@@ -2261,8 +2261,16 @@ static void pio_setup_address_monitor_pios() {
             APIO_ADD_INSTR(APIO_JMP_X_DEC(APIO_LABEL(cs_inactive)));
             APIO_ADD_INSTR(APIO_MOV_X_PINS);
             APIO_ADD_INSTR(APIO_JMP_X_DEC(APIO_LABEL(cs_inactive)));
+            APIO_ADD_INSTR(APIO_MOV_X_PINS);
+            APIO_ADD_INSTR(APIO_JMP_X_DEC(APIO_LABEL(cs_inactive)));
+            APIO_ADD_INSTR(APIO_MOV_X_PINS);
+            APIO_ADD_INSTR(APIO_JMP_X_DEC(APIO_LABEL(cs_inactive)));
         } else {
             // CS active == non-zero (pins inverted)
+            APIO_ADD_INSTR(APIO_JMP_NOT_X(APIO_LABEL(cs_inactive)));
+            APIO_ADD_INSTR(APIO_MOV_X_PINS);
+            APIO_ADD_INSTR(APIO_JMP_NOT_X(APIO_LABEL(cs_inactive)));
+            APIO_ADD_INSTR(APIO_MOV_X_PINS);
             APIO_ADD_INSTR(APIO_JMP_NOT_X(APIO_LABEL(cs_inactive)));
             APIO_ADD_INSTR(APIO_MOV_X_PINS);
             APIO_ADD_INSTR(APIO_JMP_NOT_X(APIO_LABEL(cs_inactive)));
@@ -2300,6 +2308,14 @@ static void pio_setup_address_monitor_pios() {
         APIO_ADD_INSTR(APIO_MOV_X_PINS);
         APIO_LABEL_NEW_OFFSET(check4, 2);
         APIO_ADD_INSTR(APIO_JMP_NOT_X(APIO_LABEL(check4)));
+        APIO_ADD_INSTR(APIO_JMP_X_NOT_Y(APIO_LABEL(cs_inactive)));
+        APIO_ADD_INSTR(APIO_MOV_X_PINS);
+        APIO_LABEL_NEW_OFFSET(check5, 2);
+        APIO_ADD_INSTR(APIO_JMP_NOT_X(APIO_LABEL(check5)));
+        APIO_ADD_INSTR(APIO_JMP_X_NOT_Y(APIO_LABEL(cs_inactive)));
+        APIO_ADD_INSTR(APIO_MOV_X_PINS);
+        APIO_LABEL_NEW_OFFSET(check6, 2);
+        APIO_ADD_INSTR(APIO_JMP_NOT_X(APIO_LABEL(check6)));
         APIO_ADD_INSTR(APIO_JMP_X_NOT_Y(APIO_LABEL(cs_inactive)));
         APIO_ADD_INSTR(APIO_MOV_X_PINS);
         APIO_LABEL_NEW_OFFSET(cs_active, 2);
