@@ -1,6 +1,6 @@
 [package]
 name = "onerom-config"
-version = "0.4.11"
+version = "0.4.12"
 edition = "2024"
 authors = ["Piers Finlayson <piers@piers.rocks>"]
 license = "MIT"

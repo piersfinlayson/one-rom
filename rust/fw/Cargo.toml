@@ -1,6 +1,6 @@
 [package]
 name = "onerom-fw"
-version = "0.1.22"
+version = "0.1.23"
 edition = "2024"
 authors = ["Piers Finlayson <piers@piers.rocks>"]
 license = "MIT"
@@ -20,9 +20,9 @@ name = "onerom-fw"
 path = "src/main.rs"
 
 [dependencies]
-onerom-config = { path="../config", version = "0.4.11" }
-onerom-gen = { path="../gen", version = "0.5.10" }
-sdrr-fw-parser = { path="../sdrr-fw-parser", version = "0.6.13" }
+onerom-config = { path="../config", version = "0.4.12" }
+onerom-gen = { path="../gen", version = "0.5.11" }
+sdrr-fw-parser = { path="../sdrr-fw-parser", version = "0.6.14" }
 
 base64 = { version = "0.22" }
 bytes = "1.10"

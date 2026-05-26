@@ -2,6 +2,10 @@
 
 All notables changes between versions are documented in this file.
 
+## v0.6.13 - 2026-??-??
+
+- New 28 and 32 pin boards - fire-28-c, fire-32-b.
+
 ## v0.6.12 - 2026-05-26
 
 Added

@@ -1,6 +1,6 @@
 [package]
 name = "sdrr-info"
-version = "0.5.13"
+version = "0.5.14"
 edition = "2024"
 authors = ["Piers Finlayson <piers@piers.rocks>"]
 description = "Generates information from One ROM firmware elf files"
@@ -11,7 +11,7 @@ keywords = ["embedded", "rom", "eeprom", "eprom", "flash"]
 
 [dependencies]
 
-sdrr-fw-parser = { path="../sdrr-fw-parser", version = "0.6.13", features = ["std"] }
+sdrr-fw-parser = { path="../sdrr-fw-parser", version = "0.6.14", features = ["std"] }
 
 anyhow = "1.0"
 chrono = "0.4"

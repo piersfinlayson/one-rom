@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.1.22 - 2026-??-??
+
+- New 28 and 32 pin boards - fire-28-c and fire-32-b.
+
 ## v0.1.21 - 2026-05-26
 
 - Re-added 23QL384 ROM type
