@@ -76,5 +76,5 @@
             ]
         }
     ],
-    "notes": "Character ROM CS2 is set to `ignore` as is it tied to 5V within the C64, so always active. Requires HW_REV=f"
+    "notes": "Character ROM CS2 is set to `ignore` as is it tied to 5V within the C64, so always active. Requires ice-24-f or later, or fire-24-c or later."
 }
