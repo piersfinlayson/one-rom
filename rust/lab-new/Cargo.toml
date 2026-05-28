@@ -14,17 +14,6 @@ name = "onerom-lab-fire"
 path = "src/main.rs"
 
 [features]
-default = [ "fire-40-a" ]
-fire-24-e = [ "rp2350a", "pin-24", "eprom-8bit" ]
-fire-28-a = [ "rp2350a", "pin-28", "eprom-8bit" ]
-fire-32-a = [ "rp2350b", "pin-32", "eprom-8bit" ]
-fire-40-a = [ "rp2350b", "pin-40", "eprom-16bit" ]
-pin-24 = []
-pin-28 = []
-pin-32 = []
-pin-40 = []
-eprom-8bit = []
-eprom-16bit = []
 rp2350a = [ "embassy-rp/rp235xa" ]
 rp2350b = [ "embassy-rp/rp235xb" ]
 usb = ["embassy-usb","panic-probe"]
