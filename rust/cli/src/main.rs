@@ -9,6 +9,7 @@ use clap::{CommandFactory, FromArgMatches};
 use log::{debug, error, info, trace, warn};
 
 mod args;
+mod board;
 mod control;
 mod firmware;
 mod image;
@@ -100,5 +101,6 @@ async fn sub_main() -> Result<(), Error> {
         Commands::Poke(args) => control::cmd_poke_live(&options, args).await,
         Commands::Reboot(args) => control::cmd_reboot(&options, args).await,
         Commands::Chips(args) => firmware::cmd_chips(&options, args).await,
+        Commands::Boards(args) => board::cmd_boards(&options, args).await,
     }
 }

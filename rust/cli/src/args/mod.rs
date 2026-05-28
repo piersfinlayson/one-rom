@@ -262,6 +262,15 @@ impl Cli {
     }
 }
 
+#[derive(Debug, clap::Args)]
+pub struct BoardArgs {}
+
+impl CommandTrait for BoardArgs {
+    fn requires_device(&self) -> bool {
+        false
+    }
+}
+
 #[enum_dispatch(CommandTrait)]
 #[derive(Debug, Subcommand)]
 pub enum Commands {
@@ -420,8 +429,17 @@ pub enum Commands {
     ///
     /// Examples:
     ///
-    ///   onerom firmware chips --board fire-24-e
+    ///   onerom chips --board fire-24-e
     ///
-    ///   onerom firmware chips --all
+    ///   onerom chips --all
     Chips(FirmwareChipsArgs),
+
+    /// List supported One ROM board types.
+    /// 
+    /// Displays a list of the supported One ROM board types.
+    /// 
+    /// Examples:
+    /// 
+    ///   onerom boards
+    Boards(BoardArgs)
 }
