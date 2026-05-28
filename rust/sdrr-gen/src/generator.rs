@@ -446,7 +446,8 @@ fn generate_sdrr_config_header(filename: &Path, config: &Config) -> Result<()> {
     writeln!(file)?;
     writeln!(file, "// MCU variant")?;
     writeln!(file, "{}", config.mcu_variant.define_var_fam())?;
-    if config.board.chip_pins() > 28 {
+    if config.board.chip_pins() > 28 ||
+        matches![config.board, onerom_config::hw::Board::Fire28C] {
         // Special cases for boards which uses RP2350B variant
         writeln!(file, "#define RP2350B        1")?;
     } else {
