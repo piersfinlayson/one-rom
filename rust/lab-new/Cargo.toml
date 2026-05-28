@@ -30,6 +30,7 @@ rp2350b = [ "embassy-rp/rp235xb" ]
 usb = ["embassy-usb","panic-probe"]
 
 [dependencies]
+onerom-config = { path="../config", version = "0.4.11" }
 onerom-protocol = { version = "0.1.0" }
 onerom-database = { path="../database", version = "0.1.1" }
 
@@ -50,7 +51,7 @@ critical-section = { version = "1.2.0" }
 hex = { version = "0.4", default-features = false, features = [ "alloc" ] }
 hex-literal = "1.0.0"
 log = "0.4"
-sha1 = { version = "0.10", default-features = false }
+sha1 = { version = "0.11", default-features = false }
 rtt-target = { version = "0.6", features = [ "log" ] }
 panic-probe = { version = "1.0", optional = true }
 panic-rtt-target = "0.2"

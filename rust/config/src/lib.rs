@@ -29,6 +29,7 @@ pub mod hw;
 //pub mod image;
 pub mod chip;
 pub mod mcu;
+pub mod pin_map;
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub enum Error {

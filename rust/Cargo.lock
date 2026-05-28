@@ -5167,13 +5167,14 @@ dependencies = [
  "hex",
  "hex-literal",
  "log",
+ "onerom-config",
  "onerom-database 0.1.1",
  "onerom-protocol 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "panic-probe",
  "panic-rtt-target",
  "portable-atomic",
  "rtt-target",
- "sha1 0.10.6",
+ "sha1 0.11.0",
  "static_cell",
 ]
 

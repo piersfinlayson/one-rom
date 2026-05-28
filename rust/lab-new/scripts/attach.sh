@@ -1,0 +1,1 @@
+probe-rs attach --chip RP235X ../target/thumbv8m.main-none-eabihf/release/onerom-lab-fire

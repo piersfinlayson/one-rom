@@ -6,13 +6,14 @@ A new version of One ROM Lab, rebuilt:
 
 In time it is expected this will replace the existing Lab implementation.
 
-To use to test a One ROM Fire 40 build using the feature corresponding to the test board hardware revision, for example, one of the following:
+Use the `scripts/flash.sh` script to build and flash the firmware to the test board, specifying which ROM type to read.  For example:
 
 ```bash
-cargo run --no-default-features --features fire-40-a --release
-cargo run --no-default-features --features fire-32-a --release
-cargo run --no-default-features --features fire-28-a --release
-cargo run --no-default-features --features fire-24-e --release
+scripts/flash.sh fire-24-e 2364 --cs1 0
+scripts/flash.sh fire-28-a 27c512
+scripts/flash.sh fire-28-a 23128 --cs1 0 --cs2 0 --cs3 1
+scripts/flash.sh fire-32-a 27c010
+scripts/flash.sh fire-40-a 27c400
 ```
 
 Sample output from a One ROM 40 test serving [images/test/rand_512KB.rom](../../images/test/rand_512KB.rom).

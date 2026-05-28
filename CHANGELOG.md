@@ -5,6 +5,10 @@ All notables changes between versions are documented in this file.
 ## v0.6.13 - 2026-??-??
 
 - New 28 and 32 pin boards - fire-28-c, fire-32-b.
+- Enhance lab-new to allow reading of any supported ROM type.
+
+To do:
+- Add method to get A/B from config::hw::Board, and use in generator.rs.
 
 ## v0.6.12 - 2026-05-26
 
