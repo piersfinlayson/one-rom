@@ -1,0 +1,6 @@
+{
+    "name": "neo",
+    "display_name": "One ROM Neo",
+    "description": "Drives One ROM's neo-pixel (supported models only)",
+    "build_output": "build/plugin_user.bin"
+}
