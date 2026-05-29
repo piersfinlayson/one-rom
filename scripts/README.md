@@ -30,7 +30,7 @@ scripts/build-empty-fw.sh -d -l sdrr/build/sdrr-rp2350.bin /tmp/
 
 ## add.sh
 
-Tkes a blank firmware image, adds the chip metadata to it.
+Takes a blank firmware image, adds the chip metadata to it.
 
 Example:
 
