@@ -37,6 +37,7 @@ pub type ReadResult = Vec<ModeResult>;
 /// Set via `CS1`, `CS2`, `CS3` environment variables at build time.
 /// Required for any chip whose corresponding CS line is
 /// [`ControlLineType::Configurable`].
+#[derive(Copy, Clone, Default)]
 pub struct CsPolarities {
     pub cs1: Option<bool>,
     pub cs2: Option<bool>,
@@ -112,6 +113,11 @@ impl ControlLine {
         } else {
             self.flex.set_high();
         }
+    }
+
+    fn set_polarity(&mut self, assert_high: bool) {
+        self.assert_high = assert_high;
+        self.deassert();
     }
 }
 
@@ -218,9 +224,9 @@ impl RomReader {
             match ctrl.name {
                 "ce" => ce = Some(ControlLine::active_low(flex)),
                 "oe" => oe = Some(ControlLine::active_low(flex)),
-                "cs1" => cs1 = Some(ControlLine::configurable(flex, cs.cs1.unwrap())),
-                "cs2" => cs2 = Some(ControlLine::configurable(flex, cs.cs2.unwrap())),
-                "cs3" => cs3 = Some(ControlLine::configurable(flex, cs.cs3.unwrap())),
+                "cs1" => cs1 = Some(ControlLine::configurable(flex, cs.cs1.expect("cs1 polarity required"))),
+                "cs2" => cs2 = Some(ControlLine::configurable(flex, cs.cs2.expect("cs2 polarity required"))),
+                "cs3" => cs3 = Some(ControlLine::configurable(flex, cs.cs3.expect("cs3 polarity required"))),
                 "byte" => byte_n = Some(flex),
                 _ => {}
             }
@@ -472,5 +478,70 @@ impl RomReader {
 
     fn data_all_low(data: &[Flex<'static>], data_bytes: usize) -> bool {
         data[..data_bytes * 8].iter().all(|p| p.is_low())
+    }
+
+    /// Configure the BYTE# pin and assert all control lines.
+    ///
+    /// Must be called before any `read_byte_at` calls.  Pair every call to
+    /// `begin_read` with exactly one call to `end_read`.
+    pub fn begin_read(&mut self, mode: u8) {
+        if let Some(ref mut byte_n) = self.byte_n {
+            if mode == 16 {
+                byte_n.set_high(); // BYTE# deasserted → 16-bit mode
+            } else {
+                byte_n.set_low(); // BYTE# asserted   →  8-bit mode
+            }
+        }
+        self.assert_control();
+    }
+
+    /// Read a single byte from the ROM at the given byte address.
+    ///
+    /// In 8-bit mode `byte_addr` is the physical ROM address.
+    /// In 16-bit mode `byte_addr / 2` is the word address and
+    /// `byte_addr % 2` selects the low byte (D0–D7, index 0) or the high
+    /// byte (D8–D15, index 1) from the 16-bit data bus.
+    ///
+    /// `begin_read(mode)` must have been called before the first call to
+    /// this method in a read session.
+    pub fn read_byte_at(&mut self, byte_addr: usize, mode: u8) -> u8 {
+        let (phys_addr, byte_index, delay) = if mode == 16 {
+            // Word address with A-1 (bit 0) held low, matching addr_shift=1
+            // used in read_mode.
+            (
+                (byte_addr / 2) << 1,
+                byte_addr % 2,
+                self.read_delay_16bit_cycles,
+            )
+        } else {
+            (byte_addr, 0, self.read_delay_cycles)
+        };
+
+        self.set_addr(phys_addr);
+        cortex_m::asm::delay(delay);
+        self.read_data_byte(byte_index)
+    }
+
+    /// Deassert all control lines and return the BYTE# pin to its idle state.
+    ///
+    /// Call after all `read_byte_at` calls in a read session are complete.
+    pub fn end_read(&mut self) {
+        self.deassert_control();
+        // Return BYTE# to deasserted (high): matches the idle state set in init().
+        if let Some(ref mut byte_n) = self.byte_n {
+            byte_n.set_high();
+        }
+    }
+
+    pub fn set_cs_polarities(&mut self, cs: CsPolarities) {
+        if let (Some(line), Some(p)) = (&mut self.cs1, cs.cs1) {
+            line.set_polarity(p);
+        }
+        if let (Some(line), Some(p)) = (&mut self.cs2, cs.cs2) {
+            line.set_polarity(p);
+        }
+        if let (Some(line), Some(p)) = (&mut self.cs3, cs.cs3) {
+            line.set_polarity(p);
+        }
     }
 }
