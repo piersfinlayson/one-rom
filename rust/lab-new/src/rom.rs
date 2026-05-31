@@ -140,7 +140,7 @@ pub struct RomReader {
     read_delay_cycles: u32,
     /// Read-delay cycles for 16-bit mode (27C400 only).
     read_delay_16bit_cycles: u32,
-    tristate_settle_cycles: u32,
+    tristate_settle_cycles: Option<u32>,
 }
 
 impl RomReader {
@@ -150,7 +150,7 @@ impl RomReader {
     /// - If a required CS polarity env var was not set for a configurable line.
     /// - If `pin_map` does not contain a GPIO for a physical pin required by
     ///   `chip` (indicates a board/chip-type mismatch).
-    pub fn new(pin_map: &BoardPinMap, chip: ChipType, cs: CsPolarities) -> Self {
+    pub fn new(pin_map: &BoardPinMap, chip: ChipType, cs: CsPolarities, tristate: bool) -> Self {
         // Validate CS polarities are provided for every configurable line.
         for ctrl in chip.control_lines() {
             if ctrl.line_type == ControlLineType::Configurable {
@@ -250,10 +250,15 @@ impl RomReader {
         // Empirically determined timing at 150 MHz.
         let (read_delay_cycles, read_delay_16bit_cycles, tristate_settle_cycles) = match chip {
             // 8-bit delay is longer: A-1 participates in address decoding.
-            ChipType::Chip27C400 => (12, 8, 200),
-            _ => (8, 8, 100),
+            ChipType::Chip27C400 => (12, 8, Some(200)),
+            _ => (8, 8, Some(100)),
         };
 
+        let tristate_settle_cycles = if tristate {
+            tristate_settle_cycles
+        } else {
+            None
+        };
         Self {
             addr,
             data,
@@ -446,7 +451,10 @@ impl RomReader {
     /// Assumes all control lines are currently asserted on entry; restores
     /// that state on exit.  Returns the number of tristate failures (0–2).
     fn test_tristate(&mut self, data_bytes: usize) -> u32 {
-        let settle = self.tristate_settle_cycles;
+        let settle = match self.tristate_settle_cycles {
+            Some(c) => c,
+            None => return 0, // tristate testing disabled
+        };
         let mut failures = 0u32;
 
         // Test OE (EPROMs with a dedicated output-enable).
@@ -558,5 +566,9 @@ impl RomReader {
         if let (Some(line), Some(p)) = (&mut self.cs3, cs.cs3) {
             line.set_polarity(p);
         }
+    }
+
+    pub fn tristate(&self) -> bool {
+        self.tristate_settle_cycles.is_some()
     }
 }

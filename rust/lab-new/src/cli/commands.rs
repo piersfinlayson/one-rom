@@ -28,6 +28,8 @@ use super::parser::{self, Args};
 use super::{CsPolaritySetting, CsSettings, OutputFormat, ReadRange, SessionState};
 use super::{default_chip_for_board, send_line};
 
+const CS_KEY: &str = "(0=active-low 1=active-high ?=auto)";
+
 // ---------------------------------------------------------------------------
 // Dispatch
 // ---------------------------------------------------------------------------
@@ -50,12 +52,13 @@ pub async fn dispatch(line: &str, state: &mut SessionState) -> Result<(), Error>
         'i' => cmd_chip_info(&mut args, state).await,
         'c' => cmd_set_chip_type(&mut args, state).await,
         'f' => cmd_set_format(&mut args, state).await,
+        't' => cmd_toggle_tristate(state).await,
         'q' => cmd_quick_read(state).await,
         'l' => cmd_list_chips(state).await,
         'v' => cmd_version_info(state).await,
         'd' => cmd_default_info(state).await,
         'B' => cmd_set_board(&mut args, state).await,
-        't' => cmd_list_board_types(state).await,
+        'T' => cmd_list_board_types(state).await,
         'z' => cmd_reset_to_bootloader().await,
         '?' | 'h' => super::show_help(state).await,
         _ => send_line(&format!("Unknown command '{}'. Press Enter for help.", cmd)).await,
@@ -72,21 +75,21 @@ async fn cmd_read(args: &mut Args<'_>, state: &mut SessionState) -> Result<(), E
     let cs1 = parser::get_cs_polarity(
         args.next_token(),
         state.cs.cs1,
-        "CS1 polarity (0=active-low  1=active-high  ?=auto)",
+        &format!("CS1 polarity {}", CS_KEY),
         chip_has_configurable_cs(chip, "cs1"),
     )
     .await?;
     let cs2 = parser::get_cs_polarity(
         args.next_token(),
         state.cs.cs2,
-        "CS2 polarity (0=active-low  1=active-high  ?=auto)",
+        &format!("CS2 polarity {}", CS_KEY),
         chip_has_configurable_cs(chip, "cs2"),
     )
     .await?;
     let cs3 = parser::get_cs_polarity(
         args.next_token(),
         state.cs.cs3,
-        "CS3 polarity (0=active-low  1=active-high  ?=auto)",
+        &format!("CS3 polarity {}", CS_KEY),
         chip_has_configurable_cs(chip, "cs3"),
     )
     .await?;
@@ -103,7 +106,7 @@ async fn cmd_read(args: &mut Args<'_>, state: &mut SessionState) -> Result<(), E
         state.range
     ))
     .await?;
-    do_read(board, chip, state.range, fmt, state.cs).await
+    do_read(board, chip, state.range, fmt, state.cs, state.tri_state).await
 }
 
 async fn cmd_batch(args: &mut Args<'_>, state: &mut SessionState) -> Result<(), Error> {
@@ -117,21 +120,21 @@ async fn cmd_batch(args: &mut Args<'_>, state: &mut SessionState) -> Result<(), 
     let cs1 = parser::get_cs_polarity(
         args.next_token(),
         state.cs.cs1,
-        "CS1 polarity (0=active-low  1=active-high  ?=auto)",
+        &format!("CS1 polarity {}", CS_KEY),
         chip_has_configurable_cs(chip, "cs1"),
     )
     .await?;
     let cs2 = parser::get_cs_polarity(
         args.next_token(),
         state.cs.cs2,
-        "CS2 polarity (0=active-low  1=active-high  ?=auto)",
+        &format!("CS2 polarity {}", CS_KEY),
         chip_has_configurable_cs(chip, "cs2"),
     )
     .await?;
     let cs3 = parser::get_cs_polarity(
         args.next_token(),
         state.cs.cs3,
-        "CS3 polarity (0=active-low  1=active-high  ?=auto)",
+        &format!("CS3 polarity {}", CS_KEY),
         chip_has_configurable_cs(chip, "cs3"),
     )
     .await?;
@@ -152,7 +155,7 @@ async fn cmd_batch(args: &mut Args<'_>, state: &mut SessionState) -> Result<(), 
         pass += 1;
         send_line(&format!("--- Pass {} ---", pass)).await?;
 
-        do_read(board, chip, state.range, fmt, state.cs).await?;
+        do_read(board, chip, state.range, fmt, state.cs, state.tri_state).await?;
 
         // Wait for the interval to expire OR a keypress, whichever comes first.
         // A key pressed during a read is buffered and will be returned here
@@ -223,21 +226,21 @@ async fn cmd_set_chip_type(args: &mut Args<'_>, state: &mut SessionState) -> Res
     let cs1 = parser::get_cs_polarity(
         args.next_token(),
         state.cs.cs1,
-        "CS1 polarity (0=active-low  1=active-high  ?=auto)",
+        &format!("CS1 polarity {}", CS_KEY),
         chip_has_configurable_cs(chip, "cs1"),
     )
     .await?;
     let cs2 = parser::get_cs_polarity(
         args.next_token(),
         state.cs.cs2,
-        "CS2 polarity (0=active-low  1=active-high  ?=auto)",
+        &format!("CS2 polarity {}", CS_KEY),
         chip_has_configurable_cs(chip, "cs2"),
     )
     .await?;
     let cs3 = parser::get_cs_polarity(
         args.next_token(),
         state.cs.cs3,
-        "CS3 polarity (0=active-low  1=active-high  ?=auto)",
+        &format!("CS3 polarity {}", CS_KEY),
         chip_has_configurable_cs(chip, "cs3"),
     )
     .await?;
@@ -256,6 +259,12 @@ async fn cmd_set_format(args: &mut Args<'_>, state: &mut SessionState) -> Result
     Ok(())
 }
 
+async fn cmd_toggle_tristate(state: &mut SessionState) -> Result<(), Error> {
+    state.tri_state = !state.tri_state;
+    send_line(&format!("Tri-state testing {}", if state.tri_state { "on" } else { "off" })).await?;
+    Ok(())
+}
+
 async fn cmd_quick_read(state: &mut SessionState) -> Result<(), Error> {
     let board = state.board.ok_or(Error::BoardNotSet)?;
     let chip = state.chip.ok_or(Error::ChipNotSet)?;
@@ -264,7 +273,7 @@ async fn cmd_quick_read(state: &mut SessionState) -> Result<(), Error> {
         state.range, state.format
     ))
     .await?;
-    do_read(board, chip, state.range, state.format, state.cs).await
+    do_read(board, chip, state.range, state.format, state.cs, state.tri_state).await
 }
 
 async fn cmd_list_chips(state: &SessionState) -> Result<(), Error> {
@@ -336,22 +345,22 @@ pub async fn cmd_version_info(_state: &SessionState) -> Result<(), Error> {
 async fn cmd_default_info(state: &SessionState) -> Result<(), Error> {
     send_line("").await?;
     send_line(&format!(
-        "Board:    {}",
+        "Board:     {}",
         state.board.map(|b| b.name()).unwrap_or("(not set)")
     ))
     .await?;
     send_line(&format!(
-        "Chip:     {}",
+        "Chip:      {}",
         state.chip.map(|c| c.name()).unwrap_or("(not set)")
     ))
     .await?;
     send_line(&format!(
-        "CS:       cs1={}  cs2={}  cs3={}",
+        "CS:        cs1={} cs2={} cs3={}",
         state.cs.cs1, state.cs.cs2, state.cs.cs3,
     ))
     .await?;
     send_line(&format!(
-        "Range:    {:#x}..{}",
+        "Range:     {:#x}..{}",
         state.range.start,
         if state.range.len == 0 {
             "end".to_string()
@@ -360,8 +369,9 @@ async fn cmd_default_info(state: &SessionState) -> Result<(), Error> {
         }
     ))
     .await?;
-    send_line(&format!("Format:   {}", state.format.as_str())).await?;
-    send_line(&format!("Interval: {}s", state.interval_secs)).await?;
+    send_line(&format!("Format:    {}", state.format.as_str())).await?;
+    send_line(&format!("Interval:  {}s", state.interval_secs)).await?;
+    send_line(&format!("Tri-state: {}", if state.tri_state { "on" } else { "off" })).await?;
     send_line("").await?;
     Ok(())
 }
@@ -428,6 +438,7 @@ async fn do_read(
     range: ReadRange,
     fmt: OutputFormat,
     cs: CsSettings,
+    tristate: bool,
 ) -> Result<(), Error> {
     let needs_scan = chip.control_lines().iter().any(|c| {
         c.line_type == ControlLineType::Configurable
@@ -440,12 +451,12 @@ async fn do_read(
     });
 
     if needs_scan {
-        return scan_cs(board, chip, cs).await;
+        return scan_cs(board, chip, cs, tristate).await;
     }
 
     let (start, count) = resolve_range(range, chip);
     let pin_map = BoardPinMap::new(board);
-    let mut reader = RomReader::new(&pin_map, chip, cs.to_polarities());
+    let mut reader = RomReader::new(&pin_map, chip, cs.to_polarities(), tristate);
     reader.init();
 
     match fmt {
@@ -483,9 +494,15 @@ async fn output_checksum(
 
     send_line("").await?;
     for r in &results {
+        let mode = if results.len() == 1 {
+            // If there's only one mode, omit the redundant "8-bit"/"16-bit" label.
+            "".to_string()
+        } else {
+            format!("{}-bit  ", r.mode)
+        };
         send_line(&format!(
-            "  {}-bit  SHA1: {}  checksum: {:#010X}",
-            r.mode,
+            "  {}SHA1: {}  checksum: {:#010X}",
+            mode,
             hex::encode(r.sha1),
             r.checksum,
         ))
@@ -499,12 +516,14 @@ async fn output_checksum(
         send_line(&format!("  Match: {}", matched)).await?;
     }
 
-    for r in &results {
-        send_line(&format!(
-            "  {}-bit tristate failures: {}",
-            r.mode, r.failures
-        ))
-        .await?;
+    if reader.tristate() {
+        for r in &results {
+            send_line(&format!(
+                "  {}-bit tristate failures: {}",
+                r.mode, r.failures
+            ))
+            .await?;
+        }
     }
 
     send_line("").await?;
@@ -532,7 +551,7 @@ fn trivial_sha1(byte: u8, count: usize) -> [u8; 20] {
     out
 }
 
-async fn scan_cs(board: Board, chip: ChipType, cs: CsSettings) -> Result<(), Error> {
+async fn scan_cs(board: Board, chip: ChipType, cs: CsSettings, tristate: bool) -> Result<(), Error> {
     let auto: alloc::vec::Vec<&'static str> = chip
         .control_lines()
         .iter()
@@ -574,7 +593,7 @@ async fn scan_cs(board: Board, chip: ChipType, cs: CsSettings) -> Result<(), Err
             }
         }
 
-        let mut reader = RomReader::new(&pin_map, chip, test);
+        let mut reader = RomReader::new(&pin_map, chip, test, tristate);
         reader.init();
         reader.set_cs_polarities(test);
 
@@ -583,7 +602,7 @@ async fn scan_cs(board: Board, chip: ChipType, cs: CsSettings) -> Result<(), Err
             .enumerate()
             .map(|(i, &name)| format!("{}={}", name, if (combo >> i) & 1 == 1 { "1" } else { "0" }))
             .collect::<alloc::vec::Vec<_>>()
-            .join("  ");
+            .join(" ");
 
         for &mode in chip.bit_modes() {
             let mut sha = Sha1::new();
@@ -601,8 +620,14 @@ async fn scan_cs(board: Board, chip: ChipType, cs: CsSettings) -> Result<(), Err
             sha1.copy_from_slice(&sha.finalize());
 
             let trivial = sha1 == all_zeros || sha1 == all_ffs;
+            let mode = if chip.bit_modes().len() == 1 {
+                // If there's only one mode, omit the redundant "8-bit"/"16-bit" label.
+                "".to_string()
+            } else {
+                format!("{}-bit  ", mode)
+            };
             send_line(&format!(
-                "  {}  {}-bit  SHA1: {}  checksum: {:#010X}  {}",
+                "  {}  {}SHA1: {}  checksum: {:#010X}  {}",
                 label,
                 mode,
                 hex::encode(sha1),

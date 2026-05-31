@@ -113,6 +113,8 @@ pub struct SessionState {
     pub interval_secs: u32,
     /// Control line polarities for the current chip.
     pub cs: CsSettings,
+    /// Tri-state testing flag for checksum mode.
+    pub tri_state: bool,
 }
 
 impl SessionState {
@@ -125,6 +127,7 @@ impl SessionState {
             format: OutputFormat::default(),
             interval_secs: 5,
             cs: CsSettings::unset(),
+            tri_state: true,
         }
     }
 }
@@ -324,11 +327,12 @@ pub async fn show_help(_state: &SessionState) -> Result<(), Error> {
     send_line("  c   Set or change chip type").await?;
     send_line("        c:<chip>[:<cs1>[:<cs2>[:<cs3>]]]").await?;
     send_line("  f   Set or change output format").await?;
+    send_line("  t   Toggle tri-state testing during checksum mode on and off").await?;
     send_line("  q   Quick read (uses default chip, range and format)").await?;
     send_line("  l   List chips supported by this board type").await?;
     send_line("  v   Display One ROM Lab version and hardware information").await?;
     send_line("  d   Display configured defaults").await?;
-    send_line("  t   List supported board types").await?;
+    send_line("  T   List supported board types").await?;
     send_line("  z   Reset to bootloader").await?;
     send_line("  ?/h This help").await?;
     send_line("").await?;
