@@ -14,8 +14,15 @@ name = "onerom-lab-fire"
 path = "src/main.rs"
 
 [features]
-rp2350a = [ "embassy-rp/rp235xa" ]
-rp2350b = [ "embassy-rp/rp235xb" ]
+# There are two differences between the RP225xA and B embassy-rp implementations,
+# as of 2026-05-31:
+# - Different number and location of ADC GPIOs
+# - Different total number of GPIOs
+# Lab new doesn't (currently) use ADC, so it can be build a RP235xB only for now,
+# for all board types.
+default = [ "rp235xb" ]
+rp235xa = [ "embassy-rp/rp235xa" ]
+rp235xb = [ "embassy-rp/rp235xb" ]
 
 [dependencies]
 onerom-config = { path="../config", version = "0.4.11" }

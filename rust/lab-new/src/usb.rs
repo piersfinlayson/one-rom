@@ -133,6 +133,7 @@ impl Usb {
 
         // Interface 1: vendor / WinUSB, bulk endpoints.
         // MS OS 2.0 features scoped to this function only.
+        // Used for exposing picobootx.
         {
             let mut func = builder.function(0xFF, 0, 0);
             func.msos_feature(msos::CompatibleIdFeatureDescriptor::new("WINUSB", ""));

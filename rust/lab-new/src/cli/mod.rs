@@ -350,6 +350,8 @@ pub async fn show_help(state: &SessionState) -> Result<(), Error> {
     send_line("        b[:<chip>[:<start>[:<len>[:<fmt>[:<secs>[:<cs1>[:<cs2>[:<cs3>]]]]]]]]]").await?;
     send_line("  i   Chip type information").await?;
     send_line("        i[:<chip>]").await?;
+    send_line("  c   Set or change chip type").await?;
+    send_line("        c:<chip>[:<cs1>[:<cs2>[:<cs3>]]]").await?;
     send_line("  l   List chips supported by this board type").await?;
     send_line("  v   Firmware info").await?;
     send_line("  z   Reset to bootloader").await?;

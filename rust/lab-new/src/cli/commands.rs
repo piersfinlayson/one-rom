@@ -46,6 +46,7 @@ pub async fn dispatch(line: &str, state: &mut SessionState) -> Result<(), Error>
         'r' => cmd_read(&mut args, state).await,
         'b' => cmd_batch(&mut args, state).await,
         'i' => cmd_chip_info(&mut args, state).await,
+        'c' => cmd_set_chip_type(&mut args, state).await,
         'l' => cmd_list_chips(state).await,
         'v' => cmd_firmware_info(state).await,
         'B' => cmd_set_board(&mut args, state).await,
@@ -195,6 +196,31 @@ async fn cmd_chip_info(args: &mut Args<'_>, state: &mut SessionState) -> Result<
     }
 
     send_line("").await?;
+    Ok(())
+}
+
+async fn cmd_set_chip_type(args: &mut Args<'_>, state: &mut SessionState) -> Result<(), Error> {
+    let chip = parser::require_chip(args.next_token(), state.chip).await?;
+    let cs1 = parser::get_cs_polarity(
+        args.next_token(), state.cs.cs1,
+        "CS1 polarity (0=active-low  1=active-high  ?=auto)",
+        chip_has_configurable_cs(chip, "cs1"),
+    ).await?;
+    let cs2 = parser::get_cs_polarity(
+        args.next_token(), state.cs.cs2,
+        "CS2 polarity (0=active-low  1=active-high  ?=auto)",
+        chip_has_configurable_cs(chip, "cs2"),
+    ).await?;
+    let cs3 = parser::get_cs_polarity(
+        args.next_token(), state.cs.cs3,
+        "CS3 polarity (0=active-low  1=active-high  ?=auto)",
+        chip_has_configurable_cs(chip, "cs3"),
+    ).await?;
+
+    state.chip = Some(chip);
+    state.cs = CsSettings { cs1, cs2, cs3 };
+
+    send_line(&format!("Chip set to '{}'.", chip.name())).await?;
     Ok(())
 }
 

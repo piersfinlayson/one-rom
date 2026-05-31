@@ -56,16 +56,16 @@ esac
 # fire-32-*, fire-40-*, and fire-28-c onwards are RP2350B (48 GPIOs).
 # All earlier boards are RP2350A (30 GPIOs).
 # Update this if new rp2350b fire-28 revisions are introduced.
-
+# For now use RP235XB in all cases, see Cargo.toml for details.
 case $BOARD in
     fire-28-a|fire-28-b)
-        FEATURE="rp2350a"
+        FEATURE="rp2350b"
         ;;
     fire-40-*|fire-32-*|fire-28*)
         FEATURE="rp2350b"
         ;;
     *)
-        FEATURE="rp2350a"
+        FEATURE="rp2350b"
         ;;
 esac
 
