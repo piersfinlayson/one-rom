@@ -48,7 +48,7 @@ There are also some other inconsistencies between types:
 | 23QL384 |  | 48KB | 16 (A0-A15) | CS1 (pin 22) | None | ✓ |
 | 23512 |  | 64KB | 16 (A0-A15) | CS1 (pin 20), CS2 (pin 22) | None | ✓ |
 | 23QL512 |  | 64KB | 16 (A0-A15) | CS1 (pin 22) | None | ✓ |
-| 231024 | TC531000 | 128KB | 17 (A0-A16) | CS1 (pin 20) | None | ✓ |
+| 231024 | TC531000, 23C1000, 23C1000A, MX23C1000 | 128KB | 17 (A0-A16) | CS1 (pin 20) | None | ✓ |
 
 ## 32-pin Mask ROM Family (23xx)
 

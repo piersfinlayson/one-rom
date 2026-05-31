@@ -496,7 +496,10 @@
             "function": "ROM",
             "supported": "0.6.4",
             "aliases": [
-                "TC531000"
+                "TC531000",
+                "23C1000",
+                "23C1000A",
+                "MX23C1000"
             ],
             "bit_modes": [8],
             "pins": 28,
