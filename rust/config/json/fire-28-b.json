@@ -1,7 +1,8 @@
 {
-    "description": "One ROM Fire 28 (rev A)",
+    "description": "One ROM Fire 28 (rev B)",
+    "comment1": "Identical to fire-28-a",
     "alt": [
-        "fire-28-usb-a"
+        "fire-28-usb-b"
     ],
     "chip": {
         "pins": {

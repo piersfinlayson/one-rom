@@ -178,11 +178,12 @@ test_24_all_rom_types fire-24-e
 # Test every ROM type on the first Fire 28 hardware revision.  This tests a
 # single ROM image/set
 test_28_all_rom_types fire-28-a
+test_28_all_rom_types fire-28-b
+test_28_all_rom_types fire-28-c
 
-# The PIO tester doesn't support 32 pin ROMs yet
 test_32pin fire-32-a
+test_32pin fire-32-b
 
-# The PIO tester doesn't support 40 pin ROMs yet
 test_40pin fire-40-a
 test_40pin fire-40-a -DFORCE_16_BIT
 

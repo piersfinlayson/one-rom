@@ -20,6 +20,12 @@ rp2350:HW_REV=fire-24-e
 # Fire 28 rev A
 rp2350:HW_REV=fire-28-a
 
+# Fire 28 rev B
+rp2350:HW_REV=fire-28-b
+
+# Fire 28 rev C
+rp2350:HW_REV=fire-28-c
+
 # Ice rev F
 f401re:HW_REV=ice-24-f
 f411re:HW_REV=ice-24-f

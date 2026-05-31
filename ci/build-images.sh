@@ -11,7 +11,7 @@ if [ -z "$VERSION" ] || [ -z "$DEST_PREFIX" ]; then
     exit 1
 fi
 
-FIRE_BOARDS=(fire-24-a fire-24-usb-b fire-24-c fire-24-d fire-24-e fire-28-a fire-32-a fire-40-a)
+FIRE_BOARDS=(fire-24-a fire-24-usb-b fire-24-c fire-24-d fire-24-e fire-28-a fire-28-b fire-28-c fire-32-a fire-32-b fire-40-a)
 ICE_BOARDS=(ice-24-d ice-24-e ice-24-f ice-24-g ice-24-usb-h ice-24-i ice-24-j ice-28-a)
 STM32_MCUS=(f401rb f401rc f401re f405rg f411rc f411re f446rc f446re)
 

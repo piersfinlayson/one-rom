@@ -41,6 +41,7 @@ typedef enum {
     CHIP_TYPE_28C512 = 29,
     CHIP_TYPE_23QL512 = 30,        // Not a real chip, but serves the Sinclair QL's combined 23256+23128, covering the whole 64KB address space
     CHIP_TYPE_23QL384 = 31,        // Not a real chip, but serves the Sinclair QL's combined 23256+23128, covering $0000-$BFFF (48KB)
+    CHIP_TYPE_23C1001 = 32,
     NUM_CHIP_TYPES,
     INVALID_CHIP_TYPE = 0xFF
 } sdrr_rom_type_t;
@@ -81,6 +82,7 @@ const char * const chip_type_strings[NUM_CHIP_TYPES] = {
     "28C512",
     "23QL512",
     "23QL384",
+    "23C1001",
 };
 _Static_assert(sizeof(chip_type_strings)/sizeof(chip_type_strings[0]) == NUM_CHIP_TYPES,
                "chip_type_strings size doesn't match NUM_CHIP_TYPES");

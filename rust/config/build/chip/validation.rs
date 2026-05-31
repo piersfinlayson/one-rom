@@ -416,10 +416,13 @@ impl ChipType {
         if (cs_lines.contains(&"cs1") || cs_lines.contains(&"cs2") || cs_lines.contains(&"cs3"))
             && (cs_lines.contains(&"ce") || cs_lines.contains(&"oe"))
         {
-            return Err(ValidationError::IncompatibleControlLines {
-                chip_type: type_name.to_string(),
-                combination: format!("{:?}", cs_lines),
-            });
+            // 23C1001 is the only chip type to mix CE/OE and CS lines.
+            if type_name != "23C1001" {
+                return Err(ValidationError::IncompatibleControlLines {
+                    chip_type: type_name.to_string(),
+                    combination: format!("{:?}", cs_lines),
+                });
+            }
         }
 
         Ok(())

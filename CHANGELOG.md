@@ -9,6 +9,7 @@ All notables changes between versions are documented in this file.
 
 To do:
 - Add method to get A/B from config::hw::Board, and use in generator.rs.
+- Actually add 23C1001 support to firmware and test it (fire-32-b only).
 
 ## v0.6.12 - 2026-05-26
 

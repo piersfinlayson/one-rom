@@ -1246,6 +1246,76 @@
                 }
             ]
         },
+        "23C1001": {
+            "description": "128KB mask programmed ROM with fixed active-low CE/OE, plus 2 programmable CS lines",
+            "function": "ROM",
+            "supported": "0.6.13",
+            "aliases": [
+                "D23C1001"
+            ],
+            "bit_modes": [8],
+            "pins": 32,
+            "size": 131072,
+            "address": [
+                12,
+                11,
+                10,
+                9,
+                8,
+                7,
+                6,
+                5,
+                27,
+                26,
+                23,
+                25,
+                4,
+                28,
+                29,
+                3,
+                2
+            ],
+            "data": [
+                13,
+                14,
+                15,
+                17,
+                18,
+                19,
+                20,
+                21
+            ],
+            "control": {
+                "ce": {
+                    "pin": 22,
+                    "type": "fixed_active_low"
+                },
+                "oe": {
+                    "pin": 24,
+                    "type": "fixed_active_low"
+                },
+                "cs1": {
+                    "pin": 31,
+                    "type": "configurable"
+                },
+                "cs2": {
+                    "pin": 30,
+                    "type": "configurable"
+                }
+            },
+            "power": [
+                {
+                    "name": "VCC",
+                    "pin": 32,
+                    "voltage": "+5V"
+                },
+                {
+                    "name": "GND",
+                    "pin": 16,
+                    "voltage": "0V"
+                }
+            ]
+        },
         "27C010": {
             "description": "128KB EPROM with fixed active-low CE/OE",
             "function": "ROM",

@@ -346,6 +346,7 @@ impl SdrrInfo {
             | SdrrRomType::Rom27C040
             | SdrrRomType::Rom27C080
             | SdrrRomType::Rom27C301
+            | SdrrRomType::Rom23C1001
             | SdrrRomType::Rom27C400 => {
                 return Err(format!(
                     "ROM type {} not supported for address mangling",

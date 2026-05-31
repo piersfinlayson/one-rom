@@ -350,6 +350,11 @@
                     "const": "28C512"
                 },
                 {
+                    "description": "128KB mask programmed ROM with fixed active-low CE/OE, plus 2 programmable CS lines - 131072 bytes, 32-pin package",
+                    "type": "string",
+                    "const": "23C1001"
+                },
+                {
                     "description": "128KB mask ROM with fixed active-low CE/OE - 131072 bytes, 32-pin package",
                     "type": "string",
                     "const": "23C1010"

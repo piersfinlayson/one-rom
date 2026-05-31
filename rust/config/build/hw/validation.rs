@@ -378,17 +378,6 @@ pub fn validate_config(name: &str, config: &HwConfigJson) {
                 19,
                 config.mcu.family.max_valid_addr_cs_pin(),
             );
-
-            // A16 must be the _first_ address pin for 32-pin ROMs, as in the
-            // 27C301 case it doubles as /OE.
-            let min_addr_pin = *config.mcu.pins.addr.iter().min().unwrap();
-            let a16_index = config.mcu.pins.addr[16];
-            if a16_index != min_addr_pin {
-                panic!(
-                    "{}: for 32-pin ROMs, A16 must be the lowest address pin",
-                    name
-                );
-            }
         }
         40 => {
             validate_pin_values(

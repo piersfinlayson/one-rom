@@ -559,6 +559,7 @@ const char* rom_type_to_string(sdrr_rom_type_t rom_type) {
         case CHIP_TYPE_28C512: return "28C512";
         case CHIP_TYPE_23QL512: return "23QL512";
         case CHIP_TYPE_23QL384: return "23QL384";
+        case CHIP_TYPE_23C1001: return "23C1001";
         default: return "unknown";
     }
 }
@@ -596,6 +597,8 @@ uint8_t get_num_cs(sdrr_rom_type_t rom_type) {
         case CHIP_TYPE_28C256:
         case CHIP_TYPE_28C512:
             return 3;
+        case CHIP_TYPE_23C1001:
+            return 4;
         default:
             printf("Error: Unsupported ROM type %d in get_num_cs\n", rom_type);
             assert(0 && "Unknown ROM type in num_cs");
@@ -607,6 +610,12 @@ static const uint8_t cs_combos_1[2][3] = {{0,255,255}, {1,255,255}};
 static const uint8_t cs_combos_2[4][3] = {{0,0,255}, {0,1,255}, {1,0,255}, {1,1,255}};
 static const uint8_t cs_combos_3[8][3] = {{0,0,0}, {0,0,1}, {0,1,0}, {0,1,1},
                                            {1,0,0}, {1,0,1}, {1,1,0}, {1,1,1}};
+static const uint8_t cs_combos_4[16][4] = {
+    {0,0,0,0}, {0,0,0,1}, {0,0,1,0}, {0,0,1,1},
+    {0,1,0,0}, {0,1,0,1}, {0,1,1,0}, {0,1,1,1},
+    {1,0,0,0}, {1,0,0,1}, {1,0,1,0}, {1,0,1,1},
+    {1,1,0,0}, {1,1,0,1}, {1,1,1,0}, {1,1,1,1}
+};
 
 uint8_t cs_combinations(sdrr_rom_type_t rom_type, uint8_t **combos) {
     uint8_t num_cs = get_num_cs(rom_type);
@@ -620,6 +629,9 @@ uint8_t cs_combinations(sdrr_rom_type_t rom_type, uint8_t **combos) {
         case 3:
             *combos = (uint8_t *)cs_combos_3;
             return 8;
+        case 4:
+            *combos = (uint8_t *)cs_combos_4;
+            return 16;
         default:
             assert(0 && "Unknown number of CS lines in cs_combinations");
             return 0;
@@ -666,6 +678,7 @@ size_t get_expected_rom_size(sdrr_rom_type_t rom_type) {
         case CHIP_TYPE_28C512: return 65536;
         case CHIP_TYPE_23QL512: return 65536;
         case CHIP_TYPE_23QL384: return 49152;
+        case CHIP_TYPE_23C1001: return 131072;
         default: return 0;
     }
 }
@@ -698,6 +711,7 @@ sdrr_rom_type_t rom_type_from_string(const char* type_str) {
     else if (strcmp(type_str, "28C512") == 0) return CHIP_TYPE_28C512;
     else if (strcmp(type_str, "23QL512") == 0) return CHIP_TYPE_23QL512;
     else if (strcmp(type_str, "23QL384") == 0) return CHIP_TYPE_23QL384;
+    else if (strcmp(type_str, "23C1001") == 0) return CHIP_TYPE_23C1001;
     else return -1; // Unknown type
 }
 
