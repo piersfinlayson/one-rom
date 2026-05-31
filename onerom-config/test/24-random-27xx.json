@@ -11,7 +11,7 @@
             "roms": [
                 {
                     "description": "2704",
-                    "file": "images/test/rand_8192.rom",
+                    "file": "images/test/rand_8KB.rom",
                     "type": "2704",
                     "size_handling": "truncate"
                 }
@@ -22,7 +22,7 @@
             "roms": [
                 {
                     "description": "2708",
-                    "file": "images/test/rand_65536.rom",
+                    "file": "images/test/rand_64KB.rom",
                     "type": "2708",
                     "size_handling": "truncate"
                 }

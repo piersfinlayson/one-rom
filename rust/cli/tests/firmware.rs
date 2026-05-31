@@ -234,7 +234,7 @@ fn firmware_build_slot_2364_single() {
     slot_succeeds(
         representative_board(24),
         &[slot(
-            "rand_8192.rom",
+            "rand_8KB.rom",
             "2364",
             &[("cs1", "active_low")],
             None,
@@ -246,7 +246,7 @@ fn firmware_build_slot_2364_single() {
 fn firmware_build_slot_27512_no_cs() {
     slot_succeeds(
         representative_board(28),
-        &[slot("rand_65536.rom", "27512", &[], None)],
+        &[slot("rand_64KB.rom", "27512", &[], None)],
     );
 }
 
@@ -293,7 +293,7 @@ fn firmware_build_slot_malformed_spec_fails() {
 fn firmware_build_slot_2364_missing_cs_fails() {
     slot_fails(
         representative_board(24),
-        &[slot("rand_8192.rom", "2364", &[], None)],
+        &[slot("rand_8KB.rom", "2364", &[], None)],
     );
 }
 
@@ -302,7 +302,7 @@ fn firmware_build_slot_27512_spurious_cs_fails() {
     slot_fails(
         representative_board(28),
         &[slot(
-            "rand_65536.rom",
+            "rand_64KB.rom",
             "27512",
             &[("cs1", "active_low")],
             None,
@@ -380,7 +380,7 @@ fn firmware_build_slot_size_handling_on_exact_size_fails() {
     slot_fails(
         representative_board(24),
         &[slot(
-            "rand_8192.rom",
+            "rand_8KB.rom",
             "2364",
             &[("cs1", "active_low")],
             Some("duplicate"),
@@ -416,7 +416,7 @@ fn firmware_build_slot_size_handling_invalid_fails() {
     slot_fails(
         representative_board(24),
         &[slot(
-            "rand_8192.rom",
+            "rand_8KB.rom",
             "2364",
             &[("cs1", "active_low")],
             Some("notavalue"),
@@ -442,8 +442,8 @@ fn firmware_build_slot_28pin_dual() {
     slot_succeeds(
         representative_board(28),
         &[
-            slot("rand_65536.rom", "27512", &[], None),
-            slot("rand_65536.rom", "27512", &[], None),
+        slot("rand_64KB.rom", "27512", &[], None),
+            slot("rand_64KB.rom", "27512", &[], None),
         ],
     );
 }
