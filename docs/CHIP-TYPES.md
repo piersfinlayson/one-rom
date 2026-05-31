@@ -55,7 +55,7 @@ There are also some other inconsistencies between types:
 | Chip Type | Aliases | Size | Address Lines | Control Lines | Programming | Supported |
 |-----------|---------|------|---------------|---------------|-------------|-----------|
 | 23C1001 | D23C1001 | 128KB | 17 (A0-A16) | /CE (pin 22), CS1 (pin 31), CS2 (pin 30), /OE (pin 24) | None | ✓ |
-| 23C1010 |  | 128KB | 17 (A0-A16) | /CE (pin 22), /OE (pin 24) | None | ✗ |
+| 23C1010 |  | 128KB | 17 (A0-A16) | /CE (pin 22), /OE (pin 24) | None | ✓ |
 
 ## 24-pin EPROM Family (27xx)
 

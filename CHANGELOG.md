@@ -4,13 +4,23 @@ All notables changes between versions are documented in this file.
 
 ## v0.6.13 - 2026-??-??
 
+Added:
 - New 28 and 32 pin boards - fire-28-c, fire-32-b.
 - Enhance lab-new to allow reading of any supported ROM type.
 
+Fixed:
+- 23C1010 support - there were failures when creating firmware with 23C1010.
+
 To do:
-- Add method to get A/B from config::hw::Board, and use in generator.rs.
+- Add method to get RP2350A/B from config::hw::Board, and use in generator.rs instead of hard-coding.
 - Actually add 23C1001 support to firmware and test it (fire-32-b only).
 - config/hw generator is subtracting 8 from 28 pin board address lines, but should be 10 for fire-28-a - should be avoiding the X pins as well, better than just hardcoding the fire-28-c type
+- fire-28-c optimise image sizes
+- fire-28-c Add multi-ROM sets and dynamic bank switching.
+- fire-32-b 27C301 requires fixing.  get_lowest_addr_gpio needs ii==2 for 27C301 not 0, but there's also another unknown fix required for other 64KB.
+- fire-32-b optimise image sizes
+- fire-32-b add 39SF040 support
+- In general we are missing any ability in the core firmware (and also elsewhere) to support specific ROM types only on certain revisions of different pin boards.  This likely needs somworking through.
 
 ## v0.6.12 - 2026-05-26
 

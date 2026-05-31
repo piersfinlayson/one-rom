@@ -1502,15 +1502,42 @@ fn handle_snowflake_chip_types(
     } else if *chip_type == ChipType::Chip27C301 {
         // A16 is an alternate pin
         if let Some(a16_index) = modified_map.iter().position(|&x| x == Some(16)) {
-            if a16_index == 0 {
-                // Remove this entry, and add Some(16) on the end instead.
-                modified_map.remove(0);
-                modified_map.push(Some(16));
-            } else {
-                panic!(
-                    "Address line A16 found at unexpected position {} in phys_pin_to_addr_map for 27C301 handling",
-                    a16_index
-                );
+            match board {
+                Board::Fire32A => {
+                    if a16_index == 0 {
+                        // Remove this entry, and add Some(16) on the end instead.
+                        modified_map.remove(0);
+                        modified_map.push(Some(16));
+                    } else {
+                        panic!(
+                            "Address line A16 found at unexpected position {} in phys_pin_to_addr_map for 27C301 handling",
+                            a16_index
+                        );
+                    }
+                },
+                Board::Fire32B => {
+                    if a16_index == 2 {
+                        // Remove first entry of pin map
+                        modified_map.remove(0);
+
+                        // Now add None on the end
+                        modified_map.push(None);
+
+                        // Now put A16 on the end
+                        modified_map.push(Some(16));
+
+                        // Finally, set the old A16 (now index 1) to None
+                        modified_map[1] = None;
+                    } else {
+                        panic!(
+                            "Address line A16 found at unexpected position {} in phys_pin_to_addr_map for 27C301 handling",
+                            a16_index
+                        );
+                    }
+                }
+                _ => {
+                    panic!("Unexpected 32 pin board type");
+                }
             }
         } else {
             panic!("Address line A16 not found in phys_pin_to_addr_map for 27C301 handling");

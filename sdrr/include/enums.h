@@ -46,6 +46,7 @@ typedef enum {
     INVALID_CHIP_TYPE = 0xFF
 } sdrr_rom_type_t;
 _Static_assert(sizeof(sdrr_rom_type_t) == 1, "sdrr_rom_type_t must be 1 byte");
+#define CHIP_TYPE_23C1010 CHIP_TYPE_27C010
 
 extern const char* const chip_type_strings[NUM_CHIP_TYPES];
 #if defined(ONEROM_CONSTANTS)

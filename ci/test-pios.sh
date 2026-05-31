@@ -108,6 +108,9 @@ test_32pin() {
     run_no_cs  $hw_rev images/test/rand_512KB.rom type=27C080,cs1=0 "$extra_flags"
     run_no_cs  $hw_rev images/test/rand_512KB.rom type=27C080,cs1=1 "$extra_flags"
     run_no_cs  $hw_rev images/test/rand_512KB.rom type=28C512,trunc "$extra_flags"
+
+    # Supported as of 0.6.13
+    run_no_cs  $hw_rev images/test/rand_512KB.rom type=23C1010,trunc "$extra_flags"
 }
 
 test_40pin() {
