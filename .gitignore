@@ -34,6 +34,7 @@ plugins/system/usb/pico-sdkless
 
 dist/
 output/
+!rust/lab-new/src/output/
 
 # Rust build artifacts
 target/
