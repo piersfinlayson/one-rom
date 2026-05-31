@@ -14,6 +14,8 @@ pub enum Error {
     Buffer,
     /// Unrecognised or unsupported board name
     InvalidBoard,
+    /// One ROM Lab only supported Fire boards
+    NonFireBoard,
     /// Unrecognised or unsupported chip type
     InvalidChip,
     /// Unrecognised output format specifier
@@ -53,7 +55,8 @@ impl fmt::Display for Error {
         match self {
             Self::Address => write!(f, "invalid address"),
             Self::Buffer => write!(f, "buffer too small"),
-            Self::InvalidBoard => write!(f, "unrecognised board name"),
+            Self::InvalidBoard => write!(f, "unrecognised board type"),
+            Self::NonFireBoard => write!(f, "only Fire boards are supported"),
             Self::InvalidChip => write!(f, "unrecognised chip type"),
             Self::InvalidFormat => write!(f, "unrecognised output format"),
             Self::BoardNotSet => write!(f, "board not set — use 'B:<name>' to configure it"),

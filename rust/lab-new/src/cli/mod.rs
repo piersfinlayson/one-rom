@@ -62,7 +62,7 @@ impl OutputFormat {
         match s.to_ascii_lowercase().as_str() {
             "cs" | "checksum" => Some(Self::Checksum),
             "hex" | "hexdump" => Some(Self::HexDump),
-            "ihex" | "intelhex" => Some(Self::IntelHex),
+            "ihx" | "ihex" | "intelhex" => Some(Self::IntelHex),
             _ => None,
         }
     }
@@ -117,9 +117,10 @@ pub struct SessionState {
 
 impl SessionState {
     pub fn new(board: Option<Board>) -> Self {
+        let chip = board.and_then(default_chip_for_board);
         Self {
             board,
-            chip: None,
+            chip,
             range: ReadRange::default(),
             format: OutputFormat::default(),
             interval_secs: 5,
@@ -167,19 +168,19 @@ impl CsSettings {
     pub fn to_polarities(&self) -> CsPolarities {
         CsPolarities {
             cs1: match self.cs1 {
-                CsPolaritySetting::Low  => Some(false),
+                CsPolaritySetting::Low => Some(false),
                 CsPolaritySetting::High => Some(true),
-                _                       => None,
+                _ => None,
             },
             cs2: match self.cs2 {
-                CsPolaritySetting::Low  => Some(false),
+                CsPolaritySetting::Low => Some(false),
                 CsPolaritySetting::High => Some(true),
-                _                       => None,
+                _ => None,
             },
             cs3: match self.cs3 {
-                CsPolaritySetting::Low  => Some(false),
+                CsPolaritySetting::Low => Some(false),
                 CsPolaritySetting::High => Some(true),
-                _                       => None,
+                _ => None,
             },
         }
     }
@@ -306,38 +307,7 @@ async fn read_line() -> Result<LineRead, Error> {
 // Help / firmware info
 // ---------------------------------------------------------------------------
 
-pub async fn show_help(state: &SessionState) -> Result<(), Error> {
-    send_line("").await?;
-    send_line("One ROM Lab").await?;
-    send_line(&format!("  Version:  {}", crate::PKG_VERSION)).await?;
-    send_line(&format!(
-        "  Board:    {}",
-        state.board.map(|b| b.name()).unwrap_or("(not set)")
-    ))
-    .await?;
-    send_line(&format!(
-        "  Chip:     {}",
-        state.chip.map(|c| c.name()).unwrap_or("(not set)")
-    ))
-    .await?;
-    send_line(&format!(
-        "  Defaults: range {:#010x}+{}  fmt {}  interval {}s",
-        state.range.start,
-        if state.range.len == 0 {
-            "full".to_string()
-        } else {
-            format!("{:#010x}", state.range.len)
-        },
-        state.format.as_str(),
-        state.interval_secs,
-    ))
-    .await?;
-    send_line(&format!(
-        "  CS:       cs1={}  cs2={}  cs3={}",
-        state.cs.cs1,
-        state.cs.cs2,
-        state.cs.cs3,
-    )).await?;
+pub async fn show_help(_state: &SessionState) -> Result<(), Error> {
     send_line("").await?;
     send_line("Commands:  type alone for interactive prompts,").await?;
     send_line("           or with colon-separated args to skip prompts:").await?;
@@ -347,13 +317,18 @@ pub async fn show_help(state: &SessionState) -> Result<(), Error> {
     send_line("  r   Read ROM").await?;
     send_line("        r[:<chip>[:<start>[:<len>[:<fmt>[:<cs1>[:<cs2>[:<cs3>]]]]]]]]").await?;
     send_line("  b   Batch ROM read").await?;
-    send_line("        b[:<chip>[:<start>[:<len>[:<fmt>[:<secs>[:<cs1>[:<cs2>[:<cs3>]]]]]]]]]").await?;
+    send_line("        b[:<chip>[:<start>[:<len>[:<fmt>[:<secs>[:<cs1>[:<cs2>[:<cs3>]]]]]]]]]")
+        .await?;
     send_line("  i   Chip type information").await?;
     send_line("        i[:<chip>]").await?;
     send_line("  c   Set or change chip type").await?;
     send_line("        c:<chip>[:<cs1>[:<cs2>[:<cs3>]]]").await?;
+    send_line("  f   Set or change output format").await?;
+    send_line("  q   Quick read (uses default chip, range and format)").await?;
     send_line("  l   List chips supported by this board type").await?;
-    send_line("  v   Firmware info").await?;
+    send_line("  v   Display One ROM Lab version and hardware information").await?;
+    send_line("  d   Display configured defaults").await?;
+    send_line("  t   List supported board types").await?;
     send_line("  z   Reset to bootloader").await?;
     send_line("  ?/h This help").await?;
     send_line("").await?;
@@ -402,5 +377,15 @@ pub async fn send_line(s: &str) -> Result<(), Error> {
             Err(e) => return Err(e),
         }
         Timer::after_millis(10).await;
+    }
+}
+
+fn default_chip_for_board(board: Board) -> Option<ChipType> {
+    match board.chip_pins() {
+        24 => Some(ChipType::Chip2732),
+        28 => Some(ChipType::Chip27512),
+        32 => Some(ChipType::Chip27C040),
+        40 => Some(ChipType::Chip27C400),
+        _ => None,
     }
 }

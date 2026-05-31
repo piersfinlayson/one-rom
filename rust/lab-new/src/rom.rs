@@ -224,9 +224,24 @@ impl RomReader {
             match ctrl.name {
                 "ce" => ce = Some(ControlLine::active_low(flex)),
                 "oe" => oe = Some(ControlLine::active_low(flex)),
-                "cs1" => cs1 = Some(ControlLine::configurable(flex, cs.cs1.expect("cs1 polarity required"))),
-                "cs2" => cs2 = Some(ControlLine::configurable(flex, cs.cs2.expect("cs2 polarity required"))),
-                "cs3" => cs3 = Some(ControlLine::configurable(flex, cs.cs3.expect("cs3 polarity required"))),
+                "cs1" => {
+                    cs1 = Some(ControlLine::configurable(
+                        flex,
+                        cs.cs1.expect("cs1 polarity required"),
+                    ))
+                }
+                "cs2" => {
+                    cs2 = Some(ControlLine::configurable(
+                        flex,
+                        cs.cs2.expect("cs2 polarity required"),
+                    ))
+                }
+                "cs3" => {
+                    cs3 = Some(ControlLine::configurable(
+                        flex,
+                        cs.cs3.expect("cs3 polarity required"),
+                    ))
+                }
                 "byte" => byte_n = Some(flex),
                 _ => {}
             }

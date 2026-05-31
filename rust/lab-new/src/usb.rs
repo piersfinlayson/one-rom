@@ -38,29 +38,22 @@ use embassy_usb::msos::{self, windows_version};
 use embassy_usb::{Builder, Config as UsbConfig, UsbDevice};
 use static_cell::StaticCell;
 
+use super::serial_id;
+
 bind_interrupts!(struct Irqs {
     USBCTRL_IRQ => InterruptHandler<USB>;
 });
-
-// ── Static descriptor buffers ──────────────────────────────────────────────
 
 static mut CONFIG_DESCRIPTOR: [u8; 256] = [0; 256];
 static mut BOS_DESCRIPTOR: [u8; 256] = [0; 256];
 static mut MSOS_DESCRIPTOR: [u8; 256] = [0; 256];
 static mut CONTROL_BUF: [u8; 64] = [0; 64];
 
-// Serial number: 16 hex chars from the 64-bit OTP chip ID.
-static mut SERIAL_BUF: [u8; 16] = [0u8; 16];
-
 // CDC ACM internal state.
 static CDC_STATE: StaticCell<State> = StaticCell::new();
 
-// ── Connection state ───────────────────────────────────────────────────────
-
 /// True while the host is connected.  Set by `cdc_writer`.
 static CONNECTED: AtomicBool = AtomicBool::new(false);
-
-// ── Inter-task channels and signals ───────────────────────────────────────
 
 /// Messages queued for transmission to the host.
 static CDC_TX: Channel<CriticalSectionRawMutex, String, 8> = Channel::new();
@@ -71,15 +64,11 @@ static CDC_RX: Channel<CriticalSectionRawMutex, Option<u8>, 8> = Channel::new();
 /// Fired by `cdc_writer` each time the host connects.
 static CDC_CONNECTED: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 
-// ── Constants ──────────────────────────────────────────────────────────────
-
 const VID: u16 = 0x1209;
 const PID: u16 = 0xF542;
 const VENDOR_REQUEST_MICROSOFT: u8 = 1;
 const WINUSB_GUID: &str = "{53F67517-1850-422C-91F8-C56F657195AF}";
 const MAX_PACKET: usize = 64;
-
-// ── Public types ───────────────────────────────────────────────────────────
 
 /// Errors returned by [`cdc_send`] and [`cdc_recv`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -98,7 +87,7 @@ pub struct Usb {
 impl Usb {
     /// Build the USB device.  Must be called exactly once, before [`run`].
     pub fn new(usb: Peri<'static, USB>) -> Self {
-        let serial = read_unique_id();
+        let serial = serial_id();
 
         let driver = Driver::new(usb, Irqs);
 
@@ -155,8 +144,6 @@ impl Usb {
         Self { cdc, device }
     }
 }
-
-// ── Task management ────────────────────────────────────────────────────────
 
 pub fn run(spawner: Spawner, usb: Usb) {
     let (sender, receiver) = usb.cdc.split();
@@ -229,25 +216,6 @@ async fn cdc_reader(mut receiver: Receiver<'static, Driver<'static, USB>>) -> ! 
         }
     }
 }
-
-// ── Serial-number helper ───────────────────────────────────────────────────
-
-/// Read the RP2350 OTP chip ID (rows 0x0-0x3) and return it as a 16-char
-/// hex `&'static str`.  This is the same value picoboot returns via GET_INFO.
-fn read_unique_id() -> &'static str {
-    use embassy_rp::otp;
-    let id = otp::get_chipid().unwrap_or(0);
-    let buf = unsafe { &mut SERIAL_BUF };
-    const HEX: &[u8] = b"0123456789ABCDEF";
-    for i in 0..8usize {
-        let byte = (id >> (56 - i * 8)) as u8;
-        buf[i * 2] = HEX[(byte >> 4) as usize];
-        buf[i * 2 + 1] = HEX[(byte & 0xF) as usize];
-    }
-    unsafe { core::str::from_utf8_unchecked(buf) }
-}
-
-// ── Public API ─────────────────────────────────────────────────────────────
 
 /// Wait until the host connects.
 ///

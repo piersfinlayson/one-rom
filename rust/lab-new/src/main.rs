@@ -19,6 +19,9 @@ use embassy_time::Timer;
 use embedded_alloc::LlffHeap as Heap;
 use panic_rtt_target as _;
 
+use once_cell::sync::OnceCell;
+use static_cell::StaticCell;
+
 use onerom_config::hw::Board;
 use onerom_config::pin_map::BoardPinMap;
 
@@ -33,6 +36,9 @@ mod usb;
 use rom::CsPolarities;
 
 pub const PKG_VERSION: &str = env!("CARGO_PKG_VERSION");
+
+static SERIAL_BUF: StaticCell<[u8; 16]> = StaticCell::new();
+pub static SERIAL_ID: OnceCell<&'static str> = OnceCell::new();
 
 // ---------------------------------------------------------------------------
 // Build-time configuration via environment variables
@@ -72,6 +78,9 @@ async fn main(spawner: Spawner) -> ! {
     config.clocks = ClockConfig::system_freq(150_000_000).expect("Failed to configure clocks");
     let p = embassy_rp::init(config);
     debug!("Clocks configured to 150MHz");
+
+    init_serial_id();
+    debug!("Serial ID: {}", serial_id());
 
     let usb_device = usb::Usb::new(p.USB);
     usb::run(spawner, usb_device);
@@ -125,4 +134,21 @@ pub fn cs_polarities() -> CsPolarities {
         cs2: CS2_STR.map(|s| parse_active_level(s, "CS2")),
         cs3: CS3_STR.map(|s| parse_active_level(s, "CS3")),
     }
+}
+
+fn init_serial_id() {
+    use embassy_rp::otp;
+    let id = otp::get_chipid().unwrap_or(0);
+    let buf = SERIAL_BUF.init([0u8; 16]);
+    const HEX: &[u8] = b"0123456789ABCDEF";
+    for i in 0..8usize {
+        let byte = (id >> (56 - i * 8)) as u8;
+        buf[i * 2] = HEX[(byte >> 4) as usize];
+        buf[i * 2 + 1] = HEX[(byte & 0xF) as usize];
+    }
+    SERIAL_ID.set(core::str::from_utf8(buf).unwrap()).ok();
+}
+
+pub fn serial_id() -> &'static str {
+    SERIAL_ID.get().copied().expect("serial ID not initialised")
 }

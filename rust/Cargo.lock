@@ -5335,6 +5335,7 @@ dependencies = [
  "hex",
  "hex-literal",
  "log",
+ "once_cell",
  "onerom-config",
  "onerom-database 0.1.1",
  "onerom-protocol 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",

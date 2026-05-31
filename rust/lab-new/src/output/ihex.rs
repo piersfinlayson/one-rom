@@ -86,7 +86,7 @@ pub async fn dump(reader: &mut RomReader, start: usize, count: usize) -> Result<
         addr += chunk_len;
 
         // Yield to the executor so the USB task can send buffered data.
-        Timer::after_ticks(0).await;
+        Timer::after_millis(1).await;
     }
 
     send_eof_record()

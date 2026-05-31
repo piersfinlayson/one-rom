@@ -25,11 +25,12 @@ use embassy_time::Timer;
 
 use onerom_config::chip::ChipType;
 use onerom_config::hw::Board;
+use onerom_config::mcu::Family;
 
+use super::CsPolaritySetting;
 use super::OutputFormat;
 use crate::error::Error;
 use crate::usb;
-use super::CsPolaritySetting;
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -197,7 +198,11 @@ async fn prompt_raw(msg: &str) -> Result<Option<String>, Error> {
             Err(_) => return Err(Error::UsbDisconnected),
         }
     }
-    read_raw_line().await
+    let result = read_raw_line().await;
+    if matches!(result, Ok(Some(_))) {
+        super::send_line("").await?;
+    }
+    result
 }
 
 // ---------------------------------------------------------------------------
@@ -228,10 +233,7 @@ pub async fn require_chip(
 
         let s = match input {
             // Ctrl-C
-            None => match default {
-                Some(d) => return Ok(d),
-                None => return Err(Error::Cancelled),
-            },
+            None => return Err(Error::Cancelled),
             // Blank
             Some(s) if s.is_empty() => match default {
                 Some(d) => return Ok(d),
@@ -262,7 +264,11 @@ pub async fn require_chip(
 /// Same defaulting rules as `require_chip`.
 pub async fn require_board(token: Option<&str>, default: Option<Board>) -> Result<Board, Error> {
     if let Some(t) = token {
-        return Board::try_from_str(t).ok_or(Error::InvalidBoard);
+        let b = Board::try_from_str(t).ok_or(Error::InvalidBoard)?;
+        if !matches!(b.mcu_family(), Family::Rp2350) {
+            return Err(Error::NonFireBoard);
+        }
+        return Ok(b);
     }
 
     loop {
@@ -274,10 +280,7 @@ pub async fn require_board(token: Option<&str>, default: Option<Board>) -> Resul
         };
 
         let s = match input {
-            None => match default {
-                Some(d) => return Ok(d),
-                None => return Err(Error::Cancelled),
-            },
+            None => return Err(Error::Cancelled),
             Some(s) if s.is_empty() => match default {
                 Some(d) => return Ok(d),
                 None => {
@@ -289,7 +292,14 @@ pub async fn require_board(token: Option<&str>, default: Option<Board>) -> Resul
         };
 
         match Board::try_from_str(&s) {
-            Some(b) => return Ok(b),
+            Some(b) => {
+                if !matches!(b.mcu_family(), Family::Rp2350) {
+                    super::send_line("Only Fire boards are supported.")
+                        .await?;
+                    continue;
+                }
+                return Ok(b);
+            }
             None => {
                 super::send_line(&format!("Unknown board '{}'.", s)).await?;
             }
@@ -311,7 +321,7 @@ pub async fn get_addr(token: Option<&str>, default: usize, label: &str) -> Resul
         let input = prompt_raw(&prompt).await?;
 
         let s = match input {
-            None => return Ok(default),
+            None => return Err(Error::Cancelled),
             Some(s) if s.is_empty() => return Ok(default),
             Some(s) => s,
         };
@@ -341,7 +351,7 @@ pub async fn get_format(token: Option<&str>, default: OutputFormat) -> Result<Ou
         let input = prompt_raw(&prompt).await?;
 
         let s = match input {
-            None => return Ok(default),
+            None => return Err(Error::Cancelled),
             Some(s) if s.is_empty() => return Ok(default),
             Some(s) => s,
         };
@@ -371,7 +381,7 @@ pub async fn get_interval(token: Option<&str>, default: u32) -> Result<u32, Erro
         let input = prompt_raw(&prompt).await?;
 
         let s = match input {
-            None => return Ok(default),
+            None => return Err(Error::Cancelled),
             Some(s) if s.is_empty() => return Ok(default),
             Some(s) => s,
         };
@@ -395,7 +405,7 @@ pub fn parse_cs_polarity(s: &str) -> Result<CsPolaritySetting, Error> {
         "0" => Ok(CsPolaritySetting::Low),
         "1" => Ok(CsPolaritySetting::High),
         "?" => Ok(CsPolaritySetting::Auto),
-        _   => Err(Error::InvalidCsPolarity),
+        _ => Err(Error::InvalidCsPolarity),
     }
 }
 
@@ -411,7 +421,11 @@ pub async fn get_cs_polarity(
     needed: bool,
 ) -> Result<CsPolaritySetting, Error> {
     if let Some(t) = token {
-        return if needed { parse_cs_polarity(t) } else { Ok(default) };
+        return if needed {
+            parse_cs_polarity(t)
+        } else {
+            Ok(default)
+        };
     }
 
     if !needed {
@@ -421,20 +435,18 @@ pub async fn get_cs_polarity(
     loop {
         let prompt = match default {
             CsPolaritySetting::Unset => format!("{}: ", label),
-            CsPolaritySetting::Auto  => format!("{} [?]: ", label),
-            CsPolaritySetting::Low   => format!("{} [0]: ", label),
-            CsPolaritySetting::High  => format!("{} [1]: ", label),
+            CsPolaritySetting::Auto => format!("{} [?]: ", label),
+            CsPolaritySetting::Low => format!("{} [0]: ", label),
+            CsPolaritySetting::High => format!("{} [1]: ", label),
         };
         let input = prompt_raw(&prompt).await?;
 
         let s = match input {
-            None => match default {
-                CsPolaritySetting::Unset => return Err(Error::Cancelled),
-                d => return Ok(d),
-            },
+            None => return Err(Error::Cancelled),
             Some(s) if s.is_empty() => match default {
                 CsPolaritySetting::Unset => {
-                    super::send_line("Required: 0=active-low  1=active-high  ?=auto-detect").await?;
+                    super::send_line("Required: 0=active-low  1=active-high  ?=auto-detect")
+                        .await?;
                     continue;
                 }
                 d => return Ok(d),
@@ -443,9 +455,10 @@ pub async fn get_cs_polarity(
         };
 
         match parse_cs_polarity(&s) {
-            Ok(v)  => return Ok(v),
+            Ok(v) => return Ok(v),
             Err(_) => {
-                super::send_line("Enter 0 (active-low), 1 (active-high), or ? (auto-detect).").await?;
+                super::send_line("Enter 0 (active-low), 1 (active-high), or ? (auto-detect).")
+                    .await?;
             }
         }
     }
