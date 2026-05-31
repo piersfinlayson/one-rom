@@ -4,24 +4,18 @@
 
 //! One ROM Lab - CLI argument parsing and interactive prompting
 //!
-//! This module owns three concerns:
+//! This module owns two concerns:
 //!
-//! 1. **Line reading** (`read_raw_line`): the single implementation of
-//!    byte-by-byte CDC input with echo and backspace handling.
-//!    `cli/mod.rs` delegates to this rather than duplicating it.
-//!
-//! 2. **Colon-syntax splitting** (`split_command`, `Args`): decompose a
+//! 1. **Colon-syntax splitting** (`split_command`, `Args`): decompose a
 //!    raw command line into a command character and an ordered argument
 //!    iterator.
 //!
-//! 3. **Typed argument resolution** (`require_chip`, `get_addr`, …): for
+//! 2. **Typed argument resolution** (`require_chip`, `get_addr`, …): for
 //!    each argument position, either parse the inline token (colon syntax)
-//!    or issue an interactive prompt with the current default.
+//!    or issue an interactive prompt via the shared [`LineEditor`].
 
 use alloc::format;
-use alloc::string::{String, ToString};
-
-use embassy_time::Timer;
+use alloc::string::String;
 
 use onerom_config::chip::ChipType;
 use onerom_config::hw::Board;
@@ -29,16 +23,8 @@ use onerom_config::mcu::Family;
 
 use super::CsPolaritySetting;
 use super::OutputFormat;
+use super::editor::LineEditor;
 use crate::error::Error;
-use crate::usb;
-
-// ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
-
-/// Maximum input line length in bytes.  Sufficient for any colon-syntax
-/// command with all arguments.
-pub const LINE_BUF: usize = 80;
 
 // ---------------------------------------------------------------------------
 // Colon-syntax splitting
@@ -117,92 +103,20 @@ pub fn parse_addr(s: &str) -> Result<usize, Error> {
 }
 
 // ---------------------------------------------------------------------------
-// Core line reader
-// ---------------------------------------------------------------------------
-
-/// Read one raw line from the CDC interface, echoing each character to the
-/// host as it arrives.
-///
-/// | Input           | Behaviour                                      |
-/// |-----------------|------------------------------------------------|
-/// | CR or LF        | End of line; returns `Ok(Some(trimmed_line))`  |
-/// | Ctrl-C (0x03)   | Echoes `^C\r\n`; returns `Ok(None)`            |
-/// | BS (0x08) / DEL | Destructive backspace with VT100 erasure       |
-/// | Printable ASCII | Echoed and buffered; dropped silently if full  |
-/// | USB disconnect  | Returns `Err(UsbDisconnected)`                 |
-pub async fn read_raw_line() -> Result<Option<String>, Error> {
-    let mut buf: [u8; 80] = [0u8; LINE_BUF];
-    let mut pos = 0usize;
-
-    loop {
-        match usb::cdc_recv().await {
-            Err(_) => return Err(Error::UsbDisconnected),
-
-            Ok(b'\r') => {
-                //super::send("\r").ok();
-                let s = core::str::from_utf8(&buf[..pos])
-                    .unwrap_or("")
-                    .trim()
-                    .to_string();
-                return Ok(Some(s));
-            }
-
-            Ok(b'\n') => {
-                // Echo but ignore
-                //super::send("\n").ok();
-            }
-
-            // Destructive backspace: VT100 sequence move-back / space / move-back.
-            Ok(0x08) | Ok(0x7F) => {
-                if pos > 0 {
-                    pos -= 1;
-                    super::send("\x08 \x08").ok();
-                }
-            }
-
-            // Ctrl-C: cancel the current line.
-            Ok(0x03) => {
-                super::send("^C\r\n").ok();
-                return Ok(None);
-            }
-
-            // Printable ASCII.
-            Ok(b) if b >= 0x20 => {
-                if pos < LINE_BUF {
-                    buf[pos] = b;
-                    pos += 1;
-                    // Echo without a heap allocation.
-                    let ch = [b];
-                    if let Ok(s) = core::str::from_utf8(&ch) {
-                        super::send(s).ok();
-                    }
-                }
-                // Buffer full: character silently dropped.
-            }
-
-            Ok(_) => {} // other control characters ignored
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
 // Interactive prompt helper
 // ---------------------------------------------------------------------------
 
-/// Display `msg` and read one raw line.
-async fn prompt_raw(msg: &str) -> Result<Option<String>, Error> {
-    loop {
-        match super::send(msg) {
-            Ok(()) => break,
-            Err(Error::UsbFull) => Timer::after_millis(10).await,
-            Err(_) => return Err(Error::UsbDisconnected),
-        }
-    }
-    let result = read_raw_line().await;
-    if matches!(result, Ok(Some(_))) {
+/// Send `msg` as a prompt and read one line via the shared editor.
+///
+/// On a successful line read, emits `\r\n` to advance the terminal to the
+/// next line before any follow-up output.  On Ctrl-C the editor has already
+/// emitted `^C\r\n`, so no extra newline is needed.
+async fn prompt(editor: &mut LineEditor, msg: &str) -> Result<Option<String>, Error> {
+    let result = editor.read_line(msg, false).await?;
+    if result.is_some() {
         super::send_line("").await?;
     }
-    result
+    Ok(result)
 }
 
 // ---------------------------------------------------------------------------
@@ -218,6 +132,7 @@ async fn prompt_raw(msg: &str) -> Result<Option<String>, Error> {
 pub async fn require_chip(
     token: Option<&str>,
     default: Option<ChipType>,
+    editor: &mut LineEditor,
 ) -> Result<ChipType, Error> {
     if let Some(t) = token {
         return ChipType::try_from_str(t).ok_or(Error::InvalidChip);
@@ -225,16 +140,13 @@ pub async fn require_chip(
 
     loop {
         let input = if let Some(d) = default {
-            let prompt = format!("Chip type [{}]: ", d.name());
-            prompt_raw(&prompt).await?
+            prompt(editor, &format!("Chip type [{}]: ", d.name())).await?
         } else {
-            prompt_raw("Chip type: ").await?
+            prompt(editor, "Chip type: ").await?
         };
 
         let s = match input {
-            // Ctrl-C
             None => return Err(Error::Cancelled),
-            // Blank
             Some(s) if s.is_empty() => match default {
                 Some(d) => return Ok(d),
                 None => {
@@ -262,7 +174,11 @@ pub async fn require_chip(
 /// Resolve a board from an inline token or an interactive prompt.
 ///
 /// Same defaulting rules as `require_chip`.
-pub async fn require_board(token: Option<&str>, default: Option<Board>) -> Result<Board, Error> {
+pub async fn require_board(
+    token: Option<&str>,
+    default: Option<Board>,
+    editor: &mut LineEditor,
+) -> Result<Board, Error> {
     if let Some(t) = token {
         let b = Board::try_from_str(t).ok_or(Error::InvalidBoard)?;
         if !matches!(b.mcu_family(), Family::Rp2350) {
@@ -273,10 +189,9 @@ pub async fn require_board(token: Option<&str>, default: Option<Board>) -> Resul
 
     loop {
         let input = if let Some(d) = default {
-            let prompt = format!("Board [{}]: ", d.name());
-            prompt_raw(&prompt).await?
+            prompt(editor, &format!("Board [{}]: ", d.name())).await?
         } else {
-            prompt_raw("Board: ").await?
+            prompt(editor, "Board: ").await?
         };
 
         let s = match input {
@@ -294,8 +209,7 @@ pub async fn require_board(token: Option<&str>, default: Option<Board>) -> Resul
         match Board::try_from_str(&s) {
             Some(b) => {
                 if !matches!(b.mcu_family(), Family::Rp2350) {
-                    super::send_line("Only Fire boards are supported.")
-                        .await?;
+                    super::send_line("Only Fire boards are supported.").await?;
                     continue;
                 }
                 return Ok(b);
@@ -311,14 +225,18 @@ pub async fn require_board(token: Option<&str>, default: Option<Board>) -> Resul
 ///
 /// `label` appears in the prompt, e.g. `"Start address"`.
 /// Ctrl-C or blank input returns `default`.
-pub async fn get_addr(token: Option<&str>, default: usize, label: &str) -> Result<usize, Error> {
+pub async fn get_addr(
+    token: Option<&str>,
+    default: usize,
+    label: &str,
+    editor: &mut LineEditor,
+) -> Result<usize, Error> {
     if let Some(t) = token {
         return parse_addr(t);
     }
 
     loop {
-        let prompt = format!("{} [{:#010x}]: ", label, default);
-        let input = prompt_raw(&prompt).await?;
+        let input = prompt(editor, &format!("{} [{:#x}]: ", label, default)).await?;
 
         let s = match input {
             None => return Err(Error::Cancelled),
@@ -341,14 +259,18 @@ pub async fn get_addr(token: Option<&str>, default: usize, label: &str) -> Resul
 
 /// Resolve an output format from an inline token or an interactive prompt.
 /// Ctrl-C or blank input returns `default`.
-pub async fn get_format(token: Option<&str>, default: OutputFormat) -> Result<OutputFormat, Error> {
+pub async fn get_format(
+    token: Option<&str>,
+    default: OutputFormat,
+    editor: &mut LineEditor,
+) -> Result<OutputFormat, Error> {
     if let Some(t) = token {
         return OutputFormat::from_str(t).ok_or(Error::InvalidFormat);
     }
 
     loop {
-        let prompt = format!("Format (cs/hex/ihex) [{}]: ", default.as_str());
-        let input = prompt_raw(&prompt).await?;
+        let input =
+            prompt(editor, &format!("Format (cs/hex/ihex) [{}]: ", default.as_str())).await?;
 
         let s = match input {
             None => return Err(Error::Cancelled),
@@ -367,7 +289,11 @@ pub async fn get_format(token: Option<&str>, default: OutputFormat) -> Result<Ou
 
 /// Resolve a batch interval (whole seconds, minimum 1) from an inline token
 /// or an interactive prompt.  Ctrl-C or blank input returns `default`.
-pub async fn get_interval(token: Option<&str>, default: u32) -> Result<u32, Error> {
+pub async fn get_interval(
+    token: Option<&str>,
+    default: u32,
+    editor: &mut LineEditor,
+) -> Result<u32, Error> {
     if let Some(t) = token {
         let n = t.trim().parse::<u32>().map_err(|_| Error::Syntax)?;
         if n == 0 {
@@ -377,8 +303,7 @@ pub async fn get_interval(token: Option<&str>, default: u32) -> Result<u32, Erro
     }
 
     loop {
-        let prompt = format!("Interval (seconds) [{}]: ", default);
-        let input = prompt_raw(&prompt).await?;
+        let input = prompt(editor, &format!("Interval (seconds) [{}]: ", default)).await?;
 
         let s = match input {
             None => return Err(Error::Cancelled),
@@ -414,11 +339,16 @@ pub fn parse_cs_polarity(s: &str) -> Result<CsPolaritySetting, Error> {
 /// `needed` is true when the chip actually has this line as configurable —
 /// if false the token is still consumed from the arg stream but no prompt
 /// is issued and the session default is returned unchanged.
+///
+/// When `default` is `Unset` the prompt shows `[?]` and blank input returns
+/// `Auto`, giving the user a sensible starting point without requiring them
+/// to have previously configured a polarity.
 pub async fn get_cs_polarity(
     token: Option<&str>,
     default: CsPolaritySetting,
     label: &str,
     needed: bool,
+    editor: &mut LineEditor,
 ) -> Result<CsPolaritySetting, Error> {
     if let Some(t) = token {
         return if needed {
@@ -433,21 +363,23 @@ pub async fn get_cs_polarity(
     }
 
     loop {
-        let prompt = match default {
+        let prompt_str = match default {
             CsPolaritySetting::Unset => format!("{} [?]: ", label),
             CsPolaritySetting::Auto => format!("{} [?]: ", label),
             CsPolaritySetting::Low => format!("{} [0]: ", label),
             CsPolaritySetting::High => format!("{} [1]: ", label),
         };
-        let input = prompt_raw(&prompt).await?;
+        let input = prompt(editor, &prompt_str).await?;
 
         let s = match input {
             None => return Err(Error::Cancelled),
-            Some(s) if s.is_empty() => match default {
-                // Unset being "chosen" actuall means auto
-                CsPolaritySetting::Unset => return Ok(CsPolaritySetting::Auto),
-                d => return Ok(d),
-            },
+            Some(s) if s.is_empty() => {
+                // Blank input: return the default, treating Unset as Auto.
+                return Ok(match default {
+                    CsPolaritySetting::Unset => CsPolaritySetting::Auto,
+                    d => d,
+                });
+            }
             Some(s) => s,
         };
 

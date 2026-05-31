@@ -144,6 +144,17 @@ pub struct RomReader {
 }
 
 impl RomReader {
+    #[inline]
+    fn remap_phys_pin(chip: ChipType, pin_map: &BoardPinMap, phys: u8) -> u8 {
+        if chip.chip_pins() == 24 && pin_map.chip_pins() == 28 {
+            // 24-pin chip in a 28-pin socket adapter position: chip pin 1 maps
+            // to board socket pin 3, so shift all logical chip pins by +2.
+            phys + 2
+        } else {
+            phys
+        }
+    }
+
     /// Construct a `RomReader` for `chip` on the board described by `pin_map`.
     ///
     /// # Panics
@@ -175,6 +186,7 @@ impl RomReader {
             .address_pins()
             .iter()
             .map(|&phys| {
+                let phys = Self::remap_phys_pin(chip, pin_map, phys);
                 let gpio = pin_map.gpio_for_chip_pin(phys).unwrap_or_else(|| {
                     panic!(
                         "address pin {} not mapped for chip {} on this board",
@@ -191,6 +203,7 @@ impl RomReader {
             .data_pins()
             .iter()
             .map(|&phys| {
+                let phys = Self::remap_phys_pin(chip, pin_map, phys);
                 let gpio = pin_map.gpio_for_chip_pin(phys).unwrap_or_else(|| {
                     panic!(
                         "data pin {} not mapped for chip {} on this board",
@@ -211,10 +224,11 @@ impl RomReader {
         let mut byte_n = None;
 
         for ctrl in chip.control_lines() {
-            let gpio = pin_map.gpio_for_chip_pin(ctrl.pin).unwrap_or_else(|| {
+            let phys = Self::remap_phys_pin(chip, pin_map, ctrl.pin);
+            let gpio = pin_map.gpio_for_chip_pin(phys).unwrap_or_else(|| {
                 panic!(
                     "control pin {} ('{}') not mapped for chip {} on this board",
-                    ctrl.pin,
+                    phys,
                     ctrl.name,
                     chip.name()
                 )

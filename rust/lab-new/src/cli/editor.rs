@@ -11,7 +11,6 @@
 //!
 //! Replaces the old `read_raw_line` / `prompt_raw` pair in `parser.rs`.
 
-use alloc::format;
 use alloc::string::{String, ToString};
 
 use embassy_futures::yield_now;
@@ -138,6 +137,9 @@ pub struct LineEditor {
     /// Restored when Down brings the user back past the most-recent entry.
     saved_buf: [u8; LINE_BUF],
     saved_len: usize,
+    /// Number of content bytes currently rendered on the terminal line.
+    /// Used to clear only stale tail characters on redraw without ANSI CSI.
+    display_len: usize,
 }
 
 impl LineEditor {
@@ -151,6 +153,7 @@ impl LineEditor {
             history_idx: None,
             saved_buf: [0u8; LINE_BUF],
             saved_len: 0,
+            display_len: 0,
         }
     }
 
@@ -178,6 +181,7 @@ impl LineEditor {
         self.pos = 0;
         self.esc = EscState::Normal;
         self.history_idx = None;
+        self.display_len = 0;
 
         self.emit(prompt).await?;
 
@@ -200,6 +204,7 @@ impl LineEditor {
                         if with_history {
                             self.history.push(&s);
                         }
+                        self.display_len = 0;
                         return Ok(Some(s));
                     }
 
@@ -208,6 +213,7 @@ impl LineEditor {
                     // Ctrl-C: cancel the line.
                     0x03 => {
                         self.emit("^C\r\n").await?;
+                        self.display_len = 0;
                         return Ok(None);
                     }
 
@@ -222,6 +228,7 @@ impl LineEditor {
                             if self.pos == self.len {
                                 // Deleted at EOL: simple VT100 destructive backspace.
                                 self.emit("\x08 \x08").await?;
+                                self.display_len = self.len;
                             } else {
                                 // Deleted mid-line: repaint.
                                 self.redraw(prompt).await?;
@@ -239,6 +246,7 @@ impl LineEditor {
                                 if let Ok(s) = core::str::from_utf8(&ch) {
                                     self.emit(s).await?;
                                 }
+                                self.display_len = self.len;
                             } else {
                                 // Inserted mid-line: repaint.
                                 self.redraw(prompt).await?;
@@ -282,17 +290,18 @@ impl LineEditor {
                             }
                         }
                         b'C' => {
-                            // Right arrow: move cursor right.
                             if self.pos < self.len {
+                                let ch = [self.buf[self.pos]];
+                                if let Ok(s) = core::str::from_utf8(&ch) {
+                                    self.emit(s).await?;
+                                }
                                 self.pos += 1;
-                                self.emit("\x1b[C").await?;
                             }
                         }
                         b'D' => {
-                            // Left arrow: move cursor left.
                             if self.pos > 0 {
                                 self.pos -= 1;
-                                self.emit("\x1b[D").await?;
+                                self.emit("\x08").await?;
                             }
                         }
                         b'H' => {
@@ -441,17 +450,30 @@ impl LineEditor {
     // -------------------------------------------------------------------------
 
     /// Full line repaint.
-    ///
-    /// Sequence: `\r` → prompt → buffer content → `ESC [ K` (clear to EOL) →
-    /// reposition cursor to `prompt.len() + self.pos`.
-    async fn redraw(&self, prompt: &str) -> Result<(), Error> {
+    async fn redraw(&mut self, prompt: &str) -> Result<(), Error> {
+        self.redraw_with_prev_len(prompt, self.display_len).await?;
+        self.display_len = self.len;
+        Ok(())
+    }
+
+    /// Full line repaint, clearing any stale tail characters left from a
+    /// previously longer line using only CR, spaces and backspace.
+    async fn redraw_with_prev_len(&self, prompt: &str, prev_len: usize) -> Result<(), Error> {
         let content = core::str::from_utf8(&self.buf[..self.len]).unwrap_or("");
-        let col = prompt.len() + self.pos;
-        let s = if col > 0 {
-            format!("\r{}{}\x1b[K\r\x1b[{}C", prompt, content, col)
-        } else {
-            format!("\r{}{}\x1b[K\r", prompt, content)
-        };
+        let clear_tail = prev_len.saturating_sub(self.len);
+        let move_back = (self.len - self.pos) + clear_tail;
+        let mut s = alloc::string::String::with_capacity(
+            1 + prompt.len() + self.len + clear_tail + move_back,
+        );
+        s.push('\r');
+        s.push_str(prompt);
+        s.push_str(content);
+        for _ in 0..clear_tail {
+            s.push(' ');
+        }
+        for _ in 0..move_back {
+            s.push('\x08');
+        }
         self.emit(&s).await
     }
 
@@ -459,13 +481,8 @@ impl LineEditor {
     ///
     /// Used for Home / End where only cursor placement changes.
     async fn reposition(&self, prompt: &str) -> Result<(), Error> {
-        let col = prompt.len() + self.pos;
-        let s = if col > 0 {
-            format!("\r\x1b[{}C", col)
-        } else {
-            "\r".to_string()
-        };
-        self.emit(&s).await
+        let partial = core::str::from_utf8(&self.buf[..self.pos]).unwrap_or("");
+        self.emit(&alloc::format!("\r{}{}", prompt, partial)).await
     }
 
     /// Send `s` over CDC, retrying on `UsbFull`.

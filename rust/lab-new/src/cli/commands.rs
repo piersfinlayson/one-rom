@@ -7,7 +7,7 @@
 #[allow(unused_imports)]
 use log::{debug, error, info, trace, warn};
 
-use alloc::{format, string::ToString};
+use alloc::{format, string::ToString, vec::Vec};
 
 use embassy_futures::select::{Either, select};
 use embassy_time::Timer;
@@ -39,6 +39,14 @@ const CS_KEY: &str = "(0=active-low 1=active-high ?=auto)";
 /// The first character is the command; everything after the first colon
 /// (if present) is the colon-separated argument list.
 pub async fn dispatch(line: &str, state: &mut SessionState) -> Result<(), Error> {
+    // Command token must be a single character.  Anything longer (e.g.
+    // "hello" or "read:...") is treated as invalid syntax.
+    let cmd_token = line.split(':').next().unwrap_or("").trim();
+    if cmd_token.chars().count() != 1 {
+        send_line("\r\nInvalid command syntax. Use a single-letter command, optionally followed by :args.  ? or h for help.").await?;
+        return Ok(());
+    }
+
     let (cmd, mut args) = match parser::split_command(line) {
         Some(x) => x,
         None => return Ok(()), // guard: session_loop never calls us with an empty line
@@ -56,27 +64,34 @@ pub async fn dispatch(line: &str, state: &mut SessionState) -> Result<(), Error>
         'q' => cmd_quick_read(state).await,
         'l' => cmd_list_chips(state).await,
         'v' => cmd_version_info(state).await,
-        'd' => cmd_default_info(state).await,
+        's' => cmd_default_info(state).await,
         'B' => cmd_set_board(&mut args, state).await,
         'T' => cmd_list_board_types(state).await,
         'z' => cmd_reset_to_bootloader().await,
         '?' | 'h' => super::show_help(state).await,
-        _ => send_line(&format!("Unknown command '{}'. Press Enter for help.", cmd)).await,
+        _ => {
+            send_line(&format!(
+                "Unknown command '{}'. Use single-letter commands (optionally :args). Use ? or h for help.",
+                cmd
+            ))
+            .await
+        }
     }
 }
 
 async fn cmd_read(args: &mut Args<'_>, state: &mut SessionState) -> Result<(), Error> {
     let board = state.board.ok_or(Error::BoardNotSet)?;
 
-    let chip = parser::require_chip(args.next_token(), state.chip).await?;
-    let start = parser::get_addr(args.next_token(), state.range.start, "Start address").await?;
-    let len = parser::get_addr(args.next_token(), state.range.len, "Length (0=full)").await?;
-    let fmt = parser::get_format(args.next_token(), state.format).await?;
+    let chip = parser::require_chip(args.next_token(), state.chip, &mut state.editor).await?;
+    let start = parser::get_addr(args.next_token(), state.range.start, "Start address", &mut state.editor).await?;
+    let len = parser::get_addr(args.next_token(), state.range.len, "Length (0=full)", &mut state.editor).await?;
+    let fmt = parser::get_format(args.next_token(), state.format, &mut state.editor).await?;
     let cs1 = parser::get_cs_polarity(
         args.next_token(),
         state.cs.cs1,
         &format!("CS1 polarity {}", CS_KEY),
         chip_has_configurable_cs(chip, "cs1"),
+        &mut state.editor,
     )
     .await?;
     let cs2 = parser::get_cs_polarity(
@@ -84,6 +99,7 @@ async fn cmd_read(args: &mut Args<'_>, state: &mut SessionState) -> Result<(), E
         state.cs.cs2,
         &format!("CS2 polarity {}", CS_KEY),
         chip_has_configurable_cs(chip, "cs2"),
+        &mut state.editor,
     )
     .await?;
     let cs3 = parser::get_cs_polarity(
@@ -91,6 +107,7 @@ async fn cmd_read(args: &mut Args<'_>, state: &mut SessionState) -> Result<(), E
         state.cs.cs3,
         &format!("CS3 polarity {}", CS_KEY),
         chip_has_configurable_cs(chip, "cs3"),
+        &mut state.editor,
     )
     .await?;
 
@@ -112,16 +129,17 @@ async fn cmd_read(args: &mut Args<'_>, state: &mut SessionState) -> Result<(), E
 async fn cmd_batch(args: &mut Args<'_>, state: &mut SessionState) -> Result<(), Error> {
     let board = state.board.ok_or(Error::BoardNotSet)?;
 
-    let chip = parser::require_chip(args.next_token(), state.chip).await?;
-    let start = parser::get_addr(args.next_token(), state.range.start, "Start address").await?;
-    let len = parser::get_addr(args.next_token(), state.range.len, "Length (0=full)").await?;
-    let fmt = parser::get_format(args.next_token(), state.format).await?;
-    let interval = parser::get_interval(args.next_token(), state.interval_secs).await?;
+    let chip = parser::require_chip(args.next_token(), state.chip, &mut state.editor).await?;
+    let start = parser::get_addr(args.next_token(), state.range.start, "Start address", &mut state.editor).await?;
+    let len = parser::get_addr(args.next_token(), state.range.len, "Length (0=full)", &mut state.editor).await?;
+    let fmt = parser::get_format(args.next_token(), state.format, &mut state.editor).await?;
+    let interval = parser::get_interval(args.next_token(), state.interval_secs, &mut state.editor).await?;
     let cs1 = parser::get_cs_polarity(
         args.next_token(),
         state.cs.cs1,
         &format!("CS1 polarity {}", CS_KEY),
         chip_has_configurable_cs(chip, "cs1"),
+        &mut state.editor,
     )
     .await?;
     let cs2 = parser::get_cs_polarity(
@@ -129,6 +147,7 @@ async fn cmd_batch(args: &mut Args<'_>, state: &mut SessionState) -> Result<(), 
         state.cs.cs2,
         &format!("CS2 polarity {}", CS_KEY),
         chip_has_configurable_cs(chip, "cs2"),
+        &mut state.editor,
     )
     .await?;
     let cs3 = parser::get_cs_polarity(
@@ -136,6 +155,7 @@ async fn cmd_batch(args: &mut Args<'_>, state: &mut SessionState) -> Result<(), 
         state.cs.cs3,
         &format!("CS3 polarity {}", CS_KEY),
         chip_has_configurable_cs(chip, "cs3"),
+        &mut state.editor,
     )
     .await?;
 
@@ -174,7 +194,7 @@ async fn cmd_batch(args: &mut Args<'_>, state: &mut SessionState) -> Result<(), 
 }
 
 async fn cmd_chip_info(args: &mut Args<'_>, state: &mut SessionState) -> Result<(), Error> {
-    let chip = parser::require_chip(args.next_token(), state.chip).await?;
+    let chip = parser::require_chip(args.next_token(), state.chip, &mut state.editor).await?;
     state.chip = Some(chip);
 
     let n_addr = chip.address_pins().len();
@@ -222,12 +242,13 @@ async fn cmd_chip_info(args: &mut Args<'_>, state: &mut SessionState) -> Result<
 }
 
 async fn cmd_set_chip_type(args: &mut Args<'_>, state: &mut SessionState) -> Result<(), Error> {
-    let chip = parser::require_chip(args.next_token(), state.chip).await?;
+    let chip = parser::require_chip(args.next_token(), state.chip, &mut state.editor).await?;
     let cs1 = parser::get_cs_polarity(
         args.next_token(),
         state.cs.cs1,
         &format!("CS1 polarity {}", CS_KEY),
         chip_has_configurable_cs(chip, "cs1"),
+        &mut state.editor,
     )
     .await?;
     let cs2 = parser::get_cs_polarity(
@@ -235,6 +256,7 @@ async fn cmd_set_chip_type(args: &mut Args<'_>, state: &mut SessionState) -> Res
         state.cs.cs2,
         &format!("CS2 polarity {}", CS_KEY),
         chip_has_configurable_cs(chip, "cs2"),
+        &mut state.editor,
     )
     .await?;
     let cs3 = parser::get_cs_polarity(
@@ -242,6 +264,7 @@ async fn cmd_set_chip_type(args: &mut Args<'_>, state: &mut SessionState) -> Res
         state.cs.cs3,
         &format!("CS3 polarity {}", CS_KEY),
         chip_has_configurable_cs(chip, "cs3"),
+        &mut state.editor,
     )
     .await?;
 
@@ -253,7 +276,7 @@ async fn cmd_set_chip_type(args: &mut Args<'_>, state: &mut SessionState) -> Res
 }
 
 async fn cmd_set_format(args: &mut Args<'_>, state: &mut SessionState) -> Result<(), Error> {
-    let fmt = parser::get_format(args.next_token(), state.format).await?;
+    let fmt = parser::get_format(args.next_token(), state.format, &mut state.editor).await?;
     state.format = fmt;
     send_line(&format!("Format set to '{}'.", fmt.as_str())).await?;
     Ok(())
@@ -280,8 +303,8 @@ async fn cmd_list_chips(state: &SessionState) -> Result<(), Error> {
     let board = state.board.ok_or(Error::BoardNotSet)?;
     let pins = board.chip_pins();
 
-    let names = match chip_type_names_for_pins(pins) {
-        Some(n) => n,
+    let mut names: Vec<&'static str> = match chip_type_names_for_pins(pins) {
+        Some(n) => n.to_vec(),
         None => {
             send_line(&format!(
                 "No chips known for {}-pin board '{}'.",
@@ -292,6 +315,12 @@ async fn cmd_list_chips(state: &SessionState) -> Result<(), Error> {
             return Ok(());
         }
     };
+    let extra_chip_types = board.extra_chip_types();
+    if !extra_chip_types.is_empty() {
+        names.extend(extra_chip_types.iter().map(|c| c.name()));
+        names.sort_unstable();
+        names.dedup();
+    }
 
     send_line("").await?;
     send_line(&format!(
@@ -302,7 +331,7 @@ async fn cmd_list_chips(state: &SessionState) -> Result<(), Error> {
     .await?;
     send_line("").await?;
 
-    for &name in names {
+    for name in names {
         if let Some(chip) = ChipType::try_from_str(name) {
             let n_addr = chip.address_pins().len();
             let size_bytes = chip.size_bytes();
@@ -323,7 +352,7 @@ async fn cmd_list_chips(state: &SessionState) -> Result<(), Error> {
                 _ => "?",
             };
             send_line(&format!(
-                "  {:12}  {:>2} addr lines  {:>9}  {}",
+                "  {:12}  {:>2} addr lines  {:>9}  ({})",
                 name, n_addr, size_kb_str, mode_str,
             ))
             .await?;
@@ -369,7 +398,7 @@ async fn cmd_default_info(state: &SessionState) -> Result<(), Error> {
         }
     ))
     .await?;
-    send_line(&format!("Format:    {}", state.format.as_str())).await?;
+    send_line(&format!("Format:    {}", state.format)).await?;
     send_line(&format!("Interval:  {}s", state.interval_secs)).await?;
     send_line(&format!("Tri-state: {}", if state.tri_state { "on" } else { "off" })).await?;
     send_line("").await?;
@@ -377,7 +406,7 @@ async fn cmd_default_info(state: &SessionState) -> Result<(), Error> {
 }
 
 async fn cmd_set_board(args: &mut Args<'_>, state: &mut SessionState) -> Result<(), Error> {
-    let board = parser::require_board(args.next_token(), state.board).await?;
+    let board = parser::require_board(args.next_token(), state.board, &mut state.editor).await?;
     state.board = Some(board);
     send_line(&format!("Board set to '{}'.", board.name())).await?;
     if state.chip.is_none() {
@@ -518,9 +547,14 @@ async fn output_checksum(
 
     if reader.tristate() {
         for r in &results {
+            let mode = if results.len() == 1 {
+                "".to_string()
+            } else {
+                format!("{}-bit ", r.mode)
+            };
             send_line(&format!(
-                "  {}-bit tristate failures: {}",
-                r.mode, r.failures
+                "  {}tristate failures: {}",
+                mode, r.failures
             ))
             .await?;
         }

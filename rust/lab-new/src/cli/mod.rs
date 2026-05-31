@@ -5,6 +5,7 @@
 //! One ROM Lab - CDC CLI session management
 
 pub mod commands;
+pub mod editor;
 pub mod parser;
 
 use core::fmt::Display;
@@ -13,7 +14,7 @@ use core::fmt::Display;
 use log::{debug, error, info, trace, warn};
 
 use alloc::format;
-use alloc::string::{String, ToString};
+use alloc::string::ToString;
 
 use embassy_time::Timer;
 
@@ -23,6 +24,9 @@ use onerom_config::hw::Board;
 use crate::CsPolarities;
 use crate::error::Error;
 use crate::usb;
+
+use editor::LineEditor;
+
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -99,6 +103,8 @@ impl Display for ReadRange {
 ///
 /// Constructed once in `main` and passed by mutable reference into `run`.
 pub struct SessionState {
+    /// Line editor state, including history.
+    pub editor: LineEditor,
     /// Board variant.  Populated from the `BOARD` build-time env var if set,
     /// or via the `B` command at runtime.
     pub board: Option<Board>,
@@ -121,6 +127,7 @@ impl SessionState {
     pub fn new(board: Option<Board>) -> Self {
         let chip = board.and_then(default_chip_for_board);
         Self {
+            editor: LineEditor::new(),
             board,
             chip,
             range: ReadRange::default(),
@@ -190,18 +197,6 @@ impl CsSettings {
 }
 
 // ---------------------------------------------------------------------------
-// Internal line-read result
-// ---------------------------------------------------------------------------
-
-/// Outcome of reading one command line from the CDC interface.
-enum LineRead {
-    /// A complete line was entered (may be empty, which triggers help).
-    Line(String),
-    /// Ctrl-C was pressed; the line was cancelled.
-    Cancelled,
-}
-
-// ---------------------------------------------------------------------------
 // Entry point
 // ---------------------------------------------------------------------------
 
@@ -229,32 +224,29 @@ pub async fn run(state: &mut SessionState) -> ! {
 // Session loop
 // ---------------------------------------------------------------------------
 
+
 /// Run one interactive session until the USB host disconnects.
 async fn session_loop(state: &mut SessionState) {
     let mut last_blank = false;
     loop {
-        loop {
-            match send("> ") {
-                Ok(()) => break,
-                Err(Error::UsbFull) => Timer::after_millis(10).await,
-                Err(_) => return, // genuinely disconnected
-            }
-        }
         let mut was_blank = false;
-        match read_line().await {
-            Err(_) => return,
-
-            Ok(LineRead::Cancelled) => {
-                // Ctrl-C at the bare prompt: just re-display it.
+ 
+        // The editor sends the prompt and returns the completed line.
+        match state.editor.read_line("> ", true).await {
+            Err(_) => return, // USB disconnected
+ 
+            Ok(None) => {
+                // Ctrl-C at the bare prompt: the editor already echoed ^C\r\n;
+                // just loop back to re-display the prompt.
             }
-
-            Ok(LineRead::Line(line)) if line.is_empty() => {
+ 
+            Ok(Some(line)) if line.is_empty() => {
                 was_blank = true;
                 if send_line("").await.is_err() {
                     return;
                 }
                 if last_blank {
-                    if send_line(&format!("No command entered - use ?/h for help"))
+                    if send_line("No command entered - use ?/h for help")
                         .await
                         .is_err()
                     {
@@ -262,8 +254,8 @@ async fn session_loop(state: &mut SessionState) {
                     }
                 }
             }
-
-            Ok(LineRead::Line(line)) => {
+ 
+            Ok(Some(line)) => {
                 match commands::dispatch(&line, state).await {
                     Ok(()) => {}
                     Err(Error::Cancelled) => {} // command cancelled; re-show prompt
@@ -276,7 +268,7 @@ async fn session_loop(state: &mut SessionState) {
                 }
             }
         }
-
+ 
         last_blank = was_blank;
     }
 }
@@ -298,22 +290,15 @@ async fn wait_for_enter() -> bool {
     }
 }
 
-/// Read one command line, delegating the byte-level work to `parser::read_raw_line`.
-async fn read_line() -> Result<LineRead, Error> {
-    match parser::read_raw_line().await? {
-        None => Ok(LineRead::Cancelled),
-        Some(s) => Ok(LineRead::Line(s)),
-    }
-}
-
 // ---------------------------------------------------------------------------
 // Help / firmware info
 // ---------------------------------------------------------------------------
 
 pub async fn show_help(_state: &SessionState) -> Result<(), Error> {
     send_line("").await?;
-    send_line("Commands:  type alone for interactive prompts,").await?;
-    send_line("           or with colon-separated args to skip prompts:").await?;
+    send_line("Commands:  single-letter command token, optionally followed by :args").await?;
+    send_line("           Type command alone for interactive prompts.").await?;
+    send_line("           Use colon-separated args to skip prompts.").await?;
     send_line("").await?;
     send_line("  B   Set One ROM Lab board type").await?;
     send_line("        B:<board>").await?;
@@ -331,7 +316,7 @@ pub async fn show_help(_state: &SessionState) -> Result<(), Error> {
     send_line("  q   Quick read (uses default chip, range and format)").await?;
     send_line("  l   List chips supported by this board type").await?;
     send_line("  v   Display One ROM Lab version and hardware information").await?;
-    send_line("  d   Display configured defaults").await?;
+    send_line("  s   Display settings").await?;
     send_line("  T   List supported board types").await?;
     send_line("  z   Reset to bootloader").await?;
     send_line("  ?/h This help").await?;

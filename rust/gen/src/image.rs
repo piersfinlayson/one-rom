@@ -1440,9 +1440,15 @@ fn handle_snowflake_chip_types(
         }
     } else if board.chip_pins() == 28 && *chip_type == ChipType::Chip2364 {
         // When serving a 2364 from a 28 pin board, A16 and /CE are transposed
-        let ce_pin = board.bit_ce(ChipType::Chip2764) as usize;
+        let cs_pin = if matches!(board, Board::Fire28A | Board::Fire28B) {
+            // These boards have /CE in the A16 position
+            board.bit_ce(ChipType::Chip2764) as usize
+        } else {
+            // This board has /OE in the A16 position
+            board.bit_oe(ChipType::Chip2764) as usize
+        };
         if let Some(i16) = modified_map.iter().position(|&x| x == Some(16)) {
-            modified_map.swap(i16, ce_pin);
+            modified_map.swap(i16, cs_pin);
         } else {
             panic!(
                 "Address line A16 not found in phys_pin_to_addr_map for 2364-in-28-pin handling"

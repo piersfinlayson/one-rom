@@ -906,7 +906,7 @@ fn generate_chip_pin_methods(configs: &[HwConfigData]) -> String {
             // 0-7, then address lines need to be left shifted 8 bits as
             // they'll be 8-23.
             let shift_left_8 =
-                config.config.mcu.family == McuFamily::Rp2350 && config.config.mcu.pins.data[0] < 8;
+                (config.config.mcu.family == McuFamily::Rp2350 || config.name == "fire-28-c") && config.config.mcu.pins.data[0] < 8;
             code.push_str("            #[allow(clippy::match_single_binding)]\n");
             code.push_str(&format!(
                 "            Board::{} => match chip_type {{\n",
@@ -925,7 +925,12 @@ fn generate_chip_pin_methods(configs: &[HwConfigData]) -> String {
             // Generate matches for each Chip type with shift applied
             for (chip_name, pin) in pin_map {
                 let bit_pos = if shift_left_8 && *pin >= 8 {
-                    pin - 8
+                    if config.name == "fire-28-c" {
+                        // There are two X pins at 8/9 so we need to subtract by 10 instead.
+                        pin - 10 
+                    } else {
+                        pin - 8
+                    }
                 } else {
                     *pin
                 };
