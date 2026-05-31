@@ -434,7 +434,7 @@ pub async fn get_cs_polarity(
 
     loop {
         let prompt = match default {
-            CsPolaritySetting::Unset => format!("{}: ", label),
+            CsPolaritySetting::Unset => format!("{} [?]: ", label),
             CsPolaritySetting::Auto => format!("{} [?]: ", label),
             CsPolaritySetting::Low => format!("{} [0]: ", label),
             CsPolaritySetting::High => format!("{} [1]: ", label),
@@ -444,11 +444,8 @@ pub async fn get_cs_polarity(
         let s = match input {
             None => return Err(Error::Cancelled),
             Some(s) if s.is_empty() => match default {
-                CsPolaritySetting::Unset => {
-                    super::send_line("Required: 0=active-low  1=active-high  ?=auto-detect")
-                        .await?;
-                    continue;
-                }
+                // Unset being "chosen" actuall means auto
+                CsPolaritySetting::Unset => return Ok(CsPolaritySetting::Auto),
                 d => return Ok(d),
             },
             Some(s) => s,
