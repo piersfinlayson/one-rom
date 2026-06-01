@@ -1688,6 +1688,87 @@
                 }
             ]
         },
+        "27C200" : {
+            "description": "0.25MB mask programmed EPROM with fixed active-low CE/OE",
+            "notes": "It's unclear whether 27C200 was ever used as a moniker for this ROM type, but I'm assuming it was.",
+            "function": "ROM",
+            "supported": "0.6.13",
+            "aliases": [
+                "HN62402"
+            ],
+            "bit_modes": [8, 16],
+            "pins": 40,
+            "size": 262144,
+            "address": [
+                29,
+                9,
+                8,
+                7,
+                6,
+                5,
+                4,
+                3,
+                2,
+                40,
+                39,
+                38,
+                37,
+                36,
+                35,
+                34,
+                33,
+                32
+            ],
+            "data": [
+                13,
+                15,
+                17,
+                19,
+                22,
+                24,
+                26,
+                28,
+                14,
+                16,
+                18,
+                20,
+                23,
+                25,
+                27,
+                29
+            ],
+            "control": {
+                "ce": {
+                    "pin": 10,
+                    "type": "fixed_active_low"
+                },
+                "oe": {
+                    "pin": 12,
+                    "type": "fixed_active_low"
+                },
+                "byte": {
+                    "pin": 31,
+                    "type": "fixed_active_low"
+                }
+            },
+            "power": [
+                {
+                    "name": "VCC",
+                    "pin": 21,
+                    "voltage": "+5V"
+                },
+                {
+                    "name": "GND",
+                    "pin": 11,
+                    "voltage": "0V"
+                },
+                {
+                    "name": "GND",
+                    "pin": 30,
+                    "voltage": "0V"
+                }
+            ]
+        },
         "27C400" : {
             "description": "0.5MB EPROM with fixed active-low CE/OE",
             "function": "ROM",

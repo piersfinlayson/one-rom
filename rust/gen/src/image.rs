@@ -637,6 +637,7 @@ impl Chip {
             ChipType::Chip23QL512 => 30,
             ChipType::Chip23QL384 => 31,
             ChipType::Chip23C1001 => 32,
+            ChipType::Chip27C200 => 33,
         }
     }
 }

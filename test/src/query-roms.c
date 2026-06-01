@@ -161,6 +161,7 @@ static void init_address_mangler(
             mangler->cs2_pin = config->mcu.pins.oe.pin_27c301;
             break;
 
+        case CHIP_TYPE_27C200:
         case CHIP_TYPE_27C400:
             mangler->cs1_pin = config->mcu.pins.ce.pin_27c400;
             mangler->cs2_pin = config->mcu.pins.oe.pin_27c400;
@@ -560,6 +561,7 @@ const char* rom_type_to_string(sdrr_rom_type_t rom_type) {
         case CHIP_TYPE_23QL512: return "23QL512";
         case CHIP_TYPE_23QL384: return "23QL384";
         case CHIP_TYPE_23C1001: return "23C1001";
+        case CHIP_TYPE_27C200: return "27C200";
         default: return "unknown";
     }
 }
@@ -581,6 +583,7 @@ uint8_t get_num_cs(sdrr_rom_type_t rom_type) {
         case CHIP_TYPE_27128:
         case CHIP_TYPE_27256:
         case CHIP_TYPE_27512:
+        case CHIP_TYPE_27C200:
         case CHIP_TYPE_27C400:
         case CHIP_TYPE_27C010:
         case CHIP_TYPE_27C020:
@@ -679,6 +682,7 @@ size_t get_expected_rom_size(sdrr_rom_type_t rom_type) {
         case CHIP_TYPE_23QL512: return 65536;
         case CHIP_TYPE_23QL384: return 49152;
         case CHIP_TYPE_23C1001: return 131072;
+        case CHIP_TYPE_27C200: return 262144;
         default: return 0;
     }
 }
@@ -712,6 +716,7 @@ sdrr_rom_type_t rom_type_from_string(const char* type_str) {
     else if (strcmp(type_str, "23QL512") == 0) return CHIP_TYPE_23QL512;
     else if (strcmp(type_str, "23QL384") == 0) return CHIP_TYPE_23QL384;
     else if (strcmp(type_str, "23C1001") == 0) return CHIP_TYPE_23C1001;
+    else if (strcmp(type_str, "27C200") == 0) return CHIP_TYPE_27C200;
     else return -1; // Unknown type
 }
 

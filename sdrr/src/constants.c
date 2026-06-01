@@ -69,6 +69,7 @@ const uint32_t chip_size_from_type[NUM_CHIP_TYPES] = {
     65536,  // CHIP_TYPE_23QL512
     49152,  // CHIP_TYPE_23QL384
     131072, // CHIP_TYPE_23C1001
+    262144, // CHIP_TYPE_27C200
 };
 #define STRINGIFY(x) #x
 #define TOSTRING(x) STRINGIFY(x)

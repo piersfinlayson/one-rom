@@ -106,13 +106,13 @@ static int check_rom_read(
 
     // Select delay based on ROM type
     uint32_t addr_before_cs_cycles;
-    if (rom_type == CHIP_TYPE_27C400) {
+    if (rom_type == CHIP_TYPE_27C400 || rom_type == CHIP_TYPE_27C200) {
         addr_before_cs_cycles = TST_CYCLES_27C400_ADDR_BEFORE_CS_ACTIVE;
     } else {
         addr_before_cs_cycles = TST_CYCLES_ADDR_BEFORE_CS_ACTIVE;
     }
     uint32_t cs_to_data_cycles;
-    if ((rom_type == CHIP_TYPE_27C400) && (bit_mode == 8)) {
+    if ((rom_type == CHIP_TYPE_27C400 || rom_type == CHIP_TYPE_27C200) && (bit_mode == 8)) {
         cs_to_data_cycles = TST_CYCLES_27C400_BYTE_CS_ACTIVE_TO_DATA_READY;
     } else if (multi_rom) {
         cs_to_data_cycles = TST_CYCLES_MULTI_ROM_CS_ACTIVE_TO_DATA_READY;
@@ -281,7 +281,7 @@ static int test_set(uint8_t set_index) {
     // Configure the DMA chain
     uint8_t bit_mode = 8;
     sdrr_rom_type_t rom_type = get_rom_type(set_index, 0);
-    if (rom_type == CHIP_TYPE_27C400) {
+    if (rom_type == CHIP_TYPE_27C400 || rom_type == CHIP_TYPE_27C200) {
         bit_mode = 16;
     }
     epio_dma_setup_read_pio_chain(
@@ -308,15 +308,15 @@ static int test_set(uint8_t set_index) {
         const sdrr_rom_info_t *rom = rom_set[set_index].roms[rom_index];
         rom_type = get_rom_type(set_index, rom_index);
 
-        // Do two passes for 27C400, one for 16 bit mode, the other in 8-bit mode
+        // Do two passes for 27C400/27C200, one for 16 bit mode, the other in 8-bit mode
 #if defined(FORCE_16_BIT) && (FORCE_16_BIT == 1 )
         uint8_t num_passes = 1;
 #else // !FORCE_16_BIT
-        uint8_t num_passes = (rom_type == CHIP_TYPE_27C400) ? 2 : 1;
+        uint8_t num_passes = (rom_type == CHIP_TYPE_27C400 || rom_type == CHIP_TYPE_27C200) ? 2 : 1;
 #endif // FORCE_16_BIT
         for (uint8_t pass = 0; pass < num_passes; pass++) {
             // Figure out whether to test in 8 or 16 bit mode for this pass
-            uint8_t pass_bit_mode = (rom_type == CHIP_TYPE_27C400 && pass == 0) ? 16 : 8;
+            uint8_t pass_bit_mode = ((rom_type == CHIP_TYPE_27C400 || rom_type == CHIP_TYPE_27C200) && pass == 0) ? 16 : 8;
 
             // Get the ROM size, and halve it for 16-bit mode, to use word addresses
             uint32_t rom_size = get_rom_image_size(set_index, rom_index);
@@ -325,7 +325,7 @@ static int test_set(uint8_t set_index) {
                 // with the fact that the ROM shouldn't serve about 48KB.
                 rom_size = 65536;
             }
-            uint32_t iter_count = (rom_type == CHIP_TYPE_27C400 && pass_bit_mode == 16)
+            uint32_t iter_count = ((rom_type == CHIP_TYPE_27C400 || rom_type == CHIP_TYPE_27C200) && pass_bit_mode == 16)
                 ? rom_size / 2
                 : rom_size;
 

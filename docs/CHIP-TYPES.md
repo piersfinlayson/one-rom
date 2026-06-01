@@ -89,6 +89,7 @@ There are also some other inconsistencies between types:
 
 | Chip Type | Aliases | Size | Address Lines | Control Lines | Programming | Supported |
 |-----------|---------|------|---------------|---------------|-------------|-----------|
+| 27C200 | HN62402 | 256KB | 18 (A0-A17) | /BYTE (pin 31), /CE (pin 10), /OE (pin 12) | None | ✓ |
 | 27C400 | AT27C400, M27C400, 23C4100, MX23C4100, TCS534200, 27C4100, MX27C4100, HN62404, HN62424, MB834200 | 512KB | 19 (A0-A18) | /BYTE (pin 31), /CE (pin 10), /OE (pin 12) | VPP: pin 31 (word_size); /PGM: pin 10 (Acts as /OE) | ✓ |
 
 ## 24-pin EEPROM Family (28Cxx)
@@ -207,32 +208,32 @@ There are also some other inconsistencies between types:
 
 ### 40-pin Package
 
-| Pin | 27C400 |
-|-----|------|
-| 1 | A18 |
-| 2 | A8 |
-| 3 | A7 |
-| 4 | A6 |
-| 5 | A5 |
-| 6 | A4 |
-| 7 | A3 |
-| 8 | A2 |
-| 9 | A1 |
-| 10 | /CE+/PGM |
-| 11 | GND |
-| 12 | /OE |
-| 13 | D0 |
-| 14 | D8 |
-| 15 | D1 |
-| 16 | D9 |
-| 17 | D2 |
-| 18 | D10 |
-| 19 | D3 |
-| 20 | D11 |
-| 21 | VCC |
-| 22 | D4 |
-| 23 | D12 |
-| 24 | D5 |
+| Pin | 27C200 | 27C400 |
+|-----|------|------|
+| 1 | NC | A18 |
+| 2 | A8 | A8 |
+| 3 | A7 | A7 |
+| 4 | A6 | A6 |
+| 5 | A5 | A5 |
+| 6 | A4 | A4 |
+| 7 | A3 | A3 |
+| 8 | A2 | A2 |
+| 9 | A1 | A1 |
+| 10 | /CE | /CE+/PGM |
+| 11 | GND | GND |
+| 12 | /OE | /OE |
+| 13 | D0 | D0 |
+| 14 | D8 | D8 |
+| 15 | D1 | D1 |
+| 16 | D9 | D9 |
+| 17 | D2 | D2 |
+| 18 | D10 | D10 |
+| 19 | D3 | D3 |
+| 20 | D11 | D11 |
+| 21 | VCC | VCC |
+| 22 | D4 | D4 |
+| 23 | D12 | D12 |
+| 24 | D5 | D5 |
 
 ## Detailed Pinouts
 
@@ -673,6 +674,23 @@ There are also some other inconsistencies between types:
 | /PGM | 31 | x during read |
 | VCC | 32 | +5V |
 | GND | 16 | 0V |
+
+### 27C200 - 0.25MB mask programmed EPROM with fixed active-low CE/OE
+
+**Package:** 40-pin DIP  
+**Capacity:** 262144 bytes  
+**Control:** /BYTE, /CE, /OE  
+
+| Function | Pins | Notes |
+|----------|------|-------|
+| Address (A0-A17) | 29,9,8,7,6,5,4,3,2,40,39,38,37,36,35,34,33,32 | 18 address lines |
+| Data (D0-D7) | 13,15,17,19,22,24,26,28,14,16,18,20,23,25,27,29 | 8 data lines |
+| BYTE | 31 | Active low |
+| CE | 10 | Active low |
+| OE | 12 | Active low |
+| VCC | 21 | +5V |
+| GND | 11 | 0V |
+| GND | 30 | 0V |
 
 ### 27C040 - 512KB EPROM with fixed active-low CE/OE
 

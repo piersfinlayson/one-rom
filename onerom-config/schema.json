@@ -390,6 +390,11 @@
                     "const": "27C080"
                 },
                 {
+                    "description": "0.25MB mask programmed EPROM with fixed active-low CE/OE - 262144 bytes, 40-pin package",
+                    "type": "string",
+                    "const": "27C200"
+                },
+                {
                     "description": "0.5MB EPROM with fixed active-low CE/OE - 524288 bytes, 40-pin package",
                     "type": "string",
                     "const": "27C400"

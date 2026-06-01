@@ -101,6 +101,22 @@ static void get_gpio_drive_from_addr_cs(
                 }
                 num_addr_bits--;
             }
+        } else if (rom_type == CHIP_TYPE_27C200) {
+            assert(num_addr_bits == 18 && "27C200 should have 18 address bits");
+
+            if (bit_mode == 8) {
+                // Replace the first (least significant) address line with D15
+                assert(addr < (256*1024) && "Address out of range for 8-bit mode on 27C200");
+                local_addr_pins[0] = data_pins[15];
+            } else {
+                // Remove the first (least significant) address line, as it's
+                // not used in 16-bit mode
+                assert(addr < (128*1024) && "Address out of range for 16-bit mode on 27C200");
+                for (int ii = 0; ii < 17; ii++) {
+                    local_addr_pins[ii] = addr_pins[ii + 1];
+                }
+                num_addr_bits--;
+            }
         } else if (rom_type == CHIP_TYPE_2364 && sdrr_info.pins->chip_pins == 28) {
             local_addr_pins[11] = sdrr_info.pins->cs1;    // 231024 CS1 -> 2364 A11
             local_addr_pins[12] = addr_pins[11];           // 231024 A11 -> 2364 A12
@@ -179,6 +195,7 @@ static void get_gpio_drive_from_addr_cs(
             cs3_pin = oe_pin;
             break;
 
+        case CHIP_TYPE_27C200:
         case CHIP_TYPE_27C400:
             cs1_pin = ce_pin;
             cs2_pin = oe_pin;
@@ -207,8 +224,8 @@ static void get_gpio_drive_from_addr_cs(
             break;
     }
 
-    // After switch, drive /BYTE for 27C400
-    if (rom_type == CHIP_TYPE_27C400) {
+    // After switch, drive /BYTE for 27C400/200
+    if (rom_type == CHIP_TYPE_27C400 || rom_type == CHIP_TYPE_27C200) {
         drive_mask |= (1ULL << sdrr_info.pins->byte);
         if (bit_mode == 16) {
             level_mask |= (1ULL << sdrr_info.pins->byte);

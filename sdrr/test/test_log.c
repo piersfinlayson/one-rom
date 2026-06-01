@@ -113,6 +113,10 @@ const char *chip_type[NUM_CHIP_TYPES] = {
     "28C64",
     "28C256",
     "28C512",
+    "23QL512",
+    "23QL384",
+    "23C1001",
+    "27C200"
 };
 
 const char *transform_to_str[] = {

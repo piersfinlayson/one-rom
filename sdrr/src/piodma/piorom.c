@@ -1225,7 +1225,7 @@ static uint8_t get_lowest_addr_gpio(
     uint8_t chip_pins = info->pins->chip_pins;
 
     for (int ii = 0; ii < 16; ii++) {
-        if ((ii == 0) && (rom_type == CHIP_TYPE_27C400)) {
+        if ((ii == 0) && (rom_type == CHIP_TYPE_27C400 || rom_type == CHIP_TYPE_27C200)) {
             // Skip A-1 pin for 16-bit capable chips, as the algorithm handles
             // the lowest bit (only required in /BYTE low mode) separately.
             continue;
@@ -1340,7 +1340,7 @@ static void piorom_finish_config(
 ) {
     const sdrr_rom_info_t *rom = set->roms[0];
     uint8_t is_16_bit_capable = 0;
-    if (rom->rom_type == CHIP_TYPE_27C400) {
+    if (rom->rom_type == CHIP_TYPE_27C400 || rom->rom_type == CHIP_TYPE_27C200) {
         is_16_bit_capable = 1;
         if (runtime->force_16_bit) {
             config->force_16_bit = 1;
@@ -1400,6 +1400,7 @@ static void piorom_finish_config(
             config->num_cs_pins = 1;
             break;
 
+        case CHIP_TYPE_27C200:
         case CHIP_TYPE_27C400:
             config->num_cs_pins = 2;
             break;
@@ -1540,6 +1541,7 @@ static void piorom_finish_config(
         case CHIP_TYPE_27C020:
         case CHIP_TYPE_27C040:
         case CHIP_TYPE_27C301:
+        case CHIP_TYPE_27C200:
         case CHIP_TYPE_27C400:
         case CHIP_TYPE_28C16:
         case CHIP_TYPE_28C64:
@@ -1560,11 +1562,11 @@ static void piorom_finish_config(
             } else if (ce_pin == (config->cs_base_pin - 1)) {
                 config->cs_base_pin = ce_pin;
             } else if (ce_pin > (config->cs_base_pin + 1)) {
-                if (rom->rom_type == CHIP_TYPE_27C400) {
-                    // Non-contiguous not supported for 27C400 as the chip
+                if (rom->rom_type == CHIP_TYPE_27C400 || rom->rom_type == CHIP_TYPE_27C200) {
+                    // Non-contiguous not supported for 27C400/200 as the chip
                     // select detect algorithm is more complex, due to the
                     // need to spot /BYTE
-                    ERR("PIO ROM serving non-contiguous OE/CE pins not supported for 27C400");
+                    ERR("PIO ROM serving non-contiguous OE/CE pins not supported for 27C400/200");
                     limp_mode(LIMP_MODE_INVALID_CONFIG);
                 }
                 piorom_handle_non_contiguous_cs_pins(
@@ -1576,8 +1578,8 @@ static void piorom_finish_config(
                 );
             } else {
                 // ce is less than oe
-                if (rom->rom_type == CHIP_TYPE_27C400) {
-                    ERR("PIO ROM serving non-contiguous OE/CE pins not supported for 27C400");
+                if (rom->rom_type == CHIP_TYPE_27C400 || rom->rom_type == CHIP_TYPE_27C200) {
+                    ERR("PIO ROM serving non-contiguous OE/CE pins not supported for 27C400/200");
                     limp_mode(LIMP_MODE_INVALID_CONFIG);
                 }
                 piorom_handle_non_contiguous_cs_pins(
@@ -2074,6 +2076,7 @@ static void piorom_force_unused_addr_pins_to_zero(
             // No NC pins - all address lines used.
             break;
 
+        case CHIP_TYPE_27C200:
         case CHIP_TYPE_27C400:
             // No NC pins - all address lines used.
             break;
