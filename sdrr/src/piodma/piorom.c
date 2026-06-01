@@ -1258,7 +1258,16 @@ static uint8_t get_lowest_addr_gpio(
             // Consider addr2 pins, but only when serving a > 64KB image, as
             // for 28 pin ROMs, these are only used in this case.
             for (int ii = 0; ii < 8; ii++) {
-                if ((ii == 2) && (rom_type == CHIP_TYPE_27C301)) {
+                if (rom_type == CHIP_TYPE_27C301) {
+                    if ((info->pins->cs2 == 16 && ii == 0) ||
+                        (info->pins->cs2 == 12 && ii == 2)) {
+                        // cs2=16 = fire-32-a, cs2=12 = fire-32-b
+                        // Ignore A16 for 27C301, as this is actually /OE.
+                        DEBUG("Ignoring A16 (GPIO %d) for 27C301", info->pins->addr2[ii]);
+                        continue;
+                    }
+                }
+                if ((ii == 0) && (rom_type == CHIP_TYPE_27C301)) {
                     // Ignore A16 for 27C301, as this is actually /OE.
                     DEBUG("Ignoring A16 (GPIO %d) for 27C301", info->pins->addr2[ii]);
                     continue;
