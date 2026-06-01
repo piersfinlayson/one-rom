@@ -870,7 +870,13 @@ impl ChipSet {
                             2_usize.pow(18)
                         } // 256KB
                         ChipType::Chip23QL384 | ChipType::Chip23QL512 => {
-                            2_usize.pow(17)
+                            // /CE is used as A15 for these chips.  On the fire-28-c,
+                            // /CE is before /OE, hence requires 18 bits
+                            if matches!(board, Board::Fire28A | Board::Fire28B) {
+                                2_usize.pow(17)
+                            } else {
+                                2_usize.pow(18)
+                            }
                         }
                         _ => 2_usize.pow(16), // 64KB
                     }
@@ -1556,9 +1562,11 @@ fn handle_snowflake_chip_types(
         modified_map[oe_pin] = None;
         modified_map[i15] = None;
 
-        // And we start indexing the image from the second address/cs pin, not the first.
-        modified_map.remove(0);
-        modified_map.push(None);
+        if matches!(board, Board::Fire28A | Board::Fire28B) {
+            // On these boards we start indexing the image from the second address/cs pin, not the first.
+            modified_map.remove(0);
+            modified_map.push(None);
+        }
     }
     modified_map
 }

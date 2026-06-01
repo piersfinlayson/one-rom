@@ -732,7 +732,17 @@ static void piorom_load_programs(piorom_config_t *config) {
         APIO_LABEL_NEW(ql384_inactive_poll);
         APIO_ADD_INSTR(APIO_JMP_PIN(APIO_LABEL(ql384_inactive_poll)));   // OE=1, so stay inactive until it goes active
 
-        APIO_ADD_INSTR(APIO_MOV_X_PINS);           // Read pins to X - A14 and A15
+        if (config->cs_base_pin == 11) {
+            // fire-28-c - A14/A15 are not contiguous, so need to read them separately and combine
+            APIO_ADD_INSTR(APIO_MOV_OSR_PINS);    // OSR[2:0] = [A15:mid:A14]
+            APIO_ADD_INSTR(APIO_MOV_ISR_NULL);    // clear ISR
+            APIO_ADD_INSTR(APIO_OUT_ISR(1));      // ISR[0] = A14
+            APIO_ADD_INSTR(APIO_OUT_NULL(1));     // discard mid
+            APIO_ADD_INSTR(APIO_OUT_ISR(1));      // ISR[1:0] = [A14:A15]
+            APIO_ADD_INSTR(APIO_MOV_X_ISR);       // X = [A14:A15], compare to Y=0b11
+        } else {
+            APIO_ADD_INSTR(APIO_MOV_X_PINS);           // Read pins to X - A14 and A15
+        }
         APIO_LABEL_NEW_OFFSET(ql384_active, 2);
         APIO_ADD_INSTR(APIO_JMP_X_NOT_Y(APIO_LABEL(ql384_active))); // If A14 or A15 is low, go active, otherwise stay inactive
         APIO_ADD_INSTR(APIO_JMP(APIO_LABEL(ql384_inactive_poll)));  // A14 & A15 are both high
@@ -745,7 +755,17 @@ static void piorom_load_programs(piorom_config_t *config) {
         // Now wait for OE to go inactive or both A14 and A15 to go high
         APIO_LABEL_NEW(ql384_active_poll);
         APIO_ADD_INSTR(APIO_JMP_PIN(APIO_LABEL(ql384_inactive)));   // OE has gone inactive
-        APIO_ADD_INSTR(APIO_MOV_X_PINS);           // Read pins to X - A14 and A15
+        if (config->cs_base_pin == 11) {
+            // fire-28-c - A14/A15 are not contiguous, so need to read them separately and combine
+            APIO_ADD_INSTR(APIO_MOV_OSR_PINS);    // OSR[2:0] = [A15:mid:A14]
+            APIO_ADD_INSTR(APIO_MOV_ISR_NULL);    // clear ISR
+            APIO_ADD_INSTR(APIO_OUT_ISR(1));      // ISR[0] = A14
+            APIO_ADD_INSTR(APIO_OUT_NULL(1));     // discard mid
+            APIO_ADD_INSTR(APIO_OUT_ISR(1));      // ISR[1:0] = [A14:A15]
+            APIO_ADD_INSTR(APIO_MOV_X_ISR);       // X = [A14:A15], compare to Y=0b11
+        } else {
+            APIO_ADD_INSTR(APIO_MOV_X_PINS);           // Read pins to X - A14 and A15
+        }
         APIO_WRAP_TOP();
         APIO_ADD_INSTR(APIO_JMP_X_NOT_Y(APIO_LABEL(ql384_active_poll)));   // If A14 or A15 goes low, stay active, otherwise go inactive
     } else if (config->contiguous_cs_pins) {
@@ -852,7 +872,6 @@ static void piorom_load_programs(piorom_config_t *config) {
         if (config->rom_type != CHIP_TYPE_23QL384) {
             APIO_SM_EXECCTRL_SET(0);
         } else {
-            // Use OE as our JMP pin
             APIO_SM_EXECCTRL_SET(APIO_EXECCTRL_JMP_PIN(config->cs_base_pin));
         }
     } else {
@@ -871,15 +890,22 @@ static void piorom_load_programs(piorom_config_t *config) {
         );
     } else {
         // Use A14 and A15 as the CS pins, and they immediate follow OE
+        uint8_t cs_pins = 2;
+        uint8_t cs_base_pin = config->cs_base_pin+1;
+        if (config->cs_base_pin == 11) {
+            // fire-28-c - A14/A15 are not contiguous, so need to read them separately and combine
+            cs_pins = 3;
+            cs_base_pin = 10;
+        }
         APIO_SM_SHIFTCTRL_SET(
-            APIO_IN_COUNT(2) |
+            APIO_IN_COUNT(cs_pins) |
             APIO_IN_SHIFTDIR_L          // Direction left important for non-
                                         // contiguous CS pin handling
         );
         APIO_SM_PINCTRL_SET(
             APIO_OUT_COUNT(config->num_data_pins) |
             APIO_OUT_BASE(base_data_pin) |
-            APIO_IN_BASE(config->cs_base_pin+1)
+            APIO_IN_BASE(cs_base_pin)
         );
     }
 
