@@ -189,7 +189,7 @@ impl Chip {
         match self.pins.quantity {
             24 => 16, // Includes CS and X pins
             28 => 18, // Includes CS lines (to allow for 231024 which uses /OE as address line)
-            32 => 19, // Just addr pins, 512KB max
+            32 => 19, // Addr pins, 512KB max
             40 => 19, // Just addr pins, 512KB max
             _ => panic!(
                 "Unsupported ROM type {}, expected 24, 28, or 40-pin ROM",

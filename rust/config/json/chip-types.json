@@ -1545,6 +1545,7 @@
         },
         "SST39SF040": {
             "description": "512KB flash with fixed active-low CE/OE and different pinout to 27C040",
+            "supported": "0.6.13",
             "function": "ROM",
             "aliases": [
                 "39SF040",
