@@ -23,6 +23,7 @@ To do:
 - fire-32-b optimise image sizes
 - fire-32-b add 39SF040 support
 - In general we are missing any ability in the core firmware (and also elsewhere) to support specific ROM types only on certain revisions of different pin boards.  This likely needs somworking through.
+- Finish off 39SF040 support - disable on fire-32-a (or map to 27C040), and enable on fire-32-b
 
 All of this is pushing me in the direction of a major firmware overhaul, with the metadata containing the PIO serving information required for each ROM for Fire boards, to avoid as much special casing in the firmware.  This would still be complicated, but likely easier to reason about than the current approach, which is becoming unmaintainable.  Now we have 2 x independent and unique automated tests for each ROM type, and also One ROM Lab can live test nearly every ROM type fairly easily, this change is viable.  This would require a major version bump, as the existing tooling cannot build v0.7.0 firmware.
 
