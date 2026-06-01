@@ -234,7 +234,19 @@ static void init_address_mangler(
                 }
             }
         }
-        address_mangler.addr_pins[16] = max_addr_pin + 1; // A16 is the next pin after the max address pin
+        if (address_mangler.addr_pins[18] == 24) {
+            // fire-32-a
+            address_mangler.addr_pins[16] = max_addr_pin + 1; // A16 is the next pin after the max address pin
+        } else if (address_mangler.addr_pins[18] == 16) {
+            // fire-32-b
+            address_mangler.addr_pins[16] = max_addr_pin + 2; // A16 is after A19 after the last pin
+            // Not used for this ROM type
+            address_mangler.addr_pins[17] = 255;
+            address_mangler.addr_pins[18] = 255;
+        } else {
+            printf("Error: Unexpected A[18] pin %d for 27C301 ROM type\n", address_mangler.addr_pins[18]);
+            assert(0 && "Unexpected config for 27C301");
+        }
     } else if (rom_type == CHIP_TYPE_2364 && config->rom.pin_count == 28) {
         uint8_t pin_a11 = address_mangler.addr_pins[11];
         address_mangler.addr_pins[11] = config->mcu.pins.cs1.pin_231024;
@@ -366,6 +378,13 @@ void create_address_mangler(const json_config_t* config, const sdrr_rom_type_t r
             if (address_mangler.addr_pins[ii] < min_addr_pin) {
                 min_addr_pin = address_mangler.addr_pins[ii];
             }
+        }
+
+        printf("Min address pin for 32/40 pin ROM type is %d\n", min_addr_pin);
+        if (rom_type == CHIP_TYPE_27C301 && min_addr_pin == 19) {
+            // fire-32-b
+            // Special case it
+            min_addr_pin -= 1;
         }
 
         for (int ii = 0; ii < MAX_ADDR_LINES; ii++) {

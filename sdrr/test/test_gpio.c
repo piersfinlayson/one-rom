@@ -79,7 +79,13 @@ static void get_gpio_drive_from_addr_cs(
                     highest_addr_pin = local_addr_pins[ii];
                 }
             }
-            local_addr_pins[16] = highest_addr_pin + 1;
+            if (local_addr_pins[15] == 19) {
+                // fire-28-b
+                local_addr_pins[16] = highest_addr_pin + 2;
+            } else {
+                // fire-28-a
+                local_addr_pins[16] = highest_addr_pin + 1;
+            }
         } else if (rom_type == CHIP_TYPE_28C256) {
             // Swap pins 14 and 15
             uint8_t temp = local_addr_pins[14];

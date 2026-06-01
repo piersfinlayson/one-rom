@@ -19,11 +19,11 @@ To do:
 - fire-28-c Fix 23QL384 and 23QL512 support.  Looks like 23QL384 broke as A14 and A15 (/CE for this chip type) are no longer next to each other.  Also, both 23QL384 and 23QL512 need to be 256KB on fire-28-c due to /CE (A15) being 1 pin "earlier".
 - fire-28-c optimise image sizes
 - fire-28-c Add multi-ROM sets and dynamic bank switching.
-- fire-32-b 27C301 requires fixing.  get_lowest_addr_gpio needs ii==2 for 27C301 not 0, but there's also another unknown fix required for other 64KB.
 - fire-32-b optimise image sizes
 - fire-32-b add 39SF040 support
 - In general we are missing any ability in the core firmware (and also elsewhere) to support specific ROM types only on certain revisions of different pin boards.  This likely needs somworking through.
 - Finish off 39SF040 support - disable on fire-32-a (or map to 27C040), and enable on fire-32-b
+- Make 27C301 use less flash on fire-32-b (currently using 512KB, 256KB should be possible)
 
 All of this is pushing me in the direction of a major firmware overhaul, with the metadata containing the PIO serving information required for each ROM for Fire boards, to avoid as much special casing in the firmware.  This would still be complicated, but likely easier to reason about than the current approach, which is becoming unmaintainable.  Now we have 2 x independent and unique automated tests for each ROM type, and also One ROM Lab can live test nearly every ROM type fairly easily, this change is viable.  This would require a major version bump, as the existing tooling cannot build v0.7.0 firmware.
 

@@ -1259,18 +1259,23 @@ static uint8_t get_lowest_addr_gpio(
             // for 28 pin ROMs, these are only used in this case.
             for (int ii = 0; ii < 8; ii++) {
                 if (rom_type == CHIP_TYPE_27C301) {
-                    if ((info->pins->cs2 == 16 && ii == 0) ||
-                        (info->pins->cs2 == 12 && ii == 2)) {
-                        // cs2=16 = fire-32-a, cs2=12 = fire-32-b
+                    if (info->pins->cs2 == 16 && ii == 0) {
+                        // cs2=16 = fire-32-a
                         // Ignore A16 for 27C301, as this is actually /OE.
                         DEBUG("Ignoring A16 (GPIO %d) for 27C301", info->pins->addr2[ii]);
                         continue;
                     }
-                }
-                if ((ii == 0) && (rom_type == CHIP_TYPE_27C301)) {
-                    // Ignore A16 for 27C301, as this is actually /OE.
-                    DEBUG("Ignoring A16 (GPIO %d) for 27C301", info->pins->addr2[ii]);
-                    continue;
+                    if (info->pins->cs2 == 12) {
+                        // fire-32-b
+                        if (ii == 2 || ii == 1) {
+                            // fire-32-b - also ignore A17 and A18
+                            DEBUG("Ignoring A%d (GPIO %d) for 27C301 fire-32-b",
+                                ii+16,
+                                info->pins->addr2[ii]
+                            );
+                            continue;
+                        }
+                    }
                 }
 
                 if (info->pins->addr2[ii] < lowest) {

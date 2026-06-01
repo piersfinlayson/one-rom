@@ -1524,7 +1524,8 @@ fn handle_snowflake_chip_types(
                 },
                 Board::Fire32B => {
                     if a16_index == 2 {
-                        // Remove first entry of pin map
+                        // Remove two entries of pin map
+                        modified_map.remove(0);
                         modified_map.remove(0);
 
                         // Now add None on the end
@@ -1533,8 +1534,8 @@ fn handle_snowflake_chip_types(
                         // Now put A16 on the end
                         modified_map.push(Some(16));
 
-                        // Finally, set the old A16 (now index 1) to None
-                        modified_map[1] = None;
+                        // Finally, set the old A16 (now index 0) to None
+                        modified_map[0] = None;
                     } else {
                         panic!(
                             "Address line A16 found at unexpected position {} in phys_pin_to_addr_map for 27C301 handling",
