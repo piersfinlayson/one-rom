@@ -114,11 +114,6 @@ impl ControlLine {
             self.flex.set_high();
         }
     }
-
-    fn set_polarity(&mut self, assert_high: bool) {
-        self.assert_high = assert_high;
-        self.deassert();
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -348,17 +343,15 @@ impl RomReader {
     /// into `sha` and `csum` and testing tristate after each address cycle.
     #[inline(never)]
     fn read_mode(&mut self, mode: u8, sha: &mut Sha1, csum: &mut ChecksumState) -> u32 {
-        let num_addr = self.addr.len();
-
         let (addr_count, addr_shift, data_bytes, read_delay) = match mode {
             16 => (
-                1 << (num_addr - 1), // 2^(N-1) word addresses
+                1 << self.chip.size_bytes()/2,
                 1,                   // bit 0 (A-1) always 0 in 16-bit mode
                 2,
                 self.read_delay_16bit_cycles,
             ),
             _ => (
-                1 << num_addr, // 2^N byte addresses
+                self.chip.size_bytes(),
                 0,
                 1,
                 self.read_delay_cycles,
@@ -567,18 +560,6 @@ impl RomReader {
         // Return BYTE# to deasserted (high): matches the idle state set in init().
         if let Some(ref mut byte_n) = self.byte_n {
             byte_n.set_high();
-        }
-    }
-
-    pub fn set_cs_polarities(&mut self, cs: CsPolarities) {
-        if let (Some(line), Some(p)) = (&mut self.cs1, cs.cs1) {
-            line.set_polarity(p);
-        }
-        if let (Some(line), Some(p)) = (&mut self.cs2, cs.cs2) {
-            line.set_polarity(p);
-        }
-        if let (Some(line), Some(p)) = (&mut self.cs3, cs.cs3) {
-            line.set_polarity(p);
         }
     }
 

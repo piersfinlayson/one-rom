@@ -449,7 +449,7 @@ async fn cmd_reset_to_bootloader() -> Result<(), Error> {
 /// Compute the effective `(start, byte_count)` for a read, clamped to the
 /// chip's actual address space.
 fn resolve_range(range: ReadRange, chip: ChipType) -> (usize, usize) {
-    let rom_bytes = 1usize << chip.address_pins().len();
+    let rom_bytes = chip.size_bytes();
     let start = range.start.min(rom_bytes.saturating_sub(1));
     let available = rom_bytes - start;
     let count = if range.len == 0 {
@@ -506,7 +506,7 @@ async fn output_checksum(
     start: usize,
     count: usize,
 ) -> Result<(), Error> {
-    let rom_bytes = 1usize << chip.address_pins().len();
+    let rom_bytes = chip.size_bytes();
 
     if start != 0 || count != rom_bytes {
         // TODO: wire up streaming range reads in rom.rs and remove this.
@@ -516,8 +516,6 @@ async fn output_checksum(
         ))
         .await?;
     }
-
-    let _cs = crate::cs_polarities();
 
     let results = reader.read();
 
@@ -601,7 +599,7 @@ async fn scan_cs(board: Board, chip: ChipType, cs: CsSettings, tristate: bool) -
         .map(|c| c.name)
         .collect();
 
-    let rom_bytes = 1usize << chip.address_pins().len();
+    let rom_bytes = chip.size_bytes();
     let all_zeros = trivial_sha1(0x00, rom_bytes);
     let all_ffs = trivial_sha1(0xFF, rom_bytes);
 
@@ -629,7 +627,6 @@ async fn scan_cs(board: Board, chip: ChipType, cs: CsSettings, tristate: bool) -
 
         let mut reader = RomReader::new(&pin_map, chip, test, tristate);
         reader.init();
-        reader.set_cs_polarities(test);
 
         let label = auto
             .iter()
