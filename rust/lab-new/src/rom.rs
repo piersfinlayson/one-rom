@@ -345,7 +345,7 @@ impl RomReader {
     fn read_mode(&mut self, mode: u8, sha: &mut Sha1, csum: &mut ChecksumState) -> u32 {
         let (addr_count, addr_shift, data_bytes, read_delay) = match mode {
             16 => (
-                1 << self.chip.size_bytes()/2,
+                self.chip.size_bytes()/2,
                 1,                   // bit 0 (A-1) always 0 in 16-bit mode
                 2,
                 self.read_delay_16bit_cycles,
@@ -358,16 +358,7 @@ impl RomReader {
             ),
         };
 
-        // Configure BYTE# before asserting control lines.
-        if let Some(ref mut byte_n) = self.byte_n {
-            if mode == 16 {
-                byte_n.set_high();
-            } else {
-                byte_n.set_low();
-            }
-        }
-
-        self.assert_control();
+        self.begin_read(mode);
 
         let mut failures = 0u32;
         for addr in 0..addr_count {
@@ -383,11 +374,7 @@ impl RomReader {
             failures += self.test_tristate(data_bytes);
         }
 
-        self.deassert_control();
-        // Return BYTE# to deasserted (high) state.
-        if let Some(ref mut byte_n) = self.byte_n {
-            byte_n.set_high();
-        }
+        self.end_read();
 
         failures
     }
@@ -517,9 +504,12 @@ impl RomReader {
     pub fn begin_read(&mut self, mode: u8) {
         if let Some(ref mut byte_n) = self.byte_n {
             if mode == 16 {
-                byte_n.set_high(); // BYTE# deasserted → 16-bit mode
+                byte_n.set_high();
             } else {
-                byte_n.set_low(); // BYTE# asserted   →  8-bit mode
+                byte_n.set_low();
+                if let Some(a1) = self.addr.first_mut() {
+                    a1.set_as_output();
+                }
             }
         }
         self.assert_control();
@@ -557,9 +547,14 @@ impl RomReader {
     /// Call after all `read_byte_at` calls in a read session are complete.
     pub fn end_read(&mut self) {
         self.deassert_control();
-        // Return BYTE# to deasserted (high): matches the idle state set in init().
         if let Some(ref mut byte_n) = self.byte_n {
             byte_n.set_high();
+            
+            // Reset D15/A-1 shared pin to back to input with pull-down.
+            if let Some(a1) = self.addr.first_mut() {
+                a1.set_pull(Pull::Down);
+                a1.set_as_input();
+            }
         }
     }
 

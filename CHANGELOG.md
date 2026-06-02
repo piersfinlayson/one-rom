@@ -14,14 +14,14 @@ Fixed:
 - 23C1010 support - there were failures when creating firmware with 23C1010.
 
 To do:
-- Add method to get RP2350A/B from config::hw::Board, and use in generator.rs instead of hard-coding.
+- Figure out why I had to hardcode SST39SF040 support for tester-32.
+- fire-28-c Add multi-ROM sets and dynamic bank switching.
 - Actually add 23C1001 support to firmware and test it (fire-32-b only).
+- Add method to get RP2350A/B from config::hw::Board, and use in generator.rs instead of hard-coding.
 - config/hw generator is subtracting 8 from 28 pin board address lines, but should be 10 for fire-28-a - should be avoiding the X pins as well, better than just hardcoding the fire-28-c type
 - fire-28-c Fix 23QL384 and 23QL512 support.  Looks like 23QL384 broke as A14 and A15 (/CE for this chip type) are no longer next to each other.  Also, both 23QL384 and 23QL512 need to be 256KB on fire-28-c due to /CE (A15) being 1 pin "earlier".
 - fire-28-c optimise image sizes
-- fire-28-c Add multi-ROM sets and dynamic bank switching.
 - fire-32-b optimise image sizes
-- fire-32-b add 39SF040 support
 - In general we are missing any ability in the core firmware (and also elsewhere) to support specific ROM types only on certain revisions of different pin boards.  This likely needs somworking through.
 - Finish off 39SF040 support - disable on fire-32-a (or map to 27C040), and enable on fire-32-b
 - Make 27C301 use less flash on fire-32-b (currently using 512KB, 256KB should be possible)
