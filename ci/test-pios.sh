@@ -116,7 +116,7 @@ test_32pin() {
     if [ "$hw_rev" = "fire-32-a" ]; then
         return
     fi
-    run_no_cs  $hw_rev images/test/rand_512KB.rom type=SST39SF040,trunc "$extra_flags"
+    run_no_cs  $hw_rev images/test/rand_512KB.rom type=SST39SF040    "$extra_flags"
 }
 
 test_40pin() {
