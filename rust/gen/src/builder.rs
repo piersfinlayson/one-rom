@@ -777,7 +777,7 @@ impl Builder {
     /// Generate metadata and ROM images once all files loaded
     ///
     /// Returns (metadata, Chip images)
-    pub fn build(&mut self, props: FirmwareProperties) -> Result<(Vec<u8>, Vec<u8>)> {
+    pub fn build(&self, props: FirmwareProperties) -> Result<(Vec<u8>, Vec<u8>)> {
         if props.version() > MAX_SUPPORTED_FIRMWARE_VERSION {
             return Err(Error::FirmwareTooNew {
                 version: props.version(),
