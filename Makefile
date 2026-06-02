@@ -94,8 +94,8 @@ HW_REV ?= fire-24-e
 #
 # See `config` for more extensive examples.
 
-ROM_CONFIGS ?= \
-	file=images/test/0_63_4096.rom,type=2332,cs1=0,cs2=1
+#ROM_CONFIGS ?= \
+#	file=images/test/0_63_4096.rom,type=2332,cs1=0,cs2=1
 
 # Status LED
 #
@@ -361,7 +361,7 @@ EXTRA_C_FLAGS ?=
 
 # Do not include Metadata or ROM imags
 
-EXCLUDE_METADATA ?= 0
+EXCLUDE_METADATA ?= 1
 # EXCLUDE_METADATA ?= 1
 
 #
@@ -436,6 +436,9 @@ endif
 endif
 
 # Exclude metadata
+ifeq ($(EM),1)
+EXCLUDE_METADATA=1
+endif
 ifeq ($(EXCLUDE_METADATA),1)
 ifneq ($(SUPPRESS_OUTPUT),1)
   $(info - $(COLOUR_YELLOW)EXCLUDE_METADATA=$(EXCLUDE_METADATA)$(COLOUR_RESET))
