@@ -361,7 +361,7 @@ EXTRA_C_FLAGS ?=
 
 # Do not include Metadata or ROM imags
 
-EXCLUDE_METADATA ?= 1
+EXCLUDE_METADATA ?= 0
 # EXCLUDE_METADATA ?= 1
 
 #

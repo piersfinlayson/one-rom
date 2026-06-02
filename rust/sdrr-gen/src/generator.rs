@@ -6,6 +6,7 @@
 
 use anyhow::{Context, Result};
 use onerom_config::fw::FirmwareVersion;
+use onerom_config::hw::Board;
 use std::fs;
 use std::io::Write;
 use std::path::Path;
@@ -855,10 +856,19 @@ fn generate_sdrr_config_implementation(filename: &Path, config: &Config) -> Resu
                 .copied()
                 .max()
                 .ok_or_else(|| anyhow::anyhow!("Board has no pins defined"))?;
-            if pin != max_pin + 1 {
-                return Err(anyhow::anyhow!(
-                    "For 32 pin boards, the alternative pin assignment for 27C301 A16 must be 1 more than the highest defined pin"
-                ));
+            #[allow(clippy::collapsible_if)]
+            if matches!(board, Board::Fire32A) {
+                if pin != max_pin + 1 {
+                    return Err(anyhow::anyhow!(
+                        "For 32 pin boards, the alternative pin assignment for 27C301 A16 must be 1 more than the highest defined pin"
+                    ));
+                }
+            } else if matches!(board, Board::Fire32B) {
+                if pin != max_pin + 2 {
+                    return Err(anyhow::anyhow!(
+                        "For 32 pin boards, the alternative pin assignment for 27C301 A16 must be 2 more than the highest defined pin"
+                    ));
+                }
             }
         } else {
             return Err(anyhow::anyhow!(
