@@ -1549,7 +1549,7 @@
             "function": "ROM",
             "aliases": [
                 "39SF040",
-                "29C040"
+                "29F040"
             ],
             "bit_modes": [8],
             "pins": 32,

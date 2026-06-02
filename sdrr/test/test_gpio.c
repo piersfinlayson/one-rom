@@ -71,20 +71,25 @@ static void get_gpio_drive_from_addr_cs(
             uint8_t temp = local_addr_pins[11];
             local_addr_pins[11] = local_addr_pins[12];
             local_addr_pins[12] = temp;
-        } else if (rom_type == CHIP_TYPE_27C301) {
-            // Pin A16 should be 1 after the higest address pin
+        } else if (rom_type == CHIP_TYPE_27C301 || rom_type == CHIP_TYPE_SST39SF040) {
+            // Pin A16 (27C301) or A18 (SST39SF040) should be 1 after the highest address pin
             uint8_t highest_addr_pin = 0;
             for (int ii = 0; ii < 19; ii++) {
                 if (local_addr_pins[ii] > highest_addr_pin) {
                     highest_addr_pin = local_addr_pins[ii];
                 }
             }
-            if (local_addr_pins[15] == 19) {
-                // fire-28-b
-                local_addr_pins[16] = highest_addr_pin + 2;
-            } else {
-                // fire-28-a
-                local_addr_pins[16] = highest_addr_pin + 1;
+            if (rom_type == CHIP_TYPE_27C301) {
+                if (local_addr_pins[15] == 19) {
+                    // fire-28-b
+                    local_addr_pins[16] = highest_addr_pin + 2;
+                } else {
+                    // fire-28-a
+                    local_addr_pins[16] = highest_addr_pin + 1;
+                }
+            } else if (rom_type == CHIP_TYPE_SST39SF040) {
+                // fire-32-b
+                local_addr_pins[18] = highest_addr_pin + 1;
             }
         } else if (rom_type == CHIP_TYPE_28C256) {
             // Swap pins 14 and 15
@@ -191,6 +196,7 @@ static void get_gpio_drive_from_addr_cs(
         case CHIP_TYPE_27C010:
         case CHIP_TYPE_27C020:
         case CHIP_TYPE_27C040:
+        case CHIP_TYPE_SST39SF040:
             cs1_pin = ce_pin;
             cs2_pin = oe_pin;
             break;

@@ -13,6 +13,7 @@ use alloc::vec::Vec;
 use onerom_config::chip::{ChipFunction, ChipType};
 use onerom_config::fw::{FirmwareProperties, FirmwareVersion, ServeAlg};
 use onerom_config::mcu::Family;
+use onerom_config::hw::Board;
 
 use crate::image::{Chip, ChipSet, ChipSetType, CsConfig, CsLogic, Location, SizeHandling};
 use crate::meta::Metadata;
@@ -22,7 +23,7 @@ pub const MAX_SUPPORTED_FIRMWARE_VERSION: FirmwareVersion = FirmwareVersion::new
 
 const UNSUPPORTED_FIRMWARE_VERSIONS: [FirmwareVersion; 1] = [FirmwareVersion::new(0, 6, 3, 0)];
 
-pub const SUPPORTED_CHIP_TYPES: &[ChipType; 34] = &[
+pub const SUPPORTED_CHIP_TYPES: &[ChipType; 35] = &[
     ChipType::Chip2316,
     ChipType::Chip2716,
     ChipType::Chip6116,
@@ -57,6 +58,7 @@ pub const SUPPORTED_CHIP_TYPES: &[ChipType; 34] = &[
     ChipType::Chip23QL512,
     ChipType::Chip23QL384,
     ChipType::Chip27C200,
+    ChipType::ChipSST39SF040,
 ];
 
 pub(crate) use crate::firmware::*;
@@ -711,19 +713,6 @@ impl Builder {
             }
         }
 
-        // Validate all ROM types are supported by this board
-        let board = props.board();
-        for set in self.config.chip_sets.iter() {
-            for rom in set.chips.iter() {
-                if !board.supports_chip_type(rom.chip_type) {
-                    return Err(Error::UnsupportedBoardChipType {
-                        board,
-                        chip_type: rom.chip_type,
-                    });
-                }
-            }
-        }
-
         // Validate all plugins are built for at least the firmware version
         // we're building for.  The major, minor and patch fw versions are in
         // little endian format, at offsets 24, 26 and 28 in the image.  Also
@@ -788,7 +777,7 @@ impl Builder {
     /// Generate metadata and ROM images once all files loaded
     ///
     /// Returns (metadata, Chip images)
-    pub fn build(&self, props: FirmwareProperties) -> Result<(Vec<u8>, Vec<u8>)> {
+    pub fn build(&mut self, props: FirmwareProperties) -> Result<(Vec<u8>, Vec<u8>)> {
         if props.version() > MAX_SUPPORTED_FIRMWARE_VERSION {
             return Err(Error::FirmwareTooNew {
                 version: props.version(),
@@ -832,6 +821,16 @@ impl Builder {
 
                 let filename = chip_config.filename();
 
+                let chip_config = if matches!(props.board(), Board::Fire32A) && matches!(chip_config.chip_type, ChipType::ChipSST39SF040) {
+                    // Rewrite the SST39SF040 for Fire32A to be a 27C040, assuming that
+                    // a shim will be used (as this variant doesn't support the
+                    // SST39SF040 natively).
+                    let mut new_cc = chip_config.clone();
+                    new_cc.chip_type = ChipType::Chip27C040;
+                    new_cc
+                } else {
+                    chip_config.clone()
+                };
                 let rom = Chip::from_raw_rom_image(
                     chip_id,
                     filename,

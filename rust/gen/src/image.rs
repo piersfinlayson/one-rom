@@ -1568,6 +1568,16 @@ fn handle_snowflake_chip_types(
             modified_map.remove(0);
             modified_map.push(None);
         }
+    } else if *chip_type == ChipType::ChipSST39SF040 {
+        if !matches!(board, Board::Fire32B) {
+            panic!("SST39SF040 is not supported on fire-32-a - use 27C040 with a shim");
+        }
+        
+        // On fire-32-b, regular A18 is the first address pin.  Remove it
+        modified_map.remove(0);
+
+        // Instead A18 is after the last address pin
+        modified_map.push(Some(18));
     }
     modified_map
 }

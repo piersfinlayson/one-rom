@@ -1312,6 +1312,10 @@ static uint8_t get_lowest_addr_gpio(
         if (info->pins->ce < lowest) {
             lowest = info->pins->ce;
         }
+    } else if (rom_type == CHIP_TYPE_SST39SF040) {
+        // Add one to the lowest address pin - as the usual A18 is first, but
+        // on this chip type, on fire-32-b, A18 is last
+        lowest += 1; 
     }
 
     return lowest;
@@ -1432,6 +1436,7 @@ static void piorom_finish_config(
             config->num_cs_pins = 2;
             break;
 
+        case CHIP_TYPE_SST39SF040:
         case CHIP_TYPE_27C010:
         case CHIP_TYPE_27C020:
         case CHIP_TYPE_27C040:
@@ -1566,6 +1571,7 @@ static void piorom_finish_config(
         case CHIP_TYPE_27512:
         case CHIP_TYPE_27C010:
         case CHIP_TYPE_27C020:
+        case CHIP_TYPE_SST39SF040:
         case CHIP_TYPE_27C040:
         case CHIP_TYPE_27C301:
         case CHIP_TYPE_27C200:
@@ -2095,6 +2101,7 @@ static void piorom_force_unused_addr_pins_to_zero(
             }
             break;
 
+        case CHIP_TYPE_SST39SF040:
         case CHIP_TYPE_27C040:
             // No NC pins - all address lines used.
             break;

@@ -6,20 +6,6 @@
 # CONFIG is optional - if not specified, no config is passed to make
 # Other environment variables are optional
 
-# All variants without config (uses Makefile default)
-no-config-f401rb:HW_REV=ice-24-f,MCU=f401rb
-no-config-f401rc:HW_REV=ice-24-f,MCU=f401rc
-no-config-f411rc:HW_REV=ice-24-f,MCU=f411rc
-no-config-f411re:HW_REV=ice-24-f,MCU=f411re
-no-config-f405rg:HW_REV=ice-24-f,MCU=f405rg
-no-config-f405rg:HW_REV=ice-24-f,MCU=f446rc
-no-config-f446re:HW_REV=ice-24-f,MCU=f446re
-no-config-rp2350-24a:HW_REV=fire-24-a,MCU=rp2350
-no-config-rp2350-24b:HW_REV=fire-24-usb-b,MCU=rp2350
-no-config-rp2350-24c:HW_REV=fire-24-c,MCU=rp2350
-no-config-rp2350-24d:HW_REV=fire-24-d,MCU=rp2350
-no-config-rp2350-24e:HW_REV=fire-24-e,MCU=rp2350
-
 # Use test config, one of each STM32F4 variant
 basic-f401rc:HW_REV=ice-24-f,MCU=f401rc,CONFIG=old-config/test-sdrr-0.mk
 basic-f411re:HW_REV=ice-24-f,MCU=f411re,CONFIG=old-config/test-sdrr-0.mk
@@ -185,12 +171,21 @@ fire-23ql384-28:HW_REV=fire-28-a,MCU=rp2350,ROM_CONFIGS="file=images/test/rand_6
 #ice-28-a-f446rc-c1541ii:HW_REV=ice-28-a,MCU=f446rc,CONFIG=old-config/28-1541ii.mk
 
 # Test fire-32-a
-fire-32-a:HW_REV=fire-32-a,MCU=rp2350,ROM_CONFIGS="file=images/test/rand_512KB.rom,trunc,type=27C010"
-fire-32-a:HW_REV=fire-32-a,MCU=rp2350,ROM_CONFIGS="file=images/test/rand_512KB.rom,trunc,type=27C020"
-fire-32-a:HW_REV=fire-32-a,MCU=rp2350,ROM_CONFIGS="file=images/test/rand_512KB.rom,type=27C040"
-fire-32-a:HW_REV=fire-32-a,MCU=rp2350,ROM_CONFIGS="file=images/test/rand_512KB.rom,trunc,type=27C301"
-fire-32-a:HW_REV=fire-32-a,MCU=rp2350,ROM_CONFIGS="file=images/test/rand_512KB.rom,type=27C080,cs1=0"
-fire-32-a:HW_REV=fire-32-a,MCU=rp2350,ROM_CONFIGS="file=images/test/rand_512KB.rom,type=27C080,cs1=1"
+fire-32-a-010:HW_REV=fire-32-a,MCU=rp2350,ROM_CONFIGS="file=images/test/rand_512KB.rom,trunc,type=27C010"
+fire-32-a-020:HW_REV=fire-32-a,MCU=rp2350,ROM_CONFIGS="file=images/test/rand_512KB.rom,trunc,type=27C020"
+fire-32-a-040:HW_REV=fire-32-a,MCU=rp2350,ROM_CONFIGS="file=images/test/rand_512KB.rom,type=27C040"
+fire-32-a-301:HW_REV=fire-32-a,MCU=rp2350,ROM_CONFIGS="file=images/test/rand_512KB.rom,trunc,type=27C301"
+fire-32-a-080-0:HW_REV=fire-32-a,MCU=rp2350,ROM_CONFIGS="file=images/test/rand_512KB.rom,type=27C080,cs1=0"
+fire-32-a-080-1:HW_REV=fire-32-a,MCU=rp2350,ROM_CONFIGS="file=images/test/rand_512KB.rom,type=27C080,cs1=1"
+
+# Test fire-32-b
+fire-32-b-010:HW_REV=fire-32-b,MCU=rp2350,ROM_CONFIGS="file=images/test/rand_512KB.rom,trunc,type=27C010"
+fire-32-b-020:HW_REV=fire-32-b,MCU=rp2350,ROM_CONFIGS="file=images/test/rand_512KB.rom,trunc,type=27C020"
+fire-32-b-040:HW_REV=fire-32-b,MCU=rp2350,ROM_CONFIGS="file=images/test/rand_512KB.rom,type=27C040"
+fire-32-b-301:HW_REV=fire-32-b,MCU=rp2350,ROM_CONFIGS="file=images/test/rand_512KB.rom,trunc,type=27C301"
+fire-32-b-080-0:HW_REV=fire-32-b,MCU=rp2350,ROM_CONFIGS="file=images/test/rand_512KB.rom,type=27C080,cs1=0"
+fire-32-b-080-1:HW_REV=fire-32-b,MCU=rp2350,ROM_CONFIGS="file=images/test/rand_512KB.rom,type=27C080,cs1=1"
+fire-32-b-39sf040:HW_REV=fire-32-b,MCU=rp2350,ROM_CONFIGS="file=images/test/rand_512KB.rom,type=SST39SF040"
 
 # Test fire-40-a
 fire-40-a:HW_REV=fire-40-a,MCU=rp2350,ROM_CONFIGS="file=images/test/rand_512KB.rom,type=27C400"

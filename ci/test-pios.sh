@@ -111,6 +111,12 @@ test_32pin() {
 
     # Supported as of 0.6.13
     run_no_cs  $hw_rev images/test/rand_512KB.rom type=23C1010,trunc "$extra_flags"
+
+    # Not supported on fire-32-a:
+    if [ "$hw_rev" = "fire-32-a" ]; then
+        return
+    fi
+    run_no_cs  $hw_rev images/test/rand_512KB.rom type=SST39SF040,trunc "$extra_flags"
 }
 
 test_40pin() {

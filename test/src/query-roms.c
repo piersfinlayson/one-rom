@@ -145,6 +145,7 @@ static void init_address_mangler(
             mangler->cs2_pin = config->mcu.pins.oe.pin_27c020;
             break;
 
+        case CHIP_TYPE_SST39SF040:
         case CHIP_TYPE_27C040:
             mangler->cs1_pin = config->mcu.pins.ce.pin_27c040;
             mangler->cs2_pin = config->mcu.pins.oe.pin_27c040;
@@ -222,9 +223,10 @@ static void init_address_mangler(
         uint8_t temp = address_mangler.addr_pins[14];
         address_mangler.addr_pins[14] = address_mangler.addr_pins[15];
         address_mangler.addr_pins[15] = temp;
-    } else if (rom_type == CHIP_TYPE_27C301) {
-        // Special case for 32 pin ROMs, the 27C301.  It has A16 after all the
-        // other pins, not at the beginning
+    } else if (rom_type == CHIP_TYPE_27C301 || rom_type == CHIP_TYPE_SST39SF040) {
+        // Special case for 32 pin ROMs, the 27C301 and SST39SF040.
+        // It has A16 (27C301) and A18 (SST39SF040) after all the other pins,
+        // not at the beginning
         // Find the max address pin
         uint8_t max_addr_pin = 0;
         for (int ii = 0; ii < MAX_ADDR_LINES; ii++) {
@@ -234,18 +236,30 @@ static void init_address_mangler(
                 }
             }
         }
-        if (address_mangler.addr_pins[18] == 24) {
-            // fire-32-a
-            address_mangler.addr_pins[16] = max_addr_pin + 1; // A16 is the next pin after the max address pin
-        } else if (address_mangler.addr_pins[18] == 16) {
-            // fire-32-b
-            address_mangler.addr_pins[16] = max_addr_pin + 2; // A16 is after A19 after the last pin
-            // Not used for this ROM type
-            address_mangler.addr_pins[17] = 255;
-            address_mangler.addr_pins[18] = 255;
-        } else {
-            printf("Error: Unexpected A[18] pin %d for 27C301 ROM type\n", address_mangler.addr_pins[18]);
-            assert(0 && "Unexpected config for 27C301");
+        if (rom_type == CHIP_TYPE_27C301) {
+            // fire-28-a has A16 at pin 24, fire-28-b has it at pin 16
+            if (address_mangler.addr_pins[18] == 24) {
+                // fire-32-a
+                address_mangler.addr_pins[16] = max_addr_pin + 1; // A16 is the next pin after the max address pin
+            } else if (address_mangler.addr_pins[18] == 16) {
+                // fire-32-b
+                address_mangler.addr_pins[16] = max_addr_pin + 2; // A16 is after A19 after the last pin
+                // Not used for this ROM type
+                address_mangler.addr_pins[17] = 255;
+                address_mangler.addr_pins[18] = 255;
+            } else {
+                printf("Error: Unexpected A[18] pin %d for 27C301 ROM type\n", address_mangler.addr_pins[18]);
+                assert(0 && "Unexpected config for 27C301");
+            }
+        } else if (rom_type == CHIP_TYPE_SST39SF040) {
+            // fire-32-b has A18 at pin 16
+            if (address_mangler.addr_pins[18] == 16) {
+                // fire-32-b
+                address_mangler.addr_pins[18] = max_addr_pin + 1; // A18 is the next pin after the max address pin
+            } else {
+                printf("Error: Unexpected A[18] pin %d for SST39SF040 ROM type\n", address_mangler.addr_pins[18]);
+                assert(0 && "Unexpected config for SST39SF040 - not supported on fire-32-a");
+            }
         }
     } else if (rom_type == CHIP_TYPE_2364 && config->rom.pin_count == 28) {
         uint8_t pin_a11 = address_mangler.addr_pins[11];
@@ -569,6 +583,7 @@ const char* rom_type_to_string(sdrr_rom_type_t rom_type) {
         case CHIP_TYPE_27512: return "27512";
         case CHIP_TYPE_27C010: return "27C010";
         case CHIP_TYPE_27C020: return "27C020";
+        case CHIP_TYPE_SST39SF040: return "SST39SF040";
         case CHIP_TYPE_27C040: return "27C040";
         case CHIP_TYPE_27C080: return "27C080";
         case CHIP_TYPE_27C301: return "27C301";
@@ -607,6 +622,7 @@ uint8_t get_num_cs(sdrr_rom_type_t rom_type) {
         case CHIP_TYPE_27C010:
         case CHIP_TYPE_27C020:
         case CHIP_TYPE_27C040:
+        case CHIP_TYPE_SST39SF040:
         case CHIP_TYPE_27C301:
             return 2;
         case CHIP_TYPE_2364:
@@ -691,6 +707,7 @@ size_t get_expected_rom_size(sdrr_rom_type_t rom_type) {
         case CHIP_TYPE_27C010: return 131072;
         case CHIP_TYPE_27C020: return 262144;
         case CHIP_TYPE_27C040: return 524288;
+        case CHIP_TYPE_SST39SF040: return 524288;
         case CHIP_TYPE_27C080: return 524288;
         case CHIP_TYPE_27C301: return 131072;
         case CHIP_TYPE_27C400: return 524288;
@@ -725,6 +742,7 @@ sdrr_rom_type_t rom_type_from_string(const char* type_str) {
     else if (strcmp(type_str, "27C010") == 0) return CHIP_TYPE_27C010;
     else if (strcmp(type_str, "27C020") == 0) return CHIP_TYPE_27C020;
     else if (strcmp(type_str, "27C040") == 0) return CHIP_TYPE_27C040;
+    else if (strcmp(type_str, "SST39SF040") == 0) return CHIP_TYPE_SST39SF040;
     else if (strcmp(type_str, "27C080") == 0) return CHIP_TYPE_27C080;
     else if (strcmp(type_str, "27C301") == 0) return CHIP_TYPE_27C301;
     else if (strcmp(type_str, "27C400") == 0) return CHIP_TYPE_27C400;

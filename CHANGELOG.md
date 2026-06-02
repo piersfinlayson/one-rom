@@ -8,6 +8,7 @@ Added:
 - New 28 and 32 pin boards - fire-28-c, fire-32-b.
 - Enhance lab-new to allow reading of any supported ROM type.
 - HN62402 (128KBx16/256x8) support for fire-40-a.  Uses 512KB on flash.
+- SST39SF040 support (fire-32-b only).  Uses 512KB on flash.
 
 Fixed:
 - 23C1010 support - there were failures when creating firmware with 23C1010.
