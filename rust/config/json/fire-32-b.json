@@ -81,6 +81,7 @@
             "swclk_sel": 38,
             "swdio_sel": 39,
             "status": 45,
+            "neo": 44,
             "alt": {
                 "27C301": {
                     "a16": 36
