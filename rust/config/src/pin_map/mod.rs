@@ -51,7 +51,8 @@ pub struct BoardPinMap {
     /// MCU GPIO for the board's status LED; 255 if absent.
     led_gpio: u8,
 
-    board: Board,
+    /// The board this map was built for, for reference.
+    _board: Board,
 }
 
 impl BoardPinMap {
@@ -90,11 +91,20 @@ impl BoardPinMap {
             }
         }
 
+        // Programming pins (VPP, PGM etc.)
+        if let Some(prog_pins) = ref_chip.programming_pins() {
+            for spec in prog_pins {
+                if let Some(gpio) = board.alt_pin(&ref_chip, spec.name) {
+                    set_pin(&mut pins, spec.pin, gpio);
+                }
+            }
+        }
+
         Self {
             pins,
             chip_pins: board.chip_pins(),
             led_gpio: board.pin_status(),
-            board,
+            _board: board,
         }
     }
 
@@ -105,14 +115,7 @@ impl BoardPinMap {
             return None;
         }
         match self.pins[physical_pin as usize - 1] {
-            255 => {
-                if self.chip_pins == 32 && physical_pin == 1 {
-                    // Special case Fire 32 boards
-                    Some(self.board.pin_cs1(ChipType::Chip27C080))
-                } else {
-                    None
-                }
-            },
+            255 => None,
             gpio => Some(gpio),
         }
     }

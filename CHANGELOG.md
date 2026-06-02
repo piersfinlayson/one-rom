@@ -5,28 +5,25 @@ All notables changes between versions are documented in this file.
 ## v0.6.13 - 2026-??-??
 
 Added:
-- New 28 and 32 pin boards - fire-28-c, fire-32-b.
-- Enhance lab-new to allow reading of any supported ROM type.
+- Enhance lab-new to allow reading of any supported ROM type and single build supporting all One ROM sizes.
 - HN62402 (128KBx16/256x8) support for fire-40-a.  Uses 512KB on flash.
+- Support for prototypes fire-28-c and fire-32-b.
 - SST39SF040 support (fire-32-b only).  Uses 512KB on flash.
 
 Fixed:
 - 23C1010 support - there were failures when creating firmware with 23C1010.
 
 To do:
-- Figure out why I had to hardcode SST39SF040 support for tester-32.
-- fire-28-c Add multi-ROM sets and dynamic bank switching.
 - Actually add 23C1001 support to firmware and test it (fire-32-b only).
+- fire-28-c Add multi-ROM sets and dynamic bank switching.
+
+Delay until major firmware - see [firmware-rewrit.md](docs/firmware-rewrite.md):
 - Add method to get RP2350A/B from config::hw::Board, and use in generator.rs instead of hard-coding.
-- config/hw generator is subtracting 8 from 28 pin board address lines, but should be 10 for fire-28-a - should be avoiding the X pins as well, better than just hardcoding the fire-28-c type
-- fire-28-c Fix 23QL384 and 23QL512 support.  Looks like 23QL384 broke as A14 and A15 (/CE for this chip type) are no longer next to each other.  Also, both 23QL384 and 23QL512 need to be 256KB on fire-28-c due to /CE (A15) being 1 pin "earlier".
 - fire-28-c optimise image sizes
 - fire-32-b optimise image sizes
 - In general we are missing any ability in the core firmware (and also elsewhere) to support specific ROM types only on certain revisions of different pin boards.  This likely needs somworking through.
-- Finish off 39SF040 support - disable on fire-32-a (or map to 27C040), and enable on fire-32-b
 - Make 27C301 use less flash on fire-32-b (currently using 512KB, 256KB should be possible)
-
-All of this is pushing me in the direction of a major firmware overhaul, with the metadata containing the PIO serving information required for each ROM for Fire boards, to avoid as much special casing in the firmware.  This would still be complicated, but likely easier to reason about than the current approach, which is becoming unmaintainable.  Now we have 2 x independent and unique automated tests for each ROM type, and also One ROM Lab can live test nearly every ROM type fairly easily, this change is viable.  This would require a major version bump, as the existing tooling cannot build v0.7.0 firmware.
+- config/hw generator is subtracting 8 from 28 pin board address lines, but should be 10 for fire-28-a - should be avoiding the X pins as well, better than just hardcoding the fire-28-c type
 
 ## v0.6.12 - 2026-05-26
 

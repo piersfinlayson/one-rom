@@ -14,7 +14,13 @@ Metadata for a particular ROM type is only included once, even if there are mult
 
 Ideally, the complexity - that is the different algorithms and their parameters required for each ROM type on each board - would be inferred from the chip type and board (JSON) metadata.  This is possible to some extend, much as the existing pre-processor and firmware infers behaviour like contiguous or non-contiguous CS pins.  However, it isn't entirely possible (hence handle_snowflake_chip_types() in the pre-processor), so there is expected to be a match, switch or table driven approach taken, using the information documented below in [ROM Configuration](#rom-configuration).
 
-Ice support and non-PIO Fire support are expected to be dropped in this rewrite.  Ice continues to be supported via the 0.6.* firmware but isn't expected to be enhanced in future.  The only requirement for non-PIO Fire support is for boards fire-24-a/b when serving multi-ROM sets.  This continues to be supported by 0.6.* firmware, but won't be enhanced in future.
+## Deprecated One ROM Hardware Revisions
+
+Ice support and non-PIO Fire support are expected to be dropped in this rewrite.  Ice continues to be supported via the 0.6.* firmware but isn't expected to be enhanced in future.
+
+The only requirement for non-PIO Fire support is for boards fire-24-a/b when serving multi-ROM sets, as PIO + multi-ROM set serving are incompatible on these revisions.  This continues to be supported by 0.6.* firmware, but won't be enhanced in future.
+
+## Language Choice
 
 Consideration has been given to moving from C to Rust for the core firmware.  However, C was chosen for the rewrite for a number of reasons:
 - Make the firmware more approachable by a wider group of people.
@@ -22,9 +28,23 @@ Consideration has been given to moving from C to Rust for the core firmware.  Ho
 
 Rust remains the choice for the pre-processor.  It continues to be available as Rust crates and WASM libraries for integration into different tools. 
 
+## Testing
+
+One ROM's automated testing consists of:
+- `make test` - checks with independent code that the ROM image as included in firmware is mangled as expected
+- `make test-pio` - emulates the One ROM firmware and included metadata + ROM images, to ensure every byte is served as expected, and data lines are not driven when they shouldn't be
+- `rust/lab-new` - runs on One ROM hardware and reads attached One ROMs (and real ROMs, EPROMs and EEPROMs) to ensure they read correctly 
+
+As part of the firmware rewrite all these tests are retained and used to validate the new firmware, for all supported ROM types, including CS configurations.
+
 ## Open issues
 
 - RBCP currently exposes the ROM type to the host.  If the firmware doesn't know the ROM type, we either need to remove this from RBCP, or, perhaps more usefully, include an RBCP ROM type identifier in the metadata, which the firmware just dumbly serves via RBCP.
+
+- It is expected that we'll collapse down to a single metadata/image generator with this firmware, removing the support in `sdrr-gen` to generate a firmware with it all included in one shot.  This means that
+  - We have to find a way to include the metadata/ROM images in the `make test-pio` type testing.
+  - We still need a way to generate the ROM image on its own and perform the `make test` type testing, to ensure the ROM image is mangled as appropriate.
+  It is currently unknown how these will be achieved.
 
 ## Details
 
