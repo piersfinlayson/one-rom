@@ -2,7 +2,7 @@
 
 All notables changes between versions are documented in this file.
 
-## v0.6.13 - 2026-??-??
+## v0.6.13 - 2026-06-02
 
 Added:
 - Enhance lab-new to allow reading of any supported ROM type and single build supporting all One ROM sizes.
@@ -12,18 +12,6 @@ Added:
 
 Fixed:
 - 23C1010 support - there were failures when creating firmware with 23C1010.
-
-To do:
-- Actually add 23C1001 support to firmware and test it (fire-32-b only).
-- fire-28-c Add multi-ROM sets and dynamic bank switching.
-
-Delay until major firmware - see [firmware-rewrit.md](docs/firmware-rewrite.md):
-- Add method to get RP2350A/B from config::hw::Board, and use in generator.rs instead of hard-coding.
-- fire-28-c optimise image sizes
-- fire-32-b optimise image sizes
-- In general we are missing any ability in the core firmware (and also elsewhere) to support specific ROM types only on certain revisions of different pin boards.  This likely needs somworking through.
-- Make 27C301 use less flash on fire-32-b (currently using 512KB, 256KB should be possible)
-- config/hw generator is subtracting 8 from 28 pin board address lines, but should be 10 for fire-28-a - should be avoiding the X pins as well, better than just hardcoding the fire-28-c type
 
 ## v0.6.12 - 2026-05-26
 

@@ -14,6 +14,10 @@ Metadata for a particular ROM type is only included once, even if there are mult
 
 Ideally, the complexity - that is the different algorithms and their parameters required for each ROM type on each board - would be inferred from the chip type and board (JSON) metadata.  This is possible to some extend, much as the existing pre-processor and firmware infers behaviour like contiguous or non-contiguous CS pins.  However, it isn't entirely possible (hence handle_snowflake_chip_types() in the pre-processor), so there is expected to be a match, switch or table driven approach taken, using the information documented below in [ROM Configuration](#rom-configuration).
 
+## Build Variants
+
+It is expected to collapse down to a single firmware binary for all hardware revisions.  This can be achieved by building for the RP2350B (assuming the larger pin counts).  The only issue this gives is that ADC pins are different GPIOs, but that is not an issue as the firmware doesn't use ADC.  Any plugin that wishes to use ADC can query the RP2350A/B variant using the standard mechanism.
+
 ## Deprecated One ROM Hardware Revisions
 
 Ice support and non-PIO Fire support are expected to be dropped in this rewrite.  Ice continues to be supported via the 0.6.* firmware but isn't expected to be enhanced in future.
@@ -46,7 +50,16 @@ As part of the firmware rewrite all these tests are retained and used to validat
   - We still need a way to generate the ROM image on its own and perform the `make test` type testing, to ensure the ROM image is mangled as appropriate.
   It is currently unknown how these will be achieved.
 
-## Details
+## Detailed To-Dos
+
+- Add 23C1001 support to firmware and test it (fire-32-b only).
+- fire-28-c Add multi-ROM sets and dynamic bank switching.
+- Add method to get RP2350A/B from config::hw::Board, and use in generator.rs instead of hard-coding.
+- fire-28-c optimise image sizes
+- fire-32-b optimise image sizes
+- In general we are missing any ability in the core firmware (and also elsewhere) to support specific ROM types only on certain revisions of different pin boards.  This likely needs somworking through.
+- Make 27C301 use less flash on fire-32-b (currently using 512KB, 256KB should be possible)
+- config/hw generator is subtracting 8 from 28 pin board address lines, but should be 10 for fire-28-a - should be avoiding the X pins as well, better than just hardcoding the fire-28-c type
 
 ## Algorithms
 
