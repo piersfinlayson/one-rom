@@ -3,16 +3,16 @@
 
 :root {
     /* Waveform colors */
-    --color-background: #1a1a1a;
+    --color-background: #000000; /*#1a1a1a;*/
     --color-grid: #333333;
-    --color-high: #00ff00;
+    --color-high: #ff3000;
     --one-rom-gold: #ffb700;
     --one-rom-gold-darker: #cc9200;
     --one-rom-gold-darker2: #e6a000;
-    --color-low: #004400;
+    --color-low: #00ccff;
     --color-smeared-high: #00ff00;
     --color-smeared-low: #004400;
-    --color-smeared-hatch: #ffff00;
+    --color-smeared-hatch: #666666;
     --color-hex: #ffffff;
     --color-label: #aaaaaa;
     --color-group-bg: #252525;

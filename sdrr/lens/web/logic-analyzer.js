@@ -42,9 +42,10 @@ const CONFIG = {
     // Cursor
     CURSOR_VALUE_FONT_SIZE: 20,     // Font size for cursor value display
     CURSOR_VALUE_OFFSET_X: 20,      // Horizontal offset from cursor line
-    CURSOR_VALUE_OFFSET_Y: -0.5,       // Vertical offset above trace (as fraction of trace height)
-    CURSOR_VALUE_COLOR: '#000000',  // Color for cursor values};
-    CURSOR_VALUE_TEXT_COLOR: '#ffffff',  // Color for cursor values
+    CURSOR_VALUE_OFFSET_Y: -0.5,    // Vertical offset above trace (as fraction of trace height)
+    CURSOR_VALUE_COLOR: '#000000',      // Color for backgroud
+    CURSOR_VALUE_TITLE_COLOR: '#00aa00',// Color for cursor title
+    CURSOR_VALUE_TEXT_COLOR: '#aaaa00', // Color for cursor values
     CURSOR_VALUE_PADDING_X: 2,      // Horizontal padding around cursor value text
     CURSOR_VALUE_PADDING_Y: 2,      // Vertical padding around cursor value text
     CURSOR_VALUE_HEIGHT_MULTIPLIER: 1.3,  // Account for font ascenders
@@ -53,16 +54,17 @@ const CONFIG = {
     TIME_AXIS_HEIGHT: 40,           // Height reserved for time axis at bottom
     TIME_AXIS_TICK_HEIGHT: 8,       // Height of major tick marks
     TIME_AXIS_MINOR_TICK_HEIGHT: 4, // Height of minor tick marks
-    TIME_AXIS_COLOR: '#888888',     // Color for axis and ticks
-    TIME_AXIS_TEXT_COLOR: '#ffffff', // Color for cycle numbers
+    TIME_AXIS_COLOR: '#ffffff',     // Color for axis and ticks
+    TIME_AXIS_TEXT_COLOR: '#ffb700', // Color for cycle numbers
+    DURATION_COLOR: '#00ccff',
 
     // Stepping timers
     STEP_INITIAL_DELAY: 500,        // Delay before starting continuous stepping (ms)
     STEP_INTERVAL: 250,             // Interval between steps when holding (ms)
 
     // Right hand values
-    RIGHT_HAND_VALUE_COLOR: '#000000',  // Color for right-hand values
-    RIGHT_HAND_VALUE_TEXT_COLOR: '#00ff00',  // Color for right-hand value text
+ //   RIGHT_HAND_VALUE_COLOR: '#000000',  // Color for right-hand values
+    RIGHT_HAND_VALUE_TEXT_COLOR: '#00aa00',  // Color for right-hand value text
 
     MAX_SAMPLES: 1000000,  // Keep last 10M samples (~24MB)
 }
@@ -367,7 +369,7 @@ class SignalDecoder {
         const bit = (gpios & (1n << BigInt(pinInfo.pin))) !== 0n ? 1 : 0;
         return pinInfo.inverted ? (bit ^ 1) : bit;  // XOR with 1 to invert if needed
     }
-    
+   
     // Decode address value from GPIO state
     decodeAddress(gpios) {
         let addr = 0;
@@ -640,6 +642,7 @@ class WaveformRenderer {
         this.dataExpanded = true;
         
         this.cursorX = null;  // Mouse X position for cursor
+        this.cursorY = null;  // Mouse Y position for cursor
         this.cursorCycle = null;  // Cycle at cursor position
         this.currentLayout = [];  // Calculated layout of traces for current decoder
 
@@ -648,16 +651,19 @@ class WaveformRenderer {
     }
     
     loadColors() {
-        COLORS.background = getCSSColor('--color-background');
-        COLORS.grid = getCSSColor('--color-grid');
-        COLORS.high = getCSSColor('--color-high');
-        COLORS.low = getCSSColor('--color-low');
-        COLORS.smearedHigh = getCSSColor('--color-smeared-high');
-        COLORS.smearedLow = getCSSColor('--color-smeared-low');
+        COLORS.background   = getCSSColor('--color-background');
+        COLORS.high         = getCSSColor('--color-high');
+        COLORS.low          = getCSSColor('--color-low');
         COLORS.smearedHatch = getCSSColor('--color-smeared-hatch');
-        COLORS.hex = getCSSColor('--color-hex');
-        COLORS.label = getCSSColor('--color-label');
-        COLORS.groupBg = getCSSColor('--color-group-bg');
+        COLORS.hex          = getCSSColor('--color-hex');
+        COLORS.label        = getCSSColor('--color-label');
+        COLORS.nbCyl        = getCSSColor('--one-rom-gold');
+        COLORS.duration     = getCSSColor('--color-duration');
+
+//        COLORS.smearedHigh = getCSSColor('--color-smeared-high');
+//        COLORS.smearedLow = getCSSColor('--color-smeared-low');
+//        COLORS.grid = getCSSColor('--color-grid');
+//        COLORS.groupBg = getCSSColor('--color-group-bg');
     }
     
     resize() {
@@ -705,7 +711,7 @@ class WaveformRenderer {
             traceList.push({
                 type: 'addr_hex',
                 minHeight: MIN_HEX_TRACE_HEIGHT,
-                label: `A[${decoder.pinMap.addr.length-1}:0]`,
+                label: `A[${decoder.pinMap.addr.length-1}:0]\nCycl ns`,
                 gpio: null
             });
             minTotalHeight += MIN_HEX_TRACE_HEIGHT + MIN_TRACE_SPACING;
@@ -729,7 +735,7 @@ class WaveformRenderer {
             traceList.push({
                 type: 'data_hex',
                 minHeight: MIN_HEX_TRACE_HEIGHT,
-                label: `D[${decoder.pinMap.data.length-1}:0]`,
+                label: `D[${decoder.pinMap.data.length-1}:0]\nCycl ns`,
                 gpio: null
             });
             minTotalHeight += MIN_HEX_TRACE_HEIGHT + MIN_TRACE_SPACING;
@@ -801,13 +807,25 @@ class WaveformRenderer {
         this.currentLayout = layout;
         
         // Draw labels
-        this.ctx.fillStyle = COLORS.label;
         this.ctx.font = `${CONFIG.FONT_SIZE}px monospace`;
         this.ctx.textAlign = 'right';
         this.ctx.textBaseline = 'middle';
         
         for (const trace of layout) {
-            this.ctx.fillText(trace.label, CONFIG.LABEL_WIDTH - 5, trace.y + trace.height / 2);
+            const posiCr=trace.label.search("\n");
+            if(posiCr === -1) {
+                this.ctx.fillStyle = CONFIG.RIGHT_HAND_VALUE_TEXT_COLOR;
+                this.ctx.fillText(trace.label, CONFIG.LABEL_WIDTH - 5, trace.y + trace.height / 2);
+            }
+            else { // nbCycle constant level + duration unit
+                this.ctx.fillStyle = COLORS.hex;
+                this.ctx.fillText(trace.label.substring(0, posiCr), CONFIG.LABEL_WIDTH - 5, trace.y + trace.height / 4);
+                const posiSp=trace.label.search(" ");
+                this.ctx.fillStyle = CONFIG.TIME_AXIS_TEXT_COLOR;
+                this.ctx.fillText(trace.label.substring(posiCr + 1, posiSp), CONFIG.LABEL_WIDTH - 5 - posiSp * 2, trace.y + trace.height * 3 / 4);
+                this.ctx.fillStyle = CONFIG.DURATION_COLOR;//COLORS.duration;
+                this.ctx.fillText(trace.label.substring(posiSp + 1), CONFIG.LABEL_WIDTH - 5, trace.y + trace.height * 3 / 4);
+            }
         }
         
         // Calculate visible cycle range
@@ -889,28 +907,36 @@ class WaveformRenderer {
             
             if (previousState !== null && previousX !== null) {
                 // Draw horizontal line from previous to current
-                this.ctx.beginPath();
-                
-                if (previousDriven) {
-                    // Driven - draw at HIGH or LOW
-                    this.ctx.strokeStyle = COLORS.high;
-                    const y = previousState ? yHigh : yLow;
+               this.ctx.beginPath();
+ 
+               if (previousDriven) {
+                   const y = previousState ? yHigh : yLow;
+                    this.ctx.strokeStyle = previousState ? COLORS.high : COLORS.low ; // with 2 colors : --color-high: #ff0000; --color-low: #0088ff;
                     this.ctx.moveTo(Math.max(CONFIG.LABEL_WIDTH, previousX), y);
                     this.ctx.lineTo(currentX, y);
+                    if(this.cyclesPerPixel<0.2) { // add graduation
+                        this.ctx.stroke();
+                        this.ctx.moveTo(Math.max(CONFIG.LABEL_WIDTH, previousX), y);
+                        this.ctx.lineTo(Math.max(CONFIG.LABEL_WIDTH, previousX), y+(previousState?6:-6));
+                    }
                 } else {
                     // High-Z - draw at middle level
-                    this.ctx.strokeStyle = COLORS.smearedHatch;
+                    this.ctx.strokeStyle = COLORS.smearedHatch; // Grey : --color-smeared-hatch: #888888;
                     const yMid = trace.y + trace.height / 2;
                     this.ctx.moveTo(Math.max(CONFIG.LABEL_WIDTH, previousX), yMid);
                     this.ctx.lineTo(currentX, yMid);
+                    if(this.cyclesPerPixel<0.2) { // add graduation
+                        this.ctx.stroke();
+                        this.ctx.moveTo(Math.max(CONFIG.LABEL_WIDTH, previousX), yMid-3);
+                        this.ctx.lineTo(Math.max(CONFIG.LABEL_WIDTH, previousX), yMid+3);
+                    }
                 }
-                
                 this.ctx.stroke();
                 
                 // If drive state or level changed, draw transition
                 if (isDriven !== previousDriven || (isDriven && currentState !== previousState)) {
                     this.ctx.beginPath();
-                    this.ctx.strokeStyle = COLORS.high;
+                    this.ctx.strokeStyle = COLORS.smearedHatch; // Grey not COLORS.high;                
                     
                     // Calculate previous and current Y positions
                     let prevY, currY;
@@ -944,10 +970,15 @@ class WaveformRenderer {
             if (lastSampleX > previousX) {
                 this.ctx.beginPath();
                 if (previousDriven) {
-                    this.ctx.strokeStyle = COLORS.high;
+                    this.ctx.strokeStyle = previousState ? COLORS.high : COLORS.low ;//this.ctx.strokeStyle = COLORS.high;
                     const y = previousState ? yHigh : yLow;
                     this.ctx.moveTo(previousX, y);
                     this.ctx.lineTo(Math.min(lastSampleX, canvasEndX), y);
+                    if(this.cyclesPerPixel<0.2) {
+                        this.ctx.stroke();
+                        this.ctx.moveTo(Math.min(lastSampleX, canvasEndX), y);
+                        this.ctx.lineTo(Math.min(lastSampleX, canvasEndX), y+(previousState?6:-6));
+                    }
                 } else {
                     this.ctx.strokeStyle = COLORS.smearedHatch;
                     const yMid = trace.y + trace.height / 2;
@@ -956,6 +987,28 @@ class WaveformRenderer {
                 }
                 this.ctx.stroke();
             }
+        }
+    }
+
+    privateHex(tr,bts,stbValue,curX,stbStartX) { // Avoid this redundant block of code in renderHexTrace()
+        const hexStr = '0x' + stbValue.toString(16).toUpperCase().padStart(
+            Math.ceil(bts.length / 4), '0');
+        this.ctx.fillStyle = COLORS.hex;
+        this.ctx.font = `${CONFIG.FONT_SIZE}px monospace`;
+        this.ctx.textAlign = 'left';
+        this.ctx.textBaseline = 'middle';
+        this.ctx.fillText(hexStr,
+                          Math.max(CONFIG.LABEL_WIDTH+2,stbStartX),tr.y+tr.height/4);
+        if (Math.round((curX-stbStartX)*this.cyclesPerPixel) < 1000) {
+            this.ctx.fillStyle = CONFIG.TIME_AXIS_TEXT_COLOR;
+            this.ctx.fillText(Math.round((curX-stbStartX)*this.cyclesPerPixel),
+                              Math.max(CONFIG.LABEL_WIDTH+2,stbStartX),
+                              tr.y + tr.height * 3 / 4);
+            this.ctx.fillStyle = CONFIG.DURATION_COLOR;//COLORS.duration;
+            this.ctx.fillText(Math.round((curX-stbStartX)*this.cyclesPerPixel*20/3),
+                              Math.max(CONFIG.LABEL_WIDTH+2,stbStartX)+
+                                 (Math.round((curX-stbStartX)*this.cyclesPerPixel)<10?12:20),
+                              tr.y + tr.height * 3 / 4);
         }
     }
     
@@ -999,18 +1052,9 @@ class WaveformRenderer {
                     if (stableValue !== null && stableStartX !== null) {
                         const regionWidth = currentX - Math.max(CONFIG.LABEL_WIDTH, stableStartX);
                         if (regionWidth > 30) {  // Only draw if wide enough
-                            const hexStr = '0x' + stableValue.toString(16).toUpperCase().padStart(
-                                Math.ceil(bits.length / 4), '0');
-                            this.ctx.fillStyle = COLORS.hex;
-                            this.ctx.font = `${CONFIG.FONT_SIZE}px monospace`;
-                            this.ctx.textAlign = 'left';
-                            this.ctx.textBaseline = 'middle';
-                            this.ctx.fillText(hexStr, 
-                                Math.max(CONFIG.LABEL_WIDTH + 2, stableStartX), 
-                                trace.y + trace.height / 2);
+                            this.privateHex(trace,bits,stableValue,currentX,stableStartX);
                         }
                     }
-                    
                     // Draw transition marker (vertical line)
                     this.ctx.strokeStyle = COLORS.smearedHatch;
                     this.ctx.lineWidth = 1;
@@ -1040,17 +1084,8 @@ class WaveformRenderer {
                 // Don't draw if too close to the end (right-hand value will show it)
                 const lastSampleX = this.cycleToPixelX(samples[samples.length - 1].cycle);
                 const tooCloseToEnd = stableStartX > lastSampleX - 150;  // 150px margin
-                
                 if (!tooCloseToEnd) {
-                    const hexStr = '0x' + stableValue.toString(16).toUpperCase().padStart(
-                        Math.ceil(bits.length / 4), '0');
-                    this.ctx.fillStyle = COLORS.hex;
-                    this.ctx.font = `${CONFIG.FONT_SIZE}px monospace`;
-                    this.ctx.textAlign = 'left';
-                    this.ctx.textBaseline = 'middle';
-                    this.ctx.fillText(hexStr, 
-                        Math.max(CONFIG.LABEL_WIDTH + 2, stableStartX), 
-                        trace.y + trace.height / 2);
+                    this.privateHex(trace,bits,stableValue,currentX,stableStartX);
                 }
             }
         }
@@ -1060,9 +1095,9 @@ class WaveformRenderer {
         if (this.cursorX === null || this.cursorCycle === null) return;
         
         // Draw vertical line
-        this.ctx.strokeStyle = '#ffffff';
+        this.ctx.strokeStyle = '#00ff00';
         this.ctx.lineWidth = 1;
-        this.ctx.setLineDash([4, 4]);
+        this.ctx.setLineDash([1, 7]);
         this.ctx.beginPath();
         this.ctx.moveTo(this.cursorX, 0);
         this.ctx.lineTo(this.cursorX, this.canvas.height);
@@ -1081,90 +1116,112 @@ class WaveformRenderer {
         this.ctx.textBaseline = 'top';
         
         const valueX = this.cursorX + CONFIG.CURSOR_VALUE_OFFSET_X;
+        let addataText = '';
 
         for (const trace of layout) {
+            let titleText = '';
             let valueText = '';
             
             if (trace.type === 'addr_hex') {
                 const addr = decoder.decodeAddress(sample.gpios);
-                valueText = '0x' + addr.toString(16).toUpperCase().padStart(
+                addataText = ' (' + addr.toString(16).toUpperCase().padStart(
                     Math.ceil(decoder.pinMap.addr.length / 4), '0');
             } else if (trace.type === 'data_hex') {
                 const data = decoder.decodeData(sample.gpios);
                 const ascii = byteToASCII(data);
-                valueText = '0x' + data.toString(16).toUpperCase().padStart(
-                    Math.ceil(decoder.pinMap.data.length / 4), '0') + ` ${ascii}`;
+                addataText = addataText + ':' + data.toString(16).toUpperCase().padStart(
+                    Math.ceil(decoder.pinMap.data.length / 4), '0') + ')'; //+ ` ${ascii}`;
             } else if (trace.type === 'addr_bit') {
                 const pinNum = decoder.pinMap.addr[trace.bit];
                 const isDriven = decoder.isPinDriven(sample.driven, pinNum);
-                const val = isDriven ? decoder.extractBit(sample.gpios, pinNum).toString() : 'High-Z';
-                valueText = trace.label + ': ' + val;
+                const val = isDriven ? decoder.extractBit(sample.gpios, pinNum).toString() : 'Z'; 
+                //const val = decoder.extractWidth(sample.gpios, pinNum).toString();
+                titleText = trace.label + ':';
+                valueText = val;
             } else if (trace.type === 'data_bit') {
                 const pinNum = decoder.pinMap.data[trace.bit];
                 const isDriven = decoder.isPinDriven(sample.driven, pinNum);
-                const val = isDriven ? decoder.extractBit(sample.gpios, pinNum).toString() : 'High-Z';
-                valueText = trace.label + ': ' + val;
+                const val = isDriven ? decoder.extractBit(sample.gpios, pinNum).toString() : 'Z'; 
+                //const val = decoder.extractWidth(sample.gpios, pinNum).toString();
+                titleText = trace.label + ':';
+                valueText = val;
             } else if (trace.type === 'control') {
                 const pinNum = decoder.pinMap.control[trace.signal];
                 const isDriven = decoder.isPinDriven(sample.driven, pinNum);
-                const val = isDriven ? decoder.extractBit(sample.gpios, pinNum).toString() : 'High-Z';
-                valueText = trace.label + ': ' + val;
+                const val = isDriven ? decoder.extractBit(sample.gpios, pinNum).toString() : 'Z'; 
+                //const val = decoder.extractWidth(sample.gpios, pinNum).toString();
+                titleText = trace.label + ':';
+                valueText = val;
             }
-            
-            if (valueText) {
+            if (titleText) {
                 // Draw background for readability
-                const textWidth = this.ctx.measureText(valueText).width;
+                const textWidth = this.ctx.measureText(titleText).width;
                 const textHeight = CONFIG.CURSOR_VALUE_FONT_SIZE * CONFIG.CURSOR_VALUE_HEIGHT_MULTIPLIER;
-
                 const valueY = trace.y - (trace.height * CONFIG.CURSOR_VALUE_OFFSET_Y) - textHeight;
                 
                 this.ctx.fillStyle = CONFIG.CURSOR_VALUE_COLOR;
                 this.ctx.fillRect(
                     valueX - CONFIG.CURSOR_VALUE_PADDING_X, 
-                    valueY - CONFIG.CURSOR_VALUE_PADDING_Y,  // Start at text position
+                    valueY - CONFIG.CURSOR_VALUE_PADDING_Y + 7,               // Start at text position
                     textWidth + (CONFIG.CURSOR_VALUE_PADDING_X * 2), 
-                    textHeight + (CONFIG.CURSOR_VALUE_PADDING_Y * 2)
+                    textHeight + (CONFIG.CURSOR_VALUE_PADDING_Y * 2) - 10
                 );
+                this.ctx.fillStyle = CONFIG.CURSOR_VALUE_TITLE_COLOR; 
+                this.ctx.fillText(titleText, valueX, valueY + 2 * CONFIG.CURSOR_VALUE_PADDING_Y);
+            }
+            if (valueText) {
+                // Draw background for readability
+                const textWidth = this.ctx.measureText(valueText).width;
+                const textHeight = CONFIG.CURSOR_VALUE_FONT_SIZE * CONFIG.CURSOR_VALUE_HEIGHT_MULTIPLIER;
+                const valueY = trace.y - (trace.height * CONFIG.CURSOR_VALUE_OFFSET_Y) - textHeight;
                 
+                this.ctx.fillStyle = CONFIG.CURSOR_VALUE_COLOR;
+                this.ctx.fillRect(
+                    valueX - CONFIG.CURSOR_VALUE_PADDING_X + (titleText?42:0), 
+                    valueY - CONFIG.CURSOR_VALUE_PADDING_Y + 7,               // Start at text position
+                    textWidth + (CONFIG.CURSOR_VALUE_PADDING_X * 2), 
+                    textHeight + (CONFIG.CURSOR_VALUE_PADDING_Y * 2) - 10
+                );
                 this.ctx.fillStyle = CONFIG.CURSOR_VALUE_TEXT_COLOR;
-                this.ctx.fillText(valueText, valueX, valueY + 2 * CONFIG.CURSOR_VALUE_PADDING_Y);
+                this.ctx.fillText(valueText, valueX + (titleText?42:0), valueY + 2 * CONFIG.CURSOR_VALUE_PADDING_Y);
             }
         }
 
-        // Draw cycle number at top left of cursor
+        // Draw cycle number and (Addess:data) at height cursor mouse
         this.ctx.textAlign = 'right';  // Right-align so it ends at cursor
         this.ctx.fillStyle = CONFIG.CURSOR_VALUE_COLOR;
-        const cycleText = 'Cycle: ' + this.cursorCycle.toString();
-        const cycleTextWidth = this.ctx.measureText(cycleText).width;
+        const totalText =  addataText + this.cursorCycle.toString();
+        const cycleTextWidth = this.ctx.measureText(totalText).width;
         const cycleTextHeight = CONFIG.CURSOR_VALUE_FONT_SIZE * CONFIG.CURSOR_VALUE_HEIGHT_MULTIPLIER;
-
         const cycleX = this.cursorX - CONFIG.CURSOR_VALUE_OFFSET_X;  // Left of cursor
-        const cycleY = CONFIG.CURSOR_VALUE_PADDING_Y;
-
+        const cycleY = this.cursorY - CONFIG.CURSOR_VALUE_PADDING_Y;
         this.ctx.fillRect(
             cycleX - cycleTextWidth - CONFIG.CURSOR_VALUE_PADDING_X,
-            cycleY - CONFIG.CURSOR_VALUE_PADDING_Y,
+            cycleY - CONFIG.CURSOR_VALUE_PADDING_Y + 7,
             cycleTextWidth + (CONFIG.CURSOR_VALUE_PADDING_X * 2),
-            cycleTextHeight + (CONFIG.CURSOR_VALUE_PADDING_Y * 2)
+            cycleTextHeight + (CONFIG.CURSOR_VALUE_PADDING_Y * 2) - 9 // minimized size
         );
-
-        this.ctx.fillStyle = CONFIG.CURSOR_VALUE_TEXT_COLOR;
-        this.ctx.fillText(cycleText, cycleX, cycleY + 2 * CONFIG.CURSOR_VALUE_PADDING_Y);
-
-        // Reset text align for trace values
-        this.ctx.textAlign = 'left';
+        this.ctx.fillStyle = COLORS.hex;
+        this.ctx.fillText(addataText,
+                          cycleX - this.ctx.measureText(this.cursorCycle.toString()).width - CONFIG.CURSOR_VALUE_PADDING_X,
+                          cycleY + 2 * CONFIG.CURSOR_VALUE_PADDING_Y);
+        this.ctx.fillStyle = CONFIG.TIME_AXIS_TEXT_COLOR;
+        this.ctx.fillText(this.cursorCycle.toString(),
+                          cycleX,
+                          cycleY + 2 * CONFIG.CURSOR_VALUE_PADDING_Y);
+//        this.ctx.textAlign = 'left'; // Reset text align for trace values
     }
 
     renderTimeAxis(waveformWidth) {
         const startX = CONFIG.LABEL_WIDTH;
-        const y = this.canvas.height - CONFIG.TIME_AXIS_HEIGHT;
+        const y = this.canvas.height - CONFIG.TIME_AXIS_HEIGHT - 4;
         
         // Draw baseline
         this.ctx.strokeStyle = CONFIG.TIME_AXIS_COLOR;
         this.ctx.lineWidth = 1;
         this.ctx.beginPath();
-        this.ctx.moveTo(startX, y);
-        this.ctx.lineTo(startX + waveformWidth, y);
+        this.ctx.moveTo(startX, y + 4 );
+        this.ctx.lineTo(startX + waveformWidth, y + 4);
         this.ctx.stroke();
         
         // Calculate nice tick spacing based on zoom level
@@ -1182,6 +1239,7 @@ class WaveformRenderer {
         // Draw ticks
         const startCycle = Math.floor(this.scrollPos * this.cyclesPerPixel / niceTick) * niceTick;
         const endCycle = (this.scrollPos + waveformWidth) * this.cyclesPerPixel;
+        const largMax = 10000;
         
         this.ctx.fillStyle = CONFIG.TIME_AXIS_TEXT_COLOR;
         this.ctx.font = `${CONFIG.FONT_SIZE}px monospace`;
@@ -1195,13 +1253,17 @@ class WaveformRenderer {
             
             // Major tick
             this.ctx.beginPath();
-            this.ctx.strokeStyle = CONFIG.TIME_AXIS_COLOR;
+            this.ctx.strokeStyle = CONFIG.TIME_AXIS_TEXT_COLOR; // gold
             this.ctx.moveTo(x, y);
             this.ctx.lineTo(x, y + CONFIG.TIME_AXIS_TICK_HEIGHT);
             this.ctx.stroke();
-            
-            // Label
-            this.ctx.fillText(cycle.toString(), x, y + CONFIG.TIME_AXIS_TICK_HEIGHT + 2);
+            // Label, 
+            if (cycle < largMax) {
+                this.ctx.fillText(cycle.toString(), x, y + CONFIG.TIME_AXIS_TICK_HEIGHT + 2);
+				} else {
+                this.ctx.fillText(Math.floor(cycle/largMax).toString(), x, y + CONFIG.TIME_AXIS_TICK_HEIGHT + 2);
+                this.ctx.fillText(String(cycle%largMax).padStart(4, "0"), x, y + CONFIG.TIME_AXIS_TICK_HEIGHT + 12);
+            }
         }
     }
 
@@ -1216,44 +1278,35 @@ class WaveformRenderer {
         this.ctx.textBaseline = 'middle';
         
         for (const trace of layout) {
+            let labelText = '';
             let valueText = '';
             
             if (trace.type === 'addr_hex') {
                 const addr = decoder.decodeAddress(lastSample.gpios);
-                valueText = '0x' + addr.toString(16).toUpperCase().padStart(
+                labelText = '0x' + addr.toString(16).toUpperCase().padStart(
                     Math.ceil(decoder.pinMap.addr.length / 4), '0');
             } else if (trace.type === 'data_hex') {
                 const data = decoder.decodeData(lastSample.gpios);
                 const ascii = byteToASCII(data);
-                valueText = '0x' + data.toString(16).toUpperCase().padStart(
-                    Math.ceil(decoder.pinMap.data.length / 4), '0') + ` ${ascii}`;
+                labelText = '0x' + data.toString(16).toUpperCase().padStart(
+                    Math.ceil(decoder.pinMap.data.length / 4), '0'); // + ` ${ascii}`;
             } else if (trace.type === 'addr_bit' || trace.type === 'data_bit' || trace.type === 'control') {
                 let pinNum;
                 if (trace.type === 'addr_bit') pinNum = decoder.pinMap.addr[trace.bit];
                 else if (trace.type === 'data_bit') pinNum = decoder.pinMap.data[trace.bit];
                 else pinNum = decoder.pinMap.control[trace.signal];
-                
+                labelText = trace.label + ': ';
                 const isDriven = decoder.isPinDriven(lastSample.driven, pinNum);
-                const val = isDriven ? decoder.extractBit(lastSample.gpios, pinNum).toString() : 'Z';
-                valueText = trace.label + ': ' + val;
+                valueText = isDriven ? decoder.extractBit(lastSample.gpios, pinNum).toString() : 'Z';
             }
-            
+            const valueX = lastSampleX + 10;  // Offset from end of signal
+            if (labelText) {
+                this.ctx.fillStyle = (valueText?CONFIG.RIGHT_HAND_VALUE_TEXT_COLOR:COLORS.hex);
+                this.ctx.fillText(labelText, valueX, trace.y + trace.height / 2);
+            }
             if (valueText) {
-                const valueX = lastSampleX + 10;  // Offset from end of signal
-                const textWidth = this.ctx.measureText(valueText).width;
-                
-                // Background box
-                this.ctx.fillStyle = CONFIG.RIGHT_HAND_VALUE_COLOR;
-                this.ctx.fillRect(
-                    valueX - CONFIG.CURSOR_VALUE_PADDING_X,
-                    trace.y + trace.height/2 - CONFIG.FONT_SIZE,
-                    textWidth + (CONFIG.CURSOR_VALUE_PADDING_X * 2),
-                    CONFIG.FONT_SIZE * 2
-                );
-                
-                // Text
-                this.ctx.fillStyle = CONFIG.RIGHT_HAND_VALUE_TEXT_COLOR;
-                this.ctx.fillText(valueText, valueX, trace.y + trace.height / 2);
+                this.ctx.fillStyle = CONFIG.CURSOR_VALUE_TEXT_COLOR;
+                this.ctx.fillText(valueText, valueX + 32, trace.y + trace.height / 2);
             }
         }
     }
@@ -1529,6 +1582,7 @@ class AnalyzerController {
             else if (x > CONFIG.LABEL_WIDTH) {
                 tooltip.style.display = 'none';
                 this.renderer.cursorX = x;
+                this.renderer.cursorY = y;
                 // Calculate which cycle the cursor is over
                 const cycleOffset = (x - CONFIG.LABEL_WIDTH + this.renderer.scrollPos) * this.renderer.cyclesPerPixel;
                 this.renderer.cursorCycle = BigInt(Math.floor(cycleOffset));
