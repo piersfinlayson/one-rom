@@ -299,7 +299,7 @@ fn generate_pin_comparison_table(config: &ChipTypesConfig, pin_count: u8) -> Str
     table.push('\n');
 
     // Generate row for each pin
-    for pin in 1..=24 {
+    for pin in 1..=pin_count {
         table.push_str(&format!("| {} |", pin));
         for (_, chip_type) in &roms {
             let function = get_pin_function(pin, chip_type);

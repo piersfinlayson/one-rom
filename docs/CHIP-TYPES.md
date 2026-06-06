@@ -176,6 +176,10 @@ There are also some other inconsistencies between types:
 | 22 | CS2 | CS2 | CS1 | CS2 | CS1 | A16 | /OE | /OE | /OE | /OE+PE | /OE | /OE+VPP |
 | 23 | A11 | A11 | A11 | A11 | A11 | A11 | A11 | A11 | A11 | A11 | A11 | A11 |
 | 24 | A9 | A9 | A9 | A9 | A9 | A9 | A9 | A9 | A9 | A9 | A9 | A9 |
+| 25 | A8 | A8 | A8 | A8 | A8 | A8 | A8 | A8 | A8 | A8 | A8 | A8 |
+| 26 | A13 | A13 | A13 | A13 | A13 | A13 | NC | NC | A13 | A13 | A13 | A13 |
+| 27 | CS3 | A14 | A14 | A14 | A14 | A14 | /PGM | /WRITE | /PGM | A14 | /WRITE | A14 |
+| 28 | VCC | VCC | VCC | VCC | VCC | VCC | VCC | VCC | VCC | VCC | VCC | VCC |
 
 ### 32-pin Package
 
@@ -205,6 +209,14 @@ There are also some other inconsistencies between types:
 | 22 | /CE | /CE | /CE | /CE | /CE | /CE | /CE+/PGM | /CE | /CE+/PGM |
 | 23 | A10 | A10 | A10 | A10 | A10 | A10 | A10 | A10 | A10 |
 | 24 | /OE | /OE | /OE | /OE | A16 | /OE | /OE | /OE | /OE+VPP |
+| 25 | A11 | A11 | A11 | A11 | A11 | A11 | A11 | A11 | A11 |
+| 26 | A9 | A9 | A9 | A9 | A9 | A9 | A9 | A9 | A9 |
+| 27 | A8 | A8 | A8 | A8 | A8 | A8 | A8 | A8 | A8 |
+| 28 | A13 | A13 | A13 | A13 | A13 | A13 | A13 | A13 | A13 |
+| 29 | A14 | A14 | A14 | A14 | A14 | A14 | A14 | A14 | A14 |
+| 30 | CS2 | NC | /WRITE | NC | NC | A17 | A17 | A17 | A17 |
+| 31 | CS1 | NC | NC | /PGM | /PGM | /PGM | A18 | /WRITE | A18 |
+| 32 | VCC | VCC | VCC | VCC | VCC | VCC | VCC | VCC | VCC |
 
 ### 40-pin Package
 
@@ -234,6 +246,22 @@ There are also some other inconsistencies between types:
 | 22 | D4 | D4 |
 | 23 | D12 | D12 |
 | 24 | D5 | D5 |
+| 25 | D13 | D13 |
+| 26 | D6 | D6 |
+| 27 | D14 | D14 |
+| 28 | D7 | D7 |
+| 29 | A0 | A0 |
+| 30 | GND | GND |
+| 31 | /BYTE | /BYTE+VPP |
+| 32 | A17 | A17 |
+| 33 | A16 | A16 |
+| 34 | A15 | A15 |
+| 35 | A14 | A14 |
+| 36 | A13 | A13 |
+| 37 | A12 | A12 |
+| 38 | A11 | A11 |
+| 39 | A10 | A10 |
+| 40 | A9 | A9 |
 
 ## Detailed Pinouts
 
