@@ -2176,6 +2176,67 @@
                     "voltage": "0V"
                 }
             ]
+        },
+        "62256": {
+            "description": "32KB (32768 x 8-bit) Static RAM with fixed active-low CE/OE/WE",
+            "function": "RAM",
+            "aliases": [],
+            "bit_modes": [8],
+            "pins": 28,
+            "size": 32768,
+            "address": [
+                10,
+                9,
+                8,
+                7,
+                6,
+                5,
+                4,
+                3,
+                25,
+                24,
+                21,
+                23,
+                2,
+                26,
+                1
+            ],
+            "data": [
+                11,
+                12,
+                13,
+                15,
+                16,
+                17,
+                18,
+                19
+            ],
+            "control": {
+                "oe": {
+                    "pin": 22,
+                    "type": "fixed_active_low"
+                },
+                "ce": {
+                    "pin": 20,
+                    "type": "fixed_active_low"
+                },
+                "write": {
+                    "pin": 27,
+                    "type": "fixed_active_low"
+                }
+            },
+            "power": [
+                {
+                    "name": "VCC",
+                    "pin": 28,
+                    "voltage": "+5V"
+                },
+                {
+                    "name": "GND",
+                    "pin": 14,
+                    "voltage": "0V"
+                }
+            ]
         }
     }
 }

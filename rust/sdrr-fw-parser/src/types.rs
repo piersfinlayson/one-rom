@@ -338,6 +338,11 @@ pub enum SdrrRomType {
     // 27C200
     #[deku(id = "33")]
     Rom27C200,
+
+    // 62256 (RAM)
+    #[deku(id = "34")]
+    Ram62256,
+
 }
 
 impl fmt::Display for SdrrRomType {
@@ -377,6 +382,7 @@ impl fmt::Display for SdrrRomType {
             SdrrRomType::Rom23QL384 => write!(f, "23QL384"),
             SdrrRomType::Rom23C1001 => write!(f, "23C1001"),
             SdrrRomType::Rom27C200 => write!(f, "27C200"),
+            SdrrRomType::Ram62256 => write!(f, "62256 (RAM)"),
         }
     }
 }
@@ -427,6 +433,7 @@ impl SdrrRomType {
             SdrrRomType::Rom23QL384 => 48,
             SdrrRomType::Rom23C1001 => 128,
             SdrrRomType::Rom27C200 => 256,
+            SdrrRomType::Ram62256 => 32,
         }
     }
 
@@ -467,6 +474,7 @@ impl SdrrRomType {
             SdrrRomType::Rom23QL384 => 28,
             SdrrRomType::Rom23C1001 => 32,
             SdrrRomType::Rom27C200 => 40,
+            SdrrRomType::Ram62256 => 28,
         }
     }
 
@@ -512,6 +520,7 @@ impl SdrrRomType {
             SdrrRomType::Rom23QL384 => false,
             SdrrRomType::Rom23C1001 => true,
             SdrrRomType::Rom27C200 => false,
+            SdrrRomType::Ram62256 => false,
         }
     }
 
@@ -552,6 +561,7 @@ impl SdrrRomType {
             SdrrRomType::Rom23QL384 => false,
             SdrrRomType::Rom23C1001 => false,
             SdrrRomType::Rom27C200 => false,
+            SdrrRomType::Ram62256 => false,
         }
     }
 }

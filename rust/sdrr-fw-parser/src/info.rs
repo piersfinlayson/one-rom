@@ -354,8 +354,12 @@ impl SdrrInfo {
                     rom_type
                 ));
             }
-            SdrrRomType::Ram6116 => {
-                return Err("RAM 6116 not supported for address mangling".into());
+            SdrrRomType::Ram6116
+            | SdrrRomType::Ram62256 => {
+                return Err(format!(
+                    "RAM type {} not supported for address mangling",
+                    rom_type
+                ));
             }
         };
 

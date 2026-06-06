@@ -116,6 +116,7 @@ There are also some other inconsistencies between types:
 | Chip Type | Aliases | Size | Address Lines | Control Lines | Programming | Supported |
 |-----------|---------|------|---------------|---------------|-------------|-----------|
 | 6116 | 2016 | 2KB | 11 (A0-A10) | /CE (pin 18), /OE (pin 20), /WRITE (pin 21) | None | ✓ |
+| 62256 |  | 32KB | 15 (A0-A14) | /CE (pin 20), /OE (pin 22), /WRITE (pin 27) | None | ✗ |
 
 ## Pin Function Comparison
 
@@ -150,36 +151,36 @@ There are also some other inconsistencies between types:
 
 ### 28-pin Package
 
-| Pin | 23128 | 23256 | 23QL384 | 23512 | 23QL512 | 231024 | 2764 | 28C64 | 27128 | 27256 | 28C256 | 27512 |
-|-----|------|------|------|------|------|------|------|------|------|------|------|------|
-| 1 | NC | NC | NC | A15 | NC | A15 | VPP | /BUSY | VPP | VPP | A14 | A15 |
-| 2 | A12 | A12 | A12 | A12 | A12 | A12 | A12 | A12 | A12 | A12 | A12 | A12 |
-| 3 | A7 | A7 | A7 | A7 | A7 | A7 | A7 | A7 | A7 | A7 | A7 | A7 |
-| 4 | A6 | A6 | A6 | A6 | A6 | A6 | A6 | A6 | A6 | A6 | A6 | A6 |
-| 5 | A5 | A5 | A5 | A5 | A5 | A5 | A5 | A5 | A5 | A5 | A5 | A5 |
-| 6 | A4 | A4 | A4 | A4 | A4 | A4 | A4 | A4 | A4 | A4 | A4 | A4 |
-| 7 | A3 | A3 | A3 | A3 | A3 | A3 | A3 | A3 | A3 | A3 | A3 | A3 |
-| 8 | A2 | A2 | A2 | A2 | A2 | A2 | A2 | A2 | A2 | A2 | A2 | A2 |
-| 9 | A1 | A1 | A1 | A1 | A1 | A1 | A1 | A1 | A1 | A1 | A1 | A1 |
-| 10 | A0 | A0 | A0 | A0 | A0 | A0 | A0 | A0 | A0 | A0 | A0 | A0 |
-| 11 | D0 | D0 | D0 | D0 | D0 | D0 | D0 | D0 | D0 | D0 | D0 | D0 |
-| 12 | D1 | D1 | D1 | D1 | D1 | D1 | D1 | D1 | D1 | D1 | D1 | D1 |
-| 13 | D2 | D2 | D2 | D2 | D2 | D2 | D2 | D2 | D2 | D2 | D2 | D2 |
-| 14 | GND | GND | GND | GND | GND | GND | GND | GND | GND | GND | GND | GND |
-| 15 | D3 | D3 | D3 | D3 | D3 | D3 | D3 | D3 | D3 | D3 | D3 | D3 |
-| 16 | D4 | D4 | D4 | D4 | D4 | D4 | D4 | D4 | D4 | D4 | D4 | D4 |
-| 17 | D5 | D5 | D5 | D5 | D5 | D5 | D5 | D5 | D5 | D5 | D5 | D5 |
-| 18 | D6 | D6 | D6 | D6 | D6 | D6 | D6 | D6 | D6 | D6 | D6 | D6 |
-| 19 | D7 | D7 | D7 | D7 | D7 | D7 | D7 | D7 | D7 | D7 | D7 | D7 |
-| 20 | CS1 | CS1 | A15 | CS1 | A15 | CS1 | /CE | /CE | /CE | /CE | /CE | /CE+PE |
-| 21 | A10 | A10 | A10 | A10 | A10 | A10 | A10 | A10 | A10 | A10 | A10 | A10 |
-| 22 | CS2 | CS2 | CS1 | CS2 | CS1 | A16 | /OE | /OE | /OE | /OE+PE | /OE | /OE+VPP |
-| 23 | A11 | A11 | A11 | A11 | A11 | A11 | A11 | A11 | A11 | A11 | A11 | A11 |
-| 24 | A9 | A9 | A9 | A9 | A9 | A9 | A9 | A9 | A9 | A9 | A9 | A9 |
-| 25 | A8 | A8 | A8 | A8 | A8 | A8 | A8 | A8 | A8 | A8 | A8 | A8 |
-| 26 | A13 | A13 | A13 | A13 | A13 | A13 | NC | NC | A13 | A13 | A13 | A13 |
-| 27 | CS3 | A14 | A14 | A14 | A14 | A14 | /PGM | /WRITE | /PGM | A14 | /WRITE | A14 |
-| 28 | VCC | VCC | VCC | VCC | VCC | VCC | VCC | VCC | VCC | VCC | VCC | VCC |
+| Pin | 23128 | 23256 | 23QL384 | 23512 | 23QL512 | 231024 | 2764 | 28C64 | 27128 | 27256 | 28C256 | 62256 | 27512 |
+|-----|------|------|------|------|------|------|------|------|------|------|------|------|------|
+| 1 | NC | NC | NC | A15 | NC | A15 | VPP | /BUSY | VPP | VPP | A14 | A14 | A15 |
+| 2 | A12 | A12 | A12 | A12 | A12 | A12 | A12 | A12 | A12 | A12 | A12 | A12 | A12 |
+| 3 | A7 | A7 | A7 | A7 | A7 | A7 | A7 | A7 | A7 | A7 | A7 | A7 | A7 |
+| 4 | A6 | A6 | A6 | A6 | A6 | A6 | A6 | A6 | A6 | A6 | A6 | A6 | A6 |
+| 5 | A5 | A5 | A5 | A5 | A5 | A5 | A5 | A5 | A5 | A5 | A5 | A5 | A5 |
+| 6 | A4 | A4 | A4 | A4 | A4 | A4 | A4 | A4 | A4 | A4 | A4 | A4 | A4 |
+| 7 | A3 | A3 | A3 | A3 | A3 | A3 | A3 | A3 | A3 | A3 | A3 | A3 | A3 |
+| 8 | A2 | A2 | A2 | A2 | A2 | A2 | A2 | A2 | A2 | A2 | A2 | A2 | A2 |
+| 9 | A1 | A1 | A1 | A1 | A1 | A1 | A1 | A1 | A1 | A1 | A1 | A1 | A1 |
+| 10 | A0 | A0 | A0 | A0 | A0 | A0 | A0 | A0 | A0 | A0 | A0 | A0 | A0 |
+| 11 | D0 | D0 | D0 | D0 | D0 | D0 | D0 | D0 | D0 | D0 | D0 | D0 | D0 |
+| 12 | D1 | D1 | D1 | D1 | D1 | D1 | D1 | D1 | D1 | D1 | D1 | D1 | D1 |
+| 13 | D2 | D2 | D2 | D2 | D2 | D2 | D2 | D2 | D2 | D2 | D2 | D2 | D2 |
+| 14 | GND | GND | GND | GND | GND | GND | GND | GND | GND | GND | GND | GND | GND |
+| 15 | D3 | D3 | D3 | D3 | D3 | D3 | D3 | D3 | D3 | D3 | D3 | D3 | D3 |
+| 16 | D4 | D4 | D4 | D4 | D4 | D4 | D4 | D4 | D4 | D4 | D4 | D4 | D4 |
+| 17 | D5 | D5 | D5 | D5 | D5 | D5 | D5 | D5 | D5 | D5 | D5 | D5 | D5 |
+| 18 | D6 | D6 | D6 | D6 | D6 | D6 | D6 | D6 | D6 | D6 | D6 | D6 | D6 |
+| 19 | D7 | D7 | D7 | D7 | D7 | D7 | D7 | D7 | D7 | D7 | D7 | D7 | D7 |
+| 20 | CS1 | CS1 | A15 | CS1 | A15 | CS1 | /CE | /CE | /CE | /CE | /CE | /CE | /CE+PE |
+| 21 | A10 | A10 | A10 | A10 | A10 | A10 | A10 | A10 | A10 | A10 | A10 | A10 | A10 |
+| 22 | CS2 | CS2 | CS1 | CS2 | CS1 | A16 | /OE | /OE | /OE | /OE+PE | /OE | /OE | /OE+VPP |
+| 23 | A11 | A11 | A11 | A11 | A11 | A11 | A11 | A11 | A11 | A11 | A11 | A11 | A11 |
+| 24 | A9 | A9 | A9 | A9 | A9 | A9 | A9 | A9 | A9 | A9 | A9 | A9 | A9 |
+| 25 | A8 | A8 | A8 | A8 | A8 | A8 | A8 | A8 | A8 | A8 | A8 | A8 | A8 |
+| 26 | A13 | A13 | A13 | A13 | A13 | A13 | NC | NC | A13 | A13 | A13 | A13 | A13 |
+| 27 | CS3 | A14 | A14 | A14 | A14 | A14 | /PGM | /WRITE | /PGM | A14 | /WRITE | /WRITE | A14 |
+| 28 | VCC | VCC | VCC | VCC | VCC | VCC | VCC | VCC | VCC | VCC | VCC | VCC | VCC |
 
 ### 32-pin Package
 
@@ -604,6 +605,22 @@ There are also some other inconsistencies between types:
 | GND | 14 | 0V |
 
 ### 28C256 - 32KB EEPROM with fixed active-low CE/OE
+
+**Package:** 28-pin DIP  
+**Capacity:** 32768 bytes  
+**Control:** /CE, /OE, /WRITE  
+
+| Function | Pins | Notes |
+|----------|------|-------|
+| Address (A0-A14) | 10,9,8,7,6,5,4,3,25,24,21,23,2,26,1 | 15 address lines |
+| Data (D0-D7) | 11,12,13,15,16,17,18,19 | 8 data lines |
+| CE | 20 | Active low |
+| OE | 22 | Active low |
+| WRITE | 27 | Active low |
+| VCC | 28 | +5V |
+| GND | 14 | 0V |
+
+### 62256 - 32KB (32768 x 8-bit) Static RAM with fixed active-low CE/OE/WE
 
 **Package:** 28-pin DIP  
 **Capacity:** 32768 bytes  
