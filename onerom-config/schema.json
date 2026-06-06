@@ -320,6 +320,11 @@
                     "const": "28C256"
                 },
                 {
+                    "description": "32KB (32768 x 8-bit) Static RAM with fixed active-low CE/OE/WE - 32768 bytes, 28-pin package",
+                    "type": "string",
+                    "const": "62256"
+                },
+                {
                     "description": "A composite ROM type, serving a combined 23256 and 23128 for the Sinclair QL, with a single configured CS line and is de-selected when A14 & A15 are both high - 49152 bytes, 28-pin package",
                     "type": "string",
                     "const": "23QL384"
