@@ -96,6 +96,7 @@ extern int piorom(
 extern int pioram(
     const sdrr_info_t *info,
     sdrr_runtime_info_t *runtime,
+    const sdrr_rom_set_t *set,
     uint32_t rom_table_addr
 );
 extern ora_result_t pio_setup_address_monitor(

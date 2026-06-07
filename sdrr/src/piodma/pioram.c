@@ -830,7 +830,7 @@ static void pioram_set_gpio_func(pioram_config_t *config) {
 
     // Data pins
     for (int ii = 0; ii < 8; ii++) {
-        GPIO_CTRL(ii) = GPIO_CTRL_FUNC_PIO2;
+        GPIO_CTRL(config->data_base_pin + ii) = GPIO_CTRL_FUNC_PIO2;
     }
 }
 #else // TEST_BUILD
@@ -860,6 +860,7 @@ extern uint32_t _ram_rom_image_start[];
 int pioram(
     const sdrr_info_t *info,
     sdrr_runtime_info_t *runtime,
+    const sdrr_rom_set_t *set,
     uint32_t ram_table_addr
 ) {
     (void)info;
@@ -894,6 +895,16 @@ int pioram(
         .data_in_clkdiv_frac = 0,
     };
     
+    // The next person to add a RAM type should make this better.
+    if (set->roms[0]->rom_type == CHIP_TYPE_62256) {
+        config.read_cs_base_pin = 8;   // fire-28-d
+        config.write_cs_base_pin = 9;  // fire-28-d
+        config.write_pin = 10;          // fire-28-d
+        config.addr_base_pin = 11;      // fire-28-d
+        config.num_addr_pins = 15;      // fire-28-d
+        config.num_addr_pins = 12;      // for testing on pico2w (4k)
+    }
+
     // Bring PIOs and DMA out of reset
     APIO_ENABLE_PIOS();
     DMA_ENABLE();

@@ -116,7 +116,7 @@ There are also some other inconsistencies between types:
 | Chip Type | Aliases | Size | Address Lines | Control Lines | Programming | Supported |
 |-----------|---------|------|---------------|---------------|-------------|-----------|
 | 6116 | 2016 | 2KB | 11 (A0-A10) | /CE (pin 18), /OE (pin 20), /WRITE (pin 21) | None | ✓ |
-| 62256 |  | 32KB | 15 (A0-A14) | /CE (pin 20), /OE (pin 22), /WRITE (pin 27) | None | ✗ |
+| 62256 |  | 32KB | 15 (A0-A14) | /CE (pin 20), /OE (pin 22), /WRITE (pin 27) | None | ✓ |
 
 ## Pin Function Comparison
 

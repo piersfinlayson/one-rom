@@ -23,9 +23,9 @@ int pio(
     uint32_t rom_table_addr
 ) {
     int rc;
-    if (set->roms[0]->rom_type == CHIP_TYPE_6116) {
+    if (set->roms[0]->rom_type == CHIP_TYPE_6116 || set->roms[0]->rom_type == CHIP_TYPE_62256) {
         DEBUG("PIO RAM Mode");
-        rc = pioram(info, runtime, rom_table_addr);
+        rc = pioram(info, runtime, set, rom_table_addr);
     } else {
         DEBUG("PIO ROM Mode");
         rc = piorom(info, runtime, set, rom_table_addr);

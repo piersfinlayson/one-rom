@@ -2180,6 +2180,7 @@
         "62256": {
             "description": "32KB (32768 x 8-bit) Static RAM with fixed active-low CE/OE/WE",
             "function": "RAM",
+            "supported": "0.6.13",
             "aliases": [],
             "bit_modes": [8],
             "pins": 28,
