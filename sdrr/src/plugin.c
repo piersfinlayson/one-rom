@@ -63,7 +63,7 @@ void ora_debug_log(const char* msg, ...) {
     do_debug_log_prefix();
     va_list args;
     va_start(args, msg);
-    do_log_v(msg, args);
+    do_log_v(msg, &args);
     va_end(args);
 #else
     (void)msg;
