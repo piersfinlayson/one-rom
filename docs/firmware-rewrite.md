@@ -60,30 +60,37 @@ As part of the firmware rewrite all these tests are retained and used to validat
 - In general we are missing any ability in the core firmware (and also elsewhere) to support specific ROM types only on certain revisions of different pin boards.  This likely needs somworking through.
 - Make 27C301 use less flash on fire-32-b (currently using 512KB, 256KB should be possible)
 - config/hw generator is subtracting 8 from 28 pin board address lines, but should be 10 for fire-28-a - should be avoiding the X pins as well, better than just hardcoding the fire-28-c type
+- Add concept of don't care for CS line (23C1001, HN62402, HN62302)
+- Change HN62402 to be 16 bit only and HN62302 to be 8 bit only.
 
 ## Algorithms
 
+All pin numbers are given with respect to the GPIO_BASE value provided.  GPIO_BASE can take either 0 or 16.  16 is used to access GPIOS 32-47, and prevents 0-15 from being accesssed.  The CS and Data algorithms MUST share the same GPIO_BASE value, as the CS (and Data) algorithms both need to access the data pins.  In theory it is possible to image the data pins high and the CS pins low, or vice versa, requiring a differet approach, but this isn't required by current or planned hardware.
+
+GPIO_BASE is always param 1 for all algorithms.
+
 ### Chip Select Handling
 
-| ID | Name | Description | Param 1 | Param 2 | Param 3 | Param 4 | Param 5 | Param 6 |
-|----|------|-------------|---------|---------|---------|---------|---------|---------|
-| CS0 | CS Standard   | Each ROM image is served using a contiguous set of CS pins, all of which must be low for the data pins to be set to output. | Base CS pin | Num CS pins | Which CS pins to hardware invert | Base data pin | Number of data pins (8/16) | n/a |
-| CS1 | CS non-contig single gap | Each ROM image is served using a set of CS pins, all of which must be low for the data pins to be set to outputs, but the CS pins can have up to a 1 pin total (i.e. between only one pair of CS lines). | Base CS pin | Num CS pins including gap | Index of CS pin to ignore (1 would be second pin) | Base data pin | Number of data pins (8/16) | Which CS pins to hardware invert |
-| CS2 | CS any standard | Any single CS pin going low causes the data pins to be set to outputs | Base CS pin | Num CS pins | Which CS pins to hardware invert | Base data pin | Number of data pins (8/16) | n/a |
+| ID | Name | Description | Param 1 | Param 2 | Param 3 | Param 4 | Param 5 | Param 6 | Param 7 | Param 8 | Param 9 | Param 10 |
+|----|------|-------------|---------|---------|---------|---------|---------|---------|---------|---------|---------|---------|
+| CS0 | CS Standard   | The ROM image is served using a contiguous set of CS pins. | GPIO_BASE | Base CS pin | Num CS pins | Which CS pins to hardware invert | Base data pin | Number of data pins (8/16) | Serve when all CS pins are low (0) or when one or more is high (1).  The latter is used for multi-ROM sets | Cycle delay after detecting CS active before setting data lines to outputs | Cycle delay after detecting CS inactive before setting data lines to inputs | /BYTE pin number or 0xFF is not used, indexed from GPIO_BASE |
+| CS1 | CS non-contig single gap | Each ROM image is served using a set of CS pins, all of which must be low for the data pins to be set to outputs, but the CS pins can have up to a 1 pin total (i.e. between only one pair of CS lines). | GPIO_BASE | Base CS pin | Num CS pins including gap | Index of CS pin to ignore (1 would be second pin) | Which CS pins to hardware invert | Base data pin | Number of data pins (8/16) | Cycle delay after detecting CS active before setting data lines to outputs | Cycle delay after detecting CS inactive before setting data lines to inputs | n/a |
+| CS2 | CS Enable Address Qualified | The ROM image is served when a primary enable pin is asserted AND a set of address qualifier pins do not match the inactive pattern. Used where a single global enable pin (such as /OE or /CE) gates output, with address lines providing bank selection. | GPIO_BASE | Enable pin indexed from GPIO_BASE | Hardware invert enable pin (0=no, 1=yes) | Base address qualifier pin indexed from GPIO_BASE | Num address qualifier pins including any gap pins | Inactive pattern for address qualifier pins (Y preload value) | Base data pin | Number of data pins (8/16) | n/a | n/a |
 
 It is possible to conceive a more general non-contiguous CS algorithm, with any number of pins and gaps, and the PIO would shift through the CS pins testig them one by one, or in contiguous groups.  This would be slow, and isn't currently required.
 
 ### Address Reading
 
-| ID | Name | Description | Param 1 | Param 2 | Param 3 | Param 4 |
-|----|------|-------------|---------|---------|---------|---------|
-| ADDR0 | Address Standard | Reads a complete block of address pins, postpends the value to a RAM lookup prefix and pushes to a DMA chain.  Number of address pins and RAM prefix are inferred from ROM image size. | Base address pin | List of pins (indexed from base) to always read 0/1, and which value to read | n/a | n/a |
+| ID | Name | Description | Param 1 | Param 2 | Param 3 | Param 4 | Param 5 | Param 6 |
+|----|------|-------------|---------|---------|---------|---------|---------|--------|
+| ADDR0 | Address Standard | Reads a complete block of address pins, postpends the value to a RAM lookup prefix and pushes to a DMA chain.  Number of address pins and RAM prefix are inferred from ROM image size. | GPIO_BASE | Number of cycles to wait in between address reads | Base address pin | Total number of address pins to read from | Number of ROM RAM table bits to include | List of pins (indexed from base) to always read 0/1, and which value to read |
 
 ### Data Word Serving
 
 | ID | Name | Description | Param 1 | Param 2 | Param 3 | Param 4 |
 |----|------|-------------|---------|---------|---------|---------|
-| DATA0 | Data Word Standard | Reads a data word from the TX FIFO and applies is to the data pins | Base data pin | Word size in bits (8 or 16) | n/a | n/a |
+| DATA0 | Data Word Standard | Reads a data word from the TX FIFO and applies is to the data pins | GPIO_BASE | Base data pin | Word size in bits (8 or 16) | n/a |
+| DATA1 | Data Word with Byte Mode | Reads a data word from the TX FIFO and applies is to the data pins, but if a /BYTE pin is active, only applies the appropriate byte (and ignores the upper byte) | GPIO_BASE | Base data pin | /BYTE pin number (indexed from GPIO_BASE) | A-1 pin |
 
 ## ROM Configuration
 
@@ -97,6 +104,8 @@ In general, where there are extensive notes, this indicates custom hand-coded fu
 Some notes on how the information is represented:
 - All boards referred to below are Fire boards.
 - CS01 indicates CS0 or CS1 is chosen automatically based of contiguous or non-contiguous set of CS pins.  In some cases (such as where a single CS line is used, e.g. 231024) the answer is obvious (contiguous), but the decision is expected to be made by the pre-processor automatically (without it being hand-coded for that type).
+
+THIS SECTION IS NOT YET COMPLETE.  There are ROM types using all the above algorithms.
 
 | ROM Type | ROM pins | ROM Size | Flash Size | Board     | Algorithms | Notes |
 |----------|----------|----------|------------|-----------|------------|-------|
@@ -120,3 +129,48 @@ Some notes on how the information is represented:
 | 27C301   | 32 |128KB      | 256KB      | 32-b | CS0/ADDR0/DATA0 | Shave 1 address bit by starting at A15 and running to /OE/A16. Move away from non-contiguous CS pins by forcing A19 (between A16//OE and /CE) to read 0. Requires same A16//CE swap as on fire-32-a. |
 
 Need to add 24 pin ROMs that are supported in 28 pin boards
+
+## Detail Record of Changes
+
+- Removed build options:
+  - MCO/MCO2 (STM32F4 specific)
+  - OSC (STM32F4 specific)
+  - BOOTLOADER (not required as can pull BOOT0 low instead)
+  - DISABLE_PRELOAD_TO_RAM (no longer useful)
+  - SERVE_ALG (superceded)
+  - DFU_SUPPORTED (STM32F4 specific)
+  - COUNT_ROM_ACCESS_FLAG (deprecated, use a plugin)
+  - SWD (removed)
+  - OVERCLOCK (superceded by slot config)
+  - EXCLUDE_METADATA and EM (no longer required)
+  - HW_REV (no longer required, dynamically generated)
+  - ROM_CONFIGS
+  - STATUS_LED
+- Removed #defines:
+  - MCU_VARIANT
+  - MCO2
+  - CONFIG
+  - MAIN_LOOP_ONE_SHOT
+  - DISABLE_CCM
+  - C_MAIN_LOOP
+  - MCU (no longer required, dynamically generated)
+  - DUMB_C_MAIN_LOOP_2_cs
+  - RP_USE_CP
+  - RP_PIO
+  - FORCE_16_bit
+  - TIMER_TEST
+  - TOGGLE_PA4
+  - EXECUTE_FROM_RAM
+  - NO_BOOTLOADER
+  - STATUS_LED
+- Need a way of passing in BOOT_LOGGING, etc #defines
+
+If no metadata (i.e. not even VBUS and status LED pins) drop into bootloader.
+
+Board-level information required in metadata
+
+
+
+
+
+Hardware properties

@@ -2,14 +2,18 @@
 //
 // MIT License
 
-use onerom_config::hw::BOARDS;
-use onerom_cli::{Error, Options};
 use crate::args::BoardArgs;
+use onerom_cli::{Error, Options};
+use onerom_config::hw::BOARDS;
 
 pub async fn cmd_boards(_options: &Options, _args: &BoardArgs) -> Result<(), Error> {
     println!("Supported One ROM board types:");
     // Comma separate them
-    let boards = BOARDS.iter().map(|b| b.to_string()).collect::<Vec<_>>().join(", ");
+    let boards = BOARDS
+        .iter()
+        .map(|b| b.to_string())
+        .collect::<Vec<_>>()
+        .join(", ");
     println!("  {boards}");
     Ok(())
 }

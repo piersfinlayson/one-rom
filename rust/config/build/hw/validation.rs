@@ -200,6 +200,11 @@ impl Chip {
 }
 
 #[derive(Debug, Deserialize, Clone)]
+pub struct ExternalFlash {
+    pub cs_pin: u8,
+}
+
+#[derive(Debug, Deserialize, Clone)]
 pub struct McuPins {
     pub data: Vec<u8>,
     pub addr: Vec<u8>,
@@ -227,6 +232,7 @@ pub struct McuPins {
     pub status: u8,
     pub byte: Option<u8>,
     pub alt: Option<HashMap<String, HashMap<String, u8>>>,
+    pub neo: Option<u8>,
 }
 
 #[derive(Debug, Deserialize, Clone, Default, PartialEq, Eq)]
@@ -248,6 +254,7 @@ pub struct Mcu {
     pub usb: Option<McuUsb>,
     #[serde(default)]
     pub serve_mode: ServeMode,
+    pub external_flash: Option<ExternalFlash>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -697,6 +704,13 @@ pub fn validate_config(name: &str, config: &HwConfigJson) {
                 );
             }
         }
+    }
+
+    if let Some(pin) = config.mcu.pins.neo {
+        validate_pin_number(&config.mcu, pin, "neo", name);
+    }
+    if let Some(ef) = &config.mcu.external_flash {
+        validate_pin_number(&config.mcu, ef.cs_pin, "external_flash.cs_pin", name);
     }
 }
 

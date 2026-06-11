@@ -326,3 +326,11 @@ pub fn crate_version() -> &'static str {
 pub fn metadata_version() -> &'static str {
     METADATA_VERSION_STR
 }
+
+pub trait MetadataWriter {
+    fn metadata_len(&self) -> usize;
+    fn total_set_count(&self) -> usize;
+    fn rom_images_size(&self) -> usize;
+    fn write_all(&self, buf: &mut [u8], rtn_chip_data_ptrs: &mut [u32]) -> Result<usize>;
+    fn write_roms(&self, buf: &mut [u8]) -> Result<()>;
+}

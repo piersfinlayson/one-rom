@@ -87,6 +87,7 @@ pub struct ChipType {
 
     #[serde(skip_serializing_if = "Option::is_none")]
     pub power: Option<Vec<PowerPin>>,
+    pub deselect_when_address_all_high: Option<Vec<u8>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

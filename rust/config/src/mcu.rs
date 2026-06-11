@@ -71,6 +71,14 @@ impl core::fmt::Display for Port {
     }
 }
 
+// Values match C enum values in core firmware
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[repr(u8)]
+pub enum RpVariant {
+    Rp235xA = 1,
+    Rp235xB = 0,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Processor {
     F401BC,

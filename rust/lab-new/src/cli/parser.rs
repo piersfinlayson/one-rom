@@ -269,8 +269,11 @@ pub async fn get_format(
     }
 
     loop {
-        let input =
-            prompt(editor, &format!("Format (cs/hex/ihex) [{}]: ", default.as_str())).await?;
+        let input = prompt(
+            editor,
+            &format!("Format (cs/hex/ihex) [{}]: ", default.as_str()),
+        )
+        .await?;
 
         let s = match input {
             None => return Err(Error::Cancelled),

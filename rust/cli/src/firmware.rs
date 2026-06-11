@@ -18,7 +18,8 @@ use crate::args;
 use crate::utils::{resolve_board, resolve_firmware_output};
 use onerom_cli::plugin::{PluginSpec, ResolvedPlugin, resolve_plugins};
 use onerom_cli::slot::{
-    ConfirmationsRequired, check_slot_confirmations, parse_slots, save_config, slots_to_config_json,
+    ConfirmationsRequired, GlobalConfig, check_slot_confirmations, parse_slots, save_config,
+    slots_to_config_json,
 };
 use onerom_cli::{Error, Options};
 
@@ -34,8 +35,7 @@ pub fn resolve_config_json(
     slots: &[String],
     no_config: bool,
     board: &Board,
-    config_name: Option<&str>,
-    config_description: Option<&str>,
+    global_config: Option<&GlobalConfig>,
     plugins: &[ResolvedPlugin],
 ) -> Result<String, Error> {
     if let Some(path) = config_file {
@@ -43,10 +43,10 @@ pub fn resolve_config_json(
         // so plugins is always empty here.
         read_rom_config(path).map_err(Error::from)
     } else if no_config || slots.is_empty() {
-        slots_to_config_json(plugins, &[], config_name, config_description)
+        slots_to_config_json(plugins, &[], global_config)
     } else {
         let parsed = parse_slots(slots, board)?;
-        slots_to_config_json(plugins, &parsed, config_name, config_description)
+        slots_to_config_json(plugins, &parsed, global_config)
     }
 }
 
@@ -270,13 +270,25 @@ pub async fn cmd_build(
         }
     }
 
+    let global_config = if args.no_config {
+        None
+    } else {
+        Some(GlobalConfig {
+            config_name: args.config_name.clone(),
+            config_description: args.config_description.clone(),
+            instance_name: args.instance_name.clone(),
+            serial_override: args.serial_override.clone(),
+            boot_logging: args.logging,
+            disable_swd: args.disable_swd,
+            turbo_boot: args.turbo_boot,
+        })
+    };
     let config_json = resolve_config_json(
         args.config_file.as_deref(),
         &args.slot,
         args.no_config,
         &board,
-        args.config_name.as_deref(),
-        args.config_description.as_deref(),
+        global_config.as_ref(),
         &plugins,
     )?;
 

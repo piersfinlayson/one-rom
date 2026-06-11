@@ -377,7 +377,8 @@
                     "pin": 14,
                     "voltage": "0V"
                 }
-            ]
+            ],
+            "deselect_when_address_all_high": [14, 15]
         },
         "23QL512": {
             "description": "A composite ROM type, serving two combined 23256s for the Sinclair QL, with a single configured CS line at pin 22, and A15 at pin 20 instead of pin 1",

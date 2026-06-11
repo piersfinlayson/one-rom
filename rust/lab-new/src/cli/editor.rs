@@ -1,4 +1,3 @@
-
 // Copyright (c) 2026 Piers Finlayson <piers@piers.rocks>
 //
 // MIT licence

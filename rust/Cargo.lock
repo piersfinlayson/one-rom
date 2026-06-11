@@ -2862,6 +2862,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d9c4f5dac5e15c24eb999c26181a6ca40b39fe946cbe4c263c7209467bc83af2"
 
 [[package]]
+name = "foldhash"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "77ce24cb58228fbb8aa041425bb1050850ac19177686ea6e0f41a70416f56fdb"
+
+[[package]]
 name = "font-types"
 version = "0.7.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3338,7 +3344,7 @@ version = "0.15.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9229cfe53dfd69f0609a49f65461bd93001ea1ef889cd5529dd176593f5338a1"
 dependencies = [
- "foldhash",
+ "foldhash 0.1.5",
 ]
 
 [[package]]
@@ -3346,6 +3352,9 @@ name = "hashbrown"
 version = "0.17.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ed5909b6e89a2db4456e54cd5f673791d7eca6732202bbf2a9cc504fe2f9b84a"
+dependencies = [
+ "foldhash 0.2.0",
+]
 
 [[package]]
 name = "hassle-rs"
@@ -5221,7 +5230,7 @@ dependencies = [
 
 [[package]]
 name = "onerom-config"
-version = "0.4.12"
+version = "0.5.0"
 dependencies = [
  "schemars",
  "serde",
@@ -5254,7 +5263,7 @@ dependencies = [
 
 [[package]]
 name = "onerom-fw"
-version = "0.1.23"
+version = "0.1.24"
 dependencies = [
  "base64 0.22.1",
  "bytes",
@@ -5274,7 +5283,7 @@ dependencies = [
 
 [[package]]
 name = "onerom-gen"
-version = "0.5.11"
+version = "0.5.12"
 dependencies = [
  "onerom-config",
  "schemars",
@@ -5345,6 +5354,15 @@ dependencies = [
  "rtt-target",
  "sha1 0.11.0",
  "static_cell",
+]
+
+[[package]]
+name = "onerom-metadata"
+version = "0.1.0"
+dependencies = [
+ "hashbrown 0.17.1",
+ "serde",
+ "toml",
 ]
 
 [[package]]
@@ -6666,7 +6684,7 @@ dependencies = [
 
 [[package]]
 name = "schema-gen"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "onerom-gen",
  "schemars",
@@ -6772,7 +6790,7 @@ dependencies = [
 
 [[package]]
 name = "sdrr-fw-parser"
-version = "0.6.14"
+version = "0.6.15"
 dependencies = [
  "airfrog-rpc",
  "deku 0.19.1",
@@ -6786,7 +6804,7 @@ dependencies = [
 
 [[package]]
 name = "sdrr-gen"
-version = "0.6.13"
+version = "0.6.14"
 dependencies = [
  "anyhow",
  "bytes",
@@ -6802,7 +6820,7 @@ dependencies = [
 
 [[package]]
 name = "sdrr-info"
-version = "0.5.14"
+version = "0.5.15"
 dependencies = [
  "anyhow",
  "chrono",

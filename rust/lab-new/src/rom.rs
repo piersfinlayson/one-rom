@@ -345,17 +345,12 @@ impl RomReader {
     fn read_mode(&mut self, mode: u8, sha: &mut Sha1, csum: &mut ChecksumState) -> u32 {
         let (addr_count, addr_shift, data_bytes, read_delay) = match mode {
             16 => (
-                self.chip.size_bytes()/2,
-                1,                   // bit 0 (A-1) always 0 in 16-bit mode
+                self.chip.size_bytes() / 2,
+                1, // bit 0 (A-1) always 0 in 16-bit mode
                 2,
                 self.read_delay_16bit_cycles,
             ),
-            _ => (
-                self.chip.size_bytes(),
-                0,
-                1,
-                self.read_delay_cycles,
-            ),
+            _ => (self.chip.size_bytes(), 0, 1, self.read_delay_cycles),
         };
 
         self.begin_read(mode);
@@ -549,7 +544,7 @@ impl RomReader {
         self.deassert_control();
         if let Some(ref mut byte_n) = self.byte_n {
             byte_n.set_high();
-            
+
             // Reset D15/A-1 shared pin to back to input with pull-down.
             if let Some(a1) = self.addr.first_mut() {
                 a1.set_pull(Pull::Down);

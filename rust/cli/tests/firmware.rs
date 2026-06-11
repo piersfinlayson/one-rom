@@ -233,12 +233,7 @@ fn firmware_build_40pin_config_27c400() {
 fn firmware_build_slot_2364_single() {
     slot_succeeds(
         representative_board(24),
-        &[slot(
-            "rand_8KB.rom",
-            "2364",
-            &[("cs1", "active_low")],
-            None,
-        )],
+        &[slot("rand_8KB.rom", "2364", &[("cs1", "active_low")], None)],
     );
 }
 
@@ -442,7 +437,7 @@ fn firmware_build_slot_28pin_dual() {
     slot_succeeds(
         representative_board(28),
         &[
-        slot("rand_64KB.rom", "27512", &[], None),
+            slot("rand_64KB.rom", "27512", &[], None),
             slot("rand_64KB.rom", "27512", &[], None),
         ],
     );

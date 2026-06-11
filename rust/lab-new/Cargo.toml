@@ -25,7 +25,7 @@ rp235xa = [ "embassy-rp/rp235xa" ]
 rp235xb = [ "embassy-rp/rp235xb" ]
 
 [dependencies]
-onerom-config = { path="../config", version = "0.4.11" }
+onerom-config = { path="../config", version = "0.5.0" }
 onerom-protocol = { version = "0.1.0" }
 onerom-database = { path="../database", version = "0.1.1" }
 

@@ -18,6 +18,16 @@ use onerom_gen::{
 
 const DEFAULT_CONFIG_DESCRIPTION: &str = "Created by the One ROM CLI";
 
+pub struct GlobalConfig {
+    pub config_name: Option<String>,
+    pub config_description: Option<String>,
+    pub instance_name: Option<String>,
+    pub serial_override: Option<String>,
+    pub boot_logging: bool,
+    pub disable_swd: bool,
+    pub turbo_boot: bool,
+}
+
 /// The result of checking whether any slot specifications require user
 /// confirmation before proceeding.
 pub struct ConfirmationsRequired {
@@ -468,8 +478,7 @@ fn slot_to_firmware_overrides(slot: &SlotSpec) -> Option<FirmwareConfig> {
 pub fn slots_to_config_json(
     plugins: &[ResolvedPlugin],
     slots: &[SlotSpec],
-    name: Option<&str>,
-    description: Option<&str>,
+    global_config: Option<&GlobalConfig>,
 ) -> Result<String, Error> {
     // Ensure system plugins alway come first
     let mut sorted_plugins: Vec<&ResolvedPlugin> = plugins.iter().collect();
@@ -492,14 +501,20 @@ pub fn slots_to_config_json(
 
     let config = Config {
         version: 1,
-        name: name.map(|s| s.to_string()),
-        description: description
-            .unwrap_or(DEFAULT_CONFIG_DESCRIPTION)
+        name: global_config.and_then(|c| c.config_name.clone()),
+        description: global_config
+            .and_then(|c| c.config_description.clone())
+            .unwrap_or(DEFAULT_CONFIG_DESCRIPTION.to_string())
             .to_string(),
         detail: None,
         chip_sets,
         notes: None,
         categories: None,
+        instance_name: global_config.and_then(|c| c.instance_name.clone()),
+        serial_override: global_config.and_then(|c| c.serial_override.clone()),
+        boot_logging: global_config.is_some_and(|c| c.boot_logging),
+        swd_enabled: !global_config.is_some_and(|c| c.disable_swd),
+        turbo_boot: global_config.is_some_and(|c| c.turbo_boot),
     };
 
     serde_json::to_string_pretty(&config).map_err(|e| Error::Other(e.to_string()))

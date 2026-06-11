@@ -718,6 +718,9 @@ fn generate_chip_type_impl(config: &ChipTypesConfig) -> String {
     code.push_str(&generate_chip_type_is_supported_fn(config));
     code.push_str("\n\n");
 
+    code.push_str(&generate_deselect_when_address_all_high_method(config));
+    code.push_str("\n\n");
+
     code.push_str("}\n");
 
     // Display impl
@@ -1588,5 +1591,45 @@ fn generate_chip_type_names(config: &ChipTypesConfig) -> String {
     code.push_str("    }\n");
     code.push_str("}\n");
 
+    code
+}
+
+fn generate_deselect_when_address_all_high_method(config: &ChipTypesConfig) -> String {
+    let mut code = String::new();
+
+    code.push_str("    /// Get address line indices which, when all high, deselect the chip\n");
+    code.push_str("    ///\n");
+    code.push_str("    /// Indices are 0-based into `address_pins()`. Returns `Some` only for\n");
+    code.push_str("    /// composite ROM types such as the 23QL384 which require the CS2\n");
+    code.push_str("    /// (enable + address qualified) algorithm.\n");
+    code.push_str(
+        "    pub const fn deselect_when_address_all_high(&self) -> Option<&'static [u8]> {\n",
+    );
+    code.push_str("        match self {\n");
+
+    for (type_name, _) in get_sorted_chip_types(config) {
+        if let Some(chip_type) = config.chip_types.get(type_name) {
+            let vname = variant_name(type_name, chip_type);
+            match &chip_type.deselect_when_address_all_high {
+                Some(indices) if !indices.is_empty() => {
+                    let joined = indices
+                        .iter()
+                        .map(|i| i.to_string())
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    code.push_str(&format!(
+                        "            ChipType::{} => Some(&[{}]),\n",
+                        vname, joined
+                    ));
+                }
+                _ => {
+                    code.push_str(&format!("            ChipType::{} => None,\n", vname));
+                }
+            }
+        }
+    }
+
+    code.push_str("        }\n");
+    code.push_str("    }\n");
     code
 }

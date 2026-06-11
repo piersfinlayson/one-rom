@@ -479,6 +479,10 @@ impl Chip {
         result
     }
 
+    pub(crate) fn data_byte_at(&self, logical: usize) -> Option<u8> {
+        self.data.as_ref()?.get(logical).copied()
+    }
+
     // Transforms a data byte by rearranging its bit positions to match the hardware's
     // data pin connections.
     //
@@ -496,7 +500,7 @@ impl Chip {
     //
     // This transformation ensures that when the hardware reads a byte through its
     // data pins, it gets the correct bit values despite the non-standard connections.
-    fn byte_mangled(byte: u8, board: &Board) -> u8 {
+    pub(crate) fn byte_mangled(byte: u8, board: &Board) -> u8 {
         // Start with 0 result
         let mut result = 0;
 
@@ -866,9 +870,7 @@ impl ChipSet {
                     // the same image size.
                     assert!(num_addr_pins == 18);
                     match chip.chip_type() {
-                        ChipType::Chip2364 | ChipType::Chip231024 => {
-                            2_usize.pow(18)
-                        } // 256KB
+                        ChipType::Chip2364 | ChipType::Chip231024 => 2_usize.pow(18), // 256KB
                         ChipType::Chip23QL384 | ChipType::Chip23QL512 => {
                             // /CE is used as A15 for these chips.  On the fire-28-c,
                             // /CE is before /OE, hence requires 18 bits
@@ -1521,7 +1523,7 @@ fn handle_snowflake_chip_types(
                             a16_index
                         );
                     }
-                },
+                }
                 Board::Fire32B => {
                     if a16_index == 2 {
                         // Remove two entries of pin map
@@ -1572,7 +1574,7 @@ fn handle_snowflake_chip_types(
         if !matches!(board, Board::Fire32B) {
             panic!("SST39SF040 is not supported on fire-32-a - use 27C040 with a shim");
         }
-        
+
         // On fire-32-b, regular A18 is the first address pin.  Remove it
         modified_map.remove(0);
 

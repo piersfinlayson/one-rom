@@ -14,8 +14,8 @@ use embassy_time::Timer;
 
 use onerom_config::chip::{ChipType, ControlLineType, chip_type_names_for_pins};
 use onerom_config::hw::{BOARDS, Board};
-use onerom_config::pin_map::BoardPinMap;
 use onerom_config::mcu::Family;
+use onerom_config::pin_map::BoardPinMap;
 
 use sha1::{Digest, Sha1};
 
@@ -83,8 +83,20 @@ async fn cmd_read(args: &mut Args<'_>, state: &mut SessionState) -> Result<(), E
     let board = state.board.ok_or(Error::BoardNotSet)?;
 
     let chip = parser::require_chip(args.next_token(), state.chip, &mut state.editor).await?;
-    let start = parser::get_addr(args.next_token(), state.range.start, "Start address", &mut state.editor).await?;
-    let len = parser::get_addr(args.next_token(), state.range.len, "Length (0=full)", &mut state.editor).await?;
+    let start = parser::get_addr(
+        args.next_token(),
+        state.range.start,
+        "Start address",
+        &mut state.editor,
+    )
+    .await?;
+    let len = parser::get_addr(
+        args.next_token(),
+        state.range.len,
+        "Length (0=full)",
+        &mut state.editor,
+    )
+    .await?;
     let fmt = parser::get_format(args.next_token(), state.format, &mut state.editor).await?;
     let cs1 = parser::get_cs_polarity(
         args.next_token(),
@@ -130,10 +142,23 @@ async fn cmd_batch(args: &mut Args<'_>, state: &mut SessionState) -> Result<(), 
     let board = state.board.ok_or(Error::BoardNotSet)?;
 
     let chip = parser::require_chip(args.next_token(), state.chip, &mut state.editor).await?;
-    let start = parser::get_addr(args.next_token(), state.range.start, "Start address", &mut state.editor).await?;
-    let len = parser::get_addr(args.next_token(), state.range.len, "Length (0=full)", &mut state.editor).await?;
+    let start = parser::get_addr(
+        args.next_token(),
+        state.range.start,
+        "Start address",
+        &mut state.editor,
+    )
+    .await?;
+    let len = parser::get_addr(
+        args.next_token(),
+        state.range.len,
+        "Length (0=full)",
+        &mut state.editor,
+    )
+    .await?;
     let fmt = parser::get_format(args.next_token(), state.format, &mut state.editor).await?;
-    let interval = parser::get_interval(args.next_token(), state.interval_secs, &mut state.editor).await?;
+    let interval =
+        parser::get_interval(args.next_token(), state.interval_secs, &mut state.editor).await?;
     let cs1 = parser::get_cs_polarity(
         args.next_token(),
         state.cs.cs1,
@@ -284,7 +309,11 @@ async fn cmd_set_format(args: &mut Args<'_>, state: &mut SessionState) -> Result
 
 async fn cmd_toggle_tristate(state: &mut SessionState) -> Result<(), Error> {
     state.tri_state = !state.tri_state;
-    send_line(&format!("Tri-state testing {}", if state.tri_state { "on" } else { "off" })).await?;
+    send_line(&format!(
+        "Tri-state testing {}",
+        if state.tri_state { "on" } else { "off" }
+    ))
+    .await?;
     Ok(())
 }
 
@@ -296,7 +325,15 @@ async fn cmd_quick_read(state: &mut SessionState) -> Result<(), Error> {
         state.range, state.format
     ))
     .await?;
-    do_read(board, chip, state.range, state.format, state.cs, state.tri_state).await
+    do_read(
+        board,
+        chip,
+        state.range,
+        state.format,
+        state.cs,
+        state.tri_state,
+    )
+    .await
 }
 
 async fn cmd_list_chips(state: &SessionState) -> Result<(), Error> {
@@ -400,7 +437,11 @@ async fn cmd_default_info(state: &SessionState) -> Result<(), Error> {
     .await?;
     send_line(&format!("Format:    {}", state.format)).await?;
     send_line(&format!("Interval:  {}s", state.interval_secs)).await?;
-    send_line(&format!("Tri-state: {}", if state.tri_state { "on" } else { "off" })).await?;
+    send_line(&format!(
+        "Tri-state: {}",
+        if state.tri_state { "on" } else { "off" }
+    ))
+    .await?;
     send_line("").await?;
     Ok(())
 }
@@ -550,11 +591,7 @@ async fn output_checksum(
             } else {
                 format!("{}-bit ", r.mode)
             };
-            send_line(&format!(
-                "  {}tristate failures: {}",
-                mode, r.failures
-            ))
-            .await?;
+            send_line(&format!("  {}tristate failures: {}", mode, r.failures)).await?;
         }
     }
 
@@ -583,7 +620,12 @@ fn trivial_sha1(byte: u8, count: usize) -> [u8; 20] {
     out
 }
 
-async fn scan_cs(board: Board, chip: ChipType, cs: CsSettings, tristate: bool) -> Result<(), Error> {
+async fn scan_cs(
+    board: Board,
+    chip: ChipType,
+    cs: CsSettings,
+    tristate: bool,
+) -> Result<(), Error> {
     let auto: alloc::vec::Vec<&'static str> = chip
         .control_lines()
         .iter()
@@ -663,11 +705,7 @@ async fn scan_cs(board: Board, chip: ChipType, cs: CsSettings, tristate: bool) -
                 mode,
                 hex::encode(sha1),
                 checksum.0,
-                if trivial {
-                    ""
-                } else {
-                    "*** candidate ***"
-                },
+                if trivial { "" } else { "*** candidate ***" },
             ))
             .await?;
         }

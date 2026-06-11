@@ -12,10 +12,12 @@
                 "-mfpu=fpv4-sp-d16"
             ],
             "includePath": [
-                "${workspaceFolder}/sdrr/include",
-                "${workspaceFolder}/output",
-                "${workspaceFolder}/sdrr/segger-rtt/RTT",
-                "${workspaceFolder}/sdrr/segger-rtt/Config"
+                "${workspaceFolder}/firmware/generated",
+                "${workspaceFolder}/firmware/include",
+                "${workspaceFolder}/firmware/apio/include",
+                "${workspaceFolder}/firmware/ora",
+                "${workspaceFolder}/firmware/segger-rtt/RTT",
+                "${workspaceFolder}/firmware/segger-rtt/Config"
             ],
             "defines": [
                 "__attribute__(x)=",
@@ -37,10 +39,12 @@
                 "-mfpu=fpv4-sp-d16"
             ],
             "includePath": [
-                "${workspaceFolder}/sdrr/include",
-                "${workspaceFolder}/output",
-                "${workspaceFolder}/sdrr/segger-rtt/RTT",
-                "${workspaceFolder}/sdrr/segger-rtt/Config"
+                "${workspaceFolder}/firmware/generated",
+                "${workspaceFolder}/firmware/include",
+                "${workspaceFolder}/firmware/apio/include",
+                "${workspaceFolder}/firmware/ora",
+                "${workspaceFolder}/firmware/segger-rtt/RTT",
+                "${workspaceFolder}/firmware/segger-rtt/Config"
             ],
             "defines": [
                 "__attribute__(x)=",

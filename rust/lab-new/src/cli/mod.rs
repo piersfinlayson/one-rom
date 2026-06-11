@@ -27,7 +27,6 @@ use crate::usb;
 
 use editor::LineEditor;
 
-
 // ---------------------------------------------------------------------------
 // Public types
 // ---------------------------------------------------------------------------
@@ -224,22 +223,21 @@ pub async fn run(state: &mut SessionState) -> ! {
 // Session loop
 // ---------------------------------------------------------------------------
 
-
 /// Run one interactive session until the USB host disconnects.
 async fn session_loop(state: &mut SessionState) {
     let mut last_blank = false;
     loop {
         let mut was_blank = false;
- 
+
         // The editor sends the prompt and returns the completed line.
         match state.editor.read_line("> ", true).await {
             Err(_) => return, // USB disconnected
- 
+
             Ok(None) => {
                 // Ctrl-C at the bare prompt: the editor already echoed ^C\r\n;
                 // just loop back to re-display the prompt.
             }
- 
+
             Ok(Some(line)) if line.is_empty() => {
                 was_blank = true;
                 if send_line("").await.is_err() {
@@ -254,7 +252,7 @@ async fn session_loop(state: &mut SessionState) {
                     }
                 }
             }
- 
+
             Ok(Some(line)) => {
                 match commands::dispatch(&line, state).await {
                     Ok(()) => {}
@@ -268,7 +266,7 @@ async fn session_loop(state: &mut SessionState) {
                 }
             }
         }
- 
+
         last_blank = was_blank;
     }
 }

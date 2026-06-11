@@ -45,7 +45,7 @@ However, we strongly recommend sticking to a *nix based host (Linux or macOS) fo
         sudo apt -y install gcc-arm-none-eabi
         ```
 
-    Now you will need to update the `TOOLCHAIN` environment variable in your shell or variable in the [Makefile](sdrr/Makefile) to point to the correct compiler binary directory.  It should probably `/usr/bin` or `/opt/arm-gnu-toolchain-14.3.rel1-darwin-arm64-arm-none-eabi/bin` or similar.
+    Now you will need to update the `TOOLCHAIN` environment variable in your shell or variable in the [Makefile](firmware/Makefile) to point to the correct compiler binary directory.  It should probably `/usr/bin` or `/opt/arm-gnu-toolchain-14.3.rel1-darwin-arm64-arm-none-eabi/bin` or similar.
 
     If on an ARM64 host you will also need x86_64-linux-gnu cross tools:
 
@@ -53,10 +53,10 @@ However, we strongly recommend sticking to a *nix based host (Linux or macOS) fo
     sudo apt -y install gcc-x86-64-linux-gnu
     ```
 
-3. Install the following packages required for building and testing.  Of these `vice` and `dfu-util` are optional.  (`vice` is used to build some Commodore demo programs, and `dfu-util` can be used for SWD programming Ice variants.):
+3. Install the following packages required for building and testing.  `vice` is optional.  (`vice` is used to build some Commodore demo programs.):
 
     ```bash
-    sudo apt -y install dfu-util jq libcurl4-openssl-dev libzip-dev libjson-c-dev libudev-dev vice
+    sudo apt -y install jq libcurl4-openssl-dev libzip-dev libjson-c-dev libudev-dev vice
     ```
 
     If you are using a different package manager, the package name may vary slightly, e.g., `libcurl-devel` on Fedora.
@@ -119,7 +119,8 @@ You can also use make commands as described below, but running make directly has
 
 USB is the simplest way to program One ROM if your hardware revision supports.
 
-After building the firmware as above, use the binary from `sdrr/build/sdrr-{MCU}.bin` and one of the following tools to update the firmware of your device.  You have two official One ROM options:
+After building the firmware as above, use the binary from `firmware/build/onerom-rp235x.bin` and one of the following tools to update the firmware of your device.  You have two official One ROM options:
+- [One ROM CLI](https://onerom.org/cli)
 - [One ROM Studio](https://onerom.org/studio)
 - [One ROM Web](https://onerom.org/web)
 
@@ -132,23 +133,11 @@ You also have board specific, third-party, options:
 - [pico⚡flash](https://picoflash.org) - A web based RP2040/RP2350 flash by One ROM's author. 
 - [picotool](https://github.com/raspberrypi/picotool) - A command line tool from Raspberry Pi for programming Raspberry Pi RP2040/RP2350-based boards.
 
-As well as `sdrr/build/sdrr-rp2350.bin`, if you have [picotool](https://github.com/raspberrypi/picotool) installed and in your path, a UF2 file is created as part of the build for Fire boards at `sdrr/build/sdrr-rp2350.uf2`.
+As well as `firmware/build/onerom-rp235x.bin`, if you have [picotool](https://github.com/raspberrypi/picotool) installed and in your path, a UF2 file is created as part of the build for Fire boards at `firmware/build/onerom-rp235x.uf2`.
 
 For a factory fresh Fire board, you can copy this UF2 to the RP2350 filesystem that mounts when you plug in the Fire board to program it.
 
 Note that the RP2350 filesystem is not automatically mounted when plugged into USB once you have One ROM firmware v0.6.0+ installed, but you can access it by pulling BOOT to GND on power up to enter this mode.
-
-#### Ice Boards
-
-There are many third-arty options for programming Ice USB boards, which use STM32's DFU mode.
-
-The author sometimes uses [dfu-util](http://dfu-util.sourceforge.net/).  As well as `sdrr/build/sdrr-stm32{MCU}.bin`, a DFU file is also created at `sdrr/build/sdrr-stm32{MCU}.dfu` which can be supplied directly to `dfu-util`.
-
-You can even use the following to build and flash via dfu-util in one step:
-
-```bash
-XXX make dfu-flash
-```
 
 ### SWD Programmer
 
@@ -164,7 +153,7 @@ If you installed `probe-rs`, you can a command like this to build and flash the 
 XXX make run
 ```
 
-Note that as well as `sdrr/build/sdrr-{MCU}.bin`, an ELF file is created at `sdrr/build/sdrr-{MCU}.elf` which can be used with other SWD programming tools, as it contains build symbols.  This is particularly useful for attaching to One ROM with the programmer, after it has been programmed, to view logs. 
+Note that as well as `firmware/build/onerom-rp235x.bin`, an ELF file is created at `firmware/build/onerom-rp235x.elf` which can be used with other SWD programming tools, as it contains build symbols.  This is particularly useful for attaching to One ROM with the programmer, after it has been programmed, to view logs. 
 
 See [Pi-PICO-PROGRAMMER](/docs/PI-PICO-PROGRAMMER.md) for details of using a Raspberry Pi Pico as an inexpensive SWD programmer.  Many other SWD programmers are available, like the Raspberry Pi Debug Probe, generic DAPLink, ST-Link, etc. 
 
@@ -192,5 +181,5 @@ Not all ROM types support this testing.  Please raise an issue if your specific 
 To enable both high-level logging and debug logging, use the following when building:
 
 ```bash
-BOOT_LOGGING=1 DEBUG_LOGGING=1 HW_REV=fire-24-d MCU=rp2350 CONFIG=config/vic20-pal.mk make
+BOOT_LOGGING=1 DEBUG_LOGGING=1 CONFIG=config/vic20-pal.mk make
 ```

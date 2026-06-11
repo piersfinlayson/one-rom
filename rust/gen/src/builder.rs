@@ -12,14 +12,15 @@ use alloc::vec::Vec;
 
 use onerom_config::chip::{ChipFunction, ChipType};
 use onerom_config::fw::{FirmwareProperties, FirmwareVersion, ServeAlg};
-use onerom_config::mcu::Family;
 use onerom_config::hw::Board;
+use onerom_config::mcu::Family;
 
+use crate::MetadataWriter;
 use crate::image::{Chip, ChipSet, ChipSetType, CsConfig, CsLogic, Location, SizeHandling};
-use crate::meta::Metadata;
+use crate::meta::{AdditionalProps, Metadata, MetadataV2};
 use crate::{Error, FIRMWARE_SIZE, MAX_METADATA_LEN, MIN_FIRMWARE_OVERRIDES_VERSION, Result};
 
-pub const MAX_SUPPORTED_FIRMWARE_VERSION: FirmwareVersion = FirmwareVersion::new(0, 6, 999, 0);
+pub const MAX_SUPPORTED_FIRMWARE_VERSION: FirmwareVersion = FirmwareVersion::new(0, 7, 999, 0);
 
 const UNSUPPORTED_FIRMWARE_VERSIONS: [FirmwareVersion; 1] = [FirmwareVersion::new(0, 6, 3, 0)];
 
@@ -146,7 +147,7 @@ pub(crate) use crate::firmware::*;
 /// // Buffers ready to flash at appropriate offsets
 /// # Ok::<(), onerom_gen::Error>(())
 /// ```
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Builder {
     version: FirmwareVersion,
     config: Config,
@@ -231,6 +232,7 @@ impl Builder {
 
         // Validate each rom set has roms
         let mut chip_num = 0;
+        let mut num_non_plugin_slots = 0;
         for (set_id, set) in config.chip_sets.iter().enumerate() {
             if set.chips.is_empty() {
                 return Err(Error::NoChips { id: set_id });
@@ -274,6 +276,7 @@ impl Builder {
                 }
             }
 
+            let mut is_plugin = false;
             for chip in set.chips.iter() {
                 let chip0 = &set.chips[0];
 
@@ -495,10 +498,13 @@ impl Builder {
                 }
 
                 // Check for plugins on Ice (not supported)
-                if chip.chip_type.is_plugin() && *mcu_family == Family::Stm32f4 {
-                    return Err(Error::InvalidConfig {
-                        error: format!("Plugins are not supported on Ice (Chip {})", chip_num),
-                    });
+                if chip.chip_type.is_plugin() {
+                    if *mcu_family == Family::Stm32f4 {
+                        return Err(Error::InvalidConfig {
+                            error: format!("Plugins are not supported on Ice (Chip {})", chip_num),
+                        });
+                    }
+                    is_plugin = true;
                 }
 
                 if chip.chip_type == ChipType::SystemPlugin && set_id != 0 {
@@ -522,6 +528,10 @@ impl Builder {
                 }
 
                 chip_num += 1;
+            }
+
+            if !is_plugin {
+                num_non_plugin_slots += 1;
             }
 
             // After the loop: validate CS consistency for multi/banked sets
@@ -562,6 +572,66 @@ impl Builder {
                         }
                     }
                 }
+            }
+        }
+
+        if num_non_plugin_slots == 0 {
+            return Err(Error::InvalidConfig {
+                error: "At least one non-plugin ROM slot must be specified".to_string(),
+            });
+        }
+
+        #[allow(clippy::collapsible_if)]
+        if config.instance_name.is_some() {
+            if version < &FirmwareVersion::new(0, 7, 0, 0) {
+                return Err(Error::FirmwareTooOld {
+                    feat: "boot logging = true",
+                    version: *version,
+                    minimum: FirmwareVersion::new(0, 7, 0, 0),
+                });
+            }
+        }
+
+        if !config.swd_enabled && config.boot_logging {
+            return Err(Error::InvalidConfig {
+                error: "Boot logging cannot be enabled when SWD is disabled".to_string(),
+            });
+        }
+
+        #[allow(clippy::collapsible_if)]
+        if config.boot_logging {
+            if version < &FirmwareVersion::new(0, 7, 0, 0) {
+                return Err(Error::FirmwareTooOld {
+                    feat: "boot logging = true",
+                    version: *version,
+                    minimum: FirmwareVersion::new(0, 7, 0, 0),
+                });
+            }
+        }
+
+        #[allow(clippy::collapsible_if)]
+        if !config.swd_enabled {
+            if version < &FirmwareVersion::new(0, 7, 0, 0) {
+                return Err(Error::FirmwareTooOld {
+                    feat: "swd enabled = false",
+                    version: *version,
+                    minimum: FirmwareVersion::new(0, 7, 0, 0),
+                });
+            }
+        }
+
+        if config.turbo_boot {
+            if num_non_plugin_slots > 1 {
+                return Err(Error::InvalidConfig {
+                    error: "Turbo boot cannot be enabled when there is more than one non-plugin ROM slot".to_string(),
+                });
+            }
+            if version < &FirmwareVersion::new(0, 7, 0, 0) {
+                return Err(Error::FirmwareTooOld {
+                    feat: "turbo boot = true",
+                    version: *version,
+                    minimum: FirmwareVersion::new(0, 7, 0, 0),
+                });
             }
         }
 
@@ -821,7 +891,9 @@ impl Builder {
 
                 let filename = chip_config.filename();
 
-                let chip_config = if matches!(props.board(), Board::Fire32A) && matches!(chip_config.chip_type, ChipType::ChipSST39SF040) {
+                let chip_config = if matches!(props.board(), Board::Fire32A)
+                    && matches!(chip_config.chip_type, ChipType::ChipSST39SF040)
+                {
                     // Rewrite the SST39SF040 for Fire32A to be a 27C040, assuming that
                     // a shim will be used (as this variant doesn't support the
                     // SST39SF040 natively).
@@ -862,13 +934,24 @@ impl Builder {
         }
 
         // Build Metadata
-        let metadata = Metadata::new(
-            props.board(),
-            chip_sets,
-            props.boot_logging(),
-            props.board().mcu_pio(),
-            props.version(),
-        );
+        let metadata: Box<dyn MetadataWriter> =
+            if props.version() >= FirmwareVersion::new(0, 7, 0, 0) {
+                Box::new(MetadataV2::new(
+                    props.board(),
+                    chip_sets,
+                    props.boot_logging(),
+                    props.version(),
+                    AdditionalProps::from(&self.config),
+                ))
+            } else {
+                Box::new(Metadata::new(
+                    props.board(),
+                    chip_sets,
+                    props.boot_logging(),
+                    props.board().mcu_pio(),
+                    props.version(),
+                ))
+            };
 
         // Get buffer sizes
         let metadata_size = metadata.metadata_len();
@@ -1168,6 +1251,38 @@ pub struct Config {
     /// sorting, and searching of configurations.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub categories: Option<Vec<String>>,
+
+    /// Optional name for this One ROM instance
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub instance_name: Option<String>,
+
+    /// Optional serial number override for this One ROM, overriding the stock
+    /// USB serial number (which is the MCU's unique chip ID).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub serial_override: Option<String>,
+
+    /// Whether to enable boot logging, using SWD.
+    #[serde(default = "default_boot_logging")]
+    pub boot_logging: bool,
+
+    /// Whether to enable SWD.  Must be enabled for boot logging.
+    #[serde(default = "default_swd_enabled")]
+    pub swd_enabled: bool,
+
+    /// Whethher to boot fast.  Disables reading the image select jumpers.
+    /// The first non-plugin image is served.
+    #[serde(default = "default_turbo_boot")]
+    pub turbo_boot: bool,
+}
+
+pub(crate) fn default_boot_logging() -> bool {
+    false
+}
+pub(crate) fn default_swd_enabled() -> bool {
+    true
+}
+pub(crate) fn default_turbo_boot() -> bool {
+    false
 }
 
 #[cfg(feature = "schemars")]

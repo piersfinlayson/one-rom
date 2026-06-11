@@ -2,6 +2,9 @@
 
 All notables changes between versions are documented in this file.
 
+## v0.7.0
+
+
 ## v0.6.13 - 2026-06-02
 
 Added:

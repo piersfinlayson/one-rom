@@ -1,0 +1,1881 @@
+# OneROM Metadata Type Schema
+#
+# Source of truth for OneROM C header and Rust type/code generation.
+#
+# This allows for this single file to modified when adding/changing/removing
+# metadata or other firmware fields and the corresponding Rust code to both
+# parse and generate firmware blobs.
+#
+# This avoids the needs to keep C and Rust code in sync manually.
+#
+# While the C header `firmware/generated/onerom_metadata.h` is generated from
+# this file, the C code to use it must be hand-written.  See in particular
+# `firmware/src/globals.c`.
+#
+# Do not use `\n` inside comment strings - use """ triple-quoted strings"""
+# for multi-line comments instead.  The Rust code generator inserts newlines
+# as needed.
+#
+# Copyright (C) 2026 Piers Finlayson <piers@piers.rocks>
+# MIT License
+#
+# ---------------------------------------------------------------------------
+# Schema sections
+# ---------------------------------------------------------------------------
+#   [schema]          - metadata, addresses, codegen options
+#   [[constants]]     - #define constants (C) / pub const (Rust)
+#   [[type_aliases]]  - typedef uint16_t aliases
+#   [[enums]]         - typedef enum types
+#   [[structs]]       - fixed-layout structs
+#   [[tagged_fams]]   - variable-length structs with discriminant (Rust enums)
+#   [[simple_fams]]   - variable-length structs: length prefix + byte array
+#
+# ---------------------------------------------------------------------------
+# Field kinds (used in struct/tagged_fam fields)
+# ---------------------------------------------------------------------------
+#   scalar            - u8, u16, u32
+#   enum              - reference to an [[enums]] entry
+#   type_alias        - reference to a [[type_aliases]] entry
+#   inline_array      - fixed-size array, element + count
+#   inline_array2d    - fixed 2D array, element + rows + cols
+#   cstr_ptr          - const char* null-terminated string pointer
+#   struct_ptr        - const T* pointer to struct (nullable flag)
+#   struct_array_ptr  - const T* as array, length from count_field
+#   struct_ptr_array_ptr - const T* const * (double-indirect array + count_field)
+#   tagged_fam_ptr    - pointer to a [[tagged_fams]] type
+#   simple_fam_ptr    - pointer to a [[simple_fams]] type
+#   opaque_ptr        - void* or fn pointer, stored as u32, not dereferenced
+#   padding           - reserved bytes: present in C/binary, absent from Rust type
+#
+# ---------------------------------------------------------------------------
+# 'generate' field values
+# ---------------------------------------------------------------------------
+#   "both"   - C definition + Rust parse + Rust serialize
+#   "parse"  - C definition + Rust parse only
+#   "none"   - C definition only
+
+[schema]
+version = 1
+name = "OneROM"
+description = "OneROM firmware metadata structures"
+flash_base   = 0x10000000    # RP2350 flash base address
+metadata_base = 0x1000C000   # flash_base + 48KB: root of metadata region
+metadata_size = 16384        # 16KB reserved for metadata
+root_struct = "onerom_metadata_header_t"
+
+# ===========================================================================
+# Constants
+# ===========================================================================
+
+[[constants]]
+name = "ONEROM_INFO_VERSION"
+type = "u32"
+value = 2
+comment = "Version of the onerom_info_t structure (v0.7.0+)"
+
+[[constants]]
+name = "ONEROM_METADATA_MAGIC"
+type = "cstr"
+value = "ONEROM_METADATA"
+comment = "Magic string identifying the metadata header (16 bytes including null terminator)"
+
+[[constants]]
+name = "CURRENT_METADATA_VERSION"
+type = "u32"
+value = 2
+comment = "Current metadata structure version (v0.7.0+)"
+
+[[constants]]
+name = "RUNTIME_INFO_VERSION"
+type = "u32"
+value = 2
+comment = "Version of the onerom_runtime_info_t structure (v0.7.0+)"
+
+[[constants]]
+name = "GPIO_NONE"
+type = "u8"
+value = 0xFF
+comment = "Sentinel: no GPIO is connected to this pin position"
+
+[[constants]]
+name = "MAX_ADDR_PINS"
+type = "usize"
+value = 24
+comment = "Maximum number of address pins"
+
+[[constants]]
+name = "MAX_DATA_PINS"
+type = "usize"
+value = 16
+comment = "Maximum number of data pins"
+
+[[constants]]
+name = "MAX_PHYS_PINS"
+type = "usize"
+value = 40
+comment = "Maximum number of physical ROM pins"
+
+[[constants]]
+name = "MAX_GPIOS_PER_PHYS_PIN"
+type = "usize"
+value = 2
+comment = "Maximum GPIOs per physical pin (one pin may connect to two GPIOs)"
+
+[[constants]]
+name = "MAX_IMG_SEL_PINS"
+type = "usize"
+value = 7
+comment = "Maximum number of image select jumper pins"
+
+[[constants]]
+name = "FIRE_FREQ_STOCK"
+type = "u16"
+value = 0xFFFF
+comment = "Sentinel: use stock RP2350 clock frequency (no override)"
+
+[[constants]]
+name = "FIRE_FREQ_NONE"
+type = "u16"
+value = 0
+comment = "Sentinel: no RP2350 clock frequency configured"
+
+[[constants]]
+name = "ALG_CS0_PARAMS_LEN"
+type = "usize"
+value = 4
+comment = "Parameter byte length for CS algorithm 0 (standard contiguous)"
+
+[[constants]]
+name = "ALG_CS1_PARAMS_LEN"
+type = "usize"
+value = 1
+comment = "Parameter byte length for CS algorithm 1 (non-contiguous single-gap)"
+
+[[constants]]
+name = "ALG_CS2_PARAMS_LEN"
+type = "usize"
+value = 3
+comment = "Parameter byte length for CS algorithm 2 (enable/address-qualified)"
+
+[[constants]]
+name = "ALG_ADDR0_PARAMS_PRE_LIST_LEN"
+type = "usize"
+value = 0
+comment = "Parameter byte length for address algorithm 0 (none)"
+
+[[constants]]
+name = "ALG_DATA0_PARAMS_LEN"
+type = "usize"
+value = 0
+comment = "Parameter byte length for data algorithm 0 (none)"
+
+[[constants]]
+name = "ALG_DATA1_PARAMS_LEN"
+type = "usize"
+value = 2
+comment = "Parameter byte length for data algorithm 1 (byte-mode)"
+
+[[constants]]
+name = "ALG_DMA0_PARAMS_LEN"
+type = "usize"
+value = 0
+comment = "Parameter byte length for DMA algorithm 0 (none)"
+
+# ===========================================================================
+# Type aliases
+# ===========================================================================
+
+[[type_aliases]]
+name = "fire_freq_t"
+underlying = "u16"
+comment = """RP2350 clock frequency in MHz.
+Special values: FIRE_FREQ_STOCK, FIRE_FREQ_NONE."""
+
+# ===========================================================================
+# Enums
+# ===========================================================================
+# 'size'         - byte size, verified by STATIC_ASSERT or __attribute__((packed))
+# 'packed'       - true if __attribute__((packed)) is required in C
+# 'strip_prefix' - common prefix to remove when deriving Rust variant names
+# Variant flags:
+#   sentinel = true  - generates as a pub const, not a Rust enum variant
+#   alias_for        - generates as a constant alias for another variant
+
+[[enums]]
+name = "onerom_rom_type_t"
+size = 1
+comment = "ROM/EPROM/EEPROM chip type"
+strip_prefix = "CHIP_TYPE_"
+
+[[enums.variants]]
+name = "CHIP_TYPE_2316"
+value = 0
+comment = "Mask ROM, 2KB"
+
+[[enums.variants]]
+name = "CHIP_TYPE_2332"
+value = 1
+comment = "Mask ROM, 4KB"
+
+[[enums.variants]]
+name = "CHIP_TYPE_2364"
+value = 2
+comment = "Mask ROM, 8KB"
+
+[[enums.variants]]
+name = "CHIP_TYPE_23128"
+value = 3
+comment = "Mask ROM, 16KB"
+
+[[enums.variants]]
+name = "CHIP_TYPE_23256"
+value = 4
+comment = "Mask ROM, 32KB"
+
+[[enums.variants]]
+name = "CHIP_TYPE_23512"
+value = 5
+comment = "Mask ROM, 64KB"
+
+[[enums.variants]]
+name = "CHIP_TYPE_2704"
+value = 6
+comment = "EPROM, 512B"
+
+[[enums.variants]]
+name = "CHIP_TYPE_2708"
+value = 7
+comment = "EPROM, 1KB"
+
+[[enums.variants]]
+name = "CHIP_TYPE_2716"
+value = 8
+comment = "EPROM, 2KB"
+
+[[enums.variants]]
+name = "CHIP_TYPE_2732"
+value = 9
+comment = "EPROM, 4KB"
+
+[[enums.variants]]
+name = "CHIP_TYPE_2764"
+value = 10
+comment = "EPROM, 8KB"
+
+[[enums.variants]]
+name = "CHIP_TYPE_27128"
+value = 11
+comment = "EPROM, 16KB"
+
+[[enums.variants]]
+name = "CHIP_TYPE_27256"
+value = 12
+comment = "EPROM, 32KB"
+
+[[enums.variants]]
+name = "CHIP_TYPE_27512"
+value = 13
+comment = "EPROM, 64KB"
+
+[[enums.variants]]
+name = "CHIP_TYPE_231024"
+value = 14
+comment = "Mask ROM, 128KB"
+
+[[enums.variants]]
+name = "CHIP_TYPE_27C010"
+value = 15
+comment = "EPROM, 128KB (also 23C1010)"
+
+[[enums.variants]]
+name = "CHIP_TYPE_27C020"
+value = 16
+comment = "EPROM, 256KB"
+
+[[enums.variants]]
+name = "CHIP_TYPE_27C040"
+value = 17
+comment = "EPROM, 512KB"
+
+[[enums.variants]]
+name = "CHIP_TYPE_27C080"
+value = 18
+comment = "EPROM, 1MB"
+
+[[enums.variants]]
+name = "CHIP_TYPE_27C400"
+value = 19
+comment = "EPROM"
+
+[[enums.variants]]
+name = "CHIP_TYPE_6116"
+value = 20
+comment = "SRAM, 2KB"
+
+[[enums.variants]]
+name = "CHIP_TYPE_27C301"
+value = 21
+comment = "EPROM"
+
+[[enums.variants]]
+name = "CHIP_TYPE_SYSTEM_PLUGIN"
+value = 22
+comment = "System plugin ROM slot"
+
+[[enums.variants]]
+name = "CHIP_TYPE_USER_PLUGIN"
+value = 23
+comment = "User plugin ROM slot"
+
+[[enums.variants]]
+name = "CHIP_TYPE_PIO_PLUGIN"
+value = 24
+comment = "PIO plugin ROM slot"
+
+[[enums.variants]]
+name = "CHIP_TYPE_SST39SF040"
+value = 25
+display = "SST39SF040"
+comment = "Flash, 512KB"
+
+[[enums.variants]]
+name = "CHIP_TYPE_28C16"
+value = 26
+comment = "EEPROM, 2KB"
+
+[[enums.variants]]
+name = "CHIP_TYPE_28C64"
+value = 27
+comment = "EEPROM, 8KB"
+
+[[enums.variants]]
+name = "CHIP_TYPE_28C256"
+value = 28
+comment = "EEPROM, 32KB"
+
+[[enums.variants]]
+name = "CHIP_TYPE_28C512"
+value = 29
+comment = "EEPROM, 64KB"
+
+[[enums.variants]]
+name = "CHIP_TYPE_23QL512"
+value = 30
+comment = "Sinclair QL combined mask ROM, 64KB address space"
+
+[[enums.variants]]
+name = "CHIP_TYPE_23QL384"
+value = 31
+comment = "Sinclair QL combined mask ROM, 48KB ($0000-$BFFF)"
+
+[[enums.variants]]
+name = "CHIP_TYPE_23C1001"
+value = 32
+comment = "Mask ROM"
+
+[[enums.variants]]
+name = "CHIP_TYPE_27C200"
+value = 33
+comment = "EPROM"
+
+[[enums.variants]]
+name = "NUM_CHIP_TYPES"
+value = 34
+sentinel = true
+comment = "Count of defined chip types. Not a valid chip type."
+
+[[enums.variants]]
+name = "INVALID_CHIP_TYPE"
+value = 0xFF
+comment = "Invalid or unset chip type"
+
+[[enums.aliases]]
+name = "CHIP_TYPE_23C1010"
+target = "CHIP_TYPE_27C010"
+comment = "23C1010 is electrically equivalent to 27C010"
+
+# ---
+
+[[enums]]
+name = "onerom_cs_state_t"
+size = 1
+comment = "Chip select pin active state"
+strip_prefix = "CS_"
+
+[[enums.variants]]
+name = "CS_ACTIVE_LOW"
+value = 0
+comment = "CS asserted when pin is low"
+
+[[enums.variants]]
+name = "CS_ACTIVE_HIGH"
+value = 1
+comment = "CS asserted when pin is high"
+
+[[enums.variants]]
+name = "CS_DONT_CARE"
+value = 2
+display = "don't care"
+comment = "CS is asserted with either low or high"
+
+[[enums.variants]]
+name = "CS_NOT_USED"
+value = 3
+comment = "CS pin not used"
+
+# ---
+
+[[enums]]
+name = "bit_modes_t"
+size = 1
+comment = "ROM data bus width"
+strip_prefix = "BIT_MODE_"
+
+[[enums.variants]]
+name = "BIT_MODE_8"
+value = 1
+comment = "8-bit data bus"
+
+[[enums.variants]]
+name = "BIT_MODE_16"
+value = 2
+comment = "16-bit data bus"
+
+# ---
+
+[[enums]]
+name = "fire_vreg_t"
+size = 1
+comment = "RP2350 VREG output voltage (VREQ_CTRL register values)"
+strip_prefix = "FIRE_VREG_"
+
+[[enums.variants]]
+name = "FIRE_VREG_0_55V"
+value = 0x00
+
+[[enums.variants]]
+name = "FIRE_VREG_0_60V"
+value = 0x01
+
+[[enums.variants]]
+name = "FIRE_VREG_0_65V"
+value = 0x02
+
+[[enums.variants]]
+name = "FIRE_VREG_0_70V"
+value = 0x03
+
+[[enums.variants]]
+name = "FIRE_VREG_0_75V"
+value = 0x04
+
+[[enums.variants]]
+name = "FIRE_VREG_0_80V"
+value = 0x05
+
+[[enums.variants]]
+name = "FIRE_VREG_0_85V"
+value = 0x06
+
+[[enums.variants]]
+name = "FIRE_VREG_0_90V"
+value = 0x07
+
+[[enums.variants]]
+name = "FIRE_VREG_0_95V"
+value = 0x08
+
+[[enums.variants]]
+name = "FIRE_VREG_1_00V"
+value = 0x09
+
+[[enums.variants]]
+name = "FIRE_VREG_1_05V"
+value = 0x0A
+
+[[enums.variants]]
+name = "FIRE_VREG_1_10V"
+value = 0x0B
+
+[[enums.variants]]
+name = "FIRE_VREG_1_15V"
+value = 0x0C
+
+[[enums.variants]]
+name = "FIRE_VREG_1_20V"
+value = 0x0D
+
+[[enums.variants]]
+name = "FIRE_VREG_1_25V"
+value = 0x0E
+
+[[enums.variants]]
+name = "FIRE_VREG_1_30V"
+value = 0x0F
+
+[[enums.variants]]
+name = "FIRE_VREG_1_35V"
+value = 0x10
+
+[[enums.variants]]
+name = "FIRE_VREG_1_40V"
+value = 0x11
+
+[[enums.variants]]
+name = "FIRE_VREG_1_50V"
+value = 0x12
+
+[[enums.variants]]
+name = "FIRE_VREG_1_60V"
+value = 0x13
+
+[[enums.variants]]
+name = "FIRE_VREG_1_65V"
+value = 0x14
+
+[[enums.variants]]
+name = "FIRE_VREG_1_70V"
+value = 0x15
+
+[[enums.variants]]
+name = "FIRE_VREG_1_80V"
+value = 0x16
+
+[[enums.variants]]
+name = "FIRE_VREG_1_90V"
+value = 0x17
+
+[[enums.variants]]
+name = "FIRE_VREG_2_00V"
+value = 0x18
+
+[[enums.variants]]
+name = "FIRE_VREG_2_35V"
+value = 0x19
+
+[[enums.variants]]
+name = "FIRE_VREG_2_50V"
+value = 0x1A
+
+[[enums.variants]]
+name = "FIRE_VREG_2_65V"
+value = 0x1B
+
+[[enums.variants]]
+name = "FIRE_VREG_2_80V"
+value = 0x1C
+
+[[enums.variants]]
+name = "FIRE_VREG_3_00V"
+value = 0x1D
+
+[[enums.variants]]
+name = "FIRE_VREG_3_15V"
+value = 0x1E
+
+[[enums.variants]]
+name = "FIRE_VREG_3_30V"
+value = 0x1F
+
+[[enums.variants]]
+name = "FIRE_VREG_NONE"
+value = 0xFE
+comment = "No VREG override configured"
+
+[[enums.variants]]
+name = "FIRE_VREG_STOCK"
+value = 0xFF
+comment = "Use stock VREG setting"
+
+# ---
+
+[[enums]]
+name = "limp_mode_pattern_t"
+size = 1
+packed = true
+comment = "Status LED blink pattern for limp-mode error indication"
+strip_prefix = "LIMP_MODE_"
+
+[[enums.variants]]
+name = "LIMP_MODE_NONE"
+value = 0
+comment = "Not in limp mode"
+
+[[enums.variants]]
+name = "LIMP_MODE_NO_ROMS"
+value = 1
+comment = "No ROMs configured"
+
+[[enums.variants]]
+name = "LIMP_MODE_INVALID_CONFIG"
+value = 2
+comment = "Invalid configuration detected"
+
+[[enums.variants]]
+name = "LIMP_MODE_INVALID_BUILD"
+value = 3
+comment = "Invalid build detected"
+
+[[enums.variants]]
+name = "NUM_LIMP_MODE_PATTERNS"
+value = 4
+sentinel = true
+comment = "Count of defined patterns. Not a valid pattern."
+
+# ---
+
+[[enums]]
+name = "rp235x_variant_t"
+size = 1
+packed = true
+comment = """RP235x silicon package variant.
+Values are chosen to match the SYS_INFO: PACKAGE_SEL Register"""
+strip_prefix = "RP235X"
+
+[[enums.variants]]
+name = "RP235XB"
+value = 0
+display = "RP235xB"
+comment = "RP235xB"
+
+[[enums.variants]]
+name = "RP235XA"
+value = 1
+display = "RP235xA"
+comment = "RP235xA"
+
+# ---
+
+[[enums]]
+name = "gpio_override_t"
+size = 1
+packed = true
+comment = "GPIO input override mode. Matches INOVER field of GPIOx_CTRL registers."
+strip_prefix = "GPIO_OVER_"
+
+[[enums.variants]]
+name = "GPIO_OVER_NORMAL"
+value = 0
+comment = "Normal GPIO input"
+
+[[enums.variants]]
+name = "GPIO_OVER_INVERT"
+value = 1
+comment = "Invert GPIO input"
+
+[[enums.variants]]
+name = "GPIO_OVER_LOW"
+value = 2
+comment = "Force GPIO input low"
+
+[[enums.variants]]
+name = "GPIO_OVER_HIGH"
+value = 3
+comment = "Force GPIO input high"
+
+# ---
+
+[[enums]]
+name = "rom_slot_type_t"
+size = 1
+packed = true
+comment = "ROM slot type. High-level slot classification used by plugins; does not encode ROM type."
+strip_prefix = "ROM_SLOT_TYPE_"
+
+[[enums.variants]]
+name = "ROM_SLOT_TYPE_PLUGIN_SYSTEM"
+value = 0
+display = "system plugin"
+comment = "System plugin slot"
+
+[[enums.variants]]
+name = "ROM_SLOT_TYPE_PLUGIN_USER"
+value = 1
+display = "user plugin"
+comment = "User plugin slot"
+
+[[enums.variants]]
+name = "ROM_SLOT_TYPE_PLUGIN_PIO"
+value = 2
+display = "PIO plugin"
+comment = "PIO plugin slot"
+
+[[enums.variants]]
+name = "ROM_SLOT_TYPE_SINGLE_ROM"
+value = 3
+comment = "Single ROM image slot"
+
+[[enums.variants]]
+name = "ROM_SLOT_TYPE_MULTI_ROM"
+value = 4
+comment = "Multi-ROM slot: multiple images served simultaneously via X pins"
+
+[[enums.variants]]
+name = "ROM_SLOT_TYPE_BANKED_ROM"
+value = 5
+comment = "Banked ROM slot"
+
+[[enums.variants]]
+name = "ROM_SLOT_TYPE_SINGLE_RAM"
+value = 6
+comment = "Single RAM slot"
+
+[[enums.variants]]
+name = "NUM_ROM_SLOT_TYPES"
+value = 7
+sentinel = true
+comment = "Count of slot types. Not a valid type."
+
+# ---
+
+[[enums]]
+name = "onerom_alg_cs_t"
+size = 1
+comment = "Chip select PIO algorithm selection"
+strip_prefix = "ALG_CS_"
+
+[[enums.variants]]
+name = "ALG_CS_0"
+value = 0
+comment = "Standard contiguous CS algorithm"
+
+[[enums.variants]]
+name = "ALG_CS_1"
+value = 1
+comment = "Non-contiguous single-gap CS algorithm"
+
+[[enums.variants]]
+name = "ALG_CS_2"
+value = 2
+comment = "Enable/address-qualified CS algorithm"
+
+[[enums.variants]]
+name = "NUM_CS_ALGS"
+value = 3
+sentinel = true
+comment = "Count of CS algorithms. Not a valid algorithm."
+
+# ---
+
+[[enums]]
+name = "onerom_alg_addr_t"
+size = 1
+comment = "Address reading PIO algorithm selection"
+strip_prefix = "ALG_ADDR_"
+
+[[enums.variants]]
+name = "ALG_ADDR_0"
+value = 0
+comment = "Standard address reading algorithm"
+
+[[enums.variants]]
+name = "NUM_ADDR_ALGS"
+value = 1
+sentinel = true
+comment = "Count of address algorithms. Not a valid algorithm."
+
+# ---
+
+[[enums]]
+name = "onerom_alg_data_t"
+size = 1
+comment = "Data serving PIO algorithm selection"
+strip_prefix = "ALG_DATA_"
+
+[[enums.variants]]
+name = "ALG_DATA_0"
+value = 0
+comment = "Standard data word serving algorithm"
+
+[[enums.variants]]
+name = "ALG_DATA_1"
+value = 1
+comment = "Data word with byte-mode serving algorithm"
+
+[[enums.variants]]
+name = "NUM_DATA_ALGS"
+value = 2
+sentinel = true
+comment = "Count of data algorithms. Not a valid algorithm."
+
+# ---
+
+[[enums]]
+name = "onerom_alg_dma_t"
+size = 1
+comment = "DMA algorithm selection"
+strip_prefix = "ALG_DMA_"
+
+[[enums.variants]]
+name = "ALG_DMA_0"
+value = 0
+comment = "Standard DMA algorithm"
+
+[[enums.variants]]
+name = "NUM_DMA_ALGS"
+value = 1
+sentinel = true
+comment = "Count of DMA algorithms. Not a valid algorithm."
+
+# ===========================================================================
+# Structs
+# ===========================================================================
+# 'size'            - byte size where a STATIC_ASSERT exists in the C source
+# 'root'            - true for the struct placed at metadata_base
+# 'generate'        - "both" | "parse" | "none"
+# 'expected_offset' - per-field: offset verified by STATIC_ASSERT in C source
+
+[[structs]]
+name = "onerom_info_t"
+comment = """Main OneROM information structure.
+Placed in flash by the C firmware build at a fixed location.
+Not generated by the Rust pre-processor; parsed only."""
+generate = "parse"
+size = 64
+
+[[structs.fields]]
+name = "magic"
+kind = "inline_array"
+element = "u8"
+count = 4
+comment = "Magic bytes: 'SDRR'"
+
+[[structs.fields]]
+name = "major_version"
+kind = "scalar"
+type = "u16"
+comment = "Firmware major version"
+
+[[structs.fields]]
+name = "minor_version"
+kind = "scalar"
+type = "u16"
+comment = "Firmware minor version"
+
+[[structs.fields]]
+name = "patch_version"
+kind = "scalar"
+type = "u16"
+comment = "Firmware patch version"
+
+[[structs.fields]]
+name = "build_number"
+kind = "scalar"
+type = "u16"
+comment = "Firmware build number"
+
+[[structs.fields]]
+name = "build_date"
+kind = "cstr_ptr"
+nullable = false
+comment = "Pointer to build date/time string"
+
+[[structs.fields]]
+name = "commit"
+kind = "inline_array"
+element = "u8"
+count = 8
+comment = "Git commit hash, null-terminated, 8 bytes"
+
+[[structs.fields]]
+name = "version"
+kind = "scalar"
+type = "u32"
+comment = "Info structure version (ONEROM_INFO_VERSION)"
+
+[[structs.fields]]
+name = "metadata"
+kind = "struct_ptr"
+type = "onerom_metadata_header_t"
+nullable = false
+comment = "Pointer to the metadata header (at metadata_base)"
+
+[[structs.fields]]
+name = "rtt"
+kind = "opaque_ptr"
+comment = "Pointer to SEGGER RTT control block"
+
+[[structs.fields]]
+name = "runtime"
+kind = "struct_ptr"
+type = "onerom_runtime_info_t"
+nullable = false
+comment = "Pointer to runtime info structure"
+
+[[structs.fields]]
+name = "reserved"
+kind = "padding"
+size = 24
+comment = "Pad to 64 bytes. Set to 0xFF."
+
+# ---
+
+[[structs]]
+name = "onerom_metadata_header_t"
+comment = """OneROM metadata header.
+Root of the 16KB metadata region, placed at metadata_base.
+All sub-structures must be 4-byte aligned."""
+generate = "both"
+size = 256
+root = true
+
+[[structs.fields]]
+name = "magic"
+kind = "inline_array"
+element = "u8"
+count = 16
+comment = "Magic: 'ONEROM_METADATA\\0' (ONEROM_METADATA_MAGIC)"
+
+[[structs.fields]]
+name = "version"
+kind = "scalar"
+type = "u32"
+comment = "Metadata version (CURRENT_METADATA_VERSION)"
+
+[[structs.fields]]
+name = "hw"
+kind = "struct_ptr"
+type = "onerom_hardware_info_t"
+nullable = false
+comment = "Hardware information. Mandatory."
+
+[[structs.fields]]
+name = "fw"
+kind = "struct_ptr"
+type = "onerom_firmware_config_t"
+nullable = false
+comment = "Firmware configuration. Mandatory."
+
+[[structs.fields]]
+name = "rom_slot_count"
+kind = "scalar"
+type = "u8"
+comment = "Number of populated ROM slots"
+
+[[structs.fields]]
+name = "boot_logging"
+kind = "scalar"
+type = "u8"
+comment = "Enable boot logging (currently requires SWD). 0=off, 1=on."
+
+[[structs.fields]]
+name = "swd_enabled"
+kind = "scalar"
+type = "u8"
+comment = "Enable SWD. 0=off, 1=on."
+
+[[structs.fields]]
+name = "turbo_boot"
+kind = "scalar"
+type = "u8"
+comment = "Enable fast boot, disabling image select jumper reading. 0=off, 1=on."
+
+[[structs.fields]]
+name = "rom_slots"
+kind = "struct_array_ptr"
+element = "onerom_rom_slot_t"
+count_field = "rom_slot_count"
+nullable = false
+comment = "Pointer to array of ROM slots (rom_slot_count entries)"
+
+[[structs.fields]]
+name = "reserved"
+kind = "padding"
+size = 220
+comment = "Reserved for future expansion. Set to 0xFF."
+
+# ---
+
+[[structs]]
+name = "onerom_hardware_info_t"
+comment = "Metadata: physical board hardware information"
+generate = "both"
+size = 128
+
+[[structs.fields]]
+name = "hw_rev"
+kind = "cstr_ptr"
+nullable = false
+comment = "Hardware revision string. Must be present."
+
+[[structs.fields]]
+name = "rp235x"
+kind = "enum"
+type = "rp235x_variant_t"
+comment = "Expected RP235x silicon variant for this board"
+
+[[structs.fields]]
+name = "num_phys_pins"
+kind = "scalar"
+type = "u8"
+comment = "Number of physical pins on the emulated ROM package"
+
+[[structs.fields]]
+name = "usb_capable"
+kind = "scalar"
+type = "u8"
+comment = "Whether this board has a USB port. 0=no, 1=yes."
+
+[[structs.fields]]
+name = "gpio_vbus"
+kind = "scalar"
+type = "u8"
+comment = "GPIO pin for VBUS detection. GPIO_NONE if not present."
+
+[[structs.fields]]
+name = "gpio_ext_flash_cs"
+kind = "scalar"
+type = "u8"
+comment = "GPIO for secondary flash chip select. GPIO_NONE if no secondary flash."
+
+[[structs.fields]]
+name = "gpio_status"
+kind = "scalar"
+type = "u8"
+comment = "GPIO for status LED. GPIO_NONE if not present."
+
+[[structs.fields]]
+name = "gpio_neopixel"
+kind = "scalar"
+type = "u8"
+comment = "GPIO for Neopixel LED. GPIO_NONE if not present."
+
+[[structs.fields]]
+name = "gpio_swdio"
+kind = "scalar"
+type = "u8"
+comment = "GPIO also connected to SWDIO. GPIO_NONE if not present."
+
+[[structs.fields]]
+name = "gpio_swclk"
+kind = "scalar"
+type = "u8"
+comment = "GPIO also connected to SWCLK. GPIO_NONE if not present."
+
+[[structs.fields]]
+name = "gpio_x1"
+kind = "scalar"
+type = "u8"
+comment = "GPIO connected to X1 jumper. GPIO_NONE if not present."
+
+[[structs.fields]]
+name = "gpio_x2"
+kind = "scalar"
+type = "u8"
+comment = "GPIO connected to X2 jumper. GPIO_NONE if not present."
+
+[[structs.fields]]
+name = "x_jumper_pull"
+kind = "scalar"
+type = "u8"
+comment = "X jumper pull direction when closed: 1=pull high, 0=pull low"
+
+[[structs.fields]]
+name = "gpio_sel"
+kind = "inline_array"
+element = "u8"
+count = 7
+count_ref = "MAX_IMG_SEL_PINS"
+comment = """Image select GPIO pins (MAX_IMG_SEL_PINS entries).
+Fill contiguously from index 0; GPIO_NONE terminates the list.
+Firmware infers quantity by scanning for the first GPIO_NONE."""
+
+[[structs.fields]]
+name = "sel_jumper_pull"
+kind = "scalar"
+type = "u8"
+comment = "Image select jumper pull direction when closed: 1=pull high, 0=pull low"
+
+[[structs.fields]]
+name = "gpio_from_phys_pin"
+kind = "inline_array2d"
+element = "u8"
+rows = 40
+cols = 2
+rows_ref = "MAX_PHYS_PINS"
+cols_ref = "MAX_GPIOS_PER_PHYS_PIN"
+comment = """Physical pin to GPIO mapping (MAX_PHYS_PINS x MAX_GPIOS_PER_PHYS_PIN).
+Index = physical_pin_number - 1. GPIO_NONE for unconnected positions.
+Second column allows a physical pin connected to two GPIOs."""
+
+[[structs.fields]]
+name = "reserved"
+kind = "padding"
+size = 24
+comment = "Reserved. Set to 0xFF."
+
+# ---
+
+[[structs]]
+name = "onerom_firmware_config_t"
+comment = "Metadata: One ROM-wide firmware configuration"
+generate = "both"
+size = 8
+
+[[structs.fields]]
+name = "name"
+kind = "cstr_ptr"
+nullable = true
+comment = "Name of this One ROM unit. May be NULL."
+
+[[structs.fields]]
+name = "serial_number"
+kind = "cstr_ptr"
+nullable = true
+comment = "Override serial number. NULL = derive from unique MCU chip ID."
+
+# ---
+
+[[structs]]
+name = "onerom_rom_slot_t"
+comment = """ROM slot: one storage location serving one or more ROM images simultaneously.
+Multiple images use the X pins as additional chip select lines."""
+generate = "both"
+size = 32
+
+[[structs.fields]]
+name = "data"
+kind = "opaque_ptr"
+pointed_type = "u8"
+comment = "Pointer to ROM image data in flash. Copied to RAM at startup when this slot is active."
+
+[[structs.fields]]
+name = "size"
+kind = "scalar"
+type = "u32"
+comment = "Byte size of ROM image data (ROM_IMAGE_SIZE for single, ROM_SET_IMAGE_SIZE for multi)"
+
+[[structs.fields]]
+name = "roms"
+kind = "struct_ptr_array_ptr"
+element = "onerom_rom_info_t"
+count_field = "rom_count"
+nullable = false
+comment = "Pointer to array of (rom_count) pointers to ROM info structures"
+
+[[structs.fields]]
+name = "rom_count"
+kind = "scalar"
+type = "u8"
+comment = "Number of unique ROM images in this slot"
+
+[[structs.fields]]
+name = "slot_type"
+kind = "enum"
+type = "rom_slot_type_t"
+comment = "High-level slot classification. Used by plugins; does not determine serving behaviour."
+
+[[structs.fields]]
+name = "reserved1"
+kind = "padding"
+size = 2
+
+[[structs.fields]]
+name = "alg"
+kind = "struct_ptr"
+type = "onerom_alg_config_t"
+nullable = false
+const_ptr = true
+comment = "Pointer to algorithm configuration for this slot"
+
+[[structs.fields]]
+name = "firmware_overrides"
+kind = "struct_ptr"
+type = "onerom_firmware_overrides_t"
+nullable = true
+comment = "Per-slot firmware configuration overrides. NULL if none."
+
+[[structs.fields]]
+name = "reserved2"
+kind = "padding"
+size = 8
+comment = "Padding to 32 bytes"
+
+# ---
+
+[[structs]]
+name = "onerom_rom_info_t"
+comment = "Information about a single ROM image within a slot"
+generate = "both"
+size = 16
+
+[[structs.fields]]
+name = "rom_type"
+kind = "cstr_ptr"
+nullable = false
+comment = "Human-readable ROM type string. Must not be NULL."
+
+[[structs.fields]]
+name = "filename"
+kind = "cstr_ptr"
+nullable = true
+comment = "Source ROM image filename. May be NULL."
+
+[[structs.fields]]
+name = "pin_map"
+kind = "struct_ptr"
+type = "onerom_rom_pin_map_t"
+nullable = false
+const_ptr = true
+comment = "GPIO pin mapping for this ROM type. Must not be NULL."
+
+[[structs.fields]]
+name = "reserved"
+kind = "padding"
+size = 4
+comment = "Reserved for future expansion"
+
+# ---
+
+[[structs]]
+name = "onerom_rom_pin_map_t"
+comment = "GPIO pin mapping for address and data pins of a specific ROM type"
+generate = "both"
+size = 40
+
+[[structs.fields]]
+name = "addr"
+kind = "inline_array"
+element = "u8"
+count = 24
+count_ref = "MAX_ADDR_PINS"
+comment = """Address pin to GPIO mapping (MAX_ADDR_PINS entries).
+Indexed by address pin (A-1 is index 0 for 16-bit ROMs, A0 otherwise).
+GPIO_NONE for unused address bits."""
+
+[[structs.fields]]
+name = "data"
+kind = "inline_array"
+element = "u8"
+count = 16
+count_ref = "MAX_DATA_PINS"
+comment = """Data pin to GPIO mapping (MAX_DATA_PINS entries).
+Indexed by data pin (D0, D1, ...). GPIO_NONE for unused data bits."""
+
+# ---
+
+[[structs]]
+name = "onerom_firmware_overrides_t"
+comment = """Per-ROM-slot firmware configuration overrides.
+A single instance may be shared by multiple slots with identical overrides."""
+generate = "both"
+size = 32
+
+[[structs.fields]]
+name = "override_present"
+kind = "inline_array"
+element = "u8"
+count = 8
+comment = """Bitfield indicating which overrides are active. Unused bits MUST be 0.
+Byte 0, bit 2: Fire MCU frequency override
+Byte 0, bit 3: Fire overclock override
+Byte 0, bit 4: Fire VREG override
+Byte 0, bit 5: Status LED override
+Byte 0, bit 6: SWD override"""
+
+[[structs.fields]]
+name = "ice_freq"
+kind = "scalar"
+type = "u16"
+comment = "STM32F4 MCU clock frequency override in MHz"
+
+[[structs.fields]]
+name = "fire_freq"
+kind = "type_alias"
+type = "fire_freq_t"
+comment = "RP2350 MCU clock frequency override"
+
+[[structs.fields]]
+name = "fire_vreg"
+kind = "enum"
+type = "fire_vreg_t"
+comment = "RP2350 VREG voltage override"
+
+[[structs.fields]]
+name = "pad1"
+kind = "padding"
+size = 3
+
+[[structs.fields]]
+name = "override_value"
+kind = "inline_array"
+element = "u8"
+count = 8
+comment = """Bitfield of boolean override values.
+Byte 0, bit 0: Ice overclock enabled
+Byte 0, bit 1: Fire overclock enabled
+Byte 0, bit 2: Status LED enabled
+Byte 0, bit 3: SWD enabled
+Byte 0, bit 4: Fire serve mode (1=PIO, 0=CPU)
+Byte 0, bit 5: Fire ROM DMA preload enabled
+Byte 0, bit 6: Force 16-bit mode"""
+
+[[structs.fields]]
+name = "pad3"
+kind = "padding"
+size = 8
+comment = "Padding to 32 bytes"
+
+# ---
+
+[[structs]]
+name = "onerom_alg_config_t"
+comment = "All serving algorithm configuration for one ROM slot. May be shared across slots with identical algorithms."
+generate = "both"
+size = 32
+
+[[structs.fields]]
+name = "alg_cs"
+kind = "tagged_fam_ptr"
+type = "onerom_alg_cs_config_t"
+nullable = false
+const_ptr = true
+comment = "Chip select algorithm configuration"
+
+[[structs.fields]]
+name = "alg_addr"
+kind = "tagged_fam_ptr"
+type = "onerom_alg_addr_config_t"
+nullable = false
+const_ptr = true
+comment = "Address reading algorithm configuration"
+
+[[structs.fields]]
+name = "alg_data"
+kind = "tagged_fam_ptr"
+type = "onerom_alg_data_config_t"
+nullable = false
+const_ptr = true
+comment = "Data serving algorithm configuration"
+
+[[structs.fields]]
+name = "alg_dma"
+kind = "tagged_fam_ptr"
+type = "onerom_alg_dma_config_t"
+nullable = false
+const_ptr = true
+comment = "DMA algorithm configuration"
+
+[[structs.fields]]
+name = "gpio_pull_config"
+kind = "simple_fam_ptr"
+type = "onerom_alg_pull_config_t"
+nullable = true
+const_ptr = true
+comment = "GPIO pull configuration. NULL if no pull overrides required."
+
+[[structs.fields]]
+name = "gpio_override_config"
+kind = "simple_fam_ptr"
+type = "onerom_alg_override_config_t"
+nullable = true
+const_ptr = true
+comment = "GPIO input override configuration. NULL if no overrides required."
+
+[[structs.fields]]
+name = "reserved"
+kind = "padding"
+size = 8
+comment = "Reserved for future algorithm types"
+
+# ---
+
+[[structs]]
+name = "onerom_runtime_info_t"
+comment = """OneROM runtime environment information.
+Written and maintained by the firmware at runtime; not generated by the pre-processor.
+Parsed only."""
+generate = "parse"
+size = 60
+const_fields = false
+
+[[structs.fields]]
+name = "magic"
+kind = "inline_array"
+element = "u8"
+count = 4
+comment = "Magic bytes: 'sdrr' (lowercase to distinguish from onerom_info_t magic)"
+
+[[structs.fields]]
+name = "version"
+kind = "scalar"
+type = "u32"
+comment = "Structure version (RUNTIME_INFO_VERSION)"
+
+[[structs.fields]]
+name = "runtime_info_size"
+kind = "scalar"
+type = "u8"
+comment = "Size of this structure in bytes"
+
+[[structs.fields]]
+name = "rp235x"
+kind = "enum"
+type = "rp235x_variant_t"
+comment = "Detected RP235x silicon variant"
+
+[[structs.fields]]
+name = "image_sel"
+kind = "scalar"
+type = "u8"
+comment = "Image select jumper state at boot. Initialised to 0xFF."
+
+[[structs.fields]]
+name = "rom_slot_index"
+kind = "scalar"
+type = "u8"
+comment = "Index of currently selected ROM slot. Initialised to 0xFF."
+
+[[structs.fields]]
+name = "rom_table"
+kind = "opaque_ptr"
+comment = "Pointer to RAM region One ROM is currently serving from"
+
+[[structs.fields]]
+name = "rom_table_size"
+kind = "scalar"
+type = "u32"
+comment = "Length of the ROM table in bytes. Initialised to 0."
+
+[[structs.fields]]
+name = "overclock_enabled"
+kind = "scalar"
+type = "u8"
+comment = "Whether overclocking is active"
+
+[[structs.fields]]
+name = "status_led_enabled"
+kind = "scalar"
+type = "u8"
+comment = "Whether the status LED is enabled"
+
+[[structs.fields]]
+name = "swd_enabled"
+kind = "scalar"
+type = "u8"
+comment = "Whether SWD is enabled"
+
+[[structs.fields]]
+name = "fire_vreg"
+kind = "enum"
+type = "fire_vreg_t"
+comment = "Active Fire VREG output setting"
+
+[[structs.fields]]
+name = "fire_freq"
+kind = "type_alias"
+type = "fire_freq_t"
+comment = "Active Fire clock frequency setting"
+
+[[structs.fields]]
+name = "sysclk_mhz"
+kind = "scalar"
+type = "u16"
+comment = "Active SYSCLK frequency in MHz"
+
+[[structs.fields]]
+name = "timer0_irq_0_handler"
+kind = "fn_ptr"
+comment = "Pointer to TIMER0_IRQ_0 handler"
+
+[[structs.fields]]
+name = "usbctrl_irq_handler"
+kind = "fn_ptr"
+comment = "Pointer to USBCTRL_IRQ handler"
+
+[[structs.fields]]
+name = "limp_mode"
+kind = "enum"
+type = "limp_mode_pattern_t"
+comment = "Active limp mode pattern, or LIMP_MODE_NONE"
+
+[[structs.fields]]
+name = "peri_en"
+kind = "scalar"
+type = "u8"
+comment = "Peripherals/PLLs enabled bitmask. Bit 0=USB PLL, bit 1=ADC."
+
+[[structs.fields]]
+name = "bit_mode"
+kind = "enum"
+type = "bit_modes_t"
+comment = "Active serving bus width (8 or 16 bit)"
+
+[[structs.fields]]
+name = "boot_logging"
+kind = "scalar"
+type = "u8"
+comment = "Whether boot logging is active"
+
+[[structs.fields]]
+name = "system_plugin_context"
+kind = "opaque_ptr"
+expected_offset = 40
+comment = "Pointer to system plugin context. ABI-stable: MUST remain at offset 40 (0x28)."
+
+[[structs.fields]]
+name = "user_plugin_context"
+kind = "opaque_ptr"
+expected_offset = 44
+comment = "Pointer to user plugin context. ABI-stable: MUST remain at offset 44 (0x2C)."
+
+[[structs.fields]]
+name = "current_rom_slot"
+kind = "struct_ptr"
+type = "onerom_rom_slot_t"
+nullable = true
+comment = "Pointer to the currently active ROM slot (aligned with rom_slot_index)"
+
+[[structs.fields]]
+name = "addr_pio_block_info"
+kind = "scalar"
+type = "u8"
+comment = "Top 2 bits: PIO block used by address PIOs. Bottom 6 bits: PIO instruction length in words."
+
+[[structs.fields]]
+name = "addr_pio_sm_info"
+kind = "scalar"
+type = "u8"
+comment = "Bottom 4 bits: PIO SMs used for address PIO block. Top 4 bits: IRQs used."
+
+[[structs.fields]]
+name = "cs_data_pio_block_info"
+kind = "scalar"
+type = "u8"
+comment = "Top 2 bits: PIO block used by CS/Data PIOs. Bottom 6 bits: instruction length in words."
+
+[[structs.fields]]
+name = "cs_data_pio_sm_info"
+kind = "scalar"
+type = "u8"
+comment = "Bottom 4 bits: PIO SMs used for CS/Data PIO block. Top 4 bits: IRQs used."
+
+[[structs.fields]]
+name = "dma_pio_ch"
+kind = "scalar"
+type = "u16"
+comment = "DMA channels used for serving. Bit N = channel N."
+
+[[structs.fields]]
+name = "reserved"
+kind = "padding"
+size = 2
+
+# ===========================================================================
+# Tagged FAM structs
+# ===========================================================================
+# These generate as Rust enums. The discriminant_field selects the variant;
+# common_fields are shared across all variants; each variant has its own
+# additional param fields.
+#
+# Binary layout: [discriminant (1B)] [param_len (1B)] [common_fields] [param fields]
+# param_len is derived on serialisation and consumed on parse; it does not
+# appear in the Rust type.
+#
+# 'base_size' is sizeof the fixed C struct (without params[]), verified by
+# STATIC_ASSERT in the original C source.
+
+[[tagged_fams]]
+name = "onerom_alg_cs_config_t"
+comment = "Chip select PIO algorithm configuration (variable-length)"
+generate = "both"
+discriminant_field = "alg"
+discriminant_type = "onerom_alg_cs_t"
+param_len_field = "param_len"
+base_size = 12
+
+[[tagged_fams.common_fields]]
+name = "clkdiv_int"
+kind = "scalar"
+type = "u16"
+comment = "PIO SM clock divider integer part"
+
+[[tagged_fams.common_fields]]
+name = "clkdiv_frac"
+kind = "scalar"
+type = "u8"
+comment = "PIO SM clock divider fractional part"
+
+[[tagged_fams.common_fields]]
+name = "gpio_base"
+kind = "scalar"
+type = "u8"
+comment = "GPIO base pin for this PIO block"
+
+[[tagged_fams.common_fields]]
+name = "base_cs_pin"
+kind = "scalar"
+type = "u8"
+comment = "First chip select GPIO pin"
+
+[[tagged_fams.common_fields]]
+name = "num_cs_pins"
+kind = "scalar"
+type = "u8"
+comment = "Number of chip select GPIO pins"
+
+[[tagged_fams.common_fields]]
+name = "base_data_pin"
+kind = "scalar"
+type = "u8"
+comment = "First data GPIO pin"
+
+[[tagged_fams.common_fields]]
+name = "num_data_pins"
+kind = "scalar"
+type = "u8"
+comment = "Number of data GPIO pins"
+
+[[tagged_fams.common_fields]]
+name = "cs_active_delay"
+kind = "scalar"
+type = "u8"
+comment = "Delay cycles after CS becomes active"
+
+[[tagged_fams.common_fields]]
+name = "cs_inactive_delay"
+kind = "scalar"
+type = "u8"
+comment = "Delay cycles after CS becomes inactive"
+
+[[tagged_fams.variants]]
+discriminant = "ALG_CS_0"
+comment = "Standard contiguous CS algorithm"
+params_len_constant = "ALG_CS0_PARAMS_LEN"
+
+[[tagged_fams.variants.fields]]
+name = "serve_cs_low_0"
+kind = "scalar"
+type = "u8"
+comment = "CS polarity: 0=serve when CS pins low, 1=serve when high"
+
+[[tagged_fams.variants.fields]]
+name = "byte_pin"
+kind = "scalar"
+type = "u8"
+comment = "/BYTE mode pin. GPIO_NONE if unused."
+
+[[tagged_fams.variants.fields]]
+name = "first_rom_cs_base"
+kind = "scalar"
+type = "u8"
+comment = "Multi-ROM: base CS pin for the first ROM in the set"
+
+[[tagged_fams.variants.fields]]
+name = "first_rom_num_cs_pins"
+kind = "scalar"
+type = "u8"
+comment = "Multi-ROM: number of contiguous CS pins used by the first ROM"
+
+[[tagged_fams.variants]]
+discriminant = "ALG_CS_1"
+comment = "Non-contiguous single-gap CS algorithm"
+params_len_constant = "ALG_CS1_PARAMS_LEN"
+
+[[tagged_fams.variants.fields]]
+name = "cs_ignore_index"
+kind = "scalar"
+type = "u8"
+comment = "Index of the CS pin to ignore (e.g. 1 = ignore second CS pin)"
+
+[[tagged_fams.variants]]
+discriminant = "ALG_CS_2"
+comment = "Enable/address-qualified CS algorithm. Active when enable is asserted AND qualifier pins do not match the inactive pattern."
+params_len_constant = "ALG_CS2_PARAMS_LEN"
+
+[[tagged_fams.variants.fields]]
+name = "base_qualifier_pin"
+kind = "scalar"
+type = "u8"
+comment = "Base qualifier pin index (relative to GPIO_BASE)"
+
+[[tagged_fams.variants.fields]]
+name = "num_qualifier_pins"
+kind = "scalar"
+type = "u8"
+comment = "Number of qualifier pins including any gap pins"
+
+[[tagged_fams.variants.fields]]
+name = "qualifier_inactive_pattern"
+kind = "scalar"
+type = "u8"
+comment = "Bit pattern on qualifier pins when bank is NOT selected (Y preload value)"
+
+# ---
+
+[[tagged_fams]]
+name = "onerom_alg_addr_config_t"
+comment = "Address reading PIO algorithm configuration (variable-length)"
+generate = "both"
+discriminant_field = "alg"
+discriminant_type = "onerom_alg_addr_t"
+param_len_field = "param_len"
+base_size = 10
+
+[[tagged_fams.common_fields]]
+name = "clkdiv_int"
+kind = "scalar"
+type = "u16"
+comment = "PIO SM clock divider integer part"
+
+[[tagged_fams.common_fields]]
+name = "clkdiv_frac"
+kind = "scalar"
+type = "u8"
+comment = "PIO SM clock divider fractional part"
+
+[[tagged_fams.common_fields]]
+name = "gpio_base"
+kind = "scalar"
+type = "u8"
+comment = "GPIO base pin"
+
+[[tagged_fams.common_fields]]
+name = "num_delay_cycles"
+kind = "scalar"
+type = "u8"
+comment = "Number of pipeline delay cycles"
+
+[[tagged_fams.common_fields]]
+name = "base_addr_pin"
+kind = "scalar"
+type = "u8"
+comment = "First address GPIO pin"
+
+[[tagged_fams.common_fields]]
+name = "num_addr_pins"
+kind = "scalar"
+type = "u8"
+comment = "Number of address GPIO pins"
+
+[[tagged_fams.common_fields]]
+name = "num_rom_table_bits"
+kind = "scalar"
+type = "u8"
+comment = "Number of bits used to index the ROM table"
+
+[[tagged_fams.variants]]
+discriminant = "ALG_ADDR_0"
+comment = "Standard address reading algorithm. No parameters."
+params_len_constant = "ALG_ADDR0_PARAMS_PRE_LIST_LEN"
+# No variant fields
+
+# ---
+
+[[tagged_fams]]
+name = "onerom_alg_data_config_t"
+comment = "Data serving PIO algorithm configuration (variable-length)"
+generate = "both"
+discriminant_field = "alg"
+discriminant_type = "onerom_alg_data_t"
+param_len_field = "param_len"
+base_size = 8
+
+[[tagged_fams.common_fields]]
+name = "clkdiv_int"
+kind = "scalar"
+type = "u16"
+comment = "PIO SM clock divider integer part"
+
+[[tagged_fams.common_fields]]
+name = "clkdiv_frac"
+kind = "scalar"
+type = "u8"
+comment = "PIO SM clock divider fractional part"
+
+[[tagged_fams.common_fields]]
+name = "gpio_base"
+kind = "scalar"
+type = "u8"
+comment = "GPIO base pin"
+
+[[tagged_fams.common_fields]]
+name = "base_data_pin"
+kind = "scalar"
+type = "u8"
+comment = "First data GPIO pin"
+
+[[tagged_fams.common_fields]]
+name = "word_size"
+kind = "scalar"
+type = "u8"
+comment = "Data word size in bits (8 or 16)"
+
+[[tagged_fams.variants]]
+discriminant = "ALG_DATA_0"
+comment = "Standard data word serving. No parameters."
+params_len_constant = "ALG_DATA0_PARAMS_LEN"
+# No variant fields
+
+[[tagged_fams.variants]]
+discriminant = "ALG_DATA_1"
+comment = "Data word serving with /BYTE mode support. Assumes 16-bit words and 16 data pins."
+params_len_constant = "ALG_DATA1_PARAMS_LEN"
+
+[[tagged_fams.variants.fields]]
+name = "byte_pin"
+kind = "scalar"
+type = "u8"
+comment = "/BYTE mode GPIO pin"
+
+[[tagged_fams.variants.fields]]
+name = "a_minus_1_pin"
+kind = "scalar"
+type = "u8"
+comment = "A-1 address GPIO pin"
+
+# ---
+
+[[tagged_fams]]
+name = "onerom_alg_dma_config_t"
+comment = "DMA algorithm configuration (variable-length)"
+generate = "both"
+discriminant_field = "alg"
+discriminant_type = "onerom_alg_dma_t"
+param_len_field = "param_len"
+base_size = 4
+
+[[tagged_fams.common_fields]]
+name = "bit_mode"
+kind = "enum"
+type = "bit_modes_t"
+comment = "8 or 16 bit serving mode"
+
+[[tagged_fams.common_fields]]
+name = "continuous"
+kind = "scalar"
+type = "u8"
+comment = "Transfer mode: 0=single-shot, 1=continuous"
+
+[[tagged_fams.variants]]
+discriminant = "ALG_DMA_0"
+comment = "Standard DMA algorithm. No parameters."
+params_len_constant = "ALG_DMA0_PARAMS_LEN"
+# No variant fields
+
+# ===========================================================================
+# Simple FAM structs
+# ===========================================================================
+# Variable-length structs with only a length-prefix byte and a byte array.
+# No algorithm discriminant.
+#
+# Binary layout: [param_len (1B)] [param_len bytes of params]
+# Rust type:     struct { params: Vec<u8> }
+# param_len is derived from params.len() on serialisation.
+
+[[simple_fams]]
+name = "onerom_alg_pull_config_t"
+comment = """GPIO internal pull configuration list.
+Each byte encodes an absolute GPIO number with pull direction in the MSB:
+  MSB=1 -> pull up
+  MSB=0 -> pull down"""
+generate = "both"
+param_len_field = "param_len"
+
+[[simple_fams]]
+name = "onerom_alg_override_config_t"
+comment = """GPIO input override configuration list.
+Each byte encodes an absolute GPIO number with override type in the top 2 bits
+(gpio_override_t value shifted left by 6). Lower 6 bits are the GPIO number."""
+generate = "both"
+param_len_field = "param_len"

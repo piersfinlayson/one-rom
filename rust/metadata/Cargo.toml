@@ -1,0 +1,23 @@
+[package]
+name = "onerom-metadata"
+version = "0.1.0"
+edition = "2024"
+authors = ["Piers Finlayson <piers@piers.rocks>"]
+license = "MIT"
+description = "One ROM metadata handling"
+repository = "https://github.com/piersfinlayson/one-rom"
+homepage = "https://onerom.org"
+documentation = "https://docs.rs/onerom-config"
+keywords = ["retro", "rom", "embedded"]
+categories = ["embedded", "hardware-support"]
+build = "build/main.rs"
+
+[lib]
+name = "onerom_metadata"
+ 
+[dependencies]
+hashbrown = { version = "0.17", default-features = false, features = ["default-hasher", "inline-more"] }
+
+[build-dependencies]
+serde = { version = "1", features = ["derive"] }
+toml  = { version = "1.1" }

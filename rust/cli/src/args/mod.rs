@@ -435,11 +435,11 @@ pub enum Commands {
     Chips(FirmwareChipsArgs),
 
     /// List supported One ROM board types.
-    /// 
+    ///
     /// Displays a list of the supported One ROM board types.
-    /// 
+    ///
     /// Examples:
-    /// 
+    ///
     ///   onerom boards
-    Boards(BoardArgs)
+    Boards(BoardArgs),
 }

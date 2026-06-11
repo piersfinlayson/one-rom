@@ -10,7 +10,7 @@ apio/
 epio/
 pico-sdk/
 build-test/
-sdrr/build*
+firmware/build*
 build/
 builds/
 test/build
@@ -31,6 +31,9 @@ plugins/system/usb/tinyusb
 plugins/system/usb/tinyusb-old
 plugins/system/usb/picobootx
 plugins/system/usb/pico-sdkless
+firmware/generated
+!firmware/generated/README.md
+!rust/metadata/build
 
 dist/
 output/
