@@ -1,0 +1,479 @@
+// Copyright (C) 2026 Piers Finlayson <piers@piers.rocks>
+//
+// MIT License
+
+//! Build the per-slot algorithm config (`OneromAlgConfig`) from
+//! already-derived address/CS-data layouts.
+//!
+//! `build_alg_addr`/`build_alg_data`/`build_alg_dma` build the
+//! corresponding sub-configs directly from the layouts. `build_alg_cs`
+//! (in `alg_cs.rs`), the CS-polarity overrides (`cs_overrides.rs`), and
+//! the GPIO pull config (`gpio_pull_config.rs`) are wired together by
+//! `build_alg_config` below.
+//!
+//! `build_alg_config` takes `&AddrLayout`/`&CsDataLayout` rather than
+//! deriving them itself, since `build_rom_slot` needs the same layouts for
+//! `build_rom_info`'s pin maps - deriving once and sharing avoids doing the
+//! (fallible) derivation twice. As a result `build_alg_config` itself is
+//! infallible.
+//!
+//! `bit_mode` (chip0's *effective* bit mode, from `bit_mode_for`) and
+//! `force_16_bit` are both computed once by `build_rom_slot` and passed
+//! in - `bit_mode` is also needed by `derive_addr_layout` (for the A-1
+//! carve-out), so computing it once and sharing avoids the two
+//! disagreeing.
+
+use onerom_config::chip::ChipType;
+use onerom_config::hw::Board;
+
+use onerom_metadata::{
+    BitModes, OneromAlgAddrConfig, OneromAlgConfig, OneromAlgDataConfig, OneromAlgDmaConfig,
+    OneromAlgOverrideConfig, GPIO_NONE,
+};
+
+use crate::image::{ChipSetType, CsConfig};
+
+use super::addr_layout::AddrLayout;
+use super::alg_cs::build_alg_cs;
+use super::cs_data_layout::CsDataLayout;
+use super::cs_overrides::build_cs_overrides;
+use super::gpio_pull_config::build_gpio_pull_config;
+
+/// H: clock dividers default to 1.0 for now.
+pub const DEFAULT_CLKDIV_INT: u16 = 1;
+pub const DEFAULT_CLKDIV_FRAC: u8 = 0;
+
+/// Determine the bit mode (8 vs 16) for serving `chip_type` on `board`.
+///
+/// 16-bit serving requires both a board /BYTE pin and chip support for it.
+///
+/// This is independent of `force_16_bit`: for a `BitMode16`-capable chip,
+/// `rom_data_buf` is always `2^num_addr_pins * 2` bytes (one 16-bit word
+/// per address-PIO table index) regardless of `force_16_bit` - that flag
+/// only changes *how* the chip is served (`AlgData0` vs `AlgData1`, see
+/// `build_alg_data`), not the table layout/contents.
+pub fn bit_mode_for(chip_type: ChipType, board: Board) -> BitModes {
+    if board.pin_byte() != GPIO_NONE && chip_type.supports_bit_mode(16) {
+        BitModes::BitMode16
+    } else {
+        BitModes::BitMode8
+    }
+}
+
+/// Build `OneromAlgDataConfig` from the CS/data layout.
+///
+/// - `BitMode8`: `AlgData0`, `word_size: 8` - as for any other 8-bit chip.
+/// - `BitMode16` with `force_16_bit`: `AlgData0`, `word_size: 16`. `/BYTE`
+///   is ignored entirely (not read, not driven) - the chip is served in
+///   its native 16-bit/word mode, with whatever 16-bit value DMA provides
+///   written straight across `[base_data_pin, base_data_pin+16)`. Faster
+///   than `AlgData1` (`build_alg_addr` gives this `num_delay_cycles=2`).
+/// - `BitMode16` without `force_16_bit` (default): `AlgData1`. `byte_pin`
+///   is `board.pin_byte()`, an *input* read by the data-write PIO each
+///   access (driven by the host system, not One ROM) - if low, the chip
+///   is in byte/8-bit mode and the host also drives A-1
+///   (`a_minus_1_pin`), which the PIO reads to pick the low or high byte
+///   of the 16-bit DMA value to write to `D0-D7`; if high, all 16 bits go
+///   to `D0-D15` as in the `force_16_bit` case.
+///
+/// `a_minus_1_pin` is `cs_data_layout.data_pin_gpios[num_data_pins - 1]`
+/// (the chip's highest data line, e.g. D15 for 27C400/27C200) rather than
+/// independently resolved from `chip0.address_pins()[0]`: on these chips
+/// A-1 and D_max are the *same physical pin*, and `derive_cs_data_layout`
+/// (data-line contiguity + `fits_pio_window`) is what pins that pin to a
+/// single reachable GPIO - re-deriving it via `address_pins()[0]` could in
+/// principle disagree (e.g. pick the other half of a dual-bond that's
+/// outside this PIO's window).
+///
+/// Both `byte_pin` and `a_minus_1_pin` are offsets from `layout.gpio_base`,
+/// consistent with `base_data_pin` etc.
+pub fn build_alg_data(layout: &CsDataLayout, board: Board, bit_mode: BitModes, force_16_bit: bool) -> OneromAlgDataConfig {
+    match bit_mode {
+        BitModes::BitMode8 => OneromAlgDataConfig::AlgData0 {
+            clkdiv_int: DEFAULT_CLKDIV_INT,
+            clkdiv_frac: DEFAULT_CLKDIV_FRAC,
+            gpio_base: layout.gpio_base,
+            base_data_pin: layout.base_data_pin,
+            word_size: 8,
+        },
+        BitModes::BitMode16 if force_16_bit => OneromAlgDataConfig::AlgData0 {
+            clkdiv_int: DEFAULT_CLKDIV_INT,
+            clkdiv_frac: DEFAULT_CLKDIV_FRAC,
+            gpio_base: layout.gpio_base,
+            base_data_pin: layout.base_data_pin,
+            word_size: 16,
+        },
+        BitModes::BitMode16 => {
+            let byte_pin = board.pin_byte() - layout.gpio_base;
+            let a_minus_1_pin = layout.data_pin_gpios[layout.num_data_pins as usize - 1] - layout.gpio_base;
+
+            OneromAlgDataConfig::AlgData1 {
+                clkdiv_int: DEFAULT_CLKDIV_INT,
+                clkdiv_frac: DEFAULT_CLKDIV_FRAC,
+                gpio_base: layout.gpio_base,
+                base_data_pin: layout.base_data_pin,
+                word_size: 16,
+                byte_pin,
+                a_minus_1_pin,
+            }
+        }
+    }
+}
+
+/// Build `OneromAlgAddrConfig` from the address layout.
+///
+/// `num_delay_cycles` is 2 for `AlgData0` (8-bit, or 16-bit with
+/// `force_16_bit` - neither needs the extra cycles `AlgData1`'s `/BYTE`+
+/// A-1 read takes), 6 for `AlgData1`.
+pub fn build_alg_addr(layout: &AddrLayout, alg_data: &OneromAlgDataConfig) -> OneromAlgAddrConfig {
+    let num_delay_cycles = match alg_data {
+        OneromAlgDataConfig::AlgData0 { .. } => 2,
+        OneromAlgDataConfig::AlgData1 { .. } => 6,
+    };
+
+    OneromAlgAddrConfig::AlgAddr0 {
+        clkdiv_int: DEFAULT_CLKDIV_INT,
+        clkdiv_frac: DEFAULT_CLKDIV_FRAC,
+        gpio_base: layout.gpio_base,
+        num_delay_cycles,
+        base_addr_pin: 0,
+        num_addr_pins: layout.num_addr_pins,
+        num_rom_table_bits: layout.num_addr_pins,
+    }
+}
+
+/// Build `OneromAlgDmaConfig`.
+///
+/// G: always continuous for now (IRQ-based DMA later).
+pub fn build_alg_dma(bit_mode: BitModes) -> OneromAlgDmaConfig {
+    OneromAlgDmaConfig::AlgDma0 {
+        bit_mode,
+        continuous: 1,
+    }
+}
+
+/// Assemble the full `OneromAlgConfig` for a chip set, from already-derived
+/// layouts.
+///
+/// Builds each of `alg_addr`/`alg_data`/`alg_cs`/`alg_dma` from
+/// `addr_layout`/`cs_data_layout`, and wires in any CS-polarity overrides
+/// (`cs_overrides`) and Banked X1/X2 pulls (`gpio_pull_config`).
+///
+/// `bit_mode`/`force_16_bit` determine `alg_data`/`alg_dma` (see
+/// `build_alg_data`/`bit_mode_for`) - both computed once by the caller
+/// (`build_rom_slot`), since `bit_mode` is also needed by
+/// `derive_addr_layout`. `num_chips` is `chip_types.len()` (==
+/// `chips.len()`) for the set.
+#[allow(clippy::too_many_arguments)]
+pub fn build_alg_config(
+    board: Board,
+    set_type: ChipSetType,
+    addr_layout: &AddrLayout,
+    cs_data_layout: &CsDataLayout,
+    bit_mode: BitModes,
+    force_16_bit: bool,
+    num_chips: usize,
+    cs_config: &CsConfig,
+) -> OneromAlgConfig {
+    let alg_data = build_alg_data(cs_data_layout, board, bit_mode, force_16_bit);
+    let alg_addr = build_alg_addr(addr_layout, &alg_data);
+    let alg_cs = build_alg_cs(cs_data_layout, set_type, &alg_data);
+    let alg_dma = build_alg_dma(bit_mode);
+
+    let cs_overrides = build_cs_overrides(cs_data_layout, set_type, cs_config);
+    let gpio_override_config = if cs_overrides.is_empty() {
+        None
+    } else {
+        Some(OneromAlgOverrideConfig { params: cs_overrides })
+    };
+
+    let gpio_pull_config = build_gpio_pull_config(addr_layout, set_type, num_chips, board);
+
+    OneromAlgConfig {
+        alg_cs,
+        alg_addr,
+        alg_data,
+        alg_dma,
+        gpio_pull_config,
+        gpio_override_config,
+    }
+}
+
+// ===========================================================================
+// Tests
+// ===========================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use super::super::addr_layout::derive_addr_layout;
+    use super::super::cs_data_layout::derive_cs_data_layout;
+    use crate::image::CsLogic;
+    use onerom_metadata::OneromAlgCsConfig;
+
+    #[test]
+    fn fire24a_2364_single() {
+        let addr_layout = AddrLayout {
+            gpio_base: 0,
+            num_addr_pins: 16,
+            x1_gpio: None,
+            x2_gpio: None,
+            addr_pin_gpios: alloc::vec![7, 6, 5, 4, 3, 2, 1, 0, 10, 11, 14, 15, 12],
+        };
+        let cs_data_layout = CsDataLayout {
+            gpio_base: 13,
+            base_data_pin: 3,
+            num_data_pins: 8,
+            data_pin_gpios: alloc::vec![16, 17, 18, 19, 20, 21, 22, 23],
+            base_cs_pin: 0,
+            num_cs_pins: 1,
+            cs_ignore_index: None,
+            select_lines: alloc::vec![super::super::cs_data_layout::SelectLine {
+                role: super::super::cs_data_layout::SelectRole::Cs1,
+                gpio: 13,
+            }],
+        };
+
+        let alg_data = build_alg_data(&cs_data_layout, Board::Fire24A, BitModes::BitMode8, false);
+        assert_eq!(
+            alg_data,
+            OneromAlgDataConfig::AlgData0 {
+                clkdiv_int: 1,
+                clkdiv_frac: 0,
+                gpio_base: 13,
+                base_data_pin: 3,
+                word_size: 8,
+            }
+        );
+
+        let alg_addr = build_alg_addr(&addr_layout, &alg_data);
+        assert_eq!(
+            alg_addr,
+            OneromAlgAddrConfig::AlgAddr0 {
+                clkdiv_int: 1,
+                clkdiv_frac: 0,
+                gpio_base: 0,
+                num_delay_cycles: 2,
+                base_addr_pin: 0,
+                num_addr_pins: 16,
+                num_rom_table_bits: 16,
+            }
+        );
+
+        let alg_dma = build_alg_dma(BitModes::BitMode8);
+        assert_eq!(
+            alg_dma,
+            OneromAlgDmaConfig::AlgDma0 {
+                bit_mode: BitModes::BitMode8,
+                continuous: 1,
+            }
+        );
+    }
+
+    /// End-to-end sentinel: Fire24A, single 2364, CS1 ActiveLow (matches
+    /// the PIO's required polarity for Single, so no overrides; Single
+    /// sets never get pulls either).
+    #[test]
+    fn fire24a_2364_single_full_config() {
+        let cs_config = CsConfig::new(Some(CsLogic::ActiveLow), None, None);
+
+        let bit_mode = bit_mode_for(ChipType::Chip2364, Board::Fire24A);
+        assert_eq!(bit_mode, BitModes::BitMode8);
+
+        let addr_layout = derive_addr_layout(Board::Fire24A, ChipSetType::Single, &[ChipType::Chip2364], bit_mode)
+            .expect("addr layout derivation should succeed");
+        let cs_data_layout =
+            derive_cs_data_layout(Board::Fire24A, ChipSetType::Single, &[ChipType::Chip2364], &cs_config)
+                .expect("cs/data layout derivation should succeed");
+
+        let config = build_alg_config(
+            Board::Fire24A,
+            ChipSetType::Single,
+            &addr_layout,
+            &cs_data_layout,
+            bit_mode,
+            false,
+            1,
+            &cs_config,
+        );
+
+        assert_eq!(
+            config,
+            OneromAlgConfig {
+                alg_cs: OneromAlgCsConfig::AlgCs0 {
+                    clkdiv_int: 1,
+                    clkdiv_frac: 0,
+                    gpio_base: 13,
+                    base_cs_pin: 0,
+                    num_cs_pins: 1,
+                    base_data_pin: 3,
+                    num_data_pins: 8,
+                    cs_active_delay: 0,
+                    cs_inactive_delay: 0,
+                    serve_cs_low_0: 0,
+                    byte_pin: GPIO_NONE,
+                    first_rom_cs_base: 0,
+                    first_rom_num_cs_pins: 1,
+                },
+                alg_addr: OneromAlgAddrConfig::AlgAddr0 {
+                    clkdiv_int: 1,
+                    clkdiv_frac: 0,
+                    gpio_base: 0,
+                    num_delay_cycles: 2,
+                    base_addr_pin: 0,
+                    num_addr_pins: 16,
+                    num_rom_table_bits: 16,
+                },
+                alg_data: OneromAlgDataConfig::AlgData0 {
+                    clkdiv_int: 1,
+                    clkdiv_frac: 0,
+                    gpio_base: 13,
+                    base_data_pin: 3,
+                    word_size: 8,
+                },
+                alg_dma: OneromAlgDmaConfig::AlgDma0 {
+                    bit_mode: BitModes::BitMode8,
+                    continuous: 1,
+                },
+                gpio_pull_config: None,
+                gpio_override_config: None,
+            }
+        );
+    }
+
+    /// Fire40A, single 27C400, BitMode16, `force_16_bit=false` (default):
+    /// `AlgData1` with `byte_pin`/`a_minus_1_pin` set, `num_delay_cycles=6`.
+    ///
+    /// `cs_data_layout`/`addr_layout` values are as derived for
+    /// Fire40A/27C400 (see `addr_layout::tests::fire40a_27c400_bitmode16`
+    /// and the `derive_cs_data_layout` working: D0-D15 -> GPIO 0-15,
+    /// CE -> GPIO17, so `gpio_base=0`; `a_minus_1_pin = data_pin_gpios[15]
+    /// - gpio_base = 15`; `byte_pin = board.pin_byte() - gpio_base = 18 -
+    ///   0 = 18`).
+    ///
+    /// `build_alg_cs`/`build_gpio_pull_config`/`build_cs_overrides` aren't
+    /// exercised here (no source for those to hand) - this is a focused
+    /// `build_alg_data`/`build_alg_addr`/`build_alg_dma` test, not a full
+    /// `build_alg_config` sentinel.
+    #[test]
+    fn fire40a_27c400_bitmode16_algdata1() {
+        let cs_data_layout = CsDataLayout {
+            gpio_base: 0,
+            base_data_pin: 0,
+            num_data_pins: 16,
+            data_pin_gpios: alloc::vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+            base_cs_pin: 17,
+            num_cs_pins: 1,
+            cs_ignore_index: None,
+            select_lines: alloc::vec![super::super::cs_data_layout::SelectLine {
+                role: super::super::cs_data_layout::SelectRole::Ce,
+                gpio: 17,
+            }],
+        };
+        let addr_layout = AddrLayout {
+            gpio_base: 19,
+            num_addr_pins: 18,
+            x1_gpio: None,
+            x2_gpio: None,
+            addr_pin_gpios: alloc::vec![36, 35, 34, 33, 32, 31, 30, 29, 27, 26, 25, 24, 23, 22, 21, 20, 19, 28],
+        };
+
+        let alg_data = build_alg_data(&cs_data_layout, Board::Fire40A, BitModes::BitMode16, false);
+        assert_eq!(
+            alg_data,
+            OneromAlgDataConfig::AlgData1 {
+                clkdiv_int: 1,
+                clkdiv_frac: 0,
+                gpio_base: 0,
+                base_data_pin: 0,
+                word_size: 16,
+                byte_pin: 18,
+                a_minus_1_pin: 15,
+            }
+        );
+
+        let alg_addr = build_alg_addr(&addr_layout, &alg_data);
+        assert_eq!(
+            alg_addr,
+            OneromAlgAddrConfig::AlgAddr0 {
+                clkdiv_int: 1,
+                clkdiv_frac: 0,
+                gpio_base: 19,
+                num_delay_cycles: 6,
+                base_addr_pin: 0,
+                num_addr_pins: 18,
+                num_rom_table_bits: 18,
+            }
+        );
+
+        let alg_dma = build_alg_dma(BitModes::BitMode16);
+        assert_eq!(
+            alg_dma,
+            OneromAlgDmaConfig::AlgDma0 {
+                bit_mode: BitModes::BitMode16,
+                continuous: 1,
+            }
+        );
+    }
+
+    /// Same Fire40A/27C400 layouts, `force_16_bit=true`: `AlgData0` with
+    /// `word_size=16` (`/BYTE` ignored entirely), `num_delay_cycles=2`.
+    #[test]
+    fn fire40a_27c400_force_16bit_algdata0() {
+        let cs_data_layout = CsDataLayout {
+            gpio_base: 0,
+            base_data_pin: 0,
+            num_data_pins: 16,
+            data_pin_gpios: alloc::vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+            base_cs_pin: 17,
+            num_cs_pins: 1,
+            cs_ignore_index: None,
+            select_lines: alloc::vec![super::super::cs_data_layout::SelectLine {
+                role: super::super::cs_data_layout::SelectRole::Ce,
+                gpio: 17,
+            }],
+        };
+        let addr_layout = AddrLayout {
+            gpio_base: 19,
+            num_addr_pins: 18,
+            x1_gpio: None,
+            x2_gpio: None,
+            addr_pin_gpios: alloc::vec![36, 35, 34, 33, 32, 31, 30, 29, 27, 26, 25, 24, 23, 22, 21, 20, 19, 28],
+        };
+
+        let alg_data = build_alg_data(&cs_data_layout, Board::Fire40A, BitModes::BitMode16, true);
+        assert_eq!(
+            alg_data,
+            OneromAlgDataConfig::AlgData0 {
+                clkdiv_int: 1,
+                clkdiv_frac: 0,
+                gpio_base: 0,
+                base_data_pin: 0,
+                word_size: 16,
+            }
+        );
+
+        let alg_addr = build_alg_addr(&addr_layout, &alg_data);
+        assert_eq!(
+            alg_addr,
+            OneromAlgAddrConfig::AlgAddr0 {
+                clkdiv_int: 1,
+                clkdiv_frac: 0,
+                gpio_base: 19,
+                num_delay_cycles: 2,
+                base_addr_pin: 0,
+                num_addr_pins: 18,
+                num_rom_table_bits: 18,
+            }
+        );
+
+        let alg_dma = build_alg_dma(BitModes::BitMode16);
+        assert_eq!(
+            alg_dma,
+            OneromAlgDmaConfig::AlgDma0 {
+                bit_mode: BitModes::BitMode16,
+                continuous: 1,
+            }
+        );
+    }
+}

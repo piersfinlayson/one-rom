@@ -1,8 +1,4 @@
-// Copyright (C) 2025 Piers Finlayson <piers@piers.rocks>
-//
-// MIT License
-
-// Copyright (C) 2025 Piers Finlayson <piers@piers.rocks>
+// Copyright (C) 2026 Piers Finlayson <piers@piers.rocks>
 //
 // MIT License
 
@@ -157,7 +153,7 @@ mod tests {
     use onerom_config::fw::{FirmwareProperties, FirmwareVersion, ServeAlg};
     use onerom_config::hw::Board;
     use onerom_config::mcu::{Family as McuFamily, Variant as McuVariant};
-    use onerom_gen::builder::{Builder, FileData};
+    use onerom_gen::{Builder, FileData};
     use onerom_gen::image::CsLogic;
 
     const FW_VER: FirmwareVersion = FirmwareVersion::new(0, 6, 0, 0);
@@ -2395,6 +2391,7 @@ mod tests {
 
         for i in 0..32 {
             if i > 0 {
+                #[allow(clippy::single_char_add_str)]
                 json.push_str(",");
             }
             json.push_str(&format!(
@@ -2426,7 +2423,7 @@ mod tests {
                     id: i,
                     data: create_test_rom_data(8192, (i as u8).wrapping_mul(8)),
                 })
-                .expect(&format!("Failed to add file {}", i));
+                .unwrap_or_else(|_| panic!("Failed to add file {}", i));
         }
 
         let props = FirmwareProperties::new(
@@ -2460,7 +2457,7 @@ mod tests {
         let min_pin = *addr_pins.iter().min().unwrap() as usize;
         let max_pin = *addr_pins.iter().max().unwrap() as usize;
         assert!(
-            min_pin % 8 == 0,
+            min_pin.is_multiple_of(8),
             "Address pins must start on 8-byte boundary, got min pin {}",
             min_pin
         );
@@ -2506,7 +2503,7 @@ mod tests {
         let max_pin = *data_pins.iter().max().unwrap();
         assert_eq!(data_pins.len(), 8, "Must have exactly 8 data pins");
         assert!(
-            min_pin % 8 == 0,
+            min_pin.is_multiple_of(8),
             "Data pins must start on 8-byte boundary, got min pin {}",
             min_pin
         );
@@ -2573,6 +2570,7 @@ mod tests {
         let mut errors = 0;
         let max_errors_to_report = 10;
 
+        #[allow(clippy::needless_range_loop)]
         for logical_addr in 0..rom_size {
             let logical_byte = test_data[logical_addr];
 
@@ -2699,6 +2697,7 @@ mod tests {
         let mut errors = 0;
         let max_errors_to_report = 10;
 
+        #[allow(clippy::needless_range_loop)]
         for logical_addr in 0..rom_size {
             let expected_byte = test_data[logical_addr];
             let actual_byte = read_rom_byte(&rom_images_buf, logical_addr, board);
@@ -2922,7 +2921,7 @@ mod tests {
 
         // Create distinct test data for each ROM (each 8KB)
         let rom_size = 8192;
-        let rom_data = vec![
+        let rom_data = [
             create_test_rom_data(rom_size, 0x11),
             create_test_rom_data(rom_size, 0x22),
             create_test_rom_data(rom_size, 0x33),
@@ -2935,7 +2934,7 @@ mod tests {
                     id,
                     data: data.clone(),
                 })
-                .expect(&format!("Failed to add file {}", id));
+                .unwrap_or_else(|_| panic!("Failed to add file {}", id));
         }
 
         let props = default_fw_props();
@@ -2977,7 +2976,7 @@ mod tests {
                 }
 
                 if bank < rom_data.len() {
-                    bank = bank % rom_data.len(); // Wrap around
+                    bank %= rom_data.len(); // Wrap around
                 }
                 rom_data[bank][rom_offset]
             };
@@ -5511,6 +5510,7 @@ mod tests {
 
         // Verify first copy (addresses 0-4095)
         let mut errors_first = 0;
+        #[allow(clippy::needless_range_loop)]
         for addr in 0..4096 {
             let expected = test_data[addr];
             let actual = read_rom_byte(&rom_images_buf, addr, board);
@@ -5740,6 +5740,7 @@ mod tests {
             let mut errors = 0;
             let max_errors = 10;
 
+            #[allow(clippy::needless_range_loop)]
             for addr in 0..8192 {
                 let expected = test_data[addr];
                 let actual = read_rom_byte(&rom_images_buf, addr, board);
@@ -5840,7 +5841,7 @@ mod tests {
         assert_eq!(licenses.len(), 0, "There should be no license entry");
 
         // Should fail
-        let license = onerom_gen::builder::License::new(0, 0, "license.url".to_string());
+        let license = onerom_gen::License::new(0, 0, "license.url".to_string());
         builder
             .accept_license(&license)
             .expect_err("License acceptance should fail");
@@ -5931,9 +5932,9 @@ mod tests {
             "chip_sets": [{
                 "type": "single",
                 "chips": [{
+                    "cs1": "active_low",
                     "file": "test.rom",
-                    "type": "2364",
-                    "cs1": "active_low"
+                    "type": "2364"
                 }]
             }]
         }"#;
@@ -7657,13 +7658,13 @@ mod tests {
         let mut builder = Builder::from_json(FW_VER, MCU_FAM, json).expect("Failed to parse JSON");
 
         let rom_sizes = [8192, 4096, 2048, 8192];
-        for i in 0..4 {
+        for (i, _) in rom_sizes.iter().enumerate() {
             builder
                 .add_file(FileData {
                     id: i,
                     data: create_test_rom_data(rom_sizes[i], (0xAA - i * 0x20) as u8),
                 })
-                .expect(&format!("Failed to add file {}", i));
+                .unwrap_or_else(|_| panic!("Failed to add file {}", i));
         }
 
         let props = default_fw_props_060();

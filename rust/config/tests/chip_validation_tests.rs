@@ -28,6 +28,7 @@ mod tests {
             control,
             programming: None,
             power: None,
+            deselect_when_address_all_high: None,
         }
     }
 
@@ -71,6 +72,7 @@ mod tests {
                 }),
                 pe: None,
             }),
+            deselect_when_address_all_high: None,
         }
     }
 
@@ -179,6 +181,6 @@ mod tests {
         assert_eq!(chip_27512.address.len(), 16);
         assert_eq!(chip_27512.address[15], 1);
         assert_eq!(chip_27512.control.len(), 2);
-        assert!(!chip_27512.programming.is_none());
+        assert!(chip_27512.programming.is_some());
     }
 }

@@ -62,7 +62,11 @@ pub fn generate(schema: &Schema) -> String {
 
 fn validate_schema_sizes(schema: &Schema) {
     // Every generate=both struct with an explicit size: field sum must match.
-    for s in schema.structs.iter().filter(|s| s.generate == Generate::Both) {
+    for s in schema
+        .structs
+        .iter()
+        .filter(|s| s.generate == Generate::Both)
+    {
         if let Some(schema_size) = s.size {
             let computed: usize = s.fields.iter().map(|f| field_size(f, schema)).sum();
             if computed != schema_size as usize {
@@ -76,7 +80,11 @@ fn validate_schema_sizes(schema: &Schema) {
     }
 
     // Every generate=both tagged FAM: 1(disc)+1(param_len)+common_fields == base_size.
-    for tf in schema.tagged_fams.iter().filter(|tf| tf.generate == Generate::Both) {
+    for tf in schema
+        .tagged_fams
+        .iter()
+        .filter(|tf| tf.generate == Generate::Both)
+    {
         let disc_size = schema
             .enums
             .iter()
@@ -120,9 +128,9 @@ fn const_value(schema: &Schema, name: &str) -> usize {
 fn scalar_write(ty: &str) -> (&'static str, usize) {
     match ty {
         "u8" | "char" => ("write_u8", 1),
-        "u16"         => ("write_u16_le", 2),
-        "u32"         => ("write_u32_le", 4),
-        _             => ("write_u8", 1),
+        "u16" => ("write_u16_le", 2),
+        "u32" => ("write_u32_le", 4),
+        _ => ("write_u8", 1),
     }
 }
 
@@ -133,7 +141,11 @@ fn enum_write(field: &Field, schema: &Schema) -> (&'static str, usize) {
         .iter()
         .find(|e| field.type_.as_deref() == Some(e.name.as_str()))
         .map_or(1usize, |e| e.size as usize);
-    if sz == 2 { ("write_u16_le", 2) } else { ("write_u8", 1) }
+    if sz == 2 {
+        ("write_u16_le", 2)
+    } else {
+        ("write_u8", 1)
+    }
 }
 
 /// Rust variant identifier for a tagged FAM discriminant enum variant.
@@ -201,17 +213,29 @@ fn push_serialize_context(out: &mut String, schema: &Schema) {
 
     // Per named-type intern tables.
     out.push_str("    // Per-type intern tables: Rust value -> assigned flash address.\n");
-    for s in schema.structs.iter().filter(|s| s.generate == Generate::Both) {
+    for s in schema
+        .structs
+        .iter()
+        .filter(|s| s.generate == Generate::Both)
+    {
         let tn = rust_type_name(&s.name);
         let sn = snake_name(&s.name);
         out.push_str(&format!("    {sn}_addrs: hashbrown::HashMap<{tn}, u32>,\n"));
     }
-    for tf in schema.tagged_fams.iter().filter(|tf| tf.generate == Generate::Both) {
+    for tf in schema
+        .tagged_fams
+        .iter()
+        .filter(|tf| tf.generate == Generate::Both)
+    {
         let tn = rust_type_name(&tf.name);
         let sn = snake_name(&tf.name);
         out.push_str(&format!("    {sn}_addrs: hashbrown::HashMap<{tn}, u32>,\n"));
     }
-    for sf in schema.simple_fams.iter().filter(|sf| sf.generate == Generate::Both) {
+    for sf in schema
+        .simple_fams
+        .iter()
+        .filter(|sf| sf.generate == Generate::Both)
+    {
         let tn = rust_type_name(&sf.name);
         let sn = snake_name(&sf.name);
         out.push_str(&format!("    {sn}_addrs: hashbrown::HashMap<{tn}, u32>,\n"));
@@ -222,15 +246,21 @@ fn push_serialize_context(out: &mut String, schema: &Schema) {
         "    // parent flash address -> array base flash address,\n\
          // one table per struct_array_ptr / struct_ptr_array_ptr field.\n",
     );
-    for s in schema.structs.iter().filter(|s| s.generate == Generate::Both) {
+    for s in schema
+        .structs
+        .iter()
+        .filter(|s| s.generate == Generate::Both)
+    {
         let sn = snake_name(&s.name);
         for f in &s.fields {
             match f.kind.as_str() {
                 "struct_array_ptr" => out.push_str(&format!(
-                    "    {sn}_{}_arr_addrs: hashbrown::HashMap<u32, u32>,\n", f.name
+                    "    {sn}_{}_arr_addrs: hashbrown::HashMap<u32, u32>,\n",
+                    f.name
                 )),
                 "struct_ptr_array_ptr" => out.push_str(&format!(
-                    "    {sn}_{}_ptr_arr_addrs: hashbrown::HashMap<u32, u32>,\n", f.name
+                    "    {sn}_{}_ptr_arr_addrs: hashbrown::HashMap<u32, u32>,\n",
+                    f.name
                 )),
                 _ => {}
             }
@@ -259,27 +289,51 @@ fn push_serialize_context_impl(out: &mut String, schema: &Schema) {
     out.push_str("            buf,\n");
     out.push_str("            written:      hashbrown::HashSet::new(),\n");
     out.push_str("            string_addrs: hashbrown::HashMap::new(),\n");
-    for s in schema.structs.iter().filter(|s| s.generate == Generate::Both) {
+    for s in schema
+        .structs
+        .iter()
+        .filter(|s| s.generate == Generate::Both)
+    {
         let sn = snake_name(&s.name);
-        out.push_str(&format!("            {sn}_addrs: hashbrown::HashMap::new(),\n"));
+        out.push_str(&format!(
+            "            {sn}_addrs: hashbrown::HashMap::new(),\n"
+        ));
     }
-    for tf in schema.tagged_fams.iter().filter(|tf| tf.generate == Generate::Both) {
+    for tf in schema
+        .tagged_fams
+        .iter()
+        .filter(|tf| tf.generate == Generate::Both)
+    {
         let sn = snake_name(&tf.name);
-        out.push_str(&format!("            {sn}_addrs: hashbrown::HashMap::new(),\n"));
+        out.push_str(&format!(
+            "            {sn}_addrs: hashbrown::HashMap::new(),\n"
+        ));
     }
-    for sf in schema.simple_fams.iter().filter(|sf| sf.generate == Generate::Both) {
+    for sf in schema
+        .simple_fams
+        .iter()
+        .filter(|sf| sf.generate == Generate::Both)
+    {
         let sn = snake_name(&sf.name);
-        out.push_str(&format!("            {sn}_addrs: hashbrown::HashMap::new(),\n"));
+        out.push_str(&format!(
+            "            {sn}_addrs: hashbrown::HashMap::new(),\n"
+        ));
     }
-    for s in schema.structs.iter().filter(|s| s.generate == Generate::Both) {
+    for s in schema
+        .structs
+        .iter()
+        .filter(|s| s.generate == Generate::Both)
+    {
         let sn = snake_name(&s.name);
         for f in &s.fields {
             match f.kind.as_str() {
                 "struct_array_ptr" => out.push_str(&format!(
-                    "            {sn}_{}_arr_addrs: hashbrown::HashMap::new(),\n", f.name
+                    "            {sn}_{}_arr_addrs: hashbrown::HashMap::new(),\n",
+                    f.name
                 )),
                 "struct_ptr_array_ptr" => out.push_str(&format!(
-                    "            {sn}_{}_ptr_arr_addrs: hashbrown::HashMap::new(),\n", f.name
+                    "            {sn}_{}_ptr_arr_addrs: hashbrown::HashMap::new(),\n",
+                    f.name
                 )),
                 _ => {}
             }
@@ -291,7 +345,9 @@ fn push_serialize_context_impl(out: &mut String, schema: &Schema) {
     // alloc_aligned() -------------------------------------------------------
     out.push_str("    /// Allocate `size` bytes, aligning `next_addr` to 4 first.\n");
     out.push_str("    /// Returns the allocated flash address.\n");
-    out.push_str("    pub fn alloc_aligned(&mut self, size: usize) -> Result<u32, SerializeError> {\n");
+    out.push_str(
+        "    pub fn alloc_aligned(&mut self, size: usize) -> Result<u32, SerializeError> {\n",
+    );
     out.push_str("        let aligned = (self.next_addr.saturating_add(3)) & !3u32;\n");
     out.push_str("        let end = aligned\n");
     out.push_str("            .checked_add(size as u32)\n");
@@ -305,8 +361,12 @@ fn push_serialize_context_impl(out: &mut String, schema: &Schema) {
     out.push_str("    }\n\n");
 
     // alloc_bytes() ---------------------------------------------------------
-    out.push_str("    /// Allocate `size` bytes with no alignment constraint.  Used for strings.\n");
-    out.push_str("    pub fn alloc_bytes(&mut self, size: usize) -> Result<u32, SerializeError> {\n");
+    out.push_str(
+        "    /// Allocate `size` bytes with no alignment constraint.  Used for strings.\n",
+    );
+    out.push_str(
+        "    pub fn alloc_bytes(&mut self, size: usize) -> Result<u32, SerializeError> {\n",
+    );
     out.push_str("        let end = self.next_addr\n");
     out.push_str("            .checked_add(size as u32)\n");
     out.push_str("            .ok_or(SerializeError::Overflow)?;\n");
@@ -361,7 +421,11 @@ fn push_struct_serialize_impls(out: &mut String, schema: &Schema) {
          // Struct serialize impls (layout / layout_sub_objects / write)\n\
          // ---------------------------------------------------------------------------\n\n",
     );
-    for s in schema.structs.iter().filter(|s| s.generate == Generate::Both) {
+    for s in schema
+        .structs
+        .iter()
+        .filter(|s| s.generate == Generate::Both)
+    {
         push_struct_serialize(out, s, schema);
     }
 }
@@ -370,10 +434,12 @@ fn push_struct_serialize(out: &mut String, s: &Struct, schema: &Schema) {
     let tn = rust_type_name(&s.name);
     let sn = snake_name(&s.name);
 
-    let size = s
-        .size
-        .map(|n| n as usize)
-        .unwrap_or_else(|| s.fields.iter().map(|f| field_size(f, schema)).sum::<usize>());
+    let size = s.size.map(|n| n as usize).unwrap_or_else(|| {
+        s.fields
+            .iter()
+            .map(|f| field_size(f, schema))
+            .sum::<usize>()
+    });
 
     // Map: count_field_name -> vec_field_name.
     // Used in write() to derive count scalar values from Vec lengths.
@@ -382,7 +448,9 @@ fn push_struct_serialize(out: &mut String, s: &Struct, schema: &Schema) {
         .iter()
         .filter_map(|f| {
             if matches!(f.kind.as_str(), "struct_array_ptr" | "struct_ptr_array_ptr") {
-                f.count_field.as_ref().map(|cf| (cf.clone(), f.name.clone()))
+                f.count_field
+                    .as_ref()
+                    .map(|cf| (cf.clone(), f.name.clone()))
             } else {
                 None
             }
@@ -409,8 +477,12 @@ fn push_struct_layout(out: &mut String, sn: &str, size: usize) {
     ));
     out.push_str("            return Ok(addr);\n");
     out.push_str("        }\n");
-    out.push_str(&format!("        let addr = ctx.alloc_aligned({size}usize)?;\n"));
-    out.push_str(&format!("        ctx.{sn}_addrs.insert(self.clone(), addr);\n"));
+    out.push_str(&format!(
+        "        let addr = ctx.alloc_aligned({size}usize)?;\n"
+    ));
+    out.push_str(&format!(
+        "        ctx.{sn}_addrs.insert(self.clone(), addr);\n"
+    ));
     out.push_str("        self.layout_sub_objects(ctx, addr)?;\n");
     out.push_str("        Ok(addr)\n");
     out.push_str("    }\n\n");
@@ -428,13 +500,18 @@ fn push_struct_layout_sub_objects(out: &mut String, s: &Struct, sn: &str, schema
     let needs_ctx = s.fields.iter().any(|f| {
         matches!(
             f.kind.as_str(),
-            "cstr_ptr" | "struct_ptr" | "struct_array_ptr" | "struct_ptr_array_ptr"
-                | "tagged_fam_ptr" | "simple_fam_ptr"
+            "cstr_ptr"
+                | "struct_ptr"
+                | "struct_array_ptr"
+                | "struct_ptr_array_ptr"
+                | "tagged_fam_ptr"
+                | "simple_fam_ptr"
         )
     });
-    let needs_self_addr = s.fields.iter().any(|f| {
-        matches!(f.kind.as_str(), "struct_array_ptr" | "struct_ptr_array_ptr")
-    });
+    let needs_self_addr = s
+        .fields
+        .iter()
+        .any(|f| matches!(f.kind.as_str(), "struct_array_ptr" | "struct_ptr_array_ptr"));
 
     if needs_ctx {
         out.push_str("        ctx: &mut SerializeContext<'_>,\n");
@@ -465,7 +542,8 @@ fn emit_layout_sub_objects_field(out: &mut String, f: &Field, parent_sn: &str, s
         "cstr_ptr" => {
             if f.nullable.unwrap_or(false) {
                 out.push_str(&format!(
-                    "{ind}if let Some(s) = &self.{name} {{\n\
+                    "{ind}#[allow(clippy::collapsible_if)]\n\
+                     {ind}if let Some(s) = &self.{name} {{\n\
                      {ind}    if !ctx.string_addrs.contains_key(s.as_str()) {{\n\
                      {ind}        let saddr = ctx.alloc_bytes(s.len() + 1)?;\n\
                      {ind}        ctx.string_addrs.insert(s.clone(), saddr);\n\
@@ -496,8 +574,8 @@ fn emit_layout_sub_objects_field(out: &mut String, f: &Field, parent_sn: &str, s
 
         "struct_array_ptr" => {
             let count_f = f.count_field.as_deref().unwrap_or("?");
-            let elem_c  = f.element.as_deref().unwrap_or("");
-            let stride  = struct_stride(elem_c, schema);
+            let elem_c = f.element.as_deref().unwrap_or("");
+            let stride = struct_stride(elem_c, schema);
             out.push_str(&format!(
                 "{ind}{{\n\
                  {ind}    let n = self.{name}.len();\n\
@@ -573,6 +651,14 @@ fn push_struct_write(
     out.push_str("    }\n");
 }
 
+fn addr_expr(off: usize) -> String {
+    if off == 0 {
+        "addr".to_string()
+    } else {
+        format!("addr + {off}u32")
+    }
+}
+
 fn emit_struct_write_field(
     out: &mut String,
     f: &Field,
@@ -589,13 +675,15 @@ fn emit_struct_write_field(
             let ty = f.type_.as_deref().unwrap_or("u8");
             let (method, _) = scalar_write(ty);
             if let Some(vec_field) = derived_counts.get(name.as_str()) {
+                let a = addr_expr(byte_off);
                 out.push_str(&format!(
                     "{ind}// {name}: derived from {vec_field}.len()\n\
-                     {ind}ctx.{method}(addr + {byte_off}u32, self.{vec_field}.len() as {ty});\n"
+                     {ind}ctx.{method}({a}, self.{vec_field}.len() as {ty});\n"
                 ));
             } else {
+                let a = addr_expr(byte_off);
                 out.push_str(&format!(
-                    "{ind}ctx.{method}(addr + {byte_off}u32, self.{name});\n"
+                    "{ind}ctx.{method}({a}, self.{name});\n"
                 ));
             }
         }
@@ -603,8 +691,9 @@ fn emit_struct_write_field(
         "enum" => {
             let (method, sz) = enum_write(f, schema);
             let repr = if sz == 1 { "u8" } else { "u16" };
+            let a = addr_expr(byte_off);
             out.push_str(&format!(
-                "{ind}ctx.{method}(addr + {byte_off}u32, self.{name} as {repr});\n"
+                "{ind}ctx.{method}({a}, self.{name} as {repr});\n"
             ));
         }
 
@@ -615,16 +704,18 @@ fn emit_struct_write_field(
                 .find(|a| f.type_.as_deref() == Some(a.name.as_str()))
                 .map_or("u16", |a| a.underlying.as_str());
             let (method, _) = scalar_write(underlying);
+            let a = addr_expr(byte_off);
             out.push_str(&format!(
-                "{ind}ctx.{method}(addr + {byte_off}u32, self.{name});\n"
+                "{ind}ctx.{method}({a}, self.{name});\n"
             ));
         }
 
         "inline_array" => {
             let elem = f.element.as_deref().unwrap_or("u8");
             if elem == "u8" || elem == "char" {
+                let a = addr_expr(byte_off);
                 out.push_str(&format!(
-                    "{ind}ctx.write_bytes(addr + {byte_off}u32, &self.{name});\n"
+                    "{ind}ctx.write_bytes({a}, &self.{name});\n"
                 ));
             } else {
                 out.push_str(&format!(
@@ -635,23 +726,25 @@ fn emit_struct_write_field(
 
         "inline_array2d" => {
             let cols = f.cols.unwrap_or(0);
+            let a = addr_expr(byte_off);
             out.push_str(&format!(
                 "{ind}for (r, row) in self.{name}.iter().enumerate() {{\n\
-                 {ind}    ctx.write_bytes(addr + {byte_off}u32 + (r as u32 * {cols}u32), row);\n\
+                 {ind}    ctx.write_bytes({a} + (r as u32 * {cols}u32), row);\n\
                  {ind}}}\n"
             ));
         }
 
         "cstr_ptr" => {
+            let a = addr_expr(byte_off);
             if f.nullable.unwrap_or(false) {
                 out.push_str(&format!(
                     "{ind}match &self.{name} {{\n\
-                     {ind}    None => ctx.write_u32_le(addr + {byte_off}u32, 0u32),\n\
+                     {ind}    None => ctx.write_u32_le({a}, 0u32),\n\
                      {ind}    Some(s) => {{\n\
                      {ind}        let s_addr = *ctx.string_addrs\n\
                      {ind}            .get(s.as_str())\n\
                      {ind}            .expect(\"serialize invariant: string addr missing\");\n\
-                     {ind}        ctx.write_u32_le(addr + {byte_off}u32, s_addr);\n\
+                     {ind}        ctx.write_u32_le({a}, s_addr);\n\
                      {ind}        if ctx.written.insert(s_addr) {{\n\
                      {ind}            ctx.write_bytes(s_addr, s.as_bytes());\n\
                      {ind}            ctx.write_u8(s_addr + s.len() as u32, 0u8);\n\
@@ -665,7 +758,7 @@ fn emit_struct_write_field(
                      {ind}    let s_addr = *ctx.string_addrs\n\
                      {ind}        .get(self.{name}.as_str())\n\
                      {ind}        .expect(\"serialize invariant: string addr missing\");\n\
-                     {ind}    ctx.write_u32_le(addr + {byte_off}u32, s_addr);\n\
+                     {ind}    ctx.write_u32_le({a}, s_addr);\n\
                      {ind}    if ctx.written.insert(s_addr) {{\n\
                      {ind}        ctx.write_bytes(s_addr, self.{name}.as_bytes());\n\
                      {ind}        ctx.write_u8(s_addr + self.{name}.len() as u32, 0u8);\n\
@@ -676,15 +769,16 @@ fn emit_struct_write_field(
         }
 
         "struct_ptr" => {
+            let a = addr_expr(byte_off);
             if f.nullable.unwrap_or(false) {
                 out.push_str(&format!(
                     "{ind}match &self.{name} {{\n\
-                     {ind}    None => ctx.write_u32_le(addr + {byte_off}u32, 0u32),\n\
+                     {ind}    None => ctx.write_u32_le({a}, 0u32),\n\
                      {ind}    Some(sub) => {{\n\
                      {ind}        let sub_addr = sub\n\
                      {ind}            .layout(ctx)\n\
                      {ind}            .expect(\"serialize invariant: layout in write\");\n\
-                     {ind}        ctx.write_u32_le(addr + {byte_off}u32, sub_addr);\n\
+                     {ind}        ctx.write_u32_le({a}, sub_addr);\n\
                      {ind}        sub.write(ctx, sub_addr);\n\
                      {ind}    }}\n\
                      {ind}}}\n"
@@ -695,7 +789,7 @@ fn emit_struct_write_field(
                      {ind}    let sub_addr = self.{name}\n\
                      {ind}        .layout(ctx)\n\
                      {ind}        .expect(\"serialize invariant: layout in write\");\n\
-                     {ind}    ctx.write_u32_le(addr + {byte_off}u32, sub_addr);\n\
+                     {ind}    ctx.write_u32_le({a}, sub_addr);\n\
                      {ind}    self.{name}.write(ctx, sub_addr);\n\
                      {ind}}}\n"
                 ));
@@ -704,13 +798,14 @@ fn emit_struct_write_field(
 
         "struct_array_ptr" => {
             let elem_c = f.element.as_deref().unwrap_or("");
-            let stride  = struct_stride(elem_c, schema);
+            let stride = struct_stride(elem_c, schema);
+            let a = addr_expr(byte_off);
             out.push_str(&format!(
                 "{ind}{{\n\
                  {ind}    let arr_addr = *ctx.{parent_sn}_{name}_arr_addrs\n\
                  {ind}        .get(&addr)\n\
                  {ind}        .expect(\"serialize invariant: array base addr missing\");\n\
-                 {ind}    ctx.write_u32_le(addr + {byte_off}u32, arr_addr);\n\
+                 {ind}    ctx.write_u32_le({a}, arr_addr);\n\
                  {ind}    for (i, elem) in self.{name}.iter().enumerate() {{\n\
                  {ind}        let elem_addr = arr_addr + (i as u32 * {stride}u32);\n\
                  {ind}        elem.write(ctx, elem_addr);\n\
@@ -720,12 +815,13 @@ fn emit_struct_write_field(
         }
 
         "struct_ptr_array_ptr" => {
+            let a = addr_expr(byte_off);
             out.push_str(&format!(
                 "{ind}{{\n\
                  {ind}    let ptr_arr_addr = *ctx.{parent_sn}_{name}_ptr_arr_addrs\n\
                  {ind}        .get(&addr)\n\
                  {ind}        .expect(\"serialize invariant: ptr array addr missing\");\n\
-                 {ind}    ctx.write_u32_le(addr + {byte_off}u32, ptr_arr_addr);\n\
+                 {ind}    ctx.write_u32_le({a}, ptr_arr_addr);\n\
                  {ind}    for (i, elem) in self.{name}.iter().enumerate() {{\n\
                  {ind}        let elem_addr = elem\n\
                  {ind}            .layout(ctx)\n\
@@ -738,15 +834,16 @@ fn emit_struct_write_field(
         }
 
         "tagged_fam_ptr" | "simple_fam_ptr" => {
+            let a = addr_expr(byte_off);
             if f.nullable.unwrap_or(false) {
                 out.push_str(&format!(
                     "{ind}match &self.{name} {{\n\
-                     {ind}    None => ctx.write_u32_le(addr + {byte_off}u32, 0u32),\n\
+                     {ind}    None => ctx.write_u32_le({a}, 0u32),\n\
                      {ind}    Some(sub) => {{\n\
                      {ind}        let sub_addr = sub\n\
                      {ind}            .layout(ctx)\n\
                      {ind}            .expect(\"serialize invariant: layout in write\");\n\
-                     {ind}        ctx.write_u32_le(addr + {byte_off}u32, sub_addr);\n\
+                     {ind}        ctx.write_u32_le({a}, sub_addr);\n\
                      {ind}        sub.write(ctx, sub_addr);\n\
                      {ind}    }}\n\
                      {ind}}}\n"
@@ -757,7 +854,7 @@ fn emit_struct_write_field(
                      {ind}    let sub_addr = self.{name}\n\
                      {ind}        .layout(ctx)\n\
                      {ind}        .expect(\"serialize invariant: layout in write\");\n\
-                     {ind}    ctx.write_u32_le(addr + {byte_off}u32, sub_addr);\n\
+                     {ind}    ctx.write_u32_le({a}, sub_addr);\n\
                      {ind}    self.{name}.write(ctx, sub_addr);\n\
                      {ind}}}\n"
                 ));
@@ -765,8 +862,9 @@ fn emit_struct_write_field(
         }
 
         "opaque_ptr" | "fn_ptr" => {
+            let a = addr_expr(byte_off);
             out.push_str(&format!(
-                "{ind}ctx.write_u32_le(addr + {byte_off}u32, self.{name});\n"
+                "{ind}ctx.write_u32_le({a}, self.{name});\n"
             ));
         }
 
@@ -787,7 +885,11 @@ fn emit_struct_write_field(
 // ---------------------------------------------------------------------------
 
 fn push_tagged_fam_serialize_impls(out: &mut String, schema: &Schema) {
-    if !schema.tagged_fams.iter().any(|tf| tf.generate == Generate::Both) {
+    if !schema
+        .tagged_fams
+        .iter()
+        .any(|tf| tf.generate == Generate::Both)
+    {
         return;
     }
     out.push_str(
@@ -795,17 +897,23 @@ fn push_tagged_fam_serialize_impls(out: &mut String, schema: &Schema) {
          // Tagged FAM serialize impls (layout / write)\n\
          // ---------------------------------------------------------------------------\n\n",
     );
-    for tf in schema.tagged_fams.iter().filter(|tf| tf.generate == Generate::Both) {
+    for tf in schema
+        .tagged_fams
+        .iter()
+        .filter(|tf| tf.generate == Generate::Both)
+    {
         push_tagged_fam_serialize(out, tf, schema);
     }
 }
 
 fn push_tagged_fam_serialize(out: &mut String, tf: &TaggedFam, schema: &Schema) {
-    let tn    = rust_type_name(&tf.name);
-    let sn    = snake_name(&tf.name);
+    let tn = rust_type_name(&tf.name);
+    let sn = snake_name(&tf.name);
     let disc_enum = schema.enums.iter().find(|e| e.name == tf.discriminant_type);
     let disc_size = disc_enum.map_or(1u32, |e| e.size) as usize;
-    let strip = disc_enum.and_then(|e| e.strip_prefix.as_deref()).unwrap_or("");
+    let strip = disc_enum
+        .and_then(|e| e.strip_prefix.as_deref())
+        .unwrap_or("");
 
     out.push_str(&format!("impl {tn} {{\n"));
     push_tagged_fam_layout(out, tf, sn, strip, schema);
@@ -830,14 +938,18 @@ fn push_tagged_fam_layout(
     out.push_str("        }\n");
     out.push_str("        let size = match self {\n");
     for v in &tf.variants {
-        let vn         = fam_variant_ident(&v.discriminant, strip);
+        let vn = fam_variant_ident(&v.discriminant, strip);
         let params_len = const_value(schema, &v.params_len_constant);
-        let total      = tf.base_size as usize + params_len;
-        out.push_str(&format!("            Self::{vn} {{ .. }} => {total}usize,\n"));
+        let total = tf.base_size as usize + params_len;
+        out.push_str(&format!(
+            "            Self::{vn} {{ .. }} => {total}usize,\n"
+        ));
     }
     out.push_str("        };\n");
     out.push_str("        let addr = ctx.alloc_aligned(size)?;\n");
-    out.push_str(&format!("        ctx.{sn}_addrs.insert(self.clone(), addr);\n"));
+    out.push_str(&format!(
+        "        ctx.{sn}_addrs.insert(self.clone(), addr);\n"
+    ));
     out.push_str("        Ok(addr)\n");
     out.push_str("    }\n\n");
 }
@@ -851,9 +963,7 @@ fn push_tagged_fam_write(
     strip: &str,
     schema: &Schema,
 ) {
-    out.push_str(
-        "    pub fn write(&self, ctx: &mut SerializeContext<'_>, addr: u32) {\n",
-    );
+    out.push_str("    pub fn write(&self, ctx: &mut SerializeContext<'_>, addr: u32) {\n");
     out.push_str("        if ctx.written.contains(&addr) { return; }\n");
     out.push_str("        ctx.written.insert(addr);\n");
     out.push_str("        match self {\n");
@@ -881,15 +991,20 @@ fn push_tagged_fam_write(
         let disc_val = disc_enum
             .and_then(|e| e.variants.iter().find(|ev| ev.name == v.discriminant))
             .map_or(0i64, |ev| ev.value);
-        let disc_method = if disc_size == 1 { "write_u8" } else { "write_u16_le" };
+        let disc_method = if disc_size == 1 {
+            "write_u8"
+        } else {
+            "write_u16_le"
+        };
         out.push_str(&format!(
-            "                ctx.{disc_method}(addr + 0u32, {disc_val} as _);\n"
+            "                ctx.{disc_method}(addr, {disc_val} as _);\n"
         ));
 
         // param_len byte.
         let params_len = const_value(schema, &v.params_len_constant);
+        let a = addr_expr(disc_size);
         out.push_str(&format!(
-            "                ctx.write_u8(addr + {disc_size}u32, {params_len}u8);\n"
+            "                ctx.write_u8({a}, {params_len}u8);\n"
         ));
 
         // Common fields at [disc_size+1 .. base_size).
@@ -921,15 +1036,17 @@ fn emit_fam_field_write(out: &mut String, f: &Field, off: usize, schema: &Schema
         "scalar" => {
             let ty = f.type_.as_deref().unwrap_or("u8");
             let (method, _) = scalar_write(ty);
+            let a = addr_expr(off);
             out.push_str(&format!(
-                "                ctx.{method}(addr + {off}u32, *{name});\n"
+                "                ctx.{method}({a}, *{name});\n"
             ));
         }
         "enum" => {
             let (method, sz) = enum_write(f, schema);
             let repr = if sz == 1 { "u8" } else { "u16" };
+            let a = addr_expr(off);
             out.push_str(&format!(
-                "                ctx.{method}(addr + {off}u32, *{name} as {repr});\n"
+                "                ctx.{method}({a}, *{name} as {repr});\n"
             ));
         }
         "type_alias" => {
@@ -939,8 +1056,9 @@ fn emit_fam_field_write(out: &mut String, f: &Field, off: usize, schema: &Schema
                 .find(|a| f.type_.as_deref() == Some(a.name.as_str()))
                 .map_or("u16", |a| a.underlying.as_str());
             let (method, _) = scalar_write(underlying);
+            let a = addr_expr(off);
             out.push_str(&format!(
-                "                ctx.{method}(addr + {off}u32, *{name});\n"
+                "                ctx.{method}({a}, *{name});\n"
             ));
         }
         "padding" => {}
@@ -957,7 +1075,11 @@ fn emit_fam_field_write(out: &mut String, f: &Field, off: usize, schema: &Schema
 // ---------------------------------------------------------------------------
 
 fn push_simple_fam_serialize_impls(out: &mut String, schema: &Schema) {
-    if !schema.simple_fams.iter().any(|sf| sf.generate == Generate::Both) {
+    if !schema
+        .simple_fams
+        .iter()
+        .any(|sf| sf.generate == Generate::Both)
+    {
         return;
     }
     out.push_str(
@@ -965,7 +1087,11 @@ fn push_simple_fam_serialize_impls(out: &mut String, schema: &Schema) {
          // Simple FAM serialize impls (layout / write)\n\
          // ---------------------------------------------------------------------------\n\n",
     );
-    for sf in schema.simple_fams.iter().filter(|sf| sf.generate == Generate::Both) {
+    for sf in schema
+        .simple_fams
+        .iter()
+        .filter(|sf| sf.generate == Generate::Both)
+    {
         push_simple_fam_serialize(out, sf);
     }
 }
@@ -987,14 +1113,14 @@ fn push_simple_fam_serialize(out: &mut String, sf: &SimpleFam) {
     out.push_str("        }\n");
     out.push_str("        let size = 1usize + self.params.len();\n");
     out.push_str("        let addr = ctx.alloc_aligned(size)?;\n");
-    out.push_str(&format!("        ctx.{sn}_addrs.insert(self.clone(), addr);\n"));
+    out.push_str(&format!(
+        "        ctx.{sn}_addrs.insert(self.clone(), addr);\n"
+    ));
     out.push_str("        Ok(addr)\n");
     out.push_str("    }\n\n");
 
     // write()
-    out.push_str(
-        "    pub fn write(&self, ctx: &mut SerializeContext<'_>, addr: u32) {\n",
-    );
+    out.push_str("    pub fn write(&self, ctx: &mut SerializeContext<'_>, addr: u32) {\n");
     out.push_str("        if ctx.written.contains(&addr) { return; }\n");
     out.push_str("        ctx.written.insert(addr);\n");
     // Note: the {} below is a format specifier in the GENERATED code's debug_assert!,

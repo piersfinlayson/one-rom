@@ -3,12 +3,10 @@
 // MIT License
 
 mod metav1;
-mod metav2;
 
 pub use metav1::*;
-pub use metav2::*;
 
-use crate::builder::{FireServeMode, FirmwareConfig};
+use crate::{FireServeMode, FirmwareConfig};
 
 /// Serialize the 24-byte core of `onerom_firmware_overrides_t`.
 ///

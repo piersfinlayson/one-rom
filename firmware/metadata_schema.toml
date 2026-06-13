@@ -1053,22 +1053,9 @@ type = "u8"
 comment = "GPIO also connected to SWCLK. GPIO_NONE if not present."
 
 [[structs.fields]]
-name = "gpio_x1"
-kind = "scalar"
-type = "u8"
-comment = "GPIO connected to X1 jumper. GPIO_NONE if not present."
-
-[[structs.fields]]
-name = "gpio_x2"
-kind = "scalar"
-type = "u8"
-comment = "GPIO connected to X2 jumper. GPIO_NONE if not present."
-
-[[structs.fields]]
-name = "x_jumper_pull"
-kind = "scalar"
-type = "u8"
-comment = "X jumper pull direction when closed: 1=pull high, 0=pull low"
+name = "reserved1"
+kind = "padding"
+size = 3
 
 [[structs.fields]]
 name = "gpio_sel"
@@ -1084,7 +1071,7 @@ Firmware infers quantity by scanning for the first GPIO_NONE."""
 name = "sel_jumper_pull"
 kind = "scalar"
 type = "u8"
-comment = "Image select jumper pull direction when closed: 1=pull high, 0=pull low"
+comment = "Image select jumper pull direction when closed: 1=pull high, 0=pull low, LSB is SEL0, bit 1 is SEL1, etc."
 
 [[structs.fields]]
 name = "gpio_from_phys_pin"
@@ -1099,7 +1086,7 @@ Index = physical_pin_number - 1. GPIO_NONE for unconnected positions.
 Second column allows a physical pin connected to two GPIOs."""
 
 [[structs.fields]]
-name = "reserved"
+name = "reserved2"
 kind = "padding"
 size = 24
 comment = "Reserved. Set to 0xFF."
@@ -1267,11 +1254,17 @@ kind = "inline_array"
 element = "u8"
 count = 8
 comment = """Bitfield indicating which overrides are active. Unused bits MUST be 0.
+Byte 0, bit 0: Reserved
+Byte 0, bit 1: Reserved
 Byte 0, bit 2: Fire MCU frequency override
 Byte 0, bit 3: Fire overclock override
 Byte 0, bit 4: Fire VREG override
 Byte 0, bit 5: Status LED override
-Byte 0, bit 6: SWD override"""
+Byte 0, bit 6: SWD override
+Byte 0, bit 7: Reserved
+Byte 1, bit 0: Reserved
+Byte 1, bit 1: Reserved
+"""
 
 [[structs.fields]]
 name = "ice_freq"
@@ -1302,13 +1295,14 @@ kind = "inline_array"
 element = "u8"
 count = 8
 comment = """Bitfield of boolean override values.
-Byte 0, bit 0: Ice overclock enabled
+Byte 0, bit 0: Reserved
 Byte 0, bit 1: Fire overclock enabled
 Byte 0, bit 2: Status LED enabled
 Byte 0, bit 3: SWD enabled
-Byte 0, bit 4: Fire serve mode (1=PIO, 0=CPU)
-Byte 0, bit 5: Fire ROM DMA preload enabled
-Byte 0, bit 6: Force 16-bit mode"""
+Byte 0, bit 4: Reserved
+Byte 0, bit 5: Reserved
+Byte 0, bit 6: Reserved
+"""
 
 [[structs.fields]]
 name = "pad3"
@@ -1640,7 +1634,7 @@ comment = "Delay cycles after CS becomes inactive"
 
 [[tagged_fams.variants]]
 discriminant = "ALG_CS_0"
-comment = "Standard contiguous CS algorithm"
+comment = "Standard contiguous CS algorithm, supporting single ROMs, multi-ROM sets and dynamically bank switched ROMs"
 params_len_constant = "ALG_CS0_PARAMS_LEN"
 
 [[tagged_fams.variants.fields]]
@@ -1669,7 +1663,7 @@ comment = "Multi-ROM: number of contiguous CS pins used by the first ROM"
 
 [[tagged_fams.variants]]
 discriminant = "ALG_CS_1"
-comment = "Non-contiguous single-gap CS algorithm"
+comment = "Non-contiguous single-gap CS algorithm, supports single ROMs and bank switched ROMs (not multi-ROM sets)"
 params_len_constant = "ALG_CS1_PARAMS_LEN"
 
 [[tagged_fams.variants.fields]]

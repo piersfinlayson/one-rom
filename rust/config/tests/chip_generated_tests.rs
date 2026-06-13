@@ -70,7 +70,7 @@ fn test_chip_27512_specs() {
     assert_eq!(chip.num_addr_lines(), 16);
 
     // Pin 1 is A15
-    assert!(!chip.programming_pins().is_none());
+    assert!(chip.programming_pins().is_some());
 
     let addr = chip.address_pins();
     assert_eq!(addr[15], 1); // A15 on pin 1

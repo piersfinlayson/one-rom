@@ -3,19 +3,19 @@
 // MIT License
 
 //! Crate exposing One ROM metadata types and parsing/serialization logic.
-//! 
+//!
 //! The One ROM firmware's metadata is specified by a TOML schema.  It is
 //! then processed as part of the build process and both a C header (for the
 //! core firmware), and Rust types and parsing/serialization logic is auto-
 //! generated from it.  This crate is that Rust code.
-//! 
+//!
 //! This crate is designed for use by any tooling that needs to generate
 //! One ROM metadata (i.e. building tools like One ROM CLI, Studio and Web),
 //! and any tooling that needs to read or manipualte One ROM metadata (the
 //! same examples, to process and display information about One ROM firmware
 //! files and images stored on devices).  It is `no_std` so it can be used by
 //! embedded applications, although `alloc` is required.
-//! 
+//!
 //! The majority of the objects are generated from the schema, but some core
 //! types and traits are hand-written.
 
@@ -26,7 +26,8 @@ extern crate alloc;
 use alloc::string::String;
 use alloc::vec::Vec;
 
-pub mod serialize;
+include!(concat!(env!("OUT_DIR"), "/metadata_generated.rs"));
+include!(concat!(env!("OUT_DIR"), "/serialize_generated.rs"));
 
 // ---------------------------------------------------------------------------
 // Parse errors
@@ -180,16 +181,61 @@ impl<'a> FirmwareView<'a> {
                 // a null terminator.
                 size: remaining.len() + 1,
             })?;
-        let s = core::str::from_utf8(&remaining[..len])
-            .map_err(|_| ParseError::InvalidUtf8)?;
+        let s = core::str::from_utf8(&remaining[..len]).map_err(|_| ParseError::InvalidUtf8)?;
         Ok(String::from(s))
     }
 }
 
 // ---------------------------------------------------------------------------
-// Generated types (structs, enums, tagged FAMs, simple FAMs) and their
-// parse implementations.  Written to $OUT_DIR/metadata_generated.rs by
-// build/main.rs at compile time.
+// Serialize errors
 // ---------------------------------------------------------------------------
 
-include!(concat!(env!("OUT_DIR"), "/metadata_generated.rs"));
+/// Errors produced by the two-phase serializer.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SerializeError {
+    /// The output buffer or metadata region is too small to hold the
+    /// serialized objects.
+    Overflow,
+    /// A `Vec` field's length exceeds the range of the corresponding
+    /// binary count field (e.g. > 255 for a `u8` count).
+    CountOverflow {
+        /// Name of the count field that would overflow.
+        field: &'static str,
+    },
+}
+
+// ---------------------------------------------------------------------------
+// Public entry point
+// ---------------------------------------------------------------------------
+
+/// Serialize `root` into `buf` starting at flash address `base_addr`.
+///
+/// ## Buffer
+/// `buf` is filled with `0xFF` on entry; only the serialized object bytes
+/// are written over it.  `buf` may be any length ≥ the total serialized
+/// output.  Use [`METADATA_SIZE`] bytes to cover the full metadata region.
+///
+/// ## Base address
+/// Use [`METADATA_BASE`] as `base_addr` for production metadata images.
+///
+/// ## opaque_ptr fields
+/// Fields such as `OneromRomSlot::data` store raw flash addresses pointing
+/// to data outside the metadata region.  Set them to the correct value
+/// before calling; the serializer copies them verbatim.
+///
+/// ## Derived count fields
+/// `OneromMetadataHeader::rom_slot_count` and `OneromRomSlot::rom_count`
+/// are written from the corresponding `Vec` length.  Any value set by the
+/// caller is ignored.
+pub fn serialize(
+    root: &OneromMetadataHeader,
+    base_addr: u32,
+    buf: &mut [u8],
+) -> Result<(), SerializeError> {
+    let mut ctx = SerializeContext::new(base_addr, buf);
+    // Phase 1: assign flash addresses to every reachable object.
+    root.layout(&mut ctx)?;
+    // Phase 2: write bytes.  Root is always at base_addr.
+    root.write(&mut ctx, base_addr);
+    Ok(())
+}

@@ -30,7 +30,7 @@ use crate::meta::{
     CHIP_SET_FIRMWARE_OVERRIDES_METADATA_LEN, CHIP_SET_METADATA_LEN,
     CHIP_SET_METADATA_LEN_EXTRA_INFO,
 };
-use crate::{Error, Result, builder::FirmwareConfig};
+use crate::{Error, Result, Location, FirmwareConfig};
 use crate::{MIN_FIRMWARE_OVERRIDES_VERSION, PAD_METADATA_BYTE};
 
 /// Value to use when told to pad a Chip image
@@ -47,6 +47,11 @@ const CHIP_METADATA_LEN_WITH_FILENAME: usize = 8;
 
 // From 0.6.3 28 pin Fire boards report 18 address pins, up from 16.
 const MIN_FW_VER_FIRE_28_18_ADDR_PINS: FirmwareVersion = FirmwareVersion::new(0, 6, 3, 0);
+
+/// Per-slot RAM budget: only one slot is served at a time, so this is
+/// the maximum size of any single slot's ROM table (`build_rom_image`'s
+/// return value).
+pub const MAX_IMAGE_SIZE: usize = 512 * 1024;
 
 /// How to handle Chip images that are too small for the Chip type
 #[derive(Debug, Default, Clone, serde::Serialize, serde::Deserialize)]
@@ -122,19 +127,6 @@ impl core::fmt::Display for CsLogic {
             CsLogic::Ignore => write!(f, "ignore"),
         }
     }
-}
-
-/// Location within a larger Chip image that the specific image to use resides
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
-#[serde(rename_all = "snake_case")]
-pub struct Location {
-    /// Start of the image within the larger Chip image
-    pub start: usize,
-
-    /// Length of the image within the larger Chip image.  Must match the
-    /// selected Chip type, or SizeHandling will be applied.
-    pub length: usize,
 }
 
 impl CsLogic {
@@ -279,6 +271,10 @@ impl Chip {
 
     pub fn has_data(&self) -> bool {
         self.data.is_some()
+    }
+
+    pub fn data(&self) -> Option<&[u8]> {
+        self.data.as_deref()
     }
 
     /// Returns a [`Chip`] instance.
@@ -479,10 +475,6 @@ impl Chip {
         result
     }
 
-    pub(crate) fn data_byte_at(&self, logical: usize) -> Option<u8> {
-        self.data.as_ref()?.get(logical).copied()
-    }
-
     // Transforms a data byte by rearranging its bit positions to match the hardware's
     // data pin connections.
     //
@@ -647,7 +639,7 @@ impl Chip {
 }
 
 /// Type of Chip set
-#[derive(Debug, Default, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum ChipSetType {
@@ -695,7 +687,7 @@ impl ChipSet {
         set_type: ChipSetType,
         serve_alg: ServeAlg,
         chips: Vec<Chip>,
-        firmware_overrides: Option<crate::builder::FirmwareConfig>,
+        firmware_overrides: Option<crate::FirmwareConfig>,
     ) -> Result<Self> {
         // Check some Chips were supplied
         if chips.is_empty() {

@@ -156,6 +156,8 @@ pub struct McuPorts {
 #[derive(Debug, Deserialize, Clone)]
 pub struct ChipPins {
     pub quantity: u8,
+    #[serde(default)]
+    pub non_signal: Option<Vec<u8>>,
 }
 
 #[derive(Debug, Deserialize, Clone, PartialEq, Eq, Copy)]
@@ -233,6 +235,9 @@ pub struct McuPins {
     pub byte: Option<u8>,
     pub alt: Option<HashMap<String, HashMap<String, u8>>>,
     pub neo: Option<u8>,
+    /// Maps socket pin number to the GPIO(s) connected to it
+    pub socket_pin_to_gpio: Option<HashMap<u8, Vec<u8>>>,
+    pub x_pin_to_gpio: Option<HashMap<u8, Vec<u8>>>,
 }
 
 #[derive(Debug, Deserialize, Clone, Default, PartialEq, Eq)]
@@ -712,6 +717,8 @@ pub fn validate_config(name: &str, config: &HwConfigJson) {
     if let Some(ef) = &config.mcu.external_flash {
         validate_pin_number(&config.mcu, ef.cs_pin, "external_flash.cs_pin", name);
     }
+
+    validate_socket_and_x_pins(config, name);
 }
 
 fn validate_pin_number(mcu: &Mcu, pin: u8, pin_name: &str, config_name: &str) {
@@ -760,6 +767,111 @@ fn validate_pin_values(
                 "{}: invalid pin value {} in {} array, must be 0-{}",
                 config_name, pin, pin_type, valid_value
             );
+        }
+    }
+}
+
+fn validate_socket_and_x_pins(config: &HwConfigJson, name: &str) {
+    let socket_map = &config.mcu.pins.socket_pin_to_gpio;
+    let x_map = &config.mcu.pins.x_pin_to_gpio;
+
+    if x_map.is_some() && socket_map.is_none() {
+        panic!("{}: x_pin_to_gpio requires socket_pin_to_gpio to also be present", name);
+    }
+    if socket_map.is_none() && x_map.is_none() {
+        return;
+    }
+
+    let non_signal = config.chip.pins.non_signal.as_ref().unwrap_or_else(|| {
+        panic!(
+            "{}: chip.pins.non_signal must be specified when socket_pin_to_gpio or x_pin_to_gpio is present",
+            name
+        )
+    });
+
+    for &pin in non_signal {
+        if pin == 0 || pin > config.chip.pins.quantity {
+            panic!("{}: non_signal pin {} out of range 1-{}", name, pin, config.chip.pins.quantity);
+        }
+    }
+
+    // GPIOs that socket/X GPIOs must not clash with
+    let mut other_gpios: Vec<(&str, u8)> = vec![];
+    for &pin in &config.mcu.pins.sel {
+        other_gpios.push(("sel", pin));
+    }
+    #[allow(clippy::collapsible_if)]
+    if let Some(usb) = &config.mcu.usb {
+        if let Some(usb_pins) = &usb.pins {
+            other_gpios.push(("usb_vbus", usb_pins.vbus));
+        }
+    }
+    other_gpios.push(("status", config.mcu.pins.status));
+    if let Some(neo) = config.mcu.pins.neo {
+        other_gpios.push(("neo", neo));
+    }
+
+    let mut seen_gpios: HashMap<u8, (&str, u8)> = HashMap::new();
+
+    if let Some(socket_map) = socket_map {
+        for &pin in socket_map.keys() {
+            if pin == 0 || pin > config.chip.pins.quantity {
+                panic!(
+                    "{}: socket_pin_to_gpio pin {} out of range 1-{}",
+                    name, pin, config.chip.pins.quantity
+                );
+            }
+            if non_signal.contains(&pin) {
+                panic!("{}: socket pin {} appears in both socket_pin_to_gpio and non_signal", name, pin);
+            }
+        }
+        for pin in 1..=config.chip.pins.quantity {
+            if !socket_map.contains_key(&pin) && !non_signal.contains(&pin) {
+                panic!("{}: socket pin {} is not covered by socket_pin_to_gpio or non_signal", name, pin);
+            }
+        }
+
+        for (&pin, gpios) in socket_map {
+            for &gpio in gpios {
+                validate_pin_number(&config.mcu, gpio, "socket_pin_to_gpio", name);
+                if let Some((prev_map, prev_pin)) = seen_gpios.insert(gpio, ("socket_pin_to_gpio", pin)) {
+                    panic!(
+                        "{}: GPIO {} used by both {} pin {} and socket_pin_to_gpio pin {}",
+                        name, gpio, prev_map, prev_pin, pin
+                    );
+                }
+            }
+        }
+    }
+
+    if let Some(x_map) = x_map {
+        if x_map.len() > 2 {
+            panic!("{}: x_pin_to_gpio has {} entries, maximum is 2", name, x_map.len());
+        }
+        for (&pin, gpios) in x_map {
+            if pin == 0 || pin > 2 {
+                panic!("{}: x_pin_to_gpio pin {} out of range 1-2", name, pin);
+            }
+            for &gpio in gpios {
+                validate_pin_number(&config.mcu, gpio, "x_pin_to_gpio", name);
+                if let Some((prev_map, prev_pin)) = seen_gpios.insert(gpio, ("x_pin_to_gpio", pin)) {
+                    panic!(
+                        "{}: GPIO {} used by both {} pin {} and x_pin_to_gpio pin {}",
+                        name, gpio, prev_map, prev_pin, pin
+                    );
+                }
+            }
+        }
+    }
+
+    for (gpio, (map_name, pin)) in &seen_gpios {
+        for (other_label, other_gpio) in &other_gpios {
+            if gpio == other_gpio {
+                panic!(
+                    "{}: GPIO {} used by both {} pin {} and {}",
+                    name, gpio, map_name, pin, other_label
+                );
+            }
         }
     }
 }

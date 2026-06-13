@@ -247,7 +247,6 @@ mod tests {
     extern crate alloc;
 
     use super::*;
-    use alloc::vec;
 
     #[test]
     fn test_version_equality() {
@@ -311,7 +310,7 @@ mod tests {
 
     #[test]
     fn test_version_ordering() {
-        let mut versions = vec![
+        let mut versions = [
             FirmwareVersion::new(2, 0, 0, 0),
             FirmwareVersion::new(1, 2, 3, 4),
             FirmwareVersion::new(1, 2, 3, 5),

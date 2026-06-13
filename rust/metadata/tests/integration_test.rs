@@ -10,18 +10,14 @@
 // Copyright (C) 2026 Piers Finlayson <piers@piers.rocks>
 // MIT License
 
+use onerom_metadata::{METADATA_BASE, METADATA_SIZE, SerializeError, serialize};
 use onerom_metadata::{
-    FirmwareView,
-    BitModes, FireVreg, Rp235xVariant, RomSlotType,
-    GPIO_NONE, CURRENT_METADATA_VERSION,
-    OneromAlgConfig, OneromAlgCsConfig, OneromAlgAddrConfig,
-    OneromAlgDataConfig, OneromAlgDmaConfig,
-    OneromAlgOverrideConfig, OneromAlgPullConfig,
-    OneromFirmwareConfig, OneromFirmwareOverrides,
-    OneromHardwareInfo, OneromMetadataHeader,
-    OneromRomInfo, OneromRomPinMap, OneromRomSlot,
+    BitModes, CURRENT_METADATA_VERSION, FireVreg, FirmwareView, GPIO_NONE, OneromAlgAddrConfig,
+    OneromAlgConfig, OneromAlgCsConfig, OneromAlgDataConfig, OneromAlgDmaConfig,
+    OneromAlgOverrideConfig, OneromAlgPullConfig, OneromFirmwareConfig, OneromFirmwareOverrides,
+    OneromHardwareInfo, OneromMetadataHeader, OneromRomInfo, OneromRomPinMap, OneromRomSlot,
+    RomSlotType, Rp235xVariant,
 };
-use onerom_metadata::serialize::{serialize, SerializeError, METADATA_BASE, METADATA_SIZE};
 
 // ===========================================================================
 // Buffer helpers
@@ -122,23 +118,39 @@ fn minimal_header() -> OneromMetadataHeader {
     };
     let alg = OneromAlgConfig {
         alg_cs: OneromAlgCsConfig::AlgCs0 {
-            clkdiv_int: 1, clkdiv_frac: 0, gpio_base: 0,
-            base_cs_pin: 0, num_cs_pins: 1, base_data_pin: 8,
-            num_data_pins: 8, cs_active_delay: 0, cs_inactive_delay: 0,
-            serve_cs_low_0: 1, byte_pin: GPIO_NONE,
-            first_rom_cs_base: 0, first_rom_num_cs_pins: 1,
+            clkdiv_int: 1,
+            clkdiv_frac: 0,
+            gpio_base: 0,
+            base_cs_pin: 0,
+            num_cs_pins: 1,
+            base_data_pin: 8,
+            num_data_pins: 8,
+            cs_active_delay: 0,
+            cs_inactive_delay: 0,
+            serve_cs_low_0: 1,
+            byte_pin: GPIO_NONE,
+            first_rom_cs_base: 0,
+            first_rom_num_cs_pins: 1,
         },
         alg_addr: OneromAlgAddrConfig::AlgAddr0 {
-            clkdiv_int: 1, clkdiv_frac: 0, gpio_base: 0,
-            num_delay_cycles: 2, base_addr_pin: 0, num_addr_pins: 13,
+            clkdiv_int: 1,
+            clkdiv_frac: 0,
+            gpio_base: 0,
+            num_delay_cycles: 2,
+            base_addr_pin: 0,
+            num_addr_pins: 13,
             num_rom_table_bits: 13,
         },
         alg_data: OneromAlgDataConfig::AlgData0 {
-            clkdiv_int: 1, clkdiv_frac: 0, gpio_base: 0,
-            base_data_pin: 8, word_size: 8,
+            clkdiv_int: 1,
+            clkdiv_frac: 0,
+            gpio_base: 0,
+            base_data_pin: 8,
+            word_size: 8,
         },
         alg_dma: OneromAlgDmaConfig::AlgDma0 {
-            bit_mode: BitModes::BitMode8, continuous: 1,
+            bit_mode: BitModes::BitMode8,
+            continuous: 1,
         },
         gpio_pull_config: None,
         gpio_override_config: None,
@@ -163,9 +175,6 @@ fn minimal_header() -> OneromMetadataHeader {
         gpio_neopixel: GPIO_NONE,
         gpio_swdio: GPIO_NONE,
         gpio_swclk: GPIO_NONE,
-        gpio_x1: GPIO_NONE,
-        gpio_x2: GPIO_NONE,
-        x_jumper_pull: 0,
         gpio_sel: [GPIO_NONE; 7],
         sel_jumper_pull: 0,
         gpio_from_phys_pin: [[GPIO_NONE; 2]; 40],
@@ -323,7 +332,10 @@ fn round_trip_alg_cs1() {
         ..default_alg()
     };
     let original = OneromMetadataHeader {
-        rom_slots: vec![OneromRomSlot { alg, ..make_slot(vec![make_rom_info("2364")]) }],
+        rom_slots: vec![OneromRomSlot {
+            alg,
+            ..make_slot(vec![make_rom_info("2364")])
+        }],
         ..minimal_header()
     };
     assert_round_trips(&original);
@@ -350,7 +362,10 @@ fn round_trip_alg_cs2() {
         ..default_alg()
     };
     let original = OneromMetadataHeader {
-        rom_slots: vec![OneromRomSlot { alg, ..make_slot(vec![make_rom_info("2364")]) }],
+        rom_slots: vec![OneromRomSlot {
+            alg,
+            ..make_slot(vec![make_rom_info("2364")])
+        }],
         ..minimal_header()
     };
     assert_round_trips(&original);
@@ -372,7 +387,10 @@ fn round_trip_alg_data1() {
         ..default_alg()
     };
     let original = OneromMetadataHeader {
-        rom_slots: vec![OneromRomSlot { alg, ..make_slot(vec![make_rom_info("2364")]) }],
+        rom_slots: vec![OneromRomSlot {
+            alg,
+            ..make_slot(vec![make_rom_info("2364")])
+        }],
         ..minimal_header()
     };
     assert_round_trips(&original);
@@ -394,7 +412,10 @@ fn round_trip_simple_fams() {
         ..default_alg()
     };
     let original = OneromMetadataHeader {
-        rom_slots: vec![OneromRomSlot { alg, ..make_slot(vec![make_rom_info("2364")]) }],
+        rom_slots: vec![OneromRomSlot {
+            alg,
+            ..make_slot(vec![make_rom_info("2364")])
+        }],
         ..minimal_header()
     };
     assert_round_trips(&original);
@@ -476,7 +497,8 @@ fn byte_check_count_fields_derived_from_vec() {
     let slots_ptr = read_u32_le(&buf, 32);
     let slots_off = ptr_to_off(slots_ptr, METADATA_BASE);
     assert_eq!(
-        buf[slots_off + 12], 1,
+        buf[slots_off + 12],
+        1,
         "rom_count should equal roms.len() (1), not 99",
     );
 }
@@ -501,7 +523,10 @@ fn byte_check_opaque_ptr_verbatim() {
 
     // data is the first u32 (offset 0) within the 32-byte slot.
     let written = read_u32_le(&buf, slots_off);
-    assert_eq!(written, 0xDEAD_BEEF, "opaque_ptr data field must be written verbatim");
+    assert_eq!(
+        written, 0xDEAD_BEEF,
+        "opaque_ptr data field must be written verbatim"
+    );
 }
 
 /// 11. Two slots with equal OneromAlgConfig (by value) share a single copy in
@@ -543,6 +568,7 @@ fn byte_check_object_dedup() {
 #[test]
 fn byte_check_header_padding_is_ff() {
     let buf = do_serialize(&minimal_header());
+    #[allow(clippy::needless_range_loop)]
     for offset in 36..256 {
         assert_eq!(
             buf[offset], 0xFF,
@@ -564,36 +590,37 @@ fn byte_check_pointer_alignment() {
     let check_aligned = |label: &str, ptr: u32| {
         if is_valid_ptr(ptr) {
             assert_eq!(
-                ptr % 4, 0,
+                ptr % 4,
+                0,
                 "{label}: flash pointer 0x{ptr:08X} is not 4-byte aligned",
             );
         }
     };
 
     // Header-level pointers.
-    let hw_ptr    = read_u32_le(&buf, 20);
-    let fw_ptr    = read_u32_le(&buf, 24);
+    let hw_ptr = read_u32_le(&buf, 20);
+    let fw_ptr = read_u32_le(&buf, 24);
     let slots_ptr = read_u32_le(&buf, 32);
-    check_aligned("hw",        hw_ptr);
-    check_aligned("fw",        fw_ptr);
+    check_aligned("hw", hw_ptr);
+    check_aligned("fw", fw_ptr);
     check_aligned("rom_slots", slots_ptr);
 
     // Slot-level pointers (first slot only).
     let slots_off = ptr_to_off(slots_ptr, METADATA_BASE);
-    let roms_ptr   = read_u32_le(&buf, slots_off +  8);
-    let alg_ptr    = read_u32_le(&buf, slots_off + 16);
+    let roms_ptr = read_u32_le(&buf, slots_off + 8);
+    let alg_ptr = read_u32_le(&buf, slots_off + 16);
     let fw_ovr_ptr = read_u32_le(&buf, slots_off + 20);
-    check_aligned("slot.roms",               roms_ptr);
-    check_aligned("slot.alg",                alg_ptr);
+    check_aligned("slot.roms", roms_ptr);
+    check_aligned("slot.alg", alg_ptr);
     check_aligned("slot.firmware_overrides", fw_ovr_ptr);
 
     // AlgConfig sub-pointers.
     let alg_off = ptr_to_off(alg_ptr, METADATA_BASE);
-    check_aligned("alg.alg_cs",               read_u32_le(&buf, alg_off +  0));
-    check_aligned("alg.alg_addr",             read_u32_le(&buf, alg_off +  4));
-    check_aligned("alg.alg_data",             read_u32_le(&buf, alg_off +  8));
-    check_aligned("alg.alg_dma",              read_u32_le(&buf, alg_off + 12));
-    check_aligned("alg.gpio_pull_config",     read_u32_le(&buf, alg_off + 16));
+    check_aligned("alg.alg_cs", read_u32_le(&buf, alg_off));
+    check_aligned("alg.alg_addr", read_u32_le(&buf, alg_off + 4));
+    check_aligned("alg.alg_data", read_u32_le(&buf, alg_off + 8));
+    check_aligned("alg.alg_dma", read_u32_le(&buf, alg_off + 12));
+    check_aligned("alg.gpio_pull_config", read_u32_le(&buf, alg_off + 16));
     check_aligned("alg.gpio_override_config", read_u32_le(&buf, alg_off + 20));
 }
 
@@ -624,6 +651,8 @@ fn error_count_overflow() {
     let mut buf = vec![0u8; METADATA_SIZE];
     assert_eq!(
         serialize(&header, METADATA_BASE, &mut buf),
-        Err(SerializeError::CountOverflow { field: "rom_slot_count" }),
+        Err(SerializeError::CountOverflow {
+            field: "rom_slot_count"
+        }),
     );
 }

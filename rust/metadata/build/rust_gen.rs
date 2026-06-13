@@ -146,10 +146,10 @@ fn field_rust_type(field: &Field) -> String {
 /// (`FirmwareView` method name, byte size) for a scalar Rust type string.
 fn scalar_rw(ty: &str) -> (&'static str, usize) {
     match ty {
-        "u8"  => ("read_u8",     1),
+        "u8" => ("read_u8", 1),
         "u16" => ("read_u16_le", 2),
         "u32" => ("read_u32_le", 4),
-        _     => ("read_u8",     1),
+        _ => ("read_u8", 1),
     }
 }
 
@@ -162,7 +162,7 @@ fn enum_rw(field: &Field, schema: &Schema) -> (&'static str, usize) {
         .map_or(1, |e| e.size);
     match sz {
         2 => ("read_u16_le", 2),
-        _ => ("read_u8",     1),
+        _ => ("read_u8", 1),
     }
 }
 
@@ -187,12 +187,7 @@ fn alias_rw(field: &Field, schema: &Schema) -> (&'static str, usize) {
 /// precedes the array field).  When the count field comes *after* the array
 /// field, `push_struct_parse` calls `emit_array_ptr_read` and
 /// `emit_array_loop_body` separately instead of this function.
-fn emit_field_parse_offset(
-    out: &mut String,
-    field: &Field,
-    indent: &str,
-    schema: &Schema,
-) {
+fn emit_field_parse_offset(out: &mut String, field: &Field, indent: &str, schema: &Schema) {
     let name = &field.name;
 
     // Expected-offset assertion for ABI-stable fields.
@@ -335,9 +330,7 @@ fn emit_field_parse_offset(
         "padding" => {
             let sz = field.size.unwrap_or(0);
             if sz > 0 {
-                out.push_str(&format!(
-                    "{indent}offset += {sz}; // padding: {name}\n"
-                ));
+                out.push_str(&format!("{indent}offset += {sz}; // padding: {name}\n"));
             }
         }
 
@@ -407,7 +400,9 @@ fn emit_array_loop_body(out: &mut String, field: &Field, indent: &str, schema: &
             out.push_str(&format!(
                 "{li}    let ea = {name}_ptr + (i as u32 * {stride}u32);\n"
             ));
-            out.push_str(&format!("{li}    {name}.push({elem_rn}::parse(view, ea)?);\n"));
+            out.push_str(&format!(
+                "{li}    {name}.push({elem_rn}::parse(view, ea)?);\n"
+            ));
             out.push_str(&format!("{li}}}\n"));
 
             if nullable {
@@ -510,7 +505,7 @@ fn emit_field_at_addr(
         "padding" => {
             // Nothing to read; the offset accounting is done by the caller.
         }
-        
+
         _ => {
             // Nothing to read; the offset accounting is done by the caller.
         }
@@ -549,12 +544,12 @@ fn push_constants(out: &mut String, schema: &Schema) {
             out.push_str(&format!("/// {cmt}\n"));
         }
         let rust_ty = match c.type_.as_str() {
-            "u8"    => "u8",
-            "u16"   => "u16",
-            "u32"   => "u32",
+            "u8" => "u8",
+            "u16" => "u16",
+            "u32" => "u32",
             "usize" => "usize",
-            "cstr"  => "&'static str",
-            _       => "u32",
+            "cstr" => "&str",
+            _ => "u32",
         };
         let name = &c.name;
         match &c.value {
@@ -691,7 +686,9 @@ fn push_enum(out: &mut String, e: &Enum) {
     out.push_str("        f.write_str(match self {\n");
     for v in e.variants.iter().filter(|v| !v.is_sentinel()) {
         let vn = variant_ident(&v.name, strip);
-        let disp = v.display.as_deref()
+        let disp = v
+            .display
+            .as_deref()
             .map(str::to_string)
             .unwrap_or_else(|| display_string(&v.name, strip));
         out.push_str(&format!("            Self::{vn} => {disp:?},\n"));
@@ -775,9 +772,7 @@ fn push_struct_parse(out: &mut String, s: &Struct, schema: &Schema) {
         let defer = matches!(f.kind.as_str(), "struct_array_ptr" | "struct_ptr_array_ptr") && {
             let count_name = f.count_field.as_deref().unwrap_or("");
             // Count must appear somewhere after idx.
-            s.fields[idx + 1..]
-                .iter()
-                .any(|sf| sf.name == count_name)
+            s.fields[idx + 1..].iter().any(|sf| sf.name == count_name)
         };
 
         if defer {
@@ -826,7 +821,10 @@ fn push_struct_parse(out: &mut String, s: &Struct, schema: &Schema) {
 // ---------------------------------------------------------------------------
 
 fn push_tagged_fams(out: &mut String, schema: &Schema) {
-    let any = schema.tagged_fams.iter().any(|tf| tf.generate != Generate::Skip);
+    let any = schema
+        .tagged_fams
+        .iter()
+        .any(|tf| tf.generate != Generate::Skip);
     if !any {
         return;
     }
@@ -847,10 +845,7 @@ fn push_tagged_fam(out: &mut String, tf: &TaggedFam, schema: &Schema) {
     let tn = rust_type_name(&tf.name);
 
     // Resolve the discriminant enum once; use its strip_prefix for variant naming.
-    let disc_enum = schema
-        .enums
-        .iter()
-        .find(|e| e.name == tf.discriminant_type);
+    let disc_enum = schema.enums.iter().find(|e| e.name == tf.discriminant_type);
     let strip = disc_enum
         .and_then(|e| e.strip_prefix.as_deref())
         .unwrap_or("");
@@ -884,11 +879,7 @@ fn push_tagged_fam(out: &mut String, tf: &TaggedFam, schema: &Schema) {
                     out.push_str(&format!("        /// {}\n", first.trim()));
                 }
             }
-            out.push_str(&format!(
-                "        {}: {},\n",
-                f.name,
-                field_rust_type(f)
-            ));
+            out.push_str(&format!("        {}: {},\n", f.name, field_rust_type(f)));
         }
         // Variant-specific param fields.
         for f in v.fields.iter().filter(|f| f.kind != "padding") {
@@ -897,11 +888,7 @@ fn push_tagged_fam(out: &mut String, tf: &TaggedFam, schema: &Schema) {
                     out.push_str(&format!("        /// {}\n", first.trim()));
                 }
             }
-            out.push_str(&format!(
-                "        {}: {},\n",
-                f.name,
-                field_rust_type(f)
-            ));
+            out.push_str(&format!("        {}: {},\n", f.name, field_rust_type(f)));
         }
         out.push_str("    },\n");
     }
@@ -921,7 +908,11 @@ fn push_tagged_fam_parse(
 ) {
     // Binary layout: [discriminant (1–2 B)] [param_len (1 B)] [common fields] [params…]
     let disc_size = disc_enum.map_or(1, |e| e.size) as usize;
-    let disc_reader = if disc_size == 1 { "read_u8" } else { "read_u16_le" };
+    let disc_reader = if disc_size == 1 {
+        "read_u8"
+    } else {
+        "read_u16_le"
+    };
     let param_len_off = disc_size; // byte offset of param_len
     let common_start = disc_size + 1; // byte offset of first common field
 
@@ -1055,8 +1046,8 @@ fn display_string(c_name: &str, strip_prefix: &str) -> String {
         c_name.strip_prefix(strip_prefix).unwrap_or(c_name)
     };
     if stripped.chars().next().is_some_and(|c| c.is_ascii_digit()) {
-        stripped.replace('_', ".")   // 0_55V → 0.55V, 2316 → 2316, 0 → 0
+        stripped.replace('_', ".") // 0_55V → 0.55V, 2316 → 2316, 0 → 0
     } else {
-        stripped.to_lowercase().replace('_', " ")  // ACTIVE_LOW → active low
+        stripped.to_lowercase().replace('_', " ") // ACTIVE_LOW → active low
     }
 }

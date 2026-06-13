@@ -338,7 +338,8 @@ fn generate_lib_rs(configs: &[HwConfigData]) -> String {
     code.push_str("\n#![deny(missing_docs)]\n");
     code.push_str("#![deny(unsafe_code)]\n\n");
 
-    code.push_str("mod generated;\n\n");
+    code.push_str("mod generated;\n");
+    code.push_str("mod helpers;\n\n");
     code.push_str("pub use generated::*;\n");
 
     code
@@ -365,6 +366,7 @@ fn generate_rust_code(configs: &[HwConfigData]) -> String {
     // Generate HwConfig enum
     code.push_str(&generate_hw_config_enum(configs));
     code.push_str("\n\n");
+
 
     // Generate HwConfig implementation
     code.push_str(&generate_hw_config_impl(configs));
@@ -493,6 +495,9 @@ fn generate_hw_config_impl(configs: &[HwConfigData]) -> String {
     code.push_str("\n\n");
 
     code.push_str(&generate_rp_variant_method(configs));
+    code.push_str("\n\n");
+
+    code.push_str(&generate_socket_and_x_pin_methods(configs));
     code.push_str("\n\n");
 
     code.push_str("}\n");
@@ -1577,5 +1582,82 @@ fn generate_rp_variant_method(configs: &[HwConfigData]) -> String {
     }
     code.push_str("        }\n");
     code.push_str("    }");
+    code
+}
+
+fn generate_socket_and_x_pin_methods(configs: &[HwConfigData]) -> String {
+    let mut code = String::new();
+
+    code.push_str("    /// Get the mapping from ROM socket pin number to MCU GPIO(s)\n");
+    code.push_str("    ///\n");
+    code.push_str("    /// Returns an empty slice for boards that don't define this mapping.\n");
+    code.push_str("    pub const fn socket_pin_map(&self) -> &'static [(u8, &'static [u8])] {\n");
+    code.push_str("        match self {\n");
+    for config in configs {
+        let entries_str = match &config.config.mcu.pins.socket_pin_to_gpio {
+            Some(map) => {
+                let mut entries: Vec<_> = map.iter().collect();
+                entries.sort_by_key(|(pin, _)| *pin);
+                entries
+                    .iter()
+                    .map(|(pin, gpios)| {
+                        let gpios_str = gpios.iter().map(|g| g.to_string()).collect::<Vec<_>>().join(", ");
+                        format!("({}, &[{}])", pin, gpios_str)
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            }
+            None => String::new(),
+        };
+        code.push_str(&format!("            Board::{} => &[{}],\n", config.variant_name, entries_str));
+    }
+    code.push_str("        }\n");
+    code.push_str("    }\n\n");
+
+    code.push_str("    /// Get the mapping from X header pin number to MCU GPIO(s)\n");
+    code.push_str("    ///\n");
+    code.push_str("    /// Returns an empty slice for boards that don't define this mapping.\n");
+    code.push_str("    pub const fn x_pin_map(&self) -> &'static [(u8, &'static [u8])] {\n");
+    code.push_str("        match self {\n");
+    for config in configs {
+        let entries_str = match &config.config.mcu.pins.x_pin_to_gpio {
+            Some(map) => {
+                let mut entries: Vec<_> = map.iter().collect();
+                entries.sort_by_key(|(pin, _)| *pin);
+                entries
+                    .iter()
+                    .map(|(pin, gpios)| {
+                        let gpios_str = gpios.iter().map(|g| g.to_string()).collect::<Vec<_>>().join(", ");
+                        format!("({}, &[{}])", pin, gpios_str)
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            }
+            None => String::new(),
+        };
+        code.push_str(&format!("            Board::{} => &[{}],\n", config.variant_name, entries_str));
+    }
+    code.push_str("        }\n");
+    code.push_str("    }\n\n");
+
+    code.push_str("    /// Get the ROM socket pins that are non-signal (GND/VCC)\n");
+    code.push_str("    ///\n");
+    code.push_str("    /// Returns an empty slice for boards that don't define this.\n");
+    code.push_str("    pub const fn non_signal_pins(&self) -> &'static [u8] {\n");
+    code.push_str("        match self {\n");
+    for config in configs {
+        let pins_str = config
+            .config
+            .chip
+            .pins
+            .non_signal
+            .as_ref()
+            .map(|v| v.iter().map(|p| p.to_string()).collect::<Vec<_>>().join(", "))
+            .unwrap_or_default();
+        code.push_str(&format!("            Board::{} => &[{}],\n", config.variant_name, pins_str));
+    }
+    code.push_str("        }\n");
+    code.push_str("    }");
+
     code
 }

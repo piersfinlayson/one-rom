@@ -23,6 +23,7 @@ const ENV_C_HEADER_OUT: &str = "ONEROM_C_HEADER_OUT";
 const METADATA_SCHEMA_FILE: &str = "firmware/metadata_schema.toml";
 const C_HEADER_FILE: &str = "firmware/generated/onerom_metadata.h";
 const RUST_GENERATED: &str = "metadata_generated.rs";
+const RUST_SERIALIZE_GENERATED: &str = "serialize_generated.rs";
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // -------------------------------------------------------------------------
@@ -69,14 +70,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         build_dir.join("schema.rs").display()
     );
     println!(
-       "cargo:rerun-if-changed={}",
-       build_dir.join("serialize_gen.rs").display()
-   );
-    let schema_path = build_dir.join(format!("../../../{METADATA_SCHEMA_FILE}")).canonicalize()?;
-    println!(
         "cargo:rerun-if-changed={}",
-        schema_path.display()
+        build_dir.join("serialize_gen.rs").display()
     );
+    let schema_path = build_dir
+        .join(format!("../../../{METADATA_SCHEMA_FILE}"))
+        .canonicalize()?;
+    println!("cargo:rerun-if-changed={}", schema_path.display());
 
     // -------------------------------------------------------------------------
     // Load and validate the schema
@@ -131,15 +131,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "onerom build: wrote Rust source -> {}",
         rust_out_path.display()
     );
-    println!("cargo:rerun-if-changed={}", rust_out_path.display());
 
     // -------------------------------------------------------------------------
     // Serialize source generation
     // -------------------------------------------------------------------------
- 
+
     let serialize_src = serialize_gen::generate(&schema);
- 
-    let serialize_out_path = PathBuf::from(&out_dir).join("serialize_generated.rs");
+
+    let serialize_out_path = PathBuf::from(&out_dir).join(RUST_SERIALIZE_GENERATED);
     std::fs::write(&serialize_out_path, &serialize_src).map_err(|e| {
         format!(
             "Failed to write generated serialize source to {}: {}",
@@ -151,7 +150,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "onerom build: wrote serialize source -> {}",
         serialize_out_path.display()
     );
-    println!("cargo:rerun-if-changed={}", serialize_out_path.display());
- 
+
     Ok(())
 }
