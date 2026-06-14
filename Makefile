@@ -388,7 +388,7 @@ clean-rust:
 clean-gen-config:
 	cd firmware/generated && rm -f gen-config.c
 
-clean-libonerom-test:
+clean-libonerom-test: clean-gen-config
 	+cd $(FIRMWARE_DIR) && make -f test.mk clean-test
 
 clean: clean-firmware clean-rust clean-generated clean-gen-config clean-libonerom-test

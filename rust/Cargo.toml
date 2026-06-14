@@ -10,14 +10,16 @@ members = [
     "lab-new",
     "metadata",
     "fw-config-gen",
+    "fw-emulator",
+    "fw-tester",
     "protocol",
     "schema-gen",
     "sdrr-check",
     "sdrr-fw-parser",
     "sdrr-gen",
     "sdrr-info",
-    "studio"
-, "onerom-fw-emulator", "onerom-fw-tester"]
+    "studio",
+]
 default-members = [
     "cli",
     "config",

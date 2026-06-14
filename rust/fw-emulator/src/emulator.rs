@@ -8,6 +8,7 @@
 //!
 //! ```text
 //!   Emulator::set_logging(enabled)  — optional, before boot, or after()
+//!   Emulator::set_sel_image(n)
 //!   Emulator::boot()                — calls firmware_main(), populates global state
 //!        │
 //!        ▼
@@ -20,7 +21,6 @@
 //!   emu.step_cycles(n)
 //!   emu.drive_gpios(gpios, level)
 //!   emu.read_pin_states()
-//!   emu.set_sel_image(n)
 //! ```
 //!
 //! # Thread safety
@@ -94,7 +94,7 @@ impl Emulator {
     // ── ROM image selection ──────────────────────────────────────────────────
 
     /// Tell the stub which ROM image to present.
-    pub fn set_sel_image(&self, image: u8) {
+    pub fn set_sel_image(image: u8) {
         unsafe { ffi::stub_set_sel_image(image as _) };
     }
 

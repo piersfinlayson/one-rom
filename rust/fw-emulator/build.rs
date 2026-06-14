@@ -28,22 +28,51 @@ fn main() {
         panic!("BOARD must be set (e.g. BOARD={EXAMPLE_BOARD})")
     });
 
+    // BASE_DIR is the project root used to resolve relative CONFIG paths and
+    // ROM image files.  Defaults to the computed project_root so the Makefile
+    // shell-script build works without change; set it explicitly when invoking
+    // cargo from a different directory (e.g. BASE_DIR=$(realpath ../..) from
+    // fw-tester/).
+    let base_dir = if let Ok(bd) = env::var("BASE_DIR") {
+        std::fs::canonicalize(&bd)
+            .unwrap_or_else(|e| panic!("Cannot resolve BASE_DIR '{}': {}", bd, e))
+    } else {
+        project_root.clone()
+    };
+
+    // Resolve CONFIG to a canonical absolute path relative to base_dir.
+    // Absolute paths are used as-is.
+    let config_abs = {
+        let p = PathBuf::from(&config);
+        if p.is_absolute() {
+            std::fs::canonicalize(&p)
+                .unwrap_or_else(|e| panic!("Cannot find CONFIG '{}': {}", config, e))
+        } else {
+            std::fs::canonicalize(base_dir.join(&p))
+                .unwrap_or_else(|e| panic!(
+                    "Cannot find CONFIG '{}' relative to BASE_DIR '{}': {}",
+                    config, base_dir.display(), e
+                ))
+        }
+    };
+
     // Re-run build.rs if these env vars change.
     println!("cargo:rerun-if-env-changed=CONFIG");
     println!("cargo:rerun-if-env-changed=BOARD");
+    println!("cargo:rerun-if-env-changed=BASE_DIR");
 
     // ── C build ──────────────────────────────────────────────────────────────
 
     println!("cargo:rerun-if-changed={}", project_root.join("Makefile").display());
     println!("cargo:rerun-if-changed={}", c_root.display());
-    println!("cargo:rerun-if-changed={}", project_root.join(&config).display());
+    println!("cargo:rerun-if-changed={}", config_abs.display());
     println!("cargo:rerun-if-changed={}", manifest_dir.join("src/wrapper.h").display());
 
     // Clean the C library if CONFIG or BOARD has changed since the last build.
     // The Makefile has no visibility into these variables, so we track them
     // ourselves via a stamp file in the build output directory.
     let stamp_path = c_root.join("build-test/.build-config");
-    let stamp = format!("CONFIG={config}\nBOARD={board}\n");
+    let stamp = format!("CONFIG={}\nBOARD={board}\n", config_abs.display());
     let needs_clean = std::fs::read_to_string(&stamp_path)
         .map(|s| s != stamp)
         .unwrap_or(true);
@@ -52,7 +81,7 @@ fn main() {
         let _ = Command::new("make")
             .arg("-C").arg(&project_root)
             .arg("clean-libonerom-test")
-            .env("CONFIG", &config)
+            .env("CONFIG", &config_abs)
             .env("BOARD", &board)
             .status()
             .expect("could not run make clean-libonerom-test");
@@ -61,13 +90,14 @@ fn main() {
     let status = Command::new("make")
         .arg("-C").arg(&project_root)
         .arg("libonerom-test")
-        .env("CONFIG", &config)
+        .env("CONFIG", &config_abs)
         .env("BOARD", &board)
         .status()
         .expect("could not run make — is it on PATH?");
     assert!(
         status.success(),
-        "make libonerom-test failed (CONFIG={config} BOARD={board})"
+        "make libonerom-test failed (CONFIG={} BOARD={board})",
+        config_abs.display()
     );
 
     std::fs::write(&stamp_path, &stamp)

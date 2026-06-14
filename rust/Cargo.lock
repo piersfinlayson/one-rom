@@ -5375,6 +5375,14 @@ dependencies = [
 [[package]]
 name = "onerom-fw-tester"
 version = "0.1.0"
+dependencies = [
+ "env_logger",
+ "log",
+ "onerom-config",
+ "onerom-fw-emulator",
+ "onerom-gen",
+ "serde_json",
+]
 
 [[package]]
 name = "onerom-gen"

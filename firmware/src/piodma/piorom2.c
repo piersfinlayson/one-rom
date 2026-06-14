@@ -7,6 +7,7 @@
 //   pins.
 // - Need ability to invert /BYTE
 
+#define APIO_LOG_IMPL
 #include "include.h"
 
 #if defined(TEST_BUILD)
@@ -89,7 +90,7 @@ int piorom2(void) {
     return 0;
 }
 
-static int retreive_gpio_init(const onerom_rom_slot_t *slot, gpio_init_t *gpio_init) {
+static uint8_t retrieve_gpio_init(const onerom_rom_slot_t *slot, gpio_init_t *gpio_init) {
     gpio_init->base_data_pin = 0xFF;
     gpio_init->base_addr_pin = 0xFF;
     gpio_init->base_cs_pin = 0xFF;
@@ -176,7 +177,7 @@ static int retreive_gpio_init(const onerom_rom_slot_t *slot, gpio_init_t *gpio_i
 int setup_serving_gpios(const onerom_rom_slot_t *slot) {
     // Retrieve GPIO configuration for this ROM slot
     gpio_init_t gpio_init;
-    uint8_t rc = retreive_gpio_init(slot, &gpio_init);
+    uint8_t rc = retrieve_gpio_init(slot, &gpio_init);
     if (rc != 0) {
         return rc;
     }
@@ -414,6 +415,8 @@ int setup_serving_pios(const onerom_rom_slot_t *slot, uint32_t rom_table_addr) {
     APIO_SM_CLKDIV_SET(addr_alg->clkdiv_int, addr_alg->clkdiv_frac);
     APIO_SM_JMP_TO_START();
 
+    APIO_LOG_SM("Address read");
+
     if (addr_alg->gpio_base == 0) {
         APIO_GPIOBASE_0();
     } else {
@@ -459,7 +462,7 @@ int setup_serving_pios(const onerom_rom_slot_t *slot, uint32_t rom_table_addr) {
             if (params->byte_pin != 0xFF) {
                 // Read /BYTE and if low, jump to special code to only set low
                 // 8 data pins to outputs
-                APIO_LABEL_NEW_OFFSET(byte_low_offset, 4); 
+                APIO_LABEL_NEW_OFFSET(byte_low_offset, 4 + (cs_alg->cs_inactive_delay > 0 ? 1 : 0)); 
                 APIO_ADD_INSTR(APIO_JMP_PIN(APIO_LABEL(byte_low_offset)));
             }
 
@@ -636,6 +639,7 @@ int setup_serving_pios(const onerom_rom_slot_t *slot, uint32_t rom_table_addr) {
     }
     APIO_SM_CLKDIV_SET(data_alg->clkdiv_int, data_alg->clkdiv_frac);
     APIO_SM_JMP_TO_START();
+    APIO_LOG_SM("CS/Data output");
 
     // Set up the data write algorithm
     APIO_SET_SM(SM_DATA_WRITE);
@@ -743,6 +747,7 @@ int setup_serving_pios(const onerom_rom_slot_t *slot, uint32_t rom_table_addr) {
     }
     APIO_SM_CLKDIV_SET(data_alg->clkdiv_int, data_alg->clkdiv_frac);
     APIO_SM_JMP_TO_START();
+    APIO_LOG_SM("Data write");
 
     if (cs_alg->gpio_base == data_alg->gpio_base) {
         if (data_alg->gpio_base == 0) {
@@ -776,6 +781,9 @@ static int setup_serving_dma(const onerom_rom_slot_t *slot, uint32_t rom_table_a
     RUNTIME->dma_pio_ch = STORE_DMA_CH_INFO(DMA_CH_ADDR_READ);
     RUNTIME->dma_pio_ch |= STORE_DMA_CH_INFO(DMA_CH_DATA_WRITE);
 
+    // TODO dynamically figure out which blocks PIO SMs used are in and don't
+    // use fixed APIO1/APIO2 macros
+
 #if REAL_HARDWARE
     const onerom_alg_dma_config_t *dma_alg = slot->alg->alg_dma;
     switch (dma_alg->alg) {
@@ -797,7 +805,7 @@ static int setup_serving_dma(const onerom_rom_slot_t *slot, uint32_t rom_table_a
                 // continuous transfers to channel 1.  No triggering is
                 // necessary, as channel 1 will be paced by the PIO1 SM0 RX
                 // FIFO DREQ, like this channel.
-                dma_reg->write_addr = (uint32_t)&DMA_CH_READ_ADDR(1);
+                dma_reg->write_addr = (uint32_t)&DMA_CH_READ_ADDR(DMA_CH_DATA_WRITE);
                 dma_reg->transfer_count = 0xffffffff;
             }
             dma_reg->ctrl_trig =

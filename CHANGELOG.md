@@ -6,6 +6,8 @@ All notables changes between versions are documented in this file.
 
 TODO
 USB plugin is broken
+host-control and USB rewriting ROMs is broken, probably knocking too
+Move lab-new over to new pin map within Board.
 
 Plugins need to add firmware/include to their include path and change sdrr/ora or firmware/ora.
 
