@@ -127,6 +127,7 @@ fn main() {
         .allowlist_function("epio_read_pin_states")
         .allowlist_function("epio_step_cycles")
         .allowlist_function("epio_free")
+        .allowlist_function("epio_read_driven_pins")
         .allowlist_function("stub_set_sel_image")
         .allowlist_function("ffi_limp_mode")
         .allowlist_function("ffi_pios_enabled")

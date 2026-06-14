@@ -246,8 +246,10 @@ fn run_mode(
 
         // ── Phase 3: read and compare ─────────────────────────────────────────
         let pin_states = emulator.read_pin_states();
+        let driven_pins = emulator.read_driven_pins();
         if addr_idx == 0 {
             debug!("addr=0 pin_states={:#018x}", pin_states);
+            debug!("addr=0 driven_pins={:#018x}", driven_pins);
         }
 
         if mode == 16 {
@@ -260,11 +262,11 @@ fn run_mode(
 
             if lo != exp_lo {
                 failures += 1;
-                log_mismatch(set_idx, chip_idx, addr_idx * 2, lo, exp_lo, failures);
+                log_mismatch(set_idx, chip_idx, addr_idx * 2, lo, exp_lo, driven_pins, &cache.data_gpios[..8], failures);
             }
             if hi != exp_hi {
                 failures += 1;
-                log_mismatch(set_idx, chip_idx, addr_idx * 2 + 1, hi, exp_hi, failures);
+                log_mismatch(set_idx, chip_idx, addr_idx * 2 + 1, hi, exp_hi, driven_pins, &cache.data_gpios[8..16], failures);
             }
         } else {
             let byte = driver::extract_byte(pin_states, &cache.data_gpios);
@@ -272,7 +274,7 @@ fn run_mode(
             let expected = oracle[addr_idx];
             if byte != expected {
                 failures += 1;
-                log_mismatch(set_idx, chip_idx, addr_idx, byte, expected, failures);
+                log_mismatch(set_idx, chip_idx, addr_idx, byte, expected, driven_pins, &cache.data_gpios, failures);
             }
         }
 
@@ -302,11 +304,15 @@ fn word_size_for_set(chip_set: &ChipSetConfig) -> u8 {
 
 /// Log a byte mismatch, capped at 5 per mode pass to avoid flooding the log
 /// for systematic failures.
-fn log_mismatch(set: usize, chip: usize, addr: usize, got: u8, expected: u8, count: u64) {
+fn log_mismatch(set: usize, chip: usize, addr: usize, got: u8, expected: u8,
+                driven_pins: u64, data_gpios: &[u8], count: u64) {
     if count <= 5 {
+        let drive_state: String = data_gpios.iter().map(|&g| {
+            if driven_pins & (1u64 << g) != 0 { 'y' } else { 'n' }
+        }).collect();
         error!(
-            "MISMATCH set={} chip={} addr=0x{:04X}: got=0x{:02X} expected=0x{:02X}",
-            set, chip, addr, got, expected,
+            "MISMATCH set={} chip={} addr=0x{:04X}: got=0x{:02X} expected=0x{:02X} driven=[{}]",
+            set, chip, addr, got, expected, drive_state,
         );
     } else if count == 6 {
         error!("(further mismatches suppressed for this mode pass)");

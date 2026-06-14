@@ -191,12 +191,24 @@ int setup_serving_gpios(const onerom_rom_slot_t *slot) {
         gpio_init.num_pulls,
         gpio_init.num_overrides);
 
-#if REAL_HARDWARE
     // Set all GPIO pins to SIOs, inputs, output disable, no pulls:
     // - Data
     // - Address
     // - CS
     // - Byte
+    for (int ii = 0; ii < gpio_init.num_data_pins; ii++) {
+        uint8_t pin = ii + gpio_init.base_data_pin;
+        if (pin < MAX_GPIOS) {
+            // Set the data pins to be controlled by the appropriate PIO.  Not
+            // required by other pins, as all PIOs can read any GPIO.
+            APIO_GPIO_OUTPUT(pin, BLOCK_CS_DATA);
+#if REAL_HARDWARE
+            GPIO_PAD(pin) = PAD_INPUT | PAD_DRIVE(PAD_DRIVE_8MA) | PAD_SLEW_FAST;
+#endif // REAL_HARDWARE
+        }
+    }
+
+#if REAL_HARDWARE
     if (gpio_init.base_addr_pin < MAX_GPIOS && gpio_init.num_addr_pins < 0xFF) {
         for (int ii = 0; ii < gpio_init.num_addr_pins; ii++) {
             uint8_t pin = ii + gpio_init.base_addr_pin;
@@ -213,15 +225,6 @@ int setup_serving_gpios(const onerom_rom_slot_t *slot) {
                 GPIO_CTRL(pin) = GPIO_CTRL_RESET;
                 GPIO_PAD(pin) = PAD_INPUT | PAD_OUTPUT_DISABLE;
             }
-        }
-    }
-    for (int ii = 0; ii < gpio_init.num_data_pins; ii++) {
-        uint8_t pin = ii + gpio_init.base_data_pin;
-        if (pin < MAX_GPIOS) {
-            // Set the data pins to be controlled by the appropriate PIO.  Not
-            // required by other pins, as all PIOs can read any GPIO.
-            GPIO_CTRL(pin) = DATA_GPIO_CTRL_FUNC;
-            GPIO_PAD(pin) = PAD_INPUT | PAD_DRIVE(PAD_DRIVE_8MA) | PAD_SLEW_FAST;
         }
     }
     if (gpio_init.byte_pin < MAX_GPIOS) {
@@ -472,6 +475,7 @@ int setup_serving_pios(const onerom_rom_slot_t *slot, uint32_t rom_table_addr) {
 
             // Write the SM instructions
             APIO_WRAP_BOTTOM();
+            APIO_ADD_INSTR(APIO_MOV_PINDIRS_NULL);
             APIO_LABEL_NEW(load_cs);
             APIO_ADD_INSTR(APIO_MOV_X_PINS);
             if (params->serve_cs_low_0 == 0) {

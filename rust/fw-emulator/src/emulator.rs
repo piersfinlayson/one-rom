@@ -117,6 +117,10 @@ impl Emulator {
         unsafe { ffi::epio_step_cycles(self.epio_or_panic(), cycles) };
     }
 
+    pub fn read_driven_pins(&self) -> u64 {
+        unsafe { ffi::epio_read_driven_pins(self.epio_or_panic()) }
+    }
+
     // ── Internal helpers ─────────────────────────────────────────────────────
 
     fn epio_or_panic(&self) -> *mut ffi::epio_t {
