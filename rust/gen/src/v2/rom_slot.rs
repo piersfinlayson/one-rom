@@ -122,7 +122,7 @@ pub fn build_rom_slot(
         roms,
         rom_count: chips.len() as u8,
         slot_type,
-        alg,
+        alg: Some(alg),
         firmware_overrides,
     };
 
@@ -177,7 +177,7 @@ mod tests {
 
         assert_eq!(
             slot.alg,
-            OneromAlgConfig {
+            Some(OneromAlgConfig {
                 alg_cs: OneromAlgCsConfig::AlgCs0 {
                     clkdiv_int: 1,
                     clkdiv_frac: 0,
@@ -215,7 +215,7 @@ mod tests {
                 },
                 gpio_pull_config: None,
                 gpio_override_config: None,
-            }
+            })
         );
 
         let mut expected_addr = [GPIO_NONE; MAX_ADDR_PINS];
@@ -228,10 +228,10 @@ mod tests {
             vec![OneromRomInfo {
                 rom_type: "2364".to_string(),
                 filename: Some("test.bin".to_string()),
-                pin_map: OneromRomPinMap {
+                pin_map: Some(OneromRomPinMap {
                     addr: expected_addr,
                     data: expected_data,
-                },
+                }),
             }]
         );
 

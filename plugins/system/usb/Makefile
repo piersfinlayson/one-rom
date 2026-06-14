@@ -16,10 +16,10 @@ TINYUSB_DIR   := tinyusb
 PICOBOOTX_DIR := picobootx
 PICO_SDKLESS_DIR := pico-sdkless
 
-ORA_DIR := ../../../sdrr/ora
+ORA_DIR := ../../../firmware/ora
 ORA_INCLUDE := -I$(ORA_DIR)
-SDRR_INCLUDE := -I../../../sdrr/include -I../../../output
-SEGGER_INCLUDE := -I../../../sdrr/segger-rtt/RTT -I../../../sdrr/segger-rtt/Config
+SDRR_INCLUDE := -I../../../firmware/include -I../../../firmware/generated
+SEGGER_INCLUDE := -I../../../firmware/segger-rtt/RTT -I../../../firmware/segger-rtt/Config
 PLUGIN_INCLUDE := -I.
 
 BUILD_DIR := build
@@ -52,10 +52,11 @@ CFLAGS := -mcpu=cortex-m33 -mthumb -mfloat-abi=hard -mfpu=fpv5-sp-d16 \
           $(SDRR_INCLUDE) $(SEGGER_INCLUDE) $(ORA_INCLUDE) $(PLUGIN_INCLUDE) \
 		  -Iinclude -I$(PICO_SDKLESS_DIR)/include \
           $(addprefix -I,$(TINYUSB_INCLUDE_DIRS)) \
-		  $(addprefix -I,$(PICOBOOTX_INCLUDE_DIRS))
+		  $(addprefix -I,$(PICOBOOTX_INCLUDE_DIRS)) \
+		  -std=c11
 
 LDFLAGS := -nostdlib \
-           -T ../../../sdrr/ora/plugin.ld \
+           -T ../../../firmware/ora/plugin.ld \
            -Wl,--defsym,PLUGIN_TYPE=0 \
            -Wl,--fatal-warnings \
 		   -Wl,--no-warn-rwx-segments \

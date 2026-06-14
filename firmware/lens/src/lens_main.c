@@ -9,7 +9,6 @@
 
 #include <stdio.h>
 #include <include.h>
-#include "roms.h"
 #include <test/stub.h>
 #include <apio.h>
 #include <epio.h>

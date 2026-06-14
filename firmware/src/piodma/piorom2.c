@@ -219,9 +219,9 @@ int setup_serving_gpios(const onerom_rom_slot_t *slot) {
         GPIO_CTRL(pin) = GPIO_CTRL_RESET;
         GPIO_PAD(pin) = PAD_INPUT | PAD_OUTPUT_DISABLE;
     }
-#endif // REAL_HARDWARE
 
     // Set up any pull-ups or pull-downs
+    // TODO enhance EPIO to handle pulls
     if (gpio_init.num_pulls > 0 && gpio_init.pulls != NULL) {
         for (int ii = 0; ii < gpio_init.num_pulls; ii++) {
             uint8_t pin = gpio_init.pulls[ii] & 0x7F;
@@ -235,6 +235,7 @@ int setup_serving_gpios(const onerom_rom_slot_t *slot) {
             }
         }
     }
+#endif // REAL_HARDWARE
 
     // Invert or override to always read 0 or 1
     if (gpio_init.num_overrides > 0 && gpio_init.overrides != NULL) {
@@ -768,12 +769,15 @@ void start_serving_pios(void) {
 }
 
 static int setup_serving_dma(const onerom_rom_slot_t *slot, uint32_t rom_table_addr) {
-    const onerom_alg_dma_config_t *dma_alg = slot->alg->alg_dma;
-
-
+#if !REAL_HARDWARE
+    (void)slot;
+    (void)rom_table_addr;
+#endif // !REAL_HARDWARE
     RUNTIME->dma_pio_ch = STORE_DMA_CH_INFO(DMA_CH_ADDR_READ);
     RUNTIME->dma_pio_ch |= STORE_DMA_CH_INFO(DMA_CH_DATA_WRITE);
 
+#if REAL_HARDWARE
+    const onerom_alg_dma_config_t *dma_alg = slot->alg->alg_dma;
     switch (dma_alg->alg) {
         case ALG_DMA_0: {
             volatile dma_ch_reg_t *dma_reg;
@@ -839,6 +843,7 @@ static int setup_serving_dma(const onerom_rom_slot_t *slot, uint32_t rom_table_a
     BUSCTRL_BUS_PRIORITY |=
     BUSCTRL_BUS_PRIORITY_DMA_R_BIT |
     BUSCTRL_BUS_PRIORITY_DMA_W_BIT;
+#endif // REAL_HARDWARE
 
     return 0;
 }

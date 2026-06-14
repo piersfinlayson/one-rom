@@ -27,7 +27,7 @@
 #define MCU_FLASH_SIZE_KB 2048
 #define MCU_RAM_SIZE_KB 520
 #define RP2350A
-#include "enums.h"
+#include "onerom_metadata.h"
 #include "reg-rp235x.h"
 
 // ---------------------------------------------------------------------------

@@ -23,16 +23,16 @@ typedef struct {
     uint8_t cs1;
     uint8_t cs2;
     uint8_t cs3;
-    sdrr_rom_type_t rom_type;
+    onerom_rom_type_t rom_type;
     uint8_t chip_pins;
     uint8_t chip_addr_bits;
     uint8_t chip_data_bits;
-    sdrr_cs_state_t cs1_state;
-    sdrr_cs_state_t cs2_state;
-    sdrr_cs_state_t cs3_state;
+    onerom_cs_state_t cs1_state;
+    onerom_cs_state_t cs2_state;
+    onerom_cs_state_t cs3_state;
 } rom_pin_layout_t;
 
-const sdrr_rom_set_t *app_get_active_rom_set(const usb_plugin_context_t *ctx);
+const onerom_rom_slot_t *app_get_active_rom_set(const usb_plugin_context_t *ctx);
 uint32_t app_get_active_rom_size(const usb_plugin_context_t *ctx);
 pb_status_t app_retrieve_pin_layout(
     const usb_plugin_context_t *ctx,

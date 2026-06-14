@@ -25,13 +25,12 @@ void log_init(void) {
     DEBUG("onerom_info: 0x%08X", (uint32_t)(uintptr_t)INFO);
     DEBUG("RAM ROM table: 0x%08X", (uint32_t)(uintptr_t)&_ram_rom_image_start);
     DEBUG("runtime_info: 0x%08X", (uint32_t)(uintptr_t)RUNTIME);
-    DEBUG("RTT CB: 0x%08X", (uint32_t)(uintptr_t)RUNTIME->rtt);
+    DEBUG("RTT CB: 0x%08X", (uint32_t)(uintptr_t)INFO->rtt);
     DEBUG(log_divider);
     DEBUG("RT Fire Freq: 0x%04X", RUNTIME->fire_freq);
     DEBUG("RT Overclock Enabled: 0x%02X", RUNTIME->overclock_enabled);
     DEBUG("RT Status LED Enabled: 0x%02X", RUNTIME->status_led_enabled);
     DEBUG("RT SWD Enabled: 0x%02X", RUNTIME->swd_enabled);
-    DEBUG("RT PIO mode: %s", RUNTIME->fire_serve_mode == FIRE_SERVE_PIO ? "Y" : "N");
 
     LOG(log_divider);
     platform_logging();

@@ -130,6 +130,7 @@
 #ifndef ORA_PLUGIN_H
 #define ORA_PLUGIN_H
 
+#include "macros.h"
 #include <api.h>
 #include <system.h>
 

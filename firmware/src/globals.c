@@ -6,8 +6,12 @@
 
 #include "include.h"
 
+#if defined(REAL_HARDWARE)
 // Linker variable containing location of metadata header
 extern char _metadata_start;
+#else // !REAL_HARDWARE
+#include "gen-config.c"
+#endif // REAL_HARDWARE
 
 // Pointer to the SEGGER RTT CB
 extern SEGGER_RTT_CB _SEGGER_RTT;

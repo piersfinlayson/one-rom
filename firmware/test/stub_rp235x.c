@@ -6,15 +6,20 @@
 //
 // Specifically target routines accessing hardware registers.
 
-#include "sdrr_config.h" 
-
-#if defined(TEST_BUILD) && defined(RP235X)
-
 #include "include.h"
 #include "test/stub.h"
 
+#if !defined(ONEROM_LENS)
+#define APIO_LOG_IMPL
+#endif // !ONEROM_LENS
+#define APIO_LOG_ENABLE(fmt, ...) printf(fmt "\n", ##__VA_ARGS__)
+
 void platform_specific_init(void) {
     STUB_LOG("platform_specific_init");
+}
+
+void setup_initial_gpios(void) {
+    STUB_LOG("setup_initial_gpios");
 }
 
 void setup_vbus_interrupt(void) {
@@ -70,8 +75,8 @@ uint8_t stub_set_sel_image(uint8_t image_index) {
     uint8_t valid_bits = 0;
     stub_gpio_sel_value = 0;
     for (int ii = 0; ii < MAX_IMG_SEL_PINS; ii++) {
-        uint8_t pin = sdrr_info.pins->sel[ii];
-        if (pin < MAX_USED_GPIOS) {
+        uint8_t pin = HW->gpio_sel[ii];
+        if (pin < MAX_GPIOS) {
             valid_bits++;
             if (image_index & (1 << ii)) {
                 stub_gpio_sel_value |= (1ULL << pin);
@@ -93,8 +98,8 @@ uint32_t setup_sel_pins(uint64_t *sel_mask, uint64_t *flip_bits) {
     *flip_bits = 0;
     uint32_t count = 0;
     for (int ii = 0; ii < MAX_IMG_SEL_PINS; ii++) {
-        uint8_t pin = sdrr_info.pins->sel[ii];
-        if (pin < MAX_USED_GPIOS) {
+        uint8_t pin = HW->gpio_sel[ii];
+        if (pin < MAX_GPIOS) {
             *sel_mask |= (1ULL << pin);
             count++;
         }
@@ -123,4 +128,45 @@ void platform_logging(void) {
 void setup_xosc(void) {
     STUB_LOG("setup_xosc");
 }
-#endif // TEST_BUILD && RP235X
+
+uint8_t logging_enabled = 1;
+
+void stub_log_v(const char* msg, va_list args) {
+    if (logging_enabled) {
+        vprintf(msg, args);
+        printf("\n");
+    }
+}
+
+void stub_log(const char* msg, ...) {
+    va_list args;
+    va_start(args, msg);
+    stub_log_v(msg, args);
+    va_end(args);
+}
+
+void err_log(const char* msg, ...) {
+    printf("ERROR: ");
+    va_list args;
+    va_start(args, msg);
+    stub_log_v(msg, args);
+    va_end(args);
+}
+
+// Allocate twice the required RAM ROM table size, so it can be aligned to
+// 512KB (done in preload_rom_image).
+uint32_t test_ram_rom_image_table[RAM_ROM_TABLE_SIZE*2/4] = {0};
+uint64_t *get_ram_rom_image_table_aligned(void) {
+    uint64_t address = (uint64_t)(uintptr_t)test_ram_rom_image_table;
+    address += RAM_ROM_TABLE_SIZE-1;
+    address /= RAM_ROM_TABLE_SIZE;
+    address = address * RAM_ROM_TABLE_SIZE;
+    return (uint64_t *)(uintptr_t)address;
+}
+
+limp_mode_pattern_t limp_mode_value = LIMP_MODE_NONE;
+void limp_mode(limp_mode_pattern_t pattern) {
+    limp_mode_value = pattern;
+}
+
+SEGGER_RTT_CB _SEGGER_RTT = {0};

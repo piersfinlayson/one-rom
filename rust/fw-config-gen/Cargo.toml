@@ -1,0 +1,25 @@
+[package]
+name = "fw-config-gen"
+version = "0.1.0"
+edition = "2024"
+authors = ["Piers Finlayson <piers@piers.rocks>"]
+license = "MIT"
+description = "Generate One ROM C files required when building metadata into the binary"
+repository = "https://github.com/piersfinlayson/one-rom"
+homepage = "https://onerom.org"
+keywords = ["retro", "rom", "commodore", "embedded"]
+categories = ["embedded", "hardware-support"]
+
+[[bin]]
+name = "fw-config-gen"
+path = "src/main.rs"
+ 
+[dependencies]
+anyhow = { version = "1.0" }
+clap = { version = "4.0", features = ["derive"] }
+env_logger = { version = "0.11" }
+log = { version = "0.4" }
+onerom-config = { path="../config" }
+onerom-fw = { path="../fw" }
+onerom-gen = { path="../gen" }
+onerom-metadata = { path="../metadata" }

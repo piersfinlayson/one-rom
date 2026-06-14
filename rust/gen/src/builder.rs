@@ -10,7 +10,7 @@ use onerom_config::chip::ChipType;
 use onerom_config::fw::{FirmwareProperties, FirmwareVersion};
 use onerom_config::hw::Board;
 use onerom_config::mcu::Family;
-use onerom_metadata::{CURRENT_METADATA_VERSION, METADATA_BASE, METADATA_SIZE, ONEROM_METADATA_MAGIC, OneromMetadataHeader, serialize};
+use onerom_metadata::{CURRENT_METADATA_VERSION, METADATA_BASE, METADATA_SIZE, ONEROM_METADATA_MAGIC, OneromMetadataHeader, OneromRomInfo, OneromRomSlot, RomSlotType, serialize};
 
 use crate::{FIRMWARE_SIZE, MAX_METADATA_LEN, MAX_SUPPORTED_FIRMWARE_VERSION_V1, MAX_SUPPORTED_FIRMWARE_VERSION_V2, MIN_SUPPORTED_FIRMWARE_VERSION_V1, MIN_SUPPORTED_FIRMWARE_VERSION_V2, Metadata, SUPPORTED_CHIP_TYPES_V1, SUPPORTED_CHIP_TYPES_V2, UNSUPPORTED_FIRMWARE_VERSIONS_V1, UNSUPPORTED_FIRMWARE_VERSIONS_V2};
 use crate::{Chip, ChipSet, ChipSetType, Config, CsConfig, CsLogic, Error, FileData, FireServeMode, FileSpec, License, MetadataWriter, Result};
@@ -325,56 +325,80 @@ impl Builder {
     fn build_v2(&self, props: FirmwareProperties) -> Result<(Vec<u8>, Vec<u8>)> {
         let board = props.board();
         let chip_sets = build_chip_sets(&self.config, &self.files, &self.file_id_map, &props)?;
- 
+
         let mut rom_slots = Vec::with_capacity(chip_sets.len());
         let mut layouts = Vec::with_capacity(chip_sets.len());
         for chip_set in &chip_sets {
             let firmware_overrides = chip_set.firmware_overrides.as_ref().map(build_firmware_overrides);
- 
-            // force_16_bit only has any effect when bit_mode_for(chip0,
-            // board) is BitMode16 (build_alg_data ignores it for BitMode8)
-            // - so no extra validation needed here for chips/boards that
-            // don't support 16-bit serving.
-            let force_16_bit = chip_set
-                .firmware_overrides
-                .as_ref()
-                .and_then(|o| o.fire.as_ref())
-                .is_some_and(|fire| fire.force_16_bit);
- 
-            let (slot, addr_layout, cs_data_layout) =
-                build_rom_slot(board, chip_set.set_type, &chip_set.chips, 0, firmware_overrides, force_16_bit)?;
-            rom_slots.push(slot);
-            layouts.push((addr_layout, cs_data_layout));
+
+            if chip_set.chips[0].chip_type().is_plugin() {
+                let chip = &chip_set.chips[0];
+                let slot_type = match chip.chip_type() {
+                    ChipType::SystemPlugin => RomSlotType::RomSlotTypePluginSystem,
+                    ChipType::UserPlugin  => RomSlotType::RomSlotTypePluginUser,
+                    ChipType::PioPlugin   => RomSlotType::RomSlotTypePluginPio,
+                    _ => unreachable!(),
+                };
+                let slot = OneromRomSlot {
+                    data: 0,
+                    size: chip.data().map(|d| d.len() as u32).unwrap_or(0),
+                    roms: vec![OneromRomInfo {
+                        rom_type: chip.chip_type().name().to_string(),
+                        filename: Some(chip.filename().to_string()),
+                        pin_map: None,
+                    }],
+                    rom_count: 1,
+                    slot_type,
+                    alg: None,
+                    firmware_overrides,
+                };
+                rom_slots.push(slot);
+                layouts.push(None);
+            } else {
+                let force_16_bit = chip_set
+                    .firmware_overrides
+                    .as_ref()
+                    .and_then(|o| o.fire.as_ref())
+                    .is_some_and(|fire| fire.force_16_bit);
+                let (slot, addr_layout, cs_data_layout) =
+                    build_rom_slot(board, chip_set.set_type, &chip_set.chips, 0, firmware_overrides, force_16_bit)
+                        .map_err(Error::from)?;
+                rom_slots.push(slot);
+                layouts.push(Some((addr_layout, cs_data_layout)));
+            }
         }
- 
-        // Assign each slot's `data` pointer: absolute flash address of its ROM
-        // image in the rom_data_buf region (starts immediately after the
-        // metadata region), based on cumulative size of preceding slots.
+
         const ROM_DATA_BASE: u32 = METADATA_BASE + METADATA_SIZE as u32;
         let mut rom_data_offset: u32 = 0;
         for slot in &mut rom_slots {
             slot.data = ROM_DATA_BASE + rom_data_offset;
             rom_data_offset += slot.size;
         }
- 
-        // Phase 2: generate each slot's ROM image table and concatenate
-        // into rom_data_buf, in the same order as rom_slots (matching the
-        // `data` pointers just assigned above).
+
         let mut rom_data_buf = Vec::with_capacity(rom_data_offset as usize);
-        for ((chip_set, slot), (addr_layout, cs_data_layout)) in
+        for ((chip_set, slot), layout) in
             chip_sets.iter().zip(rom_slots.iter()).zip(layouts.iter())
         {
-            let image = build_rom_image(addr_layout, cs_data_layout, chip_set.set_type, &chip_set.chips, &slot.alg.alg_dma)?;
+            let image = match layout {
+                Some((addr_layout, cs_data_layout)) => build_rom_image(
+                    addr_layout,
+                    cs_data_layout,
+                    chip_set.set_type,
+                    &chip_set.chips,
+                    &slot.alg.as_ref().expect("non-plugin slot must have alg config").alg_dma,
+                )?,
+                None => chip_set.chips[0].data().unwrap_or(&[]).to_vec(),
+            };
             debug_assert_eq!(image.len() as u32, slot.size);
             rom_data_buf.extend_from_slice(&image);
         }
- 
+
         let hw = build_hardware_info(board);
         let fw = build_firmware_config(&self.config);
- 
+
         let mut magic = [0u8; 16];
         magic[..ONEROM_METADATA_MAGIC.len()].copy_from_slice(ONEROM_METADATA_MAGIC.as_bytes());
- 
+
         let header = OneromMetadataHeader {
             magic,
             version: CURRENT_METADATA_VERSION,
@@ -386,10 +410,10 @@ impl Builder {
             turbo_boot: self.config.turbo_boot as u8,
             rom_slots,
         };
- 
+
         let mut metadata_buf = vec![0u8; METADATA_SIZE];
         serialize(&header, METADATA_BASE, &mut metadata_buf)?;
- 
+
         Ok((metadata_buf, rom_data_buf))
     }
 }

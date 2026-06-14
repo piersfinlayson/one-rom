@@ -8,6 +8,7 @@
 #define FUNCTIONS_H
 
 #include <stdint.h>
+#include <stdarg.h>
 //#include "enums.h"
 #include "onerom_metadata.h"
 #include "api.h"

@@ -173,6 +173,7 @@ void limp_mode(limp_mode_pattern_t pattern) {
 // Functions to handle copying functions to and executing them from RAM
 //
 
+#if !defined(REAL_HARDWARE)
 // Copies a function from flash to RAM
 void copy_func_to_ram(void (*fn)(void), uint32_t ram_addr, size_t size) {
     // Copy the function to RAM
@@ -184,6 +185,7 @@ void execute_ram_func(uint32_t ram_addr) {
     void (*ram_func)() = (void(*)(void))(ram_addr | 1);
     ram_func();
 }
+#endif // REAL_HARDWARE
 
 // Simple delay function
 void delay(volatile uint32_t count) {
@@ -288,7 +290,7 @@ void preload_rom_image(void) {
     // Get ROM slot information
     const onerom_rom_slot_t *slot = RUNTIME->current_rom_slot;
     uint64_t *ram_table_ptr = get_ram_rom_image_table_aligned();
-    uint32_t img_size img_size = slot->size;
+    uint32_t img_size = slot->size;
     uint64_t *img_src = (uint64_t *)(slot->data);
 
     // Set up the runtime ROM table pointer and size now, before any early return.  For

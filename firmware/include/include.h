@@ -11,6 +11,8 @@
 #include <string.h>
 #if !defined(TEST_BUILD)
 #include "SEGGER_RTT.h"
+#else // TEST_BUILD
+#include "test/SEGGER_RTT.h"
 #endif // !TEST_BUILD
 
 // If you are not using sdrr-gen, you must define configuration options

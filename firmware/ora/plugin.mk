@@ -49,7 +49,8 @@ CFLAGS  := -mcpu=cortex-m33 -mthumb -mfloat-abi=hard -mfpu=fpv5-sp-d16 \
            -nostdlib -O2 -Wall -Wextra -Werror \
            -ffunction-sections -fdata-sections \
            -DPLUGIN_TYPE_NUM=$(PLUGIN_TYPE_NUM) \
-           -I $(ORA_INCLUDE) $(EXTRA_C_FLAGS)
+           -I $(ORA_INCLUDE) -I $(dir $(ORA_INCLUDE))include $(EXTRA_C_FLAGS) \
+           -std=c11
 
 LDFLAGS := -nostdlib \
            -T $(ORA_INCLUDE)/plugin.ld \

@@ -4,6 +4,14 @@ All notables changes between versions are documented in this file.
 
 ## v0.7.0
 
+TODO
+USB plugin is broken
+
+Plugins need to add firmware/include to their include path and change sdrr/ora or firmware/ora.
+
+Retired:
+- `sdrr-info` (superceded by the CLI `onerom firmware inspect` command)
+
 
 ## v0.6.13 - 2026-06-02
 
@@ -16,9 +24,6 @@ Added:
 
 Fixed:
 - 23C1010 support - there were failures when creating firmware with 23C1010.
-
-Retired:
-- `sdrr-info` (superceded by the CLI `onerom firmware inspect` command)
 
 ## v0.6.12 - 2026-05-26
 

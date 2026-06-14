@@ -64,7 +64,7 @@ pub fn build_rom_info(chip: &Chip, addr_layout: &AddrLayout, cs_data_layout: &Cs
     OneromRomInfo {
         rom_type: chip.chip_type().name().to_string(),
         filename: truncate_filename(chip.filename()),
-        pin_map: build_rom_pin_map(addr_layout, cs_data_layout),
+        pin_map: Some(build_rom_pin_map(addr_layout, cs_data_layout)),
     }
 }
 

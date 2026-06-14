@@ -36,11 +36,11 @@ fn ptr_to_off(ptr: u32, base: u32) -> usize {
 // Construction helpers
 // ===========================================================================
 
-fn default_pin_map() -> OneromRomPinMap {
-    OneromRomPinMap {
+fn default_pin_map() -> Option<OneromRomPinMap> {
+    Some(OneromRomPinMap {
         addr: [GPIO_NONE; 24],
         data: [GPIO_NONE; 16],
-    }
+    })
 }
 
 fn make_rom_info(rom_type: &str) -> OneromRomInfo {
@@ -51,8 +51,8 @@ fn make_rom_info(rom_type: &str) -> OneromRomInfo {
     }
 }
 
-fn default_alg() -> OneromAlgConfig {
-    OneromAlgConfig {
+fn default_alg() -> Option<OneromAlgConfig> {
+    Some(OneromAlgConfig {
         alg_cs: OneromAlgCsConfig::AlgCs0 {
             clkdiv_int: 1,
             clkdiv_frac: 0,
@@ -90,7 +90,7 @@ fn default_alg() -> OneromAlgConfig {
         },
         gpio_pull_config: None,
         gpio_override_config: None,
-    }
+    })
 }
 
 fn make_slot(roms: Vec<OneromRomInfo>) -> OneromRomSlot {
@@ -114,7 +114,7 @@ fn minimal_header() -> OneromMetadataHeader {
     let rom_info = OneromRomInfo {
         rom_type: "2364".into(),
         filename: None,
-        pin_map,
+        pin_map: Some(pin_map),
     };
     let alg = OneromAlgConfig {
         alg_cs: OneromAlgCsConfig::AlgCs0 {
@@ -161,7 +161,7 @@ fn minimal_header() -> OneromMetadataHeader {
         roms: vec![rom_info],
         rom_count: 0,
         slot_type: RomSlotType::RomSlotTypeSingleRom,
-        alg,
+        alg: Some(alg),
         firmware_overrides: None,
     };
     let hw = OneromHardwareInfo {
@@ -338,11 +338,11 @@ fn round_trip_alg_cs1() {
             cs_inactive_delay: 1,
             cs_ignore_index: 1,
         },
-        ..default_alg()
+        ..default_alg().unwrap()
     };
     let original = OneromMetadataHeader {
         rom_slots: vec![OneromRomSlot {
-            alg,
+            alg: Some(alg),
             ..make_slot(vec![make_rom_info("2364")])
         }],
         ..minimal_header()
@@ -368,11 +368,11 @@ fn round_trip_alg_cs2() {
             num_qualifier_pins: 2,
             qualifier_inactive_pattern: 0b11,
         },
-        ..default_alg()
+        ..default_alg().unwrap()
     };
     let original = OneromMetadataHeader {
         rom_slots: vec![OneromRomSlot {
-            alg,
+            alg: Some(alg),
             ..make_slot(vec![make_rom_info("2364")])
         }],
         ..minimal_header()
@@ -393,11 +393,11 @@ fn round_trip_alg_data1() {
             byte_pin: 5,
             a_minus_1_pin: 6,
         },
-        ..default_alg()
+        ..default_alg().unwrap()
     };
     let original = OneromMetadataHeader {
         rom_slots: vec![OneromRomSlot {
-            alg,
+            alg: Some(alg),
             ..make_slot(vec![make_rom_info("2364")])
         }],
         ..minimal_header()
@@ -418,11 +418,11 @@ fn round_trip_simple_fams() {
         gpio_override_config: Some(OneromAlgOverrideConfig {
             params: vec![0x47], // mode 1 (invert), GPIO 7
         }),
-        ..default_alg()
+        ..default_alg().unwrap()
     };
     let original = OneromMetadataHeader {
         rom_slots: vec![OneromRomSlot {
-            alg,
+            alg: Some(alg),
             ..make_slot(vec![make_rom_info("2364")])
         }],
         ..minimal_header()

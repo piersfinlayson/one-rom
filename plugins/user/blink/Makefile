@@ -16,7 +16,8 @@ PLUGIN_TYPE := USER
 PLUGIN_SRC_DIR := src
 
 BUILD_DIR := build
-ORA_DIR := ../../../sdrr/ora
+
+ORA_DIR := ../../../firmware/ora
 
 PLUGIN_MK := $(ORA_DIR)/plugin.mk
 

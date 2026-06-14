@@ -115,7 +115,7 @@ fn push_file_header(out: &mut String) {
          // Source:    firmware/metadata_schema.toml\n\
          // Generator: build/host_gen.rs\n\
          //\n\
-         // Regenerate by running `cargo build` in rust/metadata/.\n\n",
+         // Regenerate by running `cargo build` in rust/metadata/.\n\n"
     );
 }
 
@@ -401,15 +401,17 @@ fn emit_host_define_field(
         "inline_array" => {
             let elem = f.element.as_deref().unwrap_or("u8");
             if elem == "u8" || elem == "char" {
-                let iter = format!("self.{name}.iter()");
-                emit_field_line(out, name, &array_literal_expr(&iter));
+                out.push_str("        s.push_str(&alloc::format!(\"    .");
+                out.push_str(name);
+                out.push_str(" = {{ {} }},\\n\", self.");
+                out.push_str(name);
+                out.push_str(".iter().map(|b| alloc::format!(\"0x{:02X}\", b)).collect::<alloc::vec::Vec<_>>().join(\", \")));\n");
             } else {
                 out.push_str(&format!(
                     "        compile_error!(\"non-u8 inline_array host emission not implemented for `{name}`\");\n"
                 ));
             }
         }
-
         "inline_array2d" => {
             // { {row0...}, {row1...}, ... }
             out.push_str("        s.push_str(\"    .");

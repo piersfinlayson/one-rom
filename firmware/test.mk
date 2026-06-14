@@ -7,34 +7,19 @@ COLOUR_YELLOW := $(shell echo -e '\033[33m')
 COLOUR_RESET := $(shell echo -e '\033[0m')
 
 BUILD_DIR := build-test
-BIN := $(BUILD_DIR)/onerom-test
-
-# Output directory from sdrr-gen
-GEN_OUTPUT_DIR ?= output
-OUTPUT_DIR := ../$(GEN_OUTPUT_DIR)
-
-# Include generated config
-ifneq ($(wildcard $(OUTPUT_DIR)/generated.mk),)
-  include $(OUTPUT_DIR)/generated.mk
-else
-  $(error sdrr-gen generated.mk not found. Run sdrr-gen first.)
-endif
+LIB := $(BUILD_DIR)/libonerom-test.a
 
 # Source files
-SRCS := src/constants.c src/main.c src/rom_impl.c src/test.c src/utils.c \
-        src/vector.c src/stm32f4.c src/rp235x.c src/piodma/pio.c \
-        src/piodma/piorom.c src/piodma/pioram.c src/piodma/dma.c \
-        src/plugin.c \
-        test/stub_rp235x.c test/test_main.c test/test_log.c \
-        test/test_image.c test/test_gpio.c
+SRCS := src/constants.c src/globals.c src/log.c \
+		src/main.c src/plugin.c src/utils.c \
+		src/vector.c src/rp235x.c src/piodma/pio.c \
+		src/piodma/piorom2.c src/piodma/pioram.c src/piodma/dma.c \
+		src/piodma/pioplugin.c \
+        test/stub_rp235x.c test/ffi.c \
+		generated/gen-config.c
 OBJS := $(patsubst src/%.c,$(BUILD_DIR)/%.o,$(filter src/%,$(SRCS)))
 OBJS += $(patsubst test/%.c,$(BUILD_DIR)/%.o,$(filter test/%,$(SRCS)))
-
-# Generated files
-ROMS_SRC := $(OUTPUT_DIR)/roms.c
-ROMS_OBJ := $(BUILD_DIR)/roms.o
-SDRR_CONFIG_SRC := $(OUTPUT_DIR)/sdrr_config.c
-SDRR_CONFIG_OBJ := $(BUILD_DIR)/sdrr_config.o
+OBJS += $(patsubst generated/%.c,$(BUILD_DIR)/%.o,$(filter generated/%,$(SRCS)))
 
 GIT_COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 
@@ -42,11 +27,11 @@ GIT_COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 # - fsanitize=address -fno-omit-frame-pointer for debug builds
 # - fshort-enums to ensure enums the same size as in firmware
 CFLAGS := -DAPIO_EMULATION=1 -DTEST_BUILD=1 \
-			$(EXTRA_C_FLAGS) -I include -I $(OUTPUT_DIR) -I include/test \
+			$(EXTRA_C_FLAGS) -I include -I generated -I include/test \
 			-I apio/include -I epio/include -I ora \
-			-DSDRR_VERSION_MAJOR=$(VERSION_MAJOR) -DSDRR_VERSION_MINOR=$(VERSION_MINOR) \
-			-DSDRR_VERSION_PATCH=$(VERSION_PATCH) -DSDRR_BUILD_NUMBER=$(BUILD_NUMBER) \
-			-DSDRR_GIT_COMMIT=\"$(GIT_COMMIT)\" \
+			-DONEROM_VERSION_MAJOR=$(VERSION_MAJOR) -DONEROM_VERSION_MINOR=$(VERSION_MINOR) \
+			-DONEROM_VERSION_PATCH=$(VERSION_PATCH) -DONEROM_BUILD_NUMBER=$(BUILD_NUMBER) \
+			-DONEROM_GIT_COMMIT=\"$(GIT_COMMIT)\" \
 			-DBOOT_LOGGING=1 -DDEBUG_LOGGING=1 \
 			-g -O0 -Wall -Wextra -Werror -ffunction-sections -fdata-sections \
 			-MMD -MP -fshort-enums 
@@ -61,11 +46,9 @@ LDFLAGS :=
 #			-g -fsanitize=address 
 
 # Targets
-.PHONY: all clean run debug clean-apio-src apio clean-epio-src epio-src epio
+.PHONY: all clean run debug clean-apio-src apio clean-epio-src epio-src clean-test epio
 
-all: $(BIN)
-	@echo "Running One ROM test\n-----"
-	@$(BIN)
+all: $(LIB)
 
 apio:
 	@if [ ! -d "apio" ]; then \
@@ -93,17 +76,20 @@ $(BUILD_DIR)/%.o: test/%.c | $(BUILD_DIR) epio
 	@echo "- Compiling $<"
 	@$(CC) $(CFLAGS) -c $< -o $@
 
-$(ROMS_OBJ): $(ROMS_SRC) | $(BUILD_DIR)
-	@echo "- Compiling $(ROMS_SRC)"
+$(BUILD_DIR)/%.o: generated/%.c | $(BUILD_DIR)
+	@mkdir -p $(@D)
+	@echo "- Compiling $<"
 	@$(CC) $(CFLAGS) -c $< -o $@
 
-$(SDRR_CONFIG_OBJ): $(SDRR_CONFIG_SRC) | $(BUILD_DIR)
-	@echo "- Compiling $(SDRR_CONFIG_SRC)"
-	@$(CC) $(CFLAGS) -c $< -o $@
-
-$(BIN): $(OBJS) $(ROMS_OBJ) $(SDRR_CONFIG_OBJ) | epio
-	@echo "- Linking test"
-	@$(CC) $(LDFLAGS) $^ -L epio/build -lepio -o $@
+$(LIB): $(OBJS) | epio
+	@echo "- Archiving library"
+	@mkdir -p $(BUILD_DIR)/epio-objs
+	@cd $(BUILD_DIR)/epio-objs && ar x $(CURDIR)/epio/build/libepio.a
+ifeq ($(shell uname -s),Darwin)
+	@libtool -static -o $@ $^ $(BUILD_DIR)/epio-objs/*.o
+else
+	@ar rcs $@ $^ $(BUILD_DIR)/epio-objs/*.o
+endif
 
 clean-apio-src:
 	@rm -rf apio/
@@ -111,7 +97,9 @@ clean-apio-src:
 clean-epio-src:
 	@rm -rf epio/
 
-clean: clean-apio-src clean-epio-src
+clean-test:
 	@rm -rf $(BUILD_DIR)
 
--include $(OBJS:.o=.d) $(ROMS_OBJ:.o=.d) $(SDRR_CONFIG_OBJ:.o=.d)
+clean: clean-test clean-apio-src clean-epio-src
+
+-include $(OBJS:.o=.d)

@@ -4,6 +4,11 @@
     "description": "One ROM chip configuration format.\n\nUsed to indicate:\n- What ROM chips, RAM chips and any other devices to emulate\n- What ROM images to include\n- Any overrides for the firmware build-time setting",
     "type": "object",
     "properties": {
+        "boot_logging": {
+            "description": "Whether to enable boot logging, using SWD.",
+            "type": "boolean",
+            "default": false
+        },
         "categories": {
             "description": "Optional categories for this configuration, to aid in grouping,\nsorting, and searching of configurations.",
             "type": [
@@ -32,6 +37,13 @@
                 "null"
             ]
         },
+        "instance_name": {
+            "description": "Optional name for this One ROM instance",
+            "type": [
+                "string",
+                "null"
+            ]
+        },
         "name": {
             "description": "Optional name for this configuration.  Is included in the description\noutput by the builder.",
             "type": [
@@ -45,6 +57,23 @@
                 "string",
                 "null"
             ]
+        },
+        "serial_override": {
+            "description": "Optional serial number override for this One ROM, overriding the stock\nUSB serial number (which is the MCU's unique chip ID).",
+            "type": [
+                "string",
+                "null"
+            ]
+        },
+        "swd_enabled": {
+            "description": "Whether to enable SWD.  Must be enabled for boot logging.",
+            "type": "boolean",
+            "default": true
+        },
+        "turbo_boot": {
+            "description": "Whethher to boot fast.  Disables reading the image select jumpers.\nThe first non-plugin image is served.",
+            "type": "boolean",
+            "default": false
         },
         "version": {
             "description": "Configuration format version.",

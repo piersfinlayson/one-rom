@@ -1161,9 +1161,9 @@ size = 2
 name = "alg"
 kind = "struct_ptr"
 type = "onerom_alg_config_t"
-nullable = false
+nullable = true
 const_ptr = true
-comment = "Pointer to algorithm configuration for this slot"
+comment = "Pointer to algorithm configuration for this slot.  Can be NULL for plugin ROM types"
 
 [[structs.fields]]
 name = "firmware_overrides"
@@ -1202,9 +1202,9 @@ comment = "Source ROM image filename. May be NULL."
 name = "pin_map"
 kind = "struct_ptr"
 type = "onerom_rom_pin_map_t"
-nullable = false
+nullable = true
 const_ptr = true
-comment = "GPIO pin mapping for this ROM type. Must not be NULL."
+comment = "GPIO pin mapping for this ROM type. Can be NULL for plugin ROM types."
 
 [[structs.fields]]
 name = "reserved"
