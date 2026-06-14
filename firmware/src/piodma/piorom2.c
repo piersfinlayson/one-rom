@@ -182,6 +182,15 @@ int setup_serving_gpios(const onerom_rom_slot_t *slot) {
         return rc;
     }
 
+    DEBUG("GPIO: data=%u+%u addr=%u+%u cs=%u+%u(ign=%u) byte=%u pulls=%u ovrd=%u",
+        gpio_init.base_data_pin, gpio_init.num_data_pins,
+        gpio_init.base_addr_pin, gpio_init.num_addr_pins,
+        gpio_init.base_cs_pin, gpio_init.num_cs_pins,
+        gpio_init.ignore_cs_index,
+        gpio_init.byte_pin,
+        gpio_init.num_pulls,
+        gpio_init.num_overrides);
+
 #if REAL_HARDWARE
     // Set all GPIO pins to SIOs, inputs, output disable, no pulls:
     // - Data
@@ -227,6 +236,7 @@ int setup_serving_gpios(const onerom_rom_slot_t *slot) {
         for (int ii = 0; ii < gpio_init.num_pulls; ii++) {
             uint8_t pin = gpio_init.pulls[ii] & 0x7F;
             uint8_t high = gpio_init.pulls[ii] & 0x80 ? 1 : 0;
+            DEBUG("Pull[%d]: pin=%u %s", ii, pin, high ? "up" : "down");
             if (high) {
                 GPIO_PAD(pin) &= ~PAD_INPUT_PD;
                 GPIO_PAD(pin) |= PAD_INPUT_PU;
@@ -243,6 +253,7 @@ int setup_serving_gpios(const onerom_rom_slot_t *slot) {
         for (int ii = 0; ii < gpio_init.num_overrides; ii++) {
             uint8_t pin = gpio_init.overrides[ii] & 0x3F;
             uint8_t mode = (gpio_init.overrides[ii] & 0xC0) >> 6;
+            DEBUG("Override[%d]: pin=%u mode=%u", ii, pin, mode);
             switch (mode) {
                 case GPIO_OVER_NORMAL:
                     break;
@@ -373,6 +384,11 @@ int setup_serving_pios(const onerom_rom_slot_t *slot, uint32_t rom_table_addr) {
     RUNTIME->addr_pio_block_info = STORE_PIO_BLOCK_INFO(BLOCK_ADDR);
     APIO_SET_SM(SM_ADDR_READ);
     RUNTIME->addr_pio_sm_info = STORE_PIO_SM_INFO(SM_ADDR_READ);
+    DEBUG("Addr alg %u: gpio_base=%u base=%u pins=%u tbl_bits=%u delay=%u clkdiv=%u/%u",
+        addr_alg->alg, addr_alg->gpio_base,
+        addr_alg->base_addr_pin, addr_alg->num_addr_pins,
+        addr_alg->num_rom_table_bits, addr_alg->num_delay_cycles,
+        addr_alg->clkdiv_int, addr_alg->clkdiv_frac);
     switch (addr_alg->alg) {
         case ALG_ADDR_0: {
                 // No parameters
@@ -436,6 +452,11 @@ int setup_serving_pios(const onerom_rom_slot_t *slot, uint32_t rom_table_addr) {
 
     // Retrieve the common fields
     // Apply the chosen algorithm
+    DEBUG("CS alg %u: gpio_base=%u cs=%u+%u data=%u+%u act_dly=%u inact_dly=%u",
+        cs_alg->alg, cs_alg->gpio_base,
+        cs_alg->base_cs_pin, cs_alg->num_cs_pins,
+        cs_alg->base_data_pin, cs_alg->num_data_pins,
+        cs_alg->cs_active_delay, cs_alg->cs_inactive_delay);
     switch (cs_alg->alg) {
         case ALG_CS_0: {
             // Get the algorithm parameters
@@ -445,6 +466,9 @@ int setup_serving_pios(const onerom_rom_slot_t *slot, uint32_t rom_table_addr) {
                 return 0;
             }
             const onerom_alg_cs0_param_t *params = (const onerom_alg_cs0_param_t *)cs_params;
+            DEBUG("CS0: serve_low=%u byte=%u first_cs=%u first_ncs=%u",
+                params->serve_cs_low_0, params->byte_pin,
+                params->first_rom_cs_base, params->first_rom_num_cs_pins);
 
             // Write the SM instructions
             APIO_WRAP_BOTTOM();
@@ -522,6 +546,7 @@ int setup_serving_pios(const onerom_rom_slot_t *slot, uint32_t rom_table_addr) {
                 return 0;
             }
             const onerom_alg_cs1_param_t *params = (const onerom_alg_cs1_param_t *)cs_params;
+            DEBUG("CS1: ign_idx=%u", params->cs_ignore_index);
 
             // Write the SM instructions.
             APIO_LABEL_NEW(inactive_offset);
@@ -579,6 +604,9 @@ int setup_serving_pios(const onerom_rom_slot_t *slot, uint32_t rom_table_addr) {
                 return 0;
             }
             const onerom_alg_cs2_param_t *params = (const onerom_alg_cs2_param_t *)cs_params;
+            DEBUG("CS2: qual_base=%u qual_pins=%u inact_pat=0x%02x",
+                params->base_qualifier_pin, params->num_qualifier_pins,
+                params->qualifier_inactive_pattern);
 
             // Write the SM instructions
 
@@ -644,6 +672,10 @@ int setup_serving_pios(const onerom_rom_slot_t *slot, uint32_t rom_table_addr) {
     // Set up the data write algorithm
     APIO_SET_SM(SM_DATA_WRITE);
     RUNTIME->cs_data_pio_sm_info |= STORE_PIO_SM_INFO(SM_DATA_WRITE);
+    DEBUG("Data alg %u: gpio_base=%u base=%u word=%u clkdiv=%u/%u",
+        data_alg->alg, data_alg->gpio_base,
+        data_alg->base_data_pin, data_alg->word_size,
+        data_alg->clkdiv_int, data_alg->clkdiv_frac);
     switch (data_alg->alg) {
         case ALG_DATA_0: {
             // No parameters
@@ -681,6 +713,7 @@ int setup_serving_pios(const onerom_rom_slot_t *slot, uint32_t rom_table_addr) {
                 return 0;
             }
             const onerom_alg_data1_param_t *params = (const onerom_alg_data1_param_t *)data_params;
+            DEBUG("Data1: byte=%u a_minus_1=%u", params->byte_pin, params->a_minus_1_pin);
 
             // Write the SM instructions
             APIO_WRAP_BOTTOM();
@@ -786,6 +819,8 @@ static int setup_serving_dma(const onerom_rom_slot_t *slot, uint32_t rom_table_a
 
 #if REAL_HARDWARE
     const onerom_alg_dma_config_t *dma_alg = slot->alg->alg_dma;
+    DEBUG("DMA alg %u: bit_mode=%u continuous=%u",
+        dma_alg->alg, dma_alg->bit_mode, dma_alg->continuous);
     switch (dma_alg->alg) {
         case ALG_DMA_0: {
             volatile dma_ch_reg_t *dma_reg;
