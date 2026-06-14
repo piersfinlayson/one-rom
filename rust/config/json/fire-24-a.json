@@ -5,7 +5,7 @@
   ],
   "chip": {
     "pins": {
-      "quantity": 24,
+        "quantity": 24,
         "non_signal": [12, 24]
     },
     "bit_modes": ["8"]
@@ -77,8 +77,8 @@
             "23": [10]
         },
         "x_pin_to_gpio": {
-            "1": [9],
-            "2": [8]
+            "1": [9, 25],
+            "2": [8, 24]
         }
     },
     "serve_mode": "pio"
