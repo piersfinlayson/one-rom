@@ -181,16 +181,16 @@ mod tests {
                 alg_cs: OneromAlgCsConfig::AlgCs0 {
                     clkdiv_int: 1,
                     clkdiv_frac: 0,
-                    gpio_base: 13,
-                    base_cs_pin: 0,
+                    gpio_base: 0,
+                    base_cs_pin: 13,
                     num_cs_pins: 1,
-                    base_data_pin: 3,
+                    base_data_pin: 16,
                     num_data_pins: 8,
                     cs_active_delay: 0,
                     cs_inactive_delay: 0,
                     serve_cs_low_0: 0,
                     byte_pin: GPIO_NONE,
-                    first_rom_cs_base: 0,
+                    first_rom_cs_base: 13,
                     first_rom_num_cs_pins: 1,
                 },
                 alg_addr: OneromAlgAddrConfig::AlgAddr0 {
@@ -205,8 +205,8 @@ mod tests {
                 alg_data: OneromAlgDataConfig::AlgData0 {
                     clkdiv_int: 1,
                     clkdiv_frac: 0,
-                    gpio_base: 13,
-                    base_data_pin: 3,
+                    gpio_base: 0,
+                    base_data_pin: 16,
                     word_size: 8,
                 },
                 alg_dma: OneromAlgDmaConfig::AlgDma0 {
@@ -239,7 +239,7 @@ mod tests {
         // slot.alg/slot.roms above.
         assert_eq!(addr_layout.gpio_base, 0);
         assert_eq!(addr_layout.num_addr_pins, 16);
-        assert_eq!(cs_data_layout.gpio_base, 13);
-        assert_eq!(cs_data_layout.base_data_pin, 3);
+        assert_eq!(cs_data_layout.gpio_base, 0);
+        assert_eq!(cs_data_layout.base_data_pin, 16);
     }
 }

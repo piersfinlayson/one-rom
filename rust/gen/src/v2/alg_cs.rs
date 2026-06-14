@@ -101,11 +101,11 @@ mod tests {
 
     fn fire24a_2364_layout() -> CsDataLayout {
         CsDataLayout {
-            gpio_base: 13,
-            base_data_pin: 3,
+            gpio_base: 0,
+            base_data_pin: 16,
             num_data_pins: 8,
             data_pin_gpios: alloc::vec![16, 17, 18, 19, 20, 21, 22, 23],
-            base_cs_pin: 0,
+            base_cs_pin: 13,
             num_cs_pins: 1,
             cs_ignore_index: None,
             select_lines: alloc::vec![SelectLine { role: SelectRole::Cs1, gpio: 13 }],
@@ -116,8 +116,8 @@ mod tests {
         OneromAlgDataConfig::AlgData0 {
             clkdiv_int: 1,
             clkdiv_frac: 0,
-            gpio_base: 13,
-            base_data_pin: 3,
+            gpio_base: 0,
+            base_data_pin: 16,
             word_size: 8,
         }
     }
@@ -134,16 +134,16 @@ mod tests {
             OneromAlgCsConfig::AlgCs0 {
                 clkdiv_int: 1,
                 clkdiv_frac: 0,
-                gpio_base: 13,
-                base_cs_pin: 0,
+                gpio_base: 0,
+                base_cs_pin: 13,
                 num_cs_pins: 1,
-                base_data_pin: 3,
+                base_data_pin: 16,
                 num_data_pins: 8,
                 cs_active_delay: 0,
                 cs_inactive_delay: 0,
                 serve_cs_low_0: 0,
                 byte_pin: GPIO_NONE,
-                first_rom_cs_base: 0,
+                first_rom_cs_base: 13,
                 first_rom_num_cs_pins: 1,
             }
         );
@@ -154,11 +154,11 @@ mod tests {
     #[test]
     fn multi_serve_cs_low_0_and_first_rom() {
         let layout = CsDataLayout {
-            gpio_base: 13,
-            base_data_pin: 3,
+            gpio_base: 0,
+            base_data_pin: 16,
             num_data_pins: 8,
             data_pin_gpios: alloc::vec![16, 17, 18, 19, 20, 21, 22, 23],
-            base_cs_pin: 0,
+            base_cs_pin: 13,
             num_cs_pins: 3,
             cs_ignore_index: None,
             select_lines: alloc::vec![
@@ -179,7 +179,7 @@ mod tests {
                 ..
             } => {
                 assert_eq!(serve_cs_low_0, 1);
-                assert_eq!(first_rom_cs_base, 0);
+                assert_eq!(first_rom_cs_base, 13);
                 assert_eq!(first_rom_num_cs_pins, 1);
             }
             _ => panic!("expected AlgCs0"),
@@ -191,11 +191,11 @@ mod tests {
     #[test]
     fn fire24a_2316_cs2_active_alg_cs1() {
         let layout = CsDataLayout {
-            gpio_base: 13,
-            base_data_pin: 3,
+            gpio_base: 0,
+            base_data_pin: 16,
             num_data_pins: 8,
             data_pin_gpios: alloc::vec![16, 17, 18, 19, 20, 21, 22, 23],
-            base_cs_pin: 0,
+            base_cs_pin: 13,
             num_cs_pins: 3,
             cs_ignore_index: Some(1),
             select_lines: alloc::vec![
@@ -212,10 +212,10 @@ mod tests {
             OneromAlgCsConfig::AlgCs1 {
                 clkdiv_int: 1,
                 clkdiv_frac: 0,
-                gpio_base: 13,
-                base_cs_pin: 0,
+                gpio_base: 0,
+                base_cs_pin: 13,
                 num_cs_pins: 3,
-                base_data_pin: 3,
+                base_data_pin: 16,
                 num_data_pins: 8,
                 cs_active_delay: 0,
                 cs_inactive_delay: 0,

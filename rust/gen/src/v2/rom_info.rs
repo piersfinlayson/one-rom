@@ -110,11 +110,11 @@ mod tests {
 
     fn fire24a_2364_cs_data_layout() -> CsDataLayout {
         CsDataLayout {
-            gpio_base: 13,
-            base_data_pin: 3,
+            gpio_base: 0,
+            base_data_pin: 16,
             num_data_pins: 8,
             data_pin_gpios: alloc::vec![16, 17, 18, 19, 20, 21, 22, 23],
-            base_cs_pin: 0,
+            base_cs_pin: 13,
             num_cs_pins: 1,
             cs_ignore_index: None,
             select_lines: alloc::vec![SelectLine { role: SelectRole::Cs1, gpio: 13 }],

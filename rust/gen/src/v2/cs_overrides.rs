@@ -81,11 +81,11 @@ mod tests {
 
     fn layout_with(select_lines: Vec<SelectLine>) -> CsDataLayout {
         CsDataLayout {
-            gpio_base: 13,
-            base_data_pin: 3,
+            gpio_base: 0,
+            base_data_pin: 16,
             num_data_pins: 8,
             data_pin_gpios: alloc::vec![16, 17, 18, 19, 20, 21, 22, 23],
-            base_cs_pin: 0,
+            base_cs_pin: 13,
             num_cs_pins: select_lines.len() as u8,
             cs_ignore_index: None,
             select_lines,

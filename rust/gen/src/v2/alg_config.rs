@@ -122,6 +122,14 @@ pub fn build_alg_data(layout: &CsDataLayout, board: Board, bit_mode: BitModes, f
 
 /// Build `OneromAlgAddrConfig` from the address layout.
 ///
+/// `AddrLayout::gpio_base` is the minimum GPIO of the address range,
+/// which is not necessarily a PIO GPIOBASE (0 or 16). The C firmware
+/// interprets `gpio_base == 0` as GPIOBASE_0 and any other value as
+/// GPIOBASE_16, and uses `base_addr_pin` as IN_BASE (offset within that
+/// window). This function converts accordingly:
+/// - `pio_base`: 0 if min_gpio < 16, else 16.
+/// - `base_addr_pin`: min_gpio - pio_base (offset within the window).
+///
 /// `num_delay_cycles` is 2 for `AlgData0` (8-bit, or 16-bit with
 /// `force_16_bit` - neither needs the extra cycles `AlgData1`'s `/BYTE`+
 /// A-1 read takes), 6 for `AlgData1`.
@@ -131,12 +139,18 @@ pub fn build_alg_addr(layout: &AddrLayout, alg_data: &OneromAlgDataConfig) -> On
         OneromAlgDataConfig::AlgData1 { .. } => 6,
     };
 
+    // AddrLayout::gpio_base is the min GPIO of the address range (not
+    // necessarily a valid PIO GPIOBASE).  Derive the actual PIO window
+    // base (0 or 16) and the IN_BASE offset within it.
+    let pio_base: u8 = if layout.gpio_base < 16 { 0 } else { 16 };
+    let base_addr_pin = layout.gpio_base - pio_base;
+
     OneromAlgAddrConfig::AlgAddr0 {
         clkdiv_int: DEFAULT_CLKDIV_INT,
         clkdiv_frac: DEFAULT_CLKDIV_FRAC,
-        gpio_base: layout.gpio_base,
+        gpio_base: pio_base,
         num_delay_cycles,
-        base_addr_pin: 0,
+        base_addr_pin,
         num_addr_pins: layout.num_addr_pins,
         num_rom_table_bits: layout.num_addr_pins,
     }
@@ -221,11 +235,11 @@ mod tests {
             addr_pin_gpios: alloc::vec![7, 6, 5, 4, 3, 2, 1, 0, 10, 11, 14, 15, 12],
         };
         let cs_data_layout = CsDataLayout {
-            gpio_base: 13,
-            base_data_pin: 3,
+            gpio_base: 0,
+            base_data_pin: 16,
             num_data_pins: 8,
             data_pin_gpios: alloc::vec![16, 17, 18, 19, 20, 21, 22, 23],
-            base_cs_pin: 0,
+            base_cs_pin: 13,
             num_cs_pins: 1,
             cs_ignore_index: None,
             select_lines: alloc::vec![super::super::cs_data_layout::SelectLine {
@@ -240,8 +254,8 @@ mod tests {
             OneromAlgDataConfig::AlgData0 {
                 clkdiv_int: 1,
                 clkdiv_frac: 0,
-                gpio_base: 13,
-                base_data_pin: 3,
+                gpio_base: 0,
+                base_data_pin: 16,
                 word_size: 8,
             }
         );
@@ -303,16 +317,16 @@ mod tests {
                 alg_cs: OneromAlgCsConfig::AlgCs0 {
                     clkdiv_int: 1,
                     clkdiv_frac: 0,
-                    gpio_base: 13,
-                    base_cs_pin: 0,
+                    gpio_base: 0,
+                    base_cs_pin: 13,
                     num_cs_pins: 1,
-                    base_data_pin: 3,
+                    base_data_pin: 16,
                     num_data_pins: 8,
                     cs_active_delay: 0,
                     cs_inactive_delay: 0,
                     serve_cs_low_0: 0,
                     byte_pin: GPIO_NONE,
-                    first_rom_cs_base: 0,
+                    first_rom_cs_base: 13,
                     first_rom_num_cs_pins: 1,
                 },
                 alg_addr: OneromAlgAddrConfig::AlgAddr0 {
@@ -327,8 +341,8 @@ mod tests {
                 alg_data: OneromAlgDataConfig::AlgData0 {
                     clkdiv_int: 1,
                     clkdiv_frac: 0,
-                    gpio_base: 13,
-                    base_data_pin: 3,
+                    gpio_base: 0,
+                    base_data_pin: 16,
                     word_size: 8,
                 },
                 alg_dma: OneromAlgDmaConfig::AlgDma0 {
@@ -350,6 +364,9 @@ mod tests {
     /// CE -> GPIO17, so `gpio_base=0`; `a_minus_1_pin = data_pin_gpios[15]
     /// - gpio_base = 15`; `byte_pin = board.pin_byte() - gpio_base = 18 -
     ///   0 = 18`).
+    ///
+    /// For `alg_addr`: addr_layout.gpio_base=19 (min GPIO), so
+    /// pio_base=16 (>=16), base_addr_pin=19-16=3.
     ///
     /// `build_alg_cs`/`build_gpio_pull_config`/`build_cs_overrides` aren't
     /// exercised here (no source for those to hand) - this is a focused
@@ -398,9 +415,9 @@ mod tests {
             OneromAlgAddrConfig::AlgAddr0 {
                 clkdiv_int: 1,
                 clkdiv_frac: 0,
-                gpio_base: 19,
+                gpio_base: 16,
                 num_delay_cycles: 6,
-                base_addr_pin: 0,
+                base_addr_pin: 3,
                 num_addr_pins: 18,
                 num_rom_table_bits: 18,
             }
@@ -459,9 +476,9 @@ mod tests {
             OneromAlgAddrConfig::AlgAddr0 {
                 clkdiv_int: 1,
                 clkdiv_frac: 0,
-                gpio_base: 19,
+                gpio_base: 16,
                 num_delay_cycles: 2,
-                base_addr_pin: 0,
+                base_addr_pin: 3,
                 num_addr_pins: 18,
                 num_rom_table_bits: 18,
             }

@@ -27,11 +27,13 @@
 //!   have exactly one gap for Single/Banked (`AlgCs1`,
 //!   `cs_ignore_index` = gap position - Multi doesn't support this).
 //!
-//! - Additionally, `[gpio_base, gpio_base + overall_span)` (the combined
-//!   data + select range) must fit within a single PIO GPIO window
-//!   (`[0,32)` or `[16,48)` - see `gpio_window::fits_pio_window`). A
-//!   combo can satisfy the contiguity/span checks above while still being
+//! - Additionally, `[gpio_base, gpio_base + 32)` (the PIO GPIO window
+//!   anchored at 0 or 16) must cover all data + select GPIOs.  A combo
+//!   can satisfy the contiguity/span checks above while still being
 //!   unreachable by any single PIO, so this is checked independently.
+//!
+//! `gpio_base` is always exactly 0 or 16, matching the RP2350 GPIOBASE
+//! register.  All `base_*_pin` offsets are relative to this value.
 //!
 //! Each select line is recorded in `select_lines` with its role
 //! (CS1/CS2/CS3/CE/X1/X2) and resolved (absolute) GPIO, so that
@@ -76,8 +78,10 @@ pub struct SelectLine {
 /// Resolved CS/data-range layout for one chip set.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CsDataLayout {
+    /// RP2350 PIO GPIOBASE: always exactly 0 or 16.
     pub gpio_base: u8,
 
+    /// Offset of first data GPIO from gpio_base.
     pub base_data_pin: u8,
     pub num_data_pins: u8,
 
@@ -85,6 +89,7 @@ pub struct CsDataLayout {
     /// `chip0.data_pins()` order. Length == `num_data_pins`.
     pub data_pin_gpios: Vec<u8>,
 
+    /// Offset of first CS GPIO from gpio_base.
     pub base_cs_pin: u8,
     pub num_cs_pins: u8,
 
@@ -264,20 +269,26 @@ pub fn derive_cs_data_layout(
         };
         let num_cs_pins = sel_span;
 
-        let gpio_base = data_min.min(sel_min);
+        // gpio_base must be the RP2350 PIO GPIOBASE: exactly 0 or 16.
+        // The C firmware uses this value directly to select between
+        // GPIOBASE_0 and GPIOBASE_16, so any other value is incorrect.
+        // All base_*_pin offsets are relative to this PIO window base.
+        let all_min = data_min.min(sel_min);
+        let all_max = data_max.max(sel_max);
+        let gpio_base: u8 = if all_min < 16 { 0 } else { 16 };
         let base_data_pin = data_min - gpio_base;
         let base_cs_pin = sel_min - gpio_base;
-        let overall_span = data_max.max(sel_max) - gpio_base + 1;
 
-        // The CS/data PIO can only access a single 32-GPIO window
-        // ([0,32) or [16,48)); reject combos whose combined data+select
-        // range doesn't fit in either, even if data is contiguous and the
-        // select shape is valid (AlgCs0/AlgCs1).
-        if !fits_pio_window(gpio_base, overall_span) {
+        // Span from the PIO window base to the last used GPIO; must fit
+        // within the 32-GPIO window ([0,32) for base=0, [16,48) for base=16).
+        let window_span = all_max - gpio_base + 1;
+        if !fits_pio_window(gpio_base, window_span) {
             continue;
         }
 
-        let score = overall_span as u32;
+        // Score by actual used GPIO spread (independent of window base),
+        // so combos that pack GPIOs more tightly are preferred.
+        let score = (all_max - all_min + 1) as u32;
 
         if best.as_ref().is_none_or(|(_, s)| score < *s) {
             let select_lines = select_roles
@@ -323,10 +334,10 @@ mod tests {
             derive_cs_data_layout(Board::Fire24A, ChipSetType::Single, &[ChipType::Chip2364], &cs_config)
                 .expect("layout derivation should succeed");
 
-        assert_eq!(layout.gpio_base, 13);
-        assert_eq!(layout.base_data_pin, 3);
+        assert_eq!(layout.gpio_base, 0);
+        assert_eq!(layout.base_data_pin, 16);
         assert_eq!(layout.num_data_pins, 8);
-        assert_eq!(layout.base_cs_pin, 0);
+        assert_eq!(layout.base_cs_pin, 13);
         assert_eq!(layout.num_cs_pins, 1);
         assert_eq!(layout.cs_ignore_index, None);
         assert_eq!(layout.select_lines, vec![SelectLine { role: SelectRole::Cs1, gpio: 13 }]);
@@ -349,7 +360,8 @@ mod tests {
             derive_cs_data_layout(Board::Fire24A, ChipSetType::Single, &[ChipType::Chip2316], &cs_config)
                 .expect("layout derivation should succeed");
 
-        assert_eq!(layout.base_cs_pin, 0);
+        assert_eq!(layout.gpio_base, 0);
+        assert_eq!(layout.base_cs_pin, 13);
         assert_eq!(layout.num_cs_pins, 1);
         assert_eq!(layout.cs_ignore_index, None);
         assert_eq!(layout.select_lines, vec![SelectLine { role: SelectRole::Cs1, gpio: 13 }]);
@@ -371,7 +383,8 @@ mod tests {
             derive_cs_data_layout(Board::Fire24A, ChipSetType::Single, &[ChipType::Chip2316], &cs_config)
                 .expect("layout derivation should succeed (AlgCs1)");
 
-        assert_eq!(layout.base_cs_pin, 0);
+        assert_eq!(layout.gpio_base, 0);
+        assert_eq!(layout.base_cs_pin, 13);
         assert_eq!(layout.num_cs_pins, 3);
         assert_eq!(layout.cs_ignore_index, Some(1));
         assert_eq!(
