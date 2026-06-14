@@ -13,7 +13,7 @@ use log::{debug, error, info, trace, warn};
 use std::collections::HashMap;
 
 use onerom_config::fw::FirmwareProperties;
-use onerom_gen::builder::{Builder, FileData};
+use onerom_gen::{Builder, FileData};
 use onerom_gen::{FIRMWARE_SIZE, MAX_METADATA_LEN};
 
 use net::{fetch_rom_file, fetch_rom_file_async};

@@ -16,7 +16,7 @@ use onerom_metadata::{
     OneromAlgConfig, OneromAlgCsConfig, OneromAlgDataConfig, OneromAlgDmaConfig,
     OneromAlgOverrideConfig, OneromAlgPullConfig, OneromFirmwareConfig, OneromFirmwareOverrides,
     OneromHardwareInfo, OneromMetadataHeader, OneromRomInfo, OneromRomPinMap, OneromRomSlot,
-    RomSlotType, Rp235xVariant,
+    RomSlotType, Rp235xVariant, generate_host_metadata_c
 };
 
 // ===========================================================================
@@ -194,6 +194,15 @@ fn minimal_header() -> OneromMetadataHeader {
         turbo_boot: 0,
         rom_slots: vec![slot],
     }
+}
+
+/// One `Vec<u8>` of small dummy ROM image bytes per slot.
+///
+/// `generate_host_metadata_c` needs one entry per ROM slot.  For structural
+/// and compile tests we just need valid (non-zero-length) byte arrays; the
+/// actual content doesn't matter.
+fn dummy_rom_data(n_slots: usize) -> Vec<Vec<u8>> {
+    (0..n_slots).map(|_| vec![0xAAu8; 8]).collect()
 }
 
 // ===========================================================================
@@ -655,4 +664,151 @@ fn error_count_overflow() {
             field: "rom_slot_count"
         }),
     );
+}
+
+
+// ---------------------------------------------------------------------------
+// Host C generation tests (16–18) — append at the end of the file
+// ---------------------------------------------------------------------------
+ 
+/// 16. Smoke: `generate_host_metadata_c` returns a non-empty string without
+///     panicking for the minimal valid header.
+#[test]
+fn host_c_gen_smoke() {
+    let header = minimal_header();
+    // minimal_header() has exactly one ROM slot.
+    let c_src = generate_host_metadata_c(&header, dummy_rom_data(1));
+    assert!(!c_src.is_empty(), "generated C source should not be empty");
+}
+ 
+/// 17. Structural: key patterns expected in the generated C for the minimal
+///     header are all present.
+#[test]
+fn host_c_gen_structural() {
+    let header = minimal_header();
+    let c_src = generate_host_metadata_c(&header, dummy_rom_data(1));
+ 
+    // Root symbol must be defined (not forward-declared — globals.c owns that).
+    assert!(
+        c_src.contains("_metadata_start"),
+        "missing `_metadata_start` definition"
+    );
+ 
+    // Forward declarations section.
+    assert!(
+        c_src.contains("extern const"),
+        "missing `extern const` forward declarations"
+    );
+ 
+    // String field values from minimal_header.
+    assert!(
+        c_src.contains("\"2364\""),
+        "missing rom_type string literal \"2364\""
+    );
+    assert!(
+        c_src.contains("\"1.0\""),
+        "missing hw_rev string literal \"1.0\""
+    );
+ 
+    // NULL for None pointer fields (name, serial_number, filename all absent).
+    assert!(
+        c_src.contains("= NULL"),
+        "missing `= NULL` for null pointer fields"
+    );
+ 
+    // FAM designated-initialiser pragma wrapper must be present.
+    assert!(
+        c_src.contains("#pragma GCC diagnostic push"),
+        "missing `#pragma GCC diagnostic push` for FAM structs"
+    );
+    assert!(
+        c_src.contains("-Wpedantic"),
+        "missing `-Wpedantic` in FAM pragma"
+    );
+ 
+    // Enum C constant for RomSlotType::RomSlotTypeSingleRom.
+    // NOTE: this is the C-side constant name from the schema TOML `name`
+    // field; adjust if the actual name differs.
+    assert!(
+        c_src.contains("ROM_SLOT_TYPE_SINGLE_ROM"),
+        "missing `ROM_SLOT_TYPE_SINGLE_ROM` enum constant"
+    );
+}
+ 
+/// 18. Compile: the generated C compiles cleanly under
+///     `gcc -std=c99 -Wall -Wextra -Wpedantic` (Linux/macOS only).
+///
+/// Skips gracefully if `gcc` is not in PATH or if `onerom_metadata.h` has
+/// not yet been written by the build script.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[test]
+fn host_c_gen_compiles() {
+    use std::process::Command;
+ 
+    // Locate onerom_metadata.h.  The build script writes it to
+    // firmware/generated/ relative to the project root, which is two levels
+    // above CARGO_MANIFEST_DIR (rust/metadata → rust → root).
+    let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let project_root = manifest_dir
+        .parent()
+        .and_then(|p| p.parent())
+        .expect("CARGO_MANIFEST_DIR should be two levels below the project root");
+    let include_dir = project_root.join("firmware").join("generated");
+    let firmware_include_dir = project_root.join("firmware").join("include");
+ 
+    if !include_dir.join("onerom_metadata.h").exists() {
+        eprintln!(
+            "host_c_gen_compiles: skipping — onerom_metadata.h not found at {}",
+            include_dir.display()
+        );
+        return;
+    }
+ 
+    let header = minimal_header();
+    let c_src = generate_host_metadata_c(&header, dummy_rom_data(1));
+ 
+    // Write generated C to a uniquely-named temp file.
+    let pid = std::process::id();
+    let tmp = std::env::temp_dir();
+    let c_path = tmp.join(format!("onerom_host_gen_{pid}.c"));
+    let o_path = tmp.join(format!("onerom_host_gen_{pid}.o"));
+ 
+    std::fs::write(&c_path, &c_src).expect("failed to write temp C source file");
+ 
+    let result = Command::new("gcc")
+        .args([
+            "-std=c99",
+            "-Wall",
+            "-Wextra",
+            "-Wpedantic",
+            "-c",
+            "-I",
+            &include_dir.to_string_lossy(),
+            "-I",
+            &firmware_include_dir.to_string_lossy(),
+            "-D",
+            "TEST_BUILD",
+            "-o",
+            &o_path.to_string_lossy(),
+            &c_path.to_string_lossy(),
+        ])
+        .output();
+ 
+    // Clean up temp files regardless of outcome.
+    let _ = std::fs::remove_file(&c_path);
+    let _ = std::fs::remove_file(&o_path);
+ 
+    match result {
+        Err(e) => {
+            // gcc not in PATH — skip rather than fail.
+            eprintln!("host_c_gen_compiles: skipping — gcc not available: {e}");
+        }
+        Ok(output) => {
+            assert!(
+                output.status.success(),
+                "generated C failed to compile:\n{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+    }
 }

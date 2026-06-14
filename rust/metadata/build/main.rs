@@ -12,6 +12,7 @@
 // Rust source generation (parse + serialize) is added in subsequent steps.
 
 mod c_gen;
+mod host_gen;
 mod rust_gen;
 mod schema;
 mod serialize_gen;
@@ -24,6 +25,7 @@ const METADATA_SCHEMA_FILE: &str = "firmware/metadata_schema.toml";
 const C_HEADER_FILE: &str = "firmware/generated/onerom_metadata.h";
 const RUST_GENERATED: &str = "metadata_generated.rs";
 const RUST_SERIALIZE_GENERATED: &str = "serialize_generated.rs";
+const RUST_HOST_GENERATED: &str = "host_generated.rs";
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // -------------------------------------------------------------------------
@@ -72,6 +74,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!(
         "cargo:rerun-if-changed={}",
         build_dir.join("serialize_gen.rs").display()
+    );
+    println!(
+        "cargo:rerun-if-changed={}",
+        build_dir.join("host_gen.rs").display()
     );
     let schema_path = build_dir
         .join(format!("../../../{METADATA_SCHEMA_FILE}"))
@@ -149,6 +155,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     eprintln!(
         "onerom build: wrote serialize source -> {}",
         serialize_out_path.display()
+    );
+
+    // -------------------------------------------------------------------------
+    // Host source generation
+    // -------------------------------------------------------------------------
+
+    let host_src = host_gen::generate(&schema);
+
+    let host_out_path = PathBuf::from(&out_dir).join(RUST_HOST_GENERATED);
+    std::fs::write(&host_out_path, &host_src).map_err(|e| {
+        format!(
+            "Failed to write generated host source to {}: {}",
+            host_out_path.display(),
+            e
+        )
+    })?;
+    eprintln!(
+        "onerom build: wrote host source  -> {}",
+        host_out_path.display()
     );
 
     Ok(())

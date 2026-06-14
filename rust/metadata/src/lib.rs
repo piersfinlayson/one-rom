@@ -28,6 +28,7 @@ use alloc::vec::Vec;
 
 include!(concat!(env!("OUT_DIR"), "/metadata_generated.rs"));
 include!(concat!(env!("OUT_DIR"), "/serialize_generated.rs"));
+include!(concat!(env!("OUT_DIR"), "/host_generated.rs"));
 
 // ---------------------------------------------------------------------------
 // Parse errors
@@ -238,4 +239,26 @@ pub fn serialize(
     // Phase 2: write bytes.  Root is always at base_addr.
     root.write(&mut ctx, base_addr);
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Utils
+// ---------------------------------------------------------------------------
+
+/// Escape a string for embedding inside a C string literal.
+///
+/// Escapes `"` → `\"` and `\` → `\\`. NUL bytes are rejected because
+/// `cstr_ptr` fields are null-terminated C strings and a NUL would
+/// silently truncate the value at the C level.
+pub fn escape_c_string(s: &str) -> alloc::string::String {
+    let mut out = alloc::string::String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '"'  => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\0' => panic!("NUL byte in C string literal (field value: {:?})", s),
+            c    => out.push(c),
+        }
+    }
+    out
 }

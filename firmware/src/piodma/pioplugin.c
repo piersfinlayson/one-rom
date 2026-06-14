@@ -392,8 +392,14 @@ static void get_x_pins(
     uint8_t *x_pins_over_out
 ) {
     // Get the X pins
+#if 0
+    // TODO fix
     x_pins_out[0] = HW->gpio_x1;
     x_pins_out[1] = HW->gpio_x2;
+#else
+    x_pins_out[0] = 255l;
+    x_pins_out[1] = 255;
+#endif
 
     // Get whether they are overridden
     const onerom_alg_override_config_t *override = slot->alg->gpio_override_config;
@@ -575,6 +581,8 @@ ora_result_t pio_init_knock(
     if (CURRENT_SLOT->slot_type != ROM_SLOT_TYPE_MULTI_ROM) {
         knock->multi_rom_mode = 0;
     } else {
+#if 0
+        // TODO - fix
         uint8_t x1_pin = HW->gpio_x1;
         uint8_t x2_pin = HW->gpio_x2;
         if ((x1_pin < (base + NUM_ADDR_PINS)) && (x1_pin >= base)) {
@@ -583,6 +591,7 @@ ora_result_t pio_init_knock(
         if ((x2_pin < (base + NUM_ADDR_PINS)) && (x2_pin >= base)) {
             x_mask |= 1u << (x2_pin - base);
         }
+#endif
         knock->multi_rom_mode = 1;
     }
 
