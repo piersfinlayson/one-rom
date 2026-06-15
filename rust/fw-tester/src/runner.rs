@@ -84,12 +84,19 @@ fn run_chip_set(
     emulator.setup_epio(word_size);
     emulator.step_cycles(timing::CYCLES_BEFORE_START);
 
+    let force_16_bit = chip_set
+        .firmware_overrides
+        .as_ref()
+        .and_then(|fw| fw.fire.as_ref())
+        .map(|f| f.force_16_bit)
+        .unwrap_or(false);
+
     let chip_results: Vec<ChipResult> = chip_set
         .chips
         .iter()
         .enumerate()
         .map(|(chip_idx, chip_config)| {
-            run_chip(&emulator, board, chip_config, set_idx, chip_idx, base_dir)
+            run_chip(&emulator, board, chip_config, set_idx, chip_idx, base_dir, force_16_bit)
         })
         .collect();
 
@@ -106,8 +113,28 @@ fn run_chip(
     set_idx: usize,
     chip_idx: usize,
     base_dir: &std::path::Path,
+    force_16_bit: bool,
 ) -> ChipResult {
-    let chip_type = chip_config.chip_type;
+    let requested_chip_type = chip_config.chip_type;
+
+    // Apply any board-specific chip substitutions.  Some boards cannot serve
+    // a chip in its native mode but can do so with a physical shim that
+    // remaps pins; in those cases the firmware actually serves a different
+    // chip type.  We warn loudly and test against the effective type.
+    let chip_type = if let Some(sub) = chip_substitution(board, requested_chip_type) {
+        warn!(
+            "Set {} chip {}: {} on {} is not directly servable; \
+             substituting {} (physical shim required) for this test",
+            set_idx,
+            chip_idx,
+            requested_chip_type.name(),
+            board.name(),
+            sub.name(),
+        );
+        sub
+    } else {
+        requested_chip_type
+    };
 
     debug!(
         "Set {} chip {}: building pin cache for {} on board {}",
@@ -157,6 +184,15 @@ fn run_chip(
 
     let mut mode_results = Vec::new();
     for &mode in chip_type.bit_modes() {
+        // In force_16_bit mode the firmware uses AlgData0 (word_size=16) and
+        // ignores BYTE# entirely, so only the 16-bit pass is meaningful.
+        if force_16_bit && mode != 16 {
+            debug!(
+                "Set {} chip {}: skipping {}bit mode (force_16_bit)",
+                set_idx, chip_idx, mode
+            );
+            continue;
+        }
         info!(
             "Testing set={} chip={} ({}) file={} mode={}bit ({} bytes)",
             set_idx,
@@ -486,6 +522,22 @@ fn run_mode(
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
+
+/// Return the effective `ChipType` to test when a board/chip combination
+/// requires a physical shim and the firmware therefore serves a different chip
+/// type than the one nominally installed.  Returns `None` when no substitution
+/// is needed.
+///
+/// Add new entries here as further board/chip shim combinations are
+/// discovered.
+fn chip_substitution(board: Board, chip_type: ChipType) -> Option<ChipType> {
+    match (board, chip_type) {
+        // fire-32-a cannot drive SST39SF040 directly; a pin-remap shim allows
+        // it to serve the image as a 27C040 instead.
+        (Board::Fire32A, ChipType::ChipSST39SF040) => Some(ChipType::Chip27C040),
+        _ => None,
+    }
+}
 
 fn word_size_for_set(chip_set: &ChipSetConfig) -> u8 {
     chip_set
