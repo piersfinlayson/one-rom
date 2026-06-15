@@ -373,6 +373,12 @@ int setup_serving_pios(const onerom_rom_slot_t *slot, uint32_t rom_table_addr) {
     //const uint8_t *addr_params = addr_alg->params;
     const uint8_t *data_params = data_alg->params;
 
+    uint8_t bit_mode_16 = 0;
+    if (data_alg->word_size == 16) {
+        DEBUG("Serving a 16-bit ROM");
+        bit_mode_16 = 1;
+    }
+
     // Set up the PIO assembler
     APIO_ASM_INIT();
     
@@ -399,11 +405,25 @@ int setup_serving_pios(const onerom_rom_slot_t *slot, uint32_t rom_table_addr) {
                 //}
                 //const onerom_alg_addr0_param_t *params = (const onerom_alg_addr0_param_t *)addr_params;
 
+                // Figure out the ROM table prefix and # bits
+                uint8_t rom_table_prefix_bits = 32 - addr_alg->num_rom_table_bits;
+                if (bit_mode_16) {
+                    // For 16 bit ROMs, we use 1 more address table bit than
+                    // num_rom_table_bits says - 
+                    rom_table_prefix_bits -= 1;
+                }
+                uint32_t rom_table_prefix = rom_table_addr >> (32 - rom_table_prefix_bits);
+                DEBUG("ROM table prefix 0x%08X, # bits: %u", rom_table_prefix, rom_table_prefix_bits);
+
                 // Write the SM instructions
                 APIO_WRAP_BOTTOM();
-                APIO_ADD_INSTR(APIO_ADD_DELAY(APIO_IN_X(addr_alg->num_rom_table_bits), addr_alg->num_delay_cycles));
+                APIO_ADD_INSTR(APIO_ADD_DELAY(APIO_IN_X(rom_table_prefix_bits), addr_alg->num_delay_cycles));
                 APIO_WRAP_TOP();
                 APIO_ADD_INSTR(APIO_IN_PINS(addr_alg->num_addr_pins));
+                if (bit_mode_16) {
+                    APIO_WRAP_TOP();
+                    APIO_ADD_INSTR(APIO_IN_NULL(1));
+                }
 
                 // Configure the SM registers
                 APIO_SM_EXECCTRL_SET(0);
@@ -417,7 +437,7 @@ int setup_serving_pios(const onerom_rom_slot_t *slot, uint32_t rom_table_addr) {
                 APIO_SM_PINCTRL_SET(APIO_IN_BASE(addr_alg->base_addr_pin));
 
                 // Now preload the ROM table RAM address into the X register
-                APIO_TXF = rom_table_addr >> addr_alg->num_rom_table_bits;
+                APIO_TXF = rom_table_prefix;
                 APIO_SM_EXEC_INSTR(APIO_PULL_BLOCK);
                 APIO_SM_EXEC_INSTR(APIO_MOV_X_OSR);
             }
@@ -818,10 +838,15 @@ static int setup_serving_dma(const onerom_rom_slot_t *slot, uint32_t rom_table_a
     // TODO dynamically figure out which blocks PIO SMs used are in and don't
     // use fixed APIO1/APIO2 macros
 
-#if REAL_HARDWARE
+#if defined(DEBUG_LOGGING)
     const onerom_alg_dma_config_t *dma_alg = slot->alg->alg_dma;
     DEBUG("DMA alg %u: bit_mode=%u continuous=%u",
         dma_alg->alg, dma_alg->bit_mode, dma_alg->continuous);
+#endif // DEBUG_LOGGING
+#if REAL_HARDWARE
+#if !defined(DEBUG_LOGGING)
+    const onerom_alg_dma_config_t *dma_alg = slot->alg->alg_dma;
+#endif // DEBUG_LOGGING
     switch (dma_alg->alg) {
         case ALG_DMA_0: {
             volatile dma_ch_reg_t *dma_reg;

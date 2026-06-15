@@ -188,11 +188,11 @@ test_32_config() {
 # Test every standard ROM type on every standard hardware revision.
 # Do just one 24/28/32/40 variant now, so we fail early if any ROM types are
 # broken.
+test_40pin fire-40-a
+test_40pin fire-40-a true
 test_28_all_rom_types fire-28-a
 test_24_all_rom_types fire-24-a
 test_32pin fire-32-a
-test_40pin fire-40-a
-test_40pin fire-40-a true
 
 # Remaining 24 pin boards.
 test_24_all_rom_types fire-24-b
