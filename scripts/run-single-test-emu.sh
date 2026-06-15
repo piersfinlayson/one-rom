@@ -34,6 +34,7 @@ _reproduce_cmd() {
     cmd+=" $board $image $chip_type"
     [ "$size_handling" != "none" ] && cmd+=" $size_handling"
     echo "$cmd"
+    echo "  You can also preface the command env variables, such as \`ONEROM_LOG=1 RUST_LOG=debug\`"
 }
 
 _normalize_cs() {

@@ -103,6 +103,10 @@ test_24_all_rom_types() {
 test_28_all_rom_types() {
     local board=${1:-fire-28-a}
 
+    run_no_cs  $board images/test/rand_8KB.rom   type=28C64
+    run_no_cs  $board images/test/rand_32KB.rom  type=28C256
+    run_test   $board images/test/rand_64KB.rom  type=23QL512 1
+    run_test   $board images/test/rand_48KB.rom  type=23QL384 1
     run_test   $board images/test/rand_16KB.rom  type=23128   3
     run_test   $board images/test/rand_32KB.rom  type=23256   2
     run_test   $board images/test/rand_64KB.rom  type=23512   2
@@ -111,10 +115,6 @@ test_28_all_rom_types() {
     run_no_cs  $board images/test/rand_16KB.rom  type=27128
     run_no_cs  $board images/test/rand_32KB.rom  type=27256
     run_no_cs  $board images/test/rand_64KB.rom  type=27512
-    run_no_cs  $board images/test/rand_8KB.rom   type=28C64
-    run_no_cs  $board images/test/rand_32KB.rom  type=28C256
-    run_test   $board images/test/rand_64KB.rom  type=23QL512 1
-    run_test   $board images/test/rand_48KB.rom  type=23QL384 1
 }
 
 test_32pin() {
@@ -188,13 +188,11 @@ test_32_config() {
 # Test every standard ROM type on every standard hardware revision.
 # Do just one 24/28/32/40 variant now, so we fail early if any ROM types are
 # broken.
-test_24_all_rom_types fire-24-a
 test_28_all_rom_types fire-28-a
+test_24_all_rom_types fire-24-a
 test_32pin fire-32-a
 test_40pin fire-40-a
 test_40pin fire-40-a true
-
-
 
 # Remaining 24 pin boards.
 test_24_all_rom_types fire-24-b
