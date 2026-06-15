@@ -255,7 +255,7 @@ ifneq ($(SUPPRESS_OUTPUT),1)
 $(info -----)
 endif
 
-.PHONY: all clean clean-firmware clean-firmware-build clean-sdrr-info sdrr-info info info-detail firmware run flash test test-pio generated clean-generated fw-config-gen libonerom-test gen-config clean-gen-config clean-libonerom-test
+.PHONY: all clean clean-firmware clean-firmware-build firmware run flash test test-emu generated clean-generated fw-config-gen libonerom-test gen-config clean-gen-config clean-libonerom-test
 
 all: firmware info
 	@echo "=========================================="
@@ -273,36 +273,8 @@ generated:
 	@echo "-----"
 	@cd rust && cargo build --$(CARGO_PROFILE) -p onerom-metadata
 
-sdrr-info:
-	@echo "=========================================="
-	@echo "Building sdrr-info, to:"
-	@echo "- Validate One ROM firmware"
-	@echo "- Extract key One ROM firmware properties"
-	@echo "-----"
-	@cd rust && cargo build --$(CARGO_PROFILE)
-
 fw-config-gen:
-	@cd rust && cargo build --$(CARGO_PROFILE) -p fw-config-gen
-
-info: sdrr-info firmware
-	@echo "=========================================="
-	@echo "Running sdrr-info, to:"
-	@echo "- Validate One ROM firmware"
-	@echo "- Extract key One ROM firmware properties"
-	@echo "-----"
-	@$(CARGO_TARGET_DIR)/sdrr-info info --strict $(BUILD_DIR)/$(BIN_PREFIX).bin
-	@echo "-----"
-	@echo "Use <SAME_ARGS> make info-detail to see more details about the firmware"
-
-info-detail: sdrr-info firmware
-	@echo "=========================================="
-	@echo "Running sdrr-info, to:"
-	@echo "- Validate One ROM firmware"
-	@echo "- Extract key One ROM firmware properties"
-	@echo "- Show detailed One ROM firmware properties"
-	@echo "-----"
-	@$(CARGO_TARGET_DIR)/sdrr-info info -d --strict $(BUILD_DIR)/$(BIN_PREFIX).bin
-	@echo "=========================================="
+	@cd rust && cargo build --$(CARGO_PROFILE) -p fw-config-gen --quiet
 
 firmware: generated
 	@echo "=========================================="
@@ -350,17 +322,12 @@ gen-config: fw-config-gen
 		--version $(VERSION_MAJOR).$(VERSION_MINOR).$(VERSION_PATCH).$(BUILD_NUMBER) \
 		$(BOARD_FLAG) \
 		--output $(GEN_OUTPUT_DIR)/gen-config.c
-	@echo "-----"
-	@echo "Done generating C-based metadata"
 
-test-pio: gen-config
+test-emu: gen-config
 	@echo "=========================================="
-	@echo "Running tests to:"
-	@echo "- verify generated firmware ROM images (PIO version)"
+	@echo "Running One ROM emulator tests"
 	@echo "-----"
-	@exit 1
-	@echo "-----"
-	@echo "Tests completed"
+	@BASE_DIR=$(CURDIR) CONFIG=$(CONFIG) BOARD=$(BOARD) cargo run --manifest-path rust/Cargo.toml -p onerom-fw-tester --bin onerom-fw-tester --quiet
 
 libonerom-test: gen-config
 	@echo "=========================================="

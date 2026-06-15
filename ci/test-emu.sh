@@ -1,7 +1,5 @@
 #####################################################################
-# PIO tests
-#
-# Uses epio PIO emulator to verify correct PIO behaviour
+# One ROM Emulator tests
 #####################################################################
 set -e
 
@@ -33,15 +31,15 @@ parse_base_config() {
     done
 }
 
-_run_single_pio_test() {
-    local hw_rev=$1
+_run_single_test() {
+    local board=$1
     local image=$2
     local chip_type=$3
     local size_handling=$4
     local cs1=$5
     local cs2=$6
     local cs3=$7
-    local extra_flags=$8
+    local force_16_bit=${8:-false}
 
     local chip="{\"type\":\"$chip_type\",\"file\":\"$image\""
     [ "$size_handling" != "none" ] && chip+=",\"size_handling\":\"$size_handling\""
@@ -50,149 +48,151 @@ _run_single_pio_test() {
     [ -n "$cs3" ] && chip+=",\"cs3\":\"$cs3\""
     chip+="}"
 
-    local tmp
-    tmp=$(mktemp /tmp/pio-test-XXXXXX.json)
-    printf '{"version":1,"description":"PIO test","chip_sets":[{"chips":[%s]}]}\n' "$chip" > "$tmp"
+    local chip_set="{\"type\":\"single\",\"chips\":[$chip]"
+    [ "$force_16_bit" = "true" ] && chip_set+=",\"firmware_overrides\":{\"fire\":{\"force_16_bit\":true}}"
+    chip_set+="}"
 
-    local cmd="HW_REV=$hw_rev MCU=rp2350 EXTRA_C_FLAGS=\"$extra_flags\" CONFIG=\"$tmp\" make test-pio"
-    echo "$cmd"
-    env HW_REV=$hw_rev MCU=rp2350 EXTRA_C_FLAGS="$extra_flags" \
-        CONFIG="$tmp" make test-pio > /dev/null || \
-        { rm -f "$tmp"; echo "FAILED: $cmd"; exit 1; }
+    # Xs are replaced with random chars
+    local tmp
+    tmp=$(mktemp /tmp/onerom-test-XXXXXX)
+    printf '{"version":1,"description":"PIO test","chip_sets":[%s]}\n' "$chip_set" > "$tmp"
+
+    local desc="board=$board type=$chip_type"
+    [ "$size_handling" != "none" ] && desc+=" size_handling=$size_handling"
+    [ -n "$cs1" ] && desc+=" cs1=$cs1"
+    [ -n "$cs2" ] && desc+=" cs2=$cs2"
+    [ -n "$cs3" ] && desc+=" cs3=$cs3"
+    [ "$force_16_bit" = "true" ] && desc+=" force_16_bit=true"
+    echo "Testing: $desc"
+
+    env BOARD=$board CONFIG="$tmp" make test-emu > /dev/null || \
+        { rm -f "$tmp"; echo "FAILED: $desc"; exit 1; }
     rm -f "$tmp"
 }
 
 run_test() {
-    local hw_rev=$1
+    local board=$1
     local image=$2
     local base_config=$3
     local num_cs=$4
-    local extra_flags=${5:-}
 
     parse_base_config "$base_config"
 
     for cs1 in 0 1; do
         if [ $num_cs -lt 2 ]; then
-            _run_single_pio_test "$hw_rev" "$image" "$CHIP_TYPE" "$SIZE_HANDLING" \
-                "$(cs_logic $cs1)" "" "" "$extra_flags"
+            _run_single_test "$board" "$image" "$CHIP_TYPE" "$SIZE_HANDLING" \
+                "$(cs_logic $cs1)" "" ""
             continue
         fi
         for cs2 in 0 1; do
             if [ $num_cs -lt 3 ]; then
-                _run_single_pio_test "$hw_rev" "$image" "$CHIP_TYPE" "$SIZE_HANDLING" \
-                    "$(cs_logic $cs1)" "$(cs_logic $cs2)" "" "$extra_flags"
+                _run_single_test "$board" "$image" "$CHIP_TYPE" "$SIZE_HANDLING" \
+                    "$(cs_logic $cs1)" "$(cs_logic $cs2)" ""
                 continue
             fi
             for cs3 in 0 1; do
-                _run_single_pio_test "$hw_rev" "$image" "$CHIP_TYPE" "$SIZE_HANDLING" \
-                    "$(cs_logic $cs1)" "$(cs_logic $cs2)" "$(cs_logic $cs3)" "$extra_flags"
+                _run_single_test "$board" "$image" "$CHIP_TYPE" "$SIZE_HANDLING" \
+                    "$(cs_logic $cs1)" "$(cs_logic $cs2)" "$(cs_logic $cs3)"
             done
         done
     done
 }
 
 run_no_cs() {
-    local hw_rev=$1
+    local board=$1
     local image=$2
     local base_config=$3
-    local extra_flags=${4:-}
+    local force_16_bit=${4:-false}
 
     parse_base_config "$base_config"
-    _run_single_pio_test "$hw_rev" "$image" "$CHIP_TYPE" "$SIZE_HANDLING" \
-        "$CONFIG_CS1" "$CONFIG_CS2" "$CONFIG_CS3" "$extra_flags"
+    _run_single_test "$board" "$image" "$CHIP_TYPE" "$SIZE_HANDLING" \
+        "$CONFIG_CS1" "$CONFIG_CS2" "$CONFIG_CS3" "$force_16_bit"
 }
 
 run_config() {
-    local hw_rev=$1
+    local board=$1
     local config=$2
-    local extra_flags=${3:-}
 
-    local cmd="HW_REV=$hw_rev MCU=rp2350 EXTRA_C_FLAGS=\"$extra_flags\" CONFIG=\"$config\" make test-pio"
-    echo "$cmd"
-    env HW_REV=$hw_rev MCU=rp2350 EXTRA_C_FLAGS="$extra_flags" \
-        CONFIG="$config" make test-pio > /dev/null || \
-        { echo "FAILED: $cmd"; exit 1; }
+    echo "Testing: board=$board config=$config"
+    env BOARD=$board CONFIG="$config" make test-emu > /dev/null || \
+        { echo "FAILED: board=$board config=$config"; exit 1; }
 }
 
 test_24_all_rom_types() {
-    local hw_rev=${1:-fire-24-e}
-    local extra_flags=${2:-}
+    local board=${1:-fire-24-e}
 
-    run_test   $hw_rev images/test/rand_8KB.rom trunc,type=2316  3 "$extra_flags"
-    run_test   $hw_rev images/test/rand_8KB.rom trunc,type=2332  2 "$extra_flags"
-    run_test   $hw_rev images/test/rand_8KB.rom type=2364        1 "$extra_flags"
-    run_no_cs  $hw_rev images/test/rand_8KB.rom trunc,type=2704    "$extra_flags"
-    run_no_cs  $hw_rev images/test/rand_8KB.rom trunc,type=2708    "$extra_flags"
-    run_no_cs  $hw_rev images/test/rand_8KB.rom trunc,type=2716    "$extra_flags"
-    run_no_cs  $hw_rev images/test/rand_8KB.rom trunc,type=2732    "$extra_flags"
-    run_no_cs  $hw_rev images/test/rand_8KB.rom trunc,type=28C16   "$extra_flags"
+    run_test   $board images/test/rand_8KB.rom trunc,type=2316  3
+    run_test   $board images/test/rand_8KB.rom trunc,type=2332  2
+    run_test   $board images/test/rand_8KB.rom type=2364        1
+    run_no_cs  $board images/test/rand_8KB.rom trunc,type=2704
+    run_no_cs  $board images/test/rand_8KB.rom trunc,type=2708
+    run_no_cs  $board images/test/rand_8KB.rom trunc,type=2716
+    run_no_cs  $board images/test/rand_8KB.rom trunc,type=2732
+    run_no_cs  $board images/test/rand_8KB.rom trunc,type=28C16
 }
 
 test_28_all_rom_types() {
-    local hw_rev=${1:-fire-28-a}
-    local extra_flags=${2:-}
+    local board=${1:-fire-28-a}
 
-    run_test   $hw_rev images/test/rand_64KB.rom  trunc,type=23128 3 "$extra_flags"
-    run_test   $hw_rev images/test/rand_64KB.rom  trunc,type=23256 2 "$extra_flags"
-    run_test   $hw_rev images/test/rand_64KB.rom  type=23512       2 "$extra_flags"
-    run_test   $hw_rev images/test/rand_128KB.rom type=231024      1 "$extra_flags"
-    run_no_cs  $hw_rev images/test/rand_64KB.rom  trunc,type=2764    "$extra_flags"
-    run_no_cs  $hw_rev images/test/rand_64KB.rom  trunc,type=27128   "$extra_flags"
-    run_no_cs  $hw_rev images/test/rand_64KB.rom  trunc,type=27256   "$extra_flags"
-    run_no_cs  $hw_rev images/test/rand_64KB.rom  type=27512         "$extra_flags"
-    run_no_cs  $hw_rev images/test/rand_64KB.rom  trunc,type=28C64   "$extra_flags"
-    run_no_cs  $hw_rev images/test/rand_64KB.rom  trunc,type=28C256  "$extra_flags"
+    run_test   $board images/test/rand_64KB.rom  trunc,type=23128 3
+    run_test   $board images/test/rand_64KB.rom  trunc,type=23256 2
+    run_test   $board images/test/rand_64KB.rom  type=23512       2
+    run_test   $board images/test/rand_128KB.rom type=231024      1
+    run_no_cs  $board images/test/rand_64KB.rom  trunc,type=2764
+    run_no_cs  $board images/test/rand_64KB.rom  trunc,type=27128
+    run_no_cs  $board images/test/rand_64KB.rom  trunc,type=27256
+    run_no_cs  $board images/test/rand_64KB.rom  type=27512
+    run_no_cs  $board images/test/rand_64KB.rom  trunc,type=28C64
+    run_no_cs  $board images/test/rand_64KB.rom  trunc,type=28C256
 
     # Supported as of 0.6.9
-    run_test   $hw_rev images/test/rand_8KB.rom type=2364        1 "$extra_flags"
-    run_no_cs  $hw_rev images/test/rand_8KB.rom trunc,type=2704    "$extra_flags"
-    run_no_cs  $hw_rev images/test/rand_8KB.rom trunc,type=2708    "$extra_flags"
-    run_no_cs  $hw_rev images/test/rand_8KB.rom trunc,type=2716    "$extra_flags"
-    run_no_cs  $hw_rev images/test/rand_8KB.rom trunc,type=2732    "$extra_flags"
+    run_test   $board images/test/rand_8KB.rom type=2364        1
+    run_no_cs  $board images/test/rand_8KB.rom trunc,type=2704
+    run_no_cs  $board images/test/rand_8KB.rom trunc,type=2708
+    run_no_cs  $board images/test/rand_8KB.rom trunc,type=2716
+    run_no_cs  $board images/test/rand_8KB.rom trunc,type=2732
 
     # Supported as of 0.6.11
-    run_test   $hw_rev images/test/rand_64KB.rom type=23QL512    1 "$extra_flags"
+    run_test   $board images/test/rand_64KB.rom type=23QL512    1
 
     # Supported as of 0.6.12
-    run_test   $hw_rev images/test/rand_64KB.rom trunc,type=23QL384 1 "$extra_flags"
+    run_test   $board images/test/rand_64KB.rom trunc,type=23QL384 1
 }
 
 test_32pin() {
-    local hw_rev=${1:-fire-32-a}
-    local extra_flags=${2:-}
+    local board=${1:-fire-32-a}
 
-    run_no_cs  $hw_rev images/test/rand_512KB.rom type=27C010,trunc  "$extra_flags"
-    run_no_cs  $hw_rev images/test/rand_512KB.rom type=27C020,trunc  "$extra_flags"
-    run_no_cs  $hw_rev images/test/rand_512KB.rom type=27C040        "$extra_flags"
-    run_no_cs  $hw_rev images/test/rand_512KB.rom type=27C301,trunc  "$extra_flags"
-    run_no_cs  $hw_rev images/test/rand_512KB.rom type=27C080,cs1=0  "$extra_flags"
-    run_no_cs  $hw_rev images/test/rand_512KB.rom type=27C080,cs1=1  "$extra_flags"
-    run_no_cs  $hw_rev images/test/rand_512KB.rom type=28C512,trunc  "$extra_flags"
+    run_no_cs  $board images/test/rand_512KB.rom type=27C010,trunc
+    run_no_cs  $board images/test/rand_512KB.rom type=27C020,trunc
+    run_no_cs  $board images/test/rand_512KB.rom type=27C040
+    run_no_cs  $board images/test/rand_512KB.rom type=27C301,trunc
+    run_no_cs  $board images/test/rand_512KB.rom type=27C080,cs1=0
+    run_no_cs  $board images/test/rand_512KB.rom type=27C080,cs1=1
+    run_no_cs  $board images/test/rand_512KB.rom type=28C512,trunc
 
     # Supported as of 0.6.13
-    run_no_cs  $hw_rev images/test/rand_512KB.rom type=23C1010,trunc "$extra_flags"
+    run_no_cs  $board images/test/rand_512KB.rom type=23C1010,trunc
 
     # Not supported on fire-32-a:
-    if [ "$hw_rev" = "fire-32-a" ]; then
+    if [ "$board" = "fire-32-a" ]; then
         return
     fi
-    run_no_cs  $hw_rev images/test/rand_512KB.rom type=SST39SF040    "$extra_flags"
+    run_no_cs  $board images/test/rand_512KB.rom type=SST39SF040
 }
 
 test_40pin() {
-    local hw_rev=${1:-fire-40-a}
-    local extra_flags=${2:-}
+    local board=${1:-fire-40-a}
+    local force_16_bit=${2:-false}
 
-    run_no_cs  $hw_rev images/test/rand_512KB.rom type=27C400 "$extra_flags"
-    run_no_cs  $hw_rev images/test/rand_512KB.rom type=27C200 "$extra_flags"
+    run_no_cs  $board images/test/rand_512KB.rom type=27C400 "$force_16_bit"
+    run_no_cs  $board images/test/rand_512KB.rom type=27C200 "$force_16_bit"
 }
 
 test_config() {
-    local hw_rev=${1:-fire-24-a}
+    local board=${1:-fire-24-a}
     local config=$2
-    local extra_flags=${3:-}
 
-    run_config $hw_rev "$config" "$extra_flags"
+    run_config $board "$config"
 }
 
 test_24_config() {
@@ -244,9 +244,9 @@ test_32pin fire-32-a
 test_32pin fire-32-b
 
 test_40pin fire-40-a
-test_40pin fire-40-a -DFORCE_16_BIT
+test_40pin fire-40-a true
 test_40pin fire-40-b
-test_40pin fire-40-b -DFORCE_16_BIT
+test_40pin fire-40-b true
 
 # Test specific ROM configurations on all Fire 24 hardware revisions.
 test_24_config onerom-config/pet-4-40-50.json

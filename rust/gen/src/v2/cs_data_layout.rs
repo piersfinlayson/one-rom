@@ -62,6 +62,8 @@ pub enum SelectRole {
     Cs3,
     /// Fixed active-low chip-enable (27xx-style EPROMs).
     Ce,
+    /// Fixed active-low output-enable (27xx-style EPROMs).
+    Oe,
     /// Multi-set extension select 1.
     X1,
     /// Multi-set extension select 2.
@@ -123,31 +125,34 @@ fn primary_select_phys_pin(chip_type: ChipType) -> Option<(SelectRole, u8)> {
 /// `Ignore`/unset).
 fn select_phys_pins(board: Board, chip_type: ChipType, cs_config: &CsConfig) -> Result<Vec<(SelectRole, u8)>, LayoutError> {
     let lines = chip_type.control_lines();
+    let mut pins = vec![];
 
     if let Some(ce) = lines.iter().find(|l| l.name == "ce") {
-        return Ok(vec![(SelectRole::Ce, ce.pin)]);
+        pins.push((SelectRole::Ce, ce.pin));
     }
-
-    let cs1 = lines
-        .iter()
-        .find(|l| l.name == "cs1")
-        .ok_or(LayoutError::NoSelectLine { board, chip_type })?;
-
-    let mut pins = vec![(SelectRole::Cs1, cs1.pin)];
+    if let Some(oe) = lines.iter().find(|l| l.name == "oe") {
+        pins.push((SelectRole::Oe, oe.pin));
+    }
 
     let active = |l: Option<CsLogic>| matches!(l, Some(CsLogic::ActiveLow) | Some(CsLogic::ActiveHigh));
 
+    let cs1_active = lines.iter().find(|l| l.name == "cs1")
+        .is_some_and(|cs1| { if active(cs_config.cs1_logic()) { pins.push((SelectRole::Cs1, cs1.pin)); true } else { false } });
+
+    let cs2_active = cs1_active && lines.iter().find(|l| l.name == "cs2")
+        .is_some_and(|cs2| { if active(cs_config.cs2_logic()) { pins.push((SelectRole::Cs2, cs2.pin)); true } else { false } });
+
     #[allow(clippy::collapsible_if)]
-    if let Some(cs2) = lines.iter().find(|l| l.name == "cs2") {
-        if active(cs_config.cs2_logic()) {
-            pins.push((SelectRole::Cs2, cs2.pin));
+    if cs2_active {
+        if let Some(cs3) = lines.iter().find(|l| l.name == "cs3") {
+            if active(cs_config.cs3_logic()) {
+                pins.push((SelectRole::Cs3, cs3.pin));
+            }
         }
     }
-    #[allow(clippy::collapsible_if)]
-    if let Some(cs3) = lines.iter().find(|l| l.name == "cs3") {
-        if active(cs_config.cs3_logic()) {
-            pins.push((SelectRole::Cs3, cs3.pin));
-        }
+
+    if pins.is_empty() {
+        return Err(LayoutError::NoSelectLine { board, chip_type });
     }
 
     Ok(pins)

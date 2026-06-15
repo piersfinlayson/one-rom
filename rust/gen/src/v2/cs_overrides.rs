@@ -34,10 +34,11 @@ use super::cs_data_layout::{CsDataLayout, SelectRole};
 /// - `Ce` (27xx-style fixed chip-enable) is always active-low.
 fn cs_logic_for_role(role: SelectRole, cs_config: &CsConfig) -> CsLogic {
     match role {
-        SelectRole::Cs1 | SelectRole::X1 | SelectRole::X2 => cs_config.cs1_logic(),
+        SelectRole::Cs1 | SelectRole::X1 | SelectRole::X2 => cs_config.cs1_logic().unwrap(),
         SelectRole::Cs2 => cs_config.cs2_logic().unwrap_or(CsLogic::ActiveLow),
         SelectRole::Cs3 => cs_config.cs3_logic().unwrap_or(CsLogic::ActiveLow),
         SelectRole::Ce => CsLogic::ActiveLow,
+        SelectRole::Oe => CsLogic::ActiveLow,
     }
 }
 

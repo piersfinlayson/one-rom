@@ -184,10 +184,10 @@ impl CsConfig {
         }
     }
 
-    pub fn cs1_logic(&self) -> CsLogic {
+    pub fn cs1_logic(&self) -> Option<CsLogic> {
         match self {
-            CsConfig::ChipSelect { cs1, .. } => *cs1,
-            CsConfig::CeOe => CsLogic::ActiveLow,
+            CsConfig::ChipSelect { cs1, .. } => Some(*cs1),
+            CsConfig::CeOe => Some(CsLogic::ActiveLow),
         }
     }
 
@@ -776,8 +776,8 @@ impl ChipSet {
             for chip in &self.chips {
                 if chip.cs_config.cs1_logic() != first_cs1 {
                     return Err(Error::InconsistentCsLogic {
-                        first: first_cs1,
-                        other: chip.cs_config.cs1_logic(),
+                        first: first_cs1.unwrap(),
+                        other: chip.cs_config.cs1_logic().unwrap(),
                     });
                 }
             }
@@ -806,7 +806,7 @@ impl ChipSet {
                 }
             }
 
-            Ok(self.chips[0].cs_config.cs1_logic())
+            Ok(self.chips[0].cs_config.cs1_logic().unwrap())
         }
     }
 
@@ -1010,7 +1010,7 @@ impl ChipSet {
             // All of CS1/X1/X2 have to have the same active low/high status
             // so we retrieve that from CS1 (as X1/X2 aren't specifically
             // configured in the chip sets).
-            let pins_active_high = chip_in_set.cs_config.cs1_logic() == CsLogic::ActiveHigh;
+            let pins_active_high = chip_in_set.cs_config.cs1_logic().unwrap() == CsLogic::ActiveHigh;
 
             // Get the CS pin that controls this chip's selection
             let cs_pin = board.cs_bit_for_chip_in_set(chip_in_set.chip_type, index);
@@ -1237,7 +1237,7 @@ impl ChipSet {
             buf[offset] = if is_plugin {
                 CsLogic::Ignore.c_enum_val()
             } else {
-                chip.cs_config.cs1_logic().c_enum_val()
+                chip.cs_config.cs1_logic().unwrap().c_enum_val()
             };
             offset += 1;
             buf[offset] = if is_plugin {

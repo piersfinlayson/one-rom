@@ -13,7 +13,12 @@
 //!   drive addr + CS active    →  step CS_TO_DATA cycles
 //!   read pin states, extract byte, compare with oracle
 //!   deassert CS               →  step AFTER_READ cycles
+//!   read driven pins, check data lines released
 //! ```
+//!
+//! After the per-address loop, every non-active combination of the control
+//! lines is tested at address 0 to confirm the data bus is tristated for all
+//! combinations other than the fully-asserted (valid read) state.
 
 #[allow(unused_imports)]
 use log::{debug, error, info, trace, warn};
@@ -210,8 +215,19 @@ fn run_mode(
         ctrl_active.0, ctrl_active.1
     );
 
+    // The data GPIO slice used for bus-state checks.  For 16-bit mode all 16
+    // pins are live.  For 8-bit mode only the low byte lane is driven by the
+    // chip (BYTE# keeps D8-D15 tristated on 27C400-family devices), so we
+    // limit the check to the first 8 GPIOs in the cache.
+    let driven_check_gpios: &[u8] = if mode == 16 {
+        &cache.data_gpios[..16]
+    } else {
+        &cache.data_gpios[..8.min(cache.data_gpios.len())]
+    };
+
     let mut reads = 0u64;
     let mut failures = 0u64;
+    let mut bus_failures = 0u64;
 
     for addr_idx in 0..iter_count {
         let phys_addr = addr_idx << addr_shift;
@@ -252,6 +268,16 @@ fn run_mode(
             debug!("addr=0 driven_pins={:#018x}", driven_pins);
         }
 
+        // Data lines must be driven while CS is active.
+        if !driven_check_gpios.iter().all(|&g| driven_pins & (1u64 << g) != 0) {
+            bus_failures += 1;
+            log_bus_violation(
+                set_idx, chip_idx, Some(phys_addr),
+                "not all driven (CS active)",
+                driven_pins, driven_check_gpios, bus_failures,
+            );
+        }
+
         if mode == 16 {
             let lo = driver::extract_byte(pin_states, &cache.data_gpios[..8]);
             let hi = driver::extract_byte(pin_states, &cache.data_gpios[8..16]);
@@ -281,9 +307,59 @@ fn run_mode(
         // ── Phase 4: deassert CS and settle ──────────────────────────────────
         emulator.drive_gpios(ctrl_deasserted.0, ctrl_deasserted.1);
         emulator.step_cycles(timing::CYCLES_AFTER_READ);
+
+        // Data lines must have released after CS deassert.
+        let driven_after = emulator.read_driven_pins();
+        if driven_check_gpios.iter().any(|&g| driven_after & (1u64 << g) != 0) {
+            bus_failures += 1;
+            log_bus_violation(
+                set_idx, chip_idx, Some(phys_addr),
+                "still driven (CS deasserted)",
+                driven_after, driven_check_gpios, bus_failures,
+            );
+        }
     }
 
-    ModeResult { mode, reads, failures }
+    // ── CS combination tests ──────────────────────────────────────────────────
+    // Walk every non-active combination of the control lines and confirm the
+    // data bus is tristated.  The all-active combination (combo == all_asserted)
+    // is the only state that should drive the bus; the exclusive upper bound of
+    // the range naturally excludes it.
+    // Address 0 is used throughout — tristate behaviour is address-independent.
+    let n = cache.control_lines.len();
+    if n > 0 {
+        let all_asserted: u64 = (1u64 << n) - 1;
+        debug!(
+            "Mode {}bit combo test: {} control line(s), {} non-active combinations",
+            mode, n, all_asserted
+        );
+
+        for combo in 0u64..all_asserted {
+            let ctrl = ctrl_combo_mask(cache, combo);
+            let phase = driver::merge(
+                driver::addr_mask(0, &cache.addr_gpios),
+                ctrl,
+            );
+            emulator.drive_gpios(phase.0, phase.1);
+            emulator.step_cycles(cycles_cs_to_data);
+
+            let driven_combo = emulator.read_driven_pins();
+            if driven_check_gpios.iter().any(|&g| driven_combo & (1u64 << g) != 0) {
+                bus_failures += 1;
+                log_bus_violation(
+                    set_idx, chip_idx, None,
+                    &format!("data driven for non-active CS combo {:#b}", combo),
+                    driven_combo, driven_check_gpios, bus_failures,
+                );
+            }
+        }
+
+        // Leave control lines deasserted.
+        emulator.drive_gpios(ctrl_deasserted.0, ctrl_deasserted.1);
+        emulator.step_cycles(timing::CYCLES_AFTER_READ);
+    }
+
+    ModeResult { mode, reads, failures, bus_failures }
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -300,6 +376,49 @@ fn word_size_for_set(chip_set: &ChipSetConfig) -> u8 {
             }
         })
         .unwrap_or(8)
+}
+
+/// Build a GPIO (mask, levels) pair for an arbitrary combination of control
+/// lines.  `combo` is a bitmask over `cache.control_lines`: bit i set means
+/// control line i is logically *asserted*; bit i clear means deasserted.
+fn ctrl_combo_mask(cache: &PinCache, combo: u64) -> (u64, u64) {
+    cache.control_lines
+        .iter()
+        .enumerate()
+        .map(|(i, cl)| driver::ctrl_mask(std::slice::from_ref(cl), (combo >> i) & 1 == 1))
+        .fold((0u64, 0u64), |acc, m| driver::merge(acc, m))
+}
+
+/// Log a data bus violation (lines unexpectedly driven or unexpectedly
+/// released), capped at 5 per mode pass to avoid flooding the log for
+/// systematic failures.
+fn log_bus_violation(
+    set: usize,
+    chip: usize,
+    addr: Option<usize>,
+    desc: &str,
+    driven_pins: u64,
+    data_gpios: &[u8],
+    count: u64,
+) {
+    if count <= 5 {
+        let drive_state: String = data_gpios
+            .iter()
+            .map(|&g| if driven_pins & (1u64 << g) != 0 { 'y' } else { 'n' })
+            .collect();
+        match addr {
+            Some(a) => error!(
+                "BUS set={} chip={} addr=0x{:04X}: {} driven=[{}]",
+                set, chip, a, desc, drive_state
+            ),
+            None => error!(
+                "BUS set={} chip={}: {} driven=[{}]",
+                set, chip, desc, drive_state
+            ),
+        }
+    } else if count == 6 {
+        error!("(further bus violations suppressed for this mode pass)");
+    }
 }
 
 /// Log a byte mismatch, capped at 5 per mode pass to avoid flooding the log

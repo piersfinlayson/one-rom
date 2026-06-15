@@ -22,11 +22,14 @@ pub struct ModeResult {
     pub reads: u64,
     /// Bytes that did not match the oracle.
     pub failures: u64,
+    /// Data bus state violations (not driven when CS active, still driven
+    /// after CS deassert, or driven for a non-active CS combination).
+    pub bus_failures: u64,
 }
 
 impl ModeResult {
     pub fn passed(&self) -> bool {
-        self.failures == 0
+        self.failures == 0 && self.bus_failures == 0
     }
 }
 
@@ -51,6 +54,10 @@ impl ChipResult {
     #[allow(dead_code)]
     pub fn total_failures(&self) -> u64 {
         self.mode_results.iter().map(|m| m.failures).sum()
+    }
+    #[allow(dead_code)]
+    pub fn total_bus_failures(&self) -> u64 {
+        self.mode_results.iter().map(|m| m.bus_failures).sum()
     }
 }
 
@@ -147,6 +154,7 @@ impl TestReport {
 
         let mut grand_reads = 0u64;
         let mut grand_failures = 0u64;
+        let mut grand_bus_failures = 0u64;
 
         for set in &self.set_results {
             if let Some(ref msg) = set.boot_error {
@@ -166,9 +174,10 @@ impl TestReport {
                 for mode in &chip.mode_results {
                     grand_reads += mode.reads;
                     grand_failures += mode.failures;
+                    grand_bus_failures += mode.bus_failures;
                     println!(
                         "  [{}] set={} chip={} ({}) file={} mode={}bit \
-                         reads={} failures={}",
+                         reads={} failures={} bus_failures={}",
                         if mode.passed() { "PASS" } else { "FAIL" },
                         chip.set_idx,
                         chip.chip_idx,
@@ -177,6 +186,7 @@ impl TestReport {
                         mode.mode,
                         mode.reads,
                         mode.failures,
+                        mode.bus_failures,
                     );
                 }
             }
@@ -184,9 +194,10 @@ impl TestReport {
 
         println!("-----");
         println!(
-            "Total: {} bytes read, {} failures — {}",
+            "Total: {} bytes read, {} data failures, {} bus violations — {}",
             grand_reads,
             grand_failures,
+            grand_bus_failures,
             if self.all_passed() { "PASS" } else { "FAIL" },
         );
     }
