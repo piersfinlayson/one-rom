@@ -70,10 +70,10 @@ jobs:
         export TOOLCHAIN=/usr/bin
         ci/build.sh test
 
-    - name: Run emulated PIO tests
+    - name: Run One ROM emulator tests
       run: |
         export TOOLCHAIN=/usr/bin
-        ci/test-pios.sh
+        ci/test-emu.sh
       
     - name: Build firmware for all image configs
       run: |

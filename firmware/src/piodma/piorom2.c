@@ -7,14 +7,11 @@
 //   pins.
 // - Need ability to invert /BYTE
 
-#define APIO_LOG_IMPL
-#include "include.h"
-
 #if defined(TEST_BUILD)
-#define TEST_PIO_C
-#else
 #define APIO_LOG_IMPL  1
 #endif // TEST_BUILD
+
+#include "include.h"
 
 #include "piodma/piodma.h"
 

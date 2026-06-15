@@ -3,6 +3,9 @@
 #####################################################################
 set -e
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+. "$SCRIPT_DIR/../scripts/run-single-test-emu.sh"
+
 cs_logic() {
     [ "$1" -eq 0 ] && echo "active_low" || echo "active_high"
 }
@@ -29,45 +32,6 @@ parse_base_config() {
             cs3=1)   CONFIG_CS3="active_high" ;;
         esac
     done
-}
-
-_run_single_test() {
-    local board=$1
-    local image=$2
-    local chip_type=$3
-    local size_handling=$4
-    local cs1=$5
-    local cs2=$6
-    local cs3=$7
-    local force_16_bit=${8:-false}
-
-    local chip="{\"type\":\"$chip_type\",\"file\":\"$image\""
-    [ "$size_handling" != "none" ] && chip+=",\"size_handling\":\"$size_handling\""
-    [ -n "$cs1" ] && chip+=",\"cs1\":\"$cs1\""
-    [ -n "$cs2" ] && chip+=",\"cs2\":\"$cs2\""
-    [ -n "$cs3" ] && chip+=",\"cs3\":\"$cs3\""
-    chip+="}"
-
-    local chip_set="{\"type\":\"single\",\"chips\":[$chip]"
-    [ "$force_16_bit" = "true" ] && chip_set+=",\"firmware_overrides\":{\"fire\":{\"force_16_bit\":true}}"
-    chip_set+="}"
-
-    # Xs are replaced with random chars
-    local tmp
-    tmp=$(mktemp /tmp/onerom-test-XXXXXX)
-    printf '{"version":1,"description":"PIO test","chip_sets":[%s]}\n' "$chip_set" > "$tmp"
-
-    local desc="board=$board type=$chip_type"
-    [ "$size_handling" != "none" ] && desc+=" size_handling=$size_handling"
-    [ -n "$cs1" ] && desc+=" cs1=$cs1"
-    [ -n "$cs2" ] && desc+=" cs2=$cs2"
-    [ -n "$cs3" ] && desc+=" cs3=$cs3"
-    [ "$force_16_bit" = "true" ] && desc+=" force_16_bit=true"
-    echo "Testing: $desc"
-
-    env BOARD=$board CONFIG="$tmp" make test-emu > /dev/null || \
-        { rm -f "$tmp"; echo "FAILED: $desc"; exit 1; }
-    rm -f "$tmp"
 }
 
 run_test() {
@@ -112,10 +76,14 @@ run_no_cs() {
 run_config() {
     local board=$1
     local config=$2
-
+ 
+    echo ""
     echo "Testing: board=$board config=$config"
-    env BOARD=$board CONFIG="$config" make test-emu > /dev/null || \
-        { echo "FAILED: board=$board config=$config"; exit 1; }
+    env BOARD="$board" CONFIG="$config" make test-emu || {
+        echo "FAILED: board=$board config=$config"
+        echo "Reproduce:  env BOARD=$board CONFIG=$config make test-emu"
+        exit 1
+    }
 }
 
 test_24_all_rom_types() {

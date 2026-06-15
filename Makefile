@@ -257,7 +257,7 @@ endif
 
 .PHONY: all clean clean-firmware clean-firmware-build firmware run flash test test-emu generated clean-generated fw-config-gen libonerom-test gen-config clean-gen-config clean-libonerom-test
 
-all: firmware info
+all: firmware
 	@echo "=========================================="
 	@echo "One ROM firmware build complete:"
 	@echo "- firmware files are in $(BUILD_DIR)/"
