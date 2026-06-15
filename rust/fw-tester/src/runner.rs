@@ -202,15 +202,22 @@ fn run_mode(
 ) -> ModeResult {
     let is_27c400_family = chip_type == ChipType::Chip27C400 || chip_type == ChipType::Chip27C200;
 
-    // Set BYTE# once for the whole mode pass.
-    if let Some(gpio) = cache.byte_n_gpio {
-        let (mask, levels) = driver::byte_n_mask(gpio, mode);
+    // Pre-compute the BYTE# mask so it can be merged into every drive_gpios
+    // call.  epio_drive_gpios_ext resets every GPIO that is *not* in the
+    // supplied mask to the pull-up state (1) on each call, so a one-shot
+    // drive before the loop is immediately overwritten by the first
+    // phase1/phase2 call.  Merging byte_mask into every call holds the level
+    // correctly throughout the pass.
+    let byte_mask: (u64, u64) = if let Some(gpio) = cache.byte_n_gpio {
+        let bm = driver::byte_n_mask(gpio, mode);
         debug!(
             "BYTE# gpio={} mode={} mask={:#018x} levels={:#018x}",
-            gpio, mode, mask, levels
+            gpio, mode, bm.0, bm.1
         );
-        emulator.drive_gpios(mask, levels);
-    }
+        bm
+    } else {
+        (0u64, 0u64)
+    };
 
     let (iter_count, addr_shift, cycles_cs_to_data) = if mode == 16 {
         (oracle.len() / 2, 1usize, timing::CYCLES_CS_TO_DATA)
@@ -221,6 +228,23 @@ fn run_mode(
             timing::CYCLES_CS_TO_DATA
         };
         (oracle.len(), 0usize, cs_to_data)
+    };
+
+    // In 16-bit mode, addr_gpios[0] is A-1, which is also D15 — a data
+    // output pin in word mode.  Driving it as an address pin would interfere
+    // with the data bus and cause false bus violations.  Skip it and use only
+    // A0-A17 (indices [1..]) with the word index (addr_idx) as the drive
+    // address, so bit 0 of addr_idx maps to A0, bit 1 to A1, etc.
+    //
+    // In 8-bit mode, use all address GPIOs including A-1 at index 0 (bit 0
+    // of the byte address becomes the low/high byte select).
+    //
+    // addr_shift is retained solely for computing phys_addr for log messages,
+    // which uses byte addresses in both modes.
+    let addr_gpios: &[Vec<u8>] = if mode == 16 {
+        &cache.addr_gpios[1..]
+    } else {
+        &cache.addr_gpios
     };
 
     debug!(
@@ -251,17 +275,33 @@ fn run_mode(
         &cache.data_gpios[..8.min(cache.data_gpios.len())]
     };
 
+    // The data GPIO slice for byte extraction and mismatch logging in 8-bit
+    // mode.  Even on 16-bit-capable chips the cache has 16 data GPIOs, but
+    // in byte mode only D0-D7 are driven.
+    let data_gpios_8 = &cache.data_gpios[..8.min(cache.data_gpios.len())];
+
+    // CS-deasserted drive merged with BYTE# so the level is held.
+    let deassert_drive = driver::merge(ctrl_deasserted, byte_mask);
+
     let mut reads = 0u64;
     let mut failures = 0u64;
     let mut bus_failures = 0u64;
 
     for addr_idx in 0..iter_count {
+        // phys_addr is the byte address, used for log messages only.
+        // In 16-bit mode this is addr_idx*2 (byte offset of the word).
+        // In 8-bit mode addr_shift==0 so it equals addr_idx.
         let phys_addr = addr_idx << addr_shift;
+
+        // The GPIO drive address is always addr_idx:
+        // - 16-bit: addr_gpios is [1..] so bit 0 of addr_idx maps to A0. ✓
+        // - 8-bit:  addr_gpios is full slice, addr_idx is the byte address. ✓
+        let drive_addr = addr_idx;
 
         // ── Phase 1: address valid, CS inactive ──────────────────────────────
         let phase1 = driver::merge(
-            driver::addr_mask(phys_addr, &cache.addr_gpios),
-            ctrl_deasserted,
+            driver::merge(driver::addr_mask(drive_addr, addr_gpios), ctrl_deasserted),
+            byte_mask,
         );
         if addr_idx == 0 {
             debug!(
@@ -273,7 +313,10 @@ fn run_mode(
         emulator.step_cycles(cycles_addr_before_cs);
 
         // ── Phase 2: CS asserted ─────────────────────────────────────────────
-        let phase2 = driver::merge(driver::addr_mask(phys_addr, &cache.addr_gpios), ctrl_active);
+        let phase2 = driver::merge(
+            driver::merge(driver::addr_mask(drive_addr, addr_gpios), ctrl_active),
+            byte_mask,
+        );
         if addr_idx == 0 {
             debug!(
                 "addr=0 phase2: mask={:#018x} levels={:#018x}",
@@ -343,7 +386,9 @@ fn run_mode(
                 );
             }
         } else {
-            let byte = driver::extract_byte(pin_states, &cache.data_gpios[..8]);
+            // 8-bit mode: only D0-D7 are active (D8-D15 are tristated by
+            // BYTE# on 16-bit-capable chips).
+            let byte = driver::extract_byte(pin_states, data_gpios_8);
             reads += 1;
             let expected = oracle[addr_idx];
             if byte != expected {
@@ -355,14 +400,14 @@ fn run_mode(
                     byte,
                     expected,
                     driven_pins,
-                    &cache.data_gpios,
+                    data_gpios_8,
                     failures,
                 );
             }
         }
 
         // ── Phase 4: deassert CS and settle ──────────────────────────────────
-        emulator.drive_gpios(ctrl_deasserted.0, ctrl_deasserted.1);
+        emulator.drive_gpios(deassert_drive.0, deassert_drive.1);
         emulator.step_cycles(timing::CYCLES_AFTER_READ);
 
         // Data lines must have released after CS deassert.
@@ -400,7 +445,12 @@ fn run_mode(
 
         for combo in 0u64..all_asserted {
             let ctrl = ctrl_combo_mask(cache, combo);
-            let phase = driver::merge(driver::addr_mask(0, &cache.addr_gpios), ctrl);
+            // Use the mode-appropriate addr_gpios slice (no A-1 in 16-bit
+            // mode) and hold BYTE# via byte_mask.
+            let phase = driver::merge(
+                driver::merge(driver::addr_mask(0, addr_gpios), ctrl),
+                byte_mask,
+            );
             emulator.drive_gpios(phase.0, phase.1);
             emulator.step_cycles(cycles_cs_to_data);
 
@@ -422,8 +472,8 @@ fn run_mode(
             }
         }
 
-        // Leave control lines deasserted.
-        emulator.drive_gpios(ctrl_deasserted.0, ctrl_deasserted.1);
+        // Leave control lines deasserted, BYTE# held.
+        emulator.drive_gpios(deassert_drive.0, deassert_drive.1);
         emulator.step_cycles(timing::CYCLES_AFTER_READ);
     }
 
@@ -517,6 +567,7 @@ fn log_mismatch(
     if count <= 5 {
         let drive_state: String = data_gpios
             .iter()
+            .rev()
             .map(|&g| {
                 if driven_pins & (1u64 << g) != 0 {
                     'y'
