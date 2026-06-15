@@ -343,7 +343,7 @@ fn run_mode(
                 );
             }
         } else {
-            let byte = driver::extract_byte(pin_states, &cache.data_gpios);
+            let byte = driver::extract_byte(pin_states, &cache.data_gpios[..8]);
             reads += 1;
             let expected = oracle[addr_idx];
             if byte != expected {
@@ -478,6 +478,7 @@ fn log_bus_violation(
     if count <= 5 {
         let drive_state: String = data_gpios
             .iter()
+            .rev()
             .map(|&g| {
                 if driven_pins & (1u64 << g) != 0 {
                     'y'

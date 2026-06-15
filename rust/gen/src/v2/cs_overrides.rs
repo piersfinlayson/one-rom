@@ -55,7 +55,7 @@ fn required_cs_logic(set_type: ChipSetType) -> CsLogic {
     }
 }
 
-fn encode_override(gpio: u8, ov: GpioOverride) -> u8 {
+pub fn encode_override(gpio: u8, ov: GpioOverride) -> u8 {
     ((ov as u8) << 6) | (gpio & 0x3F)
 }
 

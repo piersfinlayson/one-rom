@@ -27,11 +27,11 @@ use onerom_config::chip::ChipType;
 use onerom_config::hw::Board;
 
 use onerom_metadata::{
-    BitModes, GPIO_NONE, OneromAlgAddrConfig, OneromAlgConfig, OneromAlgDataConfig,
-    OneromAlgDmaConfig, OneromAlgOverrideConfig,
+    BitModes, GPIO_NONE, GpioOverride, OneromAlgAddrConfig, OneromAlgConfig, OneromAlgDataConfig, OneromAlgDmaConfig, OneromAlgOverrideConfig
 };
 
 use crate::image::{ChipSetType, CsConfig};
+use crate::v2::cs_overrides::encode_override;
 
 use super::addr_layout::AddrLayout;
 use super::alg_cs::build_alg_cs;
@@ -45,6 +45,9 @@ use super::gpio_pull_config::build_gpio_pull_config;
 /// H: clock dividers default to 1.0 for now.
 pub const DEFAULT_CLKDIV_INT: u16 = 1;
 pub const DEFAULT_CLKDIV_FRAC: u8 = 0;
+
+const ALG_DATA0_NUM_DELAY_CYCLES_8_BIT: u8  = 2;
+const ALG_DATA1_NUM_DELAY_CYCLES_16_BIT: u8 = 4;
 
 /// Determine the bit mode (8 vs 16) for serving `chip_type` on `board`.
 ///
@@ -141,11 +144,11 @@ pub fn build_alg_data(
 ///
 /// `num_delay_cycles` is 2 for `AlgData0` (8-bit, or 16-bit with
 /// `force_16_bit` - neither needs the extra cycles `AlgData1`'s `/BYTE`+
-/// A-1 read takes), 6 for `AlgData1`.
+/// A-1 read takes), 4 for `AlgData1`.
 pub fn build_alg_addr(layout: &AddrLayout, alg_data: &OneromAlgDataConfig) -> OneromAlgAddrConfig {
     let num_delay_cycles = match alg_data {
-        OneromAlgDataConfig::AlgData0 { .. } => 2,
-        OneromAlgDataConfig::AlgData1 { .. } => 6,
+        OneromAlgDataConfig::AlgData0 { .. } => ALG_DATA0_NUM_DELAY_CYCLES_8_BIT,
+        OneromAlgDataConfig::AlgData1 { .. } => ALG_DATA1_NUM_DELAY_CYCLES_16_BIT,
     };
 
     // AddrLayout::gpio_base is the min GPIO of the address range (not
@@ -219,7 +222,16 @@ pub fn build_alg_config(
     let alg_cs = build_alg_cs(cs_data_layout, set_type, &alg_data);
     let alg_dma = build_alg_dma(bit_mode);
 
-    let cs_overrides = build_cs_overrides(cs_data_layout, set_type, cs_config);
+    let mut cs_overrides = build_cs_overrides(cs_data_layout, set_type, cs_config);
+
+    // AlgData1 provides 8-bit serving when the BYTE is read (by the PIO) as
+    // high.  Therefore we need to invert any /byte pin.
+    if let OneromAlgDataConfig::AlgData1 { byte_pin, .. } = &alg_data {
+        let abs_gpio = byte_pin + cs_data_layout.gpio_base;
+        let or = encode_override(abs_gpio, GpioOverride::GpioOverInvert);
+        cs_overrides.push(or);
+    }
+
     let gpio_override_config = if cs_overrides.is_empty() {
         None
     } else {

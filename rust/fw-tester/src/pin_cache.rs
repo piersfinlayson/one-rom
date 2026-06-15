@@ -14,7 +14,6 @@ use onerom_config::chip::{ChipType, ControlLineType};
 use onerom_config::hw::Board;
 use onerom_gen::{ChipConfig, CsLogic, MAX_IMAGE_SIZE};
 
-
 // ── Public types ──────────────────────────────────────────────────────────────
 
 /// A single decoded control line with its assertion polarity baked in.
@@ -157,8 +156,7 @@ impl PinCache {
         // pin must be HIGH for the chip to respond (cs1=active_high serves the
         // upper half); active_low means it must be LOW (lower half).
         if chip_type.size_bytes() > MAX_IMAGE_SIZE {
-            let num_excess =
-                (chip_type.size_bytes() / MAX_IMAGE_SIZE).ilog2() as usize;
+            let num_excess = (chip_type.size_bytes() / MAX_IMAGE_SIZE).ilog2() as usize;
             let assert_high = match chip_config.cs1 {
                 Some(CsLogic::ActiveHigh) => true,
                 Some(CsLogic::ActiveLow) => false,
