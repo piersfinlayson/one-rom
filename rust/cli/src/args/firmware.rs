@@ -257,7 +257,7 @@ pub struct FirmwareBuildArgs {
     pub logging: bool,
 
     /// Disable SWD debugging on this One ROM firmware
-    #[arg(long, visible_aliases = ["swd-disable", "swd_disabled"], default_value = "true", conflicts_with_all = ["no_config", "config_file"])]
+    #[arg(long, visible_aliases = ["swd-disable", "swd_disabled"], default_value = "false", conflicts_with_all = ["no_config", "config_file"])]
     pub disable_swd: bool,
 
     /// Enable turbo boot - starts ROM serving faster, but only supports a
