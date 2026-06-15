@@ -17,8 +17,8 @@ use onerom_config::mcu::{Family, Variant as McuVariant};
 use onerom_fw::{get_rom_files, read_rom_config};
 use onerom_gen::Builder;
 use onerom_metadata::{
-    generate_host_metadata_c, serialize, FirmwareView, OneromMetadataHeader, METADATA_BASE,
-    METADATA_SIZE,
+    FirmwareView, METADATA_BASE, METADATA_SIZE, OneromMetadataHeader, generate_host_metadata_c,
+    serialize,
 };
 
 use args::Args;
@@ -54,8 +54,7 @@ fn run() -> Result<()> {
         "ROM config contains licenses — not supported by fw-config-gen"
     );
 
-    get_rom_files(&mut builder)
-        .map_err(|e| anyhow!("Failed to load ROM files: {e}"))?;
+    get_rom_files(&mut builder).map_err(|e| anyhow!("Failed to load ROM files: {e}"))?;
 
     let props = FirmwareProperties::new(
         version,

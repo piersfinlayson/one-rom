@@ -18,7 +18,9 @@
 //!
 //! `ice_freq` is always `0` for the same reason as the Ice bits above.
 
-use onerom_metadata::{FireFreq, FireVreg as OneromFireVreg, OneromFirmwareConfig, OneromFirmwareOverrides};
+use onerom_metadata::{
+    FireFreq, FireVreg as OneromFireVreg, OneromFirmwareConfig, OneromFirmwareOverrides,
+};
 
 use crate::{Config, FirmwareConfig};
 
@@ -168,7 +170,11 @@ mod tests {
 
         assert_eq!(
             result.override_present[0],
-            PRESENT_FIRE_CPU_FREQ | PRESENT_FIRE_OVERCLOCK | PRESENT_FIRE_VREG | PRESENT_LED | PRESENT_SWD
+            PRESENT_FIRE_CPU_FREQ
+                | PRESENT_FIRE_OVERCLOCK
+                | PRESENT_FIRE_VREG
+                | PRESENT_LED
+                | PRESENT_SWD
         );
         assert_eq!(result.override_present[1..], [0u8; 7]);
         assert_eq!(result.ice_freq, 0);

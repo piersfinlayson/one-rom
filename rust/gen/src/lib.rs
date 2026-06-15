@@ -15,29 +15,29 @@ pub mod meta;
 pub mod v1;
 pub mod v2;
 
-use onerom_config::mcu::Family;
+pub use builder::Builder;
 pub use firmware::{
     DebugConfig, FireConfig, FireCpuFreq, FireServeMode, FireVreg, FirmwareConfig, IceConfig,
     IceCpuFreq, LedConfig, ServeAlgParams,
 };
 pub use image::{Chip, ChipSet, ChipSetType, CsConfig, CsLogic, SizeHandling};
-pub use image::{PAD_BLANK_BYTE, PAD_NO_CHIP_BYTE, MAX_IMAGE_SIZE};
+pub use image::{MAX_IMAGE_SIZE, PAD_BLANK_BYTE, PAD_NO_CHIP_BYTE};
 pub use meta::{MAX_METADATA_LEN, Metadata, PAD_METADATA_BYTE};
-pub use builder::Builder;
+use onerom_config::mcu::Family;
 
 use alloc::string::String;
 use onerom_config::chip::ChipType;
 use onerom_config::fw::{FirmwareVersion, ServeAlg};
 
-pub use v1::MIN_SUPPORTED_FIRMWARE_VERSION as MIN_SUPPORTED_FIRMWARE_VERSION_V1;
-pub use v1::MAX_SUPPORTED_FIRMWARE_VERSION as MAX_SUPPORTED_FIRMWARE_VERSION_V1;
-pub use v2::MIN_FW_VERSION as MIN_SUPPORTED_FIRMWARE_VERSION_V2;
-pub use v2::MAX_FW_VERSION as MAX_SUPPORTED_FIRMWARE_VERSION_V2;
-pub use v1::SUPPORTED_CHIP_TYPES as SUPPORTED_CHIP_TYPES_V1;
-pub use v2::SUPPORTED_CHIP_TYPES as SUPPORTED_CHIP_TYPES_V2;
-pub use v1::UNSUPPORTED_FIRMWARE_VERSIONS as UNSUPPORTED_FIRMWARE_VERSIONS_V1;
-pub use v2::UNSUPPORTED_FIRMWARE_VERSIONS as UNSUPPORTED_FIRMWARE_VERSIONS_V2;
 use onerom_config::hw::Board;
+pub use v1::MAX_SUPPORTED_FIRMWARE_VERSION as MAX_SUPPORTED_FIRMWARE_VERSION_V1;
+pub use v1::MIN_SUPPORTED_FIRMWARE_VERSION as MIN_SUPPORTED_FIRMWARE_VERSION_V1;
+pub use v1::SUPPORTED_CHIP_TYPES as SUPPORTED_CHIP_TYPES_V1;
+pub use v1::UNSUPPORTED_FIRMWARE_VERSIONS as UNSUPPORTED_FIRMWARE_VERSIONS_V1;
+pub use v2::MAX_FW_VERSION as MAX_SUPPORTED_FIRMWARE_VERSION_V2;
+pub use v2::MIN_FW_VERSION as MIN_SUPPORTED_FIRMWARE_VERSION_V2;
+pub use v2::SUPPORTED_CHIP_TYPES as SUPPORTED_CHIP_TYPES_V2;
+pub use v2::UNSUPPORTED_FIRMWARE_VERSIONS as UNSUPPORTED_FIRMWARE_VERSIONS_V2;
 
 /// Version of metadata produced by this version of the crate
 pub const METADATA_VERSION: u32 = 1;
@@ -179,8 +179,10 @@ pub enum Error {
         chip_type: ChipType,
         index: usize,
     },
-    RomTableTooLarge { size: usize, max: usize },
-
+    RomTableTooLarge {
+        size: usize,
+        max: usize,
+    },
 }
 type Result<T> = core::result::Result<T, Error>;
 
@@ -358,7 +360,10 @@ impl core::fmt::Display for Error {
                 f,
                 "Internal error: chip {index} ({chip_type}) in this set has no image data"
             ),
-            Error::RomTableTooLarge { size, max } => write!(f, "ROM table is {size} bytes, exceeds maximum of {max} bytes for a single slot"),
+            Error::RomTableTooLarge { size, max } => write!(
+                f,
+                "ROM table is {size} bytes, exceeds maximum of {max} bytes for a single slot"
+            ),
         }
     }
 }

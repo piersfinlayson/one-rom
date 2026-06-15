@@ -124,7 +124,10 @@ impl Emulator {
     // ── Internal helpers ─────────────────────────────────────────────────────
 
     fn epio_or_panic(&self) -> *mut ffi::epio_t {
-        assert!(!self.epio.is_null(), "call setup_epio() before using GPIO/cycle methods");
+        assert!(
+            !self.epio.is_null(),
+            "call setup_epio() before using GPIO/cycle methods"
+        );
         self.epio
     }
 }

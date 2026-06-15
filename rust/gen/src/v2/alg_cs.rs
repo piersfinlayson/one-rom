@@ -21,7 +21,7 @@
 //! `qualifier_inactive_pattern`) beyond the common base fields. No
 //! `serve_cs_low_0`, `byte_pin`, or `first_rom_*`.
 
-use onerom_metadata::{OneromAlgCsConfig, OneromAlgDataConfig, GPIO_NONE};
+use onerom_metadata::{GPIO_NONE, OneromAlgCsConfig, OneromAlgDataConfig};
 
 use crate::image::ChipSetType;
 
@@ -62,7 +62,11 @@ fn first_rom_cs(layout: &CsDataLayout, set_type: ChipSetType) -> (u8, u8) {
 
 /// Build `OneromAlgCsConfig` from the CS/data layout, set type, and the
 /// already-built `AlgData` config (for `byte_pin` in `AlgCs0`).
-pub fn build_alg_cs(layout: &CsDataLayout, set_type: ChipSetType, alg_data: &OneromAlgDataConfig) -> OneromAlgCsConfig {
+pub fn build_alg_cs(
+    layout: &CsDataLayout,
+    set_type: ChipSetType,
+    alg_data: &OneromAlgDataConfig,
+) -> OneromAlgCsConfig {
     // AlgCs2 takes priority: it implies a distinct algorithm regardless of
     // whether the CS pins happen to be contiguous. Fields are only the
     // common base fields plus the three qualifier params - no serve_cs_low_0,
@@ -125,8 +129,8 @@ pub fn build_alg_cs(layout: &CsDataLayout, set_type: ChipSetType, alg_data: &One
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::cs_data_layout::{AlgCs2Config, SelectLine};
+    use super::*;
 
     fn fire24a_2364_layout() -> CsDataLayout {
         CsDataLayout {
@@ -137,7 +141,10 @@ mod tests {
             base_cs_pin: 13,
             num_cs_pins: 1,
             cs_ignore_index: None,
-            select_lines: alloc::vec![SelectLine { role: SelectRole::Cs1, gpio: 13 }],
+            select_lines: alloc::vec![SelectLine {
+                role: SelectRole::Cs1,
+                gpio: 13
+            }],
             alg_cs2: None,
         }
     }
@@ -192,9 +199,18 @@ mod tests {
             num_cs_pins: 3,
             cs_ignore_index: None,
             select_lines: alloc::vec![
-                SelectLine { role: SelectRole::Cs1, gpio: 13 },
-                SelectLine { role: SelectRole::X1, gpio: 14 },
-                SelectLine { role: SelectRole::X2, gpio: 15 },
+                SelectLine {
+                    role: SelectRole::Cs1,
+                    gpio: 13
+                },
+                SelectLine {
+                    role: SelectRole::X1,
+                    gpio: 14
+                },
+                SelectLine {
+                    role: SelectRole::X2,
+                    gpio: 15
+                },
             ],
             alg_cs2: None,
         };
@@ -239,8 +255,14 @@ mod tests {
             num_cs_pins: 3,
             cs_ignore_index: Some(1),
             select_lines: alloc::vec![
-                SelectLine { role: SelectRole::Cs1, gpio: 13 },
-                SelectLine { role: SelectRole::Cs2, gpio: 15 },
+                SelectLine {
+                    role: SelectRole::Cs1,
+                    gpio: 13
+                },
+                SelectLine {
+                    role: SelectRole::Cs2,
+                    gpio: 15
+                },
             ],
             alg_cs2: None,
         };
@@ -279,7 +301,10 @@ mod tests {
             base_cs_pin: 13,
             num_cs_pins: 1,
             cs_ignore_index: None,
-            select_lines: alloc::vec![SelectLine { role: SelectRole::Cs1, gpio: 13 }],
+            select_lines: alloc::vec![SelectLine {
+                role: SelectRole::Cs1,
+                gpio: 13
+            }],
             alg_cs2: Some(AlgCs2Config {
                 base_qualifier_pin: 5,
                 num_qualifier_pins: 2,

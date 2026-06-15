@@ -27,14 +27,17 @@ use onerom_config::chip::ChipType;
 use onerom_config::hw::Board;
 
 use onerom_metadata::{
-    BitModes, OneromAlgAddrConfig, OneromAlgConfig, OneromAlgDataConfig, OneromAlgDmaConfig,
-    OneromAlgOverrideConfig, GPIO_NONE,
+    BitModes, GPIO_NONE, OneromAlgAddrConfig, OneromAlgConfig, OneromAlgDataConfig,
+    OneromAlgDmaConfig, OneromAlgOverrideConfig,
 };
 
 use crate::image::{ChipSetType, CsConfig};
 
 use super::addr_layout::AddrLayout;
 use super::alg_cs::build_alg_cs;
+use super::alg_preference::{
+    AddrAlgPreference, CombinedAlgPreference, CsAlgPreference, DataAlgPreference, DmaAlgPreference,
+};
 use super::cs_data_layout::CsDataLayout;
 use super::cs_overrides::build_cs_overrides;
 use super::gpio_pull_config::build_gpio_pull_config;
@@ -87,7 +90,12 @@ pub fn bit_mode_for(chip_type: ChipType, board: Board) -> BitModes {
 ///
 /// Both `byte_pin` and `a_minus_1_pin` are offsets from `layout.gpio_base`,
 /// consistent with `base_data_pin` etc.
-pub fn build_alg_data(layout: &CsDataLayout, board: Board, bit_mode: BitModes, force_16_bit: bool) -> OneromAlgDataConfig {
+pub fn build_alg_data(
+    layout: &CsDataLayout,
+    board: Board,
+    bit_mode: BitModes,
+    force_16_bit: bool,
+) -> OneromAlgDataConfig {
     match bit_mode {
         BitModes::BitMode8 => OneromAlgDataConfig::AlgData0 {
             clkdiv_int: DEFAULT_CLKDIV_INT,
@@ -105,7 +113,8 @@ pub fn build_alg_data(layout: &CsDataLayout, board: Board, bit_mode: BitModes, f
         },
         BitModes::BitMode16 => {
             let byte_pin = board.pin_byte() - layout.gpio_base;
-            let a_minus_1_pin = layout.data_pin_gpios[layout.num_data_pins as usize - 1] - layout.gpio_base;
+            let a_minus_1_pin =
+                layout.data_pin_gpios[layout.num_data_pins as usize - 1] - layout.gpio_base;
 
             OneromAlgDataConfig::AlgData1 {
                 clkdiv_int: DEFAULT_CLKDIV_INT,
@@ -166,6 +175,22 @@ pub fn build_alg_dma(bit_mode: BitModes) -> OneromAlgDmaConfig {
     }
 }
 
+/// Compute the [`CombinedAlgPreference`] for an already-built
+/// [`OneromAlgConfig`], using the `From` impls on the per-family preference
+/// enums.
+///
+/// Useful for logging, post-derivation validation, and future joint
+/// algorithm-selection passes where the combined preference of a candidate
+/// layout needs to be compared against alternatives.
+pub fn combined_alg_preference(alg: &OneromAlgConfig) -> CombinedAlgPreference {
+    (
+        CsAlgPreference::from(&alg.alg_cs),
+        AddrAlgPreference::from(&alg.alg_addr),
+        DataAlgPreference::from(&alg.alg_data),
+        DmaAlgPreference::from(&alg.alg_dma),
+    )
+}
+
 /// Assemble the full `OneromAlgConfig` for a chip set, from already-derived
 /// layouts.
 ///
@@ -198,7 +223,9 @@ pub fn build_alg_config(
     let gpio_override_config = if cs_overrides.is_empty() {
         None
     } else {
-        Some(OneromAlgOverrideConfig { params: cs_overrides })
+        Some(OneromAlgOverrideConfig {
+            params: cs_overrides,
+        })
     };
 
     let gpio_pull_config = build_gpio_pull_config(addr_layout, set_type, num_chips, board);
@@ -219,9 +246,13 @@ pub fn build_alg_config(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::addr_layout::derive_addr_layout;
+    use super::super::alg_preference::{
+        AddrAlgPreference, CombinedAlgPreference, CsAlgPreference, DataAlgPreference,
+        DmaAlgPreference,
+    };
     use super::super::cs_data_layout::derive_cs_data_layout;
+    use super::*;
     use crate::image::CsLogic;
     use onerom_metadata::OneromAlgCsConfig;
 
@@ -233,6 +264,7 @@ mod tests {
             x1_gpio: None,
             x2_gpio: None,
             addr_pin_gpios: alloc::vec![7, 6, 5, 4, 3, 2, 1, 0, 10, 11, 14, 15, 12],
+            excess_addr_pin_gpios: alloc::vec![],
         };
         let cs_data_layout = CsDataLayout {
             gpio_base: 0,
@@ -289,7 +321,7 @@ mod tests {
     /// no `deselect_when_address_all_high`, so `alg_cs` must be `AlgCs0`.
     ///
     /// `derive_cs_data_layout` always receives
-    /// `Some(addr_layout.addr_pin_gpios.as_slice())` - safe for all chip
+    /// `Some(&addr_layout)` - safe for all chip
     /// types since it's ignored when `alg_cs2` is not needed.
     #[test]
     fn fire24a_2364_single_full_config() {
@@ -298,14 +330,19 @@ mod tests {
         let bit_mode = bit_mode_for(ChipType::Chip2364, Board::Fire24A);
         assert_eq!(bit_mode, BitModes::BitMode8);
 
-        let addr_layout = derive_addr_layout(Board::Fire24A, ChipSetType::Single, &[ChipType::Chip2364], bit_mode)
-            .expect("addr layout derivation should succeed");
+        let addr_layout = derive_addr_layout(
+            Board::Fire24A,
+            ChipSetType::Single,
+            &[ChipType::Chip2364],
+            bit_mode,
+        )
+        .expect("addr layout derivation should succeed");
         let cs_data_layout = derive_cs_data_layout(
             Board::Fire24A,
             ChipSetType::Single,
             &[ChipType::Chip2364],
             &cs_config,
-            Some(addr_layout.addr_pin_gpios.as_slice()),
+            Some(&addr_layout),
         )
         .expect("cs/data layout derivation should succeed");
 
@@ -379,15 +416,19 @@ mod tests {
         let bit_mode = bit_mode_for(ChipType::Chip23QL384, Board::Fire28A);
         assert_eq!(bit_mode, BitModes::BitMode8);
 
-        let addr_layout =
-            derive_addr_layout(Board::Fire28A, ChipSetType::Single, &[ChipType::Chip23QL384], bit_mode)
-                .expect("addr layout derivation should succeed");
+        let addr_layout = derive_addr_layout(
+            Board::Fire28A,
+            ChipSetType::Single,
+            &[ChipType::Chip23QL384],
+            bit_mode,
+        )
+        .expect("addr layout derivation should succeed");
         let cs_data_layout = derive_cs_data_layout(
             Board::Fire28A,
             ChipSetType::Single,
             &[ChipType::Chip23QL384],
             &cs_config,
-            Some(addr_layout.addr_pin_gpios.as_slice()),
+            Some(&addr_layout),
         )
         .expect("cs/data layout derivation should succeed");
 
@@ -404,7 +445,10 @@ mod tests {
 
         assert_eq!(
             config.alg_dma,
-            OneromAlgDmaConfig::AlgDma0 { bit_mode: BitModes::BitMode8, continuous: 1 }
+            OneromAlgDmaConfig::AlgDma0 {
+                bit_mode: BitModes::BitMode8,
+                continuous: 1
+            }
         );
 
         match &config.alg_cs {
@@ -426,7 +470,10 @@ mod tests {
                 assert_eq!(*qualifier_inactive_pattern, 0b11);
                 // base_qualifier_pin is board-specific; verified in cs_data_layout tests.
                 // At minimum it must fit within the 32-GPIO PIO window.
-                assert!(*base_qualifier_pin < 32, "base_qualifier_pin {base_qualifier_pin} out of PIO window");
+                assert!(
+                    *base_qualifier_pin < 32,
+                    "base_qualifier_pin {base_qualifier_pin} out of PIO window"
+                );
             }
             other => panic!("expected AlgCs2 for 23QL384, got {other:?}"),
         }
@@ -470,7 +517,10 @@ mod tests {
             num_addr_pins: 18,
             x1_gpio: None,
             x2_gpio: None,
-            addr_pin_gpios: alloc::vec![36, 35, 34, 33, 32, 31, 30, 29, 27, 26, 25, 24, 23, 22, 21, 20, 19, 28],
+            addr_pin_gpios: alloc::vec![
+                36, 35, 34, 33, 32, 31, 30, 29, 27, 26, 25, 24, 23, 22, 21, 20, 19, 28
+            ],
+            excess_addr_pin_gpios: alloc::vec![],
         };
 
         let alg_data = build_alg_data(&cs_data_layout, Board::Fire40A, BitModes::BitMode16, false);
@@ -534,7 +584,10 @@ mod tests {
             num_addr_pins: 18,
             x1_gpio: None,
             x2_gpio: None,
-            addr_pin_gpios: alloc::vec![36, 35, 34, 33, 32, 31, 30, 29, 27, 26, 25, 24, 23, 22, 21, 20, 19, 28],
+            addr_pin_gpios: alloc::vec![
+                36, 35, 34, 33, 32, 31, 30, 29, 27, 26, 25, 24, 23, 22, 21, 20, 19, 28
+            ],
+            excess_addr_pin_gpios: alloc::vec![],
         };
 
         let alg_data = build_alg_data(&cs_data_layout, Board::Fire40A, BitModes::BitMode16, true);
@@ -570,6 +623,51 @@ mod tests {
                 bit_mode: BitModes::BitMode16,
                 continuous: 1,
             }
+        );
+    }
+    /// `combined_alg_preference` maps a built `OneromAlgConfig` back to its
+    /// `CombinedAlgPreference` tuple via the `From` impls. For Fire24A/2364
+    /// (8-bit, contiguous CS, single addr algorithm) the expected result is
+    /// the simplest possible combination.
+    #[test]
+    fn combined_alg_preference_fire24a_2364() {
+        let cs_config = CsConfig::new(Some(CsLogic::ActiveLow), None, None);
+        let bit_mode = bit_mode_for(ChipType::Chip2364, Board::Fire24A);
+        let addr_layout = derive_addr_layout(
+            Board::Fire24A,
+            ChipSetType::Single,
+            &[ChipType::Chip2364],
+            bit_mode,
+        )
+        .expect("addr layout should succeed");
+        let cs_data_layout = derive_cs_data_layout(
+            Board::Fire24A,
+            ChipSetType::Single,
+            &[ChipType::Chip2364],
+            &cs_config,
+            Some(&addr_layout),
+        )
+        .expect("cs layout should succeed");
+        let config = build_alg_config(
+            Board::Fire24A,
+            ChipSetType::Single,
+            &addr_layout,
+            &cs_data_layout,
+            bit_mode,
+            false,
+            1,
+            &cs_config,
+        );
+
+        let pref: CombinedAlgPreference = combined_alg_preference(&config);
+        assert_eq!(
+            pref,
+            (
+                CsAlgPreference::AlgCs0,
+                AddrAlgPreference::AlgAddr0,
+                DataAlgPreference::AlgData0,
+                DmaAlgPreference::AlgDma0,
+            )
         );
     }
 }

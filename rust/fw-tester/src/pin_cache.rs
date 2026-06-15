@@ -12,7 +12,8 @@ use log::{debug, error, info, trace, warn};
 
 use onerom_config::chip::{ChipType, ControlLineType};
 use onerom_config::hw::Board;
-use onerom_gen::{ChipConfig, CsLogic};
+use onerom_gen::{ChipConfig, CsLogic, MAX_IMAGE_SIZE};
+
 
 // ── Public types ──────────────────────────────────────────────────────────────
 
@@ -50,6 +51,11 @@ pub struct PinCache {
     ///
     /// `CsLogic::Ignore` lines are excluded (they are permanently tied active
     /// on the board and the tester does not drive them).
+    ///
+    /// For oversized ROMs (e.g. 27C080 at 1MB), the top address pin(s) that
+    /// exceed `MAX_IMAGE_SIZE` are also included here as half-select lines,
+    /// driven by `cs1` polarity. The firmware treats these GPIOs as part of
+    /// the CS range (not address range), so the tester must do the same.
     pub control_lines: Vec<ControlLine>,
 
     /// GPIO for the BYTE# pin (27C400/27C200 only; `None` for all others).
@@ -69,7 +75,9 @@ impl PinCache {
         let offset = socket_offset(chip_type, board);
         let pin_map = board.socket_pin_map();
 
-        let addr_gpios = chip_type
+        // Build addr_gpios from all address pins initially; excess pins for
+        // oversized ROMs are trimmed into control_lines below.
+        let mut addr_gpios: Vec<Vec<u8>> = chip_type
             .address_pins()
             .iter()
             .map(|&pin| gpios_for(pin + offset, pin_map, chip_type, "address"))
@@ -128,10 +136,60 @@ impl PinCache {
                 }
             };
 
-            control_lines.push(ControlLine { name: spec.name, gpios, assert_high });
+            control_lines.push(ControlLine {
+                name: spec.name,
+                gpios,
+                assert_high,
+            });
         }
 
-        Self { addr_gpios, data_gpios, control_lines, byte_n_gpio }
+        // Oversized ROMs: chips whose full address space exceeds MAX_IMAGE_SIZE
+        // (e.g. 27C080 at 1MB = 2 × MAX_IMAGE_SIZE) have their top address
+        // line(s) repurposed as half-select CS pins by the gen/firmware. The
+        // gen carves them off into excess_addr_pin_gpios and folds them into
+        // the CS range; the tester must do the same so it drives them at the
+        // right level rather than leaving them at 0 as part of the address.
+        //
+        // num_excess = log2(chip_size / MAX_IMAGE_SIZE): for 27C080 that's
+        // log2(1MB / 512KB) = log2(2) = 1 (just A19).
+        //
+        // The polarity comes from cs1_logic: active_high means the half-select
+        // pin must be HIGH for the chip to respond (cs1=active_high serves the
+        // upper half); active_low means it must be LOW (lower half).
+        if chip_type.size_bytes() > MAX_IMAGE_SIZE {
+            let num_excess =
+                (chip_type.size_bytes() / MAX_IMAGE_SIZE).ilog2() as usize;
+            let assert_high = match chip_config.cs1 {
+                Some(CsLogic::ActiveHigh) => true,
+                Some(CsLogic::ActiveLow) => false,
+                other => panic!(
+                    "Oversized ROM chip {} ({}B > {}B MAX_IMAGE_SIZE) requires \
+                     cs1 active_low or active_high for half-select, got {:?}",
+                    chip_type.name(),
+                    chip_type.size_bytes(),
+                    MAX_IMAGE_SIZE,
+                    other,
+                ),
+            };
+            // Drain the top num_excess entries from addr_gpios — these are the
+            // highest address lines (e.g. A19 for 27C080), which the firmware
+            // treats as CS pins, not address pins.
+            let split = addr_gpios.len().saturating_sub(num_excess);
+            for gpios in addr_gpios.drain(split..) {
+                control_lines.push(ControlLine {
+                    name: "cs1",
+                    gpios,
+                    assert_high,
+                });
+            }
+        }
+
+        Self {
+            addr_gpios,
+            data_gpios,
+            control_lines,
+            byte_n_gpio,
+        }
     }
 }
 
@@ -156,12 +214,7 @@ fn socket_offset(chip_type: ChipType, board: Board) -> u8 {
 /// # Panics
 /// Panics if the pin is absent — indicates a chip/board mismatch or an
 /// incomplete board definition.
-fn gpios_for(
-    socket_pin: u8,
-    map: &[(u8, &[u8])],
-    chip_type: ChipType,
-    role: &str,
-) -> Vec<u8> {
+fn gpios_for(socket_pin: u8, map: &[(u8, &[u8])], chip_type: ChipType, role: &str) -> Vec<u8> {
     map.iter()
         .find(|(p, _)| *p == socket_pin)
         .map(|(_, gpios)| gpios.to_vec())

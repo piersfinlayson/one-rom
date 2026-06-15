@@ -26,11 +26,7 @@ use super::addr_layout::AddrLayout;
 /// Encode one pull entry per `OneromAlgPullConfig`'s byte format: MSB=1 ->
 /// pull up, MSB=0 -> pull down, low bits = GPIO number.
 fn encode_pull(gpio: u8, pull_up: bool) -> u8 {
-    if pull_up {
-        0x80 | gpio
-    } else {
-        gpio
-    }
+    if pull_up { 0x80 | gpio } else { gpio }
 }
 
 /// Build the GPIO pull configuration for a chip set, if any is needed.
@@ -90,6 +86,7 @@ mod tests {
             x1_gpio: Some(x1),
             x2_gpio: Some(x2),
             addr_pin_gpios: alloc::vec![7, 6, 5, 4, 3, 2, 1, 0, 10, 11, 14, 15, 12],
+            excess_addr_pin_gpios: alloc::vec![],
         }
     }
 
@@ -127,6 +124,7 @@ mod tests {
             x1_gpio: None,
             x2_gpio: None,
             addr_pin_gpios: alloc::vec![7, 6, 5, 4, 3, 2, 1, 0, 10, 11, 14, 15, 12],
+            excess_addr_pin_gpios: alloc::vec![],
         };
 
         let pulls = build_gpio_pull_config(&layout, ChipSetType::Single, 1, Board::Fire24A);

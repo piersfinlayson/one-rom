@@ -25,16 +25,21 @@ use super::cs_data_layout::{CsDataLayout, SelectRole};
 
 /// The `CsLogic` a select line is configured as, for override comparison.
 ///
-/// - `Cs1`/`X1`/`X2` all read `cs_config.cs1_logic()` - for Multi,
-///   `multi_cs_logic()` validates all chips share the same `cs1_logic()`,
-///   so chip0's value applies to X1 (chip1) and X2 (chip2) too.
+/// - `Cs1`/`X1`/`X2`/`HalfSelect` all read `cs_config.cs1_logic()`.
+///   For Multi, `multi_cs_logic()` validates all chips share the same
+///   `cs1_logic()`, so chip0's value applies to X1/X2 too. For
+///   `HalfSelect`, `derive_cs_data_layout` pre-validates that `cs1_logic`
+///   is `Some(ActiveLow|ActiveHigh)` before any `HalfSelect` line can
+///   appear, so the `unwrap` is safe.
 /// - `Cs2`/`Cs3` read the corresponding logic; `select_phys_pins` only
 ///   includes them when `Some(ActiveLow|ActiveHigh)`, so `unwrap_or` here
 ///   is just a defensive fallback, not expected to be hit.
-/// - `Ce` (27xx-style fixed chip-enable) is always active-low.
+/// - `Ce`/`Oe` (27xx-style fixed lines) are always active-low.
 fn cs_logic_for_role(role: SelectRole, cs_config: &CsConfig) -> CsLogic {
     match role {
-        SelectRole::Cs1 | SelectRole::X1 | SelectRole::X2 => cs_config.cs1_logic().unwrap(),
+        SelectRole::Cs1 | SelectRole::X1 | SelectRole::X2 | SelectRole::HalfSelect => {
+            cs_config.cs1_logic().unwrap()
+        }
         SelectRole::Cs2 => cs_config.cs2_logic().unwrap_or(CsLogic::ActiveLow),
         SelectRole::Cs3 => cs_config.cs3_logic().unwrap_or(CsLogic::ActiveLow),
         SelectRole::Ce => CsLogic::ActiveLow,
@@ -58,7 +63,16 @@ fn encode_override(gpio: u8, ov: GpioOverride) -> u8 {
 /// select line in `layout` conform to the PIO's required CS polarity for
 /// `set_type`. The `cs_ignore_index` gap (if any) isn't in
 /// `layout.select_lines`, so is untouched.
-pub fn build_cs_overrides(layout: &CsDataLayout, set_type: ChipSetType, cs_config: &CsConfig) -> Vec<u8> {
+///
+/// `HalfSelect` lines (excess address pins acting as half-selects for
+/// oversized ROMs, e.g. 27C080's A19) are treated identically to `Cs1`:
+/// their polarity is `cs1_logic`, and an override is emitted if that
+/// doesn't match the required convention for this set type.
+pub fn build_cs_overrides(
+    layout: &CsDataLayout,
+    set_type: ChipSetType,
+    cs_config: &CsConfig,
+) -> Vec<u8> {
     let required = required_cs_logic(set_type);
 
     layout
@@ -77,8 +91,8 @@ pub fn build_cs_overrides(layout: &CsDataLayout, set_type: ChipSetType, cs_confi
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::cs_data_layout::SelectLine;
+    use super::*;
 
     fn layout_with(select_lines: Vec<SelectLine>) -> CsDataLayout {
         CsDataLayout {
@@ -98,7 +112,10 @@ mod tests {
     /// no override.
     #[test]
     fn single_active_low_no_override() {
-        let layout = layout_with(alloc::vec![SelectLine { role: SelectRole::Cs1, gpio: 13 }]);
+        let layout = layout_with(alloc::vec![SelectLine {
+            role: SelectRole::Cs1,
+            gpio: 13
+        }]);
         let cs_config = CsConfig::new(Some(CsLogic::ActiveLow), None, None);
 
         let overrides = build_cs_overrides(&layout, ChipSetType::Single, &cs_config);
@@ -109,22 +126,36 @@ mod tests {
     /// GpioOverInvert on GPIO13.
     #[test]
     fn single_active_high_inverted() {
-        let layout = layout_with(alloc::vec![SelectLine { role: SelectRole::Cs1, gpio: 13 }]);
+        let layout = layout_with(alloc::vec![SelectLine {
+            role: SelectRole::Cs1,
+            gpio: 13
+        }]);
         let cs_config = CsConfig::new(Some(CsLogic::ActiveHigh), None, None);
 
         let overrides = build_cs_overrides(&layout, ChipSetType::Single, &cs_config);
-        assert_eq!(overrides, alloc::vec![encode_override(13, GpioOverride::GpioOverInvert)]);
+        assert_eq!(
+            overrides,
+            alloc::vec![encode_override(13, GpioOverride::GpioOverInvert)]
+        );
     }
 
     /// Multi set, CS1 configured ActiveLow (required ActiveHigh for Multi)
-    /// -> CS1, X1 and X2 all inverted (multi_cs_logic validates they share
-    /// chip0's cs1_logic).
+    /// -> CS1, X1 and X2 all inverted.
     #[test]
     fn multi_active_low_all_inverted() {
         let layout = layout_with(alloc::vec![
-            SelectLine { role: SelectRole::Cs1, gpio: 13 },
-            SelectLine { role: SelectRole::X1, gpio: 14 },
-            SelectLine { role: SelectRole::X2, gpio: 15 },
+            SelectLine {
+                role: SelectRole::Cs1,
+                gpio: 13
+            },
+            SelectLine {
+                role: SelectRole::X1,
+                gpio: 14
+            },
+            SelectLine {
+                role: SelectRole::X2,
+                gpio: 15
+            },
         ]);
         let cs_config = CsConfig::new(Some(CsLogic::ActiveLow), None, None);
 
@@ -144,12 +175,65 @@ mod tests {
     #[test]
     fn multi_active_high_no_override() {
         let layout = layout_with(alloc::vec![
-            SelectLine { role: SelectRole::Cs1, gpio: 13 },
-            SelectLine { role: SelectRole::X1, gpio: 14 },
+            SelectLine {
+                role: SelectRole::Cs1,
+                gpio: 13
+            },
+            SelectLine {
+                role: SelectRole::X1,
+                gpio: 14
+            },
         ]);
         let cs_config = CsConfig::new(Some(CsLogic::ActiveHigh), None, None);
 
         let overrides = build_cs_overrides(&layout, ChipSetType::Multi, &cs_config);
+        assert!(overrides.is_empty());
+    }
+
+    /// 27C080-shaped layout: CE (fixed active-low) + HalfSelect (A19, cs1
+    /// active-high = serve upper half). For a Single set (required
+    /// active-low), CE needs no override (already active-low) but A19
+    /// does (active-high ≠ active-low).
+    #[test]
+    fn half_select_active_high_inverted_for_single() {
+        let layout = layout_with(alloc::vec![
+            SelectLine {
+                role: SelectRole::Ce,
+                gpio: 13
+            },
+            SelectLine {
+                role: SelectRole::HalfSelect,
+                gpio: 14
+            },
+        ]);
+        let cs_config = CsConfig::new(Some(CsLogic::ActiveHigh), None, None);
+
+        let overrides = build_cs_overrides(&layout, ChipSetType::Single, &cs_config);
+        // CE is always active-low (matches required) -> no override.
+        // HalfSelect is active-high (cs1_logic) != active-low (required) -> override.
+        assert_eq!(
+            overrides,
+            alloc::vec![encode_override(14, GpioOverride::GpioOverInvert)]
+        );
+    }
+
+    /// 27C080-shaped layout: cs1 active-low = serve lower half. CE and A19
+    /// are both effectively active-low -> no overrides needed for Single.
+    #[test]
+    fn half_select_active_low_no_override_for_single() {
+        let layout = layout_with(alloc::vec![
+            SelectLine {
+                role: SelectRole::Ce,
+                gpio: 13
+            },
+            SelectLine {
+                role: SelectRole::HalfSelect,
+                gpio: 14
+            },
+        ]);
+        let cs_config = CsConfig::new(Some(CsLogic::ActiveLow), None, None);
+
+        let overrides = build_cs_overrides(&layout, ChipSetType::Single, &cs_config);
         assert!(overrides.is_empty());
     }
 }

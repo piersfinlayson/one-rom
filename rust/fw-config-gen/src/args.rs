@@ -8,7 +8,7 @@ use clap::Parser;
 #[command(
     name = "pio-test-gen",
     about = "Generate host C metadata for PIO testing",
-    disable_version_flag = true,
+    disable_version_flag = true
 )]
 pub struct Args {
     /// ROM config JSON file path

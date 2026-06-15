@@ -56,9 +56,10 @@ use alloc::vec::Vec;
 use onerom_config::chip::ChipType;
 use onerom_config::hw::Board;
 
-use crate::image::{ChipSetType, CsConfig, CsLogic};
-use super::addr_layout::LayoutError;
+use super::addr_layout::{AddrLayout, LayoutError};
+use super::alg_preference::{CsAlgPreference, cs_alg_preference};
 use super::gpio_window::fits_pio_window;
+use crate::image::{ChipSetType, CsConfig, CsLogic};
 
 /// Which "select" role a GPIO plays in a chip set's CS-detect range.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -74,6 +75,10 @@ pub enum SelectRole {
     X1,
     /// Multi-set extension select 2.
     X2,
+    /// Top address pin(s) acting as a half-select for oversized ROMs
+    /// (e.g. 27C080's A19). Active state determined by `cs1_logic`;
+    /// polarity handled by `cs_overrides` (same path as `Cs1`).
+    HalfSelect,
 }
 
 /// One resolved select line: its role and absolute GPIO.
@@ -153,7 +158,11 @@ fn primary_select_phys_pin(chip_type: ChipType) -> Option<(SelectRole, u8)> {
 /// Single/Banked sets: CE (FixedActiveLow), or CS1 plus any of CS2/CS3
 /// that exist and are configured `ActiveLow`/`ActiveHigh` (not
 /// `Ignore`/unset).
-fn select_phys_pins(board: Board, chip_type: ChipType, cs_config: &CsConfig) -> Result<Vec<(SelectRole, u8)>, LayoutError> {
+fn select_phys_pins(
+    board: Board,
+    chip_type: ChipType,
+    cs_config: &CsConfig,
+) -> Result<Vec<(SelectRole, u8)>, LayoutError> {
     let lines = chip_type.control_lines();
     let mut pins = vec![];
 
@@ -164,13 +173,27 @@ fn select_phys_pins(board: Board, chip_type: ChipType, cs_config: &CsConfig) -> 
         pins.push((SelectRole::Oe, oe.pin));
     }
 
-    let active = |l: Option<CsLogic>| matches!(l, Some(CsLogic::ActiveLow) | Some(CsLogic::ActiveHigh));
+    let active =
+        |l: Option<CsLogic>| matches!(l, Some(CsLogic::ActiveLow) | Some(CsLogic::ActiveHigh));
 
-    let cs1_active = lines.iter().find(|l| l.name == "cs1")
-        .is_some_and(|cs1| { if active(cs_config.cs1_logic()) { pins.push((SelectRole::Cs1, cs1.pin)); true } else { false } });
+    let cs1_active = lines.iter().find(|l| l.name == "cs1").is_some_and(|cs1| {
+        if active(cs_config.cs1_logic()) {
+            pins.push((SelectRole::Cs1, cs1.pin));
+            true
+        } else {
+            false
+        }
+    });
 
-    let cs2_active = cs1_active && lines.iter().find(|l| l.name == "cs2")
-        .is_some_and(|cs2| { if active(cs_config.cs2_logic()) { pins.push((SelectRole::Cs2, cs2.pin)); true } else { false } });
+    let cs2_active = cs1_active
+        && lines.iter().find(|l| l.name == "cs2").is_some_and(|cs2| {
+            if active(cs_config.cs2_logic()) {
+                pins.push((SelectRole::Cs2, cs2.pin));
+                true
+            } else {
+                false
+            }
+        });
 
     #[allow(clippy::collapsible_if)]
     if cs2_active {
@@ -188,36 +211,68 @@ fn select_phys_pins(board: Board, chip_type: ChipType, cs_config: &CsConfig) -> 
     Ok(pins)
 }
 
-fn gpios_for_pin(board: Board, chip_type: ChipType, phys_pin: u8) -> Result<&'static [u8], LayoutError> {
+fn gpios_for_pin(
+    board: Board,
+    chip_type: ChipType,
+    phys_pin: u8,
+) -> Result<&'static [u8], LayoutError> {
     let gpios = board.gpios_for_socket_pin(phys_pin);
     if gpios.is_empty() {
-        return Err(LayoutError::UnmappedPin { board, chip_type, phys_pin });
+        return Err(LayoutError::UnmappedPin {
+            board,
+            chip_type,
+            phys_pin,
+        });
     }
     Ok(gpios)
 }
 
 /// Derive the CS/data-range layout for a chip set.
 ///
-/// `addr_pin_gpios` must be `Some` for any chip type where
+/// `addr_layout` must be `Some` for any chip type where
 /// `chip_type.deselect_when_address_all_high()` returns `Some` (e.g.
-/// 23QL384) — pass `Some(addr_layout.addr_pin_gpios.as_slice())` after
-/// calling `derive_addr_layout`. For all other chip types `None` is fine.
-/// Returns `LayoutError::MissingAddrPinGpios` if `addr_pin_gpios` is
-/// `None` when required.
+/// 23QL384), and for any chip whose `addr_layout.excess_addr_pin_gpios` is
+/// non-empty (oversized ROM using half-select). Pass `Some(&addr_layout)`
+/// after calling `derive_addr_layout`; `None` is fine for chips that need
+/// neither. Returns `LayoutError::MissingAddrPinGpios` or
+/// `LayoutError::RomTooLargeNoCsConfig` as appropriate.
 pub fn derive_cs_data_layout(
     board: Board,
     set_type: ChipSetType,
     chip_types: &[ChipType],
     cs_config: &CsConfig,
-    addr_pin_gpios: Option<&[u8]>,
+    addr_layout: Option<&AddrLayout>,
 ) -> Result<CsDataLayout, LayoutError> {
     let chip0 = chip_types[0];
+
+    // Unpack addr_layout into its two slices used below.
+    let addr_pin_gpios: Option<&[u8]> = addr_layout.map(|a| a.addr_pin_gpios.as_slice());
+    let excess_addr_pin_gpios: &[u8] = addr_layout
+        .map(|a| a.excess_addr_pin_gpios.as_slice())
+        .unwrap_or(&[]);
 
     // Pre-check: ALG_CS_2 chips require addr_pin_gpios to resolve
     // qualifier GPIOs, which come from the already-resolved addr_layout.
     let qual_indices = chip0.deselect_when_address_all_high();
     if qual_indices.is_some() && addr_pin_gpios.is_none() {
-        return Err(LayoutError::MissingAddrPinGpios { board, chip_type: chip0 });
+        return Err(LayoutError::MissingAddrPinGpios {
+            board,
+            chip_type: chip0,
+        });
+    }
+
+    // Pre-check: oversized ROMs (excess_addr_pin_gpios non-empty) require
+    // cs1 to be active_low or active_high to act as a half-select.
+    if !excess_addr_pin_gpios.is_empty() {
+        match cs_config.cs1_logic() {
+            Some(CsLogic::ActiveLow) | Some(CsLogic::ActiveHigh) => {}
+            _ => {
+                return Err(LayoutError::RomTooLargeNoCsConfig {
+                    board,
+                    chip_type: chip0,
+                });
+            }
+        }
     }
 
     // Resolved qualifier GPIOs (fixed across all combos - they're
@@ -246,7 +301,10 @@ pub fn derive_cs_data_layout(
         }
         ChipSetType::Multi => {
             let (role, primary_pin) =
-                primary_select_phys_pin(chip0).ok_or(LayoutError::NoSelectLine { board, chip_type: chip0 })?;
+                primary_select_phys_pin(chip0).ok_or(LayoutError::NoSelectLine {
+                    board,
+                    chip_type: chip0,
+                })?;
             select_roles.push(role);
             select_candidates.push(gpios_for_pin(board, chip0, primary_pin)?);
 
@@ -281,7 +339,7 @@ pub fn derive_cs_data_layout(
         .collect();
     let num_combos: u32 = 1 << two_option_slots.len();
 
-    let mut best: Option<(CsDataLayout, u32)> = None;
+    let mut best: Option<(CsDataLayout, (CsAlgPreference, u32))> = None;
     let mut last_noncontig_select: Option<Vec<u8>> = None;
 
     for combo in 0..num_combos {
@@ -300,7 +358,14 @@ pub fn derive_cs_data_layout(
 
         let data_gpios: BTreeSet<u8> = resolved[..select_start].iter().copied().collect();
         let select_resolved = &resolved[select_start..];
-        let select_gpios: BTreeSet<u8> = select_resolved.iter().copied().collect();
+        let mut select_gpios: BTreeSet<u8> = select_resolved.iter().copied().collect();
+        // Excess address pin GPIOs (already resolved by derive_addr_layout,
+        // fixed across all combos) are folded in as additional CS select
+        // pins. The contiguity/gap check and algorithm selection naturally
+        // account for them alongside CE/OE.
+        for &gpio in excess_addr_pin_gpios {
+            select_gpios.insert(gpio);
+        }
 
         let data_min = *data_gpios.iter().next().unwrap();
         let data_max = *data_gpios.iter().last().unwrap();
@@ -315,7 +380,9 @@ pub fn derive_cs_data_layout(
 
         let cs_ignore_index = if sel_span == sel_len {
             None
-        } else if sel_span == sel_len + 1 && matches!(set_type, ChipSetType::Single | ChipSetType::Banked) {
+        } else if sel_span == sel_len + 1
+            && matches!(set_type, ChipSetType::Single | ChipSetType::Banked)
+        {
             let gap = (sel_min..=sel_max)
                 .position(|g| !select_gpios.contains(&g))
                 .expect("span - len == 1 implies exactly one gap") as u8;
@@ -358,17 +425,30 @@ pub fn derive_cs_data_layout(
             // span contributes a 1 bit.
             let qualifier_inactive_pattern =
                 qg.iter().fold(0u8, |acc, &g| acc | (1 << (g - q_min)));
-            AlgCs2Config { base_qualifier_pin, num_qualifier_pins, qualifier_inactive_pattern }
+            AlgCs2Config {
+                base_qualifier_pin,
+                num_qualifier_pins,
+                qualifier_inactive_pattern,
+            }
         });
 
-        let score = (all_max - all_min + 1) as u32;
+        let alg_pref = cs_alg_preference(cs_ignore_index, alg_cs2.as_ref());
+        let score = (alg_pref, (all_max - all_min + 1) as u32);
 
         if best.as_ref().is_none_or(|(_, s)| score < *s) {
-            let select_lines = select_roles
+            let mut select_lines: Vec<SelectLine> = select_roles
                 .iter()
                 .zip(select_resolved.iter())
                 .map(|(&role, &gpio)| SelectLine { role, gpio })
                 .collect();
+            // Excess address pins are half-select lines. Polarity for
+            // each is determined by cs1_logic in cs_overrides.
+            for &gpio in excess_addr_pin_gpios {
+                select_lines.push(SelectLine {
+                    role: SelectRole::HalfSelect,
+                    gpio,
+                });
+            }
 
             best = Some((
                 CsDataLayout {
@@ -389,7 +469,11 @@ pub fn derive_cs_data_layout(
 
     best.map(|(layout, _)| layout).ok_or({
         if let Some(gpios) = last_noncontig_select {
-            LayoutError::NonContiguousSelect { board, chip_type: chip0, gpios }
+            LayoutError::NonContiguousSelect {
+                board,
+                chip_type: chip0,
+                gpios,
+            }
         } else {
             LayoutError::NoValidLayout { board }
         }
@@ -405,9 +489,14 @@ mod tests {
     fn fire24a_2364_single() {
         let cs_config = CsConfig::new(Some(CsLogic::ActiveLow), None, None);
 
-        let layout =
-            derive_cs_data_layout(Board::Fire24A, ChipSetType::Single, &[ChipType::Chip2364], &cs_config, None)
-                .expect("layout derivation should succeed");
+        let layout = derive_cs_data_layout(
+            Board::Fire24A,
+            ChipSetType::Single,
+            &[ChipType::Chip2364],
+            &cs_config,
+            None,
+        )
+        .expect("layout derivation should succeed");
 
         assert_eq!(layout.gpio_base, 0);
         assert_eq!(layout.base_data_pin, 16);
@@ -416,7 +505,13 @@ mod tests {
         assert_eq!(layout.num_cs_pins, 1);
         assert_eq!(layout.cs_ignore_index, None);
         assert_eq!(layout.alg_cs2, None);
-        assert_eq!(layout.select_lines, vec![SelectLine { role: SelectRole::Cs1, gpio: 13 }]);
+        assert_eq!(
+            layout.select_lines,
+            vec![SelectLine {
+                role: SelectRole::Cs1,
+                gpio: 13
+            }]
+        );
 
         // data_pin_gpios: 2364's 8 data lines (physical pins
         // 9,10,11,13,14,15,16,17) resolve via Fire24A's socket_pin_map to
@@ -432,16 +527,27 @@ mod tests {
             Some(CsLogic::Ignore),
         );
 
-        let layout =
-            derive_cs_data_layout(Board::Fire24A, ChipSetType::Single, &[ChipType::Chip2316], &cs_config, None)
-                .expect("layout derivation should succeed");
+        let layout = derive_cs_data_layout(
+            Board::Fire24A,
+            ChipSetType::Single,
+            &[ChipType::Chip2316],
+            &cs_config,
+            None,
+        )
+        .expect("layout derivation should succeed");
 
         assert_eq!(layout.gpio_base, 0);
         assert_eq!(layout.base_cs_pin, 13);
         assert_eq!(layout.num_cs_pins, 1);
         assert_eq!(layout.cs_ignore_index, None);
         assert_eq!(layout.alg_cs2, None);
-        assert_eq!(layout.select_lines, vec![SelectLine { role: SelectRole::Cs1, gpio: 13 }]);
+        assert_eq!(
+            layout.select_lines,
+            vec![SelectLine {
+                role: SelectRole::Cs1,
+                gpio: 13
+            }]
+        );
     }
 
     /// Fire24A, single 2316, CS2 active (CS3 ignored).
@@ -456,9 +562,14 @@ mod tests {
             Some(CsLogic::Ignore),
         );
 
-        let layout =
-            derive_cs_data_layout(Board::Fire24A, ChipSetType::Single, &[ChipType::Chip2316], &cs_config, None)
-                .expect("layout derivation should succeed (AlgCs1)");
+        let layout = derive_cs_data_layout(
+            Board::Fire24A,
+            ChipSetType::Single,
+            &[ChipType::Chip2316],
+            &cs_config,
+            None,
+        )
+        .expect("layout derivation should succeed (AlgCs1)");
 
         assert_eq!(layout.gpio_base, 0);
         assert_eq!(layout.base_cs_pin, 13);
@@ -468,8 +579,14 @@ mod tests {
         assert_eq!(
             layout.select_lines,
             vec![
-                SelectLine { role: SelectRole::Cs1, gpio: 13 },
-                SelectLine { role: SelectRole::Cs2, gpio: 15 },
+                SelectLine {
+                    role: SelectRole::Cs1,
+                    gpio: 13
+                },
+                SelectLine {
+                    role: SelectRole::Cs2,
+                    gpio: 15
+                },
             ]
         );
     }
@@ -487,7 +604,10 @@ mod tests {
             None,
         );
 
-        assert!(matches!(result, Err(LayoutError::MissingAddrPinGpios { .. })));
+        assert!(matches!(
+            result,
+            Err(LayoutError::MissingAddrPinGpios { .. })
+        ));
     }
 
     /// 23QL384 with resolved addr_pin_gpios: verify alg_cs2 is populated
@@ -516,7 +636,7 @@ mod tests {
             ChipSetType::Single,
             &[ChipType::Chip23QL384],
             &cs_config,
-            Some(addr_layout.addr_pin_gpios.as_slice()),
+            Some(&addr_layout),
         )
         .expect("layout derivation should succeed");
 

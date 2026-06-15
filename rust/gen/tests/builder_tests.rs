@@ -153,8 +153,8 @@ mod tests {
     use onerom_config::fw::{FirmwareProperties, FirmwareVersion, ServeAlg};
     use onerom_config::hw::Board;
     use onerom_config::mcu::{Family as McuFamily, Variant as McuVariant};
-    use onerom_gen::{Builder, FileData};
     use onerom_gen::image::CsLogic;
+    use onerom_gen::{Builder, FileData};
 
     const FW_VER: FirmwareVersion = FirmwareVersion::new(0, 6, 0, 0);
     const MCU_FAM: McuFamily = McuFamily::Stm32f4;

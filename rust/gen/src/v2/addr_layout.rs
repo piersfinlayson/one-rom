@@ -43,6 +43,18 @@
 //!   `num_addr_lines == chip0.num_addr_lines() - 1`, starting from
 //!   `address_pins()[1]`.
 //!
+//! ## Oversized ROMs
+//!
+//! For chips whose full address space exceeds `MAX_IMAGE_SIZE` (e.g.
+//! 27C080 at 1MB), only the lower `max_useful_addr_lines` address lines
+//! fit in the ROM table. The top `num_excess` address lines are carved off
+//! into `AddrLayout::excess_addr_pin_gpios`: they don't contribute to
+//! `num_addr_pins` or the address-PIO range, but their resolved GPIOs are
+//! passed to `derive_cs_data_layout` to act as half-select CS pins, in
+//! conjunction with the chip's CE/OE lines. The `cs1` configuration
+//! (active_low/active_high) then determines which half of the ROM is
+//! served. See `cs_data_layout` for the CS algorithm selection.
+//!
 //! `addr_pin_gpios` records, for each of chip0's address lines actually
 //! included (in `chip0.address_pins()` order, from the starting index
 //! above), which GPIO (within `[gpio_base, gpio_base + num_addr_pins)`)
@@ -63,8 +75,9 @@ use onerom_config::hw::Board;
 use onerom_metadata::BitModes;
 
 use crate::image::ChipSetType;
-use crate::Error;
+use crate::{Error, MAX_IMAGE_SIZE};
 
+use super::alg_preference::AddrAlgPreference;
 use super::gpio_window::fits_pio_window;
 
 /// Minimum width (in GPIOs/bits) of the address-read range, i.e. the
@@ -93,7 +106,16 @@ pub struct AddrLayout {
     /// module docs re: `BitMode16` excluding `address_pins()[0]`), in
     /// `chip0.address_pins()` order. Length == `chip0.num_addr_lines()`
     /// for `BitMode8`, or `chip0.num_addr_lines() - 1` for `BitMode16`.
+    /// Empty for oversized ROMs (all lines are excess), though in practice
+    /// at least `max_useful_addr_lines` will be in-range.
     pub addr_pin_gpios: Vec<u8>,
+
+    /// Resolved GPIOs for the top address lines that were carved out
+    /// because they would push the ROM table beyond `MAX_IMAGE_SIZE`.
+    /// Empty for most chips; non-empty for oversized ROMs (e.g. 27C080 at
+    /// 1MB has one excess line: A19). Passed to `derive_cs_data_layout`
+    /// to act as half-select CS pins.
+    pub excess_addr_pin_gpios: Vec<u8>,
 }
 
 /// Layout-derivation failure: this chip type (and configuration) isn't
@@ -105,7 +127,11 @@ pub struct AddrLayout {
 pub enum LayoutError {
     /// A physical pin required by this chip type has no GPIO mapping on
     /// this board (`socket_pin_map`/`x_pin_map` returned empty).
-    UnmappedPin { board: Board, chip_type: ChipType, phys_pin: u8 },
+    UnmappedPin {
+        board: Board,
+        chip_type: ChipType,
+        phys_pin: u8,
+    },
 
     /// Multi/Banked set requires X1 and/or X2, but the board doesn't
     /// define them. X1 is required for any Multi/Banked set; X2 is only
@@ -123,26 +149,38 @@ pub enum LayoutError {
 
     /// The select-line GPIOs (CS1[/CS2/CS3] or CS1+X1[+X2]) aren't
     /// contiguous on this board, under any dual-bond combination. The PIO
-    /// CS-detect algorithm requires a contiguous range, so this chip type
-    /// (with this CS configuration) isn't currently servable on this
-    /// board.
-    NonContiguousSelect { board: Board, chip_type: ChipType, gpios: Vec<u8> },
+    /// CS-detect algorithm requires a contiguous range (or at most one
+    /// gap), so this chip type (with this CS configuration) isn't
+    /// currently servable on this board.
+    NonContiguousSelect {
+        board: Board,
+        chip_type: ChipType,
+        gpios: Vec<u8>,
+    },
 
-    /// `derive_cs_data_layout` requires `addr_pin_gpios` (resolved from
+    /// `derive_cs_data_layout` requires `addr_layout` (from
     /// `derive_addr_layout`) for chip types where
     /// `deselect_when_address_all_high()` returns `Some` (e.g. 23QL384),
     /// but `None` was passed. Address layout must be derived first.
     MissingAddrPinGpios { board: Board, chip_type: ChipType },
+
+    /// The chip's ROM size exceeds `MAX_IMAGE_SIZE` and the excess top
+    /// address pin(s) require `cs1` to be configured (active_low or
+    /// active_high) to act as a half-select, but no such configuration was
+    /// provided or `cs1` was set to `Ignore`.
+    RomTooLargeNoCsConfig { board: Board, chip_type: ChipType },
 }
 
 impl From<LayoutError> for Error {
     fn from(err: LayoutError) -> Self {
         match err {
-            LayoutError::UnmappedPin { board, chip_type, .. }
-            | LayoutError::NoSelectLine { board, chip_type }
-            | LayoutError::NonContiguousSelect { board, chip_type, .. } => {
-                Error::UnsupportedBoardChipType { board, chip_type }
+            LayoutError::UnmappedPin {
+                board, chip_type, ..
             }
+            | LayoutError::NoSelectLine { board, chip_type }
+            | LayoutError::NonContiguousSelect {
+                board, chip_type, ..
+            } => Error::UnsupportedBoardChipType { board, chip_type },
             LayoutError::MissingXPin { board, x_pin } => Error::UnsupportedBoardConfig {
                 board,
                 reason: alloc::format!(
@@ -155,8 +193,14 @@ impl From<LayoutError> for Error {
             },
             LayoutError::MissingAddrPinGpios { board, chip_type } => Error::InvalidConfig {
                 error: alloc::format!(
-                    "derive_cs_data_layout requires addr_pin_gpios for {chip_type:?} on \
+                    "derive_cs_data_layout requires addr_layout for {chip_type:?} on \
                      {board:?} (ALG_CS_2 chip), but none was provided"
+                ),
+            },
+            LayoutError::RomTooLargeNoCsConfig { board, chip_type } => Error::InvalidConfig {
+                error: alloc::format!(
+                    "{chip_type:?} on {board:?}: ROM exceeds MAX_IMAGE_SIZE; cs1 \
+                     (active_low/active_high) is required to select a half but was not configured"
                 ),
             },
         }
@@ -173,7 +217,11 @@ fn addr_line_candidates(
     let phys_pin = chip_type.address_pins()[n];
     let gpios = board.gpios_for_socket_pin(phys_pin);
     if gpios.is_empty() {
-        return Err(LayoutError::UnmappedPin { board, chip_type, phys_pin });
+        return Err(LayoutError::UnmappedPin {
+            board,
+            chip_type,
+            phys_pin,
+        });
     }
     Ok(gpios)
 }
@@ -189,6 +237,14 @@ fn addr_line_candidates(
 /// `BitMode16`, `chip0.address_pins()[0]` ("A-1") is excluded from the
 /// address-PIO range.
 ///
+/// For chips whose full address space exceeds `MAX_IMAGE_SIZE` (e.g.
+/// 27C080 at 1MB), the top address lines that would overflow are resolved
+/// normally (same combo iteration) but stored in
+/// `AddrLayout::excess_addr_pin_gpios` rather than `addr_pin_gpios`, and
+/// do not contribute to `num_addr_pins`. The caller is responsible for
+/// passing `addr_layout` to `derive_cs_data_layout` so those excess GPIOs
+/// can be folded into the CS range as half-select pins.
+///
 /// QUESTION/TODO: for Multi sets with heterogeneous chip types, chip[0]'s
 /// address-line layout is assumed representative of the whole set. Revisit
 /// if that's not actually true in practice.
@@ -203,33 +259,46 @@ pub fn derive_addr_layout(
     // For BitMode16 (AlgData1), address_pins()[0] is "A-1" - handled
     // separately by the data-write PIO (a_minus_1_pin, derived from
     // cs_data_layout), not part of the address-PIO range. Skip it here.
-    //
-    // TODO: for BitMode8 (force_8_bit, not yet implemented),
-    // address_pins()[0] is included as a normal address line via AlgData0
-    // (the branch below). On boards where A-1's GPIO sits just outside
-    // the natural span of the *other* address lines (e.g. fire-40-b,
-    // where A17=GPIO36 and A-1=GPIO37 are adjacent but A-1 isn't itself a
-    // "real" address line for a smaller chip like 27C200), including it
-    // can drag an extra "padding pool" bit into the range, doubling the
-    // ROM table beyond what's needed. A future BitMode8 variant that also
-    // handles A-1 via the data-write PIO (like AlgData1 does) could avoid
-    // this - revisit if/when force_8_bit is implemented.
-    let addr_line_start = if matches!(bit_mode, BitModes::BitMode16) { 1 } else { 0 };
+    let addr_line_start = if matches!(bit_mode, BitModes::BitMode16) {
+        1
+    } else {
+        0
+    };
     let num_addr_lines = chip0.num_addr_lines() - addr_line_start;
 
+    // Maximum address lines that fit in a single ROM table slot.
+    // bytes_per_word: 1 for BitMode8, 2 for BitMode16.
+    // max_useful_addr_lines = floor(log2(MAX_IMAGE_SIZE / bytes_per_word)).
+    // e.g. BitMode8: log2(512KB / 1) = 19; BitMode16: log2(512KB / 2) = 18.
+    let bytes_per_word: usize = if matches!(bit_mode, BitModes::BitMode16) {
+        2
+    } else {
+        1
+    };
+    let max_useful_addr_lines = (MAX_IMAGE_SIZE / bytes_per_word).ilog2() as usize;
+
+    // Split address lines into in-range (contribute to addr PIO span) and
+    // excess (carved off the top; become CS half-select pins). For most
+    // chips num_excess == 0. For e.g. 27C080 (20 address lines, BitMode8):
+    // num_in_range=19, num_excess=1 (A19 is excess).
+    let num_in_range = num_addr_lines.min(max_useful_addr_lines);
+    let num_excess = num_addr_lines - num_in_range;
+
     // --- Step 1: gather per-bit candidate GPIO sets -----------------------
+    //
+    // Layout of candidates (parallel to resolved_vec in the loop below):
+    //   [0..num_in_range)       in-range address lines  → addr_pin_gpios
+    //   [num_in_range..num_addr_lines) excess address lines → excess_addr_pin_gpios
+    //   [num_addr_lines..)      X1 / X2 (Multi/Banked)  → x1_gpio / x2_gpio
     let mut candidates: Vec<&'static [u8]> = Vec::with_capacity(num_addr_lines + 2);
     for n in 0..num_addr_lines {
         candidates.push(addr_line_candidates(board, chip0, addr_line_start + n)?);
     }
 
-    // Track which candidate slots (if any) are X1/X2, so we can read back
-    // their resolved GPIO for the winning combo below.
     let mut x1_idx: Option<usize> = None;
     let mut x2_idx: Option<usize> = None;
 
     if matches!(set_type, ChipSetType::Multi | ChipSetType::Banked) {
-        // X1: required for any Multi/Banked set (always >= 2 chips).
         let x1 = board.gpios_for_x_pin(1);
         if x1.is_empty() {
             return Err(LayoutError::MissingXPin { board, x_pin: 1 });
@@ -237,11 +306,6 @@ pub fn derive_addr_layout(
         x1_idx = Some(candidates.len());
         candidates.push(x1);
 
-        // X2: only needed (and only included in the address range) for
-        // sets with >= 3 chips - 2-chip sets select between chips[0]/[1]
-        // with X1 alone, and including an unused X2 here would just waste
-        // a table-index bit (and require an X2 mapping the board may not
-        // have).
         if chip_types.len() >= 3 {
             let x2 = board.gpios_for_x_pin(2);
             if x2.is_empty() {
@@ -253,10 +317,6 @@ pub fn derive_addr_layout(
     }
 
     // --- Step 2/3: enumerate dual-bond combinations, score each ----------
-    //
-    // Each candidate slot has 1 or 2 options. Enumerate the cartesian
-    // product over slots with 2 options (2^k combinations - expect k to be
-    // 0-2 in practice).
     let two_option_slots: Vec<usize> = candidates
         .iter()
         .enumerate()
@@ -266,13 +326,9 @@ pub fn derive_addr_layout(
 
     let num_combos: u32 = 1 << two_option_slots.len();
 
-    let mut best: Option<(AddrLayout, u32)> = None;
+    let mut best: Option<(AddrLayout, (AddrAlgPreference, u32))> = None;
 
     for combo in 0..num_combos {
-        // Per-slot resolution for this combo, parallel to `candidates`.
-        // Kept (not just collapsed into the BTreeSet below) so X1/X2 and
-        // each address line's chosen GPIO can be read back for the
-        // winning combo.
         let resolved_vec: Vec<u8> = candidates
             .iter()
             .enumerate()
@@ -286,35 +342,49 @@ pub fn derive_addr_layout(
             })
             .collect();
 
-        let resolved: BTreeSet<u8> = resolved_vec.iter().copied().collect();
+        // Span is computed from in-range address lines + X1/X2 only.
+        // Excess address lines are excluded: they don't drive the addr PIO
+        // and must not inflate num_addr_pins.
+        let mut span_gpios: BTreeSet<u8> = resolved_vec[..num_in_range].iter().copied().collect();
+        for extra_idx in [x1_idx, x2_idx].into_iter().flatten() {
+            span_gpios.insert(resolved_vec[extra_idx]);
+        }
 
-        // resolved is non-empty (num_addr_lines >= 1 always).
-        let min = *resolved.iter().next().unwrap();
-        let max = *resolved.iter().last().unwrap();
+        // span_gpios is non-empty (num_in_range >= 1 always, since
+        // MAX_IMAGE_SIZE >= MIN_ADDR_PINS and num_addr_lines >= 1).
+        let min = *span_gpios.iter().next().unwrap();
+        let max = *span_gpios.iter().last().unwrap();
         let span = max - min + 1;
 
         let num_addr_pins = span.max(MIN_ADDR_PINS);
         let gpio_base = min;
 
-        // The address PIO can only access a single 32-GPIO window
-        // ([0,32) or [16,48)); reject combos whose range doesn't fit in
-        // either, even if they'd otherwise meet MIN_ADDR_PINS/be
-        // contiguous-enough.
         if !fits_pio_window(gpio_base, num_addr_pins) {
             continue;
         }
 
-        // Lower num_addr_pins wins; gpio_base as a deterministic tiebreak.
-        let score = (num_addr_pins as u32) * 1000 + gpio_base as u32;
+        // Currently only AlgAddr0 exists, so the algorithm preference is
+        // always AlgAddr0. The u32 secondary score prefers smaller
+        // num_addr_pins (smaller table) with gpio_base as a deterministic
+        // tiebreaker.
+        let score = (
+            AddrAlgPreference::AlgAddr0,
+            (num_addr_pins as u32) * 1000 + gpio_base as u32,
+        );
 
-        if best.as_ref().is_none_or(|(_, best_score)| score < *best_score) {
+        if best.as_ref().is_none_or(|(_, s)| score < *s) {
             best = Some((
                 AddrLayout {
                     gpio_base,
                     num_addr_pins,
                     x1_gpio: x1_idx.map(|i| resolved_vec[i]),
                     x2_gpio: x2_idx.map(|i| resolved_vec[i]),
-                    addr_pin_gpios: resolved_vec[..num_addr_lines].to_vec(),
+                    addr_pin_gpios: resolved_vec[..num_in_range].to_vec(),
+                    excess_addr_pin_gpios: if num_excess > 0 {
+                        resolved_vec[num_in_range..num_addr_lines].to_vec()
+                    } else {
+                        Vec::new()
+                    },
                 },
                 score,
             ));
@@ -343,12 +413,16 @@ mod tests {
     ///
     /// Single set, so no X1/X2: x1_gpio/x2_gpio are None. 2364 doesn't
     /// support bit_mode 16, so BitMode8 (address_pins()[0] included).
-    ///
-    /// Depends on Fire24A's `socket_pin_map()` being populated.
+    /// 13 address lines < max_useful_addr_lines (19), so no excess.
     #[test]
     fn fire24a_2364_single() {
-        let layout = derive_addr_layout(Board::Fire24A, ChipSetType::Single, &[ChipType::Chip2364], BitModes::BitMode8)
-            .expect("layout derivation should succeed");
+        let layout = derive_addr_layout(
+            Board::Fire24A,
+            ChipSetType::Single,
+            &[ChipType::Chip2364],
+            BitModes::BitMode8,
+        )
+        .expect("layout derivation should succeed");
 
         assert_eq!(
             layout,
@@ -358,6 +432,7 @@ mod tests {
                 x1_gpio: None,
                 x2_gpio: None,
                 addr_pin_gpios: alloc::vec![7, 6, 5, 4, 3, 2, 1, 0, 10, 11, 14, 15, 12],
+                excess_addr_pin_gpios: alloc::vec![],
             }
         );
     }
@@ -380,10 +455,7 @@ mod tests {
     ///
     /// 2-chip Banked set, so X2 isn't included: x2_gpio=None. 27128
     /// doesn't support bit_mode 16, so BitMode8 (address_pins()[0]
-    /// included).
-    ///
-    /// Depends on Fire28C's `socket_pin_to_gpio`/`x_pin_to_gpio` being
-    /// populated.
+    /// included). 14 address lines < 19, so no excess.
     #[test]
     fn fire28c_27128_banked_2chip() {
         let layout = derive_addr_layout(
@@ -402,6 +474,7 @@ mod tests {
                 x1_gpio: Some(28),
                 x2_gpio: None,
                 addr_pin_gpios: alloc::vec![27, 26, 25, 24, 23, 22, 21, 20, 16, 15, 13, 14, 19, 17],
+                excess_addr_pin_gpios: alloc::vec![],
             }
         );
     }
@@ -420,10 +493,8 @@ mod tests {
     /// span == 18 == MIN_ADDR_PINS-or-more, so num_addr_pins=18 exactly
     /// (no padding), gpio_base=19. [19,37) fits the [16,48) PIO window.
     ///
-    /// Single set (Fire40A has one 27C400 socket), so x1_gpio/x2_gpio are
-    /// None.
-    ///
-    /// Depends on Fire40A's `socket_pin_to_gpio` being populated.
+    /// 18 address lines == max_useful_addr_lines for BitMode16 (log2(512KB/2)=18),
+    /// so no excess.
     #[test]
     fn fire40a_27c400_bitmode16() {
         let layout = derive_addr_layout(
@@ -441,8 +512,36 @@ mod tests {
                 num_addr_pins: 18,
                 x1_gpio: None,
                 x2_gpio: None,
-                addr_pin_gpios: alloc::vec![36, 35, 34, 33, 32, 31, 30, 29, 27, 26, 25, 24, 23, 22, 21, 20, 19, 28],
+                addr_pin_gpios: alloc::vec![
+                    36, 35, 34, 33, 32, 31, 30, 29, 27, 26, 25, 24, 23, 22, 21, 20, 19, 28
+                ],
+                excess_addr_pin_gpios: alloc::vec![],
             }
         );
+    }
+
+    /// 27C080 (1MB, 20 address lines, BitMode8): A19 is excess.
+    /// max_useful_addr_lines = log2(512KB/1) = 19, so num_in_range=19,
+    /// num_excess=1. The layout must have 19 entries in addr_pin_gpios
+    /// and 1 in excess_addr_pin_gpios.
+    ///
+    /// Exact GPIO values depend on the Fire board used for 27C080 and are
+    /// filled in once the board's socket_pin_map is known. The structural
+    /// assertions here (lengths) are board-independent.
+    #[test]
+    #[ignore = "fill in board and expected GPIO values once Fire32A (or equivalent) socket_pin_map is available"]
+    fn fire_27c080_single_excess_a19() {
+        // Placeholder - replace Board::Fire32A and expected values once known.
+        let layout = derive_addr_layout(
+            Board::Fire32A,
+            ChipSetType::Single,
+            &[ChipType::Chip27C080],
+            BitModes::BitMode8,
+        )
+        .expect("layout derivation should succeed");
+
+        assert_eq!(layout.addr_pin_gpios.len(), 19, "19 in-range address lines");
+        assert_eq!(layout.excess_addr_pin_gpios.len(), 1, "1 excess line (A19)");
+        assert_eq!(layout.num_addr_pins, 19); // 2^19 * 1 = 512KB table
     }
 }

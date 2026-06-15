@@ -14,10 +14,10 @@ use onerom_config::fw::FirmwareVersion;
 use onerom_config::hw::Board;
 
 use crate::MetadataWriter;
-use crate::{FireServeMode, FirmwareConfig, ServeAlgParams};
 use crate::image::{ChipSet, ChipSetType};
 use crate::meta::fw_overrides_core;
 use crate::{Error, FIRMWARE_SIZE, METADATA_VERSION, MIN_FIRMWARE_OVERRIDES_VERSION, Result};
+use crate::{FireServeMode, FirmwareConfig, ServeAlgParams};
 
 pub const PAD_METADATA_BYTE: u8 = 0xFF;
 

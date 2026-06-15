@@ -38,9 +38,7 @@ mod timing;
 use report::TestReport;
 
 fn main() {
-    env_logger::Builder::from_env(
-        env_logger::Env::default().default_filter_or("warn")
-    ).init();
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn")).init();
 
     let config_path = std::env::var("CONFIG")
         .expect("CONFIG env var must be set to the firmware config JSON path");
@@ -65,8 +63,8 @@ fn main() {
     let config: Config = serde_json::from_str(&json)
         .unwrap_or_else(|e| panic!("Failed to parse config '{}': {}", config_path, e));
 
-    let board = Board::try_from_str(&board_str)
-        .unwrap_or_else(|| panic!("Unknown board '{}'", board_str));
+    let board =
+        Board::try_from_str(&board_str).unwrap_or_else(|| panic!("Unknown board '{}'", board_str));
 
     // Firmware logging is a global setting that persists across re-boots.
     Emulator::set_logging(log_enabled);

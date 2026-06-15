@@ -254,10 +254,10 @@ pub fn escape_c_string(s: &str) -> alloc::string::String {
     let mut out = alloc::string::String::with_capacity(s.len());
     for c in s.chars() {
         match c {
-            '"'  => out.push_str("\\\""),
+            '"' => out.push_str("\\\""),
             '\\' => out.push_str("\\\\"),
             '\0' => panic!("NUL byte in C string literal (field value: {:?})", s),
-            c    => out.push(c),
+            c => out.push(c),
         }
     }
     out

@@ -682,9 +682,7 @@ fn emit_struct_write_field(
                 ));
             } else {
                 let a = addr_expr(byte_off);
-                out.push_str(&format!(
-                    "{ind}ctx.{method}({a}, self.{name});\n"
-                ));
+                out.push_str(&format!("{ind}ctx.{method}({a}, self.{name});\n"));
             }
         }
 
@@ -692,9 +690,7 @@ fn emit_struct_write_field(
             let (method, sz) = enum_write(f, schema);
             let repr = if sz == 1 { "u8" } else { "u16" };
             let a = addr_expr(byte_off);
-            out.push_str(&format!(
-                "{ind}ctx.{method}({a}, self.{name} as {repr});\n"
-            ));
+            out.push_str(&format!("{ind}ctx.{method}({a}, self.{name} as {repr});\n"));
         }
 
         "type_alias" => {
@@ -705,18 +701,14 @@ fn emit_struct_write_field(
                 .map_or("u16", |a| a.underlying.as_str());
             let (method, _) = scalar_write(underlying);
             let a = addr_expr(byte_off);
-            out.push_str(&format!(
-                "{ind}ctx.{method}({a}, self.{name});\n"
-            ));
+            out.push_str(&format!("{ind}ctx.{method}({a}, self.{name});\n"));
         }
 
         "inline_array" => {
             let elem = f.element.as_deref().unwrap_or("u8");
             if elem == "u8" || elem == "char" {
                 let a = addr_expr(byte_off);
-                out.push_str(&format!(
-                    "{ind}ctx.write_bytes({a}, &self.{name});\n"
-                ));
+                out.push_str(&format!("{ind}ctx.write_bytes({a}, &self.{name});\n"));
             } else {
                 out.push_str(&format!(
                     "{ind}compile_error!(\"non-u8 inline_array write not implemented for `{name}`\");\n"
@@ -863,9 +855,7 @@ fn emit_struct_write_field(
 
         "opaque_ptr" | "fn_ptr" => {
             let a = addr_expr(byte_off);
-            out.push_str(&format!(
-                "{ind}ctx.write_u32_le({a}, self.{name});\n"
-            ));
+            out.push_str(&format!("{ind}ctx.write_u32_le({a}, self.{name});\n"));
         }
 
         "padding" => {
@@ -1037,9 +1027,7 @@ fn emit_fam_field_write(out: &mut String, f: &Field, off: usize, schema: &Schema
             let ty = f.type_.as_deref().unwrap_or("u8");
             let (method, _) = scalar_write(ty);
             let a = addr_expr(off);
-            out.push_str(&format!(
-                "                ctx.{method}({a}, *{name});\n"
-            ));
+            out.push_str(&format!("                ctx.{method}({a}, *{name});\n"));
         }
         "enum" => {
             let (method, sz) = enum_write(f, schema);
@@ -1057,9 +1045,7 @@ fn emit_fam_field_write(out: &mut String, f: &Field, off: usize, schema: &Schema
                 .map_or("u16", |a| a.underlying.as_str());
             let (method, _) = scalar_write(underlying);
             let a = addr_expr(off);
-            out.push_str(&format!(
-                "                ctx.{method}({a}, *{name});\n"
-            ));
+            out.push_str(&format!("                ctx.{method}({a}, *{name});\n"));
         }
         "padding" => {}
         other => {

@@ -115,7 +115,7 @@ fn push_file_header(out: &mut String) {
          // Source:    firmware/metadata_schema.toml\n\
          // Generator: build/host_gen.rs\n\
          //\n\
-         // Regenerate by running `cargo build` in rust/metadata/.\n\n"
+         // Regenerate by running `cargo build` in rust/metadata/.\n\n",
     );
 }
 
@@ -135,7 +135,9 @@ fn push_host_gen_context(out: &mut String, schema: &Schema) {
     out.push_str("    /// Forward declarations: (qualifier/type text including trailing\n");
     out.push_str("    /// space, name including any array brackets).  Rendered as\n");
     out.push_str("    /// `extern {0}{1};`.\n");
-    out.push_str("    pub decls: alloc::vec::Vec<(alloc::string::String, alloc::string::String)>,\n");
+    out.push_str(
+        "    pub decls: alloc::vec::Vec<(alloc::string::String, alloc::string::String)>,\n",
+    );
     out.push_str("    /// Definitions, in discovery order.  Order is irrelevant given\n");
     out.push_str("    /// forward declarations cover everything.\n");
     out.push_str("    pub defs: alloc::vec::Vec<alloc::string::String>,\n");
@@ -146,21 +148,33 @@ fn push_host_gen_context(out: &mut String, schema: &Schema) {
     out.push_str("    rom_data_idx: usize,\n");
 
     out.push_str("    // Per-type intern tables: value -> generated C identifier.\n");
-    for s in schema.structs.iter().filter(|s| s.generate == Generate::Both) {
+    for s in schema
+        .structs
+        .iter()
+        .filter(|s| s.generate == Generate::Both)
+    {
         let tn = rust_type_name(&s.name);
         let sn = snake_name(&s.name);
         out.push_str(&format!(
             "    {sn}_names: hashbrown::HashMap<{tn}, alloc::string::String>,\n"
         ));
     }
-    for tf in schema.tagged_fams.iter().filter(|tf| tf.generate == Generate::Both) {
+    for tf in schema
+        .tagged_fams
+        .iter()
+        .filter(|tf| tf.generate == Generate::Both)
+    {
         let tn = rust_type_name(&tf.name);
         let sn = snake_name(&tf.name);
         out.push_str(&format!(
             "    {sn}_names: hashbrown::HashMap<{tn}, alloc::string::String>,\n"
         ));
     }
-    for sf in schema.simple_fams.iter().filter(|sf| sf.generate == Generate::Both) {
+    for sf in schema
+        .simple_fams
+        .iter()
+        .filter(|sf| sf.generate == Generate::Both)
+    {
         let tn = rust_type_name(&sf.name);
         let sn = snake_name(&sf.name);
         out.push_str(&format!(
@@ -179,17 +193,35 @@ fn push_host_gen_context(out: &mut String, schema: &Schema) {
     out.push_str("            counters: hashbrown::HashMap::new(),\n");
     out.push_str("            rom_data,\n");
     out.push_str("            rom_data_idx: 0,\n");
-    for s in schema.structs.iter().filter(|s| s.generate == Generate::Both) {
+    for s in schema
+        .structs
+        .iter()
+        .filter(|s| s.generate == Generate::Both)
+    {
         let sn = snake_name(&s.name);
-        out.push_str(&format!("            {sn}_names: hashbrown::HashMap::new(),\n"));
+        out.push_str(&format!(
+            "            {sn}_names: hashbrown::HashMap::new(),\n"
+        ));
     }
-    for tf in schema.tagged_fams.iter().filter(|tf| tf.generate == Generate::Both) {
+    for tf in schema
+        .tagged_fams
+        .iter()
+        .filter(|tf| tf.generate == Generate::Both)
+    {
         let sn = snake_name(&tf.name);
-        out.push_str(&format!("            {sn}_names: hashbrown::HashMap::new(),\n"));
+        out.push_str(&format!(
+            "            {sn}_names: hashbrown::HashMap::new(),\n"
+        ));
     }
-    for sf in schema.simple_fams.iter().filter(|sf| sf.generate == Generate::Both) {
+    for sf in schema
+        .simple_fams
+        .iter()
+        .filter(|sf| sf.generate == Generate::Both)
+    {
         let sn = snake_name(&sf.name);
-        out.push_str(&format!("            {sn}_names: hashbrown::HashMap::new(),\n"));
+        out.push_str(&format!(
+            "            {sn}_names: hashbrown::HashMap::new(),\n"
+        ));
     }
     out.push_str("        }\n");
     out.push_str("    }\n\n");
@@ -241,10 +273,7 @@ fn push_enum_c_name_impls(out: &mut String, schema: &Schema) {
         out.push_str("        match self {\n");
         for v in e.variants.iter().filter(|v| !v.sentinel.unwrap_or(false)) {
             let vn = variant_ident(&v.name, strip);
-            out.push_str(&format!(
-                "            Self::{vn} => \"{}\",\n",
-                v.name
-            ));
+            out.push_str(&format!("            Self::{vn} => \"{}\",\n", v.name));
         }
         out.push_str("        }\n");
         out.push_str("    }\n");
@@ -297,7 +326,11 @@ fn push_struct_host_impls(out: &mut String, schema: &Schema) {
          // Struct host impls (host_name / host_define_fields)\n\
          // ---------------------------------------------------------------------------\n\n",
     );
-    for s in schema.structs.iter().filter(|s| s.generate == Generate::Both) {
+    for s in schema
+        .structs
+        .iter()
+        .filter(|s| s.generate == Generate::Both)
+    {
         push_struct_host(out, s, schema);
     }
 }
@@ -313,7 +346,9 @@ fn push_struct_host(out: &mut String, s: &Struct, schema: &Schema) {
         .iter()
         .filter_map(|f| {
             if matches!(f.kind.as_str(), "struct_array_ptr" | "struct_ptr_array_ptr") {
-                f.count_field.as_ref().map(|cf| (cf.clone(), f.name.clone()))
+                f.count_field
+                    .as_ref()
+                    .map(|cf| (cf.clone(), f.name.clone()))
             } else {
                 None
             }
@@ -325,16 +360,16 @@ fn push_struct_host(out: &mut String, s: &Struct, schema: &Schema) {
     // host_name() ------------------------------------------------------------
     out.push_str("    /// Idempotent: returns the existing generated name if this exact\n");
     out.push_str("    /// value has already been emitted (dedup of shared sub-objects).\n");
-    out.push_str("    pub fn host_name(&self, ctx: &mut HostGenContext) -> alloc::string::String {\n");
+    out.push_str(
+        "    pub fn host_name(&self, ctx: &mut HostGenContext) -> alloc::string::String {\n",
+    );
     out.push_str(&format!(
         "        if let Some(name) = ctx.{sn}_names.get(self) {{\n"
     ));
     out.push_str("            return name.clone();\n");
     out.push_str("        }\n");
     out.push_str("        let body = self.host_define_fields(ctx);\n");
-    out.push_str(&format!(
-        "        let name = ctx.fresh_name(\"{sn}\");\n"
-    ));
+    out.push_str(&format!("        let name = ctx.fresh_name(\"{sn}\");\n"));
     out.push_str(&format!(
         "        ctx.{sn}_names.insert(self.clone(), name.clone());\n"
     ));
@@ -457,7 +492,9 @@ fn emit_host_define_field(
                 out.push_str("        }\n");
             } else {
                 out.push_str(&format!("        {{\n"));
-                out.push_str(&format!("            let n = self.{name}.host_name(ctx);\n"));
+                out.push_str(&format!(
+                    "            let n = self.{name}.host_name(ctx);\n"
+                ));
                 out.push_str("            s.push_str(\"    .");
                 out.push_str(name);
                 out.push_str(" = &\");\n");
@@ -607,7 +644,11 @@ fn emit_cstr_some_body(out: &mut String, name: &str, expr: &str, ind: &str) {
 // ---------------------------------------------------------------------------
 
 fn push_tagged_fam_host_impls(out: &mut String, schema: &Schema) {
-    if !schema.tagged_fams.iter().any(|tf| tf.generate == Generate::Both) {
+    if !schema
+        .tagged_fams
+        .iter()
+        .any(|tf| tf.generate == Generate::Both)
+    {
         return;
     }
     out.push_str(
@@ -615,7 +656,11 @@ fn push_tagged_fam_host_impls(out: &mut String, schema: &Schema) {
          // Tagged FAM host impls (host_name / host_define_fields)\n\
          // ---------------------------------------------------------------------------\n\n",
     );
-    for tf in schema.tagged_fams.iter().filter(|tf| tf.generate == Generate::Both) {
+    for tf in schema
+        .tagged_fams
+        .iter()
+        .filter(|tf| tf.generate == Generate::Both)
+    {
         push_tagged_fam_host(out, tf, schema);
     }
 }
@@ -625,12 +670,16 @@ fn push_tagged_fam_host(out: &mut String, tf: &TaggedFam, schema: &Schema) {
     let sn = snake_name(&tf.name);
     let c_type = &tf.name;
     let disc_enum = schema.enums.iter().find(|e| e.name == tf.discriminant_type);
-    let strip = disc_enum.and_then(|e| e.strip_prefix.as_deref()).unwrap_or("");
+    let strip = disc_enum
+        .and_then(|e| e.strip_prefix.as_deref())
+        .unwrap_or("");
 
     out.push_str(&format!("impl {tn} {{\n"));
 
     // host_name() --------------------------------------------------------
-    out.push_str("    pub fn host_name(&self, ctx: &mut HostGenContext) -> alloc::string::String {\n");
+    out.push_str(
+        "    pub fn host_name(&self, ctx: &mut HostGenContext) -> alloc::string::String {\n",
+    );
     out.push_str(&format!(
         "        if let Some(name) = ctx.{sn}_names.get(self) {{\n"
     ));
@@ -648,7 +697,9 @@ fn push_tagged_fam_host(out: &mut String, tf: &TaggedFam, schema: &Schema) {
     out.push_str("        {\n");
     out.push_str("            let mut d = alloc::string::String::new();\n");
     out.push_str("            d.push_str(\"#pragma GCC diagnostic push\\n\");\n");
-    out.push_str("            d.push_str(\"#pragma GCC diagnostic ignored \\\"-Wpedantic\\\"\\n\");\n");
+    out.push_str(
+        "            d.push_str(\"#pragma GCC diagnostic ignored \\\"-Wpedantic\\\"\\n\");\n",
+    );
     out.push_str(&format!("            d.push_str(\"const {c_type} \");\n"));
     out.push_str("            d.push_str(&name);\n");
     out.push_str("            d.push_str(\" = {\\n\");\n");
@@ -663,7 +714,9 @@ fn push_tagged_fam_host(out: &mut String, tf: &TaggedFam, schema: &Schema) {
     // host_define_fields() ------------------------------------------------
     out.push_str("    pub fn host_define_fields(&self, ctx: &mut HostGenContext) -> alloc::string::String {\n");
     out.push_str("        let mut s = alloc::string::String::new();\n");
-    out.push_str("        let _ = &ctx; // common fields below don't need ctx, but kept for symmetry\n");
+    out.push_str(
+        "        let _ = &ctx; // common fields below don't need ctx, but kept for symmetry\n",
+    );
     out.push_str("        match self {\n");
 
     for v in &tf.variants {
@@ -749,7 +802,9 @@ fn emit_fam_params_expr(fields: &[Field]) -> String {
     let mut out = String::new();
     out.push_str("                s.push_str(&{\n");
     out.push_str("                    #[allow(unused_mut)]\n");
-    out.push_str("                    let mut bytes: alloc::vec::Vec<u8> = alloc::vec::Vec::new();\n");
+    out.push_str(
+        "                    let mut bytes: alloc::vec::Vec<u8> = alloc::vec::Vec::new();\n",
+    );
     for f in fields {
         let name = &f.name;
         match f.kind.as_str() {
@@ -797,7 +852,11 @@ fn emit_fam_params_expr(fields: &[Field]) -> String {
 // ---------------------------------------------------------------------------
 
 fn push_simple_fam_host_impls(out: &mut String, schema: &Schema) {
-    if !schema.simple_fams.iter().any(|sf| sf.generate == Generate::Both) {
+    if !schema
+        .simple_fams
+        .iter()
+        .any(|sf| sf.generate == Generate::Both)
+    {
         return;
     }
     out.push_str(
@@ -805,7 +864,11 @@ fn push_simple_fam_host_impls(out: &mut String, schema: &Schema) {
          // Simple FAM host impls (host_name / host_define_fields)\n\
          // ---------------------------------------------------------------------------\n\n",
     );
-    for sf in schema.simple_fams.iter().filter(|sf| sf.generate == Generate::Both) {
+    for sf in schema
+        .simple_fams
+        .iter()
+        .filter(|sf| sf.generate == Generate::Both)
+    {
         push_simple_fam_host(out, sf);
     }
 }
@@ -817,7 +880,9 @@ fn push_simple_fam_host(out: &mut String, sf: &SimpleFam) {
 
     out.push_str(&format!("impl {tn} {{\n"));
 
-    out.push_str("    pub fn host_name(&self, ctx: &mut HostGenContext) -> alloc::string::String {\n");
+    out.push_str(
+        "    pub fn host_name(&self, ctx: &mut HostGenContext) -> alloc::string::String {\n",
+    );
     out.push_str(&format!(
         "        if let Some(name) = ctx.{sn}_names.get(self) {{\n"
     ));
@@ -834,7 +899,9 @@ fn push_simple_fam_host(out: &mut String, sf: &SimpleFam) {
     out.push_str("        {\n");
     out.push_str("            let mut d = alloc::string::String::new();\n");
     out.push_str("            d.push_str(\"#pragma GCC diagnostic push\\n\");\n");
-    out.push_str("            d.push_str(\"#pragma GCC diagnostic ignored \\\"-Wpedantic\\\"\\n\");\n");
+    out.push_str(
+        "            d.push_str(\"#pragma GCC diagnostic ignored \\\"-Wpedantic\\\"\\n\");\n",
+    );
     out.push_str(&format!("            d.push_str(\"const {c_type} \");\n"));
     out.push_str("            d.push_str(&name);\n");
     out.push_str("            d.push_str(\" = {\\n\");\n");
@@ -857,7 +924,9 @@ fn push_simple_fam_host(out: &mut String, sf: &SimpleFam) {
     out.push_str("            .map(|b| alloc::format!(\"0x{:02X}\", b))\n");
     out.push_str("            .collect::<alloc::vec::Vec<_>>()\n");
     out.push_str("            .join(\", \");\n");
-    out.push_str("        s.push_str(&alloc::format!(\"    .params = {{ {} }},\\n\", bytelist));\n");
+    out.push_str(
+        "        s.push_str(&alloc::format!(\"    .params = {{ {} }},\\n\", bytelist));\n",
+    );
     out.push_str("        s\n");
     out.push_str("    }\n");
     out.push_str("}\n\n");
@@ -902,7 +971,9 @@ fn push_top_level_entry_point(out: &mut String, schema: &Schema) {
     out.push_str("    let body = root.host_define_fields(&mut ctx);\n");
     out.push_str("    {\n");
     out.push_str("        let mut d = alloc::string::String::new();\n");
-    out.push_str(&format!("        d.push_str(\"const {root_c} _metadata_start = {{\\n\");\n"));
+    out.push_str(&format!(
+        "        d.push_str(\"const {root_c} _metadata_start = {{\\n\");\n"
+    ));
     out.push_str("        d.push_str(&body);\n");
     out.push_str("        d.push_str(\"};\\n\");\n");
     out.push_str("        ctx.defs.push(d);\n");
@@ -919,7 +990,9 @@ fn push_top_level_entry_point(out: &mut String, schema: &Schema) {
     out.push_str("         // globals.c's `extern char _metadata_start;` convention.\\n\\\n");
     out.push_str("         #include \\\"onerom_metadata.h\\\"\\n\\n\\\n");
     out.push_str("         // The root object is deliberately NOT forward-declared here:\\n\\\n");
-    out.push_str("         // globals.c already declares `extern char _metadata_start;`.\\n\\n\"\n");
+    out.push_str(
+        "         // globals.c already declares `extern char _metadata_start;`.\\n\\n\"\n",
+    );
     out.push_str("    );\n\n");
 
     out.push_str("    out.push_str(\"// ---------------------------------------------------------------------------\\n\");\n");

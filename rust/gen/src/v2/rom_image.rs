@@ -33,7 +33,7 @@ use alloc::vec::Vec;
 use onerom_metadata::OneromAlgDmaConfig;
 
 use crate::image::{Chip, ChipSetType};
-use crate::{Error, Result, MAX_IMAGE_SIZE, PAD_NO_CHIP_BYTE};
+use crate::{Error, MAX_IMAGE_SIZE, PAD_NO_CHIP_BYTE, Result};
 
 use super::addr_layout::AddrLayout;
 use super::cs_data_layout::CsDataLayout;
@@ -104,7 +104,10 @@ pub fn build_rom_image(
 
     let image_size = entries * word_bytes;
     if image_size > MAX_IMAGE_SIZE {
-        return Err(Error::RomTableTooLarge { size: image_size, max: MAX_IMAGE_SIZE });
+        return Err(Error::RomTableTooLarge {
+            size: image_size,
+            max: MAX_IMAGE_SIZE,
+        });
     }
 
     // Bit positions (within `i`, relative to addr_layout.gpio_base) for
@@ -151,14 +154,14 @@ pub fn build_rom_image(
                 n => {
                     return Err(Error::InvalidConfig {
                         error: format!("Banked set must have 2, 3 or 4 chips, got {n}"),
-                    })
+                    });
                 }
             }
         }
         ChipSetType::Multi => {
             return Err(Error::UnsupportedFeature {
                 feat: "Multi-set ROM image generation",
-            })
+            });
         }
     };
 
@@ -310,11 +313,17 @@ mod tests {
     }
 
     fn alg_dma_8bit() -> OneromAlgDmaConfig {
-        OneromAlgDmaConfig::AlgDma0 { bit_mode: BitModes::BitMode8, continuous: 1 }
+        OneromAlgDmaConfig::AlgDma0 {
+            bit_mode: BitModes::BitMode8,
+            continuous: 1,
+        }
     }
 
     fn alg_dma_16bit() -> OneromAlgDmaConfig {
-        OneromAlgDmaConfig::AlgDma0 { bit_mode: BitModes::BitMode16, continuous: 1 }
+        OneromAlgDmaConfig::AlgDma0 {
+            bit_mode: BitModes::BitMode16,
+            continuous: 1,
+        }
     }
 
     /// Identity data-pin mapping: GPIO 0..=7 -> output bits 0..=7.
@@ -360,6 +369,7 @@ mod tests {
             x1_gpio: None,
             x2_gpio: None,
             addr_pin_gpios: alloc::vec![7, 6, 5, 4, 3, 2, 1, 0, 10, 11, 14, 15, 12],
+            excess_addr_pin_gpios: alloc::vec![],
         };
         let cs_data_layout = CsDataLayout {
             gpio_base: 13,
@@ -378,8 +388,14 @@ mod tests {
             .collect();
         let chips = [chip_with_image("test.bin", image.clone())];
 
-        let table = build_rom_image(&addr_layout, &cs_data_layout, ChipSetType::Single, &chips, &alg_dma_8bit())
-            .expect("build_rom_image should succeed");
+        let table = build_rom_image(
+            &addr_layout,
+            &cs_data_layout,
+            ChipSetType::Single,
+            &chips,
+            &alg_dma_8bit(),
+        )
+        .expect("build_rom_image should succeed");
 
         assert_eq!(table.len(), 1 << 16);
 
@@ -410,6 +426,7 @@ mod tests {
             x1_gpio: None,
             x2_gpio: None,
             addr_pin_gpios: alloc::vec![0],
+            excess_addr_pin_gpios: alloc::vec![],
         };
         let cs_data_layout = CsDataLayout {
             gpio_base: 13,
@@ -425,8 +442,14 @@ mod tests {
 
         let chips = [chip_with_bytes("test.bin", &[0b0000_0001, 0b1000_0000])];
 
-        let table = build_rom_image(&addr_layout, &cs_data_layout, ChipSetType::Single, &chips, &alg_dma_8bit())
-            .expect("build_rom_image should succeed");
+        let table = build_rom_image(
+            &addr_layout,
+            &cs_data_layout,
+            ChipSetType::Single,
+            &chips,
+            &alg_dma_8bit(),
+        )
+        .expect("build_rom_image should succeed");
 
         assert_eq!(table.len(), 2);
         // image[0] bit0 set -> output bit7 set.
@@ -444,6 +467,7 @@ mod tests {
             x1_gpio: Some(1),
             x2_gpio: None,
             addr_pin_gpios: alloc::vec![0],
+            excess_addr_pin_gpios: alloc::vec![],
         };
         let cs_data_layout = identity_cs_data_layout_8bit();
 
@@ -452,8 +476,14 @@ mod tests {
             chip_with_bytes("bank1.bin", &[0xCC, 0xDD]),
         ];
 
-        let table = build_rom_image(&addr_layout, &cs_data_layout, ChipSetType::Banked, &chips, &alg_dma_8bit())
-            .expect("build_rom_image should succeed");
+        let table = build_rom_image(
+            &addr_layout,
+            &cs_data_layout,
+            ChipSetType::Banked,
+            &chips,
+            &alg_dma_8bit(),
+        )
+        .expect("build_rom_image should succeed");
 
         assert_eq!(table, alloc::vec![0xAA, 0xBB, 0xCC, 0xDD]);
     }
@@ -468,6 +498,7 @@ mod tests {
             x1_gpio: Some(0),
             x2_gpio: Some(1),
             addr_pin_gpios: Vec::new(),
+            excess_addr_pin_gpios: alloc::vec![],
         };
         let cs_data_layout = identity_cs_data_layout_8bit();
 
@@ -478,8 +509,14 @@ mod tests {
             chip_with_bytes("bank3.bin", &[0x33]),
         ];
 
-        let table = build_rom_image(&addr_layout, &cs_data_layout, ChipSetType::Banked, &chips, &alg_dma_8bit())
-            .expect("build_rom_image should succeed");
+        let table = build_rom_image(
+            &addr_layout,
+            &cs_data_layout,
+            ChipSetType::Banked,
+            &chips,
+            &alg_dma_8bit(),
+        )
+        .expect("build_rom_image should succeed");
 
         assert_eq!(table, alloc::vec![0x00, 0x11, 0x22, 0x33]);
     }
@@ -495,6 +532,7 @@ mod tests {
             x1_gpio: Some(0),
             x2_gpio: Some(1),
             addr_pin_gpios: Vec::new(),
+            excess_addr_pin_gpios: alloc::vec![],
         };
         let cs_data_layout = identity_cs_data_layout_8bit();
 
@@ -504,8 +542,14 @@ mod tests {
             chip_with_bytes("bank2.bin", &[0x22]),
         ];
 
-        let table = build_rom_image(&addr_layout, &cs_data_layout, ChipSetType::Banked, &chips, &alg_dma_8bit())
-            .expect("build_rom_image should succeed");
+        let table = build_rom_image(
+            &addr_layout,
+            &cs_data_layout,
+            ChipSetType::Banked,
+            &chips,
+            &alg_dma_8bit(),
+        )
+        .expect("build_rom_image should succeed");
 
         assert_eq!(table, alloc::vec![0x00, 0x11, 0x22, PAD_NO_CHIP_BYTE]);
     }
@@ -521,11 +565,18 @@ mod tests {
             x1_gpio: None,
             x2_gpio: None,
             addr_pin_gpios: Vec::new(),
+            excess_addr_pin_gpios: alloc::vec![],
         };
         let cs_data_layout = identity_cs_data_layout_8bit();
         let chips = [chip_with_bytes("test.bin", &[0x00])];
 
-        let result = build_rom_image(&addr_layout, &cs_data_layout, ChipSetType::Single, &chips, &alg_dma_8bit());
+        let result = build_rom_image(
+            &addr_layout,
+            &cs_data_layout,
+            ChipSetType::Single,
+            &chips,
+            &alg_dma_8bit(),
+        );
 
         assert!(matches!(
             result,
@@ -541,11 +592,18 @@ mod tests {
             x1_gpio: None,
             x2_gpio: None,
             addr_pin_gpios: alloc::vec![0],
+            excess_addr_pin_gpios: alloc::vec![],
         };
         let cs_data_layout = identity_cs_data_layout_8bit();
         let chips = [chip_with_bytes("test.bin", &[0x00, 0x00])];
 
-        let result = build_rom_image(&addr_layout, &cs_data_layout, ChipSetType::Multi, &chips, &alg_dma_8bit());
+        let result = build_rom_image(
+            &addr_layout,
+            &cs_data_layout,
+            ChipSetType::Multi,
+            &chips,
+            &alg_dma_8bit(),
+        );
 
         assert!(matches!(result, Err(Error::UnsupportedFeature { .. })));
     }
@@ -558,6 +616,7 @@ mod tests {
             x1_gpio: None,
             x2_gpio: None,
             addr_pin_gpios: alloc::vec![0],
+            excess_addr_pin_gpios: alloc::vec![],
         };
         let cs_data_layout = identity_cs_data_layout_8bit();
         let chips = [
@@ -565,7 +624,13 @@ mod tests {
             chip_with_bytes("b.bin", &[0x00, 0x00]),
         ];
 
-        let result = build_rom_image(&addr_layout, &cs_data_layout, ChipSetType::Single, &chips, &alg_dma_8bit());
+        let result = build_rom_image(
+            &addr_layout,
+            &cs_data_layout,
+            ChipSetType::Single,
+            &chips,
+            &alg_dma_8bit(),
+        );
 
         assert!(matches!(result, Err(Error::InvalidConfig { .. })));
     }
@@ -578,6 +643,7 @@ mod tests {
             x1_gpio: Some(0),
             x2_gpio: Some(1),
             addr_pin_gpios: Vec::new(),
+            excess_addr_pin_gpios: alloc::vec![],
         };
         let cs_data_layout = identity_cs_data_layout_8bit();
         let chips = [
@@ -588,7 +654,13 @@ mod tests {
             chip_with_bytes("e.bin", &[0x00]),
         ];
 
-        let result = build_rom_image(&addr_layout, &cs_data_layout, ChipSetType::Banked, &chips, &alg_dma_8bit());
+        let result = build_rom_image(
+            &addr_layout,
+            &cs_data_layout,
+            ChipSetType::Banked,
+            &chips,
+            &alg_dma_8bit(),
+        );
 
         assert!(matches!(result, Err(Error::InvalidConfig { .. })));
     }
@@ -609,13 +681,20 @@ mod tests {
             x1_gpio: None,
             x2_gpio: None,
             addr_pin_gpios: alloc::vec![0],
+            excess_addr_pin_gpios: alloc::vec![],
         };
         let cs_data_layout = identity_cs_data_layout_16bit();
 
         let chips = [chip_with_bytes("test.bin", &[0x01, 0x02, 0x03, 0x04])];
 
-        let table = build_rom_image(&addr_layout, &cs_data_layout, ChipSetType::Single, &chips, &alg_dma_16bit())
-            .expect("build_rom_image should succeed");
+        let table = build_rom_image(
+            &addr_layout,
+            &cs_data_layout,
+            ChipSetType::Single,
+            &chips,
+            &alg_dma_16bit(),
+        )
+        .expect("build_rom_image should succeed");
 
         assert_eq!(table.len(), 4); // 2 entries * 2 bytes/word
         assert_eq!(table, alloc::vec![0x01, 0x02, 0x03, 0x04]);
@@ -638,6 +717,7 @@ mod tests {
             x1_gpio: None,
             x2_gpio: None,
             addr_pin_gpios: alloc::vec![0],
+            excess_addr_pin_gpios: alloc::vec![],
         };
         let cs_data_layout = CsDataLayout {
             gpio_base: 0,
@@ -654,8 +734,14 @@ mod tests {
         // word0 = 0x0001 (bytes 0x01, 0x00), word1 = 0x0080 (bytes 0x80, 0x00).
         let chips = [chip_with_bytes("test.bin", &[0x01, 0x00, 0x80, 0x00])];
 
-        let table = build_rom_image(&addr_layout, &cs_data_layout, ChipSetType::Single, &chips, &alg_dma_16bit())
-            .expect("build_rom_image should succeed");
+        let table = build_rom_image(
+            &addr_layout,
+            &cs_data_layout,
+            ChipSetType::Single,
+            &chips,
+            &alg_dma_16bit(),
+        )
+        .expect("build_rom_image should succeed");
 
         assert_eq!(table, alloc::vec![0x00, 0x80, 0x00, 0x01]);
     }
@@ -670,6 +756,7 @@ mod tests {
             x1_gpio: Some(0),
             x2_gpio: Some(1),
             addr_pin_gpios: Vec::new(),
+            excess_addr_pin_gpios: alloc::vec![],
         };
         let cs_data_layout = identity_cs_data_layout_16bit();
 
@@ -679,12 +766,27 @@ mod tests {
             chip_with_bytes("bank2.bin", &[0x02, 0x12]),
         ];
 
-        let table = build_rom_image(&addr_layout, &cs_data_layout, ChipSetType::Banked, &chips, &alg_dma_16bit())
-            .expect("build_rom_image should succeed");
+        let table = build_rom_image(
+            &addr_layout,
+            &cs_data_layout,
+            ChipSetType::Banked,
+            &chips,
+            &alg_dma_16bit(),
+        )
+        .expect("build_rom_image should succeed");
 
         assert_eq!(
             table,
-            alloc::vec![0x00, 0x10, 0x01, 0x11, 0x02, 0x12, PAD_NO_CHIP_BYTE, PAD_NO_CHIP_BYTE]
+            alloc::vec![
+                0x00,
+                0x10,
+                0x01,
+                0x11,
+                0x02,
+                0x12,
+                PAD_NO_CHIP_BYTE,
+                PAD_NO_CHIP_BYTE
+            ]
         );
     }
 
@@ -706,13 +808,18 @@ mod tests {
             x1_gpio: None,
             x2_gpio: None,
             addr_pin_gpios: alloc::vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+            excess_addr_pin_gpios: alloc::vec![],
         };
         let cs_data_layout = identity_cs_data_layout_8bit();
 
         let mut image = vec![0u8; ChipType::Chip23QL384.size_bytes()]; // 49152 bytes
         image[49150] = 0xAB; // penultimate valid address
         image[49151] = 0xCD; // last valid address (0xBFFF)
-        let chips = [chip_with_typed_image("test.bin", &ChipType::Chip23QL384, image)];
+        let chips = [chip_with_typed_image(
+            "test.bin",
+            &ChipType::Chip23QL384,
+            image,
+        )];
 
         let table = build_rom_image(
             &addr_layout,
@@ -724,8 +831,8 @@ mod tests {
         .expect("build_rom_image should succeed");
 
         assert_eq!(table.len(), 1 << 16); // 65536 entries
-        assert_eq!(table[49150], 0xAB);          // penultimate valid
-        assert_eq!(table[49151], 0xCD);          // last valid (0xBFFF)
+        assert_eq!(table[49150], 0xAB); // penultimate valid
+        assert_eq!(table[49151], 0xCD); // last valid (0xBFFF)
         assert_eq!(table[49152], PAD_NO_CHIP_BYTE); // first invalid (0xC000)
         assert_eq!(table[65535], PAD_NO_CHIP_BYTE); // last entry (0xFFFF)
     }

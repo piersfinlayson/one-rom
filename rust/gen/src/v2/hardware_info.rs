@@ -10,7 +10,9 @@ use alloc::string::ToString;
 use onerom_config::hw::Board;
 use onerom_config::mcu::RpVariant;
 
-use onerom_metadata::{OneromHardwareInfo, Rp235xVariant, GPIO_NONE, MAX_IMG_SEL_PINS, MAX_PHYS_PINS};
+use onerom_metadata::{
+    GPIO_NONE, MAX_IMG_SEL_PINS, MAX_PHYS_PINS, OneromHardwareInfo, Rp235xVariant,
+};
 
 /// Build `OneromHardwareInfo` for `board`.
 pub fn build_hardware_info(board: Board) -> OneromHardwareInfo {
@@ -19,7 +21,10 @@ pub fn build_hardware_info(board: Board) -> OneromHardwareInfo {
     // RpVariant's discriminants (Rp235xA=1/Rp235xB=0) match Rp235xVariant's
     // (Rp235xa=1/Rp235xb=0) exactly - a rename, not a remap. Fire boards are
     // guaranteed Some.
-    let rp235x = match board.rp_variant().expect("Fire boards always have an RP variant") {
+    let rp235x = match board
+        .rp_variant()
+        .expect("Fire boards always have an RP variant")
+    {
         RpVariant::Rp235xA => Rp235xVariant::Rp235xa,
         RpVariant::Rp235xB => Rp235xVariant::Rp235xb,
     };
@@ -92,7 +97,10 @@ mod tests {
 
         assert_eq!(hw.hw_rev, Board::Fire24A.name());
         assert_eq!(hw.num_phys_pins, 24);
-        assert!(matches!(hw.rp235x, Rp235xVariant::Rp235xa | Rp235xVariant::Rp235xb));
+        assert!(matches!(
+            hw.rp235x,
+            Rp235xVariant::Rp235xa | Rp235xVariant::Rp235xb
+        ));
 
         assert_eq!(hw.usb_capable, 0);
         assert_eq!(hw.gpio_vbus, GPIO_NONE);
@@ -101,16 +109,38 @@ mod tests {
         assert_eq!(hw.gpio_swdio, GPIO_NONE);
         assert_eq!(hw.gpio_swclk, GPIO_NONE);
         assert_eq!(hw.gpio_status, 26);
-        assert_eq!(hw.gpio_sel, [27, 28, 29, GPIO_NONE, GPIO_NONE, GPIO_NONE, GPIO_NONE]);
+        assert_eq!(
+            hw.gpio_sel,
+            [27, 28, 29, GPIO_NONE, GPIO_NONE, GPIO_NONE, GPIO_NONE]
+        );
         assert_eq!(hw.sel_jumper_pull, 0b000);
 
         // gpio_from_phys_pin, from Fire24A's socket_pin_map(): pins 1-11,
         // 13-23 each map to a single GPIO; pins 12 and 24 (non-signal) and
         // 25-40 (beyond this 24-pin board) are [GPIO_NONE, GPIO_NONE].
         let expected_pairs: [(u8, u8); 22] = [
-            (1, 0), (2, 1), (3, 2), (4, 3), (5, 4), (6, 5), (7, 6), (8, 7),
-            (9, 16), (10, 17), (11, 18), (13, 19), (14, 20), (15, 21), (16, 22), (17, 23),
-            (18, 15), (19, 14), (20, 13), (21, 12), (22, 11), (23, 10),
+            (1, 0),
+            (2, 1),
+            (3, 2),
+            (4, 3),
+            (5, 4),
+            (6, 5),
+            (7, 6),
+            (8, 7),
+            (9, 16),
+            (10, 17),
+            (11, 18),
+            (13, 19),
+            (14, 20),
+            (15, 21),
+            (16, 22),
+            (17, 23),
+            (18, 15),
+            (19, 14),
+            (20, 13),
+            (21, 12),
+            (22, 11),
+            (23, 10),
         ];
         for &(phys_pin, gpio) in &expected_pairs {
             assert_eq!(
@@ -127,7 +157,12 @@ mod tests {
             );
         }
         for idx in 24..MAX_PHYS_PINS {
-            assert_eq!(hw.gpio_from_phys_pin[idx], [GPIO_NONE, GPIO_NONE], "phys pin {}", idx + 1);
+            assert_eq!(
+                hw.gpio_from_phys_pin[idx],
+                [GPIO_NONE, GPIO_NONE],
+                "phys pin {}",
+                idx + 1
+            );
         }
     }
 }

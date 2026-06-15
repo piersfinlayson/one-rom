@@ -21,12 +21,10 @@ fn main() {
 
     let c_root = project_root.join("firmware");
 
-    let config = env::var("CONFIG").unwrap_or_else(|_| {
-        panic!("CONFIG must be set (e.g. CONFIG={EXAMPLE_CONFIG})")
-    });
-    let board = env::var("BOARD").unwrap_or_else(|_| {
-        panic!("BOARD must be set (e.g. BOARD={EXAMPLE_BOARD})")
-    });
+    let config = env::var("CONFIG")
+        .unwrap_or_else(|_| panic!("CONFIG must be set (e.g. CONFIG={EXAMPLE_CONFIG})"));
+    let board = env::var("BOARD")
+        .unwrap_or_else(|_| panic!("BOARD must be set (e.g. BOARD={EXAMPLE_BOARD})"));
 
     // BASE_DIR is the project root used to resolve relative CONFIG paths and
     // ROM image files.  Defaults to the computed project_root so the Makefile
@@ -48,11 +46,14 @@ fn main() {
             std::fs::canonicalize(&p)
                 .unwrap_or_else(|e| panic!("Cannot find CONFIG '{}': {}", config, e))
         } else {
-            std::fs::canonicalize(base_dir.join(&p))
-                .unwrap_or_else(|e| panic!(
+            std::fs::canonicalize(base_dir.join(&p)).unwrap_or_else(|e| {
+                panic!(
                     "Cannot find CONFIG '{}' relative to BASE_DIR '{}': {}",
-                    config, base_dir.display(), e
-                ))
+                    config,
+                    base_dir.display(),
+                    e
+                )
+            })
         }
     };
 
@@ -63,10 +64,16 @@ fn main() {
 
     // ── C build ──────────────────────────────────────────────────────────────
 
-    println!("cargo:rerun-if-changed={}", project_root.join("Makefile").display());
+    println!(
+        "cargo:rerun-if-changed={}",
+        project_root.join("Makefile").display()
+    );
     println!("cargo:rerun-if-changed={}", c_root.display());
     println!("cargo:rerun-if-changed={}", config_abs.display());
-    println!("cargo:rerun-if-changed={}", manifest_dir.join("src/wrapper.h").display());
+    println!(
+        "cargo:rerun-if-changed={}",
+        manifest_dir.join("src/wrapper.h").display()
+    );
 
     // Clean the C library if CONFIG or BOARD has changed since the last build.
     // The Makefile has no visibility into these variables, so we track them
@@ -79,7 +86,8 @@ fn main() {
 
     if needs_clean {
         let _ = Command::new("make")
-            .arg("-C").arg(&project_root)
+            .arg("-C")
+            .arg(&project_root)
             .arg("clean-libonerom-test")
             .env("CONFIG", &config_abs)
             .env("BOARD", &board)
@@ -88,7 +96,8 @@ fn main() {
     }
 
     let status = Command::new("make")
-        .arg("-C").arg(&project_root)
+        .arg("-C")
+        .arg(&project_root)
         .arg("libonerom-test")
         .env("CONFIG", &config_abs)
         .env("BOARD", &board)
@@ -100,12 +109,14 @@ fn main() {
         config_abs.display()
     );
 
-    std::fs::write(&stamp_path, &stamp)
-        .expect("could not write build stamp");
+    std::fs::write(&stamp_path, &stamp).expect("could not write build stamp");
 
     // ── Linking ──────────────────────────────────────────────────────────────
 
-    println!("cargo:rustc-link-search=native={}", c_root.join("build-test").display());
+    println!(
+        "cargo:rustc-link-search=native={}",
+        c_root.join("build-test").display()
+    );
     println!("cargo:rustc-link-lib=static=onerom-test");
     println!("cargo:rustc-link-lib=m");
 

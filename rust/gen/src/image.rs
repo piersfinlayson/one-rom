@@ -30,7 +30,7 @@ use crate::meta::{
     CHIP_SET_FIRMWARE_OVERRIDES_METADATA_LEN, CHIP_SET_METADATA_LEN,
     CHIP_SET_METADATA_LEN_EXTRA_INFO,
 };
-use crate::{Error, Result, Location, FirmwareConfig};
+use crate::{Error, FirmwareConfig, Location, Result};
 use crate::{MIN_FIRMWARE_OVERRIDES_VERSION, PAD_METADATA_BYTE};
 
 /// Value to use when told to pad a Chip image
@@ -1010,7 +1010,8 @@ impl ChipSet {
             // All of CS1/X1/X2 have to have the same active low/high status
             // so we retrieve that from CS1 (as X1/X2 aren't specifically
             // configured in the chip sets).
-            let pins_active_high = chip_in_set.cs_config.cs1_logic().unwrap() == CsLogic::ActiveHigh;
+            let pins_active_high =
+                chip_in_set.cs_config.cs1_logic().unwrap() == CsLogic::ActiveHigh;
 
             // Get the CS pin that controls this chip's selection
             let cs_pin = board.cs_bit_for_chip_in_set(chip_in_set.chip_type, index);

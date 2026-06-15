@@ -4,21 +4,31 @@
 
 // Contains routines shared between all builders
 
-use alloc::string::String;
 use alloc::collections::{BTreeMap, BTreeSet};
+use alloc::string::String;
 use onerom_config::chip::ChipType;
 use onerom_config::fw::{FirmwareProperties, FirmwareVersion};
 use onerom_config::hw::Board;
 use onerom_config::mcu::Family;
-use onerom_metadata::{CURRENT_METADATA_VERSION, METADATA_BASE, METADATA_SIZE, ONEROM_METADATA_MAGIC, OneromMetadataHeader, OneromRomInfo, OneromRomSlot, RomSlotType, serialize};
+use onerom_metadata::{
+    CURRENT_METADATA_VERSION, METADATA_BASE, METADATA_SIZE, ONEROM_METADATA_MAGIC,
+    OneromMetadataHeader, OneromRomInfo, OneromRomSlot, RomSlotType, serialize,
+};
 
-use crate::{FIRMWARE_SIZE, MAX_METADATA_LEN, MAX_SUPPORTED_FIRMWARE_VERSION_V1, MAX_SUPPORTED_FIRMWARE_VERSION_V2, MIN_SUPPORTED_FIRMWARE_VERSION_V1, MIN_SUPPORTED_FIRMWARE_VERSION_V2, Metadata, SUPPORTED_CHIP_TYPES_V1, SUPPORTED_CHIP_TYPES_V2, UNSUPPORTED_FIRMWARE_VERSIONS_V1, UNSUPPORTED_FIRMWARE_VERSIONS_V2};
-use crate::{Chip, ChipSet, ChipSetType, Config, CsConfig, CsLogic, Error, FileData, FireServeMode, FileSpec, License, MetadataWriter, Result};
 use crate::v2::firmware_config::{build_firmware_config, build_firmware_overrides};
 use crate::v2::hardware_info::build_hardware_info;
 use crate::v2::rom_image::build_rom_image;
 use crate::v2::rom_slot::build_rom_slot;
-
+use crate::{
+    Chip, ChipSet, ChipSetType, Config, CsConfig, CsLogic, Error, FileData, FileSpec,
+    FireServeMode, License, MetadataWriter, Result,
+};
+use crate::{
+    FIRMWARE_SIZE, MAX_METADATA_LEN, MAX_SUPPORTED_FIRMWARE_VERSION_V1,
+    MAX_SUPPORTED_FIRMWARE_VERSION_V2, MIN_SUPPORTED_FIRMWARE_VERSION_V1,
+    MIN_SUPPORTED_FIRMWARE_VERSION_V2, Metadata, SUPPORTED_CHIP_TYPES_V1, SUPPORTED_CHIP_TYPES_V2,
+    UNSUPPORTED_FIRMWARE_VERSIONS_V1, UNSUPPORTED_FIRMWARE_VERSIONS_V2,
+};
 
 /// Main Builder object
 ///
@@ -115,7 +125,7 @@ pub struct Builder {
     licenses: BTreeMap<usize, License>,
     file_id_map: BTreeMap<usize, usize>,
 }
- 
+
 impl Builder {
     /// Create from JSON config
     ///
@@ -130,15 +140,15 @@ impl Builder {
                 maximum: MAX_SUPPORTED_FIRMWARE_VERSION_V2,
             });
         }
- 
+
         let config: Config = serde_json::from_str(json)?;
- 
+
         if version >= MIN_SUPPORTED_FIRMWARE_VERSION_V2 {
             validate_config_v2(&version, &mcu_family, &config)?;
         } else {
             validate_config_v1(&version, &mcu_family, &config)?;
         }
- 
+
         let mut builder = Self {
             version,
             config,
@@ -146,39 +156,39 @@ impl Builder {
             licenses: BTreeMap::new(),
             file_id_map: BTreeMap::new(),
         };
- 
+
         build_file_id_map(&builder.config, &mut builder.file_id_map);
- 
+
         Ok(builder)
     }
- 
+
     /// Get reference to config
     pub fn config(&self) -> &Config {
         &self.config
     }
- 
+
     // --- The methods below (file_specs, description, num_chip_sets,
     // num_roms, categories, total_file_count, accept_license) were trait
     // defaults that called sibling free functions already living in this
     // module. They become plain inherent methods with unchanged bodies -
     // included here for completeness, delete if they already exist below
     // unchanged.
- 
+
     /// Get list of files that need to be loaded
     pub fn file_specs(&self) -> Vec<FileSpec> {
         file_specs(self.config(), self.file_id_map())
     }
- 
+
     /// Get description of config for display in UI
     pub fn description(&self) -> String {
         description(self.config(), self.num_chip_sets(), self.num_roms())
     }
- 
+
     /// Get number of chip sets
     pub fn num_chip_sets(&self) -> usize {
         self.config().chip_sets.len()
     }
- 
+
     /// Get number of ROMs
     pub fn num_roms(&self) -> usize {
         self.config()
@@ -187,52 +197,52 @@ impl Builder {
             .map(|set| set.chips.len())
             .sum()
     }
- 
+
     /// Get list of categories this config belongs to, for display in UI
     pub fn categories(&self) -> Vec<String> {
         categories(self.config())
     }
- 
+
     /// Get total number of unique files that need to be loaded
     pub fn total_file_count(&self) -> usize {
         total_file_count(self.file_id_map())
     }
- 
+
     /// Mark a license as validated
     pub fn accept_license(&mut self, license: &License) -> Result<()> {
         accept_license(self.licenses_mut(), license)
     }
- 
+
     /// Add a file to be included in the build
     pub fn add_file(&mut self, file: FileData) -> Result<()> {
         add_file(&mut self.files, file, &self.file_id_map)
     }
- 
+
     /// Get list of licenses that need to be validated
     pub fn licenses(&mut self) -> Vec<License> {
         licenses(&self.config, &mut self.licenses)
     }
- 
+
     /// Get mutable reference to licenses map (mapping from license ID to
     /// License)
     pub fn licenses_mut(&mut self) -> &mut BTreeMap<usize, License> {
         &mut self.licenses
     }
- 
+
     /// Get file ID map (mapping from ROM index to file index)
     pub fn file_id_map(&self) -> &BTreeMap<usize, usize> {
         &self.file_id_map
     }
- 
+
     /// Check that the config can be built
     pub fn build_validation(&self, props: &FirmwareProperties) -> Result<()> {
         check_all_files_loaded(&self.files, self.total_file_count())?;
         check_all_licenses_validated(&self.licenses)?;
         validate_plugins(&self.config, &self.files, &self.file_id_map, props)?;
- 
+
         Ok(())
     }
- 
+
     /// Generate metadata and ROM images once all files loaded
     ///
     /// Returns (metadata, Chip images)
@@ -243,16 +253,16 @@ impl Builder {
                 maximum: MAX_SUPPORTED_FIRMWARE_VERSION_V2,
             });
         }
- 
+
         self.build_validation(&props)?;
- 
+
         if self.version >= MIN_SUPPORTED_FIRMWARE_VERSION_V2 {
             self.build_v2(props)
         } else {
             self.build_v1(props)
         }
     }
- 
+
     /// Legacy (pre-0.7.0) metadata/ROM image build
     fn build_v1(&self, props: FirmwareProperties) -> Result<(Vec<u8>, Vec<u8>)> {
         // Fire-CPU-serve-mode validation (v1-specific - PIO/CPU board
@@ -273,9 +283,9 @@ impl Builder {
                 }
             }
         }
- 
+
         let chip_sets = build_chip_sets(&self.config, &self.files, &self.file_id_map, &props)?;
- 
+
         // Build Metadata
         let metadata = Metadata::new(
             props.board(),
@@ -284,18 +294,18 @@ impl Builder {
             props.board().mcu_pio(),
             props.version(),
         );
- 
+
         // Get buffer sizes
         let metadata_size = metadata.metadata_len();
         let rom_data_size: usize = metadata.rom_images_size();
         let set_count = metadata.total_set_count();
- 
+
         // Check the board has enough space
         let mcu_variant = props.mcu_variant();
         let flash_size = mcu_variant.flash_storage_bytes();
         let rom_space = flash_size - FIRMWARE_SIZE - MAX_METADATA_LEN;
         assert!(rom_space > 0);
- 
+
         // Figure out the ROM data size
         if rom_data_size > rom_space {
             return Err(Error::BufferTooSmall {
@@ -304,23 +314,23 @@ impl Builder {
                 actual: rom_space,
             });
         }
- 
+
         // Allocate buffers
         let mut metadata_buf = vec![0u8; metadata_size];
         let mut rom_data_buf = vec![0u8; rom_data_size];
         let mut rom_data_ptrs = vec![0u32; set_count];
- 
+
         // Write metadata
         metadata.write_all(&mut metadata_buf, &mut rom_data_ptrs)?;
         // Note rom_data_ptrs unused here - absolute flash addresses.
- 
+
         // Write ROM data
         metadata.write_roms(&mut rom_data_buf)?;
- 
+
         // Done - return the two buffers
         Ok((metadata_buf, rom_data_buf))
     }
- 
+
     /// v2 (0.7.0+, RP2350, PIO-only) metadata/ROM image build
     fn build_v2(&self, props: FirmwareProperties) -> Result<(Vec<u8>, Vec<u8>)> {
         let board = props.board();
@@ -329,14 +339,17 @@ impl Builder {
         let mut rom_slots = Vec::with_capacity(chip_sets.len());
         let mut layouts = Vec::with_capacity(chip_sets.len());
         for chip_set in &chip_sets {
-            let firmware_overrides = chip_set.firmware_overrides.as_ref().map(build_firmware_overrides);
+            let firmware_overrides = chip_set
+                .firmware_overrides
+                .as_ref()
+                .map(build_firmware_overrides);
 
             if chip_set.chips[0].chip_type().is_plugin() {
                 let chip = &chip_set.chips[0];
                 let slot_type = match chip.chip_type() {
                     ChipType::SystemPlugin => RomSlotType::RomSlotTypePluginSystem,
-                    ChipType::UserPlugin  => RomSlotType::RomSlotTypePluginUser,
-                    ChipType::PioPlugin   => RomSlotType::RomSlotTypePluginPio,
+                    ChipType::UserPlugin => RomSlotType::RomSlotTypePluginUser,
+                    ChipType::PioPlugin => RomSlotType::RomSlotTypePluginPio,
                     _ => unreachable!(),
                 };
                 let slot = OneromRomSlot {
@@ -360,9 +373,15 @@ impl Builder {
                     .as_ref()
                     .and_then(|o| o.fire.as_ref())
                     .is_some_and(|fire| fire.force_16_bit);
-                let (slot, addr_layout, cs_data_layout) =
-                    build_rom_slot(board, chip_set.set_type, &chip_set.chips, 0, firmware_overrides, force_16_bit)
-                        .map_err(Error::from)?;
+                let (slot, addr_layout, cs_data_layout, _pref) = build_rom_slot(
+                    board,
+                    chip_set.set_type,
+                    &chip_set.chips,
+                    0,
+                    firmware_overrides,
+                    force_16_bit,
+                )
+                .map_err(Error::from)?;
                 rom_slots.push(slot);
                 layouts.push(Some((addr_layout, cs_data_layout)));
             }
@@ -376,8 +395,7 @@ impl Builder {
         }
 
         let mut rom_data_buf = Vec::with_capacity(rom_data_offset as usize);
-        for ((chip_set, slot), layout) in
-            chip_sets.iter().zip(rom_slots.iter()).zip(layouts.iter())
+        for ((chip_set, slot), layout) in chip_sets.iter().zip(rom_slots.iter()).zip(layouts.iter())
         {
             let image = match layout {
                 Some((addr_layout, cs_data_layout)) => build_rom_image(
@@ -385,7 +403,11 @@ impl Builder {
                     cs_data_layout,
                     chip_set.set_type,
                     &chip_set.chips,
-                    &slot.alg.as_ref().expect("non-plugin slot must have alg config").alg_dma,
+                    &slot
+                        .alg
+                        .as_ref()
+                        .expect("non-plugin slot must have alg config")
+                        .alg_dma,
                 )?,
                 None => chip_set.chips[0].data().unwrap_or(&[]).to_vec(),
             };
@@ -418,10 +440,7 @@ impl Builder {
     }
 }
 
-pub(crate) fn validate_config_version(
-    config: &Config,
-    _version: &FirmwareVersion
-) -> Result<()> {
+pub(crate) fn validate_config_version(config: &Config, _version: &FirmwareVersion) -> Result<()> {
     // Validate config version
     if config.version != 1 {
         return Err(Error::UnsupportedConfigVersion {
@@ -440,10 +459,17 @@ pub(crate) fn validate_firmware_version(
     feat: &'static str,
 ) -> Result<()> {
     if version < min {
-        return Err(Error::FirmwareTooOld { feat, version: *version, minimum: *min });
+        return Err(Error::FirmwareTooOld {
+            feat,
+            version: *version,
+            minimum: *min,
+        });
     }
     if version > max {
-        return Err(Error::FirmwareTooNew { version: *version, maximum: *max });
+        return Err(Error::FirmwareTooNew {
+            version: *version,
+            maximum: *max,
+        });
     }
     for unsupported_version in unsupported {
         if version == unsupported_version {
@@ -566,7 +592,9 @@ pub(crate) fn check_chip_sets(
             }
 
             // Check filename specified for ROMs
-            if chip.file.is_empty() && chip.chip_type.chip_function() != onerom_config::chip::ChipFunction::Ram {
+            if chip.file.is_empty()
+                && chip.chip_type.chip_function() != onerom_config::chip::ChipFunction::Ram
+            {
                 return Err(Error::InvalidConfig {
                     error: format!("Chip {} file name is empty", chip_num),
                 });
@@ -879,10 +907,14 @@ pub(crate) fn file_specs(config: &Config, file_id_map: &BTreeMap<usize, usize>) 
         }
     }
 
-    specs    
+    specs
 }
 
-pub(crate) fn add_file(files: &mut BTreeMap<usize, Vec<u8>>, file: FileData, file_id_map: &BTreeMap<usize, usize>) -> Result<()> {
+pub(crate) fn add_file(
+    files: &mut BTreeMap<usize, Vec<u8>>,
+    file: FileData,
+    file_id_map: &BTreeMap<usize, usize>,
+) -> Result<()> {
     // Check if already added
     if files.contains_key(&file.id) {
         return Err(Error::DuplicateFile { id: file.id });
@@ -921,7 +953,10 @@ pub(crate) fn licenses(config: &Config, licenses: &mut BTreeMap<usize, License>)
     licenses_vec
 }
 
-pub(crate) fn accept_license(licenses: &mut BTreeMap<usize, License>, license: &License) -> Result<()> {
+pub(crate) fn accept_license(
+    licenses: &mut BTreeMap<usize, License>,
+    license: &License,
+) -> Result<()> {
     let own_license = licenses
         .get_mut(&license.id)
         .ok_or(Error::InvalidLicense { id: license.id })?;
@@ -966,11 +1001,7 @@ pub(crate) fn total_file_count(file_id_map: &BTreeMap<usize, usize>) -> usize {
 /// 1: Image 1
 ///
 /// Notes```
-pub(crate) fn description(
-    config: &Config,
-    num_chip_sets: usize,
-    num_roms: usize,
-) -> String {
+pub(crate) fn description(config: &Config, num_chip_sets: usize, num_roms: usize) -> String {
     let mut desc = String::new();
 
     if let Some(name) = config.name.as_ref() {
@@ -1049,7 +1080,10 @@ pub(crate) fn categories(config: &Config) -> Vec<String> {
     categories
 }
 
-pub(crate) fn check_all_files_loaded(files: &BTreeMap<usize, Vec<u8>>, total_file_count: usize) -> Result<()> {
+pub(crate) fn check_all_files_loaded(
+    files: &BTreeMap<usize, Vec<u8>>,
+    total_file_count: usize,
+) -> Result<()> {
     // Check all files loaded
     for ii in 0..total_file_count {
         if !files.contains_key(&ii) {
@@ -1072,7 +1106,12 @@ pub(crate) fn check_all_licenses_validated(licenses: &BTreeMap<usize, License>) 
 // we're building for.  The major, minor and patch fw versions are in
 // little endian format, at offsets 24, 26 and 28 in the image.  Also
 // header the magic ("ORA ") at offset 0, and version (1) at offset 4.
-pub(crate) fn validate_plugins(config: &Config, files: &BTreeMap<usize, Vec<u8>>, file_id_map: &BTreeMap<usize, usize>, props: &FirmwareProperties) -> Result<()> {
+pub(crate) fn validate_plugins(
+    config: &Config,
+    files: &BTreeMap<usize, Vec<u8>>,
+    file_id_map: &BTreeMap<usize, usize>,
+    props: &FirmwareProperties,
+) -> Result<()> {
     let mut rom_id = 0;
     for set in config.chip_sets.iter() {
         for rom in set.chips.iter() {
@@ -1084,7 +1123,13 @@ pub(crate) fn validate_plugins(config: &Config, files: &BTreeMap<usize, Vec<u8>>
                 let data = files.get(file_id).unwrap();
 
                 if data.len() < 256 {
-                    return Err(Error::InvalidPluginImage { plugin_type: rom.chip_type, image_file: rom.file.clone(), error: "Plugin image is smaller than the required plugin header (256 bytes).".to_string() });
+                    return Err(Error::InvalidPluginImage {
+                        plugin_type: rom.chip_type,
+                        image_file: rom.file.clone(),
+                        error:
+                            "Plugin image is smaller than the required plugin header (256 bytes)."
+                                .to_string(),
+                    });
                 }
 
                 if &data[0..4] != b"ORA " {
@@ -1275,9 +1320,16 @@ fn validate_config_v1(
     Ok(())
 }
 
-fn validate_config_v2(version: &FirmwareVersion, mcu_family: &Family, config: &Config) -> Result<()> {
+fn validate_config_v2(
+    version: &FirmwareVersion,
+    mcu_family: &Family,
+    config: &Config,
+) -> Result<()> {
     if !matches!(mcu_family, Family::Rp2350) {
-        return Err(Error::UnsupportedMcuFamily { family: *mcu_family, version: *version });
+        return Err(Error::UnsupportedMcuFamily {
+            family: *mcu_family,
+            version: *version,
+        });
     }
     validate_config_version(config, version)?;
     validate_firmware_version(
@@ -1288,7 +1340,8 @@ fn validate_config_v2(version: &FirmwareVersion, mcu_family: &Family, config: &C
         "v0.7.0+ firmware",
     )?;
 
-    let num_non_plugin_slots = check_chip_sets(version, config, SUPPORTED_CHIP_TYPES_V2, &Family::Rp2350)?;
+    let num_non_plugin_slots =
+        check_chip_sets(version, config, SUPPORTED_CHIP_TYPES_V2, &Family::Rp2350)?;
 
     // Special ROM type handling for V2
     // no-op
@@ -1303,7 +1356,9 @@ fn validate_config_v2(version: &FirmwareVersion, mcu_family: &Family, config: &C
             && fire.serve_mode == Some(FireServeMode::Cpu)
         {
             return Err(Error::InvalidConfig {
-                error: "Fire CPU serving mode is not supported by firmware v0.7.0+ (PIO serving only)".to_string(),
+                error:
+                    "Fire CPU serving mode is not supported by firmware v0.7.0+ (PIO serving only)"
+                        .to_string(),
             });
         }
     }
@@ -1343,7 +1398,8 @@ fn validate_config_v2(version: &FirmwareVersion, mcu_family: &Family, config: &C
     }
     if config.turbo_boot && num_non_plugin_slots > 1 {
         return Err(Error::InvalidConfig {
-            error: "Turbo boot cannot be enabled when there is more than one non-plugin ROM slot".to_string(),
+            error: "Turbo boot cannot be enabled when there is more than one non-plugin ROM slot"
+                .to_string(),
         });
     }
 

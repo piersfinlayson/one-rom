@@ -46,10 +46,18 @@ pub fn run_all(board: Board, config: &Config, base_dir: &std::path::Path, report
 
 // ── Per chip set ──────────────────────────────────────────────────────────────
 
-fn run_chip_set(board: Board, chip_set: &ChipSetConfig, set_idx: usize, base_dir: &std::path::Path) -> SetResult {
+fn run_chip_set(
+    board: Board,
+    chip_set: &ChipSetConfig,
+    set_idx: usize,
+    base_dir: &std::path::Path,
+) -> SetResult {
     // TODO: multi-ROM sets and bank-switched sets require additional orchestration.
     if chip_set.set_type != ChipSetType::Single {
-        warn!("Set {}: skipping — multi-ROM and banked sets not yet supported", set_idx);
+        warn!(
+            "Set {}: skipping — multi-ROM and banked sets not yet supported",
+            set_idx
+        );
         return SetResult::skipped(set_idx, "multi-ROM and banked sets not yet supported");
     }
 
@@ -103,13 +111,17 @@ fn run_chip(
 
     debug!(
         "Set {} chip {}: building pin cache for {} on board {}",
-        set_idx, chip_idx, chip_type.name(), board.name()
+        set_idx,
+        chip_idx,
+        chip_type.name(),
+        board.name()
     );
     let cache = PinCache::build(chip_type, chip_config, board);
 
     debug!(
         "Set {} chip {}: {} addr GPIOs, {} data GPIOs, {} control lines",
-        set_idx, chip_idx,
+        set_idx,
+        chip_idx,
         cache.addr_gpios.len(),
         cache.data_gpios.len(),
         cache.control_lines.len(),
@@ -130,11 +142,12 @@ fn run_chip(
     let oracle = oracle::load(chip_config, chip_type, base_dir);
     debug!(
         "Set {} chip {}: oracle loaded, {} bytes",
-        set_idx, chip_idx, oracle.len()
+        set_idx,
+        chip_idx,
+        oracle.len()
     );
 
-    let is_27c400_family =
-        chip_type == ChipType::Chip27C400 || chip_type == ChipType::Chip27C200;
+    let is_27c400_family = chip_type == ChipType::Chip27C400 || chip_type == ChipType::Chip27C200;
 
     let cycles_addr_before_cs = if is_27c400_family {
         timing::CYCLES_27C400_ADDR_BEFORE_CS
@@ -146,7 +159,12 @@ fn run_chip(
     for &mode in chip_type.bit_modes() {
         info!(
             "Testing set={} chip={} ({}) file={} mode={}bit ({} bytes)",
-            set_idx, chip_idx, chip_type.name(), chip_config.file, mode, oracle.len(),
+            set_idx,
+            chip_idx,
+            chip_type.name(),
+            chip_config.file,
+            mode,
+            oracle.len(),
         );
         let result = run_mode(
             emulator,
@@ -161,7 +179,13 @@ fn run_chip(
         mode_results.push(result);
     }
 
-    ChipResult { set_idx, chip_idx, chip_type, filename: chip_config.file.clone(), mode_results }
+    ChipResult {
+        set_idx,
+        chip_idx,
+        chip_type,
+        filename: chip_config.file.clone(),
+        mode_results,
+    }
 }
 
 // ── Per bit mode ──────────────────────────────────────────────────────────────
@@ -176,13 +200,15 @@ fn run_mode(
     set_idx: usize,
     chip_idx: usize,
 ) -> ModeResult {
-    let is_27c400_family =
-        chip_type == ChipType::Chip27C400 || chip_type == ChipType::Chip27C200;
+    let is_27c400_family = chip_type == ChipType::Chip27C400 || chip_type == ChipType::Chip27C200;
 
     // Set BYTE# once for the whole mode pass.
     if let Some(gpio) = cache.byte_n_gpio {
         let (mask, levels) = driver::byte_n_mask(gpio, mode);
-        debug!("BYTE# gpio={} mode={} mask={:#018x} levels={:#018x}", gpio, mode, mask, levels);
+        debug!(
+            "BYTE# gpio={} mode={} mask={:#018x} levels={:#018x}",
+            gpio, mode, mask, levels
+        );
         emulator.drive_gpios(mask, levels);
     }
 
@@ -204,7 +230,7 @@ fn run_mode(
 
     // Pre-compute the deasserted control mask — reused on every iteration.
     let ctrl_deasserted = driver::ctrl_mask(&cache.control_lines, false);
-    let ctrl_active    = driver::ctrl_mask(&cache.control_lines, true);
+    let ctrl_active = driver::ctrl_mask(&cache.control_lines, true);
 
     debug!(
         "ctrl_deasserted: mask={:#018x} levels={:#018x}",
@@ -247,10 +273,7 @@ fn run_mode(
         emulator.step_cycles(cycles_addr_before_cs);
 
         // ── Phase 2: CS asserted ─────────────────────────────────────────────
-        let phase2 = driver::merge(
-            driver::addr_mask(phys_addr, &cache.addr_gpios),
-            ctrl_active,
-        );
+        let phase2 = driver::merge(driver::addr_mask(phys_addr, &cache.addr_gpios), ctrl_active);
         if addr_idx == 0 {
             debug!(
                 "addr=0 phase2: mask={:#018x} levels={:#018x}",
@@ -269,12 +292,19 @@ fn run_mode(
         }
 
         // Data lines must be driven while CS is active.
-        if !driven_check_gpios.iter().all(|&g| driven_pins & (1u64 << g) != 0) {
+        if !driven_check_gpios
+            .iter()
+            .all(|&g| driven_pins & (1u64 << g) != 0)
+        {
             bus_failures += 1;
             log_bus_violation(
-                set_idx, chip_idx, Some(phys_addr),
+                set_idx,
+                chip_idx,
+                Some(phys_addr),
                 "not all driven (CS active)",
-                driven_pins, driven_check_gpios, bus_failures,
+                driven_pins,
+                driven_check_gpios,
+                bus_failures,
             );
         }
 
@@ -288,11 +318,29 @@ fn run_mode(
 
             if lo != exp_lo {
                 failures += 1;
-                log_mismatch(set_idx, chip_idx, addr_idx * 2, lo, exp_lo, driven_pins, &cache.data_gpios[..8], failures);
+                log_mismatch(
+                    set_idx,
+                    chip_idx,
+                    addr_idx * 2,
+                    lo,
+                    exp_lo,
+                    driven_pins,
+                    &cache.data_gpios[..8],
+                    failures,
+                );
             }
             if hi != exp_hi {
                 failures += 1;
-                log_mismatch(set_idx, chip_idx, addr_idx * 2 + 1, hi, exp_hi, driven_pins, &cache.data_gpios[8..16], failures);
+                log_mismatch(
+                    set_idx,
+                    chip_idx,
+                    addr_idx * 2 + 1,
+                    hi,
+                    exp_hi,
+                    driven_pins,
+                    &cache.data_gpios[8..16],
+                    failures,
+                );
             }
         } else {
             let byte = driver::extract_byte(pin_states, &cache.data_gpios);
@@ -300,7 +348,16 @@ fn run_mode(
             let expected = oracle[addr_idx];
             if byte != expected {
                 failures += 1;
-                log_mismatch(set_idx, chip_idx, addr_idx, byte, expected, driven_pins, &cache.data_gpios, failures);
+                log_mismatch(
+                    set_idx,
+                    chip_idx,
+                    addr_idx,
+                    byte,
+                    expected,
+                    driven_pins,
+                    &cache.data_gpios,
+                    failures,
+                );
             }
         }
 
@@ -310,12 +367,19 @@ fn run_mode(
 
         // Data lines must have released after CS deassert.
         let driven_after = emulator.read_driven_pins();
-        if driven_check_gpios.iter().any(|&g| driven_after & (1u64 << g) != 0) {
+        if driven_check_gpios
+            .iter()
+            .any(|&g| driven_after & (1u64 << g) != 0)
+        {
             bus_failures += 1;
             log_bus_violation(
-                set_idx, chip_idx, Some(phys_addr),
+                set_idx,
+                chip_idx,
+                Some(phys_addr),
                 "still driven (CS deasserted)",
-                driven_after, driven_check_gpios, bus_failures,
+                driven_after,
+                driven_check_gpios,
+                bus_failures,
             );
         }
     }
@@ -336,20 +400,24 @@ fn run_mode(
 
         for combo in 0u64..all_asserted {
             let ctrl = ctrl_combo_mask(cache, combo);
-            let phase = driver::merge(
-                driver::addr_mask(0, &cache.addr_gpios),
-                ctrl,
-            );
+            let phase = driver::merge(driver::addr_mask(0, &cache.addr_gpios), ctrl);
             emulator.drive_gpios(phase.0, phase.1);
             emulator.step_cycles(cycles_cs_to_data);
 
             let driven_combo = emulator.read_driven_pins();
-            if driven_check_gpios.iter().any(|&g| driven_combo & (1u64 << g) != 0) {
+            if driven_check_gpios
+                .iter()
+                .any(|&g| driven_combo & (1u64 << g) != 0)
+            {
                 bus_failures += 1;
                 log_bus_violation(
-                    set_idx, chip_idx, None,
+                    set_idx,
+                    chip_idx,
+                    None,
                     &format!("data driven for non-active CS combo {:#b}", combo),
-                    driven_combo, driven_check_gpios, bus_failures,
+                    driven_combo,
+                    driven_check_gpios,
+                    bus_failures,
                 );
             }
         }
@@ -359,7 +427,12 @@ fn run_mode(
         emulator.step_cycles(timing::CYCLES_AFTER_READ);
     }
 
-    ModeResult { mode, reads, failures, bus_failures }
+    ModeResult {
+        mode,
+        reads,
+        failures,
+        bus_failures,
+    }
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -382,7 +455,8 @@ fn word_size_for_set(chip_set: &ChipSetConfig) -> u8 {
 /// lines.  `combo` is a bitmask over `cache.control_lines`: bit i set means
 /// control line i is logically *asserted*; bit i clear means deasserted.
 fn ctrl_combo_mask(cache: &PinCache, combo: u64) -> (u64, u64) {
-    cache.control_lines
+    cache
+        .control_lines
         .iter()
         .enumerate()
         .map(|(i, cl)| driver::ctrl_mask(std::slice::from_ref(cl), (combo >> i) & 1 == 1))
@@ -404,7 +478,13 @@ fn log_bus_violation(
     if count <= 5 {
         let drive_state: String = data_gpios
             .iter()
-            .map(|&g| if driven_pins & (1u64 << g) != 0 { 'y' } else { 'n' })
+            .map(|&g| {
+                if driven_pins & (1u64 << g) != 0 {
+                    'y'
+                } else {
+                    'n'
+                }
+            })
             .collect();
         match addr {
             Some(a) => error!(
@@ -423,12 +503,27 @@ fn log_bus_violation(
 
 /// Log a byte mismatch, capped at 5 per mode pass to avoid flooding the log
 /// for systematic failures.
-fn log_mismatch(set: usize, chip: usize, addr: usize, got: u8, expected: u8,
-                driven_pins: u64, data_gpios: &[u8], count: u64) {
+fn log_mismatch(
+    set: usize,
+    chip: usize,
+    addr: usize,
+    got: u8,
+    expected: u8,
+    driven_pins: u64,
+    data_gpios: &[u8],
+    count: u64,
+) {
     if count <= 5 {
-        let drive_state: String = data_gpios.iter().map(|&g| {
-            if driven_pins & (1u64 << g) != 0 { 'y' } else { 'n' }
-        }).collect();
+        let drive_state: String = data_gpios
+            .iter()
+            .map(|&g| {
+                if driven_pins & (1u64 << g) != 0 {
+                    'y'
+                } else {
+                    'n'
+                }
+            })
+            .collect();
         error!(
             "MISMATCH set={} chip={} addr=0x{:04X}: got=0x{:02X} expected=0x{:02X} driven=[{}]",
             set, chip, addr, got, expected, drive_state,

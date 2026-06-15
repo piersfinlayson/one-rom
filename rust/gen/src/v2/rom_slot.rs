@@ -16,9 +16,10 @@ use onerom_metadata::{BitModes, OneromAlgDmaConfig, OneromFirmwareOverrides, One
 
 use crate::image::{Chip, ChipSetType};
 
-use super::addr_layout::{derive_addr_layout, AddrLayout, LayoutError};
-use super::alg_config::{bit_mode_for, build_alg_config};
-use super::cs_data_layout::{derive_cs_data_layout, CsDataLayout};
+use super::addr_layout::{AddrLayout, LayoutError, derive_addr_layout};
+use super::alg_config::{bit_mode_for, build_alg_config, combined_alg_preference};
+use super::alg_preference::CombinedAlgPreference;
+use super::cs_data_layout::{CsDataLayout, derive_cs_data_layout};
 use super::rom_info::{build_rom_info, rom_slot_type};
 
 /// Bytes per ROM table entry/word, from `alg_dma`'s bit mode: `1` for
@@ -28,8 +29,14 @@ use super::rom_info::{build_rom_info, rom_slot_type};
 /// size the table it generates.
 pub(crate) fn bytes_per_word(alg_dma: &OneromAlgDmaConfig) -> u32 {
     match alg_dma {
-        OneromAlgDmaConfig::AlgDma0 { bit_mode: BitModes::BitMode8, .. } => 1,
-        OneromAlgDmaConfig::AlgDma0 { bit_mode: BitModes::BitMode16, .. } => 2,
+        OneromAlgDmaConfig::AlgDma0 {
+            bit_mode: BitModes::BitMode8,
+            ..
+        } => 1,
+        OneromAlgDmaConfig::AlgDma0 {
+            bit_mode: BitModes::BitMode16,
+            ..
+        } => 2,
     }
 }
 
@@ -83,7 +90,15 @@ pub fn build_rom_slot(
     data: u32,
     firmware_overrides: Option<OneromFirmwareOverrides>,
     force_16_bit: bool,
-) -> Result<(OneromRomSlot, AddrLayout, CsDataLayout), LayoutError> {
+) -> Result<
+    (
+        OneromRomSlot,
+        AddrLayout,
+        CsDataLayout,
+        CombinedAlgPreference,
+    ),
+    LayoutError,
+> {
     let chip_types: Vec<ChipType> = chips.iter().map(|c| *c.chip_type()).collect();
     let cs_config = chips[0].cs_config();
 
@@ -94,7 +109,8 @@ pub fn build_rom_slot(
     let bit_mode = bit_mode_for(chip_types[0], board);
 
     let addr_layout = derive_addr_layout(board, set_type, &chip_types, bit_mode)?;
-    let cs_data_layout = derive_cs_data_layout(board, set_type, &chip_types, cs_config, Some(addr_layout.addr_pin_gpios.as_slice()))?;
+    let cs_data_layout =
+        derive_cs_data_layout(board, set_type, &chip_types, cs_config, Some(&addr_layout))?;
 
     let alg = build_alg_config(
         board,
@@ -116,6 +132,8 @@ pub fn build_rom_slot(
 
     let slot_type = rom_slot_type(set_type, chip_types[0]);
 
+    let pref = combined_alg_preference(&alg);
+
     let slot = OneromRomSlot {
         data,
         size,
@@ -126,7 +144,7 @@ pub fn build_rom_slot(
         firmware_overrides,
     };
 
-    Ok((slot, addr_layout, cs_data_layout))
+    Ok((slot, addr_layout, cs_data_layout, pref))
 }
 
 // ===========================================================================
@@ -139,7 +157,10 @@ mod tests {
     use alloc::string::ToString;
     use alloc::vec;
 
-    use onerom_metadata::{OneromAlgAddrConfig, OneromAlgConfig, OneromAlgCsConfig, OneromAlgDataConfig, OneromRomInfo, OneromRomPinMap, RomSlotType, GPIO_NONE, MAX_ADDR_PINS, MAX_DATA_PINS};
+    use onerom_metadata::{
+        GPIO_NONE, MAX_ADDR_PINS, MAX_DATA_PINS, OneromAlgAddrConfig, OneromAlgConfig,
+        OneromAlgCsConfig, OneromAlgDataConfig, OneromRomInfo, OneromRomPinMap, RomSlotType,
+    };
 
     use crate::image::{CsConfig, CsLogic, SizeHandling};
 
@@ -166,8 +187,9 @@ mod tests {
 
         let chips = [chip];
 
-        let (slot, addr_layout, cs_data_layout) = build_rom_slot(Board::Fire24A, ChipSetType::Single, &chips, 0, None, false)
-            .expect("build_rom_slot should succeed");
+        let (slot, addr_layout, cs_data_layout, _pref) =
+            build_rom_slot(Board::Fire24A, ChipSetType::Single, &chips, 0, None, false)
+                .expect("build_rom_slot should succeed");
 
         assert_eq!(slot.data, 0);
         assert_eq!(slot.size, 1 << 16); // 2^16 * 1 byte/word
@@ -280,7 +302,7 @@ mod tests {
 
         let chips = [chip];
 
-        let (slot, addr_layout, cs_data_layout) =
+        let (slot, addr_layout, cs_data_layout, _pref) =
             build_rom_slot(Board::Fire28A, ChipSetType::Single, &chips, 0, None, false)
                 .expect("build_rom_slot should succeed");
 
@@ -297,7 +319,10 @@ mod tests {
 
         assert_eq!(
             alg.alg_dma,
-            OneromAlgDmaConfig::AlgDma0 { bit_mode: BitModes::BitMode8, continuous: 1 }
+            OneromAlgDmaConfig::AlgDma0 {
+                bit_mode: BitModes::BitMode8,
+                continuous: 1
+            }
         );
 
         match &alg.alg_cs {
@@ -319,7 +344,10 @@ mod tests {
                 assert_eq!(*qualifier_inactive_pattern, 0b11);
                 // base_qualifier_pin is board-specific; verify it's within
                 // the 32-GPIO PIO window and consistent with the returned layout.
-                assert!(*base_qualifier_pin < 32, "base_qualifier_pin {base_qualifier_pin} out of PIO window");
+                assert!(
+                    *base_qualifier_pin < 32,
+                    "base_qualifier_pin {base_qualifier_pin} out of PIO window"
+                );
                 assert_eq!(
                     *base_qualifier_pin,
                     cs_data_layout.alg_cs2.as_ref().unwrap().base_qualifier_pin,
@@ -334,7 +362,10 @@ mod tests {
 
         // The returned cs_data_layout must have alg_cs2 populated and
         // consistent with what was baked into slot.alg above.
-        let cs2 = cs_data_layout.alg_cs2.as_ref().expect("23QL384 must have alg_cs2");
+        let cs2 = cs_data_layout
+            .alg_cs2
+            .as_ref()
+            .expect("23QL384 must have alg_cs2");
         assert_eq!(cs2.num_qualifier_pins, 2);
         assert_eq!(cs2.qualifier_inactive_pattern, 0b11);
     }

@@ -776,7 +776,10 @@ fn validate_socket_and_x_pins(config: &HwConfigJson, name: &str) {
     let x_map = &config.mcu.pins.x_pin_to_gpio;
 
     if x_map.is_some() && socket_map.is_none() {
-        panic!("{}: x_pin_to_gpio requires socket_pin_to_gpio to also be present", name);
+        panic!(
+            "{}: x_pin_to_gpio requires socket_pin_to_gpio to also be present",
+            name
+        );
     }
     if socket_map.is_none() && x_map.is_none() {
         return;
@@ -791,7 +794,10 @@ fn validate_socket_and_x_pins(config: &HwConfigJson, name: &str) {
 
     for &pin in non_signal {
         if pin == 0 || pin > config.chip.pins.quantity {
-            panic!("{}: non_signal pin {} out of range 1-{}", name, pin, config.chip.pins.quantity);
+            panic!(
+                "{}: non_signal pin {} out of range 1-{}",
+                name, pin, config.chip.pins.quantity
+            );
         }
     }
 
@@ -822,19 +828,27 @@ fn validate_socket_and_x_pins(config: &HwConfigJson, name: &str) {
                 );
             }
             if non_signal.contains(&pin) {
-                panic!("{}: socket pin {} appears in both socket_pin_to_gpio and non_signal", name, pin);
+                panic!(
+                    "{}: socket pin {} appears in both socket_pin_to_gpio and non_signal",
+                    name, pin
+                );
             }
         }
         for pin in 1..=config.chip.pins.quantity {
             if !socket_map.contains_key(&pin) && !non_signal.contains(&pin) {
-                panic!("{}: socket pin {} is not covered by socket_pin_to_gpio or non_signal", name, pin);
+                panic!(
+                    "{}: socket pin {} is not covered by socket_pin_to_gpio or non_signal",
+                    name, pin
+                );
             }
         }
 
         for (&pin, gpios) in socket_map {
             for &gpio in gpios {
                 validate_pin_number(&config.mcu, gpio, "socket_pin_to_gpio", name);
-                if let Some((prev_map, prev_pin)) = seen_gpios.insert(gpio, ("socket_pin_to_gpio", pin)) {
+                if let Some((prev_map, prev_pin)) =
+                    seen_gpios.insert(gpio, ("socket_pin_to_gpio", pin))
+                {
                     panic!(
                         "{}: GPIO {} used by both {} pin {} and socket_pin_to_gpio pin {}",
                         name, gpio, prev_map, prev_pin, pin
@@ -846,7 +860,11 @@ fn validate_socket_and_x_pins(config: &HwConfigJson, name: &str) {
 
     if let Some(x_map) = x_map {
         if x_map.len() > 2 {
-            panic!("{}: x_pin_to_gpio has {} entries, maximum is 2", name, x_map.len());
+            panic!(
+                "{}: x_pin_to_gpio has {} entries, maximum is 2",
+                name,
+                x_map.len()
+            );
         }
         for (&pin, gpios) in x_map {
             if pin == 0 || pin > 2 {
@@ -854,7 +872,8 @@ fn validate_socket_and_x_pins(config: &HwConfigJson, name: &str) {
             }
             for &gpio in gpios {
                 validate_pin_number(&config.mcu, gpio, "x_pin_to_gpio", name);
-                if let Some((prev_map, prev_pin)) = seen_gpios.insert(gpio, ("x_pin_to_gpio", pin)) {
+                if let Some((prev_map, prev_pin)) = seen_gpios.insert(gpio, ("x_pin_to_gpio", pin))
+                {
                     panic!(
                         "{}: GPIO {} used by both {} pin {} and x_pin_to_gpio pin {}",
                         name, gpio, prev_map, prev_pin, pin

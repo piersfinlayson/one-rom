@@ -10,7 +10,9 @@ use alloc::string::{String, ToString};
 
 use onerom_config::chip::ChipType;
 
-use onerom_metadata::{OneromRomInfo, OneromRomPinMap, RomSlotType, GPIO_NONE, MAX_ADDR_PINS, MAX_DATA_PINS};
+use onerom_metadata::{
+    GPIO_NONE, MAX_ADDR_PINS, MAX_DATA_PINS, OneromRomInfo, OneromRomPinMap, RomSlotType,
+};
 
 use crate::image::{Chip, ChipSetType};
 
@@ -26,7 +28,10 @@ pub const MAX_ROM_FILENAME_LEN: usize = 128;
 ///
 /// Entries beyond `addr_pin_gpios.len()`/`data_pin_gpios.len()` are left
 /// as `GPIO_NONE`.
-pub fn build_rom_pin_map(addr_layout: &AddrLayout, cs_data_layout: &CsDataLayout) -> OneromRomPinMap {
+pub fn build_rom_pin_map(
+    addr_layout: &AddrLayout,
+    cs_data_layout: &CsDataLayout,
+) -> OneromRomPinMap {
     let mut addr = [GPIO_NONE; MAX_ADDR_PINS];
     for (i, &gpio) in addr_layout.addr_pin_gpios.iter().enumerate() {
         addr[i] = gpio;
@@ -60,7 +65,11 @@ fn truncate_filename(name: &str) -> Option<String> {
 }
 
 /// Build `OneromRomInfo` for one chip in a chip set.
-pub fn build_rom_info(chip: &Chip, addr_layout: &AddrLayout, cs_data_layout: &CsDataLayout) -> OneromRomInfo {
+pub fn build_rom_info(
+    chip: &Chip,
+    addr_layout: &AddrLayout,
+    cs_data_layout: &CsDataLayout,
+) -> OneromRomInfo {
     OneromRomInfo {
         rom_type: chip.chip_type().name().to_string(),
         filename: truncate_filename(chip.filename()),
@@ -95,8 +104,8 @@ pub fn rom_slot_type(set_type: ChipSetType, chip0_type: ChipType) -> RomSlotType
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::cs_data_layout::{SelectLine, SelectRole};
+    use super::*;
 
     fn fire24a_2364_addr_layout() -> AddrLayout {
         AddrLayout {
@@ -105,6 +114,7 @@ mod tests {
             x1_gpio: None,
             x2_gpio: None,
             addr_pin_gpios: alloc::vec![7, 6, 5, 4, 3, 2, 1, 0, 10, 11, 14, 15, 12],
+            excess_addr_pin_gpios: alloc::vec![],
         }
     }
 
@@ -117,14 +127,18 @@ mod tests {
             base_cs_pin: 13,
             num_cs_pins: 1,
             cs_ignore_index: None,
-            select_lines: alloc::vec![SelectLine { role: SelectRole::Cs1, gpio: 13 }],
+            select_lines: alloc::vec![SelectLine {
+                role: SelectRole::Cs1,
+                gpio: 13
+            }],
             alg_cs2: None,
         }
     }
 
     #[test]
     fn fire24a_2364_pin_map() {
-        let pin_map = build_rom_pin_map(&fire24a_2364_addr_layout(), &fire24a_2364_cs_data_layout());
+        let pin_map =
+            build_rom_pin_map(&fire24a_2364_addr_layout(), &fire24a_2364_cs_data_layout());
 
         let mut expected_addr = [GPIO_NONE; MAX_ADDR_PINS];
         expected_addr[..13].copy_from_slice(&[7, 6, 5, 4, 3, 2, 1, 0, 10, 11, 14, 15, 12]);

@@ -10,7 +10,7 @@
 //! * [`ffi`] — raw, unsafe bindgen-generated bindings (escape hatch)
 //! * [`Emulator`] — safe wrapper for test code
 
-pub mod ffi;
 mod emulator;
+pub mod ffi;
 
 pub use emulator::Emulator;

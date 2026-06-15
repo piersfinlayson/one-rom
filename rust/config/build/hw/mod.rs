@@ -367,7 +367,6 @@ fn generate_rust_code(configs: &[HwConfigData]) -> String {
     code.push_str(&generate_hw_config_enum(configs));
     code.push_str("\n\n");
 
-
     // Generate HwConfig implementation
     code.push_str(&generate_hw_config_impl(configs));
 
@@ -1601,7 +1600,11 @@ fn generate_socket_and_x_pin_methods(configs: &[HwConfigData]) -> String {
                 entries
                     .iter()
                     .map(|(pin, gpios)| {
-                        let gpios_str = gpios.iter().map(|g| g.to_string()).collect::<Vec<_>>().join(", ");
+                        let gpios_str = gpios
+                            .iter()
+                            .map(|g| g.to_string())
+                            .collect::<Vec<_>>()
+                            .join(", ");
                         format!("({}, &[{}])", pin, gpios_str)
                     })
                     .collect::<Vec<_>>()
@@ -1609,7 +1612,10 @@ fn generate_socket_and_x_pin_methods(configs: &[HwConfigData]) -> String {
             }
             None => String::new(),
         };
-        code.push_str(&format!("            Board::{} => &[{}],\n", config.variant_name, entries_str));
+        code.push_str(&format!(
+            "            Board::{} => &[{}],\n",
+            config.variant_name, entries_str
+        ));
     }
     code.push_str("        }\n");
     code.push_str("    }\n\n");
@@ -1627,7 +1633,11 @@ fn generate_socket_and_x_pin_methods(configs: &[HwConfigData]) -> String {
                 entries
                     .iter()
                     .map(|(pin, gpios)| {
-                        let gpios_str = gpios.iter().map(|g| g.to_string()).collect::<Vec<_>>().join(", ");
+                        let gpios_str = gpios
+                            .iter()
+                            .map(|g| g.to_string())
+                            .collect::<Vec<_>>()
+                            .join(", ");
                         format!("({}, &[{}])", pin, gpios_str)
                     })
                     .collect::<Vec<_>>()
@@ -1635,7 +1645,10 @@ fn generate_socket_and_x_pin_methods(configs: &[HwConfigData]) -> String {
             }
             None => String::new(),
         };
-        code.push_str(&format!("            Board::{} => &[{}],\n", config.variant_name, entries_str));
+        code.push_str(&format!(
+            "            Board::{} => &[{}],\n",
+            config.variant_name, entries_str
+        ));
     }
     code.push_str("        }\n");
     code.push_str("    }\n\n");
@@ -1652,9 +1665,17 @@ fn generate_socket_and_x_pin_methods(configs: &[HwConfigData]) -> String {
             .pins
             .non_signal
             .as_ref()
-            .map(|v| v.iter().map(|p| p.to_string()).collect::<Vec<_>>().join(", "))
+            .map(|v| {
+                v.iter()
+                    .map(|p| p.to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            })
             .unwrap_or_default();
-        code.push_str(&format!("            Board::{} => &[{}],\n", config.variant_name, pins_str));
+        code.push_str(&format!(
+            "            Board::{} => &[{}],\n",
+            config.variant_name, pins_str
+        ));
     }
     code.push_str("        }\n");
     code.push_str("    }");
