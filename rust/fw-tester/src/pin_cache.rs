@@ -94,7 +94,7 @@ impl PinCache {
                 continue;
             }
 
-            if spec.name == "write" {
+            if matches!(spec.name, "write" | "busy") {
                 // Not a select line; excluded from CS detection and bus tristate checks.
                 continue;
             }
