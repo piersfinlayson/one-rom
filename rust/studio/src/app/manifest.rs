@@ -11,7 +11,7 @@ use arc_swap::ArcSwap;
 #[allow(unused_imports)]
 use log::{debug, error, info, trace, warn};
 use onerom_config::fw::FirmwareVersion;
-use onerom_gen::MAX_SUPPORTED_FIRMWARE_VERSION;
+use onerom_gen::MAX_SUPPORTED_FIRMWARE_VERSION_V2 as MAX_SUPPORTED_FIRMWARE_VERSION;
 use schemars::JsonSchema;
 use semver::Version;
 use serde::{Deserialize, Serialize};

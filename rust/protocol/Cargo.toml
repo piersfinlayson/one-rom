@@ -14,7 +14,7 @@ name = "onerom_protocol"
 path = "src/lib.rs"
 
 [dependencies]
-onerom-database = { version = "0.1.0" }
+onerom-database = { workspace = true }
 
 serde = { version = "1.0", default-features = false, features = ["derive", "alloc"] }
 log = { version = "0.4" }

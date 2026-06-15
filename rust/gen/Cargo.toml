@@ -1,6 +1,6 @@
 [package]
 name = "onerom-gen"
-version = "0.5.12"
+version = "0.6.0"
 edition = "2024"
 authors = ["Piers Finlayson <piers@piers.rocks>"]
 license = "MIT"
@@ -16,8 +16,8 @@ categories = ["embedded", "hardware-support"]
 schemars = ["dep:schemars", "onerom-config/schemars"]
 
 [dependencies]
-onerom-config = { path="../config", version = "0.5.0" }
-onerom-metadata = { path="../metadata", version = "0.1.0" }
+onerom-config = { workspace = true }
+onerom-metadata = { workspace = true }
 
 schemars = { version = "1.0", optional = true }
 serde = { version = "1.0", default-features = false, features = ["derive"] }

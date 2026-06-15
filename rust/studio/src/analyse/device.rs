@@ -377,7 +377,7 @@ pub fn file_device_loaded(
     let usb_run_capable = analyse
         .fw_info
         .as_ref()
-        .map_or(false, |info| info.is_usb_run_capable());
+        .is_some_and(|info| info.is_usb_run_capable());
     let usb_run_capable_task = Task::done(AppMessage::Device(DeviceMessage::SetUsbRunCapable(
         usb_run_capable,
     )));

@@ -11,7 +11,8 @@ keywords = ["retro", "rom", "commodore", "embedded"]
 categories = ["embedded", "hardware-support"]
 
 [dependencies]
-onerom-gen = { path = "../gen", version = "0.5.12", features = ["schemars"] }
+onerom-gen = { workspace = true, features = ["schemars"] }
+
 schemars = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"

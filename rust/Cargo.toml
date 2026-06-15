@@ -5,33 +5,41 @@ members = [
     "config",
     "database",
     "fw",
-    "gen",
-    "lab",
-    "lab-new",
-    "metadata",
     "fw-config-gen",
     "fw-emulator",
     "fw-tester",
+    "gen",
+    "lab-new",
+    "metadata",
     "protocol",
     "schema-gen",
-    "sdrr-check",
     "sdrr-fw-parser",
-    "sdrr-gen",
-    "sdrr-info",
     "studio",
 ]
 default-members = [
     "cli",
     "config",
+    "database",
     "fw",
+    "fw-config-gen",
     "gen",
     "metadata",
-    "fw-config-gen",
+    "protocol",
+    "schema-gen",
     "sdrr-fw-parser",
-    "sdrr-gen",
-    "sdrr-info",
+    "studio",
 ]
 resolver = "2"
+
+[workspace.dependencies]
+onerom-config = { path="config", version="0.5.0" }
+onerom-database = { path="database", version="0.1.1" }
+onerom-fw = { path="fw", version="0.1.24" }
+onerom-fw-emulator = { path="fw-emulator", version="0.1.0" }
+onerom-gen = { path="gen", version="0.6.0" }
+onerom-metadata = { path="metadata", version="0.1.0" }
+onerom-protocol = { path="protocol", version="0.1.0" }
+sdrr-fw-parser ={ path="sdrr-fw-parser", version="0.6.15" }
 
 [profile.release]
 opt-level = 3

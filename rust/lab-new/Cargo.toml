@@ -25,9 +25,9 @@ rp235xa = [ "embassy-rp/rp235xa" ]
 rp235xb = [ "embassy-rp/rp235xb" ]
 
 [dependencies]
-onerom-config = { path="../config", version = "0.5.0" }
-onerom-protocol = { version = "0.1.0" }
-onerom-database = { path="../database", version = "0.1.1" }
+onerom-config = { workspace = true }
+onerom-protocol = { workspace = true }
+onerom-database = { workspace = true }
 
 airfrog-rpc = { version = "0.1.1" }
 embassy-executor = { version = "0.10.0", features = ["executor-thread", "platform-cortex-m", "nightly" ]}

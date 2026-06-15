@@ -61,10 +61,11 @@ assets = [
 ]
 
 [dependencies]
-onerom-config = { path="../config", version = "0.5.0", features = ["schemars"] }
-onerom-fw = { path="../fw", version = "0.1.24" }
-onerom-gen = { path="../gen", version = "0.5.12" }
-sdrr-fw-parser = { path="../sdrr-fw-parser", version = "0.6.15" }
+onerom-config = { workspace = true, features = ["schemars"] }
+onerom-fw = { workspace = true }
+onerom-gen = { workspace = true }
+sdrr-fw-parser = { workspace = true }
+
 dfu-rs = { git = "https://github.com/piersfinlayson/dfu-rs.git", version = "0.2.0" }
 picoboot = { version = "0.2.3" }
 
