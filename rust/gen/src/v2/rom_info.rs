@@ -118,6 +118,7 @@ mod tests {
             num_cs_pins: 1,
             cs_ignore_index: None,
             select_lines: alloc::vec![SelectLine { role: SelectRole::Cs1, gpio: 13 }],
+            alg_cs2: None,
         }
     }
 

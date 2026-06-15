@@ -127,6 +127,12 @@ pub enum LayoutError {
     /// (with this CS configuration) isn't currently servable on this
     /// board.
     NonContiguousSelect { board: Board, chip_type: ChipType, gpios: Vec<u8> },
+
+    /// `derive_cs_data_layout` requires `addr_pin_gpios` (resolved from
+    /// `derive_addr_layout`) for chip types where
+    /// `deselect_when_address_all_high()` returns `Some` (e.g. 23QL384),
+    /// but `None` was passed. Address layout must be derived first.
+    MissingAddrPinGpios { board: Board, chip_type: ChipType },
 }
 
 impl From<LayoutError> for Error {
@@ -146,6 +152,12 @@ impl From<LayoutError> for Error {
             LayoutError::NoValidLayout { board } => Error::UnsupportedBoardConfig {
                 board,
                 reason: "No valid GPIO layout found for this chip set on this board".to_string(),
+            },
+            LayoutError::MissingAddrPinGpios { board, chip_type } => Error::InvalidConfig {
+                error: alloc::format!(
+                    "derive_cs_data_layout requires addr_pin_gpios for {chip_type:?} on \
+                     {board:?} (ALG_CS_2 chip), but none was provided"
+                ),
             },
         }
     }

@@ -1674,7 +1674,7 @@ comment = "Index of the CS pin to ignore (e.g. 1 = ignore second CS pin)"
 
 [[tagged_fams.variants]]
 discriminant = "ALG_CS_2"
-comment = "Enable/address-qualified CS algorithm. Active when enable is asserted AND qualifier pins do not match the inactive pattern."
+comment = "Enable/address-qualified CS algorithm. Active when enable is asserted AND qualifier pins do not match the inactive pattern. Used for the composite ROM type 23QL384"
 params_len_constant = "ALG_CS2_PARAMS_LEN"
 
 [[tagged_fams.variants.fields]]

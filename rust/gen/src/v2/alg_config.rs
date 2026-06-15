@@ -246,6 +246,7 @@ mod tests {
                 role: super::super::cs_data_layout::SelectRole::Cs1,
                 gpio: 13,
             }],
+            alg_cs2: None,
         };
 
         let alg_data = build_alg_data(&cs_data_layout, Board::Fire24A, BitModes::BitMode8, false);
@@ -284,9 +285,12 @@ mod tests {
         );
     }
 
-    /// End-to-end sentinel: Fire24A, single 2364, CS1 ActiveLow (matches
-    /// the PIO's required polarity for Single, so no overrides; Single
-    /// sets never get pulls either).
+    /// End-to-end sentinel: Fire24A, single 2364, CS1 ActiveLow. 2364 has
+    /// no `deselect_when_address_all_high`, so `alg_cs` must be `AlgCs0`.
+    ///
+    /// `derive_cs_data_layout` always receives
+    /// `Some(addr_layout.addr_pin_gpios.as_slice())` - safe for all chip
+    /// types since it's ignored when `alg_cs2` is not needed.
     #[test]
     fn fire24a_2364_single_full_config() {
         let cs_config = CsConfig::new(Some(CsLogic::ActiveLow), None, None);
@@ -296,9 +300,14 @@ mod tests {
 
         let addr_layout = derive_addr_layout(Board::Fire24A, ChipSetType::Single, &[ChipType::Chip2364], bit_mode)
             .expect("addr layout derivation should succeed");
-        let cs_data_layout =
-            derive_cs_data_layout(Board::Fire24A, ChipSetType::Single, &[ChipType::Chip2364], &cs_config)
-                .expect("cs/data layout derivation should succeed");
+        let cs_data_layout = derive_cs_data_layout(
+            Board::Fire24A,
+            ChipSetType::Single,
+            &[ChipType::Chip2364],
+            &cs_config,
+            Some(addr_layout.addr_pin_gpios.as_slice()),
+        )
+        .expect("cs/data layout derivation should succeed");
 
         let config = build_alg_config(
             Board::Fire24A,
@@ -355,6 +364,74 @@ mod tests {
         );
     }
 
+    /// End-to-end sentinel: Fire28A, single 23QL384, CS1 ActiveLow.
+    ///
+    /// 23QL384 has `deselect_when_address_all_high() = Some(&[14, 15])`,
+    /// so `alg_cs` must be `AlgCs2` with `num_qualifier_pins=2` and
+    /// `qualifier_inactive_pattern=0b11` (A14 and A15 both high =
+    /// deselected). `alg_dma` must be `BitMode8` (23QL384 is 8-bit only).
+    /// Exact GPIO values are board-specific and tested separately in
+    /// `cs_data_layout::tests`.
+    #[test]
+    fn fire28a_23ql384_single_full_config_alg_cs2() {
+        let cs_config = CsConfig::new(Some(CsLogic::ActiveLow), None, None);
+
+        let bit_mode = bit_mode_for(ChipType::Chip23QL384, Board::Fire28A);
+        assert_eq!(bit_mode, BitModes::BitMode8);
+
+        let addr_layout =
+            derive_addr_layout(Board::Fire28A, ChipSetType::Single, &[ChipType::Chip23QL384], bit_mode)
+                .expect("addr layout derivation should succeed");
+        let cs_data_layout = derive_cs_data_layout(
+            Board::Fire28A,
+            ChipSetType::Single,
+            &[ChipType::Chip23QL384],
+            &cs_config,
+            Some(addr_layout.addr_pin_gpios.as_slice()),
+        )
+        .expect("cs/data layout derivation should succeed");
+
+        let config = build_alg_config(
+            Board::Fire28A,
+            ChipSetType::Single,
+            &addr_layout,
+            &cs_data_layout,
+            bit_mode,
+            false,
+            1,
+            &cs_config,
+        );
+
+        assert_eq!(
+            config.alg_dma,
+            OneromAlgDmaConfig::AlgDma0 { bit_mode: BitModes::BitMode8, continuous: 1 }
+        );
+
+        match &config.alg_cs {
+            OneromAlgCsConfig::AlgCs2 {
+                clkdiv_int: _,
+                clkdiv_frac: _,
+                gpio_base: _,
+                base_cs_pin: _,
+                num_cs_pins: _,
+                base_data_pin: _,
+                num_data_pins: _,
+                cs_active_delay: _,
+                cs_inactive_delay: _,
+                base_qualifier_pin,
+                num_qualifier_pins,
+                qualifier_inactive_pattern,
+            } => {
+                assert_eq!(*num_qualifier_pins, 2);
+                assert_eq!(*qualifier_inactive_pattern, 0b11);
+                // base_qualifier_pin is board-specific; verified in cs_data_layout tests.
+                // At minimum it must fit within the 32-GPIO PIO window.
+                assert!(*base_qualifier_pin < 32, "base_qualifier_pin {base_qualifier_pin} out of PIO window");
+            }
+            other => panic!("expected AlgCs2 for 23QL384, got {other:?}"),
+        }
+    }
+
     /// Fire40A, single 27C400, BitMode16, `force_16_bit=false` (default):
     /// `AlgData1` with `byte_pin`/`a_minus_1_pin` set, `num_delay_cycles=6`.
     ///
@@ -386,6 +463,7 @@ mod tests {
                 role: super::super::cs_data_layout::SelectRole::Ce,
                 gpio: 17,
             }],
+            alg_cs2: None,
         };
         let addr_layout = AddrLayout {
             gpio_base: 19,
@@ -449,6 +527,7 @@ mod tests {
                 role: super::super::cs_data_layout::SelectRole::Ce,
                 gpio: 17,
             }],
+            alg_cs2: None,
         };
         let addr_layout = AddrLayout {
             gpio_base: 19,

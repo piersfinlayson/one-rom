@@ -185,6 +185,17 @@ pub fn build_rom_image(
         })
         .collect::<Result<Vec<_>>>()?;
 
+    // Valid address count per chip, in words (not bytes): for BitMode8
+    // this equals size_bytes(); for BitMode16 it's size_bytes()/2 since
+    // chip_addr is a word address. Non-power-of-2 chips (e.g. 23QL384 at
+    // 48KB) will have chip_addr values that exceed this for the upper
+    // portion of the address space - those entries get PAD_NO_CHIP_BYTE,
+    // consistent with the missing-bank treatment above.
+    let chip_word_counts: Vec<usize> = chips
+        .iter()
+        .map(|chip| chip.chip_type().size_bytes() / word_bytes)
+        .collect();
+
     let mut image = Vec::with_capacity(entries * word_bytes);
 
     for i in 0..entries as u32 {
@@ -205,6 +216,16 @@ pub fn build_rom_image(
             // set ("both jumpered"): no chip occupies this portion of the
             // address space. PAD_NO_CHIP_BYTE is used directly (for each
             // byte of the entry), with no data-pin mangling.
+            image.extend(core::iter::repeat_n(PAD_NO_CHIP_BYTE, word_bytes));
+            continue;
+        }
+
+        if chip_addr >= chip_word_counts[bank_index] {
+            // chip_addr is beyond this chip's capacity: occurs for
+            // non-power-of-2 chips (e.g. 23QL384 at 48KB = 0xC000 bytes)
+            // where the address lines cover a larger space than the chip
+            // actually has. No byte exists here, so pad directly with no
+            // data-pin mangling, consistent with the missing-bank case above.
             image.extend(core::iter::repeat_n(PAD_NO_CHIP_BYTE, word_bytes));
             continue;
         }
@@ -269,14 +290,18 @@ mod tests {
     }
 
     fn chip_with_image(filename: &str, image: Vec<u8>) -> Chip {
+        chip_with_typed_image(filename, &ChipType::Chip2364, image)
+    }
+
+    fn chip_with_typed_image(filename: &str, chip_type: &ChipType, image: Vec<u8>) -> Chip {
         let cs_config = CsConfig::new(Some(CsLogic::ActiveLow), None, None);
         Chip::from_raw_rom_image(
             0,
             filename.to_string(),
             None,
             Some(image.as_slice()),
-            vec![0u8; ChipType::Chip2364.size_bytes()],
-            &ChipType::Chip2364,
+            vec![0u8; chip_type.size_bytes()],
+            chip_type,
             cs_config,
             &SizeHandling::None,
             None,
@@ -303,6 +328,7 @@ mod tests {
             num_cs_pins: 1,
             cs_ignore_index: None,
             select_lines: Vec::new(),
+            alg_cs2: None,
         }
     }
 
@@ -318,6 +344,7 @@ mod tests {
             num_cs_pins: 1,
             cs_ignore_index: None,
             select_lines: Vec::new(),
+            alg_cs2: None,
         }
     }
 
@@ -343,6 +370,7 @@ mod tests {
             num_cs_pins: 1,
             cs_ignore_index: None,
             select_lines: Vec::new(),
+            alg_cs2: None,
         };
 
         let image: Vec<u8> = (0..ChipType::Chip2364.size_bytes() as u32)
@@ -392,6 +420,7 @@ mod tests {
             num_cs_pins: 1,
             cs_ignore_index: None,
             select_lines: Vec::new(),
+            alg_cs2: None,
         };
 
         let chips = [chip_with_bytes("test.bin", &[0b0000_0001, 0b1000_0000])];
@@ -619,6 +648,7 @@ mod tests {
             num_cs_pins: 1,
             cs_ignore_index: None,
             select_lines: Vec::new(),
+            alg_cs2: None,
         };
 
         // word0 = 0x0001 (bytes 0x01, 0x00), word1 = 0x0080 (bytes 0x80, 0x00).
@@ -656,5 +686,47 @@ mod tests {
             table,
             alloc::vec![0x00, 0x10, 0x01, 0x11, 0x02, 0x12, PAD_NO_CHIP_BYTE, PAD_NO_CHIP_BYTE]
         );
+    }
+
+    /// Non-power-of-2 chip (23QL384, 48KB = 49152 = 0xC000 bytes): with 16
+    /// address lines (A0-A15), chip_addr ranges 0..65535 but only
+    /// 0..=49151 (0x0000..=0xBFFF) are valid. chip_addr >= 49152 must
+    /// produce PAD_NO_CHIP_BYTE with no data-pin mangling.
+    ///
+    /// Identity data mapping, so no mangling interference. We verify:
+    ///   - the byte at the last valid address (49151 / 0xBFFF) comes through;
+    ///   - the first invalid address (49152 / 0xC000) and the last table
+    ///     entry (65535 / 0xFFFF) both produce PAD_NO_CHIP_BYTE.
+    #[test]
+    fn non_power_of_2_chip_pads_upper_addresses() {
+        // 16-bit identity address mapping: GPIO0=A0 .. GPIO15=A15.
+        let addr_layout = AddrLayout {
+            gpio_base: 0,
+            num_addr_pins: 16,
+            x1_gpio: None,
+            x2_gpio: None,
+            addr_pin_gpios: alloc::vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+        };
+        let cs_data_layout = identity_cs_data_layout_8bit();
+
+        let mut image = vec![0u8; ChipType::Chip23QL384.size_bytes()]; // 49152 bytes
+        image[49150] = 0xAB; // penultimate valid address
+        image[49151] = 0xCD; // last valid address (0xBFFF)
+        let chips = [chip_with_typed_image("test.bin", &ChipType::Chip23QL384, image)];
+
+        let table = build_rom_image(
+            &addr_layout,
+            &cs_data_layout,
+            ChipSetType::Single,
+            &chips,
+            &alg_dma_8bit(),
+        )
+        .expect("build_rom_image should succeed");
+
+        assert_eq!(table.len(), 1 << 16); // 65536 entries
+        assert_eq!(table[49150], 0xAB);          // penultimate valid
+        assert_eq!(table[49151], 0xCD);          // last valid (0xBFFF)
+        assert_eq!(table[49152], PAD_NO_CHIP_BYTE); // first invalid (0xC000)
+        assert_eq!(table[65535], PAD_NO_CHIP_BYTE); // last entry (0xFFFF)
     }
 }

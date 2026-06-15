@@ -28,9 +28,9 @@
 //!   `cs_ignore_index` = gap position - Multi doesn't support this).
 //!
 //! - Additionally, `[gpio_base, gpio_base + 32)` (the PIO GPIO window
-//!   anchored at 0 or 16) must cover all data + select GPIOs.  A combo
-//!   can satisfy the contiguity/span checks above while still being
-//!   unreachable by any single PIO, so this is checked independently.
+//!   anchored at 0 or 16) must cover all data + select + qualifier GPIOs.
+//!   A combo can satisfy the contiguity/span checks above while still
+//!   being unreachable by any single PIO, so this is checked independently.
 //!
 //! `gpio_base` is always exactly 0 or 16, matching the RP2350 GPIOBASE
 //! register.  All `base_*_pin` offsets are relative to this value.
@@ -39,6 +39,12 @@
 //! (CS1/CS2/CS3/CE/X1/X2) and resolved (absolute) GPIO, so that
 //! `cs_overrides` can later look up its configured `CsLogic` and decide
 //! whether it needs inverting.
+//!
+//! For chip types with `deselect_when_address_all_high()` (e.g. 23QL384),
+//! `alg_cs2` is populated with the `ALG_CS_2` qualifier parameters.
+//! `derive_cs_data_layout` requires `addr_pin_gpios` to be `Some` in this
+//! case - it must be called after `derive_addr_layout` so the qualifier
+//! GPIOs are already resolved.
 //!
 //! Like `addr_layout`, deliberately decoupled from `Chip`/`ChipSet` (takes
 //! `CsConfig` directly - lightweight, no image data).
@@ -77,6 +83,25 @@ pub struct SelectLine {
     pub gpio: u8,
 }
 
+/// Parameters for the `ALG_CS_2` (enable + address-qualified) CS algorithm.
+///
+/// The chip is selected when the enable line is asserted AND the qualifier
+/// pins do not match `qualifier_inactive_pattern`. Present only for chip
+/// types where `chip_type.deselect_when_address_all_high()` returns `Some`
+/// (e.g. 23QL384).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AlgCs2Config {
+    /// Offset of the first qualifier pin from `gpio_base`.
+    pub base_qualifier_pin: u8,
+    /// Span of qualifier pins (including any gap pins), i.e. `num_qualifier_pins`
+    /// in the `ALG_CS_2` params struct.
+    pub num_qualifier_pins: u8,
+    /// Bit pattern (bit `n` = qualifier pin at `base_qualifier_pin + n`)
+    /// on qualifier pins when the bank is NOT selected (Y preload value).
+    /// For `deselect_when_address_all_high`, all qualifier bits are set.
+    pub qualifier_inactive_pattern: u8,
+}
+
 /// Resolved CS/data-range layout for one chip set.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CsDataLayout {
@@ -103,6 +128,11 @@ pub struct CsDataLayout {
 
     /// The real select lines (excludes the `cs_ignore_index` gap, if any).
     pub select_lines: Vec<SelectLine>,
+
+    /// `ALG_CS_2` qualifier config for chips with
+    /// `deselect_when_address_all_high()` (e.g. 23QL384). `None` for all
+    /// other chip types.
+    pub alg_cs2: Option<AlgCs2Config>,
 }
 
 /// Physical pin for chip_type's single "select" line (CE for
@@ -167,13 +197,35 @@ fn gpios_for_pin(board: Board, chip_type: ChipType, phys_pin: u8) -> Result<&'st
 }
 
 /// Derive the CS/data-range layout for a chip set.
+///
+/// `addr_pin_gpios` must be `Some` for any chip type where
+/// `chip_type.deselect_when_address_all_high()` returns `Some` (e.g.
+/// 23QL384) — pass `Some(addr_layout.addr_pin_gpios.as_slice())` after
+/// calling `derive_addr_layout`. For all other chip types `None` is fine.
+/// Returns `LayoutError::MissingAddrPinGpios` if `addr_pin_gpios` is
+/// `None` when required.
 pub fn derive_cs_data_layout(
     board: Board,
     set_type: ChipSetType,
     chip_types: &[ChipType],
     cs_config: &CsConfig,
+    addr_pin_gpios: Option<&[u8]>,
 ) -> Result<CsDataLayout, LayoutError> {
     let chip0 = chip_types[0];
+
+    // Pre-check: ALG_CS_2 chips require addr_pin_gpios to resolve
+    // qualifier GPIOs, which come from the already-resolved addr_layout.
+    let qual_indices = chip0.deselect_when_address_all_high();
+    if qual_indices.is_some() && addr_pin_gpios.is_none() {
+        return Err(LayoutError::MissingAddrPinGpios { board, chip_type: chip0 });
+    }
+
+    // Resolved qualifier GPIOs (fixed across all combos - they're
+    // determined by the address layout, not the CS/data combo iteration).
+    let qual_gpios: Option<Vec<u8>> = qual_indices.map(|indices| {
+        let gpios = addr_pin_gpios.expect("pre-checked above");
+        indices.iter().map(|&i| gpios[i as usize]).collect()
+    });
 
     let mut data_candidates: Vec<&'static [u8]> = Vec::with_capacity(chip0.data_pins().len());
     for &phys_pin in chip0.data_pins() {
@@ -275,24 +327,40 @@ pub fn derive_cs_data_layout(
         let num_cs_pins = sel_span;
 
         // gpio_base must be the RP2350 PIO GPIOBASE: exactly 0 or 16.
-        // The C firmware uses this value directly to select between
-        // GPIOBASE_0 and GPIOBASE_16, so any other value is incorrect.
-        // All base_*_pin offsets are relative to this PIO window base.
-        let all_min = data_min.min(sel_min);
-        let all_max = data_max.max(sel_max);
+        // Include qualifier GPIOs (if any) in the span so that the
+        // chosen window covers all pins the CS PIO must observe.
+        let mut all_min = data_min.min(sel_min);
+        let mut all_max = data_max.max(sel_max);
+        if let Some(ref qg) = qual_gpios {
+            let q_min = *qg.iter().min().unwrap();
+            let q_max = *qg.iter().max().unwrap();
+            all_min = all_min.min(q_min);
+            all_max = all_max.max(q_max);
+        }
+
         let gpio_base: u8 = if all_min < 16 { 0 } else { 16 };
         let base_data_pin = data_min - gpio_base;
         let base_cs_pin = sel_min - gpio_base;
 
-        // Span from the PIO window base to the last used GPIO; must fit
-        // within the 32-GPIO window ([0,32) for base=0, [16,48) for base=16).
         let window_span = all_max - gpio_base + 1;
         if !fits_pio_window(gpio_base, window_span) {
             continue;
         }
 
-        // Score by actual used GPIO spread (independent of window base),
-        // so combos that pack GPIOs more tightly are preferred.
+        // Compute ALG_CS_2 config now that we have the resolved gpio_base.
+        let alg_cs2 = qual_gpios.as_ref().map(|qg| {
+            let q_min = *qg.iter().min().unwrap();
+            let q_max = *qg.iter().max().unwrap();
+            let base_qualifier_pin = q_min - gpio_base;
+            let num_qualifier_pins = q_max - q_min + 1;
+            // deselect_when_address_all_high: inactive when all qualifier
+            // bits are high, so every qualifier pin's position within the
+            // span contributes a 1 bit.
+            let qualifier_inactive_pattern =
+                qg.iter().fold(0u8, |acc, &g| acc | (1 << (g - q_min)));
+            AlgCs2Config { base_qualifier_pin, num_qualifier_pins, qualifier_inactive_pattern }
+        });
+
         let score = (all_max - all_min + 1) as u32;
 
         if best.as_ref().is_none_or(|(_, s)| score < *s) {
@@ -312,6 +380,7 @@ pub fn derive_cs_data_layout(
                     num_cs_pins,
                     cs_ignore_index,
                     select_lines,
+                    alg_cs2,
                 },
                 score,
             ));
@@ -330,13 +399,14 @@ pub fn derive_cs_data_layout(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use onerom_metadata::BitModes;
 
     #[test]
     fn fire24a_2364_single() {
         let cs_config = CsConfig::new(Some(CsLogic::ActiveLow), None, None);
 
         let layout =
-            derive_cs_data_layout(Board::Fire24A, ChipSetType::Single, &[ChipType::Chip2364], &cs_config)
+            derive_cs_data_layout(Board::Fire24A, ChipSetType::Single, &[ChipType::Chip2364], &cs_config, None)
                 .expect("layout derivation should succeed");
 
         assert_eq!(layout.gpio_base, 0);
@@ -345,6 +415,7 @@ mod tests {
         assert_eq!(layout.base_cs_pin, 13);
         assert_eq!(layout.num_cs_pins, 1);
         assert_eq!(layout.cs_ignore_index, None);
+        assert_eq!(layout.alg_cs2, None);
         assert_eq!(layout.select_lines, vec![SelectLine { role: SelectRole::Cs1, gpio: 13 }]);
 
         // data_pin_gpios: 2364's 8 data lines (physical pins
@@ -362,13 +433,14 @@ mod tests {
         );
 
         let layout =
-            derive_cs_data_layout(Board::Fire24A, ChipSetType::Single, &[ChipType::Chip2316], &cs_config)
+            derive_cs_data_layout(Board::Fire24A, ChipSetType::Single, &[ChipType::Chip2316], &cs_config, None)
                 .expect("layout derivation should succeed");
 
         assert_eq!(layout.gpio_base, 0);
         assert_eq!(layout.base_cs_pin, 13);
         assert_eq!(layout.num_cs_pins, 1);
         assert_eq!(layout.cs_ignore_index, None);
+        assert_eq!(layout.alg_cs2, None);
         assert_eq!(layout.select_lines, vec![SelectLine { role: SelectRole::Cs1, gpio: 13 }]);
     }
 
@@ -385,13 +457,14 @@ mod tests {
         );
 
         let layout =
-            derive_cs_data_layout(Board::Fire24A, ChipSetType::Single, &[ChipType::Chip2316], &cs_config)
+            derive_cs_data_layout(Board::Fire24A, ChipSetType::Single, &[ChipType::Chip2316], &cs_config, None)
                 .expect("layout derivation should succeed (AlgCs1)");
 
         assert_eq!(layout.gpio_base, 0);
         assert_eq!(layout.base_cs_pin, 13);
         assert_eq!(layout.num_cs_pins, 3);
         assert_eq!(layout.cs_ignore_index, Some(1));
+        assert_eq!(layout.alg_cs2, None);
         assert_eq!(
             layout.select_lines,
             vec![
@@ -399,5 +472,62 @@ mod tests {
                 SelectLine { role: SelectRole::Cs2, gpio: 15 },
             ]
         );
+    }
+
+    /// 23QL384 without addr_pin_gpios returns MissingAddrPinGpios.
+    #[test]
+    fn missing_addr_pin_gpios_for_alg_cs2_chip_errors() {
+        let cs_config = CsConfig::new(Some(CsLogic::ActiveLow), None, None);
+
+        let result = derive_cs_data_layout(
+            Board::Fire28A,
+            ChipSetType::Single,
+            &[ChipType::Chip23QL384],
+            &cs_config,
+            None,
+        );
+
+        assert!(matches!(result, Err(LayoutError::MissingAddrPinGpios { .. })));
+    }
+
+    /// 23QL384 with resolved addr_pin_gpios: verify alg_cs2 is populated
+    /// with the correct qualifier config. A14 and A15 (indices 14, 15 into
+    /// address_pins()) must both be high to deselect the chip.
+    ///
+    /// The exact expected values depend on the Fire28A board's GPIO mapping
+    /// for the 23QL384's A14/A15 pins; fill in once that mapping is known.
+    #[test]
+    fn fire28a_23ql384_single_alg_cs2_populated() {
+        let cs_config = CsConfig::new(Some(CsLogic::ActiveLow), None, None);
+
+        // Derive addr_layout first to get the resolved addr_pin_gpios.
+        // (derive_addr_layout is tested separately; we call it here only
+        // to get the resolved GPIO slice for the CS2 qualifier lookup.)
+        let addr_layout = super::super::addr_layout::derive_addr_layout(
+            Board::Fire28A,
+            ChipSetType::Single,
+            &[ChipType::Chip23QL384],
+            BitModes::BitMode8,
+        )
+        .expect("addr layout derivation should succeed");
+
+        let layout = derive_cs_data_layout(
+            Board::Fire28A,
+            ChipSetType::Single,
+            &[ChipType::Chip23QL384],
+            &cs_config,
+            Some(addr_layout.addr_pin_gpios.as_slice()),
+        )
+        .expect("layout derivation should succeed");
+
+        let cs2 = layout.alg_cs2.expect("23QL384 must have alg_cs2");
+
+        // A14 and A15 are contiguous, so num_qualifier_pins == 2 and
+        // qualifier_inactive_pattern == 0b11 (both high = deselected).
+        assert_eq!(cs2.num_qualifier_pins, 2);
+        assert_eq!(cs2.qualifier_inactive_pattern, 0b11);
+
+        // base_qualifier_pin must be within the PIO window.
+        assert!(cs2.base_qualifier_pin < 32);
     }
 }

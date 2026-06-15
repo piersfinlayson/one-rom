@@ -90,6 +90,7 @@ mod tests {
             num_cs_pins: select_lines.len() as u8,
             cs_ignore_index: None,
             select_lines,
+            alg_cs2: None,
         }
     }
 

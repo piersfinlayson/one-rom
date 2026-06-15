@@ -94,7 +94,7 @@ pub fn build_rom_slot(
     let bit_mode = bit_mode_for(chip_types[0], board);
 
     let addr_layout = derive_addr_layout(board, set_type, &chip_types, bit_mode)?;
-    let cs_data_layout = derive_cs_data_layout(board, set_type, &chip_types, cs_config)?;
+    let cs_data_layout = derive_cs_data_layout(board, set_type, &chip_types, cs_config, Some(addr_layout.addr_pin_gpios.as_slice()))?;
 
     let alg = build_alg_config(
         board,
@@ -241,5 +241,101 @@ mod tests {
         assert_eq!(addr_layout.num_addr_pins, 16);
         assert_eq!(cs_data_layout.gpio_base, 0);
         assert_eq!(cs_data_layout.base_data_pin, 16);
+    }
+
+    /// End-to-end: Fire28A, single 23QL384, CS1 ActiveLow.
+    ///
+    /// Key properties under test:
+    /// - `slot.size` = 65536: 2^16 address-table entries * 1 byte/word.
+    ///   The 23QL384 has 16 address lines (A0-A15) covering the full
+    ///   64KB address space; only 0x0000-0xBFFF (48KB) are valid on the
+    ///   chip - the upper 16KB is padded by `build_rom_image`, not here.
+    /// - `alg_cs` = `AlgCs2` with `num_qualifier_pins=2`,
+    ///   `qualifier_inactive_pattern=0b11` (A14 and A15 both high =
+    ///   deselected), `serve_cs_low_0=0` (Single = active-low),
+    ///   `byte_pin=GPIO_NONE` (8-bit chip).
+    /// - `alg_dma` = `BitMode8`.
+    /// - The returned `cs_data_layout.alg_cs2` matches what was used to
+    ///   build `slot.alg`.
+    ///
+    /// Exact GPIO values are board-specific and covered by
+    /// `cs_data_layout::tests::fire28a_23ql384_single_alg_cs2_populated`.
+    #[test]
+    fn fire28a_23ql384_single() {
+        let cs_config = CsConfig::new(Some(CsLogic::ActiveLow), None, None);
+        let image = vec![0u8; ChipType::Chip23QL384.size_bytes()]; // 49152 bytes
+
+        let chip = Chip::from_raw_rom_image(
+            0,
+            "test.bin".to_string(),
+            None,
+            Some(image.as_slice()),
+            vec![0u8; ChipType::Chip23QL384.size_bytes()],
+            &ChipType::Chip23QL384,
+            cs_config,
+            &SizeHandling::None,
+            None,
+        )
+        .expect("chip construction should succeed");
+
+        let chips = [chip];
+
+        let (slot, addr_layout, cs_data_layout) =
+            build_rom_slot(Board::Fire28A, ChipSetType::Single, &chips, 0, None, false)
+                .expect("build_rom_slot should succeed");
+
+        assert_eq!(slot.data, 0);
+        // 23QL384 has 16 address lines (A0-A15), but on Fire28A they span
+        // 17 GPIO positions (one padding-pool GPIO falls within the range),
+        // so num_addr_pins=17 and the table is 2^17 * 1 byte/word = 131072.
+        assert_eq!(slot.size, 1 << 17);
+        assert_eq!(slot.rom_count, 1);
+        assert_eq!(slot.slot_type, RomSlotType::RomSlotTypeSingleRom);
+        assert_eq!(slot.firmware_overrides, None);
+
+        let alg = slot.alg.as_ref().expect("alg must be present");
+
+        assert_eq!(
+            alg.alg_dma,
+            OneromAlgDmaConfig::AlgDma0 { bit_mode: BitModes::BitMode8, continuous: 1 }
+        );
+
+        match &alg.alg_cs {
+            OneromAlgCsConfig::AlgCs2 {
+                clkdiv_int: _,
+                clkdiv_frac: _,
+                gpio_base: _,
+                base_cs_pin: _,
+                num_cs_pins: _,
+                base_data_pin: _,
+                num_data_pins: _,
+                cs_active_delay: _,
+                cs_inactive_delay: _,
+                base_qualifier_pin,
+                num_qualifier_pins,
+                qualifier_inactive_pattern,
+            } => {
+                assert_eq!(*num_qualifier_pins, 2);
+                assert_eq!(*qualifier_inactive_pattern, 0b11);
+                // base_qualifier_pin is board-specific; verify it's within
+                // the 32-GPIO PIO window and consistent with the returned layout.
+                assert!(*base_qualifier_pin < 32, "base_qualifier_pin {base_qualifier_pin} out of PIO window");
+                assert_eq!(
+                    *base_qualifier_pin,
+                    cs_data_layout.alg_cs2.as_ref().unwrap().base_qualifier_pin,
+                    "alg_cs base_qualifier_pin must match cs_data_layout"
+                );
+            }
+            other => panic!("expected AlgCs2 for 23QL384, got {other:?}"),
+        }
+
+        // 23QL384 address lines span 17 GPIO positions on Fire28A (see slot.size above).
+        assert_eq!(addr_layout.num_addr_pins, 17);
+
+        // The returned cs_data_layout must have alg_cs2 populated and
+        // consistent with what was baked into slot.alg above.
+        let cs2 = cs_data_layout.alg_cs2.as_ref().expect("23QL384 must have alg_cs2");
+        assert_eq!(cs2.num_qualifier_pins, 2);
+        assert_eq!(cs2.qualifier_inactive_pattern, 0b11);
     }
 }

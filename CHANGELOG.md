@@ -12,8 +12,11 @@ Move lab-new over to new pin map within Board.
 Plugins need to add firmware/include to their include path and change sdrr/ora or firmware/ora.
 
 Retired:
+- `lab` (superceded by `onerom-lab-new`)
+- `sdrr-check` (superceded by `onerom-fw-tester`)
 - `sdrr-info` (superceded by the CLI `onerom firmware inspect` command)
-
+- `sdrr-tester` (superceded by `onerom-lab-new`)
+- `test` (superceded by `onerom-fw-tester`)
 
 ## v0.6.13 - 2026-06-02
 
