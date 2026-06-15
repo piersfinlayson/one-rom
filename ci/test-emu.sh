@@ -89,54 +89,44 @@ run_config() {
 test_24_all_rom_types() {
     local board=${1:-fire-24-e}
 
-    run_test   $board images/test/rand_8KB.rom trunc,type=2316  3
-    run_test   $board images/test/rand_8KB.rom trunc,type=2332  2
-    run_test   $board images/test/rand_8KB.rom type=2364        1
-    run_no_cs  $board images/test/rand_8KB.rom trunc,type=2704
-    run_no_cs  $board images/test/rand_8KB.rom trunc,type=2708
-    run_no_cs  $board images/test/rand_8KB.rom trunc,type=2716
-    run_no_cs  $board images/test/rand_8KB.rom trunc,type=2732
-    run_no_cs  $board images/test/rand_8KB.rom trunc,type=28C16
+    # Deliberately truncate one, to test that function
+    run_test   $board images/test/rand_4KB.rom   trunc,type=2316  3
+    run_test   $board images/test/rand_4KB.rom   type=2332  2
+    run_test   $board images/test/rand_8KB.rom   type=2364  1
+    run_no_cs  $board images/test/rand_0.5KB.rom type=2704
+    run_no_cs  $board images/test/rand_1KB.rom   type=2708
+    run_no_cs  $board images/test/rand_2KB.rom   type=2716
+    run_no_cs  $board images/test/rand_4KB.rom   type=2732
+    run_no_cs  $board images/test/rand_8KB.rom   type=28C16
 }
 
 test_28_all_rom_types() {
     local board=${1:-fire-28-a}
 
-    run_test   $board images/test/rand_64KB.rom  trunc,type=23128 3
-    run_test   $board images/test/rand_64KB.rom  trunc,type=23256 2
-    run_test   $board images/test/rand_64KB.rom  type=23512       2
-    run_test   $board images/test/rand_128KB.rom type=231024      1
-    run_no_cs  $board images/test/rand_64KB.rom  trunc,type=2764
-    run_no_cs  $board images/test/rand_64KB.rom  trunc,type=27128
-    run_no_cs  $board images/test/rand_64KB.rom  trunc,type=27256
+    run_test   $board images/test/rand_16KB.rom  type=23128   3
+    run_test   $board images/test/rand_32KB.rom  type=23256   2
+    run_test   $board images/test/rand_64KB.rom  type=23512   2
+    run_test   $board images/test/rand_128KB.rom type=231024  1
+    run_no_cs  $board images/test/rand_8KB.rom   type=2764
+    run_no_cs  $board images/test/rand_16KB.rom  type=27128
+    run_no_cs  $board images/test/rand_32KB.rom  type=27256
     run_no_cs  $board images/test/rand_64KB.rom  type=27512
-    run_no_cs  $board images/test/rand_64KB.rom  trunc,type=28C64
-    run_no_cs  $board images/test/rand_64KB.rom  trunc,type=28C256
-
-    # Supported as of 0.6.9
-    run_test   $board images/test/rand_8KB.rom type=2364        1
-    run_no_cs  $board images/test/rand_8KB.rom trunc,type=2704
-    run_no_cs  $board images/test/rand_8KB.rom trunc,type=2708
-    run_no_cs  $board images/test/rand_8KB.rom trunc,type=2716
-    run_no_cs  $board images/test/rand_8KB.rom trunc,type=2732
-
-    # Supported as of 0.6.11
-    run_test   $board images/test/rand_64KB.rom type=23QL512    1
-
-    # Supported as of 0.6.12
-    run_test   $board images/test/rand_64KB.rom trunc,type=23QL384 1
+    run_no_cs  $board images/test/rand_8KB.rom   type=28C64
+    run_no_cs  $board images/test/rand_32KB.rom  type=28C256
+    run_test   $board images/test/rand_64KB.rom  type=23QL512 1
+    run_test   $board images/test/rand_48KB.rom  type=23QL384 1
 }
 
 test_32pin() {
     local board=${1:-fire-32-a}
 
-    run_no_cs  $board images/test/rand_512KB.rom type=27C010,trunc
-    run_no_cs  $board images/test/rand_512KB.rom type=27C020,trunc
+    run_no_cs  $board images/test/rand_128KB.rom type=27C010
+    run_no_cs  $board images/test/rand_256KB.rom type=27C020
     run_no_cs  $board images/test/rand_512KB.rom type=27C040
-    run_no_cs  $board images/test/rand_512KB.rom type=27C301,trunc
+    run_no_cs  $board images/test/rand_128KB.rom type=27C301
     run_no_cs  $board images/test/rand_512KB.rom type=27C080,cs1=0
     run_no_cs  $board images/test/rand_512KB.rom type=27C080,cs1=1
-    run_no_cs  $board images/test/rand_512KB.rom type=28C512,trunc
+    run_no_cs  $board images/test/rand_64KB.rom  type=28C512
 
     # Supported as of 0.6.13
     run_no_cs  $board images/test/rand_512KB.rom type=23C1010,trunc

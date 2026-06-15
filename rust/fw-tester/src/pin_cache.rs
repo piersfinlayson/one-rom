@@ -94,6 +94,11 @@ impl PinCache {
                 continue;
             }
 
+            if spec.name == "write" {
+                // Not a select line; excluded from CS detection and bus tristate checks.
+                continue;
+            }
+
             let assert_high = match spec.line_type {
                 ControlLineType::FixedActiveLow => false,
                 ControlLineType::Configurable => {
