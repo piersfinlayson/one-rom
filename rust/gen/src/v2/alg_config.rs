@@ -556,7 +556,7 @@ mod tests {
                 clkdiv_int: 1,
                 clkdiv_frac: 0,
                 gpio_base: 16,
-                num_delay_cycles: 6,
+                num_delay_cycles: 4,
                 base_addr_pin: 3,
                 num_addr_pins: 18,
                 num_rom_table_bits: 18,
