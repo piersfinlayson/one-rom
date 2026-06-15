@@ -2,46 +2,25 @@
 
 The most flexible ROM replacement for your retro computer.
 
+https://onerom.org
+
 ## Changes In This Release
 
 [CHANGELOG_PLACEHOLDER]
 
-## Quick Start
+## Using
 
-Use [One ROM Studio](https://onerom.org/studio) to configure and build custom firmware images for your One ROM.
+Use [One ROM Web](https://onerom.org/web) to configure your One ROM.
 
-Alternatively, download pre-built firmware images from the releases below.
+For more advanced use cases, use [One ROM CLI](https://onerom.org/cli) to build and flash your One ROM.
 
-## File Types
+## Firmware
 
-- **onerom-{hw-rev}-{mcu}-{rom-config}.bin** - Single binary file for a specific hardware revision, MCU variant and ROM configuration, ready to flash
-- **onerom-{hw-rev}-{mcu}.zip** - Zip of binaries for a specific hardware revision and MCU variant, ready to flash
-- **manifest.json** - JSON manifest file listing all available firmware images, their hardware and ROM configurations, and SHA256 checksums, for use by automated tooling.
-
-## Supported Configurations
-
-Each zip firmware with a selection of ROM images for multiple system configurations, including:
-
-- C64
-- VIC-20 PAL  
-- PET
-- Commodore 1541 disk drive
-- IEEE disk drives
-- And more...
-
-Firmware for ROM image configurations that require explicit licence acceptance (for example ['c64'](/old-config/c64.mk)) are not included in the release.  You can build them yourself, by following instructions in the [README](/README.md) and [INSTALL](/INSTALL.md).
-
-There are more hardware, MCU and other build configurations options supported by One ROM than are included in the release artifacts.  You can build them yourself, by following instructions in the [README](/README.md) and [INSTALL](/INSTALL.md).
-
-## Installation
-
-1. Download the appropriate **.bin** for your hardware and desired ROM configuration
-2. Flash the desired binary to your One ROM
-3. Install One ROM into your retro computer
+The base One ROM firmware for this release is attached to this release.  However, it is easier to use [Web](https://onerom.org/web) or CLI (https://onerom.org/cli) to build and flash your One ROM.  These tools automatically download and use the latest firmware version.
 
 ## Support
 
 For documentation, hardware setup guides, and support:
-
-- GitHub: [Project](https://piers.rocks/u/one)
+- Discord: [piers.rocks Discord](https://discord.com/invite/tq22nJefXr)
+- GitHub: [Project](https://github.com/piersfinlayson/one-rom)
 - YouTube: [@piers.rocks](https://www.youtube.com/@piers_rocks)

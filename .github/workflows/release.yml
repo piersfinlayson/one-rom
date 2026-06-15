@@ -20,7 +20,7 @@ jobs:
     - name: Install build dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y dfu-util gcc-arm-none-eabi jq libcurl4-openssl-dev libjson-c-dev libzip-dev make zip
+        sudo apt-get install -y gcc-arm-none-eabi jq libcurl4-openssl-dev libjson-c-dev libzip-dev make zip
         
     - name: Install Rust
       uses: dtolnay/rust-toolchain@stable

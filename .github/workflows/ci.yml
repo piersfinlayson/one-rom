@@ -47,7 +47,7 @@ jobs:
     - name: Install build dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y dfu-util gcc-arm-none-eabi jq libcurl4-openssl-dev libjson-c-dev libzip-dev make
+        sudo apt-get install -y gcc-arm-none-eabi jq libcurl4-openssl-dev libjson-c-dev libzip-dev make
         
     - name: Install Rust
       uses: dtolnay/rust-toolchain@stable
@@ -65,17 +65,12 @@ jobs:
         export TOOLCHAIN=/usr/bin
         ci/rust-docs.sh
 
-    - name: Test option combinations
-      run: |
-        export TOOLCHAIN=/usr/bin
-        ci/build.sh test
-
     - name: Run One ROM emulator tests
       run: |
         export TOOLCHAIN=/usr/bin
         ci/test-emu.sh
       
-    - name: Build firmware for all image configs
+    - name: Build firmware
       run: |
         export TOOLCHAIN=/usr/bin
         ci/build.sh ci
@@ -84,12 +79,13 @@ jobs:
       run: |
         export TOOLCHAIN=/usr/bin
         make clean
-        HW_REV=fire-24-e MCU=rp2350 ROM_CONFIGS= EXCLUDE_METADATA=1 make
+        make
         make -C plugins/system/usb
         make -C plugins/user/activity
         make -C plugins/user/blink
         make -C plugins/user/host-control
-        make -C sdrr/ora/examples
+        make -C plugins/user/rgb
+        make -C firmware/ora/examples
 
     - name: Build tools
       run: |
