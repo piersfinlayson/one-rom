@@ -4923,6 +4923,7 @@ name = "onerom-fw-emulator"
 version = "0.1.0"
 dependencies = [
  "bindgen",
+ "onerom-config",
 ]
 
 [[package]]

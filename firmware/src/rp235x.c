@@ -5,6 +5,7 @@
 // MIT License
 
 #include "include.h"
+#include "apio.h"
 
 // Internal function prototypes
 uint8_t calculate_pll_settings(
@@ -42,9 +43,8 @@ const rp2350_boot_block_t rp2350_arm_boot_block = {
     .end_marker      = 0xab123579
 };
 
-#if !defined(TEST_BUILD)
-
 void platform_specific_init(void) {
+#if !defined(TEST_BUILD)
     // RP235X needs to reset the JTAG interface to enable SWD (for example for
     // RTT logging)
     RESET_RESET |= RESET_JTAG;
@@ -61,8 +61,13 @@ void platform_specific_init(void) {
     if (!SYSINFO_IS_QFN60()) {
         RUNTIME->rp235x = RP235XB;
     } 
+#else 
+extern uint8_t stub_rp235x_is_b;
+    RUNTIME->rp235x = stub_rp235x_is_b ? RP235XB : RP235XA;
+#endif
 }
 
+#if !defined(TEST_BUILD)
 // Set up interrupt to fire when VBUS sensed on PA9
 void setup_vbus_interrupt(void) {
     // Check we have the information required to enable DFU
@@ -273,7 +278,6 @@ void setup_clock(void) {
     final_checks(&config);
 }
 
-#if REAL_HARDWARE
 // Perform initial GPIO setup, which involves the image select pins and the
 // status LED pin(s).
 //
@@ -281,6 +285,11 @@ void setup_clock(void) {
 void setup_initial_gpios(void) {
     DEBUG("Init GPIO");
 
+    // Initialize APIO GPIO support.  A no-op on metal, but necessary when
+    // emulating in case we repeatedly call firmware_main().
+    APIO_GPIO_INIT();
+
+#if REAL_HARDWARE
     // Take IO bank and pads bank out of reset
     RESET_RESET &= ~(RESET_IOBANK0 | RESET_PADS_BANK0);
     while (!(RESET_DONE & (RESET_IOBANK0 | RESET_PADS_BANK0)));
@@ -312,8 +321,10 @@ void setup_initial_gpios(void) {
         SIO_GPIO_OE_SET_PIN(pin);
         SIO_GPIO_OUT_SET_PIN(pin);
     }
+#endif // REAL_HARDWARE
 }
 
+#if REAL_HARDWARE
 // Reconfigure flash (QMI) speed if required
 void setup_qmi(rp235x_clock_config_t *config) {
 #if TARGET_FREQ_MHZ > (MAX_FLASH_CLOCK_FREQ_MHZ * 256)

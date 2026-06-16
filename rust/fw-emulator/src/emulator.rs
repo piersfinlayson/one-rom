@@ -8,7 +8,8 @@
 //!
 //! ```text
 //!   Emulator::set_logging(enabled)  — optional, before boot, or after()
-//!   Emulator::set_sel_image(n)
+//!   Emulator::set_rp_variant(variant)  — before boot
+//!   Emulator::set_sel_image(n)      - before boot
 //!   Emulator::boot()                — calls firmware_main(), populates global state
 //!        │
 //!        ▼
@@ -28,6 +29,7 @@
 //! `firmware_main` writes global C state.  Run tests with
 //! `RUST_TEST_THREADS=1` (or `-- --test-threads=1`) to avoid races.
 
+use onerom_config::mcu::RpVariant;
 use crate::ffi;
 
 /// A handle to a running One ROM firmware emulator instance.
@@ -55,6 +57,12 @@ impl Emulator {
     /// enabled).
     pub fn set_logging(enabled: bool) {
         unsafe { ffi::ffi_set_logging(enabled as u8) };
+    }
+
+    /// Set the RP variant (affects GPIO pinout).
+    pub fn set_rp_variant(variant: Option<RpVariant>) {
+        let is_b = matches!(variant, Some(RpVariant::Rp235xB));
+        unsafe { ffi::stub_set_rp_variant(is_b as u8) };
     }
 
     /// Create and configure the emulated PIO handle.

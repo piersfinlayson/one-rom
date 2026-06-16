@@ -1,0 +1,46 @@
+{
+    "$schema": "https://images.onerom.org/configs/schema.json",
+    "version": 1,
+    "name": "24-random-23xx",
+    "description": "23x series ROM test",
+    "categories": [
+    ],
+    "rom_sets": [
+        {
+            "type": "single",
+            "roms": [
+                {
+                    "description": "2316",
+                    "file": "images/test/rand_2KB.rom",
+                    "type": "2316",
+                    "cs1": "active_low",
+                    "cs2": "active_low",
+                    "cs3": "active_high"
+                }
+            ]
+        },
+        {
+            "type": "single",
+            "roms": [
+                {
+                    "description": "2332",
+                    "file": "images/test/rand_4KB.rom",
+                    "type": "2332",
+                    "cs1": "active_low",
+                    "cs2": "active_high"
+                }
+            ]
+        },
+        {
+            "type": "single",
+            "roms": [
+                {
+                    "description": "2364",
+                    "file": "images/test/rand_8KB.rom",
+                    "type": "2364",
+                    "cs1": "active_low"
+                }
+            ]
+        }
+    ]
+}

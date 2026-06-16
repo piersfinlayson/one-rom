@@ -110,8 +110,9 @@ fn run_chip_set(
         return SetResult::skipped(set_idx, "multi-ROM and banked sets not yet supported");
     }
 
-    // Image selection must happen before boot so the firmware sees the correct
-    // sel GPIO state during initialisation.
+    // Both the RP variant and image selection must be set before boot so the
+    // firmware sees the correct state during initialisation.
+    Emulator::set_rp_variant(board.rp_variant());
     debug!("Set {}: selecting image {}", set_idx, sel_image);
     Emulator::set_sel_image(sel_image);
 

@@ -79,6 +79,15 @@ pub enum RpVariant {
     Rp235xB = 0,
 }
 
+impl core::fmt::Display for RpVariant {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            RpVariant::Rp235xA => write!(f, "RP235xA"),
+            RpVariant::Rp235xB => write!(f, "RP235xB"),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Processor {
     F401BC,

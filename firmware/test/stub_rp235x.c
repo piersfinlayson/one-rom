@@ -18,10 +18,6 @@ void platform_specific_init(void) {
     STUB_LOG("platform_specific_init");
 }
 
-void setup_initial_gpios(void) {
-    STUB_LOG("setup_initial_gpios");
-}
-
 void setup_vbus_interrupt(void) {
     STUB_LOG("setup_vbus_interrupt");
 }
@@ -170,3 +166,9 @@ void limp_mode(limp_mode_pattern_t pattern) {
 }
 
 SEGGER_RTT_CB _SEGGER_RTT = {0};
+
+uint8_t stub_rp235x_is_b = 0;
+
+void stub_set_rp_variant(uint8_t is_b) {
+    stub_rp235x_is_b = is_b;
+}

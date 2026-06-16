@@ -26,5 +26,6 @@ extern limp_mode_pattern_t limp_mode_value;
 void stub_log(const char* msg, ...);
 uint64_t *get_ram_rom_image_table_aligned(void);
 uint8_t stub_set_sel_image(uint8_t image_index);
+void stub_set_rp_variant(uint8_t is_b);
 
 #endif // TEST_STUB_H

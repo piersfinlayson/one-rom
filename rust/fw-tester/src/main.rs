@@ -66,10 +66,15 @@ fn main() {
     let board =
         Board::try_from_str(&board_str).unwrap_or_else(|| panic!("Unknown board '{}'", board_str));
 
+    let board_display = match board.rp_variant() {
+        Some(v) => format!("{board_str} ({v})"),
+        None => board_str.clone(),
+    };
+
     // Firmware logging is a global setting that persists across re-boots.
     Emulator::set_logging(log_enabled);
 
-    let mut report = TestReport::new(&config_path, &board_str);
+    let mut report = TestReport::new(&config_path, &board_display);
     runner::run_all(board, &config, &base_dir, &mut report);
 
     report.print();

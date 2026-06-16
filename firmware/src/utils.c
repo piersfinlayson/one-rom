@@ -129,7 +129,7 @@ uint8_t metadata_valid(void) {
     LOG("Board: %s", HW->hw_rev);
 
     if (HW->rp235x != RUNTIME->rp235x) {
-        ERR("Runtime RP235X %c vs metadata %x", RUNTIME->rp235x == RP235XA ? 'A' : 'B', HW->rp235x ? 'A' : 'B');
+        ERR("Runtime RP235X %c vs metadata %c", RUNTIME->rp235x == RP235XA ? 'A' : 'B', HW->rp235x ? 'A' : 'B');
         return 0;
     }
     LOG("MCU: RP235X%c", RUNTIME->rp235x == RP235XA ? 'A' : 'B');

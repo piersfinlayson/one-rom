@@ -12,6 +12,9 @@ categories = ["embedded", "hardware-support"]
 
 [lib]
 name = "onerom_fw_emulator"
+
+[dependencies]
+onerom-config = { workspace = true }
  
 [build-dependencies]
 bindgen = "0.72"
