@@ -14,10 +14,6 @@
 #endif // !ONEROM_LENS
 #define APIO_LOG_ENABLE(fmt, ...) printf(fmt "\n", ##__VA_ARGS__)
 
-void platform_specific_init(void) {
-    STUB_LOG("platform_specific_init");
-}
-
 void setup_vbus_interrupt(void) {
     STUB_LOG("setup_vbus_interrupt");
 }
