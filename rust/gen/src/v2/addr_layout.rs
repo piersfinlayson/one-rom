@@ -169,6 +169,22 @@ pub enum LayoutError {
     /// active_high) to act as a half-select, but no such configuration was
     /// provided or `cs1` was set to `Ignore`.
     RomTooLargeNoCsConfig { board: Board, chip_type: ChipType },
+
+    /// The address GPIO span produced by this chip set on this board
+    /// exceeds `MAX_IMAGE_SIZE`. Raised by `build_rom_slot` once the
+    /// address layout and algorithm config are both known, carrying enough
+    /// context for a user-facing message. `derive_addr_layout` itself
+    /// always succeeds if a valid GPIO combo exists — it is the
+    /// *combination* of that layout with the chip count and word size that
+    /// determines whether the resulting table fits.
+    RomTableTooLarge {
+        board: Board,
+        chip_type: ChipType,
+        set_type: ChipSetType,
+        num_chips: usize,
+        num_addr_pins: u8,
+        table_size: usize,
+    },
 }
 
 impl From<LayoutError> for Error {
@@ -203,6 +219,45 @@ impl From<LayoutError> for Error {
                      (active_low/active_high) is required to select a half but was not configured"
                 ),
             },
+            LayoutError::RomTableTooLarge {
+                board,
+                chip_type,
+                set_type,
+                num_chips,
+                num_addr_pins,
+                table_size,
+            } => {
+                // Format sizes as MB where exact, KB otherwise.
+                let size_str = if table_size.is_multiple_of(1024 * 1024) {
+                    alloc::format!("{}MB", table_size / (1024 * 1024))
+                } else {
+                    alloc::format!("{}KB", table_size / 1024)
+                };
+                let max_str = if MAX_IMAGE_SIZE.is_multiple_of(1024 * 1024) {
+                    alloc::format!("{}MB", MAX_IMAGE_SIZE / (1024 * 1024))
+                } else {
+                    alloc::format!("{}KB", MAX_IMAGE_SIZE / 1024)
+                };
+                let hint = if matches!(set_type, ChipSetType::Banked | ChipSetType::Multi)
+                    && num_chips > 1
+                {
+                    alloc::format!(
+                        " Try reducing to {} chip{}.",
+                        num_chips - 1,
+                        if num_chips - 1 == 1 { "" } else { "s" }
+                    )
+                } else {
+                    alloc::string::String::new()
+                };
+                Error::UnsupportedBoardConfig {
+                    board,
+                    reason: alloc::format!(
+                        "a {num_chips}-chip {set_type:?} set of {chip_type} requires \
+                         {num_addr_pins} address bits, producing a {size_str} ROM table. \
+                         Maximum supported is {max_str}.{hint}"
+                    ),
+                }
+            }
         }
     }
 }

@@ -15,6 +15,7 @@ use onerom_config::hw::Board;
 use onerom_metadata::{BitModes, OneromAlgDmaConfig, OneromFirmwareOverrides, OneromRomSlot};
 
 use crate::image::{Chip, ChipSetType};
+use crate::MAX_IMAGE_SIZE;
 
 use super::addr_layout::{AddrLayout, LayoutError, derive_addr_layout};
 use super::alg_config::{bit_mode_for, build_alg_config, combined_alg_preference};
@@ -124,6 +125,20 @@ pub fn build_rom_slot(
     );
 
     let size = rom_table_size(&addr_layout, &alg.alg_dma);
+
+    // Check here rather than in build_rom_image: we have board, chip type,
+    // set type, and num_chips in scope, so we can produce a message the
+    // user can actually act on.
+    if size as usize > MAX_IMAGE_SIZE {
+        return Err(LayoutError::RomTableTooLarge {
+            board,
+            chip_type: chip_types[0],
+            set_type,
+            num_chips: chip_types.len(),
+            num_addr_pins: addr_layout.num_addr_pins,
+            table_size: size as usize,
+        });
+    }
 
     let roms = chips
         .iter()
@@ -266,22 +281,6 @@ mod tests {
     }
 
     /// End-to-end: Fire28A, single 23QL384, CS1 ActiveLow.
-    ///
-    /// Key properties under test:
-    /// - `slot.size` = 65536: 2^16 address-table entries * 1 byte/word.
-    ///   The 23QL384 has 16 address lines (A0-A15) covering the full
-    ///   64KB address space; only 0x0000-0xBFFF (48KB) are valid on the
-    ///   chip - the upper 16KB is padded by `build_rom_image`, not here.
-    /// - `alg_cs` = `AlgCs2` with `num_qualifier_pins=2`,
-    ///   `qualifier_inactive_pattern=0b11` (A14 and A15 both high =
-    ///   deselected), `serve_cs_low_0=0` (Single = active-low),
-    ///   `byte_pin=GPIO_NONE` (8-bit chip).
-    /// - `alg_dma` = `BitMode8`.
-    /// - The returned `cs_data_layout.alg_cs2` matches what was used to
-    ///   build `slot.alg`.
-    ///
-    /// Exact GPIO values are board-specific and covered by
-    /// `cs_data_layout::tests::fire28a_23ql384_single_alg_cs2_populated`.
     #[test]
     fn fire28a_23ql384_single() {
         let cs_config = CsConfig::new(Some(CsLogic::ActiveLow), None, None);
@@ -307,9 +306,6 @@ mod tests {
                 .expect("build_rom_slot should succeed");
 
         assert_eq!(slot.data, 0);
-        // 23QL384 has 16 address lines (A0-A15), but on Fire28A they span
-        // 17 GPIO positions (one padding-pool GPIO falls within the range),
-        // so num_addr_pins=17 and the table is 2^17 * 1 byte/word = 131072.
         assert_eq!(slot.size, 1 << 17);
         assert_eq!(slot.rom_count, 1);
         assert_eq!(slot.slot_type, RomSlotType::RomSlotTypeSingleRom);
@@ -342,8 +338,6 @@ mod tests {
             } => {
                 assert_eq!(*num_qualifier_pins, 2);
                 assert_eq!(*qualifier_inactive_pattern, 0b11);
-                // base_qualifier_pin is board-specific; verify it's within
-                // the 32-GPIO PIO window and consistent with the returned layout.
                 assert!(
                     *base_qualifier_pin < 32,
                     "base_qualifier_pin {base_qualifier_pin} out of PIO window"
@@ -357,11 +351,8 @@ mod tests {
             other => panic!("expected AlgCs2 for 23QL384, got {other:?}"),
         }
 
-        // 23QL384 address lines span 17 GPIO positions on Fire28A (see slot.size above).
         assert_eq!(addr_layout.num_addr_pins, 17);
 
-        // The returned cs_data_layout must have alg_cs2 populated and
-        // consistent with what was baked into slot.alg above.
         let cs2 = cs_data_layout
             .alg_cs2
             .as_ref()
@@ -371,24 +362,6 @@ mod tests {
     }
 
     /// End-to-end sentinel: Fire28C, 2-chip Banked 27128, CS1 ActiveLow.
-    ///
-    /// Key properties under test:
-    /// - `slot.slot_type` = `RomSlotTypeBankedRom`.
-    /// - `slot.size` = 65536: 2^16 address-table entries * 1 byte/word
-    ///   (addr_layout num_addr_pins=16, confirmed by
-    ///   `addr_layout::tests::fire28c_27128_banked_2chip`).
-    /// - `alg_cs` = `AlgCs0` with `serve_cs_low_0=0` (Banked = active-low
-    ///   convention, same as Single).
-    /// - `alg_dma` = `BitMode8`.
-    /// - `gpio_pull_config` is Some with exactly one entry (X1 only for a
-    ///   2-chip set).
-    /// - `addr_layout.x1_gpio` = Some(28), `x2_gpio` = None (2-chip set
-    ///   doesn't include X2).
-    /// - Two ROM info entries, one per chip, with correct rom_type and
-    ///   filenames.
-    ///
-    /// Detailed GPIO values within `alg_addr`/`alg_data`/`alg_cs` are
-    /// board-specific; structural correctness is the focus here.
     #[test]
     fn fire28c_27128_banked_2chip() {
         let image = vec![0u8; ChipType::Chip27128.size_bytes()];
@@ -426,7 +399,7 @@ mod tests {
                 .expect("build_rom_slot should succeed");
 
         assert_eq!(slot.data, 0);
-        assert_eq!(slot.size, 1 << 16); // 2^16 * 1 byte/word
+        assert_eq!(slot.size, 1 << 16);
         assert_eq!(slot.rom_count, 2);
         assert_eq!(slot.slot_type, RomSlotType::RomSlotTypeBankedRom);
         assert_eq!(slot.firmware_overrides, None);
@@ -441,7 +414,6 @@ mod tests {
             }
         );
 
-        // Banked sets use the same active-low convention as Single.
         match &alg.alg_cs {
             OneromAlgCsConfig::AlgCs0 { serve_cs_low_0, .. } => {
                 assert_eq!(*serve_cs_low_0, 0);
@@ -449,22 +421,79 @@ mod tests {
             other => panic!("expected AlgCs0 for Banked set, got {other:?}"),
         }
 
-        // addr_layout values confirmed by addr_layout::tests::fire28c_27128_banked_2chip.
         assert_eq!(addr_layout.x1_gpio, Some(28));
-        assert_eq!(addr_layout.x2_gpio, None); // 2-chip set: no X2
+        assert_eq!(addr_layout.x2_gpio, None);
 
-        // Banked set must have GPIO pull config; 2-chip = X1 only (one entry).
         let pull = alg
             .gpio_pull_config
             .as_ref()
             .expect("Banked set must have gpio_pull_config");
         assert_eq!(pull.params.len(), 1);
 
-        // Two ROM info entries, one per chip.
         assert_eq!(slot.roms.len(), 2);
         assert_eq!(slot.roms[0].rom_type, "27128");
         assert_eq!(slot.roms[1].rom_type, "27128");
         assert_eq!(slot.roms[0].filename, Some("bank0.bin".to_string()));
         assert_eq!(slot.roms[1].filename, Some("bank1.bin".to_string()));
+    }
+
+    /// Fire28C, 3-chip Banked 23QL512: address pins span GPIOs 10-27 (18
+    /// wide), X1/X2 outside that range → span 20 → 1MB table > MAX_IMAGE_SIZE.
+    /// Verifies that `build_rom_slot` returns a `LayoutError::RomTableTooLarge`
+    /// and that it converts to an `Error::UnsupportedBoardConfig` whose
+    /// message names the board, chip count, and address-bit count.
+    #[test]
+    fn fire28c_23ql512_banked_3chip_too_large() {
+        let image = vec![0u8; ChipType::Chip23QL512.size_bytes()];
+        let cs_config = CsConfig::new(Some(CsLogic::ActiveLow), None, None);
+
+        let make_chip = |i: usize| {
+            Chip::from_raw_rom_image(
+                i,
+                alloc::format!("bank{i}.bin"),
+                None,
+                Some(image.as_slice()),
+                vec![0u8; ChipType::Chip23QL512.size_bytes()],
+                &ChipType::Chip23QL512,
+                cs_config,
+                &SizeHandling::None,
+                None,
+            )
+            .expect("chip construction should succeed")
+        };
+
+        let chips = [make_chip(0), make_chip(1), make_chip(2)];
+
+        let err = build_rom_slot(Board::Fire28C, ChipSetType::Banked, &chips, 0, None, false)
+            .expect_err("3-chip Banked 23QL512 on Fire28C must fail");
+
+        // Verify the variant carries the right context before conversion.
+        assert!(
+            matches!(
+                err,
+                LayoutError::RomTableTooLarge {
+                    num_chips: 3,
+                    num_addr_pins: 20,
+                    ..
+                }
+            ),
+            "expected RomTableTooLarge with num_chips=3, num_addr_pins=20, got {err:?}"
+        );
+
+        // Converted Error must be UnsupportedBoardConfig with a human-readable message.
+        let converted: crate::Error = err.into();
+        let msg = converted.to_string();
+        assert!(
+            msg.contains("3-chip"),
+            "message should mention chip count: {msg}"
+        );
+        assert!(
+            msg.contains("20 address bits"),
+            "message should mention address bit count: {msg}"
+        );
+        assert!(
+            msg.contains("2 chips"),
+            "message should suggest reducing to 2 chips: {msg}"
+        );
     }
 }
