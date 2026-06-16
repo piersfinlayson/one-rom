@@ -19,20 +19,43 @@
 //! After the per-address loop, every non-active combination of the control
 //! lines is tested at address 0 to confirm the data bus is tristated for all
 //! combinations other than the fully-asserted (valid read) state.
+//!
+//! For multi-ROM sets a `background_mask` holds all non-active chip CS lines
+//! deasserted on every GPIO drive call so they cannot accidentally enable a
+//! chip while another is under test.  For dynamically banked sets the same
+//! mechanism holds all X pin GPIOs at the level corresponding to the current
+//! bank throughout the test pass.
 
 #[allow(unused_imports)]
 use log::{debug, error, info, trace, warn};
 
-use onerom_config::chip::ChipType;
+use onerom_config::chip::{ChipType, ControlLineType};
 use onerom_config::hw::Board;
 use onerom_fw_emulator::Emulator;
-use onerom_gen::{ChipConfig, ChipSetConfig, ChipSetType, Config};
+use onerom_gen::{ChipConfig, ChipSetConfig, ChipSetType, Config, CsLogic};
 
 use crate::driver;
 use crate::oracle;
-use crate::pin_cache::PinCache;
+use crate::pin_cache::{ControlLine, PinCache};
 use crate::report::{ChipResult, ModeResult, SetResult, TestReport};
 use crate::timing;
+
+// ── Capability helpers ────────────────────────────────────────────────────────
+
+/// Returns `true` if `board` supports multi-ROM sets.
+///
+/// Requires X pins and excludes boards (Fire24A, Fire24B) that route their
+/// X pins only to banked-switching logic, not secondary ROM socket CS lines.
+fn board_supports_multi(board: Board) -> bool {
+    !board.x_pin_map().is_empty() && !matches!(board, Board::Fire24A | Board::Fire24UsbB)
+}
+
+/// Returns `true` if `board` supports dynamically banked ROM sets.
+///
+/// Any board with X pins can perform dynamic bank switching.
+fn board_supports_banked(board: Board) -> bool {
+    !board.x_pin_map().is_empty()
+}
 
 // ── Entry point ───────────────────────────────────────────────────────────────
 
@@ -92,7 +115,7 @@ pub fn run_all(board: Board, config: &Config, base_dir: &std::path::Path, report
     }
 }
 
-// ── Per chip set ──────────────────────────────────────────────────────────────
+// ── Per chip set (dispatch) ───────────────────────────────────────────────────
 
 fn run_chip_set(
     board: Board,
@@ -101,15 +124,523 @@ fn run_chip_set(
     sel_image: u8,
     base_dir: &std::path::Path,
 ) -> SetResult {
-    // TODO: multi-ROM sets and bank-switched sets require additional orchestration.
-    if chip_set.set_type != ChipSetType::Single {
+    match chip_set.set_type {
+        ChipSetType::Single => run_single_set(board, chip_set, set_idx, sel_image, base_dir),
+        ChipSetType::Multi => run_multi_set(board, chip_set, set_idx, sel_image, base_dir),
+        ChipSetType::Banked => run_banked_set(board, chip_set, set_idx, sel_image, base_dir),
+    }
+}
+
+// ── Single chip set ───────────────────────────────────────────────────────────
+
+fn run_single_set(
+    board: Board,
+    chip_set: &ChipSetConfig,
+    set_idx: usize,
+    sel_image: u8,
+    base_dir: &std::path::Path,
+) -> SetResult {
+    let emulator = match boot_set(board, chip_set, set_idx, sel_image) {
+        Ok(e) => e,
+        Err(r) => return r,
+    };
+
+    let force_16_bit = get_force_16_bit(chip_set);
+
+    let chip_results: Vec<ChipResult> = chip_set
+        .chips
+        .iter()
+        .enumerate()
+        .map(|(chip_idx, chip_config)| {
+            run_chip(
+                &emulator,
+                board,
+                chip_config,
+                set_idx,
+                chip_idx,
+                base_dir,
+                force_16_bit,
+                (0u64, 0u64),
+            )
+        })
+        .collect();
+
+    SetResult::done(set_idx, chip_results)
+    // `emulator` dropped here; Drop impl frees the epio handle.
+}
+
+// ── Multi-ROM chip set ────────────────────────────────────────────────────────
+
+fn run_multi_set(
+    board: Board,
+    chip_set: &ChipSetConfig,
+    set_idx: usize,
+    sel_image: u8,
+    base_dir: &std::path::Path,
+) -> SetResult {
+    if !board_supports_multi(board) {
         warn!(
-            "Set {}: skipping — multi-ROM and banked sets not yet supported",
-            set_idx
+            "Set {}: skipping — multi-ROM sets not supported on board {}",
+            set_idx,
+            board.name()
         );
-        return SetResult::skipped(set_idx, "multi-ROM and banked sets not yet supported");
+        return SetResult::skipped(set_idx, "multi-ROM sets not supported on this board");
     }
 
+    // A multi-ROM set with only one chip is a config oddity; fall through to
+    // the single-set path which handles it correctly.
+    if chip_set.chips.len() <= 1 {
+        warn!(
+            "Set {}: multi-ROM set has {} chip(s) — treating as single",
+            set_idx,
+            chip_set.chips.len()
+        );
+        return run_single_set(board, chip_set, set_idx, sel_image, base_dir);
+    }
+
+    let n_secondary = chip_set.chips.len() - 1;
+    let n_x_pins = board.x_pin_map().len();
+    if n_secondary > n_x_pins {
+        error!(
+            "Set {}: {} secondary chip(s) but board {} has only {} X pin(s)",
+            set_idx, n_secondary, board.name(), n_x_pins,
+        );
+        return SetResult::skipped(
+            set_idx,
+            &format!(
+                "{} secondary chip(s) but board has only {} X pin(s)",
+                n_secondary, n_x_pins,
+            ),
+        );
+    }
+
+    let emulator = match boot_set(board, chip_set, set_idx, sel_image) {
+        Ok(e) => e,
+        Err(r) => return r,
+    };
+
+    let force_16_bit = get_force_16_bit(chip_set);
+
+    // ── Primary chip (chips[0], in One ROM's socket) ──────────────────────────
+    let primary_config = &chip_set.chips[0];
+    let primary_requested = primary_config.chip_type;
+    let primary_type = if let Some(sub) = chip_substitution(board, primary_requested) {
+        warn!(
+            "Set {} chip 0: {} on {} is not directly servable; \
+             substituting {} (physical shim required)",
+            set_idx,
+            primary_requested.name(),
+            board.name(),
+            sub.name(),
+        );
+        sub
+    } else {
+        primary_requested
+    };
+
+    debug!(
+        "Set {} chip 0: building pin cache for {} on board {}",
+        set_idx,
+        primary_type.name(),
+        board.name()
+    );
+    let primary_cache = PinCache::build(primary_type, primary_config, board);
+    debug!(
+        "Set {} chip 0: {} addr GPIOs, {} data GPIOs, {} control line(s)",
+        set_idx,
+        primary_cache.addr_gpios.len(),
+        primary_cache.data_gpios.len(),
+        primary_cache.control_lines.len(),
+    );
+
+    // ── X pin CS info for secondary chips ─────────────────────────────────────
+    // Use the nominal (non-substituted) chip type for polarity lookup since the
+    // config author wrote cs1/cs2/cs3 against the nominal type.
+    let x_pin_info: Vec<(Vec<u8>, bool)> = chip_set
+        .chips
+        .iter()
+        .skip(1)
+        .enumerate()
+        .map(|(i, chip_config)| {
+            let (_, gpios) = board.x_pin_map()[i];
+            let assert_high = first_active_cs_polarity(chip_config, chip_config.chip_type);
+            (gpios.to_vec(), assert_high)
+        })
+        .collect();
+
+    // Deassert mask for each secondary chip's X pin CS, computed individually
+    // so we can exclude each chip's own mask when building its background.
+    let x_deassert_masks: Vec<(u64, u64)> = x_pin_info
+        .iter()
+        .map(|(gpios, assert_high)| {
+            let line = ControlLine {
+                name: "x_cs",
+                gpios: gpios.clone(),
+                assert_high: *assert_high,
+            };
+            driver::ctrl_mask(std::slice::from_ref(&line), false)
+        })
+        .collect();
+
+    // chips[0] background: all X pin CSes held deasserted so secondary chips
+    // cannot accidentally drive the bus while the primary is under test.
+    let chips0_bg = x_deassert_masks
+        .iter()
+        .fold((0u64, 0u64), |acc, &m| driver::merge(acc, m));
+
+    // Primary socket CS deassert mask, folded into every secondary chip's
+    // background to prevent chips[0] from driving the bus during their tests.
+    let primary_cs_deassert = driver::ctrl_mask(&primary_cache.control_lines, false);
+
+    let mut chip_results = Vec::new();
+
+    // ── Test primary chip ─────────────────────────────────────────────────────
+    {
+        let oracle = oracle::load(primary_config, primary_type, base_dir);
+        debug!(
+            "Set {} chip 0: oracle loaded, {} bytes",
+            set_idx,
+            oracle.len()
+        );
+        let cycles_addr_before_cs = if is_27c400_family(primary_type) {
+            timing::CYCLES_27C400_ADDR_BEFORE_CS
+        } else {
+            timing::CYCLES_ADDR_BEFORE_CS
+        };
+
+        let mut mode_results = Vec::new();
+        for &mode in primary_type.bit_modes() {
+            if force_16_bit && mode != 16 {
+                debug!(
+                    "Set {} chip 0: skipping {}bit mode (force_16_bit)",
+                    set_idx, mode
+                );
+                continue;
+            }
+            info!(
+                "Testing set={} chip=0 ({}) file={} mode={}bit ({} bytes)",
+                set_idx,
+                primary_type.name(),
+                primary_config.file,
+                mode,
+                oracle.len(),
+            );
+            mode_results.push(run_mode(
+                &emulator,
+                &primary_cache,
+                &oracle,
+                primary_type,
+                mode,
+                cycles_addr_before_cs,
+                set_idx,
+                0,
+                chips0_bg,
+            ));
+        }
+        chip_results.push(ChipResult {
+            set_idx,
+            chip_idx: 0,
+            chip_type: primary_type,
+            filename: primary_config.file.clone(),
+            mode_results,
+        });
+    }
+
+    // ── Test secondary chips (chips[1], chips[2], …) ──────────────────────────
+    for (j, chip_config) in chip_set.chips.iter().skip(1).enumerate() {
+        let chip_idx = j + 1;
+        let requested_type = chip_config.chip_type;
+        let chip_type = if let Some(sub) = chip_substitution(board, requested_type) {
+            warn!(
+                "Set {} chip {}: {} on {} is not directly servable; \
+                 substituting {} (physical shim required)",
+                set_idx,
+                chip_idx,
+                requested_type.name(),
+                board.name(),
+                sub.name(),
+            );
+            sub
+        } else {
+            requested_type
+        };
+
+        // Background for this secondary chip:
+        //   - primary socket CSes deasserted (prevent chips[0] driving the bus)
+        //   - all OTHER secondary X pin CSes deasserted
+        let other_x_deassert = x_deassert_masks
+            .iter()
+            .enumerate()
+            .filter(|(k, _)| *k != j)
+            .fold((0u64, 0u64), |acc, (_, &m)| driver::merge(acc, m));
+        let bg = driver::merge(primary_cs_deassert, other_x_deassert);
+
+        let (x_gpios, x_assert_high) = &x_pin_info[j];
+        debug!(
+            "Set {} chip {}: building secondary pin cache for {} on board {} \
+             (X pin GPIOs={:?} assert_high={})",
+            set_idx, chip_idx,
+            chip_type.name(), board.name(),
+            x_gpios, x_assert_high,
+        );
+        let secondary_cache = PinCache::build_secondary(
+            chip_type,
+            &primary_cache,
+            board,
+            x_gpios.clone(),
+            *x_assert_high,
+        );
+        debug!(
+            "Set {} chip {}: {} addr GPIOs, {} data GPIOs",
+            set_idx, chip_idx,
+            secondary_cache.addr_gpios.len(),
+            secondary_cache.data_gpios.len(),
+        );
+
+        let oracle = oracle::load(chip_config, chip_type, base_dir);
+        debug!(
+            "Set {} chip {}: oracle loaded, {} bytes",
+            set_idx, chip_idx, oracle.len()
+        );
+
+        let cycles_addr_before_cs = if is_27c400_family(chip_type) {
+            timing::CYCLES_27C400_ADDR_BEFORE_CS
+        } else {
+            timing::CYCLES_ADDR_BEFORE_CS
+        };
+
+        let mut mode_results = Vec::new();
+        for &mode in chip_type.bit_modes() {
+            if force_16_bit && mode != 16 {
+                debug!(
+                    "Set {} chip {}: skipping {}bit mode (force_16_bit)",
+                    set_idx, chip_idx, mode
+                );
+                continue;
+            }
+            info!(
+                "Testing set={} chip={} ({}) file={} mode={}bit ({} bytes)",
+                set_idx,
+                chip_idx,
+                chip_type.name(),
+                chip_config.file,
+                mode,
+                oracle.len(),
+            );
+            mode_results.push(run_mode(
+                &emulator,
+                &secondary_cache,
+                &oracle,
+                chip_type,
+                mode,
+                cycles_addr_before_cs,
+                set_idx,
+                chip_idx,
+                bg,
+            ));
+        }
+        chip_results.push(ChipResult {
+            set_idx,
+            chip_idx,
+            chip_type,
+            filename: chip_config.file.clone(),
+            mode_results,
+        });
+    }
+
+    SetResult::done(set_idx, chip_results)
+    // `emulator` dropped here; Drop impl frees the epio handle.
+}
+
+// ── Banked chip set ───────────────────────────────────────────────────────────
+
+fn run_banked_set(
+    board: Board,
+    chip_set: &ChipSetConfig,
+    set_idx: usize,
+    sel_image: u8,
+    base_dir: &std::path::Path,
+) -> SetResult {
+    if !board_supports_banked(board) {
+        warn!(
+            "Set {}: skipping — dynamic banked sets not supported on board {}",
+            set_idx,
+            board.name()
+        );
+        return SetResult::skipped(
+            set_idx,
+            "dynamic banked sets not supported on this board",
+        );
+    }
+
+    if chip_set.chips.is_empty() {
+        warn!("Set {}: banked set has no chips", set_idx);
+        return SetResult::skipped(set_idx, "banked set has no chips");
+    }
+
+    // All chips in a banked set must be the same type — they share the same
+    // socket and the same PinCache; only the oracle and X pin state vary.
+    let chip_type_0 = chip_set.chips[0].chip_type;
+    if let Some(pos) = chip_set
+        .chips
+        .iter()
+        .position(|c| c.chip_type != chip_type_0)
+    {
+        error!(
+            "Set {}: banked sets require a uniform chip type; \
+             chip {} is {} but chip 0 is {}",
+            set_idx,
+            pos,
+            chip_set.chips[pos].chip_type.name(),
+            chip_type_0.name(),
+        );
+        return SetResult::skipped(
+            set_idx,
+            "banked sets require all chips to have the same type",
+        );
+    }
+
+    // Verify the board has enough X pins to encode all banks in binary.
+    // n banks require ceil(log2(n)) X pins; computed via leading_zeros.
+    let n_banks = chip_set.chips.len();
+    let x_pins_needed =
+        (usize::BITS - n_banks.saturating_sub(1).leading_zeros()) as usize;
+    let n_x_pins = board.x_pin_map().len();
+    if x_pins_needed > n_x_pins {
+        error!(
+            "Set {}: {} bank(s) require {} X pin(s) to encode but board {} has only {}",
+            set_idx, n_banks, x_pins_needed, board.name(), n_x_pins,
+        );
+        return SetResult::skipped(
+            set_idx,
+            &format!(
+                "{} banks require {} X pin(s) but board has only {}",
+                n_banks, x_pins_needed, n_x_pins,
+            ),
+        );
+    }
+
+    // Apply any board-specific chip substitution (same for all banks since
+    // all banks share the chip type).
+    let chip_type = if let Some(sub) = chip_substitution(board, chip_type_0) {
+        warn!(
+            "Set {}: {} on {} is not directly servable; \
+             substituting {} (physical shim required) for all banks",
+            set_idx,
+            chip_type_0.name(),
+            board.name(),
+            sub.name(),
+        );
+        sub
+    } else {
+        chip_type_0
+    };
+
+    let emulator = match boot_set(board, chip_set, set_idx, sel_image) {
+        Ok(e) => e,
+        Err(r) => return r,
+    };
+
+    let force_16_bit = get_force_16_bit(chip_set);
+
+    // All banks share the same chip type → one PinCache covers every bank.
+    debug!(
+        "Set {}: building pin cache for {} on board {}",
+        set_idx,
+        chip_type.name(),
+        board.name()
+    );
+    let cache = PinCache::build(chip_type, &chip_set.chips[0], board);
+    debug!(
+        "Set {}: {} addr GPIOs, {} data GPIOs, {} control line(s)",
+        set_idx,
+        cache.addr_gpios.len(),
+        cache.data_gpios.len(),
+        cache.control_lines.len(),
+    );
+
+    let cycles_addr_before_cs = if is_27c400_family(chip_type) {
+        timing::CYCLES_27C400_ADDR_BEFORE_CS
+    } else {
+        timing::CYCLES_ADDR_BEFORE_CS
+    };
+
+    let mut chip_results = Vec::new();
+
+    for (bank, chip_config) in chip_set.chips.iter().enumerate() {
+        // Drive X pins to select this bank.  Because bank switching is dynamic,
+        // no reboot is needed between banks: the firmware reads the X pin state
+        // on every access.  The mask is held throughout the entire test pass for
+        // this bank via background_mask in run_mode().
+        let bg = banked_x_mask(board, bank);
+        debug!(
+            "Set {} bank {}: X pin background mask=({:#018x}, {:#018x})",
+            set_idx, bank, bg.0, bg.1,
+        );
+
+        let oracle = oracle::load(chip_config, chip_type, base_dir);
+        debug!(
+            "Set {} bank {}: oracle loaded, {} bytes",
+            set_idx, bank, oracle.len()
+        );
+
+        let mut mode_results = Vec::new();
+        for &mode in chip_type.bit_modes() {
+            if force_16_bit && mode != 16 {
+                debug!(
+                    "Set {} bank {}: skipping {}bit mode (force_16_bit)",
+                    set_idx, bank, mode
+                );
+                continue;
+            }
+            info!(
+                "Testing set={} bank={} ({}) file={} mode={}bit ({} bytes)",
+                set_idx,
+                bank,
+                chip_type.name(),
+                chip_config.file,
+                mode,
+                oracle.len(),
+            );
+            mode_results.push(run_mode(
+                &emulator,
+                &cache,
+                &oracle,
+                chip_type,
+                mode,
+                cycles_addr_before_cs,
+                set_idx,
+                bank,
+                bg,
+            ));
+        }
+        chip_results.push(ChipResult {
+            set_idx,
+            chip_idx: bank,
+            chip_type,
+            filename: chip_config.file.clone(),
+            mode_results,
+        });
+    }
+
+    SetResult::done(set_idx, chip_results)
+    // `emulator` dropped here; Drop impl frees the epio handle.
+}
+
+// ── Boot helper ───────────────────────────────────────────────────────────────
+
+/// Boot the firmware for a chip set, returning the ready `Emulator` or an
+/// error `SetResult` if the firmware failed to start correctly.
+///
+/// Sets the RP variant and sel image before booting, then verifies that the
+/// firmware is not in limp mode and that the PIO state machines are enabled.
+/// Shared by all three set types.
+fn boot_set(
+    board: Board,
+    chip_set: &ChipSetConfig,
+    set_idx: usize,
+    sel_image: u8,
+) -> Result<Emulator, SetResult> {
     // Both the RP variant and image selection must be set before boot so the
     // firmware sees the correct state during initialisation.
     Emulator::set_rp_variant(board.rp_variant());
@@ -121,11 +652,14 @@ fn run_chip_set(
 
     if emulator.limp_mode() {
         error!("Set {}: firmware entered limp mode", set_idx);
-        return SetResult::boot_error(set_idx, "firmware entered limp mode");
+        return Err(SetResult::boot_error(set_idx, "firmware entered limp mode"));
     }
     if !emulator.pios_enabled() {
         error!("Set {}: PIO state machines not enabled after boot", set_idx);
-        return SetResult::boot_error(set_idx, "PIO state machines not enabled after boot");
+        return Err(SetResult::boot_error(
+            set_idx,
+            "PIO state machines not enabled after boot",
+        ));
     }
     debug!("Set {}: PIOs enabled, setting up epio", set_idx);
 
@@ -134,24 +668,7 @@ fn run_chip_set(
     emulator.setup_epio(word_size);
     emulator.step_cycles(timing::CYCLES_BEFORE_START);
 
-    let force_16_bit = chip_set
-        .firmware_overrides
-        .as_ref()
-        .and_then(|fw| fw.fire.as_ref())
-        .map(|f| f.force_16_bit)
-        .unwrap_or(false);
-
-    let chip_results: Vec<ChipResult> = chip_set
-        .chips
-        .iter()
-        .enumerate()
-        .map(|(chip_idx, chip_config)| {
-            run_chip(&emulator, board, chip_config, set_idx, chip_idx, base_dir, force_16_bit)
-        })
-        .collect();
-
-    SetResult::done(set_idx, chip_results)
-    // `emulator` dropped here; Drop impl frees the epio handle.
+    Ok(emulator)
 }
 
 // ── Per chip ──────────────────────────────────────────────────────────────────
@@ -164,6 +681,7 @@ fn run_chip(
     chip_idx: usize,
     base_dir: &std::path::Path,
     force_16_bit: bool,
+    background_mask: (u64, u64),
 ) -> ChipResult {
     let requested_chip_type = chip_config.chip_type;
 
@@ -224,9 +742,7 @@ fn run_chip(
         oracle.len()
     );
 
-    let is_27c400_family = chip_type == ChipType::Chip27C400 || chip_type == ChipType::Chip27C200;
-
-    let cycles_addr_before_cs = if is_27c400_family {
+    let cycles_addr_before_cs = if is_27c400_family(chip_type) {
         timing::CYCLES_27C400_ADDR_BEFORE_CS
     } else {
         timing::CYCLES_ADDR_BEFORE_CS
@@ -261,6 +777,7 @@ fn run_chip(
             cycles_addr_before_cs,
             set_idx,
             chip_idx,
+            background_mask,
         );
         mode_results.push(result);
     }
@@ -285,15 +802,16 @@ fn run_mode(
     cycles_addr_before_cs: u32,
     set_idx: usize,
     chip_idx: usize,
+    background_mask: (u64, u64),
 ) -> ModeResult {
-    let is_27c400_family = chip_type == ChipType::Chip27C400 || chip_type == ChipType::Chip27C200;
+    let is_27c400_family = is_27c400_family(chip_type);
 
     // Pre-compute the BYTE# mask so it can be merged into every drive_gpios
     // call.  epio_drive_gpios_ext resets every GPIO that is *not* in the
     // supplied mask to the pull-up state (1) on each call, so a one-shot
     // drive before the loop is immediately overwritten by the first
-    // phase1/phase2 call.  Merging byte_mask into every call holds the level
-    // correctly throughout the pass.
+    // phase1/phase2 call.  Merging into every call holds the level correctly
+    // throughout the pass.
     let byte_mask: (u64, u64) = if let Some(gpio) = cache.byte_n_gpio {
         let bm = driver::byte_n_mask(gpio, mode);
         debug!(
@@ -304,6 +822,15 @@ fn run_mode(
     } else {
         (0u64, 0u64)
     };
+
+    // Merge BYTE# with the caller-supplied background mask to produce the
+    // single constant mask applied on every GPIO drive call.
+    //
+    // background_mask holds GPIOs that must be kept at a fixed level:
+    //   - Single chip sets:  (0, 0) — nothing extra to hold.
+    //   - Multi-ROM sets:    deasserted CS lines of all non-active chips.
+    //   - Banked sets:       all X pins driven to the level selecting the bank.
+    let const_mask = driver::merge(byte_mask, background_mask);
 
     let (iter_count, addr_shift, cycles_cs_to_data) = if mode == 16 {
         (oracle.len() / 2, 1usize, timing::CYCLES_CS_TO_DATA)
@@ -334,7 +861,8 @@ fn run_mode(
     };
 
     debug!(
-        "Mode {}bit: {} iterations, addr_shift={}, cycles_addr_before_cs={}, cycles_cs_to_data={}",
+        "Mode {}bit: {} iterations, addr_shift={}, \
+         cycles_addr_before_cs={}, cycles_cs_to_data={}",
         mode, iter_count, addr_shift, cycles_addr_before_cs, cycles_cs_to_data
     );
 
@@ -366,8 +894,9 @@ fn run_mode(
     // in byte mode only D0-D7 are driven.
     let data_gpios_8 = &cache.data_gpios[..8.min(cache.data_gpios.len())];
 
-    // CS-deasserted drive merged with BYTE# so the level is held.
-    let deassert_drive = driver::merge(ctrl_deasserted, byte_mask);
+    // CS-deasserted drive merged with const_mask so all constant levels are
+    // held between reads.
+    let deassert_drive = driver::merge(ctrl_deasserted, const_mask);
 
     let mut reads = 0u64;
     let mut failures = 0u64;
@@ -387,7 +916,7 @@ fn run_mode(
         // ── Phase 1: address valid, CS inactive ──────────────────────────────
         let phase1 = driver::merge(
             driver::merge(driver::addr_mask(drive_addr, addr_gpios), ctrl_deasserted),
-            byte_mask,
+            const_mask,
         );
         if addr_idx == 0 {
             debug!(
@@ -401,7 +930,7 @@ fn run_mode(
         // ── Phase 2: CS asserted ─────────────────────────────────────────────
         let phase2 = driver::merge(
             driver::merge(driver::addr_mask(drive_addr, addr_gpios), ctrl_active),
-            byte_mask,
+            const_mask,
         );
         if addr_idx == 0 {
             debug!(
@@ -473,7 +1002,7 @@ fn run_mode(
             }
         } else {
             // 8-bit mode: only D0-D7 are active (D8-D15 are tristated by
-            // BYTE# on 16-bit-capable chips).
+            // BYTE# on 27C400-family devices).
             let byte = driver::extract_byte(pin_states, data_gpios_8);
             reads += 1;
             let expected = oracle[addr_idx];
@@ -521,6 +1050,10 @@ fn run_mode(
     // is the only state that should drive the bus; the exclusive upper bound of
     // the range naturally excludes it.
     // Address 0 is used throughout — tristate behaviour is address-independent.
+    //
+    // const_mask is merged into every drive here too, keeping background GPIOs
+    // (other chips' CS lines, bank-select X pins) at their required levels
+    // throughout the combo sweep.
     let n = cache.control_lines.len();
     if n > 0 {
         let all_asserted: u64 = (1u64 << n) - 1;
@@ -532,10 +1065,10 @@ fn run_mode(
         for combo in 0u64..all_asserted {
             let ctrl = ctrl_combo_mask(cache, combo);
             // Use the mode-appropriate addr_gpios slice (no A-1 in 16-bit
-            // mode) and hold BYTE# via byte_mask.
+            // mode) and hold const_mask via merge.
             let phase = driver::merge(
                 driver::merge(driver::addr_mask(0, addr_gpios), ctrl),
-                byte_mask,
+                const_mask,
             );
             emulator.drive_gpios(phase.0, phase.1);
             emulator.step_cycles(cycles_cs_to_data);
@@ -558,7 +1091,7 @@ fn run_mode(
             }
         }
 
-        // Leave control lines deasserted, BYTE# held.
+        // Leave control lines deasserted, const_mask held.
         emulator.drive_gpios(deassert_drive.0, deassert_drive.1);
         emulator.step_cycles(timing::CYCLES_AFTER_READ);
     }
@@ -578,8 +1111,7 @@ fn run_mode(
 /// type than the one nominally installed.  Returns `None` when no substitution
 /// is needed.
 ///
-/// Add new entries here as further board/chip shim combinations are
-/// discovered.
+/// Add new entries here as further board/chip shim combinations are discovered.
 fn chip_substitution(board: Board, chip_type: ChipType) -> Option<ChipType> {
     match (board, chip_type) {
         // fire-32-a cannot drive SST39SF040 directly; a pin-remap shim allows
@@ -601,6 +1133,88 @@ fn word_size_for_set(chip_set: &ChipSetConfig) -> u8 {
             }
         })
         .unwrap_or(8)
+}
+
+/// Extract the `force_16_bit` flag from a chip set's firmware overrides.
+fn get_force_16_bit(chip_set: &ChipSetConfig) -> bool {
+    chip_set
+        .firmware_overrides
+        .as_ref()
+        .and_then(|fw| fw.fire.as_ref())
+        .map(|f| f.force_16_bit)
+        .unwrap_or(false)
+}
+
+/// Returns `true` for the 27C400/27C200 chip family, which requires special
+/// timing and BYTE# handling.
+fn is_27c400_family(chip_type: ChipType) -> bool {
+    chip_type == ChipType::Chip27C400 || chip_type == ChipType::Chip27C200
+}
+
+/// Find the assertion polarity for the first active (non-Ignore) configurable
+/// CS line on a secondary chip in a multi-ROM set.
+///
+/// Returns `true` if the corresponding X pin must be driven HIGH to assert CS.
+///
+/// # Panics
+/// Panics if `chip_type` has no active configurable CS line.  Only chips with
+/// at least one configurable CS are currently supported as secondary chips;
+/// chips with only fixed CE/OE lines require future config extensions to
+/// specify which CE/OE pin connects to the X pin.
+fn first_active_cs_polarity(chip_config: &ChipConfig, chip_type: ChipType) -> bool {
+    chip_type
+        .control_lines()
+        .iter()
+        .filter(|spec| matches!(spec.line_type, ControlLineType::Configurable))
+        .find_map(|spec| {
+            let logic = match spec.name {
+                "cs1" => chip_config.cs1,
+                "cs2" => chip_config.cs2,
+                "cs3" => chip_config.cs3,
+                _ => None,
+            };
+            match logic {
+                Some(CsLogic::ActiveHigh) => Some(true),
+                Some(CsLogic::ActiveLow) => Some(false),
+                Some(CsLogic::Ignore) | None => None,
+            }
+        })
+        .unwrap_or_else(|| {
+            panic!(
+                "Multi-ROM secondary chip {} has no active (non-Ignore) configurable CS \
+                 line — only chips with a configurable CS are currently supported as \
+                 secondary chips; fixed CE/OE chips require future config extensions",
+                chip_type.name()
+            )
+        })
+}
+
+/// Build the GPIO background mask that drives all X pins to the correct logical
+/// level for `bank_idx` in a dynamically banked set.
+///
+/// Bit k (0-indexed) of `bank_idx` is the logical value of X pin k+1:
+/// `0` = jumper open  (level = `1 − x_jumper_pull()`),
+/// `1` = jumper closed (level = `x_jumper_pull()`).
+///
+/// If an X pin maps to multiple MCU GPIOs all are driven to the same level.
+fn banked_x_mask(board: Board, bank_idx: usize) -> (u64, u64) {
+    // closed_high: true if driving a pin HIGH corresponds to jumper-closed (logical 1).
+    let closed_high = board.x_jumper_pull() == 1;
+    board
+        .x_pin_map()
+        .iter()
+        .enumerate()
+        .fold((0u64, 0u64), |acc, (k, pin_entry)| {
+            let gpios: &[u8] = pin_entry.1;
+            // Bit k of bank_idx: 1 = jumper closed (logical 1), 0 = open (logical 0).
+            let bit_set = (bank_idx >> k) & 1 == 1;
+            // Drive HIGH when: (closed & pull=HIGH) or (open & pull=LOW).
+            let drive_high = bit_set == closed_high;
+            let gpio_mask = gpios.iter().fold((0u64, 0u64), |a, &g| {
+                driver::merge(a, (1u64 << g, if drive_high { 1u64 << g } else { 0 }))
+            });
+            driver::merge(acc, gpio_mask)
+        })
 }
 
 /// Build a GPIO (mask, levels) pair for an arbitrary combination of control

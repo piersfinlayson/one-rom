@@ -4,8 +4,8 @@
 
 //! GPIO pull configuration (point I, pull portion).
 //!
-//! For Banked sets, X1 (and X2, for 4-bank sets) need an internal pull in
-//! the direction *opposite* `board.x_jumper_pull()`: the bank-select
+//! For Banked sets, X1 (and X2, for 3-bank or 4-bank sets) need an internal
+//! pull in the direction *opposite* `board.x_jumper_pull()`: the bank-select
 //! jumper pulls the pin one way when fitted, so the GPIO's internal pull
 //! is set the other way - giving a clean binary "jumper fitted / not
 //! fitted" read on that pin, with both values then populated in the ROM
@@ -31,8 +31,13 @@ fn encode_pull(gpio: u8, pull_up: bool) -> u8 {
 
 /// Build the GPIO pull configuration for a chip set, if any is needed.
 ///
-/// `num_chips` is `chips.len()` for the set: 2 -> 2-bank (X1 only), 4 ->
-/// 4-bank (X1+X2), for Banked sets. Single/Multi always return `None`.
+/// `num_chips` is `chips.len()` for the set: 2 -> 2-bank (X1 only), 3 or
+/// 4 -> 3-bank or 4-bank (X1+X2), for Banked sets. Single/Multi always
+/// return `None`.
+///
+/// For a 3-chip set, bank index 3 (X1 and X2 both set) maps to "no chip"
+/// in `build_rom_image`, but both jumpers still exist and both GPIOs need
+/// internal pulls so the RP2350 reads them cleanly when neither is fitted.
 pub fn build_gpio_pull_config(
     layout: &AddrLayout,
     set_type: ChipSetType,
@@ -53,7 +58,7 @@ pub fn build_gpio_pull_config(
     }
 
     #[allow(clippy::collapsible_if)]
-    if num_chips == 4 {
+    if num_chips >= 3 {
         if let Some(x2_gpio) = layout.x2_gpio {
             params.push(encode_pull(x2_gpio, pull_up));
         }
@@ -99,6 +104,23 @@ mod tests {
             .expect("2-bank Banked set should have pull config");
 
         assert_eq!(pulls.params, alloc::vec![encode_pull(14, true)]);
+    }
+
+    /// 3-bank Banked set: both X1 and X2 get pull entries. Bank index 3
+    /// (X1 and X2 both set) maps to "no chip" in build_rom_image, but both
+    /// jumpers still exist and both GPIOs need pulls to read cleanly when
+    /// not fitted.
+    #[test]
+    fn banked_3bank_pulls_x1_and_x2() {
+        let layout = layout_with_x(14, 15);
+
+        let pulls = build_gpio_pull_config(&layout, ChipSetType::Banked, 3, Board::Fire24A)
+            .expect("3-bank Banked set should have pull config");
+
+        assert_eq!(
+            pulls.params,
+            alloc::vec![encode_pull(14, true), encode_pull(15, true)]
+        );
     }
 
     /// 4-bank Banked set: both X1 and X2 get pull entries.

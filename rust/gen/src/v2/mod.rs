@@ -4,17 +4,13 @@
 
 // Known open TODOs:
 //
-// build_rom_slot/build() work end-to-end for that one case (sentinel test
-// passes). Multi and Banked have unit-level coverage for individual pieces
-// (build_alg_cs's Multi test, build_gpio_pull_config's Banked tests) but no
+// Multi has unit-level coverage for individual pieces (build_alg_cs's Multi test) but no
 // end-to-end build_rom_slot/build() sentinel yet — worth adding once you have
-// a Multi or Banked config to test against.
+// a Banked config to test against.
 //
 // Multi sets with heterogeneous chip types: chip0's address-line layout is
 // assumed representative of the whole set — flagged, not validated against
 // real hardware.
-//
-// Check addr delay values for 8 and 16 bit roms.
 //
 // Add force_8_bit including possibly new algdata to not read byte, just decide
 // which byte to apply - and have the appropriate addr read delay.

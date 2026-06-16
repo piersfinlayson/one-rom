@@ -369,4 +369,102 @@ mod tests {
         assert_eq!(cs2.num_qualifier_pins, 2);
         assert_eq!(cs2.qualifier_inactive_pattern, 0b11);
     }
+
+    /// End-to-end sentinel: Fire28C, 2-chip Banked 27128, CS1 ActiveLow.
+    ///
+    /// Key properties under test:
+    /// - `slot.slot_type` = `RomSlotTypeBankedRom`.
+    /// - `slot.size` = 65536: 2^16 address-table entries * 1 byte/word
+    ///   (addr_layout num_addr_pins=16, confirmed by
+    ///   `addr_layout::tests::fire28c_27128_banked_2chip`).
+    /// - `alg_cs` = `AlgCs0` with `serve_cs_low_0=0` (Banked = active-low
+    ///   convention, same as Single).
+    /// - `alg_dma` = `BitMode8`.
+    /// - `gpio_pull_config` is Some with exactly one entry (X1 only for a
+    ///   2-chip set).
+    /// - `addr_layout.x1_gpio` = Some(28), `x2_gpio` = None (2-chip set
+    ///   doesn't include X2).
+    /// - Two ROM info entries, one per chip, with correct rom_type and
+    ///   filenames.
+    ///
+    /// Detailed GPIO values within `alg_addr`/`alg_data`/`alg_cs` are
+    /// board-specific; structural correctness is the focus here.
+    #[test]
+    fn fire28c_27128_banked_2chip() {
+        let image = vec![0u8; ChipType::Chip27128.size_bytes()];
+
+        let chip0 = Chip::from_raw_rom_image(
+            0,
+            "bank0.bin".to_string(),
+            None,
+            Some(image.as_slice()),
+            vec![0u8; ChipType::Chip27128.size_bytes()],
+            &ChipType::Chip27128,
+            CsConfig::new(Some(CsLogic::ActiveLow), None, None),
+            &SizeHandling::None,
+            None,
+        )
+        .expect("chip 0 construction should succeed");
+
+        let chip1 = Chip::from_raw_rom_image(
+            1,
+            "bank1.bin".to_string(),
+            None,
+            Some(image.as_slice()),
+            vec![0u8; ChipType::Chip27128.size_bytes()],
+            &ChipType::Chip27128,
+            CsConfig::new(Some(CsLogic::ActiveLow), None, None),
+            &SizeHandling::None,
+            None,
+        )
+        .expect("chip 1 construction should succeed");
+
+        let chips = [chip0, chip1];
+
+        let (slot, addr_layout, _cs_data_layout, _pref) =
+            build_rom_slot(Board::Fire28C, ChipSetType::Banked, &chips, 0, None, false)
+                .expect("build_rom_slot should succeed");
+
+        assert_eq!(slot.data, 0);
+        assert_eq!(slot.size, 1 << 16); // 2^16 * 1 byte/word
+        assert_eq!(slot.rom_count, 2);
+        assert_eq!(slot.slot_type, RomSlotType::RomSlotTypeBankedRom);
+        assert_eq!(slot.firmware_overrides, None);
+
+        let alg = slot.alg.as_ref().expect("alg must be present");
+
+        assert_eq!(
+            alg.alg_dma,
+            OneromAlgDmaConfig::AlgDma0 {
+                bit_mode: BitModes::BitMode8,
+                continuous: 1
+            }
+        );
+
+        // Banked sets use the same active-low convention as Single.
+        match &alg.alg_cs {
+            OneromAlgCsConfig::AlgCs0 { serve_cs_low_0, .. } => {
+                assert_eq!(*serve_cs_low_0, 0);
+            }
+            other => panic!("expected AlgCs0 for Banked set, got {other:?}"),
+        }
+
+        // addr_layout values confirmed by addr_layout::tests::fire28c_27128_banked_2chip.
+        assert_eq!(addr_layout.x1_gpio, Some(28));
+        assert_eq!(addr_layout.x2_gpio, None); // 2-chip set: no X2
+
+        // Banked set must have GPIO pull config; 2-chip = X1 only (one entry).
+        let pull = alg
+            .gpio_pull_config
+            .as_ref()
+            .expect("Banked set must have gpio_pull_config");
+        assert_eq!(pull.params.len(), 1);
+
+        // Two ROM info entries, one per chip.
+        assert_eq!(slot.roms.len(), 2);
+        assert_eq!(slot.roms[0].rom_type, "27128");
+        assert_eq!(slot.roms[1].rom_type, "27128");
+        assert_eq!(slot.roms[0].filename, Some("bank0.bin".to_string()));
+        assert_eq!(slot.roms[1].filename, Some("bank1.bin".to_string()));
+    }
 }

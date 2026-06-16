@@ -761,7 +761,7 @@ pub(crate) fn check_chip_sets(
                 }
             } else {
                 // For multi ROM sets, not all CS lines can be ignore
-                if !cs1_active {
+                if set.set_type == ChipSetType::Multi && !cs1_active {
                     return Err(Error::InvalidConfig {
                         error: format!(
                             "CS1 cannot be ignore for multi-ROM sets (Chip {})",

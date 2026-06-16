@@ -6,6 +6,11 @@
 //!
 //! `PinCache::build` does the O(pins) mapping work once so the hot test loop
 //! can operate purely on pre-resolved GPIO numbers.
+//!
+//! For secondary chips in a multi-ROM set (chips[1], chips[2], …) that are not
+//! in One ROM's socket, use `PinCache::build_secondary`.  These chips share
+//! the address and data bus with the primary chip (chips[0]) and are selected
+//! by an X pin acting as their unique CS line.
 
 #[allow(unused_imports)]
 use log::{debug, error, info, trace, warn};
@@ -18,7 +23,7 @@ use onerom_gen::{ChipConfig, CsLogic, MAX_IMAGE_SIZE};
 
 /// A single decoded control line with its assertion polarity baked in.
 pub struct ControlLine {
-    /// Name for diagnostics ("ce", "oe", "cs1", "cs2", "cs3").
+    /// Name for diagnostics ("ce", "oe", "cs1", "cs2", "cs3", "x_cs").
     // Not read in the hot path; retained for future diagnostic/tristate use.
     #[allow(dead_code)]
     pub name: &'static str,
@@ -55,6 +60,9 @@ pub struct PinCache {
     /// exceed `MAX_IMAGE_SIZE` are also included here as half-select lines,
     /// driven by `cs1` polarity. The firmware treats these GPIOs as part of
     /// the CS range (not address range), so the tester must do the same.
+    ///
+    /// For secondary chips in a multi-ROM set, this contains exactly one entry:
+    /// the X pin ControlLine whose assertion selects that secondary chip.
     pub control_lines: Vec<ControlLine>,
 
     /// GPIO for the BYTE# pin (27C400/27C200 only; `None` for all others).
@@ -187,6 +195,61 @@ impl PinCache {
             data_gpios,
             control_lines,
             byte_n_gpio,
+        }
+    }
+
+    /// Build a `PinCache` for a secondary chip in a multi-ROM set.
+    ///
+    /// Secondary chips (chips[1], chips[2], …) are not in One ROM's socket.
+    /// They share the address and data bus with the primary chip (chips[0])
+    /// and are selected by an X pin acting as their unique CS line.
+    ///
+    /// Address GPIOs are derived from the secondary chip's own pin definitions
+    /// via the board's socket_pin_map.  Because the shared bus means that
+    /// socket pin N on One ROM's board carries the same signal as socket pin N
+    /// on the secondary chip's socket, the same map applies correctly — and
+    /// naturally handles chips with different address-line counts (e.g. a 2332
+    /// with 12 address lines alongside a 2364 with 13).
+    ///
+    /// Data GPIOs are always taken from the primary cache; the data bus is
+    /// fully shared and its GPIO mapping does not vary by chip type.
+    ///
+    /// Fixed CE/OE lines on the secondary chip are handled by the target PCB
+    /// (typically tied permanently active) and are not driven by the tester.
+    /// Only configurable CS lines can serve as the unique X pin selector; chips
+    /// with only fixed CS lines are not supported as secondary chips.
+    ///
+    /// 27C400/27C200-family chips are not supported as secondary chips in
+    /// multi-ROM sets; `byte_n_gpio` is always `None`.
+    ///
+    /// # Panics
+    /// Panics if any required address pin is absent from the board's socket pin
+    /// map.
+    pub fn build_secondary(
+        chip_type: ChipType,
+        primary: &PinCache,
+        board: Board,
+        x_pin_gpios: Vec<u8>,
+        x_assert_high: bool,
+    ) -> Self {
+        let offset = socket_offset(chip_type, board);
+        let pin_map = board.socket_pin_map();
+
+        let addr_gpios: Vec<Vec<u8>> = chip_type
+            .address_pins()
+            .iter()
+            .map(|&pin| gpios_for(pin + offset, pin_map, chip_type, "address"))
+            .collect();
+
+        Self {
+            addr_gpios,
+            data_gpios: primary.data_gpios.clone(),
+            control_lines: vec![ControlLine {
+                name: "x_cs",
+                gpios: x_pin_gpios,
+                assert_high: x_assert_high,
+            }],
+            byte_n_gpio: None,
         }
     }
 }

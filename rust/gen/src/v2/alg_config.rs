@@ -27,7 +27,8 @@ use onerom_config::chip::ChipType;
 use onerom_config::hw::Board;
 
 use onerom_metadata::{
-    BitModes, GPIO_NONE, GpioOverride, OneromAlgAddrConfig, OneromAlgConfig, OneromAlgDataConfig, OneromAlgDmaConfig, OneromAlgOverrideConfig
+    BitModes, GPIO_NONE, GpioOverride, OneromAlgAddrConfig, OneromAlgConfig, OneromAlgDataConfig,
+    OneromAlgDmaConfig, OneromAlgOverrideConfig,
 };
 
 use crate::image::{ChipSetType, CsConfig};
@@ -39,14 +40,14 @@ use super::alg_preference::{
     AddrAlgPreference, CombinedAlgPreference, CsAlgPreference, DataAlgPreference, DmaAlgPreference,
 };
 use super::cs_data_layout::CsDataLayout;
-use super::cs_overrides::build_cs_overrides;
+use super::cs_overrides::{build_cs_overrides, build_gpio_x_overrides};
 use super::gpio_pull_config::build_gpio_pull_config;
 
 /// H: clock dividers default to 1.0 for now.
 pub const DEFAULT_CLKDIV_INT: u16 = 1;
 pub const DEFAULT_CLKDIV_FRAC: u8 = 0;
 
-const ALG_DATA0_NUM_DELAY_CYCLES_8_BIT: u8  = 2;
+const ALG_DATA0_NUM_DELAY_CYCLES_8_BIT: u8 = 2;
 const ALG_DATA1_NUM_DELAY_CYCLES_16_BIT: u8 = 4;
 
 /// Determine the bit mode (8 vs 16) for serving `chip_type` on `board`.
@@ -199,7 +200,8 @@ pub fn combined_alg_preference(alg: &OneromAlgConfig) -> CombinedAlgPreference {
 ///
 /// Builds each of `alg_addr`/`alg_data`/`alg_cs`/`alg_dma` from
 /// `addr_layout`/`cs_data_layout`, and wires in any CS-polarity overrides
-/// (`cs_overrides`) and Banked X1/X2 pulls (`gpio_pull_config`).
+/// (`cs_overrides`), Banked X1/X2 address-pin inversion overrides
+/// (`gpio_x_overrides`), and Banked X1/X2 pulls (`gpio_pull_config`).
 ///
 /// `bit_mode`/`force_16_bit` determine `alg_data`/`alg_dma` (see
 /// `build_alg_data`/`bit_mode_for`) - both computed once by the caller
@@ -222,22 +224,28 @@ pub fn build_alg_config(
     let alg_cs = build_alg_cs(cs_data_layout, set_type, &alg_data);
     let alg_dma = build_alg_dma(bit_mode);
 
-    let mut cs_overrides = build_cs_overrides(cs_data_layout, set_type, cs_config);
+    let mut overrides = build_cs_overrides(cs_data_layout, set_type, cs_config);
 
-    // AlgData1 provides 8-bit serving when the BYTE is read (by the PIO) as
-    // high.  Therefore we need to invert any /byte pin.
+    // AlgData1 provides 8-bit serving when /BYTE is read high by the PIO.
+    // The RP2350 GPIO input level for /BYTE is high when the pin is not
+    // asserted, so we need to invert it so the PIO sees 1 = byte mode
+    // asserted.
     if let OneromAlgDataConfig::AlgData1 { byte_pin, .. } = &alg_data {
         let abs_gpio = byte_pin + cs_data_layout.gpio_base;
-        let or = encode_override(abs_gpio, GpioOverride::GpioOverInvert);
-        cs_overrides.push(or);
+        overrides.push(encode_override(abs_gpio, GpioOverride::GpioOverInvert));
     }
 
-    let gpio_override_config = if cs_overrides.is_empty() {
+    // Banked sets on boards where x_jumper_pull==0: X1/X2 address GPIOs
+    // read 0 when the jumper is fitted and 1 when not — the opposite of the
+    // expected convention (fitted = selected = 1 in the table index).
+    // GpioOverInvert corrects this so bank 0 is always the "no jumper"
+    // default regardless of board x_jumper_pull direction.
+    overrides.extend(build_gpio_x_overrides(addr_layout, set_type, num_chips, board));
+
+    let gpio_override_config = if overrides.is_empty() {
         None
     } else {
-        Some(OneromAlgOverrideConfig {
-            params: cs_overrides,
-        })
+        Some(OneromAlgOverrideConfig { params: overrides })
     };
 
     let gpio_pull_config = build_gpio_pull_config(addr_layout, set_type, num_chips, board);
@@ -331,10 +339,7 @@ mod tests {
 
     /// End-to-end sentinel: Fire24A, single 2364, CS1 ActiveLow. 2364 has
     /// no `deselect_when_address_all_high`, so `alg_cs` must be `AlgCs0`.
-    ///
-    /// `derive_cs_data_layout` always receives
-    /// `Some(&addr_layout)` - safe for all chip
-    /// types since it's ignored when `alg_cs2` is not needed.
+    /// Single set → no X-pin override → `gpio_override_config` must be None.
     #[test]
     fn fire24a_2364_single_full_config() {
         let cs_config = CsConfig::new(Some(CsLogic::ActiveLow), None, None);
@@ -413,6 +418,65 @@ mod tests {
         );
     }
 
+    /// Fire24A, 2-chip Banked 2364, CS1 ActiveLow: verifies that
+    /// `gpio_override_config` is populated with exactly one `GpioOverInvert`
+    /// entry for X1. Fire24A has `x_jumper_pull()==0`, so fitting the X1
+    /// jumper drives the GPIO low — the inversion corrects this so the
+    /// address PIO sees 1 (bank 1 selected) when the jumper is fitted and
+    /// 0 (bank 0, default) when it is not.
+    #[test]
+    fn fire24a_2364_banked_2chip_has_x_override() {
+        let cs_config = CsConfig::new(Some(CsLogic::ActiveLow), None, None);
+        let bit_mode = bit_mode_for(ChipType::Chip2364, Board::Fire24A);
+
+        let addr_layout = derive_addr_layout(
+            Board::Fire24A,
+            ChipSetType::Banked,
+            &[ChipType::Chip2364, ChipType::Chip2364],
+            bit_mode,
+        )
+        .expect("addr layout derivation should succeed");
+        let cs_data_layout = derive_cs_data_layout(
+            Board::Fire24A,
+            ChipSetType::Banked,
+            &[ChipType::Chip2364, ChipType::Chip2364],
+            &cs_config,
+            Some(&addr_layout),
+        )
+        .expect("cs/data layout derivation should succeed");
+
+        let config = build_alg_config(
+            Board::Fire24A,
+            ChipSetType::Banked,
+            &addr_layout,
+            &cs_data_layout,
+            bit_mode,
+            false,
+            2,
+            &cs_config,
+        );
+
+        // CS1 active_low matches required active_low → no CS override.
+        // AlgData0 (8-bit) → no byte_pin override.
+        // Banked + x_jumper_pull=0 → GpioOverInvert for X1 (2-chip: X1 only).
+        let ov = config
+            .gpio_override_config
+            .expect("banked on x_jumper_pull=0 board must have gpio_override_config");
+        assert_eq!(ov.params.len(), 1, "2-chip banked: X1 override only");
+
+        let x1_gpio = addr_layout
+            .x1_gpio
+            .expect("banked addr_layout must have x1_gpio");
+
+        // Top 2 bits = GpioOverInvert (value 1); lower 6 bits = X1 GPIO.
+        assert_eq!(ov.params[0] >> 6, 1, "entry must be GpioOverInvert type");
+        assert_eq!(
+            ov.params[0] & 0x3F,
+            x1_gpio,
+            "override GPIO must match addr_layout.x1_gpio"
+        );
+    }
+
     /// End-to-end sentinel: Fire28A, single 23QL384, CS1 ActiveLow.
     ///
     /// 23QL384 has `deselect_when_address_all_high() = Some(&[14, 15])`,
@@ -480,8 +544,6 @@ mod tests {
             } => {
                 assert_eq!(*num_qualifier_pins, 2);
                 assert_eq!(*qualifier_inactive_pattern, 0b11);
-                // base_qualifier_pin is board-specific; verified in cs_data_layout tests.
-                // At minimum it must fit within the 32-GPIO PIO window.
                 assert!(
                     *base_qualifier_pin < 32,
                     "base_qualifier_pin {base_qualifier_pin} out of PIO window"
@@ -492,22 +554,7 @@ mod tests {
     }
 
     /// Fire40A, single 27C400, BitMode16, `force_16_bit=false` (default):
-    /// `AlgData1` with `byte_pin`/`a_minus_1_pin` set, `num_delay_cycles=6`.
-    ///
-    /// `cs_data_layout`/`addr_layout` values are as derived for
-    /// Fire40A/27C400 (see `addr_layout::tests::fire40a_27c400_bitmode16`
-    /// and the `derive_cs_data_layout` working: D0-D15 -> GPIO 0-15,
-    /// CE -> GPIO17, so `gpio_base=0`; `a_minus_1_pin = data_pin_gpios[15]
-    /// - gpio_base = 15`; `byte_pin = board.pin_byte() - gpio_base = 18 -
-    ///   0 = 18`).
-    ///
-    /// For `alg_addr`: addr_layout.gpio_base=19 (min GPIO), so
-    /// pio_base=16 (>=16), base_addr_pin=19-16=3.
-    ///
-    /// `build_alg_cs`/`build_gpio_pull_config`/`build_cs_overrides` aren't
-    /// exercised here (no source for those to hand) - this is a focused
-    /// `build_alg_data`/`build_alg_addr`/`build_alg_dma` test, not a full
-    /// `build_alg_config` sentinel.
+    /// `AlgData1` with `byte_pin`/`a_minus_1_pin` set, `num_delay_cycles=4`.
     #[test]
     fn fire40a_27c400_bitmode16_algdata1() {
         let cs_data_layout = CsDataLayout {
@@ -637,6 +684,7 @@ mod tests {
             }
         );
     }
+
     /// `combined_alg_preference` maps a built `OneromAlgConfig` back to its
     /// `CombinedAlgPreference` tuple via the `From` impls. For Fire24A/2364
     /// (8-bit, contiguous CS, single addr algorithm) the expected result is

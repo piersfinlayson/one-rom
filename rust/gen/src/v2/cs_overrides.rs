@@ -2,7 +2,12 @@
 //
 // MIT License
 
-//! CS-line polarity overrides (point I, CS portion).
+//! GPIO input override configuration (point I, override portion).
+//!
+//! Two distinct concerns are handled here, both contributing to
+//! `OneromAlgConfig::gpio_override_config`:
+//!
+//! ## CS-line polarity overrides
 //!
 //! The CS-detect PIO requires a fixed convention regardless of how a
 //! chip's CS lines are configured:
@@ -14,13 +19,32 @@
 //! `CsLogic::ActiveHigh` CS1 on a Single set. Where it doesn't match, the
 //! corresponding GPIO gets a `GpioOverInvert` so the PIO always sees the
 //! convention it expects.
+//!
+//! ## X-pin address-bus inversion (Banked sets)
+//!
+//! For Banked sets, X1/X2 are jumper inputs that appear as bits in the
+//! address-read PIO window. When `board.x_jumper_pull() == 0`, fitting a
+//! jumper drives the GPIO low (0), but the ROM table was built with 0 = "no
+//! jumper / default bank". Without correction, bank 0 is served when the
+//! jumper IS fitted and bank 1 when it is not — the opposite of the expected
+//! convention.
+//!
+//! `GpioOverInvert` on the X1/X2 address GPIOs corrects this: fitting a
+//! jumper still drives the pin low physically, but the PIO sees it as 1,
+//! so bank 1 is selected. Bank 0 remains the "no jumper" default on all
+//! boards regardless of `x_jumper_pull` direction.
+//!
+//! When `x_jumper_pull() != 0` (jumper pulls high), fitting a jumper drives
+//! the GPIO high (1) and no inversion is needed.
 
 use alloc::vec::Vec;
 
+use onerom_config::hw::Board;
 use onerom_metadata::GpioOverride;
 
 use crate::image::{ChipSetType, CsConfig, CsLogic};
 
+use super::addr_layout::AddrLayout;
 use super::cs_data_layout::{CsDataLayout, SelectRole};
 
 /// The `CsLogic` a select line is configured as, for override comparison.
@@ -89,6 +113,56 @@ pub fn build_cs_overrides(
         .collect()
 }
 
+/// Build `GpioOverInvert` entries for the X1/X2 address-bus GPIOs of a
+/// Banked set when `board.x_jumper_pull() == 0`.
+///
+/// When the jumper pulls low on close, fitting it drives the GPIO to 0.
+/// The address PIO reads that 0 and indexes into the ROM table with that
+/// bit clear — so bank 0 is served when the jumper IS fitted and bank 1
+/// when it is not. This is the opposite of the expected convention
+/// (fitting a jumper = selecting a non-default bank).
+///
+/// Inverting the GPIO input corrects this: the PIO sees 1 when the jumper
+/// is fitted (selecting bank 1) and 0 when it is not (bank 0 = default),
+/// making the bank assignment consistent across boards regardless of
+/// `x_jumper_pull` direction.
+///
+/// Mirrors `build_gpio_pull_config` in chip-count gating: 1 entry for
+/// 2-chip (X1 only), 2 entries for 3/4-chip (X1 and X2). Returns an empty
+/// `Vec` for Single/Multi sets and for Banked sets where
+/// `x_jumper_pull != 0` (no inversion needed there).
+pub fn build_gpio_x_overrides(
+    layout: &AddrLayout,
+    set_type: ChipSetType,
+    num_chips: usize,
+    board: Board,
+) -> Vec<u8> {
+    if !matches!(set_type, ChipSetType::Banked) {
+        return Vec::new();
+    }
+
+    // Inversion only needed when the jumper pulls low: fitting drives the
+    // GPIO to 0, but the ROM table expects 1 to mean "this bank selected".
+    if board.x_jumper_pull() != 0 {
+        return Vec::new();
+    }
+
+    let mut params = Vec::with_capacity(2);
+
+    if let Some(x1_gpio) = layout.x1_gpio {
+        params.push(encode_override(x1_gpio, GpioOverride::GpioOverInvert));
+    }
+
+    #[allow(clippy::collapsible_if)]
+    if num_chips >= 3 {
+        if let Some(x2_gpio) = layout.x2_gpio {
+            params.push(encode_override(x2_gpio, GpioOverride::GpioOverInvert));
+        }
+    }
+
+    params
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::cs_data_layout::SelectLine;
@@ -107,6 +181,10 @@ mod tests {
             alg_cs2: None,
         }
     }
+
+    // ========================================================================
+    // build_cs_overrides tests (unchanged)
+    // ========================================================================
 
     /// Single set, CS1 configured ActiveLow (matches required ActiveLow) ->
     /// no override.
@@ -235,5 +313,108 @@ mod tests {
 
         let overrides = build_cs_overrides(&layout, ChipSetType::Single, &cs_config);
         assert!(overrides.is_empty());
+    }
+
+    // ========================================================================
+    // build_gpio_x_overrides tests
+    // ========================================================================
+
+    /// AddrLayout with X1/X2 set to illustrative GPIO values. Fire24A has
+    /// x_jumper_pull() == 0 (jumper pulls low when fitted), which is the
+    /// condition that requires inversion.
+    fn addr_layout_with_x(x1: u8, x2: u8) -> AddrLayout {
+        AddrLayout {
+            gpio_base: 0,
+            num_addr_pins: 16,
+            x1_gpio: Some(x1),
+            x2_gpio: Some(x2),
+            addr_pin_gpios: alloc::vec![7, 6, 5, 4, 3, 2, 1, 0, 10, 11, 14, 15, 12],
+            excess_addr_pin_gpios: alloc::vec![],
+        }
+    }
+
+    /// Single sets never need X-pin overrides.
+    #[test]
+    fn x_override_single_never() {
+        let layout = addr_layout_with_x(14, 15);
+        let overrides =
+            build_gpio_x_overrides(&layout, ChipSetType::Single, 1, Board::Fire24A);
+        assert!(overrides.is_empty());
+    }
+
+    /// Multi sets never need X-pin overrides (X1/X2 are driven CS outputs,
+    /// not jumper inputs).
+    #[test]
+    fn x_override_multi_never() {
+        let layout = addr_layout_with_x(14, 15);
+        let overrides =
+            build_gpio_x_overrides(&layout, ChipSetType::Multi, 3, Board::Fire24A);
+        assert!(overrides.is_empty());
+    }
+
+    /// 2-chip Banked, Fire24A (x_jumper_pull=0): X1 gets GpioOverInvert;
+    /// X2 is not included (2-chip sets only use X1).
+    #[test]
+    fn x_override_banked_2chip_x1_only() {
+        let layout = addr_layout_with_x(14, 15);
+        let overrides =
+            build_gpio_x_overrides(&layout, ChipSetType::Banked, 2, Board::Fire24A);
+
+        assert_eq!(
+            overrides,
+            alloc::vec![encode_override(14, GpioOverride::GpioOverInvert)]
+        );
+    }
+
+    /// 3-chip Banked, Fire24A (x_jumper_pull=0): both X1 and X2 get
+    /// GpioOverInvert. Bank index 3 (X1=1, X2=1) is the "no chip" slot, but
+    /// both jumpers exist and both GPIOs need inversion so the address PIO
+    /// reads them correctly.
+    #[test]
+    fn x_override_banked_3chip_x1_and_x2() {
+        let layout = addr_layout_with_x(14, 15);
+        let overrides =
+            build_gpio_x_overrides(&layout, ChipSetType::Banked, 3, Board::Fire24A);
+
+        assert_eq!(
+            overrides,
+            alloc::vec![
+                encode_override(14, GpioOverride::GpioOverInvert),
+                encode_override(15, GpioOverride::GpioOverInvert),
+            ]
+        );
+    }
+
+    /// 4-chip Banked, Fire24A (x_jumper_pull=0): both X1 and X2 get
+    /// GpioOverInvert, same as 3-chip.
+    #[test]
+    fn x_override_banked_4chip_x1_and_x2() {
+        let layout = addr_layout_with_x(14, 15);
+        let overrides =
+            build_gpio_x_overrides(&layout, ChipSetType::Banked, 4, Board::Fire24A);
+
+        assert_eq!(
+            overrides,
+            alloc::vec![
+                encode_override(14, GpioOverride::GpioOverInvert),
+                encode_override(15, GpioOverride::GpioOverInvert),
+            ]
+        );
+    }
+
+    /// Verify encode_override produces the correct byte: top 2 bits =
+    /// GpioOverride discriminant, bottom 6 bits = GPIO number.
+    #[test]
+    fn encode_override_invert_format() {
+        // GpioOverInvert = 1, GPIO 14: (1 << 6) | 14 = 0x4E
+        assert_eq!(
+            encode_override(14, GpioOverride::GpioOverInvert),
+            (1u8 << 6) | 14
+        );
+        // GpioOverNormal = 0, GPIO 14: (0 << 6) | 14 = 0x0E
+        assert_eq!(
+            encode_override(14, GpioOverride::GpioOverNormal),
+            14
+        );
     }
 }
