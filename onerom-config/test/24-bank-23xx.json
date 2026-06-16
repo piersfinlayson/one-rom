@@ -1,0 +1,129 @@
+{
+    "$schema": "https://images.onerom.org/configs/schema.json",
+    "version": 1,
+    "name": "24 pin One ROM banked test - 23xx ROM types",
+    "description": "24 pin One ROM banked test - 23xx ROM types",
+    "categories": [],
+    "rom_sets": [
+        {
+            "type": "banked",
+            "description": "set 0",
+            "roms": [
+                {
+                    "description": "1",
+                    "file": "images/test/rand_4KB.rom",
+                    "type": "2332",
+                    "cs1": "active_high",
+                    "cs2": "active_high"
+                },
+                {
+                    "description": "2",
+                    "file": "images/test/rand_8KB.rom",
+                    "type": "2332",
+                    "cs1": "active_high",
+                    "cs2": "active_high",
+                    "size_handling": "truncate"
+                }
+            ]
+        },
+        {
+            "type": "banked",
+            "description": "set 1",
+            "roms": [
+                {
+                    "description": "1",
+                    "file": "images/test/rand_4KB.rom",
+                    "type": "2332",
+                    "cs1": "active_low",
+                    "cs2": "active_low"
+                },
+                {
+                    "description": "2",
+                    "file": "images/test/rand_8KB.rom",
+                    "type": "2332",
+                    "cs1": "active_low",
+                    "cs2": "active_low",
+                    "size_handling": "truncate"
+                },
+                {
+                    "description": "3",
+                    "file": "images/test/rand_16KB.rom",
+                    "type": "2332",
+                    "cs1": "active_low",
+                    "cs2": "active_low",
+                    "size_handling": "truncate"
+                }
+            ]
+        },
+        {
+            "type": "banked",
+            "description": "set 2",
+            "roms": [
+                {
+                    "description": "1",
+                    "file": "images/test/rand_4KB.rom",
+                    "type": "2332",
+                    "cs1": "active_low",
+                    "cs2": "active_high"
+                },
+                {
+                    "description": "2",
+                    "file": "images/test/rand_8KB.rom",
+                    "type": "2332",
+                    "cs1": "active_low",
+                    "cs2": "active_high",
+                    "size_handling": "truncate"
+                },
+                {
+                    "description": "3",
+                    "file": "images/test/rand_16KB.rom",
+                    "type": "2332",
+                    "cs1": "active_low",
+                    "cs2": "active_high",
+                    "size_handling": "truncate"
+                },
+                {
+                    "description": "4",
+                    "file": "images/test/rand_32KB.rom",
+                    "type": "2332",
+                    "cs1": "active_low",
+                    "cs2": "active_high",
+                    "size_handling": "truncate"
+                }
+            ]
+        },
+        {
+            "type": "banked",
+            "description": "set 3",
+            "roms": [
+                {
+                    "description": "1",
+                    "file": "images/test/rand_8KB.rom",
+                    "type": "2364",
+                    "cs1": "active_low"
+                },
+                {
+                    "description": "2",
+                    "file": "images/test/rand_16KB.rom",
+                    "type": "2364",
+                    "cs1": "active_low",
+                    "size_handling": "truncate"
+                },
+                {
+                    "description": "3",
+                    "file": "images/test/rand_32KB.rom",
+                    "type": "2364",
+                    "cs1": "active_low",
+                    "size_handling": "truncate"
+                },
+                {
+                    "description": "4",
+                    "file": "images/test/rand_64KB.rom",
+                    "type": "2364",
+                    "cs1": "active_low",
+                    "size_handling": "truncate"
+                }
+            ]
+        }
+    ]
+}

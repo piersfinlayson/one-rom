@@ -1189,16 +1189,19 @@ fn first_active_cs_polarity(chip_config: &ChipConfig, chip_type: ChipType) -> bo
         })
 }
 
-/// Build the GPIO background mask that drives all X pins to the correct logical
-/// level for `bank_idx` in a dynamically banked set.
+/// Build the GPIO background mask for X pins in a dynamically banked set.
 ///
 /// Bit k (0-indexed) of `bank_idx` is the logical value of X pin k+1:
-/// `0` = jumper open  (level = `1 − x_jumper_pull()`),
-/// `1` = jumper closed (level = `x_jumper_pull()`).
+/// `1` = jumper closed → drive to `x_jumper_pull()` level.
+/// `0` = jumper open  → leave undriven; the emulator's simulated firmware
+///                       pull holds the pin at the correct level.
+///
+/// Only closed pins are included in the mask.  Driving open pins explicitly
+/// is no longer necessary now that the emulator models the firmware's
+/// internal pull configuration.
 ///
 /// If an X pin maps to multiple MCU GPIOs all are driven to the same level.
 fn banked_x_mask(board: Board, bank_idx: usize) -> (u64, u64) {
-    // closed_high: true if driving a pin HIGH corresponds to jumper-closed (logical 1).
     let closed_high = board.x_jumper_pull() == 1;
     board
         .x_pin_map()
@@ -1206,14 +1209,19 @@ fn banked_x_mask(board: Board, bank_idx: usize) -> (u64, u64) {
         .enumerate()
         .fold((0u64, 0u64), |acc, (k, pin_entry)| {
             let gpios: &[u8] = pin_entry.1;
-            // Bit k of bank_idx: 1 = jumper closed (logical 1), 0 = open (logical 0).
-            let bit_set = (bank_idx >> k) & 1 == 1;
-            // Drive HIGH when: (closed & pull=HIGH) or (open & pull=LOW).
-            let drive_high = bit_set == closed_high;
-            let gpio_mask = gpios.iter().fold((0u64, 0u64), |a, &g| {
-                driver::merge(a, (1u64 << g, if drive_high { 1u64 << g } else { 0 }))
-            });
-            driver::merge(acc, gpio_mask)
+            if (bank_idx >> k) & 1 == 1 {
+                // Jumper closed: drive to x_jumper_pull level.
+                let gpio_mask = gpios.iter().fold((0u64, 0u64), |a, &g| {
+                    driver::merge(
+                        a,
+                        (1u64 << g, if closed_high { 1u64 << g } else { 0 }),
+                    )
+                });
+                driver::merge(acc, gpio_mask)
+            } else {
+                // Jumper open: omit from mask; emulator pull takes over.
+                acc
+            }
         })
 }
 

@@ -188,70 +188,60 @@ int setup_serving_gpios(const onerom_rom_slot_t *slot) {
         gpio_init.num_pulls,
         gpio_init.num_overrides);
 
-    // Set all GPIO pins to SIOs, inputs, output disable, no pulls:
-    // - Data
-    // - Address
-    // - CS
-    // - Byte
+    // Data pins: PIO-controlled input/output, 8 mA drive, fast slew
     for (int ii = 0; ii < gpio_init.num_data_pins; ii++) {
         uint8_t pin = ii + gpio_init.base_data_pin;
         if (pin < MAX_GPIOS) {
-            // Set the data pins to be controlled by the appropriate PIO.  Not
-            // required by other pins, as all PIOs can read any GPIO.
-            APIO_GPIO_OUTPUT(pin, BLOCK_CS_DATA);
-#if REAL_HARDWARE
-            GPIO_PAD(pin) = PAD_INPUT | PAD_DRIVE(PAD_DRIVE_8MA) | PAD_SLEW_FAST;
-#endif // REAL_HARDWARE
+            APIO_GPIO_INPUT_OUTPUT(pin, BLOCK_CS_DATA);
+            APIO_GPIO_DRIVE(pin, APIO_DRIVE_8MA);
+            APIO_GPIO_SLEW_FAST(pin);
         }
     }
 
-#if REAL_HARDWARE
+    // Address pins: input-only, output driver disabled
     if (gpio_init.base_addr_pin < MAX_GPIOS && gpio_init.num_addr_pins < 0xFF) {
         for (int ii = 0; ii < gpio_init.num_addr_pins; ii++) {
             uint8_t pin = ii + gpio_init.base_addr_pin;
             if (pin < MAX_GPIOS) {
-                GPIO_CTRL(pin) = GPIO_CTRL_RESET;
-                GPIO_PAD(pin) = PAD_INPUT | PAD_OUTPUT_DISABLE;
+                APIO_GPIO_INPUT_ONLY(pin);
             }
         }
     }
+
+    // CS pins: input-only, output driver disabled (except the ignored index)
     if (gpio_init.base_cs_pin < MAX_GPIOS && gpio_init.num_cs_pins < 0xFF) {
         for (int ii = 0; ii < gpio_init.num_cs_pins; ii++) {
             uint8_t pin = ii + gpio_init.base_cs_pin;
             if (pin < MAX_GPIOS && ii != gpio_init.ignore_cs_index) {
-                GPIO_CTRL(pin) = GPIO_CTRL_RESET;
-                GPIO_PAD(pin) = PAD_INPUT | PAD_OUTPUT_DISABLE;
+                APIO_GPIO_INPUT_ONLY(pin);
             }
         }
     }
+
+    // Byte pin: input-only, output driver disabled
     if (gpio_init.byte_pin < MAX_GPIOS) {
         uint8_t pin = gpio_init.byte_pin;
-        GPIO_CTRL(pin) = GPIO_CTRL_RESET;
-        GPIO_PAD(pin) = PAD_INPUT | PAD_OUTPUT_DISABLE;
+        APIO_GPIO_INPUT_ONLY(pin);
     }
 
-    // Set up any pull-ups or pull-downs
-    // TODO enhance EPIO to handle pulls
+    // Pull-ups and pull-downs
     if (gpio_init.num_pulls > 0 && gpio_init.pulls != NULL) {
         for (int ii = 0; ii < gpio_init.num_pulls; ii++) {
-            uint8_t pin = gpio_init.pulls[ii] & 0x7F;
+            uint8_t pin  = gpio_init.pulls[ii] & 0x7F;
             uint8_t high = gpio_init.pulls[ii] & 0x80 ? 1 : 0;
             DEBUG("Pull[%d]: pin=%u %s", ii, pin, high ? "up" : "down");
             if (high) {
-                GPIO_PAD(pin) &= ~PAD_INPUT_PD;
-                GPIO_PAD(pin) |= PAD_INPUT_PU;
+                APIO_GPIO_PULL_UP(pin);
             } else {
-                GPIO_PAD(pin) &= ~PAD_INPUT_PU;
-                GPIO_PAD(pin) |= PAD_INPUT_PD;
+                APIO_GPIO_PULL_DOWN(pin);
             }
         }
     }
-#endif // REAL_HARDWARE
 
     // Invert or override to always read 0 or 1
     if (gpio_init.num_overrides > 0 && gpio_init.overrides != NULL) {
         for (int ii = 0; ii < gpio_init.num_overrides; ii++) {
-            uint8_t pin = gpio_init.overrides[ii] & 0x3F;
+            uint8_t pin  = gpio_init.overrides[ii] & 0x3F;
             uint8_t mode = (gpio_init.overrides[ii] & 0xC0) >> 6;
             DEBUG("Override[%d]: pin=%u mode=%u", ii, pin, mode);
             switch (mode) {

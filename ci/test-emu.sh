@@ -175,13 +175,59 @@ test_28_config() {
     local config=$1
 
     test_config fire-28-a "$config"
+    test_config fire-28-b "$config"
+    test_config fire-28-c "$config"
 }
 
 test_32_config() {
     local config=$1
 
     test_config fire-32-a "$config"
+    test_config fire-32-b "$config"
 }
+
+test_40_config() {
+    local config=$1
+
+    test_config fire-40-a "$config"
+    test_config fire-40-b "$config"
+}
+
+# Test bank switched ROM configurations on all Fire 24 hardware revisions.
+# All 24 pin hardware revisions support bank switched ROMs with PIO support.
+test_24_config onerom-config/test/24-bank-23xx.json
+test_24_config onerom-config/test/24-bank-27xx.json
+test_24_config onerom-config/test/24-bank-28xx.json
+
+# Test bank switched ROM configurations on fire-28-c (no X pins on earlier
+# revisions)
+test_config fire-28-c onerom-config/test/28-bank-23xxx.json
+test_config fire-28-c onerom-config/test/28-bank-27xxx.json
+test_config fire-28-c onerom-config/test/28-bank-28xxx.json
+
+# Test specific ROM configurations on all Fire 24 hardware revisions.
+# fire-24-c only has 2 image select jumpers so can only test the first
+# 4 sets within the PET config, but does check that the firmware
+# correctly wraps at that point.
+test_24_config onerom-config/pet-4-40-50.json
+test_24_config onerom-config/test/24-random-27xx.json
+
+# Test specific ROM configurations on all Fire 28 hardware revisions.
+test_28_config onerom-config/28-c64c.json
+test_28_config onerom-config/28-1541ii.json
+
+# Test specific ROM configurations on all Fire 32 hardware revisions.
+test_32_config onerom-config/test/32-random-27c080.json
+test_32_config onerom-config/test/32-random-27c301.json
+test_32_config onerom-config/test/32-random-27c0x0.json
+
+# Test specific ROM configurations on all Fire 40 hardware revisions.
+test_40_config onerom-config/test/40-random.json
+
+# Test multi-ROM sets on revisions C+.  A/B do not support multi-ROM sets with
+# PIO support due to a lack of contiguity between CS and X pins.
+test_24_config_c_onwards onerom-config/test/set-2-images.json
+test_24_config_c_onwards onerom-config/test/set-3-images.json
 
 # Test every standard ROM type on every standard hardware revision.
 # Do just one 24/28/32/40 variant now, so we fail early if any ROM types are
@@ -210,28 +256,3 @@ test_32pin fire-32-b
 test_40pin fire-40-b
 test_40pin fire-40-b true
 
-# Test specific ROM configurations on all Fire 24 hardware revisions.
-test_24_config onerom-config/pet-4-40-50.json
-test_24_config onerom-config/test/24-random-27xx.json
-
-# Test multi-ROM sets on revisions C+.  A/B do not support multi-ROM sets with
-# PIO support due to a lack of contiguity between CS and X pins.
-test_24_config_c_onwards onerom-config/test/set-2-images.json
-test_24_config_c_onwards onerom-config/test/set-3-images.json
-
-# Test bank switched ROM configurations on all Fire 24 hardware revisions.
-# All hardware revisions support bank switched ROMs with PIO support.
-test_24_config onerom-config/bank-c64-char.json
-
-# Test specific ROM configurations on all Fire 28 hardware revisions.
-test_28_config onerom-config/28-c64c.json
-test_28_config onerom-config/28-1541ii.json
-
-# Test specific ROM configurations on all Fire 32 hardware revisions.
-test_32_config onerom-config/test/32-random-27c080.json
-test_32_config onerom-config/test/32-random-27c301.json
-test_32_config onerom-config/test/32-random-27c0x0.json
-
-# Test specific ROM configurations on all Fire 40 hardware revisions.
-test_config fire-40-a onerom-config/test/40-random.json
-test_config fire-40-b onerom-config/test/40-random.json

@@ -1,0 +1,78 @@
+{
+    "$schema": "https://images.onerom.org/configs/schema.json",
+    "version": 1,
+    "name": "24 pin One ROM banked test - 28xx ROM types",
+    "description": "24 pin One ROM banked test - 28xx ROM types",
+    "categories": [],
+    "rom_sets": [
+        {
+            "type": "banked",
+            "description": "set 0",
+            "roms": [
+                {
+                    "description": "1",
+                    "file": "images/test/rand_2KB.rom",
+                    "type": "28C16"
+                },
+                {
+                    "description": "2",
+                    "file": "images/test/rand_4KB.rom",
+                    "type": "28C16",
+                    "size_handling": "truncate"
+                }
+            ]
+        },
+        {
+            "type": "banked",
+            "description": "set 0",
+            "roms": [
+                {
+                    "description": "1",
+                    "file": "images/test/rand_2KB.rom",
+                    "type": "28C16"
+                },
+                {
+                    "description": "2",
+                    "file": "images/test/rand_4KB.rom",
+                    "type": "28C16",
+                    "size_handling": "truncate"
+                },
+                {
+                    "description": "3",
+                    "file": "images/test/rand_8KB.rom",
+                    "type": "28C16",
+                    "size_handling": "truncate"
+                }
+            ]
+        },
+        {
+            "type": "banked",
+            "description": "set 0",
+            "roms": [
+                {
+                    "description": "1",
+                    "file": "images/test/rand_2KB.rom",
+                    "type": "28C16"
+                },
+                {
+                    "description": "2",
+                    "file": "images/test/rand_4KB.rom",
+                    "type": "28C16",
+                    "size_handling": "truncate"
+                },
+                {
+                    "description": "1",
+                    "file": "images/test/rand_8KB.rom",
+                    "type": "28C16",
+                    "size_handling": "truncate"
+                },
+                {
+                    "description": "2",
+                    "file": "images/test/rand_16KB.rom",
+                    "type": "28C16",
+                    "size_handling": "truncate"
+                }
+            ]
+        }
+    ]
+}
