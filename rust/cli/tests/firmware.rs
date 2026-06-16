@@ -205,13 +205,38 @@ fn firmware_chips_all_boards_succeed() {
 }
 
 #[test]
-fn firmware_build_24pin_config() {
+fn firmware_build_24pin_config_23xx() {
+    build_config_test("onerom-config/test/24-random-23xx.json", 24);
+}
+
+#[test]
+fn firmware_build_24pin_config_27xx() {
     build_config_test("onerom-config/test/24-random-27xx.json", 24);
 }
 
 #[test]
-fn firmware_build_28pin_config() {
+fn firmware_build_24pin_config_28xx() {
+    build_config_test("onerom-config/test/24-random-28xx.json", 24);
+}
+
+#[test]
+fn firmware_build_28pin_config_23xxx() {
+    build_config_test("onerom-config/test/28-random-23xxx.json", 28);
+}
+
+#[test]
+fn firmware_build_28pin_config_23qlxxx() {
+    build_config_test("onerom-config/test/28-random-23qlxxx.json", 28);
+}
+
+#[test]
+fn firmware_build_28pin_config_27xxx() {
     build_config_test("onerom-config/test/28-random-27xxx.json", 28);
+}
+
+#[test]
+fn firmware_build_28pin_config_28xxx() {
+    build_config_test("onerom-config/test/28-random-28xxx.json", 28);
 }
 
 #[test]
@@ -225,8 +250,43 @@ fn firmware_build_32pin_config_27c301() {
 }
 
 #[test]
-fn firmware_build_40pin_config_27c400() {
-    build_config_test("onerom-config/test/40-random-27c400.json", 40);
+fn firmware_build_40pin_config() {
+    build_config_test("onerom-config/test/40-random.json", 40);
+}
+
+#[test]
+fn firmware_build_40pin_config_force_16bit() {
+    build_config_test("onerom-config/test/40-random-force-16bit.json", 40);
+}
+
+#[test]
+fn firmware_build_24pin_config_bank_23xx() {
+    build_config_test("onerom-config/test/24-bank-23xx.json", 24);
+}
+
+#[test]
+fn firmware_build_24pin_config_bank_27xx() {
+    build_config_test("onerom-config/test/24-bank-27xx.json", 24);
+}
+
+#[test]
+fn firmware_build_24pin_config_bank_28xx() {
+    build_config_test("onerom-config/test/24-bank-28xx.json", 24);
+}
+
+#[test]
+fn firmware_build_28pin_config_bank_23xxx() {
+    build_config_test("onerom-config/test/28-bank-23xxx.json", 28);
+}
+
+#[test]
+fn firmware_build_28pin_config_bank_27xxx() {
+    build_config_test("onerom-config/test/28-bank-27xxx.json", 28);
+}
+
+#[test]
+fn firmware_build_28pin_config_bank_28xxx() {
+    build_config_test("onerom-config/test/28-bank-28xxx.json", 28);
 }
 
 #[test]

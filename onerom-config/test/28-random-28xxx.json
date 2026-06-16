@@ -1,0 +1,30 @@
+{
+    "$schema": "https://images.onerom.org/configs/schema.json",
+    "version": 1,
+    "name": "28-random-28xxx",
+    "description": "28xxx series ROM test",
+    "categories": [
+    ],
+    "rom_sets": [
+        {
+            "type": "single",
+            "roms": [
+                {
+                    "description": "28C64",
+                    "file": "images/test/rand_8KB.rom",
+                    "type": "28C64"
+                }
+            ]
+        },
+        {
+            "type": "single",
+            "roms": [
+                {
+                    "description": "28C256",
+                    "file": "images/test/rand_32KB.rom",
+                    "type": "28C256"
+                }
+            ]
+        }
+    ]
+}

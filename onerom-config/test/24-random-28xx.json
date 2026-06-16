@@ -1,0 +1,20 @@
+{
+    "$schema": "https://images.onerom.org/configs/schema.json",
+    "version": 1,
+    "name": "24-random-28xx",
+    "description": "28xx series ROM test",
+    "categories": [
+    ],
+    "rom_sets": [
+        {
+            "type": "single",
+            "roms": [
+                {
+                    "description": "28C16",
+                    "file": "images/test/rand_2KB.rom",
+                    "type": "28C16"
+                }
+            ]
+        }
+    ]
+}

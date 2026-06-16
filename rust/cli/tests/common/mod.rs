@@ -34,7 +34,7 @@ pub fn project_root() -> std::path::PathBuf {
 pub fn representative_board(pins: u8) -> &'static str {
     match pins {
         24 => "fire-24-e",
-        28 => "fire-28-a",
+        28 => "fire-28-c",
         32 => "fire-32-a",
         40 => "fire-40-a",
         _ => panic!("no representative board for {pins}-pin"),

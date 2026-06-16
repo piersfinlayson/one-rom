@@ -256,7 +256,7 @@ impl Builder {
 
         self.build_validation(&props)?;
 
-        if self.version >= MIN_SUPPORTED_FIRMWARE_VERSION_V2 {
+        if self.version > MIN_SUPPORTED_FIRMWARE_VERSION_V1 {
             self.build_v2(props)
         } else {
             self.build_v1(props)

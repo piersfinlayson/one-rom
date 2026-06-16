@@ -1,7 +1,7 @@
 {
     "$schema": "https://images.onerom.org/configs/schema.json",
     "version": 1,
-    "name": "27-random-27xxx",
+    "name": "28-random-27xxx",
     "description": "27xxx series ROM test",
     "categories": [
     ],

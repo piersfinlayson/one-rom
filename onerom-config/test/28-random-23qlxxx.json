@@ -1,0 +1,54 @@
+{
+    "$schema": "https://images.onerom.org/configs/schema.json",
+    "version": 1,
+    "name": "28-random-23QLxxx",
+    "description": "23QLxxx series ROM test",
+    "categories": [
+    ],
+    "rom_sets": [
+        {
+            "type": "single",
+            "roms": [
+                {
+                    "description": "23QL384",
+                    "file": "images/test/rand_48KB.rom",
+                    "type": "23QL384",
+                    "cs1": "active_low"
+                }
+            ]
+        },
+        {
+            "type": "single",
+            "roms": [
+                {
+                    "description": "23QL384",
+                    "file": "images/test/rand_48KB.rom",
+                    "type": "23QL384",
+                    "cs1": "active_high"
+                }
+            ]
+        },
+        {
+            "type": "single",
+            "roms": [
+                {
+                    "description": "23QL512",
+                    "file": "images/test/rand_64KB.rom",
+                    "type": "23QL512",
+                    "cs1": "active_low"
+                }
+            ]
+        },
+        {
+            "type": "single",
+            "roms": [
+                {
+                    "description": "23QL512",
+                    "file": "images/test/rand_64KB.rom",
+                    "type": "23QL512",
+                    "cs1": "active_high"
+                }
+            ]
+        }
+    ]
+}

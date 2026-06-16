@@ -193,6 +193,14 @@ test_40_config() {
     test_config fire-40-b "$config"
 }
 
+test_24_config onerom-config/test/24-random-23xx.json
+test_24_config onerom-config/test/24-random-27xx.json
+test_24_config onerom-config/test/24-random-28xx.json
+test_28_config onerom-config/test/28-random-23xxx.json
+test_28_config onerom-config/test/28-random-23qlxxx.json
+test_28_config onerom-config/test/28-random-27xxx.json
+test_28_config onerom-config/test/24-random-28xxx.json
+
 # Test bank switched ROM configurations on all Fire 24 hardware revisions.
 # All 24 pin hardware revisions support bank switched ROMs with PIO support.
 test_24_config onerom-config/test/24-bank-23xx.json
@@ -223,6 +231,7 @@ test_32_config onerom-config/test/32-random-27c0x0.json
 
 # Test specific ROM configurations on all Fire 40 hardware revisions.
 test_40_config onerom-config/test/40-random.json
+test_40_config onerom-config/test/40-random-force-16bit.json
 
 # Test multi-ROM sets on revisions C+.  A/B do not support multi-ROM sets with
 # PIO support due to a lack of contiguity between CS and X pins.
