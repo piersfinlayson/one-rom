@@ -70,6 +70,9 @@ pub struct SetResult {
     pub skip_reason: Option<String>,
     /// `Some(msg)` → firmware did not boot correctly.
     pub boot_error: Option<String>,
+    /// Optional informational note shown in the report alongside this set's
+    /// results (e.g. sel-wrap or one-beyond annotation).
+    pub note: Option<String>,
 }
 
 impl SetResult {
@@ -80,6 +83,7 @@ impl SetResult {
             skipped: false,
             skip_reason: None,
             boot_error: None,
+            note: None,
         }
     }
 
@@ -90,6 +94,7 @@ impl SetResult {
             skipped: true,
             skip_reason: Some(reason.to_string()),
             boot_error: None,
+            note: None,
         }
     }
 
@@ -100,7 +105,12 @@ impl SetResult {
             skipped: false,
             skip_reason: None,
             boot_error: Some(reason.to_string()),
+            note: None,
         }
+    }
+
+    pub fn set_note(&mut self, note: String) {
+        self.note = Some(note);
     }
 
     /// `true` iff the set ran and every chip/mode passed.
@@ -157,6 +167,9 @@ impl TestReport {
         let mut grand_bus_failures = 0u64;
 
         for set in &self.set_results {
+            if let Some(ref note) = set.note {
+                println!("Set {} : NOTE — {}", set.set_idx, note);
+            }
             if let Some(ref msg) = set.boot_error {
                 println!("Set {} : BOOT ERROR — {}", set.set_idx, msg);
                 continue;

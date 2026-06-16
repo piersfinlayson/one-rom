@@ -4,11 +4,12 @@
 
 //! Oracle: expected byte sequence for a given chip configuration.
 //!
-//! Loads the raw ROM image from disk and applies size handling to produce
-//! exactly the number of bytes the chip serves.  The result is the ground
-//! truth against which every served byte is compared.
+//! Loads the raw ROM image from disk or URL and applies size handling to
+//! produce exactly the number of bytes the chip serves.  The result is the
+//! ground truth against which every served byte is compared.
 
 use onerom_config::chip::ChipType;
+use onerom_fw::net::fetch_rom_file;
 use onerom_gen::{ChipConfig, SizeHandling};
 
 /// Load and size-adjust the oracle bytes for `chip_config`.
@@ -19,12 +20,25 @@ use onerom_gen::{ChipConfig, SizeHandling};
 ///   board only serves the lower half of that chip's address space.
 ///
 /// # Panics
-/// Panics on I/O failure, size mismatches inconsistent with `size_handling`,
-/// or a source file that cannot satisfy the requested size handling.
+/// Panics on I/O failure, unsupported `location` field, size mismatches
+/// inconsistent with `size_handling`, or a source that cannot satisfy the
+/// requested size handling.
 pub fn load(chip_config: &ChipConfig, chip_type: ChipType, base_dir: &std::path::Path) -> Vec<u8> {
-    let path = base_dir.join(&chip_config.file);
-    let raw = std::fs::read(&path)
-        .unwrap_or_else(|e| panic!("Failed to read ROM image '{}': {}", path.display(), e));
+    if chip_config.location.is_some() {
+        panic!(
+            "ROM image '{}': location-based extraction is not supported by the firmware tester",
+            chip_config.file
+        );
+    }
+
+    let source = if chip_config.file.starts_with("http://") || chip_config.file.starts_with("https://") {
+        chip_config.file.clone()
+    } else {
+        base_dir.join(&chip_config.file).to_string_lossy().into_owned()
+    };
+
+    let (raw, _) = fetch_rom_file(&source, &[], chip_config.extract.clone(), false)
+        .unwrap_or_else(|e| panic!("Failed to load ROM image '{}': {}", source, e));
 
     // 27C080: one board serves only the lower 512 KB of the 1 MB space.
     let target = if chip_type == ChipType::Chip27C080 {
@@ -40,7 +54,7 @@ pub fn load(chip_config: &ChipConfig, chip_type: ChipType, base_dir: &std::path:
                 target,
                 "ROM image '{}' is {} bytes; {} expects exactly {} bytes \
                  (use size_handling to override)",
-                path.display(),
+                source,
                 raw.len(),
                 chip_type.name(),
                 target,
@@ -52,7 +66,7 @@ pub fn load(chip_config: &ChipConfig, chip_type: ChipType, base_dir: &std::path:
             assert!(
                 raw.len() >= target,
                 "ROM image '{}' is {} bytes — too small to truncate to {} bytes for {}",
-                path.display(),
+                source,
                 raw.len(),
                 target,
                 chip_type.name(),
@@ -66,7 +80,7 @@ pub fn load(chip_config: &ChipConfig, chip_type: ChipType, base_dir: &std::path:
                 0,
                 "ROM image '{}' ({} bytes) does not divide evenly into \
                  {} bytes for {} (size_handling = duplicate)",
-                path.display(),
+                source,
                 raw.len(),
                 target,
                 chip_type.name(),
@@ -79,7 +93,7 @@ pub fn load(chip_config: &ChipConfig, chip_type: ChipType, base_dir: &std::path:
                 raw.len() <= target,
                 "ROM image '{}' ({} bytes) is larger than {} bytes for {} \
                  — use truncate, not pad",
-                path.display(),
+                source,
                 raw.len(),
                 target,
                 chip_type.name(),

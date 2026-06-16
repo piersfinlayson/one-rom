@@ -4932,6 +4932,7 @@ dependencies = [
  "env_logger",
  "log",
  "onerom-config",
+ "onerom-fw",
  "onerom-fw-emulator",
  "onerom-gen",
  "serde_json",

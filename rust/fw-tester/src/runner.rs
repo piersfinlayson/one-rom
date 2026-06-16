@@ -37,9 +37,57 @@ use crate::timing;
 // ── Entry point ───────────────────────────────────────────────────────────────
 
 pub fn run_all(board: Board, config: &Config, base_dir: &std::path::Path, report: &mut TestReport) {
-    info!("Running {} chip set(s)", config.chip_sets.len());
+    let num_sets = config.chip_sets.len();
+    let num_sel_pins = board.sel_pins().len();
+    let max_images = 1usize << num_sel_pins;
+    info!(
+        "Running {} chip set(s); board has {} sel pin(s) (max {} images)",
+        num_sets, num_sel_pins, max_images
+    );
+
     for (set_idx, chip_set) in config.chip_sets.iter().enumerate() {
-        let result = run_chip_set(board, chip_set, set_idx, base_dir);
+        let effective_idx = set_idx % max_images;
+
+        let (oracle_set, note) = if effective_idx != set_idx {
+            warn!(
+                "Set {}: board has {} sel pin(s) (max {} images); \
+                 sel wraps to set {} — oracle taken from set {}",
+                set_idx, num_sel_pins, max_images, effective_idx, effective_idx,
+            );
+            (
+                &config.chip_sets[effective_idx],
+                Some(format!(
+                    "sel wraps to set {} (board has {} sel pin(s), max {} images)",
+                    effective_idx, num_sel_pins, max_images,
+                )),
+            )
+        } else {
+            (chip_set, None)
+        };
+
+        let mut result = run_chip_set(board, oracle_set, set_idx, set_idx as u8, base_dir);
+        if let Some(n) = note {
+            result.set_note(n);
+        }
+        report.add_set_result(result);
+    }
+
+    // One-beyond test: verify the firmware wraps to set 0 when the sel value
+    // is one past the last configured set, provided the board has enough sel
+    // pins to express that value.
+    if num_sets > 0 && num_sets < max_images {
+        info!(
+            "Running one-beyond test: sel={} expects set 0 to be served",
+            num_sets
+        );
+        let note = format!(
+            "one-beyond test: sel={} (one past {} configured set(s)), \
+             firmware should wrap to set 0",
+            num_sets, num_sets,
+        );
+        let mut result =
+            run_chip_set(board, &config.chip_sets[0], num_sets, num_sets as u8, base_dir);
+        result.set_note(note);
         report.add_set_result(result);
     }
 }
@@ -50,6 +98,7 @@ fn run_chip_set(
     board: Board,
     chip_set: &ChipSetConfig,
     set_idx: usize,
+    sel_image: u8,
     base_dir: &std::path::Path,
 ) -> SetResult {
     // TODO: multi-ROM sets and bank-switched sets require additional orchestration.
@@ -63,8 +112,8 @@ fn run_chip_set(
 
     // Image selection must happen before boot so the firmware sees the correct
     // sel GPIO state during initialisation.
-    debug!("Set {}: selecting image", set_idx);
-    Emulator::set_sel_image(set_idx as u8);
+    debug!("Set {}: selecting image {}", set_idx, sel_image);
+    Emulator::set_sel_image(sel_image);
 
     debug!("Set {}: booting firmware", set_idx);
     let mut emulator = Emulator::boot();
