@@ -478,6 +478,15 @@ fn firmware_build_28pin_config_bank_23xxx_current() {
 }
 
 #[test]
+fn firmware_build_28pin_config_bank_23qlxxx_current() {
+    build_config_test(
+        "onerom-config/test/28-bank-23qlxxx.json",
+        28,
+        FirmwareVersion::Current,
+    );
+}
+
+#[test]
 fn firmware_build_28pin_config_bank_27xxx_current() {
     build_config_test(
         "onerom-config/test/28-bank-27xxx.json",

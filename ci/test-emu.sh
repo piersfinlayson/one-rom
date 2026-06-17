@@ -215,6 +215,7 @@ test_24_config onerom-config/test/24-bank-28xx.json
 # Test bank switched ROM configurations on fire-28-c (no X pins on earlier
 # revisions)
 test_config fire-28-c onerom-config/test/28-bank-23xxx.json
+test_config fire-28-c onerom-config/test/28-bank-23qlxxx.json
 test_config fire-28-c onerom-config/test/28-bank-27xxx.json
 test_config fire-28-c onerom-config/test/28-bank-28xxx.json
 

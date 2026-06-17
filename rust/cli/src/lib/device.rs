@@ -9,7 +9,7 @@
 
 use log::debug;
 use nusb::DeviceInfo;
-use onerom_fw_parser::Sdrr;
+use onerom_fw_parser::ParsedDevice;
 use wildmatch::WildMatch;
 
 use crate::error::Error;
@@ -52,7 +52,7 @@ pub struct Device {
     #[allow(unused)]
     pub device_info: DeviceInfo,
     /// One ROM device information, if present on the device
-    pub onerom: Option<Sdrr>,
+    pub onerom: Option<ParsedDevice>,
     /// Running or stopped.
     pub state: DeviceState,
     /// Whether this device is capable of running One ROM firmware while
@@ -64,12 +64,12 @@ impl std::fmt::Display for Device {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let serial = self.serial.as_deref().unwrap_or("(no serial)");
         let info_str = if let Some(onerom) = self.onerom.as_ref()
-            && let Some(info) = onerom.flash.as_ref()
+            && let Some(sdrr) = onerom.as_original()
+            && let Some(info) = sdrr.flash.as_ref()
             && let Some(board) = info.board.as_ref()
         {
             let model = board.model().to_string();
             let chip_pins = board.chip_pins();
-            // Hardware revision is last part of model string after last dash, e.g. "fire-24-e" -> "e" and convert to upper case
             let hw_rev = board
                 .name()
                 .rsplit_once('-')
@@ -103,10 +103,10 @@ impl Device {
     /// A recognised device has valid One ROM flash or RAM information
     /// available.
     pub fn is_recognised(&self) -> bool {
-        self.onerom
-            .as_ref()
-            .map(|o| o.flash.is_some() || o.ram.is_some())
-            .unwrap_or(false)
+        self.onerom.as_ref().map(|o| match o {
+            ParsedDevice::Original(sdrr) => sdrr.flash.is_some() || sdrr.ram.is_some(),
+            ParsedDevice::Schema(onerom) => onerom.info().is_some(),
+        }).unwrap_or(false)
     }
 
     pub fn is_running(&self) -> bool {
@@ -117,7 +117,7 @@ impl Device {
         self.usb_can_run
     }
 
-    pub fn update_onerom(&mut self, onerom: Sdrr) {
+    pub fn update_onerom(&mut self, onerom: ParsedDevice) {
         self.onerom = Some(onerom);
         self.update_state();
     }
@@ -128,48 +128,55 @@ impl Device {
         self.usb_can_run = false;
         self.state = DeviceState::Unknown;
 
-        // Did we retrieve any valid One ROM information?
-        if self.onerom.is_none() {
-            // Nope.
-            return;
-        }
-        let onerom = self.onerom.as_ref().unwrap();
+        let Some(onerom) = self.onerom.as_ref() else { return; };
 
-        if onerom.flash.is_none() {
-            // No valid flash information.
-            return;
-        }
-        let flash = onerom.flash.as_ref().unwrap();
+        match onerom {
+            ParsedDevice::Original(sdrr) => {
+                let Some(flash) = sdrr.flash.as_ref() else { return; };
 
-        if let Some(runtime_info) = &onerom.ram {
-            // Is it actually running, or is it limping?
-            self.state = match runtime_info.limp_mode.as_ref() {
-                Some(limp_mode) if *limp_mode != onerom_fw_parser::types::LimpMode::None => {
-                    DeviceState::Limp
+                if let Some(runtime_info) = &sdrr.ram {
+                    self.state = match runtime_info.limp_mode.as_ref() {
+                        Some(limp_mode)
+                            if *limp_mode != onerom_fw_parser::types::LimpMode::None =>
+                        {
+                            DeviceState::Limp
+                        }
+                        _ => DeviceState::Running,
+                    }
+                } else {
+                    self.state = DeviceState::Stopped;
                 }
-                _ => DeviceState::Running,
-            }
-        } else {
-            // We have a valid firmware but it is not running.  We don't know
-            // if it's capable of running yet.
-            self.state = DeviceState::Stopped;
-        }
 
-        // Now figure out whether it's capable of running while plugged into
-        // USB.
-        self.usb_can_run = flash.is_usb_run_capable();
+                self.usb_can_run = flash.is_usb_run_capable();
+            }
+            ParsedDevice::Schema(onerom) => {
+                if onerom.info().is_none() {
+                    return;
+                }
+
+                if onerom.runtime().is_some() {
+                    self.state = DeviceState::Running;
+                } else {
+                    self.state = DeviceState::Stopped;
+                }
+                // usb_can_run not yet determinable from schema format
+            }
+        }
     }
 
     pub fn get_active_rom_set_index(&self) -> Option<u8> {
-        self.onerom
-            .as_ref()
-            .and_then(|o| o.ram.as_ref())
-            .map(|ram| ram.rom_set_index)
+        self.onerom.as_ref().and_then(|o| match o {
+            ParsedDevice::Original(sdrr) => {
+                sdrr.ram.as_ref().map(|ram| ram.rom_set_index)
+            }
+            ParsedDevice::Schema(_) => None,
+        })
     }
 
     /// Returns the active ROM set if available.
     pub fn get_active_rom_set(&self) -> Option<&onerom_fw_parser::SdrrRomSet> {
-        let flash_info = self.onerom.as_ref().and_then(|o| o.flash.as_ref())?;
+        let sdrr = self.onerom.as_ref().and_then(|o| o.as_original())?;
+        let flash_info = sdrr.flash.as_ref()?;
         let active_set_index = self.get_active_rom_set_index()? as usize;
         flash_info.rom_sets.get(active_set_index)
     }
@@ -203,7 +210,8 @@ impl Device {
         let board = self
             .onerom
             .as_ref()
-            .and_then(|o| o.flash.as_ref())
+            .and_then(|o| o.as_original())
+            .and_then(|s| s.flash.as_ref())
             .and_then(|f| f.board.as_ref())
             .map(|b| b.model().to_string())
             .unwrap_or_else(|| "~".to_string()); // sorts after Z

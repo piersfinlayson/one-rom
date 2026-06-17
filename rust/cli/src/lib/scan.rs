@@ -20,7 +20,8 @@ pub async fn scan(options: &Options, board_filter: Option<Board>) -> Result<Vec<
     if let Some(board) = board_filter.as_ref() {
         devices.retain(|d| {
             if let Some(onerom) = d.onerom.as_ref()
-                && let Some(flash) = onerom.flash.as_ref()
+                && let Some(sdrr) = onerom.as_original()
+                && let Some(flash) = sdrr.flash.as_ref()
                 && let Some(flash_board) = flash.board.as_ref()
             {
                 flash_board == board

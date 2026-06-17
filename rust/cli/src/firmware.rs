@@ -11,7 +11,7 @@ use onerom_config::hw::Board;
 use onerom_config::mcu::Variant;
 use onerom_fw::net::{Release, Releases, fetch_license_async};
 use onerom_fw::{assemble_firmware, get_rom_files_async, read_rom_config, validate_sizes};
-use onerom_fw_parser::{Parser, SdrrInfo, readers::MemoryReader};
+use onerom_fw_parser::{ParsedDevice, Parser, readers::MemoryReader};
 use onerom_gen::{Builder, FIRMWARE_SIZE, License};
 
 use crate::args;
@@ -58,9 +58,10 @@ pub async fn verify_assembled_firmware(
     force: bool,
 ) -> Result<(), Error> {
     let info = parse_firmware(data).await?;
-    if !info.parse_errors.is_empty() {
+    #[allow(clippy::collapsible_if)]
+    if !info.parse_errors().is_empty() {
         let detail = info
-            .parse_errors
+            .parse_errors()
             .iter()
             .map(|e| format!("  {e}"))
             .collect::<Vec<_>>()
@@ -72,21 +73,23 @@ pub async fn verify_assembled_firmware(
             return Err(Error::FirmwareValidation(detail));
         }
     } else if options.verbose {
-        println!(
-            "Assembled firmware version {} parsed successfully with no errors",
-            info.version
-        );
+        if let Some(version) = info.version() {
+            println!(
+                "Assembled firmware version {} parsed successfully with no errors",
+                version
+            );
+        }
     }
     Ok(())
 }
 
-pub async fn parse_firmware(data: &[u8]) -> Result<SdrrInfo, Error> {
+pub async fn parse_firmware(data: &[u8]) -> Result<ParsedDevice, Error> {
     // The hardcoded base address looks odd here, as the STM32's base flash
-    // address, but when using a memory reader, sdrr-fw-parse will just figure
+    // address, but when using a memory reader, onerom-fw-parser will just figure
     // it out for itself based on what it finds in the image.
     let mut reader = MemoryReader::new(data.to_vec(), 0x0800_0000);
     let mut parser = Parser::new(&mut reader);
-    parser.parse_flash().await.map_err(Error::Other)
+    Ok(parser.parse_device().await)
 }
 
 fn check_firmware_size(options: &Options, data: &[u8]) -> Result<(), Error> {
@@ -142,11 +145,14 @@ async fn acquire_local_firmware(
     let data = std::fs::read(firmware).map_err(|e| Error::io(firmware, e))?;
     check_firmware_size(options, &data)?;
     let info = parse_firmware(&data).await?;
-    let version_str = format!("{}", info.version);
+    let version = info.version().ok_or_else(|| {
+        Error::Other("Could not determine firmware version".to_string())
+    })?;
+    let version_str = format!("{}", version);
     if options.verbose {
         println!("Detected firmware version: {version_str}");
     }
-    Ok((data, info.version, version_str))
+    Ok((data, version, version_str))
 }
 
 async fn acquire_release_firmware(
@@ -459,17 +465,29 @@ async fn inspect_release_firmware(
         .map_err(Error::from)
 }
 
-fn print_firmware_info(options: &Options, info: &SdrrInfo) -> Result<(), Error> {
-    if !info.parse_errors.is_empty() {
+fn print_firmware_info(options: &Options, info: &ParsedDevice) -> Result<(), Error> {
+    if !info.parse_errors().is_empty() {
         eprintln!("Warning: firmware parsed with errors:");
-        for error in &info.parse_errors {
+        for error in info.parse_errors() {
             eprintln!("  {error}");
         }
         eprintln!();
     }
 
+    match info {
+        ParsedDevice::Original(sdrr) => print_original_firmware_info(options, sdrr),
+        ParsedDevice::Schema(onerom) => print_schema_firmware_info(options, onerom),
+    }
+}
+
+fn print_original_firmware_info(options: &Options, sdrr: &onerom_fw_parser::Sdrr) -> Result<(), Error> {
+    let Some(info) = sdrr.flash.as_ref() else {
+        println!("(no flash information available)");
+        return Ok(());
+    };
+
     if options.verbose {
-        let json = serde_json::to_string_pretty(&info).map_err(|e| Error::Other(e.to_string()))?;
+        let json = serde_json::to_string_pretty(info).map_err(|e| Error::Other(e.to_string()))?;
         println!("---");
         println!("{json}");
     } else {
@@ -486,6 +504,29 @@ fn print_firmware_info(options: &Options, info: &SdrrInfo) -> Result<(), Error> 
                 println!("    ROM {j}: {} {name}", rom.rom_type);
             }
         }
+    }
+    Ok(())
+}
+
+fn print_schema_firmware_info(options: &Options, onerom: &onerom_fw_parser::OneRom) -> Result<(), Error> {
+    let Some(info) = onerom.info() else {
+        println!("(no firmware information available)");
+        return Ok(());
+    };
+
+    if options.verbose {
+        println!("Version:  {}.{}.{}", info.major_version, info.minor_version, info.patch_version);
+        println!("Build:    {}", info.build_number);
+        println!("Format:   Schema (v0.7.0+)");
+        if let Some(metadata) = onerom.metadata() {
+            println!("Slots: {}", metadata.rom_slot_count);
+            for (i, slot) in metadata.rom_slots.iter().enumerate() {
+                println!("  Slot {i}: {} ROM(s)", slot.rom_count);
+            }
+        }
+    } else {
+        println!("Version:  {}.{}.{}", info.major_version, info.minor_version, info.patch_version);
+        println!("Format:   Schema (v0.7.0+)");
     }
     Ok(())
 }

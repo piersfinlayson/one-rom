@@ -21,17 +21,27 @@ pub async fn cmd_info(options: &Options, args: &InspectInfoArgs) -> Result<(), E
 
     // Print the detailed device information as JSON if available
     if let Some(onerom) = device.onerom.as_ref() {
-        if let Some(info) = onerom.flash.as_ref() {
-            let json =
-                serde_json::to_string_pretty(info).map_err(|e| Error::Other(e.to_string()))?;
-            println!("Flash information:");
-            println!("{json}");
-        }
-        if let Some(info) = onerom.ram.as_ref() {
-            let json =
-                serde_json::to_string_pretty(info).map_err(|e| Error::Other(e.to_string()))?;
-            println!("Runtime information:");
-            println!("{json}");
+        if let Some(sdrr) = onerom.as_original() {
+            if let Some(info) = sdrr.flash.as_ref() {
+                let json =
+                    serde_json::to_string_pretty(info).map_err(|e| Error::Other(e.to_string()))?;
+                println!("Flash information:");
+                println!("{json}");
+            }
+            if let Some(info) = sdrr.ram.as_ref() {
+                let json =
+                    serde_json::to_string_pretty(info).map_err(|e| Error::Other(e.to_string()))?;
+                println!("Runtime information:");
+                println!("{json}");
+            }
+        } else if let Some(schema) = onerom.as_schema() {
+            if let Some(info) = schema.info() {
+                println!("Firmware version: {}.{}.{}", info.major_version, info.minor_version, info.patch_version);
+                println!("Format: Schema (v0.7.0+)");
+            }
+            if schema.runtime().is_some() {
+                println!("Device is running.");
+            }
         }
     }
 
@@ -49,7 +59,8 @@ pub fn output_slot_info(device: &Device, options: &Options, prefix: &str) -> Res
     println!("{device}");
     let active_rom_set_index = device.get_active_rom_set_index();
     if let Some(onerom) = device.onerom.as_ref()
-        && let Some(info) = onerom.flash.as_ref()
+        && let Some(sdrr) = onerom.as_original()
+        && let Some(info) = sdrr.flash.as_ref()
     {
         let verbose = options.verbose;
         let set_count = info.rom_set_count;

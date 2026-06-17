@@ -154,9 +154,8 @@ fn resolve_fw_version(
 
     if let Some(device) = &options.device
         && let Some(onerom) = &device.onerom
-        && let Some(flash) = &onerom.flash
     {
-        return Ok(Some(flash.version));
+        return Ok(onerom.version());
     }
 
     Ok(None)

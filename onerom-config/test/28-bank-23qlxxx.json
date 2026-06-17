@@ -1,0 +1,47 @@
+{
+    "$schema": "https://images.onerom.org/configs/schema.json",
+    "version": 1,
+    "name": "28 pin One ROM banked test - 23xxx ROM types",
+    "description": "28 pin One ROM banked test - 23xxx ROM types",
+    "categories": [],
+    "rom_sets": [
+        {
+            "type": "banked",
+            "description": "Set 3 - 23QL384 - max 2 banks",
+            "roms": [
+                {
+                    "description": "1",
+                    "file": "images/test/rand_48KB.rom",
+                    "type": "23QL384",
+                    "cs1": "active_high"
+                },
+                {
+                    "description": "2",
+                    "file": "images/test/rand_64KB.rom",
+                    "type": "23QL384",
+                    "size_handling": "truncate",
+                    "cs1": "active_high"
+                }
+            ]
+        },
+        {
+            "type": "banked",
+            "description": "Set 4 - 23QL512 - max 2 banks",
+            "roms": [
+                {
+                    "description": "1",
+                    "file": "images/test/rand_64KB.rom",
+                    "type": "23QL512",
+                    "cs1": "active_high"
+                },
+                {
+                    "description": "2",
+                    "file": "images/test/rand_128KB.rom",
+                    "type": "23QL512",
+                    "size_handling": "truncate",
+                    "cs1": "active_high"
+                }
+            ]
+        }
+    ]
+}

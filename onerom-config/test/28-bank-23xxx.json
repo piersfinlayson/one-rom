@@ -126,44 +126,6 @@
                     "cs1": "active_high"
                 }
             ]
-        },
-        {
-            "type": "banked",
-            "description": "Set 3 - 23QL384 - max 2 banks",
-            "roms": [
-                {
-                    "description": "1",
-                    "file": "images/test/rand_48KB.rom",
-                    "type": "23QL384",
-                    "cs1": "active_high"
-                },
-                {
-                    "description": "2",
-                    "file": "images/test/rand_64KB.rom",
-                    "type": "23QL384",
-                    "size_handling": "truncate",
-                    "cs1": "active_high"
-                }
-            ]
-        },
-        {
-            "type": "banked",
-            "description": "Set 4 - 23QL512 - max 2 banks",
-            "roms": [
-                {
-                    "description": "1",
-                    "file": "images/test/rand_64KB.rom",
-                    "type": "23QL512",
-                    "cs1": "active_high"
-                },
-                {
-                    "description": "2",
-                    "file": "images/test/rand_128KB.rom",
-                    "type": "23QL512",
-                    "size_handling": "truncate",
-                    "cs1": "active_high"
-                }
-            ]
         }
     ]
 }
