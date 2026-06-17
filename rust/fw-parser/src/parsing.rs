@@ -1,4 +1,4 @@
-// Copyright (C) 2025 Piers Finlayson <piers@piers.rocks>
+// Copyright (C) 2026 Piers Finlayson <piers@piers.rocks>
 //
 // MIT License
 
@@ -23,6 +23,12 @@ use alloc::{format, string::String, vec, vec::Vec};
 // Maximum length of strings and bits of strings read from firmware
 const MAX_STRING_LEN: usize = 1024;
 const STRING_READ_CHUNK_SIZE: usize = 64;
+
+/// How many bytes to read for the full runtime info buffer.
+///
+/// Covers all versioned extensions through V0.6.7 (57 bytes) with a small
+/// margin.  Does not include `piorom_config` which starts at offset 60.
+pub(crate) const SDRR_RUNTIME_BUF_SIZE: usize = 64;
 
 #[derive(Debug, DekuRead, DekuWrite)]
 #[deku(endian = "little", magic = b"sdrr")]
@@ -52,7 +58,7 @@ pub(crate) struct SdrrRuntimeInfoHeaderVunknown {
 // Used internally to construct [`SdrrRuntimeInfo`]
 pub(crate) struct SdrrRuntimeInfoHeaderV0_6_0 {
     pub overclock_enabled: u8,
-    pub status_led_enabeled: u8,
+    pub status_led_enabled: u8,
     pub swd_enabled: u8,
     pub fire_vreg: FireVreg,
     #[deku(endian = "little")]
@@ -103,7 +109,7 @@ impl SdrrRuntimeInfoHeader {
     const ACCESS_COUNT_OFFSET: usize = 8;
 
     pub(crate) const fn size() -> usize {
-        // Rrust struct size ignored the magic bytes
+        // Rust struct size ignores the magic bytes
         const_assert_eq!(
             core::mem::size_of::<SdrrRuntimeInfoHeader>(),
             SdrrRuntimeInfoHeader::SDRR_RUNTIME_INFO_HEADER_SIZE - 4
@@ -114,6 +120,127 @@ impl SdrrRuntimeInfoHeader {
     pub(crate) const fn access_count_offset() -> usize {
         Self::ACCESS_COUNT_OFFSET
     }
+}
+
+// ---------------------------------------------------------------------------
+// Versioned runtime field offsets (from sdrr_runtime_info_t in config_base.h)
+// ---------------------------------------------------------------------------
+//
+// Offset 0  - 19: base header (magic + fields)
+// Offset 20 - 23: bootloader_entry (Vunknown)
+// Offset 24 - 33: V0.6.0 fields (overclock, status_led, swd, fire_vreg, ice_freq, fire_freq, sysclk_mhz)
+// Offset 34 - 35: V0.6.2 fields (fire_serve_mode, bit_mode)
+// Offset 36 - 38: V0.6.3 fields (rom_dma_copy, num_data_pins, force_16_bit)
+// Offset 39 - 56: V0.6.7 fields (peri_en, plugin ptrs x4, limp_mode)
+// Offset 57 - 59: pad[3]
+// Offset 60+    : piorom_config (not parsed here)
+
+const V0_6_0_OFFSET: usize = 24;
+const V0_6_0_END: usize = 34;
+const V0_6_2_OFFSET: usize = 34;
+const V0_6_2_END: usize = 36;
+const V0_6_3_OFFSET: usize = 36;
+const V0_6_3_END: usize = 39;
+const V0_6_7_OFFSET: usize = 39;
+const V0_6_7_END: usize = 57;
+
+/// Versioned fields parsed from the runtime info buffer beyond the base header.
+pub(crate) struct RuntimeVersionedFields {
+    pub overclock_enabled: Option<bool>,
+    pub status_led_enabled: Option<bool>,
+    pub swd_enabled: Option<bool>,
+    pub fire_vreg: Option<FireVreg>,
+    pub ice_freq_mhz: Option<u16>,
+    pub fire_freq_mhz: Option<u16>,
+    pub sysclk_mhz: Option<u16>,
+    pub fire_serve_mode: Option<FireServeMode>,
+    pub bit_mode: Option<BitMode>,
+    pub rom_dma_copy: Option<bool>,
+    pub num_data_pins: Option<u8>,
+    pub force_16_bit: Option<bool>,
+    pub peri_en: Option<u8>,
+    pub limp_mode: Option<LimpMode>,
+}
+
+impl RuntimeVersionedFields {
+    fn none() -> Self {
+        Self {
+            overclock_enabled: None,
+            status_led_enabled: None,
+            swd_enabled: None,
+            fire_vreg: None,
+            ice_freq_mhz: None,
+            fire_freq_mhz: None,
+            sysclk_mhz: None,
+            fire_serve_mode: None,
+            bit_mode: None,
+            rom_dma_copy: None,
+            num_data_pins: None,
+            force_16_bit: None,
+            peri_en: None,
+            limp_mode: None,
+        }
+    }
+}
+
+/// Parse versioned runtime fields from the full raw runtime info buffer.
+///
+/// Uses `runtime_info_size` (byte 4 of the buffer) as the boundary rather
+/// than the firmware version, so this works even when flash info is not
+/// available.
+pub(crate) fn parse_runtime_versioned_fields(data: &[u8]) -> RuntimeVersionedFields {
+    let mut f = RuntimeVersionedFields::none();
+
+    if data.len() < SdrrRuntimeInfoHeader::size() {
+        return f;
+    }
+
+    // runtime_info_size is at offset 4 in the raw buffer (after the 4-byte magic).
+    let runtime_info_size = data[4] as usize;
+
+    // V0.6.0: overclock, status_led, swd, fire_vreg, ice_freq, fire_freq, sysclk_mhz
+    #[allow(clippy::collapsible_if)]
+    if runtime_info_size >= V0_6_0_END && data.len() >= V0_6_0_END {
+        if let Ok((_, v)) = SdrrRuntimeInfoHeaderV0_6_0::from_bytes((&data[V0_6_0_OFFSET..], 0)) {
+            f.overclock_enabled = Some(v.overclock_enabled != 0);
+            f.status_led_enabled = Some(v.status_led_enabled != 0);
+            f.swd_enabled = Some(v.swd_enabled != 0);
+            f.fire_vreg = Some(v.fire_vreg);
+            f.ice_freq_mhz = Some(v.ice_freq);
+            f.fire_freq_mhz = Some(v.fire_freq);
+            f.sysclk_mhz = Some(v.sysclk_mhz);
+        }
+    }
+
+    // V0.6.2: fire_serve_mode, bit_mode
+    #[allow(clippy::collapsible_if)]
+    if runtime_info_size >= V0_6_2_END && data.len() >= V0_6_2_END {
+        if let Ok((_, v)) = SdrrRuntimeInfoHeaderV0_6_2::from_bytes((&data[V0_6_2_OFFSET..], 0)) {
+            f.fire_serve_mode = Some(v.fire_serve_mode);
+            f.bit_mode = Some(v.bit_mode);
+        }
+    }
+
+    // V0.6.3: rom_dma_copy, num_data_pins, force_16_bit
+    #[allow(clippy::collapsible_if)]
+    if runtime_info_size >= V0_6_3_END && data.len() >= V0_6_3_END {
+        if let Ok((_, v)) = SdrrRuntimeInfoHeaderV0_6_3::from_bytes((&data[V0_6_3_OFFSET..], 0)) {
+            f.rom_dma_copy = Some(v.rom_dma_copy != 0);
+            f.num_data_pins = Some(v.num_data_pins);
+            f.force_16_bit = Some(v.force_16_bit != 0);
+        }
+    }
+
+    // V0.6.7: peri_en, plugin context ptrs (skipped), limp_mode
+    #[allow(clippy::collapsible_if)]
+    if runtime_info_size >= V0_6_7_END && data.len() >= V0_6_7_END {
+        if let Ok((_, v)) = SdrrRuntimeInfoHeaderV0_6_7::from_bytes((&data[V0_6_7_OFFSET..], 0)) {
+            f.peri_en = Some(v.peri_en);
+            f.limp_mode = Some(v.limp_mode);
+        }
+    }
+
+    f
 }
 
 #[derive(Debug, DekuRead, DekuWrite)]

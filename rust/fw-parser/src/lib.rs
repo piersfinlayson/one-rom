@@ -71,7 +71,7 @@ pub use onerom::{FirmwareFormat, OneRom};
  
 use crate::parsing::{
     SdrrInfoHeader, SdrrRuntimeInfoHeader, parse_and_validate_header,
-    parse_and_validate_runtime_info,
+    parse_and_validate_runtime_info, parse_runtime_versioned_fields, SDRR_RUNTIME_BUF_SIZE,
 };
  
 use onerom::parse_onerom_from_view;
@@ -234,24 +234,25 @@ impl<'a, R: Reader> Parser<'a, R> {
         parse_and_validate_header(&header_buf)
     }
  
-    async fn retrieve_runtime_header(&mut self) -> Result<SdrrRuntimeInfoHeader, String> {
+    async fn retrieve_runtime_header(&mut self) -> Result<(SdrrRuntimeInfoHeader, [u8; SDRR_RUNTIME_BUF_SIZE]), String> {
         // Try to find SDRR runtime info at standard location
         let sdrr_runtime_info_addr = self.base_ram_address + SDRR_RUNTIME_INFO_FW_OFFSET;
  
-        // Read the runtime info header
-        let mut runtime_buf = [0u8; SdrrRuntimeInfoHeader::size()];
+        // Read the full runtime info buffer (base header + versioned extensions)
+        let mut runtime_buf = [0u8; SDRR_RUNTIME_BUF_SIZE];
         self.reader
             .read(sdrr_runtime_info_addr, &mut runtime_buf)
             .await
             .map_err(|_| "Failed to read SDRR runtime info")?;
         // Parse and validate runtime info using the helper
-        parse_and_validate_runtime_info(&runtime_buf)
+        let header = parse_and_validate_runtime_info(&runtime_buf)?;
+        Ok((header, runtime_buf))
     }
  
     async fn retrieve_runtime_header_from_info(
         &mut self,
         info: &SdrrInfo,
-    ) -> Result<SdrrRuntimeInfoHeader, String> {
+    ) -> Result<(SdrrRuntimeInfoHeader, [u8; SDRR_RUNTIME_BUF_SIZE]), String> {
         let runtime_info_ptr = info.runtime_info_ptr;
         if runtime_info_ptr < self.base_ram_address && runtime_info_ptr != 0xFFFF_FFFF_u32 {
             return Err(format!(
@@ -260,14 +261,15 @@ impl<'a, R: Reader> Parser<'a, R> {
             ));
         }
  
-        // Read the runtime info header
-        let mut runtime_buf = [0u8; SdrrRuntimeInfoHeader::size()];
+        // Read the full runtime info buffer (base header + versioned extensions)
+        let mut runtime_buf = [0u8; SDRR_RUNTIME_BUF_SIZE];
         self.reader
             .read(runtime_info_ptr, &mut runtime_buf)
             .await
             .map_err(|_| "Failed to read SDRR runtime info")?;
         // Parse and validate runtime info using the helper
-        parse_and_validate_runtime_info(&runtime_buf)
+        let header = parse_and_validate_runtime_info(&runtime_buf)?;
+        Ok((header, runtime_buf))
     }
  
     /// Detect the format of the firmware without fully parsing it.
@@ -799,7 +801,9 @@ impl<'a, R: Reader> Parser<'a, R> {
     async fn parse_ram_from_runtime_info(
         &mut self,
         runtime_info: SdrrRuntimeInfoHeader,
+        runtime_buf: &[u8],
     ) -> Result<SdrrRuntimeInfo, String> {
+        let v = parse_runtime_versioned_fields(runtime_buf);
         Ok(SdrrRuntimeInfo {
             image_sel: runtime_info.image_sel,
             rom_set_index: runtime_info.rom_set_index,
@@ -809,33 +813,33 @@ impl<'a, R: Reader> Parser<'a, R> {
                 + SdrrRuntimeInfoHeader::access_count_offset() as u32,
             rom_table_address: runtime_info.rom_table_ptr,
             rom_table_size: runtime_info.rom_table_size,
-            overclock_enabled: None,
-            status_led_enabled: None,
-            swd_enabled: None,
-            fire_vreg: None,
-            ice_freq_mhz: None,
-            fire_freq_mhz: None,
-            sysclk_mhz: None,
-            fire_serve_mode: None,
-            bit_mode: None,
-            rom_dma_copy: None,
-            num_data_pins: None,
-            force_16_bit: None,
-            peri_en: None,
-            limp_mode: None,
+            overclock_enabled: v.overclock_enabled,
+            status_led_enabled: v.status_led_enabled,
+            swd_enabled: v.swd_enabled,
+            fire_vreg: v.fire_vreg,
+            ice_freq_mhz: v.ice_freq_mhz,
+            fire_freq_mhz: v.fire_freq_mhz,
+            sysclk_mhz: v.sysclk_mhz,
+            fire_serve_mode: v.fire_serve_mode,
+            bit_mode: v.bit_mode,
+            rom_dma_copy: v.rom_dma_copy,
+            num_data_pins: v.num_data_pins,
+            force_16_bit: v.force_16_bit,
+            peri_en: v.peri_en,
+            limp_mode: v.limp_mode,
         })
     }
  
     async fn parse_ram(&mut self) -> Result<SdrrRuntimeInfo, String> {
         // Parse and validate runtime info using the helper
-        let runtime_info = self.retrieve_runtime_header().await?;
-        self.parse_ram_from_runtime_info(runtime_info).await
+        let (runtime_info, runtime_buf) = self.retrieve_runtime_header().await?;
+        self.parse_ram_from_runtime_info(runtime_info, &runtime_buf).await
     }
  
     async fn parse_ram_from_info(&mut self, info: &SdrrInfo) -> Result<SdrrRuntimeInfo, String> {
         // Parse and validate runtime info using the helper
-        let runtime_info = self.retrieve_runtime_header_from_info(info).await?;
-        self.parse_ram_from_runtime_info(runtime_info).await
+        let (runtime_info, runtime_buf) = self.retrieve_runtime_header_from_info(info).await?;
+        self.parse_ram_from_runtime_info(runtime_info, &runtime_buf).await
     }
  
     async fn read_string_at_ptr(&mut self, ptr: u32) -> Result<String, String> {
