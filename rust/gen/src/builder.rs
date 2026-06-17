@@ -12,7 +12,7 @@ use onerom_config::hw::Board;
 use onerom_config::mcu::Family;
 use onerom_metadata::{
     CURRENT_METADATA_VERSION, METADATA_BASE, METADATA_SIZE, ONEROM_METADATA_MAGIC,
-    OneromMetadataHeader, OneromRomInfo, OneromRomSlot, RomSlotType, serialize,
+    OneromMetadataHeader, OneromRomInfo, OneromRomSlot, Pointer, RomSlotType, serialize,
 };
 
 use crate::v2::firmware_config::{build_firmware_config, build_firmware_overrides};
@@ -353,7 +353,7 @@ impl Builder {
                     _ => unreachable!(),
                 };
                 let slot = OneromRomSlot {
-                    data: 0,
+                    data: Pointer::Null,
                     size: chip.data().map(|d| d.len() as u32).unwrap_or(0),
                     roms: vec![OneromRomInfo {
                         rom_type: chip.chip_type().name().to_string(),
@@ -390,7 +390,7 @@ impl Builder {
         const ROM_DATA_BASE: u32 = METADATA_BASE + METADATA_SIZE as u32;
         let mut rom_data_offset: u32 = 0;
         for slot in &mut rom_slots {
-            slot.data = ROM_DATA_BASE + rom_data_offset;
+            slot.data = Pointer::Addr32(ROM_DATA_BASE + rom_data_offset);
             rom_data_offset += slot.size;
         }
 

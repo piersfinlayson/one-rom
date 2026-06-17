@@ -1,4 +1,4 @@
-# sdrr-fw-parser
+# onerom-fw-parser
 
 Crate to handle parsing an SDRR firmware image.
 

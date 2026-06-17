@@ -29,8 +29,8 @@
 //! `firmware_main` writes global C state.  Run tests with
 //! `RUST_TEST_THREADS=1` (or `-- --test-threads=1`) to avoid races.
 
-use onerom_config::mcu::RpVariant;
 use crate::ffi;
+use onerom_config::mcu::RpVariant;
 
 /// A handle to a running One ROM firmware emulator instance.
 pub struct Emulator {

@@ -472,7 +472,7 @@ fn slot_to_firmware_overrides(slot: &SlotSpec) -> Option<FirmwareConfig> {
 /// slot specs.
 ///
 /// Plugin chip_sets are inserted first (system plugin at index 0, user plugin
-/// at index 1, matching [`plugin_to_chip_set_json`] semantics).  ROM slot
+/// at index 1).  ROM slot
 /// chip_sets follow from index 0 or 2 onwards depending on how many plugins
 /// are present.
 pub fn slots_to_config_json(

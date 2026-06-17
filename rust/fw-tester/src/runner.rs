@@ -108,8 +108,13 @@ pub fn run_all(board: Board, config: &Config, base_dir: &std::path::Path, report
              firmware should wrap to set 0",
             num_sets, num_sets,
         );
-        let mut result =
-            run_chip_set(board, &config.chip_sets[0], num_sets, num_sets as u8, base_dir);
+        let mut result = run_chip_set(
+            board,
+            &config.chip_sets[0],
+            num_sets,
+            num_sets as u8,
+            base_dir,
+        );
         result.set_note(note);
         report.add_set_result(result);
     }
@@ -203,7 +208,10 @@ fn run_multi_set(
     if n_secondary > n_x_pins {
         error!(
             "Set {}: {} secondary chip(s) but board {} has only {} X pin(s)",
-            set_idx, n_secondary, board.name(), n_x_pins,
+            set_idx,
+            n_secondary,
+            board.name(),
+            n_x_pins,
         );
         return SetResult::skipped(
             set_idx,
@@ -379,9 +387,12 @@ fn run_multi_set(
         debug!(
             "Set {} chip {}: building secondary pin cache for {} on board {} \
              (X pin GPIOs={:?} assert_high={})",
-            set_idx, chip_idx,
-            chip_type.name(), board.name(),
-            x_gpios, x_assert_high,
+            set_idx,
+            chip_idx,
+            chip_type.name(),
+            board.name(),
+            x_gpios,
+            x_assert_high,
         );
         let secondary_cache = PinCache::build_secondary(
             chip_type,
@@ -392,7 +403,8 @@ fn run_multi_set(
         );
         debug!(
             "Set {} chip {}: {} addr GPIOs, {} data GPIOs",
-            set_idx, chip_idx,
+            set_idx,
+            chip_idx,
             secondary_cache.addr_gpios.len(),
             secondary_cache.data_gpios.len(),
         );
@@ -400,7 +412,9 @@ fn run_multi_set(
         let oracle = oracle::load(chip_config, chip_type, base_dir);
         debug!(
             "Set {} chip {}: oracle loaded, {} bytes",
-            set_idx, chip_idx, oracle.len()
+            set_idx,
+            chip_idx,
+            oracle.len()
         );
 
         let cycles_addr_before_cs = if is_27c400_family(chip_type) {
@@ -467,10 +481,7 @@ fn run_banked_set(
             set_idx,
             board.name()
         );
-        return SetResult::skipped(
-            set_idx,
-            "dynamic banked sets not supported on this board",
-        );
+        return SetResult::skipped(set_idx, "dynamic banked sets not supported on this board");
     }
 
     if chip_set.chips.is_empty() {
@@ -503,13 +514,16 @@ fn run_banked_set(
     // Verify the board has enough X pins to encode all banks in binary.
     // n banks require ceil(log2(n)) X pins; computed via leading_zeros.
     let n_banks = chip_set.chips.len();
-    let x_pins_needed =
-        (usize::BITS - n_banks.saturating_sub(1).leading_zeros()) as usize;
+    let x_pins_needed = (usize::BITS - n_banks.saturating_sub(1).leading_zeros()) as usize;
     let n_x_pins = board.x_pin_map().len();
     if x_pins_needed > n_x_pins {
         error!(
             "Set {}: {} bank(s) require {} X pin(s) to encode but board {} has only {}",
-            set_idx, n_banks, x_pins_needed, board.name(), n_x_pins,
+            set_idx,
+            n_banks,
+            x_pins_needed,
+            board.name(),
+            n_x_pins,
         );
         return SetResult::skipped(
             set_idx,
@@ -581,7 +595,9 @@ fn run_banked_set(
         let oracle = oracle::load(chip_config, chip_type, base_dir);
         debug!(
             "Set {} bank {}: oracle loaded, {} bytes",
-            set_idx, bank, oracle.len()
+            set_idx,
+            bank,
+            oracle.len()
         );
 
         let mut mode_results = Vec::new();
@@ -918,10 +934,10 @@ fn run_mode(
             driver::merge(driver::addr_mask(drive_addr, addr_gpios), ctrl_deasserted),
             const_mask,
         );
-        if addr_idx == 0 {
+        if addr_idx < 2 {
             debug!(
-                "addr=0 phase1: mask={:#018x} levels={:#018x}",
-                phase1.0, phase1.1
+                "addr={} phase1: mask={:#018x} levels={:#018x}",
+                phys_addr, phase1.0, phase1.1
             );
         }
         emulator.drive_gpios(phase1.0, phase1.1);
@@ -932,10 +948,10 @@ fn run_mode(
             driver::merge(driver::addr_mask(drive_addr, addr_gpios), ctrl_active),
             const_mask,
         );
-        if addr_idx == 0 {
+        if addr_idx < 2 {
             debug!(
-                "addr=0 phase2: mask={:#018x} levels={:#018x}",
-                phase2.0, phase2.1
+                "addr={} phase2: mask={:#018x} levels={:#018x}",
+                phys_addr, phase2.0, phase2.1
             );
         }
         emulator.drive_gpios(phase2.0, phase2.1);
@@ -944,9 +960,9 @@ fn run_mode(
         // ── Phase 3: read and compare ─────────────────────────────────────────
         let pin_states = emulator.read_pin_states();
         let driven_pins = emulator.read_driven_pins();
-        if addr_idx == 0 {
-            debug!("addr=0 pin_states={:#018x}", pin_states);
-            debug!("addr=0 driven_pins={:#018x}", driven_pins);
+        if addr_idx < 2 {
+            debug!("addr={} pin_states={:#018x}", phys_addr, pin_states);
+            debug!("addr={} driven_pins={:#018x}", phys_addr, driven_pins);
         }
 
         // Data lines must be driven while CS is active.
@@ -1212,10 +1228,7 @@ fn banked_x_mask(board: Board, bank_idx: usize) -> (u64, u64) {
             if (bank_idx >> k) & 1 == 1 {
                 // Jumper closed: drive to x_jumper_pull level.
                 let gpio_mask = gpios.iter().fold((0u64, 0u64), |a, &g| {
-                    driver::merge(
-                        a,
-                        (1u64 << g, if closed_high { 1u64 << g } else { 0 }),
-                    )
+                    driver::merge(a, (1u64 << g, if closed_high { 1u64 << g } else { 0 }))
                 });
                 driver::merge(acc, gpio_mask)
             } else {

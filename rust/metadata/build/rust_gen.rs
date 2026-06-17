@@ -131,8 +131,9 @@ fn field_rust_type(field: &Field) -> String {
             }
         }
 
-        // Raw flash addresses; no callable representation in parse context.
-        "opaque_ptr" | "fn_ptr" => "u32".into(),
+        // Pointer fields: stored as the Pointer enum, never dereferenced by
+        // the generated parser.
+        "opaque_ptr" | "fn_ptr" => "Pointer".into(),
 
         // Padding is omitted from Rust struct definitions.
         _ => "u8".into(),
@@ -143,7 +144,7 @@ fn field_rust_type(field: &Field) -> String {
 // Read-method selection helpers
 // ---------------------------------------------------------------------------
 
-/// (`FirmwareView` method name, byte size) for a scalar Rust type string.
+/// (`DeviceMemoryView` method name, byte size) for a scalar Rust type string.
 fn scalar_rw(ty: &str) -> (&'static str, usize) {
     match ty {
         "u8" => ("read_u8", 1),
@@ -153,7 +154,7 @@ fn scalar_rw(ty: &str) -> (&'static str, usize) {
     }
 }
 
-/// (`FirmwareView` method name, byte size) for an enum field.
+/// (`DeviceMemoryView` method name, byte size) for an enum field.
 fn enum_rw(field: &Field, schema: &Schema) -> (&'static str, usize) {
     let sz = schema
         .enums
@@ -166,7 +167,7 @@ fn enum_rw(field: &Field, schema: &Schema) -> (&'static str, usize) {
     }
 }
 
-/// (`FirmwareView` method name, byte size) for a type_alias field.
+/// (`DeviceMemoryView` method name, byte size) for a type_alias field.
 fn alias_rw(field: &Field, schema: &Schema) -> (&'static str, usize) {
     let underlying = schema
         .type_aliases
@@ -180,7 +181,7 @@ fn alias_rw(field: &Field, schema: &Schema) -> (&'static str, usize) {
 // Parse code emission — mutable-offset style (structs)
 // ---------------------------------------------------------------------------
 
-/// Emit the FirmwareView read + `offset +=` code for one struct field.
+/// Emit the DeviceMemoryView read + `offset +=` code for one struct field.
 ///
 /// For `struct_array_ptr` and `struct_ptr_array_ptr` this emits both the
 /// pointer read and the loop body in one shot (used when the count field
@@ -256,7 +257,7 @@ fn emit_field_parse_offset(out: &mut String, field: &Field, indent: &str, schema
         }
 
         "cstr_ptr" => {
-            // FirmwareView::read_cstr reads the pointer at addr and follows it.
+            // DeviceMemoryView::read_cstr reads the pointer at addr and follows it.
             // read_cstr_opt does the same but returns None for a null pointer.
             if field.nullable.unwrap_or(false) {
                 out.push_str(&format!(
@@ -276,7 +277,7 @@ fn emit_field_parse_offset(out: &mut String, field: &Field, indent: &str, schema
             ));
             if field.nullable.unwrap_or(false) {
                 out.push_str(&format!(
-                    "{indent}let {name} = if {name}_ptr == 0 {{\n\
+                    "{indent}let {name} = if {name}_ptr == 0 || {name}_ptr == 0xFFFF_FFFF {{\n\
                      {indent}    None\n\
                      {indent}}} else {{\n\
                      {indent}    Some({tn}::parse(view, {name}_ptr)?)\n\
@@ -293,7 +294,6 @@ fn emit_field_parse_offset(out: &mut String, field: &Field, indent: &str, schema
         }
 
         "struct_array_ptr" | "struct_ptr_array_ptr" => {
-            // Count field precedes this field (normal case).
             emit_array_ptr_read(out, field, indent);
             emit_array_loop_body(out, field, indent, schema);
         }
@@ -305,7 +305,7 @@ fn emit_field_parse_offset(out: &mut String, field: &Field, indent: &str, schema
             ));
             if field.nullable.unwrap_or(false) {
                 out.push_str(&format!(
-                    "{indent}let {name} = if {name}_ptr == 0 {{\n\
+                    "{indent}let {name} = if {name}_ptr == 0 || {name}_ptr == 0xFFFF_FFFF {{\n\
                      {indent}    None\n\
                      {indent}}} else {{\n\
                      {indent}    Some({tn}::parse(view, {name}_ptr)?)\n\
@@ -321,9 +321,12 @@ fn emit_field_parse_offset(out: &mut String, field: &Field, indent: &str, schema
             }
         }
 
+        // opaque_ptr and fn_ptr fields are stored as Pointer values.  The
+        // address is read from the view but the pointer is never followed by
+        // the generated parser.
         "opaque_ptr" | "fn_ptr" => {
             out.push_str(&format!(
-                "{indent}let {name} = view.read_ptr(offset)?; offset += 4;\n"
+                "{indent}let {name} = Pointer::new(view.read_ptr(offset)?); offset += 4;\n"
             ));
         }
 
@@ -750,6 +753,13 @@ fn push_struct_def(out: &mut String, s: &Struct) {
         out.push_str(&format!("    pub {}: {ftype},\n", f.name));
     }
     out.push_str("}\n\n");
+
+    if let Some(sz) = s.size {
+        out.push_str(&format!(
+            "/// Binary size of [`{tn}`] in bytes.\npub const {}_SIZE: usize = {sz};\n\n",
+            s.name.strip_suffix("_t").unwrap_or(&s.name).to_uppercase()
+        ));
+    }
 }
 
 fn push_struct_parse(out: &mut String, s: &Struct, schema: &Schema) {
@@ -757,7 +767,7 @@ fn push_struct_parse(out: &mut String, s: &Struct, schema: &Schema) {
 
     out.push_str(&format!("impl {tn} {{\n"));
     out.push_str(
-        "    pub fn parse(view: &FirmwareView, addr: u32) -> Result<Self, ParseError> {\n",
+        "    pub fn parse(view: &DeviceMemoryView, addr: u32) -> Result<Self, ParseError> {\n",
     );
     out.push_str("        #[allow(unused_variables)]\n");
     out.push_str("        let mut offset = addr;\n");
@@ -918,7 +928,7 @@ fn push_tagged_fam_parse(
 
     out.push_str(&format!("impl {tn} {{\n"));
     out.push_str(
-        "    pub fn parse(view: &FirmwareView, addr: u32) -> Result<Self, ParseError> {\n",
+        "    pub fn parse(view: &DeviceMemoryView, addr: u32) -> Result<Self, ParseError> {\n",
     );
 
     // Discriminant and param_len (param_len is read for future use / validation).
@@ -1026,7 +1036,7 @@ fn push_simple_fam(out: &mut String, sf: &SimpleFam) {
     // Parse: read param_len byte, then slice_at for the bytes.
     out.push_str(&format!("impl {tn} {{\n"));
     out.push_str(
-        "    pub fn parse(view: &FirmwareView, addr: u32) -> Result<Self, ParseError> {\n",
+        "    pub fn parse(view: &DeviceMemoryView, addr: u32) -> Result<Self, ParseError> {\n",
     );
     out.push_str("        let param_len = view.read_u8(addr)? as usize;\n");
     out.push_str("        let params = view.slice_at(addr + 1, param_len)?.to_vec();\n");

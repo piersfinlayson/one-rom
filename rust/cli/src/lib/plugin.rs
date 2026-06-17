@@ -38,10 +38,6 @@
 //! Once all types are known, the caller must call
 //! [`validate_resolved_plugin_types`] to perform the full semantic check
 //! (no duplicates, user requires system).
-//!
-//! After resolution, [`plugin_to_chip_set_json`] produces the chip_set JSON
-//! entry for each plugin, ready to be prepended to the chip_sets array before
-//! the ROM slot entries.
 
 use onerom_config::chip::ChipType as OraChipType;
 use onerom_config::fw::FirmwareVersion;

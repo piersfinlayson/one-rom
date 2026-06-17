@@ -5,7 +5,7 @@
 //! Shared error type for the One ROM CLI library.
 
 use onerom_config::fw::FirmwareVersion;
-use sdrr_fw_parser::SdrrRomType;
+use onerom_fw_parser::SdrrRomType;
 
 use crate::plugin::{PluginType, PluginVersion};
 

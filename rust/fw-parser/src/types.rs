@@ -2,7 +2,7 @@
 //
 // MIT License
 
-//! sdrr-fw-parser
+//! onerom-fw-parser
 //!
 //! Enums and types used in SDRR firmware parsing
 

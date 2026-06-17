@@ -4,7 +4,7 @@
 
 //! Integration tests for the v2 (RP2350/Fire) builder path.
 //!
-//! Uses `onerom_metadata::FirmwareView` to parse the serialised output,
+//! Uses `onerom_metadata::DeviceMemoryView` to parse the serialised output,
 //! reading fields at the absolute flash addresses derived from the schema.
 //!
 //! Board/chip combinations are selected from confirmed layout derivations in
@@ -17,7 +17,7 @@ mod tests {
     use onerom_config::mcu::{Family as McuFamily, Variant as McuVariant};
     use onerom_gen::{Builder, FileData};
     use onerom_metadata::{
-        CURRENT_METADATA_VERSION, FirmwareView, METADATA_BASE, METADATA_SIZE,
+        CURRENT_METADATA_VERSION, DeviceMemoryView, METADATA_BASE, METADATA_SIZE,
         ONEROM_METADATA_MAGIC,
     };
 
@@ -40,7 +40,7 @@ mod tests {
     const ALG_DATA_1: u8 = 1;
 
     // Sentinel for nullable pointer fields. The v2 serializer writes 0 for
-    // null; the parser (FirmwareView) also accepts 0xFFFF_FFFF as null.
+    // null; the parser (DeviceMemoryView) also accepts 0xFFFF_FFFF as null.
     const NULL_PTR: u32 = 0;
 
     // ========================================================================
@@ -48,29 +48,29 @@ mod tests {
     // ========================================================================
 
     // onerom_metadata_header_t (size = 256, placed at METADATA_BASE)
-    const HDR_MAGIC: u32 = METADATA_BASE;            // [u8; 16]
-    const HDR_VERSION: u32 = METADATA_BASE + 16;     // u32
+    const HDR_MAGIC: u32 = METADATA_BASE; // [u8; 16]
+    const HDR_VERSION: u32 = METADATA_BASE + 16; // u32
     // hw_ptr at +20
-    const HDR_FW_PTR: u32 = METADATA_BASE + 24;      // u32 → onerom_firmware_config_t
-    const HDR_SLOT_COUNT: u32 = METADATA_BASE + 28;  // u8
+    const HDR_FW_PTR: u32 = METADATA_BASE + 24; // u32 → onerom_firmware_config_t
+    const HDR_SLOT_COUNT: u32 = METADATA_BASE + 28; // u8
     const HDR_BOOT_LOGGING: u32 = METADATA_BASE + 29; // u8
     const HDR_SWD_ENABLED: u32 = METADATA_BASE + 30; // u8
-    const HDR_TURBO_BOOT: u32 = METADATA_BASE + 31;  // u8
-    const HDR_SLOTS_PTR: u32 = METADATA_BASE + 32;   // u32 → [onerom_rom_slot_t]
+    const HDR_TURBO_BOOT: u32 = METADATA_BASE + 31; // u8
+    const HDR_SLOTS_PTR: u32 = METADATA_BASE + 32; // u32 → [onerom_rom_slot_t]
 
     // onerom_firmware_config_t (size = 8)
-    const FW_CFG_NAME: u32 = 0;   // cstr_ptr u32 (nullable)
+    const FW_CFG_NAME: u32 = 0; // cstr_ptr u32 (nullable)
     const FW_CFG_SERIAL: u32 = 4; // cstr_ptr u32 (nullable)
 
     // onerom_rom_slot_t (size = 32, laid out as a contiguous array)
-    const SLOT_DATA: u32 = 0;       // opaque_ptr u32
-    const SLOT_SIZE: u32 = 4;       // u32
-    const SLOT_ROMS: u32 = 8;       // struct_ptr_array_ptr u32
+    const SLOT_DATA: u32 = 0; // opaque_ptr u32
+    const SLOT_SIZE: u32 = 4; // u32
+    const SLOT_ROMS: u32 = 8; // struct_ptr_array_ptr u32
     const SLOT_ROM_COUNT: u32 = 12; // u8
-    const SLOT_TYPE: u32 = 13;      // u8 (rom_slot_type_t)
+    const SLOT_TYPE: u32 = 13; // u8 (rom_slot_type_t)
     // reserved1 at +14 (2 bytes)
-    const SLOT_ALG: u32 = 16;       // struct_ptr u32 → onerom_alg_config_t
-    const SLOT_FW_OVRD: u32 = 20;   // struct_ptr u32, nullable
+    const SLOT_ALG: u32 = 16; // struct_ptr u32 → onerom_alg_config_t
+    const SLOT_FW_OVRD: u32 = 20; // struct_ptr u32, nullable
 
     // onerom_firmware_overrides_t (size = 32)
     // +0:  override_present [u8; 8]
@@ -80,10 +80,10 @@ mod tests {
     // +13: pad1 [u8; 3]
     // +16: override_value [u8; 8]
     // +24: pad3 [u8; 8]
-    const FW_OVRD_PRESENT: u32 = 0;    // first byte of override_present
+    const FW_OVRD_PRESENT: u32 = 0; // first byte of override_present
     const FW_OVRD_FIRE_FREQ: u32 = 10; // u16
     const FW_OVRD_FIRE_VREG: u32 = 12; // u8
-    const FW_OVRD_VALUE: u32 = 16;     // first byte of override_value
+    const FW_OVRD_VALUE: u32 = 16; // first byte of override_value
 
     // override_present[0] bit positions (from build_firmware_overrides)
     const OVR_FIRE_CPU_FREQ: u8 = 1 << 2;
@@ -96,17 +96,17 @@ mod tests {
     const VAL_LED_ENABLED: u8 = 1 << 2;
 
     // onerom_alg_config_t (size = 32)
-    const ALG_CS_PTR: u32 = 0;        // tagged_fam_ptr u32 → onerom_alg_cs_config_t
-    const ALG_DATA_PTR: u32 = 8;      // tagged_fam_ptr u32 → onerom_alg_data_config_t
-    const ALG_DMA_PTR: u32 = 12;      // tagged_fam_ptr u32 → onerom_alg_dma_config_t
-    const ALG_PULL_PTR: u32 = 16;     // simple_fam_ptr u32, nullable
+    const ALG_CS_PTR: u32 = 0; // tagged_fam_ptr u32 → onerom_alg_cs_config_t
+    const ALG_DATA_PTR: u32 = 8; // tagged_fam_ptr u32 → onerom_alg_data_config_t
+    const ALG_DMA_PTR: u32 = 12; // tagged_fam_ptr u32 → onerom_alg_dma_config_t
+    const ALG_PULL_PTR: u32 = 16; // simple_fam_ptr u32, nullable
     const ALG_OVERRIDE_PTR: u32 = 20; // simple_fam_ptr u32, nullable
 
     // onerom_alg_override_config_t simple FAM binary layout:
     //   [param_len(1)] [params(param_len)]
     // Each param byte: (gpio_override_t << 6) | (gpio & 0x3F)
     // GpioOverInvert (value=1): top 2 bits = 0b01
-    const OVERRIDE_PARAM_LEN: u32 = 0;  // u8
+    const OVERRIDE_PARAM_LEN: u32 = 0; // u8
     const OVERRIDE_TYPE_INVERT: u8 = 1; // GpioOverride::GpioOverInvert discriminant
 
     // onerom_alg_cs_config_t tagged FAM binary layout:
@@ -118,10 +118,10 @@ mod tests {
     //   first_rom_cs_base, first_rom_num_cs_pins
     // ALG_CS_2 params (param_len=3): base_qualifier_pin, num_qualifier_pins,
     //   qualifier_inactive_pattern
-    const CS_DISCRIMINANT: u32 = 0;             // u8 (onerom_alg_cs_t)
-    const CS0_SERVE_CS_LOW_0: u32 = 12;         // u8 — first ALG_CS_0 param byte
-    const CS2_BASE_QUALIFIER_PIN: u32 = 12;     // u8 — first ALG_CS_2 param byte
-    const CS2_NUM_QUALIFIER_PINS: u32 = 13;     // u8
+    const CS_DISCRIMINANT: u32 = 0; // u8 (onerom_alg_cs_t)
+    const CS0_SERVE_CS_LOW_0: u32 = 12; // u8 — first ALG_CS_0 param byte
+    const CS2_BASE_QUALIFIER_PIN: u32 = 12; // u8 — first ALG_CS_2 param byte
+    const CS2_NUM_QUALIFIER_PINS: u32 = 13; // u8
     const CS2_QUALIFIER_INACTIVE_PATTERN: u32 = 14; // u8
 
     // onerom_alg_data_config_t tagged FAM binary layout:
@@ -129,7 +129,7 @@ mod tests {
     //   [gpio_base(1)] [base_data_pin(1)] [word_size(1)] [params(param_len)]
     // ALG_DATA_1 params (param_len=2): byte_pin, a_minus_1_pin
     const DATA_DISCRIMINANT: u32 = 0; // u8 (onerom_alg_data_t)
-    const DATA_WORD_SIZE: u32 = 7;    // u8 — same offset for both AlgData0/1
+    const DATA_WORD_SIZE: u32 = 7; // u8 — same offset for both AlgData0/1
 
     // onerom_alg_dma_config_t tagged FAM binary layout:
     //   [discriminant(1)] [param_len(1)] [bit_mode(1)] [continuous(1)]
@@ -162,17 +162,17 @@ mod tests {
             .expect("from_json should succeed")
     }
 
-    fn view(buf: &[u8]) -> FirmwareView<'_> {
-        FirmwareView::new(buf, METADATA_BASE)
+    fn view(buf: &[u8]) -> DeviceMemoryView<'_> {
+        DeviceMemoryView::new(buf, METADATA_BASE)
     }
 
     /// Absolute flash address of slot `n` in the contiguous slots array.
-    fn slot_base(v: &FirmwareView, n: u32) -> u32 {
+    fn slot_base(v: &DeviceMemoryView, n: u32) -> u32 {
         v.read_u32_le(HDR_SLOTS_PTR).unwrap() + n * 32
     }
 
     /// Absolute flash address of the alg_config pointed to by a slot.
-    fn alg_base(v: &FirmwareView, slot: u32) -> u32 {
+    fn alg_base(v: &DeviceMemoryView, slot: u32) -> u32 {
         v.read_u32_le(slot + SLOT_ALG).unwrap()
     }
 
@@ -194,7 +194,11 @@ mod tests {
         }"#;
 
         let mut b = v2_builder(json);
-        b.add_file(FileData { id: 0, data: vec![0xAAu8; 8192] }).unwrap();
+        b.add_file(FileData {
+            id: 0,
+            data: vec![0xAAu8; 8192],
+        })
+        .unwrap();
 
         let (meta, rom) = b.build(v2_props(Board::Fire24A)).expect("build");
         let v = view(&meta);
@@ -202,7 +206,10 @@ mod tests {
         // Header
         let magic = v.read_bytes::<16>(HDR_MAGIC).unwrap();
         assert!(magic.starts_with(ONEROM_METADATA_MAGIC.as_bytes()));
-        assert_eq!(v.read_u32_le(HDR_VERSION).unwrap(), CURRENT_METADATA_VERSION);
+        assert_eq!(
+            v.read_u32_le(HDR_VERSION).unwrap(),
+            CURRENT_METADATA_VERSION
+        );
         assert_eq!(v.read_u8(HDR_SLOT_COUNT).unwrap(), 1);
 
         // Slot 0 structural fields
@@ -262,8 +269,16 @@ mod tests {
         }"#;
 
         let mut b = v2_builder(json);
-        b.add_file(FileData { id: 0, data: vec![0xAAu8; 8192] }).unwrap();
-        b.add_file(FileData { id: 1, data: vec![0x55u8; 8192] }).unwrap();
+        b.add_file(FileData {
+            id: 0,
+            data: vec![0xAAu8; 8192],
+        })
+        .unwrap();
+        b.add_file(FileData {
+            id: 1,
+            data: vec![0x55u8; 8192],
+        })
+        .unwrap();
 
         let (meta, rom) = b.build(v2_props(Board::Fire24A)).expect("build");
         let v = view(&meta);
@@ -296,7 +311,10 @@ mod tests {
         // PIO reads 1 when the jumper is fitted (bank 1 selected) and 0 when
         // not (bank 0 = default). 2-chip: X1 override only (param_len == 1).
         let ov = v.read_u32_le(alg + ALG_OVERRIDE_PTR).unwrap();
-        assert_ne!(ov, NULL_PTR, "banked on x_jumper_pull=0 board must have gpio_override_config");
+        assert_ne!(
+            ov, NULL_PTR,
+            "banked on x_jumper_pull=0 board must have gpio_override_config"
+        );
         assert_eq!(v.read_u8(ov + OVERRIDE_PARAM_LEN).unwrap(), 1);
         assert_eq!(v.read_u8(ov + 1).unwrap() >> 6, OVERRIDE_TYPE_INVERT);
 
@@ -332,9 +350,21 @@ mod tests {
         }"#;
 
         let mut b = v2_builder(json);
-        b.add_file(FileData { id: 0, data: vec![0x11u8; 8192] }).unwrap();
-        b.add_file(FileData { id: 1, data: vec![0x22u8; 8192] }).unwrap();
-        b.add_file(FileData { id: 2, data: vec![0x33u8; 8192] }).unwrap();
+        b.add_file(FileData {
+            id: 0,
+            data: vec![0x11u8; 8192],
+        })
+        .unwrap();
+        b.add_file(FileData {
+            id: 1,
+            data: vec![0x22u8; 8192],
+        })
+        .unwrap();
+        b.add_file(FileData {
+            id: 2,
+            data: vec![0x33u8; 8192],
+        })
+        .unwrap();
 
         let (meta, rom) = b.build(v2_props(Board::Fire24A)).expect("build");
         let v = view(&meta);
@@ -371,7 +401,10 @@ mod tests {
         // Fire24A has x_jumper_pull=0: X1 and X2 both need GpioOverInvert.
         // 3-chip: param_len == 2.
         let ov = v.read_u32_le(alg + ALG_OVERRIDE_PTR).unwrap();
-        assert_ne!(ov, NULL_PTR, "banked on x_jumper_pull=0 board must have gpio_override_config");
+        assert_ne!(
+            ov, NULL_PTR,
+            "banked on x_jumper_pull=0 board must have gpio_override_config"
+        );
         assert_eq!(
             v.read_u8(ov + OVERRIDE_PARAM_LEN).unwrap(),
             2,
@@ -411,10 +444,26 @@ mod tests {
         }"#;
 
         let mut b = v2_builder(json);
-        b.add_file(FileData { id: 0, data: vec![0x11u8; 8192] }).unwrap();
-        b.add_file(FileData { id: 1, data: vec![0x22u8; 8192] }).unwrap();
-        b.add_file(FileData { id: 2, data: vec![0x33u8; 8192] }).unwrap();
-        b.add_file(FileData { id: 3, data: vec![0x44u8; 8192] }).unwrap();
+        b.add_file(FileData {
+            id: 0,
+            data: vec![0x11u8; 8192],
+        })
+        .unwrap();
+        b.add_file(FileData {
+            id: 1,
+            data: vec![0x22u8; 8192],
+        })
+        .unwrap();
+        b.add_file(FileData {
+            id: 2,
+            data: vec![0x33u8; 8192],
+        })
+        .unwrap();
+        b.add_file(FileData {
+            id: 3,
+            data: vec![0x44u8; 8192],
+        })
+        .unwrap();
 
         let (meta, rom) = b.build(v2_props(Board::Fire24A)).expect("build");
         let v = view(&meta);
@@ -450,7 +499,10 @@ mod tests {
         // Fire24A has x_jumper_pull=0: X1 and X2 both need GpioOverInvert.
         // 4-chip: param_len == 2 (same as 3-chip).
         let ov = v.read_u32_le(alg + ALG_OVERRIDE_PTR).unwrap();
-        assert_ne!(ov, NULL_PTR, "banked on x_jumper_pull=0 board must have gpio_override_config");
+        assert_ne!(
+            ov, NULL_PTR,
+            "banked on x_jumper_pull=0 board must have gpio_override_config"
+        );
         assert_eq!(
             v.read_u8(ov + OVERRIDE_PARAM_LEN).unwrap(),
             2,
@@ -492,8 +544,16 @@ mod tests {
         }"#;
 
         let mut b = v2_builder(json);
-        b.add_file(FileData { id: 0, data: vec![0xAAu8; 8192] }).unwrap();
-        b.add_file(FileData { id: 1, data: vec![0x55u8; 8192] }).unwrap();
+        b.add_file(FileData {
+            id: 0,
+            data: vec![0xAAu8; 8192],
+        })
+        .unwrap();
+        b.add_file(FileData {
+            id: 1,
+            data: vec![0x55u8; 8192],
+        })
+        .unwrap();
 
         let (meta, rom) = b.build(v2_props(Board::Fire24A)).expect("build");
         let v = view(&meta);
@@ -544,7 +604,11 @@ mod tests {
         }"#;
 
         let mut b = v2_builder(json);
-        b.add_file(FileData { id: 0, data: vec![0xAAu8; 8192] }).unwrap();
+        b.add_file(FileData {
+            id: 0,
+            data: vec![0xAAu8; 8192],
+        })
+        .unwrap();
 
         let (meta, _rom) = b.build(v2_props(Board::Fire24A)).expect("build");
         let v = view(&meta);
@@ -575,7 +639,11 @@ mod tests {
         }"#;
 
         let mut b = v2_builder(json);
-        b.add_file(FileData { id: 0, data: vec![0xAAu8; 8192] }).unwrap();
+        b.add_file(FileData {
+            id: 0,
+            data: vec![0xAAu8; 8192],
+        })
+        .unwrap();
 
         let (meta, _rom) = b.build(v2_props(Board::Fire24A)).expect("build");
         let v = view(&meta);
@@ -621,7 +689,11 @@ mod tests {
         }"#;
 
         let mut b = v2_builder(json);
-        b.add_file(FileData { id: 0, data: vec![0xAAu8; 8192] }).unwrap();
+        b.add_file(FileData {
+            id: 0,
+            data: vec![0xAAu8; 8192],
+        })
+        .unwrap();
 
         let (meta, _rom) = b.build(v2_props(Board::Fire24A)).expect("build");
         let v = view(&meta);
@@ -631,9 +703,11 @@ mod tests {
         assert_ne!(fw_ovrd, NULL_PTR, "slot must have firmware_overrides");
 
         // override_present[0]: fire cpu_freq, fire overclock, fire vreg, led
-        let expected_present =
-            OVR_FIRE_CPU_FREQ | OVR_FIRE_OVERCLOCK | OVR_FIRE_VREG | OVR_LED;
-        assert_eq!(v.read_u8(fw_ovrd + FW_OVRD_PRESENT).unwrap(), expected_present);
+        let expected_present = OVR_FIRE_CPU_FREQ | OVR_FIRE_OVERCLOCK | OVR_FIRE_VREG | OVR_LED;
+        assert_eq!(
+            v.read_u8(fw_ovrd + FW_OVRD_PRESENT).unwrap(),
+            expected_present
+        );
 
         // fire_freq = 300 MHz
         assert_eq!(v.read_u16_le(fw_ovrd + FW_OVRD_FIRE_FREQ).unwrap(), 300);
@@ -666,7 +740,11 @@ mod tests {
 
         let mut b = v2_builder(json);
         // 23QL384 = 48KB = 49152 bytes
-        b.add_file(FileData { id: 0, data: vec![0xAAu8; 49152] }).unwrap();
+        b.add_file(FileData {
+            id: 0,
+            data: vec![0xAAu8; 49152],
+        })
+        .unwrap();
 
         let (meta, rom) = b.build(v2_props(Board::Fire28A)).expect("build");
         let v = view(&meta);
@@ -731,7 +809,11 @@ mod tests {
 
         let mut b = v2_builder(json);
         // 27C400 = 512KB byte-mode image = 524288 bytes
-        b.add_file(FileData { id: 0, data: vec![0xAAu8; 524288] }).unwrap();
+        b.add_file(FileData {
+            id: 0,
+            data: vec![0xAAu8; 524288],
+        })
+        .unwrap();
 
         let (meta, rom) = b.build(v2_props(Board::Fire40A)).expect("build");
         let v = view(&meta);

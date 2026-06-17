@@ -1,0 +1,70 @@
+{
+    "$schema": "https://images.onerom.org/configs/schema.json",
+    "version": 1,
+    "name": "32-random-27c301",
+    "description": "27C301 test config with random data",
+    "categories": [
+    ],
+    "rom_sets": [
+        {
+            "type": "single",
+            "chips": [
+                {
+                "file": "https://images.onerom.org/plugins/system/usb/v0.1.2/plugin.bin",
+                "type": "system_plugin",
+                "size_handling": "pad"
+                }
+            ]
+        },
+        {
+            "type": "single",
+            "chips": [
+                {
+                "file": "https://images.onerom.org/plugins/user/rgb/v0.1.1/plugin.bin",
+                "type": "user_plugin",
+                "size_handling": "pad"
+                }
+            ]
+        },
+        {
+            "type": "single",
+            "roms": [
+                {
+                    "description": "29F040",
+                    "file": "images/test/rand_512KB.rom",
+                    "type": "29F040"
+                }
+            ]
+        },
+        {
+            "type": "single",
+            "roms": [
+                {
+                    "description": "27C301",
+                    "file": "images/test/rand_128KB.rom",
+                    "type": "27C301"
+                }
+            ]
+        },
+        {
+            "type": "single",
+            "roms": [
+                {
+                    "description": "28C512",
+                    "file": "images/test/rand_64KB.rom",
+                    "type": "28C512"
+                }
+            ]
+        },
+        {
+            "type": "single",
+            "roms": [
+                {
+                    "description": "23C1001",
+                    "file": "images/test/rand_128KB.rom",
+                    "type": "23C1001"
+                }
+            ]
+        }
+    ]
+}

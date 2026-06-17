@@ -11,8 +11,8 @@ use onerom_config::hw::Board;
 use onerom_config::mcu::Variant;
 use onerom_fw::net::{Release, Releases, fetch_license_async};
 use onerom_fw::{assemble_firmware, get_rom_files_async, read_rom_config, validate_sizes};
+use onerom_fw_parser::{Parser, SdrrInfo, readers::MemoryReader};
 use onerom_gen::{Builder, FIRMWARE_SIZE, License};
-use sdrr_fw_parser::{Parser, SdrrInfo, readers::MemoryReader};
 
 use crate::args;
 use crate::utils::{resolve_board, resolve_firmware_output};

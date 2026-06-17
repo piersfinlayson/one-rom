@@ -9,8 +9,8 @@
 
 #[allow(unused_imports)]
 use log::{debug, warn};
+use onerom_fw_parser::Parser;
 use picoboot::{Picoboot, Reader as PicobootReader, Target, usb::Timeouts};
-use sdrr_fw_parser::Parser;
 use std::time::Duration;
 
 use crate::Error;

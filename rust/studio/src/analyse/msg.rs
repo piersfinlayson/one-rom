@@ -12,7 +12,7 @@ use log::{debug, error, info, trace, warn};
 #[allow(unused_imports)]
 use onerom_config::fw::FirmwareVersion;
 use onerom_config::mcu::Variant as McuVariant;
-use sdrr_fw_parser::SdrrInfo;
+use onerom_fw_parser::SdrrInfo;
 
 use crate::analyse::device::{
     detect_device, device_reboot_complete, file_device_loaded, firmware_flash_complete,

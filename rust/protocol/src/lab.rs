@@ -4,7 +4,7 @@
 //!
 //! Uses `airfrog-rpc` for the underlying RPC transport.
 //!
-//! The host can retrieve the RAM metada using `sdrr-fw-parser` which provides
+//! The host can retrieve the RAM metada using `onerom-fw-parser` which provides
 //! the RAM channel addresses required for RPC communication.
 //!
 //! See `airfrog::firmware::onerom_lab` for example host usage.

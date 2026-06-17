@@ -240,7 +240,12 @@ pub fn build_alg_config(
     // expected convention (fitted = selected = 1 in the table index).
     // GpioOverInvert corrects this so bank 0 is always the "no jumper"
     // default regardless of board x_jumper_pull direction.
-    overrides.extend(build_gpio_x_overrides(addr_layout, set_type, num_chips, board));
+    overrides.extend(build_gpio_x_overrides(
+        addr_layout,
+        set_type,
+        num_chips,
+        board,
+    ));
 
     let gpio_override_config = if overrides.is_empty() {
         None

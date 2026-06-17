@@ -10,7 +10,7 @@ use crate::utils::{check_device, check_live_read_write, print_hex_dump};
 use onerom_cli::LIVE_ROM_BASE;
 use onerom_cli::usb::read_memory;
 use onerom_cli::{Device, Error, Options};
-use sdrr_fw_parser::SdrrCsState;
+use onerom_fw_parser::SdrrCsState;
 
 pub async fn cmd_info(options: &Options, args: &InspectInfoArgs) -> Result<(), Error> {
     // Print the device summary

@@ -63,8 +63,8 @@ assets = [
 [dependencies]
 onerom-config = { workspace = true, features = ["schemars"] }
 onerom-fw = { workspace = true }
+onerom-fw-parser = { workspace = true }
 onerom-gen = { workspace = true }
-sdrr-fw-parser = { workspace = true }
 
 dfu-rs = { git = "https://github.com/piersfinlayson/dfu-rs.git", version = "0.2.0" }
 picoboot = { version = "0.2.3" }

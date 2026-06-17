@@ -4863,10 +4863,10 @@ dependencies = [
  "nusb 0.2.3",
  "onerom-config",
  "onerom-fw",
+ "onerom-fw-parser",
  "onerom-gen",
  "picoboot",
  "reqwest",
- "sdrr-fw-parser",
  "serde",
  "serde_json",
  "sha2 0.11.0",
@@ -4909,9 +4909,9 @@ dependencies = [
  "hex",
  "log",
  "onerom-config",
+ "onerom-fw-parser",
  "onerom-gen",
  "reqwest",
- "sdrr-fw-parser",
  "serde",
  "serde_json",
  "smol",
@@ -4924,6 +4924,21 @@ version = "0.1.0"
 dependencies = [
  "bindgen",
  "onerom-config",
+]
+
+[[package]]
+name = "onerom-fw-parser"
+version = "0.7.0"
+dependencies = [
+ "airfrog-rpc",
+ "deku 0.19.1",
+ "esp-println",
+ "log",
+ "onerom-config",
+ "onerom-gen",
+ "onerom-metadata",
+ "serde",
+ "static_assertions",
 ]
 
 [[package]]
@@ -4988,6 +5003,7 @@ name = "onerom-metadata"
 version = "0.1.0"
 dependencies = [
  "hashbrown 0.17.1",
+ "onerom-config",
  "serde",
  "toml",
 ]
@@ -5018,6 +5034,7 @@ dependencies = [
  "log",
  "onerom-config",
  "onerom-fw",
+ "onerom-fw-parser",
  "onerom-gen",
  "open",
  "picoboot",
@@ -5026,7 +5043,6 @@ dependencies = [
  "resvg",
  "rfd",
  "schemars",
- "sdrr-fw-parser",
  "semver 1.0.28",
  "serde",
  "serde_json",
@@ -6343,20 +6359,6 @@ dependencies = [
  "memmap2",
  "smithay-client-toolkit 0.19.2",
  "tiny-skia",
-]
-
-[[package]]
-name = "sdrr-fw-parser"
-version = "0.6.15"
-dependencies = [
- "airfrog-rpc",
- "deku 0.19.1",
- "esp-println",
- "log",
- "onerom-config",
- "onerom-gen",
- "serde",
- "static_assertions",
 ]
 
 [[package]]

@@ -23,7 +23,7 @@ path = "src/main.rs"
 onerom-config = { workspace = true }
 onerom-fw = { workspace = true }
 onerom-gen = { workspace = true }
-sdrr-fw-parser = { workspace = true }
+onerom-fw-parser = { workspace = true }
 
 picoboot = { version = "0.2.3", features = ["reader", "tokio"] }
 

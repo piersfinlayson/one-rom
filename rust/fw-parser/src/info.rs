@@ -2,7 +2,7 @@
 //
 // MIT License
 
-//! sdrr-fw-parser
+//! onerom-fw-parser
 //!
 //! Structures used to represent the parsed SDRR firmware information
 

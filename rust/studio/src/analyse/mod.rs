@@ -19,7 +19,7 @@ use std::path::PathBuf;
 use log::{debug, error, info, trace, warn};
 #[allow(unused_imports)]
 use onerom_config::fw::FirmwareVersion;
-use sdrr_fw_parser::SdrrInfo;
+use onerom_fw_parser::SdrrInfo;
 
 use crate::app::{AppMessage, progress_tick_subscription};
 use crate::device::Device;

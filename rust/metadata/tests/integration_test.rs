@@ -10,12 +10,13 @@
 // Copyright (C) 2026 Piers Finlayson <piers@piers.rocks>
 // MIT License
 
+use onerom_config::mcu::{RP235X_BASE_FLASH, RP235X_BASE_SRAM, RP235X_END_SRAM};
 use onerom_metadata::{
-    BitModes, CURRENT_METADATA_VERSION, FireVreg, FirmwareView, GPIO_NONE, OneromAlgAddrConfig,
+    BitModes, CURRENT_METADATA_VERSION, DeviceMemoryView, FireVreg, GPIO_NONE, OneromAlgAddrConfig,
     OneromAlgConfig, OneromAlgCsConfig, OneromAlgDataConfig, OneromAlgDmaConfig,
     OneromAlgOverrideConfig, OneromAlgPullConfig, OneromFirmwareConfig, OneromFirmwareOverrides,
     OneromHardwareInfo, OneromMetadataHeader, OneromRomInfo, OneromRomPinMap, OneromRomSlot,
-    RomSlotType, Rp235xVariant, generate_host_metadata_c,
+    Pointer, RomSlotType, Rp235xVariant, generate_host_metadata_c,
 };
 use onerom_metadata::{METADATA_BASE, METADATA_SIZE, SerializeError, serialize};
 
@@ -95,7 +96,7 @@ fn default_alg() -> Option<OneromAlgConfig> {
 
 fn make_slot(roms: Vec<OneromRomInfo>) -> OneromRomSlot {
     OneromRomSlot {
-        data: 0,
+        data: Pointer::Null,
         size: 8192,
         roms,
         rom_count: 0,
@@ -156,7 +157,7 @@ fn minimal_header() -> OneromMetadataHeader {
         gpio_override_config: None,
     };
     let slot = OneromRomSlot {
-        data: 0,
+        data: Pointer::Null,
         size: 8192,
         roms: vec![rom_info],
         rom_count: 0,
@@ -219,7 +220,7 @@ fn do_serialize(header: &OneromMetadataHeader) -> Vec<u8> {
 /// Full round-trip: serialize then parse, returning the reconstructed header.
 fn round_trip(header: &OneromMetadataHeader) -> OneromMetadataHeader {
     let buf = do_serialize(header);
-    let view = FirmwareView::new(&buf, METADATA_BASE);
+    let view = DeviceMemoryView::new(&buf, METADATA_BASE);
     OneromMetadataHeader::parse(&view, METADATA_BASE).expect("parse failed")
 }
 
@@ -517,7 +518,7 @@ fn byte_check_count_fields_derived_from_vec() {
 #[test]
 fn byte_check_opaque_ptr_verbatim() {
     let slot = OneromRomSlot {
-        data: 0xDEAD_BEEF,
+        data: Pointer::Addr32(0xDEAD_BEEF),
         ..make_slot(vec![make_rom_info("2364")])
     };
     let header = OneromMetadataHeader {
@@ -810,4 +811,97 @@ fn host_c_gen_compiles() {
             );
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// Pointer unit tests (19–25)
+// ---------------------------------------------------------------------------
+//
+// Add to the imports at the top of integration_test.rs:
+//
+//   use onerom_metadata::{
+//       Pointer, RP235X_BASE_FLASH, RP235X_BASE_SRAM, RP235X_END_SRAM,
+//       ...existing imports...
+//   };
+
+/// 19. Pointer::new maps both null sentinels (0 and 0xFFFF_FFFF) to Pointer::Null
+///     and any other value to Pointer::Addr32.
+#[test]
+fn pointer_new_sentinels() {
+    assert_eq!(Pointer::new(0), Pointer::Null);
+    assert_eq!(Pointer::new(0xFFFF_FFFF), Pointer::Null);
+    assert_eq!(Pointer::new(0x1000_8000), Pointer::Addr32(0x1000_8000));
+    assert_eq!(Pointer::new(0x0000_0001), Pointer::Addr32(0x0000_0001));
+}
+
+/// 20. is_null() returns true only for Pointer::Null.
+#[test]
+fn pointer_is_null() {
+    assert!(Pointer::Null.is_null());
+    assert!(!Pointer::Addr32(0x1000_0000).is_null());
+}
+
+/// 21. addr() returns None for Null, Some(a) for Addr32.
+#[test]
+fn pointer_addr() {
+    assert_eq!(Pointer::Null.addr(), None);
+    assert_eq!(Pointer::Addr32(0xABCD_1234).addr(), Some(0xABCD_1234));
+}
+
+/// 22. raw() returns 0 for Null and the stored address for Addr32.
+///     This is what the serializer uses when writing opaque_ptr fields.
+#[test]
+fn pointer_raw() {
+    assert_eq!(Pointer::Null.raw(), 0);
+    assert_eq!(Pointer::Addr32(0xDEAD_BEEF).raw(), 0xDEAD_BEEF);
+}
+
+/// 23. is_flash() is true for addresses within the RP235x XIP flash region
+///     [RP235X_BASE_FLASH, RP235X_END_FLASH) and false otherwise.
+#[test]
+fn pointer_is_flash() {
+    // Base address — first flash byte.
+    assert!(Pointer::Addr32(RP235X_BASE_FLASH).is_flash());
+    // Mid-flash address.
+    assert!(Pointer::Addr32(0x1000_C000).is_flash());
+    // One byte before the exclusive end.
+    assert!(Pointer::Addr32(0x1FFF_FFFF).is_flash());
+    // Exactly at the exclusive end — not flash.
+    assert!(!Pointer::Addr32(0x2000_0000).is_flash());
+    // SRAM address — not flash.
+    assert!(!Pointer::Addr32(RP235X_BASE_SRAM).is_flash());
+    // Null — not flash.
+    assert!(!Pointer::Null.is_flash());
+}
+
+/// 24. is_sram() is true for addresses within the RP235x SRAM region
+///     [RP235X_BASE_SRAM, RP235X_END_SRAM] and false otherwise.
+#[test]
+fn pointer_is_sram() {
+    // Base address — first SRAM byte.
+    assert!(Pointer::Addr32(RP235X_BASE_SRAM).is_sram());
+    // Inclusive end — last SRAM byte.
+    assert!(Pointer::Addr32(RP235X_END_SRAM).is_sram());
+    // One byte past the inclusive end — not SRAM.
+    assert!(!Pointer::Addr32(RP235X_END_SRAM + 1).is_sram());
+    // Flash address — not SRAM.
+    assert!(!Pointer::Addr32(RP235X_BASE_FLASH).is_sram());
+    // Null — not SRAM.
+    assert!(!Pointer::Null.is_sram());
+}
+
+/// 25. Pointer::Addr32 survives a full serialize → parse round-trip unchanged.
+///     Verifies that raw() and Pointer::new() compose correctly end-to-end.
+#[test]
+fn round_trip_opaque_ptr_addr32() {
+    // Use a realistic flash address for the ROM data pointer.
+    let slot = OneromRomSlot {
+        data: Pointer::Addr32(0x1001_0000),
+        ..make_slot(vec![make_rom_info("2364")])
+    };
+    let original = OneromMetadataHeader {
+        rom_slots: vec![slot],
+        ..minimal_header()
+    };
+    assert_round_trips(&original);
 }

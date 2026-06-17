@@ -9,7 +9,7 @@
 
 use log::debug;
 use nusb::DeviceInfo;
-use sdrr_fw_parser::Sdrr;
+use onerom_fw_parser::Sdrr;
 use wildmatch::WildMatch;
 
 use crate::error::Error;
@@ -144,7 +144,7 @@ impl Device {
         if let Some(runtime_info) = &onerom.ram {
             // Is it actually running, or is it limping?
             self.state = match runtime_info.limp_mode.as_ref() {
-                Some(limp_mode) if *limp_mode != sdrr_fw_parser::types::LimpMode::None => {
+                Some(limp_mode) if *limp_mode != onerom_fw_parser::types::LimpMode::None => {
                     DeviceState::Limp
                 }
                 _ => DeviceState::Running,
@@ -168,14 +168,14 @@ impl Device {
     }
 
     /// Returns the active ROM set if available.
-    pub fn get_active_rom_set(&self) -> Option<&sdrr_fw_parser::SdrrRomSet> {
+    pub fn get_active_rom_set(&self) -> Option<&onerom_fw_parser::SdrrRomSet> {
         let flash_info = self.onerom.as_ref().and_then(|o| o.flash.as_ref())?;
         let active_set_index = self.get_active_rom_set_index()? as usize;
         flash_info.rom_sets.get(active_set_index)
     }
 
     /// Returns the active ROM type if available.
-    pub fn get_active_rom_type(&self) -> Option<sdrr_fw_parser::SdrrRomType> {
+    pub fn get_active_rom_type(&self) -> Option<onerom_fw_parser::SdrrRomType> {
         if !self.is_running() {
             return None;
         }

@@ -21,8 +21,8 @@ path = "src/main.rs"
 
 [dependencies]
 onerom-config = { workspace = true }
+onerom-fw-parser = { workspace = true }
 onerom-gen = { workspace = true }
-sdrr-fw-parser = { workspace = true }
 
 base64 = { version = "0.22" }
 bytes = "1.10"

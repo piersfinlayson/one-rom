@@ -2,7 +2,7 @@
 //
 // MIT License
 
-//! sdrr-fw-parser
+//! onerom-fw-parser
 //!
 //! Contains standard re-usable reader implementations for parsing SDRR firmware
 
@@ -25,7 +25,7 @@ use alloc::{format, string::String, vec, vec::Vec};
 ///
 /// ```rust
 /// # async fn test() -> Result<(), Box<dyn std::error::Error>> {
-/// use sdrr_fw_parser::{Parser, readers::MemoryReader};
+/// use onerom_fw_parser::{Parser, readers::MemoryReader};
 ///
 /// // Load firmware file
 /// let firmware_data = std::fs::read("firmware.bin")?;

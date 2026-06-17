@@ -9,7 +9,7 @@ use log::{debug, error, info, trace, warn};
 use onerom_config::fw::FirmwareVersion;
 use onerom_config::hw::Board;
 use onerom_config::mcu::Variant as McuVariant;
-use sdrr_fw_parser::{Parser, readers::MemoryReader};
+use onerom_fw_parser::{Parser, readers::MemoryReader};
 
 use crate::Error;
 use crate::net::Releases;

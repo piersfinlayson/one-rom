@@ -6,8 +6,8 @@ use onerom_config::hw::BOARDS;
 
 mod common;
 use common::{
-    build_config_test, build_slots, fails, onerom, project_root, representative_board, slot,
-    slot_fails, slot_succeeds, succeeds,
+    FIXED_VERSION, FirmwareVersion, build_config_test, build_slots, fails, onerom, project_root,
+    representative_board, slot, slot_fails, slot_succeeds, succeeds,
 };
 
 #[test]
@@ -204,89 +204,295 @@ fn firmware_chips_all_boards_succeed() {
     }
 }
 
+// --- 24-pin random configs: fixed + current ---
+
 #[test]
 fn firmware_build_24pin_config_23xx() {
-    build_config_test("onerom-config/test/24-random-23xx.json", 24);
+    build_config_test(
+        "onerom-config/test/24-random-23xx.json",
+        24,
+        FirmwareVersion::Fixed(FIXED_VERSION),
+    );
+}
+
+#[test]
+fn firmware_build_24pin_config_23xx_current() {
+    build_config_test(
+        "onerom-config/test/24-random-23xx.json",
+        24,
+        FirmwareVersion::Current,
+    );
 }
 
 #[test]
 fn firmware_build_24pin_config_27xx() {
-    build_config_test("onerom-config/test/24-random-27xx.json", 24);
+    build_config_test(
+        "onerom-config/test/24-random-27xx.json",
+        24,
+        FirmwareVersion::Fixed(FIXED_VERSION),
+    );
+}
+
+#[test]
+fn firmware_build_24pin_config_27xx_current() {
+    build_config_test(
+        "onerom-config/test/24-random-27xx.json",
+        24,
+        FirmwareVersion::Current,
+    );
 }
 
 #[test]
 fn firmware_build_24pin_config_28xx() {
-    build_config_test("onerom-config/test/24-random-28xx.json", 24);
+    build_config_test(
+        "onerom-config/test/24-random-28xx.json",
+        24,
+        FirmwareVersion::Fixed(FIXED_VERSION),
+    );
 }
 
 #[test]
+fn firmware_build_24pin_config_28xx_current() {
+    build_config_test(
+        "onerom-config/test/24-random-28xx.json",
+        24,
+        FirmwareVersion::Current,
+    );
+}
+
+// --- 28-pin random configs: fixed + current ---
+
+#[test]
 fn firmware_build_28pin_config_23xxx() {
-    build_config_test("onerom-config/test/28-random-23xxx.json", 28);
+    build_config_test(
+        "onerom-config/test/28-random-23xxx.json",
+        28,
+        FirmwareVersion::Fixed(FIXED_VERSION),
+    );
+}
+
+#[test]
+fn firmware_build_28pin_config_23xxx_current() {
+    build_config_test(
+        "onerom-config/test/28-random-23xxx.json",
+        28,
+        FirmwareVersion::Current,
+    );
 }
 
 #[test]
 fn firmware_build_28pin_config_23qlxxx() {
-    build_config_test("onerom-config/test/28-random-23qlxxx.json", 28);
+    build_config_test(
+        "onerom-config/test/28-random-23qlxxx.json",
+        28,
+        FirmwareVersion::Fixed(FIXED_VERSION),
+    );
+}
+
+#[test]
+fn firmware_build_28pin_config_23qlxxx_current() {
+    build_config_test(
+        "onerom-config/test/28-random-23qlxxx.json",
+        28,
+        FirmwareVersion::Current,
+    );
 }
 
 #[test]
 fn firmware_build_28pin_config_27xxx() {
-    build_config_test("onerom-config/test/28-random-27xxx.json", 28);
+    build_config_test(
+        "onerom-config/test/28-random-27xxx.json",
+        28,
+        FirmwareVersion::Fixed(FIXED_VERSION),
+    );
+}
+
+#[test]
+fn firmware_build_28pin_config_27xxx_current() {
+    build_config_test(
+        "onerom-config/test/28-random-27xxx.json",
+        28,
+        FirmwareVersion::Current,
+    );
 }
 
 #[test]
 fn firmware_build_28pin_config_28xxx() {
-    build_config_test("onerom-config/test/28-random-28xxx.json", 28);
+    build_config_test(
+        "onerom-config/test/28-random-28xxx.json",
+        28,
+        FirmwareVersion::Fixed(FIXED_VERSION),
+    );
 }
 
 #[test]
+fn firmware_build_28pin_config_28xxx_current() {
+    build_config_test(
+        "onerom-config/test/28-random-28xxx.json",
+        28,
+        FirmwareVersion::Current,
+    );
+}
+
+// --- 32-pin random configs: fixed + current ---
+
+#[test]
 fn firmware_build_32pin_config_27c0x0() {
-    build_config_test("onerom-config/test/32-random-27c0x0.json", 32);
+    build_config_test(
+        "onerom-config/test/32-random-27c0x0.json",
+        32,
+        FirmwareVersion::Fixed(FIXED_VERSION),
+    );
+}
+
+#[test]
+fn firmware_build_32pin_config_27c0x0_current() {
+    build_config_test(
+        "onerom-config/test/32-random-27c0x0.json",
+        32,
+        FirmwareVersion::Current,
+    );
 }
 
 #[test]
 fn firmware_build_32pin_config_27c301() {
-    build_config_test("onerom-config/test/32-random-27c301.json", 32);
+    build_config_test(
+        "onerom-config/test/32-random-27c301.json",
+        32,
+        FirmwareVersion::Fixed(FIXED_VERSION),
+    );
 }
 
 #[test]
+fn firmware_build_32pin_config_27c301_current() {
+    build_config_test(
+        "onerom-config/test/32-random-27c301.json",
+        32,
+        FirmwareVersion::Current,
+    );
+}
+
+// --- 40-pin random configs: fixed + current ---
+
+#[test]
 fn firmware_build_40pin_config() {
-    build_config_test("onerom-config/test/40-random.json", 40);
+    build_config_test(
+        "onerom-config/test/40-random.json",
+        40,
+        FirmwareVersion::Fixed(FIXED_VERSION),
+    );
+}
+
+#[test]
+fn firmware_build_40pin_config_current() {
+    build_config_test(
+        "onerom-config/test/40-random.json",
+        40,
+        FirmwareVersion::Current,
+    );
 }
 
 #[test]
 fn firmware_build_40pin_config_force_16bit() {
-    build_config_test("onerom-config/test/40-random-force-16bit.json", 40);
+    build_config_test(
+        "onerom-config/test/40-random-force-16bit.json",
+        40,
+        FirmwareVersion::Fixed(FIXED_VERSION),
+    );
 }
 
 #[test]
+fn firmware_build_40pin_config_force_16bit_current() {
+    build_config_test(
+        "onerom-config/test/40-random-force-16bit.json",
+        40,
+        FirmwareVersion::Current,
+    );
+}
+
+// --- 24-pin bank configs: fixed + current ---
+
+#[test]
 fn firmware_build_24pin_config_bank_23xx() {
-    build_config_test("onerom-config/test/24-bank-23xx.json", 24);
+    build_config_test(
+        "onerom-config/test/24-bank-23xx.json",
+        24,
+        FirmwareVersion::Fixed(FIXED_VERSION),
+    );
+}
+
+#[test]
+fn firmware_build_24pin_config_bank_23xx_current() {
+    build_config_test(
+        "onerom-config/test/24-bank-23xx.json",
+        24,
+        FirmwareVersion::Current,
+    );
 }
 
 #[test]
 fn firmware_build_24pin_config_bank_27xx() {
-    build_config_test("onerom-config/test/24-bank-27xx.json", 24);
+    build_config_test(
+        "onerom-config/test/24-bank-27xx.json",
+        24,
+        FirmwareVersion::Fixed(FIXED_VERSION),
+    );
+}
+
+#[test]
+fn firmware_build_24pin_config_bank_27xx_current() {
+    build_config_test(
+        "onerom-config/test/24-bank-27xx.json",
+        24,
+        FirmwareVersion::Current,
+    );
 }
 
 #[test]
 fn firmware_build_24pin_config_bank_28xx() {
-    build_config_test("onerom-config/test/24-bank-28xx.json", 24);
+    build_config_test(
+        "onerom-config/test/24-bank-28xx.json",
+        24,
+        FirmwareVersion::Fixed(FIXED_VERSION),
+    );
 }
 
 #[test]
-fn firmware_build_28pin_config_bank_23xxx() {
-    build_config_test("onerom-config/test/28-bank-23xxx.json", 28);
+fn firmware_build_24pin_config_bank_28xx_current() {
+    build_config_test(
+        "onerom-config/test/24-bank-28xx.json",
+        24,
+        FirmwareVersion::Current,
+    );
+}
+
+// --- 28-pin bank configs: current only ---
+
+#[test]
+fn firmware_build_28pin_config_bank_23xxx_current() {
+    build_config_test(
+        "onerom-config/test/28-bank-23xxx.json",
+        28,
+        FirmwareVersion::Current,
+    );
 }
 
 #[test]
-fn firmware_build_28pin_config_bank_27xxx() {
-    build_config_test("onerom-config/test/28-bank-27xxx.json", 28);
+fn firmware_build_28pin_config_bank_27xxx_current() {
+    build_config_test(
+        "onerom-config/test/28-bank-27xxx.json",
+        28,
+        FirmwareVersion::Current,
+    );
 }
 
 #[test]
-fn firmware_build_28pin_config_bank_28xxx() {
-    build_config_test("onerom-config/test/28-bank-28xxx.json", 28);
+fn firmware_build_28pin_config_bank_28xxx_current() {
+    build_config_test(
+        "onerom-config/test/28-bank-28xxx.json",
+        28,
+        FirmwareVersion::Current,
+    );
 }
 
 #[test]

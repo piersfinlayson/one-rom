@@ -1,3 +1,7 @@
+# Copyright (C) 2026 Piers Finlayson <piers@piers.rocks>
+#
+# MIT License
+
 # OneROM Metadata Type Schema
 #
 # Source of truth for OneROM C header and Rust type/code generation.
@@ -15,9 +19,6 @@
 # Do not use `\n` inside comment strings - use """ triple-quoted strings"""
 # for multi-line comments instead.  The Rust code generator inserts newlines
 # as needed.
-#
-# Copyright (C) 2026 Piers Finlayson <piers@piers.rocks>
-# MIT License
 #
 # ---------------------------------------------------------------------------
 # Schema sections
@@ -44,8 +45,15 @@
 #   struct_ptr_array_ptr - const T* const * (double-indirect array + count_field)
 #   tagged_fam_ptr    - pointer to a [[tagged_fams]] type
 #   simple_fam_ptr    - pointer to a [[simple_fams]] type
-#   opaque_ptr        - void* or fn pointer, stored as u32, not dereferenced
+#   opaque_ptr        - void* pointer, stored as Pointer, not dereferenced
+#   fn_ptr            - function pointer, stored as Pointer, not dereferenced
 #   padding           - reserved bytes: present in C/binary, absent from Rust type
+#
+# ---------------------------------------------------------------------------
+# Field-level attributes
+# ---------------------------------------------------------------------------
+#   nullable          - cstr_ptr/struct_ptr: null pointer yields None rather
+#                       than ParseError::NullPointer
 #
 # ---------------------------------------------------------------------------
 # 'generate' field values
@@ -90,6 +98,12 @@ name = "RUNTIME_INFO_VERSION"
 type = "u32"
 value = 2
 comment = "Version of the onerom_runtime_info_t structure (v0.7.0+)"
+
+[[constants]]
+name = "BUILD_DATE_BUF_LEN"
+type = "usize"
+value = 128
+comment = "Maximum byte buffer used when reading the build_date cstr_ptr field."
 
 [[constants]]
 name = "GPIO_NONE"
@@ -887,19 +901,20 @@ comment = "Info structure version (ONEROM_INFO_VERSION)"
 name = "metadata"
 kind = "struct_ptr"
 type = "onerom_metadata_header_t"
-nullable = false
+nullable = true
 comment = "Pointer to the metadata header (at metadata_base)"
 
 [[structs.fields]]
 name = "rtt"
 kind = "opaque_ptr"
+nullable = true
 comment = "Pointer to SEGGER RTT control block"
 
 [[structs.fields]]
 name = "runtime"
 kind = "struct_ptr"
 type = "onerom_runtime_info_t"
-nullable = false
+nullable = true
 comment = "Pointer to runtime info structure"
 
 [[structs.fields]]

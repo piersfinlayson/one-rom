@@ -10,7 +10,7 @@ use log::{debug, error, info, trace, warn};
 #[allow(unused_imports)]
 use onerom_config::fw::FirmwareVersion;
 use onerom_config::mcu::Variant as McuVariant;
-use sdrr_fw_parser::{Parser, SdrrInfo, readers::MemoryReader};
+use onerom_fw_parser::{Parser, SdrrInfo, readers::MemoryReader};
 
 use crate::analyse::{Analyse, AnalyseState, FW_VERSION_METADATA, Message};
 use crate::app::AppMessage;

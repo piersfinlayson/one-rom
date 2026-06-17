@@ -17,7 +17,7 @@ use onerom_config::mcu::{Family, Variant as McuVariant};
 use onerom_fw::{get_rom_files, read_rom_config};
 use onerom_gen::Builder;
 use onerom_metadata::{
-    FirmwareView, METADATA_BASE, METADATA_SIZE, OneromMetadataHeader, generate_host_metadata_c,
+    DeviceMemoryView, METADATA_BASE, METADATA_SIZE, OneromMetadataHeader, generate_host_metadata_c,
     serialize,
 };
 
@@ -70,7 +70,7 @@ fn run() -> Result<()> {
         .map_err(|e| anyhow!("Build failed: {e}"))?;
 
     // Parse metadata back
-    let view = FirmwareView::new(&metadata_buf, METADATA_BASE);
+    let view = DeviceMemoryView::new(&metadata_buf, METADATA_BASE);
     let header = OneromMetadataHeader::parse(&view, METADATA_BASE)
         .map_err(|e| anyhow!("Failed to parse generated metadata: {e:?}"))?;
 

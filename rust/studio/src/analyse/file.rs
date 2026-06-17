@@ -15,7 +15,7 @@ use std::path::PathBuf;
 use log::{debug, error, info, trace, warn};
 #[allow(unused_imports)]
 use onerom_config::fw::FirmwareVersion;
-use sdrr_fw_parser::{Parser, SdrrInfo, readers::MemoryReader};
+use onerom_fw_parser::{Parser, SdrrInfo, readers::MemoryReader};
 
 use crate::analyse::{Analyse, AnalyseState, Message};
 use crate::app::AppMessage;

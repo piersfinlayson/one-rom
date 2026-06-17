@@ -337,8 +337,7 @@ mod tests {
     #[test]
     fn x_override_single_never() {
         let layout = addr_layout_with_x(14, 15);
-        let overrides =
-            build_gpio_x_overrides(&layout, ChipSetType::Single, 1, Board::Fire24A);
+        let overrides = build_gpio_x_overrides(&layout, ChipSetType::Single, 1, Board::Fire24A);
         assert!(overrides.is_empty());
     }
 
@@ -347,8 +346,7 @@ mod tests {
     #[test]
     fn x_override_multi_never() {
         let layout = addr_layout_with_x(14, 15);
-        let overrides =
-            build_gpio_x_overrides(&layout, ChipSetType::Multi, 3, Board::Fire24A);
+        let overrides = build_gpio_x_overrides(&layout, ChipSetType::Multi, 3, Board::Fire24A);
         assert!(overrides.is_empty());
     }
 
@@ -357,8 +355,7 @@ mod tests {
     #[test]
     fn x_override_banked_2chip_x1_only() {
         let layout = addr_layout_with_x(14, 15);
-        let overrides =
-            build_gpio_x_overrides(&layout, ChipSetType::Banked, 2, Board::Fire24A);
+        let overrides = build_gpio_x_overrides(&layout, ChipSetType::Banked, 2, Board::Fire24A);
 
         assert_eq!(
             overrides,
@@ -373,8 +370,7 @@ mod tests {
     #[test]
     fn x_override_banked_3chip_x1_and_x2() {
         let layout = addr_layout_with_x(14, 15);
-        let overrides =
-            build_gpio_x_overrides(&layout, ChipSetType::Banked, 3, Board::Fire24A);
+        let overrides = build_gpio_x_overrides(&layout, ChipSetType::Banked, 3, Board::Fire24A);
 
         assert_eq!(
             overrides,
@@ -390,8 +386,7 @@ mod tests {
     #[test]
     fn x_override_banked_4chip_x1_and_x2() {
         let layout = addr_layout_with_x(14, 15);
-        let overrides =
-            build_gpio_x_overrides(&layout, ChipSetType::Banked, 4, Board::Fire24A);
+        let overrides = build_gpio_x_overrides(&layout, ChipSetType::Banked, 4, Board::Fire24A);
 
         assert_eq!(
             overrides,
@@ -412,9 +407,6 @@ mod tests {
             (1u8 << 6) | 14
         );
         // GpioOverNormal = 0, GPIO 14: (0 << 6) | 14 = 0x0E
-        assert_eq!(
-            encode_override(14, GpioOverride::GpioOverNormal),
-            14
-        );
+        assert_eq!(encode_override(14, GpioOverride::GpioOverNormal), 14);
     }
 }

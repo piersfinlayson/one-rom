@@ -855,7 +855,7 @@ fn emit_struct_write_field(
 
         "opaque_ptr" | "fn_ptr" => {
             let a = addr_expr(byte_off);
-            out.push_str(&format!("{ind}ctx.write_u32_le({a}, self.{name});\n"));
+            out.push_str(&format!("{ind}ctx.write_u32_le({a}, self.{name}.raw());\n"));
         }
 
         "padding" => {

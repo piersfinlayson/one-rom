@@ -31,11 +31,15 @@ pub fn load(chip_config: &ChipConfig, chip_type: ChipType, base_dir: &std::path:
         );
     }
 
-    let source = if chip_config.file.starts_with("http://") || chip_config.file.starts_with("https://") {
-        chip_config.file.clone()
-    } else {
-        base_dir.join(&chip_config.file).to_string_lossy().into_owned()
-    };
+    let source =
+        if chip_config.file.starts_with("http://") || chip_config.file.starts_with("https://") {
+            chip_config.file.clone()
+        } else {
+            base_dir
+                .join(&chip_config.file)
+                .to_string_lossy()
+                .into_owned()
+        };
 
     let (raw, _) = fetch_rom_file(&source, &[], chip_config.extract.clone(), false)
         .unwrap_or_else(|e| panic!("Failed to load ROM image '{}': {}", source, e));

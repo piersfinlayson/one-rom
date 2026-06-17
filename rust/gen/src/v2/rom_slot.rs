@@ -12,10 +12,12 @@ use alloc::vec::Vec;
 use onerom_config::chip::ChipType;
 use onerom_config::hw::Board;
 
-use onerom_metadata::{BitModes, OneromAlgDmaConfig, OneromFirmwareOverrides, OneromRomSlot};
+use onerom_metadata::{
+    BitModes, OneromAlgDmaConfig, OneromFirmwareOverrides, OneromRomSlot, Pointer,
+};
 
-use crate::image::{Chip, ChipSetType};
 use crate::MAX_IMAGE_SIZE;
+use crate::image::{Chip, ChipSetType};
 
 use super::addr_layout::{AddrLayout, LayoutError, derive_addr_layout};
 use super::alg_config::{bit_mode_for, build_alg_config, combined_alg_preference};
@@ -150,7 +152,7 @@ pub fn build_rom_slot(
     let pref = combined_alg_preference(&alg);
 
     let slot = OneromRomSlot {
-        data,
+        data: Pointer::new(data),
         size,
         roms,
         rom_count: chips.len() as u8,
@@ -174,7 +176,8 @@ mod tests {
 
     use onerom_metadata::{
         GPIO_NONE, MAX_ADDR_PINS, MAX_DATA_PINS, OneromAlgAddrConfig, OneromAlgConfig,
-        OneromAlgCsConfig, OneromAlgDataConfig, OneromRomInfo, OneromRomPinMap, RomSlotType,
+        OneromAlgCsConfig, OneromAlgDataConfig, OneromRomInfo, OneromRomPinMap, Pointer,
+        RomSlotType,
     };
 
     use crate::image::{CsConfig, CsLogic, SizeHandling};
@@ -206,7 +209,7 @@ mod tests {
             build_rom_slot(Board::Fire24A, ChipSetType::Single, &chips, 0, None, false)
                 .expect("build_rom_slot should succeed");
 
-        assert_eq!(slot.data, 0);
+        assert_eq!(slot.data, Pointer::Null);
         assert_eq!(slot.size, 1 << 16); // 2^16 * 1 byte/word
         assert_eq!(slot.rom_count, 1);
         assert_eq!(slot.slot_type, RomSlotType::RomSlotTypeSingleRom);
@@ -305,7 +308,7 @@ mod tests {
             build_rom_slot(Board::Fire28A, ChipSetType::Single, &chips, 0, None, false)
                 .expect("build_rom_slot should succeed");
 
-        assert_eq!(slot.data, 0);
+        assert_eq!(slot.data, Pointer::Null);
         assert_eq!(slot.size, 1 << 17);
         assert_eq!(slot.rom_count, 1);
         assert_eq!(slot.slot_type, RomSlotType::RomSlotTypeSingleRom);
@@ -398,7 +401,7 @@ mod tests {
             build_rom_slot(Board::Fire28C, ChipSetType::Banked, &chips, 0, None, false)
                 .expect("build_rom_slot should succeed");
 
-        assert_eq!(slot.data, 0);
+        assert_eq!(slot.data, Pointer::Null);
         assert_eq!(slot.size, 1 << 16);
         assert_eq!(slot.rom_count, 2);
         assert_eq!(slot.slot_type, RomSlotType::RomSlotTypeBankedRom);

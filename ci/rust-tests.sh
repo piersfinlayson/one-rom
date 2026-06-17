@@ -4,6 +4,9 @@ set -e
 cd rust
 echo "Running tests for Rust crates..."
 
+echo "Testing onerom-cli..."
+cargo test -p onerom-cli
+
 echo "Testing onerom-config..."
 cargo test -p onerom-config
 
@@ -13,8 +16,17 @@ cargo test -p onerom-database
 echo "Testing onerom-fw..."
 cargo test -p onerom-fw
 
+echo "Testing fw-config-gen..."
+cargo test -p fw-config-gen
+
+echo "Testing onerom-fw-parser..."
+cargo test -p onerom-fw-parser
+
 echo "Testing onerom-gen..."
 cargo test -p onerom-gen
+
+echo "Testing onerom-metadata..."
+cargo test -p onerom-protocol
 
 echo "Testing onerom-protocol..."
 cargo test -p onerom-protocol
@@ -22,8 +34,3 @@ cargo test -p onerom-protocol
 echo "Testing schema-gen..."
 cargo test -p schema-gen
 
-echo "Testing sdrr-fw-parser..."
-cargo test -p sdrr-fw-parser
-
-echo "Testing cli..."
-cargo test -p onerom-cli

@@ -16,6 +16,7 @@ build = "build/main.rs"
 name = "onerom_metadata"
  
 [dependencies]
+onerom-config = { workspace = true }
 hashbrown = { version = "0.17", default-features = false, features = ["default-hasher", "inline-more"] }
 
 [build-dependencies]

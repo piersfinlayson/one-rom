@@ -1,4 +1,4 @@
-//! sdrr-fw-parser - One ROM Lab object handling
+//! onerom-fw-parser - One ROM Lab object handling
 
 // Copyright (C) 2025 Piers Finlayson <piers@piers.rocks>
 //
