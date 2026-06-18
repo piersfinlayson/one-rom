@@ -36,7 +36,10 @@ pub async fn cmd_info(options: &Options, args: &InspectInfoArgs) -> Result<(), E
             }
         } else if let Some(schema) = onerom.as_schema() {
             if let Some(info) = schema.info() {
-                println!("Firmware version: {}.{}.{}", info.major_version, info.minor_version, info.patch_version);
+                println!(
+                    "Firmware version: {}.{}.{}",
+                    info.major_version, info.minor_version, info.patch_version
+                );
                 println!("Format: Schema (v0.7.0+)");
             }
             if schema.runtime().is_some() {

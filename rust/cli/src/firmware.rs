@@ -145,9 +145,9 @@ async fn acquire_local_firmware(
     let data = std::fs::read(firmware).map_err(|e| Error::io(firmware, e))?;
     check_firmware_size(options, &data)?;
     let info = parse_firmware(&data).await?;
-    let version = info.version().ok_or_else(|| {
-        Error::Other("Could not determine firmware version".to_string())
-    })?;
+    let version = info
+        .version()
+        .ok_or_else(|| Error::Other("Could not determine firmware version".to_string()))?;
     let version_str = format!("{}", version);
     if options.verbose {
         println!("Detected firmware version: {version_str}");
@@ -480,7 +480,10 @@ fn print_firmware_info(options: &Options, info: &ParsedDevice) -> Result<(), Err
     }
 }
 
-fn print_original_firmware_info(options: &Options, sdrr: &onerom_fw_parser::Sdrr) -> Result<(), Error> {
+fn print_original_firmware_info(
+    options: &Options,
+    sdrr: &onerom_fw_parser::Sdrr,
+) -> Result<(), Error> {
     let Some(info) = sdrr.flash.as_ref() else {
         println!("(no flash information available)");
         return Ok(());
@@ -508,14 +511,20 @@ fn print_original_firmware_info(options: &Options, sdrr: &onerom_fw_parser::Sdrr
     Ok(())
 }
 
-fn print_schema_firmware_info(options: &Options, onerom: &onerom_fw_parser::OneRom) -> Result<(), Error> {
+fn print_schema_firmware_info(
+    options: &Options,
+    onerom: &onerom_fw_parser::OneRom,
+) -> Result<(), Error> {
     let Some(info) = onerom.info() else {
         println!("(no firmware information available)");
         return Ok(());
     };
 
     if options.verbose {
-        println!("Version:  {}.{}.{}", info.major_version, info.minor_version, info.patch_version);
+        println!(
+            "Version:  {}.{}.{}",
+            info.major_version, info.minor_version, info.patch_version
+        );
         println!("Build:    {}", info.build_number);
         println!("Format:   Schema (v0.7.0+)");
         if let Some(metadata) = onerom.metadata() {
@@ -525,7 +534,10 @@ fn print_schema_firmware_info(options: &Options, onerom: &onerom_fw_parser::OneR
             }
         }
     } else {
-        println!("Version:  {}.{}.{}", info.major_version, info.minor_version, info.patch_version);
+        println!(
+            "Version:  {}.{}.{}",
+            info.major_version, info.minor_version, info.patch_version
+        );
         println!("Format:   Schema (v0.7.0+)");
     }
     Ok(())

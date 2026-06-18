@@ -155,8 +155,8 @@ fn run_single_set(
     // Check ROM-serving GPIO pulls.  Build the PinCache for the first chip to
     // derive the active GPIO mask (data + addr + CS + byte).
     if let Some(chip_config) = chip_set.chips.first() {
-        let chip_type = chip_substitution(board, chip_config.chip_type)
-            .unwrap_or(chip_config.chip_type);
+        let chip_type =
+            chip_substitution(board, chip_config.chip_type).unwrap_or(chip_config.chip_type);
         let cache = PinCache::build(chip_type, chip_config, board);
         if let Err(r) = check_rom_pin_pulls(&emulator, &cache, set_idx) {
             return r;
@@ -1179,7 +1179,10 @@ fn check_rom_pin_pulls(
     }
 
     let bad = (emulator.read_pull_up_pins() | emulator.read_pull_down_pins()) & mask;
-    debug!("Set {}: checking ROM-serving GPIO pulls with mask {:#018x}", set_idx, mask);
+    debug!(
+        "Set {}: checking ROM-serving GPIO pulls with mask {:#018x}",
+        set_idx, mask
+    );
     if bad != 0 {
         error!(
             "Set {}: ROM-serving GPIOs have unexpected pull — {:#018x} \
@@ -1224,15 +1227,18 @@ fn check_x_pin_pulls(
         }
     }
 
-    debug!("Set {}: checking X pin pulls with mask {:#018x}", set_idx, x_mask);
+    debug!(
+        "Set {}: checking X pin pulls with mask {:#018x}",
+        set_idx, x_mask
+    );
 
-    let pull_up   = emulator.read_pull_up_pins();
+    let pull_up = emulator.read_pull_up_pins();
     let pull_down = emulator.read_pull_down_pins();
 
     if board.x_jumper_pull() == 1 {
         // Jumper closed = HIGH → open pin must read LOW → pull-down required
         let missing = x_mask & !pull_down;
-        let wrong   = x_mask &  pull_up;
+        let wrong = x_mask & pull_up;
         if missing != 0 || wrong != 0 {
             error!(
                 "Set {}: X pins have wrong pull — expected pull-down; \
@@ -1247,7 +1253,7 @@ fn check_x_pin_pulls(
     } else {
         // Jumper closed = LOW → open pin must read HIGH → pull-up required
         let missing = x_mask & !pull_up;
-        let wrong   = x_mask &  pull_down;
+        let wrong = x_mask & pull_down;
         if missing != 0 || wrong != 0 {
             error!(
                 "Set {}: X pins have wrong pull — expected pull-up; \

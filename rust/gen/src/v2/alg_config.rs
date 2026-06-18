@@ -152,8 +152,17 @@ pub fn build_alg_addr(layout: &AddrLayout, alg_data: &OneromAlgDataConfig) -> On
     // adds that extra bit manually as a 0.
     // using an extension of the algorithm.
     let (num_delay_cycles, num_rom_table_bits) = match alg_data {
-        OneromAlgDataConfig::AlgData0 { .. } => (ALG_DATA0_NUM_DELAY_CYCLES_8_BIT, layout.num_addr_pins),
-        OneromAlgDataConfig::AlgData1 { .. } => (ALG_DATA1_NUM_DELAY_CYCLES_16_BIT, layout.num_addr_pins + 1),
+        OneromAlgDataConfig::AlgData0 { word_size, .. } => (
+            ALG_DATA0_NUM_DELAY_CYCLES_8_BIT,
+            if *word_size == 8u8 {
+                layout.num_addr_pins
+            } else {
+                layout.num_addr_pins + 1
+            },
+        ),
+        OneromAlgDataConfig::AlgData1 { .. } => {
+            (ALG_DATA1_NUM_DELAY_CYCLES_16_BIT, layout.num_addr_pins + 1)
+        }
     };
 
     // AddrLayout::gpio_base is the min GPIO of the address range (not

@@ -10,9 +10,9 @@
 
 use onerom_config::fw::FirmwareVersion;
 
+use crate::ParseError;
 use crate::info::Sdrr;
 use crate::onerom::OneRom;
-use crate::ParseError;
 
 #[cfg(not(feature = "std"))]
 use alloc::vec::Vec;

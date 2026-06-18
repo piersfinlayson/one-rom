@@ -103,10 +103,13 @@ impl Device {
     /// A recognised device has valid One ROM flash or RAM information
     /// available.
     pub fn is_recognised(&self) -> bool {
-        self.onerom.as_ref().map(|o| match o {
-            ParsedDevice::Original(sdrr) => sdrr.flash.is_some() || sdrr.ram.is_some(),
-            ParsedDevice::Schema(onerom) => onerom.info().is_some(),
-        }).unwrap_or(false)
+        self.onerom
+            .as_ref()
+            .map(|o| match o {
+                ParsedDevice::Original(sdrr) => sdrr.flash.is_some() || sdrr.ram.is_some(),
+                ParsedDevice::Schema(onerom) => onerom.info().is_some(),
+            })
+            .unwrap_or(false)
     }
 
     pub fn is_running(&self) -> bool {
@@ -128,11 +131,15 @@ impl Device {
         self.usb_can_run = false;
         self.state = DeviceState::Unknown;
 
-        let Some(onerom) = self.onerom.as_ref() else { return; };
+        let Some(onerom) = self.onerom.as_ref() else {
+            return;
+        };
 
         match onerom {
             ParsedDevice::Original(sdrr) => {
-                let Some(flash) = sdrr.flash.as_ref() else { return; };
+                let Some(flash) = sdrr.flash.as_ref() else {
+                    return;
+                };
 
                 if let Some(runtime_info) = &sdrr.ram {
                     self.state = match runtime_info.limp_mode.as_ref() {
@@ -166,9 +173,7 @@ impl Device {
 
     pub fn get_active_rom_set_index(&self) -> Option<u8> {
         self.onerom.as_ref().and_then(|o| match o {
-            ParsedDevice::Original(sdrr) => {
-                sdrr.ram.as_ref().map(|ram| ram.rom_set_index)
-            }
+            ParsedDevice::Original(sdrr) => sdrr.ram.as_ref().map(|ram| ram.rom_set_index),
             ParsedDevice::Schema(_) => None,
         })
     }

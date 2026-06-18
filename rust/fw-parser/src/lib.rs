@@ -26,21 +26,21 @@
 //! ```
 
 #![cfg_attr(not(feature = "std"), no_std)]
- 
+
 // Get logging working when building on ESP32
 #[cfg(feature = "esp32")]
 use esp_println as _;
- 
+
 use airfrog_rpc::io::Reader;
 use onerom_config::fw::FirmwareVersion;
 use onerom_config::hw::Board;
-use onerom_config::mcu::{Variant as McuVariant, RP235X_BASE_FLASH, RP235X_BASE_SRAM};
- 
+use onerom_config::mcu::{RP235X_BASE_FLASH, RP235X_BASE_SRAM, Variant as McuVariant};
+
 /// Maximum SDRR firmware versions supported by this version of`sdrr-fw-parser`
 pub const MAX_VERSION_MAJOR: u16 = 0;
 pub const MAX_VERSION_MINOR: u16 = 7;
 pub const MAX_VERSION_PATCH: u16 = 999;
- 
+
 // lib.rs - Public API and core traits
 pub mod device;
 pub mod info;
@@ -49,54 +49,57 @@ pub mod onerom;
 mod parsing;
 pub mod readers;
 pub mod types;
- 
+
 // Use alloc if no-std.
 #[cfg(not(feature = "std"))]
 extern crate alloc;
 #[cfg(not(feature = "std"))]
 use alloc::vec;
- 
+
 use core::fmt;
 #[allow(unused_imports)]
 use log::{debug, error, info, trace, warn};
- 
+
+pub use device::ParsedDevice;
 pub use info::{Sdrr, SdrrExtraInfo, SdrrInfo, SdrrPins, SdrrRomInfo, SdrrRomSet, SdrrRuntimeInfo};
 pub use lab::{LabFlash, LabParser, LabRam, OneRomLab};
+pub use onerom::{FirmwareFormat, OneRom};
 pub use types::{
     McuLine, McuStorage, SdrrAddress, SdrrCsSet, SdrrCsState, SdrrLogicalAddress, SdrrMcuPort,
     SdrrRomType, SdrrServe, Source,
 };
-pub use device::ParsedDevice;
-pub use onerom::{FirmwareFormat, OneRom};
- 
+
 use crate::parsing::{
-    SdrrInfoHeader, SdrrRuntimeInfoHeader, parse_and_validate_header,
-    parse_and_validate_runtime_info, parse_runtime_versioned_fields, SDRR_RUNTIME_BUF_SIZE,
+    SDRR_RUNTIME_BUF_SIZE, SdrrInfoHeader, SdrrRuntimeInfoHeader, parse_and_validate_header,
+    parse_and_validate_runtime_info, parse_runtime_versioned_fields,
 };
- 
+
 use onerom::parse_onerom_from_view;
-use onerom_metadata::{DeviceMemoryView, METADATA_SIZE, BUILD_DATE_BUF_LEN, MIN_SCHEMA_VERSION, ONEROM_RUNTIME_INFO_SIZE};
- 
+use onerom_metadata::{
+    BUILD_DATE_BUF_LEN, DeviceMemoryView, METADATA_SIZE, MIN_SCHEMA_VERSION,
+    ONEROM_RUNTIME_INFO_SIZE,
+};
+
 /// Offset from start of the firmware where the SDRR info header is located.
 ///
 /// The first 4 "magic" bytes are b"SDRR" (upper case).
 pub const SDRR_INFO_FW_OFFSET: u32 = 0x200;
- 
+
 /// Offset from the start of RAM where the SDRR runtime info header is located.
 ///
 /// The first 4 "magic" bytes are b"sdrr" (lower case).
 pub const SDRR_RUNTIME_INFO_FW_OFFSET: u32 = 0x0;
- 
+
 // Use std/no-std String and Vec types
 #[cfg(not(feature = "std"))]
 use alloc::{format, string::String, vec::Vec};
- 
+
 // STM32F4 flash base address.  Required to find offset from pointers
 pub(crate) const STM32F4_FLASH_BASE: u32 = 0x08000000;
- 
+
 // STM32F4 RAM base address.  Required to find offset from pointers
 pub(crate) const STM32F4_RAM_BASE: u32 = 0x20000000;
- 
+
 /// Parser for Software Defined Retro ROM (SDRR) firmware images.
 ///
 /// This parser extracts configuration and ROM data from SDRR firmware files,
@@ -163,7 +166,7 @@ pub struct Parser<'a, R: Reader> {
     base_flash_address: u32,
     base_ram_address: u32,
 }
- 
+
 impl<'a, R: Reader> Parser<'a, R> {
     /// Create a new parser with the default STM32F4 base address (0x08000000).
     ///
@@ -195,7 +198,7 @@ impl<'a, R: Reader> Parser<'a, R> {
             base_ram_address: STM32F4_RAM_BASE,
         }
     }
- 
+
     /// Create a new parser with a custom base address.
     ///
     /// Use this when parsing firmware for devices with non-standard memory maps
@@ -217,27 +220,29 @@ impl<'a, R: Reader> Parser<'a, R> {
             base_ram_address,
         }
     }
- 
+
     // Retrieve the SDRR info header from the firmware.
     async fn retrieve_header(&mut self) -> Result<SdrrInfoHeader, String> {
         // Try to find SDRR info at standard location
         let sdrr_info_addr = self.base_flash_address + SDRR_INFO_FW_OFFSET;
- 
+
         // Read the header
         let mut header_buf = [0u8; SdrrInfoHeader::size()];
         self.reader
             .read(sdrr_info_addr, &mut header_buf)
             .await
             .map_err(|_| "Failed to read SDRR header")?;
- 
+
         // Parse and validate header using the helper
         parse_and_validate_header(&header_buf)
     }
- 
-    async fn retrieve_runtime_header(&mut self) -> Result<(SdrrRuntimeInfoHeader, [u8; SDRR_RUNTIME_BUF_SIZE]), String> {
+
+    async fn retrieve_runtime_header(
+        &mut self,
+    ) -> Result<(SdrrRuntimeInfoHeader, [u8; SDRR_RUNTIME_BUF_SIZE]), String> {
         // Try to find SDRR runtime info at standard location
         let sdrr_runtime_info_addr = self.base_ram_address + SDRR_RUNTIME_INFO_FW_OFFSET;
- 
+
         // Read the full runtime info buffer (base header + versioned extensions)
         let mut runtime_buf = [0u8; SDRR_RUNTIME_BUF_SIZE];
         self.reader
@@ -248,7 +253,7 @@ impl<'a, R: Reader> Parser<'a, R> {
         let header = parse_and_validate_runtime_info(&runtime_buf)?;
         Ok((header, runtime_buf))
     }
- 
+
     async fn retrieve_runtime_header_from_info(
         &mut self,
         info: &SdrrInfo,
@@ -260,7 +265,7 @@ impl<'a, R: Reader> Parser<'a, R> {
                 runtime_info_ptr
             ));
         }
- 
+
         // Read the full runtime info buffer (base header + versioned extensions)
         let mut runtime_buf = [0u8; SDRR_RUNTIME_BUF_SIZE];
         self.reader
@@ -271,7 +276,7 @@ impl<'a, R: Reader> Parser<'a, R> {
         let header = parse_and_validate_runtime_info(&runtime_buf)?;
         Ok((header, runtime_buf))
     }
- 
+
     /// Detect the format of the firmware without fully parsing it.
     ///
     /// Reads just enough of the info header to determine whether the firmware
@@ -282,26 +287,26 @@ impl<'a, R: Reader> Parser<'a, R> {
     /// is not a recognisable OneROM firmware image.
     pub async fn detect_format(&mut self) -> Option<FirmwareFormat> {
         let info_addr = self.base_flash_address + SDRR_INFO_FW_OFFSET;
- 
+
         // Read only the fields we need: magic (4) + major (2) + minor (2).
         let mut buf = [0u8; 8];
         self.reader.read(info_addr, &mut buf).await.ok()?;
- 
+
         if &buf[0..4] != b"SDRR" {
             return None;
         }
- 
+
         let major = u16::from_le_bytes([buf[4], buf[5]]);
         let minor = u16::from_le_bytes([buf[6], buf[7]]);
         let version = FirmwareVersion::new(major, minor, 0, 0);
- 
+
         if version >= MIN_SCHEMA_VERSION {
             Some(FirmwareFormat::Schema)
         } else {
             Some(FirmwareFormat::Original)
         }
     }
- 
+
     /// Function to do a brief check whether this is an SDRR device.
     ///
     /// Returns:
@@ -313,7 +318,7 @@ impl<'a, R: Reader> Parser<'a, R> {
             Err(_) => false,
         }
     }
- 
+
     /// Parses both flash and RAM
     pub async fn parse(&mut self) -> Sdrr {
         let flash = match self.parse_flash().await {
@@ -323,13 +328,13 @@ impl<'a, R: Reader> Parser<'a, R> {
                 None
             }
         };
- 
+
         let ram = if let Some(flash) = &flash {
             self.parse_ram_from_info(flash).await
         } else {
             self.parse_ram().await
         };
- 
+
         let ram = match ram {
             Ok(r) => Some(r),
             Err(e) => {
@@ -337,10 +342,10 @@ impl<'a, R: Reader> Parser<'a, R> {
                 None
             }
         };
- 
+
         Sdrr { flash, ram }
     }
- 
+
     /// Parse original-format (pre-v0.7.0) firmware.
     ///
     /// Alias for [`parse`](Self::parse); provided for symmetry with
@@ -348,7 +353,7 @@ impl<'a, R: Reader> Parser<'a, R> {
     pub async fn parse_format_original(&mut self) -> Sdrr {
         self.parse().await
     }
- 
+
     /// Parse a One ROM device in whichever format it uses.
     ///
     /// Detects the firmware format and delegates to [`parse`](Self::parse)
@@ -361,19 +366,17 @@ impl<'a, R: Reader> Parser<'a, R> {
     /// both firmware generations transparently.
     pub async fn parse_device(&mut self) -> ParsedDevice {
         match self.detect_format().await {
-            Some(FirmwareFormat::Schema) => {
-                match self.parse_format_schema().await {
-                    Ok(onerom) => ParsedDevice::Schema(onerom),
-                    Err(e) => ParsedDevice::Schema(OneRom::new(
-                        None,
-                        vec![ParseError::new("parse_format_schema", e)],
-                    )),
-                }
-            }
+            Some(FirmwareFormat::Schema) => match self.parse_format_schema().await {
+                Ok(onerom) => ParsedDevice::Schema(onerom),
+                Err(e) => ParsedDevice::Schema(OneRom::new(
+                    None,
+                    vec![ParseError::new("parse_format_schema", e)],
+                )),
+            },
             _ => ParsedDevice::Original(self.parse().await),
         }
     }
- 
+
     /// Parse SDRR metadata from the firmware.
     ///
     /// This method reads and parses all structural information from the firmware,
@@ -438,14 +441,12 @@ impl<'a, R: Reader> Parser<'a, R> {
     pub async fn parse_flash(&mut self) -> Result<SdrrInfo, String> {
         // Parse and validate header using the helper
         let mut header = self.retrieve_header().await?;
- 
+
         // Schema-format firmware cannot be parsed by this path.
         if header.major_version == 0 && header.minor_version >= 7 {
-            return Err(
-                "Firmware >= v0.7.0 uses schema format; use parse_format_schema()".into(),
-            );
+            return Err("Firmware >= v0.7.0 uses schema format; use parse_format_schema()".into());
         }
- 
+
         // Get firmware version
         let version = FirmwareVersion::new(
             header.major_version,
@@ -453,7 +454,7 @@ impl<'a, R: Reader> Parser<'a, R> {
             header.patch_version,
             header.build_number,
         );
- 
+
         // Update our base address based on the header - before this we don't
         // need to have the correct base_flash_address set.  Base RAM is the
         // same.
@@ -461,9 +462,9 @@ impl<'a, R: Reader> Parser<'a, R> {
             self.base_flash_address = 0x10000000; // RP2350 flash base address
             self.reader.update_base_address(self.base_flash_address);
         }
- 
+
         let mut parse_errors = Vec::new();
- 
+
         // Parse strings with error collection
         let build_date = match self.read_string_at_ptr(header.build_date_ptr).await {
             Ok(s) => Some(s),
@@ -472,7 +473,7 @@ impl<'a, R: Reader> Parser<'a, R> {
                 None
             }
         };
- 
+
         let hw_rev = match self.read_string_at_ptr(header.hw_rev_ptr).await {
             Ok(s) => Some(s),
             Err(e) => {
@@ -480,7 +481,7 @@ impl<'a, R: Reader> Parser<'a, R> {
                 None
             }
         };
- 
+
         // Parse extra info
         let (extra_info, runtime_info_ptr) = match parsing::read_extra_info(
             self.reader,
@@ -499,7 +500,7 @@ impl<'a, R: Reader> Parser<'a, R> {
                 (None, 0xFFFF_FFFF_u32)
             }
         };
- 
+
         // If necessary, parse OneRomMetadataHeader
         let metadata_present = if header.major_version > 0 || header.minor_version > 4 {
             // OneRomMetadataHeader should be parsed for 0.5.0 and above.  Its
@@ -509,7 +510,7 @@ impl<'a, R: Reader> Parser<'a, R> {
             let metadata_ptr = header.rom_sets_ptr;
             header.rom_set_count = 0;
             header.rom_sets_ptr = 0;
- 
+
             match parsing::read_one_rom_metadata_header_info(
                 self.reader,
                 metadata_ptr,
@@ -553,7 +554,7 @@ impl<'a, R: Reader> Parser<'a, R> {
             // No metadata
             false
         };
- 
+
         // Parse ROM sets with error collection
         let rom_sets =
             match parsing::read_rom_sets(self.reader, &header, self.base_flash_address, &version)
@@ -577,7 +578,7 @@ impl<'a, R: Reader> Parser<'a, R> {
                     Vec::new()
                 }
             };
- 
+
         // Parse pins
         let pins =
             match parsing::read_pins(self.reader, header.pins_ptr, self.base_flash_address).await {
@@ -587,7 +588,7 @@ impl<'a, R: Reader> Parser<'a, R> {
                     None
                 }
             };
- 
+
         // Try to decode board, model and MCU variant from hw_rev
         let board = hw_rev.as_ref().and_then(|s| Board::try_from_str(s));
         let model = board.as_ref().map(|b| b.model());
@@ -615,7 +616,7 @@ impl<'a, R: Reader> Parser<'a, R> {
                 ),
             ));
         }
- 
+
         Ok(SdrrInfo {
             major_version: header.major_version,
             minor_version: header.minor_version,
@@ -649,7 +650,7 @@ impl<'a, R: Reader> Parser<'a, R> {
             runtime_info_ptr,
         })
     }
- 
+
     /// Parse schema-format (v0.7.0+) firmware.
     ///
     /// Reads the minimum set of memory regions required — the info header
@@ -676,45 +677,47 @@ impl<'a, R: Reader> Parser<'a, R> {
         self.base_flash_address = RP235X_BASE_FLASH;
         self.base_ram_address = RP235X_BASE_SRAM;
         self.reader.update_base_address(self.base_flash_address);
- 
+
         let info_addr = self.base_flash_address + SDRR_INFO_FW_OFFSET;
- 
+
         // ---- Read and validate info header (64 bytes) -------------------
         let mut info_buf = [0u8; 64];
         self.reader
             .read(info_addr, &mut info_buf)
             .await
             .map_err(|_| "Failed to read info header".to_string())?;
- 
+
         if &info_buf[0..4] != b"SDRR" {
             return Err("Invalid magic: not an SDRR firmware image".into());
         }
- 
+
         let major = u16::from_le_bytes([info_buf[4], info_buf[5]]);
         let minor = u16::from_le_bytes([info_buf[6], info_buf[7]]);
         let version = FirmwareVersion::new(major, minor, 0, 0);
- 
+
         if version < MIN_SCHEMA_VERSION {
             return Err(format!(
                 "Firmware v{major}.{minor} is not schema format; use parse_format_original()"
             ));
         }
- 
+
         // ---- Extract pointers from info header --------------------------
-        let build_date_ptr =
-            u32::from_le_bytes(info_buf[12..16].try_into().unwrap());
-        let metadata_ptr =
-            u32::from_le_bytes(info_buf[28..32].try_into().unwrap());
-        let runtime_ptr =
-            u32::from_le_bytes(info_buf[36..40].try_into().unwrap());
- 
+        let build_date_ptr = u32::from_le_bytes(info_buf[12..16].try_into().unwrap());
+        let metadata_ptr = u32::from_le_bytes(info_buf[28..32].try_into().unwrap());
+        let runtime_ptr = u32::from_le_bytes(info_buf[36..40].try_into().unwrap());
+
         // ---- Load memory regions ----------------------------------------
         let mut parse_errors = Vec::new();
- 
+
         // Build_date string — typically a few dozen bytes in flash.
         let mut build_date_buf = [0u8; BUILD_DATE_BUF_LEN];
         if build_date_ptr >= self.base_flash_address {
-            if self.reader.read(build_date_ptr, &mut build_date_buf).await.is_err() {
+            if self
+                .reader
+                .read(build_date_ptr, &mut build_date_buf)
+                .await
+                .is_err()
+            {
                 parse_errors.push(ParseError::new(
                     "build_date",
                     "Failed to read build_date string",
@@ -726,7 +729,7 @@ impl<'a, R: Reader> Parser<'a, R> {
                 format!("Invalid build_date pointer: {build_date_ptr:#010X}"),
             ));
         }
- 
+
         // Metadata blob — up to METADATA_SIZE bytes.
         let mut meta_buf = vec![0u8; METADATA_SIZE];
         let meta_ok = if metadata_ptr != 0 && metadata_ptr != 0xFFFF_FFFF {
@@ -743,7 +746,7 @@ impl<'a, R: Reader> Parser<'a, R> {
         } else {
             false
         };
- 
+
         // Runtime info — present only when the device is actively running.
         let mut runtime_buf = [0u8; ONEROM_RUNTIME_INFO_SIZE];
         let runtime_ok = if runtime_ptr != 0 && runtime_ptr != 0xFFFF_FFFF {
@@ -758,7 +761,7 @@ impl<'a, R: Reader> Parser<'a, R> {
         } else {
             false
         };
- 
+
         // ---- Patch unreadable pointers in info_buf ----------------------
         //
         // The generated parser follows non-null struct_ptr fields.  If we
@@ -772,7 +775,7 @@ impl<'a, R: Reader> Parser<'a, R> {
         if !runtime_ok {
             info_buf[36..40].copy_from_slice(&0u32.to_le_bytes());
         }
- 
+
         // ---- Assemble DeviceMemoryView ----------------------------------
         //
         // SYNC/ASYNC BOUNDARY
@@ -794,10 +797,10 @@ impl<'a, R: Reader> Parser<'a, R> {
         if runtime_ok {
             view.add_region(&runtime_buf, runtime_ptr);
         }
- 
+
         Ok(parse_onerom_from_view(&view, info_addr, parse_errors))
     }
- 
+
     async fn parse_ram_from_runtime_info(
         &mut self,
         runtime_info: SdrrRuntimeInfoHeader,
@@ -829,28 +832,30 @@ impl<'a, R: Reader> Parser<'a, R> {
             limp_mode: v.limp_mode,
         })
     }
- 
+
     async fn parse_ram(&mut self) -> Result<SdrrRuntimeInfo, String> {
         // Parse and validate runtime info using the helper
         let (runtime_info, runtime_buf) = self.retrieve_runtime_header().await?;
-        self.parse_ram_from_runtime_info(runtime_info, &runtime_buf).await
+        self.parse_ram_from_runtime_info(runtime_info, &runtime_buf)
+            .await
     }
- 
+
     async fn parse_ram_from_info(&mut self, info: &SdrrInfo) -> Result<SdrrRuntimeInfo, String> {
         // Parse and validate runtime info using the helper
         let (runtime_info, runtime_buf) = self.retrieve_runtime_header_from_info(info).await?;
-        self.parse_ram_from_runtime_info(runtime_info, &runtime_buf).await
+        self.parse_ram_from_runtime_info(runtime_info, &runtime_buf)
+            .await
     }
- 
+
     async fn read_string_at_ptr(&mut self, ptr: u32) -> Result<String, String> {
         if ptr < self.base_flash_address {
             return Err(format!("Invalid pointer: 0x{:08X}", ptr));
         }
- 
+
         read_string_at_ptr(self.reader, ptr).await
     }
 }
- 
+
 /// Error information for non-fatal parsing failures.
 ///
 /// When parsing SDRR firmware, some sections may fail to parse due to corruption,
@@ -878,7 +883,7 @@ pub struct ParseError {
     /// - `"rom_set[1].roms[2]"` - Third ROM in second ROM set
     /// - `"pins"` - Pin configuration structure
     pub field: String,
- 
+
     /// Human-readable description of why parsing failed.
     ///
     /// Examples:
@@ -888,7 +893,7 @@ pub struct ParseError {
     /// - `"Unsupported ROM type value: 255"`
     pub reason: String,
 }
- 
+
 impl ParseError {
     /// Create a new parse error.
     pub fn new(field: impl Into<String>, reason: impl Into<String>) -> Self {
@@ -898,58 +903,58 @@ impl ParseError {
         }
     }
 }
- 
+
 impl fmt::Display for ParseError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}: {}", self.field, self.reason)
     }
 }
- 
+
 async fn read_string_at_ptr<R: Reader>(reader: &mut R, ptr: u32) -> Result<String, String> {
     // Read in chunks to find null terminator
     let mut result = Vec::new();
     let mut addr = ptr;
     let mut buf = [0u8; 64];
- 
+
     loop {
         let chunk_size = buf.len().min(1024 - result.len()); // Limit total size
         reader
             .read(addr, &mut buf[..chunk_size])
             .await
             .map_err(|_| format!("Failed to read string at 0x{ptr:08X}"))?;
- 
+
         if let Some(null_pos) = buf[..chunk_size].iter().position(|&b| b == 0) {
             result.extend_from_slice(&buf[..null_pos]);
             break;
         }
- 
+
         result.extend_from_slice(&buf[..chunk_size]);
         addr += chunk_size as u32;
- 
+
         if result.len() >= 1024 {
             return Err("String too long (>1KB)".into());
         }
     }
- 
+
     String::from_utf8(result).map_err(|_| "Invalid UTF-8 string".into())
 }
- 
+
 async fn read_str_at_ptr<R: Reader>(reader: &mut R, len: u32, ptr: u32) -> Result<String, String> {
     if len > 1024 {
         return Err("String too long (>1KB)".into());
     } else if len == 0 {
         return Ok(String::new());
     }
- 
+
     let mut buf = vec![0u8; len as usize];
     reader
         .read(ptr, &mut buf)
         .await
         .map_err(|_| format!("Failed to read string at 0x{ptr:08X}"))?;
- 
+
     String::from_utf8(buf).map_err(|_| "Invalid UTF-8 string".into())
 }
- 
+
 pub fn crate_version() -> &'static str {
     env!("CARGO_PKG_VERSION")
 }
