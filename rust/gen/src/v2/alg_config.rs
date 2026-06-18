@@ -689,7 +689,7 @@ mod tests {
                 num_delay_cycles: 2,
                 base_addr_pin: 3,
                 num_addr_pins: 18,
-                num_rom_table_bits: 18,
+                num_rom_table_bits: 19,
             }
         );
 
