@@ -152,6 +152,17 @@ fn run_single_set(
 
     let force_16_bit = get_force_16_bit(chip_set);
 
+    // Check ROM-serving GPIO pulls.  Build the PinCache for the first chip to
+    // derive the active GPIO mask (data + addr + CS + byte).
+    if let Some(chip_config) = chip_set.chips.first() {
+        let chip_type = chip_substitution(board, chip_config.chip_type)
+            .unwrap_or(chip_config.chip_type);
+        let cache = PinCache::build(chip_type, chip_config, board);
+        if let Err(r) = check_rom_pin_pulls(&emulator, &cache, set_idx) {
+            return r;
+        }
+    }
+
     let chip_results: Vec<ChipResult> = chip_set
         .chips
         .iter()
@@ -260,6 +271,10 @@ fn run_multi_set(
         primary_cache.data_gpios.len(),
         primary_cache.control_lines.len(),
     );
+
+    if let Err(r) = check_rom_pin_pulls(&emulator, &primary_cache, set_idx) {
+        return r;
+    }
 
     // ── X pin CS info for secondary chips ─────────────────────────────────────
     // Use the nominal (non-substituted) chip type for polarity lookup since the
@@ -573,6 +588,13 @@ fn run_banked_set(
         cache.control_lines.len(),
     );
 
+    if let Err(r) = check_rom_pin_pulls(&emulator, &cache, set_idx) {
+        return r;
+    }
+    if let Err(r) = check_x_pin_pulls(&emulator, board, set_idx, x_pins_needed) {
+        return r;
+    }
+
     let cycles_addr_before_cs = if is_16_bit_capable_rom(chip_type) {
         timing::CYCLES_27C400_ADDR_BEFORE_CS
     } else {
@@ -824,8 +846,9 @@ fn run_mode(
 
     // Pre-compute the BYTE# mask so it can be merged into every drive_gpios
     // call.  epio_drive_gpios_ext resets every GPIO that is *not* in the
-    // supplied mask to the pull-up state (1) on each call, so a one-shot
-    // drive before the loop is immediately overwritten by the first
+    // supplied mask to its configured pull state on each call (pull-none pins
+    // go to the float mode value, which defaults to 1/high).  A one-shot
+    // drive before the loop would be immediately overwritten by the first
     // phase1/phase2 call.  Merging into every call holds the level correctly
     // throughout the pass.
     let byte_mask: (u64, u64) = if let Some(gpio) = cache.byte_n_gpio {
@@ -1122,6 +1145,125 @@ fn run_mode(
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
+/// Verify that no ROM-serving GPIO has a pull resistor configured.
+///
+/// Builds a mask of the active pins — data, address, CS, and byte — from the
+/// PinCache and checks that none of them carry a pull-up or pull-down.  X pins
+/// (used for bank selection) are intentionally pulled and are not in the cache,
+/// so they are not checked.
+///
+/// A pull on a ROM-serving pin means the firmware is missing
+/// `APIO_GPIO_PULL_NONE` for that pin, which would corrupt emulated reads when
+/// `epio_drive_gpios_ext` restores undriven pins to their pull state.
+fn check_rom_pin_pulls(
+    emulator: &Emulator,
+    cache: &PinCache,
+    set_idx: usize,
+) -> Result<(), SetResult> {
+    let mut mask = 0u64;
+    for &g in &cache.data_gpios {
+        mask |= 1u64 << g;
+    }
+    for gpios in &cache.addr_gpios {
+        for &g in gpios {
+            mask |= 1u64 << g;
+        }
+    }
+    for cl in &cache.control_lines {
+        for &g in &cl.gpios {
+            mask |= 1u64 << g;
+        }
+    }
+    if let Some(g) = cache.byte_n_gpio {
+        mask |= 1u64 << g;
+    }
+
+    let bad = (emulator.read_pull_up_pins() | emulator.read_pull_down_pins()) & mask;
+    debug!("Set {}: checking ROM-serving GPIO pulls with mask {:#018x}", set_idx, mask);
+    if bad != 0 {
+        error!(
+            "Set {}: ROM-serving GPIOs have unexpected pull — {:#018x} \
+             (firmware missing APIO_GPIO_PULL_NONE)",
+            set_idx, bad
+        );
+        return Err(SetResult::boot_error(
+            set_idx,
+            "unexpected pull on ROM-serving GPIO",
+        ));
+    }
+    Ok(())
+}
+
+/// Verify that X pins have the correct pull direction configured for a banked
+/// set.
+///
+/// Open jumpers rely on the MCU pull resistor to hold a defined level.  The
+/// required direction is the opposite of `board.x_jumper_pull()`:
+///
+/// * closed = HIGH (`x_jumper_pull() == 1`) → open must read LOW → pull-down
+/// * closed = LOW  (`x_jumper_pull() == 0`) → open must read HIGH → pull-up
+///
+/// A wrong or missing pull means an open jumper would float to the float-mode
+/// value rather than the firmware-intended level, causing the wrong bank to be
+/// selected.
+fn check_x_pin_pulls(
+    emulator: &Emulator,
+    board: Board,
+    set_idx: usize,
+    n_pins_used: usize,
+) -> Result<(), SetResult> {
+    let x_pin_map = board.x_pin_map();
+    if x_pin_map.is_empty() || n_pins_used == 0 {
+        return Ok(());
+    }
+
+    let mut x_mask = 0u64;
+    for (_, gpios) in x_pin_map.iter().take(n_pins_used) {
+        for &g in *gpios {
+            x_mask |= 1u64 << g;
+        }
+    }
+
+    debug!("Set {}: checking X pin pulls with mask {:#018x}", set_idx, x_mask);
+
+    let pull_up   = emulator.read_pull_up_pins();
+    let pull_down = emulator.read_pull_down_pins();
+
+    if board.x_jumper_pull() == 1 {
+        // Jumper closed = HIGH → open pin must read LOW → pull-down required
+        let missing = x_mask & !pull_down;
+        let wrong   = x_mask &  pull_up;
+        if missing != 0 || wrong != 0 {
+            error!(
+                "Set {}: X pins have wrong pull — expected pull-down; \
+                 missing={:#018x} wrong_pull_up={:#018x}",
+                set_idx, missing, wrong
+            );
+            return Err(SetResult::boot_error(
+                set_idx,
+                "X pins missing required pull-down",
+            ));
+        }
+    } else {
+        // Jumper closed = LOW → open pin must read HIGH → pull-up required
+        let missing = x_mask & !pull_up;
+        let wrong   = x_mask &  pull_down;
+        if missing != 0 || wrong != 0 {
+            error!(
+                "Set {}: X pins have wrong pull — expected pull-up; \
+                 missing={:#018x} wrong_pull_down={:#018x}",
+                set_idx, missing, wrong
+            );
+            return Err(SetResult::boot_error(
+                set_idx,
+                "X pins missing required pull-up",
+            ));
+        }
+    }
+
+    Ok(())
+}
+
 /// Return the effective `ChipType` to test when a board/chip combination
 /// requires a physical shim and the firmware therefore serves a different chip
 /// type than the one nominally installed.  Returns `None` when no substitution
@@ -1209,12 +1351,12 @@ fn first_active_cs_polarity(chip_config: &ChipConfig, chip_type: ChipType) -> bo
 ///
 /// Bit k (0-indexed) of `bank_idx` is the logical value of X pin k+1:
 /// `1` = jumper closed → drive to `x_jumper_pull()` level.
-/// `0` = jumper open  → leave undriven; the emulator's simulated firmware
-///                       pull holds the pin at the correct level.
+/// `0` = jumper open  → leave undriven; epio_drive_gpios_ext restores the
+///                       pin to its configured pull state (pull-none →
+///                       float mode value) on every drive call.
 ///
-/// Only closed pins are included in the mask.  Driving open pins explicitly
-/// is no longer necessary now that the emulator models the firmware's
-/// internal pull configuration.
+/// Only closed pins are included in the mask.  Open pins are left out so
+/// epio_drive_gpios_ext can restore them correctly on every call.
 ///
 /// If an X pin maps to multiple MCU GPIOs all are driven to the same level.
 fn banked_x_mask(board: Board, bank_idx: usize) -> (u64, u64) {
@@ -1232,7 +1374,8 @@ fn banked_x_mask(board: Board, bank_idx: usize) -> (u64, u64) {
                 });
                 driver::merge(acc, gpio_mask)
             } else {
-                // Jumper open: omit from mask; emulator pull takes over.
+                // Jumper open: omit from mask so epio_drive_gpios_ext restores
+                // to pull state on every call.
                 acc
             }
         })
