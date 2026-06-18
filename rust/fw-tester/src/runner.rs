@@ -310,7 +310,7 @@ fn run_multi_set(
             set_idx,
             oracle.len()
         );
-        let cycles_addr_before_cs = if is_27c400_family(primary_type) {
+        let cycles_addr_before_cs = if is_16_bit_capable_rom(primary_type) {
             timing::CYCLES_27C400_ADDR_BEFORE_CS
         } else {
             timing::CYCLES_ADDR_BEFORE_CS
@@ -417,7 +417,7 @@ fn run_multi_set(
             oracle.len()
         );
 
-        let cycles_addr_before_cs = if is_27c400_family(chip_type) {
+        let cycles_addr_before_cs = if is_16_bit_capable_rom(chip_type) {
             timing::CYCLES_27C400_ADDR_BEFORE_CS
         } else {
             timing::CYCLES_ADDR_BEFORE_CS
@@ -573,7 +573,7 @@ fn run_banked_set(
         cache.control_lines.len(),
     );
 
-    let cycles_addr_before_cs = if is_27c400_family(chip_type) {
+    let cycles_addr_before_cs = if is_16_bit_capable_rom(chip_type) {
         timing::CYCLES_27C400_ADDR_BEFORE_CS
     } else {
         timing::CYCLES_ADDR_BEFORE_CS
@@ -758,7 +758,7 @@ fn run_chip(
         oracle.len()
     );
 
-    let cycles_addr_before_cs = if is_27c400_family(chip_type) {
+    let cycles_addr_before_cs = if is_16_bit_capable_rom(chip_type) {
         timing::CYCLES_27C400_ADDR_BEFORE_CS
     } else {
         timing::CYCLES_ADDR_BEFORE_CS
@@ -820,7 +820,7 @@ fn run_mode(
     chip_idx: usize,
     background_mask: (u64, u64),
 ) -> ModeResult {
-    let is_27c400_family = is_27c400_family(chip_type);
+    let is_27c400_family = is_16_bit_capable_rom(chip_type);
 
     // Pre-compute the BYTE# mask so it can be merged into every drive_gpios
     // call.  epio_drive_gpios_ext resets every GPIO that is *not* in the
@@ -1163,8 +1163,8 @@ fn get_force_16_bit(chip_set: &ChipSetConfig) -> bool {
 
 /// Returns `true` for the 27C400/27C200 chip family, which requires special
 /// timing and BYTE# handling.
-fn is_27c400_family(chip_type: ChipType) -> bool {
-    chip_type == ChipType::Chip27C400 || chip_type == ChipType::Chip27C200
+fn is_16_bit_capable_rom(chip_type: ChipType) -> bool {
+    chip_type.bit_modes().contains(&16)
 }
 
 /// Find the assertion polarity for the first active (non-Ignore) configurable

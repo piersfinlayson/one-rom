@@ -193,11 +193,34 @@ test_40_config() {
     test_config fire-40-b "$config"
 }
 
-# Test specific ROM configurations on all Fire 40 hardware revisions.
-test_40_config onerom-config/test/40-random.json
-test_40_config onerom-config/test/40-random-force-16bit.json
+# Test every standard ROM type on every standard hardware revision.
+# Do just one 24/28/32/40 variant now, so we fail early if any ROM types are
+# broken.
+test_40pin fire-40-a
+test_40pin fire-40-a true
+test_28_all_rom_types fire-28-a
+test_24_all_rom_types fire-24-a
+test_32pin fire-32-a
 
-# Standard set of 24 pin ROM tests
+# Remaining 24 pin boards.
+test_24_all_rom_types fire-24-b
+test_24_all_rom_types fire-24-c
+test_24_all_rom_types fire-24-d
+test_24_all_rom_types fire-24-e
+test_24_all_rom_types fire-24-f
+
+# Remaining 28 pin boards.
+test_28_all_rom_types fire-28-c # First, as B is same as A
+test_28_all_rom_types fire-28-b
+
+# Remaining 32 pin boards.
+test_32pin fire-32-b
+
+# Remaining 40 pin boards.
+test_40pin fire-40-b
+test_40pin fire-40-b true
+
+# Extended set of 24 & 28 pin ROM tests
 test_24_config onerom-config/test/24-random-23xx.json
 test_24_config onerom-config/test/24-random-27xx.json
 test_24_config onerom-config/test/24-random-28xx.json
@@ -205,6 +228,10 @@ test_28_config onerom-config/test/28-random-23xxx.json
 test_28_config onerom-config/test/28-random-23qlxxx.json
 test_28_config onerom-config/test/28-random-27xxx.json
 test_28_config onerom-config/test/28-random-28xxx.json
+
+# Test specific ROM configurations on all Fire 40 hardware revisions.
+test_40_config onerom-config/test/40-random.json
+test_40_config onerom-config/test/40-random-force-16bit.json
 
 # Test bank switched ROM configurations on all Fire 24 hardware revisions.
 # All 24 pin hardware revisions support bank switched ROMs with PIO support.
@@ -239,31 +266,3 @@ test_32_config onerom-config/test/32-random-27c0x0.json
 # PIO support due to a lack of contiguity between CS and X pins.
 test_24_config_c_onwards onerom-config/test/set-2-images.json
 test_24_config_c_onwards onerom-config/test/set-3-images.json
-
-# Test every standard ROM type on every standard hardware revision.
-# Do just one 24/28/32/40 variant now, so we fail early if any ROM types are
-# broken.
-test_40pin fire-40-a
-test_40pin fire-40-a true
-test_28_all_rom_types fire-28-a
-test_24_all_rom_types fire-24-a
-test_32pin fire-32-a
-
-# Remaining 24 pin boards.
-test_24_all_rom_types fire-24-b
-test_24_all_rom_types fire-24-c
-test_24_all_rom_types fire-24-d
-test_24_all_rom_types fire-24-e
-test_24_all_rom_types fire-24-f
-
-# Remaining 28 pin boards.
-test_28_all_rom_types fire-28-c # First, as B is same as A
-test_28_all_rom_types fire-28-b
-
-# Remaining 32 pin boards.
-test_32pin fire-32-b
-
-# Remaining 40 pin boards.
-test_40pin fire-40-b
-test_40pin fire-40-b true
-

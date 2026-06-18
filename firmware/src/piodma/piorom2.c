@@ -192,6 +192,8 @@ int setup_serving_gpios(const onerom_rom_slot_t *slot) {
     for (int ii = 0; ii < gpio_init.num_data_pins; ii++) {
         uint8_t pin = ii + gpio_init.base_data_pin;
         if (pin < MAX_GPIOS) {
+            // Clear pulls - pull-down enabled by default on output pins
+            APIO_GPIO_PULL_NONE(pin);
             APIO_GPIO_INPUT_OUTPUT(pin, BLOCK_CS_DATA);
             APIO_GPIO_DRIVE(pin, APIO_DRIVE_8MA);
             APIO_GPIO_SLEW_FAST(pin);
