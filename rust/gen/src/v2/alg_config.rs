@@ -147,9 +147,13 @@ pub fn build_alg_data(
 /// `force_16_bit` - neither needs the extra cycles `AlgData1`'s `/BYTE`+
 /// A-1 read takes), 4 for `AlgData1`.
 pub fn build_alg_addr(layout: &AddrLayout, alg_data: &OneromAlgDataConfig) -> OneromAlgAddrConfig {
-    let num_delay_cycles = match alg_data {
-        OneromAlgDataConfig::AlgData0 { .. } => ALG_DATA0_NUM_DELAY_CYCLES_8_BIT,
-        OneromAlgDataConfig::AlgData1 { .. } => ALG_DATA1_NUM_DELAY_CYCLES_16_BIT,
+    // The rom table itself uses 1 more address bit than the number of address
+    // pins in 16-bit mode, which is AlgData1.  The address read algorithm
+    // adds that extra bit manually as a 0.
+    // using an extension of the algorithm.
+    let (num_delay_cycles, num_rom_table_bits) = match alg_data {
+        OneromAlgDataConfig::AlgData0 { .. } => (ALG_DATA0_NUM_DELAY_CYCLES_8_BIT, layout.num_addr_pins),
+        OneromAlgDataConfig::AlgData1 { .. } => (ALG_DATA1_NUM_DELAY_CYCLES_16_BIT, layout.num_addr_pins + 1),
     };
 
     // AddrLayout::gpio_base is the min GPIO of the address range (not
@@ -165,7 +169,7 @@ pub fn build_alg_addr(layout: &AddrLayout, alg_data: &OneromAlgDataConfig) -> On
         num_delay_cycles,
         base_addr_pin,
         num_addr_pins: layout.num_addr_pins,
-        num_rom_table_bits: layout.num_addr_pins,
+        num_rom_table_bits,
     }
 }
 

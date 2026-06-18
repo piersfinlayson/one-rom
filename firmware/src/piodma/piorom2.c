@@ -365,12 +365,6 @@ int setup_serving_pios(const onerom_rom_slot_t *slot, uint32_t rom_table_addr) {
     //const uint8_t *addr_params = addr_alg->params;
     const uint8_t *data_params = data_alg->params;
 
-    uint8_t bit_mode_16 = 0;
-    if (data_alg->word_size == 16) {
-        DEBUG("Serving a 16-bit ROM");
-        bit_mode_16 = 1;
-    }
-
     // Set up the PIO assembler
     APIO_ASM_INIT();
     
@@ -397,23 +391,31 @@ int setup_serving_pios(const onerom_rom_slot_t *slot, uint32_t rom_table_addr) {
                 //}
                 //const onerom_alg_addr0_param_t *params = (const onerom_alg_addr0_param_t *)addr_params;
 
-                // Figure out the ROM table prefix and # bits
+                // Figure out the ROM table prefix and # bits.  The number
+                // of ROM table bits and number of address bits may be
+                // different - there may be more ROM table bits than address
+                // pins (e.g. 16 bit ROMs), in which case we pad the extra
+                // bits with 0s in the PIO algorithm below.
                 uint8_t rom_table_prefix_bits = 32 - addr_alg->num_rom_table_bits;
-                if (bit_mode_16) {
-                    // For 16 bit ROMs, we use 1 more address table bit than
-                    // num_rom_table_bits says - 
-                    rom_table_prefix_bits -= 1;
-                }
                 uint32_t rom_table_prefix = rom_table_addr >> (32 - rom_table_prefix_bits);
+                int8_t extra_addr_bits = addr_alg->num_rom_table_bits - addr_alg->num_addr_pins;
                 DEBUG("ROM table prefix 0x%08X, # bits: %u", rom_table_prefix, rom_table_prefix_bits);
 
                 // Write the SM instructions
                 APIO_WRAP_BOTTOM();
                 APIO_ADD_INSTR(APIO_ADD_DELAY(APIO_IN_X(rom_table_prefix_bits), addr_alg->num_delay_cycles));
-                APIO_WRAP_TOP();
-                APIO_ADD_INSTR(APIO_IN_PINS(addr_alg->num_addr_pins));
-                if (bit_mode_16) {
+                if (extra_addr_bits == 0) {
                     APIO_WRAP_TOP();
+                }
+                APIO_ADD_INSTR(APIO_IN_PINS(addr_alg->num_addr_pins));
+                for (int ii = extra_addr_bits; ii > 0; ii--) {
+                // If the number of ROM table bits is more than the number
+                // of address pins, pad the input with additional 0s to
+                // fill the address.
+                    if (ii == 1) {
+                        // Last bit, so wrap the top of the loop
+                        APIO_WRAP_TOP();
+                    }
                     APIO_ADD_INSTR(APIO_IN_NULL(1));
                 }
 
