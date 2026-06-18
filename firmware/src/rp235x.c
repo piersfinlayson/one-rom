@@ -293,15 +293,15 @@ void setup_initial_gpios(void) {
     // Take IO bank and pads bank out of reset
     RESET_RESET &= ~(RESET_IOBANK0 | RESET_PADS_BANK0);
     while (!(RESET_DONE & (RESET_IOBANK0 | RESET_PADS_BANK0)));
+#endif // REAL_HARDWARE
 
-    // Set up the image select pins
-    for (int ii = 0; ii < MAX_IMG_SEL_PINS; ii++) {
-        if (HW->gpio_sel[ii] < MAX_GPIOS) {
-            GPIO_CTRL(ii) = GPIO_CTRL_RESET;
-            GPIO_PAD(ii) = PAD_INPUT | PAD_OUTPUT_DISABLE;
-        }
+    // Initialize all pins to input only, no pulls
+    for (int ii = 0; ii < MAX_GPIOS; ii++) {
+        APIO_GPIO_PULL_NONE(ii);
+        APIO_GPIO_INPUT_ONLY(ii);
     }
-    
+
+#if REAL_HARDWARE
     // If there's a status LED, set it up as an output pin, high (LED off).
     if (HW->gpio_status < MAX_GPIOS) {
         uint8_t pin = HW->gpio_status;
