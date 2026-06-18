@@ -125,8 +125,20 @@ impl Emulator {
         unsafe { ffi::epio_step_cycles(self.epio_or_panic(), cycles) };
     }
 
+    /// Return a bitmask of all GPIO pins currently driven by the PIO or
+    /// externally.
     pub fn read_driven_pins(&self) -> u64 {
         unsafe { ffi::epio_read_driven_pins(self.epio_or_panic()) }
+    }
+
+    /// Return a bitmask of all GPIO pins that have a pull-up configured.
+    pub fn read_pull_up_pins(&self) -> u64 {
+        unsafe { ffi::epio_read_pull_up_pins(self.epio_or_panic()) }
+    }
+
+    /// Return a bitmask of all GPIO pins that have a pull-down configured.
+    pub fn read_pull_down_pins(&self) -> u64 {
+        unsafe { ffi::epio_read_pull_down_pins(self.epio_or_panic()) }
     }
 
     // ── Internal helpers ─────────────────────────────────────────────────────
