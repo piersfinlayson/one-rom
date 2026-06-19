@@ -527,9 +527,9 @@ pub struct ChipSetConfig {
     /// chip sets, and multiple members for multi-ROM and banked ROM sets.
     ///
     /// For multi-ROM sets, the array order determines X pin assignment:
-    ///   chips[0] — primary socket (One ROM physically installed here)
-    ///   chips[1] — X1 pin monitors this socket's chip select via fly-lead
-    ///   chips[2] — X2 pin monitors this socket's chip select via fly-lead
+    ///   chip0 — primary socket (One ROM physically installed here)
+    ///   chip1 — X1 pin monitors this socket's chip select via fly-lead
+    ///   chip2 — X2 pin monitors this socket's chip select via fly-lead
     /// Maximum 3 chips per multi-ROM set (primary + 2 X pins).
     #[serde(alias = "roms")]
     pub chips: Vec<ChipConfig>,
@@ -598,7 +598,7 @@ pub struct ChipConfig {
     ///   - V2 multi-ROM set chips[1+] (secondary sockets — free pass)
     ///   - Lines with allow_ignore in chip_types.json (datasheet-defined)
     /// 
-    /// Required for chips[0] in multi-ROM sets and for single-chip sets
+    /// Required for chip0 in multi-ROM sets and for single-chip sets
     /// where a line needs ignoring for custom circuit reasons.
     /// Misuse can cause bus contention — only set when intentional.
     #[serde(default)]
