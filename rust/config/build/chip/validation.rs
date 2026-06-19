@@ -25,6 +25,11 @@ pub struct ControlLine {
     pub pin: u8,
     #[serde(rename = "type")]
     pub line_type: ControlLineType,
+    /// Whether this line may be set to Ignore in a ChipConfig without the
+    /// explicit allow_cs_ignore flag.  Set only for lines where the chip
+    /// datasheet explicitly defines a don't-care state (e.g. 23C1001 cs1/cs2).
+    #[serde(default)]
+    pub allow_ignore: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -88,6 +93,13 @@ pub struct ChipType {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub power: Option<Vec<PowerPin>>,
     pub deselect_when_address_all_high: Option<Vec<u8>>,
+
+    /// Permit this chip type to have both configurable CS lines (cs1/cs2/cs3)
+    /// and fixed CE/OE lines simultaneously in its control map.  Most chip
+    /// types are either CS-style or CE/OE-style; only chips like 23C1001 are
+    /// both.  Replaces the old per-chip-name special case in validation.
+    #[serde(default)]
+    pub allow_mixed_control: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -413,12 +425,14 @@ impl ChipType {
         }
 
         // Check for incompatible chip select line combinations.
+        // CS1/2/3 (configurable) and CE/OE (fixed) may only coexist if the
+        // chip type explicitly declares allow_mixed_control in chip_types.json.
         let cs_lines: Vec<&str> = self.control.keys().map(|s| s.as_str()).collect();
+        #[allow(clippy::collapsible_if)]
         if (cs_lines.contains(&"cs1") || cs_lines.contains(&"cs2") || cs_lines.contains(&"cs3"))
             && (cs_lines.contains(&"ce") || cs_lines.contains(&"oe"))
         {
-            // 23C1001 is the only chip type to mix CE/OE and CS lines.
-            if type_name != "23C1001" {
+            if !self.allow_mixed_control {
                 return Err(ValidationError::IncompatibleControlLines {
                     chip_type: type_name.to_string(),
                     combination: format!("{:?}", cs_lines),

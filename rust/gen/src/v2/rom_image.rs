@@ -7,11 +7,37 @@
 //! `rom_data_buf`), from the address/CS-data layouts already derived for
 //! that set.
 //!
-//! Covers Single and Banked (2, 3 or 4 chips), both `AlgData0`/`BitMode8`
-//! (1 byte/entry) and `AlgData1`-or-`AlgData0`/`BitMode16` (2 bytes/entry -
-//! `force_16_bit` doesn't affect the table, only which algorithm serves
-//! it, so this function doesn't need it). Multi is out of scope for now -
-//! see the One ROM v2 handoff notes.
+//! Covers Single, Banked (2, 3 or 4 chips), and Multi (2 or 3 chips), both
+//! `AlgData0`/`BitMode8` (1 byte/entry) and `AlgData1`-or-`AlgData0`/
+//! `BitMode16` (2 bytes/entry - `force_16_bit` doesn't affect the table,
+//! only which algorithm serves it, so this function doesn't need it).
+//!
+//! ## Multi sets
+//!
+//! For Multi sets, the address PIO's full window (all `num_addr_pins` bits)
+//! indexes the ROM table. Within that window, each table entry is identified
+//! by three one-hot select bits:
+//!
+//! - **CS1/CE bit** (`cs1_gpio - addr_layout.gpio_base`): derived from the
+//!   primary select line in `cs_data_layout.select_lines` (role `Cs1`, `Ce`,
+//!   or `Oe`). Chip0's data lives at addresses where this bit is 1.
+//! - **X1 bit** (`addr_layout.x1_gpio - addr_layout.gpio_base`): chip1's
+//!   data lives at addresses where this bit is 1.
+//! - **X2 bit** (`addr_layout.x2_gpio - addr_layout.gpio_base`): chip2's
+//!   data (3-chip set only) at addresses where this bit is 1.
+//!
+//! CS lines are always logically active-high in the ROM table (the CS-detect
+//! PIO uses `serve_cs_low_0 = 1` for Multi, and `GpioOverInvert` is applied
+//! to hardware active-low lines). Entries where 0 or >1 select bits are 1
+//! receive `PAD_NO_CHIP_BYTE` (hardware can never produce these combinations
+//! in normal operation).
+//!
+//! The CS1/CE GPIO is guaranteed to fall within `addr_layout`'s span
+//! `[gpio_base, gpio_base + num_addr_pins)` for supported boards: the CS/data
+//! layout derivation requires CS1+X1[+X2] to be contiguous and within the
+//! same PIO window, and the address layout derivation includes X1/X2 in its
+//! span — since CS1 is adjacent to X1/X2 it falls within the span
+//! automatically.
 //!
 //! For `BitMode16`, `addr_pin_gpios` has 18 entries (A0-A17 - "A-1",
 //! `address_pins()[0]`, is excluded per `addr_layout`'s carve-out) and
@@ -52,6 +78,7 @@ use super::rom_slot::{bytes_per_word, table_entries};
 ///   `(addr_pin_gpios[n] - gpio_base)` of `i`. For `BitMode8` this is the
 ///   byte address directly; for `BitMode16` it's the 16-bit word address
 ///   (A0..A17 - see module docs for the byte/word addressing convention).
+/// - For Single sets: always chip 0.
 /// - For Banked sets:
 ///   - 2 chips: bit `(x1_gpio - gpio_base)` of `i` selects `chips[0]` or
 ///     `chips[1]`.
@@ -61,6 +88,7 @@ use super::rom_slot::{bytes_per_word, table_entries};
 ///     both set - "both jumpered") means no chip occupies this portion of
 ///     the address space, and the table entry is `bytes_per_word` copies
 ///     of `PAD_NO_CHIP_BYTE`, used as-is with no data-pin mangling.
+/// - For Multi sets: one-hot CS/X detection — see module docs.
 /// - Any other bit of `i` (used by neither of the above) is a "padding
 ///   pool" bit: it doesn't affect the table entry, so the same value is
 ///   naturally produced for both its settings.
@@ -77,10 +105,8 @@ use super::rom_slot::{bytes_per_word, table_entries};
 ///   bytes_per_word(alg_dma)` exceeds [`crate::MAX_IMAGE_SIZE`] - the
 ///   per-slot RAM budget (only one slot is served at a time, so this is
 ///   the limit on a single table, not the sum across slots).
-/// - [`Error::UnsupportedFeature`] if `set_type` is `ChipSetType::Multi`
-///   (out of scope - see handoff notes).
-/// - [`Error::InvalidConfig`] if `chips.len()` isn't `1` for `Single`, or
-///   `2`/`3`/`4` for `Banked`.
+/// - [`Error::InvalidConfig`] if `chips.len()` isn't `1` for `Single`,
+///   `2`/`3`/`4` for `Banked`, or `2`/`3` for `Multi`.
 /// - [`Error::MissingImageData`] if any `chips[n].data()` is `None` - by
 ///   the time a `Chip` reaches here its image data must already be
 ///   validated/sized (`from_raw_rom_image` + `SizeHandling`).
@@ -159,10 +185,56 @@ pub fn build_rom_image(
             }
         }
         ChipSetType::Multi => {
-            return Err(Error::UnsupportedFeature {
-                feat: "Multi-set ROM image generation",
-            });
+            if chips.len() < 2 || chips.len() > 3 {
+                return Err(Error::InvalidConfig {
+                    error: format!("Multi set must have 2 or 3 chips, got {}", chips.len()),
+                });
+            }
+            Vec::new()
         }
+    };
+
+    // Multi-set one-hot select bit positions (cs1_bit, x1_bit, x2_bit).
+    //
+    // CS1/CE's GPIO comes from cs_data_layout.select_lines (the primary
+    // select line, role Cs1, Ce, or Oe). Its bit position within the table
+    // index `i` is (gpio - addr_layout.gpio_base). CS1/CE falls within the
+    // addr PIO window as a "gap" bit even though it isn't in addr_pin_gpios —
+    // it's adjacent to X1/X2 (all three are contiguous per the CS layout
+    // derivation), so it lands within the addr span automatically.
+    //
+    // X1/X2 positions come from addr_layout.x1_gpio/x2_gpio (the addr PIO's
+    // resolved GPIOs for these pins, which may differ from cs_data_layout's
+    // for dual-bonded pins — the addr PIO's values are what index the table).
+    let multi_select: Option<(u8, u8, Option<u8>)> = if set_type == ChipSetType::Multi {
+        use super::cs_data_layout::SelectRole;
+        let cs1_gpio = cs_data_layout
+            .select_lines
+            .iter()
+            .find(|l| matches!(l.role, SelectRole::Cs1 | SelectRole::Ce | SelectRole::Oe))
+            .expect("Multi cs_data_layout must have a primary select line")
+            .gpio;
+        let cs1_bit = cs1_gpio - addr_layout.gpio_base;
+
+        let x1_bit = addr_layout
+            .x1_gpio
+            .expect("Multi AddrLayout must have x1_gpio")
+            - addr_layout.gpio_base;
+
+        let x2_bit = if chips.len() >= 3 {
+            Some(
+                addr_layout
+                    .x2_gpio
+                    .expect("3-chip Multi AddrLayout must have x2_gpio")
+                    - addr_layout.gpio_base,
+            )
+        } else {
+            None
+        };
+
+        Some((cs1_bit, x1_bit, x2_bit))
+    } else {
+        None
     };
 
     // Bit positions (within the mangled value) for each chip data line
@@ -208,22 +280,49 @@ pub fn build_rom_image(
             chip_addr |= bit << n;
         }
 
-        let mut bank_index: usize = 0;
-        for (n, &bit_pos) in bank_bit_positions.iter().enumerate() {
-            let bit = ((i >> bit_pos) & 1) as usize;
-            bank_index |= bit << n;
-        }
+        // Determine which chip to serve for this table index.
+        //
+        // Multi: one-hot — exactly one of cs1/x1/x2 must be 1. 0 or >1
+        // active → no chip selected → PAD_NO_CHIP_BYTE.
+        //
+        // Banked: binary bank index from X1/X2. Out-of-range (e.g. both
+        // jumpers fitted on a 3-chip set, bank index 3) → PAD_NO_CHIP_BYTE.
+        //
+        // Single: always chip 0.
+        let chip_index: Option<usize> = if let Some((cs1_bit, x1_bit, x2_bit)) = multi_select {
+            let cs1_active = ((i >> cs1_bit) & 1) == 1;
+            let x1_active = ((i >> x1_bit) & 1) == 1;
+            let x2_active = x2_bit.is_some_and(|b| ((i >> b) & 1) == 1);
 
-        if bank_index >= chips.len() {
-            // Only reachable for a 3-chip Banked set with X1 and X2 both
-            // set ("both jumpered"): no chip occupies this portion of the
-            // address space. PAD_NO_CHIP_BYTE is used directly (for each
-            // byte of the entry), with no data-pin mangling.
-            image.extend(core::iter::repeat_n(PAD_NO_CHIP_BYTE, word_bytes));
-            continue;
-        }
+            match (cs1_active, x1_active, x2_active) {
+                (true, false, false) => Some(0),
+                (false, true, false) => Some(1),
+                (false, false, true) => {
+                    // chip2 — only valid for 3-chip sets; already validated above
+                    if chips.len() >= 3 { Some(2) } else { None }
+                }
+                _ => None, // no chip active, or multiple active
+            }
+        } else {
+            let mut bank_index: usize = 0;
+            for (n, &bit_pos) in bank_bit_positions.iter().enumerate() {
+                let bit = ((i >> bit_pos) & 1) as usize;
+                bank_index |= bit << n;
+            }
+            if bank_index < chips.len() { Some(bank_index) } else { None }
+        };
 
-        if chip_addr >= chip_word_counts[bank_index] {
+        let chip_index = match chip_index {
+            None => {
+                // No chip selected (or invalid combination): pad directly
+                // with no data-pin mangling.
+                image.extend(core::iter::repeat_n(PAD_NO_CHIP_BYTE, word_bytes));
+                continue;
+            }
+            Some(idx) => idx,
+        };
+
+        if chip_addr >= chip_word_counts[chip_index] {
             // chip_addr is beyond this chip's capacity: occurs for
             // non-power-of-2 chips (e.g. 23QL384 at 48KB = 0xC000 bytes)
             // where the address lines cover a larger space than the chip
@@ -233,7 +332,7 @@ pub fn build_rom_image(
             continue;
         }
 
-        let chip_image = chip_data[bank_index];
+        let chip_image = chip_data[chip_index];
 
         // Raw value at chip_addr, as a u32 (8 or 16 significant bits
         // depending on word_bytes): for BitMode8, the byte at chip_addr;
@@ -280,6 +379,8 @@ mod tests {
     use onerom_metadata::BitModes;
 
     use crate::image::{CsConfig, CsLogic, SizeHandling};
+
+    use super::super::cs_data_layout::{SelectLine, SelectRole};
 
     /// Build a `Chip2364` (8192-byte image) with the given leading bytes;
     /// the rest of the image is zero-filled. Test-only convenience -
@@ -584,18 +685,198 @@ mod tests {
         ));
     }
 
+    // =========================================================================
+    // Multi-set tests
+    // =========================================================================
+
+    /// Synthetic Multi select layout helper.
+    ///
+    /// 4-bit table (num_addr_pins=4, 16 entries). Layout:
+    ///   - GPIO 0,1: addr bits A0, A1 (chip_addr = bit0 | (bit1<<1))
+    ///   - GPIO 2: CS1 (chip0's select; bit position 2 in `i`)
+    ///   - GPIO 3: X1  (chip1's select; bit position 3 in `i`)
+    fn multi_2chip_addr_layout() -> AddrLayout {
+        AddrLayout {
+            gpio_base: 0,
+            num_addr_pins: 4,
+            x1_gpio: Some(3),
+            x2_gpio: None,
+            addr_pin_gpios: alloc::vec![0, 1],
+            excess_addr_pin_gpios: alloc::vec![],
+        }
+    }
+
+    fn multi_cs_data_layout_with_cs1_at(cs1_gpio: u8) -> CsDataLayout {
+        CsDataLayout {
+            gpio_base: 0,
+            base_data_pin: 0,
+            num_data_pins: 8,
+            data_pin_gpios: alloc::vec![0, 1, 2, 3, 4, 5, 6, 7],
+            base_cs_pin: cs1_gpio,
+            num_cs_pins: 2,
+            cs_ignore_index: None,
+            select_lines: alloc::vec![
+                SelectLine { role: SelectRole::Cs1, gpio: cs1_gpio },
+                SelectLine { role: SelectRole::X1, gpio: 3 },
+            ],
+            alg_cs2: None,
+        }
+    }
+
+    /// 2-chip Multi, 8-bit, identity data mapping.
+    ///
+    /// Table layout (16 entries, CS1=bit2, X1=bit3, addr=bits0-1):
+    ///   i=0..3   (CS1=0, X1=0): no chip → PAD
+    ///   i=4..7   (CS1=1, X1=0): chip0, addr 0..3
+    ///   i=8..11  (CS1=0, X1=1): chip1, addr 0..3
+    ///   i=12..15 (CS1=1, X1=1): both active → PAD
     #[test]
-    fn multi_set_is_unsupported() {
+    fn multi_2chip_8bit_one_hot_selection() {
+        let addr_layout = multi_2chip_addr_layout();
+        let cs_data_layout = multi_cs_data_layout_with_cs1_at(2);
+
+        let chips = [
+            chip_with_bytes("chip0.bin", &[0xA0, 0xA1, 0xA2, 0xA3]),
+            chip_with_bytes("chip1.bin", &[0xB0, 0xB1, 0xB2, 0xB3]),
+        ];
+
+        let table = build_rom_image(
+            &addr_layout,
+            &cs_data_layout,
+            ChipSetType::Multi,
+            &chips,
+            &alg_dma_8bit(),
+        )
+        .expect("build_rom_image should succeed");
+
+        assert_eq!(table.len(), 16);
+        assert_eq!(&table[0..4],  &[PAD_NO_CHIP_BYTE; 4]);  // no chip active
+        assert_eq!(&table[4..8],  &[0xA0, 0xA1, 0xA2, 0xA3]); // chip0
+        assert_eq!(&table[8..12], &[0xB0, 0xB1, 0xB2, 0xB3]); // chip1
+        assert_eq!(&table[12..16], &[PAD_NO_CHIP_BYTE; 4]); // both active
+    }
+
+    /// 3-chip Multi, 8-bit. CS1=bit1, X1=bit2, X2=bit3, addr=bit0.
+    ///
+    /// Layout:
+    ///   - GPIO 0: A0 (addr_pin_gpios=[0])
+    ///   - GPIO 1: CS1 (chip0)
+    ///   - GPIO 2: X1  (chip1)
+    ///   - GPIO 3: X2  (chip2)
+    /// 
+    /// num_addr_pins=4 → 16 entries.
+    #[test]
+    fn multi_3chip_8bit_one_hot_selection() {
         let addr_layout = AddrLayout {
             gpio_base: 0,
-            num_addr_pins: 1,
-            x1_gpio: None,
-            x2_gpio: None,
+            num_addr_pins: 4,
+            x1_gpio: Some(2),
+            x2_gpio: Some(3),
             addr_pin_gpios: alloc::vec![0],
             excess_addr_pin_gpios: alloc::vec![],
         };
-        let cs_data_layout = identity_cs_data_layout_8bit();
-        let chips = [chip_with_bytes("test.bin", &[0x00, 0x00])];
+        let cs_data_layout = CsDataLayout {
+            gpio_base: 0,
+            base_data_pin: 0,
+            num_data_pins: 8,
+            data_pin_gpios: alloc::vec![0, 1, 2, 3, 4, 5, 6, 7],
+            base_cs_pin: 1,
+            num_cs_pins: 3,
+            cs_ignore_index: None,
+            select_lines: alloc::vec![
+                SelectLine { role: SelectRole::Cs1, gpio: 1 },
+                SelectLine { role: SelectRole::X1,  gpio: 2 },
+                SelectLine { role: SelectRole::X2,  gpio: 3 },
+            ],
+            alg_cs2: None,
+        };
+
+        let chips = [
+            chip_with_bytes("chip0.bin", &[0xA0, 0xA1]),
+            chip_with_bytes("chip1.bin", &[0xB0, 0xB1]),
+            chip_with_bytes("chip2.bin", &[0xC0, 0xC1]),
+        ];
+
+        let table = build_rom_image(
+            &addr_layout,
+            &cs_data_layout,
+            ChipSetType::Multi,
+            &chips,
+            &alg_dma_8bit(),
+        )
+        .expect("build_rom_image should succeed");
+
+        assert_eq!(table.len(), 16);
+        // CS1_bit=1, X1_bit=2, X2_bit=3, addr_bit=0
+        // i=0  (0000): no select → PAD
+        // i=1  (0001): only addr bit → PAD
+        // i=2  (0010): CS1=1 → chip0, addr=0 → 0xA0
+        // i=3  (0011): CS1=1 → chip0, addr=1 → 0xA1
+        // i=4  (0100): X1=1  → chip1, addr=0 → 0xB0
+        // i=5  (0101): X1=1  → chip1, addr=1 → 0xB1
+        // i=6  (0110): CS1+X1 → PAD
+        // i=8  (1000): X2=1  → chip2, addr=0 → 0xC0
+        // i=9  (1001): X2=1  → chip2, addr=1 → 0xC1
+        assert_eq!(table[0], PAD_NO_CHIP_BYTE);
+        assert_eq!(table[1], PAD_NO_CHIP_BYTE);
+        assert_eq!(table[2], 0xA0);
+        assert_eq!(table[3], 0xA1);
+        assert_eq!(table[4], 0xB0);
+        assert_eq!(table[5], 0xB1);
+        assert_eq!(table[6], PAD_NO_CHIP_BYTE);
+        assert_eq!(table[8], 0xC0);
+        assert_eq!(table[9], 0xC1);
+        #[allow(clippy::needless_range_loop)]
+        for idx in 10..16usize {
+            assert_eq!(table[idx], PAD_NO_CHIP_BYTE, "entry {idx} should be PAD");
+        }
+    }
+
+    /// Multi set with Ce-role primary select (27-series in multi-ROM).
+    /// Same layout as multi_2chip_8bit_one_hot_selection but the primary
+    /// select line has role Ce instead of Cs1.
+    #[test]
+    fn multi_2chip_ce_role_primary_select() {
+        let addr_layout = multi_2chip_addr_layout();
+        let cs_data_layout = CsDataLayout {
+            gpio_base: 0,
+            base_data_pin: 0,
+            num_data_pins: 8,
+            data_pin_gpios: alloc::vec![0, 1, 2, 3, 4, 5, 6, 7],
+            base_cs_pin: 2,
+            num_cs_pins: 2,
+            cs_ignore_index: None,
+            select_lines: alloc::vec![
+                SelectLine { role: SelectRole::Ce, gpio: 2 },
+                SelectLine { role: SelectRole::X1, gpio: 3 },
+            ],
+            alg_cs2: None,
+        };
+
+        let chips = [
+            chip_with_bytes("chip0.bin", &[0xC0, 0xC1, 0xC2, 0xC3]),
+            chip_with_bytes("chip1.bin", &[0xD0, 0xD1, 0xD2, 0xD3]),
+        ];
+
+        let table = build_rom_image(
+            &addr_layout,
+            &cs_data_layout,
+            ChipSetType::Multi,
+            &chips,
+            &alg_dma_8bit(),
+        )
+        .expect("build_rom_image should succeed for Ce-role primary select");
+
+        assert_eq!(&table[4..8],  &[0xC0, 0xC1, 0xC2, 0xC3]); // CE=1 → chip0
+        assert_eq!(&table[8..12], &[0xD0, 0xD1, 0xD2, 0xD3]); // X1=1 → chip1
+    }
+
+    /// Multi with wrong chip count (1 chip) errors.
+    #[test]
+    fn multi_with_wrong_chip_count_errors() {
+        let addr_layout = multi_2chip_addr_layout();
+        let cs_data_layout = multi_cs_data_layout_with_cs1_at(2);
+        let chips = [chip_with_bytes("only.bin", &[0x00])];
 
         let result = build_rom_image(
             &addr_layout,
@@ -605,7 +886,7 @@ mod tests {
             &alg_dma_8bit(),
         );
 
-        assert!(matches!(result, Err(Error::UnsupportedFeature { .. })));
+        assert!(matches!(result, Err(Error::InvalidConfig { .. })));
     }
 
     #[test]

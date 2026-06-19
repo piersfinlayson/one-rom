@@ -525,6 +525,12 @@ pub struct ChipSetConfig {
 
     /// Array of chip configurations in this set.  Contains 1 member for single
     /// chip sets, and multiple members for multi-ROM and banked ROM sets.
+    ///
+    /// For multi-ROM sets, the array order determines X pin assignment:
+    ///   chips[0] — primary socket (One ROM physically installed here)
+    ///   chips[1] — X1 pin monitors this socket's chip select via fly-lead
+    ///   chips[2] — X2 pin monitors this socket's chip select via fly-lead
+    /// Maximum 3 chips per multi-ROM set (primary + 2 X pins).
     #[serde(alias = "roms")]
     pub chips: Vec<ChipConfig>,
 
@@ -574,6 +580,29 @@ pub struct ChipConfig {
     /// Optional Chip Select 3 logic - only valid for Chip Types that have CS3
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cs3: Option<CsLogic>,
+
+    /// Optional Chip Enable logic override - only valid for chip types that
+    /// have a /CE control line.  In V2 multi-ROM sets, may be set to Ignore
+    /// when /CE is tied active and /OE is the fly-leaded chip select, or vice
+    /// versa.  Not valid for V1 configurations.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ce: Option<CsLogic>,
+
+    /// Optional Output Enable logic override - only valid for chip types that
+    /// have an /OE control line.  Not valid for V1 configurations.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub oe: Option<CsLogic>,
+
+    /// Explicitly permit CS/CE/OE lines to be set to Ignore outside the
+    /// contexts where this is implicitly allowed:
+    ///   - V2 multi-ROM set chips[1+] (secondary sockets — free pass)
+    ///   - Lines with allow_ignore in chip_types.json (datasheet-defined)
+    /// 
+    /// Required for chips[0] in multi-ROM sets and for single-chip sets
+    /// where a line needs ignoring for custom circuit reasons.
+    /// Misuse can cause bus contention — only set when intentional.
+    #[serde(default)]
+    pub allow_cs_ignore: bool,
 
     /// Optional size handling configuration for this Chip.  Used to specify
     /// handling when the image supplied isn't the correct size for this Chip
@@ -667,6 +696,12 @@ pub struct FileSpec {
     /// Provided for information only.
     pub cs3: Option<CsLogic>,
 
+    /// Optional Chip Enable logic override.  Provided for information only.
+    pub ce: Option<CsLogic>,
+
+    /// Optional Output Enable logic override.  Provided for information only.
+    pub oe: Option<CsLogic>,
+
     /// ROM Set ID that this file belongs to.  Provided for information only.
     pub set_id: usize,
 
@@ -685,7 +720,7 @@ pub struct FileData {
     pub id: usize,
 
     /// File data
-    pub data: Vec<u8>,
+    pub data: alloc::vec::Vec<u8>,
 }
 
 /// Location within a larger Chip image that the specific image to use resides

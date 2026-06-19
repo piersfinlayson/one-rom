@@ -79,6 +79,7 @@ use crate::{Error, MAX_IMAGE_SIZE};
 
 use super::alg_preference::AddrAlgPreference;
 use super::gpio_window::fits_pio_window;
+use super::multi_cs_config::MultiChipCsConfig;
 
 /// Minimum width (in GPIOs/bits) of the address-read range, i.e. the
 /// minimum 64KB ROM table size.
@@ -303,11 +304,17 @@ fn addr_line_candidates(
 /// QUESTION/TODO: for Multi sets with heterogeneous chip types, chip[0]'s
 /// address-line layout is assumed representative of the whole set. Revisit
 /// if that's not actually true in practice.
+/// `multi_cs_config` must be `Some` for `ChipSetType::Multi`, `None`
+/// otherwise. It provides the per-chip select and commoned line GPIOs,
+/// which are included in the addr span so that CE/OE/CS1 remain within
+/// the address PIO window even when they fall between the addr lines and
+/// X1/X2 in the GPIO numbering.
 pub fn derive_addr_layout(
     board: Board,
     set_type: ChipSetType,
     chip_types: &[ChipType],
     bit_mode: BitModes,
+    multi_cs_config: Option<&MultiChipCsConfig>,
 ) -> Result<AddrLayout, LayoutError> {
     let chip0 = chip_types[0];
 
@@ -371,6 +378,28 @@ pub fn derive_addr_layout(
         }
     }
 
+    // For Multi sets, precompute the per_chip_select and commoned line
+    // GPIOs. These are fixed (not dual-bonded) and must be within the addr
+    // PIO window so the ROM table can index on them correctly. Including
+    // them in span_gpios forces the combo scorer to pick an X1/X2 bond
+    // that keeps CE/OE/CS1 within the window span.
+    let multi_span_gpios: Vec<u8> = if matches!(set_type, ChipSetType::Multi) {
+        if let Some(mcc) = multi_cs_config {
+            core::iter::once(mcc.per_chip_select)
+                .chain(mcc.commoned_lines.iter().copied())
+                .filter_map(|kind| {
+                    let name = kind.name();
+                    let line = chip0.control_lines().iter().find(|l| l.name == name)?;
+                    board.gpios_for_socket_pin(line.pin).first().copied()
+                })
+                .collect()
+        } else {
+            Vec::new()
+        }
+    } else {
+        Vec::new()
+    };
+
     // --- Step 2/3: enumerate dual-bond combinations, score each ----------
     let two_option_slots: Vec<usize> = candidates
         .iter()
@@ -403,6 +432,13 @@ pub fn derive_addr_layout(
         let mut span_gpios: BTreeSet<u8> = resolved_vec[..num_in_range].iter().copied().collect();
         for extra_idx in [x1_idx, x2_idx].into_iter().flatten() {
             span_gpios.insert(resolved_vec[extra_idx]);
+        }
+        // For Multi sets, also include the per_chip_select and commoned
+        // line GPIOs. These are physically present in the CS range and must
+        // be within the addr PIO window for the ROM table to be indexed
+        // correctly (CE/OE/CS1 appear as "gap" bits in the table index).
+        for &gpio in &multi_span_gpios {
+            span_gpios.insert(gpio);
         }
 
         // span_gpios is non-empty (num_in_range >= 1 always, since
@@ -476,6 +512,7 @@ mod tests {
             ChipSetType::Single,
             &[ChipType::Chip2364],
             BitModes::BitMode8,
+            None,
         )
         .expect("layout derivation should succeed");
 
@@ -518,6 +555,7 @@ mod tests {
             ChipSetType::Banked,
             &[ChipType::Chip27128, ChipType::Chip27128],
             BitModes::BitMode8,
+            None,
         )
         .expect("layout derivation should succeed");
 
@@ -557,6 +595,7 @@ mod tests {
             ChipSetType::Single,
             &[ChipType::Chip27C400],
             BitModes::BitMode16,
+            None,
         )
         .expect("layout derivation should succeed");
 
@@ -575,28 +614,140 @@ mod tests {
         );
     }
 
-    /// 27C080 (1MB, 20 address lines, BitMode8): A19 is excess.
-    /// max_useful_addr_lines = log2(512KB/1) = 19, so num_in_range=19,
-    /// num_excess=1. The layout must have 19 entries in addr_pin_gpios
-    /// and 1 in excess_addr_pin_gpios.
+    /// Fire32B, single 27C010 (128KB EPROM, 17 address lines).
     ///
-    /// Exact GPIO values depend on the Fire board used for 27C080 and are
-    /// filled in once the board's socket_pin_map is known. The structural
-    /// assertions here (lengths) are board-independent.
+    /// 27C010 address pins (A0-A16): physical pins
+    /// 12,11,10,9,8,7,6,5,27,26,23,25,4,28,29,3,2 → GPIOs
+    /// 34,33,32,31,30,29,28,27,23,22,20,21,26,24,25,19,18.
+    ///
+    /// Pin 2 (A16) is dual-bonded [12,18]: GPIO 18 wins (span 17 vs 23).
+    /// Resulting span [18,34] = 17 GPIOs, gpio_base=18, num_addr_pins=17.
+    /// [18,35) fits the [16,48) PIO window.
     #[test]
-    #[ignore = "fill in board and expected GPIO values once Fire32A (or equivalent) socket_pin_map is available"]
-    fn fire_27c080_single_excess_a19() {
-        // Placeholder - replace Board::Fire32A and expected values once known.
+    fn fire32b_27c010_single() {
         let layout = derive_addr_layout(
-            Board::Fire32A,
+            Board::Fire32B,
+            ChipSetType::Single,
+            &[ChipType::Chip27C010],
+            BitModes::BitMode8,
+            None,
+        )
+        .expect("layout derivation should succeed");
+ 
+        assert_eq!(
+            layout,
+            AddrLayout {
+                gpio_base: 18,
+                num_addr_pins: 17,
+                x1_gpio: None,
+                x2_gpio: None,
+                addr_pin_gpios: alloc::vec![
+                    34, 33, 32, 31, 30, 29, 28, 27, 23, 22, 20, 21, 26, 24, 25, 19, 18
+                ],
+                excess_addr_pin_gpios: alloc::vec![],
+            }
+        );
+    }
+ 
+    /// Fire32B, single 27C040 (512KB EPROM, 19 address lines).
+    ///
+    /// Extends 27C010 with A17 (pin 30, dual-bonded [11,17]) and A18
+    /// (pin 31, dual-bonded [10,16]). Both prefer their higher bonds:
+    /// GPIO 17 and GPIO 16 extend the span down without widening it
+    /// unnecessarily (bonds 11/10 would push min to 10-11, span 25).
+    /// Span [16,34] = 19 GPIOs, gpio_base=16, num_addr_pins=19.
+    #[test]
+    fn fire32b_27c040_single() {
+        let layout = derive_addr_layout(
+            Board::Fire32B,
+            ChipSetType::Single,
+            &[ChipType::Chip27C040],
+            BitModes::BitMode8,
+            None,
+        )
+        .expect("layout derivation should succeed");
+ 
+        assert_eq!(
+            layout,
+            AddrLayout {
+                gpio_base: 16,
+                num_addr_pins: 19,
+                x1_gpio: None,
+                x2_gpio: None,
+                addr_pin_gpios: alloc::vec![
+                    34, 33, 32, 31, 30, 29, 28, 27, 23, 22, 20, 21, 26, 24, 25, 19, 18, 17, 16
+                ],
+                excess_addr_pin_gpios: alloc::vec![],
+            }
+        );
+    }
+ 
+    /// Fire32B, single SST39SF040 (512KB flash, 19 address lines).
+    ///
+    /// Differs from 27C040 only at A18: pin 1 (dual-bonded [13,35])
+    /// instead of pin 31. The combo scorer picks GPIO 35 for A18:
+    /// with A16=18, A17=17, A18=35 the span is the contiguous range
+    /// [17,35] = 19 GPIOs (score 19017), whereas A18=13 gives the
+    /// non-contiguous range [13,34] = 22 GPIOs (score 22013).
+    /// gpio_base=17, num_addr_pins=19. [17,36) fits [16,48).
+    #[test]
+    fn fire32b_sst39sf040_single() {
+        let layout = derive_addr_layout(
+            Board::Fire32B,
+            ChipSetType::Single,
+            &[ChipType::ChipSST39SF040],
+            BitModes::BitMode8,
+            None,
+        )
+        .expect("layout derivation should succeed");
+ 
+        assert_eq!(
+            layout,
+            AddrLayout {
+                gpio_base: 17,
+                num_addr_pins: 19,
+                x1_gpio: None,
+                x2_gpio: None,
+                addr_pin_gpios: alloc::vec![
+                    34, 33, 32, 31, 30, 29, 28, 27, 23, 22, 20, 21, 26, 24, 25, 19, 18, 17, 35
+                ],
+                excess_addr_pin_gpios: alloc::vec![],
+            }
+        );
+    }
+ 
+    /// Fire32B, single 27C080 (1MB EPROM, 20 address lines, A19 excess).
+    ///
+    /// Replaces the earlier Board::Fire32A placeholder. 27C080 extends
+    /// 27C040 with A19 on pin 1 (dual-bonded [13,35]). max_useful_addr_lines
+    /// for BitMode8 = 19, so A19 is excess. In-range A0-A18 resolve
+    /// identically to 27C040 (gpio_base=16, num_addr_pins=19). For the
+    /// excess A19, both GPIO 13 and 35 produce equal in-range scores;
+    /// combo 7 (bit3=0 → GPIO 13) comes before combo 15 (bit3=1 → GPIO 35)
+    /// in the iteration, so excess_addr_pin_gpios=[13].
+    #[test]
+    fn fire32b_27c080_single_excess_a19() {
+        let layout = derive_addr_layout(
+            Board::Fire32B,
             ChipSetType::Single,
             &[ChipType::Chip27C080],
             BitModes::BitMode8,
+            None,
         )
         .expect("layout derivation should succeed");
-
-        assert_eq!(layout.addr_pin_gpios.len(), 19, "19 in-range address lines");
-        assert_eq!(layout.excess_addr_pin_gpios.len(), 1, "1 excess line (A19)");
-        assert_eq!(layout.num_addr_pins, 19); // 2^19 * 1 = 512KB table
+ 
+        assert_eq!(
+            layout,
+            AddrLayout {
+                gpio_base: 16,
+                num_addr_pins: 19,
+                x1_gpio: None,
+                x2_gpio: None,
+                addr_pin_gpios: alloc::vec![
+                    34, 33, 32, 31, 30, 29, 28, 27, 23, 22, 20, 21, 26, 24, 25, 19, 18, 17, 16
+                ],
+                excess_addr_pin_gpios: alloc::vec![13],
+            }
+        );
     }
 }

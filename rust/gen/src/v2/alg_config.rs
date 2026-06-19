@@ -370,6 +370,7 @@ mod tests {
             ChipSetType::Single,
             &[ChipType::Chip2364],
             bit_mode,
+            None,
         )
         .expect("addr layout derivation should succeed");
         let cs_data_layout = derive_cs_data_layout(
@@ -378,6 +379,7 @@ mod tests {
             &[ChipType::Chip2364],
             &cs_config,
             Some(&addr_layout),
+            None,
         )
         .expect("cs/data layout derivation should succeed");
 
@@ -452,6 +454,7 @@ mod tests {
             ChipSetType::Banked,
             &[ChipType::Chip2364, ChipType::Chip2364],
             bit_mode,
+            None,
         )
         .expect("addr layout derivation should succeed");
         let cs_data_layout = derive_cs_data_layout(
@@ -460,6 +463,7 @@ mod tests {
             &[ChipType::Chip2364, ChipType::Chip2364],
             &cs_config,
             Some(&addr_layout),
+            None,
         )
         .expect("cs/data layout derivation should succeed");
 
@@ -515,6 +519,7 @@ mod tests {
             ChipSetType::Single,
             &[ChipType::Chip23QL384],
             bit_mode,
+            None,
         )
         .expect("addr layout derivation should succeed");
         let cs_data_layout = derive_cs_data_layout(
@@ -523,6 +528,7 @@ mod tests {
             &[ChipType::Chip23QL384],
             &cs_config,
             Some(&addr_layout),
+            None,
         )
         .expect("cs/data layout derivation should succeed");
 
@@ -716,6 +722,7 @@ mod tests {
             ChipSetType::Single,
             &[ChipType::Chip2364],
             bit_mode,
+            None,
         )
         .expect("addr layout should succeed");
         let cs_data_layout = derive_cs_data_layout(
@@ -724,6 +731,7 @@ mod tests {
             &[ChipType::Chip2364],
             &cs_config,
             Some(&addr_layout),
+            None,
         )
         .expect("cs layout should succeed");
         let config = build_alg_config(

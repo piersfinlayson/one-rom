@@ -459,12 +459,17 @@ fn generate_control_line_spec_struct() -> &'static str {
 pub struct ControlLineSpec {
     /// Signal name (e.g., "cs1", "ce", "oe")
     pub name: &'static str,
-    
+ 
     /// Physical pin number on the Chip package
     pub pin: u8,
-    
+ 
     /// Behavior type (configurable or fixed active-low)
     pub line_type: ControlLineType,
+ 
+    /// Whether this line may be set to Ignore in a ChipConfig without the
+    /// explicit allow_cs_ignore flag.  True only for lines where the chip
+    /// datasheet defines a don't-care state (e.g. 23C1001 cs1/cs2).
+    pub allow_ignore: bool,
 }"#
 }
 
@@ -846,7 +851,7 @@ fn generate_aliases_method(config: &ChipTypesConfig) -> String {
     code.push_str("    /// use onerom_config::chip::ChipType;\n");
     code.push_str("    ///\n");
     code.push_str("    /// assert_eq!(ChipType::Chip6116.aliases(), &[\"6116\", \"2016\"]);\n");
-    code.push_str("    /// assert_eq!(ChipType::Chip2364.aliases(), &[\"2364\", \"4764\", \"MCM68764\", \"MCM68A764\", \"MCM68364\", \"MCM68A364\"]);\n");
+    code.push_str("    /// assert_eq!(ChipType::Chip2364.aliases(), &[\"2364\", \"4764\", \"MCM68764\", \"MCM68A764\", \"MCM68364\", \"MCM68A364\", \"MM52164\"]);\n");
     code.push_str("    /// ```\n");
     code.push_str("    pub const fn aliases(&self) -> &'static [&'static str] {\n");
     code.push_str("        match self {\n");
@@ -1249,8 +1254,8 @@ fn generate_control_lines_method(config: &ChipTypesConfig) -> String {
                     ControlLineType::FixedActiveLow => "ControlLineType::FixedActiveLow",
                 };
                 code.push_str(&format!(
-                    "                ControlLineSpec {{ name: \"{}\", pin: {}, line_type: {} }},\n",
-                    name, control.pin, line_type
+                    "                ControlLineSpec {{ name: \"{}\", pin: {}, line_type: {}, allow_ignore: {} }},\n",
+                    name, control.pin, line_type, control.allow_ignore
                 ));
             }
 

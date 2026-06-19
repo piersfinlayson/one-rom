@@ -26,7 +26,7 @@ use onerom_metadata::{GPIO_NONE, OneromAlgCsConfig, OneromAlgDataConfig};
 use crate::image::ChipSetType;
 
 use super::alg_config::{DEFAULT_CLKDIV_FRAC, DEFAULT_CLKDIV_INT};
-use super::cs_data_layout::{CsDataLayout, SelectRole};
+use super::cs_data_layout::CsDataLayout;
 
 /// The CS-detect PIO's required polarity, as `serve_cs_low_0`.
 /// Only used for `AlgCs0` - `AlgCs2` has no such field.
@@ -42,20 +42,21 @@ fn serve_cs_low_0(set_type: ChipSetType) -> u8 {
 ///
 /// - Single/Banked: there's only one rom - its range is the whole select
 ///   range.
-/// - Multi: chip0's own select line is specifically `Cs1` (X1/X2 belong
-///   to chip1/chip2) - a single pin, at its own offset within the range.
+/// - Multi: chip0's select line is always the first entry in
+///   `select_lines` (placed there by `derive_cs_data_layout` in
+///   per_chip_select, X1, X2 order). It may be `Cs1`, `Ce`, or `Oe`
+///   depending on the chip type and which line is fly-leaded.
 ///
 /// Only used for `AlgCs0` - `AlgCs2` has no `first_rom_*` fields.
 fn first_rom_cs(layout: &CsDataLayout, set_type: ChipSetType) -> (u8, u8) {
     match set_type {
         ChipSetType::Single | ChipSetType::Banked => (layout.base_cs_pin, layout.num_cs_pins),
         ChipSetType::Multi => {
-            let cs1 = layout
+            let chip0_select = layout
                 .select_lines
-                .iter()
-                .find(|l| l.role == SelectRole::Cs1)
-                .expect("Multi sets always have a Cs1 select line");
-            (cs1.gpio - layout.gpio_base, 1)
+                .first()
+                .expect("Multi sets must have at least one select line");
+            (chip0_select.gpio - layout.gpio_base, 1)
         }
     }
 }
@@ -129,7 +130,7 @@ pub fn build_alg_cs(
 
 #[cfg(test)]
 mod tests {
-    use super::super::cs_data_layout::{AlgCs2Config, SelectLine};
+    use super::super::cs_data_layout::{AlgCs2Config, SelectLine, SelectRole};
     use super::*;
 
     fn fire24a_2364_layout() -> CsDataLayout {

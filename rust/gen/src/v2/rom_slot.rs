@@ -23,6 +23,7 @@ use super::addr_layout::{AddrLayout, LayoutError, derive_addr_layout};
 use super::alg_config::{bit_mode_for, build_alg_config, combined_alg_preference};
 use super::alg_preference::CombinedAlgPreference;
 use super::cs_data_layout::{CsDataLayout, derive_cs_data_layout};
+use super::multi_cs_config::{MultiChipCsConfig, derive_multi_cs_config};
 use super::rom_info::{build_rom_info, rom_slot_type};
 
 /// Bytes per ROM table entry/word, from `alg_dma`'s bit mode: `1` for
@@ -111,9 +112,14 @@ pub fn build_rom_slot(
     // Independent of force_16_bit (see bit_mode_for's docs).
     let bit_mode = bit_mode_for(chip_types[0], board);
 
-    let addr_layout = derive_addr_layout(board, set_type, &chip_types, bit_mode)?;
+    let multi_cs_config: Option<MultiChipCsConfig> = if set_type == ChipSetType::Multi {
+        Some(derive_multi_cs_config(chips))
+    } else {
+        None
+    };
+    let addr_layout = derive_addr_layout(board, set_type, &chip_types, bit_mode, multi_cs_config.as_ref())?;
     let cs_data_layout =
-        derive_cs_data_layout(board, set_type, &chip_types, cs_config, Some(&addr_layout))?;
+        derive_cs_data_layout(board, set_type, &chip_types, cs_config, Some(&addr_layout), multi_cs_config.as_ref())?;
 
     let alg = build_alg_config(
         board,

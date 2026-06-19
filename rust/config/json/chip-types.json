@@ -159,7 +159,8 @@
                 "MCM68764",
                 "MCM68A764",
                 "MCM68364",
-                "MCM68A364"
+                "MCM68A364",
+                "MM52164"
             ],
             "bit_modes": [8],
             "pins": 24,
@@ -1251,7 +1252,8 @@
         "23C1001": {
             "description": "128KB mask programmed ROM with fixed active-low CE/OE, plus 2 programmable CS lines",
             "function": "ROM",
-            "supported": "0.6.13",
+            "supported": "0.7.0",
+            "allow_mixed_control": true,
             "aliases": [
                 "D23C1001"
             ],
@@ -1298,11 +1300,13 @@
                 },
                 "cs1": {
                     "pin": 31,
-                    "type": "configurable"
+                    "type": "configurable",
+                    "allow_ignore": true
                 },
                 "cs2": {
                     "pin": 30,
-                    "type": "configurable"
+                    "type": "configurable",
+                    "allow_ignore": true
                 }
             },
             "power": [
@@ -1617,6 +1621,7 @@
         },
         "27C080": {
             "description": "1MB EPROM with fixed active-low CE/OE",
+            "notes": "One ROM canot serve an entire 27C080, as it is a 1MB ROM.  However it can be programmed as a 27C080 with CS1 indicating which half of the ROM to serve, which is pin A19.  Two 32 pin One ROMs can be stacked with different CS1 configuration, and each with half a 27C080 image, to serve the entire 1MB ROM",
             "function": "ROM",
             "supported": "0.6.8",
             "aliases": [

@@ -436,10 +436,13 @@ fn slot_to_chip_config(slot: &SlotSpec) -> ChipConfig {
         cs1: slot.cs1,
         cs2: slot.cs2,
         cs3: slot.cs3,
+        ce: None,
+        oe: None,
         size_handling: slot.size_handling.clone().unwrap_or_default(),
         extract: None,
         label: slot.label.clone(),
         location: None,
+        allow_cs_ignore: false,
     }
 }
 

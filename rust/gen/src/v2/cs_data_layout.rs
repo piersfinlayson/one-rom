@@ -61,6 +61,8 @@ use super::alg_preference::{CsAlgPreference, cs_alg_preference};
 use super::gpio_window::fits_pio_window;
 use crate::image::{ChipSetType, CsConfig, CsLogic};
 
+use super::multi_cs_config::{ControlLineKind, MultiChipCsConfig, control_line_logic};
+
 /// Which "select" role a GPIO plays in a chip set's CS-detect range.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SelectRole {
@@ -107,6 +109,19 @@ pub struct AlgCs2Config {
     pub qualifier_inactive_pattern: u8,
 }
 
+/// Map a `ControlLineKind` to its equivalent `SelectRole` for use in
+/// `select_lines`. Covers only chip control lines; X1/X2/HalfSelect
+/// are not produced by `ControlLineKind`.
+fn control_line_kind_to_select_role(kind: ControlLineKind) -> SelectRole {
+    match kind {
+        ControlLineKind::Ce  => SelectRole::Ce,
+        ControlLineKind::Oe  => SelectRole::Oe,
+        ControlLineKind::Cs1 => SelectRole::Cs1,
+        ControlLineKind::Cs2 => SelectRole::Cs2,
+        ControlLineKind::Cs3 => SelectRole::Cs3,
+    }
+}
+
 /// Resolved CS/data-range layout for one chip set.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CsDataLayout {
@@ -140,24 +155,16 @@ pub struct CsDataLayout {
     pub alg_cs2: Option<AlgCs2Config>,
 }
 
-/// Physical pin for chip_type's single "select" line (CE for
-/// FixedActiveLow chips, CS1 for Configurable). Used for Multi sets, where
-/// CS2/CS3 must be `Ignore` (validated elsewhere).
-fn primary_select_phys_pin(chip_type: ChipType) -> Option<(SelectRole, u8)> {
-    let lines = chip_type.control_lines();
-    if let Some(ce) = lines.iter().find(|l| l.name == "ce") {
-        return Some((SelectRole::Ce, ce.pin));
-    }
-    lines
-        .iter()
-        .find(|l| l.name == "cs1")
-        .map(|l| (SelectRole::Cs1, l.pin))
-}
-
 /// Physical pins (with roles) for chip_type's select line(s) for
-/// Single/Banked sets: CE (FixedActiveLow), or CS1 plus any of CS2/CS3
-/// that exist and are configured `ActiveLow`/`ActiveHigh` (not
-/// `Ignore`/unset).
+/// Single/Banked sets. Each control line is checked independently:
+///
+/// - CE: included if not `CsLogic::Ignore` (from `CeOeExplicit`) or if
+///   `CsConfig::CeOe` (always active).
+/// - OE: same as CE.
+/// - CS1/CS2/CS3: included if configured `ActiveLow`/`ActiveHigh`. Each
+///   is checked independently — there is no chain dependency between them,
+///   so any combination of active/ignore is valid (subject to the
+///   permission rules enforced by `check_cs_v2`).
 fn select_phys_pins(
     board: Board,
     chip_type: ChipType,
@@ -166,41 +173,42 @@ fn select_phys_pins(
     let lines = chip_type.control_lines();
     let mut pins = vec![];
 
-    if let Some(ce) = lines.iter().find(|l| l.name == "ce") {
-        pins.push((SelectRole::Ce, ce.pin));
-    }
-    if let Some(oe) = lines.iter().find(|l| l.name == "oe") {
-        pins.push((SelectRole::Oe, oe.pin));
-    }
-
     let active =
-        |l: Option<CsLogic>| matches!(l, Some(CsLogic::ActiveLow) | Some(CsLogic::ActiveHigh));
+        |l: CsLogic| matches!(l, CsLogic::ActiveLow | CsLogic::ActiveHigh);
 
-    let cs1_active = lines.iter().find(|l| l.name == "cs1").is_some_and(|cs1| {
-        if active(cs_config.cs1_logic()) {
-            pins.push((SelectRole::Cs1, cs1.pin));
-            true
-        } else {
-            false
-        }
-    });
-
-    let cs2_active = cs1_active
-        && lines.iter().find(|l| l.name == "cs2").is_some_and(|cs2| {
-            if active(cs_config.cs2_logic()) {
-                pins.push((SelectRole::Cs2, cs2.pin));
-                true
-            } else {
-                false
+    for line in lines {
+        match line.name {
+            "ce" => {
+                let logic = control_line_logic("ce", cs_config);
+                if active(logic) {
+                    pins.push((SelectRole::Ce, line.pin));
+                }
             }
-        });
-
-    #[allow(clippy::collapsible_if)]
-    if cs2_active {
-        if let Some(cs3) = lines.iter().find(|l| l.name == "cs3") {
-            if active(cs_config.cs3_logic()) {
-                pins.push((SelectRole::Cs3, cs3.pin));
+            "oe" => {
+                let logic = control_line_logic("oe", cs_config);
+                if active(logic) {
+                    pins.push((SelectRole::Oe, line.pin));
+                }
             }
+            "cs1" => {
+                let logic = control_line_logic("cs1", cs_config);
+                if active(logic) {
+                    pins.push((SelectRole::Cs1, line.pin));
+                }
+            }
+            "cs2" => {
+                let logic = control_line_logic("cs2", cs_config);
+                if active(logic) {
+                    pins.push((SelectRole::Cs2, line.pin));
+                }
+            }
+            "cs3" => {
+                let logic = control_line_logic("cs3", cs_config);
+                if active(logic) {
+                    pins.push((SelectRole::Cs3, line.pin));
+                }
+            }
+            _ => {}
         }
     }
 
@@ -236,12 +244,17 @@ fn gpios_for_pin(
 /// after calling `derive_addr_layout`; `None` is fine for chips that need
 /// neither. Returns `LayoutError::MissingAddrPinGpios` or
 /// `LayoutError::RomTooLargeNoCsConfig` as appropriate.
+///
+/// `multi_cs_config` must be `Some` for `ChipSetType::Multi`, `None` for
+/// all other set types. Derive it from the chip set's chips via
+/// `derive_multi_cs_config` before calling this function.
 pub fn derive_cs_data_layout(
     board: Board,
     set_type: ChipSetType,
     chip_types: &[ChipType],
     cs_config: &CsConfig,
     addr_layout: Option<&AddrLayout>,
+    multi_cs_config: Option<&MultiChipCsConfig>,
 ) -> Result<CsDataLayout, LayoutError> {
     let chip0 = chip_types[0];
 
@@ -288,9 +301,14 @@ pub fn derive_cs_data_layout(
     }
     let num_data_pins = chip0.data_pins().len() as u8;
 
-    // select_roles[i] / select_candidates[i] are parallel.
+    // select_roles[i] / select_candidates[i]: per-chip discriminating lines.
+    // commoned_candidates: GPIOs of lines commoned across all chips (Multi
+    // sets only). Not added to select_lines, but folded into the contiguity
+    // check so that CE/OE/X pins all form a contiguous span even when the
+    // commoned line sits between the per-chip select and X1/X2.
     let mut select_roles: Vec<SelectRole> = Vec::new();
     let mut select_candidates: Vec<&'static [u8]> = Vec::new();
+    let mut commoned_candidates: Vec<&'static [u8]> = Vec::new();
 
     match set_type {
         ChipSetType::Single | ChipSetType::Banked => {
@@ -300,13 +318,29 @@ pub fn derive_cs_data_layout(
             }
         }
         ChipSetType::Multi => {
-            let (role, primary_pin) =
-                primary_select_phys_pin(chip0).ok_or(LayoutError::NoSelectLine {
-                    board,
-                    chip_type: chip0,
-                })?;
-            select_roles.push(role);
-            select_candidates.push(gpios_for_pin(board, chip0, primary_pin)?);
+            let mcc = multi_cs_config
+                .expect("derive_cs_data_layout called for Multi set without MultiChipCsConfig");
+
+            // per_chip_select: chip0's fly-leaded line → becomes a select_line.
+            let per_chip_line = chip0
+                .control_lines()
+                .iter()
+                .find(|l| l.name == mcc.per_chip_select.name())
+                .ok_or(LayoutError::NoSelectLine { board, chip_type: chip0 })?;
+            select_roles.push(control_line_kind_to_select_role(mcc.per_chip_select));
+            select_candidates.push(gpios_for_pin(board, chip0, per_chip_line.pin)?);
+
+            // commoned lines: physically present, always active. Their GPIOs
+            // are included in the span (filling any gap between per_chip_select
+            // and X pins) but not in select_lines.
+            for &commoned_kind in &mcc.commoned_lines {
+                let commoned_line = chip0
+                    .control_lines()
+                    .iter()
+                    .find(|l| l.name == commoned_kind.name())
+                    .ok_or(LayoutError::NoSelectLine { board, chip_type: chip0 })?;
+                commoned_candidates.push(gpios_for_pin(board, chip0, commoned_line.pin)?);
+            }
 
             if chip_types.len() >= 2 {
                 let x1 = board.gpios_for_x_pin(1);
@@ -328,8 +362,10 @@ pub fn derive_cs_data_layout(
     }
 
     let select_start = data_candidates.len();
+    let select_end = select_start + select_candidates.len();
     let mut all_candidates = data_candidates;
     all_candidates.extend_from_slice(&select_candidates);
+    all_candidates.extend_from_slice(&commoned_candidates);
 
     let two_option_slots: Vec<usize> = all_candidates
         .iter()
@@ -357,13 +393,21 @@ pub fn derive_cs_data_layout(
             .collect();
 
         let data_gpios: BTreeSet<u8> = resolved[..select_start].iter().copied().collect();
-        let select_resolved = &resolved[select_start..];
+        let select_resolved = &resolved[select_start..select_end];
+        let commoned_resolved = &resolved[select_end..];
         let mut select_gpios: BTreeSet<u8> = select_resolved.iter().copied().collect();
         // Excess address pin GPIOs (already resolved by derive_addr_layout,
         // fixed across all combos) are folded in as additional CS select
         // pins. The contiguity/gap check and algorithm selection naturally
         // account for them alongside CE/OE.
         for &gpio in excess_addr_pin_gpios {
+            select_gpios.insert(gpio);
+        }
+        // Commoned line GPIOs (Multi sets only) fill any physical gap between
+        // the per-chip select and X1/X2. They are always present in hardware
+        // (driven active by the board), so including them here makes the
+        // span contiguous without adding them to select_lines.
+        for &gpio in commoned_resolved {
             select_gpios.insert(gpio);
         }
 
@@ -495,6 +539,7 @@ mod tests {
             &[ChipType::Chip2364],
             &cs_config,
             None,
+            None,
         )
         .expect("layout derivation should succeed");
 
@@ -533,6 +578,7 @@ mod tests {
             &[ChipType::Chip2316],
             &cs_config,
             None,
+            None,
         )
         .expect("layout derivation should succeed");
 
@@ -568,6 +614,7 @@ mod tests {
             &[ChipType::Chip2316],
             &cs_config,
             None,
+            None,
         )
         .expect("layout derivation should succeed (AlgCs1)");
 
@@ -602,6 +649,7 @@ mod tests {
             &[ChipType::Chip23QL384],
             &cs_config,
             None,
+            None,
         );
 
         assert!(matches!(
@@ -628,6 +676,7 @@ mod tests {
             ChipSetType::Single,
             &[ChipType::Chip23QL384],
             BitModes::BitMode8,
+            None,
         )
         .expect("addr layout derivation should succeed");
 
@@ -637,6 +686,7 @@ mod tests {
             &[ChipType::Chip23QL384],
             &cs_config,
             Some(&addr_layout),
+            None,
         )
         .expect("layout derivation should succeed");
 
@@ -649,5 +699,377 @@ mod tests {
 
         // base_qualifier_pin must be within the PIO window.
         assert!(cs2.base_qualifier_pin < 32);
+    }
+
+    /// Fire24A, 2-chip Multi set with 2364 (CS1). On Fire24A, CS1 is at
+    /// GPIO 13 and X1 is at GPIO 9 — not contiguous — so Multi sets are not
+    /// supported on this board for 2364 chips.
+    #[test]
+    fn fire24a_2364_multi_2chip_cs1_primary() {
+        let cs_config = CsConfig::new(Some(CsLogic::ActiveLow), None, None);
+
+        let mcc = MultiChipCsConfig { per_chip_select: ControlLineKind::Cs1, commoned_lines: alloc::vec![] };
+
+        let result = derive_cs_data_layout(
+            Board::Fire24A,
+            ChipSetType::Multi,
+            &[ChipType::Chip2364, ChipType::Chip2364],
+            &cs_config,
+            None,
+            Some(&mcc),
+        );
+
+        assert!(
+            matches!(result, Err(LayoutError::NonContiguousSelect { .. })),
+            "Fire24A Multi 2364: CS1 (GPIO 13) and X1 (GPIO 9) are not contiguous"
+        );
+    }
+
+    /// Fire24A, 2-chip Multi set with 2732, CeOeExplicit { ce: ActiveLow,
+    /// oe: Ignore }. On Fire24A, CE is at GPIO 15 (pin 18) and X1 is at
+    /// GPIO 9 — not contiguous.
+    #[test]
+    fn fire24a_2732_multi_2chip_ce_primary() {
+        let cs_config = CsConfig::new_with_ce_oe(Some(CsLogic::ActiveLow), Some(CsLogic::Ignore));
+
+        let mcc = MultiChipCsConfig { per_chip_select: ControlLineKind::Ce, commoned_lines: alloc::vec![ControlLineKind::Oe] };
+
+        let result = derive_cs_data_layout(
+            Board::Fire24A,
+            ChipSetType::Multi,
+            &[ChipType::Chip2732, ChipType::Chip2732],
+            &cs_config,
+            None,
+            Some(&mcc),
+        );
+
+        assert!(
+            matches!(result, Err(LayoutError::NonContiguousSelect { .. })),
+            "Fire24A Multi 2732 CE-primary: CE (GPIO 15) and X1 (GPIO 9) are not contiguous"
+        );
+    }
+
+    /// Fire24A, 2-chip Multi set with 2732, CeOeExplicit { ce: Ignore,
+    /// oe: ActiveLow }. On Fire24A, OE is at GPIO 13 (pin 20) and X1 is at
+    /// GPIO 9 — not contiguous.
+    #[test]
+    fn fire24a_2732_multi_2chip_oe_primary() {
+        let cs_config = CsConfig::new_with_ce_oe(Some(CsLogic::Ignore), Some(CsLogic::ActiveLow));
+
+        let mcc = MultiChipCsConfig { per_chip_select: ControlLineKind::Oe, commoned_lines: alloc::vec![ControlLineKind::Ce] };
+
+        let result = derive_cs_data_layout(
+            Board::Fire24A,
+            ChipSetType::Multi,
+            &[ChipType::Chip2732, ChipType::Chip2732],
+            &cs_config,
+            None,
+            Some(&mcc),
+        );
+
+        assert!(
+            matches!(result, Err(LayoutError::NonContiguousSelect { .. })),
+            "Fire24A Multi 2732 OE-primary: OE (GPIO 13) and X1 (GPIO 9) are not contiguous"
+        );
+    }
+
+    // =========================================================================
+    // Fire24E Multi tests
+    //
+    // Fire24E has X1=GPIO9, X2=GPIO8. CE=GPIO11, OE=GPIO10 for 2732.
+    // CS1=GPIO10 for 2364. For 2732, both CE-primary and OE-primary work:
+    // the commoned line fills any gap, making CE+OE+X contiguous {8,9,10,11}.
+    //   - 2364 CS1 = GPIO 10: {9,10} or {8,9,10} ✓
+    //   - 2732 OE-primary: {OE@10, X1@9}, commoned CE@11 → {9,10,11} ✓
+    //   - 2732 CE-primary: {CE@11, X1@9}, commoned OE@10 → {9,10,11} ✓
+    // =========================================================================
+
+    /// Fire24E, 2-chip Multi set with 2364 (CS1).
+    /// CS1 at GPIO 10, X1 at GPIO 9 — contiguous, AlgCs0.
+    #[test]
+    fn fire24e_2364_multi_2chip_cs1_primary() {
+        let cs_config = CsConfig::new(Some(CsLogic::ActiveLow), None, None);
+
+        let mcc = MultiChipCsConfig { per_chip_select: ControlLineKind::Cs1, commoned_lines: alloc::vec![] };
+
+        let layout = derive_cs_data_layout(
+            Board::Fire24E,
+            ChipSetType::Multi,
+            &[ChipType::Chip2364, ChipType::Chip2364],
+            &cs_config,
+            None,
+            Some(&mcc),
+        )
+        .expect("Fire24E Multi 2364 2-chip layout derivation should succeed");
+
+        assert_eq!(layout.cs_ignore_index, None);
+        assert_eq!(
+            layout.select_lines[0],
+            SelectLine { role: SelectRole::Cs1, gpio: 10 }
+        );
+        assert_eq!(
+            layout.select_lines[1],
+            SelectLine { role: SelectRole::X1, gpio: 9 }
+        );
+    }
+
+    /// Fire24E, 3-chip Multi set with 2364 (CS1).
+    /// CS1 at GPIO 10, X1 at GPIO 9, X2 at GPIO 8 — all contiguous, AlgCs0.
+    #[test]
+    fn fire24e_2364_multi_3chip_cs1_primary() {
+        let cs_config = CsConfig::new(Some(CsLogic::ActiveLow), None, None);
+
+        let mcc = MultiChipCsConfig { per_chip_select: ControlLineKind::Cs1, commoned_lines: alloc::vec![] };
+
+        let layout = derive_cs_data_layout(
+            Board::Fire24E,
+            ChipSetType::Multi,
+            &[ChipType::Chip2364, ChipType::Chip2364, ChipType::Chip2364],
+            &cs_config,
+            None,
+            Some(&mcc),
+        )
+        .expect("Fire24E Multi 2364 3-chip layout derivation should succeed");
+
+        assert_eq!(layout.cs_ignore_index, None);
+        assert_eq!(
+            layout.select_lines[0],
+            SelectLine { role: SelectRole::Cs1, gpio: 10 }
+        );
+        assert_eq!(
+            layout.select_lines[1],
+            SelectLine { role: SelectRole::X1, gpio: 9 }
+        );
+        assert_eq!(
+            layout.select_lines[2],
+            SelectLine { role: SelectRole::X2, gpio: 8 }
+        );
+    }
+
+    /// Fire24E, 2-chip Multi set with 2732, CeOeExplicit { ce: Ignore,
+    /// oe: ActiveLow }. OE at GPIO 10 (pin 20), X1 at GPIO 9 — contiguous.
+    #[test]
+    fn fire24e_2732_multi_2chip_oe_primary() {
+        let cs_config = CsConfig::new_with_ce_oe(Some(CsLogic::Ignore), Some(CsLogic::ActiveLow));
+
+        let mcc = MultiChipCsConfig { per_chip_select: ControlLineKind::Oe, commoned_lines: alloc::vec![ControlLineKind::Ce] };
+
+        let layout = derive_cs_data_layout(
+            Board::Fire24E,
+            ChipSetType::Multi,
+            &[ChipType::Chip2732, ChipType::Chip2732],
+            &cs_config,
+            None,
+            Some(&mcc),
+        )
+        .expect("Fire24E Multi 2732 OE-primary layout derivation should succeed");
+
+        assert_eq!(layout.cs_ignore_index, None);
+        assert_eq!(
+            layout.select_lines[0],
+            SelectLine { role: SelectRole::Oe, gpio: 10 }
+        );
+        assert_eq!(
+            layout.select_lines[1],
+            SelectLine { role: SelectRole::X1, gpio: 9 }
+        );
+    }
+
+    /// Fire24E, 2-chip Multi set with 2732, CeOeExplicit { ce: ActiveLow,
+    /// oe: Ignore }. CE at GPIO 11 (pin 18), X1 at GPIO 9. OE (GPIO 10,
+    /// commoned) fills the gap, making {9,10,11} contiguous.
+    #[test]
+    fn fire24e_2732_multi_2chip_ce_primary() {
+        let cs_config = CsConfig::new_with_ce_oe(Some(CsLogic::ActiveLow), Some(CsLogic::Ignore));
+
+        let mcc = MultiChipCsConfig { per_chip_select: ControlLineKind::Ce, commoned_lines: alloc::vec![ControlLineKind::Oe] };
+
+        let layout = derive_cs_data_layout(
+            Board::Fire24E,
+            ChipSetType::Multi,
+            &[ChipType::Chip2732, ChipType::Chip2732],
+            &cs_config,
+            None,
+            Some(&mcc),
+        )
+        .expect("Fire24E Multi 2732 CE-primary: OE (GPIO 10) fills gap between CE (11) and X1 (9)");
+
+        assert_eq!(layout.cs_ignore_index, None);
+        assert_eq!(
+            layout.select_lines[0],
+            SelectLine { role: SelectRole::Ce, gpio: 11 }
+        );
+        assert_eq!(
+            layout.select_lines[1],
+            SelectLine { role: SelectRole::X1, gpio: 9 }
+        );
+    }
+
+    // =========================================================================
+    // Fire28C Multi tests
+    //
+    // Fire28C has X1=[9,28] (dual-bonded), X2=[8,29] (dual-bonded).
+    // CE=GPIO10, OE=GPIO11 for 27-series; CS1=GPIO10 for 23-series.
+    // X1 resolves to GPIO 9 (the contiguous candidate over GPIO 28).
+    //
+    // For 27-series, CE and OE are both physically present (contiguous with
+    // X1/X2), so both CE-primary and OE-primary work — the commoned line
+    // fills any gap:
+    //   - CE-primary: {CE@10, X1@9}, commoned OE@11 → {9,10,11} ✓
+    //   - OE-primary: {OE@11, X1@9}, commoned CE@10 → {9,10,11} ✓
+    // =========================================================================
+
+    /// Fire28C, 2-chip Multi set with 23128 (CS1 at GPIO 10).
+    /// X1 resolves to GPIO 9 (not 28) as the contiguous candidate.
+    #[test]
+    fn fire28c_23128_multi_2chip_cs1_primary() {
+        let cs_config = CsConfig::new(Some(CsLogic::ActiveLow), None, None);
+
+        let mcc = MultiChipCsConfig { per_chip_select: ControlLineKind::Cs1, commoned_lines: alloc::vec![ControlLineKind::Cs2, ControlLineKind::Cs3] };
+
+        let layout = derive_cs_data_layout(
+            Board::Fire28C,
+            ChipSetType::Multi,
+            &[ChipType::Chip23128, ChipType::Chip23128],
+            &cs_config,
+            None,
+            Some(&mcc),
+        )
+        .expect("Fire28C Multi 23128 2-chip layout derivation should succeed");
+
+        assert_eq!(layout.cs_ignore_index, None);
+        assert_eq!(
+            layout.select_lines[0],
+            SelectLine { role: SelectRole::Cs1, gpio: 10 }
+        );
+        assert_eq!(
+            layout.select_lines[1],
+            SelectLine { role: SelectRole::X1, gpio: 9 }
+        );
+    }
+
+    /// Fire28C, 3-chip Multi set with 23128 (CS1 at GPIO 10).
+    /// CS1=10, X1=9, X2=8 — all contiguous.
+    #[test]
+    fn fire28c_23128_multi_3chip_cs1_primary() {
+        let cs_config = CsConfig::new(Some(CsLogic::ActiveLow), None, None);
+
+        let mcc = MultiChipCsConfig { per_chip_select: ControlLineKind::Cs1, commoned_lines: alloc::vec![ControlLineKind::Cs2, ControlLineKind::Cs3] };
+
+        let layout = derive_cs_data_layout(
+            Board::Fire28C,
+            ChipSetType::Multi,
+            &[ChipType::Chip23128, ChipType::Chip23128, ChipType::Chip23128],
+            &cs_config,
+            None,
+            Some(&mcc),
+        )
+        .expect("Fire28C Multi 23128 3-chip layout derivation should succeed");
+
+        assert_eq!(layout.cs_ignore_index, None);
+        assert_eq!(
+            layout.select_lines[0],
+            SelectLine { role: SelectRole::Cs1, gpio: 10 }
+        );
+        assert_eq!(
+            layout.select_lines[1],
+            SelectLine { role: SelectRole::X1, gpio: 9 }
+        );
+        assert_eq!(
+            layout.select_lines[2],
+            SelectLine { role: SelectRole::X2, gpio: 8 }
+        );
+    }
+
+    /// Fire28C, 2-chip Multi set with 27128, CeOeExplicit { ce: ActiveLow,
+    /// oe: Ignore }. CE at GPIO 10 (pin 20), X1 resolves to GPIO 9.
+    #[test]
+    fn fire28c_27128_multi_2chip_ce_primary() {
+        let cs_config = CsConfig::new_with_ce_oe(Some(CsLogic::ActiveLow), Some(CsLogic::Ignore));
+
+        let mcc = MultiChipCsConfig { per_chip_select: ControlLineKind::Ce, commoned_lines: alloc::vec![ControlLineKind::Oe] };
+
+        let layout = derive_cs_data_layout(
+            Board::Fire28C,
+            ChipSetType::Multi,
+            &[ChipType::Chip27128, ChipType::Chip27128],
+            &cs_config,
+            None,
+            Some(&mcc),
+        )
+        .expect("Fire28C Multi 27128 CE-primary 2-chip layout derivation should succeed");
+
+        assert_eq!(layout.cs_ignore_index, None);
+        assert_eq!(
+            layout.select_lines[0],
+            SelectLine { role: SelectRole::Ce, gpio: 10 }
+        );
+        assert_eq!(
+            layout.select_lines[1],
+            SelectLine { role: SelectRole::X1, gpio: 9 }
+        );
+    }
+
+    /// Fire28C, 3-chip Multi set with 27128, CeOeExplicit { ce: ActiveLow,
+    /// oe: Ignore }. CE=10, X1=9, X2=8 — all contiguous.
+    #[test]
+    fn fire28c_27128_multi_3chip_ce_primary() {
+        let cs_config = CsConfig::new_with_ce_oe(Some(CsLogic::ActiveLow), Some(CsLogic::Ignore));
+
+        let mcc = MultiChipCsConfig { per_chip_select: ControlLineKind::Ce, commoned_lines: alloc::vec![ControlLineKind::Oe] };
+
+        let layout = derive_cs_data_layout(
+            Board::Fire28C,
+            ChipSetType::Multi,
+            &[ChipType::Chip27128, ChipType::Chip27128, ChipType::Chip27128],
+            &cs_config,
+            None,
+            Some(&mcc),
+        )
+        .expect("Fire28C Multi 27128 CE-primary 3-chip layout derivation should succeed");
+
+        assert_eq!(layout.cs_ignore_index, None);
+        assert_eq!(
+            layout.select_lines[0],
+            SelectLine { role: SelectRole::Ce, gpio: 10 }
+        );
+        assert_eq!(
+            layout.select_lines[1],
+            SelectLine { role: SelectRole::X1, gpio: 9 }
+        );
+        assert_eq!(
+            layout.select_lines[2],
+            SelectLine { role: SelectRole::X2, gpio: 8 }
+        );
+    }
+
+    /// Fire28C, 2-chip Multi set with 27128, CeOeExplicit { ce: Ignore,
+    /// oe: ActiveLow }. OE at GPIO 11 (pin 22), X1 at GPIO 9. CE (GPIO 10,
+    /// commoned) fills the gap, making {9,10,11} contiguous.
+    #[test]
+    fn fire28c_27128_multi_2chip_oe_primary() {
+        let cs_config = CsConfig::new_with_ce_oe(Some(CsLogic::Ignore), Some(CsLogic::ActiveLow));
+
+        let mcc = MultiChipCsConfig { per_chip_select: ControlLineKind::Oe, commoned_lines: alloc::vec![ControlLineKind::Ce] };
+
+        let layout = derive_cs_data_layout(
+            Board::Fire28C,
+            ChipSetType::Multi,
+            &[ChipType::Chip27128, ChipType::Chip27128],
+            &cs_config,
+            None,
+            Some(&mcc),
+        )
+        .expect("Fire28C Multi 27128 OE-primary: CE (GPIO 10) fills gap between OE (11) and X1 (9)");
+
+        assert_eq!(layout.cs_ignore_index, None);
+        assert_eq!(
+            layout.select_lines[0],
+            SelectLine { role: SelectRole::Oe, gpio: 11 }
+        );
+        assert_eq!(
+            layout.select_lines[1],
+            SelectLine { role: SelectRole::X1, gpio: 9 }
+        );
     }
 }

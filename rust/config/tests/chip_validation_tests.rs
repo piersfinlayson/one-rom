@@ -12,6 +12,7 @@ mod tests {
             ControlLine {
                 pin: 20,
                 line_type: ControlLineType::Configurable,
+                allow_ignore: false,
             },
         );
 
@@ -29,6 +30,7 @@ mod tests {
             programming: None,
             power: None,
             deselect_when_address_all_high: None,
+            allow_mixed_control: false,
         }
     }
 
@@ -39,6 +41,7 @@ mod tests {
             ControlLine {
                 pin: 20,
                 line_type: ControlLineType::FixedActiveLow,
+                allow_ignore: false,
             },
         );
         control.insert(
@@ -46,6 +49,7 @@ mod tests {
             ControlLine {
                 pin: 22,
                 line_type: ControlLineType::FixedActiveLow,
+                allow_ignore: false,
             },
         );
 
@@ -73,6 +77,7 @@ mod tests {
                 pe: None,
             }),
             deselect_when_address_all_high: None,
+            allow_mixed_control: false,
         }
     }
 

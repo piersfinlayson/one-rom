@@ -156,6 +156,14 @@ impl CsLogic {
     }
 }
 
+/// Chip select / chip enable configuration for a single Chip.
+///
+/// `ChipSelect` is used for 23-series and other chips with configurable CS
+/// lines.  `CeOe` is used for 27-series and similar chips where both /CE and
+/// /OE are fixed active-low with no user override (V1 behaviour, and V2 single
+/// chips where no override is needed).  `CeOeExplicit` is used in V2 multi-ROM
+/// sets where one of /CE or /OE is fly-leaded to an X pin (active chip select)
+/// and the other is tied active (Ignore).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 pub enum CsConfig {
@@ -170,11 +178,27 @@ pub enum CsConfig {
         /// Third chip select line, required for certain Chip Types
         cs3: Option<CsLogic>,
     },
-    /// Configuration using CE/OE instead of chip select
+    /// Configuration using CE/OE instead of chip select, both fixed
+    /// active-low with no user override.
+    /// cs1_logic() returns ActiveLow (CE); cs2_logic() returns ActiveLow (OE).
     CeOe,
+    /// Configuration using CE/OE with explicit per-line logic values.
+    /// Used in V2 multi-ROM sets where one line is fly-leaded to an X pin
+    /// and the other is tied active (Ignore).
+    ///
+    /// cs1_logic() returns the non-Ignore line (the active chip select).
+    /// cs2_logic() returns the other line (Ignore for multi-ROM secondary
+    /// chips, or ActiveLow when both lines are monitored).
+    CeOeExplicit {
+        ce: CsLogic,
+        oe: CsLogic,
+    },
 }
 
 impl CsConfig {
+    /// Construct from configurable CS lines (cs1/cs2/cs3).
+    /// When all three are None, falls back to CeOe (CE/OE chip with no
+    /// override).
     pub fn new(cs1: Option<CsLogic>, cs2: Option<CsLogic>, cs3: Option<CsLogic>) -> Self {
         if cs1.is_none() && cs2.is_none() && cs3.is_none() {
             Self::CeOe
@@ -184,24 +208,60 @@ impl CsConfig {
         }
     }
 
+    /// Construct from explicit CE/OE logic values.  Used for V2 CE/OE chips
+    /// where one line is set to Ignore in the config (fly-leaded to X pin in
+    /// a multi-ROM set).  Falls back to CeOe when both values are default
+    /// active-low, to preserve V1 compatibility.
+    pub fn new_with_ce_oe(ce: Option<CsLogic>, oe: Option<CsLogic>) -> Self {
+        let ce = ce.unwrap_or(CsLogic::ActiveLow);
+        let oe = oe.unwrap_or(CsLogic::ActiveLow);
+        if ce == CsLogic::ActiveLow && oe == CsLogic::ActiveLow {
+            Self::CeOe
+        } else {
+            Self::CeOeExplicit { ce, oe }
+        }
+    }
+
+    /// Returns the primary chip-select logic.
+    ///
+    /// For ChipSelect: cs1.
+    /// For CeOe: ActiveLow (both lines active, CE treated as primary).
+    /// For CeOeExplicit: the non-Ignore line (CE if CE != Ignore, else OE).
     pub fn cs1_logic(&self) -> Option<CsLogic> {
         match self {
             CsConfig::ChipSelect { cs1, .. } => Some(*cs1),
             CsConfig::CeOe => Some(CsLogic::ActiveLow),
+            CsConfig::CeOeExplicit { ce, oe } => {
+                if *ce != CsLogic::Ignore { Some(*ce) } else { Some(*oe) }
+            }
         }
     }
 
+    /// Returns the secondary chip-select logic.
+    ///
+    /// For ChipSelect: cs2.
+    /// For CeOe: ActiveLow (OE is also active).
+    /// For CeOeExplicit: the complementary line to cs1 — should be Ignore
+    /// for multi-ROM secondary chips.
     pub fn cs2_logic(&self) -> Option<CsLogic> {
         match self {
             CsConfig::ChipSelect { cs2, .. } => *cs2,
             CsConfig::CeOe => Some(CsLogic::ActiveLow),
+            CsConfig::CeOeExplicit { ce, oe } => {
+                if *ce != CsLogic::Ignore { Some(*oe) } else { Some(*ce) }
+            }
         }
     }
 
+    /// Returns the tertiary chip-select logic.
+    ///
+    /// Only meaningful for ChipSelect chips with three CS lines.
+    /// Not applicable to CE/OE chips.
     pub fn cs3_logic(&self) -> Option<CsLogic> {
         match self {
             CsConfig::ChipSelect { cs3, .. } => *cs3,
             CsConfig::CeOe => None,
+            CsConfig::CeOeExplicit { .. } => None,
         }
     }
 }
@@ -783,10 +843,15 @@ impl ChipSet {
             }
 
             // For multi-Chip sets we also need to check CS2 and CS3 are ignored
-            // for all Chips
+            // for all Chips.  CE/OE chips (plain CeOe) are skipped here — they
+            // have no cs2/cs3 select concept and their secondary line is handled
+            // via CeOeExplicit when an explicit override is configured.
             #[allow(clippy::collapsible_if)]
             if self.set_type == ChipSetType::Multi {
                 for chip in &self.chips {
+                    if matches!(chip.cs_config, CsConfig::CeOe) {
+                        continue;
+                    }
                     if let Some(cs2) = chip.cs_config.cs2_logic() {
                         if cs2 != CsLogic::Ignore {
                             return Err(Error::InconsistentCsLogic {
@@ -1075,6 +1140,12 @@ impl ChipSet {
     ) -> bool {
         let cs_config = &chip_in_set.cs_config;
         let chip_type = chip_in_set.chip_type;
+
+        // CE/OE chips don't have cs2/cs3 selects — no additional requirements
+        // to check beyond the primary CS which is already verified by the caller.
+        if matches!(cs_config, CsConfig::CeOe | CsConfig::CeOeExplicit { .. }) {
+            return true;
+        }
 
         // Check CS2 if specified
         if let Some(cs2_logic) = cs_config.cs2_logic() {
