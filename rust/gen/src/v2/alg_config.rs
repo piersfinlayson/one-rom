@@ -31,6 +31,7 @@ use onerom_metadata::{
     OneromAlgDmaConfig, OneromAlgOverrideConfig,
 };
 
+use crate::image::CsConfig;
 use crate::v2::cs_overrides::encode_override;
 
 use super::addr_layout::AddrLayout;
@@ -221,11 +222,16 @@ pub fn combined_alg_preference(alg: &OneromAlgConfig) -> CombinedAlgPreference {
 /// (`build_rom_slot`), since `bit_mode` is also needed by
 /// `derive_addr_layout`. `num_chips` is `chip_types.len()` (==
 /// `chips.len()`) for the set.
+///
+/// `secondary_cs_configs` carries the CS configs for `chips[1..]` in a
+/// Multi set (empty for Single/Banked). X1/X2 override decisions use the
+/// respective secondary chip's `cs1_logic` rather than `chip[0]`'s.
 #[allow(clippy::too_many_arguments)]
 pub fn build_alg_config(
     ctx: &SlotContext,
     addr_layout: &AddrLayout,
     cs_data_layout: &CsDataLayout,
+    secondary_cs_configs: &[CsConfig],
 ) -> OneromAlgConfig {
     let board = ctx.board;
     let set_type = ctx.set_type;
@@ -239,7 +245,7 @@ pub fn build_alg_config(
     let alg_cs = build_alg_cs(cs_data_layout, set_type, &alg_data);
     let alg_dma = build_alg_dma(bit_mode);
 
-    let mut overrides = build_cs_overrides(cs_data_layout, set_type, cs_config);
+    let mut overrides = build_cs_overrides(cs_data_layout, set_type, cs_config, secondary_cs_configs);
 
     // AlgData1 provides 8-bit serving when /BYTE is read high by the PIO.
     // The RP2350 GPIO input level for /BYTE is high when the pin is not
@@ -383,7 +389,7 @@ mod tests {
             derive_cs_data_layout(&ctx, Some(&addr_layout))
                 .expect("cs/data layout derivation should succeed");
 
-        let config = build_alg_config(&ctx, &addr_layout, &cs_data_layout);
+        let config = build_alg_config(&ctx, &addr_layout, &cs_data_layout, &[]);
 
         assert_eq!(
             config,
@@ -456,7 +462,7 @@ mod tests {
             derive_cs_data_layout(&ctx, Some(&addr_layout))
                 .expect("cs/data layout derivation should succeed");
 
-        let config = build_alg_config(&ctx, &addr_layout, &cs_data_layout);
+        let config = build_alg_config(&ctx, &addr_layout, &cs_data_layout, &[]);
 
         // CS1 active_low matches required active_low → no CS override.
         // AlgData0 (8-bit) → no byte_pin override.
@@ -509,7 +515,7 @@ mod tests {
             derive_cs_data_layout(&ctx, Some(&addr_layout))
                 .expect("cs/data layout derivation should succeed");
 
-        let config = build_alg_config(&ctx, &addr_layout, &cs_data_layout);
+        let config = build_alg_config(&ctx, &addr_layout, &cs_data_layout, &[]);
 
         assert_eq!(
             config.alg_dma,
@@ -701,7 +707,7 @@ mod tests {
         let cs_data_layout =
             derive_cs_data_layout(&ctx, Some(&addr_layout))
                 .expect("cs layout should succeed");
-        let config = build_alg_config(&ctx, &addr_layout, &cs_data_layout);
+        let config = build_alg_config(&ctx, &addr_layout, &cs_data_layout, &[]);
 
         let pref: CombinedAlgPreference = combined_alg_preference(&config);
         assert_eq!(

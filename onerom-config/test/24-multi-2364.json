@@ -32,13 +32,13 @@
                     "description": "1",
                     "file": "images/test/rand_8KB.rom",
                     "type": "2364",
-                    "cs1": "active_high"
+                    "cs1": "active_low"
                 },
                 {
                     "description": "2",
                     "file": "images/test/rand_16KB.rom",
                     "type": "2364",
-                    "cs1": "active_high",
+                    "cs1": "active_low",
                     "size_handling": "truncate"
                 },
                 {

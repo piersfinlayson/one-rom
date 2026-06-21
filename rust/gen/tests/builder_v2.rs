@@ -2357,4 +2357,64 @@ mod tests {
         assert_eq!(v.read_cstr(v.read_u32_le(roms_arr).unwrap() + ROM_INFO_TYPE_PTR).unwrap(), "23128");
         assert_eq!(v.read_cstr(v.read_u32_le(roms_arr + 4).unwrap() + ROM_INFO_TYPE_PTR).unwrap(), "23128");
     }
+
+    // ========================================================================
+    // v2 multi 2-chip mixed polarity: Fire24E / 2x 2364
+    // ========================================================================
+
+    /// Regression test for the mixed-polarity Multi override bug.
+    ///
+    /// chip[0] cs1=active_low, chip[1] cs1=active_high.  The Multi CS PIO
+    /// requires active-high on all select lines, so:
+    ///   - CS1 (chip[0], active_low) needs GpioOverInvert.
+    ///   - X1  (chip[1], active_high) must NOT be inverted.
+    ///
+    /// Before the fix, `build_cs_overrides` used chip[0]'s cs_config for X1
+    /// as well, producing two GpioOverInvert entries and inverting X1
+    /// incorrectly.  With the fix, only one entry is emitted (CS1 only).
+    ///
+    /// Fails before fix: override param_len == 2.
+    /// Passes after fix: override param_len == 1.
+    #[test]
+    fn v2_multi_2chip_mixed_polarity_fire24e_2364() {
+        let json = r#"{
+            "version": 1,
+            "description": "v2 multi mixed polarity regression",
+            "chip_sets": [{
+                "type": "multi",
+                "chips": [
+                    { "file": "chip0.bin", "type": "2364", "cs1": "active_low" },
+                    { "file": "chip1.bin", "type": "2364", "cs1": "active_high" }
+                ]
+            }]
+        }"#;
+
+        let mut b = v2_builder(json);
+        b.add_file(FileData { id: 0, data: vec![0xAAu8; 8192] }).unwrap();
+        b.add_file(FileData { id: 1, data: vec![0xBBu8; 8192] }).unwrap();
+
+        let (meta, _rom) = b.build(v2_props(Board::Fire24E)).expect("build");
+        let v = view(&meta);
+
+        let s0 = slot_base(&v, 0);
+        assert_eq!(v.read_u8(s0 + SLOT_TYPE).unwrap(), SLOT_TYPE_MULTI_ROM);
+
+        let alg = alg_base(&v, s0);
+
+        // No pull config: Multi X pins are CS selects, not jumpers.
+        assert_eq!(v.read_u32_le(alg + ALG_PULL_PTR).unwrap(), NULL_PTR);
+
+        // Only CS1 needs GpioOverInvert (active_low ≠ required active_high).
+        // X1 carries chip[1]'s active_high CS — it already matches the
+        // required convention and must not be inverted.
+        let ov = v.read_u32_le(alg + ALG_OVERRIDE_PTR).unwrap();
+        assert_ne!(ov, NULL_PTR, "CS1 override must be present");
+        assert_eq!(
+            v.read_u8(ov + OVERRIDE_PARAM_LEN).unwrap(),
+            1,
+            "only chip[0]'s CS1 (active_low) should be inverted; \
+            chip[1]'s X1 (active_high) must not be"
+        );
+        assert_eq!(v.read_u8(ov + 1).unwrap() >> 6, OVERRIDE_TYPE_INVERT);
+    }
 }

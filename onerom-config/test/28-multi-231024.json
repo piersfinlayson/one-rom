@@ -1,0 +1,44 @@
+{
+    "$schema": "https://images.onerom.org/configs/schema.json",
+    "version": 1,
+    "name": "28 pin One ROM multi-ROM tests - 231024 ROM type",
+    "description": "28 pin One ROM multi-ROM tests - 231024 ROM type",
+    "categories": [],
+    "rom_sets": [
+        {
+            "type": "multi",
+            "description": "set 0",
+            "roms": [
+                {
+                    "file": "images/test/rand_128KB.rom",
+                    "type": "231024",
+                    "cs1": "active_high"
+                },
+                {
+                    "file": "images/test/rand_256KB.rom",
+                    "type": "231024",
+                    "cs1": "active_high",
+                    "size_handling": "truncate"
+                }
+            ]
+        },
+
+        {
+            "type": "multi",
+            "description": "set 1",
+            "roms": [
+                {
+                    "file": "images/test/rand_128KB.rom",
+                    "type": "231024",
+                    "cs1": "active_low"
+                },
+                {
+                    "file": "images/test/rand_256KB.rom",
+                    "type": "231024",
+                    "cs1": "active_high",
+                    "size_handling": "truncate"
+                }
+            ]
+        }
+    ]
+}

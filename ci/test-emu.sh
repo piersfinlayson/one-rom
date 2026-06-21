@@ -182,6 +182,12 @@ test_28_config() {
     test_config fire-28-c "$config"
 }
 
+test_28_config_c_onwards() {
+    local config=$1
+
+    test_config fire-28-c "$config"
+}
+
 test_32_config() {
     local config=$1
 
@@ -231,7 +237,6 @@ test_28_config onerom-config/test/28-random-23xxx.json
 test_28_config onerom-config/test/28-random-23qlxxx.json
 test_28_config onerom-config/test/28-random-27xxx.json
 test_28_config onerom-config/test/28-random-28xxx.json
-test_24_config onerom-config/test/24-multi-2364.json
 
 # Test specific ROM configurations on all Fire 40 hardware revisions.
 test_40_config onerom-config/test/40-random.json
@@ -250,6 +255,10 @@ test_config fire-28-c onerom-config/test/28-bank-23qlxxx.json
 test_config fire-28-c onerom-config/test/28-bank-27xxx.json
 test_config fire-28-c onerom-config/test/28-bank-28xxx.json
 
+# Test multi-chip ROM configurations on all Fire 24 hardware revisions.
+test_24_config_c_onwards onerom-config/test/24-multi-2364.json
+test_28_config_c_onwards onerom-config/test/28-multi-231024.json
+
 # Test specific ROM configurations on all Fire 24 hardware revisions.
 # fire-24-c only has 2 image select jumpers so can only test the first
 # 4 sets within the PET config, but does check that the firmware
@@ -266,8 +275,3 @@ test_32_config onerom-config/test/32-random-27c080.json
 test_32_config onerom-config/test/32-random-27c301.json
 test_32_config onerom-config/test/32-random-27c0x0.json
 test_config fire-32-b onerom-config/test/32-random-27c1001.json
-
-# Test multi-ROM sets on revisions C+.  A/B do not support multi-ROM sets with
-# PIO support due to a lack of contiguity between CS and X pins.
-test_24_config_c_onwards onerom-config/test/set-2-images.json
-test_24_config_c_onwards onerom-config/test/set-3-images.json

@@ -17,7 +17,7 @@ use onerom_metadata::{
 };
 
 use crate::MAX_IMAGE_SIZE;
-use crate::image::{Chip, ChipSetType};
+use crate::image::{Chip, ChipSetType, CsConfig};
 
 use super::addr_layout::{AddrLayout, LayoutError, derive_addr_layout};
 use super::alg_config::{bit_mode_for, build_alg_config, combined_alg_preference};
@@ -133,7 +133,13 @@ pub fn build_rom_slot(
     let addr_layout = derive_addr_layout(&ctx)?;
     let cs_data_layout = derive_cs_data_layout(&ctx, Some(&addr_layout))?;
 
-    let alg = build_alg_config(&ctx, &addr_layout, &cs_data_layout);
+    let secondary_cs_configs: Vec<CsConfig> = if set_type == ChipSetType::Multi {
+        chips[1..].iter().map(|c| *c.cs_config()).collect()
+    } else {
+        Vec::new()
+    };
+
+    let alg = build_alg_config(&ctx, &addr_layout, &cs_data_layout, &secondary_cs_configs);
 
     let size = rom_table_size(&addr_layout, &alg.alg_dma);
 
