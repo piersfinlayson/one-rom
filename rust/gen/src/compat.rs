@@ -34,14 +34,36 @@ pub struct CompatResult {
     pub slot_size_bytes: u32,
 
     /// Socket-pin translation offset: 0 for native (chip pins == board socket
-    /// pins), 2 or 4 for cross-size combinations.
-    pub pin_offset: u8,
+    /// pins), positive for smaller chip in larger socket (One ROM overhangs
+    /// the target socket), negative for larger chip in smaller socket
+    /// (fly-leads required from the chip socket's address pins to One ROM's
+    /// X1/X2 header pins).
+    pub pin_offset: i16,
+
+    /// Number of fly-lead connections required. 0 for native and overhang
+    /// combinations; 1 for a single fly-lead to X1, 2 for fly-leads to both
+    /// X1 and X2.
+    pub num_fly_lead_pins: u8,
 }
 
 impl CompatResult {
-    /// True if this is a native same-size combination (pin_offset == 0).
+    /// True if the chip and board socket are the same size — no adapter or
+    /// fly-leads needed.
     pub fn is_native(&self) -> bool {
         self.pin_offset == 0
+    }
+
+    /// True if the chip has fewer pins than the board socket and One ROM
+    /// overhangs the target socket when installed.
+    pub fn is_overhang(&self) -> bool {
+        self.pin_offset > 0
+    }
+
+    /// True if the chip has more pins than the board socket and fly-leads are
+    /// required from the chip socket's address pin(s) to One ROM's X1 (and
+    /// optionally X2) header pins.
+    pub fn requires_fly_leads(&self) -> bool {
+        self.pin_offset < 0
     }
 }
 
@@ -58,11 +80,15 @@ pub fn is_v2_chip(chip_type: ChipType) -> bool {
 /// - The chip is a plugin or not in `SUPPORTED_CHIP_TYPES_V2`.
 /// - `socket_pin_offset` returns `None` (pin counts not a supported pair).
 /// - `derive_addr_layout` fails — e.g. the GPIO span for the chip's address
-///   lines does not fit any PIO window.
+///   lines does not fit any PIO window, or an overhanging address pin cannot
+///   be assigned to an X pin.
 /// - `derive_cs_data_layout` fails.
 ///
-/// Cross-size combinations (e.g. a 24-pin chip in a 28-pin socket) are
-/// evaluated where `socket_pin_offset` permits.
+/// Native, overhang (smaller chip in larger socket), and fly-lead (larger
+/// chip in smaller socket) combinations are all evaluated where
+/// `socket_pin_offset` permits. For fly-lead results, `num_fly_lead_pins`
+/// indicates how many connections from the chip socket's address pins to One
+/// ROM's X1/X2 header pins are required.
 ///
 /// CS configuration for the layout check: cs1 = `ActiveLow`, cs2/cs3 =
 /// `Ignore`. This activates only the primary select line and is sufficient
@@ -104,9 +130,26 @@ pub fn check_chip_on_board(board: Board, chip_type: ChipType) -> Option<CompatRe
         1
     };
 
+    // Count overhanging address pins that required fly-leads. Mirrors the
+    // logic in derive_addr_layout so the count matches what was actually
+    // wired to X pins during layout derivation.
+    let num_fly_lead_pins = if pin_offset < 0 {
+        let addr_line_start = if matches!(bit_mode, BitModes::BitMode16) { 1 } else { 0 };
+        chip_type.address_pins()[addr_line_start..]
+            .iter()
+            .filter(|&&ap| {
+                let sp = ap as i16 + pin_offset;
+                sp < 1 || sp > board.chip_pins() as i16
+            })
+            .count() as u8
+    } else {
+        0
+    };
+
     Some(CompatResult {
         num_addr_pins: addr_layout.num_addr_pins,
         slot_size_bytes: (1u32 << addr_layout.num_addr_pins) * bytes_per_word,
         pin_offset,
+        num_fly_lead_pins,
     })
 }

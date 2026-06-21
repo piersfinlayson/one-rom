@@ -224,9 +224,19 @@ fn gpios_for_pin(
     board: Board,
     chip_type: ChipType,
     phys_pin: u8,
-    pin_offset: u8,
+    pin_offset: i16,
 ) -> Result<&'static [u8], LayoutError> {
-    let gpios = board.gpios_for_socket_pin(phys_pin + pin_offset);
+    let socket_pin = phys_pin as i16 + pin_offset;
+    if socket_pin < 1 || socket_pin > board.chip_pins() as i16 {
+        // Data/CS pins cannot be fly-leaded: if one overhangs the socket
+        // the chip/board combination is not supported.
+        return Err(LayoutError::UnmappedPin {
+            board,
+            chip_type,
+            phys_pin,
+        });
+    }
+    let gpios = board.gpios_for_socket_pin(socket_pin as u8);
     if gpios.is_empty() {
         return Err(LayoutError::UnmappedPin {
             board,

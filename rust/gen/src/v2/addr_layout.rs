@@ -188,9 +188,10 @@ pub enum LayoutError {
     },
 
     /// The chip's pin count and the board's socket pin count are not a
-    /// supported combination. Same-size pairs (24/24, 28/28, 32/32, 40/40)
-    /// and the known smaller-in-larger pairs (24 in 28, 28 in 32, 24 in 32)
-    /// are valid; everything else is not. See `socket_pin_offset`.
+    /// supported combination. Same-size pairs (24/24, 28/28, 32/32, 40/40),
+    /// smaller-in-larger pairs (24 in 28, 28 in 32, 24 in 32), and
+    /// fly-lead pairs (28 in 24, 32 in 28, 32 in 24) are valid; everything
+    /// else is not. See `socket_pin_offset`.
     IncompatiblePinCount { board: Board, chip_type: ChipType },
 }
 
@@ -275,19 +276,24 @@ impl From<LayoutError> for Error {
 /// Get the candidate GPIO(s) for chip_type's address line at
 /// `address_pins()` index `n`, on `board`, applying `pin_offset` to
 /// translate from chip physical pin to socket pin.
+///
+/// Must only be called for address pins whose socket position is within
+/// `[1, board.chip_pins()]`. Overhanging pins (outside that range) are
+/// handled by the fly-lead path in `derive_addr_layout` before this
+/// function is reached.
 fn addr_line_candidates(
     board: Board,
     chip_type: ChipType,
     n: usize,
-    pin_offset: u8,
+    pin_offset: i16,
 ) -> Result<&'static [u8], LayoutError> {
-    let phys_pin = chip_type.address_pins()[n] + pin_offset;
-    let gpios = board.gpios_for_socket_pin(phys_pin);
+    let socket_pin = (chip_type.address_pins()[n] as i16 + pin_offset) as u8;
+    let gpios = board.gpios_for_socket_pin(socket_pin);
     if gpios.is_empty() {
         return Err(LayoutError::UnmappedPin {
             board,
             chip_type,
-            phys_pin,
+            phys_pin: socket_pin,
         });
     }
     Ok(gpios)
@@ -304,7 +310,13 @@ fn addr_line_candidates(
 /// address-PIO range.
 ///
 /// `ctx.pin_offset` is applied to every chip physical pin before the
-/// board socket-pin lookup, to handle chips smaller than the board socket.
+/// board socket-pin lookup. Positive for chips smaller than the socket;
+/// negative for chips larger (fly-lead mode). Address pins that compute
+/// a socket position outside `[1, board.chip_pins()]` are overhanging and
+/// are assigned to X1/X2 in order (first overhanging address pin gets X1,
+/// second gets X2). Only `ChipSetType::Single` supports fly-lead — Multi
+/// and Banked sets use X pins for bank/CS selection and cannot also use
+/// them for fly-leads.
 ///
 /// For chips whose full address space exceeds `MAX_IMAGE_SIZE` (e.g.
 /// 27C080 at 1MB), the top address lines that would overflow are resolved
@@ -366,9 +378,45 @@ pub fn derive_addr_layout(ctx: &SlotContext) -> Result<AddrLayout, LayoutError> 
     //   [0..num_in_range)       in-range address lines  → addr_pin_gpios
     //   [num_in_range..num_addr_lines) excess address lines → excess_addr_pin_gpios
     //   [num_addr_lines..)      X1 / X2 (Multi/Banked)  → x1_gpio / x2_gpio
+    //
+    // For fly-lead Single sets (chip larger than socket), overhanging
+    // address pins slot into candidates at their natural position using
+    // the X1/X2 GPIOs as their source. They appear in addr_pin_gpios at
+    // the correct index and contribute to the span like any other address
+    // pin; x1_gpio/x2_gpio remain None (those fields are for Multi/Banked
+    // bank-select/CS use, not for fly-lead address inputs).
     let mut candidates: Vec<&'static [u8]> = Vec::with_capacity(num_addr_lines + 2);
+    let mut fly_lead_x_count = 0u8; // X pins consumed by fly-leads so far
+
     for n in 0..num_addr_lines {
-        candidates.push(addr_line_candidates(board, chip0, addr_line_start + n, pin_offset)?);
+        let addr_pin_idx = addr_line_start + n;
+        let socket_pin = chip0.address_pins()[addr_pin_idx] as i16 + pin_offset;
+
+        if socket_pin < 1 || socket_pin > board.chip_pins() as i16 {
+            // This address pin overhangs the socket: assign the next X pin
+            // as its fly-lead GPIO source.
+            if matches!(set_type, ChipSetType::Multi | ChipSetType::Banked) {
+                // X pins are already allocated for Multi/Banked bank/CS
+                // selection and cannot simultaneously serve as fly-leads.
+                return Err(LayoutError::NoValidLayout { board });
+            }
+            fly_lead_x_count += 1;
+            if fly_lead_x_count > 2 {
+                // Only X1 and X2 exist; more than 2 overhanging address
+                // pins cannot be fly-leaded.
+                return Err(LayoutError::NoValidLayout { board });
+            }
+            let x_gpios = board.gpios_for_x_pin(fly_lead_x_count);
+            if x_gpios.is_empty() {
+                return Err(LayoutError::MissingXPin {
+                    board,
+                    x_pin: fly_lead_x_count,
+                });
+            }
+            candidates.push(x_gpios);
+        } else {
+            candidates.push(addr_line_candidates(board, chip0, addr_pin_idx, pin_offset)?);
+        }
     }
 
     let mut x1_idx: Option<usize> = None;
@@ -404,8 +452,12 @@ pub fn derive_addr_layout(ctx: &SlotContext) -> Result<AddrLayout, LayoutError> 
                 .filter_map(|kind| {
                     let name = kind.name();
                     let line = chip0.control_lines().iter().find(|l| l.name == name)?;
+                    let socket_pin = line.pin as i16 + pin_offset;
+                    if socket_pin < 1 || socket_pin > board.chip_pins() as i16 {
+                        return None;
+                    }
                     board
-                        .gpios_for_socket_pin(line.pin + pin_offset)
+                        .gpios_for_socket_pin(socket_pin as u8)
                         .first()
                         .copied()
                 })

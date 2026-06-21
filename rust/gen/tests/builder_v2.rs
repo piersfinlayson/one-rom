@@ -1978,4 +1978,221 @@ mod tests {
              puts the addr span [14,34] outside both PIO windows"
         );
     }
+
+    // ========================================================================
+    // v2 fly-lead: 27128 (28-pin) on Fire24A (24-pin) — A13 in VCC socket
+    // ========================================================================
+
+    /// 27128 on Fire24A must fail: A13 (chip pin 26) maps to socket pin 24
+    /// (pin_offset=-2: 26-2=24), which is VCC on Fire24A and carries no GPIO.
+    /// `gpios_for_pin` returns `UnmappedPin` → build error.
+    ///
+    /// This is the canonical example of a fly-lead that cannot work: the extra
+    /// address line falls inside the socket at a position the board already
+    /// drives, rather than overhanging outside it.
+    #[test]
+    fn v2_single_fire24a_27128_a13_in_vcc_socket() {
+        let json = r#"{
+            "version": 1,
+            "description": "v2 fly-lead: 27128 on Fire24A (expected failure)",
+            "chip_sets": [{
+                "type": "single",
+                "chips": [{ "file": "test.bin", "type": "27128" }]
+            }]
+        }"#;
+
+        let mut b = v2_builder(json);
+        b.add_file(FileData {
+            id: 0,
+            data: vec![0xAAu8; 16384], // 27128 = 16KB
+        })
+        .unwrap();
+
+        let result = b.build(v2_props(Board::Fire24A));
+        assert!(
+            result.is_err(),
+            "27128 on Fire24A: A13 (chip pin 26) at socket pin 24 = VCC (GPIO_NONE) → must fail"
+        );
+    }
+
+    // ========================================================================
+    // v2 fly-lead: 28C512 (32-pin) on Fire28C (28-pin) — no fly-leads needed
+    // ========================================================================
+
+    /// 28C512 (64KB EEPROM, 32-pin) on Fire28C (28-pin), pin_offset=-2.
+    ///
+    /// All 16 address lines fall within socket pins 1-28. The overhanging
+    /// chip positions (pins 1, 2, 31, 32 at socket positions -1, 0, 29, 30)
+    /// carry only non-address signals, so no fly-leads are needed despite the
+    /// chip having more pins than the socket.
+    ///
+    /// 16 address lines → slot_size = 2^16 = 65536.
+    /// Single set: no pull config, no GPIO override config.
+    #[test]
+    fn v2_single_fire28c_28c512_fly_lead_none_required() {
+        let json = r#"{
+            "version": 1,
+            "description": "v2 fly-lead: 28C512 on Fire28C (0 fly-leads)",
+            "chip_sets": [{
+                "type": "single",
+                "chips": [{ "file": "test.bin", "type": "28C512" }]
+            }]
+        }"#;
+
+        let mut b = v2_builder(json);
+        b.add_file(FileData {
+            id: 0,
+            data: vec![0xAAu8; 65536], // 28C512 = 64KB
+        })
+        .unwrap();
+
+        let (meta, rom) = b.build(v2_props(Board::Fire28C)).expect("build");
+        let v = view(&meta);
+
+        assert_eq!(v.read_u8(HDR_SLOT_COUNT).unwrap(), 1);
+
+        let s0 = slot_base(&v, 0);
+        assert_eq!(v.read_u8(s0 + SLOT_TYPE).unwrap(), SLOT_TYPE_SINGLE_ROM);
+        assert_eq!(v.read_u8(s0 + SLOT_ROM_COUNT).unwrap(), 1);
+        assert_eq!(v.read_u32_le(s0 + SLOT_FW_OVRD).unwrap(), NULL_PTR);
+
+        // 16 address lines → 64KB table
+        let slot_size = v.read_u32_le(s0 + SLOT_SIZE).unwrap();
+        assert_eq!(slot_size, 1u32 << 16);
+        assert_eq!(rom.len() as u32, slot_size);
+
+        let alg = alg_base(&v, s0);
+
+        let dma = v.read_u32_le(alg + ALG_DMA_PTR).unwrap();
+        assert_eq!(v.read_u8(dma + DMA_BIT_MODE).unwrap(), BIT_MODE_8);
+
+        // No fly-lead wiring needed: no pull config, no GPIO override
+        assert_eq!(v.read_u32_le(alg + ALG_PULL_PTR).unwrap(), NULL_PTR);
+        assert_eq!(v.read_u32_le(alg + ALG_OVERRIDE_PTR).unwrap(), NULL_PTR);
+
+        let roms_arr = v.read_u32_le(s0 + SLOT_ROMS).unwrap();
+        let rom0 = v.read_u32_le(roms_arr).unwrap();
+        assert_eq!(v.read_cstr(rom0 + ROM_INFO_TYPE_PTR).unwrap(), "28C512");
+    }
+
+    // ========================================================================
+    // v2 fly-lead: 27C010 (32-pin) on Fire28C (28-pin) — one fly-lead to X1
+    // ========================================================================
+
+    /// 27C010 (128KB EPROM, 32-pin) on Fire28C (28-pin), pin_offset=-2.
+    ///
+    /// A16 (chip pin 2) maps to socket pin 0 (2-2=0 < 1) and overhangs —
+    /// fly-leaded to X1. A15 (chip pin 3) maps to socket pin 1 and resolves
+    /// normally from the socket. All remaining 15 address lines (A0-A14) are
+    /// within socket pins 1-28.
+    ///
+    /// 17 address lines → slot_size = 2^17 = 131072.
+    /// CE and OE are fixed active-low and match the Single set convention —
+    /// no pull config, no GPIO override config.
+    #[test]
+    fn v2_single_fire28c_27c010_one_fly_lead() {
+        let json = r#"{
+            "version": 1,
+            "description": "v2 fly-lead: 27C010 on Fire28C (1 fly-lead to X1)",
+            "chip_sets": [{
+                "type": "single",
+                "chips": [{ "file": "test.bin", "type": "27C010" }]
+            }]
+        }"#;
+
+        let mut b = v2_builder(json);
+        b.add_file(FileData {
+            id: 0,
+            data: vec![0xAAu8; 131072], // 27C010 = 128KB
+        })
+        .unwrap();
+
+        let (meta, rom) = b.build(v2_props(Board::Fire28C)).expect("build");
+        let v = view(&meta);
+
+        assert_eq!(v.read_u8(HDR_SLOT_COUNT).unwrap(), 1);
+
+        let s0 = slot_base(&v, 0);
+        assert_eq!(v.read_u8(s0 + SLOT_TYPE).unwrap(), SLOT_TYPE_SINGLE_ROM);
+        assert_eq!(v.read_u8(s0 + SLOT_ROM_COUNT).unwrap(), 1);
+        assert_eq!(v.read_u32_le(s0 + SLOT_FW_OVRD).unwrap(), NULL_PTR);
+
+        // 17 address lines → 128KB table
+        let slot_size = v.read_u32_le(s0 + SLOT_SIZE).unwrap();
+        assert_eq!(slot_size, 1u32 << 17);
+        assert_eq!(rom.len() as u32, slot_size);
+
+        let alg = alg_base(&v, s0);
+
+        let cs = v.read_u32_le(alg + ALG_CS_PTR).unwrap();
+        assert_eq!(v.read_u8(cs + CS_DISCRIMINANT).unwrap(), ALG_CS_0);
+        // Single set, CE+OE active-low: serve_cs_low_0 = 0
+        assert_eq!(v.read_u8(cs + CS0_SERVE_CS_LOW_0).unwrap(), 0);
+
+        let dma = v.read_u32_le(alg + ALG_DMA_PTR).unwrap();
+        assert_eq!(v.read_u8(dma + DMA_BIT_MODE).unwrap(), BIT_MODE_8);
+
+        // Fly-lead to X1 for A16 — no pull config (not banked), no CS override
+        // (CE+OE are fixed active-low and match the Single set convention)
+        assert_eq!(v.read_u32_le(alg + ALG_PULL_PTR).unwrap(), NULL_PTR);
+        assert_eq!(v.read_u32_le(alg + ALG_OVERRIDE_PTR).unwrap(), NULL_PTR);
+
+        let roms_arr = v.read_u32_le(s0 + SLOT_ROMS).unwrap();
+        let rom0 = v.read_u32_le(roms_arr).unwrap();
+        assert_eq!(v.read_cstr(rom0 + ROM_INFO_TYPE_PTR).unwrap(), "27C010");
+    }
+
+    // ========================================================================
+    // v2 fly-lead: 2764 (28-pin) on Fire24A (24-pin) — one fly-lead to X1
+    // ========================================================================
+ 
+    /// 2764 (8KB EPROM, 28-pin) on Fire24A (24-pin), pin_offset=-2.
+    ///
+    /// A12 (chip pin 2) maps to socket pin 0 (2-2=0 < 1) and overhangs —
+    /// fly-leaded to X1. All other address lines (A0-A11) are within socket
+    /// pins 1-24. Single set: no pull config, no GPIO override config.
+    #[test]
+    fn v2_single_fire24a_2764_one_fly_lead() {
+        let json = r#"{
+            "version": 1,
+            "description": "v2 fly-lead: 2764 on Fire24A (1 fly-lead to X1)",
+            "chip_sets": [{
+                "type": "single",
+                "chips": [{ "file": "test.bin", "type": "2764" }]
+            }]
+        }"#;
+
+        let mut b = v2_builder(json);
+        b.add_file(FileData {
+            id: 0,
+            data: vec![0xAAu8; 8192], // 2764 = 8KB
+        })
+        .unwrap();
+
+        let (meta, rom) = b.build(v2_props(Board::Fire24A)).expect("build");
+        let v = view(&meta);
+
+        assert_eq!(v.read_u8(HDR_SLOT_COUNT).unwrap(), 1);
+
+        let s0 = slot_base(&v, 0);
+        assert_eq!(v.read_u8(s0 + SLOT_TYPE).unwrap(), SLOT_TYPE_SINGLE_ROM);
+        assert_eq!(v.read_u8(s0 + SLOT_ROM_COUNT).unwrap(), 1);
+        assert_eq!(v.read_u32_le(s0 + SLOT_FW_OVRD).unwrap(), NULL_PTR);
+
+        let slot_size = v.read_u32_le(s0 + SLOT_SIZE).unwrap();
+        assert_eq!(slot_size, 1u32 << 15); // 32KB per compat table
+        assert_eq!(rom.len() as u32, slot_size);
+
+        let alg = alg_base(&v, s0);
+
+        let dma = v.read_u32_le(alg + ALG_DMA_PTR).unwrap();
+        assert_eq!(v.read_u8(dma + DMA_BIT_MODE).unwrap(), BIT_MODE_8);
+
+        assert_eq!(v.read_u32_le(alg + ALG_PULL_PTR).unwrap(), NULL_PTR);
+        assert_eq!(v.read_u32_le(alg + ALG_OVERRIDE_PTR).unwrap(), NULL_PTR);
+
+        let roms_arr = v.read_u32_le(s0 + SLOT_ROMS).unwrap();
+        let rom0 = v.read_u32_le(roms_arr).unwrap();
+        assert_eq!(v.read_cstr(rom0 + ROM_INFO_TYPE_PTR).unwrap(), "2764");
+    }
 }

@@ -2,17 +2,26 @@
 
 This document shows which chips each One ROM Fire hardware variant emulates.
 
-**ROM size** is the chip's actual storage capacity. **Image size** is the space used on One ROM device's internal flash to emulate that chip. This can be larger than the original ROM itself, due to the way One ROM works.
+**ROM size** is the chip's actual storage capacity.
 
-Some ROMs that are smaller than a particular board's socket can still be emulated by a larger One ROM, by inserting the larger One ROM in the smaller socket, with the top pins (1, 2, ...) hanging out. If doing this, it is _extremely_ important that power is rerouted to One ROM's VCC pin, or One ROM may be damaged.
+**Image size** is the space used on One ROM device's internal flash to emulate that chip. This can be larger than the original ROM itself, due to the way One ROM works.
+
+One ROM typically has a 2MB flash, with 64KB reserved for the firmware and metadata. The remainder is available for ROM images. The total number of images that can be supported is based on the image size of each ROM.
+
+Some lower pin count ROMs can be emulated by larger One ROMs, by inserting the larger One ROM in the smaller socket, with the top pins (1, 2, ...) hanging out (and it is not necessary to solder these pins to One ROM if using like this). If doing this, it is _extremely_ important that power is rerouted to One ROM's VCC pin, or to the 5V header pin, or One ROM may be damaged.
+
+Some greater pin count ROMs can be emulated by a smaller One ROM, provided the ROM's extra address pins fall on socket positions that One ROM does not use. In this case, the smaller One ROM gets installed to the bottom of the larger socket, with the top pins of the socket unpopulated. A short fly-lead must be run from each additional address pin of those socket pins to the X1 (and, if two are needed, X2) header pin on One ROM.
 
 | Cell | Meaning |
 |:---|:---|
 | `64KB` | Chip is supported on this board; shows the image size |
 | `64KB*` | Supported with One ROM overhanging the socket (top pins exposed — power reroute required) |
+| `64KB†` | Supported with fly-lead wire(s) from the chip socket's address pin(s) to One ROM's X1 (and X2) header pin |
 | `-` | Not supported on this board |
 
 ## 24-pin boards
+
+*24-pin chips (native)*
 
 | Chip | ROM size | 24A | 24B | 24C | 24D | 24E | 24F |
 |:---|---:|---:|---:|---:|---:|---:|---:|
@@ -36,6 +45,15 @@ Some ROMs that are smaller than a particular board's socket can still be emulate
 | MCM68A364 | 8KB | 64KB | 64KB | 8KB | 8KB | 8KB | 8KB |
 | MCM68A764 | 8KB | 64KB | 64KB | 8KB | 8KB | 8KB | 8KB |
 | MM52164 | 8KB | 64KB | 64KB | 8KB | 8KB | 8KB | 8KB |
+
+*28-pin chips (with fly-leads)*
+
+| Chip | ROM size | 24A | 24B | 24C | 24D | 24E | 24F |
+|:---|---:|---:|---:|---:|---:|---:|---:|
+| 2764 | 8KB | 32KB† | 32KB† | 32KB† | 32KB† | 32KB† | 32KB† |
+| 27C64 | 8KB | 32KB† | 32KB† | 32KB† | 32KB† | 32KB† | 32KB† |
+| 27LC64 | 8KB | 32KB† | 32KB† | 32KB† | 32KB† | 32KB† | 32KB† |
+| 28C64 | 8KB | 32KB† | 32KB† | 32KB† | 32KB† | 32KB† | 32KB† |
 
 ## 28-pin boards
 
@@ -94,6 +112,19 @@ Some ROMs that are smaller than a particular board's socket can still be emulate
 | MCM68A364 | 8KB | 128KB* | 128KB* | 256KB* |
 | MCM68A764 | 8KB | 128KB* | 128KB* | 256KB* |
 | MM52164 | 8KB | 128KB* | 128KB* | 256KB* |
+
+*32-pin chips (with fly-leads)*
+
+| Chip | ROM size | 28A | 28B | 28C |
+|:---|---:|---:|---:|---:|
+| 28C512 | 64KB | 64KB† | 64KB† | 64KB† |
+| 23C1010 | 128KB | - | - | 128KB† |
+| 27C010 | 128KB | - | - | 128KB† |
+| 27C1000A | 128KB | - | - | 128KB† |
+| 27C1001 | 128KB | - | - | 128KB† |
+| 29F010 | 128KB | - | - | 128KB† |
+| 39SF010 | 128KB | - | - | 128KB† |
+| SST39SF010 | 128KB | - | - | 128KB† |
 
 ## 32-pin boards
 
@@ -197,6 +228,8 @@ Full chip list for each board. Where a particular ROM type goes by multiple iden
 
 ## One ROM Fire 24 (rev A/A2) — fire-24-a
 
+*24-pin chips (native)*
+
 | Chip | ROM size | Image size | Fit |
 |:---|---:|---:|:---|
 | 2704 | 512B | 2KB | native |
@@ -219,9 +252,20 @@ Full chip list for each board. Where a particular ROM type goes by multiple iden
 | MCM68A364 | 8KB | 64KB | native |
 | MCM68A764 | 8KB | 64KB | native |
 | MM52164 | 8KB | 64KB | native |
+
+*28-pin chips (with fly-leads)*
+
+| Chip | ROM size | Image size | Fit |
+|:---|---:|---:|:---|
+| 2764 | 8KB | 32KB | fly-lead to X1 |
+| 27C64 | 8KB | 32KB | fly-lead to X1 |
+| 27LC64 | 8KB | 32KB | fly-lead to X1 |
+| 28C64 | 8KB | 32KB | fly-lead to X1 |
 
 ## One ROM Fire 24 (rev B) — fire-24-usb-b
 
+*24-pin chips (native)*
+
 | Chip | ROM size | Image size | Fit |
 |:---|---:|---:|:---|
 | 2704 | 512B | 2KB | native |
@@ -245,7 +289,18 @@ Full chip list for each board. Where a particular ROM type goes by multiple iden
 | MCM68A764 | 8KB | 64KB | native |
 | MM52164 | 8KB | 64KB | native |
 
+*28-pin chips (with fly-leads)*
+
+| Chip | ROM size | Image size | Fit |
+|:---|---:|---:|:---|
+| 2764 | 8KB | 32KB | fly-lead to X1 |
+| 27C64 | 8KB | 32KB | fly-lead to X1 |
+| 27LC64 | 8KB | 32KB | fly-lead to X1 |
+| 28C64 | 8KB | 32KB | fly-lead to X1 |
+
 ## One ROM Fire 24 (rev C) — fire-24-c
+
+*24-pin chips (native)*
 
 | Chip | ROM size | Image size | Fit |
 |:---|---:|---:|:---|
@@ -269,9 +324,20 @@ Full chip list for each board. Where a particular ROM type goes by multiple iden
 | MCM68A364 | 8KB | 8KB | native |
 | MCM68A764 | 8KB | 8KB | native |
 | MM52164 | 8KB | 8KB | native |
+
+*28-pin chips (with fly-leads)*
+
+| Chip | ROM size | Image size | Fit |
+|:---|---:|---:|:---|
+| 2764 | 8KB | 32KB | fly-lead to X1 |
+| 27C64 | 8KB | 32KB | fly-lead to X1 |
+| 27LC64 | 8KB | 32KB | fly-lead to X1 |
+| 28C64 | 8KB | 32KB | fly-lead to X1 |
 
 ## One ROM Fire 24 (rev D) — fire-24-d
 
+*24-pin chips (native)*
+
 | Chip | ROM size | Image size | Fit |
 |:---|---:|---:|:---|
 | 2704 | 512B | 512B | native |
@@ -294,9 +360,20 @@ Full chip list for each board. Where a particular ROM type goes by multiple iden
 | MCM68A364 | 8KB | 8KB | native |
 | MCM68A764 | 8KB | 8KB | native |
 | MM52164 | 8KB | 8KB | native |
+
+*28-pin chips (with fly-leads)*
+
+| Chip | ROM size | Image size | Fit |
+|:---|---:|---:|:---|
+| 2764 | 8KB | 32KB | fly-lead to X1 |
+| 27C64 | 8KB | 32KB | fly-lead to X1 |
+| 27LC64 | 8KB | 32KB | fly-lead to X1 |
+| 28C64 | 8KB | 32KB | fly-lead to X1 |
 
 ## One ROM Fire 24 (rev E) — fire-24-e
 
+*24-pin chips (native)*
+
 | Chip | ROM size | Image size | Fit |
 |:---|---:|---:|:---|
 | 2704 | 512B | 512B | native |
@@ -319,9 +396,20 @@ Full chip list for each board. Where a particular ROM type goes by multiple iden
 | MCM68A364 | 8KB | 8KB | native |
 | MCM68A764 | 8KB | 8KB | native |
 | MM52164 | 8KB | 8KB | native |
+
+*28-pin chips (with fly-leads)*
+
+| Chip | ROM size | Image size | Fit |
+|:---|---:|---:|:---|
+| 2764 | 8KB | 32KB | fly-lead to X1 |
+| 27C64 | 8KB | 32KB | fly-lead to X1 |
+| 27LC64 | 8KB | 32KB | fly-lead to X1 |
+| 28C64 | 8KB | 32KB | fly-lead to X1 |
 
 ## One ROM Fire 24 (rev F) — fire-24-f
 
+*24-pin chips (native)*
+
 | Chip | ROM size | Image size | Fit |
 |:---|---:|---:|:---|
 | 2704 | 512B | 512B | native |
@@ -344,6 +432,15 @@ Full chip list for each board. Where a particular ROM type goes by multiple iden
 | MCM68A364 | 8KB | 8KB | native |
 | MCM68A764 | 8KB | 8KB | native |
 | MM52164 | 8KB | 8KB | native |
+
+*28-pin chips (with fly-leads)*
+
+| Chip | ROM size | Image size | Fit |
+|:---|---:|---:|:---|
+| 2764 | 8KB | 32KB | fly-lead to X1 |
+| 27C64 | 8KB | 32KB | fly-lead to X1 |
+| 27LC64 | 8KB | 32KB | fly-lead to X1 |
+| 28C64 | 8KB | 32KB | fly-lead to X1 |
 
 ## One ROM Fire 28 (rev A/A2/A3/A4) — fire-28-a
 
@@ -403,6 +500,12 @@ Full chip list for each board. Where a particular ROM type goes by multiple iden
 | MCM68A764 | 8KB | 128KB | overhang |
 | MM52164 | 8KB | 128KB | overhang |
 
+*32-pin chips (with fly-leads)*
+
+| Chip | ROM size | Image size | Fit |
+|:---|---:|---:|:---|
+| 28C512 | 64KB | 64KB | no fly-leads required |
+
 ## One ROM Fire 28 (rev B) — fire-28-b
 
 *28-pin chips (native)*
@@ -461,6 +564,12 @@ Full chip list for each board. Where a particular ROM type goes by multiple iden
 | MCM68A764 | 8KB | 128KB | overhang |
 | MM52164 | 8KB | 128KB | overhang |
 
+*32-pin chips (with fly-leads)*
+
+| Chip | ROM size | Image size | Fit |
+|:---|---:|---:|:---|
+| 28C512 | 64KB | 64KB | no fly-leads required |
+
 ## One ROM Fire 28 (rev C) — fire-28-c
 
 *28-pin chips (native)*
@@ -518,6 +627,19 @@ Full chip list for each board. Where a particular ROM type goes by multiple iden
 | MCM68A364 | 8KB | 256KB | overhang |
 | MCM68A764 | 8KB | 256KB | overhang |
 | MM52164 | 8KB | 256KB | overhang |
+
+*32-pin chips (with fly-leads)*
+
+| Chip | ROM size | Image size | Fit |
+|:---|---:|---:|:---|
+| 28C512 | 64KB | 64KB | no fly-leads required |
+| 23C1010 | 128KB | 128KB | fly-lead to X1 |
+| 27C010 | 128KB | 128KB | fly-lead to X1 |
+| 27C1000A | 128KB | 128KB | fly-lead to X1 |
+| 27C1001 | 128KB | 128KB | fly-lead to X1 |
+| 29F010 | 128KB | 128KB | fly-lead to X1 |
+| 39SF010 | 128KB | 128KB | fly-lead to X1 |
+| SST39SF010 | 128KB | 128KB | fly-lead to X1 |
 
 ## One ROM Fire 32 (rev A) — fire-32-a
 

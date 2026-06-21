@@ -112,35 +112,61 @@ fn format_size(bytes: u32) -> String {
 
 /// Format a compat result as a Markdown table cell.
 ///
-/// `-` = not supported; `64KB` = native fit; `64KB*` = adapter needed.
+/// `-` = not supported; `64KB` = native fit; `64KB*` = One ROM overhangs
+/// the socket; `64KB†` = fly-leads required to X1/X2 header pins.
 fn format_result(result: &Option<CompatResult>) -> String {
     match result {
         None => "-".to_string(),
         Some(r) => {
             let size = format_size(r.slot_size_bytes);
-            if r.is_native() { size } else { format!("{}*", size) }
+            if r.is_native() {
+                size
+            } else if r.requires_fly_leads() {
+                format!("{}†", size)
+            } else {
+                format!("{}*", size)
+            }
         }
     }
 }
 
-/// Human-readable socket fit description.
-fn format_socket(result: &CompatResult) -> &'static str {
-    if result.is_native() { "native" } else { "overhang" }
+/// Human-readable socket fit description for per-board tables.
+fn format_socket(result: &CompatResult) -> String {
+    if result.is_native() {
+        "native".to_string()
+    } else if result.requires_fly_leads() {
+        match result.num_fly_lead_pins {
+            0 => "no fly-leads required".to_string(),
+            1 => "fly-lead to X1".to_string(),
+            2 => "fly-lead to X1 and X2".to_string(),
+            n => format!("fly-lead ({} pins)", n),
+        }
+    } else {
+        "overhang".to_string()
+    }
+}
+
+// ── Sort key ──────────────────────────────────────────────────────────────────
+
+/// Sort key for entries: native first, then overhang (ascending by chip size
+/// difference), then fly-lead (ascending by chip size difference).
+fn pin_offset_order(pin_offset: i16) -> i32 {
+    if pin_offset == 0 { 0 } else if pin_offset > 0 { 1 } else { 2 }
 }
 
 // ── Data structures ───────────────────────────────────────────────────────────
 
 /// One chip row in the compatibility matrix.
 struct MatrixEntry {
-    pin_offset: u8,
+    pin_offset: i16,
     alias:      &'static str,
     rom_size:   u32,
     results:    Vec<Option<CompatResult>>,
 }
 
-/// A group of same-offset chips in a matrix section (native or overhang).
+/// A group of same-offset chips in a matrix section.
 struct MatrixGroup {
-    pin_offset: u8,
+    pin_offset: i16,
     entries:    Vec<MatrixEntry>,
 }
 
@@ -154,7 +180,7 @@ struct BoardEntry {
 
 /// A group of same-offset chips in a per-board table.
 struct BoardGroup {
-    pin_offset: u8,
+    pin_offset: i16,
     chip_pins:  u8,
     entries:    Vec<BoardEntry>,
 }
@@ -198,7 +224,9 @@ fn write_matrix_section(w: &mut impl Write, title: &str, boards: &[Board]) -> io
         })
         .collect();
 
-    entries.sort_by_key(|e| (e.pin_offset, e.rom_size, e.alias));
+    entries.sort_by_key(|e| {
+        (pin_offset_order(e.pin_offset), e.pin_offset.abs(), e.rom_size, e.alias)
+    });
 
     let mut groups: Vec<MatrixGroup> = Vec::new();
     for entry in entries {
@@ -212,11 +240,13 @@ fn write_matrix_section(w: &mut impl Write, title: &str, boards: &[Board]) -> io
 
     for group in &groups {
         if show_headers {
+            let chip_pins = board_pins as i16 - 2 * group.pin_offset;
             if group.pin_offset == 0 {
                 writeln!(w, "*{}-pin chips (native)*", board_pins)?;
-            } else {
-                let chip_pins = board_pins - 2 * group.pin_offset;
+            } else if group.pin_offset > 0 {
                 writeln!(w, "*{}-pin chips (with overhang)*", chip_pins)?;
+            } else {
+                writeln!(w, "*{}-pin chips (with fly-leads)*", chip_pins)?;
             }
             writeln!(w)?;
         }
@@ -271,7 +301,9 @@ fn write_board_table(w: &mut impl Write, board: Board) -> io::Result<()> {
         return Ok(());
     }
 
-    entries.sort_by_key(|e| (e.result.pin_offset, e.rom_size, e.alias));
+    entries.sort_by_key(|e| {
+        (pin_offset_order(e.result.pin_offset), e.result.pin_offset.abs(), e.rom_size, e.alias)
+    });
 
     let mut groups: Vec<BoardGroup> = Vec::new();
     for entry in entries {
@@ -291,8 +323,10 @@ fn write_board_table(w: &mut impl Write, board: Board) -> io::Result<()> {
         if show_headers {
             if group.pin_offset == 0 {
                 writeln!(w, "*{}-pin chips (native)*", board.chip_pins())?;
-            } else {
+            } else if group.pin_offset > 0 {
                 writeln!(w, "*{}-pin chips (with overhang)*", group.chip_pins)?;
+            } else {
+                writeln!(w, "*{}-pin chips (with fly-leads)*", group.chip_pins)?;
             }
             writeln!(w)?;
         }
@@ -338,21 +372,35 @@ fn generate_document(w: &mut impl Write) -> io::Result<()> {
     writeln!(w)?;
     writeln!(w, "This document shows which chips each One ROM Fire hardware variant emulates.")?;
     writeln!(w)?;
-    writeln!(w, "**ROM size** is the chip's actual storage capacity. \
-                 **Image size** is the space used on One ROM device's internal \
+    writeln!(w, "**ROM size** is the chip's actual storage capacity.")?;
+    writeln!(w)?;
+    writeln!(w, "**Image size** is the space used on One ROM device's internal \
                  flash to emulate that chip. This can be larger than the original \
                  ROM itself, due to the way One ROM works.")?;
     writeln!(w)?;
-    writeln!(w, "Some ROMs that are smaller than a particular board's socket can still \
-                 be emulated by a larger One ROM, by inserting the larger One ROM in the \
-                 smaller socket, with the top pins (1, 2, ...) hanging out. If doing \
+    writeln!(w, "One ROM typically has a 2MB flash, with 64KB reserved for the firmware \
+                 and metadata. The remainder is available for ROM images. The total number \
+                 of images that can be supported is based on the image size of each ROM.")?;
+    writeln!(w)?;
+    writeln!(w, "Some lower pin count ROMs can \
+                 be emulated by larger One ROMs, by inserting the larger One ROM in the \
+                 smaller socket, with the top pins (1, 2, ...) hanging out (and it is not \
+                 necessary to solder these pins to One ROM if using like this). If doing \
                  this, it is _extremely_ important that power is rerouted to One ROM's VCC \
-                 pin, or One ROM may be damaged.")?;
+                 pin, or to the 5V header pin, or One ROM may be damaged.")?;
+    writeln!(w)?;
+    writeln!(w, "Some greater pin count ROMs can be emulated by a smaller One ROM, provided \
+                 the ROM's extra address pins fall on socket positions that One ROM does not \
+                 use. In this case, the smaller One ROM gets installed to the bottom \
+                 of the larger socket, with the top pins of the socket unpopulated. \
+                 A short fly-lead must be run from each additional address pin of those \
+                 socket pins to the X1 (and, if two are needed, X2) header pin on One ROM.")?;
     writeln!(w)?;
     writeln!(w, "| Cell | Meaning |")?;
     writeln!(w, "|:---|:---|")?;
     writeln!(w, "| `64KB` | Chip is supported on this board; shows the image size |")?;
     writeln!(w, "| `64KB*` | Supported with One ROM overhanging the socket (top pins exposed — power reroute required) |")?;
+    writeln!(w, "| `64KB†` | Supported with fly-lead wire(s) from the chip socket's address pin(s) to One ROM's X1 (and X2) header pin |")?;
     writeln!(w, "| `-` | Not supported on this board |")?;
     writeln!(w)?;
 
