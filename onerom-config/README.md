@@ -15,7 +15,7 @@ A config file following this format can be used with [One ROM Studio](https://on
 
 ## Local File Names
 
-Where ROM images are on the local filesystem, it is safest to use full file paths.  On Windows, use double backslashes in the file path (e.g. "C:\\Users\\piers\\local-chargen-custom.bin").
+Where ROM images are on the local filesystem, it is safest to use full file paths.  On Windows, use double backslashes in the file path (e.g. "C:\\\\Users\\\\piers\\\\local-chargen-custom.bin"), or forward slashes (e.g. "c:/Users/piers/local-chargen-custom.bin").
 
 ## Minimal Config
 
