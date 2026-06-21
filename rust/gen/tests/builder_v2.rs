@@ -897,9 +897,9 @@ mod tests {
         assert_eq!(v.read_u32_le(s0 + SLOT_DATA).unwrap(), ROM_DATA_BASE);
         assert_eq!(v.read_u32_le(s0 + SLOT_FW_OVRD).unwrap(), NULL_PTR);
  
-        // Table: 2^16 entries × 1 byte = 65536
+        // Table: 2^15 entries × 1 byte = 32768
         let slot_size = v.read_u32_le(s0 + SLOT_SIZE).unwrap();
-        assert_eq!(slot_size, 1 << 16);
+        assert_eq!(slot_size, 1 << 15);
         assert_eq!(rom.len() as u32, slot_size);
  
         let alg = alg_base(&v, s0);
@@ -1665,5 +1665,317 @@ mod tests {
             assert_eq!(v.read_cstr(rom0 + ROM_INFO_TYPE_PTR).unwrap(), "27C080",
                 "cs1={cs1_str}: chip type string");
         }
+    }
+
+    // ========================================================================
+    // v2 cross-size: 2364 (24-pin) on Fire28C (28-pin), pin_offset=2
+    // ========================================================================
+
+    /// Single 2364 (24-pin mask ROM) served from a 28-pin One ROM (Fire28C),
+    /// pin_offset=2.
+    ///
+    /// The 2364's 13 address lines (chip pins 1-8, 19, 21-23) land at socket
+    /// pins 3-10, 21, 23-25, resolving to GPIOs {10,13,14,15,16,20-27}.
+    /// The GPIO span [10,27] is 18 bits wide — 5 of those positions are
+    /// occupied by data/CS lines, not address lines, and become don't-care
+    /// bits in the ROM table. The resulting table is 2^18 = 262144 bytes
+    /// (256KB), fitting within MAX_IMAGE_SIZE.
+    ///
+    /// CS1 (chip pin 20) lands at socket pin 22 → GPIO 11.
+    /// Data lines (chip pins 9-11, 13-17) land at socket pins 11-13, 15-19
+    /// → GPIOs 0-7.
+    ///
+    /// Key cross-size assertions:
+    /// - slot_size = 2^18 = 262144 (18-bit GPIO span, not 16)
+    /// - first_rom_cs_base = 11 (CS1 at GPIO 11, gpio_base=0)
+    /// - first_rom_num_cs_pins = 1
+    #[test]
+    fn v2_single_fire28c_2364() {
+        let json = r#"{
+            "version": 1,
+            "description": "v2 cross-size: 2364 on Fire28C",
+            "chip_sets": [{
+                "type": "single",
+                "chips": [{ "file": "test.bin", "type": "2364", "cs1": "active_low" }]
+            }]
+        }"#;
+
+        let mut b = v2_builder(json);
+        b.add_file(FileData {
+            id: 0,
+            data: vec![0xAAu8; 8192],
+        })
+        .unwrap();
+
+        let (meta, rom) = b.build(v2_props(Board::Fire28C)).expect("build");
+        let v = view(&meta);
+
+        assert_eq!(v.read_u8(HDR_SLOT_COUNT).unwrap(), 1);
+
+        let s0 = slot_base(&v, 0);
+        assert_eq!(v.read_u8(s0 + SLOT_TYPE).unwrap(), SLOT_TYPE_SINGLE_ROM);
+        assert_eq!(v.read_u8(s0 + SLOT_ROM_COUNT).unwrap(), 1);
+        assert_eq!(v.read_u32_le(s0 + SLOT_FW_OVRD).unwrap(), NULL_PTR);
+
+        // 18-bit GPIO span (not the usual 16): 5 gap positions add 2^5
+        // redundancy to the table. The 8KB chip fills only 8192 of the
+        // 262144 entries; the rest are PAD_NO_CHIP_BYTE.
+        let slot_size = v.read_u32_le(s0 + SLOT_SIZE).unwrap();
+        assert_eq!(slot_size, 1u32 << 18, "2364 on Fire28C: 18-bit GPIO span → 256KB table");
+        assert_eq!(rom.len() as u32, slot_size);
+
+        let alg = alg_base(&v, s0);
+
+        let cs = v.read_u32_le(alg + ALG_CS_PTR).unwrap();
+        assert_eq!(v.read_u8(cs + CS_DISCRIMINANT).unwrap(), ALG_CS_0);
+        assert_eq!(v.read_u8(cs + CS0_SERVE_CS_LOW_0).unwrap(), 0);
+        // CS1 at GPIO 11 (socket pin 22), gpio_base=0 → offset 11.
+        assert_eq!(
+            v.read_u8(cs + CS0_FIRST_ROM_CS_BASE).unwrap(), 11,
+            "CS1 (chip pin 20 + offset 2 = socket 22 → GPIO 11)"
+        );
+        assert_eq!(v.read_u8(cs + CS0_FIRST_ROM_NUM_CS_PINS).unwrap(), 1);
+        assert_eq!(v.read_u8(cs + CS0_BYTE_PIN).unwrap(), 0xFF);
+
+        let data = v.read_u32_le(alg + ALG_DATA_PTR).unwrap();
+        assert_eq!(v.read_u8(data + DATA_DISCRIMINANT).unwrap(), ALG_DATA_0);
+        assert_eq!(v.read_u8(data + DATA_WORD_SIZE).unwrap(), 8);
+
+        let dma = v.read_u32_le(alg + ALG_DMA_PTR).unwrap();
+        assert_eq!(v.read_u8(dma + DMA_BIT_MODE).unwrap(), BIT_MODE_8);
+
+        assert_eq!(v.read_u32_le(alg + ALG_PULL_PTR).unwrap(), NULL_PTR);
+        assert_eq!(v.read_u32_le(alg + ALG_OVERRIDE_PTR).unwrap(), NULL_PTR);
+
+        let roms_arr = v.read_u32_le(s0 + SLOT_ROMS).unwrap();
+        let rom0 = v.read_u32_le(roms_arr).unwrap();
+        assert_eq!(v.read_cstr(rom0 + ROM_INFO_TYPE_PTR).unwrap(), "2364");
+    }
+
+    // ========================================================================
+    // v2 cross-size: 2732 (24-pin) on Fire32B (32-pin), pin_offset=4
+    // ========================================================================
+
+    /// Single 2732 (24-pin EPROM) served from a 32-pin One ROM (Fire32B),
+    /// pin_offset=4.
+    ///
+    /// The 2732 works where 2364 does not because chip pin 18 differs between
+    /// the two:
+    ///   - 2364: chip pin 18 = A11 (address line) → socket 22 → GPIO 14.
+    ///     GPIO 14 drags the addr span to [14,34], which straddles both PIO
+    ///     windows and fits in neither.
+    ///   - 2732: chip pin 18 = CE (control line, not an address pin). GPIO
+    ///     14 never enters the address span. The 12 address lines resolve to
+    ///     GPIOs {20-23, 27-34}, span [20,34] = 15 bits, padded to 16 —
+    ///     fitting cleanly in [16,48).
+    ///
+    /// CE (chip pin 18 → socket 22 → GPIO 14) and OE (chip pin 20 → socket
+    /// 24 → GPIO 15, taking the contiguous dual-bond option over GPIO 36)
+    /// form a 2-pin contiguous CS range [14,15].
+    ///
+    /// Key cross-size assertions:
+    /// - slot_size = 2^16 = 65536
+    /// - first_rom_cs_base = 14 (CE at GPIO 14, gpio_base=0)
+    /// - first_rom_num_cs_pins = 2 (CE + OE contiguous)
+    #[test]
+    fn v2_single_fire32b_2732() {
+        let json = r#"{
+            "version": 1,
+            "description": "v2 cross-size: 2732 on Fire32B",
+            "chip_sets": [{
+                "type": "single",
+                "chips": [{ "file": "test.bin", "type": "2732" }]
+            }]
+        }"#;
+
+        let mut b = v2_builder(json);
+        b.add_file(FileData {
+            id: 0,
+            data: vec![0xBBu8; 4096],
+        })
+        .unwrap();
+
+        let (meta, rom) = b.build(v2_props(Board::Fire32B)).expect("build");
+        let v = view(&meta);
+
+        assert_eq!(v.read_u8(HDR_SLOT_COUNT).unwrap(), 1);
+
+        let s0 = slot_base(&v, 0);
+        assert_eq!(v.read_u8(s0 + SLOT_TYPE).unwrap(), SLOT_TYPE_SINGLE_ROM);
+        assert_eq!(v.read_u8(s0 + SLOT_ROM_COUNT).unwrap(), 1);
+        assert_eq!(v.read_u32_le(s0 + SLOT_FW_OVRD).unwrap(), NULL_PTR);
+
+        let slot_size = v.read_u32_le(s0 + SLOT_SIZE).unwrap();
+        assert_eq!(slot_size, 1u32 << 15, "2732 on Fire32B: 12 addr pins padded to 15 → 32KB table");
+        assert_eq!(rom.len() as u32, slot_size);
+
+        let alg = alg_base(&v, s0);
+
+        let cs = v.read_u32_le(alg + ALG_CS_PTR).unwrap();
+        assert_eq!(v.read_u8(cs + CS_DISCRIMINANT).unwrap(), ALG_CS_0);
+        assert_eq!(v.read_u8(cs + CS0_SERVE_CS_LOW_0).unwrap(), 0);
+        // CE (chip pin 18 + offset 4 = socket 22 → GPIO 14), gpio_base=0.
+        // OE (chip pin 20 + offset 4 = socket 24 → GPIO 15) is adjacent.
+        // Together they form a 2-pin contiguous CS range.
+        assert_eq!(
+            v.read_u8(cs + CS0_FIRST_ROM_CS_BASE).unwrap(), 14,
+            "CE at GPIO 14 (chip pin 18 + offset 4 = socket 22)"
+        );
+        assert_eq!(
+            v.read_u8(cs + CS0_FIRST_ROM_NUM_CS_PINS).unwrap(), 2,
+            "CE + OE span 2 contiguous pins [14,15]"
+        );
+        assert_eq!(v.read_u8(cs + CS0_BYTE_PIN).unwrap(), 0xFF);
+
+        let data = v.read_u32_le(alg + ALG_DATA_PTR).unwrap();
+        assert_eq!(v.read_u8(data + DATA_DISCRIMINANT).unwrap(), ALG_DATA_0);
+        assert_eq!(v.read_u8(data + DATA_WORD_SIZE).unwrap(), 8);
+
+        let dma = v.read_u32_le(alg + ALG_DMA_PTR).unwrap();
+        assert_eq!(v.read_u8(dma + DMA_BIT_MODE).unwrap(), BIT_MODE_8);
+
+        assert_eq!(v.read_u32_le(alg + ALG_PULL_PTR).unwrap(), NULL_PTR);
+        assert_eq!(v.read_u32_le(alg + ALG_OVERRIDE_PTR).unwrap(), NULL_PTR);
+
+        let roms_arr = v.read_u32_le(s0 + SLOT_ROMS).unwrap();
+        let rom0 = v.read_u32_le(roms_arr).unwrap();
+        assert_eq!(v.read_cstr(rom0 + ROM_INFO_TYPE_PTR).unwrap(), "2732");
+    }
+
+    // ========================================================================
+    // v2 cross-size: 27256 (28-pin) on Fire32B (32-pin), pin_offset=2
+    // ========================================================================
+
+    /// Single 27256 (28-pin EPROM) served from a 32-pin One ROM (Fire32B),
+    /// pin_offset=2.
+    ///
+    /// The 27256's 15 address lines (chip pins 2-10, 21, 23-27) land at
+    /// socket pins 4-12, 23, 25-29, resolving to GPIOs {20-34} — 15
+    /// contiguous values, padded to 16. GPIO span fits [16,48).
+    ///
+    /// Notably, the CE/OE layout is identical to 2732 on Fire32B (above):
+    /// CE (chip pin 20 → socket 22 → GPIO 14) and OE (chip pin 22 → socket
+    /// 24 → GPIO 15) form the same 2-pin CS range [14,15], and data lines
+    /// resolve to GPIOs 0-7. This is not a coincidence — the same socket
+    /// positions carry the same GPIOs regardless of which chip is installed.
+    ///
+    /// Key cross-size assertions:
+    /// - slot_size = 2^16 = 65536
+    /// - first_rom_cs_base = 14
+    /// - first_rom_num_cs_pins = 2
+    #[test]
+    fn v2_single_fire32b_27256() {
+        let json = r#"{
+            "version": 1,
+            "description": "v2 cross-size: 27256 on Fire32B",
+            "chip_sets": [{
+                "type": "single",
+                "chips": [{ "file": "test.bin", "type": "27256" }]
+            }]
+        }"#;
+
+        let mut b = v2_builder(json);
+        b.add_file(FileData {
+            id: 0,
+            data: vec![0xCCu8; 32768],
+        })
+        .unwrap();
+
+        let (meta, rom) = b.build(v2_props(Board::Fire32B)).expect("build");
+        let v = view(&meta);
+
+        assert_eq!(v.read_u8(HDR_SLOT_COUNT).unwrap(), 1);
+
+        let s0 = slot_base(&v, 0);
+        assert_eq!(v.read_u8(s0 + SLOT_TYPE).unwrap(), SLOT_TYPE_SINGLE_ROM);
+        assert_eq!(v.read_u8(s0 + SLOT_ROM_COUNT).unwrap(), 1);
+        assert_eq!(v.read_u32_le(s0 + SLOT_FW_OVRD).unwrap(), NULL_PTR);
+
+        let slot_size = v.read_u32_le(s0 + SLOT_SIZE).unwrap();
+        assert_eq!(slot_size, 1u32 << 15, "27256 on Fire32B: 15 addr pins padded to 15 → 32KB table");
+        assert_eq!(rom.len() as u32, slot_size);
+
+        let alg = alg_base(&v, s0);
+
+        let cs = v.read_u32_le(alg + ALG_CS_PTR).unwrap();
+        assert_eq!(v.read_u8(cs + CS_DISCRIMINANT).unwrap(), ALG_CS_0);
+        assert_eq!(v.read_u8(cs + CS0_SERVE_CS_LOW_0).unwrap(), 0);
+        // CE (chip pin 20 + offset 2 = socket 22 → GPIO 14), gpio_base=0.
+        // OE (chip pin 22 + offset 2 = socket 24 → GPIO 15).
+        // Identical CS layout to 2732 on Fire32B: same socket positions,
+        // same GPIOs, regardless of which chip is installed.
+        assert_eq!(
+            v.read_u8(cs + CS0_FIRST_ROM_CS_BASE).unwrap(), 14,
+            "CE at GPIO 14 (chip pin 20 + offset 2 = socket 22)"
+        );
+        assert_eq!(
+            v.read_u8(cs + CS0_FIRST_ROM_NUM_CS_PINS).unwrap(), 2,
+            "CE + OE span 2 contiguous pins [14,15]"
+        );
+        assert_eq!(v.read_u8(cs + CS0_BYTE_PIN).unwrap(), 0xFF);
+
+        let data = v.read_u32_le(alg + ALG_DATA_PTR).unwrap();
+        assert_eq!(v.read_u8(data + DATA_DISCRIMINANT).unwrap(), ALG_DATA_0);
+        assert_eq!(v.read_u8(data + DATA_WORD_SIZE).unwrap(), 8);
+
+        let dma = v.read_u32_le(alg + ALG_DMA_PTR).unwrap();
+        assert_eq!(v.read_u8(dma + DMA_BIT_MODE).unwrap(), BIT_MODE_8);
+
+        assert_eq!(v.read_u32_le(alg + ALG_PULL_PTR).unwrap(), NULL_PTR);
+        assert_eq!(v.read_u32_le(alg + ALG_OVERRIDE_PTR).unwrap(), NULL_PTR);
+
+        let roms_arr = v.read_u32_le(s0 + SLOT_ROMS).unwrap();
+        let rom0 = v.read_u32_le(roms_arr).unwrap();
+        assert_eq!(v.read_cstr(rom0 + ROM_INFO_TYPE_PTR).unwrap(), "27256");
+    }
+
+    // ========================================================================
+    // v2 cross-size: 2364 (24-pin) on Fire32B (32-pin) — incompatible layout
+    // ========================================================================
+
+    /// 2364 on Fire32B must fail: pin_offset=2 is a valid offset, but the
+    /// resulting GPIO span is unservable.
+    ///
+    /// `socket_pin_offset(24, 32) = Some(4)`, so this is NOT an
+    /// `IncompatiblePinCount` error. The failure occurs inside
+    /// `derive_addr_layout`: chip pin 18 (A11) lands at socket pin 22 →
+    /// GPIO 14, while chip pins 7/8 (A1/A0) land at socket pins 11/12 →
+    /// GPIOs 33/34. The resulting span [14,34] is 21 bits wide, which
+    /// straddles both PIO windows ([0,32) and [16,48)) and fits in neither.
+    ///
+    /// The same chip works on Fire28C (pin_offset=2) because the Fire28C
+    /// GPIO layout keeps the equivalent span within [0,32). It works as
+    /// 2732 on Fire32B because the 2732's chip pin 18 is CE (excluded from
+    /// the address span), not an address line.
+    ///
+    /// A future Fire32C with a dual-bond at socket pin 22 → [14, 37] would
+    /// resolve this: the combo scorer would pick GPIO 37 for A11, giving a
+    /// span of [20,37] = 18 bits that fits [16,48), at the cost of a 256KB
+    /// table.
+    #[test]
+    fn v2_single_fire32b_2364_incompatible_layout() {
+        let json = r#"{
+            "version": 1,
+            "description": "v2 cross-size: 2364 on Fire32B (expected failure)",
+            "chip_sets": [{
+                "type": "single",
+                "chips": [{ "file": "test.bin", "type": "2364", "cs1": "active_low" }]
+            }]
+        }"#;
+
+        let mut b = v2_builder(json);
+        b.add_file(FileData {
+            id: 0,
+            data: vec![0xAAu8; 8192],
+        })
+        .unwrap();
+
+        let result = b.build(v2_props(Board::Fire32B));
+
+        assert!(
+            result.is_err(),
+            "2364 on Fire32B must fail: A11 (chip pin 18) at socket 22 → GPIO 14 \
+             puts the addr span [14,34] outside both PIO windows"
+        );
     }
 }

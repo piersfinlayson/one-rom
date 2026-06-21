@@ -1,0 +1,117 @@
+{
+    "$schema": "https://images.onerom.org/configs/schema.json",
+    "version": 1,
+    "name": "32-random-23c1001-all-cs",
+    "description": "23C1001 test config with random data - all CS1/CS2 combinations",
+    "categories": [],
+    "rom_sets": [
+        {
+            "type": "single",
+            "roms": [
+                {
+                    "description": "23C1001 cs1=active_high cs2=active_high",
+                    "file": "images/test/rand_128KB.rom",
+                    "type": "23C1001",
+                    "cs1": "active_high",
+                    "cs2": "active_high"
+                }
+            ]
+        },
+        {
+            "type": "single",
+            "roms": [
+                {
+                    "description": "23C1001 cs1=active_high cs2=active_low",
+                    "file": "images/test/rand_128KB.rom",
+                    "type": "23C1001",
+                    "cs1": "active_high",
+                    "cs2": "active_low"
+                }
+            ]
+        },
+        {
+            "type": "single",
+            "roms": [
+                {
+                    "description": "23C1001 cs1=active_high cs2=ignore",
+                    "file": "images/test/rand_128KB.rom",
+                    "type": "23C1001",
+                    "cs1": "active_high",
+                    "cs2": "ignore"
+                }
+            ]
+        },
+        {
+            "type": "single",
+            "roms": [
+                {
+                    "description": "23C1001 cs1=active_low cs2=active_high",
+                    "file": "images/test/rand_128KB.rom",
+                    "type": "23C1001",
+                    "cs1": "active_low",
+                    "cs2": "active_high"
+                }
+            ]
+        },
+        {
+            "type": "single",
+            "roms": [
+                {
+                    "description": "23C1001 cs1=active_low cs2=active_low",
+                    "file": "images/test/rand_128KB.rom",
+                    "type": "23C1001",
+                    "cs1": "active_low",
+                    "cs2": "active_low"
+                }
+            ]
+        },
+        {
+            "type": "single",
+            "roms": [
+                {
+                    "description": "23C1001 cs1=active_low cs2=ignore",
+                    "file": "images/test/rand_128KB.rom",
+                    "type": "23C1001",
+                    "cs1": "active_low",
+                    "cs2": "ignore"
+                }
+            ]
+        },
+        {
+            "type": "single",
+            "roms": [
+                {
+                    "description": "23C1001 cs1=ignore cs2=active_high",
+                    "file": "images/test/rand_128KB.rom",
+                    "type": "23C1001",
+                    "cs1": "ignore",
+                    "cs2": "active_high"
+                }
+            ]
+        },
+        {
+            "type": "single",
+            "roms": [
+                {
+                    "description": "23C1001 cs1=ignore cs2=active_low",
+                    "file": "images/test/rand_128KB.rom",
+                    "type": "23C1001",
+                    "cs1": "ignore",
+                    "cs2": "active_low"
+                }
+            ]
+        },
+        {
+            "type": "single",
+            "roms": [
+                {
+                    "description": "23C1001 cs1=ignore cs2=ignore",
+                    "file": "images/test/rand_128KB.rom",
+                    "type": "23C1001",
+                    "cs1": "ignore",
+                    "cs2": "ignore"
+                }
+            ]
+        }
+    ]
+}

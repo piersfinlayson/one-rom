@@ -8,7 +8,6 @@ use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::string::String;
 use onerom_config::chip::ChipType;
 use onerom_config::fw::{FirmwareProperties, FirmwareVersion};
-use onerom_config::hw::Board;
 use onerom_config::mcu::Family;
 use onerom_metadata::{
     CURRENT_METADATA_VERSION, METADATA_BASE, METADATA_SIZE, ONEROM_METADATA_MAGIC,
@@ -1518,16 +1517,6 @@ pub(crate) fn build_chip_sets(
             };
 
             let filename = chip_config.filename();
-
-            let chip_config = if matches!(props.board(), Board::Fire32A)
-                && matches!(chip_config.chip_type, ChipType::ChipSST39SF040)
-            {
-                let mut new_cc = chip_config.clone();
-                new_cc.chip_type = ChipType::Chip27C040;
-                new_cc
-            } else {
-                chip_config.clone()
-            };
 
             // For V2 CE/OE chips where ce or oe is explicitly configured,
             // use new_with_ce_oe so the logic is carried into the CsConfig.

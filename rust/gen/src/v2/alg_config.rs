@@ -31,7 +31,6 @@ use onerom_metadata::{
     OneromAlgDmaConfig, OneromAlgOverrideConfig,
 };
 
-use crate::image::{ChipSetType, CsConfig};
 use crate::v2::cs_overrides::encode_override;
 
 use super::addr_layout::AddrLayout;
@@ -42,6 +41,7 @@ use super::alg_preference::{
 use super::cs_data_layout::CsDataLayout;
 use super::cs_overrides::{build_cs_overrides, build_gpio_x_overrides};
 use super::gpio_pull_config::build_gpio_pull_config;
+use super::slot_context::SlotContext;
 
 /// H: clock dividers default to 1.0 for now.
 pub const DEFAULT_CLKDIV_INT: u16 = 1;
@@ -223,15 +223,17 @@ pub fn combined_alg_preference(alg: &OneromAlgConfig) -> CombinedAlgPreference {
 /// `chips.len()`) for the set.
 #[allow(clippy::too_many_arguments)]
 pub fn build_alg_config(
-    board: Board,
-    set_type: ChipSetType,
+    ctx: &SlotContext,
     addr_layout: &AddrLayout,
     cs_data_layout: &CsDataLayout,
-    bit_mode: BitModes,
-    force_16_bit: bool,
-    num_chips: usize,
-    cs_config: &CsConfig,
 ) -> OneromAlgConfig {
+    let board = ctx.board;
+    let set_type = ctx.set_type;
+    let bit_mode = ctx.bit_mode;
+    let force_16_bit = ctx.force_16_bit;
+    let num_chips = ctx.chip_types.len();
+    let cs_config = &ctx.cs_config;
+
     let alg_data = build_alg_data(cs_data_layout, board, bit_mode, force_16_bit);
     let alg_addr = build_alg_addr(addr_layout, &alg_data);
     let alg_cs = build_alg_cs(cs_data_layout, set_type, &alg_data);
@@ -290,8 +292,9 @@ mod tests {
         DmaAlgPreference,
     };
     use super::super::cs_data_layout::derive_cs_data_layout;
+    use super::super::slot_context::SlotContext;
     use super::*;
-    use crate::image::CsLogic;
+    use crate::image::{ChipSetType, CsConfig, CsLogic};
     use onerom_metadata::OneromAlgCsConfig;
 
     #[test]
@@ -362,37 +365,25 @@ mod tests {
     fn fire24a_2364_single_full_config() {
         let cs_config = CsConfig::new(Some(CsLogic::ActiveLow), None, None);
 
-        let bit_mode = bit_mode_for(ChipType::Chip2364, Board::Fire24A);
-        assert_eq!(bit_mode, BitModes::BitMode8);
+        let ctx = SlotContext {
+            board: Board::Fire24A,
+            set_type: ChipSetType::Single,
+            chip_types: alloc::vec![ChipType::Chip2364],
+            cs_config,
+            bit_mode: bit_mode_for(ChipType::Chip2364, Board::Fire24A),
+            pin_offset: 0,
+            force_16_bit: false,
+            multi_cs_config: None,
+        };
+        assert_eq!(ctx.bit_mode, BitModes::BitMode8);
 
-        let addr_layout = derive_addr_layout(
-            Board::Fire24A,
-            ChipSetType::Single,
-            &[ChipType::Chip2364],
-            bit_mode,
-            None,
-        )
-        .expect("addr layout derivation should succeed");
-        let cs_data_layout = derive_cs_data_layout(
-            Board::Fire24A,
-            ChipSetType::Single,
-            &[ChipType::Chip2364],
-            &cs_config,
-            Some(&addr_layout),
-            None,
-        )
-        .expect("cs/data layout derivation should succeed");
+        let addr_layout =
+            derive_addr_layout(&ctx).expect("addr layout derivation should succeed");
+        let cs_data_layout =
+            derive_cs_data_layout(&ctx, Some(&addr_layout))
+                .expect("cs/data layout derivation should succeed");
 
-        let config = build_alg_config(
-            Board::Fire24A,
-            ChipSetType::Single,
-            &addr_layout,
-            &cs_data_layout,
-            bit_mode,
-            false,
-            1,
-            &cs_config,
-        );
+        let config = build_alg_config(&ctx, &addr_layout, &cs_data_layout);
 
         assert_eq!(
             config,
@@ -447,36 +438,25 @@ mod tests {
     #[test]
     fn fire24a_2364_banked_2chip_has_x_override() {
         let cs_config = CsConfig::new(Some(CsLogic::ActiveLow), None, None);
-        let bit_mode = bit_mode_for(ChipType::Chip2364, Board::Fire24A);
 
-        let addr_layout = derive_addr_layout(
-            Board::Fire24A,
-            ChipSetType::Banked,
-            &[ChipType::Chip2364, ChipType::Chip2364],
-            bit_mode,
-            None,
-        )
-        .expect("addr layout derivation should succeed");
-        let cs_data_layout = derive_cs_data_layout(
-            Board::Fire24A,
-            ChipSetType::Banked,
-            &[ChipType::Chip2364, ChipType::Chip2364],
-            &cs_config,
-            Some(&addr_layout),
-            None,
-        )
-        .expect("cs/data layout derivation should succeed");
+        let ctx = SlotContext {
+            board: Board::Fire24A,
+            set_type: ChipSetType::Banked,
+            chip_types: alloc::vec![ChipType::Chip2364, ChipType::Chip2364],
+            cs_config,
+            bit_mode: bit_mode_for(ChipType::Chip2364, Board::Fire24A),
+            pin_offset: 0,
+            force_16_bit: false,
+            multi_cs_config: None,
+        };
 
-        let config = build_alg_config(
-            Board::Fire24A,
-            ChipSetType::Banked,
-            &addr_layout,
-            &cs_data_layout,
-            bit_mode,
-            false,
-            2,
-            &cs_config,
-        );
+        let addr_layout =
+            derive_addr_layout(&ctx).expect("addr layout derivation should succeed");
+        let cs_data_layout =
+            derive_cs_data_layout(&ctx, Some(&addr_layout))
+                .expect("cs/data layout derivation should succeed");
+
+        let config = build_alg_config(&ctx, &addr_layout, &cs_data_layout);
 
         // CS1 active_low matches required active_low → no CS override.
         // AlgData0 (8-bit) → no byte_pin override.
@@ -511,37 +491,25 @@ mod tests {
     fn fire28a_23ql384_single_full_config_alg_cs2() {
         let cs_config = CsConfig::new(Some(CsLogic::ActiveLow), None, None);
 
-        let bit_mode = bit_mode_for(ChipType::Chip23QL384, Board::Fire28A);
-        assert_eq!(bit_mode, BitModes::BitMode8);
+        let ctx = SlotContext {
+            board: Board::Fire28A,
+            set_type: ChipSetType::Single,
+            chip_types: alloc::vec![ChipType::Chip23QL384],
+            cs_config,
+            bit_mode: bit_mode_for(ChipType::Chip23QL384, Board::Fire28A),
+            pin_offset: 0,
+            force_16_bit: false,
+            multi_cs_config: None,
+        };
+        assert_eq!(ctx.bit_mode, BitModes::BitMode8);
 
-        let addr_layout = derive_addr_layout(
-            Board::Fire28A,
-            ChipSetType::Single,
-            &[ChipType::Chip23QL384],
-            bit_mode,
-            None,
-        )
-        .expect("addr layout derivation should succeed");
-        let cs_data_layout = derive_cs_data_layout(
-            Board::Fire28A,
-            ChipSetType::Single,
-            &[ChipType::Chip23QL384],
-            &cs_config,
-            Some(&addr_layout),
-            None,
-        )
-        .expect("cs/data layout derivation should succeed");
+        let addr_layout =
+            derive_addr_layout(&ctx).expect("addr layout derivation should succeed");
+        let cs_data_layout =
+            derive_cs_data_layout(&ctx, Some(&addr_layout))
+                .expect("cs/data layout derivation should succeed");
 
-        let config = build_alg_config(
-            Board::Fire28A,
-            ChipSetType::Single,
-            &addr_layout,
-            &cs_data_layout,
-            bit_mode,
-            false,
-            1,
-            &cs_config,
-        );
+        let config = build_alg_config(&ctx, &addr_layout, &cs_data_layout);
 
         assert_eq!(
             config.alg_dma,
@@ -716,34 +684,24 @@ mod tests {
     #[test]
     fn combined_alg_preference_fire24a_2364() {
         let cs_config = CsConfig::new(Some(CsLogic::ActiveLow), None, None);
-        let bit_mode = bit_mode_for(ChipType::Chip2364, Board::Fire24A);
-        let addr_layout = derive_addr_layout(
-            Board::Fire24A,
-            ChipSetType::Single,
-            &[ChipType::Chip2364],
-            bit_mode,
-            None,
-        )
-        .expect("addr layout should succeed");
-        let cs_data_layout = derive_cs_data_layout(
-            Board::Fire24A,
-            ChipSetType::Single,
-            &[ChipType::Chip2364],
-            &cs_config,
-            Some(&addr_layout),
-            None,
-        )
-        .expect("cs layout should succeed");
-        let config = build_alg_config(
-            Board::Fire24A,
-            ChipSetType::Single,
-            &addr_layout,
-            &cs_data_layout,
-            bit_mode,
-            false,
-            1,
-            &cs_config,
-        );
+
+        let ctx = SlotContext {
+            board: Board::Fire24A,
+            set_type: ChipSetType::Single,
+            chip_types: alloc::vec![ChipType::Chip2364],
+            cs_config,
+            bit_mode: bit_mode_for(ChipType::Chip2364, Board::Fire24A),
+            pin_offset: 0,
+            force_16_bit: false,
+            multi_cs_config: None,
+        };
+
+        let addr_layout =
+            derive_addr_layout(&ctx).expect("addr layout should succeed");
+        let cs_data_layout =
+            derive_cs_data_layout(&ctx, Some(&addr_layout))
+                .expect("cs layout should succeed");
+        let config = build_alg_config(&ctx, &addr_layout, &cs_data_layout);
 
         let pref: CombinedAlgPreference = combined_alg_preference(&config);
         assert_eq!(

@@ -17,6 +17,7 @@ Retired:
 - `sdrr-info` (superceded by the CLI `onerom firmware inspect` command)
 - `sdrr-tester` (superceded by `onerom-lab-new`)
 - `test` (superceded by `onerom-fw-tester`)
+- Silent replacement of SST39SF040 with 27C040 for fire-32-a.  Decided it was best to flag this isn't natively supported.
 
 ## v0.6.13 - 2026-06-02
 

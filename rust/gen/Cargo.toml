@@ -11,6 +11,14 @@ documentation = "https://docs.rs/onerom-gen"
 keywords = ["retro", "rom", "commodore", "embedded"]
 categories = ["embedded", "hardware-support"]
 
+[lib]
+name = "onerom_gen"
+path = "src/lib.rs"
+
+[[bin]]
+name = "compat"
+path = "src/bin/compat_bin.rs"
+
 [features]
 # Used to generate JSON schema files
 schemars = ["dep:schemars", "onerom-config/schemars"]

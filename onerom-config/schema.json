@@ -91,7 +91,7 @@
             "type": "object",
             "properties": {
                 "allow_cs_ignore": {
-                    "description": "Explicitly permit CS/CE/OE lines to be set to Ignore outside the\ncontexts where this is implicitly allowed:\n  - V2 multi-ROM set chips[1+] (secondary sockets — free pass)\n  - Lines with allow_ignore in chip_types.json (datasheet-defined)\n\nRequired for chips[0] in multi-ROM sets and for single-chip sets\nwhere a line needs ignoring for custom circuit reasons.\nMisuse can cause bus contention — only set when intentional.",
+                    "description": "Explicitly permit CS/CE/OE lines to be set to Ignore outside the\ncontexts where this is implicitly allowed:\n  - V2 multi-ROM set chips[1+] (secondary sockets — free pass)\n  - Lines with allow_ignore in chip_types.json (datasheet-defined)\n\nRequired for chip0 in multi-ROM sets and for single-chip sets\nwhere a line needs ignoring for custom circuit reasons.\nMisuse can cause bus contention — only set when intentional.",
                     "type": "boolean",
                     "default": false
                 },
@@ -212,7 +212,7 @@
             "type": "object",
             "properties": {
                 "chips": {
-                    "description": "Array of chip configurations in this set.  Contains 1 member for single\nchip sets, and multiple members for multi-ROM and banked ROM sets.\n\nFor multi-ROM sets, the array order determines X pin assignment:\n  chips[0] — primary socket (One ROM physically installed here)\n  chips[1] — X1 pin monitors this socket's chip select via fly-lead\n  chips[2] — X2 pin monitors this socket's chip select via fly-lead\nMaximum 3 chips per multi-ROM set (primary + 2 X pins).",
+                    "description": "Array of chip configurations in this set.  Contains 1 member for single\nchip sets, and multiple members for multi-ROM and banked ROM sets.\n\nFor multi-ROM sets, the array order determines X pin assignment:\n  chip0 — primary socket (One ROM physically installed here)\n  chip1 — X1 pin monitors this socket's chip select via fly-lead\n  chip2 — X2 pin monitors this socket's chip select via fly-lead\nMaximum 3 chips per multi-ROM set (primary + 2 X pins).",
                     "type": "array",
                     "items": {
                         "$ref": "#/$defs/ChipConfig"

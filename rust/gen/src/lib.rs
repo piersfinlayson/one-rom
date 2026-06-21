@@ -9,6 +9,7 @@
 extern crate alloc;
 
 pub mod builder;
+pub mod compat;
 pub mod firmware;
 pub mod image;
 pub mod meta;

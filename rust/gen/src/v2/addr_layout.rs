@@ -79,11 +79,11 @@ use crate::{Error, MAX_IMAGE_SIZE};
 
 use super::alg_preference::AddrAlgPreference;
 use super::gpio_window::fits_pio_window;
-use super::multi_cs_config::MultiChipCsConfig;
+use super::slot_context::SlotContext;
 
-/// Minimum width (in GPIOs/bits) of the address-read range, i.e. the
-/// minimum 64KB ROM table size.
-const MIN_ADDR_PINS: u8 = 16;
+/// Minimum width (in GPIOs/bits) of the address-read range.  This in turn
+/// drives the minimal possible ROM image size on flash.
+const MIN_ADDR_PINS: u8 = 8;
 
 /// Resolved address-range layout for one chip set: the address PIO reads
 /// `num_addr_pins` contiguous GPIOs starting at `gpio_base`, and that
@@ -186,6 +186,12 @@ pub enum LayoutError {
         num_addr_pins: u8,
         table_size: usize,
     },
+
+    /// The chip's pin count and the board's socket pin count are not a
+    /// supported combination. Same-size pairs (24/24, 28/28, 32/32, 40/40)
+    /// and the known smaller-in-larger pairs (24 in 28, 28 in 32, 24 in 32)
+    /// are valid; everything else is not. See `socket_pin_offset`.
+    IncompatiblePinCount { board: Board, chip_type: ChipType },
 }
 
 impl From<LayoutError> for Error {
@@ -259,18 +265,23 @@ impl From<LayoutError> for Error {
                     ),
                 }
             }
+            LayoutError::IncompatiblePinCount { board, chip_type } => {
+                Error::UnsupportedBoardChipType { board, chip_type }
+            }
         }
     }
 }
 
 /// Get the candidate GPIO(s) for chip_type's address line at
-/// `address_pins()` index `n`, on `board`.
+/// `address_pins()` index `n`, on `board`, applying `pin_offset` to
+/// translate from chip physical pin to socket pin.
 fn addr_line_candidates(
     board: Board,
     chip_type: ChipType,
     n: usize,
+    pin_offset: u8,
 ) -> Result<&'static [u8], LayoutError> {
-    let phys_pin = chip_type.address_pins()[n];
+    let phys_pin = chip_type.address_pins()[n] + pin_offset;
     let gpios = board.gpios_for_socket_pin(phys_pin);
     if gpios.is_empty() {
         return Err(LayoutError::UnmappedPin {
@@ -284,14 +295,16 @@ fn addr_line_candidates(
 
 /// Derive the address-range layout for a chip set.
 ///
-/// `chip_types` is the chip type(s) in the set, in slot order
-/// (`chip_types[0]` is the "primary" chip whose address lines define the
-/// range; for Multi/Banked, X1 (and X2 for 3+ chip sets) are added on
-/// top).
+/// `ctx.chip_types[0]` is the primary chip whose address lines define the
+/// range; for Multi/Banked sets, X1 (and X2 for 3+ chip sets) are added
+/// on top.
 ///
-/// `bit_mode` is chip0's *effective* bit mode (see module docs) - for
+/// `ctx.bit_mode` is chip0's *effective* bit mode (see module docs) — for
 /// `BitMode16`, `chip0.address_pins()[0]` ("A-1") is excluded from the
 /// address-PIO range.
+///
+/// `ctx.pin_offset` is applied to every chip physical pin before the
+/// board socket-pin lookup, to handle chips smaller than the board socket.
 ///
 /// For chips whose full address space exceeds `MAX_IMAGE_SIZE` (e.g.
 /// 27C080 at 1MB), the top address lines that would overflow are resolved
@@ -304,18 +317,19 @@ fn addr_line_candidates(
 /// QUESTION/TODO: for Multi sets with heterogeneous chip types, chip[0]'s
 /// address-line layout is assumed representative of the whole set. Revisit
 /// if that's not actually true in practice.
-/// `multi_cs_config` must be `Some` for `ChipSetType::Multi`, `None`
+/// `ctx.multi_cs_config` must be `Some` for `ChipSetType::Multi`, `None`
 /// otherwise. It provides the per-chip select and commoned line GPIOs,
 /// which are included in the addr span so that CE/OE/CS1 remain within
 /// the address PIO window even when they fall between the addr lines and
 /// X1/X2 in the GPIO numbering.
-pub fn derive_addr_layout(
-    board: Board,
-    set_type: ChipSetType,
-    chip_types: &[ChipType],
-    bit_mode: BitModes,
-    multi_cs_config: Option<&MultiChipCsConfig>,
-) -> Result<AddrLayout, LayoutError> {
+pub fn derive_addr_layout(ctx: &SlotContext) -> Result<AddrLayout, LayoutError> {
+    let board = ctx.board;
+    let set_type = ctx.set_type;
+    let chip_types = &ctx.chip_types;
+    let bit_mode = ctx.bit_mode;
+    let multi_cs_config = ctx.multi_cs_config.as_ref();
+    let pin_offset = ctx.pin_offset;
+
     let chip0 = chip_types[0];
 
     // For BitMode16 (AlgData1), address_pins()[0] is "A-1" - handled
@@ -354,7 +368,7 @@ pub fn derive_addr_layout(
     //   [num_addr_lines..)      X1 / X2 (Multi/Banked)  → x1_gpio / x2_gpio
     let mut candidates: Vec<&'static [u8]> = Vec::with_capacity(num_addr_lines + 2);
     for n in 0..num_addr_lines {
-        candidates.push(addr_line_candidates(board, chip0, addr_line_start + n)?);
+        candidates.push(addr_line_candidates(board, chip0, addr_line_start + n, pin_offset)?);
     }
 
     let mut x1_idx: Option<usize> = None;
@@ -390,7 +404,10 @@ pub fn derive_addr_layout(
                 .filter_map(|kind| {
                     let name = kind.name();
                     let line = chip0.control_lines().iter().find(|l| l.name == name)?;
-                    board.gpios_for_socket_pin(line.pin).first().copied()
+                    board
+                        .gpios_for_socket_pin(line.pin + pin_offset)
+                        .first()
+                        .copied()
                 })
                 .collect()
         } else {
@@ -493,6 +510,22 @@ pub fn derive_addr_layout(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::image::{CsConfig, CsLogic};
+
+    use super::super::slot_context::SlotContext;
+
+    fn ctx_single_8bit(board: Board, chip_type: ChipType) -> SlotContext {
+        SlotContext {
+            board,
+            set_type: ChipSetType::Single,
+            chip_types: alloc::vec![chip_type],
+            cs_config: CsConfig::new(Some(CsLogic::ActiveLow), None, None),
+            bit_mode: BitModes::BitMode8,
+            pin_offset: 0,
+            force_16_bit: false,
+            multi_cs_config: None,
+        }
+    }
 
     /// Fire24A, single 2364.
     ///
@@ -507,14 +540,8 @@ mod tests {
     /// 13 address lines < max_useful_addr_lines (19), so no excess.
     #[test]
     fn fire24a_2364_single() {
-        let layout = derive_addr_layout(
-            Board::Fire24A,
-            ChipSetType::Single,
-            &[ChipType::Chip2364],
-            BitModes::BitMode8,
-            None,
-        )
-        .expect("layout derivation should succeed");
+        let layout = derive_addr_layout(&ctx_single_8bit(Board::Fire24A, ChipType::Chip2364))
+            .expect("layout derivation should succeed");
 
         assert_eq!(
             layout,
@@ -550,14 +577,18 @@ mod tests {
     /// included). 14 address lines < 19, so no excess.
     #[test]
     fn fire28c_27128_banked_2chip() {
-        let layout = derive_addr_layout(
-            Board::Fire28C,
-            ChipSetType::Banked,
-            &[ChipType::Chip27128, ChipType::Chip27128],
-            BitModes::BitMode8,
-            None,
-        )
-        .expect("layout derivation should succeed");
+        let ctx = SlotContext {
+            board: Board::Fire28C,
+            set_type: ChipSetType::Banked,
+            chip_types: alloc::vec![ChipType::Chip27128, ChipType::Chip27128],
+            cs_config: CsConfig::new(Some(CsLogic::ActiveLow), None, None),
+            bit_mode: BitModes::BitMode8,
+            pin_offset: 0,
+            force_16_bit: false,
+            multi_cs_config: None,
+        };
+        let layout = derive_addr_layout(&ctx)
+            .expect("layout derivation should succeed");
 
         assert_eq!(
             layout,
@@ -590,14 +621,18 @@ mod tests {
     /// so no excess.
     #[test]
     fn fire40a_27c400_bitmode16() {
-        let layout = derive_addr_layout(
-            Board::Fire40A,
-            ChipSetType::Single,
-            &[ChipType::Chip27C400],
-            BitModes::BitMode16,
-            None,
-        )
-        .expect("layout derivation should succeed");
+        let ctx = SlotContext {
+            board: Board::Fire40A,
+            set_type: ChipSetType::Single,
+            chip_types: alloc::vec![ChipType::Chip27C400],
+            cs_config: CsConfig::new(Some(CsLogic::ActiveLow), None, None),
+            bit_mode: BitModes::BitMode16,
+            pin_offset: 0,
+            force_16_bit: false,
+            multi_cs_config: None,
+        };
+        let layout = derive_addr_layout(&ctx)
+            .expect("layout derivation should succeed");
 
         assert_eq!(
             layout,
@@ -625,15 +660,9 @@ mod tests {
     /// [18,35) fits the [16,48) PIO window.
     #[test]
     fn fire32b_27c010_single() {
-        let layout = derive_addr_layout(
-            Board::Fire32B,
-            ChipSetType::Single,
-            &[ChipType::Chip27C010],
-            BitModes::BitMode8,
-            None,
-        )
-        .expect("layout derivation should succeed");
- 
+        let layout = derive_addr_layout(&ctx_single_8bit(Board::Fire32B, ChipType::Chip27C010))
+            .expect("layout derivation should succeed");
+
         assert_eq!(
             layout,
             AddrLayout {
@@ -648,7 +677,7 @@ mod tests {
             }
         );
     }
- 
+
     /// Fire32B, single 27C040 (512KB EPROM, 19 address lines).
     ///
     /// Extends 27C010 with A17 (pin 30, dual-bonded [11,17]) and A18
@@ -658,15 +687,9 @@ mod tests {
     /// Span [16,34] = 19 GPIOs, gpio_base=16, num_addr_pins=19.
     #[test]
     fn fire32b_27c040_single() {
-        let layout = derive_addr_layout(
-            Board::Fire32B,
-            ChipSetType::Single,
-            &[ChipType::Chip27C040],
-            BitModes::BitMode8,
-            None,
-        )
-        .expect("layout derivation should succeed");
- 
+        let layout = derive_addr_layout(&ctx_single_8bit(Board::Fire32B, ChipType::Chip27C040))
+            .expect("layout derivation should succeed");
+
         assert_eq!(
             layout,
             AddrLayout {
@@ -681,7 +704,7 @@ mod tests {
             }
         );
     }
- 
+
     /// Fire32B, single SST39SF040 (512KB flash, 19 address lines).
     ///
     /// Differs from 27C040 only at A18: pin 1 (dual-bonded [13,35])
@@ -692,15 +715,10 @@ mod tests {
     /// gpio_base=17, num_addr_pins=19. [17,36) fits [16,48).
     #[test]
     fn fire32b_sst39sf040_single() {
-        let layout = derive_addr_layout(
-            Board::Fire32B,
-            ChipSetType::Single,
-            &[ChipType::ChipSST39SF040],
-            BitModes::BitMode8,
-            None,
-        )
-        .expect("layout derivation should succeed");
- 
+        let layout =
+            derive_addr_layout(&ctx_single_8bit(Board::Fire32B, ChipType::ChipSST39SF040))
+                .expect("layout derivation should succeed");
+
         assert_eq!(
             layout,
             AddrLayout {
@@ -715,7 +733,7 @@ mod tests {
             }
         );
     }
- 
+
     /// Fire32B, single 27C080 (1MB EPROM, 20 address lines, A19 excess).
     ///
     /// Replaces the earlier Board::Fire32A placeholder. 27C080 extends
@@ -727,15 +745,9 @@ mod tests {
     /// in the iteration, so excess_addr_pin_gpios=[13].
     #[test]
     fn fire32b_27c080_single_excess_a19() {
-        let layout = derive_addr_layout(
-            Board::Fire32B,
-            ChipSetType::Single,
-            &[ChipType::Chip27C080],
-            BitModes::BitMode8,
-            None,
-        )
-        .expect("layout derivation should succeed");
- 
+        let layout = derive_addr_layout(&ctx_single_8bit(Board::Fire32B, ChipType::Chip27C080))
+            .expect("layout derivation should succeed");
+
         assert_eq!(
             layout,
             AddrLayout {

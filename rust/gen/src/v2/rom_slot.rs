@@ -25,6 +25,7 @@ use super::alg_preference::CombinedAlgPreference;
 use super::cs_data_layout::{CsDataLayout, derive_cs_data_layout};
 use super::multi_cs_config::{MultiChipCsConfig, derive_multi_cs_config};
 use super::rom_info::{build_rom_info, rom_slot_type};
+use super::slot_context::{SlotContext, socket_pin_offset};
 
 /// Bytes per ROM table entry/word, from `alg_dma`'s bit mode: `1` for
 /// `BitMode8` (`AlgData0`), `2` for `BitMode16` (`AlgData1`).
@@ -69,14 +70,12 @@ fn rom_table_size(addr_layout: &AddrLayout, alg_dma: &OneromAlgDmaConfig) -> u32
 /// deliberately decoupled from `ChipSet` itself, since `id`/`serve_alg`
 /// aren't needed here.
 ///
-/// `data` is the absolute flash address of this slot's ROM image data -
-/// TODO: Phase 2, currently always `0`/a placeholder pending the top-level
-/// layout pass that assigns these once all slots are sized (mirroring v1's
-/// `rom_data_ptrs`).
+/// `data` is the absolute flash address of this slot's ROM image data.
+/// Callers (e.g. `build_v2`) typically pass `0` as a placeholder and patch
+/// `slot.data` with the real address once all slot sizes are known.
 ///
-/// `firmware_overrides` is the already-converted per-slot override config
-/// (point 5, `build_firmware_overrides` - not yet implemented; pass `None`
-/// for now).
+/// `firmware_overrides` is the already-converted per-slot override config,
+/// built by `build_firmware_overrides` from the chip set's `FirmwareConfig`.
 ///
 /// `force_16_bit` is chip0's `force_16_bit` override (from the chip set's
 /// config, `fire.force_16_bit` - only meaningful when `bit_mode_for`
@@ -84,9 +83,9 @@ fn rom_table_size(addr_layout: &AddrLayout, alg_dma: &OneromAlgDmaConfig) -> u32
 /// `build_alg_config`.
 ///
 /// The returned `AddrLayout`/`CsDataLayout` are the same ones used to build
-/// `slot.alg`/`slot.roms`; callers building `rom_data_buf` (Phase 2's ROM
-/// image generation, `build_rom_image`) should reuse these rather than
-/// re-deriving (the derivation is fallible and not free).
+/// `slot.alg`/`slot.roms`; callers building `rom_data_buf` via
+/// `build_rom_image` should reuse these rather than re-deriving (the
+/// derivation is fallible and not free).
 pub fn build_rom_slot(
     board: Board,
     set_type: ChipSetType,
@@ -104,12 +103,14 @@ pub fn build_rom_slot(
     LayoutError,
 > {
     let chip_types: Vec<ChipType> = chips.iter().map(|c| *c.chip_type()).collect();
-    let cs_config = chips[0].cs_config();
+    let cs_config = *chips[0].cs_config();
 
-    // Effective bit mode for chip0 - shared between the address-layout
-    // derivation (BitMode16 excludes address_pins()[0], "A-1") and
-    // build_alg_config's algorithm choice, so they can't disagree.
-    // Independent of force_16_bit (see bit_mode_for's docs).
+    let pin_offset = socket_pin_offset(chip_types[0].chip_pins(), board.chip_pins())
+        .ok_or(LayoutError::IncompatiblePinCount {
+            board,
+            chip_type: chip_types[0],
+        })?;
+
     let bit_mode = bit_mode_for(chip_types[0], board);
 
     let multi_cs_config: Option<MultiChipCsConfig> = if set_type == ChipSetType::Multi {
@@ -117,20 +118,22 @@ pub fn build_rom_slot(
     } else {
         None
     };
-    let addr_layout = derive_addr_layout(board, set_type, &chip_types, bit_mode, multi_cs_config.as_ref())?;
-    let cs_data_layout =
-        derive_cs_data_layout(board, set_type, &chip_types, cs_config, Some(&addr_layout), multi_cs_config.as_ref())?;
 
-    let alg = build_alg_config(
+    let ctx = SlotContext {
         board,
         set_type,
-        &addr_layout,
-        &cs_data_layout,
-        bit_mode,
-        force_16_bit,
-        chip_types.len(),
+        chip_types,
         cs_config,
-    );
+        bit_mode,
+        pin_offset,
+        force_16_bit,
+        multi_cs_config,
+    };
+
+    let addr_layout = derive_addr_layout(&ctx)?;
+    let cs_data_layout = derive_cs_data_layout(&ctx, Some(&addr_layout))?;
+
+    let alg = build_alg_config(&ctx, &addr_layout, &cs_data_layout);
 
     let size = rom_table_size(&addr_layout, &alg.alg_dma);
 
@@ -139,10 +142,10 @@ pub fn build_rom_slot(
     // user can actually act on.
     if size as usize > MAX_IMAGE_SIZE {
         return Err(LayoutError::RomTableTooLarge {
-            board,
-            chip_type: chip_types[0],
-            set_type,
-            num_chips: chip_types.len(),
+            board: ctx.board,
+            chip_type: ctx.chip_types[0],
+            set_type: ctx.set_type,
+            num_chips: ctx.chip_types.len(),
             num_addr_pins: addr_layout.num_addr_pins,
             table_size: size as usize,
         });
@@ -153,7 +156,7 @@ pub fn build_rom_slot(
         .map(|chip| build_rom_info(chip, &addr_layout, &cs_data_layout))
         .collect();
 
-    let slot_type = rom_slot_type(set_type, chip_types[0]);
+    let slot_type = rom_slot_type(ctx.set_type, ctx.chip_types[0]);
 
     let pref = combined_alg_preference(&alg);
 

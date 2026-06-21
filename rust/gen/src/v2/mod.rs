@@ -4,10 +4,6 @@
 
 // Known open TODOs:
 //
-// Multi has unit-level coverage for individual pieces (build_alg_cs's Multi test) but no
-// end-to-end build_rom_slot/build() sentinel yet — worth adding once you have
-// a Banked config to test against.
-//
 // Multi sets with heterogeneous chip types: chip0's address-line layout is
 // assumed representative of the whole set — flagged, not validated against
 // real hardware.
@@ -24,11 +20,11 @@
 //
 // Removal of gpio_x * causes pioplugin compile problems
 
-mod addr_layout;
-mod alg_config;
+pub(crate) mod addr_layout;
+pub(crate) mod alg_config;
 mod alg_cs;
 mod alg_preference;
-mod cs_data_layout;
+pub(crate) mod cs_data_layout;
 mod cs_overrides;
 pub(crate) mod firmware_config;
 mod gpio_pull_config;
@@ -38,6 +34,7 @@ pub(crate) mod multi_cs_config;
 pub(crate) mod rom_image;
 mod rom_info;
 pub(crate) mod rom_slot;
+pub(crate) mod slot_context;
 
 pub mod builder;
 pub use builder::*;
