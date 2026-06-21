@@ -38,8 +38,13 @@ fn encode_pull(gpio: u8, pull_up: bool) -> u8 {
 /// For a 3-chip set, bank index 3 (X1 and X2 both set) maps to "no chip"
 /// in `build_rom_image`, but both jumpers still exist and both GPIOs need
 /// internal pulls so the RP2350 reads them cleanly when neither is fitted.
+/// 
+/// For belt and braces we set the pulls on both GPIOs for each X pin (if
+/// there are more than 1).  This isn't strictly necessary, as, by definition,
+/// the two GPIOs for each X pin are connected together, so a single pull
+/// affects both.  But it makes it easier to test using `fw-tester`. 
 pub fn build_gpio_pull_config(
-    layout: &AddrLayout,
+    _layout: &AddrLayout,
     set_type: ChipSetType,
     num_chips: usize,
     board: Board,
@@ -53,14 +58,14 @@ pub fn build_gpio_pull_config(
 
     let mut params: Vec<u8> = Vec::with_capacity(2);
 
-    if let Some(x1_gpio) = layout.x1_gpio {
-        params.push(encode_pull(x1_gpio, pull_up));
+    for &gpio in board.gpios_for_x_pin(1) {
+        params.push(encode_pull(gpio, pull_up));
     }
 
     #[allow(clippy::collapsible_if)]
     if num_chips >= 3 {
-        if let Some(x2_gpio) = layout.x2_gpio {
-            params.push(encode_pull(x2_gpio, pull_up));
+        for &gpio in board.gpios_for_x_pin(2) {
+            params.push(encode_pull(gpio, pull_up));
         }
     }
 
@@ -78,12 +83,13 @@ pub fn build_gpio_pull_config(
 #[cfg(test)]
 mod tests {
     use super::*;
-
+ 
     /// Fire24A: x_jumper_pull() == 0 (jumper pulls low when fitted), so the
     /// GPIO pull is the inverse: pull-up (MSB set).
     ///
-    /// X1/X2 GPIOs here are illustrative values for testing the encoding -
-    /// not derived from Fire24A's actual x_pin_map.
+    /// The x1/x2 values passed here are no longer used by
+    /// `build_gpio_pull_config` — pull GPIOs are now derived from
+    /// `board.x_pin_map()` so that all bond GPIOs for each X pin are covered.
     fn layout_with_x(x1: u8, x2: u8) -> AddrLayout {
         AddrLayout {
             gpio_base: 0,
@@ -94,18 +100,18 @@ mod tests {
             excess_addr_pin_gpios: alloc::vec![],
         }
     }
-
+ 
     /// 2-bank Banked set: only X1 gets a pull entry.
     #[test]
     fn banked_2bank_pulls_x1_only() {
         let layout = layout_with_x(14, 15);
-
+ 
         let pulls = build_gpio_pull_config(&layout, ChipSetType::Banked, 2, Board::Fire24A)
             .expect("2-bank Banked set should have pull config");
-
-        assert_eq!(pulls.params, alloc::vec![encode_pull(14, true)]);
+ 
+        assert_eq!(pulls.params, alloc::vec![encode_pull(9, true)]);
     }
-
+ 
     /// 3-bank Banked set: both X1 and X2 get pull entries. Bank index 3
     /// (X1 and X2 both set) maps to "no chip" in build_rom_image, but both
     /// jumpers still exist and both GPIOs need pulls to read cleanly when
@@ -113,30 +119,30 @@ mod tests {
     #[test]
     fn banked_3bank_pulls_x1_and_x2() {
         let layout = layout_with_x(14, 15);
-
+ 
         let pulls = build_gpio_pull_config(&layout, ChipSetType::Banked, 3, Board::Fire24A)
             .expect("3-bank Banked set should have pull config");
-
+ 
         assert_eq!(
             pulls.params,
-            alloc::vec![encode_pull(14, true), encode_pull(15, true)]
+            alloc::vec![encode_pull(9, true), encode_pull(8, true)]
         );
     }
-
+ 
     /// 4-bank Banked set: both X1 and X2 get pull entries.
     #[test]
     fn banked_4bank_pulls_x1_and_x2() {
         let layout = layout_with_x(14, 15);
-
+ 
         let pulls = build_gpio_pull_config(&layout, ChipSetType::Banked, 4, Board::Fire24A)
             .expect("4-bank Banked set should have pull config");
-
+ 
         assert_eq!(
             pulls.params,
-            alloc::vec![encode_pull(14, true), encode_pull(15, true)]
+            alloc::vec![encode_pull(9, true), encode_pull(8, true)]
         );
     }
-
+ 
     /// Single sets never need pull entries.
     #[test]
     fn single_no_pulls() {
@@ -148,17 +154,17 @@ mod tests {
             addr_pin_gpios: alloc::vec![7, 6, 5, 4, 3, 2, 1, 0, 10, 11, 14, 15, 12],
             excess_addr_pin_gpios: alloc::vec![],
         };
-
+ 
         let pulls = build_gpio_pull_config(&layout, ChipSetType::Single, 1, Board::Fire24A);
         assert_eq!(pulls, None);
     }
-
+ 
     /// Multi sets never need pull entries (X1/X2 are CS lines for chip1/2,
     /// not jumpers).
     #[test]
     fn multi_no_pulls() {
         let layout = layout_with_x(14, 15);
-
+ 
         let pulls = build_gpio_pull_config(&layout, ChipSetType::Multi, 3, Board::Fire24A);
         assert_eq!(pulls, None);
     }

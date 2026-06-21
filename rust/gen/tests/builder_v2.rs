@@ -1573,10 +1573,10 @@ mod tests {
         let dma = v.read_u32_le(alg + ALG_DMA_PTR).unwrap();
         assert_eq!(v.read_u8(dma + DMA_BIT_MODE).unwrap(), BIT_MODE_8);
  
-        // 2-chip banked: pull entry for X1 only
+        // 2-chip banked: pull entries for both bonds of X1 (GPIO 9 and GPIO 28)
         let pull = v.read_u32_le(alg + ALG_PULL_PTR).unwrap();
         assert_ne!(pull, NULL_PTR, "banked set must have gpio_pull_config");
-        assert_eq!(v.read_u8(pull + PULL_PARAM_LEN).unwrap(), 1);
+        assert_eq!(v.read_u8(pull + PULL_PARAM_LEN).unwrap(), 2);
  
         // x_jumper_pull=0: X1 (GPIO 28) needs GpioOverInvert — 1 entry
         let ov = v.read_u32_le(alg + ALG_OVERRIDE_PTR).unwrap();

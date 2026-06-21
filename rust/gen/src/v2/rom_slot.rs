@@ -440,7 +440,8 @@ mod tests {
             .gpio_pull_config
             .as_ref()
             .expect("Banked set must have gpio_pull_config");
-        assert_eq!(pull.params.len(), 1);
+        // Fire28C X1 is dual-bonded [GPIO9, GPIO28]: pull-up on both bonds.
+        assert_eq!(pull.params, alloc::vec![0x80 | 9u8, 0x80 | 28u8]);
 
         assert_eq!(slot.roms.len(), 2);
         assert_eq!(slot.roms[0].rom_type, "27128");
