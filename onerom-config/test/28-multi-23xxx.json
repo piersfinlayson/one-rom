@@ -1,0 +1,263 @@
+{
+    "$schema": "https://images.onerom.org/configs/schema.json",
+    "version": 1,
+    "name": "28 pin One ROM multi-ROM tests - 23xx ROM types",
+    "description": "28 pin One ROM multi-ROM tests - 23xx ROM types",
+    "categories": [],
+    "rom_sets": [
+        {
+            "type": "multi",
+            "description": "set 0: 23128 2-chip cs1=H cs2=L cs3=L",
+            "roms": [
+                {
+                    "description": "primary",
+                    "file": "images/test/rand_16KB.rom",
+                    "type": "23128",
+                    "cs1": "active_high",
+                    "cs2": "active_low",
+                    "cs3": "active_low"
+                },
+                {
+                    "description": "secondary 1",
+                    "file": "images/test/rand_32KB.rom",
+                    "type": "23128",
+                    "cs1": "active_high",
+                    "cs2": "ignore",
+                    "cs3": "ignore",
+                    "size_handling": "truncate"
+                }
+            ]
+        },
+        {
+            "type": "multi",
+            "description": "set 1: 23128 2-chip cs1=H cs2=H cs3=L",
+            "roms": [
+                {
+                    "description": "primary",
+                    "file": "images/test/rand_16KB.rom",
+                    "type": "23128",
+                    "cs1": "active_high",
+                    "cs2": "active_high",
+                    "cs3": "active_low"
+                },
+                {
+                    "description": "secondary 1",
+                    "file": "images/test/rand_32KB.rom",
+                    "type": "23128",
+                    "cs1": "active_high",
+                    "cs2": "ignore",
+                    "cs3": "ignore",
+                    "size_handling": "truncate"
+                }
+            ]
+        },
+        {
+            "type": "multi",
+            "description": "set 2: 23128 2-chip cs1=H cs2=L cs3=L, secondary X-pin low (cs2 selector)",
+            "roms": [
+                {
+                    "description": "primary",
+                    "file": "images/test/rand_16KB.rom",
+                    "type": "23128",
+                    "cs1": "active_high",
+                    "cs2": "active_low",
+                    "cs3": "active_low"
+                },
+                {
+                    "description": "secondary 1",
+                    "file": "images/test/rand_32KB.rom",
+                    "type": "23128",
+                    "cs1": "ignore",
+                    "cs2": "active_low",
+                    "cs3": "ignore",
+                    "size_handling": "truncate"
+                }
+            ]
+        },
+        {
+            "type": "multi",
+            "description": "set 3: 23256 2-chip cs1=H cs2=L",
+            "roms": [
+                {
+                    "description": "primary",
+                    "file": "images/test/rand_32KB.rom",
+                    "type": "23256",
+                    "cs1": "active_high",
+                    "cs2": "active_low"
+                },
+                {
+                    "description": "secondary 1",
+                    "file": "images/test/rand_64KB.rom",
+                    "type": "23256",
+                    "cs1": "active_high",
+                    "cs2": "ignore",
+                    "size_handling": "truncate"
+                }
+            ]
+        },
+        {
+            "type": "multi",
+            "description": "set 4: 23256 2-chip cs1=H cs2=H",
+            "roms": [
+                {
+                    "description": "primary",
+                    "file": "images/test/rand_32KB.rom",
+                    "type": "23256",
+                    "cs1": "active_high",
+                    "cs2": "active_high"
+                },
+                {
+                    "description": "secondary 1",
+                    "file": "images/test/rand_64KB.rom",
+                    "type": "23256",
+                    "cs1": "active_high",
+                    "cs2": "ignore",
+                    "size_handling": "truncate"
+                }
+            ]
+        },
+        {
+            "type": "multi",
+            "description": "set 5: 23512 2-chip cs1=H cs2=L",
+            "roms": [
+                {
+                    "description": "primary",
+                    "file": "images/test/rand_64KB.rom",
+                    "type": "23512",
+                    "cs1": "active_high",
+                    "cs2": "active_low"
+                },
+                {
+                    "description": "secondary 1",
+                    "file": "images/test/rand_128KB.rom",
+                    "type": "23512",
+                    "cs1": "active_high",
+                    "cs2": "ignore",
+                    "size_handling": "truncate"
+                }
+            ]
+        },
+        {
+            "type": "multi",
+            "description": "set 6: 23512 2-chip cs1=H cs2=H",
+            "roms": [
+                {
+                    "description": "primary",
+                    "file": "images/test/rand_64KB.rom",
+                    "type": "23512",
+                    "cs1": "active_high",
+                    "cs2": "active_high"
+                },
+                {
+                    "description": "secondary 1",
+                    "file": "images/test/rand_128KB.rom",
+                    "type": "23512",
+                    "cs1": "active_high",
+                    "cs2": "ignore",
+                    "size_handling": "truncate"
+                }
+            ]
+        },
+        {
+            "type": "multi",
+            "description": "set 7: 231024 2-chip cs1=H",
+            "roms": [
+                {
+                    "description": "primary",
+                    "file": "images/test/rand_128KB.rom",
+                    "type": "231024",
+                    "cs1": "active_high"
+                },
+                {
+                    "description": "secondary 1",
+                    "file": "images/test/rand_256KB.rom",
+                    "type": "231024",
+                    "cs1": "active_high",
+                    "size_handling": "truncate"
+                }
+            ]
+        },
+        {
+            "type": "multi",
+            "description": "set 8: 231024 2-chip cs1=L",
+            "roms": [
+                {
+                    "description": "primary",
+                    "file": "images/test/rand_128KB.rom",
+                    "type": "231024",
+                    "cs1": "active_low"
+                },
+                {
+                    "description": "secondary 1",
+                    "file": "images/test/rand_256KB.rom",
+                    "type": "231024",
+                    "cs1": "active_low",
+                    "size_handling": "truncate"
+                }
+            ]
+        },
+        {
+            "type": "multi",
+            "description": "set 9: 23256 primary + 23128 secondary (secondary has fewer addr lines)",
+            "roms": [
+                {
+                    "description": "primary",
+                    "file": "images/test/rand_32KB.rom",
+                    "type": "23256",
+                    "cs1": "active_high",
+                    "cs2": "active_low"
+                },
+                {
+                    "description": "secondary 1",
+                    "file": "images/test/rand_64KB.rom",
+                    "type": "23128",
+                    "cs1": "active_high",
+                    "cs2": "ignore",
+                    "cs3": "ignore",
+                    "size_handling": "truncate"
+                }
+            ]
+        },
+        {
+            "type": "multi",
+            "description": "set 10: 23512 primary + 23256 secondary (secondary has fewer addr lines)",
+            "roms": [
+                {
+                    "description": "primary",
+                    "file": "images/test/rand_64KB.rom",
+                    "type": "23512",
+                    "cs1": "active_high",
+                    "cs2": "active_low"
+                },
+                {
+                    "description": "secondary 1",
+                    "file": "images/test/rand_128KB.rom",
+                    "type": "23256",
+                    "cs1": "active_high",
+                    "cs2": "ignore",
+                    "size_handling": "truncate"
+                }
+            ]
+        },
+        {
+            "type": "multi",
+            "description": "set 11: 231024 primary + 23512 secondary (secondary has fewer addr lines)",
+            "roms": [
+                {
+                    "description": "primary",
+                    "file": "images/test/rand_128KB.rom",
+                    "type": "231024",
+                    "cs1": "active_high"
+                },
+                {
+                    "description": "secondary 1",
+                    "file": "images/test/rand_256KB.rom",
+                    "type": "23512",
+                    "cs1": "active_high",
+                    "cs2": "ignore",
+                    "size_handling": "truncate"
+                }
+            ]
+        }
+    ]
+}

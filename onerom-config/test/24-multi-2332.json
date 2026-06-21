@@ -1,0 +1,125 @@
+{
+    "$schema": "https://images.onerom.org/configs/schema.json",
+    "version": 1,
+    "name": "24 pin One ROM multi-ROM tests - 2332 ROM types",
+    "description": "24 pin One ROM multi-ROM tests - 2332 ROM types",
+    "categories": [],
+    "rom_sets": [
+        {
+            "type": "multi",
+            "description": "set 1",
+            "roms": [
+                {
+                    "description": "1",
+                    "file": "images/test/rand_4KB.rom",
+                    "type": "2332",
+                    "cs1": "active_high",
+                    "cs2": "active_low"
+                },
+                {
+                    "description": "2",
+                    "file": "images/test/rand_8KB.rom",
+                    "type": "2332",
+                    "cs1": "active_high",
+                    "cs2": "ignore",
+                    "size_handling": "truncate"
+                },
+                {
+                    "description": "3",
+                    "file": "images/test/rand_16KB.rom",
+                    "type": "2332",
+                    "cs1": "active_high",
+                    "cs2": "ignore",
+                    "size_handling": "truncate"
+                }
+            ]
+        },
+        {
+            "type": "multi",
+            "description": "set 2",
+            "roms": [
+                {
+                    "description": "1",
+                    "file": "images/test/rand_4KB.rom",
+                    "type": "2332",
+                    "cs1": "active_low",
+                    "cs2": "active_low"
+                },
+                {
+                    "description": "2",
+                    "file": "images/test/rand_8KB.rom",
+                    "type": "2332",
+                    "cs1": "active_low",
+                    "cs2": "ignore",
+                    "size_handling": "truncate"
+                },
+                {
+                    "description": "3",
+                    "file": "images/test/rand_16KB.rom",
+                    "type": "2332",
+                    "cs1": "active_low",
+                    "cs2": "ignore",
+                    "size_handling": "truncate"
+                }
+            ]
+        },
+        {
+            "type": "multi",
+            "description": "set 3",
+            "roms": [
+                {
+                    "description": "1",
+                    "file": "images/test/rand_4KB.rom",
+                    "type": "2332",
+                    "cs1": "active_high",
+                    "cs2": "active_low"
+                },
+                {
+                    "description": "2",
+                    "file": "images/test/rand_8KB.rom",
+                    "type": "2332",
+                    "cs1": "ignore",
+                    "cs2": "active_low",
+                    "size_handling": "truncate"
+                },
+                {
+                    "description": "3",
+                    "file": "images/test/rand_16KB.rom",
+                    "type": "2332",
+                    "cs1": "ignore",
+                    "cs2": "active_low",
+                    "size_handling": "truncate"
+                }
+            ]
+        },
+        {
+            "type": "multi",
+            "description": "set 4",
+            "roms": [
+                {
+                    "description": "1",
+                    "file": "images/test/rand_4KB.rom",
+                    "type": "2332",
+                    "cs1": "active_low",
+                    "cs2": "active_high"
+                },
+                {
+                    "description": "2",
+                    "file": "images/test/rand_8KB.rom",
+                    "type": "2332",
+                    "cs1": "ignore",
+                    "cs2": "active_high",
+                    "size_handling": "truncate"
+                },
+                {
+                    "description": "3",
+                    "file": "images/test/rand_16KB.rom",
+                    "type": "2332",
+                    "cs1": "ignore",
+                    "cs2": "active_high",
+                    "size_handling": "truncate"
+                }
+            ]
+        }
+   ]
+}

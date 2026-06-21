@@ -2195,4 +2195,166 @@ mod tests {
         let rom0 = v.read_u32_le(roms_arr).unwrap();
         assert_eq!(v.read_cstr(rom0 + ROM_INFO_TYPE_PTR).unwrap(), "2764");
     }
+
+    // ========================================================================
+    // check_cs_v2: Multi set CS polarity consistency
+    // ========================================================================
+ 
+    /// CS2-primary Multi set must be accepted.
+    ///
+    /// Regression test for the bug where cs_primary_polarity blindly returned
+    /// cs1 polarity, causing CS2-primary sets to fail with InconsistentCsLogic
+    /// when chips[1+] legitimately had cs1=Ignore (commoned).
+    ///
+    /// Here: CS1 is commoned (active_low across all chips), CS2 is the
+    /// per-chip select. chips[1] has cs1=ignore and cs2=active_low — exactly
+    /// 1 active line, matching chip[0]'s cs2 polarity.
+    #[test]
+    fn check_cs_v2_multi_cs2_primary_accepted() {
+        let json = r#"{
+            "version": 1,
+            "description": "CS2-primary Multi regression",
+            "chip_sets": [{
+                "type": "multi",
+                "chips": [
+                    { "file": "a.bin", "type": "23128",
+                      "cs1": "active_low", "cs2": "active_low", "cs3": "active_low" },
+                    { "file": "b.bin", "type": "23128",
+                      "cs1": "ignore", "cs2": "active_low", "cs3": "ignore" }
+                ]
+            }]
+        }"#;
+        v2_builder(json); // must not panic — from_json must succeed
+    }
+ 
+    // ========================================================================
+    // check_cs_v2: Multi set accepts mixed per-chip select polarities
+    // ========================================================================
+ 
+    /// Multi sets with different CS polarities across chips must be accepted.
+    ///
+    /// Each chip in a Multi set has its per-chip select on a *different*
+    /// physical GPIO: chip[0] uses the board's CS1 line; chips[1+] are
+    /// fly-leaded to X1/X2. Because those are independent signals with
+    /// independent GpioOverInvert handling, there is no physical constraint
+    /// requiring them to share the same polarity.
+    ///
+    /// Previously rejected by the Multi polarity consistency check
+    /// (active_low ≠ active_high); now accepted after restricting that
+    /// check to Banked sets only.
+    #[test]
+    fn check_cs_v2_multi_mixed_polarity_accepted() {
+        let json = r#"{
+            "version": 1,
+            "description": "Multi set with mixed per-chip select polarities",
+            "chip_sets": [{
+                "type": "multi",
+                "chips": [
+                    { "file": "a.bin", "type": "2364", "cs1": "active_low" },
+                    { "file": "b.bin", "type": "2364", "cs1": "active_high" }
+                ]
+            }]
+        }"#;
+        v2_builder(json); // must not panic — from_json must succeed
+    }
+ 
+    /// Banked sets must still reject inconsistent CS polarities: all chips
+    /// share the same physical CS line, so active_low and active_high are
+    /// contradictory for the same signal.
+    #[test]
+    fn check_cs_v2_banked_mixed_polarity_rejected() {
+        let json = r#"{
+            "version": 1,
+            "description": "Banked set with mixed CS polarity — invalid",
+            "chip_sets": [{
+                "type": "banked",
+                "chips": [
+                    { "file": "a.bin", "type": "2364", "cs1": "active_low" },
+                    { "file": "b.bin", "type": "2364", "cs1": "active_high" }
+                ]
+            }]
+        }"#;
+        Builder::from_json(FirmwareVersion::new(0, 7, 0, 0), McuFamily::Rp2350, json)
+            .expect_err("Banked set with mixed CS polarity must be rejected");
+    }
+
+    // ========================================================================
+    // v2 multi 2-chip CS2-primary: Fire28C / 2x 23128
+    // ========================================================================
+ 
+    /// 2-chip CS2-primary Multi set on Fire28C with 23128.
+    ///
+    /// chip[0]: cs1=active_low (commoned), cs2=active_low (per-chip select),
+    ///          cs3=active_low (commoned).
+    /// chip[1]: cs1=ignore, cs2=active_low, cs3=ignore.
+    ///
+    /// Regression: previously panicked at rom_image.rs because the Multi
+    /// branch searched for SelectRole::Cs1|Ce|Oe and CS2-primary sets have
+    /// SelectRole::Cs2 as their first select_line entry. Now fixed to use
+    /// select_lines.first().
+    ///
+    /// first_rom_cs_base=11 (CS2 at GPIO 11) distinguishes this from
+    /// CS1-primary sets (first_rom_cs_base=10) and CE-primary (=10) or
+    /// OE-primary (=11) 27-series sets.
+    #[test]
+    fn v2_multi_2chip_fire28c_23128_cs2_primary() {
+        let json = r#"{
+            "version": 1,
+            "description": "v2 multi CS2-primary 23128 Fire28C",
+            "chip_sets": [{
+                "type": "multi",
+                "chips": [
+                    { "file": "chip0.bin", "type": "23128",
+                      "cs1": "active_low", "cs2": "active_low", "cs3": "active_low" },
+                    { "file": "chip1.bin", "type": "23128",
+                      "cs1": "ignore", "cs2": "active_low", "cs3": "ignore" }
+                ]
+            }]
+        }"#;
+ 
+        let mut b = v2_builder(json);
+        b.add_file(FileData { id: 0, data: vec![0xAAu8; 16384] }).unwrap();
+        b.add_file(FileData { id: 1, data: vec![0xBBu8; 16384] }).unwrap();
+ 
+        let (meta, rom) = b.build(v2_props(Board::Fire28C)).expect("build");
+        let v = view(&meta);
+ 
+        let s0 = slot_base(&v, 0);
+        assert_eq!(v.read_u8(s0 + SLOT_TYPE).unwrap(), SLOT_TYPE_MULTI_ROM);
+        assert_eq!(v.read_u8(s0 + SLOT_ROM_COUNT).unwrap(), 2);
+        assert_eq!(v.read_u32_le(s0 + SLOT_FW_OVRD).unwrap(), NULL_PTR);
+ 
+        let slot_size = v.read_u32_le(s0 + SLOT_SIZE).unwrap();
+        assert_eq!(rom.len() as u32, slot_size);
+ 
+        let alg = alg_base(&v, s0);
+        let cs = v.read_u32_le(alg + ALG_CS_PTR).unwrap();
+        assert_eq!(v.read_u8(cs + CS_DISCRIMINANT).unwrap(), ALG_CS_0);
+        assert_eq!(v.read_u8(cs + CS0_SERVE_CS_LOW_0).unwrap(), 1);
+ 
+        // CS2 at GPIO 11 is the per-chip select: first_rom_cs_base=11.
+        // This is the key assertion proving select_lines.first() returned
+        // CS2 (not CS1 at GPIO 10).
+        assert_eq!(
+            v.read_u8(cs + CS0_FIRST_ROM_CS_BASE).unwrap(), 11,
+            "first_rom_cs_base must be 11 (CS2 at GPIO 11, not CS1 at GPIO 10)"
+        );
+        assert_eq!(v.read_u8(cs + CS0_FIRST_ROM_NUM_CS_PINS).unwrap(), 1);
+ 
+        let dma = v.read_u32_le(alg + ALG_DMA_PTR).unwrap();
+        assert_eq!(v.read_u8(dma + DMA_BIT_MODE).unwrap(), BIT_MODE_8);
+ 
+        assert_eq!(v.read_u32_le(alg + ALG_PULL_PTR).unwrap(), NULL_PTR);
+ 
+        // CS2 and X1 both active_low → both need GpioOverInvert (2 entries)
+        let ov = v.read_u32_le(alg + ALG_OVERRIDE_PTR).unwrap();
+        assert_ne!(ov, NULL_PTR, "CS2-primary Multi must have gpio_override_config");
+        assert_eq!(v.read_u8(ov + OVERRIDE_PARAM_LEN).unwrap(), 2);
+        assert_eq!(v.read_u8(ov + 1).unwrap() >> 6, OVERRIDE_TYPE_INVERT);
+        assert_eq!(v.read_u8(ov + 2).unwrap() >> 6, OVERRIDE_TYPE_INVERT);
+ 
+        let roms_arr = v.read_u32_le(s0 + SLOT_ROMS).unwrap();
+        assert_eq!(v.read_cstr(v.read_u32_le(roms_arr).unwrap() + ROM_INFO_TYPE_PTR).unwrap(), "23128");
+        assert_eq!(v.read_cstr(v.read_u32_le(roms_arr + 4).unwrap() + ROM_INFO_TYPE_PTR).unwrap(), "23128");
+    }
 }

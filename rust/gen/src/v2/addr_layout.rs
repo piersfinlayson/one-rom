@@ -199,12 +199,39 @@ impl From<LayoutError> for Error {
     fn from(err: LayoutError) -> Self {
         match err {
             LayoutError::UnmappedPin {
-                board, chip_type, ..
-            }
-            | LayoutError::NoSelectLine { board, chip_type }
-            | LayoutError::NonContiguousSelect {
-                board, chip_type, ..
-            } => Error::UnsupportedBoardChipType { board, chip_type },
+                board,
+                chip_type,
+                phys_pin,
+            } => Error::UnsupportedBoardConfig {
+                board,
+                reason: alloc::format!(
+                    "{} physical pin {} has no GPIO mapping on this board",
+                    chip_type.name(),
+                    phys_pin
+                ),
+            },
+            LayoutError::NoSelectLine { board, chip_type } => Error::UnsupportedBoardConfig {
+                board,
+                reason: alloc::format!(
+                    "no select line found for {} — the chip type must have at least one \
+                     control line (CE/OE/CS1) with a GPIO mapping on this board",
+                    chip_type.name()
+                ),
+            },
+            LayoutError::NonContiguousSelect {
+                board,
+                chip_type,
+                gpios,
+            } => Error::UnsupportedBoardConfig {
+                board,
+                reason: alloc::format!(
+                    "{} select/control GPIOs {:?} are not contiguous on this board; \
+                     Multi and Banked sets require all select, commoned, and X-pin GPIOs \
+                     to form a contiguous range within a single PIO window",
+                    chip_type.name(),
+                    gpios
+                ),
+            },
             LayoutError::MissingXPin { board, x_pin } => Error::UnsupportedBoardConfig {
                 board,
                 reason: alloc::format!(
@@ -639,8 +666,7 @@ mod tests {
             force_16_bit: false,
             multi_cs_config: None,
         };
-        let layout = derive_addr_layout(&ctx)
-            .expect("layout derivation should succeed");
+        let layout = derive_addr_layout(&ctx).expect("layout derivation should succeed");
 
         assert_eq!(
             layout,
@@ -649,7 +675,9 @@ mod tests {
                 num_addr_pins: 16,
                 x1_gpio: Some(28),
                 x2_gpio: None,
-                addr_pin_gpios: alloc::vec![27, 26, 25, 24, 23, 22, 21, 20, 16, 15, 13, 14, 19, 17],
+                addr_pin_gpios: alloc::vec![
+                    27, 26, 25, 24, 23, 22, 21, 20, 16, 15, 13, 14, 19, 17
+                ],
                 excess_addr_pin_gpios: alloc::vec![],
             }
         );
@@ -683,8 +711,7 @@ mod tests {
             force_16_bit: false,
             multi_cs_config: None,
         };
-        let layout = derive_addr_layout(&ctx)
-            .expect("layout derivation should succeed");
+        let layout = derive_addr_layout(&ctx).expect("layout derivation should succeed");
 
         assert_eq!(
             layout,

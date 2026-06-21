@@ -21,10 +21,12 @@
 //! combinations other than the fully-asserted (valid read) state.
 //!
 //! For multi-ROM sets a `background_mask` holds all non-active chip CS lines
-//! deasserted on every GPIO drive call so they cannot accidentally enable a
-//! chip while another is under test.  For dynamically banked sets the same
-//! mechanism holds all X pin GPIOs at the level corresponding to the current
-//! bank throughout the test pass.
+//! deasserted, and any primary address GPIOs unused by the secondary chip at
+//! zero, on every GPIO drive call so they cannot accidentally enable a chip
+//! while another is under test, and so the firmware's address lookup stays
+//! within the correct region of the padded ROM image.  For dynamically banked
+//! sets the same mechanism holds all X pin GPIOs at the level corresponding to
+//! the current bank throughout the test pass.
 
 #[allow(unused_imports)]
 use log::{debug, error, info, trace, warn};
@@ -352,9 +354,9 @@ fn run_multi_set(
                 &emulator,
                 &primary_cache,
                 &oracle,
-                primary_type,
                 mode,
                 cycles_addr_before_cs,
+                timing::CYCLES_CS_TO_DATA_MULTI,
                 set_idx,
                 0,
                 chips0_bg,
@@ -388,16 +390,6 @@ fn run_multi_set(
             requested_type
         };
 
-        // Background for this secondary chip:
-        //   - primary socket CSes deasserted (prevent chips[0] driving the bus)
-        //   - all OTHER secondary X pin CSes deasserted
-        let other_x_deassert = x_deassert_masks
-            .iter()
-            .enumerate()
-            .filter(|(k, _)| *k != j)
-            .fold((0u64, 0u64), |acc, (_, &m)| driver::merge(acc, m));
-        let bg = driver::merge(primary_cs_deassert, other_x_deassert);
-
         let (x_gpios, x_assert_high) = &x_pin_info[j];
         debug!(
             "Set {} chip {}: building secondary pin cache for {} on board {} \
@@ -409,6 +401,9 @@ fn run_multi_set(
             x_gpios,
             x_assert_high,
         );
+        // Build the secondary cache before computing the background mask: the
+        // cache's addr_gpios are needed to identify extra primary address GPIOs
+        // that must be held at zero.
         let secondary_cache = PinCache::build_secondary(
             chip_type,
             &primary_cache,
@@ -422,6 +417,50 @@ fn run_multi_set(
             chip_idx,
             secondary_cache.addr_gpios.len(),
             secondary_cache.data_gpios.len(),
+        );
+
+        // Background for this secondary chip:
+        //   - primary socket CSes deasserted (prevent chips[0] driving the bus)
+        //   - all OTHER secondary X pin CSes deasserted
+        //   - extra primary address GPIOs not present in this secondary's cache,
+        //     held LOW (see below)
+        let other_x_deassert = x_deassert_masks
+            .iter()
+            .enumerate()
+            .filter(|(k, _)| *k != j)
+            .fold((0u64, 0u64), |acc, (_, &m)| driver::merge(acc, m));
+
+        // Extra address GPIOs: when the secondary has fewer address lines than
+        // the primary (e.g. a 2332 secondary behind a 2364 primary), the
+        // unshared GPIO(s) — A12 in that example — are absent from the
+        // secondary's addr_gpios and from every drive mask in run_mode.
+        // epio_drive_gpios_ext would then float-restore them to HIGH
+        // (APIO_GPIO_PULL_NONE → float mode = 1), causing the firmware to look
+        // up addresses in the wrong region of the padded ROM image.  Drive them
+        // to 0 (addr bit = 0) throughout the secondary's test pass.
+        //
+        // When primary and secondary have the same address line count (e.g. two
+        // 2364s) this mask is (0, 0) and has no effect.
+        let extra_addr_mask: (u64, u64) = {
+            let secondary_addrs: std::collections::HashSet<u8> = secondary_cache
+                .addr_gpios
+                .iter()
+                .flat_map(|v| v.iter().copied())
+                .collect();
+            let mut m = 0u64;
+            for gpios in &primary_cache.addr_gpios {
+                for &g in gpios {
+                    if !secondary_addrs.contains(&g) {
+                        m |= 1u64 << g;
+                    }
+                }
+            }
+            (m, 0u64)
+        };
+
+        let bg = driver::merge(
+            driver::merge(primary_cs_deassert, other_x_deassert),
+            extra_addr_mask,
         );
 
         let oracle = oracle::load(chip_config, chip_type, base_dir);
@@ -460,9 +499,9 @@ fn run_multi_set(
                 &emulator,
                 &secondary_cache,
                 &oracle,
-                chip_type,
                 mode,
                 cycles_addr_before_cs,
+                timing::CYCLES_CS_TO_DATA_MULTI,
                 set_idx,
                 chip_idx,
                 bg,
@@ -631,6 +670,13 @@ fn run_banked_set(
                 );
                 continue;
             }
+            let cycles_cs_to_data = if mode == 16 {
+                timing::CYCLES_CS_TO_DATA
+            } else if is_16_bit_capable_rom(chip_type) {
+                timing::CYCLES_27C400_CS_TO_DATA_BYTE
+            } else {
+                timing::CYCLES_CS_TO_DATA
+            };
             info!(
                 "Testing set={} bank={} ({}) file={} mode={}bit ({} bytes)",
                 set_idx,
@@ -644,9 +690,9 @@ fn run_banked_set(
                 &emulator,
                 &cache,
                 &oracle,
-                chip_type,
                 mode,
                 cycles_addr_before_cs,
+                cycles_cs_to_data,
                 set_idx,
                 bank,
                 bg,
@@ -797,6 +843,13 @@ fn run_chip(
             );
             continue;
         }
+        let cycles_cs_to_data = if mode == 16 {
+            timing::CYCLES_CS_TO_DATA
+        } else if is_16_bit_capable_rom(chip_type) {
+            timing::CYCLES_27C400_CS_TO_DATA_BYTE
+        } else {
+            timing::CYCLES_CS_TO_DATA
+        };
         info!(
             "Testing set={} chip={} ({}) file={} mode={}bit ({} bytes)",
             set_idx,
@@ -810,9 +863,9 @@ fn run_chip(
             emulator,
             &cache,
             &oracle,
-            chip_type,
             mode,
             cycles_addr_before_cs,
+            cycles_cs_to_data,
             set_idx,
             chip_idx,
             background_mask,
@@ -835,15 +888,13 @@ fn run_mode(
     emulator: &Emulator,
     cache: &PinCache,
     oracle: &[u8],
-    chip_type: ChipType,
     mode: u8,
     cycles_addr_before_cs: u32,
+    cycles_cs_to_data: u32,
     set_idx: usize,
     chip_idx: usize,
     background_mask: (u64, u64),
 ) -> ModeResult {
-    let is_27c400_family = is_16_bit_capable_rom(chip_type);
-
     // Pre-compute the BYTE# mask so it can be merged into every drive_gpios
     // call.  epio_drive_gpios_ext resets every GPIO that is *not* in the
     // supplied mask to its configured pull state on each call (pull-none pins
@@ -867,19 +918,17 @@ fn run_mode(
     //
     // background_mask holds GPIOs that must be kept at a fixed level:
     //   - Single chip sets:  (0, 0) — nothing extra to hold.
-    //   - Multi-ROM sets:    deasserted CS lines of all non-active chips.
+    //   - Multi-ROM sets:    deasserted CS lines of all non-active chips, plus
+    //                        any primary address GPIOs unused by this secondary
+    //                        held LOW so the firmware's address lookup stays
+    //                        within the correct region of the padded ROM image.
     //   - Banked sets:       all X pins driven to the level selecting the bank.
     let const_mask = driver::merge(byte_mask, background_mask);
 
-    let (iter_count, addr_shift, cycles_cs_to_data) = if mode == 16 {
-        (oracle.len() / 2, 1usize, timing::CYCLES_CS_TO_DATA)
+    let (iter_count, addr_shift) = if mode == 16 {
+        (oracle.len() / 2, 1usize)
     } else {
-        let cs_to_data = if is_27c400_family {
-            timing::CYCLES_27C400_CS_TO_DATA_BYTE
-        } else {
-            timing::CYCLES_CS_TO_DATA
-        };
-        (oracle.len(), 0usize, cs_to_data)
+        (oracle.len(), 0usize)
     };
 
     // In 16-bit mode, addr_gpios[0] is A-1, which is also D15 — a data

@@ -207,12 +207,10 @@ pub fn build_rom_image(
     // resolved GPIOs for these pins, which may differ from cs_data_layout's
     // for dual-bonded pins — the addr PIO's values are what index the table).
     let multi_select: Option<(u8, u8, Option<u8>)> = if set_type == ChipSetType::Multi {
-        use super::cs_data_layout::SelectRole;
         let cs1_gpio = cs_data_layout
             .select_lines
-            .iter()
-            .find(|l| matches!(l.role, SelectRole::Cs1 | SelectRole::Ce | SelectRole::Oe))
-            .expect("Multi cs_data_layout must have a primary select line")
+            .first()
+            .expect("Multi cs_data_layout must have at least one select line")
             .gpio;
         let cs1_bit = cs1_gpio - addr_layout.gpio_base;
 

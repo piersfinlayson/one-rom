@@ -25,8 +25,6 @@ pub const CYCLES_ADDR_BEFORE_CS: u32 = 6; // ~40 ns
 pub const CYCLES_CS_TO_DATA: u32 = 6; // ~40 ns
 
 /// CS-to-data delay for multi-ROM sets.
-// Not yet used; retained for when multi-ROM set support is added.
-#[allow(dead_code)]
 ///
 /// The address is only sampled after CS goes active, requiring an extra
 /// address→DMA→data write chain before output is valid.

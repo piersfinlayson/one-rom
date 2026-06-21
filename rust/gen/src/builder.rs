@@ -1156,12 +1156,19 @@ pub(crate) fn check_cs_v2(config: &Config) -> Result<()> {
             }
         }
 
-        // ---- CS polarity consistency across chips in multi/banked sets ----
-        if (set.set_type == ChipSetType::Multi || set.set_type == ChipSetType::Banked)
-            && set.chips.len() > 1
-        {
+        // ---- CS polarity consistency for Banked sets only ----
+        //
+        // All chips in a Banked set share the same physical CS line on the board,
+        // so they must agree on its polarity: the same voltage level can't be
+        // simultaneously "active" for one bank and "inactive" for another.
+        //
+        // Multi sets are exempt: each chip's per-chip select is a different
+        // physical GPIO (chip[0] uses CS1/CE/OE, chips[1+] use X1/X2 fly-leads).
+        // Those are independent signals with independent GpioOverInvert handling,
+        // so there is no physical requirement for their polarities to match.
+        if set.set_type == ChipSetType::Banked && set.chips.len() > 1 {
             let primary = cs_primary_polarity(&set.chips[0]);
-            for (idx, chip) in set.chips.iter().enumerate().skip(1) {
+            for chip in set.chips.iter().skip(1) {
                 let polarity = cs_primary_polarity(chip);
                 if polarity != primary {
                     return Err(Error::InconsistentCsLogic {
@@ -1169,7 +1176,6 @@ pub(crate) fn check_cs_v2(config: &Config) -> Result<()> {
                         other: polarity.unwrap_or(CsLogic::ActiveLow),
                     });
                 }
-                let _ = idx;
             }
         }
     }
