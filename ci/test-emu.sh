@@ -131,9 +131,12 @@ test_32pin() {
     # Supported as of 0.6.13
     run_no_cs  $board images/test/rand_512KB.rom type=23C1010,trunc
 
-    # On fire-32-a onerom-fw-tester knows that onerom-gen replaces SST39SF040
-    # with 27C040 (assuming a shim will be used), and instead tests a 27C040
-    run_no_cs  $board images/test/rand_512KB.rom type=SST39SF040
+    # Not supported on fire-32-a:
+    if [ "$board" = "fire-32-a" ]; then
+        echo "Skipping SST39SF040 test on $board (not supported)"
+        return
+    fi
+    run_no_cs  fire-32-b images/test/rand_512KB.rom type=SST39SF040
 }
 
 test_40pin() {
