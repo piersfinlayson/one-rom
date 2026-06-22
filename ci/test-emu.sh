@@ -274,4 +274,4 @@ test_28_config onerom-config/28-1541ii.json
 test_32_config onerom-config/test/32-random-27c080.json
 test_32_config onerom-config/test/32-random-27c301.json
 test_32_config onerom-config/test/32-random-27c0x0.json
-test_config fire-32-b onerom-config/test/32-random-27c1001.json
+test_config fire-32-b onerom-config/test/32-random-23c1001.json
