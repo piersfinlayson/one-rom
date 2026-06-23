@@ -43,6 +43,7 @@ pub enum FirmwareFormat {
 /// `metadata` and `runtime` may be `None` if the corresponding region could
 /// not be read or parsed — for example, if the device is not running (no
 /// runtime info in RAM) or if the metadata pointer was invalid.
+#[derive(Debug, Clone)]
 pub struct OneRom {
     info: Option<OneromInfo>,
     parse_errors: Vec<ParseError>,

@@ -27,6 +27,7 @@ use alloc::vec::Vec;
 /// [`as_original`]: ParsedDevice::as_original
 /// [`as_schema`]: ParsedDevice::as_schema
 /// [`Parser::parse_device`]: crate::Parser::parse_device
+#[derive(Debug, Clone)]
 pub enum ParsedDevice {
     /// Pre-v0.7.0 hand-crafted format.
     Original(Sdrr),

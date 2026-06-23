@@ -751,7 +751,13 @@ impl<'a, R: Reader> Parser<'a, R> {
         let mut runtime_buf = [0u8; ONEROM_RUNTIME_INFO_SIZE];
         let runtime_ok = if runtime_ptr != 0 && runtime_ptr != 0xFFFF_FFFF {
             match self.reader.read(runtime_ptr, &mut runtime_buf).await {
-                Ok(()) => true,
+                Ok(()) => {
+                    let magic_ok = &runtime_buf[0..4] == b"sdrr";
+                    if !magic_ok {
+                        debug!("Runtime struct at {:#010X} has invalid magic - device not running", runtime_ptr);
+                    }
+                    magic_ok
+                }
                 Err(_) => {
                     // Not treated as an error: device may simply not be running.
                     debug!("Could not read runtime info at {:#010X}", runtime_ptr);
