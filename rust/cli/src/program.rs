@@ -231,7 +231,7 @@ pub async fn cmd_program(
     }
 
     let data = acquire_program_image(options, args, &board, &mcu).await?;
-    verify_assembled_firmware(options, &data, args.force).await?;
+    verify_assembled_firmware(options, &data, args.force, board).await?;
 
     loop {
         if let Some(out) = &args.output {

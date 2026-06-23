@@ -41,7 +41,12 @@ pub fn resolve_config_json(
     if let Some(path) = config_file {
         // --config-file is mutually exclusive with --plugin at the args level,
         // so plugins is always empty here.
-        read_rom_config(path).map_err(Error::from)
+        let json = read_rom_config(path)?;
+        if let Some(overrides) = global_config {
+            apply_global_overrides(json, overrides)
+        } else {
+            Ok(json)
+        }
     } else if no_config || slots.is_empty() {
         slots_to_config_json(plugins, &[], global_config)
     } else {
@@ -50,15 +55,63 @@ pub fn resolve_config_json(
     }
 }
 
+fn apply_global_overrides(json: String, global_config: &GlobalConfig) -> Result<String, Error> {
+    let mut value: serde_json::Value = serde_json::from_str(&json)
+        .map_err(|e| Error::Other(format!("Failed to parse config JSON: {e}")))?;
+
+    let obj = value
+        .as_object_mut()
+        .ok_or_else(|| Error::Other("Config JSON root is not an object".to_string()))?;
+
+    if let Some(v) = &global_config.config_name {
+        obj.insert("name".to_string(), v.clone().into());
+    }
+    if let Some(v) = &global_config.config_description {
+        obj.insert("description".to_string(), v.clone().into());
+    }
+    if let Some(v) = &global_config.instance_name {
+        obj.insert("instance_name".to_string(), v.clone().into());
+    }
+    if let Some(v) = &global_config.serial_override {
+        obj.insert("serial_override".to_string(), v.clone().into());
+    }
+    if let Some(v) = global_config.boot_logging {
+        obj.insert("boot_logging".to_string(), v.into());
+    }
+    if let Some(v) = global_config.disable_swd {
+        obj.insert("swd_enabled".to_string(), (!v).into());
+    }
+    if let Some(v) = global_config.turbo_boot {
+        obj.insert("turbo_boot".to_string(), v.into());
+    }
+
+    serde_json::to_string(&value)
+        .map_err(|e| Error::Other(format!("Failed to re-serialize config JSON: {e}")))
+}
+
 // ------------------------------- Firmware parsing and sizing -------------------------------
 
+#[allow(clippy::collapsible_if)]
 pub async fn verify_assembled_firmware(
     options: &Options,
     data: &[u8],
     force: bool,
+    expected_board: Option<Board>
 ) -> Result<(), Error> {
     let info = parse_firmware(data).await?;
-    #[allow(clippy::collapsible_if)]
+
+    if let (Some(expected), Some(actual)) = (expected_board, info.get_board()) {
+        if actual != expected {
+            if force {
+                eprintln!("Warning: firmware board type '{}' does not match expected '{}' (continuing due to --force)", actual.name(), expected.name());
+            } else {
+                return Err(Error::BoardMismatch(expected.name().to_string(), actual.name().to_string()));
+            }
+        } else if options.verbose {
+            println!("Board match confirmed: {}", expected.name());
+        }
+    }
+
     if !info.parse_errors().is_empty() {
         let detail = info
             .parse_errors()
@@ -312,7 +365,7 @@ pub async fn cmd_build(
 
     let assembled = assemble_firmware(firmware_data, metadata, image_data)?;
     let size = assembled.len();
-    verify_assembled_firmware(options, &assembled, args.force).await?;
+    verify_assembled_firmware(options, &assembled, args.force, Some(board)).await?;
 
     let out = resolve_firmware_output(
         &args.output,
@@ -520,6 +573,8 @@ fn print_schema_firmware_info(
         return Ok(());
     };
 
+    let board = onerom.metadata().and_then(|m| Board::try_from_str(m.hw.hw_rev.as_str()));
+    let board_name = board.map_or("unknown".to_string(), |b| b.name().to_string());
     if options.verbose {
         println!(
             "Version:  {}.{}.{}",
@@ -527,6 +582,7 @@ fn print_schema_firmware_info(
         );
         println!("Build:    {}", info.build_number);
         println!("Format:   Schema (v0.7.0+)");
+        println!("Board:    {board_name}");
         if let Some(metadata) = onerom.metadata() {
             println!("Slots: {}", metadata.rom_slot_count);
             for (i, slot) in metadata.rom_slots.iter().enumerate() {
@@ -538,7 +594,7 @@ fn print_schema_firmware_info(
             "Version:  {}.{}.{}",
             info.major_version, info.minor_version, info.patch_version
         );
-        println!("Format:   Schema (v0.7.0+)");
+        println!("Board:    {board_name}");
     }
     Ok(())
 }

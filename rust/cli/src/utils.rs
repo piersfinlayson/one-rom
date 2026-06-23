@@ -224,9 +224,7 @@ pub fn resolve_board(
         let board = device
             .onerom
             .as_ref()
-            .and_then(|o| o.as_original())
-            .and_then(|s| s.flash.as_ref())
-            .and_then(|f| f.board)
+            .and_then(|o| o.get_board())
             .ok_or(Error::NoBoardFromDevice(device.to_string()))?;
         Ok(Some(board))
     } else {

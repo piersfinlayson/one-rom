@@ -185,10 +185,10 @@ impl Device {
     }
 
     pub fn get_active_rom_set_index(&self) -> Option<u8> {
-    self.onerom.as_ref().and_then(|o| match o {
-        ParsedDevice::Original(sdrr) => sdrr.ram.as_ref().map(|ram| ram.rom_set_index),
-        ParsedDevice::Schema(onerom) => onerom.runtime().map(|r| r.rom_slot_index),
-    })
+        self.onerom.as_ref().and_then(|o| match o {
+            ParsedDevice::Original(sdrr) => sdrr.ram.as_ref().map(|ram| ram.rom_set_index),
+            ParsedDevice::Schema(onerom) => onerom.runtime().map(|r| r.rom_slot_index),
+        })
     }
 
     /// Returns the active ROM set if available.

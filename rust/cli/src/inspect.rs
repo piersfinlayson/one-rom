@@ -166,6 +166,7 @@ pub fn output_slot_info(device: &Device, options: &Options, prefix: &str) -> Res
                     println!("    Flash location {:?}  size {:#x} bytes", slot.data, slot.size);
                 }
 
+                #[allow(clippy::collapsible_if)]
                 if let Some(overrides) = &slot.firmware_overrides {
                     if overrides.override_present.iter().any(|&b| b != 0) {
                         const PRESENT_FIRE_CPU_FREQ: u8 = 1 << 2;

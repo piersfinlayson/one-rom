@@ -101,7 +101,7 @@ pub struct FirmwareBuildArgs {
         short='j',
         visible_aliases = ["config-json", "config", "json"],
         value_name = "FILE",
-        conflicts_with_all = ["slot", "config_name", "config_description", "save_config", "no_config", "instance_name", "serial_override", "logging", "disable_swd", "turbo_boot"]
+        conflicts_with_all = ["slot", "config_name", "config_description", "save_config", "no_config"]
     )]
     pub config_file: Option<String>,
 
@@ -245,25 +245,25 @@ pub struct FirmwareBuildArgs {
     pub no_config: bool,
 
     /// Provide this One ROM with a name
-    #[arg(long, visible_aliases = ["instance-name", "instance_name", "onerom", "onerom-name", "one-rom", "one-rom-name"], value_name = "NAME", conflicts_with_all = ["no_config", "config_file"])]
+    #[arg(long, visible_aliases = ["instance-name", "instance_name", "onerom", "onerom-name", "one-rom", "one-rom-name"], value_name = "NAME", conflicts_with_all = ["no_config"])]
     pub instance_name: Option<String>,
 
     // Provide a serial number to override this device's actual serial number
-    #[arg(long, visible_aliases = ["serial-override", "serial_override"], value_name = "NEW SERIAL", conflicts_with_all = ["no_config", "config_file"])]
+    #[arg(long, visible_aliases = ["serial-override", "serial_override"], value_name = "NEW SERIAL", conflicts_with_all = ["no_config"])]
     pub serial_override: Option<String>,
 
     /// Enable logging on this One ROM firmware
-    #[arg(long, visible_aliases = ["boot-logging", "boot_logging"], default_value = "false", conflicts_with_all = ["no_config", "config_file"])]
-    pub logging: bool,
+    #[arg(long, visible_aliases = ["boot-logging", "boot_logging"], default_missing_value = "true", num_args = 0..=1, conflicts_with_all = ["no_config"])]
+    pub logging: Option<bool>,
 
     /// Disable SWD debugging on this One ROM firmware
-    #[arg(long, visible_aliases = ["swd-disable", "swd_disabled"], default_value = "false", conflicts_with_all = ["no_config", "config_file"])]
-    pub disable_swd: bool,
+    #[arg(long, visible_aliases = ["swd-disable", "swd_disabled"], default_missing_value = "true", num_args = 0..=1, conflicts_with_all = ["no_config"])]
+    pub disable_swd: Option<bool>,
 
     /// Enable turbo boot - starts ROM serving faster, but only supports a
     /// single programmed slot
-    #[arg(long, visible_aliases = ["turbo-boot", "turbo_boot"], default_value = "false", conflicts_with_all = ["no_config", "config_file"])]
-    pub turbo_boot: bool,
+    #[arg(long, visible_aliases = ["turbo-boot", "turbo_boot"], default_missing_value = "true", num_args = 0..=1, conflicts_with_all = ["no_config"])]
+    pub turbo_boot: Option<bool>,
 }
 
 impl CommandTrait for FirmwareBuildArgs {

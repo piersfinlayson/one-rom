@@ -204,6 +204,11 @@ pub enum Error {
         "ROM image '{0}' has an odd number of bytes ({1}).\n  Byte swapping requires an even-length input file."
     )]
     OddLengthImage(String, usize),
+
+    #[error(
+        "Firmware board type '{0}' does not match the expected board type '{1}'.\n  Use --force to override."
+    )]
+    BoardMismatch(String, String),
 }
 
 impl Error {

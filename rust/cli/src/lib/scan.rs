@@ -19,15 +19,11 @@ pub async fn scan(options: &Options, board_filter: Option<Board>) -> Result<Vec<
     // Now filter based on the board_type
     if let Some(board) = board_filter.as_ref() {
         devices.retain(|d| {
-            if let Some(onerom) = d.onerom.as_ref()
-                && let Some(sdrr) = onerom.as_original()
-                && let Some(flash) = sdrr.flash.as_ref()
-                && let Some(flash_board) = flash.board.as_ref()
-            {
-                flash_board == board
-            } else {
-                false
-            }
+            d.onerom
+                .as_ref()
+                .and_then(|o| o.get_board())
+                .map(|b| &b == board)
+                .unwrap_or(false)
         });
     }
 

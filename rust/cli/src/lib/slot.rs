@@ -23,9 +23,9 @@ pub struct GlobalConfig {
     pub config_description: Option<String>,
     pub instance_name: Option<String>,
     pub serial_override: Option<String>,
-    pub boot_logging: bool,
-    pub disable_swd: bool,
-    pub turbo_boot: bool,
+    pub boot_logging: Option<bool>,
+    pub disable_swd: Option<bool>,
+    pub turbo_boot: Option<bool>,
 }
 
 /// The result of checking whether any slot specifications require user
@@ -515,9 +515,9 @@ pub fn slots_to_config_json(
         categories: None,
         instance_name: global_config.and_then(|c| c.instance_name.clone()),
         serial_override: global_config.and_then(|c| c.serial_override.clone()),
-        boot_logging: global_config.is_some_and(|c| c.boot_logging),
-        swd_enabled: !global_config.is_some_and(|c| c.disable_swd),
-        turbo_boot: global_config.is_some_and(|c| c.turbo_boot),
+        boot_logging: global_config.is_some_and(|c| c.boot_logging.unwrap_or(false)),
+        swd_enabled: !global_config.is_some_and(|c| c.disable_swd.unwrap_or(false)),
+        turbo_boot: global_config.is_some_and(|c| c.turbo_boot.unwrap_or(false)),
     };
 
     serde_json::to_string_pretty(&config).map_err(|e| Error::Other(e.to_string()))
