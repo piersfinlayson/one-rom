@@ -167,46 +167,6 @@ ifneq ($(SUPPRESS_OUTPUT),1)
 endif
 endif
 
-# Set boot logging flag based on BOOT_LOGGING variable
-ifeq ($(BOOT_LOGGING), 1)
-ifneq ($(SUPPRESS_OUTPUT),1)
-  $(info - BOOT_LOGGING=$(BOOT_LOGGING))
-endif
-  BOOT_LOGGING_FLAG = --boot-logging
-else
-  BOOT_LOGGING_FLAG = 
-endif
-
-# Set plugin logging flag based on PLUGIN_LOGGING variable
-ifeq ($(PLUGIN_LOGGING), 1)
-ifneq ($(SUPPRESS_OUTPUT),1)
-  $(info - PLUGIN_LOGGING=$(PLUGIN_LOGGING))
-endif
-  PLUGIN_LOGGING_FLAG = --plugin-logging
-else
-  PLUGIN_LOGGING_FLAG =
-endif
-
-# Set main loop logging flag based on MAIN_LOOP_LOGGING variable
-ifeq ($(MAIN_LOOP_LOGGING), 1)
-ifneq ($(SUPPRESS_OUTPUT),1)
-  $(info - MAIN_LOOP_LOGGING=$(MAIN_LOOP_LOGGING))
-endif
-  MAIN_LOOP_LOGGING_FLAG = --main-loop-logging
-else
-  MAIN_LOOP_LOGGING_FLAG = 
-endif
-
-# Set debug logging flag based on DEBUG_LOGGING variable
-ifeq ($(DEBUG_LOGGING), 1)
-ifneq ($(SUPPRESS_OUTPUT),1)
-  $(info - DEBUG_LOGGING=$(DEBUG_LOGGING))
-endif
-  DEBUG_LOGGING_FLAG = --debug-logging
-else
-  DEBUG_LOGGING_FLAG =
-endif
-
 # Set FREQ_FLAG based on FREQ variable
 ifeq ($(FREQ),)
   FREQ_FLAG =
@@ -280,7 +240,7 @@ firmware: generated
 	@echo "=========================================="
 	@echo "Building One ROM firmware - RP235X"
 	@echo "-----"
-	@GEN_OUTPUT_DIR=$(GEN_OUTPUT_DIR) EXTRA_C_FLAGS="$(EXTRA_C_FLAGS)" BIN_PREFIX="$(BIN_PREFIX)" make --no-print-directory -C $(FIRMWARE_DIR)
+	@GEN_OUTPUT_DIR=$(GEN_OUTPUT_DIR) EXTRA_C_FLAGS="$(EXTRA_C_FLAGS)" BIN_PREFIX="$(BIN_PREFIX)" DEBUG_LOGGING=$(DEBUG_LOGGING) PLUGING_LOGGGIN=$(PLUGIN_LOGGING) make --no-print-directory -C $(FIRMWARE_DIR)
 	@if command -v picotool >/dev/null 2>&1; then \
 		picotool uf2 convert $(BUILD_DIR)/$(BIN_PREFIX).bin $(BUILD_DIR)/$(BIN_PREFIX).uf2; \
 	else \

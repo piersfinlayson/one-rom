@@ -58,14 +58,8 @@ CFLAGS := $(EXTRA_C_FLAGS) $(COMMON_FLAGS) $(SEGGER_RTT_FLAGS) -Werror \
 		  -DONEROM_GIT_COMMIT=\"$(GIT_COMMIT)\" 
 LDFLAGS := $(COMMON_FLAGS) -Werror -Llink -nostdlib -specs=nosys.specs -specs=nano.specs -Wl,--no-gc-sections -Wl,--fatal-warnings -Wl,-Map=$(MAP)
 
-ifeq ($(BOOT_LOGGING), 1)
-	CFLAGS += -DBOOT_LOGGING=1
-endif
 ifeq ($(PLUGIN_LOGGING), 1)
 	CFLAGS += -DPLUGIN_LOGGING=1
-endif
-ifeq ($(MAIN_LOOP_LOGGING), 1)
-	CFLAGS += -DMAIN_LOOP_LOGGING=1
 endif
 ifeq ($(DEBUG_LOGGING), 1)
 	CFLAGS += -DDEBUG_LOGGING=1
