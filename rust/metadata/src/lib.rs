@@ -58,6 +58,8 @@ include!(concat!(env!("OUT_DIR"), "/metadata_generated.rs"));
 include!(concat!(env!("OUT_DIR"), "/serialize_generated.rs"));
 include!(concat!(env!("OUT_DIR"), "/host_generated.rs"));
 
+mod firmware_overrides_impl;
+
 pub const MIN_SCHEMA_VERSION: FirmwareVersion = FirmwareVersion::new(0, 7, 0, 0);
 
 // ---------------------------------------------------------------------------

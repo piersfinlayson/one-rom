@@ -186,56 +186,43 @@ pub fn output_slot_info(device: &Device, options: &Options, prefix: &str) -> Res
                 println!("  Slot {i}{active}:");
                 if verbose {
                     print!("{prefix}");
+                    let data_addr = slot
+                        .data
+                        .addr()
+                        .map(|a| format!("{a:#010x}"))
+                        .unwrap_or_else(|| "(null)".to_string());
                     println!(
-                        "    Flash location {:?}  size {:#x} bytes",
-                        slot.data, slot.size
+                        "    Flash location {data_addr}  size {:#x} bytes",
+                        slot.size
                     );
                 }
 
-                #[allow(clippy::collapsible_if)]
                 if let Some(overrides) = &slot.firmware_overrides {
-                    if overrides.override_present.iter().any(|&b| b != 0) {
-                        const PRESENT_FIRE_CPU_FREQ: u8 = 1 << 2;
-                        const PRESENT_FIRE_VREG: u8 = 1 << 4;
-                        const PRESENT_LED: u8 = 1 << 5;
-                        const PRESENT_SWD: u8 = 1 << 6;
-                        const VALUE_LED_ENABLED: u8 = 1 << 2;
-                        const VALUE_SWD_ENABLED: u8 = 1 << 3;
-
-                        let present = overrides.override_present[0];
-                        let value = overrides.override_value[0];
-
+                    if overrides.any_present() {
                         print!("{prefix}");
                         println!("    Firmware overrides:");
-                        if present & PRESENT_LED != 0 {
+                        if let Some(enabled) = overrides.led_enabled() {
+                            print!("{prefix}");
+                            println!("      Status LED: {}", if enabled { "on" } else { "off" });
+                        }
+                        if let Some(freq) = overrides.cpu_freq() {
+                            print!("{prefix}");
+                            println!("      CPU frequency: {freq}MHz");
+                        }
+                        if let Some(vreg) = overrides.vreg() {
+                            print!("{prefix}");
+                            println!("      CPU voltage: {vreg}");
+                        }
+                        if let Some(overclock) = overrides.overclock_enabled() {
                             print!("{prefix}");
                             println!(
-                                "      Status LED: {}",
-                                if value & VALUE_LED_ENABLED != 0 {
-                                    "on"
-                                } else {
-                                    "off"
-                                }
+                                "      Overclock: {}",
+                                if overclock { "enabled" } else { "disabled" }
                             );
                         }
-                        if present & PRESENT_FIRE_CPU_FREQ != 0 {
+                        if let Some(swd) = overrides.swd_enabled() {
                             print!("{prefix}");
-                            println!("      CPU frequency: {}MHz", overrides.fire_freq);
-                        }
-                        if present & PRESENT_FIRE_VREG != 0 {
-                            print!("{prefix}");
-                            println!("      CPU voltage: {}", overrides.fire_vreg);
-                        }
-                        if present & PRESENT_SWD != 0 {
-                            print!("{prefix}");
-                            println!(
-                                "      SWD: {}",
-                                if value & VALUE_SWD_ENABLED != 0 {
-                                    "on"
-                                } else {
-                                    "off"
-                                }
-                            );
+                            println!("      SWD: {}", if swd { "on" } else { "off" });
                         }
                     }
                 }
