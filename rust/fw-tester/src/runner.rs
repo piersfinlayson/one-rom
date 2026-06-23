@@ -27,6 +27,13 @@
 //! within the correct region of the padded ROM image.  For dynamically banked
 //! sets the same mechanism holds all X pin GPIOs at the level corresponding to
 //! the current bank throughout the test pass.
+//!
+//! For multi-ROM secondary chips with fewer address lines than the primary
+//! (e.g. a 2332 behind a 2364), the extra address GPIO(s) are not connected
+//! to the secondary chip and may be either HIGH or LOW on real hardware.  The
+//! tester enumerates all 2^n level combinations for the n extra GPIOs, running
+//! `run_mode` once per combination.  Results are accumulated into a single
+//! `ModeResult`; `combos` records how many passes were made.
 
 #[allow(unused_imports)]
 use log::{debug, error, info, trace, warn};
@@ -403,7 +410,7 @@ fn run_multi_set(
         );
         // Build the secondary cache before computing the background mask: the
         // cache's addr_gpios are needed to identify extra primary address GPIOs
-        // that must be held at zero.
+        // that must be enumerated.
         let secondary_cache = PinCache::build_secondary(
             chip_type,
             &primary_cache,
@@ -419,29 +426,18 @@ fn run_multi_set(
             secondary_cache.data_gpios.len(),
         );
 
-        // Background for this secondary chip:
-        //   - primary socket CSes deasserted (prevent chips[0] driving the bus)
-        //   - all OTHER secondary X pin CSes deasserted
-        //   - extra primary address GPIOs not present in this secondary's cache,
-        //     held LOW (see below)
-        let other_x_deassert = x_deassert_masks
-            .iter()
-            .enumerate()
-            .filter(|(k, _)| *k != j)
-            .fold((0u64, 0u64), |acc, (_, &m)| driver::merge(acc, m));
-
         // Extra address GPIOs: when the secondary has fewer address lines than
         // the primary (e.g. a 2332 secondary behind a 2364 primary), the
-        // unshared GPIO(s) — A12 in that example — are absent from the
-        // secondary's addr_gpios and from every drive mask in run_mode.
-        // epio_drive_gpios_ext would then float-restore them to HIGH
-        // (APIO_GPIO_PULL_NONE → float mode = 1), causing the firmware to look
-        // up addresses in the wrong region of the padded ROM image.  Drive them
-        // to 0 (addr bit = 0) throughout the secondary's test pass.
+        // unshared GPIO(s) — A12 in that example — are not connected to the
+        // secondary chip.  On real hardware these lines are driven by the host
+        // and may be HIGH or LOW depending on which address the host is
+        // accessing.  We enumerate all 2^n combinations so the test covers
+        // every possible level rather than a single fixed value.
         //
         // When primary and secondary have the same address line count (e.g. two
-        // 2364s) this mask is (0, 0) and has no effect.
-        let extra_addr_mask: (u64, u64) = {
+        // 2364s) extra_mask=0, n_combos=1, and the loop degenerates to the
+        // existing single-pass behaviour with no overhead.
+        let extra_mask: u64 = {
             let secondary_addrs: std::collections::HashSet<u8> = secondary_cache
                 .addr_gpios
                 .iter()
@@ -455,13 +451,31 @@ fn run_multi_set(
                     }
                 }
             }
-            (m, 0u64)
+            m
         };
 
-        let bg = driver::merge(
-            driver::merge(primary_cs_deassert, other_x_deassert),
-            extra_addr_mask,
-        );
+        let extra_gpios: Vec<u8> = (0u8..64)
+            .filter(|&g| extra_mask & (1u64 << g) != 0)
+            .collect();
+        let n_combos = 1usize << extra_gpios.len();
+
+        if n_combos > 1 {
+            debug!(
+                "Set {} chip {}: {} extra addr GPIO(s) ({:?}) — {} combo(s)",
+                set_idx, chip_idx, extra_gpios.len(), extra_gpios, n_combos,
+            );
+        }
+
+        // Base background for this secondary chip: primary CS deasserted and
+        // all other secondary X pin CSes deasserted.  The extra-bit levels are
+        // merged in per combo inside the mode loop.
+        let other_x_deassert = x_deassert_masks
+            .iter()
+            .enumerate()
+            .filter(|(k, _)| *k != j)
+            .fold((0u64, 0u64), |acc, (_, &m)| driver::merge(acc, m));
+
+        let base_bg = driver::merge(primary_cs_deassert, other_x_deassert);
 
         let oracle = oracle::load(chip_config, chip_type, base_dir);
         debug!(
@@ -487,25 +501,62 @@ fn run_multi_set(
                 continue;
             }
             info!(
-                "Testing set={} chip={} ({}) file={} mode={}bit ({} bytes)",
+                "Testing set={} chip={} ({}) file={} mode={}bit {} combo(s) ({} bytes)",
                 set_idx,
                 chip_idx,
                 chip_type.name(),
                 chip_config.file,
                 mode,
+                n_combos,
                 oracle.len(),
             );
-            mode_results.push(run_mode(
-                &emulator,
-                &secondary_cache,
-                &oracle,
+
+            let mut total_reads = 0u64;
+            let mut total_failures = 0u64;
+            let mut total_bus_failures = 0u64;
+
+            for combo in 0..n_combos {
+                // Build the level mask for the extra GPIOs for this combo.
+                // Bit i of `combo` determines whether extra_gpios[i] is HIGH.
+                let extra_levels: u64 = extra_gpios
+                    .iter()
+                    .enumerate()
+                    .fold(0u64, |acc, (i, &g)| {
+                        if (combo >> i) & 1 == 1 { acc | (1u64 << g) } else { acc }
+                    });
+                let bg = driver::merge(base_bg, (extra_mask, extra_levels));
+
+                if n_combos > 1 {
+                    debug!(
+                        "Set {} chip {} mode {}bit combo {}/{}: \
+                         extra_levels={:#018x}",
+                        set_idx, chip_idx, mode, combo + 1, n_combos, extra_levels,
+                    );
+                }
+
+                let r = run_mode(
+                    &emulator,
+                    &secondary_cache,
+                    &oracle,
+                    mode,
+                    cycles_addr_before_cs,
+                    timing::CYCLES_CS_TO_DATA_MULTI,
+                    set_idx,
+                    chip_idx,
+                    bg,
+                );
+                total_reads += r.reads;
+                total_failures += r.failures;
+                total_bus_failures += r.bus_failures;
+            }
+
+            mode_results.push(ModeResult {
                 mode,
-                cycles_addr_before_cs,
-                timing::CYCLES_CS_TO_DATA_MULTI,
-                set_idx,
-                chip_idx,
-                bg,
-            ));
+                reads: total_reads,
+                failures: total_failures,
+                bus_failures: total_bus_failures,
+                combos: n_combos as u32,
+            });
         }
         chip_results.push(ChipResult {
             set_idx,
@@ -919,9 +970,8 @@ fn run_mode(
     // background_mask holds GPIOs that must be kept at a fixed level:
     //   - Single chip sets:  (0, 0) — nothing extra to hold.
     //   - Multi-ROM sets:    deasserted CS lines of all non-active chips, plus
-    //                        any primary address GPIOs unused by this secondary
-    //                        held LOW so the firmware's address lookup stays
-    //                        within the correct region of the padded ROM image.
+    //                        any extra primary address GPIOs held at the
+    //                        current combo level.
     //   - Banked sets:       all X pins driven to the level selecting the bank.
     let const_mask = driver::merge(byte_mask, background_mask);
 
@@ -1189,6 +1239,7 @@ fn run_mode(
         reads,
         failures,
         bus_failures,
+        combos: 1,
     }
 }
 

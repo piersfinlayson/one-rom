@@ -18,13 +18,20 @@ use onerom_config::chip::ChipType;
 pub struct ModeResult {
     /// Bit width under test (8 or 16).
     pub mode: u8,
-    /// Total bytes compared (2 × word count in 16-bit mode).
+    /// Total bytes compared across all combos (2 × word count in 16-bit mode,
+    /// multiplied by `combos`).
     pub reads: u64,
-    /// Bytes that did not match the oracle.
+    /// Bytes that did not match the oracle (across all combos).
     pub failures: u64,
-    /// Data bus state violations (not driven when CS active, still driven
-    /// after CS deassert, or driven for a non-active CS combination).
+    /// Data bus state violations across all combos (not driven when CS active,
+    /// still driven after CS deassert, or driven for a non-active CS
+    /// combination).
     pub bus_failures: u64,
+    /// Number of extra-address-bit combinations exercised.  1 for all single,
+    /// banked, and equal-width multi sets.  > 1 for multi sets where the
+    /// secondary chip has fewer address lines than the primary: each missing
+    /// address line doubles the combo count (e.g. 2332 behind 2364 → 2 combos).
+    pub combos: u32,
 }
 
 impl ModeResult {
@@ -188,8 +195,18 @@ impl TestReport {
                     grand_reads += mode.reads;
                     grand_failures += mode.failures;
                     grand_bus_failures += mode.bus_failures;
+
+                    // combos > 1 means the secondary chip had fewer address
+                    // lines than the primary; show the count so the inflated
+                    // reads total is self-evident (reads = combos × oracle_len).
+                    let combo_str = if mode.combos > 1 {
+                        format!(" combos={}", mode.combos)
+                    } else {
+                        String::new()
+                    };
+
                     println!(
-                        "  [{}] set={} chip={} ({}) file={} mode={}bit \
+                        "  [{}] set={} chip={} ({}) file={} mode={}bit{} \
                          reads={} failures={} bus_failures={}",
                         if mode.passed() { "PASS" } else { "FAIL" },
                         chip.set_idx,
@@ -197,6 +214,7 @@ impl TestReport {
                         chip.chip_type.name(),
                         chip.filename,
                         mode.mode,
+                        combo_str,
                         mode.reads,
                         mode.failures,
                         mode.bus_failures,

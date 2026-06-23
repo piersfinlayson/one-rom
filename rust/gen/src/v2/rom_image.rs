@@ -29,8 +29,8 @@
 //! CS lines are always logically active-high in the ROM table (the CS-detect
 //! PIO uses `serve_cs_low_0 = 1` for Multi, and `GpioOverInvert` is applied
 //! to hardware active-low lines). Entries where 0 or >1 select bits are 1
-//! receive `PAD_NO_CHIP_BYTE` (hardware can never produce these combinations
-//! in normal operation).
+//! receive the mangled form of `PAD_NO_CHIP_BYTE` (hardware can never produce
+//! these combinations in normal operation).
 //!
 //! The CS1/CE GPIO is guaranteed to fall within `addr_layout`'s span
 //! `[gpio_base, gpio_base + num_addr_pins)` for supported boards: the CS/data
@@ -65,6 +65,24 @@ use super::addr_layout::AddrLayout;
 use super::cs_data_layout::CsDataLayout;
 use super::rom_slot::{bytes_per_word, table_entries};
 
+/// Mangle a raw data word for writing to the ROM table.
+///
+/// Bit `d` of `raw` (chip data line d) moves to bit `data_bit_positions[d]`
+/// of the returned value.  This matches the physical GPIO layout so the DMA
+/// output drives the correct data pins directly without any runtime
+/// transformation.
+///
+/// Used for both real chip data and pad bytes — pad bytes must be mangled for
+/// the same reason as data bytes, so the host always sees correctly positioned
+/// bits on the data lines regardless of the source of the table entry.
+fn mangle_word(raw: u32, data_bit_positions: &[u8]) -> u32 {
+    let mut mangled = 0u32;
+    for (d, &bit_pos) in data_bit_positions.iter().enumerate() {
+        mangled |= ((raw >> d) & 1) << bit_pos;
+    }
+    mangled
+}
+
 /// Build the ROM image table for one chip set/slot.
 ///
 /// The returned `Vec<u8>` has `2^addr_layout.num_addr_pins *
@@ -86,18 +104,27 @@ use super::rom_slot::{bytes_per_word, table_entries};
 ///     gpio_base)` together form a 2-bit bank index 0..3, selecting
 ///     `chips[bank_index]`. For a 3-chip set, bank index `3` (X1 and X2
 ///     both set - "both jumpered") means no chip occupies this portion of
-///     the address space, and the table entry is `bytes_per_word` copies
-///     of `PAD_NO_CHIP_BYTE`, used as-is with no data-pin mangling.
+///     the address space; the table entry is the mangled form of
+///     `PAD_NO_CHIP_BYTE` for each `bytes_per_word` bytes.
 /// - For Multi sets: one-hot CS/X detection — see module docs.
 /// - Any other bit of `i` (used by neither of the above) is a "padding
 ///   pool" bit: it doesn't affect the table entry, so the same value is
 ///   naturally produced for both its settings.
+/// - For a chip whose address space is smaller than the table index range
+///   (e.g. a 2332 secondary in a 2364-primary multi-set, or a 23QL384 at
+///   48KB), `chip_addr >= chip_word_counts[chip_index]` handling depends on
+///   whether the chip's size is a power of two:
+///   - Power-of-2 chips: address lines above the chip's own range are not
+///     connected to the physical device and are don't-cares; `chip_addr` is
+///     masked to the chip's actual address width, mirroring the data.
+///   - Non-power-of-2 chips: addresses above the chip's capacity are
+///     genuinely absent; the table entry is the mangled form of
+///     `PAD_NO_CHIP_BYTE`.
 /// - Otherwise, the selected chip's image byte(s) at the chip address are
-///   "mangled" per `cs_data_layout.data_pin_gpios`: bit `d` of the raw
-///   value (chip data line `d`) moves to bit `(data_pin_gpios[d] -
-///   cs_data_layout.gpio_base - cs_data_layout.base_data_pin)` of the
-///   mangled value, which is then written out as `bytes_per_word`
-///   little-endian bytes.
+///   mangled via [`mangle_word`]: bit `d` of the raw value (chip data line
+///   `d`) moves to bit `(data_pin_gpios[d] - cs_data_layout.gpio_base -
+///   cs_data_layout.base_data_pin)` of the mangled value, which is then
+///   written out as `bytes_per_word` little-endian bytes.
 ///
 /// # Errors
 ///
@@ -247,6 +274,15 @@ pub fn build_rom_image(
         .map(|&gpio| gpio - data_base)
         .collect();
 
+    // Pre-compute the mangled pad value.  All pad entries — whether from a
+    // missing bank, no chip selected, or an address beyond a non-power-of-2
+    // chip's capacity — must go through the same bit permutation as real data
+    // so the host always sees correctly positioned bits on the data lines.
+    let pad_raw: u32 = (0..word_bytes).fold(0u32, |acc, b| {
+        acc | (PAD_NO_CHIP_BYTE as u32) << (8 * b)
+    });
+    let mangled_pad = mangle_word(pad_raw, &data_bit_positions);
+
     let chip_data: Vec<&[u8]> = chips
         .iter()
         .enumerate()
@@ -262,7 +298,7 @@ pub fn build_rom_image(
     // this equals size_bytes(); for BitMode16 it's size_bytes()/2 since
     // chip_addr is a word address. Non-power-of-2 chips (e.g. 23QL384 at
     // 48KB) will have chip_addr values that exceed this for the upper
-    // portion of the address space - those entries get PAD_NO_CHIP_BYTE,
+    // portion of the address space - those entries get the mangled pad,
     // consistent with the missing-bank treatment above.
     let chip_word_counts: Vec<usize> = chips
         .iter()
@@ -281,10 +317,10 @@ pub fn build_rom_image(
         // Determine which chip to serve for this table index.
         //
         // Multi: one-hot — exactly one of cs1/x1/x2 must be 1. 0 or >1
-        // active → no chip selected → PAD_NO_CHIP_BYTE.
+        // active → no chip selected → mangled pad.
         //
         // Banked: binary bank index from X1/X2. Out-of-range (e.g. both
-        // jumpers fitted on a 3-chip set, bank index 3) → PAD_NO_CHIP_BYTE.
+        // jumpers fitted on a 3-chip set, bank index 3) → mangled pad.
         //
         // Single: always chip 0.
         let chip_index: Option<usize> = if let Some((cs1_bit, x1_bit, x2_bit)) = multi_select {
@@ -312,22 +348,32 @@ pub fn build_rom_image(
 
         let chip_index = match chip_index {
             None => {
-                // No chip selected (or invalid combination): pad directly
-                // with no data-pin mangling.
-                image.extend(core::iter::repeat_n(PAD_NO_CHIP_BYTE, word_bytes));
+                // No chip selected (or invalid bank/CS combination).
+                for b in 0..word_bytes {
+                    image.push(((mangled_pad >> (8 * b)) & 0xFF) as u8);
+                }
                 continue;
             }
             Some(idx) => idx,
         };
 
-        if chip_addr >= chip_word_counts[chip_index] {
-            // chip_addr is beyond this chip's capacity: occurs for
-            // non-power-of-2 chips (e.g. 23QL384 at 48KB = 0xC000 bytes)
-            // where the address lines cover a larger space than the chip
-            // actually has. No byte exists here, so pad directly with no
-            // data-pin mangling, consistent with the missing-bank case above.
-            image.extend(core::iter::repeat_n(PAD_NO_CHIP_BYTE, word_bytes));
-            continue;
+        let chip_size = chip_word_counts[chip_index];
+        if chip_addr >= chip_size {
+            if chip_size.is_power_of_two() {
+                // Undersized power-of-2 chip (e.g. 2332 secondary in a
+                // 2364-primary multi-set): address lines above this chip's own
+                // range are not connected to the physical device and are
+                // don't-cares.  Mirror by masking chip_addr to the chip's
+                // actual address width.
+                chip_addr &= chip_size - 1;
+            } else {
+                // Non-power-of-2 chip (e.g. 23QL384 at 48KB): addresses above
+                // the chip's capacity are genuinely absent.
+                for b in 0..word_bytes {
+                    image.push(((mangled_pad >> (8 * b)) & 0xFF) as u8);
+                }
+                continue;
+            }
         }
 
         let chip_image = chip_data[chip_index];
@@ -346,15 +392,8 @@ pub fn build_rom_image(
             n => unreachable!("bytes_per_word only returns 1 or 2, got {n}"),
         };
 
-        // Mangle: bit `d` of `raw` (chip data line d) moves to bit
-        // `data_bit_positions[d]` of `mangled`.
-        let mut mangled: u32 = 0;
-        for (d, &bit_pos) in data_bit_positions.iter().enumerate() {
-            let bit = (raw >> d) & 1;
-            mangled |= bit << bit_pos;
-        }
-
-        // Write out little-endian: byte 0 = bits 0-7, byte 1 = bits 8-15.
+        // Mangle and write out little-endian: byte 0 = bits 0-7, byte 1 = bits 8-15.
+        let mangled = mangle_word(raw, &data_bit_positions);
         for b in 0..word_bytes {
             image.push(((mangled >> (8 * b)) & 0xFF) as u8);
         }
@@ -621,8 +660,9 @@ mod tests {
     }
 
     /// 3-bank Banked set: bank index 3 (X1 and X2 both set - "both
-    /// jumpered") has no corresponding chip, so reads as
-    /// `PAD_NO_CHIP_BYTE`.
+    /// jumpered") has no corresponding chip, so reads as the mangled form
+    /// of `PAD_NO_CHIP_BYTE`.  With an identity data mapping the mangled
+    /// value equals `PAD_NO_CHIP_BYTE`.
     #[test]
     fn banked_3bank_pad_value() {
         let addr_layout = AddrLayout {
@@ -761,7 +801,7 @@ mod tests {
     ///   - GPIO 1: CS1 (chip0)
     ///   - GPIO 2: X1  (chip1)
     ///   - GPIO 3: X2  (chip2)
-    /// 
+    ///
     /// num_addr_pins=4 → 16 entries.
     #[test]
     fn multi_3chip_8bit_one_hot_selection() {
@@ -1026,7 +1066,8 @@ mod tests {
     }
 
     /// 3-bank Banked set with BitMode16: bank index 3's "no chip" entry is
-    /// 2 bytes of `PAD_NO_CHIP_BYTE`.
+    /// 2 bytes of the mangled form of `PAD_NO_CHIP_BYTE`.  With an identity
+    /// data mapping the mangled value equals `PAD_NO_CHIP_BYTE`.
     #[test]
     fn banked_3bank_pad_value_16bit() {
         let addr_layout = AddrLayout {
@@ -1072,7 +1113,9 @@ mod tests {
     /// Non-power-of-2 chip (23QL384, 48KB = 49152 = 0xC000 bytes): with 16
     /// address lines (A0-A15), chip_addr ranges 0..65535 but only
     /// 0..=49151 (0x0000..=0xBFFF) are valid. chip_addr >= 49152 must
-    /// produce PAD_NO_CHIP_BYTE with no data-pin mangling.
+    /// produce the mangled form of `PAD_NO_CHIP_BYTE` with no data-pin
+    /// mangling of its own.  With an identity data mapping the mangled
+    /// value equals `PAD_NO_CHIP_BYTE`.
     ///
     /// Identity data mapping, so no mangling interference. We verify:
     ///   - the byte at the last valid address (49151 / 0xBFFF) comes through;
@@ -1114,5 +1157,172 @@ mod tests {
         assert_eq!(table[49151], 0xCD); // last valid (0xBFFF)
         assert_eq!(table[49152], PAD_NO_CHIP_BYTE); // first invalid (0xC000)
         assert_eq!(table[65535], PAD_NO_CHIP_BYTE); // last entry (0xFFFF)
+    }
+
+    /// Pad bytes under a non-identity data-pin mapping must be mangled before
+    /// being written to the table.
+    ///
+    /// Uses a 3-bank Banked set with a bit-reversal data mapping (same as
+    /// `data_pin_mangling_bit_reversal`).  Bank index 3 (X1 and X2 both set)
+    /// produces `PAD_NO_CHIP_BYTE`.  Under bit-reversal,
+    /// `mangle(0xAA)` = `mangle(0b10101010)` = `0b01010101` = `0x55`.
+    ///
+    /// Before the fix, pad entries were written as raw `0xAA` regardless of
+    /// the data-pin mapping, causing the host to see a permuted bit pattern
+    /// rather than `0xAA` on the data lines.
+    #[test]
+    fn banked_3bank_pad_value_non_identity_mapping_is_mangled() {
+        let addr_layout = AddrLayout {
+            gpio_base: 0,
+            num_addr_pins: 2,
+            x1_gpio: Some(0),
+            x2_gpio: Some(1),
+            addr_pin_gpios: Vec::new(),
+            excess_addr_pin_gpios: alloc::vec![],
+        };
+        // Bit-reversal: data bit d → output bit (7-d).
+        // data_bit_positions = [7,6,5,4,3,2,1,0] - data_base(0) = [7,6,5,4,3,2,1,0].
+        let cs_data_layout = CsDataLayout {
+            gpio_base: 0,
+            base_data_pin: 0,
+            num_data_pins: 8,
+            data_pin_gpios: alloc::vec![7, 6, 5, 4, 3, 2, 1, 0],
+            base_cs_pin: 0,
+            num_cs_pins: 1,
+            cs_ignore_index: None,
+            select_lines: Vec::new(),
+            alg_cs2: None,
+        };
+
+        let chips = [
+            chip_with_bytes("bank0.bin", &[0x00]),
+            chip_with_bytes("bank1.bin", &[0x11]),
+            chip_with_bytes("bank2.bin", &[0x22]),
+        ];
+
+        let table = build_rom_image(
+            &addr_layout,
+            &cs_data_layout,
+            ChipSetType::Banked,
+            &chips,
+            &alg_dma_8bit(),
+        )
+        .expect("build_rom_image should succeed");
+
+        // Sanity: real data bytes are mangled correctly.
+        // mangle(0x00 = 0b0000_0000) = 0x00
+        // mangle(0x11 = 0b0001_0001): bit0→bit7, bit4→bit3 → 0b1000_1000 = 0x88
+        // mangle(0x22 = 0b0010_0010): bit1→bit6, bit5→bit2 → 0b0100_0100 = 0x44
+        assert_eq!(table[0], 0x00);
+        assert_eq!(table[1], 0x88);
+        assert_eq!(table[2], 0x44);
+
+        // Key assertion: bank index 3 (no chip) must write mangle(PAD_NO_CHIP_BYTE)
+        // not the raw value.  mangle(0xAA = 0b1010_1010) = 0b0101_0101 = 0x55.
+        assert_eq!(
+            table[3],
+            0x55,
+            "PAD must be mangled: mangle(0xAA) = 0x55 under bit-reversal; \
+             got raw 0xAA means the pad path skipped mangle_word"
+        );
+    }
+
+    /// Power-of-2 undersized secondary chip in a multi-set (e.g. 2332 behind
+    /// a 2364 primary): the extra address line (A12) is a don't-care and the
+    /// 2332's 4KB image must mirror across both halves of the 8KB address
+    /// window.
+    ///
+    /// Layout: 15-bit table (num_addr_pins=15, 32768 entries).
+    ///   - GPIO  0-11: addr bits A0-A11 (shared by both chips)
+    ///   - GPIO 12:    addr bit A12 (primary 2364 only; don't-care for 2332)
+    ///   - GPIO 13:    CS1 — primary chip0 select (gap bit within addr window;
+    ///                 not in addr_pin_gpios)
+    ///   - GPIO 14:    X1  — secondary chip1 select
+    ///
+    /// The previous (broken) version put CS1 at GPIO12 — the same bit
+    /// position as A12 — so i_hi = (1<<13)|(1<<12) set both X1 and CS1
+    /// simultaneously, hitting the both-active → PAD path instead of the
+    /// mirror path.  CS1 must be a distinct GPIO from every address pin.
+    ///
+    /// For every address i where X1=1, CS1=0 (chip1 selected):
+    ///   bits 0-11 of i give the 2332 chip_addr (A0-A11).
+    ///   bit 12 of i (A12) is a don't-care: both i and i|(1<<12) must
+    ///   return the same oracle byte.
+    #[test]
+    fn multi_power_of_2_secondary_mirrors_across_extra_address_bit() {
+        // 15-bit table: GPIO0-11=A0-A11, GPIO12=A12 (primary only),
+        // GPIO13=CS1 (gap bit), GPIO14=X1.
+        let addr_layout = AddrLayout {
+            gpio_base: 0,
+            num_addr_pins: 15,
+            x1_gpio: Some(14),
+            x2_gpio: None,
+            // Primary (2364) has 13 address pins A0-A12 at GPIOs 0-12.
+            addr_pin_gpios: alloc::vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12],
+            excess_addr_pin_gpios: alloc::vec![],
+        };
+        // CS1 at GPIO13, X1 at GPIO14.  GPIO12 (A12) is an addr pin, not a
+        // select bit, so it cannot conflict with CS1.
+        let cs_data_layout = CsDataLayout {
+            gpio_base: 0,
+            base_data_pin: 0,
+            num_data_pins: 8,
+            data_pin_gpios: alloc::vec![0, 1, 2, 3, 4, 5, 6, 7],
+            base_cs_pin: 13,
+            num_cs_pins: 2,
+            cs_ignore_index: None,
+            select_lines: alloc::vec![
+                SelectLine { role: SelectRole::Cs1, gpio: 13 },
+                SelectLine { role: SelectRole::X1,  gpio: 14 },
+            ],
+            alg_cs2: None,
+        };
+
+        // 2332: 4096 bytes (2^12).  Fill with address-as-value so each byte
+        // is uniquely identifiable.
+        let mut secondary_image = vec![0u8; 4096];
+        for (i, b) in secondary_image.iter_mut().enumerate() {
+            *b = (i & 0xFF) as u8;
+        }
+        // Primary (2364, 8192 bytes) — content irrelevant for this test.
+        let chips = [
+            chip_with_bytes("primary.bin", &[]),
+            chip_with_typed_image(
+                "secondary.bin",
+                &ChipType::Chip2332,
+                secondary_image.clone(),
+            ),
+        ];
+
+        let table = build_rom_image(
+            &addr_layout,
+            &cs_data_layout,
+            ChipSetType::Multi,
+            &chips,
+            &alg_dma_8bit(),
+        )
+        .expect("build_rom_image should succeed");
+
+        assert_eq!(table.len(), 1 << 15);
+
+        // X1=bit14, CS1=bit13, A12=bit12.
+        // For each lower-12-bit address, verify A12=0 and A12=1 both produce
+        // the same correct oracle byte when chip1 (X1=1, CS1=0) is selected.
+        for addr12 in [0x000usize, 0x001, 0x7FF, 0xFFF] {
+            let i_lo = (1 << 14) | addr12;              // X1=1, CS1=0, A12=0
+            let i_hi = (1 << 14) | (1 << 12) | addr12;  // X1=1, CS1=0, A12=1
+            assert_eq!(
+                table[i_lo], table[i_hi],
+                "addr12={addr12:#05x}: A12=0 entry {i_lo:#06x} \
+                 ({:#04x}) != A12=1 entry {i_hi:#06x} ({:#04x})",
+                table[i_lo], table[i_hi],
+            );
+            let expected = secondary_image[addr12 & 0xFFF];
+            assert_eq!(
+                table[i_lo], expected,
+                "addr12={addr12:#05x}: got {:#04x}, expected {expected:#04x}",
+                table[i_lo],
+            );
+        }
     }
 }
