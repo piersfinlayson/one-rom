@@ -365,6 +365,9 @@ int setup_serving_pios(const onerom_rom_slot_t *slot, uint32_t rom_table_addr) {
     //const uint8_t *addr_params = addr_alg->params;
     const uint8_t *data_params = data_alg->params;
 
+    // Enable the PIOs
+    APIO_ENABLE_PIOS(); 
+
     // Set up the PIO assembler
     APIO_ASM_INIT();
     
