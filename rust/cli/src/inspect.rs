@@ -60,106 +60,160 @@ pub async fn cmd_telemetry(options: &Options, args: &InspectTelemetryArgs) -> Re
 pub fn output_slot_info(device: &Device, options: &Options, prefix: &str) -> Result<(), Error> {
     print!("{prefix}");
     println!("{device}");
+
     let active_rom_set_index = device.get_active_rom_set_index();
-    if let Some(onerom) = device.onerom.as_ref()
-        && let Some(sdrr) = onerom.as_original()
-        && let Some(info) = sdrr.flash.as_ref()
-    {
-        let verbose = options.verbose;
-        let set_count = info.rom_set_count;
-        let active_str = if let Some(active_set) = active_rom_set_index {
-            format!(" - Slot {active_set} is active")
-        } else {
-            "".to_string()
-        };
-        print!("{prefix}");
-        println!(
-            "  Configured with {set_count} slot{}{}",
-            if set_count == 1 { "" } else { "s" },
-            active_str
-        );
-        for (i, set) in info.rom_sets.iter().enumerate() {
-            let active = if Some(i as u8) == active_rom_set_index {
-                " (active)"
-            } else {
-                ""
-            };
+    let verbose = options.verbose;
+
+    match device.onerom.as_ref() {
+        Some(onerom_fw_parser::ParsedDevice::Original(sdrr)) => {
+            let info = sdrr
+                .flash
+                .as_ref()
+                .ok_or_else(|| Error::Other("No recognised information found on device flash".to_string()))?;
+
+            let set_count = info.rom_set_count;
+            let active_str = active_rom_set_index
+                .map(|i| format!(" - Slot {i} is active"))
+                .unwrap_or_default();
             print!("{prefix}");
-            println!("  Slot {i}{active}:");
-            let set_location = set.data_ptr;
-            let set_image_size = set.size;
-            if let Some(overrides) = &set.firmware_overrides {
+            println!("  Configured with {set_count} slot{}{}", if set_count == 1 { "" } else { "s" }, active_str);
+
+            for (i, set) in info.rom_sets.iter().enumerate() {
+                let active = if Some(i as u8) == active_rom_set_index { " (active)" } else { "" };
                 print!("{prefix}");
-                println!("    Firmware overrides:");
-                if let Some(led) = &overrides.led {
+                println!("  Slot {i}{active}:");
+                let set_location = set.data_ptr;
+                let set_image_size = set.size;
+                if let Some(overrides) = &set.firmware_overrides {
                     print!("{prefix}");
-                    println!(
-                        "      Status LED: {}",
-                        if led.enabled { "on" } else { "off" }
-                    );
+                    println!("    Firmware overrides:");
+                    if let Some(led) = &overrides.led {
+                        print!("{prefix}");
+                        println!("      Status LED: {}", if led.enabled { "on" } else { "off" });
+                    }
+                    if let Some(fire) = &overrides.fire {
+                        if let Some(freq) = fire.cpu_freq {
+                            print!("{prefix}");
+                            println!("      CPU frequency: {freq}");
+                        }
+                        if let Some(vreg) = &fire.vreg {
+                            print!("{prefix}");
+                            println!("      CPU voltage: {vreg}");
+                        }
+                        if let Some(serve_mode) = &fire.serve_mode {
+                            print!("{prefix}");
+                            println!("      Serve mode: {serve_mode}");
+                        }
+                        if !fire.rom_dma_preload {
+                            print!("{prefix}");
+                            println!("      ROM DMA preload disabled");
+                        }
+                        if fire.force_16_bit {
+                            print!("{prefix}");
+                            println!("      Force 16-bit ROM enabled");
+                        }
+                    }
+                    if let Some(debug) = &overrides.swd {
+                        print!("{prefix}");
+                        println!("      SWD: {}", if debug.swd_enabled { "on" } else { "off" });
+                    }
                 }
-                if let Some(fire) = &overrides.fire {
-                    if let Some(freq) = fire.cpu_freq {
-                        print!("{prefix}");
-                        println!("      CPU frequency: {freq}");
+                for (j, rom) in set.roms.iter().enumerate() {
+                    let mut cs = String::new();
+                    if rom.cs1_state != SdrrCsState::NotUsed {
+                        cs.push_str(&format!("Chip Select 1: {} ", rom.cs1_state));
                     }
-                    if let Some(vreg) = &fire.vreg {
-                        print!("{prefix}");
-                        println!("      CPU voltage: {vreg}");
+                    if rom.cs2_state != SdrrCsState::NotUsed {
+                        cs.push_str(&format!("Chip Select 2: {} ", rom.cs2_state));
                     }
-                    if let Some(serve_mode) = &fire.serve_mode {
-                        print!("{prefix}");
-                        println!("      Serve mode: {serve_mode}");
+                    if rom.cs3_state != SdrrCsState::NotUsed {
+                        cs.push_str(&format!("Chip Select 3: {} ", rom.cs3_state));
                     }
-                    if !fire.rom_dma_preload {
-                        print!("{prefix}");
-                        println!("      ROM DMA preload disabled");
-                    }
-                    if fire.force_16_bit {
-                        print!("{prefix}");
-                        println!("      Force 16-bit ROM enabled",);
-                    }
-                }
-                if let Some(debug) = &overrides.swd {
+                    let rom_type = rom.rom_type;
                     print!("{prefix}");
-                    println!(
-                        "      SWD: {}",
-                        if debug.swd_enabled { "on" } else { "off" }
-                    );
+                    println!("    Chip {j}: {rom_type} {cs}");
+                    if verbose {
+                        print!("{prefix}");
+                        println!("      Flash location 0x{set_location:08x} size 0x{set_image_size:08x} bytes");
+                    }
+                    if let Some(filename) = &rom.filename {
+                        print!("{prefix}");
+                        println!("      Image source: {filename}");
+                    }
                 }
             }
+            Ok(())
+        }
 
-            for (j, rom) in set.roms.iter().enumerate() {
-                let mut cs = String::new();
-                if rom.cs1_state != SdrrCsState::NotUsed {
-                    cs.push_str(&format!("Chip Select 1: {} ", rom.cs1_state));
-                }
-                if rom.cs2_state != SdrrCsState::NotUsed {
-                    cs.push_str(&format!("Chip Select 2: {} ", rom.cs2_state));
-                }
-                if rom.cs3_state != SdrrCsState::NotUsed {
-                    cs.push_str(&format!("Chip Select 3: {} ", rom.cs3_state));
-                }
-                let rom_type = rom.rom_type;
+        Some(onerom_fw_parser::ParsedDevice::Schema(onerom)) => {
+            let metadata = onerom
+                .metadata()
+                .ok_or_else(|| Error::Other("No metadata found on device flash".to_string()))?;
+
+            let set_count = metadata.rom_slot_count;
+            let active_str = active_rom_set_index
+                .map(|i| format!(" - Slot {i} is active"))
+                .unwrap_or_default();
+            print!("{prefix}");
+            println!("  Configured with {set_count} slot{}{}", if set_count == 1 { "" } else { "s" }, active_str);
+
+            for (i, slot) in metadata.rom_slots.iter().enumerate() {
+                let active = if Some(i as u8) == active_rom_set_index { " (active)" } else { "" };
                 print!("{prefix}");
-                println!("    Chip {j}: {rom_type} {cs}");
+                println!("  Slot {i}{active}:");
                 if verbose {
                     print!("{prefix}");
-                    println!(
-                        "      Flash location 0x{set_location:08x} size 0x{set_image_size:08x} bytes"
-                    );
+                    println!("    Flash location {:?}  size {:#x} bytes", slot.data, slot.size);
                 }
-                if let Some(filename) = &rom.filename {
+
+                if let Some(overrides) = &slot.firmware_overrides {
+                    if overrides.override_present.iter().any(|&b| b != 0) {
+                        const PRESENT_FIRE_CPU_FREQ: u8 = 1 << 2;
+                        const PRESENT_FIRE_VREG: u8    = 1 << 4;
+                        const PRESENT_LED: u8          = 1 << 5;
+                        const PRESENT_SWD: u8          = 1 << 6;
+                        const VALUE_LED_ENABLED: u8    = 1 << 2;
+                        const VALUE_SWD_ENABLED: u8    = 1 << 3;
+
+                        let present = overrides.override_present[0];
+                        let value   = overrides.override_value[0];
+
+                        print!("{prefix}");
+                        println!("    Firmware overrides:");
+                        if present & PRESENT_LED != 0 {
+                            print!("{prefix}");
+                            println!("      Status LED: {}", if value & VALUE_LED_ENABLED != 0 { "on" } else { "off" });
+                        }
+                        if present & PRESENT_FIRE_CPU_FREQ != 0 {
+                            print!("{prefix}");
+                            println!("      CPU frequency: {}MHz", overrides.fire_freq);
+                        }
+                        if present & PRESENT_FIRE_VREG != 0 {
+                            print!("{prefix}");
+                            println!("      CPU voltage: {}", overrides.fire_vreg);
+                        }
+                        if present & PRESENT_SWD != 0 {
+                            print!("{prefix}");
+                            println!("      SWD: {}", if value & VALUE_SWD_ENABLED != 0 { "on" } else { "off" });
+                        }
+                    }
+                }
+
+                for (j, rom) in slot.roms.iter().enumerate() {
                     print!("{prefix}");
-                    println!("      Image source: {filename}");
+                    println!("    Chip {j}: {}", rom.rom_type);
+                    if let Some(filename) = &rom.filename {
+                        print!("{prefix}");
+                        println!("      Image source: {filename}");
+                    }
                 }
             }
+            Ok(())
         }
-        Ok(())
-    } else {
-        Err(Error::Other(
+
+        _ => Err(Error::Other(
             "No recognised information found on device flash".to_string(),
-        ))
+        )),
     }
 }
 

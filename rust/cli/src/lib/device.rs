@@ -63,23 +63,36 @@ pub struct Device {
 impl std::fmt::Display for Device {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let serial = self.serial.as_deref().unwrap_or("(no serial)");
-        let info_str = if let Some(onerom) = self.onerom.as_ref()
-            && let Some(sdrr) = onerom.as_original()
-            && let Some(info) = sdrr.flash.as_ref()
-            && let Some(board) = info.board.as_ref()
-        {
-            let model = board.model().to_string();
-            let chip_pins = board.chip_pins();
-            let hw_rev = board
-                .name()
-                .rsplit_once('-')
-                .map(|(_, rev)| rev)
-                .unwrap_or("(unknown revision)")
-                .to_uppercase();
-            let fw_version = &info.version;
-            format!("One ROM {model} {chip_pins} {hw_rev} - Firmware: {fw_version}")
-        } else {
-            "Unknown           - Firmware: n/a  ".to_string()
+        let info_str = match self.onerom.as_ref() {
+            Some(ParsedDevice::Original(sdrr))
+                if sdrr.flash.as_ref().and_then(|f| f.board.as_ref()).is_some() =>
+            {
+                let info = sdrr.flash.as_ref().unwrap();
+                let board = info.board.as_ref().unwrap();
+                let model = board.model().to_string();
+                let chip_pins = board.chip_pins();
+                let hw_rev = board
+                    .name()
+                    .rsplit_once('-')
+                    .map(|(_, rev)| rev)
+                    .unwrap_or("(unknown revision)")
+                    .to_uppercase();
+                let fw_version = &info.version;
+                format!("One ROM {model} {chip_pins} {hw_rev} - Firmware: {fw_version}")
+            }
+            Some(ParsedDevice::Schema(onerom)) if onerom.info().is_some() => {
+                let info = onerom.info().unwrap();
+                let board_str = onerom
+                    .metadata()
+                    .map(|m| m.hw.hw_rev.as_str())
+                    .unwrap_or("unknown");
+                let fw_version = format!(
+                    "v{}.{}.{}",
+                    info.major_version, info.minor_version, info.patch_version
+                );
+                format!("One ROM {board_str:<18} - Firmware: {fw_version}  ")
+            }
+            _ => "Unknown           - Firmware: n/a  ".to_string(),
         };
         write!(f, "{info_str} State: {} Serial: {serial}", self.state)
     }
@@ -172,10 +185,10 @@ impl Device {
     }
 
     pub fn get_active_rom_set_index(&self) -> Option<u8> {
-        self.onerom.as_ref().and_then(|o| match o {
-            ParsedDevice::Original(sdrr) => sdrr.ram.as_ref().map(|ram| ram.rom_set_index),
-            ParsedDevice::Schema(_) => None,
-        })
+    self.onerom.as_ref().and_then(|o| match o {
+        ParsedDevice::Original(sdrr) => sdrr.ram.as_ref().map(|ram| ram.rom_set_index),
+        ParsedDevice::Schema(onerom) => onerom.runtime().map(|r| r.rom_slot_index),
+    })
     }
 
     /// Returns the active ROM set if available.
@@ -215,10 +228,16 @@ impl Device {
         let board = self
             .onerom
             .as_ref()
-            .and_then(|o| o.as_original())
-            .and_then(|s| s.flash.as_ref())
-            .and_then(|f| f.board.as_ref())
-            .map(|b| b.model().to_string())
+            .and_then(|o| match o {
+                ParsedDevice::Original(sdrr) => sdrr
+                    .flash
+                    .as_ref()
+                    .and_then(|f| f.board.as_ref())
+                    .map(|b| b.model().to_string()),
+                ParsedDevice::Schema(onerom) => onerom
+                    .metadata()
+                    .map(|m| m.hw.hw_rev.clone()),
+            })
             .unwrap_or_else(|| "~".to_string()); // sorts after Z
         let serial = self.serial.clone().unwrap_or_else(|| "~".to_string());
         (board, serial)
