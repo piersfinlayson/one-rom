@@ -986,7 +986,9 @@ void launch_core1(ora_plugin_entry_t plugin_entry) {
     fifo_push_blocking(entry);
 }
 
-__attribute__((noinline)) ora_plugin_entry_t launch_plugins_inner(void) {
+__attribute__((noinline)) ora_plugin_entry_t launch_plugins_inner(uint8_t *launched_plugins) {
+    *launched_plugins = 0;
+
     // Launch any available system plugin on core 1
     uint8_t system_plugin = 0;
     if (METADATA->rom_slot_count >= 1) {
@@ -1004,6 +1006,7 @@ __attribute__((noinline)) ora_plugin_entry_t launch_plugins_inner(void) {
                 }
                 launch_core1(header->entry);
                 system_plugin = 1;
+                *launched_plugins |= 1u;
             }
         }
     }
@@ -1039,7 +1042,8 @@ __attribute__((noinline)) ora_plugin_entry_t launch_plugins_inner(void) {
 }
 
 void ora_launch_plugins(void) {
-    ora_plugin_entry_t core0_entry = launch_plugins_inner();
+    uint8_t launched_plugins = 0;
+    ora_plugin_entry_t core0_entry = launch_plugins_inner(&launched_plugins);
 
     // We launch the user plugin from this outer function in order to save as
     // much stack space as possible.
@@ -1048,9 +1052,14 @@ void ora_launch_plugins(void) {
         ERR("User plugin returned unexpectedly");
     }
 
-    while (1) {
-        ora_yield(NULL);
+    if (launched_plugins &= 1u) {
+        // No user plugin, so just yield to the system plugin forever.
+        while (1) {
+            ora_yield(NULL);
+        }
     }
+
+    // No system plugin, no need to yield, just return.
 }
 
 void irq_handler_timer0_irq_0(void) {
