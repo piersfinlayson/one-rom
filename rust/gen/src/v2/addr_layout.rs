@@ -442,7 +442,12 @@ pub fn derive_addr_layout(ctx: &SlotContext) -> Result<AddrLayout, LayoutError> 
             }
             candidates.push(x_gpios);
         } else {
-            candidates.push(addr_line_candidates(board, chip0, addr_pin_idx, pin_offset)?);
+            candidates.push(addr_line_candidates(
+                board,
+                chip0,
+                addr_pin_idx,
+                pin_offset,
+            )?);
         }
     }
 
@@ -675,9 +680,7 @@ mod tests {
                 num_addr_pins: 16,
                 x1_gpio: Some(28),
                 x2_gpio: None,
-                addr_pin_gpios: alloc::vec![
-                    27, 26, 25, 24, 23, 22, 21, 20, 16, 15, 13, 14, 19, 17
-                ],
+                addr_pin_gpios: alloc::vec![27, 26, 25, 24, 23, 22, 21, 20, 16, 15, 13, 14, 19, 17],
                 excess_addr_pin_gpios: alloc::vec![],
             }
         );
@@ -794,9 +797,8 @@ mod tests {
     /// gpio_base=17, num_addr_pins=19. [17,36) fits [16,48).
     #[test]
     fn fire32b_sst39sf040_single() {
-        let layout =
-            derive_addr_layout(&ctx_single_8bit(Board::Fire32B, ChipType::ChipSST39SF040))
-                .expect("layout derivation should succeed");
+        let layout = derive_addr_layout(&ctx_single_8bit(Board::Fire32B, ChipType::ChipSST39SF040))
+            .expect("layout derivation should succeed");
 
         assert_eq!(
             layout,

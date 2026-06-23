@@ -34,8 +34,8 @@ impl ControlLineKind {
     /// The control line name as used in `ChipType::control_lines()`.
     pub(crate) fn name(self) -> &'static str {
         match self {
-            Self::Ce  => "ce",
-            Self::Oe  => "oe",
+            Self::Ce => "ce",
+            Self::Oe => "oe",
             Self::Cs1 => "cs1",
             Self::Cs2 => "cs2",
             Self::Cs3 => "cs3",
@@ -45,12 +45,12 @@ impl ControlLineKind {
 
 fn name_to_control_line_kind(name: &str) -> Option<ControlLineKind> {
     match name {
-        "ce"  => Some(ControlLineKind::Ce),
-        "oe"  => Some(ControlLineKind::Oe),
+        "ce" => Some(ControlLineKind::Ce),
+        "oe" => Some(ControlLineKind::Oe),
         "cs1" => Some(ControlLineKind::Cs1),
         "cs2" => Some(ControlLineKind::Cs2),
         "cs3" => Some(ControlLineKind::Cs3),
-        _     => None,
+        _ => None,
     }
 }
 
@@ -127,8 +127,7 @@ pub fn derive_multi_cs_config(chips: &[Chip]) -> MultiChipCsConfig {
 
     // Single-control-line chip: that line is always the per-chip select.
     if named.len() == 1 {
-        let kind = name_to_control_line_kind(named[0].name)
-            .expect("filtered to known names above");
+        let kind = name_to_control_line_kind(named[0].name).expect("filtered to known names above");
         return MultiChipCsConfig {
             per_chip_select: kind,
             commoned_lines: Vec::new(),
@@ -144,8 +143,7 @@ pub fn derive_multi_cs_config(chips: &[Chip]) -> MultiChipCsConfig {
     let mut commoned_lines = Vec::new();
 
     for line in &named {
-        let kind = name_to_control_line_kind(line.name)
-            .expect("filtered to known names above");
+        let kind = name_to_control_line_kind(line.name).expect("filtered to known names above");
         let logic = control_line_logic(line.name, ref_config);
         if logic == CsLogic::Ignore {
             commoned_lines.push(kind);
@@ -155,9 +153,10 @@ pub fn derive_multi_cs_config(chips: &[Chip]) -> MultiChipCsConfig {
     }
 
     MultiChipCsConfig {
-        per_chip_select: per_chip_select
-            .expect("Multi set must have exactly one active select line \
-                     (validated by check_cs_v2)"),
+        per_chip_select: per_chip_select.expect(
+            "Multi set must have exactly one active select line \
+                     (validated by check_cs_v2)",
+        ),
         commoned_lines,
     }
 }

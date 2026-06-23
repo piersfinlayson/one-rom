@@ -754,7 +754,10 @@ impl<'a, R: Reader> Parser<'a, R> {
                 Ok(()) => {
                     let magic_ok = &runtime_buf[0..4] == b"sdrr";
                     if !magic_ok {
-                        debug!("Runtime struct at {:#010X} has invalid magic - device not running", runtime_ptr);
+                        debug!(
+                            "Runtime struct at {:#010X} has invalid magic - device not running",
+                            runtime_ptr
+                        );
                     }
                     magic_ok
                 }

@@ -134,7 +134,11 @@ pub fn check_chip_on_board(board: Board, chip_type: ChipType) -> Option<CompatRe
     // logic in derive_addr_layout so the count matches what was actually
     // wired to X pins during layout derivation.
     let num_fly_lead_pins = if pin_offset < 0 {
-        let addr_line_start = if matches!(bit_mode, BitModes::BitMode16) { 1 } else { 0 };
+        let addr_line_start = if matches!(bit_mode, BitModes::BitMode16) {
+            1
+        } else {
+            0
+        };
         chip_type.address_pins()[addr_line_start..]
             .iter()
             .filter(|&&ap| {

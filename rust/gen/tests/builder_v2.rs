@@ -122,13 +122,13 @@ mod tests {
     const CS_DISCRIMINANT: u32 = 0; // u8 (onerom_alg_cs_t)
     const CS_CONFIG_LEN: u32 = 12; // Lengrh of onerom_alg_cs_config_t
     const CS0_SERVE_CS_LOW_0: u32 = CS_CONFIG_LEN; // u8 — first ALG_CS_0 param byte
-    const CS0_FIRST_ROM_CS_BASE: u32 = CS_CONFIG_LEN+2;     // u8 — chip0's CS pin offset within the CS range
-    const CS0_FIRST_ROM_NUM_CS_PINS: u32 = CS_CONFIG_LEN+3; // u8 — always 1 for Multi (one pin per chip)
+    const CS0_FIRST_ROM_CS_BASE: u32 = CS_CONFIG_LEN + 2; // u8 — chip0's CS pin offset within the CS range
+    const CS0_FIRST_ROM_NUM_CS_PINS: u32 = CS_CONFIG_LEN + 3; // u8 — always 1 for Multi (one pin per chip)
     const CS2_BASE_QUALIFIER_PIN: u32 = CS_CONFIG_LEN; // u8 — first ALG_CS_2 param byte
-    const CS2_NUM_QUALIFIER_PINS: u32 = CS_CONFIG_LEN+1; // u8
-    const CS2_QUALIFIER_INACTIVE_PATTERN: u32 = CS_CONFIG_LEN+2; // u8
+    const CS2_NUM_QUALIFIER_PINS: u32 = CS_CONFIG_LEN + 1; // u8
+    const CS2_QUALIFIER_INACTIVE_PATTERN: u32 = CS_CONFIG_LEN + 2; // u8
     const CS0_BYTE_PIN: u32 = CS_CONFIG_LEN + 1; // u8 — 2nd ALG_CS_0 param byte
-    const ALG_DATA_0: u8 = 0;                     // onerom_alg_data_t discriminant
+    const ALG_DATA_0: u8 = 0; // onerom_alg_data_t discriminant
 
     // onerom_alg_data_config_t tagged FAM binary layout:
     //   [discriminant(1)] [param_len(1)] [clkdiv_int(2)] [clkdiv_frac(1)]
@@ -857,7 +857,7 @@ mod tests {
     // ========================================================================
     // v2 multi 2-chip: Fire24E / 2x 2364
     // ========================================================================
- 
+
     /// 2-chip Multi set on Fire24E (CS1 as per-chip select — 2364 has only
     /// one control line so no ignore needed on chips[1]).
     ///
@@ -881,27 +881,35 @@ mod tests {
                 ]
             }]
         }"#;
- 
+
         let mut b = v2_builder(json);
-        b.add_file(FileData { id: 0, data: vec![0xAAu8; 8192] }).unwrap();
-        b.add_file(FileData { id: 1, data: vec![0xBBu8; 8192] }).unwrap();
- 
+        b.add_file(FileData {
+            id: 0,
+            data: vec![0xAAu8; 8192],
+        })
+        .unwrap();
+        b.add_file(FileData {
+            id: 1,
+            data: vec![0xBBu8; 8192],
+        })
+        .unwrap();
+
         let (meta, rom) = b.build(v2_props(Board::Fire24E)).expect("build");
         let v = view(&meta);
- 
+
         assert_eq!(v.read_u8(HDR_SLOT_COUNT).unwrap(), 1);
- 
+
         let s0 = slot_base(&v, 0);
         assert_eq!(v.read_u8(s0 + SLOT_TYPE).unwrap(), SLOT_TYPE_MULTI_ROM);
         assert_eq!(v.read_u8(s0 + SLOT_ROM_COUNT).unwrap(), 2);
         assert_eq!(v.read_u32_le(s0 + SLOT_DATA).unwrap(), ROM_DATA_BASE);
         assert_eq!(v.read_u32_le(s0 + SLOT_FW_OVRD).unwrap(), NULL_PTR);
- 
+
         // Table: 2^15 entries × 1 byte = 32768
         let slot_size = v.read_u32_le(s0 + SLOT_SIZE).unwrap();
         assert_eq!(slot_size, 1 << 15);
         assert_eq!(rom.len() as u32, slot_size);
- 
+
         let alg = alg_base(&v, s0);
         let cs = v.read_u32_le(alg + ALG_CS_PTR).unwrap();
         assert_eq!(v.read_u8(cs + CS_DISCRIMINANT).unwrap(), ALG_CS_0);
@@ -910,32 +918,41 @@ mod tests {
         // chip0's per-chip select: CS1 at GPIO 10, gpio_base=0 → offset 10
         assert_eq!(v.read_u8(cs + CS0_FIRST_ROM_CS_BASE).unwrap(), 10);
         assert_eq!(v.read_u8(cs + CS0_FIRST_ROM_NUM_CS_PINS).unwrap(), 1);
- 
+
         let dma = v.read_u32_le(alg + ALG_DMA_PTR).unwrap();
         assert_eq!(v.read_u8(dma + DMA_BIT_MODE).unwrap(), BIT_MODE_8);
- 
+
         // No pull config: Multi X pins are driven CS selects, not jumpers
         assert_eq!(v.read_u32_le(alg + ALG_PULL_PTR).unwrap(), NULL_PTR);
- 
+
         // 2 GpioOverInvert entries: CS1 and X1 (active-low → active-high)
         let ov = v.read_u32_le(alg + ALG_OVERRIDE_PTR).unwrap();
         assert_ne!(ov, NULL_PTR, "Multi set must have gpio_override_config");
         assert_eq!(
-            v.read_u8(ov + OVERRIDE_PARAM_LEN).unwrap(), 2,
+            v.read_u8(ov + OVERRIDE_PARAM_LEN).unwrap(),
+            2,
             "2-chip Multi must have 2 override entries (CS1 and X1)"
         );
         assert_eq!(v.read_u8(ov + 1).unwrap() >> 6, OVERRIDE_TYPE_INVERT);
         assert_eq!(v.read_u8(ov + 2).unwrap() >> 6, OVERRIDE_TYPE_INVERT);
- 
+
         let roms_arr = v.read_u32_le(s0 + SLOT_ROMS).unwrap();
-        assert_eq!(v.read_cstr(v.read_u32_le(roms_arr).unwrap() + ROM_INFO_TYPE_PTR).unwrap(), "2364");
-        assert_eq!(v.read_cstr(v.read_u32_le(roms_arr + 4).unwrap() + ROM_INFO_TYPE_PTR).unwrap(), "2364");
+        assert_eq!(
+            v.read_cstr(v.read_u32_le(roms_arr).unwrap() + ROM_INFO_TYPE_PTR)
+                .unwrap(),
+            "2364"
+        );
+        assert_eq!(
+            v.read_cstr(v.read_u32_le(roms_arr + 4).unwrap() + ROM_INFO_TYPE_PTR)
+                .unwrap(),
+            "2364"
+        );
     }
- 
+
     // ========================================================================
     // v2 multi 3-chip: Fire24E / 3x 2364
     // ========================================================================
- 
+
     /// 3-chip Multi set on Fire24E. Extends the 2-chip test with X2, giving
     /// 3 GpioOverInvert entries (CS1, X1, X2).
     #[test]
@@ -952,56 +969,70 @@ mod tests {
                 ]
             }]
         }"#;
- 
+
         let mut b = v2_builder(json);
-        b.add_file(FileData { id: 0, data: vec![0xAAu8; 8192] }).unwrap();
-        b.add_file(FileData { id: 1, data: vec![0xBBu8; 8192] }).unwrap();
-        b.add_file(FileData { id: 2, data: vec![0xCCu8; 8192] }).unwrap();
- 
+        b.add_file(FileData {
+            id: 0,
+            data: vec![0xAAu8; 8192],
+        })
+        .unwrap();
+        b.add_file(FileData {
+            id: 1,
+            data: vec![0xBBu8; 8192],
+        })
+        .unwrap();
+        b.add_file(FileData {
+            id: 2,
+            data: vec![0xCCu8; 8192],
+        })
+        .unwrap();
+
         let (meta, rom) = b.build(v2_props(Board::Fire24E)).expect("build");
         let v = view(&meta);
- 
+
         let s0 = slot_base(&v, 0);
         assert_eq!(v.read_u8(s0 + SLOT_TYPE).unwrap(), SLOT_TYPE_MULTI_ROM);
         assert_eq!(v.read_u8(s0 + SLOT_ROM_COUNT).unwrap(), 3);
- 
+
         let slot_size = v.read_u32_le(s0 + SLOT_SIZE).unwrap();
         assert_eq!(slot_size, 1 << 16);
         assert_eq!(rom.len() as u32, slot_size);
- 
+
         let alg = alg_base(&v, s0);
         let cs = v.read_u32_le(alg + ALG_CS_PTR).unwrap();
         assert_eq!(v.read_u8(cs + CS_DISCRIMINANT).unwrap(), ALG_CS_0);
         assert_eq!(v.read_u8(cs + CS0_SERVE_CS_LOW_0).unwrap(), 1);
         assert_eq!(v.read_u8(cs + CS0_FIRST_ROM_CS_BASE).unwrap(), 10);
         assert_eq!(v.read_u8(cs + CS0_FIRST_ROM_NUM_CS_PINS).unwrap(), 1);
- 
+
         assert_eq!(v.read_u32_le(alg + ALG_PULL_PTR).unwrap(), NULL_PTR);
- 
+
         // 3 GpioOverInvert entries: CS1, X1, X2
         let ov = v.read_u32_le(alg + ALG_OVERRIDE_PTR).unwrap();
         assert_ne!(ov, NULL_PTR);
         assert_eq!(
-            v.read_u8(ov + OVERRIDE_PARAM_LEN).unwrap(), 3,
+            v.read_u8(ov + OVERRIDE_PARAM_LEN).unwrap(),
+            3,
             "3-chip Multi must have 3 override entries (CS1, X1, X2)"
         );
         assert_eq!(v.read_u8(ov + 1).unwrap() >> 6, OVERRIDE_TYPE_INVERT);
         assert_eq!(v.read_u8(ov + 2).unwrap() >> 6, OVERRIDE_TYPE_INVERT);
         assert_eq!(v.read_u8(ov + 3).unwrap() >> 6, OVERRIDE_TYPE_INVERT);
- 
+
         let roms_arr = v.read_u32_le(s0 + SLOT_ROMS).unwrap();
         for i in 0..3u32 {
             assert_eq!(
-                v.read_cstr(v.read_u32_le(roms_arr + i * 4).unwrap() + ROM_INFO_TYPE_PTR).unwrap(),
+                v.read_cstr(v.read_u32_le(roms_arr + i * 4).unwrap() + ROM_INFO_TYPE_PTR)
+                    .unwrap(),
                 "2364"
             );
         }
     }
- 
+
     // ========================================================================
     // v2 multi 2-chip CE-primary: Fire28C / 2x 27128, OE commoned
     // ========================================================================
- 
+
     /// 2-chip Multi set on Fire28C, 27128 with CE as per-chip select (OE
     /// commoned). chips[1] has `"oe": "ignore"`.
     ///
@@ -1026,22 +1057,30 @@ mod tests {
                 ]
             }]
         }"#;
- 
+
         let mut b = v2_builder(json);
-        b.add_file(FileData { id: 0, data: vec![0xAAu8; 16384] }).unwrap();
-        b.add_file(FileData { id: 1, data: vec![0xBBu8; 16384] }).unwrap();
- 
+        b.add_file(FileData {
+            id: 0,
+            data: vec![0xAAu8; 16384],
+        })
+        .unwrap();
+        b.add_file(FileData {
+            id: 1,
+            data: vec![0xBBu8; 16384],
+        })
+        .unwrap();
+
         let (meta, rom) = b.build(v2_props(Board::Fire28C)).expect("build");
         let v = view(&meta);
- 
+
         let s0 = slot_base(&v, 0);
         assert_eq!(v.read_u8(s0 + SLOT_TYPE).unwrap(), SLOT_TYPE_MULTI_ROM);
         assert_eq!(v.read_u8(s0 + SLOT_ROM_COUNT).unwrap(), 2);
         assert_eq!(v.read_u32_le(s0 + SLOT_FW_OVRD).unwrap(), NULL_PTR);
- 
+
         let slot_size = v.read_u32_le(s0 + SLOT_SIZE).unwrap();
         assert_eq!(rom.len() as u32, slot_size);
- 
+
         let alg = alg_base(&v, s0);
         let cs = v.read_u32_le(alg + ALG_CS_PTR).unwrap();
         assert_eq!(v.read_u8(cs + CS_DISCRIMINANT).unwrap(), ALG_CS_0);
@@ -1049,25 +1088,33 @@ mod tests {
         // CE at GPIO 10, gpio_base=0 → first_rom_cs_base = 10
         assert_eq!(v.read_u8(cs + CS0_FIRST_ROM_CS_BASE).unwrap(), 10);
         assert_eq!(v.read_u8(cs + CS0_FIRST_ROM_NUM_CS_PINS).unwrap(), 1);
- 
+
         assert_eq!(v.read_u32_le(alg + ALG_PULL_PTR).unwrap(), NULL_PTR);
- 
+
         // 2 GpioOverInvert entries: CE and X1
         let ov = v.read_u32_le(alg + ALG_OVERRIDE_PTR).unwrap();
         assert_ne!(ov, NULL_PTR, "Multi set must have gpio_override_config");
         assert_eq!(v.read_u8(ov + OVERRIDE_PARAM_LEN).unwrap(), 2);
         assert_eq!(v.read_u8(ov + 1).unwrap() >> 6, OVERRIDE_TYPE_INVERT);
         assert_eq!(v.read_u8(ov + 2).unwrap() >> 6, OVERRIDE_TYPE_INVERT);
- 
+
         let roms_arr = v.read_u32_le(s0 + SLOT_ROMS).unwrap();
-        assert_eq!(v.read_cstr(v.read_u32_le(roms_arr).unwrap() + ROM_INFO_TYPE_PTR).unwrap(), "27128");
-        assert_eq!(v.read_cstr(v.read_u32_le(roms_arr + 4).unwrap() + ROM_INFO_TYPE_PTR).unwrap(), "27128");
+        assert_eq!(
+            v.read_cstr(v.read_u32_le(roms_arr).unwrap() + ROM_INFO_TYPE_PTR)
+                .unwrap(),
+            "27128"
+        );
+        assert_eq!(
+            v.read_cstr(v.read_u32_le(roms_arr + 4).unwrap() + ROM_INFO_TYPE_PTR)
+                .unwrap(),
+            "27128"
+        );
     }
- 
+
     // ========================================================================
     // v2 multi 2-chip OE-primary: Fire28C / 2x 27128, CE commoned
     // ========================================================================
- 
+
     /// 2-chip Multi set on Fire28C, 27128 with OE as per-chip select (CE
     /// commoned). chips[1] has `"ce": "ignore"`.
     ///
@@ -1092,22 +1139,30 @@ mod tests {
                 ]
             }]
         }"#;
- 
+
         let mut b = v2_builder(json);
-        b.add_file(FileData { id: 0, data: vec![0xAAu8; 16384] }).unwrap();
-        b.add_file(FileData { id: 1, data: vec![0xBBu8; 16384] }).unwrap();
- 
+        b.add_file(FileData {
+            id: 0,
+            data: vec![0xAAu8; 16384],
+        })
+        .unwrap();
+        b.add_file(FileData {
+            id: 1,
+            data: vec![0xBBu8; 16384],
+        })
+        .unwrap();
+
         let (meta, rom) = b.build(v2_props(Board::Fire28C)).expect("build");
         let v = view(&meta);
- 
+
         let s0 = slot_base(&v, 0);
         assert_eq!(v.read_u8(s0 + SLOT_TYPE).unwrap(), SLOT_TYPE_MULTI_ROM);
         assert_eq!(v.read_u8(s0 + SLOT_ROM_COUNT).unwrap(), 2);
         assert_eq!(v.read_u32_le(s0 + SLOT_FW_OVRD).unwrap(), NULL_PTR);
- 
+
         let slot_size = v.read_u32_le(s0 + SLOT_SIZE).unwrap();
         assert_eq!(rom.len() as u32, slot_size);
- 
+
         let alg = alg_base(&v, s0);
         let cs = v.read_u32_le(alg + ALG_CS_PTR).unwrap();
         assert_eq!(v.read_u8(cs + CS_DISCRIMINANT).unwrap(), ALG_CS_0);
@@ -1115,25 +1170,33 @@ mod tests {
         // OE at GPIO 11, gpio_base=0 → first_rom_cs_base = 11
         assert_eq!(v.read_u8(cs + CS0_FIRST_ROM_CS_BASE).unwrap(), 11);
         assert_eq!(v.read_u8(cs + CS0_FIRST_ROM_NUM_CS_PINS).unwrap(), 1);
- 
+
         assert_eq!(v.read_u32_le(alg + ALG_PULL_PTR).unwrap(), NULL_PTR);
- 
+
         // 2 GpioOverInvert entries: OE and X1
         let ov = v.read_u32_le(alg + ALG_OVERRIDE_PTR).unwrap();
         assert_ne!(ov, NULL_PTR, "Multi set must have gpio_override_config");
         assert_eq!(v.read_u8(ov + OVERRIDE_PARAM_LEN).unwrap(), 2);
         assert_eq!(v.read_u8(ov + 1).unwrap() >> 6, OVERRIDE_TYPE_INVERT);
         assert_eq!(v.read_u8(ov + 2).unwrap() >> 6, OVERRIDE_TYPE_INVERT);
- 
+
         let roms_arr = v.read_u32_le(s0 + SLOT_ROMS).unwrap();
-        assert_eq!(v.read_cstr(v.read_u32_le(roms_arr).unwrap() + ROM_INFO_TYPE_PTR).unwrap(), "27128");
-        assert_eq!(v.read_cstr(v.read_u32_le(roms_arr + 4).unwrap() + ROM_INFO_TYPE_PTR).unwrap(), "27128");
+        assert_eq!(
+            v.read_cstr(v.read_u32_le(roms_arr).unwrap() + ROM_INFO_TYPE_PTR)
+                .unwrap(),
+            "27128"
+        );
+        assert_eq!(
+            v.read_cstr(v.read_u32_le(roms_arr + 4).unwrap() + ROM_INFO_TYPE_PTR)
+                .unwrap(),
+            "27128"
+        );
     }
 
     // ========================================================================
     // v2 40-pin: byte_pin populated (AlgData1, default force_16_bit=false)
     // ========================================================================
- 
+
     /// Single 27C400, Fire40A, default serving (AlgData1, force_16_bit=false).
     ///
     /// Extends the existing `v2_single_fire40a_27c400` scenario with the
@@ -1153,25 +1216,25 @@ mod tests {
                 "chips": [{ "file": "test.bin", "type": "27C400" }]
             }]
         }"#;
- 
+
         let mut b = v2_builder(json);
         b.add_file(FileData {
             id: 0,
             data: vec![0xAAu8; 524288], // 27C400 = 512KB byte-mode image
         })
         .unwrap();
- 
+
         let (meta, _rom) = b.build(v2_props(Board::Fire40A)).expect("build");
         let v = view(&meta);
- 
+
         let s0 = slot_base(&v, 0);
         let alg = alg_base(&v, s0);
- 
+
         // AlgCs0: serve_cs_low_0 = 0 (single set, active-low)
         let cs = v.read_u32_le(alg + ALG_CS_PTR).unwrap();
         assert_eq!(v.read_u8(cs + CS_DISCRIMINANT).unwrap(), ALG_CS_0);
         assert_eq!(v.read_u8(cs + CS0_SERVE_CS_LOW_0).unwrap(), 0);
- 
+
         // byte_pin must be a real GPIO (not 0xFF / GPIO_NONE): AlgData1
         // supplies its /BYTE pin to the CS algorithm so the CS PIO knows
         // which GPIO signals byte-mode operation.
@@ -1180,21 +1243,21 @@ mod tests {
             byte_pin, 0xFF,
             "byte_pin must be a real GPIO (not GPIO_NONE) when AlgData1 is used"
         );
- 
+
         // AlgData: discriminant=1 (AlgData1), word_size=16
         let data = v.read_u32_le(alg + ALG_DATA_PTR).unwrap();
         assert_eq!(v.read_u8(data + DATA_DISCRIMINANT).unwrap(), ALG_DATA_1);
         assert_eq!(v.read_u8(data + DATA_WORD_SIZE).unwrap(), 16);
- 
+
         // DMA: BitMode16
         let dma = v.read_u32_le(alg + ALG_DMA_PTR).unwrap();
         assert_eq!(v.read_u8(dma + DMA_BIT_MODE).unwrap(), BIT_MODE_16);
     }
- 
+
     // ========================================================================
     // v2 40-pin: byte_pin absent (AlgData0, force_16_bit=true)
     // ========================================================================
- 
+
     /// Single 27C400, Fire40A, `force_16_bit = true` (AlgData0, word_size=16).
     ///
     /// With `force_16_bit`, the chip is served in its native 16-bit/word mode
@@ -1217,51 +1280,53 @@ mod tests {
                 }
             }]
         }"#;
- 
+
         let mut b = v2_builder(json);
         b.add_file(FileData {
             id: 0,
             data: vec![0xAAu8; 524288],
         })
         .unwrap();
- 
+
         let (meta, rom) = b.build(v2_props(Board::Fire40A)).expect("build");
         let v = view(&meta);
- 
+
         let s0 = slot_base(&v, 0);
- 
+
         // Table size unchanged: force_16_bit doesn't affect layout.
         let slot_size = v.read_u32_le(s0 + SLOT_SIZE).unwrap();
         assert_eq!(slot_size, 1u32 << 18 << 1); // 2^18 * 2 = 524288
         assert_eq!(rom.len() as u32, slot_size);
- 
+
         let alg = alg_base(&v, s0);
- 
+
         // AlgData0 (not AlgData1) with word_size=16: /BYTE is ignored.
         let data = v.read_u32_le(alg + ALG_DATA_PTR).unwrap();
         assert_eq!(
-            v.read_u8(data + DATA_DISCRIMINANT).unwrap(), ALG_DATA_0,
+            v.read_u8(data + DATA_DISCRIMINANT).unwrap(),
+            ALG_DATA_0,
             "force_16_bit must produce AlgData0, not AlgData1"
         );
         assert_eq!(v.read_u8(data + DATA_WORD_SIZE).unwrap(), 16);
- 
+
         // DMA: still BitMode16
         let dma = v.read_u32_le(alg + ALG_DMA_PTR).unwrap();
         assert_eq!(v.read_u8(dma + DMA_BIT_MODE).unwrap(), BIT_MODE_16);
- 
+
         // AlgCs0: byte_pin must be GPIO_NONE (0xFF) — AlgData0 has no /BYTE.
         let cs = v.read_u32_le(alg + ALG_CS_PTR).unwrap();
         assert_eq!(v.read_u8(cs + CS_DISCRIMINANT).unwrap(), ALG_CS_0);
         assert_eq!(
-            v.read_u8(cs + CS0_BYTE_PIN).unwrap(), 0xFF,
+            v.read_u8(cs + CS0_BYTE_PIN).unwrap(),
+            0xFF,
             "byte_pin must be GPIO_NONE when force_16_bit=true (AlgData0, no /BYTE)"
         );
     }
- 
+
     // ========================================================================
     // v2 40-pin: 27C200 (256KB, BitMode16)
     // ========================================================================
- 
+
     /// Single 27C200, Fire40A, BitMode16 (AlgData1).
     ///
     /// 27C200 is a 256KB 16-bit EPROM: 2^17 word addresses (A0-A16),
@@ -1279,7 +1344,7 @@ mod tests {
                 "chips": [{ "file": "test.bin", "type": "27C200" }]
             }]
         }"#;
- 
+
         let mut b = v2_builder(json);
         // 27C200 = 256KB byte-mode image = 262144 bytes
         b.add_file(FileData {
@@ -1287,44 +1352,45 @@ mod tests {
             data: vec![0xAAu8; 262144],
         })
         .unwrap();
- 
+
         let (meta, rom) = b.build(v2_props(Board::Fire40A)).expect("build");
         let v = view(&meta);
- 
+
         assert_eq!(v.read_u8(HDR_SLOT_COUNT).unwrap(), 1);
- 
+
         let s0 = slot_base(&v, 0);
         assert_eq!(v.read_u8(s0 + SLOT_TYPE).unwrap(), SLOT_TYPE_SINGLE_ROM);
         assert_eq!(v.read_u8(s0 + SLOT_ROM_COUNT).unwrap(), 1);
- 
+
         // 2^17 word entries × 2 bytes/word = 262144, but Fire 40 A requires an
         // extra pin
         let slot_size = v.read_u32_le(s0 + SLOT_SIZE).unwrap();
-        assert_eq!(slot_size, 1u32 << (17+1) << 1); // 2^17 * 2 = 262144
+        assert_eq!(slot_size, 1u32 << (17 + 1) << 1); // 2^17 * 2 = 262144
         assert_eq!(rom.len() as u32, slot_size);
- 
+
         let alg = alg_base(&v, s0);
- 
+
         // AlgData1 (default, force_16_bit=false), word_size=16
         let data = v.read_u32_le(alg + ALG_DATA_PTR).unwrap();
         assert_eq!(v.read_u8(data + DATA_DISCRIMINANT).unwrap(), ALG_DATA_1);
         assert_eq!(v.read_u8(data + DATA_WORD_SIZE).unwrap(), 16);
- 
+
         // DMA: BitMode16
         let dma = v.read_u32_le(alg + ALG_DMA_PTR).unwrap();
         assert_eq!(v.read_u8(dma + DMA_BIT_MODE).unwrap(), BIT_MODE_16);
- 
+
         // byte_pin populated (AlgData1 supplies it to AlgCs0)
         let cs = v.read_u32_le(alg + ALG_CS_PTR).unwrap();
         assert_eq!(v.read_u8(cs + CS_DISCRIMINANT).unwrap(), ALG_CS_0);
         assert_ne!(
-            v.read_u8(cs + CS0_BYTE_PIN).unwrap(), 0xFF,
+            v.read_u8(cs + CS0_BYTE_PIN).unwrap(),
+            0xFF,
             "byte_pin must be set for AlgData1 (27C200 on Fire40A)"
         );
- 
+
         // Single set: no pull config
         assert_eq!(v.read_u32_le(alg + ALG_PULL_PTR).unwrap(), NULL_PTR);
- 
+
         let roms_arr = v.read_u32_le(s0 + SLOT_ROMS).unwrap();
         let rom0 = v.read_u32_le(roms_arr).unwrap();
         assert_eq!(v.read_cstr(rom0 + ROM_INFO_TYPE_PTR).unwrap(), "27C200");
@@ -1333,7 +1399,7 @@ mod tests {
     // ========================================================================
     // v2 single: Fire32B / 27C010
     // ========================================================================
- 
+
     /// Single 27C010 (128KB EPROM) on Fire32B.
     ///
     /// 17 address lines → num_addr_pins=17, slot_size=2^17=131072.
@@ -1348,53 +1414,53 @@ mod tests {
                 "chips": [{ "file": "test.bin", "type": "27C010" }]
             }]
         }"#;
- 
+
         let mut b = v2_builder(json);
         b.add_file(FileData {
             id: 0,
             data: vec![0xAAu8; 131072], // 27C010 = 128KB
         })
         .unwrap();
- 
+
         let (meta, rom) = b.build(v2_props(Board::Fire32B)).expect("build");
         let v = view(&meta);
- 
+
         assert_eq!(v.read_u8(HDR_SLOT_COUNT).unwrap(), 1);
- 
+
         let s0 = slot_base(&v, 0);
         assert_eq!(v.read_u8(s0 + SLOT_TYPE).unwrap(), SLOT_TYPE_SINGLE_ROM);
         assert_eq!(v.read_u8(s0 + SLOT_ROM_COUNT).unwrap(), 1);
         assert_eq!(v.read_u32_le(s0 + SLOT_FW_OVRD).unwrap(), NULL_PTR);
- 
+
         let slot_size = v.read_u32_le(s0 + SLOT_SIZE).unwrap();
         assert_eq!(slot_size, 1u32 << 17); // 2^17 = 131072
         assert_eq!(rom.len() as u32, slot_size);
- 
+
         let alg = alg_base(&v, s0);
- 
+
         let cs = v.read_u32_le(alg + ALG_CS_PTR).unwrap();
         assert_eq!(v.read_u8(cs + CS_DISCRIMINANT).unwrap(), ALG_CS_0);
         assert_eq!(v.read_u8(cs + CS0_SERVE_CS_LOW_0).unwrap(), 0);
- 
+
         let data = v.read_u32_le(alg + ALG_DATA_PTR).unwrap();
         assert_eq!(v.read_u8(data + DATA_DISCRIMINANT).unwrap(), ALG_DATA_0);
         assert_eq!(v.read_u8(data + DATA_WORD_SIZE).unwrap(), 8);
- 
+
         let dma = v.read_u32_le(alg + ALG_DMA_PTR).unwrap();
         assert_eq!(v.read_u8(dma + DMA_BIT_MODE).unwrap(), BIT_MODE_8);
- 
+
         assert_eq!(v.read_u32_le(alg + ALG_PULL_PTR).unwrap(), NULL_PTR);
         assert_eq!(v.read_u32_le(alg + ALG_OVERRIDE_PTR).unwrap(), NULL_PTR);
- 
+
         let roms_arr = v.read_u32_le(s0 + SLOT_ROMS).unwrap();
         let rom0 = v.read_u32_le(roms_arr).unwrap();
         assert_eq!(v.read_cstr(rom0 + ROM_INFO_TYPE_PTR).unwrap(), "27C010");
     }
- 
+
     // ========================================================================
     // v2 single: Fire32B / 27C040
     // ========================================================================
- 
+
     /// Single 27C040 (512KB EPROM) on Fire32B.
     ///
     /// 19 address lines → num_addr_pins=19, slot_size=2^19=524288.
@@ -1410,53 +1476,53 @@ mod tests {
                 "chips": [{ "file": "test.bin", "type": "27C040" }]
             }]
         }"#;
- 
+
         let mut b = v2_builder(json);
         b.add_file(FileData {
             id: 0,
             data: vec![0xAAu8; 524288], // 27C040 = 512KB
         })
         .unwrap();
- 
+
         let (meta, rom) = b.build(v2_props(Board::Fire32B)).expect("build");
         let v = view(&meta);
- 
+
         assert_eq!(v.read_u8(HDR_SLOT_COUNT).unwrap(), 1);
- 
+
         let s0 = slot_base(&v, 0);
         assert_eq!(v.read_u8(s0 + SLOT_TYPE).unwrap(), SLOT_TYPE_SINGLE_ROM);
         assert_eq!(v.read_u8(s0 + SLOT_ROM_COUNT).unwrap(), 1);
         assert_eq!(v.read_u32_le(s0 + SLOT_FW_OVRD).unwrap(), NULL_PTR);
- 
+
         let slot_size = v.read_u32_le(s0 + SLOT_SIZE).unwrap();
         assert_eq!(slot_size, 1u32 << 19); // 2^19 = 524288
         assert_eq!(rom.len() as u32, slot_size);
- 
+
         let alg = alg_base(&v, s0);
- 
+
         let cs = v.read_u32_le(alg + ALG_CS_PTR).unwrap();
         assert_eq!(v.read_u8(cs + CS_DISCRIMINANT).unwrap(), ALG_CS_0);
         assert_eq!(v.read_u8(cs + CS0_SERVE_CS_LOW_0).unwrap(), 0);
- 
+
         let data = v.read_u32_le(alg + ALG_DATA_PTR).unwrap();
         assert_eq!(v.read_u8(data + DATA_DISCRIMINANT).unwrap(), ALG_DATA_0);
         assert_eq!(v.read_u8(data + DATA_WORD_SIZE).unwrap(), 8);
- 
+
         let dma = v.read_u32_le(alg + ALG_DMA_PTR).unwrap();
         assert_eq!(v.read_u8(dma + DMA_BIT_MODE).unwrap(), BIT_MODE_8);
- 
+
         assert_eq!(v.read_u32_le(alg + ALG_PULL_PTR).unwrap(), NULL_PTR);
         assert_eq!(v.read_u32_le(alg + ALG_OVERRIDE_PTR).unwrap(), NULL_PTR);
- 
+
         let roms_arr = v.read_u32_le(s0 + SLOT_ROMS).unwrap();
         let rom0 = v.read_u32_le(roms_arr).unwrap();
         assert_eq!(v.read_cstr(rom0 + ROM_INFO_TYPE_PTR).unwrap(), "27C040");
     }
- 
+
     // ========================================================================
     // v2 single: Fire32B / SST39SF040
     // ========================================================================
- 
+
     /// Single SST39SF040 (512KB flash) on Fire32B.
     ///
     /// Same size as 27C040 but A18 is on pin 1 (dual-bonded [13,35]).
@@ -1473,45 +1539,45 @@ mod tests {
                 "chips": [{ "file": "test.bin", "type": "SST39SF040" }]
             }]
         }"#;
- 
+
         let mut b = v2_builder(json);
         b.add_file(FileData {
             id: 0,
             data: vec![0xBBu8; 524288], // SST39SF040 = 512KB
         })
         .unwrap();
- 
+
         let (meta, rom) = b.build(v2_props(Board::Fire32B)).expect("build");
         let v = view(&meta);
- 
+
         assert_eq!(v.read_u8(HDR_SLOT_COUNT).unwrap(), 1);
- 
+
         let s0 = slot_base(&v, 0);
         assert_eq!(v.read_u8(s0 + SLOT_TYPE).unwrap(), SLOT_TYPE_SINGLE_ROM);
         assert_eq!(v.read_u8(s0 + SLOT_ROM_COUNT).unwrap(), 1);
         assert_eq!(v.read_u32_le(s0 + SLOT_FW_OVRD).unwrap(), NULL_PTR);
- 
+
         // Same table size as 27C040: 19 address lines → 2^19 bytes
         let slot_size = v.read_u32_le(s0 + SLOT_SIZE).unwrap();
         assert_eq!(slot_size, 1u32 << 19);
         assert_eq!(rom.len() as u32, slot_size);
- 
+
         let alg = alg_base(&v, s0);
- 
+
         let cs = v.read_u32_le(alg + ALG_CS_PTR).unwrap();
         assert_eq!(v.read_u8(cs + CS_DISCRIMINANT).unwrap(), ALG_CS_0);
         assert_eq!(v.read_u8(cs + CS0_SERVE_CS_LOW_0).unwrap(), 0);
- 
+
         let data = v.read_u32_le(alg + ALG_DATA_PTR).unwrap();
         assert_eq!(v.read_u8(data + DATA_DISCRIMINANT).unwrap(), ALG_DATA_0);
         assert_eq!(v.read_u8(data + DATA_WORD_SIZE).unwrap(), 8);
- 
+
         let dma = v.read_u32_le(alg + ALG_DMA_PTR).unwrap();
         assert_eq!(v.read_u8(dma + DMA_BIT_MODE).unwrap(), BIT_MODE_8);
- 
+
         assert_eq!(v.read_u32_le(alg + ALG_PULL_PTR).unwrap(), NULL_PTR);
         assert_eq!(v.read_u32_le(alg + ALG_OVERRIDE_PTR).unwrap(), NULL_PTR);
- 
+
         let roms_arr = v.read_u32_le(s0 + SLOT_ROMS).unwrap();
         let rom0 = v.read_u32_le(roms_arr).unwrap();
         assert_eq!(v.read_cstr(rom0 + ROM_INFO_TYPE_PTR).unwrap(), "SST39SF040");
@@ -1520,7 +1586,7 @@ mod tests {
     // ========================================================================
     // v2 banked 2-chip: Fire28C / 2x 27128
     // ========================================================================
- 
+
     /// 2-chip Banked 27128 on Fire28C.
     ///
     /// addr_layout: gpio_base=13, num_addr_pins=16, x1_gpio=Some(28).
@@ -1545,125 +1611,179 @@ mod tests {
                 ]
             }]
         }"#;
- 
+
         let mut b = v2_builder(json);
-        b.add_file(FileData { id: 0, data: vec![0xAAu8; 16384] }).unwrap();
-        b.add_file(FileData { id: 1, data: vec![0x55u8; 16384] }).unwrap();
- 
+        b.add_file(FileData {
+            id: 0,
+            data: vec![0xAAu8; 16384],
+        })
+        .unwrap();
+        b.add_file(FileData {
+            id: 1,
+            data: vec![0x55u8; 16384],
+        })
+        .unwrap();
+
         let (meta, rom) = b.build(v2_props(Board::Fire28C)).expect("build");
         let v = view(&meta);
- 
+
         assert_eq!(v.read_u8(HDR_SLOT_COUNT).unwrap(), 1);
- 
+
         let s0 = slot_base(&v, 0);
         assert_eq!(v.read_u8(s0 + SLOT_TYPE).unwrap(), SLOT_TYPE_BANKED_ROM);
         assert_eq!(v.read_u8(s0 + SLOT_ROM_COUNT).unwrap(), 2);
         assert_eq!(v.read_u32_le(s0 + SLOT_FW_OVRD).unwrap(), NULL_PTR);
- 
+
         let slot_size = v.read_u32_le(s0 + SLOT_SIZE).unwrap();
         assert_eq!(slot_size, 1u32 << 16); // 2^16 = 65536
         assert_eq!(rom.len() as u32, slot_size);
- 
+
         let alg = alg_base(&v, s0);
- 
+
         let cs = v.read_u32_le(alg + ALG_CS_PTR).unwrap();
         assert_eq!(v.read_u8(cs + CS_DISCRIMINANT).unwrap(), ALG_CS_0);
         assert_eq!(v.read_u8(cs + CS0_SERVE_CS_LOW_0).unwrap(), 0); // CE+OE active-low
- 
+
         let dma = v.read_u32_le(alg + ALG_DMA_PTR).unwrap();
         assert_eq!(v.read_u8(dma + DMA_BIT_MODE).unwrap(), BIT_MODE_8);
- 
+
         // 2-chip banked: pull entries for both bonds of X1 (GPIO 9 and GPIO 28)
         let pull = v.read_u32_le(alg + ALG_PULL_PTR).unwrap();
         assert_ne!(pull, NULL_PTR, "banked set must have gpio_pull_config");
         assert_eq!(v.read_u8(pull + PULL_PARAM_LEN).unwrap(), 2);
- 
+
         // x_jumper_pull=0: X1 (GPIO 28) needs GpioOverInvert — 1 entry
         let ov = v.read_u32_le(alg + ALG_OVERRIDE_PTR).unwrap();
-        assert_ne!(ov, NULL_PTR, "banked on x_jumper_pull=0 board must have override");
+        assert_ne!(
+            ov, NULL_PTR,
+            "banked on x_jumper_pull=0 board must have override"
+        );
         assert_eq!(v.read_u8(ov + OVERRIDE_PARAM_LEN).unwrap(), 1);
         assert_eq!(v.read_u8(ov + 1).unwrap() >> 6, OVERRIDE_TYPE_INVERT);
         // Lower 6 bits must be X1's GPIO (28)
         assert_eq!(v.read_u8(ov + 1).unwrap() & 0x3F, 28);
- 
+
         let roms_arr = v.read_u32_le(s0 + SLOT_ROMS).unwrap();
-        assert_eq!(v.read_cstr(v.read_u32_le(roms_arr).unwrap() + ROM_INFO_TYPE_PTR).unwrap(), "27128");
-        assert_eq!(v.read_cstr(v.read_u32_le(roms_arr + 4).unwrap() + ROM_INFO_TYPE_PTR).unwrap(), "27128");
+        assert_eq!(
+            v.read_cstr(v.read_u32_le(roms_arr).unwrap() + ROM_INFO_TYPE_PTR)
+                .unwrap(),
+            "27128"
+        );
+        assert_eq!(
+            v.read_cstr(v.read_u32_le(roms_arr + 4).unwrap() + ROM_INFO_TYPE_PTR)
+                .unwrap(),
+            "27128"
+        );
     }
 
     // ========================================================================
     // v2 single: Fire32B / 27C080 — both halves
     // ========================================================================
- 
+
     /// 27C080 half-select on Fire32B: tests both the lower half
     /// (cs1=active_low, no CS override) and the upper half
     /// (cs1=active_high, GpioOverInvert on GPIO 13 = A19).
     #[test]
     fn v2_single_fire32b_27c080_halves() {
         for (cs1_str, expect_override) in &[("active_low", false), ("active_high", true)] {
-            let json = format!(r#"{{
+            let json = format!(
+                r#"{{
                 "version": 1,
                 "description": "v2 Fire32B 27C080 {}",
                 "chip_sets": [{{
                     "type": "single",
                     "chips": [{{ "file": "test.bin", "type": "27C080", "cs1": "{}" }}]
                 }}]
-            }}"#, cs1_str, cs1_str);
- 
+            }}"#,
+                cs1_str, cs1_str
+            );
+
             let mut b = v2_builder(&json);
-            b.add_file(FileData { id: 0, data: vec![0xAAu8; 524288] }).unwrap();
- 
+            b.add_file(FileData {
+                id: 0,
+                data: vec![0xAAu8; 524288],
+            })
+            .unwrap();
+
             let (meta, rom) = b
                 .build(v2_props(Board::Fire32B))
                 .unwrap_or_else(|e| panic!("build failed for cs1={cs1_str}: {e:?}"));
             let v = view(&meta);
- 
+
             let s0 = slot_base(&v, 0);
-            assert_eq!(v.read_u8(s0 + SLOT_TYPE).unwrap(), SLOT_TYPE_SINGLE_ROM,
-                "cs1={cs1_str}: slot_type");
-            assert_eq!(v.read_u8(s0 + SLOT_ROM_COUNT).unwrap(), 1,
-                "cs1={cs1_str}: rom_count");
- 
+            assert_eq!(
+                v.read_u8(s0 + SLOT_TYPE).unwrap(),
+                SLOT_TYPE_SINGLE_ROM,
+                "cs1={cs1_str}: slot_type"
+            );
+            assert_eq!(
+                v.read_u8(s0 + SLOT_ROM_COUNT).unwrap(),
+                1,
+                "cs1={cs1_str}: rom_count"
+            );
+
             // Both halves: same 19-bit table size
             let slot_size = v.read_u32_le(s0 + SLOT_SIZE).unwrap();
             assert_eq!(slot_size, 1u32 << 19, "cs1={cs1_str}: slot_size");
             assert_eq!(rom.len() as u32, slot_size, "cs1={cs1_str}: rom len");
- 
+
             let alg = alg_base(&v, s0);
             let cs = v.read_u32_le(alg + ALG_CS_PTR).unwrap();
-            assert_eq!(v.read_u8(cs + CS_DISCRIMINANT).unwrap(), ALG_CS_0,
-                "cs1={cs1_str}: cs discriminant");
-            assert_eq!(v.read_u8(cs + CS0_SERVE_CS_LOW_0).unwrap(), 0,
-                "cs1={cs1_str}: serve_cs_low_0");
- 
+            assert_eq!(
+                v.read_u8(cs + CS_DISCRIMINANT).unwrap(),
+                ALG_CS_0,
+                "cs1={cs1_str}: cs discriminant"
+            );
+            assert_eq!(
+                v.read_u8(cs + CS0_SERVE_CS_LOW_0).unwrap(),
+                0,
+                "cs1={cs1_str}: serve_cs_low_0"
+            );
+
             let dma = v.read_u32_le(alg + ALG_DMA_PTR).unwrap();
-            assert_eq!(v.read_u8(dma + DMA_BIT_MODE).unwrap(), BIT_MODE_8,
-                "cs1={cs1_str}: bit_mode");
- 
-            assert_eq!(v.read_u32_le(alg + ALG_PULL_PTR).unwrap(), NULL_PTR,
-                "cs1={cs1_str}: no pull config");
- 
+            assert_eq!(
+                v.read_u8(dma + DMA_BIT_MODE).unwrap(),
+                BIT_MODE_8,
+                "cs1={cs1_str}: bit_mode"
+            );
+
+            assert_eq!(
+                v.read_u32_le(alg + ALG_PULL_PTR).unwrap(),
+                NULL_PTR,
+                "cs1={cs1_str}: no pull config"
+            );
+
             let ov = v.read_u32_le(alg + ALG_OVERRIDE_PTR).unwrap();
             if *expect_override {
                 // active_high: GpioOverInvert on GPIO 13 (A19/CS1)
-                assert_ne!(ov, NULL_PTR,
-                    "cs1={cs1_str}: override must be present");
-                assert_eq!(v.read_u8(ov + OVERRIDE_PARAM_LEN).unwrap(), 1,
-                    "cs1={cs1_str}: override param_len");
-                assert_eq!(v.read_u8(ov + 1).unwrap() >> 6, OVERRIDE_TYPE_INVERT,
-                    "cs1={cs1_str}: override type");
-                assert_eq!(v.read_u8(ov + 1).unwrap() & 0x3F, 13,
-                    "cs1={cs1_str}: override GPIO must be 13 (A19)");
+                assert_ne!(ov, NULL_PTR, "cs1={cs1_str}: override must be present");
+                assert_eq!(
+                    v.read_u8(ov + OVERRIDE_PARAM_LEN).unwrap(),
+                    1,
+                    "cs1={cs1_str}: override param_len"
+                );
+                assert_eq!(
+                    v.read_u8(ov + 1).unwrap() >> 6,
+                    OVERRIDE_TYPE_INVERT,
+                    "cs1={cs1_str}: override type"
+                );
+                assert_eq!(
+                    v.read_u8(ov + 1).unwrap() & 0x3F,
+                    13,
+                    "cs1={cs1_str}: override GPIO must be 13 (A19)"
+                );
             } else {
                 // active_low: no override needed
-                assert_eq!(ov, NULL_PTR,
-                    "cs1={cs1_str}: no override expected");
+                assert_eq!(ov, NULL_PTR, "cs1={cs1_str}: no override expected");
             }
- 
+
             let roms_arr = v.read_u32_le(s0 + SLOT_ROMS).unwrap();
             let rom0 = v.read_u32_le(roms_arr).unwrap();
-            assert_eq!(v.read_cstr(rom0 + ROM_INFO_TYPE_PTR).unwrap(), "27C080",
-                "cs1={cs1_str}: chip type string");
+            assert_eq!(
+                v.read_cstr(rom0 + ROM_INFO_TYPE_PTR).unwrap(),
+                "27C080",
+                "cs1={cs1_str}: chip type string"
+            );
         }
     }
 
@@ -1721,7 +1841,11 @@ mod tests {
         // redundancy to the table. The 8KB chip fills only 8192 of the
         // 262144 entries; the rest are PAD_NO_CHIP_BYTE.
         let slot_size = v.read_u32_le(s0 + SLOT_SIZE).unwrap();
-        assert_eq!(slot_size, 1u32 << 18, "2364 on Fire28C: 18-bit GPIO span → 256KB table");
+        assert_eq!(
+            slot_size,
+            1u32 << 18,
+            "2364 on Fire28C: 18-bit GPIO span → 256KB table"
+        );
         assert_eq!(rom.len() as u32, slot_size);
 
         let alg = alg_base(&v, s0);
@@ -1731,7 +1855,8 @@ mod tests {
         assert_eq!(v.read_u8(cs + CS0_SERVE_CS_LOW_0).unwrap(), 0);
         // CS1 at GPIO 11 (socket pin 22), gpio_base=0 → offset 11.
         assert_eq!(
-            v.read_u8(cs + CS0_FIRST_ROM_CS_BASE).unwrap(), 11,
+            v.read_u8(cs + CS0_FIRST_ROM_CS_BASE).unwrap(),
+            11,
             "CS1 (chip pin 20 + offset 2 = socket 22 → GPIO 11)"
         );
         assert_eq!(v.read_u8(cs + CS0_FIRST_ROM_NUM_CS_PINS).unwrap(), 1);
@@ -1806,7 +1931,11 @@ mod tests {
         assert_eq!(v.read_u32_le(s0 + SLOT_FW_OVRD).unwrap(), NULL_PTR);
 
         let slot_size = v.read_u32_le(s0 + SLOT_SIZE).unwrap();
-        assert_eq!(slot_size, 1u32 << 15, "2732 on Fire32B: 12 addr pins padded to 15 → 32KB table");
+        assert_eq!(
+            slot_size,
+            1u32 << 15,
+            "2732 on Fire32B: 12 addr pins padded to 15 → 32KB table"
+        );
         assert_eq!(rom.len() as u32, slot_size);
 
         let alg = alg_base(&v, s0);
@@ -1818,11 +1947,13 @@ mod tests {
         // OE (chip pin 20 + offset 4 = socket 24 → GPIO 15) is adjacent.
         // Together they form a 2-pin contiguous CS range.
         assert_eq!(
-            v.read_u8(cs + CS0_FIRST_ROM_CS_BASE).unwrap(), 14,
+            v.read_u8(cs + CS0_FIRST_ROM_CS_BASE).unwrap(),
+            14,
             "CE at GPIO 14 (chip pin 18 + offset 4 = socket 22)"
         );
         assert_eq!(
-            v.read_u8(cs + CS0_FIRST_ROM_NUM_CS_PINS).unwrap(), 2,
+            v.read_u8(cs + CS0_FIRST_ROM_NUM_CS_PINS).unwrap(),
+            2,
             "CE + OE span 2 contiguous pins [14,15]"
         );
         assert_eq!(v.read_u8(cs + CS0_BYTE_PIN).unwrap(), 0xFF);
@@ -1892,7 +2023,11 @@ mod tests {
         assert_eq!(v.read_u32_le(s0 + SLOT_FW_OVRD).unwrap(), NULL_PTR);
 
         let slot_size = v.read_u32_le(s0 + SLOT_SIZE).unwrap();
-        assert_eq!(slot_size, 1u32 << 15, "27256 on Fire32B: 15 addr pins padded to 15 → 32KB table");
+        assert_eq!(
+            slot_size,
+            1u32 << 15,
+            "27256 on Fire32B: 15 addr pins padded to 15 → 32KB table"
+        );
         assert_eq!(rom.len() as u32, slot_size);
 
         let alg = alg_base(&v, s0);
@@ -1905,11 +2040,13 @@ mod tests {
         // Identical CS layout to 2732 on Fire32B: same socket positions,
         // same GPIOs, regardless of which chip is installed.
         assert_eq!(
-            v.read_u8(cs + CS0_FIRST_ROM_CS_BASE).unwrap(), 14,
+            v.read_u8(cs + CS0_FIRST_ROM_CS_BASE).unwrap(),
+            14,
             "CE at GPIO 14 (chip pin 20 + offset 2 = socket 22)"
         );
         assert_eq!(
-            v.read_u8(cs + CS0_FIRST_ROM_NUM_CS_PINS).unwrap(), 2,
+            v.read_u8(cs + CS0_FIRST_ROM_NUM_CS_PINS).unwrap(),
+            2,
             "CE + OE span 2 contiguous pins [14,15]"
         );
         assert_eq!(v.read_u8(cs + CS0_BYTE_PIN).unwrap(), 0xFF);
@@ -2145,7 +2282,7 @@ mod tests {
     // ========================================================================
     // v2 fly-lead: 2764 (28-pin) on Fire24A (24-pin) — one fly-lead to X1
     // ========================================================================
- 
+
     /// 2764 (8KB EPROM, 28-pin) on Fire24A (24-pin), pin_offset=-2.
     ///
     /// A12 (chip pin 2) maps to socket pin 0 (2-2=0 < 1) and overhangs —
@@ -2199,7 +2336,7 @@ mod tests {
     // ========================================================================
     // check_cs_v2: Multi set CS polarity consistency
     // ========================================================================
- 
+
     /// CS2-primary Multi set must be accepted.
     ///
     /// Regression test for the bug where cs_primary_polarity blindly returned
@@ -2226,11 +2363,11 @@ mod tests {
         }"#;
         v2_builder(json); // must not panic — from_json must succeed
     }
- 
+
     // ========================================================================
     // check_cs_v2: Multi set accepts mixed per-chip select polarities
     // ========================================================================
- 
+
     /// Multi sets with different CS polarities across chips must be accepted.
     ///
     /// Each chip in a Multi set has its per-chip select on a *different*
@@ -2257,7 +2394,7 @@ mod tests {
         }"#;
         v2_builder(json); // must not panic — from_json must succeed
     }
- 
+
     /// Banked sets must still reject inconsistent CS polarities: all chips
     /// share the same physical CS line, so active_low and active_high are
     /// contradictory for the same signal.
@@ -2281,7 +2418,7 @@ mod tests {
     // ========================================================================
     // v2 multi 2-chip CS2-primary: Fire28C / 2x 23128
     // ========================================================================
- 
+
     /// 2-chip CS2-primary Multi set on Fire28C with 23128.
     ///
     /// chip[0]: cs1=active_low (commoned), cs2=active_low (per-chip select),
@@ -2311,51 +2448,71 @@ mod tests {
                 ]
             }]
         }"#;
- 
+
         let mut b = v2_builder(json);
-        b.add_file(FileData { id: 0, data: vec![0xAAu8; 16384] }).unwrap();
-        b.add_file(FileData { id: 1, data: vec![0xBBu8; 16384] }).unwrap();
- 
+        b.add_file(FileData {
+            id: 0,
+            data: vec![0xAAu8; 16384],
+        })
+        .unwrap();
+        b.add_file(FileData {
+            id: 1,
+            data: vec![0xBBu8; 16384],
+        })
+        .unwrap();
+
         let (meta, rom) = b.build(v2_props(Board::Fire28C)).expect("build");
         let v = view(&meta);
- 
+
         let s0 = slot_base(&v, 0);
         assert_eq!(v.read_u8(s0 + SLOT_TYPE).unwrap(), SLOT_TYPE_MULTI_ROM);
         assert_eq!(v.read_u8(s0 + SLOT_ROM_COUNT).unwrap(), 2);
         assert_eq!(v.read_u32_le(s0 + SLOT_FW_OVRD).unwrap(), NULL_PTR);
- 
+
         let slot_size = v.read_u32_le(s0 + SLOT_SIZE).unwrap();
         assert_eq!(rom.len() as u32, slot_size);
- 
+
         let alg = alg_base(&v, s0);
         let cs = v.read_u32_le(alg + ALG_CS_PTR).unwrap();
         assert_eq!(v.read_u8(cs + CS_DISCRIMINANT).unwrap(), ALG_CS_0);
         assert_eq!(v.read_u8(cs + CS0_SERVE_CS_LOW_0).unwrap(), 1);
- 
+
         // CS2 at GPIO 11 is the per-chip select: first_rom_cs_base=11.
         // This is the key assertion proving select_lines.first() returned
         // CS2 (not CS1 at GPIO 10).
         assert_eq!(
-            v.read_u8(cs + CS0_FIRST_ROM_CS_BASE).unwrap(), 11,
+            v.read_u8(cs + CS0_FIRST_ROM_CS_BASE).unwrap(),
+            11,
             "first_rom_cs_base must be 11 (CS2 at GPIO 11, not CS1 at GPIO 10)"
         );
         assert_eq!(v.read_u8(cs + CS0_FIRST_ROM_NUM_CS_PINS).unwrap(), 1);
- 
+
         let dma = v.read_u32_le(alg + ALG_DMA_PTR).unwrap();
         assert_eq!(v.read_u8(dma + DMA_BIT_MODE).unwrap(), BIT_MODE_8);
- 
+
         assert_eq!(v.read_u32_le(alg + ALG_PULL_PTR).unwrap(), NULL_PTR);
- 
+
         // CS2 and X1 both active_low → both need GpioOverInvert (2 entries)
         let ov = v.read_u32_le(alg + ALG_OVERRIDE_PTR).unwrap();
-        assert_ne!(ov, NULL_PTR, "CS2-primary Multi must have gpio_override_config");
+        assert_ne!(
+            ov, NULL_PTR,
+            "CS2-primary Multi must have gpio_override_config"
+        );
         assert_eq!(v.read_u8(ov + OVERRIDE_PARAM_LEN).unwrap(), 2);
         assert_eq!(v.read_u8(ov + 1).unwrap() >> 6, OVERRIDE_TYPE_INVERT);
         assert_eq!(v.read_u8(ov + 2).unwrap() >> 6, OVERRIDE_TYPE_INVERT);
- 
+
         let roms_arr = v.read_u32_le(s0 + SLOT_ROMS).unwrap();
-        assert_eq!(v.read_cstr(v.read_u32_le(roms_arr).unwrap() + ROM_INFO_TYPE_PTR).unwrap(), "23128");
-        assert_eq!(v.read_cstr(v.read_u32_le(roms_arr + 4).unwrap() + ROM_INFO_TYPE_PTR).unwrap(), "23128");
+        assert_eq!(
+            v.read_cstr(v.read_u32_le(roms_arr).unwrap() + ROM_INFO_TYPE_PTR)
+                .unwrap(),
+            "23128"
+        );
+        assert_eq!(
+            v.read_cstr(v.read_u32_le(roms_arr + 4).unwrap() + ROM_INFO_TYPE_PTR)
+                .unwrap(),
+            "23128"
+        );
     }
 
     // ========================================================================
@@ -2390,8 +2547,16 @@ mod tests {
         }"#;
 
         let mut b = v2_builder(json);
-        b.add_file(FileData { id: 0, data: vec![0xAAu8; 8192] }).unwrap();
-        b.add_file(FileData { id: 1, data: vec![0xBBu8; 8192] }).unwrap();
+        b.add_file(FileData {
+            id: 0,
+            data: vec![0xAAu8; 8192],
+        })
+        .unwrap();
+        b.add_file(FileData {
+            id: 1,
+            data: vec![0xBBu8; 8192],
+        })
+        .unwrap();
 
         let (meta, _rom) = b.build(v2_props(Board::Fire24E)).expect("build");
         let v = view(&meta);

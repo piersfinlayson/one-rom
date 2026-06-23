@@ -598,7 +598,7 @@ pub struct ChipConfig {
     /// contexts where this is implicitly allowed:
     ///   - V2 multi-ROM set chips[1+] (secondary sockets — free pass)
     ///   - Lines with allow_ignore in chip_types.json (datasheet-defined)
-    /// 
+    ///
     /// Required for chip0 in multi-ROM sets and for single-chip sets
     /// where a line needs ignoring for custom circuit reasons.
     /// Misuse can cause bus contention — only set when intentional.

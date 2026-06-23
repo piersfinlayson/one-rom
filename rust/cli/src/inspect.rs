@@ -66,20 +66,27 @@ pub fn output_slot_info(device: &Device, options: &Options, prefix: &str) -> Res
 
     match device.onerom.as_ref() {
         Some(onerom_fw_parser::ParsedDevice::Original(sdrr)) => {
-            let info = sdrr
-                .flash
-                .as_ref()
-                .ok_or_else(|| Error::Other("No recognised information found on device flash".to_string()))?;
+            let info = sdrr.flash.as_ref().ok_or_else(|| {
+                Error::Other("No recognised information found on device flash".to_string())
+            })?;
 
             let set_count = info.rom_set_count;
             let active_str = active_rom_set_index
                 .map(|i| format!(" - Slot {i} is active"))
                 .unwrap_or_default();
             print!("{prefix}");
-            println!("  Configured with {set_count} slot{}{}", if set_count == 1 { "" } else { "s" }, active_str);
+            println!(
+                "  Configured with {set_count} slot{}{}",
+                if set_count == 1 { "" } else { "s" },
+                active_str
+            );
 
             for (i, set) in info.rom_sets.iter().enumerate() {
-                let active = if Some(i as u8) == active_rom_set_index { " (active)" } else { "" };
+                let active = if Some(i as u8) == active_rom_set_index {
+                    " (active)"
+                } else {
+                    ""
+                };
                 print!("{prefix}");
                 println!("  Slot {i}{active}:");
                 let set_location = set.data_ptr;
@@ -89,7 +96,10 @@ pub fn output_slot_info(device: &Device, options: &Options, prefix: &str) -> Res
                     println!("    Firmware overrides:");
                     if let Some(led) = &overrides.led {
                         print!("{prefix}");
-                        println!("      Status LED: {}", if led.enabled { "on" } else { "off" });
+                        println!(
+                            "      Status LED: {}",
+                            if led.enabled { "on" } else { "off" }
+                        );
                     }
                     if let Some(fire) = &overrides.fire {
                         if let Some(freq) = fire.cpu_freq {
@@ -115,7 +125,10 @@ pub fn output_slot_info(device: &Device, options: &Options, prefix: &str) -> Res
                     }
                     if let Some(debug) = &overrides.swd {
                         print!("{prefix}");
-                        println!("      SWD: {}", if debug.swd_enabled { "on" } else { "off" });
+                        println!(
+                            "      SWD: {}",
+                            if debug.swd_enabled { "on" } else { "off" }
+                        );
                     }
                 }
                 for (j, rom) in set.roms.iter().enumerate() {
@@ -134,7 +147,9 @@ pub fn output_slot_info(device: &Device, options: &Options, prefix: &str) -> Res
                     println!("    Chip {j}: {rom_type} {cs}");
                     if verbose {
                         print!("{prefix}");
-                        println!("      Flash location 0x{set_location:08x} size 0x{set_image_size:08x} bytes");
+                        println!(
+                            "      Flash location 0x{set_location:08x} size 0x{set_image_size:08x} bytes"
+                        );
                     }
                     if let Some(filename) = &rom.filename {
                         print!("{prefix}");
@@ -155,35 +170,53 @@ pub fn output_slot_info(device: &Device, options: &Options, prefix: &str) -> Res
                 .map(|i| format!(" - Slot {i} is active"))
                 .unwrap_or_default();
             print!("{prefix}");
-            println!("  Configured with {set_count} slot{}{}", if set_count == 1 { "" } else { "s" }, active_str);
+            println!(
+                "  Configured with {set_count} slot{}{}",
+                if set_count == 1 { "" } else { "s" },
+                active_str
+            );
 
             for (i, slot) in metadata.rom_slots.iter().enumerate() {
-                let active = if Some(i as u8) == active_rom_set_index { " (active)" } else { "" };
+                let active = if Some(i as u8) == active_rom_set_index {
+                    " (active)"
+                } else {
+                    ""
+                };
                 print!("{prefix}");
                 println!("  Slot {i}{active}:");
                 if verbose {
                     print!("{prefix}");
-                    println!("    Flash location {:?}  size {:#x} bytes", slot.data, slot.size);
+                    println!(
+                        "    Flash location {:?}  size {:#x} bytes",
+                        slot.data, slot.size
+                    );
                 }
 
                 #[allow(clippy::collapsible_if)]
                 if let Some(overrides) = &slot.firmware_overrides {
                     if overrides.override_present.iter().any(|&b| b != 0) {
                         const PRESENT_FIRE_CPU_FREQ: u8 = 1 << 2;
-                        const PRESENT_FIRE_VREG: u8    = 1 << 4;
-                        const PRESENT_LED: u8          = 1 << 5;
-                        const PRESENT_SWD: u8          = 1 << 6;
-                        const VALUE_LED_ENABLED: u8    = 1 << 2;
-                        const VALUE_SWD_ENABLED: u8    = 1 << 3;
+                        const PRESENT_FIRE_VREG: u8 = 1 << 4;
+                        const PRESENT_LED: u8 = 1 << 5;
+                        const PRESENT_SWD: u8 = 1 << 6;
+                        const VALUE_LED_ENABLED: u8 = 1 << 2;
+                        const VALUE_SWD_ENABLED: u8 = 1 << 3;
 
                         let present = overrides.override_present[0];
-                        let value   = overrides.override_value[0];
+                        let value = overrides.override_value[0];
 
                         print!("{prefix}");
                         println!("    Firmware overrides:");
                         if present & PRESENT_LED != 0 {
                             print!("{prefix}");
-                            println!("      Status LED: {}", if value & VALUE_LED_ENABLED != 0 { "on" } else { "off" });
+                            println!(
+                                "      Status LED: {}",
+                                if value & VALUE_LED_ENABLED != 0 {
+                                    "on"
+                                } else {
+                                    "off"
+                                }
+                            );
                         }
                         if present & PRESENT_FIRE_CPU_FREQ != 0 {
                             print!("{prefix}");
@@ -195,7 +228,14 @@ pub fn output_slot_info(device: &Device, options: &Options, prefix: &str) -> Res
                         }
                         if present & PRESENT_SWD != 0 {
                             print!("{prefix}");
-                            println!("      SWD: {}", if value & VALUE_SWD_ENABLED != 0 { "on" } else { "off" });
+                            println!(
+                                "      SWD: {}",
+                                if value & VALUE_SWD_ENABLED != 0 {
+                                    "on"
+                                } else {
+                                    "off"
+                                }
+                            );
                         }
                     }
                 }

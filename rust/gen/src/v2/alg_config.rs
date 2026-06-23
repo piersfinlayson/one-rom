@@ -245,7 +245,8 @@ pub fn build_alg_config(
     let alg_cs = build_alg_cs(cs_data_layout, set_type, &alg_data);
     let alg_dma = build_alg_dma(bit_mode);
 
-    let mut overrides = build_cs_overrides(cs_data_layout, set_type, cs_config, secondary_cs_configs);
+    let mut overrides =
+        build_cs_overrides(cs_data_layout, set_type, cs_config, secondary_cs_configs);
 
     // AlgData1 provides 8-bit serving when /BYTE is read high by the PIO.
     // The RP2350 GPIO input level for /BYTE is high when the pin is not
@@ -383,11 +384,9 @@ mod tests {
         };
         assert_eq!(ctx.bit_mode, BitModes::BitMode8);
 
-        let addr_layout =
-            derive_addr_layout(&ctx).expect("addr layout derivation should succeed");
-        let cs_data_layout =
-            derive_cs_data_layout(&ctx, Some(&addr_layout))
-                .expect("cs/data layout derivation should succeed");
+        let addr_layout = derive_addr_layout(&ctx).expect("addr layout derivation should succeed");
+        let cs_data_layout = derive_cs_data_layout(&ctx, Some(&addr_layout))
+            .expect("cs/data layout derivation should succeed");
 
         let config = build_alg_config(&ctx, &addr_layout, &cs_data_layout, &[]);
 
@@ -456,11 +455,9 @@ mod tests {
             multi_cs_config: None,
         };
 
-        let addr_layout =
-            derive_addr_layout(&ctx).expect("addr layout derivation should succeed");
-        let cs_data_layout =
-            derive_cs_data_layout(&ctx, Some(&addr_layout))
-                .expect("cs/data layout derivation should succeed");
+        let addr_layout = derive_addr_layout(&ctx).expect("addr layout derivation should succeed");
+        let cs_data_layout = derive_cs_data_layout(&ctx, Some(&addr_layout))
+            .expect("cs/data layout derivation should succeed");
 
         let config = build_alg_config(&ctx, &addr_layout, &cs_data_layout, &[]);
 
@@ -509,11 +506,9 @@ mod tests {
         };
         assert_eq!(ctx.bit_mode, BitModes::BitMode8);
 
-        let addr_layout =
-            derive_addr_layout(&ctx).expect("addr layout derivation should succeed");
-        let cs_data_layout =
-            derive_cs_data_layout(&ctx, Some(&addr_layout))
-                .expect("cs/data layout derivation should succeed");
+        let addr_layout = derive_addr_layout(&ctx).expect("addr layout derivation should succeed");
+        let cs_data_layout = derive_cs_data_layout(&ctx, Some(&addr_layout))
+            .expect("cs/data layout derivation should succeed");
 
         let config = build_alg_config(&ctx, &addr_layout, &cs_data_layout, &[]);
 
@@ -702,11 +697,9 @@ mod tests {
             multi_cs_config: None,
         };
 
-        let addr_layout =
-            derive_addr_layout(&ctx).expect("addr layout should succeed");
+        let addr_layout = derive_addr_layout(&ctx).expect("addr layout should succeed");
         let cs_data_layout =
-            derive_cs_data_layout(&ctx, Some(&addr_layout))
-                .expect("cs layout should succeed");
+            derive_cs_data_layout(&ctx, Some(&addr_layout)).expect("cs layout should succeed");
         let config = build_alg_config(&ctx, &addr_layout, &cs_data_layout, &[]);
 
         let pref: CombinedAlgPreference = combined_alg_preference(&config);

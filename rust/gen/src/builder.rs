@@ -238,7 +238,10 @@ impl Builder {
     /// Generate metadata and ROM images once all files loaded
     ///
     /// Returns (metadata, Chip images)
-    pub fn build(&self, props: FirmwareProperties) -> Result<(alloc::vec::Vec<u8>, alloc::vec::Vec<u8>)> {
+    pub fn build(
+        &self,
+        props: FirmwareProperties,
+    ) -> Result<(alloc::vec::Vec<u8>, alloc::vec::Vec<u8>)> {
         if props.version() > MAX_SUPPORTED_FIRMWARE_VERSION_V2 {
             return Err(Error::FirmwareTooNew {
                 version: props.version(),
@@ -256,7 +259,10 @@ impl Builder {
     }
 
     /// Legacy (pre-0.7.0) metadata/ROM image build
-    fn build_v1(&self, props: FirmwareProperties) -> Result<(alloc::vec::Vec<u8>, alloc::vec::Vec<u8>)> {
+    fn build_v1(
+        &self,
+        props: FirmwareProperties,
+    ) -> Result<(alloc::vec::Vec<u8>, alloc::vec::Vec<u8>)> {
         // Fire-CPU-serve-mode validation (v1-specific - PIO/CPU board
         // distinction doesn't apply to v2).
         for chip_set_config in self.config.chip_sets.iter() {
@@ -324,7 +330,10 @@ impl Builder {
     }
 
     /// v2 (0.7.0+, RP2350, PIO-only) metadata/ROM image build
-    fn build_v2(&self, props: FirmwareProperties) -> Result<(alloc::vec::Vec<u8>, alloc::vec::Vec<u8>)> {
+    fn build_v2(
+        &self,
+        props: FirmwareProperties,
+    ) -> Result<(alloc::vec::Vec<u8>, alloc::vec::Vec<u8>)> {
         let board = props.board();
         let chip_sets = build_chip_sets(&self.config, &self.files, &self.file_id_map, &props)?;
 
@@ -750,9 +759,15 @@ pub(crate) fn check_cs_v1(config: &Config) -> Result<()> {
 
             let specified_cs_lines: BTreeSet<&str> = {
                 let mut lines = BTreeSet::new();
-                if chip.cs1.is_some() { lines.insert("cs1"); }
-                if chip.cs2.is_some() { lines.insert("cs2"); }
-                if chip.cs3.is_some() { lines.insert("cs3"); }
+                if chip.cs1.is_some() {
+                    lines.insert("cs1");
+                }
+                if chip.cs2.is_some() {
+                    lines.insert("cs2");
+                }
+                if chip.cs3.is_some() {
+                    lines.insert("cs3");
+                }
                 lines
             };
 
@@ -840,9 +855,13 @@ pub(crate) fn check_cs_v1(config: &Config) -> Result<()> {
                                  ROM 0 has cs1={:?}/cs2={:?}/cs3={:?}, but ROM {} has \
                                  cs1={:?}/cs2={:?}/cs3={:?}",
                                 set.set_type,
-                                first_cs1, first_cs2, first_cs3,
+                                first_cs1,
+                                first_cs2,
+                                first_cs3,
                                 idx,
-                                rom.cs1, rom.cs2, rom.cs3
+                                rom.cs1,
+                                rom.cs2,
+                                rom.cs3
                             ),
                         });
                     }
@@ -880,14 +899,24 @@ pub(crate) fn check_cs_v2(config: &Config) -> Result<()> {
             let is_multi_secondary = set.set_type == ChipSetType::Multi && chip_idx > 0;
 
             // ---- ce/oe fields only valid for chip types that have those lines ----
-            let has_ce = chip.chip_type.control_lines().iter().any(|l| l.name == "ce");
-            let has_oe = chip.chip_type.control_lines().iter().any(|l| l.name == "oe");
+            let has_ce = chip
+                .chip_type
+                .control_lines()
+                .iter()
+                .any(|l| l.name == "ce");
+            let has_oe = chip
+                .chip_type
+                .control_lines()
+                .iter()
+                .any(|l| l.name == "oe");
 
             if chip.ce.is_some() && !has_ce {
                 return Err(Error::InvalidConfig {
                     error: format!(
                         "ce specified for chip type {} which has no /CE line (set {}, chip {})",
-                        chip.chip_type.name(), set_id, chip_idx
+                        chip.chip_type.name(),
+                        set_id,
+                        chip_idx
                     ),
                 });
             }
@@ -895,7 +924,9 @@ pub(crate) fn check_cs_v2(config: &Config) -> Result<()> {
                 return Err(Error::InvalidConfig {
                     error: format!(
                         "oe specified for chip type {} which has no /OE line (set {}, chip {})",
-                        chip.chip_type.name(), set_id, chip_idx
+                        chip.chip_type.name(),
+                        set_id,
+                        chip_idx
                     ),
                 });
             }
@@ -903,28 +934,37 @@ pub(crate) fn check_cs_v2(config: &Config) -> Result<()> {
             // ---- Both CE and OE may not both be Ignore ----
             let ce_logic = chip.ce.unwrap_or(CsLogic::ActiveLow);
             let oe_logic = chip.oe.unwrap_or(CsLogic::ActiveLow);
-            if has_ce && has_oe
-                && ce_logic == CsLogic::Ignore
-                && oe_logic == CsLogic::Ignore
-            {
+            if has_ce && has_oe && ce_logic == CsLogic::Ignore && oe_logic == CsLogic::Ignore {
                 return Err(Error::InvalidConfig {
                     error: format!(
                         "Both CE and OE cannot be Ignore simultaneously for chip type {} \
                          (set {}, chip {})",
-                        chip.chip_type.name(), set_id, chip_idx
+                        chip.chip_type.name(),
+                        set_id,
+                        chip_idx
                     ),
                 });
             }
 
             // ---- Validate configurable CS lines (cs1/cs2/cs3) ----
-            let has_cs2 = chip.chip_type.control_lines().iter().any(|l| l.name == "cs2");
-            let has_cs3 = chip.chip_type.control_lines().iter().any(|l| l.name == "cs3");
+            let has_cs2 = chip
+                .chip_type
+                .control_lines()
+                .iter()
+                .any(|l| l.name == "cs2");
+            let has_cs3 = chip
+                .chip_type
+                .control_lines()
+                .iter()
+                .any(|l| l.name == "cs3");
 
             if chip.cs2.is_some() && !has_cs2 {
                 return Err(Error::InvalidConfig {
                     error: format!(
                         "CS2 specified for chip type {} which does not use CS2 (set {}, chip {})",
-                        chip.chip_type.name(), set_id, chip_idx
+                        chip.chip_type.name(),
+                        set_id,
+                        chip_idx
                     ),
                 });
             }
@@ -932,7 +972,9 @@ pub(crate) fn check_cs_v2(config: &Config) -> Result<()> {
                 return Err(Error::InvalidConfig {
                     error: format!(
                         "CS3 specified for chip type {} which does not use CS3 (set {}, chip {})",
-                        chip.chip_type.name(), set_id, chip_idx
+                        chip.chip_type.name(),
+                        set_id,
+                        chip_idx
                     ),
                 });
             }
@@ -960,9 +1002,15 @@ pub(crate) fn check_cs_v2(config: &Config) -> Result<()> {
 
             let specified_cs: BTreeSet<&str> = {
                 let mut s = BTreeSet::new();
-                if chip.cs1.is_some() { s.insert("cs1"); }
-                if chip.cs2.is_some() { s.insert("cs2"); }
-                if chip.cs3.is_some() { s.insert("cs3"); }
+                if chip.cs1.is_some() {
+                    s.insert("cs1");
+                }
+                if chip.cs2.is_some() {
+                    s.insert("cs2");
+                }
+                if chip.cs3.is_some() {
+                    s.insert("cs3");
+                }
                 s
             };
 
@@ -974,7 +1022,8 @@ pub(crate) fn check_cs_v2(config: &Config) -> Result<()> {
                         chip.chip_type.name(),
                         configurable_lines,
                         specified_cs,
-                        set_id, chip_idx
+                        set_id,
+                        chip_idx
                     ),
                 });
             }
@@ -1015,16 +1064,27 @@ pub(crate) fn check_cs_v2(config: &Config) -> Result<()> {
                          intentional.",
                         line_name.to_uppercase(),
                         chip.chip_type.name(),
-                        set_id, chip_idx
+                        set_id,
+                        chip_idx
                     ),
                 })
             };
 
-            if let Some(logic) = chip.cs1 { check_ignore("cs1", logic)?; }
-            if let Some(logic) = chip.cs2 { check_ignore("cs2", logic)?; }
-            if let Some(logic) = chip.cs3 { check_ignore("cs3", logic)?; }
-            if has_ce { check_ignore("ce", ce_logic)?; }
-            if has_oe { check_ignore("oe", oe_logic)?; }
+            if let Some(logic) = chip.cs1 {
+                check_ignore("cs1", logic)?;
+            }
+            if let Some(logic) = chip.cs2 {
+                check_ignore("cs2", logic)?;
+            }
+            if let Some(logic) = chip.cs3 {
+                check_ignore("cs3", logic)?;
+            }
+            if has_ce {
+                check_ignore("ce", ce_logic)?;
+            }
+            if has_oe {
+                check_ignore("oe", oe_logic)?;
+            }
 
             // ---- CS ordering rules for configurable-CS chips ----
             // When allow_cs_ignore is NOT set, the natural expectation is that
@@ -1042,7 +1102,9 @@ pub(crate) fn check_cs_v2(config: &Config) -> Result<()> {
                         error: alloc::format!(
                             "CS1 cannot be Ignore when CS2 or CS3 are active for chip type {} \
                              (set {}, chip {}) unless allow_cs_ignore is set",
-                            chip.chip_type.name(), set_id, chip_idx
+                            chip.chip_type.name(),
+                            set_id,
+                            chip_idx
                         ),
                     });
                 }
@@ -1051,7 +1113,9 @@ pub(crate) fn check_cs_v2(config: &Config) -> Result<()> {
                         error: alloc::format!(
                             "CS2 cannot be Ignore when CS3 is active for chip type {} \
                              (set {}, chip {}) unless allow_cs_ignore is set",
-                            chip.chip_type.name(), set_id, chip_idx
+                            chip.chip_type.name(),
+                            set_id,
+                            chip_idx
                         ),
                     });
                 }
@@ -1102,7 +1166,10 @@ pub(crate) fn check_cs_v2(config: &Config) -> Result<()> {
                         "Multi set secondary chips must have exactly 1 active control line \
                          (the per-chip select) and ignore the rest. Chip type {} (set {}) \
                          has {} active lines: {:?}",
-                        chip_type.name(), set_id, active.len(), active
+                        chip_type.name(),
+                        set_id,
+                        active.len(),
+                        active
                     ),
                 });
             }
@@ -1126,7 +1193,10 @@ pub(crate) fn check_cs_v2(config: &Config) -> Result<()> {
                                 "Multi set secondary chips must all ignore the same control \
                                  lines. Chip {} (set {}, chip {}) differs from chip 1 on \
                                  line '{}'",
-                                chip_type.name(), set_id, idx, name
+                                chip_type.name(),
+                                set_id,
+                                idx,
+                                name
                             ),
                         });
                     }
@@ -1149,7 +1219,8 @@ pub(crate) fn check_cs_v2(config: &Config) -> Result<()> {
                         error: alloc::format!(
                             "Multi set chip 0 cannot ignore '{}', which is the per-chip \
                              select line for this set (set {})",
-                            per_chip_select_name, set_id
+                            per_chip_select_name,
+                            set_id
                         ),
                     });
                 }
@@ -1188,17 +1259,28 @@ pub(crate) fn check_cs_v2(config: &Config) -> Result<()> {
 /// For CE/OE chips: the non-Ignore line (CE takes precedence if both active).
 /// For configurable-CS chips: cs1.
 pub(crate) fn cs_primary_polarity(chip: &ChipConfig) -> Option<CsLogic> {
-    let has_ce = chip.chip_type.control_lines().iter().any(|l| l.name == "ce");
+    let has_ce = chip
+        .chip_type
+        .control_lines()
+        .iter()
+        .any(|l| l.name == "ce");
     if has_ce {
         let ce = chip.ce.unwrap_or(CsLogic::ActiveLow);
         let oe = chip.oe.unwrap_or(CsLogic::ActiveLow);
-        if ce != CsLogic::Ignore { Some(ce) } else { Some(oe) }
+        if ce != CsLogic::Ignore {
+            Some(ce)
+        } else {
+            Some(oe)
+        }
     } else {
         chip.cs1
     }
 }
 
-pub(crate) fn file_specs(config: &Config, file_id_map: &BTreeMap<usize, usize>) -> alloc::vec::Vec<FileSpec> {
+pub(crate) fn file_specs(
+    config: &Config,
+    file_id_map: &BTreeMap<usize, usize>,
+) -> alloc::vec::Vec<FileSpec> {
     let mut specs = alloc::vec::Vec::new();
     let mut seen_files: BTreeMap<(String, Option<String>), usize> = BTreeMap::new();
     let mut rom_id = 0;
@@ -1261,7 +1343,10 @@ pub(crate) fn add_file(
     Ok(())
 }
 
-pub(crate) fn licenses(config: &Config, licenses: &mut BTreeMap<usize, License>) -> alloc::vec::Vec<License> {
+pub(crate) fn licenses(
+    config: &Config,
+    licenses: &mut BTreeMap<usize, License>,
+) -> alloc::vec::Vec<License> {
     let mut licenses_vec = alloc::vec::Vec::new();
 
     let mut license_id = 0;

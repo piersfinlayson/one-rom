@@ -96,16 +96,23 @@ pub async fn verify_assembled_firmware(
     options: &Options,
     data: &[u8],
     force: bool,
-    expected_board: Option<Board>
+    expected_board: Option<Board>,
 ) -> Result<(), Error> {
     let info = parse_firmware(data).await?;
 
     if let (Some(expected), Some(actual)) = (expected_board, info.get_board()) {
         if actual != expected {
             if force {
-                eprintln!("Warning: firmware board type '{}' does not match expected '{}' (continuing due to --force)", actual.name(), expected.name());
+                eprintln!(
+                    "Warning: firmware board type '{}' does not match expected '{}' (continuing due to --force)",
+                    actual.name(),
+                    expected.name()
+                );
             } else {
-                return Err(Error::BoardMismatch(expected.name().to_string(), actual.name().to_string()));
+                return Err(Error::BoardMismatch(
+                    expected.name().to_string(),
+                    actual.name().to_string(),
+                ));
             }
         } else if options.verbose {
             println!("Board match confirmed: {}", expected.name());
@@ -573,7 +580,9 @@ fn print_schema_firmware_info(
         return Ok(());
     };
 
-    let board = onerom.metadata().and_then(|m| Board::try_from_str(m.hw.hw_rev.as_str()));
+    let board = onerom
+        .metadata()
+        .and_then(|m| Board::try_from_str(m.hw.hw_rev.as_str()));
     let board_name = board.map_or("unknown".to_string(), |b| b.name().to_string());
     if options.verbose {
         println!(

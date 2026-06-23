@@ -234,9 +234,7 @@ impl Device {
                     .as_ref()
                     .and_then(|f| f.board.as_ref())
                     .map(|b| b.model().to_string()),
-                ParsedDevice::Schema(onerom) => onerom
-                    .metadata()
-                    .map(|m| m.hw.hw_rev.clone()),
+                ParsedDevice::Schema(onerom) => onerom.metadata().map(|m| m.hw.hw_rev.clone()),
             })
             .unwrap_or_else(|| "~".to_string()); // sorts after Z
         let serial = self.serial.clone().unwrap_or_else(|| "~".to_string());

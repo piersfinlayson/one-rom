@@ -462,7 +462,11 @@ fn run_multi_set(
         if n_combos > 1 {
             debug!(
                 "Set {} chip {}: {} extra addr GPIO(s) ({:?}) — {} combo(s)",
-                set_idx, chip_idx, extra_gpios.len(), extra_gpios, n_combos,
+                set_idx,
+                chip_idx,
+                extra_gpios.len(),
+                extra_gpios,
+                n_combos,
             );
         }
 
@@ -518,11 +522,13 @@ fn run_multi_set(
             for combo in 0..n_combos {
                 // Build the level mask for the extra GPIOs for this combo.
                 // Bit i of `combo` determines whether extra_gpios[i] is HIGH.
-                let extra_levels: u64 = extra_gpios
-                    .iter()
-                    .enumerate()
-                    .fold(0u64, |acc, (i, &g)| {
-                        if (combo >> i) & 1 == 1 { acc | (1u64 << g) } else { acc }
+                let extra_levels: u64 =
+                    extra_gpios.iter().enumerate().fold(0u64, |acc, (i, &g)| {
+                        if (combo >> i) & 1 == 1 {
+                            acc | (1u64 << g)
+                        } else {
+                            acc
+                        }
                     });
                 let bg = driver::merge(base_bg, (extra_mask, extra_levels));
 
@@ -530,7 +536,12 @@ fn run_multi_set(
                     debug!(
                         "Set {} chip {} mode {}bit combo {}/{}: \
                          extra_levels={:#018x}",
-                        set_idx, chip_idx, mode, combo + 1, n_combos, extra_levels,
+                        set_idx,
+                        chip_idx,
+                        mode,
+                        combo + 1,
+                        n_combos,
+                        extra_levels,
                     );
                 }
 

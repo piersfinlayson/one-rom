@@ -189,10 +189,7 @@ pub enum CsConfig {
     /// cs1_logic() returns the non-Ignore line (the active chip select).
     /// cs2_logic() returns the other line (Ignore for multi-ROM secondary
     /// chips, or ActiveLow when both lines are monitored).
-    CeOeExplicit {
-        ce: CsLogic,
-        oe: CsLogic,
-    },
+    CeOeExplicit { ce: CsLogic, oe: CsLogic },
 }
 
 impl CsConfig {
@@ -232,7 +229,11 @@ impl CsConfig {
             CsConfig::ChipSelect { cs1, .. } => Some(*cs1),
             CsConfig::CeOe => Some(CsLogic::ActiveLow),
             CsConfig::CeOeExplicit { ce, oe } => {
-                if *ce != CsLogic::Ignore { Some(*ce) } else { Some(*oe) }
+                if *ce != CsLogic::Ignore {
+                    Some(*ce)
+                } else {
+                    Some(*oe)
+                }
             }
         }
     }
@@ -248,7 +249,11 @@ impl CsConfig {
             CsConfig::ChipSelect { cs2, .. } => *cs2,
             CsConfig::CeOe => Some(CsLogic::ActiveLow),
             CsConfig::CeOeExplicit { ce, oe } => {
-                if *ce != CsLogic::Ignore { Some(*oe) } else { Some(*ce) }
+                if *ce != CsLogic::Ignore {
+                    Some(*oe)
+                } else {
+                    Some(*ce)
+                }
             }
         }
     }

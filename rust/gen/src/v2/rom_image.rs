@@ -278,9 +278,8 @@ pub fn build_rom_image(
     // missing bank, no chip selected, or an address beyond a non-power-of-2
     // chip's capacity — must go through the same bit permutation as real data
     // so the host always sees correctly positioned bits on the data lines.
-    let pad_raw: u32 = (0..word_bytes).fold(0u32, |acc, b| {
-        acc | (PAD_NO_CHIP_BYTE as u32) << (8 * b)
-    });
+    let pad_raw: u32 =
+        (0..word_bytes).fold(0u32, |acc, b| acc | (PAD_NO_CHIP_BYTE as u32) << (8 * b));
     let mangled_pad = mangle_word(pad_raw, &data_bit_positions);
 
     let chip_data: Vec<&[u8]> = chips
@@ -343,7 +342,11 @@ pub fn build_rom_image(
                 let bit = ((i >> bit_pos) & 1) as usize;
                 bank_index |= bit << n;
             }
-            if bank_index < chips.len() { Some(bank_index) } else { None }
+            if bank_index < chips.len() {
+                Some(bank_index)
+            } else {
+                None
+            }
         };
 
         let chip_index = match chip_index {
@@ -754,8 +757,14 @@ mod tests {
             num_cs_pins: 2,
             cs_ignore_index: None,
             select_lines: alloc::vec![
-                SelectLine { role: SelectRole::Cs1, gpio: cs1_gpio },
-                SelectLine { role: SelectRole::X1, gpio: 3 },
+                SelectLine {
+                    role: SelectRole::Cs1,
+                    gpio: cs1_gpio
+                },
+                SelectLine {
+                    role: SelectRole::X1,
+                    gpio: 3
+                },
             ],
             alg_cs2: None,
         }
@@ -788,8 +797,8 @@ mod tests {
         .expect("build_rom_image should succeed");
 
         assert_eq!(table.len(), 16);
-        assert_eq!(&table[0..4],  &[PAD_NO_CHIP_BYTE; 4]);  // no chip active
-        assert_eq!(&table[4..8],  &[0xA0, 0xA1, 0xA2, 0xA3]); // chip0
+        assert_eq!(&table[0..4], &[PAD_NO_CHIP_BYTE; 4]); // no chip active
+        assert_eq!(&table[4..8], &[0xA0, 0xA1, 0xA2, 0xA3]); // chip0
         assert_eq!(&table[8..12], &[0xB0, 0xB1, 0xB2, 0xB3]); // chip1
         assert_eq!(&table[12..16], &[PAD_NO_CHIP_BYTE; 4]); // both active
     }
@@ -822,9 +831,18 @@ mod tests {
             num_cs_pins: 3,
             cs_ignore_index: None,
             select_lines: alloc::vec![
-                SelectLine { role: SelectRole::Cs1, gpio: 1 },
-                SelectLine { role: SelectRole::X1,  gpio: 2 },
-                SelectLine { role: SelectRole::X2,  gpio: 3 },
+                SelectLine {
+                    role: SelectRole::Cs1,
+                    gpio: 1
+                },
+                SelectLine {
+                    role: SelectRole::X1,
+                    gpio: 2
+                },
+                SelectLine {
+                    role: SelectRole::X2,
+                    gpio: 3
+                },
             ],
             alg_cs2: None,
         };
@@ -885,8 +903,14 @@ mod tests {
             num_cs_pins: 2,
             cs_ignore_index: None,
             select_lines: alloc::vec![
-                SelectLine { role: SelectRole::Ce, gpio: 2 },
-                SelectLine { role: SelectRole::X1, gpio: 3 },
+                SelectLine {
+                    role: SelectRole::Ce,
+                    gpio: 2
+                },
+                SelectLine {
+                    role: SelectRole::X1,
+                    gpio: 3
+                },
             ],
             alg_cs2: None,
         };
@@ -905,7 +929,7 @@ mod tests {
         )
         .expect("build_rom_image should succeed for Ce-role primary select");
 
-        assert_eq!(&table[4..8],  &[0xC0, 0xC1, 0xC2, 0xC3]); // CE=1 → chip0
+        assert_eq!(&table[4..8], &[0xC0, 0xC1, 0xC2, 0xC3]); // CE=1 → chip0
         assert_eq!(&table[8..12], &[0xD0, 0xD1, 0xD2, 0xD3]); // X1=1 → chip1
     }
 
@@ -1220,8 +1244,7 @@ mod tests {
         // Key assertion: bank index 3 (no chip) must write mangle(PAD_NO_CHIP_BYTE)
         // not the raw value.  mangle(0xAA = 0b1010_1010) = 0b0101_0101 = 0x55.
         assert_eq!(
-            table[3],
-            0x55,
+            table[3], 0x55,
             "PAD must be mangled: mangle(0xAA) = 0x55 under bit-reversal; \
              got raw 0xAA means the pad path skipped mangle_word"
         );
@@ -1272,8 +1295,14 @@ mod tests {
             num_cs_pins: 2,
             cs_ignore_index: None,
             select_lines: alloc::vec![
-                SelectLine { role: SelectRole::Cs1, gpio: 13 },
-                SelectLine { role: SelectRole::X1,  gpio: 14 },
+                SelectLine {
+                    role: SelectRole::Cs1,
+                    gpio: 13
+                },
+                SelectLine {
+                    role: SelectRole::X1,
+                    gpio: 14
+                },
             ],
             alg_cs2: None,
         };
@@ -1309,8 +1338,8 @@ mod tests {
         // For each lower-12-bit address, verify A12=0 and A12=1 both produce
         // the same correct oracle byte when chip1 (X1=1, CS1=0) is selected.
         for addr12 in [0x000usize, 0x001, 0x7FF, 0xFFF] {
-            let i_lo = (1 << 14) | addr12;              // X1=1, CS1=0, A12=0
-            let i_hi = (1 << 14) | (1 << 12) | addr12;  // X1=1, CS1=0, A12=1
+            let i_lo = (1 << 14) | addr12; // X1=1, CS1=0, A12=0
+            let i_hi = (1 << 14) | (1 << 12) | addr12; // X1=1, CS1=0, A12=1
             assert_eq!(
                 table[i_lo], table[i_hi],
                 "addr12={addr12:#05x}: A12=0 entry {i_lo:#06x} \

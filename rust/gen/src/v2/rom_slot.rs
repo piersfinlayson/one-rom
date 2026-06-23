@@ -105,11 +105,12 @@ pub fn build_rom_slot(
     let chip_types: Vec<ChipType> = chips.iter().map(|c| *c.chip_type()).collect();
     let cs_config = *chips[0].cs_config();
 
-    let pin_offset = socket_pin_offset(chip_types[0].chip_pins(), board.chip_pins())
-        .ok_or(LayoutError::IncompatiblePinCount {
+    let pin_offset = socket_pin_offset(chip_types[0].chip_pins(), board.chip_pins()).ok_or(
+        LayoutError::IncompatiblePinCount {
             board,
             chip_type: chip_types[0],
-        })?;
+        },
+    )?;
 
     let bit_mode = bit_mode_for(chip_types[0], board);
 
