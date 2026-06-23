@@ -11,7 +11,7 @@ use onerom_config::hw::Board;
 use onerom_config::mcu::RpVariant;
 
 use onerom_metadata::{
-    GPIO_NONE, MAX_IMG_SEL_PINS, MAX_PHYS_PINS, OneromHardwareInfo, Rp235xVariant,
+    GPIO_NONE, MAX_IMG_SEL_PINS, MAX_PHYS_PINS, MAX_X_PIN_GPIOS, OneromHardwareInfo, Rp235xVariant,
 };
 
 /// Build `OneromHardwareInfo` for `board`.
@@ -63,6 +63,22 @@ pub fn build_hardware_info(board: Board) -> OneromHardwareInfo {
         }
     }
 
+    // x1[0]/x1[1]: GPIOs for X1 expansion pin. x1[0] is GPIO_NONE if X1 is
+    // absent; x1[1] is GPIO_NONE if X1 connects to only one GPIO.
+    // Likewise for x2.
+    let mut x1 = [GPIO_NONE; MAX_X_PIN_GPIOS];
+    let mut x2 = [GPIO_NONE; MAX_X_PIN_GPIOS];
+    for &(x_pin, gpios) in board.x_pin_map() {
+        let target = match x_pin {
+            1 => &mut x1,
+            2 => &mut x2,
+            _ => continue,
+        };
+        for (j, &gpio) in gpios.iter().enumerate().take(MAX_X_PIN_GPIOS) {
+            target[j] = gpio;
+        }
+    }
+
     OneromHardwareInfo {
         hw_rev,
         rp235x,
@@ -77,6 +93,8 @@ pub fn build_hardware_info(board: Board) -> OneromHardwareInfo {
         gpio_sel,
         sel_jumper_pull,
         gpio_from_phys_pin,
+        x1,
+        x2,
     }
 }
 
@@ -91,6 +109,7 @@ mod tests {
     /// Fire24A: full assertions, from its hardware config (no USB, no
     /// external flash, no neopixel, no SWD - status LED on GPIO26, SEL
     /// jumpers on GPIO27-29 all pulled low when closed).
+    /// X pin map: X1 → GPIO9, X2 → GPIO8 (single GPIO per pin).
     #[test]
     fn fire24a() {
         let hw = build_hardware_info(Board::Fire24A);
@@ -114,6 +133,10 @@ mod tests {
             [27, 28, 29, GPIO_NONE, GPIO_NONE, GPIO_NONE, GPIO_NONE]
         );
         assert_eq!(hw.sel_jumper_pull, 0b000);
+
+        // X1 → GPIO9 only; X2 → GPIO8 only.
+        assert_eq!(hw.x1, [9, GPIO_NONE]);
+        assert_eq!(hw.x2, [8, GPIO_NONE]);
 
         // gpio_from_phys_pin, from Fire24A's socket_pin_map(): pins 1-11,
         // 13-23 each map to a single GPIO; pins 12 and 24 (non-signal) and
@@ -164,5 +187,22 @@ mod tests {
                 idx + 1
             );
         }
+    }
+
+    /// Fire28C: X1 is dual-bonded [GPIO9, GPIO28], X2 is dual-bonded
+    /// [GPIO8, GPIO29].
+    #[test]
+    fn fire28c_x_pins() {
+        let hw = build_hardware_info(Board::Fire28C);
+        assert_eq!(hw.x1, [9, 28]);
+        assert_eq!(hw.x2, [8, 29]);
+    }
+
+    /// Fire28A: no X pins.
+    #[test]
+    fn fire28a_no_x_pins() {
+        let hw = build_hardware_info(Board::Fire28A);
+        assert_eq!(hw.x1, [GPIO_NONE, GPIO_NONE]);
+        assert_eq!(hw.x2, [GPIO_NONE, GPIO_NONE]);
     }
 }

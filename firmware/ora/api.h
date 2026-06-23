@@ -135,7 +135,7 @@ typedef enum {
 
     /**
      * @brief Get a pointer to the runtime info structure
-      * @sa ora_get_runtime_info_fn_t
+      * @sa ora_ntime_info_fn_t
      */
     ORA_ID_GET_RUNTIME_INFO = 0x00000010,
 
@@ -687,6 +687,9 @@ typedef void *(*ora_alloc_fn_t)(size_t size);
  * @brief Get One ROM information
  * @sa ORA_ID_GET_FIRMWARE_INFO
  *
+ * DEPRECATED AS OF v0.7.0 - attempt to retrieve this function pointer returns
+ * NULL.
+ *
  * @return A pointer to a structure containing information about the One ROM
  * firmware, the device it is running on, configured ROM sets, and runtime
  * information. The exact structure of this data is defined by the One ROM
@@ -864,6 +867,9 @@ typedef uint32_t (*ora_get_clkref_mhz_fn_t)(void);
 /**
  * @brief Get a pointer to the runtime info structure
  * @sa ORA_ID_GET_RUNTIME_INFO
+ * 
+ * DEPRECATED AS OF v0.7.0 - attempt to retrieve this function pointer returns
+ * NULL.
  *
  * Returns a pointer to the runtime info structure, which contains information
  * about the current state of the firmware and device that may be useful for

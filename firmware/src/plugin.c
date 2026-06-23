@@ -746,8 +746,6 @@ void *ora_fn_lookup(api_id_t id) {
             return ora_reboot_bootsel;
         case ORA_ID_ALLOC:
             return ora_alloc;
-        case ORA_ID_GET_FIRMWARE_INFO:
-            return ora_get_firmware_info;
         case ORA_ID_LOG:
             return ora_log;
         case ORA_ID_ERR_LOG:
@@ -774,8 +772,6 @@ void *ora_fn_lookup(api_id_t id) {
             return ora_enable_irq;
         case ORA_ID_GET_CLKREF_MHZ:
             return ora_get_clkref_mhz;
-        case ORA_ID_GET_RUNTIME_INFO:
-            return ora_get_runtime_info;
         case ORA_ID_GET_CHIP_SIZE_FROM_TYPE:
             return ora_get_chip_size_from_type;
         case ORA_ID_IS_PIN_OUTPUT:
@@ -826,6 +822,10 @@ void *ora_fn_lookup(api_id_t id) {
             return ora_enter_exclusive_mode;
         case ORA_ID_EXIT_EXCLUSIVE_MODE:
             return ora_exit_exclusive_mode;
+
+        // Deprecated functions
+        case ORA_ID_GET_FIRMWARE_INFO:
+        case ORA_ID_GET_RUNTIME_INFO:
         default:
             return NULL;
     }

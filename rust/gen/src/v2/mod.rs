@@ -32,7 +32,7 @@ mod gpio_window;
 pub(crate) mod hardware_info;
 pub(crate) mod multi_cs_config;
 pub(crate) mod rom_image;
-mod rom_info;
+pub(crate) mod rom_info;
 pub(crate) mod rom_slot;
 pub(crate) mod slot_context;
 

@@ -157,8 +157,18 @@ void usb_init(ora_lookup_fn_t ora_lookup_fn) {
     DEBUG("USB plugin started");
 
     // Get firmware and runtime information
-    context.runtime = get_runtime_info();
-    context.firmware = get_firmware_info();
+    if (get_runtime_info != NULL) {
+        context.runtime = get_runtime_info();
+    } else {
+        ERR("Runtime info function not available");
+        context.runtime = NULL;
+    }
+    if (get_firmware_info != NULL) {
+        context.firmware = get_firmware_info();
+    } else {
+        ERR("Firmware info function not available");
+        context.firmware = NULL;
+    }
     context.active_rom_set = app_get_active_rom_set(&context);
 
     // Set up USB.  tinyusb will register its own IRQ handler, using the API

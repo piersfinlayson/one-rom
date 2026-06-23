@@ -244,6 +244,11 @@ static pb_status_t app_logical_addr_to_offset(
     uint32_t *offset_out,
     const usb_plugin_context_t *ctx
 ) {
+    if (ctx->runtime == NULL) {
+        ERR("Runtime info not available in context");
+        return PB_STATUS_NOT_FOUND;
+    }
+
     uint32_t rom_table_size = ctx->runtime->rom_table_size;
 
     uint32_t offset_addr = 0u;

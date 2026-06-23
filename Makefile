@@ -240,7 +240,7 @@ firmware: generated
 	@echo "=========================================="
 	@echo "Building One ROM firmware - RP235X"
 	@echo "-----"
-	@GEN_OUTPUT_DIR=$(GEN_OUTPUT_DIR) EXTRA_C_FLAGS="$(EXTRA_C_FLAGS)" BIN_PREFIX="$(BIN_PREFIX)" DEBUG_LOGGING=$(DEBUG_LOGGING) PLUGING_LOGGGIN=$(PLUGIN_LOGGING) make --no-print-directory -C $(FIRMWARE_DIR)
+	@GEN_OUTPUT_DIR=$(GEN_OUTPUT_DIR) EXTRA_C_FLAGS="$(EXTRA_C_FLAGS)" BIN_PREFIX="$(BIN_PREFIX)" DEBUG_LOGGING=$(DEBUG_LOGGING) PLUGIN_LOGGGING=$(PLUGIN_LOGGING) make --no-print-directory -C $(FIRMWARE_DIR)
 	@if command -v picotool >/dev/null 2>&1; then \
 		picotool uf2 convert $(BUILD_DIR)/$(BIN_PREFIX).bin $(BUILD_DIR)/$(BIN_PREFIX).uf2; \
 	else \

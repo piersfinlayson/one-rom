@@ -136,6 +136,12 @@ value = 2
 comment = "Maximum GPIOs per physical pin (one pin may connect to two GPIOs)"
 
 [[constants]]
+name = "MAX_X_PIN_GPIOS"
+type = "usize"
+value = 2
+comment = "Maximum GPIOs per X expansion pin (one X pin may connect to two GPIOs)"
+
+[[constants]]
 name = "MAX_IMG_SEL_PINS"
 type = "usize"
 value = 7
@@ -1101,9 +1107,29 @@ Index = physical_pin_number - 1. GPIO_NONE for unconnected positions.
 Second column allows a physical pin connected to two GPIOs."""
 
 [[structs.fields]]
+name = "x1"
+kind = "inline_array"
+element = "u8"
+count = 2
+count_ref = "MAX_X_PIN_GPIOS"
+comment = """X1 expansion pin GPIO mapping (MAX_X_PIN_GPIOS entries).
+x1[0] is GPIO_NONE if X1 is not present on this board.
+x1[1] is GPIO_NONE if X1 connects to only one GPIO."""
+
+[[structs.fields]]
+name = "x2"
+kind = "inline_array"
+element = "u8"
+count = 2
+count_ref = "MAX_X_PIN_GPIOS"
+comment = """X2 expansion pin GPIO mapping (MAX_X_PIN_GPIOS entries).
+x2[0] is GPIO_NONE if X2 is not present on this board.
+x2[1] is GPIO_NONE if X2 connects to only one GPIO."""
+
+[[structs.fields]]
 name = "reserved2"
 kind = "padding"
-size = 24
+size = 20
 comment = "Reserved. Set to 0xFF."
 
 # ---
@@ -1199,7 +1225,7 @@ comment = "Padding to 32 bytes"
 name = "onerom_rom_info_t"
 comment = "Information about a single ROM image within a slot"
 generate = "both"
-size = 16
+size = 24
 
 [[structs.fields]]
 name = "rom_type"
@@ -1222,9 +1248,26 @@ const_ptr = true
 comment = "GPIO pin mapping for this ROM type. Can be NULL for plugin ROM types."
 
 [[structs.fields]]
+name = "chip_size"
+kind = "scalar"
+type = "u32"
+comment = """Logical chip size in bytes. Set by the pre-processor.
+Needed at runtime by plugins and the plugin API; not inferrable from address
+pin count alone due to gaps and padding in the image layout."""
+
+[[structs.fields]]
+name = "rom_type_enum"
+kind = "enum"
+type = "onerom_rom_type_t"
+comment = """ROM type as enum value. Set by the pre-processor.
+Canonical stable type identifier for RBCP wire format and other consumers
+that require a compact, unambiguous type token rather than the human-readable
+string. Avoids client-side string-to-enum mapping."""
+
+[[structs.fields]]
 name = "reserved"
 kind = "padding"
-size = 4
+size = 7
 comment = "Reserved for future expansion"
 
 # ---

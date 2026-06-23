@@ -192,8 +192,8 @@ mod tests {
 
     use onerom_metadata::{
         GPIO_NONE, MAX_ADDR_PINS, MAX_DATA_PINS, OneromAlgAddrConfig, OneromAlgConfig,
-        OneromAlgCsConfig, OneromAlgDataConfig, OneromRomInfo, OneromRomPinMap, Pointer,
-        RomSlotType,
+        OneromAlgCsConfig, OneromAlgDataConfig, OneromRomInfo, OneromRomPinMap, OneromRomType,
+        Pointer, RomSlotType,
     };
 
     use crate::image::{CsConfig, CsLogic, SizeHandling};
@@ -288,6 +288,8 @@ mod tests {
                     addr: expected_addr,
                     data: expected_data,
                 }),
+                chip_size: ChipType::Chip2364.size_bytes() as u32,
+                rom_type_enum: OneromRomType::ChipType2364,
             }]
         );
 
