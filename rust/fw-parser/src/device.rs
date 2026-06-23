@@ -9,6 +9,7 @@
 //! for callers that do not need to distinguish between firmware generations.
 
 use onerom_config::fw::FirmwareVersion;
+use onerom_config::hw::Board;
 
 use crate::ParseError;
 use crate::info::Sdrr;
@@ -91,6 +92,17 @@ impl ParsedDevice {
             Some(onerom)
         } else {
             None
+        }
+    }
+
+    /// Returns the board type, if it could be determined.
+    pub fn get_board(&self) -> Option<Board> {
+        match self {
+            Self::Original(sdrr) => sdrr.flash.as_ref().and_then(|f| f.board),
+            Self::Schema(onerom) => {
+                let hw_rev = &onerom.info()?.metadata.as_ref()?.hw.hw_rev;
+                Board::try_from_str(hw_rev)
+            }
         }
     }
 }
