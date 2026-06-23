@@ -118,7 +118,7 @@ extern uint32_t _ram_func_end;      // End of .ram_func section in RAM
 
 extern uint32_t _onerom_runtime_info_ram[]; // Start of .onerom_runtime_info section in RAM
 extern uint32_t _onerom_runtime_info_flash[];   // Start of .onerom_runtime_info section in flash
-extern uint32_t _onerom_runtime_info_end[];   // End of .onerom_runtime_info section in flash
+extern uint32_t _onerom_runtime_info_end[];   // End of .onerom_runtime_info section in RAM
 
 void ora_launch_plugins(void);
 
@@ -134,10 +134,22 @@ void Reset_Handler(void) {
     // We use memcpy and memset because it's likely to be faster than anything
     // we could come up with.
 
-    // Copy onerom_runtime_info_t from flash to RAM
+    // Copy onerom_runtime_info_t from flash to RAM, magic last.
+    // The magic acts as a commit indicator: valid magic means the full
+    // struct is visible. Skip the first 4 bytes (magic) in the main copy.
+    const size_t runtime_size = (size_t)((char*)_onerom_runtime_info_end - (char*)_onerom_runtime_info_ram);
+
+    memcpy((uint8_t*)_onerom_runtime_info_ram + 4,
+        (uint8_t*)_onerom_runtime_info_flash + 4,
+        runtime_size - 4);
+
+    // Ensure all struct bytes are visible before the magic is written.
+    __asm volatile ("dmb" ::: "memory");
+
+    // Write magic last.
     memcpy(_onerom_runtime_info_ram,
         _onerom_runtime_info_flash,
-           (unsigned int)((char*)_onerom_runtime_info_end - (char*)_onerom_runtime_info_ram));
+        4);
 
     // Copy data section from flash to RAM
     memcpy(&_sdata, &_sidata, (unsigned int)((char*)&_edata - (char*)&_sdata));
