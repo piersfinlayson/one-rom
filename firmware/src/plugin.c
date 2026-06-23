@@ -56,13 +56,16 @@ uint8_t initial_plugin_parse(uint8_t *disable_vbus_det, uint8_t *num_plugins) {
     *disable_vbus_det = 0;
     *num_plugins = 0;
 
-    if (METADATA->rom_slot_count >= 1) {
+    if (METADATA->rom_slot_count == 0) {
+        DEBUG("No ROM sets defined, skipping plugin parsing");
+        return plugins;
+    } else {
         const onerom_rom_slot_t *set = &METADATA->rom_slots[0];
         if (set->slot_type == ROM_SLOT_TYPE_PLUGIN_SYSTEM) {
             const ora_plugin_header_t *header = (ora_plugin_header_t *)(uintptr_t)(set->data);
             if (check_plugin_valid(header, ORA_PLUGIN_TYPE_SYSTEM, 0)) {
                 *disable_vbus_det = header->overrides1 & ORA_OVERRIDE1_DISABLE_VBUS_DETECT ? 1 : 0;
-                LOG("Valid plugin detected, disable_vbus_det=%d", *disable_vbus_det);
+                LOG("Valid system plugin=, disable_vbus_det=%d", *disable_vbus_det);
             }
 
             // Have system plugin (1)
@@ -70,27 +73,28 @@ uint8_t initial_plugin_parse(uint8_t *disable_vbus_det, uint8_t *num_plugins) {
         } else {
             DEBUG("ROM is not a plugin, skipping plugin parsing");
         }
+    }
 
-        if (METADATA->rom_slot_count > 1) {
-            const onerom_rom_slot_t *other_set = &METADATA->rom_slots[1];
-            if (other_set->slot_type == ROM_SLOT_TYPE_PLUGIN_USER) {
-                if (plugins & 0x01) {
-                    // Have user plugin (2) so check it
-                    const ora_plugin_header_t *header = (ora_plugin_header_t *)(uintptr_t)(set->data);
-                    if (check_plugin_valid(header, ORA_PLUGIN_TYPE_USER, 1)) {
-                        *disable_vbus_det = header->overrides1 & ORA_OVERRIDE1_DISABLE_VBUS_DETECT ? 1 : 0;
-                        LOG("Valid plugin detected, disable_vbus_det=%d", *disable_vbus_det);
+    if (METADATA->rom_slot_count > 1) {
+        const onerom_rom_slot_t *other_set = &METADATA->rom_slots[1];
+        if (other_set->slot_type == ROM_SLOT_TYPE_PLUGIN_USER) {
+            if (plugins & 0x01) {
+                // Have user plugin (2) so check it
+                const ora_plugin_header_t *header = (ora_plugin_header_t *)(uintptr_t)(other_set->data);
+                if (check_plugin_valid(header, ORA_PLUGIN_TYPE_USER, 1)) {
+                    if (header->overrides1 & ORA_OVERRIDE1_DISABLE_VBUS_DETECT) {
+                        *disable_vbus_det = 1;
                     }
-                    DEBUG("User plugin");
-                    plugins |= 2;
-                } else {
-                    ERR("Ignoring user plugin without system plugin");
+                    LOG("Valid user plugin, disable_vbus_det=%d", *disable_vbus_det);
                 }
+                DEBUG("User plugin");
+                plugins |= 2;
+            } else {
+                ERR("Ignoring user plugin without system plugin");
             }
         }
-    } else {
-        DEBUG("No ROM sets defined, skipping plugin parsing");
     }
+
 
     for (int ii = 0; ii < 2; ii++) {
         if (plugins & (1 << ii)) {
@@ -154,7 +158,7 @@ void ora_debug_log(const char* msg, ...) {
     do_debug_log_prefix();
     va_list args;
     va_start(args, msg);
-    do_log_v(msg, args);
+    do_log_v(msg, &args);
     va_end(args);
 #else
     (void)msg;
