@@ -740,6 +740,15 @@ ora_result_t ora_exit_exclusive_mode(void) {
     return ORA_RESULT_OK;
 }
 
+ora_result_t ora_read_ram_rom_slot(
+    uint8_t   slot,
+    uint32_t  offset,
+    uint8_t  *buf,
+    uint32_t  len
+) {
+    return pio_read_ram_rom_slot(CURRENT_SLOT, slot, offset, buf, len);
+}
+
 void *ora_fn_lookup(api_id_t id) {
     switch (id) {
         case ORA_ID_REBOOT_BOOTSEL:
@@ -816,12 +825,14 @@ void *ora_fn_lookup(api_id_t id) {
             return ora_get_device_version;
         case ORA_ID_DEMANGLE_DATA:
             return ora_demangle_data;
-        case ORA_ID_YIELD:
-            return ora_yield;
         case ORA_ID_ENTER_EXCLUSIVE_MODE:
             return ora_enter_exclusive_mode;
         case ORA_ID_EXIT_EXCLUSIVE_MODE:
             return ora_exit_exclusive_mode;
+        case ORA_ID_YIELD:
+            return ora_yield;
+        case ORA_ID_READ_RAM_ROM_SLOT:
+            return ora_read_ram_rom_slot; 
 
         // Deprecated functions
         case ORA_ID_GET_FIRMWARE_INFO:

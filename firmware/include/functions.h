@@ -122,6 +122,14 @@ ora_result_t pio_get_new_rom_ram_region(uint32_t *addr_out, uint32_t *size_out);
 uint8_t pio_get_effective_addr_pins(void);
 uint32_t pio_get_rom_region_size(void);
 ora_result_t pio_switch_rom_region(uint32_t new_region_addr);
+ora_result_t pio_read_ram_rom_slot(
+    const onerom_rom_slot_t *rom_slot,
+    uint8_t   ram_slot,
+    uint32_t  offset,
+    uint8_t  *buf,
+    uint32_t  len
+);
+uint8_t pio_get_active_ram_slot(void);
 
 // plugin.c
 uint8_t check_plugin_valid(

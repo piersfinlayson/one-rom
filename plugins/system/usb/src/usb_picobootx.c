@@ -104,9 +104,9 @@ void usb_picoboot_task(void) {
 // ---------------------------------------------------------------------------
 
 static pb_status_t app_range_logical_rom_read_prepare(
-    uint32_t  addr,
-    uint32_t  len,
-    void     *ctx
+    uint32_t addr,
+    uint32_t len,
+    void *ctx
 ) {
     const usb_plugin_context_t *uctx = (const usb_plugin_context_t *)ctx;
     uint32_t rom_size = app_get_active_rom_size(uctx);
@@ -119,27 +119,20 @@ static pb_status_t app_range_logical_rom_read_prepare(
     return PB_STATUS_OK;
 }
 
+
 static pb_status_t app_range_logical_rom_read(
-    uint32_t  addr,
+    uint32_t addr,
     uint8_t  *buf,
-    uint32_t  len,
-    void     *ctx
+    uint32_t len,
+    void *ctx
 ) {
-    rom_pin_layout_t layout;
-    pb_status_t st = app_retrieve_pin_layout((const usb_plugin_context_t *)ctx, &layout);
-    if (st != PB_STATUS_OK) {
-        return st;
-    }
-
-    // Strip the base address to get a logical ROM address
     addr &= 0x0FFFFFFF;
-
+ 
     for (uint32_t i = 0; i < len; i++) {
-        uint32_t value;
+        uint32_t    value;
         pb_status_t st = app_get_logical_byte_from_logical_addr(
             addr + i,
             &value,
-            &layout,
             (const usb_plugin_context_t *)ctx
         );
         if (st != PB_STATUS_OK) {
@@ -151,10 +144,10 @@ static pb_status_t app_range_logical_rom_read(
 }
 
 static pb_status_t app_range_logical_rom_write_prepare(
-    uint32_t  addr,
-    uint32_t  len,
-    bool     *is_flash,
-    void     *ctx
+    uint32_t addr,
+    uint32_t len,
+    bool *is_flash,
+    void *ctx
 ) {
     const usb_plugin_context_t *uctx = (const usb_plugin_context_t *)ctx;
     uint32_t rom_size = app_get_active_rom_size(uctx);
@@ -168,22 +161,19 @@ static pb_status_t app_range_logical_rom_write_prepare(
     return PB_STATUS_OK;
 }
 
+
 static pb_status_t app_range_logical_rom_write(
-    uint32_t        addr,
-    const uint8_t  *buf,
-    uint32_t        len,
-    void           *ctx
+    uint32_t addr,
+    const uint8_t *buf,
+    uint32_t len,
+    void *ctx
 ) {
     const usb_plugin_context_t *uctx = (const usb_plugin_context_t *)ctx;
-
-    rom_pin_layout_t layout;
-    pb_status_t st = app_retrieve_pin_layout(uctx, &layout);
-    if (st != PB_STATUS_OK) {
-        return st;
-    }
-
+ 
+    addr &= 0x0FFFFFFF;
+ 
     for (uint32_t i = 0u; i < len; i++) {
-        st = app_set_logical_byte_at_logical_addr(addr + i, buf[i], &layout, uctx);
+        pb_status_t st = app_set_logical_byte_at_logical_addr(addr + i, buf[i], uctx);
         if (st != PB_STATUS_OK) {
             return st;
         }

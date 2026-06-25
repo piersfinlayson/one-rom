@@ -9,6 +9,103 @@
 
 #if REAL_HARDWARE
 
+// GPIOs for X1 and X2 within the address span.  GPIO_NONE when absent.
+typedef struct {
+    uint8_t x1_gpio;
+    uint8_t x2_gpio;
+} v2_x_pin_gpios_t;
+
+// Returns the 2-bit GPIO input override type for gpio from
+// gpio_override_config, or GPIO_OVER_NORMAL (0) if not present or if
+// gpio_override_config is NULL.
+static uint8_t v2_get_gpio_override(
+    const onerom_rom_slot_t *slot,
+    uint8_t gpio
+) {
+    const onerom_alg_override_config_t *ovr = slot->alg->gpio_override_config;
+    if (ovr == NULL || ovr == (const onerom_alg_override_config_t *)0xFFFFFFFF) {
+        return GPIO_OVER_NORMAL;
+    }
+    for (uint8_t i = 0; i < ovr->param_len; i++) {
+        if ((ovr->params[i] & 0x3Fu) == gpio) {
+            return (uint8_t)((ovr->params[i] >> 6u) & 0x03u);
+        }
+    }
+    return GPIO_OVER_NORMAL;
+}
+
+// Identifies the X1 and X2 GPIOs within the address span for Multi/Banked
+// slots using the hardware metadata arrays HW->gpio_x1[] / HW->gpio_x2[].
+//
+// For each GPIO g in [addr_base, addr_base + num_addr_pins):
+//   - chip address pins (pin_map->addr[]) are skipped.
+//   - the full CS range [cs_base, cs_base + num_cs_pins) is skipped; this
+//     covers both real CS lines and any cs_ignore_index gap, and applies to
+//     all slot types (Banked sets also have CS lines as gap bits in the
+//     address span).
+//   - remaining GPIOs are matched against HW->gpio_x1[] / HW->gpio_x2[].
+//     If no match is found an internal error is logged.
+//
+// Returns {GPIO_NONE, GPIO_NONE} for Single slots.
+static v2_x_pin_gpios_t v2_get_x_pin_gpios(
+    const onerom_rom_slot_t *slot,
+    uint8_t addr_base
+) {
+    v2_x_pin_gpios_t result = { GPIO_NONE, GPIO_NONE };
+ 
+    if (slot->slot_type != ROM_SLOT_TYPE_MULTI_ROM &&
+        slot->slot_type != ROM_SLOT_TYPE_BANKED_ROM) {
+        return result;
+    }
+ 
+    const onerom_alg_addr_config_t *addr_alg = slot->alg->alg_addr;
+    const onerom_alg_cs_config_t   *cs_alg   = slot->alg->alg_cs;
+    const onerom_rom_pin_map_t     *pin_map   = slot->roms[0]->pin_map;
+ 
+    uint8_t cs_base = cs_alg->gpio_base + cs_alg->base_cs_pin;
+    uint8_t cs_end  = cs_base + cs_alg->num_cs_pins;
+ 
+    for (uint8_t g = addr_base;
+         g < (uint8_t)(addr_base + addr_alg->num_addr_pins); g++) {
+ 
+        // Skip chip address pins.
+        uint8_t is_addr = 0;
+        for (uint8_t n = 0; n < MAX_ADDR_PINS; n++) {
+            if (pin_map->addr[n] >= GPIO_NONE) break;
+            if (pin_map->addr[n] == g) { is_addr = 1; break; }
+        }
+        if (is_addr) continue;
+ 
+        // Skip CS range (real CS lines and any cs_ignore_index gap).
+        if (g >= cs_base && g < cs_end) continue;
+ 
+        // Match against hardware X pin arrays.
+        uint8_t matched = 0;
+        for (uint8_t j = 0; j < MAX_X_PIN_GPIOS; j++) {
+            if (HW->gpio_x1[j] == g) {
+                result.x1_gpio = g;
+                matched = 1;
+                break;
+            }
+        }
+        if (!matched) {
+            for (uint8_t j = 0; j < MAX_X_PIN_GPIOS; j++) {
+                if (HW->gpio_x2[j] == g) {
+                    result.x2_gpio = g;
+                    matched = 1;
+                    break;
+                }
+            }
+        }
+        if (!matched) {
+            ERR("v2_get_x_pin_gpios: unidentified GPIO %u in address span "
+                "(slot_type=%d)", (unsigned)g, slot->slot_type);
+        }
+    }
+ 
+    return result;
+}
+
 static void pio_setup_address_monitor_pios() {
     const onerom_rom_slot_t *slot = RUNTIME->current_rom_slot;
 
@@ -254,164 +351,197 @@ ora_result_t pio_setup_address_monitor(
     return ORA_RESULT_OK;
 }
 
-static ora_result_t get_addr_pin(
-    const onerom_rom_slot_t *slot,
-    uint8_t ii,
-    uint8_t *pin_out
-) {
-    // Select the hardware mapping from the first ROM in the slot.
-    const onerom_rom_pin_map_t *pin_map = slot->roms[0]->pin_map;
-
-    if (pin_map->addr[ii] >= MAX_GPIOS) {
-        return ORA_RESULT_INTERNAL_ERROR;
-    }
-    *pin_out = pin_map->addr[ii];
-    return ORA_RESULT_OK;
-}
-
-// This function always returns a mapping from logical to physical pins for
-// the first ROM in a multi-ROM slot.
+// Maps a logical chip address (host-visible A_n values, chip0) to the SRAM
+// table index where that address's data is stored.
+//
+// Step 1: scatter logical address bits to their GPIO bit positions.
+//   NORMAL:     table bit = logical bit.
+//   INVERT:     table bit = ~logical bit.  The GPIO is inverted so the PIO
+//               sees ~A_n; the pre-processor indexes the table by that
+//               post-override value, so the table bit for A_n = b is ~b.
+//   GPIO_OVER_LOW:  table bit = 0 regardless.
+//   GPIO_OVER_HIGH: table bit = 1 regardless.
+//
+// Step 2: CS bits (Multi only).
+//   For Multi, chip0's CS line(s) must be 1 in the table index (active-high
+//   serving convention; serve_cs_low_0 == 1).  INVERT on a CS line normalises
+//   the physical GPIO polarity to produce this state, so the target bit value
+//   is always 1 for chip0 CS active and no INVERT check is needed here; only
+//   GPIO_OVER_LOW prevents the target being met.
+//   Single/Banked sets need no action: CS bits default to 0, which is the
+//   correct active-low state for those types.
+//
+// Step 3: Banked X bits.
+//   Currently targets bank 0 only (X bits remain 0).
+//   TODO: add explicit bank selection when required.
 uint32_t pio_map_addr_to_phys(
     const onerom_rom_slot_t *slot,
     uint32_t logical_addr
 ) {
-    uint8_t base = BASE_ADDR_PIN;
-    uint8_t num  = NUM_ADDR_PINS;
-    uint32_t physical = 0;
-
-    for (uint8_t b = 0; b < num; b++) {
-        if (logical_addr & (1u << b)) {
-            uint8_t pin;
-            if (get_addr_pin(CURRENT_SLOT, b, &pin) == ORA_RESULT_OK) {
-                physical |= (1u << (pin - base));
-            }
+    const onerom_alg_addr_config_t *addr_alg = slot->alg->alg_addr;
+    const onerom_rom_pin_map_t     *pin_map   = slot->roms[0]->pin_map;
+    uint8_t  addr_base = addr_alg->gpio_base + addr_alg->base_addr_pin;
+    uint32_t physical  = 0;
+ 
+    // Step 1: address bits.
+    for (uint8_t n = 0; n < MAX_ADDR_PINS; n++) {
+        uint8_t gpio = pin_map->addr[n];
+        if (gpio >= GPIO_NONE) break;
+ 
+        uint8_t bit_pos     = gpio - addr_base;
+        uint8_t logical_bit = (uint8_t)((logical_addr >> n) & 1u);
+        uint8_t override    = v2_get_gpio_override(slot, gpio);
+ 
+        switch (override) {
+            case GPIO_OVER_NORMAL:
+                if (logical_bit) physical |= (1u << bit_pos);
+                break;
+            case GPIO_OVER_INVERT:
+                if (!logical_bit) physical |= (1u << bit_pos);
+                break;
+            case GPIO_OVER_LOW:
+                break;
+            case GPIO_OVER_HIGH:
+                physical |= (1u << bit_pos);
+                break;
+            default:
+                break;
         }
     }
-
-    // In multi-ROM mode CS1 is part of the SRAM address space, and active
-    // CS1 = bit SET (inverted).  Always OR in the CS1 bit so back-channel
-    // writes land in the correct half of SRAM that the host is reading
-    // from.  Also handles multiple CSs
-    if ((slot->slot_type == ROM_SLOT_TYPE_MULTI_ROM) &&
-        (slot->alg->alg_cs->alg == ALG_CS_0)) {
-        onerom_alg_cs0_param_t *params = (onerom_alg_cs0_param_t *)slot->alg->alg_cs->params;
-        uint8_t base_cs_pin = params->first_rom_cs_base;
-        uint8_t num_cs_pins = params->first_rom_num_cs_pins;
-
-        for (int cs_pin = base_cs_pin; cs_pin < (base_cs_pin + num_cs_pins); cs_pin++) {
-            if (cs_pin < MAX_GPIOS) {
-                physical |= (1u << (cs_pin - base));
+ 
+    // Step 2: CS bits (Multi only).
+    if (slot->slot_type == ROM_SLOT_TYPE_MULTI_ROM) {
+        const onerom_alg_cs_config_t *cs_alg = slot->alg->alg_cs;
+ 
+        switch (cs_alg->alg) {
+            case ALG_CS_0: {
+                const onerom_alg_cs0_param_t *cs_params =
+                    (const onerom_alg_cs0_param_t *)cs_alg->params;
+                uint8_t cs_base = cs_alg->gpio_base + cs_params->first_rom_cs_base;
+                uint8_t cs_end  = cs_base + cs_params->first_rom_num_cs_pins;
+                for (uint8_t g = cs_base; g < cs_end; g++) {
+                    uint8_t bit_pos  = g - addr_base;
+                    uint8_t override = v2_get_gpio_override(slot, g);
+                    switch (override) {
+                        case GPIO_OVER_NORMAL:
+                        case GPIO_OVER_INVERT:
+                        case GPIO_OVER_HIGH:
+                            physical |= (1u << bit_pos);
+                            break;
+                        case GPIO_OVER_LOW:
+                            ERR("pio_map_addr_to_phys: CS GPIO %u GPIO_OVER_LOW in "
+                                "Multi slot; chip0 CS cannot be made active",
+                                (unsigned)g);
+                            break;
+                        default:
+                            break;
+                    }
+                }
+                break;
             }
+            case ALG_CS_1: {
+                const onerom_alg_cs1_param_t *cs_params =
+                    (const onerom_alg_cs1_param_t *)cs_alg->params;
+                uint8_t cs_base = cs_alg->gpio_base + cs_alg->base_cs_pin;
+                for (uint8_t i = 0; i < cs_alg->num_cs_pins; i++) {
+                    if (i == cs_params->cs_ignore_index) continue;
+                    uint8_t g        = cs_base + i;
+                    uint8_t bit_pos  = g - addr_base;
+                    uint8_t override = v2_get_gpio_override(slot, g);
+                    switch (override) {
+                        case GPIO_OVER_NORMAL:
+                        case GPIO_OVER_INVERT:
+                        case GPIO_OVER_HIGH:
+                            physical |= (1u << bit_pos);
+                            break;
+                        case GPIO_OVER_LOW:
+                            ERR("pio_map_addr_to_phys: CS GPIO %u GPIO_OVER_LOW in "
+                                "Multi slot", (unsigned)g);
+                            break;
+                        default:
+                            break;
+                    }
+                }
+                break;
+            }
+            case ALG_CS_2:
+            default:
+                ERR("pio_map_addr_to_phys: unsupported CS algorithm %d for "
+                    "Multi slot", cs_alg->alg);
+                // TODO: implement AlgCs2 Multi support
+                break;
         }
     }
-
+ 
+    // Step 3: Banked X bits — target bank 0 only (X bits remain 0).
+    // TODO: add explicit bank selection when required.
+ 
     return physical;
 }
 
-static ora_result_t get_data_pin(
-    const onerom_rom_slot_t *slot,
-    uint8_t ii,
-    uint8_t *pin_out
-) {
-    // Select the hardware mapping from the first ROM in the slot.
-    const onerom_rom_pin_map_t *pin_map = slot->roms[0]->pin_map;
-
-    if (pin_map->data[ii] >= MAX_GPIOS) {
-        return ORA_RESULT_INTERNAL_ERROR;
-    }
-    *pin_out = pin_map->data[ii];
-    return ORA_RESULT_OK;
-}
-
+// Maps a logical data byte to the physical byte to store in the SRAM table.
+// Scatters logical data bit d to bit position (data_pin_gpios[d] - data_base)
+// applying the GPIO override at each position.
 uint32_t pio_map_data_to_phys(
     const onerom_rom_slot_t *slot,
     uint32_t logical_data
 ) {
-    uint8_t base = BASE_DATA_PIN;
-    uint32_t physical = 0;
-
-    for (uint8_t b = 0; b < 8; b++) {
-        if (logical_data & (1u << b)) {
-            uint8_t pin;
-            if (get_data_pin(slot, b, &pin) == ORA_RESULT_OK) {
-                physical |= (1u << (pin - base));
-            }
+    const onerom_alg_data_config_t *data_alg = slot->alg->alg_data;
+    const onerom_rom_pin_map_t     *pin_map   = slot->roms[0]->pin_map;
+    uint8_t  data_base = data_alg->gpio_base + data_alg->base_data_pin;
+    uint8_t  num_data  = data_alg->word_size;   /* 8 or 16 */
+    uint32_t physical  = 0;
+ 
+    for (uint8_t d = 0; d < num_data; d++) {
+        uint8_t gpio = pin_map->data[d];
+        if (gpio >= GPIO_NONE) continue;
+ 
+        uint8_t bit_pos     = gpio - data_base;
+        uint8_t logical_bit = (uint8_t)((logical_data >> d) & 1u);
+        uint8_t override    = v2_get_gpio_override(slot, gpio);
+ 
+        switch (override) {
+            case GPIO_OVER_NORMAL:
+                if (logical_bit) physical |= (1u << bit_pos);
+                break;
+            case GPIO_OVER_INVERT:
+                if (!logical_bit) physical |= (1u << bit_pos);
+                break;
+            case GPIO_OVER_LOW:
+                break;
+            case GPIO_OVER_HIGH:
+                physical |= (1u << bit_pos);
+                break;
+            default:
+                break;
         }
     }
+ 
     return physical;
 }
 
-#define MAX_CS_PINS 8
-static void get_cs_pins(
-    const onerom_rom_slot_t *slot,
-    uint8_t *cs_pins_out,
-    uint8_t *cs_pins_over_out
-) {
-    const onerom_alg_cs_config_t *cs_alg = slot->alg->alg_cs;
-    switch (cs_alg->alg) {
-        case ALG_CS_0:
-        case ALG_CS_2: {
-            for (int ii = 0; (ii < cs_alg->num_cs_pins) && (ii < MAX_CS_PINS); ii++) {
-                cs_pins_out[ii] = cs_alg->base_cs_pin + ii;
-            }
-            break;
-        }
-
-        case ALG_CS_1: {
-            onerom_alg_cs1_param_t *params = (onerom_alg_cs1_param_t *)cs_alg->params;
-            int jj = 0;
-            for (int ii = 0; (ii < cs_alg->num_cs_pins) && (ii < MAX_CS_PINS); ii++) {
-                if (ii != params->cs_ignore_index) {
-                        cs_pins_out[jj] = cs_alg->base_cs_pin + ii;
-                        jj++;
-                }
-            }
-            break;
-        }
-
-        default:
-            ERR("Unsupported CS algorithm: %d", cs_alg->alg);
-            break;
-    }
-
-    // Get whether they are overridden
-    const onerom_alg_override_config_t *override = slot->alg->gpio_override_config;
-    for (int ii = 0; ii < override->param_len; ii++) {
-        for (int jj = 0; jj < MAX_CS_PINS; jj++) {
-            if ((override->params[ii] & 0x3F) == cs_pins_out[jj]) {
-                cs_pins_over_out[jj] = (override->params[ii] >> 6) & 0x03;
-            }
-        }
-    }
-}
-
-#define MAX_X_PINS 2
-static void get_x_pins(
-    const onerom_rom_slot_t *slot,
-    uint8_t *x_pins_out,
-    uint8_t *x_pins_over_out
-) {
-    // Get the X pins
-#if 0
-    // TODO fix
-    x_pins_out[0] = HW->gpio_x1;
-    x_pins_out[1] = HW->gpio_x2;
-#else
-    x_pins_out[0] = 255;
-    x_pins_out[1] = 255;
-#endif
-
-    // Get whether they are overridden
-    const onerom_alg_override_config_t *override = slot->alg->gpio_override_config;
-    for (int ii = 0; ii < override->param_len; ii++) {
-        for (int jj = 0; jj < MAX_X_PINS; jj++) {
-            if ((override->params[ii] & 0x3F) == x_pins_out[jj]) {
-                x_pins_over_out[jj] = (override->params[ii] >> 6) & 0x03;
-            }
-        }
-    }
-}
-
+// Converts a ring buffer entry (post-override PIO-visible GPIO bitmap) to a
+// logical address, with optional control pin activity checking.
+//
+// physical_addr is post-override: PIOs always read post-override values from
+// IN PINS, so ring buffer entries already reflect PIO-visible values.
+//
+// Control pin check (check_control_pins != 0):
+//   AlgCs0, Single/Banked: verify all CS pins are in the active-low state (0).
+//   AlgCs0, Multi:         verify chip0 CS sub-range is active-high (1), then
+//                          verify X pins are inactive (0).
+//   AlgCs1, Single/Banked: verify real CS pins (excluding cs_ignore_index)
+//                          are in the active-low state (0).
+//   AlgCs2:                not currently supported; returns ORA_RESULT_ERROR.
+//                          TODO: implement when AlgCs2 address monitor support
+//                          is added.
+//
+// Address extraction:
+//   NORMAL:     logical bit = physical bit.
+//   INVERT:     logical bit = ~physical bit (ring buffer has post-INVERT value;
+//               invert to recover original chip pin value).
+//   GPIO_OVER_LOW:  logical bit = 0 (forced; carries no information).
+//   GPIO_OVER_HIGH: logical bit = 1.
 ora_result_t pio_demangle_addr(
     const onerom_rom_slot_t *slot,
     uint32_t physical_addr,
@@ -421,186 +551,383 @@ ora_result_t pio_demangle_addr(
     if (logical_addr_out == NULL) {
         return ORA_RESULT_INVALID_ARG;
     }
-
-    uint8_t base = BASE_ADDR_PIN;
-    uint8_t num  = NUM_ADDR_PINS;
-
+ 
+    const onerom_alg_addr_config_t *addr_alg = slot->alg->alg_addr;
+    const onerom_alg_cs_config_t   *cs_alg   = slot->alg->alg_cs;
+    const onerom_rom_pin_map_t     *pin_map   = slot->roms[0]->pin_map;
+    uint8_t addr_base = addr_alg->gpio_base + addr_alg->base_addr_pin;
+ 
     if (check_control_pins) {
-        uint8_t x_pins[MAX_X_PINS];
-        uint8_t x_pins_override[MAX_X_PINS];
-        get_x_pins(slot, x_pins, x_pins_override);
-
-        uint8_t cs_pins[MAX_CS_PINS] = {GPIO_NONE};
-        uint8_t cs_pins_override[MAX_CS_PINS] = {0};
-        get_cs_pins(slot, cs_pins, cs_pins_override);
-
-        // Test for actice CS pins
-        for (int ii = 0; ii < MAX_CS_PINS && cs_pins[ii] < MAX_GPIOS; ii++) {
-            uint8_t cs_pin = cs_pins[ii];
-            if ((cs_pin >= base) && (cs_pin < (base + num))) {
-                uint8_t cs_pin_pos = 1u << (cs_pin - base);
-                switch (cs_pins_override[ii]) {
-                    case GPIO_OVER_NORMAL:
-                        // CS is inactive if 
-                        if ((physical_addr & cs_pin_pos) == 0) {
-                            return ORA_RESULT_CONTROL_PIN_ACTIVE;
-                        }
-                        break;
-
-                    case GPIO_OVER_INVERT:
-                        if ((physical_addr & cs_pin_pos) != 0) {
-                            return ORA_RESULT_CONTROL_PIN_ACTIVE;
-                        }
-                        break;
-
-                    default:
-                        // Ignore other cases
-                        break;
+        switch (cs_alg->alg) {
+            case ALG_CS_0: {
+                const onerom_alg_cs0_param_t *cs_params =
+                    (const onerom_alg_cs0_param_t *)cs_alg->params;
+                uint8_t expected_active = cs_params->serve_cs_low_0;
+ 
+                // For Multi, check only chip0's CS sub-range.  Checking the
+                // full CS range would include X pins (which are 0 for a chip0
+                // access) and return false positives against expected_active=1.
+                uint8_t cs_check_base, cs_check_count;
+                if (slot->slot_type == ROM_SLOT_TYPE_MULTI_ROM) {
+                    cs_check_base  = cs_alg->gpio_base
+                                   + cs_params->first_rom_cs_base;
+                    cs_check_count = cs_params->first_rom_num_cs_pins;
+                } else {
+                    cs_check_base  = cs_alg->gpio_base + cs_alg->base_cs_pin;
+                    cs_check_count = cs_alg->num_cs_pins;
                 }
-            }
-        }
-
-        if (slot->slot_type == ROM_SLOT_TYPE_MULTI_ROM) {
-            // Test for active X pins - if any active, reject
-            for (int ii = 0; ii < MAX_X_PINS && x_pins[ii] < MAX_GPIOS; ii++) {
-                uint8_t x_pin = x_pins[ii];
-                if ((x_pin >= base) && (x_pin < (base + num))) {
-                    uint8_t x_pin_pos = 1u << (x_pin - base);
-                    switch (x_pins_override[ii]) {
+ 
+                for (uint8_t i = 0; i < cs_check_count; i++) {
+                    uint8_t g            = cs_check_base + i;
+                    uint8_t bit_pos      = g - addr_base;
+                    uint8_t physical_bit = (uint8_t)((physical_addr >> bit_pos)
+                                                      & 1u);
+                    uint8_t override     = v2_get_gpio_override(slot, g);
+ 
+                    switch (override) {
                         case GPIO_OVER_NORMAL:
-                            if ((physical_addr & x_pin_pos) != 0) {
-                                return ORA_RESULT_CONTROL_PIN_ACTIVE;
-                            }
-                            break;
-
                         case GPIO_OVER_INVERT:
-                            if ((physical_addr & x_pin_pos) == 0) {
+                            // physical_addr is post-override; compare directly.
+                            if (physical_bit != expected_active) {
                                 return ORA_RESULT_CONTROL_PIN_ACTIVE;
                             }
                             break;
-
+                        case GPIO_OVER_LOW:
+                            if (expected_active != 0u) {
+                                return ORA_RESULT_CONTROL_PIN_ACTIVE;
+                            }
+                            break;
+                        case GPIO_OVER_HIGH:
+                            if (expected_active != 1u) {
+                                return ORA_RESULT_CONTROL_PIN_ACTIVE;
+                            }
+                            break;
                         default:
-                            // Ignore other cases
                             break;
                     }
                 }
+ 
+                // Multi: reject if any X pin is active (=1), indicating a
+                // secondary chip is being addressed.
+                if (slot->slot_type == ROM_SLOT_TYPE_MULTI_ROM) {
+                    v2_x_pin_gpios_t xp = v2_get_x_pin_gpios(slot, addr_base);
+                    uint8_t x_gpios[2]  = { xp.x1_gpio, xp.x2_gpio };
+                    for (uint8_t xi = 0; xi < 2; xi++) {
+                        if (x_gpios[xi] >= GPIO_NONE) continue;
+                        uint8_t bit_pos = x_gpios[xi] - addr_base;
+                        if ((uint8_t)((physical_addr >> bit_pos) & 1u) != 0u) {
+                            return ORA_RESULT_CONTROL_PIN_ACTIVE;
+                        }
+                    }
+                }
+                break;
             }
+ 
+            case ALG_CS_1: {
+                // AlgCs1 is Single/Banked only; active-low (expected = 0).
+                const onerom_alg_cs1_param_t *cs_params =
+                    (const onerom_alg_cs1_param_t *)cs_alg->params;
+                uint8_t cs_base = cs_alg->gpio_base + cs_alg->base_cs_pin;
+ 
+                for (uint8_t i = 0; i < cs_alg->num_cs_pins; i++) {
+                    if (i == cs_params->cs_ignore_index) continue;
+                    uint8_t g            = cs_base + i;
+                    uint8_t bit_pos      = g - addr_base;
+                    uint8_t physical_bit = (uint8_t)((physical_addr >> bit_pos)
+                                                      & 1u);
+                    uint8_t override     = v2_get_gpio_override(slot, g);
+ 
+                    switch (override) {
+                        case GPIO_OVER_NORMAL:
+                        case GPIO_OVER_INVERT:
+                            if (physical_bit != 0u) {
+                                return ORA_RESULT_CONTROL_PIN_ACTIVE;
+                            }
+                            break;
+                        case GPIO_OVER_LOW:
+                            /* forced to 0 = active; always passes */
+                            break;
+                        case GPIO_OVER_HIGH:
+                            /* forced to 1 = inactive; always fails */
+                            return ORA_RESULT_CONTROL_PIN_ACTIVE;
+                        default:
+                            break;
+                    }
+                }
+                break;
+            }
+ 
+            case ALG_CS_2:
+            default:
+                ERR("pio_demangle_addr: unsupported CS algorithm %d",
+                    cs_alg->alg);
+                return ORA_RESULT_ERROR;
+                // TODO: implement AlgCs2 support
         }
     }
-
-    // 23QL512 not supported here, nor are other chip types like the 231024,
-    // 2732 - any snowflake chip type
-    // TODO - lift restriction
+ 
+    // Address extraction.
     uint32_t logical = 0;
-    for (uint8_t b = 0; b < num; b++) {
-        uint8_t pin;
-        if (get_addr_pin(slot, b, &pin) == ORA_RESULT_OK) {
-            if (physical_addr & (1u << (pin - base))) {
-                logical |= (1u << b);
-            }
+    for (uint8_t n = 0; n < MAX_ADDR_PINS; n++) {
+        uint8_t gpio = pin_map->addr[n];
+        if (gpio >= GPIO_NONE) break;
+ 
+        uint8_t bit_pos      = gpio - addr_base;
+        uint8_t physical_bit = (uint8_t)((physical_addr >> bit_pos) & 1u);
+        uint8_t override     = v2_get_gpio_override(slot, gpio);
+ 
+        switch (override) {
+            case GPIO_OVER_NORMAL:
+                if (physical_bit) logical |= (1u << n);
+                break;
+            case GPIO_OVER_INVERT:
+                // Invert to recover original chip pin value from post-override
+                // ring buffer entry.
+                if (!physical_bit) logical |= (1u << n);
+                break;
+            case GPIO_OVER_LOW:
+                /* always 0; contributes 0 */
+                break;
+            case GPIO_OVER_HIGH:
+                logical |= (1u << n);
+                break;
+            default:
+                break;
         }
     }
-
+ 
     *logical_addr_out = logical;
     return ORA_RESULT_OK;
 }
-
+ 
+// ---------------------------------------------------------------------------
+// pio_demangle_data
+// ---------------------------------------------------------------------------
+ 
+// Reverses the data pin permutation: extracts the logical byte from a
+// physically stored (mangled) SRAM table byte.
 uint8_t pio_demangle_data(
     const onerom_rom_slot_t *slot,
     uint8_t physical_data
 ) {
-    uint8_t base = BASE_DATA_PIN;
-    const onerom_rom_pin_map_t *pin_map = slot->roms[0]->pin_map;
-    uint8_t logical = 0;
-    for (uint8_t b = 0; b < 8; b++) {
-        uint8_t pin = pin_map->data[b];
-        if (pin < MAX_GPIOS) {
-            if (physical_data & (1u << (pin - base))) {
-                logical |= (1u << b);
-            }
+    const onerom_alg_data_config_t *data_alg = slot->alg->alg_data;
+    const onerom_rom_pin_map_t     *pin_map   = slot->roms[0]->pin_map;
+    uint8_t data_base = data_alg->gpio_base + data_alg->base_data_pin;
+    uint8_t num_data  = data_alg->word_size;
+    uint8_t logical   = 0;
+ 
+    for (uint8_t d = 0; d < num_data; d++) {
+        uint8_t gpio = pin_map->data[d];
+        if (gpio >= GPIO_NONE) continue;
+ 
+        uint8_t bit_pos      = gpio - data_base;
+        uint8_t physical_bit = (physical_data >> bit_pos) & 1u;
+        uint8_t override     = v2_get_gpio_override(slot, gpio);
+ 
+        switch (override) {
+            case GPIO_OVER_NORMAL:
+                if (physical_bit) logical |= (1u << d);
+                break;
+            case GPIO_OVER_INVERT:
+                if (!physical_bit) logical |= (1u << d);
+                break;
+            case GPIO_OVER_LOW:
+                /* always 0; contributes 0 */
+                break;
+            case GPIO_OVER_HIGH:
+                logical |= (1u << d);
+                break;
+            default:
+                break;
         }
     }
+ 
     return logical;
 }
 
+
+// Precomputes mask and match values for knock detection against ring buffer
+// entries (post-override PIO-visible values).
+//
+// Mask: bit positions of knock_bits address GPIOs.  Forced GPIOs are excluded
+// (they carry no information).
+//
+// Match values: ring buffer entries are post-override, so INVERT bits appear
+// flipped relative to logical knock sequence values.
+//
+// CS mask: bit positions of real CS pins within the address span, for
+// debounce filtering.
+//
+// X mask (Multi only): bit positions of X pins within the address span.
+//
+// AlgCs2 is not currently supported; returns ORA_RESULT_ERROR.
+// TODO: implement AlgCs2 support.
 ora_result_t pio_init_knock(
     const uint32_t *knock_seq,
-    uint8_t knock_len,
-    uint8_t knock_bits,
-    uint8_t data_size,
-    ora_knock_t *knock
+    uint8_t         knock_len,
+    uint8_t         knock_bits,
+    uint8_t         data_size,
+    ora_knock_t    *knock
 ) {
     if (knock_seq == NULL || knock == NULL) {
         return ORA_RESULT_INVALID_ARG;
     }
-    if (knock_len == 0 || knock_bits == 0 || knock_bits > NUM_ADDR_PINS) {
+    if (knock_len == 0u || knock_bits == 0u || knock_bits > MAX_ADDR_PINS) {
         return ORA_RESULT_INVALID_ARG;
     }
-
-    uint8_t base = BASE_ADDR_PIN;
-    uint8_t pin;
-    ora_result_t result;
-
+ 
+    const onerom_rom_slot_t        *slot     = CURRENT_SLOT;
+    const onerom_alg_addr_config_t *addr_alg = slot->alg->alg_addr;
+    const onerom_alg_cs_config_t   *cs_alg   = slot->alg->alg_cs;
+    const onerom_rom_pin_map_t     *pin_map   = slot->roms[0]->pin_map;
+    uint8_t addr_base = addr_alg->gpio_base + addr_alg->base_addr_pin;
+ 
+    // Mask.
     knock->mask = 0;
     for (uint8_t i = 0; i < knock_bits; i++) {
-        result = get_addr_pin(CURRENT_SLOT, i, &pin);
-        if (result != ORA_RESULT_OK) {
-            return result;
+        uint8_t gpio = pin_map->addr[i];
+        if (gpio >= GPIO_NONE) {
+            return ORA_RESULT_INTERNAL_ERROR;
         }
-        knock->mask |= (1u << (pin - base));
+        uint8_t override = v2_get_gpio_override(slot, gpio);
+        switch (override) {
+            case GPIO_OVER_NORMAL:
+            case GPIO_OVER_INVERT:
+                knock->mask |= (1u << (gpio - addr_base));
+                break;
+            case GPIO_OVER_LOW:
+            case GPIO_OVER_HIGH:
+                /* exclude forced bits from mask */
+                break;
+            default:
+                break;
+        }
     }
-
+ 
+    // Match values.
     for (uint8_t k = 0; k < knock_len; k++) {
         knock->matches[k] = 0;
         for (uint8_t i = 0; i < knock_bits; i++) {
-            result = get_addr_pin(CURRENT_SLOT, i, &pin);
-            if (result != ORA_RESULT_OK) {
-                return result;
-            }
-            if (knock_seq[k] & (1u << i)) {
-                knock->matches[k] |= (1u << (pin - base));
+            uint8_t gpio = pin_map->addr[i];
+            if (gpio >= GPIO_NONE) continue;
+ 
+            uint8_t bit_pos     = gpio - addr_base;
+            uint8_t override    = v2_get_gpio_override(slot, gpio);
+            uint8_t logical_bit = (uint8_t)((knock_seq[k] >> i) & 1u);
+ 
+            switch (override) {
+                case GPIO_OVER_NORMAL:
+                    if (logical_bit) knock->matches[k] |= (1u << bit_pos);
+                    break;
+                case GPIO_OVER_INVERT:
+                    // Ring buffer has ~logical for inverted GPIOs.
+                    if (!logical_bit) knock->matches[k] |= (1u << bit_pos);
+                    break;
+                case GPIO_OVER_LOW:
+                case GPIO_OVER_HIGH:
+                    /* excluded from mask; excluded from match */
+                    break;
+                default:
+                    break;
             }
         }
     }
-
-    // Calculate CS and X pin masks for filtering during knock detection and
-    // payload collection
+ 
+    // CS mask.
     uint32_t cs_mask = 0;
+    switch (cs_alg->alg) {
+        case ALG_CS_0: {
+            uint8_t cs_base = cs_alg->gpio_base + cs_alg->base_cs_pin;
+            for (uint8_t i = 0; i < cs_alg->num_cs_pins; i++) {
+                uint8_t g = cs_base + i;
+                if (g >= addr_base &&
+                    g < (uint8_t)(addr_base + addr_alg->num_addr_pins)) {
+                    cs_mask |= (1u << (g - addr_base));
+                }
+            }
+            break;
+        }
+        case ALG_CS_1: {
+            const onerom_alg_cs1_param_t *cs_params =
+                (const onerom_alg_cs1_param_t *)cs_alg->params;
+            uint8_t cs_base = cs_alg->gpio_base + cs_alg->base_cs_pin;
+            for (uint8_t i = 0; i < cs_alg->num_cs_pins; i++) {
+                if (i == cs_params->cs_ignore_index) continue;
+                uint8_t g = cs_base + i;
+                if (g >= addr_base &&
+                    g < (uint8_t)(addr_base + addr_alg->num_addr_pins)) {
+                    cs_mask |= (1u << (g - addr_base));
+                }
+            }
+            break;
+        }
+        case ALG_CS_2:
+        default:
+            ERR("pio_init_knock: unsupported CS algorithm %d", cs_alg->alg);
+            return ORA_RESULT_ERROR;
+            // TODO: implement AlgCs2 support
+    }
+ 
+    // X mask (Multi only).
     uint32_t x_mask = 0;
-
-    // Get CS pins
-    uint8_t cs_pins[MAX_CS_PINS] = {GPIO_NONE};
-    uint8_t cs_pins_override[MAX_CS_PINS] = {0};
-    get_cs_pins(CURRENT_SLOT, cs_pins, cs_pins_override);
-    for (int ii = 0; ii < MAX_CS_PINS && cs_pins[ii] < MAX_GPIOS; ii++) {
-        uint8_t cs_pin = cs_pins[ii];
-        if ((cs_pin >= base) && (cs_pin < (base + NUM_ADDR_PINS))) {
-            cs_mask |= 1u << (cs_pin - base);
+    if (slot->slot_type == ROM_SLOT_TYPE_MULTI_ROM) {
+        v2_x_pin_gpios_t xp         = v2_get_x_pin_gpios(slot, addr_base);
+        uint8_t          x_gpios[2] = { xp.x1_gpio, xp.x2_gpio };
+        for (uint8_t xi = 0; xi < 2; xi++) {
+            if (x_gpios[xi] >= GPIO_NONE) continue;
+            if (x_gpios[xi] >= addr_base &&
+                x_gpios[xi] < (uint8_t)(addr_base + addr_alg->num_addr_pins)) {
+                x_mask |= (1u << (x_gpios[xi] - addr_base));
+            }
         }
     }
-    if (CURRENT_SLOT->slot_type != ROM_SLOT_TYPE_MULTI_ROM) {
-        knock->multi_rom_mode = 0;
-    } else {
-#if 0
-        // TODO - fix
-        uint8_t x1_pin = HW->gpio_x1;
-        uint8_t x2_pin = HW->gpio_x2;
-        if ((x1_pin < (base + NUM_ADDR_PINS)) && (x1_pin >= base)) {
-            x_mask |= 1u << (x1_pin - base);
-        }
-        if ((x2_pin < (base + NUM_ADDR_PINS)) && (x2_pin >= base)) {
-            x_mask |= 1u << (x2_pin - base);
-        }
-#endif
-        knock->multi_rom_mode = 1;
+ 
+    knock->len            = knock_len;
+    knock->bits           = knock_bits;
+    knock->data_size      = data_size;
+    knock->multi_rom_mode = (slot->slot_type == ROM_SLOT_TYPE_MULTI_ROM)
+                            ? 1u : 0u;
+    knock->cs_mask        = cs_mask;
+    knock->x_mask         = x_mask;
+ 
+    return ORA_RESULT_OK;
+}
+
+// Reads a contiguous logical region of a RAM slot into buf, reversing the
+// address and data mappings.  Counterpart to pio_reprogram_ram_rom_slot.
+//
+// rom_slot provides the pin map and algorithm config for the mappings.
+// ram_slot is the RAM slot index to read from.
+//
+// Reads are always permitted from the active slot; no allow_active flag is
+// needed (the caller is responsible for any consistency requirements).
+ora_result_t pio_read_ram_rom_slot(
+    const onerom_rom_slot_t *rom_slot,
+    uint8_t   ram_slot,
+    uint32_t  offset,
+    uint8_t  *buf,
+    uint32_t  len
+) {
+    if (buf == NULL || len == 0u) {
+        return ORA_RESULT_INVALID_ARG;
     }
-
-    knock->len  = knock_len;
-    knock->bits = knock_bits;
-    knock->data_size = data_size;
-    knock->cs_mask = cs_mask;
-    knock->x_mask = x_mask;
-
+ 
+    uint32_t     addr, size;
+    ora_result_t result = ora_get_ram_slot_info(ram_slot, &addr, &size, NULL);
+    if (result != ORA_RESULT_OK) {
+        return result;
+    }
+ 
+    if (offset + len > size) {
+        return ORA_RESULT_INVALID_ARG;
+    }
+ 
+    const uint8_t *sram = (const uint8_t *)addr;
+    for (uint32_t i = 0u; i < len; i++) {
+        uint32_t physical_offset = pio_map_addr_to_phys(rom_slot, offset + i);
+        buf[i] = pio_demangle_data(rom_slot, sram[physical_offset]);
+    }
+ 
     return ORA_RESULT_OK;
 }
 
@@ -768,46 +1095,53 @@ volatile uint32_t * volatile *pio_get_address_monitor_ring_write_pos(void) {
     return (volatile uint32_t * volatile *)&DMA_CH_REG(DMA_CH_ADDR_MONITOR)->write_addr;
 }
 
+// Returns the number of bits used to index the ROM table — i.e. the low bits
+// of the 32-bit PIO shift-register output that form the SRAM offset.
+//
+// This equals alg_addr->num_rom_table_bits, which already accounts for the
+// extra bit used in 16-bit word mode (num_rom_table_bits = num_addr_pins + 1
+// for ALG_DATA_1 / 16-bit, num_addr_pins for 8-bit).  The v1 equivalent was
+// NUM_ADDR_PINS + (BIT_MODE == BIT_MODE_16 ? 1 : 0).
 uint8_t pio_get_effective_addr_pins(void) {
-    uint8_t effective_addr_pins = NUM_ADDR_PINS;
-    if (BIT_MODE == BIT_MODE_16) {
-        effective_addr_pins += 1;
-    }
-    return effective_addr_pins;
+    return CURRENT_SLOT->alg->alg_addr->num_rom_table_bits;
 }
-
+ 
+// Returns the number of bytes in one ROM table region, i.e. the number of
+// table entries addressable by the PIO address SM in a single SRAM window.
 uint32_t pio_get_rom_region_size(void) {
     return 1u << pio_get_effective_addr_pins();
 }
 
+// Atomically switches the SRAM region being served by updating the X register
+// in the address-read SM with the high bits of new_region_addr.
+//
+// Input validation is the caller's responsibility.  ora_set_active_ram_slot
+// validates the slot index and derives a correct address via
+// ora_get_ram_slot_info before calling this function.
 ora_result_t pio_switch_rom_region(uint32_t new_region_addr) {
-    // Input validation is the caller's responsibility. ora_set_active_ram_slot
-    // validates the slot index and derives a correct address via
-    // ora_get_ram_slot_info before calling this function.
-    uint8_t effective_addr_pins = pio_get_effective_addr_pins();
-    uint8_t rom_table_num_addr_bits = 32 - effective_addr_pins;
-    uint32_t high_bits_mask = (1u << rom_table_num_addr_bits) - 1;
-    uint32_t rom_table_high_bits = (new_region_addr >> effective_addr_pins) & high_bits_mask;
-
-    // Update the ROM table address in the config to keep it consistent with
-    // reality.
+    uint8_t  effective_addr_pins    = pio_get_effective_addr_pins();
+    uint8_t  rom_table_prefix_bits  = 32u - effective_addr_pins;
+    uint32_t high_bits_mask         = (1u << rom_table_prefix_bits) - 1u;
+    uint32_t rom_table_high_bits    = (new_region_addr >> effective_addr_pins)
+                                      & high_bits_mask;
+ 
+    // Keep RUNTIME consistent with the switch.
     RUNTIME->rom_table = (void *)new_region_addr;
-
-    // Avoid unused variable warnings from APIO implementation causing
-    // compile errors.
-    // Update the X register in the address read SM with the new RAM table
-    // base.  This delays the address read SM by a single cycle, but is an
-    // atomic switch.
+ 
+    // Update the X register in the address-read SM with the new SRAM region
+    // base.  This delays the SM by a single cycle but is an atomic switch.
     APIO_ASM_INIT();
     APIO_SET_BLOCK(BLOCK_ADDR);
     APIO_SET_SM(SM_ADDR_READ);
     APIO_TXF = rom_table_high_bits;
     APIO_SM_EXEC_INSTR(APIO_PULL_BLOCK);
-
-    // This is the point at which the SRAM region switch takes effect.
     APIO_SM_EXEC_INSTR(APIO_MOV_X_OSR);
-
+ 
     return ORA_RESULT_OK;
+}
+
+uint8_t pio_get_active_ram_slot(void) {
+    return RUNTIME->rom_slot_index;
 }
 
 #endif // REAL_HARDWARE

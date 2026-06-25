@@ -289,6 +289,12 @@ typedef enum {
      */
     ORA_ID_YIELD                = 0x00000029,
 
+    /** 
+     * @brief Read a logical region of a RAM ROM slot into a buffer.
+     * @sa ora_read_ram_rom_slot_fn_t
+     */
+    ORA_ID_READ_RAM_ROM_SLOT         = 0x0000002A,
+
     /** Invalid API identifier */
     ORA_ID_INVALID = 0xFFFFFFFF,
 } api_id_t;
@@ -1516,6 +1522,62 @@ typedef ora_result_t (*ora_exit_exclusive_mode_fn_t)(void);
  * @return ORA_RESULT_OK on success, whether or not a pause occurred
  */
 typedef ora_result_t (*ora_yield_fn_t)(uint8_t *was_paused_out);
+
+
+/**
+ * @brief Read a logical region of a RAM ROM slot into a buffer.
+ *
+ * Reads @p len logical bytes starting at @p offset from the RAM slot
+ * identified by @p slot, reversing the address and data pin mappings
+ * applied by the pre-processor when the ROM image was built.  This
+ * function is the symmetric counterpart to
+ * @ref ora_reprogram_ram_rom_slot_fn_t.
+ *
+ * Unlike @ref ora_reprogram_ram_rom_slot_fn_t, there is no @c allow_active
+ * flag: reads from the active slot are always permitted.  The DMA engine
+ * and a concurrent read race in the same way a write does, so the caller
+ * is responsible for any consistency requirements (for example, quiescing
+ * host accesses before reading back a region that has just been written).
+ *
+ * Address and data mappings are derived from the current slot's pin map and
+ * algorithm configuration in the same way as
+ * @ref ora_reprogram_ram_rom_slot_fn_t.  Logical offsets and byte values
+ * correspond to the chip-visible address space and data values, with all
+ * GPIO address scrambling and data pin permutation reversed.
+ *
+ * @param[in]  slot    RAM slot index (0-based) to read from.  Must
+ *                     identify a slot that has been allocated via the
+ *                     firmware slot management API.
+ * @param[in]  offset  Logical byte offset within the slot, in the range
+ *                     [0, chip_size).  @c chip_size is the size of the
+ *                     ROM image in logical bytes as reported by the slot
+ *                     metadata.
+ * @param[out] buf     Caller-supplied buffer to receive the logical bytes.
+ *                     Must be at least @p len bytes long and must not be
+ *                     @c NULL.
+ * @param[in]  len     Number of logical bytes to read.  Must be greater
+ *                     than zero and must satisfy @p offset + @p len <=
+ *                     chip_size.
+ *
+ * @retval ORA_RESULT_OK           All @p len bytes were read successfully
+ *                                  and @p buf has been filled with the
+ *                                  logical values.
+ * @retval ORA_RESULT_INVALID_ARG  @p buf is @c NULL, @p len is zero, or
+ *                                  @p offset + @p len exceeds the slot's
+ *                                  chip_size.
+ * @retval ORA_RESULT_NOT_FOUND    @p slot is out of range or has not been
+ *                                  allocated.
+ *
+ * @sa ORA_ID_READ_RAM_ROM_SLOT
+ * @sa ora_reprogram_ram_rom_slot_fn_t
+ * @sa ORA_ID_REPROGRAM_RAM_ROM_SLOT
+ */
+typedef ora_result_t (*ora_read_ram_rom_slot_fn_t)(
+    uint8_t   slot,
+    uint32_t  offset,
+    uint8_t  *buf,
+    uint32_t  len
+);
 
 /** @} */ // plugin_api_functions
 

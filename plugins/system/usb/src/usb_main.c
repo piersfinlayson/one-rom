@@ -148,11 +148,12 @@ void usb_init(ora_lookup_fn_t ora_lookup_fn) {
     ora_setup_usb_fn_t setup_usb = ora_lookup_fn(ORA_ID_SETUP_USB);
     ora_enable_irq_fn_t enable_irq = ora_lookup_fn(ORA_ID_ENABLE_IRQ);
     ora_get_clkref_mhz_fn_t get_clkref_mhz = ora_lookup_fn(ORA_ID_GET_CLKREF_MHZ);
-    ora_get_firmware_info_fn_t get_firmware_info = ora_lookup_fn(ORA_ID_GET_FIRMWARE_INFO);
     ora_get_runtime_info_fn_t get_runtime_info = ora_lookup_fn(ORA_ID_GET_RUNTIME_INFO);
-    context.get_chip_size_from_type = ora_lookup_fn(ORA_ID_GET_CHIP_SIZE_FROM_TYPE);
     context.set_status_led = ora_lookup_fn(ORA_ID_SET_STATUS_LED);
-
+    context.get_active_ram_slot = ora_lookup_fn(ORA_ID_GET_ACTIVE_RAM_SLOT);
+    context.get_ram_slot_info = ora_lookup_fn(ORA_ID_GET_RAM_SLOT_INFO);
+    context.read_ram_rom_slot = ora_lookup_fn(ORA_ID_READ_RAM_ROM_SLOT);
+    context.reprogram_ram_rom_slot = ora_lookup_fn(ORA_ID_REPROGRAM_RAM_ROM_SLOT);
     // Can't log until we have the log functions
     DEBUG("USB plugin started");
 
@@ -163,13 +164,6 @@ void usb_init(ora_lookup_fn_t ora_lookup_fn) {
         ERR("Runtime info function not available");
         context.runtime = NULL;
     }
-    if (get_firmware_info != NULL) {
-        context.firmware = get_firmware_info();
-    } else {
-        ERR("Firmware info function not available");
-        context.firmware = NULL;
-    }
-    context.active_rom_set = app_get_active_rom_set(&context);
 
     // Set up USB.  tinyusb will register its own IRQ handler, using the API
     // functions we provide.
