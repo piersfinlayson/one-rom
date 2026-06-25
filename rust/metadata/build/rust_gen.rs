@@ -612,6 +612,13 @@ fn push_enums(out: &mut String, schema: &Schema) {
 }
 
 fn push_enum(out: &mut String, e: &Enum) {
+    // Enums sourced from external data (e.g. chip-types.json) do not generate
+    // a Rust type.  The C generator handles those; consumers use the relevant
+    // crate's API directly (e.g. ChipType::try_from_rbcp_u8() from onerom_config).
+    if e.source.is_some() {
+        return;
+    }
+
     let tn = rust_type_name(&e.name);
     let strip = e.strip_prefix.as_deref().unwrap_or("");
     // u8 for size<=1, u16 for size==2.

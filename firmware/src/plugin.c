@@ -250,7 +250,7 @@ uint32_t ora_get_clkref_mhz(void) {
 
 uint32_t ora_get_chip_size_from_type(uint32_t chip_type) {
     if (chip_type < NUM_CHIP_TYPES) {
-        return chip_size_from_type[chip_type];
+        return onerom_chip_type_sizes[chip_type];
     }
     return 0u;
 }

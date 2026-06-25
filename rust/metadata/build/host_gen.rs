@@ -253,6 +253,12 @@ fn push_host_gen_context(out: &mut String, schema: &Schema) {
 // integer).  Tagged FAM *discriminants* don't use this — the discriminant's
 // C name is known statically from the schema (`variant.discriminant`) and
 // is emitted directly.
+//
+// Enums with `source` set (e.g. onerom_rom_type_t, which is generated from
+// chip-types.json) have no corresponding Rust enum type, so no c_name() impl
+// is emitted for them.  Any struct field of that enum kind should instead be
+// declared as `kind = "scalar", type = "u8"` in the schema so that
+// host_define_fields emits it as a plain integer rather than calling c_name().
 
 fn push_enum_c_name_impls(out: &mut String, schema: &Schema) {
     if schema.enums.is_empty() {
@@ -264,6 +270,12 @@ fn push_enum_c_name_impls(out: &mut String, schema: &Schema) {
          // ---------------------------------------------------------------------------\n\n",
     );
     for e in &schema.enums {
+        // Enums sourced from external data have no corresponding Rust enum type;
+        // skip c_name() generation for them.
+        if e.source.is_some() {
+            continue;
+        }
+
         let tn = rust_type_name(&e.name);
         let strip = e.strip_prefix.as_deref().unwrap_or("");
         out.push_str(&format!("impl {tn} {{\n"));

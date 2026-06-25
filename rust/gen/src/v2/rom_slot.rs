@@ -192,7 +192,7 @@ mod tests {
 
     use onerom_metadata::{
         GPIO_NONE, MAX_ADDR_PINS, MAX_DATA_PINS, OneromAlgAddrConfig, OneromAlgConfig,
-        OneromAlgCsConfig, OneromAlgDataConfig, OneromRomInfo, OneromRomPinMap, OneromRomType,
+        OneromAlgCsConfig, OneromAlgDataConfig, OneromRomInfo, OneromRomPinMap,
         Pointer, RomSlotType,
     };
 
@@ -289,7 +289,7 @@ mod tests {
                     data: expected_data,
                 }),
                 chip_size: ChipType::Chip2364.size_bytes() as u32,
-                rom_type_enum: OneromRomType::ChipType2364,
+                rom_type_enum: ChipType::Chip2364 as u8,
             }]
         );
 

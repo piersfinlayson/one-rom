@@ -397,7 +397,7 @@ static void get_x_pins(
     x_pins_out[0] = HW->gpio_x1;
     x_pins_out[1] = HW->gpio_x2;
 #else
-    x_pins_out[0] = 255l;
+    x_pins_out[0] = 255;
     x_pins_out[1] = 255;
 #endif
 

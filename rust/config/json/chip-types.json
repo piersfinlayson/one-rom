@@ -3,6 +3,7 @@
         "SystemPlugin": {
             "description": "One ROM System Plugin",
             "function": "Plugin",
+            "rbcp_chip_type": 22,
             "bit_modes": [],
             "pins": 0,
             "size": 65536,
@@ -14,6 +15,7 @@
         "UserPlugin": {
             "description": "One ROM User Plugin",
             "function": "Plugin",
+            "rbcp_chip_type": 23,
             "bit_modes": [],
             "pins": 0,
             "size": 65536,
@@ -25,6 +27,7 @@
         "PioPlugin": {
             "description": "One ROM PIO Plugin",
             "function": "Plugin",
+            "rbcp_chip_type": 24,
             "bit_modes": [],
             "pins": 0,
             "size": 65536,
@@ -35,6 +38,7 @@
         "2316": {
             "description": "2KB mask ROM with 3 configurable CS lines",
             "function": "ROM",
+            "rbcp_chip_type": 0,
             "supported": "0.4.4",
             "aliases": [
                 "9316"
@@ -95,6 +99,7 @@
         "2332": {
             "description": "4KB mask ROM with 2 configurable CS lines",
             "function": "ROM",
+            "rbcp_chip_type": 1,
             "supported": "0.4.4",
             "aliases": [
                 "9332",
@@ -153,6 +158,7 @@
         "2364": {
             "description": "8KB mask ROM with 1 configurable CS line",
             "function": "ROM",
+            "rbcp_chip_type": 2,
             "supported": "0.4.4",
             "aliases": [
                 "4764",
@@ -212,6 +218,7 @@
         "23128": {
             "description": "16KB mask ROM with 3 configurable CS lines",
             "function": "ROM",
+            "rbcp_chip_type": 3,
             "supported": "0.5.8",
             "bit_modes": [8],
             "pins": 28,
@@ -272,6 +279,7 @@
         "23256": {
             "description": "32KB mask ROM with 2 configurable CS lines",
             "function": "ROM",
+            "rbcp_chip_type": 4,
             "supported": "0.5.8",
             "bit_modes": [8],
             "pins": 28,
@@ -329,6 +337,7 @@
         "23QL384": {
             "description": "A composite ROM type, serving a combined 23256 and 23128 for the Sinclair QL, with a single configured CS line and is de-selected when A14 & A15 are both high",
             "function": "ROM",
+            "rbcp_chip_type": 31,
             "supported": "0.6.12",
             "bit_modes": [8],
             "pins": 28,
@@ -384,6 +393,7 @@
         "23QL512": {
             "description": "A composite ROM type, serving two combined 23256s for the Sinclair QL, with a single configured CS line at pin 22, and A15 at pin 20 instead of pin 1",
             "function": "ROM",
+            "rbcp_chip_type": 30,
             "supported": "0.6.11",
             "bit_modes": [8],
             "pins": 28,
@@ -438,6 +448,7 @@
         "23512": {
             "description": "64KB mask ROM with 2 configurable CS lines",
             "function": "ROM",
+            "rbcp_chip_type": 5,
             "supported": "0.5.8",
             "bit_modes": [8],
             "pins": 28,
@@ -496,6 +507,7 @@
         "231024": {
             "description": "128KB mask ROM with 1 configurable CS line",
             "function": "ROM",
+            "rbcp_chip_type": 14,
             "supported": "0.6.4",
             "aliases": [
                 "TC531000",
@@ -557,6 +569,8 @@
         "23C1010": {
             "description": "128KB mask ROM with fixed active-low CE/OE",
             "function": "ROM",
+            "rbcp_chip_type": 15,
+            "rbcp_alias": true,
             "supported": "0.6.13",
             "aliases": [],
             "bit_modes": [8],
@@ -617,6 +631,7 @@
         "2704": {
             "description": "512B EPROM with multiple supply voltages",
             "function": "ROM",
+            "rbcp_chip_type": 6,
             "supported": "0.6.6",
             "bit_modes": [8],
             "pins": 24,
@@ -693,6 +708,7 @@
         "2708": {
             "description": "1KB EPROM with multiple supply voltages",
             "function": "ROM",
+            "rbcp_chip_type": 7,
             "supported": "0.6.6",
             "bit_modes": [8],
             "pins": 24,
@@ -765,6 +781,7 @@
         "2716": {
             "description": "2KB EPROM with fixed active-low CE/OE",
             "function": "ROM",
+            "rbcp_chip_type": 8,
             "supported": "0.5.6",
             "bit_modes": [8],
             "pins": 24,
@@ -828,6 +845,7 @@
         "2732": {
             "description": "4KB EPROM with fixed active-low CE and shared OE/VPP",
             "function": "ROM",
+            "rbcp_chip_type": 9,
             "supported": "0.5.6",
             "aliases": [
                 "27C32"
@@ -895,6 +913,7 @@
         "2764": {
             "description": "8KB EPROM with fixed active-low CE/OE",
             "function": "ROM",
+            "rbcp_chip_type": 10,
             "supported": "0.5.8",
             "aliases": [
                 "27C64",
@@ -964,6 +983,7 @@
         "27128": {
             "description": "16KB EPROM with fixed active-low CE/OE",
             "function": "ROM",
+            "rbcp_chip_type": 11,
             "supported": "0.5.8",
             "aliases": [
                 "27C128",
@@ -1034,6 +1054,7 @@
         "27256": {
             "description": "32KB EPROM with fixed active-low CE/OE",
             "function": "ROM",
+            "rbcp_chip_type": 12,
             "supported": "0.5.8",
             "aliases": [
                 "27C256",
@@ -1106,6 +1127,7 @@
         "27512": {
             "description": "64KB EPROM with fixed active-low CE/OE",
             "function": "ROM",
+            "rbcp_chip_type": 13,
             "supported": "0.5.8",
             "aliases": [
                 "27C512",
@@ -1179,6 +1201,7 @@
         "27C301": {
             "description": "128KB EPROM with fixed active-low CE/OE",
             "function": "ROM",
+            "rbcp_chip_type": 21,
             "supported": "0.6.6",
             "aliases": [
                 "27C1000",
@@ -1252,6 +1275,7 @@
         "23C1001": {
             "description": "128KB mask programmed ROM with fixed active-low CE/OE, plus 2 programmable CS lines",
             "function": "ROM",
+            "rbcp_chip_type": 32,
             "supported": "0.7.0",
             "allow_mixed_control": true,
             "aliases": [
@@ -1325,6 +1349,7 @@
         "27C010": {
             "description": "128KB EPROM with fixed active-low CE/OE",
             "function": "ROM",
+            "rbcp_chip_type": 15,
             "supported": "0.6.6",
             "aliases": [
                 "27C1001",
@@ -1401,6 +1426,7 @@
         "27C020": {
             "description": "256KB EPROM with fixed active-low CE/OE",
             "function": "ROM",
+            "rbcp_chip_type": 16,
             "supported": "0.6.6",
             "aliases": [
                 "27C2001",
@@ -1477,6 +1503,7 @@
         "27C040": {
             "description": "512KB EPROM with fixed active-low CE/OE",
             "function": "ROM",
+            "rbcp_chip_type": 17,
             "supported": "0.6.6",
             "aliases": [
                 "27C4001"
@@ -1550,8 +1577,9 @@
         },
         "SST39SF040": {
             "description": "512KB flash with fixed active-low CE/OE and different pinout to 27C040",
-            "supported": "0.6.13",
             "function": "ROM",
+            "rbcp_chip_type": 25,
+            "supported": "0.6.13",
             "aliases": [
                 "39SF040",
                 "29F040"
@@ -1623,6 +1651,7 @@
             "description": "1MB EPROM with fixed active-low CE/OE",
             "notes": "One ROM canot serve an entire 27C080, as it is a 1MB ROM.  However it can be programmed as a 27C080 with CS1 indicating which half of the ROM to serve, which is pin A19.  Two 32 pin One ROMs can be stacked with different CS1 configuration, and each with half a 27C080 image, to serve the entire 1MB ROM",
             "function": "ROM",
+            "rbcp_chip_type": 18,
             "supported": "0.6.8",
             "aliases": [
                 "27C801"
@@ -1695,10 +1724,11 @@
                 }
             ]
         },
-        "27C200" : {
+        "27C200": {
             "description": "0.25MB mask programmed EPROM with fixed active-low CE/OE",
             "notes": "It's unclear whether 27C200 was ever used as a moniker for this ROM type, but I'm assuming it was.",
             "function": "ROM",
+            "rbcp_chip_type": 33,
             "supported": "0.6.13",
             "aliases": [
                 "HN62402"
@@ -1776,9 +1806,10 @@
                 }
             ]
         },
-        "27C400" : {
+        "27C400": {
             "description": "0.5MB EPROM with fixed active-low CE/OE",
             "function": "ROM",
+            "rbcp_chip_type": 19,
             "supported": "0.6.5",
             "aliases": [
                 "AT27C400",
@@ -1879,6 +1910,7 @@
         "28C16": {
             "description": "2KB EEPROM with fixed active-low CE/OE",
             "function": "ROM",
+            "rbcp_chip_type": 26,
             "supported": "0.6.8",
             "aliases": [],
             "bit_modes": [8],
@@ -1937,6 +1969,7 @@
         "28C64": {
             "description": "8KB EEPROM with fixed active-low CE/OE",
             "function": "ROM",
+            "rbcp_chip_type": 27,
             "supported": "0.6.8",
             "aliases": [],
             "bit_modes": [8],
@@ -2001,6 +2034,7 @@
         "28C256": {
             "description": "32KB EEPROM with fixed active-low CE/OE",
             "function": "ROM",
+            "rbcp_chip_type": 28,
             "supported": "0.6.8",
             "aliases": [],
             "bit_modes": [8],
@@ -2063,6 +2097,7 @@
         "28C512": {
             "description": "64KB EEPROM with fixed active-low CE/OE",
             "function": "ROM",
+            "rbcp_chip_type": 29,
             "supported": "0.6.8",
             "aliases": [],
             "bit_modes": [8],
@@ -2126,6 +2161,7 @@
         "6116": {
             "description": "2KB (2048 x 8-bit) Static RAM with fixed active-low CE/OE/WE",
             "function": "RAM",
+            "rbcp_chip_type": 20,
             "supported": "0.6.2",
             "aliases": [
                 "2016"

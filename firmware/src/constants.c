@@ -32,42 +32,7 @@ const char oscillator[] = "Oscillator";
 const char * const port_names[] = {"NONE", "A", "B", "C", "D", "0"};
 const char * const cs_values[] = {"Active Low", "Active High", "-"};
 #endif // BOOT_LOGGING
-const uint32_t chip_size_from_type[NUM_CHIP_TYPES] = {
-    2048,   // CHIP_TYPE_2316
-    4096,   // CHIP_TYPE_2332
-    8192,   // CHIP_TYPE_2364
-    16384,  // CHIP_TYPE_23128
-    32768,  // CHIP_TYPE_23256
-    65536,  // CHIP_TYPE_23512
-    512,    // CHIP_TYPE_2704
-    1024,   // CHIP_TYPE_2708
-    2048,   // CHIP_TYPE_2716
-    4096,   // CHIP_TYPE_2732
-    8192,   // CHIP_TYPE_2764
-    16384,  // CHIP_TYPE_27128
-    32768,  // CHIP_TYPE_27256
-    65536,  // CHIP_TYPE_27512
-    131072, // CHIP_TYPE_231024
-    131072, // CHIP_TYPE_27C010
-    262144, // CHIP_TYPE_27C020
-    524288, // CHIP_TYPE_27C040
-    1048576,// CHIP_TYPE_27C080
-    524288, // CHIP_TYPE_27C400
-    2048,   // CHIP_TYPE_6116
-    131072, // CHIP_TYPE_27C301
-    65536,  // CHIP_TYPE_SYSTEM_PLUGIN
-    65536,  // CHIP_TYPE_USER_PLUGIN
-    65536,  // CHIP_TYPE_PIO_PLUGIN
-    524288, // CHIP_TYPE_SST39SF040
-    2048,   // CHIP_TYPE_28C16
-    8192,   // CHIP_TYPE_28C64
-    32768,  // CHIP_TYPE_28C256
-    65536,  // CHIP_TYPE_28C512
-    65536,  // CHIP_TYPE_23QL512
-    49152,  // CHIP_TYPE_23QL384
-    131072, // CHIP_TYPE_23C1001
-    262144, // CHIP_TYPE_27C200
-};
+
 #define STRINGIFY(x) #x
 #define TOSTRING(x) STRINGIFY(x)
 #define ONEROM_VERSION_STRING \

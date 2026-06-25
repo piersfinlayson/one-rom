@@ -91,6 +91,13 @@ pub struct Enum {
     pub comment: Option<String>,
     /// Common C name prefix to strip when deriving Rust variant names.
     pub strip_prefix: Option<String>,
+    /// When set to "rbcp_chip_types", enum variants are generated from
+    /// `onerom_config::chip::CHIP_TYPES` rather than being listed here.
+    /// c_gen.rs handles the generation using `ChipType` methods directly
+    /// (`rbcp_chip_type()`, `c_enum_name()`, `size_bytes()`, `try_from_rbcp_u8()`);
+    /// rust_gen.rs and host_gen.rs skip this enum entirely (no Rust type is
+    /// emitted).
+    pub source: Option<String>,
     #[serde(default)]
     pub variants: Vec<EnumVariant>,
     /// Same-value name aliases (C: #define; Rust: const).

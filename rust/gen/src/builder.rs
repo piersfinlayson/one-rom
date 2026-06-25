@@ -15,7 +15,6 @@ use onerom_metadata::{
 use crate::v2::firmware_config::{build_firmware_config, build_firmware_overrides};
 use crate::v2::hardware_info::build_hardware_info;
 use crate::v2::rom_image::build_rom_image;
-use crate::v2::rom_info::chip_type_to_onerom_rom_type;
 use crate::v2::rom_slot::build_rom_slot;
 use crate::{
     Chip, ChipConfig, ChipSet, ChipSetType, Config, CsConfig, CsLogic, Error, FileData, FileSpec,
@@ -360,7 +359,7 @@ impl Builder {
                         filename: Some(chip.filename().to_string()),
                         pin_map: None,
                         chip_size: chip.chip_type().size_bytes() as u32,
-                        rom_type_enum: chip_type_to_onerom_rom_type(*chip.chip_type()),
+                        rom_type_enum: *chip.chip_type() as u8,
                     }],
                     rom_count: 1,
                     slot_type,

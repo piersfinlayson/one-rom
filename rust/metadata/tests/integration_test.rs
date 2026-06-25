@@ -10,6 +10,7 @@
 // Copyright (C) 2026 Piers Finlayson <piers@piers.rocks>
 // MIT License
 
+use onerom_config::chip::ChipType;
 use onerom_config::mcu::{RP235X_BASE_FLASH, RP235X_BASE_SRAM, RP235X_END_SRAM};
 use onerom_metadata::{
     BitModes, CURRENT_METADATA_VERSION, DeviceMemoryView, FireVreg, GPIO_NONE, OneromAlgAddrConfig,
@@ -45,10 +46,14 @@ fn default_pin_map() -> Option<OneromRomPinMap> {
 }
 
 fn make_rom_info(rom_type: &str) -> OneromRomInfo {
+    let chip = ChipType::try_from_str(rom_type)
+        .unwrap_or_else(|| panic!("unknown chip type: {rom_type}"));
     OneromRomInfo {
         rom_type: rom_type.into(),
         filename: None,
         pin_map: default_pin_map(),
+        chip_size: chip.size_bytes() as u32,
+        rom_type_enum: chip.rbcp_chip_type(),
     }
 }
 
@@ -112,10 +117,13 @@ fn minimal_header() -> OneromMetadataHeader {
         addr: [GPIO_NONE; 24],
         data: [GPIO_NONE; 16],
     };
+    let chip_2364 = ChipType::Chip2364;
     let rom_info = OneromRomInfo {
         rom_type: "2364".into(),
         filename: None,
         pin_map: Some(pin_map),
+        chip_size: chip_2364.size_bytes() as u32,
+        rom_type_enum: chip_2364.rbcp_chip_type(),
     };
     let alg = OneromAlgConfig {
         alg_cs: OneromAlgCsConfig::AlgCs0 {
@@ -179,6 +187,8 @@ fn minimal_header() -> OneromMetadataHeader {
         gpio_sel: [GPIO_NONE; 7],
         sel_jumper_pull: 0,
         gpio_from_phys_pin: [[GPIO_NONE; 2]; 40],
+        gpio_x1: [GPIO_NONE; 2],
+        gpio_x2: [GPIO_NONE; 2],
     };
     let fw = OneromFirmwareConfig {
         name: None,
@@ -266,10 +276,13 @@ fn round_trip_optional_fields() {
         name: Some("MyUnit".into()),
         serial_number: Some("SN-0042".into()),
     };
+    let chip_2364 = ChipType::Chip2364;
     let rom = OneromRomInfo {
         rom_type: "2364".into(),
         filename: Some("basic.rom".into()),
         pin_map: default_pin_map(),
+        chip_size: chip_2364.size_bytes() as u32,
+        rom_type_enum: chip_2364.rbcp_chip_type(),
     };
     let fw_overrides = OneromFirmwareOverrides {
         // Byte 0 bit 2 = fire-freq override present.

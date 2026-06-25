@@ -79,6 +79,19 @@ pub struct ChipType {
     pub supported: Option<String>,
     pub aliases: Option<Vec<String>>,
     pub function: ChipFunction,
+
+    /// RBCP wire protocol chip type value.  Must match the corresponding
+    /// `onerom_rom_type_t` enum variant in the firmware metadata schema.
+    pub rbcp_chip_type: u8,
+
+    /// If true, this chip type shares its rbcp_chip_type value with another
+    /// chip type of which it is an electrical alias.  Alias chips participate
+    /// in rbcp_chip_type() (forward lookup) but are excluded from
+    /// try_from_rbcp_u8() (reverse lookup) so that the canonical chip type
+    /// is always returned.
+    #[serde(default)]
+    pub rbcp_alias: bool,
+
     pub bit_modes: Vec<u8>,
     pub pins: u8,
 
@@ -149,6 +162,12 @@ pub enum ValidationError {
     UnknownControlLine {
         chip_type: String,
         line_name: String,
+    },
+    /// Two non-alias chip types share the same rbcp_chip_type value.
+    DuplicateRbcpChipType {
+        chip_type_a: String,
+        chip_type_b: String,
+        value: u8,
     },
 }
 
@@ -242,6 +261,18 @@ impl fmt::Display for ValidationError {
                     chip_type, line_name
                 )
             }
+            ValidationError::DuplicateRbcpChipType {
+                chip_type_a,
+                chip_type_b,
+                value,
+            } => {
+                write!(
+                    f,
+                    "ROM types '{}' and '{}' share rbcp_chip_type value {} (0x{:02X}); \
+                     mark one as 'rbcp_alias: true' if they are electrically equivalent",
+                    chip_type_a, chip_type_b, value, value
+                )
+            }
         }
     }
 }
@@ -262,6 +293,24 @@ impl ChipTypesConfig {
         for (type_name, chip_type) in &self.chip_types {
             chip_type.validate(type_name)?;
         }
+
+        // Global uniqueness check: no two non-alias chips may share an rbcp_chip_type value.
+        // BTreeMap iteration is alphabetical, giving deterministic error messages.
+        let mut seen: BTreeMap<u8, &str> = BTreeMap::new();
+        for (type_name, chip_type) in &self.chip_types {
+            if chip_type.rbcp_alias {
+                continue;
+            }
+            if let Some(existing) = seen.get(&chip_type.rbcp_chip_type) {
+                return Err(ValidationError::DuplicateRbcpChipType {
+                    chip_type_a: existing.to_string(),
+                    chip_type_b: type_name.to_string(),
+                    value: chip_type.rbcp_chip_type,
+                });
+            }
+            seen.insert(chip_type.rbcp_chip_type, type_name);
+        }
+
         Ok(())
     }
 }

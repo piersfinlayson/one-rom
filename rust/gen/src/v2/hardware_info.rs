@@ -66,12 +66,12 @@ pub fn build_hardware_info(board: Board) -> OneromHardwareInfo {
     // x1[0]/x1[1]: GPIOs for X1 expansion pin. x1[0] is GPIO_NONE if X1 is
     // absent; x1[1] is GPIO_NONE if X1 connects to only one GPIO.
     // Likewise for x2.
-    let mut x1 = [GPIO_NONE; MAX_X_PIN_GPIOS];
-    let mut x2 = [GPIO_NONE; MAX_X_PIN_GPIOS];
+    let mut gpio_x1 = [GPIO_NONE; MAX_X_PIN_GPIOS];
+    let mut gpio_x2 = [GPIO_NONE; MAX_X_PIN_GPIOS];
     for &(x_pin, gpios) in board.x_pin_map() {
         let target = match x_pin {
-            1 => &mut x1,
-            2 => &mut x2,
+            1 => &mut gpio_x1,
+            2 => &mut gpio_x2,
             _ => continue,
         };
         for (j, &gpio) in gpios.iter().enumerate().take(MAX_X_PIN_GPIOS) {
@@ -93,8 +93,8 @@ pub fn build_hardware_info(board: Board) -> OneromHardwareInfo {
         gpio_sel,
         sel_jumper_pull,
         gpio_from_phys_pin,
-        x1,
-        x2,
+        gpio_x1,
+        gpio_x2,
     }
 }
 
@@ -135,8 +135,8 @@ mod tests {
         assert_eq!(hw.sel_jumper_pull, 0b000);
 
         // X1 → GPIO9 only; X2 → GPIO8 only.
-        assert_eq!(hw.x1, [9, GPIO_NONE]);
-        assert_eq!(hw.x2, [8, GPIO_NONE]);
+        assert_eq!(hw.gpio_x1, [9, GPIO_NONE]);
+        assert_eq!(hw.gpio_x2, [8, GPIO_NONE]);
 
         // gpio_from_phys_pin, from Fire24A's socket_pin_map(): pins 1-11,
         // 13-23 each map to a single GPIO; pins 12 and 24 (non-signal) and
@@ -194,15 +194,15 @@ mod tests {
     #[test]
     fn fire28c_x_pins() {
         let hw = build_hardware_info(Board::Fire28C);
-        assert_eq!(hw.x1, [9, 28]);
-        assert_eq!(hw.x2, [8, 29]);
+        assert_eq!(hw.gpio_x1, [9, 28]);
+        assert_eq!(hw.gpio_x2, [8, 29]);
     }
 
     /// Fire28A: no X pins.
     #[test]
     fn fire28a_no_x_pins() {
         let hw = build_hardware_info(Board::Fire28A);
-        assert_eq!(hw.x1, [GPIO_NONE, GPIO_NONE]);
-        assert_eq!(hw.x2, [GPIO_NONE, GPIO_NONE]);
+        assert_eq!(hw.gpio_x1, [GPIO_NONE, GPIO_NONE]);
+        assert_eq!(hw.gpio_x2, [GPIO_NONE, GPIO_NONE]);
     }
 }

@@ -217,6 +217,9 @@ Special values: FIRE_FREQ_STOCK, FIRE_FREQ_NONE."""
 # 'size'         - byte size, verified by STATIC_ASSERT or __attribute__((packed))
 # 'packed'       - true if __attribute__((packed)) is required in C
 # 'strip_prefix' - common prefix to remove when deriving Rust variant names
+# 'source'       - when set to "rbcp_chip_types", enum variants are generated
+#                  from hw-config/chip-types.json rather than listed here;
+#                  see build/c_gen.rs for the generation contract
 # Variant flags:
 #   sentinel = true  - generates as a pub const, not a Rust enum variant
 #   alias_for        - generates as a constant alias for another variant
@@ -226,193 +229,16 @@ name = "onerom_rom_type_t"
 size = 1
 comment = "ROM/EPROM/EEPROM chip type"
 strip_prefix = "CHIP_TYPE_"
-
-[[enums.variants]]
-name = "CHIP_TYPE_2316"
-value = 0
-comment = "Mask ROM, 2KB"
-
-[[enums.variants]]
-name = "CHIP_TYPE_2332"
-value = 1
-comment = "Mask ROM, 4KB"
-
-[[enums.variants]]
-name = "CHIP_TYPE_2364"
-value = 2
-comment = "Mask ROM, 8KB"
-
-[[enums.variants]]
-name = "CHIP_TYPE_23128"
-value = 3
-comment = "Mask ROM, 16KB"
-
-[[enums.variants]]
-name = "CHIP_TYPE_23256"
-value = 4
-comment = "Mask ROM, 32KB"
-
-[[enums.variants]]
-name = "CHIP_TYPE_23512"
-value = 5
-comment = "Mask ROM, 64KB"
-
-[[enums.variants]]
-name = "CHIP_TYPE_2704"
-value = 6
-comment = "EPROM, 512B"
-
-[[enums.variants]]
-name = "CHIP_TYPE_2708"
-value = 7
-comment = "EPROM, 1KB"
-
-[[enums.variants]]
-name = "CHIP_TYPE_2716"
-value = 8
-comment = "EPROM, 2KB"
-
-[[enums.variants]]
-name = "CHIP_TYPE_2732"
-value = 9
-comment = "EPROM, 4KB"
-
-[[enums.variants]]
-name = "CHIP_TYPE_2764"
-value = 10
-comment = "EPROM, 8KB"
-
-[[enums.variants]]
-name = "CHIP_TYPE_27128"
-value = 11
-comment = "EPROM, 16KB"
-
-[[enums.variants]]
-name = "CHIP_TYPE_27256"
-value = 12
-comment = "EPROM, 32KB"
-
-[[enums.variants]]
-name = "CHIP_TYPE_27512"
-value = 13
-comment = "EPROM, 64KB"
-
-[[enums.variants]]
-name = "CHIP_TYPE_231024"
-value = 14
-comment = "Mask ROM, 128KB"
-
-[[enums.variants]]
-name = "CHIP_TYPE_27C010"
-value = 15
-comment = "EPROM, 128KB (also 23C1010)"
-
-[[enums.variants]]
-name = "CHIP_TYPE_27C020"
-value = 16
-comment = "EPROM, 256KB"
-
-[[enums.variants]]
-name = "CHIP_TYPE_27C040"
-value = 17
-comment = "EPROM, 512KB"
-
-[[enums.variants]]
-name = "CHIP_TYPE_27C080"
-value = 18
-comment = "EPROM, 1MB"
-
-[[enums.variants]]
-name = "CHIP_TYPE_27C400"
-value = 19
-comment = "EPROM"
-
-[[enums.variants]]
-name = "CHIP_TYPE_6116"
-value = 20
-comment = "SRAM, 2KB"
-
-[[enums.variants]]
-name = "CHIP_TYPE_27C301"
-value = 21
-comment = "EPROM"
-
-[[enums.variants]]
-name = "CHIP_TYPE_SYSTEM_PLUGIN"
-value = 22
-comment = "System plugin ROM slot"
-
-[[enums.variants]]
-name = "CHIP_TYPE_USER_PLUGIN"
-value = 23
-comment = "User plugin ROM slot"
-
-[[enums.variants]]
-name = "CHIP_TYPE_PIO_PLUGIN"
-value = 24
-comment = "PIO plugin ROM slot"
-
-[[enums.variants]]
-name = "CHIP_TYPE_SST39SF040"
-value = 25
-display = "SST39SF040"
-comment = "Flash, 512KB"
-
-[[enums.variants]]
-name = "CHIP_TYPE_28C16"
-value = 26
-comment = "EEPROM, 2KB"
-
-[[enums.variants]]
-name = "CHIP_TYPE_28C64"
-value = 27
-comment = "EEPROM, 8KB"
-
-[[enums.variants]]
-name = "CHIP_TYPE_28C256"
-value = 28
-comment = "EEPROM, 32KB"
-
-[[enums.variants]]
-name = "CHIP_TYPE_28C512"
-value = 29
-comment = "EEPROM, 64KB"
-
-[[enums.variants]]
-name = "CHIP_TYPE_23QL512"
-value = 30
-comment = "Sinclair QL combined mask ROM, 64KB address space"
-
-[[enums.variants]]
-name = "CHIP_TYPE_23QL384"
-value = 31
-comment = "Sinclair QL combined mask ROM, 48KB ($0000-$BFFF)"
-
-[[enums.variants]]
-name = "CHIP_TYPE_23C1001"
-value = 32
-comment = "Mask ROM"
-
-[[enums.variants]]
-name = "CHIP_TYPE_27C200"
-value = 33
-comment = "EPROM"
-
-[[enums.variants]]
-name = "NUM_CHIP_TYPES"
-value = 34
-sentinel = true
-comment = "Count of defined chip types. Not a valid chip type."
-
-[[enums.variants]]
-name = "INVALID_CHIP_TYPE"
-value = 0xFF
-comment = "Invalid or unset chip type"
-
-[[enums.aliases]]
-name = "CHIP_TYPE_23C1010"
-target = "CHIP_TYPE_27C010"
-comment = "23C1010 is electrically equivalent to 27C010"
+# source: when set to "rbcp_chip_types", enum variants are generated from
+# hw-config/chip-types.json (via the rbcp_chip_type field on each chip entry)
+# rather than being listed here.  The C generator emits one CHIP_TYPE_<NAME>
+# variant per non-alias chip sorted by rbcp value, appends NUM_CHIP_TYPES and
+# INVALID_CHIP_TYPE sentinels, emits a #define for each alias chip (e.g.
+# CHIP_TYPE_23C1010), and emits the onerom_chip_type_sizes[] array under
+# #if defined(ONEROM_CONSTANTS).
+# No Rust enum is generated for this type; consumers use
+# ChipType::try_from_rbcp_u8() from the onerom_config crate instead.
+source = "rbcp_chip_types"
 
 # ---
 
@@ -1107,7 +933,7 @@ Index = physical_pin_number - 1. GPIO_NONE for unconnected positions.
 Second column allows a physical pin connected to two GPIOs."""
 
 [[structs.fields]]
-name = "x1"
+name = "gpio_x1"
 kind = "inline_array"
 element = "u8"
 count = 2
@@ -1117,7 +943,7 @@ x1[0] is GPIO_NONE if X1 is not present on this board.
 x1[1] is GPIO_NONE if X1 connects to only one GPIO."""
 
 [[structs.fields]]
-name = "x2"
+name = "gpio_x2"
 kind = "inline_array"
 element = "u8"
 count = 2
@@ -1257,12 +1083,12 @@ pin count alone due to gaps and padding in the image layout."""
 
 [[structs.fields]]
 name = "rom_type_enum"
-kind = "enum"
-type = "onerom_rom_type_t"
-comment = """ROM type as enum value. Set by the pre-processor.
+kind = "scalar"
+type = "u8"
+comment = """ROM type as RBCP wire value (onerom_rom_type_t). Set by the pre-processor.
 Canonical stable type identifier for RBCP wire format and other consumers
 that require a compact, unambiguous type token rather than the human-readable
-string. Avoids client-side string-to-enum mapping."""
+string. Use ChipType::try_from_rbcp_u8() from onerom_config to resolve."""
 
 [[structs.fields]]
 name = "reserved"

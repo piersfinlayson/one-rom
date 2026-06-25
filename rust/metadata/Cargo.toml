@@ -20,5 +20,6 @@ onerom-config = { workspace = true }
 hashbrown = { version = "0.17", default-features = false, features = ["default-hasher", "inline-more"] }
 
 [build-dependencies]
+onerom-config = { workspace = true }
 serde = { version = "1", features = ["derive"] }
 toml  = { version = "1.1" }

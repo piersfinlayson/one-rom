@@ -11,7 +11,7 @@ use alloc::string::{String, ToString};
 use onerom_config::chip::ChipType;
 
 use onerom_metadata::{
-    GPIO_NONE, MAX_ADDR_PINS, MAX_DATA_PINS, OneromRomInfo, OneromRomPinMap, OneromRomType,
+    GPIO_NONE, MAX_ADDR_PINS, MAX_DATA_PINS, OneromRomInfo, OneromRomPinMap, 
     RomSlotType,
 };
 
@@ -24,51 +24,6 @@ use super::cs_data_layout::CsDataLayout;
 /// metadata size. Longer names are truncated at a UTF-8 character
 /// boundary.
 pub const MAX_ROM_FILENAME_LEN: usize = 128;
-
-/// Map a `ChipType` to its corresponding `OneromRomType` enum value.
-///
-/// `Chip23C1010` maps to `ChipType27c010` because the two are electrically
-/// equivalent and share the same metadata enum entry (23C1010 is an alias
-/// in the schema).
-pub(crate) fn chip_type_to_onerom_rom_type(ct: ChipType) -> OneromRomType {
-    match ct {
-        ChipType::PioPlugin      => OneromRomType::ChipTypePioPlugin,
-        ChipType::SystemPlugin   => OneromRomType::ChipTypeSystemPlugin,
-        ChipType::UserPlugin     => OneromRomType::ChipTypeUserPlugin,
-        ChipType::Chip2704       => OneromRomType::ChipType2704,
-        ChipType::Chip2708       => OneromRomType::ChipType2708,
-        ChipType::Chip2316       => OneromRomType::ChipType2316,
-        ChipType::Chip2716       => OneromRomType::ChipType2716,
-        ChipType::Chip28C16      => OneromRomType::ChipType28c16,
-        ChipType::Chip6116       => OneromRomType::ChipType6116,
-        ChipType::Chip2332       => OneromRomType::ChipType2332,
-        ChipType::Chip2732       => OneromRomType::ChipType2732,
-        ChipType::Chip2364       => OneromRomType::ChipType2364,
-        ChipType::Chip2764       => OneromRomType::ChipType2764,
-        ChipType::Chip28C64      => OneromRomType::ChipType28c64,
-        ChipType::Chip23128      => OneromRomType::ChipType23128,
-        ChipType::Chip27128      => OneromRomType::ChipType27128,
-        ChipType::Chip23256      => OneromRomType::ChipType23256,
-        ChipType::Chip27256      => OneromRomType::ChipType27256,
-        ChipType::Chip28C256     => OneromRomType::ChipType28c256,
-        ChipType::Chip23QL384    => OneromRomType::ChipType23ql384,
-        ChipType::Chip23512      => OneromRomType::ChipType23512,
-        ChipType::Chip23QL512    => OneromRomType::ChipType23ql512,
-        ChipType::Chip27512      => OneromRomType::ChipType27512,
-        ChipType::Chip231024     => OneromRomType::ChipType231024,
-        ChipType::Chip28C512     => OneromRomType::ChipType28c512,
-        ChipType::Chip23C1001    => OneromRomType::ChipType23c1001,
-        ChipType::Chip23C1010    => OneromRomType::ChipType27c010, // alias: electrically equivalent
-        ChipType::Chip27C010     => OneromRomType::ChipType27c010,
-        ChipType::Chip27C301     => OneromRomType::ChipType27c301,
-        ChipType::Chip27C020     => OneromRomType::ChipType27c020,
-        ChipType::Chip27C040     => OneromRomType::ChipType27c040,
-        ChipType::ChipSST39SF040 => OneromRomType::ChipTypeSst39sf040,
-        ChipType::Chip27C080     => OneromRomType::ChipType27c080,
-        ChipType::Chip27C200     => OneromRomType::ChipType27c200,
-        ChipType::Chip27C400     => OneromRomType::ChipType27c400,
-    }
-}
 
 /// Build `OneromRomPinMap` from the resolved per-line address/data GPIOs.
 ///
@@ -121,7 +76,7 @@ pub fn build_rom_info(
         filename: truncate_filename(chip.filename()),
         pin_map: Some(build_rom_pin_map(addr_layout, cs_data_layout)),
         chip_size: chip.chip_type().size_bytes() as u32,
-        rom_type_enum: chip_type_to_onerom_rom_type(*chip.chip_type()),
+        rom_type_enum: *chip.chip_type() as u8,
     }
 }
 
@@ -234,18 +189,5 @@ mod tests {
             rom_slot_type(ChipSetType::Banked, ChipType::Chip2364),
             RomSlotType::RomSlotTypeBankedRom
         );
-    }
-
-    /// Verify the full ChipType → OneromRomType mapping for a representative
-    /// sample, including the 23C1010 alias.
-    #[test]
-    fn chip_type_to_onerom_rom_type_mapping() {
-        assert_eq!(chip_type_to_onerom_rom_type(ChipType::Chip2364),    OneromRomType::ChipType2364);
-        assert_eq!(chip_type_to_onerom_rom_type(ChipType::Chip27128),   OneromRomType::ChipType27128);
-        assert_eq!(chip_type_to_onerom_rom_type(ChipType::Chip27C010),  OneromRomType::ChipType27c010);
-        assert_eq!(chip_type_to_onerom_rom_type(ChipType::Chip23C1010), OneromRomType::ChipType27c010);
-        assert_eq!(chip_type_to_onerom_rom_type(ChipType::Chip27C400),  OneromRomType::ChipType27c400);
-        assert_eq!(chip_type_to_onerom_rom_type(ChipType::ChipSST39SF040), OneromRomType::ChipTypeSst39sf040);
-        assert_eq!(chip_type_to_onerom_rom_type(ChipType::SystemPlugin), OneromRomType::ChipTypeSystemPlugin);
     }
 }

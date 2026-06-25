@@ -1259,7 +1259,7 @@ mod tests {
     ///   - GPIO  0-11: addr bits A0-A11 (shared by both chips)
     ///   - GPIO 12:    addr bit A12 (primary 2364 only; don't-care for 2332)
     ///   - GPIO 13:    CS1 — primary chip0 select (gap bit within addr window;
-    ///                 not in addr_pin_gpios)
+    ///     not in addr_pin_gpios)
     ///   - GPIO 14:    X1  — secondary chip1 select
     ///
     /// The previous (broken) version put CS1 at GPIO12 — the same bit

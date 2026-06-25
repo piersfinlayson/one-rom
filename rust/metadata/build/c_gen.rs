@@ -14,12 +14,15 @@
 //   simple FAM structs    (length-prefixed byte-array structs)
 //   header guard close
 
+use onerom_config::chip::{ChipType, CHIP_TYPES};
+
 use crate::schema::{ConstantValue, Field, Schema, SimpleFam, Struct, TaggedFam, field_size};
 
 // ---------------------------------------------------------------------------
 // Public entry point
 // ---------------------------------------------------------------------------
 
+/// Generate the C header.
 pub fn generate(schema: &Schema) -> String {
     let mut out = String::with_capacity(65536);
     emit_file_header(schema, &mut out);
@@ -151,44 +154,161 @@ fn emit_enums(schema: &Schema, out: &mut String) {
     }
     emit_major_section_header("Enums", out);
     for e in &schema.enums {
-        emit_item_header(e.comment.as_deref(), out);
-
-        let packed = if e.packed.unwrap_or(false) {
-            " __attribute__((packed))"
-        } else {
-            ""
-        };
-        out.push_str(&format!("typedef enum{} {{\n", packed));
-
-        for v in &e.variants {
-            let val_str = format_enum_value(v.value, e.size);
-            let comment_str = v
-                .comment
-                .as_deref()
-                .and_then(|c| c.lines().next())
-                .map(|l| format!("  // {}", l))
-                .unwrap_or_default();
-            out.push_str(&format!("    {} = {},{}\n", v.name, val_str, comment_str));
-        }
-
-        out.push_str(&format!("}} {};\n", e.name));
-        out.push_str(&format!(
-            "STATIC_ASSERT(sizeof({name}) == {size}, \
-             \"{name} must be {size} {unit}\");\n",
-            name = e.name,
-            size = e.size,
-            unit = bytes_str(e.size),
-        ));
-
-        for alias in &e.aliases {
-            if let Some(c) = &alias.comment {
-                emit_comment(c, "", out);
-            }
-            out.push_str(&format!("#define {} {}\n", alias.name, alias.target));
-        }
-
-        out.push('\n');
+        emit_enum(e, out);
     }
+}
+
+fn emit_enum(e: &crate::schema::Enum, out: &mut String) {
+    if e.source.as_deref() == Some("rbcp_chip_types") {
+        emit_rbcp_chip_type_enum(e, out);
+        return;
+    }
+
+    emit_item_header(e.comment.as_deref(), out);
+
+    let packed = if e.packed.unwrap_or(false) {
+        " __attribute__((packed))"
+    } else {
+        ""
+    };
+    out.push_str(&format!("typedef enum{} {{\n", packed));
+
+    for v in &e.variants {
+        let val_str = format_enum_value(v.value, e.size);
+        let comment_str = v
+            .comment
+            .as_deref()
+            .and_then(|c| c.lines().next())
+            .map(|l| format!("  // {}", l))
+            .unwrap_or_default();
+        out.push_str(&format!("    {} = {},{}\n", v.name, val_str, comment_str));
+    }
+
+    out.push_str(&format!("}} {};\n", e.name));
+    out.push_str(&format!(
+        "STATIC_ASSERT(sizeof({name}) == {size}, \
+         \"{name} must be {size} {unit}\");\n",
+        name = e.name,
+        size = e.size,
+        unit = bytes_str(e.size),
+    ));
+
+    for alias in &e.aliases {
+        if let Some(c) = &alias.comment {
+            emit_comment(c, "", out);
+        }
+        out.push_str(&format!("#define {} {}\n", alias.name, alias.target));
+    }
+
+    out.push('\n');
+}
+
+// ---------------------------------------------------------------------------
+// RBCP chip type enum (sourced from onerom_config::chip::ChipType)
+// ---------------------------------------------------------------------------
+
+/// Emit the `onerom_rom_type_t` typedef enum and the chip size array.
+///
+/// Canonical variants are those for which `ChipType::try_from_rbcp_u8` returns
+/// the same chip — i.e. they are the primary holder of their RBCP value.
+/// Alias chips (e.g. `Chip23C1010`, which shares value 15 with `Chip27C010`)
+/// are detected by the same test and emitted as `#define` directives rather
+/// than enum variants.
+///
+/// `c_enum_name()` is used directly for all C constant names; no conversion
+/// is needed.
+fn emit_rbcp_chip_type_enum(e: &crate::schema::Enum, out: &mut String) {
+    emit_item_header(e.comment.as_deref(), out);
+
+    // Canonical chips: try_from_rbcp_u8 round-trips back to self.
+    let mut canonical: Vec<ChipType> = CHIP_TYPES
+        .iter()
+        .copied()
+        .filter(|ct| ChipType::try_from_rbcp_u8(ct.rbcp_chip_type()) == Some(*ct))
+        .collect();
+    canonical.sort_by_key(|ct| ct.rbcp_chip_type());
+
+    // Alias chips: try_from_rbcp_u8 returns a different (canonical) chip.
+    let aliases: Vec<ChipType> = CHIP_TYPES
+        .iter()
+        .copied()
+        .filter(|ct| ChipType::try_from_rbcp_u8(ct.rbcp_chip_type()) != Some(*ct))
+        .collect();
+
+    let num_chip_types: u32 = canonical
+        .iter()
+        .map(|ct| ct.rbcp_chip_type() as u32)
+        .max()
+        .unwrap_or(0)
+        + 1;
+
+    // Enum body.
+    out.push_str("typedef enum {\n");
+    for ct in &canonical {
+        let val_str = format_enum_value(ct.rbcp_chip_type() as i64, e.size);
+        out.push_str(&format!(
+            "    {} = {},  // {} ({} bytes)\n",
+            ct.c_enum_name(),
+            val_str,
+            ct.name(),
+            ct.size_bytes(),
+        ));
+    }
+    out.push_str(&format!(
+        "    NUM_CHIP_TYPES = {},  // Count of defined chip types. Not a valid chip type.\n",
+        num_chip_types
+    ));
+    out.push_str("    INVALID_CHIP_TYPE = 0xFF,  // Invalid or unset chip type\n");
+    out.push_str(&format!("}} {};\n", e.name));
+
+    // STATIC_ASSERT on enum storage size.
+    out.push_str(&format!(
+        "STATIC_ASSERT(sizeof({name}) == {size}, \"{name} must be {size} {unit}\");\n",
+        name = e.name,
+        size = e.size,
+        unit = bytes_str(e.size),
+    ));
+
+    // #define for each alias chip.
+    for alias in &aliases {
+        let primary = ChipType::try_from_rbcp_u8(alias.rbcp_chip_type())
+            .expect("alias must resolve to a canonical chip");
+        out.push_str(&format!(
+            "// {} is electrically equivalent to {}\n",
+            alias.name(),
+            primary.name()
+        ));
+        out.push_str(&format!(
+            "#define {} {}\n",
+            alias.c_enum_name(),
+            primary.c_enum_name()
+        ));
+    }
+
+    out.push('\n');
+
+    emit_chip_type_sizes_array(&canonical, out);
+}
+
+/// Emit the `onerom_chip_type_sizes[]` designated-initialiser array.
+///
+/// Indexed by `onerom_rom_type_t` value (0 … NUM_CHIP_TYPES-1).
+/// Alias chips are excluded — they share an index with their canonical
+/// equivalent.  Plugin types are included with their size (65536).
+fn emit_chip_type_sizes_array(canonical: &[ChipType], out: &mut String) {
+    out.push_str("extern const uint32_t onerom_chip_type_sizes[];\n");
+    out.push_str("#if defined(ONEROM_CONSTANTS)\n");
+    out.push_str("const uint32_t onerom_chip_type_sizes[NUM_CHIP_TYPES] = {\n");
+    for ct in canonical {
+        out.push_str(&format!(
+            "    [{}] = {},\n",
+            ct.c_enum_name(),
+            ct.size_bytes()
+        ));
+    }
+    out.push_str("};\n");
+    out.push_str("#endif /* ONEROM_CONSTANTS */\n");
+    out.push('\n');
 }
 
 // ---------------------------------------------------------------------------
