@@ -192,8 +192,8 @@ mod tests {
 
     use onerom_metadata::{
         GPIO_NONE, MAX_ADDR_PINS, MAX_DATA_PINS, OneromAlgAddrConfig, OneromAlgConfig,
-        OneromAlgCsConfig, OneromAlgDataConfig, OneromRomInfo, OneromRomPinMap,
-        Pointer, RomSlotType,
+        OneromAlgCsConfig, OneromAlgDataConfig, OneromRomInfo, OneromRomPinMap, Pointer,
+        RomSlotType,
     };
 
     use crate::image::{CsConfig, CsLogic, SizeHandling};

@@ -14,7 +14,7 @@
 //   simple FAM structs    (length-prefixed byte-array structs)
 //   header guard close
 
-use onerom_config::chip::{ChipType, CHIP_TYPES};
+use onerom_config::chip::{CHIP_TYPES, ChipType};
 
 use crate::schema::{ConstantValue, Field, Schema, SimpleFam, Struct, TaggedFam, field_size};
 

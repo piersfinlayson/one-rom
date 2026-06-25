@@ -1713,8 +1713,12 @@ fn generate_try_from_rbcp_u8(config: &ChipTypesConfig) -> String {
     code.push_str("    /// use onerom_config::chip::{ChipType, INVALID_RBCP_CHIP_TYPE};\n");
     code.push_str("    ///\n");
     code.push_str("    /// assert_eq!(ChipType::try_from_rbcp_u8(2), Some(ChipType::Chip2364));\n");
-    code.push_str("    /// assert_eq!(ChipType::try_from_rbcp_u8(15), Some(ChipType::Chip27C010));\n");
-    code.push_str("    /// assert_eq!(ChipType::try_from_rbcp_u8(INVALID_RBCP_CHIP_TYPE), None);\n");
+    code.push_str(
+        "    /// assert_eq!(ChipType::try_from_rbcp_u8(15), Some(ChipType::Chip27C010));\n",
+    );
+    code.push_str(
+        "    /// assert_eq!(ChipType::try_from_rbcp_u8(INVALID_RBCP_CHIP_TYPE), None);\n",
+    );
     code.push_str("    /// ```\n");
     code.push_str("    pub const fn try_from_rbcp_u8(val: u8) -> Option<Self> {\n");
     code.push_str("        match val {\n");

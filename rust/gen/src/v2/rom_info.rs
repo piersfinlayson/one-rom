@@ -11,8 +11,7 @@ use alloc::string::{String, ToString};
 use onerom_config::chip::ChipType;
 
 use onerom_metadata::{
-    GPIO_NONE, MAX_ADDR_PINS, MAX_DATA_PINS, OneromRomInfo, OneromRomPinMap, 
-    RomSlotType,
+    GPIO_NONE, MAX_ADDR_PINS, MAX_DATA_PINS, OneromRomInfo, OneromRomPinMap, RomSlotType,
 };
 
 use crate::image::{Chip, ChipSetType};

@@ -46,8 +46,8 @@ fn default_pin_map() -> Option<OneromRomPinMap> {
 }
 
 fn make_rom_info(rom_type: &str) -> OneromRomInfo {
-    let chip = ChipType::try_from_str(rom_type)
-        .unwrap_or_else(|| panic!("unknown chip type: {rom_type}"));
+    let chip =
+        ChipType::try_from_str(rom_type).unwrap_or_else(|| panic!("unknown chip type: {rom_type}"));
     OneromRomInfo {
         rom_type: rom_type.into(),
         filename: None,
