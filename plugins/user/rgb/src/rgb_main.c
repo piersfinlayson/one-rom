@@ -9,7 +9,7 @@
 
 ORA_DEFINE_USER_PLUGIN(
     neopixel_main,
-    0, 1, 0, 0,
+    0, 1, 1, 0,
     0, 6, 7
 );
 
