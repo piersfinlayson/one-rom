@@ -30,6 +30,11 @@
 
 /*
  * firmware_main is not in a dedicated header.
- * Forward-declare it here; remove this line if a header exists for it.
+ * Forward-declare it here
  */
 int firmware_main(void);
+
+/*
+ * Forward-declare ora_fn_lookup it here
+ */
+void *ora_fn_lookup(api_id_t id);

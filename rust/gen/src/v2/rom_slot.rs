@@ -289,7 +289,7 @@ mod tests {
                     data: expected_data,
                 }),
                 chip_size: ChipType::Chip2364.size_bytes() as u32,
-                rom_type_enum: ChipType::Chip2364 as u8,
+                rbcp_rom_type: ChipType::Chip2364 as u8,
             }]
         );
 

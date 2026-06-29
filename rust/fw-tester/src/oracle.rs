@@ -12,12 +12,29 @@ use onerom_config::chip::ChipType;
 use onerom_fw::net::fetch_rom_file;
 use onerom_gen::{ChipConfig, SizeHandling};
 
+/// Number of bytes One ROM actually serves for `chip_type`.
+///
+/// This is `chip_type.size_bytes()` for every chip except the 27C080: a single
+/// One ROM board serves only the lower half (512 KB) of that chip's 1 MB
+/// address space, because A19 is repurposed as the chip-select line so two
+/// stacked boards (one with A19/CS low, one high) can together serve the whole
+/// device.
+///
+/// This is the authority for "how many bytes does this chip serve" — used by
+/// the oracle to size its expected image, and by the address-range and
+/// reprogram-length tests so they stay within the served region.
+pub fn served_size(chip_type: ChipType) -> usize {
+    if chip_type == ChipType::Chip27C080 {
+        chip_type.size_bytes() / 2
+    } else {
+        chip_type.size_bytes()
+    }
+}
+
 /// Load and size-adjust the oracle bytes for `chip_config`.
 ///
-/// Returns a `Vec<u8>` whose length equals the number of bytes served:
-/// - `chip_type.size_bytes()` for all chips except 27C080.
-/// - `chip_type.size_bytes() / 2` for 27C080, because a single One ROM
-///   board only serves the lower half of that chip's address space.
+/// Returns a `Vec<u8>` whose length equals the number of bytes served (see
+/// [`served_size`]).
 ///
 /// # Panics
 /// Panics on I/O failure, unsupported `location` field, size mismatches
@@ -45,11 +62,7 @@ pub fn load(chip_config: &ChipConfig, chip_type: ChipType, base_dir: &std::path:
         .unwrap_or_else(|e| panic!("Failed to load ROM image '{}': {}", source, e));
 
     // 27C080: one board serves only the lower 512 KB of the 1 MB space.
-    let target = if chip_type == ChipType::Chip27C080 {
-        chip_type.size_bytes() / 2
-    } else {
-        chip_type.size_bytes()
-    };
+    let target = served_size(chip_type);
 
     match chip_config.size_handling {
         SizeHandling::None => {

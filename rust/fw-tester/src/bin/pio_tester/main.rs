@@ -28,12 +28,8 @@ use onerom_config::hw::Board;
 use onerom_fw_emulator::Emulator;
 use onerom_gen::Config;
 
-mod driver;
-mod oracle;
-mod pin_cache;
 mod report;
 mod runner;
-mod timing;
 
 use report::TestReport;
 

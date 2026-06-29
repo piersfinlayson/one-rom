@@ -215,7 +215,7 @@ ifneq ($(SUPPRESS_OUTPUT),1)
 $(info -----)
 endif
 
-.PHONY: all clean clean-firmware clean-firmware-build firmware run flash test test-emu generated clean-generated fw-config-gen libonerom-test gen-config clean-gen-config clean-libonerom-test
+.PHONY: all clean clean-firmware clean-firmware-build firmware run flash test test-emu test-api generated clean-generated fw-config-gen libonerom-test gen-config clean-gen-config clean-libonerom-test
 
 all: firmware
 	@echo "=========================================="
@@ -287,7 +287,13 @@ test-emu: gen-config
 	@echo "=========================================="
 	@echo "Running One ROM emulator tests"
 	@echo "-----"
-	@BASE_DIR=$(CURDIR) CONFIG=$(CONFIG) BOARD=$(BOARD) cargo run --manifest-path rust/Cargo.toml -p onerom-fw-tester --bin onerom-fw-tester --quiet
+	@BASE_DIR=$(CURDIR) CONFIG=$(CONFIG) BOARD=$(BOARD) cargo run --manifest-path rust/Cargo.toml -p onerom-fw-tester --bin pio-tester --quiet
+
+test-api: gen-config
+	@echo "=========================================="
+	@echo "Running One ROM emulator tests"
+	@echo "-----"
+	@BASE_DIR=$(CURDIR) CONFIG=$(CONFIG) BOARD=$(BOARD) cargo run --manifest-path rust/Cargo.toml -p onerom-fw-tester --bin plugin-api-tester --quiet
 
 libonerom-test: gen-config
 	@echo "=========================================="

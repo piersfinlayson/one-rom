@@ -143,6 +143,14 @@ void irq_handler_timer0_irq_0(void);
 void irq_handler_usbctrl_irq(void);
 ora_result_t ora_get_ram_slot_info(uint8_t ram_slot, uint32_t *addr_out, uint32_t *size_out, uint32_t *rom_type_out);
 ora_result_t ora_get_active_ram_slot(uint8_t *ram_slot_out);
+#if !REAL_HARDWARE
+uint8_t *sram_to_host(uint32_t addr);
+// Sets the SRAM buffer pointer used by sram_to_host().  Call after
+// epio_from_apio() with epio_get_sram_ptr() to unify the firmware's SRAM
+// backing store with epio's, so subsequent firmware writes are immediately
+// visible to the running epio simulation.
+void set_host_sram_ptr(uint8_t *ptr);
+#endif // !REAL_HARDWARE
 
 // pio/dma.c
 void dma_copy(

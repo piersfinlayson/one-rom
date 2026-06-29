@@ -6,6 +6,8 @@
 #include <stdint.h>
 #include <epio.h>
 
+void *ffi_runtime_info_ptr(void);
+uint32_t ffi_runtime_info_size(void);
 uint8_t ffi_limp_mode(void);
 uint8_t ffi_pios_enabled(void);
 void ffi_epio_setup_sram(epio_t *epio);

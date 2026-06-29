@@ -1082,7 +1082,7 @@ Needed at runtime by plugins and the plugin API; not inferrable from address
 pin count alone due to gaps and padding in the image layout."""
 
 [[structs.fields]]
-name = "rom_type_enum"
+name = "rbcp_rom_type"
 kind = "scalar"
 type = "u8"
 comment = """ROM type as RBCP wire value (onerom_rom_type_t). Set by the pre-processor.
@@ -1111,7 +1111,7 @@ element = "u8"
 count = 24
 count_ref = "MAX_ADDR_PINS"
 comment = """Address pin to GPIO mapping (MAX_ADDR_PINS entries).
-Indexed by address pin (A-1 is index 0 for 16-bit ROMs, A0 otherwise).
+Indexed by address pin (A-1 is not included for 16-bit ROMs).
 GPIO_NONE for unused address bits."""
 
 [[structs.fields]]
@@ -1435,9 +1435,15 @@ type = "u16"
 comment = "DMA channels used for serving. Bit N = channel N."
 
 [[structs.fields]]
+name = "current_ram_slot"
+kind = "scalar"
+type = "u8"
+comment = "Currently active RAM slot - initialized to 0xFF."
+
+[[structs.fields]]
 name = "reserved"
 kind = "padding"
-size = 2
+size = 1
 
 # ===========================================================================
 # Tagged FAM structs

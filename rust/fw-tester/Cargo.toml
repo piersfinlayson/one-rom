@@ -10,16 +10,25 @@ homepage = "https://onerom.org"
 keywords = ["retro", "rom", "commodore", "embedded"]
 categories = ["embedded", "hardware-support"]
 
+[lib]
+path = "src/lib.rs"
+
 [[bin]]
-name = "onerom-fw-tester"
-path = "src/main.rs"
- 
+name = "pio-tester"
+path = "src/bin/pio_tester/main.rs"
+
+[[bin]]
+name = "plugin-api-tester"
+path = "src/bin/plugin_api_tester/main.rs"
+
 [dependencies]
 onerom-config = { workspace = true }
 onerom-gen = { workspace = true }
 onerom-fw = { workspace = true }
 onerom-fw-emulator = { workspace = true }
+onerom-metadata = { workspace = true }
 
 serde_json = "1"
 log  = "0.4"
-env_logger = "0.11" 
+env_logger = "0.11"
+rand = "0.10"

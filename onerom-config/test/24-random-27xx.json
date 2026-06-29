@@ -11,9 +11,8 @@
             "roms": [
                 {
                     "description": "2704",
-                    "file": "images/test/rand_8KB.rom",
-                    "type": "2704",
-                    "size_handling": "truncate"
+                    "file": "images/test/rand_0.5KB.rom",
+                    "type": "2704"
                 }
             ]
         },
@@ -22,9 +21,8 @@
             "roms": [
                 {
                     "description": "2708",
-                    "file": "images/test/rand_64KB.rom",
-                    "type": "2708",
-                    "size_handling": "truncate"
+                    "file": "images/test/rand_1KB.rom",
+                    "type": "2708"
                 }
             ]
         },
@@ -33,9 +31,8 @@
             "roms": [
                 {
                     "description": "2716",
-                    "file": "images/test/rand_512KB.rom",
-                    "type": "2716",
-                    "size_handling": "truncate"
+                    "file": "images/test/rand_2KB.rom",
+                    "type": "2716"
                 }
             ]
         },
@@ -44,9 +41,8 @@
             "roms": [
                 {
                     "description": "2732",
-                    "file": "images/test/rand_512KB_alt.rom",
-                    "type": "2732",
-                    "size_handling": "truncate"
+                    "file": "images/test/rand_4KB.rom",
+                    "type": "2732"
                 }
             ]
         }

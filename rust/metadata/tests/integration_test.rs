@@ -53,7 +53,7 @@ fn make_rom_info(rom_type: &str) -> OneromRomInfo {
         filename: None,
         pin_map: default_pin_map(),
         chip_size: chip.size_bytes() as u32,
-        rom_type_enum: chip.rbcp_chip_type(),
+        rbcp_rom_type: chip.rbcp_chip_type(),
     }
 }
 
@@ -123,7 +123,7 @@ fn minimal_header() -> OneromMetadataHeader {
         filename: None,
         pin_map: Some(pin_map),
         chip_size: chip_2364.size_bytes() as u32,
-        rom_type_enum: chip_2364.rbcp_chip_type(),
+        rbcp_rom_type: chip_2364.rbcp_chip_type(),
     };
     let alg = OneromAlgConfig {
         alg_cs: OneromAlgCsConfig::AlgCs0 {
@@ -282,7 +282,7 @@ fn round_trip_optional_fields() {
         filename: Some("basic.rom".into()),
         pin_map: default_pin_map(),
         chip_size: chip_2364.size_bytes() as u32,
-        rom_type_enum: chip_2364.rbcp_chip_type(),
+        rbcp_rom_type: chip_2364.rbcp_chip_type(),
     };
     let fw_overrides = OneromFirmwareOverrides {
         // Byte 0 bit 2 = fire-freq override present.

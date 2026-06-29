@@ -1,5 +1,5 @@
 #####################################################################
-# One ROM Emulator tests
+# One ROM Emulator (including PIO and plugin API) tests
 #####################################################################
 set -e
 
@@ -86,6 +86,19 @@ run_config() {
     }
 }
 
+run_config_api() {
+    local board=$1
+    local config=$2
+ 
+    echo ""
+    echo "Testing: board=$board config=$config"
+    env BOARD="$board" CONFIG="$config" make test-api || {
+        echo "FAILED: board=$board config=$config"
+        echo "Reproduce:  env BOARD=$board CONFIG=$config make test-api"
+        exit 1
+    }
+}
+
 test_24_all_rom_types() {
     local board=${1:-fire-24-e}
 
@@ -154,6 +167,13 @@ test_config() {
     run_config $board "$config"
 }
 
+test_config_api() {
+    local board=${1:-fire-24-a}
+    local config=$2
+
+    run_config_api $board "$config"
+}
+
 test_24_config() {
     local config=$1
 
@@ -163,6 +183,17 @@ test_24_config() {
     test_config fire-24-d "$config"
     test_config fire-24-e "$config"
     test_config fire-24-f "$config"
+}
+
+test_24_config_api() {
+    local config=$1
+
+    test_config_api fire-24-a "$config"
+    test_config_api fire-24-b "$config"
+    test_config_api fire-24-c "$config"
+    test_config_api fire-24-d "$config"
+    test_config_api fire-24-e "$config"
+    test_config_api fire-24-f "$config"
 }
 
 test_24_config_c_onwards() {
@@ -182,6 +213,14 @@ test_28_config() {
     test_config fire-28-c "$config"
 }
 
+test_28_config_api() {
+    local config=$1
+
+    test_config_api fire-28-a "$config"
+    test_config_api fire-28-b "$config"
+    test_config_api fire-28-c "$config"
+}
+
 test_28_config_c_onwards() {
     local config=$1
 
@@ -195,11 +234,25 @@ test_32_config() {
     test_config fire-32-b "$config"
 }
 
+test_32_config_api() {
+    local config=$1
+
+    test_config_api fire-32-a "$config"
+    test_config_api fire-32-b "$config"
+}
+
 test_40_config() {
     local config=$1
 
     test_config fire-40-a "$config"
     test_config fire-40-b "$config"
+}
+
+test_40_config_api() {
+    local config=$1
+
+    test_config_api fire-40-a "$config"
+    test_config_api fire-40-b "$config"
 }
 
 # Test every standard ROM type on every standard hardware revision.
@@ -275,3 +328,18 @@ test_32_config onerom-config/test/32-random-27c080.json
 test_32_config onerom-config/test/32-random-27c301.json
 test_32_config onerom-config/test/32-random-27c0x0.json
 test_config fire-32-b onerom-config/test/32-random-23c1001.json
+
+# Plugin API tests
+test_24_config_api onerom-config/test/24-random-23xx.json
+test_24_config_api onerom-config/test/24-random-27xx.json
+test_24_config_api onerom-config/test/24-random-28xx.json
+test_28_config_api onerom-config/test/28-random-23xxx.json
+test_28_config_api onerom-config/test/28-random-23qlxxx.json
+test_28_config_api onerom-config/test/28-random-27xxx.json
+test_28_config_api onerom-config/test/28-random-28xxx.json
+test_32_config_api onerom-config/test/32-random-27c080.json
+test_32_config_api onerom-config/test/32-random-27c301.json
+test_32_config_api onerom-config/test/32-random-27c0x0.json
+test_config fire-32-b onerom-config/test/32-random-extra.json
+test_40_config_api onerom-config/test/40-random.json
+test_40_config_api onerom-config/test/40-random-force-16bit.json

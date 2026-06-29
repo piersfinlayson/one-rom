@@ -7,8 +7,6 @@
 #include "include.h"
 #include "piodma/piodma.h"
 
-#if REAL_HARDWARE
-
 // GPIOs for X1 and X2 within the address span.  GPIO_NONE when absent.
 typedef struct {
     uint8_t x1_gpio;
@@ -109,7 +107,12 @@ static v2_x_pin_gpios_t v2_get_x_pin_gpios(
 static void pio_setup_address_monitor_pios() {
     const onerom_rom_slot_t *slot = RUNTIME->current_rom_slot;
 
-    APIO_ASM_INIT();
+    // APIO_ASM_CONTINUE() rather than APIO_ASM_INIT(): this function extends
+    // the PIO configuration built at boot rather than starting from scratch.
+    // In emulation mode APIO_ASM_CONTINUE() is a no-op, preserving the
+    // accumulated apio state so that epio_update_from_apio() can pick up the
+    // new SM programs written here without disturbing already-running SMs.
+    APIO_ASM_CONTINUE();
 
     // Use the same block as the ROM serving CS/Data PIO, starting from
     // where it left off
@@ -287,6 +290,7 @@ static void pio_setup_address_monitor_dma(
     uint8_t ring_size_log2,
     uint8_t data_size
 ) {
+#if !defined(TEST_BUILD)
     uint32_t dma_data_size;
     if (data_size == 8) {
         dma_data_size = DMA_CTRL_TRIG_DATA_SIZE_8BIT;
@@ -314,6 +318,10 @@ static void pio_setup_address_monitor_dma(
                 sm_addr_read
             )
         );
+#else // TEST_BUILD
+    LOG("DMA setup: ch=%d block=%d sm=%d ring_buf=%p ring_size_log2=%d data_size=%d",
+        dma_ch, block, sm_addr_read, (void *)ring_buf, ring_size_log2, data_size);
+#endif // !TEST_BUILD
 }
 
 ora_result_t pio_setup_address_monitor(
@@ -354,6 +362,20 @@ ora_result_t pio_setup_address_monitor(
 // Maps a logical chip address (host-visible A_n values, chip0) to the SRAM
 // table index where that address's data is stored.
 //
+// Word size and A-1:
+//   word_size == 8:  logical_addr is a plain byte address. Every address
+//                    line, including the least-significant, is a scattered
+//                    GPIO in pin_map->addr[]. addr[n] holds A_n's GPIO.
+//   word_size == 16: the ROM serves 16-bit words as two adjacent bytes in
+//                    the table. The least-significant logical address bit
+//                    is A-1 — it selects the low (A-1=0) or high (A-1=1)
+//                    byte within a word and is NOT a scattered GPIO: it is
+//                    simply bit 0 of the table index. pin_map->addr[] holds
+//                    A0..A_n (the word-address lines) only. So the word
+//                    address is (logical_addr >> 1), scattered through
+//                    addr[], and A-1 (logical_addr & 1) is OR'd back in as
+//                    the table-index LSB: index = (scatter(word) << 1) | A-1.
+//
 // Step 1: scatter logical address bits to their GPIO bit positions.
 //   NORMAL:     table bit = logical bit.
 //   INVERT:     table bit = ~logical bit.  The GPIO is inverted so the PIO
@@ -379,19 +401,33 @@ uint32_t pio_map_addr_to_phys(
     uint32_t logical_addr
 ) {
     const onerom_alg_addr_config_t *addr_alg = slot->alg->alg_addr;
+    const onerom_alg_data_config_t *data_alg = slot->alg->alg_data;
     const onerom_rom_pin_map_t     *pin_map   = slot->roms[0]->pin_map;
     uint8_t  addr_base = addr_alg->gpio_base + addr_alg->base_addr_pin;
     uint32_t physical  = 0;
- 
+
+    // For 16-bit serving, A-1 is the least-significant logical address bit
+    // and maps directly to the table-index LSB (selecting the low/high byte
+    // of the adjacent-byte word pair), rather than to a scattered GPIO in
+    // addr[].  Split it off here; addr[] is scattered over the word address
+    // (logical_addr >> 1), and a_minus_1 is re-applied as bit 0 at the end.
+    uint8_t  word_size = data_alg->word_size;
+    uint32_t a_minus_1 = 0;
+    uint32_t addr_bits = logical_addr;
+    if (word_size == 16u) {
+        a_minus_1 = logical_addr & 1u;
+        addr_bits = logical_addr >> 1;
+    }
+
     // Step 1: address bits.
     for (uint8_t n = 0; n < MAX_ADDR_PINS; n++) {
         uint8_t gpio = pin_map->addr[n];
         if (gpio >= GPIO_NONE) break;
- 
+
         uint8_t bit_pos     = gpio - addr_base;
-        uint8_t logical_bit = (uint8_t)((logical_addr >> n) & 1u);
+        uint8_t logical_bit = (uint8_t)((addr_bits >> n) & 1u);
         uint8_t override    = v2_get_gpio_override(slot, gpio);
- 
+
         switch (override) {
             case GPIO_OVER_NORMAL:
                 if (logical_bit) physical |= (1u << bit_pos);
@@ -408,11 +444,11 @@ uint32_t pio_map_addr_to_phys(
                 break;
         }
     }
- 
+
     // Step 2: CS bits (Multi only).
     if (slot->slot_type == ROM_SLOT_TYPE_MULTI_ROM) {
         const onerom_alg_cs_config_t *cs_alg = slot->alg->alg_cs;
- 
+
         switch (cs_alg->alg) {
             case ALG_CS_0: {
                 const onerom_alg_cs0_param_t *cs_params =
@@ -472,10 +508,18 @@ uint32_t pio_map_addr_to_phys(
                 break;
         }
     }
- 
+
     // Step 3: Banked X bits — target bank 0 only (X bits remain 0).
     // TODO: add explicit bank selection when required.
- 
+
+    // Step 4: 16-bit A-1 — the byte-within-word select is the table-index
+    // LSB.  The scatter above produced the word-address index in the GPIO
+    // bit positions; shift it up by one and OR in A-1 so that adjacent
+    // logical bytes map to adjacent table offsets.
+    if (word_size == 16u) {
+        physical = (physical << 1) | a_minus_1;
+    }
+
     return physical;
 }
 
@@ -526,6 +570,15 @@ uint32_t pio_map_data_to_phys(
 // physical_addr is post-override: PIOs always read post-override values from
 // IN PINS, so ring buffer entries already reflect PIO-visible values.
 //
+// Word size and A-1 (mirror of pio_map_addr_to_phys):
+//   word_size == 16: the table index is (word_scatter << 1) | A-1, where
+//                    A-1 (the byte-within-word select) is the LSB and is NOT
+//                    a scattered GPIO in addr[].  This function pulls A-1 off
+//                    bit 0, shifts the scattered word address down by one so
+//                    the addr[] extraction sees the word index in its
+//                    original GPIO bit positions, then re-applies A-1 as the
+//                    logical LSB.  word_size == 8: physical_addr is used as-is.
+//
 // Control pin check (check_control_pins != 0):
 //   AlgCs0, Single/Banked: verify all CS pins are in the active-low state (0).
 //   AlgCs0, Multi:         verify chip0 CS sub-range is active-high (1), then
@@ -551,19 +604,35 @@ ora_result_t pio_demangle_addr(
     if (logical_addr_out == NULL) {
         return ORA_RESULT_INVALID_ARG;
     }
- 
+
     const onerom_alg_addr_config_t *addr_alg = slot->alg->alg_addr;
+    const onerom_alg_data_config_t *data_alg = slot->alg->alg_data;
     const onerom_alg_cs_config_t   *cs_alg   = slot->alg->alg_cs;
     const onerom_rom_pin_map_t     *pin_map   = slot->roms[0]->pin_map;
     uint8_t addr_base = addr_alg->gpio_base + addr_alg->base_addr_pin;
- 
+
+    // 16-bit serving: pio_map_addr_to_phys built the table index as
+    // (word_scatter << 1) | A-1, where A-1 (the byte-within-word select) is
+    // the least-significant bit and is NOT a scattered GPIO in addr[].
+    // Reverse that here: pull A-1 off bit 0, then shift the scattered word
+    // address down by one so the addr[] extraction below (and the control-
+    // pin checks, which read the same shifted frame) see the word index in
+    // its original GPIO bit positions.  A-1 is re-applied as the logical
+    // LSB at the end.
+    uint8_t  word_size = data_alg->word_size;
+    uint32_t a_minus_1 = 0;
+    if (word_size == 16u) {
+        a_minus_1     = physical_addr & 1u;
+        physical_addr = physical_addr >> 1;
+    }
+
     if (check_control_pins) {
         switch (cs_alg->alg) {
             case ALG_CS_0: {
                 const onerom_alg_cs0_param_t *cs_params =
                     (const onerom_alg_cs0_param_t *)cs_alg->params;
                 uint8_t expected_active = cs_params->serve_cs_low_0;
- 
+
                 // For Multi, check only chip0's CS sub-range.  Checking the
                 // full CS range would include X pins (which are 0 for a chip0
                 // access) and return false positives against expected_active=1.
@@ -576,14 +645,14 @@ ora_result_t pio_demangle_addr(
                     cs_check_base  = cs_alg->gpio_base + cs_alg->base_cs_pin;
                     cs_check_count = cs_alg->num_cs_pins;
                 }
- 
+
                 for (uint8_t i = 0; i < cs_check_count; i++) {
                     uint8_t g            = cs_check_base + i;
                     uint8_t bit_pos      = g - addr_base;
                     uint8_t physical_bit = (uint8_t)((physical_addr >> bit_pos)
                                                       & 1u);
                     uint8_t override     = v2_get_gpio_override(slot, g);
- 
+
                     switch (override) {
                         case GPIO_OVER_NORMAL:
                         case GPIO_OVER_INVERT:
@@ -606,7 +675,7 @@ ora_result_t pio_demangle_addr(
                             break;
                     }
                 }
- 
+
                 // Multi: reject if any X pin is active (=1), indicating a
                 // secondary chip is being addressed.
                 if (slot->slot_type == ROM_SLOT_TYPE_MULTI_ROM) {
@@ -622,13 +691,13 @@ ora_result_t pio_demangle_addr(
                 }
                 break;
             }
- 
+
             case ALG_CS_1: {
                 // AlgCs1 is Single/Banked only; active-low (expected = 0).
                 const onerom_alg_cs1_param_t *cs_params =
                     (const onerom_alg_cs1_param_t *)cs_alg->params;
                 uint8_t cs_base = cs_alg->gpio_base + cs_alg->base_cs_pin;
- 
+
                 for (uint8_t i = 0; i < cs_alg->num_cs_pins; i++) {
                     if (i == cs_params->cs_ignore_index) continue;
                     uint8_t g            = cs_base + i;
@@ -636,7 +705,7 @@ ora_result_t pio_demangle_addr(
                     uint8_t physical_bit = (uint8_t)((physical_addr >> bit_pos)
                                                       & 1u);
                     uint8_t override     = v2_get_gpio_override(slot, g);
- 
+
                     switch (override) {
                         case GPIO_OVER_NORMAL:
                         case GPIO_OVER_INVERT:
@@ -656,7 +725,7 @@ ora_result_t pio_demangle_addr(
                 }
                 break;
             }
- 
+
             case ALG_CS_2:
             default:
                 ERR("pio_demangle_addr: unsupported CS algorithm %d",
@@ -665,17 +734,17 @@ ora_result_t pio_demangle_addr(
                 // TODO: implement AlgCs2 support
         }
     }
- 
+
     // Address extraction.
     uint32_t logical = 0;
     for (uint8_t n = 0; n < MAX_ADDR_PINS; n++) {
         uint8_t gpio = pin_map->addr[n];
         if (gpio >= GPIO_NONE) break;
- 
+
         uint8_t bit_pos      = gpio - addr_base;
         uint8_t physical_bit = (uint8_t)((physical_addr >> bit_pos) & 1u);
         uint8_t override     = v2_get_gpio_override(slot, gpio);
- 
+
         switch (override) {
             case GPIO_OVER_NORMAL:
                 if (physical_bit) logical |= (1u << n);
@@ -695,7 +764,13 @@ ora_result_t pio_demangle_addr(
                 break;
         }
     }
- 
+
+    // 16-bit: re-apply A-1 as the logical LSB, shifting the recovered word
+    // address up by one (inverse of the split at the top of this function).
+    if (word_size == 16u) {
+        logical = (logical << 1) | a_minus_1;
+    }
+
     *logical_addr_out = logical;
     return ORA_RESULT_OK;
 }
@@ -893,6 +968,25 @@ ora_result_t pio_init_knock(
     return ORA_RESULT_OK;
 }
 
+#if !REAL_HARDWARE
+// Pointer to an externally-provided SRAM buffer, set by set_host_sram_ptr().
+// When non-NULL, sram_to_host() returns into this buffer instead of the
+// firmware's own allocation, allowing fw-emulator to unify the two backing
+// stores so that all firmware SRAM writes are immediately visible to epio.
+static uint8_t *s_host_sram_ptr = NULL;
+
+void set_host_sram_ptr(uint8_t *ptr) {
+    s_host_sram_ptr = ptr;
+}
+
+uint8_t *sram_to_host(uint32_t addr) {
+    if (s_host_sram_ptr != NULL) {
+        return s_host_sram_ptr + (addr - SRAM_BASE);
+    }
+    return (uint8_t *)get_ram_rom_image_table_aligned() + (addr - SRAM_BASE);
+}
+#endif
+
 // Reads a contiguous logical region of a RAM slot into buf, reversing the
 // address and data mappings.  Counterpart to pio_reprogram_ram_rom_slot.
 //
@@ -922,7 +1016,11 @@ ora_result_t pio_read_ram_rom_slot(
         return ORA_RESULT_INVALID_ARG;
     }
  
-    const uint8_t *sram = (const uint8_t *)addr;
+#if REAL_HARDWARE
+    const uint8_t *sram = (const uint8_t *)(uintptr_t)addr;
+#else
+    const uint8_t *sram = sram_to_host(addr);
+#endif
     for (uint32_t i = 0u; i < len; i++) {
         uint32_t physical_offset = pio_map_addr_to_phys(rom_slot, offset + i);
         buf[i] = pio_demangle_data(rom_slot, sram[physical_offset]);
@@ -931,6 +1029,7 @@ ora_result_t pio_read_ram_rom_slot(
     return ORA_RESULT_OK;
 }
 
+#if !defined(TEST_BUILD)
 __attribute__((always_inline)) static inline uint8_t debounce(
     uint32_t entry,
     const ora_knock_t *knock
@@ -946,6 +1045,7 @@ __attribute__((always_inline)) static inline uint8_t debounce(
     if (knock->x_mask && (entry & knock->x_mask)) return 1;     // X pin active
     return 0;
 }
+#endif // !TEST_BUILD
 
 // Written as a macro to allow multiple data sizes
 #define KNOCK_DETECT_LOOP(TYPE) do {                                        \
@@ -1000,6 +1100,7 @@ ora_result_t pio_wait_for_knock(
     volatile uint32_t *start_pos,
     volatile uint32_t **next_read_out
 ) {
+#if !defined(TEST_BUILD)
     // Discard any captures that occurred before we were called.  Do this first
     // to avoid missing bytes, even before testing for a start_pos.
     volatile uint32_t *read_ptr = (volatile uint32_t *)DMA_CH_REG(DMA_CH_ADDR_MONITOR)->write_addr;
@@ -1039,6 +1140,17 @@ ora_result_t pio_wait_for_knock(
         *next_read_out = read_ptr;
     }
     return ORA_RESULT_OK;
+#else // TEST_BUILD
+    (void)knock;
+    (void)ring_buf;
+    (void)ring_entries_log2;
+    (void)flags;
+    (void)payload_out;
+    (void)payload_len;
+    (void)start_pos;
+    (void)next_read_out;
+    return ORA_RESULT_OK;
+#endif // !TEST_BUILD
 }
 
 ora_result_t pio_reprogram_ram_rom_slot(
@@ -1075,7 +1187,11 @@ ora_result_t pio_reprogram_ram_rom_slot(
 
     // Remap logical addresses and data bytes to their physical representations
     // and write to the target slot in SRAM
-    uint8_t *sram = (uint8_t *)addr;
+#if REAL_HARDWARE
+    uint8_t *sram = (uint8_t *)(uintptr_t)addr;
+#else
+    uint8_t *sram = sram_to_host(addr);
+#endif
     for (uint32_t i = 0; i < len; i++) {
         uint32_t physical_addr = pio_map_addr_to_phys(CURRENT_SLOT, offset + i);
         uint8_t  physical_data = pio_map_data_to_phys(CURRENT_SLOT, data[i]);
@@ -1126,11 +1242,18 @@ ora_result_t pio_switch_rom_region(uint32_t new_region_addr) {
                                       & high_bits_mask;
  
     // Keep RUNTIME consistent with the switch.
-    RUNTIME->rom_table = (void *)new_region_addr;
+    RUNTIME->rom_table = (void *)(uintptr_t)new_region_addr;
  
     // Update the X register in the address-read SM with the new SRAM region
     // base.  This delays the SM by a single cycle but is an atomic switch.
-    APIO_ASM_INIT();
+    //
+    // APIO_ASM_CONTINUE() rather than APIO_ASM_INIT(): this function modifies
+    // a live SM via APIO_SM_EXEC_INSTR without touching any PIO program
+    // memory.  In emulation mode APIO_ASM_CONTINUE() is a no-op, preserving
+    // the accumulated apio state so that epio_update_from_apio() sees only the
+    // two pre_instrs added here and can apply them to the live epio SM without
+    // disturbing any other SM state.
+    APIO_ASM_CONTINUE();
     APIO_SET_BLOCK(BLOCK_ADDR);
     APIO_SET_SM(SM_ADDR_READ);
     APIO_TXF = rom_table_high_bits;
@@ -1141,7 +1264,5 @@ ora_result_t pio_switch_rom_region(uint32_t new_region_addr) {
 }
 
 uint8_t pio_get_active_ram_slot(void) {
-    return RUNTIME->rom_slot_index;
+    return RUNTIME->current_ram_slot;
 }
-
-#endif // REAL_HARDWARE

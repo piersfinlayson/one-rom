@@ -75,7 +75,7 @@ pub fn build_rom_info(
         filename: truncate_filename(chip.filename()),
         pin_map: Some(build_rom_pin_map(addr_layout, cs_data_layout)),
         chip_size: chip.chip_type().size_bytes() as u32,
-        rom_type_enum: *chip.chip_type() as u8,
+        rbcp_rom_type: chip.chip_type().rbcp_chip_type(),
     }
 }
 

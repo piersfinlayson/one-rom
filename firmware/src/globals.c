@@ -55,7 +55,8 @@ onerom_runtime_info_t onerom_runtime_info SECTION_ONEROM_RUNTIME_INFO = {
     .addr_pio_sm_info = 0,
     .cs_data_pio_block_info = 0,
     .cs_data_pio_sm_info = 0,
-    .dma_pio_ch = 0
+    .dma_pio_ch = 0,
+    .current_ram_slot = 0xFF
 };
 
 // Main One ROM build info structure, located at known point in flash

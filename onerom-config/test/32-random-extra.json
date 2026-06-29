@@ -8,26 +8,6 @@
     "rom_sets": [
         {
             "type": "single",
-            "chips": [
-                {
-                "file": "https://images.onerom.org/plugins/system/usb/v0.1.2/plugin.bin",
-                "type": "system_plugin",
-                "size_handling": "pad"
-                }
-            ]
-        },
-        {
-            "type": "single",
-            "chips": [
-                {
-                "file": "https://images.onerom.org/plugins/user/rgb/v0.1.1/plugin.bin",
-                "type": "user_plugin",
-                "size_handling": "pad"
-                }
-            ]
-        },
-        {
-            "type": "single",
             "roms": [
                 {
                     "description": "29F040",
@@ -62,7 +42,9 @@
                 {
                     "description": "23C1001",
                     "file": "images/test/rand_128KB.rom",
-                    "type": "23C1001"
+                    "type": "23C1001",
+                    "cs1": "active_high",
+                    "cs2": "active_low"
                 }
             ]
         }

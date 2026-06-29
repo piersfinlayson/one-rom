@@ -83,6 +83,9 @@ int firmware_main(void) {
 
     // Set up the RAM table to serve the ROM from
     if (RUNTIME->current_rom_slot != NULL) {
+        // We always preload to RAM slot 0
+        RUNTIME->current_ram_slot = 0;
+
         preload_rom_image();
     }
 

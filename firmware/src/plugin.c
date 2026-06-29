@@ -106,10 +106,10 @@ uint8_t initial_plugin_parse(uint8_t *disable_vbus_det, uint8_t *num_plugins) {
     return plugins;
 }
 
-#if !defined(TEST_BUILD)
-
 void ora_reboot_bootsel(void) {
+#if !defined(TEST_BUILD)
     enter_bootloader();
+#endif // !TEST_BUILD
 
     // Do not return
     while (1);
@@ -120,22 +120,16 @@ void *ora_alloc(size_t size) {
     return NULL;
 }
 
-void *ora_get_firmware_info(void) {
-    void *info = (void *)INFO;
-    return info;
-}
-
-void *ora_get_runtime_info(void) {
-    void *info = (void *)RUNTIME;
-    return info;
-}
-
 void ora_log(const char* msg, ...) {
 #if defined(PLUGIN_LOGGING)
+#if !defined(TEST_BUILD)
     va_list args;
     va_start(args, msg);
     do_log_v(msg, &args);
     va_end(args);
+#else // TEST_BUILD
+    stub_log(msg);
+#endif // !TEST_BUILD
 #else
     (void)msg;
 #endif // PLUGIN_LOGGING
@@ -143,11 +137,17 @@ void ora_log(const char* msg, ...) {
 
 void ora_err_log(const char* msg, ...) {
 #if defined(PLUGIN_LOGGING)
+#if !defined(TEST_BUILD)
+
     do_err_log_prefix();
     va_list args;
     va_start(args, msg);
     do_log_v(msg, &args);
     va_end(args);
+#else // TEST_BUILD
+    err_log(msg);
+#endif // !TEST_BUILD
+
 #else
     (void)msg;
 #endif // PLUGIN_LOGGING
@@ -155,11 +155,15 @@ void ora_err_log(const char* msg, ...) {
 
 void ora_debug_log(const char* msg, ...) {
 #if defined(BOOT_LOGGING) && defined(DEBUG_LOGGING)
+#if !defined(TEST_BUILD)
     do_debug_log_prefix();
     va_list args;
     va_start(args, msg);
     do_log_v(msg, &args);
     va_end(args);
+#else // TEST_BUILD
+    stub_log("DEBUG:%s", msg);
+#endif // !TEST_BUILD
 #else
     (void)msg;
 #endif // BOOT_LOGGING && DEBUG_LOGGING
@@ -170,6 +174,7 @@ size_t plugin_get_free_mem(void) {
 }
 
 void ora_set_status_led(uint8_t on) {
+#if !defined(TEST_BUILD)
     uint8_t pin = HW->gpio_status;
     if (RUNTIME->status_led_enabled && pin <= MAX_GPIOS) {
         if (on) {
@@ -178,19 +183,31 @@ void ora_set_status_led(uint8_t on) {
             status_led_off(pin);
         }
     }
+#else // TEST_BUILD
+    LOG("ORA set status LED %d", on);
+#endif // !TEST_BUILD
 }
 
 void ora_setup_usb(void) {
+#if !defined(TEST_BUILD)
     setup_usb_pll();
     setup_usb_controller();
+#else // TEST_BUILD
+    LOG("ORA setup USB");
+#endif // !TEST_BUILD
 }
 
 void ora_setup_adc(void) {
+#if !defined(TEST_BUILD)
     setup_usb_pll();
     setup_adc();
+#else // TEST_BUILD
+    LOG("ORA setup ADC");
+#endif // !TEST_BUILD
 }
 
 void ora_enable_irq(ora_irq_t irq, uint8_t enable) {
+#if !defined(TEST_BUILD)
     if (enable) {
         if (irq < 32) {
             NVIC_ISER0 = (1u << irq);
@@ -204,9 +221,13 @@ void ora_enable_irq(ora_irq_t irq, uint8_t enable) {
             NVIC_ICER1 = (1u << (irq - 32));
         }
     }
+#else // TEST_BUILD
+    LOG("ORA enable IRQ %d %d", irq, enable);
+#endif // !TEST_BUILD
 }
 
 void ora_register_irq(ora_irq_t irq, ora_irq_handler_t handler) {
+#if !defined(TEST_BUILD)
     switch (irq) {
         case ORA_IRQ_TIMER0_IRQ_0:
             RUNTIME->timer0_irq_0_handler = handler;
@@ -224,6 +245,9 @@ void ora_register_irq(ora_irq_t irq, ora_irq_handler_t handler) {
             ERR("Invalid IRQ number for registration: %d", irq);
             break;
     }
+#else // TEST_BUILD
+    LOG("ORA register IRQ %d %p", irq, handler);
+#endif // !TEST_BUILD
 }
 
 void ora_set_plugin_context(void *context) {
@@ -256,10 +280,15 @@ uint32_t ora_get_chip_size_from_type(uint32_t chip_type) {
 }
 
 uint8_t ora_is_pin_output(uint8_t pin) {
+#if !defined(TEST_BUILD)
     if (pin <= MAX_GPIOS) {
         return GPIO_IS_OUTPUT(pin);
     }
     return 0xFF;
+#else // TEST_BUILD
+    LOG("ORA is pin output %d", pin);
+    return 0xFF;
+#endif // !TEST_BUILD
 }
 
 uint8_t ora_get_data_pin_nums(uint8_t *data_pins_out, uint8_t num_pins) {
@@ -393,7 +422,7 @@ ora_result_t ora_get_ram_slot_info(
         *size_out = region_size;
     }
     if (rom_type_out != NULL) {
-        *rom_type_out = 0xFF;
+        *rom_type_out = CURRENT_SLOT->roms[0]->rbcp_rom_type;
     }
 
     return ORA_RESULT_OK;
@@ -433,7 +462,11 @@ ora_result_t ora_set_active_ram_slot(uint8_t ram_slot) {
         return result;
     }
 
-    return pio_switch_rom_region(addr);
+    result = pio_switch_rom_region(addr);
+    if (result == ORA_RESULT_OK) {
+        RUNTIME->current_ram_slot = ram_slot;
+    }
+    return result;
 }
 
 static uint8_t is_plugin_type(const onerom_rom_slot_t *slot) {
@@ -503,7 +536,7 @@ ora_result_t ora_get_flash_slot_info(
         *name_out = set->roms[0]->filename;
     }
     if (rom_type_out != NULL) {
-        *rom_type_out = (uint32_t)set->roms[0]->rom_type;
+        *rom_type_out = (uint32_t)set->roms[0]->rbcp_rom_type;
     }
     if (rom_count_out != NULL) {
         *rom_count_out = set->rom_count;
@@ -549,7 +582,11 @@ ora_result_t ora_copy_flash_slot_to_ram_slot(
     }
 
     // Flash data is already in physical layout so copy directly to SRAM
-    memcpy((void *)addr, set->data, size);
+#if REAL_HARDWARE
+    memcpy((void *)(uintptr_t)addr, set->data, size);
+#else
+    memcpy(sram_to_host(addr), set->data, size);
+#endif
 
     return ORA_RESULT_OK;
 }
@@ -569,6 +606,8 @@ ora_result_t ora_demangle_data(uint8_t physical_data, uint8_t *logical_data_out)
     *logical_data_out = pio_demangle_data(CURRENT_SLOT, physical_data);
     return ORA_RESULT_OK;
 }
+
+#if !defined(TEST_BUILD)
 
 // Private to the framework — not exposed to plugins
 #define EXCLUSIVE_MODE_REQUEST  0x584D5251u  // XMRQ
@@ -617,8 +656,10 @@ static void yield_wait_for_resume(void) {
         "bx   lr                    \n"
     );
 }
+#endif // !TEST_BUILD
 
 ora_result_t ora_yield(uint8_t *was_paused_out) {
+#if !defined(TEST_BUILD)
     if (was_paused_out != NULL) {
         *was_paused_out = 0;
     }
@@ -657,8 +698,16 @@ ora_result_t ora_yield(uint8_t *was_paused_out) {
     }
 
     return ORA_RESULT_OK;
+#else // TEST_BUILD
+    LOG("ORA yield");
+    if (was_paused_out != NULL) {
+        *was_paused_out = 0;
+    }
+    return ORA_RESULT_OK;
+#endif // !TEST_BUILD
 }
 
+#if !defined(TEST_BUILD)
 // Returns  0: no plugin on other core, safe to proceed without FIFO
 //          1: plugin present and supports yield
 //         -1: plugin present but does not support yield
@@ -691,8 +740,10 @@ static int other_core_yield_capability(void) {
     const ora_plugin_header_t *header = (const ora_plugin_header_t *)set->data;
     return (header->properties1 & ORA_PROPERTY1_SUPPORTS_YIELD) ? 1 : -1;
 }
+#endif // !TEST_BUILD
 
 ora_result_t ora_enter_exclusive_mode(void) {
+#if !defined(TEST_BUILD)
     int cap = other_core_yield_capability();
     if (cap < 0) return ORA_RESULT_NOT_SUPPORTED;
     if (cap == 0) return ORA_RESULT_OK;
@@ -717,9 +768,14 @@ ora_result_t ora_enter_exclusive_mode(void) {
     for (volatile int i = 0; i < 100000; i++) {}
 
     return ORA_RESULT_OK;
+#else // TEST_BUILD
+    LOG("ORA enter exclusive mode");
+    return ORA_RESULT_OK;
+#endif // !TEST_BUILD
 }
 
 ora_result_t ora_exit_exclusive_mode(void) {
+#if !defined(TEST_BUILD)
     //int cap = other_core_yield_capability();
     //if (cap < 0) return ORA_RESULT_NOT_SUPPORTED;
     //if (cap == 0) return ORA_RESULT_OK;
@@ -738,6 +794,10 @@ ora_result_t ora_exit_exclusive_mode(void) {
     for (volatile int i = 0; i < 1000000; i++) {}
 
     return ORA_RESULT_OK;
+#else // TEST_BUILD
+    LOG("ORA exit exclusive mode");
+    return ORA_RESULT_OK;
+#endif // !TEST_BUILD
 }
 
 ora_result_t ora_read_ram_rom_slot(
@@ -842,6 +902,7 @@ void *ora_fn_lookup(api_id_t id) {
     }
 }
 
+#if !defined(TEST_BUILD)
 static void fifo_drain(void) {
     while (SIO_FIFO_ST & 1u)
         (void)SIO_FIFO_RD;

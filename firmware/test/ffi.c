@@ -8,6 +8,16 @@
 #include <epio.h>
 #include <apio.h>
 
+extern onerom_runtime_info_t onerom_runtime_info;
+
+void *ffi_runtime_info_ptr(void) {
+    return &onerom_runtime_info;
+}
+
+uint32_t ffi_runtime_info_size(void) {
+    return (uint32_t)sizeof(onerom_runtime_info);
+}
+
 uint8_t ffi_limp_mode(void) {
     return (uint8_t)limp_mode_value;
 }

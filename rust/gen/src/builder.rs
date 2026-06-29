@@ -359,7 +359,7 @@ impl Builder {
                         filename: Some(chip.filename().to_string()),
                         pin_map: None,
                         chip_size: chip.chip_type().size_bytes() as u32,
-                        rom_type_enum: *chip.chip_type() as u8,
+                        rbcp_rom_type: *chip.chip_type() as u8,
                     }],
                     rom_count: 1,
                     slot_type,
