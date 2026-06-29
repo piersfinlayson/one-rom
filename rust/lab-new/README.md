@@ -9,11 +9,11 @@ In time it is expected this will replace the existing Lab implementation.
 Use the `scripts/flash.sh` script to build and flash the firmware to the test board, specifying which ROM type to read.  For example:
 
 ```bash
-scripts/flash.sh fire-24-e 2364 --cs1 0
-scripts/flash.sh fire-28-a 27c512
-scripts/flash.sh fire-28-a 23128 --cs1 0 --cs2 0 --cs3 1
-scripts/flash.sh fire-32-a 27c010
-scripts/flash.sh fire-40-a 27c400
+scripts/flash.sh # Requires entering board type using the menu prompt
+scripts/flash.sh fire-24-e
+scripts/flash.sh fire-28-a
+scripts/flash.sh fire-32-a
+scripts/flash.sh fire-40-a
 ```
 
 Sample output from a One ROM 40 test serving [images/test/rand_512KB.rom](../../images/test/rand_512KB.rom).

@@ -86,8 +86,7 @@ async fn main(spawner: Spawner) -> ! {
     usb::run(spawner, usb_device);
 
     // Build the physical-pin → MCU GPIO map for this board
-    let board = BOARD_STR
-        .map(|s| Board::try_from_str(s).unwrap_or_else(|| panic!("Unknown board '{}'", s)));
+    let board = BOARD_STR.and_then(Board::try_from_str);
     if let Some(board) = board {
         debug!("Board: {}", board.name());
         let pin_map = BoardPinMap::new(board);
