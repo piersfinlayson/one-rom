@@ -234,7 +234,11 @@ static void setup_test_infra(void) {
 }
 
 static epio_t *start_epio(void) {
-    return epio_from_apio();
+    epio_t *epio = epio_from_apio();
+    for (int ii = 0; ii < MAX_USED_GPIOS; ii++) {
+        epio_set_gpio_pull_up(epio, ii, 1);
+    }
+    return epio;
 }
 
 static int test_set(uint8_t set_index) {
