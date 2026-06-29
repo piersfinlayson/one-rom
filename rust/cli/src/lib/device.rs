@@ -9,6 +9,7 @@
 
 use log::debug;
 use nusb::DeviceInfo;
+use onerom_config::hw::Board;
 use onerom_fw_parser::ParsedDevice;
 use wildmatch::WildMatch;
 
@@ -69,20 +70,12 @@ impl std::fmt::Display for Device {
             {
                 let info = sdrr.flash.as_ref().unwrap();
                 let board = info.board.as_ref().unwrap();
-                let model = board.model().to_string();
-                let chip_pins = board.chip_pins();
-                let hw_rev = board
-                    .name()
-                    .rsplit_once('-')
-                    .map(|(_, rev)| rev)
-                    .unwrap_or("(unknown revision)")
-                    .to_uppercase();
                 let fw_version = &info.version;
-                format!("One ROM {model} {chip_pins} {hw_rev} - Firmware: {fw_version}")
+                format!("One ROM {} - Firmware: {fw_version}", board_label(board))
             }
             Some(ParsedDevice::Schema(onerom)) if onerom.info().is_some() => {
                 let info = onerom.info().unwrap();
-                let board_str = onerom
+                let hw_rev = onerom
                     .metadata()
                     .map(|m| m.hw.hw_rev.as_str())
                     .unwrap_or("unknown");
@@ -90,7 +83,11 @@ impl std::fmt::Display for Device {
                     "v{}.{}.{}",
                     info.major_version, info.minor_version, info.patch_version
                 );
-                format!("One ROM {board_str:<18} - Firmware: {fw_version}  ")
+                let board_part = match Board::try_from_str(hw_rev) {
+                    Some(board) => board_label(&board),
+                    None => hw_rev.to_string(),
+                };
+                format!("One ROM {board_part} - Firmware: {fw_version}")
             }
             _ => "Unknown           - Firmware: n/a  ".to_string(),
         };
@@ -150,7 +147,7 @@ impl Device {
 
         match onerom {
             ParsedDevice::Original(sdrr) => {
-                let Some(flash) = sdrr.flash.as_ref() else {
+                if sdrr.flash.is_none() {
                     return;
                 };
 
@@ -166,22 +163,24 @@ impl Device {
                 } else {
                     self.state = DeviceState::Stopped;
                 }
-
-                self.usb_can_run = flash.is_usb_run_capable();
             }
             ParsedDevice::Schema(onerom) => {
                 if onerom.info().is_none() {
                     return;
-                }
+                };
 
-                if onerom.runtime().is_some() {
-                    self.state = DeviceState::Running;
+                if let Some(runtime_info) = &onerom.runtime() {
+                    self.state = match runtime_info.limp_mode {
+                        onerom_metadata::LimpModePattern::LimpModeNone => DeviceState::Running,
+                        _ => DeviceState::Limp,
+                    }
                 } else {
                     self.state = DeviceState::Stopped;
                 }
-                // usb_can_run not yet determinable from schema format
             }
         }
+
+        self.usb_can_run = onerom.is_usb_run_capable();
     }
 
     pub fn get_active_rom_set_index(&self) -> Option<u8> {
@@ -191,28 +190,40 @@ impl Device {
         })
     }
 
-    /// Returns the active ROM set if available.
-    pub fn get_active_rom_set(&self) -> Option<&onerom_fw_parser::SdrrRomSet> {
+    fn get_active_sdrr_rom_set(&self) -> Option<&onerom_fw_parser::SdrrRomSet> {
         let sdrr = self.onerom.as_ref().and_then(|o| o.as_original())?;
         let flash_info = sdrr.flash.as_ref()?;
         let active_set_index = self.get_active_rom_set_index()? as usize;
         flash_info.rom_sets.get(active_set_index)
     }
 
-    /// Returns the active ROM type if available.
-    pub fn get_active_rom_type(&self) -> Option<onerom_fw_parser::SdrrRomType> {
+    /// Returns (rom type label, rom size in bytes) for the active ROM,
+    /// if the device is running. Neutral across SDRR and schema devices.
+    fn active_rom_facts(&self) -> Option<(String, usize)> {
         if !self.is_running() {
             return None;
         }
-        self.get_active_rom_set()
-            .and_then(|set| set.roms.first())
-            .map(|rom| rom.rom_type)
+        match self.onerom.as_ref()? {
+            ParsedDevice::Original(_) => {
+                let rom = self.get_active_sdrr_rom_set()?.roms.first()?;
+                Some((rom.rom_type.to_string(), rom.rom_type.rom_size()))
+            }
+            ParsedDevice::Schema(onerom) => {
+                let slot = onerom.runtime()?.current_rom_slot.as_ref()?;
+                let rom = slot.roms.first()?;
+                Some((rom.rom_type.clone(), rom.chip_size as usize))
+            }
+        }
     }
 
-    /// Returns the active ROM size if available
+    /// Returns the active ROM type label if available.
+    pub fn get_active_rom_type(&self) -> Option<String> {
+        self.active_rom_facts().map(|(ty, _)| ty)
+    }
+
+    /// Returns the active ROM size in bytes if available.
     pub fn get_active_rom_size(&self) -> Option<usize> {
-        self.get_active_rom_type()
-            .map(|rom_type| rom_type.rom_size())
+        self.active_rom_facts().map(|(_, size)| size)
     }
 
     /// Returns whether this device matches the provided serial pattern, which
@@ -240,6 +251,22 @@ impl Device {
         let serial = self.serial.clone().unwrap_or_else(|| "~".to_string());
         (board, serial)
     }
+}
+
+/// Human-readable board identity fragment, e.g. "Fire 24 F".
+/// Shared by both Display arms so SDRR and schema devices render identically.
+fn board_label(board: &Board) -> String {
+    let model = board.model();
+    let pins = board.chip_pins();
+    // Derive rev from the canonical name, not the raw hw_rev, so legacy
+    // aliases normalise to the same output.
+    let rev = board
+        .name()
+        .rsplit_once('-')
+        .map(|(_, rev)| rev)
+        .unwrap_or("")
+        .to_uppercase();
+    format!("{model} {pins} {rev}")
 }
 
 /// Returns whether a serial number matches a given pattern, which may include

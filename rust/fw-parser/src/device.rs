@@ -105,4 +105,33 @@ impl ParsedDevice {
             }
         }
     }
+
+    /// Returns whether the device is USB capable
+    pub fn is_usb_run_capable(&self) -> bool {
+        match self {
+            Self::Original(sdrr) => sdrr
+                .flash
+                .as_ref()
+                .map(|f| f.is_usb_run_capable())
+                .unwrap_or(false),
+            Self::Schema(onerom) => {
+                // Get the first ROM set if it exists
+                let slot = match onerom.metadata() {
+                    Some(metadata) => match metadata.rom_slots.first() {
+                        Some(slot) => slot,
+                        None => return false,
+                    },
+                    None => return false,
+                };
+
+                let rom_info = match slot.roms.first() {
+                    Some(info) => info,
+                    None => return false,
+                };
+
+                rom_info.rbcp_rom_type
+                    == onerom_config::chip::ChipType::SystemPlugin.rbcp_chip_type()
+            }
+        }
+    }
 }

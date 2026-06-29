@@ -15,6 +15,7 @@ use onerom_metadata::{
 use crate::v2::firmware_config::{build_firmware_config, build_firmware_overrides};
 use crate::v2::hardware_info::build_hardware_info;
 use crate::v2::rom_image::build_rom_image;
+use crate::v2::rom_info::truncate_filename;
 use crate::v2::rom_slot::build_rom_slot;
 use crate::{
     Chip, ChipConfig, ChipSet, ChipSetType, Config, CsConfig, CsLogic, Error, FileData, FileSpec,
@@ -356,10 +357,10 @@ impl Builder {
                     size: chip.data().map(|d| d.len() as u32).unwrap_or(0),
                     roms: alloc::vec![OneromRomInfo {
                         rom_type: chip.chip_type().name().to_string(),
-                        filename: Some(chip.filename().to_string()),
+                        filename: truncate_filename(chip.filename()),
                         pin_map: None,
                         chip_size: chip.chip_type().size_bytes() as u32,
-                        rbcp_rom_type: *chip.chip_type() as u8,
+                        rbcp_rom_type: chip.chip_type().rbcp_chip_type(),
                     }],
                     rom_count: 1,
                     slot_type,

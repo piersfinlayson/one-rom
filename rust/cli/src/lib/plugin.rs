@@ -263,6 +263,23 @@ pub struct PluginRelease {
     /// Minimum One ROM firmware version required to run this plugin.
     #[serde(deserialize_with = "deserialize_fw_version")]
     pub min_fw_version: FirmwareVersion,
+    /// First One ROM firmware version this release is known to be incompatible
+    /// with, recorded after release once a breaking firmware change is found.
+    ///
+    /// The compatibility window is half-open: `[min_fw_version, incompatible_from)`.
+    /// `None` means there is no known upper bound.
+    ///
+    /// This is advisory only. The bound is discovered after the plugin binary
+    /// is built, so it cannot live in the binary header and the firmware does
+    /// not enforce it; it is honoured by manifest-aware tooling (this CLI)
+    /// alone. Tools that bypass the manifest (sideloaded `file=` binaries, the
+    /// web tool, third-party tooling) do not see it.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_opt_fw_version"
+    )]
+    pub incompatible_from: Option<FirmwareVersion>,
 }
 
 fn deserialize_fw_version<'de, D>(d: D) -> Result<FirmwareVersion, D::Error>
@@ -271,6 +288,46 @@ where
 {
     let s = String::deserialize(d)?;
     FirmwareVersion::try_from_str(&s).map_err(serde::de::Error::custom)
+}
+
+fn deserialize_opt_fw_version<'de, D>(d: D) -> Result<Option<FirmwareVersion>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let opt = Option::<String>::deserialize(d)?;
+    opt.map(|s| FirmwareVersion::try_from_str(&s))
+        .transpose()
+        .map_err(serde::de::Error::custom)
+}
+
+/// Why a release is incompatible with a given firmware version.
+#[derive(Debug, Clone, Copy)]
+enum FwIncompat {
+    /// Firmware predates the release's minimum supported firmware version.
+    TooOld,
+    /// Firmware is at or beyond the version from which this release is known to
+    /// be incompatible. Carries that boundary version.
+    TooNew(FirmwareVersion),
+}
+
+/// Build the appropriate error for a release that is incompatible with `fw`.
+fn fw_incompat_error(
+    name: &str,
+    release: &PluginRelease,
+    reason: FwIncompat,
+    fw: &FirmwareVersion,
+) -> Error {
+    match reason {
+        FwIncompat::TooOld => Error::PluginIncompatible(
+            name.to_string(),
+            release.version,
+            release.min_fw_version,
+            *fw,
+        ),
+        FwIncompat::TooNew(from) => {
+            Error::PluginIncompatibleNewer(name.to_string(), release.version, from, *fw)
+        }
+    }
 }
 
 impl PluginRelease {
@@ -286,9 +343,26 @@ impl PluginRelease {
         )
     }
 
+    /// Returns why this release is incompatible with `fw`, or `None` if it is
+    /// compatible.
+    ///
+    /// The compatibility window is half-open: `[min_fw_version, incompatible_from)`.
+    /// A release with no `incompatible_from` has no upper bound.
+    fn fw_incompat(&self, fw: &FirmwareVersion) -> Option<FwIncompat> {
+        if fw < &self.min_fw_version {
+            Some(FwIncompat::TooOld)
+        } else if let Some(from) = self.incompatible_from
+            && fw >= &from
+        {
+            Some(FwIncompat::TooNew(from))
+        } else {
+            None
+        }
+    }
+
     /// Returns true if this release is compatible with the given firmware version.
     pub fn compatible_with_firmware(&self, fw: &FirmwareVersion) -> bool {
-        fw >= &self.min_fw_version
+        self.fw_incompat(fw).is_none()
     }
 }
 
@@ -758,6 +832,43 @@ async fn resolve_plugin(
     }
 }
 
+/// Select the release to use for an unpinned named spec.
+///
+/// Releases are ordered newest-first. With a known firmware version this walks
+/// that list and returns the newest release whose compatibility window includes
+/// `fw`; if none qualifies it returns an error describing why the newest release
+/// is incompatible. With no firmware version it returns the newest release
+/// without checking compatibility (it cannot be checked).
+fn select_unpinned<'a>(
+    releases: &'a PluginReleasesManifest,
+    name: &str,
+    fw_version: Option<&FirmwareVersion>,
+) -> Result<&'a PluginRelease, Error> {
+    let Some(newest) = releases.releases.first() else {
+        return Err(Error::PluginNotFound(name.to_string()));
+    };
+
+    let Some(fw) = fw_version else {
+        // Firmware version unknown: compatibility cannot be checked, so use the
+        // newest release and let later header checks catch a hard mismatch.
+        return Ok(newest);
+    };
+
+    // Newest-first: if the newest release fits this firmware it is the answer.
+    // Otherwise walk the older releases for the newest one that does. Binding
+    // `reason` from the newest's incompatibility means the no-compatible-release
+    // error reports against the newest release without recomputing anything.
+    match newest.fw_incompat(fw) {
+        None => Ok(newest),
+        Some(reason) => releases
+            .releases
+            .iter()
+            .skip(1)
+            .find(|r| r.compatible_with_firmware(fw))
+            .ok_or_else(|| fw_incompat_error(name, newest, reason, fw)),
+    }
+}
+
 async fn resolve_named_plugin(
     name: &str,
     known_type: Option<PluginType>,
@@ -779,6 +890,10 @@ async fn resolve_named_plugin(
 
     let releases = fetch_plugin_releases(plugin_type, name).await?;
 
+    // An explicit version pin selects that exact release; an incompatible pin
+    // is a hard error (handled by the compatibility check below), never a
+    // reason to silently substitute a different version. An unpinned spec walks
+    // the releases for the newest compatible one.
     let release = if let Some(v) = version {
         releases
             .releases
@@ -786,22 +901,17 @@ async fn resolve_named_plugin(
             .find(|r| r.version == v)
             .ok_or_else(|| Error::PluginVersionNotFound(name.to_string(), v.to_string()))?
     } else {
-        releases
-            .releases
-            .first()
-            .ok_or_else(|| Error::PluginNotFound(name.to_string()))?
+        select_unpinned(&releases, name, fw_version)?
     };
 
-    // Fail fast on manifest compatibility before downloading.
+    // Fail fast on compatibility before downloading. For an explicit version
+    // pin this enforces the pin (too-old or too-new is a hard error). For an
+    // unpinned spec with known firmware the release is already compatible, so
+    // this is a no-op. With unknown firmware compatibility cannot be checked.
     if let Some(fw) = fw_version
-        && !release.compatible_with_firmware(fw)
+        && let Some(reason) = release.fw_incompat(fw)
     {
-        return Err(Error::PluginIncompatible(
-            name.to_string(),
-            release.version,
-            release.min_fw_version,
-            *fw,
-        ));
+        return Err(fw_incompat_error(name, release, reason, fw));
     }
 
     let url = release.binary_url(plugin_type, name);

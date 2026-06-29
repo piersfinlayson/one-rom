@@ -1,6 +1,6 @@
 [package]
 name = "onerom-cli"
-version = "0.1.10"
+version = "0.2.0"
 edition = "2024"
 authors = ["Piers Finlayson <piers@piers.rocks>"]
 license = "MIT"
@@ -24,6 +24,7 @@ onerom-config = { workspace = true }
 onerom-fw = { workspace = true }
 onerom-gen = { workspace = true }
 onerom-fw-parser = { workspace = true }
+onerom-metadata = { workspace = true }
 
 picoboot = { version = "0.2.3", features = ["reader", "tokio"] }
 

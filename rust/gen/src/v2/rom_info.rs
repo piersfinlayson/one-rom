@@ -48,7 +48,7 @@ pub fn build_rom_pin_map(
 /// Truncate `name` to at most `MAX_ROM_FILENAME_LEN` bytes, at a UTF-8
 /// character boundary. Returns `None` if `name` is empty (per `Chip`,
 /// always a `String`, possibly `""`).
-fn truncate_filename(name: &str) -> Option<String> {
+pub(crate) fn truncate_filename(name: &str) -> Option<String> {
     if name.is_empty() {
         return None;
     }

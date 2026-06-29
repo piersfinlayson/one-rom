@@ -197,6 +197,7 @@ pub fn output_slot_info(device: &Device, options: &Options, prefix: &str) -> Res
                     );
                 }
 
+                #[allow(clippy::collapsible_if)]
                 if let Some(overrides) = &slot.firmware_overrides {
                     if overrides.any_present() {
                         print!("{prefix}");

@@ -5,7 +5,6 @@
 //! Shared error type for the One ROM CLI library.
 
 use onerom_config::fw::FirmwareVersion;
-use onerom_fw_parser::SdrrRomType;
 
 use crate::plugin::{PluginType, PluginVersion};
 
@@ -68,7 +67,7 @@ pub enum Error {
     #[error(
         "The operation attempted to access past the end of a live ROM image.\n  The {0} size is {1} bytes"
     )]
-    LiveOutOfBounds(SdrrRomType, usize),
+    LiveOutOfBounds(String, usize),
 
     #[error("Cannot determine the board type.\n  Either --board or --serial must be specified.")]
     NoBoardOrDevice,
@@ -209,6 +208,11 @@ pub enum Error {
         "Firmware board type '{0}' does not match the expected board type '{1}'.\n  Use --force to override."
     )]
     BoardMismatch(String, String),
+
+    #[error(
+        "Plugin '{0}' version '{1}' is not compatible with firmware {2} or later.\n  The selected firmware version is {3}."
+    )]
+    PluginIncompatibleNewer(String, PluginVersion, FirmwareVersion, FirmwareVersion),
 }
 
 impl Error {
