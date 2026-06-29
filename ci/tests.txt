@@ -39,6 +39,7 @@ pcb-rev-pb:HW_REV=fire-24-usb-b,MCU=rp2350,CONFIG=old-config/test-sdrr-0.mk
 pcb-rev-pc:HW_REV=fire-24-c,MCU=rp2350,CONFIG=old-config/test-sdrr-0.mk
 pcb-rev-pd:HW_REV=fire-24-d,MCU=rp2350,CONFIG=old-config/test-sdrr-0.mk
 pcb-rev-pe:HW_REV=fire-24-e,MCU=rp2350,CONFIG=old-config/test-sdrr-0.mk
+pcb-rev-pf:HW_REV=fire-24-f,MCU=rp2350,CONFIG=old-config/test-sdrr-0.mk
 
 # Enable BOOT_LOGGGING
 boot-logging-f401re:HW_REV=ice-24-f,BOOT_LOGGING=1,MCU=f401re,CONFIG=old-config/test-sdrr-0.mk
@@ -145,6 +146,7 @@ fire-2764:HW_REV=fire-28-a,MCU=rp2350,ROM_CONFIGS="file=images/test/rand_64KB.ro
 fire-27128:HW_REV=fire-28-a,MCU=rp2350,ROM_CONFIGS="file=images/test/rand_64KB.rom,trunc,type=27128"
 fire-27256:HW_REV=fire-28-a,MCU=rp2350,ROM_CONFIGS="file=images/test/rand_64KB.rom,trunc,type=27256"
 fire-27512:HW_REV=fire-28-a,MCU=rp2350,ROM_CONFIGS="file=images/test/rand_64KB.rom,type=27512"
+fire-27512c:HW_REV=fire-28-c,MCU=rp2350,ROM_CONFIGS="file=images/test/rand_64KB.rom,type=27512"
 
 ## 28 pin 23 series ROM tests
 # Ice tests are broken - it's probaby a test script issue, but we have deprecated ice-28-a boards anyway
@@ -190,6 +192,10 @@ fire-32-b-39sf040:HW_REV=fire-32-b,MCU=rp2350,ROM_CONFIGS="file=images/test/rand
 # Test fire-40-a
 fire-40-a:HW_REV=fire-40-a,MCU=rp2350,ROM_CONFIGS="file=images/test/rand_512KB.rom,type=27C400"
 fire-40-a:HW_REV=fire-40-a,MCU=rp2350,EXTRA_C_FLAGS="-DFORCE_16_BIT",ROM_CONFIGS="file=images/test/rand_512KB.rom,type=27C400"
+
+# Test fire-40-b
+fire-40-b:HW_REV=fire-40-b,MCU=rp2350,ROM_CONFIGS="file=images/test/rand_512KB.rom,type=27C400"
+fire-40-b:HW_REV=fire-40-b,MCU=rp2350,EXTRA_C_FLAGS="-DFORCE_16_BIT",ROM_CONFIGS="file=images/test/rand_512KB.rom,type=27C400"
 
 # Test 28C ROM types (Fire only) 
 28c16:HW_REV=fire-24-e,MCU=rp2350,ROM_CONFIGS="file=images/test/rand_128KB.rom,trunc,type=28C16"

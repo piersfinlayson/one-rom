@@ -19,6 +19,11 @@ Retired:
 - `test` (superceded by `onerom-fw-tester`)
 - Silent replacement of SST39SF040 with 27C040 for fire-32-a.  Decided it was best to flag this isn't natively supported.
 
+## v0.6.14 - 2026-??-??
+
+- Added support for prototypes fire-40-b and fire-24-f.
+- Improved lab-new scripts.
+
 ## v0.6.13 - 2026-06-02
 
 Added:
