@@ -27,6 +27,11 @@ pub struct ModeResult {
     /// still driven after CS deassert, or driven for a non-active CS
     /// combination).
     pub bus_failures: u64,
+    /// Forced-low override failures: a non-address GPIO inside the address
+    /// window that a `GpioOverLow` override should hold low changed the served
+    /// byte when toggled.  Zero on sets with no address-window gaps (the
+    /// adversarial re-read is skipped entirely there).
+    pub forced_low_failures: u64,
     /// Number of extra-address-bit combinations exercised.  1 for all single,
     /// banked, and equal-width multi sets.  > 1 for multi sets where the
     /// secondary chip has fewer address lines than the primary: each missing
@@ -36,7 +41,7 @@ pub struct ModeResult {
 
 impl ModeResult {
     pub fn passed(&self) -> bool {
-        self.failures == 0 && self.bus_failures == 0
+        self.failures == 0 && self.bus_failures == 0 && self.forced_low_failures == 0
     }
 }
 
@@ -77,6 +82,10 @@ pub struct SetResult {
     pub skip_reason: Option<String>,
     /// `Some(msg)` → firmware did not boot correctly.
     pub boot_error: Option<String>,
+    /// `Some(msg)` → the address-window gap check failed at setup: the
+    /// tester-derived gap set and the firmware's declared `GpioOverLow` set
+    /// disagree.  The set's read passes are not run when this is set.
+    pub gap_error: Option<String>,
     /// Optional informational note shown in the report alongside this set's
     /// results (e.g. sel-wrap or one-beyond annotation).
     pub note: Option<String>,
@@ -90,6 +99,7 @@ impl SetResult {
             skipped: false,
             skip_reason: None,
             boot_error: None,
+            gap_error: None,
             note: None,
         }
     }
@@ -101,6 +111,7 @@ impl SetResult {
             skipped: true,
             skip_reason: Some(reason.to_string()),
             boot_error: None,
+            gap_error: None,
             note: None,
         }
     }
@@ -112,6 +123,21 @@ impl SetResult {
             skipped: false,
             skip_reason: None,
             boot_error: Some(reason.to_string()),
+            gap_error: None,
+            note: None,
+        }
+    }
+
+    /// Setup-time address-window gap check failure.  Like a boot error, the
+    /// set ran no read passes; reported distinctly from data/bus failures.
+    pub fn gap_error(set_idx: usize, reason: &str) -> Self {
+        Self {
+            set_idx,
+            chip_results: vec![],
+            skipped: false,
+            skip_reason: None,
+            boot_error: None,
+            gap_error: Some(reason.to_string()),
             note: None,
         }
     }
@@ -124,7 +150,7 @@ impl SetResult {
     /// Boot errors and non-skipped sets with failures return `false`.
     /// Skipped sets return `false` but are excluded from [`TestReport::all_passed`].
     pub fn passed(&self) -> bool {
-        if self.skipped || self.boot_error.is_some() {
+        if self.skipped || self.boot_error.is_some() || self.gap_error.is_some() {
             return false;
         }
         self.chip_results.iter().all(|c| c.passed())
@@ -172,6 +198,7 @@ impl TestReport {
         let mut grand_reads = 0u64;
         let mut grand_failures = 0u64;
         let mut grand_bus_failures = 0u64;
+        let mut grand_forced_low = 0u64;
 
         for set in &self.set_results {
             if let Some(ref note) = set.note {
@@ -179,6 +206,10 @@ impl TestReport {
             }
             if let Some(ref msg) = set.boot_error {
                 println!("Set {} : BOOT ERROR — {}", set.set_idx, msg);
+                continue;
+            }
+            if let Some(ref msg) = set.gap_error {
+                println!("Set {} : ADDRESS-WINDOW GAP CHECK — {}", set.set_idx, msg);
                 continue;
             }
             if set.skipped {
@@ -195,6 +226,7 @@ impl TestReport {
                     grand_reads += mode.reads;
                     grand_failures += mode.failures;
                     grand_bus_failures += mode.bus_failures;
+                    grand_forced_low += mode.forced_low_failures;
 
                     // combos > 1 means the secondary chip had fewer address
                     // lines than the primary; show the count so the inflated
@@ -207,7 +239,7 @@ impl TestReport {
 
                     println!(
                         "  [{}] set={} chip={} ({}) file={} mode={}bit{} \
-                         reads={} failures={} bus_failures={}",
+                         reads={} failures={} bus_failures={} forced_low_failures={}",
                         if mode.passed() { "PASS" } else { "FAIL" },
                         chip.set_idx,
                         chip.chip_idx,
@@ -218,6 +250,7 @@ impl TestReport {
                         mode.reads,
                         mode.failures,
                         mode.bus_failures,
+                        mode.forced_low_failures,
                     );
                 }
             }
@@ -225,10 +258,12 @@ impl TestReport {
 
         println!("-----");
         println!(
-            "Total: {} bytes read, {} data failures, {} bus violations — {}",
+            "Total: {} bytes read, {} data failures, {} bus violations, \
+             {} forced-low failures — {}",
             grand_reads,
             grand_failures,
             grand_bus_failures,
+            grand_forced_low,
             if self.all_passed() { "PASS" } else { "FAIL" },
         );
     }

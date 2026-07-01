@@ -39,12 +39,14 @@
 use log::{debug, error, info, trace, warn};
 
 use onerom_config::chip::{ChipType, ControlLineType};
+use onerom_config::fw::FirmwareVersion;
 use onerom_config::hw::Board;
 use onerom_fw_emulator::Emulator;
 use onerom_gen::{ChipConfig, ChipSetConfig, ChipSetType, Config, CsLogic};
 
 use crate::report::{ChipResult, ModeResult, SetResult, TestReport};
 use onerom_fw_tester::driver;
+use onerom_fw_tester::geometry;
 use onerom_fw_tester::oracle;
 use onerom_fw_tester::pin_cache::{ControlLine, PinCache};
 use onerom_fw_tester::runner::{addr_before_cs_cycles, cs_to_data_cycles, run_mode};
@@ -98,7 +100,15 @@ pub fn run_all(board: Board, config: &Config, base_dir: &std::path::Path, report
             (chip_set, None)
         };
 
-        let mut result = run_chip_set(board, oracle_set, set_idx, set_idx as u8, base_dir);
+        let mut result = run_chip_set(
+            board,
+            config,
+            oracle_set,
+            set_idx,
+            effective_idx,
+            set_idx as u8,
+            base_dir,
+        );
         if let Some(n) = note {
             result.set_note(n);
         }
@@ -120,8 +130,10 @@ pub fn run_all(board: Board, config: &Config, base_dir: &std::path::Path, report
         );
         let mut result = run_chip_set(
             board,
+            config,
             &config.chip_sets[0],
             num_sets,
+            0,
             num_sets as u8,
             base_dir,
         );
@@ -134,15 +146,23 @@ pub fn run_all(board: Board, config: &Config, base_dir: &std::path::Path, report
 
 fn run_chip_set(
     board: Board,
+    config: &Config,
     chip_set: &ChipSetConfig,
     set_idx: usize,
+    served_idx: usize,
     sel_image: u8,
     base_dir: &std::path::Path,
 ) -> SetResult {
     match chip_set.set_type {
-        ChipSetType::Single => run_single_set(board, chip_set, set_idx, sel_image, base_dir),
-        ChipSetType::Multi => run_multi_set(board, chip_set, set_idx, sel_image, base_dir),
-        ChipSetType::Banked => run_banked_set(board, chip_set, set_idx, sel_image, base_dir),
+        ChipSetType::Single => run_single_set(
+            board, config, chip_set, set_idx, served_idx, sel_image, base_dir,
+        ),
+        ChipSetType::Multi => run_multi_set(
+            board, config, chip_set, set_idx, served_idx, sel_image, base_dir,
+        ),
+        ChipSetType::Banked => run_banked_set(
+            board, config, chip_set, set_idx, served_idx, sel_image, base_dir,
+        ),
     }
 }
 
@@ -150,28 +170,47 @@ fn run_chip_set(
 
 fn run_single_set(
     board: Board,
+    config: &Config,
     chip_set: &ChipSetConfig,
     set_idx: usize,
+    served_idx: usize,
     sel_image: u8,
     base_dir: &std::path::Path,
 ) -> SetResult {
-    let emulator = match boot_set(board, chip_set, set_idx, sel_image) {
+    let (emulator, fw_version) = match boot_set(board, chip_set, set_idx, sel_image) {
         Ok(e) => e,
         Err(r) => return r,
     };
 
     let force_16_bit = get_force_16_bit(chip_set);
 
-    // Check ROM-serving GPIO pulls.  Build the PinCache for the first chip to
-    // derive the active GPIO mask (data + addr + CS + byte).
-    if let Some(chip_config) = chip_set.chips.first() {
+    // Check ROM-serving GPIO pulls, and compute the forced-low gap set.  Both
+    // use the PinCache for the first chip (the slot's primary).  Single sets
+    // use no X pins, so n_used_x = 0.
+    let gap_gpios: Vec<u8> = if let Some(chip_config) = chip_set.chips.first() {
         let chip_type =
             chip_substitution(board, chip_config.chip_type).unwrap_or(chip_config.chip_type);
         let cache = PinCache::build(chip_type, chip_config, board);
         if let Err(r) = check_rom_pin_pulls(&emulator, &cache, set_idx) {
             return r;
         }
-    }
+        match gap_set_for_slot(
+            board,
+            config,
+            base_dir,
+            served_idx,
+            fw_version,
+            chip_config.chip_type,
+            &cache,
+            0,
+            set_idx,
+        ) {
+            Ok(g) => g,
+            Err(r) => return r,
+        }
+    } else {
+        Vec::new()
+    };
 
     let chip_results: Vec<ChipResult> = chip_set
         .chips
@@ -187,6 +226,7 @@ fn run_single_set(
                 base_dir,
                 force_16_bit,
                 (0u64, 0u64),
+                &gap_gpios,
             )
         })
         .collect();
@@ -199,8 +239,10 @@ fn run_single_set(
 
 fn run_multi_set(
     board: Board,
+    config: &Config,
     chip_set: &ChipSetConfig,
     set_idx: usize,
+    served_idx: usize,
     sel_image: u8,
     base_dir: &std::path::Path,
 ) -> SetResult {
@@ -221,7 +263,9 @@ fn run_multi_set(
             set_idx,
             chip_set.chips.len()
         );
-        return run_single_set(board, chip_set, set_idx, sel_image, base_dir);
+        return run_single_set(
+            board, config, chip_set, set_idx, served_idx, sel_image, base_dir,
+        );
     }
 
     let n_secondary = chip_set.chips.len() - 1;
@@ -243,7 +287,7 @@ fn run_multi_set(
         );
     }
 
-    let emulator = match boot_set(board, chip_set, set_idx, sel_image) {
+    let (emulator, fw_version) = match boot_set(board, chip_set, set_idx, sel_image) {
         Ok(e) => e,
         Err(r) => return r,
     };
@@ -285,6 +329,23 @@ fn run_multi_set(
     if let Err(r) = check_rom_pin_pulls(&emulator, &primary_cache, set_idx) {
         return r;
     }
+
+    // Forced-low gap set for the slot: primary geometry + the first
+    // `n_secondary` X pins (the secondary CS selectors) are the used X.
+    let gap_gpios = match gap_set_for_slot(
+        board,
+        config,
+        base_dir,
+        served_idx,
+        fw_version,
+        primary_requested,
+        &primary_cache,
+        n_secondary,
+        set_idx,
+    ) {
+        Ok(g) => g,
+        Err(r) => return r,
+    };
 
     // ── X pin CS info for secondary chips ─────────────────────────────────────
     // Use the nominal (non-substituted) chip type for polarity lookup since the
@@ -354,7 +415,7 @@ fn run_multi_set(
                 mode,
                 oracle.len(),
             );
-            let (reads, failures, bus_failures) = run_mode(
+            let (reads, failures, bus_failures, forced_low_failures) = run_mode(
                 &emulator,
                 &primary_cache,
                 &oracle,
@@ -364,12 +425,14 @@ fn run_multi_set(
                 set_idx,
                 0,
                 chips0_bg,
+                &gap_gpios,
             );
             mode_results.push(ModeResult {
                 mode,
                 reads,
                 failures,
                 bus_failures,
+                forced_low_failures,
                 combos: 1,
             });
         }
@@ -518,6 +581,7 @@ fn run_multi_set(
             let mut total_reads = 0u64;
             let mut total_failures = 0u64;
             let mut total_bus_failures = 0u64;
+            let mut total_forced_low_failures = 0u64;
 
             for combo in 0..n_combos {
                 // Build the level mask for the extra GPIOs for this combo.
@@ -545,7 +609,7 @@ fn run_multi_set(
                     );
                 }
 
-                let (reads, failures, bus_failures) = run_mode(
+                let (reads, failures, bus_failures, forced_low_failures) = run_mode(
                     &emulator,
                     &secondary_cache,
                     &oracle,
@@ -555,10 +619,12 @@ fn run_multi_set(
                     set_idx,
                     chip_idx,
                     bg,
+                    &gap_gpios,
                 );
                 total_reads += reads;
                 total_failures += failures;
                 total_bus_failures += bus_failures;
+                total_forced_low_failures += forced_low_failures;
             }
 
             mode_results.push(ModeResult {
@@ -566,6 +632,7 @@ fn run_multi_set(
                 reads: total_reads,
                 failures: total_failures,
                 bus_failures: total_bus_failures,
+                forced_low_failures: total_forced_low_failures,
                 combos: n_combos as u32,
             });
         }
@@ -586,8 +653,10 @@ fn run_multi_set(
 
 fn run_banked_set(
     board: Board,
+    config: &Config,
     chip_set: &ChipSetConfig,
     set_idx: usize,
+    served_idx: usize,
     sel_image: u8,
     base_dir: &std::path::Path,
 ) -> SetResult {
@@ -666,7 +735,7 @@ fn run_banked_set(
         chip_type_0
     };
 
-    let emulator = match boot_set(board, chip_set, set_idx, sel_image) {
+    let (emulator, fw_version) = match boot_set(board, chip_set, set_idx, sel_image) {
         Ok(e) => e,
         Err(r) => return r,
     };
@@ -695,6 +764,23 @@ fn run_banked_set(
     if let Err(r) = check_x_pin_pulls(&emulator, board, set_idx, x_pins_needed) {
         return r;
     }
+
+    // Forced-low gap set for the slot: primary geometry + the first
+    // `x_pins_needed` X pins (the bank-select lines) are the used X.
+    let gap_gpios = match gap_set_for_slot(
+        board,
+        config,
+        base_dir,
+        served_idx,
+        fw_version,
+        chip_type_0,
+        &cache,
+        x_pins_needed,
+        set_idx,
+    ) {
+        Ok(g) => g,
+        Err(r) => return r,
+    };
 
     let cycles_addr_before_cs = addr_before_cs_cycles(chip_type);
 
@@ -738,7 +824,7 @@ fn run_banked_set(
                 mode,
                 oracle.len(),
             );
-            let (reads, failures, bus_failures) = run_mode(
+            let (reads, failures, bus_failures, forced_low_failures) = run_mode(
                 &emulator,
                 &cache,
                 &oracle,
@@ -748,12 +834,14 @@ fn run_banked_set(
                 set_idx,
                 bank,
                 bg,
+                &gap_gpios,
             );
             mode_results.push(ModeResult {
                 mode,
                 reads,
                 failures,
                 bus_failures,
+                forced_low_failures,
                 combos: 1,
             });
         }
@@ -772,18 +860,21 @@ fn run_banked_set(
 
 // ── Boot helper ───────────────────────────────────────────────────────────────
 
-/// Boot the firmware for a chip set, returning the ready `Emulator` or an
-/// error `SetResult` if the firmware failed to start correctly.
+/// Boot the firmware for a chip set, returning the ready `Emulator` and the
+/// parsed firmware version, or an error `SetResult` if the firmware failed to
+/// start correctly.
 ///
 /// Sets the RP variant and sel image before booting, then verifies that the
 /// firmware is not in limp mode and that the PIO state machines are enabled.
+/// The firmware version is read back (and `'v'`-stripped before parsing) so
+/// callers can rebuild the gen metadata that matches the running firmware.
 /// Shared by all three set types.
 fn boot_set(
     board: Board,
     chip_set: &ChipSetConfig,
     set_idx: usize,
     sel_image: u8,
-) -> Result<Emulator, SetResult> {
+) -> Result<(Emulator, FirmwareVersion), SetResult> {
     // Both the RP variant and image selection must be set before boot so the
     // firmware sees the correct state during initialisation.
     Emulator::set_rp_variant(board.rp_variant());
@@ -804,6 +895,51 @@ fn boot_set(
             "PIO state machines not enabled after boot",
         ));
     }
+
+    // Read and parse the firmware version (same protocol as setup.rs), so the
+    // gap check can rebuild metadata matching the running firmware.
+    let (result, version_str) = emulator.get_device_version(64);
+    if !result.is_ok() {
+        error!(
+            "Set {}: failed to get device version: {:?}",
+            set_idx, result
+        );
+        return Err(SetResult::boot_error(
+            set_idx,
+            "failed to get device version",
+        ));
+    }
+    let version_str = match version_str {
+        Some(s) => s,
+        None => {
+            error!(
+                "Set {}: get_device_version returned OK but no string",
+                set_idx
+            );
+            return Err(SetResult::boot_error(
+                set_idx,
+                "get_device_version returned no string",
+            ));
+        }
+    };
+    let stripped = version_str
+        .strip_prefix('v')
+        .unwrap_or(&version_str)
+        .to_string();
+    let fw_version = match FirmwareVersion::try_from_str(&stripped) {
+        Ok(v) => v,
+        Err(e) => {
+            error!(
+                "Set {}: failed to parse firmware version '{}': {}",
+                set_idx, version_str, e
+            );
+            return Err(SetResult::boot_error(
+                set_idx,
+                "failed to parse firmware version",
+            ));
+        }
+    };
+
     debug!("Set {}: PIOs enabled, setting up epio", set_idx);
 
     let word_size = word_size_for_set(chip_set);
@@ -811,11 +947,12 @@ fn boot_set(
     emulator.setup_epio(word_size);
     emulator.step_cycles(timing::CYCLES_BEFORE_START);
 
-    Ok(emulator)
+    Ok((emulator, fw_version))
 }
 
 // ── Per chip ──────────────────────────────────────────────────────────────────
 
+#[allow(clippy::too_many_arguments)]
 fn run_chip(
     emulator: &Emulator,
     board: Board,
@@ -825,6 +962,7 @@ fn run_chip(
     base_dir: &std::path::Path,
     force_16_bit: bool,
     background_mask: (u64, u64),
+    gap_gpios: &[u8],
 ) -> ChipResult {
     let requested_chip_type = chip_config.chip_type;
 
@@ -908,7 +1046,7 @@ fn run_chip(
             mode,
             oracle.len(),
         );
-        let (reads, failures, bus_failures) = run_mode(
+        let (reads, failures, bus_failures, forced_low_failures) = run_mode(
             emulator,
             &cache,
             &oracle,
@@ -918,12 +1056,14 @@ fn run_chip(
             set_idx,
             chip_idx,
             background_mask,
+            gap_gpios,
         );
         mode_results.push(ModeResult {
             mode,
             reads,
             failures,
             bus_failures,
+            forced_low_failures,
             combos: 1,
         });
     }
@@ -938,6 +1078,112 @@ fn run_chip(
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
+
+/// Compute the forced-low gap set for a slot and cross-check it against the
+/// firmware's declared `GpioOverLow` overrides.
+///
+/// The used set is assembled from gen's emitted metadata for address and data
+/// (`geom.addr_pins`, `geom.data_pins`) and the first `n_used_x` board X pins
+/// (`geom.x_pin_gpios`, the bank-select / secondary-CS lines this set actually
+/// uses), unioned with the tester's independent `PinCache` view of the chip
+/// selects and `/BYTE` pin.  Gaps are the address-window GPIOs not in that set.
+///
+/// On success the derived gaps are returned for use as the adversarial drive
+/// set.  On disagreement with `geom.forced_low_gpios` a `gap_error` `SetResult`
+/// is returned, which aborts the set's read passes (mirroring a boot error) and
+/// names the under-/over-declared pins.
+///
+/// Substituted sets are skipped: the rebuilt metadata reflects the requested
+/// chip type while the drive uses the substituted type, so the two geometries
+/// can legitimately diverge.  An empty gap set is returned (no drive, no check).
+#[allow(clippy::too_many_arguments)]
+fn gap_set_for_slot(
+    board: Board,
+    config: &Config,
+    base_dir: &std::path::Path,
+    served_idx: usize,
+    fw_version: FirmwareVersion,
+    requested_primary_type: ChipType,
+    primary_cache: &PinCache,
+    n_used_x: usize,
+    set_idx: usize,
+) -> Result<Vec<u8>, SetResult> {
+    if chip_substitution(board, requested_primary_type).is_some() {
+        warn!(
+            "Set {}: skipping forced-low gap check — chip substitution in effect",
+            set_idx
+        );
+        return Ok(Vec::new());
+    }
+
+    let geom = match geometry::slot_geometry(config, board, fw_version, base_dir, served_idx) {
+        Ok(g) => g,
+        Err(e) => {
+            error!("Set {}: metadata geometry unavailable: {}", set_idx, e);
+            return Err(SetResult::gap_error(
+                set_idx,
+                &format!("metadata geometry unavailable: {e}"),
+            ));
+        }
+    };
+
+    // Used set: addr/data from gen's metadata; CS + /BYTE from the tester's
+    // independent PinCache; the first n_used_x board X pins from metadata.
+    let mut used = 0u64;
+    for &g in &geom.addr_pins {
+        used |= 1u64 << g;
+    }
+    for &g in &geom.data_pins {
+        used |= 1u64 << g;
+    }
+    for cl in &primary_cache.control_lines {
+        for &g in &cl.gpios {
+            used |= 1u64 << g;
+        }
+    }
+    if let Some(g) = primary_cache.byte_n_gpio {
+        used |= 1u64 << g;
+    }
+    for x in geom.x_pin_gpios.iter().take(n_used_x) {
+        for &g in x {
+            used |= 1u64 << g;
+        }
+    }
+
+    let base = geom.addr_window_base;
+    let end = geom.addr_window_base + geom.addr_window_len;
+    let mut gaps: Vec<u8> = (base..end).filter(|&g| used & (1u64 << g) == 0).collect();
+    gaps.sort_unstable();
+
+    let mut declared = geom.forced_low_gpios.clone();
+    declared.sort_unstable();
+    declared.dedup();
+
+    if gaps != declared {
+        let derived: std::collections::HashSet<u8> = gaps.iter().copied().collect();
+        let decl: std::collections::HashSet<u8> = declared.iter().copied().collect();
+        let under: Vec<u8> = gaps.iter().copied().filter(|g| !decl.contains(g)).collect();
+        let over: Vec<u8> = declared
+            .iter()
+            .copied()
+            .filter(|g| !derived.contains(g))
+            .collect();
+        error!(
+            "Set {}: address-window gap check failed — derived {:?} vs declared {:?}",
+            set_idx, gaps, declared
+        );
+        return Err(SetResult::gap_error(
+            set_idx,
+            &format!(
+                "tester-derived gaps {gaps:?} != firmware GpioOverLow {declared:?}; \
+                 under-declared (gap not forced low) {under:?}; \
+                 over-declared (forced low but not a gap) {over:?}"
+            ),
+        ));
+    }
+
+    Ok(gaps)
+}
 
 /// Verify that no ROM-serving GPIO has a pull resistor configured.
 ///

@@ -126,7 +126,10 @@ fn pio_verify(
         }
         modes_run.push(mode);
         let cycles_cs_to_data = cs_to_data_cycles(chip_type, mode);
-        let (reads, failures, bus_failures) = run_mode(
+        // No forced-low gap drive here: the address-window override validation
+        // is owned by the pio-tester's run loop.  Pass an empty gap set so this
+        // reprogram-correctness pass is unchanged (the 4th return is always 0).
+        let (reads, failures, bus_failures, _forced_low) = run_mode(
             emu,
             cache,
             oracle_bytes,
@@ -136,6 +139,7 @@ fn pio_verify(
             0,
             0,
             (0u64, 0u64),
+            &[],
         );
         total_reads += reads;
         total_failures += failures;

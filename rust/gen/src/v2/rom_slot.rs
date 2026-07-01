@@ -191,10 +191,12 @@ mod tests {
     use alloc::vec;
 
     use onerom_metadata::{
-        GPIO_NONE, MAX_ADDR_PINS, MAX_DATA_PINS, OneromAlgAddrConfig, OneromAlgConfig,
-        OneromAlgCsConfig, OneromAlgDataConfig, OneromRomInfo, OneromRomPinMap, Pointer,
-        RomSlotType,
+        GPIO_NONE, GpioOverride, MAX_ADDR_PINS, MAX_DATA_PINS, OneromAlgAddrConfig,
+        OneromAlgConfig, OneromAlgCsConfig, OneromAlgDataConfig, OneromAlgOverrideConfig,
+        OneromRomInfo, OneromRomPinMap, Pointer, RomSlotType,
     };
+
+    use crate::v2::cs_overrides::encode_override;
 
     use crate::image::{CsConfig, CsLogic, SizeHandling};
 
@@ -270,7 +272,14 @@ mod tests {
                     continuous: 1,
                 },
                 gpio_pull_config: None,
-                gpio_override_config: None,
+                // GPIO8 (X2) and GPIO9 (X1) are unused on a Single set and
+                // sit inside the [0,16) address window → both forced low.
+                gpio_override_config: Some(OneromAlgOverrideConfig {
+                    params: alloc::vec![
+                        encode_override(8, GpioOverride::GpioOverLow),
+                        encode_override(9, GpioOverride::GpioOverLow),
+                    ],
+                }),
             })
         );
 

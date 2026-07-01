@@ -40,7 +40,9 @@ use super::alg_preference::{
     AddrAlgPreference, CombinedAlgPreference, CsAlgPreference, DataAlgPreference, DmaAlgPreference,
 };
 use super::cs_data_layout::CsDataLayout;
-use super::cs_overrides::{build_cs_overrides, build_gpio_x_overrides};
+use super::cs_overrides::{
+    build_cs_overrides, build_gpio_x_overrides, build_unused_addr_overrides,
+};
 use super::gpio_pull_config::build_gpio_pull_config;
 use super::slot_context::SlotContext;
 
@@ -269,6 +271,16 @@ pub fn build_alg_config(
         board,
     ));
 
+    // Force every GPIO inside the address-read window that serves no purpose
+    // for this ROM type (gaps, padding, or emulated-NC socket pins) to read
+    // 0, so a host driving such a pin can't perturb the ROM-table index.
+    // Disjoint from the overrides above - those all target used GPIOs.
+    overrides.extend(build_unused_addr_overrides(
+        addr_layout,
+        cs_data_layout,
+        &alg_data,
+    ));
+
     let gpio_override_config = if overrides.is_empty() {
         None
     } else {
@@ -367,7 +379,9 @@ mod tests {
 
     /// End-to-end sentinel: Fire24A, single 2364, CS1 ActiveLow. 2364 has
     /// no `deselect_when_address_all_high`, so `alg_cs` must be `AlgCs0`.
-    /// Single set → no X-pin override → `gpio_override_config` must be None.
+    /// Single set → no CS/X-inversion override, but GPIO8 (X2) and GPIO9
+    /// (X1) sit unused inside the [0,16) address window, so both are forced
+    /// low → `gpio_override_config` carries two `GpioOverLow` entries.
     #[test]
     fn fire24a_2364_single_full_config() {
         let cs_config = CsConfig::new(Some(CsLogic::ActiveLow), None, None);
@@ -429,7 +443,12 @@ mod tests {
                     continuous: 1,
                 },
                 gpio_pull_config: None,
-                gpio_override_config: None,
+                gpio_override_config: Some(OneromAlgOverrideConfig {
+                    params: alloc::vec![
+                        encode_override(8, GpioOverride::GpioOverLow),
+                        encode_override(9, GpioOverride::GpioOverLow),
+                    ],
+                }),
             }
         );
     }
@@ -464,22 +483,32 @@ mod tests {
         // CS1 active_low matches required active_low → no CS override.
         // AlgData0 (8-bit) → no byte_pin override.
         // Banked + x_jumper_pull=0 → GpioOverInvert for X1 (2-chip: X1 only).
+        // GPIO8 (X2) is unused on a 2-chip set and sits in the [0,16)
+        // address window → one GpioOverLow entry.
         let ov = config
             .gpio_override_config
             .expect("banked on x_jumper_pull=0 board must have gpio_override_config");
-        assert_eq!(ov.params.len(), 1, "2-chip banked: X1 override only");
+        assert_eq!(
+            ov.params.len(),
+            2,
+            "2-chip banked: X1 invert + X2 unused-low"
+        );
 
         let x1_gpio = addr_layout
             .x1_gpio
             .expect("banked addr_layout must have x1_gpio");
 
-        // Top 2 bits = GpioOverInvert (value 1); lower 6 bits = X1 GPIO.
-        assert_eq!(ov.params[0] >> 6, 1, "entry must be GpioOverInvert type");
+        // Entry 0: GpioOverInvert on X1.
+        assert_eq!(ov.params[0] >> 6, 1, "entry 0 must be GpioOverInvert type");
         assert_eq!(
             ov.params[0] & 0x3F,
             x1_gpio,
             "override GPIO must match addr_layout.x1_gpio"
         );
+
+        // Entry 1: GpioOverLow on GPIO8 (Fire24A X2, unused on a 2-chip set).
+        assert_eq!(ov.params[1] >> 6, 2, "entry 1 must be GpioOverLow type");
+        assert_eq!(ov.params[1] & 0x3F, 8, "unused-low GPIO must be X2 (GPIO8)");
     }
 
     /// End-to-end sentinel: Fire28A, single 23QL384, CS1 ActiveLow.

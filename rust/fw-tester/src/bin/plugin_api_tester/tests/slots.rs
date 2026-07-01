@@ -9,14 +9,12 @@
 //! slot count/info tests enumerate every slot and so are image-independent.
 
 use onerom_config::chip::ChipType;
-use onerom_config::fw::{FirmwareProperties, FirmwareVersion, ServeAlg};
+use onerom_config::fw::FirmwareVersion;
 use onerom_config::hw::Board;
-use onerom_config::mcu::{Family, Variant as McuVariant};
 use onerom_fw_emulator::{
     Emulator, ORA_FLASH_SLOT_FLAG_EXCLUDE_NON_PLUGINS, ORA_FLASH_SLOT_FLAG_EXCLUDE_PLUGINS,
 };
-use onerom_gen::{Builder, Config};
-use onerom_metadata::{DeviceMemoryView, METADATA_BASE, OneromMetadataHeader, RomSlotType};
+use onerom_gen::Config;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -29,23 +27,13 @@ fn chip_type_from_config(config: &Config, set_idx: usize) -> Result<ChipType, St
         .ok_or_else(|| format!("config has no chip set {} (or it has no chips)", set_idx))
 }
 
-/// Derive the expected SRAM region size for the booted image (`set_idx`) by
-/// running the same onerom_gen pipeline the firmware itself uses.
-///
-/// The builder is fed the real ROM files via `get_rom_files` — the exact
-/// loader the production firmware generator uses.  It loads each file raw and
-/// lets the builder apply size_handling (truncate/pad/duplicate) itself, once,
-/// exactly as in a real build.
-///
-/// `get_rom_files` resolves `spec.source` against the current working
-/// directory, but the tester does not run from the project root.  Each chip's
-/// relative `file` path is therefore rewritten to an absolute path under
-/// `base_dir` before building (the same base the oracle resolves against), so
-/// loading is independent of cwd.  Absolute and http(s) sources are left
-/// untouched.
-///
-/// The size of the `set_idx`-th non-plugin slot is returned, matching the
+/// Expected SRAM region size for the booted image (`set_idx`): the size of the
+/// `set_idx`-th non-plugin slot in the gen-built metadata, matching the
 /// firmware's flash slot enumeration under EXCLUDE_PLUGINS.
+///
+/// Thin caller over the shared `geometry` build→parse; chips with address-pin
+/// gaps (e.g. 231024) therefore get the gen-computed region size rather than a
+/// nominal address-line guess.
 fn expected_rom_slot_size(
     config: &Config,
     board: Board,
@@ -53,68 +41,7 @@ fn expected_rom_slot_size(
     base_dir: &std::path::Path,
     set_idx: usize,
 ) -> Result<u32, String> {
-    // Rewrite relative file paths to absolute under base_dir so get_rom_files
-    // (which resolves against cwd) loads them regardless of where the tester
-    // runs.
-    let mut abs_config = config.clone();
-    for set in &mut abs_config.chip_sets {
-        for chip in &mut set.chips {
-            if chip.file.is_empty()
-                || chip.file.starts_with("http://")
-                || chip.file.starts_with("https://")
-            {
-                continue;
-            }
-            let p = std::path::Path::new(&chip.file);
-            if p.is_relative() {
-                chip.file = base_dir.join(p).to_string_lossy().into_owned();
-            }
-        }
-    }
-
-    let config_json =
-        serde_json::to_string(&abs_config).map_err(|e| format!("reserialize config: {e}"))?;
-
-    let mut builder = Builder::from_json(fw_version, Family::Rp2350, &config_json)
-        .map_err(|e| format!("Builder::from_json: {e}"))?;
-
-    // Load real files raw and let the builder apply size_handling, exactly as
-    // the production generator does.
-    onerom_fw::get_rom_files(&mut builder).map_err(|e| format!("get_rom_files: {e}"))?;
-
-    let props = FirmwareProperties::new(
-        fw_version,
-        board,
-        McuVariant::RP2350,
-        ServeAlg::default(),
-        false,
-    )
-    .map_err(|e| format!("FirmwareProperties::new: {e}"))?;
-
-    let (metadata_buf, _) = builder
-        .build(props)
-        .map_err(|e| format!("builder.build: {e}"))?;
-
-    let view = DeviceMemoryView::new(&metadata_buf, METADATA_BASE);
-    let header = OneromMetadataHeader::parse(&view, METADATA_BASE)
-        .map_err(|e| format!("metadata parse: {e:?}"))?;
-
-    // Flash slots are indexed by sel_image (excluding plugins), so the booted
-    // image is the set_idx-th non-plugin slot.
-    header
-        .rom_slots
-        .iter()
-        .filter(|s| {
-            !matches!(
-                s.slot_type,
-                RomSlotType::RomSlotTypePluginSystem
-                    | RomSlotType::RomSlotTypePluginUser
-                    | RomSlotType::RomSlotTypePluginPio
-            )
-        })
-        .nth(set_idx)
-        .map(|s| s.size)
-        .ok_or_else(|| format!("no non-plugin ROM slot {} found in metadata", set_idx))
+    onerom_fw_tester::geometry::expected_rom_slot_size(config, board, fw_version, base_dir, set_idx)
 }
 
 // ── Flash slot tests ──────────────────────────────────────────────────────────

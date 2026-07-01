@@ -19,7 +19,17 @@ use crate::timing;
 /// Drive the emulated ROM bus for every address in the oracle, comparing
 /// the PIO output against the expected bytes.
 ///
-/// Returns `(reads, failures, bus_failures)`.
+/// `gap_gpios` are absolute GPIOs the firmware declares as `GpioOverLow` — non
+/// address pins that sit inside the address-read window and must be held low.
+/// When non-empty, each address is read a second time with those GPIOs driven
+/// to a per-address toggling pattern (gap `i` carries bit `i` of the address
+/// index), so every gap sees both levels across the sweep.  The override must
+/// hold the firmware's view of them at 0, so the served byte must be unchanged;
+/// any divergence is counted in `forced_low_failures`, kept distinct from
+/// ordinary data mismatches.  Pass `&[]` to skip the check entirely.
+///
+/// Returns `(reads, failures, bus_failures, forced_low_failures)`.
+#[allow(clippy::too_many_arguments)]
 pub fn run_mode(
     emulator: &Emulator,
     cache: &PinCache,
@@ -30,7 +40,8 @@ pub fn run_mode(
     set_idx: usize,
     chip_idx: usize,
     background_mask: (u64, u64),
-) -> (u64, u64, u64) {
+    gap_gpios: &[u8],
+) -> (u64, u64, u64, u64) {
     // Pre-compute the BYTE# mask so it can be merged into every drive_gpios
     // call.  epio_drive_gpios_ext resets every GPIO that is *not* in the
     // supplied mask to its configured pull state on each call (pull-none pins
@@ -121,9 +132,15 @@ pub fn run_mode(
     // held between reads.
     let deassert_drive = driver::merge(ctrl_deasserted, const_mask);
 
+    // Absolute mask of the forced-low gap GPIOs.  Empty (0) when the slot has
+    // no gaps, in which case the adversarial second read is skipped entirely
+    // and this pass costs exactly what it did before.
+    let gap_mask: u64 = gap_gpios.iter().fold(0u64, |m, &g| m | (1u64 << g));
+
     let mut reads = 0u64;
     let mut failures = 0u64;
     let mut bus_failures = 0u64;
+    let mut forced_low_failures = 0u64;
 
     for addr_idx in 0..iter_count {
         // phys_addr is the byte address, used for log messages only.
@@ -265,6 +282,86 @@ pub fn run_mode(
                 bus_failures,
             );
         }
+
+        // ── Phase 5: adversarial forced-low check ────────────────────────────
+        // Re-read this address with the gap GPIOs driven to a per-address
+        // toggling pattern (gap i ← bit i of addr_idx).  These pins carry no
+        // address signal; the firmware's GpioOverLow overrides must hold its
+        // view of them at 0, so the served byte must be identical to the oracle
+        // regardless of what is driven here.  A divergence is the regression
+        // this check exists to catch and is counted separately.
+        if gap_mask != 0 {
+            let gap_levels: u64 = gap_gpios.iter().enumerate().fold(0u64, |acc, (i, &g)| {
+                if (drive_addr >> i) & 1 == 1 {
+                    acc | (1u64 << g)
+                } else {
+                    acc
+                }
+            });
+            let gap_extra = driver::merge(const_mask, (gap_mask, gap_levels));
+
+            let gp1 = driver::merge(
+                driver::merge(driver::addr_mask(drive_addr, addr_gpios), ctrl_deasserted),
+                gap_extra,
+            );
+            emulator.drive_gpios(gp1.0, gp1.1);
+            emulator.step_cycles(cycles_addr_before_cs);
+
+            let gp2 = driver::merge(
+                driver::merge(driver::addr_mask(drive_addr, addr_gpios), ctrl_active),
+                gap_extra,
+            );
+            emulator.drive_gpios(gp2.0, gp2.1);
+            emulator.step_cycles(cycles_cs_to_data);
+
+            let gap_states = emulator.read_pin_states();
+            if mode == 16 {
+                let lo = driver::extract_byte(gap_states, &cache.data_gpios[..8]);
+                let hi = driver::extract_byte(gap_states, &cache.data_gpios[8..16]);
+                if lo != oracle[addr_idx * 2] {
+                    forced_low_failures += 1;
+                    log_forced_low(
+                        set_idx,
+                        chip_idx,
+                        addr_idx * 2,
+                        lo,
+                        oracle[addr_idx * 2],
+                        gap_gpios,
+                        forced_low_failures,
+                    );
+                }
+                if hi != oracle[addr_idx * 2 + 1] {
+                    forced_low_failures += 1;
+                    log_forced_low(
+                        set_idx,
+                        chip_idx,
+                        addr_idx * 2 + 1,
+                        hi,
+                        oracle[addr_idx * 2 + 1],
+                        gap_gpios,
+                        forced_low_failures,
+                    );
+                }
+            } else {
+                let byte = driver::extract_byte(gap_states, data_gpios_8);
+                if byte != oracle[addr_idx] {
+                    forced_low_failures += 1;
+                    log_forced_low(
+                        set_idx,
+                        chip_idx,
+                        addr_idx,
+                        byte,
+                        oracle[addr_idx],
+                        gap_gpios,
+                        forced_low_failures,
+                    );
+                }
+            }
+
+            // Release CS and the gap drive, settle, before the next address.
+            emulator.drive_gpios(deassert_drive.0, deassert_drive.1);
+            emulator.step_cycles(timing::CYCLES_AFTER_READ);
+        }
     }
 
     // ── CS combination tests ──────────────────────────────────────────────────
@@ -319,7 +416,7 @@ pub fn run_mode(
         emulator.step_cycles(timing::CYCLES_AFTER_READ);
     }
 
-    (reads, failures, bus_failures)
+    (reads, failures, bus_failures, forced_low_failures)
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -405,6 +502,30 @@ fn log_mismatch(
         );
     } else if count == 6 {
         error!("(further mismatches suppressed for this mode pass)");
+    }
+}
+
+/// Log a forced-low override failure: a non-address GPIO that should be held
+/// low by a `GpioOverLow` override changed the served byte when toggled.
+/// Capped at 5 per mode pass.
+fn log_forced_low(
+    set: usize,
+    chip: usize,
+    addr: usize,
+    got: u8,
+    expected: u8,
+    gap_gpios: &[u8],
+    count: u64,
+) {
+    if count <= 5 {
+        error!(
+            "FORCED-LOW OVERRIDE set={} chip={} addr=0x{:04X}: served 0x{:02X}, \
+             expected 0x{:02X} with non-address GPIO(s) {:?} toggled — \
+             firmware did not hold them low",
+            set, chip, addr, got, expected, gap_gpios,
+        );
+    } else if count == 6 {
+        error!("(further forced-low failures suppressed for this mode pass)");
     }
 }
 

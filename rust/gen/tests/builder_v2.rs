@@ -109,6 +109,7 @@ mod tests {
     // GpioOverInvert (value=1): top 2 bits = 0b01
     const OVERRIDE_PARAM_LEN: u32 = 0; // u8
     const OVERRIDE_TYPE_INVERT: u8 = 1; // GpioOverride::GpioOverInvert discriminant
+    const OVERRIDE_TYPE_LOW: u8 = 2; // GpioOverride::GpioOverLow discriminant
 
     // onerom_alg_cs_config_t tagged FAM binary layout:
     //   [discriminant(1)] [param_len(1)] [clkdiv_int(2)] [clkdiv_frac(1)]
@@ -229,8 +230,9 @@ mod tests {
         let slot_size = v.read_u32_le(s0 + SLOT_SIZE).unwrap();
         assert_eq!(rom.len() as u32, slot_size);
 
-        // ALG: CS0, active-low (serve_cs_low_0=0), BitMode8, no pull config,
-        // no override config (Single sets never need X-pin inversion)
+        // ALG: CS0, active-low (serve_cs_low_0=0), BitMode8, no pull config.
+        // GPIO8 (X2) and GPIO9 (X1) are unused on a Single set but sit inside
+        // the [0,16) address window, so both are forced low.
         let alg = alg_base(&v, s0);
         let cs = v.read_u32_le(alg + ALG_CS_PTR).unwrap();
         assert_eq!(v.read_u8(cs + CS_DISCRIMINANT).unwrap(), ALG_CS_0);
@@ -238,7 +240,11 @@ mod tests {
         let dma = v.read_u32_le(alg + ALG_DMA_PTR).unwrap();
         assert_eq!(v.read_u8(dma + DMA_BIT_MODE).unwrap(), BIT_MODE_8);
         assert_eq!(v.read_u32_le(alg + ALG_PULL_PTR).unwrap(), NULL_PTR);
-        assert_eq!(v.read_u32_le(alg + ALG_OVERRIDE_PTR).unwrap(), NULL_PTR);
+        let ov = v.read_u32_le(alg + ALG_OVERRIDE_PTR).unwrap();
+        assert_ne!(ov, NULL_PTR, "unused X-pin GPIOs must be forced low");
+        assert_eq!(v.read_u8(ov + OVERRIDE_PARAM_LEN).unwrap(), 2);
+        assert_eq!(v.read_u8(ov + 1).unwrap(), (OVERRIDE_TYPE_LOW << 6) | 8);
+        assert_eq!(v.read_u8(ov + 2).unwrap(), (OVERRIDE_TYPE_LOW << 6) | 9);
 
         // ROM info: chip type string
         let roms_arr = v.read_u32_le(s0 + SLOT_ROMS).unwrap();
@@ -315,14 +321,16 @@ mod tests {
 
         // Fire24A has x_jumper_pull=0: X1 needs GpioOverInvert so the address
         // PIO reads 1 when the jumper is fitted (bank 1 selected) and 0 when
-        // not (bank 0 = default). 2-chip: X1 override only (param_len == 1).
+        // not (bank 0 = default). 2-chip: X1 inverted; X2 (GPIO8) is unused on
+        // a 2-chip set and forced low (param_len == 2).
         let ov = v.read_u32_le(alg + ALG_OVERRIDE_PTR).unwrap();
         assert_ne!(
             ov, NULL_PTR,
             "banked on x_jumper_pull=0 board must have gpio_override_config"
         );
-        assert_eq!(v.read_u8(ov + OVERRIDE_PARAM_LEN).unwrap(), 1);
+        assert_eq!(v.read_u8(ov + OVERRIDE_PARAM_LEN).unwrap(), 2);
         assert_eq!(v.read_u8(ov + 1).unwrap() >> 6, OVERRIDE_TYPE_INVERT);
+        assert_eq!(v.read_u8(ov + 2).unwrap(), (OVERRIDE_TYPE_LOW << 6) | 8);
 
         let roms_arr = v.read_u32_le(s0 + SLOT_ROMS).unwrap();
         let rom0 = v.read_u32_le(roms_arr).unwrap();
@@ -1094,9 +1102,12 @@ mod tests {
         // 2 GpioOverInvert entries: CE and X1
         let ov = v.read_u32_le(alg + ALG_OVERRIDE_PTR).unwrap();
         assert_ne!(ov, NULL_PTR, "Multi set must have gpio_override_config");
-        assert_eq!(v.read_u8(ov + OVERRIDE_PARAM_LEN).unwrap(), 2);
-        assert_eq!(v.read_u8(ov + 1).unwrap() >> 6, OVERRIDE_TYPE_INVERT);
-        assert_eq!(v.read_u8(ov + 2).unwrap() >> 6, OVERRIDE_TYPE_INVERT);
+        assert_eq!(v.read_u8(ov + OVERRIDE_PARAM_LEN).unwrap(), 4);
+        assert_eq!(v.read_u8(ov + 1).unwrap() >> 6, OVERRIDE_TYPE_INVERT); // CE @ GPIO10
+        assert_eq!(v.read_u8(ov + 2).unwrap() >> 6, OVERRIDE_TYPE_INVERT); // X1 @ GPIO9
+        // GPIO12 and GPIO18 are gaps in the [9,28) address window -> forced low.
+        assert_eq!(v.read_u8(ov + 3).unwrap(), (OVERRIDE_TYPE_LOW << 6) | 12);
+        assert_eq!(v.read_u8(ov + 4).unwrap(), (OVERRIDE_TYPE_LOW << 6) | 18);
 
         let roms_arr = v.read_u32_le(s0 + SLOT_ROMS).unwrap();
         assert_eq!(
@@ -1176,9 +1187,12 @@ mod tests {
         // 2 GpioOverInvert entries: OE and X1
         let ov = v.read_u32_le(alg + ALG_OVERRIDE_PTR).unwrap();
         assert_ne!(ov, NULL_PTR, "Multi set must have gpio_override_config");
-        assert_eq!(v.read_u8(ov + OVERRIDE_PARAM_LEN).unwrap(), 2);
-        assert_eq!(v.read_u8(ov + 1).unwrap() >> 6, OVERRIDE_TYPE_INVERT);
-        assert_eq!(v.read_u8(ov + 2).unwrap() >> 6, OVERRIDE_TYPE_INVERT);
+        assert_eq!(v.read_u8(ov + OVERRIDE_PARAM_LEN).unwrap(), 4);
+        assert_eq!(v.read_u8(ov + 1).unwrap() >> 6, OVERRIDE_TYPE_INVERT); // OE @ GPIO11
+        assert_eq!(v.read_u8(ov + 2).unwrap() >> 6, OVERRIDE_TYPE_INVERT); // X1 @ GPIO9
+        // GPIO12 and GPIO18 are gaps in the [9,28) address window -> forced low.
+        assert_eq!(v.read_u8(ov + 3).unwrap(), (OVERRIDE_TYPE_LOW << 6) | 12);
+        assert_eq!(v.read_u8(ov + 4).unwrap(), (OVERRIDE_TYPE_LOW << 6) | 18);
 
         let roms_arr = v.read_u32_le(s0 + SLOT_ROMS).unwrap();
         assert_eq!(
@@ -1652,16 +1666,19 @@ mod tests {
         assert_ne!(pull, NULL_PTR, "banked set must have gpio_pull_config");
         assert_eq!(v.read_u8(pull + PULL_PARAM_LEN).unwrap(), 2);
 
-        // x_jumper_pull=0: X1 (GPIO 28) needs GpioOverInvert — 1 entry
+        // x_jumper_pull=0: X1 (GPIO 28) needs GpioOverInvert. GPIO18
+        // (socket pin 1 / VPP) is a gap in the [13,29) address window and is
+        // forced low — 2 entries.
         let ov = v.read_u32_le(alg + ALG_OVERRIDE_PTR).unwrap();
         assert_ne!(
             ov, NULL_PTR,
             "banked on x_jumper_pull=0 board must have override"
         );
-        assert_eq!(v.read_u8(ov + OVERRIDE_PARAM_LEN).unwrap(), 1);
+        assert_eq!(v.read_u8(ov + OVERRIDE_PARAM_LEN).unwrap(), 2);
         assert_eq!(v.read_u8(ov + 1).unwrap() >> 6, OVERRIDE_TYPE_INVERT);
         // Lower 6 bits must be X1's GPIO (28)
         assert_eq!(v.read_u8(ov + 1).unwrap() & 0x3F, 28);
+        assert_eq!(v.read_u8(ov + 2).unwrap(), (OVERRIDE_TYPE_LOW << 6) | 18);
 
         let roms_arr = v.read_u32_le(s0 + SLOT_ROMS).unwrap();
         assert_eq!(
@@ -1870,7 +1887,15 @@ mod tests {
         assert_eq!(v.read_u8(dma + DMA_BIT_MODE).unwrap(), BIT_MODE_8);
 
         assert_eq!(v.read_u32_le(alg + ALG_PULL_PTR).unwrap(), NULL_PTR);
-        assert_eq!(v.read_u32_le(alg + ALG_OVERRIDE_PTR).unwrap(), NULL_PTR);
+        let ov = v.read_u32_le(alg + ALG_OVERRIDE_PTR).unwrap();
+        assert_ne!(ov, NULL_PTR, "unused window GPIOs forced low");
+        // 24-pin 2364 centred in 28-pin socket (offset +2): GPIOs 12,17,18,19
+        // are gaps in the [10,28) address window (NC / VCC socket pins).
+        assert_eq!(v.read_u8(ov + OVERRIDE_PARAM_LEN).unwrap(), 4);
+        assert_eq!(v.read_u8(ov + 1).unwrap(), (OVERRIDE_TYPE_LOW << 6) | 12);
+        assert_eq!(v.read_u8(ov + 2).unwrap(), (OVERRIDE_TYPE_LOW << 6) | 17);
+        assert_eq!(v.read_u8(ov + 3).unwrap(), (OVERRIDE_TYPE_LOW << 6) | 18);
+        assert_eq!(v.read_u8(ov + 4).unwrap(), (OVERRIDE_TYPE_LOW << 6) | 19);
 
         let roms_arr = v.read_u32_le(s0 + SLOT_ROMS).unwrap();
         let rom0 = v.read_u32_le(roms_arr).unwrap();
@@ -1966,7 +1991,14 @@ mod tests {
         assert_eq!(v.read_u8(dma + DMA_BIT_MODE).unwrap(), BIT_MODE_8);
 
         assert_eq!(v.read_u32_le(alg + ALG_PULL_PTR).unwrap(), NULL_PTR);
-        assert_eq!(v.read_u32_le(alg + ALG_OVERRIDE_PTR).unwrap(), NULL_PTR);
+        let ov = v.read_u32_le(alg + ALG_OVERRIDE_PTR).unwrap();
+        assert_ne!(ov, NULL_PTR, "unused window GPIOs forced low");
+        // 24-pin 2732 centred in 32-pin socket (offset +4): GPIOs 24,25,26
+        // are gaps in the [20,35) address window.
+        assert_eq!(v.read_u8(ov + OVERRIDE_PARAM_LEN).unwrap(), 3);
+        assert_eq!(v.read_u8(ov + 1).unwrap(), (OVERRIDE_TYPE_LOW << 6) | 24);
+        assert_eq!(v.read_u8(ov + 2).unwrap(), (OVERRIDE_TYPE_LOW << 6) | 25);
+        assert_eq!(v.read_u8(ov + 3).unwrap(), (OVERRIDE_TYPE_LOW << 6) | 26);
 
         let roms_arr = v.read_u32_le(s0 + SLOT_ROMS).unwrap();
         let rom0 = v.read_u32_le(roms_arr).unwrap();
@@ -2326,7 +2358,12 @@ mod tests {
         assert_eq!(v.read_u8(dma + DMA_BIT_MODE).unwrap(), BIT_MODE_8);
 
         assert_eq!(v.read_u32_le(alg + ALG_PULL_PTR).unwrap(), NULL_PTR);
-        assert_eq!(v.read_u32_le(alg + ALG_OVERRIDE_PTR).unwrap(), NULL_PTR);
+        let ov = v.read_u32_le(alg + ALG_OVERRIDE_PTR).unwrap();
+        assert_ne!(ov, NULL_PTR, "unused window GPIO forced low");
+        // 28-pin 2764 fly-leaded into 24-pin socket (offset -2): GPIO8 (X2)
+        // is the sole gap in the [0,15) address window.
+        assert_eq!(v.read_u8(ov + OVERRIDE_PARAM_LEN).unwrap(), 1);
+        assert_eq!(v.read_u8(ov + 1).unwrap(), (OVERRIDE_TYPE_LOW << 6) | 8);
 
         let roms_arr = v.read_u32_le(s0 + SLOT_ROMS).unwrap();
         let rom0 = v.read_u32_le(roms_arr).unwrap();
@@ -2498,9 +2535,12 @@ mod tests {
             ov, NULL_PTR,
             "CS2-primary Multi must have gpio_override_config"
         );
-        assert_eq!(v.read_u8(ov + OVERRIDE_PARAM_LEN).unwrap(), 2);
-        assert_eq!(v.read_u8(ov + 1).unwrap() >> 6, OVERRIDE_TYPE_INVERT);
-        assert_eq!(v.read_u8(ov + 2).unwrap() >> 6, OVERRIDE_TYPE_INVERT);
+        assert_eq!(v.read_u8(ov + OVERRIDE_PARAM_LEN).unwrap(), 3);
+        assert_eq!(v.read_u8(ov + 1).unwrap() >> 6, OVERRIDE_TYPE_INVERT); // CS2 @ GPIO11
+        assert_eq!(v.read_u8(ov + 2).unwrap() >> 6, OVERRIDE_TYPE_INVERT); // X1 @ GPIO9
+        // GPIO18 is a gap in the [9,28) address window -> forced low
+        // (GPIO12 carries 23128 CS3, a commoned line, so is not forced).
+        assert_eq!(v.read_u8(ov + 3).unwrap(), (OVERRIDE_TYPE_LOW << 6) | 18);
 
         let roms_arr = v.read_u32_le(s0 + SLOT_ROMS).unwrap();
         assert_eq!(
