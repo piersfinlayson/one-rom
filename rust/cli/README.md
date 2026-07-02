@@ -4,6 +4,8 @@ This directory contains the source code and build scripts for the One ROM comman
 
 The CLI is a Rust application that provides a cross-platform CLI to manage One ROMs, including those with the USB plugin to provide management of One ROM while running (serving bytes).
 
+For instructions on using the CLI, see [The CLI manual](/docs/CLI-MANUAL.md).
+
 ## Building
 
 With the One ROM [build environment](/INSTALL.md) installed, from this directory:
@@ -44,3 +46,5 @@ cargo build --release
     ```
 
 5. Check new releases appear at https://onerom.org/cli/
+
+6. Consider whether the [CLI Manual](/docs/CLI-MANUAL.md) needs updating for the new release.

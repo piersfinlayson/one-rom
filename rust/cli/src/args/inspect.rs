@@ -5,7 +5,7 @@
 //! Argument definitions for `onerom inspect`.
 
 use crate::args::CommandTrait;
-use crate::utils::parse_u32;
+use crate::utils::{parse_u8, parse_u32};
 use clap::{Args, Subcommand};
 use enum_dispatch::enum_dispatch;
 
@@ -127,11 +127,11 @@ impl CommandTrait for InspectSlotsArgs {
 #[derive(Debug, Args)]
 pub struct InspectImageArgs {
     /// Slot index to read. Reads the currently active slot if omitted.
-    #[arg(long, short='l', value_name = "INDEX", value_parser = parse_u32)]
+    #[arg(long, short='l', value_name = "INDEX", value_parser = parse_u8)]
     pub slot: Option<u8>,
 
     /// Save the image data to this file.
-    #[arg(long, short, visible_alias = "out", value_name = "FILE", value_parser = parse_u32)]
+    #[arg(long, short, visible_alias = "out", value_name = "FILE")]
     pub output: Option<String>,
 }
 
