@@ -297,8 +297,8 @@ pub enum Commands {
     /// With explicit ROM arguments instead of a config file:
     ///
     ///   onerom program --board fire-24-e \
-    ///       --slot file=kernal.bin,type=2364,cs=active_low \
-    ///       --slot file=basic.bin,type=2364,cs=active_low
+    ///       --slot file=kernal.bin,type=2364,cs1=active_low \
+    ///       --slot file=basic.bin,type=2364,cs1=active_low
     ///
     /// Using a local, pre-built firmware binary, containing the ROM metadata and
     /// images:
@@ -309,8 +309,8 @@ pub enum Commands {
     /// and specifying the ROMs via arguments:
     ///
     ///   onerom program --firmware minimal.bin \
-    ///       --slot file=kernal.bin,type=2364,cs=active_low \
-    ///       --slot file=basic.bin,type=2364,cs=active_low
+    ///       --slot file=kernal.bin,type=2364,cs1=active_low \
+    ///       --slot file=basic.bin,type=2364,cs1=active_low
     ///
     /// To save the firmware to file, **as well** as programming the One ROM, use
     /// --out.

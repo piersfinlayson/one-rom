@@ -4913,7 +4913,7 @@ dependencies = [
 
 [[package]]
 name = "onerom-fw"
-version = "0.1.24"
+version = "0.1.25"
 dependencies = [
  "base64 0.22.1",
  "bytes",
@@ -5034,7 +5034,7 @@ dependencies = [
 
 [[package]]
 name = "onerom-studio"
-version = "0.1.22"
+version = "0.2.0"
 dependencies = [
  "arc-swap",
  "built",
@@ -6329,7 +6329,7 @@ dependencies = [
 
 [[package]]
 name = "schema-gen"
-version = "0.1.9"
+version = "0.1.10"
 dependencies = [
  "onerom-gen",
  "schemars",

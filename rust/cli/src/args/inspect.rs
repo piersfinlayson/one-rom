@@ -126,7 +126,7 @@ impl CommandTrait for InspectSlotsArgs {
 
 #[derive(Debug, Args)]
 pub struct InspectImageArgs {
-    /// Slot index to read (0-15). Reads the currently active slot if omitted.
+    /// Slot index to read. Reads the currently active slot if omitted.
     #[arg(long, short='l', value_name = "INDEX", value_parser = parse_u32)]
     pub slot: Option<u8>,
 
