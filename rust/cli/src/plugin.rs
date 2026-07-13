@@ -4,7 +4,7 @@
 
 //! Plugin management commands.
 
-use onerom_cli::plugin::{Catalogue, Plugin, Release, fetch_releases};
+use onerom_cli::plugin::{Catalogue, Plugin, Release};
 use onerom_cli::{CliFetch, Error, Options};
 use onerom_config::fw::FirmwareVersion;
 
@@ -23,10 +23,11 @@ pub async fn cmd_plugin(options: &Options, args: &PluginArgs) -> Result<(), Erro
     // Parse firmware version filter if provided, or infer from a connected device.
     let fw_version = resolve_fw_version(options, args)?;
 
-    // Fetch the catalogue (plugin identities only). Releases are fetched
-    // per-plugin below so that one unreachable plugin does not abort the whole
-    // listing.
-    let catalogue = Catalogue::fetch(&CliFetch).await?;
+    // Fetch the catalogue, then load every plugin's releases tolerantly: a
+    // plugin whose releases cannot be fetched keeps empty releases and is
+    // reported below, rather than aborting the whole listing.
+    let mut catalogue = Catalogue::fetch(&CliFetch).await?;
+    let failures = catalogue.load_all_releases_resilient(&CliFetch).await;
 
     // Filter by type if requested.
     let plugins: Vec<&Plugin> = catalogue
@@ -52,23 +53,15 @@ pub async fn cmd_plugin(options: &Options, args: &PluginArgs) -> Result<(), Erro
     }
 
     println!("Available plugins ({}):", plugins.len());
-    for entry in plugins {
-        // Fetch this plugin's releases into a local clone, so a failure for one
-        // plugin is reported inline rather than aborting the listing.
-        let mut plugin = entry.clone();
-        match fetch_releases(&mut plugin, &CliFetch).await {
-            Ok(()) => {
-                println!("---");
-                print_plugin(options, &plugin, &fw_version, args.all_versions);
-            }
-            Err(e) => {
-                println!(
-                    "  {}/{}: failed to fetch releases: {e}",
-                    entry.plugin_type.short(),
-                    entry.name
-                );
-            }
-        }
+    for plugin in plugins {
+        println!("---");
+        print_plugin(options, plugin, &fw_version, args.all_versions);
+    }
+
+    // Report any plugins whose releases could not be fetched.
+    for (name, error) in &failures {
+        println!("---");
+        println!("  {name}: failed to fetch releases: {error}");
     }
 
     Ok(())
@@ -110,10 +103,7 @@ fn print_release(options: &Options, release: &Release, fw_version: &Option<Firmw
         _ => "",
     };
     let min_fw = if options.verbose {
-        format!(
-            " - requires One ROM firmware >= v{}",
-            release.min_fw_version
-        )
+        format!(" - requires One ROM firmware >= v{}", release.min_fw_version)
     } else {
         String::new()
     };

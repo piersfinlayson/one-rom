@@ -14,8 +14,8 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 
 use onerom_app::{
-    Catalogue, Error, LocalPluginFetch, PluginError, PluginType, PluginVersion, ResolvedSource,
-    parse_plugins, resolve_plugins,
+    Catalogue, Error, LocalPluginFetch, PluginError, PluginType, PluginVersion,
+    ResolvedSource, parse_plugins, resolve_plugins,
 };
 
 const BASE: &str = "https://images.onerom.org/plugins";
@@ -343,9 +343,30 @@ async fn catalogue_fetch_then_load_releases() {
     assert_eq!(usb.releases[0].version, PluginVersion::new(0, 1, 0, 0));
 }
 
-// ------------------------------------------------------------
-// Live-schema canary (opt-in)
-// ------------------------------------------------------------
+#[tokio::test]
+async fn catalogue_resilient_load_tolerates_one_failure() {
+    let usb_bin = header(0, (0, 1, 0, 0));
+    let usb_sha = sha_hex(&usb_bin);
+
+    // usb's releases are served; rgb's are NOT (no mock response) -> rgb fails.
+    let fetch = MockFetch::new()
+        .with(&format!("{BASE}/plugins.json"), plugins_json())
+        .with(
+            &format!("{BASE}/system/usb/releases.json"),
+            releases_json("One ROM USB", "0.1.0", "0.7.0", &usb_sha),
+        );
+
+    let mut cat = Catalogue::fetch(&fetch).await.unwrap();
+    let failures = cat.load_all_releases_resilient(&fetch).await;
+
+    // rgb failed, usb succeeded: one failure, and it names rgb.
+    assert_eq!(failures.len(), 1);
+    assert_eq!(failures[0].0, "rgb");
+
+    // usb is fully loaded; rgb kept its empty releases rather than aborting all.
+    assert_eq!(cat.plugin_by_name("usb").unwrap().releases.len(), 1);
+    assert!(cat.plugin_by_name("rgb").unwrap().releases.is_empty());
+}
 
 /// Fetches the real plugins manifest and confirms it still deserialises into
 /// the crate's types. Ignored by default (needs network and tracks a live
