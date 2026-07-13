@@ -9,7 +9,7 @@
 use onerom_metadata::{DeviceMemoryView, OneromInfo};
 
 #[cfg(not(feature = "std"))]
-use alloc::{format, string::String, vec::Vec};
+use alloc::{format, vec::Vec};
 
 use crate::ParseError;
 

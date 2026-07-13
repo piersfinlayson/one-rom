@@ -31,6 +31,9 @@
 #[cfg(feature = "esp32")]
 use esp_println as _;
 
+#[cfg(not(feature = "std"))]
+use alloc::string::ToString;
+
 use airfrog_rpc::io::Reader;
 use onerom_config::fw::FirmwareVersion;
 use onerom_config::hw::Board;

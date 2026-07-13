@@ -15,9 +15,6 @@ use crate::ParseError;
 use crate::info::Sdrr;
 use crate::onerom::OneRom;
 
-#[cfg(not(feature = "std"))]
-use alloc::vec::Vec;
-
 /// The complete parsed state of a One ROM device, regardless of firmware
 /// generation.
 ///
