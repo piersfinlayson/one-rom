@@ -115,6 +115,7 @@ async fn build_and_assemble(
         board,
         Some(&global_config),
         &plugins,
+        args.allow_unsupported_chip_type,
     )?;
 
     if let Some(path) = &args.save_config {
@@ -226,7 +227,8 @@ pub async fn cmd_program(
     if let Some(b) = &board
         && !args.slot.is_empty()
     {
-        let confirmations = check_slot_confirmations(&args.slot, b)?;
+        let confirmations =
+            check_slot_confirmations(&args.slot, b, args.allow_unsupported_chip_type)?;
         confirm_slot_overrides(options, &confirmations).await?;
     }
 

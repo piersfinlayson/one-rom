@@ -262,6 +262,27 @@ impl Builder {
         &self,
         props: FirmwareProperties,
     ) -> Result<(alloc::vec::Vec<u8>, alloc::vec::Vec<u8>)> {
+        // Reject chip types the target board does not support. This is the same
+        // board-level test the CLI applies when parsing --slot, but here it is
+        // enforced unconditionally: V1 firmware genuinely cannot serve an
+        // unsupported chip type, so the CLI's --allow-unsupported-chip-type
+        // override deliberately has no effect on the V1 path. Plugin chip types
+        // are gated separately and skipped here.
+        let board = props.board();
+        for chip_set in self.config.chip_sets.iter() {
+            for chip in chip_set.chips.iter() {
+                if chip.chip_type.is_plugin() {
+                    continue;
+                }
+                if !board.allows_chip_type(chip.chip_type) {
+                    return Err(Error::UnsupportedBoardChipType {
+                        board,
+                        chip_type: chip.chip_type,
+                    });
+                }
+            }
+        }
+
         // Fire-CPU-serve-mode validation (v1-specific - PIO/CPU board
         // distinction doesn't apply to v2).
         for chip_set_config in self.config.chip_sets.iter() {

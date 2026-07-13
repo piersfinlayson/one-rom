@@ -338,6 +338,7 @@ mod tests {
                 role: super::super::cs_data_layout::SelectRole::Cs1,
                 gpio: 13,
             }],
+            commoned_lines: alloc::vec![],
             alg_cs2: None,
         };
 
@@ -591,6 +592,7 @@ mod tests {
                 role: super::super::cs_data_layout::SelectRole::Ce,
                 gpio: 17,
             }],
+            commoned_lines: alloc::vec![],
             alg_cs2: None,
         };
         let addr_layout = AddrLayout {
@@ -658,6 +660,7 @@ mod tests {
                 role: super::super::cs_data_layout::SelectRole::Ce,
                 gpio: 17,
             }],
+            commoned_lines: alloc::vec![],
             alg_cs2: None,
         };
         let addr_layout = AddrLayout {

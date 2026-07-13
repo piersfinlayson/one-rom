@@ -55,6 +55,15 @@
 //! `/BYTE` pin. The entries are therefore disjoint from the CS-polarity,
 //! `/BYTE`-invert and X-pin-inversion overrides above: no GPIO receives
 //! two override entries.
+//!
+//! Note the distinction between *commoned* and *truly-ignored* control lines
+//! in a Multi set. A commoned line is driven active on every read and is a
+//! real member of the CS-detect range, so it counts as "used" and is never
+//! forced low. A truly-ignored line (`Ignore` on chip0 as well as the
+//! secondaries) carries no meaning: `derive_cs_data_layout` keeps it out of
+//! the CS range wherever the geometry allows, so it is *not* "used" here and
+//! is forced low if it falls inside the address window. This is the case that
+//! motivated the split - see `multi_cs_config::derive_multi_cs_config`.
 
 use alloc::collections::BTreeSet;
 use alloc::vec::Vec;
@@ -105,10 +114,13 @@ pub fn encode_override(gpio: u8, ov: GpioOverride) -> u8 {
     ((ov as u8) << 6) | (gpio & 0x3F)
 }
 
-/// Build the `GpioOverInvert` entries (point I) needed to make every
-/// select line in `layout` conform to the PIO's required CS polarity for
-/// `set_type`. The `cs_ignore_index` gap (if any) isn't in
-/// `layout.select_lines`, so is untouched.
+/// Build the `GpioOverInvert` entries (point I) needed to make every select
+/// line *and every commoned line* in `layout` conform to the PIO's required CS
+/// polarity for `set_type`. Commoned lines sit in the CS-detect range but are
+/// not select lines; they are driven active by chip0, so their polarity is read
+/// from `cs_config`. Without normalising them, an active-low commoned line
+/// reads high at idle in a Multi set and spuriously fires the CS gate. The
+/// `cs_ignore_index` gap (if any) isn't in either list, so is untouched.
 ///
 /// `HalfSelect` lines (excess address pins acting as half-selects for
 /// oversized ROMs, e.g. 27C080's A19) are treated identically to `Cs1`:
@@ -117,9 +129,11 @@ pub fn encode_override(gpio: u8, ov: GpioOverride) -> u8 {
 ///
 /// `secondary_cs_configs` carries `chips[1]`'s config at index 0 and
 /// `chips[2]`'s at index 1 (Multi sets only; empty for Single/Banked).
-/// X1/X2 override decisions use the respective secondary chip's
-/// `cs1_logic` rather than chip[0]'s: in a Multi set with mixed
-/// polarities those X pins carry a different chip's CS line.
+/// X1/X2 carry the *per-chip select line* of the respective secondary chip -
+/// which is not necessarily CS1 (it can be CS2/CS3/CE/OE). Their override
+/// decisions therefore read that chip's logic for the per-chip-select role
+/// (`select_lines[0].role`), not a hardcoded `cs1_logic`: reading CS1 for a
+/// CS2-primary set gives the wrong polarity and mis-inverts the X pins.
 pub fn build_cs_overrides(
     layout: &CsDataLayout,
     set_type: ChipSetType,
@@ -128,6 +142,15 @@ pub fn build_cs_overrides(
 ) -> Vec<u8> {
     let required = required_cs_logic(set_type);
 
+    // The per-chip select (select_lines[0] in a Multi set) is the line
+    // fly-leaded to X1/X2, so it determines which of each secondary chip's
+    // control lines those X pins carry. Not necessarily CS1.
+    let per_chip_role = layout
+        .select_lines
+        .first()
+        .map(|l| l.role)
+        .unwrap_or(SelectRole::Cs1);
+
     layout
         .select_lines
         .iter()
@@ -135,11 +158,11 @@ pub fn build_cs_overrides(
             let configured = match line.role {
                 SelectRole::X1 => secondary_cs_configs
                     .first()
-                    .and_then(|c| c.cs1_logic())
+                    .map(|c| cs_logic_for_role(per_chip_role, c))
                     .unwrap_or(CsLogic::ActiveLow),
                 SelectRole::X2 => secondary_cs_configs
                     .get(1)
-                    .and_then(|c| c.cs1_logic())
+                    .map(|c| cs_logic_for_role(per_chip_role, c))
                     .unwrap_or(CsLogic::ActiveLow),
                 _ => cs_logic_for_role(line.role, cs_config),
             };
@@ -149,6 +172,16 @@ pub fn build_cs_overrides(
                 None
             }
         })
+        // Commoned lines are driven active by chip0, so their polarity comes
+        // from `cs_config`. Normalise them to the required convention exactly
+        // as for select lines.
+        .chain(layout.commoned_lines.iter().filter_map(|line| {
+            if cs_logic_for_role(line.role, cs_config) != required {
+                Some(encode_override(line.gpio, GpioOverride::GpioOverInvert))
+            } else {
+                None
+            }
+        }))
         .collect()
 }
 
@@ -220,7 +253,9 @@ pub fn build_gpio_x_overrides(
 /// - every select line, plus the full CS GPIO range. The range is what
 ///   captures Multi commoned lines and the `AlgCs1` `cs_ignore` gap pin -
 ///   both physically present and inside the CS span, but deliberately
-///   absent from `select_lines`,
+///   absent from `select_lines`. Truly-ignored control lines are *not* in
+///   this range (`derive_cs_data_layout` excludes them), so they are not
+///   "used" and are forced low if they fall inside the address window,
 /// - the `/BYTE` input pin (`AlgData1` only).
 ///
 /// Entries are emitted in ascending GPIO order for deterministic output.
@@ -245,7 +280,9 @@ pub fn build_unused_addr_overrides(
     used.extend(cs_data_layout.select_lines.iter().map(|line| line.gpio));
 
     // Full CS GPIO range: captures Multi commoned lines and the AlgCs1
-    // cs_ignore gap, neither of which appears in select_lines.
+    // cs_ignore gap, neither of which appears in select_lines. Truly-ignored
+    // lines are excluded from this range upstream, so they fall through to
+    // GpioOverLow below.
     let cs_base = cs_data_layout.gpio_base + cs_data_layout.base_cs_pin;
     used.extend(cs_base..cs_base + cs_data_layout.num_cs_pins);
 
@@ -277,6 +314,25 @@ mod tests {
             num_cs_pins: select_lines.len() as u8,
             cs_ignore_index: None,
             select_lines,
+            commoned_lines: alloc::vec![],
+            alg_cs2: None,
+        }
+    }
+
+    fn layout_with_commoned(
+        select_lines: Vec<SelectLine>,
+        commoned_lines: Vec<SelectLine>,
+    ) -> CsDataLayout {
+        CsDataLayout {
+            gpio_base: 0,
+            base_data_pin: 16,
+            num_data_pins: 8,
+            data_pin_gpios: alloc::vec![16, 17, 18, 19, 20, 21, 22, 23],
+            base_cs_pin: 13,
+            num_cs_pins: (select_lines.len() + commoned_lines.len()) as u8,
+            cs_ignore_index: None,
+            select_lines,
+            commoned_lines,
             alg_cs2: None,
         }
     }
@@ -579,6 +635,7 @@ mod tests {
                 role: SelectRole::Cs1,
                 gpio: 13,
             }],
+            commoned_lines: alloc::vec![],
             alg_cs2: None,
         }
     }
@@ -680,6 +737,7 @@ mod tests {
                 role: SelectRole::Ce,
                 gpio: 7,
             }],
+            commoned_lines: alloc::vec![],
             alg_cs2: None,
         };
         let alg_data = OneromAlgDataConfig::AlgData1 {
@@ -697,6 +755,134 @@ mod tests {
         assert_eq!(
             overrides,
             alloc::vec![encode_override(4, GpioOverride::GpioOverLow)]
+        );
+    }
+
+    /// Multi set with an active-low commoned line: it must be inverted just
+    /// like an active-low select line, otherwise it reads high at idle and
+    /// spuriously fires the CS gate. Regression for the commoned-not-normalised
+    /// bug (bus violations on active-low commoned lines).
+    #[test]
+    fn multi_active_low_commoned_inverted() {
+        let layout = layout_with_commoned(
+            alloc::vec![
+                SelectLine {
+                    role: SelectRole::Cs1,
+                    gpio: 13,
+                },
+                SelectLine {
+                    role: SelectRole::X1,
+                    gpio: 15,
+                },
+            ],
+            alloc::vec![SelectLine {
+                role: SelectRole::Cs2,
+                gpio: 14,
+            }],
+        );
+        // chip0: cs1 (select) and cs2 (commoned) both active_low.
+        let cs_config = CsConfig::new(Some(CsLogic::ActiveLow), Some(CsLogic::ActiveLow), None);
+        let secondary = CsConfig::new(Some(CsLogic::ActiveLow), None, None);
+
+        let overrides = build_cs_overrides(&layout, ChipSetType::Multi, &cs_config, &[secondary]);
+
+        // Selects (CS1@13, X1@15) invert first, then the commoned CS2@14.
+        assert_eq!(
+            overrides,
+            alloc::vec![
+                encode_override(13, GpioOverride::GpioOverInvert),
+                encode_override(15, GpioOverride::GpioOverInvert),
+                encode_override(14, GpioOverride::GpioOverInvert),
+            ]
+        );
+    }
+
+    /// Multi set with an active-high commoned line: already matches the
+    /// required active-high convention, so it needs no override - only the
+    /// active-low select is inverted.
+    #[test]
+    fn multi_active_high_commoned_not_inverted() {
+        let layout = layout_with_commoned(
+            alloc::vec![
+                SelectLine {
+                    role: SelectRole::Cs1,
+                    gpio: 13,
+                },
+                SelectLine {
+                    role: SelectRole::X1,
+                    gpio: 15,
+                },
+            ],
+            alloc::vec![SelectLine {
+                role: SelectRole::Cs2,
+                gpio: 14,
+            }],
+        );
+        // cs1 (select) active_low -> invert; cs2 (commoned) active_high -> not.
+        let cs_config = CsConfig::new(Some(CsLogic::ActiveLow), Some(CsLogic::ActiveHigh), None);
+        let secondary = CsConfig::new(Some(CsLogic::ActiveLow), None, None);
+
+        let overrides = build_cs_overrides(&layout, ChipSetType::Multi, &cs_config, &[secondary]);
+
+        assert_eq!(
+            overrides,
+            alloc::vec![
+                encode_override(13, GpioOverride::GpioOverInvert),
+                encode_override(15, GpioOverride::GpioOverInvert),
+            ]
+        );
+    }
+
+    /// Multi set, CS2-primary and active-high: X1/X2 carry the secondaries'
+    /// CS2, so their polarity must be read as CS2 (active-high == required) and
+    /// NOT CS1 (ignored -> defaults active-low, which would wrongly invert the
+    /// X pins). Regression for the X-pin-reads-cs1 bug that corrupted the CS
+    /// gate and ROM-select index on active-high CS2-primary multi sets.
+    #[test]
+    fn multi_cs2_primary_active_high_x_pins_not_inverted() {
+        let layout = layout_with(alloc::vec![
+            SelectLine {
+                role: SelectRole::Cs2,
+                gpio: 14,
+            },
+            SelectLine {
+                role: SelectRole::X1,
+                gpio: 15,
+            },
+            SelectLine {
+                role: SelectRole::X2,
+                gpio: 16,
+            },
+        ]);
+        // chip0 drives CS2 active-high (the per-chip select); CS1/CS3 ignored.
+        let cs_config = CsConfig::new(
+            Some(CsLogic::Ignore),
+            Some(CsLogic::ActiveHigh),
+            Some(CsLogic::Ignore),
+        );
+
+        let overrides = build_cs_overrides(
+            &layout,
+            ChipSetType::Multi,
+            &cs_config,
+            &[
+                CsConfig::new(
+                    Some(CsLogic::Ignore),
+                    Some(CsLogic::ActiveHigh),
+                    Some(CsLogic::Ignore),
+                ),
+                CsConfig::new(
+                    Some(CsLogic::Ignore),
+                    Some(CsLogic::ActiveHigh),
+                    Some(CsLogic::Ignore),
+                ),
+            ],
+        );
+
+        // Everything already active-high == required: no inversions at all.
+        assert!(
+            overrides.is_empty(),
+            "CS2-primary active-high multi must not invert X pins, got {overrides:?}"
         );
     }
 }

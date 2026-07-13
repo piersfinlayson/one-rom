@@ -146,6 +146,7 @@ mod tests {
                 role: SelectRole::Cs1,
                 gpio: 13
             }],
+            commoned_lines: alloc::vec![],
             alg_cs2: None,
         }
     }
@@ -213,6 +214,7 @@ mod tests {
                     gpio: 15
                 },
             ],
+            commoned_lines: alloc::vec![],
             alg_cs2: None,
         };
         let alg_data = alg_data_8bit();
@@ -265,6 +267,7 @@ mod tests {
                     gpio: 15
                 },
             ],
+            commoned_lines: alloc::vec![],
             alg_cs2: None,
         };
         let alg_data = alg_data_8bit();
@@ -306,6 +309,7 @@ mod tests {
                 role: SelectRole::Cs1,
                 gpio: 13
             }],
+            commoned_lines: alloc::vec![],
             alg_cs2: Some(AlgCs2Config {
                 base_qualifier_pin: 5,
                 num_qualifier_pins: 2,

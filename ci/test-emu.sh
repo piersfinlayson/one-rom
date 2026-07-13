@@ -310,6 +310,7 @@ test_config fire-28-c onerom-config/test/28-bank-28xxx.json
 
 # Test multi-chip ROM configurations on all Fire 24 hardware revisions.
 test_24_config_c_onwards onerom-config/test/24-multi-2364.json
+test_24_config_c_onwards onerom-config/test/24-multi-2316.json
 test_28_config_c_onwards onerom-config/test/28-multi-231024.json
 
 # Test specific ROM configurations on all Fire 24 hardware revisions.

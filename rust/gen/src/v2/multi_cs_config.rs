@@ -76,10 +76,18 @@ pub struct MultiChipCsConfig {
     /// for chips[1+]. Chip0's instance of this line is its primary CS.
     pub per_chip_select: ControlLineKind,
 
-    /// Control lines commoned across all chips in the set: physically
-    /// present and always driven active, contributing to the contiguous
-    /// GPIO span but not used to discriminate between chips.
+    /// Lines commoned across all chips: driven active on chip0 and shared
+    /// across the set, so asserted during any valid read. Physically present
+    /// in the CS-detect span and part of the "any select active" gate, but
+    /// not used to discriminate between chips. Identified by being `Ignore`
+    /// on the secondaries yet *active* on chip0.
     pub commoned_lines: Vec<ControlLineKind>,
+
+    /// Lines that are truly ignored: `Ignore` on both the secondaries and
+    /// chip0. They carry no meaning for the set — excluded from the CS range
+    /// where geometry allows, and forced low in the address window (with
+    /// ROM-image duplication as backstop) where they cannot be.
+    pub ignored_lines: Vec<ControlLineKind>,
 }
 
 /// Get the `CsLogic` for a named control line from a `CsConfig`.
@@ -108,13 +116,19 @@ pub(crate) fn control_line_logic(name: &str, cs_config: &CsConfig) -> CsLogic {
 
 /// Derive `MultiChipCsConfig` from the chip set's `CsConfig`s.
 ///
-/// For single-control-line chips (e.g. 2364 with only CS1), returns the
-/// one line as `per_chip_select` with no commoned lines.
+/// For single-control-line chips (e.g. 2364 with only CS1), returns the one
+/// line as `per_chip_select` with no commoned or ignored lines.
 ///
-/// For N-line chips (N > 1), reads chips[1]'s `CsConfig` to determine
-/// which single line is active (per-chip select) and which N-1 are
-/// `Ignore` (commoned). `check_cs_v2` has already validated that all
-/// chips[1+] agree and that chip[0] does not ignore its per-chip select.
+/// For N-line chips (N > 1): the secondaries (`chips[1+]`) have exactly one
+/// active line — the per-chip select, fly-leaded to X1/X2 — and `Ignore` the
+/// other N-1 (validated by `check_cs_v2`). The secondary can't say what those
+/// N-1 lines *are*, so chip0's polarity disambiguates each:
+///
+/// * active on chip0 → commoned (a real, always-active shared select)
+/// * `Ignore` on chip0 → truly ignored (a don't-care line)
+///
+/// `check_cs_v2` guarantees all `chips[1+]` agree and that `chips[0]` does not
+/// ignore its per-chip select.
 pub fn derive_multi_cs_config(chips: &[Chip]) -> MultiChipCsConfig {
     let chip0_type = *chips[0].chip_type();
     let control_lines = chip0_type.control_lines();
@@ -131,24 +145,28 @@ pub fn derive_multi_cs_config(chips: &[Chip]) -> MultiChipCsConfig {
         return MultiChipCsConfig {
             per_chip_select: kind,
             commoned_lines: Vec::new(),
+            ignored_lines: Vec::new(),
         };
     }
 
-    // For N > 1 control lines: chips[1]'s CsConfig determines which line
-    // is active (per_chip_select) and which are Ignore (commoned).
-    // check_cs_v2 guarantees exactly 1 active line — derivation only.
-    let ref_config = chips[1].cs_config();
+    // The secondary's single active line is the per-chip select; the rest are
+    // Ignore there. chip0's own polarity then splits those into commoned
+    // (active on chip0) vs truly ignored (Ignore on chip0).
+    let secondary_config = chips[1].cs_config();
+    let chip0_config = chips[0].cs_config();
 
     let mut per_chip_select = None;
     let mut commoned_lines = Vec::new();
+    let mut ignored_lines = Vec::new();
 
     for line in &named {
         let kind = name_to_control_line_kind(line.name).expect("filtered to known names above");
-        let logic = control_line_logic(line.name, ref_config);
-        if logic == CsLogic::Ignore {
-            commoned_lines.push(kind);
-        } else {
+        if control_line_logic(line.name, secondary_config) != CsLogic::Ignore {
             per_chip_select = Some(kind);
+        } else if control_line_logic(line.name, chip0_config) == CsLogic::Ignore {
+            ignored_lines.push(kind);
+        } else {
+            commoned_lines.push(kind);
         }
     }
 
@@ -158,5 +176,6 @@ pub fn derive_multi_cs_config(chips: &[Chip]) -> MultiChipCsConfig {
                      (validated by check_cs_v2)",
         ),
         commoned_lines,
+        ignored_lines,
     }
 }

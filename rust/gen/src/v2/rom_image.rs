@@ -478,6 +478,7 @@ mod tests {
             num_cs_pins: 1,
             cs_ignore_index: None,
             select_lines: Vec::new(),
+            commoned_lines: alloc::vec![],
             alg_cs2: None,
         }
     }
@@ -494,6 +495,7 @@ mod tests {
             num_cs_pins: 1,
             cs_ignore_index: None,
             select_lines: Vec::new(),
+            commoned_lines: alloc::vec![],
             alg_cs2: None,
         }
     }
@@ -521,6 +523,7 @@ mod tests {
             num_cs_pins: 1,
             cs_ignore_index: None,
             select_lines: Vec::new(),
+            commoned_lines: alloc::vec![],
             alg_cs2: None,
         };
 
@@ -578,6 +581,7 @@ mod tests {
             num_cs_pins: 1,
             cs_ignore_index: None,
             select_lines: Vec::new(),
+            commoned_lines: alloc::vec![],
             alg_cs2: None,
         };
 
@@ -766,6 +770,7 @@ mod tests {
                     gpio: 3
                 },
             ],
+            commoned_lines: alloc::vec![],
             alg_cs2: None,
         }
     }
@@ -844,6 +849,7 @@ mod tests {
                     gpio: 3
                 },
             ],
+            commoned_lines: alloc::vec![],
             alg_cs2: None,
         };
 
@@ -912,6 +918,7 @@ mod tests {
                     gpio: 3
                 },
             ],
+            commoned_lines: alloc::vec![],
             alg_cs2: None,
         };
 
@@ -1071,6 +1078,7 @@ mod tests {
             num_cs_pins: 1,
             cs_ignore_index: None,
             select_lines: Vec::new(),
+            commoned_lines: alloc::vec![],
             alg_cs2: None,
         };
 
@@ -1215,6 +1223,7 @@ mod tests {
             num_cs_pins: 1,
             cs_ignore_index: None,
             select_lines: Vec::new(),
+            commoned_lines: alloc::vec![],
             alg_cs2: None,
         };
 
@@ -1304,6 +1313,7 @@ mod tests {
                     gpio: 14
                 },
             ],
+            commoned_lines: alloc::vec![],
             alg_cs2: None,
         };
 

@@ -294,7 +294,7 @@ impl core::fmt::Display for Error {
             Error::UnsupportedBoardChipType { board, chip_type } => {
                 write!(
                     f,
-                    "The board {board} does not support chip type {chip_type}"
+                    "The board {board} does not support chip type {chip_type} with this firmware version"
                 )
             }
             Error::InvalidLicense { id } => {

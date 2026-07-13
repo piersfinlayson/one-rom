@@ -116,7 +116,9 @@ pub enum Error {
     #[error("Unsupported chip type '{0}'.\n  Supported types for this board: {1}")]
     UnsupportedChipType(String, String),
 
-    #[error("This board does not support chip types {1}.\n  Supported types: {2}")]
+    #[error(
+        "This board does not support chip types {1}.\n  Supported types: {2}\n  Use --allow-unsupported-chip-type to override."
+    )]
     UnsupportedBoardChipType(String, String, String),
 
     #[error(

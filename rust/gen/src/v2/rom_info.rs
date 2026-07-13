@@ -133,6 +133,7 @@ mod tests {
                 role: SelectRole::Cs1,
                 gpio: 13
             }],
+            commoned_lines: alloc::vec![],
             alg_cs2: None,
         }
     }

@@ -6,6 +6,7 @@
 //! data accessors in `generated.rs`.
 
 use super::generated::Board;
+use crate::chip::ChipType;
 
 impl Board {
     /// Get the MCU GPIO(s) connected to a given ROM socket pin
@@ -43,5 +44,16 @@ impl Board {
             .iter()
             .find(|(_, gpios)| gpios.contains(&gpio))
             .map(|(pin, _)| *pin)
+    }
+
+    /// Whether this board permits `chip_type`, either as a natively supported
+    /// type or via its extra chip type set.
+    ///
+    /// This is the combined test used to gate ROM chip types against a board:
+    /// the CLI applies it when parsing `--slot` arguments, and the V1 firmware
+    /// builder applies it (unconditionally) at build time. Plugin chip types
+    /// are not covered here — callers handle those separately.
+    pub fn allows_chip_type(&self, chip_type: ChipType) -> bool {
+        self.supports_chip_type(chip_type) || self.extra_chip_types().contains(&chip_type)
     }
 }

@@ -37,6 +37,7 @@ pub fn resolve_config_json(
     board: &Board,
     global_config: Option<&GlobalConfig>,
     plugins: &[ResolvedPlugin],
+    allow_unsupported_chip_type: bool,
 ) -> Result<String, Error> {
     if let Some(path) = config_file {
         // --config-file is mutually exclusive with --plugin at the args level,
@@ -50,7 +51,7 @@ pub fn resolve_config_json(
     } else if no_config || slots.is_empty() {
         slots_to_config_json(plugins, &[], global_config)
     } else {
-        let parsed = parse_slots(slots, board)?;
+        let parsed = parse_slots(slots, board, allow_unsupported_chip_type)?;
         slots_to_config_json(plugins, &parsed, global_config)
     }
 }
@@ -316,7 +317,8 @@ pub async fn cmd_build(
     let mcu = Variant::RP2350;
 
     if !args.slot.is_empty() {
-        let confirmations = check_slot_confirmations(&args.slot, &board)?;
+        let confirmations =
+            check_slot_confirmations(&args.slot, &board, args.allow_unsupported_chip_type)?;
         confirm_slot_overrides(options, &confirmations).await?;
     }
 
@@ -356,6 +358,7 @@ pub async fn cmd_build(
         &board,
         global_config.as_ref(),
         &plugins,
+        args.allow_unsupported_chip_type,
     )?;
 
     if let Some(path) = &args.save_config {
@@ -432,11 +435,19 @@ pub async fn accept_license(options: &Options, license: &License) -> Result<(), 
 /// Prompt the user for confirmation if any slot overrides require it.
 ///
 /// CPU frequencies above 150MHz and vreg voltages above 1.10V each require
-/// separate confirmation. Both are suppressed by `--yes`.
+/// separate confirmation. Both are suppressed by `--yes`. Any chip types
+/// permitted via `--allow-unsupported-chip-type` are also surfaced here as a
+/// warning (not suppressed, since it is informational rather than a prompt).
 pub async fn confirm_slot_overrides(
     options: &Options,
     confirmations: &ConfirmationsRequired,
 ) -> Result<(), Error> {
+    for chip_type in &confirmations.unsupported_chip_types {
+        eprintln!(
+            "Warning: chip type {chip_type} is not supported by this board - proceeding anyway (--allow-unsupported-chip-type)"
+        );
+    }
+
     if confirmations.cpu_freq {
         if options.yes {
             println!("Auto-accepted above-stock CPU frequency (--yes)");

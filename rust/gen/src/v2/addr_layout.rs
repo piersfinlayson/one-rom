@@ -193,6 +193,19 @@ pub enum LayoutError {
     /// fly-lead pairs (28 in 24, 32 in 28, 32 in 24) are valid; everything
     /// else is not. See `socket_pin_offset`.
     IncompatiblePinCount { board: Board, chip_type: ChipType },
+
+    /// A truly-ignored control line (an `Ignore` line on chip0 as well as the
+    /// secondaries of a Multi set) resolves to a GPIO that sits *between* the
+    /// set's select lines - interior to the CS-detect span. Edge-positioned
+    /// ignored lines are simply excluded from the span and forced low as
+    /// address-window gaps; an interior one cannot be excluded without leaving
+    /// the CS span non-contiguous, which the Multi CS PIO cannot serve. Not
+    /// currently supported.
+    InteriorIgnoredLine {
+        board: Board,
+        chip_type: ChipType,
+        gpio: u8,
+    },
 }
 
 impl From<LayoutError> for Error {
@@ -296,6 +309,20 @@ impl From<LayoutError> for Error {
             LayoutError::IncompatiblePinCount { board, chip_type } => {
                 Error::UnsupportedBoardChipType { board, chip_type }
             }
+            LayoutError::InteriorIgnoredLine {
+                board,
+                chip_type,
+                gpio,
+            } => Error::UnsupportedBoardConfig {
+                board,
+                reason: alloc::format!(
+                    "{} has an ignored control line at GPIO {gpio} sitting between \
+                     this set's select lines; a truly-ignored line interior to the \
+                     CS-detect span is not currently supported on this board (only \
+                     edge-positioned ignored lines can be excluded and forced low)",
+                    chip_type.name()
+                ),
+            },
         }
     }
 }

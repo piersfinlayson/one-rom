@@ -33,6 +33,12 @@ pub struct ControlLine {
     pub gpios: Vec<u8>,
     /// `true` → assert by driving HIGH; `false` → assert by driving LOW.
     pub assert_high: bool,
+    /// `true` for a *commoned* line on a Multi-set primary: a CS line asserted
+    /// on every read that does not select a chip. Set by the runner after
+    /// `build`; `false` everywhere else. The tristate combo sweep holds these
+    /// deasserted and never enumerates them (an asserted commoned line fires
+    /// the CS gate on its own).
+    pub commoned: bool,
 }
 
 /// All GPIO information needed to run the test loop for one chip.
@@ -147,6 +153,7 @@ impl PinCache {
                 name: spec.name,
                 gpios,
                 assert_high,
+                commoned: false,
             });
         }
 
@@ -186,6 +193,7 @@ impl PinCache {
                     name: "cs1",
                     gpios,
                     assert_high,
+                    commoned: false,
                 });
             }
         }
@@ -248,6 +256,7 @@ impl PinCache {
                 name: "x_cs",
                 gpios: x_pin_gpios,
                 assert_high: x_assert_high,
+                commoned: false,
             }],
             byte_n_gpio: None,
         }

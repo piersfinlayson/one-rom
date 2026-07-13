@@ -364,31 +364,46 @@ pub fn run_mode(
         }
     }
 
-    // ── CS combination tests ──────────────────────────────────────────────────
-    // Walk every non-active combination of the control lines and confirm the
-    // data bus is tristated.  The all-active combination (combo == all_asserted)
-    // is the only state that should drive the bus; the exclusive upper bound of
-    // the range naturally excludes it.
-    // Address 0 is used throughout — tristate behaviour is address-independent.
-    //
-    // const_mask is merged into every drive here too, keeping background GPIOs
-    // (other chips' CS lines, bank-select X pins) at their required levels
-    // throughout the combo sweep.
-    let n = cache.control_lines.len();
+    // Enumerate only the discriminating (non-commoned) control lines. A commoned
+    // line (Multi primary: a CS line shared across the set) is asserted on every
+    // real read and selects nothing, so toggling it independently is unphysical
+    // — and, being in the CS-detect range, an asserted commoned line fires the
+    // gate alone. Hold every commoned line deasserted (idle level) throughout
+    // and vary only the selects, so "chip not selected" is modelled faithfully.
+    let select_lines: Vec<_> = cache
+        .control_lines
+        .iter()
+        .filter(|cl| !cl.commoned)
+        .collect();
+    let commoned_deasserted: (u64, u64) = cache
+        .control_lines
+        .iter()
+        .filter(|cl| cl.commoned)
+        .map(|cl| driver::ctrl_mask(std::slice::from_ref(cl), false))
+        .fold((0u64, 0u64), |acc, m| driver::merge(acc, m));
+    let combo_const = driver::merge(const_mask, commoned_deasserted);
+
+    let n = select_lines.len();
     if n > 0 {
         let all_asserted: u64 = (1u64 << n) - 1;
         debug!(
-            "Mode {}bit combo test: {} control line(s), {} non-active combinations",
-            mode, n, all_asserted
+            "Mode {}bit combo test: {} select line(s) ({} commoned held deasserted), \
+             {} non-active combinations",
+            mode,
+            n,
+            cache.control_lines.len() - n,
+            all_asserted
         );
 
         for combo in 0u64..all_asserted {
-            let ctrl = ctrl_combo_mask(cache, combo);
-            // Use the mode-appropriate addr_gpios slice (no A-1 in 16-bit
-            // mode) and hold const_mask via merge.
+            let ctrl = select_lines
+                .iter()
+                .enumerate()
+                .map(|(i, cl)| driver::ctrl_mask(std::slice::from_ref(*cl), (combo >> i) & 1 == 1))
+                .fold((0u64, 0u64), |acc, m| driver::merge(acc, m));
             let phase = driver::merge(
                 driver::merge(driver::addr_mask(0, addr_gpios), ctrl),
-                const_mask,
+                combo_const,
             );
             emulator.drive_gpios(phase.0, phase.1);
             emulator.step_cycles(cycles_cs_to_data);
@@ -411,7 +426,6 @@ pub fn run_mode(
             }
         }
 
-        // Leave control lines deasserted, const_mask held.
         emulator.drive_gpios(deassert_drive.0, deassert_drive.1);
         emulator.step_cycles(timing::CYCLES_AFTER_READ);
     }
@@ -420,18 +434,6 @@ pub fn run_mode(
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
-
-/// Build a GPIO (mask, levels) pair for an arbitrary combination of control
-/// lines.  `combo` is a bitmask over `cache.control_lines`: bit i set means
-/// control line i is logically *asserted*; bit i clear means deasserted.
-fn ctrl_combo_mask(cache: &PinCache, combo: u64) -> (u64, u64) {
-    cache
-        .control_lines
-        .iter()
-        .enumerate()
-        .map(|(i, cl)| driver::ctrl_mask(std::slice::from_ref(cl), (combo >> i) & 1 == 1))
-        .fold((0u64, 0u64), |acc, m| driver::merge(acc, m))
-}
 
 /// Log a data bus violation (lines unexpectedly driven or unexpectedly
 /// released), capped at 5 per mode pass to avoid flooding the log for

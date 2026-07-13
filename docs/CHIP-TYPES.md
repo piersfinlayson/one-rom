@@ -37,7 +37,7 @@ There are also some other inconsistencies between types:
 |-----------|---------|------|---------------|---------------|-------------|-----------|
 | 2316 | 9316 | 2KB | 11 (A0-A10) | CS1 (pin 20), CS2 (pin 18), CS3 (pin 21) | None | ✓ |
 | 2332 | 9332, 4732 | 4KB | 12 (A0-A11) | CS1 (pin 20), CS2 (pin 21) | None | ✓ |
-| 2364 | 4764, MCM68764, MCM68A764, MCM68364, MCM68A364, MM52164 | 8KB | 13 (A0-A12) | CS1 (pin 20) | None | ✓ |
+| 2364 | 4764, MCM68764, MCM68A764, MCM68364, MCM68A364, MM52164, MK36000 | 8KB | 13 (A0-A12) | CS1 (pin 20) | None | ✓ |
 
 ## 28-pin Mask ROM Family (23xx)
 

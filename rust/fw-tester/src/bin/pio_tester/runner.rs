@@ -317,7 +317,7 @@ fn run_multi_set(
         primary_type.name(),
         board.name()
     );
-    let primary_cache = PinCache::build(primary_type, primary_config, board);
+    let mut primary_cache = PinCache::build(primary_type, primary_config, board);
     debug!(
         "Set {} chip 0: {} addr GPIOs, {} data GPIOs, {} control line(s)",
         set_idx,
@@ -325,6 +325,17 @@ fn run_multi_set(
         primary_cache.data_gpios.len(),
         primary_cache.control_lines.len(),
     );
+
+    // chip0's commoned lines: active CS lines that are not the per-chip select
+    // (the line the secondaries drive via X). Held deasserted, not enumerated,
+    // during the tristate sweep — they qualify a read, they don't select a chip.
+    if let Some(select) = per_chip_select_name(&chip_set.chips[1]) {
+        for cl in &mut primary_cache.control_lines {
+            if cl.name != select {
+                cl.commoned = true;
+            }
+        }
+    }
 
     if let Err(r) = check_rom_pin_pulls(&emulator, &primary_cache, set_idx) {
         return r;
@@ -371,6 +382,7 @@ fn run_multi_set(
                 name: "x_cs",
                 gpios: gpios.clone(),
                 assert_high: *assert_high,
+                commoned: false,
             };
             driver::ctrl_mask(std::slice::from_ref(&line), false)
         })
@@ -1183,6 +1195,28 @@ fn gap_set_for_slot(
     }
 
     Ok(gaps)
+}
+
+/// Name of the per-chip select line for a Multi set: the single active
+/// (non-Ignore) configurable CS line on a secondary chip. `None` if none
+/// (only configurable-CS chips are supported as secondaries, so this matches
+/// the polarity lookup in `first_active_cs_polarity`).
+fn per_chip_select_name(secondary: &ChipConfig) -> Option<&'static str> {
+    secondary
+        .chip_type
+        .control_lines()
+        .iter()
+        .filter(|spec| matches!(spec.line_type, ControlLineType::Configurable))
+        .find_map(|spec| {
+            let logic = match spec.name {
+                "cs1" => secondary.cs1,
+                "cs2" => secondary.cs2,
+                "cs3" => secondary.cs3,
+                _ => None,
+            };
+            matches!(logic, Some(CsLogic::ActiveHigh) | Some(CsLogic::ActiveLow))
+                .then_some(spec.name)
+        })
 }
 
 /// Verify that no ROM-serving GPIO has a pull resistor configured.

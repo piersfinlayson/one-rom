@@ -35,6 +35,9 @@ pub struct ConfirmationsRequired {
     pub cpu_freq: bool,
     /// True if any slot has a vreg above the stock threshold.
     pub vreg: bool,
+    /// Names of chip types that the board does not support but were permitted
+    /// via `--allow-unsupported-chip-type`. Empty unless the override was used.
+    pub unsupported_chip_types: Vec<String>,
 }
 
 /// Check whether any slot specifications require user confirmation.
@@ -55,6 +58,7 @@ pub fn check_confirmations(slots: &[SlotSpec]) -> ConfirmationsRequired {
                 .map(|v| *v > FireVreg::stock_value())
                 .unwrap_or(false)
         }),
+        unsupported_chip_types: Vec::new(),
     }
 }
 
@@ -65,9 +69,19 @@ pub fn check_confirmations(slots: &[SlotSpec]) -> ConfirmationsRequired {
 pub fn check_slot_confirmations(
     slots: &[String],
     board: &Board,
+    allow_unsupported_chip_type: bool,
 ) -> Result<ConfirmationsRequired, Error> {
-    let parsed = parse_slots(slots, board)?;
-    Ok(check_confirmations(&parsed))
+    let parsed = parse_slots(slots, board, allow_unsupported_chip_type)?;
+    let mut confirmations = check_confirmations(&parsed);
+    // A parsed slot with an unsupported chip type can only be present because
+    // the override was set (parse_slot errors otherwise), so collect these for
+    // the caller to warn about.
+    confirmations.unsupported_chip_types = parsed
+        .iter()
+        .filter(|s| !board.allows_chip_type(s.chip_type))
+        .map(|s| s.chip_type.name().to_string())
+        .collect();
+    Ok(confirmations)
 }
 
 // Handle tilde expansion for file paths in slot specifications, since these
@@ -236,7 +250,17 @@ const SLOT_KEYS: &[&str] = &[
 ];
 
 /// Parse a single `--slot` string into a [`SlotSpec`], validating against the given board.
-fn parse_slot(slot: &str, board: &Board) -> Result<SlotSpec, Error> {
+///
+/// When `allow_unsupported_chip_type` is set, a chip type outside the board's
+/// supported set is permitted rather than rejected; the caller is expected to
+/// warn (see [`ConfirmationsRequired::unsupported_chip_types`]). Board
+/// electrical constraints (e.g. the 40-pin requirement for `force_16bit`) are
+/// unaffected.
+fn parse_slot(
+    slot: &str,
+    board: &Board,
+    allow_unsupported_chip_type: bool,
+) -> Result<SlotSpec, Error> {
     let mut file = None;
     let mut label = None;
     let mut chip_type_str = None;
@@ -309,7 +333,7 @@ fn parse_slot(slot: &str, board: &Board) -> Result<SlotSpec, Error> {
         Error::UnsupportedChipType(chip_type_str.clone(), supported)
     })?;
 
-    if !board.supports_chip_type(chip_type) && !board.extra_chip_types().contains(&chip_type) {
+    if !allow_unsupported_chip_type && !board.allows_chip_type(chip_type) {
         let supported = supported_chip_names_for_board(board);
         return Err(Error::UnsupportedBoardChipType(
             chip_type.name().to_string(),
@@ -423,8 +447,15 @@ pub fn supported_chip_names_for_board(board: &Board) -> String {
 
 /// Parse all `--slot` strings against a resolved board, returning a vec of
 /// [`SlotSpec`] or the first error.
-pub fn parse_slots(slots: &[String], board: &Board) -> Result<Vec<SlotSpec>, Error> {
-    slots.iter().map(|s| parse_slot(s, board)).collect()
+pub fn parse_slots(
+    slots: &[String],
+    board: &Board,
+    allow_unsupported_chip_type: bool,
+) -> Result<Vec<SlotSpec>, Error> {
+    slots
+        .iter()
+        .map(|s| parse_slot(s, board, allow_unsupported_chip_type))
+        .collect()
 }
 
 fn slot_to_chip_config(slot: &SlotSpec) -> ChipConfig {

@@ -1,0 +1,149 @@
+{
+    "$schema": "https://images.onerom.org/configs/schema.json",
+    "version": 1,
+    "name": "24 pin One ROM multi-ROM tests - 2316 ROM types",
+    "description": "24 pin One ROM multi-ROM tests - 2316 ROM types",
+    "categories": [],
+    "rom_sets": [
+        {
+            "type": "multi",
+            "description": "set 1 - cs1 select (active_high), cs2 commoned, cs3 ignored",
+            "roms": [
+                {
+                    "description": "1",
+                    "file": "images/test/rand_2KB.rom",
+                    "type": "2316",
+                    "cs1": "active_high",
+                    "cs2": "active_low",
+                    "cs3": "ignore",
+                    "allow_cs_ignore": true
+                },
+                {
+                    "description": "2",
+                    "file": "images/test/rand_4KB.rom",
+                    "type": "2316",
+                    "cs1": "active_high",
+                    "cs2": "ignore",
+                    "cs3": "ignore",
+                    "allow_cs_ignore": true,
+                    "size_handling": "truncate"
+                },
+                {
+                    "description": "3",
+                    "file": "images/test/rand_8KB.rom",
+                    "type": "2316",
+                    "cs1": "active_high",
+                    "cs2": "ignore",
+                    "cs3": "ignore",
+                    "allow_cs_ignore": true,
+                    "size_handling": "truncate"
+                }
+            ]
+        },
+        {
+            "type": "multi",
+            "description": "set 2 - cs1 select (active_low), cs2 commoned, cs3 ignored",
+            "roms": [
+                {
+                    "description": "1",
+                    "file": "images/test/rand_2KB.rom",
+                    "type": "2316",
+                    "cs1": "active_low",
+                    "cs2": "active_low",
+                    "cs3": "ignore",
+                    "allow_cs_ignore": true
+                },
+                {
+                    "description": "2",
+                    "file": "images/test/rand_4KB.rom",
+                    "type": "2316",
+                    "cs1": "active_low",
+                    "cs2": "ignore",
+                    "cs3": "ignore",
+                    "allow_cs_ignore": true,
+                    "size_handling": "truncate"
+                },
+                {
+                    "description": "3",
+                    "file": "images/test/rand_8KB.rom",
+                    "type": "2316",
+                    "cs1": "active_low",
+                    "cs2": "ignore",
+                    "cs3": "ignore",
+                    "allow_cs_ignore": true,
+                    "size_handling": "truncate"
+                }
+            ]
+        },
+        {
+            "type": "multi",
+            "description": "set 3 - cs2 select (active_low), cs1 commoned, cs3 ignored",
+            "roms": [
+                {
+                    "description": "1",
+                    "file": "images/test/rand_2KB.rom",
+                    "type": "2316",
+                    "cs1": "active_high",
+                    "cs2": "active_low",
+                    "cs3": "ignore",
+                    "allow_cs_ignore": true
+                },
+                {
+                    "description": "2",
+                    "file": "images/test/rand_4KB.rom",
+                    "type": "2316",
+                    "cs1": "ignore",
+                    "cs2": "active_low",
+                    "cs3": "ignore",
+                    "allow_cs_ignore": true,
+                    "size_handling": "truncate"
+                },
+                {
+                    "description": "3",
+                    "file": "images/test/rand_8KB.rom",
+                    "type": "2316",
+                    "cs1": "ignore",
+                    "cs2": "active_low",
+                    "cs3": "ignore",
+                    "allow_cs_ignore": true,
+                    "size_handling": "truncate"
+                }
+            ]
+        },
+        {
+            "type": "multi",
+            "description": "set 4 - cs2 select (active_high), cs1 commoned, cs3 ignored",
+            "roms": [
+                {
+                    "description": "1",
+                    "file": "images/test/rand_2KB.rom",
+                    "type": "2316",
+                    "cs1": "active_low",
+                    "cs2": "active_high",
+                    "cs3": "ignore",
+                    "allow_cs_ignore": true
+                },
+                {
+                    "description": "2",
+                    "file": "images/test/rand_4KB.rom",
+                    "type": "2316",
+                    "cs1": "ignore",
+                    "cs2": "active_high",
+                    "cs3": "ignore",
+                    "allow_cs_ignore": true,
+                    "size_handling": "truncate"
+                },
+                {
+                    "description": "3",
+                    "file": "images/test/rand_8KB.rom",
+                    "type": "2316",
+                    "cs1": "ignore",
+                    "cs2": "active_high",
+                    "cs3": "ignore",
+                    "allow_cs_ignore": true,
+                    "size_handling": "truncate"
+                }
+            ]
+        }
+    ]
+}

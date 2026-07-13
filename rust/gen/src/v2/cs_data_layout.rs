@@ -150,6 +150,15 @@ pub struct CsDataLayout {
     /// The real select lines (excludes the `cs_ignore_index` gap, if any).
     pub select_lines: Vec<SelectLine>,
 
+    /// Commoned lines (Multi sets only): control lines driven active on chip0
+    /// and shared across the set. Physically present in the CS-detect span
+    /// (folded into `num_cs_pins`) but not discriminating, so absent from
+    /// `select_lines`. Carried here so `build_cs_overrides` can normalise their
+    /// polarity to the required convention exactly as it does for select lines.
+    /// Without it, an active-low commoned line reads high at idle and mis-
+    /// fires the CS gate. Empty for Single/Banked.
+    pub commoned_lines: Vec<SelectLine>,
+
     /// `ALG_CS_2` qualifier config for chips with
     /// `deselect_when_address_all_high()` (e.g. 23QL384). `None` for all
     /// other chip types.
@@ -326,6 +335,14 @@ pub fn derive_cs_data_layout(
     let mut select_roles: Vec<SelectRole> = Vec::new();
     let mut select_candidates: Vec<&'static [u8]> = Vec::new();
     let mut commoned_candidates: Vec<&'static [u8]> = Vec::new();
+    // Roles parallel to commoned_candidates, so the resolved commoned GPIOs can
+    // be paired back into SelectLine entries for polarity normalisation.
+    let mut commoned_roles: Vec<SelectRole> = Vec::new();
+    // Truly-ignored control lines' resolved GPIOs (all bond options). NOT part
+    // of the CS span - resolved only so that an ignored line landing in a
+    // select-span gap (interior, not edge) can be reported precisely as an
+    // InteriorIgnoredLine rather than a generic NonContiguousSelect.
+    let mut ignored_gpios: BTreeSet<u8> = BTreeSet::new();
 
     match set_type {
         ChipSetType::Single | ChipSetType::Banked => {
@@ -362,12 +379,34 @@ pub fn derive_cs_data_layout(
                         board,
                         chip_type: chip0,
                     })?;
+                commoned_roles.push(control_line_kind_to_select_role(commoned_kind));
                 commoned_candidates.push(gpios_for_pin(
                     board,
                     chip0,
                     commoned_line.pin,
                     pin_offset,
                 )?);
+            }
+
+            // Resolve truly-ignored lines' GPIOs for the interior-gap check.
+            // They are deliberately NOT added to the CS span (that is the whole
+            // point of the commoned/ignored split): an edge-positioned ignored
+            // line drops out of num_cs_pins and is forced low as an
+            // address-window gap. Only an *interior* ignored line - one whose
+            // GPIO sits between the select lines - is unservable, and is
+            // reported as InteriorIgnoredLine below.
+            for &ignored_kind in &mcc.ignored_lines {
+                let ignored_line = chip0
+                    .control_lines()
+                    .iter()
+                    .find(|l| l.name == ignored_kind.name())
+                    .ok_or(LayoutError::NoSelectLine {
+                        board,
+                        chip_type: chip0,
+                    })?;
+                for &gpio in gpios_for_pin(board, chip0, ignored_line.pin, pin_offset)? {
+                    ignored_gpios.insert(gpio);
+                }
             }
 
             if chip_types.len() >= 2 {
@@ -405,6 +444,8 @@ pub fn derive_cs_data_layout(
 
     let mut best: Option<(CsDataLayout, (CsAlgPreference, u32))> = None;
     let mut last_noncontig_select: Option<Vec<u8>> = None;
+    // GPIO of a truly-ignored line found sitting in a select-span gap.
+    let mut interior_ignored: Option<u8> = None;
 
     for combo in 0..num_combos {
         let resolved: Vec<u8> = all_candidates
@@ -460,6 +501,14 @@ pub fn derive_cs_data_layout(
                 .expect("span - len == 1 implies exactly one gap") as u8;
             Some(gap)
         } else {
+            // Non-contiguous select span. If the gap is occupied by a
+            // truly-ignored control line, that is the specific (and currently
+            // unsupported) cause - record it so the final error names it,
+            // rather than falling back to a generic NonContiguousSelect.
+            if interior_ignored.is_none() {
+                interior_ignored = (sel_min..=sel_max)
+                    .find(|g| !select_gpios.contains(g) && ignored_gpios.contains(g));
+            }
             last_noncontig_select = Some(select_gpios.into_iter().collect());
             continue;
         };
@@ -522,6 +571,12 @@ pub fn derive_cs_data_layout(
                 });
             }
 
+            let commoned_lines: Vec<SelectLine> = commoned_roles
+                .iter()
+                .zip(commoned_resolved.iter())
+                .map(|(&role, &gpio)| SelectLine { role, gpio })
+                .collect();
+
             best = Some((
                 CsDataLayout {
                     gpio_base,
@@ -532,6 +587,7 @@ pub fn derive_cs_data_layout(
                     num_cs_pins,
                     cs_ignore_index,
                     select_lines,
+                    commoned_lines,
                     alg_cs2,
                 },
                 score,
@@ -540,7 +596,13 @@ pub fn derive_cs_data_layout(
     }
 
     best.map(|(layout, _)| layout).ok_or({
-        if let Some(gpios) = last_noncontig_select {
+        if let Some(gpio) = interior_ignored {
+            LayoutError::InteriorIgnoredLine {
+                board,
+                chip_type: chip0,
+                gpio,
+            }
+        } else if let Some(gpios) = last_noncontig_select {
             LayoutError::NonContiguousSelect {
                 board,
                 chip_type: chip0,
@@ -734,6 +796,7 @@ mod tests {
         let mcc = MultiChipCsConfig {
             per_chip_select: ControlLineKind::Cs1,
             commoned_lines: alloc::vec![],
+            ignored_lines: alloc::vec![],
         };
         let ctx = ctx_multi(
             Board::Fire24A,
@@ -759,6 +822,7 @@ mod tests {
         let mcc = MultiChipCsConfig {
             per_chip_select: ControlLineKind::Ce,
             commoned_lines: alloc::vec![ControlLineKind::Oe],
+            ignored_lines: alloc::vec![],
         };
         let ctx = ctx_multi(
             Board::Fire24A,
@@ -784,6 +848,7 @@ mod tests {
         let mcc = MultiChipCsConfig {
             per_chip_select: ControlLineKind::Oe,
             commoned_lines: alloc::vec![ControlLineKind::Ce],
+            ignored_lines: alloc::vec![],
         };
         let ctx = ctx_multi(
             Board::Fire24A,
@@ -819,6 +884,7 @@ mod tests {
         let mcc = MultiChipCsConfig {
             per_chip_select: ControlLineKind::Cs1,
             commoned_lines: alloc::vec![],
+            ignored_lines: alloc::vec![],
         };
         let ctx = ctx_multi(
             Board::Fire24E,
@@ -855,6 +921,7 @@ mod tests {
         let mcc = MultiChipCsConfig {
             per_chip_select: ControlLineKind::Cs1,
             commoned_lines: alloc::vec![],
+            ignored_lines: alloc::vec![],
         };
         let ctx = ctx_multi(
             Board::Fire24E,
@@ -898,6 +965,7 @@ mod tests {
         let mcc = MultiChipCsConfig {
             per_chip_select: ControlLineKind::Oe,
             commoned_lines: alloc::vec![ControlLineKind::Ce],
+            ignored_lines: alloc::vec![],
         };
         let ctx = ctx_multi(
             Board::Fire24E,
@@ -935,6 +1003,7 @@ mod tests {
         let mcc = MultiChipCsConfig {
             per_chip_select: ControlLineKind::Ce,
             commoned_lines: alloc::vec![ControlLineKind::Oe],
+            ignored_lines: alloc::vec![],
         };
         let ctx = ctx_multi(
             Board::Fire24E,
@@ -986,6 +1055,7 @@ mod tests {
         let mcc = MultiChipCsConfig {
             per_chip_select: ControlLineKind::Cs1,
             commoned_lines: alloc::vec![ControlLineKind::Cs2, ControlLineKind::Cs3],
+            ignored_lines: alloc::vec![],
         };
         let ctx = ctx_multi(
             Board::Fire28C,
@@ -1022,6 +1092,7 @@ mod tests {
         let mcc = MultiChipCsConfig {
             per_chip_select: ControlLineKind::Cs1,
             commoned_lines: alloc::vec![ControlLineKind::Cs2, ControlLineKind::Cs3],
+            ignored_lines: alloc::vec![],
         };
         let ctx = ctx_multi(
             Board::Fire28C,
@@ -1069,6 +1140,7 @@ mod tests {
         let mcc = MultiChipCsConfig {
             per_chip_select: ControlLineKind::Ce,
             commoned_lines: alloc::vec![ControlLineKind::Oe],
+            ignored_lines: alloc::vec![],
         };
         let ctx = ctx_multi(
             Board::Fire28C,
@@ -1105,6 +1177,7 @@ mod tests {
         let mcc = MultiChipCsConfig {
             per_chip_select: ControlLineKind::Ce,
             commoned_lines: alloc::vec![ControlLineKind::Oe],
+            ignored_lines: alloc::vec![],
         };
         let ctx = ctx_multi(
             Board::Fire28C,
@@ -1153,6 +1226,7 @@ mod tests {
         let mcc = MultiChipCsConfig {
             per_chip_select: ControlLineKind::Oe,
             commoned_lines: alloc::vec![ControlLineKind::Ce],
+            ignored_lines: alloc::vec![],
         };
         let ctx = ctx_multi(
             Board::Fire28C,
@@ -1179,6 +1253,153 @@ mod tests {
                 role: SelectRole::X1,
                 gpio: 9
             }
+        );
+    }
+
+    // =========================================================================
+    // Fire24F Multi tests — truly-ignored (not commoned) control lines
+    //
+    // Fire24F has X1=GPIO9, X2=GPIO8, and for the 2316 CS1=GPIO10, CS2=GPIO11,
+    // CS3=GPIO12. In a Multi set CS1 is the per-chip select; CS2/CS3 are
+    // `Ignore` on chip0 as well as the secondaries, so they are truly ignored
+    // rather than commoned. Unlike commoned lines, ignored lines are NOT
+    // folded into the CS-detect span: the range is just the real selects, and
+    // CS2/CS3 are left to be forced low as address-window gaps by
+    // `cs_overrides`. This is the issue266 layout.
+    // =========================================================================
+
+    /// Fire24F, 2-chip Multi 2316: per-chip select CS1@10 + X1@9. CS2/CS3
+    /// (GPIO 11/12) are ignored, so the range is {9,10} (num_cs_pins=2), not
+    /// {9..12}.
+    #[test]
+    fn fire24f_2316_multi_2chip_cs2_cs3_ignored() {
+        let cs_config = CsConfig::new(
+            Some(CsLogic::ActiveLow),
+            Some(CsLogic::Ignore),
+            Some(CsLogic::Ignore),
+        );
+        let mcc = MultiChipCsConfig {
+            per_chip_select: ControlLineKind::Cs1,
+            commoned_lines: alloc::vec![],
+            ignored_lines: alloc::vec![ControlLineKind::Cs2, ControlLineKind::Cs3],
+        };
+        let ctx = ctx_multi(
+            Board::Fire24F,
+            alloc::vec![ChipType::Chip2316, ChipType::Chip2316],
+            cs_config,
+            mcc,
+        );
+
+        let layout = derive_cs_data_layout(&ctx, None)
+            .expect("Fire24F Multi 2316 2-chip layout derivation should succeed");
+
+        assert_eq!(layout.gpio_base, 0);
+        assert_eq!(layout.base_cs_pin, 9);
+        // Ignored CS2/CS3 are excluded from the span: 2 real selects, not 4.
+        assert_eq!(layout.num_cs_pins, 2);
+        assert_eq!(layout.cs_ignore_index, None);
+        assert_eq!(
+            layout.select_lines,
+            vec![
+                SelectLine {
+                    role: SelectRole::Cs1,
+                    gpio: 10
+                },
+                SelectLine {
+                    role: SelectRole::X1,
+                    gpio: 9
+                },
+            ]
+        );
+    }
+
+    /// Fire24F, 3-chip Multi 2316: per-chip select CS1@10 + X1@9 + X2@8. As
+    /// above, CS2/CS3 (GPIO 11/12) are ignored and excluded from the span, so
+    /// num_cs_pins=3 ({8,9,10}) rather than 5 ({8..12}).
+    #[test]
+    fn fire24f_2316_multi_3chip_cs2_cs3_ignored() {
+        let cs_config = CsConfig::new(
+            Some(CsLogic::ActiveLow),
+            Some(CsLogic::Ignore),
+            Some(CsLogic::Ignore),
+        );
+        let mcc = MultiChipCsConfig {
+            per_chip_select: ControlLineKind::Cs1,
+            commoned_lines: alloc::vec![],
+            ignored_lines: alloc::vec![ControlLineKind::Cs2, ControlLineKind::Cs3],
+        };
+        let ctx = ctx_multi(
+            Board::Fire24F,
+            alloc::vec![ChipType::Chip2316, ChipType::Chip2316, ChipType::Chip2316],
+            cs_config,
+            mcc,
+        );
+
+        let layout = derive_cs_data_layout(&ctx, None)
+            .expect("Fire24F Multi 2316 3-chip layout derivation should succeed");
+
+        assert_eq!(layout.gpio_base, 0);
+        assert_eq!(layout.base_cs_pin, 8);
+        // {X2@8, X1@9, CS1@10}: the two ignored lines above (11/12) are not
+        // part of the CS range.
+        assert_eq!(layout.num_cs_pins, 3);
+        assert_eq!(layout.cs_ignore_index, None);
+        assert_eq!(
+            layout.select_lines,
+            vec![
+                SelectLine {
+                    role: SelectRole::Cs1,
+                    gpio: 10
+                },
+                SelectLine {
+                    role: SelectRole::X1,
+                    gpio: 9
+                },
+                SelectLine {
+                    role: SelectRole::X2,
+                    gpio: 8
+                },
+            ]
+        );
+    }
+
+    /// Fire24F, 3-chip Multi 2316 with an *interior* ignored line. Contrived
+    /// via a hand-built mcc so CS3 is the per-chip select and CS1/CS2 are
+    /// ignored: on Fire24F CS3=GPIO12, X1=GPIO9, X2=GPIO8 give selects
+    /// {8,9,12}, and the ignored CS1@10 / CS2@11 fall in the gap. An ignored
+    /// line interior to the select span is not servable (the CS span cannot be
+    /// made contiguous without reading it), and must surface as a specific
+    /// InteriorIgnoredLine rather than a generic NonContiguousSelect.
+    ///
+    /// The reported GPIO is the lowest gap position occupied by an ignored
+    /// line: CS1 at GPIO 10.
+    #[test]
+    fn fire24f_2316_multi_interior_ignored_errors() {
+        let cs_config = CsConfig::new(
+            Some(CsLogic::Ignore),
+            Some(CsLogic::Ignore),
+            Some(CsLogic::ActiveLow),
+        );
+        let mcc = MultiChipCsConfig {
+            per_chip_select: ControlLineKind::Cs3,
+            commoned_lines: alloc::vec![],
+            ignored_lines: alloc::vec![ControlLineKind::Cs1, ControlLineKind::Cs2],
+        };
+        let ctx = ctx_multi(
+            Board::Fire24F,
+            alloc::vec![ChipType::Chip2316, ChipType::Chip2316, ChipType::Chip2316],
+            cs_config,
+            mcc,
+        );
+
+        let result = derive_cs_data_layout(&ctx, None);
+
+        assert!(
+            matches!(
+                result,
+                Err(LayoutError::InteriorIgnoredLine { gpio: 10, .. })
+            ),
+            "interior ignored CS1@10 must produce InteriorIgnoredLine, got {result:?}"
         );
     }
 }

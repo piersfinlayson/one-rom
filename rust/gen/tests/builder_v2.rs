@@ -44,6 +44,13 @@ mod tests {
     // null; the parser (DeviceMemoryView) also accepts 0xFFFF_FFFF as null.
     const NULL_PTR: u32 = 0;
 
+    // Common header (CS_CONFIG_LEN = 12 bytes):
+    //   [discriminant(1)][param_len(1)][clkdiv_int(2)][clkdiv_frac(1)][gpio_base(1)]
+    //   [base_cs_pin(1)][num_cs_pins(1)][base_data_pin(1)][num_data_pins(1)]
+    //   [cs_active_delay(1)][cs_inactive_delay(1)]
+    const CS_BASE_CS_PIN: u32 = 6; // u8 — offset of first CS GPIO from gpio_base
+    const CS_NUM_CS_PINS: u32 = 7; // u8 — width of the CS-detect range
+
     // ========================================================================
     // Field byte offsets derived from the schema
     // ========================================================================
@@ -1102,12 +1109,12 @@ mod tests {
         // 2 GpioOverInvert entries: CE and X1
         let ov = v.read_u32_le(alg + ALG_OVERRIDE_PTR).unwrap();
         assert_ne!(ov, NULL_PTR, "Multi set must have gpio_override_config");
-        assert_eq!(v.read_u8(ov + OVERRIDE_PARAM_LEN).unwrap(), 4);
+        assert_eq!(v.read_u8(ov + OVERRIDE_PARAM_LEN).unwrap(), 5);
         assert_eq!(v.read_u8(ov + 1).unwrap() >> 6, OVERRIDE_TYPE_INVERT); // CE @ GPIO10
         assert_eq!(v.read_u8(ov + 2).unwrap() >> 6, OVERRIDE_TYPE_INVERT); // X1 @ GPIO9
-        // GPIO12 and GPIO18 are gaps in the [9,28) address window -> forced low.
-        assert_eq!(v.read_u8(ov + 3).unwrap(), (OVERRIDE_TYPE_LOW << 6) | 12);
-        assert_eq!(v.read_u8(ov + 4).unwrap(), (OVERRIDE_TYPE_LOW << 6) | 18);
+        assert_eq!(v.read_u8(ov + 3).unwrap(), (OVERRIDE_TYPE_INVERT << 6) | 11); // OE commoned @ GPIO11
+        assert_eq!(v.read_u8(ov + 4).unwrap(), (OVERRIDE_TYPE_LOW << 6) | 12);
+        assert_eq!(v.read_u8(ov + 5).unwrap(), (OVERRIDE_TYPE_LOW << 6) | 18);
 
         let roms_arr = v.read_u32_le(s0 + SLOT_ROMS).unwrap();
         assert_eq!(
@@ -1187,12 +1194,12 @@ mod tests {
         // 2 GpioOverInvert entries: OE and X1
         let ov = v.read_u32_le(alg + ALG_OVERRIDE_PTR).unwrap();
         assert_ne!(ov, NULL_PTR, "Multi set must have gpio_override_config");
-        assert_eq!(v.read_u8(ov + OVERRIDE_PARAM_LEN).unwrap(), 4);
+        assert_eq!(v.read_u8(ov + OVERRIDE_PARAM_LEN).unwrap(), 5);
         assert_eq!(v.read_u8(ov + 1).unwrap() >> 6, OVERRIDE_TYPE_INVERT); // OE @ GPIO11
         assert_eq!(v.read_u8(ov + 2).unwrap() >> 6, OVERRIDE_TYPE_INVERT); // X1 @ GPIO9
-        // GPIO12 and GPIO18 are gaps in the [9,28) address window -> forced low.
-        assert_eq!(v.read_u8(ov + 3).unwrap(), (OVERRIDE_TYPE_LOW << 6) | 12);
-        assert_eq!(v.read_u8(ov + 4).unwrap(), (OVERRIDE_TYPE_LOW << 6) | 18);
+        assert_eq!(v.read_u8(ov + 3).unwrap(), (OVERRIDE_TYPE_INVERT << 6) | 10); // CE commoned @ GPIO10
+        assert_eq!(v.read_u8(ov + 4).unwrap(), (OVERRIDE_TYPE_LOW << 6) | 12);
+        assert_eq!(v.read_u8(ov + 5).unwrap(), (OVERRIDE_TYPE_LOW << 6) | 18);
 
         let roms_arr = v.read_u32_le(s0 + SLOT_ROMS).unwrap();
         assert_eq!(
@@ -2535,12 +2542,12 @@ mod tests {
             ov, NULL_PTR,
             "CS2-primary Multi must have gpio_override_config"
         );
-        assert_eq!(v.read_u8(ov + OVERRIDE_PARAM_LEN).unwrap(), 3);
+        assert_eq!(v.read_u8(ov + OVERRIDE_PARAM_LEN).unwrap(), 5);
         assert_eq!(v.read_u8(ov + 1).unwrap() >> 6, OVERRIDE_TYPE_INVERT); // CS2 @ GPIO11
         assert_eq!(v.read_u8(ov + 2).unwrap() >> 6, OVERRIDE_TYPE_INVERT); // X1 @ GPIO9
-        // GPIO18 is a gap in the [9,28) address window -> forced low
-        // (GPIO12 carries 23128 CS3, a commoned line, so is not forced).
-        assert_eq!(v.read_u8(ov + 3).unwrap(), (OVERRIDE_TYPE_LOW << 6) | 18);
+        assert_eq!(v.read_u8(ov + 3).unwrap(), (OVERRIDE_TYPE_INVERT << 6) | 10); // CS1 commoned @ GPIO10
+        assert_eq!(v.read_u8(ov + 4).unwrap(), (OVERRIDE_TYPE_INVERT << 6) | 12); // CS3 commoned @ GPIO12
+        assert_eq!(v.read_u8(ov + 5).unwrap(), (OVERRIDE_TYPE_LOW << 6) | 18);
 
         let roms_arr = v.read_u32_le(s0 + SLOT_ROMS).unwrap();
         assert_eq!(
@@ -2621,5 +2628,128 @@ mod tests {
             chip[1]'s X1 (active_high) must not be"
         );
         assert_eq!(v.read_u8(ov + 1).unwrap() >> 6, OVERRIDE_TYPE_INVERT);
+    }
+
+    // ========================================================================
+    // v2 multi 3-chip: Fire24F / 3x 2316 — truly-ignored CS2/CS3 (issue266)
+    // ========================================================================
+
+    /// 3-chip Multi 2316 on Fire24F — the issue266 layout.
+    ///
+    /// Every chip has cs1=active_low (per-chip select), cs2=ignore, cs3=ignore.
+    /// Because cs2/cs3 are `Ignore` on chip0 as well as the secondaries, they are
+    /// *truly ignored*, not commoned: CS1@10 is the select, X1@9/X2@8 the fly-lead
+    /// selects, and CS2@11/CS3@12 carry no meaning for the set.
+    ///
+    /// Before the fix, `derive_multi_cs_config` looked only at a secondary and
+    /// classified every non-select line as commoned, so CS2/CS3 were folded into
+    /// the CS-detect span (cs=8+5, the gate reading GPIO 11/12) and never forced
+    /// low. After the fix they are excluded from the span and forced low as
+    /// address-window gaps.
+    ///
+    /// Key assertions vs. the pre-fix behaviour:
+    /// - num_cs_pins = 3 (the three real selects {8,9,10}), NOT 5.
+    /// - override config forces GPIO 11 and 12 low.
+    #[test]
+    fn v2_multi_3chip_fire24f_2316_cs2_cs3_ignored() {
+        let json = r#"{
+            "version": 1,
+            "description": "v2 multi 3-chip 2316 Fire24F (issue266)",
+            "chip_sets": [{
+                "type": "multi",
+                "chips": [
+                    { "file": "chip0.bin", "type": "2316", "allow_cs_ignore": true,
+                    "cs1": "active_low", "cs2": "ignore", "cs3": "ignore" },
+                    { "file": "chip1.bin", "type": "2316", "allow_cs_ignore": true,
+                    "cs1": "active_low", "cs2": "ignore", "cs3": "ignore" },
+                    { "file": "chip2.bin", "type": "2316", "allow_cs_ignore": true,
+                    "cs1": "active_low", "cs2": "ignore", "cs3": "ignore" }
+                ]
+            }]
+        }"#;
+
+        let mut b = v2_builder(json);
+        b.add_file(FileData {
+            id: 0,
+            data: vec![0xAAu8; 2048], // 2316 = 2KB
+        })
+        .unwrap();
+        b.add_file(FileData {
+            id: 1,
+            data: vec![0xBBu8; 2048],
+        })
+        .unwrap();
+        b.add_file(FileData {
+            id: 2,
+            data: vec![0xCCu8; 2048],
+        })
+        .unwrap();
+
+        let (meta, rom) = b.build(v2_props(Board::Fire24F)).expect("build");
+        let v = view(&meta);
+
+        let s0 = slot_base(&v, 0);
+        assert_eq!(v.read_u8(s0 + SLOT_TYPE).unwrap(), SLOT_TYPE_MULTI_ROM);
+        assert_eq!(v.read_u8(s0 + SLOT_ROM_COUNT).unwrap(), 3);
+        assert_eq!(v.read_u32_le(s0 + SLOT_FW_OVRD).unwrap(), NULL_PTR);
+
+        // Address window is [8,24) → 16 bits → 64KB. Unchanged by the fix: CS2/CS3
+        // sit between the X pins and the address block, so they were inside the
+        // window (and part of its span) either way.
+        let slot_size = v.read_u32_le(s0 + SLOT_SIZE).unwrap();
+        assert_eq!(slot_size, 1u32 << 16);
+        assert_eq!(rom.len() as u32, slot_size);
+
+        let alg = alg_base(&v, s0);
+        let cs = v.read_u32_le(alg + ALG_CS_PTR).unwrap();
+        assert_eq!(v.read_u8(cs + CS_DISCRIMINANT).unwrap(), ALG_CS_0);
+        assert_eq!(v.read_u8(cs + CS0_SERVE_CS_LOW_0).unwrap(), 1);
+
+        // The fix: the CS-detect range is the three real selects {X2@8, X1@9,
+        // CS1@10}, not {8..12}. Ignored CS2/CS3 are out of the gate.
+        assert_eq!(v.read_u8(cs + CS_BASE_CS_PIN).unwrap(), 8);
+        assert_eq!(
+            v.read_u8(cs + CS_NUM_CS_PINS).unwrap(),
+            3,
+            "ignored CS2/CS3 must be excluded from the CS range (was 5 pre-fix)"
+        );
+
+        // chip0's per-chip select is CS1 at GPIO 10.
+        assert_eq!(v.read_u8(cs + CS0_FIRST_ROM_CS_BASE).unwrap(), 10);
+        assert_eq!(v.read_u8(cs + CS0_FIRST_ROM_NUM_CS_PINS).unwrap(), 1);
+
+        let dma = v.read_u32_le(alg + ALG_DMA_PTR).unwrap();
+        assert_eq!(v.read_u8(dma + DMA_BIT_MODE).unwrap(), BIT_MODE_8);
+
+        // Multi X pins are driven CS selects, not jumpers → no pull config.
+        assert_eq!(v.read_u32_le(alg + ALG_PULL_PTR).unwrap(), NULL_PTR);
+
+        // Override config: three GpioOverInvert (CS1@10, X1@9, X2@8 — all
+        // active_low, inverted to active-high for the Multi gate), then two
+        // GpioOverLow for the truly-ignored CS2@11 and CS3@12 that fall inside the
+        // [8,24) address window. Invert entries precede forced-low entries, matching
+        // the pattern in v2_multi_2chip_fire28c_27128_ce_primary.
+        let ov = v.read_u32_le(alg + ALG_OVERRIDE_PTR).unwrap();
+        assert_ne!(ov, NULL_PTR, "Multi set must have gpio_override_config");
+        assert_eq!(
+            v.read_u8(ov + OVERRIDE_PARAM_LEN).unwrap(),
+            5,
+            "3 inverts (selects) + 2 forced-low (ignored CS2/CS3)"
+        );
+        assert_eq!(v.read_u8(ov + 1).unwrap() >> 6, OVERRIDE_TYPE_INVERT);
+        assert_eq!(v.read_u8(ov + 2).unwrap() >> 6, OVERRIDE_TYPE_INVERT);
+        assert_eq!(v.read_u8(ov + 3).unwrap() >> 6, OVERRIDE_TYPE_INVERT);
+        // The crux of the fix: the ignored lines are forced low.
+        assert_eq!(v.read_u8(ov + 4).unwrap(), (OVERRIDE_TYPE_LOW << 6) | 11);
+        assert_eq!(v.read_u8(ov + 5).unwrap(), (OVERRIDE_TYPE_LOW << 6) | 12);
+
+        let roms_arr = v.read_u32_le(s0 + SLOT_ROMS).unwrap();
+        for i in 0..3u32 {
+            assert_eq!(
+                v.read_cstr(v.read_u32_le(roms_arr + i * 4).unwrap() + ROM_INFO_TYPE_PTR)
+                    .unwrap(),
+                "2316"
+            );
+        }
     }
 }
