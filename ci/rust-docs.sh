@@ -5,7 +5,7 @@ cd rust
 echo "Generating documentation for Rust crates..."
 
 echo "Generating documentation for onerom-app..."
-RUSTDOCFLAGS="-D warnings" cargo doc -p onerom-ap
+RUSTDOCFLAGS="-D warnings" cargo doc -p onerom-app
 
 echo "Generating documentation for onerom-cli..."
 RUSTDOCFLAGS="-D warnings" cargo doc -p onerom-cli
