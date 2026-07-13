@@ -96,7 +96,12 @@ async fn build_and_assemble(
     let (firmware_data, version, _version_str) =
         acquire_firmware(options, &args.base_firmware, &args.version, board, mcu).await?;
 
-    let plugins = resolve_plugins(&parse_plugins(&args.plugin)?, Some(version)).await?;
+    let plugins = resolve_plugins(
+        &parse_plugins(&args.plugin)?,
+        &version,
+        &onerom_cli::CliFetch,
+    )
+    .await?;
 
     let global_config = GlobalConfig {
         config_name: args.config_name.clone(),

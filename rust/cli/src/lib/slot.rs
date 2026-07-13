@@ -520,7 +520,7 @@ pub fn slots_to_config_json(
 
     let mut chip_sets: Vec<ChipSetConfig> = sorted_plugins
         .iter()
-        .map(|p| plugin_to_chip_set_config(&p.file, p.plugin_type, p.size))
+        .map(|p| plugin_to_chip_set_config(&p.file(), p.plugin_type, p.size))
         .collect::<Result<Vec<_>, _>>()?;
 
     for slot in slots {

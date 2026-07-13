@@ -1,0 +1,35 @@
+[package]
+name = "onerom-app"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+authors = ["Piers Finlayson <piers@piers.rocks>"]
+description = "Shared, transport-free logic for One ROM applications (CLI, Studio, web, embedded)."
+repository = "https://github.com/piersfinlayson/one-rom"
+
+[dependencies]
+onerom-config = { workspace = true }
+onerom-gen = { workspace = true }
+
+thiserror = { version = "2", default-features = false }
+serde = { version = "1", default-features = false, features = ["alloc", "derive"] }
+serde_json = { version = "1", default-features = false, features = ["alloc"] }
+trait-variant = "0.1"
+sha2 = { version = "0.11", default-features = false }
+hex = { version = "0.4", default-features = false, features = ["alloc"] }
+
+[features]
+# `onerom-app` is `no_std` by default. Enabling `std` is reserved for future
+# helpers that genuinely require the standard library; nothing in the crate
+# requires it today. Host applications that are themselves `std` (the CLI,
+# Studio) may enable it, but the core logic must remain buildable without it.
+default = []
+std = ["serde/std", "serde_json/std"]
+
+[dev-dependencies]
+onerom-config = { workspace = true }
+
+tokio = { version = "1", features = ["macros", "rt"] }
+sha2 = "0.11"
+hex = "0.4"
+ureq = "3"

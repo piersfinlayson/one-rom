@@ -234,3 +234,57 @@ impl From<onerom_config::Error> for Error {
         Self::Other(format!("{e}"))
     }
 }
+
+impl From<onerom_app::PluginError> for Error {
+    fn from(p: onerom_app::PluginError) -> Self {
+        use onerom_app::PluginError as P;
+        match p {
+            P::DuplicatePlugin(t) => Error::DuplicatePlugin(t),
+            P::UserPluginWithoutSystem => Error::UserPluginWithoutSystem,
+            P::TooLarge(size, max) => Error::PluginTooLarge(size, max),
+            P::NotFound(name) => Error::PluginNotFound(name),
+            P::VersionNotFound(name, v) => Error::PluginVersionNotFound(name, v.to_string()),
+            P::Incompatible {
+                name,
+                version,
+                min_fw,
+                fw,
+            } => Error::PluginIncompatible(name, version, min_fw, fw),
+            P::IncompatibleNewer {
+                name,
+                version,
+                from,
+                fw,
+            } => Error::PluginIncompatibleNewer(name, version, from, fw),
+            P::BinaryTooSmall(src, actual, min) => Error::PluginBinaryTooSmall(src, actual, min),
+            P::InvalidMagic(src, got, expected) => Error::PluginInvalidMagic(src, got, expected),
+            P::TypeMismatch(src, expected, got) => {
+                Error::PluginTypeMismatch(src, expected.to_string(), got.to_string())
+            }
+            P::VersionMismatch(name, manifest, header) => {
+                Error::PluginVersionMismatch(name, manifest, header)
+            }
+            P::Sha256Mismatch {
+                binary,
+                expected,
+                got,
+            } => Error::PluginSha256Mismatch(binary, expected, got),
+            P::PioNotSupported(src) => Error::PluginPioNotSupported(src),
+            P::UnknownBinaryType(src, v) => Error::PluginUnknownBinaryType(src, v),
+            P::UnknownManifestType(name, ty) => Error::PluginUnknownManifestType(name, ty),
+            P::SpecSyntax(msg) => Error::InvalidArgument("--plugin".to_string(), msg),
+            P::ManifestJson(url, detail) => Error::Json(url, detail),
+        }
+    }
+}
+
+impl From<onerom_app::Error<onerom_fw::Error>> for Error {
+    fn from(e: onerom_app::Error<onerom_fw::Error>) -> Self {
+        match e {
+            // Fetch failures carry onerom-fw's own error; map it as onerom-fw
+            // errors are mapped elsewhere in the CLI (via From<onerom_fw::Error>).
+            onerom_app::Error::Fetch { error, .. } => error.into(),
+            onerom_app::Error::Plugin(p) => p.into(),
+        }
+    }
+}

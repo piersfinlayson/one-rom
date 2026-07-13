@@ -4,6 +4,10 @@ set -e
 cd rust
 echo "Running tests for Rust crates..."
 
+echo "Testing onerom-app..."
+cargo test -p onerom-app
+cargo test -p onerom-app -- --ignored
+
 echo "Testing onerom-cli..."
 cargo test -p onerom-cli
 

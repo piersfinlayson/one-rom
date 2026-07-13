@@ -19,6 +19,9 @@ Retired:
 - `test` (superceded by `onerom-fw-tester`)
 - Silent replacement of SST39SF040 with 27C040 for fire-32-a.  Decided it was best to flag this isn't natively supported.
 
+New:
+- `onerom-app` crate, containing functionality shared between One ROM user facing apps, like CLI, Studio and the Web UI (via onerom-wasm).
+
 ## v0.6.14 - 2026-??-??
 
 - Added support for fire-40-b and fire-24-f.

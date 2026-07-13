@@ -20,6 +20,7 @@ name = "onerom"
 path = "src/main.rs"
 
 [dependencies]
+onerom-app = { workspace = true }
 onerom-config = { workspace = true }
 onerom-fw = { workspace = true }
 onerom-gen = { workspace = true }

@@ -325,7 +325,12 @@ pub async fn cmd_build(
     let (firmware_data, version, version_str) =
         acquire_firmware(options, &args.base_firmware, &args.version, &board, &mcu).await?;
 
-    let plugins = resolve_plugins(&parse_plugin_specs(&args.plugin)?, Some(version)).await?;
+    let plugins = resolve_plugins(
+        &parse_plugin_specs(&args.plugin)?,
+        &version,
+        &onerom_cli::CliFetch,
+    )
+    .await?;
     if options.verbose {
         for plugin in &plugins {
             println!(
@@ -333,7 +338,7 @@ pub async fn cmd_build(
                 plugin.plugin_type.short(),
                 plugin.name,
                 plugin.version,
-                plugin.file,
+                plugin.file(),
             );
         }
     }
@@ -791,5 +796,5 @@ pub async fn cmd_download(
 }
 
 fn parse_plugin_specs(raw: &[String]) -> Result<Vec<PluginSpec>, Error> {
-    onerom_cli::plugin::parse_plugins(raw)
+    Ok(onerom_cli::plugin::parse_plugins(raw)?)
 }

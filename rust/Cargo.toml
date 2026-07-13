@@ -1,6 +1,7 @@
 # Workspace configuration for the Rust elements of the One ROM project
 [workspace]
 members = [
+    "app",
     "cli",
     "config",
     "database",
@@ -17,6 +18,7 @@ members = [
     "studio",
 ]
 default-members = [
+    "app",
     "cli",
     "config",
     "database",
@@ -32,6 +34,7 @@ default-members = [
 resolver = "2"
 
 [workspace.dependencies]
+onerom-app = { path="app", version="0.1.0" }
 onerom-config = { path="config", version="0.5.0" }
 onerom-database = { path="database", version="0.1.1" }
 onerom-fw = { path="fw", version="0.1.25" }

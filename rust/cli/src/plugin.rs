@@ -4,11 +4,8 @@
 
 //! Plugin management commands.
 
-use onerom_cli::plugin::{
-    PluginRelease, PluginReleasesManifest, PluginType, fetch_plugin_releases,
-    fetch_plugins_manifest,
-};
-use onerom_cli::{Error, Options};
+use onerom_cli::plugin::{Catalogue, Plugin, Release, fetch_releases};
+use onerom_cli::{CliFetch, Error, Options};
 use onerom_config::fw::FirmwareVersion;
 
 use crate::args::plugin::PluginArgs;
@@ -16,70 +13,62 @@ use crate::args::plugin::PluginArgs;
 /// Handle the `onerom plugin` command.
 ///
 /// Lists available plugins from the release manifest. By default shows only
-/// the latest version of each plugin. With `--all-versions`, shows all
-/// versions. With `--type`, filters to system or user plugins only.
+/// the latest version of each plugin; with `--all-versions`, all versions.
+/// With `--type`, filters to system or user plugins only.
 ///
 /// Compatibility with a specific firmware version can be checked by passing
-/// `--fw-version` or connecting a device — incompatible releases are flagged
-/// with a warning.
+/// `--fw-version` or connecting a device - incompatible releases are flagged
+/// (they are shown, not hidden).
 pub async fn cmd_plugin(options: &Options, args: &PluginArgs) -> Result<(), Error> {
-    // Parse firmware version filter if provided, or infer from connected device
+    // Parse firmware version filter if provided, or infer from a connected device.
     let fw_version = resolve_fw_version(options, args)?;
 
-    // Fetch top-level manifest to get the list of plugins
-    let manifest = fetch_plugins_manifest().await?;
+    // Fetch the catalogue (plugin identities only). Releases are fetched
+    // per-plugin below so that one unreachable plugin does not abort the whole
+    // listing.
+    let catalogue = Catalogue::fetch(&CliFetch).await?;
 
-    if manifest.plugins.is_empty() {
-        println!("No plugins available.");
-        return Ok(());
-    }
-
-    // Filter by type if requested
-    let plugins: Vec<_> = manifest
-        .plugins
+    // Filter by type if requested.
+    let plugins: Vec<&Plugin> = catalogue
+        .plugins()
         .iter()
         .filter(|p| args.r#type.is_none_or(|t| p.plugin_type == t))
         .collect();
 
     if plugins.is_empty() {
-        println!("No plugins found matching the specified type.");
+        if catalogue.plugins().is_empty() {
+            println!("No plugins available.");
+        } else {
+            println!("No plugins found matching the specified type.");
+        }
         return Ok(());
     }
 
-    // Print latest firmware version for reference if known
     if options.verbose {
-        if let Some(fw) = &fw_version {
-            println!("Firmware version: {}", fw);
-        } else {
-            println!("Connect a device or use --fw-version to check compatibility.");
+        match &fw_version {
+            Some(fw) => println!("Firmware version: {fw}"),
+            None => println!("Connect a device or use --fw-version to check compatibility."),
         }
     }
 
     println!("Available plugins ({}):", plugins.len());
     for entry in plugins {
-        // Fetch per-plugin releases manifest
-        let releases = match fetch_plugin_releases(entry.plugin_type, &entry.name).await {
-            Ok(r) => r,
+        // Fetch this plugin's releases into a local clone, so a failure for one
+        // plugin is reported inline rather than aborting the listing.
+        let mut plugin = entry.clone();
+        match fetch_releases(&mut plugin, &CliFetch).await {
+            Ok(()) => {
+                println!("---");
+                print_plugin(options, &plugin, &fw_version, args.all_versions);
+            }
             Err(e) => {
-                let short_type = entry.plugin_type.short();
                 println!(
                     "  {}/{}: failed to fetch releases: {e}",
-                    short_type, entry.name
+                    entry.plugin_type.short(),
+                    entry.name
                 );
-                continue;
             }
-        };
-
-        println!("---");
-
-        print_plugin(
-            options,
-            &releases,
-            entry.plugin_type,
-            &entry.name,
-            &fw_version,
-            args.all_versions,
-        );
+        }
     }
 
     Ok(())
@@ -88,25 +77,25 @@ pub async fn cmd_plugin(options: &Options, args: &PluginArgs) -> Result<(), Erro
 /// Print a single plugin's information.
 fn print_plugin(
     options: &Options,
-    releases: &PluginReleasesManifest,
-    plugin_type: PluginType,
-    name: &str,
+    plugin: &Plugin,
     fw_version: &Option<FirmwareVersion>,
     all_versions: bool,
 ) {
-    println!("{}/{name} - {}", plugin_type.short(), releases.display_name);
-    println!("  {}", releases.description);
+    let display = plugin.display_name.as_deref().unwrap_or(&plugin.name);
+    println!("{}/{} - {display}", plugin.plugin_type.short(), plugin.name);
+    if let Some(desc) = plugin.description.as_deref() {
+        println!("  {desc}");
+    }
 
-    if releases.releases.is_empty() {
+    if plugin.releases.is_empty() {
         println!("  No releases available.");
         return;
     }
 
-    let to_show: Vec<&PluginRelease> = if all_versions {
-        releases.releases.iter().collect()
+    let to_show: Vec<&Release> = if all_versions {
+        plugin.releases.iter().collect()
     } else {
-        // Show only latest
-        releases.releases.iter().take(1).collect()
+        plugin.releases.iter().take(1).collect()
     };
 
     for release in to_show {
@@ -115,11 +104,9 @@ fn print_plugin(
 }
 
 /// Print a single release entry with compatibility information.
-fn print_release(options: &Options, release: &PluginRelease, fw_version: &Option<FirmwareVersion>) {
+fn print_release(options: &Options, release: &Release, fw_version: &Option<FirmwareVersion>) {
     let compat = match fw_version {
-        Some(fw) if !release.compatible_with_firmware(fw) => {
-            " - incompatible with selected firmware"
-        }
+        Some(fw) if !release.is_compatible(fw) => " - incompatible with selected firmware",
         _ => "",
     };
     let min_fw = if options.verbose {
@@ -128,17 +115,16 @@ fn print_release(options: &Options, release: &PluginRelease, fw_version: &Option
             release.min_fw_version
         )
     } else {
-        "".to_string()
+        String::new()
     };
     println!("    v{}{min_fw}{compat}", release.version);
 }
 
 /// Resolve the firmware version to check compatibility against.
 ///
-/// Uses `--fw-version` if provided, otherwise infers from the connected
-/// device if one is attached. Returns `None` if neither is available —
-/// in that case, compatibility is not checked and min_fw_version is shown
-/// for reference only.
+/// Uses `--fw-version` if provided, otherwise infers from the connected device
+/// if one is attached. Returns `None` if neither is available - in that case
+/// compatibility is not checked and `min_fw_version` is shown for reference.
 fn resolve_fw_version(
     options: &Options,
     args: &PluginArgs,

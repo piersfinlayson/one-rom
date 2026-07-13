@@ -12,6 +12,7 @@ use clap::ValueEnum;
 
 pub mod device;
 pub mod error;
+pub mod fetch;
 pub mod picobootx;
 pub mod plugin;
 pub mod scan;
@@ -20,6 +21,7 @@ pub mod usb;
 
 pub use device::{Device, DeviceState};
 pub use error::Error;
+pub use fetch::CliFetch;
 
 pub const LIVE_ROM_BASE: u32 = 0x9000_0000;
 pub const LIVE_ROM_MAX_OFFSET: u32 = 0x0008_0000;
