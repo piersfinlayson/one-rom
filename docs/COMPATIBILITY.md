@@ -44,6 +44,7 @@ Some greater pin count ROMs can be emulated by a smaller One ROM, provided the R
 | MCM68764 | 8KB | 64KB | 64KB | 8KB | 8KB | 8KB | 8KB |
 | MCM68A364 | 8KB | 64KB | 64KB | 8KB | 8KB | 8KB | 8KB |
 | MCM68A764 | 8KB | 64KB | 64KB | 8KB | 8KB | 8KB | 8KB |
+| MK36000 | 8KB | 64KB | 64KB | 8KB | 8KB | 8KB | 8KB |
 | MM52164 | 8KB | 64KB | 64KB | 8KB | 8KB | 8KB | 8KB |
 
 *28-pin chips (with fly-leads)*
@@ -111,6 +112,7 @@ Some greater pin count ROMs can be emulated by a smaller One ROM, provided the R
 | MCM68764 | 8KB | 128KB* | 128KB* | 256KB* |
 | MCM68A364 | 8KB | 128KB* | 128KB* | 256KB* |
 | MCM68A764 | 8KB | 128KB* | 128KB* | 256KB* |
+| MK36000 | 8KB | 128KB* | 128KB* | 256KB* |
 | MM52164 | 8KB | 128KB* | 128KB* | 256KB* |
 
 *32-pin chips (with fly-leads)*
@@ -251,6 +253,7 @@ Full chip list for each board. Where a particular ROM type goes by multiple iden
 | MCM68764 | 8KB | 64KB | native |
 | MCM68A364 | 8KB | 64KB | native |
 | MCM68A764 | 8KB | 64KB | native |
+| MK36000 | 8KB | 64KB | native |
 | MM52164 | 8KB | 64KB | native |
 
 *28-pin chips (with fly-leads)*
@@ -287,6 +290,7 @@ Full chip list for each board. Where a particular ROM type goes by multiple iden
 | MCM68764 | 8KB | 64KB | native |
 | MCM68A364 | 8KB | 64KB | native |
 | MCM68A764 | 8KB | 64KB | native |
+| MK36000 | 8KB | 64KB | native |
 | MM52164 | 8KB | 64KB | native |
 
 *28-pin chips (with fly-leads)*
@@ -323,6 +327,7 @@ Full chip list for each board. Where a particular ROM type goes by multiple iden
 | MCM68764 | 8KB | 8KB | native |
 | MCM68A364 | 8KB | 8KB | native |
 | MCM68A764 | 8KB | 8KB | native |
+| MK36000 | 8KB | 8KB | native |
 | MM52164 | 8KB | 8KB | native |
 
 *28-pin chips (with fly-leads)*
@@ -359,6 +364,7 @@ Full chip list for each board. Where a particular ROM type goes by multiple iden
 | MCM68764 | 8KB | 8KB | native |
 | MCM68A364 | 8KB | 8KB | native |
 | MCM68A764 | 8KB | 8KB | native |
+| MK36000 | 8KB | 8KB | native |
 | MM52164 | 8KB | 8KB | native |
 
 *28-pin chips (with fly-leads)*
@@ -395,6 +401,7 @@ Full chip list for each board. Where a particular ROM type goes by multiple iden
 | MCM68764 | 8KB | 8KB | native |
 | MCM68A364 | 8KB | 8KB | native |
 | MCM68A764 | 8KB | 8KB | native |
+| MK36000 | 8KB | 8KB | native |
 | MM52164 | 8KB | 8KB | native |
 
 *28-pin chips (with fly-leads)*
@@ -431,6 +438,7 @@ Full chip list for each board. Where a particular ROM type goes by multiple iden
 | MCM68764 | 8KB | 8KB | native |
 | MCM68A364 | 8KB | 8KB | native |
 | MCM68A764 | 8KB | 8KB | native |
+| MK36000 | 8KB | 8KB | native |
 | MM52164 | 8KB | 8KB | native |
 
 *28-pin chips (with fly-leads)*
@@ -498,6 +506,7 @@ Full chip list for each board. Where a particular ROM type goes by multiple iden
 | MCM68764 | 8KB | 128KB | overhang |
 | MCM68A364 | 8KB | 128KB | overhang |
 | MCM68A764 | 8KB | 128KB | overhang |
+| MK36000 | 8KB | 128KB | overhang |
 | MM52164 | 8KB | 128KB | overhang |
 
 *32-pin chips (with fly-leads)*
@@ -562,6 +571,7 @@ Full chip list for each board. Where a particular ROM type goes by multiple iden
 | MCM68764 | 8KB | 128KB | overhang |
 | MCM68A364 | 8KB | 128KB | overhang |
 | MCM68A764 | 8KB | 128KB | overhang |
+| MK36000 | 8KB | 128KB | overhang |
 | MM52164 | 8KB | 128KB | overhang |
 
 *32-pin chips (with fly-leads)*
@@ -626,6 +636,7 @@ Full chip list for each board. Where a particular ROM type goes by multiple iden
 | MCM68764 | 8KB | 256KB | overhang |
 | MCM68A364 | 8KB | 256KB | overhang |
 | MCM68A764 | 8KB | 256KB | overhang |
+| MK36000 | 8KB | 256KB | overhang |
 | MM52164 | 8KB | 256KB | overhang |
 
 *32-pin chips (with fly-leads)*
