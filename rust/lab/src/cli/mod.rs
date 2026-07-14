@@ -315,6 +315,8 @@ pub async fn show_help(_state: &SessionState) -> Result<(), Error> {
     send_line("  l   List chips supported by this board type").await?;
     send_line("  v   Display One ROM Lab version and hardware information").await?;
     send_line("  s   Display settings").await?;
+    send_line("  p   Show board pin map (socket pin -> GPIO)").await?;
+    send_line("        p[:<chip>]").await?;
     send_line("  T   List supported board types").await?;
     send_line("  z   Reset to bootloader").await?;
     send_line("  ?/h This help").await?;

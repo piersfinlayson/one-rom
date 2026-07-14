@@ -7,7 +7,7 @@
 #[allow(unused_imports)]
 use log::{debug, error, info, trace, warn};
 
-use alloc::{format, string::ToString, vec::Vec};
+use alloc::{format, string::{String, ToString}, vec::Vec};
 
 use embassy_futures::select::{Either, select};
 use embassy_time::Timer;
@@ -64,6 +64,7 @@ pub async fn dispatch(line: &str, state: &mut SessionState) -> Result<(), Error>
         'l' => cmd_list_chips(state).await,
         'v' => cmd_version_info(state).await,
         's' => cmd_default_info(state).await,
+        'p' => cmd_pin_map(&mut args, state).await,
         'B' => cmd_set_board(&mut args, state).await,
         'T' => cmd_list_board_types(state).await,
         'z' => cmd_reset_to_bootloader().await,
@@ -443,6 +444,140 @@ async fn cmd_default_info(state: &SessionState) -> Result<(), Error> {
     .await?;
     send_line("").await?;
     Ok(())
+}
+
+/// Show the current board's physical socket-pin -> MCU GPIO map.
+///
+/// Read-only: never prompts, never mutates session state.  An inline chip
+/// (`p:<chip>`) annotates each pin with that chip's role for a one-off view
+/// without changing the session chip; with no inline chip the session chip is
+/// used.  With no chip at all (an unreachable state today, since every board
+/// defaults one) the map still renders as pin -> GPIO with the role column
+/// omitted.
+///
+/// Every GPIO wired to a pin is shown, including the twinned pins on Fire32/40
+/// where a socket pin routes to two GPIOs -- unlike the reader, which uses only
+/// the first.  They share a net, so any one drives or samples the pin.
+async fn cmd_pin_map(args: &mut Args<'_>, state: &SessionState) -> Result<(), Error> {
+    let board = state.board.ok_or(Error::BoardNotSet)?;
+
+    // An inline chip overrides the session chip for annotation only.
+    let chip = match args.next_token() {
+        Some(t) => Some(ChipType::try_from_str(t).ok_or(Error::InvalidChip)?),
+        None => state.chip,
+    };
+
+    send_line("").await?;
+    match chip {
+        Some(c) => send_line(&format!("Board: {}   Chip: {}", board.name(), c.name())).await?,
+        None => send_line(&format!("Board: {}   Chip: (none)", board.name())).await?,
+    }
+    send_line("").await?;
+
+    send_line(" Pin  Signal  GPIO").await?;
+
+    // Walk every physical board socket pin in order.  The GPIO comes from
+    // socket_pin_map() (or "-" if the pin has none); the signal is what the
+    // chip does at that pin, "NC" where the chip reaches nothing.
+    let map = board.socket_pin_map();
+
+    for pin in 1..=board.chip_pins() {
+        let gpio_str = match map.iter().find(|&&(p, _)| p == pin) {
+            Some(&(_, gpios)) => join_u8(gpios),
+            None => String::from("-"),
+        };
+        let sig = match chip {
+            Some(c) => {
+                let s = signal_for_pin(c, board, pin);
+                if s.is_empty() { String::from("NC") } else { s }
+            }
+            None if board.non_signal_pins().contains(&pin) => String::from("GND/VCC"),
+            None => String::new(),
+        };
+        send_line(&format!(" {:>3}  {:<6}  {}", pin, sig, gpio_str)).await?;
+    }
+
+    let x = board.x_pin_map();
+    if !x.is_empty() {
+        send_line("").await?;
+        let mut line = String::from("X header:");
+        for &(xn, gpios) in x {
+            line.push_str(&format!(" X{}={}", xn, join_u8(gpios)));
+        }
+        send_line(&line).await?;
+    }
+
+    send_line("").await?;
+    Ok(())
+}
+
+/// Offset from a chip's own pin numbering to board socket numbering, for the
+/// 24-pin-chip-in-28-pin-socket adapter case.  Mirrors `RomReader`.
+fn socket_offset(chip: ChipType, board: Board) -> u8 {
+    if chip.chip_pins() == 24 && board.chip_pins() == 28 {
+        2
+    } else {
+        0
+    }
+}
+
+/// Resolve the signal name a chip assigns to a board socket pin (e.g. `A7`,
+/// `D0`, `CE`), or an empty string for pins the chip doesn't use.
+///
+/// The board socket pin is mapped back to the chip's own pin numbering,
+/// undoing the 24-pin-chip-in-28-pin-socket offset that `RomReader` applies in
+/// the forward direction, so this view stays consistent with what the reader
+/// drives.
+fn signal_for_pin(chip: ChipType, board: Board, socket_pin: u8) -> String {
+    let offset = socket_offset(chip, board);
+    let chip_pin = match socket_pin.checked_sub(offset) {
+        Some(p) if p >= 1 => p,
+        _ => return String::new(),
+    };
+
+    if let Some(i) = chip.address_pins().iter().position(|&p| p == chip_pin) {
+        // 16-bit chips (27C200/27C400) expose A-1 as their first address line;
+        // every other chip starts at A0.  Keyed off the bit mode rather than a
+        // chip name, so any future 16-bit part is covered.  Mirrors rom.rs.
+        let base: i32 = if chip.supports_bit_mode(16) { -1 } else { 0 };
+        return format!("A{}", i as i32 + base);
+    }
+    if let Some(i) = chip.data_pins().iter().position(|&p| p == chip_pin) {
+        return format!("D{}", i);
+    }
+    for ctrl in chip.control_lines() {
+        if ctrl.pin == chip_pin {
+            return ctrl.name.to_ascii_uppercase();
+        }
+    }
+    if let Some(progs) = chip.programming_pins() {
+        for spec in progs {
+            if spec.pin == chip_pin {
+                return spec.name.to_ascii_uppercase();
+            }
+        }
+    }
+    for spec in chip.power_pins() {
+        if spec.pin == chip_pin {
+            return spec.name.to_ascii_uppercase();
+        }
+    }
+    String::new()
+}
+
+/// Join a slice of `u8` as a comma-separated string, or `-` if empty.
+fn join_u8(vals: &[u8]) -> String {
+    let mut s = String::new();
+    for (i, v) in vals.iter().enumerate() {
+        if i > 0 {
+            s.push_str(", ");
+        }
+        s.push_str(&format!("{}", v));
+    }
+    if s.is_empty() {
+        s.push('-');
+    }
+    s
 }
 
 async fn cmd_set_board(args: &mut Args<'_>, state: &mut SessionState) -> Result<(), Error> {
