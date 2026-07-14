@@ -1,0 +1,3 @@
+[env]
+# Ensure that onerom-metadata's generated C header is always output to the correct location
+ONEROM_C_HEADER_OUT = { value = "../firmware/generated/onerom_metadata.h", relative = true }

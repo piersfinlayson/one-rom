@@ -2,9 +2,13 @@
 //
 // Build script entry point for the onerom metadata crate.
 //
-// Loads firmware/metadata_schema.toml from the project root and runs
-// all code generators.  Currently generates:
+// Loads metadata_schema.toml from the crate root and runs all code
+// generators.  Currently generates:
 //   - A single C header  (firmware/generated/onerom_metadata.h by default)
+//
+// The schema ships inside the crate so the generated code and the schema
+// version are a single, self-contained unit; published tarballs therefore
+// build without reaching outside CARGO_MANIFEST_DIR.
 //
 // The C header output path can be overridden by setting the environment
 // variable ONEROM_C_HEADER_OUT to an absolute path before building.
@@ -21,7 +25,7 @@ use std::env;
 use std::path::PathBuf;
 
 const ENV_C_HEADER_OUT: &str = "ONEROM_C_HEADER_OUT";
-const METADATA_SCHEMA_FILE: &str = "firmware/metadata_schema.toml";
+const METADATA_SCHEMA_FILE: &str = "metadata_schema.toml";
 const C_HEADER_FILE: &str = "firmware/generated/onerom_metadata.h";
 const RUST_GENERATED: &str = "metadata_generated.rs";
 const RUST_SERIALIZE_GENERATED: &str = "serialize_generated.rs";
@@ -29,25 +33,23 @@ const RUST_HOST_GENERATED: &str = "host_generated.rs";
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // -------------------------------------------------------------------------
-    // Locate the project root and key paths
+    // Locate key paths
     // -------------------------------------------------------------------------
 
-    // CARGO_MANIFEST_DIR points to rust/metadata/.
-    // The project root is two levels above that (rust/metadata -> rust -> root).
+    // CARGO_MANIFEST_DIR points to the crate root.  The schema lives directly
+    // inside the crate, so everything resolves relative to this with no upward
+    // walking - which is what makes the published tarball self-contained.
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR")?);
-    let project_root = manifest_dir
-        .parent()
-        .and_then(|p| p.parent())
-        .expect("CARGO_MANIFEST_DIR must be two levels below the project root")
-        .to_path_buf();
 
-    let schema_path = project_root.join(METADATA_SCHEMA_FILE);
+    let schema_path = manifest_dir.join(METADATA_SCHEMA_FILE);
 
     // C header output path.  Configurable so CI or the C build system can
-    // redirect it without touching the build script.
+    // redirect it without touching the build script.  The fallback lands
+    // inside the crate build tree; it is always produced, and for consumers
+    // it simply appears under their target/ and is otherwise unused.
     let c_header_path = env::var(ENV_C_HEADER_OUT)
         .map(PathBuf::from)
-        .unwrap_or_else(|_| project_root.join(C_HEADER_FILE));
+        .unwrap_or_else(|_| manifest_dir.join(C_HEADER_FILE));
 
     // -------------------------------------------------------------------------
     // Cargo rerun-if-changed directives
@@ -79,10 +81,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "cargo:rerun-if-changed={}",
         build_dir.join("host_gen.rs").display()
     );
-    let schema_path = build_dir
-        .join(format!("../../../{METADATA_SCHEMA_FILE}"))
-        .canonicalize()?;
-    println!("cargo:rerun-if-changed={}", schema_path.display());
 
     // -------------------------------------------------------------------------
     // Load and validate the schema
