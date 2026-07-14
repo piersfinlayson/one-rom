@@ -17,6 +17,7 @@ TODO
 - Update Studio to support firmware v0.7.0+
 - Publish USB plugin 0.2.0
 - Publish host-control 0.1.1
+- Figure out why status LED is off on v0.7.0
 
 TEST
 - All ROM types live

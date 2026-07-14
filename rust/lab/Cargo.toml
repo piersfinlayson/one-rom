@@ -29,7 +29,7 @@ onerom-config = { workspace = true }
 onerom-protocol = { workspace = true }
 onerom-database = { workspace = true }
 
-airfrog-rpc = { version = "0.1.1" }
+airfrog-rpc = { version = "0.1.2" }
 embassy-executor = { version = "0.10.0", features = ["executor-thread", "platform-cortex-m", "nightly" ]}
 embassy-futures = { version = "0.1.1" }
 embassy-rp = { version = "0.10.0", features = [ "rt", "unstable-pac", "time-driver", "intrinsics", "critical-section-impl", "imagedef-secure-exe", "boot2-generic-03h" ] }
