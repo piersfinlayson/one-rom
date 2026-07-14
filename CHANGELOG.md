@@ -22,7 +22,19 @@ Retired:
 New:
 - `onerom-app` crate, containing functionality shared between One ROM user facing apps, like CLI, Studio and the Web UI (via onerom-wasm).
 
-## v0.6.14 - 2026-??-??
+## 2026-07-04
+
+Release hardware design files for new variants:
+- fire-24-f
+- fire-28-c
+- fire-32-b2
+- fire-40-b
+
+All of these new hardware designs are licensed under the [CERN Open Hardware Licence Version 2 - Weakly Reciprocal (CERN-OHL-W-2.0)](/LICENSE.md#cern-ohl-w-20-license).
+
+All previous hardware designs are re-licensed under the [CERN Open Hardware Licence Version 2 - Weakly Reciprocal (CERN-OHL-W-2.0)](/LICENSE.md#cern-ohl-w-20-license).
+
+## v0.6.14 - 2026-07-02
 
 - Added support for fire-40-b and fire-24-f.
 - Improved lab-new scripts.

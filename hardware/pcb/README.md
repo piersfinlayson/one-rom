@@ -5,25 +5,28 @@ Contains One ROM PCB design files.  These are organised into two directories:
 - [`verified/`](verified/README.md) - Verified designs that have been tested and work.
 - [`unverified/`](unverified/README.md) - Unverified designs that have not been tested.
 
+Before using any of the designs, review the hardware [LICENSE](/LICENSE.md#cern-ohl-w-20-license) and [NOTICE](/hardware/NOTICE) files.
+
 ## Recommended Revisions
 
-Last Updated 26th March 2026.
-
-I recommend Fire over Ice boards for most users.  See [MCU-SELECTION.md](../docs/MCU-SELECTION.md) for a comparison between Fire and Ice capabilities.
+Last Updated 4th July 2026.
 
 The following table lists the recommended verified designs.  Each design has been manufactured and assembled using JLCPCB's PCB assembly service, and verified to work correctly.
 
-| Model | MCU | Pins | USB | SWD | Image Select Pins | X Pins | PCB |
-|-------|-----|------|-----|-----|-------------------|--------|-------|
-| Fire  | RP2350A | 24 | Micro-B | ✓ | 4 | 2 | [fire-24-d](./verified/fire-24-d/README.md) |
-| Fire  | RP2354A | 24 | C | ✓ | 4 | 2 | [fire-24-e](./verified/fire-24-e/README.md) |
-| Ice   | STM32F4 | 24 | Micro-B | ✓ | 4 | 2 | [ice-24-j](./verified/ice-24-j/README.md) |
-| Fire  | RP2350A or RP2354A | 28 | C | ✓ | 2 | n/a | [fire-28-a4](./verified/fire-28-a4/README.md) |
-| Fire  | RP2350A or RP2354A | 28 | C (upright) | ✓ | 2 | n/a | [fire-28-b](./verified/fire-28-b/README.md) |
-| Fire  | RP2350B or RP2354B | 32 | C | ✓ | 4 | n/a | [fire-32-a](./verified/fire-32-a/README.md) |
-| Fire  | RP2350B or RP2354B | 40 | C | ✓ | 4 | n/a | [fire-40-a](./verified/fire-40-a/README.md) |
+| Model | MCU | Pins | USB | SWD | Image Select Pins | X Pins | RGB | PCB |
+|-------|-----|------|-----|-----|-------------------|--------|-----|-------|
+| Fire  | RP2350A | 24 | Micro-B | ✓ | 4 | 2 | - | [fire-24-d](./verified/fire-24-d/README.md) |
+| Fire  | RP2354A | 24 | C | ✓ | 4 | 2 | - | [fire-24-e](./verified/fire-24-e/README.md) |
+| Fire  | RP2354A | 24 | C | ✓ | 4 | 2 | ✓ | [fire-24-f](./verified/fire-24-f/README.md) |
+| Fire  | RP2350A or RP2354A | 28 | C | ✓ | 2 | n/a | - | [fire-28-a4](./verified/fire-28-a4/README.md) |
+| Fire  | RP2350A or RP2354A | 28 | C (upright) | ✓ | 2 | n/a | - | [fire-28-b](./verified/fire-28-b/README.md) |
+| Fire  | RP2354B | 28 | C | ✓ | 2 | 2 | ✓ | [fire-28-c](./verified/fire-28-c/README.md) |
+| Fire  | RP2350B or RP2354B | 32 | C | ✓ | 4 | n/a | - | [fire-32-a](./verified/fire-32-a/README.md) |
+| Fire  | RP2350B or RP2354B | 32 | C | ✓ | 4 | n/a | ✓ | [fire-32-b2](./verified/fire-32-b2/README.md) |
+| Fire  | RP2350B or RP2354B | 40 | C | ✓ | 4 | n/a | - | [fire-40-a](./verified/fire-40-a/README.md) |
+| Fire  | RP2350B or RP2354B | 40 | C | ✓ | 4 | n/a | ✓ | [fire-40-b](./verified/fire-40-b/README.md) |
 
-**One ROM 32 and 40 require components on the top and bottom of the PCB**
+**One ROM 28C, 32 and 40 require components on the top and bottom of the PCB**
 
 There may be later, unverified, revisions not in the list above.  These may have improvements over the recommended revisions, but they have not been verified to work.  If you want to use one of these later revisions, read the relevant README before ordering.
 

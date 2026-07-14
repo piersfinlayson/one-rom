@@ -1,8 +1,6 @@
 # Fire 28 Rev C
 
-**Unverified**
-
-A variant of the 28 pin using the RP2354B MCU, making use of its extra GPIOs to provide X pins (for multi-ROM slots like the 24 pin version) and more efficient use of flash for most image types.  Uses a flat (inline) USB-C connector.
+A variant of the 28 pin using the RP2354B MCU, making use of its extra GPIOs to provide X pins and more efficient use of flash for most image types.  Uses a flat (inline) USB-C connector.
 
 **Has components on both sides of the board.**
 
@@ -12,9 +10,3 @@ Changes from fire-28-a:
 - Adds 2 more image select jumpers, matching the 4 of the 24/32/40 pins designs.  The right-most two are ADC (non-5V tolerant) pins, with the othe two being 5V tolerant.
 - Adds two X pins to allow for multi-ROM slots like the 24 pin version.
 - Address and CS pins have been laid out differently.
-
-KiCad and fabrication files are not yet provided for this revision.
-
-## Contents
-
-- [Schematic](./fire-28-c-schematic.pdf)
