@@ -34,17 +34,32 @@
 // Plugin header
 // ---------------------------------------------------------------------------
 
-// Use the simpler plugin header macro.  We do _not_ support yielding, as that
-// would interfere with knock/byte detection.
+// We do _not_ support yielding, as that would interfere with knock/byte detection.
 
-ORA_DEFINE_USER_PLUGIN(
-    rbcp_main,
-    MAJOR_VERSION,
-    MINOR_VERSION,
-    PATCH_VERSION,
-    BUILD_VERSION,
-    0, 6, 9       // minimum One ROM firmware version
+// Define this plugin's attribues
+void rbcp_main(
+    ora_lookup_fn_t ora_lookup_fn,
+    ora_plugin_type_t plugin_type,
+    const ora_entry_args_t *entry_args
 );
+__attribute__((section(".plugin_header")))
+const ora_plugin_header_t ora_plugin_header = {
+    .magic    = ORA_PLUGIN_MAGIC,
+    .api_version  = ORA_PLUGIN_VERSION_1,
+    .major_version = MAJOR_VERSION,
+    .minor_version = MINOR_VERSION,
+    .patch_version = PATCH_VERSION,
+    .build_version = BUILD_VERSION,
+    .entry  = rbcp_main,
+    .plugin_type = ORA_PLUGIN_TYPE_USER,
+    .sam_usage = 255,
+    .overrides1 = 0,
+    .properties1 = 0,
+    .min_fw_major_version = 0,
+    .min_fw_minor_version = 7,
+    .min_fw_patch_version = 0,
+    .reserved = {0},
+};
 
 // ---------------------------------------------------------------------------
 // Ring buffer

@@ -5,7 +5,8 @@ All notables changes between versions are documented in this file.
 ## v0.7.0
 
 TODO
-USB plugin is broken
+- publish USB plugin 0.2.0
+- publish host-control 0.1.1
 host-control and USB rewriting ROMs is broken, probably knocking too
 Move lab-new over to new pin map within Board.
 
@@ -21,6 +22,10 @@ Retired:
 
 New:
 - `onerom-app` crate, containing functionality shared between One ROM user facing apps, like CLI, Studio and the Web UI (via onerom-wasm).
+
+Updated:
+- plugins/system/usb
+- plugins/user/host-control
 
 ## 2026-07-04
 
