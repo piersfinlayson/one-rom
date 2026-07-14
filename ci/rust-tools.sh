@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
 set -e
 
-cd rust/lab-new
+cd rust/lab
 scripts/build-all.sh
