@@ -23,7 +23,6 @@ use once_cell::sync::OnceCell;
 use static_cell::StaticCell;
 
 use onerom_config::hw::Board;
-use onerom_config::pin_map::BoardPinMap;
 
 mod cli;
 mod error;
@@ -89,10 +88,13 @@ async fn main(spawner: Spawner) -> ! {
     let board = BOARD_STR.and_then(Board::try_from_str);
     if let Some(board) = board {
         debug!("Board: {}", board.name());
-        let pin_map = BoardPinMap::new(board);
 
         // Status LED (optional — some boards have none)
-        let mut led = pin_map.led_gpio().map(hw::steal_gpio);
+        let led_gpio = match board.pin_status() {
+            255 => None,
+            gpio => Some(gpio),
+        };
+        let mut led = led_gpio.map(hw::steal_gpio);
         if let Some(ref mut led) = led {
             led.set_as_output();
             for _ in 0..2 {

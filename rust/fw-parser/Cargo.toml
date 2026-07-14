@@ -1,6 +1,6 @@
 [package]
 name = "onerom-fw-parser"
-version = "0.7.0"
+version = "0.7.1"
 edition = "2024"
 authors = ["Piers Finlayson <piers@piers.rocks>"]
 description = "One ROM firmware parser"

@@ -9,7 +9,7 @@ use alloc::vec::Vec;
 use core::num::Wrapping;
 use embassy_rp::gpio::{Flex, Pull};
 use onerom_config::chip::{ChipType, ControlLineType};
-use onerom_config::pin_map::BoardPinMap;
+use onerom_config::hw::Board;
 use sha1::{Digest, Sha1};
 
 use crate::hw::steal_gpio;
@@ -58,6 +58,24 @@ impl CsPolarities {
 // ---------------------------------------------------------------------------
 // Private helpers
 // ---------------------------------------------------------------------------
+
+/// Look up the MCU GPIO wired to physical socket pin `physical_pin` (1-based)
+/// on `board`.
+///
+/// [`Board::socket_pin_map`] can list more than one GPIO for a pin on boards
+/// that route a socket pin to two GPIOs for the serving PIO (Fire32/40).
+/// Those GPIOs share a net, so for a reader driving or sampling the pin any
+/// one of them is correct; we take the first.
+///
+/// Returns `None` for non-signal pins (VCC, GND) and any pin absent from the
+/// board's map.
+fn gpio_for_socket_pin(board: Board, physical_pin: u8) -> Option<u8> {
+    board
+        .socket_pin_map()
+        .iter()
+        .find(|&&(pin, _)| pin == physical_pin)
+        .and_then(|&(_, gpios)| gpios.first().copied())
+}
 
 struct ChecksumState(Wrapping<u32>);
 
@@ -140,8 +158,8 @@ pub struct RomReader {
 
 impl RomReader {
     #[inline]
-    fn remap_phys_pin(chip: ChipType, pin_map: &BoardPinMap, phys: u8) -> u8 {
-        if chip.chip_pins() == 24 && pin_map.chip_pins() == 28 {
+    fn remap_phys_pin(chip: ChipType, board: Board, phys: u8) -> u8 {
+        if chip.chip_pins() == 24 && board.chip_pins() == 28 {
             // 24-pin chip in a 28-pin socket adapter position: chip pin 1 maps
             // to board socket pin 3, so shift all logical chip pins by +2.
             phys + 2
@@ -150,13 +168,13 @@ impl RomReader {
         }
     }
 
-    /// Construct a `RomReader` for `chip` on the board described by `pin_map`.
+    /// Construct a `RomReader` for `chip` on `board`.
     ///
     /// # Panics
     /// - If a required CS polarity env var was not set for a configurable line.
-    /// - If `pin_map` does not contain a GPIO for a physical pin required by
+    /// - If `board` does not contain a GPIO for a physical pin required by
     ///   `chip` (indicates a board/chip-type mismatch).
-    pub fn new(pin_map: &BoardPinMap, chip: ChipType, cs: CsPolarities, tristate: bool) -> Self {
+    pub fn new(board: Board, chip: ChipType, cs: CsPolarities, tristate: bool) -> Self {
         // Validate CS polarities are provided for every configurable line.
         for ctrl in chip.control_lines() {
             if ctrl.line_type == ControlLineType::Configurable {
@@ -181,8 +199,8 @@ impl RomReader {
             .address_pins()
             .iter()
             .map(|&phys| {
-                let phys = Self::remap_phys_pin(chip, pin_map, phys);
-                let gpio = pin_map.gpio_for_chip_pin(phys).unwrap_or_else(|| {
+                let phys = Self::remap_phys_pin(chip, board, phys);
+                let gpio = gpio_for_socket_pin(board, phys).unwrap_or_else(|| {
                     panic!(
                         "address pin {} not mapped for chip {} on this board",
                         phys,
@@ -198,8 +216,8 @@ impl RomReader {
             .data_pins()
             .iter()
             .map(|&phys| {
-                let phys = Self::remap_phys_pin(chip, pin_map, phys);
-                let gpio = pin_map.gpio_for_chip_pin(phys).unwrap_or_else(|| {
+                let phys = Self::remap_phys_pin(chip, board, phys);
+                let gpio = gpio_for_socket_pin(board, phys).unwrap_or_else(|| {
                     panic!(
                         "data pin {} not mapped for chip {} on this board",
                         phys,
@@ -219,8 +237,8 @@ impl RomReader {
         let mut byte_n = None;
 
         for ctrl in chip.control_lines() {
-            let phys = Self::remap_phys_pin(chip, pin_map, ctrl.pin);
-            let gpio = pin_map.gpio_for_chip_pin(phys).unwrap_or_else(|| {
+            let phys = Self::remap_phys_pin(chip, board, ctrl.pin);
+            let gpio = gpio_for_socket_pin(board, phys).unwrap_or_else(|| {
                 panic!(
                     "control pin {} ('{}') not mapped for chip {} on this board",
                     phys,

@@ -15,7 +15,6 @@ use embassy_time::Timer;
 use onerom_config::chip::{ChipType, ControlLineType, chip_type_names_for_pins};
 use onerom_config::hw::{BOARDS, Board};
 use onerom_config::mcu::Family;
-use onerom_config::pin_map::BoardPinMap;
 
 use sha1::{Digest, Sha1};
 
@@ -525,8 +524,7 @@ async fn do_read(
     }
 
     let (start, count) = resolve_range(range, chip);
-    let pin_map = BoardPinMap::new(board);
-    let mut reader = RomReader::new(&pin_map, chip, cs.to_polarities(), tristate);
+    let mut reader = RomReader::new(board, chip, cs.to_polarities(), tristate);
     reader.init();
 
     match fmt {
@@ -652,7 +650,6 @@ async fn scan_cs(
     .await?;
     send_line("").await?;
 
-    let pin_map = BoardPinMap::new(board);
     let base = cs.to_polarities();
 
     for combo in 0u32..(1u32 << auto.len()) {
@@ -667,7 +664,7 @@ async fn scan_cs(
             }
         }
 
-        let mut reader = RomReader::new(&pin_map, chip, test, tristate);
+        let mut reader = RomReader::new(board, chip, test, tristate);
         reader.init();
 
         let label = auto

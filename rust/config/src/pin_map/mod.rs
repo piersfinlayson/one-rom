@@ -4,6 +4,9 @@
 
 //! Physical socket pin to MCU GPIO mapping.
 //!
+//! DEPRECATED.  Use new Board::socket_pin_map(), x_pin_map() and
+//! non_signal_pins() methods instead.
+//!
 //! [`BoardPinMap`] takes a [`Board`] and produces a complete, immutable map
 //! of every physical socket pin to the MCU GPIO it is wired to on that board.
 //!

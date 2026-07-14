@@ -1,6 +1,6 @@
 [package]
-name = "onerom-lab-new"
-version = "0.1.0"
+name = "onerom-lab"
+version = "0.2.0"
 edition = "2024"
 authors = ["Piers Finlayson <piers@piers.rocks>"]
 description = "One ROM Lab (V2)"

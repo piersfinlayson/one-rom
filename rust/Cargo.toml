@@ -11,7 +11,7 @@ members = [
     "fw-tester",
     "fw-parser",
     "gen",
-    "lab-new",
+    "lab",
     "metadata",
     "protocol",
     "schema-gen",
@@ -35,12 +35,12 @@ resolver = "2"
 
 [workspace.dependencies]
 onerom-app = { path="app", version="0.1.0" }
-onerom-config = { path="config", version="0.5.0" }
+onerom-config = { path="config", version="0.5.1" }
 onerom-database = { path="database", version="0.1.1" }
 onerom-fw = { path="fw", version="0.1.25" }
 onerom-fw-emulator = { path="fw-emulator", version="0.1.0" }
 onerom-fw-parser = { path="fw-parser", version="0.7.0" }
-onerom-gen = { path="gen", version="0.6.0" }
+onerom-gen = { path="gen", version="0.6.1" }
 onerom-metadata = { path="metadata", version="0.1.0" }
 onerom-protocol = { path="protocol", version="0.1.0" }
 

@@ -11,10 +11,10 @@ pub const MIN_FW_VERSION: FirmwareVersion = FirmwareVersion::new(0, 7, 0, 0);
 pub const MAX_FW_VERSION: FirmwareVersion = FirmwareVersion::new(0, 7, 999, 999);
 pub const UNSUPPORTED_FIRMWARE_VERSIONS: &[FirmwareVersion] = &[];
 
-pub const SUPPORTED_CHIP_TYPES: &[ChipType; 35] = &[
+pub const SUPPORTED_CHIP_TYPES: &[ChipType; 34] = &[
     ChipType::Chip2316,
     ChipType::Chip2716,
-    ChipType::Chip6116,
+    // ChipType::Chip6116,
     ChipType::Chip2332,
     ChipType::Chip2732,
     ChipType::Chip2364,
