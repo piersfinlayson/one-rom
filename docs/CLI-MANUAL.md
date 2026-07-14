@@ -8,7 +8,7 @@ This manual is in two parts. The **Guide** walks through installation and the
 common workflows. The **Reference** documents every command, subcommand and
 option.
 
-> This manual documents the `onerom` CLI as of release v0.1.10. Board,
+> This manual documents the `onerom` CLI as of release v0.1.11. Board,
 > chip and plugin lists shown in examples are illustrative — the set your build
 > supports may differ. Run `onerom --version` to check your version, and
 > `onerom boards` / `onerom chips` for the definitive lists your build knows
