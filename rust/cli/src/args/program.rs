@@ -96,7 +96,7 @@ pub struct ProgramArgs {
     ///
     ///   --plugin file=https://example.com/plugin.bin
     ///
-    #[arg(long, value_name = "SPEC", conflicts_with = "config_file")]
+    #[arg(long, value_name = "SPEC", conflicts_with_all = ["config_file", "firmware"])]
     pub plugin: Vec<String>,
 
     /// Name for the generated ROM configuration.
@@ -127,12 +127,13 @@ pub struct ProgramArgs {
     /// Flash a pre-built complete firmware binary directly.
     ///
     /// Mutually exclusive with --config-file, --slot, --base-firmware,
-    /// and --version.
+    /// and --plugin because a pre-built firmware already contains all of the
+    /// ROMs, plugins, etc.  Also conflicts with --version.
     #[arg(
         long,
         value_name = "FILE",
         visible_alias = "fw",
-        conflicts_with_all = ["config_file", "slot", "base_firmware", "version"]
+        conflicts_with_all = ["config_file", "slot", "base_firmware", "version", "plugin"]
     )]
     pub firmware: Option<String>,
 

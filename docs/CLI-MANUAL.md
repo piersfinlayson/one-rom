@@ -356,7 +356,7 @@ onerom program --config-file c64.json --out firmware.bin
 |---|---|
 | `--config-file, -j <FILE>` (aliases `--config-json`, `--config`, `--json`) | ROM configuration JSON file. Conflicts with `--slot`, `--config-name`, `--config-description`, `--save-config`, `--no-config`, `--firmware`. |
 | `--slot <SPEC>` (alias `--rom`) | ROM slot specification; repeatable. See [ROM slot specification](#rom-slot-specification). Conflicts with `--config-file`, `--no-config`, `--firmware`. |
-| `--firmware <FILE>` (alias `--fw`) | Flash a pre-built complete firmware binary directly. Conflicts with `--config-file`, `--slot`, `--base-firmware`, `--version`. |
+| `--firmware <FILE>` (alias `--fw`) | Flash a pre-built complete firmware binary directly. Conflicts with `--config-file`, `--slot`, `--base-firmware` and `--plugin` because a pre-built firmware already contains all ROMs/plugins. Also conflicts with `--version`. |
 | `--base-firmware <FILE>` | Use a local minimal firmware instead of downloading. With `--slot`, ROMs are built into it; alone, requires `--no-config`. Must be built with `EXCLUDE_METADATA=1` and `ROM_CONFIGS=`. Conflicts with `--firmware`, `--version`. |
 | `--no-config` | Confirm flashing a base firmware with no ROM configuration. Only valid with `--config-name` and/or `--config-description`. Conflicts with `--config-file`, `--slot`, `--firmware`, and the config-override options below. |
 
@@ -364,7 +364,7 @@ onerom program --config-file c64.json --out firmware.bin
 
 | Option | Description |
 |---|---|
-| `--plugin <SPEC>` | Plugin specification; repeatable. See [Plugin specification](#plugin-specification). Conflicts with `--config-file`. |
+| `--plugin <SPEC>` | Plugin specification; repeatable. See [Plugin specification](#plugin-specification). Conflicts with `--config-file`, `--firmware`. |
 | `--config-name <NAME>` (alias `--name`) | Name for the generated ROM configuration. Conflicts with `--config-file`. |
 | `--config-description <DESC>` (aliases `--desc`, `--description`) | Description for the generated configuration. Defaults to *"Created by the One ROM CLI"*. Conflicts with `--config-file`. |
 | `--save-config <FILE>` | Save the generated configuration to JSON. Only valid with `--slot` or `--no-config`. Conflicts with `--config-file`. |
