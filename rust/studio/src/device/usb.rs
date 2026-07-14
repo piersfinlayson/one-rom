@@ -246,7 +246,7 @@ async fn flash_fire_async(mut picoboot: Picoboot, client: Client, data: Vec<u8>)
     debug!("Flash firmware to Fire USB");
     // Set a timeout to 10s in case a very large flash erase takes a very long time
     picoboot.set_timeouts(picoboot::usb::Timeouts {
-        endpoint: Duration::from_secs(10),
+        endpoint: Duration::from_secs(20),
         ..picoboot::usb::Timeouts::default()
     });
     match picoboot
