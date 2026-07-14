@@ -25,6 +25,7 @@ cargo test -p fw-config-gen
 
 echo "Testing onerom-fw-parser..."
 cargo test -p onerom-fw-parser
+cargo test -p onerom-fw-parser --no-default-features
 
 echo "Testing onerom-gen..."
 cargo test -p onerom-gen
