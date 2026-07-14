@@ -52,7 +52,11 @@ pub use plugin::{
     // `Send` variant `PluginFetch` from the base `LocalPluginFetch`.
     LocalPluginFetch,
     Plugin,
+    // Display of a device's plugin slot, resolved from its recorded image
+    // source (manifest-backed or local).
+    PluginDisplay,
     PluginFetch,
+    PluginOrigin,
     // Plugin specifications (parsed `--plugin` style inputs).
     PluginSpec,
     PluginType,
@@ -70,6 +74,8 @@ pub use plugin::{
     // Pure decision logic.
     parse_plugins,
     plugin_to_chip_set_config,
+    // Resolve a device plugin slot to a PluginDisplay (delegates fetching).
+    resolve_plugin_display,
     resolve_plugins,
     validate_resolved_plugin_types,
     verify_binary,

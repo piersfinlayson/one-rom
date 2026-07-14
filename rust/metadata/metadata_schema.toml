@@ -52,8 +52,16 @@
 # ---------------------------------------------------------------------------
 # Field-level attributes
 # ---------------------------------------------------------------------------
-#   nullable          - cstr_ptr/struct_ptr: null pointer yields None rather
-#                       than ParseError::NullPointer
+#   nullable            - cstr_ptr/struct_ptr: null pointer yields None rather
+#                         than ParseError::NullPointer
+#   expected_const      - inline_array: name of a generated constant whose bytes
+#                         the parsed array must begin with; a mismatch yields
+#                         ParseError::BadMagic. Used for struct magic fields.
+#   none_on_parse_error - nullable struct_ptr/tagged_fam_ptr/simple_fam_ptr: a
+#                         non-null pointer whose target fails to parse yields
+#                         None rather than propagating the error. Used where the
+#                         target may be absent or stale (e.g. a runtime pointer
+#                         into RAM on a stopped device).
 #
 # ---------------------------------------------------------------------------
 # 'generate' field values
@@ -82,6 +90,12 @@ value = 2
 comment = "Version of the onerom_info_t structure (v0.7.0+)"
 
 [[constants]]
+name = "ONEROM_INFO_MAGIC"
+type = "cstr"
+value = "SDRR"
+comment = "Magic bytes at the start of onerom_info_t"
+
+[[constants]]
 name = "ONEROM_METADATA_MAGIC"
 type = "cstr"
 value = "ONEROM_METADATA"
@@ -98,6 +112,12 @@ name = "RUNTIME_INFO_VERSION"
 type = "u32"
 value = 2
 comment = "Version of the onerom_runtime_info_t structure (v0.7.0+)"
+
+[[constants]]
+name = "RUNTIME_INFO_MAGIC"
+type = "cstr"
+value = "sdrr"
+comment = "Magic bytes at the start of onerom_runtime_info_t (lowercase, to distinguish from onerom_info_t)"
 
 [[constants]]
 name = "BUILD_DATE_BUF_LEN"
@@ -684,7 +704,8 @@ name = "magic"
 kind = "inline_array"
 element = "u8"
 count = 4
-comment = "Magic bytes: 'SDRR'"
+expected_const = "ONEROM_INFO_MAGIC"
+comment = "Magic bytes: See ONEROM_INFO_MAGIC const"
 
 [[structs.fields]]
 name = "major_version"
@@ -747,7 +768,10 @@ name = "runtime"
 kind = "struct_ptr"
 type = "onerom_runtime_info_t"
 nullable = true
-comment = "Pointer to runtime info structure"
+none_on_parse_error = true
+comment = """Pointer to runtime info structure.
+Points into RAM; on a stopped device that RAM is absent or stale, so a failed
+parse (e.g. bad magic) yields None rather than failing the whole struct."""
 
 [[structs.fields]]
 name = "reserved"
@@ -1272,7 +1296,8 @@ name = "magic"
 kind = "inline_array"
 element = "u8"
 count = 4
-comment = "Magic bytes: 'sdrr' (lowercase to distinguish from onerom_info_t magic)"
+expected_const = "RUNTIME_INFO_MAGIC"
+comment = "Magic bytes: See RUNTIME_INFO_MAGIC const"
 
 [[structs.fields]]
 name = "version"

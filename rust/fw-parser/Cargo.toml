@@ -20,7 +20,7 @@ onerom-config = { workspace = true }
 onerom-gen = { workspace = true }
 onerom-metadata = { workspace = true }
 
-airfrog-rpc = { version = "0.1.0" }
+airfrog-rpc = { version = "^0.1.2" }
 deku = { version = "0.19", default-features = false, features = ["alloc"] }
 esp-println = { version = "0.15", features = ["esp32c3", "log-04"], optional = true }
 log = "0.4"

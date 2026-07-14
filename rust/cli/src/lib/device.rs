@@ -184,17 +184,7 @@ impl Device {
     }
 
     pub fn get_active_rom_set_index(&self) -> Option<u8> {
-        self.onerom.as_ref().and_then(|o| match o {
-            ParsedDevice::Original(sdrr) => sdrr.ram.as_ref().map(|ram| ram.rom_set_index),
-            ParsedDevice::Schema(onerom) => onerom.runtime().map(|r| r.rom_slot_index),
-        })
-    }
-
-    fn get_active_sdrr_rom_set(&self) -> Option<&onerom_fw_parser::SdrrRomSet> {
-        let sdrr = self.onerom.as_ref().and_then(|o| o.as_original())?;
-        let flash_info = sdrr.flash.as_ref()?;
-        let active_set_index = self.get_active_rom_set_index()? as usize;
-        flash_info.rom_sets.get(active_set_index)
+        self.onerom.as_ref()?.active_slot_index().map(|i| i as u8)
     }
 
     /// Returns (rom type label, rom size in bytes) for the active ROM,
@@ -203,17 +193,10 @@ impl Device {
         if !self.is_running() {
             return None;
         }
-        match self.onerom.as_ref()? {
-            ParsedDevice::Original(_) => {
-                let rom = self.get_active_sdrr_rom_set()?.roms.first()?;
-                Some((rom.rom_type.to_string(), rom.rom_type.rom_size()))
-            }
-            ParsedDevice::Schema(onerom) => {
-                let slot = onerom.runtime()?.current_rom_slot.as_ref()?;
-                let rom = slot.roms.first()?;
-                Some((rom.rom_type.clone(), rom.chip_size as usize))
-            }
-        }
+        let onerom = self.onerom.as_ref()?;
+        let slot = onerom.slots().find(|s| s.active)?;
+        let rom = slot.roms().next()?;
+        Some((rom.rom_type.into_owned(), rom.size))
     }
 
     /// Returns the active ROM type label if available.

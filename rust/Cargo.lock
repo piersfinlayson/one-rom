@@ -100,6 +100,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "airfrog-rpc"
+version = "0.1.2"
+dependencies = [
+ "async-trait",
+ "log",
+]
+
+[[package]]
 name = "allocator-api2"
 version = "0.2.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4917,7 +4925,7 @@ dependencies = [
  "onerom-fw-parser",
  "onerom-gen",
  "onerom-metadata",
- "picoboot",
+ "picoboot 0.2.4",
  "reqwest",
  "serde",
  "serde_json",
@@ -4982,7 +4990,7 @@ dependencies = [
 name = "onerom-fw-parser"
 version = "0.7.1"
 dependencies = [
- "airfrog-rpc",
+ "airfrog-rpc 0.1.2",
  "deku 0.19.1",
  "esp-println",
  "log",
@@ -5023,7 +5031,7 @@ dependencies = [
 name = "onerom-lab"
 version = "0.2.0"
 dependencies = [
- "airfrog-rpc",
+ "airfrog-rpc 0.1.1",
  "built",
  "cortex-m",
  "cortex-m-rt",
@@ -5059,6 +5067,8 @@ dependencies = [
  "hashbrown 0.17.1",
  "onerom-config",
  "serde",
+ "serde-big-array",
+ "serde_json",
  "toml",
 ]
 
@@ -5091,7 +5101,7 @@ dependencies = [
  "onerom-fw-parser",
  "onerom-gen",
  "open",
- "picoboot",
+ "picoboot 0.2.3",
  "probe-rs",
  "reqwest",
  "resvg",
@@ -5364,7 +5374,19 @@ version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "811ade6a82ade90de2c3f97bfa0951e0cd7af596c721c47818a98cc6fecf647b"
 dependencies = [
- "airfrog-rpc",
+ "deku 0.20.3",
+ "log",
+ "nusb 0.2.4",
+ "rustix 1.1.4",
+ "serde",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "picoboot"
+version = "0.2.4"
+dependencies = [
+ "airfrog-rpc 0.1.2",
  "deku 0.20.3",
  "log",
  "nusb 0.2.4",
@@ -6509,6 +6531,15 @@ checksum = "9a8e94ea7f378bd32cbbd37198a4a91436180c5bb472411e48b5ec2e2124ae9e"
 dependencies = [
  "serde_core",
  "serde_derive",
+]
+
+[[package]]
+name = "serde-big-array"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "11fc7cc2c76d73e0f27ee52abbd64eec84d46f370c88371120433196934e4b7f"
+dependencies = [
+ "serde",
 ]
 
 [[package]]

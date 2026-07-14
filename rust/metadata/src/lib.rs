@@ -79,6 +79,8 @@ pub enum ParseError {
     UnknownDiscriminant { type_name: &'static str, value: u32 },
     /// A C string contained bytes that are not valid UTF-8.
     InvalidUtf8,
+    /// A C string did not contain the expected magic value
+    BadMagic { field: &'static str },
 }
 
 // ---------------------------------------------------------------------------
@@ -89,7 +91,7 @@ pub enum ParseError {
 ///
 /// Both `0x0000_0000` and `0xFFFF_FFFF` are treated as null/absent sentinels,
 /// matching the convention used throughout the OneROM firmware and metadata.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum Pointer {
     /// Null or absent pointer (raw value was `0` or `0xFFFF_FFFF`).
     Null,

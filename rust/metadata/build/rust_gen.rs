@@ -239,6 +239,15 @@ fn emit_field_parse_offset(out: &mut String, field: &Field, indent: &str, schema
             out.push_str(&format!(
                 "{indent}let {name} = view.read_bytes::<{n}>(offset)?; offset += {total};\n"
             ));
+            // Optional magic validation: compare the leading bytes against a
+            // generated constant (e.g. ONEROM_INFO_MAGIC = "SDRR").
+            if let Some(konst) = field.expected_const.as_deref() {
+                out.push_str(&format!(
+                    "{indent}if !{name}.starts_with({konst}.as_bytes()) {{\n\
+                     {indent}    return Err(ParseError::BadMagic {{ field: \"{name}\" }});\n\
+                     {indent}}}\n"
+                ));
+            }
         }
 
         "inline_array2d" => {
@@ -276,11 +285,20 @@ fn emit_field_parse_offset(out: &mut String, field: &Field, indent: &str, schema
                 "{indent}let {name}_ptr = view.read_ptr(offset)?; offset += 4;\n"
             ));
             if field.nullable.unwrap_or(false) {
+                // `none_on_parse_error` widens tolerance: a non-null pointer
+                // whose target fails to parse yields None instead of
+                // propagating (e.g. a runtime pointer into RAM that holds
+                // stale/absent data on a stopped device).
+                let parse_expr = if field.none_on_parse_error.unwrap_or(false) {
+                    format!("{tn}::parse(view, {name}_ptr).ok()")
+                } else {
+                    format!("Some({tn}::parse(view, {name}_ptr)?)")
+                };
                 out.push_str(&format!(
                     "{indent}let {name} = if {name}_ptr == 0 || {name}_ptr == 0xFFFF_FFFF {{\n\
                      {indent}    None\n\
                      {indent}}} else {{\n\
-                     {indent}    Some({tn}::parse(view, {name}_ptr)?)\n\
+                     {indent}    {parse_expr}\n\
                      {indent}}};\n"
                 ));
             } else {
@@ -304,11 +322,16 @@ fn emit_field_parse_offset(out: &mut String, field: &Field, indent: &str, schema
                 "{indent}let {name}_ptr = view.read_ptr(offset)?; offset += 4;\n"
             ));
             if field.nullable.unwrap_or(false) {
+                let parse_expr = if field.none_on_parse_error.unwrap_or(false) {
+                    format!("{tn}::parse(view, {name}_ptr).ok()")
+                } else {
+                    format!("Some({tn}::parse(view, {name}_ptr)?)")
+                };
                 out.push_str(&format!(
                     "{indent}let {name} = if {name}_ptr == 0 || {name}_ptr == 0xFFFF_FFFF {{\n\
                      {indent}    None\n\
                      {indent}}} else {{\n\
-                     {indent}    Some({tn}::parse(view, {name}_ptr)?)\n\
+                     {indent}    {parse_expr}\n\
                      {indent}}};\n"
                 ));
             } else {
@@ -632,7 +655,9 @@ fn push_enum(out: &mut String, e: &Enum) {
     }
 
     // Enum definition — only non-sentinel variants.
-    out.push_str("#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]\n");
+    out.push_str(
+        "#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]\n",
+    );
     out.push_str(&format!("#[repr({repr})]\n"));
     out.push_str(&format!("pub enum {tn} {{\n"));
     for v in e.variants.iter().filter(|v| !v.is_sentinel()) {
@@ -731,6 +756,17 @@ fn push_structs(out: &mut String, schema: &Schema) {
     }
 }
 
+/// serde's built-in array impls stop at length 32; a fixed array whose outer
+/// length exceeds that needs `serde_big_array::BigArray`. Only the outer length
+/// matters — the element type serialises on its own.
+fn field_needs_big_array(f: &Field) -> bool {
+    match f.kind.as_str() {
+        "inline_array" => f.count.unwrap_or(0) > 32,
+        "inline_array2d" => f.rows.unwrap_or(0) > 32,
+        _ => false,
+    }
+}
+
 fn push_struct_def(out: &mut String, s: &Struct) {
     let tn = rust_type_name(&s.name);
 
@@ -741,9 +777,9 @@ fn push_struct_def(out: &mut String, s: &Struct) {
     }
 
     let derives = if s.generate == Generate::Both {
-        "#[derive(Debug, Clone, PartialEq, Eq, Hash)]"
+        "#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]"
     } else {
-        "#[derive(Debug, Clone)]"
+        "#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]"
     };
     out.push_str(derives);
     out.push('\n');
@@ -755,6 +791,9 @@ fn push_struct_def(out: &mut String, s: &Struct) {
             if let Some(first) = cmt.lines().next() {
                 out.push_str(&format!("    /// {}\n", first.trim()));
             }
+        }
+        if field_needs_big_array(f) {
+            out.push_str("    #[serde(with = \"serde_big_array::BigArray\")]\n");
         }
         let ftype = field_rust_type(f);
         out.push_str(&format!("    pub {}: {ftype},\n", f.name));
@@ -874,9 +913,9 @@ fn push_tagged_fam(out: &mut String, tf: &TaggedFam, schema: &Schema) {
         }
     }
     let derives = if tf.generate == Generate::Both {
-        "#[derive(Debug, Clone, PartialEq, Eq, Hash)]"
+        "#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]"
     } else {
-        "#[derive(Debug, Clone)]"
+        "#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]"
     };
     out.push_str(derives);
     out.push('\n');
@@ -1030,9 +1069,9 @@ fn push_simple_fam(out: &mut String, sf: &SimpleFam) {
         }
     }
     let derives = if sf.generate == Generate::Both {
-        "#[derive(Debug, Clone, PartialEq, Eq, Hash)]"
+        "#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]"
     } else {
-        "#[derive(Debug, Clone)]"
+        "#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]"
     };
     out.push_str(derives);
     out.push('\n');

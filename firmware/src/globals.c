@@ -22,13 +22,14 @@ const char onerom_build_date[] = __DATE__ " " __TIME__;
 // Main One ROM runtime info structure, located in RAM and updated at
 // runtime.  Pointed to by onerom_info, which is located at a known point in
 // flash.
+_Static_assert(sizeof(RUNTIME_INFO_MAGIC) == 5, "RUNTIME_INFO_MAGIC must be 4 bytes + NULL TERMINATOR");
 #if REAL_HARDWARE
 #define SECTION_ONEROM_RUNTIME_INFO __attribute__((section(".onerom_runtime_info")))
 #else // !REAL_HARDWARE
 #define SECTION_ONEROM_RUNTIME_INFO
 #endif // !REAL_HARDWARE
 onerom_runtime_info_t onerom_runtime_info SECTION_ONEROM_RUNTIME_INFO = {
-    .magic = {'s', 'd', 'r', 'r'},  // Lower case to distinguish from firmware magic
+    .magic = { RUNTIME_INFO_MAGIC[0], RUNTIME_INFO_MAGIC[1], RUNTIME_INFO_MAGIC[2], RUNTIME_INFO_MAGIC[3] },
     .version = RUNTIME_INFO_VERSION,
     .runtime_info_size = sizeof(onerom_runtime_info_t),
     .rp235x = RP235XA,  // Updated later based on querying hardware
@@ -60,11 +61,12 @@ onerom_runtime_info_t onerom_runtime_info SECTION_ONEROM_RUNTIME_INFO = {
 };
 
 // Main One ROM build info structure, located at known point in flash
+_Static_assert(sizeof(ONEROM_INFO_MAGIC) == 5, "ONEROM_INFO_MAGIC must be 4 bytes + NULL TERMINATOR");
 #if REAL_HARDWARE
 __attribute__((section(".onerom_info")))
 #endif // !REAL_HARDWARE
 const onerom_info_t onerom_info = {
-    .magic = {'S', 'D', 'R', 'R'},
+    .magic = { ONEROM_INFO_MAGIC[0], ONEROM_INFO_MAGIC[1], ONEROM_INFO_MAGIC[2], ONEROM_INFO_MAGIC[3] },
     .major_version = ONEROM_VERSION_MAJOR,
     .minor_version = ONEROM_VERSION_MINOR,
     .patch_version = ONEROM_VERSION_PATCH,

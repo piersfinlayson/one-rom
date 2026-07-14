@@ -197,6 +197,20 @@ impl PluginType {
             PluginType::User => 1,
         }
     }
+
+    /// The plugin type occupying chip-set slot `slot_index`, or `None` if that
+    /// index is not a plugin slot.
+    ///
+    /// The inverse of [`slot_index`](Self::slot_index): slot 0 is the system
+    /// plugin, slot 1 the user plugin. ROM slots (2 onwards, or 0 when no
+    /// plugins are present) are not plugin slots and return `None`.
+    pub fn from_slot_index(slot_index: usize) -> Option<Self> {
+        match slot_index {
+            0 => Some(PluginType::System),
+            1 => Some(PluginType::User),
+            _ => None,
+        }
+    }
 }
 
 impl fmt::Display for PluginType {
@@ -626,6 +640,40 @@ pub(crate) fn binary_url(plugin_type: PluginType, name: &str, release: &Release)
     )
 }
 
+/// Recover the `(type, name, version)` encoded in an official plugin image
+/// source, or `None` if the source is not an official plugin URL.
+///
+/// This is the inverse of [`binary_url`], which builds
+/// `{PLUGIN_SITE_BASE}/{type}/{name}/{version_path}/{filename}`. A source is
+/// official only if it begins with [`PLUGIN_SITE_BASE`] and has exactly those
+/// four segments, the type is recognised, and the version path parses. Anything
+/// else - a local build path, a non-official URL - yields `None` and is treated
+/// as a user/sideloaded plugin by the caller.
+fn official_plugin_from_source(source: &str) -> Option<(PluginType, String, PluginVersion)> {
+    let rest = source.strip_prefix(PLUGIN_SITE_BASE)?.strip_prefix('/')?;
+
+    // Exactly {type}/{name}/{version_path}/{filename}.
+    let mut segs = rest.split('/');
+    let type_str = segs.next()?;
+    let name = segs.next()?;
+    let version_path = segs.next()?;
+    let _filename = segs.next()?;
+    if segs.next().is_some() {
+        return None; // more than four segments: not our URL shape
+    }
+
+    if name.is_empty() {
+        return None;
+    }
+
+    let plugin_type = PluginType::try_from_str(type_str)?;
+    // The version directory is `v0.1.2`; drop the leading `v` before parsing.
+    let version =
+        PluginVersion::try_from_str(version_path.strip_prefix('v').unwrap_or(version_path))?;
+
+    Some((plugin_type, name.to_string(), version))
+}
+
 /// The URL of the top-level plugins catalogue (`plugins.json`).
 pub(crate) fn plugins_manifest_url() -> String {
     alloc::format!("{PLUGIN_SITE_BASE}/plugins.json")
@@ -724,6 +772,118 @@ impl ResolvedPlugin {
         plugin_to_chip_set_config(&self.file(), self.plugin_type, self.size)
     }
 }
+
+// ============================================================
+// PluginDisplay
+// ============================================================
+
+/// A plugin identified from a device's recorded image source, for display.
+///
+/// Produced by [`resolve_plugin_display`] from the source string a device
+/// records for a plugin slot, together with the slot index. It is built without
+/// the plugin binary, so unlike [`ResolvedPlugin`] it carries no size, and a
+/// local plugin carries no version - only what its origin actually provides.
+///
+/// The plugin type is derived from the slot (system in slot 0, user in slot 1);
+/// the origin-specific data - full manifest identity for an official plugin, or
+/// just the source string for a local one - lives in [`origin`](Self::origin).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct PluginDisplay {
+    /// The plugin type, derived from the slot the plugin occupies.
+    pub plugin_type: PluginType,
+    /// Origin-specific data: manifest identity, or a local source.
+    pub origin: PluginOrigin,
+}
+
+/// Where a [`PluginDisplay`] came from, with the data specific to each origin.
+///
+/// The two origins carry genuinely different data: an official plugin has a
+/// full catalogue identity (slug, display name, releases) plus the version its
+/// URL names; a local plugin has only the source string it was built from.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub enum PluginOrigin {
+    /// An official plugin from the images server manifest.
+    ///
+    /// `plugin` carries the catalogue identity; its `display_name`/`description`
+    /// and `releases` are populated when the manifest was successfully fetched,
+    /// and left empty otherwise (so [`PluginDisplay::display_label`] falls back
+    /// to the slug). `version` is the version named by the source URL.
+    Manifest {
+        /// Catalogue identity, enriched with manifest data where available.
+        plugin: Plugin,
+        /// The version named by the plugin's image-source URL.
+        version: PluginVersion,
+    },
+    /// A user-built or sideloaded plugin: only the source string is known.
+    Local {
+        /// The image source the device recorded (a path or URL).
+        source: String,
+    },
+}
+
+impl PluginDisplay {
+    /// A human-readable label, always displayable.
+    ///
+    /// For an official plugin this is the manifest display name when it was
+    /// loaded, otherwise the slug. For a local plugin it is the file stem of
+    /// the source. Never empty, never an error - a failed manifest fetch simply
+    /// degrades the official label from display name to slug.
+    pub fn display_label(&self) -> &str {
+        match &self.origin {
+            PluginOrigin::Manifest { plugin, .. } => {
+                plugin.display_name.as_deref().unwrap_or(&plugin.name)
+            }
+            PluginOrigin::Local { source } => file_stem_str(source),
+        }
+    }
+}
+
+/// Resolve a device's plugin slot to a [`PluginDisplay`] for presentation.
+///
+/// `slot_index` identifies the slot (0 = system, 1 = user); `source` is the
+/// image source the device recorded for it. Returns `None` only if `slot_index`
+/// is not a plugin slot.
+///
+/// For an official source, this fetches the plugin's release manifest to
+/// populate its display name and releases. That fetch is best-effort: on any
+/// failure the plugin is still returned as [`PluginOrigin::Manifest`] with the
+/// manifest data unset, so the caller always gets a usable result and
+/// [`PluginDisplay::display_label`] falls back to the slug. A local source
+/// performs no I/O.
+pub async fn resolve_plugin_display<F: LocalPluginFetch>(
+    slot_index: usize,
+    source: &str,
+    fetch: &F,
+) -> Option<PluginDisplay> {
+    let plugin_type = PluginType::from_slot_index(slot_index)?;
+
+    let origin = match official_plugin_from_source(source) {
+        Some((_url_type, name, version)) => {
+            // Build the catalogue identity from the URL, then enrich it from the
+            // manifest. The type comes from the slot (authoritative), not the
+            // URL; the two agree for well-formed firmware.
+            let mut plugin = Plugin {
+                name,
+                plugin_type,
+                display_name: None,
+                description: None,
+                releases: Vec::new(),
+            };
+            // Best-effort: ignore fetch/parse failure and keep the slug.
+            let _ = fetch_releases(&mut plugin, fetch).await;
+            PluginOrigin::Manifest { plugin, version }
+        }
+        None => PluginOrigin::Local {
+            source: source.to_string(),
+        },
+    };
+
+    Some(PluginDisplay {
+        plugin_type,
+        origin,
+    })
+}
+
 
 // ============================================================
 // PluginFetch trait
@@ -1375,14 +1535,23 @@ async fn resolve_file<F: LocalPluginFetch>(
     })
 }
 
+/// The final path segment of `path` with any extension removed, borrowed from
+/// `path`.
+///
+/// A leading-dot name (for example `.bin`) is returned whole rather than
+/// becoming empty.
+fn file_stem_str(path: &str) -> &str {
+    let last = path.rsplit(['/', '\\']).next().unwrap_or(path);
+    match last.rsplit_once('.') {
+        Some((stem, _)) if !stem.is_empty() => stem,
+        _ => last,
+    }
+}
+
 /// Extract a plugin name from a file path or URL: the final path segment with
 /// any extension removed.
 fn file_stem(path: &str) -> String {
-    let last = path.rsplit(['/', '\\']).next().unwrap_or(path);
-    match last.rsplit_once('.') {
-        Some((stem, _)) if !stem.is_empty() => stem.into(),
-        _ => last.into(),
-    }
+    file_stem_str(path).to_string()
 }
 
 // ============================================================
@@ -1893,5 +2062,121 @@ mod tests {
             },
         };
         assert_eq!(rp.file(), "/tmp/custom.bin");
+    }
+
+    // --- from_slot_index --------------------------------------------------
+
+    #[test]
+    fn plugin_type_from_slot_index_maps_plugin_slots_only() {
+        assert_eq!(PluginType::from_slot_index(0), Some(PluginType::System));
+        assert_eq!(PluginType::from_slot_index(1), Some(PluginType::User));
+        assert_eq!(PluginType::from_slot_index(2), None);
+        // Round-trips with slot_index.
+        assert_eq!(
+            PluginType::from_slot_index(PluginType::System.slot_index()),
+            Some(PluginType::System)
+        );
+        assert_eq!(
+            PluginType::from_slot_index(PluginType::User.slot_index()),
+            Some(PluginType::User)
+        );
+    }
+
+    // --- official_plugin_from_source --------------------------------------
+
+    #[test]
+    fn official_source_parses_type_name_and_version() {
+        let src = "https://images.onerom.org/plugins/system/usb/v0.1.2/plugin.bin";
+        assert_eq!(
+            official_plugin_from_source(src),
+            Some((PluginType::System, "usb".to_string(), pv(0, 1, 2)))
+        );
+    }
+
+    #[test]
+    fn official_source_rejects_non_official_and_malformed() {
+        // Local build path (the shape seen on test firmware).
+        assert_eq!(
+            official_plugin_from_source("../../plugins/system/usb/build/usb_system_plugin.bin"),
+            None
+        );
+        // Wrong host.
+        assert_eq!(
+            official_plugin_from_source("https://example.com/plugins/system/usb/v0.1.2/plugin.bin"),
+            None
+        );
+        // Too few segments (missing filename).
+        assert_eq!(
+            official_plugin_from_source("https://images.onerom.org/plugins/system/usb/v0.1.2"),
+            None
+        );
+        // Too many segments.
+        assert_eq!(
+            official_plugin_from_source(
+                "https://images.onerom.org/plugins/system/usb/v0.1.2/sub/plugin.bin"
+            ),
+            None
+        );
+        // Unrecognised type.
+        assert_eq!(
+            official_plugin_from_source(
+                "https://images.onerom.org/plugins/pio/usb/v0.1.2/plugin.bin"
+            ),
+            None
+        );
+        // Unparseable version.
+        assert_eq!(
+            official_plugin_from_source(
+                "https://images.onerom.org/plugins/system/usb/vX/plugin.bin"
+            ),
+            None
+        );
+        // Empty name.
+        assert_eq!(
+            official_plugin_from_source(
+                "https://images.onerom.org/plugins/system//v0.1.2/plugin.bin"
+            ),
+            None
+        );
+    }
+
+    // --- PluginDisplay::display_label -------------------------------------
+
+    #[test]
+    fn display_label_prefers_manifest_display_name() {
+        let mut p = plugin("usb", PluginType::System, vec![]);
+        p.display_name = Some("One ROM USB".to_string());
+        let pd = PluginDisplay {
+            plugin_type: PluginType::System,
+            origin: PluginOrigin::Manifest {
+                plugin: p,
+                version: pv(0, 1, 2),
+            },
+        };
+        assert_eq!(pd.display_label(), "One ROM USB");
+    }
+
+    #[test]
+    fn display_label_falls_back_to_slug_when_manifest_unloaded() {
+        // display_name None models a failed/absent manifest fetch.
+        let pd = PluginDisplay {
+            plugin_type: PluginType::System,
+            origin: PluginOrigin::Manifest {
+                plugin: plugin("usb", PluginType::System, vec![]),
+                version: pv(0, 1, 2),
+            },
+        };
+        assert_eq!(pd.display_label(), "usb");
+    }
+
+    #[test]
+    fn display_label_uses_file_stem_for_local() {
+        let pd = PluginDisplay {
+            plugin_type: PluginType::User,
+            origin: PluginOrigin::Local {
+                source: "../../plugins/user/rgb/build/plugin_user.bin".to_string(),
+            },
+        };
+        assert_eq!(pd.display_label(), "plugin_user");
     }
 }

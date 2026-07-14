@@ -27,7 +27,7 @@ onerom-gen = { workspace = true }
 onerom-fw-parser = { workspace = true }
 onerom-metadata = { workspace = true }
 
-picoboot = { version = "0.2.3", features = ["reader", "tokio"] }
+picoboot = { path="../../../picoboot", version = "0.2.4", features = ["reader", "tokio"] }
 
 base64 = { version = "0.22" }
 bytes = "1.10"

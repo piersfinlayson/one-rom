@@ -259,6 +259,7 @@ pub async fn cmd_program(
             if let Some(device) = options.device.as_ref() {
                 println!("Reading device after programming...");
                 crate::inspect::output_slot_info(device, options, "")
+                    .await
                     .inspect_err(|_| log::error!("Failed to read slots after programming"))?;
             } else {
                 eprintln!("Failed to read device after programming");

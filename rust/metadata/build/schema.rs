@@ -217,7 +217,10 @@ pub struct Field {
     pub expected_offset: Option<u32>,
 
     pub comment: Option<String>,
-}
+
+    pub expected_const: Option<String>,
+
+    pub none_on_parse_error: Option<bool>,}
 
 // ---------------------------------------------------------------------------
 // [[structs]]
