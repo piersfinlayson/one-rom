@@ -27,11 +27,9 @@ Some greater pin count ROMs can be emulated by a smaller One ROM, provided the R
 |:---|---:|---:|---:|---:|---:|---:|---:|
 | 2704 | 512B | 2KB | 2KB | 512B | 512B | 512B | 512B |
 | 2708 | 1KB | 4KB | 4KB | 1KB | 1KB | 1KB | 1KB |
-| 2016 | 2KB | 32KB | 32KB | 2KB | 2KB | 2KB | 2KB |
 | 2316 | 2KB | 32KB | 32KB | 2KB | 2KB | 2KB | 2KB |
 | 2716 | 2KB | 32KB | 32KB | 2KB | 2KB | 2KB | 2KB |
 | 28C16 | 2KB | 32KB | 32KB | 2KB | 2KB | 2KB | 2KB |
-| 6116 | 2KB | 32KB | 32KB | 2KB | 2KB | 2KB | 2KB |
 | 9316 | 2KB | 32KB | 32KB | 2KB | 2KB | 2KB | 2KB |
 | 2332 | 4KB | 64KB | 64KB | 8KB | 8KB | 8KB | 8KB |
 | 2732 | 4KB | 32KB | 32KB | 4KB | 4KB | 4KB | 4KB |
@@ -95,11 +93,9 @@ Some greater pin count ROMs can be emulated by a smaller One ROM, provided the R
 |:---|---:|---:|---:|---:|
 | 2704 | 512B | 4KB* | 4KB* | 4KB* |
 | 2708 | 1KB | 16KB* | 16KB* | 8KB* |
-| 2016 | 2KB | 32KB* | 32KB* | 32KB* |
 | 2316 | 2KB | 32KB* | 32KB* | 32KB* |
 | 2716 | 2KB | 32KB* | 32KB* | 32KB* |
 | 28C16 | 2KB | 32KB* | 32KB* | 32KB* |
-| 6116 | 2KB | 32KB* | 32KB* | 32KB* |
 | 9316 | 2KB | 32KB* | 32KB* | 32KB* |
 | 2332 | 4KB | 128KB* | 128KB* | 256KB* |
 | 2732 | 4KB | 32KB* | 32KB* | 32KB* |
@@ -195,11 +191,9 @@ Some greater pin count ROMs can be emulated by a smaller One ROM, provided the R
 |:---|---:|---:|---:|
 | 2704 | 512B | 32KB* | 4KB* |
 | 2708 | 1KB | 64KB* | 8KB* |
-| 2016 | 2KB | 256KB* | 32KB* |
 | 2316 | 2KB | 256KB* | 32KB* |
 | 2716 | 2KB | 256KB* | 32KB* |
 | 28C16 | 2KB | 256KB* | 32KB* |
-| 6116 | 2KB | 256KB* | 32KB* |
 | 9316 | 2KB | 256KB* | 32KB* |
 | 2732 | 4KB | 256KB* | 32KB* |
 | 27C32 | 4KB | 256KB* | 32KB* |
@@ -236,11 +230,9 @@ Full chip list for each board. Where a particular ROM type goes by multiple iden
 |:---|---:|---:|:---|
 | 2704 | 512B | 2KB | native |
 | 2708 | 1KB | 4KB | native |
-| 2016 | 2KB | 32KB | native |
 | 2316 | 2KB | 32KB | native |
 | 2716 | 2KB | 32KB | native |
 | 28C16 | 2KB | 32KB | native |
-| 6116 | 2KB | 32KB | native |
 | 9316 | 2KB | 32KB | native |
 | 2332 | 4KB | 64KB | native |
 | 2732 | 4KB | 32KB | native |
@@ -273,11 +265,9 @@ Full chip list for each board. Where a particular ROM type goes by multiple iden
 |:---|---:|---:|:---|
 | 2704 | 512B | 2KB | native |
 | 2708 | 1KB | 4KB | native |
-| 2016 | 2KB | 32KB | native |
 | 2316 | 2KB | 32KB | native |
 | 2716 | 2KB | 32KB | native |
 | 28C16 | 2KB | 32KB | native |
-| 6116 | 2KB | 32KB | native |
 | 9316 | 2KB | 32KB | native |
 | 2332 | 4KB | 64KB | native |
 | 2732 | 4KB | 32KB | native |
@@ -310,11 +300,9 @@ Full chip list for each board. Where a particular ROM type goes by multiple iden
 |:---|---:|---:|:---|
 | 2704 | 512B | 512B | native |
 | 2708 | 1KB | 1KB | native |
-| 2016 | 2KB | 2KB | native |
 | 2316 | 2KB | 2KB | native |
 | 2716 | 2KB | 2KB | native |
 | 28C16 | 2KB | 2KB | native |
-| 6116 | 2KB | 2KB | native |
 | 9316 | 2KB | 2KB | native |
 | 2332 | 4KB | 8KB | native |
 | 2732 | 4KB | 4KB | native |
@@ -347,11 +335,9 @@ Full chip list for each board. Where a particular ROM type goes by multiple iden
 |:---|---:|---:|:---|
 | 2704 | 512B | 512B | native |
 | 2708 | 1KB | 1KB | native |
-| 2016 | 2KB | 2KB | native |
 | 2316 | 2KB | 2KB | native |
 | 2716 | 2KB | 2KB | native |
 | 28C16 | 2KB | 2KB | native |
-| 6116 | 2KB | 2KB | native |
 | 9316 | 2KB | 2KB | native |
 | 2332 | 4KB | 8KB | native |
 | 2732 | 4KB | 4KB | native |
@@ -384,11 +370,9 @@ Full chip list for each board. Where a particular ROM type goes by multiple iden
 |:---|---:|---:|:---|
 | 2704 | 512B | 512B | native |
 | 2708 | 1KB | 1KB | native |
-| 2016 | 2KB | 2KB | native |
 | 2316 | 2KB | 2KB | native |
 | 2716 | 2KB | 2KB | native |
 | 28C16 | 2KB | 2KB | native |
-| 6116 | 2KB | 2KB | native |
 | 9316 | 2KB | 2KB | native |
 | 2332 | 4KB | 8KB | native |
 | 2732 | 4KB | 4KB | native |
@@ -421,11 +405,9 @@ Full chip list for each board. Where a particular ROM type goes by multiple iden
 |:---|---:|---:|:---|
 | 2704 | 512B | 512B | native |
 | 2708 | 1KB | 1KB | native |
-| 2016 | 2KB | 2KB | native |
 | 2316 | 2KB | 2KB | native |
 | 2716 | 2KB | 2KB | native |
 | 28C16 | 2KB | 2KB | native |
-| 6116 | 2KB | 2KB | native |
 | 9316 | 2KB | 2KB | native |
 | 2332 | 4KB | 8KB | native |
 | 2732 | 4KB | 4KB | native |
@@ -489,11 +471,9 @@ Full chip list for each board. Where a particular ROM type goes by multiple iden
 |:---|---:|---:|:---|
 | 2704 | 512B | 4KB | overhang |
 | 2708 | 1KB | 16KB | overhang |
-| 2016 | 2KB | 32KB | overhang |
 | 2316 | 2KB | 32KB | overhang |
 | 2716 | 2KB | 32KB | overhang |
 | 28C16 | 2KB | 32KB | overhang |
-| 6116 | 2KB | 32KB | overhang |
 | 9316 | 2KB | 32KB | overhang |
 | 2332 | 4KB | 128KB | overhang |
 | 2732 | 4KB | 32KB | overhang |
@@ -554,11 +534,9 @@ Full chip list for each board. Where a particular ROM type goes by multiple iden
 |:---|---:|---:|:---|
 | 2704 | 512B | 4KB | overhang |
 | 2708 | 1KB | 16KB | overhang |
-| 2016 | 2KB | 32KB | overhang |
 | 2316 | 2KB | 32KB | overhang |
 | 2716 | 2KB | 32KB | overhang |
 | 28C16 | 2KB | 32KB | overhang |
-| 6116 | 2KB | 32KB | overhang |
 | 9316 | 2KB | 32KB | overhang |
 | 2332 | 4KB | 128KB | overhang |
 | 2732 | 4KB | 32KB | overhang |
@@ -619,11 +597,9 @@ Full chip list for each board. Where a particular ROM type goes by multiple iden
 |:---|---:|---:|:---|
 | 2704 | 512B | 4KB | overhang |
 | 2708 | 1KB | 8KB | overhang |
-| 2016 | 2KB | 32KB | overhang |
 | 2316 | 2KB | 32KB | overhang |
 | 2716 | 2KB | 32KB | overhang |
 | 28C16 | 2KB | 32KB | overhang |
-| 6116 | 2KB | 32KB | overhang |
 | 9316 | 2KB | 32KB | overhang |
 | 2332 | 4KB | 256KB | overhang |
 | 2732 | 4KB | 32KB | overhang |
@@ -714,11 +690,9 @@ Full chip list for each board. Where a particular ROM type goes by multiple iden
 |:---|---:|---:|:---|
 | 2704 | 512B | 32KB | overhang |
 | 2708 | 1KB | 64KB | overhang |
-| 2016 | 2KB | 256KB | overhang |
 | 2316 | 2KB | 256KB | overhang |
 | 2716 | 2KB | 256KB | overhang |
 | 28C16 | 2KB | 256KB | overhang |
-| 6116 | 2KB | 256KB | overhang |
 | 9316 | 2KB | 256KB | overhang |
 | 2732 | 4KB | 256KB | overhang |
 | 27C32 | 4KB | 256KB | overhang |
@@ -790,11 +764,9 @@ Full chip list for each board. Where a particular ROM type goes by multiple iden
 |:---|---:|---:|:---|
 | 2704 | 512B | 4KB | overhang |
 | 2708 | 1KB | 8KB | overhang |
-| 2016 | 2KB | 32KB | overhang |
 | 2316 | 2KB | 32KB | overhang |
 | 2716 | 2KB | 32KB | overhang |
 | 28C16 | 2KB | 32KB | overhang |
-| 6116 | 2KB | 32KB | overhang |
 | 9316 | 2KB | 32KB | overhang |
 | 2732 | 4KB | 32KB | overhang |
 | 27C32 | 4KB | 32KB | overhang |
