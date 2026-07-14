@@ -1,5 +1,10 @@
 # CLI Changelog
 
+## v0.2.0 - 2026-??-??
+
+- Support firmware v0.7.x
+- Move plugin handling to onerom-app crate.
+
 ## v0.1.10 - 2026-??-??
 
 - Added more help on size handling when programming or building firmware.
