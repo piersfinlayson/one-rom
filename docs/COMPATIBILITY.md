@@ -58,71 +58,71 @@ Some greater pin count ROMs can be emulated by a smaller One ROM, provided the R
 
 *28-pin chips (native)*
 
-| Chip | ROM size | 28A | 28B | 28C |
-|:---|---:|---:|---:|---:|
-| 2764 | 8KB | 32KB | 32KB | 32KB |
-| 27C64 | 8KB | 32KB | 32KB | 32KB |
-| 27LC64 | 8KB | 32KB | 32KB | 32KB |
-| 28C64 | 8KB | 32KB | 32KB | 32KB |
-| 23128 | 16KB | 32KB | 32KB | 32KB |
-| 27128 | 16KB | 32KB | 32KB | 32KB |
-| 27C128 | 16KB | 32KB | 32KB | 32KB |
-| 27LC128 | 16KB | 32KB | 32KB | 32KB |
-| 23256 | 32KB | 64KB | 64KB | 64KB |
-| 27256 | 32KB | 64KB | 64KB | 64KB |
-| 27C256 | 32KB | 64KB | 64KB | 64KB |
-| 27LC256 | 32KB | 64KB | 64KB | 64KB |
-| 27SF256 | 32KB | 64KB | 64KB | 64KB |
-| 28C256 | 32KB | 32KB | 32KB | 32KB |
-| 23QL384 | 48KB | 128KB | 128KB | 256KB |
-| 23512 | 64KB | 64KB | 64KB | 64KB |
-| 23QL512 | 64KB | 128KB | 128KB | 256KB |
-| 27512 | 64KB | 64KB | 64KB | 64KB |
-| 27C512 | 64KB | 64KB | 64KB | 64KB |
-| 27LC512 | 64KB | 64KB | 64KB | 64KB |
-| 27SF512 | 64KB | 64KB | 64KB | 64KB |
-| 231024 | 128KB | 256KB | 256KB | 128KB |
-| 23C1000 | 128KB | 256KB | 256KB | 128KB |
-| 23C1000A | 128KB | 256KB | 256KB | 128KB |
-| MX23C1000 | 128KB | 256KB | 256KB | 128KB |
-| TC531000 | 128KB | 256KB | 256KB | 128KB |
+| Chip | ROM size | 28A | 28B | 28C | 28D |
+|:---|---:|---:|---:|---:|---:|
+| 2764 | 8KB | 32KB | 32KB | 32KB | 32KB |
+| 27C64 | 8KB | 32KB | 32KB | 32KB | 32KB |
+| 27LC64 | 8KB | 32KB | 32KB | 32KB | 32KB |
+| 28C64 | 8KB | 32KB | 32KB | 32KB | 32KB |
+| 23128 | 16KB | 32KB | 32KB | 32KB | 32KB |
+| 27128 | 16KB | 32KB | 32KB | 32KB | 32KB |
+| 27C128 | 16KB | 32KB | 32KB | 32KB | 32KB |
+| 27LC128 | 16KB | 32KB | 32KB | 32KB | 32KB |
+| 23256 | 32KB | 64KB | 64KB | 64KB | 64KB |
+| 27256 | 32KB | 64KB | 64KB | 64KB | 64KB |
+| 27C256 | 32KB | 64KB | 64KB | 64KB | 64KB |
+| 27LC256 | 32KB | 64KB | 64KB | 64KB | 64KB |
+| 27SF256 | 32KB | 64KB | 64KB | 64KB | 64KB |
+| 28C256 | 32KB | 32KB | 32KB | 32KB | 32KB |
+| 23QL384 | 48KB | 128KB | 128KB | 256KB | 256KB |
+| 23512 | 64KB | 64KB | 64KB | 64KB | 64KB |
+| 23QL512 | 64KB | 128KB | 128KB | 256KB | 256KB |
+| 27512 | 64KB | 64KB | 64KB | 64KB | 64KB |
+| 27C512 | 64KB | 64KB | 64KB | 64KB | 64KB |
+| 27LC512 | 64KB | 64KB | 64KB | 64KB | 64KB |
+| 27SF512 | 64KB | 64KB | 64KB | 64KB | 64KB |
+| 231024 | 128KB | 256KB | 256KB | 128KB | 128KB |
+| 23C1000 | 128KB | 256KB | 256KB | 128KB | 128KB |
+| 23C1000A | 128KB | 256KB | 256KB | 128KB | 128KB |
+| MX23C1000 | 128KB | 256KB | 256KB | 128KB | 128KB |
+| TC531000 | 128KB | 256KB | 256KB | 128KB | 128KB |
 
 *24-pin chips (with overhang)*
 
-| Chip | ROM size | 28A | 28B | 28C |
-|:---|---:|---:|---:|---:|
-| 2704 | 512B | 4KB* | 4KB* | 4KB* |
-| 2708 | 1KB | 16KB* | 16KB* | 8KB* |
-| 2316 | 2KB | 32KB* | 32KB* | 32KB* |
-| 2716 | 2KB | 32KB* | 32KB* | 32KB* |
-| 28C16 | 2KB | 32KB* | 32KB* | 32KB* |
-| 9316 | 2KB | 32KB* | 32KB* | 32KB* |
-| 2332 | 4KB | 128KB* | 128KB* | 256KB* |
-| 2732 | 4KB | 32KB* | 32KB* | 32KB* |
-| 27C32 | 4KB | 32KB* | 32KB* | 32KB* |
-| 4732 | 4KB | 128KB* | 128KB* | 256KB* |
-| 9332 | 4KB | 128KB* | 128KB* | 256KB* |
-| 2364 | 8KB | 128KB* | 128KB* | 256KB* |
-| 4764 | 8KB | 128KB* | 128KB* | 256KB* |
-| MCM68364 | 8KB | 128KB* | 128KB* | 256KB* |
-| MCM68764 | 8KB | 128KB* | 128KB* | 256KB* |
-| MCM68A364 | 8KB | 128KB* | 128KB* | 256KB* |
-| MCM68A764 | 8KB | 128KB* | 128KB* | 256KB* |
-| MK36000 | 8KB | 128KB* | 128KB* | 256KB* |
-| MM52164 | 8KB | 128KB* | 128KB* | 256KB* |
+| Chip | ROM size | 28A | 28B | 28C | 28D |
+|:---|---:|---:|---:|---:|---:|
+| 2704 | 512B | 4KB* | 4KB* | 4KB* | 4KB* |
+| 2708 | 1KB | 16KB* | 16KB* | 8KB* | 8KB* |
+| 2316 | 2KB | 32KB* | 32KB* | 32KB* | 32KB* |
+| 2716 | 2KB | 32KB* | 32KB* | 32KB* | 32KB* |
+| 28C16 | 2KB | 32KB* | 32KB* | 32KB* | 32KB* |
+| 9316 | 2KB | 32KB* | 32KB* | 32KB* | 32KB* |
+| 2332 | 4KB | 128KB* | 128KB* | 256KB* | 256KB* |
+| 2732 | 4KB | 32KB* | 32KB* | 32KB* | 32KB* |
+| 27C32 | 4KB | 32KB* | 32KB* | 32KB* | 32KB* |
+| 4732 | 4KB | 128KB* | 128KB* | 256KB* | 256KB* |
+| 9332 | 4KB | 128KB* | 128KB* | 256KB* | 256KB* |
+| 2364 | 8KB | 128KB* | 128KB* | 256KB* | 256KB* |
+| 4764 | 8KB | 128KB* | 128KB* | 256KB* | 256KB* |
+| MCM68364 | 8KB | 128KB* | 128KB* | 256KB* | 256KB* |
+| MCM68764 | 8KB | 128KB* | 128KB* | 256KB* | 256KB* |
+| MCM68A364 | 8KB | 128KB* | 128KB* | 256KB* | 256KB* |
+| MCM68A764 | 8KB | 128KB* | 128KB* | 256KB* | 256KB* |
+| MK36000 | 8KB | 128KB* | 128KB* | 256KB* | 256KB* |
+| MM52164 | 8KB | 128KB* | 128KB* | 256KB* | 256KB* |
 
 *32-pin chips (with fly-leads)*
 
-| Chip | ROM size | 28A | 28B | 28C |
-|:---|---:|---:|---:|---:|
-| 28C512 | 64KB | 64KB† | 64KB† | 64KB† |
-| 23C1010 | 128KB | - | - | 128KB† |
-| 27C010 | 128KB | - | - | 128KB† |
-| 27C1000A | 128KB | - | - | 128KB† |
-| 27C1001 | 128KB | - | - | 128KB† |
-| 29F010 | 128KB | - | - | 128KB† |
-| 39SF010 | 128KB | - | - | 128KB† |
-| SST39SF010 | 128KB | - | - | 128KB† |
+| Chip | ROM size | 28A | 28B | 28C | 28D |
+|:---|---:|---:|---:|---:|---:|
+| 28C512 | 64KB | 64KB† | 64KB† | 64KB† | 64KB† |
+| 23C1010 | 128KB | - | - | 128KB† | 128KB† |
+| 27C010 | 128KB | - | - | 128KB† | 128KB† |
+| 27C1000A | 128KB | - | - | 128KB† | 128KB† |
+| 27C1001 | 128KB | - | - | 128KB† | 128KB† |
+| 29F010 | 128KB | - | - | 128KB† | 128KB† |
+| 39SF010 | 128KB | - | - | 128KB† | 128KB† |
+| SST39SF010 | 128KB | - | - | 128KB† | 128KB† |
 
 ## 32-pin boards
 
@@ -559,6 +559,76 @@ Full chip list for each board. Where a particular ROM type goes by multiple iden
 | 28C512 | 64KB | 64KB | no fly-leads required |
 
 ## One ROM Fire 28 (rev C) — fire-28-c
+
+*28-pin chips (native)*
+
+| Chip | ROM size | Image size | Fit |
+|:---|---:|---:|:---|
+| 2764 | 8KB | 32KB | native |
+| 27C64 | 8KB | 32KB | native |
+| 27LC64 | 8KB | 32KB | native |
+| 28C64 | 8KB | 32KB | native |
+| 23128 | 16KB | 32KB | native |
+| 27128 | 16KB | 32KB | native |
+| 27C128 | 16KB | 32KB | native |
+| 27LC128 | 16KB | 32KB | native |
+| 23256 | 32KB | 64KB | native |
+| 27256 | 32KB | 64KB | native |
+| 27C256 | 32KB | 64KB | native |
+| 27LC256 | 32KB | 64KB | native |
+| 27SF256 | 32KB | 64KB | native |
+| 28C256 | 32KB | 32KB | native |
+| 23QL384 | 48KB | 256KB | native |
+| 23512 | 64KB | 64KB | native |
+| 23QL512 | 64KB | 256KB | native |
+| 27512 | 64KB | 64KB | native |
+| 27C512 | 64KB | 64KB | native |
+| 27LC512 | 64KB | 64KB | native |
+| 27SF512 | 64KB | 64KB | native |
+| 231024 | 128KB | 128KB | native |
+| 23C1000 | 128KB | 128KB | native |
+| 23C1000A | 128KB | 128KB | native |
+| MX23C1000 | 128KB | 128KB | native |
+| TC531000 | 128KB | 128KB | native |
+
+*24-pin chips (with overhang)*
+
+| Chip | ROM size | Image size | Fit |
+|:---|---:|---:|:---|
+| 2704 | 512B | 4KB | overhang |
+| 2708 | 1KB | 8KB | overhang |
+| 2316 | 2KB | 32KB | overhang |
+| 2716 | 2KB | 32KB | overhang |
+| 28C16 | 2KB | 32KB | overhang |
+| 9316 | 2KB | 32KB | overhang |
+| 2332 | 4KB | 256KB | overhang |
+| 2732 | 4KB | 32KB | overhang |
+| 27C32 | 4KB | 32KB | overhang |
+| 4732 | 4KB | 256KB | overhang |
+| 9332 | 4KB | 256KB | overhang |
+| 2364 | 8KB | 256KB | overhang |
+| 4764 | 8KB | 256KB | overhang |
+| MCM68364 | 8KB | 256KB | overhang |
+| MCM68764 | 8KB | 256KB | overhang |
+| MCM68A364 | 8KB | 256KB | overhang |
+| MCM68A764 | 8KB | 256KB | overhang |
+| MK36000 | 8KB | 256KB | overhang |
+| MM52164 | 8KB | 256KB | overhang |
+
+*32-pin chips (with fly-leads)*
+
+| Chip | ROM size | Image size | Fit |
+|:---|---:|---:|:---|
+| 28C512 | 64KB | 64KB | no fly-leads required |
+| 23C1010 | 128KB | 128KB | fly-lead to X1 |
+| 27C010 | 128KB | 128KB | fly-lead to X1 |
+| 27C1000A | 128KB | 128KB | fly-lead to X1 |
+| 27C1001 | 128KB | 128KB | fly-lead to X1 |
+| 29F010 | 128KB | 128KB | fly-lead to X1 |
+| 39SF010 | 128KB | 128KB | fly-lead to X1 |
+| SST39SF010 | 128KB | 128KB | fly-lead to X1 |
+
+## One ROM Fire 28 (rev D) — fire-28-d
 
 *28-pin chips (native)*
 
