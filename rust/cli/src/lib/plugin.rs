@@ -20,8 +20,12 @@ pub use onerom_app::{
     // Fetch abstraction (implemented by `CliFetch`).
     LocalPluginFetch,
     Plugin,
+    // Display of a device's plugin slot, resolved from its recorded image
+    // source (manifest-backed or local).
+    PluginDisplay,
     PluginError,
     PluginFetch,
+    PluginOrigin,
     PluginSpec,
     PluginType,
     // Verification.
@@ -38,6 +42,8 @@ pub use onerom_app::{
     newest_compatible,
     parse_plugins,
     plugin_to_chip_set_config,
+    // Resolve a device plugin slot to a PluginDisplay (delegates fetching).
+    resolve_plugin_display,
     resolve_plugins,
     validate_resolved_plugin_types,
     verify_binary,

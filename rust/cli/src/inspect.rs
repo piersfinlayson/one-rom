@@ -7,9 +7,9 @@ use crate::args::inspect::{
     InspectSlotsArgs, InspectTelemetryArgs,
 };
 use crate::utils::{check_device, check_live_read_write, print_hex_dump};
-use onerom_app::{PluginOrigin, PluginType, resolve_plugin_display};
 use onerom_cli::CliFetch;
 use onerom_cli::LIVE_ROM_BASE;
+use onerom_cli::plugin::{PluginOrigin, PluginType, resolve_plugin_display};
 use onerom_cli::usb::read_memory;
 use onerom_cli::{Device, Error, Options};
 use onerom_fw_parser::{ParsedDevice, SdrrCsState, SlotKind};
@@ -37,15 +37,15 @@ pub async fn cmd_info(options: &Options, args: &InspectInfoArgs) -> Result<(), E
                 println!("{json}");
             }
         } else if let Some(schema) = onerom.as_schema() {
+            // A schema device dumps as a single tree: unlike the original
+            // format, whose flash and RAM information are siblings, the
+            // metadata and runtime information are both nested within the info
+            // header, so one dump covers the lot.
             if let Some(info) = schema.info() {
-                println!(
-                    "Firmware version: {}.{}.{}",
-                    info.major_version, info.minor_version, info.patch_version
-                );
-                println!("Format: Schema (v0.7.0+)");
-            }
-            if schema.runtime().is_some() {
-                println!("Device is running.");
+                let json =
+                    serde_json::to_string_pretty(info).map_err(|e| Error::Other(e.to_string()))?;
+                println!("Device information:");
+                println!("{json}");
             }
         }
     }
