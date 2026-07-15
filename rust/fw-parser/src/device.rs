@@ -11,6 +11,17 @@
 //! Format-specific data remains reachable via [`as_original`] and [`as_schema`]
 //! for the cases that genuinely need it.
 //!
+//! # Recognition vs parse errors
+//!
+//! [`ParsedDevice::parse_device`] is infallible: it always yields a
+//! `ParsedDevice`, even for data that is not One ROM firmware at all. Two
+//! separate questions follow from it, and callers should not conflate them:
+//!
+//! - [`is_recognised`] answers "is this a One ROM?". It is the check to make
+//!   before presenting a device or file to the user as a One ROM.
+//! - [`parse_errors`] answers "what went wrong *within* a device we did
+//!   recognise?". A recognised device may still carry non-fatal errors.
+//!
 //! # ROM layout
 //!
 //! [`ParsedDevice::slots`] gives a borrowed, allocation-free walk over the
@@ -37,6 +48,9 @@
 //! [`as_original`]: ParsedDevice::as_original
 //! [`as_schema`]: ParsedDevice::as_schema
 //! [`active_slot_index`]: ParsedDevice::active_slot_index
+//! [`is_recognised`]: ParsedDevice::is_recognised
+//! [`parse_errors`]: ParsedDevice::parse_errors
+//! [`ParsedDevice::parse_device`]: crate::Parser::parse_device
 
 #[cfg(feature = "std")]
 use std::borrow::Cow;
@@ -74,10 +88,34 @@ pub enum ParsedDevice {
 }
 
 impl ParsedDevice {
+    /// Returns `true` if a recognisable One ROM was found.
+    ///
+    /// [`Parser::parse_device`] is infallible, so this is the check that
+    /// distinguishes "this is a One ROM" from "this is some other data".
+    /// Original-format devices are recognised if either the flash or the RAM
+    /// region parsed; schema-format devices if the firmware info structure was
+    /// located.
+    ///
+    /// This is deliberately distinct from [`parse_errors`](Self::parse_errors),
+    /// which reports non-fatal problems *within* a device that was recognised.
+    /// A device can be recognised and still carry parse errors.
+    ///
+    /// [`Parser::parse_device`]: crate::Parser::parse_device
+    pub fn is_recognised(&self) -> bool {
+        match self {
+            Self::Original(sdrr) => sdrr.flash.is_some() || sdrr.ram.is_some(),
+            Self::Schema(onerom) => onerom.info().is_some(),
+        }
+    }
+
     /// Returns `true` if the device was actively running when parsed.
     ///
     /// For original-format devices this means RAM info was successfully read.
     /// For schema-format devices this means runtime info was present.
+    ///
+    /// Note this reports what the *parse* found, which requires the reader to
+    /// have been able to reach RAM. A caller that only read flash will always
+    /// see `false` here, and should determine liveness by other means.
     pub fn is_running(&self) -> bool {
         match self {
             Self::Original(sdrr) => sdrr.is_running(),
@@ -101,7 +139,23 @@ impl ParsedDevice {
         }
     }
 
+    /// Returns whether explicit firmware metadata is present, or `None` if it
+    /// could not be determined.
+    ///
+    /// Always `Some(true)` for schema-format devices: the metadata region is
+    /// what they are parsed from, so its presence is implied by the format.
+    pub fn metadata_present(&self) -> Option<bool> {
+        match self {
+            Self::Original(sdrr) => sdrr.flash.as_ref().map(|f| f.metadata_present),
+            Self::Schema(_) => Some(true),
+        }
+    }
+
     /// Returns non-fatal parse errors encountered during parsing.
+    ///
+    /// These describe problems *within* a device; see
+    /// [`is_recognised`](Self::is_recognised) for whether a One ROM was found
+    /// at all.
     pub fn parse_errors(&self) -> &[ParseError] {
         match self {
             Self::Original(sdrr) => sdrr

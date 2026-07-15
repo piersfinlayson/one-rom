@@ -19,7 +19,7 @@ use std::path::PathBuf;
 use log::{debug, error, info, trace, warn};
 #[allow(unused_imports)]
 use onerom_config::fw::FirmwareVersion;
-use onerom_fw_parser::SdrrInfo;
+use onerom_fw_parser::ParsedDevice;
 
 use crate::app::{AppMessage, progress_tick_subscription};
 use crate::device::Device;
@@ -107,8 +107,12 @@ pub struct Analyse {
     // Analysis content (text window)
     analysis_content: String,
 
-    // Loaded firmware information
-    fw_info: Option<SdrrInfo>,
+    // Loaded firmware information.
+    //
+    // Holds either firmware generation - pre-v0.7.0 (original) or v0.7.0+
+    // (schema).  Only ever populated from a recognised One ROM: an
+    // unrecognised parse is reported as an error and leaves this None.
+    fw_info: Option<ParsedDevice>,
 
     // Loaded firmware file path
     fw_file: Option<PathBuf>,
@@ -185,7 +189,8 @@ impl Analyse {
     /// Handle Analyse subscriptions
     pub fn subscription(&self) -> Subscription<Message> {
         if self.is_busy() {
-            progress_tick_subscription(Message::ProgressTick)
+            // Constructor, not a value - see progress_tick_subscription().
+            progress_tick_subscription(|_| Message::ProgressTick)
         } else {
             Subscription::none()
         }

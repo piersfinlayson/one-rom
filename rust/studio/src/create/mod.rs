@@ -255,7 +255,8 @@ impl Create {
         let mut subs = vec![];
 
         if self.is_busy() {
-            subs.push(progress_tick_subscription(Message::ProgressTick))
+            // Constructor, not a value - see progress_tick_subscription().
+            subs.push(progress_tick_subscription(|_| Message::ProgressTick))
         }
 
         #[allow(clippy::collapsible_if)]

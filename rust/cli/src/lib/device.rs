@@ -113,13 +113,7 @@ impl Device {
     /// A recognised device has valid One ROM flash or RAM information
     /// available.
     pub fn is_recognised(&self) -> bool {
-        self.onerom
-            .as_ref()
-            .map(|o| match o {
-                ParsedDevice::Original(sdrr) => sdrr.flash.is_some() || sdrr.ram.is_some(),
-                ParsedDevice::Schema(onerom) => onerom.info().is_some(),
-            })
-            .unwrap_or(false)
+        self.onerom.as_ref().is_some_and(ParsedDevice::is_recognised)
     }
 
     pub fn is_running(&self) -> bool {

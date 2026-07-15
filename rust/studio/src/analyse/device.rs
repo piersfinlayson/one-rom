@@ -10,7 +10,7 @@ use log::{debug, error, info, trace, warn};
 #[allow(unused_imports)]
 use onerom_config::fw::FirmwareVersion;
 use onerom_config::mcu::Variant as McuVariant;
-use onerom_fw_parser::{Parser, SdrrInfo, readers::MemoryReader};
+use onerom_fw_parser::{ParsedDevice, Parser, readers::MemoryReader};
 
 use crate::analyse::{Analyse, AnalyseState, FW_VERSION_METADATA, Message};
 use crate::app::AppMessage;
@@ -86,7 +86,6 @@ impl DetectState {
 
 // Receive device data and process it
 pub async fn handle_device_data(data: Vec<u8>) -> AppMessage {
-    let data_copy = data.clone();
     let data_len = data.len();
 
     // Before proceeding, check if the entire data is 0xFF - this indicates
@@ -100,57 +99,77 @@ pub async fn handle_device_data(data: Vec<u8>) -> AppMessage {
     }
 
     // We always pass in 0x08000000 as the parser's base address even if
-    // RP2350 - parser will figure out what
-    // it's looking at
-    let mut reader = MemoryReader::new(data, 0x08000000);
-    let mut parser = Parser::new(&mut reader);
-    let info = parser.parse_flash().await;
-    let info = match info {
-        Ok(info) => Ok((info, data_copy.to_vec())),
-        Err(err) => Err(err),
+    // RP2350 - parser will figure out what it's looking at.
+    //
+    // parse_device() detects the firmware generation and is infallible: it
+    // returns a ParsedDevice for any input, so whether this is actually One
+    // ROM firmware is a separate question, answered by is_recognised().
+    let device = {
+        let mut reader = MemoryReader::new(data.clone(), 0x08000000);
+        let mut parser = Parser::new(&mut reader);
+        parser.parse_device().await
     };
 
-    // parse_flash() returns a Result<SdrrInfo, String>.
-    // If the parsing worked, that's great, but we may still need to load and parse data
-    // from the device again - as first time around we only read 64KB of flash, and in
+    if !device.is_recognised() {
+        debug!("Device data contains no recognisable One ROM firmware information");
+        return Message::DeviceLoaded(Err("No One ROM firmware information found".to_string()))
+            .into();
+    }
+
+    // The parse succeeded, but we may still need to read and parse from the
+    // device again - first time around we only read 64KB of flash, and in
     // pre-v0.5.0 firmware, often more than this is needed.
     if data_len > (64 * 1024) {
         // We read more than 64KB, so whatever happened just return the
         // result
-        debug!(
-            "Firmware data length > 64KB ({} bytes), so not re-reading",
-            data_len
-        );
-        Message::DeviceLoaded(info).into()
-    } else {
-        if let Err(err) = &info {
-            // Parsing failed - just return the error
-            debug!("Failed to parse firmware data: {}", err);
-            return Message::DeviceLoaded(Err(err.clone())).into();
-        }
-        let (info, data) = info.unwrap();
-
-        if info.version >= FW_VERSION_METADATA || info.parse_errors.is_empty() {
-            // Firmware is v0.5.0 or later, so 64KB read is sufficient, or
-            // we parsed everything OK anyway
-            trace!("Firmware is v0.5.0 or later, or parsed successfully");
-            return Message::DeviceLoaded(Ok((info, data))).into();
-        }
-
-        if info.mcu_variant.is_none() {
-            // The MCU info wasn't decoded.  This is worrying, and means
-            // we can't confidently predict the size, so just return as is.
-            info!(
-                "MCU variant {} {} not detected during firmware decode, cannot re-read full flash",
-                info.stm_line, info.stm_storage
-            );
-            return Message::DeviceLoaded(Ok((info, data))).into();
-        }
-        let mcu = info.mcu_variant.unwrap();
-
-        // Ready to re-read full flash
-        Message::RereadDevice(mcu, info.version).into()
+        debug!("Firmware data length > 64KB ({data_len} bytes), so not re-reading");
+        return Message::DeviceLoaded(Ok((device, data))).into();
     }
+
+    // Decide whether a full-flash re-read is needed.  Only original-format
+    // firmware can require one: schema-format firmware is v0.7.0+, and keeps
+    // its metadata within the first 64KB by construction.
+    let reread = reread_required(&device);
+
+    match reread {
+        Some((mcu, version)) => Message::RereadDevice(mcu, version).into(),
+        None => Message::DeviceLoaded(Ok((device, data))).into(),
+    }
+}
+
+// Determine whether a parsed device needs its full flash re-reading to be
+// parsed completely, returning the MCU variant and firmware version needed to
+// perform that read.
+fn reread_required(device: &ParsedDevice) -> Option<(McuVariant, FirmwareVersion)> {
+    // Schema-format firmware never needs a second read.
+    let Some(sdrr) = device.as_original() else {
+        trace!("Schema-format firmware - 64KB read is sufficient");
+        return None;
+    };
+
+    // No flash information means there's nothing to re-read on the strength
+    // of.  is_recognised() may still have passed on the RAM information alone.
+    let info = sdrr.flash.as_ref()?;
+
+    if info.version >= FW_VERSION_METADATA || info.parse_errors.is_empty() {
+        // Firmware is v0.5.0 or later, so 64KB read is sufficient, or we
+        // parsed everything OK anyway
+        trace!("Firmware is v0.5.0 or later, or parsed successfully");
+        return None;
+    }
+
+    // The MCU info wasn't decoded.  This is worrying, and means we can't
+    // confidently predict the size, so just return as is.
+    let Some(mcu) = info.mcu_variant else {
+        info!(
+            "MCU variant {} {} not detected during firmware decode, cannot re-read full flash",
+            info.stm_line, info.stm_storage
+        );
+        return None;
+    };
+
+    // Ready to re-read full flash
+    Some((mcu, info.version))
 }
 
 /// Flash firmware to device
@@ -170,15 +189,11 @@ pub fn flash_firmware(analyse: &mut Analyse) -> Task<AppMessage> {
         && let Some(filename) = analyse.fw_file.as_ref()
     {
         // Get hardware info from firmware file.
-        let hw_info = if let Some(info) = analyse.fw_info.as_ref() {
-            HardwareInfo {
-                board: info.board,
-                model: info.model,
-                mcu_variant: info.mcu_variant,
-            }
-        } else {
-            HardwareInfo::default()
-        };
+        let hw_info = analyse
+            .fw_info
+            .as_ref()
+            .map(HardwareInfo::from_parsed)
+            .unwrap_or_default();
 
         // Update state
         analyse.state = AnalyseState::Flashing;
@@ -328,14 +343,14 @@ pub fn reread_device(
 /// device flash, as parsing is the same process
 pub fn file_device_loaded(
     analyse: &mut Analyse,
-    result: Result<(SdrrInfo, Vec<u8>), String>,
+    result: Result<(ParsedDevice, Vec<u8>), String>,
     is_file: bool,
 ) -> Task<AppMessage> {
     match result {
-        // The actual read succeeded, so parse the info
-        Ok((info, data)) => {
-            // Turn the info into JSON
-            let json = serde_json::to_string_pretty(&info).map_err(|e| e.to_string());
+        // The actual read and parse succeeded, and found a One ROM
+        Ok((device, data)) => {
+            // Turn the parsed device into JSON
+            let json = serde_json::to_string_pretty(&device).map_err(|e| e.to_string());
 
             // Handle JSON parse result, updating analysis content (the window
             // display) accordingly
@@ -345,11 +360,11 @@ pub fn file_device_loaded(
             };
 
             // Store firmware info and file contents
-            analyse.fw_info = Some(info);
+            analyse.fw_info = Some(device);
             analyse.file_contents = if is_file { Some(data) } else { None };
         }
 
-        // The read failed
+        // The read failed, or what we read wasn't a One ROM
         Err(err) => {
             // Update analysis content with error message, depending on whether
             // this was a file or device read
@@ -377,7 +392,7 @@ pub fn file_device_loaded(
     let usb_run_capable = analyse
         .fw_info
         .as_ref()
-        .is_some_and(|info| info.is_usb_run_capable());
+        .is_some_and(|device| device.is_usb_run_capable());
     let usb_run_capable_task = Task::done(AppMessage::Device(DeviceMessage::SetUsbRunCapable(
         usb_run_capable,
     )));
@@ -392,19 +407,12 @@ pub fn file_device_loaded(
 
 // Decide whether to share decoded hardware info with rest of app
 fn share_hw_info(analyse: &mut Analyse) -> Option<AppMessage> {
-    if let Some(info) = analyse.fw_info.as_ref() {
-        // We have some information so share it
-        let hw_info = HardwareInfo {
-            board: info.board,
-            model: info.model,
-            mcu_variant: info.mcu_variant,
-        };
-        Some(AppMessage::Studio(StudioMessage::HardwareInfo(Some(
-            hw_info,
+    // We have some information so share it
+    analyse.fw_info.as_ref().map(|device| {
+        AppMessage::Studio(StudioMessage::HardwareInfo(Some(HardwareInfo::from_parsed(
+            device,
         ))))
-    } else {
-        None
-    }
+    })
 }
 
 pub fn stop_device(analyse: &mut Analyse) -> Task<AppMessage> {

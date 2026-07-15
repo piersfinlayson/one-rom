@@ -13,8 +13,6 @@ There is also a longer term benefit of reduced maintainability costs and also lo
 Ice boards are capped at firmware v0.6.xx (and are not supported in v0.7.0+).  The programming tools continue to support Ice boards and v0.6.xx.
 
 TODO
-- Update Web to support firmware v0.7.0+
-- Update Studio to support firmware v0.7.0+
 - Publish USB plugin 0.2.0
 - Publish host-control 0.1.1
 - Figure out why status LED is off on v0.7.0

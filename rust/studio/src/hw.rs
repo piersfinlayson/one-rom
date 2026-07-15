@@ -12,6 +12,7 @@ use onerom_config::fw::{FirmwareProperties, ServeAlg};
 use onerom_config::hw::{Board, Model};
 use onerom_config::mcu::Variant as McuVariant;
 use onerom_fw::net::Release;
+use onerom_fw_parser::ParsedDevice;
 
 /// Information One ROM about hardware
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -27,6 +28,34 @@ pub struct HardwareInfo {
 }
 
 impl HardwareInfo {
+    /// Constructs hardware info from a parsed device, neutrally across
+    /// firmware generations.
+    ///
+    /// Original-format firmware records model and MCU variant explicitly, so
+    /// they are read from the parse - they can be present even when the board
+    /// itself could not be identified.
+    ///
+    /// Schema-format firmware is v0.7.0+, which is Fire/RP2350 only, so the
+    /// MCU variant is implied by the format.  The model is still derived from
+    /// the board rather than assumed, so an unidentifiable board reports an
+    /// unknown model instead of a guess.
+    pub fn from_parsed(device: &ParsedDevice) -> Self {
+        let board = device.get_board();
+
+        match device {
+            ParsedDevice::Original(sdrr) => Self {
+                board,
+                model: sdrr.flash.as_ref().and_then(|f| f.model),
+                mcu_variant: sdrr.flash.as_ref().and_then(|f| f.mcu_variant),
+            },
+            ParsedDevice::Schema(_) => Self {
+                board,
+                model: board.map(|b| b.model()),
+                mcu_variant: Some(McuVariant::RP2350),
+            },
+        }
+    }
+
     /// Returns true if all hardware information is present
     pub fn is_complete(&self) -> bool {
         self.board.is_some() && self.model.is_some() && self.mcu_variant.is_some()

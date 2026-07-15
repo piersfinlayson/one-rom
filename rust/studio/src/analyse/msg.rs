@@ -12,7 +12,7 @@ use log::{debug, error, info, trace, warn};
 #[allow(unused_imports)]
 use onerom_config::fw::FirmwareVersion;
 use onerom_config::mcu::Variant as McuVariant;
-use onerom_fw_parser::SdrrInfo;
+use onerom_fw_parser::ParsedDevice;
 
 use crate::analyse::device::{
     detect_device, device_reboot_complete, file_device_loaded, firmware_flash_complete,
@@ -33,11 +33,11 @@ pub enum Message {
     // Handle file
     SelectFile,
     FileSelected(Option<PathBuf>),
-    FileLoaded(Result<(SdrrInfo, Vec<u8>), String>),
+    FileLoaded(Result<(ParsedDevice, Vec<u8>), String>),
 
     // Handle device
     DetectDevice,
-    DeviceLoaded(Result<(SdrrInfo, Vec<u8>), String>),
+    DeviceLoaded(Result<(ParsedDevice, Vec<u8>), String>),
     DeviceData(Vec<u8>),
     ReadFailed(String),
     RereadDevice(McuVariant, FirmwareVersion),

@@ -5,6 +5,7 @@
 pub mod manifest;
 
 use iced::alignment::Vertical::Bottom;
+use iced::time::Instant;
 use iced::widget::{Space, Stack, column, row};
 use iced::{Element, Length, Subscription, Task};
 #[allow(unused_imports)]
@@ -24,11 +25,25 @@ use crate::update_app_manifest;
 
 // How often to tick progress updates
 const PROGRESS_TICK_INTERVAL: Duration = Duration::from_millis(500);
-pub fn progress_tick_subscription<T>(tick: T) -> Subscription<T>
+
+/// Produces a subscription emitting a progress tick message at a regular
+/// interval.
+///
+/// Takes a message *constructor*, not a message value.  `Subscription::map()`
+/// asserts at runtime that the closure handed to it is non-capturing: iced
+/// identifies subscriptions across update cycles by hashing them, and a
+/// closure holding captured state has no stable identity to hash.  Capturing
+/// a message value here and cloning it therefore panics for every message
+/// type that isn't zero-sized.
+///
+/// A caller-supplied `|_| Message::ProgressTick` captures nothing, so it is
+/// zero-sized and satisfies the assert whatever the message type.
+pub fn progress_tick_subscription<T, F>(tick: F) -> Subscription<T>
 where
-    T: 'static + Clone + Sync + Send,
+    T: 'static,
+    F: Fn(Instant) -> T + Clone + Send + 'static,
 {
-    iced::time::every(PROGRESS_TICK_INTERVAL).map(move |_| tick.clone())
+    iced::time::every(PROGRESS_TICK_INTERVAL).map(tick)
 }
 
 // How often to re-read the application manifest

@@ -15,7 +15,7 @@ use std::path::PathBuf;
 use log::{debug, error, info, trace, warn};
 #[allow(unused_imports)]
 use onerom_config::fw::FirmwareVersion;
-use onerom_fw_parser::{Parser, SdrrInfo, readers::MemoryReader};
+use onerom_fw_parser::{ParsedDevice, Parser, readers::MemoryReader};
 
 use crate::analyse::{Analyse, AnalyseState, Message};
 use crate::app::AppMessage;
@@ -44,23 +44,34 @@ pub fn load_file(analyse: &mut Analyse, path: Option<PathBuf>) -> Task<AppMessag
 }
 
 // Actual file load routine
-async fn load_file_async(path: PathBuf) -> Result<(SdrrInfo, Vec<u8>), String> {
+async fn load_file_async(path: PathBuf) -> Result<(ParsedDevice, Vec<u8>), String> {
     // Check we have a valid file
-    if path.exists() && path.is_file() {
-        // Read in the file
-        let data = std::fs::read(path).map_err(|e| e.to_string())?;
+    if !path.exists() || !path.is_file() {
+        return Err("File does not exist or is a directory".to_string());
+    }
 
-        // Parse it using the One ROM firmware parser.  Note we _always_ drive
-        // the parser from address 0x08000000 - it will figure out if it's an
-        // RP2350 and needs to modify addresses internally.
+    // Read in the file
+    let data = std::fs::read(path).map_err(|e| e.to_string())?;
+
+    // Parse it using the One ROM firmware parser.  Note we _always_ drive
+    // the parser from address 0x08000000 - it will figure out if it's an
+    // RP2350 and needs to modify addresses internally.
+    //
+    // parse_device() detects the firmware generation and is infallible: it
+    // returns a ParsedDevice for any input, so whether this is actually One
+    // ROM firmware is a separate question, answered by is_recognised().
+    let device = {
         let mut reader = MemoryReader::new(data.clone(), 0x08000000);
         let mut parser = Parser::new(&mut reader);
-        let parser_result = parser.parse_flash().await;
-        parser_result.map(|info| (info, data))
-    } else {
-        // Return an error
-        Err("File does not exist or is a directory".to_string())
+        parser.parse_device().await
+    };
+
+    if !device.is_recognised() {
+        debug!("Parsed file contains no recognisable One ROM firmware information");
+        return Err("No One ROM firmware information found".to_string());
     }
+
+    Ok((device, data))
 }
 
 /// Show firmware file chooser dialog

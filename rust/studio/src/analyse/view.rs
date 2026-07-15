@@ -175,11 +175,11 @@ fn fw_content_heading<'a>(
 
     if let Some(hw_info) = hw_info {
         // Add hardware information as we have some
-        let version = analyse.fw_info.as_ref().map(|info| info.version);
+        let version = analyse.fw_info.as_ref().and_then(|device| device.version());
         let metadata = analyse
             .fw_info
             .as_ref()
-            .map_or(Some(false), |info| Some(info.metadata_present));
+            .map_or(Some(false), |device| device.metadata_present());
         let info_row = Style::hw_info_row(
             version,
             metadata,
