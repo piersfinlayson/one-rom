@@ -4881,7 +4881,7 @@ checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
 
 [[package]]
 name = "onerom-app"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "hex",
  "onerom-config",
@@ -4932,7 +4932,7 @@ dependencies = [
 
 [[package]]
 name = "onerom-config"
-version = "0.5.1"
+version = "0.5.2"
 dependencies = [
  "schemars",
  "serde",
@@ -4980,7 +4980,7 @@ dependencies = [
 
 [[package]]
 name = "onerom-fw-parser"
-version = "0.7.1"
+version = "0.7.2"
 dependencies = [
  "airfrog-rpc",
  "deku 0.19.1",
@@ -5010,7 +5010,7 @@ dependencies = [
 
 [[package]]
 name = "onerom-gen"
-version = "0.6.1"
+version = "0.6.2"
 dependencies = [
  "onerom-config",
  "onerom-metadata",
@@ -5054,7 +5054,7 @@ dependencies = [
 
 [[package]]
 name = "onerom-metadata"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "hashbrown 0.17.1",
  "onerom-config",
