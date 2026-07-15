@@ -211,6 +211,7 @@ test_28_config() {
     test_config fire-28-a "$config"
     test_config fire-28-b "$config"
     test_config fire-28-c "$config"
+    test_config fire-28-d "$config"
 }
 
 test_28_config_api() {
@@ -219,12 +220,14 @@ test_28_config_api() {
     test_config_api fire-28-a "$config"
     test_config_api fire-28-b "$config"
     test_config_api fire-28-c "$config"
+    test_config_api fire-28-d "$config"
 }
 
 test_28_config_c_onwards() {
     local config=$1
 
     test_config fire-28-c "$config"
+    test_config fire-28-d "$config"
 }
 
 test_32_config() {
@@ -274,6 +277,7 @@ test_24_all_rom_types fire-24-f
 # Remaining 28 pin boards.
 test_28_all_rom_types fire-28-c # First, as B is same as A
 test_28_all_rom_types fire-28-b
+test_28_all_rom_types fire-28-d
 
 # Remaining 32 pin boards.
 test_32pin fire-32-b
@@ -307,6 +311,10 @@ test_config fire-28-c onerom-config/test/28-bank-23xxx.json
 test_config fire-28-c onerom-config/test/28-bank-23qlxxx.json
 test_config fire-28-c onerom-config/test/28-bank-27xxx.json
 test_config fire-28-c onerom-config/test/28-bank-28xxx.json
+test_config fire-28-d onerom-config/test/28-bank-23xxx.json
+test_config fire-28-d onerom-config/test/28-bank-23qlxxx.json
+test_config fire-28-d onerom-config/test/28-bank-27xxx.json
+test_config fire-28-d onerom-config/test/28-bank-28xxx.json
 
 # Test multi-chip ROM configurations on all Fire 24 hardware revisions.
 test_24_config_c_onwards onerom-config/test/24-multi-2364.json
