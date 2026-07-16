@@ -10,25 +10,26 @@
 
 use onerom_config::chip::ChipType;
 use onerom_fw::net::fetch_rom_file;
-use onerom_gen::{ChipConfig, SizeHandling};
+use onerom_gen::{ChipConfig, SizeHandling, num_excess_addr_lines};
 
 /// Number of bytes One ROM actually serves for `chip_type`.
 ///
-/// This is `chip_type.size_bytes()` for every chip except the 27C080: a single
-/// One ROM board serves only the lower half (512 KB) of that chip's 1 MB
-/// address space, because A19 is repurposed as the chip-select line so two
-/// stacked boards (one with A19/CS low, one high) can together serve the whole
-/// device.
+/// This is `chip_type.size_bytes()` for every chip whose address space fits in
+/// `MAX_IMAGE_SIZE`. Above that, each excess top address line is repurposed as
+/// a half-select and halves what one board serves: the 27C080 is the only such
+/// chip today, where a single board serves the lower or upper 512 KB of its
+/// 1 MB space (A19 becomes the chip select), so two stacked boards — one with
+/// cs1 active_low, one active_high — together serve the whole device.
+///
+/// The excess count is `onerom_gen`'s own, shared rather than recomputed, so
+/// the tester cannot disagree with the firmware it is testing about how big the
+/// served region is.
 ///
 /// This is the authority for "how many bytes does this chip serve" — used by
 /// the oracle to size its expected image, and by the address-range and
 /// reprogram-length tests so they stay within the served region.
 pub fn served_size(chip_type: ChipType) -> usize {
-    if chip_type == ChipType::Chip27C080 {
-        chip_type.size_bytes() / 2
-    } else {
-        chip_type.size_bytes()
-    }
+    chip_type.size_bytes() >> num_excess_addr_lines(&chip_type)
 }
 
 /// Load and size-adjust the oracle bytes for `chip_config`.

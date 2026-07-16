@@ -2,13 +2,14 @@
 
 This document provides detailed specifications for the different Chip types One ROM supports, and aims to support in future, including pinouts, control lines, and programming requirements.
 
-The document is auto-generated from the [json/rom-types.json](/rust/config/json/rom-types.json) configuration file.  That file was created by researching datasheets for the various Chip types.
+The document is auto-generated from the [json/chip-types.json](/rust/config/json/chip-types.json) configuration file.  That file was created by researching datasheets for the various Chip types.
 
 Some of the pin names have been modified from the datasheet values for consistency beween Chip types:
 
 - /OE on 2704/2408 is called Program, but serves as /OE when in read mode.  Other 27xx ROMs use /OE for that pin, hence the /OE name is used here. 
 - Similarly /CE on 2704/2708 ROMs is called /CS, but is called /CE for consistency with other ROM types.
 - 23256/23512 chip select lines are often called CE/OE on datasheets, but are mask programmable to be active high or low, hence these are referred to within this doc as CS lines, like the other 23xx ROMs.
+- Chips whose enables have a polarity fixed by the silicon use CE/OE where every enable is active low (the JEDEC convention followed by the 27xx and 28xx families).  Where the enables are not all active low, CS lines are used instead: the HM7641 has CS1 and CS2 fixed active low, and CS3 and CS4 fixed active high.  A leading `/` in the tables below indicates an active low line.
 
 There are also some other inconsistencies between types:
 
@@ -18,15 +19,16 @@ There are also some other inconsistencies between types:
 ## Contents
 
 - [24-pin Mask ROM Family (23xx)](#24-pin-mask-rom-family-23xx)
-- [28-pin Mask ROM Family (23xxx)](#28-pin-mask-rom-family-23xx)
-- [32-pin Mask ROM Family (23xxx)](#32-pin-mask-rom-family-23xx)
+- [28-pin Mask ROM Family (23xx)](#28-pin-mask-rom-family-23xx)
+- [32-pin Mask ROM Family (23xx)](#32-pin-mask-rom-family-23xx)
 - [24-pin EPROM Family (27xx)](#24-pin-eprom-family-27xx)
-- [28-pin EPROM Family (2764 and 27xxx)](#28-pin-eprom-family-27xx)
-- [32-pin EPROM Family (27xxx)](#32-pin-eprom-family-27xx)
-- [40-pin EPROM Family (27xxx)](#40-pin-eprom-family-27xx)
+- [28-pin EPROM Family (27xx)](#28-pin-eprom-family-27xx)
+- [32-pin EPROM Family (27xx)](#32-pin-eprom-family-27xx)
+- [40-pin EPROM Family (27xx)](#40-pin-eprom-family-27xx)
 - [24-pin EEPROM Family (28Cxx)](#24-pin-eeprom-family-28cxx)
 - [28-pin EEPROM Family (28Cxx)](#28-pin-eeprom-family-28cxx)
 - [32-pin EEPROM Family (28Cxx)](#32-pin-eeprom-family-28cxx)
+- [24-pin Bipolar PROM Family (HM76xx)](#24-pin-bipolar-prom-family-hm76xx)
 - [RAM Chips](#ram-chips)
 - [Pin Function Comparison](#pin-function-comparison)
 - [Detailed Pinouts](#detailed-pinouts)
@@ -61,10 +63,10 @@ There are also some other inconsistencies between types:
 
 | Chip Type | Aliases | Size | Address Lines | Control Lines | Programming | Supported |
 |-----------|---------|------|---------------|---------------|-------------|-----------|
-| 2704 |  | 512B | 9 (A0-A8) | /CE (pin 18), /OE (pin 20) | VPP: pin 18 (Low during read) | ✓ |
-| 2708 |  | 1KB | 10 (A0-A9) | /CE (pin 18), /OE (pin 20) | VPP: pin 18 (Low during read) | ✓ |
-| 2716 |  | 2KB | 11 (A0-A10) | /CE (pin 18), /OE (pin 20) | VPP: pin 21 (VCC during read) | ✓ |
-| 2732 | 27C32 | 4KB | 12 (A0-A11) | /CE (pin 18), /OE (pin 20) | VPP: pin 20 (Acts as /OE) | ✓ |
+| 2704 |  | 512B | 9 (A0-A8) | /CE (pin 18), /OE (pin 20) | VPP: pin 18 (Low during read); PE: pin 20 (Low during read) | ✓ |
+| 2708 |  | 1KB | 10 (A0-A9) | /CE (pin 18), /OE (pin 20) | VPP: pin 18 (Low during read); PE: pin 20 (Low during read) | ✓ |
+| 2716 |  | 2KB | 11 (A0-A10) | /CE (pin 18), /OE (pin 20) | VPP: pin 21 (VCC during read); PE: pin 20 (Low during read) | ✓ |
+| 2732 | 27C32 | 4KB | 12 (A0-A11) | /CE (pin 18), /OE (pin 20) | VPP: pin 20 (Acts as /OE); PE: pin 18 (Low during read) | ✓ |
 
 ## 28-pin EPROM Family (27xx)
 
@@ -72,25 +74,26 @@ There are also some other inconsistencies between types:
 |-----------|---------|------|---------------|---------------|-------------|-----------|
 | 2764 | 27C64, 27LC64 | 8KB | 13 (A0-A12) | /CE (pin 20), /OE (pin 22) | VPP: pin 1 (VCC during read); /PGM: pin 27 (High during read) | ✓ |
 | 27128 | 27C128, 27LC128 | 16KB | 14 (A0-A13) | /CE (pin 20), /OE (pin 22) | VPP: pin 1 (VCC during read); /PGM: pin 27 (High during read) | ✓ |
-| 27256 | 27C256, 27LC256, 27SF256 | 32KB | 15 (A0-A14) | /CE (pin 20), /OE (pin 22) | VPP: pin 1 (VCC during read) | ✓ |
-| 27512 | 27C512, 27LC512, 27SF512 | 64KB | 16 (A0-A15) | /CE (pin 20), /OE (pin 22) | VPP: pin 22 (VCC during read) | ✓ |
+| 27256 | 27C256, 27LC256, 27SF256 | 32KB | 15 (A0-A14) | /CE (pin 20), /OE (pin 22) | VPP: pin 1 (VCC during read); PE: pin 22 (Low during read) | ✓ |
+| 27512 | 27C512, 27LC512, 27SF512 | 64KB | 16 (A0-A15) | /CE (pin 20), /OE (pin 22) | VPP: pin 22 (VCC during read); PE: pin 20 (Low during read) | ✓ |
 
 ## 32-pin EPROM Family (27xx)
 
 | Chip Type | Aliases | Size | Address Lines | Control Lines | Programming | Supported |
 |-----------|---------|------|---------------|---------------|-------------|-----------|
-| 27C010 | 27C1001, 27C1000A, 29F010, 39SF010, SST39SF010 | 128KB | 17 (A0-A16) | /CE (pin 22), /OE (pin 24) | VPP: pin 1 (x); /PGM: pin 31 (x) | ✓ |
-| 27C301 | 27C1000, 27C100 | 128KB | 17 (A0-A16) | /CE (pin 22), /OE (pin 2) | VPP: pin 1 (x); /PGM: pin 31 (x) | ✓ |
-| 27C020 | 27C2001, 39SF020, 29F020, SST39SF020 | 256KB | 18 (A0-A17) | /CE (pin 22), /OE (pin 24) | VPP: pin 1 (x); /PGM: pin 31 (x) | ✓ |
-| 27C040 | 27C4001 | 512KB | 19 (A0-A18) | /CE (pin 22), /OE (pin 24) | VPP: pin 1 (x); /PGM: pin 22 (Acts as /OE) | ✓ |
-| 27C080 | 27C801 | 1024KB | 20 (A0-A19) | /CE (pin 22), /OE (pin 24) | VPP: pin 24 (Acts as /OE); /PGM: pin 22 (Acts as /OE) | ✓ |
+| 27C010 | 27C1001, 27C1000A, 29F010, 39SF010, SST39SF010 | 128KB | 17 (A0-A16) | /CE (pin 22), /OE (pin 24) | VPP: pin 1 (Don't care during read); /PGM: pin 31 (Don't care during read) | ✓ |
+| 27C301 | 27C1000, 27C100 | 128KB | 17 (A0-A16) | /CE (pin 22), /OE (pin 2) | VPP: pin 1 (Don't care during read); /PGM: pin 31 (Don't care during read) | ✓ |
+| 27C020 | 27C2001, 39SF020, 29F020, SST39SF020 | 256KB | 18 (A0-A17) | /CE (pin 22), /OE (pin 24) | VPP: pin 1 (Don't care during read); /PGM: pin 31 (Don't care during read) | ✓ |
+| 27C040 | 27C4001 | 512KB | 19 (A0-A18) | /CE (pin 22), /OE (pin 24) | VPP: pin 1 (Don't care during read); /PGM: pin 22 (Acts as /OE) | ✓ |
+| SST39SF040 | 39SF040, 29F040 | 512KB | 19 (A0-A18) | /CE (pin 22), /OE (pin 24), /WRITE (pin 31) | None | ✓ |
+| 27C080 | 27C801 | 1MB | 20 (A0-A19) | /CE (pin 22), /OE (pin 24) | VPP: pin 24 (Acts as /OE); /PGM: pin 22 (Acts as /OE) | ✓ |
 
 ## 40-pin EPROM Family (27xx)
 
 | Chip Type | Aliases | Size | Address Lines | Control Lines | Programming | Supported |
 |-----------|---------|------|---------------|---------------|-------------|-----------|
 | 27C200 | HN62402 | 256KB | 18 (A0-A17) | /BYTE (pin 31), /CE (pin 10), /OE (pin 12) | None | ✓ |
-| 27C400 | AT27C400, M27C400, 23C4100, MX23C4100, TCS534200, 27C4100, MX27C4100, HN62404, HN62424, MB834200 | 512KB | 19 (A0-A18) | /BYTE (pin 31), /CE (pin 10), /OE (pin 12) | VPP: pin 31 (word_size); /PGM: pin 10 (Acts as /OE) | ✓ |
+| 27C400 | AT27C400, M27C400, 23C4100, MX23C4100, TCS534200, 27C4100, MX27C4100, HN62404, HN62424, MB834200 | 512KB | 19 (A0-A18) | /BYTE (pin 31), /CE (pin 10), /OE (pin 12) | VPP: pin 31 (Selects word size during read); /PGM: pin 10 (Acts as /OE) | ✓ |
 
 ## 24-pin EEPROM Family (28Cxx)
 
@@ -111,6 +114,12 @@ There are also some other inconsistencies between types:
 |-----------|---------|------|---------------|---------------|-------------|-----------|
 | 28C512 |  | 64KB | 16 (A0-A15) | /CE (pin 22), /OE (pin 24), /WRITE (pin 30) | None | ✓ |
 
+## 24-pin Bipolar PROM Family (HM76xx)
+
+| Chip Type | Aliases | Size | Address Lines | Control Lines | Programming | Supported |
+|-----------|---------|------|---------------|---------------|-------------|-----------|
+| HM7641 |  | 512B | 9 (A0-A8) | /CS1 (pin 21), /CS2 (pin 20), CS3 (pin 19), CS4 (pin 18) | None | ✓ |
+
 ## RAM Chips
 
 | Chip Type | Aliases | Size | Address Lines | Control Lines | Programming | Supported |
@@ -121,32 +130,32 @@ There are also some other inconsistencies between types:
 
 ### 24-pin Package
 
-| Pin | 2316 | 2332 | 2364 | 2704 | 2708 | 2716 | 28C16 | 6116 | 2732 |
-|-----|------|------|------|------|------|------|------|------|------|
-| 1 | A7 | A7 | A7 | A7 | A7 | A7 | A7 | A7 | A7 |
-| 2 | A6 | A6 | A6 | A6 | A6 | A6 | A6 | A6 | A6 |
-| 3 | A5 | A5 | A5 | A5 | A5 | A5 | A5 | A5 | A5 |
-| 4 | A4 | A4 | A4 | A4 | A4 | A4 | A4 | A4 | A4 |
-| 5 | A3 | A3 | A3 | A3 | A3 | A3 | A3 | A3 | A3 |
-| 6 | A2 | A2 | A2 | A2 | A2 | A2 | A2 | A2 | A2 |
-| 7 | A1 | A1 | A1 | A1 | A1 | A1 | A1 | A1 | A1 |
-| 8 | A0 | A0 | A0 | A0 | A0 | A0 | A0 | A0 | A0 |
-| 9 | D0 | D0 | D0 | D0 | D0 | D0 | D0 | D0 | D0 |
-| 10 | D1 | D1 | D1 | D1 | D1 | D1 | D1 | D1 | D1 |
-| 11 | D2 | D2 | D2 | D2 | D2 | D2 | D2 | D2 | D2 |
-| 12 | GND | GND | GND | GND | GND | GND | GND | GND | GND |
-| 13 | D3 | D3 | D3 | D3 | D3 | D3 | D3 | D3 | D3 |
-| 14 | D4 | D4 | D4 | D4 | D4 | D4 | D4 | D4 | D4 |
-| 15 | D5 | D5 | D5 | D5 | D5 | D5 | D5 | D5 | D5 |
-| 16 | D6 | D6 | D6 | D6 | D6 | D6 | D6 | D6 | D6 |
-| 17 | D7 | D7 | D7 | D7 | D7 | D7 | D7 | D7 | D7 |
-| 18 | CS2 | A11 | A11 | /CE+VPP | /CE+VPP | /CE | /CE | /CE | /CE+PE |
-| 19 | A10 | A10 | A10 | VDD | VDD | A10 | A10 | A10 | A10 |
-| 20 | CS1 | CS1 | CS1 | /OE+PE | /OE+PE | /OE+PE | /OE | /OE | /OE+VPP |
-| 21 | CS3 | CS2 | A12 | VBB | VBB | VPP | /WRITE | /WRITE | A11 |
-| 22 | A9 | A9 | A9 | GND | A9 | A9 | A9 | A9 | A9 |
-| 23 | A8 | A8 | A8 | A8 | A8 | A8 | A8 | A8 | A8 |
-| 24 | VCC | VCC | VCC | VCC | VCC | VCC | VCC | VCC | VCC |
+| Pin | 2316 | 2332 | 2364 | 2704 | HM7641 | 2708 | 2716 | 28C16 | 6116 | 2732 |
+|-----|------|------|------|------|------|------|------|------|------|------|
+| 1 | A7 | A7 | A7 | A7 | A7 | A7 | A7 | A7 | A7 | A7 |
+| 2 | A6 | A6 | A6 | A6 | A6 | A6 | A6 | A6 | A6 | A6 |
+| 3 | A5 | A5 | A5 | A5 | A5 | A5 | A5 | A5 | A5 | A5 |
+| 4 | A4 | A4 | A4 | A4 | A4 | A4 | A4 | A4 | A4 | A4 |
+| 5 | A3 | A3 | A3 | A3 | A3 | A3 | A3 | A3 | A3 | A3 |
+| 6 | A2 | A2 | A2 | A2 | A2 | A2 | A2 | A2 | A2 | A2 |
+| 7 | A1 | A1 | A1 | A1 | A1 | A1 | A1 | A1 | A1 | A1 |
+| 8 | A0 | A0 | A0 | A0 | A0 | A0 | A0 | A0 | A0 | A0 |
+| 9 | D0 | D0 | D0 | D0 | D0 | D0 | D0 | D0 | D0 | D0 |
+| 10 | D1 | D1 | D1 | D1 | D1 | D1 | D1 | D1 | D1 | D1 |
+| 11 | D2 | D2 | D2 | D2 | D2 | D2 | D2 | D2 | D2 | D2 |
+| 12 | GND | GND | GND | GND | GND | GND | GND | GND | GND | GND |
+| 13 | D3 | D3 | D3 | D3 | D3 | D3 | D3 | D3 | D3 | D3 |
+| 14 | D4 | D4 | D4 | D4 | D4 | D4 | D4 | D4 | D4 | D4 |
+| 15 | D5 | D5 | D5 | D5 | D5 | D5 | D5 | D5 | D5 | D5 |
+| 16 | D6 | D6 | D6 | D6 | D6 | D6 | D6 | D6 | D6 | D6 |
+| 17 | D7 | D7 | D7 | D7 | D7 | D7 | D7 | D7 | D7 | D7 |
+| 18 | CS2 | A11 | A11 | /CE+VPP | CS4 | /CE+VPP | /CE | /CE | /CE | /CE+PE |
+| 19 | A10 | A10 | A10 | VDD | CS3 | VDD | A10 | A10 | A10 | A10 |
+| 20 | CS1 | CS1 | CS1 | /OE+PE | /CS2 | /OE+PE | /OE+PE | /OE | /OE | /OE+VPP |
+| 21 | CS3 | CS2 | A12 | VBB | /CS1 | VBB | VPP | /WRITE | /WRITE | A11 |
+| 22 | A9 | A9 | A9 | GND | NC | A9 | A9 | A9 | A9 | A9 |
+| 23 | A8 | A8 | A8 | A8 | A8 | A8 | A8 | A8 | A8 | A8 |
+| 24 | VCC | VCC | VCC | VCC | VCC | VCC | VCC | VCC | VCC | VCC |
 
 ### 28-pin Package
 
@@ -176,6 +185,10 @@ There are also some other inconsistencies between types:
 | 22 | CS2 | CS2 | CS1 | CS2 | CS1 | A16 | /OE | /OE | /OE | /OE+PE | /OE | /OE+VPP |
 | 23 | A11 | A11 | A11 | A11 | A11 | A11 | A11 | A11 | A11 | A11 | A11 | A11 |
 | 24 | A9 | A9 | A9 | A9 | A9 | A9 | A9 | A9 | A9 | A9 | A9 | A9 |
+| 25 | A8 | A8 | A8 | A8 | A8 | A8 | A8 | A8 | A8 | A8 | A8 | A8 |
+| 26 | A13 | A13 | A13 | A13 | A13 | A13 | NC | NC | A13 | A13 | A13 | A13 |
+| 27 | CS3 | A14 | A14 | A14 | A14 | A14 | /PGM | /WRITE | /PGM | A14 | /WRITE | A14 |
+| 28 | VCC | VCC | VCC | VCC | VCC | VCC | VCC | VCC | VCC | VCC | VCC | VCC |
 
 ### 32-pin Package
 
@@ -205,6 +218,14 @@ There are also some other inconsistencies between types:
 | 22 | /CE | /CE | /CE | /CE | /CE | /CE | /CE+/PGM | /CE | /CE+/PGM |
 | 23 | A10 | A10 | A10 | A10 | A10 | A10 | A10 | A10 | A10 |
 | 24 | /OE | /OE | /OE | /OE | A16 | /OE | /OE | /OE | /OE+VPP |
+| 25 | A11 | A11 | A11 | A11 | A11 | A11 | A11 | A11 | A11 |
+| 26 | A9 | A9 | A9 | A9 | A9 | A9 | A9 | A9 | A9 |
+| 27 | A8 | A8 | A8 | A8 | A8 | A8 | A8 | A8 | A8 |
+| 28 | A13 | A13 | A13 | A13 | A13 | A13 | A13 | A13 | A13 |
+| 29 | A14 | A14 | A14 | A14 | A14 | A14 | A14 | A14 | A14 |
+| 30 | CS2 | NC | /WRITE | NC | NC | A17 | A17 | A17 | A17 |
+| 31 | CS1 | NC | NC | /PGM | /PGM | /PGM | A18 | /WRITE | A18 |
+| 32 | VCC | VCC | VCC | VCC | VCC | VCC | VCC | VCC | VCC |
 
 ### 40-pin Package
 
@@ -234,6 +255,22 @@ There are also some other inconsistencies between types:
 | 22 | D4 | D4 |
 | 23 | D12 | D12 |
 | 24 | D5 | D5 |
+| 25 | D13 | D13 |
+| 26 | D6 | D6 |
+| 27 | D14 | D14 |
+| 28 | D7 | D7 |
+| 29 | A0+D15 | A0+D15 |
+| 30 | GND | GND |
+| 31 | /BYTE | /BYTE+VPP |
+| 32 | A17 | A17 |
+| 33 | A16 | A16 |
+| 34 | A15 | A15 |
+| 35 | A14 | A14 |
+| 36 | A13 | A13 |
+| 37 | A12 | A12 |
+| 38 | A11 | A11 |
+| 39 | A10 | A10 |
+| 40 | A9 | A9 |
 
 ## Detailed Pinouts
 
@@ -374,16 +411,16 @@ There are also some other inconsistencies between types:
 
 **Package:** 32-pin DIP  
 **Capacity:** 131072 bytes  
-**Control:** 4 configurable CS lines  
+**Control:** 2 configurable CS lines, /CE, /OE  
 
 | Function | Pins | Notes |
 |----------|------|-------|
 | Address (A0-A16) | 12,11,10,9,8,7,6,5,27,26,23,25,4,28,29,3,2 | 17 address lines |
 | Data (D0-D7) | 13,14,15,17,18,19,20,21 | 8 data lines |
-| CE | 22 | Active low |
+| /CE | 22 | Active low |
 | CS1 | 31 | Configurable polarity |
 | CS2 | 30 | Configurable polarity |
-| OE | 24 | Active low |
+| /OE | 24 | Active low |
 | VCC | 32 | +5V |
 | GND | 16 | 0V |
 
@@ -397,8 +434,8 @@ There are also some other inconsistencies between types:
 |----------|------|-------|
 | Address (A0-A16) | 12,11,10,9,8,7,6,5,27,26,23,25,4,28,29,3,2 | 17 address lines |
 | Data (D0-D7) | 13,14,15,17,18,19,20,21 | 8 data lines |
-| CE | 22 | Active low |
-| OE | 24 | Active low |
+| /CE | 22 | Active low |
+| /OE | 24 | Active low |
 | VCC | 32 | +5V |
 | GND | 16 | 0V |
 
@@ -412,8 +449,8 @@ There are also some other inconsistencies between types:
 |----------|------|-------|
 | Address (A0-A8) | 8,7,6,5,4,3,2,1,23 | 9 address lines |
 | Data (D0-D7) | 9,10,11,13,14,15,16,17 | 8 data lines |
-| CE | 18 | Active low |
-| OE | 20 | Active low |
+| /CE | 18 | Active low |
+| /OE | 20 | Active low |
 | VPP | 18 | Low during read during read |
 | PE | 20 | Low during read during read |
 | VCC | 24 | +5V |
@@ -421,6 +458,23 @@ There are also some other inconsistencies between types:
 | VBB | 21 | -5V |
 | GND | 12 | 0V |
 | GND | 22 | 0V |
+
+### HM7641 - 512B bipolar PROM with three-state outputs and four fixed-polarity chip selects
+
+**Package:** 24-pin DIP  
+**Capacity:** 512 bytes  
+**Control:** /CS1, /CS2, CS3, CS4  
+
+| Function | Pins | Notes |
+|----------|------|-------|
+| Address (A0-A8) | 8,7,6,5,4,3,2,1,23 | 9 address lines |
+| Data (D0-D7) | 9,10,11,13,14,15,16,17 | 8 data lines |
+| /CS1 | 21 | Active low |
+| /CS2 | 20 | Active low |
+| CS3 | 19 | Active high |
+| CS4 | 18 | Active high |
+| VCC | 24 | +5V |
+| GND | 12 | 0V |
 
 ### 2708 - 1KB EPROM with multiple supply voltages
 
@@ -432,8 +486,8 @@ There are also some other inconsistencies between types:
 |----------|------|-------|
 | Address (A0-A9) | 8,7,6,5,4,3,2,1,23,22 | 10 address lines |
 | Data (D0-D7) | 9,10,11,13,14,15,16,17 | 8 data lines |
-| CE | 18 | Active low |
-| OE | 20 | Active low |
+| /CE | 18 | Active low |
+| /OE | 20 | Active low |
 | VPP | 18 | Low during read during read |
 | PE | 20 | Low during read during read |
 | VCC | 24 | +5V |
@@ -451,8 +505,8 @@ There are also some other inconsistencies between types:
 |----------|------|-------|
 | Address (A0-A10) | 8,7,6,5,4,3,2,1,23,22,19 | 11 address lines |
 | Data (D0-D7) | 9,10,11,13,14,15,16,17 | 8 data lines |
-| CE | 18 | Active low |
-| OE | 20 | Active low |
+| /CE | 18 | Active low |
+| /OE | 20 | Active low |
 | VPP | 21 | VCC during read during read |
 | PE | 20 | Low during read during read |
 | VCC | 24 | +5V |
@@ -468,9 +522,9 @@ There are also some other inconsistencies between types:
 |----------|------|-------|
 | Address (A0-A10) | 8,7,6,5,4,3,2,1,23,22,19 | 11 address lines |
 | Data (D0-D7) | 9,10,11,13,14,15,16,17 | 8 data lines |
-| CE | 18 | Active low |
-| OE | 20 | Active low |
-| WRITE | 21 | Active low |
+| /CE | 18 | Active low |
+| /OE | 20 | Active low |
+| /WRITE | 21 | Active low |
 | VCC | 24 | +5V |
 | GND | 12 | 0V |
 
@@ -484,9 +538,9 @@ There are also some other inconsistencies between types:
 |----------|------|-------|
 | Address (A0-A10) | 8,7,6,5,4,3,2,1,23,22,19 | 11 address lines |
 | Data (D0-D7) | 9,10,11,13,14,15,16,17 | 8 data lines |
-| CE | 18 | Active low |
-| OE | 20 | Active low |
-| WRITE | 21 | Active low |
+| /CE | 18 | Active low |
+| /OE | 20 | Active low |
+| /WRITE | 21 | Active low |
 | VCC | 24 | +5V |
 | GND | 12 | 0V |
 
@@ -500,8 +554,8 @@ There are also some other inconsistencies between types:
 |----------|------|-------|
 | Address (A0-A11) | 8,7,6,5,4,3,2,1,23,22,19,21 | 12 address lines |
 | Data (D0-D7) | 9,10,11,13,14,15,16,17 | 8 data lines |
-| CE | 18 | Active low |
-| OE | 20 | Active low |
+| /CE | 18 | Active low |
+| /OE | 20 | Active low |
 | VPP | 20 | Acts as /OE during read |
 | PE | 18 | Low during read during read |
 | VCC | 24 | +5V |
@@ -517,8 +571,8 @@ There are also some other inconsistencies between types:
 |----------|------|-------|
 | Address (A0-A12) | 10,9,8,7,6,5,4,3,25,24,21,23,2 | 13 address lines |
 | Data (D0-D7) | 11,12,13,15,16,17,18,19 | 8 data lines |
-| CE | 20 | Active low |
-| OE | 22 | Active low |
+| /CE | 20 | Active low |
+| /OE | 22 | Active low |
 | VPP | 1 | VCC during read during read |
 | /PGM | 27 | High during read during read |
 | VCC | 28 | +5V |
@@ -534,10 +588,10 @@ There are also some other inconsistencies between types:
 |----------|------|-------|
 | Address (A0-A12) | 10,9,8,7,6,5,4,3,25,24,21,23,2 | 13 address lines |
 | Data (D0-D7) | 11,12,13,15,16,17,18,19 | 8 data lines |
-| BUSY | 1 | Active low |
-| CE | 20 | Active low |
-| OE | 22 | Active low |
-| WRITE | 27 | Active low |
+| /BUSY | 1 | Active low |
+| /CE | 20 | Active low |
+| /OE | 22 | Active low |
+| /WRITE | 27 | Active low |
 | VCC | 28 | +5V |
 | GND | 14 | 0V |
 
@@ -551,8 +605,8 @@ There are also some other inconsistencies between types:
 |----------|------|-------|
 | Address (A0-A13) | 10,9,8,7,6,5,4,3,25,24,21,23,2,26 | 14 address lines |
 | Data (D0-D7) | 11,12,13,15,16,17,18,19 | 8 data lines |
-| CE | 20 | Active low |
-| OE | 22 | Active low |
+| /CE | 20 | Active low |
+| /OE | 22 | Active low |
 | VPP | 1 | VCC during read during read |
 | /PGM | 27 | High during read during read |
 | VCC | 28 | +5V |
@@ -568,8 +622,8 @@ There are also some other inconsistencies between types:
 |----------|------|-------|
 | Address (A0-A14) | 10,9,8,7,6,5,4,3,25,24,21,23,2,26,27 | 15 address lines |
 | Data (D0-D7) | 11,12,13,15,16,17,18,19 | 8 data lines |
-| CE | 20 | Active low |
-| OE | 22 | Active low |
+| /CE | 20 | Active low |
+| /OE | 22 | Active low |
 | VPP | 1 | VCC during read during read |
 | PE | 22 | Low during read during read |
 | VCC | 28 | +5V |
@@ -585,9 +639,9 @@ There are also some other inconsistencies between types:
 |----------|------|-------|
 | Address (A0-A14) | 10,9,8,7,6,5,4,3,25,24,21,23,2,26,1 | 15 address lines |
 | Data (D0-D7) | 11,12,13,15,16,17,18,19 | 8 data lines |
-| CE | 20 | Active low |
-| OE | 22 | Active low |
-| WRITE | 27 | Active low |
+| /CE | 20 | Active low |
+| /OE | 22 | Active low |
+| /WRITE | 27 | Active low |
 | VCC | 28 | +5V |
 | GND | 14 | 0V |
 
@@ -601,8 +655,8 @@ There are also some other inconsistencies between types:
 |----------|------|-------|
 | Address (A0-A15) | 10,9,8,7,6,5,4,3,25,24,21,23,2,26,27,1 | 16 address lines |
 | Data (D0-D7) | 11,12,13,15,16,17,18,19 | 8 data lines |
-| CE | 20 | Active low |
-| OE | 22 | Active low |
+| /CE | 20 | Active low |
+| /OE | 22 | Active low |
 | VPP | 22 | VCC during read during read |
 | PE | 20 | Low during read during read |
 | VCC | 28 | +5V |
@@ -618,9 +672,9 @@ There are also some other inconsistencies between types:
 |----------|------|-------|
 | Address (A0-A15) | 12,11,10,9,8,7,6,5,27,26,23,25,4,28,29,3 | 16 address lines |
 | Data (D0-D7) | 13,14,15,17,18,19,20,21 | 8 data lines |
-| CE | 22 | Active low |
-| OE | 24 | Active low |
-| WRITE | 30 | Active low |
+| /CE | 22 | Active low |
+| /OE | 24 | Active low |
+| /WRITE | 30 | Active low |
 | VCC | 32 | +5V |
 | GND | 16 | 0V |
 
@@ -634,10 +688,10 @@ There are also some other inconsistencies between types:
 |----------|------|-------|
 | Address (A0-A16) | 12,11,10,9,8,7,6,5,27,26,23,25,4,28,29,3,2 | 17 address lines |
 | Data (D0-D7) | 13,14,15,17,18,19,20,21 | 8 data lines |
-| CE | 22 | Active low |
-| OE | 24 | Active low |
-| VPP | 1 | x during read |
-| /PGM | 31 | x during read |
+| /CE | 22 | Active low |
+| /OE | 24 | Active low |
+| VPP | 1 | Don't care during read during read |
+| /PGM | 31 | Don't care during read during read |
 | VCC | 32 | +5V |
 | GND | 16 | 0V |
 
@@ -651,10 +705,10 @@ There are also some other inconsistencies between types:
 |----------|------|-------|
 | Address (A0-A16) | 12,11,10,9,8,7,6,5,27,26,23,25,4,28,29,3,24 | 17 address lines |
 | Data (D0-D7) | 13,14,15,17,18,19,20,21 | 8 data lines |
-| CE | 22 | Active low |
-| OE | 2 | Active low |
-| VPP | 1 | x during read |
-| /PGM | 31 | x during read |
+| /CE | 22 | Active low |
+| /OE | 2 | Active low |
+| VPP | 1 | Don't care during read during read |
+| /PGM | 31 | Don't care during read during read |
 | VCC | 32 | +5V |
 | GND | 16 | 0V |
 
@@ -668,10 +722,10 @@ There are also some other inconsistencies between types:
 |----------|------|-------|
 | Address (A0-A17) | 12,11,10,9,8,7,6,5,27,26,23,25,4,28,29,3,2,30 | 18 address lines |
 | Data (D0-D7) | 13,14,15,17,18,19,20,21 | 8 data lines |
-| CE | 22 | Active low |
-| OE | 24 | Active low |
-| VPP | 1 | x during read |
-| /PGM | 31 | x during read |
+| /CE | 22 | Active low |
+| /OE | 24 | Active low |
+| VPP | 1 | Don't care during read during read |
+| /PGM | 31 | Don't care during read during read |
 | VCC | 32 | +5V |
 | GND | 16 | 0V |
 
@@ -684,10 +738,10 @@ There are also some other inconsistencies between types:
 | Function | Pins | Notes |
 |----------|------|-------|
 | Address (A0-A17) | 29,9,8,7,6,5,4,3,2,40,39,38,37,36,35,34,33,32 | 18 address lines |
-| Data (D0-D7) | 13,15,17,19,22,24,26,28,14,16,18,20,23,25,27,29 | 8 data lines |
-| BYTE | 31 | Active low |
-| CE | 10 | Active low |
-| OE | 12 | Active low |
+| Data (D0-D15) | 13,15,17,19,22,24,26,28,14,16,18,20,23,25,27,29 | 16 data lines |
+| /BYTE | 31 | Active low |
+| /CE | 10 | Active low |
+| /OE | 12 | Active low |
 | VCC | 21 | +5V |
 | GND | 11 | 0V |
 | GND | 30 | 0V |
@@ -702,9 +756,9 @@ There are also some other inconsistencies between types:
 |----------|------|-------|
 | Address (A0-A18) | 12,11,10,9,8,7,6,5,27,26,23,25,4,28,29,3,2,30,31 | 19 address lines |
 | Data (D0-D7) | 13,14,15,17,18,19,20,21 | 8 data lines |
-| CE | 22 | Active low |
-| OE | 24 | Active low |
-| VPP | 1 | x during read |
+| /CE | 22 | Active low |
+| /OE | 24 | Active low |
+| VPP | 1 | Don't care during read during read |
 | /PGM | 22 | Acts as /OE during read |
 | VCC | 32 | +5V |
 | GND | 16 | 0V |
@@ -718,11 +772,11 @@ There are also some other inconsistencies between types:
 | Function | Pins | Notes |
 |----------|------|-------|
 | Address (A0-A18) | 29,9,8,7,6,5,4,3,2,40,39,38,37,36,35,34,33,32,1 | 19 address lines |
-| Data (D0-D7) | 13,15,17,19,22,24,26,28,14,16,18,20,23,25,27,29 | 8 data lines |
-| BYTE | 31 | Active low |
-| CE | 10 | Active low |
-| OE | 12 | Active low |
-| VPP | 31 | word_size during read |
+| Data (D0-D15) | 13,15,17,19,22,24,26,28,14,16,18,20,23,25,27,29 | 16 data lines |
+| /BYTE | 31 | Active low |
+| /CE | 10 | Active low |
+| /OE | 12 | Active low |
+| VPP | 31 | Selects word size during read during read |
 | /PGM | 10 | Acts as /OE during read |
 | VCC | 21 | +5V |
 | GND | 11 | 0V |
@@ -738,9 +792,9 @@ There are also some other inconsistencies between types:
 |----------|------|-------|
 | Address (A0-A18) | 12,11,10,9,8,7,6,5,27,26,23,25,4,28,29,3,2,30,1 | 19 address lines |
 | Data (D0-D7) | 13,14,15,17,18,19,20,21 | 8 data lines |
-| CE | 22 | Active low |
-| OE | 24 | Active low |
-| WRITE | 31 | Active low |
+| /CE | 22 | Active low |
+| /OE | 24 | Active low |
+| /WRITE | 31 | Active low |
 | VCC | 32 | +5V |
 | GND | 16 | 0V |
 
@@ -754,8 +808,8 @@ There are also some other inconsistencies between types:
 |----------|------|-------|
 | Address (A0-A19) | 12,11,10,9,8,7,6,5,27,26,23,25,4,28,29,3,2,30,31,1 | 20 address lines |
 | Data (D0-D7) | 13,14,15,17,18,19,20,21 | 8 data lines |
-| CE | 22 | Active low |
-| OE | 24 | Active low |
+| /CE | 22 | Active low |
+| /OE | 24 | Active low |
 | VPP | 24 | Acts as /OE during read |
 | /PGM | 22 | Acts as /OE during read |
 | VCC | 32 | +5V |

@@ -385,7 +385,7 @@ mod tests {
     /// low → `gpio_override_config` carries two `GpioOverLow` entries.
     #[test]
     fn fire24a_2364_single_full_config() {
-        let cs_config = CsConfig::new(Some(CsLogic::ActiveLow), None, None);
+        let cs_config = CsConfig::new(Some(CsLogic::ActiveLow), None, None, None);
 
         let ctx = SlotContext {
             board: Board::Fire24A,
@@ -462,7 +462,7 @@ mod tests {
     /// 0 (bank 0, default) when it is not.
     #[test]
     fn fire24a_2364_banked_2chip_has_x_override() {
-        let cs_config = CsConfig::new(Some(CsLogic::ActiveLow), None, None);
+        let cs_config = CsConfig::new(Some(CsLogic::ActiveLow), None, None, None);
 
         let ctx = SlotContext {
             board: Board::Fire24A,
@@ -522,7 +522,7 @@ mod tests {
     /// `cs_data_layout::tests`.
     #[test]
     fn fire28a_23ql384_single_full_config_alg_cs2() {
-        let cs_config = CsConfig::new(Some(CsLogic::ActiveLow), None, None);
+        let cs_config = CsConfig::new(Some(CsLogic::ActiveLow), None, None, None);
 
         let ctx = SlotContext {
             board: Board::Fire28A,
@@ -716,7 +716,7 @@ mod tests {
     /// the simplest possible combination.
     #[test]
     fn combined_alg_preference_fire24a_2364() {
-        let cs_config = CsConfig::new(Some(CsLogic::ActiveLow), None, None);
+        let cs_config = CsConfig::new(Some(CsLogic::ActiveLow), None, None, None);
 
         let ctx = SlotContext {
             board: Board::Fire24A,

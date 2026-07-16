@@ -438,7 +438,7 @@ mod tests {
     }
 
     fn chip_with_typed_image(filename: &str, chip_type: &ChipType, image: Vec<u8>) -> Chip {
-        let cs_config = CsConfig::new(Some(CsLogic::ActiveLow), None, None);
+        let cs_config = CsConfig::new(Some(CsLogic::ActiveLow), None, None, None);
         Chip::from_raw_rom_image(
             0,
             filename.to_string(),

@@ -70,6 +70,7 @@ pub enum SelectRole {
     Cs1,
     Cs2,
     Cs3,
+    Cs4,
     /// Fixed active-low chip-enable (27xx-style EPROMs).
     Ce,
     /// Fixed active-low output-enable (27xx-style EPROMs).
@@ -120,6 +121,7 @@ fn control_line_kind_to_select_role(kind: ControlLineKind) -> SelectRole {
         ControlLineKind::Cs1 => SelectRole::Cs1,
         ControlLineKind::Cs2 => SelectRole::Cs2,
         ControlLineKind::Cs3 => SelectRole::Cs3,
+        ControlLineKind::Cs4 => SelectRole::Cs4,
     }
 }
 
@@ -215,6 +217,12 @@ fn select_phys_pins(
                 let logic = control_line_logic("cs3", cs_config);
                 if active(logic) {
                     pins.push((SelectRole::Cs3, line.pin));
+                }
+            }
+            "cs4" => {
+                let logic = control_line_logic("cs4", cs_config);
+                if active(logic) {
+                    pins.push((SelectRole::Cs4, line.pin));
                 }
             }
             _ => {}
@@ -655,7 +663,7 @@ mod tests {
 
     #[test]
     fn fire24a_2364_single() {
-        let cs_config = CsConfig::new(Some(CsLogic::ActiveLow), None, None);
+        let cs_config = CsConfig::new(Some(CsLogic::ActiveLow), None, None, None);
         let ctx = ctx_single(Board::Fire24A, ChipType::Chip2364, cs_config);
 
         let layout = derive_cs_data_layout(&ctx, None).expect("layout derivation should succeed");
@@ -687,6 +695,7 @@ mod tests {
             Some(CsLogic::ActiveLow),
             Some(CsLogic::Ignore),
             Some(CsLogic::Ignore),
+            None,
         );
         let ctx = ctx_single(Board::Fire24A, ChipType::Chip2316, cs_config);
 
@@ -716,6 +725,7 @@ mod tests {
             Some(CsLogic::ActiveLow),
             Some(CsLogic::ActiveLow),
             Some(CsLogic::Ignore),
+            None,
         );
         let ctx = ctx_single(Board::Fire24A, ChipType::Chip2316, cs_config);
 
@@ -745,7 +755,7 @@ mod tests {
     /// 23QL384 without addr_pin_gpios returns MissingAddrPinGpios.
     #[test]
     fn missing_addr_pin_gpios_for_alg_cs2_chip_errors() {
-        let cs_config = CsConfig::new(Some(CsLogic::ActiveLow), None, None);
+        let cs_config = CsConfig::new(Some(CsLogic::ActiveLow), None, None, None);
         let ctx = ctx_single(Board::Fire28A, ChipType::Chip23QL384, cs_config);
 
         let result = derive_cs_data_layout(&ctx, None);
@@ -764,7 +774,7 @@ mod tests {
     /// for the 23QL384's A14/A15 pins; fill in once that mapping is known.
     #[test]
     fn fire28a_23ql384_single_alg_cs2_populated() {
-        let cs_config = CsConfig::new(Some(CsLogic::ActiveLow), None, None);
+        let cs_config = CsConfig::new(Some(CsLogic::ActiveLow), None, None, None);
         let ctx = ctx_single(Board::Fire28A, ChipType::Chip23QL384, cs_config);
 
         // Derive addr_layout first to get the resolved addr_pin_gpios.
@@ -792,7 +802,7 @@ mod tests {
     /// supported on this board for 2364 chips.
     #[test]
     fn fire24a_2364_multi_2chip_cs1_primary() {
-        let cs_config = CsConfig::new(Some(CsLogic::ActiveLow), None, None);
+        let cs_config = CsConfig::new(Some(CsLogic::ActiveLow), None, None, None);
         let mcc = MultiChipCsConfig {
             per_chip_select: ControlLineKind::Cs1,
             commoned_lines: alloc::vec![],
@@ -880,7 +890,7 @@ mod tests {
     /// CS1 at GPIO 10, X1 at GPIO 9 — contiguous, AlgCs0.
     #[test]
     fn fire24e_2364_multi_2chip_cs1_primary() {
-        let cs_config = CsConfig::new(Some(CsLogic::ActiveLow), None, None);
+        let cs_config = CsConfig::new(Some(CsLogic::ActiveLow), None, None, None);
         let mcc = MultiChipCsConfig {
             per_chip_select: ControlLineKind::Cs1,
             commoned_lines: alloc::vec![],
@@ -917,7 +927,7 @@ mod tests {
     /// CS1 at GPIO 10, X1 at GPIO 9, X2 at GPIO 8 — all contiguous, AlgCs0.
     #[test]
     fn fire24e_2364_multi_3chip_cs1_primary() {
-        let cs_config = CsConfig::new(Some(CsLogic::ActiveLow), None, None);
+        let cs_config = CsConfig::new(Some(CsLogic::ActiveLow), None, None, None);
         let mcc = MultiChipCsConfig {
             per_chip_select: ControlLineKind::Cs1,
             commoned_lines: alloc::vec![],
@@ -1051,7 +1061,7 @@ mod tests {
     /// X1 resolves to GPIO 9 (not 28) as the contiguous candidate.
     #[test]
     fn fire28c_23128_multi_2chip_cs1_primary() {
-        let cs_config = CsConfig::new(Some(CsLogic::ActiveLow), None, None);
+        let cs_config = CsConfig::new(Some(CsLogic::ActiveLow), None, None, None);
         let mcc = MultiChipCsConfig {
             per_chip_select: ControlLineKind::Cs1,
             commoned_lines: alloc::vec![ControlLineKind::Cs2, ControlLineKind::Cs3],
@@ -1088,7 +1098,7 @@ mod tests {
     /// CS1=10, X1=9, X2=8 — all contiguous.
     #[test]
     fn fire28c_23128_multi_3chip_cs1_primary() {
-        let cs_config = CsConfig::new(Some(CsLogic::ActiveLow), None, None);
+        let cs_config = CsConfig::new(Some(CsLogic::ActiveLow), None, None, None);
         let mcc = MultiChipCsConfig {
             per_chip_select: ControlLineKind::Cs1,
             commoned_lines: alloc::vec![ControlLineKind::Cs2, ControlLineKind::Cs3],
@@ -1277,6 +1287,7 @@ mod tests {
             Some(CsLogic::ActiveLow),
             Some(CsLogic::Ignore),
             Some(CsLogic::Ignore),
+            None
         );
         let mcc = MultiChipCsConfig {
             per_chip_select: ControlLineKind::Cs1,
@@ -1322,6 +1333,7 @@ mod tests {
             Some(CsLogic::ActiveLow),
             Some(CsLogic::Ignore),
             Some(CsLogic::Ignore),
+            None
         );
         let mcc = MultiChipCsConfig {
             per_chip_select: ControlLineKind::Cs1,
@@ -1379,6 +1391,7 @@ mod tests {
             Some(CsLogic::Ignore),
             Some(CsLogic::Ignore),
             Some(CsLogic::ActiveLow),
+            None
         );
         let mcc = MultiChipCsConfig {
             per_chip_select: ControlLineKind::Cs3,

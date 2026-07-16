@@ -139,6 +139,17 @@
                         }
                     ]
                 },
+                "cs4": {
+                    "description": "Optional Chip Select 4 logic - only valid for Chip Types that have CS4",
+                    "anyOf": [
+                        {
+                            "$ref": "#/$defs/CsLogic"
+                        },
+                        {
+                            "type": "null"
+                        }
+                    ]
+                },
                 "description": {
                     "description": "Optional description for this configuration.  This is included in the\ndescription output by the builder.",
                     "type": [
@@ -299,6 +310,11 @@
                     "description": "512B EPROM with multiple supply voltages - 512 bytes, 24-pin package",
                     "type": "string",
                     "const": "2704"
+                },
+                {
+                    "description": "512B bipolar PROM with three-state outputs and four fixed-polarity chip selects - 512 bytes, 24-pin package",
+                    "type": "string",
+                    "const": "HM7641"
                 },
                 {
                     "description": "1KB EPROM with multiple supply voltages - 1024 bytes, 24-pin package",

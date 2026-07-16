@@ -13,7 +13,7 @@ use onerom_config::chip::{CHIP_TYPE_NAMES_PLUGINS, ChipFunction, ChipType, Contr
 use onerom_config::hw::Board;
 use onerom_gen::{
     ChipConfig, ChipSetConfig, ChipSetType, Config, CsLogic, FireConfig, FireCpuFreq, FireVreg,
-    FirmwareConfig, LedConfig, SizeHandling,
+    FirmwareConfig, LedConfig, SizeHandling, requires_half_select_cs1,
 };
 
 const DEFAULT_CONFIG_DESCRIPTION: &str = "Created by the One ROM CLI";
@@ -105,6 +105,7 @@ pub struct SlotSpec {
     pub cs1: Option<CsLogic>,
     pub cs2: Option<CsLogic>,
     pub cs3: Option<CsLogic>,
+    pub cs4: Option<CsLogic>,
     size_handling: Option<SizeHandling>,
     pub cpu_freq: Option<FireCpuFreq>,
     pub vreg: Option<FireVreg>,
@@ -241,6 +242,7 @@ const SLOT_KEYS: &[&str] = &[
     "cs1",
     "cs2",
     "cs3",
+    "cs4",
     "size_handling",
     "size",
     "cpu-freq",
@@ -267,6 +269,7 @@ fn parse_slot(
     let mut cs1 = None;
     let mut cs2 = None;
     let mut cs3 = None;
+    let mut cs4 = None;
     let mut size_handling = None;
     let mut cpu_freq = None;
     let mut vreg = None;
@@ -297,6 +300,7 @@ fn parse_slot(
             "cs1" => cs1 = Some(parse_cs_logic(slot, key, value)?),
             "cs2" => cs2 = Some(parse_cs_logic(slot, key, value)?),
             "cs3" => cs3 = Some(parse_cs_logic(slot, key, value)?),
+            "cs4" => cs4 = Some(parse_cs_logic(slot, key, value)?),
             "size_handling" | "size" => {
                 size_handling = Some(parse_size_handling(slot, key, value)?)
             }
@@ -349,7 +353,7 @@ fn parse_slot(
         ));
     }
 
-    validate_cs_lines(slot, &chip_type, cs1, cs2, cs3)?;
+    validate_cs_lines(slot, &chip_type, cs1, cs2, cs3, cs4)?;
 
     if force_16bit.is_some() && board.chip_pins() != 40 {
         return Err(Error::InvalidArgument(
@@ -365,6 +369,7 @@ fn parse_slot(
         cs1,
         cs2,
         cs3,
+        cs4,
         size_handling,
         cpu_freq,
         vreg,
@@ -373,30 +378,36 @@ fn parse_slot(
     })
 }
 
-/// Validate that CS lines are provided for all configurable control lines,
-/// and not provided for fixed active-low lines.
+/// Validate the CS lines supplied against the chip type's control lines.
+///
+/// - A `Configurable` line's polarity is mask-programmed at manufacture, so
+///   the user must state it.
+/// - A fixed line's polarity is set by the silicon, so the user must not
+///   state it. `ignore` is not a polarity - it says this One ROM does not
+///   monitor the line - so it stays permitted here and is policed by
+///   `check_cs_v2`'s `allow_cs_ignore` rules.
+/// - A line the chip type does not have must not be specified, except `cs1`
+///   on a chip needing a half-select (see `requires_half_select_cs1`), where
+///   `cs1` names the excess top address line rather than a pin. `check_cs_v2`
+///   requires it there.
 fn validate_cs_lines(
     slot: &str,
     chip_type: &ChipType,
     cs1: Option<CsLogic>,
     cs2: Option<CsLogic>,
     cs3: Option<CsLogic>,
+    cs4: Option<CsLogic>,
 ) -> Result<(), Error> {
-    let cs_values = [
-        ("cs1", cs1.is_some()),
-        ("cs2", cs2.is_some()),
-        ("cs3", cs3.is_some()),
-    ];
+    let cs_values = [("cs1", cs1), ("cs2", cs2), ("cs3", cs3), ("cs4", cs4)];
 
     for line in chip_type.control_lines() {
         let supplied = cs_values
             .iter()
             .find(|(name, _)| *name == line.name)
-            .map(|(_, v)| *v)
-            .unwrap_or(false);
+            .and_then(|(_, v)| *v);
 
         match line.line_type {
-            ControlLineType::Configurable if !supplied => {
+            ControlLineType::Configurable if supplied.is_none() => {
                 return Err(Error::InvalidArgument(
                     "--slot".to_string(),
                     format!(
@@ -406,12 +417,19 @@ fn validate_cs_lines(
                     ),
                 ));
             }
-            ControlLineType::FixedActiveLow if supplied => {
+            ControlLineType::FixedActiveLow | ControlLineType::FixedActiveHigh
+                if matches!(supplied, Some(logic) if logic != CsLogic::Ignore) =>
+            {
                 return Err(Error::InvalidArgument(
                     "--slot".to_string(),
                     format!(
-                        "Chip type {} has fixed active-low {}, do not specify it\n    --slot '{slot}'",
+                        "Chip type {} has fixed {} {}, do not specify it\n    --slot '{slot}'",
                         chip_type.name(),
+                        if line.line_type == ControlLineType::FixedActiveHigh {
+                            "active-high"
+                        } else {
+                            "active-low"
+                        },
                         line.name
                     ),
                 ));
@@ -420,8 +438,14 @@ fn validate_cs_lines(
         }
     }
 
-    for (cs_name, has_val) in &cs_values {
-        if *has_val && !chip_type.control_lines().iter().any(|l| l.name == *cs_name) {
+    for (cs_name, user) in &cs_values {
+        // On an oversized chip, cs1 names the excess top address line acting
+        // as a half-select, not a control line - its absence from
+        // control_lines() is expected, and check_cs_v2 requires it.
+        if *cs_name == "cs1" && requires_half_select_cs1(chip_type) {
+            continue;
+        }
+        if user.is_some() && !chip_type.control_lines().iter().any(|l| l.name == *cs_name) {
             return Err(Error::InvalidArgument(
                 "--slot".to_string(),
                 format!(
@@ -467,6 +491,7 @@ fn slot_to_chip_config(slot: &SlotSpec) -> ChipConfig {
         cs1: slot.cs1,
         cs2: slot.cs2,
         cs3: slot.cs3,
+        cs4: slot.cs4,
         ce: None,
         oe: None,
         size_handling: slot.size_handling.clone().unwrap_or_default(),

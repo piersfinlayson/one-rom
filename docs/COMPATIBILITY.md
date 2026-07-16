@@ -26,6 +26,7 @@ Some greater pin count ROMs can be emulated by a smaller One ROM, provided the R
 | Chip | ROM size | 24A | 24B | 24C | 24D | 24E | 24F |
 |:---|---:|---:|---:|---:|---:|---:|---:|
 | 2704 | 512B | 2KB | 2KB | 512B | 512B | 512B | 512B |
+| HM7641 | 512B | - | - | 512B | 512B | 512B | 512B |
 | 2708 | 1KB | 4KB | 4KB | 1KB | 1KB | 1KB | 1KB |
 | 2316 | 2KB | 32KB | 32KB | 2KB | 2KB | 2KB | 2KB |
 | 2716 | 2KB | 32KB | 32KB | 2KB | 2KB | 2KB | 2KB |
@@ -299,6 +300,7 @@ Full chip list for each board. Where a particular ROM type goes by multiple iden
 | Chip | ROM size | Image size | Fit |
 |:---|---:|---:|:---|
 | 2704 | 512B | 512B | native |
+| HM7641 | 512B | 512B | native |
 | 2708 | 1KB | 1KB | native |
 | 2316 | 2KB | 2KB | native |
 | 2716 | 2KB | 2KB | native |
@@ -334,6 +336,7 @@ Full chip list for each board. Where a particular ROM type goes by multiple iden
 | Chip | ROM size | Image size | Fit |
 |:---|---:|---:|:---|
 | 2704 | 512B | 512B | native |
+| HM7641 | 512B | 512B | native |
 | 2708 | 1KB | 1KB | native |
 | 2316 | 2KB | 2KB | native |
 | 2716 | 2KB | 2KB | native |
@@ -369,6 +372,7 @@ Full chip list for each board. Where a particular ROM type goes by multiple iden
 | Chip | ROM size | Image size | Fit |
 |:---|---:|---:|:---|
 | 2704 | 512B | 512B | native |
+| HM7641 | 512B | 512B | native |
 | 2708 | 1KB | 1KB | native |
 | 2316 | 2KB | 2KB | native |
 | 2716 | 2KB | 2KB | native |
@@ -404,6 +408,7 @@ Full chip list for each board. Where a particular ROM type goes by multiple iden
 | Chip | ROM size | Image size | Fit |
 |:---|---:|---:|:---|
 | 2704 | 512B | 512B | native |
+| HM7641 | 512B | 512B | native |
 | 2708 | 1KB | 1KB | native |
 | 2316 | 2KB | 2KB | native |
 | 2716 | 2KB | 2KB | native |

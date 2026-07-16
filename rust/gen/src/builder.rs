@@ -27,6 +27,7 @@ use crate::{
     MIN_SUPPORTED_FIRMWARE_VERSION_V2, Metadata, SUPPORTED_CHIP_TYPES_V1, SUPPORTED_CHIP_TYPES_V2,
     UNSUPPORTED_FIRMWARE_VERSIONS_V1, UNSUPPORTED_FIRMWARE_VERSIONS_V2,
 };
+use crate::image::requires_half_select_cs1;
 
 /// Main Builder object
 ///
@@ -895,10 +896,13 @@ pub(crate) fn check_cs_v1(config: &Config) -> Result<()> {
     Ok(())
 }
 
+
 /// V2 CS/CE/OE validation.
 ///
 /// Handles:
 /// - ce/oe override fields (only valid for chip types that have those lines)
+/// - CS lines against the chip type: configurable lines must be specified,
+///   fixed lines must not have their polarity stated
 /// - allow_cs_ignore flag and the ignore permission rules:
 ///   (a) chips[1+] in a multi-ROM set — implicit free pass
 ///   (b) lines with allow_ignore in chip_types.json — implicit free pass
@@ -906,20 +910,20 @@ pub(crate) fn check_cs_v1(config: &Config) -> Result<()> {
 /// - Polarity consistency across chips in multi/banked sets
 pub(crate) fn check_cs_v2(config: &Config) -> Result<()> {
     use onerom_config::chip::ControlLineType;
-
+ 
     for (set_id, set) in config.chip_sets.iter().enumerate() {
         // Plugin sets have no CS lines — skip
         if set.chips.iter().all(|c| c.chip_type.is_plugin()) {
             continue;
         }
-
+ 
         for (chip_idx, chip) in set.chips.iter().enumerate() {
             if chip.chip_type.is_plugin() {
                 continue;
             }
-
+ 
             let is_multi_secondary = set.set_type == ChipSetType::Multi && chip_idx > 0;
-
+ 
             // ---- ce/oe fields only valid for chip types that have those lines ----
             let has_ce = chip
                 .chip_type
@@ -931,7 +935,7 @@ pub(crate) fn check_cs_v2(config: &Config) -> Result<()> {
                 .control_lines()
                 .iter()
                 .any(|l| l.name == "oe");
-
+ 
             if chip.ce.is_some() && !has_ce {
                 return Err(Error::InvalidConfig {
                     error: format!(
@@ -952,7 +956,7 @@ pub(crate) fn check_cs_v2(config: &Config) -> Result<()> {
                     ),
                 });
             }
-
+ 
             // ---- Both CE and OE may not both be Ignore ----
             let ce_logic = chip.ce.unwrap_or(CsLogic::ActiveLow);
             let oe_logic = chip.oe.unwrap_or(CsLogic::ActiveLow);
@@ -967,89 +971,98 @@ pub(crate) fn check_cs_v2(config: &Config) -> Result<()> {
                     ),
                 });
             }
-
-            // ---- Validate configurable CS lines (cs1/cs2/cs3) ----
-            let has_cs2 = chip
-                .chip_type
-                .control_lines()
-                .iter()
-                .any(|l| l.name == "cs2");
-            let has_cs3 = chip
-                .chip_type
-                .control_lines()
-                .iter()
-                .any(|l| l.name == "cs3");
-
-            if chip.cs2.is_some() && !has_cs2 {
-                return Err(Error::InvalidConfig {
-                    error: format!(
-                        "CS2 specified for chip type {} which does not use CS2 (set {}, chip {})",
-                        chip.chip_type.name(),
-                        set_id,
-                        chip_idx
-                    ),
-                });
-            }
-            if chip.cs3.is_some() && !has_cs3 {
-                return Err(Error::InvalidConfig {
-                    error: format!(
-                        "CS3 specified for chip type {} which does not use CS3 (set {}, chip {})",
-                        chip.chip_type.name(),
-                        set_id,
-                        chip_idx
-                    ),
-                });
-            }
-
-            // ---- Required configurable CS lines must all be specified ----
-            let mut configurable_lines: BTreeSet<&str> = chip
-                .chip_type
-                .control_lines()
-                .iter()
-                .filter(|l| {
-                    l.line_type == ControlLineType::Configurable
-                        && matches!(l.name, "cs1" | "cs2" | "cs3")
-                })
-                .map(|l| l.name)
-                .collect();
-
-            // 27C080 has no configurable CS lines in its chip definition,
-            // but cs1 is used as the A19 excess-address half-select: one
-            // One ROM serves the lower 512KB (active_low), another serves
-            // the upper 512KB (active_high). Require cs1 explicitly here,
-            // matching the V1 special case in check_cs_v1.
-            if chip.chip_type == ChipType::Chip27C080 {
-                configurable_lines.insert("cs1");
-            }
-
-            let specified_cs: BTreeSet<&str> = {
-                let mut s = BTreeSet::new();
-                if chip.cs1.is_some() {
-                    s.insert("cs1");
+ 
+            // ---- Validate each CS line against the chip type ----
+            //
+            // A CS line's polarity is either mask-programmed at manufacture
+            // (Configurable — the user must state it, there is no default) or
+            // fixed by the silicon (FixedActiveLow/FixedActiveHigh — the user
+            // must not state it). `Ignore` is not a polarity: it says this One
+            // ROM does not monitor the line, so it remains available on fixed
+            // lines and is policed by the allow_cs_ignore rules below.
+            //
+            // A chip whose address space exceeds MAX_IMAGE_SIZE has no cs1
+            // control line, but requires cs1 to select which half of it this
+            // One ROM serves - cs1 there names the excess top address line,
+            // not a pin. Derived from the chip type's address line count
+            // rather than named explicitly, so any future oversized chip type
+            // works without touching this. See `requires_half_select_cs1`.
+            let half_select_cs1 = requires_half_select_cs1(&chip.chip_type);
+            let cs_values = [
+                ("cs1", chip.cs1),
+                ("cs2", chip.cs2),
+                ("cs3", chip.cs3),
+                ("cs4", chip.cs4),
+            ];
+ 
+            for (name, user) in cs_values {
+                let spec = chip
+                    .chip_type
+                    .control_lines()
+                    .iter()
+                    .find(|l| l.name == name);
+                let virtual_cs1 = half_select_cs1 && name == "cs1";
+ 
+                match (spec, user) {
+                    // Line the chip doesn't have.
+                    (None, Some(_)) if !virtual_cs1 => {
+                        return Err(Error::InvalidConfig {
+                            error: format!(
+                                "{} specified for chip type {} which does not use it \
+                                 (set {}, chip {})",
+                                name.to_uppercase(),
+                                chip.chip_type.name(),
+                                set_id,
+                                chip_idx
+                            ),
+                        });
+                    }
+                    // Oversized chip's half-select.
+                    (None, None) if virtual_cs1 => {
+                        return Err(Error::InvalidConfig {
+                            error: format!(
+                                "Chip type {} requires cs1 (the half-select) to be \
+                                 specified (set {}, chip {})",
+                                chip.chip_type.name(),
+                                set_id,
+                                chip_idx
+                            ),
+                        });
+                    }
+                    // Configurable polarity: the user must state it.
+                    (Some(s), None) if s.line_type == ControlLineType::Configurable => {
+                        return Err(Error::InvalidConfig {
+                            error: format!(
+                                "Chip type {} requires configurable CS line {} to be \
+                                 specified (set {}, chip {})",
+                                chip.chip_type.name(),
+                                name,
+                                set_id,
+                                chip_idx
+                            ),
+                        });
+                    }
+                    // Fixed polarity: the user must not state it.
+                    (Some(s), Some(logic))
+                        if s.line_type != ControlLineType::Configurable
+                            && logic != CsLogic::Ignore =>
+                    {
+                        return Err(Error::InvalidConfig {
+                            error: format!(
+                                "{} polarity is fixed by chip type {} and cannot be \
+                                 configured; only 'ignore' may be specified \
+                                 (set {}, chip {})",
+                                name.to_uppercase(),
+                                chip.chip_type.name(),
+                                set_id,
+                                chip_idx
+                            ),
+                        });
+                    }
+                    _ => {}
                 }
-                if chip.cs2.is_some() {
-                    s.insert("cs2");
-                }
-                if chip.cs3.is_some() {
-                    s.insert("cs3");
-                }
-                s
-            };
-
-            if configurable_lines != specified_cs {
-                return Err(Error::InvalidConfig {
-                    error: format!(
-                        "Chip type {} requires configurable CS lines {:?}, but {:?} were \
-                         specified (set {}, chip {})",
-                        chip.chip_type.name(),
-                        configurable_lines,
-                        specified_cs,
-                        set_id,
-                        chip_idx
-                    ),
-                });
             }
-
+ 
             // ---- Ignore permission check ----
             //
             // Ignore is implicitly permitted:
@@ -1091,15 +1104,11 @@ pub(crate) fn check_cs_v2(config: &Config) -> Result<()> {
                     ),
                 })
             };
-
-            if let Some(logic) = chip.cs1 {
-                check_ignore("cs1", logic)?;
-            }
-            if let Some(logic) = chip.cs2 {
-                check_ignore("cs2", logic)?;
-            }
-            if let Some(logic) = chip.cs3 {
-                check_ignore("cs3", logic)?;
+ 
+            for (name, user) in cs_values {
+                if let Some(logic) = user {
+                    check_ignore(name, logic)?;
+                }
             }
             if has_ce {
                 check_ignore("ce", ce_logic)?;
@@ -1107,7 +1116,7 @@ pub(crate) fn check_cs_v2(config: &Config) -> Result<()> {
             if has_oe {
                 check_ignore("oe", oe_logic)?;
             }
-
+ 
             // ---- CS ordering rules for configurable-CS chips ----
             // When allow_cs_ignore is NOT set, the natural expectation is that
             // CS lines are used from CS1 outward — e.g. CS1 only, or CS1+CS2,
@@ -1118,11 +1127,23 @@ pub(crate) fn check_cs_v2(config: &Config) -> Result<()> {
                 let cs1_active = chip.cs1.is_some_and(|l| l != CsLogic::Ignore);
                 let cs2_active = chip.cs2.is_some_and(|l| l != CsLogic::Ignore);
                 let cs3_active = chip.cs3.is_some_and(|l| l != CsLogic::Ignore);
-
-                if !cs1_active && (cs2_active || cs3_active) {
+                let cs4_active = chip.cs4.is_some_and(|l| l != CsLogic::Ignore);
+ 
+                if !cs1_active && (cs2_active || cs3_active || cs4_active) {
                     return Err(Error::InvalidConfig {
                         error: alloc::format!(
-                            "CS1 cannot be Ignore when CS2 or CS3 are active for chip type {} \
+                            "CS1 cannot be Ignore when CS2, CS3 or CS4 are active for chip \
+                             type {} (set {}, chip {}) unless allow_cs_ignore is set",
+                            chip.chip_type.name(),
+                            set_id,
+                            chip_idx
+                        ),
+                    });
+                }
+                if !cs2_active && (cs3_active || cs4_active) {
+                    return Err(Error::InvalidConfig {
+                        error: alloc::format!(
+                            "CS2 cannot be Ignore when CS3 or CS4 are active for chip type {} \
                              (set {}, chip {}) unless allow_cs_ignore is set",
                             chip.chip_type.name(),
                             set_id,
@@ -1130,10 +1151,10 @@ pub(crate) fn check_cs_v2(config: &Config) -> Result<()> {
                         ),
                     });
                 }
-                if !cs2_active && cs3_active {
+                if !cs3_active && cs4_active {
                     return Err(Error::InvalidConfig {
                         error: alloc::format!(
-                            "CS2 cannot be Ignore when CS3 is active for chip type {} \
+                            "CS3 cannot be Ignore when CS4 is active for chip type {} \
                              (set {}, chip {}) unless allow_cs_ignore is set",
                             chip.chip_type.name(),
                             set_id,
@@ -1143,7 +1164,7 @@ pub(crate) fn check_cs_v2(config: &Config) -> Result<()> {
                 }
             }
         }
-
+ 
         // ---- Multi set consistency validation ----
         //
         // For Multi sets with chips having N > 1 control lines, chips[1+]
@@ -1151,36 +1172,42 @@ pub(crate) fn check_cs_v2(config: &Config) -> Result<()> {
         // to X1/X2) and ignore the remaining N-1 (the commoned lines). All
         // chips[1+] must ignore the same set of lines. Chip[0] must not ignore
         // its per-chip select line.
+        //
+        // Only the Ignore/not-Ignore distinction matters here, so the
+        // ActiveLow default used for unspecified lines is safe even where the
+        // real polarity is fixed active-high (the line is active either way).
         if set.set_type == ChipSetType::Multi && set.chips.len() >= 2 {
             let chip1 = &set.chips[1];
             let chip_type = chip1.chip_type;
             let control_lines = chip_type.control_lines();
-
+ 
+            let line_logic = |chip: &ChipConfig, name: &str| -> CsLogic {
+                match name {
+                    "ce" => chip.ce.unwrap_or(CsLogic::ActiveLow),
+                    "oe" => chip.oe.unwrap_or(CsLogic::ActiveLow),
+                    "cs1" => chip.cs1.unwrap_or(CsLogic::ActiveLow),
+                    "cs2" => chip.cs2.unwrap_or(CsLogic::ActiveLow),
+                    "cs3" => chip.cs3.unwrap_or(CsLogic::ActiveLow),
+                    "cs4" => chip.cs4.unwrap_or(CsLogic::ActiveLow),
+                    _ => CsLogic::ActiveLow,
+                }
+            };
+ 
             // Collect (name, logic) for all control lines of chips[1],
-            // using defaults (ActiveLow) for unspecified CE/OE.
+            // using defaults (ActiveLow) for unspecified lines.
             let line_logics: alloc::vec::Vec<(&str, CsLogic)> = control_lines
                 .iter()
-                .filter(|l| matches!(l.name, "ce" | "oe" | "cs1" | "cs2" | "cs3"))
-                .map(|l| {
-                    let logic = match l.name {
-                        "ce" => chip1.ce.unwrap_or(CsLogic::ActiveLow),
-                        "oe" => chip1.oe.unwrap_or(CsLogic::ActiveLow),
-                        "cs1" => chip1.cs1.unwrap_or(CsLogic::ActiveLow),
-                        "cs2" => chip1.cs2.unwrap_or(CsLogic::ActiveLow),
-                        "cs3" => chip1.cs3.unwrap_or(CsLogic::ActiveLow),
-                        _ => CsLogic::ActiveLow,
-                    };
-                    (l.name, logic)
-                })
+                .filter(|l| matches!(l.name, "ce" | "oe" | "cs1" | "cs2" | "cs3" | "cs4"))
+                .map(|l| (l.name, line_logic(chip1, l.name)))
                 .collect();
-
+ 
             let num_lines = line_logics.len();
             let active: alloc::vec::Vec<&str> = line_logics
                 .iter()
                 .filter(|(_, l)| *l != CsLogic::Ignore)
                 .map(|(n, _)| *n)
                 .collect();
-
+ 
             // For single-line chips, no ignores needed.
             if num_lines > 1 && active.len() != 1 {
                 return Err(Error::InvalidConfig {
@@ -1195,19 +1222,11 @@ pub(crate) fn check_cs_v2(config: &Config) -> Result<()> {
                     ),
                 });
             }
-
+ 
             // All chips[1+] must agree on which lines are active/ignored.
             for (idx, chip) in set.chips.iter().enumerate().skip(2) {
                 for &(name, ref_logic) in &line_logics {
-                    let chip_logic = match name {
-                        "ce" => chip.ce.unwrap_or(CsLogic::ActiveLow),
-                        "oe" => chip.oe.unwrap_or(CsLogic::ActiveLow),
-                        "cs1" => chip.cs1.unwrap_or(CsLogic::ActiveLow),
-                        "cs2" => chip.cs2.unwrap_or(CsLogic::ActiveLow),
-                        "cs3" => chip.cs3.unwrap_or(CsLogic::ActiveLow),
-                        _ => CsLogic::ActiveLow,
-                    };
-                    let chip_is_ignore = chip_logic == CsLogic::Ignore;
+                    let chip_is_ignore = line_logic(chip, name) == CsLogic::Ignore;
                     let ref_is_ignore = ref_logic == CsLogic::Ignore;
                     if chip_is_ignore != ref_is_ignore {
                         return Err(Error::InvalidConfig {
@@ -1224,19 +1243,11 @@ pub(crate) fn check_cs_v2(config: &Config) -> Result<()> {
                     }
                 }
             }
-
+ 
             // Chip[0] must not ignore the per-chip select line.
             if let Some(&per_chip_select_name) = active.first() {
                 let chip0 = &set.chips[0];
-                let chip0_logic = match per_chip_select_name {
-                    "ce" => chip0.ce.unwrap_or(CsLogic::ActiveLow),
-                    "oe" => chip0.oe.unwrap_or(CsLogic::ActiveLow),
-                    "cs1" => chip0.cs1.unwrap_or(CsLogic::ActiveLow),
-                    "cs2" => chip0.cs2.unwrap_or(CsLogic::ActiveLow),
-                    "cs3" => chip0.cs3.unwrap_or(CsLogic::ActiveLow),
-                    _ => CsLogic::ActiveLow,
-                };
-                if chip0_logic == CsLogic::Ignore {
+                if line_logic(chip0, per_chip_select_name) == CsLogic::Ignore {
                     return Err(Error::InvalidConfig {
                         error: alloc::format!(
                             "Multi set chip 0 cannot ignore '{}', which is the per-chip \
@@ -1248,7 +1259,7 @@ pub(crate) fn check_cs_v2(config: &Config) -> Result<()> {
                 }
             }
         }
-
+ 
         // ---- CS polarity consistency for Banked sets only ----
         //
         // All chips in a Banked set share the same physical CS line on the board,
@@ -1272,7 +1283,7 @@ pub(crate) fn check_cs_v2(config: &Config) -> Result<()> {
             }
         }
     }
-
+ 
     Ok(())
 }
 
@@ -1328,6 +1339,7 @@ pub(crate) fn file_specs(
                     cs1: rom.cs1,
                     cs2: rom.cs2,
                     cs3: rom.cs3,
+                    cs4: rom.cs4,
                     ce: rom.ce,
                     oe: rom.oe,
                     set_id: chip_set_num,
@@ -1631,15 +1643,19 @@ pub(crate) fn build_chip_sets(
 
             let filename = chip_config.filename();
 
-            // For V2 CE/OE chips where ce or oe is explicitly configured,
-            // use new_with_ce_oe so the logic is carried into the CsConfig.
-            // V1 always has ce/oe as None (enforced by validate_config_v1),
-            // so this branch is never taken for V1.
-            let cs_config = if chip_config.ce.is_some() || chip_config.oe.is_some() {
-                CsConfig::new_with_ce_oe(chip_config.ce, chip_config.oe)
-            } else {
-                CsConfig::new(chip_config.cs1, chip_config.cs2, chip_config.cs3)
-            };
+            // Resolve the chip's control line configuration against its chip
+            // type: fixed-polarity CS lines take their polarity from the
+            // silicon, configurable ones from the user, and chip types with no
+            // CS lines at all fall through to CE/OE.
+            let cs_config = CsConfig::from_chip_type(
+                &chip_config.chip_type,
+                chip_config.cs1,
+                chip_config.cs2,
+                chip_config.cs3,
+                chip_config.cs4,
+                chip_config.ce,
+                chip_config.oe,
+            );
 
             let rom = Chip::from_raw_rom_image(
                 chip_id,

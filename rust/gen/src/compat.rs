@@ -108,6 +108,7 @@ pub fn check_chip_on_board(board: Board, chip_type: ChipType) -> Option<CompatRe
         Some(CsLogic::ActiveLow),
         Some(CsLogic::Ignore),
         Some(CsLogic::Ignore),
+        None,
     );
 
     let ctx = SlotContext {

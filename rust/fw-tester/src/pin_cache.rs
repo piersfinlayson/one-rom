@@ -15,9 +15,9 @@
 #[allow(unused_imports)]
 use log::{debug, error, info, trace, warn};
 
-use onerom_config::chip::{ChipType, ControlLineType};
+use onerom_config::chip::ChipType;
 use onerom_config::hw::Board;
-use onerom_gen::{ChipConfig, CsLogic, MAX_IMAGE_SIZE};
+use onerom_gen::{ChipConfig, CsLogic, MAX_IMAGE_SIZE, num_excess_addr_lines};
 
 // ── Public types ──────────────────────────────────────────────────────────────
 
@@ -120,33 +120,46 @@ impl PinCache {
                 continue;
             }
 
-            let assert_high = match spec.line_type {
-                ControlLineType::FixedActiveLow => false,
-                ControlLineType::Configurable => {
-                    let logic = match spec.name {
-                        "cs1" => chip_config.cs1,
-                        "cs2" => chip_config.cs2,
-                        "cs3" => chip_config.cs3,
-                        other => panic!(
-                            "Unrecognised configurable control line '{}' on chip {}",
-                            other,
-                            chip_type.name()
-                        ),
-                    };
-                    match logic {
-                        Some(CsLogic::ActiveHigh) => true,
-                        Some(CsLogic::ActiveLow) => false,
-                        // Ignore: permanently tied active on the board.
-                        // The tester does not drive it.
-                        Some(CsLogic::Ignore) => continue,
-                        None => panic!(
-                            "Chip {} has configurable CS line '{}' but no polarity \
-                             is specified in the config — add cs1/cs2/cs3 field",
-                            chip_type.name(),
-                            spec.name,
-                        ),
-                    }
-                }
+            // The user's setting for this line, if any. For a fixed-polarity
+            // line this can only be Ignore - check_cs_v2 rejects a stated
+            // polarity there. For a configurable line it carries the polarity.
+            let configured = match spec.name {
+                "cs1" => chip_config.cs1,
+                "cs2" => chip_config.cs2,
+                "cs3" => chip_config.cs3,
+                "cs4" => chip_config.cs4,
+                "ce" => chip_config.ce,
+                "oe" => chip_config.oe,
+                other => panic!(
+                    "Unrecognised control line '{}' on chip {}",
+                    other,
+                    chip_type.name()
+                ),
+            };
+
+            // Ignore: permanently tied active on the board.
+            // The tester does not drive it.
+            if configured == Some(CsLogic::Ignore) {
+                continue;
+            }
+
+            let assert_high = match spec.line_type.fixed_active_level() {
+                // Polarity fixed by the silicon: the JEDEC CE/OE enables, and
+                // chips whose chip selects are not mask-programmable (e.g. the
+                // HM7641, CS1/CS2 active low and CS3/CS4 active high).
+                Some(active_high) => active_high,
+                // Mask-programmed at manufacture: the config must state it.
+                None => match configured {
+                    Some(CsLogic::ActiveHigh) => true,
+                    Some(CsLogic::ActiveLow) => false,
+                    Some(CsLogic::Ignore) => unreachable!("filtered above"),
+                    None => panic!(
+                        "Chip {} has configurable CS line '{}' but no polarity \
+                         is specified in the config — add cs1/cs2/cs3/cs4 field",
+                        chip_type.name(),
+                        spec.name,
+                    ),
+                },
             };
 
             control_lines.push(ControlLine {
@@ -164,14 +177,14 @@ impl PinCache {
         // the CS range; the tester must do the same so it drives them at the
         // right level rather than leaving them at 0 as part of the address.
         //
-        // num_excess = log2(chip_size / MAX_IMAGE_SIZE): for 27C080 that's
-        // log2(1MB / 512KB) = log2(2) = 1 (just A19).
+        // `num_excess_addr_lines` is gen's own answer, shared rather than
+        // recomputed here: for 27C080 it is 1 (just A19).
         //
         // The polarity comes from cs1_logic: active_high means the half-select
         // pin must be HIGH for the chip to respond (cs1=active_high serves the
         // upper half); active_low means it must be LOW (lower half).
-        if chip_type.size_bytes() > MAX_IMAGE_SIZE {
-            let num_excess = (chip_type.size_bytes() / MAX_IMAGE_SIZE).ilog2() as usize;
+        let num_excess = num_excess_addr_lines(&chip_type);
+        if num_excess > 0 {
             let assert_high = match chip_config.cs1 {
                 Some(CsLogic::ActiveHigh) => true,
                 Some(CsLogic::ActiveLow) => false,

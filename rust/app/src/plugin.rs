@@ -1221,6 +1221,7 @@ pub fn plugin_to_chip_set_config(
             cs1: None,
             cs2: None,
             cs3: None,
+            cs4: None,
             ce: None,
             oe: None,
             size_handling,

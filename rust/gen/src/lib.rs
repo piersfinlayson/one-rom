@@ -22,6 +22,7 @@ pub use firmware::{
     IceCpuFreq, LedConfig, ServeAlgParams,
 };
 pub use image::{Chip, ChipSet, ChipSetType, CsConfig, CsLogic, SizeHandling};
+pub use image::{num_excess_addr_lines, requires_half_select_cs1};
 pub use image::{MAX_IMAGE_SIZE, PAD_BLANK_BYTE, PAD_NO_CHIP_BYTE};
 pub use meta::{MAX_METADATA_LEN, Metadata, PAD_METADATA_BYTE};
 use onerom_config::mcu::Family;
@@ -582,6 +583,10 @@ pub struct ChipConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cs3: Option<CsLogic>,
 
+    /// Optional Chip Select 4 logic - only valid for Chip Types that have CS4
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cs4: Option<CsLogic>,
+
     /// Optional Chip Enable logic override - only valid for chip types that
     /// have a /CE control line.  In V2 multi-ROM sets, may be set to Ignore
     /// when /CE is tied active and /OE is the fly-leaded chip select, or vice
@@ -696,6 +701,10 @@ pub struct FileSpec {
     /// Optional Chip Select 3 logic - only valid for ROM Types that have CS3.
     /// Provided for information only.
     pub cs3: Option<CsLogic>,
+
+    /// Optional Chip Select 4 logic - only valid for ROM Types that have CS4.
+    /// Provided for information only.
+    pub cs4: Option<CsLogic>,
 
     /// Optional Chip Enable logic override.  Provided for information only.
     pub ce: Option<CsLogic>,

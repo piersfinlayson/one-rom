@@ -629,6 +629,69 @@
                 }
             ]
         },
+        "HM7641": {
+            "description": "512B bipolar PROM with three-state outputs and four fixed-polarity chip selects",
+            "function": "ROM",
+            "rbcp_chip_type": 34,
+            "supported": "0.7.0",
+            "aliases": [],
+            "bit_modes": [
+                8
+            ],
+            "pins": 24,
+            "size": 512,
+            "address": [
+                8,
+                7,
+                6,
+                5,
+                4,
+                3,
+                2,
+                1,
+                23
+            ],
+            "data": [
+                9,
+                10,
+                11,
+                13,
+                14,
+                15,
+                16,
+                17
+            ],
+            "control": {
+                "cs1": {
+                    "pin": 21,
+                    "type": "fixed_active_low"
+                },
+                "cs2": {
+                    "pin": 20,
+                    "type": "fixed_active_low"
+                },
+                "cs3": {
+                    "pin": 19,
+                    "type": "fixed_active_high"
+                },
+                "cs4": {
+                    "pin": 18,
+                    "type": "fixed_active_high"
+                }
+            },
+            "power": [
+                {
+                    "name": "VCC",
+                    "pin": 24,
+                    "voltage": "+5V"
+                },
+                {
+                    "name": "GND",
+                    "pin": 12,
+                    "voltage": "0V"
+                }
+            ]
+        },
         "2704": {
             "description": "512B EPROM with multiple supply voltages",
             "function": "ROM",

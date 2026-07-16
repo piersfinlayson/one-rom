@@ -156,6 +156,41 @@ impl CsLogic {
     }
 }
 
+/// Number of a chip type's top address lines that cannot fit in the ROM
+/// table, and must therefore act as a half-select instead.
+///
+/// Mirrors the in-range/excess split `derive_addr_layout` performs. The
+/// result is independent of bit mode: `BitMode16` drops one address line
+/// (`A-1`, served by the data PIO rather than the address PIO) but also
+/// halves the usable table depth, so both terms fall by one and cancel:
+///
+/// - `BitMode8`:  `num_addr_lines - log2(MAX_IMAGE_SIZE / 1)`
+/// - `BitMode16`: `(num_addr_lines - 1) - log2(MAX_IMAGE_SIZE / 2)`
+///
+/// `derive_addr_layout` computes the split itself because it also needs the
+/// in-range count and the resolved GPIOs; this is the chip-type-level
+/// question, answerable without a board.
+pub const fn num_excess_addr_lines(chip_type: &ChipType) -> usize {
+    let max_useful_addr_lines = MAX_IMAGE_SIZE.ilog2() as usize;
+    chip_type.num_addr_lines().saturating_sub(max_useful_addr_lines)
+}
+
+/// Whether a chip type's address space exceeds `MAX_IMAGE_SIZE`, so that its
+/// excess top address line(s) act as a half-select selected by `cs1`.
+///
+/// Such a chip has **no `cs1` control line** - here `cs1` names the
+/// half-select, not a pin - yet `cs1` is *required*, so that the user says
+/// which half this One ROM serves. Callers validating `cs1` against
+/// `control_lines()` must special-case it on this basis rather than on the
+/// chip type's name.
+///
+/// The 27C080 is the only such chip type today: two One ROMs each serve half
+/// of its 1MB, one configured `cs1=active_low` (lower 512KB) and the other
+/// `cs1=active_high` (upper 512KB), with A19 as the discriminator.
+pub const fn requires_half_select_cs1(chip_type: &ChipType) -> bool {
+    num_excess_addr_lines(chip_type) > 0
+}
+
 /// Chip select / chip enable configuration for a single Chip.
 ///
 /// `ChipSelect` is used for 23-series and other chips with configurable CS
@@ -167,7 +202,7 @@ impl CsLogic {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 pub enum CsConfig {
-    /// Configuration of the 3 possible Chip Select lines
+    /// Configuration of the 4 possible Chip Select lines
     ChipSelect {
         /// Where type is ChipSelect, CS1 is always required
         cs1: CsLogic,
@@ -177,6 +212,12 @@ pub enum CsConfig {
 
         /// Third chip select line, required for certain Chip Types
         cs3: Option<CsLogic>,
+
+        /// Fourth chip select line, required for certain Chip Types
+        /// (e.g. HM7641).  Defaulted for backwards compatibility with
+        /// `Chip`s serialized before CS4 existed.
+        #[serde(default)]
+        cs4: Option<CsLogic>,
     },
     /// Configuration using CE/OE instead of chip select, both fixed
     /// active-low with no user override.
@@ -193,16 +234,89 @@ pub enum CsConfig {
 }
 
 impl CsConfig {
-    /// Construct from configurable CS lines (cs1/cs2/cs3).
-    /// When all three are None, falls back to CeOe (CE/OE chip with no
+    /// Construct from configurable CS lines (cs1/cs2/cs3/cs4).
+    /// When all four are None, falls back to CeOe (CE/OE chip with no
     /// override).
-    pub fn new(cs1: Option<CsLogic>, cs2: Option<CsLogic>, cs3: Option<CsLogic>) -> Self {
-        if cs1.is_none() && cs2.is_none() && cs3.is_none() {
+    ///
+    /// Prefer [`CsConfig::from_chip_type`], which resolves fixed-polarity CS
+    /// lines from the chip type rather than relying on the caller. This
+    /// constructor cannot tell a CE/OE chip from a chip whose CS lines are all
+    /// fixed (and so never specified by the user), and will return `CeOe` for
+    /// both.
+    pub fn new(
+        cs1: Option<CsLogic>,
+        cs2: Option<CsLogic>,
+        cs3: Option<CsLogic>,
+        cs4: Option<CsLogic>,
+    ) -> Self {
+        if cs1.is_none() && cs2.is_none() && cs3.is_none() && cs4.is_none() {
             Self::CeOe
         } else {
             let cs1 = cs1.expect("CS1 must be specified if any CS lines are used");
-            Self::ChipSelect { cs1, cs2, cs3 }
+            Self::ChipSelect { cs1, cs2, cs3, cs4 }
         }
+    }
+
+    /// Construct from a chip type and the user's control line configuration.
+    ///
+    /// A CS line's polarity may be mask-programmed at manufacture
+    /// (`Configurable`), in which case the user supplies it; or fixed by the
+    /// silicon (`FixedActiveLow`/`FixedActiveHigh`, e.g. the HM7641), in which
+    /// case it is read from the chip type and the user may only say
+    /// `CsLogic::Ignore` - "this One ROM does not monitor this line", which is
+    /// participation, not polarity. `check_cs_v2` rejects any attempt to state
+    /// the polarity of a fixed line.
+    ///
+    /// A chip type with no CS lines at all is a CE/OE chip, and falls through
+    /// to [`CsConfig::new_with_ce_oe`].
+    ///
+    /// `ce`/`oe` take precedence over the CS lines when either is specified,
+    /// preserving existing behaviour for chip types that declare both
+    /// (`allow_mixed_control`, currently only the 23C1001).
+    pub fn from_chip_type(
+        chip_type: &ChipType,
+        cs1: Option<CsLogic>,
+        cs2: Option<CsLogic>,
+        cs3: Option<CsLogic>,
+        cs4: Option<CsLogic>,
+        ce: Option<CsLogic>,
+        oe: Option<CsLogic>,
+    ) -> Self {
+        if ce.is_some() || oe.is_some() {
+            return Self::new_with_ce_oe(ce, oe);
+        }
+
+        // Resolve one CS line against the chip type:
+        // - fixed polarity: the silicon decides, unless the user said Ignore
+        // - configurable: the user decides
+        // - no such line on this chip: pass the user's value through. The
+        //   27C080 relies on this - its cs1 is the A19 excess-address
+        //   half-select, not a control line on the chip.
+        let resolve = |name: &str, user: Option<CsLogic>| -> Option<CsLogic> {
+            match chip_type.control_lines().iter().find(|l| l.name == name) {
+                Some(spec) => match spec.line_type.fixed_active_level() {
+                    Some(active_high) => Some(match user {
+                        Some(CsLogic::Ignore) => CsLogic::Ignore,
+                        _ => {
+                            if active_high {
+                                CsLogic::ActiveHigh
+                            } else {
+                                CsLogic::ActiveLow
+                            }
+                        }
+                    }),
+                    None => user,
+                },
+                None => user,
+            }
+        };
+
+        Self::new(
+            resolve("cs1", cs1),
+            resolve("cs2", cs2),
+            resolve("cs3", cs3),
+            resolve("cs4", cs4),
+        )
     }
 
     /// Construct from explicit CE/OE logic values.  Used for V2 CE/OE chips
@@ -260,11 +374,23 @@ impl CsConfig {
 
     /// Returns the tertiary chip-select logic.
     ///
-    /// Only meaningful for ChipSelect chips with three CS lines.
+    /// Only meaningful for ChipSelect chips with three or more CS lines.
     /// Not applicable to CE/OE chips.
     pub fn cs3_logic(&self) -> Option<CsLogic> {
         match self {
             CsConfig::ChipSelect { cs3, .. } => *cs3,
+            CsConfig::CeOe => None,
+            CsConfig::CeOeExplicit { .. } => None,
+        }
+    }
+
+    /// Returns the quaternary chip-select logic.
+    ///
+    /// Only meaningful for ChipSelect chips with four CS lines (e.g. the
+    /// HM7641). Not applicable to CE/OE chips.
+    pub fn cs4_logic(&self) -> Option<CsLogic> {
+        match self {
+            CsConfig::ChipSelect { cs4, .. } => *cs4,
             CsConfig::CeOe => None,
             CsConfig::CeOeExplicit { .. } => None,
         }
@@ -699,6 +825,7 @@ impl Chip {
             ChipType::Chip23QL384 => 31,
             ChipType::Chip23C1001 => 32,
             ChipType::Chip27C200 => 33,
+            _ => panic!("Unsupported Chip type for pre-V0.7.0 firmware {:?}", self.chip_type),
         }
     }
 }

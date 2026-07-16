@@ -10,6 +10,159 @@ mod validation;
 
 use validation::{ChipFunction, ChipType, ChipTypesConfig, ControlLineType};
 
+/// A documentation grouping for chip types.
+///
+/// Families are inferred from the chip type name and pin count by
+/// [`chip_family`], as the JSON carries no explicit family field.
+pub struct ChipFamily {
+    /// Stable key used to group chip types.
+    pub key: &'static str,
+
+    /// Heading used in the generated crate documentation (`chip/mod.rs`).
+    pub lib_heading: &'static str,
+
+    /// Heading used in the generated markdown documentation (`CHIP-TYPES.md`).
+    pub doc_heading: &'static str,
+}
+
+/// Every chip family, in the order they are presented in documentation.
+///
+/// A family with no chip types is skipped rather than emitted empty, so entries
+/// may be added here ahead of the chip types that will populate them.
+pub const CHIP_FAMILIES: &[ChipFamily] = &[
+    ChipFamily {
+        key: "mask_24pin",
+        lib_heading: "24-pin Mask ROMs (23xx series)",
+        doc_heading: "24-pin Mask ROM Family (23xx)",
+    },
+    ChipFamily {
+        key: "mask_28pin",
+        lib_heading: "28-pin Mask ROMs (23xx series)",
+        doc_heading: "28-pin Mask ROM Family (23xx)",
+    },
+    ChipFamily {
+        key: "mask_32pin",
+        lib_heading: "32-pin Mask ROMs (23xx series)",
+        doc_heading: "32-pin Mask ROM Family (23xx)",
+    },
+    ChipFamily {
+        key: "mask_40pin",
+        lib_heading: "40-pin Mask ROMs (23xx series)",
+        doc_heading: "40-pin Mask ROM Family (23xx)",
+    },
+    ChipFamily {
+        key: "eprom_24pin",
+        lib_heading: "24-pin EPROMs (27xx series)",
+        doc_heading: "24-pin EPROM Family (27xx)",
+    },
+    ChipFamily {
+        key: "eprom_28pin",
+        lib_heading: "28-pin EPROMs (27xx series)",
+        doc_heading: "28-pin EPROM Family (27xx)",
+    },
+    ChipFamily {
+        key: "eprom_32pin",
+        lib_heading: "32-pin EPROMs (27Cxx series)",
+        doc_heading: "32-pin EPROM Family (27xx)",
+    },
+    ChipFamily {
+        key: "eprom_40pin",
+        lib_heading: "40-pin EPROMs (27Cxx series)",
+        doc_heading: "40-pin EPROM Family (27xx)",
+    },
+    ChipFamily {
+        key: "eeprom_24pin",
+        lib_heading: "24-pin EEPROMs (28Cxx series)",
+        doc_heading: "24-pin EEPROM Family (28Cxx)",
+    },
+    ChipFamily {
+        key: "eeprom_28pin",
+        lib_heading: "28-pin EEPROMs (28Cxx series)",
+        doc_heading: "28-pin EEPROM Family (28Cxx)",
+    },
+    ChipFamily {
+        key: "eeprom_32pin",
+        lib_heading: "32-pin EEPROMs (28Cxx series)",
+        doc_heading: "32-pin EEPROM Family (28Cxx)",
+    },
+    ChipFamily {
+        key: "prom_24pin",
+        lib_heading: "24-pin Bipolar PROMs (HM76xx series)",
+        doc_heading: "24-pin Bipolar PROM Family (HM76xx)",
+    },
+    ChipFamily {
+        key: "ram_chips",
+        lib_heading: "RAM Chips",
+        doc_heading: "RAM Chips",
+    },
+];
+
+/// Classify a chip type into its documentation family.
+///
+/// Returns `None` for plugins, which are not chips and so belong to no family.
+///
+/// The family is inferred from the chip type's name, as the JSON carries no
+/// explicit family field: `23`, `27` and `28` denote the mask ROM, EPROM and
+/// EEPROM families respectively, and `SST39SF` and `HM76` are the exceptions to
+/// that numeric convention.  RAM is identified by its function rather than its
+/// name.
+///
+/// # Panics
+///
+/// Panics if the chip type's name matches no known family, or if its pin count
+/// is not one this family is known to come in.  Both mean a new chip type has
+/// been added to the JSON without being accounted for here, and so must fail the
+/// build rather than be silently omitted from the documentation.
+pub fn chip_family(type_name: &str, chip_type: &ChipType) -> Option<&'static ChipFamily> {
+    if chip_type.function.is_plugin() {
+        return None;
+    }
+
+    // Identified by function, as RAM part numbers follow no common convention.
+    let name = if chip_type.function == ChipFunction::Ram {
+        "ram_chips"
+    } else {
+        let family = if type_name.starts_with("23") {
+            "mask"
+        } else if type_name.starts_with("27") || type_name.starts_with("SST39SF") {
+            "eprom"
+        } else if type_name.starts_with("28") {
+            "eeprom"
+        } else if type_name.starts_with("HM76") {
+            "prom"
+        } else {
+            panic!("Unsupported chip type {type_name} - needs adding to chip_family()");
+        };
+
+        match (family, chip_type.pins) {
+            ("mask", 24) => "mask_24pin",
+            ("mask", 28) => "mask_28pin",
+            ("mask", 32) => "mask_32pin",
+            ("mask", 40) => "mask_40pin",
+            ("eprom", 24) => "eprom_24pin",
+            ("eprom", 28) => "eprom_28pin",
+            ("eprom", 32) => "eprom_32pin",
+            ("eprom", 40) => "eprom_40pin",
+            ("eeprom", 24) => "eeprom_24pin",
+            ("eeprom", 28) => "eeprom_28pin",
+            ("eeprom", 32) => "eeprom_32pin",
+            ("prom", 24) => "prom_24pin",
+            (family, pins) => {
+                panic!("Unexpected pin count {pins} for {family} chip type {type_name}")
+            }
+        }
+    };
+
+    // A miss here means `name` above and CHIP_FAMILIES have drifted apart.  It
+    // must not fall through to `None`, which callers read as "not a chip".
+    Some(
+        CHIP_FAMILIES
+            .iter()
+            .find(|family| family.key == name)
+            .unwrap_or_else(|| panic!("Chip family '{name}' is missing from CHIP_FAMILIES")),
+    )
+}
+
 pub const CHIP_TYPES_JSON_FILENAME: &str = "json/chip-types.json";
 pub const CHIP_GENERATED_RS_FILENAME: &str = "chip/generated.rs";
 pub const CHIP_MOD_RS_FILENAME: &str = "chip/mod.rs";
@@ -111,22 +264,17 @@ fn generate_lib_rs(config: &ChipTypesConfig) -> String {
     code.push_str("//! # Supported Chip Types\n");
     code.push_str("//!\n");
 
-    // Group Chips by type for documentation
-    let mut mask_24pin = Vec::new();
-    let mut mask_28pin = Vec::new();
-    let mut mask_32pin = Vec::new();
-    let mut mask_40pin = Vec::new();
-    let mut eprom_24pin = Vec::new();
-    let mut eprom_28pin = Vec::new();
-    let mut eprom_32pin = Vec::new();
-    let mut eprom_40pin = Vec::new();
-    let mut eeprom_24pin = Vec::new();
-    let mut eeprom_28pin = Vec::new();
-    let mut eeprom_32pin = Vec::new();
-    let mut ram_chips = Vec::new();
+    // Group Chips by family for documentation
+    let mut families: std::collections::BTreeMap<&'static str, Vec<String>> =
+        std::collections::BTreeMap::new();
 
     for (type_name, _chip_type) in get_sorted_chip_types(config) {
         if let Some(chip_type) = config.chip_types.get(type_name) {
+            // Plugins have no family - they are not chips.
+            let Some(family) = chip_family(type_name, chip_type) else {
+                continue;
+            };
+
             let mut entry = format!(
                 "//! - **{}**: {} ({})\n",
                 type_name,
@@ -147,155 +295,18 @@ fn generate_lib_rs(config: &ChipTypesConfig) -> String {
                 entry.push_str(&format!("//!   Aliases: {}\n", aliases.join(", ")));
             }
 
-            if type_name.starts_with("23") && chip_type.function == ChipFunction::Rom {
-                if chip_type.pins == 24 {
-                    mask_24pin.push(entry);
-                } else if chip_type.pins == 28 {
-                    mask_28pin.push(entry);
-                } else if chip_type.pins == 32 {
-                    mask_32pin.push(entry);
-                } else if chip_type.pins == 40 {
-                    mask_40pin.push(entry);
-                } else {
-                    panic!(
-                        "Unexpected pin count {} for mask ROM {}",
-                        chip_type.pins, type_name
-                    );
-                }
-            } else if (type_name.starts_with("27") || type_name.starts_with("SST39SF"))
-                && chip_type.function == ChipFunction::Rom
-            {
-                if chip_type.pins == 24 {
-                    eprom_24pin.push(entry);
-                } else if chip_type.pins == 28 {
-                    eprom_28pin.push(entry);
-                } else if chip_type.pins == 32 {
-                    eprom_32pin.push(entry);
-                } else if chip_type.pins == 40 {
-                    eprom_40pin.push(entry);
-                } else {
-                    panic!(
-                        "Unexpected pin count {} for EPROM {}",
-                        chip_type.pins, type_name
-                    );
-                }
-            } else if type_name.starts_with("28") {
-                if chip_type.pins == 24 {
-                    eeprom_24pin.push(entry);
-                } else if chip_type.pins == 28 {
-                    eeprom_28pin.push(entry);
-                } else if chip_type.pins == 32 {
-                    eeprom_32pin.push(entry);
-                } else {
-                    panic!(
-                        "Unexpected pin count {} for EEPROM {}",
-                        chip_type.pins, type_name
-                    );
-                }
-            } else if chip_type.function == ChipFunction::Ram {
-                ram_chips.push(entry);
-            } else if chip_type.function.is_plugin() {
-                // Skip plugins for now - they don't fit into the standard categories
-            } else {
-                panic!("Unsupported chip type {} - needs adding", type_name);
+            families.entry(family.key).or_default().push(entry);
+        }
+    }
+
+    for family in CHIP_FAMILIES {
+        if let Some(entries) = families.get(family.key) {
+            code.push_str(&format!("//! ## {}\n", family.lib_heading));
+            for entry in entries {
+                code.push_str(entry);
             }
+            code.push_str("//!\n");
         }
-    }
-
-    if !mask_24pin.is_empty() {
-        code.push_str("//! ## 24-pin Mask ROMs (23xx series)\n");
-        for entry in mask_24pin {
-            code.push_str(&entry);
-        }
-        code.push_str("//!\n");
-    }
-
-    if !mask_28pin.is_empty() {
-        code.push_str("//! ## 28-pin Mask ROMs (23xx series)\n");
-        for entry in mask_28pin {
-            code.push_str(&entry);
-        }
-        code.push_str("//!\n");
-    }
-
-    if !mask_32pin.is_empty() {
-        code.push_str("//! ## 32-pin Mask ROMs (23xx series)\n");
-        for entry in mask_32pin {
-            code.push_str(&entry);
-        }
-        code.push_str("//!\n");
-    }
-
-    if !mask_40pin.is_empty() {
-        code.push_str("//! ## 40-pin Mask ROMs (23xx series)\n");
-        for entry in mask_40pin {
-            code.push_str(&entry);
-        }
-        code.push_str("//!\n");
-    }
-
-    if !eprom_24pin.is_empty() {
-        code.push_str("//! ## 24-pin EPROMs (27xx series)\n");
-        for entry in eprom_24pin {
-            code.push_str(&entry);
-        }
-        code.push_str("//!\n");
-    }
-
-    if !eprom_28pin.is_empty() {
-        code.push_str("//! ## 28-pin EPROMs (27xx series)\n");
-        for entry in eprom_28pin {
-            code.push_str(&entry);
-        }
-        code.push_str("//!\n");
-    }
-
-    if !eprom_32pin.is_empty() {
-        code.push_str("//! ## 32-pin EPROMs (27Cxx series)\n");
-        for entry in eprom_32pin {
-            code.push_str(&entry);
-        }
-        code.push_str("//!\n");
-    }
-
-    if !eprom_40pin.is_empty() {
-        code.push_str("//! ## 40-pin EPROMs (27Cxx series)\n");
-        for entry in eprom_40pin {
-            code.push_str(&entry);
-        }
-        code.push_str("//!\n");
-    }
-
-    if !eeprom_24pin.is_empty() {
-        code.push_str("//! ## 24-pin EEPROMs (28Cxx series)\n");
-        for entry in eeprom_24pin {
-            code.push_str(&entry);
-        }
-        code.push_str("//!\n");
-    }
-
-    if !eeprom_28pin.is_empty() {
-        code.push_str("//! ## 28-pin EEPROMs (28Cxx series)\n");
-        for entry in eeprom_28pin {
-            code.push_str(&entry);
-        }
-        code.push_str("//!\n");
-    }
-
-    if !eeprom_32pin.is_empty() {
-        code.push_str("//! ## 32-pin EEPROMs (28Cxx series)\n");
-        for entry in eeprom_32pin {
-            code.push_str(&entry);
-        }
-        code.push_str("//!\n");
-    }
-
-    if !ram_chips.is_empty() {
-        code.push_str("//! ## RAM Chips\n");
-        for entry in ram_chips {
-            code.push_str(&entry);
-        }
-        code.push_str("//!\n");
     }
 
     code.push_str("//! # Usage\n");
@@ -435,8 +446,8 @@ impl ChipFunction {
 fn generate_control_line_type_enum() -> &'static str {
     r#"/// Control line behavior type
 ///
-/// Defines whether a control line is user-configurable (mask-programmable)
-/// or fixed active-low per JEDEC standard.
+/// Defines whether a control line's polarity is user-configurable
+/// (mask-programmable) or fixed by the silicon, and if fixed, which polarity.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 pub enum ControlLineType {
@@ -450,6 +461,61 @@ pub enum ControlLineType {
     ///
     /// These lines follow the JEDEC standard and are always active-low (/CE, /OE).
     FixedActiveLow,
+
+    /// Fixed active-high control line
+    ///
+    /// The polarity is fixed by the silicon, as for `FixedActiveLow`, but the
+    /// line is asserted high. Used by parts whose chip selects are not
+    /// mask-programmable and are not all active low - the HM7641, for
+    /// instance, has CS1/CS2 fixed active low and CS3/CS4 fixed active high.
+    /// The user has no say in the polarity of these lines.
+    FixedActiveHigh,
+}
+
+impl ControlLineType {
+    /// Check whether this control line's polarity is fixed by the silicon
+    ///
+    /// Returns `false` only for [`ControlLineType::Configurable`], whose
+    /// polarity must be supplied by the user's chip configuration.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use onerom_config::chip::ControlLineType;
+    ///
+    /// assert!(ControlLineType::FixedActiveLow.is_fixed());
+    /// assert!(ControlLineType::FixedActiveHigh.is_fixed());
+    /// assert!(!ControlLineType::Configurable.is_fixed());
+    /// ```
+    pub const fn is_fixed(&self) -> bool {
+        matches!(
+            self,
+            ControlLineType::FixedActiveLow | ControlLineType::FixedActiveHigh
+        )
+    }
+
+    /// Get the fixed active level of this control line
+    ///
+    /// Returns `Some(false)` for an active-low line, `Some(true)` for an
+    /// active-high line, and `None` for a configurable line, whose active level
+    /// is not known until the user configures it.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use onerom_config::chip::ControlLineType;
+    ///
+    /// assert_eq!(ControlLineType::FixedActiveLow.fixed_active_level(), Some(false));
+    /// assert_eq!(ControlLineType::FixedActiveHigh.fixed_active_level(), Some(true));
+    /// assert_eq!(ControlLineType::Configurable.fixed_active_level(), None);
+    /// ```
+    pub const fn fixed_active_level(&self) -> Option<bool> {
+        match self {
+            ControlLineType::FixedActiveLow => Some(false),
+            ControlLineType::FixedActiveHigh => Some(true),
+            ControlLineType::Configurable => None,
+        }
+    }
 }"#
 }
 
@@ -511,7 +577,7 @@ pub enum ProgrammingPinState {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 pub struct ProgrammingPinSpec {
-    /// Pin name (e.g., "vpp", "pgm", "oe_vpp")
+    /// Pin name: one of "vpp", "pgm" or "pe"
     pub name: &'static str,
     
     /// Physical pin number on the Chip package
@@ -1270,6 +1336,7 @@ fn generate_control_lines_method(config: &ChipTypesConfig) -> String {
                 let line_type = match control.line_type {
                     ControlLineType::Configurable => "ControlLineType::Configurable",
                     ControlLineType::FixedActiveLow => "ControlLineType::FixedActiveLow",
+                    ControlLineType::FixedActiveHigh => "ControlLineType::FixedActiveHigh",
                 };
                 code.push_str(&format!(
                     "                ControlLineSpec {{ name: \"{}\", pin: {}, line_type: {}, allow_ignore: {} }},\n",
@@ -1284,6 +1351,26 @@ fn generate_control_lines_method(config: &ChipTypesConfig) -> String {
     code.push_str("        }\n");
     code.push_str("    }\n");
     code
+}
+
+/// Map a JSON read state to the generated `ProgrammingPinState` variant.
+///
+/// # Panics
+///
+/// Panics on an unrecognised read state.  Validation rejects these before code
+/// generation is reached, so this indicates the two have drifted apart.
+fn programming_pin_state(type_name: &str, pin_name: &str, read_state: &str) -> &'static str {
+    match read_state {
+        "vcc" => "ProgrammingPinState::Vcc",
+        "high" => "ProgrammingPinState::High",
+        "low" => "ProgrammingPinState::Low",
+        "chip_select" => "ProgrammingPinState::ChipSelect",
+        "x" => "ProgrammingPinState::Ignored",
+        "word_size" => "ProgrammingPinState::WordSize",
+        _ => panic!(
+            "Chip type '{type_name}': invalid read state '{read_state}' for programming pin '{pin_name}'"
+        ),
+    }
 }
 
 fn generate_programming_pins_method(config: &ChipTypesConfig) -> String {
@@ -1320,35 +1407,17 @@ fn generate_programming_pins_method(config: &ChipTypesConfig) -> String {
             if let Some(ref prog) = chip_type.programming {
                 let mut specs = Vec::new();
 
-                if let Some(ref vpp) = prog.vpp {
-                    let state = match vpp.read_state.as_str() {
-                        "vcc" => "ProgrammingPinState::Vcc",
-                        "high" => "ProgrammingPinState::High",
-                        "low" => "ProgrammingPinState::Low",
-                        "chip_select" => "ProgrammingPinState::ChipSelect",
-                        "x" => "ProgrammingPinState::Ignored",
-                        "word_size" => "ProgrammingPinState::WordSize",
-                        _ => panic!("Invalid read state"),
-                    };
+                for (pin_name, pin) in [
+                    ("vpp", prog.vpp.as_ref()),
+                    ("pgm", prog.pgm.as_ref()),
+                    ("pe", prog.pe.as_ref()),
+                ] {
+                    let Some(pin) = pin else { continue };
                     specs.push(format!(
-                        "ProgrammingPinSpec {{ name: \"vpp\", pin: {}, read_state: {} }}",
-                        vpp.pin, state
-                    ));
-                }
-
-                if let Some(ref pgm) = prog.pgm {
-                    let state = match pgm.read_state.as_str() {
-                        "vcc" => "ProgrammingPinState::Vcc",
-                        "high" => "ProgrammingPinState::High",
-                        "low" => "ProgrammingPinState::Low",
-                        "chip_select" => "ProgrammingPinState::ChipSelect",
-                        "x" => "ProgrammingPinState::Ignored",
-                        "word_size" => "ProgrammingPinState::WordSize",
-                        _ => panic!("Invalid read state"),
-                    };
-                    specs.push(format!(
-                        "ProgrammingPinSpec {{ name: \"pgm\", pin: {}, read_state: {} }}",
-                        pgm.pin, state
+                        "ProgrammingPinSpec {{ name: \"{}\", pin: {}, read_state: {} }}",
+                        pin_name,
+                        pin.pin,
+                        programming_pin_state(type_name, pin_name, &pin.read_state)
                     ));
                 }
 

@@ -86,10 +86,15 @@ use super::cs_data_layout::{CsDataLayout, SelectRole};
 /// - `Cs1`/`HalfSelect` read `cs_config.cs1_logic()`. For `HalfSelect`,
 ///   `derive_cs_data_layout` pre-validates that `cs1_logic` is
 ///   `Some(ActiveLow|ActiveHigh)`, so the `unwrap` is safe.
-/// - `Cs2`/`Cs3` read the corresponding logic; `select_phys_pins` only
+/// - `Cs2`/`Cs3`/`Cs4` read the corresponding logic; `select_phys_pins` only
 ///   includes them when `Some(ActiveLow|ActiveHigh)`, so `unwrap_or` here
 ///   is just a defensive fallback, not expected to be hit.
 /// - `Ce`/`Oe` (27xx-style fixed lines) are always active-low.
+///
+/// A CS line's polarity may be fixed by the silicon rather than chosen by the
+/// user (e.g. the HM7641's active-high CS3/CS4). That is resolved into
+/// `CsConfig` by `CsConfig::from_chip_type`, so it needs no special handling
+/// here - a fixed line reads exactly like a configured one.
 fn cs_logic_for_role(role: SelectRole, cs_config: &CsConfig) -> CsLogic {
     match role {
         SelectRole::Cs1 | SelectRole::X1 | SelectRole::X2 | SelectRole::HalfSelect => {
@@ -97,6 +102,7 @@ fn cs_logic_for_role(role: SelectRole, cs_config: &CsConfig) -> CsLogic {
         }
         SelectRole::Cs2 => cs_config.cs2_logic().unwrap_or(CsLogic::ActiveLow),
         SelectRole::Cs3 => cs_config.cs3_logic().unwrap_or(CsLogic::ActiveLow),
+        SelectRole::Cs4 => cs_config.cs4_logic().unwrap_or(CsLogic::ActiveLow),
         SelectRole::Ce => CsLogic::ActiveLow,
         SelectRole::Oe => CsLogic::ActiveLow,
     }
@@ -349,7 +355,7 @@ mod tests {
             role: SelectRole::Cs1,
             gpio: 13
         }]);
-        let cs_config = CsConfig::new(Some(CsLogic::ActiveLow), None, None);
+        let cs_config = CsConfig::new(Some(CsLogic::ActiveLow), None, None, None);
 
         let overrides = build_cs_overrides(&layout, ChipSetType::Single, &cs_config, &[]);
         assert!(overrides.is_empty());
@@ -363,7 +369,7 @@ mod tests {
             role: SelectRole::Cs1,
             gpio: 13
         }]);
-        let cs_config = CsConfig::new(Some(CsLogic::ActiveHigh), None, None);
+        let cs_config = CsConfig::new(Some(CsLogic::ActiveHigh), None, None, None);
 
         let overrides = build_cs_overrides(&layout, ChipSetType::Single, &cs_config, &[]);
         assert_eq!(
@@ -390,15 +396,15 @@ mod tests {
                 gpio: 15
             },
         ]);
-        let cs_config = CsConfig::new(Some(CsLogic::ActiveLow), None, None);
+        let cs_config = CsConfig::new(Some(CsLogic::ActiveLow), None, None, None);
 
         let overrides = build_cs_overrides(
             &layout,
             ChipSetType::Multi,
             &cs_config,
             &[
-                CsConfig::new(Some(CsLogic::ActiveLow), None, None),
-                CsConfig::new(Some(CsLogic::ActiveLow), None, None),
+                CsConfig::new(Some(CsLogic::ActiveLow), None, None, None),
+                CsConfig::new(Some(CsLogic::ActiveLow), None, None, None),
             ],
         );
         assert_eq!(
@@ -425,13 +431,13 @@ mod tests {
                 gpio: 14
             },
         ]);
-        let cs_config = CsConfig::new(Some(CsLogic::ActiveHigh), None, None);
+        let cs_config = CsConfig::new(Some(CsLogic::ActiveHigh), None, None, None);
 
         let overrides = build_cs_overrides(
             &layout,
             ChipSetType::Multi,
             &cs_config,
-            &[CsConfig::new(Some(CsLogic::ActiveHigh), None, None)],
+            &[CsConfig::new(Some(CsLogic::ActiveHigh), None, None, None)],
         );
         assert!(overrides.is_empty());
     }
@@ -452,8 +458,8 @@ mod tests {
                 gpio: 14
             },
         ]);
-        let cs_config = CsConfig::new(Some(CsLogic::ActiveLow), None, None);
-        let secondary = &[CsConfig::new(Some(CsLogic::ActiveHigh), None, None)];
+        let cs_config = CsConfig::new(Some(CsLogic::ActiveLow), None, None, None);
+        let secondary = &[CsConfig::new(Some(CsLogic::ActiveHigh), None, None, None)];
 
         let overrides = build_cs_overrides(&layout, ChipSetType::Multi, &cs_config, secondary);
         // Only CS1 inverted (active_low ≠ required active_high).
@@ -480,7 +486,7 @@ mod tests {
                 gpio: 14
             },
         ]);
-        let cs_config = CsConfig::new(Some(CsLogic::ActiveHigh), None, None);
+        let cs_config = CsConfig::new(Some(CsLogic::ActiveHigh), None, None, None);
 
         let overrides = build_cs_overrides(&layout, ChipSetType::Single, &cs_config, &[]);
         // CE is always active-low (matches required) -> no override.
@@ -505,7 +511,7 @@ mod tests {
                 gpio: 14
             },
         ]);
-        let cs_config = CsConfig::new(Some(CsLogic::ActiveLow), None, None);
+        let cs_config = CsConfig::new(Some(CsLogic::ActiveLow), None, None, None);
 
         let overrides = build_cs_overrides(&layout, ChipSetType::Single, &cs_config, &[]);
         assert!(overrides.is_empty());
@@ -781,8 +787,8 @@ mod tests {
             }],
         );
         // chip0: cs1 (select) and cs2 (commoned) both active_low.
-        let cs_config = CsConfig::new(Some(CsLogic::ActiveLow), Some(CsLogic::ActiveLow), None);
-        let secondary = CsConfig::new(Some(CsLogic::ActiveLow), None, None);
+        let cs_config = CsConfig::new(Some(CsLogic::ActiveLow), Some(CsLogic::ActiveLow), None, None);
+        let secondary = CsConfig::new(Some(CsLogic::ActiveLow), None, None, None);
 
         let overrides = build_cs_overrides(&layout, ChipSetType::Multi, &cs_config, &[secondary]);
 
@@ -819,8 +825,8 @@ mod tests {
             }],
         );
         // cs1 (select) active_low -> invert; cs2 (commoned) active_high -> not.
-        let cs_config = CsConfig::new(Some(CsLogic::ActiveLow), Some(CsLogic::ActiveHigh), None);
-        let secondary = CsConfig::new(Some(CsLogic::ActiveLow), None, None);
+        let cs_config = CsConfig::new(Some(CsLogic::ActiveLow), Some(CsLogic::ActiveHigh), None, None);
+        let secondary = CsConfig::new(Some(CsLogic::ActiveLow), None, None, None);
 
         let overrides = build_cs_overrides(&layout, ChipSetType::Multi, &cs_config, &[secondary]);
 
@@ -859,6 +865,7 @@ mod tests {
             Some(CsLogic::Ignore),
             Some(CsLogic::ActiveHigh),
             Some(CsLogic::Ignore),
+            None,
         );
 
         let overrides = build_cs_overrides(
@@ -870,11 +877,13 @@ mod tests {
                     Some(CsLogic::Ignore),
                     Some(CsLogic::ActiveHigh),
                     Some(CsLogic::Ignore),
+                    None,
                 ),
                 CsConfig::new(
                     Some(CsLogic::Ignore),
                     Some(CsLogic::ActiveHigh),
                     Some(CsLogic::Ignore),
+                    None,
                 ),
             ],
         );

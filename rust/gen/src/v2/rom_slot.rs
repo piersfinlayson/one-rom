@@ -205,7 +205,7 @@ mod tests {
     /// without any resizing.
     #[test]
     fn fire24a_2364_single() {
-        let cs_config = CsConfig::new(Some(CsLogic::ActiveLow), None, None);
+        let cs_config = CsConfig::new(Some(CsLogic::ActiveLow), None, None, None);
         let image = vec![0u8; ChipType::Chip2364.size_bytes()];
 
         let chip = Chip::from_raw_rom_image(
@@ -313,7 +313,7 @@ mod tests {
     /// End-to-end: Fire28A, single 23QL384, CS1 ActiveLow.
     #[test]
     fn fire28a_23ql384_single() {
-        let cs_config = CsConfig::new(Some(CsLogic::ActiveLow), None, None);
+        let cs_config = CsConfig::new(Some(CsLogic::ActiveLow), None, None, None);
         let image = vec![0u8; ChipType::Chip23QL384.size_bytes()]; // 49152 bytes
 
         let chip = Chip::from_raw_rom_image(
@@ -403,7 +403,7 @@ mod tests {
             Some(image.as_slice()),
             vec![0u8; ChipType::Chip27128.size_bytes()],
             &ChipType::Chip27128,
-            CsConfig::new(Some(CsLogic::ActiveLow), None, None),
+            CsConfig::new(Some(CsLogic::ActiveLow), None, None, None),
             &SizeHandling::None,
             None,
         )
@@ -416,7 +416,7 @@ mod tests {
             Some(image.as_slice()),
             vec![0u8; ChipType::Chip27128.size_bytes()],
             &ChipType::Chip27128,
-            CsConfig::new(Some(CsLogic::ActiveLow), None, None),
+            CsConfig::new(Some(CsLogic::ActiveLow), None, None, None),
             &SizeHandling::None,
             None,
         )
@@ -476,7 +476,7 @@ mod tests {
     #[test]
     fn fire28c_23ql512_banked_3chip_too_large() {
         let image = vec![0u8; ChipType::Chip23QL512.size_bytes()];
-        let cs_config = CsConfig::new(Some(CsLogic::ActiveLow), None, None);
+        let cs_config = CsConfig::new(Some(CsLogic::ActiveLow), None, None, None);
 
         let make_chip = |i: usize| {
             Chip::from_raw_rom_image(

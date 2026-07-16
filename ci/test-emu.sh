@@ -111,6 +111,7 @@ test_24_all_rom_types() {
     run_no_cs  $board images/test/rand_2KB.rom   type=2716
     run_no_cs  $board images/test/rand_4KB.rom   type=2732
     run_no_cs  $board images/test/rand_2KB.rom   type=28C16
+    run_no_cs  $board images/test/rand_0.5KB.rom type=HM7641
 }
 
 test_28_all_rom_types() {

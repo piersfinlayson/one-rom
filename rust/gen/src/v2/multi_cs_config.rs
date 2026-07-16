@@ -28,6 +28,7 @@ pub enum ControlLineKind {
     Cs1,
     Cs2,
     Cs3,
+    Cs4,
 }
 
 impl ControlLineKind {
@@ -39,6 +40,7 @@ impl ControlLineKind {
             Self::Cs1 => "cs1",
             Self::Cs2 => "cs2",
             Self::Cs3 => "cs3",
+            Self::Cs4 => "cs4",
         }
     }
 }
@@ -50,6 +52,7 @@ fn name_to_control_line_kind(name: &str) -> Option<ControlLineKind> {
         "cs1" => Some(ControlLineKind::Cs1),
         "cs2" => Some(ControlLineKind::Cs2),
         "cs3" => Some(ControlLineKind::Cs3),
+        "cs4" => Some(ControlLineKind::Cs4),
         _ => None,
     }
 }
@@ -110,6 +113,7 @@ pub(crate) fn control_line_logic(name: &str, cs_config: &CsConfig) -> CsLogic {
         "cs1" => cs_config.cs1_logic().unwrap_or(CsLogic::ActiveLow),
         "cs2" => cs_config.cs2_logic().unwrap_or(CsLogic::ActiveLow),
         "cs3" => cs_config.cs3_logic().unwrap_or(CsLogic::ActiveLow),
+        "cs4" => cs_config.cs4_logic().unwrap_or(CsLogic::ActiveLow),
         _ => CsLogic::ActiveLow,
     }
 }
