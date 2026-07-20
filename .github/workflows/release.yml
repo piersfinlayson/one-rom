@@ -20,7 +20,7 @@ jobs:
     - name: Install build dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y gcc-arm-none-eabi jq libcurl4-openssl-dev libjson-c-dev libzip-dev make zip
+        sudo apt-get install -y gcc-arm-none-eabi libcurl4-openssl-dev libjson-c-dev libzip-dev make zip
         
     - name: Install Rust
       uses: dtolnay/rust-toolchain@stable
@@ -37,42 +37,13 @@ jobs:
         export TOOLCHAIN=/usr/bin
         ci/test-emu.sh
 
-    - name: Build all combinations
+    - name: Build firmware
       env:
         TOOLCHAIN: /usr/bin
       run: ci/build.sh ci
       
     - name: Package release
       run: ci/build.sh release ${{ steps.version.outputs.VERSION }}
-      
-    - name: Commit manifest.json back to repo
-      run: |
-        # Checkout main branch
-        git fetch origin main
-        git checkout main
-        
-        git config user.name "github-actions[bot]"
-        git config user.email "github-actions[bot]@users.noreply.github.com"
-        
-        mkdir -p releases
-        
-        # Copy manifest with version
-        cp builds/${{ steps.version.outputs.VERSION }}/firmware/manifest.json releases/manifest-${{ steps.version.outputs.VERSION }}.json
-        
-        # Also update latest manifest
-        cp builds/${{ steps.version.outputs.VERSION }}/firmware/manifest.json releases/manifest-latest.json
-        
-        # Update or create releases.json
-        if [ -f releases/releases.json ]; then
-        jq '. += [{"tag": "${{ steps.version.outputs.VERSION }}", "date": "'$(date -u +%Y-%m-%dT%H:%M:%SZ)'"}]' releases/releases.json > releases/releases.json.tmp
-        mv releases/releases.json.tmp releases/releases.json
-        else
-        echo '[{"tag": "${{ steps.version.outputs.VERSION }}", "date": "'$(date -u +%Y-%m-%dT%H:%M:%SZ)'"}]' > releases/releases.json
-        fi
-        
-        git add releases/
-        git commit -m "Add manifest and update releases list for ${{ steps.version.outputs.VERSION }}"
-        git push origin main
 
     - name: Read release notes
       id: release_notes

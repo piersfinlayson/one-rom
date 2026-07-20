@@ -18,18 +18,24 @@ echo "picotool: $(picotool version 2>/dev/null || echo 'not found')"
 echo ""
 
 cat << 'EOF'
+A One ROM build environment - build the firmware, build the tooling, and run
+the tooling.
+
 To get started:
   ./clone.sh && cd one-rom
 
-Build firmware:
-  scripts/onerom.sh <board> <config-file>
+Build the base firmware (a single image for all Fire boards):
+  scripts/build-empty-fw.sh
 
-Examples:
-  scripts/onerom.sh fire-24-d onerom-config/vic20-pal.json
-  scripts/onerom.sh ice-24-j onerom-config/c64.json
+Copy the built firmware to the output directory:
+  ../copy-fw.sh
 
-Copy firmware to output directory:
-  ./copy-fw.sh
+Build the tooling (e.g. the CLI):
+  cd rust/cli && cargo build --release
+
+Run the tooling - build a configured firmware for a board and ROM config:
+  onerom firmware build --config-file onerom-config/vic20-pal.json \
+      --board fire-24-e --out firmware.bin
 EOF
 
 echo ""

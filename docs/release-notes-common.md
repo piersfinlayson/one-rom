@@ -16,7 +16,7 @@ For more advanced use cases, use [One ROM CLI](https://onerom.org/cli) to build 
 
 ## Firmware
 
-The base One ROM firmware for this release is attached to this release.  However, it is easier to use [Web](https://onerom.org/web) or CLI (https://onerom.org/cli) to build and flash your One ROM.  These tools automatically download and use the latest firmware version.
+The base One ROM firmware for this release is attached to this release.  However, it is easier to use [Web](https://onerom.org/web) or [CLI](https://onerom.org/cli) to build and flash your One ROM.  These tools automatically download and use the latest firmware version.
 
 ## Support
 

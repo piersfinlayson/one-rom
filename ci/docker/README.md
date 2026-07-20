@@ -6,7 +6,11 @@ It supports Linux, macOS, and Windows hosts (x86_64 and arm64). Docker Desktop a
 
 Dependencies are installed in the container, so you do not need to install them on your host system.
 
-Example usage:
+The container is a complete One ROM build environment: use it to build the firmware, build the host tooling (CLI, Studio, Lab), and run the tooling.
+
+From v0.7.0 the firmware is a single base image covering all Fire boards (Ice is no longer supported). Building a firmware for a specific board and ROM configuration is a tooling step - use the CLI, as shown below.
+
+Example usage - build the base firmware:
 
 ```bash
 mkdir ./output
@@ -14,7 +18,7 @@ docker run --rm -v $(pwd)/output:/home/build/output \
     --name onerom-build ghcr.io/piersfinlayson/onerom-build:latest \
     sh -c './clone.sh && \
             cd one-rom && \
-            scripts/onerom.sh fire-24-d onerom-config/vic20-pal.json && \
+            scripts/build-empty-fw.sh && \
             ../copy-fw.sh'
 ```
 
@@ -22,10 +26,10 @@ The firmware is now available in `./output/` on your host:
 
 ```bash
 $ ls -l ./output
-total 3088
--rw-r--r--  1 pdf  wheel  393216 Jan 31 18:16 onerom_fire-24-d_vic20-pal.bin
--rwxr-xr-x  1 pdf  wheel  398168 Jan 31 18:16 onerom_fire-24-d_vic20-pal.elf
--rw-r--r--  1 pdf  wheel  786432 Jan 31 18:16 onerom_fire-24-d_vic20-pal.uf2
+total 1568
+-rw-r--r--  1 pdf  wheel  262144 Jan 31 18:16 onerom-rp235x.bin
+-rwxr-xr-x  1 pdf  wheel  398168 Jan 31 18:16 onerom-rp235x.elf
+-rw-r--r--  1 pdf  wheel  524288 Jan 31 18:16 onerom-rp235x.uf2
 ```
 
 ## Building One ROM
@@ -41,7 +45,7 @@ This example:
 
 * creates a `./output/` directory on your host for the built firmware
 * clones the One ROM repo
-* builds One ROM for the `fire-24-d` configuration using the `onerom-config/vic20-pal.json` configuration file
+* builds the base One ROM firmware
 * copies the built firmware to the mounted output directory on your host
 * exits the container (which is then auto-deleted).
 
@@ -50,14 +54,14 @@ mkdir -p ./output
 docker run -it --rm -v $(pwd)/output:/home/build/output --hostname onerom-build --name onerom-build ghcr.io/piersfinlayson/onerom-build:latest bash
 ./clone.sh
 cd one-rom
-scripts/onerom.sh fire-24-d onerom-config/vic20-pal.json
+scripts/build-empty-fw.sh
 ../copy-fw.sh
 exit
 ```
 
 You can now retrieve the built firmware from your host at `./output/`.
 
-The first time you run `scripts/onerom.sh` it will take a while to build all of the Rust toolchain components.  Subsequent builds using the same container will be much faster.
+The first time you run `scripts/build-empty-fw.sh` it will take a while to build all of the Rust toolchain components.  Subsequent builds using the same container will be much faster.
 
 ### Background
 
@@ -67,7 +71,7 @@ This example is similar to the foreground example, but runs the container in the
 mkdir -p ./output
 docker run -d -v $(pwd)/output:/home/build/output --name onerom-build ghcr.io/piersfinlayson/onerom-build:latest
 docker exec -it onerom-build ./clone.sh
-docker exec -it onerom-build sh -c 'cd one-rom && scripts/onerom.sh fire-24-d onerom-config/vic20-pal.json && ./copy-fw.sh'
+docker exec -it onerom-build sh -c 'cd one-rom && scripts/build-empty-fw.sh && ../copy-fw.sh'
 ```
 
 You can now retrieve the built firmware from your host at `./output/`.
@@ -79,6 +83,21 @@ docker stop onerom-build
 docker rm onerom-build
 ```
 
+### Building a Configured Firmware
+
+The steps above build the base firmware. To build a flashable firmware for a specific board with a ROM configuration, build and run the CLI - this is a tooling step, not a firmware compile:
+
+```bash
+cd rust/cli
+cargo build --release
+./target/release/onerom firmware build \
+    --config-file ../../onerom-config/vic20-pal.json \
+    --board fire-24-e \
+    --out /home/build/output/firmware.bin
+```
+
+The CLI can do much more (inspecting, programming, and managing a connected One ROM); run `onerom --help` for the full command set.
+
 ## Programming One ROM
 
 The easiest ways of programming One ROM using the firmware built in this container are:
@@ -88,7 +107,7 @@ The easiest ways of programming One ROM using the firmware built in this contain
 
 Both tools allow you to select locally built firmware files to program to your One ROM.
 
-However, it is possible to use `probe-rs`, `picotool` (One ROM Fire) and `dfu-util` (One ROM Ice) from within the container by giving the container access to the required hardware devices.  Use `--privileged` or `--device` flags to give the container access to USB devices.
+However, it is possible to use `probe-rs` and `picotool` from within the container by giving the container access to the required hardware devices.  Use `--privileged` or `--device` flags to give the container access to USB devices.
 
 ## Building the Container
 

@@ -38,30 +38,6 @@ clean_builds() {
 }
 
 #
-# Get display name for a hardware revision
-# Args: hw_rev
-#
-get_hw_display() {
-    local hw_rev="$1"
-    case "$hw_rev" in
-        fire-24-a)     echo "Fire 24 A" ;;
-        fire-24-usb-b) echo "Fire 24 B" ;;
-        fire-24-c)     echo "Fire 24 C" ;;
-        fire-24-d)     echo "Fire 24 D" ;;
-        fire-24-e)     echo "Fire 24 E" ;;
-        fire-24-f)     echo "Fire 24 F" ;;
-        fire-28-a)     echo "Fire 28 A" ;;
-        fire-28-b)     echo "Fire 28 B" ;;
-        fire-28-c)     echo "Fire 28 C" ;;
-        fire-32-a)     echo "Fire 32 A" ;;
-        fire-32-b)     echo "Fire 32 B" ;;
-        fire-40-a)     echo "Fire 40 A" ;;
-        fire-40-b)     echo "Fire 40 B" ;;
-        *)             echo "$hw_rev" ;;
-    esac
-}
-
-#
 # Build firmware with retry
 # Returns: 0 on success, 1 on failure
 #
@@ -89,63 +65,6 @@ build_firmware() {
     fi
 
     return 0
-}
-
-#
-# Generate manifest JSON for release
-# Args: version, firmware_dir
-#
-generate_manifest() {
-    local version="$1"
-    local firmware_dir="$2"
-    local manifest_file="${firmware_dir}/manifest.json"
-
-    # Determine GitHub repository
-    local github_repo="${GITHUB_REPOSITORY:-}"
-    if [[ -z "$github_repo" ]]; then
-        local git_remote
-        git_remote=$(git remote get-url origin 2>/dev/null || echo "")
-        if [[ "$git_remote" =~ github.com[:/]([^/]+/[^/.]+) ]]; then
-            github_repo="${BASH_REMATCH[1]%.git}"
-        fi
-    fi
-
-    if [[ -z "$github_repo" ]]; then
-        echo "ERROR: Could not determine GitHub repository. Set GITHUB_REPOSITORY or configure git remote."
-        exit 1
-    fi
-
-    # Build hardware section from rust/config/json/*.json
-    local hardware_json="{"
-    local first=true
-
-    for hw_config_file in "${PROJECT_ROOT}/rust/config/json"/*.json; do
-        [[ -f "$hw_config_file" ]] || continue
-        local hw_rev
-        hw_rev=$(basename "$hw_config_file" .json)
-
-        # Only include fire hardware entries
-        [[ "$hw_rev" != fire-* ]] && continue
-
-        local description
-        description=$(jq -r '.description // ""' "$hw_config_file")
-        local usb_support
-        usb_support=$(jq -r '.mcu.usb.present // false' "$hw_config_file")
-        local display
-        display=$(get_hw_display "$hw_rev")
-
-        [[ "$first" == true ]] && first=false || hardware_json+=","
-        hardware_json+="\"${hw_rev}\":{\"display\":\"${display}\",\"description\":\"${description}\",\"usb_support\":${usb_support}}"
-    done
-    hardware_json+="}"
-
-    local models_json='{"fire":{"display":"Fire"}}'
-
-    local manifest
-    manifest=$(echo "{\"version\":\"${version}\",\"hardware\":${hardware_json},\"models\":${models_json},\"artifacts\":[]}" | jq '.')
-    echo "$manifest" > "$manifest_file"
-
-    echo "Generated manifest: ${manifest_file}"
 }
 
 #
@@ -196,7 +115,6 @@ main() {
             zip "onerom-${version}.zip" "${bin_name}" > /dev/null
             cd "${PROJECT_ROOT}"
 
-            generate_manifest "$version" "$firmware_dir"
             echo "Release ${version} complete: ${firmware_dir}"
             ;;
 

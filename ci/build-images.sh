@@ -1,4 +1,20 @@
 #!/usr/bin/env bash
+#
+# build-images.sh - Build and stage the One ROM base firmware for one-rom-images
+# (images.onerom.org).
+#
+# From v0.7.0 there is a single base firmware for every Fire board: it is the
+# same across RP2350A/RP2350B and across all Fire hardware variants. Ice is no
+# longer supported. Because the base firmware is board- and MCU-variant
+# agnostic, it is built once and staged in a single location; every Fire board
+# in the manifest fragment points at that one firmware.bin via a shared `path`.
+# (The board/MCU still matter when generating per-variant metadata and images -
+# just not for the base firmware staged here.)
+#
+# The fragment is written to /tmp/releases.json for manual pasting into
+# one-rom-images/releases.json. This script deliberately does not touch the
+# `latest` field - update that by hand once the release is ready.
+#
 set -e
 
 VERSION=$1
@@ -7,89 +23,57 @@ DEST_VERSION=v$VERSION
 
 if [ -z "$VERSION" ] || [ -z "$DEST_PREFIX" ]; then
     echo "Usage: $0 <version> <destination_prefix>"
-    echo "  - example: $0 0.5.2 ../one-rom-images"
+    echo "  - example: $0 0.7.0 ../one-rom-images"
     exit 1
 fi
 
-FIRE_BOARDS=(fire-24-a fire-24-usb-b fire-24-c fire-24-d fire-24-e fire-24-f fire-28-a fire-28-b fire-28-c fire-28-d fire-32-a fire-32-b fire-40-a fire-40-b)
-ICE_BOARDS=(ice-24-d ice-24-e ice-24-f ice-24-g ice-24-usb-h ice-24-i ice-24-j ice-28-a)
-STM32_MCUS=(f401rb f401rc f401re f405rg f411rc f411re f446rc f446re)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+FIRMWARE_BIN="${PROJECT_ROOT}/firmware/build/onerom-rp235x.bin"
 
-# Board-specific extra args (applied to all MCUs for that board)
-declare -A BOARD_EXTRA_ARGS=(
-    ["ice-24-d"]="STATUS_LED=0"
-)
+# Shared staging location. Every Fire board resolves here via its `path`
+# override in the manifest fragment below.
+SHARED_MODEL="fire"
+SHARED_MCU="rp2350"
 
-# Board+MCU-specific extra args (if you need them)
-#
-# Currently unused
-#
-#declare -A BOARD_MCU_EXTRA_ARGS=(
-#    ["ice-24-d+f401re"]="STATUS_LED=0 SOME_OTHER=1"
-#)
-declare -A BOARD_MCU_EXTRA_ARGS=()
+cd "${PROJECT_ROOT}"
 
+# Build the base firmware once. This is the same `make firmware` output that
+# ci/build.sh publishes, so the staged image is identical to the release image.
+echo "Building One ROM base firmware v${VERSION}..."
+make clean-firmware-build > /dev/null 2>&1 || true
+make firmware
+
+if [ ! -f "${FIRMWARE_BIN}" ]; then
+    echo "ERROR: expected firmware ${FIRMWARE_BIN} not found"
+    exit 1
+fi
+
+# Stage it in the single shared destination.
+dest_dir="${DEST_PREFIX}/${DEST_VERSION}/${SHARED_MODEL}/${SHARED_MCU}"
+mkdir -p "${dest_dir}"
+cp "${FIRMWARE_BIN}" "${dest_dir}/firmware.bin"
+echo "Staged base firmware at ${dest_dir}/firmware.bin"
+
+# Build the manifest fragment. Every Fire board is listed by name (so clients
+# that look up a specific board still find it), but each points at the shared
+# ${SHARED_MODEL}/${SHARED_MCU} path via its `path` override. Board list is
+# derived from rust/config/json/fire-*.json so it never goes stale.
 json_boards=""
-
-# Build fire boards with RP2350
-for board in "${FIRE_BOARDS[@]}"; do
-    echo "Building $board with rp2350..."
-    
-    # Get extra args
-    extra_args="${BOARD_MCU_EXTRA_ARGS[$board+rp2350]:-${BOARD_EXTRA_ARGS[$board]:-}}"
-    
-    eval "EXCLUDE_METADATA=1 ROM_CONFIGS= HW_REV=$board MCU=rp2350 $extra_args make"
-    
-    dest_dir="$DEST_PREFIX/$DEST_VERSION/$board/rp2350"
-    mkdir -p "$dest_dir"
-    cp "sdrr/build/sdrr-rp2350.bin" "$dest_dir/firmware.bin"
-
-    # Add to JSON
+for cfg in "${PROJECT_ROOT}/rust/config/json"/fire-*.json; do
+    [ -f "$cfg" ] || continue
+    board=$(basename "$cfg" .json)
     json_boards+="
                 {
                     \"name\": \"$board\",
+                    \"path\": \"${SHARED_MODEL}\",
                     \"mcus\": [
-                        {\"name\": \"rp2350\"}
+                        {\"name\": \"${SHARED_MCU}\"}
                     ]
                 },"
 done
-
-# For ice boards
-for board in "${ICE_BOARDS[@]}"; do
-    json_mcus=""
-    for mcu in "${STM32_MCUS[@]}"; do
-        echo "Building $board with $mcu..."
-        
-        # Get extra args (board+mcu specific takes precedence over board-only)
-        extra_args="${BOARD_MCU_EXTRA_ARGS[$board+$mcu]:-${BOARD_EXTRA_ARGS[$board]:-}}"
-        
-        eval "EXCLUDE_METADATA=1 ROM_CONFIGS= HW_REV=$board MCU=$mcu $extra_args make"
-        
-        dest_dir="$DEST_PREFIX/$DEST_VERSION/$board/$mcu"
-        mkdir -p "$dest_dir"
-        cp "sdrr/build/sdrr-stm32$mcu.bin" "$dest_dir/firmware.bin"
-
-        # Add MCU to list
-        json_mcus+="
-                        {\"name\": \"$mcu\"},"
-    done
-
-    # Remove trailing comma from mcus
-    json_mcus="${json_mcus%,}"
-    
-    # Add board to JSON
-    json_boards+="
-                {
-                    \"name\": \"$board\",
-                    \"mcus\": [$json_mcus
-                    ]
-                },"
-done
-
-# Remove trailing comma from boards
 json_boards="${json_boards%,}"
 
-# Write JSON file
 cat > "/tmp/releases.json" <<EOF
         {
             "version": "$VERSION",
@@ -100,3 +84,4 @@ cat > "/tmp/releases.json" <<EOF
 EOF
 
 echo "JSON manifest fragment written to /tmp/releases.json"
+echo "- paste it into one-rom-images/releases.json (and update 'latest' by hand when ready)"
