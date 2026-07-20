@@ -2,7 +2,7 @@
 
 All notables changes between versions are documented in this file.
 
-## v0.7.0
+## v0.7.0 - 2026-??-??
 
 This release includes a significant rewrite of the One ROM firmware focusing on Fire boards.
 
@@ -13,15 +13,11 @@ There is also a longer term benefit of reduced maintainability costs and also lo
 Ice boards are capped at firmware v0.6.xx (and are not supported in v0.7.0+).  The programming tools continue to support Ice boards and v0.6.xx.
 
 TODO
-- Publish USB plugin 0.2.0
-- Publish host-control 0.1.1
 - Figure out why status LED is off on v0.7.0
 
-TEST
+TO TEST
 - All ROM types live
 - Host control plugin
-- USB plugin
-- Do 0.6.xx USB and host-control plugins work when new 0.7.0 plugin version published.
 
 Retired:
 - `lab` (and replaced by `onerom-lab`)
