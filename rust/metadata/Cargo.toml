@@ -1,6 +1,6 @@
 [package]
 name = "onerom-metadata"
-version = "0.1.3"
+version = "0.1.4"
 edition = "2024"
 authors = ["Piers Finlayson <piers@piers.rocks>"]
 license = "MIT"

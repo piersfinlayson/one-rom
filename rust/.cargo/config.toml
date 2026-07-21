@@ -1,3 +1,5 @@
 [env]
 # Ensure that onerom-metadata's generated C header is always output to the correct location
 ONEROM_C_HEADER_OUT = { value = "../firmware/generated/onerom_metadata.h", relative = true }
+# Ensure onerom-metadata's generated plugin-facing key header lands in firmware/ora
+ONEROM_KEYS_HEADER_OUT = { value = "../firmware/ora/onerom_metadata_keys_generated.h", relative = true }

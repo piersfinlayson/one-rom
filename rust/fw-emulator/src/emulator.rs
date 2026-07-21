@@ -489,6 +489,22 @@ impl Emulator {
         (r, s)
     }
 
+    pub fn get_metadata_str(&self, key: ffi::ora_metadata_key_t) -> (OraResult, Option<String>) {
+        let mut ptr: *const std::os::raw::c_char = std::ptr::null();
+        let r = plugin_call!(
+            ffi::api_id_t_ORA_ID_GET_METADATA_STR,
+            ffi::ora_get_metadata_str_fn_t,
+            key,
+            &mut ptr as *mut *const std::os::raw::c_char
+        );
+        let r = OraResult::from(r);
+        // An unset optional field is OK with a NULL pointer (None), distinct
+        // from a non-OK result (e.g. NotSupported for an unknown key).
+        let s = (r.is_ok() && !ptr.is_null())
+            .then(|| unsafe { std::ffi::CStr::from_ptr(ptr) }.to_string_lossy().into_owned());
+        (r, s)
+    }
+
     pub fn get_chip_size_from_type(&self, chip_type: u32) -> u32 {
         plugin_call!(
             ffi::api_id_t_ORA_ID_GET_CHIP_SIZE_FROM_TYPE,

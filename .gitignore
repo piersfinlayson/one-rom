@@ -34,6 +34,7 @@ plugins/system/usb/pico-sdkless
 firmware/generated
 !firmware/generated/README.md
 !rust/metadata/build
+firmware/ora/onerom_metadata_keys_generated.h
 
 dist/
 output/

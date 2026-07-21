@@ -173,6 +173,29 @@ pub enum Generate {
 /// | opaque_ptr            | (none; const-ness derived from struct setting)  |
 /// | fn_ptr                | (none; generates void (*name)(void))            |
 /// | padding               | size                                            |
+/// A plugin-facing metadata key.
+///
+/// When attached to a struct field via `plugin_key`, that field is exposed to
+/// plugins through the metadata getter API under this key.  `id` is the stable,
+/// permanent enum value: once assigned it must never be renumbered or reused.
+#[derive(Deserialize, Debug, Clone)]
+pub struct PluginKey {
+    pub name: String,
+    pub id: u32,
+}
+
+/// A plugin key paired with the field it is attached to.
+pub struct PluginKeyEntry<'a> {
+    pub key: &'a PluginKey,
+    pub comment: Option<&'a str>,
+    /// Name of the struct that contains the field (for access-path derivation).
+    pub struct_name: &'a str,
+    /// Name of the field itself (the last hop of the access path).
+    pub field_name: &'a str,
+    /// Field kind, e.g. "cstr_ptr" - selects which typed accessor resolves it.
+    pub kind: &'a str,
+}
+
 #[derive(Deserialize, Debug, Clone)]
 pub struct Field {
     pub name: String,
@@ -220,7 +243,12 @@ pub struct Field {
 
     pub expected_const: Option<String>,
 
-    pub none_on_parse_error: Option<bool>,}
+    pub none_on_parse_error: Option<bool>,
+
+    /// Plugin-facing metadata key.  When set, this field is exposed to plugins
+    /// through the metadata getter API under the given key name and id.
+    pub plugin_key: Option<PluginKey>,
+}
 
 // ---------------------------------------------------------------------------
 // [[structs]]
@@ -313,7 +341,133 @@ impl Schema {
     pub fn load(path: &Path) -> Result<Self, Box<dyn std::error::Error>> {
         let content = std::fs::read_to_string(path)?;
         let schema: Schema = toml::from_str(&content)?;
+        schema.validate_plugin_keys()?;
         Ok(schema)
+    }
+
+    /// Every plugin-exposed metadata key, paired with its field comment,
+    /// sorted by id.  Drives generation of the plugin-facing key header.
+    pub fn plugin_keys(&self) -> Vec<PluginKeyEntry<'_>> {
+        let mut keys = Vec::new();
+        for s in &self.structs {
+            for f in &s.fields {
+                if let Some(pk) = &f.plugin_key {
+                    keys.push(PluginKeyEntry {
+                        key: pk,
+                        comment: f.comment.as_deref(),
+                        struct_name: &s.name,
+                        field_name: &f.name,
+                        kind: &f.kind,
+                    });
+                }
+            }
+        }
+        keys.sort_by_key(|e| e.key.id);
+        keys
+    }
+
+    /// Enforce the key-space invariants: ids 0x00000000 and 0xFFFFFFFF are
+    /// reserved sentinels, and both ids and names must be unique across the
+    /// whole schema so a key value identifies exactly one datum.
+    fn validate_plugin_keys(&self) -> Result<(), Box<dyn std::error::Error>> {
+        use std::collections::HashMap;
+        let mut ids: HashMap<u32, String> = HashMap::new();
+        let mut names: HashMap<String, u32> = HashMap::new();
+        for s in &self.structs {
+            for f in &s.fields {
+                if let Some(pk) = &f.plugin_key {
+                    if pk.id == 0x0000_0000 || pk.id == 0xFFFF_FFFF {
+                        return Err(format!(
+                            "plugin_key '{}' uses reserved id 0x{:08X}",
+                            pk.name, pk.id
+                        )
+                        .into());
+                    }
+                    if let Some(prev) = ids.insert(pk.id, pk.name.clone()) {
+                        return Err(format!(
+                            "plugin_key id 0x{:08X} used by both '{}' and '{}'",
+                            pk.id, prev, pk.name
+                        )
+                        .into());
+                    }
+                    if names.insert(pk.name.clone(), pk.id).is_some() {
+                        return Err(
+                            format!("plugin_key name '{}' used more than once", pk.name).into()
+                        );
+                    }
+                    // String keys resolve a stored value, so their access path
+                    // from the metadata root must exist.  Fail the build now
+                    // (with a clear message) rather than emit a broken path.
+                    if f.kind == "cstr_ptr" {
+                        self.plugin_key_access(&s.name, &f.name)?;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// C access expression for a plugin-key field, e.g. "METADATA->fw->name".
+    ///
+    /// Walks the struct-pointer graph from the metadata root down to the struct
+    /// that contains the field, then appends the field itself.  Every hop is a
+    /// pointer, so every step joins with "->".
+    pub fn plugin_key_access(
+        &self,
+        struct_name: &str,
+        field_name: &str,
+    ) -> Result<String, Box<dyn std::error::Error>> {
+        let root = self.schema.root_struct.as_str();
+        let mut path = Vec::new();
+        if !self.find_struct_path(root, struct_name, &mut Vec::new(), &mut path) {
+            return Err(format!(
+                "plugin_key on {struct_name}.{field_name}: struct '{struct_name}' is not \
+                 reachable from the metadata root '{root}' via struct pointers"
+            )
+            .into());
+        }
+        let mut expr = String::from("METADATA");
+        for step in &path {
+            expr.push_str("->");
+            expr.push_str(step);
+        }
+        expr.push_str("->");
+        expr.push_str(field_name);
+        Ok(expr)
+    }
+
+    /// Depth-first search of the struct-pointer graph from `current` to
+    /// `target`, recording the pointer field names taken.  Returns true and
+    /// fills `path` on success; `visited` guards against cycles.
+    fn find_struct_path(
+        &self,
+        current: &str,
+        target: &str,
+        visited: &mut Vec<String>,
+        path: &mut Vec<String>,
+    ) -> bool {
+        if current == target {
+            return true;
+        }
+        if visited.iter().any(|v| v == current) {
+            return false;
+        }
+        visited.push(current.to_string());
+
+        let Some(s) = self.structs.iter().find(|s| s.name == current) else {
+            return false;
+        };
+        for f in &s.fields {
+            // Only single struct pointers form a resolvable single-value path.
+            if f.kind == "struct_ptr" && let Some(ty) = &f.type_ {
+                path.push(f.name.clone());
+                if self.find_struct_path(ty, target, visited, path) {
+                    return true;
+                }
+                path.pop();
+            }
+        }
+        false
     }
 }
 

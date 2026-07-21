@@ -103,15 +103,13 @@ At this point you can follow the instructions below to build and flash the firmw
 
 ## Building the Firmware
 
-To build the firmware, you use a command like this:
+To build the base firmware, you use `scripts/build-empty-fw.sh` from the repo root.
+
+To build a firmware image to flash to a One ROM, you use the CLI tool, which you can build from `rust/cli` or download from [One ROM CLI](https://onerom.org/cli).  For example:
 
 ```bash
-scripts/onerom.sh fire-24-d onerom-config/vic20-pal.json
+onerom firmware build --base-firmware firmware/build/onerom-rp235x.bin --config onerom-config/vic20-pal.json /tmp/firmware.bin
 ```
-
-To flash, use `-f`, to include regular and debug logging use `-l` and `-d` respectively.
-
-You can also use make commands as described below, but running make directly has been deprecated in favour of the `scripts/onerom.sh` script.
 
 ## Programming the Firmware
 
@@ -124,7 +122,7 @@ After building the firmware as above, use the binary from `firmware/build/onerom
 - [One ROM Studio](https://onerom.org/studio)
 - [One ROM Web](https://onerom.org/web)
 
-If both cases, you need to select the option to upload a local firmware binary, and then program it.
+If all cases, you need to select the option to upload a local firmware binary, and then program it.
 
 You also have board specific, third-party, options:
 
@@ -159,27 +157,3 @@ See [Pi-PICO-PROGRAMMER](/docs/PI-PICO-PROGRAMMER.md) for details of using a Ras
 
 Occassionally your One ROM may lock up, particularly if you are experimenting with overclocking or other advanced configuration options, or debugging firmware changes.  If this is is the case, try rebooting your programmer, One ROM, or both, and try again.  If you still have problems, see [Recovering a Bricked Device](docs/GETTING-STARTED.md#recovering-a-bricked-device) for help.
 
-## Additional Make Targets
-
-To build and then review the contents of the firmware run:
-
-```bash
-XXX make info
-XXX make info-detail # More details
-```
-
-To perform consistency checking on the firmware run the following:
-
-```bash
-XXX make test
-```
-
-Not all ROM types support this testing.  Please raise an issue if your specific ROM type fails this test.
-
-## Debugging
-
-To enable both high-level logging and debug logging, use the following when building:
-
-```bash
-BOOT_LOGGING=1 DEBUG_LOGGING=1 CONFIG=config/vic20-pal.mk make
-```

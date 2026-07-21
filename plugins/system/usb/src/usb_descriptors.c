@@ -219,9 +219,16 @@ uint16_t const *tud_descriptor_string_cb(uint8_t index, uint16_t langid) {
       chr_count = 1;
       break;
 
-    case STRID_SERIAL:
-      chr_count = picoboot_get_serial(_desc_str + 1, 32);
+    case STRID_SERIAL: {
+      // Prefer a configured USB serial override; fall back to the chip-ID
+      // serial when none is set.  Both use the full descriptor-string capacity.
+      size_t const avail = sizeof(_desc_str) / sizeof(_desc_str[0]) - 1;
+      chr_count = usb_get_serial(_desc_str + 1, avail);
+      if (chr_count == 0) {
+        chr_count = picoboot_get_serial(_desc_str + 1, avail);
+      }
       break;
+    }
 
     default:
       // Note: the 0xEE index string is a Microsoft OS 1.0 Descriptors.

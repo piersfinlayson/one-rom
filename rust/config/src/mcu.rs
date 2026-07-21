@@ -86,6 +86,19 @@ pub enum RpVariant {
     Rp235xB = 0,
 }
 
+impl RpVariant {
+    /// Construct from the `CHIP_INFO` `package_sel` word returned by the
+    /// RP2350 `get_sys_info` API: `0` is the QFN-80 (RP235xB), `1` is the
+    /// QFN-60 (RP235xA). Returns `None` for any other value.
+    pub fn from_package_sel(sel: u32) -> Option<Self> {
+        match sel {
+            0 => Some(RpVariant::Rp235xB),
+            1 => Some(RpVariant::Rp235xA),
+            _ => None,
+        }
+    }
+}
+
 impl core::fmt::Display for RpVariant {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
@@ -407,5 +420,63 @@ impl Variant {
             Variant::RP2350 => "RP235X",
             Variant::RP2350B => "RP235X",
         }
+    }
+}
+
+/// The RP2350's unique per-chip hardware identity.
+///
+/// This is the one device property that is invariant across the device's
+/// running/stopped state and across any USB serial-number override: the serial
+/// string a host sees changes with state and configuration, but the chip ID
+/// does not. It is therefore the reliable key for tracking a device across
+/// reboots (for example while programming it).
+///
+/// The value is the RP2350 device id, read from the picoboot `GET_INFO`
+/// `CHIP_INFO` response (`device_id_low | device_id_high << 32`).
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub struct Rp235xChipId(u64);
+
+impl Rp235xChipId {
+    /// Construct from the three `CHIP_INFO` data words, in the order the
+    /// RP2350 `get_sys_info` API returns them:
+    /// `[package_sel, device_id_low, device_id_high]`. `package_sel` is the
+    /// package variant register and is not part of chip identity, so it is
+    /// ignored here.
+    pub fn from_chip_info(words: [u32; 3]) -> Self {
+        Self((words[1] as u64) | ((words[2] as u64) << 32))
+    }
+
+    /// Construct directly from the 64-bit device id.
+    pub fn from_u64(id: u64) -> Self {
+        Self(id)
+    }
+
+    /// The raw 64-bit device id.
+    pub fn as_u64(&self) -> u64 {
+        self.0
+    }
+
+
+    /// Parse from a 16-hex-digit USB serial string, as presented by the stock
+    /// bootloader and by a running device with no serial override. Returns
+    /// `None` if the string is not exactly 16 hex digits (e.g. it is a serial
+    /// override). Round-trips with `Display`, so a chip ID read via
+    /// `from_chip_info` and one parsed here from the same device's serial are
+    /// equal.
+    pub fn from_hex_serial(serial: &str) -> Option<Self> {
+        let s = serial.trim();
+        if s.len() != 16 || !s.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return None;
+        }
+        u64::from_str_radix(s, 16).ok().map(Self)
+    }
+}
+
+impl core::fmt::Display for Rp235xChipId {
+    /// Formats as 16 uppercase hex digits, matching the chip-ID serial string
+    /// the device presents in bootloader mode and when running without an
+    /// override. Intended for display and logging only, not identity comparison.
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "{:016X}", self.0)
     }
 }

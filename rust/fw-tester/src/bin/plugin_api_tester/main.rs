@@ -123,6 +123,10 @@ fn run_slot(
         "device_version",
         tests::info::test_device_version(&emulator, &fw_version),
     );
+    report.add(
+        "metadata_str",
+        tests::info::test_metadata_str(&emulator, config),
+    );
 
     // Lookup
     report.add(

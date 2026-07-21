@@ -33,6 +33,7 @@ pub fn generate(schema: &Schema) -> String {
     emit_struct_defs(schema, &mut out);
     emit_tagged_fam_defs(schema, &mut out);
     emit_simple_fam_defs(schema, &mut out);
+    emit_metadata_str_cases(schema, &mut out);
     emit_file_footer(schema, &mut out);
     out
 }
@@ -78,8 +79,99 @@ fn emit_file_header(schema: &Schema, out: &mut String) {
     ));
 }
 
+// ---------------------------------------------------------------------------
+// Plugin metadata key resolvers
+// ---------------------------------------------------------------------------
+
+/// Emit ONEROM_METADATA_STR_CASES: the generated switch arms for the string
+/// metadata getter (ora_get_metadata_str in firmware/src/plugin.c).
+///
+/// One arm per schema field tagged `plugin_key`: string-typed fields resolve
+/// their stored value; any other type returns ORA_RESULT_TYPE_MISMATCH.  The
+/// expanding function owns the switch, the argument guard, and the default arm.
+fn emit_metadata_str_cases(schema: &Schema, out: &mut String) {
+    let keys = schema.plugin_keys();
+    if keys.is_empty() {
+        return;
+    }
+
+    emit_major_section_header("Plugin metadata key resolvers", out);
+
+    let comment = wrap_comment_text(
+        "ONEROM_METADATA_STR_CASES(out) expands to the case arms of the switch in \
+         ora_get_metadata_str() (firmware/src/plugin.c).\n\n\
+         The arms are generated from the schema fields tagged `plugin_key`: each \
+         string-typed field resolves its stored value here; any non-string key \
+         returns ORA_RESULT_TYPE_MISMATCH. The expanding function supplies the \
+         surrounding switch, the `out == NULL` guard, and the `default:` arm that \
+         returns ORA_RESULT_NOT_SUPPORTED for keys unknown to this firmware.\n\n\
+         The macro references ora_metadata_key_t / ora_result_t from the plugin \
+         API (api.h). It is inert text, so those symbols need only be in scope \
+         where the macro is expanded (plugin.c, which includes api.h): this header \
+         therefore does not - and must not - include api.h, keeping the metadata \
+         type header free of any dependency on the plugin API surface.",
+        76,
+    );
+    emit_comment(&comment, "", out);
+
+    // Build the physical lines of the #define, then align the line-continuation
+    // backslashes into a single column.
+    let mut lines: Vec<String> = vec!["#define ONEROM_METADATA_STR_CASES(out)".to_string()];
+    for entry in &keys {
+        let key_name = format!("ORA_METADATA_KEY_{}", entry.key.name);
+        lines.push(format!("    case {}:", key_name));
+        if entry.kind == "cstr_ptr" {
+            let access = schema
+                .plugin_key_access(entry.struct_name, entry.field_name)
+                .expect("plugin_key access paths are validated at schema load");
+            lines.push(format!("        *(out) = {};", access));
+            lines.push("        return ORA_RESULT_OK;".to_string());
+        } else {
+            lines.push("        return ORA_RESULT_TYPE_MISMATCH;".to_string());
+        }
+    }
+
+    let width = lines.iter().map(|l| l.len()).max().unwrap_or(0);
+    for (i, line) in lines.iter().enumerate() {
+        if i + 1 < lines.len() {
+            out.push_str(&format!("{:<width$} \\\n", line, width = width));
+        } else {
+            out.push_str(&format!("{}\n", line));
+        }
+    }
+    out.push('\n');
+}
+
 fn emit_file_footer(schema: &Schema, out: &mut String) {
     out.push_str(&format!("#endif // {}\n", header_guard(schema)));
+}
+
+/// Word-wrap comment text to `width` columns (before the `// ` prefix that
+/// emit_comment adds), preserving blank-line paragraph breaks.  Lets generated
+/// comment bodies be authored as flowing paragraphs yet match the hand-wrapped
+/// house style in the rest of the header.
+fn wrap_comment_text(text: &str, width: usize) -> String {
+    let mut paragraphs = Vec::new();
+    for para in text.split("\n\n") {
+        let mut lines = Vec::new();
+        let mut line = String::new();
+        for word in para.split_whitespace() {
+            if line.is_empty() {
+                line.push_str(word);
+            } else if line.len() + 1 + word.len() <= width {
+                line.push(' ');
+                line.push_str(word);
+            } else {
+                lines.push(std::mem::take(&mut line));
+                line.push_str(word);
+            }
+        }
+        if !line.is_empty() {
+            lines.push(line);
+        }
+        paragraphs.push(lines.join("\n"));
+    }
+    paragraphs.join("\n\n")
 }
 
 fn header_guard(schema: &Schema) -> String {

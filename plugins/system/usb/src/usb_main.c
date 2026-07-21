@@ -126,14 +126,34 @@ void usb_plugin_task(void) {
     led_handle_ongoing_led_modes();
 }
 
+// Resolve the USB serial override from device metadata and widen it into the
+// UTF-16 descriptor buffer.  Returns the number of code units written, or 0
+// when there is no override to apply - either the running firmware predates the
+// metadata getter, or no override is set - so the caller falls back to the
+// chip-ID serial.
+//
+// The override string lives in flash and is read on demand (zero-copy); nothing
+// is cached, and the metadata getter is only looked up here, at descriptor
+// time.  An override longer than max_chars is truncated, so the descriptor
+// never overruns.  min_fw is unaffected: absence of the getter is handled, not
+// required.
 size_t usb_get_serial(uint16_t *desc_str, size_t max_chars) {
-    const char serial[] = "dummy serial";
-    size_t len = strlen(serial);
-    if (len > max_chars) {
-        len = max_chars;
+    ora_get_metadata_str_fn_t get_metadata_str =
+        context.ora_lookup_fn(ORA_ID_GET_METADATA_STR);
+    if (get_metadata_str == NULL) {
+        return 0;
     }
-    for (size_t i = 0; i < len; i++) {
-        desc_str[i] = serial[i];
+
+    const char *serial = NULL;
+    if (get_metadata_str(ORA_METADATA_KEY_SERIAL_OVERRIDE, &serial) != ORA_RESULT_OK
+        || serial == NULL) {
+        return 0;
+    }
+
+    size_t len = 0;
+    while (serial[len] != '\0' && len < max_chars) {
+        desc_str[len] = (uint16_t)(uint8_t)serial[len];
+        len++;
     }
     return len;
 }

@@ -27,9 +27,13 @@ pub async fn scan(options: &Options, board_filter: Option<Board>) -> Result<Vec<
         });
     }
 
-    // And/or the device
+    // And/or the device. Prefer the invariant chip ID; fall back to the serial
+    // only when the chip ID of the selected device isn't known.
     if let Some(device) = options.device.as_ref() {
-        devices.retain(|d| d.serial == device.serial);
+        match device.chip_id {
+            Some(id) => devices.retain(|d| d.chip_id == Some(id)),
+            None => devices.retain(|d| d.serial == device.serial),
+        }
     }
 
     devices.sort_by_key(|d| d.sort_key());

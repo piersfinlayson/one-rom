@@ -17,6 +17,7 @@
 
 mod c_gen;
 mod host_gen;
+mod keys_gen;
 mod rust_gen;
 mod schema;
 mod serialize_gen;
@@ -25,8 +26,10 @@ use std::env;
 use std::path::PathBuf;
 
 const ENV_C_HEADER_OUT: &str = "ONEROM_C_HEADER_OUT";
+const ENV_KEYS_HEADER_OUT: &str = "ONEROM_KEYS_HEADER_OUT";
 const METADATA_SCHEMA_FILE: &str = "metadata_schema.toml";
 const C_HEADER_FILE: &str = "firmware/generated/onerom_metadata.h";
+const KEYS_HEADER_FILE: &str = "firmware/ora/onerom_metadata_keys_generated.h";
 const RUST_GENERATED: &str = "metadata_generated.rs";
 const RUST_SERIALIZE_GENERATED: &str = "serialize_generated.rs";
 const RUST_HOST_GENERATED: &str = "host_generated.rs";
@@ -50,6 +53,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let c_header_path = env::var(ENV_C_HEADER_OUT)
         .map(PathBuf::from)
         .unwrap_or_else(|_| manifest_dir.join(C_HEADER_FILE));
+
+    // Plugin-facing key header.  Redirected to firmware/ora by the workspace
+    // .cargo/config.toml (relative to rust/), the same mechanism as the C
+    // header above; the in-crate fallback is otherwise unused.
+    let keys_header_path = env::var(ENV_KEYS_HEADER_OUT)
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| manifest_dir.join(KEYS_HEADER_FILE));
 
     // -------------------------------------------------------------------------
     // Cargo rerun-if-changed directives
@@ -80,6 +90,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!(
         "cargo:rerun-if-changed={}",
         build_dir.join("host_gen.rs").display()
+    );
+
+    println!(
+        "cargo:rerun-if-changed={}",
+        build_dir.join("keys_gen.rs").display()
     );
 
     // -------------------------------------------------------------------------
@@ -114,6 +129,28 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     eprintln!(
         "onerom build: wrote C header    -> {}",
         c_header_path.display()
+    );
+
+    // -------------------------------------------------------------------------
+    // Plugin-facing key header generation
+    // -------------------------------------------------------------------------
+
+    let keys_header = keys_gen::generate(&schema);
+
+    if let Some(parent) = keys_header_path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(&keys_header_path, &keys_header).map_err(|e| {
+        format!(
+            "Failed to write keys header to {}: {}",
+            keys_header_path.display(),
+            e
+        )
+    })?;
+
+    eprintln!(
+        "onerom build: wrote keys header -> {}",
+        keys_header_path.display()
     );
 
     // -------------------------------------------------------------------------

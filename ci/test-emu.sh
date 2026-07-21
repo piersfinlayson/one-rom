@@ -353,3 +353,8 @@ test_32_config_api onerom-config/test/32-random-27c0x0.json
 test_config fire-32-b onerom-config/test/32-random-extra.json
 test_40_config_api onerom-config/test/40-random.json
 test_40_config_api onerom-config/test/40-random-force-16bit.json
+
+# Device metadata test: this config sets an instance name and serial override,
+# so the plugin API metadata getter is exercised on the present (non-NULL)
+# path.  Other configs leave these unset and cover the absent (NULL) path.
+test_config_api fire-24-a onerom-config/test/metadata.json

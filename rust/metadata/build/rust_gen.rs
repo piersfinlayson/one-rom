@@ -556,6 +556,16 @@ fn push_file_header(out: &mut String) {
 // Section: constants
 // ---------------------------------------------------------------------------
 
+/// Emit a doc comment as one `/// ` line per source line, prefixed with
+/// `indent`.  Correctly handles multi-line (triple-quoted) schema comments;
+/// all doc-comment emission routes through here so a single-line variant that
+/// silently drops later lines cannot creep back in.
+fn push_doc_comment(out: &mut String, indent: &str, comment: &str) {
+    for line in comment.lines() {
+        out.push_str(&format!("{indent}/// {}\n", line.trim()));
+    }
+}
+
 fn push_constants(out: &mut String, schema: &Schema) {
     if schema.constants.is_empty() {
         return;
@@ -567,7 +577,7 @@ fn push_constants(out: &mut String, schema: &Schema) {
     );
     for c in &schema.constants {
         if let Some(cmt) = &c.comment {
-            out.push_str(&format!("/// {cmt}\n"));
+            push_doc_comment(out, "", cmt);
         }
         let rust_ty = match c.type_.as_str() {
             "u8" => "u8",
@@ -606,9 +616,7 @@ fn push_type_aliases(out: &mut String, schema: &Schema) {
     );
     for ta in &schema.type_aliases {
         if let Some(cmt) = &ta.comment {
-            for line in cmt.lines() {
-                out.push_str(&format!("/// {}\n", line.trim()));
-            }
+            push_doc_comment(out, "", cmt);
         }
         let rn = rust_type_name(&ta.name);
         let underlying = &ta.underlying;
@@ -649,9 +657,7 @@ fn push_enum(out: &mut String, e: &Enum) {
 
     // Struct-level doc comment.
     if let Some(cmt) = &e.comment {
-        for line in cmt.lines() {
-            out.push_str(&format!("/// {}\n", line.trim()));
-        }
+        push_doc_comment(out, "", cmt);
     }
 
     // Enum definition — only non-sentinel variants.
@@ -662,7 +668,7 @@ fn push_enum(out: &mut String, e: &Enum) {
     out.push_str(&format!("pub enum {tn} {{\n"));
     for v in e.variants.iter().filter(|v| !v.is_sentinel()) {
         if let Some(cmt) = &v.comment {
-            out.push_str(&format!("    /// {}\n", cmt.trim()));
+            push_doc_comment(out, "    ", cmt);
         }
         let vn = variant_ident(&v.name, strip);
         out.push_str(&format!("    {vn} = {},\n", v.value));
@@ -673,7 +679,7 @@ fn push_enum(out: &mut String, e: &Enum) {
     let has_sentinels = e.variants.iter().any(|v| v.is_sentinel());
     for v in e.variants.iter().filter(|v| v.is_sentinel()) {
         if let Some(cmt) = &v.comment {
-            out.push_str(&format!("/// {}\n", cmt.trim()));
+            push_doc_comment(out, "", cmt);
         }
         out.push_str(&format!("pub const {}: {repr} = {};\n", v.name, v.value));
     }
@@ -681,7 +687,7 @@ fn push_enum(out: &mut String, e: &Enum) {
     // Alias variants become pub constants pointing at the target variant.
     for a in &e.aliases {
         if let Some(cmt) = &a.comment {
-            out.push_str(&format!("/// {}\n", cmt.trim()));
+            push_doc_comment(out, "", cmt);
         }
         let target_vn = e
             .variants
@@ -771,9 +777,7 @@ fn push_struct_def(out: &mut String, s: &Struct) {
     let tn = rust_type_name(&s.name);
 
     if let Some(cmt) = &s.comment {
-        for line in cmt.lines() {
-            out.push_str(&format!("/// {}\n", line.trim()));
-        }
+        push_doc_comment(out, "", cmt);
     }
 
     let derives = if s.generate == Generate::Both {
@@ -908,9 +912,7 @@ fn push_tagged_fam(out: &mut String, tf: &TaggedFam, schema: &Schema) {
 
     // ---- Rust enum definition ----------------------------------------
     if let Some(cmt) = &tf.comment {
-        for line in cmt.lines() {
-            out.push_str(&format!("/// {}\n", line.trim()));
-        }
+        push_doc_comment(out, "", cmt);
     }
     let derives = if tf.generate == Generate::Both {
         "#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]"
@@ -923,7 +925,7 @@ fn push_tagged_fam(out: &mut String, tf: &TaggedFam, schema: &Schema) {
 
     for v in &tf.variants {
         if let Some(cmt) = &v.comment {
-            out.push_str(&format!("    /// {}\n", cmt.trim()));
+            push_doc_comment(out, "    ", cmt);
         }
         let vn = variant_ident(&v.discriminant, strip);
         out.push_str(&format!("    {vn} {{\n"));
@@ -1064,9 +1066,7 @@ fn push_simple_fam(out: &mut String, sf: &SimpleFam) {
     let tn = rust_type_name(&sf.name);
 
     if let Some(cmt) = &sf.comment {
-        for line in cmt.lines() {
-            out.push_str(&format!("/// {}\n", line.trim()));
-        }
+        push_doc_comment(out, "", cmt);
     }
     let derives = if sf.generate == Generate::Both {
         "#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]"

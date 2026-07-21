@@ -18,6 +18,8 @@
 #include <stdint.h>
 #include <stddef.h>
 
+#include <onerom_metadata_keys_generated.h>
+
 /**
  * @defgroup plugin_api One ROM Plugin API
  * @brief The complete API for One ROM plugins
@@ -294,6 +296,12 @@ typedef enum {
      * @sa ora_read_ram_rom_slot_fn_t
      */
     ORA_ID_READ_RAM_ROM_SLOT         = 0x0000002A,
+
+    /**
+     * @brief Get a device-level metadata string by key
+     * @sa ora_get_metadata_str_fn_t
+     */
+    ORA_ID_GET_METADATA_STR          = 0x0000002B,
 
     /** Invalid API identifier */
     ORA_ID_INVALID = 0xFFFFFFFF,
@@ -620,6 +628,7 @@ typedef enum {
     ORA_RESULT_INVALID_SLOT = 8,
     ORA_RESULT_NO_SLOT_ACTIVE = 9,
     ORA_RESULT_NOT_SUPPORTED = 10,
+    ORA_RESULT_TYPE_MISMATCH = 11,
 } ora_result_t;
 
 /**
@@ -1449,6 +1458,34 @@ typedef ora_result_t (*ora_copy_flash_slot_to_ram_slot_fn_t)(
  * @return ORA_RESULT_OK on success, ORA_RESULT_ERROR on failure
  */
 typedef ora_result_t (*ora_get_device_version_fn_t)(uint8_t *version_out, uint32_t max_len);
+
+/**
+ * @brief Get a device-level metadata string by key
+ * @sa ORA_ID_GET_METADATA_STR
+ *
+ * Retrieves a device-level metadata string identified by @p key. The metadata
+ * key space is unified across accessors; this accessor resolves only keys whose
+ * datum is a string.
+ *
+ * On success @p out receives a pointer directly into flash - no allocation is
+ * required, and the pointer is valid for the lifetime of the firmware. If the
+ * requested field is present but unset (for example an absent serial number
+ * override), the call succeeds with @p out set to NULL: an unset field is data,
+ * not an error.
+ *
+ * The firmware returns stored metadata verbatim and applies no interpretation.
+ * Deriving effective values (e.g. a serial from the MCU chip ID) or formatting
+ * for presentation is the caller's responsibility.
+ *
+ * @param key  The metadata datum to retrieve. @sa ora_metadata_key_t
+ * @param out  Output pointer to receive the string pointer, or NULL if the
+ *             field is unset. Must not itself be NULL.
+ * @return ORA_RESULT_OK on success (including the unset case, @p out = NULL);
+ *         ORA_RESULT_NOT_SUPPORTED if @p key is unknown to this firmware;
+ *         ORA_RESULT_TYPE_MISMATCH if @p key is valid but not a string;
+ *         ORA_RESULT_INVALID_ARG if @p out is NULL.
+ */
+typedef ora_result_t (*ora_get_metadata_str_fn_t)(ora_metadata_key_t key, const char **out);
 
 /**
  * @brief Demangle a captured physical data byte back to a logical byte

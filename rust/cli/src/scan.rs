@@ -55,6 +55,12 @@ pub async fn cmd_scan(options: &Options, args: &args::scan::ScanArgs) -> Result<
         } else {
             println!("  {d}");
         }
+        if options.verbose && let Some(id) = d.chip_id {
+            match d.rp_variant {
+                Some(variant) => println!("  MCU: {variant} Chip ID: {id}"),
+                None => println!("  Chip ID: {id}"),
+            }
+        }
     }
 
     Ok(())

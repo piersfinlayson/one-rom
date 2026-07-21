@@ -1,6 +1,6 @@
 {
-    "name": "blink",
-    "display_name": "One ROM Blink",
-    "description": "Blinks One ROM's status LED",
+    "name": "activity",
+    "display_name": "One ROM Activity",
+    "description": "Blinks the status LED when there's ROM reading activity.",
     "build_output": "build/plugin_user.bin"
 }

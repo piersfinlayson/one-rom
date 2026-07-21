@@ -8,8 +8,9 @@ use onerom_config::chip::ChipType;
 use onerom_config::fw::{FirmwareProperties, FirmwareVersion};
 use onerom_config::mcu::Family;
 use onerom_metadata::{
-    CURRENT_METADATA_VERSION, METADATA_BASE, METADATA_SIZE, ONEROM_METADATA_MAGIC,
-    OneromMetadataHeader, OneromRomInfo, OneromRomSlot, Pointer, RomSlotType, serialize,
+    CURRENT_METADATA_VERSION, MAX_SERIAL_NUMBER_LEN, MAX_UNIT_NAME_LEN, METADATA_BASE,
+    METADATA_SIZE, ONEROM_METADATA_MAGIC, OneromMetadataHeader, OneromRomInfo, OneromRomSlot,
+    Pointer, RomSlotType, serialize,
 };
 
 use crate::v2::firmware_config::{build_firmware_config, build_firmware_overrides};
@@ -1802,6 +1803,34 @@ fn validate_config_v2(
         UNSUPPORTED_FIRMWARE_VERSIONS_V2,
         "v0.7.0+ firmware",
     )?;
+
+    // Device-level metadata strings are stored verbatim in flash; reject
+    // over-long values here, up front, rather than silently truncating them
+    // when the metadata is built.
+    if let Some(name) = &config.instance_name
+        && name.len() > MAX_UNIT_NAME_LEN
+    {
+        return Err(Error::InvalidConfig {
+            error: format!(
+                "instance_name is too long: {} bytes, but the maximum is {}. \
+                 Please shorten the unit name.",
+                name.len(),
+                MAX_UNIT_NAME_LEN
+            ),
+        });
+    }
+    if let Some(serial) = &config.serial_override
+        && serial.len() > MAX_SERIAL_NUMBER_LEN
+    {
+        return Err(Error::InvalidConfig {
+            error: format!(
+                "serial_override is too long: {} bytes, but the maximum is {}. \
+                 Please shorten the serial number override.",
+                serial.len(),
+                MAX_SERIAL_NUMBER_LEN
+            ),
+        });
+    }
 
     let num_non_plugin_slots =
         check_chip_sets(version, config, SUPPORTED_CHIP_TYPES_V2, &Family::Rp2350)?;

@@ -126,6 +126,22 @@ value = 128
 comment = "Maximum byte buffer used when reading the build_date cstr_ptr field."
 
 [[constants]]
+name = "MAX_UNIT_NAME_LEN"
+type = "usize"
+value = 31
+comment = """Maximum byte length, excluding the NUL terminator, of the
+onerom_firmware_config_t.name string. Kept to 31 so the stored string plus its
+terminator occupies 32 bytes."""
+
+[[constants]]
+name = "MAX_SERIAL_NUMBER_LEN"
+type = "usize"
+value = 31
+comment = """Maximum byte length, excluding the NUL terminator, of the
+onerom_firmware_config_t.serial_number string. Kept to 31 so the stored string
+plus its terminator occupies 32 bytes."""
+
+[[constants]]
 name = "GPIO_NONE"
 type = "u8"
 value = 0xFF
@@ -994,13 +1010,15 @@ size = 8
 name = "name"
 kind = "cstr_ptr"
 nullable = true
-comment = "Name of this One ROM unit. May be NULL."
+plugin_key = { name = "UNIT_NAME", id = 1 }
+comment = "Name of this One ROM unit. May be NULL. At most MAX_UNIT_NAME_LEN bytes."
 
 [[structs.fields]]
 name = "serial_number"
 kind = "cstr_ptr"
 nullable = true
-comment = "Override serial number. NULL = derive from unique MCU chip ID."
+plugin_key = { name = "SERIAL_OVERRIDE", id = 2 }
+comment = "Override serial number. NULL = derive from unique MCU chip ID. At most MAX_SERIAL_NUMBER_LEN bytes."
 
 # ---
 

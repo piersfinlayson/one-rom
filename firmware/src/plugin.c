@@ -599,6 +599,24 @@ ora_result_t ora_get_device_version(uint8_t *version_out, uint32_t max_len) {
     return ORA_RESULT_OK;
 }
 
+ora_result_t ora_get_metadata_str(ora_metadata_key_t key, const char **out) {
+    if (out == NULL) {
+        return ORA_RESULT_INVALID_ARG;
+    }
+
+    // The per-key arms are generated from the schema `plugin_key` fields and
+    // expanded from ONEROM_METADATA_STR_CASES (onerom_metadata.h). A string key
+    // resolves its stored value verbatim - NULL when the optional field is
+    // unset, returned as OK, not an error, and no serial policy is applied. Any
+    // non-string key returns ORA_RESULT_TYPE_MISMATCH. Keys unknown to this
+    // firmware fall through to the default below.
+    switch (key) {
+        ONEROM_METADATA_STR_CASES(out)
+        default:
+            return ORA_RESULT_NOT_SUPPORTED;
+    }
+}
+
 ora_result_t ora_demangle_data(uint8_t physical_data, uint8_t *logical_data_out) {
     if (logical_data_out == NULL) {
         return ORA_RESULT_INVALID_ARG;
@@ -893,6 +911,9 @@ void *ora_fn_lookup(api_id_t id) {
             return ora_yield;
         case ORA_ID_READ_RAM_ROM_SLOT:
             return ora_read_ram_rom_slot; 
+
+        case ORA_ID_GET_METADATA_STR:
+            return ora_get_metadata_str;
 
         // Deprecated functions
         case ORA_ID_GET_FIRMWARE_INFO:

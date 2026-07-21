@@ -44,6 +44,12 @@ void usb_picoboot_tx_cb(uint8_t idx, uint32_t sent_bytes);
 void usb_picoboot_rx_cb(uint8_t idx, uint8_t const *buf, uint32_t count);
 void usb_picoboot_task(void);
 
+// Resolve a configured USB serial override from device metadata, defined in
+// usb_main.c.  Widens the override into desc_str and returns the number of
+// code units, or 0 when no override applies (so the caller falls back to the
+// chip-ID serial).
+size_t usb_get_serial(uint16_t *desc_str, size_t max_chars);
+
 // Logging macros
 #if defined(DEBUG)
 #undef DEBUG

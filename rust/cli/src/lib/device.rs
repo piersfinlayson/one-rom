@@ -10,6 +10,7 @@
 use log::debug;
 use nusb::DeviceInfo;
 use onerom_config::hw::Board;
+use onerom_config::mcu::{Rp235xChipId, RpVariant};
 use onerom_fw_parser::ParsedDevice;
 use wildmatch::WildMatch;
 
@@ -59,6 +60,13 @@ pub struct Device {
     /// Whether this device is capable of running One ROM firmware while
     /// plugged into USB
     pub usb_can_run: bool,
+    /// The RP2350 chip ID, if it has been read. This is the device's invariant
+    /// identity, used to track it across reboots where the USB serial changes
+    /// (bootloader mode, or a programmed serial override).
+    pub chip_id: Option<Rp235xChipId>,
+    /// The RP2350 package variant (RP235xA/RP235xB), if it has been read.
+    /// Populated when read from a running device via GET_INFO.
+    pub rp_variant: Option<RpVariant>,
 }
 
 impl std::fmt::Display for Device {
@@ -307,5 +315,53 @@ pub async fn select_device(
                 }
             }
         }
+    }
+}
+
+/// Re-select a device by its (invariant) chip ID.
+///
+/// Used to re-find a device after a state change that may have altered its USB
+/// serial - entering the bootloader (where the serial reverts to the chip ID),
+/// or programming a serial override. Unlike [`select_device`], this does not
+/// rely on the serial string, which is not stable across those transitions.
+///
+/// If `chip_id` is `None` (the chip ID was never read), this falls back to
+/// auto-selecting a single connected device, erroring if more than one is
+/// present.
+pub async fn select_device_by_chip_id(
+    chip_id: Option<Rp235xChipId>,
+    unrecognised: bool,
+    vid_pid: &[(u16, u16)],
+) -> Result<Device, Error> {
+    let devices = enumerate_devices(unrecognised, vid_pid).await?;
+
+    if devices.is_empty() {
+        debug!("No devices found");
+        return Err(Error::NoDevices);
+    }
+
+    let Some(id) = chip_id else {
+        // No chip ID to match on; fall back to single-device auto-select.
+        if devices.len() > 1 {
+            let serials: Vec<String> = devices
+                .iter()
+                .map(|d| d.serial.as_deref().unwrap_or("(no serial)").to_string())
+                .collect();
+            return Err(Error::MultipleDevices(serials));
+        }
+        return Ok(devices.into_iter().next().unwrap());
+    };
+
+    let mut matched: Vec<Device> = devices
+        .into_iter()
+        .filter(|d| d.chip_id == Some(id))
+        .collect();
+
+    match matched.len() {
+        0 => Err(Error::DeviceNotFound(id.to_string())),
+        1 => Ok(matched.remove(0)),
+        // Chip IDs are unique, so more than one match indicates a bug or a
+        // read error rather than genuinely duplicate hardware.
+        _ => Err(Error::MultipleDevices(vec![id.to_string()])),
     }
 }

@@ -1,0 +1,20 @@
+{
+    "$schema": "https://images.onerom.org/configs/schema.json",
+    "version": 1,
+    "name": "metadata",
+    "description": "Device metadata test: sets instance name and serial override so the plugin API metadata getter is exercised on the present (non-NULL) path. Extend with further device-level metadata fields as they are exposed.",
+    "instance_name": "One ROM Metadata Test",
+    "serial_override": "MD-TEST-0001",
+    "rom_sets": [
+        {
+            "type": "single",
+            "roms": [
+                {
+                    "description": "2716",
+                    "file": "images/test/rand_2KB.rom",
+                    "type": "2716"
+                }
+            ]
+        }
+    ]
+}

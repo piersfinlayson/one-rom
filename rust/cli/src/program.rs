@@ -14,7 +14,7 @@ use crate::firmware::{
     verify_assembled_firmware,
 };
 use crate::utils::{check_device, resolve_board};
-use onerom_cli::device::select_device;
+use onerom_cli::device::select_device_by_chip_id;
 use onerom_cli::plugin::{parse_plugins, resolve_plugins};
 use onerom_cli::slot::{GlobalConfig, check_slot_confirmations, save_config};
 use onerom_cli::usb::{RebootArgs, flash_program, flash_program_read, reboot};
@@ -178,11 +178,11 @@ async fn reboot_to_stopped_if_running(options: &mut Options) -> Result<(), Error
     if options.verbose {
         println!("Device is running, rebooting into stopped mode...");
     }
-    let serial = device.serial.clone();
+    let chip_id = device.chip_id;
     reboot(device, &RebootArgs::stopped(false, false)).await?;
 
     let new_device =
-        select_device(serial.as_deref(), options.unrecognised, &options.vid_pid).await?;
+        select_device_by_chip_id(chip_id, options.unrecognised, &options.vid_pid).await?;
     if new_device.is_running() {
         return Err(Error::DeviceStillRunning);
     }
@@ -201,12 +201,12 @@ async fn reboot_and_rescan(options: &mut Options, reboot_args: &RebootArgs) -> R
     if options.verbose {
         println!("Rebooting device...");
     }
-    let serial = device.serial.clone();
+    let chip_id = device.chip_id;
     reboot(device, reboot_args).await?;
 
     if !reboot_args.fast {
         let device =
-            select_device(serial.as_deref(), options.unrecognised, &options.vid_pid).await?;
+            select_device_by_chip_id(chip_id, options.unrecognised, &options.vid_pid).await?;
         if options.verbose {
             println!("{device}");
         }
