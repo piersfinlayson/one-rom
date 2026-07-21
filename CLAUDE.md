@@ -1,0 +1,183 @@
+# One ROM — Claude Code project guide
+
+One ROM (formerly SDRR, "Software Defined Retro ROM") is an open-source ROM
+replacement for retro systems. It emulates 24/28/32/40-pin mask ROMs, EPROMs,
+some flash, and 2K SRAM, using an RP2350 (**Fire**) or, on legacy hardware, an
+STM32F4 (**Ice**). Shipped in the thousands; other vendors sell it too. Treat
+it as a long-lived, production project.
+
+## Working style (read first)
+
+- Do it **right**, for the long term. No hacks, no throwaway "make it pass"
+  fixes. If the clean solution is more work, that is the one we want.
+- Explain the **why** before the change. Reasoning first, not a diff dumped on
+  the wall.
+- **Do not switch technical approach without asking first.** If you think a
+  chosen path is wrong, stop and raise it — do not quietly re-architect. I
+  usually have a better read on feasibility than you do.
+- Do not give up on a hard task. Persistence is my call, not yours.
+- Do not assert from memory. Read the code before making claims about how it
+  behaves; verify against the tree.
+- If this guide looks wrong or incomplete, verify against the code, then tell
+  me and propose a specific correction. Do not edit `CLAUDE.md` without my
+  go-ahead.
+- Hold the existing bar for code style, accurate comments, and API docs.
+- Answer the question actually asked; do not infer extra scope.
+
+## Git & commits
+
+- All commits are **GPG-signed** with my key. You do **not** have the
+  passphrase, so you **cannot** create commits — never run `git commit`.
+  Prepare and stage the change, then hand me the exact command plus the commit
+  message to run myself.
+- **No `Co-Authored-By` trailer**, and no other Claude/AI attribution, in
+  commit messages — keep it out of the history entirely.
+- Only commit when I ask; only push when I ask.
+
+## Firmware
+
+`firmware/` is the C + hand-optimised ARM (thumb) core firmware. It is **fully
+bare metal — no SDK, no HAL** (no pico-sdk, no vendor HAL). Serving is cycle-
+and timing-critical; on RP2350 it runs on PIO/DMA.
+
+- `firmware/src`, `firmware/include`, `firmware/link` — sources, headers,
+  linker scripts.
+- `firmware/ora/` — the plugin API: `api.h`, `plugin.h`, `system.h`,
+  `plugin.ld`, `plugin.mk`, `examples/`.
+- `firmware/lens` + `lens.mk` — One ROM Lens, a cycle-exact PIO emulator /
+  browser tool.
+- `firmware/test` + `test.mk`.
+- Build output: `firmware/build/onerom-rp235x.bin` (`BIN_PREFIX ?= onerom-rp235x`).
+
+On invalid config/build the firmware enters **limp mode** (LED blink patterns;
+`utils.c` / `globals.c`). The firmware **enforces plugin `min_fw_version`**: at
+plugin launch (`firmware/src/plugin.c`) it compares the plugin header's
+`min_fw_{major,minor,patch}_version` against the running firmware and refuses to
+run a plugin that requires newer firmware.
+
+## Rust workspace (`rust/`)
+
+Directory → package name:
+
+- `fw` → `onerom-fw` — firmware-image composition; resolves/downloads base
+  firmware via `releases.json` (`src/net.rs`).
+- `cli` → `onerom-cli` — the One ROM CLI (binary `onerom`). Full device tool,
+  not a front-end: subcommands `scan`, `program`, `inspect`, `control`,
+  `update`, `image`, `peek`, `poke`, `reboot`, `firmware`. Talks to devices
+  over USB via `picoboot` / the `picobootx` extension (`nusb`), and uses
+  `onerom-fw`, `onerom-gen`, `onerom-fw-parser`, `onerom-metadata`,
+  `onerom-app`, `onerom-config` among others.
+- `gen` → `onerom-gen` — firmware/metadata generator; also driven by the
+  `one-rom-wasm` repo.
+- `config` → `onerom-config` — ROM/RAM config model.
+- `metadata` → `onerom-metadata` — embedded firmware metadata.
+- `protocol` → `onerom-protocol` — implements RBCP (see related repos).
+- `fw-parser` → `onerom-fw-parser`; `fw-emulator` → `onerom-fw-emulator`;
+  `fw-tester` → `onerom-fw-tester`; `fw-config-gen` → `fw-config-gen`.
+- `app` → `onerom-app`; `studio` → `onerom-studio` (desktop GUI, released
+  independently via `studio-*` tags); `lab` → `onerom-lab` (hardware tester);
+  `database` → `onerom-database`.
+- `schema-gen` → `schema-gen` — emits `onerom-config/schema.json` from the
+  `onerom-gen` config type.
+
+Legacy `sdrr-*` crate names are gone; everything is `onerom-*` now.
+
+## Building
+
+Base (empty) firmware, from the repo root:
+
+    scripts/build-empty-fw.sh [-d] [-l]     # -d debug logging, -l logging
+
+Flashable image — use the CLI (`onerom-cli`, or download from
+https://onerom.org/cli). `onerom program` is the primary build-and-flash
+workflow; `onerom firmware` builds a binary without programming a device:
+
+    # build + flash a connected One ROM (board inferred from the device):
+    onerom program --config onerom-config/vic20-pal.json
+
+    # build a firmware binary without flashing:
+    onerom firmware build \
+      --base-firmware firmware/build/onerom-rp235x.bin \
+      --config onerom-config/vic20-pal.json \
+      /tmp/firmware.bin
+
+CI / release firmware builds:
+
+    ci/build.sh ci                  # clean + build base -> builds/ci/onerom-rp235x.bin
+    ci/build.sh release <version>   # package a prior ci build -> builds/<version>/...
+    ci/build.sh clean
+
+Other `ci/` scripts: `build-images.sh` (populates the `images.onerom.org`
+channel), `build-cross-fw.sh` (cross-builds the `onerom-fw` **tool** —
+orthogonal to firmware variant builds, do not conflate), `rust-tests.sh`,
+`rust-docs.sh`, `rust-tools.sh`, `test-emu.sh`. Reproducible builds use the
+container in `ci/docker/`.
+
+## Config (`onerom-config/`)
+
+JSON ROM/RAM config files plus `schema.json` (generated by `schema-gen`).
+Config uses `chip_sets`/`chips`; the old `rom_sets`/`roms` keys still parse for
+back-compat.
+
+## Plugins (`plugins/`)
+
+Plugins are separate binaries run on a spare RP2350 core once serving has
+started (system + user types, ~1KB stack each, no sandbox). The plugin API
+(`firmware/ora/`) is **stable**: it may be extended, but changes are guaranteed
+backwards compatible. The system USB plugin provides the device-side USB stack
+and exposes the `picobootx` interface. The `host-control` plugin implements
+RBCP.
+
+## Metadata & manifest — two separate mechanisms
+
+Do not conflate these:
+
+1. **Embedded firmware metadata (the v0.7.0 "v2" schema).** Defined by
+   `onerom-metadata`; `MIN_SCHEMA_VERSION = 0.7.0`
+   (`rust/metadata/src/lib.rs`). `onerom-fw-parser` reads both old and new
+   layouts by branching on `version >= MIN_SCHEMA_VERSION`. This is the real
+   versioned dual-schema, living in the firmware metadata parser.
+
+2. **The `releases.json` manifest at `images.onerom.org`** (not the deprecated
+   local-repo copy). Consumed in `rust/fw/src/net.rs` (`Releases` / `Release` /
+   `Board` / `Mcu`), and also in `rust/studio/src/app/manifest.rs` and
+   `rust/app/src/plugin.rs`. There is a **single** consumer schema with **no**
+   version-sniffing branch; back-compat across all historical releases is
+   achieved via `Option<String> path` overrides, not a second schema. The
+   top-level `version: usize` is a data marker only.
+
+Consequences to respect:
+
+- `images.onerom.org` archives **all** historical releases (v0.5.x, per-board
+  v0.6.x, v0.7.0). v0.7.0 entries still enumerate `boards`/`mcus`, so pre-0.7.0
+  clients keep working; the shared board/MCU-agnostic base firmware is expressed
+  by pointing multiple entries at the same `path`.
+- The base firmware became board/MCU-agnostic, but the composed **full image
+  and its metadata are still per-hardware-variant**.
+- Do **not** collapse old releases into a single model-level entry, and do not
+  add a version-sniffing branch to the manifest consumer — that breaks pre-0.7.0
+  clients and is off the table.
+- Plugin manifest `min_fw_version` is enforced by the firmware (see Firmware);
+  the manifest's `incompatible_from` upper bound is advisory only (discovered
+  post-build, not in the binary header).
+
+## Related repositories
+
+- `one-rom-site` — the onerom.org website, including the browser programmer.
+- `one-rom-images` — backs `images.onerom.org` (firmware images, configs,
+  plugin manifests, Studio releases).
+- `one-rom-wasm` — WASM build of `onerom-gen` for in-browser firmware
+  generation (wasm.onerom.org).
+- `rom-bus-control-protocol` (RBCP) — protocol spec; implemented by
+  `onerom-protocol` and the `host-control` plugin.
+- `picoboot` — host-side Rust crate for the RP2040/RP2350 PICOBOOT USB
+  interface (used by `onerom-cli`).
+- `picobootx` — device-side PICOBOOT extension library adding custom commands;
+  exposed by One ROM's system USB plugin.
+
+## Hardware notes
+
+- `hardware/pcb/` holds KiCad files, per revision, verified/unverified.
+- RP2350 runs 5V-tolerant with no level shifters.
+- GPIO-to-ROM-pin mapping is driven by 2-layer PCB routing, so data/address
+  lines are not in logical GPIO order; pre-processing accounts for this.
