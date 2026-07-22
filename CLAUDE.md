@@ -41,6 +41,18 @@ it as a long-lived, production project.
   `rust/cli/CHANGELOG.md`, `rust/studio/CHANGELOG.md`, or the relevant plugin's
   `CHANGELOG.md` (e.g. `plugins/system/usb/CHANGELOG.md`). Leave vendored
   changelogs (tinyusb, `firmware/apio`, `firmware/epio`) alone.
+- **Before bumping any crate/component version, read the repo-root
+  [CHANGELOG.md](/CHANGELOG.md) first.** Its "To publish" list under the current
+  in-development heading is the source of truth for in-flight version bumps. A
+  crate or plugin already listed there is bumped-but-unpublished — do **not**
+  bump it again for a further change in the same cycle; just add the CHANGELOG
+  entry. Crates without their own `CHANGELOG.md` (`onerom-metadata`,
+  `onerom-gen`, …) are tracked **only** via that list.
+- The **firmware is not separately versioned** beyond the in-development branch
+  version (e.g. `0.7.1`); that version is what signals newly available plugin
+  APIs and is what a plugin's `min_fw_version` targets. `firmware/ora/api.h` is
+  **not** version-bumped for backwards-compatible additions — only a
+  non-backwards-compatible change would bump it, and those are off the table.
 
 ## Firmware
 
@@ -191,6 +203,20 @@ started (system + user types, ~1KB stack each, no sandbox). The plugin API
 backwards compatible. The system USB plugin provides the device-side USB stack
 and exposes the `picobootx` interface. The `host-control` plugin implements
 RBCP.
+
+- **Extending the plugin API:** add new `ORA_ID_*` values additively (never
+  renumber or repurpose an existing one), and give every new ID an `@since
+  firmware vX.Y.Z` line in its `firmware/ora/api.h` doc block, naming the
+  firmware version it first shipped in — that version is what a plugin targets
+  via `min_fw_version`. `api.h` itself is only version-bumped for a
+  non-backwards-compatible change (which shouldn't happen).
+- **Exposing device metadata to plugins:** tag the field in
+  `rust/metadata/metadata_schema.toml` with `plugin_key = { name = "…", id = N }`.
+  String fields then resolve via `ORA_ID_GET_METADATA_STR`, unsigned
+  scalar/enum fields via `ORA_ID_GET_METADATA_UINT` — no hand-written firmware.
+  Key ids are one permanent namespace: never renumber or reuse. `status_led_enabled`
+  is the live status-LED state and the cross-plugin coordination channel (written
+  by `ora_set_status_led`, read via its `STATUS_LED_STATE` key).
 
 ## Metadata & manifest — two separate mechanisms
 

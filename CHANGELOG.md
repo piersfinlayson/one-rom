@@ -6,6 +6,8 @@ All notables changes between versions are documented in this file.
 
 - Fix the status LED defaulting to off on v0.7.0.  The runtime now defaults the status LED to on, and it is only turned off by a per-slot firmware override that explicitly disables it.  Also fixed the limp-mode LED force-enable, which never fired (so limp-mode error blink patterns did not show when the LED was overridden off).
   - This required a firmware update.
+- Add a plugin metadata getter, `ORA_ID_GET_METADATA_UINT`, and expose device GPIOs (status LED, neopixel, VBUS, SWD, ext-flash CS) and the live status-LED state to plugins over the existing metadata-key mechanism.  `ora_set_status_led` now drives the LED even when it was configured off (a plugin/user can still turn it on), and records the state as the coordination channel plugins read.  The RGB plugin now discovers the neopixel and status-LED GPIOs at runtime instead of hard-coding them, and on boards where the two share a GPIO it reflects the status-LED state on the shared LED while cycling the neopixel.  CPU fault handlers now force the status LED on so faults stay visible regardless of the LED state.
+  - This required a firmware update and an RGB plugin update.
 - Add support for CLI's `--serial-override` option.  This causes the USB plugin to use the overriding serial number when One ROM is running.  When stopped One ROM continues to use the chip ID (as the USB stack is provided by the RP2350's bootrom).  This required some enhancements to other Studio to cope with the serial number changing across stopped/started cases.  Web "just works" with a custom or stock serial number.  Neither Studio not Web support programming a serial override.
   - This required a firmware update, and a USB plugin update, to expose and use the serial override metadata.
 
@@ -19,6 +21,7 @@ To publish:
 - CLI bin 0.2.1
 - Studio 0.2.1
 - USB plugin 0.2.1
+- RGB plugin 0.1.2
 
 ## v0.7.0 - 2026-07-20
 

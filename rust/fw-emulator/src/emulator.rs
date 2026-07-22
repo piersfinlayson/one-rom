@@ -57,6 +57,7 @@ pub enum OraResult {
     InvalidSlot,
     NoSlotActive,
     NotSupported,
+    TypeMismatch,
     Unknown(u32),
 }
 
@@ -74,6 +75,7 @@ impl From<ffi::ora_result_t> for OraResult {
             ffi::ora_result_t_ORA_RESULT_INVALID_SLOT => Self::InvalidSlot,
             ffi::ora_result_t_ORA_RESULT_NO_SLOT_ACTIVE => Self::NoSlotActive,
             ffi::ora_result_t_ORA_RESULT_NOT_SUPPORTED => Self::NotSupported,
+            ffi::ora_result_t_ORA_RESULT_TYPE_MISMATCH => Self::TypeMismatch,
             other => Self::Unknown(other),
         }
     }
@@ -503,6 +505,19 @@ impl Emulator {
         let s = (r.is_ok() && !ptr.is_null())
             .then(|| unsafe { std::ffi::CStr::from_ptr(ptr) }.to_string_lossy().into_owned());
         (r, s)
+    }
+
+    pub fn get_metadata_uint(&self, key: ffi::ora_metadata_key_t) -> (OraResult, Option<u32>) {
+        let mut val: u32 = 0;
+        let r = plugin_call!(
+            ffi::api_id_t_ORA_ID_GET_METADATA_UINT,
+            ffi::ora_get_metadata_uint_fn_t,
+            key,
+            &mut val as *mut u32
+        );
+        let r = OraResult::from(r);
+        let v = r.is_ok().then_some(val);
+        (r, v)
     }
 
     pub fn get_chip_size_from_type(&self, chip_type: u32) -> u32 {

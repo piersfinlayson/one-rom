@@ -38,9 +38,9 @@ onerom_runtime_info_t onerom_runtime_info SECTION_ONEROM_RUNTIME_INFO = {
     .rom_table = NULL,
     .rom_table_size = 0,
     .overclock_enabled = 0,
-    // Status LED is on by default; a per-slot firmware override (LED present
-    // bit in override_present[0], see process_firmware_overrides()) is the only
-    // thing that turns it off.
+    // Live status-LED state, seeded on. A per-slot firmware override can seed
+    // it off (see process_firmware_overrides()); ora_set_status_led() then
+    // updates it at runtime. See ora_set_status_led_fn_t in api.h.
     .status_led_enabled = 1,
     .swd_enabled = 0,
     .fire_vreg = FIRE_VREG_STOCK,

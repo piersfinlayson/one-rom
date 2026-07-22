@@ -176,7 +176,12 @@ size_t plugin_get_free_mem(void) {
 void ora_set_status_led(uint8_t on) {
 #if !defined(TEST_BUILD)
     uint8_t pin = HW->gpio_status;
-    if (RUNTIME->status_led_enabled && pin < MAX_GPIOS) {
+    // Pin presence is the only gate: a plugin may drive the status LED even if
+    // it was configured off. status_led_enabled is the live state and plugin
+    // coordination channel (see ora_set_status_led_fn_t in api.h), so record
+    // the new state here as well as driving the pin.
+    if (pin < MAX_GPIOS) {
+        RUNTIME->status_led_enabled = on ? 1 : 0;
         if (on) {
             status_led_on(pin);
         } else {
@@ -617,6 +622,23 @@ ora_result_t ora_get_metadata_str(ora_metadata_key_t key, const char **out) {
     }
 }
 
+ora_result_t ora_get_metadata_uint(ora_metadata_key_t key, uint32_t *out) {
+    if (out == NULL) {
+        return ORA_RESULT_INVALID_ARG;
+    }
+
+    // The per-key arms are generated from the schema `plugin_key` fields and
+    // expanded from ONEROM_METADATA_UINT_CASES (onerom_metadata.h). An unsigned
+    // scalar/enum key resolves its stored value zero-extended to uint32_t; any
+    // non-numeric key returns ORA_RESULT_TYPE_MISMATCH. Keys unknown to this
+    // firmware fall through to the default below.
+    switch (key) {
+        ONEROM_METADATA_UINT_CASES(out)
+        default:
+            return ORA_RESULT_NOT_SUPPORTED;
+    }
+}
+
 ora_result_t ora_demangle_data(uint8_t physical_data, uint8_t *logical_data_out) {
     if (logical_data_out == NULL) {
         return ORA_RESULT_INVALID_ARG;
@@ -914,6 +936,8 @@ void *ora_fn_lookup(api_id_t id) {
 
         case ORA_ID_GET_METADATA_STR:
             return ora_get_metadata_str;
+        case ORA_ID_GET_METADATA_UINT:
+            return ora_get_metadata_uint;
 
         // Deprecated functions
         case ORA_ID_GET_FIRMWARE_INFO:

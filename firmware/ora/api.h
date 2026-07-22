@@ -37,6 +37,11 @@
  *
  * This enumeration defines the identifiers for the API functions available
  * to plugins. Each identifier corresponds to a specific API function.
+ *
+ * Every new identifier MUST carry an `@since firmware vX.Y.Z` line in its doc
+ * block, naming the firmware version in which it first became available (which
+ * a plugin targets via its min_fw_version). Identifiers predating this
+ * convention are left unannotated rather than labelled with a guessed version.
  */
 typedef enum {
     /**
@@ -300,8 +305,21 @@ typedef enum {
     /**
      * @brief Get a device-level metadata string by key
      * @sa ora_get_metadata_str_fn_t
+     * @since firmware 0.7.1
      */
     ORA_ID_GET_METADATA_STR          = 0x0000002B,
+
+    /**
+     * @brief Get a device-level unsigned metadata value by key
+     *
+     * Numeric sibling of ORA_ID_GET_METADATA_STR over the same unified key
+     * space. Resolves, among others, ORA_METADATA_KEY_STATUS_LED_STATE - the
+     * live status-LED state and cross-plugin coordination channel (see
+     * ora_set_status_led_fn_t).
+     * @sa ora_get_metadata_uint_fn_t
+     * @since firmware 0.7.1
+     */
+    ORA_ID_GET_METADATA_UINT         = 0x0000002C,
 
     /** Invalid API identifier */
     ORA_ID_INVALID = 0xFFFFFFFF,
@@ -781,8 +799,18 @@ typedef size_t (*ora_get_free_mem_fn_t)(void);
  * @brief Set the status LED on or off
  * @sa ORA_ID_SET_STATUS_LED
  *
- * This controls the status LED, if is enabled and properly configured.  If it
- * is not, this function silently fails.
+ * Sets the live status-LED state. This is the single coordination channel for
+ * the status LED: the call records the new state (readable by any plugin as
+ * ORA_METADATA_KEY_STATUS_LED_STATE via ora_get_metadata_uint_fn_t) and drives
+ * the status-LED GPIO. The board's configured default (the `led` option) only
+ * seeds the initial state; a plugin may turn the LED on even if it was
+ * configured off. If the board has no status-LED GPIO the call does nothing.
+ *
+ * Coordination without cross-plugin awareness: on a board where the status LED
+ * and a neopixel share a GPIO, the neopixel-driving plugin owns the pin and
+ * should render the status LED by reading STATUS_LED_STATE each frame - so a
+ * write here is reflected by that plugin without either plugin knowing about
+ * the other. Neither plugin references the other; they meet at this flag.
  *
  * @param on Set to 1 to turn the LED on, or 0 to turn it off.
  */
@@ -1486,6 +1514,26 @@ typedef ora_result_t (*ora_get_device_version_fn_t)(uint8_t *version_out, uint32
  *         ORA_RESULT_INVALID_ARG if @p out is NULL.
  */
 typedef ora_result_t (*ora_get_metadata_str_fn_t)(ora_metadata_key_t key, const char **out);
+
+/**
+ * @brief Get a device-level unsigned metadata value by key
+ * @sa ORA_ID_GET_METADATA_UINT
+ *
+ * Numeric sibling of ora_get_metadata_str_fn_t over the same unified key space.
+ * Resolves keys whose datum is an unsigned scalar or enum, zero-extending the
+ * stored value into @p out. Hardware-topology keys (e.g. ORA_METADATA_KEY_GPIO_
+ * STATUS, ORA_METADATA_KEY_GPIO_NEOPIXEL) resolve from device metadata; live
+ * keys (e.g. ORA_METADATA_KEY_STATUS_LED_STATE) resolve from runtime state and
+ * therefore reflect the current value on each call.
+ *
+ * @param key  The metadata datum to retrieve. @sa ora_metadata_key_t
+ * @param out  Output pointer to receive the value. Must not be NULL.
+ * @return ORA_RESULT_OK on success;
+ *         ORA_RESULT_NOT_SUPPORTED if @p key is unknown to this firmware;
+ *         ORA_RESULT_TYPE_MISMATCH if @p key is valid but not an unsigned value;
+ *         ORA_RESULT_INVALID_ARG if @p out is NULL.
+ */
+typedef ora_result_t (*ora_get_metadata_uint_fn_t)(ora_metadata_key_t key, uint32_t *out);
 
 /**
  * @brief Demangle a captured physical data byte back to a logical byte

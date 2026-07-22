@@ -9,8 +9,8 @@
 
 ORA_DEFINE_USER_PLUGIN(
     neopixel_main,
-    0, 1, 1, 0,
-    0, 6, 7
+    0, 1, 2, 0,
+    0, 7, 1
 );
 
 // RP2350 SIO register offsets differ from RP2040 — the HI variants
@@ -36,14 +36,6 @@ ORA_DEFINE_USER_PLUGIN(
 #define PAD_DRIVE(X)        ((X & PAD_DRIVE_MASK) << PAD_DRIVE_BIT)
 #define PAD_SLEW_FAST_BIT   0
 #define PAD_SLEW_FAST       (1 << PAD_SLEW_FAST_BIT)
-
-#define SYSINFO_BASE        0x40000000
-#define SYSINFO_PACKAGE_SEL     (*((volatile uint32_t *)(SYSINFO_BASE + 0x04)))
-#define SYSINFO_IS_QFN60()      (SYSINFO_PACKAGE_SEL & 0b1)
-
-// Change to match your wiring
-#define NEOPIXEL_PIN_A      29u
-#define NEOPIXEL_PIN_B      44u
 
 // WS2812 nominal pulse widths in nanoseconds
 #define T0H_NS   350u
@@ -133,12 +125,25 @@ void neopixel_main(
     s_t1l = (T1L_NS * mhz) / 1000u;
     s_rst = RST_US * mhz;           // µs × MHz = cycles directly
 
-    // Figure out whether we're an RP235xA or B.
-    uint8_t neopixel_pin = NEOPIXEL_PIN_B;
-    uint8_t rp235xa = SYSINFO_IS_QFN60();
-    if (rp235xa) {
-        neopixel_pin = NEOPIXEL_PIN_A;
+    // Learn the neopixel and status-LED GPIOs from device metadata rather than
+    // hard-coding them. On some boards the status LED and neopixel share a
+    // GPIO; when they do, this plugin owns the pin and must also honour the
+    // status LED (see the frame loop below).
+    ora_get_metadata_uint_fn_t get_meta = ora_lookup_fn(ORA_ID_GET_METADATA_UINT);
+    uint32_t neo = GPIO_NONE, status = GPIO_NONE;
+    if (get_meta != NULL) {
+        get_meta(ORA_METADATA_KEY_GPIO_NEOPIXEL, &neo);
+        get_meta(ORA_METADATA_KEY_GPIO_STATUS, &status);
     }
+
+    // No neopixel on this board - nothing to drive; idle.
+    if (neo == GPIO_NONE) {
+        while (1) { }
+    }
+
+    uint8_t neopixel_pin = (uint8_t)neo;
+    // Does the status LED share this GPIO?
+    uint8_t shared_status = (status != GPIO_NONE) && (neo == status);
 
     // Configure pin: set function to SIO, drive low, enable output
     s_pin_mask = 1u << (neopixel_pin & 31u);
@@ -164,8 +169,25 @@ void neopixel_main(
         uint8_t r, g, b;
         hsv_to_rgb(hue, 255, 255, &r, &g, &b);
 
-        reset_pulse();
         send_pixel(r, g, b);
+        reset_pulse();          // hold low >= reset time so the pixel latches
+
+        // If the status LED shares this GPIO, park the line at the status LED's
+        // desired idle level once the pixel has latched: the neopixel keeps its
+        // colour, while the discrete LED reflects the live status_led_enabled
+        // state. This is the only coordination - the plugin has no awareness of
+        // whatever set that state.
+        if (shared_status) {
+            uint32_t led_on = 0;
+            if (get_meta != NULL) {
+                get_meta(ORA_METADATA_KEY_STATUS_LED_STATE, &led_on);
+            }
+            if (led_on) {
+                *s_out_clr = s_pin_mask;   // low = LED on (active low)
+            } else {
+                *s_out_set = s_pin_mask;   // high = LED off
+            }
+        }
 
         hue = (hue + 1u) % 360u;
 

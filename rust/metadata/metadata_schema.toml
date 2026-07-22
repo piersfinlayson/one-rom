@@ -69,6 +69,22 @@
 #   "both"   - C definition + Rust parse + Rust serialize
 #   "parse"  - C definition + Rust parse only
 #   "none"   - C definition only
+#
+# ---------------------------------------------------------------------------
+# Plugin keys
+# ---------------------------------------------------------------------------
+# Tagging a field `plugin_key = { name = "NAME", id = N }` exposes it to plugins
+# through the metadata getter API automatically - no hand-written firmware:
+#   - cstr_ptr fields          -> ORA_ID_GET_METADATA_STR
+#   - unsigned scalar / enum   -> ORA_ID_GET_METADATA_UINT (zero-extended to u32)
+# Fields in onerom_hardware_info_t (and the metadata header) resolve via the
+# METADATA root; fields in onerom_runtime_info_t resolve via the RUNTIME root.
+# Keys are one unified namespace across all typed getters. An id is a permanent,
+# stable identifier: once assigned it is NEVER renumbered or reused - pick the
+# next free id; a retired field's id returns NOT_SUPPORTED. Only the first
+# comment line reaches the generated key header, so keep fuller docs in
+# firmware/ora/api.h. Do not tag internal/plumbing, per-slot, or reserved
+# fields.
 
 [schema]
 version = 1
@@ -883,6 +899,7 @@ size = 128
 name = "hw_rev"
 kind = "cstr_ptr"
 nullable = false
+plugin_key = { name = "HW_REV", id = 6 }
 comment = "Hardware revision string. Must be present."
 
 [[structs.fields]]
@@ -895,48 +912,56 @@ comment = "Expected RP235x silicon variant for this board"
 name = "num_phys_pins"
 kind = "scalar"
 type = "u8"
+plugin_key = { name = "NUM_PHYS_PINS", id = 7 }
 comment = "Number of physical pins on the emulated ROM package"
 
 [[structs.fields]]
 name = "usb_capable"
 kind = "scalar"
 type = "u8"
+plugin_key = { name = "USB_CAPABLE", id = 8 }
 comment = "Whether this board has a USB port. 0=no, 1=yes."
 
 [[structs.fields]]
 name = "gpio_vbus"
 kind = "scalar"
 type = "u8"
+plugin_key = { name = "GPIO_VBUS", id = 9 }
 comment = "GPIO pin for VBUS detection. GPIO_NONE if not present."
 
 [[structs.fields]]
 name = "gpio_ext_flash_cs"
 kind = "scalar"
 type = "u8"
+plugin_key = { name = "GPIO_EXT_FLASH_CS", id = 10 }
 comment = "GPIO for secondary flash chip select. GPIO_NONE if no secondary flash."
 
 [[structs.fields]]
 name = "gpio_status"
 kind = "scalar"
 type = "u8"
+plugin_key = { name = "GPIO_STATUS", id = 3 }
 comment = "GPIO for status LED. GPIO_NONE if not present."
 
 [[structs.fields]]
 name = "gpio_neopixel"
 kind = "scalar"
 type = "u8"
+plugin_key = { name = "GPIO_NEOPIXEL", id = 4 }
 comment = "GPIO for Neopixel LED. GPIO_NONE if not present."
 
 [[structs.fields]]
 name = "gpio_swdio"
 kind = "scalar"
 type = "u8"
+plugin_key = { name = "GPIO_SWDIO", id = 11 }
 comment = "GPIO also connected to SWDIO. GPIO_NONE if not present."
 
 [[structs.fields]]
 name = "gpio_swclk"
 kind = "scalar"
 type = "u8"
+plugin_key = { name = "GPIO_SWCLK", id = 12 }
 comment = "GPIO also connected to SWCLK. GPIO_NONE if not present."
 
 [[structs.fields]]
@@ -1368,7 +1393,8 @@ comment = "Whether overclocking is active"
 name = "status_led_enabled"
 kind = "scalar"
 type = "u8"
-comment = "Whether the status LED is enabled"
+plugin_key = { name = "STATUS_LED_STATE", id = 5 }
+comment = "Live status-LED on/off state and plugin coordination channel; seeded from the led config default, then updated via ora_set_status_led (see api.h)"
 
 [[structs.fields]]
 name = "swd_enabled"
@@ -1426,6 +1452,7 @@ comment = "Active serving bus width (8 or 16 bit)"
 name = "boot_logging"
 kind = "scalar"
 type = "u8"
+plugin_key = { name = "BOOT_LOGGING", id = 13 }
 comment = "Whether boot logging is active"
 
 [[structs.fields]]

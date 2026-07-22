@@ -407,33 +407,44 @@ impl Schema {
         Ok(())
     }
 
-    /// C access expression for a plugin-key field, e.g. "METADATA->fw->name".
+    /// C access expression for a plugin-key field, e.g. "METADATA->fw->name"
+    /// or "RUNTIME->status_led_enabled".
     ///
-    /// Walks the struct-pointer graph from the metadata root down to the struct
-    /// that contains the field, then appends the field itself.  Every hop is a
-    /// pointer, so every step joins with "->".
+    /// Walks the struct-pointer graph from each known firmware root (METADATA,
+    /// then RUNTIME) down to the struct that contains the field, then appends
+    /// the field itself.  Every hop is a pointer, so every step joins with "->".
     pub fn plugin_key_access(
         &self,
         struct_name: &str,
         field_name: &str,
     ) -> Result<String, Box<dyn std::error::Error>> {
-        let root = self.schema.root_struct.as_str();
-        let mut path = Vec::new();
-        if !self.find_struct_path(root, struct_name, &mut Vec::new(), &mut path) {
-            return Err(format!(
-                "plugin_key on {struct_name}.{field_name}: struct '{struct_name}' is not \
-                 reachable from the metadata root '{root}' via struct pointers"
-            )
-            .into());
+        // Plugin-key fields resolve from one of a fixed set of firmware roots,
+        // each reachable in plugin.c via an access macro (see macros.h). The
+        // metadata-header root is tried first so existing keys keep their exact
+        // output; fields in onerom_runtime_info_t (live state such as
+        // status_led_enabled) resolve via the RUNTIME root instead.
+        let roots: [(&str, &str); 2] = [
+            (self.schema.root_struct.as_str(), "METADATA"),
+            ("onerom_runtime_info_t", "RUNTIME"),
+        ];
+        for (root, macro_name) in roots {
+            let mut path = Vec::new();
+            if self.find_struct_path(root, struct_name, &mut Vec::new(), &mut path) {
+                let mut expr = String::from(macro_name);
+                for step in &path {
+                    expr.push_str("->");
+                    expr.push_str(step);
+                }
+                expr.push_str("->");
+                expr.push_str(field_name);
+                return Ok(expr);
+            }
         }
-        let mut expr = String::from("METADATA");
-        for step in &path {
-            expr.push_str("->");
-            expr.push_str(step);
-        }
-        expr.push_str("->");
-        expr.push_str(field_name);
-        Ok(expr)
+        Err(format!(
+            "plugin_key on {struct_name}.{field_name}: struct '{struct_name}' is not \
+             reachable from any plugin-key root (METADATA, RUNTIME) via struct pointers"
+        )
+        .into())
     }
 
     /// Depth-first search of the struct-pointer graph from `current` to

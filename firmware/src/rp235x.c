@@ -302,14 +302,8 @@ void setup_initial_gpios(void) {
     }
 
 #if REAL_HARDWARE
-    // If there's a status LED, set it up as an output pin, high (LED off).
-    if (HW->gpio_status < MAX_GPIOS) {
-        uint8_t pin = HW->gpio_status;
-        GPIO_PAD(pin) &= ~(PAD_OUTPUT_DISABLE | PAD_INPUT);
-        GPIO_PAD(pin) |= PAD_DRIVE(PAD_DRIVE_4MA);
-        SIO_GPIO_OE_SET_PIN(pin);
-        SIO_GPIO_OUT_SET_PIN(pin);
-    }
+    // Set up the status LED pin (output, driven high = LED off).
+    setup_status_led();
 
     // If there's a neo-pixel LED, set it up as an output pin, high.  Note
     // the neopixel LED might be the same as the regular status LED, in which
@@ -703,7 +697,21 @@ void disable_sel_pins(void) {
 #endif // !TEST_BUILD
 
 void setup_status_led(void) {
-    // No-op - done in setup_gpio()
+#if REAL_HARDWARE
+    // Configure the status LED GPIO as an SIO push-pull output, driven high so
+    // the LED is off (active-low wiring). Idempotent and self-contained, so it
+    // is safe to call repeatedly - e.g. a fault handler calls it to reclaim the
+    // pin (funcsel/drive/OE) before forcing the LED on, in case a plugin such
+    // as the neopixel driver had reconfigured it.
+    if (HW->gpio_status < MAX_GPIOS) {
+        uint8_t pin = HW->gpio_status;
+        GPIO_CTRL(pin) = GPIO_CTRL_RESET;   // SIO function
+        GPIO_PAD(pin) &= ~(PAD_OUTPUT_DISABLE | PAD_INPUT);
+        GPIO_PAD(pin) |= PAD_DRIVE(PAD_DRIVE_4MA);
+        SIO_GPIO_OE_SET_PIN(pin);
+        SIO_GPIO_OUT_SET_PIN(pin);
+    }
+#endif // REAL_HARDWARE
 }
 
 void blink_pattern(uint32_t on_time, uint32_t off_time, uint8_t repeats) {

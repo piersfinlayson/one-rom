@@ -25,7 +25,6 @@ typedef struct {
     ora_read_ram_rom_slot_fn_t read_ram_rom_slot;
     ora_reprogram_ram_rom_slot_fn_t reprogram_ram_rom_slot;
     uint32_t timer_ms;
-    const onerom_runtime_info_t *runtime;
     onerom_pending_t pending;
     led_status_t led_status;
 } usb_plugin_context_t;

@@ -89,12 +89,12 @@ int firmware_main(void) {
         preload_rom_image();
     }
 
-    // Setup status LED up now, so we don't need to call the function from the
-    // main loop - which might be running from RAM.
-    if (RUNTIME->status_led_enabled) {
-        DEBUG("Init LED");
-        setup_status_led();
-    }
+    // Set up the status LED hardware now (unconditionally - the pin is
+    // configured as an output whether or not the LED is currently on), so we
+    // don't need to call the function from the main loop, which might be
+    // running from RAM.
+    DEBUG("Init LED");
+    setup_status_led();
 
     // If no ROM slot is selected, enter limp mode now that the status LED is
     // setup.

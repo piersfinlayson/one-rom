@@ -127,6 +127,10 @@ fn run_slot(
         "metadata_str",
         tests::info::test_metadata_str(&emulator, config),
     );
+    report.add(
+        "metadata_uint",
+        tests::info::test_metadata_uint(&emulator),
+    );
 
     // Lookup
     report.add(
