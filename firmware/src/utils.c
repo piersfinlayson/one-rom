@@ -150,8 +150,12 @@ void limp_mode(limp_mode_pattern_t pattern) {
 
     uint32_t on_time, off_time;
 
-    if (!RUNTIME->status_led_enabled && RUNTIME->status_led_enabled) {
+    // Force the status LED on so the limp-mode error pattern is visible, even
+    // if it was disabled by a per-slot firmware override.  blink_pattern()
+    // gates on status_led_enabled, so the flag must be set, not just the pin.
+    if (!RUNTIME->status_led_enabled) {
         DEBUG("Enabled status LED");
+        RUNTIME->status_led_enabled = 1;
         setup_status_led();
     }
 

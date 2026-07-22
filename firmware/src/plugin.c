@@ -176,7 +176,7 @@ size_t plugin_get_free_mem(void) {
 void ora_set_status_led(uint8_t on) {
 #if !defined(TEST_BUILD)
     uint8_t pin = HW->gpio_status;
-    if (RUNTIME->status_led_enabled && pin <= MAX_GPIOS) {
+    if (RUNTIME->status_led_enabled && pin < MAX_GPIOS) {
         if (on) {
             status_led_on(pin);
         } else {
@@ -281,7 +281,7 @@ uint32_t ora_get_chip_size_from_type(uint32_t chip_type) {
 
 uint8_t ora_is_pin_output(uint8_t pin) {
 #if !defined(TEST_BUILD)
-    if (pin <= MAX_GPIOS) {
+    if (pin < MAX_GPIOS) {
         return GPIO_IS_OUTPUT(pin);
     }
     return 0xFF;

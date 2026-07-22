@@ -707,7 +707,7 @@ void setup_status_led(void) {
 }
 
 void blink_pattern(uint32_t on_time, uint32_t off_time, uint8_t repeats) {
-    if (RUNTIME->status_led_enabled && HW->gpio_status <= MAX_GPIOS) {
+    if (RUNTIME->status_led_enabled && HW->gpio_status < MAX_GPIOS) {
         uint8_t pin = HW->gpio_status;
         for(uint8_t i = 0; i < repeats; i++) {
             status_led_on(pin);

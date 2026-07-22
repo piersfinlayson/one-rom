@@ -38,7 +38,10 @@ onerom_runtime_info_t onerom_runtime_info SECTION_ONEROM_RUNTIME_INFO = {
     .rom_table = NULL,
     .rom_table_size = 0,
     .overclock_enabled = 0,
-    .status_led_enabled = 0,
+    // Status LED is on by default; a per-slot firmware override (LED present
+    // bit in override_present[0], see process_firmware_overrides()) is the only
+    // thing that turns it off.
+    .status_led_enabled = 1,
     .swd_enabled = 0,
     .fire_vreg = FIRE_VREG_STOCK,
     .fire_freq = FIRE_FREQ_NONE,

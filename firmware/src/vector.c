@@ -172,12 +172,12 @@ void Reset_Handler(void) {
 
 // Default handler for unhandled interrupts - fast continuous blink
 void Default_Handler(void) {
-    onerom_runtime_info_t *runtime_info = (onerom_runtime_info_t *)_onerom_runtime_info_ram;
-    if (runtime_info->status_led_enabled) {
-        setup_status_led();
-        while (1) {
-            blink_pattern(100000, 100000, 255);
-        }
+    // Halt regardless of the status LED: an unhandled interrupt stays pending,
+    // so returning from here just re-enters in a tight spin.  blink_pattern()
+    // gates on status_led_enabled, so the LED only blinks when it is enabled.
+    setup_status_led();
+    while (1) {
+        blink_pattern(100000, 100000, 255);
     }
 }
 
