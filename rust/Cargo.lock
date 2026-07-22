@@ -5088,6 +5088,7 @@ dependencies = [
  "hex",
  "iced",
  "log",
+ "onerom-cli",
  "onerom-config",
  "onerom-fw",
  "onerom-fw-parser",

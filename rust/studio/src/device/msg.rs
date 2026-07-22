@@ -282,7 +282,7 @@ pub fn handle_message(
         }
         Message::RebootDevice { client, stopped } => {
             debug!("{client} Rebooting device (stopped={stopped})");
-            device.pending_serial = device.selected.serial_number();
+            device.pending_id = device.selected.reconnect_id();
             device.reboot_result = None;
             device.operating = Some(client.clone());
             device.selected.reboot(client, stopped)

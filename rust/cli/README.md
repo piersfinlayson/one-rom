@@ -16,6 +16,18 @@ cargo build --release
 
 ## Releasing
 
+`onerom-cli` has two release channels:
+
+- **The `onerom` binary** — cross-platform CLI artifacts distributed via
+  https://onerom.org/cli and tagged `cli-vX.Y.Z`. Steps below.
+- **The `onerom-cli` library crate** — published to crates.io as part of the
+  main One ROM release (see [RELEASE.md](/RELEASE.md)). Studio and other
+  applications build on this library, so it is published consistently alongside
+  its dependencies (`onerom-app`, `onerom-config`, `onerom-fw`, `onerom-gen`,
+  `onerom-fw-parser`, `onerom-metadata`).
+
+### Binary release
+
 1. Build the release artifacts for all platforms:
 
     ```bash

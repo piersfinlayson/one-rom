@@ -7,7 +7,9 @@
 use dfu_rs::{DEFAULT_USB_TIMEOUT, Device as DfuDevice, DfuType, search_for_dfu};
 #[allow(unused_imports)]
 use log::{debug, error, info, trace, warn};
+use onerom_cli::usb::read_chip_info;
 use onerom_config::Model;
+use onerom_config::mcu::{Rp235xChipId, RpVariant};
 use picoboot::{Picoboot, Target};
 use std::time::Duration;
 
@@ -83,8 +85,19 @@ async fn get_fire_list_async() -> Option<Vec<UsbDeviceType>> {
                         warn!("Failed to create Picoboot device: {e}");
                     })
                     .ok();
-                if let Some(p) = p {
-                    usb_devices.push(UsbDeviceType::from_picoboot(p));
+                if let Some(mut p) = p {
+                    // Read the chip identity via GET_INFO (served in both
+                    // running and bootloader states). On failure we keep the
+                    // device but without a chip ID; reconnection then falls
+                    // back to the serial.
+                    let (chip_id, package) = match read_chip_info(&mut p).await {
+                        Ok(info) => (Some(info.chip_id), info.package),
+                        Err(e) => {
+                            warn!("Failed to read chip info from Fire device ({}): {e}", p.info());
+                            (None, None)
+                        }
+                    };
+                    usb_devices.push(UsbDeviceType::from_picoboot(p, chip_id, package));
                 }
             }
             Some(usb_devices)
@@ -103,6 +116,62 @@ pub async fn get_usb_device_list_delay(duration: Duration) -> AppMessage {
     get_usb_device_list_async().await
 }
 
+/// A discovered Fire (RP2350) USB device: the picoboot handle plus the chip
+/// identity read from it at enumeration.
+#[derive(Debug, Clone)]
+pub struct FireDevice {
+    picoboot: Picoboot,
+    chip_id: Option<Rp235xChipId>,
+    package: Option<RpVariant>,
+}
+
+impl FireDevice {
+    fn new(picoboot: Picoboot, chip_id: Option<Rp235xChipId>, package: Option<RpVariant>) -> Self {
+        Self {
+            picoboot,
+            chip_id,
+            package,
+        }
+    }
+
+    /// The device's invariant chip ID, if it was read at enumeration.
+    pub fn chip_id(&self) -> Option<Rp235xChipId> {
+        self.chip_id
+    }
+
+    /// The device's RP2350 package variant, if it was read at enumeration.
+    pub fn package(&self) -> Option<RpVariant> {
+        self.package
+    }
+
+    pub fn serial_number(&self) -> Option<&str> {
+        self.picoboot.serial_number()
+    }
+
+    pub fn vid(&self) -> u16 {
+        self.picoboot.target().vid()
+    }
+
+    pub fn pid(&self) -> u16 {
+        self.picoboot.target().pid()
+    }
+
+    pub fn info(&self) -> String {
+        self.picoboot.info()
+    }
+}
+
+/// Identity comparison deliberately ignores `chip_id`/`package`: those are read
+/// asynchronously at enumeration and can transiently fail, so including them
+/// would make two enumerations of the *same* physical device compare unequal
+/// and churn presence detection. Two `FireDevice`s are equal iff their picoboot
+/// identity matches.
+impl PartialEq for FireDevice {
+    fn eq(&self, other: &Self) -> bool {
+        self.picoboot == other.picoboot
+    }
+}
+
 /// A USB device type
 #[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq)]
@@ -110,14 +179,14 @@ pub enum UsbDeviceType {
     /// An STM32 bootloader
     Ice(DfuDevice),
     /// An RP2350 bootloader
-    Fire(Picoboot),
+    Fire(FireDevice),
 }
 
 impl std::fmt::Display for UsbDeviceType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             UsbDeviceType::Ice(d) => write!(f, "Ice USB ({})", d.info()),
-            UsbDeviceType::Fire(p) => write!(f, "Fire USB ({})", p.info()),
+            UsbDeviceType::Fire(fire) => write!(f, "Fire USB ({})", fire.info()),
         }
     }
 }
@@ -126,7 +195,7 @@ impl UsbDeviceType {
     pub fn is_run_capable(&self) -> bool {
         matches!(
             self,
-            UsbDeviceType::Fire(p) if p.vid() == FIRE_VID && p.pid() == FIRE_RUN_PID
+            UsbDeviceType::Fire(fire) if fire.vid() == FIRE_VID && fire.pid() == FIRE_RUN_PID
         )
     }
 
@@ -137,21 +206,25 @@ impl UsbDeviceType {
         }
     }
 
-    pub fn from_picoboot(picoboot: Picoboot) -> Self {
-        UsbDeviceType::Fire(picoboot)
+    pub fn from_picoboot(
+        picoboot: Picoboot,
+        chip_id: Option<Rp235xChipId>,
+        package: Option<RpVariant>,
+    ) -> Self {
+        UsbDeviceType::Fire(FireDevice::new(picoboot, chip_id, package))
     }
 
     pub fn vid(&self) -> u16 {
         match self {
             UsbDeviceType::Ice(d) => d.info().vid(),
-            UsbDeviceType::Fire(p) => p.target().vid(),
+            UsbDeviceType::Fire(fire) => fire.vid(),
         }
     }
 
     pub fn pid(&self) -> u16 {
         match self {
             UsbDeviceType::Ice(d) => d.info().pid(),
-            UsbDeviceType::Fire(p) => p.target().pid(),
+            UsbDeviceType::Fire(fire) => fire.pid(),
         }
     }
 
@@ -185,17 +258,19 @@ pub async fn read_async(
                 Message::ReadFailed(client, log).into()
             }
         },
-        UsbDeviceType::Fire(mut p) => match p.read(address, (words * 4) as u32).await {
-            Ok(data) => Message::DeviceData(client, data).into(),
-            Err(e) => {
-                let log = format!(
-                    "Failed to read {words} words of memory at {address:#010X} from Fire USB ({}): {e}",
-                    p.info(),
-                );
-                warn!("{log}");
-                Message::ReadFailed(client, log).into()
+        UsbDeviceType::Fire(mut fire) => {
+            match fire.picoboot.read(address, (words * 4) as u32).await {
+                Ok(data) => Message::DeviceData(client, data).into(),
+                Err(e) => {
+                    let log = format!(
+                        "Failed to read {words} words of memory at {address:#010X} from Fire USB ({}): {e}",
+                        fire.info(),
+                    );
+                    warn!("{log}");
+                    Message::ReadFailed(client, log).into()
+                }
             }
-        },
+        }
     }
 }
 
@@ -208,7 +283,7 @@ pub async fn flash_async(
 ) -> AppMessage {
     match usb_device {
         UsbDeviceType::Ice(d) => flash_ice_async(d, client, data).await,
-        UsbDeviceType::Fire(p) => flash_fire_async(p, client, data).await,
+        UsbDeviceType::Fire(fire) => flash_fire_async(fire.picoboot, client, data).await,
     }
 }
 
@@ -273,7 +348,7 @@ async fn flash_fire_async(mut picoboot: Picoboot, client: Client, data: Vec<u8>)
 
 pub async fn reboot_async(usb_device: UsbDeviceType, client: Client, stopped: bool) -> AppMessage {
     match usb_device {
-        UsbDeviceType::Fire(mut p) => {
+        UsbDeviceType::Fire(mut fire) => {
             let reboot_type = if stopped {
                 picoboot::RebootType::Bootsel {
                     disable_msd: true,
@@ -282,10 +357,10 @@ pub async fn reboot_async(usb_device: UsbDeviceType, client: Client, stopped: bo
             } else {
                 picoboot::RebootType::Normal
             };
-            match p.reboot(reboot_type, REBOOT_DELAY).await {
+            match fire.picoboot.reboot(reboot_type, REBOOT_DELAY).await {
                 Ok(()) => Message::RebootDeviceResult(client, Ok(())).into(),
                 Err(e) => {
-                    let log = format!("Failed to reboot Fire USB ({}): {e}", p.info());
+                    let log = format!("Failed to reboot Fire USB ({}): {e}", fire.info());
                     warn!("{log}");
                     Message::RebootDeviceResult(client, Err(log)).into()
                 }

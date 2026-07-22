@@ -122,8 +122,24 @@ async fn get_picoboot(device: &Device, long: bool) -> Result<Picoboot, Error> {
     Ok(picoboot)
 }
 
+/// RP2350 chip identity and package variant, read from a device via GET_INFO.
+#[derive(Debug, Clone, Copy)]
+pub struct ChipInfo {
+    /// The device's invariant chip ID.
+    pub chip_id: Rp235xChipId,
+    /// The package variant, present when the response carried a recognised
+    /// `package_sel`.
+    pub package: Option<RpVariant>,
+}
+
 /// Read the RP2350 chip ID and package variant via the picoboot `GET_INFO`
-/// (`SYS` / `CHIP_INFO`) command.
+/// (`SYS` / `CHIP_INFO`) command, served by both the running picobootx stack
+/// and the stock bootrom.
+///
+/// Connects the supplied handle (if not already connected) and resets the
+/// PICOBOOT interface before issuing the command, mirroring the crate's own
+/// read/write paths: the stock bootrom can leave the bulk endpoint halted after
+/// a prior operation, and without a reset the command write stalls.
 ///
 /// The command args are the packed `pb_get_info_args_t`: `info_type = SYS`
 /// (byte 0), three reserved bytes, then the `param0` flags word (`CHIP_INFO`)
@@ -145,12 +161,15 @@ async fn get_picoboot(device: &Device, long: bool) -> Result<Picoboot, Error> {
 ///
 /// `package_sel` yields the package variant; an unrecognised value is warned
 /// and returned as `None`, without failing the chip-ID read.
-async fn read_chip_id(
-    conn: &mut picoboot::Connection,
-) -> Result<(Rp235xChipId, Option<RpVariant>), Error> {
+pub async fn read_chip_info(pb: &mut Picoboot) -> Result<ChipInfo, Error> {
     const PB_INFO_SYS: u8 = 0x01;
     const CHIP_INFO_FLAG: u32 = 0x0000_0001;
     const RESP_BYTES: u32 = 32;
+
+    let conn = pb.connect().await.map_err(|e| Error::Usb(e.to_string()))?;
+    conn.reset_interface()
+        .await
+        .map_err(|e| Error::Usb(e.to_string()))?;
 
     let mut args = [0u8; 16];
     args[0] = PB_INFO_SYS;
@@ -176,14 +195,14 @@ async fn read_chip_id(
     }
     let data = (count - 2) * 4;
     let package_sel = word(data);
-    let rp_variant = RpVariant::from_package_sel(package_sel);
-    if rp_variant.is_none() {
+    let package = RpVariant::from_package_sel(package_sel);
+    if package.is_none() {
         warn!("Unrecognised RP2350 package_sel {package_sel:#x} in CHIP_INFO");
     }
-    Ok((
-        Rp235xChipId::from_chip_info([package_sel, word(data + 4), word(data + 8)]),
-        rp_variant,
-    ))
+    Ok(ChipInfo {
+        chip_id: Rp235xChipId::from_chip_info([package_sel, word(data + 4), word(data + 8)]),
+        package,
+    })
 }
 
 /// Read the first 64KB from flash on a One ROM Fire device.
@@ -223,8 +242,8 @@ pub async fn read_device_info(device: &mut Device) -> Result<(), Error> {
 /// package variant is only available from GET_INFO, so it is `None` on the
 /// serial fallback path.
 async fn resolve_chip_id(device: &Device) -> (Option<Rp235xChipId>, Option<RpVariant>) {
-    match query_chip_info(device).await {
-        Ok((id, rp_variant)) => (Some(id), rp_variant),
+    match read_device_chip_info(device).await {
+        Ok(info) => (Some(info.chip_id), info.package),
         Err(e) => {
             warn!("GET_INFO failed on {device}, falling back to serial: {e}");
             let chip_id = device
@@ -236,23 +255,10 @@ async fn resolve_chip_id(device: &Device) -> (Option<Rp235xChipId>, Option<RpVar
     }
 }
 
-/// Read the chip ID and package variant via the picoboot GET_INFO command,
-/// served by both the running picobootx stack and the stock bootrom.
-///
-/// Resets the PICOBOOT interface before issuing the command, mirroring the
-/// crate's own read/write paths: the stock bootrom can leave the bulk endpoint
-/// halted after a prior operation, and without a reset the command write
-/// stalls.
-async fn query_chip_info(device: &Device) -> Result<(Rp235xChipId, Option<RpVariant>), Error> {
+/// Open a fresh picoboot handle to a discovered device and read its chip info.
+async fn read_device_chip_info(device: &Device) -> Result<ChipInfo, Error> {
     let mut picoboot = get_picoboot(device, false).await?;
-    let conn = picoboot
-        .connect()
-        .await
-        .map_err(|e| Error::Usb(e.to_string()))?;
-    conn.reset_interface()
-        .await
-        .map_err(|e| Error::Usb(e.to_string()))?;
-    read_chip_id(conn).await
+    read_chip_info(&mut picoboot).await
 }
 
 /// What state One ROM should be rebooted into

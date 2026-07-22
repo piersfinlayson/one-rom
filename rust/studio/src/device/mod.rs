@@ -19,6 +19,7 @@ use iced::{Element, Subscription, Task, event, keyboard};
 #[allow(unused_imports)]
 use log::{debug, error, info, trace, warn};
 use onerom_config::Model;
+use onerom_config::mcu::Rp235xChipId;
 
 use crate::app::AppMessage;
 use crate::hw::HardwareInfo;
@@ -144,6 +145,16 @@ impl Address {
     }
 }
 
+/// How to re-find a device after a reboot that changes its USB serial (Run
+/// <-> Stop, or a programmed serial override). The RP2350 chip ID is invariant
+/// across those transitions, so it is preferred for Fire devices; the serial is
+/// the fallback when the chip ID could not be read.
+#[derive(Debug, Clone)]
+enum PendingId {
+    ChipId(Rp235xChipId),
+    Serial(String),
+}
+
 /// Device state
 #[derive(Debug, Clone)]
 pub struct Device {
@@ -154,10 +165,10 @@ pub struct Device {
     usb_devices: Vec<UsbDeviceType>,
     operating: Option<Client>,
     running: bool,
-    // Used to track the serial number of the last connected device, for use
-    // in matching with when attempting to reconnect after a reboot that
-    // changes modes - Run -> Stop or Stop -> Run
-    pending_serial: Option<String>,
+    // Identity of the last connected device, captured before a reboot that
+    // changes modes (Run -> Stop or Stop -> Run), so we can re-match it once it
+    // re-enumerates - even if a serial override changed its USB serial.
+    pending_id: Option<PendingId>,
     reboot_result: Option<(Client, Result<(), String>)>,
     usb_run_capable: bool,
 }
@@ -172,7 +183,7 @@ impl Default for Device {
             usb_devices: Vec::new(),
             operating: None,
             running: false,
-            pending_serial: None,
+            pending_id: None,
             reboot_result: None,
             usb_run_capable: false,
         }
@@ -289,7 +300,7 @@ impl Device {
     // If a device is selected, make sure it still exists.  If there's no
     // device, select one if possible.
     fn check_selected(&mut self) {
-        let mut matched_serial = false;
+        let mut matched_pending = false;
 
         // See if the existing device is still valid
         let should_clear = match &self.selected {
@@ -303,18 +314,32 @@ impl Device {
         }
 
         if self.selected.is_none() {
-            // If we have a pending serial, try to match it before auto-selecting
-            if let Some(serial) = &self.pending_serial.clone() {
-                if let Some(usb_device) = self.usb_devices.iter().find(|d| {
-                    matches!(d, UsbDeviceType::Fire(p) if p.serial_number() == Some(serial.as_str()))
-                }).cloned() {
-                    info!("Re-selected device by serial number: {serial}");
+            // If we have a pending identity from a reboot, try to re-match it
+            // before auto-selecting. Fire devices are matched by chip ID (or
+            // serial when the chip ID was unknown); either way only a Fire
+            // device can satisfy a pending identity.
+            if let Some(pending) = self.pending_id.clone() {
+                let found = self
+                    .usb_devices
+                    .iter()
+                    .find(|d| match &pending {
+                        PendingId::ChipId(id) => {
+                            matches!(d, UsbDeviceType::Fire(fire) if fire.chip_id() == Some(*id))
+                        }
+                        PendingId::Serial(serial) => matches!(
+                            d,
+                            UsbDeviceType::Fire(fire) if fire.serial_number() == Some(serial.as_str())
+                        ),
+                    })
+                    .cloned();
+                if let Some(usb_device) = found {
+                    info!("Re-selected device by {pending:?}");
                     self.selected_usb_device = Some(usb_device.clone());
                     self.selected = DeviceType::from_usb(usb_device);
-                    matched_serial = true;
+                    matched_pending = true;
                 } else {
                     // Device not yet re-enumerated - don't auto-select anything else
-                    warn!("Device with serial {serial} hasn't re-enumerated");
+                    warn!("Rebooted device ({pending:?}) hasn't re-enumerated");
                     self.running = false;
                 }
             } else {
@@ -336,14 +361,14 @@ impl Device {
         // gives us the accurate information based on the firmware parsing
         // later.
         self.running = self.is_live_usb_device();
-        if matched_serial {
+        if matched_pending {
             // We KNOW it's a run-capable device if we rebooted it and it came
-            // back with the same serial number.  This saves a re-analyse.
+            // back as the same device.  This saves a re-analyse.
             self.usb_run_capable = true;
         } else {
             self.usb_run_capable = self.is_live_usb_device();
         }
-        self.pending_serial = None;
+        self.pending_id = None;
     }
 
     // Methods called when device is selected
@@ -451,6 +476,18 @@ impl DeviceType {
             DeviceType::DebugProbe(_) => None,
             DeviceType::None => None,
         }
+    }
+
+    /// The identity to re-match this device by after a reboot that changes its
+    /// USB serial. Prefers the invariant chip ID for Fire devices, falling back
+    /// to the serial when the chip ID was not read.
+    fn reconnect_id(&self) -> Option<PendingId> {
+        if let DeviceType::Usb(UsbDeviceType::Fire(fire)) = self
+            && let Some(chip_id) = fire.chip_id()
+        {
+            return Some(PendingId::ChipId(chip_id));
+        }
+        self.serial_number().map(PendingId::Serial)
     }
 
     fn usb_device(&self) -> Option<UsbDeviceType> {
