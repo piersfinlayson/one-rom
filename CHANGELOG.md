@@ -10,6 +10,7 @@ All notables changes between versions are documented in this file.
   - This required a firmware update and an RGB plugin update.
 - Add support for CLI's `--serial-override` option.  This causes the USB plugin to use the overriding serial number when One ROM is running.  When stopped One ROM continues to use the chip ID (as the USB stack is provided by the RP2350's bootrom).  This required some enhancements to other Studio to cope with the serial number changing across stopped/started cases.  Web "just works" with a custom or stock serial number.  Neither Studio not Web support programming a serial override.
   - This required a firmware update, and a USB plugin update, to expose and use the serial override metadata.
+- The CLI now accepts `--plugin` alongside a `--config-file` on both `program` and `firmware build`.  The specified plugins are inserted ahead of the config's ROM slots, so you can add a plugin to a stock config without editing it.  It is an error if the config already defines a plugin of its own.  Previously `--plugin` and `--config-file` were mutually exclusive.  CLI-only change; no firmware update required.
 
 To publish:
 - Rust crates:

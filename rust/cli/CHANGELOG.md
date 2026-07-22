@@ -3,6 +3,9 @@
 ## v0.2.1 - 2026-??-??
 
 - Support devices with overridden serials
+- Allow `--plugin` to be combined with `--config-file` on `program` and
+  `firmware build`; the plugins are inserted ahead of the config's ROM slots.
+  Errors if the config already defines a plugin of its own.
 
 ## v0.2.0 - 2026-07-20
 

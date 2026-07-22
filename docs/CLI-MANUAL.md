@@ -8,7 +8,7 @@ This manual is in two parts. The **Guide** walks through installation and the
 common workflows. The **Reference** documents every command, subcommand and
 option.
 
-> This manual documents the `onerom` CLI as of release v0.1.11. Board,
+> This manual documents the `onerom` CLI as of release v0.2.1. Board,
 > chip and plugin lists shown in examples are illustrative — the set your build
 > supports may differ. Run `onerom --version` to check your version, and
 > `onerom boards` / `onerom chips` for the definitive lists your build knows
@@ -84,6 +84,11 @@ onerom --serial 'A1B2*' inspect info
 
 `--serial` is **global**: it can appear at any level of the command line.
 
+A device programmed with a serial override (`program --serial-override`) reports
+and is matched by that overridden serial while **Running**. When **Stopped** its
+USB stack comes from the RP2350 bootrom, so it falls back to reporting its chip
+ID — match it by chip ID (or reboot it to running) in that state.
+
 Discover what's attached:
 
 ```
@@ -148,6 +153,17 @@ onerom program --board fire-24-e \
     --slot file=kernal.bin,type=2364,cs1=active_low \
     --plugin usb
 ```
+
+`--plugin` may also be combined with `--config-file`. The plugins are inserted
+ahead of the config's ROM slots (which shift up accordingly), so you can add a
+plugin to a stock config without editing it:
+
+```
+onerom program --config-file c64.json --plugin usb
+```
+
+It is an error if the config already defines a plugin of its own — remove it
+from the config, or drop `--plugin`.
 
 Plugin spec forms are listed under [Plugin
 specification](#plugin-specification).
@@ -316,7 +332,8 @@ and rely on `--serial` (global) to pick a specific device.
 ## scan
 
 Discover and list connected One ROMs — serial, USB location, name, board type,
-MCU and loaded firmware version.
+MCU and loaded firmware version. With `--verbose` (`-v`), each device also
+shows its MCU variant and chip ID.
 
 ```
 onerom scan
@@ -364,7 +381,7 @@ onerom program --config-file c64.json --out firmware.bin
 
 | Option | Description |
 |---|---|
-| `--plugin <SPEC>` | Plugin specification; repeatable. See [Plugin specification](#plugin-specification). Conflicts with `--config-file`, `--firmware`. |
+| `--plugin <SPEC>` | Plugin specification; repeatable. See [Plugin specification](#plugin-specification). May be combined with `--config-file`: the plugins are inserted ahead of the config's ROM slots (which shift up), and it is an error if the config already defines a plugin of its own. Conflicts with `--firmware`. |
 | `--config-name <NAME>` (alias `--name`) | Name for the generated ROM configuration. Conflicts with `--config-file`. |
 | `--config-description <DESC>` (aliases `--desc`, `--description`) | Description for the generated configuration. Defaults to *"Created by the One ROM CLI"*. Conflicts with `--config-file`. |
 | `--save-config <FILE>` | Save the generated configuration to JSON. Only valid with `--slot` or `--no-config`. Conflicts with `--config-file`. |
@@ -427,7 +444,8 @@ onerom inspect <COMMAND>
 ### inspect info
 
 Show the device's serial number, user-assigned name, board type, MCU, firmware
-version and hardware revision. No options.
+version and hardware revision. With `--verbose` (`-v`), also shows the MCU
+variant and chip ID.
 
 ```
 onerom inspect info

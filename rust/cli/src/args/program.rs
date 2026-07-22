@@ -82,7 +82,10 @@ pub struct ProgramArgs {
     ///
     /// System plugins are always placed in slot 0, user plugins in slot 1.
     ///
-    /// Mutually exclusive with --config-file.
+    /// May be combined with --config-file: the plugins are inserted ahead of
+    /// the config's ROM slots (shifting them up). It is an error if the config
+    /// already defines a plugin of its own. Still mutually exclusive with
+    /// --firmware, since a pre-built firmware already contains its plugins.
     ///
     /// Forms:
     ///
@@ -96,7 +99,7 @@ pub struct ProgramArgs {
     ///
     ///   --plugin file=https://example.com/plugin.bin
     ///
-    #[arg(long, value_name = "SPEC", conflicts_with_all = ["config_file", "firmware"])]
+    #[arg(long, value_name = "SPEC", conflicts_with = "firmware")]
     pub plugin: Vec<String>,
 
     /// Name for the generated ROM configuration.

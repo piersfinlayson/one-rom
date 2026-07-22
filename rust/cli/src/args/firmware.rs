@@ -161,7 +161,9 @@ pub struct FirmwareBuildArgs {
     /// A user plugin requires a system plugin.
     /// System plugins are always placed in slot 0, user plugins in slot 1.
     ///
-    /// Mutually exclusive with --config-file.
+    /// May be combined with --config-file: the plugins are inserted ahead of
+    /// the config's ROM slots (shifting them up). It is an error if the config
+    /// already defines a plugin of its own.
     ///
     /// Forms:
     ///   --plugin usb                       latest compatible version by name
@@ -170,7 +172,7 @@ pub struct FirmwareBuildArgs {
     ///   --plugin file=path/to/plugin.bin   local or remote file
     ///   --plugin file=https://example.com/plugin.bin
     ///
-    #[arg(long, value_name = "SPEC", conflicts_with = "config_file")]
+    #[arg(long, value_name = "SPEC")]
     pub plugin: Vec<String>,
 
     /// Name for the generated ROM configuration.

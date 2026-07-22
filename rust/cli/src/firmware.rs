@@ -18,8 +18,8 @@ use crate::args;
 use crate::utils::{resolve_board, resolve_firmware_output};
 use onerom_cli::plugin::{PluginSpec, ResolvedPlugin, resolve_plugins};
 use onerom_cli::slot::{
-    ConfirmationsRequired, GlobalConfig, check_slot_confirmations, parse_slots, save_config,
-    slots_to_config_json,
+    ConfirmationsRequired, GlobalConfig, check_slot_confirmations, inject_plugins_into_config,
+    parse_slots, save_config, slots_to_config_json,
 };
 use onerom_cli::{Error, Options};
 
@@ -40,9 +40,10 @@ pub fn resolve_config_json(
     allow_unsupported_chip_type: bool,
 ) -> Result<String, Error> {
     if let Some(path) = config_file {
-        // --config-file is mutually exclusive with --plugin at the args level,
-        // so plugins is always empty here.
+        // A config file supplies the ROM slots; any --plugin entries are
+        // injected ahead of them (erroring if the config defines its own).
         let json = read_rom_config(path)?;
+        let json = inject_plugins_into_config(json, plugins)?;
         if let Some(overrides) = global_config {
             apply_global_overrides(json, overrides)
         } else {

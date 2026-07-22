@@ -579,7 +579,159 @@ pub fn slots_to_config_json(
     serde_json::to_string_pretty(&config).map_err(|e| Error::Other(e.to_string()))
 }
 
+/// Inject resolved plugins into a user-provided config JSON string.
+///
+/// The plugins are prepended to the config's `chip_sets` so a system plugin
+/// lands in slot 0 and a user plugin in slot 1 — the placement the firmware
+/// builder requires — with the config's existing ROM slots shifting up
+/// accordingly.
+///
+/// Returns the JSON unchanged if `plugins` is empty. Returns an error if the
+/// config already defines a plugin of its own, since merging command-line
+/// plugins with config-defined plugins is ambiguous: remove the plugin from the
+/// config, or drop `--plugin`.
+pub fn inject_plugins_into_config(
+    json: String,
+    plugins: &[ResolvedPlugin],
+) -> Result<String, Error> {
+    if plugins.is_empty() {
+        return Ok(json);
+    }
+
+    let mut config: Config = serde_json::from_str(&json)
+        .map_err(|e| Error::Other(format!("Failed to parse config JSON: {e}")))?;
+
+    if config
+        .chip_sets
+        .iter()
+        .flat_map(|cs| cs.chips.iter())
+        .any(|c| c.chip_type.is_plugin())
+    {
+        return Err(Error::Other(
+            "The provided config file already defines a plugin; remove it from \
+             the config, or drop --plugin."
+                .to_string(),
+        ));
+    }
+
+    // Ensure system plugins come before user plugins (slot 0 then slot 1).
+    let mut sorted_plugins: Vec<&ResolvedPlugin> = plugins.iter().collect();
+    sorted_plugins.sort_by_key(|p| p.plugin_type.slot_index());
+
+    let mut chip_sets: Vec<ChipSetConfig> = sorted_plugins
+        .iter()
+        .map(|p| plugin_to_chip_set_config(&p.file(), p.plugin_type, p.size))
+        .collect::<Result<Vec<_>, _>>()?;
+
+    // Prepend the plugin slots ahead of the config's existing ROM slots.
+    chip_sets.append(&mut config.chip_sets);
+    config.chip_sets = chip_sets;
+
+    serde_json::to_string_pretty(&config).map_err(|e| Error::Other(e.to_string()))
+}
+
 /// Save a config JSON string to a file.
 pub fn save_config(path: &str, json: &str) -> Result<(), Error> {
     std::fs::write(path, json).map_err(|e| Error::io(path, e))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::plugin::{PluginType, PluginVersion, ResolvedSource};
+
+    /// A single-ROM config using the canonical `chip_sets`/`chips` keys.
+    const ROM_ONLY: &str = r#"{
+        "version": 1,
+        "name": "t",
+        "description": "d",
+        "chip_sets": [
+            { "type": "single", "chips": [
+                { "file": "http://x/rom.bin", "type": "23128",
+                  "cs1": "active_low", "cs2": "active_low", "cs3": "active_high" }
+            ] }
+        ]
+    }"#;
+
+    fn plugin(plugin_type: PluginType) -> ResolvedPlugin {
+        ResolvedPlugin {
+            plugin_type,
+            name: "p".to_string(),
+            version: PluginVersion::new(0, 1, 0, 0),
+            size: 1024,
+            source: ResolvedSource::File {
+                path: "/tmp/p.bin".to_string(),
+            },
+        }
+    }
+
+    fn chip_types(json: &str) -> Vec<ChipType> {
+        let config: Config = serde_json::from_str(json).expect("valid config");
+        config
+            .chip_sets
+            .iter()
+            .flat_map(|cs| cs.chips.iter())
+            .map(|c| c.chip_type)
+            .collect()
+    }
+
+    #[test]
+    fn empty_plugins_is_passthrough() {
+        let out = inject_plugins_into_config(ROM_ONLY.to_string(), &[]).unwrap();
+        assert_eq!(out, ROM_ONLY);
+    }
+
+    #[test]
+    fn plugins_are_prepended_system_then_user() {
+        // Supply the plugins out of order to prove sorting, not input order,
+        // decides placement: system must precede user, both ahead of the ROM.
+        let out = inject_plugins_into_config(
+            ROM_ONLY.to_string(),
+            &[plugin(PluginType::User), plugin(PluginType::System)],
+        )
+        .unwrap();
+        assert_eq!(
+            chip_types(&out),
+            vec![
+                ChipType::SystemPlugin,
+                ChipType::UserPlugin,
+                ChipType::Chip23128,
+            ]
+        );
+    }
+
+    #[test]
+    fn system_only_prepends_before_rom() {
+        let out = inject_plugins_into_config(
+            ROM_ONLY.to_string(),
+            &[plugin(PluginType::System)],
+        )
+        .unwrap();
+        assert_eq!(
+            chip_types(&out),
+            vec![ChipType::SystemPlugin, ChipType::Chip23128]
+        );
+    }
+
+    #[test]
+    fn config_already_defining_a_plugin_is_rejected() {
+        let with_plugin = r#"{
+            "version": 1,
+            "name": "t",
+            "description": "d",
+            "chip_sets": [
+                { "type": "single", "chips": [
+                    { "file": "http://x/usb.bin", "type": "system_plugin" } ] },
+                { "type": "single", "chips": [
+                    { "file": "http://x/rom.bin", "type": "23128",
+                      "cs1": "active_low", "cs2": "active_low", "cs3": "active_high" } ] }
+            ]
+        }"#;
+        let err = inject_plugins_into_config(
+            with_plugin.to_string(),
+            &[plugin(PluginType::System)],
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("already defines a plugin"));
+    }
 }
