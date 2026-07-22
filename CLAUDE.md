@@ -23,6 +23,8 @@ it as a long-lived, production project.
   go-ahead.
 - Hold the existing bar for code style, accurate comments, and API docs.
 - Answer the question actually asked; do not infer extra scope.
+- Discuss and review designs with me before you start coding. For anything
+  beyond a trivial change, propose the design, and wait for my go-ahead.
 
 ## Git & commits
 
@@ -81,6 +83,13 @@ Directory → package name:
   `onerom-gen` config type.
 
 Legacy `sdrr-*` crate names are gone; everything is `onerom-*` now.
+
+**Direction — Studio onto `onerom-cli` lib.** The long-term plan is to rewrite
+`onerom-studio` so it relies mostly on the `onerom-cli` library rather than
+carrying its own duplicate device logic. So `onerom-studio` depends on
+`onerom-cli`, and new shared device logic (chip-ID identity, GET_INFO reads,
+reboot/reconnect handling) belongs in `onerom-cli` and should be consumed from
+there — not reimplemented in Studio, and not split into a separate crate.
 
 ## Building
 
