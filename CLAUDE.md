@@ -35,6 +35,12 @@ it as a long-lived, production project.
 - **No `Co-Authored-By` trailer**, and no other Claude/AI attribution, in
   commit messages — keep it out of the history entirely.
 - Only commit when I ask; only push when I ask.
+- Keep **CHANGELOGs** current. When a change is user-facing, add an entry —
+  under the current in-development version heading — to the repo-root
+  [CHANGELOG.md](/CHANGELOG.md) **and** the affected component's own:
+  `rust/cli/CHANGELOG.md`, `rust/studio/CHANGELOG.md`, or the relevant plugin's
+  `CHANGELOG.md` (e.g. `plugins/system/usb/CHANGELOG.md`). Leave vendored
+  changelogs (tinyusb, `firmware/apio`, `firmware/epio`) alone.
 
 ## Firmware
 
