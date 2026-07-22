@@ -127,18 +127,30 @@ async fn get_picoboot(device: &Device, long: bool) -> Result<Picoboot, Error> {
 ///
 /// The command args are the packed `pb_get_info_args_t`: `info_type = SYS`
 /// (byte 0), three reserved bytes, then the `param0` flags word (`CHIP_INFO`)
-/// at byte offset 4. The response is `[header, package_sel, device_id_low,
-/// device_id_high]` — the header word differs between the stock bootloader
-/// (supported-flags subset) and the running picobootx stack (word count), so it
-/// is skipped and the three `CHIP_INFO` data words are parsed. `package_sel`
-/// yields the package variant; an unrecognised value is warned and returned as
-/// `None`, without failing the chip-ID read.
+/// at byte offset 4. `bCmdSize` is `0x10`. `dTransferLength` must be at least
+/// the response size and a multiple of 4 — the stock bootrom STALLs the
+/// endpoint if the buffer is too small to hold its reply — so we request 32
+/// bytes, a little over the largest response we can receive.
+///
+/// The response is a self-describing word array: word 0 is the count of words
+/// that follow. Since we request only `CHIP_INFO`, its three data words
+/// (`package_sel`, `device_id_low`, `device_id_high`) are always the last
+/// three of those words. Locating them relative to the count word handles both
+/// layouts seen in the field:
+///
+/// - the stock RP2350 bootrom returns `[count=4, flags, package_sel, lo, hi]`;
+/// - picobootx (running) currently returns `[count=3, package_sel, lo, hi]`,
+///   omitting the returned-flags word (a picobootx bug; once fixed it will
+///   return `count=4` like the bootrom, which this parser also accepts).
+///
+/// `package_sel` yields the package variant; an unrecognised value is warned
+/// and returned as `None`, without failing the chip-ID read.
 async fn read_chip_id(
     conn: &mut picoboot::Connection,
 ) -> Result<(Rp235xChipId, Option<RpVariant>), Error> {
     const PB_INFO_SYS: u8 = 0x01;
     const CHIP_INFO_FLAG: u32 = 0x0000_0001;
-    const RESP_BYTES: u32 = 16;
+    const RESP_BYTES: u32 = 32;
 
     let mut args = [0u8; 16];
     args[0] = PB_INFO_SYS;
@@ -150,21 +162,26 @@ async fn read_chip_id(
         .await
         .map_err(|e| Error::Usb(e.to_string()))?;
 
-    if resp.len() < RESP_BYTES as usize {
+    let word = |i: usize| u32::from_le_bytes([resp[i], resp[i + 1], resp[i + 2], resp[i + 3]]);
+
+    // Word 0 is the count of words that follow; the three CHIP_INFO data words
+    // are the last of them, starting at word `count - 2`. Need the count word
+    // plus at least those three data words.
+    let count = if resp.len() >= 4 { word(0) as usize } else { 0 };
+    if count < 3 || resp.len() < (count + 1) * 4 {
         return Err(Error::Usb(format!(
-            "GET_INFO CHIP_INFO returned {} bytes, expected {RESP_BYTES}",
+            "GET_INFO CHIP_INFO returned {} bytes with count {count}; too short",
             resp.len()
         )));
     }
-
-    let word = |i: usize| u32::from_le_bytes([resp[i], resp[i + 1], resp[i + 2], resp[i + 3]]);
-    let package_sel = word(4);
+    let data = (count - 2) * 4;
+    let package_sel = word(data);
     let rp_variant = RpVariant::from_package_sel(package_sel);
     if rp_variant.is_none() {
         warn!("Unrecognised RP2350 package_sel {package_sel:#x} in CHIP_INFO");
     }
     Ok((
-        Rp235xChipId::from_chip_info([package_sel, word(8), word(12)]),
+        Rp235xChipId::from_chip_info([package_sel, word(data + 4), word(data + 8)]),
         rp_variant,
     ))
 }
@@ -177,8 +194,7 @@ async fn read_chip_id(
 pub async fn read_device_info(device: &mut Device) -> Result<(), Error> {
     debug!("Reading {FLASH_READ_SIZE_KB}KB from {FLASH_BASE:#010x} on {device}");
 
-    // Parse the device's flash first: this determines the device state, which
-    // decides how the chip ID is obtained below.
+    // Parse the device's flash first, to establish its state and recognition.
     let picoboot = get_picoboot(device, false).await?;
     let onerom = {
         let mut reader = PicobootReader::new(picoboot).await.map_err(Error::Usb)?;
@@ -187,8 +203,7 @@ pub async fn read_device_info(device: &mut Device) -> Result<(), Error> {
     };
     device.update_onerom(onerom);
 
-    // Determine the chip ID - the device's invariant identity - and, where
-    // available, the package variant.
+    // Read the chip ID - the device's invariant identity - and package variant.
     let (chip_id, rp_variant) = resolve_chip_id(device).await;
     device.chip_id = chip_id;
     device.rp_variant = rp_variant;
@@ -199,40 +214,42 @@ pub async fn read_device_info(device: &mut Device) -> Result<(), Error> {
 /// Determine a device's RP2350 chip ID and, where available, its package
 /// variant.
 ///
-/// A running device may be presenting a serial-number override, so its serial
-/// cannot be trusted as the chip ID - it is queried directly with GET_INFO,
-/// which picobootx serves while running. In any other state - notably the
-/// stock bootloader - the USB serial *is* the chip ID in hex (the bootrom
-/// controls it), and issuing GET_INFO there stalls the endpoint, so the chip
-/// ID is derived from the serial instead. The package variant is only obtained
-/// from the GET_INFO path, so it is `None` when the chip ID comes from the
-/// serial.
+/// The chip ID and package are read directly via GET_INFO, which both the
+/// running picobootx stack and the stock bootrom serve. GET_INFO is preferred
+/// over the USB serial because a running device may present a serial-number
+/// override, whereas the true chip ID never changes. If GET_INFO fails for any
+/// reason, fall back to the serial, which is the chip ID in hex whenever the
+/// device is not presenting an override (notably in the bootloader). The
+/// package variant is only available from GET_INFO, so it is `None` on the
+/// serial fallback path.
 async fn resolve_chip_id(device: &Device) -> (Option<Rp235xChipId>, Option<RpVariant>) {
-    if device.is_running() {
-        match read_running_chip_id(device).await {
-            Ok((id, rp_variant)) => (Some(id), rp_variant),
-            Err(e) => {
-                warn!("Failed to read chip ID on {device}: {e}");
-                (None, None)
-            }
+    match query_chip_info(device).await {
+        Ok((id, rp_variant)) => (Some(id), rp_variant),
+        Err(e) => {
+            warn!("GET_INFO failed on {device}, falling back to serial: {e}");
+            let chip_id = device
+                .serial
+                .as_deref()
+                .and_then(Rp235xChipId::from_hex_serial);
+            (chip_id, None)
         }
-    } else {
-        let chip_id = device
-            .serial
-            .as_deref()
-            .and_then(Rp235xChipId::from_hex_serial);
-        (chip_id, None)
     }
 }
 
-/// Read the chip ID and package variant from a running device via GET_INFO
-/// (served by picobootx).
-async fn read_running_chip_id(
-    device: &Device,
-) -> Result<(Rp235xChipId, Option<RpVariant>), Error> {
+/// Read the chip ID and package variant via the picoboot GET_INFO command,
+/// served by both the running picobootx stack and the stock bootrom.
+///
+/// Resets the PICOBOOT interface before issuing the command, mirroring the
+/// crate's own read/write paths: the stock bootrom can leave the bulk endpoint
+/// halted after a prior operation, and without a reset the command write
+/// stalls.
+async fn query_chip_info(device: &Device) -> Result<(Rp235xChipId, Option<RpVariant>), Error> {
     let mut picoboot = get_picoboot(device, false).await?;
     let conn = picoboot
         .connect()
+        .await
+        .map_err(|e| Error::Usb(e.to_string()))?;
+    conn.reset_interface()
         .await
         .map_err(|e| Error::Usb(e.to_string()))?;
     read_chip_id(conn).await
