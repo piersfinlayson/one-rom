@@ -217,6 +217,18 @@ impl Device {
         matches_serial(self.serial.as_deref(), pattern)
     }
 
+    /// The verbose one-line MCU / chip-ID summary shown beneath the device
+    /// header, e.g. `MCU: RP235xB Chip ID: FC9D67248E8E8023`. Returns `None`
+    /// if the chip ID has not been read; the `MCU:` prefix is dropped when the
+    /// package variant is unknown.
+    pub fn mcu_chip_id_line(&self) -> Option<String> {
+        let id = self.chip_id?;
+        Some(match self.rp_variant {
+            Some(variant) => format!("MCU: {variant} Chip ID: {id}"),
+            None => format!("Chip ID: {id}"),
+        })
+    }
+
     /// Returns a sort key for this device, which sorts first by board type (with
     /// unrecognised devices sorted last) and then by serial number (with devices
     /// with no serial sorted last).

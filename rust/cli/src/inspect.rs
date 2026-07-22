@@ -80,6 +80,12 @@ pub async fn output_slot_info(
 
     let verbose = options.verbose;
 
+    // Device identity sits directly beneath the header, before slot detail.
+    if verbose && let Some(line) = device.mcu_chip_id_line() {
+        print!("{prefix}");
+        println!("  {line}");
+    }
+
     let parsed = device.onerom.as_ref().ok_or_else(|| {
         Error::Other("No recognised information found on device flash".to_string())
     })?;

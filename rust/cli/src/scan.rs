@@ -47,6 +47,8 @@ pub async fn cmd_scan(options: &Options, args: &args::scan::ScanArgs) -> Result<
 
     for d in &devices {
         if args.slots {
+            // output_slot_info prints the device header followed by the MCU /
+            // chip-ID line (when verbose) and the slot detail.
             println!("---");
             crate::inspect::output_slot_info(d, options, "")
                 .await
@@ -54,11 +56,8 @@ pub async fn cmd_scan(options: &Options, args: &args::scan::ScanArgs) -> Result<
                 .ok();
         } else {
             println!("  {d}");
-        }
-        if options.verbose && let Some(id) = d.chip_id {
-            match d.rp_variant {
-                Some(variant) => println!("  MCU: {variant} Chip ID: {id}"),
-                None => println!("  Chip ID: {id}"),
+            if options.verbose && let Some(line) = d.mcu_chip_id_line() {
+                println!("  {line}");
             }
         }
     }
