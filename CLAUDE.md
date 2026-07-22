@@ -23,6 +23,10 @@ it as a long-lived, production project.
   go-ahead.
 - Hold the existing bar for code style, accurate comments, and API docs.
 - Answer the question actually asked; do not infer extra scope.
+- **Ask questions as free-form text, not multiple-choice.** I dislike the
+  predefined-answer question UI — it is too limiting. When you need a decision,
+  put the options and your recommendation in prose and let me reply in my own
+  words.
 - Discuss and review designs with me before you start coding. For anything
   beyond a trivial change, propose the design, and wait for my go-ahead.
 
@@ -41,6 +45,11 @@ it as a long-lived, production project.
   `rust/cli/CHANGELOG.md`, `rust/studio/CHANGELOG.md`, or the relevant plugin's
   `CHANGELOG.md` (e.g. `plugins/system/usb/CHANGELOG.md`). Leave vendored
   changelogs (tinyusb, `firmware/apio`, `firmware/epio`) alone.
+- **When you touch the CLI, keep [docs/CLI-MANUAL.md](/docs/CLI-MANUAL.md) in
+  sync.** Any user-facing CLI change — new/changed subcommands or options,
+  altered conflicts, changed output — must be reflected there, including the
+  version banner near the top ("as of release vX.Y.Z"). The manual is the
+  user-facing reference; do not let it drift behind the CLI CHANGELOG.
 - **Before bumping any crate/component version, read the repo-root
   [CHANGELOG.md](/CHANGELOG.md) first.** Its "To publish" list under the current
   in-development heading is the source of truth for in-flight version bumps. A
@@ -167,12 +176,17 @@ changes device state.
   `--base-firmware firmware/build/onerom-rp235x.bin` to `program`/`firmware
   build`. Without it the CLI downloads the *released* base firmware and your
   firmware changes are not under test.
-- **The device needs the USB (system) plugin to run and stay discoverable after
-  flashing** — add `--plugin usb`. Add `--plugin rgb` too when testing RGB One
-  ROMs (Piers's usual test hardware). Max one system + one user plugin; `usb` is
+- **A One ROM is discoverable over USB even without the USB plugin.** When
+  stopped it sits in the RP2350 bootloader (picoboot), so `scan` still finds it —
+  it just isn't serving and has limited function. To have it come up **Running**
+  (serving ROMs) and stay discoverable *while running*, flash the USB (system)
+  plugin — add `--plugin usb`. Add `--plugin rgb` too when testing RGB One ROMs
+  (Piers's usual test hardware). Max one system + one user plugin; `usb` is
   system, `rgb`/`host-control`/`blink` are user.
-- `--plugin` **cannot** be combined with `--config` (plugins would have to live
-  inside the JSON). To pass plugins on the command line, use `--slot` mode:
+- `--plugin` **can** be combined with `--config` (as well as with `--slot`): the
+  plugins are inserted ahead of the config's ROM slots, and it is an error if the
+  config already defines a plugin of its own. To pass plugins alongside
+  command-line ROMs, use `--slot` mode:
 
       onerom program \
         --slot file=<path|url>,type=23128,cs1=active_low,cs2=active_low,cs3=active_high \
