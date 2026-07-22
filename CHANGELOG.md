@@ -5,6 +5,18 @@ All notables changes between versions are documented in this file.
 ## v0.7.1 - 2026-??-??
 
 - Add support for CLI's `--serial-override` option.  This causes the USB plugin to use the overriding serial number when One ROM is running.  When stopped One ROM continues to use the chip ID (as the USB stack is provided by the RP2350's bootrom).  This required some enhancements to other Studio to cope with the serial number changing across stopped/started cases.  Web "just works" with a custom or stock serial number.  Neither Studio not Web support programming a serial override.
+  - This required a firmware update, and a USB plugin update, to expose and use the serial override metadata.
+
+To publish:
+- Rust crates:
+  - onerom-config 0.5.4
+  - onerom-metadata 0.1.4
+  - onerom-gen 0.6.4
+  - onerom-app 0.1.3
+  - onerom-cli 0.2.1
+- CLI bin 0.2.1
+- Studio 0.2.1
+- USB plugin 0.2.1
 
 ## v0.7.0 - 2026-07-20
 

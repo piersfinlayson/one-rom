@@ -1,5 +1,9 @@
 # Changelog
 
+# v0.2.1 - 2026-??-??
+
+- Support devices with overridden serials
+
 # v0.2.0 - 2026-07-20
 
 - Support firmware v0.7.x

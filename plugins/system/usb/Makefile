@@ -9,7 +9,7 @@ OBJDUMP := $(if $(TOOLCHAIN),$(TOOLCHAIN)/arm-none-eabi-objdump,arm-none-eabi-ob
 
 MAJOR_VERSION := 0
 MINOR_VERSION := 2
-PATCH_VERSION := 0
+PATCH_VERSION := 1
 BUILD_VERSION := 0
 
 TINYUSB_DIR   := tinyusb
