@@ -150,6 +150,92 @@ pub fn test_flash_slot_info(emu: &Emulator, config: &Config) -> Result<(), Strin
     }
 }
 
+/// Verify per-ROM extended info (`ORA_ID_GET_FLASH_SLOT_EXT_INFO`) against
+/// config ground truth.
+///
+/// The key check is that `rom_type` is the exact string the user specified
+/// (e.g. `27LC512`, not the canonical `27512`) — this is the only ORA path that
+/// exposes that string. Also cross-checks the RBCP value and that an
+/// out-of-range `rom_index` is rejected.
+pub fn test_flash_slot_ext_info(emu: &Emulator, config: &Config) -> Result<(), String> {
+    let mut errors = Vec::new();
+
+    for (i, chip_set) in config.chip_sets.iter().enumerate() {
+        for (rom_index, chip) in chip_set.chips.iter().enumerate() {
+            let (result, info) = emu.get_flash_slot_ext_info(
+                i as u8,
+                rom_index as u8,
+                ORA_FLASH_SLOT_FLAG_EXCLUDE_PLUGINS,
+            );
+            if !result.is_ok() {
+                errors.push(format!(
+                    "slot {} rom {}: get_flash_slot_ext_info failed: {:?}",
+                    i, rom_index, result
+                ));
+                continue;
+            }
+            let info = match info {
+                Some(info) => info,
+                None => {
+                    errors.push(format!("slot {} rom {}: no ext info returned", i, rom_index));
+                    continue;
+                }
+            };
+
+            // The exact user-specified spelling must round-trip verbatim.
+            let expected_raw = chip.chip_type.raw();
+            match info.rom_type.and_then(|s| s.to_str().ok()) {
+                Some(actual) if actual == expected_raw => {}
+                Some(actual) => errors.push(format!(
+                    "slot {} rom {}: rom_type string mismatch: API={:?} config={:?}",
+                    i, rom_index, actual, expected_raw
+                )),
+                None => errors.push(format!(
+                    "slot {} rom {}: rom_type string missing or not valid UTF-8",
+                    i, rom_index
+                )),
+            }
+
+            // Cross-check the RBCP value resolves back to the same chip type.
+            match ChipType::try_from_rbcp_u8(info.rbcp_rom_type as u8) {
+                Some(t) if t == chip.chip_type.resolved() => {}
+                Some(t) => errors.push(format!(
+                    "slot {} rom {}: rbcp type mismatch: API={} config={}",
+                    i,
+                    rom_index,
+                    t.name(),
+                    chip.chip_type.resolved().name()
+                )),
+                None => errors.push(format!(
+                    "slot {} rom {}: rbcp_rom_type {} is not a valid ChipType",
+                    i, rom_index, info.rbcp_rom_type
+                )),
+            }
+        }
+
+        // An out-of-range rom_index must be rejected, not silently accepted.
+        let (result, _) = emu.get_flash_slot_ext_info(
+            i as u8,
+            chip_set.chips.len() as u8,
+            ORA_FLASH_SLOT_FLAG_EXCLUDE_PLUGINS,
+        );
+        if result.is_ok() {
+            errors.push(format!(
+                "slot {}: get_flash_slot_ext_info accepted out-of-range rom_index {}",
+                i,
+                chip_set.chips.len()
+            ));
+        }
+    }
+
+    if errors.is_empty() {
+        println!("  {} flash slot(s) ext-verified", config.chip_sets.len());
+        Ok(())
+    } else {
+        Err(errors.join("; "))
+    }
+}
+
 // ── RAM slot tests ────────────────────────────────────────────────────────────
 
 /// Verify RAM slot count against the value derived from the booted image's

@@ -162,6 +162,10 @@ fn run_slot(
         tests::slots::test_flash_slot_info(&emulator, config),
     );
     report.add(
+        "flash_slot_ext_info",
+        tests::slots::test_flash_slot_ext_info(&emulator, config),
+    );
+    report.add(
         "ram_slot_count",
         tests::slots::test_ram_slot_count(&emulator, config, board, fw_version, base_dir, set_idx),
     );

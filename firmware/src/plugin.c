@@ -550,10 +550,38 @@ ora_result_t ora_get_flash_slot_info(
     return ORA_RESULT_OK;
 }
 
-ora_result_t ora_get_flash_slot_ext_info(uint8_t flash_slot, uint32_t flags) {
-    (void)flash_slot;
-    (void)flags;
-    return ORA_RESULT_ERROR;
+ora_result_t ora_get_flash_slot_ext_info(
+    uint8_t flash_slot,
+    uint8_t rom_index,
+    uint32_t flags,
+    const char **rom_type_out,
+    const char **filename_out,
+    uint32_t *chip_size_out,
+    uint32_t *rbcp_rom_type_out
+) {
+    const onerom_rom_slot_t *set = get_flash_slot_slot(flash_slot, flags);
+    if (set == NULL) {
+        return ORA_RESULT_INVALID_SLOT;
+    }
+    if (rom_index >= set->rom_count) {
+        return ORA_RESULT_INVALID_ARG;
+    }
+
+    const onerom_rom_info_t *rom = set->roms[rom_index];
+    if (rom_type_out != NULL) {
+        *rom_type_out = rom->rom_type;
+    }
+    if (filename_out != NULL) {
+        *filename_out = rom->filename;
+    }
+    if (chip_size_out != NULL) {
+        *chip_size_out = rom->chip_size;
+    }
+    if (rbcp_rom_type_out != NULL) {
+        *rbcp_rom_type_out = (uint32_t)rom->rbcp_rom_type;
+    }
+
+    return ORA_RESULT_OK;
 }
 
 ora_result_t ora_copy_flash_slot_to_ram_slot(

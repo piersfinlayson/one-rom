@@ -102,6 +102,20 @@ pub struct FlashSlotInfo {
     pub rom_count: u8,
 }
 
+/// Per-ROM detail for one ROM within a flash slot (via
+/// `ORA_ID_GET_FLASH_SLOT_EXT_INFO`).
+pub struct FlashSlotExtInfo {
+    /// The ROM type string exactly as the user specified it (e.g. `27LC512`,
+    /// not the canonical `27512`). `None` only if the firmware returned NULL,
+    /// which the API forbids on success. Points directly into firmware memory.
+    pub rom_type: Option<&'static std::ffi::CStr>,
+    /// The ROM's filename string, or `None` if none. Points directly into
+    /// firmware memory.
+    pub filename: Option<&'static std::ffi::CStr>,
+    pub chip_size: u32,
+    pub rbcp_rom_type: u32,
+}
+
 // ── Internal macro ────────────────────────────────────────────────────────────
 
 /// Call through `ora_fn_lookup` to a named plugin API function.
@@ -424,6 +438,43 @@ impl Emulator {
                 name,
                 rom_type,
                 rom_count,
+            }
+        });
+        (r, info)
+    }
+
+    pub fn get_flash_slot_ext_info(
+        &self,
+        flash_slot: u8,
+        rom_index: u8,
+        flags: u32,
+    ) -> (OraResult, Option<FlashSlotExtInfo>) {
+        let mut rom_type_ptr: *const std::os::raw::c_char = std::ptr::null();
+        let mut filename_ptr: *const std::os::raw::c_char = std::ptr::null();
+        let mut chip_size: u32 = 0;
+        let mut rbcp_rom_type: u32 = 0;
+        let r = plugin_call!(
+            ffi::api_id_t_ORA_ID_GET_FLASH_SLOT_EXT_INFO,
+            ffi::ora_get_flash_slot_ext_info_fn_t,
+            flash_slot,
+            rom_index,
+            flags,
+            &mut rom_type_ptr as *mut *const std::os::raw::c_char,
+            &mut filename_ptr as *mut *const std::os::raw::c_char,
+            &mut chip_size as *mut u32,
+            &mut rbcp_rom_type as *mut u32
+        );
+        let r = OraResult::from(r);
+        let info = r.is_ok().then(|| {
+            let rom_type =
+                (!rom_type_ptr.is_null()).then(|| unsafe { std::ffi::CStr::from_ptr(rom_type_ptr) });
+            let filename =
+                (!filename_ptr.is_null()).then(|| unsafe { std::ffi::CStr::from_ptr(filename_ptr) });
+            FlashSlotExtInfo {
+                rom_type,
+                filename,
+                chip_size,
+                rbcp_rom_type,
             }
         });
         (r, info)

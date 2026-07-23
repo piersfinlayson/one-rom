@@ -255,8 +255,9 @@ typedef enum {
     ORA_ID_GET_FLASH_SLOT_INFO = 0x00000022,
 
     /**
-     * @brief Get extended information about a flash slot
+     * @brief Get extended, per-ROM information about a flash slot
      * @sa ora_get_flash_slot_ext_info_fn_t
+     * @since firmware 0.7.1
      */
     ORA_ID_GET_FLASH_SLOT_EXT_INFO = 0x00000023,
 
@@ -1415,23 +1416,49 @@ typedef ora_result_t (*ora_get_flash_slot_info_fn_t)(
 );
 
 /**
- * @brief Get extended information about a flash slot
+ * @brief Get extended, per-ROM information about a flash slot
  * @sa ORA_ID_GET_FLASH_SLOT_EXT_INFO
+ * @since firmware 0.7.1
  *
- * @warning This function is not yet implemented. Calling it is undefined
- * behaviour. It is reserved for future use to expose per-ROM details within
- * multi-ROM flash slots, such as individual ROM filenames, types, and CS
- * states. Its parameter list and behaviour are subject to change without
- * notice.
+ * Returns details for a single ROM image within a flash slot, addressed by
+ * @p rom_index. A multi-ROM set exposes each constituent ROM; a single-ROM
+ * slot has exactly one ROM at index 0. The number of ROMs in a slot is the
+ * @p rom_count_out returned by @ref ora_get_flash_slot_info_fn_t.
  *
- * @param flash_slot    Index of the flash slot to query
- * @param flags         Filtering flags
- * // TBD - multi-ROM detail parameters
+ * Unlike @ref ora_get_flash_slot_info_fn_t, which reports the ROM type only as
+ * its numeric RBCP value, this reports @p rom_type_out — the ROM type string
+ * exactly as the user specified it when programming (e.g. "27LC512" rather than
+ * the canonical "27512"). All string outputs receive pointers directly into
+ * flash memory — no allocation is required. All output pointers are optional;
+ * pass NULL for any value not required.
+ *
+ * @param flash_slot        Index of the flash slot to query, filtered as per
+ *                          @ref ora_get_flash_slot_count_fn_t
+ * @param rom_index         Index of the ROM within the slot (0-based, less than
+ *                          the slot's rom_count)
+ * @param flags             Filtering flags, must match those passed to
+ *                          @ref ora_get_flash_slot_count_fn_t
+ * @param rom_type_out      Receives the ROM type string as specified by the
+ *                          user. Never NULL on success. May be NULL if not
+ *                          required.
+ * @param filename_out      Receives the ROM's filename string, or NULL if none.
+ *                          May be NULL if not required.
+ * @param chip_size_out     Receives the ROM's size in bytes. May be NULL if not
+ *                          required.
+ * @param rbcp_rom_type_out Receives the ROM type as its RBCP wire value. May be
+ *                          NULL if not required.
+ * @return ORA_RESULT_OK on success, ORA_RESULT_INVALID_SLOT if flash_slot is
+ *         out of range for the given flags, ORA_RESULT_INVALID_ARG if rom_index
+ *         is out of range for the slot
  */
 typedef ora_result_t (*ora_get_flash_slot_ext_info_fn_t)(
     uint8_t flash_slot,
-    uint32_t flags
-    // TBD - multi-ROM detail
+    uint8_t rom_index,
+    uint32_t flags,
+    const char **rom_type_out,
+    const char **filename_out,
+    uint32_t *chip_size_out,
+    uint32_t *rbcp_rom_type_out
 );
 
 /** @brief Perform the copy asynchronously via DMA */
