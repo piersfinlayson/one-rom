@@ -33,7 +33,7 @@ fn chip_type_from_config(config: &Config, set_idx: usize) -> Result<ChipType, St
         .chip_sets
         .get(set_idx)
         .and_then(|s| s.chips.first())
-        .map(|c| c.chip_type)
+        .map(|c| c.chip_type.resolved())
         .ok_or_else(|| format!("config has no chip set {} (or it has no chips)", set_idx))
 }
 
@@ -201,7 +201,7 @@ pub fn test_initial_pio_verify(
     set_idx: usize,
 ) -> Result<(), String> {
     let chip_config = chip_config_at(config, set_idx)?;
-    let chip_type = chip_config.chip_type;
+    let chip_type = chip_config.chip_type.resolved();
     let oracle_bytes = oracle::load(chip_config, chip_type, base_dir);
 
     let cache = PinCache::build(chip_type, chip_config, board);
@@ -232,7 +232,7 @@ pub fn test_noop_switch_pio_verify(
     set_idx: usize,
 ) -> Result<(), String> {
     let chip_config = chip_config_at(config, set_idx)?;
-    let chip_type = chip_config.chip_type;
+    let chip_type = chip_config.chip_type.resolved();
     let oracle_bytes = oracle::load(chip_config, chip_type, base_dir);
 
     // No reprogram, no content change — switch to the already-active slot.
@@ -321,7 +321,7 @@ pub fn test_copy_flash_to_ram(
     dst_ram: u8,
 ) -> Result<(), String> {
     let chip_config = chip_config_at(config, set_idx)?;
-    let chip_type = chip_config.chip_type;
+    let chip_type = chip_config.chip_type.resolved();
     let expected = oracle::load(chip_config, chip_type, base_dir);
 
     let result = emu.copy_flash_slot_to_ram_slot(
@@ -378,7 +378,7 @@ pub fn test_reprogram_pio_verify(
     set_idx: usize,
 ) -> Result<(), String> {
     let chip_config = chip_config_at(config, set_idx)?;
-    let chip_type = chip_config.chip_type;
+    let chip_type = chip_config.chip_type.resolved();
     let oracle_bytes = oracle::load(chip_config, chip_type, base_dir);
 
     let result = emu.reprogram_ram_rom_slot(slot, 0, &oracle_bytes, true);
@@ -414,7 +414,7 @@ pub fn test_copy_flash_pio_verify(
     ram_slot: u8,
 ) -> Result<(), String> {
     let chip_config = chip_config_at(config, set_idx)?;
-    let chip_type = chip_config.chip_type;
+    let chip_type = chip_config.chip_type.resolved();
     let oracle_bytes = oracle::load(chip_config, chip_type, base_dir);
 
     let result = emu.copy_flash_slot_to_ram_slot(

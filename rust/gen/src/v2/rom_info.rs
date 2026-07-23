@@ -71,7 +71,7 @@ pub fn build_rom_info(
     cs_data_layout: &CsDataLayout,
 ) -> OneromRomInfo {
     OneromRomInfo {
-        rom_type: chip.chip_type().name().to_string(),
+        rom_type: chip.chip_type_raw().to_string(),
         filename: truncate_filename(chip.filename()),
         pin_map: Some(build_rom_pin_map(addr_layout, cs_data_layout)),
         chip_size: chip.chip_type().size_bytes() as u32,

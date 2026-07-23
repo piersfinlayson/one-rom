@@ -18,7 +18,7 @@ fn chip_type_from_config(config: &Config, set_idx: usize) -> Result<ChipType, St
         .chip_sets
         .get(set_idx)
         .and_then(|s| s.chips.first())
-        .map(|c| c.chip_type)
+        .map(|c| c.chip_type.resolved())
         .ok_or_else(|| format!("config has no chip set {} (or it has no chips)", set_idx))
 }
 

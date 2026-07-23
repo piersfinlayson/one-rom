@@ -23,7 +23,7 @@ fn chip_type_from_config(config: &Config, set_idx: usize) -> Result<ChipType, St
         .chip_sets
         .get(set_idx)
         .and_then(|s| s.chips.first())
-        .map(|c| c.chip_type)
+        .map(|c| c.chip_type.resolved())
         .ok_or_else(|| format!("config has no chip set {} (or it has no chips)", set_idx))
 }
 
@@ -91,7 +91,7 @@ pub fn test_flash_slot_info(emu: &Emulator, config: &Config) -> Result<(), Strin
 
     for (i, chip_set) in config.chip_sets.iter().enumerate() {
         let expected_chip_type = match chip_set.chips.first() {
-            Some(c) => c.chip_type,
+            Some(c) => c.chip_type.resolved(),
             None => {
                 errors.push(format!("slot {}: config chip set has no chips", i));
                 continue;
@@ -343,7 +343,7 @@ pub fn test_read_initial_slot(
         .chips
         .first()
         .ok_or_else(|| format!("chip set {} has no chips", set_idx))?;
-    let chip_type = chip_config.chip_type;
+    let chip_type = chip_config.chip_type.resolved();
 
     let expected = onerom_fw_tester::oracle::load(chip_config, chip_type, base_dir);
     let chip_size = expected.len();

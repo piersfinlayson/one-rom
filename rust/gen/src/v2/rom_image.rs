@@ -445,7 +445,7 @@ mod tests {
             None,
             Some(image.as_slice()),
             vec![0u8; chip_type.size_bytes()],
-            chip_type,
+            &(*chip_type).into(),
             cs_config,
             &SizeHandling::None,
             None,

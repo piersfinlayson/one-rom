@@ -4,11 +4,12 @@
 
 //! Generates firmware artifacts for One ROM.
 
-//#![no_std]
+#![no_std]
 
 extern crate alloc;
 
 pub mod builder;
+pub mod chip_type_spec;
 pub mod compat;
 pub mod firmware;
 pub mod image;
@@ -17,6 +18,7 @@ pub mod v1;
 pub mod v2;
 
 pub use builder::Builder;
+pub use chip_type_spec::ChipTypeSpec;
 pub use firmware::{
     DebugConfig, FireConfig, FireCpuFreq, FireServeMode, FireVreg, FirmwareConfig, IceConfig,
     IceCpuFreq, LedConfig, ServeAlgParams,
@@ -27,7 +29,9 @@ pub use image::{MAX_IMAGE_SIZE, PAD_BLANK_BYTE, PAD_NO_CHIP_BYTE};
 pub use meta::{MAX_METADATA_LEN, Metadata, PAD_METADATA_BYTE};
 use onerom_config::mcu::Family;
 
-use alloc::string::String;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use onerom_config::chip::ChipType;
 use onerom_config::fw::{FirmwareVersion, ServeAlg};
 
@@ -569,7 +573,7 @@ pub struct ChipConfig {
 
     /// Type of ROM
     #[serde(rename = "type")]
-    pub chip_type: ChipType,
+    pub chip_type: ChipTypeSpec,
 
     /// Optional Chip Select 1 logic - only valid for Chip Types that have CS1
     #[serde(skip_serializing_if = "Option::is_none")]

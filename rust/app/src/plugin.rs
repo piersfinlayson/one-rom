@@ -1217,7 +1217,7 @@ pub fn plugin_to_chip_set_config(
             file: file.into(),
             license: None,
             description: None,
-            chip_type,
+            chip_type: chip_type.into(),
             cs1: None,
             cs2: None,
             cs3: None,
@@ -1989,14 +1989,14 @@ mod tests {
         let cfg = plugin_to_chip_set_config("http://x/p.bin", PluginType::System, 1024).unwrap();
         assert_eq!(cfg.chips.len(), 1);
         let chip = &cfg.chips[0];
-        assert_eq!(chip.chip_type, OraChipType::SystemPlugin);
+        assert_eq!(chip.chip_type.resolved(), OraChipType::SystemPlugin);
         assert_eq!(chip.file, "http://x/p.bin");
         assert!(matches!(chip.size_handling, SizeHandling::Pad));
         assert!(chip.cs1.is_none() && chip.ce.is_none() && chip.oe.is_none());
         assert!(!chip.allow_cs_ignore);
 
         let user = plugin_to_chip_set_config("f", PluginType::User, PLUGIN_MAX_SIZE).unwrap();
-        assert_eq!(user.chips[0].chip_type, OraChipType::UserPlugin);
+        assert_eq!(user.chips[0].chip_type.resolved(), OraChipType::UserPlugin);
         assert!(matches!(user.chips[0].size_handling, SizeHandling::None));
     }
 

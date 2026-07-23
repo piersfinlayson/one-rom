@@ -11,15 +11,17 @@ All notables changes between versions are documented in this file.
 - Add support for CLI's `--serial-override` option.  This causes the USB plugin to use the overriding serial number when One ROM is running.  When stopped One ROM continues to use the chip ID (as the USB stack is provided by the RP2350's bootrom).  This required some enhancements to other Studio to cope with the serial number changing across stopped/started cases.  Web "just works" with a custom or stock serial number.  Neither Studio not Web support programming a serial override.
   - This required a firmware update, and a USB plugin update, to expose and use the serial override metadata.
 - The CLI now accepts `--plugin` alongside a `--config-file` on both `program` and `firmware build`.  The specified plugins are inserted ahead of the config's ROM slots, so you can add a plugin to a stock config without editing it.  It is an error if the config already defines a plugin of its own.  Previously `--plugin` and `--config-file` were mutually exclusive.  CLI-only change; no firmware update required.
+- The ROM type stored in a firmware's metadata now preserves the exact string the user entered rather than a canonicalised name.  Previously every spelling of a part (e.g. `27512`, `27C512`, `27LC512`, `27SF512`) was normalised to a single canonical name (`27512`) before being stored; now the original spelling is retained, on both the `--config-file` (`"type"`) and the CLI `--slot type=...` paths.  The resolved chip type continues to drive all behaviour (RBCP type, size, timing, chip-select layout); only the human-readable metadata string changed.  This is a new-firmware change in the sense that the composed metadata differs, but no firmware or plugin update is required.
+- `onerom-gen` is now built as a genuine `no_std` (+`alloc`) crate, matching its intended use in embedded/WASM contexts (e.g. `one-rom-wasm`).  Previously the `#![no_std]` attribute was commented out.  Backwards-compatible for `std` consumers.
 
 To publish:
 - Rust crates:
   - onerom-config 0.5.4
   - onerom-metadata 0.1.4
-  - onerom-gen 0.6.4
-  - onerom-app 0.1.3
-  - onerom-cli 0.2.1
-- CLI bin 0.2.1
+  - onerom-gen 0.7.0
+  - onerom-app 0.2.0
+  - onerom-cli 0.3.0
+- CLI bin 0.3.0
 - Studio 0.2.1
 - USB plugin 0.2.1
 - RGB plugin 0.1.2

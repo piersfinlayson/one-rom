@@ -189,7 +189,7 @@ fn run_single_set(
     // use no X pins, so n_used_x = 0.
     let gap_gpios: Vec<u8> = if let Some(chip_config) = chip_set.chips.first() {
         let chip_type =
-            chip_substitution(board, chip_config.chip_type).unwrap_or(chip_config.chip_type);
+            chip_substitution(board, chip_config.chip_type.resolved()).unwrap_or(chip_config.chip_type.resolved());
         let cache = PinCache::build(chip_type, chip_config, board);
         if let Err(r) = check_rom_pin_pulls(&emulator, &cache, set_idx) {
             return r;
@@ -200,7 +200,7 @@ fn run_single_set(
             base_dir,
             served_idx,
             fw_version,
-            chip_config.chip_type,
+            chip_config.chip_type.resolved(),
             &cache,
             0,
             set_idx,
@@ -296,7 +296,7 @@ fn run_multi_set(
 
     // ── Primary chip (chips[0], in One ROM's socket) ──────────────────────────
     let primary_config = &chip_set.chips[0];
-    let primary_requested = primary_config.chip_type;
+    let primary_requested = primary_config.chip_type.resolved();
     let primary_type = if let Some(sub) = chip_substitution(board, primary_requested) {
         warn!(
             "Set {} chip 0: {} on {} is not directly servable; \
@@ -368,7 +368,7 @@ fn run_multi_set(
         .enumerate()
         .map(|(i, chip_config)| {
             let (_, gpios) = board.x_pin_map()[i];
-            let assert_high = first_active_cs_polarity(chip_config, chip_config.chip_type);
+            let assert_high = first_active_cs_polarity(chip_config, chip_config.chip_type.resolved());
             (gpios.to_vec(), assert_high)
         })
         .collect();
@@ -460,7 +460,7 @@ fn run_multi_set(
     // ── Test secondary chips (chips[1], chips[2], …) ──────────────────────────
     for (j, chip_config) in chip_set.chips.iter().skip(1).enumerate() {
         let chip_idx = j + 1;
-        let requested_type = chip_config.chip_type;
+        let requested_type = chip_config.chip_type.resolved();
         let chip_type = if let Some(sub) = chip_substitution(board, requested_type) {
             warn!(
                 "Set {} chip {}: {} on {} is not directly servable; \
@@ -688,18 +688,18 @@ fn run_banked_set(
 
     // All chips in a banked set must be the same type — they share the same
     // socket and the same PinCache; only the oracle and X pin state vary.
-    let chip_type_0 = chip_set.chips[0].chip_type;
+    let chip_type_0 = chip_set.chips[0].chip_type.resolved();
     if let Some(pos) = chip_set
         .chips
         .iter()
-        .position(|c| c.chip_type != chip_type_0)
+        .position(|c| c.chip_type.resolved() != chip_type_0)
     {
         error!(
             "Set {}: banked sets require a uniform chip type; \
              chip {} is {} but chip 0 is {}",
             set_idx,
             pos,
-            chip_set.chips[pos].chip_type.name(),
+            chip_set.chips[pos].chip_type.resolved().name(),
             chip_type_0.name(),
         );
         return SetResult::skipped(
@@ -976,7 +976,7 @@ fn run_chip(
     background_mask: (u64, u64),
     gap_gpios: &[u8],
 ) -> ChipResult {
-    let requested_chip_type = chip_config.chip_type;
+    let requested_chip_type = chip_config.chip_type.resolved();
 
     // Apply any board-specific chip substitutions.  Some boards cannot serve
     // a chip in its native mode but can do so with a physical shim that
@@ -1203,7 +1203,7 @@ fn gap_set_for_slot(
 /// the polarity lookup in `first_active_cs_polarity`).
 fn per_chip_select_name(secondary: &ChipConfig) -> Option<&'static str> {
     secondary
-        .chip_type
+        .chip_type.resolved()
         .control_lines()
         .iter()
         .filter(|spec| matches!(spec.line_type, ControlLineType::Configurable))
@@ -1364,7 +1364,7 @@ fn word_size_for_set(chip_set: &ChipSetConfig) -> u8 {
         .chips
         .first()
         .map(|c| {
-            if c.chip_type == ChipType::Chip27C400 || c.chip_type == ChipType::Chip27C200 {
+            if c.chip_type.resolved() == ChipType::Chip27C400 || c.chip_type.resolved() == ChipType::Chip27C200 {
                 16
             } else {
                 8

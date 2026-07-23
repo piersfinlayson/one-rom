@@ -57,6 +57,15 @@ it as a long-lived, production project.
   bump it again for a further change in the same cycle; just add the CHANGELOG
   entry. Crates without their own `CHANGELOG.md` (`onerom-metadata`,
   `onerom-gen`, …) are tracked **only** via that list.
+- These crates are published to crates.io with external consumers, so **SemVer
+  governs**. A non-backwards-compatible public-API change requires a **minor**
+  bump (pre-1.0: `0.MINOR.PATCH`, so `0.6.x → 0.7.0`), never a patch. The
+  "already listed → don't bump again" rule assumes the further change is
+  backwards-compatible *with the planned bump*: if a crate is listed at a
+  **patch** bump and your new change **breaks its public API**, escalate that
+  listed entry from patch to minor. Breaking = altering/removing a public item's
+  signature or a public field's type, or transitively re-exposing a
+  dependency's breaking bump through your own public API.
 - The **firmware is not separately versioned** beyond the in-development branch
   version (e.g. `0.7.1`); that version is what signals newly available plugin
   APIs and is what a plugin's `min_fw_version` targets. `firmware/ora/api.h` is
@@ -176,13 +185,17 @@ changes device state.
   `--base-firmware firmware/build/onerom-rp235x.bin` to `program`/`firmware
   build`. Without it the CLI downloads the *released* base firmware and your
   firmware changes are not under test.
-- **A One ROM is discoverable over USB even without the USB plugin.** When
-  stopped it sits in the RP2350 bootloader (picoboot), so `scan` still finds it —
-  it just isn't serving and has limited function. To have it come up **Running**
-  (serving ROMs) and stay discoverable *while running*, flash the USB (system)
-  plugin — add `--plugin usb`. Add `--plugin rgb` too when testing RGB One ROMs
-  (Piers's usual test hardware). Max one system + one user plugin; `usb` is
-  system, `rgb`/`host-control`/`blink` are user.
+- **Discoverability never requires a plugin.** A stopped One ROM sits in the
+  RP2350 bootloader (picoboot), so `scan` always finds it and `scan --slots`
+  reads its slot metadata — with no plugins flashed. The system USB plugin does
+  **not** provide discoverability; what it provides is the device's *own* USB
+  stack, which a **Running** device needs to **serve while staying on the USB
+  bus** (without it, a Running device drops off the bus until it is stopped back
+  into the bootloader). So add `--plugin usb` only when the test needs the
+  device to *serve while remaining USB-visible* — never "so it's discoverable".
+  Add `--plugin rgb` too when testing RGB One ROMs (Piers's usual test
+  hardware). Max one system + one user plugin; `usb` is system,
+  `rgb`/`host-control`/`blink` are user.
 - `--plugin` **can** be combined with `--config` (as well as with `--slot`): the
   plugins are inserted ahead of the config's ROM slots, and it is an error if the
   config already defines a plugin of its own. To pass plugins alongside

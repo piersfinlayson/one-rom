@@ -1,11 +1,15 @@
 # CLI Changelog
 
-## v0.2.1 - 2026-??-??
+## v0.3.0 - 2026-??-??
 
 - Support devices with overridden serials
 - Allow `--plugin` to be combined with `--config-file` on `program` and
   `firmware build`; the plugins are inserted ahead of the config's ROM slots.
   Errors if the config already defines a plugin of its own.
+- The ROM type is now stored in metadata using the exact spelling the user
+  entered, on both the `--config-file` (`"type"`) and `--slot type=...` paths,
+  instead of a canonicalised name (e.g. `27SF512` is retained rather than
+  normalised to `27512`).  The resolved type still drives all behaviour.
 
 ## v0.2.0 - 2026-07-20
 

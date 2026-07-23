@@ -21,6 +21,7 @@ use alloc::vec::Vec;
 use core::cmp::Ordering;
 use core::panic;
 
+use crate::ChipTypeSpec;
 use onerom_config::chip::{ChipFunction, ChipType};
 use onerom_config::fw::{FirmwareVersion, ServeAlg};
 use onerom_config::hw::Board;
@@ -408,7 +409,7 @@ pub struct Chip {
     // Optional alternative label for the Chip, replacing filename
     label: Option<String>,
 
-    chip_type: ChipType,
+    chip_type: ChipTypeSpec,
 
     cs_config: CsConfig,
 
@@ -423,7 +424,7 @@ impl Chip {
         index: usize,
         filename: String,
         label: Option<String>,
-        chip_type: &ChipType,
+        chip_type: ChipTypeSpec,
         cs_config: CsConfig,
         data: Option<Vec<u8>>,
         location: Option<Location>,
@@ -432,7 +433,7 @@ impl Chip {
             index,
             filename,
             label,
-            chip_type: *chip_type,
+            chip_type,
             cs_config,
             data,
             location,
@@ -457,7 +458,16 @@ impl Chip {
 
     /// Returns the Chip type.
     pub fn chip_type(&self) -> &ChipType {
-        &self.chip_type
+        self.chip_type.resolved_ref()
+    }
+
+    /// Returns the exact ROM/chip type string the user entered for this Chip.
+    ///
+    /// Unlike [`Chip::chip_type`], which returns the resolved [`ChipType`]
+    /// (canonical across all spellings of the same part), this preserves the
+    /// user's original spelling for use in generated metadata.
+    pub fn chip_type_raw(&self) -> &str {
+        self.chip_type.raw()
     }
 
     pub fn has_data(&self) -> bool {
@@ -480,15 +490,25 @@ impl Chip {
         label: Option<String>,
         source: Option<&[u8]>,
         mut dest: Vec<u8>,
-        chip_type: &ChipType,
+        chip_type_spec: &ChipTypeSpec,
         cs_config: CsConfig,
         size_handling: &SizeHandling,
         location: Option<Location>,
     ) -> Result<Self> {
+        // Resolved type drives all sizing/handling logic below; the spec is
+        // carried through to the constructed Chip so the user's raw spelling
+        // survives into metadata.
+        let chip_type = chip_type_spec.resolved_ref();
         if source.is_none() {
             if chip_type.chip_function() == ChipFunction::Ram {
                 return Ok(Self::new(
-                    index, filename, label, chip_type, cs_config, None, location,
+                    index,
+                    filename,
+                    label,
+                    chip_type_spec.clone(),
+                    cs_config,
+                    None,
+                    location,
                 ));
             } else {
                 // This is an internal error
@@ -633,7 +653,7 @@ impl Chip {
             index,
             filename,
             label,
-            chip_type,
+            chip_type_spec.clone(),
             cs_config,
             Some(dest),
             location,
@@ -760,7 +780,7 @@ impl Chip {
         // We have been passed a physical address based on the hardware pins,
         // so we need to transform it to a logical address based on the Chip
         // image.
-        let num_addr_lines = self.chip_type.num_addr_lines();
+        let num_addr_lines = self.chip_type.resolved().num_addr_lines();
         let transformed_address =
             Self::address_to_logical(phys_pin_to_addr_map, address, board, num_addr_lines);
 
@@ -790,7 +810,7 @@ impl Chip {
 
     // See `sdrr/include/enums.h`
     fn chip_type_c_enum_val(&self) -> u8 {
-        match self.chip_type {
+        match self.chip_type.resolved() {
             ChipType::Chip2316 => 0,
             ChipType::Chip2332 => 1,
             ChipType::Chip2364 => 2,
@@ -825,7 +845,7 @@ impl Chip {
             ChipType::Chip23QL384 => 31,
             ChipType::Chip23C1001 => 32,
             ChipType::Chip27C200 => 33,
-            _ => panic!("Unsupported Chip type for pre-V0.7.0 firmware {:?}", self.chip_type),
+            _ => panic!("Unsupported Chip type for pre-V0.7.0 firmware {:?}", self.chip_type.resolved()),
         }
     }
 }
@@ -1009,7 +1029,7 @@ impl ChipSet {
 
     /// Returns the ChipFunction for this set
     pub fn chip_function(&self) -> ChipFunction {
-        self.chips[0].chip_type.chip_function()
+        self.chips[0].chip_type.resolved().chip_function()
     }
 
     /// Returns the size of the data required for this Chip set, in bytes.
@@ -1154,11 +1174,11 @@ impl ChipSet {
                 // images even if the CS value is set to inactive
             };
 
-            let num_addr_lines = self.chips[chip_index].chip_type.num_addr_lines();
+            let num_addr_lines = self.chips[chip_index].chip_type.resolved().num_addr_lines();
             let mut phys_pin_to_addr_map = handle_snowflake_chip_types(
                 board,
                 board.phys_pin_to_addr_map(),
-                &self.chips[chip_index].chip_type,
+                &self.chips[chip_index].chip_type.resolved(),
             );
             Self::truncate_phys_pin_to_addr_map(&mut phys_pin_to_addr_map, num_addr_lines);
 
@@ -1168,13 +1188,13 @@ impl ChipSet {
                 board,
                 num_addr_lines,
             );
-            if transformed >= self.chips[chip_index].chip_type.size_bytes() {
+            if transformed >= self.chips[chip_index].chip_type.resolved().size_bytes() {
                 // Only valid for non-power-of-2 chip types (e.g. 23QL384 at 48KB), where
                 // the logical address space implied by num_addr_lines exceeds the actual
                 // chip data size.  For power-of-2 types this indicates an internal error.
                 assert!(
                     !self.chips[chip_index]
-                        .chip_type
+                        .chip_type.resolved()
                         .size_bytes()
                         .is_power_of_two(),
                     "Transformed address {} out of bounds for power-of-2 chip type - internal error",
@@ -1196,11 +1216,11 @@ impl ChipSet {
             // Get the physical addr and data pin mappings.  We have to
             // retrieve this for each Chip in the set, as each Chip may be
             // a different type (size).
-            let num_addr_lines = chip_in_set.chip_type.num_addr_lines();
+            let num_addr_lines = chip_in_set.chip_type.resolved().num_addr_lines();
             let mut phys_pin_to_addr_map = handle_snowflake_chip_types(
                 board,
                 board.phys_pin_to_addr_map(),
-                &chip_in_set.chip_type,
+                &chip_in_set.chip_type.resolved(),
             );
             Self::truncate_phys_pin_to_addr_map(&mut phys_pin_to_addr_map, num_addr_lines);
 
@@ -1211,7 +1231,7 @@ impl ChipSet {
                 chip_in_set.cs_config.cs1_logic().unwrap() == CsLogic::ActiveHigh;
 
             // Get the CS pin that controls this chip's selection
-            let cs_pin = board.cs_bit_for_chip_in_set(chip_in_set.chip_type, index);
+            let cs_pin = board.cs_bit_for_chip_in_set(chip_in_set.chip_type.resolved(), index);
             assert!(cs_pin <= 15, "Internal error: CS pin is > 15");
 
             fn is_pin_active(
@@ -1240,7 +1260,7 @@ impl ChipSet {
 
             if cs_active {
                 // Verify exactly one CS pin is active
-                let cs1_pin = board.bit_cs1(chip_in_set.chip_type);
+                let cs1_pin = board.bit_cs1(chip_in_set.chip_type.resolved());
                 let x1_pin = board.bit_x1();
                 let x2_pin = board.bit_x2();
 
@@ -1271,7 +1291,7 @@ impl ChipSet {
         board: &Board,
     ) -> bool {
         let cs_config = &chip_in_set.cs_config;
-        let chip_type = chip_in_set.chip_type;
+        let chip_type = chip_in_set.chip_type.resolved();
 
         // CE/OE chips don't have cs2/cs3 selects — no additional requirements
         // to check beyond the primary CS which is already verified by the caller.
@@ -1437,7 +1457,7 @@ impl ChipSet {
             offset += 1;
 
             // Write the CS states
-            let is_plugin = chip.chip_type.chip_function().is_plugin();
+            let is_plugin = chip.chip_type.resolved().chip_function().is_plugin();
             buf[offset] = if is_plugin {
                 CsLogic::Ignore.c_enum_val()
             } else {

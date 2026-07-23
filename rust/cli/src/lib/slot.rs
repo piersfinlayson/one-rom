@@ -12,8 +12,8 @@ use crate::plugin::{ResolvedPlugin, plugin_to_chip_set_config};
 use onerom_config::chip::{CHIP_TYPE_NAMES_PLUGINS, ChipFunction, ChipType, ControlLineType};
 use onerom_config::hw::Board;
 use onerom_gen::{
-    ChipConfig, ChipSetConfig, ChipSetType, Config, CsLogic, FireConfig, FireCpuFreq, FireVreg,
-    FirmwareConfig, LedConfig, SizeHandling, requires_half_select_cs1,
+    ChipConfig, ChipSetConfig, ChipSetType, ChipTypeSpec, Config, CsLogic, FireConfig,
+    FireCpuFreq, FireVreg, FirmwareConfig, LedConfig, SizeHandling, requires_half_select_cs1,
 };
 
 const DEFAULT_CONFIG_DESCRIPTION: &str = "Created by the One ROM CLI";
@@ -78,8 +78,8 @@ pub fn check_slot_confirmations(
     // the caller to warn about.
     confirmations.unsupported_chip_types = parsed
         .iter()
-        .filter(|s| !board.allows_chip_type(s.chip_type))
-        .map(|s| s.chip_type.name().to_string())
+        .filter(|s| !board.allows_chip_type(s.chip_type.resolved()))
+        .map(|s| s.chip_type.resolved().name().to_string())
         .collect();
     Ok(confirmations)
 }
@@ -101,7 +101,7 @@ fn expand_tilde(path: &str) -> std::borrow::Cow<'_, str> {
 pub struct SlotSpec {
     pub file: Option<String>,
     pub label: Option<String>,
-    pub chip_type: ChipType,
+    pub chip_type: ChipTypeSpec,
     pub cs1: Option<CsLogic>,
     pub cs2: Option<CsLogic>,
     pub cs3: Option<CsLogic>,
@@ -365,7 +365,9 @@ fn parse_slot(
     Ok(SlotSpec {
         file,
         label,
-        chip_type,
+        // Preserve the user's exact spelling (e.g. `27SF512`) alongside the
+        // resolved type, so it survives verbatim into the generated metadata.
+        chip_type: ChipTypeSpec::new(chip_type_str, chip_type),
         cs1,
         cs2,
         cs3,
@@ -487,7 +489,7 @@ fn slot_to_chip_config(slot: &SlotSpec) -> ChipConfig {
         file: slot.file.clone().unwrap_or_default(),
         license: None,
         description: None,
-        chip_type: slot.chip_type,
+        chip_type: slot.chip_type.clone(),
         cs1: slot.cs1,
         cs2: slot.cs2,
         cs3: slot.cs3,
@@ -605,7 +607,7 @@ pub fn inject_plugins_into_config(
         .chip_sets
         .iter()
         .flat_map(|cs| cs.chips.iter())
-        .any(|c| c.chip_type.is_plugin())
+        .any(|c| c.chip_type.resolved().is_plugin())
     {
         return Err(Error::Other(
             "The provided config file already defines a plugin; remove it from \
@@ -671,7 +673,7 @@ mod tests {
             .chip_sets
             .iter()
             .flat_map(|cs| cs.chips.iter())
-            .map(|c| c.chip_type)
+            .map(|c| c.chip_type.resolved())
             .collect()
     }
 

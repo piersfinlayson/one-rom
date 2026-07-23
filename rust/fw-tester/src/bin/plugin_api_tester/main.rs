@@ -85,7 +85,7 @@ fn main() {
                 let label = chip_set
                     .chips
                     .first()
-                    .map(|c| c.chip_type.name().to_string())
+                    .map(|c| c.chip_type.resolved().name().to_string())
                     .unwrap_or_else(|| "<no chip>".to_string());
                 report.begin_slot(idx, sel, &label);
                 run_slot(&mut report, board, &config, &base_dir, log_enabled, idx);
@@ -187,7 +187,7 @@ fn run_slot(
         .get(set_idx)
         .and_then(|s| s.chips.first())
         .map(|c| {
-            if c.chip_type.bit_modes().contains(&16) {
+            if c.chip_type.resolved().bit_modes().contains(&16) {
                 16u8
             } else {
                 8u8

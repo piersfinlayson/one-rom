@@ -8,7 +8,7 @@ This manual is in two parts. The **Guide** walks through installation and the
 common workflows. The **Reference** documents every command, subcommand and
 option.
 
-> This manual documents the `onerom` CLI as of release v0.2.1. Board,
+> This manual documents the `onerom` CLI as of release v0.3.0. Board,
 > chip and plugin lists shown in examples are illustrative — the set your build
 > supports may differ. Run `onerom --version` to check your version, and
 > `onerom boards` / `onerom chips` for the definitive lists your build knows
@@ -1020,7 +1020,7 @@ file=<path_or_url>,type=<romtype>[,cs1=<logic>][,cs2=<logic>][,cs3=<logic>]
 | Key | Values / notes |
 |---|---|
 | `file` | Local path or URL to the ROM image. |
-| `type` | Chip type (see [`chips`](#chips)), e.g. `2364`, `2332`, `2716`, `27C400`. |
+| `type` | Chip type (see [`chips`](#chips)), e.g. `2364`, `2332`, `2716`, `27C400`. Any accepted alias may be used; the exact spelling you enter is preserved in the device metadata (shown by `scan`/`inspect`), while the resolved type drives behaviour. |
 | `cs1`, `cs2`, `cs3` | CS polarity: `active_low` (or `0`), `active_high` (or `1`). Which lines are required depends on the chip type (e.g. `2332` requires `cs1` and `cs2`). |
 | `size_handling` (alias `size`) | `none`, `duplicate` (or `dup`), `truncate` (or `trunc`), `pad`. |
 | `cpu-freq` | e.g. `150`, `150mhz`, `150MHz`. Values above 150 MHz require confirmation (suppressed by `--yes`) and set overclock automatically. |
