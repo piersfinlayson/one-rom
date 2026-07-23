@@ -92,7 +92,7 @@
                 38,
                 39
             ],
-            "sel_jumper_pull": [0, 1, 0, 0],
+            "sel_jumper_pull": [0, 0, 0, 1],
             "x_jumper_pull": 0,
             "swclk_sel": 38,
             "swdio_sel": 39,
