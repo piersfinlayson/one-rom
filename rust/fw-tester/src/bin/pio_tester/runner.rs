@@ -48,6 +48,7 @@ use crate::report::{ChipResult, ModeResult, SetResult, TestReport};
 use onerom_fw_tester::driver;
 use onerom_fw_tester::geometry;
 use onerom_fw_tester::oracle;
+use onerom_fw_tester::geometry::chip_substitution;
 use onerom_fw_tester::pin_cache::{ControlLine, PinCache};
 use onerom_fw_tester::runner::{addr_before_cs_cycles, cs_to_data_cycles, run_mode};
 use onerom_fw_tester::timing;
@@ -1350,15 +1351,6 @@ fn check_x_pin_pulls(
 /// is needed.
 ///
 /// Add new entries here as further board/chip shim combinations are discovered.
-fn chip_substitution(board: Board, chip_type: ChipType) -> Option<ChipType> {
-    match (board, chip_type) {
-        // fire-32-a cannot drive SST39SF040 directly; a pin-remap shim allows
-        // it to serve the image as a 27C040 instead.
-        (Board::Fire32A, ChipType::ChipSST39SF040) => Some(ChipType::Chip27C040),
-        _ => None,
-    }
-}
-
 fn word_size_for_set(chip_set: &ChipSetConfig) -> u8 {
     chip_set
         .chips

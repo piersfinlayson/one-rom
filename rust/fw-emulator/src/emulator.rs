@@ -292,6 +292,31 @@ impl Emulator {
         unsafe { ffi::epio_read_pull_down_pins(self.epio_or_panic()) }
     }
 
+    /// Whether GPIO `pin` is read inverted by the firmware's pin routing.
+    pub fn gpio_input_inverted(&self, pin: u8) -> bool {
+        unsafe { ffi::epio_get_gpio_input_inverted(self.epio_or_panic(), pin) != 0 }
+    }
+
+    /// Disassemble one PIO state machine (`block`, `sm`) to text, or `None` if
+    /// it has no program / is unavailable.
+    pub fn disassemble_sm(&self, block: u8, sm: u8) -> Option<String> {
+        let mut buf = [0u8; 4096];
+        let n = unsafe {
+            ffi::epio_disassemble_sm(
+                self.epio_or_panic(),
+                block,
+                sm,
+                buf.as_mut_ptr() as *mut core::ffi::c_char,
+                buf.len(),
+            )
+        };
+        if n <= 0 {
+            return None;
+        }
+        let end = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
+        Some(String::from_utf8_lossy(&buf[..end]).into_owned())
+    }
+
     // ── Internal helpers ─────────────────────────────────────────────────────
 
     fn epio_or_panic(&self) -> *mut ffi::epio_t {

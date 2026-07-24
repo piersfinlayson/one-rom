@@ -9,7 +9,9 @@
 //!
 //! * [`ffi`] — raw, unsafe bindgen-generated bindings (escape hatch)
 //! * [`Emulator`] — safe wrapper for test code
+//! * [`driver`] — GPIO bitmask builders shared by the tester and One ROM Lens
 
+pub mod driver;
 mod emulator;
 pub mod ffi;
 

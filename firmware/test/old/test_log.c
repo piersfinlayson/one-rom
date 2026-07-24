@@ -5,9 +5,7 @@
 // Test logging functions
 
 // Include an implementation of the APIO logging function
-#if !defined(ONEROM_LENS)
 #define APIO_LOG_IMPL
-#endif // !ONEROM_LENS
 #define APIO_LOG_ENABLE(fmt, ...) printf(fmt "\n", ##__VA_ARGS__)
 
 #include <stdio.h>

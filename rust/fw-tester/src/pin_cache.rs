@@ -21,25 +21,10 @@ use onerom_gen::{ChipConfig, CsLogic, MAX_IMAGE_SIZE, num_excess_addr_lines};
 
 // ── Public types ──────────────────────────────────────────────────────────────
 
-/// A single decoded control line with its assertion polarity baked in.
-pub struct ControlLine {
-    /// Name for diagnostics ("ce", "oe", "cs1", "cs2", "cs3", "x_cs").
-    // Not read in the hot path; retained for future diagnostic/tristate use.
-    #[allow(dead_code)]
-    pub name: &'static str,
-    /// Every MCU GPIO driven by this physical pin.
-    /// Usually one; some boards (e.g. Fire32B fly-leads) wire one socket pin
-    /// to two GPIOs and both must be driven.
-    pub gpios: Vec<u8>,
-    /// `true` → assert by driving HIGH; `false` → assert by driving LOW.
-    pub assert_high: bool,
-    /// `true` for a *commoned* line on a Multi-set primary: a CS line asserted
-    /// on every read that does not select a chip. Set by the runner after
-    /// `build`; `false` everywhere else. The tristate combo sweep holds these
-    /// deasserted and never enumerates them (an asserted commoned line fires
-    /// the CS gate on its own).
-    pub commoned: bool,
-}
+// `ControlLine` moved to `onerom-fw-emulator` (alongside the `driver` bitmask
+// builders that consume it) so One ROM Lens can share it; re-exported so
+// `onerom_fw_tester::pin_cache::ControlLine` still resolves.
+pub use onerom_fw_emulator::driver::ControlLine;
 
 /// All GPIO information needed to run the test loop for one chip.
 pub struct PinCache {

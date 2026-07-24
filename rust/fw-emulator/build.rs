@@ -64,6 +64,21 @@ fn main() {
 
     // ── C build ──────────────────────────────────────────────────────────────
 
+    // Cargo sets CARGO_CFG_TARGET_ARCH to the *target* being built.  When that
+    // is wasm we cross-compile the C library with Emscripten (for One ROM Lens)
+    // into a separate build-wasm/, instead of the native host build-test/.  The
+    // native path is unchanged.
+    let is_wasm = env::var("CARGO_CFG_TARGET_ARCH").as_deref() == Ok("wasm32");
+    let (make_target, clean_target, build_subdir) = if is_wasm {
+        (
+            "libonerom-test-wasm",
+            "clean-libonerom-test-wasm",
+            "build-wasm",
+        )
+    } else {
+        ("libonerom-test", "clean-libonerom-test", "build-test")
+    };
+
     println!(
         "cargo:rerun-if-changed={}",
         project_root.join("Makefile").display()
@@ -78,7 +93,7 @@ fn main() {
     // Clean the C library if CONFIG or BOARD has changed since the last build.
     // The Makefile has no visibility into these variables, so we track them
     // ourselves via a stamp file in the build output directory.
-    let stamp_path = c_root.join("build-test/.build-config");
+    let stamp_path = c_root.join(build_subdir).join(".build-config");
     let stamp = format!("CONFIG={}\nBOARD={board}\n", config_abs.display());
     let needs_clean = std::fs::read_to_string(&stamp_path)
         .map(|s| s != stamp)
@@ -88,24 +103,24 @@ fn main() {
         let _ = Command::new("make")
             .arg("-C")
             .arg(&project_root)
-            .arg("clean-libonerom-test")
+            .arg(clean_target)
             .env("CONFIG", &config_abs)
             .env("BOARD", &board)
             .status()
-            .expect("could not run make clean-libonerom-test");
+            .expect("could not run make clean target");
     }
 
     let status = Command::new("make")
         .arg("-C")
         .arg(&project_root)
-        .arg("libonerom-test")
+        .arg(make_target)
         .env("CONFIG", &config_abs)
         .env("BOARD", &board)
         .status()
         .expect("could not run make — is it on PATH?");
     assert!(
         status.success(),
-        "make libonerom-test failed (CONFIG={} BOARD={board})",
+        "make {make_target} failed (CONFIG={} BOARD={board})",
         config_abs.display()
     );
 
@@ -115,15 +130,32 @@ fn main() {
 
     println!(
         "cargo:rustc-link-search=native={}",
-        c_root.join("build-test").display()
+        c_root.join(build_subdir).display()
     );
     println!("cargo:rustc-link-lib=static=onerom-test");
-    println!("cargo:rustc-link-lib=m");
+    // Emscripten provides libm as part of its libc; only the native build needs
+    // an explicit -lm.
+    if !is_wasm {
+        println!("cargo:rustc-link-lib=m");
+    }
 
     // ── bindgen ──────────────────────────────────────────────────────────────
 
-    let bindings = bindgen::Builder::default()
-        .header(manifest_dir.join("src/wrapper.h").to_str().unwrap())
+    let mut builder = bindgen::Builder::default()
+        .header(manifest_dir.join("src/wrapper.h").to_str().unwrap());
+
+    // When cross-compiling to wasm, cargo sets TARGET=wasm32-unknown-emscripten,
+    // so libclang would parse the firmware headers for the wasm target and fail
+    // to find libc headers (string.h etc.), which live in the Emscripten
+    // sysroot.  We only need the C *declarations* — no by-value C structs cross
+    // the FFI boundary whose layout differs between host and wasm — so parse
+    // with the host target and its system headers.  bindgen emits width-correct
+    // type aliases (c_long, usize, …) regardless of the parse target.
+    if is_wasm {
+        builder = builder.clang_arg(format!("--target={}", env::var("HOST").unwrap()));
+    }
+
+    let bindings = builder
         .clang_arg(format!("-I{}", c_root.join("include").display()))
         .clang_arg(format!("-I{}", c_root.join("generated").display()))
         .clang_arg(format!("-I{}", c_root.join("include/test").display()))
@@ -143,6 +175,8 @@ fn main() {
         .allowlist_function("epio_read_driven_pins")
         .allowlist_function("epio_read_pull_up_pins")
         .allowlist_function("epio_read_pull_down_pins")
+        .allowlist_function("epio_disassemble_sm")
+        .allowlist_function("epio_get_gpio_input_inverted")
         .allowlist_function("set_host_sram_ptr")
         .allowlist_function("stub_set_sel_image")
         .allowlist_function("stub_set_rp_variant")

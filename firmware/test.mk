@@ -2,7 +2,32 @@
 # For native test builds only
 MAKEFLAGS += --no-builtin-rules --no-builtin-variables
 
-CC := gcc
+# Build mode.  WASM=1 cross-compiles the library to WebAssembly with the
+# Emscripten toolchain (for One ROM Lens); the default is a native host build.
+# In WASM mode we compile with emcc, link against epio's wasm build, and archive
+# with emar (llvm-ar) — the host libtool/ar cannot handle wasm objects.  Callers
+# should also pass a distinct BUILD_DIR (e.g. build-wasm) so native and wasm
+# objects do not clash.
+WASM ?= 0
+ifeq ($(WASM),1)
+  CC := emcc
+  EPIO_MAKE_TARGET := wasm
+  EPIO_LIB := epio/build/wasm/libepio.a
+  AR_EXTRACT := emar x
+  AR_COMBINE := emar rcs
+else
+  CC := gcc
+  EPIO_MAKE_TARGET :=
+  EPIO_LIB := epio/build/libepio.a
+  ifeq ($(shell uname -s),Darwin)
+    AR_EXTRACT := ar x
+    AR_COMBINE := libtool -static -o
+  else
+    AR_EXTRACT := ar x
+    AR_COMBINE := ar rcs
+  endif
+endif
+
 COLOUR_YELLOW := $(shell echo -e '\033[33m')
 COLOUR_RESET := $(shell echo -e '\033[0m')
 
@@ -61,7 +86,7 @@ epio-src:
 	fi
 
 epio: epio-src
-	@$(MAKE) -C epio
+	@$(MAKE) -C epio $(EPIO_MAKE_TARGET)
 
 $(BUILD_DIR):
 	@mkdir -p $@
@@ -84,12 +109,8 @@ $(BUILD_DIR)/%.o: generated/%.c | $(BUILD_DIR)
 $(LIB): $(OBJS) | epio
 	@echo "- Archiving library"
 	@mkdir -p $(BUILD_DIR)/epio-objs
-	@cd $(BUILD_DIR)/epio-objs && ar x $(CURDIR)/epio/build/libepio.a
-ifeq ($(shell uname -s),Darwin)
-	@libtool -static -o $@ $^ $(BUILD_DIR)/epio-objs/*.o
-else
-	@ar rcs $@ $^ $(BUILD_DIR)/epio-objs/*.o
-endif
+	@cd $(BUILD_DIR)/epio-objs && $(AR_EXTRACT) $(CURDIR)/$(EPIO_LIB)
+	@$(AR_COMBINE) $@ $^ $(BUILD_DIR)/epio-objs/*.o
 
 clean-apio-src:
 	@rm -rf apio/

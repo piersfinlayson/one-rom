@@ -100,29 +100,17 @@ class WASMModule {
     }
     
     async init() {
-        return new Promise((resolve, reject) => {
-            // Check if module is already initialized
-            if (Module.calledRun) {
-                this.module = Module;
-                this.ready = true;
-                resolve();
-                return;
-            }
-            
-            // Set up callback for when it initializes
-            Module.onRuntimeInitialized = () => {
-                this.module = Module;
-                this.ready = true;
-                resolve();
-            };
-        });
+        // MODULARIZE build: OneRomLens() is a factory returning a Promise for
+        // the instantiated module.
+        this.module = await OneRomLens();
+        this.ready = true;
     }
-    
+
     // High-level onerom API
     oneromInit() {
-        // Returns epio_t* handle (as a number)
-        this.epioHandle = this.module.ccall('onerom_init', 'number', [], []);
-        return this.epioHandle !== 0;  // Return success/fail as boolean
+        // Boot the emulator: 1 = PIOs up, 0 = booted but PIOs off, -1 = limp.
+        const status = this.module.ccall('onerom_init', 'number', [], []);
+        return status === 1;
     }
     
     oneromDrivePins(addr, numAddrBits, cs1, cs2, cs3, x1, x2, ce, oe) {
@@ -180,51 +168,35 @@ class WASMModule {
         return this.module.ccall('onerom_get_byte_pin', 'number', [], []);
     }
     
-    // Direct epio API calls using the handle
+    // Stepping / sampling.  State is global in the wasm module, so (unlike the
+    // old raw-epio build) no handle is threaded through; method names are kept
+    // so the rest of the analyzer is unchanged.
     epioStepCycles(cycles) {
-        this.module.ccall('epio_step_cycles', null, ['number', 'number'], 
-            [this.epioHandle, cycles]);
+        this.module.ccall('onerom_step', null, ['number'], [cycles]);
     }
-    
+
     epioGetCycleCount() {
-        return BigInt(this.module.ccall('epio_get_cycle_count', 'number', ['number'], 
-            [this.epioHandle]));
+        return BigInt(this.module.ccall('onerom_get_cycle_count', 'number', [], []));
     }
-    
+
     epioResetCycleCount() {
-        this.module.ccall('epio_reset_cycle_count', null, ['number'], 
-            [this.epioHandle]);
+        this.module.ccall('onerom_reset_cycle_count', null, [], []);
     }
-    
+
     epioReadPinStates() {
-        return BigInt(this.module.ccall('epio_read_pin_states', 'number', ['number'], 
-            [this.epioHandle]));
+        return BigInt(this.module.ccall('onerom_read_pin_states', 'number', [], []));
     }
 
     epioReadDrivenPins() {
-        return BigInt(this.module.ccall('epio_read_driven_pins', 'number', ['number'], 
-            [this.epioHandle]));
+        return BigInt(this.module.ccall('onerom_read_driven_pins', 'number', [], []));
     }
 
     oneromGetPIODisassembly() {
-        const bufferSize = 16384;  // 16KB should be plenty
-        const bufferPtr = this.module._malloc(bufferSize);
-        
-        try {
-            const length = this.module.ccall('onerom_get_pio_disassembly', 'number',
-                ['number', 'number'],
-                [bufferPtr, bufferSize]);
-            
-            if (length <= 0) {
-                return "Error: Could not retrieve PIO disassembly";
-            }
-            
-            // Read the string from WASM memory
-            const result = this.module.UTF8ToString(bufferPtr);
-            return result;
-        } finally {
-            this.module._free(bufferPtr);
-        }
+        // Rust returns a pointer to a NUL-terminated string in wasm memory that
+        // stays valid until the next call; read it with UTF8ToString.
+        const ptr = this.module.ccall('onerom_get_pio_disassembly', 'number', [], []);
+        if (!ptr) return "PIO disassembly not available.";
+        return this.module.UTF8ToString(ptr);
     }
 
     oneromLensGetRomSize() {
@@ -247,8 +219,7 @@ class WASMModule {
     }
 
     epioGetGpioInverted(pin) {
-        return this.module.ccall('epio_get_gpio_input_inverted', 'number', ['number', 'number'], 
-            [this.epioHandle, pin]);
+        return this.module.ccall('onerom_get_gpio_input_inverted', 'number', ['number'], [pin]);
     }
 }
 

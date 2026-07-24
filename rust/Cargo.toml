@@ -12,6 +12,7 @@ members = [
     "fw-parser",
     "gen",
     "lab",
+    "lens",
     "metadata",
     "protocol",
     "schema-gen",
@@ -41,6 +42,7 @@ onerom-database = { path="database", version="0.1.1" }
 onerom-fw = { path="fw", version="0.1.25" }
 onerom-fw-emulator = { path="fw-emulator", version="0.1.0" }
 onerom-fw-parser = { path="fw-parser", version="0.7.3" }
+onerom-fw-tester = { path="fw-tester", version="0.1.0" }
 onerom-gen = { path="gen", version="0.7.0" }
 onerom-metadata = { path="metadata", version="0.1.4" }
 onerom-protocol = { path="protocol", version="0.1.0" }

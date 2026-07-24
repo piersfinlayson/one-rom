@@ -1,0 +1,30 @@
+[package]
+name = "onerom-lens"
+version = "0.1.0"
+edition = "2024"
+# A workspace-only wasm binary (One ROM Lens); never published to crates.io.
+publish = false
+authors = ["Piers Finlayson <piers@piers.rocks>"]
+license = "MIT"
+description = "One ROM Lens — cycle-exact PIO/DMA emulator visualised in the browser"
+repository = "https://github.com/piersfinlayson/one-rom"
+homepage = "https://onerom.org"
+keywords = ["retro", "rom", "commodore", "embedded"]
+categories = ["embedded", "hardware-support"]
+
+# A binary (not a cdylib) so Emscripten emits its JS loader alongside the wasm;
+# `main` is a no-op and the browser front-end (logic-analyzer.js) drives the
+# exported `onerom_*` functions through Emscripten's ccall/cwrap.
+
+[dependencies]
+onerom-fw-emulator = { workspace = true }
+
+# Build-time only: compute the pin geometry (address/data GPIOs, control lines)
+# for CONFIG/BOARD and embed it as consts.  Build scripts compile for the host,
+# so fw-tester's non-wasm deps (onerom-fw networking, etc.) are fine here — none
+# of this reaches the wasm runtime.
+[build-dependencies]
+onerom-fw-tester = { workspace = true }
+onerom-gen = { workspace = true }
+onerom-config = { workspace = true }
+serde_json = "1"

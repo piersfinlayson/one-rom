@@ -215,7 +215,7 @@ ifneq ($(SUPPRESS_OUTPUT),1)
 $(info -----)
 endif
 
-.PHONY: all clean clean-firmware clean-firmware-build firmware run flash test test-emu test-api generated clean-generated fw-config-gen libonerom-test gen-config clean-gen-config clean-libonerom-test
+.PHONY: all clean clean-firmware clean-firmware-build firmware run flash test test-emu test-api generated clean-generated fw-config-gen libonerom-test libonerom-test-wasm gen-config clean-gen-config clean-libonerom-test clean-libonerom-test-wasm
 
 all: firmware
 	@echo "=========================================="
@@ -303,6 +303,18 @@ libonerom-test: gen-config
 	@echo "-----"
 	@echo "Done building libonerom-test"
 
+# WebAssembly build of libonerom-test (for One ROM Lens).  Cross-compiles with
+# Emscripten into a separate build-wasm/ so it never clashes with the native
+# build-test/ objects.  Driven by onerom-fw-emulator's build.rs when its cargo
+# target is wasm.
+libonerom-test-wasm: gen-config
+	@echo "=========================================="
+	@echo "Building libonerom-test (WebAssembly)"
+	@echo "-----"
+	EXTRA_C_FLAGS="$(EXTRA_C_FLAGS)" make --no-print-directory -C $(FIRMWARE_DIR) -f test.mk WASM=1 BUILD_DIR=build-wasm
+	@echo "-----"
+	@echo "Done building libonerom-test (WebAssembly)"
+
 -include $(GEN_OUTPUT_DIR)/generated.mk
 
 clean-firmware-build:
@@ -324,4 +336,7 @@ clean-gen-config:
 clean-libonerom-test: clean-gen-config
 	+cd $(FIRMWARE_DIR) && make -f test.mk clean-test
 
-clean: clean-firmware clean-rust clean-generated clean-gen-config clean-libonerom-test
+clean-libonerom-test-wasm: clean-gen-config
+	+cd $(FIRMWARE_DIR) && make -f test.mk clean-test BUILD_DIR=build-wasm
+
+clean: clean-firmware clean-rust clean-generated clean-gen-config clean-libonerom-test clean-libonerom-test-wasm

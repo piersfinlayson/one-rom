@@ -74,7 +74,17 @@ RUN rustup target install \
     x86_64-pc-windows-gnu \
     aarch64-pc-windows-gnullvm \
     x86_64-apple-darwin \
-    aarch64-apple-darwin
+    aarch64-apple-darwin \
+    wasm32-unknown-emscripten
+
+# Install the Emscripten SDK (for building One ROM Lens to wasm).  emcc/emar are
+# placed on PATH; EM_CONFIG points emcc at the activated SDK's config.
+ENV EMSDK=/home/build/emsdk
+RUN git clone https://github.com/emscripten-core/emsdk.git "${EMSDK}" && \
+    "${EMSDK}/emsdk" install latest && \
+    "${EMSDK}/emsdk" activate latest
+ENV EM_CONFIG="${EMSDK}/.emscripten"
+ENV PATH="${EMSDK}:${EMSDK}/upstream/emscripten:${PATH}"
 
 # Install probe-rs
 RUN curl --proto '=https' --tlsv1.2 -LsSf https://github.com/probe-rs/probe-rs/releases/latest/download/probe-rs-tools-installer.sh | sh

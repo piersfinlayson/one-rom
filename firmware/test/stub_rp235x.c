@@ -9,9 +9,7 @@
 #include "include.h"
 #include "test/stub.h"
 
-#if !defined(ONEROM_LENS)
 #define APIO_LOG_IMPL
-#endif // !ONEROM_LENS
 #define APIO_LOG_ENABLE(fmt, ...) printf(fmt "\n", ##__VA_ARGS__)
 
 void setup_vbus_interrupt(void) {

@@ -82,9 +82,15 @@ and timing-critical; on RP2350 it runs on PIO/DMA.
   linker scripts.
 - `firmware/ora/` — the plugin API: `api.h`, `plugin.h`, `system.h`,
   `plugin.ld`, `plugin.mk`, `examples/`.
-- `firmware/lens` + `lens.mk` — One ROM Lens, a cycle-exact PIO emulator /
-  browser tool.
-- `firmware/test` + `test.mk`.
+- `firmware/test` + `test.mk`. `test.mk`'s `WASM=1` mode cross-compiles the
+  firmware to WebAssembly (via Emscripten) for One ROM Lens; the root
+  `libonerom-test-wasm` target drives it.
+- Build output: `firmware/build/onerom-rp235x.bin` (`BIN_PREFIX ?= onerom-rp235x`).
+
+One ROM Lens — a cycle-exact PIO emulator / browser tool — now lives in the Rust
+workspace as [rust/lens](/rust/lens) (`onerom-lens`), built on `onerom-fw-emulator`
+and compiled to wasm; see its [README](/rust/lens/README.md). (The old C shim
+`firmware/lens/` + `firmware/lens.mk` are gone.)
 - Build output: `firmware/build/onerom-rp235x.bin` (`BIN_PREFIX ?= onerom-rp235x`).
 
 On invalid config/build the firmware enters **limp mode** (LED blink patterns;
@@ -115,6 +121,8 @@ Directory → package name:
 - `app` → `onerom-app`; `studio` → `onerom-studio` (desktop GUI, released
   independently via `studio-*` tags); `lab` → `onerom-lab` (hardware tester);
   `database` → `onerom-database`.
+- `lens` → `onerom-lens` — One ROM Lens, the browser PIO/DMA waveform viewer;
+  a wasm (`wasm32-unknown-emscripten`) binary built on `onerom-fw-emulator`.
 - `schema-gen` → `schema-gen` — emits `onerom-config/schema.json` from the
   `onerom-gen` config type.
 

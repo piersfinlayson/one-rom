@@ -1,17 +1,39 @@
-// Copyright (c) 2026 Piers Finlayson <piers@piers.rocks>
+// Copyright (C) 2026 Piers Finlayson <piers@piers.rocks>
 //
 // MIT License
 
 //! GPIO bitmask builders and data-byte extractor.
 //!
 //! All functions produce or consume raw `u64` bitmasks as consumed by
-//! `Emulator::drive_gpios(mask, levels)`:
+//! [`Emulator::drive_gpios`](crate::Emulator::drive_gpios)`(mask, levels)`:
 //!
 //! - bit N set in `mask`   → GPIO N is actively driven
 //! - bit N set in `levels` → GPIO N is driven HIGH (LOW if clear in levels)
 //! - bit N clear in `mask` → GPIO N is unaffected
+//!
+//! These helpers are shared by the host-side tester (`onerom-fw-tester`) and by
+//! One ROM Lens (`onerom-lens`, which runs the emulator in the browser), so they
+//! live with the emulator rather than in either consumer.
 
-use crate::pin_cache::ControlLine;
+/// A single decoded control line with its assertion polarity baked in.
+pub struct ControlLine {
+    /// Name for diagnostics ("ce", "oe", "cs1", "cs2", "cs3", "x_cs").
+    // Not read in the hot path; retained for future diagnostic/tristate use.
+    #[allow(dead_code)]
+    pub name: &'static str,
+    /// Every MCU GPIO driven by this physical pin.
+    /// Usually one; some boards (e.g. Fire32B fly-leads) wire one socket pin
+    /// to two GPIOs and both must be driven.
+    pub gpios: Vec<u8>,
+    /// `true` → assert by driving HIGH; `false` → assert by driving LOW.
+    pub assert_high: bool,
+    /// `true` for a *commoned* line on a Multi-set primary: a CS line asserted
+    /// on every read that does not select a chip. Set by the runner after
+    /// `build`; `false` everywhere else. The tristate combo sweep holds these
+    /// deasserted and never enumerates them (an asserted commoned line fires
+    /// the CS gate on its own).
+    pub commoned: bool,
+}
 
 /// Build a `(mask, levels)` pair to drive address GPIOs for logical address
 /// `addr`.

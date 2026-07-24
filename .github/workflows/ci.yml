@@ -55,6 +55,17 @@ jobs:
     - name: Install Rust wasm-pack
       run: cargo install wasm-pack
 
+    - name: Install Emscripten (for One ROM Lens)
+      run: |
+        ci/install-emscripten.sh "$HOME/emsdk"
+        source "$HOME/emsdk/emsdk_env.sh"
+        # Persist emcc/emar (and EMSDK) for subsequent steps.
+        echo "PATH=$PATH" >> "$GITHUB_ENV"
+        echo "EMSDK=$EMSDK" >> "$GITHUB_ENV"
+
+    - name: Install wasm target
+      run: rustup target add wasm32-unknown-emscripten
+
     - name: Run various Rust tests
       run: |
         export TOOLCHAIN=/usr/bin
@@ -91,3 +102,8 @@ jobs:
       run: |
         export TOOLCHAIN=/usr/bin
         ci/rust-tools.sh
+
+    - name: Build One ROM Lens (wasm)
+      run: |
+        export TOOLCHAIN=/usr/bin
+        ci/build-lens.sh

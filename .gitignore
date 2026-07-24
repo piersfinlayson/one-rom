@@ -106,3 +106,6 @@ flamegraph.svg
 # .prg files
 *.prg
 *.d64
+
+# One ROM Lens local serve bundle
+rust/lens/build/

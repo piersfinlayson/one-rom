@@ -5053,6 +5053,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "onerom-lens"
+version = "0.1.0"
+dependencies = [
+ "onerom-config",
+ "onerom-fw-emulator",
+ "onerom-fw-tester",
+ "onerom-gen",
+ "serde_json",
+]
+
+[[package]]
 name = "onerom-metadata"
 version = "0.1.4"
 dependencies = [
