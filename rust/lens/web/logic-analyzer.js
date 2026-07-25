@@ -1527,8 +1527,8 @@ class AnalyzerController {
                 let foundTrace = false;
                 for (const trace of this.renderer.currentLayout) {
                     if (y >= trace.y && y <= trace.y + trace.height) {
-                        if (trace.gpio !== null && trace.gpio !== 255) {
-                            tooltip.textContent = `GPIO ${trace.gpio}`;
+                        if (trace.gpio !== null && trace.gpio.pin !== CONFIG.PIN_NOT_DRIVEN) {
+                            tooltip.textContent = `GPIO ${trace.gpio.pin}`;
                             tooltip.style.display = 'block';
                             tooltip.style.left = (e.clientX + 10) + 'px';
                             tooltip.style.top = (rect.top + trace.y + trace.height / 2 - 10) + 'px';  // ← Center on trace
