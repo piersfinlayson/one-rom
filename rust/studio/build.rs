@@ -35,7 +35,7 @@ fn compile_windows_resources() {
         let statuses = repo.statuses(None).unwrap();
         let is_dirty = !statuses.is_empty();
 
-        format!(" ({}{})", if is_dirty { "!" } else { "" }, &commit_id,)
+        format!(" ({}{})", if is_dirty { "!" } else { "" }, commit_id,)
     } else {
         println!("cargo:warning=Could not open git repository to get commit ID");
         "".to_string()

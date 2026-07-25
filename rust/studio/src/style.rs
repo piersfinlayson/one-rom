@@ -467,7 +467,7 @@ impl<'a> Style<'a> {
                 } else {
                     ""
                 },
-                &commit_id
+                commit_id
             )
         } else {
             "".to_string()

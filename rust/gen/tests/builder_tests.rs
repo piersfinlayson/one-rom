@@ -229,7 +229,7 @@ mod tests {
             assert_eq!(
                 &self.magic, HEADER_MAGIC,
                 "Magic bytes mismatch. Expected {:?}, got {:?}",
-                HEADER_MAGIC, &self.magic
+                HEADER_MAGIC, self.magic
             );
 
             assert_eq!(
