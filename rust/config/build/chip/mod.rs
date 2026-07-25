@@ -629,6 +629,9 @@ fn generate_chip_type_enum(config: &ChipTypesConfig) -> String {
     code.push_str("/// ```\n");
     code.push_str("#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize)]\n");
     code.push_str("#[cfg_attr(feature = \"schemars\", derive(schemars::JsonSchema))]\n");
+    // Marked non-exhaustive so adding a new chip type in a later release is a
+    // backwards-compatible change: external matches must carry a wildcard arm.
+    code.push_str("#[non_exhaustive]\n");
     code.push_str("pub enum ChipType {\n");
 
     for (type_name, _chip_type) in get_sorted_chip_types(config) {
@@ -1733,11 +1736,8 @@ fn generate_rbcp_chip_type_method(config: &ChipTypesConfig) -> String {
     code.push_str("    ///\n");
     code.push_str("    /// Returns the `u8` used to identify this chip type on the RBCP wire.\n");
     code.push_str("    /// Matches the corresponding `onerom_rom_type_t` enum value in the\n");
-    code.push_str("    /// OneROM C firmware metadata schema.\n");
-    code.push_str("    ///\n");
-    code.push_str("    /// Alias chip types (e.g. `Chip23C1010`) return the same value as their\n");
-    code.push_str("    /// canonical equivalent (`Chip27C010`), since they are electrically\n");
-    code.push_str("    /// identical and share the same wire representation.\n");
+    code.push_str("    /// OneROM C firmware metadata schema.  Each chip type has a unique\n");
+    code.push_str("    /// value.\n");
     code.push_str("    ///\n");
     code.push_str("    /// # Examples\n");
     code.push_str("    ///\n");
@@ -1746,7 +1746,6 @@ fn generate_rbcp_chip_type_method(config: &ChipTypesConfig) -> String {
     code.push_str("    ///\n");
     code.push_str("    /// assert_eq!(ChipType::Chip2364.rbcp_chip_type(), 2);\n");
     code.push_str("    /// assert_eq!(ChipType::Chip27C010.rbcp_chip_type(), 15);\n");
-    code.push_str("    /// assert_eq!(ChipType::Chip23C1010.rbcp_chip_type(), 15); // alias\n");
     code.push_str("    /// ```\n");
     code.push_str("    pub const fn rbcp_chip_type(&self) -> u8 {\n");
     code.push_str("        match self {\n");
@@ -1772,9 +1771,7 @@ fn generate_try_from_rbcp_u8(config: &ChipTypesConfig) -> String {
     code.push_str("    /// Resolve an RBCP wire protocol chip type value to a `ChipType`\n");
     code.push_str("    ///\n");
     code.push_str("    /// Returns `None` for unrecognised values, including\n");
-    code.push_str("    /// `INVALID_RBCP_CHIP_TYPE` (0xFF). Alias chip types are not returned;\n");
-    code.push_str("    /// the canonical type is returned instead (e.g. value 15 yields\n");
-    code.push_str("    /// `Chip27C010`, not `Chip23C1010`).\n");
+    code.push_str("    /// `INVALID_RBCP_CHIP_TYPE` (0xFF).\n");
     code.push_str("    ///\n");
     code.push_str("    /// # Examples\n");
     code.push_str("    ///\n");
@@ -1795,13 +1792,11 @@ fn generate_try_from_rbcp_u8(config: &ChipTypesConfig) -> String {
     let mut sorted: Vec<_> = config.chip_types.iter().collect();
     sorted.sort_by_key(|(_, chip_type)| chip_type.rbcp_chip_type);
     for (type_name, chip_type) in &sorted {
-        if !chip_type.rbcp_alias {
-            code.push_str(&format!(
-                "            {} => Some(ChipType::{}),\n",
-                chip_type.rbcp_chip_type,
-                variant_name(type_name, chip_type)
-            ));
-        }
+        code.push_str(&format!(
+            "            {} => Some(ChipType::{}),\n",
+            chip_type.rbcp_chip_type,
+            variant_name(type_name, chip_type)
+        ));
     }
 
     code.push_str("            _ => None,\n");

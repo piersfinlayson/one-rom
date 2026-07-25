@@ -101,16 +101,9 @@ pub struct ChipType {
     pub function: ChipFunction,
 
     /// RBCP wire protocol chip type value.  Must match the corresponding
-    /// `onerom_rom_type_t` enum variant in the firmware metadata schema.
+    /// `onerom_rom_type_t` enum variant in the firmware metadata schema, and
+    /// must be unique across all chip types (enforced by `validate`).
     pub rbcp_chip_type: u8,
-
-    /// If true, this chip type shares its rbcp_chip_type value with another
-    /// chip type of which it is an electrical alias.  Alias chips participate
-    /// in rbcp_chip_type() (forward lookup) but are excluded from
-    /// try_from_rbcp_u8() (reverse lookup) so that the canonical chip type
-    /// is always returned.
-    #[serde(default)]
-    pub rbcp_alias: bool,
 
     pub bit_modes: Vec<u8>,
     pub pins: u8,
@@ -191,7 +184,7 @@ pub enum ValidationError {
         line_name: String,
         expected: &'static [&'static str],
     },
-    /// Two non-alias chip types share the same rbcp_chip_type value.
+    /// Two chip types share the same rbcp_chip_type value.
     DuplicateRbcpChipType {
         chip_type_a: String,
         chip_type_b: String,
@@ -312,7 +305,7 @@ impl fmt::Display for ValidationError {
                 write!(
                     f,
                     "ROM types '{}' and '{}' share rbcp_chip_type value {} (0x{:02X}); \
-                     mark one as 'rbcp_alias: true' if they are electrically equivalent",
+                     every chip type must have a unique rbcp_chip_type",
                     chip_type_a, chip_type_b, value, value
                 )
             }
@@ -337,13 +330,10 @@ impl ChipTypesConfig {
             chip_type.validate(type_name)?;
         }
 
-        // Global uniqueness check: no two non-alias chips may share an rbcp_chip_type value.
+        // Global uniqueness check: no two chips may share an rbcp_chip_type value.
         // BTreeMap iteration is alphabetical, giving deterministic error messages.
         let mut seen: BTreeMap<u8, &str> = BTreeMap::new();
         for (type_name, chip_type) in &self.chip_types {
-            if chip_type.rbcp_alias {
-                continue;
-            }
             if let Some(existing) = seen.get(&chip_type.rbcp_chip_type) {
                 return Err(ValidationError::DuplicateRbcpChipType {
                     chip_type_a: existing.to_string(),

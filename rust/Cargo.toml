@@ -37,7 +37,7 @@ resolver = "2"
 [workspace.dependencies]
 onerom-app = { path="app", version="0.2.0" }
 onerom-cli = { path="cli", version="0.3.0" }
-onerom-config = { path="config", version="0.5.4" }
+onerom-config = { path="config", version="0.6.0" }
 onerom-database = { path="database", version="0.1.1" }
 onerom-fw = { path="fw", version="0.1.25" }
 onerom-fw-emulator = { path="fw-emulator", version="0.1.0" }

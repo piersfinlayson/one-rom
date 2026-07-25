@@ -22,10 +22,13 @@ All notables changes between versions are documented in this file.
   - Internal refactor to support this: `onerom-fw-emulator` gains a shared `driver` module (moved from `onerom-fw-tester`, which re-exports it so its public API is unchanged) plus `Emulator` methods for PIO disassembly and GPIO-inversion queries, and `test.mk` gains a `WASM=1` cross-compile mode; `chip_substitution` moved into the `onerom-fw-tester` library.  All backwards-compatible; `onerom-fw-emulator`, `onerom-fw-tester` and `onerom-lens` are not published to crates.io.
 - Fix `onerom image swap-bytes` panicking at startup (even on `--help`) with a clap short-option collision — `-i` was claimed by both the global `--vid-pid` and swap-bytes' `--input`.  `--input`/`--output` are now long-only (aliases `--in`/`--out` unchanged).  A new `verify_cli` test runs clap's `debug_assert()` over the whole command tree so such collisions fail CI rather than reaching users.  CLI-only change; no firmware update required.
 - Removed `test-retired`, the old test mechanism, superceded by `onerom-fw-tester`.
+- Add the `62256` chip type — 32KB (32768 x 8-bit) static RAM in a 28-pin DIP — as a recognised type in the config model and schema, but **not yet supported for serving**.  Its `supported` version is omitted, so it shows as ✗ in `docs/CHIP-TYPES.md` and `onerom-gen`'s builder rejects any config that uses it.  This reserves the type name, its pinout and its RBCP chip type (35) ahead of SRAM serving support being re-added to the v0.7.x firmware.  Host-tooling/metadata change only; no firmware update required.
+- `onerom_config::chip::ChipType` is now `#[non_exhaustive]`, so future chip-type additions are backwards-compatible for downstream crates.  This is itself a breaking change (external `match` expressions on `ChipType` must now carry a wildcard arm), hence the `onerom-config` minor version bump.
+- Give the 23C1010 mask ROM its own RBCP chip type (`0x24`); it previously shared `0x0F` with the electrically-equivalent 27C010.  The v0.7.0+ generator no longer needs two chip types to share a firmware representation, so they are now distinct end to end (metadata, RBCP wire type, `ChipType::try_from_rbcp_u8`).  The now-unused `rbcp_alias` sharing mechanism in `onerom-config` is retired, and `rbcp_chip_type` uniqueness is unconditionally enforced at build time.  Changes the metadata emitted for 23C1010 images.  The RBCP spec (`rom-bus-control-protocol`) is updated to match, and also gains the 23C1001, 27C200, HM7641 and 62256 ROM types.
 
 To publish:
 - Rust crates:
-  - onerom-config 0.5.4
+  - onerom-config 0.6.0
   - onerom-metadata 0.1.4
   - onerom-gen 0.7.0
   - onerom-app 0.2.0
