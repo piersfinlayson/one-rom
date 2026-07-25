@@ -121,7 +121,9 @@ impl Device {
     /// A recognised device has valid One ROM flash or RAM information
     /// available.
     pub fn is_recognised(&self) -> bool {
-        self.onerom.as_ref().is_some_and(ParsedDevice::is_recognised)
+        self.onerom
+            .as_ref()
+            .is_some_and(ParsedDevice::is_recognised)
     }
 
     pub fn is_running(&self) -> bool {

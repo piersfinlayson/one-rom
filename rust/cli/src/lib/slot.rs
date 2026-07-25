@@ -458,8 +458,7 @@ fn validate_cs_lines(
                     ),
                 ));
             }
-            ControlLineType::FixedActiveLow | ControlLineType::FixedActiveHigh
-                if matches!(supplied, Some(logic) if logic != CsLogic::Ignore) =>
+            ControlLineType::FixedActiveLow | ControlLineType::FixedActiveHigh if matches!(supplied, Some(logic) if logic != CsLogic::Ignore) =>
             {
                 return Err(Error::InvalidArgument(
                     "--slot".to_string(),
@@ -784,11 +783,8 @@ mod tests {
 
     #[test]
     fn system_only_prepends_before_rom() {
-        let out = inject_plugins_into_config(
-            ROM_ONLY.to_string(),
-            &[plugin(PluginType::System)],
-        )
-        .unwrap();
+        let out = inject_plugins_into_config(ROM_ONLY.to_string(), &[plugin(PluginType::System)])
+            .unwrap();
         assert_eq!(
             chip_types(&out),
             vec![ChipType::SystemPlugin, ChipType::Chip23128]
@@ -809,11 +805,9 @@ mod tests {
                       "cs1": "active_low", "cs2": "active_low", "cs3": "active_high" } ] }
             ]
         }"#;
-        let err = inject_plugins_into_config(
-            with_plugin.to_string(),
-            &[plugin(PluginType::System)],
-        )
-        .unwrap_err();
+        let err =
+            inject_plugins_into_config(with_plugin.to_string(), &[plugin(PluginType::System)])
+                .unwrap_err();
         assert!(err.to_string().contains("already defines a plugin"));
     }
 }

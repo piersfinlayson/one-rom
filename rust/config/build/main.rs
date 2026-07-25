@@ -6,6 +6,7 @@ use std::env;
 use std::path::Path;
 
 mod chip;
+mod fmt;
 mod hw;
 
 fn main() {

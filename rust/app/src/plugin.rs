@@ -133,7 +133,11 @@ impl fmt::Display for PluginVersion {
         if self.build == 0 {
             write!(f, "{}.{}.{}", self.major, self.minor, self.patch)
         } else {
-            write!(f, "{}.{}.{}.{}", self.major, self.minor, self.patch, self.build)
+            write!(
+                f,
+                "{}.{}.{}.{}",
+                self.major, self.minor, self.patch, self.build
+            )
         }
     }
 }
@@ -228,8 +232,9 @@ impl Serialize for PluginType {
 impl<'de> Deserialize<'de> for PluginType {
     fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
         let s = String::deserialize(d)?;
-        PluginType::try_from_str(&s)
-            .ok_or_else(|| serde::de::Error::custom(alloc::format!("unrecognised plugin type '{s}'")))
+        PluginType::try_from_str(&s).ok_or_else(|| {
+            serde::de::Error::custom(alloc::format!("unrecognised plugin type '{s}'"))
+        })
     }
 }
 
@@ -759,9 +764,7 @@ impl ResolvedPlugin {
     /// The binary URL (for a named plugin) or path (for a sideloaded one).
     pub fn file(&self) -> String {
         match &self.source {
-            ResolvedSource::Named { release } => {
-                binary_url(self.plugin_type, &self.name, release)
-            }
+            ResolvedSource::Named { release } => binary_url(self.plugin_type, &self.name, release),
             ResolvedSource::File { path } => path.clone(),
         }
     }
@@ -884,7 +887,6 @@ pub async fn resolve_plugin_display<F: LocalPluginFetch>(
     })
 }
 
-
 // ============================================================
 // PluginFetch trait
 // ============================================================
@@ -995,7 +997,11 @@ fn parse_plugin_header(data: &[u8], source: &str) -> Result<PluginHeader, Plugin
     // Magic guard: only trust the type byte if this is really a plugin binary.
     let magic = u32::from_le_bytes([data[0], data[1], data[2], data[3]]);
     if magic != ORA_PLUGIN_MAGIC {
-        return Err(PluginError::InvalidMagic(source.into(), magic, ORA_PLUGIN_MAGIC));
+        return Err(PluginError::InvalidMagic(
+            source.into(),
+            magic,
+            ORA_PLUGIN_MAGIC,
+        ));
     }
 
     // Type at offset 20 (`ora_plugin_type_t`: 0 = system, 1 = user, 2 = PIO).
@@ -1054,7 +1060,11 @@ pub fn verify_binary(
 
     let header = parse_plugin_header(data, source)?;
 
-    if let VerifyTarget::Release { release, expected_type } = target {
+    if let VerifyTarget::Release {
+        release,
+        expected_type,
+    } = target
+    {
         // SHA-256 against the manifest digest - the check onerom-gen cannot do.
         let actual = sha256_hex(data);
         if actual != release.sha256.to_lowercase() {
@@ -1145,7 +1155,12 @@ pub fn newest_compatible<'a>(plugin: &'a Plugin, fw: &FirmwareVersion) -> Option
 }
 
 /// Build a [`PluginError`] describing why `release` is incompatible with `fw`.
-fn incompat_error(name: &str, release: &Release, reason: FwIncompat, fw: &FirmwareVersion) -> PluginError {
+fn incompat_error(
+    name: &str,
+    release: &Release,
+    reason: FwIncompat,
+    fw: &FirmwareVersion,
+) -> PluginError {
     match reason {
         FwIncompat::TooOld => PluginError::Incompatible {
             name: name.into(),
@@ -1251,10 +1266,7 @@ where
     F: LocalPluginFetch,
     T: serde::de::DeserializeOwned,
 {
-    let bytes = fetch
-        .fetch(url)
-        .await
-        .map_err(|e| Error::fetch(url, e))?;
+    let bytes = fetch.fetch(url).await.map_err(|e| Error::fetch(url, e))?;
     serde_json::from_slice(&bytes)
         .map_err(|e| PluginError::ManifestJson(url.into(), alloc::format!("{e}")).into())
 }
@@ -1618,7 +1630,11 @@ mod tests {
     /// correctly, so tests can exercise the magic guard.
     fn header(magic_ok: bool, type_byte: u8, ver: (u16, u16, u16, u16)) -> Vec<u8> {
         let mut buf = vec![0u8; ORA_PLUGIN_HEADER_SIZE];
-        let magic = if magic_ok { ORA_PLUGIN_MAGIC } else { 0xDEAD_BEEF };
+        let magic = if magic_ok {
+            ORA_PLUGIN_MAGIC
+        } else {
+            0xDEAD_BEEF
+        };
         buf[0..4].copy_from_slice(&magic.to_le_bytes());
         buf[8..10].copy_from_slice(&ver.0.to_le_bytes());
         buf[10..12].copy_from_slice(&ver.1.to_le_bytes());
@@ -1838,7 +1854,10 @@ mod tests {
         assert_eq!(compat[0].version, pv(0, 2, 0));
 
         // newest_compatible agrees.
-        assert_eq!(newest_compatible(&p, &fw(0, 6, 0)).unwrap().version, pv(0, 2, 0));
+        assert_eq!(
+            newest_compatible(&p, &fw(0, 6, 0)).unwrap().version,
+            pv(0, 2, 0)
+        );
     }
 
     #[test]
@@ -1856,9 +1875,7 @@ mod tests {
     #[test]
     fn validate_types_enforces_invariants() {
         assert!(validate_resolved_plugin_types(&[PluginType::System]).is_ok());
-        assert!(
-            validate_resolved_plugin_types(&[PluginType::System, PluginType::User]).is_ok()
-        );
+        assert!(validate_resolved_plugin_types(&[PluginType::System, PluginType::User]).is_ok());
         assert!(matches!(
             validate_resolved_plugin_types(&[PluginType::User]),
             Err(PluginError::UserPluginWithoutSystem)
@@ -1964,7 +1981,11 @@ mod tests {
                 },
                 "u.bin",
             ),
-            Err(PluginError::TypeMismatch(_, PluginType::User, PluginType::System))
+            Err(PluginError::TypeMismatch(
+                _,
+                PluginType::User,
+                PluginType::System
+            ))
         ));
     }
 

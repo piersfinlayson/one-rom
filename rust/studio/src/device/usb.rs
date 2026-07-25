@@ -93,7 +93,10 @@ async fn get_fire_list_async() -> Option<Vec<UsbDeviceType>> {
                     let (chip_id, package) = match read_chip_info(&mut p).await {
                         Ok(info) => (Some(info.chip_id), info.package),
                         Err(e) => {
-                            warn!("Failed to read chip info from Fire device ({}): {e}", p.info());
+                            warn!(
+                                "Failed to read chip info from Fire device ({}): {e}",
+                                p.info()
+                            );
                             (None, None)
                         }
                     };

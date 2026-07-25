@@ -256,10 +256,9 @@ impl core::fmt::Display for IhexError {
                 f,
                 "line {line}: bad checksum, expected {expected:#04x} but found {actual:#04x}"
             ),
-            IhexError::UnsupportedRecordType { line, record_type } => write!(
-                f,
-                "line {line}: unsupported record type {record_type:#04x}"
-            ),
+            IhexError::UnsupportedRecordType { line, record_type } => {
+                write!(f, "line {line}: unsupported record type {record_type:#04x}")
+            }
             IhexError::AddressBelowLoad {
                 line,
                 address,
@@ -548,11 +547,26 @@ mod tests {
     #[test]
     fn parse_str_accepts_decimal_and_hex_forms() {
         assert_eq!(LoadAddress::parse_str("0").unwrap(), LoadAddress(0));
-        assert_eq!(LoadAddress::parse_str("57344").unwrap(), LoadAddress(0xE000));
-        assert_eq!(LoadAddress::parse_str("0xE000").unwrap(), LoadAddress(0xE000));
-        assert_eq!(LoadAddress::parse_str("0Xe000").unwrap(), LoadAddress(0xE000));
-        assert_eq!(LoadAddress::parse_str("$E000").unwrap(), LoadAddress(0xE000));
-        assert_eq!(LoadAddress::parse_str("  $E000 ").unwrap(), LoadAddress(0xE000));
+        assert_eq!(
+            LoadAddress::parse_str("57344").unwrap(),
+            LoadAddress(0xE000)
+        );
+        assert_eq!(
+            LoadAddress::parse_str("0xE000").unwrap(),
+            LoadAddress(0xE000)
+        );
+        assert_eq!(
+            LoadAddress::parse_str("0Xe000").unwrap(),
+            LoadAddress(0xE000)
+        );
+        assert_eq!(
+            LoadAddress::parse_str("$E000").unwrap(),
+            LoadAddress(0xE000)
+        );
+        assert_eq!(
+            LoadAddress::parse_str("  $E000 ").unwrap(),
+            LoadAddress(0xE000)
+        );
         assert!(LoadAddress::parse_str("").is_err());
         assert!(LoadAddress::parse_str("$").is_err());
         assert!(LoadAddress::parse_str("0xZZ").is_err());
@@ -568,7 +582,10 @@ mod tests {
         assert_eq!(from_hex, LoadAddress(0xE000));
         let from_dollar: LoadAddress = serde_json::from_str("\"$E000\"").unwrap();
         assert_eq!(from_dollar, LoadAddress(0xE000));
-        assert_eq!(serde_json::to_string(&LoadAddress(0xE000)).unwrap(), "\"0xe000\"");
+        assert_eq!(
+            serde_json::to_string(&LoadAddress(0xE000)).unwrap(),
+            "\"0xe000\""
+        );
         // A negative number is rejected.
         assert!(serde_json::from_str::<LoadAddress>("-1").is_err());
     }
@@ -749,9 +766,9 @@ mod tests {
         assert_eq!(
             out,
             concat!(
-                ":020000040000FA\r\n",   // type-04 ELA, upper = 0x0000
+                ":020000040000FA\r\n",     // type-04 ELA, upper = 0x0000
                 ":0400000000010203F6\r\n", // 4 data bytes at 0x0000
-                ":00000001FF\r\n",        // EOF
+                ":00000001FF\r\n",         // EOF
             )
         );
     }
@@ -760,7 +777,9 @@ mod tests {
     fn encode_decode_round_trips() {
         // Contiguous images round-trip exactly (no internal gaps to fill).
         for len in [1usize, 15, 16, 17, 256, 8192] {
-            let data: Vec<u8> = (0..len).map(|i| (i.wrapping_mul(37) ^ 0x5A) as u8).collect();
+            let data: Vec<u8> = (0..len)
+                .map(|i| (i.wrapping_mul(37) ^ 0x5A) as u8)
+                .collect();
             for la in [0usize, 0x10, 0xE000] {
                 let hex = encode_ihex(&data, la);
                 let back = decode_ihex(hex.as_bytes(), la).unwrap();

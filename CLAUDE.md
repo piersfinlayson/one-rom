@@ -163,8 +163,8 @@ CI / release firmware builds:
 Other `ci/` scripts: `build-images.sh` (populates the `images.onerom.org`
 channel), `build-cross-fw.sh` (cross-builds the `onerom-fw` **tool** —
 orthogonal to firmware variant builds, do not conflate), `rust-tests.sh`,
-`rust-docs.sh`, `rust-tools.sh`, `test-emu.sh`. Reproducible builds use the
-container in `ci/docker/`.
+`rust-docs.sh`, `rust-lint.sh`, `rust-tools.sh`, `test-emu.sh`. Reproducible
+builds use the container in `ci/docker/`.
 
 Some checked-in files are generated and must stay in sync — `ci/rust-tests.sh`
 **fails** if the committed copy differs from a fresh regeneration:
@@ -178,6 +178,23 @@ end-of-work validation, **not** per-change checks. **Do not run them
 proactively.** As a piece of work approaches completion, check with me before
 running them; during iteration, per-crate `cargo check` / `clippy` / targeted
 tests are enough.
+
+**Formatting & clippy** are a CI gate: `ci/rust-lint.sh` runs
+`cargo fmt --all -- --check` and `clippy` with `-D warnings` across the whole
+workspace. A single `cargo clippy --workspace` can't build the tree, so the
+script groups crates by how they build: host crates in one pass; `onerom-fw-tester`
+and the wasm pair (`onerom-fw-emulator`, `onerom-lens`) with `CONFIG`/`BOARD` set
+because their build embeds the firmware emulator (the wasm pair targets
+`wasm32-unknown-emscripten`); and `onerom-lab` from its own dir on its pinned
+nightly (`--bins`). Like the other end-of-work scripts, run it as work wraps up,
+not per-change. `onerom-studio` is **not** in this gate (it isn't built in
+`ci.yml`); it is fmt-/clippy-checked by a `lint` job in
+`.github/workflows/build-studio.yml` instead. Note: `onerom-config`'s generated
+modules
+(`src/{chip,hw}/generated.rs` and their `mod.rs` — all git-ignored) are
+rustfmt-formatted **at generation time** by the build script
+(`config/build/fmt.rs`) so the fmt gate stays green; keep that path intact if you
+touch the code generators.
 
 ## Testing firmware on a device (CLI)
 

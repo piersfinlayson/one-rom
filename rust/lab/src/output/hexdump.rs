@@ -58,8 +58,8 @@ pub async fn dump(reader: &mut RomReader, start: usize, count: usize) -> Result<
         // deassert.  This keeps the borrow of `reader` confined to a sync
         // scope so it does not cross the `.await` below.
         reader.begin_read(8);
-        for i in 0..chunk_len {
-            chunk[i] = reader.read_byte_at(addr + i, 8);
+        for (i, byte) in chunk.iter_mut().enumerate().take(chunk_len) {
+            *byte = reader.read_byte_at(addr + i, 8);
         }
         reader.end_read();
 
@@ -89,7 +89,6 @@ pub async fn dump(reader: &mut RomReader, start: usize, count: usize) -> Result<
 /// is not a multiple of 16); missing positions are padded with spaces so
 /// that the ASCII sidebar column stays aligned.
 fn format_line(buf: &mut [u8; LINE_BUF], addr: usize, data: &[u8]) -> usize {
-    let len = data.len(); // 1 ..= 16
     let mut pos = 0usize;
 
     // 8-digit address.
@@ -105,8 +104,8 @@ fn format_line(buf: &mut [u8; LINE_BUF], addr: usize, data: &[u8]) -> usize {
             buf[pos] = b' ';
             pos += 1; // gap between the two groups
         }
-        if i < len {
-            super::write_hex8(buf, &mut pos, data[i]);
+        if let Some(&byte) = data.get(i) {
+            super::write_hex8(buf, &mut pos, byte);
         } else {
             buf[pos] = b' ';
             pos += 1; // pad missing byte: two spaces
@@ -127,11 +126,10 @@ fn format_line(buf: &mut [u8; LINE_BUF], addr: usize, data: &[u8]) -> usize {
     buf[pos] = b'|';
     pos += 1;
     for i in 0..16 {
-        buf[pos] = if i < len {
-            let c = data[i];
-            if (0x20..0x7F).contains(&c) { c } else { b'.' }
-        } else {
-            b' '
+        buf[pos] = match data.get(i) {
+            Some(&c) if (0x20..0x7F).contains(&c) => c,
+            Some(_) => b'.',
+            None => b' ',
         };
         pos += 1;
     }

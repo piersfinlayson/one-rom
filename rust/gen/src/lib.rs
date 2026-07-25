@@ -20,14 +20,16 @@ pub mod v2;
 
 pub use builder::Builder;
 pub use chip_type_spec::ChipTypeSpec;
-pub use ihex::{AddressParseError, IHEX_BLANK_BYTE, IhexError, LoadAddress, decode_ihex, encode_ihex};
 pub use firmware::{
     DebugConfig, FireConfig, FireCpuFreq, FireServeMode, FireVreg, FirmwareConfig, IceConfig,
     IceCpuFreq, LedConfig, ServeAlgParams,
 };
+pub use ihex::{
+    AddressParseError, IHEX_BLANK_BYTE, IhexError, LoadAddress, decode_ihex, encode_ihex,
+};
 pub use image::{Chip, ChipSet, ChipSetType, CsConfig, CsLogic, FileFormat, SizeHandling};
-pub use image::{num_excess_addr_lines, requires_half_select_cs1};
 pub use image::{MAX_IMAGE_SIZE, PAD_BLANK_BYTE, PAD_NO_CHIP_BYTE};
+pub use image::{num_excess_addr_lines, requires_half_select_cs1};
 pub use meta::{MAX_METADATA_LEN, Metadata, PAD_METADATA_BYTE};
 use onerom_config::mcu::Family;
 

@@ -48,7 +48,11 @@ fn embed_geometry() {
         .unwrap_or_else(|_| project_root.clone());
     let config_path = {
         let p = PathBuf::from(&config);
-        if p.is_absolute() { p } else { base_dir.join(&p) }
+        if p.is_absolute() {
+            p
+        } else {
+            base_dir.join(&p)
+        }
     };
     println!("cargo:rerun-if-env-changed=CONFIG");
     println!("cargo:rerun-if-env-changed=BOARD");
@@ -59,8 +63,8 @@ fn embed_geometry() {
         .unwrap_or_else(|e| panic!("cannot read CONFIG '{}': {e}", config_path.display()));
     let cfg: Config = serde_json::from_str(&json)
         .unwrap_or_else(|e| panic!("cannot parse CONFIG '{}': {e}", config_path.display()));
-    let board = Board::try_from_str(&board_str)
-        .unwrap_or_else(|| panic!("unknown BOARD '{board_str}'"));
+    let board =
+        Board::try_from_str(&board_str).unwrap_or_else(|| panic!("unknown BOARD '{board_str}'"));
 
     // Lens visualises the first chip of the first chip set.
     let chip_set = cfg
@@ -123,8 +127,18 @@ fn embed_geometry() {
         None => out.push_str("pub const BYTE_N_GPIO: Option<u8> = None;\n"),
     }
 
-    writeln!(out, "pub const NUM_ADDR_BITS: usize = {};", cache.addr_gpios.len()).unwrap();
-    writeln!(out, "pub const NUM_DATA_BITS: usize = {};", cache.data_gpios.len()).unwrap();
+    writeln!(
+        out,
+        "pub const NUM_ADDR_BITS: usize = {};",
+        cache.addr_gpios.len()
+    )
+    .unwrap();
+    writeln!(
+        out,
+        "pub const NUM_DATA_BITS: usize = {};",
+        cache.data_gpios.len()
+    )
+    .unwrap();
 
     // DMA word size: 16-bit for the wide 27C200/27C400, else 8-bit.
     let word_size = if matches!(chip_type, ChipType::Chip27C400 | ChipType::Chip27C200) {

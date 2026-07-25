@@ -35,6 +35,14 @@
 //! `run_mode` once per combination.  Results are accumulated into a single
 //! `ModeResult`; `combos` records how many passes were made.
 
+// Several helpers here return `Result<T, SetResult>`, where the `Err` variant
+// is a fully-populated `SetResult` short-returned as the finished record for a
+// set (boot error, skip, gap error) rather than a lightweight error.
+// `SetResult` is meant to be large, this is an internal test-tool binary (not a
+// public API), and the value is moved on a cold early-return path, so boxing it
+// would add indirection and churn every call site for no real benefit.
+#![allow(clippy::result_large_err)]
+
 #[allow(unused_imports)]
 use log::{debug, error, info, trace, warn};
 
@@ -47,8 +55,8 @@ use onerom_gen::{ChipConfig, ChipSetConfig, ChipSetType, Config, CsLogic};
 use crate::report::{ChipResult, ModeResult, SetResult, TestReport};
 use onerom_fw_tester::driver;
 use onerom_fw_tester::geometry;
-use onerom_fw_tester::oracle;
 use onerom_fw_tester::geometry::chip_substitution;
+use onerom_fw_tester::oracle;
 use onerom_fw_tester::pin_cache::{ControlLine, PinCache};
 use onerom_fw_tester::runner::{addr_before_cs_cycles, cs_to_data_cycles, run_mode};
 use onerom_fw_tester::timing;
@@ -189,8 +197,8 @@ fn run_single_set(
     // use the PinCache for the first chip (the slot's primary).  Single sets
     // use no X pins, so n_used_x = 0.
     let gap_gpios: Vec<u8> = if let Some(chip_config) = chip_set.chips.first() {
-        let chip_type =
-            chip_substitution(board, chip_config.chip_type.resolved()).unwrap_or(chip_config.chip_type.resolved());
+        let chip_type = chip_substitution(board, chip_config.chip_type.resolved())
+            .unwrap_or(chip_config.chip_type.resolved());
         let cache = PinCache::build(chip_type, chip_config, board);
         if let Err(r) = check_rom_pin_pulls(&emulator, &cache, set_idx) {
             return r;
@@ -369,7 +377,8 @@ fn run_multi_set(
         .enumerate()
         .map(|(i, chip_config)| {
             let (_, gpios) = board.x_pin_map()[i];
-            let assert_high = first_active_cs_polarity(chip_config, chip_config.chip_type.resolved());
+            let assert_high =
+                first_active_cs_polarity(chip_config, chip_config.chip_type.resolved());
             (gpios.to_vec(), assert_high)
         })
         .collect();
@@ -1204,7 +1213,8 @@ fn gap_set_for_slot(
 /// the polarity lookup in `first_active_cs_polarity`).
 fn per_chip_select_name(secondary: &ChipConfig) -> Option<&'static str> {
     secondary
-        .chip_type.resolved()
+        .chip_type
+        .resolved()
         .control_lines()
         .iter()
         .filter(|spec| matches!(spec.line_type, ControlLineType::Configurable))
@@ -1356,7 +1366,9 @@ fn word_size_for_set(chip_set: &ChipSetConfig) -> u8 {
         .chips
         .first()
         .map(|c| {
-            if c.chip_type.resolved() == ChipType::Chip27C400 || c.chip_type.resolved() == ChipType::Chip27C200 {
+            if c.chip_type.resolved() == ChipType::Chip27C400
+                || c.chip_type.resolved() == ChipType::Chip27C200
+            {
                 16
             } else {
                 8

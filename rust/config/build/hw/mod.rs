@@ -44,12 +44,10 @@ pub fn build(manifest_path: &Path) {
 
     // Write generated files
     let generated_path = manifest_path.join("src").join(HW_GENERATED_RS_FILENAME);
-    fs::write(&generated_path, &generated_code)
-        .unwrap_or_else(|e| panic!("Failed to write {}: {}", generated_path.display(), e));
+    crate::fmt::write_rust(&generated_path, &generated_code);
 
     let mod_path = manifest_path.join("src").join(HW_MOD_RS_FILENAME);
-    fs::write(&mod_path, &lib_code)
-        .unwrap_or_else(|e| panic!("Failed to write {}: {}", mod_path.display(), e));
+    crate::fmt::write_rust(&mod_path, &lib_code);
 }
 
 fn get_config_dirs(repo_root: &Path) -> Vec<std::path::PathBuf> {

@@ -28,8 +28,8 @@ use std::ffi::{CString, c_char};
 /// `onerom_*` functions after Emscripten instantiates it.
 fn main() {}
 
-use onerom_fw_emulator::driver::{self, ControlLine};
 use onerom_fw_emulator::Emulator;
+use onerom_fw_emulator::driver::{self, ControlLine};
 
 /// Build-time embedded pin geometry (`ADDR_GPIOS`, `DATA_GPIOS`, `CONTROL_LINES`,
 /// `BYTE_N_GPIO`, `NUM_ADDR_BITS`, `NUM_DATA_BITS`, `WORD_SIZE`).
@@ -229,7 +229,9 @@ pub extern "C" fn onerom_get_addr_pin(bit: u32) -> u32 {
 /// GPIO number carrying data bit `bit`; `0xFF` if out of range.
 #[unsafe(no_mangle)]
 pub extern "C" fn onerom_get_data_pin(bit: u32) -> u32 {
-    geometry::DATA_GPIOS.get(bit as usize).map_or(0xFF, |&g| g as u32)
+    geometry::DATA_GPIOS
+        .get(bit as usize)
+        .map_or(0xFF, |&g| g as u32)
 }
 
 /// Number of control lines (CE/OE/CS + any oversized-ROM half-selects).
@@ -324,11 +326,11 @@ pub extern "C" fn onerom_get_pio_disassembly() -> *const c_char {
         let mut out = String::new();
         for block in 0..3u8 {
             for sm in 0..4u8 {
-                if let Some(d) = lens.emu.disassemble_sm(block, sm) {
-                    if d.contains(".program") {
-                        out.push_str(&d);
-                        out.push_str("\n\n");
-                    }
+                if let Some(d) = lens.emu.disassemble_sm(block, sm)
+                    && d.contains(".program")
+                {
+                    out.push_str(&d);
+                    out.push_str("\n\n");
                 }
             }
         }

@@ -9,9 +9,11 @@
 
 #[allow(unused_imports)]
 use log::{debug, warn};
-use onerom_fw_parser::Parser;
 use onerom_config::mcu::{Rp235xChipId, RpVariant};
-use picoboot::{Picoboot, PicobootCmd, PicobootCmdId, Reader as PicobootReader, Target, usb::Timeouts};
+use onerom_fw_parser::Parser;
+use picoboot::{
+    Picoboot, PicobootCmd, PicobootCmdId, Reader as PicobootReader, Target, usb::Timeouts,
+};
 use std::time::Duration;
 
 use crate::Error;

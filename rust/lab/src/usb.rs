@@ -184,10 +184,8 @@ async fn cdc_writer(mut sender: Sender<'static, Driver<'static, USB>>) -> ! {
 
             // Send a ZLP if the final chunk exactly filled a packet, so the
             // host knows the transfer is complete.
-            if bytes.len() % MAX_PACKET == 0 {
-                if sender.write_packet(&[]).await.is_err() {
-                    break 'connected;
-                }
+            if bytes.len() % MAX_PACKET == 0 && sender.write_packet(&[]).await.is_err() {
+                break 'connected;
             }
         }
 
@@ -203,15 +201,10 @@ async fn cdc_reader(mut receiver: Receiver<'static, Driver<'static, USB>>) -> ! 
     loop {
         receiver.wait_connection().await;
         let mut buf = [0u8; 64];
-        loop {
-            match receiver.read_packet(&mut buf).await {
-                Ok(n) => {
-                    for &b in &buf[..n] {
-                        // Drop silently if the RX channel is full.
-                        let _ = CDC_RX.try_send(Some(b));
-                    }
-                }
-                Err(_) => break,
+        while let Ok(n) = receiver.read_packet(&mut buf).await {
+            for &b in &buf[..n] {
+                // Drop silently if the RX channel is full.
+                let _ = CDC_RX.try_send(Some(b));
             }
         }
     }
@@ -268,6 +261,6 @@ pub async fn cdc_try_recv() -> Result<Option<u8>, Error> {
     match select(Timer::after_millis(5), cdc_recv()).await {
         Either::First(_) => Ok(None),
         Either::Second(Ok(b)) => Ok(Some(b)),
-        Either::Second(Err(e)) => Err(e.into()),
+        Either::Second(Err(e)) => Err(e),
     }
 }

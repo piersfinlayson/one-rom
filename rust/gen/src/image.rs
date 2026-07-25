@@ -242,7 +242,9 @@ impl CsLogic {
 /// question, answerable without a board.
 pub const fn num_excess_addr_lines(chip_type: &ChipType) -> usize {
     let max_useful_addr_lines = MAX_IMAGE_SIZE.ilog2() as usize;
-    chip_type.num_addr_lines().saturating_sub(max_useful_addr_lines)
+    chip_type
+        .num_addr_lines()
+        .saturating_sub(max_useful_addr_lines)
 }
 
 /// Whether a chip type's address space exceeds `MAX_IMAGE_SIZE`, so that its
@@ -921,7 +923,10 @@ impl Chip {
             ChipType::Chip23QL384 => 31,
             ChipType::Chip23C1001 => 32,
             ChipType::Chip27C200 => 33,
-            _ => panic!("Unsupported Chip type for pre-V0.7.0 firmware {:?}", self.chip_type.resolved()),
+            _ => panic!(
+                "Unsupported Chip type for pre-V0.7.0 firmware {:?}",
+                self.chip_type.resolved()
+            ),
         }
     }
 }
@@ -1270,7 +1275,8 @@ impl ChipSet {
                 // chip data size.  For power-of-2 types this indicates an internal error.
                 assert!(
                     !self.chips[chip_index]
-                        .chip_type.resolved()
+                        .chip_type
+                        .resolved()
                         .size_bytes()
                         .is_power_of_two(),
                     "Transformed address {} out of bounds for power-of-2 chip type - internal error",

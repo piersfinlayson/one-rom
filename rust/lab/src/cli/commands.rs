@@ -7,7 +7,11 @@
 #[allow(unused_imports)]
 use log::{debug, error, info, trace, warn};
 
-use alloc::{format, string::{String, ToString}, vec::Vec};
+use alloc::{
+    format,
+    string::{String, ToString},
+    vec::Vec,
+};
 
 use embassy_futures::select::{Either, select};
 use embassy_time::Timer;
@@ -228,12 +232,10 @@ async fn cmd_chip_info(args: &mut Args<'_>, state: &mut SessionState) -> Result<
     let size_kb = size_bytes >> 10;
     let size_kb_str = if size_kb > 0 {
         format!("{} KB", size_kb)
+    } else if matches![chip, ChipType::Chip2704] {
+        "0.5 KB".to_string()
     } else {
-        if matches![chip, ChipType::Chip2704] {
-            format!("0.5 KB")
-        } else {
-            format!("0 KB")
-        }
+        "0 KB".to_string()
     };
 
     send_line("").await?;
@@ -375,12 +377,10 @@ async fn cmd_list_chips(state: &SessionState) -> Result<(), Error> {
             let size_kb = size_bytes >> 10;
             let size_kb_str = if size_kb > 0 {
                 format!("{} KB", size_kb)
+            } else if matches![chip, ChipType::Chip2704] {
+                "0.5 KB".to_string()
             } else {
-                if matches![chip, ChipType::Chip2704] {
-                    format!("0.5 KB")
-                } else {
-                    format!("0 KB")
-                }
+                "0 KB".to_string()
             };
             let mode_str = match chip.bit_modes() {
                 [8] => "8-bit",
@@ -584,11 +584,11 @@ async fn cmd_set_board(args: &mut Args<'_>, state: &mut SessionState) -> Result<
     let board = parser::require_board(args.next_token(), state.board, &mut state.editor).await?;
     state.board = Some(board);
     send_line(&format!("Board set to '{}'.", board.name())).await?;
-    if state.chip.is_none() {
-        if let Some(chip) = default_chip_for_board(board) {
-            state.chip = Some(chip);
-            send_line(&format!("Chip defaulted to '{}'.", chip.name())).await?;
-        }
+    if state.chip.is_none()
+        && let Some(chip) = default_chip_for_board(board)
+    {
+        state.chip = Some(chip);
+        send_line(&format!("Chip defaulted to '{}'.", chip.name())).await?;
     }
     Ok(())
 }

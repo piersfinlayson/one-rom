@@ -41,9 +41,9 @@ pub enum Error {
     InvalidCsPolarity,
 }
 
-impl Into<Error> for crate::usb::Error {
-    fn into(self) -> Error {
-        match self {
+impl From<crate::usb::Error> for Error {
+    fn from(err: crate::usb::Error) -> Error {
+        match err {
             crate::usb::Error::Disconnected => Error::UsbDisconnected,
             crate::usb::Error::Full => Error::UsbFull,
         }

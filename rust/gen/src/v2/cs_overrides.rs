@@ -787,7 +787,12 @@ mod tests {
             }],
         );
         // chip0: cs1 (select) and cs2 (commoned) both active_low.
-        let cs_config = CsConfig::new(Some(CsLogic::ActiveLow), Some(CsLogic::ActiveLow), None, None);
+        let cs_config = CsConfig::new(
+            Some(CsLogic::ActiveLow),
+            Some(CsLogic::ActiveLow),
+            None,
+            None,
+        );
         let secondary = CsConfig::new(Some(CsLogic::ActiveLow), None, None, None);
 
         let overrides = build_cs_overrides(&layout, ChipSetType::Multi, &cs_config, &[secondary]);
@@ -825,7 +830,12 @@ mod tests {
             }],
         );
         // cs1 (select) active_low -> invert; cs2 (commoned) active_high -> not.
-        let cs_config = CsConfig::new(Some(CsLogic::ActiveLow), Some(CsLogic::ActiveHigh), None, None);
+        let cs_config = CsConfig::new(
+            Some(CsLogic::ActiveLow),
+            Some(CsLogic::ActiveHigh),
+            None,
+            None,
+        );
         let secondary = CsConfig::new(Some(CsLogic::ActiveLow), None, None, None);
 
         let overrides = build_cs_overrides(&layout, ChipSetType::Multi, &cs_config, &[secondary]);

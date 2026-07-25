@@ -177,7 +177,10 @@ pub fn test_flash_slot_ext_info(emu: &Emulator, config: &Config) -> Result<(), S
             let info = match info {
                 Some(info) => info,
                 None => {
-                    errors.push(format!("slot {} rom {}: no ext info returned", i, rom_index));
+                    errors.push(format!(
+                        "slot {} rom {}: no ext info returned",
+                        i, rom_index
+                    ));
                     continue;
                 }
             };

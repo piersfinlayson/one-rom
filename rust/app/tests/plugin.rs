@@ -14,8 +14,8 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 
 use onerom_app::{
-    Catalogue, Error, LocalPluginFetch, PluginError, PluginType, PluginVersion,
-    ResolvedSource, parse_plugins, resolve_plugins,
+    Catalogue, Error, LocalPluginFetch, PluginError, PluginType, PluginVersion, ResolvedSource,
+    parse_plugins, resolve_plugins,
 };
 
 const BASE: &str = "https://images.onerom.org/plugins";

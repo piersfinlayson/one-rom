@@ -470,7 +470,9 @@ impl Schema {
         };
         for f in &s.fields {
             // Only single struct pointers form a resolvable single-value path.
-            if f.kind == "struct_ptr" && let Some(ty) = &f.type_ {
+            if f.kind == "struct_ptr"
+                && let Some(ty) = &f.type_
+            {
                 path.push(f.name.clone());
                 if self.find_struct_path(ty, target, visited, path) {
                     return true;

@@ -56,7 +56,9 @@ pub async fn cmd_scan(options: &Options, args: &args::scan::ScanArgs) -> Result<
                 .ok();
         } else {
             println!("  {d}");
-            if options.verbose && let Some(line) = d.mcu_chip_id_line() {
+            if options.verbose
+                && let Some(line) = d.mcu_chip_id_line()
+            {
                 println!("  {line}");
             }
         }

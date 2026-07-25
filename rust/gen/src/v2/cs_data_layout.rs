@@ -1287,7 +1287,7 @@ mod tests {
             Some(CsLogic::ActiveLow),
             Some(CsLogic::Ignore),
             Some(CsLogic::Ignore),
-            None
+            None,
         );
         let mcc = MultiChipCsConfig {
             per_chip_select: ControlLineKind::Cs1,
@@ -1333,7 +1333,7 @@ mod tests {
             Some(CsLogic::ActiveLow),
             Some(CsLogic::Ignore),
             Some(CsLogic::Ignore),
-            None
+            None,
         );
         let mcc = MultiChipCsConfig {
             per_chip_select: ControlLineKind::Cs1,
@@ -1391,7 +1391,7 @@ mod tests {
             Some(CsLogic::Ignore),
             Some(CsLogic::Ignore),
             Some(CsLogic::ActiveLow),
-            None
+            None,
         );
         let mcc = MultiChipCsConfig {
             per_chip_select: ControlLineKind::Cs3,

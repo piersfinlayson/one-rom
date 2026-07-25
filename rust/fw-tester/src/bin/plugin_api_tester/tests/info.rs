@@ -5,7 +5,7 @@
 //! Tests for firmware info queries: device version.
 
 use onerom_config::fw::FirmwareVersion;
-use onerom_fw_emulator::{ffi, Emulator, OraResult};
+use onerom_fw_emulator::{Emulator, OraResult, ffi};
 use onerom_gen::Config;
 
 /// Verify that get_device_version returns a string that matches the parsed

@@ -63,7 +63,7 @@ use core::fmt;
 #[allow(unused_imports)]
 use log::{debug, error, info, trace, warn};
 
-pub use device::{ParsedDevice, SlotKind, RomView, SlotView, Slots};
+pub use device::{ParsedDevice, RomView, SlotKind, SlotView, Slots};
 pub use info::{Sdrr, SdrrExtraInfo, SdrrInfo, SdrrPins, SdrrRomInfo, SdrrRomSet, SdrrRuntimeInfo};
 pub use lab::{LabFlash, LabParser, LabRam, OneRomLab};
 pub use onerom::{FirmwareFormat, OneRom};

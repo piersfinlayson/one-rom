@@ -103,7 +103,10 @@ fn print_release(options: &Options, release: &Release, fw_version: &Option<Firmw
         _ => "",
     };
     let min_fw = if options.verbose {
-        format!(" - requires One ROM firmware >= v{}", release.min_fw_version)
+        format!(
+            " - requires One ROM firmware >= v{}",
+            release.min_fw_version
+        )
     } else {
         String::new()
     };

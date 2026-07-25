@@ -51,6 +51,8 @@ jobs:
         
     - name: Install Rust
       uses: dtolnay/rust-toolchain@stable
+      with:
+        components: rustfmt, clippy
 
     - name: Install Rust wasm-pack
       run: cargo install wasm-pack
@@ -65,6 +67,11 @@ jobs:
 
     - name: Install wasm target
       run: rustup target add wasm32-unknown-emscripten
+
+    - name: Run Rust lint (rustfmt + clippy)
+      run: |
+        export TOOLCHAIN=/usr/bin
+        ci/rust-lint.sh
 
     - name: Run various Rust tests
       run: |

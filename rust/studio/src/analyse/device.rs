@@ -409,9 +409,9 @@ pub fn file_device_loaded(
 fn share_hw_info(analyse: &mut Analyse) -> Option<AppMessage> {
     // We have some information so share it
     analyse.fw_info.as_ref().map(|device| {
-        AppMessage::Studio(StudioMessage::HardwareInfo(Some(HardwareInfo::from_parsed(
-            device,
-        ))))
+        AppMessage::Studio(StudioMessage::HardwareInfo(Some(
+            HardwareInfo::from_parsed(device),
+        )))
     })
 }
 

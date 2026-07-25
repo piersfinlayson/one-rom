@@ -141,8 +141,8 @@ fn main() {
 
     // ── bindgen ──────────────────────────────────────────────────────────────
 
-    let mut builder = bindgen::Builder::default()
-        .header(manifest_dir.join("src/wrapper.h").to_str().unwrap());
+    let mut builder =
+        bindgen::Builder::default().header(manifest_dir.join("src/wrapper.h").to_str().unwrap());
 
     // When cross-compiling to wasm, cargo sets TARGET=wasm32-unknown-emscripten,
     // so libclang would parse the firmware headers for the wasm target and fail

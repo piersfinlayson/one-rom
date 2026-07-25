@@ -84,8 +84,8 @@ pub async fn dump(reader: &mut RomReader, start: usize, count: usize) -> Result<
 
         // Assert control lines, read one record's worth of bytes, deassert.
         reader.begin_read(8);
-        for i in 0..chunk_len {
-            chunk[i] = reader.read_byte_at(addr + i, 8);
+        for (i, byte) in chunk.iter_mut().enumerate().take(chunk_len) {
+            *byte = reader.read_byte_at(addr + i, 8);
         }
         reader.end_read();
 

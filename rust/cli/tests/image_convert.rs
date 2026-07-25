@@ -11,7 +11,9 @@ use std::path::Path;
 
 /// A deterministic, non-trivial test image.
 fn sample(len: usize) -> Vec<u8> {
-    (0..len).map(|i| (i.wrapping_mul(37) ^ 0x5A) as u8).collect()
+    (0..len)
+        .map(|i| (i.wrapping_mul(37) ^ 0x5A) as u8)
+        .collect()
 }
 
 fn convert(from: &str, to: &str, input: &Path, output: &Path, load_address: Option<&str>) {

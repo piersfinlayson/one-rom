@@ -52,12 +52,12 @@
 //! [`parse_errors`]: ParsedDevice::parse_errors
 //! [`ParsedDevice::parse_device`]: crate::Parser::parse_device
 
-#[cfg(feature = "std")]
-use std::borrow::Cow;
 #[cfg(not(feature = "std"))]
 use alloc::borrow::Cow;
 #[cfg(not(feature = "std"))]
 use alloc::string::{String, ToString};
+#[cfg(feature = "std")]
+use std::borrow::Cow;
 
 use onerom_config::fw::FirmwareVersion;
 use onerom_config::hw::Board;

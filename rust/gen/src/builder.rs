@@ -14,6 +14,7 @@ use onerom_metadata::{
     Pointer, RomSlotType, serialize,
 };
 
+use crate::image::requires_half_select_cs1;
 use crate::v2::firmware_config::{build_firmware_config, build_firmware_overrides};
 use crate::v2::hardware_info::build_hardware_info;
 use crate::v2::rom_image::build_rom_image;
@@ -29,7 +30,6 @@ use crate::{
     MIN_SUPPORTED_FIRMWARE_VERSION_V2, Metadata, SUPPORTED_CHIP_TYPES_V1, SUPPORTED_CHIP_TYPES_V2,
     UNSUPPORTED_FIRMWARE_VERSIONS_V1, UNSUPPORTED_FIRMWARE_VERSIONS_V2,
 };
-use crate::image::requires_half_select_cs1;
 
 /// Main Builder object
 ///
@@ -618,7 +618,8 @@ pub(crate) fn check_chip_sets(
 
             // Check filename specified for ROMs
             if chip.file.is_empty()
-                && chip.chip_type.resolved().chip_function() != onerom_config::chip::ChipFunction::Ram
+                && chip.chip_type.resolved().chip_function()
+                    != onerom_config::chip::ChipFunction::Ram
             {
                 return Err(Error::InvalidConfig {
                     error: format!("Chip {} file name is empty", chip_num),
@@ -626,7 +627,9 @@ pub(crate) fn check_chip_sets(
             }
 
             // Check all Chips in a bank are same type
-            if set.set_type == ChipSetType::Banked && chip.chip_type.resolved() != chip0.chip_type.resolved() {
+            if set.set_type == ChipSetType::Banked
+                && chip.chip_type.resolved() != chip0.chip_type.resolved()
+            {
                 return Err(Error::InvalidConfig {
                     error: format!(
                         "All Chips in a banked set must be of the same type ({} != {})",
@@ -724,12 +727,14 @@ pub(crate) fn check_cs_v1(config: &Config) -> Result<()> {
 
             // Check that invalid CS lines are NOT specified
             let has_cs2 = chip
-                .chip_type.resolved()
+                .chip_type
+                .resolved()
                 .control_lines()
                 .iter()
                 .any(|line| line.name == "cs2");
             let has_cs3 = chip
-                .chip_type.resolved()
+                .chip_type
+                .resolved()
                 .control_lines()
                 .iter()
                 .any(|line| line.name == "cs3");
@@ -770,7 +775,8 @@ pub(crate) fn check_cs_v1(config: &Config) -> Result<()> {
 
             // Check that the correct CS lines are specified for the Chip type
             let mut required_cs_lines: BTreeSet<&str> = chip
-                .chip_type.resolved()
+                .chip_type
+                .resolved()
                 .control_lines()
                 .iter()
                 .filter(|line| matches!(line.name, "cs1" | "cs2" | "cs3"))
@@ -898,7 +904,6 @@ pub(crate) fn check_cs_v1(config: &Config) -> Result<()> {
     Ok(())
 }
 
-
 /// V2 CS/CE/OE validation.
 ///
 /// Handles:
@@ -912,32 +917,34 @@ pub(crate) fn check_cs_v1(config: &Config) -> Result<()> {
 /// - Polarity consistency across chips in multi/banked sets
 pub(crate) fn check_cs_v2(config: &Config) -> Result<()> {
     use onerom_config::chip::ControlLineType;
- 
+
     for (set_id, set) in config.chip_sets.iter().enumerate() {
         // Plugin sets have no CS lines — skip
         if set.chips.iter().all(|c| c.chip_type.resolved().is_plugin()) {
             continue;
         }
- 
+
         for (chip_idx, chip) in set.chips.iter().enumerate() {
             if chip.chip_type.resolved().is_plugin() {
                 continue;
             }
- 
+
             let is_multi_secondary = set.set_type == ChipSetType::Multi && chip_idx > 0;
- 
+
             // ---- ce/oe fields only valid for chip types that have those lines ----
             let has_ce = chip
-                .chip_type.resolved()
+                .chip_type
+                .resolved()
                 .control_lines()
                 .iter()
                 .any(|l| l.name == "ce");
             let has_oe = chip
-                .chip_type.resolved()
+                .chip_type
+                .resolved()
                 .control_lines()
                 .iter()
                 .any(|l| l.name == "oe");
- 
+
             if chip.ce.is_some() && !has_ce {
                 return Err(Error::InvalidConfig {
                     error: format!(
@@ -958,7 +965,7 @@ pub(crate) fn check_cs_v2(config: &Config) -> Result<()> {
                     ),
                 });
             }
- 
+
             // ---- Both CE and OE may not both be Ignore ----
             let ce_logic = chip.ce.unwrap_or(CsLogic::ActiveLow);
             let oe_logic = chip.oe.unwrap_or(CsLogic::ActiveLow);
@@ -973,7 +980,7 @@ pub(crate) fn check_cs_v2(config: &Config) -> Result<()> {
                     ),
                 });
             }
- 
+
             // ---- Validate each CS line against the chip type ----
             //
             // A CS line's polarity is either mask-programmed at manufacture
@@ -996,15 +1003,16 @@ pub(crate) fn check_cs_v2(config: &Config) -> Result<()> {
                 ("cs3", chip.cs3),
                 ("cs4", chip.cs4),
             ];
- 
+
             for (name, user) in cs_values {
                 let spec = chip
-                    .chip_type.resolved()
+                    .chip_type
+                    .resolved()
                     .control_lines()
                     .iter()
                     .find(|l| l.name == name);
                 let virtual_cs1 = half_select_cs1 && name == "cs1";
- 
+
                 match (spec, user) {
                     // Line the chip doesn't have.
                     (None, Some(_)) if !virtual_cs1 => {
@@ -1064,7 +1072,7 @@ pub(crate) fn check_cs_v2(config: &Config) -> Result<()> {
                     _ => {}
                 }
             }
- 
+
             // ---- Ignore permission check ----
             //
             // Ignore is implicitly permitted:
@@ -1082,7 +1090,8 @@ pub(crate) fn check_cs_v2(config: &Config) -> Result<()> {
                 }
                 // (b) per-line allow_ignore in chip_types.json
                 let line_spec = chip
-                    .chip_type.resolved()
+                    .chip_type
+                    .resolved()
                     .control_lines()
                     .iter()
                     .find(|l| l.name == line_name);
@@ -1106,7 +1115,7 @@ pub(crate) fn check_cs_v2(config: &Config) -> Result<()> {
                     ),
                 })
             };
- 
+
             for (name, user) in cs_values {
                 if let Some(logic) = user {
                     check_ignore(name, logic)?;
@@ -1118,7 +1127,7 @@ pub(crate) fn check_cs_v2(config: &Config) -> Result<()> {
             if has_oe {
                 check_ignore("oe", oe_logic)?;
             }
- 
+
             // ---- CS ordering rules for configurable-CS chips ----
             // When allow_cs_ignore is NOT set, the natural expectation is that
             // CS lines are used from CS1 outward — e.g. CS1 only, or CS1+CS2,
@@ -1130,7 +1139,7 @@ pub(crate) fn check_cs_v2(config: &Config) -> Result<()> {
                 let cs2_active = chip.cs2.is_some_and(|l| l != CsLogic::Ignore);
                 let cs3_active = chip.cs3.is_some_and(|l| l != CsLogic::Ignore);
                 let cs4_active = chip.cs4.is_some_and(|l| l != CsLogic::Ignore);
- 
+
                 if !cs1_active && (cs2_active || cs3_active || cs4_active) {
                     return Err(Error::InvalidConfig {
                         error: alloc::format!(
@@ -1166,7 +1175,7 @@ pub(crate) fn check_cs_v2(config: &Config) -> Result<()> {
                 }
             }
         }
- 
+
         // ---- Multi set consistency validation ----
         //
         // For Multi sets with chips having N > 1 control lines, chips[1+]
@@ -1182,7 +1191,7 @@ pub(crate) fn check_cs_v2(config: &Config) -> Result<()> {
             let chip1 = &set.chips[1];
             let chip_type = chip1.chip_type.resolved();
             let control_lines = chip_type.control_lines();
- 
+
             let line_logic = |chip: &ChipConfig, name: &str| -> CsLogic {
                 match name {
                     "ce" => chip.ce.unwrap_or(CsLogic::ActiveLow),
@@ -1194,7 +1203,7 @@ pub(crate) fn check_cs_v2(config: &Config) -> Result<()> {
                     _ => CsLogic::ActiveLow,
                 }
             };
- 
+
             // Collect (name, logic) for all control lines of chips[1],
             // using defaults (ActiveLow) for unspecified lines.
             let line_logics: alloc::vec::Vec<(&str, CsLogic)> = control_lines
@@ -1202,14 +1211,14 @@ pub(crate) fn check_cs_v2(config: &Config) -> Result<()> {
                 .filter(|l| matches!(l.name, "ce" | "oe" | "cs1" | "cs2" | "cs3" | "cs4"))
                 .map(|l| (l.name, line_logic(chip1, l.name)))
                 .collect();
- 
+
             let num_lines = line_logics.len();
             let active: alloc::vec::Vec<&str> = line_logics
                 .iter()
                 .filter(|(_, l)| *l != CsLogic::Ignore)
                 .map(|(n, _)| *n)
                 .collect();
- 
+
             // For single-line chips, no ignores needed.
             if num_lines > 1 && active.len() != 1 {
                 return Err(Error::InvalidConfig {
@@ -1224,7 +1233,7 @@ pub(crate) fn check_cs_v2(config: &Config) -> Result<()> {
                     ),
                 });
             }
- 
+
             // All chips[1+] must agree on which lines are active/ignored.
             for (idx, chip) in set.chips.iter().enumerate().skip(2) {
                 for &(name, ref_logic) in &line_logics {
@@ -1245,7 +1254,7 @@ pub(crate) fn check_cs_v2(config: &Config) -> Result<()> {
                     }
                 }
             }
- 
+
             // Chip[0] must not ignore the per-chip select line.
             if let Some(&per_chip_select_name) = active.first() {
                 let chip0 = &set.chips[0];
@@ -1261,7 +1270,7 @@ pub(crate) fn check_cs_v2(config: &Config) -> Result<()> {
                 }
             }
         }
- 
+
         // ---- CS polarity consistency for Banked sets only ----
         //
         // All chips in a Banked set share the same physical CS line on the board,
@@ -1285,7 +1294,7 @@ pub(crate) fn check_cs_v2(config: &Config) -> Result<()> {
             }
         }
     }
- 
+
     Ok(())
 }
 
@@ -1295,7 +1304,8 @@ pub(crate) fn check_cs_v2(config: &Config) -> Result<()> {
 /// For configurable-CS chips: cs1.
 pub(crate) fn cs_primary_polarity(chip: &ChipConfig) -> Option<CsLogic> {
     let has_ce = chip
-        .chip_type.resolved()
+        .chip_type
+        .resolved()
         .control_lines()
         .iter()
         .any(|l| l.name == "ce");

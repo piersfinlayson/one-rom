@@ -456,7 +456,6 @@ impl Rp235xChipId {
         self.0
     }
 
-
     /// Parse from a 16-hex-digit USB serial string, as presented by the stock
     /// bootloader and by a running device with no serial override. Returns
     /// `None` if the string is not exactly 16 hex digits (e.g. it is a serial

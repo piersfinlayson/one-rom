@@ -491,10 +491,10 @@ impl Emulator {
         );
         let r = OraResult::from(r);
         let info = r.is_ok().then(|| {
-            let rom_type =
-                (!rom_type_ptr.is_null()).then(|| unsafe { std::ffi::CStr::from_ptr(rom_type_ptr) });
-            let filename =
-                (!filename_ptr.is_null()).then(|| unsafe { std::ffi::CStr::from_ptr(filename_ptr) });
+            let rom_type = (!rom_type_ptr.is_null())
+                .then(|| unsafe { std::ffi::CStr::from_ptr(rom_type_ptr) });
+            let filename = (!filename_ptr.is_null())
+                .then(|| unsafe { std::ffi::CStr::from_ptr(filename_ptr) });
             FlashSlotExtInfo {
                 rom_type,
                 filename,
@@ -578,8 +578,11 @@ impl Emulator {
         let r = OraResult::from(r);
         // An unset optional field is OK with a NULL pointer (None), distinct
         // from a non-OK result (e.g. NotSupported for an unknown key).
-        let s = (r.is_ok() && !ptr.is_null())
-            .then(|| unsafe { std::ffi::CStr::from_ptr(ptr) }.to_string_lossy().into_owned());
+        let s = (r.is_ok() && !ptr.is_null()).then(|| {
+            unsafe { std::ffi::CStr::from_ptr(ptr) }
+                .to_string_lossy()
+                .into_owned()
+        });
         (r, s)
     }
 

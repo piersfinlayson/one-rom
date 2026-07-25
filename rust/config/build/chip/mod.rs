@@ -193,13 +193,11 @@ pub fn build(manifest_path: &Path) {
 
     // Write src/chip/generated.rs
     let src_path = manifest_path.join("src").join(CHIP_GENERATED_RS_FILENAME);
-    fs::write(&src_path, &generated_code)
-        .unwrap_or_else(|e| panic!("Failed to write {}: {}", src_path.display(), e));
+    crate::fmt::write_rust(&src_path, &generated_code);
 
     // Write src/chip/mod.rs
     let mod_path = manifest_path.join("src").join(CHIP_MOD_RS_FILENAME);
-    fs::write(&mod_path, &lib_code)
-        .unwrap_or_else(|e| panic!("Failed to write {}: {}", mod_path.display(), e));
+    crate::fmt::write_rust(&mod_path, &lib_code);
 
     // Write docs/chip-types.md
     let docs_path = manifest_path

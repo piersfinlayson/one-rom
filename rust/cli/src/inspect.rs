@@ -167,7 +167,10 @@ pub async fn output_slot_info(
                     println!("    Firmware overrides:");
                     if let Some(led) = &overrides.led {
                         print!("{prefix}");
-                        println!("      Status LED: {}", if led.enabled { "on" } else { "off" });
+                        println!(
+                            "      Status LED: {}",
+                            if led.enabled { "on" } else { "off" }
+                        );
                     }
                     if let Some(fire) = &overrides.fire {
                         if let Some(freq) = fire.cpu_freq {
@@ -193,7 +196,10 @@ pub async fn output_slot_info(
                     }
                     if let Some(debug) = &overrides.swd {
                         print!("{prefix}");
-                        println!("      SWD: {}", if debug.swd_enabled { "on" } else { "off" });
+                        println!(
+                            "      SWD: {}",
+                            if debug.swd_enabled { "on" } else { "off" }
+                        );
                     }
                 }
 
@@ -238,7 +244,10 @@ pub async fn output_slot_info(
                         .addr()
                         .map(|a| format!("{a:#010x}"))
                         .unwrap_or_else(|| "(null)".to_string());
-                    println!("    Flash location {data_addr}  size {:#x} bytes", slot.size);
+                    println!(
+                        "    Flash location {data_addr}  size {:#x} bytes",
+                        slot.size
+                    );
                 }
 
                 #[allow(clippy::collapsible_if)]

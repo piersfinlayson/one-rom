@@ -380,7 +380,7 @@ pub fn run_mode(
         .iter()
         .filter(|cl| cl.commoned)
         .map(|cl| driver::ctrl_mask(std::slice::from_ref(cl), false))
-        .fold((0u64, 0u64), |acc, m| driver::merge(acc, m));
+        .fold((0u64, 0u64), driver::merge);
     let combo_const = driver::merge(const_mask, commoned_deasserted);
 
     let n = select_lines.len();
@@ -400,7 +400,7 @@ pub fn run_mode(
                 .iter()
                 .enumerate()
                 .map(|(i, cl)| driver::ctrl_mask(std::slice::from_ref(*cl), (combo >> i) & 1 == 1))
-                .fold((0u64, 0u64), |acc, m| driver::merge(acc, m));
+                .fold((0u64, 0u64), driver::merge);
             let phase = driver::merge(
                 driver::merge(driver::addr_mask(0, addr_gpios), ctrl),
                 combo_const,
@@ -476,6 +476,10 @@ fn log_bus_violation(
 
 /// Log a byte mismatch, capped at 5 per mode pass to avoid flooding the log
 /// for systematic failures.
+// Each argument is an independent piece of the mismatch context that has to be
+// rendered; grouping them into a struct would add ceremony without clarifying a
+// pure logging helper that is one over the lint's threshold.
+#[allow(clippy::too_many_arguments)]
 fn log_mismatch(
     set: usize,
     chip: usize,
