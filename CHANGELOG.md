@@ -34,6 +34,8 @@ To publish:
 - Studio 0.2.1
 - USB plugin 0.2.1
 - RGB plugin 0.1.2
+- WASM 0.5.0
+- Site
 
 ## v0.7.0 - 2026-07-20
 
