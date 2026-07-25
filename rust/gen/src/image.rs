@@ -136,6 +136,16 @@ impl FileFormat {
         matches!(self, FileFormat::Binary)
     }
 
+    /// A short human-readable label for this format, for UI display (e.g. a
+    /// format picker). Distinct from the serialised config value: this is
+    /// `"Intel HEX"`, the config value is `"ihex"`.
+    pub fn display_name(&self) -> &'static str {
+        match self {
+            FileFormat::Binary => "Binary",
+            FileFormat::IntelHex => "Intel HEX",
+        }
+    }
+
     /// Parses a format name case-insensitively, for command-line parsing.
     /// Accepts `binary`/`bin`/`raw` for [`FileFormat::Binary`] and
     /// `ihex`/`intel_hex`/`intel-hex`/`intelhex`/`hex` for
