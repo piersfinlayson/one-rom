@@ -105,3 +105,22 @@ async fn sub_main() -> Result<(), Error> {
         Commands::Boards(args) => board::cmd_boards(&options, args).await,
     }
 }
+
+#[cfg(test)]
+mod cli_assert {
+    use super::*;
+
+    /// Validate the whole clap command tree at test time.
+    ///
+    /// `debug_assert()` clones the command, propagates global arguments into
+    /// every subcommand, and runs clap's internal uniqueness checks - catching
+    /// misconfigurations such as a subcommand short option colliding with a
+    /// global one (e.g. `--input`'s `-i` clashing with the global `--vid-pid`
+    /// `-i`) that otherwise only surface as a panic when the offending
+    /// subcommand is invoked. Keep this test so such collisions fail CI rather
+    /// than reaching users.
+    #[test]
+    fn verify_cli() {
+        Cli::command().debug_assert();
+    }
+}

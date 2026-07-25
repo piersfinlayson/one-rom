@@ -2,6 +2,11 @@
 
 ## v0.3.0 - 2026-??-??
 
+- Fix `onerom image swap-bytes` panicking at startup (even for `--help`) with a
+  clap short-option collision: `-i` was claimed by both the global `--vid-pid`
+  and swap-bytes' `--input`. `--input`/`--output` are now long-only (aliases
+  `--in`/`--out` unchanged). Added a `verify_cli` test that runs clap's
+  `debug_assert()` over the whole command tree to catch such collisions in CI.
 - Add `onerom image convert --from <fmt> --to <fmt> --input <file> --output <file>
   [--load-address <addr>]`, converting ROM images between `binary` and `ihex`
   (Intel HEX). The format set is designed to accept further formats later.

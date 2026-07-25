@@ -783,8 +783,8 @@ onerom image swap-bytes --input kick.bin --output kick-swapped.bin
 
 | Option | Description |
 |---|---|
-| `--input, -i <FILE>` (alias `--in`) | Input ROM image file. |
-| `--output, -o <FILE>` (alias `--out`) | Output file path. |
+| `--input <FILE>` (alias `--in`) | Input ROM image file. |
+| `--output <FILE>` (alias `--out`) | Output file path. |
 
 Device required: no.
 

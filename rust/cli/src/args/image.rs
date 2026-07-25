@@ -58,11 +58,11 @@ pub enum ImageCommands {
 #[derive(Debug, Args)]
 pub struct ImageSwapBytesArgs {
     /// Input ROM image file.
-    #[arg(long, short, visible_alias = "in", value_name = "FILE")]
+    #[arg(long, visible_alias = "in", value_name = "FILE")]
     pub input: String,
 
     /// Output file path.
-    #[arg(long, short, visible_alias = "out", value_name = "FILE")]
+    #[arg(long, visible_alias = "out", value_name = "FILE")]
     pub output: String,
 }
 
