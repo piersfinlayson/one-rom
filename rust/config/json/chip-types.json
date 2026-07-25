@@ -41,7 +41,8 @@
             "rbcp_chip_type": 0,
             "supported": "0.4.4",
             "aliases": [
-                "9316"
+                "9316",
+                "9316A"
             ],
             "bit_modes": [8],
             "pins": 24,

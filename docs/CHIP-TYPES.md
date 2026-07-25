@@ -37,7 +37,7 @@ There are also some other inconsistencies between types:
 
 | Chip Type | Aliases | Size | Address Lines | Control Lines | Programming | Supported |
 |-----------|---------|------|---------------|---------------|-------------|-----------|
-| 2316 | 9316 | 2KB | 11 (A0-A10) | CS1 (pin 20), CS2 (pin 18), CS3 (pin 21) | None | ✓ |
+| 2316 | 9316, 9316A | 2KB | 11 (A0-A10) | CS1 (pin 20), CS2 (pin 18), CS3 (pin 21) | None | ✓ |
 | 2332 | 9332, 4732 | 4KB | 12 (A0-A11) | CS1 (pin 20), CS2 (pin 21) | None | ✓ |
 | 2364 | 4764, MCM68764, MCM68A764, MCM68364, MCM68A364, MM52164, MK36000 | 8KB | 13 (A0-A12) | CS1 (pin 20) | None | ✓ |
 
