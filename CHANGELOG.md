@@ -35,6 +35,7 @@ To publish:
   - onerom-gen 0.7.0
   - onerom-app 0.2.0
   - onerom-cli 0.3.0
+- Config schema
 - CLI bin 0.3.0
 - Studio 0.2.1
 - USB plugin 0.2.1
