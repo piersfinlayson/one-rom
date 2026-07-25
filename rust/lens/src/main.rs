@@ -189,6 +189,14 @@ pub extern "C" fn onerom_reset_cycle_count() {
     });
 }
 
+/// Current SYSCLK frequency in MHz, as reported by the running firmware.  A Lens
+/// cycle is a PIO cycle clocked from SYSCLK, so a duration in nanoseconds is
+/// `cycles * 1000 / sysclk_mhz`.  Returns 0 before the emulator is initialised.
+#[unsafe(no_mangle)]
+pub extern "C" fn onerom_get_sysclk_mhz() -> u32 {
+    LENS.with_borrow(|slot| slot.as_ref().map_or(0, |l| l.emu.sysclk_mhz()))
+}
+
 /// Read the current value on the data bus (`data_bits` least-significant bits).
 #[unsafe(no_mangle)]
 pub extern "C" fn onerom_read_data(data_bits: u32) -> u32 {

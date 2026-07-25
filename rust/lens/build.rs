@@ -166,6 +166,7 @@ const EXPORTS: &[&str] = &[
     "_onerom_read_driven_pins",
     "_onerom_get_cycle_count",
     "_onerom_reset_cycle_count",
+    "_onerom_get_sysclk_mhz",
     "_onerom_get_addr_pin",
     "_onerom_get_data_pin",
     "_onerom_lens_get_num_control_lines",

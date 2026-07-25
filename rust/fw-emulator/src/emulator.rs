@@ -603,6 +603,16 @@ impl Emulator {
             chip_type
         )
     }
+
+    /// Current SYSCLK frequency in MHz, as reported by the running firmware
+    /// (`ORA_ID_GET_SYSCLK_MHZ`).  The PIO — and hence a Lens cycle — is clocked
+    /// from SYSCLK, so this is the divisor for converting cycles to real time.
+    pub fn sysclk_mhz(&self) -> u32 {
+        plugin_call!(
+            ffi::api_id_t_ORA_ID_GET_SYSCLK_MHZ,
+            ffi::ora_get_sysclk_mhz_fn_t
+        )
+    }
 }
 
 impl Drop for Emulator {

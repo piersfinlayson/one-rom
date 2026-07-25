@@ -32,6 +32,11 @@ const CONFIG = {
     HEX_TRACE_HEIGHT: 24,            // Height of hex summary traces
     FONT_SIZE: 12,                   // Font size for labels and hex values
     LABEL_WIDTH: 60,                 // Width reserved for signal labels
+
+    // Graduation ticks: when zoomed in far enough to distinguish individual
+    // cycles, mark each cycle boundary with a short tick off the trace line.
+    GRADUATION_MAX_CYCLES_PER_PIXEL: 0.2,  // Only show ticks at/below this zoom
+    GRADUATION_TICK: 6,                    // Tick length in pixels
     
     // Execution
     DEFAULT_SPEED: 100,              // Default cycles per frame
@@ -39,14 +44,15 @@ const CONFIG = {
     // Auto-scroll margin (pixels from right edge where we start scrolling)
     AUTOSCROLL_MARGIN: 100,
 
-    // Cursor
-    CURSOR_VALUE_FONT_SIZE: 20,     // Font size for cursor value display
-    CURSOR_VALUE_OFFSET_X: 20,      // Horizontal offset from cursor line
-    CURSOR_VALUE_OFFSET_Y: -0.5,       // Vertical offset above trace (as fraction of trace height)
-    CURSOR_VALUE_COLOR: '#000000',  // Color for cursor values};
-    CURSOR_VALUE_TEXT_COLOR: '#ffffff',  // Color for cursor values
-    CURSOR_VALUE_PADDING_X: 2,      // Horizontal padding around cursor value text
-    CURSOR_VALUE_PADDING_Y: 2,      // Vertical padding around cursor value text
+    // Cursor readout
+    CURSOR_LINE_COLOR: '#ffffff',   // Vertical cursor line
+    CURSOR_LINE_DASH: [1, 7],       // Cursor line dash pattern
+    CURSOR_BIT_FONT_SIZE: 12,       // Compact per-bit value at each trace's row
+    CURSOR_SUMMARY_FONT_SIZE: 13,   // Cursor summary readout (cycle / time / bus)
+    CURSOR_VALUE_COLOR: '#000000',  // Background behind cursor readouts
+    CURSOR_VALUE_TEXT_COLOR: '#ffffff',  // Cursor summary text
+    CURSOR_VALUE_PADDING_X: 2,      // Horizontal padding around cursor readouts
+    CURSOR_VALUE_PADDING_Y: 2,      // Vertical padding around cursor readouts
     CURSOR_VALUE_HEIGHT_MULTIPLIER: 1.3,  // Account for font ascenders
 
     // Time axis
@@ -181,6 +187,12 @@ class WASMModule {
 
     epioResetCycleCount() {
         this.module.ccall('onerom_reset_cycle_count', null, [], []);
+    }
+
+    // SYSCLK frequency in MHz reported by the firmware. A Lens cycle is a PIO
+    // cycle clocked from SYSCLK, so nanoseconds = cycles * 1000 / this.
+    oneromGetSysclkMhz() {
+        return this.module.ccall('onerom_get_sysclk_mhz', 'number', [], []);
     }
 
     epioReadPinStates() {
@@ -593,6 +605,7 @@ class WaveformRenderer {
         this.cyclesPerPixel = CONFIG.CYCLES_PER_PIXEL_DEFAULT;
         this.scrollPos = 0;  // In cycles
         this.autoScroll = true;
+        this.sysclkMhz = 0;  // Firmware SYSCLK in MHz; 0 = unknown (cycles only)
         
         // Signal group visibility
         this.showAddr = true;
@@ -611,6 +624,7 @@ class WaveformRenderer {
         this.dataExpanded = true;
         
         this.cursorX = null;  // Mouse X position for cursor
+        this.cursorY = null;  // Mouse Y position (summary readout follows it)
         this.cursorCycle = null;  // Cycle at cursor position
         this.currentLayout = [];  // Calculated layout of traces for current decoder
 
@@ -620,12 +634,10 @@ class WaveformRenderer {
     
     loadColors() {
         COLORS.background = getCSSColor('--color-background');
-        COLORS.grid = getCSSColor('--color-grid');
         COLORS.high = getCSSColor('--color-high');
         COLORS.low = getCSSColor('--color-low');
-        COLORS.smearedHigh = getCSSColor('--color-smeared-high');
-        COLORS.smearedLow = getCSSColor('--color-smeared-low');
         COLORS.smearedHatch = getCSSColor('--color-smeared-hatch');
+        COLORS.duration = getCSSColor('--color-duration');
         COLORS.hex = getCSSColor('--color-hex');
         COLORS.label = getCSSColor('--color-label');
         COLORS.groupBg = getCSSColor('--color-group-bg');
@@ -859,45 +871,36 @@ class WaveformRenderer {
             if (currentX > canvasEndX) break;
             
             if (previousState !== null && previousX !== null) {
-                // Draw horizontal line from previous to current
-                this.ctx.beginPath();
-                
+                const segStartX = Math.max(CONFIG.LABEL_WIDTH, previousX);
+
+                // Horizontal level (driven) or mid-line (High-Z), coloured by
+                // level; a graduation tick marks the cycle boundary at its start.
                 if (previousDriven) {
-                    // Driven - draw at HIGH or LOW
-                    this.ctx.strokeStyle = COLORS.high;
                     const y = previousState ? yHigh : yLow;
-                    this.ctx.moveTo(Math.max(CONFIG.LABEL_WIDTH, previousX), y);
-                    this.ctx.lineTo(currentX, y);
-                } else {
-                    // High-Z - draw at middle level
-                    this.ctx.strokeStyle = COLORS.smearedHatch;
-                    const yMid = trace.y + trace.height / 2;
-                    this.ctx.moveTo(Math.max(CONFIG.LABEL_WIDTH, previousX), yMid);
-                    this.ctx.lineTo(currentX, yMid);
-                }
-                
-                this.ctx.stroke();
-                
-                // If drive state or level changed, draw transition
-                if (isDriven !== previousDriven || (isDriven && currentState !== previousState)) {
+                    this.ctx.strokeStyle = previousState ? COLORS.high : COLORS.low;
                     this.ctx.beginPath();
-                    this.ctx.strokeStyle = COLORS.high;
-                    
-                    // Calculate previous and current Y positions
-                    let prevY, currY;
-                    
-                    if (previousDriven) {
-                        prevY = previousState ? yHigh : yLow;
-                    } else {
-                        prevY = trace.y + trace.height / 2; // yMid
-                    }
-                    
-                    if (isDriven) {
-                        currY = currentState ? yHigh : yLow;
-                    } else {
-                        currY = trace.y + trace.height / 2; // yMid
-                    }
-                    
+                    this.ctx.moveTo(segStartX, y);
+                    this.ctx.lineTo(currentX, y);
+                    this.ctx.stroke();
+                    this.drawGraduationTick(segStartX, y, previousState ? 1 : -1);
+                } else {
+                    const yMid = trace.y + trace.height / 2;
+                    this.ctx.strokeStyle = COLORS.smearedHatch;
+                    this.ctx.beginPath();
+                    this.ctx.moveTo(segStartX, yMid);
+                    this.ctx.lineTo(currentX, yMid);
+                    this.ctx.stroke();
+                    this.drawGraduationTick(segStartX, yMid, 0);
+                }
+
+                // Vertical transition edge on drive/level change - neutral grey
+                if (isDriven !== previousDriven || (isDriven && currentState !== previousState)) {
+                    const prevY = previousDriven
+                        ? (previousState ? yHigh : yLow) : trace.y + trace.height / 2;
+                    const currY = isDriven
+                        ? (currentState ? yHigh : yLow) : trace.y + trace.height / 2;
+                    this.ctx.strokeStyle = COLORS.smearedHatch;
+                    this.ctx.beginPath();
                     this.ctx.moveTo(currentX, prevY);
                     this.ctx.lineTo(currentX, currY);
                     this.ctx.stroke();
@@ -913,23 +916,68 @@ class WaveformRenderer {
         if (previousState !== null && previousX !== null && previousX < canvasEndX) {
             const lastSampleX = this.cycleToPixelX(samples[samples.length - 1].cycle);
             if (lastSampleX > previousX) {
-                this.ctx.beginPath();
                 if (previousDriven) {
-                    this.ctx.strokeStyle = COLORS.high;
                     const y = previousState ? yHigh : yLow;
+                    this.ctx.strokeStyle = previousState ? COLORS.high : COLORS.low;
+                    this.ctx.beginPath();
                     this.ctx.moveTo(previousX, y);
                     this.ctx.lineTo(Math.min(lastSampleX, canvasEndX), y);
+                    this.ctx.stroke();
+                    this.drawGraduationTick(previousX, y, previousState ? 1 : -1);
                 } else {
-                    this.ctx.strokeStyle = COLORS.smearedHatch;
                     const yMid = trace.y + trace.height / 2;
+                    this.ctx.strokeStyle = COLORS.smearedHatch;
+                    this.ctx.beginPath();
                     this.ctx.moveTo(previousX, yMid);
                     this.ctx.lineTo(Math.min(lastSampleX, canvasEndX), yMid);
+                    this.ctx.stroke();
+                    this.drawGraduationTick(previousX, yMid, 0);
                 }
-                this.ctx.stroke();
             }
         }
     }
-    
+
+    // Draw a short cycle-boundary graduation tick at x, off a trace line at y,
+    // but only when zoomed in far enough to distinguish cycles. `dir` points the
+    // tick into the trace: +1 down (below a HIGH line), -1 up (above a LOW line),
+    // 0 centred (High-Z mid-line). Inherits the caller's current strokeStyle.
+    drawGraduationTick(x, y, dir) {
+        if (this.cyclesPerPixel >= CONFIG.GRADUATION_MAX_CYCLES_PER_PIXEL) return;
+        const t = CONFIG.GRADUATION_TICK;
+        this.ctx.beginPath();
+        if (dir === 0) {
+            this.ctx.moveTo(x, y - t / 2);
+            this.ctx.lineTo(x, y + t / 2);
+        } else {
+            this.ctx.moveTo(x, y);
+            this.ctx.lineTo(x, y + dir * t);
+        }
+        this.ctx.stroke();
+    }
+
+    // Format a held-value duration for a hex region: cycle count, plus real time
+    // in nanoseconds when the firmware clock is known (sysclkMhz > 0).
+    formatDuration(cycles) {
+        const c = Math.round(cycles);
+        if (this.sysclkMhz > 0) {
+            return `${c}cy ${Math.round(c * 1000 / this.sysclkMhz)}ns`;
+        }
+        return `${c}cy`;
+    }
+
+    // Draw a stable hex region at x: its value on the upper line and, below it,
+    // how long the value is held (see formatDuration). Shared by the mid-stream
+    // and final-region paths of renderHexTrace.
+    drawHexValue(trace, x, hexStr, durationCycles) {
+        this.ctx.font = `${CONFIG.FONT_SIZE}px monospace`;
+        this.ctx.textAlign = 'left';
+        this.ctx.textBaseline = 'middle';
+        this.ctx.fillStyle = COLORS.hex;
+        this.ctx.fillText(hexStr, x, trace.y + trace.height / 4);
+        this.ctx.fillStyle = COLORS.duration;
+        this.ctx.fillText(this.formatDuration(durationCycles), x, trace.y + trace.height * 3 / 4);
+    }
+
     // Render hex summary trace
     renderHexTrace(trace, samples, decoder, type, waveformWidth) {
         if (samples.length === 0) return;
@@ -937,31 +985,37 @@ class WaveformRenderer {
         const bits = type === 'addr' ? decoder.pinMap.addr : decoder.pinMap.data;
         const canvasEndX = CONFIG.LABEL_WIDTH + waveformWidth;
         
-        // Track value changes
+        const hexStrOf = (value) => '0x' + value.toString(16).toUpperCase().padStart(
+            Math.ceil(bits.length / 4), '0');
+
+        // Track value changes. stableStartCycle lets us report the exact held
+        // duration in cycles, independent of any left-edge clipping of the region.
         let previousValue = null;
         let previousX = null;
         let stableStartX = null;
+        let stableStartCycle = null;
         let stableValue = null;
-        
+
         for (let i = 0; i < samples.length; i++) {
             const sample = samples[i];
-            const currentValue = type === 'addr' ? 
-                decoder.decodeAddress(sample.gpios) : 
+            const currentValue = type === 'addr' ?
+                decoder.decodeAddress(sample.gpios) :
                 decoder.decodeData(sample.gpios);
             const currentX = this.cycleToPixelX(sample.cycle);
-            
+
             // Skip if off-screen to the left
             if (currentX < CONFIG.LABEL_WIDTH) {
                 previousValue = currentValue;
                 previousX = currentX;
                 stableValue = currentValue;
                 stableStartX = currentX;
+                stableStartCycle = sample.cycle;
                 continue;
             }
-            
+
             // Stop if off-screen to the right
             if (currentX > canvasEndX) break;
-            
+
             if (previousValue !== null) {
                 if (currentValue === previousValue) {
                     // Value still stable, continue
@@ -970,18 +1024,12 @@ class WaveformRenderer {
                     if (stableValue !== null && stableStartX !== null) {
                         const regionWidth = currentX - Math.max(CONFIG.LABEL_WIDTH, stableStartX);
                         if (regionWidth > 30) {  // Only draw if wide enough
-                            const hexStr = '0x' + stableValue.toString(16).toUpperCase().padStart(
-                                Math.ceil(bits.length / 4), '0');
-                            this.ctx.fillStyle = COLORS.hex;
-                            this.ctx.font = `${CONFIG.FONT_SIZE}px monospace`;
-                            this.ctx.textAlign = 'left';
-                            this.ctx.textBaseline = 'middle';
-                            this.ctx.fillText(hexStr, 
-                                Math.max(CONFIG.LABEL_WIDTH + 2, stableStartX), 
-                                trace.y + trace.height / 2);
+                            const durationCycles = Number(sample.cycle) - Number(stableStartCycle);
+                            this.drawHexValue(trace, Math.max(CONFIG.LABEL_WIDTH + 2, stableStartX),
+                                hexStrOf(stableValue), durationCycles);
                         }
                     }
-                    
+
                     // Draw transition marker (vertical line)
                     this.ctx.strokeStyle = COLORS.smearedHatch;
                     this.ctx.lineWidth = 1;
@@ -989,141 +1037,134 @@ class WaveformRenderer {
                     this.ctx.moveTo(currentX, trace.y + 2);
                     this.ctx.lineTo(currentX, trace.y + trace.height - 2);
                     this.ctx.stroke();
-                    
+
                     // Start new stable region
                     stableStartX = currentX;
+                    stableStartCycle = sample.cycle;
                     stableValue = currentValue;
                 }
             } else {
                 // First sample
                 stableStartX = currentX;
+                stableStartCycle = sample.cycle;
                 stableValue = currentValue;
             }
-            
+
             previousValue = currentValue;
             previousX = currentX;
         }
-        
+
         // Draw final stable region
         if (stableValue !== null && stableStartX !== null && stableStartX < canvasEndX) {
             const regionWidth = canvasEndX - Math.max(CONFIG.LABEL_WIDTH, stableStartX);
             if (regionWidth > 30) {
                 // Don't draw if too close to the end (right-hand value will show it)
-                const lastSampleX = this.cycleToPixelX(samples[samples.length - 1].cycle);
+                const lastSample = samples[samples.length - 1];
+                const lastSampleX = this.cycleToPixelX(lastSample.cycle);
                 const tooCloseToEnd = stableStartX > lastSampleX - 150;  // 150px margin
-                
+
                 if (!tooCloseToEnd) {
-                    const hexStr = '0x' + stableValue.toString(16).toUpperCase().padStart(
-                        Math.ceil(bits.length / 4), '0');
-                    this.ctx.fillStyle = COLORS.hex;
-                    this.ctx.font = `${CONFIG.FONT_SIZE}px monospace`;
-                    this.ctx.textAlign = 'left';
-                    this.ctx.textBaseline = 'middle';
-                    this.ctx.fillText(hexStr, 
-                        Math.max(CONFIG.LABEL_WIDTH + 2, stableStartX), 
-                        trace.y + trace.height / 2);
+                    const durationCycles = Number(lastSample.cycle) - Number(stableStartCycle);
+                    this.drawHexValue(trace, Math.max(CONFIG.LABEL_WIDTH + 2, stableStartX),
+                        hexStrOf(stableValue), durationCycles);
                 }
             }
         }
     }
 
+    // Time at an absolute cycle, using the firmware clock (see sysclkMhz).
+    // Adaptive units; empty string when the clock is unknown.
+    formatTimeAtCycle(cycle) {
+        if (this.sysclkMhz <= 0) return '';
+        const ns = Number(cycle) * 1000 / this.sysclkMhz;
+        if (ns < 1000) return `${ns.toFixed(0)}ns`;
+        if (ns < 1e6) return `${(ns / 1000).toFixed(2)}us`;
+        return `${(ns / 1e6).toFixed(3)}ms`;
+    }
+
     renderCursor(sampleBuffer, decoder, layout) {
         if (this.cursorX === null || this.cursorCycle === null) return;
-        
-        // Draw vertical line
-        this.ctx.strokeStyle = '#ffffff';
+
+        // Vertical cursor line
+        this.ctx.strokeStyle = CONFIG.CURSOR_LINE_COLOR;
         this.ctx.lineWidth = 1;
-        this.ctx.setLineDash([4, 4]);
+        this.ctx.setLineDash(CONFIG.CURSOR_LINE_DASH);
         this.ctx.beginPath();
         this.ctx.moveTo(this.cursorX, 0);
         this.ctx.lineTo(this.cursorX, this.canvas.height);
         this.ctx.stroke();
         this.ctx.setLineDash([]);
-        
-        // Find sample at cursor position
+
+        // Sample under the cursor
         const samples = sampleBuffer.getSamplesInRange(this.cursorCycle, this.cursorCycle + 1n);
         if (samples.length === 0) return;
-        
         const sample = samples[0];
-        
-        // Display values for each trace - above and to the right
-        this.ctx.font = `${CONFIG.CURSOR_VALUE_FONT_SIZE}px monospace`;
+
+        // Per-bit values: compact, inline at each trace's own row just right of
+        // the cursor line, coloured by level (Z = High-Z). Hex rows are omitted
+        // here - the address/data bus is summarised in the readout below.
+        this.ctx.font = `${CONFIG.CURSOR_BIT_FONT_SIZE}px monospace`;
         this.ctx.textAlign = 'left';
-        this.ctx.textBaseline = 'top';
-        
-        const valueX = this.cursorX + CONFIG.CURSOR_VALUE_OFFSET_X;
-
+        this.ctx.textBaseline = 'middle';
+        const bitX = this.cursorX + CONFIG.CURSOR_VALUE_PADDING_X + 2;
         for (const trace of layout) {
-            let valueText = '';
-            
-            if (trace.type === 'addr_hex') {
-                const addr = decoder.decodeAddress(sample.gpios);
-                valueText = '0x' + addr.toString(16).toUpperCase().padStart(
-                    Math.ceil(decoder.pinMap.addr.length / 4), '0');
-            } else if (trace.type === 'data_hex') {
-                const data = decoder.decodeData(sample.gpios);
-                const ascii = byteToASCII(data);
-                valueText = '0x' + data.toString(16).toUpperCase().padStart(
-                    Math.ceil(decoder.pinMap.data.length / 4), '0') + ` ${ascii}`;
-            } else if (trace.type === 'addr_bit') {
-                const pinNum = decoder.pinMap.addr[trace.bit];
-                const isDriven = decoder.isPinDriven(sample.driven, pinNum);
-                const val = isDriven ? decoder.extractBit(sample.gpios, pinNum).toString() : 'High-Z';
-                valueText = trace.label + ': ' + val;
-            } else if (trace.type === 'data_bit') {
-                const pinNum = decoder.pinMap.data[trace.bit];
-                const isDriven = decoder.isPinDriven(sample.driven, pinNum);
-                const val = isDriven ? decoder.extractBit(sample.gpios, pinNum).toString() : 'High-Z';
-                valueText = trace.label + ': ' + val;
-            } else if (trace.type === 'control') {
-                const pinNum = decoder.pinMap.control[trace.signal];
-                const isDriven = decoder.isPinDriven(sample.driven, pinNum);
-                const val = isDriven ? decoder.extractBit(sample.gpios, pinNum).toString() : 'High-Z';
-                valueText = trace.label + ': ' + val;
-            }
-            
-            if (valueText) {
-                // Draw background for readability
-                const textWidth = this.ctx.measureText(valueText).width;
-                const textHeight = CONFIG.CURSOR_VALUE_FONT_SIZE * CONFIG.CURSOR_VALUE_HEIGHT_MULTIPLIER;
+            let pinNum;
+            if (trace.type === 'addr_bit') pinNum = decoder.pinMap.addr[trace.bit];
+            else if (trace.type === 'data_bit') pinNum = decoder.pinMap.data[trace.bit];
+            else if (trace.type === 'control') pinNum = decoder.pinMap.control[trace.signal];
+            else continue;
 
-                const valueY = trace.y - (trace.height * CONFIG.CURSOR_VALUE_OFFSET_Y) - textHeight;
-                
-                this.ctx.fillStyle = CONFIG.CURSOR_VALUE_COLOR;
-                this.ctx.fillRect(
-                    valueX - CONFIG.CURSOR_VALUE_PADDING_X, 
-                    valueY - CONFIG.CURSOR_VALUE_PADDING_Y,  // Start at text position
-                    textWidth + (CONFIG.CURSOR_VALUE_PADDING_X * 2), 
-                    textHeight + (CONFIG.CURSOR_VALUE_PADDING_Y * 2)
-                );
-                
-                this.ctx.fillStyle = CONFIG.CURSOR_VALUE_TEXT_COLOR;
-                this.ctx.fillText(valueText, valueX, valueY + 2 * CONFIG.CURSOR_VALUE_PADDING_Y);
-            }
+            const bit = decoder.isPinDriven(sample.driven, pinNum)
+                ? decoder.extractBit(sample.gpios, pinNum) : null;
+            const text = bit === null ? 'Z' : bit.toString();
+            const color = bit === null ? COLORS.smearedHatch : (bit ? COLORS.high : COLORS.low);
+            const y = trace.y + trace.height / 2;
+            const w = this.ctx.measureText(text).width;
+
+            // Small backing box keeps the value legible over the waveform
+            this.ctx.fillStyle = CONFIG.CURSOR_VALUE_COLOR;
+            this.ctx.fillRect(bitX - CONFIG.CURSOR_VALUE_PADDING_X,
+                y - CONFIG.CURSOR_BIT_FONT_SIZE / 2 - 1,
+                w + CONFIG.CURSOR_VALUE_PADDING_X * 2, CONFIG.CURSOR_BIT_FONT_SIZE + 2);
+            this.ctx.fillStyle = color;
+            this.ctx.fillText(text, bitX, y);
         }
 
-        // Draw cycle number at top left of cursor
-        this.ctx.textAlign = 'right';  // Right-align so it ends at cursor
+        // Summary readout: cycle, real time, and the address/data bus at this
+        // cycle. Placed left of the cursor line (so it clears the inline bit
+        // values on the right) and follows the mouse Y, clamped on-screen.
+        const addr = decoder.decodeAddress(sample.gpios);
+        const data = decoder.decodeData(sample.gpios);
+        const addrHex = '0x' + addr.toString(16).toUpperCase().padStart(
+            Math.ceil(decoder.pinMap.addr.length / 4), '0');
+        const dataHex = '0x' + data.toString(16).toUpperCase().padStart(
+            Math.ceil(decoder.pinMap.data.length / 4), '0');
+        const time = this.formatTimeAtCycle(this.cursorCycle);
+        const lines = [`Cycle ${this.cursorCycle.toString()}`];
+        if (time) lines.push(time);
+        lines.push(`A=${addrHex}`);
+        lines.push(`D=${dataHex} ${byteToASCII(data)}`);
+
+        this.ctx.font = `${CONFIG.CURSOR_SUMMARY_FONT_SIZE}px monospace`;
+        this.ctx.textAlign = 'right';
+        this.ctx.textBaseline = 'top';
+        const lineH = CONFIG.CURSOR_SUMMARY_FONT_SIZE * CONFIG.CURSOR_VALUE_HEIGHT_MULTIPLIER;
+        const boxW = Math.max(...lines.map(l => this.ctx.measureText(l).width));
+        const boxH = lines.length * lineH;
+        const boxRight = this.cursorX - CONFIG.CURSOR_VALUE_PADDING_X - 2;
+        // Stack the lines, centred on the mouse Y, clamped on-screen
+        let top = (this.cursorY ?? 0) - boxH / 2;
+        top = Math.max(0, Math.min(top, this.canvas.height - boxH));
+
         this.ctx.fillStyle = CONFIG.CURSOR_VALUE_COLOR;
-        const cycleText = 'Cycle: ' + this.cursorCycle.toString();
-        const cycleTextWidth = this.ctx.measureText(cycleText).width;
-        const cycleTextHeight = CONFIG.CURSOR_VALUE_FONT_SIZE * CONFIG.CURSOR_VALUE_HEIGHT_MULTIPLIER;
-
-        const cycleX = this.cursorX - CONFIG.CURSOR_VALUE_OFFSET_X;  // Left of cursor
-        const cycleY = CONFIG.CURSOR_VALUE_PADDING_Y;
-
-        this.ctx.fillRect(
-            cycleX - cycleTextWidth - CONFIG.CURSOR_VALUE_PADDING_X,
-            cycleY - CONFIG.CURSOR_VALUE_PADDING_Y,
-            cycleTextWidth + (CONFIG.CURSOR_VALUE_PADDING_X * 2),
-            cycleTextHeight + (CONFIG.CURSOR_VALUE_PADDING_Y * 2)
-        );
-
+        this.ctx.fillRect(boxRight - boxW - CONFIG.CURSOR_VALUE_PADDING_X, top,
+            boxW + CONFIG.CURSOR_VALUE_PADDING_X * 2, boxH + CONFIG.CURSOR_VALUE_PADDING_Y);
         this.ctx.fillStyle = CONFIG.CURSOR_VALUE_TEXT_COLOR;
-        this.ctx.fillText(cycleText, cycleX, cycleY + 2 * CONFIG.CURSOR_VALUE_PADDING_Y);
+        lines.forEach((line, i) => {
+            this.ctx.fillText(line, boxRight, top + CONFIG.CURSOR_VALUE_PADDING_Y + i * lineH);
+        });
 
-        // Reset text align for trace values
-        this.ctx.textAlign = 'left';
+        this.ctx.textAlign = 'left';  // restore default
     }
 
     renderTimeAxis(waveformWidth) {
@@ -1266,6 +1307,13 @@ class AnalyzerController {
         const canvas = document.getElementById('waveform');
         this.renderer = new WaveformRenderer(canvas);
         this.renderer.resize();
+
+        // Read the firmware's SYSCLK once. A Lens cycle is a PIO cycle clocked
+        // from SYSCLK, so the renderer uses this to convert cycle counts to real
+        // time. Fixed for a given build, so it never needs re-reading.
+        this.renderer.sysclkMhz = this.wasm.oneromGetSysclkMhz();
+        document.getElementById('sysclk').textContent =
+            this.renderer.sysclkMhz > 0 ? `${this.renderer.sysclkMhz} MHz` : 'unknown';
 
         // Read initial visibility state from HTML
         this.renderer.showAddr = document.getElementById('toggleAddr').checked;
@@ -1500,6 +1548,7 @@ class AnalyzerController {
             else if (x > CONFIG.LABEL_WIDTH) {
                 tooltip.style.display = 'none';
                 this.renderer.cursorX = x;
+                this.renderer.cursorY = y;
                 // Calculate which cycle the cursor is over
                 const cycleOffset = (x - CONFIG.LABEL_WIDTH + this.renderer.scrollPos) * this.renderer.cyclesPerPixel;
                 this.renderer.cursorCycle = BigInt(Math.floor(cycleOffset));
