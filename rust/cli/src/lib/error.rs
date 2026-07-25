@@ -215,6 +215,9 @@ pub enum Error {
         "Plugin '{0}' version '{1}' is not compatible with firmware {2} or later.\n  The selected firmware version is {3}."
     )]
     PluginIncompatibleNewer(String, PluginVersion, FirmwareVersion, FirmwareVersion),
+
+    #[error("Failed to decode Intel HEX from '{0}':\n  {1}")]
+    IhexDecode(String, String),
 }
 
 impl Error {

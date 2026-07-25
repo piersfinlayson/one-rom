@@ -4,6 +4,14 @@
 
 //! One ROM Lab - Intel HEX output
 //!
+//! This is a deliberate duplicate of `onerom_gen::encode_ihex`: lab is
+//! embedded (`no_std`, `thumbv8m`) and streams records over USB one at a time
+//! from stack buffers, so it cannot use gen's whole-image, allocating encoder.
+//! **Both must emit byte-for-byte identical output.** `onerom-gen`'s
+//! `ihex::tests::encode_matches_expected_wire_format` pins that exact wire
+//! format (leading type-04 record, 16-byte data records, uppercase hex, CRLF,
+//! EOF); any change to the format here must be mirrored there, and vice versa.
+//!
 //! Produces standard Intel HEX with 16-byte data records (`:10...`).
 //! Extended linear address records (type 04) are emitted whenever the upper
 //! 16 bits of the byte address change, including before the first record.

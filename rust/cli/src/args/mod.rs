@@ -50,7 +50,7 @@ use firmware::{
     FirmwareArgs, FirmwareBuildArgs, FirmwareChipsArgs, FirmwareCommands, FirmwareDownloadArgs,
     FirmwareInspectArgs, FirmwareReleasesArgs,
 };
-use image::{ImageArgs, ImageCommands, ImageSwapBytesArgs};
+use image::{ImageArgs, ImageCommands, ImageConvertArgs, ImageSwapBytesArgs};
 use inspect::{
     InspectArgs, InspectCommands, InspectGpioArgs, InspectImageArgs, InspectInfoArgs,
     InspectPeekArgs, InspectPeekCommands, InspectPeekLiveArgs, InspectPeekMemoryArgs,

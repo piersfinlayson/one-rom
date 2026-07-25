@@ -21,7 +21,7 @@ use crate::v2::rom_info::truncate_filename;
 use crate::v2::rom_slot::build_rom_slot;
 use crate::{
     Chip, ChipConfig, ChipSet, ChipSetType, Config, CsConfig, CsLogic, Error, FileData, FileSpec,
-    FireServeMode, License, MetadataWriter, Result,
+    FireServeMode, IHEX_BLANK_BYTE, License, MetadataWriter, PAD_BLANK_BYTE, Result, SizeHandling,
 };
 use crate::{
     FIRMWARE_SIZE, MAX_METADATA_LEN, MAX_SUPPORTED_FIRMWARE_VERSION_V1,
@@ -1336,6 +1336,8 @@ pub(crate) fn file_specs(
                     source: rom.file.clone(),
                     extract: rom.extract.clone(),
                     size_handling: rom.size_handling.clone(),
+                    format: rom.format,
+                    load_address: rom.load_address,
                     chip_type: rom.chip_type.resolved(),
                     rom_size: rom.chip_type.resolved().size_bytes(),
                     cs1: rom.cs1,
@@ -1643,6 +1645,36 @@ pub(crate) fn build_chip_sets(
                 None
             };
 
+            // A load address is only meaningful for an Intel HEX image.
+            if chip_config.format.is_binary() && !chip_config.load_address.is_zero() {
+                return Err(Error::LoadAddressWithoutIhex { index: chip_id });
+            }
+
+            // Decode Intel HEX up front so `from_raw_rom_image` still receives a
+            // flat binary image; its own SizeHandling then reconciles the
+            // decoded image against the chip size (padding with 0xFF rather than
+            // the raw-binary 0xAA).  Duplicate has no meaning for an
+            // address-placed image.
+            let (source, blank_byte) = match (chip_config.format, data) {
+                (crate::FileFormat::IntelHex, Some(raw)) => {
+                    if matches!(chip_config.size_handling, SizeHandling::Duplicate) {
+                        return Err(Error::IhexDuplicateUnsupported { index: chip_id });
+                    }
+                    let decoded = crate::ihex::decode_ihex(raw, chip_config.load_address.0)
+                        .map_err(|source| Error::IntelHex {
+                            index: chip_id,
+                            source,
+                        })?;
+                    (Some(decoded), IHEX_BLANK_BYTE)
+                }
+                _ => (None, PAD_BLANK_BYTE),
+            };
+            // Borrow the decoded image if present, otherwise the raw file bytes.
+            let source: Option<&[u8]> = match &source {
+                Some(decoded) => Some(decoded.as_slice()),
+                None => data.map(|v| &**v),
+            };
+
             let filename = chip_config.filename();
 
             // Resolve the chip's control line configuration against its chip
@@ -1663,11 +1695,12 @@ pub(crate) fn build_chip_sets(
                 chip_id,
                 filename,
                 chip_config.label.clone(),
-                data.map(|v| &**v),
+                source,
                 alloc::vec![0u8; chip_config.chip_type.resolved().size_bytes()],
                 &chip_config.chip_type,
                 cs_config,
                 &chip_config.size_handling,
+                blank_byte,
                 chip_config.location,
             )?;
             set_roms.push(rom);

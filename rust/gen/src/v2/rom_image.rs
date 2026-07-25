@@ -448,6 +448,7 @@ mod tests {
             &(*chip_type).into(),
             cs_config,
             &SizeHandling::None,
+            crate::PAD_BLANK_BYTE,
             None,
         )
         .expect("chip construction should succeed")

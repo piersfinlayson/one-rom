@@ -169,6 +169,10 @@
                     "type": "string",
                     "default": ""
                 },
+                "format": {
+                    "description": "Format of the supplied ROM image.  Defaults to raw binary.  Set to\n`ihex` to have the generator decode an Intel HEX file into a binary\nimage before use.",
+                    "$ref": "#/$defs/FileFormat"
+                },
                 "label": {
                     "description": "Optional label for this ROM image.  If specified, this is used in\nmetadata instead of the filename (which itself can be complex if\nextracting a file from an image and providing location information)",
                     "type": [
@@ -182,6 +186,10 @@
                         "string",
                         "null"
                     ]
+                },
+                "load_address": {
+                    "description": "For Intel HEX images ([`FileFormat::IntelHex`]), the absolute address\nthat maps to byte 0 of the ROM.  Record addresses below it are an\nerror; the highest address defines the image extent.  Accepts a decimal\nor a `0x`/`$`-prefixed hex value.  Must be 0 (unset) for binary images.\nDefaults to 0.",
+                    "$ref": "#/$defs/LoadAddress"
                 },
                 "location": {
                     "description": "Optional location within a larger image file.  Used to specify start\noffset and length within the file.  Useful when multiple ROM images\nare concatenated into a single file and one needs to be extracted.",
@@ -504,6 +512,21 @@
                 }
             }
         },
+        "FileFormat": {
+            "description": "Format of a supplied ROM image file.\n\nThe default, [`FileFormat::Binary`], treats the supplied file as a raw\nbinary image.  [`FileFormat::IntelHex`] decodes an Intel HEX file into a\nbinary image before it is placed into the firmware; see the\n[`ihex`](crate::ihex) module for the supported record types and the\ndecoding rules.",
+            "oneOf": [
+                {
+                    "description": "Raw binary image (default).",
+                    "type": "string",
+                    "const": "binary"
+                },
+                {
+                    "description": "Intel HEX image, decoded to a binary image before use.",
+                    "type": "string",
+                    "const": "ihex"
+                }
+            ]
+        },
         "FireConfig": {
             "description": "Fire configuration structure",
             "type": "object",
@@ -715,6 +738,19 @@
                     "default": true
                 }
             }
+        },
+        "LoadAddress": {
+            "description": "Intel HEX load address: a non-negative integer, or a string in decimal or 0x-/$-prefixed hexadecimal.",
+            "oneOf": [
+                {
+                    "type": "integer",
+                    "minimum": 0
+                },
+                {
+                    "type": "string",
+                    "pattern": "^(0[xX]|\\$)?[0-9a-fA-F]+$"
+                }
+            ]
         },
         "Location": {
             "description": "Location within a larger Chip image that the specific image to use resides",

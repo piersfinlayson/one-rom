@@ -12,8 +12,9 @@ use crate::plugin::{ResolvedPlugin, plugin_to_chip_set_config};
 use onerom_config::chip::{CHIP_TYPE_NAMES_PLUGINS, ChipFunction, ChipType, ControlLineType};
 use onerom_config::hw::Board;
 use onerom_gen::{
-    ChipConfig, ChipSetConfig, ChipSetType, ChipTypeSpec, Config, CsLogic, FireConfig,
-    FireCpuFreq, FireVreg, FirmwareConfig, LedConfig, SizeHandling, requires_half_select_cs1,
+    ChipConfig, ChipSetConfig, ChipSetType, ChipTypeSpec, Config, CsLogic, FileFormat, FireConfig,
+    FireCpuFreq, FireVreg, FirmwareConfig, LedConfig, LoadAddress, SizeHandling,
+    requires_half_select_cs1,
 };
 
 const DEFAULT_CONFIG_DESCRIPTION: &str = "Created by the One ROM CLI";
@@ -98,6 +99,7 @@ fn expand_tilde(path: &str) -> std::borrow::Cow<'_, str> {
 }
 
 /// Parsed and validated slot specification from a `--slot` argument.
+#[derive(Debug)]
 pub struct SlotSpec {
     pub file: Option<String>,
     pub label: Option<String>,
@@ -111,6 +113,8 @@ pub struct SlotSpec {
     pub vreg: Option<FireVreg>,
     pub led: Option<bool>,
     pub force_16bit: Option<bool>,
+    pub format: Option<FileFormat>,
+    pub load_address: Option<LoadAddress>,
 }
 
 /// Parse a CS logic value, accepting active_low/0 and active_high/1.
@@ -147,6 +151,23 @@ fn parse_size_handling(slot: &str, _key: &str, value: &str) -> Result<SizeHandli
                 "Invalid size_handling '{value}'\n    --slot '{slot}'\n  Supported values: {supported_variants}"
             ),
         )
+    })
+}
+
+fn parse_format(slot: &str, value: &str) -> Result<FileFormat, Error> {
+    FileFormat::try_from_str(value).ok_or_else(|| {
+        Error::InvalidArgument(
+            "--slot".to_string(),
+            format!(
+                "Invalid format '{value}'\n    --slot '{slot}'\n  Supported values: binary, ihex"
+            ),
+        )
+    })
+}
+
+fn parse_load_address(slot: &str, value: &str) -> Result<LoadAddress, Error> {
+    LoadAddress::parse_str(value).map_err(|e| {
+        Error::InvalidArgument("--slot".to_string(), format!("{e}\n    --slot '{slot}'"))
     })
 }
 
@@ -249,6 +270,8 @@ const SLOT_KEYS: &[&str] = &[
     "cpu-vreg",
     "led",
     "force_16bit",
+    "format",
+    "load_address",
 ];
 
 /// Parse a single `--slot` string into a [`SlotSpec`], validating against the given board.
@@ -275,6 +298,8 @@ fn parse_slot(
     let mut vreg = None;
     let mut led = None;
     let mut force_16bit = None;
+    let mut format = None;
+    let mut load_address = None;
 
     //
     // Parse
@@ -310,6 +335,10 @@ fn parse_slot(
             "led" | "status_led" | "status-led" => led = Some(parse_bool(slot, key, value)?),
             "16bit" | "force_16bit" | "force_16_bit" | "force-16bit" | "force-16-bit" => {
                 force_16bit = Some(parse_bool(slot, key, value)?)
+            }
+            "format" => format = Some(parse_format(slot, value)?),
+            "load_address" | "load-address" | "load_addr" => {
+                load_address = Some(parse_load_address(slot, value)?)
             }
             other => {
                 let supported_keys = SLOT_KEYS.join(", ");
@@ -362,6 +391,14 @@ fn parse_slot(
         ));
     }
 
+    // A load address only makes sense for an Intel HEX image.
+    if load_address.is_some() && format != Some(FileFormat::IntelHex) {
+        return Err(Error::InvalidArgument(
+            "--slot".to_string(),
+            format!("load_address is only valid with format=ihex\n    --slot '{slot}'"),
+        ));
+    }
+
     Ok(SlotSpec {
         file,
         label,
@@ -377,6 +414,8 @@ fn parse_slot(
         vreg,
         led,
         force_16bit,
+        format,
+        load_address,
     })
 }
 
@@ -501,6 +540,8 @@ fn slot_to_chip_config(slot: &SlotSpec) -> ChipConfig {
         label: slot.label.clone(),
         location: None,
         allow_cs_ignore: false,
+        format: slot.format.unwrap_or_default(),
+        load_address: slot.load_address.unwrap_or_default(),
     }
 }
 
@@ -675,6 +716,45 @@ mod tests {
             .flat_map(|cs| cs.chips.iter())
             .map(|c| c.chip_type.resolved())
             .collect()
+    }
+
+    #[test]
+    fn slot_parses_ihex_format_and_load_address() {
+        let board = Board::try_from_str("24-e").unwrap();
+        let slot = parse_slot(
+            "file=rom.hex,type=2364,cs1=active_low,format=ihex,load_address=$E000",
+            &board,
+            false,
+        )
+        .unwrap();
+        assert_eq!(slot.format, Some(FileFormat::IntelHex));
+        assert_eq!(slot.load_address, Some(LoadAddress(0xE000)));
+
+        // The parsed spec carries the values through to the ChipConfig.
+        let chip = slot_to_chip_config(&slot);
+        assert_eq!(chip.format, FileFormat::IntelHex);
+        assert_eq!(chip.load_address, LoadAddress(0xE000));
+    }
+
+    #[test]
+    fn slot_defaults_to_binary_format() {
+        let board = Board::try_from_str("24-e").unwrap();
+        let slot = parse_slot("file=rom.bin,type=2364,cs1=active_low", &board, false).unwrap();
+        assert_eq!(slot.format, None);
+        assert_eq!(slot.load_address, None);
+        assert_eq!(slot_to_chip_config(&slot).format, FileFormat::Binary);
+    }
+
+    #[test]
+    fn slot_load_address_requires_ihex() {
+        let board = Board::try_from_str("24-e").unwrap();
+        let err = parse_slot(
+            "file=rom.bin,type=2364,cs1=active_low,load_address=0x100",
+            &board,
+            false,
+        )
+        .unwrap_err();
+        assert!(format!("{err}").contains("load_address is only valid with format=ihex"));
     }
 
     #[test]

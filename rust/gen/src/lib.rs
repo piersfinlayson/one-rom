@@ -12,6 +12,7 @@ pub mod builder;
 pub mod chip_type_spec;
 pub mod compat;
 pub mod firmware;
+pub mod ihex;
 pub mod image;
 pub mod meta;
 pub mod v1;
@@ -19,11 +20,12 @@ pub mod v2;
 
 pub use builder::Builder;
 pub use chip_type_spec::ChipTypeSpec;
+pub use ihex::{AddressParseError, IHEX_BLANK_BYTE, IhexError, LoadAddress, decode_ihex, encode_ihex};
 pub use firmware::{
     DebugConfig, FireConfig, FireCpuFreq, FireServeMode, FireVreg, FirmwareConfig, IceConfig,
     IceCpuFreq, LedConfig, ServeAlgParams,
 };
-pub use image::{Chip, ChipSet, ChipSetType, CsConfig, CsLogic, SizeHandling};
+pub use image::{Chip, ChipSet, ChipSetType, CsConfig, CsLogic, FileFormat, SizeHandling};
 pub use image::{num_excess_addr_lines, requires_half_select_cs1};
 pub use image::{MAX_IMAGE_SIZE, PAD_BLANK_BYTE, PAD_NO_CHIP_BYTE};
 pub use meta::{MAX_METADATA_LEN, Metadata, PAD_METADATA_BYTE};
@@ -188,6 +190,20 @@ pub enum Error {
     RomTableTooLarge {
         size: usize,
         max: usize,
+    },
+    /// An Intel HEX image failed to decode.
+    IntelHex {
+        index: usize,
+        source: ihex::IhexError,
+    },
+    /// `size_handling: duplicate` was requested for an Intel HEX image, which
+    /// places data by address and cannot be meaningfully duplicated.
+    IhexDuplicateUnsupported {
+        index: usize,
+    },
+    /// A non-zero `load_address` was set on a chip that is not Intel HEX.
+    LoadAddressWithoutIhex {
+        index: usize,
     },
 }
 type Result<T> = core::result::Result<T, Error>;
@@ -369,6 +385,18 @@ impl core::fmt::Display for Error {
             Error::RomTableTooLarge { size, max } => write!(
                 f,
                 "ROM table is {size} bytes, exceeds maximum of {max} bytes for a single slot"
+            ),
+            Error::IntelHex { index, source } => write!(
+                f,
+                "The Intel HEX image for chip {index} could not be decoded:\n  {source}"
+            ),
+            Error::IhexDuplicateUnsupported { index } => write!(
+                f,
+                "Chip {index}: the duplicate size-handling option is not supported for Intel HEX images, which place data by address"
+            ),
+            Error::LoadAddressWithoutIhex { index } => write!(
+                f,
+                "Chip {index}: load_address is only valid for Intel HEX images (format: ihex)"
             ),
         }
     }
@@ -636,6 +664,20 @@ pub struct ChipConfig {
     /// are concatenated into a single file and one needs to be extracted.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub location: Option<Location>,
+
+    /// Format of the supplied ROM image.  Defaults to raw binary.  Set to
+    /// `ihex` to have the generator decode an Intel HEX file into a binary
+    /// image before use.
+    #[serde(default, skip_serializing_if = "FileFormat::is_binary")]
+    pub format: FileFormat,
+
+    /// For Intel HEX images ([`FileFormat::IntelHex`]), the absolute address
+    /// that maps to byte 0 of the ROM.  Record addresses below it are an
+    /// error; the highest address defines the image extent.  Accepts a decimal
+    /// or a `0x`/`$`-prefixed hex value.  Must be 0 (unset) for binary images.
+    /// Defaults to 0.
+    #[serde(default, skip_serializing_if = "LoadAddress::is_zero")]
+    pub load_address: LoadAddress,
 }
 
 impl ChipConfig {
@@ -687,6 +729,17 @@ pub struct FileSpec {
     /// Size handling configuration for this ROM.  Provided for information
     /// only.
     pub size_handling: SizeHandling,
+
+    /// Format of the supplied ROM image.  The caller loads the raw bytes
+    /// regardless of format; decoding (e.g. Intel HEX) is performed by the
+    /// builder.  Provided for information only.
+    #[serde(default)]
+    pub format: FileFormat,
+
+    /// For Intel HEX images, the load address mapping to ROM byte 0.  Provided
+    /// for information only.
+    #[serde(default)]
+    pub load_address: LoadAddress,
 
     /// Type of Chip.  Provided for information only.
     pub chip_type: ChipType,

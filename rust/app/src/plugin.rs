@@ -1229,6 +1229,9 @@ pub fn plugin_to_chip_set_config(
             label: None,
             location: None,
             allow_cs_ignore: false,
+            // Plugins are always raw binary images.
+            format: Default::default(),
+            load_address: Default::default(),
         }],
         serve_alg: None,
         firmware_overrides: None,

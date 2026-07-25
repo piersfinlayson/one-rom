@@ -2,6 +2,14 @@
 
 ## v0.3.0 - 2026-??-??
 
+- Add `onerom image convert --from <fmt> --to <fmt> --input <file> --output <file>
+  [--load-address <addr>]`, converting ROM images between `binary` and `ihex`
+  (Intel HEX). The format set is designed to accept further formats later.
+- Add `format` and `load_address` keys to `--slot` for Intel HEX ROM images:
+  `--slot file=rom.hex,type=2364,cs1=active_low,format=ihex[,load_address=$E000]`.
+  `format` accepts `binary` (default) or `ihex`; `load_address` (only valid with
+  `format=ihex`) accepts a decimal or `0x`/`$`-prefixed hex address that maps to
+  byte 0 of the ROM.  The same keys are available in config files.
 - Support devices with overridden serials
 - Allow `--plugin` to be combined with `--config-file` on `program` and
   `firmware build`; the plugins are inserted ahead of the config's ROM slots.

@@ -217,6 +217,7 @@ mod tests {
             &ChipType::Chip2364.into(),
             cs_config,
             &SizeHandling::None,
+            crate::PAD_BLANK_BYTE,
             None,
         )
         .expect("chip construction should succeed");
@@ -325,6 +326,7 @@ mod tests {
             &ChipType::Chip23QL384.into(),
             cs_config,
             &SizeHandling::None,
+            crate::PAD_BLANK_BYTE,
             None,
         )
         .expect("chip construction should succeed");
@@ -405,6 +407,7 @@ mod tests {
             &ChipType::Chip27128.into(),
             CsConfig::new(Some(CsLogic::ActiveLow), None, None, None),
             &SizeHandling::None,
+            crate::PAD_BLANK_BYTE,
             None,
         )
         .expect("chip 0 construction should succeed");
@@ -418,6 +421,7 @@ mod tests {
             &ChipType::Chip27128.into(),
             CsConfig::new(Some(CsLogic::ActiveLow), None, None, None),
             &SizeHandling::None,
+            crate::PAD_BLANK_BYTE,
             None,
         )
         .expect("chip 1 construction should succeed");
@@ -488,6 +492,7 @@ mod tests {
                 &ChipType::Chip23QL512.into(),
                 cs_config,
                 &SizeHandling::None,
+                crate::PAD_BLANK_BYTE,
                 None,
             )
             .expect("chip construction should succeed")

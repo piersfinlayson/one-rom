@@ -107,13 +107,17 @@ pub struct FirmwareBuildArgs {
 
     /// ROM slot specification. May be repeated for multiple slots.
     ///
-    /// Format: file=<path_or_url>,type=<romtype>[,cs1=<logic>][,cs2=<logic>][,cs3=<logic>][,size_handling=<handling>][,cpu-freq=<freq>][,cpu-vreg=<voltage>][,led=<bool>][,force_16bit=<bool>]
+    /// Format: file=<path_or_url>,type=<romtype>[,cs1=<logic>][,cs2=<logic>][,cs3=<logic>][,size_handling=<handling>][,format=<binary|ihex>][,load_address=<addr>][,cpu-freq=<freq>][,cpu-vreg=<voltage>][,led=<bool>][,force_16bit=<bool>]
     ///
     /// CS logic values: active_low (or 0), active_high (or 1).
     ///
     /// Required CS lines depend on chip type (e.g. 2332 requires cs1 and cs2).
     ///
     /// Size handling values: none, duplicate (or dup), truncate (or trunc), pad.
+    ///
+    /// Format values: binary (default), ihex (Intel HEX). load_address is only
+    /// valid with format=ihex and gives the Intel HEX address mapping to byte 0
+    /// of the ROM, as a decimal or 0x-/$-prefixed hex value (e.g. $E000).
     ///
     /// CPU frequency: e.g. 150, 150mhz, 150MHz. Values above 150MHz require
     /// confirmation (suppressed with --yes). Sets overclock automatically.
@@ -139,6 +143,10 @@ pub struct FirmwareBuildArgs {
     ///   --slot file=char.bin,type=2332,cs1=active_low,cs2=active_high,led=off
     ///
     ///   --slot file=amiga.bin,type=27C400,force_16bit=true
+    ///
+    ///   --slot file=kernal.hex,type=2364,cs1=active_low,format=ihex
+    ///
+    ///   --slot file=kernal.hex,type=2364,cs1=active_low,format=ihex,load_address=$E000
     ///
     ///   --slot file=undersized.bin,type=2732,size=pad
     ///

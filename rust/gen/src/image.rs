@@ -104,6 +104,65 @@ impl core::fmt::Display for SizeHandling {
     }
 }
 
+/// Format of a supplied ROM image file.
+///
+/// The default, [`FileFormat::Binary`], treats the supplied file as a raw
+/// binary image.  [`FileFormat::IntelHex`] decodes an Intel HEX file into a
+/// binary image before it is placed into the firmware; see the
+/// [`ihex`](crate::ihex) module for the supported record types and the
+/// decoding rules.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+pub enum FileFormat {
+    /// Raw binary image (default).
+    #[default]
+    Binary,
+
+    /// Intel HEX image, decoded to a binary image before use.
+    #[serde(
+        rename = "ihex",
+        alias = "intel_hex",
+        alias = "intel-hex",
+        alias = "intelhex",
+        alias = "hex"
+    )]
+    IntelHex,
+}
+
+impl FileFormat {
+    /// Returns true if this is the default (raw binary) format.
+    pub fn is_binary(&self) -> bool {
+        matches!(self, FileFormat::Binary)
+    }
+
+    /// Parses a format name case-insensitively, for command-line parsing.
+    /// Accepts `binary`/`bin`/`raw` for [`FileFormat::Binary`] and
+    /// `ihex`/`intel_hex`/`intel-hex`/`intelhex`/`hex` for
+    /// [`FileFormat::IntelHex`].
+    pub fn try_from_str(s: &str) -> Option<Self> {
+        match s.to_lowercase().as_str() {
+            "binary" | "bin" | "raw" => Some(FileFormat::Binary),
+            "ihex" | "intel_hex" | "intel-hex" | "intelhex" | "hex" => Some(FileFormat::IntelHex),
+            _ => None,
+        }
+    }
+
+    /// All supported format values, for enumerating in help text.
+    pub fn supported_values() -> &'static [Self; 2] {
+        &[FileFormat::Binary, FileFormat::IntelHex]
+    }
+}
+
+impl core::fmt::Display for FileFormat {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            FileFormat::Binary => write!(f, "binary"),
+            FileFormat::IntelHex => write!(f, "ihex"),
+        }
+    }
+}
+
 /// Possible Chip Select line logic options
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
@@ -483,6 +542,12 @@ impl Chip {
     /// Takes a raw Chip image (binary data, loaded from file) and processes it
     /// according to the specified size handling (none, duplicate, pad) to
     /// ensure it matches the expected size for the given Chip type.
+    ///
+    /// `blank_byte` is the value used to fill any padding introduced by
+    /// [`SizeHandling::Pad`] (and the automatic padding applied to plugin
+    /// images).  Callers pass [`PAD_BLANK_BYTE`] for raw binary images and
+    /// [`IHEX_BLANK_BYTE`](crate::ihex::IHEX_BLANK_BYTE) for Intel HEX images,
+    /// which have already been decoded to a binary image by the caller.
     #[allow(clippy::too_many_arguments)]
     pub fn from_raw_rom_image(
         index: usize,
@@ -493,6 +558,7 @@ impl Chip {
         chip_type_spec: &ChipTypeSpec,
         cs_config: CsConfig,
         size_handling: &SizeHandling,
+        blank_byte: u8,
         location: Option<Location>,
     ) -> Result<Self> {
         // Resolved type drives all sizing/handling logic below; the spec is
@@ -588,7 +654,7 @@ impl Chip {
                             // Automatically pad a plugin
                             dest[..source.len()].copy_from_slice(source);
                             for byte in &mut dest[source.len()..expected_size] {
-                                *byte = PAD_BLANK_BYTE;
+                                *byte = blank_byte;
                             }
                         } else {
                             return Err(Error::ImageTooSmall {
@@ -617,7 +683,7 @@ impl Chip {
                         }
                     }
                     SizeHandling::Pad => {
-                        // Copy source to dest and pad the rest with 0xAA
+                        // Copy source to dest and pad the rest with blank_byte
                         dest[..source.len()].copy_from_slice(source);
                         for byte in &mut dest[source.len()..expected_size] {
                             *byte = PAD_BLANK_BYTE;

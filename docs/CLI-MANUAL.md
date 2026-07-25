@@ -788,6 +788,29 @@ onerom image swap-bytes --input kick.bin --output kick-swapped.bin
 
 Device required: no.
 
+### image convert
+
+Convert a ROM image between formats. Reads `--input` in the `--from` format and
+writes `--output` in the `--to` format. Formats: `binary` (aliases `bin`, `raw`)
+and `ihex` (Intel HEX; aliases `intel-hex`, `intel_hex`). The format set is
+designed to grow — further formats can be added without changing the command.
+
+```
+onerom image convert --from ihex --to binary --input rom.hex --output rom.bin
+onerom image convert --from binary --to ihex --input rom.bin --output rom.hex --load-address $E000
+```
+
+| Option | Description |
+|---|---|
+| `--from <FORMAT>` | Input format: `binary` or `ihex`. |
+| `--to <FORMAT>` | Output format: `binary` or `ihex`. |
+| `--input <FILE>` (alias `--in`) | Input ROM image file. |
+| `--output <FILE>` (alias `--out`) | Output file path. |
+| `--load-address <ADDR>` | Intel HEX load address (decimal, or `0x`/`$`-prefixed hex). Only valid when one side is `ihex`; subtracted when reading ihex, used as the base when writing ihex. Defaults to `0`. |
+
+Intel HEX output uses 16-byte records with a terminating EOF record; unwritten
+addresses read as `0xFF` when decoding. Device required: no.
+
 ---
 
 ## firmware
@@ -1013,8 +1036,8 @@ Repeat `--slot` once per slot. Comma-separated `key=value` pairs:
 
 ```
 file=<path_or_url>,type=<romtype>[,cs1=<logic>][,cs2=<logic>][,cs3=<logic>]
-    [,size_handling=<handling>][,cpu-freq=<freq>][,cpu-vreg=<voltage>]
-    [,led=<bool>][,force_16bit=<bool>]
+    [,size_handling=<handling>][,format=<binary|ihex>][,load_address=<addr>]
+    [,cpu-freq=<freq>][,cpu-vreg=<voltage>][,led=<bool>][,force_16bit=<bool>]
 ```
 
 | Key | Values / notes |
@@ -1022,7 +1045,9 @@ file=<path_or_url>,type=<romtype>[,cs1=<logic>][,cs2=<logic>][,cs3=<logic>]
 | `file` | Local path or URL to the ROM image. |
 | `type` | Chip type (see [`chips`](#chips)), e.g. `2364`, `2332`, `2716`, `27C400`. Any accepted alias may be used; the exact spelling you enter is preserved in the device metadata (shown by `scan`/`inspect`), while the resolved type drives behaviour. |
 | `cs1`, `cs2`, `cs3` | CS polarity: `active_low` (or `0`), `active_high` (or `1`). Which lines are required depends on the chip type (e.g. `2332` requires `cs1` and `cs2`). |
-| `size_handling` (alias `size`) | `none`, `duplicate` (or `dup`), `truncate` (or `trunc`), `pad`. |
+| `size_handling` (alias `size`) | `none`, `duplicate` (or `dup`), `truncate` (or `trunc`), `pad`. For an Intel HEX image, padding fills with `0xFF` and `duplicate` is not permitted. |
+| `format` | `binary` (default) or `ihex` (Intel HEX). An `ihex` file is decoded to a binary image before use; unwritten bytes read as `0xFF`. |
+| `load_address` (alias `load-address`) | Only valid with `format=ihex`. The absolute Intel HEX address that maps to byte 0 of the ROM, as a decimal or `0x`/`$`-prefixed hex value (e.g. `$E000`). Defaults to `0`. |
 | `cpu-freq` | e.g. `150`, `150mhz`, `150MHz`. Values above 150 MHz require confirmation (suppressed by `--yes`) and set overclock automatically. |
 | `cpu-vreg` | e.g. `1.1`, `1.10`, `1.10v`, `1.10V`. Values above 1.10 V require confirmation (suppressed by `--yes`). Must be a supported level. |
 | `led` | Boolean: `on`/`off`, `true`/`false`, `1`/`0`. |
@@ -1035,6 +1060,8 @@ Examples:
 --slot file=chargen.bin,type=2332,cs1=active_low,cs2=active_high
 --slot file=https://example.com/basic.bin,type=2716
 --slot file=small.bin,type=2364,cs1=active_low,size_handling=duplicate
+--slot file=kernal.hex,type=2364,cs1=active_low,format=ihex
+--slot file=kernal.hex,type=2364,cs1=active_low,format=ihex,load_address=$E000
 --slot file=kernal.bin,type=2364,cs1=active_low,cpu-freq=200MHz,cpu-vreg=1.2V
 --slot file=char.bin,type=2332,cs1=active_low,cs2=active_high,led=off
 --slot file=amiga.bin,type=27C400,force_16bit=true
