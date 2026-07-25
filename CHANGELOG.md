@@ -4,6 +4,15 @@ All notables changes between versions are documented in this file.
 
 ## v0.7.1 - 2026-??-??
 
+Headline changes in this release:
+- Intel HEX ROM input in programming tools and ihex<->binary conversion in the CLI.
+- The v0.7.0 status LED regression fixed.
+- One ROM Lens working again and ported to a Rust/wasm crate
+- New plugin-API getters for device GPIOs and the exact per-ROM type string
+- CLI `--serial-override` support to define a custom serial number, exposed via the USB plugin. 
+
+In detail:
+
 - Add Intel HEX (ihex) support as a ROM image input format.  A chip may now set `"format": "ihex"` in a config file (the default remains raw binary), with an optional `"load_address"` — a decimal, or `0x`/`$`-prefixed hex value — giving the absolute Intel HEX address that maps to byte 0 of the ROM.  The CLI exposes the same via `--slot format=ihex,load_address=...`.  Decoding lives in `onerom-gen`, so any consumer that supplies the ROM through a config (CLI, Studio, Web) gets it.  Record types 00/01/02/04 are handled and 03/05 start-address records are ignored; a terminating end-of-file record is required, unwritten bytes (internal gaps and, with `size_handling: pad`, the tail) read as `0xFF`, and `size_handling` continues to govern reconciliation against the ROM size.  `onerom-gen` also gained `FileFormat::display_name` so a UI can enumerate the supported formats (via `FileFormat::supported_values`) with human labels — the web programmer builds its File Format picker from this.  Host-tooling change only; no firmware update required.
 - Add `onerom image convert` to convert ROM image files between raw binary and Intel HEX (`--from`/`--to` `binary`|`ihex`, with `--load-address` for the ihex side).  The encoder lives in `onerom-gen` alongside the decoder and emits the same wire format as One ROM Lab's ROM dump.  The config schema (`onerom-config/schema.json`) gains the `format`/`load_address` chip keys.
 - Fix the status LED defaulting to off on v0.7.0.  The runtime now defaults the status LED to on, and it is only turned off by a per-slot firmware override that explicitly disables it.  Also fixed the limp-mode LED force-enable, which never fired (so limp-mode error blink patterns did not show when the LED was overridden off).
