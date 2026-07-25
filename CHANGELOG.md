@@ -41,6 +41,7 @@ To publish:
 - RGB plugin 0.1.2
 - WASM 0.5.0
 - Site
+- Release 0.7.1
 
 ## v0.7.0 - 2026-07-20
 
