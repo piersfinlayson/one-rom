@@ -3,6 +3,15 @@
     "alt": [
         "fire-28-usb-a"
     ],
+    "jumper_header": {
+        "columns": {
+            "1": { "1": ["5v"],      "2": ["gnd"] },
+            "2": { "1": ["run"],     "2": ["swdio"] },
+            "3": { "1": ["bootsel"], "2": ["swclk"] },
+            "4": { "1": ["sel_b"],   "2": ["gnd"] },
+            "5": { "1": ["sel_a"],   "2": ["gnd"] }
+        }
+    },
     "chip": {
         "pins": {
             "quantity": 28,

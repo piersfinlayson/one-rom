@@ -2,6 +2,15 @@
     "description": "One ROM Fire 32 (rev A)",
     "alt": [
     ],
+    "jumper_header": {
+        "columns": {
+            "1": { "1": ["5v"],      "2": ["gnd"] },
+            "2": { "1": ["run"],     "2": ["sel_d", "swdio"] },
+            "3": { "1": ["bootsel"], "2": ["sel_c", "swclk"] },
+            "4": { "1": ["sel_b"],   "2": ["gnd"], "3": ["a18"] },
+            "5": { "1": ["sel_a"],   "2": ["gnd"], "3": ["a17"] }
+        }
+    },
     "chip": {
         "pins": {
             "quantity": 32,

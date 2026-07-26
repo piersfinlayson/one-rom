@@ -281,6 +281,50 @@ pub struct HwConfigJson {
     pub alt: Vec<String>,
     pub chip: Chip,
     pub mcu: Mcu,
+    /// Optional physical jumper-header descriptor; absent for boards not yet
+    /// characterised (a consumer then falls back to a generic description).
+    #[serde(default)]
+    pub jumper_header: Option<JsonJumperHeader>,
+}
+
+/// Raw JSON form of a board's jumper header: columns keyed by 1-based column
+/// number, each a map of row number ("1"/"2"/"3") to a list of role tokens.
+#[derive(Debug, Clone, Deserialize)]
+pub struct JsonJumperHeader {
+    pub columns: HashMap<String, HashMap<String, Vec<String>>>,
+}
+
+/// A parsed, validated header role (build-time owned mirror of the runtime
+/// `crate::hw::header::HeaderRole`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HeaderRoleP {
+    Power5V,
+    Gnd,
+    Run,
+    Bootsel,
+    Select(u8),
+    Swclk,
+    Swdio,
+    X1,
+    X2,
+    Addr(u8),
+}
+
+/// A parsed pad state (build-time owned mirror of `HeaderSlot`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HeaderSlotP {
+    NotPopulated,
+    NotConnected,
+    Roles(Vec<HeaderRoleP>),
+}
+
+/// A parsed header column (build-time owned mirror of `HeaderColumn`).
+#[derive(Debug, Clone)]
+pub struct HeaderColumnP {
+    pub col: u8,
+    pub row1: HeaderSlotP,
+    pub row2: HeaderSlotP,
+    pub row3: Option<HeaderSlotP>,
 }
 
 fn deserialize_mcu_family<'de, D>(deserializer: D) -> Result<McuFamily, D::Error>
@@ -719,6 +763,11 @@ pub fn validate_config(name: &str, config: &HwConfigJson) {
     }
 
     validate_socket_and_x_pins(config, name);
+
+    if let Some(header) = &config.jumper_header {
+        let cols = parse_jumper_header(name, header);
+        validate_jumper_header(name, &cols, &config.mcu.pins);
+    }
 }
 
 fn validate_pin_number(mcu: &Mcu, pin: u8, pin_name: &str, config_name: &str) {
@@ -893,4 +942,314 @@ fn validate_socket_and_x_pins(config: &HwConfigJson, name: &str) {
             }
         }
     }
+}
+
+// ---- Jumper-header parsing, validation and code generation ----
+
+fn parse_role_token(name: &str, token: &str) -> HeaderRoleP {
+    match token {
+        "5v" => HeaderRoleP::Power5V,
+        "gnd" => HeaderRoleP::Gnd,
+        "run" => HeaderRoleP::Run,
+        "bootsel" => HeaderRoleP::Bootsel,
+        "swclk" => HeaderRoleP::Swclk,
+        "swdio" => HeaderRoleP::Swdio,
+        "x1" => HeaderRoleP::X1,
+        "x2" => HeaderRoleP::X2,
+        _ => {
+            if let Some(letter) = token.strip_prefix("sel_") {
+                let bytes = letter.as_bytes();
+                if bytes.len() == 1 && bytes[0].is_ascii_lowercase() {
+                    return HeaderRoleP::Select(bytes[0] - b'a');
+                }
+            }
+            // Address line broken out on the header, e.g. "a17" = A17.
+            if let Some(Ok(n)) = token.strip_prefix('a').map(str::parse::<u8>) {
+                return HeaderRoleP::Addr(n);
+            }
+            panic!("{name}: invalid jumper_header role token '{token}'");
+        }
+    }
+}
+
+fn parse_slot(name: &str, tokens: &[String]) -> HeaderSlotP {
+    if tokens.is_empty() {
+        panic!("{name}: jumper_header slot has no role tokens (use \"nc\" or \"np\")");
+    }
+    if tokens.len() == 1 {
+        match tokens[0].as_str() {
+            "np" => return HeaderSlotP::NotPopulated,
+            "nc" => return HeaderSlotP::NotConnected,
+            _ => {}
+        }
+    }
+    for t in tokens {
+        if t == "nc" || t == "np" {
+            panic!("{name}: jumper_header slot mixes '{t}' with other roles");
+        }
+    }
+    if tokens.len() > 2 {
+        panic!(
+            "{name}: jumper_header slot has {} roles, at most 2 are allowed",
+            tokens.len()
+        );
+    }
+    HeaderSlotP::Roles(tokens.iter().map(|t| parse_role_token(name, t)).collect())
+}
+
+/// Parse a board's raw JSON jumper header into an ordered, structurally-valid
+/// list of columns. Panics (failing the build) on any malformed entry.
+pub fn parse_jumper_header(name: &str, header: &JsonJumperHeader) -> Vec<HeaderColumnP> {
+    let mut cols: Vec<HeaderColumnP> = Vec::new();
+
+    for (col_key, rows) in &header.columns {
+        let col: u8 = col_key.parse().unwrap_or_else(|_| {
+            panic!("{name}: jumper_header column key '{col_key}' is not a number")
+        });
+        if col == 0 {
+            panic!("{name}: jumper_header column numbers are 1-based, found 0");
+        }
+
+        for row_key in rows.keys() {
+            if !matches!(row_key.as_str(), "1" | "2" | "3") {
+                panic!(
+                    "{name}: jumper_header column {col} has invalid row '{row_key}' (expected 1, 2 or 3)"
+                );
+            }
+        }
+
+        let row1_tokens = rows
+            .get("1")
+            .unwrap_or_else(|| panic!("{name}: jumper_header column {col} is missing row 1"));
+        let row2_tokens = rows
+            .get("2")
+            .unwrap_or_else(|| panic!("{name}: jumper_header column {col} is missing row 2"));
+
+        cols.push(HeaderColumnP {
+            col,
+            row1: parse_slot(name, row1_tokens),
+            row2: parse_slot(name, row2_tokens),
+            row3: rows.get("3").map(|t| parse_slot(name, t)),
+        });
+    }
+
+    cols.sort_by_key(|c| c.col);
+
+    for pair in cols.windows(2) {
+        if pair[0].col == pair[1].col {
+            panic!("{name}: jumper_header has duplicate column {}", pair[0].col);
+        }
+    }
+
+    cols
+}
+
+fn slot_roles(slot: &HeaderSlotP) -> &[HeaderRoleP] {
+    match slot {
+        HeaderSlotP::Roles(roles) => roles,
+        _ => &[],
+    }
+}
+
+/// Cross-check a parsed jumper header against the board's electrical pin
+/// assignments, so the physical descriptor cannot drift from the `sel` /
+/// `swclk_sel` / `swdio_sel` / `x1` / `x2` data. Panics (failing the build) on
+/// any inconsistency.
+pub fn validate_jumper_header(name: &str, cols: &[HeaderColumnP], pins: &McuPins) {
+    // Flatten to (col, row, slot).
+    let mut slots: Vec<(u8, u8, &HeaderSlotP)> = Vec::new();
+    for c in cols {
+        slots.push((c.col, 1, &c.row1));
+        slots.push((c.col, 2, &c.row2));
+        if let Some(r3) = &c.row3 {
+            slots.push((c.col, 3, r3));
+        }
+    }
+
+    let mut select_bits: Vec<u8> = Vec::new();
+    let mut swclk_locs: Vec<(u8, u8)> = Vec::new();
+    let mut swdio_locs: Vec<(u8, u8)> = Vec::new();
+    let mut x1_locs: Vec<(u8, u8)> = Vec::new();
+    let mut x2_locs: Vec<(u8, u8)> = Vec::new();
+    let mut addr_lines: Vec<u8> = Vec::new();
+
+    for (col, row, slot) in &slots {
+        for role in slot_roles(slot) {
+            // The extra (row 3) pad carries only "extra config" roles - an X pin
+            // or a high address line broken out on the header.
+            if *row == 3
+                && !matches!(
+                    role,
+                    HeaderRoleP::X1 | HeaderRoleP::X2 | HeaderRoleP::Addr(_)
+                )
+            {
+                panic!(
+                    "{name}: jumper_header row 3 (col {col}) may only carry X pins or address lines"
+                );
+            }
+            match role {
+                HeaderRoleP::Select(b) => select_bits.push(*b),
+                HeaderRoleP::Swclk => swclk_locs.push((*col, *row)),
+                HeaderRoleP::Swdio => swdio_locs.push((*col, *row)),
+                HeaderRoleP::X1 => {
+                    x1_locs.push((*col, *row));
+                    if *row != 3 {
+                        panic!("{name}: jumper_header X1 must be on row 3, found row {row}");
+                    }
+                }
+                HeaderRoleP::X2 => {
+                    x2_locs.push((*col, *row));
+                    if *row != 3 {
+                        panic!("{name}: jumper_header X2 must be on row 3, found row {row}");
+                    }
+                }
+                HeaderRoleP::Addr(n) => addr_lines.push(*n),
+                _ => {}
+            }
+        }
+    }
+
+    // Address lines broken out on the header must exist on the board.
+    for &n in &addr_lines {
+        if n as usize >= pins.addr.len() {
+            panic!(
+                "{name}: jumper_header address line A{n} out of range (board has {} address lines, A0..A{})",
+                pins.addr.len(),
+                pins.addr.len().saturating_sub(1)
+            );
+        }
+    }
+
+    // Image-select bits must be exactly 0..sel.len(), each present once.
+    select_bits.sort_unstable();
+    let expected: Vec<u8> = (0..pins.sel.len() as u8).collect();
+    if select_bits != expected {
+        panic!(
+            "{name}: jumper_header select bits {:?} do not match the {} sel pin(s) (expected {:?})",
+            select_bits,
+            pins.sel.len(),
+            expected
+        );
+    }
+
+    // SWD multiplex consistency.
+    check_swd(name, "swclk", &swclk_locs, pins.swclk_sel, &slots, pins);
+    check_swd(name, "swdio", &swdio_locs, pins.swdio_sel, &slots, pins);
+
+    // X-pin presence must match the board's x1/x2 GPIO definitions.
+    if pins.x1.is_some() != !x1_locs.is_empty() {
+        panic!("{name}: jumper_header X1 presence does not match the board's x1 pin");
+    }
+    if pins.x2.is_some() != !x2_locs.is_empty() {
+        panic!("{name}: jumper_header X2 presence does not match the board's x2 pin");
+    }
+    if x1_locs.len() > 1 || x2_locs.len() > 1 {
+        panic!("{name}: jumper_header defines X1 or X2 more than once");
+    }
+}
+
+fn check_swd(
+    name: &str,
+    which: &str,
+    locs: &[(u8, u8)],
+    sel_gpio: u8,
+    slots: &[(u8, u8, &HeaderSlotP)],
+    pins: &McuPins,
+) {
+    // At most one pad may carry a given SWD signal.
+    if locs.len() > 1 {
+        panic!("{name}: jumper_header tags {which} more than once");
+    }
+
+    // The select bit (if any) sharing the SWD pad.
+    let muxed_bit = |col: u8, row: u8| -> Option<u8> {
+        let slot = slots
+            .iter()
+            .find(|(c, r, _)| *c == col && *r == row)
+            .map(|(_, _, s)| *s)?;
+        slot_roles(slot).iter().find_map(|role| match role {
+            HeaderRoleP::Select(b) => Some(*b),
+            _ => None,
+        })
+    };
+
+    if sel_gpio == 255 {
+        // This board does not route SWD onto an image-select pin. A standalone
+        // SWD pad is fine (e.g. a 2-select board whose SWD pins share the header
+        // but are not image selects); it just must not sit on a select pad,
+        // which would imply a multiplexing the board does not declare.
+        if let Some(&(col, row)) = locs.first() {
+            assert!(
+                muxed_bit(col, row).is_none(),
+                "{name}: jumper_header {which} shares an image-select pad (col {col}) but no {which}_sel pin is set"
+            );
+        }
+        return;
+    }
+
+    // SWD is multiplexed onto an image-select pin: the header must tag it, on the
+    // select pad whose GPIO is {which}_sel.
+    if locs.len() != 1 {
+        panic!("{name}: jumper_header must tag {which} exactly once ({which}_sel is set)");
+    }
+    let (col, row) = locs[0];
+    let bit = muxed_bit(col, row).unwrap_or_else(|| {
+        panic!("{name}: jumper_header {which} pad (col {col}) is not also an image-select pad")
+    });
+    let gpio = pins.sel.get(bit as usize).copied().unwrap_or_else(|| {
+        panic!("{name}: jumper_header {which} select bit {bit} is out of range")
+    });
+    if gpio != sel_gpio {
+        panic!(
+            "{name}: jumper_header {which} is on select bit {bit} (GPIO {gpio}) but {which}_sel is GPIO {sel_gpio}"
+        );
+    }
+}
+
+fn format_role(role: &HeaderRoleP) -> String {
+    match role {
+        HeaderRoleP::Power5V => "HeaderRole::Power5V".to_string(),
+        HeaderRoleP::Gnd => "HeaderRole::Gnd".to_string(),
+        HeaderRoleP::Run => "HeaderRole::Run".to_string(),
+        HeaderRoleP::Bootsel => "HeaderRole::Bootsel".to_string(),
+        HeaderRoleP::Select(b) => format!("HeaderRole::Select({b})"),
+        HeaderRoleP::Swclk => "HeaderRole::Swclk".to_string(),
+        HeaderRoleP::Swdio => "HeaderRole::Swdio".to_string(),
+        HeaderRoleP::X1 => "HeaderRole::X1".to_string(),
+        HeaderRoleP::X2 => "HeaderRole::X2".to_string(),
+        HeaderRoleP::Addr(n) => format!("HeaderRole::Addr({n})"),
+    }
+}
+
+fn format_slot(slot: &HeaderSlotP) -> String {
+    match slot {
+        HeaderSlotP::NotPopulated => "HeaderSlot::NotPopulated".to_string(),
+        HeaderSlotP::NotConnected => "HeaderSlot::NotConnected".to_string(),
+        HeaderSlotP::Roles(roles) => {
+            let inner = roles.iter().map(format_role).collect::<Vec<_>>().join(", ");
+            format!("HeaderSlot::Roles(&[{inner}])")
+        }
+    }
+}
+
+/// Emit the Rust literal (a `JumperHeader { .. }` expression) for a parsed
+/// header, for embedding in the generated board accessor.
+pub fn format_jumper_header(cols: &[HeaderColumnP]) -> String {
+    let col_strs: Vec<String> = cols
+        .iter()
+        .map(|c| {
+            let row3 = match &c.row3 {
+                Some(s) => format!("Some({})", format_slot(s)),
+                None => "None".to_string(),
+            };
+            format!(
+                "HeaderColumn {{ col: {}, row1: {}, row2: {}, row3: {} }}",
+                c.col,
+                format_slot(&c.row1),
+                format_slot(&c.row2),
+                row3
+            )
+        })
+        .collect();
+    format!("JumperHeader {{ columns: &[{}] }}", col_strs.join(", "))
 }
