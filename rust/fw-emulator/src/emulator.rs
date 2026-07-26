@@ -45,10 +45,10 @@ thread_local! {
 /// the thread-local closure installed by [`Emulator::set_yield_hook`].
 unsafe extern "C" fn yield_trampoline() {
     YIELD_HOOK.with(|h| {
-        if let Ok(mut guard) = h.try_borrow_mut() {
-            if let Some(f) = guard.as_mut() {
-                f();
-            }
+        if let Ok(mut guard) = h.try_borrow_mut()
+            && let Some(f) = guard.as_mut()
+        {
+            f();
         }
     });
 }
@@ -307,7 +307,12 @@ impl Emulator {
 
     /// `ORA_ID_SETUP_ADDRESS_MONITOR`.  `ring_buf` must be a host pointer into
     /// epio SRAM (see [`Self::sram_host_ptr`]).
-    pub fn setup_address_monitor(
+    ///
+    /// # Safety
+    /// `ring_buf` must point at a valid, correctly aligned ring buffer of
+    /// `2^ring_entries_log2` entries within epio SRAM, live for the monitor's
+    /// lifetime.
+    pub unsafe fn setup_address_monitor(
         &self,
         ring_buf: *mut u32,
         ring_entries_log2: u8,
@@ -326,7 +331,11 @@ impl Emulator {
     }
 
     /// `ORA_ID_INIT_KNOCK`.  Fills the caller-allocated `knock` structure.
-    pub fn init_knock(
+    ///
+    /// # Safety
+    /// `knock` must point at a writable `ora_knock_t` sized for `knock_seq.len()`
+    /// entries (see `ORA_KNOCK_SIZE`).
+    pub unsafe fn init_knock(
         &self,
         knock_seq: &[u32],
         knock_bits: u8,
@@ -358,13 +367,18 @@ impl Emulator {
         plugin_call!(
             ffi::api_id_t_ORA_ID_GET_ADDRESS_MONITOR_RING_WRITE_POS,
             ffi::ora_get_address_monitor_ring_write_pos_fn_t
-        ) as *mut *mut u32
+        )
     }
 
     /// `ORA_ID_WAIT_FOR_KNOCK`.  Blocking: drive the simulation forward via a
     /// yield hook (see [`Self::set_yield_hook`]) so this can make progress.
+    ///
+    /// # Safety
+    /// `knock` and `ring_buf` must be valid for the monitor; `payload_out` must
+    /// point at `payload_len` writable `u32`s; `start_pos`/`next_read_out` are
+    /// each either null or valid.
     #[allow(clippy::too_many_arguments)]
-    pub fn wait_for_knock(
+    pub unsafe fn wait_for_knock(
         &self,
         knock: *const ffi::ora_knock_t,
         ring_buf: *mut u32,

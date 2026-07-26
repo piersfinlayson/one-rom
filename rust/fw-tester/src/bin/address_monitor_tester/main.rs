@@ -20,15 +20,15 @@
 //! Env: `CONFIG` (config JSON), `BOARD` (e.g. `fire-24-a`), optional
 //! `BASE_DIR`, `ONEROM_LOG=1`.  Exits 0 if all cases pass, 1 otherwise.
 
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
-use std::sync::Arc;
 use std::time::Duration;
 
 use onerom_config::chip::ChipType;
 use onerom_config::hw::Board;
 use onerom_fw_emulator::driver;
-use onerom_fw_emulator::{ffi, Emulator, OraResult};
+use onerom_fw_emulator::{Emulator, OraResult, ffi};
 use onerom_gen::{ChipConfig, Config};
 
 use onerom_fw_tester::pin_cache::PinCache;
@@ -44,7 +44,14 @@ const RING_DATA_SIZE: u8 = 32;
 const RING_BASE: u32 = 0x2008_1000;
 
 // Knock sequence "!RBCP!" matched against A0-A7.
-const KNOCK: [u32; 6] = [b'!' as u32, b'R' as u32, b'B' as u32, b'C' as u32, b'P' as u32, b'!' as u32];
+const KNOCK: [u32; 6] = [
+    b'!' as u32,
+    b'R' as u32,
+    b'B' as u32,
+    b'C' as u32,
+    b'P' as u32,
+    b'!' as u32,
+];
 const KNOCK_BITS: u8 = 8;
 
 // Watchdog for the blocking wait_for_knock case.
@@ -73,7 +80,9 @@ fn main() {
     let board_str = std::env::var("BOARD").expect("BOARD env var must be set (e.g. fire-24-a)");
     let board =
         Board::try_from_str(&board_str).unwrap_or_else(|| panic!("Unknown board '{}'", board_str));
-    let log_enabled = std::env::var("ONEROM_LOG").map(|v| v == "1").unwrap_or(false);
+    let log_enabled = std::env::var("ONEROM_LOG")
+        .map(|v| v == "1")
+        .unwrap_or(false);
     let config_path = std::env::var("CONFIG").expect("CONFIG env var must be set");
     let base_dir_str = std::env::var("BASE_DIR").unwrap_or_else(|_| ".".to_string());
     let base_dir = std::fs::canonicalize(&base_dir_str)
@@ -203,12 +212,16 @@ fn boot(board: Board, sel: u8, word_size: u8, log_enabled: bool) -> Result<Emula
 fn setup_monitor(emu: &Emulator) -> Result<(), String> {
     emu.arm_monitor();
     let ring = emu.sram_host_ptr(RING_BASE);
-    let r = emu.setup_address_monitor(
-        ring,
-        RING_ENTRIES_LOG2,
-        ffi::ora_monitor_mode_t_ORA_MONITOR_MODE_CONTROL,
-        RING_DATA_SIZE,
-    );
+    // SAFETY: `ring` is a valid ring buffer within epio SRAM (from
+    // sram_host_ptr), live for the monitor's lifetime.
+    let r = unsafe {
+        emu.setup_address_monitor(
+            ring,
+            RING_ENTRIES_LOG2,
+            ffi::ora_monitor_mode_t_ORA_MONITOR_MODE_CONTROL,
+            RING_DATA_SIZE,
+        )
+    };
     if r != OraResult::Ok {
         return Err(format!("setup_address_monitor returned {r:?}"));
     }
@@ -306,22 +319,26 @@ fn layer2_knock(emu: &Emulator, cache: &PinCache, stop: &Arc<AtomicBool>) -> Res
     let mut knock_buf = KnockBuf::new(KNOCK.len());
     let ring = emu.sram_host_ptr(RING_BASE);
 
-    let r = emu.init_knock(&KNOCK, KNOCK_BITS, RING_DATA_SIZE, knock_buf.ptr());
+    // SAFETY: `knock_buf` is sized for KNOCK.len() entries; `ring` is the live
+    // monitor ring; `payload` holds 2 writable u32s; the position args are null.
+    let r = unsafe { emu.init_knock(&KNOCK, KNOCK_BITS, RING_DATA_SIZE, knock_buf.ptr()) };
     if r != OraResult::Ok {
         emu.clear_yield_hook();
         return Err(format!("init_knock returned {r:?}"));
     }
 
-    let r = emu.wait_for_knock(
-        knock_buf.ptr(),
-        ring,
-        RING_ENTRIES_LOG2,
-        WAIT_FLAG_DEBOUNCE_CS,
-        payload.as_mut_ptr(),
-        2,
-        std::ptr::null_mut(),
-        std::ptr::null_mut(),
-    );
+    let r = unsafe {
+        emu.wait_for_knock(
+            knock_buf.ptr(),
+            ring,
+            RING_ENTRIES_LOG2,
+            WAIT_FLAG_DEBOUNCE_CS,
+            payload.as_mut_ptr(),
+            2,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+        )
+    };
     emu.clear_yield_hook();
 
     if r != OraResult::Ok {
