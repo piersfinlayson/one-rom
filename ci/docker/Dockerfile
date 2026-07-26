@@ -67,7 +67,12 @@ ENV TOOLCHAIN="/opt/arm-toolchain/bin"
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 ENV PATH="/home/build/.cargo/bin:${PATH}"
 RUN cargo install wasm-pack cross
-RUN rustup target install thumbv8m.main-none-eabihf
+# Nightly toolchain (with clippy/rustfmt and the RP2350 target) for building
+# One ROM Lab, the hardware tester, which pins nightly via its
+# rust-toolchain.toml.
+RUN rustup toolchain install nightly \
+    --component clippy,rustfmt \
+    --target thumbv8m.main-none-eabihf
 RUN rustup target install \
     x86_64-unknown-linux-gnu \
     aarch64-unknown-linux-gnu \

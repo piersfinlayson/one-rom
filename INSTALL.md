@@ -68,11 +68,17 @@ However, we strongly recommend sticking to a *nix based host (Linux or macOS) fo
     ```bash
     curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
     source $HOME/.cargo/env
-    rustup target install thumbv7em-none-eabihf
-    rustup target install thumbv8m.main-none-eabihf
     cargo install cross
     cargo install wasm-pack   # Only required to build one-rom-wasm
     cargo install cargo-dist  # Only required to build One ROM Studio installers
+    ```
+
+    The One ROM hardware tester (`onerom-lab`) runs on the RP2350 and is built
+    with the nightly toolchain (pinned by its `rust-toolchain.toml`).  You only
+    need this if you are building the tester:
+
+    ```bash
+    rustup toolchain install nightly --component clippy,rustfmt --target thumbv8m.main-none-eabihf
     ```
 
     If planning to build One ROM Studio for all possible targets (you likely only want to build a subset!) you will also need to install additional Rust targets and the mingw-w64 toolchain for Windows targets.  If you just want to build the One ROM firmware you do not need to do this step.

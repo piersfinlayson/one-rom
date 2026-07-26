@@ -43,9 +43,14 @@ CONFIG="$EMU_CONFIG" BOARD="$EMU_BOARD" \
     cargo clippy -p onerom-fw-tester --all-targets -- -D warnings
 
 # onerom-lab pins its own nightly toolchain (rust-toolchain.toml) and is a
-# binary-only crate; lint it from its own directory so that toolchain applies.
+# binary-only crate that builds for the RP2350 (thumbv8m via its
+# .cargo/config.toml).  Lint it from its own directory so that toolchain and
+# target apply; add the target first (for the nightly toolchain), mirroring
+# lab's build-all.sh.
 echo "Running clippy (onerom-lab)..."
-( cd lab && cargo clippy --bins -- -D warnings )
+( cd lab \
+    && rustup target add thumbv8m.main-none-eabihf \
+    && cargo clippy --bins -- -D warnings )
 
 # onerom-fw-emulator and onerom-lens build for wasm (they compile the firmware
 # C to wasm via Emscripten), so they are linted against the wasm target.
