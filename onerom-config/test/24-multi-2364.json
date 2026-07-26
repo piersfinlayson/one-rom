@@ -103,6 +103,33 @@
                     "size_handling": "truncate"
                 }
             ]
+        },
+        {
+            "type": "multi",
+            "description": "set 4 - mixed secondary types, 2332 in the middle (chip[1])",
+            "roms": [
+                {
+                    "description": "1",
+                    "file": "images/test/rand_8KB.rom",
+                    "type": "2364",
+                    "cs1": "active_high"
+                },
+                {
+                    "description": "2",
+                    "file": "images/test/rand_32KB.rom",
+                    "type": "2332",
+                    "cs1": "active_high",
+                    "cs2": "ignore",
+                    "size_handling": "truncate"
+                },
+                {
+                    "description": "3",
+                    "file": "images/test/rand_16KB.rom",
+                    "type": "2364",
+                    "cs1": "active_high",
+                    "size_handling": "truncate"
+                }
+            ]
         }
    ]
 }

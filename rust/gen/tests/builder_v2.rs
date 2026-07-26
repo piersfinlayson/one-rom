@@ -2460,6 +2460,130 @@ mod tests {
     }
 
     // ========================================================================
+    // v2 multi mixed secondary chip types (2364 primary + 2332 secondary)
+    //
+    // The primary (chip[0]) is a 2364 with one control line (CS1); a 2332
+    // secondary has two (CS1 + CS2), with CS2 ignored because it is tied to a
+    // fixed level in the host machine (e.g. the C64 character ROM's CS2 -> 5V).
+    // Validation must accept such a set regardless of where the 2332 sits among
+    // the secondaries: `derive_multi_cs_config` anchors on chip[0], so ordering
+    // is irrelevant to how the set is served.
+    // ========================================================================
+
+    /// 2332 secondary in the *middle* (chip[1]). This is the ordering that
+    /// regressed in v0.7.0: the old check used chip[1] as its reference and
+    /// rejected the trailing 2364 for "differing" on CS2.
+    #[test]
+    fn check_cs_v2_multi_2332_secondary_middle_accepted() {
+        let json = r#"{
+            "version": 1,
+            "description": "2364 primary, 2332 secondary in the middle",
+            "chip_sets": [{
+                "type": "multi",
+                "chips": [
+                    { "file": "kernal.bin", "type": "2364", "cs1": "active_low" },
+                    { "file": "char.bin",   "type": "2332", "cs1": "active_low", "cs2": "ignore" },
+                    { "file": "basic.bin",  "type": "2364", "cs1": "active_low" }
+                ]
+            }]
+        }"#;
+        v2_builder(json); // must not panic — from_json must succeed
+    }
+
+    /// The same three chips with the 2332 secondary *last* (as shipped in
+    /// `onerom-config/set-c64.json`). Must remain accepted.
+    #[test]
+    fn check_cs_v2_multi_2332_secondary_last_accepted() {
+        let json = r#"{
+            "version": 1,
+            "description": "2364 primary, 2332 secondary last",
+            "chip_sets": [{
+                "type": "multi",
+                "chips": [
+                    { "file": "kernal.bin", "type": "2364", "cs1": "active_low" },
+                    { "file": "basic.bin",  "type": "2364", "cs1": "active_low" },
+                    { "file": "char.bin",   "type": "2332", "cs1": "active_low", "cs2": "ignore" }
+                ]
+            }]
+        }"#;
+        v2_builder(json); // must not panic — from_json must succeed
+    }
+
+    /// A secondary must have exactly one active control line. A 2332 secondary
+    /// that leaves CS2 active (rather than ignoring it) has two — its single
+    /// fly-lead cannot drive both, so this is rejected.
+    #[test]
+    fn check_cs_v2_multi_secondary_two_active_lines_rejected() {
+        let json = r#"{
+            "version": 1,
+            "description": "2332 secondary with CS2 active — invalid",
+            "chip_sets": [{
+                "type": "multi",
+                "chips": [
+                    { "file": "kernal.bin", "type": "2364", "cs1": "active_low" },
+                    { "file": "char.bin",   "type": "2332", "cs1": "active_low", "cs2": "active_low" }
+                ]
+            }]
+        }"#;
+        let err = Builder::from_json(FirmwareVersion::new(0, 7, 0, 0), McuFamily::Rp2350, json)
+            .expect_err("secondary with two active control lines must be rejected");
+        assert!(
+            err.to_string().contains("exactly one active control line"),
+            "unexpected error: {err}"
+        );
+    }
+
+    /// All secondaries must select on the same control line, because the deriver
+    /// reads only chip[1] to fix the per-chip select for the whole set. Here a
+    /// 27512 set has one secondary selecting on CE and another on OE.
+    #[test]
+    fn check_cs_v2_multi_secondaries_disagree_on_select_rejected() {
+        let json = r#"{
+            "version": 1,
+            "description": "27512 multi, secondaries select different lines — invalid",
+            "chip_sets": [{
+                "type": "multi",
+                "chips": [
+                    { "file": "a.bin", "type": "27512", "ce": "active_low", "oe": "active_low" },
+                    { "file": "b.bin", "type": "27512", "ce": "active_low", "oe": "ignore" },
+                    { "file": "c.bin", "type": "27512", "ce": "ignore", "oe": "active_low" }
+                ]
+            }]
+        }"#;
+        let err = Builder::from_json(FirmwareVersion::new(0, 7, 0, 0), McuFamily::Rp2350, json)
+            .expect_err("secondaries selecting different lines must be rejected");
+        assert!(
+            err.to_string().contains("same per-chip select line"),
+            "unexpected error: {err}"
+        );
+    }
+
+    /// A secondary must have every control line the primary has. Here the
+    /// primary is a 2332 (CS1 + CS2) but a secondary is a 2364 (CS1 only): the
+    /// deriver would read the 2364's absent CS2 as active and misclassify it, so
+    /// this is rejected.
+    #[test]
+    fn check_cs_v2_multi_secondary_missing_primary_line_rejected() {
+        let json = r#"{
+            "version": 1,
+            "description": "2332 primary, 2364 secondary lacking CS2 — invalid",
+            "chip_sets": [{
+                "type": "multi",
+                "chips": [
+                    { "file": "a.bin", "type": "2332", "cs1": "active_low", "cs2": "active_low" },
+                    { "file": "b.bin", "type": "2364", "cs1": "active_low" }
+                ]
+            }]
+        }"#;
+        let err = Builder::from_json(FirmwareVersion::new(0, 7, 0, 0), McuFamily::Rp2350, json)
+            .expect_err("secondary lacking a primary control line must be rejected");
+        assert!(
+            err.to_string().contains("lacks control line"),
+            "unexpected error: {err}"
+        );
+    }
+
+    // ========================================================================
     // v2 multi 2-chip CS2-primary: Fire28C / 2x 23128
     // ========================================================================
 

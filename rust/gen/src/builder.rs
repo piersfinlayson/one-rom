@@ -1178,20 +1178,25 @@ pub(crate) fn check_cs_v2(config: &Config) -> Result<()> {
 
         // ---- Multi set consistency validation ----
         //
-        // For Multi sets with chips having N > 1 control lines, chips[1+]
-        // must each have exactly 1 active line (the per-chip select, fly-leaded
-        // to X1/X2) and ignore the remaining N-1 (the commoned lines). All
-        // chips[1+] must ignore the same set of lines. Chip[0] must not ignore
-        // its per-chip select line.
+        // A Multi set serves several chips through One ROM's per-chip select
+        // mechanism: chip[0] (the primary) sits in the socket and is served via
+        // its own control lines; chips[1+] (the secondaries) are each fly-leaded
+        // to an X header pin by a single select line.
         //
-        // Only the Ignore/not-Ignore distinction matters here, so the
-        // ActiveLow default used for unspecified lines is safe even where the
-        // real polarity is fixed active-high (the line is active either way).
+        // `derive_multi_cs_config` (v2::multi_cs_config) builds the serving
+        // config from chip[0]'s control lines — the set's line "universe" — then
+        // reads chips[1]'s logic to pick which of those lines is the per-chip
+        // select and to classify chip[0]'s remaining lines as commoned (active on
+        // chip[0] too) or ignored. This validation mirrors that model so it
+        // accepts exactly the sets the deriver can serve; anchoring on chip[0]
+        // (not chip[1]) makes the result independent of secondary ordering.
+        //
+        // Only the Ignore/not-Ignore distinction matters here, so the ActiveLow
+        // default used for unspecified lines is safe even where the real polarity
+        // is fixed active-high (the line is active either way).
         if set.set_type == ChipSetType::Multi && set.chips.len() >= 2 {
-            let chip1 = &set.chips[1];
-            let chip_type = chip1.chip_type.resolved();
-            let control_lines = chip_type.control_lines();
-
+            let is_control =
+                |name: &str| matches!(name, "ce" | "oe" | "cs1" | "cs2" | "cs3" | "cs4");
             let line_logic = |chip: &ChipConfig, name: &str| -> CsLogic {
                 match name {
                     "ce" => chip.ce.unwrap_or(CsLogic::ActiveLow),
@@ -1203,71 +1208,121 @@ pub(crate) fn check_cs_v2(config: &Config) -> Result<()> {
                     _ => CsLogic::ActiveLow,
                 }
             };
+            let control_names = |chip: &ChipConfig| -> alloc::vec::Vec<&'static str> {
+                chip.chip_type
+                    .resolved()
+                    .control_lines()
+                    .iter()
+                    .map(|l| l.name)
+                    .filter(|n| is_control(n))
+                    .collect()
+            };
 
-            // Collect (name, logic) for all control lines of chips[1],
-            // using defaults (ActiveLow) for unspecified lines.
-            let line_logics: alloc::vec::Vec<(&str, CsLogic)> = control_lines
-                .iter()
-                .filter(|l| matches!(l.name, "ce" | "oe" | "cs1" | "cs2" | "cs3" | "cs4"))
-                .map(|l| (l.name, line_logic(chip1, l.name)))
-                .collect();
+            // chip[0]'s control lines are the set's line universe (matching
+            // derive_multi_cs_config).
+            let chip0 = &set.chips[0];
+            let chip0_name = chip0.chip_type.resolved().name();
+            let universe = control_names(chip0);
+            let mut set_select: Option<&str> = None;
 
-            let num_lines = line_logics.len();
-            let active: alloc::vec::Vec<&str> = line_logics
-                .iter()
-                .filter(|(_, l)| *l != CsLogic::Ignore)
-                .map(|(n, _)| *n)
-                .collect();
+            for (idx, chip) in set.chips.iter().enumerate().skip(1) {
+                let chip_name = chip.chip_type.resolved().name();
+                let own = control_names(chip);
 
-            // For single-line chips, no ignores needed.
-            if num_lines > 1 && active.len() != 1 {
-                return Err(Error::InvalidConfig {
-                    error: alloc::format!(
-                        "Multi set secondary chips must have exactly 1 active control line \
-                         (the per-chip select) and ignore the rest. Chip type {} (set {}) \
-                         has {} active lines: {:?}",
-                        chip_type.name(),
-                        set_id,
-                        active.len(),
-                        active
-                    ),
-                });
-            }
-
-            // All chips[1+] must agree on which lines are active/ignored.
-            for (idx, chip) in set.chips.iter().enumerate().skip(2) {
-                for &(name, ref_logic) in &line_logics {
-                    let chip_is_ignore = line_logic(chip, name) == CsLogic::Ignore;
-                    let ref_is_ignore = ref_logic == CsLogic::Ignore;
-                    if chip_is_ignore != ref_is_ignore {
-                        return Err(Error::InvalidConfig {
-                            error: alloc::format!(
-                                "Multi set secondary chips must all ignore the same control \
-                                 lines. Chip {} (set {}, chip {}) differs from chip 1 on \
-                                 line '{}'",
-                                chip_type.name(),
-                                set_id,
-                                idx,
-                                name
-                            ),
-                        });
-                    }
-                }
-            }
-
-            // Chip[0] must not ignore the per-chip select line.
-            if let Some(&per_chip_select_name) = active.first() {
-                let chip0 = &set.chips[0];
-                if line_logic(chip0, per_chip_select_name) == CsLogic::Ignore {
+                // (1) A secondary is fly-leaded by exactly one select line; every
+                //     other control line it has must be ignored.
+                let active: alloc::vec::Vec<&str> = own
+                    .iter()
+                    .copied()
+                    .filter(|&n| line_logic(chip, n) != CsLogic::Ignore)
+                    .collect();
+                if active.len() != 1 {
                     return Err(Error::InvalidConfig {
                         error: alloc::format!(
-                            "Multi set chip 0 cannot ignore '{}', which is the per-chip \
-                             select line for this set (set {})",
-                            per_chip_select_name,
-                            set_id
+                            "Multi set secondary chips must have exactly one active control \
+                             line (the per-chip select) and ignore the rest. Chip {} (set {}, \
+                             chip {}) has {} active lines: {:?}",
+                            chip_name,
+                            set_id,
+                            idx,
+                            active.len(),
+                            active
                         ),
                     });
                 }
+                let select = active[0];
+
+                // (2) The select line must be one chip[0] also has: the deriver
+                //     builds the CS layout from chip[0]'s control lines.
+                if !universe.contains(&select) {
+                    return Err(Error::InvalidConfig {
+                        error: alloc::format!(
+                            "Multi set secondary chip {} (set {}, chip {}) selects on control \
+                             line '{}', which the primary chip {} does not have",
+                            chip_name,
+                            set_id,
+                            idx,
+                            select,
+                            chip0_name
+                        ),
+                    });
+                }
+
+                // (3) The secondary must have every line chip[0] has, or the
+                //     deriver — which reads each of chip[0]'s lines on the
+                //     secondary — would treat a line the secondary's type lacks
+                //     (defaulted active, not Ignore) as a second select.
+                if let Some(missing) = universe.iter().copied().find(|u| !own.contains(u)) {
+                    return Err(Error::InvalidConfig {
+                        error: alloc::format!(
+                            "Multi set secondary chip {} (set {}, chip {}) lacks control line \
+                             '{}', which the primary chip {} has; a secondary must have every \
+                             control line of the primary",
+                            chip_name,
+                            set_id,
+                            idx,
+                            missing,
+                            chip0_name
+                        ),
+                    });
+                }
+
+                // (4) All secondaries must select the same line: the deriver
+                //     reads only chip[1] to fix the set's per-chip select.
+                match set_select {
+                    None => set_select = Some(select),
+                    Some(first) if first != select => {
+                        return Err(Error::InvalidConfig {
+                            error: alloc::format!(
+                                "Multi set secondary chips must all use the same per-chip \
+                                 select line. Chip {} (set {}, chip {}) selects on '{}', but an \
+                                 earlier secondary selects on '{}'",
+                                chip_name,
+                                set_id,
+                                idx,
+                                select,
+                                first
+                            ),
+                        });
+                    }
+                    Some(_) => {}
+                }
+            }
+
+            // (5) chip[0] must not ignore the per-chip select line: that line is
+            //     chip[0]'s own primary CS.
+            if let Some(select) = set_select
+                && line_logic(chip0, select) == CsLogic::Ignore
+            {
+                return Err(Error::InvalidConfig {
+                    error: alloc::format!(
+                        "Multi set primary chip {} (set {}) must not ignore '{}', the per-chip \
+                         select line for this set",
+                        chip0_name,
+                        set_id,
+                        select
+                    ),
+                });
             }
         }
 
