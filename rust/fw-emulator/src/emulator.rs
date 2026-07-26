@@ -32,7 +32,26 @@
 use crate::ffi;
 use onerom_config::mcu::RpVariant;
 
+use std::cell::RefCell;
 use std::sync::OnceLock;
+
+thread_local! {
+    /// The closure installed via [`Emulator::set_yield_hook`], invoked by the
+    /// C `onerom_test_yield` hook through [`yield_trampoline`].
+    static YIELD_HOOK: RefCell<Option<Box<dyn FnMut()>>> = const { RefCell::new(None) };
+}
+
+/// C-ABI trampoline registered with the firmware's yield hook.  Dispatches to
+/// the thread-local closure installed by [`Emulator::set_yield_hook`].
+unsafe extern "C" fn yield_trampoline() {
+    YIELD_HOOK.with(|h| {
+        if let Ok(mut guard) = h.try_borrow_mut() {
+            if let Some(f) = guard.as_mut() {
+                f();
+            }
+        }
+    });
+}
 
 /// Pristine image of `onerom_runtime_info`, captured on the first boot before
 /// firmware_main() runs.  Restored on every subsequent in-process boot to
@@ -236,6 +255,138 @@ impl Emulator {
         unsafe { ffi::ffi_epio_setup_dma_chain(epio, word_size) };
 
         self.epio = epio;
+    }
+
+    /// Install a yield hook invoked whenever the firmware would busy-wait on
+    /// hardware the emulator drives (see `onerom_test_yield` in the firmware).
+    ///
+    /// The closure typically advances the simulation — drive the next stimulus
+    /// and step cycles — so a blocking firmware poll (e.g. `wait_for_knock`)
+    /// makes progress in this single-threaded harness.  Replaces any previously
+    /// installed hook.
+    pub fn set_yield_hook(&self, f: impl FnMut() + 'static) {
+        YIELD_HOOK.with(|h| *h.borrow_mut() = Some(Box::new(f)));
+        unsafe { ffi::set_onerom_test_yield_hook(Some(yield_trampoline)) };
+    }
+
+    /// Remove any installed yield hook.
+    pub fn clear_yield_hook(&self) {
+        unsafe { ffi::set_onerom_test_yield_hook(None) };
+        YIELD_HOOK.with(|h| *h.borrow_mut() = None);
+    }
+
+    /// Arm the address-monitor emulation seam.
+    ///
+    /// Installs the hook the firmware's `pio_setup_address_monitor_dma` calls
+    /// under emulation, so a later `setup_address_monitor` (via the plugin API)
+    /// wires up epio's capture channel from the block/SM the firmware chose.
+    /// Call after [`Self::setup_epio`] and before configuring the monitor.
+    pub fn arm_monitor(&self) {
+        unsafe { ffi::ffi_epio_arm_monitor(self.epio_or_panic()) };
+    }
+
+    /// Apply accumulated apio state (new/enabled SMs, GPIO config) to the live
+    /// epio instance.  Call after any firmware step that extends the PIO
+    /// configuration via `APIO_ASM_CONTINUE` — e.g. `setup_address_monitor`
+    /// and `start_address_monitor`.
+    pub fn update_from_apio(&self) {
+        unsafe { ffi::epio_update_from_apio(self.epio_or_panic()) };
+    }
+
+    // ── Address-monitor plugin API (via ora_fn_lookup) ───────────────────────
+
+    /// A raw host pointer into epio's SRAM buffer at RP2350 address `addr`.
+    /// The firmware is handed this as its `ring_buf`, so its native pointer
+    /// arithmetic and dereferences hit the same buffer epio's capture DMA
+    /// writes into.
+    pub fn sram_host_ptr(&self, addr: u32) -> *mut u32 {
+        let base = unsafe { ffi::epio_get_sram_ptr(self.epio_or_panic()) };
+        // SRAM_BASE is 0x20000000 in both the firmware and epio.
+        unsafe { base.add((addr - 0x2000_0000) as usize) as *mut u32 }
+    }
+
+    /// `ORA_ID_SETUP_ADDRESS_MONITOR`.  `ring_buf` must be a host pointer into
+    /// epio SRAM (see [`Self::sram_host_ptr`]).
+    pub fn setup_address_monitor(
+        &self,
+        ring_buf: *mut u32,
+        ring_entries_log2: u8,
+        mode: ffi::ora_monitor_mode_t,
+        data_size: u8,
+    ) -> OraResult {
+        OraResult::from(plugin_call!(
+            ffi::api_id_t_ORA_ID_SETUP_ADDRESS_MONITOR,
+            ffi::ora_setup_address_monitor_fn_t,
+            ring_buf,
+            ring_entries_log2,
+            mode,
+            data_size,
+            core::ptr::null_mut()
+        ))
+    }
+
+    /// `ORA_ID_INIT_KNOCK`.  Fills the caller-allocated `knock` structure.
+    pub fn init_knock(
+        &self,
+        knock_seq: &[u32],
+        knock_bits: u8,
+        data_size: u8,
+        knock: *mut ffi::ora_knock_t,
+    ) -> OraResult {
+        OraResult::from(plugin_call!(
+            ffi::api_id_t_ORA_ID_INIT_KNOCK,
+            ffi::ora_init_knock_fn_t,
+            knock_seq.as_ptr(),
+            knock_seq.len() as u8,
+            knock_bits,
+            data_size,
+            knock
+        ))
+    }
+
+    /// `ORA_ID_START_ADDRESS_MONITOR`.
+    pub fn start_address_monitor(&self) {
+        plugin_call!(
+            ffi::api_id_t_ORA_ID_START_ADDRESS_MONITOR,
+            ffi::ora_start_address_monitor_fn_t
+        );
+    }
+
+    /// `ORA_ID_GET_ADDRESS_MONITOR_RING_WRITE_POS`.  Returns the slot whose
+    /// pointed-to value is the current ring write pointer.
+    pub fn get_address_monitor_ring_write_pos(&self) -> *mut *mut u32 {
+        plugin_call!(
+            ffi::api_id_t_ORA_ID_GET_ADDRESS_MONITOR_RING_WRITE_POS,
+            ffi::ora_get_address_monitor_ring_write_pos_fn_t
+        ) as *mut *mut u32
+    }
+
+    /// `ORA_ID_WAIT_FOR_KNOCK`.  Blocking: drive the simulation forward via a
+    /// yield hook (see [`Self::set_yield_hook`]) so this can make progress.
+    #[allow(clippy::too_many_arguments)]
+    pub fn wait_for_knock(
+        &self,
+        knock: *const ffi::ora_knock_t,
+        ring_buf: *mut u32,
+        ring_entries_log2: u8,
+        flags: u32,
+        payload_out: *mut u32,
+        payload_len: u8,
+        start_pos: *mut u32,
+        next_read_out: *mut *mut u32,
+    ) -> OraResult {
+        OraResult::from(plugin_call!(
+            ffi::api_id_t_ORA_ID_WAIT_FOR_KNOCK,
+            ffi::ora_wait_for_knock_fn_t,
+            knock,
+            ring_buf,
+            ring_entries_log2,
+            flags,
+            payload_out,
+            payload_len,
+            start_pos,
+            next_read_out
+        ))
     }
 
     // ── Firmware state queries (valid after boot()) ──────────────────────────

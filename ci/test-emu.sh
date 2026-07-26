@@ -89,12 +89,25 @@ run_config() {
 run_config_api() {
     local board=$1
     local config=$2
- 
+
     echo ""
     echo "Testing: board=$board config=$config"
     env BOARD="$board" CONFIG="$config" make test-api || {
         echo "FAILED: board=$board config=$config"
         echo "Reproduce:  env BOARD=$board CONFIG=$config make test-api"
+        exit 1
+    }
+}
+
+run_config_monitor() {
+    local board=$1
+    local config=$2
+
+    echo ""
+    echo "Testing: board=$board config=$config"
+    env BOARD="$board" CONFIG="$config" make test-monitor || {
+        echo "FAILED: board=$board config=$config"
+        echo "Reproduce:  env BOARD=$board CONFIG=$config make test-monitor"
         exit 1
     }
 }
@@ -259,6 +272,47 @@ test_40_config_api() {
     test_config_api fire-40-b "$config"
 }
 
+test_config_monitor() {
+    local board=${1:-fire-24-a}
+    local config=$2
+
+    run_config_monitor "$board" "$config"
+}
+
+test_24_config_monitor() {
+    local config=$1
+
+    test_config_monitor fire-24-a "$config"
+    test_config_monitor fire-24-b "$config"
+    test_config_monitor fire-24-c "$config"
+    test_config_monitor fire-24-d "$config"
+    test_config_monitor fire-24-e "$config"
+    test_config_monitor fire-24-f "$config"
+}
+
+test_28_config_monitor() {
+    local config=$1
+
+    test_config_monitor fire-28-a "$config"
+    test_config_monitor fire-28-b "$config"
+    test_config_monitor fire-28-c "$config"
+    test_config_monitor fire-28-d "$config"
+}
+
+test_32_config_monitor() {
+    local config=$1
+
+    test_config_monitor fire-32-a "$config"
+    test_config_monitor fire-32-b "$config"
+}
+
+test_40_config_monitor() {
+    local config=$1
+
+    test_config_monitor fire-40-a "$config"
+    test_config_monitor fire-40-b "$config"
+}
+
 # Test every standard ROM type on every standard hardware revision.
 # Do just one 24/28/32/40 variant now, so we fail early if any ROM types are
 # broken.
@@ -358,3 +412,21 @@ test_40_config_api onerom-config/test/40-random-force-16bit.json
 # so the plugin API metadata getter is exercised on the present (non-NULL)
 # path.  Other configs leave these unset and cover the absent (NULL) path.
 test_config_api fire-24-a onerom-config/test/metadata.json
+
+# Address-monitor tests: drive the address-monitor plugin API (capture pipeline
+# and knock detection, the foundation an RBCP plugin builds on) across ROM types
+# and board sizes.  16-bit (40-pin) sets self-skip — knock detection is an
+# 8-bit-ROM mechanism (see issue #277) — but the 40-pin boards are still swept
+# so any 8-bit sets on them are covered.
+test_24_config_monitor onerom-config/test/24-random-23xx.json
+test_24_config_monitor onerom-config/test/24-random-27xx.json
+test_24_config_monitor onerom-config/test/24-random-28xx.json
+test_28_config_monitor onerom-config/test/28-random-23xxx.json
+test_28_config_monitor onerom-config/test/28-random-23qlxxx.json
+test_28_config_monitor onerom-config/test/28-random-27xxx.json
+test_28_config_monitor onerom-config/test/28-random-28xxx.json
+test_32_config_monitor onerom-config/test/32-random-27c080.json
+test_32_config_monitor onerom-config/test/32-random-27c301.json
+test_32_config_monitor onerom-config/test/32-random-27c0x0.json
+test_40_config_monitor onerom-config/test/40-random.json
+test_40_config_monitor onerom-config/test/40-random-force-16bit.json

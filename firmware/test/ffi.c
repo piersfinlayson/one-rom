@@ -45,6 +45,39 @@ void ffi_epio_setup_dma_chain(epio_t *epio, uint8_t word_size) {
     );
 }
 
+// Address-monitor capture DMA wiring.
+//
+// The firmware's pio_setup_address_monitor_dma has no DMA registers under
+// emulation; it calls monitor_dma_configure_cb (installed by
+// ffi_epio_arm_monitor) with the block/SM/ring it CHOSE.  We wire epio's
+// capture channel from that choice — so a wrong block choice by the firmware
+// is caught — and point the firmware's ring-write-position slot at epio's live
+// capture write pointer.
+static epio_t *s_monitor_epio;
+
+static void monitor_dma_configure_cb(
+    uint8_t src_block,
+    uint8_t src_sm,
+    void *ring_buf,
+    uint8_t ring_size_log2,
+    uint8_t data_size
+) {
+    uint32_t ring_base = SRAM_BASE +
+        (uint32_t)((uint8_t *)ring_buf - epio_get_sram_ptr(s_monitor_epio));
+    epio_dma_setup_capture_pio_ring(s_monitor_epio, DMA_CH_ADDR_MONITOR,
+                                    src_block, src_sm, 1,
+                                    ring_base, ring_size_log2, data_size);
+    set_host_monitor_write_slot((volatile uint32_t * volatile *)
+        epio_dma_capture_write_slot(s_monitor_epio, DMA_CH_ADDR_MONITOR));
+}
+
+// Arm the address-monitor emulation seam.  Call once after setup_epio and
+// before the firmware configures the address monitor.
+void ffi_epio_arm_monitor(epio_t *epio) {
+    s_monitor_epio = epio;
+    set_host_monitor_dma_configure(monitor_dma_configure_cb);
+}
+
 extern uint8_t logging_enabled;
 
 void ffi_set_logging(uint8_t enabled) {

@@ -21,6 +21,10 @@ path = "src/bin/pio_tester/main.rs"
 name = "plugin-api-tester"
 path = "src/bin/plugin_api_tester/main.rs"
 
+[[bin]]
+name = "address-monitor-tester"
+path = "src/bin/address_monitor_tester/main.rs"
+
 [dependencies]
 onerom-config = { workspace = true }
 onerom-gen = { workspace = true }

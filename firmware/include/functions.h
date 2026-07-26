@@ -150,6 +150,41 @@ uint8_t *sram_to_host(uint32_t addr);
 // backing store with epio's, so subsequent firmware writes are immediately
 // visible to the running epio simulation.
 void set_host_sram_ptr(uint8_t *ptr);
+
+// Address-monitor emulation seams (see pioplugin.c).  There are no DMA
+// registers under emulation, so the firmware routes the address-monitor DMA
+// configuration and ring-write-position reads through injected hooks that the
+// test harness wires to epio's capture channel.
+typedef void (*monitor_dma_configure_fn_t)(
+    uint8_t src_block,
+    uint8_t src_sm,
+    void *ring_buf,
+    uint8_t ring_size_log2,
+    uint8_t data_size
+);
+// Sets the callback pio_setup_address_monitor_dma invokes with the block/SM/
+// ring it chose, so the harness can configure epio's capture channel from the
+// firmware's own choice.
+void set_host_monitor_dma_configure(monitor_dma_configure_fn_t fn);
+// Sets the slot the firmware reads the address-monitor ring write position
+// from; point it at epio's live capture write pointer.
+void set_host_monitor_write_slot(volatile uint32_t * volatile *slot);
+
+// Generic test-yield hook.  Firmware calls onerom_test_yield() at points where
+// it would busy-wait on hardware the emulator drives (e.g. polling the address
+// monitor ring write position), giving the harness a chance to advance the
+// simulation.  No-op until the harness installs a hook via
+// set_onerom_test_yield_hook().  On real hardware onerom_test_yield() compiles
+// to nothing.
+extern void (*onerom_test_yield_hook)(void);
+void set_onerom_test_yield_hook(void (*hook)(void));
+static inline void onerom_test_yield(void) {
+    if (onerom_test_yield_hook != NULL) {
+        onerom_test_yield_hook();
+    }
+}
+#else // REAL_HARDWARE
+static inline void onerom_test_yield(void) {}
 #endif // !REAL_HARDWARE
 
 // pio/dma.c

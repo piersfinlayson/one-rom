@@ -184,6 +184,8 @@ fn main() {
         .allowlist_function("ffi_pios_enabled")
         .allowlist_function("ffi_epio_setup_sram")
         .allowlist_function("ffi_epio_setup_dma_chain")
+        .allowlist_function("ffi_epio_arm_monitor")
+        .allowlist_function("set_onerom_test_yield_hook")
         .allowlist_function("ffi_set_logging")
         .allowlist_function("ora_fn_lookup")
         .allowlist_type("ora_result_t")
