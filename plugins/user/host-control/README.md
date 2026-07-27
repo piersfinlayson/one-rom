@@ -29,3 +29,7 @@ RBCP command signalling (the knock and command bytes) travels on the address lin
 This plugin omits the least-significant address line from command signalling for every ROM served on the **40-pin variant**: on that hardware the ROM's least-significant line is served through a separately-read pin the address monitor cannot sample.  A host must therefore carry command data from address bit 1 upward, advancing its read address by two per command byte.  On the 24-, 28- and 32-pin variants every address line is observed, so command data uses address bit 0 upward with stride 1.
 
 See "Address Line Presentation" in the [RBCP specification](https://github.com/piersfinlayson/rom-bus-control-protocol) for the general model.
+
+## Unsupported ROM types
+
+The only ROM type supported by One ROM but unsupported by RBCP and this host-control plugin is the 23QL384 chip type, which uses an unusual serving algorithm, due to its need to combine address lines into its CS decisions, and not serve on certain address ranges.
