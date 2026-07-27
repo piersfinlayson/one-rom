@@ -422,6 +422,20 @@ impl Emulator {
         unsafe { ffi::stub_set_sel_image(image as _) };
     }
 
+    /// The image-select value the firmware read from the sel pins on this boot.
+    ///
+    /// This is the firmware's own reading, not the stub's view of what it
+    /// drove, so it covers the whole request -> pins -> firmware path.  It
+    /// equals the value passed to [`Self::set_sel_image`], except that a value
+    /// the board's sel pins cannot express wraps, exactly as on hardware.
+    ///
+    /// Check it after [`Self::boot`] rather than assuming the request took
+    /// effect: a case that silently runs against the wrong image reports
+    /// whatever that image does under the intended case's label.
+    pub fn sel_image(&self) -> u8 {
+        unsafe { ffi::ffi_image_sel() }
+    }
+
     // ── GPIO / cycle operations (require setup_epio()) ───────────────────────
 
     /// Drive external GPIO states into the emulator.

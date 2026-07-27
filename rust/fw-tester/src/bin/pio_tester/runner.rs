@@ -906,6 +906,25 @@ fn boot_set(
     debug!("Set {}: booting firmware", set_idx);
     let mut emulator = Emulator::boot();
 
+    // Confirm the firmware selected the image this set drove the sel pins for.
+    // A sel value beyond the board's pin count wraps, by design — run_all
+    // accounts for that (oracle substitution, one-beyond test), so compare
+    // against the wrapped value rather than the raw request.  Any other
+    // discrepancy means the set would silently have tested a different ROM.
+    let max_images = 1usize << board.sel_pins().len();
+    let expected_image = (sel_image as usize % max_images) as u8;
+    if emulator.sel_image() != expected_image {
+        error!(
+            "Set {}: firmware selected image {}, not {}",
+            set_idx,
+            emulator.sel_image(),
+            expected_image
+        );
+        return Err(SetResult::boot_error(
+            set_idx,
+            "firmware selected a different image — the set would have tested the wrong ROM",
+        ));
+    }
     if emulator.limp_mode() {
         error!("Set {}: firmware entered limp mode", set_idx);
         return Err(SetResult::boot_error(set_idx, "firmware entered limp mode"));

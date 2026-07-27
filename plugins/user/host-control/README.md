@@ -32,13 +32,10 @@ See "Address Line Presentation" in the [RBCP specification](https://github.com/p
 
 ## Unsupported ROM types
 
-RBCP and this host-control plugin rely on One ROM's address monitor, which watches chip-select and captures the addresses the host reads.  The monitor does not yet support ROM/board combinations that use a **qualifier-based chip-select** — where address lines factor into the select decision and the ROM is deselected over certain address ranges (the firmware's `ALG_CS_2` algorithm).  On such combinations RBCP does not function.
+RBCP and this host-control plugin rely on One ROM's address monitor, which watches chip-select and captures the addresses the host reads.  The monitor does not yet support ROM types that use a **qualifier-based chip-select** — where address lines factor into the select decision and the ROM is deselected over certain address ranges (the firmware's `ALG_CS_2` algorithm).  On those, RBCP does not function.
 
-This currently affects:
+This affects the **23QL384** only, on every board and in every CS configuration: it inherently combines its top two address lines into the CS decision and does not serve the address range where both are high.  It is the only ROM type that resolves to a qualifier-based chip-select.
 
-- **23QL384**, on every board — it inherently combines address lines into its CS decision and does not serve certain address ranges.
-- **23QL512**, only on board configurations where its upper address pins double as bank-select (X) pins — for example the 28-pin Fire revisions that have X pins (fire-28-c/d) with CS1 active-low — where the same qualifier-based algorithm is selected.  Where 23QL512 resolves to a plain chip-select it is fully supported.
+All other ROM types — including the **23QL512**, on every board revision, banked or not, with `cs1` active-low or active-high — use a plain chip-select and are fully supported.
 
-Note that the chip-select algorithm is resolved from the chip, the board and the per-image CS configuration, so whether a given ROM type is supported can depend on the board and configuration, not the chip type alone.
-
-Support for these ROM types is planned as a future enhancement to the address monitor.
+Support for the 23QL384 is planned as a future enhancement to the address monitor.

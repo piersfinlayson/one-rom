@@ -24,7 +24,7 @@
 /* stub_set_sel_image */
 #include "stub.h"
 
-/* ffi_limp_mode, ffi_pios_enabled,
+/* ffi_limp_mode, ffi_pios_enabled, ffi_image_sel,
    ffi_epio_setup_sram, ffi_epio_setup_dma_chain */
 #include "ffi.h"
 

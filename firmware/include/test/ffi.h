@@ -10,6 +10,7 @@ void *ffi_runtime_info_ptr(void);
 uint32_t ffi_runtime_info_size(void);
 uint8_t ffi_limp_mode(void);
 uint8_t ffi_pios_enabled(void);
+uint8_t ffi_image_sel(void);
 void ffi_epio_setup_sram(epio_t *epio);
 void ffi_epio_setup_dma_chain(epio_t *epio, uint8_t word_size);
 void ffi_epio_arm_monitor(epio_t *epio);

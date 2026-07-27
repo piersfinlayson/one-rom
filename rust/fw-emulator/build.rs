@@ -182,6 +182,7 @@ fn main() {
         .allowlist_function("stub_set_rp_variant")
         .allowlist_function("ffi_limp_mode")
         .allowlist_function("ffi_pios_enabled")
+        .allowlist_function("ffi_image_sel")
         .allowlist_function("ffi_epio_setup_sram")
         .allowlist_function("ffi_epio_setup_dma_chain")
         .allowlist_function("ffi_epio_arm_monitor")

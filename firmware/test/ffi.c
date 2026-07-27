@@ -26,6 +26,13 @@ uint8_t ffi_pios_enabled(void) {
     return (uint8_t)_apio_emulated_pio.pios_enabled;
 }
 
+// The image-select value the firmware read from the sel pins on this boot.
+// Lets a test confirm the firmware selected the image the case drove the pins
+// for, rather than trusting the stub's own view of what it drove.
+uint8_t ffi_image_sel(void) {
+    return (uint8_t)RUNTIME->image_sel;
+}
+
 void ffi_epio_setup_sram(epio_t *epio) {
     uint64_t *source = get_ram_rom_image_table_aligned();
     epio_sram_set(epio, SRAM_BASE, (uint8_t *)source, RAM_ROM_TABLE_SIZE);

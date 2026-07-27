@@ -124,6 +124,21 @@ fn main() {
             continue;
         }
 
+        // A set index beyond what the board's sel pins can express wraps to a
+        // lower image, so this case would drive the bus for one chip set while
+        // the firmware served another.  Unlike the PIO tester there is no
+        // oracle substitution to make that meaningful here, so say so and move
+        // on rather than test the wrong ROM under this set's label.
+        let max_images = 1usize << board.sel_pins().len();
+        if idx >= max_images {
+            println!(
+                "SKIP  {label}: board has {} sel pin(s) (max {max_images} images), so this \
+                 set is not selectable",
+                board.sel_pins().len()
+            );
+            continue;
+        }
+
         // force_16_bit configs ignore /BYTE entirely (AlgData0, word_size 16),
         // so there is no byte mode to exercise and the shared A-1/D15 pin is
         // always a firmware output.
@@ -167,17 +182,15 @@ fn main() {
 fn monitor_skip_reason(chip_type: ChipType) -> Option<&'static str> {
     match chip_type {
         // The monitor's CS-monitor state machine does not implement the
-        // qualifier-based chip-select algorithm (ALG_CS_2).  23QL384 always
-        // resolves to it; 23QL512 resolves to it on boards whose upper address
-        // pins double as bank-select (X) pins with CS1 active-low (e.g.
-        // fire-28-c/d).  The CS algorithm is resolved per image from
-        // chip+board+CS config, so it cannot be pinned to the chip type alone;
-        // this coarser chip-type skip is an interim measure (the plain-CS
-        // configurations of these chips, where they work, exercise nothing
-        // other chips do not).  Proper fix: make the monitor CS-algorithm-
-        // agnostic — see the address-monitor follow-up issue.
-        ChipType::Chip23QL384 | ChipType::Chip23QL512 => Some(
-            "may resolve to ALG_CS_2 (qualifier-based CS), not yet supported by the address monitor",
+        // qualifier-based chip-select algorithm (ALG_CS_2), which 23QL384
+        // resolves to on every board and CS configuration - it is the only
+        // chip type with `deselect_when_address_all_high` set.  The CS
+        // algorithm is resolved per image from chip+board+CS config rather
+        // than from the chip type alone, so this chip-type skip is coarser
+        // than the limitation it stands in for; it is exact for 23QL384
+        // because that chip never resolves to anything else.
+        ChipType::Chip23QL384 => Some(
+            "resolves to ALG_CS_2 (qualifier-based CS), not yet supported by the address monitor",
         ),
         _ => None,
     }
@@ -306,6 +319,17 @@ fn boot(board: Board, sel: u8, word_size: u8, log_enabled: bool) -> Result<Emula
     Emulator::set_rp_variant(board.rp_variant());
     Emulator::set_sel_image(sel);
     let mut emu = Emulator::boot();
+    // Confirm the firmware selected the image this case is about.  Without
+    // this check a mis-selected image is invisible: the case runs against a
+    // different ROM entirely and reports whatever that one does under this
+    // case's label.
+    if emu.sel_image() != sel {
+        return Err(format!(
+            "firmware selected image {} but this case is image {sel} — the case would \
+             have tested the wrong ROM",
+            emu.sel_image()
+        ));
+    }
     if emu.limp_mode() {
         return Err("firmware entered limp mode".to_string());
     }

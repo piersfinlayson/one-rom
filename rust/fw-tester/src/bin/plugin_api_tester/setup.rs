@@ -32,6 +32,18 @@ pub fn setup(board: Board, log_enabled: bool, sel_image: u8) -> (Emulator, Firmw
 
     let emulator = Emulator::boot();
 
+    // Confirm the firmware selected the requested image — otherwise the slot
+    // under test is not the slot being exercised, and every result below is
+    // about the wrong ROM.
+    if emulator.sel_image() != sel_image {
+        error!(
+            "Firmware selected image {}, not the requested {}",
+            emulator.sel_image(),
+            sel_image
+        );
+        process::exit(1);
+    }
+
     if emulator.limp_mode() {
         error!("Firmware entered limp mode (sel_image={})", sel_image);
         process::exit(1);

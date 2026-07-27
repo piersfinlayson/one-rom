@@ -57,16 +57,35 @@ void setup_cp(void) {
     STUB_LOG("setup_cp");
 }
 
+// Defined below, alongside stub_set_rp_variant().
+extern uint8_t stub_rp235x_is_b;
+
+// Maximum GPIO number for the RP235x variant under test.
+//
+// The firmware's MAX_GPIOS is max_gpios[RUNTIME->rp235x], and RUNTIME->rp235x
+// is only populated once firmware_main() has run - it cold-boots as RP235XA.
+// Stubs called before boot (stub_set_sel_image) must not read it: doing so
+// judged a B-variant board's sel pins (38-41) out of range, drove no pins, and
+// silently selected image 0 on the first boot of a process.  The variant is
+// the test's own choice, supplied by stub_set_rp_variant(), so use that - it
+// is correct both before and during boot.  (The plugin API cannot serve this:
+// it only exists once the firmware is running, and exposes no variant or GPIO
+// count in any case.)
+static uint8_t stub_max_gpios(void) {
+    return max_gpios[stub_rp235x_is_b ? RP235XB : RP235XA];
+}
+
 // Sel pin stub state
 static uint64_t stub_gpio_sel_value;
 static uint8_t stub_sel_image;
 
 uint8_t stub_set_sel_image(uint8_t image_index) {
     uint8_t valid_bits = 0;
+    uint8_t gpio_limit = stub_max_gpios();
     stub_gpio_sel_value = 0;
     for (int ii = 0; ii < MAX_IMG_SEL_PINS; ii++) {
         uint8_t pin = HW->gpio_sel[ii];
-        if (pin < MAX_GPIOS) {
+        if (pin < gpio_limit) {
             valid_bits++;
             if (image_index & (1 << ii)) {
                 stub_gpio_sel_value |= (1ULL << pin);
@@ -87,9 +106,10 @@ uint32_t setup_sel_pins(uint64_t *sel_mask, uint64_t *flip_bits) {
     *sel_mask = 0;
     *flip_bits = 0;
     uint32_t count = 0;
+    uint8_t gpio_limit = stub_max_gpios();
     for (int ii = 0; ii < MAX_IMG_SEL_PINS; ii++) {
         uint8_t pin = HW->gpio_sel[ii];
-        if (pin < MAX_GPIOS) {
+        if (pin < gpio_limit) {
             *sel_mask |= (1ULL << pin);
             count++;
         }

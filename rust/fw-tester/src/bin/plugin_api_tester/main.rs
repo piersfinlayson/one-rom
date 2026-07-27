@@ -78,8 +78,16 @@ fn main() {
 
     let mut report = ApiReport::new(&board_str, &config_path);
 
+    // Sel values beyond this wrap to a lower image, so the slot under test
+    // would not be the slot exercised.
+    let max_images = 1usize << board.sel_pins().len();
+
     for (idx, chip_set) in config.chip_sets.iter().enumerate() {
         let sel = idx as u8;
+        if idx >= max_images {
+            report.skip_slot(idx, sel, "not selectable — board has too few sel pins");
+            continue;
+        }
         match chip_set.set_type {
             ChipSetType::Single => {
                 let label = chip_set
