@@ -226,6 +226,17 @@ Some greater pin count ROMs can be emulated by a smaller One ROM, provided the R
 
 Full chip list for each board. Where a particular ROM type goes by multiple identifiers (for example 27512, 27C512, 27SF512), each type appears as a separate row.
 
+The **Fit** column says how the chip sits in the board's socket:
+
+| Fit | Meaning |
+|:---|:---|
+| `native` | Chip and board have the same pin count — it goes straight in |
+| `overhang` | Chip has *fewer* pins than the board, so One ROM's top pins hang out of the socket |
+| `larger socket (no fly-leads)` | Chip has *more* pins than the board, but no address line among the extra ones: One ROM sits in the bottom of the socket with nothing to wire |
+| `fly-lead to X1` (and `X2`) | Chip has more pins than the board, and the overhanging address line(s) must be wired to One ROM's X1 (and X2) header pin |
+
+Every fit other than `native` is a cross-size fit, and in all of them One ROM's power pins may not line up with the socket's — power must be rerouted to One ROM's own VCC or 5V header pin. `larger socket (no fly-leads)` means no *signal* wiring is needed; it does not mean the chip simply drops in.
+
 ## One ROM Fire 24 (rev A/A2) — fire-24-a
 
 *24-pin chips (native)*

@@ -995,10 +995,26 @@ onerom chips --all
 
 For a board, each chip is listed with its **ROM size** (the chip's own capacity)
 and its **image size** — the flash One ROM uses to emulate it, which is often
-larger, and occasionally much larger. The figures, and the native / overhang /
-fly-lead grouping, are the same ones published in
-[Chip Compatibility](COMPATIBILITY.md); the document is generated from the same
-source the CLI reads, so the two agree.
+larger, and occasionally much larger. The figures, and the grouping, are the same
+ones published in [Chip Compatibility](COMPATIBILITY.md); the document is
+generated from the same source the CLI reads, so the two agree.
+
+Chips are grouped by how they fit the board's socket, and the **Fit** column
+names the fit exactly:
+
+| Fit | Meaning |
+|---|---|
+| `native` | Chip and board have the same pin count — it goes straight in. |
+| `overhang` | Chip has *fewer* pins than the board, so One ROM's top pins hang out of the socket. |
+| `larger socket (no fly-leads)` | Chip has *more* pins than the board, but no address line among the extra ones: One ROM sits bottom-justified in the socket, with nothing to wire. |
+| `fly-lead to X1` / `fly-lead to X1 and X2` | Chip has more pins than the board, and the overhanging address line(s) must be wired to One ROM's `X1` (and `X2`) header pin. |
+
+Every fit other than `native` is a cross-size fit, and in all of them One ROM's
+power pins may not line up with the socket's — **power must be rerouted to One
+ROM's own VCC/5V pin**. `larger socket (no fly-leads)` means no *signal* wiring
+is needed; it does not mean the chip simply drops in. Use
+[`boards socket`](#boards-socket) with `--chip-type` and `--gpio` to see exactly
+where One ROM's VCC lands.
 
 The sizes are for a chip served alone in its slot. A banked or multi-ROM set
 draws further lines into the slot's address window, so its image can be larger
@@ -1007,8 +1023,10 @@ than the figure shown here; build the firmware and run
 
 Chips are listed only where a size can be derived, which means Fire (RP2350)
 boards. An Ice (STM32) board falls back to a plain list of names. A chip type of
-the board's own pin count that the board cannot serve — the SRAM types, at the
-time of writing — is named in a trailing line rather than tabulated.
+the board's own pin count that the board cannot serve — either because no
+firmware serves it yet (the SRAM types, at the time of writing) or because this
+particular board's layout cannot place it — is named in a trailing line rather
+than tabulated.
 
 Board is taken from `--board`, or inferred from a connected One ROM. `--chip-type`
 accepts any chip type the board can emulate, under any accepted spelling.
@@ -1017,7 +1035,6 @@ Example output (illustrative — your build may differ):
 
 ```
 $ onerom chips --board fire-24-f
-
 Supported chip types for fire-24-f (One ROM Fire 24 (rev F)):
 
   24-pin chips (native)
@@ -1031,8 +1048,20 @@ Supported chip types for fire-24-f (One ROM Fire 24 (rev F)):
     2764            8KB        32KB  fly-lead to X1
     ...
 
-$ onerom chips --board fire-28-c --chip-type 2364
+  Image size is the flash One ROM uses to emulate the chip, which may exceed the
+  chip's own ROM size.  See docs/COMPATIBILITY.md.
 
+  Recognised but not servable on this board: 2016, 6116
+
+Supported plugin types:
+  SystemPlugin, UserPlugin
+```
+
+A single chip type, on the board that makes the point — an 8KB ROM costing 256KB
+of flash, because One ROM overhangs a 28-pin socket to emulate a 24-pin part:
+
+```
+$ onerom chips --board fire-28-c --chip-type 2364
 2364 on fire-28-c (One ROM Fire 28 (rev C)):
   ROM size    8KB
   Image size  256KB

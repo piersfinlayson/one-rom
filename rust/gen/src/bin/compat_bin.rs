@@ -414,6 +414,39 @@ fn generate_document(w: &mut impl Write) -> io::Result<()> {
                  type appears as a separate row."
     )?;
     writeln!(w)?;
+    writeln!(
+        w,
+        "The **Fit** column says how the chip sits in the board's socket:"
+    )?;
+    writeln!(w)?;
+    writeln!(w, "| Fit | Meaning |")?;
+    writeln!(w, "|:---|:---|")?;
+    writeln!(
+        w,
+        "| `native` | Chip and board have the same pin count — it goes straight in |"
+    )?;
+    writeln!(
+        w,
+        "| `overhang` | Chip has *fewer* pins than the board, so One ROM's top pins hang out of the socket |"
+    )?;
+    writeln!(
+        w,
+        "| `larger socket (no fly-leads)` | Chip has *more* pins than the board, but no address line among the extra ones: One ROM sits in the bottom of the socket with nothing to wire |"
+    )?;
+    writeln!(
+        w,
+        "| `fly-lead to X1` (and `X2`) | Chip has more pins than the board, and the overhanging address line(s) must be wired to One ROM's X1 (and X2) header pin |"
+    )?;
+    writeln!(w)?;
+    writeln!(
+        w,
+        "Every fit other than `native` is a cross-size fit, and in all of them One \
+                 ROM's power pins may not line up with the socket's — power must be \
+                 rerouted to One ROM's own VCC or 5V header pin. \
+                 `larger socket (no fly-leads)` means no *signal* wiring is needed; it \
+                 does not mean the chip simply drops in."
+    )?;
+    writeln!(w)?;
 
     for board in &fire_boards {
         write_board_table(w, *board)?;
