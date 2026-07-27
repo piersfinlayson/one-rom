@@ -508,7 +508,7 @@ Full chip list for each board. Where a particular ROM type goes by multiple iden
 
 | Chip | ROM size | Image size | Fit |
 |:---|---:|---:|:---|
-| 28C512 | 64KB | 64KB | no fly-leads required |
+| 28C512 | 64KB | 64KB | larger socket (no fly-leads) |
 
 ## One ROM Fire 28 (rev B) — fire-28-b
 
@@ -572,7 +572,7 @@ Full chip list for each board. Where a particular ROM type goes by multiple iden
 
 | Chip | ROM size | Image size | Fit |
 |:---|---:|---:|:---|
-| 28C512 | 64KB | 64KB | no fly-leads required |
+| 28C512 | 64KB | 64KB | larger socket (no fly-leads) |
 
 ## One ROM Fire 28 (rev C) — fire-28-c
 
@@ -636,7 +636,7 @@ Full chip list for each board. Where a particular ROM type goes by multiple iden
 
 | Chip | ROM size | Image size | Fit |
 |:---|---:|---:|:---|
-| 28C512 | 64KB | 64KB | no fly-leads required |
+| 28C512 | 64KB | 64KB | larger socket (no fly-leads) |
 | 23C1010 | 128KB | 128KB | fly-lead to X1 |
 | 27C010 | 128KB | 128KB | fly-lead to X1 |
 | 27C1000A | 128KB | 128KB | fly-lead to X1 |
@@ -707,7 +707,7 @@ Full chip list for each board. Where a particular ROM type goes by multiple iden
 
 | Chip | ROM size | Image size | Fit |
 |:---|---:|---:|:---|
-| 28C512 | 64KB | 64KB | no fly-leads required |
+| 28C512 | 64KB | 64KB | larger socket (no fly-leads) |
 | 23C1010 | 128KB | 128KB | fly-lead to X1 |
 | 27C010 | 128KB | 128KB | fly-lead to X1 |
 | 27C1000A | 128KB | 128KB | fly-lead to X1 |

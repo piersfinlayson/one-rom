@@ -71,7 +71,17 @@ impl CompatResult {
     }
 
     /// How the chip sits in the board's socket, as a short human-readable
-    /// phrase: `native`, `overhang`, or `fly-lead to X1[ and X2]`.
+    /// phrase: `native`, `overhang`, `larger socket (no fly-leads)`, or
+    /// `fly-lead to X1[ and X2]`.
+    ///
+    /// The `larger socket (no fly-leads)` case is a chip with more pins than
+    /// the board whose extra pins carry no address lines: One ROM sits
+    /// bottom-justified in the larger socket and nothing needs wiring. It is
+    /// spelled out rather than left as a bare "no fly-leads" because these rows
+    /// sit under a "(with fly-leads)" heading, which on its own reads as a
+    /// contradiction. It still does not simply drop in - the socket's VCC is
+    /// among the pins One ROM cannot reach, so power must be rerouted, as for
+    /// any cross-size fit.
     ///
     /// Used by the `compat` binary for `docs/COMPATIBILITY.md`'s per-board
     /// tables and by the CLI's `chips` command, so the two agree.
@@ -80,7 +90,7 @@ impl CompatResult {
             "native".to_string()
         } else if self.requires_fly_leads() {
             match self.num_fly_lead_pins {
-                0 => "no fly-leads required".to_string(),
+                0 => "larger socket (no fly-leads)".to_string(),
                 1 => "fly-lead to X1".to_string(),
                 2 => "fly-lead to X1 and X2".to_string(),
                 n => alloc::format!("fly-lead ({n} pins)"),
@@ -306,6 +316,22 @@ mod tests {
         assert_eq!(fly_lead.rom_size_bytes, 8 * 1024);
         assert_eq!(fly_lead.result.slot_size_bytes, 32 * 1024);
         assert_eq!(fly_lead.result.fit_description(), "fly-lead to X1");
+    }
+
+    /// A chip with more pins than the board, but no address line among the
+    /// extra ones, needs no fly-leads - One ROM just sits bottom-justified in
+    /// the larger socket. The 32-pin 28C512 on a 28-pin board is the case.
+    /// It is still a cross-size fit, not a native one.
+    #[test]
+    fn larger_socket_without_fly_leads_says_so() {
+        let entry = find(Board::Fire28C, "28C512");
+        assert!(entry.result.requires_fly_leads());
+        assert_eq!(entry.result.num_fly_lead_pins, 0);
+        assert!(!entry.result.is_native());
+        assert_eq!(
+            entry.result.fit_description(),
+            "larger socket (no fly-leads)"
+        );
     }
 
     /// Callers group consecutive runs of equal `pin_offset` into the document's

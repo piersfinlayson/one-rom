@@ -15,6 +15,12 @@
   size can be derived, keep the plain name list. `--all` is unchanged.
 - `onerom boards socket <board> --chip-type <chip>` (and `onerom inspect socket
   --chip-type <chip>`) now reports the chip's image size below the pinout.
+- Reword the fit shown for a chip with more pins than the board whose extra pins
+  carry no address lines (the 32-pin 28C512 on a 28-pin board). It read `no
+  fly-leads required` directly under a `(with fly-leads)` heading, which reads as
+  a contradiction; it now reads `larger socket (no fly-leads)`, saying where One
+  ROM sits as well as what it does not need. `docs/COMPATIBILITY.md` is
+  regenerated to match.
 
 - Add ASCII views of a board's physical pin layouts. `onerom boards header
   [<board>]` draws the pin (jumper / programming) header, annotating each
