@@ -105,11 +105,14 @@ fn main() {
         let chip_type = chip.chip_type.resolved();
         let label = format!("set {} ({})", idx, chip_type.name());
 
-        // Knock detection is an 8-bit-ROM mechanism (the knock is matched
-        // against A0-A7 of single-byte accesses); 16-bit parts are out of
-        // scope for the address monitor.
-        if matches!(chip_type, ChipType::Chip27C400 | ChipType::Chip27C200) {
-            println!("SKIP  {label}: 16-bit ROM (knock detection is 8-bit only)");
+        // Skip chip types the address monitor cannot handle yet.  This list is
+        // maintained by hand, never inferred from firmware behaviour: if the
+        // monitor's own error path decided what to skip, a firmware bug could
+        // silently drop a case and still report green.  A dropped case here is
+        // a deliberate, reviewed choice; when the monitor gains support, the
+        // entry is removed and the case starts being exercised.
+        if let Some(reason) = monitor_skip_reason(chip_type) {
+            println!("SKIP  {label}: {reason}");
             continue;
         }
 
@@ -127,6 +130,31 @@ fn main() {
 
     println!("address-monitor: {passed} passed, {failed} failed  [{board_str} / {config_path}]");
     std::process::exit(if failed == 0 { 0 } else { 1 });
+}
+
+/// Chip types the address monitor cannot handle yet, and why.  Returns the skip
+/// reason, or `None` for a chip that should be exercised.
+///
+/// This is deliberately an explicit, hand-maintained list keyed on the chip
+/// type — not derived from any firmware return value — so coverage is never
+/// silently dropped by a firmware bug.  Each entry is removed when the monitor
+/// gains support, at which point the case is exercised again.
+fn monitor_skip_reason(chip_type: ChipType) -> Option<&'static str> {
+    match chip_type {
+        // Knock detection matches against A0-A7 of single-byte accesses, so it
+        // is inherently an 8-bit-ROM mechanism; 16-bit parts are out of scope
+        // (see #277).
+        ChipType::Chip27C400 | ChipType::Chip27C200 => {
+            Some("16-bit ROM (knock detection is 8-bit only; #277)")
+        }
+        // 23QL384 uses the "deselect when address all high" chip-select
+        // algorithm (ALG_CS_2), which the monitor's CS-monitor state machine
+        // does not implement.
+        ChipType::Chip23QL384 => Some(
+            "uses ALG_CS_2 (deselect-when-address-all-high), not yet supported by the address monitor",
+        ),
+        _ => None,
+    }
 }
 
 /// Run one case on a detached worker thread, with a watchdog on the main
