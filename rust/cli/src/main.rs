@@ -10,6 +10,7 @@ use log::{debug, error, info, trace, warn};
 
 mod args;
 mod board;
+mod board_view;
 mod control;
 mod firmware;
 mod image;
@@ -20,6 +21,7 @@ mod scan;
 mod update;
 mod utils;
 
+use args::BoardCommands;
 use args::Cli;
 use args::Commands;
 use args::control::{ControlCommands, ControlLedCommands, ControlPokeCommands};
@@ -67,6 +69,8 @@ async fn sub_main() -> Result<(), Error> {
             InspectCommands::Slots(args) => inspect::cmd_slots(&options, args).await,
             InspectCommands::Image(args) => inspect::cmd_image(&options, args).await,
             InspectCommands::Gpio(args) => inspect::cmd_gpio(&options, args).await,
+            InspectCommands::Header(args) => inspect::cmd_header(&options, args).await,
+            InspectCommands::Socket(args) => inspect::cmd_socket(&options, args).await,
             InspectCommands::Peek(args) => match &args.command {
                 InspectPeekCommands::Live(args) => inspect::cmd_peek_live(&options, args).await,
                 InspectPeekCommands::Memory(args) => inspect::cmd_peek_memory(&options, args).await,
@@ -102,7 +106,11 @@ async fn sub_main() -> Result<(), Error> {
         Commands::Poke(args) => control::cmd_poke_live(&options, args).await,
         Commands::Reboot(args) => control::cmd_reboot(&options, args).await,
         Commands::Chips(args) => firmware::cmd_chips(&options, args).await,
-        Commands::Boards(args) => board::cmd_boards(&options, args).await,
+        Commands::Boards(args) => match &args.command {
+            None => board::cmd_boards(&options, args).await,
+            Some(BoardCommands::Header(args)) => board::cmd_header(&options, args).await,
+            Some(BoardCommands::Socket(args)) => board::cmd_socket(&options, args).await,
+        },
     }
 }
 

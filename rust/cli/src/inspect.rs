@@ -3,10 +3,10 @@
 // MIT License
 
 use crate::args::inspect::{
-    InspectGpioArgs, InspectImageArgs, InspectInfoArgs, InspectPeekLiveArgs, InspectPeekMemoryArgs,
-    InspectSlotsArgs, InspectTelemetryArgs,
+    InspectGpioArgs, InspectHeaderArgs, InspectImageArgs, InspectInfoArgs, InspectPeekLiveArgs,
+    InspectPeekMemoryArgs, InspectSlotsArgs, InspectSocketArgs, InspectTelemetryArgs,
 };
-use crate::utils::{check_device, check_live_read_write, print_hex_dump};
+use crate::utils::{check_device, check_live_read_write, print_hex_dump, resolve_board};
 use onerom_cli::CliFetch;
 use onerom_cli::LIVE_ROM_BASE;
 use onerom_cli::plugin::{PluginOrigin, PluginType, resolve_plugin_display};
@@ -391,4 +391,17 @@ pub async fn cmd_gpio(options: &Options, args: &InspectGpioArgs) -> Result<(), E
     check_device(options, args, true)?;
     let _device = options.device.as_ref().unwrap();
     Err(Error::Unimplemented("inspect gpio".into()))
+}
+
+pub async fn cmd_header(options: &Options, args: &InspectHeaderArgs) -> Result<(), Error> {
+    check_device(options, args, false)?;
+    let board = resolve_board(options, &None)?.ok_or(Error::NoBoardOrDevice)?;
+    crate::board::show_pin_header(&board);
+    Ok(())
+}
+
+pub async fn cmd_socket(options: &Options, args: &InspectSocketArgs) -> Result<(), Error> {
+    check_device(options, args, false)?;
+    let board = resolve_board(options, &None)?.ok_or(Error::NoBoardOrDevice)?;
+    crate::board::show_rom_socket(&board, &args.chip_type, args.gpio)
 }

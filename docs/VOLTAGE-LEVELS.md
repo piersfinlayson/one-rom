@@ -8,6 +8,16 @@ The STM32F1 series (64-bit variant) on the face of it has the required number of
 
 Therefore the STM32F4 series was initially chosen, followed by the RP2350, both to give sufficient raw horsepower (clock speed and flash instruction prefetch and cache), and also to provide the required FT hardware configuration.
 
+> **The RP2350 ADC pins are the one exception.** Almost every RP2350 GPIO is 5V
+> tolerant, but the ADC-capable GPIOs are **not** - they are 3.3V-only and must
+> not exceed the 3.3V IO supply. These are GPIO26-29 on the RP2350A (the QFN-60,
+> used by the 24/28-pin Fire boards) and GPIO40-47 on the RP2350B (the QFN-80,
+> used by the 32/40-pin Fire boards). One ROM never routes a 5V ROM-bus signal to
+> one of these pins; where they are used it is for image-select, status-LED or USB
+> signals on the top-edge header, which stay within 3.3V. The CLI's
+> `onerom boards header <board>` view flags each such pad as `!!3V3!!` so it is
+> obvious which header pads must be kept at or below 3.3V.
+
 There are two areas which are important to understand when considering voltage levels:
 1. The logic level compatibility between One ROM and the retro system - that is, ensuring that One ROM's outputs are within the acceptable input levels of the retro system, and vice versa.  See [5V and 3.3V Logic Levels](#5v-and-33v-logic-levels).
 2. The absolute maximum voltage levels that One ROM can tolerate on its pins, especially during power-on, when One ROM's MCU VDD is not yet at 3.3V.  See [Absolute Maximum VIN](#absolute-maximum-vin).
@@ -76,7 +86,7 @@ The test philosophy used was as follows:
 
 Fire 24 serves as a reasonable proxy for Fire 28, as the designs are essentially identical, with a different GPIO mapping and couple more GPIOs used.
 
-The 2.5s/1.5s timing was chosen, using convenient 555 circuit component values, to give One ROM plenty of time to fully boot and stabilise, and enough time for internal capacitors to meaningfully discharge during the off period, bringing VDD back down to close to zero before the next cycle.  Remember - during the period when VDD is 3.3V, all pins are fully 5v tolerant (up to 5.5V), so the testing is focused on the power-on period only.
+The 2.5s/1.5s timing was chosen, using convenient 555 circuit component values, to give One ROM plenty of time to fully boot and stabilise, and enough time for internal capacitors to meaningfully discharge during the off period, bringing VDD back down to close to zero before the next cycle.  Remember - during the period when VDD is 3.3V, all pins other than the RP2350 ADC inputs (see the note above) are fully 5v tolerant (up to 5.5V), so the testing is focused on the power-on period only.
 
 Both Ice and Fire boards passed this test without issue.  The conclusion is that both One ROM Ice and Fire (using the STM32F4 and RP2350 respectively) can happily tolerate this over-voltage scenario under heavy use for extended periods of time.
 

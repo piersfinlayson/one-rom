@@ -322,7 +322,7 @@ and rely on `--serial` (global) to pick a specific device.
 | [`firmware`](#firmware) | Build, inspect and manage firmware binaries | Varies |
 | [`plugin`](#plugin) | List available plugins | No |
 | [`chips`](#chips) | List supported chip types | No |
-| [`boards`](#boards) | List supported board types | No |
+| [`boards`](#boards) | List board types, or draw a board's pin header / socket | No |
 | [`peek`](#peek-top-level-alias) | Alias for `inspect peek live` | Yes |
 | [`poke`](#poke-top-level-alias) | Alias for `control poke live` | Yes |
 | [`reboot`](#reboot-top-level-alias) | Alias for `control reboot` | Yes |
@@ -440,6 +440,8 @@ onerom inspect <COMMAND>
 | [`image`](#inspect-image) | Read a slot's ROM image **(not yet supported)** | Yes |
 | [`peek`](#inspect-peek) | Read SRAM or the live ROM image | Yes |
 | [`gpio`](#inspect-gpio) | Read GPIO pin state **(not yet supported)** | Yes |
+| [`header`](#inspect-header) | Draw the device board's pin header | Yes |
+| [`socket`](#inspect-socket) | Draw the device board's ROM socket pinout | Yes |
 
 ### inspect info
 
@@ -525,6 +527,32 @@ supported)**
 | Option | Description |
 |---|---|
 | `--pin <PIN>` | Show only this pin. |
+
+### inspect header
+
+Draw the connected device's pin (jumper / programming) header as ASCII. The
+board is inferred from the device. This is the device-oriented form of
+[`boards header`](#boards-header); see there for what the diagram shows. No
+options.
+
+```
+onerom inspect header
+```
+
+### inspect socket
+
+Draw the connected device's ROM socket pinout as ASCII. The board is inferred
+from the device. This is the device-oriented form of
+[`boards socket`](#boards-socket).
+
+```
+onerom inspect socket [--chip-type <chip>] [--gpio]
+```
+
+| Option | Description |
+|---|---|
+| `--chip-type <chip>` | Label pins with this ROM type's functions instead of GPIOs. |
+| `--gpio` | Overlay the GPIO(s) onto the `--chip-type` function view (requires `--chip-type`). |
 
 ---
 
@@ -978,13 +1006,15 @@ Device required: no.
 
 ## boards
 
-List supported One ROM board types. No options.
+List supported One ROM board types, or draw a board's physical pin layouts as
+ASCII.
 
 ```
 onerom boards
 ```
 
-Example output (illustrative — your build may differ):
+With no subcommand, lists the supported board types. Example output
+(illustrative — your build may differ):
 
 ```
 Supported One ROM board types:
@@ -995,6 +1025,73 @@ Supported One ROM board types:
 ```
 
 Device required: no.
+
+### boards header
+
+Draw a board's pin (jumper / programming) header — the 2xN header along the
+board's top edge — as ASCII, pad by pad. Each image-select and X pad is
+annotated with the MCU GPIO behind it, and on RP2350 (Fire) boards with whether
+that GPIO is 5V-tolerant (`5V`) or 3.3V-only (`!!3V3!!` — an ADC pin that must
+not be driven above 3.3V). See [Voltage Levels](VOLTAGE-LEVELS.md) for the ADC
+caveat.
+
+```
+onerom boards header [<board>]
+```
+
+`<board>` is a board type (e.g. `fire-24-f`); if omitted, it is inferred from a
+connected One ROM. Boards not yet characterised print a short notice instead of
+a diagram.
+
+```
+onerom boards header fire-24-f
+```
+
+Device required: no (a device is used only to infer `<board>` when it is
+omitted).
+
+### boards socket
+
+Draw a board's ROM socket pinout as a DIP diagram.
+
+```
+onerom boards socket [<board>] [--chip-type <chip>] [--gpio]
+```
+
+Without `--chip-type`, each socket pin is labelled with the GPIO(s) behind it (the
+GPIO map). With `--chip-type <chip>` (e.g. `2364`), the pins are labelled with that
+ROM's functions (address / data / chip-select / `BYTE` / power / …) instead;
+add `--gpio` to overlay both. `--gpio` requires `--chip-type`. A pin that carries
+two functions on a multiplexed part (e.g. the 27C400's pin 29, `A0/D15`) shows
+both.
+
+When the chip's pin count differs from the board's, the socket is drawn at the
+larger of the two and the smaller device is bottom-justified (see
+[Chip Compatibility](COMPATIBILITY.md)):
+
+- emulating a **smaller** ROM on a larger One ROM, One ROM's extra pins hang out
+  of the socket and are marked `overhang` (reroute power to One ROM's VCC/5V pin);
+- emulating a **larger** ROM on a smaller One ROM, the socket pins One ROM does
+  not reach are marked `(empty)`, and any address line there shows the One ROM
+  `X1`/`X2` header pin it must be fly-leaded to (e.g. `A12 → X1`).
+
+In both cases One ROM's own power pins may not line up with the ROM's. With
+`--gpio`, the pin One ROM's VCC (or GND) lands on is annotated `(VCC)`/`(GND)` —
+e.g. `NC (VCC)` shows One ROM's VCC sitting on the ROM's NC pin — so you know
+where power must be applied.
+
+`<board>` is inferred from a connected One ROM when omitted. `--chip-type` must be a
+chip type the board can emulate (native, overhang or fly-lead; see
+[`onerom chips`](#chips) and [Chip Compatibility](COMPATIBILITY.md)).
+
+```
+onerom boards socket fire-24-f
+onerom boards socket fire-24-f --chip-type 2364
+onerom boards socket fire-24-f --chip-type 2364 --gpio
+```
+
+Device required: no (a device is used only to infer `<board>` when it is
+omitted).
 
 ---
 

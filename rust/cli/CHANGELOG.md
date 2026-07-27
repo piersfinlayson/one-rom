@@ -2,6 +2,21 @@
 
 ## v0.3.0 - 2026-??-??
 
+- Add ASCII views of a board's physical pin layouts. `onerom boards header
+  [<board>]` draws the pin (jumper / programming) header, annotating each
+  image-select and X pad with the MCU GPIO behind it and — on RP2350 (Fire)
+  boards — whether that GPIO is 5V-tolerant (`5V`) or 3.3V-only (`!!3V3!!`, an
+  ADC pin). `onerom boards socket [<board>] [--chip-type <chip>] [--gpio]` draws the
+  ROM socket as a DIP pinout: GPIOs by default, ROM pin functions (address /
+  data / chip-select / `BYTE` / …) with `--chip-type <chip>`, and both with
+  `--gpio`. A chip whose pin count differs from the board's is drawn at the
+  larger of the two, bottom-justified, matching `docs/COMPATIBILITY.md`: a
+  smaller ROM on a larger One ROM marks the hanging-out pins `overhang`; a larger
+  ROM on a smaller One ROM marks the pins One ROM cannot reach `(empty)` and
+  shows the `X1`/`X2` fly-lead each overhanging address line needs (e.g.
+  `A12 → X1`). The board is inferred from a connected One ROM when omitted, and
+  the same views are available for the connected device as `onerom inspect
+  header` and `onerom inspect socket`.
 - Fix `onerom image swap-bytes` panicking at startup (even for `--help`) with a
   clap short-option collision: `-i` was claimed by both the global `--vid-pid`
   and swap-bytes' `--input`. `--input`/`--output` are now long-only (aliases

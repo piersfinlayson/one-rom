@@ -52,9 +52,9 @@ use firmware::{
 };
 use image::{ImageArgs, ImageCommands, ImageConvertArgs, ImageSwapBytesArgs};
 use inspect::{
-    InspectArgs, InspectCommands, InspectGpioArgs, InspectImageArgs, InspectInfoArgs,
-    InspectPeekArgs, InspectPeekCommands, InspectPeekLiveArgs, InspectPeekMemoryArgs,
-    InspectSlotsArgs, InspectTelemetryArgs,
+    InspectArgs, InspectCommands, InspectGpioArgs, InspectHeaderArgs, InspectImageArgs,
+    InspectInfoArgs, InspectPeekArgs, InspectPeekCommands, InspectPeekLiveArgs,
+    InspectPeekMemoryArgs, InspectSlotsArgs, InspectSocketArgs, InspectTelemetryArgs,
 };
 use plugin::PluginArgs;
 use program::ProgramArgs;
@@ -263,9 +263,88 @@ impl Cli {
 }
 
 #[derive(Debug, clap::Args)]
-pub struct BoardArgs {}
+pub struct BoardArgs {
+    #[command(subcommand)]
+    pub command: Option<BoardCommands>,
+}
 
 impl CommandTrait for BoardArgs {
+    fn requires_device(&self) -> bool {
+        // Every form works offline given a board name, and the header/socket
+        // views only *infer* the board from a connected device when no name is
+        // supplied - they never require one. So a device is never mandatory.
+        false
+    }
+}
+
+#[derive(Debug, Subcommand)]
+pub enum BoardCommands {
+    /// Draw a board's pin (jumper / programming) header as ASCII.
+    ///
+    /// Shows the 2xN header along the board's top edge, pad by pad, with the
+    /// MCU GPIO behind each image-select and X pad and — on RP2350 (Fire)
+    /// boards — whether that GPIO is 5V-tolerant or 3.3V-only (an ADC pin).
+    ///
+    /// The board is taken from the argument, or inferred from a connected
+    /// One ROM when omitted.
+    ///
+    /// Examples:
+    ///
+    ///   onerom boards header fire-24-f
+    ///
+    ///   onerom boards header
+    Header(BoardHeaderArgs),
+
+    /// Draw a board's ROM socket pinout as ASCII.
+    ///
+    /// Without --chip-type each socket pin is labelled with the GPIO(s) behind it.
+    /// With --chip-type <chip> the pins are labelled with that ROM's functions
+    /// (address / data / chip-select / …); add --gpio to overlay both.
+    ///
+    /// The board is taken from the argument, or inferred from a connected
+    /// One ROM when omitted.
+    ///
+    /// Examples:
+    ///
+    ///   onerom boards socket fire-24-f
+    ///
+    ///   onerom boards socket fire-24-f --chip-type 2364
+    ///
+    ///   onerom boards socket fire-24-f --chip-type 2364 --gpio
+    Socket(BoardSocketArgs),
+}
+
+#[derive(Debug, clap::Args)]
+pub struct BoardHeaderArgs {
+    /// Board type to show (e.g. fire-24-f). Inferred from a connected One ROM
+    /// if omitted.
+    #[arg(value_name = "BOARD")]
+    pub board: Option<String>,
+}
+
+impl CommandTrait for BoardHeaderArgs {
+    fn requires_device(&self) -> bool {
+        false
+    }
+}
+
+#[derive(Debug, clap::Args)]
+pub struct BoardSocketArgs {
+    /// Board type to show (e.g. fire-24-f). Inferred from a connected One ROM
+    /// if omitted.
+    #[arg(value_name = "BOARD")]
+    pub board: Option<String>,
+
+    /// Show ROM pin functions for this chip type (e.g. 2364) instead of GPIOs.
+    #[arg(long, value_name = "CHIP")]
+    pub chip_type: Option<String>,
+
+    /// Overlay the GPIO(s) behind each pin onto the --chip-type function view.
+    #[arg(long, requires = "chip_type")]
+    pub gpio: bool,
+}
+
+impl CommandTrait for BoardSocketArgs {
     fn requires_device(&self) -> bool {
         false
     }
@@ -434,12 +513,18 @@ pub enum Commands {
     ///   onerom chips --all
     Chips(FirmwareChipsArgs),
 
-    /// List supported One ROM board types.
+    /// List supported One ROM board types, or view a board's pin layouts.
     ///
-    /// Displays a list of the supported One ROM board types.
+    /// With no subcommand, lists the supported One ROM board types. The
+    /// `header` and `socket` subcommands draw a board's pin (jumper) header
+    /// and ROM socket pinout as ASCII.
     ///
     /// Examples:
     ///
     ///   onerom boards
+    ///
+    ///   onerom boards header fire-24-f
+    ///
+    ///   onerom boards socket fire-24-f --chip-type 2364
     Boards(BoardArgs),
 }

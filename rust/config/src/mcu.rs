@@ -108,6 +108,53 @@ impl core::fmt::Display for RpVariant {
     }
 }
 
+/// The over-voltage tolerance of an MCU GPIO pad.
+///
+/// One ROM drives 5V retro buses directly, without level shifters, relying on
+/// the MCU's 5V-tolerant GPIOs. A handful of RP2350 pads are the exception: the
+/// ADC-capable GPIOs are **not** 5V tolerant and must be kept at or below the
+/// 3.3V IO supply. This distinction matters on the image-select header, where
+/// some select lines can sit behind those ADC pins.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+pub enum PinTolerance {
+    /// 5V-tolerant pad — safe to drive from, or expose to, a 5V retro bus.
+    FiveVolt,
+    /// 3.3V-only pad (an RP2350 ADC input); must not exceed the 3.3V IO supply.
+    ThreeVolt3,
+}
+
+impl RpVariant {
+    /// The ADC-capable GPIOs for this RP2350 package.
+    ///
+    /// These are the only RP2350 pads that are **not** 5V tolerant (see
+    /// [`PinTolerance`]); every other GPIO is 5V-tolerant:
+    ///
+    /// - [`RpVariant::Rp235xA`] (QFN-60): GPIO 26–29.
+    /// - [`RpVariant::Rp235xB`] (QFN-80): GPIO 40–47.
+    pub const fn adc_gpios(&self) -> &'static [u8] {
+        match self {
+            RpVariant::Rp235xA => &[26, 27, 28, 29],
+            RpVariant::Rp235xB => &[40, 41, 42, 43, 44, 45, 46, 47],
+        }
+    }
+
+    /// The over-voltage tolerance of a GPIO on this RP2350 package.
+    ///
+    /// The ADC pins ([`Self::adc_gpios`]) are [`PinTolerance::ThreeVolt3`];
+    /// every other GPIO is [`PinTolerance::FiveVolt`].
+    pub const fn gpio_tolerance(&self, gpio: u8) -> PinTolerance {
+        let adc = self.adc_gpios();
+        let mut i = 0;
+        while i < adc.len() {
+            if adc[i] == gpio {
+                return PinTolerance::ThreeVolt3;
+            }
+            i += 1;
+        }
+        PinTolerance::FiveVolt
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Processor {
     F401BC,
@@ -477,5 +524,37 @@ impl core::fmt::Display for Rp235xChipId {
     /// override. Intended for display and logging only, not identity comparison.
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "{:016X}", self.0)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rp235xa_adc_pins_are_3v3_only() {
+        let v = RpVariant::Rp235xA;
+        assert_eq!(v.adc_gpios(), &[26, 27, 28, 29]);
+        for gpio in [26, 27, 28, 29] {
+            assert_eq!(v.gpio_tolerance(gpio), PinTolerance::ThreeVolt3);
+        }
+        // A representative selection of the surrounding GPIOs are 5V-tolerant,
+        // including the boundaries just outside the ADC range.
+        for gpio in [0, 8, 9, 24, 25, 30] {
+            assert_eq!(v.gpio_tolerance(gpio), PinTolerance::FiveVolt);
+        }
+    }
+
+    #[test]
+    fn rp235xb_adc_pins_are_3v3_only() {
+        let v = RpVariant::Rp235xB;
+        assert_eq!(v.adc_gpios(), &[40, 41, 42, 43, 44, 45, 46, 47]);
+        for gpio in 40..=47 {
+            assert_eq!(v.gpio_tolerance(gpio), PinTolerance::ThreeVolt3);
+        }
+        // The RP2350A ADC range is 5V-tolerant on the B package.
+        for gpio in [26, 27, 28, 29, 39, 48] {
+            assert_eq!(v.gpio_tolerance(gpio), PinTolerance::FiveVolt);
+        }
     }
 }

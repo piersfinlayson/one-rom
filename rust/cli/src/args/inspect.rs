@@ -91,6 +91,32 @@ pub enum InspectCommands {
     ///
     ///   onerom inspect gpio
     Gpio(InspectGpioArgs),
+
+    /// Draw the connected One ROM's pin (jumper / programming) header as ASCII.
+    ///
+    /// Shows the 2xN header along the board's top edge, pad by pad, with the
+    /// MCU GPIO behind each image-select and X pad and — on RP2350 (Fire)
+    /// boards — whether that GPIO is 5V-tolerant or 3.3V-only (an ADC pin). The
+    /// board is inferred from the connected device.
+    ///
+    /// Example:
+    ///
+    ///   onerom inspect header
+    Header(InspectHeaderArgs),
+
+    /// Draw the connected One ROM's ROM socket pinout as ASCII.
+    ///
+    /// Without --chip-type each socket pin is labelled with the GPIO(s) behind it;
+    /// with --chip-type <chip> the pins show that ROM's functions (address / data /
+    /// chip-select / …), and --gpio overlays both. The board is inferred from
+    /// the connected device.
+    ///
+    /// Examples:
+    ///
+    ///   onerom inspect socket
+    ///
+    ///   onerom inspect socket --chip-type 2364 --gpio
+    Socket(InspectSocketArgs),
 }
 
 #[derive(Debug, Args)]
@@ -246,6 +272,32 @@ pub struct InspectGpioArgs {
 }
 
 impl CommandTrait for InspectGpioArgs {
+    fn requires_device(&self) -> bool {
+        true
+    }
+}
+
+#[derive(Debug, Args)]
+pub struct InspectHeaderArgs {}
+
+impl CommandTrait for InspectHeaderArgs {
+    fn requires_device(&self) -> bool {
+        true
+    }
+}
+
+#[derive(Debug, Args)]
+pub struct InspectSocketArgs {
+    /// Show ROM pin functions for this chip type (e.g. 2364) instead of GPIOs.
+    #[arg(long, value_name = "CHIP")]
+    pub chip_type: Option<String>,
+
+    /// Overlay the GPIO(s) behind each pin onto the --chip-type function view.
+    #[arg(long, requires = "chip_type")]
+    pub gpio: bool,
+}
+
+impl CommandTrait for InspectSocketArgs {
     fn requires_device(&self) -> bool {
         true
     }
