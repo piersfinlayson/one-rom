@@ -415,9 +415,11 @@ test_config_api fire-24-a onerom-config/test/metadata.json
 
 # Address-monitor tests: drive the address-monitor plugin API (capture pipeline
 # and knock detection, the foundation an RBCP plugin builds on) across ROM types
-# and board sizes.  16-bit (40-pin) sets self-skip — knock detection is an
-# 8-bit-ROM mechanism (see issue #277) — but the 40-pin boards are still swept
-# so any 8-bit sets on them are covered.
+# and board sizes.  16-bit (40-pin) sets are covered too: command signalling
+# uses the observed (bus) address space, which on 40-pin omits the ROM's
+# least-significant address line, and each 16-bit set is driven in both /BYTE
+# modes — including a check that A-1 does not leak into the captured address.
+# Chip types the monitor cannot yet handle self-skip (see monitor_skip_reason).
 test_24_config_monitor onerom-config/test/24-random-23xx.json
 test_24_config_monitor onerom-config/test/24-random-27xx.json
 test_24_config_monitor onerom-config/test/24-random-28xx.json

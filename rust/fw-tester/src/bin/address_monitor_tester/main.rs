@@ -17,6 +17,14 @@
 //! real (blocking) `wait_for_knock`, fed by the yield hook, with a watchdog
 //! timeout so a broken capture path fails the case rather than hanging.
 //!
+//! Addresses are driven on, and checked in, the *observed* (bus) address space
+//! — the lines the device actually monitors, which on the 40-pin variant
+//! exclude the ROM's least-significant address line.  That is the space
+//! host-to-device command signalling travels in.  A 16-bit-capable chip is
+//! exercised in both `/BYTE` modes, and in byte mode Layer 1 additionally
+//! drives A-1 (the byte-within-word select) both ways and requires the captured
+//! address to be identical — A-1 must never leak into command decode.
+//!
 //! Env: `CONFIG` (config JSON), `BOARD` (e.g. `fire-24-a`), optional
 //! `BASE_DIR`, `ONEROM_LOG=1`.  Exits 0 if all cases pass, 1 otherwise.
 
@@ -116,7 +124,24 @@ fn main() {
             continue;
         }
 
-        match run_case(board, chip_type, chip.clone(), idx as u8, log_enabled) {
+        // force_16_bit configs ignore /BYTE entirely (AlgData0, word_size 16),
+        // so there is no byte mode to exercise and the shared A-1/D15 pin is
+        // always a firmware output.
+        let force_16_bit = chip_set
+            .firmware_overrides
+            .as_ref()
+            .and_then(|fw| fw.fire.as_ref())
+            .map(|f| f.force_16_bit)
+            .unwrap_or(false);
+
+        match run_case(
+            board,
+            chip_type,
+            chip.clone(),
+            idx as u8,
+            force_16_bit,
+            log_enabled,
+        ) {
             Ok(()) => {
                 println!("PASS  {label}");
                 passed += 1;
@@ -141,17 +166,18 @@ fn main() {
 /// gains support, at which point the case is exercised again.
 fn monitor_skip_reason(chip_type: ChipType) -> Option<&'static str> {
     match chip_type {
-        // Knock detection matches against A0-A7 of single-byte accesses, so it
-        // is inherently an 8-bit-ROM mechanism; 16-bit parts are out of scope
-        // (see #277).
-        ChipType::Chip27C400 | ChipType::Chip27C200 => {
-            Some("16-bit ROM (knock detection is 8-bit only; #277)")
-        }
-        // 23QL384 uses the "deselect when address all high" chip-select
-        // algorithm (ALG_CS_2), which the monitor's CS-monitor state machine
-        // does not implement.
-        ChipType::Chip23QL384 => Some(
-            "uses ALG_CS_2 (deselect-when-address-all-high), not yet supported by the address monitor",
+        // The monitor's CS-monitor state machine does not implement the
+        // qualifier-based chip-select algorithm (ALG_CS_2).  23QL384 always
+        // resolves to it; 23QL512 resolves to it on boards whose upper address
+        // pins double as bank-select (X) pins with CS1 active-low (e.g.
+        // fire-28-c/d).  The CS algorithm is resolved per image from
+        // chip+board+CS config, so it cannot be pinned to the chip type alone;
+        // this coarser chip-type skip is an interim measure (the plain-CS
+        // configurations of these chips, where they work, exercise nothing
+        // other chips do not).  Proper fix: make the monitor CS-algorithm-
+        // agnostic — see the address-monitor follow-up issue.
+        ChipType::Chip23QL384 | ChipType::Chip23QL512 => Some(
+            "may resolve to ALG_CS_2 (qualifier-based CS), not yet supported by the address monitor",
         ),
         _ => None,
     }
@@ -170,6 +196,7 @@ fn run_case(
     chip_type: ChipType,
     chip: ChipConfig,
     sel: u8,
+    force_16_bit: bool,
     log_enabled: bool,
 ) -> Result<(), String> {
     let stop = Arc::new(AtomicBool::new(false));
@@ -177,7 +204,15 @@ fn run_case(
     let (tx, rx) = mpsc::channel();
 
     let handle = std::thread::spawn(move || {
-        let r = run_case_inner(board, chip_type, &chip, sel, log_enabled, &stop_worker);
+        let r = run_case_inner(
+            board,
+            chip_type,
+            &chip,
+            sel,
+            force_16_bit,
+            log_enabled,
+            &stop_worker,
+        );
         let _ = tx.send(r);
     });
 
@@ -199,6 +234,7 @@ fn run_case_inner(
     chip_type: ChipType,
     chip: &ChipConfig,
     sel: u8,
+    force_16_bit: bool,
     log_enabled: bool,
     stop: &Arc<AtomicBool>,
 ) -> Result<(), String> {
@@ -213,13 +249,54 @@ fn run_case_inner(
 
     setup_monitor(&emu)?;
 
-    // Layer 1: one CS-active access must produce exactly one ring entry that
-    // demangles to the driven address.
-    layer1_capture(&emu, &cache)?;
+    // Command signalling travels on the lines the device observes, which on the
+    // 40-pin variant exclude the ROM's least-significant address line.  Ask the
+    // firmware how many low lines it does not observe rather than deriving it
+    // from the chip type, so this tracks whatever the firmware actually does.
+    let (r, unobserved) = emu.get_unobserved_addr_bits();
+    if r != OraResult::Ok {
+        return Err(format!("get_unobserved_addr_bits returned {r:?}"));
+    }
+    if (unobserved as usize) >= cache.addr_gpios.len() {
+        return Err(format!(
+            "firmware reports {unobserved} unobserved address bits, but the chip has only {} address lines",
+            cache.addr_gpios.len()
+        ));
+    }
+    let observed_gpios = &cache.addr_gpios[unobserved as usize..];
 
-    // Layer 2: the real wait_for_knock must detect "!RBCP!" and collect the
-    // trailing GROUP/CMD payload, driven through the yield hook.
-    layer2_knock(&emu, &cache, stop)?;
+    // /BYTE modes to exercise.  A 16-bit-capable chip is driven both ways: the
+    // monitor watches the word address lines and must behave identically in
+    // word mode (/BYTE high) and byte mode (/BYTE low).  A force_16_bit config
+    // ignores /BYTE, so only the word pass is meaningful; a chip with no /BYTE
+    // line gets a single pass with an empty mask.
+    let modes: &[u8] = match cache.byte_n_gpio {
+        None => &[0],
+        Some(_) if force_16_bit => &[16],
+        Some(_) => &[16, 8],
+    };
+
+    for &mode in modes {
+        let byte_bg = match cache.byte_n_gpio {
+            Some(g) if mode != 0 => driver::byte_n_mask(g, mode),
+            _ => (0, 0),
+        };
+
+        // Layer 1: one CS-active access must produce exactly one ring entry
+        // that demangles to the driven observed address.
+        layer1_capture(&emu, &cache, observed_gpios, byte_bg, mode)?;
+
+        // In byte mode the host drives A-1 on a line the monitor must not
+        // observe.  Only valid here: in word mode that same physical pin is
+        // D15, a firmware output, and must not be driven.
+        if mode == 8 && unobserved > 0 {
+            layer1_a_minus_1_invariance(&emu, &cache, observed_gpios, byte_bg, unobserved)?;
+        }
+
+        // Layer 2: the real wait_for_knock must detect "!RBCP!" and collect the
+        // trailing GROUP/CMD payload, driven through the yield hook.
+        layer2_knock(&emu, &cache, unobserved, byte_bg, stop, mode)?;
+    }
 
     Ok(())
 }
@@ -259,18 +336,28 @@ fn setup_monitor(emu: &Emulator) -> Result<(), String> {
     Ok(())
 }
 
-/// Drive one CS-active read of logical address `addr`: settle the address with
+/// Drive one CS-active read of observed address `addr`: settle the address with
 /// CS deasserted, assert CS, then deassert.  Mirrors a real ROM access cycle.
-fn drive_access(emu: &Emulator, cache: &PinCache, addr: usize) {
-    let a = driver::addr_mask(addr, &cache.addr_gpios);
+///
+/// `addr` is placed on the *observed* address lines (bit 0 on the
+/// least-significant observed line).  `background` is held across every phase
+/// and carries the /BYTE level plus, in byte mode, any A-1 level being driven.
+fn drive_access(
+    emu: &Emulator,
+    cache: &PinCache,
+    observed_gpios: &[Vec<u8>],
+    background: (u64, u64),
+    addr: usize,
+) {
+    let a = driver::addr_mask(addr, observed_gpios);
     let cs_on = driver::ctrl_mask(&cache.control_lines, true);
     let cs_off = driver::ctrl_mask(&cache.control_lines, false);
 
-    let settle = driver::merge(a, cs_off);
+    let settle = driver::merge(driver::merge(a, cs_off), background);
     emu.drive_gpios(settle.0, settle.1);
     emu.step_cycles(8);
 
-    let active = driver::merge(a, cs_on);
+    let active = driver::merge(driver::merge(a, cs_on), background);
     emu.drive_gpios(active.0, active.1);
     emu.step_cycles(16);
 
@@ -278,15 +365,22 @@ fn drive_access(emu: &Emulator, cache: &PinCache, addr: usize) {
     emu.step_cycles(8);
 }
 
-fn layer1_capture(emu: &Emulator, cache: &PinCache) -> Result<(), String> {
+/// Drive one access and return the observed address the monitor captured for
+/// it.  Fails if no ring entry was produced or it would not demangle.
+fn capture_one(
+    emu: &Emulator,
+    cache: &PinCache,
+    observed_gpios: &[Vec<u8>],
+    background: (u64, u64),
+    addr: usize,
+) -> Result<u32, String> {
     let slot = emu.get_address_monitor_ring_write_pos();
     if slot.is_null() {
         return Err("get_address_monitor_ring_write_pos returned NULL".to_string());
     }
     let before = unsafe { *slot };
 
-    let addr = KNOCK[0] as usize; // '!'
-    drive_access(emu, cache, addr);
+    drive_access(emu, cache, observed_gpios, background, addr);
 
     let after = unsafe { *slot };
     if after == before {
@@ -297,23 +391,96 @@ fn layer1_capture(emu: &Emulator, cache: &PinCache) -> Result<(), String> {
         );
     }
 
-    // The entry that was written sits at `before`; demangle and check it.
+    // The entry that was written sits at `before`; demangle and return it.
+    // Observed (bus) space, not byte space — that is what signalling uses.
     let phys = unsafe { *before };
-    let (r, logical) = emu.demangle_addr(phys, true);
+    let (r, observed) = emu.demangle_observed_addr(phys, true);
     if r != OraResult::Ok {
         return Err(format!("captured entry failed to demangle: {r:?}"));
     }
-    if (logical & 0xFF) as usize != addr {
+    Ok(observed)
+}
+
+fn layer1_capture(
+    emu: &Emulator,
+    cache: &PinCache,
+    observed_gpios: &[Vec<u8>],
+    background: (u64, u64),
+    mode: u8,
+) -> Result<(), String> {
+    let addr = KNOCK[0] as usize; // '!'
+    let observed = capture_one(emu, cache, observed_gpios, background, addr)?;
+    if (observed & 0xFF) as usize != addr {
         return Err(format!(
-            "captured address 0x{:02X} != driven 0x{:02X}",
-            logical & 0xFF,
+            "{}: captured address 0x{:02X} != driven 0x{:02X}",
+            mode_label(mode),
+            observed & 0xFF,
             addr
         ));
     }
     Ok(())
 }
 
-fn layer2_knock(emu: &Emulator, cache: &PinCache, stop: &Arc<AtomicBool>) -> Result<(), String> {
+/// In byte mode the host drives A-1 (the byte-within-word select) to pick a
+/// half of the addressed word.  A-1 is not one of the lines the device
+/// observes, so the monitor must capture the same observed address whichever
+/// way it is driven — this is exactly the bit that must not leak into command
+/// decode.  Drive the same word address with A-1 low and then high and require
+/// both captures to be identical.
+fn layer1_a_minus_1_invariance(
+    emu: &Emulator,
+    cache: &PinCache,
+    observed_gpios: &[Vec<u8>],
+    byte_bg: (u64, u64),
+    unobserved: u8,
+) -> Result<(), String> {
+    let addr = KNOCK[0] as usize;
+    // The unobserved low lines, driven as a little-endian value below them.
+    let unobserved_gpios = &cache.addr_gpios[..unobserved as usize];
+
+    let mut seen: Vec<u32> = Vec::new();
+    for level in 0..(1usize << unobserved) {
+        let a_minus_1 = driver::addr_mask(level, unobserved_gpios);
+        let background = driver::merge(byte_bg, a_minus_1);
+        let observed = capture_one(emu, cache, observed_gpios, background, addr)?;
+        if (observed & 0xFF) as usize != addr {
+            return Err(format!(
+                "byte mode, A-1={level}: captured address 0x{:02X} != driven 0x{:02X}",
+                observed & 0xFF,
+                addr
+            ));
+        }
+        seen.push(observed);
+    }
+
+    if seen.windows(2).any(|w| w[0] != w[1]) {
+        return Err(format!(
+            "byte mode: A-1 leaked into the observed address — captures differed across \
+             A-1 levels ({seen:#X?}); the monitor must not observe the byte-within-word select"
+        ));
+    }
+    Ok(())
+}
+
+/// Label for a /BYTE mode, for error messages.
+fn mode_label(mode: u8) -> &'static str {
+    match mode {
+        16 => "word mode (/BYTE high)",
+        8 => "byte mode (/BYTE low)",
+        _ => "8-bit ROM",
+    }
+}
+
+/// `unobserved` is taken rather than a borrowed slice so the yield hook can
+/// re-derive the observed lines from the cache pointer it already holds.
+fn layer2_knock(
+    emu: &Emulator,
+    cache: &PinCache,
+    unobserved: u8,
+    background: (u64, u64),
+    stop: &Arc<AtomicBool>,
+    mode: u8,
+) -> Result<(), String> {
     // Sequence the hook plays: the six knock bytes, then a GROUP/CMD payload
     // (NOP = 0x00/0x00) which wait_for_knock collects after detection.
     let mut schedule: Vec<usize> = KNOCK.iter().map(|&b| b as usize).collect();
@@ -336,7 +503,8 @@ fn layer2_knock(emu: &Emulator, cache: &PinCache, stop: &Arc<AtomicBool>) -> Res
         let emu = unsafe { &*(emu_ptr as *const Emulator) };
         let cache = unsafe { &*(cache_ptr as *const PinCache) };
         if cursor < schedule.len() {
-            drive_access(emu, cache, schedule[cursor]);
+            let observed_gpios = &cache.addr_gpios[unobserved as usize..];
+            drive_access(emu, cache, observed_gpios, background, schedule[cursor]);
             cursor += 1;
         } else {
             emu.step_cycles(8);
@@ -370,19 +538,27 @@ fn layer2_knock(emu: &Emulator, cache: &PinCache, stop: &Arc<AtomicBool>) -> Res
     emu.clear_yield_hook();
 
     if r != OraResult::Ok {
-        return Err(format!("wait_for_knock returned {r:?}"));
+        return Err(format!(
+            "{}: wait_for_knock returned {r:?}",
+            mode_label(mode)
+        ));
     }
 
-    // Verify the collected payload demangles to GROUP/CMD (NOP = 0x00/0x00).
+    // Verify the collected payload demangles to GROUP/CMD (NOP = 0x00/0x00),
+    // in observed (bus) space — the space command bytes are signalled in.
     for (i, &want) in [0x00usize, 0x00usize].iter().enumerate() {
-        let (r, logical) = emu.demangle_addr(payload[i], false);
+        let (r, observed) = emu.demangle_observed_addr(payload[i], false);
         if r != OraResult::Ok {
-            return Err(format!("payload[{i}] demangle: {r:?}"));
-        }
-        if (logical & 0xFF) as usize != want {
             return Err(format!(
-                "payload[{i}] = 0x{:02X} != 0x{:02X}",
-                logical & 0xFF,
+                "{}: payload[{i}] demangle: {r:?}",
+                mode_label(mode)
+            ));
+        }
+        if (observed & 0xFF) as usize != want {
+            return Err(format!(
+                "{}: payload[{i}] = 0x{:02X} != 0x{:02X}",
+                mode_label(mode),
+                observed & 0xFF,
                 want
             ));
         }

@@ -520,6 +520,40 @@ impl Emulator {
         (OraResult::from(r), logical)
     }
 
+    /// Demangle a ring capture to the address the device observes on its
+    /// address lines, rather than the logical byte address.
+    ///
+    /// The two differ on the 40-pin variant, whose monitor does not observe the
+    /// ROM's least-significant address line; this is the space host-to-device
+    /// command signalling travels in.  See `ora_demangle_observed_addr_fn_t`.
+    pub fn demangle_observed_addr(
+        &self,
+        physical_addr: u32,
+        check_control_pins: bool,
+    ) -> (OraResult, u32) {
+        let mut observed: u32 = 0;
+        let r = plugin_call!(
+            ffi::api_id_t_ORA_ID_DEMANGLE_OBSERVED_ADDR,
+            ffi::ora_demangle_observed_addr_fn_t,
+            physical_addr,
+            &mut observed as *mut u32,
+            check_control_pins as u8
+        );
+        (OraResult::from(r), observed)
+    }
+
+    /// Number of least-significant address bits the device does not observe for
+    /// the current ROM: 0 on the 24/28/32-pin variants, 1 on the 40-pin.
+    pub fn get_unobserved_addr_bits(&self) -> (OraResult, u8) {
+        let mut bits: u8 = 0;
+        let r = plugin_call!(
+            ffi::api_id_t_ORA_ID_GET_UNOBSERVED_ADDR_BITS,
+            ffi::ora_get_unobserved_addr_bits_fn_t,
+            &mut bits as *mut u8
+        );
+        (OraResult::from(r), bits)
+    }
+
     pub fn map_data_to_phys(&self, logical_data: u8) -> u8 {
         plugin_call!(
             ffi::api_id_t_ORA_ID_MAP_DATA_TO_PHYS,
