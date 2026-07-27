@@ -214,6 +214,9 @@ static void pio_setup_address_monitor_pios() {
     }
     uint8_t base_cs_pin = cs_alg->base_cs_pin;
     uint8_t num_cs_pins = cs_alg->num_cs_pins;
+    // EXECCTRL is zero for the algorithms that reach their verdict from the CS
+    // pins alone; AlgCs2 needs JMP_PIN pointed at its enable line.
+    uint32_t execctrl = 0;
     switch (cs_alg->alg) {
         case ALG_CS_0: {
             // All CS pins contiguous - CS active == zero
@@ -301,15 +304,72 @@ static void pio_setup_address_monitor_pios() {
             break;
         }
 
-        // 23QL384 is not currently supported
-        case ALG_CS_2:
+        case ALG_CS_2: {
+            // Enable + address-qualified select (23QL384).  The chip is
+            // selected when the enable line is asserted AND the qualifier pins
+            // do not match the deselect pattern; the CS-active predicate here
+            // must track the serving SM's, built in setup_serving_pios()
+            // (piorom2.c) - if one changes, so must the other.
+            //
+            // Unlike the serving SM this debounces, as the AlgCs0/AlgCs1
+            // monitors do: four consecutive active samples before an access is
+            // taken as real.  Only the enable is debounced.  The qualifiers are
+            // address lines, which settle ahead of the enable being asserted,
+            // and are read once the enable has held low - so sampling them once
+            // at that point is later, not earlier, than debouncing them.
+            const onerom_alg_cs2_param_t *params =
+                (const onerom_alg_cs2_param_t *)cs_alg->params;
+
+            APIO_WRAP_BOTTOM();
+            APIO_LABEL_NEW(cs_inactive);
+            APIO_ADD_INSTR(APIO_JMP_PIN(APIO_LABEL(cs_inactive)));
+            APIO_ADD_INSTR(APIO_JMP_PIN(APIO_LABEL(cs_inactive)));
+            APIO_ADD_INSTR(APIO_JMP_PIN(APIO_LABEL(cs_inactive)));
+            APIO_ADD_INSTR(APIO_JMP_PIN(APIO_LABEL(cs_inactive)));
+
+            // Enable held low: selected unless the qualifier pins read the
+            // deselect pattern preloaded into Y.
+            APIO_ADD_INSTR(APIO_MOV_X_PINS);
+            APIO_LABEL_NEW_OFFSET(cs_active, 2);
+            APIO_ADD_INSTR(APIO_JMP_X_NOT_Y(APIO_LABEL(cs_active)));
+            APIO_ADD_INSTR(APIO_JMP(APIO_LABEL(cs_inactive)));
+
+            // cs_active:
+            APIO_ADD_INSTR(irq_set_instr);
+
+            // Hold until the enable is released or the host addresses a
+            // deselected range.  Either way, re-arm through the debounce: a
+            // host that walks the address from a deselected range back into a
+            // selected one, without ever releasing the enable, is a fresh
+            // access and must produce a fresh capture.
+            APIO_LABEL_NEW(cs_active_poll);
+            APIO_ADD_INSTR(APIO_JMP_PIN(APIO_LABEL(cs_inactive)));
+            APIO_ADD_INSTR(APIO_MOV_X_PINS);
+            APIO_WRAP_TOP();
+            APIO_ADD_INSTR(APIO_JMP_X_NOT_Y(APIO_LABEL(cs_active_poll)));
+
+            // This SM's IN pins are the qualifier span, not the CS range, and
+            // JMP_PIN is the enable line (an offset from gpio_base, as in the
+            // serving SM).  Read base_cs_pin before overwriting it.
+            execctrl = APIO_EXECCTRL_JMP_PIN(cs_alg->base_cs_pin);
+            base_cs_pin = params->base_qualifier_pin;
+            num_cs_pins = params->num_qualifier_pins;
+
+            // Preload Y with the qualifier deselect pattern via TXF rather
+            // than SET_Y, as the pattern may exceed the 5-bit SET immediate.
+            APIO_TXF = params->qualifier_inactive_pattern;
+            APIO_SM_EXEC_INSTR(APIO_PULL_BLOCK);
+            APIO_SM_EXEC_INSTR(APIO_MOV_Y_OSR);
+            break;
+        }
+
         default:
             ERR("Unsupported CS algorithm: %d", cs_alg->alg);
             break;
     }
 
     APIO_SM_CLKDIV_SET(cs_alg->clkdiv_int, cs_alg->clkdiv_frac);
-    APIO_SM_EXECCTRL_SET(0);
+    APIO_SM_EXECCTRL_SET(execctrl);
     APIO_SM_SHIFTCTRL_SET(
         APIO_IN_COUNT(num_cs_pins) |
         APIO_IN_SHIFTDIR_L
@@ -607,9 +667,13 @@ uint32_t pio_map_addr_to_phys(
             }
             case ALG_CS_2:
             default:
+                // AlgCs2 selects on a single enable line plus address
+                // qualifiers, which cannot express a Multi set's per-chip
+                // select; the generator rejects every Multi combination of the
+                // only chip type that resolves to it (23QL384), so reaching
+                // here means the metadata is inconsistent.
                 ERR("pio_map_addr_to_phys: unsupported CS algorithm %d for "
                     "Multi slot", cs_alg->alg);
-                // TODO: implement AlgCs2 Multi support
                 break;
         }
     }
@@ -687,9 +751,10 @@ uint32_t pio_map_data_to_phys(
 //                          verify X pins are inactive (0).
 //   AlgCs1, Single/Banked: verify real CS pins (excluding cs_ignore_index)
 //                          are in the active-low state (0).
-//   AlgCs2:                not currently supported; returns ORA_RESULT_ERROR.
-//                          TODO: implement when AlgCs2 address monitor support
-//                          is added.
+//   AlgCs2, Single/Banked: verify the enable line is active-low (0), then that
+//                          the qualifier field does not read the deselect
+//                          pattern (which would mean the host addressed a range
+//                          the chip does not serve).
 //
 // Address extraction:
 //   NORMAL:     logical bit = physical bit.
@@ -812,7 +877,59 @@ ora_result_t pio_demangle_observed_addr(
                 break;
             }
 
-            case ALG_CS_2:
+            case ALG_CS_2: {
+                // Enable + address-qualified select.  Two conditions, matching
+                // the CS monitor SM: the enable line must be asserted (active
+                // low, like AlgCs1), and the qualifier field must not read the
+                // deselect pattern.
+                const onerom_alg_cs2_param_t *cs_params =
+                    (const onerom_alg_cs2_param_t *)cs_alg->params;
+
+                uint8_t enable_gpio = cs_alg->gpio_base + cs_alg->base_cs_pin;
+                uint8_t bit_pos     = enable_gpio - addr_base;
+                uint8_t override    = v2_get_gpio_override(slot, enable_gpio);
+
+                switch (override) {
+                    case GPIO_OVER_NORMAL:
+                    case GPIO_OVER_INVERT:
+                        if ((uint8_t)((physical_addr >> bit_pos) & 1u) != 0u) {
+                            return ORA_RESULT_CONTROL_PIN_ACTIVE;
+                        }
+                        break;
+                    case GPIO_OVER_LOW:
+                        /* forced to 0 = active; always passes */
+                        break;
+                    case GPIO_OVER_HIGH:
+                        /* forced to 1 = inactive; always fails */
+                        return ORA_RESULT_CONTROL_PIN_ACTIVE;
+                    default:
+                        break;
+                }
+
+                // The qualifier field is compared whole, exactly as the PIO
+                // compares it against Y - the pattern is expressed over the
+                // whole span, so any non-qualifier GPIO inside it carries a 0.
+                // The only such GPIO is the enable line (on fire-28-c/d it sits
+                // between the two qualifier pins), which the check above has
+                // already established reads 0 here.  Rebase the span from
+                // gpio_base to the captured entry's own base to line the two
+                // up.
+                uint8_t qual_gpio = cs_alg->gpio_base
+                                  + cs_params->base_qualifier_pin;
+                uint8_t qual_shift = qual_gpio - addr_base;
+                uint32_t qual_mask =
+                    (cs_params->num_qualifier_pins >= 32u)
+                        ? 0xFFFFFFFFu
+                        : ((1u << cs_params->num_qualifier_pins) - 1u);
+                uint32_t qual_field = (physical_addr >> qual_shift) & qual_mask;
+
+                if (qual_field == (uint32_t)cs_params->qualifier_inactive_pattern) {
+                    // Deselected address range - the chip served nothing here.
+                    return ORA_RESULT_CONTROL_PIN_ACTIVE;
+                }
+                break;
+            }
+
             default:
                 ERR("pio_demangle_addr: unsupported CS algorithm %d",
                     cs_alg->alg);
@@ -956,9 +1073,6 @@ uint8_t pio_demangle_data(
 // debounce filtering.
 //
 // X mask (Multi only): bit positions of X pins within the address span.
-//
-// AlgCs2 is not currently supported; returns ORA_RESULT_ERROR.
-// TODO: implement AlgCs2 support.
 ora_result_t pio_init_knock(
     const uint32_t *knock_seq,
     uint8_t         knock_len,
@@ -1058,11 +1172,19 @@ ora_result_t pio_init_knock(
             }
             break;
         }
-        case ALG_CS_2:
+        case ALG_CS_2: {
+            // The enable line only.  The qualifier pins are address lines, and
+            // masking those would remove address bits from the debounce test.
+            uint8_t g = cs_alg->gpio_base + cs_alg->base_cs_pin;
+            if (g >= addr_base &&
+                g < (uint8_t)(addr_base + addr_alg->num_addr_pins)) {
+                cs_mask |= (1u << (g - addr_base));
+            }
+            break;
+        }
         default:
             ERR("pio_init_knock: unsupported CS algorithm %d", cs_alg->alg);
             return ORA_RESULT_ERROR;
-            // TODO: implement AlgCs2 support
     }
  
     // X mask (Multi only).

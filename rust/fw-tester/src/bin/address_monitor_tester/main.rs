@@ -180,20 +180,12 @@ fn main() {
 /// silently dropped by a firmware bug.  Each entry is removed when the monitor
 /// gains support, at which point the case is exercised again.
 fn monitor_skip_reason(chip_type: ChipType) -> Option<&'static str> {
-    match chip_type {
-        // The monitor's CS-monitor state machine does not implement the
-        // qualifier-based chip-select algorithm (ALG_CS_2), which 23QL384
-        // resolves to on every board and CS configuration - it is the only
-        // chip type with `deselect_when_address_all_high` set.  The CS
-        // algorithm is resolved per image from chip+board+CS config rather
-        // than from the chip type alone, so this chip-type skip is coarser
-        // than the limitation it stands in for; it is exact for 23QL384
-        // because that chip never resolves to anything else.
-        ChipType::Chip23QL384 => Some(
-            "resolves to ALG_CS_2 (qualifier-based CS), not yet supported by the address monitor",
-        ),
-        _ => None,
-    }
+    let _ = chip_type;
+    // The list is currently empty: the monitor handles every CS algorithm a
+    // chip type can resolve to, including ALG_CS_2 (qualifier-based CS, which
+    // 23QL384 resolves to on every board).  Kept so a future limitation is
+    // recorded as a deliberate, reviewed skip rather than a silent gap.
+    None
 }
 
 /// Run one case on a detached worker thread, with a watchdog on the main
@@ -304,6 +296,20 @@ fn run_case_inner(
         // D15, a firmware output, and must not be driven.
         if mode == 8 && unobserved > 0 {
             layer1_a_minus_1_invariance(&emu, &cache, observed_gpios, byte_bg, unobserved)?;
+        }
+
+        // A chip whose select folds in address lines (ALG_CS_2) must not be
+        // captured in the range it does not serve.
+        if let Some(qual) = chip_type.deselect_when_address_all_high() {
+            layer1_deselected_range(
+                &emu,
+                &cache,
+                observed_gpios,
+                byte_bg,
+                qual,
+                unobserved,
+                mode,
+            )?;
         }
 
         // Layer 2: the real wait_for_knock must detect "!RBCP!" and collect the
@@ -440,6 +446,74 @@ fn layer1_capture(
             mode_label(mode),
             observed & 0xFF,
             addr
+        ));
+    }
+    Ok(())
+}
+
+/// A chip type with `deselect_when_address_all_high` (23QL384) folds those
+/// address lines into its chip-select decision: with all of them high it is
+/// deselected and serves nothing, so the monitor must capture nothing there.
+/// A capture in that range would feed the plugin an address the chip never
+/// answered, and — because command decode masks off the low bits — one
+/// indistinguishable from a real command.
+///
+/// Drives one access inside the deselected range and requires no ring entry,
+/// then one just outside it (a single qualifier line dropped low) and requires
+/// a capture of exactly that address, so a monitor that has simply stopped
+/// capturing cannot pass.
+fn layer1_deselected_range(
+    emu: &Emulator,
+    cache: &PinCache,
+    observed_gpios: &[Vec<u8>],
+    background: (u64, u64),
+    qual_indices: &[u8],
+    unobserved: u8,
+    mode: u8,
+) -> Result<(), String> {
+    // Qualifier indices are chip address-line numbers; the driven address is in
+    // observed space, which omits `unobserved` low lines.  A qualifier below
+    // that cut is not drivable here — it cannot happen (the qualifiers are a
+    // chip's top address lines) but do not guess if it ever does.
+    if qual_indices.iter().any(|&i| i < unobserved) {
+        return Err(format!(
+            "chip has a chip-select qualifier on address line {:?}, below the {unobserved} \
+             unobserved line(s) — cannot drive it in observed space",
+            qual_indices.iter().min()
+        ));
+    }
+    let bit = |i: u8| 1usize << (i - unobserved);
+
+    let deselected: usize = qual_indices.iter().fold(0, |acc, &i| acc | bit(i));
+    // Drop the lowest qualifier line to land just below the deselected range.
+    let lowest = *qual_indices
+        .iter()
+        .min()
+        .expect("qualifier list is non-empty");
+    let selected: usize = deselected & !bit(lowest);
+
+    let slot = emu.get_address_monitor_ring_write_pos();
+    if slot.is_null() {
+        return Err("get_address_monitor_ring_write_pos returned NULL".to_string());
+    }
+
+    let before = unsafe { *slot };
+    drive_access(emu, cache, observed_gpios, background, deselected);
+    if unsafe { *slot } != before {
+        return Err(format!(
+            "{}: monitor captured an access at observed address 0x{deselected:X}, which is \
+             inside the chip's deselected range — the chip serves nothing there, so nothing \
+             may reach the ring",
+            mode_label(mode)
+        ));
+    }
+
+    let observed = capture_one(emu, cache, observed_gpios, background, selected)?;
+    if observed as usize != selected {
+        return Err(format!(
+            "{}: captured address 0x{observed:X} != driven 0x{selected:X} just below the \
+             deselected range",
+            mode_label(mode)
         ));
     }
     Ok(())

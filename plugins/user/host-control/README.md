@@ -30,12 +30,10 @@ This plugin omits the least-significant address line from command signalling for
 
 See "Address Line Presentation" in the [RBCP specification](https://github.com/piersfinlayson/rom-bus-control-protocol) for the general model.
 
-## Unsupported ROM types
+## Deselected address ranges
 
-RBCP and this host-control plugin rely on One ROM's address monitor, which watches chip-select and captures the addresses the host reads.  The monitor does not yet support ROM types that use a **qualifier-based chip-select** — where address lines factor into the select decision and the ROM is deselected over certain address ranges (the firmware's `ALG_CS_2` algorithm).  On those, RBCP does not function.
+RBCP and this host-control plugin rely on One ROM's address monitor, which watches chip-select and captures the addresses the host reads.  Every ROM type is supported, including those with a **qualifier-based chip-select** — where address lines factor into the select decision, so the ROM is deselected over part of its address space (the firmware's `ALG_CS_2` algorithm).
 
-This affects the **23QL384** only, on every board and in every CS configuration: it inherently combines its top two address lines into the CS decision and does not serve the address range where both are high.  It is the only ROM type that resolves to a qualifier-based chip-select.
+One ROM type works that way: the **23QL384**, on every board and in every CS configuration.  It combines its top two address lines into the chip-select decision and serves nothing while both are high.  The monitor captures only where the chip is genuinely selected, so a host must keep its command signalling — the knock and the command bytes after it — inside an address range the ROM actually serves.  For the 23QL384 that means below the top quarter of its address space; reads there are invisible to the plugin, exactly as they are to the ROM.
 
-All other ROM types — including the **23QL512**, on every board revision, banked or not, with `cs1` active-low or active-high — use a plain chip-select and are fully supported.
-
-Support for the 23QL384 is planned as a future enhancement to the address monitor.
+No other ROM type has a deselected range, so on all of them any address the ROM answers can carry command signalling.
