@@ -25,10 +25,10 @@ use crate::{
     FireServeMode, IHEX_BLANK_BYTE, License, MetadataWriter, PAD_BLANK_BYTE, Result, SizeHandling,
 };
 use crate::{
-    FIRMWARE_SIZE, MAX_METADATA_LEN, MAX_SUPPORTED_FIRMWARE_VERSION_V1,
-    MAX_SUPPORTED_FIRMWARE_VERSION_V2, MIN_SUPPORTED_FIRMWARE_VERSION_V1,
-    MIN_SUPPORTED_FIRMWARE_VERSION_V2, Metadata, SUPPORTED_CHIP_TYPES_V1, SUPPORTED_CHIP_TYPES_V2,
-    UNSUPPORTED_FIRMWARE_VERSIONS_V1, UNSUPPORTED_FIRMWARE_VERSIONS_V2,
+    MAX_SUPPORTED_FIRMWARE_VERSION_V1, MAX_SUPPORTED_FIRMWARE_VERSION_V2,
+    MIN_SUPPORTED_FIRMWARE_VERSION_V1, MIN_SUPPORTED_FIRMWARE_VERSION_V2, Metadata,
+    SUPPORTED_CHIP_TYPES_V1, SUPPORTED_CHIP_TYPES_V2, UNSUPPORTED_FIRMWARE_VERSIONS_V1,
+    UNSUPPORTED_FIRMWARE_VERSIONS_V2,
 };
 
 /// Main Builder object
@@ -322,9 +322,7 @@ impl Builder {
         let set_count = metadata.total_set_count();
 
         // Check the board has enough space
-        let mcu_variant = props.mcu_variant();
-        let flash_size = mcu_variant.flash_storage_bytes();
-        let rom_space = flash_size - FIRMWARE_SIZE - MAX_METADATA_LEN;
+        let rom_space = crate::rom_data_space(props.mcu_variant());
         assert!(rom_space > 0);
 
         // Figure out the ROM data size
@@ -427,8 +425,7 @@ impl Builder {
         // onerom-gen implementation, rather than each having to re-run the
         // downstream `onerom-fw::validate_sizes` themselves.
         let rom_data_size = rom_data_offset as usize;
-        let flash_size = props.mcu_variant().flash_storage_bytes();
-        let rom_space = flash_size - FIRMWARE_SIZE - METADATA_SIZE;
+        let rom_space = crate::rom_data_space(props.mcu_variant());
         if rom_data_size > rom_space {
             return Err(Error::BufferTooSmall {
                 location: "Flash",

@@ -10,9 +10,13 @@
 //! supportable.
 //!
 //! Used by the `compat` binary to generate the compatibility matrix and
-//! per-board chip tables.
+//! per-board chip tables, and by the CLI's `chips` command - which share
+//! [`supported_chips`], [`format_size`] and [`CompatResult::fit_description`]
+//! so the tool and the document cannot disagree.
 
-use onerom_config::chip::ChipType;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use onerom_config::chip::{CHIP_TYPE_NAMES, ChipType};
 use onerom_config::hw::Board;
 use onerom_metadata::BitModes;
 
@@ -64,6 +68,41 @@ impl CompatResult {
     /// optionally X2) header pins.
     pub fn requires_fly_leads(&self) -> bool {
         self.pin_offset < 0
+    }
+
+    /// How the chip sits in the board's socket, as a short human-readable
+    /// phrase: `native`, `overhang`, or `fly-lead to X1[ and X2]`.
+    ///
+    /// Used by the `compat` binary for `docs/COMPATIBILITY.md`'s per-board
+    /// tables and by the CLI's `chips` command, so the two agree.
+    pub fn fit_description(&self) -> String {
+        if self.is_native() {
+            "native".to_string()
+        } else if self.requires_fly_leads() {
+            match self.num_fly_lead_pins {
+                0 => "no fly-leads required".to_string(),
+                1 => "fly-lead to X1".to_string(),
+                2 => "fly-lead to X1 and X2".to_string(),
+                n => alloc::format!("fly-lead ({n} pins)"),
+            }
+        } else {
+            "overhang".to_string()
+        }
+    }
+}
+
+/// Render a ROM or image size the way `docs/COMPATIBILITY.md` and the CLI do:
+/// whole `MB`/`KB` units where the value divides exactly, `B` below 1KB.
+///
+/// Every size this is applied to is a power of two, so the truncating division
+/// is exact; it is not a general-purpose byte formatter.
+pub fn format_size(bytes: u32) -> String {
+    if bytes >= 1024 * 1024 {
+        alloc::format!("{}MB", bytes / (1024 * 1024))
+    } else if bytes >= 1024 {
+        alloc::format!("{}KB", bytes / 1024)
+    } else {
+        alloc::format!("{bytes}B")
     }
 }
 
@@ -157,4 +196,169 @@ pub fn check_chip_on_board(board: Board, chip_type: ChipType) -> Option<CompatRe
         pin_offset,
         num_fly_lead_pins,
     })
+}
+
+/// One chip type a board can emulate, as listed by [`supported_chips`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ChipCompat {
+    /// The chip type.
+    pub chip_type: ChipType,
+
+    /// The name this entry was listed under. Chip types with several accepted
+    /// spellings appear once per alias (e.g. `2316` and `9316A`), since a user
+    /// looking up the part number stamped on their chip needs to find it.
+    pub alias: &'static str,
+
+    /// The chip's own storage capacity, which may be smaller than the flash
+    /// the image occupies ([`CompatResult::slot_size_bytes`]).
+    pub rom_size_bytes: u32,
+
+    /// How the chip fits this board, and how much flash its image uses.
+    pub result: CompatResult,
+}
+
+/// Sort key ordering fit classes: native, then overhang, then fly-lead.
+pub fn pin_offset_order(pin_offset: i16) -> i32 {
+    match pin_offset {
+        0 => 0,
+        n if n > 0 => 1,
+        _ => 2,
+    }
+}
+
+/// Every chip type `board` can emulate, with the flash each one's image uses.
+///
+/// Ordered as `docs/COMPATIBILITY.md` presents it - native fits first, then
+/// overhang, then fly-lead; within a class by how far the chip's pin count is
+/// from the board's, then ascending ROM size, then name - so a caller can group
+/// consecutive runs of equal `result.pin_offset` into that document's sections.
+///
+/// Sizes are for a chip served alone in its slot. A banked or multi-chip set
+/// draws X1/X2 (and, for a multi set, the per-chip select and commoned control
+/// lines) into the slot's address window, which can make its table larger than
+/// the figure here; only the builder knows that, since it depends on the set's
+/// exact composition.
+pub fn supported_chips(board: Board) -> Vec<ChipCompat> {
+    let mut entries: Vec<ChipCompat> = CHIP_TYPE_NAMES
+        .iter()
+        .filter_map(|alias| {
+            let chip_type = ChipType::try_from_str(alias)?;
+            let result = check_chip_on_board(board, chip_type)?;
+            Some(ChipCompat {
+                chip_type,
+                alias,
+                rom_size_bytes: chip_type.size_bytes() as u32,
+                result,
+            })
+        })
+        .collect();
+
+    entries.sort_by_key(|e| {
+        (
+            pin_offset_order(e.result.pin_offset),
+            e.result.pin_offset.abs(),
+            e.rom_size_bytes,
+            e.alias,
+        )
+    });
+
+    entries
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn find(board: Board, alias: &str) -> ChipCompat {
+        *supported_chips(board)
+            .iter()
+            .find(|e| e.alias == alias)
+            .unwrap_or_else(|| panic!("{alias} should be listed for {}", board.name()))
+    }
+
+    #[test]
+    fn format_size_picks_whole_units() {
+        assert_eq!(format_size(512), "512B");
+        assert_eq!(format_size(1024), "1KB");
+        assert_eq!(format_size(48 * 1024), "48KB");
+        assert_eq!(format_size(1024 * 1024), "1MB");
+    }
+
+    /// The image sizes and fits `supported_chips` reports are what
+    /// `docs/COMPATIBILITY.md` publishes, since the document is generated from
+    /// it. Spot-check one entry of each fit class, including the two cases the
+    /// figure exists to expose: a chip whose image is far larger than the chip
+    /// (2364 overhanging a 28-pin board, 8KB served from a 256KB table) and one
+    /// where the two match.
+    #[test]
+    fn reports_the_documented_image_sizes() {
+        let native = find(Board::Fire24F, "2364");
+        assert_eq!(native.rom_size_bytes, 8 * 1024);
+        assert_eq!(native.result.slot_size_bytes, 8 * 1024);
+        assert_eq!(native.result.fit_description(), "native");
+
+        let overhang = find(Board::Fire28C, "2364");
+        assert_eq!(overhang.rom_size_bytes, 8 * 1024);
+        assert_eq!(overhang.result.slot_size_bytes, 256 * 1024);
+        assert_eq!(overhang.result.fit_description(), "overhang");
+
+        let fly_lead = find(Board::Fire24F, "2764");
+        assert_eq!(fly_lead.rom_size_bytes, 8 * 1024);
+        assert_eq!(fly_lead.result.slot_size_bytes, 32 * 1024);
+        assert_eq!(fly_lead.result.fit_description(), "fly-lead to X1");
+    }
+
+    /// Callers group consecutive runs of equal `pin_offset` into the document's
+    /// sections, which only works if the entries are ordered by fit class - so
+    /// each class must appear exactly once in the listing.
+    #[test]
+    fn orders_by_fit_class_without_interleaving() {
+        for board in [Board::Fire24F, Board::Fire28C, Board::Fire32B] {
+            let entries = supported_chips(board);
+            assert!(!entries.is_empty(), "{} lists no chips", board.name());
+
+            let classes: Vec<i32> = entries
+                .iter()
+                .map(|e| pin_offset_order(e.result.pin_offset))
+                .collect();
+            assert!(
+                classes.windows(2).all(|w| w[0] <= w[1]),
+                "{} entries are not ordered by fit class: {classes:?}",
+                board.name()
+            );
+
+            let mut offsets: Vec<i16> = entries.iter().map(|e| e.result.pin_offset).collect();
+            offsets.dedup();
+            let unique = offsets.len();
+            offsets.sort_unstable();
+            offsets.dedup();
+            assert_eq!(
+                unique,
+                offsets.len(),
+                "{} has a pin offset split across sections",
+                board.name()
+            );
+        }
+    }
+
+    /// Every alias of a chip type is listed, so a user can look up the part
+    /// number stamped on the chip rather than One ROM's preferred name for it.
+    #[test]
+    fn lists_each_alias_separately() {
+        let entries = supported_chips(Board::Fire24F);
+        for alias in ["2316", "9316", "9316A"] {
+            assert!(
+                entries.iter().any(|e| e.alias == alias),
+                "{alias} missing from the fire-24-f listing"
+            );
+        }
+    }
+
+    /// A chip the board cannot serve has no size to report.
+    #[test]
+    fn omits_unsupported_chips() {
+        let entries = supported_chips(Board::Fire24F);
+        assert!(entries.iter().all(|e| e.alias != "27C400"));
+        assert!(check_chip_on_board(Board::Fire24F, ChipType::Chip27C400).is_none());
+    }
 }

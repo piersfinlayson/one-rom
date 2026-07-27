@@ -503,12 +503,14 @@ pub enum Commands {
 
     /// List supported chip types.
     ///
-    /// Displays the chip types supported by a specific board, or all chip types
-    /// grouped by pin count.
+    /// For a board, displays each chip type it can emulate with the flash each
+    /// one uses, or with --all, every chip type grouped by pin count.
     ///
     /// Examples:
     ///
     ///   onerom chips --board fire-24-e
+    ///
+    ///   onerom chips --board fire-24-e --chip-type 2364
     ///
     ///   onerom chips --all
     Chips(FirmwareChipsArgs),

@@ -321,7 +321,7 @@ and rely on `--serial` (global) to pick a specific device.
 | [`image`](#image) | ROM image file manipulation | No |
 | [`firmware`](#firmware) | Build, inspect and manage firmware binaries | Varies |
 | [`plugin`](#plugin) | List available plugins | No |
-| [`chips`](#chips) | List supported chip types | No |
+| [`chips`](#chips) | List supported chip types and their flash usage | No |
 | [`boards`](#boards) | List board types, or draw a board's pin header / socket | No |
 | [`peek`](#peek-top-level-alias) | Alias for `inspect peek live` | Yes |
 | [`poke`](#poke-top-level-alias) | Alias for `control poke live` | Yes |
@@ -551,7 +551,7 @@ onerom inspect socket [--chip-type <chip>] [--gpio]
 
 | Option | Description |
 |---|---|
-| `--chip-type <chip>` | Label pins with this ROM type's functions instead of GPIOs. |
+| `--chip-type <chip>` | Label pins with this ROM type's functions instead of GPIOs, and report the chip's image size on this board. |
 | `--gpio` | Overlay the GPIO(s) onto the `--chip-type` function view (requires `--chip-type`). |
 
 ---
@@ -856,7 +856,7 @@ onerom firmware <COMMAND>
 | [`inspect`](#firmware-inspect) | Inspect a firmware binary | No |
 | [`releases`](#firmware-releases) | List firmware releases | No |
 | [`download`](#firmware-download) | Download a release binary | No |
-| [`chips`](#firmware-chips) | List supported chip types | No |
+| [`chips`](#firmware-chips) | List supported chip types and their flash usage | No |
 | `program` | Alias for [`onerom program`](#program) | Yes |
 
 ### firmware build
@@ -933,11 +933,12 @@ onerom firmware download --version 0.6.5 --board fire-24-e --out firmware.bin
 
 ### firmware chips
 
-List supported chip types for a board, or all chip types grouped by pin count.
-Identical to the top-level [`chips`](#chips).
+List the chip types a board can emulate and the flash each one uses, or all chip
+types grouped by pin count. Identical to the top-level [`chips`](#chips).
 
 ```
 onerom firmware chips --board fire-24-e
+onerom firmware chips --board fire-24-e --chip-type 2364
 onerom firmware chips --all
 ```
 
@@ -945,6 +946,7 @@ onerom firmware chips --all
 |---|---|
 | `--board, -b <BOARD>` | Show supported chips for this board. Conflicts with `--all`. |
 | `--all, -a` | Show all chips grouped by pin count. Conflicts with `--board`. |
+| `--chip-type, -c <CHIP>` | Show just this chip type's flash usage on the board. Conflicts with `--all`. |
 
 ---
 
@@ -974,11 +976,12 @@ Device required: no.
 
 ## chips
 
-List supported chip types — for a board, or all grouped by pin count. Top-level
-alias for [`firmware chips`](#firmware-chips).
+List supported chip types — for a board, with the flash each one uses, or all
+grouped by pin count. Top-level alias for [`firmware chips`](#firmware-chips).
 
 ```
 onerom chips --board fire-24-e
+onerom chips --board fire-24-e --chip-type 2364
 onerom chips --all
 ```
 
@@ -986,8 +989,58 @@ onerom chips --all
 |---|---|
 | `--board, -b <BOARD>` | Show supported chips for this board. Conflicts with `--all`. |
 | `--all, -a` | Show all chips grouped by pin count. Conflicts with `--board`. |
+| `--chip-type, -c <CHIP>` | Show just this chip type's flash usage on the board. Conflicts with `--all`. |
+
+### Flash usage
+
+For a board, each chip is listed with its **ROM size** (the chip's own capacity)
+and its **image size** — the flash One ROM uses to emulate it, which is often
+larger, and occasionally much larger. The figures, and the native / overhang /
+fly-lead grouping, are the same ones published in
+[Chip Compatibility](COMPATIBILITY.md); the document is generated from the same
+source the CLI reads, so the two agree.
+
+The sizes are for a chip served alone in its slot. A banked or multi-ROM set
+draws further lines into the slot's address window, so its image can be larger
+than the figure shown here; build the firmware and run
+[`onerom firmware inspect`](#firmware-inspect) to see what a specific set costs.
+
+Chips are listed only where a size can be derived, which means Fire (RP2350)
+boards. An Ice (STM32) board falls back to a plain list of names. A chip type of
+the board's own pin count that the board cannot serve — the SRAM types, at the
+time of writing — is named in a trailing line rather than tabulated.
+
+Board is taken from `--board`, or inferred from a connected One ROM. `--chip-type`
+accepts any chip type the board can emulate, under any accepted spelling.
 
 Example output (illustrative — your build may differ):
+
+```
+$ onerom chips --board fire-24-f
+
+Supported chip types for fire-24-f (One ROM Fire 24 (rev F)):
+
+  24-pin chips (native)
+    Chip       ROM size  Image size  Fit
+    2704           512B        512B  native
+    2364            8KB         8KB  native
+    ...
+
+  28-pin chips (with fly-leads)
+    Chip       ROM size  Image size  Fit
+    2764            8KB        32KB  fly-lead to X1
+    ...
+
+$ onerom chips --board fire-28-c --chip-type 2364
+
+2364 on fire-28-c (One ROM Fire 28 (rev C)):
+  ROM size    8KB
+  Image size  256KB
+  Fit         overhang
+```
+
+With `--all`, chip types are listed by pin count without sizes, which are
+board-dependent:
 
 ```
 Supported 24-pin chips:
@@ -1000,7 +1053,8 @@ Supported 40-pin chips:
   23C4100, 27C200, 27C400, 27C4100, AT27C400, HN62402, M27C400, MX23C4100, ...
 ```
 
-Device required: no.
+Device required: no (a device is used only to infer the board when `--board` is
+omitted).
 
 ---
 
@@ -1079,6 +1133,10 @@ In both cases One ROM's own power pins may not line up with the ROM's. With
 `--gpio`, the pin One ROM's VCC (or GND) lands on is annotated `(VCC)`/`(GND)` —
 e.g. `NC (VCC)` shows One ROM's VCC sitting on the ROM's NC pin — so you know
 where power must be applied.
+
+With `--chip-type`, the diagram is followed by that chip's image size on this
+board — the flash One ROM uses to emulate it, as reported by
+[`onerom chips`](#chips).
 
 `<board>` is inferred from a connected One ROM when omitted. `--chip-type` must be a
 chip type the board can emulate (native, overhang or fly-lead; see

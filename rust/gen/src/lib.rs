@@ -57,6 +57,28 @@ const METADATA_VERSION_STR: &str = "1";
 /// Firmware size reserved at the start of flash, before metadata
 pub const FIRMWARE_SIZE: usize = 48 * 1024; // 48KB
 
+// The V1 and V2 metadata regions are the same size, which is what lets
+// [`rom_data_space`] serve both build paths. `MAX_METADATA_LEN` bounds what the
+// V1 writer emits; `METADATA_SIZE` is the fixed region the V2 layout reserves.
+// If they ever diverge, `rom_data_space` needs to take the metadata size (or
+// the schema) as an argument rather than assuming one value.
+const _: () = assert!(MAX_METADATA_LEN == onerom_metadata::METADATA_SIZE);
+
+/// Flash available for ROM image data on `mcu_variant`, in bytes.
+///
+/// This is the whole flash less the two fixed regions that precede the ROM
+/// images: the firmware ([`FIRMWARE_SIZE`], 48KB) and the metadata region
+/// (16KB). On the RP2350's 2MB flash that leaves 1984KB.
+///
+/// Both builder paths bound their composed ROM data with this, and it is the
+/// budget a caller should size a set of images against. Note the separate,
+/// smaller [`MAX_IMAGE_SIZE`] cap that applies to any *single* slot - that is a
+/// RAM limit, not a flash one, so a set of images can be within this budget yet
+/// still contain a slot that is too large to serve.
+pub fn rom_data_space(mcu_variant: onerom_config::mcu::Variant) -> usize {
+    mcu_variant.flash_storage_bytes() - FIRMWARE_SIZE - MAX_METADATA_LEN
+}
+
 pub const MIN_FIRMWARE_OVERRIDES_VERSION: FirmwareVersion = FirmwareVersion::new(0, 6, 0, 0);
 
 /// Error type
@@ -804,4 +826,32 @@ pub struct Location {
     /// Length of the image within the larger Chip image.  Must match the
     /// selected Chip type, or SizeHandling will be applied.
     pub length: usize,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use onerom_config::mcu::Variant;
+
+    /// The ROM budget is the flash less the firmware and metadata regions -
+    /// 1984KB of the RP2350's 2MB. Both builder paths bound their composed ROM
+    /// data with this, so a wrong value here silently changes what builds.
+    #[test]
+    fn rom_data_space_excludes_the_firmware_and_metadata_regions() {
+        let space = rom_data_space(Variant::RP2350);
+        assert_eq!(space, 1984 * 1024);
+        assert_eq!(
+            space,
+            Variant::RP2350.flash_storage_bytes() - FIRMWARE_SIZE - MAX_METADATA_LEN
+        );
+        assert_eq!(rom_data_space(Variant::RP2350B), space);
+    }
+
+    /// A single slot can be at most MAX_IMAGE_SIZE, which must stay well inside
+    /// the whole-flash budget - otherwise the per-slot RAM cap, not flash,
+    /// would be what limits a single-image build.
+    #[test]
+    fn a_single_slot_fits_the_rom_budget() {
+        assert!(MAX_IMAGE_SIZE < rom_data_space(Variant::RP2350));
+    }
 }

@@ -2,6 +2,20 @@
 
 ## v0.3.0 - 2026-??-??
 
+- `onerom chips --board <board>` now reports how much of One ROM's flash each
+  chip type uses. Each chip is listed with its ROM size and its image size — the
+  flash used to emulate it, which is often larger than the chip (a 2364 costs 8KB
+  on a 24-pin board but 256KB overhanging a 28-pin one) — grouped by how it fits
+  the socket (native / overhang / fly-lead), matching `docs/COMPATIBILITY.md`.
+  `--chip-type <chip>` (`-c`) answers for a single chip type. The listing now
+  covers every chip the board can emulate, including the overhang and fly-lead
+  combinations the previous name-only list omitted; conversely a recognised chip
+  type the board cannot serve (the SRAM types) is named in a trailing line
+  instead of being listed as supported. Ice (STM32) boards, for which no image
+  size can be derived, keep the plain name list. `--all` is unchanged.
+- `onerom boards socket <board> --chip-type <chip>` (and `onerom inspect socket
+  --chip-type <chip>`) now reports the chip's image size below the pinout.
+
 - Add ASCII views of a board's physical pin layouts. `onerom boards header
   [<board>]` draws the pin (jumper / programming) header, annotating each
   image-select and X pad with the MCU GPIO behind it and — on RP2350 (Fire)

@@ -5,13 +5,14 @@
 use log::{debug, trace};
 use std::io::Write;
 
-use onerom_config::chip::{CHIP_TYPE_NAMES_PLUGINS, chip_type_names_for_pins};
+use onerom_config::chip::{CHIP_TYPE_NAMES_PLUGINS, ChipType, chip_type_names_for_pins};
 use onerom_config::fw::{FirmwareProperties, FirmwareVersion, ServeAlg};
 use onerom_config::hw::Board;
 use onerom_config::mcu::Variant;
 use onerom_fw::net::{Release, Releases, fetch_license_async};
 use onerom_fw::{assemble_firmware, get_rom_files_async, read_rom_config, validate_sizes};
 use onerom_fw_parser::{ParsedDevice, Parser, readers::MemoryReader};
+use onerom_gen::compat::{ChipCompat, check_chip_on_board, format_size, supported_chips};
 use onerom_gen::{Builder, FIRMWARE_SIZE, License};
 
 use crate::args;
@@ -715,10 +716,13 @@ pub async fn cmd_chips(
         resolve_board(options, &args.board)?
     };
 
-    if let Some(board) = board {
-        print_chips_for_board(&board);
-    } else {
-        print_all_chips();
+    match (board, args.chip_type.as_deref()) {
+        // A single chip's flash usage is a per-board figure, so --chip-type
+        // needs a board - given, or inferred from a connected One ROM.
+        (None, Some(_)) => return Err(Error::NoBoardOrDevice),
+        (Some(board), Some(chip_type)) => print_chip_on_board(&board, chip_type)?,
+        (Some(board), None) => print_chips_for_board(&board),
+        (None, None) => print_all_chips(),
     }
 
     Ok(())
@@ -730,16 +734,148 @@ fn print_plugin_chips() {
     println!("  {names_str}");
 }
 
-fn print_chips_for_board(board: &Board) {
-    println!("Supported chip types for {}:", board.name());
+/// Heading for a run of chips that fit `board` the same way, matching the
+/// section headings in `docs/COMPATIBILITY.md`.
+fn chip_group_heading(board: &Board, entry: &ChipCompat) -> String {
+    let chip_pins = entry.chip_type.chip_pins();
+    if entry.result.is_native() {
+        format!("{}-pin chips (native)", board.chip_pins())
+    } else if entry.result.requires_fly_leads() {
+        format!("{chip_pins}-pin chips (with fly-leads)")
+    } else {
+        format!("{chip_pins}-pin chips (with overhang)")
+    }
+}
+
+/// The chip types `board` can emulate, as a comma-separated list for error
+/// messages. Wider than `Board::supported_chip_type_names()`, which covers only
+/// the board's own pin count - this includes the overhang and fly-lead types.
+fn emulatable_chip_names(board: &Board) -> String {
+    supported_chips(*board)
+        .iter()
+        .map(|e| e.alias)
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// List a board's chip types by name only, without image sizes.
+///
+/// Used for boards `onerom_gen::compat` cannot size - it derives the v2
+/// (Fire/RP2350) serving layout, so an Ice/STM32 board has no per-chip figure to
+/// report and falls back to this.
+fn print_chip_names_for_board(board: &Board) {
     let names = board.supported_chip_type_names();
     if names.is_empty() {
         println!("  (none)");
     } else {
-        let names_str = names.join(", ");
-        println!("  {names_str}");
+        println!("  {}", names.join(", "));
     }
+}
+
+fn print_chips_for_board(board: &Board) {
+    let entries = supported_chips(*board);
+    println!(
+        "Supported chip types for {} ({}):",
+        board.name(),
+        board.description()
+    );
+
+    if entries.is_empty() {
+        print_chip_names_for_board(board);
+        print_plugin_chips();
+        return;
+    }
+
+    // Size the columns across every group, so they line up down the whole
+    // listing rather than shifting between sections.
+    let width = |header: &str, longest: usize| longest.max(header.len());
+    let chip_w = width(
+        "Chip",
+        entries.iter().map(|e| e.alias.len()).max().unwrap_or(0),
+    );
+    let rom_w = width(
+        "ROM size",
+        entries
+            .iter()
+            .map(|e| format_size(e.rom_size_bytes).len())
+            .max()
+            .unwrap_or(0),
+    );
+    let image_w = width(
+        "Image size",
+        entries
+            .iter()
+            .map(|e| format_size(e.result.slot_size_bytes).len())
+            .max()
+            .unwrap_or(0),
+    );
+
+    // `supported_chips` orders the entries so chips that fit the same way are
+    // consecutive, so a change of pin offset starts a new section.
+    let mut group: Option<i16> = None;
+    for entry in &entries {
+        if group != Some(entry.result.pin_offset) {
+            group = Some(entry.result.pin_offset);
+            println!();
+            println!("  {}", chip_group_heading(board, entry));
+            println!(
+                "    {:chip_w$}  {:>rom_w$}  {:>image_w$}  Fit",
+                "Chip", "ROM size", "Image size"
+            );
+        }
+        println!(
+            "    {:chip_w$}  {:>rom_w$}  {:>image_w$}  {}",
+            entry.alias,
+            format_size(entry.rom_size_bytes),
+            format_size(entry.result.slot_size_bytes),
+            entry.result.fit_description(),
+        );
+    }
+
+    println!();
+    println!(
+        "  Image size is the flash One ROM uses to emulate the chip, which may \
+         exceed the\n  chip's own ROM size.  See docs/COMPATIBILITY.md."
+    );
+
+    // Chip types of this board's own pin count that it cannot serve - either
+    // because no firmware serves them yet (the SRAM types, at the time of
+    // writing) or because this particular board's layout cannot place them.
+    // They have no image size, so they cannot appear in the table above, but
+    // naming them beats leaving a recognised type unaccounted for.
+    let unservable: Vec<&str> = board
+        .supported_chip_type_names()
+        .iter()
+        .copied()
+        .filter(|name| !entries.iter().any(|e| e.alias == *name))
+        .collect();
+    if !unservable.is_empty() {
+        println!(
+            "\n  Recognised but not servable on this board: {}",
+            unservable.join(", ")
+        );
+    }
+
+    println!();
     print_plugin_chips();
+}
+
+/// Print one chip type's flash usage on `board`.
+fn print_chip_on_board(board: &Board, name: &str) -> Result<(), Error> {
+    let unsupported = || Error::UnsupportedChipType(name.to_string(), emulatable_chip_names(board));
+
+    let chip_type = ChipType::try_from_str(name).ok_or_else(unsupported)?;
+    let result = check_chip_on_board(*board, chip_type).ok_or_else(unsupported)?;
+
+    println!("{name} on {} ({}):", board.name(), board.description());
+    println!(
+        "  ROM size    {}",
+        format_size(chip_type.size_bytes() as u32)
+    );
+    println!("  Image size  {}", format_size(result.slot_size_bytes));
+    println!("  Fit         {}", result.fit_description());
+
+    Ok(())
 }
 
 fn print_all_chips() {
@@ -798,4 +934,39 @@ pub async fn cmd_download(
 
 fn parse_plugin_specs(raw: &[String]) -> Result<Vec<PluginSpec>, Error> {
     Ok(onerom_cli::plugin::parse_plugins(raw)?)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `chips --board` lists every chip type the board can emulate, which is
+    /// wider than `Board::supported_chip_type_names()` - that covers only the
+    /// board's own pin count, omitting the overhang and fly-lead combinations
+    /// `docs/COMPATIBILITY.md` documents. The error message for an unknown
+    /// `--chip-type` must offer the same wider list the listing shows.
+    #[test]
+    fn emulatable_names_include_cross_size_chips() {
+        let board = Board::try_from_str("fire-24-f").unwrap();
+        let names = emulatable_chip_names(&board);
+
+        // Native 24-pin type, in both lists.
+        assert!(names.contains("2364"));
+        // 28-pin type, reachable only with a fly-lead - listed here, but not by
+        // the board's own pin-count list.
+        assert!(names.contains("2764"));
+        assert!(!board.supported_chip_type_names().contains(&"2764"));
+        // A chip this board cannot serve at all appears in neither.
+        assert!(!names.contains("27C400"));
+    }
+
+    /// A chip type the board cannot serve has no image size to report, so the
+    /// query fails rather than printing a figure for an unservable combination.
+    #[test]
+    fn single_chip_query_rejects_unservable_chips() {
+        let board = Board::try_from_str("fire-24-f").unwrap();
+        assert!(print_chip_on_board(&board, "2364").is_ok());
+        assert!(print_chip_on_board(&board, "27C400").is_err());
+        assert!(print_chip_on_board(&board, "not-a-chip").is_err());
+    }
 }

@@ -75,12 +75,14 @@ pub enum FirmwareCommands {
 
     /// List supported chip types.
     ///
-    /// Displays the chip types supported by a specific board, or all chip types
-    /// grouped by pin count.
+    /// For a board, displays each chip type it can emulate with the flash each
+    /// one uses, or with --all, every chip type grouped by pin count.
     ///
     /// Examples:
     ///
     ///   onerom firmware chips --board fire-24-e
+    ///
+    ///   onerom firmware chips --board fire-24-e --chip-type 2364
     ///
     ///   onerom firmware chips --all
     Chips(FirmwareChipsArgs),
@@ -369,6 +371,10 @@ pub struct FirmwareChipsArgs {
     /// Show all supported chip types grouped by pin count.
     #[arg(long, short, conflicts_with = "board")]
     pub all: bool,
+
+    /// Show just this chip type's flash usage on the board.
+    #[arg(long, short = 'c', value_name = "CHIP", conflicts_with = "all")]
+    pub chip_type: Option<String>,
 }
 
 impl CommandTrait for FirmwareChipsArgs {

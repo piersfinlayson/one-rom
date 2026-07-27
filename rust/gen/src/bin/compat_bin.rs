@@ -15,7 +15,10 @@ use std::path::{Path, PathBuf};
 
 use onerom_config::chip::{CHIP_TYPE_NAMES, ChipType};
 use onerom_config::hw::{Board, Model};
-use onerom_gen::compat::{CompatResult, check_chip_on_board, is_v2_chip};
+use onerom_gen::compat::{
+    ChipCompat, CompatResult, check_chip_on_board, format_size, is_v2_chip, pin_offset_order,
+    supported_chips,
+};
 
 // ── Repository paths ──────────────────────────────────────────────────────────
 
@@ -100,16 +103,6 @@ fn board_short(board: Board) -> String {
 
 // ── Formatting helpers ────────────────────────────────────────────────────────
 
-fn format_size(bytes: u32) -> String {
-    if bytes >= 1024 * 1024 {
-        format!("{}MB", bytes / (1024 * 1024))
-    } else if bytes >= 1024 {
-        format!("{}KB", bytes / 1024)
-    } else {
-        format!("{}B", bytes)
-    }
-}
-
 /// Format a compat result as a Markdown table cell.
 ///
 /// `-` = not supported; `64KB` = native fit; `64KB*` = One ROM overhangs
@@ -130,36 +123,6 @@ fn format_result(result: &Option<CompatResult>) -> String {
     }
 }
 
-/// Human-readable socket fit description for per-board tables.
-fn format_socket(result: &CompatResult) -> String {
-    if result.is_native() {
-        "native".to_string()
-    } else if result.requires_fly_leads() {
-        match result.num_fly_lead_pins {
-            0 => "no fly-leads required".to_string(),
-            1 => "fly-lead to X1".to_string(),
-            2 => "fly-lead to X1 and X2".to_string(),
-            n => format!("fly-lead ({} pins)", n),
-        }
-    } else {
-        "overhang".to_string()
-    }
-}
-
-// ── Sort key ──────────────────────────────────────────────────────────────────
-
-/// Sort key for entries: native first, then overhang (ascending by chip size
-/// difference), then fly-lead (ascending by chip size difference).
-fn pin_offset_order(pin_offset: i16) -> i32 {
-    if pin_offset == 0 {
-        0
-    } else if pin_offset > 0 {
-        1
-    } else {
-        2
-    }
-}
-
 // ── Data structures ───────────────────────────────────────────────────────────
 
 /// One chip row in the compatibility matrix.
@@ -176,19 +139,11 @@ struct MatrixGroup {
     entries: Vec<MatrixEntry>,
 }
 
-/// One supported chip in a per-board table.
-struct BoardEntry {
-    alias: &'static str,
-    rom_size: u32,
-    chip_pins: u8,
-    result: CompatResult,
-}
-
 /// A group of same-offset chips in a per-board table.
 struct BoardGroup {
     pin_offset: i16,
     chip_pins: u8,
-    entries: Vec<BoardEntry>,
+    entries: Vec<ChipCompat>,
 }
 
 // ── Matrix section ────────────────────────────────────────────────────────────
@@ -296,19 +251,7 @@ fn write_board_table(w: &mut impl Write, board: Board) -> io::Result<()> {
     writeln!(w, "## {} — {}", board.description(), board.name())?;
     writeln!(w)?;
 
-    let mut entries: Vec<BoardEntry> = CHIP_TYPE_NAMES
-        .iter()
-        .filter_map(|alias| {
-            let chip_type = ChipType::try_from_str(alias)?;
-            let result = check_chip_on_board(board, chip_type)?;
-            Some(BoardEntry {
-                alias,
-                rom_size: chip_type.size_bytes() as u32,
-                chip_pins: chip_type.chip_pins(),
-                result,
-            })
-        })
-        .collect();
+    let entries = supported_chips(board);
 
     if entries.is_empty() {
         writeln!(w, "*(no supported chips)*")?;
@@ -316,22 +259,13 @@ fn write_board_table(w: &mut impl Write, board: Board) -> io::Result<()> {
         return Ok(());
     }
 
-    entries.sort_by_key(|e| {
-        (
-            pin_offset_order(e.result.pin_offset),
-            e.result.pin_offset.abs(),
-            e.rom_size,
-            e.alias,
-        )
-    });
-
     let mut groups: Vec<BoardGroup> = Vec::new();
     for entry in entries {
         match groups.last_mut() {
             Some(g) if g.pin_offset == entry.result.pin_offset => g.entries.push(entry),
             _ => groups.push(BoardGroup {
                 pin_offset: entry.result.pin_offset,
-                chip_pins: entry.chip_pins,
+                chip_pins: entry.chip_type.chip_pins(),
                 entries: vec![entry],
             }),
         }
@@ -359,9 +293,9 @@ fn write_board_table(w: &mut impl Write, board: Board) -> io::Result<()> {
                 w,
                 "| {} | {} | {} | {} |",
                 entry.alias,
-                format_size(entry.rom_size),
+                format_size(entry.rom_size_bytes),
                 format_size(entry.result.slot_size_bytes),
-                format_socket(&entry.result),
+                entry.result.fit_description(),
             )?;
         }
         writeln!(w)?;
