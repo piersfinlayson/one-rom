@@ -46,10 +46,21 @@ it as a long-lived, production project.
   `CHANGELOG.md` (e.g. `plugins/system/usb/CHANGELOG.md`). Leave vendored
   changelogs (tinyusb, `firmware/apio`, `firmware/epio`) alone.
 - **When you touch the CLI, keep [docs/CLI-MANUAL.md](/docs/CLI-MANUAL.md) in
-  sync.** Any user-facing CLI change — new/changed subcommands or options,
-  altered conflicts, changed output — must be reflected there, including the
-  version banner near the top ("as of release vX.Y.Z"). The manual is the
-  user-facing reference; do not let it drift behind the CLI CHANGELOG.
+  sync, in the same commit.** Any user-facing CLI change — new/changed
+  subcommands or options, altered conflicts, changed output — must be reflected
+  there, including the version banner near the top ("as of release vX.Y.Z"). The
+  manual is the user-facing reference; do not let it drift behind the CLI
+  CHANGELOG.
+  - The trigger is **"the CLI prints something different"**, not "the CLI gained
+    an option". Rewording a label, adding or dropping a line, changing what a
+    column can contain — each is a manual change, and each is easy to miss
+    precisely because no option changed. Where the manual quotes example output,
+    paste a **verbatim run**; hand-written examples drift and quietly become
+    wrong.
+  - The manual is not the only user-facing document a CLI change can reach. If
+    what you changed is also described in `docs/COMPATIBILITY.md`,
+    `docs/CHIP-TYPES.md` or another `docs/` file — or in a **generator** that
+    emits one — update that too, in the same commit.
 - **Before bumping any crate/component version, read the repo-root
   [CHANGELOG.md](/CHANGELOG.md) first.** Its "To publish" list under the current
   in-development heading is the source of truth for in-flight version bumps. A
