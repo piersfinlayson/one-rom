@@ -420,7 +420,24 @@ impl Builder {
             rom_data_offset += slot.size;
         }
 
-        let mut rom_data_buf = alloc::vec::Vec::with_capacity(rom_data_offset as usize);
+        // Check the ROM data fits in the flash left after the firmware and the
+        // fixed-size metadata region. This mirrors the V1 guard so that every
+        // caller of `build()` - CLI, the onerom-fw tool, Studio, and the
+        // web programmer via one-rom-wasm - gets the check from the single
+        // onerom-gen implementation, rather than each having to re-run the
+        // downstream `onerom-fw::validate_sizes` themselves.
+        let rom_data_size = rom_data_offset as usize;
+        let flash_size = props.mcu_variant().flash_storage_bytes();
+        let rom_space = flash_size - FIRMWARE_SIZE - METADATA_SIZE;
+        if rom_data_size > rom_space {
+            return Err(Error::BufferTooSmall {
+                location: "Flash",
+                expected: rom_data_size,
+                actual: rom_space,
+            });
+        }
+
+        let mut rom_data_buf = alloc::vec::Vec::with_capacity(rom_data_size);
         for ((chip_set, slot), layout) in chip_sets.iter().zip(rom_slots.iter()).zip(layouts.iter())
         {
             let image = match layout {

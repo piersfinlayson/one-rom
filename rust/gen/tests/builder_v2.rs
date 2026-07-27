@@ -2876,4 +2876,63 @@ mod tests {
             );
         }
     }
+
+    // ========================================================================
+    // v2 flash-overflow guard: Fire32B / 16 x 27C010
+    // ========================================================================
+
+    /// The v2 builder must reject a config whose composed ROM data does not fit
+    /// the target board's flash — matching the guard the v1 builder has always
+    /// had. Sixteen 27C010 slots (each served 1:1 at 128KB, see
+    /// `v2_single_fire32b_27c010`) total 2MB, which exceeds the ROM space left
+    /// on the RP2350's 2MB flash after the firmware (48KB) and the metadata
+    /// region (16KB). Without the guard, `build()` would silently return an
+    /// over-large image; every consumer of the single onerom-gen `build()`
+    /// (CLI, the onerom-fw tool, Studio, one-rom-wasm) relies on this check.
+    #[test]
+    fn v2_rejects_oversized_rom_data() {
+        const CHIP_BYTES: usize = 131_072; // 27C010 = 128KB, served 1:1
+        const SLOTS: usize = 16; // 16 * 128KB = 2MB > flash minus fw+metadata
+
+        let sets: Vec<String> = (0..SLOTS)
+            .map(|i| {
+                format!(
+                    r#"{{ "type": "single", "chips": [{{ "file": "f{i}.bin", "type": "27C010" }}] }}"#
+                )
+            })
+            .collect();
+        let json = format!(
+            r#"{{ "version": 1, "description": "v2 flash overflow", "chip_sets": [{}] }}"#,
+            sets.join(",")
+        );
+
+        let mut b = v2_builder(&json);
+        for id in 0..SLOTS {
+            b.add_file(FileData {
+                id,
+                data: vec![0xAAu8; CHIP_BYTES],
+            })
+            .unwrap();
+        }
+
+        let err = b
+            .build(v2_props(Board::Fire32B))
+            .expect_err("build must reject ROM data that overflows flash");
+
+        match err {
+            onerom_gen::Error::BufferTooSmall {
+                location,
+                expected,
+                actual,
+            } => {
+                assert_eq!(location, "Flash");
+                assert_eq!(expected, SLOTS * CHIP_BYTES);
+                assert!(
+                    expected > actual,
+                    "expected ROM data ({expected}) should exceed available flash ({actual})"
+                );
+            }
+            other => panic!("expected Error::BufferTooSmall, got {other:?}"),
+        }
+    }
 }
