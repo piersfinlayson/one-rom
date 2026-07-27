@@ -344,6 +344,18 @@ ora_result_t ora_demangle_addr(
     return pio_demangle_addr(CURRENT_SLOT, physical_addr, logical_addr_out, check_control_pins);
 }
 
+ora_result_t ora_demangle_observed_addr(
+    uint32_t physical_addr,
+    uint32_t *observed_addr_out,
+    uint8_t check_control_pins
+) {
+    return pio_demangle_observed_addr(CURRENT_SLOT, physical_addr, observed_addr_out, check_control_pins);
+}
+
+ora_result_t ora_get_unobserved_addr_bits(uint8_t *bits_out) {
+    return pio_get_unobserved_addr_bits(CURRENT_SLOT, bits_out);
+}
+
 ora_result_t ora_init_knock(
     const uint32_t *knock_seq,
     uint8_t knock_len,
@@ -923,6 +935,10 @@ void *ora_fn_lookup(api_id_t id) {
             return ora_map_data_to_phys;
         case ORA_ID_DEMANGLE_ADDR:
             return ora_demangle_addr;
+        case ORA_ID_DEMANGLE_OBSERVED_ADDR:
+            return ora_demangle_observed_addr;
+        case ORA_ID_GET_UNOBSERVED_ADDR_BITS:
+            return ora_get_unobserved_addr_bits;
         case ORA_ID_INIT_KNOCK:
             return ora_init_knock;
         case ORA_ID_WAIT_FOR_KNOCK:

@@ -88,6 +88,16 @@ ora_result_t pio_demangle_addr(
     uint32_t *logical_addr_out,
     uint8_t check_control_pins
 );
+ora_result_t pio_demangle_observed_addr(
+    const onerom_rom_slot_t *slot,
+    uint32_t physical_addr,
+    uint32_t *logical_addr_out,
+    uint8_t check_control_pins
+);
+ora_result_t pio_get_unobserved_addr_bits(
+    const onerom_rom_slot_t *slot,
+    uint8_t *bits_out
+);
 uint8_t pio_demangle_data(
     const onerom_rom_slot_t *slot,
     uint8_t physical_data

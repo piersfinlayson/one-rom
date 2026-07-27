@@ -57,7 +57,7 @@ const ora_plugin_header_t ora_plugin_header = {
     .properties1 = 0,
     .min_fw_major_version = 0,
     .min_fw_minor_version = 7,
-    .min_fw_patch_version = 0,
+    .min_fw_patch_version = 1,
     .reserved = {0},
 };
 
@@ -111,7 +111,7 @@ static const uint32_t s_knock_seq[KNOCK_LEN] = {
 
 #define RBCP_PROTOCOL_VERSION_MAJOR 0u
 #define RBCP_PROTOCOL_VERSION_MINOR 1u
-#define RBCP_PROTOCOL_VERSION_PATCH 0u
+#define RBCP_PROTOCOL_VERSION_PATCH 1u
 const uint8_t protocol_version[4] = {
     RBCP_PROTOCOL_VERSION_MAJOR,
     RBCP_PROTOCOL_VERSION_MINOR,
@@ -222,13 +222,18 @@ typedef struct {
 static rbcp_state_t s_state;
 static nv_state_t s_nv_state;
 
+// Number of low observed-address bits the device omits for the served ROM
+// (host signalling stride = 1 << this).  Fixed for the served ROM type, so it
+// is read once at setup rather than per command.
+static uint8_t s_unobserved_addr_bits;
+
 // ---------------------------------------------------------------------------
 // API function pointers (populated at plugin entry)
 // ---------------------------------------------------------------------------
 
 static ora_lookup_fn_t                      s_lookup;
 static ora_log_fn_t                         s_log;
-static ora_demangle_addr_fn_t               s_demangle;
+static ora_demangle_observed_addr_fn_t      s_demangle;  // observed (bus) address: command signalling lives here, not byte space
 static ora_reprogram_ram_rom_slot_fn_t      s_reprogram;
 static ora_get_ram_slot_info_fn_t           s_get_ram_slot_info;
 static ora_get_ram_slot_count_fn_t          s_get_ram_slot_count;
@@ -247,10 +252,13 @@ static ora_demangle_data_fn_t               s_demangle_data;
 // Ring buffer read helpers
 // ---------------------------------------------------------------------------
 
-// Block until the next CS-active address capture is available, then return
-// its A0-A7 as a logical byte.  Entries where CS is inactive are skipped.
-// In command-response mode, entries whose upper address bits do not match
-// the configured command page are also skipped.
+// Block until the next CS-active address capture is available, then return the
+// low 8 bits of its observed (bus) address as the command byte.  The address is
+// demangled via ORA_ID_DEMANGLE_OBSERVED_ADDR, so on a word- or LSB-omitting
+// ROM the value is the observed word/bus address (not the byte address) — which
+// is the space command signalling travels in.  Entries where CS is inactive are
+// skipped.  In command-response mode, entries whose upper observed address bits
+// do not match the configured command page are also skipped.
 //
 // WARNING: This function blocks indefinitely.  If the host resets or crashes
 // mid-command while the plugin is waiting for an argument byte, this function
@@ -484,9 +492,14 @@ static bool exec_enter_cmd_resp(void) {
         s_log("ENTER_CMD_RESP failed: get_ram_slot_info error");
         return false;
     }
-    if (((uint32_t)command_page << 8u) >= slot_size) {
-        s_log("ENTER_CMD_RESP discarded: command page 0x%04X out of range for slot size %u",
-              (unsigned)command_page, (unsigned)slot_size);
+    // The command page is in observed (bus) address space, which on a word- or
+    // otherwise LSB-omitting ROM is narrower than the byte-addressed slot: the
+    // observed span is slot_size >> (unobserved low address bits, cached at
+    // setup as it is fixed for the served ROM type).
+    uint32_t observed_span = slot_size >> s_unobserved_addr_bits;
+    if (((uint32_t)command_page << 8u) >= observed_span) {
+        s_log("ENTER_CMD_RESP discarded: command page 0x%04X out of range for observed span %u",
+              (unsigned)command_page, (unsigned)observed_span);
         return false;
     }
     uint32_t region_end = region_offset + (uint32_t)region_size;
@@ -1366,7 +1379,7 @@ __attribute__((noinline)) static void rbcp_setup(
     // Retrieve API function pointers
     s_lookup               = ora_lookup_fn;
     s_log                  = ora_lookup_fn(ORA_ID_LOG);
-    s_demangle             = ora_lookup_fn(ORA_ID_DEMANGLE_ADDR);
+    s_demangle             = ora_lookup_fn(ORA_ID_DEMANGLE_OBSERVED_ADDR);
     s_reprogram            = ora_lookup_fn(ORA_ID_REPROGRAM_RAM_ROM_SLOT);
     s_get_ram_slot_info    = ora_lookup_fn(ORA_ID_GET_RAM_SLOT_INFO);
     s_get_ram_slot_count   = ora_lookup_fn(ORA_ID_GET_RAM_SLOT_COUNT);
@@ -1392,6 +1405,17 @@ __attribute__((noinline)) static void rbcp_setup(
     s_log("RBCP plugin starting");
 
     init_rbcp(true);
+
+    // The observed-address geometry is fixed for the served ROM type, so read
+    // the unobserved-LSB count once here and cache the value rather than the
+    // accessor pointer.
+    ora_get_unobserved_addr_bits_fn_t get_unobserved_addr_bits =
+        ora_lookup_fn(ORA_ID_GET_UNOBSERVED_ADDR_BITS);
+    s_unobserved_addr_bits = 0;
+    if (get_unobserved_addr_bits(&s_unobserved_addr_bits) != ORA_RESULT_OK) {
+        s_log("RBCP: get_unobserved_addr_bits failed; assuming 0 (fully observed)");
+        s_unobserved_addr_bits = 0;
+    }
 
     // Set up address monitor in control mode so the plugin can modify the
     // ROM image being served (required for back-channel writes).

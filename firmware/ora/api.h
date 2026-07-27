@@ -322,6 +322,22 @@ typedef enum {
      */
     ORA_ID_GET_METADATA_UINT         = 0x0000002C,
 
+    /**
+     * @brief Demangle a captured physical address to the address the device
+     *        observes on its address lines
+     * @sa ora_demangle_observed_addr_fn_t
+     * @since firmware 0.7.1
+     */
+    ORA_ID_DEMANGLE_OBSERVED_ADDR    = 0x0000002D,
+
+    /**
+     * @brief Get the number of least-significant address bits the device does
+     *        not observe for the current ROM
+     * @sa ora_get_unobserved_addr_bits_fn_t
+     * @since firmware 0.7.1
+     */
+    ORA_ID_GET_UNOBSERVED_ADDR_BITS  = 0x0000002E,
+
     /** Invalid API identifier */
     ORA_ID_INVALID = 0xFFFFFFFF,
 } api_id_t;
@@ -1077,12 +1093,21 @@ typedef uint32_t (*ora_map_addr_to_phys_fn_t)(uint32_t logical_addr);
 typedef uint8_t (*ora_map_data_to_phys_fn_t)(uint8_t logical_data);
 
 /**
- * @brief Demangle a captured physical address back to a logical address
+ * @brief Demangle a captured physical address back to a logical byte address
  * @sa ORA_ID_DEMANGLE_ADDR
  *
- * Converts a raw GPIO capture from the ring buffer back to the logical ROM
- * address it represents, based on the firmware's internal pin mapping for the
- * current hardware variant.
+ * Converts a raw GPIO capture from the ring buffer to the logical ROM address
+ * it represents — the byte-addressable index into the ROM image, and the exact
+ * inverse of @ref ora_map_addr_to_phys_fn_t. This is the space for reading and
+ * writing ROM image bytes.
+ *
+ * On the 24-, 28- and 32-pin variants this also equals the address observed on
+ * the bus. On the 40-pin variant the ROM's least-significant address line is
+ * served through a separately-read pin the address monitor does not sample, so
+ * bit 0 of this logical address is not a bus line — it is the byte-within-word
+ * select (A-1) on a word-organised ×16 ROM (e.g. 27C400/27C200), or A0 on an
+ * 8-bit 40-pin ROM. To decode signalling captured from the address bus, use
+ * @ref ora_demangle_observed_addr_fn_t instead.
  *
  * If check_control_pins is non-zero, the function will validate that the
  * control pins (X1, X2, CS1) are inactive in the capture. If any are active,
@@ -1090,7 +1115,7 @@ typedef uint8_t (*ora_map_data_to_phys_fn_t)(uint8_t logical_data);
  * left unchanged.
  *
  * @param physical_addr         Raw GPIO capture from the ring buffer
- * @param logical_addr_out      Output logical ROM address
+ * @param logical_addr_out      Output logical (byte) ROM address
  * @param check_control_pins    If non-zero, fail if any control pins are active
  * @return ORA_RESULT_OK on success, ORA_RESULT_CONTROL_PIN_ACTIVE if
  *         check_control_pins is set and a control pin is found to be active,
@@ -1100,6 +1125,91 @@ typedef ora_result_t (*ora_demangle_addr_fn_t)(
     uint32_t physical_addr,
     uint32_t *logical_addr_out,
     uint8_t check_control_pins
+);
+
+/**
+ * @brief Demangle a captured physical address to the observed bus address
+ * @sa ORA_ID_DEMANGLE_OBSERVED_ADDR
+ *
+ * Converts a raw GPIO capture from the ring buffer to the address present on
+ * the address lines the device physically observes — least-significant observed
+ * line as bit 0. This is the address space host-to-device signalling travels
+ * in, so it is the function to use when decoding commands captured by the
+ * address monitor. To read or write ROM image bytes instead, use
+ * @ref ora_demangle_addr_fn_t / @ref ora_map_addr_to_phys_fn_t.
+ *
+ * Whether this differs from @ref ora_demangle_addr_fn_t is fixed by the One ROM
+ * variant, not the individual ROM:
+ *
+ *   - 24-, 28- and 32-pin variants observe every address line. The observed
+ *     address equals the logical byte address, and this returns exactly what
+ *     @ref ora_demangle_addr_fn_t returns.
+ *   - The 40-pin variant serves the ROM's least-significant address line through
+ *     a separately-read pin the address monitor does not sample. The observed
+ *     address omits that line, so this returns one bit fewer than
+ *     @ref ora_demangle_addr_fn_t, for every ROM on the variant. The omitted
+ *     line is the byte-within-word select (A-1) on a word-organised ×16 ROM such
+ *     as the 27C400 or 27C200, and A0 on an 8-bit 40-pin ROM; the arithmetic is
+ *     the same either way.
+ *
+ * The exact number of low bits dropped for the current ROM is reported by
+ * @ref ora_get_unobserved_addr_bits_fn_t (0 on 24/28/32-pin, 1 on 40-pin).
+ *
+ * If check_control_pins is non-zero, validates that the control pins (X1, X2,
+ * CS1) are inactive in the capture, returning ORA_RESULT_CONTROL_PIN_ACTIVE and
+ * leaving observed_addr_out unchanged if any are active.
+ *
+ * @param physical_addr        Raw GPIO capture from the ring buffer
+ * @param observed_addr_out    Output observed bus address
+ * @param check_control_pins   If non-zero, fail if any control pins are active
+ * @return ORA_RESULT_OK on success, ORA_RESULT_CONTROL_PIN_ACTIVE if
+ *         check_control_pins is set and a control pin is active, or
+ *         ORA_RESULT_ERROR on failure
+ */
+typedef ora_result_t (*ora_demangle_observed_addr_fn_t)(
+    uint32_t physical_addr,
+    uint32_t *observed_addr_out,
+    uint8_t check_control_pins
+);
+
+/**
+ * @brief Get the number of least-significant address bits the device does not
+ *        observe for the current ROM
+ * @sa ORA_ID_GET_UNOBSERVED_ADDR_BITS
+ *
+ * Reports how the device treats the current ROM's addresses: the number of
+ * low-order logical address bits not present on the lines the address monitor
+ * observes, written to *bits_out. This is the bit difference between
+ * @ref ora_demangle_addr_fn_t (logical byte address) and
+ * @ref ora_demangle_observed_addr_fn_t (observed bus address) for this ROM. The
+ * host's signalling stride is 1 << that value.
+ *
+ * The value is fixed by the One ROM variant:
+ *
+ *   - 0 on the 24-, 28- and 32-pin variants: every address line is observed;
+ *     stride 1; the least-significant address line carries command data.
+ *   - 1 on the 40-pin variant: the least-significant line is served through a
+ *     separately-read pin the monitor does not sample; stride 2; that line
+ *     carries no command data. This holds for every ROM on the variant — the
+ *     ×16 parts (27C400/27C200) and 8-bit 40-pin parts alike.
+ *
+ * A plugin can combine this with the ROM byte size
+ * (@ref ora_get_chip_size_from_type_fn_t) to bound host-supplied address pages:
+ * the observed address span is (byte size >> the returned value).
+ *
+ * This is device-side information for the plugin's own use. The addressing
+ * behaviour cannot be discovered over the wire at session time — a host must
+ * already know it to frame the initiating knock — so it is never reported to
+ * the host; a host obtains it from the plugin's documentation, agreed in
+ * advance.
+ *
+ * @param bits_out  Output: number of unobserved least-significant address bits
+ *                  for the current ROM. Unchanged on failure.
+ * @return ORA_RESULT_OK on success, ORA_RESULT_INVALID_ARG if bits_out is NULL,
+ *         or an error result if no ROM is currently being served
+ */
+typedef ora_result_t (*ora_get_unobserved_addr_bits_fn_t)(
+    uint8_t *bits_out
 );
 
 /**

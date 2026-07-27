@@ -9,7 +9,7 @@ OBJDUMP := $(if $(TOOLCHAIN),$(TOOLCHAIN)/arm-none-eabi-objdump,arm-none-eabi-ob
 
 MAJOR_VERSION := 0
 MINOR_VERSION := 1
-PATCH_VERSION := 1
+PATCH_VERSION := 2
 BUILD_VERSION := 0
 
 ORA_DIR := ../../../firmware/ora

@@ -669,20 +669,17 @@ uint32_t pio_map_data_to_phys(
     return physical;
 }
 
-// Converts a ring buffer entry (post-override PIO-visible GPIO bitmap) to a
-// logical address, with optional control pin activity checking.
+// pio_demangle_observed_addr: converts a ring buffer entry (post-override
+// PIO-visible GPIO bitmap) to the address observed on the device's address
+// lines, with optional control pin activity checking.  This is the body shared
+// with pio_demangle_addr, which wraps it with the 16-bit A-1 fold; see the ORA
+// API docs (ora_demangle_observed_addr_fn_t / ora_demangle_addr_fn_t) for the
+// observed-vs-logical-byte-address distinction.
 //
 // physical_addr is post-override: PIOs always read post-override values from
-// IN PINS, so ring buffer entries already reflect PIO-visible values.
-//
-// Word size and A-1 (mirror of pio_map_addr_to_phys):
-//   word_size == 16: the table index is (word_scatter << 1) | A-1, where
-//                    A-1 (the byte-within-word select) is the LSB and is NOT
-//                    a scattered GPIO in addr[].  This function pulls A-1 off
-//                    bit 0, shifts the scattered word address down by one so
-//                    the addr[] extraction sees the word index in its
-//                    original GPIO bit positions, then re-applies A-1 as the
-//                    logical LSB.  word_size == 8: physical_addr is used as-is.
+// IN PINS, so ring buffer entries already reflect PIO-visible values.  Address
+// bits are extracted from pin_map->addr[] at their raw GPIO bit positions (no
+// A-1 fold), which is the value present on the observed lines.
 //
 // Control pin check (check_control_pins != 0):
 //   AlgCs0, Single/Banked: verify all CS pins are in the active-low state (0).
@@ -700,7 +697,7 @@ uint32_t pio_map_data_to_phys(
 //               invert to recover original chip pin value).
 //   GPIO_OVER_LOW:  logical bit = 0 (forced; carries no information).
 //   GPIO_OVER_HIGH: logical bit = 1.
-ora_result_t pio_demangle_addr(
+ora_result_t pio_demangle_observed_addr(
     const onerom_rom_slot_t *slot,
     uint32_t physical_addr,
     uint32_t *logical_addr_out,
@@ -711,25 +708,9 @@ ora_result_t pio_demangle_addr(
     }
 
     const onerom_alg_addr_config_t *addr_alg = slot->alg->alg_addr;
-    const onerom_alg_data_config_t *data_alg = slot->alg->alg_data;
     const onerom_alg_cs_config_t   *cs_alg   = slot->alg->alg_cs;
     const onerom_rom_pin_map_t     *pin_map   = slot->roms[0]->pin_map;
     uint8_t addr_base = addr_alg->gpio_base + addr_alg->base_addr_pin;
-
-    // 16-bit serving: pio_map_addr_to_phys built the table index as
-    // (word_scatter << 1) | A-1, where A-1 (the byte-within-word select) is
-    // the least-significant bit and is NOT a scattered GPIO in addr[].
-    // Reverse that here: pull A-1 off bit 0, then shift the scattered word
-    // address down by one so the addr[] extraction below (and the control-
-    // pin checks, which read the same shifted frame) see the word index in
-    // its original GPIO bit positions.  A-1 is re-applied as the logical
-    // LSB at the end.
-    uint8_t  word_size = data_alg->word_size;
-    uint32_t a_minus_1 = 0;
-    if (word_size == 16u) {
-        a_minus_1     = physical_addr & 1u;
-        physical_addr = physical_addr >> 1;
-    }
 
     if (check_control_pins) {
         switch (cs_alg->alg) {
@@ -870,16 +851,52 @@ ora_result_t pio_demangle_addr(
         }
     }
 
-    // 16-bit: re-apply A-1 as the logical LSB, shifting the recovered word
-    // address up by one (inverse of the split at the top of this function).
-    if (word_size == 16u) {
-        logical = (logical << 1) | a_minus_1;
-    }
-
     *logical_addr_out = logical;
     return ORA_RESULT_OK;
 }
- 
+
+// Wraps pio_demangle_observed_addr with the 16-bit A-1 fold so the result is
+// the logical byte address (the inverse of pio_map_addr_to_phys), rather than
+// the observed bus address.  For word_size == 8 the two are identical.  This is
+// the cold path (inverse-of-map use); pio_demangle_observed_addr is the hot
+// path used to decode address-monitor captures.
+ora_result_t pio_demangle_addr(
+    const onerom_rom_slot_t *slot,
+    uint32_t physical_addr,
+    uint32_t *logical_addr_out,
+    uint8_t check_control_pins
+) {
+    uint8_t  word_size = slot->alg->alg_data->word_size;
+    uint32_t a_minus_1 = 0;
+    if (word_size == 16u) {
+        a_minus_1     = physical_addr & 1u;
+        physical_addr = physical_addr >> 1;
+    }
+    ora_result_t r = pio_demangle_observed_addr(
+        slot, physical_addr, logical_addr_out, check_control_pins);
+    if (r == ORA_RESULT_OK && word_size == 16u) {
+        *logical_addr_out = (*logical_addr_out << 1) | a_minus_1;
+    }
+    return r;
+}
+
+// Number of least-significant logical-address bits the device does not observe
+// on its monitored address lines for this ROM: num_rom_table_bits (the full
+// logical byte-address width) minus num_addr_pins (the observed lines).  0 on
+// 24/28/32-pin variants, 1 on the 40-pin variant.  See
+// ora_get_unobserved_addr_bits_fn_t.
+ora_result_t pio_get_unobserved_addr_bits(
+    const onerom_rom_slot_t *slot,
+    uint8_t *bits_out
+) {
+    if (bits_out == NULL) {
+        return ORA_RESULT_INVALID_ARG;
+    }
+    const onerom_alg_addr_config_t *addr_alg = slot->alg->alg_addr;
+    *bits_out = (uint8_t)(addr_alg->num_rom_table_bits - addr_alg->num_addr_pins);
+    return ORA_RESULT_OK;
+}
+
 // ---------------------------------------------------------------------------
 // pio_demangle_data
 // ---------------------------------------------------------------------------
