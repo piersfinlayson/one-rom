@@ -414,7 +414,7 @@ fn board_power_name(board: &Board, pin: u8) -> Option<String> {
 /// With no `chip` the board's own socket is drawn, each pin labelled with the
 /// GPIO(s) behind it. With a `chip` the socket is drawn at the larger of the
 /// board's and the chip's pin counts, the smaller device bottom-justified in the
-/// middle (matching [`socket_pin_offset`](onerom_gen::socket_pin_offset)):
+/// middle (matching [`socket_pin_offset`]):
 ///
 /// - a smaller ROM on a bigger One ROM leaves One ROM pins hanging out of the
 ///   socket, labelled `overhang`;
