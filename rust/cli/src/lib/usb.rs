@@ -607,6 +607,10 @@ enum CmdFailure {
     /// rejected its arguments.
     InvalidArg,
 
+    /// `PB_STATUS_PRECONDITION_NOT_MET` - for `GPIO_SET`, every one of the
+    /// plugin's pending-release slots is occupied by a different GPIO.
+    PreconditionNotMet,
+
     /// A USB-level failure, or a status this layer has no specific handling
     /// for. Carries the detail to show the user.
     Transport(String),
@@ -619,6 +623,7 @@ impl std::fmt::Display for CmdFailure {
             Self::InvalidCmdLength => write!(f, "the device rejected the command's length"),
             Self::NotPermitted => write!(f, "the device refused the command"),
             Self::InvalidArg => write!(f, "the device rejected the command's arguments"),
+            Self::PreconditionNotMet => write!(f, "the device has no free hold slot"),
             Self::Transport(detail) => write!(f, "{detail}"),
         }
     }
@@ -633,6 +638,7 @@ impl CmdFailure {
             Some(PicobootStatus::InvalidCmdLength) => Self::InvalidCmdLength,
             Some(PicobootStatus::NotPermitted) => Self::NotPermitted,
             Some(PicobootStatus::InvalidArg) => Self::InvalidArg,
+            Some(PicobootStatus::PreconditionNotMet) => Self::PreconditionNotMet,
             Some(other) => Self::Transport(format!("{detail}\n  Device status: {other:?}")),
             None => Self::Transport(detail),
         }
@@ -813,6 +819,8 @@ pub async fn gpio_set(device: &Device, caps: &Caps, args: GpioSetArgs) -> Result
             // refusal.
             CmdFailure::NotPermitted => Error::GpioInUse(args.gpio),
             CmdFailure::InvalidArg => Error::GpioRejected(args.gpio),
+            // Every pending-release slot is held by a different GPIO.
+            CmdFailure::PreconditionNotMet => Error::GpioNoHoldSlot,
             failure if failure.means_too_old() => Error::PluginTooOldForGpio(device.to_string()),
             failure => cmd_error("GPIO_SET", failure),
         })

@@ -2,6 +2,48 @@
 
 ## v0.3.0 - 2026-??-??
 
+- Add GPIO control: `onerom control gpio` drives a One ROM GPIO high, low or
+  high-impedance, `onerom control reset` pulses one low to reset the host system
+  One ROM is installed in, and `onerom inspect gpio` shows what every GPIO is and
+  what One ROM is doing with it. All three need a *running* device with the USB
+  system plugin — a stopped One ROM is in the RP2350 bootloader, where One ROM's
+  own command handler does not exist, and they say so rather than failing
+  obscurely.
+  - `control gpio --hold <MS>` holds the state for a bounded period and then
+    applies `--then` (`z` unless you say otherwise); without `--hold` the state
+    latches. The **device** times the hold, so an interrupted CLI cannot leave a
+    pin latched. `control reset` is that with `--state low --then z` and `--hold`
+    defaulting to 100ms, and it never drives the line high: a reset net has its
+    own pull-up and may have other drivers on it. A `--hold` of 0 is rejected for
+    `reset`, since a pulse with no end is not a reset.
+  - A GPIO One ROM is itself using is refused, naming what it is doing, unless
+    `--force` is given — and forcing prints what it costs: a pin serving *reads*
+    (address, chip-select, `/BYTE`) goes back with `--state z`, while a pin
+    serving *drives* (a data pin) leaves serving broken until the device is
+    rebooted. A GPIO that is not 5V-tolerant (an RP2350 ADC pin, from static
+    board metadata rather than any measurement) warns and asks, which `--yes` or
+    `--force` answers. Nothing else about the pad is checked: what is wired to it
+    is the user's to know.
+  - `--pin` takes an MCU GPIO written `gpio<N>` only. A bare number is rejected
+    rather than guessed at — `23` is a plausible GPIO, image-select pad, X pad
+    and ROM socket pin at once — and the header pad names (`sel_a`, `x1`, …) are
+    recognised and reported as not yet supported rather than as meaningless.
+  - `inspect gpio` names each GPIO's role itself, from the board pin map and the
+    chip type being served, because the device deliberately reports only what
+    taking a pin over would cost (free / read by serving / driven by serving /
+    system) and never what the pin is. The table's `Pad` and `Function` columns
+    reuse the same board lookups `boards header` and `boards socket --gpio` draw
+    with, so the diagram and the table cannot drift apart. A board revision or
+    ROM type this build does not recognise costs those names, not the listing,
+    and a board whose physical header layout is not yet characterised falls back
+    to naming pads from its pin assignments and says so.
+  - The GPIO count listed and accepted is the device's own — 30 on an RP2350A, 48
+    on an RP2350B — read from it rather than assumed.
+
+  Requires One ROM firmware v0.7.1 or later and the v0.7.1 or later USB system
+  plugin; against anything older the CLI says which of the two is too old rather
+  than surfacing a USB stall.
+
 - `onerom chips --board <board>` now reports how much of One ROM's flash each
   chip type uses. Each chip is listed with its ROM size and its image size — the
   flash used to emulate it, which is often larger than the chip (a 2364 costs 8KB

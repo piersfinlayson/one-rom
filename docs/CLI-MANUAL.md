@@ -231,6 +231,33 @@ Make the status LED beacon so you can spot which board is which:
 onerom control led beacon
 ```
 
+### Reset the host system after programming
+
+If you have run a wire from a One ROM header pad to the reset line of the
+machine One ROM is installed in, `control reset` pulses that pad low and then
+releases it — resetting the host so it picks up the image you just flashed.
+Pass the MCU GPIO behind the pad; `onerom inspect header` shows which that is:
+
+```
+onerom program --config-file c64.json
+onerom control reset --pin gpio9
+```
+
+The pad is typically `X1`/`X2`, or an image-select pad whose jumper you have
+removed. The device times the pulse, so an interrupted CLI cannot leave the host
+held in reset. See [`control reset`](#control-reset), and
+[`control gpio`](#control-gpio) for driving a GPIO to an arbitrary state.
+
+### See what One ROM is doing with its GPIOs
+
+```
+onerom inspect gpio
+```
+
+One row per MCU GPIO: the header pad behind it, its function under the ROM being
+served, direction, level, 5V tolerance, and what One ROM itself is using it for.
+Useful before driving a pin — see [`inspect gpio`](#inspect-gpio).
+
 ### Erase / recover a device
 
 Erase flash. This is best done while stopped; by default the command reboots the
@@ -439,7 +466,7 @@ onerom inspect <COMMAND>
 | [`slots`](#inspect-slots) | List ROM slots | Yes |
 | [`image`](#inspect-image) | Read a slot's ROM image **(not yet supported)** | Yes |
 | [`peek`](#inspect-peek) | Read SRAM or the live ROM image | Yes |
-| [`gpio`](#inspect-gpio) | Read GPIO pin state **(not yet supported)** | Yes |
+| [`gpio`](#inspect-gpio) | Show what each GPIO is and what it is doing | Yes (running) |
 | [`header`](#inspect-header) | Draw the device board's pin header | Yes |
 | [`socket`](#inspect-socket) | Draw the device board's ROM socket pinout | Yes |
 
@@ -521,12 +548,52 @@ onerom inspect peek memory --address 0x10000000 --length 8192 --output flash-sta
 
 ### inspect gpio
 
-Show the direction and logic level of each exposed GPIO pin. **(not yet
-supported)**
+Show, one row per MCU GPIO, what that GPIO is on this board and what One ROM is
+currently doing with it.
+
+The device must be **running** with the USB system plugin: One ROM's own
+command handler lives in that plugin, and a stopped device is in the RP2350
+bootloader where it does not exist. See [Device states](#device-states).
+
+```
+onerom inspect gpio
+onerom inspect gpio --pin gpio9
+```
 
 | Option | Description |
 |---|---|
-| `--pin <PIN>` | Show only this pin. |
+| `--pin <PIN>` | Show only this GPIO, written `gpio<N>` (see [Pin values](#pin-values)). |
+
+The number of GPIOs listed is the device's own — 30 on an RP2350A, 48 on an
+RP2350B.
+
+Columns:
+
+| Column | Meaning |
+|---|---|
+| `GPIO` | MCU GPIO number. |
+| `Pad` | The header pad behind this GPIO, e.g. `SEL_A`, `X1`, `SEL_D/SWDIO` (a pad carrying two roles shows both). `-` if the GPIO is on no pad. |
+| `Function` | What this GPIO is under the ROM currently being served: `A5`, `D3`, `CS1`, `BYTE`, a board system function (`status LED`, `NeoPixel`, `USB VBUS`, `ext flash CS`), or `-`. |
+| `Dir` | `out` if the pin's output driver is enabled, `in` if not. |
+| `Level` | The level currently on the pad, `0` or `1`. |
+| `5V` | `5V` if the GPIO is 5V-tolerant, `3V3` if it is an RP2350 ADC pin and therefore 3.3V-only, `?` if the board is not characterised. |
+| `One ROM use` | What One ROM itself is using the GPIO for: `free`, `serving (read)`, `serving (driven)` or `system`. |
+
+Only `Dir`, `Level` and `One ROM use` come from the device. Everything else is
+derived by the CLI from the board's pin map and the chip type being served: the
+device deliberately reports what taking a pin over would *cost*, never what the
+pin *is*. `serving (read)` pins (address, chip-select, `/BYTE`) can be driven and
+released; `serving (driven)` pins (the data pins) cannot be given back without a
+reboot — see [`control gpio`](#control-gpio).
+
+A board revision or ROM type this build does not recognise costs the derived
+names, not the listing: those columns fall back to `-` (or, for a socket pin
+whose chip type is unknown, `socket pin <N>`). On a board whose physical header
+layout is not yet characterised, `Pad` names come from the board's pin
+assignments alone and the table says so beneath itself.
+
+<!-- TODO: paste a verbatim `onerom inspect gpio` run here once the commands have
+     been exercised on real hardware. Do not hand-write one. -->
 
 ### inspect header
 
@@ -570,9 +637,9 @@ onerom control <COMMAND>
 | [`reboot`](#control-reboot) | Reboot the device | Yes |
 | [`led`](#control-led) | Control the status LED | Yes |
 | [`poke`](#control-poke) | Write to SRAM or the live ROM image | Yes |
-| [`reset`](#control-reset) | Assert the host reset signal **(not yet supported)** | Yes |
+| [`reset`](#control-reset) | Pulse a GPIO low to reset the host system | Yes (running) |
 | [`select`](#control-select) | Select the active ROM slot **(not yet supported)** | Yes |
-| [`gpio`](#control-gpio) | Set a GPIO pin state **(not yet supported)** | Yes |
+| [`gpio`](#control-gpio) | Drive a GPIO high, low or high-impedance | Yes (running) |
 | [`erase`](#control-erase) | Erase flash memory | Yes |
 
 ### control reboot
@@ -662,16 +729,43 @@ Exactly one of `--byte` / `--input` is required.
 
 ### control reset
 
-Drive the reset pin to reset the host system One ROM is installed in — useful in
-scripted workflows after programming. **(not yet supported)**
+Pulse a GPIO low, then release it, to reset the host system One ROM is installed
+in — useful in scripted workflows after programming a new image.
+
+`--pin` is the MCU GPIO your reset wire is soldered to, typically an `X1`/`X2`
+pad or an image-select pad whose jumper has been removed;
+[`inspect header`](#inspect-header) shows which GPIO is behind each pad.
+
+The line is only ever **driven low and then released to high impedance**. A reset
+net has its own pull-up and may have other drivers on it, so there is
+deliberately no way to drive it high. Use [`control gpio`](#control-gpio) if you
+need arbitrary states.
+
+The **device** times the pulse, not the CLI: if this command is interrupted, the
+terminal closes or the cable is pulled mid-pulse, the device still releases the
+pin. The device's own limit is 60 seconds.
+
+The device must be **running** with the USB system plugin — see
+[Device states](#device-states).
 
 ```
-onerom control reset --hold 500
+onerom control reset --pin gpio9
+onerom control reset --pin gpio9 --hold 500
 ```
 
 | Option | Description |
 |---|---|
-| `--hold <MS>` | Milliseconds to hold reset asserted. Default `100`. |
+| `--pin <PIN>` | MCU GPIO the reset wire is connected to, written `gpio<N>` (see [Pin values](#pin-values)). Required. |
+| `--hold <MS>` | Milliseconds to hold reset asserted. Decimal or `0x` hex. Default `100`; `0` is rejected, because a reset pulse with no end is not a reset. |
+
+If One ROM is itself using the GPIO the command is refused, naming what it is
+doing; `control reset` has no `--force` of its own, and the message points at
+`control gpio --force` for the case where that is genuinely what you want. If the
+GPIO is not 5V-tolerant the command warns and asks for confirmation, which
+`--yes` answers.
+
+<!-- TODO: paste a verbatim `onerom control reset` run here once the commands
+     have been exercised on real hardware. Do not hand-write one. -->
 
 ### control select
 
@@ -684,17 +778,52 @@ Switch the device to serving the specified slot immediately (not persistent).
 
 ### control gpio
 
-Set a GPIO pin high, low, or high-impedance. **(not yet supported)**
+Drive a One ROM GPIO high, low or high-impedance, optionally for a bounded
+period.
+
+Without `--hold` the state is latched until something else changes it. With
+`--hold` the **device** holds the state for that many milliseconds and then
+applies `--then` — high impedance unless you say otherwise. As with
+[`control reset`](#control-reset), the hold is timed on the device, so an
+interrupted CLI cannot leave a pin latched.
+
+The device must be **running** with the USB system plugin — see
+[Device states](#device-states). [`inspect gpio`](#inspect-gpio) shows what each
+GPIO is and what One ROM is using it for.
 
 ```
-onerom control gpio --pin 3 --state high
-onerom control gpio --pin 3 --state z
+onerom control gpio --pin gpio9 --state high
+onerom control gpio --pin gpio9 --state low --hold 250
+onerom control gpio --pin gpio9 --state low --hold 250 --then high
+onerom control gpio --pin gpio9 --state z
 ```
 
 | Option | Description |
 |---|---|
-| `--pin <PIN>` | GPIO pin number. Required. |
+| `--pin <PIN>` | MCU GPIO to drive, written `gpio<N>` (see [Pin values](#pin-values)). Required. |
 | `--state <STATE>` | `high`, `low`, or `z` (high-impedance). Required. |
+| `--hold <MS>` | Hold `--state` for this many milliseconds, then apply `--then`. Decimal or `0x` hex. Omit to latch indefinitely. The device's own limit is 60 seconds. |
+| `--then <STATE>` | State to apply when `--hold` expires: `high`, `low` or `z`. Default `z`. Requires `--hold`. |
+| `--force` | Drive the GPIO even though One ROM is using it for serving. |
+
+**Refusals and warnings.** If One ROM is itself using the GPIO, the command is
+refused and names what it is doing. `--force` overrides, and prints what that
+costs:
+
+- a pin serving **reads** (address, chip-select, `/BYTE`) is reversible — serving
+  keeps reading it, and `--state z` puts it back;
+- a pin serving **drives** (a data pin) is not — forcing it takes the pin away
+  from the PIO that drives it, and serving stays broken until the device is
+  rebooted.
+
+If the GPIO is not 5V-tolerant — an RP2350 ADC pin, per the board metadata, not
+a measurement — the command warns and asks for confirmation, which `--yes` or
+`--force` answers. Nothing else about the pad is checked: what is wired to it,
+whether a jumper is fitted and what voltage the far end sits at are yours to
+know.
+
+<!-- TODO: paste a verbatim `onerom control gpio` run here once the commands have
+     been exercised on real hardware. Do not hand-write one. -->
 
 ### control erase
 
@@ -1267,3 +1396,25 @@ plugin. The system plugin is placed in slot 0, the user plugin in slot 1.
 | `--plugin usb,version=0.1.0` | Pinned version. |
 | `--plugin file=path/to/plugin.bin` | Local file. |
 | `--plugin file=https://example.com/plugin.bin` | Remote file. |
+## Pin values
+
+Used by `--pin` in [`control gpio`](#control-gpio), [`control
+reset`](#control-reset) and [`inspect gpio`](#inspect-gpio).
+
+`--pin` names one **MCU GPIO**, written `gpio<N>` — for example `gpio23`. The
+spelling is case-insensitive (`GPIO23` works).
+
+A bare number is **rejected**. `23` could be an MCU GPIO, an image-select pad, an
+X pad or a ROM socket pin, and driving the wrong one is not a recoverable
+mistake, so the CLI names the namespaces rather than guessing. Header pad names
+(`sel_a`..`sel_e`, `x1`, `x2`, `a<N>`) are recognised but not yet accepted, and
+say so; `run`, `bootsel`, `swclk` and `swdio` are reported as not being GPIOs
+that can be driven.
+
+Run [`onerom inspect header`](#inspect-header) to see which GPIO is behind each
+header pad, or [`onerom inspect gpio`](#inspect-gpio) for the full per-GPIO
+listing.
+
+The upper bound is the device's own GPIO count — 30 on an RP2350A, 48 on an
+RP2350B — read from the device rather than assumed, so a GPIO the device does not
+have is reported against what it does have.

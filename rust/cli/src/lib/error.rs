@@ -255,6 +255,19 @@ pub enum Error {
 
     #[error("This One ROM returned a response that could not be decoded:\n  {0}")]
     PicobootxDecode(String),
+
+    #[error(
+        "This One ROM is not running, so its GPIOs cannot be read or driven.\n  {0}\n  A stopped One ROM sits in the RP2350 bootloader, where One ROM's own\n  command handler is not running.\n  Start it with 'onerom control reboot --running'."
+    )]
+    DeviceNotRunning(String),
+
+    #[error("{0} is in use by One ROM: {1}.\n  {2}\n  {3}")]
+    GpioInUseNamed(String, String, String, String),
+
+    #[error(
+        "This One ROM is already holding as many GPIOs as it can.\n  Release one first - drive it with no --hold, or wait for a hold to expire."
+    )]
+    GpioNoHoldSlot,
 }
 
 impl Error {

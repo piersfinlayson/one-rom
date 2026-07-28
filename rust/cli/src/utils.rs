@@ -8,8 +8,9 @@ use log::debug;
 use std::io::Write;
 
 use crate::args::CommandTrait;
-use onerom_cli::{DeviceState, Error, LogLevel, Options};
+use onerom_cli::{Device, DeviceState, Error, LogLevel, Options};
 use onerom_cli::{LIVE_ROM_BASE, LIVE_ROM_MAX_OFFSET};
+use onerom_config::chip::ChipType;
 use onerom_config::hw::Board;
 
 pub fn get_supported_boards() -> String {
@@ -70,6 +71,23 @@ pub fn check_device(
     let device = options.device.as_ref().unwrap();
     if must_be_run_capable && !device.usb_can_run {
         return Err(Error::CannotRun(device.to_string()));
+    }
+    Ok(())
+}
+
+/// Checks that a device is present and **currently running**.
+///
+/// [`check_device`] with `must_be_run_capable` tests `usb_can_run`, which asks
+/// whether the flashed firmware and system plugin *could* serve. That is true of
+/// a stopped device sitting in the RP2350 bootloader, and so is not enough for
+/// anything that talks to One ROM's own picoboot command handler: that handler
+/// lives in the USB system plugin, and while the device is stopped the boot ROM
+/// answers picoboot instead, with no One ROM commands at all.
+pub fn check_device_running(options: &Options, args: &impl CommandTrait) -> Result<(), Error> {
+    check_device(options, args, true)?;
+    let device = options.device.as_ref().unwrap();
+    if !device.is_running() {
+        return Err(Error::DeviceNotRunning(device.to_string()));
     }
     Ok(())
 }
@@ -231,6 +249,16 @@ pub fn resolve_board(
         debug!("No board argument or device available to resolve board");
         Ok(None)
     }
+}
+
+/// The chip type of the ROM the device is currently serving.
+///
+/// The device records a human-readable ROM type per slot rather than an enum,
+/// so this resolves that label back to a [`ChipType`]. `None` when the device is
+/// not running, has no readable metadata, or names a type this build does not
+/// know - all of which cost the caller a name, not an operation.
+pub fn active_chip_type(device: &Device) -> Option<ChipType> {
+    ChipType::try_from_str(&device.get_active_rom_type()?)
 }
 
 /// Figures out the firmware output filename to use

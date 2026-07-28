@@ -2,15 +2,25 @@
 //
 // MIT License
 
+use crate::args::control::GpioState;
+use crate::board_view::{gpio_header_role, gpio_rom_function, gpio_system_function};
 use crate::{
     args,
-    utils::{check_device, check_live_read_write},
+    utils::{
+        active_chip_type, check_device, check_device_running, check_live_read_write, resolve_board,
+    },
 };
 use onerom_cli::device::{Device, select_device};
+use onerom_cli::picobootx::{ONEROM_FEAT_GPIO_QUERY, ONEROM_GPIO_FLAG_FORCE};
+use onerom_cli::pin::Pin;
 use onerom_cli::usb::{
-    FLASH_BASE, LedSubCmd, RebootArgs, flash_erase, read_memory, reboot, set_led, write_memory,
+    FLASH_BASE, GpioSetArgs, GpioUse, LedSubCmd, RebootArgs, flash_erase, get_caps, gpio_query,
+    gpio_set, read_memory, reboot, set_led, write_memory,
 };
 use onerom_cli::{Error, Options};
+use onerom_config::chip::ChipType;
+use onerom_config::hw::Board;
+use onerom_config::mcu::PinTolerance;
 use std::io::Write;
 
 pub async fn cmd_led_on(
@@ -95,13 +105,209 @@ pub async fn cmd_reboot(
     Ok(())
 }
 
+/// Name a GPIO as richly as the local metadata allows, e.g.
+/// `GPIO16 (A7)`, `GPIO9 (X1 pad)`, `GPIO29 (status LED)`.
+///
+/// Every name here comes from the board and the chip being served. The device
+/// reports only a coarse use category and deliberately never a role name, so if
+/// the board could not be resolved this degrades to the bare `GPIO<N>`.
+fn describe_gpio(board: Option<&Board>, chip: Option<ChipType>, gpio: u8) -> String {
+    let mut notes: Vec<String> = Vec::new();
+    if let Some(board) = board {
+        if let Some(chip) = chip
+            && let Some(function) = gpio_rom_function(board, chip, gpio)
+        {
+            notes.push(function);
+        }
+        if let Some(system) = gpio_system_function(board, gpio) {
+            notes.push(system.to_string());
+        }
+        if let Some(role) = gpio_header_role(board, gpio) {
+            notes.push(format!("{role} pad"));
+        }
+    }
+
+    if notes.is_empty() {
+        format!("GPIO{gpio}")
+    } else {
+        format!("GPIO{gpio} ({})", notes.join(", "))
+    }
+}
+
+/// What One ROM is doing with a GPIO, and what taking it over costs.
+///
+/// The two halves come from the device's `use` category, which reports the
+/// *consequence* of forcing a pin rather than the pin's role - the role is named
+/// separately by [`describe_gpio`] from board metadata.
+fn describe_use(gpio_use: GpioUse) -> (&'static str, &'static str) {
+    match gpio_use {
+        GpioUse::Free => ("not in use by One ROM", ""),
+        GpioUse::ServingRead => (
+            "ROM serving reads it",
+            "Forcing it is reversible: serving keeps reading the pin, and setting it \
+             back to z restores it.",
+        ),
+        GpioUse::ServingDriven => (
+            "ROM serving drives it",
+            "Forcing it takes the pin away from the PIO that drives it, and serving \
+             stays broken until the device is rebooted.",
+        ),
+        GpioUse::SystemPin => (
+            "it is a One ROM system pin",
+            "Driving it will disturb whatever the board uses it for.",
+        ),
+    }
+}
+
+/// Ask before doing something the user may not have meant. `--yes` (and, where
+/// the command has one, `--force`) answers for them.
+fn confirm_gpio(options: &Options, force: bool) -> Result<bool, Error> {
+    if options.yes || force {
+        println!(
+            "Auto-accepted ({})",
+            if options.yes { "--yes" } else { "--force" }
+        );
+        return Ok(true);
+    }
+
+    print!("Proceed anyway? (y/N): ");
+    std::io::stdout()
+        .flush()
+        .map_err(|e| Error::Other(e.to_string()))?;
+
+    let mut input = String::new();
+    std::io::stdin()
+        .read_line(&mut input)
+        .map_err(|e| Error::Other(e.to_string()))?;
+
+    Ok(matches!(input.trim().to_lowercase().as_str(), "y" | "yes"))
+}
+
+/// Drive one GPIO, having first asked the device what it is using it for.
+///
+/// Shared by `control gpio` and `control reset` - the two differ in the request
+/// they build and what they print afterwards, not in what happens here.
+///
+/// Returns `false` if the user declined a warning, in which case nothing was
+/// driven. `force_hint` is how the caller's command overrides the in-use
+/// refusal; `control reset` has no `--force` of its own and points elsewhere.
+async fn drive_gpio(
+    options: &Options,
+    pin: Pin,
+    state: GpioState,
+    after: GpioState,
+    hold_ms: u32,
+    force: bool,
+    force_hint: &str,
+) -> Result<bool, Error> {
+    let device = options.device.as_ref().unwrap();
+    let gpio = pin.gpio();
+
+    // The capability probe is also how a device too old for GPIO control says
+    // so, in place of an unexplained USB stall.
+    let caps = get_caps(device).await?;
+
+    // Naming is best effort: a board this build does not recognise costs the
+    // pin's name, not the operation.
+    let board = resolve_board(options, &None).ok().flatten();
+    let chip = active_chip_type(device);
+    let name = describe_gpio(board.as_ref(), chip, gpio);
+
+    // Ask before driving, so a refusal can say what the pin is doing rather
+    // than only that it is busy. The firmware gates the write regardless, so
+    // skipping this on a device that cannot answer loses the explanation, not
+    // the protection.
+    let gpio_use = if caps.has_feature(ONEROM_FEAT_GPIO_QUERY) {
+        gpio_query(device, &caps, gpio, 1)
+            .await?
+            .first()
+            .and_then(|entry| entry.gpio_use())
+    } else {
+        None
+    };
+
+    if let Some(gpio_use) = gpio_use
+        && gpio_use != GpioUse::Free
+    {
+        let (doing, consequence) = describe_use(gpio_use);
+        if !force {
+            return Err(Error::GpioInUseNamed(
+                name.to_string(),
+                doing.to_string(),
+                consequence.to_string(),
+                force_hint.to_string(),
+            ));
+        }
+        println!("Warning: {name} is in use by One ROM: {doing}.");
+        println!("  {consequence}");
+    }
+
+    // Static board metadata, not a measurement: the RP2350's ADC pins are the
+    // only pads that are not 5V-tolerant. Nothing here knows or asks what is
+    // wired to the pad.
+    if let Some(board) = board.as_ref()
+        && board.gpio_tolerance(gpio) == Some(PinTolerance::ThreeVolt3)
+    {
+        println!("Warning: {name} is 3.3V-only (an RP2350 ADC pin), not 5V-tolerant.");
+        println!("  More than 3.3V on this pad can damage the MCU - including whatever the");
+        println!("  net sits at once One ROM releases the pin.");
+        if !confirm_gpio(options, force)? {
+            println!("Aborted");
+            return Ok(false);
+        }
+    }
+
+    let args = GpioSetArgs {
+        gpio,
+        state: state.into(),
+        after_state: after.into(),
+        flags: if force { ONEROM_GPIO_FLAG_FORCE } else { 0 },
+        duration_ms: hold_ms,
+    };
+    gpio_set(device, &caps, args).await?;
+
+    Ok(true)
+}
+
 pub async fn cmd_reset(
     options: &Options,
     args: &args::control::ControlResetArgs,
 ) -> Result<(), Error> {
-    check_device(options, args, true)?;
-    let _device = options.device.as_ref().unwrap();
-    Err(Error::Unimplemented("control reset".to_string()))
+    check_device_running(options, args)?;
+
+    // A reset pulse with no end is not a reset. `--hold 0` reaches the device as
+    // "latch indefinitely", which for a reset line means holding the host system
+    // down for ever, so it is rejected here rather than silently honoured.
+    if args.hold == 0 {
+        return Err(Error::InvalidArgument(
+            "--hold".to_string(),
+            "A reset pulse must have a duration.\n  \
+             Use 'onerom control gpio --pin <PIN> --state low' to latch a pin low indefinitely."
+                .to_string(),
+        ));
+    }
+
+    let driven = drive_gpio(
+        options,
+        args.pin,
+        GpioState::Low,
+        // Released, never driven high: a reset net has its own pull-up and may
+        // have other drivers on it.
+        GpioState::Z,
+        args.hold,
+        false,
+        "Use 'onerom control gpio --pin <PIN> --state low --hold <MS> --force' to drive it anyway.",
+    )
+    .await?;
+
+    if driven {
+        println!(
+            "Asserted reset on {} for {}ms - the device times the pulse and releases the pin",
+            args.pin, args.hold
+        );
+    }
+
+    Ok(())
 }
 
 pub async fn cmd_select(
@@ -117,9 +323,37 @@ pub async fn cmd_gpio(
     options: &Options,
     args: &args::control::ControlGpioArgs,
 ) -> Result<(), Error> {
-    check_device(options, args, true)?;
-    let _device = options.device.as_ref().unwrap();
-    Err(Error::Unimplemented("control gpio".to_string()))
+    check_device_running(options, args)?;
+
+    // No --hold means latch indefinitely, and --then has nothing to revert to;
+    // clap already requires --hold alongside it. With --hold and no --then the
+    // pin is released.
+    let hold_ms = args.hold.unwrap_or(0);
+    let after = args.then.unwrap_or(GpioState::Z);
+
+    let driven = drive_gpio(
+        options,
+        args.pin,
+        args.state,
+        after,
+        hold_ms,
+        args.force,
+        "Use --force to drive it anyway.",
+    )
+    .await?;
+
+    if driven {
+        if hold_ms == 0 {
+            println!("Set {} {}", args.pin, args.state);
+        } else {
+            println!(
+                "Set {} {} for {hold_ms}ms - the device times the hold and then sets it {after}",
+                args.pin, args.state
+            );
+        }
+    }
+
+    Ok(())
 }
 
 // Resolve poke input — either a single byte value or the contents of a file.

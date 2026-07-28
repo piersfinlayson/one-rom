@@ -8,6 +8,7 @@ use crate::args::CommandTrait;
 use crate::utils::{parse_u8, parse_u32};
 use clap::{Args, Subcommand};
 use enum_dispatch::enum_dispatch;
+use onerom_cli::pin::{Pin, parse_pin};
 
 #[derive(Debug, Args)]
 pub struct InspectArgs {
@@ -83,13 +84,22 @@ pub enum InspectCommands {
     )]
     Peek(InspectPeekArgs),
 
-    /// Read the current state of the One ROM GPIO pins (not yet supported).
+    /// Show what every One ROM GPIO is, and what it is doing.
     ///
-    /// Displays the direction and logic level of each exposed GPIO pin.
+    /// One row per MCU GPIO: the header pad behind it, its function under the
+    /// ROM currently being served, its direction and level, whether it is
+    /// 5V-tolerant, and what One ROM itself is using it for.
     ///
-    /// Example:
+    /// The device reports only a coarse category - free, read by serving,
+    /// driven by serving, or a system pin - along with the level and
+    /// direction. Every name in the table comes from this CLI's board and chip
+    /// metadata, not from the device.
+    ///
+    /// Examples:
     ///
     ///   onerom inspect gpio
+    ///
+    ///   onerom inspect gpio --pin gpio9
     Gpio(InspectGpioArgs),
 
     /// Draw the connected One ROM's pin (jumper / programming) header as ASCII.
@@ -266,9 +276,12 @@ impl CommandTrait for InspectPeekMemoryArgs {
 
 #[derive(Debug, Args)]
 pub struct InspectGpioArgs {
-    /// Show only this specific pin.
-    #[arg(long, value_name = "PIN")]
-    pub pin: Option<u8>,
+    /// Show only this GPIO, written gpio<N>.
+    ///
+    /// A bare number is rejected - see 'onerom inspect header' for the GPIO
+    /// behind each header pad.
+    #[arg(long, value_name = "PIN", value_parser = parse_pin)]
+    pub pin: Option<Pin>,
 }
 
 impl CommandTrait for InspectGpioArgs {
