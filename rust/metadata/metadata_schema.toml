@@ -1358,6 +1358,7 @@ comment = "Size of this structure in bytes"
 name = "rp235x"
 kind = "enum"
 type = "rp235x_variant_t"
+plugin_key = { name = "RP_VARIANT", id = 14 }
 comment = "Detected RP235x silicon variant"
 
 [[structs.fields]]

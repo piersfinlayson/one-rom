@@ -11,14 +11,20 @@
 use log::{debug, warn};
 use onerom_config::mcu::{Rp235xChipId, RpVariant};
 use onerom_fw_parser::Parser;
+use picoboot::cmd::PicobootStatus;
 use picoboot::{
-    Picoboot, PicobootCmd, PicobootCmdId, Reader as PicobootReader, Target, usb::Timeouts,
+    Picoboot, PicobootCmd, PicobootCmdId, PicobootXCmd, Reader as PicobootReader, Target,
+    usb::Timeouts,
 };
 use std::time::Duration;
 
 use crate::Error;
-pub use crate::picobootx::LedSubCmd;
-use crate::picobootx::{ONEROM_CMD_SET_LED, ONEROM_MAGIC};
+pub use crate::picobootx::{Caps, GpioEntry, GpioSetArgs, GpioState, GpioUse, LedSubCmd};
+use crate::picobootx::{
+    GpioQueryArgs, ONEROM_CAPS_LEN, ONEROM_CMD_ARGS_LEN, ONEROM_CMD_GET_CAPS,
+    ONEROM_CMD_GPIO_QUERY, ONEROM_CMD_GPIO_SET, ONEROM_CMD_SET_LED, ONEROM_FEAT_GPIO_HOLD,
+    ONEROM_FEAT_GPIO_QUERY, ONEROM_FEAT_GPIO_SET, ONEROM_MAGIC, PICOBOOT_DIR_IN,
+};
 use crate::{Device, DeviceState};
 
 /// Flash start address on RP2350.
@@ -564,4 +570,414 @@ pub async fn set_led(device: &Device, led_id: u8, sub_cmd: LedSubCmd) -> Result<
         .await
         .map(|_| ())
         .map_err(|e| Error::Usb(e.to_string()))
+}
+
+// ===========================================================================
+// One ROM custom picoboot commands: capabilities and GPIO control
+// ===========================================================================
+
+/// `bCmdSize` every One ROM custom command carries: all 16 argument bytes.
+const ONEROM_CMD_SIZE: u8 = 0x10;
+
+/// Why a One ROM custom picoboot command failed.
+///
+/// A refusal from the device arrives as a stalled endpoint, which on its own
+/// says nothing about the reason. The reason is in the device's command status,
+/// which [`send_onerom_cmd`] reads before it lets anything reset the interface.
+/// These are the cases the callers must not collapse into one another: a device
+/// that has never heard of the command needs the user to update it, a device
+/// that refused needs `--force` or a different pin, and a transport failure
+/// needs neither.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum CmdFailure {
+    /// `PB_STATUS_UNKNOWN_CMD` - the device's dispatcher has no case for this
+    /// command ID.
+    UnknownCmd,
+
+    /// `PB_STATUS_INVALID_CMD_LENGTH` - the device rejected the command's
+    /// shape. See [`CmdFailure::classify`] for why this can also mean "too
+    /// old".
+    InvalidCmdLength,
+
+    /// `PB_STATUS_NOT_PERMITTED` - the device understood the command and
+    /// refused it. For `GPIO_SET` this is the firmware's in-use gate.
+    NotPermitted,
+
+    /// `PB_STATUS_INVALID_ARG` - the device understood the command and
+    /// rejected its arguments.
+    InvalidArg,
+
+    /// A USB-level failure, or a status this layer has no specific handling
+    /// for. Carries the detail to show the user.
+    Transport(String),
+}
+
+impl std::fmt::Display for CmdFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::UnknownCmd => write!(f, "the device did not recognise the command"),
+            Self::InvalidCmdLength => write!(f, "the device rejected the command's length"),
+            Self::NotPermitted => write!(f, "the device refused the command"),
+            Self::InvalidArg => write!(f, "the device rejected the command's arguments"),
+            Self::Transport(detail) => write!(f, "{detail}"),
+        }
+    }
+}
+
+impl CmdFailure {
+    /// Classify a failed command from the device's command status, falling back
+    /// to the transport error when no status could be read.
+    fn classify(status: Option<PicobootStatus>, detail: String) -> Self {
+        match status {
+            Some(PicobootStatus::UnknownCmd) => Self::UnknownCmd,
+            Some(PicobootStatus::InvalidCmdLength) => Self::InvalidCmdLength,
+            Some(PicobootStatus::NotPermitted) => Self::NotPermitted,
+            Some(PicobootStatus::InvalidArg) => Self::InvalidArg,
+            Some(other) => Self::Transport(format!("{detail}\n  Device status: {other:?}")),
+            None => Self::Transport(detail),
+        }
+    }
+
+    /// Whether this failure means the device's USB system plugin predates the
+    /// command.
+    ///
+    /// `UNKNOWN_CMD` is the obvious case - the plugin's dispatcher fell through
+    /// to its `default:` arm. `INVALID_CMD_LENGTH` is the same thing for a
+    /// command with a data phase: a plugin that predates
+    /// `ONEROM_CMD_GET_CAPS` rejects any custom command with a non-zero
+    /// `transfer_len` before it ever looks at the command ID, so an old device
+    /// answers the capability probe with `INVALID_CMD_LENGTH` rather than
+    /// `UNKNOWN_CMD`. Both mean "this device cannot do this"; neither can be
+    /// produced by a correctly formed command against a device that can, since
+    /// the host fixes `bCmdSize` and `transfer_len` itself.
+    fn means_too_old(&self) -> bool {
+        matches!(self, Self::UnknownCmd | Self::InvalidCmdLength)
+    }
+}
+
+/// Render a failure this layer has no more specific error for.
+fn cmd_error(label: &str, failure: CmdFailure) -> Error {
+    Error::Usb(format!("One ROM {label} command failed:\n  {failure}"))
+}
+
+/// Send a One ROM custom picoboot command, preserving the device's command
+/// status when it fails.
+///
+/// This drives the [`picoboot::Connection`] directly rather than going through
+/// [`Picoboot::send_picobootx_cmd`], and the reason is the error path.
+/// `Picoboot::send_picobootx_cmd` responds to a failure by resetting the
+/// PICOBOOT interface and then dropping the connection if it was the one that
+/// opened it. Both are fatal to diagnosis: the device's `INTERFACE_RESET`
+/// handler sets the command status back to `PB_STATUS_OK`, and dropping the
+/// connection makes `Connection::get_command_status()` unreachable - and
+/// `Connection::reset_interface()` reads the status only to log it. So the
+/// status - the only
+/// thing that distinguishes "your One ROM is too old" from "the GPIO is in use"
+/// from "the cable fell out" - is read here first, and the interface is reset
+/// afterwards.
+///
+/// The interface is reset before sending too, matching what
+/// `Picoboot::send_picobootx_cmd` and [`read_chip_info`] do: a previous
+/// operation can leave an endpoint halted, and without the reset the command
+/// write stalls.
+async fn send_onerom_cmd(
+    device: &Device,
+    label: &str,
+    cmd_id: u8,
+    transfer_len: u32,
+    args: [u8; ONEROM_CMD_ARGS_LEN],
+) -> Result<Vec<u8>, CmdFailure> {
+    let mut picoboot = get_picoboot(device, false)
+        .await
+        .map_err(|e| CmdFailure::Transport(e.to_string()))?;
+    let conn = picoboot
+        .connect()
+        .await
+        .map_err(|e| CmdFailure::Transport(e.to_string()))?;
+    conn.reset_interface()
+        .await
+        .map_err(|e| CmdFailure::Transport(e.to_string()))?;
+
+    let cmd = PicobootXCmd::new(ONEROM_MAGIC, cmd_id, ONEROM_CMD_SIZE, transfer_len, args);
+    debug!("Sending One ROM {label} command (id {cmd_id:#04x}) to {device}");
+
+    match conn.send_picobootx_cmd(cmd, None).await {
+        Ok(data) => Ok(data),
+        Err(e) => {
+            // Read the status before anything resets the interface - the reset
+            // control request clears it. A status the host cannot read at all
+            // leaves the transport error as the only evidence, which is the
+            // right answer for an unplugged device.
+            let status = conn
+                .get_command_status()
+                .await
+                .inspect_err(|e| debug!("Could not read command status after failure: {e}"))
+                .ok()
+                .map(|status| status.get_status_code());
+            debug!("One ROM {label} command failed: {e} (status {status:?})");
+
+            // Best effort, so the next command starts from a clean endpoint.
+            conn.reset_interface().await.ok();
+
+            Err(CmdFailure::classify(status, e.to_string()))
+        }
+    }
+}
+
+/// Read a One ROM's picobootx extension capabilities.
+///
+/// This is the probe every GPIO command must make first: it says whether the
+/// device supports them at all, and it carries the `num_gpios` those commands
+/// are sized from. The device must be running with the USB system plugin - a
+/// stopped device is in the bootloader, where there is no One ROM command
+/// handler at all.
+pub async fn get_caps(device: &Device) -> Result<Caps, Error> {
+    let data = send_onerom_cmd(
+        device,
+        "GET_CAPS",
+        ONEROM_CMD_GET_CAPS | PICOBOOT_DIR_IN,
+        ONEROM_CAPS_LEN,
+        [0u8; ONEROM_CMD_ARGS_LEN],
+    )
+    .await
+    .map_err(|failure| {
+        if failure.means_too_old() {
+            Error::PluginTooOldForGpio(device.to_string())
+        } else {
+            cmd_error("GET_CAPS", failure)
+        }
+    })?;
+
+    Ok(Caps::decode(&data)?)
+}
+
+/// Check a capability bit before sending the command that needs it.
+///
+/// A clear bit means the plugin is present but the firmware underneath it is
+/// not: the plugin computes these bits at init from which ORA functions it
+/// found, so it reports GPIO control unavailable rather than failing the
+/// command later.
+fn check_feature(caps: &Caps, feature: u32, device: &str) -> Result<(), Error> {
+    if caps.has_feature(feature) {
+        Ok(())
+    } else {
+        Err(Error::FirmwareTooOldForGpio(device.to_string()))
+    }
+}
+
+/// Check a GPIO run against the device's own `num_gpios`.
+///
+/// 30 on an RP2350A and 48 on an RP2350B, so this is never a constant. Doing it
+/// here rather than letting the device reject the command turns an opaque
+/// `INVALID_ARG` into a message that says what the device actually has.
+fn check_gpio_range(caps: &Caps, first_gpio: u8, count: u8) -> Result<(), Error> {
+    debug_assert!(count > 0, "an empty GPIO run should not reach here");
+    let past_end = first_gpio as u16 + count as u16;
+    if past_end > caps.num_gpios as u16 {
+        // Name the highest GPIO asked for, which is the one the device does
+        // not have.
+        let highest = past_end.saturating_sub(1).min(u8::MAX as u16) as u8;
+        return Err(Error::GpioOutOfRange(highest, caps.num_gpios));
+    }
+    Ok(())
+}
+
+/// Drive a GPIO on a One ROM device, optionally for a bounded period.
+///
+/// `caps` must come from [`get_caps`] on the same device.
+///
+/// A bounded hold is timed by the device, not by this host: a CLI process that
+/// dies between assert and release must not be able to leave a pin latched.
+pub async fn gpio_set(device: &Device, caps: &Caps, args: GpioSetArgs) -> Result<(), Error> {
+    check_feature(caps, ONEROM_FEAT_GPIO_SET, &device.to_string())?;
+    check_gpio_range(caps, args.gpio, 1)?;
+
+    if args.duration_ms != 0 {
+        // Refuse rather than silently latch: a device that ignores duration_ms
+        // would hold a reset line asserted for ever.
+        if !caps.has_feature(ONEROM_FEAT_GPIO_HOLD) {
+            return Err(Error::GpioHoldUnsupported(device.to_string()));
+        }
+        // A device that advertises no bound is left to speak for itself.
+        if caps.max_hold_ms != 0 && args.duration_ms > caps.max_hold_ms {
+            return Err(Error::GpioHoldTooLong(args.duration_ms, caps.max_hold_ms));
+        }
+    }
+
+    send_onerom_cmd(device, "GPIO_SET", ONEROM_CMD_GPIO_SET, 0, args.encode())
+        .await
+        .map(|_| ())
+        .map_err(|failure| match failure {
+            // The firmware's in-use gate. The caller has already checked the
+            // feature bit, so this cannot be the plugin's "ORA function absent"
+            // refusal.
+            CmdFailure::NotPermitted => Error::GpioInUse(args.gpio),
+            CmdFailure::InvalidArg => Error::GpioRejected(args.gpio),
+            failure if failure.means_too_old() => Error::PluginTooOldForGpio(device.to_string()),
+            failure => cmd_error("GPIO_SET", failure),
+        })
+}
+
+/// Read what One ROM is using a run of `count` GPIOs for, starting at
+/// `first_gpio`.
+///
+/// `caps` must come from [`get_caps`] on the same device. A `count` of 0 asks
+/// for nothing and returns nothing without touching the device.
+pub async fn gpio_query(
+    device: &Device,
+    caps: &Caps,
+    first_gpio: u8,
+    count: u8,
+) -> Result<Vec<GpioEntry>, Error> {
+    check_feature(caps, ONEROM_FEAT_GPIO_QUERY, &device.to_string())?;
+    if count == 0 {
+        return Ok(Vec::new());
+    }
+    check_gpio_range(caps, first_gpio, count)?;
+
+    let args = GpioQueryArgs { first_gpio, count };
+    let data = send_onerom_cmd(
+        device,
+        "GPIO_QUERY",
+        ONEROM_CMD_GPIO_QUERY | PICOBOOT_DIR_IN,
+        args.transfer_len(),
+        args.encode(),
+    )
+    .await
+    .map_err(|failure| match failure {
+        CmdFailure::InvalidArg => Error::GpioRejected(first_gpio),
+        failure if failure.means_too_old() => Error::PluginTooOldForGpio(device.to_string()),
+        failure => cmd_error("GPIO_QUERY", failure),
+    })?;
+
+    let entries = GpioEntry::decode_all(&data)?;
+    if entries.len() != count as usize {
+        return Err(Error::PicobootxDecode(format!(
+            "GPIO_QUERY returned {} entries for GPIO{first_gpio}, expected {count}",
+            entries.len()
+        )));
+    }
+    Ok(entries)
+}
+
+/// Read what One ROM is using every one of its GPIOs for.
+///
+/// The whole device fits in a single command on either RP2350 variant (48
+/// GPIOs is 192 bytes, inside picoboot's 256-byte transfer limit).
+pub async fn gpio_query_all(device: &Device, caps: &Caps) -> Result<Vec<GpioEntry>, Error> {
+    gpio_query(device, caps, 0, caps.num_gpios).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // The transport itself needs a device, but the classification of a failure
+    // - the part that decides what the user is told - is pure.
+
+    #[test]
+    fn a_status_that_means_too_old_is_recognised() {
+        assert!(CmdFailure::classify(Some(PicobootStatus::UnknownCmd), "e".into()).means_too_old());
+        // A plugin that predates GET_CAPS rejects the data phase before it
+        // looks at the command ID, so this means "too old" too.
+        assert!(
+            CmdFailure::classify(Some(PicobootStatus::InvalidCmdLength), "e".into())
+                .means_too_old()
+        );
+    }
+
+    #[test]
+    fn a_refusal_is_not_confused_with_being_too_old() {
+        let refusal = CmdFailure::classify(Some(PicobootStatus::NotPermitted), "e".into());
+        assert_eq!(refusal, CmdFailure::NotPermitted);
+        assert!(!refusal.means_too_old());
+
+        let bad_arg = CmdFailure::classify(Some(PicobootStatus::InvalidArg), "e".into());
+        assert_eq!(bad_arg, CmdFailure::InvalidArg);
+        assert!(!bad_arg.means_too_old());
+    }
+
+    #[test]
+    fn a_transport_failure_is_not_confused_with_a_refusal() {
+        // No status at all: the device never answered.
+        let failure = CmdFailure::classify(None, "endpoint timed out".into());
+        assert_eq!(
+            failure,
+            CmdFailure::Transport("endpoint timed out".to_string())
+        );
+        assert!(!failure.means_too_old());
+        assert!(failure.to_string().contains("endpoint timed out"));
+
+        // A status with no specific handling keeps both the transport detail
+        // and the status, rather than being reported as a refusal.
+        let failure = CmdFailure::classify(Some(PicobootStatus::InvalidState), "stalled".into());
+        assert!(!failure.means_too_old());
+        let msg = failure.to_string();
+        assert!(msg.contains("stalled"), "{msg}");
+        assert!(msg.contains("InvalidState"), "{msg}");
+    }
+
+    #[test]
+    fn a_gpio_run_is_checked_against_the_devices_own_gpio_count() {
+        let a = Caps {
+            num_gpios: 30,
+            ..Caps::default()
+        };
+        let b = Caps {
+            num_gpios: 48,
+            ..Caps::default()
+        };
+
+        assert!(check_gpio_range(&a, 29, 1).is_ok());
+        assert!(check_gpio_range(&a, 0, 30).is_ok());
+        // 30 GPIOs on an RP2350A, so GPIO30 does not exist there even though it
+        // does on an RP2350B.
+        assert!(check_gpio_range(&a, 30, 1).is_err());
+        assert!(check_gpio_range(&a, 0, 48).is_err());
+        assert!(check_gpio_range(&b, 30, 1).is_ok());
+        assert!(check_gpio_range(&b, 0, 48).is_ok());
+        assert!(check_gpio_range(&b, 47, 2).is_err());
+
+        // A device that reported no GPIOs cannot have any driven.
+        assert!(check_gpio_range(&Caps::default(), 0, 1).is_err());
+
+        let msg = check_gpio_range(&a, 30, 1).unwrap_err().to_string();
+        assert!(msg.contains("GPIO30"), "{msg}");
+        assert!(msg.contains("30 GPIOs"), "{msg}");
+
+        // A run that starts inside the device but ends past it names the GPIO
+        // the device does not have, not the one it does.
+        let msg = check_gpio_range(&a, 0, 48).unwrap_err().to_string();
+        assert!(msg.contains("GPIO47"), "{msg}");
+    }
+
+    #[test]
+    fn a_missing_feature_bit_blames_the_firmware_not_the_plugin() {
+        // The plugin answered GET_CAPS, so it is not too old; it reports the
+        // GPIO bits clear because the firmware beneath it has no GPIO ORA
+        // functions to call.
+        let caps = Caps {
+            num_gpios: 30,
+            features: 0,
+            ..Caps::default()
+        };
+        for feature in [ONEROM_FEAT_GPIO_SET, ONEROM_FEAT_GPIO_QUERY] {
+            let msg = check_feature(&caps, feature, "One ROM Fire 24 F")
+                .unwrap_err()
+                .to_string();
+            assert!(msg.contains("firmware"), "{msg}");
+            assert!(msg.contains("One ROM Fire 24 F"), "{msg}");
+            // Not the plugin's fault, so it must not be blamed.
+            assert!(!msg.contains("plugin predates"), "{msg}");
+        }
+
+        // And with the bits set, nothing is refused.
+        let caps = Caps {
+            features: ONEROM_FEAT_GPIO_SET | ONEROM_FEAT_GPIO_QUERY,
+            ..caps
+        };
+        assert!(check_feature(&caps, ONEROM_FEAT_GPIO_SET, "d").is_ok());
+        assert!(check_feature(&caps, ONEROM_FEAT_GPIO_QUERY, "d").is_ok());
+        assert!(check_feature(&caps, ONEROM_FEAT_GPIO_HOLD, "d").is_err());
+    }
 }

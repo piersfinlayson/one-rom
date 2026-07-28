@@ -124,6 +124,11 @@ void usb_plugin_task(void) {
     }
 
     led_handle_ongoing_led_modes();
+
+    // ONEROM_CMD_GPIO_SET is applied in the dispatch handler; only the timed
+    // release of a bounded hold is deferred to here, where the millisecond
+    // timer can be checked.
+    gpio_handle_pending_releases();
 }
 
 // Resolve the USB serial override from device metadata and widen it into the
@@ -175,6 +180,11 @@ void usb_init(ora_lookup_fn_t ora_lookup_fn) {
     context.reprogram_ram_rom_slot = ora_lookup_fn(ORA_ID_REPROGRAM_RAM_ROM_SLOT);
     // Can't log until we have the log functions
     DEBUG("USB plugin started");
+
+    // Resolve the GPIO API and decide what the GPIO commands can offer.  Done
+    // once, here, because none of it can change while the plugin runs - and
+    // because probing it per request would put ORA lookups on the command path.
+    gpio_init_caps();
 
     // Set up USB.  tinyusb will register its own IRQ handler, using the API
     // functions we provide.

@@ -68,9 +68,18 @@ static pb_status_t onerom_picobootx_dispatch(
     uint32_t *bytes_written,
     void *ctx
 );
+static pb_status_t onerom_picobootx_fill(
+    const picoboot_cmd_t *cmd,
+    uint8_t *buf,
+    uint32_t max_len,
+    uint32_t *bytes_written,
+    bool *done,
+    void *ctx
+);
 static const picoboot_custom_ops_t onerom_picobootx_ops = {
     .magic    = ONEROM_PICOBOOTX_MAGIC,
     .dispatch = onerom_picobootx_dispatch,
+    .fill     = onerom_picobootx_fill,
 };
 
 // A flash write buffer required by picoboot to batch flash writes so it has
@@ -362,6 +371,64 @@ pb_status_t app_picoboot_flash_erase_prepare(
 // One ROM picoboot protocol extension handling
 // ---------------------------------------------------------------------------
 
+// Set up the device -> host data phase of a custom command.
+//
+// total is what the command's transfer_len asks for and what onerom_picobootx_
+// fill must produce exactly: the host reads that many bytes and no more, so
+// under-producing hangs its read and over-producing desynchronises the stream.
+static pb_status_t onerom_in_xfer_begin(
+    const picoboot_cmd_t *cmd,
+    uint8_t first_gpio
+) {
+    if (cmd->transfer_len == 0u ||
+        cmd->transfer_len > ONEROM_MAX_TRANSFER_LEN) {
+        return PB_STATUS_INVALID_TRANSFER_LEN;
+    }
+
+    context.in_xfer.offset = 0u;
+    context.in_xfer.total = cmd->transfer_len;
+    context.in_xfer.first_gpio = first_gpio;
+
+    return PB_STATUS_OK;
+}
+
+// Validate ONEROM_CMD_GET_CAPS and prepare its response.
+//
+// Any transfer_len within the bound is accepted rather than only
+// ONEROM_CAPS_LEN, because onerom_caps_t is meant to grow: a newer host asking
+// for more gets zero padding, and an older host asking for less gets a prefix,
+// which is exactly what struct_len lets it make sense of.
+static pb_status_t onerom_caps_prepare(const picoboot_cmd_t *cmd) {
+    return onerom_in_xfer_begin(cmd, 0u);
+}
+
+// Validate ONEROM_CMD_GPIO_QUERY and prepare its response.
+static pb_status_t onerom_gpio_query_prepare(const picoboot_cmd_t *cmd) {
+    const onerom_gpio_query_args_t *args =
+        (const onerom_gpio_query_args_t *)cmd->args;
+
+    if (!(context.features & ONEROM_FEAT_GPIO_QUERY)) {
+        return PB_STATUS_NOT_PERMITTED;
+    }
+
+    // The device is the authority on how many GPIOs it has; the host sizes its
+    // run from the num_gpios this same plugin reported in its capabilities.
+    if (args->count == 0u ||
+        ((uint32_t)args->first_gpio + args->count) > context.num_gpios) {
+        return PB_STATUS_INVALID_ARG;
+    }
+
+    // Unlike the capabilities, this response has no growth story of its own -
+    // the entry size is fixed and the run length is the host's - so the two
+    // sides must agree on the byte count exactly.
+    if (cmd->transfer_len !=
+        ((uint32_t)args->count * sizeof(onerom_gpio_entry_t))) {
+        return PB_STATUS_INVALID_TRANSFER_LEN;
+    }
+
+    return onerom_in_xfer_begin(cmd, args->first_gpio);
+}
+
 static pb_status_t onerom_picobootx_dispatch(
     const picoboot_cmd_t *cmd,
     uint8_t *buf,
@@ -371,16 +438,31 @@ static pb_status_t onerom_picobootx_dispatch(
 ) {
     (void)buf; (void)buf_len; (void)bytes_written;
 
-    if (cmd->cmd_size != 0x10u || cmd->transfer_len != 0u) {
+    // Every One ROM command carries all 16 argument bytes.  The data phase is
+    // per-command from here on: rejecting any command with a transfer_len, as
+    // this did before ONEROM_CMD_GET_CAPS existed, would reject the two
+    // commands that have one.  That older behaviour is load-bearing in the
+    // other direction - it is how a host recognises a device that predates
+    // these commands - so it must not be reproduced by a plugin that has them.
+    if (cmd->cmd_size != ONEROM_CMD_ARGS_LEN) {
         return PB_STATUS_INVALID_CMD_LENGTH;
     }
 
     usb_plugin_context_t *uctx = (usb_plugin_context_t *)ctx;
 
-    // Just store the command in context for the main firmware task to handler
-    // when scheduled later.
-    switch ((onerom_cmd_id_t)cmd->cmd_id) {
+    // PICOBOOT_DIR_IN is the host's statement that it will read data back, not
+    // part of the command ID, so it has to come off before matching.  Without
+    // this, ONEROM_CMD_GET_CAPS and ONEROM_CMD_GPIO_QUERY arrive as 0x82 and
+    // 0x84 and fall through to the unknown-command arm.
+    uint8_t cmd_id = (uint8_t)(cmd->cmd_id & ~PICOBOOT_DIR_IN);
+
+    switch ((onerom_cmd_id_t)cmd_id) {
         case ONEROM_CMD_SET_LED: {
+            if (cmd->transfer_len != 0u) {
+                return PB_STATUS_INVALID_CMD_LENGTH;
+            }
+            // Deferred to the task loop: an LED mode is a state machine that
+            // outlives the command, and nothing about it can be refused.
             const onerom_set_led_args_t *args = (const onerom_set_led_args_t *)cmd->args;
             uctx->pending.cmd = ONEROM_PENDING_SET_LED;
             uctx->pending.args.set_led.led_id = args->led_id;
@@ -388,7 +470,104 @@ static pb_status_t onerom_picobootx_dispatch(
             return PB_STATUS_OK;
         }
 
+        case ONEROM_CMD_GET_CAPS:
+            return onerom_caps_prepare(cmd);
+
+        case ONEROM_CMD_GPIO_SET:
+            if (cmd->transfer_len != 0u) {
+                return PB_STATUS_INVALID_CMD_LENGTH;
+            }
+            // Applied here and now, not deferred: see gpio_handle_set().
+            return gpio_handle_set((const onerom_gpio_set_args_t *)cmd->args);
+
+        case ONEROM_CMD_GPIO_QUERY:
+            return onerom_gpio_query_prepare(cmd);
+
         default:
             return PB_STATUS_UNKNOWN_CMD;
     }
+}
+
+// Produce the bytes of an ONEROM_CMD_GET_CAPS response lying in
+// [offset, offset + len), zero-padding past the end of onerom_caps_t.
+static void onerom_caps_bytes(uint8_t *buf, uint32_t offset, uint32_t len) {
+    onerom_caps_t caps = {0};
+    caps.struct_len = (uint16_t)sizeof(caps);
+    caps.ext_major = ONEROM_PBX_EXT_MAJOR;
+    caps.ext_minor = ONEROM_PBX_EXT_MINOR;
+    caps.features = context.features;
+    caps.num_gpios = context.num_gpios;
+
+    // A real bound, not zero: a host is entitled to treat a non-zero value as
+    // authoritative and refuse a longer hold before it ever reaches the device.
+    // Zero would mean "no opinion", which this plugin has never had - it always
+    // enforces ONEROM_GPIO_MAX_HOLD_MS - so saying so would be a lie of
+    // omission.  It is reported only alongside the feature bit that makes holds
+    // meaningful.
+    caps.max_hold_ms = (context.features & ONEROM_FEAT_GPIO_HOLD) ?
+                       ONEROM_GPIO_MAX_HOLD_MS : 0u;
+
+    const uint8_t *src = (const uint8_t *)&caps;
+    for (uint32_t i = 0u; i < len; i++) {
+        uint32_t pos = offset + i;
+        buf[i] = (pos < sizeof(caps)) ? src[pos] : 0u;
+    }
+}
+
+static pb_status_t onerom_picobootx_fill(
+    const picoboot_cmd_t *cmd,
+    uint8_t *buf,
+    uint32_t max_len,
+    uint32_t *bytes_written,
+    bool *done,
+    void *ctx
+) {
+    (void)ctx;
+
+    *bytes_written = 0u;
+    *done = false;
+
+    uint32_t remaining = context.in_xfer.total - context.in_xfer.offset;
+    uint32_t len = (max_len < remaining) ? max_len : remaining;
+
+    switch ((onerom_cmd_id_t)(cmd->cmd_id & ~PICOBOOT_DIR_IN)) {
+        case ONEROM_CMD_GET_CAPS:
+            onerom_caps_bytes(buf, context.in_xfer.offset, len);
+            break;
+
+        case ONEROM_CMD_GPIO_QUERY: {
+            // Entries are produced one at a time, straight from the firmware,
+            // so nothing has to be buffered between calls; the offset is the
+            // whole of the cursor.  A call with room for less than one entry
+            // produces nothing and asks to be called again, which is what the
+            // fill contract's zero-bytes-not-done case is for.
+            len -= len % sizeof(onerom_gpio_entry_t);
+            for (uint32_t i = 0u; i < len; i += sizeof(onerom_gpio_entry_t)) {
+                uint32_t index =
+                    (context.in_xfer.offset + i) / sizeof(onerom_gpio_entry_t);
+                onerom_gpio_entry_t entry;
+                pb_status_t st = gpio_fill_entry(
+                    (uint8_t)(context.in_xfer.first_gpio + index),
+                    &entry
+                );
+                if (st != PB_STATUS_OK) {
+                    return st;
+                }
+                memcpy(&buf[i], &entry, sizeof(entry));
+            }
+            break;
+        }
+
+        default:
+            // Unreachable: dispatch only starts a data phase for the two
+            // commands above.
+            ERR("Unexpected fill for cmd_id 0x%02x", cmd->cmd_id);
+            return PB_STATUS_UNKNOWN_ERROR;
+    }
+
+    context.in_xfer.offset += len;
+    *bytes_written = len;
+    *done = (context.in_xfer.offset >= context.in_xfer.total);
+
+    return PB_STATUS_OK;
 }

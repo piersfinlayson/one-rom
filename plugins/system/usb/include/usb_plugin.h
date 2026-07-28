@@ -12,6 +12,7 @@
 #include "include.h"
 #include "usb_custom_pbx.h"
 #include "usb_led.h"
+#include "usb_gpio.h"
 
 // Context structure for our plugin
 typedef struct {
@@ -24,9 +25,27 @@ typedef struct {
     ora_get_ram_slot_info_fn_t get_ram_slot_info;
     ora_read_ram_rom_slot_fn_t read_ram_rom_slot;
     ora_reprogram_ram_rom_slot_fn_t reprogram_ram_rom_slot;
+
+    // GPIO control.  Both are NULL on firmware that predates the GPIO plugin
+    // API (added in firmware 0.7.1); see gpio_init_caps().
+    ora_gpio_set_fn_t gpio_set;
+    ora_gpio_query_fn_t gpio_query;
+
+    // What ONEROM_CMD_GET_CAPS reports, decided once at init.
+    //
+    // features is a ONEROM_FEAT_* bitmap, and num_gpios the running RP2350
+    // variant's GPIO count.  Both are zero when the running firmware cannot
+    // support GPIO control, which is what keeps the plugin's min_fw_version at
+    // 0.7.0: the host is told the commands are unavailable rather than the
+    // plugin refusing to load.
+    uint32_t features;
+    uint8_t num_gpios;
+
     uint32_t timer_ms;
     onerom_pending_t pending;
+    onerom_in_xfer_t in_xfer;
     led_status_t led_status;
+    gpio_status_t gpio_status;
 } usb_plugin_context_t;
 
 // Forward declaration of the context, which we define in usb_main.c

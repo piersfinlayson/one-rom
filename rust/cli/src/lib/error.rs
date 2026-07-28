@@ -218,11 +218,57 @@ pub enum Error {
 
     #[error("Failed to decode Intel HEX from '{0}':\n  {1}")]
     IhexDecode(String, String),
+
+    #[error("Invalid --pin value '{0}':\n  {1}")]
+    InvalidPin(String, String),
+
+    #[error(
+        "This One ROM's USB system plugin predates GPIO control.\n  {0}\n  Reprogram it with the v0.7.1 or later USB system plugin, for example:\n    onerom program --config <your config> --plugin usb"
+    )]
+    PluginTooOldForGpio(String),
+
+    #[error(
+        "This One ROM's firmware predates GPIO control.\n  {0}\n  Its USB system plugin supports GPIO control but the firmware beneath it does not.\n  Update the device to One ROM firmware v0.7.1 or later."
+    )]
+    FirmwareTooOldForGpio(String),
+
+    #[error(
+        "This One ROM cannot hold a GPIO for a bounded period.\n  {0}\n  Update the device to One ROM firmware v0.7.1 or later, or omit --hold."
+    )]
+    GpioHoldUnsupported(String),
+
+    #[error("A hold of {0}ms is longer than this One ROM allows.\n  Its maximum is {1}ms.")]
+    GpioHoldTooLong(u32, u32),
+
+    #[error("This One ROM has no GPIO{0}.\n  It reports {1} GPIOs, GPIO0 upwards.")]
+    GpioOutOfRange(u8, u8),
+
+    #[error(
+        "GPIO{0} is in use by One ROM.\n  Use --force to drive it anyway - see 'onerom inspect gpio' for what it is doing."
+    )]
+    GpioInUse(u8),
+
+    #[error(
+        "This One ROM rejected the request for GPIO{0} as invalid.\n  This is likely a bug.  Please report it."
+    )]
+    GpioRejected(u8),
+
+    #[error("This One ROM returned a response that could not be decoded:\n  {0}")]
+    PicobootxDecode(String),
 }
 
 impl Error {
     pub fn io(path: impl AsRef<std::path::Path>, e: std::io::Error) -> Self {
         Self::Io(format!("{}: {e}", path.as_ref().display()))
+    }
+}
+
+/// Phase 2 left `DecodeError` local to `picobootx.rs` so that module stays a
+/// pure description of the wire format. This is where a wire response the host
+/// could not make sense of becomes something a user sees.
+impl From<crate::picobootx::DecodeError> for Error {
+    fn from(e: crate::picobootx::DecodeError) -> Self {
+        Self::PicobootxDecode(e.to_string())
     }
 }
 

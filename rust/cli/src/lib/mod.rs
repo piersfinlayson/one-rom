@@ -14,6 +14,7 @@ pub mod device;
 pub mod error;
 pub mod fetch;
 pub mod picobootx;
+pub mod pin;
 pub mod plugin;
 pub mod scan;
 pub mod slot;
