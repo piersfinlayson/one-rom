@@ -338,6 +338,20 @@ typedef enum {
      */
     ORA_ID_GET_UNOBSERVED_ADDR_BITS  = 0x0000002E,
 
+    /**
+     * @brief Drive a GPIO high or low, or release it to high impedance
+     * @sa ora_gpio_set_fn_t
+     * @since firmware 0.7.1
+     */
+    ORA_ID_GPIO_SET                  = 0x0000002F,
+
+    /**
+     * @brief Query what One ROM is using a GPIO for, and its current state
+     * @sa ora_gpio_query_fn_t
+     * @since firmware 0.7.1
+     */
+    ORA_ID_GPIO_QUERY                = 0x00000030,
+
     /** Invalid API identifier */
     ORA_ID_INVALID = 0xFFFFFFFF,
 } api_id_t;
@@ -664,6 +678,8 @@ typedef enum {
     ORA_RESULT_NO_SLOT_ACTIVE = 9,
     ORA_RESULT_NOT_SUPPORTED = 10,
     ORA_RESULT_TYPE_MISMATCH = 11,
+    /** @since firmware 0.7.1 */
+    ORA_RESULT_GPIO_IN_USE = 12,
 } ora_result_t;
 
 /**
@@ -1799,6 +1815,181 @@ typedef ora_result_t (*ora_read_ram_rom_slot_fn_t)(
     uint32_t  offset,
     uint8_t  *buf,
     uint32_t  len
+);
+
+/**
+ * @brief State a GPIO can be placed in by @ref ora_gpio_set_fn_t
+ * @since firmware 0.7.1
+ */
+typedef enum {
+    /** @brief Drive the GPIO low */
+    ORA_GPIO_STATE_LOW   = 0,
+
+    /** @brief Drive the GPIO high */
+    ORA_GPIO_STATE_HIGH  = 1,
+
+    /**
+     * @brief Release the GPIO - output driver disabled, high impedance
+     *
+     * The input path stays enabled, so the pin can still be read via
+     * @ref ora_gpio_query_fn_t.
+     */
+    ORA_GPIO_STATE_INPUT = 2,
+} ora_gpio_state_t;
+
+/**
+ * @brief What One ROM itself is using a GPIO for
+ * @since firmware 0.7.1
+ *
+ * Reports only what the firmware has claimed the GPIO for: the serving set of
+ * the currently active ROM slot, plus the board's own system pins. It says
+ * nothing about what is attached to the pin electrically - whether a jumper is
+ * fitted, what the far end of a wire is connected to, or whether something else
+ * is driving the net. That remains the user's responsibility.
+ *
+ * Serving reads its address, chip select and /BYTE pins as SIO inputs with the
+ * output driver disabled, so they are indistinguishable from unused pins by
+ * register inspection alone; this enumeration is the only way to tell them
+ * apart.
+ *
+ * What is reported is the *consequence* of driving the GPIO, not the role it
+ * plays. The roles - address, data, chip select, /BYTE, X - are deliberately
+ * not reported: naming them needs the board pin map and the active chip's
+ * metadata, which a host already has, whereas whether One ROM drives or merely
+ * reads a pin is knowledge only the firmware has.
+ */
+typedef enum {
+    /** @brief Not used by One ROM */
+    ORA_GPIO_USE_FREE           = 0,
+
+    /**
+     * @brief Serving reads this GPIO; driving it is reversible
+     *
+     * Covers the whole address span of the active ROM slot - including any X
+     * expansion pins folded into it on Multi and Banked slots - the whole chip
+     * select span, including any position the select field masks out and any
+     * excess address line acting as a half-select, and the /BYTE pin.
+     *
+     * These are all SIO inputs, and PIO keeps reading the pin whatever its
+     * function select says, so driving one and then releasing it with
+     * ORA_GPIO_STATE_INPUT restores serving exactly.
+     * @sa ora_gpio_set_fn_t
+     */
+    ORA_GPIO_USE_SERVING_READ   = 1,
+
+    /**
+     * @brief Serving drives this GPIO; driving it breaks serving until reboot
+     *
+     * The data pins of the active ROM slot, which PIO owns and drives. Taking
+     * one away from PIO is not undone by releasing it.
+     * @sa ora_gpio_set_fn_t
+     */
+    ORA_GPIO_USE_SERVING_DRIVEN = 2,
+
+    /** @brief A board system pin - status LED, neopixel, VBUS or ext flash CS */
+    ORA_GPIO_USE_SYSTEM         = 3,
+} ora_gpio_use_t;
+
+/**
+ * @brief Drive a GPIO even if One ROM is using it
+ * @sa ora_gpio_set_fn_t
+ * @since firmware 0.7.1
+ */
+#define ORA_GPIO_FLAG_FORCE  (1u << 0)
+
+/**
+ * @brief GPIO information returned by @ref ora_gpio_query_fn_t
+ * @since firmware 0.7.1
+ */
+typedef struct {
+    /**
+     * @brief In: sizeof this structure as known to the caller.  Out: the
+     * number of bytes the firmware actually wrote.
+     *
+     * The caller sets this to sizeof(ora_gpio_info_t) as it knows it before
+     * calling. The firmware writes at most that many bytes and sets this field
+     * to how many it wrote, so a plugin built against an older or newer version
+     * of this structure than the running firmware still interoperates.
+     */
+    uint8_t size;
+
+    /** @brief What One ROM is using this GPIO for. @sa ora_gpio_use_t */
+    uint8_t use;
+
+    /** @brief The level currently present on the pad, 0 or 1 */
+    uint8_t level;
+
+    /** @brief 1 if the pin's output driver is currently enabled, 0 if not */
+    uint8_t is_output;
+} ora_gpio_info_t;
+STATIC_ASSERT(sizeof(ora_gpio_info_t) == 4, "ora_gpio_info_t must be 4 bytes");
+
+/**
+ * @brief Drive a GPIO high or low, or release it to high impedance
+ * @sa ORA_ID_GPIO_SET
+ * @since firmware 0.7.1
+ *
+ * Takes the GPIO under SIO control and applies @p state immediately. The call
+ * is instantaneous: it starts no timer and schedules nothing. A caller wanting
+ * a bounded assertion must time the release itself.
+ *
+ * By default the call refuses, with ORA_RESULT_GPIO_IN_USE, any GPIO whose
+ * @ref ora_gpio_use_t is not ORA_GPIO_USE_FREE. This is the firmware's whole
+ * safety model - it knows what One ROM itself has claimed, and nothing about
+ * what is wired to the pin. @ref ORA_GPIO_FLAG_FORCE overrides the refusal.
+ *
+ * How recoverable a forced pin is is exactly what @ref ora_gpio_use_t reports:
+ *
+ *   - ORA_GPIO_USE_SERVING_DRIVEN - the pin is driven by PIO. Forcing it takes
+ *     the pin's function select away from PIO, and the serving path does not
+ *     restore it, so serving is broken until the device reboots. Setting the
+ *     pin back to ORA_GPIO_STATE_INPUT does not undo this.
+ *   - ORA_GPIO_USE_SERVING_READ - the pin is an SIO input with its output
+ *     driver disabled, and PIO keeps reading it whatever its function select
+ *     says. Forcing one is therefore reversible: set it back to
+ *     ORA_GPIO_STATE_INPUT and serving reads the pin as before. While it is
+ *     driven, of course, serving sees the level being driven.
+ *
+ * Only the function select, the output enable and the pad's output-disable bit
+ * are altered. Pulls, drive strength, slew rate and any input polarity
+ * inversion are left untouched, which is what makes the release above exact.
+ *
+ * @param gpio   The GPIO to set, less than the running variant's GPIO count
+ * @param state  The state to place the GPIO in. @sa ora_gpio_state_t
+ * @param flags  Behavioural flags. Pass 0 for default behaviour.
+ *               @sa ORA_GPIO_FLAG_FORCE
+ * @return ORA_RESULT_OK on success; ORA_RESULT_GPIO_IN_USE if the GPIO is in
+ *         use by One ROM and ORA_GPIO_FLAG_FORCE was not set;
+ *         ORA_RESULT_INVALID_ARG if @p gpio is out of range or @p state is not
+ *         a valid @ref ora_gpio_state_t
+ */
+typedef ora_result_t (*ora_gpio_set_fn_t)(
+    uint8_t  gpio,
+    uint8_t  state,
+    uint32_t flags
+);
+
+/**
+ * @brief Query what One ROM is using a GPIO for, and its current state
+ * @sa ORA_ID_GPIO_QUERY
+ * @since firmware 0.7.1
+ *
+ * Reports the GPIO's use, the level present on the pad, and whether its output
+ * driver is enabled. There is deliberately no bulk form - a caller wanting the
+ * whole device loops over this call.
+ *
+ * The caller must set @p info_out->size to its own sizeof(ora_gpio_info_t)
+ * before calling; see @ref ora_gpio_info_t.
+ *
+ * @param gpio      The GPIO to query, less than the running variant's GPIO count
+ * @param info_out  Structure to fill in, with its size field already set
+ * @return ORA_RESULT_OK on success; ORA_RESULT_INVALID_ARG if @p info_out is
+ *         NULL or @p gpio is out of range; ORA_RESULT_INVALID_SIZE if
+ *         @p info_out->size is zero
+ */
+typedef ora_result_t (*ora_gpio_query_fn_t)(
+    uint8_t gpio,
+    ora_gpio_info_t *info_out
 );
 
 /** @} */ // plugin_api_functions

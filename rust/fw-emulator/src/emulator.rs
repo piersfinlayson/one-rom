@@ -77,6 +77,7 @@ pub enum OraResult {
     NoSlotActive,
     NotSupported,
     TypeMismatch,
+    GpioInUse,
     Unknown(u32),
 }
 
@@ -95,6 +96,7 @@ impl From<ffi::ora_result_t> for OraResult {
             ffi::ora_result_t_ORA_RESULT_NO_SLOT_ACTIVE => Self::NoSlotActive,
             ffi::ora_result_t_ORA_RESULT_NOT_SUPPORTED => Self::NotSupported,
             ffi::ora_result_t_ORA_RESULT_TYPE_MISMATCH => Self::TypeMismatch,
+            ffi::ora_result_t_ORA_RESULT_GPIO_IN_USE => Self::GpioInUse,
             other => Self::Unknown(other),
         }
     }
@@ -119,6 +121,20 @@ pub struct FlashSlotInfo {
     pub name: Option<&'static std::ffi::CStr>,
     pub rom_type: u32,
     pub rom_count: u8,
+}
+
+/// One GPIO's state as reported by `ORA_ID_GPIO_QUERY`.
+///
+/// `gpio_use` is an [`ffi::ora_gpio_use_t`] value; it is left raw rather than
+/// mapped to a Rust enum so a test can report an unexpected value verbatim
+/// instead of collapsing it into a catch-all.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GpioInfo {
+    /// Bytes the firmware reported writing.
+    pub size: u8,
+    pub gpio_use: u8,
+    pub level: u8,
+    pub is_output: u8,
 }
 
 /// Per-ROM detail for one ROM within a flash slot (via
@@ -810,6 +826,42 @@ impl Emulator {
         let r = OraResult::from(r);
         let v = r.is_ok().then_some(val);
         (r, v)
+    }
+
+    /// `ORA_ID_GPIO_QUERY`, telling the firmware the caller's structure is
+    /// `caller_size` bytes.
+    ///
+    /// Fields beyond what the firmware writes are returned as the sentinel
+    /// `0xFF` this function pre-fills them with, so a caller exercising the
+    /// forward-compatibility contract can tell "not written" from "written as
+    /// zero".
+    pub fn gpio_query_sized(&self, gpio: u8, caller_size: u8) -> (OraResult, GpioInfo) {
+        let mut info = ffi::ora_gpio_info_t {
+            size: caller_size,
+            use_: 0xFF,
+            level: 0xFF,
+            is_output: 0xFF,
+        };
+        let r = plugin_call!(
+            ffi::api_id_t_ORA_ID_GPIO_QUERY,
+            ffi::ora_gpio_query_fn_t,
+            gpio,
+            &mut info as *mut ffi::ora_gpio_info_t
+        );
+        (
+            OraResult::from(r),
+            GpioInfo {
+                size: info.size,
+                gpio_use: info.use_,
+                level: info.level,
+                is_output: info.is_output,
+            },
+        )
+    }
+
+    /// `ORA_ID_GPIO_QUERY` with the full structure this build knows about.
+    pub fn gpio_query(&self, gpio: u8) -> (OraResult, GpioInfo) {
+        self.gpio_query_sized(gpio, size_of::<ffi::ora_gpio_info_t>() as u8)
     }
 
     pub fn get_chip_size_from_type(&self, chip_type: u32) -> u32 {

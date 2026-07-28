@@ -140,6 +140,11 @@ ora_result_t pio_read_ram_rom_slot(
     uint32_t  len
 );
 uint8_t pio_get_active_ram_slot(void);
+ora_result_t pio_get_gpio_use(
+    const onerom_rom_slot_t *slot,
+    uint8_t gpio,
+    uint8_t *use_out
+);
 
 // plugin.c
 uint8_t check_plugin_valid(

@@ -26,8 +26,9 @@
 //! is indexed directly by the image-select value, so for each Single slot the
 //! firmware is rebooted with `sel_image` set to that slot's index, making it
 //! the active boot image, and the full test suite is run against it.
-//! Multi/Banked slots are skipped (their serving is covered by the separate
-//! pio-tester).
+//! Multi/Banked slots boot the same way but run only the GPIO classification
+//! test — their serving is covered by the separate pio-tester, while their
+//! GPIO layout is not reachable from a Single slot.
 
 use std::process;
 
@@ -88,23 +89,64 @@ fn main() {
             report.skip_slot(idx, sel, "not selectable — board has too few sel pins");
             continue;
         }
+        let label = chip_set
+            .chips
+            .first()
+            .map(|c| c.chip_type.resolved().name().to_string())
+            .unwrap_or_else(|| "<no chip>".to_string());
         match chip_set.set_type {
             ChipSetType::Single => {
-                let label = chip_set
-                    .chips
-                    .first()
-                    .map(|c| c.chip_type.resolved().name().to_string())
-                    .unwrap_or_else(|| "<no chip>".to_string());
                 report.begin_slot(idx, sel, &label);
                 run_slot(&mut report, board, &config, &base_dir, log_enabled, idx);
             }
-            ChipSetType::Multi => report.skip_slot(idx, sel, "Multi"),
-            ChipSetType::Banked => report.skip_slot(idx, sel, "Banked"),
+            // Multi and Banked slots are not exercised for serving here — the
+            // pio-tester covers that — but their GPIO layout is what makes
+            // them interesting to the GPIO classification: X pins are folded
+            // into the address span and the chip-select range sits inside it.
+            // So they boot and run that one test.
+            ChipSetType::Multi | ChipSetType::Banked => {
+                let kind = if chip_set.set_type == ChipSetType::Multi {
+                    "Multi"
+                } else {
+                    "Banked"
+                };
+                let label = format!("{label} ({kind}, GPIO classification only)");
+                report.begin_slot(idx, sel, &label);
+                run_slot_gpio_only(&mut report, board, &config, &base_dir, log_enabled, idx);
+            }
         }
     }
 
     report.print();
     process::exit(if report.all_passed() { 0 } else { 1 });
+}
+
+/// Boot the firmware with `set_idx` as the selected image and run only the
+/// GPIO classification test against it.
+///
+/// Used for Multi and Banked slots, whose serving is covered by the pio-tester
+/// but whose GPIO layout — X pins folded into the address span, the
+/// chip-select range inside it — is not reachable from a Single slot.  No epio
+/// setup is needed: the classification is derived from the slot configuration
+/// and the GPIO setup boot performed, both complete before any cycle runs.
+fn run_slot_gpio_only(
+    report: &mut ApiReport,
+    board: Board,
+    config: &Config,
+    base_dir: &std::path::Path,
+    log_enabled: bool,
+    set_idx: usize,
+) {
+    let (emulator, fw_version) = setup(board, log_enabled, set_idx as u8);
+
+    report.add(
+        "gpio_use",
+        tests::gpio::test_gpio_use(&emulator, config, board, fw_version, base_dir, set_idx),
+    );
+    report.skip(
+        "serving and slot tests",
+        "serving of a Multi/Banked slot is covered by the pio-tester",
+    );
 }
 
 /// Boot the firmware with `set_idx` as the selected image, then run the full
@@ -141,6 +183,12 @@ fn run_slot(
     report.add(
         "lookup_coverage",
         tests::lookup::test_lookup_coverage(&emulator),
+    );
+
+    // GPIO
+    report.add(
+        "gpio_use",
+        tests::gpio::test_gpio_use(&emulator, config, board, fw_version, base_dir, set_idx),
     );
 
     // Mapping

@@ -191,6 +191,18 @@ fn main() {
         .allowlist_function("ora_fn_lookup")
         .allowlist_type("ora_result_t")
         .allowlist_type("ora_.*_fn_t")
+        // ora_gpio_use_t / ora_gpio_state_t are referenced only from comments
+        // and uint8_t struct fields, so nothing drags them in transitively.
+        // The plugin API tester compares ora_gpio_query's reported use against
+        // the apio emulation's own record, and must name the enumerators
+        // rather than hardcode their values.
+        .allowlist_type("ora_gpio_.*_t")
+        // The apio emulation's record of how the firmware configured the PIO
+        // blocks and the GPIOs.  This is what serving actually did, as opposed
+        // to what the slot configuration says it should have done, and is the
+        // plugin API tester's independent oracle for the GPIO classification.
+        .allowlist_var("_apio_emulated_pio")
+        .allowlist_var("_apio_emulated_gpios")
         .allowlist_function("ffi_runtime_info_ptr")
         .allowlist_function("ffi_runtime_info_size")
         .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()))

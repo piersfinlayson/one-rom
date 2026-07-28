@@ -109,3 +109,6 @@ flamegraph.svg
 
 # One ROM Lens local serve bundle
 rust/lens/build/
+
+# GPIO control working notes (not shipped)
+.onerom-plan/

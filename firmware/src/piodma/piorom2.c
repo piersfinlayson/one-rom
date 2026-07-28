@@ -111,7 +111,13 @@ static uint8_t retrieve_gpio_init(const onerom_rom_slot_t *slot, gpio_init_t *gp
     switch (slot->alg->alg_cs->alg) {
         case ALG_CS_0: {
             const onerom_alg_cs0_param_t *params = (const onerom_alg_cs0_param_t *)slot->alg->alg_cs->params;
-            gpio_init->byte_pin = params->byte_pin + cs_alg->gpio_base;
+            // byte_pin is GPIO_NONE when the chip has no /BYTE pin.  Adding the
+            // base to that would wrap it round into a real GPIO, which
+            // setup_serving_gpios() would then reconfigure, so only offset a
+            // pin that is actually present.
+            if (params->byte_pin != GPIO_NONE) {
+                gpio_init->byte_pin = params->byte_pin + cs_alg->gpio_base;
+            }
             break;
         }
 
@@ -165,6 +171,74 @@ static uint8_t retrieve_gpio_init(const onerom_rom_slot_t *slot, gpio_init_t *gp
     }
 
     return 0;
+}
+
+// Reports what the ROM serving path uses gpio for on this slot, writing an
+// ora_gpio_use_t to *use_out.  ORA_GPIO_USE_FREE means serving does not use the
+// GPIO - board-level system pins (status LED, neopixel, VBUS, ext flash CS) are
+// not considered here, as they are independent of the active slot.
+//
+// The classification is derived from retrieve_gpio_init(), the same
+// configuration setup_serving_gpios() acts on, so the two cannot drift.
+//
+// What is reported is the consequence of driving the pin, not the role it
+// plays: the data pins are driven by PIO, so taking one over breaks serving
+// until reboot, while everything else serving uses is an SIO input that PIO
+// keeps reading regardless of its function select, so taking one over is
+// reversible.  Naming the role is the host's job.
+ora_result_t pio_get_gpio_use(
+    const onerom_rom_slot_t *slot,
+    uint8_t gpio,
+    uint8_t *use_out
+) {
+    if (slot == NULL || use_out == NULL) {
+        return ORA_RESULT_INVALID_ARG;
+    }
+
+    gpio_init_t gpio_init;
+    if (retrieve_gpio_init(slot, &gpio_init) != 0) {
+        return ORA_RESULT_INTERNAL_ERROR;
+    }
+
+    *use_out = ORA_GPIO_USE_FREE;
+
+    // Data pins - the only serving GPIOs One ROM drives.
+    if (gpio_init.base_data_pin < MAX_GPIOS &&
+        gpio >= gpio_init.base_data_pin &&
+        (gpio - gpio_init.base_data_pin) < gpio_init.num_data_pins) {
+        *use_out = ORA_GPIO_USE_SERVING_DRIVEN;
+        return ORA_RESULT_OK;
+    }
+
+    // CS pins.  The whole span is covered, including the cs_ignore_index gap (a
+    // position serving masks out of the select field) and any excess address
+    // line folded in as a half-select: every position in the span is part of
+    // the select field the CS state machine samples.
+    if (gpio_init.base_cs_pin < MAX_GPIOS &&
+        gpio >= gpio_init.base_cs_pin &&
+        (gpio - gpio_init.base_cs_pin) < gpio_init.num_cs_pins) {
+        *use_out = ORA_GPIO_USE_SERVING_READ;
+        return ORA_RESULT_OK;
+    }
+
+    // The byte pin.  It sits outside the CS span, so it has to be located
+    // specifically - otherwise it would fall through to free, and a 27C400
+    // could be flipped between byte and word mode unforced.
+    if (gpio_init.byte_pin < MAX_GPIOS && gpio == gpio_init.byte_pin) {
+        *use_out = ORA_GPIO_USE_SERVING_READ;
+        return ORA_RESULT_OK;
+    }
+
+    // Address span.  Everything in it is read by the address state machine,
+    // including any X pins folded into the span on Multi and Banked slots.
+    if (gpio_init.base_addr_pin < MAX_GPIOS &&
+        gpio >= gpio_init.base_addr_pin &&
+        (gpio - gpio_init.base_addr_pin) < gpio_init.num_addr_pins) {
+        *use_out = ORA_GPIO_USE_SERVING_READ;
+        return ORA_RESULT_OK;
+    }
+
+    return ORA_RESULT_OK;
 }
 
 // This function first initializes any GPIOs used by this ROM slot, then

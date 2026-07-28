@@ -349,6 +349,10 @@
                                         (*(volatile uint32_t*)(SIO_BASE + 0x038) = (1 << pin)); \
                                     else \
                                         (*(volatile uint32_t*)(SIO_BASE + 0x03C) = (1 << (pin - 32)));
+#define SIO_GPIO_OE_CLR_PIN(pin)    if (pin < 32) \
+                                        (*(volatile uint32_t*)(SIO_BASE + 0x040) = (1 << pin)); \
+                                    else \
+                                        (*(volatile uint32_t*)(SIO_BASE + 0x044) = (1 << (pin - 32)));
 #define SIO_GPIO_OUT_SET_PIN(pin)   if (pin < 32) \
                                         (*(volatile uint32_t*)(SIO_BASE + 0x018) = (1 << pin)); \
                                     else \

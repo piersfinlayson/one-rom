@@ -2,6 +2,7 @@
 //
 // MIT License
 
+pub mod gpio;
 pub mod info;
 pub mod lookup;
 pub mod mapping;

@@ -889,6 +889,122 @@ ora_result_t ora_read_ram_rom_slot(
     return pio_read_ram_rom_slot(CURRENT_SLOT, slot, offset, buf, len);
 }
 
+// Returns what One ROM is using gpio for, as an ora_gpio_use_t.  gpio must
+// already have been range checked.
+//
+// The serving set of the active slot comes from pio_get_gpio_use(), which
+// derives it from the configuration the serving path itself acts on.  Board
+// system pins are checked afterwards, so a pin doing both is reported as what
+// serving is using it for.  Deliberately excluded: the image select pads, whose
+// primary use for GPIO control is a wire soldered to a pad whose jumper has been
+// removed, and SWCLK/SWDIO, which are not GPIOs on the boards that expose them.
+static uint8_t ora_gpio_get_use(uint8_t gpio) {
+    uint8_t use = ORA_GPIO_USE_FREE;
+
+    const onerom_rom_slot_t *slot = CURRENT_SLOT;
+    if (slot != NULL) {
+        if (pio_get_gpio_use(slot, gpio, &use) != ORA_RESULT_OK) {
+            use = ORA_GPIO_USE_FREE;
+        }
+        if (use != ORA_GPIO_USE_FREE) {
+            return use;
+        }
+    }
+
+    // System pins.  Each is GPIO_NONE when the board does not have it, and gpio
+    // is known to be less than MAX_GPIOS, so a direct comparison cannot match a
+    // missing pin.
+    if (gpio == HW->gpio_status ||
+        gpio == HW->gpio_neopixel ||
+        gpio == HW->gpio_vbus ||
+        gpio == HW->gpio_ext_flash_cs) {
+        return ORA_GPIO_USE_SYSTEM;
+    }
+
+    return ORA_GPIO_USE_FREE;
+}
+
+ora_result_t ora_gpio_set(uint8_t gpio, uint8_t state, uint32_t flags) {
+    if (gpio >= MAX_GPIOS) {
+        return ORA_RESULT_INVALID_ARG;
+    }
+    if (state != ORA_GPIO_STATE_LOW &&
+        state != ORA_GPIO_STATE_HIGH &&
+        state != ORA_GPIO_STATE_INPUT) {
+        return ORA_RESULT_INVALID_ARG;
+    }
+
+    if (!(flags & ORA_GPIO_FLAG_FORCE) &&
+        (ora_gpio_get_use(gpio) != ORA_GPIO_USE_FREE)) {
+        return ORA_RESULT_GPIO_IN_USE;
+    }
+
+#if !defined(TEST_BUILD)
+    // Only the function select, the output enables and the pad's output-disable
+    // bit are touched.  Pulls, drive strength, slew and the input override are
+    // left as they are, so on an ORA_GPIO_USE_SERVING_READ pin - all of which
+    // serving leaves as SIO inputs - releasing back to ORA_GPIO_STATE_INPUT
+    // restores exactly the configuration serving set up, including any polarity
+    // inversion the select lines rely on.
+    if (state == ORA_GPIO_STATE_INPUT) {
+        // Disable the pad's output driver first: that stops the pin driving
+        // whatever peripheral currently owns it.
+        GPIO_PAD(gpio) |= (PAD_OUTPUT_DISABLE | PAD_INPUT);
+        SIO_GPIO_OE_CLR_PIN(gpio);
+        GPIO_CTRL(gpio) = (GPIO_CTRL(gpio) & ~(uint32_t)GPIO_CTRL_FUNC_MASK) |
+                          GPIO_CTRL_FUNC_SIO;
+    } else {
+        // Set the output value before enabling the driver, so the pin never
+        // momentarily drives the wrong level.
+        if (state == ORA_GPIO_STATE_HIGH) {
+            SIO_GPIO_OUT_SET_PIN(gpio);
+        } else {
+            SIO_GPIO_OUT_CLR_PIN(gpio);
+        }
+        GPIO_CTRL(gpio) = (GPIO_CTRL(gpio) & ~(uint32_t)GPIO_CTRL_FUNC_MASK) |
+                          GPIO_CTRL_FUNC_SIO;
+        GPIO_PAD(gpio) &= ~(PAD_OUTPUT_DISABLE | (1u << PAD_ISO_BIT));
+        GPIO_PAD(gpio) |= PAD_INPUT;
+        SIO_GPIO_OE_SET_PIN(gpio);
+    }
+#else // TEST_BUILD
+    LOG("ORA gpio set %d state %d flags 0x%08x", gpio, state, flags);
+#endif // !TEST_BUILD
+
+    return ORA_RESULT_OK;
+}
+
+ora_result_t ora_gpio_query(uint8_t gpio, ora_gpio_info_t *info_out) {
+    if (info_out == NULL || gpio >= MAX_GPIOS) {
+        return ORA_RESULT_INVALID_ARG;
+    }
+
+    // The caller tells us how large its own copy of the structure is; we write
+    // no more than that, and report back how much we wrote.
+    uint8_t caller_size = info_out->size;
+    if (caller_size == 0) {
+        return ORA_RESULT_INVALID_SIZE;
+    }
+    if (caller_size > sizeof(ora_gpio_info_t)) {
+        caller_size = sizeof(ora_gpio_info_t);
+    }
+
+    ora_gpio_info_t info;
+    info.size = caller_size;
+    info.use = ora_gpio_get_use(gpio);
+#if !defined(TEST_BUILD)
+    info.level = GPIO_READ(gpio) ? 1 : 0;
+    info.is_output = GPIO_IS_OUTPUT(gpio) ? 1 : 0;
+#else // TEST_BUILD
+    info.level = 0;
+    info.is_output = 0;
+#endif // !TEST_BUILD
+
+    memcpy(info_out, &info, caller_size);
+
+    return ORA_RESULT_OK;
+}
+
 void *ora_fn_lookup(api_id_t id) {
     switch (id) {
         case ORA_ID_REBOOT_BOOTSEL:
@@ -982,6 +1098,11 @@ void *ora_fn_lookup(api_id_t id) {
             return ora_get_metadata_str;
         case ORA_ID_GET_METADATA_UINT:
             return ora_get_metadata_uint;
+
+        case ORA_ID_GPIO_SET:
+            return ora_gpio_set;
+        case ORA_ID_GPIO_QUERY:
+            return ora_gpio_query;
 
         // Deprecated functions
         case ORA_ID_GET_FIRMWARE_INFO:
