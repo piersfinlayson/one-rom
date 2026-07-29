@@ -86,7 +86,7 @@ async fn sub_main() -> Result<(), Error> {
             ControlCommands::Reboot(args) => control::cmd_reboot(&options, args).await,
             ControlCommands::Reset(args) => control::cmd_reset(&options, args).await,
             ControlCommands::Select(args) => control::cmd_select(&options, args).await,
-            ControlCommands::Gpio(args) => control::cmd_gpio(&options, args).await,
+            ControlCommands::Pin(args) => control::cmd_pin(&options, args).await,
             ControlCommands::Poke(args) => match &args.command {
                 ControlPokeCommands::Memory(args) => control::cmd_poke_memory(&options, args).await,
                 ControlPokeCommands::Live(args) => control::cmd_poke_live(&options, args).await,
@@ -106,10 +106,10 @@ async fn sub_main() -> Result<(), Error> {
         Commands::Poke(args) => control::cmd_poke_live(&options, args).await,
         Commands::Reboot(args) => control::cmd_reboot(&options, args).await,
         Commands::Chips(args) => firmware::cmd_chips(&options, args).await,
-        Commands::Boards(args) => match &args.command {
-            None => board::cmd_boards(&options, args).await,
-            Some(BoardCommands::Header(args)) => board::cmd_header(&options, args).await,
-            Some(BoardCommands::Socket(args)) => board::cmd_socket(&options, args).await,
+        Commands::Board(args) => match &args.command {
+            BoardCommands::List(args) => board::cmd_list(&options, args).await,
+            BoardCommands::Header(args) => board::cmd_header(&options, args).await,
+            BoardCommands::Socket(args) => board::cmd_socket(&options, args).await,
         },
     }
 }

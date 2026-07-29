@@ -11,7 +11,7 @@ option.
 > This manual documents the `onerom` CLI as of release v0.3.0. Board,
 > chip and plugin lists shown in examples are illustrative — the set your build
 > supports may differ. Run `onerom --version` to check your version, and
-> `onerom boards` / `onerom chips` for the definitive lists your build knows
+> `onerom board list` / `onerom chips` for the definitive lists your build knows
 > about. Commands marked **(not yet supported)** are present in the CLI surface
 > but not yet functional.
 
@@ -246,7 +246,7 @@ onerom control reset --pin gpio9
 The pad is typically `X1`/`X2`, or an image-select pad whose jumper you have
 removed. The device times the pulse, so an interrupted CLI cannot leave the host
 held in reset. See [`control reset`](#control-reset), and
-[`control gpio`](#control-gpio) for driving a GPIO to an arbitrary state.
+[`control pin`](#control-pin) for driving a GPIO to an arbitrary state.
 
 ### See what One ROM is doing with its GPIOs
 
@@ -254,9 +254,11 @@ held in reset. See [`control reset`](#control-reset), and
 onerom inspect gpio
 ```
 
-One row per MCU GPIO: the header pad behind it, its function under the ROM being
-served, direction, level, 5V tolerance, and what One ROM itself is using it for.
-Useful before driving a pin — see [`inspect gpio`](#inspect-gpio).
+One row per MCU GPIO: everything that GPIO is — its ROM socket signal under the
+image being served, the board peripheral it drives, the header pad it surfaces
+on — plus direction, level, 5V tolerance, and what One ROM itself is using it
+for. GPIOs connected to nothing are omitted unless you pass `--all`. Useful
+before driving a pin — see [`inspect gpio`](#inspect-gpio).
 
 ### Erase / recover a device
 
@@ -349,7 +351,7 @@ and rely on `--serial` (global) to pick a specific device.
 | [`firmware`](#firmware) | Build, inspect and manage firmware binaries | Varies |
 | [`plugin`](#plugin) | List available plugins | No |
 | [`chips`](#chips) | List supported chip types and their flash usage | No |
-| [`boards`](#boards) | List board types, or draw a board's pin header / socket | No |
+| [`board`](#board) | List board types, or draw a board's pin header / socket | No |
 | [`peek`](#peek-top-level-alias) | Alias for `inspect peek live` | Yes |
 | [`poke`](#poke-top-level-alias) | Alias for `control poke live` | Yes |
 | [`reboot`](#reboot-top-level-alias) | Alias for `control reboot` | Yes |
@@ -557,14 +559,24 @@ bootloader where it does not exist. See [Device states](#device-states).
 
 ```
 onerom inspect gpio
+onerom inspect gpio --all
 onerom inspect gpio --pin gpio9
 ```
 
 | Option | Description |
 |---|---|
-| `--pin <PIN>` | Show only this GPIO, written `gpio<N>` (see [Pin values](#pin-values)). |
+| `--pin <PIN>` | Show only this GPIO, written `gpio<N>` (see [Pin values](#pin-values)). Conflicts with `--all`. |
+| `--all` | Also list GPIOs with no function at all. By default only GPIOs connected to something are shown. |
 
-The number of GPIOs listed is the device's own — 30 on an RP2350A, 48 on an
+By default the table lists only the GPIOs connected to **something** — a ROM
+socket signal, a board peripheral or a header pad. On a 48-GPIO board a quarter
+of the GPIOs are connected to nothing, and listing them buries the rows worth
+reading; a line beneath the table says how many were omitted. `--all` lists
+every GPIO. Note the filter is on what the GPIO *is*, not on what the device
+reports using it for: the `X1`/`X2` and image-select pads report `free` and are
+exactly what you read this table to find, so they always appear.
+
+The number of GPIOs the device has is its own — 30 on an RP2350A, 48 on an
 RP2350B.
 
 Columns:
@@ -572,25 +584,44 @@ Columns:
 | Column | Meaning |
 |---|---|
 | `GPIO` | MCU GPIO number. |
-| `Pad` | The header pad behind this GPIO, e.g. `SEL_A`, `X1`, `SEL_D/SWDIO` (a pad carrying two roles shows both). `-` if the GPIO is on no pad. |
-| `Function` | What this GPIO is under the ROM currently being served: `A5`, `D3`, `CS1`, `BYTE`, a board system function (`status LED`, `NeoPixel`, `USB VBUS`, `ext flash CS`), or `-`. |
+| `Function` | Everything this GPIO is, comma-separated in a fixed order: its ROM socket signal under the image being served (`A5`, `D3`, `CS1`, `BYTE/VPP`), then the board peripheral (`Status LED`, `RGB LED`, `USB VBUS`, `ext flash CS`), then the header pad (`X1`, `X2`, `SEL_A`). `-` if the GPIO is connected to nothing. |
 | `Dir` | `out` if the pin's output driver is enabled, `in` if not. |
 | `Level` | The level currently on the pad, `0` or `1`. |
-| `5V` | `5V` if the GPIO is 5V-tolerant, `3V3` if it is an RP2350 ADC pin and therefore 3.3V-only, `?` if the board is not characterised. |
+| `Max V` | `5V` if the GPIO is 5V-tolerant, `3V3` if it is an RP2350 ADC pin and therefore 3.3V-only, `?` if the board is not characterised. |
 | `One ROM use` | What One ROM itself is using the GPIO for: `free`, `serving (read)`, `serving (driven)` or `system`. |
 
-Only `Dir`, `Level` and `One ROM use` come from the device. Everything else is
+`Function` lists everything that applies rather than stopping at the first
+match, so a GPIO that is genuinely two things says so: on a `fire-24-f` the
+Status LED and the RGB LED are the same GPIO, and it reads `Status LED,
+RGB LED`. Names that would repeat are shown once — on a 32-pin board a high
+address line is both the socket's `A17` and the `A17` header pad, which is one
+net.
+
+`Function` names only what a **GPIO** is. A header pad may carry more than the
+GPIO behind it — on a Fire 24/28 board the `SEL_C` and `SEL_D` pads sit on the
+SWCLK and SWDIO nets — but SWCLK and SWDIO are dedicated RP2350 pins with no
+GPIO of their own, so they do not appear here. Run
+[`inspect header`](#inspect-header) for the pad-by-pad view, which shows every
+role each pad carries.
+
+Only `Dir`, `Level` and `One ROM use` come from the device. `Function` is
 derived by the CLI from the board's pin map and the chip type being served: the
 device deliberately reports what taking a pin over would *cost*, never what the
 pin *is*. `serving (read)` pins (address, chip-select, `/BYTE`) can be driven and
 released; `serving (driven)` pins (the data pins) cannot be given back without a
-reboot — see [`control gpio`](#control-gpio).
+reboot — see [`control pin`](#control-pin).
+
+With `--verbose` (`-v`) the table is followed by a legend restating where each
+column comes from, what `Dir` means and what the `3V3`/`5V` tags mean. Nothing
+is lost without it: the cost of taking a serving pin over is stated at the point
+of action by `control pin` itself.
 
 A board revision or ROM type this build does not recognise costs the derived
-names, not the listing: those columns fall back to `-` (or, for a socket pin
-whose chip type is unknown, `socket pin <N>`). On a board whose physical header
-layout is not yet characterised, `Pad` names come from the board's pin
-assignments alone and the table says so beneath itself.
+names, not the listing: `Function` falls back to `-` (or, for a socket pin whose
+chip type is unknown, `socket pin <N>`), and with no recognised board at all
+nothing is filtered out, since nothing can be ruled out. On a board whose
+physical header layout is not yet characterised, pad names come from the board's
+pin assignments alone and `--verbose` says so beneath the table.
 
 <!-- TODO: paste a verbatim `onerom inspect gpio` run here once the commands have
      been exercised on real hardware. Do not hand-write one. -->
@@ -599,7 +630,7 @@ assignments alone and the table says so beneath itself.
 
 Draw the connected device's pin (jumper / programming) header as ASCII. The
 board is inferred from the device. This is the device-oriented form of
-[`boards header`](#boards-header); see there for what the diagram shows. No
+[`board header`](#board-header); see there for what the diagram shows. No
 options.
 
 ```
@@ -610,7 +641,7 @@ onerom inspect header
 
 Draw the connected device's ROM socket pinout as ASCII. The board is inferred
 from the device. This is the device-oriented form of
-[`boards socket`](#boards-socket).
+[`board socket`](#board-socket).
 
 ```
 onerom inspect socket [--chip-type <chip>] [--gpio]
@@ -639,7 +670,7 @@ onerom control <COMMAND>
 | [`poke`](#control-poke) | Write to SRAM or the live ROM image | Yes |
 | [`reset`](#control-reset) | Pulse a GPIO low to reset the host system | Yes (running) |
 | [`select`](#control-select) | Select the active ROM slot **(not yet supported)** | Yes |
-| [`gpio`](#control-gpio) | Drive a GPIO high, low or high-impedance | Yes (running) |
+| [`pin`](#control-pin) | Drive a pin high, low or high-impedance | Yes (running) |
 | [`erase`](#control-erase) | Erase flash memory | Yes |
 
 ### control reboot
@@ -738,7 +769,7 @@ pad or an image-select pad whose jumper has been removed;
 
 The line is only ever **driven low and then released to high impedance**. A reset
 net has its own pull-up and may have other drivers on it, so there is
-deliberately no way to drive it high. Use [`control gpio`](#control-gpio) if you
+deliberately no way to drive it high. Use [`control pin`](#control-pin) if you
 need arbitrary states.
 
 The **device** times the pulse, not the CLI: if this command is interrupted, the
@@ -760,7 +791,7 @@ onerom control reset --pin gpio9 --hold 500
 
 If One ROM is itself using the GPIO the command is refused, naming what it is
 doing; `control reset` has no `--force` of its own, and the message points at
-`control gpio --force` for the case where that is genuinely what you want. If the
+`control pin --force` for the case where that is genuinely what you want. If the
 GPIO is not 5V-tolerant the command warns and asks for confirmation, which
 `--yes` answers.
 
@@ -776,10 +807,14 @@ Switch the device to serving the specified slot immediately (not persistent).
 |---|---|
 | `--slot, -l <INDEX>` | Slot index to activate. Required. |
 
-### control gpio
+### control pin
 
-Drive a One ROM GPIO high, low or high-impedance, optionally for a bounded
+Drive a One ROM pin high, low or high-impedance, optionally for a bounded
 period.
+
+`--pin` names an MCU GPIO today (see [Pin values](#pin-values)); the command is
+named for what is being addressed rather than for that one spelling, since
+header pad names are planned.
 
 Without `--hold` the state is latched until something else changes it. With
 `--hold` the **device** holds the state for that many milliseconds and then
@@ -792,10 +827,10 @@ The device must be **running** with the USB system plugin — see
 GPIO is and what One ROM is using it for.
 
 ```
-onerom control gpio --pin gpio9 --state high
-onerom control gpio --pin gpio9 --state low --hold 250
-onerom control gpio --pin gpio9 --state low --hold 250 --then high
-onerom control gpio --pin gpio9 --state z
+onerom control pin --pin gpio9 --state high
+onerom control pin --pin gpio9 --state low --hold 250
+onerom control pin --pin gpio9 --state low --hold 250 --then high
+onerom control pin --pin gpio9 --state z
 ```
 
 | Option | Description |
@@ -822,7 +857,7 @@ a measurement — the command warns and asks for confirmation, which `--yes` or
 whether a jumper is fitted and what voltage the far end sits at are yours to
 know.
 
-<!-- TODO: paste a verbatim `onerom control gpio` run here once the commands have
+<!-- TODO: paste a verbatim `onerom control pin` run here once the commands have
      been exercised on real hardware. Do not hand-write one. -->
 
 ### control erase
@@ -1142,7 +1177,7 @@ Every fit other than `native` is a cross-size fit, and in all of them One ROM's
 power pins may not line up with the socket's — **power must be rerouted to One
 ROM's own VCC/5V pin**. `larger socket (no fly-leads)` means no *signal* wiring
 is needed; it does not mean the chip simply drops in. Use
-[`boards socket`](#boards-socket) with `--chip-type` and `--gpio` to see exactly
+[`board socket`](#board-socket) with `--chip-type` and `--gpio` to see exactly
 where One ROM's VCC lands.
 
 The sizes are for a chip served alone in its slot. A banked or multi-ROM set
@@ -1216,17 +1251,31 @@ omitted).
 
 ---
 
-## boards
+## board
 
 List supported One ROM board types, or draw a board's physical pin layouts as
 ASCII.
 
 ```
-onerom boards
+onerom board <COMMAND>
 ```
 
-With no subcommand, lists the supported board types. Example output
-(illustrative — your build may differ):
+| Subcommand | Purpose | Device required |
+|---|---|---|
+| [`list`](#board-list) | List the supported board types | No |
+| [`header`](#board-header) | Draw a board's pin (jumper) header | No |
+| [`socket`](#board-socket) | Draw a board's ROM socket pinout | No |
+
+### board list
+
+Lists the supported board types. This replaces the bare `onerom boards` of
+earlier releases, which no longer exists.
+
+```
+onerom board list
+```
+
+Example output (illustrative — your build may differ):
 
 ```
 Supported One ROM board types:
@@ -1238,7 +1287,7 @@ Supported One ROM board types:
 
 Device required: no.
 
-### boards header
+### board header
 
 Draw a board's pin (jumper / programming) header — the 2xN header along the
 board's top edge — as ASCII, pad by pad. Each image-select and X pad is
@@ -1248,7 +1297,7 @@ not be driven above 3.3V). See [Voltage Levels](VOLTAGE-LEVELS.md) for the ADC
 caveat.
 
 ```
-onerom boards header [<board>]
+onerom board header [<board>]
 ```
 
 `<board>` is a board type (e.g. `fire-24-f`); if omitted, it is inferred from a
@@ -1256,18 +1305,18 @@ connected One ROM. Boards not yet characterised print a short notice instead of
 a diagram.
 
 ```
-onerom boards header fire-24-f
+onerom board header fire-24-f
 ```
 
 Device required: no (a device is used only to infer `<board>` when it is
 omitted).
 
-### boards socket
+### board socket
 
 Draw a board's ROM socket pinout as a DIP diagram.
 
 ```
-onerom boards socket [<board>] [--chip-type <chip>] [--gpio]
+onerom board socket [<board>] [--chip-type <chip>] [--gpio]
 ```
 
 Without `--chip-type`, each socket pin is labelled with the GPIO(s) behind it (the
@@ -1301,9 +1350,9 @@ chip type the board can emulate (native, overhang or fly-lead; see
 [`onerom chips`](#chips) and [Chip Compatibility](COMPATIBILITY.md)).
 
 ```
-onerom boards socket fire-24-f
-onerom boards socket fire-24-f --chip-type 2364
-onerom boards socket fire-24-f --chip-type 2364 --gpio
+onerom board socket fire-24-f
+onerom board socket fire-24-f --chip-type 2364
+onerom board socket fire-24-f --chip-type 2364 --gpio
 ```
 
 Device required: no (a device is used only to infer `<board>` when it is
@@ -1398,7 +1447,7 @@ plugin. The system plugin is placed in slot 0, the user plugin in slot 1.
 | `--plugin file=https://example.com/plugin.bin` | Remote file. |
 ## Pin values
 
-Used by `--pin` in [`control gpio`](#control-gpio), [`control
+Used by `--pin` in [`control pin`](#control-pin), [`control
 reset`](#control-reset) and [`inspect gpio`](#inspect-gpio).
 
 `--pin` names one **MCU GPIO**, written `gpio<N>` — for example `gpio23`. The

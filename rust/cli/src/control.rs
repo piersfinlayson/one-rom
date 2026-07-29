@@ -3,7 +3,7 @@
 // MIT License
 
 use crate::args::control::GpioState;
-use crate::board_view::{gpio_header_role, gpio_rom_function, gpio_system_function};
+use crate::board_view::{gpio_header_role, gpio_rom_function, gpio_system_functions};
 use crate::{
     args,
     utils::{
@@ -106,7 +106,7 @@ pub async fn cmd_reboot(
 }
 
 /// Name a GPIO as richly as the local metadata allows, e.g.
-/// `GPIO16 (A7)`, `GPIO9 (X1 pad)`, `GPIO29 (status LED)`.
+/// `GPIO16 (A7)`, `GPIO9 (X1 pad)`, `GPIO29 (status LED, NeoPixel)`.
 ///
 /// Every name here comes from the board and the chip being served. The device
 /// reports only a coarse use category and deliberately never a role name, so if
@@ -119,9 +119,14 @@ fn describe_gpio(board: Option<&Board>, chip: Option<ChipType>, gpio: u8) -> Str
         {
             notes.push(function);
         }
-        if let Some(system) = gpio_system_function(board, gpio) {
-            notes.push(system.to_string());
-        }
+        // A GPIO can carry two peripherals - fire-24-f drives its status LED
+        // and its NeoPixel from GPIO 29 - and a refusal that named only one
+        // would understate what driving it disturbs.
+        notes.extend(
+            gpio_system_functions(board, gpio)
+                .into_iter()
+                .map(String::from),
+        );
         if let Some(role) = gpio_header_role(board, gpio) {
             notes.push(format!("{role} pad"));
         }
@@ -185,7 +190,7 @@ fn confirm_gpio(options: &Options, force: bool) -> Result<bool, Error> {
 
 /// Drive one GPIO, having first asked the device what it is using it for.
 ///
-/// Shared by `control gpio` and `control reset` - the two differ in the request
+/// Shared by `control pin` and `control reset` - the two differ in the request
 /// they build and what they print afterwards, not in what happens here.
 ///
 /// Returns `false` if the user declined a warning, in which case nothing was
@@ -282,7 +287,7 @@ pub async fn cmd_reset(
         return Err(Error::InvalidArgument(
             "--hold".to_string(),
             "A reset pulse must have a duration.\n  \
-             Use 'onerom control gpio --pin <PIN> --state low' to latch a pin low indefinitely."
+             Use 'onerom control pin --pin <PIN> --state low' to latch a pin low indefinitely."
                 .to_string(),
         ));
     }
@@ -296,7 +301,7 @@ pub async fn cmd_reset(
         GpioState::Z,
         args.hold,
         false,
-        "Use 'onerom control gpio --pin <PIN> --state low --hold <MS> --force' to drive it anyway.",
+        "Use 'onerom control pin --pin <PIN> --state low --hold <MS> --force' to drive it anyway.",
     )
     .await?;
 
@@ -319,10 +324,7 @@ pub async fn cmd_select(
     Err(Error::Unimplemented("control select".to_string()))
 }
 
-pub async fn cmd_gpio(
-    options: &Options,
-    args: &args::control::ControlGpioArgs,
-) -> Result<(), Error> {
+pub async fn cmd_pin(options: &Options, args: &args::control::ControlPinArgs) -> Result<(), Error> {
     check_device_running(options, args)?;
 
     // No --hold means latch indefinitely, and --then has nothing to revert to;

@@ -6,7 +6,7 @@ use crate::args::inspect::{
     InspectGpioArgs, InspectHeaderArgs, InspectImageArgs, InspectInfoArgs, InspectPeekLiveArgs,
     InspectPeekMemoryArgs, InspectSlotsArgs, InspectSocketArgs, InspectTelemetryArgs,
 };
-use crate::board_view::{gpio_header_role, gpio_rom_function, gpio_system_function};
+use crate::board_view::{gpio_header_role, gpio_rom_function, gpio_system_functions};
 use crate::utils::{
     active_chip_type, check_device, check_device_running, check_live_read_write, print_hex_dump,
     resolve_board,
@@ -410,29 +410,68 @@ fn gpio_use_label(entry: &GpioEntry) -> String {
     }
 }
 
-/// The `Function` column: what this GPIO is, in ROM or board terms.
+/// What the table shows when a column has nothing to say.
+const GPIO_NONE: &str = "-";
+
+/// The `Function` column: everything this GPIO is, in ROM or board terms.
 ///
-/// A socket pin is named by the ROM currently being served (`A5`, `D3`, `CS1`,
-/// `BYTE`); a board system pin by what the board uses it for. Falls back to the
-/// bare socket pin number when the served chip type could not be resolved, so a
-/// socket pin is never shown as unused.
+/// One column rather than two, because splitting the ROM socket signal from the
+/// header pad splits on *provenance* rather than on anything a reader needs: on
+/// a 32-pin board the `A17` header pad and the socket's `A17` line are the same
+/// net, and everywhere else exactly one of the two is populated. An X pad or an
+/// image-select pad is as much a function of the pin as `A11` is.
+///
+/// Every name that applies is listed, in a fixed order - the ROM socket signal
+/// for the chip being served, then the board peripheral, then the header pad -
+/// rather than first-match-wins, deduplicated so the shared `A17` net is not
+/// named twice. A GPIO can genuinely be two things: `fire-24-f` drives its
+/// status LED and its NeoPixel from GPIO 29, and both belong here.
+///
+/// Falls back to the bare socket pin number when the served chip type could not
+/// be resolved, so a socket pin is never shown as unused.
 fn gpio_function_label(board: Option<&Board>, chip: Option<ChipType>, gpio: u8) -> String {
     let Some(board) = board else {
-        return "-".to_string();
+        return GPIO_NONE.to_string();
     };
 
-    if let Some(chip) = chip
-        && let Some(function) = gpio_rom_function(board, chip, gpio)
-    {
-        return function;
+    // Deduplication is by name, not by source: a 32-pin board's high address
+    // lines are broken out on header pads, so the socket signal and the pad are
+    // one net and must not be listed twice.
+    let mut names: Vec<String> = Vec::new();
+    let mut add = |name: String| {
+        if !names.contains(&name) {
+            names.push(name);
+        }
+    };
+
+    // 1. The ROM socket signal under the chip being served. With no resolvable
+    //    chip type the socket position is still worth stating.
+    match chip.and_then(|chip| gpio_rom_function(board, chip, gpio)) {
+        Some(function) => add(function),
+        None => {
+            if let Some(socket_pin) = board.socket_pin_for_gpio(gpio) {
+                add(format!("socket pin {socket_pin}"));
+            }
+        }
     }
-    if let Some(system) = gpio_system_function(board, gpio) {
-        return system.to_string();
+
+    // 2. The board peripheral(s).
+    for system in gpio_system_functions(board, gpio) {
+        add(system.to_string());
     }
-    if let Some(socket_pin) = board.socket_pin_for_gpio(gpio) {
-        return format!("socket pin {socket_pin}");
+
+    // 3. The header pad. Named last because it is where the signal surfaces
+    //    rather than what it carries - but named, because "which GPIO is X1" is
+    //    the main thing this table is read to answer before wiring a reset line.
+    if let Some(role) = gpio_header_role(board, gpio) {
+        add(role);
     }
-    "-".to_string()
+
+    if names.is_empty() {
+        GPIO_NONE.to_string()
+    } else {
+        names.join(", ")
+    }
 }
 
 /// The `5V` column, from static board metadata. Ice (STM32) boards are not
@@ -446,15 +485,11 @@ fn gpio_tolerance_label(board: Option<&Board>, gpio: u8) -> String {
 }
 
 /// Column headings for the `inspect gpio` table.
-const GPIO_HEADINGS: [&str; 7] = [
-    "GPIO",
-    "Pad",
-    "Function",
-    "Dir",
-    "Level",
-    "5V",
-    "One ROM use",
-];
+const GPIO_HEADINGS: [&str; 6] = ["GPIO", "Function", "Dir", "Level", "Max V", "Current use"];
+
+/// The `Function` column's index in a row, which the "is this GPIO connected to
+/// anything?" filter reads.
+const GPIO_FUNCTION_COLUMN: usize = 1;
 
 /// Render the `inspect gpio` table for `entries`, which describe the run of
 /// GPIOs starting at `first_gpio`.
@@ -463,23 +498,28 @@ const GPIO_HEADINGS: [&str; 7] = [
 /// comes from `entries`, and everything about their names from `board` and
 /// `chip`. Both are optional, because a board revision or ROM type this build
 /// does not recognise must cost names rather than the listing.
+///
+/// `show_unconnected` includes the GPIOs with no function at all - thirteen of a
+/// fire-28-c's forty-eight, which bury the rows a reader came for. `verbose`
+/// adds the legend explaining where each column comes from.
 fn render_gpio_table(
     board: Option<&Board>,
     chip: Option<ChipType>,
     first_gpio: u8,
     entries: &[GpioEntry],
+    show_unconnected: bool,
+    verbose: bool,
 ) -> String {
     // Rows are built first so every column can be sized to its own content.
-    let rows: Vec<[String; 7]> = entries
+    // Filtering happens here rather than at the caller so the columns are sized
+    // to what is actually shown.
+    let all_rows: Vec<[String; GPIO_HEADINGS.len()]> = entries
         .iter()
         .enumerate()
         .map(|(i, entry)| {
             let gpio = first_gpio.saturating_add(i as u8);
             [
                 gpio.to_string(),
-                board
-                    .and_then(|b| gpio_header_role(b, gpio))
-                    .unwrap_or_else(|| "-".to_string()),
                 gpio_function_label(board, chip, gpio),
                 if entry.is_output != 0 { "out" } else { "in" }.to_string(),
                 entry.level.to_string(),
@@ -488,6 +528,19 @@ fn render_gpio_table(
             ]
         })
         .collect();
+
+    // "Connected to something" is a question about the board, not about what
+    // the device reports: X1, X2 and the image-select pads are `free`, and they
+    // are precisely the pins someone reads this table to find. Without a board
+    // nothing can be ruled out, so nothing is.
+    let connected = |row: &[String; GPIO_HEADINGS.len()]| {
+        row[GPIO_FUNCTION_COLUMN] != GPIO_NONE || board.is_none()
+    };
+    let rows: Vec<&[String; GPIO_HEADINGS.len()]> = all_rows
+        .iter()
+        .filter(|row| show_unconnected || connected(row))
+        .collect();
+    let hidden = all_rows.len() - rows.len();
 
     let widths: Vec<usize> = (0..GPIO_HEADINGS.len())
         .map(|c| {
@@ -516,33 +569,85 @@ fn render_gpio_table(
         &widths.iter().map(|w| "-".repeat(*w)).collect::<Vec<_>>(),
     ));
     for row in &rows {
-        out.push_str(&line(row));
+        out.push_str(&line(*row));
     }
 
-    // Legend. The first line is the one that matters: the device says only what
-    // it is doing with a pin, never what the pin is, so a reader must know which
-    // columns are its word and which are this CLI's derivation.
-    out.push('\n');
-    out.push_str("  Pad and Function are derived by this CLI from the board and the ROM being\n");
-    out.push_str("  served; One ROM use, Dir and Level are what the device reports.\n");
-    out.push_str("  Dir is the pin's output driver - 'out' if enabled, 'in' if not.\n");
-    out.push_str(
-        "  serving (read) pins can be driven and released; serving (driven) pins cannot\n",
-    );
-    out.push_str("  be given back without a reboot.  See 'onerom control gpio'.\n");
-    if board.is_some_and(|b| b.rp_variant().is_some()) {
-        out.push_str("  3V3 = 3.3V-only (ADC pin, keep ≤3.3V)    5V = 5V-tolerant\n");
-    } else {
-        out.push_str("  5V tolerance is not characterised pin by pin on this board.\n");
+    // Rows dropped by the filter are always accounted for: a listing that
+    // silently omits GPIOs is worse than a noisy one.
+    if hidden > 0 {
+        out.push('\n');
+        out.push_str(&format!(
+            "  {hidden} GPIO{} with no function {} hidden - use --all to show {}.\n",
+            if hidden == 1 { "" } else { "s" },
+            if hidden == 1 { "is" } else { "are" },
+            if hidden == 1 { "it" } else { "them" },
+        ));
     }
-    if board.is_some_and(|b| b.jumper_header().is_none()) {
+
+    // The legend explains where each column comes from, which is worth saying
+    // once and tiresome on every run - so it is behind --verbose. Nothing safety
+    // -critical lives here: the cost of taking a serving pin over is stated at
+    // the point of action, by 'control pin' itself.
+    if verbose {
+        out.push('\n');
         out.push_str(
-            "  This board's header layout is not characterised, so Pad names come from its\n",
+            "  Function is derived by this CLI from the board and the ROM being served,\n",
         );
-        out.push_str("  pin assignments alone - run 'onerom inspect header' for what is known.\n");
+        out.push_str(
+            "  and lists the socket signal, the board peripheral and the header pad, in\n",
+        );
+        out.push_str("  that order; Current use, Dir and Level are what the device reports.\n");
+        out.push('\n');
+        out.push_str("  Dir is the pin's output driver - 'out' if enabled, 'in' if not.\n");
+        out.push('\n');
+        out.push_str(
+            "  Current use is what One ROM is doing with the pin now, which can change:\n",
+        );
+        out.push_str(
+            "  the image select pins are read at start of day and released, so they show\n",
+        );
+        out.push_str("  free while serving.\n");
+        out.push('\n');
+        out.push_str(
+            "  serving (read) pins can be driven and released; serving (driven) pins cannot\n",
+        );
+        out.push_str("  be given back without a reboot.  See 'onerom control pin'.\n");
+        out.push('\n');
+        out.push_str(
+            "  Function names only what a GPIO is; a pad may also carry SWCLK or SWDIO,\n",
+        );
+        out.push_str("  which are dedicated pins - run 'onerom inspect header' for the pads.\n");
+        out.push('\n');
+        if board.is_some_and(|b| b.rp_variant().is_some()) {
+            out.push_str("  3V3 = 3.3V-only (ADC pin, keep ≤3.3V)    5V = 5V-tolerant\n");
+        } else {
+            out.push_str("  5V tolerance is not characterised pin by pin on this board.\n");
+        }
+        if board.is_some_and(|b| b.jumper_header().is_none()) {
+            out.push_str(
+                "  This board's header layout is not characterised, so pad names come from its\n",
+            );
+            out.push_str(
+                "  pin assignments alone - run 'onerom inspect header' for what is known.\n",
+            );
+        }
     }
 
     out
+}
+
+/// The RP2350 variant a device's GPIO count implies.
+///
+/// The device reports its GPIO count, not its variant, but the two are one to
+/// one: the RP235xA (QFN-60) has 30 and the RP235xB (QFN-80) has 48. Anything
+/// else is a device this build does not understand, and is better left unnamed
+/// than guessed at.
+fn rp_variant_from_gpio_count(num_gpios: u8) -> Option<&'static str> {
+    match num_gpios {
+        30 => Some("RP235xA"),
+        48 => Some("RP235xB"),
+        _ => None,
+    }
 }
 
 pub async fn cmd_gpio(options: &Options, args: &InspectGpioArgs) -> Result<(), Error> {
@@ -569,6 +674,13 @@ pub async fn cmd_gpio(options: &Options, args: &InspectGpioArgs) -> Result<(), E
     if let Some(board) = board.as_ref() {
         title.push_str(&format!("  ·  {}", board.description()));
     }
+    // The silicon variant the device itself reports, not what the board
+    // revision implies: it decides how many GPIOs there are (30 or 48) and
+    // which of them are 3.3V-only, so the table's length and its Max V column
+    // both only make sense once it is stated.
+    if let Some(variant) = rp_variant_from_gpio_count(caps.num_gpios) {
+        title.push_str(&format!("  ·  {variant}"));
+    }
     if let Some(rom_type) = device.get_active_rom_type() {
         title.push_str(&format!("  ·  serving {rom_type}"));
     }
@@ -577,7 +689,16 @@ pub async fn cmd_gpio(options: &Options, args: &InspectGpioArgs) -> Result<(), E
 
     print!(
         "{}",
-        render_gpio_table(board.as_ref(), chip, first_gpio, &entries)
+        render_gpio_table(
+            board.as_ref(),
+            chip,
+            first_gpio,
+            &entries,
+            // --pin already narrows to one GPIO; filtering it out again would
+            // answer a direct question with an empty table.
+            args.all || args.pin.is_some(),
+            options.verbose,
+        )
     );
 
     Ok(())
@@ -613,38 +734,225 @@ mod tests {
             .collect()
     }
 
+    /// The number of GPIO rows in a rendered table. The body ends at the blank
+    /// line before whatever follows it.
+    fn row_count(table: &str) -> usize {
+        table
+            .lines()
+            .skip(2) // headings and rule
+            .take_while(|l| !l.is_empty())
+            .count()
+    }
+
+    /// The `Function` cell for `gpio`, read out of a rendered table rather than
+    /// from the labelling helper, so the assertions are about what a user sees.
+    fn function_cell(table: &str, gpio: u8) -> String {
+        let widths: Vec<usize> = table
+            .lines()
+            .nth(1)
+            .expect("rule row")
+            .split_whitespace()
+            .map(str::len)
+            .collect();
+        let row = table
+            .lines()
+            .skip(2)
+            .take_while(|l| !l.is_empty())
+            .find(|l| l.split_whitespace().next() == Some(&gpio.to_string()))
+            .unwrap_or_else(|| panic!("no row for GPIO{gpio}\n{table}"));
+        // Two leading spaces, then the GPIO column and its two-space gutter.
+        let start = 2 + widths[0] + 2;
+        row[start..]
+            .chars()
+            .take(widths[GPIO_FUNCTION_COLUMN])
+            .collect::<String>()
+            .trim_end()
+            .to_string()
+    }
+
     #[test]
-    fn table_names_pads_and_functions_from_local_metadata() {
+    fn table_names_every_function_of_a_gpio_in_one_column() {
         let board = Board::try_from_str("fire-24-f").unwrap();
         let table = render_gpio_table(
             Some(&board),
             Some(ChipType::Chip2364),
             0,
             &entries(30, GpioUse::ServingRead as u8),
+            true,
+            true,
         );
 
-        // The socket, header and system columns, from the same board data the
-        // socket and header diagrams draw with.
-        assert!(table.contains("A7"), "{table}");
-        assert!(table.contains("CS1"), "{table}");
-        assert!(table.contains("SEL_A"), "{table}");
-        assert!(table.contains("SEL_D/SWDIO"), "{table}");
-        assert!(table.contains("X1"), "{table}");
-        assert!(table.contains("status LED"), "{table}");
+        // One column, holding socket signals, board peripherals and header pads
+        // alike - all of them things the GPIO is.
+        assert!(!table.contains("Pad"), "{table}");
+        assert_eq!(function_cell(&table, 16), "A7");
+        assert_eq!(function_cell(&table, 10), "CS1");
+        assert_eq!(function_cell(&table, 26), "SEL_A");
+        assert_eq!(function_cell(&table, 9), "X1");
+        assert_eq!(function_cell(&table, 8), "X2");
 
         // The device's own column, and the ADC pins' tolerance.
         assert!(table.contains("serving (read)"), "{table}");
         assert!(table.contains("3V3"), "{table}");
         assert!(table.contains("5V = 5V-tolerant"), "{table}");
 
-        // One row per GPIO. The table body ends at the blank line before the
-        // legend, so counting stops there.
-        let rows = table
-            .lines()
-            .skip(2) // headings and rule
-            .take_while(|l| !l.is_empty())
-            .count();
-        assert_eq!(rows, 30, "{table}");
+        // One row per GPIO, with --all.
+        assert_eq!(row_count(&table), 30, "{table}");
+    }
+
+    #[test]
+    fn table_function_column_names_only_gpios() {
+        // GPIO24/25 are the SEL_D/SEL_C pads, which share their nets with the
+        // SWDIO/SWCLK debug pins. Those are dedicated RP2350 pins, not GPIOs, so
+        // a GPIO-indexed table must not claim GPIO24 is SWDIO. (Not verbose:
+        // the legend mentions both names, to explain their absence.)
+        let board = Board::try_from_str("fire-24-f").unwrap();
+        let table = render_gpio_table(
+            Some(&board),
+            Some(ChipType::Chip2364),
+            0,
+            &entries(30, GpioUse::Free as u8),
+            true,
+            false,
+        );
+        assert!(!table.contains("SWDIO"), "{table}");
+        assert!(!table.contains("SWCLK"), "{table}");
+        assert_eq!(function_cell(&table, 24), "SEL_D");
+        assert_eq!(function_cell(&table, 25), "SEL_C");
+    }
+
+    #[test]
+    fn table_names_both_functions_of_a_shared_system_gpio() {
+        // fire-24-f drives the status LED and the NeoPixel from GPIO 29.
+        let board = Board::try_from_str("fire-24-f").unwrap();
+        assert_eq!(board.pin_status(), 29);
+        assert_eq!(board.pin_neo(), Some(29));
+        let table = render_gpio_table(
+            Some(&board),
+            Some(ChipType::Chip2364),
+            0,
+            &entries(30, GpioUse::SystemPin as u8),
+            true,
+            false,
+        );
+        assert_eq!(function_cell(&table, 29), "Status LED, RGB LED");
+
+        // fire-28-c has them on distinct GPIOs, which must name one each.
+        let b28 = Board::try_from_str("fire-28-c").unwrap();
+        assert_eq!(b28.pin_status(), 45);
+        assert_eq!(b28.pin_neo(), Some(44));
+        let table = render_gpio_table(
+            Some(&b28),
+            Some(ChipType::Chip2364),
+            0,
+            &entries(48, GpioUse::SystemPin as u8),
+            true,
+            false,
+        );
+        assert_eq!(function_cell(&table, 45), "Status LED");
+        assert_eq!(function_cell(&table, 44), "RGB LED");
+    }
+
+    #[test]
+    fn table_does_not_name_one_net_twice() {
+        // A 32-pin board breaks its high address lines out onto header pads, so
+        // the socket signal and the pad are the same net under the same name.
+        let board = Board::try_from_str("fire-32-b").unwrap();
+        let table = render_gpio_table(
+            Some(&board),
+            Some(ChipType::Chip27C040),
+            0,
+            &entries(48, GpioUse::ServingRead as u8),
+            true,
+            false,
+        );
+        for line in table.lines().skip(2).take_while(|l| !l.is_empty()) {
+            let cell = line
+                .split_whitespace()
+                .nth(1)
+                .expect("a function cell")
+                .to_string();
+            assert!(!line.contains(&format!("{cell}, {cell}")), "{line}");
+        }
+        // The shared pad/socket case is present in this board at all, so the
+        // assertion above is not vacuous.
+        let a_pad_gpio = board
+            .addr_pins()
+            .iter()
+            .copied()
+            .find(|&g| gpio_header_role(&board, g).is_some_and(|r| r.starts_with('A')))
+            .expect("fire-32-b breaks out address lines");
+        assert!(
+            !function_cell(&table, a_pad_gpio).contains(','),
+            "{}",
+            function_cell(&table, a_pad_gpio)
+        );
+    }
+
+    #[test]
+    fn table_hides_unconnected_gpios_by_default() {
+        let board = Board::try_from_str("fire-28-c").unwrap();
+        let all = render_gpio_table(
+            Some(&board),
+            Some(ChipType::Chip2364),
+            0,
+            &entries(48, GpioUse::Free as u8),
+            true,
+            false,
+        );
+        let default = render_gpio_table(
+            Some(&board),
+            Some(ChipType::Chip2364),
+            0,
+            &entries(48, GpioUse::Free as u8),
+            false,
+            false,
+        );
+
+        assert_eq!(row_count(&all), 48, "{all}");
+        assert!(row_count(&default) < row_count(&all), "{default}");
+
+        // Every hidden row is accounted for, and the count is right.
+        let hidden = row_count(&all) - row_count(&default);
+        assert!(
+            default.contains(&format!("{hidden} GPIOs with no function are hidden")),
+            "{default}"
+        );
+        assert!(!all.contains("hidden"), "{all}");
+
+        // The drivable pads report `free`, so a filter on the device's `use`
+        // would drop exactly the rows this table exists to show. They must
+        // survive the default view.
+        for pad in ["X1", "X2", "SEL_A", "SEL_B", "SEL_C", "SEL_D"] {
+            assert!(default.contains(pad), "{pad} missing\n{default}");
+        }
+    }
+
+    #[test]
+    fn table_legend_is_verbose_only() {
+        let board = Board::try_from_str("fire-24-f").unwrap();
+        let quiet = render_gpio_table(
+            Some(&board),
+            Some(ChipType::Chip2364),
+            0,
+            &entries(30, GpioUse::Free as u8),
+            true,
+            false,
+        );
+        let loud = render_gpio_table(
+            Some(&board),
+            Some(ChipType::Chip2364),
+            0,
+            &entries(30, GpioUse::Free as u8),
+            true,
+            true,
+        );
+        assert!(!quiet.contains("derived by this CLI"), "{quiet}");
+        assert!(!quiet.contains("5V-tolerant"), "{quiet}");
+        assert!(loud.contains("derived by this CLI"), "{loud}");
+        assert!(loud.contains("onerom control pin"), "{loud}");
+        // The table itself is identical either way.
+        assert_eq!(row_count(&quiet), row_count(&loud));
     }
 
     #[test]
@@ -655,6 +963,8 @@ mod tests {
             Some(ChipType::Chip27512),
             0,
             &entries(48, GpioUse::Free as u8),
+            true,
+            true,
         );
 
         // Every table line - headings, rule and rows - starts each column at the
@@ -681,10 +991,21 @@ mod tests {
 
     #[test]
     fn table_degrades_without_a_board() {
-        // An unrecognised board loses the names, not the listing.
-        let table = render_gpio_table(None, None, 0, &entries(30, GpioUse::Free as u8));
-        assert!(table.contains("One ROM use"), "{table}");
+        // An unrecognised board loses the names, not the listing - including
+        // under the default filter, which cannot rule anything out without a
+        // board to ask.
+        let table = render_gpio_table(
+            None,
+            None,
+            0,
+            &entries(30, GpioUse::Free as u8),
+            false,
+            true,
+        );
+        assert!(table.contains("Current use"), "{table}");
         assert!(table.contains("free"), "{table}");
+        assert_eq!(row_count(&table), 30, "{table}");
+        assert!(!table.contains("hidden"), "{table}");
         // Tolerance is unknown, and says so rather than claiming 5V.
         assert!(table.contains('?'), "{table}");
         assert!(table.contains("not characterised pin by pin"), "{table}");
@@ -695,7 +1016,14 @@ mod tests {
         // A ROM type this build cannot resolve still names socket pins by their
         // socket position, rather than showing them as nothing.
         let board = Board::try_from_str("fire-24-f").unwrap();
-        let table = render_gpio_table(Some(&board), None, 0, &entries(30, GpioUse::Free as u8));
+        let table = render_gpio_table(
+            Some(&board),
+            None,
+            0,
+            &entries(30, GpioUse::Free as u8),
+            true,
+            true,
+        );
         assert!(table.contains("socket pin "), "{table}");
         assert!(table.contains("SEL_A"), "{table}");
     }
@@ -704,7 +1032,14 @@ mod tests {
     fn table_notes_an_uncharacterised_header() {
         let board = Board::try_from_str("ice-24-d").unwrap();
         assert!(board.jumper_header().is_none());
-        let table = render_gpio_table(Some(&board), None, 0, &entries(16, GpioUse::Free as u8));
+        let table = render_gpio_table(
+            Some(&board),
+            None,
+            0,
+            &entries(16, GpioUse::Free as u8),
+            true,
+            true,
+        );
         assert!(
             table.contains("header layout is not characterised"),
             "{table}"
@@ -721,17 +1056,19 @@ mod tests {
             Some(ChipType::Chip2364),
             9,
             &entries(1, GpioUse::Free as u8),
+            true,
+            false,
         );
         // --pin gpio9 shows GPIO 9, not GPIO 0.
         assert!(table.contains("\n  9 "), "{table}");
-        assert!(table.contains("X1"), "{table}");
+        assert_eq!(function_cell(&table, 9), "X1");
     }
 
     #[test]
     fn table_shows_an_unrecognised_use_raw() {
         // A category from a device newer than this build must not be guessed at.
         let board = Board::try_from_str("fire-24-f").unwrap();
-        let table = render_gpio_table(Some(&board), None, 0, &entries(4, 9));
+        let table = render_gpio_table(Some(&board), None, 0, &entries(4, 9), true, false);
         assert!(table.contains("unknown (9)"), "{table}");
     }
 
@@ -761,10 +1098,22 @@ mod tests {
 
         for (label, board, chip, count) in [
             (
-                "RP2350A, 30 GPIOs, fully characterised",
+                "RP2350A, 30 GPIOs, shared status LED / NeoPixel",
                 Some("fire-24-f"),
                 Some(ChipType::Chip2364),
                 30u8,
+            ),
+            (
+                "RP2350B, 48 GPIOs, status LED and NeoPixel distinct",
+                Some("fire-28-c"),
+                Some(ChipType::Chip2364),
+                48,
+            ),
+            (
+                "RP2350B, address lines broken out onto header pads",
+                Some("fire-32-b"),
+                Some(ChipType::Chip27C040),
+                48,
             ),
             (
                 "RP2350B, 48 GPIOs, 16-bit ROM with a /BYTE pin",
@@ -782,16 +1131,18 @@ mod tests {
             ("board unrecognised", None, None, 30),
         ] {
             let board = board.map(|b| Board::try_from_str(b).unwrap());
-            println!("\n=== {label} ===");
-            println!(
-                "{}",
-                render_gpio_table(
-                    board.as_ref(),
-                    chip,
-                    0,
-                    &mixed(count, 0..=7, count.saturating_sub(1))
-                )
-            );
+            let entries = mixed(count, 0..=7, count.saturating_sub(1));
+            // Both the default view and --all, and both with and without the
+            // legend, so every shape the command can print is eyeballable.
+            for (view, show_unconnected, verbose) in
+                [("default", false, false), ("--all --verbose", true, true)]
+            {
+                println!("\n=== {label} ({view}) ===");
+                println!(
+                    "{}",
+                    render_gpio_table(board.as_ref(), chip, 0, &entries, show_unconnected, verbose)
+                );
+            }
         }
     }
 }

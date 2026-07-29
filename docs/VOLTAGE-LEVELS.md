@@ -15,7 +15,7 @@ Therefore the STM32F4 series was initially chosen, followed by the RP2350, both 
 > used by the 32/40-pin Fire boards). One ROM never routes a 5V ROM-bus signal to
 > one of these pins; where they are used it is for image-select, status-LED or USB
 > signals on the top-edge header, which stay within 3.3V. The CLI's
-> `onerom boards header <board>` view flags each such pad as `!!3V3!!` so it is
+> `onerom board header <board>` view flags each such pad as `!!3V3!!` so it is
 > obvious which header pads must be kept at or below 3.3V.
 
 There are two areas which are important to understand when considering voltage levels:

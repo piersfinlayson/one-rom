@@ -2,14 +2,14 @@
 //
 // MIT License
 
-use crate::args::{BoardArgs, BoardHeaderArgs, BoardSocketArgs};
+use crate::args::{BoardHeaderArgs, BoardListArgs, BoardSocketArgs};
 use crate::board_view::{render_pin_header, render_rom_socket};
 use crate::utils::resolve_board;
 use onerom_cli::{Error, Options};
 use onerom_config::chip::ChipType;
 use onerom_config::hw::{BOARDS, Board};
 
-pub async fn cmd_boards(_options: &Options, _args: &BoardArgs) -> Result<(), Error> {
+pub async fn cmd_list(_options: &Options, _args: &BoardListArgs) -> Result<(), Error> {
     println!("Supported One ROM board types:");
     // Comma separate them
     let boards = BOARDS
@@ -33,7 +33,7 @@ pub async fn cmd_socket(options: &Options, args: &BoardSocketArgs) -> Result<(),
 }
 
 /// Print a board's pin (jumper / programming) header, or a notice if the board
-/// has no header descriptor yet. Shared by `boards header` and `inspect header`.
+/// has no header descriptor yet. Shared by `board header` and `inspect header`.
 pub(crate) fn show_pin_header(board: &Board) {
     match render_pin_header(board) {
         Some(diagram) => print!("{diagram}"),
@@ -46,7 +46,7 @@ pub(crate) fn show_pin_header(board: &Board) {
 
 /// Print a board's ROM socket pinout. `chip_type`, when given, selects the
 /// function view and must be a chip type the board accepts. Shared by
-/// `boards socket` and `inspect socket`.
+/// `board socket` and `inspect socket`.
 pub(crate) fn show_rom_socket(
     board: &Board,
     chip_type: &Option<String>,

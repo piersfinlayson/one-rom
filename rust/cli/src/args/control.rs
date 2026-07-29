@@ -87,7 +87,7 @@ pub enum ControlCommands {
     ///
     /// The reset line is only ever driven low and then released: a reset net
     /// has its own pull-up and may have other drivers on it, so there is
-    /// deliberately no way to drive it high. Use 'onerom control gpio' if you
+    /// deliberately no way to drive it high. Use 'onerom control pin' if you
     /// need arbitrary states.
     ///
     /// The device times the pulse, not this command, so an interrupted CLI
@@ -110,7 +110,7 @@ pub enum ControlCommands {
     ///   onerom control select --slot 2
     Select(ControlSelectArgs),
 
-    /// Drive a One ROM GPIO high, low or high-impedance.
+    /// Drive a One ROM pin high, low or high-impedance.
     ///
     /// --pin names an MCU GPIO, written 'gpio<N>'. Run 'onerom inspect header'
     /// to see which GPIO is behind each header pad, and 'onerom inspect gpio'
@@ -129,12 +129,12 @@ pub enum ControlCommands {
     ///
     /// Examples:
     ///
-    ///   onerom control gpio --pin gpio9 --state high
+    ///   onerom control pin --pin gpio9 --state high
     ///
-    ///   onerom control gpio --pin gpio9 --state low --hold 250
+    ///   onerom control pin --pin gpio9 --state low --hold 250
     ///
-    ///   onerom control gpio --pin gpio9 --state z
-    Gpio(ControlGpioArgs),
+    ///   onerom control pin --pin gpio9 --state z
+    Pin(ControlPinArgs),
 
     /// Erase this One ROM's flash memory.
     ///
@@ -340,7 +340,7 @@ impl std::fmt::Display for GpioState {
 }
 
 #[derive(Debug, Args)]
-pub struct ControlGpioArgs {
+pub struct ControlPinArgs {
     /// MCU GPIO to drive, written gpio<N>.
     ///
     /// A bare number is rejected - see 'onerom inspect header' for the GPIO
@@ -368,7 +368,7 @@ pub struct ControlGpioArgs {
     pub force: bool,
 }
 
-impl CommandTrait for ControlGpioArgs {
+impl CommandTrait for ControlPinArgs {
     fn requires_device(&self) -> bool {
         true
     }

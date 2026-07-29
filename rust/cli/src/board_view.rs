@@ -595,12 +595,16 @@ pub fn render_rom_socket(board: &Board, chip: Option<ChipType>, show_gpio: bool)
 // `socket_pin_offset`) so a change to how a pad or a socket pin is named shows
 // up in the diagram and the table together.
 
-/// The header pad role(s) behind an MCU GPIO, e.g. `SEL_A`, `X1`, `SEL_D/SWDIO`.
+/// The header pad role(s) an MCU GPIO *is*, e.g. `SEL_A`, `X1`, `A12`.
 ///
-/// Where the board carries a [`JumperHeader`](onerom_config::hw::JumperHeader)
-/// the answer is the full pad — every role that pad carries, joined with `/` —
-/// which is how a pad that is both an image-select bit and an SWD line names
-/// itself.
+/// Only roles that have a GPIO behind them are named. A pad may carry more than
+/// one role — on a Fire 24/28 board the SEL_C and SEL_D pads sit on the SWCLK
+/// and SWDIO nets — but SWCLK and SWDIO are dedicated RP2350 pins, not GPIOs, so
+/// naming GPIO 25 `SEL_C/SWCLK` would assert something untrue of the GPIO. That
+/// a pad shares a net with a debug probe is a fact about the pad; this answer is
+/// indexed by GPIO. (The header diagram is indexed by pad and does show every
+/// role — see [`render_pin_header`].) Where a GPIO genuinely is more than one
+/// role, the roles are joined with `/`.
 ///
 /// `jumper_header` is populated for the Fire 24/28/32 boards but not yet for
 /// Fire 40 or any Ice board, so an uncharacterised board falls back to the
@@ -625,16 +629,17 @@ pub fn gpio_header_role(board: &Board, gpio: u8) -> Option<String> {
             .flat_map(|c| [Some(&c.row1), Some(&c.row2), c.row3.as_ref()])
             .flatten()
             .find_map(|slot| match slot {
-                HeaderSlot::Roles(roles) => roles
-                    .iter()
-                    .any(|r| header_role_gpio(board, r) == Some(gpio))
-                    .then(|| {
-                        roles
-                            .iter()
-                            .map(header_role_label)
-                            .collect::<Vec<_>>()
-                            .join("/")
-                    }),
+                HeaderSlot::Roles(roles) => {
+                    // Roles with no GPIO of their own (SWCLK, SWDIO, RUN,
+                    // BOOTSEL, power, ground) are dropped: they belong to the
+                    // pad, not to this GPIO.
+                    let named: Vec<String> = roles
+                        .iter()
+                        .filter(|r| header_role_gpio(board, r) == Some(gpio))
+                        .map(header_role_label)
+                        .collect();
+                    (!named.is_empty()).then(|| named.join("/"))
+                }
                 _ => None,
             });
         if pad.is_some() {
@@ -675,28 +680,35 @@ pub fn gpio_rom_function(board: &Board, chip: ChipType, gpio: u8) -> Option<Stri
     socket_function(chip, chip_pin as u8)
 }
 
-/// The One ROM system function of an MCU GPIO, or `None` if it has none.
+/// Every One ROM system function of an MCU GPIO; empty if it has none.
 ///
 /// These are the pins the firmware reports as `SYSTEM`: the status LED, the
 /// NeoPixel, the USB VBUS sense line and the external flash chip-select. The
 /// board data uses 255 as "no such pin", which no real GPIO number reaches.
-pub fn gpio_system_function(board: &Board, gpio: u8) -> Option<&'static str> {
+///
+/// A GPIO can carry more than one of them — on `fire-24-f` the status LED and
+/// the NeoPixel are both GPIO 29, which is exactly why the RGB plugin reflects
+/// the status-LED state on that shared LED — so this answers with all of them.
+/// Stopping at the first would report half the truth about the pin most likely
+/// to be driven by accident.
+pub fn gpio_system_functions(board: &Board, gpio: u8) -> Vec<&'static str> {
+    let mut functions = Vec::new();
     if gpio == 255 {
-        return None;
+        return functions;
     }
     if board.pin_status() == gpio {
-        return Some("status LED");
+        functions.push("Status LED");
     }
     if board.pin_neo() == Some(gpio) {
-        return Some("NeoPixel");
+        functions.push("RGB LED");
     }
     if board.usb_vbus_pin() == Some(gpio) {
-        return Some("USB VBUS");
+        functions.push("USB VBUS");
     }
     if board.external_flash_cs_pin() == Some(gpio) {
-        return Some("ext flash CS");
+        functions.push("ext flash CS");
     }
-    None
+    functions
 }
 
 #[cfg(test)]
@@ -887,14 +899,19 @@ mod tests {
     }
 
     #[test]
-    fn gpio_header_role_names_a_whole_pad() {
+    fn gpio_header_role_names_only_what_the_gpio_is() {
         let b = board();
-        // GPIO26/27 are SEL_A/SEL_B; GPIO25/24 are the SWD-multiplexed pair, and
-        // name both roles the pad carries.
         assert_eq!(gpio_header_role(&b, 26).as_deref(), Some("SEL_A"));
-        assert_eq!(gpio_header_role(&b, 24).as_deref(), Some("SEL_D/SWDIO"));
         assert_eq!(gpio_header_role(&b, 9).as_deref(), Some("X1"));
         assert_eq!(gpio_header_role(&b, 8).as_deref(), Some("X2"));
+        // GPIO25/24 sit on the pads that also carry the SWCLK/SWDIO nets, but
+        // those are dedicated RP2350 pins rather than GPIOs, so the GPIO is
+        // named SEL_C/SEL_D alone. The pad-indexed header diagram still shows
+        // both roles.
+        assert_eq!(gpio_header_role(&b, 25).as_deref(), Some("SEL_C"));
+        assert_eq!(gpio_header_role(&b, 24).as_deref(), Some("SEL_D"));
+        let header = render_pin_header(&b).expect("fire-24-f has a header");
+        assert!(header.contains("SWDIO"), "{header}");
         // A data pin is on no header pad.
         assert_eq!(gpio_header_role(&b, 0), None);
     }
@@ -947,21 +964,26 @@ mod tests {
     }
 
     #[test]
-    fn gpio_system_function_names_the_firmwares_system_pins() {
+    fn gpio_system_functions_name_the_firmwares_system_pins() {
         let b = board();
-        assert_eq!(gpio_system_function(&b, b.pin_status()), Some("status LED"));
-        assert_eq!(gpio_system_function(&b, 29), Some("status LED"));
-        assert_eq!(gpio_system_function(&b, 0), None);
+        // fire-24-f puts the status LED and the NeoPixel on the same GPIO, so
+        // both must be named - reporting only the first hides half of what
+        // driving GPIO 29 disturbs.
+        assert_eq!(b.pin_status(), 29);
+        assert_eq!(b.pin_neo(), Some(29));
+        assert_eq!(gpio_system_functions(&b, 29), ["Status LED", "RGB LED"]);
+        assert!(gpio_system_functions(&b, 0).is_empty());
 
         // A board with an external flash and a NeoPixel on distinct GPIOs.
         let b32 = Board::try_from_str("fire-32-b").unwrap();
-        assert_eq!(gpio_system_function(&b32, 44), Some("NeoPixel"));
-        assert_eq!(gpio_system_function(&b32, 47), Some("ext flash CS"));
+        assert_eq!(gpio_system_functions(&b32, 44), ["RGB LED"]);
+        assert_eq!(gpio_system_functions(&b32, 47), ["ext flash CS"]);
+        assert_eq!(gpio_system_functions(&b32, 45), ["Status LED"]);
 
         // Ice boards report 255 for "no status LED"; 255 is not a GPIO.
         let ice = Board::try_from_str("ice-24-d").unwrap();
         assert_eq!(ice.pin_status(), 255);
-        assert_eq!(gpio_system_function(&ice, 255), None);
+        assert!(gpio_system_functions(&ice, 255).is_empty());
     }
 
     /// Naming every GPIO of every board, under every chip type that board
@@ -974,7 +996,7 @@ mod tests {
             let board = &board;
             for gpio in 0u8..48 {
                 let _ = gpio_header_role(board, gpio);
-                let _ = gpio_system_function(board, gpio);
+                let _ = gpio_system_functions(board, gpio);
                 for &chip in CHIP_TYPES {
                     let _ = gpio_rom_function(board, chip, gpio);
                 }

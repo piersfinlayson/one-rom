@@ -2,14 +2,53 @@
 
 ## v0.3.0 - 2026-??-??
 
-- Add GPIO control: `onerom control gpio` drives a One ROM GPIO high, low or
+- **Breaking: `onerom boards` is now `onerom board`**, and the bare listing it
+  used to print is `onerom board list`. The `board header` and `board socket`
+  views added earlier in this release are documented under their shipping names
+  and never existed as `boards` subcommands in a release. There is **no alias**
+  — a plural noun taking a singular argument (`onerom board header fire-24-f`)
+  read wrongly, and with
+  three subcommands under it the listing deserved a name of its own rather than
+  being what you got by omitting one. Scripts calling `onerom boards` must be
+  updated; the CLI suggests `board` rather than simply failing.
+- `onerom inspect gpio` now shows one `Function` column instead of separate
+  `Pad` and `Function` columns, listing everything the GPIO is: its ROM socket
+  signal under the image being served, then the board peripheral, then the
+  header pad. The old split was about where a name came from rather than about
+  anything a reader needs — on a 32-pin board the `a17` header pad and the
+  socket's `A17` line are one net, and everywhere else exactly one of the two
+  columns was populated. Repeated names are shown once; an X or image-select pad
+  is a function of the pin like any other.
+  - It also **fixes a real omission**: the lookup stopped at the first system
+    function it matched, so on a `fire-24-f` — where the status LED and the
+    NeoPixel are both GPIO 29 — the table named only the status LED. Both are
+    now listed, which matters because that is the pin most likely to be driven
+    by accident.
+  - `Function` no longer claims a GPIO is `SWCLK` or `SWDIO`. Those are
+    dedicated RP2350 pins with no GPIO of their own; the `SEL_C`/`SEL_D` pads
+    merely share their nets, which is a fact about the pad, not about the GPIO.
+    `onerom inspect header` remains the pad-indexed view and still shows every
+    role a pad carries.
+- `onerom inspect gpio` now lists only the GPIOs connected to something, with a
+  line saying how many were omitted; `--all` lists every GPIO. On a `fire-28-c`
+  thirteen of forty-eight GPIOs are connected to nothing at all, and they buried
+  the rows worth reading. The filter is on what a GPIO *is*, not on what the
+  device reports using it for — the `X1`/`X2` and image-select pads report
+  `free` and are exactly what the table is read to find, so they always appear.
+  With no recognised board nothing is hidden, since nothing can be ruled out.
+- The explanatory legend under the `inspect gpio` table is now shown only with
+  `--verbose`. It is worth reading once and noise on every run after that, and
+  nothing is lost by default: the cost of taking a serving pin over is stated at
+  the point of action by `control pin` itself.
+
+- Add GPIO control: `onerom control pin` drives a One ROM GPIO high, low or
   high-impedance, `onerom control reset` pulses one low to reset the host system
   One ROM is installed in, and `onerom inspect gpio` shows what every GPIO is and
   what One ROM is doing with it. All three need a *running* device with the USB
   system plugin — a stopped One ROM is in the RP2350 bootloader, where One ROM's
   own command handler does not exist, and they say so rather than failing
   obscurely.
-  - `control gpio --hold <MS>` holds the state for a bounded period and then
+  - `control pin --hold <MS>` holds the state for a bounded period and then
     applies `--then` (`z` unless you say otherwise); without `--hold` the state
     latches. The **device** times the hold, so an interrupted CLI cannot leave a
     pin latched. `control reset` is that with `--state low --then z` and `--hold`
@@ -31,8 +70,8 @@
   - `inspect gpio` names each GPIO's role itself, from the board pin map and the
     chip type being served, because the device deliberately reports only what
     taking a pin over would cost (free / read by serving / driven by serving /
-    system) and never what the pin is. The table's `Pad` and `Function` columns
-    reuse the same board lookups `boards header` and `boards socket --gpio` draw
+    system) and never what the pin is. The table's `Function` column reuses the
+    same board lookups `board header` and `board socket --gpio` draw
     with, so the diagram and the table cannot drift apart. A board revision or
     ROM type this build does not recognise costs those names, not the listing,
     and a board whose physical header layout is not yet characterised falls back
@@ -55,7 +94,7 @@
   type the board cannot serve (the SRAM types) is named in a trailing line
   instead of being listed as supported. Ice (STM32) boards, for which no image
   size can be derived, keep the plain name list. `--all` is unchanged.
-- `onerom boards socket <board> --chip-type <chip>` (and `onerom inspect socket
+- `onerom board socket <board> --chip-type <chip>` (and `onerom inspect socket
   --chip-type <chip>`) now reports the chip's image size below the pinout.
 - Reword the fit shown for a chip with more pins than the board whose extra pins
   carry no address lines (the 32-pin 28C512 on a 28-pin board). It read `no
@@ -64,11 +103,11 @@
   ROM sits as well as what it does not need. `docs/COMPATIBILITY.md` is
   regenerated to match.
 
-- Add ASCII views of a board's physical pin layouts. `onerom boards header
+- Add ASCII views of a board's physical pin layouts. `onerom board header
   [<board>]` draws the pin (jumper / programming) header, annotating each
   image-select and X pad with the MCU GPIO behind it and — on RP2350 (Fire)
   boards — whether that GPIO is 5V-tolerant (`5V`) or 3.3V-only (`!!3V3!!`, an
-  ADC pin). `onerom boards socket [<board>] [--chip-type <chip>] [--gpio]` draws the
+  ADC pin). `onerom board socket [<board>] [--chip-type <chip>] [--gpio]` draws the
   ROM socket as a DIP pinout: GPIOs by default, ROM pin functions (address /
   data / chip-select / `BYTE` / …) with `--chip-type <chip>`, and both with
   `--gpio`. A chip whose pin count differs from the board's is drawn at the

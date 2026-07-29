@@ -41,10 +41,10 @@ use crate::utils::parse_u16_hex_only;
 use onerom_cli::{Error, Options};
 
 use control::{
-    ControlArgs, ControlCommands, ControlEraseArgs, ControlGpioArgs, ControlLedArgs,
-    ControlLedBeaconArgs, ControlLedCommands, ControlLedFlameArgs, ControlLedOffArgs,
-    ControlLedOnArgs, ControlPokeArgs, ControlPokeCommands, ControlPokeLiveArgs,
-    ControlPokeMemoryArgs, ControlRebootArgs, ControlResetArgs, ControlSelectArgs,
+    ControlArgs, ControlCommands, ControlEraseArgs, ControlLedArgs, ControlLedBeaconArgs,
+    ControlLedCommands, ControlLedFlameArgs, ControlLedOffArgs, ControlLedOnArgs, ControlPinArgs,
+    ControlPokeArgs, ControlPokeCommands, ControlPokeLiveArgs, ControlPokeMemoryArgs,
+    ControlRebootArgs, ControlResetArgs, ControlSelectArgs,
 };
 use firmware::{
     FirmwareArgs, FirmwareBuildArgs, FirmwareChipsArgs, FirmwareCommands, FirmwareDownloadArgs,
@@ -265,7 +265,7 @@ impl Cli {
 #[derive(Debug, clap::Args)]
 pub struct BoardArgs {
     #[command(subcommand)]
-    pub command: Option<BoardCommands>,
+    pub command: BoardCommands,
 }
 
 impl CommandTrait for BoardArgs {
@@ -279,6 +279,13 @@ impl CommandTrait for BoardArgs {
 
 #[derive(Debug, Subcommand)]
 pub enum BoardCommands {
+    /// List the supported One ROM board types.
+    ///
+    /// Example:
+    ///
+    ///   onerom board list
+    List(BoardListArgs),
+
     /// Draw a board's pin (jumper / programming) header as ASCII.
     ///
     /// Shows the 2xN header along the board's top edge, pad by pad, with the
@@ -290,9 +297,9 @@ pub enum BoardCommands {
     ///
     /// Examples:
     ///
-    ///   onerom boards header fire-24-f
+    ///   onerom board header fire-24-f
     ///
-    ///   onerom boards header
+    ///   onerom board header
     Header(BoardHeaderArgs),
 
     /// Draw a board's ROM socket pinout as ASCII.
@@ -306,12 +313,21 @@ pub enum BoardCommands {
     ///
     /// Examples:
     ///
-    ///   onerom boards socket fire-24-f
+    ///   onerom board socket fire-24-f
     ///
-    ///   onerom boards socket fire-24-f --chip-type 2364
+    ///   onerom board socket fire-24-f --chip-type 2364
     ///
-    ///   onerom boards socket fire-24-f --chip-type 2364 --gpio
+    ///   onerom board socket fire-24-f --chip-type 2364 --gpio
     Socket(BoardSocketArgs),
+}
+
+#[derive(Debug, clap::Args)]
+pub struct BoardListArgs {}
+
+impl CommandTrait for BoardListArgs {
+    fn requires_device(&self) -> bool {
+        false
+    }
 }
 
 #[derive(Debug, clap::Args)]
@@ -517,16 +533,19 @@ pub enum Commands {
 
     /// List supported One ROM board types, or view a board's pin layouts.
     ///
-    /// With no subcommand, lists the supported One ROM board types. The
-    /// `header` and `socket` subcommands draw a board's pin (jumper) header
-    /// and ROM socket pinout as ASCII.
+    /// `list` names the supported One ROM board types. `header` and `socket`
+    /// draw a board's pin (jumper) header and ROM socket pinout as ASCII.
     ///
     /// Examples:
     ///
-    ///   onerom boards
+    ///   onerom board list
     ///
-    ///   onerom boards header fire-24-f
+    ///   onerom board header fire-24-f
     ///
-    ///   onerom boards socket fire-24-f --chip-type 2364
-    Boards(BoardArgs),
+    ///   onerom board socket fire-24-f --chip-type 2364
+    #[command(
+        subcommand_value_name = "COMMAND",
+        subcommand_help_heading = "Commands"
+    )]
+    Board(BoardArgs),
 }

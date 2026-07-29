@@ -86,9 +86,13 @@ pub enum InspectCommands {
 
     /// Show what every One ROM GPIO is, and what it is doing.
     ///
-    /// One row per MCU GPIO: the header pad behind it, its function under the
-    /// ROM currently being served, its direction and level, whether it is
+    /// One row per MCU GPIO: everything the GPIO is - its signal under the ROM
+    /// currently being served, the board peripheral it drives, the header pad
+    /// it surfaces on - plus its direction and level, whether it is
     /// 5V-tolerant, and what One ROM itself is using it for.
+    ///
+    /// Only GPIOs connected to something are listed; --all adds the rest.
+    /// --verbose adds a legend explaining where each column comes from.
     ///
     /// The device reports only a coarse category - free, read by serving,
     /// driven by serving, or a system pin - along with the level and
@@ -98,6 +102,8 @@ pub enum InspectCommands {
     /// Examples:
     ///
     ///   onerom inspect gpio
+    ///
+    ///   onerom inspect gpio --all
     ///
     ///   onerom inspect gpio --pin gpio9
     Gpio(InspectGpioArgs),
@@ -282,6 +288,15 @@ pub struct InspectGpioArgs {
     /// behind each header pad.
     #[arg(long, value_name = "PIN", value_parser = parse_pin)]
     pub pin: Option<Pin>,
+
+    /// Also show GPIOs with no function at all.
+    ///
+    /// By default only GPIOs connected to something - a ROM socket signal, a
+    /// board peripheral or a header pad - are listed. On a 48-GPIO board a
+    /// quarter of them are connected to nothing, and listing them buries the
+    /// rest.
+    #[arg(long, conflicts_with = "pin")]
+    pub all: bool,
 }
 
 impl CommandTrait for InspectGpioArgs {
