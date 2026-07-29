@@ -711,14 +711,16 @@ pub async fn cmd_gpio(options: &Options, args: &InspectGpioArgs) -> Result<(), E
 
 pub async fn cmd_header(options: &Options, args: &InspectHeaderArgs) -> Result<(), Error> {
     check_device(options, args, false)?;
-    let board = resolve_board(options, &None)?.ok_or(Error::NoBoardOrDevice)?;
+    let board = resolve_board(options, &None)?
+        .ok_or_else(|| Error::NoDeviceForBoardView("header".to_string()))?;
     crate::board::show_pin_header(&board);
     Ok(())
 }
 
 pub async fn cmd_socket(options: &Options, args: &InspectSocketArgs) -> Result<(), Error> {
     check_device(options, args, false)?;
-    let board = resolve_board(options, &None)?.ok_or(Error::NoBoardOrDevice)?;
+    let board = resolve_board(options, &None)?
+        .ok_or_else(|| Error::NoDeviceForBoardView("socket".to_string()))?;
     crate::board::show_rom_socket(&board, &args.chip_type, args.gpio)
 }
 

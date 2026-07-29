@@ -626,8 +626,53 @@ nothing is filtered out, since nothing can be ruled out. On a board whose
 physical header layout is not yet characterised, pad names come from the board's
 pin assignments alone and `--verbose` says so beneath the table.
 
-<!-- TODO: paste a verbatim `onerom inspect gpio` run here once the commands have
-     been exercised on real hardware. Do not hand-write one. -->
+On a Fire 28 (rev C) serving a 27512:
+
+```
+One ROM Fire 28 C - Firmware: v0.7.1 State: Running Serial: FC9D67248E8E8023
+
+GPIO state  ·  One ROM Fire 28 (rev C)  ·  RP235xB  ·  serving 27512
+
+  GPIO  Function    Dir  Level  Max V  Current use
+  ----  ----------  ---  -----  -----  ----------------
+  0     D0          out  0      5V     serving (driven)
+  1     D1          out  0      5V     serving (driven)
+  2     D2          out  1      5V     serving (driven)
+  3     D3          out  1      5V     serving (driven)
+  4     D4          out  1      5V     serving (driven)
+  5     D5          out  1      5V     serving (driven)
+  6     D6          out  1      5V     serving (driven)
+  7     D7          out  0      5V     serving (driven)
+  8     X2          in   0      5V     free
+  9     X1          in   0      5V     free
+  10    CE/PE       in   0      5V     serving (read)
+  11    OE/VPP      in   0      5V     serving (read)
+  12    A14         in   0      5V     serving (read)
+  13    A10         in   0      5V     serving (read)
+  14    A11         in   0      5V     serving (read)
+  15    A9          in   0      5V     serving (read)
+  16    A8          in   0      5V     serving (read)
+  17    A13         in   0      5V     serving (read)
+  18    A15         in   0      5V     serving (read)
+  19    A12         in   0      5V     serving (read)
+  20    A7          in   0      5V     serving (read)
+  21    A6          in   0      5V     serving (read)
+  22    A5          in   0      5V     serving (read)
+  23    A4          in   0      5V     serving (read)
+  24    A3          in   0      5V     serving (read)
+  25    A2          in   0      5V     serving (read)
+  26    A1          in   0      5V     serving (read)
+  27    A0          in   0      5V     serving (read)
+  38    SEL_C       in   1      5V     free
+  39    SEL_D       in   1      5V     free
+  40    SEL_A       in   0      3V3    free
+  41    SEL_B       in   0      3V3    free
+  44    RGB LED     out  0      3V3    system
+  45    Status LED  out  0      3V3    system
+  46    USB VBUS    in   1      3V3    system
+
+  13 GPIOs with no function are hidden - use --all to show them.
+```
 
 ### inspect header
 
@@ -801,8 +846,10 @@ doing; `control reset` has no `--force` of its own, and the message points at
 GPIO is not 5V-tolerant the command warns and asks for confirmation, which
 `--yes` answers.
 
-<!-- TODO: paste a verbatim `onerom control reset` run here once the commands
-     have been exercised on real hardware. Do not hand-write one. -->
+```
+$ onerom control reset --pin x1
+Asserted reset on x1 (gpio9) for 100ms - the device times the pulse and releases the pin
+```
 
 ### control select
 
@@ -864,8 +911,10 @@ a measurement — the command warns and asks for confirmation, which `--yes` or
 whether a jumper is fitted and what voltage the far end sits at are yours to
 know.
 
-<!-- TODO: paste a verbatim `onerom control pin` run here once the commands have
-     been exercised on real hardware. Do not hand-write one. -->
+```
+$ onerom control pin --pin x1 --state low --hold 2000
+Set x1 (gpio9) low for 2000ms - the device times the hold and then sets it high impedance
+```
 
 ### control erase
 
@@ -1287,7 +1336,8 @@ Example output (illustrative — your build may differ):
 ```
 Supported One ROM board types:
   fire-24-a, fire-24-c, fire-24-d, fire-24-e, fire-24-f, fire-24-usb-b,
-  fire-28-a, fire-28-b, fire-28-c, fire-32-a, fire-32-b, fire-40-a, fire-40-b,
+  fire-28-a, fire-28-b, fire-28-c, fire-28-d, fire-32-a, fire-32-b, fire-40-a,
+  fire-40-b,
   ice-24-d, ice-24-e, ice-24-f, ice-24-g, ice-24-i, ice-24-j, ice-24-usb-h,
   ice-28-a
 ```

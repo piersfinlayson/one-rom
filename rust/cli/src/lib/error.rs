@@ -72,6 +72,17 @@ pub enum Error {
     #[error("Cannot determine the board type.\n  Either --board or --serial must be specified.")]
     NoBoardOrDevice,
 
+    /// A device-oriented view could not identify the board.
+    ///
+    /// Distinct from [`Error::NoBoardOrDevice`] because these commands have no
+    /// `--board`: they draw the board of a *connected* One ROM, and the
+    /// board-oriented `onerom board ...` form is what draws a board by name.
+    /// Telling the user to pass `--board` here would be a dead end.
+    #[error(
+        "Cannot determine the board type.\n  This command draws the board of a connected One ROM.  Connect one, or use\n  'onerom board {0} <board>' to draw a board by name."
+    )]
+    NoDeviceForBoardView(String),
+
     #[error("Specified version '{0}' not found.\n  Available releases: {1}")]
     VersionNotFound(String, String),
 

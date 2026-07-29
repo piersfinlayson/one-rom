@@ -11,6 +11,11 @@
   three subcommands under it the listing deserved a name of its own rather than
   being what you got by omitting one. Scripts calling `onerom boards` must be
   updated; the CLI suggests `board` rather than simply failing.
+- `onerom inspect header` and `onerom inspect socket` no longer tell you to pass
+  `--board` when they cannot identify the board. Neither has a `--board` — they
+  draw the board of a *connected* One ROM — so that advice was a dead end. They
+  now point at `onerom board header <board>` / `onerom board socket <board>`,
+  which is the form that draws a board by name.
 - `onerom inspect gpio` now shows one `Function` column instead of separate
   `Pad` and `Function` columns, listing everything the GPIO is: its ROM socket
   signal under the image being served, then the board peripheral, then the
