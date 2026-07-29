@@ -22,6 +22,11 @@
   `--chip-type` with `--gpio`. The `--chip-type` function view is unaffected: it
   is drawn from the chip's pinout and the board's ROM signal assignments, not
   from the socket map.
+- `board header` and `inspect header` now say `command unsupported` for a board
+  with no pin-header descriptor, where they said `nothing to draw` and called
+  the descriptor missing "yet". What a command does today is what it can report;
+  whether a board gains a descriptor later is not something an error message
+  gets to announce.
 - Stop hard-wrapping prose in console output. A handful of messages broke a
   sentence across lines at a fixed width — the `chips` image-size note, three of
   the `--pin` errors and the new Ice-board one — which the terminal then wrapped
