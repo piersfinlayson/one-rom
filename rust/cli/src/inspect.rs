@@ -8,8 +8,8 @@ use crate::args::inspect::{
 };
 use crate::board_view::{gpio_header_role, gpio_rom_function, gpio_system_functions};
 use crate::utils::{
-    active_chip_type, check_device, check_device_running, check_live_read_write, print_hex_dump,
-    resolve_board, resolve_board_optional,
+    active_chip_type, check_device, check_device_running, check_fire_board_optional,
+    check_live_read_write, print_hex_dump, resolve_board, resolve_board_optional,
 };
 use onerom_cli::CliFetch;
 use onerom_cli::LIVE_ROM_BASE;
@@ -658,6 +658,9 @@ pub async fn cmd_gpio(options: &Options, args: &InspectGpioArgs) -> Result<(), E
     // being served. The board is also what turns a --pin pad name into a GPIO,
     // so it has to be settled before the device is queried.
     let board = resolve_board_optional(options, &args.board)?;
+    // The GPIOs being named belong to the connected Fire, so an Ice --board
+    // would relabel them against hardware that is not there.
+    check_fire_board_optional(&board)?;
     let chip = active_chip_type(device);
     let pin = args
         .pin

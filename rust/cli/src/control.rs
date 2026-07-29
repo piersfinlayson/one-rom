@@ -7,8 +7,8 @@ use crate::board_view::{gpio_header_role, gpio_rom_function, gpio_system_functio
 use crate::{
     args,
     utils::{
-        active_chip_type, check_device, check_device_running, check_live_read_write,
-        resolve_board_optional,
+        active_chip_type, check_device, check_device_running, check_fire_board_optional,
+        check_live_read_write, resolve_board_optional,
     },
 };
 use onerom_cli::device::{Device, select_device};
@@ -319,6 +319,9 @@ pub async fn cmd_reset(
     // before the device is touched: a --pin this board has no pad for is the
     // user's mistake, not something to discover half way through driving it.
     let board = resolve_board_optional(options, &args.board)?;
+    // The device being driven is a Fire, so an Ice --board would name its pads
+    // against the wrong hardware - silently, which is the worst of the options.
+    check_fire_board_optional(&board)?;
     let pin = args.pin.resolve(board.as_ref())?;
 
     let driven = drive_gpio(
@@ -367,8 +370,10 @@ pub async fn cmd_pin(options: &Options, args: &args::control::ControlPinArgs) ->
     let after = args.then.unwrap_or(GpioState::Z);
 
     // See cmd_reset: the pin is resolved against the board before anything is
-    // driven, because a pad name has no GPIO until a board says so.
+    // driven, because a pad name has no GPIO until a board says so, and an Ice
+    // board is not the hardware being driven.
     let board = resolve_board_optional(options, &args.board)?;
+    check_fire_board_optional(&board)?;
     let pin = args.pin.resolve(board.as_ref())?;
 
     let driven = drive_gpio(

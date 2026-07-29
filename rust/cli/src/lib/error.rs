@@ -31,6 +31,19 @@ pub enum Error {
     #[error("Unknown board type: {0}\n  Known board types: {1}")]
     InvalidBoard(String, String),
 
+    /// A board the CLI can describe but cannot act on.
+    ///
+    /// Every firmware and device path here is RP2350-only - images are composed
+    /// for [`Variant::RP2350`](onerom_config::mcu::Variant) and devices are
+    /// reached over picoboot - so an Ice (STM32) board has no image to build and
+    /// no bootloader to talk to. Saying so here beats letting it surface as a
+    /// missing-release error from the manifest lookup, which describes a symptom
+    /// rather than the cause.
+    #[error(
+        "Board '{0}' is an Ice (STM32) board, which this command does not support.\n  This command supports Fire (RP2350) boards only."
+    )]
+    IceBoardUnsupported(String),
+
     #[error(
         "You must not specify both --serial and --board together.\n  If --serial is specified, this is used to determine the board type automatically if possible."
     )]

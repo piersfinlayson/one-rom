@@ -339,6 +339,12 @@ any level).
 Most commands accept `--board` (`-b`) to identify or override the board type,
 and rely on `--serial` (global) to pick a specific device.
 
+Ice (STM32) boards are recognised, but the CLI cannot scan, program or build
+firmware for them. Where `--board` reaches a device or builds an image, naming
+an Ice board is an error rather than a later failure. Commands that only report
+hardware take them; each command's own entry below states what it accepts, and
+[`board list`](#board-list) shows which boards are which.
+
 ## Command summary
 
 | Command | Purpose | Device required |
@@ -373,8 +379,8 @@ onerom scan --slots
 
 | Option | Description |
 |---|---|
-| `--board <BOARD>` | Only show devices matching this board type. Conflicts with `--list-boards`. |
-| `--list-boards` | List all known board types. |
+| `--board <BOARD>` | Only show devices matching this board type. Conflicts with `--list-boards`. Must be a Fire board — a scan cannot find an Ice board. |
+| `--list-boards` | List the known board types, the same listing as [`board list`](#board-list). |
 | `--slots` (alias `--slot`) | Also show the ROM slot contents for each device found. Conflicts with `--list-boards`. |
 
 Device required: no.
@@ -622,9 +628,9 @@ of action by `control pin` itself.
 A board revision or ROM type this build does not recognise costs the derived
 names, not the listing: `Function` falls back to `-` (or, for a socket pin whose
 chip type is unknown, `socket pin <N>`), and with no recognised board at all
-nothing is filtered out, since nothing can be ruled out. On a board whose
-physical header layout is not yet characterised, pad names come from the board's
-pin assignments alone and `--verbose` says so beneath the table.
+nothing is filtered out, since nothing can be ruled out. On a board with no
+pin-header descriptor, pad names come from the board's pin assignments alone and
+`--verbose` says so beneath the table.
 
 On a Fire 28 (rev C) serving a 27512:
 
@@ -1268,8 +1274,7 @@ Supported chip types for fire-24-f (One ROM Fire 24 (rev F)):
     2764            8KB        32KB  fly-lead to X1
     ...
 
-  Image size is the flash One ROM uses to emulate the chip, which may exceed the
-  chip's own ROM size.  See docs/COMPATIBILITY.md.
+  Image size is the flash One ROM uses to emulate the chip, which may exceed the chip's own ROM size.  See docs/COMPATIBILITY.md.
 
   Recognised but not servable on this board: 2016, 6116
 
@@ -1324,8 +1329,13 @@ onerom board <COMMAND>
 
 ### board list
 
-Lists the supported board types. This replaces the bare `onerom boards` of
+Lists the board types, in two groups. This replaces the bare `onerom boards` of
 earlier releases, which no longer exists.
+
+The first group is the boards the CLI can act on — the Fire (RP2350) boards.
+The second is the Ice (STM32) boards, which the CLI recognises but cannot scan,
+program or build firmware for; naming one on a command that needs a device or an
+image is an error. Commands that only report hardware still take them.
 
 ```
 onerom board list
@@ -1335,12 +1345,14 @@ Example output (illustrative — your build may differ):
 
 ```
 Supported One ROM board types:
-  fire-24-a, fire-24-c, fire-24-d, fire-24-e, fire-24-f, fire-24-usb-b,
-  fire-28-a, fire-28-b, fire-28-c, fire-28-d, fire-32-a, fire-32-b, fire-40-a,
-  fire-40-b,
-  ice-24-d, ice-24-e, ice-24-f, ice-24-g, ice-24-i, ice-24-j, ice-24-usb-h,
-  ice-28-a
+  fire-24-a, fire-24-c, fire-24-d, fire-24-e, fire-24-eadb01, fire-24-f, fire-24-usb-b, fire-28-a, fire-28-b, fire-28-c, fire-28-d, fire-32-a, fire-32-b, fire-40-a, fire-40-b
+
+Recognised, but not supported by the CLI:
+  ice-24-d, ice-24-e, ice-24-f, ice-24-g, ice-24-i, ice-24-j, ice-24-usb-h, ice-28-a
+  These boards use an STM32, rather than the RP2350 the CLI works with.
 ```
+
+`onerom scan --list-boards` prints the same listing.
 
 Device required: no.
 
@@ -1358,8 +1370,8 @@ onerom board header [<board>]
 ```
 
 `<board>` is a board type (e.g. `fire-24-f`); if omitted, it is inferred from a
-connected One ROM. Boards not yet characterised print a short notice instead of
-a diagram.
+connected One ROM. A board with no pin-header descriptor prints a short notice
+instead of a diagram.
 
 ```
 onerom board header fire-24-f
@@ -1382,6 +1394,11 @@ ROM's functions (address / data / chip-select / `BYTE` / power / …) instead;
 add `--gpio` to overlay both. `--gpio` requires `--chip-type`. A pin that carries
 two functions on a multiplexed part (e.g. the 27C400's pin 29, `A0/D15`) shows
 both.
+
+The two views that label pins with GPIOs — no `--chip-type`, or `--gpio` — need
+the board's GPIO map. A board without one reports that and draws nothing; the
+`--chip-type` function view still works, as it is drawn from the chip's pinout
+and the board's ROM signal assignments.
 
 When the chip's pin count differs from the board's, the socket is drawn at the
 larger of the two and the smaller device is bottom-justified (see

@@ -16,7 +16,7 @@ use onerom_gen::compat::{ChipCompat, check_chip_on_board, format_size, supported
 use onerom_gen::{Builder, FIRMWARE_SIZE, License};
 
 use crate::args;
-use crate::utils::{resolve_board, resolve_firmware_output};
+use crate::utils::{check_fire_board, resolve_board, resolve_firmware_output};
 use onerom_cli::plugin::{PluginSpec, ResolvedPlugin, resolve_plugins};
 use onerom_cli::slot::{
     ConfirmationsRequired, GlobalConfig, check_slot_confirmations, inject_plugins_into_config,
@@ -316,6 +316,7 @@ pub async fn cmd_build(
     check_build_args(options, args)?;
 
     let board = resolve_board(options, &args.board)?.ok_or(Error::NoBoardOrDevice)?;
+    check_fire_board(&board)?;
     let mcu = Variant::RP2350;
 
     if !args.slot.is_empty() {
@@ -526,6 +527,7 @@ async fn inspect_release_firmware(
     args: &args::firmware::FirmwareInspectArgs,
 ) -> Result<Vec<u8>, Error> {
     let board = resolve_board(options, &args.board)?.ok_or(Error::NoBoardOrDevice)?;
+    check_fire_board(&board)?;
     let mcu = Variant::RP2350;
     let releases = Releases::from_network_async().await?;
     let release = resolve_release(&releases, &args.version)?;
@@ -834,8 +836,8 @@ fn print_chips_for_board(board: &Board) {
 
     println!();
     println!(
-        "  Image size is the flash One ROM uses to emulate the chip, which may \
-         exceed the\n  chip's own ROM size.  See docs/COMPATIBILITY.md."
+        "  Image size is the flash One ROM uses to emulate the chip, which may exceed \
+         the chip's own ROM size.  See docs/COMPATIBILITY.md."
     );
 
     // Chip types of this board's own pin count that it cannot serve - either
@@ -896,6 +898,7 @@ pub async fn cmd_download(
     args: &args::firmware::FirmwareDownloadArgs,
 ) -> Result<(), Error> {
     let board = resolve_board(options, &args.board)?.ok_or(Error::NoBoardOrDevice)?;
+    check_fire_board(&board)?;
     let mcu = Variant::RP2350;
 
     let releases = Releases::from_network_async().await?;

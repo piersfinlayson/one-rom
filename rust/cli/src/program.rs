@@ -13,7 +13,7 @@ use crate::firmware::{
     acquire_firmware, build_rom_image, confirm_slot_overrides, resolve_config_json,
     verify_assembled_firmware,
 };
-use crate::utils::{check_device, resolve_board};
+use crate::utils::{check_device, check_fire_board_optional, resolve_board};
 use onerom_cli::device::select_device_by_chip_id;
 use onerom_cli::plugin::{parse_plugins, resolve_plugins};
 use onerom_cli::slot::{GlobalConfig, check_slot_confirmations, save_config};
@@ -227,6 +227,7 @@ pub async fn cmd_program(
     // Board must be resolved before acquire_program_image so it is available
     // for chip type validation when parsing --slot arguments.
     let board = resolve_board(options, &args.board)?;
+    check_fire_board_optional(&board)?;
     let mcu = Variant::RP2350;
 
     if let Some(b) = &board

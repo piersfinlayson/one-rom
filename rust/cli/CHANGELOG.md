@@ -2,6 +2,32 @@
 
 ## v0.3.0 - 2026-??-??
 
+- **Ice (STM32) boards are now listed separately, and rejected where the CLI
+  cannot use them.** `onerom board list` (and `onerom scan --list-boards`, which
+  now prints the same listing) shows the Fire boards under the existing heading
+  and the Ice boards under a second one, saying what they are: recognised, but
+  not something this CLI can scan, program or build firmware for. It never
+  could — every firmware path composes an RP2350 image and every device path
+  speaks picoboot, the RP2350 bootloader — but the single merged list implied
+  otherwise, and `--board ice-24-d` failed several layers down as a missing
+  release, which describes the symptom rather than the cause. `scan`, `program`,
+  `firmware build`, `firmware download`, `firmware inspect --board`,
+  `control pin`, `control reset` and `inspect gpio` now reject an Ice `--board`
+  up front and say why. The commands that only *describe* hardware are
+  unchanged and still take Ice boards: `board header`, `board socket`, `chips`
+  and `firmware releases`. `Error::IceBoardUnsupported` is new.
+- `board socket` and `inspect socket` now say when a board has no GPIO map,
+  instead of drawing the diagram with the GPIO column blank all the way down.
+  This affects the two views that label pins with GPIOs — no `--chip-type`, and
+  `--chip-type` with `--gpio`. The `--chip-type` function view is unaffected: it
+  is drawn from the chip's pinout and the board's ROM signal assignments, not
+  from the socket map.
+- Stop hard-wrapping prose in console output. A handful of messages broke a
+  sentence across lines at a fixed width — the `chips` image-size note, three of
+  the `--pin` errors and the new Ice-board one — which the terminal then wrapped
+  again at its own width. Each sentence is now one line and the terminal decides
+  where it breaks. Multi-line messages that put a *separate* sentence on its own
+  indented line are unchanged; that is structure, not wrapping.
 - **Breaking: `onerom boards` is now `onerom board`**, and the bare listing it
   used to print is `onerom board list`. The `board header` and `board socket`
   views added earlier in this release are documented under their shipping names

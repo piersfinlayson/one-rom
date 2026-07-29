@@ -58,7 +58,7 @@ const HEADER_HINT: &str =
     "Run 'onerom inspect header' to see which GPIO is behind each header pad.";
 
 /// What `--pin` accepts, as one sentence for an error message.
-const NAMESPACE_HINT: &str = "--pin takes an MCU GPIO, written 'gpio<N>' - for example 'gpio23' - or a header\n  pad name: 'sel_a'..'sel_e', 'x1' or 'x2'.";
+const NAMESPACE_HINT: &str = "--pin takes an MCU GPIO, written 'gpio<N>' - for example 'gpio23' - or a header pad name: 'sel_a'..'sel_e', 'x1' or 'x2'.";
 
 /// The board pin arrays' "no such pin" sentinel. No real GPIO number reaches it.
 const NO_PIN: u8 = 255;
@@ -155,8 +155,8 @@ impl Pin {
                     return Err(Error::InvalidPin(
                         pad.to_string(),
                         format!(
-                            "'{pad}' is a header pad, and which GPIO sits behind a pad depends on\n  \
-                             the board. This One ROM's board type could not be determined.\n  \
+                            "'{pad}' is a header pad, and which GPIO sits behind a pad depends on the board.\n  \
+                             This One ROM's board type could not be determined.\n  \
                              Pass --board <BOARD>, or name the MCU GPIO directly as 'gpio<N>'."
                         ),
                     ));
@@ -304,15 +304,14 @@ pub fn parse_pin(spec: &str) -> Result<Pin, Error> {
 
     if name.bytes().all(|b| b.is_ascii_digit()) {
         return invalid(format!(
-            "A bare number is ambiguous: it could be an MCU GPIO, an image-select pad,\n  an X pad or a ROM socket pin.\n  Write an MCU GPIO as 'gpio{name}'.\n  {HEADER_HINT}"
+            "A bare number is ambiguous: it could be an MCU GPIO, an image-select pad, an X pad or a ROM socket pin.\n  Write an MCU GPIO as 'gpio{name}'.\n  {HEADER_HINT}"
         ));
     }
 
     if is_address_pad_name(&name) {
         return invalid(format!(
             "'{name}' is a broken-out address line, which --pin does not accept.\n  \
-             --pin takes an MCU GPIO ('gpio<N>') or a header pad ('sel_a'..'sel_e',\n  \
-             'x1', 'x2').\n  \
+             --pin takes an MCU GPIO ('gpio<N>') or a header pad ('sel_a'..'sel_e', 'x1', 'x2').\n  \
              Use the MCU GPIO behind the pad, written 'gpio<N>'.\n  \
              {HEADER_HINT}"
         ));
