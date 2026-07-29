@@ -9,7 +9,7 @@ use crate::args::inspect::{
 use crate::board_view::{gpio_header_role, gpio_rom_function, gpio_system_functions};
 use crate::utils::{
     active_chip_type, check_device, check_device_running, check_live_read_write, print_hex_dump,
-    resolve_board,
+    resolve_board, resolve_board_optional,
 };
 use onerom_cli::CliFetch;
 use onerom_cli::LIVE_ROM_BASE;
@@ -654,18 +654,23 @@ pub async fn cmd_gpio(options: &Options, args: &InspectGpioArgs) -> Result<(), E
     check_device_running(options, args)?;
     let device = options.device.as_ref().unwrap();
 
+    // Naming is entirely local: the board pin map plus the chip type of the ROM
+    // being served. The board is also what turns a --pin pad name into a GPIO,
+    // so it has to be settled before the device is queried.
+    let board = resolve_board_optional(options, &args.board)?;
+    let chip = active_chip_type(device);
+    let pin = args
+        .pin
+        .map(|pin| pin.resolve(board.as_ref()))
+        .transpose()?;
+
     // The capability probe carries num_gpios, which is what a whole-device query
     // is sized from - 30 on an RP2350A, 48 on an RP2350B, never a constant.
     let caps = get_caps(device).await?;
-    let (first_gpio, entries) = match args.pin {
+    let (first_gpio, entries) = match pin {
         Some(pin) => (pin.gpio(), gpio_query(device, &caps, pin.gpio(), 1).await?),
         None => (0, gpio_query_all(device, &caps).await?),
     };
-
-    // Naming is entirely local: the board pin map plus the chip type of the ROM
-    // being served.
-    let board = resolve_board(options, &None).ok().flatten();
-    let chip = active_chip_type(device);
 
     println!("{device}");
     println!();

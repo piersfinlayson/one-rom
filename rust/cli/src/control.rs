@@ -7,12 +7,13 @@ use crate::board_view::{gpio_header_role, gpio_rom_function, gpio_system_functio
 use crate::{
     args,
     utils::{
-        active_chip_type, check_device, check_device_running, check_live_read_write, resolve_board,
+        active_chip_type, check_device, check_device_running, check_live_read_write,
+        resolve_board_optional,
     },
 };
 use onerom_cli::device::{Device, select_device};
 use onerom_cli::picobootx::{ONEROM_FEAT_GPIO_QUERY, ONEROM_GPIO_FLAG_FORCE};
-use onerom_cli::pin::Pin;
+use onerom_cli::pin::ResolvedPin;
 use onerom_cli::usb::{
     FLASH_BASE, GpioSetArgs, GpioUse, LedSubCmd, RebootArgs, flash_erase, get_caps, gpio_query,
     gpio_set, read_memory, reboot, set_led, write_memory,
@@ -188,25 +189,47 @@ fn confirm_gpio(options: &Options, force: bool) -> Result<bool, Error> {
     Ok(matches!(input.trim().to_lowercase().as_str(), "y" | "yes"))
 }
 
+/// One `control` command's request to drive a pin.
+///
+/// The pin arrives already resolved, and the board it was resolved against comes
+/// with it: both callers need the board anyway - to resolve a `--pin` pad name
+/// before there is anything to drive - so passing it on costs nothing and keeps
+/// the "which GPIO is this?" question settled in one place.
+struct DriveRequest<'a> {
+    /// The pin to drive.
+    pin: ResolvedPin,
+
+    /// The board the pin was resolved against, where one is known. `None` costs
+    /// the pin's name and its 5V-tolerance check, not the operation.
+    board: Option<&'a Board>,
+
+    /// The state to drive now.
+    state: GpioState,
+
+    /// The state to apply when `hold_ms` expires.
+    after: GpioState,
+
+    /// Milliseconds to hold `state` for; 0 latches indefinitely.
+    hold_ms: u32,
+
+    /// Whether to override the device's in-use refusal.
+    force: bool,
+
+    /// How the caller's command overrides the in-use refusal; `control reset`
+    /// has no `--force` of its own and points elsewhere.
+    force_hint: &'a str,
+}
+
 /// Drive one GPIO, having first asked the device what it is using it for.
 ///
 /// Shared by `control pin` and `control reset` - the two differ in the request
 /// they build and what they print afterwards, not in what happens here.
 ///
 /// Returns `false` if the user declined a warning, in which case nothing was
-/// driven. `force_hint` is how the caller's command overrides the in-use
-/// refusal; `control reset` has no `--force` of its own and points elsewhere.
-async fn drive_gpio(
-    options: &Options,
-    pin: Pin,
-    state: GpioState,
-    after: GpioState,
-    hold_ms: u32,
-    force: bool,
-    force_hint: &str,
-) -> Result<bool, Error> {
+/// driven.
+async fn drive_gpio(options: &Options, req: DriveRequest<'_>) -> Result<bool, Error> {
     let device = options.device.as_ref().unwrap();
-    let gpio = pin.gpio();
+    let gpio = req.pin.gpio();
 
     // The capability probe is also how a device too old for GPIO control says
     // so, in place of an unexplained USB stall.
@@ -214,9 +237,9 @@ async fn drive_gpio(
 
     // Naming is best effort: a board this build does not recognise costs the
     // pin's name, not the operation.
-    let board = resolve_board(options, &None).ok().flatten();
+    let board = req.board;
     let chip = active_chip_type(device);
-    let name = describe_gpio(board.as_ref(), chip, gpio);
+    let name = describe_gpio(board, chip, gpio);
 
     // Ask before driving, so a refusal can say what the pin is doing rather
     // than only that it is busy. The firmware gates the write regardless, so
@@ -235,12 +258,12 @@ async fn drive_gpio(
         && gpio_use != GpioUse::Free
     {
         let (doing, consequence) = describe_use(gpio_use);
-        if !force {
+        if !req.force {
             return Err(Error::GpioInUseNamed(
                 name.to_string(),
                 doing.to_string(),
                 consequence.to_string(),
-                force_hint.to_string(),
+                req.force_hint.to_string(),
             ));
         }
         println!("Warning: {name} is in use by One ROM: {doing}.");
@@ -250,13 +273,13 @@ async fn drive_gpio(
     // Static board metadata, not a measurement: the RP2350's ADC pins are the
     // only pads that are not 5V-tolerant. Nothing here knows or asks what is
     // wired to the pad.
-    if let Some(board) = board.as_ref()
+    if let Some(board) = board
         && board.gpio_tolerance(gpio) == Some(PinTolerance::ThreeVolt3)
     {
         println!("Warning: {name} is 3.3V-only (an RP2350 ADC pin), not 5V-tolerant.");
         println!("  More than 3.3V on this pad can damage the MCU - including whatever the");
         println!("  net sits at once One ROM releases the pin.");
-        if !confirm_gpio(options, force)? {
+        if !confirm_gpio(options, req.force)? {
             println!("Aborted");
             return Ok(false);
         }
@@ -264,10 +287,10 @@ async fn drive_gpio(
 
     let args = GpioSetArgs {
         gpio,
-        state: state.into(),
-        after_state: after.into(),
-        flags: if force { ONEROM_GPIO_FLAG_FORCE } else { 0 },
-        duration_ms: hold_ms,
+        state: req.state.into(),
+        after_state: req.after.into(),
+        flags: if req.force { ONEROM_GPIO_FLAG_FORCE } else { 0 },
+        duration_ms: req.hold_ms,
     };
     gpio_set(device, &caps, args).await?;
 
@@ -292,23 +315,33 @@ pub async fn cmd_reset(
         ));
     }
 
+    // A pad name is meaningless without a board, so the pin is resolved here,
+    // before the device is touched: a --pin this board has no pad for is the
+    // user's mistake, not something to discover half way through driving it.
+    let board = resolve_board_optional(options, &args.board)?;
+    let pin = args.pin.resolve(board.as_ref())?;
+
     let driven = drive_gpio(
         options,
-        args.pin,
-        GpioState::Low,
-        // Released, never driven high: a reset net has its own pull-up and may
-        // have other drivers on it.
-        GpioState::Z,
-        args.hold,
-        false,
-        "Use 'onerom control pin --pin <PIN> --state low --hold <MS> --force' to drive it anyway.",
+        DriveRequest {
+            pin,
+            board: board.as_ref(),
+            state: GpioState::Low,
+            // Released, never driven high: a reset net has its own pull-up and
+            // may have other drivers on it.
+            after: GpioState::Z,
+            hold_ms: args.hold,
+            force: false,
+            force_hint:
+                "Use 'onerom control pin --pin <PIN> --state low --hold <MS> --force' to drive it anyway.",
+        },
     )
     .await?;
 
     if driven {
         println!(
-            "Asserted reset on {} for {}ms - the device times the pulse and releases the pin",
-            args.pin, args.hold
+            "Asserted reset on {pin} for {}ms - the device times the pulse and releases the pin",
+            args.hold
         );
     }
 
@@ -333,24 +366,32 @@ pub async fn cmd_pin(options: &Options, args: &args::control::ControlPinArgs) ->
     let hold_ms = args.hold.unwrap_or(0);
     let after = args.then.unwrap_or(GpioState::Z);
 
+    // See cmd_reset: the pin is resolved against the board before anything is
+    // driven, because a pad name has no GPIO until a board says so.
+    let board = resolve_board_optional(options, &args.board)?;
+    let pin = args.pin.resolve(board.as_ref())?;
+
     let driven = drive_gpio(
         options,
-        args.pin,
-        args.state,
-        after,
-        hold_ms,
-        args.force,
-        "Use --force to drive it anyway.",
+        DriveRequest {
+            pin,
+            board: board.as_ref(),
+            state: args.state,
+            after,
+            hold_ms,
+            force: args.force,
+            force_hint: "Use --force to drive it anyway.",
+        },
     )
     .await?;
 
     if driven {
         if hold_ms == 0 {
-            println!("Set {} {}", args.pin, args.state);
+            println!("Set {pin} {}", args.state);
         } else {
             println!(
-                "Set {} {} for {hold_ms}ms - the device times the hold and then sets it {after}",
-                args.pin, args.state
+                "Set {pin} {} for {hold_ms}ms - the device times the hold and then sets it {after}",
+                args.state
             );
         }
     }

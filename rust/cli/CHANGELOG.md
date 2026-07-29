@@ -20,8 +20,8 @@
   columns was populated. Repeated names are shown once; an X or image-select pad
   is a function of the pin like any other.
   - It also **fixes a real omission**: the lookup stopped at the first system
-    function it matched, so on a `fire-24-f` — where the status LED and the
-    NeoPixel are both GPIO 29 — the table named only the status LED. Both are
+    function it matched, so on a `fire-24-f` — where the Status LED and the
+    RGB LED are both GPIO 29 — the table named only the Status LED. Both are
     now listed, which matters because that is the pin most likely to be driven
     by accident.
   - `Function` no longer claims a GPIO is `SWCLK` or `SWDIO`. Those are
@@ -63,10 +63,26 @@
     board metadata rather than any measurement) warns and asks, which `--yes` or
     `--force` answers. Nothing else about the pad is checked: what is wired to it
     is the user's to know.
-  - `--pin` takes an MCU GPIO written `gpio<N>` only. A bare number is rejected
-    rather than guessed at — `23` is a plausible GPIO, image-select pad, X pad
-    and ROM socket pin at once — and the header pad names (`sel_a`, `x1`, …) are
-    recognised and reported as not yet supported rather than as meaningless.
+  - `--pin` takes an MCU GPIO written `gpio<N>`, or a header pad name: `sel_a`
+    to `sel_e` (`sel-a` and `sela` are also accepted) and `x1`/`x2` — the pads a
+    wire can physically reach. A pad resolves against the board, read from the
+    device or given by `--board`, and from its electrical pin assignments rather
+    than its header layout, so pad names work on every board that has the pad
+    including those whose physical header is not yet characterised. A board with
+    no such pad is refused, naming the pads it does have.
+  - A bare `--pin` number is rejected rather than guessed at — `23` is a
+    plausible GPIO, image-select pad, X pad and ROM socket pin at once, and
+    accepting pad names sharpens that ambiguity rather than removing it. The
+    broken-out address pads (`a<N>`) are recognised and refused with a reason:
+    `--pin` addresses MCU GPIOs and the pads a wire can
+    reach, an address line is a ROM signal rather than one of those, and
+    accepting `a17` would invite `a11` or `d3`, which have no pad at all.
+  - `control pin --state` and `--then` accept `1` and `0` alongside `high` and
+    `low`.
+  - `control pin`, `control reset` and `inspect gpio` take `--board`, which
+    overrides the board type read from the device. It is needed only to resolve
+    a `--pin` pad name on a One ROM whose board revision this build does not
+    recognise; `gpio<N>` needs no board at all.
   - `inspect gpio` names each GPIO's role itself, from the board pin map and the
     chip type being served, because the device deliberately reports only what
     taking a pin over would cost (free / read by serving / driven by serving /

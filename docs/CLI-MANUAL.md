@@ -236,11 +236,12 @@ onerom control led beacon
 If you have run a wire from a One ROM header pad to the reset line of the
 machine One ROM is installed in, `control reset` pulses that pad low and then
 releases it — resetting the host so it picks up the image you just flashed.
-Pass the MCU GPIO behind the pad; `onerom inspect header` shows which that is:
+Name the pad, or the MCU GPIO behind it — `onerom inspect header` shows which
+that is:
 
 ```
 onerom program --config-file c64.json
-onerom control reset --pin gpio9
+onerom control reset --pin x1
 ```
 
 The pad is typically `X1`/`X2`, or an image-select pad whose jumper you have
@@ -561,11 +562,13 @@ bootloader where it does not exist. See [Device states](#device-states).
 onerom inspect gpio
 onerom inspect gpio --all
 onerom inspect gpio --pin gpio9
+onerom inspect gpio --pin x1
 ```
 
 | Option | Description |
 |---|---|
-| `--pin <PIN>` | Show only this GPIO, written `gpio<N>` (see [Pin values](#pin-values)). Conflicts with `--all`. |
+| `--pin <PIN>` | Show only this pin, named as `gpio<N>` or as a header pad (see [Pin values](#pin-values)). Conflicts with `--all`. |
+| `--board <BOARD>` | Board type, overriding what the device reports. Only needed to resolve a `--pin` pad name on a board this build does not recognise. |
 | `--all` | Also list GPIOs with no function at all. By default only GPIOs connected to something are shown. |
 
 By default the table lists only the GPIOs connected to **something** — a ROM
@@ -763,8 +766,9 @@ Exactly one of `--byte` / `--input` is required.
 Pulse a GPIO low, then release it, to reset the host system One ROM is installed
 in — useful in scripted workflows after programming a new image.
 
-`--pin` is the MCU GPIO your reset wire is soldered to, typically an `X1`/`X2`
-pad or an image-select pad whose jumper has been removed;
+`--pin` is the pin your reset wire is soldered to, typically an `X1`/`X2` pad or
+an image-select pad whose jumper has been removed. Name it by pad (`x1`,
+`sel_a`) or by MCU GPIO (`gpio9`) — see [Pin values](#pin-values);
 [`inspect header`](#inspect-header) shows which GPIO is behind each pad.
 
 The line is only ever **driven low and then released to high impedance**. A reset
@@ -780,13 +784,15 @@ The device must be **running** with the USB system plugin — see
 [Device states](#device-states).
 
 ```
+onerom control reset --pin x1
 onerom control reset --pin gpio9
 onerom control reset --pin gpio9 --hold 500
 ```
 
 | Option | Description |
 |---|---|
-| `--pin <PIN>` | MCU GPIO the reset wire is connected to, written `gpio<N>` (see [Pin values](#pin-values)). Required. |
+| `--pin <PIN>` | Pin the reset wire is connected to, named as `gpio<N>` or as a header pad (see [Pin values](#pin-values)). Required. |
+| `--board <BOARD>` | Board type, overriding what the device reports. Only needed to resolve a `--pin` pad name on a board this build does not recognise. |
 | `--hold <MS>` | Milliseconds to hold reset asserted. Decimal or `0x` hex. Default `100`; `0` is rejected, because a reset pulse with no end is not a reset. |
 
 If One ROM is itself using the GPIO the command is refused, naming what it is
@@ -812,9 +818,8 @@ Switch the device to serving the specified slot immediately (not persistent).
 Drive a One ROM pin high, low or high-impedance, optionally for a bounded
 period.
 
-`--pin` names an MCU GPIO today (see [Pin values](#pin-values)); the command is
-named for what is being addressed rather than for that one spelling, since
-header pad names are planned.
+`--pin` names an MCU GPIO or a header pad (see [Pin values](#pin-values)); the
+command is named for what is being addressed rather than for any one spelling.
 
 Without `--hold` the state is latched until something else changes it. With
 `--hold` the **device** holds the state for that many milliseconds and then
@@ -830,15 +835,17 @@ GPIO is and what One ROM is using it for.
 onerom control pin --pin gpio9 --state high
 onerom control pin --pin gpio9 --state low --hold 250
 onerom control pin --pin gpio9 --state low --hold 250 --then high
-onerom control pin --pin gpio9 --state z
+onerom control pin --pin x1 --state 0 --hold 250
+onerom control pin --pin sel_a --state z
 ```
 
 | Option | Description |
 |---|---|
-| `--pin <PIN>` | MCU GPIO to drive, written `gpio<N>` (see [Pin values](#pin-values)). Required. |
-| `--state <STATE>` | `high`, `low`, or `z` (high-impedance). Required. |
+| `--pin <PIN>` | Pin to drive, named as `gpio<N>` or as a header pad (see [Pin values](#pin-values)). Required. |
+| `--board <BOARD>` | Board type, overriding what the device reports. Only needed to resolve a `--pin` pad name on a board this build does not recognise. |
+| `--state <STATE>` | `high`, `low`, or `z` (high-impedance). `1` and `0` are accepted for `high` and `low`. Required. |
 | `--hold <MS>` | Hold `--state` for this many milliseconds, then apply `--then`. Decimal or `0x` hex. Omit to latch indefinitely. The device's own limit is 60 seconds. |
-| `--then <STATE>` | State to apply when `--hold` expires: `high`, `low` or `z`. Default `z`. Requires `--hold`. |
+| `--then <STATE>` | State to apply when `--hold` expires: `high`, `low` or `z` (or `1`/`0`). Default `z`. Requires `--hold`. |
 | `--force` | Drive the GPIO even though One ROM is using it for serving. |
 
 **Refusals and warnings.** If One ROM is itself using the GPIO, the command is
@@ -1450,15 +1457,37 @@ plugin. The system plugin is placed in slot 0, the user plugin in slot 1.
 Used by `--pin` in [`control pin`](#control-pin), [`control
 reset`](#control-reset) and [`inspect gpio`](#inspect-gpio).
 
-`--pin` names one **MCU GPIO**, written `gpio<N>` — for example `gpio23`. The
-spelling is case-insensitive (`GPIO23` works).
+`--pin` names one **MCU GPIO**, either directly or through a header pad that is
+wired to one. All spellings are case-insensitive (`GPIO23`, `SEL_A`).
+
+| Form | Meaning |
+|---|---|
+| `gpio<N>` | An MCU GPIO — for example `gpio23`. |
+| `sel_a` … `sel_e` | An image-select pad. `sel-a` and `sela` are also accepted. |
+| `x1`, `x2` | An X pad. |
+
+A pad name resolves against the **board**, since which GPIO sits behind `sel_a`
+is a fact about the board and not about the name. The board is normally read
+from the connected device; `--board` overrides it, and is what you need if this
+build does not recognise the device's board revision. `gpio<N>` needs no board.
+A board that has no such pad — `sel_e` on a four-select board, `x1` on a board
+with no X pads — is an error naming the pads that board does have.
+
+Resolution uses the board's electrical pin assignments, not its header layout,
+so pad names work on every board, including those whose physical header is not
+yet characterised.
 
 A bare number is **rejected**. `23` could be an MCU GPIO, an image-select pad, an
 X pad or a ROM socket pin, and driving the wrong one is not a recoverable
-mistake, so the CLI names the namespaces rather than guessing. Header pad names
-(`sel_a`..`sel_e`, `x1`, `x2`, `a<N>`) are recognised but not yet accepted, and
-say so; `run`, `bootsel`, `swclk` and `swdio` are reported as not being GPIOs
-that can be driven.
+mistake, so the CLI names the namespaces rather than guessing. Accepting pad
+names does not remove that ambiguity — it sharpens it.
+
+The broken-out address pads (`a<N>`) are recognised and **deliberately refused**,
+now and in future. `--pin` addresses MCU GPIOs and the pads a wire can reach; an
+address line is a ROM signal rather than one of those, and accepting `a17` would
+invite `a11` or `d3`, which have no pad at all. Use the MCU GPIO behind the pad.
+`run`, `bootsel`, `swclk` and `swdio` are reported as not being GPIOs that can be
+driven. There is no syntax for a ROM socket leg.
 
 Run [`onerom inspect header`](#inspect-header) to see which GPIO is behind each
 header pad, or [`onerom inspect gpio`](#inspect-gpio) for the full per-GPIO

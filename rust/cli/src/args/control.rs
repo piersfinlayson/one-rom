@@ -81,9 +81,10 @@ pub enum ControlCommands {
     /// reset the host system the One ROM is installed in. Useful in scripted
     /// workflows to reset the host after programming a new ROM image.
     ///
-    /// --pin is the MCU GPIO your reset wire is soldered to - typically an X
-    /// pad, or an image-select pad whose jumper you have removed. Run
-    /// 'onerom inspect header' to see which GPIO is behind each pad.
+    /// --pin is the pin your reset wire is soldered to - typically an X pad, or
+    /// an image-select pad whose jumper you have removed. Name it by pad
+    /// ('x1', 'sel_a') or by MCU GPIO ('gpio9'). Run 'onerom inspect header' to
+    /// see which GPIO is behind each pad.
     ///
     /// The reset line is only ever driven low and then released: a reset net
     /// has its own pull-up and may have other drivers on it, so there is
@@ -95,7 +96,7 @@ pub enum ControlCommands {
     ///
     /// Examples:
     ///
-    ///   onerom control reset --pin gpio9
+    ///   onerom control reset --pin x1
     ///
     ///   onerom control reset --pin gpio9 --hold 500
     Reset(ControlResetArgs),
@@ -112,9 +113,10 @@ pub enum ControlCommands {
 
     /// Drive a One ROM pin high, low or high-impedance.
     ///
-    /// --pin names an MCU GPIO, written 'gpio<N>'. Run 'onerom inspect header'
-    /// to see which GPIO is behind each header pad, and 'onerom inspect gpio'
-    /// to see what One ROM is currently using each GPIO for.
+    /// --pin names an MCU GPIO, written 'gpio<N>', or a header pad: 'sel_a'
+    /// to 'sel_e', 'x1' or 'x2'. Run 'onerom inspect header' to see which GPIO
+    /// is behind each header pad, and 'onerom inspect gpio' to see what One ROM
+    /// is currently using each GPIO for.
     ///
     /// Without --hold the state is latched until something changes it. With
     /// --hold the device holds the state for that many milliseconds and then
@@ -131,9 +133,9 @@ pub enum ControlCommands {
     ///
     ///   onerom control pin --pin gpio9 --state high
     ///
-    ///   onerom control pin --pin gpio9 --state low --hold 250
+    ///   onerom control pin --pin x1 --state 0 --hold 250
     ///
-    ///   onerom control pin --pin gpio9 --state z
+    ///   onerom control pin --pin sel_a --state z
     Pin(ControlPinArgs),
 
     /// Erase this One ROM's flash memory.
@@ -274,12 +276,20 @@ impl From<&ControlRebootArgs> for RebootArgs {
 
 #[derive(Debug, Args)]
 pub struct ControlResetArgs {
-    /// MCU GPIO the reset wire is connected to, written gpio<N>.
+    /// Pin the reset wire is connected to: an MCU GPIO written gpio<N>, or a
+    /// header pad name (sel_a..sel_e, x1, x2).
     ///
     /// A bare number is rejected - see 'onerom inspect header' for the GPIO
     /// behind each header pad.
     #[arg(long, value_name = "PIN", required = true, value_parser = parse_pin)]
     pub pin: Pin,
+
+    /// Board type, overriding what the connected One ROM reports.
+    ///
+    /// Only needed to resolve a header pad name on a One ROM whose board type
+    /// this build does not recognise. A GPIO named as gpio<N> needs no board.
+    #[arg(long, value_name = "BOARD")]
+    pub board: Option<String>,
 
     /// Duration in milliseconds to hold the reset signal asserted.
     /// Defaults to 100.
@@ -308,9 +318,11 @@ impl CommandTrait for ControlSelectArgs {
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
 pub enum GpioState {
-    /// Drive the pin high.
+    /// Drive the pin high. Also accepted as '1'.
+    #[value(alias = "1")]
     High,
-    /// Drive the pin low.
+    /// Drive the pin low. Also accepted as '0'.
+    #[value(alias = "0")]
     Low,
     /// Set the pin to high-impedance (tri-state).
     Z,
@@ -341,14 +353,24 @@ impl std::fmt::Display for GpioState {
 
 #[derive(Debug, Args)]
 pub struct ControlPinArgs {
-    /// MCU GPIO to drive, written gpio<N>.
+    /// Pin to drive: an MCU GPIO written gpio<N>, or a header pad name
+    /// (sel_a..sel_e, x1, x2).
     ///
     /// A bare number is rejected - see 'onerom inspect header' for the GPIO
     /// behind each header pad.
     #[arg(long, value_name = "PIN", required = true, value_parser = parse_pin)]
     pub pin: Pin,
 
+    /// Board type, overriding what the connected One ROM reports.
+    ///
+    /// Only needed to resolve a header pad name on a One ROM whose board type
+    /// this build does not recognise. A GPIO named as gpio<N> needs no board.
+    #[arg(long, value_name = "BOARD")]
+    pub board: Option<String>,
+
     /// Desired pin state: high, low, or z (high-impedance).
+    ///
+    /// '1' and '0' are accepted for high and low.
     #[arg(long, value_name = "STATE", required = true)]
     pub state: GpioState,
 
@@ -360,6 +382,8 @@ pub struct ControlPinArgs {
     pub hold: Option<u32>,
 
     /// State to apply when --hold expires. Defaults to z. Requires --hold.
+    ///
+    /// '1' and '0' are accepted for high and low.
     #[arg(long, value_name = "STATE", requires = "hold")]
     pub then: Option<GpioState>,
 

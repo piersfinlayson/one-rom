@@ -106,6 +106,8 @@ pub enum InspectCommands {
     ///   onerom inspect gpio --all
     ///
     ///   onerom inspect gpio --pin gpio9
+    ///
+    ///   onerom inspect gpio --pin x1
     Gpio(InspectGpioArgs),
 
     /// Draw the connected One ROM's pin (jumper / programming) header as ASCII.
@@ -282,12 +284,20 @@ impl CommandTrait for InspectPeekMemoryArgs {
 
 #[derive(Debug, Args)]
 pub struct InspectGpioArgs {
-    /// Show only this GPIO, written gpio<N>.
+    /// Show only this pin: an MCU GPIO written gpio<N>, or a header pad name
+    /// (sel_a..sel_e, x1, x2).
     ///
     /// A bare number is rejected - see 'onerom inspect header' for the GPIO
     /// behind each header pad.
     #[arg(long, value_name = "PIN", value_parser = parse_pin)]
     pub pin: Option<Pin>,
+
+    /// Board type, overriding what the connected One ROM reports.
+    ///
+    /// Only needed to resolve a header pad name on a One ROM whose board type
+    /// this build does not recognise. A GPIO named as gpio<N> needs no board.
+    #[arg(long, value_name = "BOARD")]
+    pub board: Option<String>,
 
     /// Also show GPIOs with no function at all.
     ///
