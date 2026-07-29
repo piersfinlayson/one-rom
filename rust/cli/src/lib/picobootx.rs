@@ -93,6 +93,29 @@ pub enum LedSubCmd {
     Flame = 0x03,
 }
 
+/// Arguments to [`ONEROM_CMD_SET_LED`], laid out as `onerom_set_led_args_t` in
+/// the plugin's `usb_custom_pbx.h`.
+#[derive(Debug, Clone, Copy)]
+pub struct SetLedArgs {
+    /// Which LED. Only 0 exists today.
+    pub led_id: u8,
+
+    /// What to do with it.
+    pub sub_cmd: LedSubCmd,
+}
+
+impl SetLedArgs {
+    /// Pack into the 16 inline argument bytes of a picoboot command.
+    pub fn encode(&self) -> [u8; ONEROM_CMD_ARGS_LEN] {
+        let mut args = [0u8; ONEROM_CMD_ARGS_LEN];
+        args[0] = self.led_id;
+        args[1] = self.sub_cmd as u8;
+        // args[2..4] are reserved and args[4..16] are the unused p0/p1/p2
+        // parameter words; all stay zero.
+        args
+    }
+}
+
 /// State a GPIO can be placed in. Mirrors the firmware's `ora_gpio_state_t`
 /// value for value.
 #[repr(u8)]

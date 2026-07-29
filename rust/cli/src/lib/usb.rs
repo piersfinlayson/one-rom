@@ -19,7 +19,9 @@ use picoboot::{
 use std::time::Duration;
 
 use crate::Error;
-pub use crate::picobootx::{Caps, GpioEntry, GpioSetArgs, GpioState, GpioUse, LedSubCmd};
+pub use crate::picobootx::{
+    Caps, GpioEntry, GpioSetArgs, GpioState, GpioUse, LedSubCmd, SetLedArgs,
+};
 use crate::picobootx::{
     GpioQueryArgs, ONEROM_CAPS_LEN, ONEROM_CMD_ARGS_LEN, ONEROM_CMD_GET_CAPS,
     ONEROM_CMD_GPIO_QUERY, ONEROM_CMD_GPIO_SET, ONEROM_CMD_SET_LED, ONEROM_FEAT_GPIO_HOLD,
@@ -557,19 +559,15 @@ async fn pause_reenumeration() {
 
 /// Set the status LED on a One ROM device.
 pub async fn set_led(device: &Device, led_id: u8, sub_cmd: LedSubCmd) -> Result<(), Error> {
-    let mut args = [0u8; 16];
-    args[0] = led_id;
-    args[1] = sub_cmd as u8;
+    let args = SetLedArgs { led_id, sub_cmd }.encode();
 
-    let cmd = picoboot::PicobootXCmd::new(ONEROM_MAGIC, ONEROM_CMD_SET_LED, 0x10, 0, args);
-
-    let mut picoboot = get_picoboot(device, false).await?;
-
-    picoboot
-        .send_picobootx_cmd(cmd, None)
+    send_onerom_cmd(device, "SET_LED", ONEROM_CMD_SET_LED, 0, args)
         .await
         .map(|_| ())
-        .map_err(|e| Error::Usb(e.to_string()))
+        // No "too old" arm here, unlike the GPIO commands: SET_LED is the
+        // oldest One ROM command there is, so a plugin that does not know it
+        // does not know any of them, and blaming GPIO control would mislead.
+        .map_err(|failure| cmd_error("SET_LED", failure))
 }
 
 // ===========================================================================

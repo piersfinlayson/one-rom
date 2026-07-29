@@ -75,7 +75,7 @@ pub enum ControlCommands {
     )]
     Poke(ControlPokeArgs),
 
-    /// Assert the host reset signal via a One ROM GPIO.
+    /// Pulse a One ROM GPIO low to reset the host system.
     ///
     /// Pulses the named GPIO low, then releases it to high impedance, to
     /// reset the host system the One ROM is installed in. Useful in scripted

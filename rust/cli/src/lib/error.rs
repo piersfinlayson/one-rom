@@ -361,3 +361,38 @@ impl From<onerom_app::Error<onerom_fw::Error>> for Error {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The board-view error names a command that can actually help.
+    ///
+    /// `inspect header` and `inspect socket` have no `--board`, so the shared
+    /// [`Error::NoBoardOrDevice`] - which tells the user to pass one - is a dead
+    /// end for them. This message exists to point at the `board` form instead,
+    /// and is easy to break by editing one and not the other.
+    #[test]
+    fn board_view_error_points_at_a_command_that_takes_a_board() {
+        for view in ["header", "socket"] {
+            let msg = Error::NoDeviceForBoardView(view.to_string()).to_string();
+            assert!(
+                msg.contains(&format!("onerom board {view} <board>")),
+                "{view}: {msg}"
+            );
+            // The advice the shared error gives, which these commands cannot
+            // act on.
+            assert!(!msg.contains("--board"), "{view}: {msg}");
+            assert!(!msg.contains("--serial"), "{view}: {msg}");
+        }
+    }
+
+    /// The shared error still gives the `--board` advice, which is correct for
+    /// the commands that have one (`program`, `firmware build`, `board ...`).
+    #[test]
+    fn shared_no_board_error_still_advises_board_or_serial() {
+        let msg = Error::NoBoardOrDevice.to_string();
+        assert!(msg.contains("--board"), "{msg}");
+        assert!(msg.contains("--serial"), "{msg}");
+    }
+}
