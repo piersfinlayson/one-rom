@@ -38,11 +38,12 @@ pub enum ImageCommands {
 
     /// Extract one lane from an interleaved ROM image.
     ///
-    /// Divides the image into units of --unit bytes and keeps unit --offset of
-    /// every --stride units.  Used to split a wide ROM image, distributed as a
-    /// single interleaved file, into the narrower images each device needs.
+    /// The image contains --stride interleaved lanes of --bytes bytes each;
+    /// lane --offset is kept and the rest discarded.  Used to split a wide ROM
+    /// image, distributed as a single interleaved file, into the narrower
+    /// images each device needs.
     ///
-    /// The input length must be a multiple of --unit x --stride.
+    /// The input length must be a multiple of --bytes x --stride.
     ///
     /// Odd bytes of a 16-bit interleaved image:
     ///
@@ -54,7 +55,7 @@ pub enum ImageCommands {
     ///
     /// The upper 16-bit half of each 32-bit word:
     ///
-    ///   onerom image deinterleave --input rom32.bin --output hi.bin --offset 1 --stride 2 --unit 2
+    ///   onerom image deinterleave --input rom32.bin --output hi.bin --offset 1 --stride 2 --bytes 2
     Deinterleave(ImageDeinterleaveArgs),
 
     /// Convert a ROM image between formats.
@@ -103,17 +104,17 @@ pub struct ImageDeinterleaveArgs {
     #[arg(long, visible_alias = "out", value_name = "FILE")]
     pub output: String,
 
-    /// Which unit of each group to keep.  Must be less than --stride.
+    /// Which lane to keep.  Must be less than --stride.
     #[arg(long, value_name = "N")]
     pub offset: usize,
 
-    /// How many units per group.  Must be at least 2.
+    /// How many lanes the image interleaves.  Must be at least 2.
     #[arg(long, value_name = "N")]
     pub stride: usize,
 
-    /// Bytes per unit.  Use 2 to keep 16-bit words together.
-    #[arg(long, value_name = "N", default_value_t = 1)]
-    pub unit: usize,
+    /// Width of one lane, in bytes.  Use 2 to keep 16-bit words together.
+    #[arg(long, visible_alias = "unit", value_name = "N", default_value_t = 1)]
+    pub bytes: usize,
 }
 
 impl CommandTrait for ImageDeinterleaveArgs {

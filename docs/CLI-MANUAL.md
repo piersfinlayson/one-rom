@@ -1057,12 +1057,12 @@ Device required: no.
 
 ### image deinterleave
 
-Extract one lane from an interleaved ROM image. Divides the image into units of
-`--unit` bytes and keeps unit `--offset` of every `--stride` units. Used to
-split a wide ROM image, distributed as a single interleaved file, into the
-narrower images each device needs.
+Extract one lane from an interleaved ROM image. The image contains `--stride`
+interleaved lanes of `--bytes` bytes each; lane `--offset` is kept and the rest
+discarded. Used to split a wide ROM image, distributed as a single interleaved
+file, into the narrower images each device needs.
 
-The input length must be a multiple of `--unit × --stride`; the output is
+The input length must be a multiple of `--bytes × --stride`; the output is
 `1/--stride` of the input length.
 
 ```
@@ -1073,19 +1073,19 @@ onerom image deinterleave --input rom16.bin --output odd.bin --offset 1 --stride
 onerom image deinterleave --input rom32.bin --output b2.bin --offset 2 --stride 4
 
 # the upper 16-bit half of each 32-bit word
-onerom image deinterleave --input rom32.bin --output hi.bin --offset 1 --stride 2 --unit 2
+onerom image deinterleave --input rom32.bin --output hi.bin --offset 1 --stride 2 --bytes 2
 ```
 
 | Option | Description |
 |---|---|
 | `--input <FILE>` (alias `--in`) | Input ROM image file. |
 | `--output <FILE>` (alias `--out`) | Output file path. |
-| `--offset <N>` | Which unit of each group to keep. Must be less than `--stride`. |
-| `--stride <N>` | How many units per group. Must be at least 2. |
-| `--unit <N>` | Bytes per unit. Defaults to `1`; use `2` to keep 16-bit words together. |
+| `--offset <N>` | Which lane to keep. Must be less than `--stride`. |
+| `--stride <N>` | How many lanes the image interleaves. Must be at least 2. |
+| `--bytes <N>` (alias `--unit`) | Width of one lane, in bytes. Defaults to `1`; use `2` to keep 16-bit words together. |
 
 The same operation is available during a build as
-`--slot transform=deinterleave:<offset>/<stride>[/<unit>]`; see
+`--slot transform=deinterleave:<offset>/<stride>[/<bytes>]`; see
 [Image transforms](#image-transforms).
 
 Device required: no.
@@ -1575,11 +1575,22 @@ They are available two ways, and both run exactly the same operation:
 | Transform | Effect |
 |---|---|
 | `swap_bytes` | Reverses the byte order within each 16-bit word. The image must have an even length. |
-| `deinterleave:<offset>/<stride>` | Divides the image into single bytes and keeps byte `offset` of every `stride`. |
-| `deinterleave:<offset>/<stride>/<unit>` | As above, but in units of `unit` bytes — use `2` to keep 16-bit words together. |
+| `deinterleave:<offset>/<stride>` | The image contains `stride` interleaved lanes one byte wide; keep lane `offset`. |
+| `deinterleave:<offset>/<stride>/<bytes>` | As above, with lanes `bytes` wide — use `2` to keep 16-bit words together. |
 
-`deinterleave` requires the image length to be a multiple of `unit × stride`.
-The result is `1/stride` of the input length.
+The parameters are positional, in the order `<offset>/<stride>/<bytes>`, and
+`<bytes>` may be omitted (it defaults to `1`).
+
+Each name has aliases, accepted identically by the CLI and by a config file:
+
+| Canonical | Also accepted |
+|---|---|
+| `swap_bytes` | `swap-bytes`, `swapbytes` |
+| `deinterleave` | `de_interleave`, `de-interleave`, `deint` |
+| `transform=` (slot key) | `trans=` |
+
+`deinterleave` requires the image length to be a multiple of `bytes × stride`
+— one full set of lanes. The result is `1/stride` of the input length.
 
 Transforms are applied **in the order listed**, and the order matters:
 
@@ -1588,7 +1599,7 @@ transform=deinterleave:1/2/2+swap_bytes
 ```
 
 takes the upper 16-bit half of each 32-bit word and *then* swaps its byte
-pairs. Note that `offset` selects which unit, not a named "high" or "low" half
+pairs. Note that `offset` selects which lane, not a named "high" or "low" half
 — which half you get depends on the byte order of your source image, and that
 is what `swap_bytes` is for.
 

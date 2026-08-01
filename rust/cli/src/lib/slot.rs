@@ -351,7 +351,7 @@ fn parse_slot(
             "load_address" | "load-address" | "load_addr" => {
                 load_address = Some(parse_load_address(slot, value)?)
             }
-            "transform" => transform = parse_transform(slot, value)?,
+            "transform" | "trans" => transform = parse_transform(slot, value)?,
             other => {
                 let supported_keys = SLOT_KEYS.join(", ");
                 return Err(Error::InvalidArgument(
@@ -763,6 +763,20 @@ mod tests {
     }
 
     #[test]
+    fn slot_accepts_the_trans_key_alias() {
+        let board = Board::try_from_str("24-e").unwrap();
+        for key in ["transform", "trans"] {
+            let slot = parse_slot(
+                &format!("file=rom.bin,type=2364,cs1=active_low,{key}=swap_bytes"),
+                &board,
+                false,
+            )
+            .unwrap_or_else(|e| panic!("slot key '{key}' rejected: {e}"));
+            assert_eq!(slot.transform, vec![Transform::SwapBytes]);
+        }
+    }
+
+    #[test]
     fn slot_parses_a_transform_list_in_order() {
         let board = Board::try_from_str("24-e").unwrap();
         let slot = parse_slot(
@@ -777,7 +791,7 @@ mod tests {
                 Transform::Deinterleave {
                     offset: 1,
                     stride: 2,
-                    unit: 2
+                    bytes: 2
                 },
                 Transform::SwapBytes,
             ]
@@ -798,7 +812,7 @@ mod tests {
             vec![Transform::Deinterleave {
                 offset: 0,
                 stride: 4,
-                unit: 1
+                bytes: 1
             }]
         );
     }

@@ -45,7 +45,7 @@ fn swap_bytes(input: &Path, output: &Path) {
     );
 }
 
-fn deinterleave(input: &Path, output: &Path, offset: &str, stride: &str, unit: Option<&str>) {
+fn deinterleave(input: &Path, output: &Path, offset: &str, stride: &str, bytes: Option<&str>) {
     let mut cmd = onerom();
     cmd.args([
         "image",
@@ -59,8 +59,8 @@ fn deinterleave(input: &Path, output: &Path, offset: &str, stride: &str, unit: O
         "--stride",
         stride,
     ]);
-    if let Some(unit) = unit {
-        cmd.args(["--unit", unit]);
+    if let Some(bytes) = bytes {
+        cmd.args(["--bytes", bytes]);
     }
     let out = cmd.output().unwrap();
     assert!(
@@ -112,11 +112,50 @@ fn deinterleave_extracts_a_16_bit_half() {
     let out = dir.path().join("half.bin");
     std::fs::write(&src, &data).unwrap();
 
-    // The upper 16-bit unit of each 32-bit group is [0xB0, 0xB1].
+    // The upper 16-bit lane of each 32-bit group is [0xB0, 0xB1].
     deinterleave(&src, &out, "1", "2", Some("2"));
     let got = std::fs::read(&out).unwrap();
     assert_eq!(got.len(), data.len() / 2);
     assert_eq!(&got[..4], &[0xB0, 0xB1, 0xB0, 0xB1]);
+}
+
+#[test]
+fn deinterleave_accepts_the_unit_alias_for_bytes() {
+    let dir = tempfile::tempdir().unwrap();
+    let data = interleaved_32bit(16);
+    let src = dir.path().join("rom32.bin");
+    std::fs::write(&src, &data).unwrap();
+
+    // `--unit` was the original spelling; it stays accepted so existing
+    // invocations keep working, and must mean exactly what `--bytes` means.
+    let mut with_bytes = dir.path().join("bytes.bin");
+    deinterleave(&src, &with_bytes, "1", "2", Some("2"));
+    let expected = std::fs::read(&with_bytes).unwrap();
+
+    with_bytes = dir.path().join("unit.bin");
+    let out = onerom()
+        .args([
+            "image",
+            "deinterleave",
+            "--input",
+            src.to_str().unwrap(),
+            "--output",
+            with_bytes.to_str().unwrap(),
+            "--offset",
+            "1",
+            "--stride",
+            "2",
+            "--unit",
+            "2",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "--unit alias rejected: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(std::fs::read(&with_bytes).unwrap(), expected);
 }
 
 #[test]

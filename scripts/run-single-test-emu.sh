@@ -51,7 +51,7 @@ _normalize_cs() {
 }
 
 # Translate the CLI's textual transform notation (`swap_bytes`,
-# `deinterleave:<offset>/<stride>[/<unit>]`, joined with `+`) into the JSON
+# `deinterleave:<offset>/<stride>[/<bytes>]`, joined with `+`) into the JSON
 # array a config file carries.  The two notations are deliberately different -
 # see docs/CLI-MANUAL.md - so the harness accepts the one a user would type.
 _transform_json() {
@@ -67,10 +67,10 @@ _transform_json() {
                 ;;
             deinterleave:*)
                 local params=${part#deinterleave:}
-                local offset stride unit
-                IFS='/' read -r offset stride unit <<< "$params"
-                [ -z "$unit" ] && unit=1
-                json="{\"deinterleave\":{\"offset\":$offset,\"stride\":$stride,\"unit\":$unit}}"
+                local offset stride bytes
+                IFS='/' read -r offset stride bytes <<< "$params"
+                [ -z "$bytes" ] && bytes=1
+                json="{\"deinterleave\":{\"offset\":$offset,\"stride\":$stride,\"bytes\":$bytes}}"
                 ;;
             *)
                 echo "Unknown transform '$part'" >&2

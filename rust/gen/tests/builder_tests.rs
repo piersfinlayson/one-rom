@@ -1754,7 +1754,7 @@ mod tests {
                     "type": "2364",
                     "cs1": "active_low",
                     "transform": [
-                        { "deinterleave": { "offset": 1, "stride": 2, "unit": 2 } },
+                        { "deinterleave": { "offset": 1, "stride": 2, "bytes": 2 } },
                         "swap_bytes"
                     ]
                 }]
@@ -1797,7 +1797,7 @@ mod tests {
                     "cs1": "active_low",
                     "location": { "start": 8192, "length": 16384 },
                     "transform": [
-                        { "deinterleave": { "offset": 1, "stride": 2, "unit": 2 } },
+                        { "deinterleave": { "offset": 1, "stride": 2, "bytes": 2 } },
                         "swap_bytes"
                     ]
                 }]
@@ -1840,7 +1840,7 @@ mod tests {
                     "cs1": "active_low",
                     "size_handling": "duplicate",
                     "transform": [
-                        { "deinterleave": { "offset": 0, "stride": 2, "unit": 2 } }
+                        { "deinterleave": { "offset": 0, "stride": 2, "bytes": 2 } }
                     ]
                 }]
             }]
@@ -1875,7 +1875,7 @@ mod tests {
                     "type": "2364",
                     "cs1": "active_low",
                     "transform": [
-                        { "deinterleave": { "offset": 1, "stride": 2, "unit": 2 } },
+                        { "deinterleave": { "offset": 1, "stride": 2, "bytes": 2 } },
                         "swap_bytes"
                     ]
                 }]
@@ -1977,7 +1977,7 @@ mod tests {
                     "file": "",
                     "type": "6116",
                                         "transform": [
-                        { "deinterleave": { "offset": 9, "stride": 1, "unit": 0 } }
+                        { "deinterleave": { "offset": 9, "stride": 1, "bytes": 0 } }
                     ]
                 }]
             }]
@@ -1993,7 +1993,7 @@ mod tests {
             Err(e) => e,
         };
         let msg = format!("{err}");
-        assert!(msg.contains("unit must be at least 1"), "{msg}");
+        assert!(msg.contains("lane width must be at least 1"), "{msg}");
     }
 
     #[test]

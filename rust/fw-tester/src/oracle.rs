@@ -37,9 +37,12 @@ fn apply_transforms(raw: &[u8], transforms: &[Transform], source: &str) -> Vec<u
             Transform::Deinterleave {
                 offset,
                 stride,
-                unit,
+                bytes,
             } => {
-                assert!(*unit >= 1, "ROM image '{source}': deinterleave unit is 0");
+                assert!(
+                    *bytes >= 1,
+                    "ROM image '{source}': deinterleave lane width is 0"
+                );
                 assert!(
                     *stride >= 2,
                     "ROM image '{source}': deinterleave stride is {stride}"
@@ -49,17 +52,17 @@ fn apply_transforms(raw: &[u8], transforms: &[Transform], source: &str) -> Vec<u
                     "ROM image '{source}': deinterleave offset {offset} is not below stride {stride}"
                 );
                 assert!(
-                    data.len().is_multiple_of(unit * stride),
+                    data.len().is_multiple_of(bytes * stride),
                     "ROM image '{source}': {} bytes is not a multiple of the {} byte \
                      deinterleave group",
                     data.len(),
-                    unit * stride,
+                    bytes * stride,
                 );
 
-                data.chunks_exact(*unit)
+                data.chunks_exact(*bytes)
                     .enumerate()
                     .filter(|(i, _)| i % stride == *offset)
-                    .flat_map(|(_, unit)| unit.iter().copied())
+                    .flat_map(|(_, lane)| lane.iter().copied())
                     .collect()
             }
 

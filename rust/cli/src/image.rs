@@ -69,21 +69,21 @@ pub async fn cmd_deinterleave(
     let transform = Transform::Deinterleave {
         offset: args.offset,
         stride: args.stride,
-        unit: args.unit,
+        bytes: args.bytes,
     };
 
     // Report bad parameters before reading the file, so a typo in --stride
     // does not depend on the image being readable.
     transform.validate().map_err(|e| {
-        Error::InvalidArgument("--stride/--offset/--unit".to_string(), e.to_string())
+        Error::InvalidArgument("--stride/--offset/--bytes".to_string(), e.to_string())
     })?;
 
     let what = format!(
-        "keeping unit {} of every {} ({} byte{} per unit)",
+        "keeping lane {} of {} ({} byte{} per lane)",
         args.offset,
         args.stride,
-        args.unit,
-        if args.unit == 1 { "" } else { "s" }
+        args.bytes,
+        if args.bytes == 1 { "" } else { "s" }
     );
     transform_file(options, &args.input, &args.output, &transform, &what)
 }

@@ -778,7 +778,7 @@ pub struct ChipConfig {
     /// against the chip size by [`SizeHandling`], and after an Intel HEX image
     /// has been decoded — so transforms behave the same whichever format the
     /// image arrived in.  Order is significant; see the
-    /// [`transform`](crate::transform) module.
+    /// [`transform`] module.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub transform: Vec<Transform>,
 }

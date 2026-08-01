@@ -46,21 +46,28 @@
 //! | Text                              | Meaning                                        |
 //! |-----------------------------------|------------------------------------------------|
 //! | `swap_bytes`                      | Reverse the byte pairs of each 16-bit word.     |
-//! | `deinterleave:<offset>/<stride>`  | Keep byte `offset` of every `stride` bytes.     |
-//! | `deinterleave:<offset>/<stride>/<unit>` | As above, in units of `unit` bytes.       |
+//! | `deinterleave:<offset>/<stride>`  | Keep lane `offset` of `stride` byte-wide lanes. |
+//! | `deinterleave:<offset>/<stride>/<bytes>` | As above, with lanes `bytes` wide.       |
 //! | `deinterleave:1/2/2+swap_bytes`   | Upper 16 bits of each 32-bit word, byte-swapped. |
+//!
+//! Each name has aliases, accepted identically by the CLI and by a config
+//! file: `swap_bytes` also takes `swap-bytes`/`swapbytes`, and `deinterleave`
+//! also takes `de_interleave`/`de-interleave`/`deint`.  Whichever spelling is
+//! written, the canonical one is what [`Transform`]'s
+//! [`Display`](core::fmt::Display) writes back out, so the string recorded in
+//! metadata is stable.
 //!
 //! In a config file the structured JSON form is used instead, and a
 //! parameterless transform is a bare string:
 //!
 //! ```json
 //! "transform": ["swap_bytes"]
-//! "transform": [{ "deinterleave": { "offset": 1, "stride": 2, "unit": 2 } }, "swap_bytes"]
+//! "transform": [{ "deinterleave": { "offset": 1, "stride": 2, "bytes": 2 } }, "swap_bytes"]
 //! ```
 //!
 //! ## Why the deinterleave parameters are positional
 //!
-//! `offset` selects *which* unit, not a named half: there is deliberately no
+//! `offset` selects *which lane*, not a named half: there is deliberately no
 //! `high`/`low` spelling.  Which half of a 32-bit word `offset = 0` yields
 //! depends on the byte order of the source image, which the generator cannot
 //! know.  Byte order is [`Transform::SwapBytes`]'s job, and keeping the two
@@ -73,12 +80,21 @@ use alloc::vec::Vec;
 
 use crate::SizeHandling;
 
-/// Default number of bytes per interleave unit.
-const DEFAULT_UNIT: usize = 1;
+/// Default lane width: a single byte.
+const DEFAULT_BYTES: usize = 1;
 
-fn default_unit() -> usize {
-    DEFAULT_UNIT
+fn default_bytes() -> usize {
+    DEFAULT_BYTES
 }
+
+/// Accepted spellings of [`Transform::SwapBytes`], canonical first.
+///
+/// The serde aliases on the variant itself must match this list, so that a
+/// config file accepts exactly what the CLI does.
+const SWAP_BYTES_NAMES: &[&str] = &["swap_bytes", "swap-bytes", "swapbytes"];
+
+/// Accepted spellings of [`Transform::Deinterleave`], canonical first.
+const DEINTERLEAVE_NAMES: &[&str] = &["deinterleave", "de_interleave", "de-interleave", "deint"];
 
 /// Separator between members of a transform list in its text encoding.
 ///
@@ -109,6 +125,7 @@ pub struct Transformed {
 /// See the [module documentation](self) for where transforms run in the image
 /// pipeline, why order matters, and the text encoding used by the CLI and by
 /// firmware metadata.
+///
 /// This enum is `#[non_exhaustive]`: it is expected to grow (bit-order
 /// reversal and inversion are the obvious candidates), and adding a variant
 /// should not be a breaking change for downstream crates.
@@ -126,33 +143,38 @@ pub enum Transform {
     /// [`SizeHandling`] decides: `pad` appends one blank byte, `truncate`
     /// drops the trailing byte, and `none`/`duplicate` report
     /// [`TransformError::OddLength`].
+    #[serde(alias = "swap-bytes", alias = "swapbytes")]
     SwapBytes,
 
     /// Extract one lane from an interleaved image.
     ///
-    /// The image is divided into units of `unit` bytes; unit *i* is kept when
-    /// `i % stride == offset`, and the kept units are concatenated in order.
-    /// The result is `1/stride` of the input length.
+    /// The image contains `stride` interleaved lanes of `bytes` bytes each;
+    /// lane `offset` is kept and the rest discarded.  The result is `1/stride`
+    /// of the input length.
     ///
-    /// | Source            | Wanted                  | `offset` | `stride` | `unit` |
-    /// |-------------------|-------------------------|----------|----------|--------|
-    /// | 16-bit interleaved | even / odd bytes       | 0 / 1    | 2        | 1      |
-    /// | 32-bit interleaved | byte *n* of 4          | 0–3      | 4        | 1      |
-    /// | 32-bit interleaved | one 16-bit half        | 0 / 1    | 2        | 2      |
+    /// | Source             | Wanted            | `offset` | `stride` | `bytes` |
+    /// |--------------------|-------------------|----------|----------|---------|
+    /// | 16-bit interleaved | even / odd bytes  | 0 / 1    | 2        | 1       |
+    /// | 32-bit interleaved | byte *n* of 4     | 0–3      | 4        | 1       |
+    /// | 32-bit interleaved | one 16-bit half   | 0 / 1    | 2        | 2       |
     ///
-    /// The image length must be a multiple of `unit * stride`; a ragged tail
-    /// means the image is not the interleaved set it was taken for, so it is
-    /// reported rather than silently dropped.
+    /// The image length must be a multiple of `bytes * stride` (one full set
+    /// of lanes); a ragged tail means the image is not the interleaved set it
+    /// was taken for, so it is reported rather than silently dropped.
+    #[serde(alias = "de_interleave", alias = "de-interleave", alias = "deint")]
     Deinterleave {
-        /// Which unit of each group to keep.  Must be less than `stride`.
+        /// Which lane to keep.  Must be less than `stride`.
         offset: usize,
 
-        /// How many units per group.  Must be at least 2.
+        /// How many lanes the image interleaves.  Must be at least 2.
         stride: usize,
 
-        /// Bytes per unit.  Defaults to 1 (a single byte).
-        #[serde(default = "default_unit")]
-        unit: usize,
+        /// Width of one lane, in bytes.  Defaults to 1.
+        ///
+        /// This is the width of the device the lane feeds: 1 for an 8-bit
+        /// part, 2 to keep 16-bit words intact.
+        #[serde(default = "default_bytes", alias = "unit")]
+        bytes: usize,
     },
 }
 
@@ -160,7 +182,7 @@ impl Transform {
     /// The text forms accepted by [`Transform::try_from_str`], for use in
     /// error messages listing what is supported.
     pub fn supported_forms() -> &'static [&'static str] {
-        &["swap_bytes", "deinterleave:<offset>/<stride>[/<unit>]"]
+        &["swap_bytes", "deinterleave:<offset>/<stride>[/<bytes>]"]
     }
 
     /// Validates this transform's parameters.
@@ -174,10 +196,10 @@ impl Transform {
             Transform::Deinterleave {
                 offset,
                 stride,
-                unit,
+                bytes,
             } => {
-                if *unit == 0 {
-                    return Err(TransformError::InvalidUnit { unit: *unit });
+                if *bytes == 0 {
+                    return Err(TransformError::InvalidBytes { bytes: *bytes });
                 }
                 if *stride < 2 {
                     return Err(TransformError::InvalidStride { stride: *stride });
@@ -188,9 +210,10 @@ impl Transform {
                         stride: *stride,
                     });
                 }
-                unit.checked_mul(*stride)
+                bytes
+                    .checked_mul(*stride)
                     .ok_or(TransformError::GroupOverflow {
-                        unit: *unit,
+                        bytes: *bytes,
                         stride: *stride,
                     })?;
                 Ok(())
@@ -223,9 +246,9 @@ impl Transform {
             Transform::Deinterleave {
                 offset,
                 stride,
-                unit,
+                bytes,
             } => Ok(Transformed {
-                data: deinterleave(data, *offset, *stride, *unit)?,
+                data: deinterleave(data, *offset, *stride, *bytes)?,
                 used_size_handling: false,
             }),
         }
@@ -241,13 +264,13 @@ impl Transform {
         };
 
         match name {
-            "swap_bytes" | "swap-bytes" | "swapbytes" => match params {
+            s if SWAP_BYTES_NAMES.contains(&s) => match params {
                 None => Ok(Transform::SwapBytes),
                 Some(_) => Err(TransformError::UnexpectedParameters {
                     name: name.to_owned(),
                 }),
             },
-            "deinterleave" | "de-interleave" => match params {
+            s if DEINTERLEAVE_NAMES.contains(&s) => match params {
                 Some(params) => parse_deinterleave(params),
                 None => Err(TransformError::MissingParameters {
                     name: name.to_owned(),
@@ -267,14 +290,14 @@ impl core::fmt::Display for Transform {
             Transform::Deinterleave {
                 offset,
                 stride,
-                unit,
+                bytes,
             } => {
-                // The unit is omitted when it is the default, so the common
+                // The bytes is omitted when it is the default, so the common
                 // byte-wise forms stay short and round-trip unchanged.
-                if *unit == DEFAULT_UNIT {
+                if *bytes == DEFAULT_BYTES {
                     write!(f, "deinterleave:{offset}/{stride}")
                 } else {
-                    write!(f, "deinterleave:{offset}/{stride}/{unit}")
+                    write!(f, "deinterleave:{offset}/{stride}/{bytes}")
                 }
             }
         }
@@ -371,16 +394,16 @@ fn swap_bytes(
     ))
 }
 
-/// Keeps unit `offset` of every `stride` units of `unit` bytes.
+/// Keeps lane `offset` of the `stride` lanes, each `bytes` wide.
 fn deinterleave(
     data: &[u8],
     offset: usize,
     stride: usize,
-    unit: usize,
+    bytes: usize,
 ) -> Result<Vec<u8>, TransformError> {
     // Parameters are validated by the caller (Transform::apply), so the group
     // size cannot overflow and offset is within stride.
-    let group = unit * stride;
+    let group = bytes * stride;
 
     if !data.len().is_multiple_of(group) {
         return Err(TransformError::Ragged {
@@ -390,9 +413,9 @@ fn deinterleave(
     }
 
     let mut out = Vec::with_capacity(data.len() / stride);
-    let mut pos = offset * unit;
+    let mut pos = offset * bytes;
     while pos < data.len() {
-        out.extend_from_slice(&data[pos..pos + unit]);
+        out.extend_from_slice(&data[pos..pos + bytes]);
         pos += group;
     }
 
@@ -400,7 +423,7 @@ fn deinterleave(
 }
 
 /// Parses the parameters of a `deinterleave` transform: `<offset>/<stride>`
-/// or `<offset>/<stride>/<unit>`.
+/// or `<offset>/<stride>/<bytes>`.
 fn parse_deinterleave(params: &str) -> Result<Transform, TransformError> {
     let bad = |reason: &str| TransformError::BadParameters {
         params: params.to_owned(),
@@ -412,9 +435,9 @@ fn parse_deinterleave(params: &str) -> Result<Transform, TransformError> {
     let stride = parts
         .next()
         .ok_or_else(|| bad("expected <offset>/<stride>"))?;
-    let unit = parts.next();
+    let bytes = parts.next();
     if parts.next().is_some() {
-        return Err(bad("too many values, expected <offset>/<stride>[/<unit>]"));
+        return Err(bad("too many values, expected <offset>/<stride>[/<bytes>]"));
     }
 
     let number = |value: &str, what: &str| -> Result<usize, TransformError> {
@@ -427,9 +450,9 @@ fn parse_deinterleave(params: &str) -> Result<Transform, TransformError> {
     let transform = Transform::Deinterleave {
         offset: number(offset, "offset")?,
         stride: number(stride, "stride")?,
-        unit: match unit {
-            Some(unit) => number(unit, "unit")?,
-            None => DEFAULT_UNIT,
+        bytes: match bytes {
+            Some(bytes) => number(bytes, "bytes")?,
+            None => DEFAULT_BYTES,
         },
     };
     transform.validate()?;
@@ -457,14 +480,14 @@ pub enum TransformError {
     /// nothing) rather than deinterleaving.
     InvalidStride { stride: usize },
 
-    /// `offset` was not less than `stride`, so it selects no unit.
+    /// `offset` was not less than `stride`, so it selects no lane.
     InvalidOffset { offset: usize, stride: usize },
 
-    /// `unit` was zero, so the transform would select no bytes.
-    InvalidUnit { unit: usize },
+    /// The lane width was zero, so the transform would select nothing.
+    InvalidBytes { bytes: usize },
 
-    /// `unit * stride` overflowed.
-    GroupOverflow { unit: usize, stride: usize },
+    /// `bytes * stride` overflowed.
+    GroupOverflow { bytes: usize, stride: usize },
 
     /// `swap_bytes` was applied to an odd-length image and the chip's size
     /// handling gave no way to resolve it.
@@ -500,12 +523,15 @@ impl core::fmt::Display for TransformError {
                 f,
                 "deinterleave offset must be less than the stride, got offset {offset} with stride {stride}"
             ),
-            TransformError::InvalidUnit { unit } => {
-                write!(f, "deinterleave unit must be at least 1, got {unit}")
+            TransformError::InvalidBytes { bytes } => {
+                write!(
+                    f,
+                    "deinterleave lane width must be at least 1 byte, got {bytes}"
+                )
             }
-            TransformError::GroupOverflow { unit, stride } => write!(
+            TransformError::GroupOverflow { bytes, stride } => write!(
                 f,
-                "deinterleave unit {unit} multiplied by stride {stride} overflows"
+                "deinterleave lane width {bytes} multiplied by stride {stride} overflows"
             ),
             TransformError::OddLength { len } => write!(
                 f,
@@ -513,7 +539,7 @@ impl core::fmt::Display for TransformError {
             ),
             TransformError::Ragged { len, group } => write!(
                 f,
-                "deinterleave requires the image length to be a multiple of {group} bytes (unit x stride), got {len} bytes"
+                "deinterleave requires the image length to be a multiple of {group} bytes (lane width x stride), got {len} bytes"
             ),
         }
     }
@@ -527,11 +553,11 @@ mod tests {
     /// Two 32-bit words, each byte distinct so any rearrangement is visible.
     const W32: [u8; 8] = [0, 1, 2, 3, 4, 5, 6, 7];
 
-    fn deint(data: &[u8], offset: usize, stride: usize, unit: usize) -> Vec<u8> {
+    fn deint(data: &[u8], offset: usize, stride: usize, bytes: usize) -> Vec<u8> {
         Transform::Deinterleave {
             offset,
             stride,
-            unit,
+            bytes,
         }
         .apply(data, &SizeHandling::None, PAD)
         .unwrap()
@@ -636,7 +662,7 @@ mod tests {
 
     #[test]
     fn deinterleave_unit_selects_whole_groups_of_bytes() {
-        // A unit larger than one byte is what removes any need for an
+        // A bytes larger than one byte is what removes any need for an
         // offset *set*: taking a 16-bit half of a 32-bit word keeps the byte
         // pair together, which repeated single-byte selections could not
         // express in one operation.
@@ -661,7 +687,7 @@ mod tests {
             Transform::Deinterleave {
                 offset: 0,
                 stride: 4,
-                unit: 1
+                bytes: 1
             }
             .apply(&[0, 1, 2, 3, 4], &SizeHandling::None, PAD),
             Err(TransformError::Ragged { len: 5, group: 4 })
@@ -682,14 +708,14 @@ mod tests {
                     stride: 2,
                 },
             ),
-            (0, 2, 0, TransformError::InvalidUnit { unit: 0 }),
+            (0, 2, 0, TransformError::InvalidBytes { bytes: 0 }),
         ];
-        for (offset, stride, unit, expected) in cases {
+        for (offset, stride, bytes, expected) in cases {
             assert_eq!(
                 Transform::Deinterleave {
                     offset,
                     stride,
-                    unit
+                    bytes
                 }
                 .apply(&W32, &SizeHandling::None, PAD),
                 Err(expected)
@@ -722,7 +748,7 @@ mod tests {
 
     #[test]
     fn word_aligned_deinterleave_commutes_with_swap_bytes() {
-        // A 16-bit unit selects whole words, so it never splits a pair that
+        // A 16-bit bytes selects whole words, so it never splits a pair that
         // swap_bytes acts on and the two orders agree.  Worth pinning: it is
         // why the common 68k recipe survives being written either way round.
         assert_eq!(chain("deinterleave:1/2/2+swap_bytes"), vec![3, 2, 7, 6]);
@@ -771,7 +797,7 @@ mod tests {
             vec![Transform::Deinterleave {
                 offset: 1,
                 stride: 2,
-                unit: 1
+                bytes: 1
             }]
         );
         assert_eq!(
@@ -779,7 +805,7 @@ mod tests {
             vec![Transform::Deinterleave {
                 offset: 1,
                 stride: 2,
-                unit: 2
+                bytes: 2
             }]
         );
     }
@@ -792,7 +818,7 @@ mod tests {
                 Transform::Deinterleave {
                     offset: 1,
                     stride: 2,
-                    unit: 2
+                    bytes: 2
                 },
                 Transform::SwapBytes,
             ]
@@ -823,7 +849,7 @@ mod tests {
             Transform::Deinterleave {
                 offset: 1,
                 stride: 2,
-                unit: 1
+                bytes: 1
             }
             .to_string(),
             "deinterleave:1/2"
@@ -863,9 +889,85 @@ mod tests {
         ));
     }
 
+    /// Every accepted spelling of a transform name, in the text encoding.
+    ///
+    /// The CLI and a config file must agree on these, so the same list drives
+    /// the serde test below.
+    const SWAP_SPELLINGS: &[&str] = &["swap_bytes", "swap-bytes", "swapbytes"];
+    const DEINTERLEAVE_SPELLINGS: &[&str] =
+        &["deinterleave", "de_interleave", "de-interleave", "deint"];
+
+    #[test]
+    fn text_accepts_every_swap_bytes_spelling() {
+        for spelling in SWAP_SPELLINGS {
+            assert_eq!(
+                Transform::try_from_str(spelling),
+                Ok(Transform::SwapBytes),
+                "text spelling {spelling:?} not accepted"
+            );
+        }
+    }
+
+    #[test]
+    fn text_accepts_every_deinterleave_spelling() {
+        for spelling in DEINTERLEAVE_SPELLINGS {
+            assert_eq!(
+                Transform::try_from_str(&alloc::format!("{spelling}:1/2")),
+                Ok(Transform::Deinterleave {
+                    offset: 1,
+                    stride: 2,
+                    bytes: 1
+                }),
+                "text spelling {spelling:?} not accepted"
+            );
+        }
+    }
+
+    #[test]
+    fn spellings_normalise_when_formatted() {
+        // Whichever spelling was written, one canonical form comes back out,
+        // so the metadata provenance string is stable.
+        for spelling in DEINTERLEAVE_SPELLINGS {
+            let parsed = Transform::try_from_str(&alloc::format!("{spelling}:1/2")).unwrap();
+            assert_eq!(parsed.to_string(), "deinterleave:1/2");
+        }
+        for spelling in SWAP_SPELLINGS {
+            let parsed = Transform::try_from_str(spelling).unwrap();
+            assert_eq!(parsed.to_string(), "swap_bytes");
+        }
+    }
+
     //
     // Serde
     //
+
+    #[test]
+    fn serde_accepts_every_swap_bytes_spelling() {
+        for spelling in SWAP_SPELLINGS {
+            let json = alloc::format!("\"{spelling}\"");
+            assert_eq!(
+                serde_json::from_str::<Transform>(&json).ok(),
+                Some(Transform::SwapBytes),
+                "config spelling {spelling:?} not accepted"
+            );
+        }
+    }
+
+    #[test]
+    fn serde_accepts_every_deinterleave_spelling() {
+        for spelling in DEINTERLEAVE_SPELLINGS {
+            let json = alloc::format!("{{\"{spelling}\":{{\"offset\":1,\"stride\":2}}}}");
+            assert_eq!(
+                serde_json::from_str::<Transform>(&json).ok(),
+                Some(Transform::Deinterleave {
+                    offset: 1,
+                    stride: 2,
+                    bytes: 1
+                }),
+                "config spelling {spelling:?} not accepted"
+            );
+        }
+    }
 
     #[test]
     fn parameterless_transform_serialises_as_a_bare_string() {
@@ -882,10 +984,13 @@ mod tests {
         let transform = Transform::Deinterleave {
             offset: 1,
             stride: 2,
-            unit: 2,
+            bytes: 2,
         };
         let json = serde_json::to_string(&transform).unwrap();
-        assert_eq!(json, r#"{"deinterleave":{"offset":1,"stride":2,"unit":2}}"#);
+        assert_eq!(
+            json,
+            r#"{"deinterleave":{"offset":1,"stride":2,"bytes":2}}"#
+        );
         assert_eq!(serde_json::from_str::<Transform>(&json).unwrap(), transform);
     }
 
@@ -898,7 +1003,7 @@ mod tests {
             Transform::Deinterleave {
                 offset: 1,
                 stride: 2,
-                unit: 1
+                bytes: 1
             }
         );
     }
