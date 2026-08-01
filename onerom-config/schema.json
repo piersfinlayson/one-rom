@@ -217,6 +217,13 @@
                     "description": "Optional size handling configuration for this Chip.  Used to specify\nhandling when the image supplied isn't the correct size for this Chip\ntype.",
                     "$ref": "#/$defs/SizeHandling"
                 },
+                "transform": {
+                    "description": "Byte-level transformations to apply to the supplied image, in order.\n\nApplied after any [`Location`] slice and before the image is reconciled\nagainst the chip size by [`SizeHandling`], and after an Intel HEX image\nhas been decoded — so transforms behave the same whichever format the\nimage arrived in.  Order is significant; see the\n[`transform`](crate::transform) module.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/$defs/Transform"
+                    }
+                },
                 "type": {
                     "description": "Type of ROM",
                     "$ref": "#/$defs/ChipType"
@@ -844,6 +851,54 @@
                     "description": "Pads the image out with [`PAD_BLANK_BYTE`].",
                     "type": "string",
                     "const": "pad"
+                }
+            ]
+        },
+        "Transform": {
+            "description": "A single byte-level transformation of a supplied ROM image.\n\nSee the [module documentation](self) for where transforms run in the image\npipeline, why order matters, and the text encoding used by the CLI and by\nfirmware metadata.\nThis enum is `#[non_exhaustive]`: it is expected to grow (bit-order\nreversal and inversion are the obvious candidates), and adding a variant\nshould not be a breaking change for downstream crates.",
+            "oneOf": [
+                {
+                    "description": "Reverse the byte order within each 16-bit word throughout the image.\n\nRequired for 16-bit wide parts (e.g. 27C400) when the source image was\nproduced with the opposite byte order to the one One ROM serves.\n\nThe image must have an even length.  If it does not, the chip's\n[`SizeHandling`] decides: `pad` appends one blank byte, `truncate`\ndrops the trailing byte, and `none`/`duplicate` report\n[`TransformError::OddLength`].",
+                    "type": "string",
+                    "const": "swap_bytes"
+                },
+                {
+                    "description": "Extract one lane from an interleaved image.\n\nThe image is divided into units of `unit` bytes; unit *i* is kept when\n`i % stride == offset`, and the kept units are concatenated in order.\nThe result is `1/stride` of the input length.\n\n| Source            | Wanted                  | `offset` | `stride` | `unit` |\n|-------------------|-------------------------|----------|----------|--------|\n| 16-bit interleaved | even / odd bytes       | 0 / 1    | 2        | 1      |\n| 32-bit interleaved | byte *n* of 4          | 0–3      | 4        | 1      |\n| 32-bit interleaved | one 16-bit half        | 0 / 1    | 2        | 2      |\n\nThe image length must be a multiple of `unit * stride`; a ragged tail\nmeans the image is not the interleaved set it was taken for, so it is\nreported rather than silently dropped.",
+                    "type": "object",
+                    "properties": {
+                        "deinterleave": {
+                            "type": "object",
+                            "properties": {
+                                "offset": {
+                                    "description": "Which unit of each group to keep.  Must be less than `stride`.",
+                                    "type": "integer",
+                                    "format": "uint",
+                                    "minimum": 0
+                                },
+                                "stride": {
+                                    "description": "How many units per group.  Must be at least 2.",
+                                    "type": "integer",
+                                    "format": "uint",
+                                    "minimum": 0
+                                },
+                                "unit": {
+                                    "description": "Bytes per unit.  Defaults to 1 (a single byte).",
+                                    "type": "integer",
+                                    "format": "uint",
+                                    "default": 1,
+                                    "minimum": 0
+                                }
+                            },
+                            "required": [
+                                "offset",
+                                "stride"
+                            ]
+                        }
+                    },
+                    "additionalProperties": false,
+                    "required": [
+                        "deinterleave"
+                    ]
                 }
             ]
         }

@@ -244,6 +244,7 @@ pub fn firmware_flash_complete(analyse: &mut Analyse, result: Result<(), String>
 ///
 /// If `err` is Some, indicates an error from the previous read attempt,
 /// which is logged and displayed.
+#[allow(clippy::wildcard_enum_match_arm)]
 pub fn detect_device(analyse: &mut Analyse, err: Option<String>) -> Task<AppMessage> {
     // Clear out previous firmware info and file contents
     analyse.file_contents = None;

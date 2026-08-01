@@ -55,3 +55,6 @@ panic-rtt-target = "0.2"
 [build-dependencies]
 built = "0.8"
 csv = "1.3"
+
+[lints]
+workspace = true

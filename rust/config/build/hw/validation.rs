@@ -1044,6 +1044,7 @@ pub fn parse_jumper_header(name: &str, header: &JsonJumperHeader) -> Vec<HeaderC
     cols
 }
 
+#[allow(clippy::wildcard_enum_match_arm)]
 fn slot_roles(slot: &HeaderSlotP) -> &[HeaderRoleP] {
     match slot {
         HeaderSlotP::Roles(roles) => roles,
@@ -1055,6 +1056,7 @@ fn slot_roles(slot: &HeaderSlotP) -> &[HeaderRoleP] {
 /// assignments, so the physical descriptor cannot drift from the `sel` /
 /// `swclk_sel` / `swdio_sel` / `x1` / `x2` data. Panics (failing the build) on
 /// any inconsistency.
+#[allow(clippy::wildcard_enum_match_arm)]
 pub fn validate_jumper_header(name: &str, cols: &[HeaderColumnP], pins: &McuPins) {
     // Flatten to (col, row, slot).
     let mut slots: Vec<(u8, u8, &HeaderSlotP)> = Vec::new();
@@ -1148,6 +1150,7 @@ pub fn validate_jumper_header(name: &str, cols: &[HeaderColumnP], pins: &McuPins
     }
 }
 
+#[allow(clippy::wildcard_enum_match_arm)]
 fn check_swd(
     name: &str,
     which: &str,

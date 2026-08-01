@@ -174,6 +174,7 @@ impl CsSettings {
         }
     }
 
+    #[allow(clippy::wildcard_enum_match_arm)]
     pub fn to_polarities(self) -> CsPolarities {
         CsPolarities {
             cs1: match self.cs1 {

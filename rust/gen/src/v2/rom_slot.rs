@@ -219,6 +219,7 @@ mod tests {
             &SizeHandling::None,
             crate::PAD_BLANK_BYTE,
             None,
+            &[],
         )
         .expect("chip construction should succeed");
 
@@ -313,6 +314,7 @@ mod tests {
 
     /// End-to-end: Fire28A, single 23QL384, CS1 ActiveLow.
     #[test]
+    #[allow(clippy::wildcard_enum_match_arm)]
     fn fire28a_23ql384_single() {
         let cs_config = CsConfig::new(Some(CsLogic::ActiveLow), None, None, None);
         let image = vec![0u8; ChipType::Chip23QL384.size_bytes()]; // 49152 bytes
@@ -328,6 +330,7 @@ mod tests {
             &SizeHandling::None,
             crate::PAD_BLANK_BYTE,
             None,
+            &[],
         )
         .expect("chip construction should succeed");
 
@@ -395,6 +398,7 @@ mod tests {
 
     /// End-to-end sentinel: Fire28C, 2-chip Banked 27128, CS1 ActiveLow.
     #[test]
+    #[allow(clippy::wildcard_enum_match_arm)]
     fn fire28c_27128_banked_2chip() {
         let image = vec![0u8; ChipType::Chip27128.size_bytes()];
 
@@ -409,6 +413,7 @@ mod tests {
             &SizeHandling::None,
             crate::PAD_BLANK_BYTE,
             None,
+            &[],
         )
         .expect("chip 0 construction should succeed");
 
@@ -423,6 +428,7 @@ mod tests {
             &SizeHandling::None,
             crate::PAD_BLANK_BYTE,
             None,
+            &[],
         )
         .expect("chip 1 construction should succeed");
 
@@ -494,6 +500,7 @@ mod tests {
                 &SizeHandling::None,
                 crate::PAD_BLANK_BYTE,
                 None,
+                &[],
             )
             .expect("chip construction should succeed")
         };

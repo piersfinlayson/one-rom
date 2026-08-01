@@ -13,8 +13,8 @@ use onerom_config::chip::{CHIP_TYPE_NAMES_PLUGINS, ChipFunction, ChipType, Contr
 use onerom_config::hw::Board;
 use onerom_gen::{
     ChipConfig, ChipSetConfig, ChipSetType, ChipTypeSpec, Config, CsLogic, FileFormat, FireConfig,
-    FireCpuFreq, FireVreg, FirmwareConfig, LedConfig, LoadAddress, SizeHandling,
-    requires_half_select_cs1,
+    FireCpuFreq, FireVreg, FirmwareConfig, LedConfig, LoadAddress, SizeHandling, Transform,
+    parse_transform_list, requires_half_select_cs1,
 };
 
 const DEFAULT_CONFIG_DESCRIPTION: &str = "Created by the One ROM CLI";
@@ -115,6 +115,7 @@ pub struct SlotSpec {
     pub force_16bit: Option<bool>,
     pub format: Option<FileFormat>,
     pub load_address: Option<LoadAddress>,
+    pub transform: Vec<Transform>,
 }
 
 /// Parse a CS logic value, accepting active_low/0 and active_high/1.
@@ -167,6 +168,14 @@ fn parse_format(slot: &str, value: &str) -> Result<FileFormat, Error> {
 
 fn parse_load_address(slot: &str, value: &str) -> Result<LoadAddress, Error> {
     LoadAddress::parse_str(value).map_err(|e| {
+        Error::InvalidArgument("--slot".to_string(), format!("{e}\n    --slot '{slot}'"))
+    })
+}
+
+/// Parse a `+`-separated list of image transforms, e.g.
+/// `deinterleave:1/2/2+swap_bytes`.
+fn parse_transform(slot: &str, value: &str) -> Result<Vec<Transform>, Error> {
+    parse_transform_list(value).map_err(|e| {
         Error::InvalidArgument("--slot".to_string(), format!("{e}\n    --slot '{slot}'"))
     })
 }
@@ -272,6 +281,7 @@ const SLOT_KEYS: &[&str] = &[
     "force_16bit",
     "format",
     "load_address",
+    "transform",
 ];
 
 /// Parse a single `--slot` string into a [`SlotSpec`], validating against the given board.
@@ -300,6 +310,7 @@ fn parse_slot(
     let mut force_16bit = None;
     let mut format = None;
     let mut load_address = None;
+    let mut transform = Vec::new();
 
     //
     // Parse
@@ -340,6 +351,7 @@ fn parse_slot(
             "load_address" | "load-address" | "load_addr" => {
                 load_address = Some(parse_load_address(slot, value)?)
             }
+            "transform" => transform = parse_transform(slot, value)?,
             other => {
                 let supported_keys = SLOT_KEYS.join(", ");
                 return Err(Error::InvalidArgument(
@@ -416,6 +428,7 @@ fn parse_slot(
         force_16bit,
         format,
         load_address,
+        transform,
     })
 }
 
@@ -474,7 +487,12 @@ fn validate_cs_lines(
                     ),
                 ));
             }
-            _ => {}
+            // Everything the guards above did not catch: a Configurable line
+            // that was supplied, and a fixed line that was either omitted or
+            // explicitly ignored.  All valid.
+            ControlLineType::Configurable
+            | ControlLineType::FixedActiveLow
+            | ControlLineType::FixedActiveHigh => {}
         }
     }
 
@@ -523,25 +541,20 @@ pub fn parse_slots(
 }
 
 fn slot_to_chip_config(slot: &SlotSpec) -> ChipConfig {
-    ChipConfig {
-        file: slot.file.clone().unwrap_or_default(),
-        license: None,
-        description: None,
-        chip_type: slot.chip_type.clone(),
-        cs1: slot.cs1,
-        cs2: slot.cs2,
-        cs3: slot.cs3,
-        cs4: slot.cs4,
-        ce: None,
-        oe: None,
-        size_handling: slot.size_handling.clone().unwrap_or_default(),
-        extract: None,
-        label: slot.label.clone(),
-        location: None,
-        allow_cs_ignore: false,
-        format: slot.format.unwrap_or_default(),
-        load_address: slot.load_address.unwrap_or_default(),
-    }
+    let mut chip = ChipConfig::new(
+        slot.file.clone().unwrap_or_default(),
+        slot.chip_type.clone(),
+    );
+    chip.cs1 = slot.cs1;
+    chip.cs2 = slot.cs2;
+    chip.cs3 = slot.cs3;
+    chip.cs4 = slot.cs4;
+    chip.size_handling = slot.size_handling.clone().unwrap_or_default();
+    chip.label = slot.label.clone();
+    chip.format = slot.format.unwrap_or_default();
+    chip.load_address = slot.load_address.unwrap_or_default();
+    chip.transform = slot.transform.clone();
+    chip
 }
 
 fn slot_to_firmware_overrides(slot: &SlotSpec) -> Option<FirmwareConfig> {
@@ -591,32 +604,21 @@ pub fn slots_to_config_json(
         .collect::<Result<Vec<_>, _>>()?;
 
     for slot in slots {
-        chip_sets.push(ChipSetConfig {
-            set_type: ChipSetType::Single,
-            description: None,
-            chips: vec![slot_to_chip_config(slot)],
-            serve_alg: None,
-            firmware_overrides: slot_to_firmware_overrides(slot),
-        });
+        let mut chip_set = ChipSetConfig::new(ChipSetType::Single, vec![slot_to_chip_config(slot)]);
+        chip_set.firmware_overrides = slot_to_firmware_overrides(slot);
+        chip_sets.push(chip_set);
     }
 
-    let config = Config {
-        version: 1,
-        name: global_config.and_then(|c| c.config_name.clone()),
-        description: global_config
-            .and_then(|c| c.config_description.clone())
-            .unwrap_or(DEFAULT_CONFIG_DESCRIPTION.to_string())
-            .to_string(),
-        detail: None,
-        chip_sets,
-        notes: None,
-        categories: None,
-        instance_name: global_config.and_then(|c| c.instance_name.clone()),
-        serial_override: global_config.and_then(|c| c.serial_override.clone()),
-        boot_logging: global_config.is_some_and(|c| c.boot_logging.unwrap_or(false)),
-        swd_enabled: !global_config.is_some_and(|c| c.disable_swd.unwrap_or(false)),
-        turbo_boot: global_config.is_some_and(|c| c.turbo_boot.unwrap_or(false)),
-    };
+    let description = global_config
+        .and_then(|c| c.config_description.clone())
+        .unwrap_or(DEFAULT_CONFIG_DESCRIPTION.to_string());
+    let mut config = Config::new(description, chip_sets);
+    config.name = global_config.and_then(|c| c.config_name.clone());
+    config.instance_name = global_config.and_then(|c| c.instance_name.clone());
+    config.serial_override = global_config.and_then(|c| c.serial_override.clone());
+    config.boot_logging = global_config.is_some_and(|c| c.boot_logging.unwrap_or(false));
+    config.swd_enabled = !global_config.is_some_and(|c| c.disable_swd.unwrap_or(false));
+    config.turbo_boot = global_config.is_some_and(|c| c.turbo_boot.unwrap_or(false));
 
     serde_json::to_string_pretty(&config).map_err(|e| Error::Other(e.to_string()))
 }
@@ -742,6 +744,99 @@ mod tests {
         assert_eq!(slot.format, None);
         assert_eq!(slot.load_address, None);
         assert_eq!(slot_to_chip_config(&slot).format, FileFormat::Binary);
+    }
+
+    #[test]
+    fn slot_parses_a_single_transform() {
+        let board = Board::try_from_str("24-e").unwrap();
+        let slot = parse_slot(
+            "file=rom.bin,type=2364,cs1=active_low,transform=swap_bytes",
+            &board,
+            false,
+        )
+        .unwrap();
+        assert_eq!(slot.transform, vec![Transform::SwapBytes]);
+        assert_eq!(
+            slot_to_chip_config(&slot).transform,
+            vec![Transform::SwapBytes]
+        );
+    }
+
+    #[test]
+    fn slot_parses_a_transform_list_in_order() {
+        let board = Board::try_from_str("24-e").unwrap();
+        let slot = parse_slot(
+            "file=rom.bin,type=2364,cs1=active_low,transform=deinterleave:1/2/2+swap_bytes",
+            &board,
+            false,
+        )
+        .unwrap();
+        assert_eq!(
+            slot.transform,
+            vec![
+                Transform::Deinterleave {
+                    offset: 1,
+                    stride: 2,
+                    unit: 2
+                },
+                Transform::SwapBytes,
+            ]
+        );
+    }
+
+    #[test]
+    fn slot_transform_unit_defaults_to_one() {
+        let board = Board::try_from_str("24-e").unwrap();
+        let slot = parse_slot(
+            "file=rom.bin,type=2364,cs1=active_low,transform=deinterleave:0/4",
+            &board,
+            false,
+        )
+        .unwrap();
+        assert_eq!(
+            slot.transform,
+            vec![Transform::Deinterleave {
+                offset: 0,
+                stride: 4,
+                unit: 1
+            }]
+        );
+    }
+
+    #[test]
+    fn slot_defaults_to_no_transform() {
+        let board = Board::try_from_str("24-e").unwrap();
+        let slot = parse_slot("file=rom.bin,type=2364,cs1=active_low", &board, false).unwrap();
+        assert!(slot.transform.is_empty());
+        assert!(slot_to_chip_config(&slot).transform.is_empty());
+    }
+
+    #[test]
+    fn slot_rejects_a_bad_transform() {
+        let board = Board::try_from_str("24-e").unwrap();
+        let err = parse_slot(
+            "file=rom.bin,type=2364,cs1=active_low,transform=nonsense",
+            &board,
+            false,
+        )
+        .unwrap_err();
+        let msg = format!("{err}");
+        assert!(msg.contains("unknown transform 'nonsense'"), "{msg}");
+        // The error lists what is accepted, and echoes the offending slot.
+        assert!(msg.contains("swap_bytes"), "{msg}");
+        assert!(msg.contains("--slot 'file=rom.bin"), "{msg}");
+    }
+
+    #[test]
+    fn slot_rejects_a_duplicate_transform_key() {
+        let board = Board::try_from_str("24-e").unwrap();
+        let err = parse_slot(
+            "file=rom.bin,type=2364,cs1=active_low,transform=swap_bytes,transform=swap_bytes",
+            &board,
+            false,
+        )
+        .unwrap_err();
+        assert!(format!("{err}").contains("Duplicate slot key 'transform'"));
     }
 
     #[test]

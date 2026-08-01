@@ -684,6 +684,7 @@ impl TryFrom<u8> for FireVreg {
 }
 
 impl core::fmt::Display for FireVreg {
+    #[allow(clippy::wildcard_enum_match_arm)]
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             Self::Stock => write!(f, "Stock"),

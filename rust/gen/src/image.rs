@@ -31,6 +31,7 @@ use crate::meta::{
     CHIP_SET_FIRMWARE_OVERRIDES_METADATA_LEN, CHIP_SET_METADATA_LEN,
     CHIP_SET_METADATA_LEN_EXTRA_INFO,
 };
+use crate::transform::{Transform, apply_transforms};
 use crate::{Error, FirmwareConfig, Location, Result};
 use crate::{MIN_FIRMWARE_OVERRIDES_VERSION, PAD_METADATA_BYTE};
 
@@ -560,6 +561,10 @@ impl Chip {
     /// images).  Callers pass [`PAD_BLANK_BYTE`] for raw binary images and
     /// [`IHEX_BLANK_BYTE`](crate::ihex::IHEX_BLANK_BYTE) for Intel HEX images,
     /// which have already been decoded to a binary image by the caller.
+    ///
+    /// `transforms` are applied to the image after any `location` slice and
+    /// before it is reconciled against the chip size; see the
+    /// [`transform`](crate::transform) module for why that is the order.
     #[allow(clippy::too_many_arguments)]
     pub fn from_raw_rom_image(
         index: usize,
@@ -572,11 +577,22 @@ impl Chip {
         size_handling: &SizeHandling,
         blank_byte: u8,
         location: Option<Location>,
+        transforms: &[Transform],
     ) -> Result<Self> {
         // Resolved type drives all sizing/handling logic below; the spec is
         // carried through to the constructed Chip so the user's raw spelling
         // survives into metadata.
         let chip_type = chip_type_spec.resolved_ref();
+
+        // Validate transforms before the source-less early return below, so a
+        // misconfigured transform on a chip with no image (a RAM chip) is still
+        // reported rather than being carried silently into the metadata.
+        for transform in transforms {
+            transform
+                .validate()
+                .map_err(|e| Error::Transform { index, source: e })?;
+        }
+
         if source.is_none() {
             if chip_type.chip_function() == ChipFunction::Ram {
                 return Ok(Self::new(
@@ -624,6 +640,20 @@ impl Chip {
             source
         };
 
+        // Rearrange the located bytes before any size reconciliation, so
+        // padding and duplication operate on the final byte order rather than
+        // the transforms operating on filler.
+        let transformed;
+        let mut transform_used_size_handling = false;
+        let source: &[u8] = if transforms.is_empty() {
+            source
+        } else {
+            transformed = apply_transforms(source, transforms, size_handling, blank_byte)
+                .map_err(|e| Error::Transform { index, source: e })?;
+            transform_used_size_handling = transformed.used_size_handling;
+            &transformed.data
+        };
+
         let expected_size = chip_type.size_bytes();
         if dest.len() < expected_size {
             return Err(Error::BufferTooSmall {
@@ -643,13 +673,22 @@ impl Chip {
         // See what handling is required, if any
         match source.len().cmp(&expected_size) {
             Ordering::Equal => {
-                // Exact match - error if dup/pad specified unnecessarily
+                // Exact match - error if dup/pad specified unnecessarily.
+                // Unless a transform already consumed the size handling to
+                // resolve an odd-length image: it was needed after all, and
+                // landing on the exact chip size afterwards is the good
+                // outcome, not a reason to reject the build.
                 match size_handling {
                     SizeHandling::None => {
                         // Copy source to dest as-is
                         dest[..expected_size].copy_from_slice(&source[..expected_size]);
                     }
-                    _ => {
+                    SizeHandling::Duplicate | SizeHandling::Pad | SizeHandling::Truncate
+                        if transform_used_size_handling =>
+                    {
+                        dest[..expected_size].copy_from_slice(&source[..expected_size]);
+                    }
+                    SizeHandling::Duplicate | SizeHandling::Pad | SizeHandling::Truncate => {
                         return Err(Error::RightSize {
                             chip_type: *chip_type,
                             size: expected_size,
@@ -695,10 +734,14 @@ impl Chip {
                         }
                     }
                     SizeHandling::Pad => {
-                        // Copy source to dest and pad the rest with blank_byte
+                        // Copy source to dest and pad the rest with blank_byte.
+                        // Not PAD_BLANK_BYTE: an Intel HEX image pads with
+                        // 0xFF, matching the gaps the decoder already filled,
+                        // and a raw binary passes PAD_BLANK_BYTE in as
+                        // blank_byte anyway.
                         dest[..source.len()].copy_from_slice(source);
                         for byte in &mut dest[source.len()..expected_size] {
-                            *byte = PAD_BLANK_BYTE;
+                            *byte = blank_byte;
                         }
                     }
                     SizeHandling::Truncate => {
@@ -716,7 +759,7 @@ impl Chip {
                         // Copy only up to expected size
                         dest[..expected_size].copy_from_slice(&source[..expected_size]);
                     }
-                    _ => {
+                    SizeHandling::None | SizeHandling::Duplicate | SizeHandling::Pad => {
                         return Err(Error::ImageTooLarge {
                             chip_type: *chip_type,
                             image_size: source.len(),
@@ -887,6 +930,7 @@ impl Chip {
     }
 
     // See `sdrr/include/enums.h`
+    #[allow(clippy::wildcard_enum_match_arm)]
     fn chip_type_c_enum_val(&self) -> u8 {
         match self.chip_type.resolved() {
             ChipType::Chip2316 => 0,
@@ -1114,6 +1158,7 @@ impl ChipSet {
     }
 
     /// Returns the size of the data required for this Chip set, in bytes.
+    #[allow(clippy::wildcard_enum_match_arm)]
     pub fn image_size(&self, board: &Board, fw_version: &FirmwareVersion) -> usize {
         let family = board.mcu_family();
         let num_addr_pins = board.addr_pins().len();
@@ -1431,6 +1476,7 @@ impl ChipSet {
     }
 
     #[allow(dead_code)]
+    #[allow(clippy::wildcard_enum_match_arm)]
     fn mask_cs_selection_bits(&self, address: usize, chip_type: ChipType, board: &Board) -> usize {
         let mut masked_address = address;
 
@@ -1724,6 +1770,7 @@ impl ChipSet {
 // 231024.  In this case, we want to throw away the first two address lines,
 // as these are CS lines, which aren't used as address lines, except for the
 // 231024.
+#[allow(clippy::wildcard_enum_match_arm)]
 fn handle_snowflake_chip_types(
     board: &Board,
     phys_pin_to_addr_map: &[Option<usize>],

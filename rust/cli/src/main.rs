@@ -100,6 +100,7 @@ async fn sub_main() -> Result<(), Error> {
         },
         Commands::Image(args) => match &args.command {
             ImageCommands::SwapBytes(args) => image::cmd_swap_bytes(&options, args).await,
+            ImageCommands::Deinterleave(args) => image::cmd_deinterleave(&options, args).await,
             ImageCommands::Convert(args) => image::cmd_convert(&options, args).await,
         },
         Commands::Peek(args) => inspect::cmd_peek_live(&options, args).await,

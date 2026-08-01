@@ -275,11 +275,18 @@ impl RomReader {
         }
 
         // Empirically determined timing at 150 MHz.
-        let (read_delay_cycles, read_delay_16bit_cycles, tristate_settle_cycles) = match chip {
-            // 8-bit delay is longer: A-1 participates in address decoding.
-            ChipType::Chip27C400 => (12, 8, Some(200)),
-            _ => (8, 8, Some(100)),
-        };
+        //
+        // The longer timing belongs to every 16-bit-capable part, not to the
+        // 27C400 specifically: it is A-1 taking part in address decoding when
+        // such a chip is read in byte mode that costs the extra cycles.  The
+        // 27C200 is the same shape and was previously getting the 8-bit
+        // timing.
+        let (read_delay_cycles, read_delay_16bit_cycles, tristate_settle_cycles) =
+            if chip.supports_bit_mode(16) {
+                (12, 8, Some(200))
+            } else {
+                (8, 8, Some(100))
+            };
 
         let tristate_settle_cycles = if tristate {
             tristate_settle_cycles

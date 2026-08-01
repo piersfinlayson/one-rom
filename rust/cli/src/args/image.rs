@@ -36,6 +36,27 @@ pub enum ImageCommands {
     ///   onerom image swap-bytes --input kick.bin --output kick-swapped.bin
     SwapBytes(ImageSwapBytesArgs),
 
+    /// Extract one lane from an interleaved ROM image.
+    ///
+    /// Divides the image into units of --unit bytes and keeps unit --offset of
+    /// every --stride units.  Used to split a wide ROM image, distributed as a
+    /// single interleaved file, into the narrower images each device needs.
+    ///
+    /// The input length must be a multiple of --unit x --stride.
+    ///
+    /// Odd bytes of a 16-bit interleaved image:
+    ///
+    ///   onerom image deinterleave --input rom16.bin --output odd.bin --offset 1 --stride 2
+    ///
+    /// Byte 2 of a 32-bit interleaved image:
+    ///
+    ///   onerom image deinterleave --input rom32.bin --output b2.bin --offset 2 --stride 4
+    ///
+    /// The upper 16-bit half of each 32-bit word:
+    ///
+    ///   onerom image deinterleave --input rom32.bin --output hi.bin --offset 1 --stride 2 --unit 2
+    Deinterleave(ImageDeinterleaveArgs),
+
     /// Convert a ROM image between formats.
     ///
     /// Reads --input in the --from format and writes --output in the --to
@@ -67,6 +88,35 @@ pub struct ImageSwapBytesArgs {
 }
 
 impl CommandTrait for ImageSwapBytesArgs {
+    fn requires_device(&self) -> bool {
+        false
+    }
+}
+
+#[derive(Debug, Args)]
+pub struct ImageDeinterleaveArgs {
+    /// Input ROM image file.
+    #[arg(long, visible_alias = "in", value_name = "FILE")]
+    pub input: String,
+
+    /// Output file path.
+    #[arg(long, visible_alias = "out", value_name = "FILE")]
+    pub output: String,
+
+    /// Which unit of each group to keep.  Must be less than --stride.
+    #[arg(long, value_name = "N")]
+    pub offset: usize,
+
+    /// How many units per group.  Must be at least 2.
+    #[arg(long, value_name = "N")]
+    pub stride: usize,
+
+    /// Bytes per unit.  Use 2 to keep 16-bit words together.
+    #[arg(long, value_name = "N", default_value_t = 1)]
+    pub unit: usize,
+}
+
+impl CommandTrait for ImageDeinterleaveArgs {
     fn requires_device(&self) -> bool {
         false
     }

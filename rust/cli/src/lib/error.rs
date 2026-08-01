@@ -243,6 +243,9 @@ pub enum Error {
     #[error("Failed to decode Intel HEX from '{0}':\n  {1}")]
     IhexDecode(String, String),
 
+    #[error("Failed to transform ROM image '{0}':\n  {1}")]
+    ImageTransform(String, String),
+
     #[error("Invalid --pin value '{0}':\n  {1}")]
     InvalidPin(String, String),
 

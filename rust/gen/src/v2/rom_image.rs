@@ -450,6 +450,7 @@ mod tests {
             &SizeHandling::None,
             crate::PAD_BLANK_BYTE,
             None,
+            &[],
         )
         .expect("chip construction should succeed")
     }

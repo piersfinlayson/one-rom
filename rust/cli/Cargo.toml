@@ -72,3 +72,5 @@ assets = [
     ["target/release/onerom", "usr/bin/", "755"],
     ["scripts/69-onerom-cli.rules", "lib/udev/rules.d/69-onerom-cli.rules", "644"],
 ]
+[lints]
+workspace = true

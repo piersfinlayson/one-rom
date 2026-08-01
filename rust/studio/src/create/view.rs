@@ -21,6 +21,7 @@ use crate::{AppLink, AppMessage};
 use super::build::{ACTIVE_STATES, Active};
 
 /// Create tab view
+#[allow(clippy::wildcard_enum_match_arm)]
 pub fn view<'a>(
     create: &'a Create,
     runtime_info: &'a RuntimeInfo,

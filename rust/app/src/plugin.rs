@@ -399,7 +399,13 @@ pub fn parse_plugins(specs: &[String]) -> Result<Vec<PluginSpec>, PluginError> {
                     plugin_type: Some(t),
                     ..
                 } => Some(*t),
-                _ => None,
+                // An unstated type is resolved from the manifest later, and a
+                // sideloaded binary carries its type in its header; neither is
+                // known here.
+                PluginSpec::Named {
+                    plugin_type: None, ..
+                }
+                | PluginSpec::File { .. } => None,
             })
             .collect();
         validate_plugin_type_set(&types)?;
@@ -1225,32 +1231,12 @@ pub fn plugin_to_chip_set_config(
         PluginType::User => OraChipType::UserPlugin,
     };
 
-    Ok(ChipSetConfig {
-        set_type: ChipSetType::Single,
-        description: None,
-        chips: alloc::vec![ChipConfig {
-            file: file.into(),
-            license: None,
-            description: None,
-            chip_type: chip_type.into(),
-            cs1: None,
-            cs2: None,
-            cs3: None,
-            cs4: None,
-            ce: None,
-            oe: None,
-            size_handling,
-            extract: None,
-            label: None,
-            location: None,
-            allow_cs_ignore: false,
-            // Plugins are always raw binary images.
-            format: Default::default(),
-            load_address: Default::default(),
-        }],
-        serve_alg: None,
-        firmware_overrides: None,
-    })
+    // A plugin is always a raw binary image with no chip selects, so
+    // everything beyond the file, type and size handling stays at its default.
+    let mut chip = ChipConfig::new(file.into(), chip_type.into());
+    chip.size_handling = size_handling;
+
+    Ok(ChipSetConfig::new(ChipSetType::Single, alloc::vec![chip]))
 }
 
 // ------------------------------------------------------------

@@ -170,7 +170,17 @@ pub fn build_cs_overrides(
                     .get(1)
                     .map(|c| cs_logic_for_role(per_chip_role, c))
                     .unwrap_or(CsLogic::ActiveLow),
-                _ => cs_logic_for_role(line.role, cs_config),
+                // Every other role takes its polarity from the set's primary
+                // chip config.  HalfSelect is deliberately here: its active
+                // state follows cs1_logic, so it goes down the same path as
+                // Cs1 (see SelectRole::HalfSelect).
+                SelectRole::Cs1
+                | SelectRole::Cs2
+                | SelectRole::Cs3
+                | SelectRole::Cs4
+                | SelectRole::Ce
+                | SelectRole::Oe
+                | SelectRole::HalfSelect => cs_logic_for_role(line.role, cs_config),
             };
             if configured != required {
                 Some(encode_override(line.gpio, GpioOverride::GpioOverInvert))

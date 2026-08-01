@@ -14,6 +14,9 @@
 #   --cs2 <active_low|active_high>   CS2 polarity
 #   --cs3 <active_low|active_high>   CS3 polarity
 #   --force-16-bit                   Force 16-bit mode (40-pin boards)
+#   --transform <spec>               Image transforms, in the CLI's --slot
+#                                    notation, e.g. swap_bytes or
+#                                    deinterleave:1/2/2+swap_bytes
 #   -h, --help                       Show this help and exit
 #
 # Examples:
@@ -21,16 +24,18 @@
 #   scripts/run-single-test-emu.sh fire-24-a images/test/rand_8KB.rom 2364 --cs1 active_low
 #   scripts/run-single-test-emu.sh fire-28-a images/test/rand_64KB.rom 23512 --cs1 active_low --cs2 active_high
 #   scripts/run-single-test-emu.sh fire-40-a images/test/rand_512KB.rom 27C400 --force-16-bit
+#   scripts/run-single-test-emu.sh fire-24-e images/test/rand_8KB.rom 2364 --cs1 active_low --transform swap_bytes
 
 _reproduce_cmd() {
     local board=$1 image=$2 chip_type=$3 size_handling=$4
-    local cs1=$5 cs2=$6 cs3=$7 force_16_bit=$8
+    local cs1=$5 cs2=$6 cs3=$7 force_16_bit=$8 transform=$9
 
     local cmd="scripts/run-single-test-emu.sh"
     [ -n "$cs1" ]               && cmd+=" --cs1 $cs1"
     [ -n "$cs2" ]               && cmd+=" --cs2 $cs2"
     [ -n "$cs3" ]               && cmd+=" --cs3 $cs3"
     [ "$force_16_bit" = "true" ] && cmd+=" --force-16-bit"
+    [ -n "$transform" ]         && cmd+=" --transform $transform"
     cmd+=" $board $image $chip_type"
     [ "$size_handling" != "none" ] && cmd+=" $size_handling"
     echo "$cmd"
@@ -45,6 +50,41 @@ _normalize_cs() {
     esac
 }
 
+# Translate the CLI's textual transform notation (`swap_bytes`,
+# `deinterleave:<offset>/<stride>[/<unit>]`, joined with `+`) into the JSON
+# array a config file carries.  The two notations are deliberately different -
+# see docs/CLI-MANUAL.md - so the harness accepts the one a user would type.
+_transform_json() {
+    local spec=$1
+    local out="" first=1 part
+
+    local IFS='+'
+    for part in $spec; do
+        local json
+        case $part in
+            swap_bytes)
+                json='"swap_bytes"'
+                ;;
+            deinterleave:*)
+                local params=${part#deinterleave:}
+                local offset stride unit
+                IFS='/' read -r offset stride unit <<< "$params"
+                [ -z "$unit" ] && unit=1
+                json="{\"deinterleave\":{\"offset\":$offset,\"stride\":$stride,\"unit\":$unit}}"
+                ;;
+            *)
+                echo "Unknown transform '$part'" >&2
+                exit 1
+                ;;
+        esac
+        [ $first -eq 0 ] && out+=","
+        out+="$json"
+        first=0
+    done
+
+    echo "[$out]"
+}
+
 _run_single_test() {
     local board=$1
     local image=$2
@@ -54,12 +94,14 @@ _run_single_test() {
     local cs2; cs2=$(_normalize_cs "${6:-}")
     local cs3; cs3=$(_normalize_cs "${7:-}")
     local force_16_bit=${8:-false}
+    local transform=${9:-}
 
     local chip="{\"type\":\"$chip_type\",\"file\":\"$image\""
     [ "$size_handling" != "none" ] && chip+=",\"size_handling\":\"$size_handling\""
     [ -n "$cs1" ] && chip+=",\"cs1\":\"$cs1\""
     [ -n "$cs2" ] && chip+=",\"cs2\":\"$cs2\""
     [ -n "$cs3" ] && chip+=",\"cs3\":\"$cs3\""
+    [ -n "$transform" ] && chip+=",\"transform\":$(_transform_json "$transform")"
     chip+="}"
 
     local chip_set="{\"type\":\"single\",\"chips\":[$chip]"
@@ -76,6 +118,7 @@ _run_single_test() {
     [ -n "$cs2" ] && desc+=" cs2=$cs2"
     [ -n "$cs3" ] && desc+=" cs3=$cs3"
     [ "$force_16_bit" = "true" ] && desc+=" force_16_bit=true"
+    [ -n "$transform" ] && desc+=" transform=$transform"
     echo ""
     echo "Testing: $desc"
 
@@ -100,6 +143,7 @@ _usage() {
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
     cs1="" cs2="" cs3=""
     force_16_bit=false
+    transform=""
 
     positional=()
     while [[ $# -gt 0 ]]; do
@@ -109,6 +153,7 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
             --cs2)          cs2=$2;  shift 2 ;;
             --cs3)          cs3=$2;  shift 2 ;;
             --force-16-bit) force_16_bit=true; shift ;;
+            --transform)    transform=$2; shift 2 ;;
             -*)             echo "Unknown option: $1" >&2; _usage; exit 1 ;;
             *)              positional+=("$1"); shift ;;
         esac
@@ -123,5 +168,5 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
     board=${positional[0]} image=${positional[1]} chip_type=${positional[2]} size_handling=${positional[3]:-none}
 
     _run_single_test "$board" "$image" "$chip_type" "$size_handling" \
-        "$cs1" "$cs2" "$cs3" "$force_16_bit"
+        "$cs1" "$cs2" "$cs3" "$force_16_bit" "$transform"
 fi

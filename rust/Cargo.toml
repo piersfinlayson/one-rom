@@ -34,6 +34,18 @@ default-members = [
 ]
 resolver = "2"
 
+# Lints applied across the workspace.  Members opt in with `[lints] workspace =
+# true`.
+[workspace.lints.clippy]
+# Several types we consume are `#[non_exhaustive]` — including our own
+# `onerom_gen::Error` — so a `match` on them needs a wildcard arm and the
+# compiler can no longer tell us when a new variant appears.  This lint fills
+# that gap: it stays quiet while every known variant is listed explicitly, and
+# fires on the wildcard as soon as one is added.  Combined with `-D warnings`
+# in `ci/rust-lint.sh` that makes a new variant a build failure rather than
+# something silently absorbed.
+wildcard_enum_match_arm = "warn"
+
 [workspace.dependencies]
 onerom-app = { path="app", version="0.2.0" }
 onerom-cli = { path="cli", version="0.3.0" }

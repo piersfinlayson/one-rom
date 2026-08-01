@@ -75,6 +75,7 @@ fn header_role_label(role: &HeaderRole) -> String {
 
 /// The MCU GPIO behind a role, where one exists (image-select, X and broken-out
 /// address pads carry a GPIO; power/ground/SWD/control pads do not).
+#[allow(clippy::wildcard_enum_match_arm)]
 fn header_role_gpio(board: &Board, role: &HeaderRole) -> Option<u8> {
     match role {
         HeaderRole::Select(b) => board.sel_pins().get(*b as usize).copied(),
@@ -141,6 +142,7 @@ const HBOT: &str = "└───────────┘";
 ///
 /// Returns `None` if the board has no `jumper_header` descriptor yet, so the
 /// caller can print a "not characterised" notice rather than an empty diagram.
+#[allow(clippy::wildcard_enum_match_arm)]
 pub fn render_pin_header(board: &Board) -> Option<String> {
     let header = board.jumper_header()?;
 
@@ -615,6 +617,7 @@ pub fn render_rom_socket(board: &Board, chip: Option<ChipType>, show_gpio: bool)
 /// this function degrades to naming rather than to nothing.
 ///
 /// `None` means no pad carries this GPIO.
+#[allow(clippy::wildcard_enum_match_arm)]
 pub fn gpio_header_role(board: &Board, gpio: u8) -> Option<String> {
     // The board pin arrays use 255 for "no such pin", and no real GPIO number
     // reaches it, so it must never match one of those sentinels.

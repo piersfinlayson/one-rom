@@ -279,11 +279,21 @@ stack.
 ### Prepare a 16-bit ROM image
 
 16-bit ROM types (e.g. 27C400) may need their byte pairs swapped to match the
-order One ROM expects:
+order One ROM expects. Either rewrite the file first:
 
 ```
 onerom image swap-bytes --input kick.bin --output kick-swapped.bin
 ```
+
+or let the build do it, leaving the source file untouched:
+
+```
+onerom program --slot file=kick.bin,type=27C400,transform=swap_bytes
+```
+
+If your image interleaves several devices in one file — a 32-bit ROM set, say —
+`deinterleave` extracts a single lane. See
+[Image transforms](#image-transforms) for the full set and how they compose.
 
 ## Device states
 
@@ -1040,6 +1050,44 @@ onerom image swap-bytes --input kick.bin --output kick-swapped.bin
 | `--input <FILE>` (alias `--in`) | Input ROM image file. |
 | `--output <FILE>` (alias `--out`) | Output file path. |
 
+The same operation is available during a build as
+`--slot transform=swap_bytes`; see [Image transforms](#image-transforms).
+
+Device required: no.
+
+### image deinterleave
+
+Extract one lane from an interleaved ROM image. Divides the image into units of
+`--unit` bytes and keeps unit `--offset` of every `--stride` units. Used to
+split a wide ROM image, distributed as a single interleaved file, into the
+narrower images each device needs.
+
+The input length must be a multiple of `--unit × --stride`; the output is
+`1/--stride` of the input length.
+
+```
+# odd bytes of a 16-bit interleaved image
+onerom image deinterleave --input rom16.bin --output odd.bin --offset 1 --stride 2
+
+# byte 2 of a 32-bit interleaved image
+onerom image deinterleave --input rom32.bin --output b2.bin --offset 2 --stride 4
+
+# the upper 16-bit half of each 32-bit word
+onerom image deinterleave --input rom32.bin --output hi.bin --offset 1 --stride 2 --unit 2
+```
+
+| Option | Description |
+|---|---|
+| `--input <FILE>` (alias `--in`) | Input ROM image file. |
+| `--output <FILE>` (alias `--out`) | Output file path. |
+| `--offset <N>` | Which unit of each group to keep. Must be less than `--stride`. |
+| `--stride <N>` | How many units per group. Must be at least 2. |
+| `--unit <N>` | Bytes per unit. Defaults to `1`; use `2` to keep 16-bit words together. |
+
+The same operation is available during a build as
+`--slot transform=deinterleave:<offset>/<stride>[/<unit>]`; see
+[Image transforms](#image-transforms).
+
 Device required: no.
 
 ### image convert
@@ -1473,6 +1521,7 @@ Repeat `--slot` once per slot. Comma-separated `key=value` pairs:
 ```
 file=<path_or_url>,type=<romtype>[,cs1=<logic>][,cs2=<logic>][,cs3=<logic>]
     [,size_handling=<handling>][,format=<binary|ihex>][,load_address=<addr>]
+    [,transform=<list>]
     [,cpu-freq=<freq>][,cpu-vreg=<voltage>][,led=<bool>][,force_16bit=<bool>]
 ```
 
@@ -1484,6 +1533,7 @@ file=<path_or_url>,type=<romtype>[,cs1=<logic>][,cs2=<logic>][,cs3=<logic>]
 | `size_handling` (alias `size`) | `none`, `duplicate` (or `dup`), `truncate` (or `trunc`), `pad`. For an Intel HEX image, padding fills with `0xFF` and `duplicate` is not permitted. |
 | `format` | `binary` (default) or `ihex` (Intel HEX). An `ihex` file is decoded to a binary image before use; unwritten bytes read as `0xFF`. |
 | `load_address` (alias `load-address`) | Only valid with `format=ihex`. The absolute Intel HEX address that maps to byte 0 of the ROM, as a decimal or `0x`/`$`-prefixed hex value (e.g. `$E000`). Defaults to `0`. |
+| `transform` | Byte-level rearrangements of the image, applied in the order given and joined with `+`. See [Image transforms](#image-transforms). |
 | `cpu-freq` | e.g. `150`, `150mhz`, `150MHz`. Values above 150 MHz require confirmation (suppressed by `--yes`) and set overclock automatically. |
 | `cpu-vreg` | e.g. `1.1`, `1.10`, `1.10v`, `1.10V`. Values above 1.10 V require confirmation (suppressed by `--yes`). Must be a supported level. |
 | `led` | Boolean: `on`/`off`, `true`/`false`, `1`/`0`. |
@@ -1504,7 +1554,66 @@ Examples:
 --slot file=undersized.bin,type=2732,size=pad
 --slot file=oversized.bin,type=2732,size=trunc
 --slot file=halfsized.bin,type=2732,size=dup
+--slot file=amiga.bin,type=27C400,transform=swap_bytes
+--slot file=rom32.bin,type=27C010,transform=deinterleave:1/2/2+swap_bytes
 ```
+
+## Image transforms
+
+Some ROM images are not laid out the way the target chip needs them: a 16-bit
+part whose image was produced with the opposite byte order, or a wide image
+that interleaves several narrower devices. Transforms rearrange the bytes
+before the image is written into the firmware.
+
+They are available two ways, and both run exactly the same operation:
+
+- as the `transform=` key of a [`--slot`](#rom-slot-specification), or a
+  `"transform"` array in a config file, applied during the build;
+- as the standalone [`image swap-bytes`](#image-swap-bytes) and
+  [`image deinterleave`](#image-deinterleave) subcommands, which rewrite a file.
+
+| Transform | Effect |
+|---|---|
+| `swap_bytes` | Reverses the byte order within each 16-bit word. The image must have an even length. |
+| `deinterleave:<offset>/<stride>` | Divides the image into single bytes and keeps byte `offset` of every `stride`. |
+| `deinterleave:<offset>/<stride>/<unit>` | As above, but in units of `unit` bytes — use `2` to keep 16-bit words together. |
+
+`deinterleave` requires the image length to be a multiple of `unit × stride`.
+The result is `1/stride` of the input length.
+
+Transforms are applied **in the order listed**, and the order matters:
+
+```
+transform=deinterleave:1/2/2+swap_bytes
+```
+
+takes the upper 16-bit half of each 32-bit word and *then* swaps its byte
+pairs. Note that `offset` selects which unit, not a named "high" or "low" half
+— which half you get depends on the byte order of your source image, and that
+is what `swap_bytes` is for.
+
+Within the build pipeline, transforms run after any `location` window and after
+an Intel HEX image has been decoded, but before `size_handling` reconciles the
+image against the chip size. A `swap_bytes` on an odd-length image is an error
+unless `size_handling` is `pad` (which appends one blank byte) or `truncate`
+(which drops the trailing byte). Where the size handling is used this way it
+counts as having been needed, so it is not then reported as redundant even if
+the transformed image lands on exactly the chip size.
+
+Common recipes:
+
+| Goal | Spec |
+|---|---|
+| 16-bit image with the wrong byte order | `transform=swap_bytes` |
+| Even / odd bytes of a 16-bit interleaved image | `transform=deinterleave:0/2` / `transform=deinterleave:1/2` |
+| Byte *n* of a 32-bit interleaved image | `transform=deinterleave:<n>/4` |
+| One 16-bit half of a 32-bit interleaved image | `transform=deinterleave:0/2/2` or `deinterleave:1/2/2` |
+
+The transforms applied to an image are recorded in the firmware metadata
+alongside its filename — as `kick.bin|transform=swap_bytes` — so a built image
+carries a record of how its ROM data was derived. Note that the metadata
+filename field is capped at 128 bytes, so the suffix can be truncated away for a
+very long path; use `label=` to keep it short.
 
 ## Plugin specification
 

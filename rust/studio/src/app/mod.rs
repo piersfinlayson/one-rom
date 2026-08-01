@@ -151,6 +151,7 @@ impl<'a> App<'a> {
         self.studio.runtime_info()
     }
 
+    #[allow(clippy::wildcard_enum_match_arm)]
     pub fn update(&mut self, message: AppMessage) -> Task<AppMessage> {
         let runtime_info = self.runtime_info().clone();
 

@@ -792,6 +792,7 @@ fn check_gpio_range(caps: &Caps, first_gpio: u8, count: u8) -> Result<(), Error>
 ///
 /// A bounded hold is timed by the device, not by this host: a CLI process that
 /// dies between assert and release must not be able to leave a pin latched.
+#[allow(clippy::wildcard_enum_match_arm)]
 pub async fn gpio_set(device: &Device, caps: &Caps, args: GpioSetArgs) -> Result<(), Error> {
     check_feature(caps, ONEROM_FEAT_GPIO_SET, &device.to_string())?;
     check_gpio_range(caps, args.gpio, 1)?;
@@ -829,6 +830,7 @@ pub async fn gpio_set(device: &Device, caps: &Caps, args: GpioSetArgs) -> Result
 ///
 /// `caps` must come from [`get_caps`] on the same device. A `count` of 0 asks
 /// for nothing and returns nothing without touching the device.
+#[allow(clippy::wildcard_enum_match_arm)]
 pub async fn gpio_query(
     device: &Device,
     caps: &Caps,

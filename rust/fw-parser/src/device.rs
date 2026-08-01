@@ -448,6 +448,11 @@ fn schema_slot_kind(slot: &OneromRomSlot) -> SlotKind {
         RomSlotType::RomSlotTypePluginSystem
         | RomSlotType::RomSlotTypePluginUser
         | RomSlotType::RomSlotTypePluginPio => SlotKind::Plugin,
-        _ => SlotKind::Rom,
+        // A RAM slot is user-placed and counted in the user-facing numbering,
+        // so it belongs here rather than with the plugins.
+        RomSlotType::RomSlotTypeSingleRom
+        | RomSlotType::RomSlotTypeBankedRom
+        | RomSlotType::RomSlotTypeMultiRom
+        | RomSlotType::RomSlotTypeSingleRam => SlotKind::Rom,
     }
 }

@@ -95,3 +95,6 @@ built = { version = "0.8", features = ["git2"] }
 embed-resource = "3"
 git2 = { version = "0.20", default-features = false }
 static_vcruntime = "2.0"
+
+[lints]
+workspace = true

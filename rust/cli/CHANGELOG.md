@@ -2,6 +2,28 @@
 
 ## v0.3.0 - 2026-??-??
 
+- **ROM images can now be rearranged as part of a build**, via a new
+  `transform=` key on `--slot`. Two transforms are available: `swap_bytes`,
+  which reverses the byte order within each 16-bit word, and
+  `deinterleave:<offset>/<stride>[/<unit>]`, which extracts one lane from an
+  interleaved image — a 32-bit ROM set distributed as a single file, split into
+  8-bit lanes or 16-bit halves. Several may be combined with `+` and are applied
+  in the order given, which matters:
+  `transform=deinterleave:1/2/2+swap_bytes` takes the upper 16-bit half of each
+  32-bit word and then swaps its byte pairs. The same is expressible as a
+  `"transform"` array in a config file. Previously the only option was
+  `onerom image swap-bytes`, which rewrites the source file — so a byte-swapped
+  16-bit ROM needed a second copy on disk, and an interleaved image could not be
+  used at all.
+- **New `onerom image deinterleave`** — the standalone counterpart to
+  `onerom image swap-bytes`, taking `--offset`, `--stride` and `--unit`, for
+  when you want a rewritten file rather than a build-time transform. Both
+  subcommands now share their implementation with the `transform=` slot key, so
+  the two paths cannot drift apart. Neither reads Intel HEX yet; run
+  `onerom image convert` first.
+- `Error::ImageTransform` is new, reporting a transform that could not be
+  applied to an image.
+
 - **Ice (STM32) boards are now listed separately, and rejected where the CLI
   cannot use them.** `onerom board list` (and `onerom scan --list-boards`, which
   now prints the same listing) shows the Fire boards under the existing heading

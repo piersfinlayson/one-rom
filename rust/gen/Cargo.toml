@@ -33,3 +33,5 @@ serde_json = { version = "1.0", default-features = false, features = ["alloc"] }
 
 [package.metadata.docs.rs]
 all-features = true
+[lints]
+workspace = true

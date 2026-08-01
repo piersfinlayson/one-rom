@@ -346,6 +346,7 @@ pub fn parse_cs_polarity(s: &str) -> Result<CsPolaritySetting, Error> {
 /// When `default` is `Unset` the prompt shows `[?]` and blank input returns
 /// `Auto`, giving the user a sensible starting point without requiring them
 /// to have previously configured a polarity.
+#[allow(clippy::wildcard_enum_match_arm)]
 pub async fn get_cs_polarity(
     token: Option<&str>,
     default: CsPolaritySetting,

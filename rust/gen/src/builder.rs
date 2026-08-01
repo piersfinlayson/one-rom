@@ -92,10 +92,7 @@ use crate::{
 /// for spec in file_specs {
 ///     let data = fetch_file(&spec.source)?; // Your implementation
 ///     
-///     builder.add_file(FileData {
-///         id: spec.id,
-///         data,
-///     })?;
+///     builder.add_file(FileData::new(spec.id, data))?;
 /// }
 ///
 /// // Get config description (optional)
@@ -351,6 +348,7 @@ impl Builder {
     }
 
     /// v2 (0.7.0+, RP2350, PIO-only) metadata/ROM image build
+    #[allow(clippy::wildcard_enum_match_arm)]
     fn build_v2(
         &self,
         props: FirmwareProperties,
@@ -1781,6 +1779,7 @@ pub(crate) fn build_chip_sets(
                 &chip_config.size_handling,
                 blank_byte,
                 chip_config.location,
+                &chip_config.transform,
             )?;
             set_roms.push(rom);
             chip_id += 1;

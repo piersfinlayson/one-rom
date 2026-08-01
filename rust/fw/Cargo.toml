@@ -35,3 +35,6 @@ serde = { version = "1.0", default-features = false, features = ["derive"] }
 serde_json = "1.0"
 smol = { version = "2.0" }
 zip = "6.0"
+
+[lints]
+workspace = true

@@ -369,10 +369,20 @@ impl Variant {
     }
 
     pub fn ccm_ram_kb(&self) -> Option<usize> {
-        // F405 has 64KB of CCM RAM, others don't
+        // F405 has 64KB of CCM RAM, others don't.  Enumerated rather than
+        // defaulted so that adding a variant with CCM forces a decision here
+        // instead of silently reporting none.
         match self {
             Variant::F405RG => Some(64),
-            _ => None,
+            Variant::F446RC
+            | Variant::F446RE
+            | Variant::F411RC
+            | Variant::F411RE
+            | Variant::F401RE
+            | Variant::F401RB
+            | Variant::F401RC
+            | Variant::RP2350
+            | Variant::RP2350B => None,
         }
     }
 

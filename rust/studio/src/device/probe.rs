@@ -189,6 +189,7 @@ where
 }
 
 // Helper to open a probe and session, and run a closure
+#[allow(clippy::wildcard_enum_match_arm)]
 fn probe_flash(
     probe: DebugProbeInfo,
     chip_id: String,

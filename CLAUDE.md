@@ -159,11 +159,13 @@ workflow; `onerom firmware` builds a binary without programming a device:
     # build + flash a connected One ROM (board inferred from the device):
     onerom program --config onerom-config/vic20-pal.json
 
-    # build a firmware binary without flashing:
+    # build a firmware binary without flashing (--board is required unless a
+    # One ROM is connected to infer it from):
     onerom firmware build \
       --base-firmware firmware/build/onerom-rp235x.bin \
       --config onerom-config/vic20-pal.json \
-      /tmp/firmware.bin
+      --board fire-24-e \
+      --output /tmp/firmware.bin
 
 CI / release firmware builds:
 
@@ -247,9 +249,10 @@ changes device state.
   LED), `,cpu-freq=200MHz`, `,force_16bit=true` — the same overrides expressible
   as `firmware_overrides` in a config file.
 - `--out <file>` saves the composed image *and* flashes; `onerom firmware build
-  … <out>` composes without flashing; `onerom firmware inspect <bin>` dumps
-  contents. Board is inferred from the connected device (override with
-  `--board`). `program` composes the image before writing, so a bad build aborts
+  --out <file>` composes without flashing; `onerom firmware inspect --firmware
+  <bin>` dumps contents. The output path and the firmware to inspect are always
+  options, never positional arguments. Board is inferred from the connected
+  device (override with `--board`). `program` composes the image before writing, so a bad build aborts
   without touching the device.
 
 ## Config (`onerom-config/`)

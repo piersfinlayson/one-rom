@@ -576,6 +576,7 @@ async fn flash_async(
     }
 }
 
+#[allow(clippy::wildcard_enum_match_arm)]
 async fn reboot_async(device: DeviceType, client: Client, stopped: bool) -> AppMessage {
     match device {
         DeviceType::Usb(u) => usb::reboot_async(u.clone(), client, stopped).await,

@@ -288,6 +288,7 @@ impl Config {
     }
 
     /// Get URL if network config
+    #[allow(clippy::wildcard_enum_match_arm)]
     pub fn url(&self) -> Option<&String> {
         match self {
             Config::Network { url, .. } => Some(url),
@@ -384,6 +385,7 @@ pub fn load_config_file(config: Config) -> AppMessage {
 }
 
 /// Generate a built config
+#[allow(clippy::wildcard_enum_match_arm)]
 pub fn generate_built_config(config: Config) -> AppMessage {
     assert!(config.is_built());
     let (rom_type, chip_select, data) = match &config {

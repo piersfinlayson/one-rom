@@ -99,6 +99,7 @@ pub fn build_image_result(
     Task::none()
 }
 
+#[allow(clippy::wildcard_enum_match_arm)]
 pub fn select_rom_type(create: &mut Create, rom_type: ChipType) -> Task<AppMessage> {
     debug!("User selected ROM type: {}", rom_type.name());
     if !create.is_building() && !create.is_flashing() && !create.is_saving() {
@@ -150,6 +151,7 @@ pub fn select_cs_active(create: &mut Create, index: usize, active: Active) -> Ta
     Task::none()
 }
 
+#[allow(clippy::wildcard_enum_match_arm)]
 pub fn select_data_vec(create: &mut Create, data: Vec<u8>) -> Task<AppMessage> {
     debug!("User provided data vector of length {}", data.len());
     if let State::UserBuilding { rom_type, cs, .. } = &create.state {

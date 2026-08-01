@@ -10,7 +10,67 @@
 
 use onerom_config::chip::ChipType;
 use onerom_fw::net::fetch_rom_file;
-use onerom_gen::{ChipConfig, SizeHandling, num_excess_addr_lines};
+use onerom_gen::{ChipConfig, SizeHandling, Transform, num_excess_addr_lines};
+
+/// Apply a chip's `transform` list to its loaded image.
+///
+/// # Panics
+/// Panics on a transform this tester does not model, or on an image the
+/// transform cannot be applied to.  The odd-length `swap_bytes` case is
+/// deliberately unsupported: resolving it depends on `size_handling`, which is
+/// applied later, and no tester image needs it.
+fn apply_transforms(raw: &[u8], transforms: &[Transform], source: &str) -> Vec<u8> {
+    let mut data = raw.to_vec();
+
+    for transform in transforms {
+        data = match transform {
+            Transform::SwapBytes => {
+                assert!(
+                    data.len().is_multiple_of(2),
+                    "ROM image '{source}': swap_bytes needs an even-length image, got {} bytes \
+                     (the odd-length size_handling interaction is not modelled by the tester)",
+                    data.len(),
+                );
+                data.chunks_exact(2).flat_map(|w| [w[1], w[0]]).collect()
+            }
+
+            Transform::Deinterleave {
+                offset,
+                stride,
+                unit,
+            } => {
+                assert!(*unit >= 1, "ROM image '{source}': deinterleave unit is 0");
+                assert!(
+                    *stride >= 2,
+                    "ROM image '{source}': deinterleave stride is {stride}"
+                );
+                assert!(
+                    offset < stride,
+                    "ROM image '{source}': deinterleave offset {offset} is not below stride {stride}"
+                );
+                assert!(
+                    data.len().is_multiple_of(unit * stride),
+                    "ROM image '{source}': {} bytes is not a multiple of the {} byte \
+                     deinterleave group",
+                    data.len(),
+                    unit * stride,
+                );
+
+                data.chunks_exact(*unit)
+                    .enumerate()
+                    .filter(|(i, _)| i % stride == *offset)
+                    .flat_map(|(_, unit)| unit.iter().copied())
+                    .collect()
+            }
+
+            other => panic!(
+                "ROM image '{source}': transform '{other}' is not modelled by the firmware tester"
+            ),
+        };
+    }
+
+    data
+}
 
 /// Number of bytes One ROM actually serves for `chip_type`.
 ///
@@ -61,6 +121,12 @@ pub fn load(chip_config: &ChipConfig, chip_type: ChipType, base_dir: &std::path:
 
     let (raw, _) = fetch_rom_file(&source, &[], chip_config.extract.clone(), false)
         .unwrap_or_else(|e| panic!("Failed to load ROM image '{}': {}", source, e));
+
+    // Transforms rearrange the image before size handling, mirroring the
+    // generator's pipeline.  Written out here rather than called from
+    // `onerom-gen` so the oracle stays an independent statement of what the
+    // firmware should serve, in the same way size handling is below.
+    let raw = apply_transforms(&raw, &chip_config.transform, &source);
 
     // 27C080: one board serves only the lower 512 KB of the 1 MB space.
     let target = served_size(chip_type);

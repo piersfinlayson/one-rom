@@ -73,6 +73,18 @@ run_no_cs() {
         "$CONFIG_CS1" "$CONFIG_CS2" "$CONFIG_CS3" "$force_16_bit"
 }
 
+run_transform() {
+    local board=$1
+    local image=$2
+    local base_config=$3
+    local transform=$4
+    local force_16_bit=${5:-false}
+
+    parse_base_config "$base_config"
+    _run_single_test "$board" "$image" "$CHIP_TYPE" "$SIZE_HANDLING" \
+        "$CONFIG_CS1" "$CONFIG_CS2" "$CONFIG_CS3" "$force_16_bit" "$transform"
+}
+
 run_config() {
     local board=$1
     local config=$2
@@ -172,6 +184,15 @@ test_40pin() {
 
     run_no_cs  $board images/test/rand_512KB.rom type=27C400 "$force_16_bit"
     run_no_cs  $board images/test/rand_256KB.rom type=27C200 "$force_16_bit"
+
+    # One test per image transform, so that deleting or breaking a transform
+    # shows up here and not only in the unit tests.  The arithmetic itself is
+    # covered by onerom-gen's tests; what these prove is that the transformed
+    # image is what the firmware actually serves.  They sit with the 16-bit
+    # parts because that is where both transforms are actually reached for:
+    # byte order on a 27C400, and one 8-bit lane out of a wider ROM set.
+    run_transform $board images/test/rand_512KB.rom type=27C400 swap_bytes       "$force_16_bit"
+    run_transform $board images/test/rand_512KB.rom type=27C200 deinterleave:0/2 "$force_16_bit"
 }
 
 test_config() {

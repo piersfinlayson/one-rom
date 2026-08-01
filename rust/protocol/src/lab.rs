@@ -266,6 +266,7 @@ pub struct LabRomEntry {
 
 impl LabRomEntry {
     /// Get RomMetadata from the appropriate response
+    #[allow(clippy::wildcard_enum_match_arm)]
     pub fn from_buffer(buf: &[u8]) -> Result<Self, Error> {
         let mut pos = 0;
 

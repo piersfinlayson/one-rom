@@ -143,6 +143,7 @@ pub fn save_firmware_complete(create: &mut Create) -> Task<AppMessage> {
 }
 
 /// Handle a ROM config being selected
+#[allow(clippy::wildcard_enum_match_arm)]
 pub fn config_selected(create: &mut Create, config: Config) -> Task<AppMessage> {
     debug!("Config selected: {}", config);
 

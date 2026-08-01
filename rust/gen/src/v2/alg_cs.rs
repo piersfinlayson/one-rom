@@ -191,6 +191,7 @@ mod tests {
     /// Multi set: serve_cs_low_0 = 1 (active-high), and first_rom_cs_base
     /// picks out chip0's Cs1 specifically (not the whole 3-pin range).
     #[test]
+    #[allow(clippy::wildcard_enum_match_arm)]
     fn multi_serve_cs_low_0_and_first_rom() {
         let layout = CsDataLayout {
             gpio_base: 0,

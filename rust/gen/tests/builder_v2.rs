@@ -208,11 +208,7 @@ mod tests {
         }"#;
 
         let mut b = v2_builder(json);
-        b.add_file(FileData {
-            id: 0,
-            data: vec![0xAAu8; 8192],
-        })
-        .unwrap();
+        b.add_file(FileData::new(0, vec![0xAAu8; 8192])).unwrap();
 
         let (meta, rom) = b.build(v2_props(Board::Fire24A)).expect("build");
         let v = view(&meta);
@@ -288,16 +284,8 @@ mod tests {
         }"#;
 
         let mut b = v2_builder(json);
-        b.add_file(FileData {
-            id: 0,
-            data: vec![0xAAu8; 8192],
-        })
-        .unwrap();
-        b.add_file(FileData {
-            id: 1,
-            data: vec![0x55u8; 8192],
-        })
-        .unwrap();
+        b.add_file(FileData::new(0, vec![0xAAu8; 8192])).unwrap();
+        b.add_file(FileData::new(1, vec![0x55u8; 8192])).unwrap();
 
         let (meta, rom) = b.build(v2_props(Board::Fire24A)).expect("build");
         let v = view(&meta);
@@ -371,21 +359,9 @@ mod tests {
         }"#;
 
         let mut b = v2_builder(json);
-        b.add_file(FileData {
-            id: 0,
-            data: vec![0x11u8; 8192],
-        })
-        .unwrap();
-        b.add_file(FileData {
-            id: 1,
-            data: vec![0x22u8; 8192],
-        })
-        .unwrap();
-        b.add_file(FileData {
-            id: 2,
-            data: vec![0x33u8; 8192],
-        })
-        .unwrap();
+        b.add_file(FileData::new(0, vec![0x11u8; 8192])).unwrap();
+        b.add_file(FileData::new(1, vec![0x22u8; 8192])).unwrap();
+        b.add_file(FileData::new(2, vec![0x33u8; 8192])).unwrap();
 
         let (meta, rom) = b.build(v2_props(Board::Fire24A)).expect("build");
         let v = view(&meta);
@@ -465,26 +441,10 @@ mod tests {
         }"#;
 
         let mut b = v2_builder(json);
-        b.add_file(FileData {
-            id: 0,
-            data: vec![0x11u8; 8192],
-        })
-        .unwrap();
-        b.add_file(FileData {
-            id: 1,
-            data: vec![0x22u8; 8192],
-        })
-        .unwrap();
-        b.add_file(FileData {
-            id: 2,
-            data: vec![0x33u8; 8192],
-        })
-        .unwrap();
-        b.add_file(FileData {
-            id: 3,
-            data: vec![0x44u8; 8192],
-        })
-        .unwrap();
+        b.add_file(FileData::new(0, vec![0x11u8; 8192])).unwrap();
+        b.add_file(FileData::new(1, vec![0x22u8; 8192])).unwrap();
+        b.add_file(FileData::new(2, vec![0x33u8; 8192])).unwrap();
+        b.add_file(FileData::new(3, vec![0x44u8; 8192])).unwrap();
 
         let (meta, rom) = b.build(v2_props(Board::Fire24A)).expect("build");
         let v = view(&meta);
@@ -565,16 +525,8 @@ mod tests {
         }"#;
 
         let mut b = v2_builder(json);
-        b.add_file(FileData {
-            id: 0,
-            data: vec![0xAAu8; 8192],
-        })
-        .unwrap();
-        b.add_file(FileData {
-            id: 1,
-            data: vec![0x55u8; 8192],
-        })
-        .unwrap();
+        b.add_file(FileData::new(0, vec![0xAAu8; 8192])).unwrap();
+        b.add_file(FileData::new(1, vec![0x55u8; 8192])).unwrap();
 
         let (meta, rom) = b.build(v2_props(Board::Fire24A)).expect("build");
         let v = view(&meta);
@@ -625,11 +577,7 @@ mod tests {
         }"#;
 
         let mut b = v2_builder(json);
-        b.add_file(FileData {
-            id: 0,
-            data: vec![0xAAu8; 8192],
-        })
-        .unwrap();
+        b.add_file(FileData::new(0, vec![0xAAu8; 8192])).unwrap();
 
         let (meta, _rom) = b.build(v2_props(Board::Fire24A)).expect("build");
         let v = view(&meta);
@@ -660,11 +608,7 @@ mod tests {
         }"#;
 
         let mut b = v2_builder(json);
-        b.add_file(FileData {
-            id: 0,
-            data: vec![0xAAu8; 8192],
-        })
-        .unwrap();
+        b.add_file(FileData::new(0, vec![0xAAu8; 8192])).unwrap();
 
         let (meta, _rom) = b.build(v2_props(Board::Fire24A)).expect("build");
         let v = view(&meta);
@@ -710,11 +654,7 @@ mod tests {
         }"#;
 
         let mut b = v2_builder(json);
-        b.add_file(FileData {
-            id: 0,
-            data: vec![0xAAu8; 8192],
-        })
-        .unwrap();
+        b.add_file(FileData::new(0, vec![0xAAu8; 8192])).unwrap();
 
         let (meta, _rom) = b.build(v2_props(Board::Fire24A)).expect("build");
         let v = view(&meta);
@@ -761,11 +701,7 @@ mod tests {
 
         let mut b = v2_builder(json);
         // 23QL384 = 48KB = 49152 bytes
-        b.add_file(FileData {
-            id: 0,
-            data: vec![0xAAu8; 49152],
-        })
-        .unwrap();
+        b.add_file(FileData::new(0, vec![0xAAu8; 49152])).unwrap();
 
         let (meta, rom) = b.build(v2_props(Board::Fire28A)).expect("build");
         let v = view(&meta);
@@ -830,11 +766,7 @@ mod tests {
 
         let mut b = v2_builder(json);
         // 27C400 = 512KB byte-mode image = 524288 bytes
-        b.add_file(FileData {
-            id: 0,
-            data: vec![0xAAu8; 524288],
-        })
-        .unwrap();
+        b.add_file(FileData::new(0, vec![0xAAu8; 524288])).unwrap();
 
         let (meta, rom) = b.build(v2_props(Board::Fire40A)).expect("build");
         let v = view(&meta);
@@ -898,16 +830,8 @@ mod tests {
         }"#;
 
         let mut b = v2_builder(json);
-        b.add_file(FileData {
-            id: 0,
-            data: vec![0xAAu8; 8192],
-        })
-        .unwrap();
-        b.add_file(FileData {
-            id: 1,
-            data: vec![0xBBu8; 8192],
-        })
-        .unwrap();
+        b.add_file(FileData::new(0, vec![0xAAu8; 8192])).unwrap();
+        b.add_file(FileData::new(1, vec![0xBBu8; 8192])).unwrap();
 
         let (meta, rom) = b.build(v2_props(Board::Fire24E)).expect("build");
         let v = view(&meta);
@@ -986,21 +910,9 @@ mod tests {
         }"#;
 
         let mut b = v2_builder(json);
-        b.add_file(FileData {
-            id: 0,
-            data: vec![0xAAu8; 8192],
-        })
-        .unwrap();
-        b.add_file(FileData {
-            id: 1,
-            data: vec![0xBBu8; 8192],
-        })
-        .unwrap();
-        b.add_file(FileData {
-            id: 2,
-            data: vec![0xCCu8; 8192],
-        })
-        .unwrap();
+        b.add_file(FileData::new(0, vec![0xAAu8; 8192])).unwrap();
+        b.add_file(FileData::new(1, vec![0xBBu8; 8192])).unwrap();
+        b.add_file(FileData::new(2, vec![0xCCu8; 8192])).unwrap();
 
         let (meta, rom) = b.build(v2_props(Board::Fire24E)).expect("build");
         let v = view(&meta);
@@ -1074,16 +986,8 @@ mod tests {
         }"#;
 
         let mut b = v2_builder(json);
-        b.add_file(FileData {
-            id: 0,
-            data: vec![0xAAu8; 16384],
-        })
-        .unwrap();
-        b.add_file(FileData {
-            id: 1,
-            data: vec![0xBBu8; 16384],
-        })
-        .unwrap();
+        b.add_file(FileData::new(0, vec![0xAAu8; 16384])).unwrap();
+        b.add_file(FileData::new(1, vec![0xBBu8; 16384])).unwrap();
 
         let (meta, rom) = b.build(v2_props(Board::Fire28C)).expect("build");
         let v = view(&meta);
@@ -1159,16 +1063,8 @@ mod tests {
         }"#;
 
         let mut b = v2_builder(json);
-        b.add_file(FileData {
-            id: 0,
-            data: vec![0xAAu8; 16384],
-        })
-        .unwrap();
-        b.add_file(FileData {
-            id: 1,
-            data: vec![0xBBu8; 16384],
-        })
-        .unwrap();
+        b.add_file(FileData::new(0, vec![0xAAu8; 16384])).unwrap();
+        b.add_file(FileData::new(1, vec![0xBBu8; 16384])).unwrap();
 
         let (meta, rom) = b.build(v2_props(Board::Fire28C)).expect("build");
         let v = view(&meta);
@@ -1239,10 +1135,9 @@ mod tests {
         }"#;
 
         let mut b = v2_builder(json);
-        b.add_file(FileData {
-            id: 0,
-            data: vec![0xAAu8; 524288], // 27C400 = 512KB byte-mode image
-        })
+        b.add_file(
+            FileData::new(0, vec![0xAAu8; 524288]), /* 27C400 = 512KB byte-mode image */
+        )
         .unwrap();
 
         let (meta, _rom) = b.build(v2_props(Board::Fire40A)).expect("build");
@@ -1303,11 +1198,7 @@ mod tests {
         }"#;
 
         let mut b = v2_builder(json);
-        b.add_file(FileData {
-            id: 0,
-            data: vec![0xAAu8; 524288],
-        })
-        .unwrap();
+        b.add_file(FileData::new(0, vec![0xAAu8; 524288])).unwrap();
 
         let (meta, rom) = b.build(v2_props(Board::Fire40A)).expect("build");
         let v = view(&meta);
@@ -1368,11 +1259,7 @@ mod tests {
 
         let mut b = v2_builder(json);
         // 27C200 = 256KB byte-mode image = 262144 bytes
-        b.add_file(FileData {
-            id: 0,
-            data: vec![0xAAu8; 262144],
-        })
-        .unwrap();
+        b.add_file(FileData::new(0, vec![0xAAu8; 262144])).unwrap();
 
         let (meta, rom) = b.build(v2_props(Board::Fire40A)).expect("build");
         let v = view(&meta);
@@ -1437,10 +1324,9 @@ mod tests {
         }"#;
 
         let mut b = v2_builder(json);
-        b.add_file(FileData {
-            id: 0,
-            data: vec![0xAAu8; 131072], // 27C010 = 128KB
-        })
+        b.add_file(
+            FileData::new(0, vec![0xAAu8; 131072]), /* 27C010 = 128KB */
+        )
         .unwrap();
 
         let (meta, rom) = b.build(v2_props(Board::Fire32B)).expect("build");
@@ -1499,10 +1385,9 @@ mod tests {
         }"#;
 
         let mut b = v2_builder(json);
-        b.add_file(FileData {
-            id: 0,
-            data: vec![0xAAu8; 524288], // 27C040 = 512KB
-        })
+        b.add_file(
+            FileData::new(0, vec![0xAAu8; 524288]), /* 27C040 = 512KB */
+        )
         .unwrap();
 
         let (meta, rom) = b.build(v2_props(Board::Fire32B)).expect("build");
@@ -1562,10 +1447,9 @@ mod tests {
         }"#;
 
         let mut b = v2_builder(json);
-        b.add_file(FileData {
-            id: 0,
-            data: vec![0xBBu8; 524288], // SST39SF040 = 512KB
-        })
+        b.add_file(
+            FileData::new(0, vec![0xBBu8; 524288]), /* SST39SF040 = 512KB */
+        )
         .unwrap();
 
         let (meta, rom) = b.build(v2_props(Board::Fire32B)).expect("build");
@@ -1634,16 +1518,8 @@ mod tests {
         }"#;
 
         let mut b = v2_builder(json);
-        b.add_file(FileData {
-            id: 0,
-            data: vec![0xAAu8; 16384],
-        })
-        .unwrap();
-        b.add_file(FileData {
-            id: 1,
-            data: vec![0x55u8; 16384],
-        })
-        .unwrap();
+        b.add_file(FileData::new(0, vec![0xAAu8; 16384])).unwrap();
+        b.add_file(FileData::new(1, vec![0x55u8; 16384])).unwrap();
 
         let (meta, rom) = b.build(v2_props(Board::Fire28C)).expect("build");
         let v = view(&meta);
@@ -1723,11 +1599,7 @@ mod tests {
             );
 
             let mut b = v2_builder(&json);
-            b.add_file(FileData {
-                id: 0,
-                data: vec![0xAAu8; 524288],
-            })
-            .unwrap();
+            b.add_file(FileData::new(0, vec![0xAAu8; 524288])).unwrap();
 
             let (meta, rom) = b
                 .build(v2_props(Board::Fire32B))
@@ -1845,11 +1717,7 @@ mod tests {
         }"#;
 
         let mut b = v2_builder(json);
-        b.add_file(FileData {
-            id: 0,
-            data: vec![0xAAu8; 8192],
-        })
-        .unwrap();
+        b.add_file(FileData::new(0, vec![0xAAu8; 8192])).unwrap();
 
         let (meta, rom) = b.build(v2_props(Board::Fire28C)).expect("build");
         let v = view(&meta);
@@ -1946,11 +1814,7 @@ mod tests {
         }"#;
 
         let mut b = v2_builder(json);
-        b.add_file(FileData {
-            id: 0,
-            data: vec![0xBBu8; 4096],
-        })
-        .unwrap();
+        b.add_file(FileData::new(0, vec![0xBBu8; 4096])).unwrap();
 
         let (meta, rom) = b.build(v2_props(Board::Fire32B)).expect("build");
         let v = view(&meta);
@@ -2045,11 +1909,7 @@ mod tests {
         }"#;
 
         let mut b = v2_builder(json);
-        b.add_file(FileData {
-            id: 0,
-            data: vec![0xCCu8; 32768],
-        })
-        .unwrap();
+        b.add_file(FileData::new(0, vec![0xCCu8; 32768])).unwrap();
 
         let (meta, rom) = b.build(v2_props(Board::Fire32B)).expect("build");
         let v = view(&meta);
@@ -2140,11 +2000,7 @@ mod tests {
         }"#;
 
         let mut b = v2_builder(json);
-        b.add_file(FileData {
-            id: 0,
-            data: vec![0xAAu8; 8192],
-        })
-        .unwrap();
+        b.add_file(FileData::new(0, vec![0xAAu8; 8192])).unwrap();
 
         let result = b.build(v2_props(Board::Fire32B));
 
@@ -2178,10 +2034,9 @@ mod tests {
         }"#;
 
         let mut b = v2_builder(json);
-        b.add_file(FileData {
-            id: 0,
-            data: vec![0xAAu8; 16384], // 27128 = 16KB
-        })
+        b.add_file(
+            FileData::new(0, vec![0xAAu8; 16384]), /* 27128 = 16KB */
+        )
         .unwrap();
 
         let result = b.build(v2_props(Board::Fire24A));
@@ -2216,10 +2071,9 @@ mod tests {
         }"#;
 
         let mut b = v2_builder(json);
-        b.add_file(FileData {
-            id: 0,
-            data: vec![0xAAu8; 65536], // 28C512 = 64KB
-        })
+        b.add_file(
+            FileData::new(0, vec![0xAAu8; 65536]), /* 28C512 = 64KB */
+        )
         .unwrap();
 
         let (meta, rom) = b.build(v2_props(Board::Fire28C)).expect("build");
@@ -2277,10 +2131,9 @@ mod tests {
         }"#;
 
         let mut b = v2_builder(json);
-        b.add_file(FileData {
-            id: 0,
-            data: vec![0xAAu8; 131072], // 27C010 = 128KB
-        })
+        b.add_file(
+            FileData::new(0, vec![0xAAu8; 131072]), /* 27C010 = 128KB */
+        )
         .unwrap();
 
         let (meta, rom) = b.build(v2_props(Board::Fire28C)).expect("build");
@@ -2339,11 +2192,8 @@ mod tests {
         }"#;
 
         let mut b = v2_builder(json);
-        b.add_file(FileData {
-            id: 0,
-            data: vec![0xAAu8; 8192], // 2764 = 8KB
-        })
-        .unwrap();
+        b.add_file(FileData::new(0, vec![0xAAu8; 8192]) /* 2764 = 8KB */)
+            .unwrap();
 
         let (meta, rom) = b.build(v2_props(Board::Fire24A)).expect("build");
         let v = view(&meta);
@@ -2618,16 +2468,8 @@ mod tests {
         }"#;
 
         let mut b = v2_builder(json);
-        b.add_file(FileData {
-            id: 0,
-            data: vec![0xAAu8; 16384],
-        })
-        .unwrap();
-        b.add_file(FileData {
-            id: 1,
-            data: vec![0xBBu8; 16384],
-        })
-        .unwrap();
+        b.add_file(FileData::new(0, vec![0xAAu8; 16384])).unwrap();
+        b.add_file(FileData::new(1, vec![0xBBu8; 16384])).unwrap();
 
         let (meta, rom) = b.build(v2_props(Board::Fire28C)).expect("build");
         let v = view(&meta);
@@ -2718,16 +2560,8 @@ mod tests {
         }"#;
 
         let mut b = v2_builder(json);
-        b.add_file(FileData {
-            id: 0,
-            data: vec![0xAAu8; 8192],
-        })
-        .unwrap();
-        b.add_file(FileData {
-            id: 1,
-            data: vec![0xBBu8; 8192],
-        })
-        .unwrap();
+        b.add_file(FileData::new(0, vec![0xAAu8; 8192])).unwrap();
+        b.add_file(FileData::new(1, vec![0xBBu8; 8192])).unwrap();
 
         let (meta, _rom) = b.build(v2_props(Board::Fire24E)).expect("build");
         let v = view(&meta);
@@ -2793,21 +2627,10 @@ mod tests {
         }"#;
 
         let mut b = v2_builder(json);
-        b.add_file(FileData {
-            id: 0,
-            data: vec![0xAAu8; 2048], // 2316 = 2KB
-        })
-        .unwrap();
-        b.add_file(FileData {
-            id: 1,
-            data: vec![0xBBu8; 2048],
-        })
-        .unwrap();
-        b.add_file(FileData {
-            id: 2,
-            data: vec![0xCCu8; 2048],
-        })
-        .unwrap();
+        b.add_file(FileData::new(0, vec![0xAAu8; 2048]) /* 2316 = 2KB */)
+            .unwrap();
+        b.add_file(FileData::new(1, vec![0xBBu8; 2048])).unwrap();
+        b.add_file(FileData::new(2, vec![0xCCu8; 2048])).unwrap();
 
         let (meta, rom) = b.build(v2_props(Board::Fire24F)).expect("build");
         let v = view(&meta);
@@ -2890,6 +2713,7 @@ mod tests {
     /// over-large image; every consumer of the single onerom-gen `build()`
     /// (CLI, the onerom-fw tool, Studio, one-rom-wasm) relies on this check.
     #[test]
+    #[allow(clippy::wildcard_enum_match_arm)]
     fn v2_rejects_oversized_rom_data() {
         const CHIP_BYTES: usize = 131_072; // 27C010 = 128KB, served 1:1
         const SLOTS: usize = 16; // 16 * 128KB = 2MB > flash minus fw+metadata
@@ -2908,11 +2732,8 @@ mod tests {
 
         let mut b = v2_builder(&json);
         for id in 0..SLOTS {
-            b.add_file(FileData {
-                id,
-                data: vec![0xAAu8; CHIP_BYTES],
-            })
-            .unwrap();
+            b.add_file(FileData::new(id, vec![0xAAu8; CHIP_BYTES]))
+                .unwrap();
         }
 
         let err = b

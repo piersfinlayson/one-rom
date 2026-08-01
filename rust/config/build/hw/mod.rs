@@ -354,7 +354,14 @@ fn generate_rust_code(configs: &[HwConfigData]) -> String {
     code.push_str("// Copyright (C) 2025 Piers Finlayson <piers@piers.rocks>\n");
     code.push_str("//\n");
     code.push_str("// MIT License\n\n");
-    code.push_str("#![allow(dead_code)]\n\n");
+    code.push_str("#![allow(dead_code)]\n");
+    // The generated board tables match exhaustively over generated enums with
+    // a catch-all arm.  The workspace enables clippy::wildcard_enum_match_arm
+    // so that a new variant of a *hand-written* enum is caught; here the
+    // wildcards are emitted deliberately and there is no author to warn, so
+    // the lint is switched off at generation time - in the same spirit as the
+    // rustfmt pass that keeps this file clean for the format gate.
+    code.push_str("#![allow(clippy::wildcard_enum_match_arm)]\n\n");
 
     code.push_str("use crate::chip::{ChipType, chip_type_names_for_pins};\n");
     code.push_str("use crate::mcu::{Port, Family, RpVariant};\n");

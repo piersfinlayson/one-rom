@@ -141,6 +141,7 @@ impl Device {
 
     // Figure out the device state from the presence of the One ROM device
     // information
+    #[allow(clippy::wildcard_enum_match_arm)]
     fn update_state(&mut self) {
         self.usb_can_run = false;
         self.state = DeviceState::Unknown;

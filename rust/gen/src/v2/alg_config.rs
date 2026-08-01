@@ -521,6 +521,7 @@ mod tests {
     /// Exact GPIO values are board-specific and tested separately in
     /// `cs_data_layout::tests`.
     #[test]
+    #[allow(clippy::wildcard_enum_match_arm)]
     fn fire28a_23ql384_single_full_config_alg_cs2() {
         let cs_config = CsConfig::new(Some(CsLogic::ActiveLow), None, None, None);
 

@@ -15,6 +15,7 @@ pub mod firmware;
 pub mod ihex;
 pub mod image;
 pub mod meta;
+pub mod transform;
 pub mod v1;
 pub mod v2;
 
@@ -32,6 +33,10 @@ pub use image::{MAX_IMAGE_SIZE, PAD_BLANK_BYTE, PAD_NO_CHIP_BYTE};
 pub use image::{num_excess_addr_lines, requires_half_select_cs1};
 pub use meta::{MAX_METADATA_LEN, Metadata, PAD_METADATA_BYTE};
 use onerom_config::mcu::Family;
+pub use transform::{
+    TRANSFORM_LIST_SEPARATOR, Transform, TransformError, apply_transforms, format_transform_list,
+    parse_transform_list,
+};
 
 use alloc::format;
 use alloc::string::{String, ToString};
@@ -82,7 +87,14 @@ pub fn rom_data_space(mcu_variant: onerom_config::mcu::Variant) -> usize {
 pub const MIN_FIRMWARE_OVERRIDES_VERSION: FirmwareVersion = FirmwareVersion::new(0, 6, 0, 0);
 
 /// Error type
+///
+/// This enum is `#[non_exhaustive]`: new variants may be added in a
+/// backwards-compatible release, so a `match` on it outside this crate needs a
+/// wildcard arm.  Enabling `clippy::wildcard_enum_match_arm` will then point at
+/// that arm whenever a new variant appears, rather than letting it be absorbed
+/// silently.
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
+#[non_exhaustive]
 pub enum Error {
     RightSize {
         chip_type: ChipType,
@@ -229,6 +241,11 @@ pub enum Error {
     /// A non-zero `load_address` was set on a chip that is not Intel HEX.
     LoadAddressWithoutIhex {
         index: usize,
+    },
+    /// A chip's `transform` list could not be applied to its image.
+    Transform {
+        index: usize,
+        source: transform::TransformError,
     },
 }
 type Result<T> = core::result::Result<T, Error>;
@@ -423,6 +440,9 @@ impl core::fmt::Display for Error {
                 f,
                 "Chip {index}: load_address is only valid for Intel HEX images (format: ihex)"
             ),
+            Error::Transform { index, source } => {
+                write!(f, "Chip {index}: {source}")
+            }
         }
     }
 }
@@ -453,6 +473,7 @@ pub trait MetadataWriter {
 
 /// License details for validation by caller
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[non_exhaustive]
 pub struct License {
     /// License ID provided for information only.
     pub id: usize,
@@ -466,6 +487,24 @@ pub struct License {
 
     // Whether this license has been validated by the caller
     validated: bool,
+}
+
+impl ChipSetConfig {
+    /// Creates a chip set of `set_type` containing `chips`, with every
+    /// optional setting at its default.
+    ///
+    /// [`ChipSetConfig`] is `#[non_exhaustive]`, so this (rather than a struct
+    /// literal) is how callers outside this crate build one; assign the
+    /// optional fields afterwards.
+    pub fn new(set_type: ChipSetType, chips: Vec<ChipConfig>) -> Self {
+        Self {
+            set_type,
+            description: None,
+            chips,
+            serve_alg: None,
+            firmware_overrides: None,
+        }
+    }
 }
 
 impl License {
@@ -489,6 +528,7 @@ impl License {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[cfg_attr(feature = "schemars", schemars(title = "One ROM Configuration"))]
+#[non_exhaustive]
 pub struct Config {
     /// Configuration format version.
     #[cfg_attr(feature = "schemars", schemars(schema_with = "version_schema"))]
@@ -551,6 +591,32 @@ pub struct Config {
     pub turbo_boot: bool,
 }
 
+impl Config {
+    /// Creates a configuration containing `chip_sets`, with every optional
+    /// setting at its default.
+    ///
+    /// [`Config`] is `#[non_exhaustive]`, so this (rather than a struct
+    /// literal) is how callers outside this crate build one; assign the
+    /// optional fields afterwards.  The defaults match those applied when
+    /// deserialising a config file that omits them.
+    pub fn new(description: String, chip_sets: Vec<ChipSetConfig>) -> Self {
+        Self {
+            version: 1,
+            name: None,
+            description,
+            detail: None,
+            chip_sets,
+            notes: None,
+            categories: None,
+            instance_name: None,
+            serial_override: None,
+            boot_logging: default_boot_logging(),
+            swd_enabled: default_swd_enabled(),
+            turbo_boot: default_turbo_boot(),
+        }
+    }
+}
+
 pub(crate) fn default_boot_logging() -> bool {
     false
 }
@@ -571,6 +637,7 @@ fn version_schema(_gen: &mut schemars::SchemaGenerator) -> schemars::Schema {
 /// Chip Set configuration structure
 #[derive(Debug, Default, Clone, serde::Serialize, serde::Deserialize)]
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+#[non_exhaustive]
 pub struct ChipSetConfig {
     /// Type of ROM set
     #[serde(rename = "type")]
@@ -607,6 +674,7 @@ pub struct ChipSetConfig {
 /// Chip configuration structure
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+#[non_exhaustive]
 pub struct ChipConfig {
     /// Filename or URL of any ROM image - filename is only valid if using a
     /// generator tool with local file access.  This is passed to the generator
@@ -703,9 +771,50 @@ pub struct ChipConfig {
     /// Defaults to 0.
     #[serde(default, skip_serializing_if = "LoadAddress::is_zero")]
     pub load_address: LoadAddress,
+
+    /// Byte-level transformations to apply to the supplied image, in order.
+    ///
+    /// Applied after any [`Location`] slice and before the image is reconciled
+    /// against the chip size by [`SizeHandling`], and after an Intel HEX image
+    /// has been decoded — so transforms behave the same whichever format the
+    /// image arrived in.  Order is significant; see the
+    /// [`transform`](crate::transform) module.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub transform: Vec<Transform>,
 }
 
 impl ChipConfig {
+    /// Creates a chip configuration for `file` as a `chip_type` part, with
+    /// every optional setting at its default.
+    ///
+    /// [`ChipConfig`] is `#[non_exhaustive]`, so this (rather than a struct
+    /// literal) is how callers outside this crate build one; assign the
+    /// optional fields afterwards.  `file` and `chip_type` are the two
+    /// settings with no meaningful default: a chip has to have a type, and
+    /// only a RAM chip may lack an image.
+    pub fn new(file: String, chip_type: ChipTypeSpec) -> Self {
+        Self {
+            file,
+            license: None,
+            description: None,
+            chip_type,
+            cs1: None,
+            cs2: None,
+            cs3: None,
+            cs4: None,
+            ce: None,
+            oe: None,
+            allow_cs_ignore: false,
+            size_handling: SizeHandling::default(),
+            extract: None,
+            label: None,
+            location: None,
+            format: FileFormat::default(),
+            load_address: LoadAddress::default(),
+            transform: Vec::new(),
+        }
+    }
+
     // Constructs the filename string for metadata.  Note label will be used
     // in metadata instead if specified.
     fn filename(&self) -> String {
@@ -722,19 +831,33 @@ impl ChipConfig {
         };
 
         // If location specified, append "|start=0x...,length=0x..."
-        if let Some(location) = &self.location {
+        let filename_base = if let Some(location) = &self.location {
             format!(
                 "{}|start={:#X},length={:#X}",
                 filename_base, location.start, location.length
             )
         } else {
             filename_base
+        };
+
+        // Record any transforms, so the metadata says how the served bytes
+        // were derived from the named source and not just where they came
+        // from.  Uses the same text encoding as the CLI's `transform=` key.
+        if self.transform.is_empty() {
+            filename_base
+        } else {
+            format!(
+                "{}|transform={}",
+                filename_base,
+                format_transform_list(&self.transform)
+            )
         }
     }
 }
 
 /// Details about a file to be loaded by the caller
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[non_exhaustive]
 pub struct FileSpec {
     /// File ID to be used when adding the loaded file to the builder
     pub id: usize,
@@ -807,6 +930,7 @@ pub struct FileSpec {
 
 /// File data loaded by the caller, passed back to the builder.
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
+#[non_exhaustive]
 pub struct FileData {
     /// File ID as per FileSpec
     pub id: usize,
@@ -815,10 +939,19 @@ pub struct FileData {
     pub data: alloc::vec::Vec<u8>,
 }
 
+impl FileData {
+    /// Creates the loaded contents of the file identified by `id` in the
+    /// corresponding [`FileSpec`].
+    pub fn new(id: usize, data: alloc::vec::Vec<u8>) -> Self {
+        Self { id, data }
+    }
+}
+
 /// Location within a larger Chip image that the specific image to use resides
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub struct Location {
     /// Start of the image within the larger Chip image
     pub start: usize,
@@ -826,6 +959,14 @@ pub struct Location {
     /// Length of the image within the larger Chip image.  Must match the
     /// selected Chip type, or SizeHandling will be applied.
     pub length: usize,
+}
+
+impl Location {
+    /// Creates a location `length` bytes long, starting at `start` within the
+    /// supplied image.
+    pub fn new(start: usize, length: usize) -> Self {
+        Self { start, length }
+    }
 }
 
 #[cfg(test)]
