@@ -10,8 +10,8 @@ it as a long-lived, production project.
 
 - Do it **right**, for the long term. No hacks, no throwaway "make it pass"
   fixes. If the clean solution is more work, that is the one we want.
-- Explain the **why** before the change. Reasoning first, not a diff dumped on
-  the wall.
+- Explain the **why** before the change — in discussion, not in the commit
+  message or the CHANGELOG. Reasoning first, not a diff dumped on the wall.
 - **Do not switch technical approach without asking first.** If you think a
   chosen path is wrong, stop and raise it — do not quietly re-architect. I
   usually have a better read on feasibility than you do.
@@ -39,6 +39,26 @@ it as a long-lived, production project.
 - **No `Co-Authored-By` trailer**, and no other Claude/AI attribution, in
   commit messages — keep it out of the history entirely.
 - Only commit when I ask; only push when I ask.
+- **Commit bodies are bullets, one line each, one per main thing the commit
+  does.** Three or fewer; often none at all, where the subject says it. A
+  bullet states *what*, and *why* only where the why is not obvious from the
+  what. Prose paragraphs in a commit body are the failure mode to avoid.
+  - Leave out: mechanism the diff already shows, alternatives considered and
+    rejected, notes that tests were added, and verification run-logs (one
+    line — `Verified on fire-28-a/b/c/d, single and banked` — not a
+    transcript). Reasoning a future reader genuinely needs goes in a code
+    comment next to the thing it explains, or in the issue.
+- **CHANGELOG entries are one or two sentences — 40 words is already long.**
+  The headline list at the top of a release carries the story; a detail
+  bullet says what changed and, where it is not obvious, what it means for a
+  user. Same for the component CHANGELOGs. Keep the existing
+  `- This required a firmware update.` sub-bullet convention.
+  - **One entry per user-visible change, not per commit.** A feature built
+    over several commits — device side, plugin, CLI — is one entry, not one
+    per layer. Corrections made before release fold into the entry for the
+    thing they correct.
+  - Internal-only work (refactors, test-harness fixes, CI, CLAUDE.md) gets no
+    entry unless a user or a downstream crate can see it.
 - Keep **CHANGELOGs** current. When a change is user-facing, add an entry —
   under the current in-development version heading — to the repo-root
   [CHANGELOG.md](/CHANGELOG.md) **and** the affected component's own:
