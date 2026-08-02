@@ -146,7 +146,9 @@ Directory → package name:
   `one-rom-wasm` repo.
 - `config` → `onerom-config` — ROM/RAM config model.
 - `metadata` → `onerom-metadata` — embedded firmware metadata.
-- `protocol` → `onerom-protocol` — implements RBCP (see related repos).
+- `protocol` → `onerom-protocol` — the One ROM Lab wire protocol, spoken
+  between an airfrog (over SWD) and a One ROM Lab device; carried over
+  `airfrog-rpc`. Not RBCP.
 - `fw-parser` → `onerom-fw-parser`; `fw-emulator` → `onerom-fw-emulator`;
   `fw-tester` → `onerom-fw-tester`; `fw-config-gen` → `fw-config-gen`.
 - `app` → `onerom-app`; `studio` → `onerom-studio` (desktop GUI, released
@@ -344,8 +346,9 @@ Consequences to respect:
   plugin manifests, Studio releases).
 - `one-rom-wasm` — WASM build of `onerom-gen` for in-browser firmware
   generation (wasm.onerom.org).
-- `rom-bus-control-protocol` (RBCP) — protocol spec; implemented by
-  `onerom-protocol` and the `host-control` plugin.
+- `rom-bus-control-protocol` (RBCP) — protocol spec; the device side is
+  implemented by the `host-control` plugin. There is no host-side RBCP
+  implementation in this repo (in particular, `onerom-protocol` is not it).
 - `picoboot` — host-side Rust crate for the RP2040/RP2350 PICOBOOT USB
   interface (used by `onerom-cli`).
 - `picobootx` — device-side PICOBOOT extension library adding custom commands;
