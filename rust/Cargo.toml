@@ -14,6 +14,7 @@ members = [
     "lab",
     "lens",
     "metadata",
+    "plugin-tester",
     "protocol",
     "schema-gen",
     "studio",

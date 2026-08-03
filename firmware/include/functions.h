@@ -185,21 +185,18 @@ void set_host_monitor_dma_configure(monitor_dma_configure_fn_t fn);
 // from; point it at epio's live capture write pointer.
 void set_host_monitor_write_slot(volatile uint32_t * volatile *slot);
 
-// Generic test-yield hook.  Firmware calls onerom_test_yield() at points where
-// it would busy-wait on hardware the emulator drives (e.g. polling the address
-// monitor ring write position), giving the harness a chance to advance the
-// simulation.  No-op until the harness installs a hook via
-// set_onerom_test_yield_hook().  On real hardware onerom_test_yield() compiles
-// to nothing.
+// Generic test-yield hook.  The harness installs a callback here, which the
+// firmware invokes at points where it would otherwise busy-wait on hardware
+// the emulator drives, giving the harness a chance to advance the simulation.
+//
+// Only the hook itself is declared here, because the harness binds to the
+// setter.  The ONEROM_TEST_YIELD() invocation is a macro, private to the
+// source that busy-waits (pioplugin.c) — a seam used in one file does not
+// belong in every translation unit, and a macro is guaranteed to vanish on a
+// device build at any optimisation level, where an empty inline function is
+// only expected to.
 extern void (*onerom_test_yield_hook)(void);
 void set_onerom_test_yield_hook(void (*hook)(void));
-static inline void onerom_test_yield(void) {
-    if (onerom_test_yield_hook != NULL) {
-        onerom_test_yield_hook();
-    }
-}
-#else // REAL_HARDWARE
-static inline void onerom_test_yield(void) {}
 #endif // !REAL_HARDWARE
 
 // pio/dma.c

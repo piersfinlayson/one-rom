@@ -128,7 +128,10 @@ void ora_log(const char* msg, ...) {
     do_log_v(msg, &args);
     va_end(args);
 #else // TEST_BUILD
-    stub_log(msg);
+    va_list args;
+    va_start(args, msg);
+    stub_log_v(msg, args);
+    va_end(args);
 #endif // !TEST_BUILD
 #else
     (void)msg;
@@ -145,7 +148,10 @@ void ora_err_log(const char* msg, ...) {
     do_log_v(msg, &args);
     va_end(args);
 #else // TEST_BUILD
-    err_log(msg);
+    va_list args;
+    va_start(args, msg);
+    stub_log_prefix_v("ERROR: ", msg, args);
+    va_end(args);
 #endif // !TEST_BUILD
 
 #else
@@ -162,7 +168,10 @@ void ora_debug_log(const char* msg, ...) {
     do_log_v(msg, &args);
     va_end(args);
 #else // TEST_BUILD
-    stub_log("DEBUG:%s", msg);
+    va_list args;
+    va_start(args, msg);
+    stub_log_prefix_v("DEBUG:", msg, args);
+    va_end(args);
 #endif // !TEST_BUILD
 #else
     (void)msg;

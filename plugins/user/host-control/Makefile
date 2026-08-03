@@ -51,9 +51,59 @@ LDFLAGS := -nostdlib \
 PLUGIN_OBJ := $(patsubst %.c,$(BUILD_DIR)/%.o,$(SRC))
 ALL_OBJ    := $(PLUGIN_OBJ) $(FLASH_ERASE_OBJ)
 
-.PHONY: all clean distclean
+# ---------------------------------------------------------------------------
+# Host build
+#
+# Compiles the plugin natively so it can be run against the firmware emulator
+# for regression testing — see rust/plugin-tester.  This produces an object
+# file, not a plugin binary: there is no linker script and no plugin header
+# placement, and the harness supplies the linker symbols and the emulation
+# seams (ORA_SECTION and friends are no-ops under ORA_HOST_TEST).
+#
+# The flags here must match the firmware's own native test build
+# (firmware/test.mk), because the two link together:
+# - -fshort-enums, or ora_result_t is a different width on each side.
+# - -DTEST_BUILD=1, which selects REAL_HARDWARE 0 and drops the metadata
+#   layout STATIC_ASSERTs.  Those assert device offsets that a 64-bit host
+#   cannot satisfy — its pointers are twice the width — and the firmware test
+#   build already accepts that.  Both sides must agree, so both define it.
+#
+# -Werror is deliberately absent.  Two casts in the NV commit path still warn
+# on a 64-bit host: the flash offset computed from __nv_storage_start, and the
+# erase routine's address formed from a RAM slot base with the Thumb bit set.
+# Neither is an SRAM dereference, so ORA_SRAM_PTR does not cover them; both
+# need the flash seams before they can be made host-clean, and until then the
+# commit path is not exercised on a host at all.  Everything else compiles
+# warning-free, so this can match the ARM build's -Werror once those land.
+# ---------------------------------------------------------------------------
+
+HOST_CC        ?= cc
+HOST_BUILD_DIR := build-host
+HOST_OBJ       := $(HOST_BUILD_DIR)/host_control_main.o
+
+HOST_CFLAGS := -DORA_HOST_TEST=1 -DTEST_BUILD=1 -fshort-enums \
+               -O1 -g -Wall -Wextra \
+               -DMAJOR_VERSION=$(MAJOR_VERSION) -DMINOR_VERSION=$(MINOR_VERSION) \
+               -DPATCH_VERSION=$(PATCH_VERSION) -DBUILD_VERSION=$(BUILD_VERSION) \
+               $(SDRR_INCLUDE) $(ORA_INCLUDE) $(PLUGIN_INCLUDE) \
+               -Iinclude \
+               -MMD -MP
+
+.PHONY: all clean distclean host clean-host
 
 all: $(BIN)
+
+host: $(HOST_OBJ)
+
+$(HOST_BUILD_DIR):
+	@mkdir -p $@
+
+$(HOST_OBJ): $(SRC) | $(HOST_BUILD_DIR)
+	@echo "Compiling $< for host..."
+	@$(HOST_CC) $(HOST_CFLAGS) -c $< -o $@
+
+clean-host:
+	@rm -rf $(HOST_BUILD_DIR)
 
 $(FLASH_ERASE_OBJ): $(FLASH_ERASE_SRC) | $(BUILD_DIR)
 	@mkdir -p $(dir $@)
@@ -79,7 +129,7 @@ $(BIN): $(ELF)
 $(BUILD_DIR):
 	@mkdir -p $@
 
-clean:
+clean: clean-host
 	@echo "Cleaning build artifacts..."
 	@rm -rf $(BUILD_DIR)
 

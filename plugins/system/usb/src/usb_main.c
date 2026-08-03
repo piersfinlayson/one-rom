@@ -20,7 +20,7 @@ void usb_main(
     ora_plugin_type_t plugin_type,
     const ora_entry_args_t *entry_args
 );
-__attribute__((section(".plugin_header")))
+ORA_SECTION(".plugin_header")
 const ora_plugin_header_t ora_plugin_header = {
     .magic    = ORA_PLUGIN_MAGIC,
     .api_version  = ORA_PLUGIN_VERSION_1,

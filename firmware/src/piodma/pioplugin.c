@@ -32,16 +32,38 @@ void set_host_monitor_write_slot(volatile uint32_t * volatile *slot) {
     s_host_monitor_write_slot = slot;
 }
 
-// Generic test-yield hook storage (see onerom_test_yield() in functions.h).
-// Lives here, in a firmware source compiled into the test build, following the
-// same pattern as the seams above; it is generic and any firmware busy-wait
-// may call onerom_test_yield().
+// Generic test-yield hook storage (the hook is declared in functions.h, since
+// the harness binds to the setter).  Lives here, in a firmware source compiled
+// into the test build, following the same pattern as the seams above.
 void (*onerom_test_yield_hook)(void) = NULL;
 
 void set_onerom_test_yield_hook(void (*hook)(void)) {
     onerom_test_yield_hook = hook;
 }
 #endif // !REAL_HARDWARE
+
+// Hand control to the test harness from inside a busy-wait.
+//
+// Expands to nothing on a device build, so it costs not one instruction in the
+// capture path — a guarantee at every optimisation level, which an empty
+// inline function would leave to the compiler.
+//
+// Only call this where the loop genuinely cannot proceed without more captured
+// data.  Under emulation nothing advances while the firmware runs, so a yield
+// is a one-way handover: the harness takes control, drives the next bus cycle,
+// and moves on.  A yield issued when the loop could have carried on therefore
+// gives away a turn that is never returned, and the firmware ends up running
+// behind the bus the harness thinks it is level with.
+#if !REAL_HARDWARE
+#define ONEROM_TEST_YIELD()                     \
+    do {                                        \
+        if (onerom_test_yield_hook != NULL) {   \
+            onerom_test_yield_hook();           \
+        }                                       \
+    } while (0)
+#else
+#define ONEROM_TEST_YIELD() do { } while (0)
+#endif
 
 // Location holding the address-monitor DMA's current ring write position.
 // The pointed-to value is the current write pointer and advances as the ring
@@ -1309,7 +1331,13 @@ __attribute__((always_inline)) static inline uint8_t debounce(
                     ? 1 : 0;                                                \
             }                                                               \
         }                                                                   \
-        onerom_test_yield();                                               \
+        /* The inner loop exits either because the ring is drained or       \
+           because the knock completed.  Only the first needs more captured \
+           data; yielding on the second would give away a turn we do not    \
+           need.  See ONEROM_TEST_YIELD. */                                 \
+        if (knock_pos < knock->len) {                                       \
+            ONEROM_TEST_YIELD();                                            \
+        }                                                                   \
     }                                                                       \
     read_ptr = (volatile uint32_t *)rp;                                     \
 } while (0)
@@ -1327,7 +1355,11 @@ __attribute__((always_inline)) static inline uint8_t debounce(
             }                                                               \
             payload_out[payload_pos++] = entry;                             \
         }                                                                   \
-        onerom_test_yield();                                               \
+        /* As above: yield only when the ring ran dry, not when the payload \
+           is complete and we are ready to run the command. */              \
+        if (payload_pos < payload_len) {                                    \
+            ONEROM_TEST_YIELD();                                            \
+        }                                                                   \
     }                                                                       \
     read_ptr = (volatile uint32_t *)rp;                                     \
 } while (0)

@@ -37,3 +37,12 @@ RBCP and this host-control plugin rely on One ROM's address monitor, which watch
 One ROM type works that way: the **23QL384**, on every board and in every CS configuration.  It combines its top two address lines into the chip-select decision and serves nothing while both are high.  The monitor captures only where the chip is genuinely selected, so a host must keep its command signalling — the knock and the command bytes after it — inside an address range the ROM actually serves.  For the 23QL384 that means below the top quarter of its address space; reads there are invisible to the plugin, exactly as they are to the ROM.
 
 No other ROM type has a deselected range, so on all of them any address the ROM answers can carry command signalling.
+## Deviations from the RBCP specification
+
+This plugin aims to implement the [RBCP specification](https://github.com/piersfinlayson/rom-bus-control-protocol) exactly, and its conformance is tested against the specification rather than against itself.  Where it knowingly differs, the difference is listed here.
+
+### GET_FLASH_SLOT_INFO accepts a smaller back-channel than the specification requires
+
+The specification says `GET_FLASH_SLOT_INFO` "only succeeds if there is sufficient space, which means a back channel size of at least 64 bytes".  This plugin requires a 32-byte response data section — a 40-byte back-channel region.
+
+Forty is what the response actually needs: an 8-byte response header plus one 32-byte record.  The specification's 64 is a round number above that.  The deviation is therefore more permissive than the specification, and no specification-conformant host can be affected by it: a host that allocates the 64 bytes the specification asks for is served exactly as it expects.  A host written against this plugin, however, may allocate as little as 40 and will not be portable to a device that enforces the 64.

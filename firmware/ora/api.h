@@ -21,6 +21,115 @@
 #include <onerom_metadata_keys_generated.h>
 
 /**
+ * @brief Place an object in a named linker section
+ *
+ * Plugins place certain objects — the plugin header, a ring buffer — at
+ * addresses their linker script fixes, using a named section.  Use this macro
+ * rather than the @c section attribute directly, so the same source also
+ * compiles for a host-side test build, where those sections do not exist and
+ * the attribute would be rejected outright by some host toolchains.
+ *
+ * Expands to nothing when @c ORA_HOST_TEST is defined; to the @c section
+ * attribute otherwise.  Placement on a real device is therefore unchanged.
+ *
+ * @param sec Section name, e.g. ".ring_buf"
+ */
+#if defined(ORA_HOST_TEST)
+#define ORA_SECTION(sec)
+#else
+#define ORA_SECTION(sec) __attribute__((section(sec)))
+#endif
+
+#if defined(ORA_HOST_TEST)
+/**
+ * @brief Host-test seam: translate a device SRAM address to a usable pointer
+ *
+ * Provided by the test harness, not by the firmware.  See @ref ORA_SRAM_PTR.
+ */
+void *ora_host_test_sram_ptr(uint32_t addr);
+
+/**
+ * @brief Host-test seam: hand control back to the harness
+ *
+ * Provided by the test harness, not by the firmware.  See @ref ORA_TEST_YIELD.
+ */
+void ora_host_test_yield(void);
+#endif
+
+/**
+ * @brief Obtain a dereferenceable pointer for a device SRAM address
+ *
+ * Several API calls hand a plugin an address in the device's own address space
+ * — @ref ora_get_ram_slot_info_fn_t returns a RAM slot's base, for instance.
+ * Use this macro to turn such an address into a pointer before dereferencing
+ * it.  Arithmetic on the address itself (bounds checks, offsets, alignment) is
+ * unaffected and should carry on using the plain value; only the dereference
+ * needs converting.
+ *
+ * On a device this is the identity — the address already is a pointer, and the
+ * macro compiles away to nothing.  Under a host-side test build the plugin runs
+ * in a process whose address space is not the device's, and whose pointers are
+ * wider, so the harness maps the address into the emulated SRAM it serves from.
+ *
+ * Call it once per region and keep the pointer, exactly as you would already
+ * hoist a slot base out of a loop; there is no reason to convert per byte.
+ *
+ * Only addresses within the device's SRAM can be mapped.  Flash addresses and
+ * peripheral registers have no host equivalent and are not covered.
+ *
+ * @code
+ * uint32_t slot_base;
+ * get_ram_slot_info(slot, &slot_base, NULL, NULL);
+ * volatile uint8_t *slot = ORA_SRAM_PTR(slot_base);
+ * slot[offset] = value;
+ * @endcode
+ *
+ * @param addr Device SRAM address, as returned by the plugin API
+ *
+ * @since firmware v0.7.1
+ */
+#if defined(ORA_HOST_TEST)
+#define ORA_SRAM_PTR(addr) ora_host_test_sram_ptr(addr)
+#else
+#define ORA_SRAM_PTR(addr) ((void *)(uintptr_t)(addr))
+#endif
+
+/**
+ * @brief Allow a host-side test build to make progress inside a busy-wait
+ *
+ * Place this in any loop whose exit condition depends on state only the other
+ * core or external hardware can change — a spin on a ring-buffer write
+ * pointer, a poll of a location the host writes, a wait on a DMA pointer.
+ *
+ * On a device it compiles to nothing whatsoever.  It is therefore *not* a
+ * delay, *not* a scheduling primitive, and carries no timing guarantee of any
+ * kind; never reach for it to pace a loop.  It is also unrelated to
+ * @ref ORA_ID_YIELD, which is about co-operating with the other plugin over
+ * exclusive access — a different concern entirely, despite the name.
+ *
+ * Under a host-side test build the emulated hardware only advances when the
+ * harness advances it, so a loop like the above would spin forever with
+ * nothing to change its exit condition.  This macro hands control back so the
+ * harness can drive the next stimulus.
+ *
+ * Omitting it costs nothing on a device; the only consequence is that the loop
+ * cannot be exercised on a host.
+ *
+ * @code
+ * while (read_idx == write_idx) {
+ *     ORA_TEST_YIELD();
+ * }
+ * @endcode
+ *
+ * @since firmware v0.7.1
+ */
+#if defined(ORA_HOST_TEST)
+#define ORA_TEST_YIELD() ora_host_test_yield()
+#else
+#define ORA_TEST_YIELD() ((void)0)
+#endif
+
+/**
  * @defgroup plugin_api One ROM Plugin API
  * @brief The complete API for One ROM plugins
  * @{
@@ -509,9 +618,25 @@ typedef struct {
  * setup_address_monitor(ring_buf, 6, ORA_MONITOR_MODE_CONTROL, NULL);
  * @endcode
  *
+ * Under a host-side test build (@c ORA_HOST_TEST) these declare a pointer
+ * instead of an array, with external linkage, which the harness points at a
+ * suitably aligned region of the SRAM it emulates before the plugin's entry
+ * point runs.  The capture DMA writes into emulated SRAM specifically, so a
+ * buffer in ordinary host memory would not receive anything; and a plugin's
+ * uses — passing it to @ref ora_setup_address_monitor_fn_t, indexing it,
+ * differencing it against the write pointer — read identically either way.
+ *
  * @param name              Name for the ring buffer array
  * @param ring_entries_log2 Log2 of the number of entries, e.g. 6 for 64 entries
  */
+#if defined(ORA_HOST_TEST)
+#define ORA_RING_BUF_DECLARE_8BIT(name, ring_entries_log2)  \
+    volatile uint32_t *name
+#define ORA_RING_BUF_DECLARE_16BIT(name, ring_entries_log2) \
+    volatile uint32_t *name
+#define ORA_RING_BUF_DECLARE_32BIT(name, ring_entries_log2) \
+    volatile uint32_t *name
+#else
 #define ORA_RING_BUF_DECLARE_8BIT(name, ring_entries_log2)  \
     static volatile uint32_t __attribute__((aligned(        \
         ORA_RING_BUF_SIZE_8BIT(ring_entries_log2)           \
@@ -524,7 +649,8 @@ typedef struct {
     static volatile uint32_t __attribute__((aligned(        \
         ORA_RING_BUF_SIZE_32BIT(ring_entries_log2)          \
     ))) name[1u << (ring_entries_log2)]
-    
+#endif
+
 /**
  * @brief IRQ handler function type
  *

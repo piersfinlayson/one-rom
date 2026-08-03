@@ -155,6 +155,16 @@ void stub_log(const char* msg, ...) {
     va_end(args);
 }
 
+// As stub_log_v, with a prefix.  The prefix is inside the logging_enabled
+// check so a disabled log emits nothing at all, rather than a bare prefix.
+void stub_log_prefix_v(const char* prefix, const char* msg, va_list args) {
+    if (logging_enabled) {
+        printf("%s", prefix);
+        vprintf(msg, args);
+        printf("\n");
+    }
+}
+
 void err_log(const char* msg, ...) {
     printf("ERROR: ");
     va_list args;
