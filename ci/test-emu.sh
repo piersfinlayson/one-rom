@@ -6,6 +6,19 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$SCRIPT_DIR/../scripts/run-single-test-emu.sh"
 
+# The hardware revisions of each socket size, in one place, so that adding a
+# board is one edit.  The LATE lists are the revisions from C onwards, which
+# some configurations need: bank switching wants the X pins earlier revisions
+# do not have, and multi-chip sets want image-select jumpers fire-24-a and b
+# lack.  Every full list is defined in terms of its LATE list, so a new board
+# added to one is picked up by both.
+FIRE_24_LATE_BOARDS="fire-24-c fire-24-d fire-24-e fire-24-f"
+FIRE_24_BOARDS="fire-24-a fire-24-b $FIRE_24_LATE_BOARDS"
+FIRE_28_LATE_BOARDS="fire-28-c fire-28-d"
+FIRE_28_BOARDS="fire-28-a fire-28-b $FIRE_28_LATE_BOARDS"
+FIRE_32_BOARDS="fire-32-a fire-32-b"
+FIRE_40_BOARDS="fire-40-a fire-40-b"
+
 cs_logic() {
     [ "$1" -eq 0 ] && echo "active_low" || echo "active_high"
 }
@@ -209,90 +222,6 @@ test_config_api() {
     run_config_api $board "$config"
 }
 
-test_24_config() {
-    local config=$1
-
-    test_config fire-24-a "$config"
-    test_config fire-24-b "$config"
-    test_config fire-24-c "$config"
-    test_config fire-24-d "$config"
-    test_config fire-24-e "$config"
-    test_config fire-24-f "$config"
-}
-
-test_24_config_api() {
-    local config=$1
-
-    test_config_api fire-24-a "$config"
-    test_config_api fire-24-b "$config"
-    test_config_api fire-24-c "$config"
-    test_config_api fire-24-d "$config"
-    test_config_api fire-24-e "$config"
-    test_config_api fire-24-f "$config"
-}
-
-test_24_config_c_onwards() {
-    local config=$1
-
-    test_config fire-24-c "$config"
-    test_config fire-24-d "$config"
-    test_config fire-24-e "$config"
-    test_config fire-24-f "$config"
-}
-
-test_28_config() {
-    local config=$1
-
-    test_config fire-28-a "$config"
-    test_config fire-28-b "$config"
-    test_config fire-28-c "$config"
-    test_config fire-28-d "$config"
-}
-
-test_28_config_api() {
-    local config=$1
-
-    test_config_api fire-28-a "$config"
-    test_config_api fire-28-b "$config"
-    test_config_api fire-28-c "$config"
-    test_config_api fire-28-d "$config"
-}
-
-test_28_config_c_onwards() {
-    local config=$1
-
-    test_config fire-28-c "$config"
-    test_config fire-28-d "$config"
-}
-
-test_32_config() {
-    local config=$1
-
-    test_config fire-32-a "$config"
-    test_config fire-32-b "$config"
-}
-
-test_32_config_api() {
-    local config=$1
-
-    test_config_api fire-32-a "$config"
-    test_config_api fire-32-b "$config"
-}
-
-test_40_config() {
-    local config=$1
-
-    test_config fire-40-a "$config"
-    test_config fire-40-b "$config"
-}
-
-test_40_config_api() {
-    local config=$1
-
-    test_config_api fire-40-a "$config"
-    test_config_api fire-40-b "$config"
-}
-
 test_config_monitor() {
     local board=${1:-fire-24-a}
     local config=$2
@@ -300,39 +229,40 @@ test_config_monitor() {
     run_config_monitor "$board" "$config"
 }
 
-test_24_config_monitor() {
-    local config=$1
+# Run one config through `runner` on each of the boards named after it.
+#
+# `runner` is one of the run_config* functions above — which test harness the
+# config is put through — and the board list is one of the FIRE_*_BOARDS
+# variables, so the two vary independently and neither is spelled out per pin
+# count per harness.
+run_boards() {
+    local runner=$1
+    local config=$2
+    shift 2
 
-    test_config_monitor fire-24-a "$config"
-    test_config_monitor fire-24-b "$config"
-    test_config_monitor fire-24-c "$config"
-    test_config_monitor fire-24-d "$config"
-    test_config_monitor fire-24-e "$config"
-    test_config_monitor fire-24-f "$config"
+    local board
+    for board in "$@"; do
+        "$runner" "$board" "$config"
+    done
 }
 
-test_28_config_monitor() {
-    local config=$1
+test_24_config()           { run_boards run_config         "$1" $FIRE_24_BOARDS; }
+test_24_config_api()       { run_boards run_config_api     "$1" $FIRE_24_BOARDS; }
+test_24_config_monitor()   { run_boards run_config_monitor "$1" $FIRE_24_BOARDS; }
+test_24_config_c_onwards() { run_boards run_config         "$1" $FIRE_24_LATE_BOARDS; }
 
-    test_config_monitor fire-28-a "$config"
-    test_config_monitor fire-28-b "$config"
-    test_config_monitor fire-28-c "$config"
-    test_config_monitor fire-28-d "$config"
-}
+test_28_config()           { run_boards run_config         "$1" $FIRE_28_BOARDS; }
+test_28_config_api()       { run_boards run_config_api     "$1" $FIRE_28_BOARDS; }
+test_28_config_monitor()   { run_boards run_config_monitor "$1" $FIRE_28_BOARDS; }
+test_28_config_c_onwards() { run_boards run_config         "$1" $FIRE_28_LATE_BOARDS; }
 
-test_32_config_monitor() {
-    local config=$1
+test_32_config()           { run_boards run_config         "$1" $FIRE_32_BOARDS; }
+test_32_config_api()       { run_boards run_config_api     "$1" $FIRE_32_BOARDS; }
+test_32_config_monitor()   { run_boards run_config_monitor "$1" $FIRE_32_BOARDS; }
 
-    test_config_monitor fire-32-a "$config"
-    test_config_monitor fire-32-b "$config"
-}
-
-test_40_config_monitor() {
-    local config=$1
-
-    test_config_monitor fire-40-a "$config"
-    test_config_monitor fire-40-b "$config"
-}
+test_40_config()           { run_boards run_config         "$1" $FIRE_40_BOARDS; }
+test_40_config_api()       { run_boards run_config_api     "$1" $FIRE_40_BOARDS; }
+test_40_config_monitor()   { run_boards run_config_monitor "$1" $FIRE_40_BOARDS; }
 
 # Test every standard ROM type on every standard hardware revision.
 # Do just one 24/28/32/40 variant now, so we fail early if any ROM types are
@@ -453,3 +383,4 @@ test_32_config_monitor onerom-config/test/32-random-27c301.json
 test_32_config_monitor onerom-config/test/32-random-27c0x0.json
 test_40_config_monitor onerom-config/test/40-random.json
 test_40_config_monitor onerom-config/test/40-random-force-16bit.json
+
