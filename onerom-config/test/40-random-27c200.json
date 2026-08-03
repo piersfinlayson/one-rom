@@ -1,0 +1,30 @@
+{
+    "$schema": "https://images.onerom.org/configs/schema.json",
+    "version": 1,
+    "name": "40-random-27c200",
+    "description": "40 pin One ROM test config with random data, 27C200 first — the RBCP tester only drives chip set 0, and 27C200 is not the first set of any other 40 pin config",
+    "categories": [
+    ],
+    "rom_sets": [
+        {
+            "type": "single",
+            "roms": [
+                {
+                    "description": "27C200",
+                    "file": "images/test/rand_256KB.rom",
+                    "type": "27C200"
+                }
+            ]
+        },
+        {
+            "type": "single",
+            "roms": [
+                {
+                    "description": "27C400",
+                    "file": "images/test/rand_512KB.rom",
+                    "type": "27C400"
+                }
+            ]
+        }
+    ]
+}

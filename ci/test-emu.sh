@@ -137,6 +137,19 @@ run_config_monitor() {
     }
 }
 
+run_config_rbcp() {
+    local board=$1
+    local config=$2
+
+    echo ""
+    echo "Testing: board=$board config=$config"
+    env BOARD="$board" CONFIG="$config" make test-rbcp || {
+        echo "FAILED: board=$board config=$config"
+        echo "Reproduce:  env BOARD=$board CONFIG=$config make test-rbcp"
+        exit 1
+    }
+}
+
 test_24_all_rom_types() {
     local board=${1:-fire-24-e}
 
@@ -229,6 +242,13 @@ test_config_monitor() {
     run_config_monitor "$board" "$config"
 }
 
+test_config_rbcp() {
+    local board=${1:-fire-24-a}
+    local config=$2
+
+    run_config_rbcp "$board" "$config"
+}
+
 # Run one config through `runner` on each of the boards named after it.
 #
 # `runner` is one of the run_config* functions above — which test harness the
@@ -249,20 +269,24 @@ run_boards() {
 test_24_config()           { run_boards run_config         "$1" $FIRE_24_BOARDS; }
 test_24_config_api()       { run_boards run_config_api     "$1" $FIRE_24_BOARDS; }
 test_24_config_monitor()   { run_boards run_config_monitor "$1" $FIRE_24_BOARDS; }
+test_24_config_rbcp()      { run_boards run_config_rbcp    "$1" $FIRE_24_BOARDS; }
 test_24_config_c_onwards() { run_boards run_config         "$1" $FIRE_24_LATE_BOARDS; }
 
 test_28_config()           { run_boards run_config         "$1" $FIRE_28_BOARDS; }
 test_28_config_api()       { run_boards run_config_api     "$1" $FIRE_28_BOARDS; }
 test_28_config_monitor()   { run_boards run_config_monitor "$1" $FIRE_28_BOARDS; }
+test_28_config_rbcp()      { run_boards run_config_rbcp    "$1" $FIRE_28_BOARDS; }
 test_28_config_c_onwards() { run_boards run_config         "$1" $FIRE_28_LATE_BOARDS; }
 
 test_32_config()           { run_boards run_config         "$1" $FIRE_32_BOARDS; }
 test_32_config_api()       { run_boards run_config_api     "$1" $FIRE_32_BOARDS; }
 test_32_config_monitor()   { run_boards run_config_monitor "$1" $FIRE_32_BOARDS; }
+test_32_config_rbcp()      { run_boards run_config_rbcp    "$1" $FIRE_32_BOARDS; }
 
 test_40_config()           { run_boards run_config         "$1" $FIRE_40_BOARDS; }
 test_40_config_api()       { run_boards run_config_api     "$1" $FIRE_40_BOARDS; }
 test_40_config_monitor()   { run_boards run_config_monitor "$1" $FIRE_40_BOARDS; }
+test_40_config_rbcp()      { run_boards run_config_rbcp    "$1" $FIRE_40_BOARDS; }
 
 # Test every standard ROM type on every standard hardware revision.
 # Do just one 24/28/32/40 variant now, so we fail early if any ROM types are
@@ -384,3 +408,26 @@ test_32_config_monitor onerom-config/test/32-random-27c0x0.json
 test_40_config_monitor onerom-config/test/40-random.json
 test_40_config_monitor onerom-config/test/40-random-force-16bit.json
 
+
+# RBCP tests: drive the host-control plugin's own C source over emulated ROM bus
+# cycles as a host would, asserting what the RBCP specification requires.  Two
+# layers, because the two things that can break are independent.
+#
+# Board coverage — one config per socket size, on every board of that family.
+# What varies between revisions of a board is the pin map, and the protocol runs
+# over the bus, so the whole of it has to work on each.
+test_24_config_rbcp onerom-config/test/24-random-23xx.json
+test_28_config_rbcp onerom-config/test/28-random-27xxx.json
+test_32_config_rbcp onerom-config/test/32-random-27c080.json
+test_40_config_rbcp onerom-config/test/40-random.json
+
+# Behaviour coverage — one board each, for the two serving arrangements the
+# board sweep above never reaches: a 23QL384's qualifier-based chip select, with
+# its deselected top quarter, and the force_16_bit data algorithm, which ignores
+# /BYTE so the host cannot select a half of the word.
+test_config_rbcp fire-28-a onerom-config/test/28-random-23qlxxx.json
+test_config_rbcp fire-40-a onerom-config/test/40-random-force-16bit.json
+
+# The tester drives chip set 0 only, and 27C200 is not the first set of any
+# other 40 pin config, so it needs one of its own.
+test_config_rbcp fire-40-a onerom-config/test/40-random-27c200.json

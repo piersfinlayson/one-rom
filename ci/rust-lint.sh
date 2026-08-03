@@ -37,10 +37,11 @@ cargo clippy \
     -p schema-gen \
     --all-targets -- -D warnings
 
-# onerom-fw-tester embeds the firmware emulator, so it needs CONFIG/BOARD.
-echo "Running clippy (onerom-fw-tester)..."
+# onerom-fw-tester embeds the firmware emulator, so it needs CONFIG/BOARD, and
+# onerom-plugin-tester links against onerom-fw-tester's library.
+echo "Running clippy (onerom-fw-tester, onerom-plugin-tester)..."
 CONFIG="$EMU_CONFIG" BOARD="$EMU_BOARD" \
-    cargo clippy -p onerom-fw-tester --all-targets -- -D warnings
+    cargo clippy -p onerom-fw-tester -p onerom-plugin-tester --all-targets -- -D warnings
 
 # onerom-lab pins its own nightly toolchain (rust-toolchain.toml) and is a
 # binary-only crate that builds for the RP2350 (thumbv8m via its
