@@ -44,40 +44,8 @@
 //! SLOT_PEEK the only way to inspect the bottom of a slot — and the fill
 //! scenario needs it for exactly that.
 
-use crate::driver::{Bus, Hdr, Session, control, group, modify, read};
+use crate::driver::{Bus, Hdr, Session, control, group, modify, slot_poke_args};
 use crate::{Ctx, Outcome};
-
-/// SLOT_POKE arguments: "A0=byte, A1/A2/A3=24-bit address (little-endian),
-/// A4=slot".
-fn poke_args(addr: u32, value: u8, slot: u8) -> [u8; 5] {
-    [
-        value,
-        addr as u8,
-        (addr >> 8) as u8,
-        (addr >> 16) as u8,
-        slot,
-    ]
-}
-
-/// SLOT_PEEK arguments: "A0=count, A1/A2/A3=24-bit address (little-endian),
-/// A4=slot".
-fn peek_args(addr: u32, count: u8, slot: u8) -> [u8; 5] {
-    [
-        count,
-        addr as u8,
-        (addr >> 8) as u8,
-        (addr >> 16) as u8,
-        slot,
-    ]
-}
-
-/// A RAM slot that is not the one being served, if the device has one.
-///
-/// The next index round, so it exists on any device with more than one slot,
-/// whichever slot is currently active.
-fn inactive_slot(ctx: &Ctx) -> Option<u8> {
-    (ctx.ram_slot_count > 1).then(|| (ctx.active_ram_slot + 1) % ctx.ram_slot_count)
-}
 
 /// Why a scenario about a second slot cannot run on this device.
 fn needs_second_slot(ctx: &Ctx, what: &str) -> Outcome {
@@ -89,22 +57,7 @@ fn needs_second_slot(ctx: &Ctx, what: &str) -> Outcome {
     ))
 }
 
-/// SLOT_POKE one byte into any RAM slot, from inside a session.
-///
-/// The driver's [`Bus::poke_verified`] is command mode and always targets the
-/// active slot; this is the command-response counterpart, and the slot is the
-/// point.
-fn poke_slot(bus: &mut Bus, s: &Session, slot: u8, addr: u32, value: u8) -> Result<(), String> {
-    bus.issue_cmd(
-        s,
-        group::MODIFY,
-        modify::SLOT_POKE,
-        &poke_args(addr, value, slot),
-    )
-    .map_err(|e| format!("SLOT_POKE of 0x{value:02X} to 0x{addr:06X} in slot {slot}: {e}"))
-}
-
-/// As [`poke_slot`] into the active slot, and require the device to serve it.
+/// SLOT_POKE into the active slot, and require the device to serve it.
 ///
 /// Proves the whole path at that moment, and leaves a value this module chose
 /// in the slot being served — the value a peek at another slot must be told
@@ -116,18 +69,7 @@ fn poke_active_verified(
     addr: u32,
     value: u8,
 ) -> Result<(), String> {
-    poke_slot(bus, s, ctx.active_ram_slot, addr, value)?;
-    bus.expect_byte(addr, value)
-}
-
-/// Read bytes out of any RAM slot with SLOT_PEEK.
-///
-/// The host's only view of a slot it is not being served, and the reason the
-/// commands below can be asserted without first activating what they changed.
-fn peek_slot(bus: &mut Bus, s: &Session, slot: u8, addr: u32, len: u8) -> Result<Vec<u8>, String> {
-    bus.issue_cmd(s, group::READ, read::SLOT_PEEK, &peek_args(addr, len, slot))
-        .map_err(|e| format!("SLOT_PEEK of {len} byte(s) from 0x{addr:06X} in slot {slot}: {e}"))?;
-    bus.read_data(s, 0, u32::from(len))
+    bus.poke_slot_verified(s, ctx.active_ram_slot, addr, value)
 }
 
 /// Peek one byte of a slot and require it to hold `want`.
@@ -139,7 +81,7 @@ fn expect_peek(
     want: u8,
     why: &str,
 ) -> Result<(), String> {
-    let got = peek_slot(bus, s, slot, addr, 1)?[0];
+    let got = bus.peek_slot(s, slot, addr, 1)?[0];
     if got != want {
         return Err(format!(
             "slot {slot} holds 0x{got:02X} at 0x{addr:06X}, expected 0x{want:02X} — {why}"
@@ -225,7 +167,7 @@ pub fn slot_poke_rejects_slot_aa(bus: &mut Bus, ctx: &Ctx) -> Result<Outcome, St
         &s,
         group::MODIFY,
         modify::SLOT_POKE,
-        &poke_args(addr, value, 0xAA),
+        &slot_poke_args(addr, value, 0xAA),
     )?;
 
     Ok(Outcome::Pass)
@@ -247,7 +189,7 @@ pub fn slot_poke_rejects_slot_aa(bus: &mut Bus, ctx: &Ctx) -> Result<Outcome, St
 /// slot must not appear in the one the machine is running from.  The vector
 /// straddles a word boundary, as a real one does.
 pub fn slot_poke_patches_inactive_slot(bus: &mut Bus, ctx: &Ctx) -> Result<Outcome, String> {
-    let Some(target) = inactive_slot(ctx) else {
+    let Some(target) = ctx.inactive_ram_slot() else {
         return Ok(needs_second_slot(ctx, "patching an inactive slot"));
     };
     let lo_addr = ctx.scratch_addr();
@@ -270,12 +212,12 @@ pub fn slot_poke_patches_inactive_slot(bus: &mut Bus, ctx: &Ctx) -> Result<Outco
         .map_err(|e| format!("LOAD_SLOT of flash slot 0 into RAM slot {target}: {e}"))?;
 
     let patch = [flash[0] ^ 0xFF, flash[1] ^ 0xFF];
-    poke_slot(bus, &s, target, lo_addr, patch[0])?;
-    poke_slot(bus, &s, target, hi_addr, patch[1])?;
+    bus.poke_slot(&s, target, lo_addr, patch[0])?;
+    bus.poke_slot(&s, target, hi_addr, patch[1])?;
 
     // One peek, both bytes: they are consistent together, which is the point of
     // patching before the slot is activated.
-    let got = peek_slot(bus, &s, target, lo_addr, 2)?;
+    let got = bus.peek_slot(&s, target, lo_addr, 2)?;
     if got != patch {
         return Err(format!(
             "slot {target} holds {got:02X?} at 0x{lo_addr:06X}, expected the patched \
@@ -308,7 +250,7 @@ pub fn slot_poke_patches_inactive_slot(bus: &mut Bus, ctx: &Ctx) -> Result<Outco
 /// slot's header is armed with values the device would not write, so the NOP
 /// that follows can only match by having been written there.
 pub fn switch_slot_moves_the_back_channel(bus: &mut Bus, ctx: &Ctx) -> Result<Outcome, String> {
-    let Some(target) = inactive_slot(ctx) else {
+    let Some(target) = ctx.inactive_ram_slot() else {
         return Ok(needs_second_slot(ctx, "switching slots"));
     };
     let marker_addr = ctx.scratch_addr();
@@ -323,28 +265,25 @@ pub fn switch_slot_moves_the_back_channel(bus: &mut Bus, ctx: &Ctx) -> Result<Ou
     let in_active = original ^ 0xFF;
     let in_target = original ^ 0x5A;
     poke_active_verified(bus, &s, ctx, marker_addr, in_active)?;
-    poke_slot(bus, &s, target, marker_addr, in_target)?;
+    bus.poke_slot(&s, target, marker_addr, in_target)?;
 
     // Arm the target slot's header.  0x77 is the CMD of no command in any
     // group, and the token is armed far from the value the device must write.
     const ARMED_LAST_CMD: u8 = 0x77;
-    poke_slot(
-        bus,
+    bus.poke_slot(
         &s,
         target,
         s.bch_start + Hdr::LastCmdGroup.offset(),
         ARMED_LAST_CMD,
     )?;
-    poke_slot(
-        bus,
+    bus.poke_slot(
         &s,
         target,
         s.bch_start + Hdr::LastCmdCmd.offset(),
         ARMED_LAST_CMD,
     )?;
     let token = bus.read_hdr(&s, Hdr::TokenLsb)?;
-    poke_slot(
-        bus,
+    bus.poke_slot(
         &s,
         target,
         s.bch_start + Hdr::TokenLsb.offset(),
@@ -402,7 +341,7 @@ pub fn switch_slot_moves_the_back_channel(bus: &mut Bus, ctx: &Ctx) -> Result<Ou
 /// only the switch makes it readable.  Until then the address serves the active
 /// slot's value, and the device wrote both.
 pub fn switch_slot_in_command_mode(bus: &mut Bus, ctx: &Ctx) -> Result<Outcome, String> {
-    let Some(target) = inactive_slot(ctx) else {
+    let Some(target) = ctx.inactive_ram_slot() else {
         return Ok(needs_second_slot(ctx, "switching slots"));
     };
     let marker_addr = ctx.scratch_addr();
@@ -416,12 +355,7 @@ pub fn switch_slot_in_command_mode(bus: &mut Bus, ctx: &Ctx) -> Result<Outcome, 
         .map_err(|e| format!("marking the served slot: {e}"))?;
 
     bus.knock(page)?;
-    bus.send_cmd(
-        page,
-        group::MODIFY,
-        modify::SLOT_POKE,
-        &poke_args(marker_addr, in_target, target),
-    )?;
+    bus.send_poke_slot(page, target, marker_addr, in_target)?;
 
     bus.knock(page)?;
     bus.send_cmd(page, group::MODIFY, modify::SWITCH_SLOT, &[target])?;
@@ -471,7 +405,7 @@ pub fn load_slot_copies_without_activating(bus: &mut Bus, ctx: &Ctx) -> Result<O
     /// on an odd address so the range straddles a word.
     const LEN: u32 = 4;
 
-    let Some(target) = inactive_slot(ctx) else {
+    let Some(target) = ctx.inactive_ram_slot() else {
         return Ok(needs_second_slot(
             ctx,
             "loading a slot that is not being served",
@@ -489,7 +423,7 @@ pub fn load_slot_copies_without_activating(bus: &mut Bus, ctx: &Ctx) -> Result<O
     }
     for (i, &v) in in_flash.iter().enumerate() {
         poke_active_verified(bus, &s, ctx, base + i as u32, v ^ 0xFF)?;
-        poke_slot(bus, &s, target, base + i as u32, v ^ 0x5A)?;
+        bus.poke_slot(&s, target, base + i as u32, v ^ 0x5A)?;
     }
 
     // A peek is only evidence about the copy if it reads the slot it names, so
@@ -510,7 +444,7 @@ pub fn load_slot_copies_without_activating(bus: &mut Bus, ctx: &Ctx) -> Result<O
     bus.issue_cmd(&s, group::MODIFY, modify::LOAD_SLOT, &[target, 0])
         .map_err(|e| format!("LOAD_SLOT of flash slot 0 into RAM slot {target}: {e}"))?;
 
-    let got = peek_slot(bus, &s, target, base, LEN as u8)?;
+    let got = bus.peek_slot(&s, target, base, LEN as u8)?;
     if got != in_flash {
         return Err(format!(
             "after LOAD_SLOT of flash slot 0 into RAM slot {target}, that slot holds {got:02X?} \
@@ -569,7 +503,7 @@ pub fn load_slot_rejects_slot_aa(bus: &mut Bus, ctx: &Ctx) -> Result<Outcome, St
 /// command page is a command byte, so the device's own read is what makes
 /// address 0 assertable at all.
 pub fn slot_poke_all_byte_fills_the_slot(bus: &mut Bus, ctx: &Ctx) -> Result<Outcome, String> {
-    let Some(target) = inactive_slot(ctx) else {
+    let Some(target) = ctx.inactive_ram_slot() else {
         return Ok(needs_second_slot(
             ctx,
             "filling a slot that is not being served",
@@ -593,7 +527,7 @@ pub fn slot_poke_all_byte_fills_the_slot(bus: &mut Bus, ctx: &Ctx) -> Result<Out
     let armed = fill ^ 0x0F;
 
     for &addr in &probes {
-        poke_slot(bus, &s, target, addr, armed)?;
+        bus.poke_slot(&s, target, addr, armed)?;
         // The served slot is marked too, wherever the host can read it, so a
         // fill that reached the wrong slot is visible.
         if addr > probes[0] {

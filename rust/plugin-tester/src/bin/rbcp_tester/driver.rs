@@ -194,6 +194,52 @@ impl Session {
     pub fn data_size(&self) -> u32 {
         u32::from(self.bch_size) - HDR_SIZE
     }
+
+    /// The nine argument bytes of ENTER_CMD_RESP: "A0/A1=command page (16-bit
+    /// LE), A2/A3/A4=back-channel start address (24-bit LE), A5/A6=back-channel
+    /// size in bytes (16-bit LE), A7=complete, A8=status-OK".
+    ///
+    /// A session *is* those nine bytes, so it builds them: the driver sends the
+    /// frame for the entries it makes itself, and a scenario needs the same
+    /// frame with one field deliberately spoiled, or sent from inside a session
+    /// where no knock belongs in front of it.
+    pub fn enter_args(&self) -> [u8; 9] {
+        [
+            self.command_page as u8,
+            (self.command_page >> 8) as u8,
+            self.bch_start as u8,
+            (self.bch_start >> 8) as u8,
+            (self.bch_start >> 16) as u8,
+            self.bch_size as u8,
+            (self.bch_size >> 8) as u8,
+            self.complete,
+            self.status_ok,
+        ]
+    }
+}
+
+/// SLOT_POKE arguments: "A0=byte, A1/A2/A3=24-bit address (little-endian),
+/// A4=slot".
+pub fn slot_poke_args(addr: u32, value: u8, slot: u8) -> [u8; 5] {
+    [
+        value,
+        addr as u8,
+        (addr >> 8) as u8,
+        (addr >> 16) as u8,
+        slot,
+    ]
+}
+
+/// SLOT_PEEK arguments: "A0=count, A1/A2/A3=24-bit address (little-endian),
+/// A4=slot".  A count of zero means 256 bytes.
+pub fn slot_peek_args(addr: u32, count: u8, slot: u8) -> [u8; 5] {
+    [
+        count,
+        addr as u8,
+        (addr >> 8) as u8,
+        (addr >> 16) as u8,
+        slot,
+    ]
 }
 
 /// A byte of the served image holding a value the test put there, used to tell
@@ -418,13 +464,7 @@ impl<'a> Bus<'a> {
     /// Command Mode Constraint is about what the device does when it has been
     /// given fewer argument bytes than the command declares.
     pub fn poke_args(&self, ctx: &Ctx, addr: u32, value: u8) -> [u8; 5] {
-        [
-            value,
-            addr as u8,
-            (addr >> 8) as u8,
-            (addr >> 16) as u8,
-            ctx.active_ram_slot,
-        ]
+        slot_poke_args(addr, value, ctx.active_ram_slot)
     }
 
     /// Send a SLOT_POKE frame: GROUP, CMD and its five arguments.
@@ -432,17 +472,23 @@ impl<'a> Bus<'a> {
     /// The frame only — no knock.  The caller decides how, or whether, to
     /// frame it, which is the whole point in a scenario about framing.
     pub fn send_poke(&mut self, ctx: &Ctx, addr: u32, value: u8) -> Result<(), String> {
+        self.send_poke_slot(ctx.command_page(), ctx.active_ram_slot, addr, value)
+    }
+
+    /// As [`Bus::send_poke`], naming the slot rather than taking the active
+    /// one.
+    pub fn send_poke_slot(
+        &mut self,
+        page: u16,
+        slot: u8,
+        addr: u32,
+        value: u8,
+    ) -> Result<(), String> {
         self.send_cmd(
-            ctx.command_page(),
+            page,
             group::MODIFY,
             modify::SLOT_POKE,
-            &[
-                value,
-                addr as u8,
-                (addr >> 8) as u8,
-                (addr >> 16) as u8,
-                ctx.active_ram_slot,
-            ],
+            &slot_poke_args(addr, value, slot),
         )
     }
 
@@ -471,8 +517,25 @@ impl<'a> Bus<'a> {
     /// formed, the write path works and the harness can read the result — so
     /// it serves equally as setup, as a fence, and as a liveness check.
     pub fn poke_verified(&mut self, ctx: &Ctx, addr: u32, value: u8) -> Result<(), String> {
-        self.knock(ctx.command_page())?;
-        self.send_poke(ctx, addr, value)?;
+        self.poke_verified_slot(ctx.command_page(), ctx.active_ram_slot, addr, value)
+    }
+
+    /// As [`Bus::poke_verified`], naming the slot rather than taking the one
+    /// that was active when the scenario began.
+    ///
+    /// The verification is a bus read, so `slot` must be the slot being served
+    /// *at that point* — which is the whole reason this exists: after a switch,
+    /// the active slot is no longer [`Ctx::active_ram_slot`], and a fence aimed
+    /// at the stale one would fail rather than fence.
+    pub fn poke_verified_slot(
+        &mut self,
+        page: u16,
+        slot: u8,
+        addr: u32,
+        value: u8,
+    ) -> Result<(), String> {
+        self.knock(page)?;
+        self.send_poke_slot(page, slot, addr, value)?;
         self.await_byte(addr, value)
     }
 
@@ -528,9 +591,19 @@ impl<'a> Bus<'a> {
     /// in front of it.  That is what rules out "the device simply has not got
     /// round to it yet", which no amount of waiting can.
     pub fn fence(&mut self, ctx: &Ctx) -> Result<(), String> {
+        self.fence_slot(ctx, ctx.active_ram_slot)
+    }
+
+    /// As [`Bus::fence`], naming the slot the poke is aimed at.
+    ///
+    /// Wanted wherever *which slot is active* is the question under test: a
+    /// fence aimed at the slot that used to be active would fail on precisely
+    /// the device the scenario exists to catch, and a failing fence names the
+    /// wrong fault.
+    pub fn fence_slot(&mut self, ctx: &Ctx, slot: u8) -> Result<(), String> {
         let addr = ctx.fence_addr();
         let value = self.read(addr)? ^ 0xFF;
-        self.poke_verified(ctx, addr, value)
+        self.poke_verified_slot(ctx.command_page(), slot, addr, value)
             .map_err(|e| format!("fence: {e}"))
     }
 
@@ -724,6 +797,76 @@ impl<'a> Bus<'a> {
         }
     }
 
+    /// SLOT_POKE one byte into a named RAM slot, from inside a session.
+    ///
+    /// The command-response counterpart to [`Bus::poke_verified`], which is
+    /// command mode and always targets the active slot.  Naming the slot is the
+    /// point: SLOT_POKE's "target slot need not be active", and most of what
+    /// the Modify group is for happens in a slot that is not being served.
+    pub fn poke_slot(&mut self, s: &Session, slot: u8, addr: u32, value: u8) -> Result<(), String> {
+        self.issue_cmd(
+            s,
+            group::MODIFY,
+            modify::SLOT_POKE,
+            &slot_poke_args(addr, value, slot),
+        )
+        .map_err(|e| format!("SLOT_POKE of 0x{value:02X} to 0x{addr:06X} in slot {slot}: {e}"))
+    }
+
+    /// As [`Bus::poke_slot`], and require the device to serve the byte back.
+    ///
+    /// Only sound for the slot being served.  Proves the whole path at that
+    /// moment and leaves a value the scenario chose in the served image — the
+    /// value a peek at another slot must be told apart from.
+    pub fn poke_slot_verified(
+        &mut self,
+        s: &Session,
+        slot: u8,
+        addr: u32,
+        value: u8,
+    ) -> Result<(), String> {
+        self.poke_slot(s, slot, addr, value)?;
+        self.expect_byte(addr, value)
+    }
+
+    /// Read bytes out of any RAM slot with SLOT_PEEK.
+    ///
+    /// The host's only view of a slot it is not being served: a device-side
+    /// read of the slot named, answered over the bus in the response data
+    /// section.
+    pub fn peek_slot(
+        &mut self,
+        s: &Session,
+        slot: u8,
+        addr: u32,
+        len: u8,
+    ) -> Result<Vec<u8>, String> {
+        self.issue_cmd(
+            s,
+            group::READ,
+            read::SLOT_PEEK,
+            &slot_peek_args(addr, len, slot),
+        )
+        .map_err(|e| format!("SLOT_PEEK of {len} byte(s) from 0x{addr:06X} in slot {slot}: {e}"))?;
+        self.read_data(s, 0, u32::from(len))
+    }
+
+    /// Send an ENTER_CMD_RESP frame — the frame only, no knock.
+    ///
+    /// [`Bus::enter_cmd_resp`] is the whole exchange, knock included, and polls
+    /// it to completion.  This is for the scenarios that must not do that: one
+    /// spoiling an argument, where there is nothing to poll for because the
+    /// device is required to discard the command, and one issuing it from
+    /// inside a session, where a knock's bytes would be read as command bytes.
+    pub fn send_enter_cmd_resp(&mut self, page: u16, s: &Session) -> Result<(), String> {
+        self.send_cmd(
+            page,
+            group::CONTROL,
+            control::ENTER_CMD_RESP,
+            &s.enter_args(),
+        )
+    }
+
     /// Poll a back-channel condition until it holds or the limit is reached.
     fn poll(&mut self, mut cond: impl FnMut(&mut Bus<'a>) -> bool) -> bool {
         for _ in 0..POLL_LIMIT {
@@ -764,24 +907,8 @@ impl<'a> Bus<'a> {
         self.knock(s.command_page)
             .map_err(|_| CmdFailure::NotReceived)?;
 
-        let args = [
-            s.command_page as u8,
-            (s.command_page >> 8) as u8,
-            s.bch_start as u8,
-            (s.bch_start >> 8) as u8,
-            (s.bch_start >> 16) as u8,
-            s.bch_size as u8,
-            (s.bch_size >> 8) as u8,
-            s.complete,
-            s.status_ok,
-        ];
-        self.send_cmd(
-            s.command_page,
-            group::CONTROL,
-            control::ENTER_CMD_RESP,
-            &args,
-        )
-        .map_err(|_| CmdFailure::NotReceived)?;
+        self.send_enter_cmd_resp(s.command_page, s)
+            .map_err(|_| CmdFailure::NotReceived)?;
 
         let mut samples = Vec::new();
         let changed = self.poll(|b| match b.read_hdr(s, Hdr::TokenLsb) {

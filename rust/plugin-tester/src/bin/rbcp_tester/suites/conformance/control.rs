@@ -42,7 +42,7 @@
 //! command-response mode, so an entry that *succeeds* is positive proof the
 //! device had left.
 
-use crate::driver::{Bus, CmdFailure, Hdr, Session, control, group, modify, read};
+use crate::driver::{Bus, CmdFailure, Hdr, Session, control, group, read, slot_peek_args};
 use crate::{Ctx, Outcome};
 
 /// EXIT_CMD_RESP_SILENT must leave the response header untouched.
@@ -259,7 +259,7 @@ pub fn enter_fails_when_already_in_command_response_mode(
 
     // The same arguments the device has just accepted, so the only thing that
     // can make the device refuse them is that it is already in the mode.
-    bus.expect_rejected(&s, group::CONTROL, control::ENTER_CMD_RESP, &enter_args(&s))
+    bus.expect_rejected(&s, group::CONTROL, control::ENTER_CMD_RESP, &s.enter_args())
         .map_err(|e| format!("{e} — ENTER_CMD_RESP is not supported in command-response mode"))?;
 
     Ok(Outcome::Pass)
@@ -455,13 +455,8 @@ pub fn switch_and_exit_slot_aa_does_not_switch(
             marker
         };
         for (at, byte) in [(addr, value), (fence, fence_before)] {
-            bus.issue_cmd(
-                &s,
-                group::MODIFY,
-                modify::SLOT_POKE,
-                &slot_poke_args(at, byte, slot),
-            )
-            .map_err(|e| format!("SLOT_POKE marking 0x{at:06X} of slot {slot}: {e}"))?;
+            bus.poke_slot(&s, slot, at, byte)
+                .map_err(|e| format!("marking 0x{at:06X} of slot {slot}: {e}"))?;
         }
         bus.issue_cmd(
             &s,
@@ -493,12 +488,7 @@ pub fn switch_and_exit_slot_aa_does_not_switch(
     let fence_after = !fence_before;
     for slot in 0..ctx.ram_slot_count {
         bus.knock(ctx.command_page())?;
-        bus.send_cmd(
-            ctx.command_page(),
-            group::MODIFY,
-            modify::SLOT_POKE,
-            &slot_poke_args(fence, fence_after, slot),
-        )?;
+        bus.send_poke_slot(ctx.command_page(), slot, fence, fence_after)?;
     }
     bus.await_byte(fence, fence_after).map_err(|e| {
         format!("the device took no command-mode session after SWITCH_AND_EXIT: {e}")
@@ -532,52 +522,6 @@ fn fence_in_command_mode(bus: &mut Bus, ctx: &Ctx) -> Result<(), String> {
         .map_err(|e| format!("the device took no command-mode session after the exit: {e}"))
 }
 
-/// The nine argument bytes of ENTER_CMD_RESP: "A0/A1=command page (16-bit LE),
-/// A2/A3/A4=back-channel start address (24-bit LE), A5/A6=back-channel size in
-/// bytes (16-bit LE), A7=complete, A8=status-OK".
-///
-/// The driver builds these for the entries it makes itself; the scenarios above
-/// need to send the same frame with one field deliberately spoiled, or from
-/// inside a session where no knock belongs in front of it.
-fn enter_args(s: &Session) -> [u8; 9] {
-    [
-        s.command_page as u8,
-        (s.command_page >> 8) as u8,
-        s.bch_start as u8,
-        (s.bch_start >> 8) as u8,
-        (s.bch_start >> 16) as u8,
-        s.bch_size as u8,
-        (s.bch_size >> 8) as u8,
-        s.complete,
-        s.status_ok,
-    ]
-}
-
-/// SLOT_POKE arguments for a command issued inside a session, where the
-/// driver's command-mode helper — which always targets the active slot — does
-/// not apply.
-fn slot_poke_args(addr: u32, value: u8, slot: u8) -> [u8; 5] {
-    [
-        value,
-        addr as u8,
-        (addr >> 8) as u8,
-        (addr >> 16) as u8,
-        slot,
-    ]
-}
-
-/// SLOT_PEEK arguments: "A0=count, A1/A2/A3=24-bit address (little-endian),
-/// A4=slot".
-fn slot_peek_args(addr: u32, count: u8, slot: u8) -> [u8; 5] {
-    [
-        count,
-        addr as u8,
-        (addr >> 8) as u8,
-        (addr >> 16) as u8,
-        slot,
-    ]
-}
-
 /// Require the device to discard a malformed ENTER_CMD_RESP silently.
 ///
 /// The specification's own advice is that this is what a host concludes from
@@ -606,12 +550,7 @@ fn expect_entry_discarded(
         .map_err(|e| format!("arming the token byte at 0x{token:06X}: {e}"))?;
 
     bus.knock(ctx.command_page())?;
-    bus.send_cmd(
-        ctx.command_page(),
-        group::CONTROL,
-        control::ENTER_CMD_RESP,
-        &enter_args(bad),
-    )?;
+    bus.send_enter_cmd_resp(ctx.command_page(), bad)?;
 
     bus.fence(ctx)
         .map_err(|e| format!("after an ENTER_CMD_RESP with {what}: {e}"))?;

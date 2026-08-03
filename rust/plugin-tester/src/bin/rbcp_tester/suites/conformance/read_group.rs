@@ -38,7 +38,8 @@
 //! [`enter_sized`].
 
 use crate::driver::{
-    Bus, DEFAULT_COMPLETE, DEFAULT_STATUS_OK, HDR_SIZE, Session, control, group, modify, read,
+    Bus, DEFAULT_COMPLETE, DEFAULT_STATUS_OK, HDR_SIZE, Session, control, group, read,
+    slot_peek_args,
 };
 use crate::{Ctx, Outcome};
 
@@ -111,52 +112,6 @@ fn peek_fits(ctx: &Ctx, len: u32) -> Option<Outcome> {
             ctx.ram_slot_size
         ))
     })
-}
-
-/// SLOT_PEEK arguments: "A0=count, A1/A2/A3=24-bit address (little-endian),
-/// A4=slot".  A count of zero means 256 bytes.
-fn peek_args(addr: u32, count: u8, slot: u8) -> [u8; 5] {
-    [
-        count,
-        addr as u8,
-        (addr >> 8) as u8,
-        (addr >> 16) as u8,
-        slot,
-    ]
-}
-
-/// SLOT_POKE arguments for a command issued inside a session, where the
-/// driver's command-mode helper does not apply.
-fn poke_args(addr: u32, value: u8, slot: u8) -> [u8; 5] {
-    [
-        value,
-        addr as u8,
-        (addr >> 8) as u8,
-        (addr >> 16) as u8,
-        slot,
-    ]
-}
-
-/// Poke one byte inside a session and require the device to serve it back.
-///
-/// The command-response counterpart of [`Bus::poke_verified`]: it proves the
-/// byte holds a value this module chose, so a later comparison is against
-/// something known rather than whatever the image happened to contain.
-fn poke_verified_in_session(
-    bus: &mut Bus,
-    s: &Session,
-    slot: u8,
-    addr: u32,
-    value: u8,
-) -> Result<(), String> {
-    bus.issue_cmd(
-        s,
-        group::MODIFY,
-        modify::SLOT_POKE,
-        &poke_args(addr, value, slot),
-    )
-    .map_err(|e| format!("SLOT_POKE of 0x{value:02X} to 0x{addr:06X}: {e}"))?;
-    bus.expect_byte(addr, value)
 }
 
 /// Require a name field to be "ASCII.  Unused bytes are filled with 0x00.
@@ -652,8 +607,8 @@ pub fn slot_peek(bus: &mut Bus, ctx: &Ctx) -> Result<Outcome, String> {
     // — or with a stale copy of this one — cannot match by accident.
     let first = bus.read(src)? ^ 0xFF;
     let last = bus.read(src + PEEK_LEN - 1)? ^ 0x5A;
-    poke_verified_in_session(bus, &s, slot, src, first)?;
-    poke_verified_in_session(bus, &s, slot, src + PEEK_LEN - 1, last)?;
+    bus.poke_slot_verified(&s, slot, src, first)?;
+    bus.poke_slot_verified(&s, slot, src + PEEK_LEN - 1, last)?;
 
     let served = served_bytes(bus, src, PEEK_LEN)?;
 
@@ -661,7 +616,7 @@ pub fn slot_peek(bus: &mut Bus, ctx: &Ctx) -> Result<Outcome, String> {
         &s,
         group::READ,
         read::SLOT_PEEK,
-        &peek_args(src, PEEK_LEN as u8, slot),
+        &slot_peek_args(src, PEEK_LEN as u8, slot),
     )
     .map_err(|e| format!("SLOT_PEEK of {PEEK_LEN} bytes from 0x{src:06X}: {e}"))?;
 
@@ -704,15 +659,20 @@ pub fn slot_peek_count_zero_is_256(bus: &mut Bus, ctx: &Ctx) -> Result<Outcome, 
         .map_err(|e| format!("ENTER_CMD_RESP: {e}"))?;
 
     let want = bus.read(src + FULL - 1)? ^ 0xFF;
-    poke_verified_in_session(bus, &s, slot, src + FULL - 1, want)?;
+    bus.poke_slot_verified(&s, slot, src + FULL - 1, want)?;
 
     // Arm the destination with the opposite value, so the byte can only become
     // `want` by the device having read the whole 256.
     let dst = s.bch_start + HDR_SIZE + FULL - 1;
-    poke_verified_in_session(bus, &s, slot, dst, !want)?;
+    bus.poke_slot_verified(&s, slot, dst, !want)?;
 
-    bus.issue_cmd(&s, group::READ, read::SLOT_PEEK, &peek_args(src, 0, slot))
-        .map_err(|e| format!("SLOT_PEEK with a count of zero: {e}"))?;
+    bus.issue_cmd(
+        &s,
+        group::READ,
+        read::SLOT_PEEK,
+        &slot_peek_args(src, 0, slot),
+    )
+    .map_err(|e| format!("SLOT_PEEK with a count of zero: {e}"))?;
 
     let served = served_bytes(bus, src, FULL)?;
     bus.expect_data(&s, 0, &served, "SLOT_PEEK response")
@@ -740,7 +700,7 @@ pub fn slot_peek_exceeding_data_section_fails(bus: &mut Bus, ctx: &Ctx) -> Resul
         &s,
         group::READ,
         read::SLOT_PEEK,
-        &peek_args(src, REQUESTED, ctx.active_ram_slot),
+        &slot_peek_args(src, REQUESTED, ctx.active_ram_slot),
     )
     .map_err(|e| {
         format!(
@@ -770,7 +730,7 @@ pub fn slot_peek_rejects_slot_aa(bus: &mut Bus, ctx: &Ctx) -> Result<Outcome, St
         &s,
         group::READ,
         read::SLOT_PEEK,
-        &peek_args(src, PEEK_LEN as u8, 0xAA),
+        &slot_peek_args(src, PEEK_LEN as u8, 0xAA),
     )?;
 
     Ok(Outcome::Pass)

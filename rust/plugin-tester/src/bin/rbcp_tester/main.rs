@@ -143,6 +143,18 @@ impl Ctx {
         self.fence_addr() + 3
     }
 
+    /// A RAM slot that is not the one being served, if the device has one.
+    ///
+    /// The next index round, so it exists on any device with more than one
+    /// slot, whichever slot is currently active.  Much of the protocol is about
+    /// a slot the host is not being served — LOAD_SLOT, SWITCH_SLOT and the
+    /// specification's own patch-then-switch pattern all need one — and the
+    /// device may have exactly one: the RAM slot count falls out of the ROM
+    /// table size, and a 40-pin ×16 part has a single slot.
+    pub fn inactive_ram_slot(&self) -> Option<u8> {
+        (self.ram_slot_count > 1).then(|| (self.active_ram_slot + 1) % self.ram_slot_count)
+    }
+
     pub fn session(&self) -> driver::Session {
         driver::Session {
             command_page: self.command_page(),
