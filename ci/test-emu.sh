@@ -429,5 +429,10 @@ test_config_rbcp fire-28-a onerom-config/test/28-random-23qlxxx.json
 test_config_rbcp fire-40-a onerom-config/test/40-random-force-16bit.json
 
 # The tester drives chip set 0 only, and 27C200 is not the first set of any
-# other 40 pin config, so it needs one of its own.
-test_config_rbcp fire-40-a onerom-config/test/40-random-27c200.json
+# other 40 pin config, so it needs one of its own.  Run on both 40 pin boards:
+# fire-40-b gives the 27C200 a 256KB ROM table region and so two RAM slots,
+# which makes it the only configuration where the NV storage write transaction
+# — and the flash erase and program it commits through — runs against a
+# word-organised ROM.  On fire-40-a the same part gets a 512KB region, one slot,
+# and a read-only NV storage.
+test_40_config_rbcp onerom-config/test/40-random-27c200.json

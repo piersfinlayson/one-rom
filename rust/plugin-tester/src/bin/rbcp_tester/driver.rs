@@ -40,6 +40,7 @@ use onerom_config::chip::ChipType;
 use onerom_fw_emulator::{Emulator, driver as gpio};
 use onerom_fw_tester::pin_cache::PinCache;
 use onerom_fw_tester::{runner, timing};
+use onerom_plugin_tester::ffi;
 use onerom_plugin_tester::harness::Plugin;
 
 use crate::Ctx;
@@ -429,6 +430,74 @@ impl<'a> Bus<'a> {
         let mut buf = vec![0u8; len];
         let _ = self.emu.read_ram_rom_slot(slot, offset, &mut buf);
         buf
+    }
+
+    /// Put bytes into the device's NV storage directly, as a previous boot's
+    /// host would have left them.
+    ///
+    /// Setup, never an assertion.  A host's only way to write NV storage is
+    /// NV_POKE_COMMIT, so a scenario about *reading* it — that NV_PEEK answers
+    /// from NV storage, that it goes on doing so mid-transaction — would
+    /// otherwise have to write it with the very command it is trying to be
+    /// independent of.  This writes the storage behind the device's back, and
+    /// the assertion is then made over the bus, through the device, which is
+    /// two different paths agreeing.
+    ///
+    /// Every scenario starts with NV storage erased to 0xFF, the state the
+    /// specification requires of a device no host has written to.
+    pub fn seed_nv(&self, offset: u32, bytes: &[u8]) {
+        // SAFETY: the plugin is parked at a yield, so nothing else is touching
+        // the region; the caller's range is checked against its size.
+        unsafe {
+            let size = ffi::ora_host_test_nv_storage_size();
+            assert!(
+                offset + bytes.len() as u32 <= size,
+                "seeding {} bytes at 0x{offset:04X} runs past the device's {size}-byte NV storage",
+                bytes.len()
+            );
+            let base = ffi::ora_host_test_nv_storage().add(offset as usize);
+            std::ptr::copy_nonoverlapping(bytes.as_ptr(), base, bytes.len());
+        }
+    }
+
+    /// What the plugin asked the flash hardware to do.
+    ///
+    /// The commit path is a fixed sequence whose *ordering* matters — a
+    /// program issued before XIP came back, or an erase issued while it was
+    /// still active, would be a real defect on a device and is invisible in
+    /// the resulting bytes alone.  This is how a scenario asserts the sequence
+    /// rather than only its outcome.
+    pub fn flash_log(&self) -> ffi::FlashLog {
+        // SAFETY: the plugin is parked at a yield, so the shim's record is not
+        // being written; the pointer is to a static and is never null.
+        unsafe { *ffi::ora_host_test_flash_log() }
+    }
+
+    /// The XIP clock divisor the device would read before disabling XIP.
+    ///
+    /// The harness answers for it, so a scenario can require the divisor the
+    /// device hands back to the routine that restores XIP to be the one it
+    /// read — which is the whole reason it is read first.
+    pub fn xip_clkdiv(&self) -> u8 {
+        // SAFETY: the seam is a pure function over a constant.
+        unsafe { ffi::ora_host_test_xip_clkdiv() }
+    }
+
+    /// What the device's NV storage actually holds.
+    ///
+    /// Diagnostic only, and the counterpart of [`Bus::api_slot_bytes`]: an
+    /// assertion belongs against what NV_PEEK answers over the bus, because
+    /// that is all a host can see.  This tells apart "the device wrote the
+    /// wrong thing" from "the device wrote the right thing somewhere the host
+    /// cannot read it".
+    pub fn nv_bytes(&self, offset: u32, len: usize) -> Vec<u8> {
+        // SAFETY: as `seed_nv`.
+        unsafe {
+            let size = ffi::ora_host_test_nv_storage_size();
+            assert!(offset + len as u32 <= size);
+            let base = ffi::ora_host_test_nv_storage().add(offset as usize);
+            std::slice::from_raw_parts(base, len).to_vec()
+        }
     }
 
     /// Signal one command byte on the given page.  The data read back is
@@ -1024,6 +1093,17 @@ pub mod modify {
     pub const SWITCH_SLOT: u8 = 0x01;
     pub const LOAD_SLOT: u8 = 0x02;
     pub const SLOT_POKE_ALL_BYTE: u8 = 0x03;
+}
+
+#[allow(dead_code)]
+pub mod nv {
+    pub const GET_NV_CAPABILITY: u8 = 0x00;
+    pub const NV_PEEK: u8 = 0x01;
+    pub const NV_POKE_BEGIN: u8 = 0x02;
+    pub const NV_POKE: u8 = 0x03;
+    pub const NV_POKE_COMMIT: u8 = 0x04;
+    pub const NV_POKE_DISCARD: u8 = 0x05;
+    pub const NV_POKE_COMMIT_BYTE: u8 = 0x06;
 }
 
 #[allow(dead_code)]

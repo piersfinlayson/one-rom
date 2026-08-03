@@ -2,6 +2,29 @@
 
 ## [0.1.2] - 2026-??-??
 
+Report as many RAM slots as the RAM holds, rather than at most seven, and keep
+those a host cannot name for the plugin's own use.
+
+- **Potentially breaking.**  A RAM slot is exactly one ROM region, so with a
+  small ROM there are now far more slots and each is far smaller than before —
+  as little as 2KB for a 2316, where the old cap of seven was meant to keep a
+  slot at 64KB but could not, since a slot has to be the size of the ROM being
+  served.  A host that assumed a slot was large enough for some purpose of its
+  own, or that there were at most seven, sees something different.
+- `GET_RAM_SLOT_INFO_ALL` now reports at most 170 slots however many the
+  firmware has, because every command that names a slot rejects 0xAA and a slot
+  no host can name is no use to one.  Slots above that are the plugin's.
+
+Make NV storage writable on devices whose RAM slots are too small to stage a
+transaction in.  Where the plugin has slots of its own it stages there, using as
+many consecutive slots as the staging buffer needs, and leaves the slot the host
+named untouched.
+
+- Previously `GET_NV_CAPABILITY` reported NV storage writable whenever the
+  device had more than one RAM slot, but every `NV_POKE_BEGIN` then failed if no
+  single slot could hold the 4KB staging buffer and the erase routine — which is
+  every device serving a ROM smaller than that.
+
 Route RBCP command decode through the observed (bus) address space, so command
 signalling works on a 40-pin part whose least-significant address line the
 device does not observe.

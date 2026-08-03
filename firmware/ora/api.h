@@ -130,6 +130,210 @@ void ora_host_test_yield(void);
 #endif
 
 /**
+ * @defgroup plugin_device_facts Device facts
+ * @brief Absolute addresses and pointer forms that only exist on the device
+ *
+ * A plugin that writes flash has to reach past the plugin API to a handful of
+ * facts about the chip it runs on: where the bootrom's lookup table is, where
+ * flash is mapped, how a pointer to staged code is formed.  Each is a bare
+ * absolute address or a target-specific pointer conversion, so each is a place
+ * a host-side test build would fault rather than misbehave.
+ *
+ * Every one of them is named individually here rather than covered by one
+ * general "read this address" escape hatch.  A general one would let any
+ * absolute access through unexamined, and the value of these is precisely that
+ * the list is short and each entry says which device fact it stands for.  On a
+ * device each compiles to the same expression the plugin used to write inline.
+ *
+ * @{
+ */
+
+/**
+ * @brief Address holding the pointer to the bootrom's table-lookup routine
+ *
+ * Fixed by the RP2350 boot ROM.  Only meaningful on the device.
+ */
+#define ORA_BOOTROM_TABLE_LOOKUP_ADDR 0x00000016u
+
+/** @brief Bootrom table flags selecting the Arm secure entry points */
+#define ORA_BOOTROM_FLAG_ARM_SEC 0x0004u
+
+/** @brief QMI memory-window 0 timing register, whose low byte is the clock
+ * divisor.  Only meaningful on the device. */
+#define ORA_XIP_QMI_M0_TIMING_ADDR 0x400D000Cu
+
+/** @brief Base of the XIP-mapped flash window.  Only meaningful on the
+ * device. */
+#define ORA_FLASH_BASE_ADDR 0x10000000u
+
+/**
+ * @brief Most RAM slots the firmware will report
+ *
+ * A slot index travels in a single byte, and RBCP reserves 0xFF to mean "no
+ * slot is active", so the highest usable index is 0xFE and the count cannot
+ * exceed 255.
+ *
+ * Note that a *host* cannot name every one of those: RBCP rejects 0xAA in
+ * every slot argument, so that a reset started mid-command stays detectable.
+ * A plugin that exposes slots to a host must cap what it advertises at 170
+ * accordingly — see the host-control plugin, which keeps the slots above that
+ * for its own use.
+ */
+#define ORA_MAX_RAM_SLOTS 255u
+
+#if !defined(ORA_HOST_TEST)
+/**
+ * @brief Device implementation of @ref ORA_BOOTROM_LOOKUP
+ *
+ * A function rather than a macro body so that the diagnostic suppression the
+ * absolute dereference needs has somewhere ordinary to live.  The compiler
+ * cannot know that address 0x16 is a valid object, and says so.
+ */
+static inline void *ora_bootrom_lookup_impl(uint32_t code, uint32_t mask) {
+    typedef void *(*ora_rom_table_lookup_fn)(uint32_t code, uint32_t mask);
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Warray-bounds"
+    ora_rom_table_lookup_fn lookup = (ora_rom_table_lookup_fn)(uintptr_t) *
+        (uint16_t *)(ORA_BOOTROM_TABLE_LOOKUP_ADDR);
+#pragma GCC diagnostic pop
+    return lookup(code, mask);
+}
+#endif
+
+#if defined(ORA_HOST_TEST)
+/** @brief Host-test seam.  See @ref ORA_BOOTROM_LOOKUP. */
+void *ora_host_test_bootrom_lookup(uint32_t code, uint32_t mask);
+/** @brief Host-test seam.  See @ref ORA_XIP_CLKDIV. */
+uint8_t ora_host_test_xip_clkdiv(void);
+/** @brief Host-test seam.  See @ref ORA_FLASH_OFFSET. */
+uint32_t ora_host_test_flash_offset(const void *addr);
+/** @brief Host-test seam.  See @ref ORA_STAGED_FN_SIZE. */
+uint32_t ora_host_test_staged_fn_size(const void *start, const void *end);
+/** @brief Host-test seam.  See @ref ORA_STAGED_FN_PTR. */
+void *ora_host_test_staged_fn_ptr(uint32_t addr);
+#endif
+
+/**
+ * @brief Look a bootrom function up by its two-character code
+ *
+ * The RP2350 bootrom publishes a table of functions — flash erase, flash
+ * program, XIP control — reached through a lookup routine whose address is
+ * itself stored at a fixed absolute address low in the address map.  A plugin
+ * needs these to touch flash at all, because flash cannot be read while it is
+ * being written and the routines that do it must not themselves be in flash.
+ *
+ * On a device this reads that fixed address and calls through it.  Under a
+ * host-side test build there is no bootrom, and address 0x16 is not mapped, so
+ * the harness supplies stand-ins instead.
+ *
+ * @param code Two-character function code, packed low byte first
+ * @param mask Bootrom table flags selecting the architecture and mode
+ * @return The function's address, or NULL if the bootrom does not publish it
+ *
+ * @since firmware v0.7.2
+ */
+#if defined(ORA_HOST_TEST)
+#define ORA_BOOTROM_LOOKUP(code, mask) ora_host_test_bootrom_lookup((code), (mask))
+#else
+#define ORA_BOOTROM_LOOKUP(code, mask) ora_bootrom_lookup_impl((code), (mask))
+#endif
+
+/**
+ * @brief The XIP clock divisor currently in force
+ *
+ * The erase sequence takes flash out of XIP mode and must put it back the way
+ * it found it, so the divisor has to be read before XIP is disabled and handed
+ * to the routine that restores it.  It lives in a QMI timing register.
+ *
+ * On a device this reads that register.  Under a host-side test build there is
+ * no QMI, and its address is not mapped.
+ *
+ * @since firmware v0.7.2
+ */
+#if defined(ORA_HOST_TEST)
+#define ORA_XIP_CLKDIV() ora_host_test_xip_clkdiv()
+#else
+#define ORA_XIP_CLKDIV()                                                      \
+    ((uint8_t)(*((volatile uint32_t *)(uintptr_t)ORA_XIP_QMI_M0_TIMING_ADDR)  \
+               & 0xFFu))
+#endif
+
+/**
+ * @brief Convert a pointer into flash to an offset the bootrom understands
+ *
+ * The bootrom's flash routines take an offset from the start of flash, while a
+ * plugin knows its reserved region as a linker symbol — an address in the
+ * XIP-mapped window.  This is the conversion between them.
+ *
+ * On a device it is a subtraction from the base of the mapped window.  Under a
+ * host-side test build the object is somewhere in the process's own heap or
+ * BSS, and that subtraction would produce a meaningless — and, on a 64-bit
+ * host, truncated — number, so the harness supplies the offset into whatever
+ * it is standing the region in for.
+ *
+ * @param addr Pointer into the device's flash
+ *
+ * @since firmware v0.7.2
+ */
+#if defined(ORA_HOST_TEST)
+#define ORA_FLASH_OFFSET(addr) ora_host_test_flash_offset((const void *)(addr))
+#else
+#define ORA_FLASH_OFFSET(addr)                                                \
+    ((uint32_t)((uintptr_t)(addr) - ORA_FLASH_BASE_ADDR))
+#endif
+
+/**
+ * @brief Size of a routine bracketed by a pair of linker symbols
+ *
+ * A routine that runs while flash is unreadable must be copied into RAM first,
+ * and the plugin's linker script brackets it with a start and end symbol so
+ * that the plugin can find out how much to copy.
+ *
+ * On a device that is the difference between the two.  Under a host-side test
+ * build there is no such section and therefore no bracketing symbols: whatever
+ * the harness defines under those names are unrelated objects, and the
+ * difference between pointers into unrelated objects is meaningless — it is
+ * not merely inaccurate but arbitrary, and has been observed to be large
+ * enough to fault.  So the harness answers for the size instead.
+ *
+ * @param start First byte of the routine
+ * @param end   One past its last byte
+ *
+ * @since firmware v0.7.2
+ */
+#if defined(ORA_HOST_TEST)
+#define ORA_STAGED_FN_SIZE(start, end) ora_host_test_staged_fn_size((start), (end))
+#else
+#define ORA_STAGED_FN_SIZE(start, end)                                        \
+    ((uint32_t)((const uint8_t *)(end) - (const uint8_t *)(start)))
+#endif
+
+/**
+ * @brief Form a callable pointer to a routine the plugin has staged in SRAM
+ *
+ * Having copied a position-independent routine into a RAM slot, the plugin
+ * calls it through a pointer built from that address.  On a Cortex-M the
+ * pointer must carry the Thumb bit.
+ *
+ * On a device that is the address with its low bit set.  Under a host-side
+ * test build the staged bytes are not executable, the host's instruction set
+ * is not Thumb, and setting the low bit of a host function pointer corrupts
+ * it, so the harness supplies a pointer to its own stand-in for the routine.
+ *
+ * @param type Function pointer type to produce
+ * @param addr Device SRAM address the routine was copied to
+ *
+ * @since firmware v0.7.2
+ */
+#if defined(ORA_HOST_TEST)
+#define ORA_STAGED_FN_PTR(type, addr) ((type)ora_host_test_staged_fn_ptr(addr))
+#else
+#define ORA_STAGED_FN_PTR(type, addr) ((type)(uintptr_t)((addr) | 1u))
+#endif
+
+/** @} */
+
+/**
  * @defgroup plugin_api One ROM Plugin API
  * @brief The complete API for One ROM plugins
  * @{
@@ -1524,19 +1728,16 @@ typedef volatile uint32_t * volatile *(*ora_get_address_monitor_ring_write_pos_f
  *
  * Returns the total number of RAM slots available for the ROM type currently
  * being served. Slot 0 is always the primary slot, pre-populated by the
- * firmware on boot. The number of available slots varies by ROM type, for
- * example, the number of slots _might_ be as follows, but plugins must not
- * rely on these exact numbers and instead use this function to query the
- * number of slots at runtime:
- * - 64KB ROM image on flash:  up to 7 slots
- * - 128KB ROM image on flash: up to 3 slots
- * - 256KB ROM image on flash: up to 2 slots
- * - 512KB ROM image on flash: 1 slot only
- * 
- * Note that sizes above are the size of the ROM image slot on flash, which is
- * normally larger than the actual ROM type being served.
+ * firmware on boot.
  *
- * @return Total number of RAM slots available
+ * A slot is exactly one ROM region, so the count is however many of those fit
+ * in the RAM reserved for them — with a small ROM that can be a great many,
+ * and with a 512KB one it is a single slot. Plugins must not assume any
+ * particular number, and in particular must not assume a slot is large enough
+ * for some purpose of their own: a slot is as small as the ROM being served,
+ * which can be 2KB or less.
+ *
+ * @return Total number of RAM slots available, at most @ref ORA_MAX_RAM_SLOTS
  */
 typedef uint8_t (*ora_get_ram_slot_count_fn_t)(void);
 

@@ -498,12 +498,51 @@ pub fn get_ram_slot_info_all(bus: &mut Bus, ctx: &Ctx) -> Result<Outcome, String
     bus.issue_cmd(&s, group::READ, read::GET_RAM_SLOT_INFO_ALL, &[])
         .map_err(|e| format!("GET_RAM_SLOT_INFO_ALL: {e}"))?;
 
+    // active_slot is cross-checked against what the device reported through its
+    // own plugin API at start-up — two paths through the device agreeing.
+    //
+    // total_count is not, and deliberately: "Total number of RAM slots
+    // available on the device" is what the device chooses to make available,
+    // and a plugin may legitimately keep some back — this one does, since RBCP
+    // rejects 0xAA in every slot argument and a slot no host can name is no use
+    // to a host.  So the count is asserted by what it *means* instead: every
+    // slot it promises can be named, and the first index past it cannot.
     bus.expect_data(
         &s,
-        0,
-        &[ctx.ram_slot_count, ctx.active_ram_slot],
-        "GET_RAM_SLOT_INFO_ALL response (total_count, active_slot)",
+        1,
+        &[ctx.active_ram_slot],
+        "GET_RAM_SLOT_INFO_ALL response (active_slot)",
     )?;
+
+    let total = bus.read_data(&s, 0, 1)?[0];
+    if total == 0 {
+        return Err("GET_RAM_SLOT_INFO_ALL reports no RAM slots at all".to_string());
+    }
+
+    // The last slot promised, and the first one past the promise.  SLOT_PEEK
+    // reads the slot it names without changing anything, so it asks the
+    // question without disturbing an image.
+    bus.issue_cmd(
+        &s,
+        group::READ,
+        read::SLOT_PEEK,
+        &slot_peek_args(0, 1, total - 1),
+    )
+    .map_err(|e| {
+        format!(
+            "SLOT_PEEK of slot {}: {e} — the device advertises {total} RAM slot(s), so every \
+             index below {total} must be one a host can name",
+            total - 1
+        )
+    })?;
+
+    bus.expect_rejected(
+        &s,
+        group::READ,
+        read::SLOT_PEEK,
+        &slot_peek_args(0, 1, total),
+    )
+    .map_err(|e| format!("{e} — slot {total} is the first index past the {total} advertised"))?;
 
     let rom_type = bus.read_data(&s, 2, 1)?[0];
     if rom_type == ROM_TYPE_INVALID {

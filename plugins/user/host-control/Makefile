@@ -68,21 +68,20 @@ ALL_OBJ    := $(PLUGIN_OBJ) $(FLASH_ERASE_OBJ)
 #   cannot satisfy — its pointers are twice the width — and the firmware test
 #   build already accepts that.  Both sides must agree, so both define it.
 #
-# -Werror is deliberately absent.  Two casts in the NV commit path still warn
-# on a 64-bit host: the flash offset computed from __nv_storage_start, and the
-# erase routine's address formed from a RAM slot base with the Thumb bit set.
-# Neither is an SRAM dereference, so ORA_SRAM_PTR does not cover them; both
-# need the flash seams before they can be made host-clean, and until then the
-# commit path is not exercised on a host at all.  Everything else compiles
-# warning-free, so this can match the ARM build's -Werror once those land.
+# -Werror matches the ARM build.  The two casts in the NV commit path that used
+# to warn on a 64-bit host — the flash offset computed from __nv_storage_start,
+# and the erase routine's address formed from a RAM slot base with the Thumb
+# bit set — now go through ORA_FLASH_OFFSET and ORA_STAGED_FN_PTR.
 # ---------------------------------------------------------------------------
 
-HOST_CC        ?= cc
-HOST_BUILD_DIR := build-host
-HOST_OBJ       := $(HOST_BUILD_DIR)/host_control_main.o
+HOST_CC          ?= cc
+HOST_BUILD_DIR   := build-host
+HOST_OBJ         := $(HOST_BUILD_DIR)/host_control_main.o
+HOST_FLASH_ERASE := $(HOST_BUILD_DIR)/flash_erase.o
+HOST_ALL_OBJ     := $(HOST_OBJ) $(HOST_FLASH_ERASE)
 
 HOST_CFLAGS := -DORA_HOST_TEST=1 -DTEST_BUILD=1 -fshort-enums \
-               -O1 -g -Wall -Wextra \
+               -O1 -g -Wall -Wextra -Werror \
                -DMAJOR_VERSION=$(MAJOR_VERSION) -DMINOR_VERSION=$(MINOR_VERSION) \
                -DPATCH_VERSION=$(PATCH_VERSION) -DBUILD_VERSION=$(BUILD_VERSION) \
                $(SDRR_INCLUDE) $(ORA_INCLUDE) $(PLUGIN_INCLUDE) \
@@ -93,12 +92,19 @@ HOST_CFLAGS := -DORA_HOST_TEST=1 -DTEST_BUILD=1 -fshort-enums \
 
 all: $(BIN)
 
-host: $(HOST_OBJ)
+host: $(HOST_ALL_OBJ)
 
 $(HOST_BUILD_DIR):
 	@mkdir -p $@
 
 $(HOST_OBJ): $(SRC) | $(HOST_BUILD_DIR)
+	@echo "Compiling $< for host..."
+	@$(HOST_CC) $(HOST_CFLAGS) -c $< -o $@
+
+# The erase routine is compiled for the host too, and the harness calls the
+# real thing rather than the bytes the plugin staged — see ORA_STAGED_FN_PTR.
+# So the sequence under test is the plugin's own, not a re-description of it.
+$(HOST_FLASH_ERASE): $(FLASH_ERASE_SRC) | $(HOST_BUILD_DIR)
 	@echo "Compiling $< for host..."
 	@$(HOST_CC) $(HOST_CFLAGS) -c $< -o $@
 

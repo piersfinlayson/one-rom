@@ -438,6 +438,14 @@ pub fn switch_and_exit_slot_aa_does_not_switch(
     bus.enter_cmd_resp(&s)
         .map_err(|e| format!("ENTER_CMD_RESP: {e}"))?;
 
+    // Every slot the device says a host may name — read from the device rather
+    // than taken from the firmware's own count, because a plugin may keep some
+    // slots back and those are not ones a mishandled 0xAA could land the host
+    // on.
+    bus.issue_cmd(&s, group::READ, read::GET_RAM_SLOT_INFO_ALL, &[])
+        .map_err(|e| format!("GET_RAM_SLOT_INFO_ALL: {e}"))?;
+    let slots = bus.read_data(&s, 0, 1)?[0];
+
     // All derived from the image, so none can be satisfied by what is already
     // there, and they differ from each other whatever that is.
     let original = bus.read(addr)?;
@@ -448,7 +456,7 @@ pub fn switch_and_exit_slot_aa_does_not_switch(
     // Mark every slot, and read each back with SLOT_PEEK: an inactive slot is
     // not on the bus, so that is the only way to know the marks landed and that
     // the discrimination below has two live values to choose between.
-    for slot in 0..ctx.ram_slot_count {
+    for slot in 0..slots {
         let value = if slot == ctx.active_ram_slot {
             active_value
         } else {
@@ -486,7 +494,7 @@ pub fn switch_and_exit_slot_aa_does_not_switch(
     // has processed a command since the stimulus, and says nothing about which
     // slot that is — which is the question the read below answers.
     let fence_after = !fence_before;
-    for slot in 0..ctx.ram_slot_count {
+    for slot in 0..slots {
         bus.knock(ctx.command_page())?;
         bus.send_poke_slot(ctx.command_page(), slot, fence, fence_after)?;
     }

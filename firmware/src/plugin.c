@@ -415,18 +415,40 @@ volatile uint32_t * volatile *ora_get_address_monitor_ring_write_pos(void) {
     return pio_get_address_monitor_ring_write_pos();
 }
 
-uint8_t ora_get_ram_slot_count(void) {
-    uint8_t effective_addr_pins = pio_get_effective_addr_pins();
+// The region the RAM slots are carved out of, from the linker script.
+extern uint32_t _ram_rom_image_start[];
+extern uint32_t _ram_rom_image_end[];
 
-    // Slot count based on ROM size:
-    // - 2^16=64KB=7
-    // - 2^17=128KB=3
-    // - 2^18=256KB=2
-    // - 2^19+=512KB=1
-    if (effective_addr_pins <= 16) return 7;
-    if (effective_addr_pins <= 17) return 3;
-    if (effective_addr_pins <= 18) return 2;
-    return 1;
+// Bytes available for RAM slots.
+static uint32_t ram_rom_image_size(void) {
+#if defined(TEST_BUILD)
+    // The native test build has no linker script; its stub reserves the same
+    // region as a fixed-size object.
+    return RAM_ROM_TABLE_SIZE;
+#else
+    return (uint32_t)((uintptr_t)_ram_rom_image_end
+                      - (uintptr_t)_ram_rom_image_start);
+#endif
+}
+
+uint8_t ora_get_ram_slot_count(void) {
+    uint32_t region_size = pio_get_rom_region_size();
+    if (region_size == 0u) {
+        return 1u;
+    }
+
+    // As many as the region holds.  Previously this was a table keyed on the
+    // ROM size, capped at 7 so that a slot would be at least 64KB; but a slot
+    // has to be exactly one ROM region — that is what makes it servable — so
+    // the cap only ever threw away slots that a small ROM would have had.
+    uint32_t count = ram_rom_image_size() / region_size;
+    if (count < 1u) {
+        return 1u;
+    }
+    if (count > ORA_MAX_RAM_SLOTS) {
+        count = ORA_MAX_RAM_SLOTS;
+    }
+    return (uint8_t)count;
 }
 
 ora_result_t ora_get_ram_slot_info(

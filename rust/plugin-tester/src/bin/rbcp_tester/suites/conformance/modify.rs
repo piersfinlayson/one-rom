@@ -33,7 +33,7 @@
 //!
 //! Most of this group is about a slot other than the one being served, and the
 //! device may have only one: the RAM slot count falls out of the ROM table
-//! size, and a 40-pin ×16 part has exactly one.  Those scenarios skip there,
+//! size, and a 512 KB region leaves room for one.  Those scenarios skip there,
 //! naming what the device lacks, rather than degenerating into a poke at the
 //! active slot that would assert something weaker under the same name.
 //!

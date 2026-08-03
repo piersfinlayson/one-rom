@@ -79,6 +79,8 @@ pub struct Ctx {
     pub ram_slot_count: u8,
     /// The RAM slot being served when the scenario starts.
     pub active_ram_slot: u8,
+    /// Size of the device's dedicated NV storage, in bytes.
+    pub nv_size: u32,
 }
 
 impl Ctx {
@@ -145,12 +147,12 @@ impl Ctx {
 
     /// A RAM slot that is not the one being served, if the device has one.
     ///
-    /// The next index round, so it exists on any device with more than one
-    /// slot, whichever slot is currently active.  Much of the protocol is about
-    /// a slot the host is not being served — LOAD_SLOT, SWITCH_SLOT and the
-    /// specification's own patch-then-switch pattern all need one — and the
-    /// device may have exactly one: the RAM slot count falls out of the ROM
-    /// table size, and a 40-pin ×16 part has a single slot.
+    /// Setup, not an assertion: a scenario needs *some* slot it may name, and
+    /// the next index round is one.  It is deliberately the lowest such index
+    /// rather than anything derived from what the device advertises — a plugin
+    /// may offer a host fewer slots than the firmware has, and predicting how
+    /// many would be mirroring the plugin rather than testing it.  Which slots
+    /// a host may actually name is asserted over the bus, in the Read group.
     pub fn inactive_ram_slot(&self) -> Option<u8> {
         (self.ram_slot_count > 1).then(|| (self.active_ram_slot + 1) % self.ram_slot_count)
     }
@@ -419,6 +421,26 @@ fn run_scenario(
         _ => return Err(format!("get_active_ram_slot returned {r:?}")),
     };
 
+    // Erase the device's NV storage.
+    //
+    // On a device this is a reserved flash sector, and the specification says
+    // that "before having been written by any host, the entire NV storage on
+    // any device is initialized to 0xFF".  In this process it is an ordinary
+    // object in the shim, which zero-initialises and — unlike the firmware's
+    // RAM, which the emulator restores from its cold-boot image — survives a
+    // reboot, so what one scenario committed would still be there for the
+    // next.  Erasing it here gives every scenario the same starting point a
+    // device gives a host that has never written to it.
+    //
+    // SAFETY: the plugin is parked at a yield, so nothing else is reading it.
+    let nv_size = unsafe { ffi::ora_host_test_nv_storage_size() };
+    // SAFETY: the shim's region is `nv_size` bytes and outlives the scenario.
+    unsafe { std::ptr::write_bytes(ffi::ora_host_test_nv_storage(), 0xFF, nv_size as usize) };
+    // The shim's record of what the plugin asked the flash hardware to do is
+    // process-global for the same reason, so it starts each scenario empty.
+    // SAFETY: as above.
+    unsafe { ffi::ora_host_test_reset_flash_log() };
+
     let ctx = Ctx {
         config: config.clone(),
         base_dir: base_dir.to_path_buf(),
@@ -429,6 +451,7 @@ fn run_scenario(
         ram_slot_size,
         ram_slot_count: emu.get_ram_slot_count(),
         active_ram_slot,
+        nv_size,
     };
 
     let cache = PinCache::build(chip_type, chip, board);

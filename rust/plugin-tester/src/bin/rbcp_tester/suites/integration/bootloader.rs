@@ -53,7 +53,10 @@
 //! # A second RAM slot
 //!
 //! The pattern is defined in terms of a slot that is not being served, so a
-//! device with one RAM slot cannot run it — a 40-pin ×16 part has exactly one.
+//! device with one RAM slot cannot run it.  Whether it has one turns on the
+//! size of the ROM table region rather than on the part: a region of 512 KB
+//! leaves room for a single slot, which a 27C400 reaches on either 40-pin
+//! board and a 27C200 reaches on fire-40-a but not on fire-40-b.
 //! It skips there rather than degenerating into a patch of the active slot,
 //! which is the thing the specification warns against.
 
@@ -285,11 +288,18 @@ fn ram_slot_info(bus: &mut Bus, s: &Session, ctx: &Ctx) -> Result<u8, String> {
         .map_err(|e| format!("GET_RAM_SLOT_INFO_ALL: {e}"))?;
 
     let info = bus.read_data(s, 0, 4)?;
-    if info[0] != ctx.ram_slot_count || info[1] != ctx.active_ram_slot {
+    if info[1] != ctx.active_ram_slot {
         return Err(format!(
-            "GET_RAM_SLOT_INFO_ALL reports {} slot(s) with slot {} active; the device's own \
-             plugin API reports {} slot(s) with slot {} active",
-            info[0], info[1], ctx.ram_slot_count, ctx.active_ram_slot
+            "GET_RAM_SLOT_INFO_ALL reports slot {} active; the device's own plugin API reports \
+             slot {} active",
+            info[1], ctx.active_ram_slot
+        ));
+    }
+    if info[0] == 0 || info[1] >= info[0] {
+        return Err(format!(
+            "GET_RAM_SLOT_INFO_ALL reports {} RAM slot(s) with slot {} active — the active slot \
+             has to be one of the slots the device says it has",
+            info[0], info[1]
         ));
     }
     Ok(info[2])

@@ -301,6 +301,33 @@ static inline uint8_t failed_val(void) {
     return (uint8_t)(~s_state.cfg.status_ok);
 }
 
+// Most RAM slots this plugin will admit to a host.
+//
+// Every RBCP command that names a slot rejects 0xAA, so that a reset started
+// mid-command stays detectable.  A slot the host can never name is a slot it
+// can never use, so slot 170 is where the host-visible range has to stop —
+// advertising more would offer a slot that no host could switch to, poke, or
+// load into.
+#define MAX_HOST_SLOTS 170u
+
+// Number of RAM slots the host is told about, and the range it may name.
+//
+// The firmware reports as many slots as the RAM holds, which with a small ROM
+// is far more than a host can address.  Everything at or above this index is
+// this plugin's own — see nv_private_staging.
+static uint8_t host_slot_count(void) {
+    uint8_t total = s_get_ram_slot_count();
+    return total > MAX_HOST_SLOTS ? (uint8_t)MAX_HOST_SLOTS : total;
+}
+
+// Whether a slot index is one the host is allowed to name.
+//
+// Rejects the plugin's own slots as firmly as an out-of-range one: a host
+// reaching into them would be writing over a staging buffer mid-transaction.
+static bool host_slot_valid(uint8_t slot) {
+    return slot < host_slot_count();
+}
+
 // Write one byte into the response header at the given header-relative offset.
 // These reset_ring arg is intended to be used when update progress->complete,
 // to ensure we collect as few new bytes as possible after the host potentially
@@ -675,7 +702,7 @@ static bool exec_get_flash_slot_info_all(uint8_t slot) {
 
 static bool exec_get_ram_slot_info_all(uint8_t slot) {
     s_log("GET_RAM_SLOT_INFO_ALL: slot=%u", (unsigned)slot);
-    uint8_t  total    = s_get_ram_slot_count();
+    uint8_t  total    = host_slot_count();
     uint32_t rom_type = 0xFFu;
 
     // slot is s_state.active_slot — both the back-channel destination and
@@ -731,6 +758,10 @@ static bool exec_slot_peek(void) {
 
     if (target == 0xAAu) {
         s_log("SLOT_PEEK failed: target value 0xAA is reserved");
+        return false;
+    }
+    if (!host_slot_valid(target)) {
+        s_log("SLOT_PEEK failed: slot %u is not one the host may name", (unsigned)target);
         return false;
     }
 
@@ -800,6 +831,10 @@ static bool exec_slot_poke(void) {
         s_log("SLOT_POKE failed: target value 0xAA is reserved");
         return false;
     }
+    if (!host_slot_valid(target)) {
+        s_log("SLOT_POKE failed: slot %u is not one the host may name", (unsigned)target);
+        return false;
+    }
 
     uint32_t addr = (uint32_t)a0
                   | ((uint32_t)a1 << 8u)
@@ -812,6 +847,10 @@ static bool exec_switch_slot(void) {
 
     if (target == 0xAAu) {
         s_log("SWITCH_SLOT failed: target value 0xAA is reserved");
+        return false;
+    }
+    if (!host_slot_valid(target)) {
+        s_log("SWITCH_SLOT failed: slot %u is not one the host may name", (unsigned)target);
         return false;
     }
 
@@ -827,6 +866,10 @@ static bool exec_load_slot(void) {
 
     if ((ram_slot == 0xAAu) || (flash_slot == 0xAAu)) {
         s_log("LOAD_SLOT failed: slot value 0xAA is reserved");
+        return false;
+    }
+    if (!host_slot_valid(ram_slot)) {
+        s_log("LOAD_SLOT failed: slot %u is not one the host may name", (unsigned)ram_slot);
         return false;
     }
 
@@ -849,6 +892,10 @@ static bool exec_slot_poke_all_byte(void) {
 
     if (target == 0xAAu) {
         s_log("SLOT_POKE_ALL_BYTE failed: target value 0xAA is reserved");
+        return false;
+    }
+    if (!host_slot_valid(target)) {
+        s_log("SLOT_POKE_ALL_BYTE failed: slot %u is not one the host may name", (unsigned)target);
         return false;
     }
 
@@ -876,38 +923,52 @@ static bool exec_slot_poke_all_byte(void) {
 // NV Storage
 // ---------------------------------------------------------------------------
 
-// RP2350 bootrom lookup
-#define NV_ROM_TABLE_LOOKUP_ADDR    0x00000016u
-#define NV_ROM_TABLE_FLAG_ARM_SEC   0x0004u
-
-// RP2350 XIP QMI registers
-#define XIP_QMI_BASE        0x400d0000
-#define XIP_QMI_M0_TIMING   (*((volatile uint32_t *)(XIP_QMI_BASE + 0x0C)))
-#define XIP_QMI_M0_CLKDIV_MASK   0xFF
-#define XIP_QMI_M0_CLKDIV_SHIFT  0
-
-// RP2350 flash
-#define RP2350_FLASH_BASE   0x10000000u
+// The bootrom table, the XIP clock divisor, the base of mapped flash, the
+// extent of the erase routine and the pointer to its staged copy are all facts
+// about the device rather than about this plugin, so each goes through its own
+// named ORA macro — see "Device facts" in ora/api.h.  On a device every one of
+// them compiles to the expression that used to be written here inline.
 
 static void *nv_lookup_boot_fn(char a, char b) {
-    typedef void *(*rom_table_lookup_fn)(uint32_t code, uint32_t mask);
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Warray-bounds"
-    rom_table_lookup_fn rom_table_lookup =
-        (rom_table_lookup_fn)(uintptr_t)*(uint16_t *)(NV_ROM_TABLE_LOOKUP_ADDR);
-#pragma GCC diagnostic pop
     uint32_t code = ((uint32_t)(uint8_t)b << 8) | (uint32_t)(uint8_t)a;
-    return rom_table_lookup(code, NV_ROM_TABLE_FLAG_ARM_SEC);
+    return ORA_BOOTROM_LOOKUP(code, ORA_BOOTROM_FLAG_ARM_SEC);
 }
 
 static void nv_discard_impl(void) {
     init_nv_state();
 }
 
+static bool nv_private_staging(uint32_t *base_out, uint8_t *first_out);
+static uint32_t nv_staging_required(void);
+
+// Whether a write transaction can be staged anywhere at all.
+//
+// Two routes, and either will do: this plugin's own slots above the
+// host-visible range, or a slot the host lends us — which needs there to be
+// more than one, so that the one being served is not the one overwritten, and
+// needs that slot to be big enough.
+//
+// One function rather than the test written at each site, so that what
+// GET_NV_CAPABILITY reports and what the write commands do cannot drift apart.
+// A device that answered "writable" and then failed every transaction would be
+// worse than one that admitted it could not.
+static bool nv_writable(void) {
+    uint32_t base;
+    if (nv_private_staging(&base, NULL)) {
+        return true;
+    }
+    if (host_slot_count() <= 1u) {
+        return false;
+    }
+    uint32_t slot_size;
+    if (s_get_ram_slot_info(0u, NULL, &slot_size, NULL) != ORA_RESULT_OK) {
+        return false;
+    }
+    return slot_size >= nv_staging_required();
+}
+
 static bool exec_get_nv_capability(void) {
-    // Writable only if hardware supports it AND >1 RAM slot available
-    // (single-slot devices can never free a slot for staging)
-    bool writable = (s_get_ram_slot_count() > 1u);
+    bool writable = nv_writable();
     uint8_t resp[4] = {
         (uint8_t)(NV_STORAGE_SIZE & 0xFFu),
         (uint8_t)((NV_STORAGE_SIZE >> 8u) & 0xFFu),
@@ -941,9 +1002,66 @@ static bool exec_nv_peek(void) {
     return true;
 }
 
+// Bytes a staging area must hold: the whole of NV storage, plus the erase
+// routine copied in immediately above it.
+static uint32_t nv_staging_required(void) {
+    return NV_STORAGE_SIZE
+         + ORA_STAGED_FN_SIZE(__flash_erase_fn_start, __flash_erase_fn_end);
+}
+
+// Find a staging area among this plugin's own RAM slots, if it has any.
+//
+// The firmware reports every slot the RAM holds; the host is told about at
+// most MAX_HOST_SLOTS of them, so anything above that is ours.  Slots are
+// consecutive regions of SRAM, so a run of them is one contiguous buffer — and
+// a run is what a small ROM needs, since a slot is only as big as the ROM being
+// served and can be 2KB.
+//
+// The *highest* run, so that adding host-visible slots later — or a plugin
+// wanting a private slot of its own — takes from the bottom of the private
+// range and does not collide.
+//
+// Staging here rather than in the host's slot is strictly better for the host:
+// nothing it can name is disturbed.  Where there is no private slot at all —
+// a large ROM leaves few slots, and a 512KB one leaves a single slot — the
+// caller falls back to the slot the host lent us, which is what RBCP describes.
+static bool nv_private_staging(uint32_t *base_out, uint8_t *first_out) {
+    uint8_t total = s_get_ram_slot_count();
+    uint8_t host  = host_slot_count();
+    if (total <= host) {
+        return false;
+    }
+
+    uint32_t slot_size;
+    if (s_get_ram_slot_info(host, NULL, &slot_size, NULL) != ORA_RESULT_OK
+        || slot_size == 0u) {
+        return false;
+    }
+
+    uint32_t required     = nv_staging_required();
+    uint32_t slots_needed = (required + slot_size - 1u) / slot_size;
+    if (slots_needed > (uint32_t)(total - host)) {
+        return false;
+    }
+
+    uint8_t first = (uint8_t)((uint32_t)total - slots_needed);
+    if (first_out != NULL) {
+        *first_out = first;
+    }
+    return s_get_ram_slot_info(first, base_out, NULL, NULL) == ORA_RESULT_OK;
+}
+
 static bool nv_poke_begin_impl(uint8_t slot) {
     if (s_nv_state.active) {
         s_log("NPB: transaction already in progress");
+        return false;
+    }
+    // "Fails if ... the RAM slot specified is invalid, active or too small."
+    // The first two are checked whichever way the transaction is staged: the
+    // host is telling us which slot it is willing to lose, and naming the one
+    // being served is a mistake worth reporting even when we do not need it.
+    if (!host_slot_valid(slot)) {
+        s_log("NPB: slot %u is not one the host may name", (unsigned)slot);
         return false;
     }
     if (slot == s_state.active_slot) {
@@ -951,18 +1069,30 @@ static bool nv_poke_begin_impl(uint8_t slot) {
         return false;
     }
 
-    uint32_t slot_base, slot_size;
-    if (s_get_ram_slot_info(slot, &slot_base, &slot_size, NULL) != ORA_RESULT_OK) {
-        s_log("NPB: invalid slot %u", (unsigned)slot);
-        return false;
-    }
+    uint32_t erase_fn_size =
+        ORA_STAGED_FN_SIZE(__flash_erase_fn_start, __flash_erase_fn_end);
+    uint32_t required = nv_staging_required();
 
-    uint32_t erase_fn_size = (uint32_t)(__flash_erase_fn_end - __flash_erase_fn_start);
-    uint32_t required      = NV_STORAGE_SIZE + erase_fn_size;
-    if (slot_size < required) {
-        s_log("NPB: slot %u too small (%u < %u)",
-              (unsigned)slot, (unsigned)slot_size, (unsigned)required);
-        return false;
+    // Prefer our own slots; fall back to the one the host lent us.  Only the
+    // fallback cares how big that slot is — which is the whole point, since a
+    // slot is only as large as the ROM being served and a small ROM could
+    // never lend one big enough.
+    uint32_t slot_base, slot_size;
+    uint8_t  first_private;
+    if (nv_private_staging(&slot_base, &first_private)) {
+        slot_size = required;
+        s_log("NPB: staging in this plugin's own slots, from %u",
+              (unsigned)first_private);
+    } else {
+        if (s_get_ram_slot_info(slot, &slot_base, &slot_size, NULL) != ORA_RESULT_OK) {
+            s_log("NPB: invalid slot %u", (unsigned)slot);
+            return false;
+        }
+        if (slot_size < required) {
+            s_log("NPB: slot %u too small (%u < %u)",
+                  (unsigned)slot, (unsigned)slot_size, (unsigned)required);
+            return false;
+        }
     }
 
     // Copy NV flash contents into staging (linear SRAM write, no mangling)
@@ -1098,16 +1228,14 @@ static bool exec_nv_poke_commit(void) {
     connect_internal_flash();
 
     // Read clkdiv and compute flash offset before exiting XIP.
-    uint8_t  clkdiv    = (uint8_t)((XIP_QMI_M0_TIMING >> XIP_QMI_M0_CLKDIV_SHIFT)
-                                    & XIP_QMI_M0_CLKDIV_MASK);
-    uint32_t flash_offs = (uint32_t)__nv_storage_start - RP2350_FLASH_BASE;
+    uint8_t  clkdiv     = ORA_XIP_CLKDIV();
+    uint32_t flash_offs = ORA_FLASH_OFFSET(__nv_storage_start);
 
     s_log("NPC: offs=0x%08X clkdiv=%u", (unsigned)flash_offs, (unsigned)clkdiv);
 
     // Erase the NV sector via the function blob copied into the RAM slot.
-    // Thumb bit must be set on the function pointer.
-    nv_flash_erase_critical_fn_t erase_fn =
-        (nv_flash_erase_critical_fn_t)((s_nv_state.staging_base + NV_STORAGE_SIZE) | 1u);
+    nv_flash_erase_critical_fn_t erase_fn = ORA_STAGED_FN_PTR(
+        nv_flash_erase_critical_fn_t, s_nv_state.staging_base + NV_STORAGE_SIZE);
     erase_fn(
         flash_exit_xip,
         flash_range_erase,
@@ -1139,6 +1267,15 @@ static bool exec_nv_poke_commit_byte(void) {
     uint8_t slot    = ring_read_byte();
     if (slot == 0xAAu) {
         s_log("NV_POKE_COMMIT_BYTE: slot 0xAA invalid");
+        return false;
+    }
+
+    // Checked before the unchanged-byte short cut below, not after.  The
+    // command "fails if NV storage is not writable", and a host that gets
+    // status-OK from a write command has been told the write happened; on a
+    // read-only device it cannot have, whatever the byte was.
+    if (!nv_writable()) {
+        s_log("NV_POKE_COMMIT_BYTE: NV storage is read-only");
         return false;
     }
 

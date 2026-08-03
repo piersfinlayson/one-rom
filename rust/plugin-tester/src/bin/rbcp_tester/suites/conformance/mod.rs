@@ -17,6 +17,7 @@ pub mod control;
 pub mod framing;
 pub mod knock;
 pub mod modify;
+pub mod nv_storage;
 pub mod processing_sequence;
 pub mod read_group;
 pub mod reset;
@@ -248,6 +249,131 @@ pub static SCENARIOS: &[Scenario] = &[
         name: "conformance.modify.slot_poke_all_byte_rejects_slot_aa",
         spec_ref: "Group 0x02 — SLOT_POKE_ALL_BYTE (A1 of 0xAA is invalid and rejected)",
         run: modify::slot_poke_all_byte_rejects_slot_aa,
+    },
+    Scenario {
+        name: "conformance.nv.get_nv_capability",
+        spec_ref: "Group 0x03 — GET_NV_CAPABILITY; GET_NV_CAPABILITY Response Format",
+        run: nv_storage::get_nv_capability,
+    },
+    Scenario {
+        name: "conformance.nv.nv_capability_matches_behaviour",
+        spec_ref: "Group 0x03 — GET_NV_CAPABILITY; NV_POKE_BEGIN",
+        run: nv_storage::nv_capability_matches_behaviour,
+    },
+    Scenario {
+        name: "conformance.nv.erased_storage_reads_as_ff",
+        spec_ref: "Group 0x03 — NV Storage (initialized to 0xFF before first write)",
+        run: nv_storage::erased_storage_reads_as_ff,
+    },
+    Scenario {
+        name: "conformance.nv.nv_peek_reads_storage",
+        spec_ref: "Group 0x03 — NV_PEEK; NV_PEEK Response Format",
+        run: nv_storage::nv_peek_reads_storage,
+    },
+    Scenario {
+        name: "conformance.nv.nv_peek_count_zero_is_256",
+        spec_ref: "Group 0x03 — NV_PEEK (a count of zero indicates 256 bytes)",
+        run: nv_storage::nv_peek_count_zero_is_256,
+    },
+    Scenario {
+        name: "conformance.nv.nv_peek_rejects_location_msb_above_7f",
+        spec_ref: "Group 0x03 — NV_PEEK (the location MSB must not exceed 0x7F)",
+        run: nv_storage::nv_peek_rejects_location_msb_above_7f,
+    },
+    Scenario {
+        name: "conformance.nv.nv_peek_beyond_storage_fails",
+        spec_ref: "Group 0x03 — NV_PEEK (the requested range exceeds the NV storage size)",
+        run: nv_storage::nv_peek_beyond_storage_fails,
+    },
+    Scenario {
+        name: "conformance.nv.nv_peek_exceeding_data_section_fails",
+        spec_ref: "Group 0x03 — NV_PEEK (insufficient space in the response data section)",
+        run: nv_storage::nv_peek_exceeding_data_section_fails,
+    },
+    Scenario {
+        name: "conformance.nv.nv_peek_and_slot_peek_read_different_stores",
+        spec_ref: "Group 0x03 — NV_PEEK; Group 0x01 — SLOT_PEEK",
+        run: nv_storage::nv_peek_and_slot_peek_read_different_stores,
+    },
+    Scenario {
+        name: "conformance.nv.nv_poke_discard_abandons_the_transaction",
+        spec_ref: "Group 0x03 — NV_POKE_BEGIN, NV_POKE, NV_POKE_DISCARD",
+        run: nv_storage::nv_poke_discard_abandons_the_transaction,
+    },
+    Scenario {
+        name: "conformance.nv.nv_poke_begin_rejects_a_second_transaction",
+        spec_ref: "Group 0x03 — NV Storage (only one write transaction at a time)",
+        run: nv_storage::nv_poke_begin_rejects_a_second_transaction,
+    },
+    Scenario {
+        name: "conformance.nv.nv_poke_begin_rejects_bad_slots",
+        spec_ref: "Group 0x03 — NV_POKE_BEGIN (invalid, active or 0xAA slot)",
+        run: nv_storage::nv_poke_begin_rejects_bad_slots,
+    },
+    Scenario {
+        name: "conformance.nv.nv_poke_and_discard_need_a_transaction",
+        spec_ref: "Group 0x03 — NV_POKE, NV_POKE_DISCARD (no transaction in progress)",
+        run: nv_storage::nv_poke_and_discard_need_a_transaction,
+    },
+    Scenario {
+        name: "conformance.nv.nv_poke_rejects_bad_locations",
+        spec_ref: "Group 0x03 — NV_POKE (location MSB above 0x7F; beyond the NV storage size)",
+        run: nv_storage::nv_poke_rejects_bad_locations,
+    },
+    Scenario {
+        name: "conformance.nv.nv_peek_reads_storage_during_a_transaction",
+        spec_ref: "Group 0x03 — NV_PEEK (always reads NV storage, transaction or not)",
+        run: nv_storage::nv_peek_reads_storage_during_a_transaction,
+    },
+    Scenario {
+        name: "conformance.nv.exiting_command_response_mode_discards_the_transaction",
+        spec_ref: "Group 0x03 — NV Storage (exit by any route discards the staging buffer)",
+        run: nv_storage::exiting_command_response_mode_discards_the_transaction,
+    },
+    Scenario {
+        name: "conformance.nv.nv_poke_commit_byte_returns_early_for_an_unchanged_byte",
+        spec_ref: "Group 0x03 — NV_POKE_COMMIT_BYTE",
+        run: nv_storage::nv_poke_commit_byte_returns_early_for_an_unchanged_byte,
+    },
+    Scenario {
+        name: "conformance.nv.nv_poke_commit_byte_rejects_slot_aa",
+        spec_ref: "Group 0x03 — NV_POKE_COMMIT_BYTE (A3 of 0xAA is invalid and rejected)",
+        run: nv_storage::nv_poke_commit_byte_rejects_slot_aa,
+    },
+    Scenario {
+        name: "conformance.nv.nv_poke_commit_writes_the_staging_buffer",
+        spec_ref: "Group 0x03 — NV_POKE_COMMIT",
+        run: nv_storage::nv_poke_commit_writes_the_staging_buffer,
+    },
+    Scenario {
+        name: "conformance.nv.nv_poke_commit_erases_before_programming",
+        spec_ref: "Group 0x03 — NV_POKE_COMMIT (device erase/program sequence)",
+        run: nv_storage::nv_poke_commit_erases_before_programming,
+    },
+    Scenario {
+        name: "conformance.nv.nv_poke_commit_needs_a_transaction",
+        spec_ref: "Group 0x03 — NV_POKE_COMMIT (no transaction in progress)",
+        run: nv_storage::nv_poke_commit_needs_a_transaction,
+    },
+    Scenario {
+        name: "conformance.nv.nv_poke_commit_byte_performs_the_whole_transaction",
+        spec_ref: "Group 0x03 — NV_POKE_COMMIT_BYTE (BEGIN, POKE, COMMIT in one command)",
+        run: nv_storage::nv_poke_commit_byte_performs_the_whole_transaction,
+    },
+    Scenario {
+        name: "conformance.nv.a_commit_outlives_the_session",
+        spec_ref: "Group 0x03 — NV Storage (dedicated non-volatile storage)",
+        run: nv_storage::a_commit_outlives_the_session,
+    },
+    Scenario {
+        name: "conformance.nv.nv_poke_commit_byte_refused_when_read_only",
+        spec_ref: "Group 0x03 — NV_POKE_COMMIT_BYTE (fails if NV storage is not writable)",
+        run: nv_storage::nv_poke_commit_byte_refused_when_read_only,
+    },
+    Scenario {
+        name: "conformance.nv.not_valid_in_command_mode",
+        spec_ref: "Group 0x03 — NV Storage (command-response mode only)",
+        run: nv_storage::not_valid_in_command_mode,
     },
     Scenario {
         name: "conformance.reset.group_and_command_bytes_match",

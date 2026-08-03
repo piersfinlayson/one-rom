@@ -13,7 +13,7 @@ use std::{env, path::PathBuf, process::Command};
 
 /// Plugin directory, relative to the project root, and its Makefile target.
 const PLUGIN_DIR: &str = "plugins/user/host-control";
-const PLUGIN_OBJ: &str = "build-host/host_control_main.o";
+const PLUGIN_OBJS: &[&str] = &["build-host/host_control_main.o", "build-host/flash_erase.o"];
 
 /// Flags the shim is compiled with.  These must stay in step with the plugin's
 /// `host` target and with `firmware/test.mk`: all three objects link together,
@@ -70,7 +70,7 @@ fn main() {
         "make host failed in {}",
         plugin_dir.display()
     );
-    let plugin_obj = plugin_dir.join(PLUGIN_OBJ);
+    let plugin_objs: Vec<PathBuf> = PLUGIN_OBJS.iter().map(|o| plugin_dir.join(o)).collect();
 
     // ── Shim object ──────────────────────────────────────────────────────────
 
@@ -81,6 +81,9 @@ fn main() {
         .arg(format!("-I{}", firmware.join("include").display()))
         .arg(format!("-I{}", firmware.join("generated").display()))
         .arg(format!("-I{}", firmware.join("ora").display()))
+        // The shim calls the plugin's own erase routine and shares its
+        // bootrom function-pointer types.
+        .arg(format!("-I{}", plugin_dir.join("src").display()))
         .arg("-c")
         .arg(manifest_dir.join("csrc/host_shim.c"))
         .arg("-o")
@@ -100,14 +103,14 @@ fn main() {
             .arg("-static")
             .arg("-o")
             .arg(&archive)
-            .arg(&plugin_obj)
+            .args(&plugin_objs)
             .arg(&shim_obj)
             .status()
     } else {
         Command::new("ar")
             .arg("rcs")
             .arg(&archive)
-            .arg(&plugin_obj)
+            .args(&plugin_objs)
             .arg(&shim_obj)
             .status()
     }
