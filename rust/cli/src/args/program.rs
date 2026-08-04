@@ -255,7 +255,10 @@ pub struct ProgramArgs {
     #[arg(long, visible_aliases = ["boot-logging", "boot_logging"], default_missing_value = "true", num_args = 0..=1, conflicts_with_all = ["no_config"])]
     pub logging: Option<bool>,
 
-    /// Enable/disable SWD debugging on this One ROM firmware
+    /// Shut SWD down before ROM serving starts, to stop debug port SRAM
+    /// accesses stealing cycles from the serving DMAs.  SWD stays up for the
+    /// whole of boot (including boot logging), then goes off until the next
+    /// reset.  Not a debug lockout - BOOTSEL/PICOBOOT are unaffected
     #[arg(long, visible_aliases = ["swd-disable", "swd_disable"], default_missing_value = "true", num_args = 0..=1, conflicts_with_all = ["no_config"])]
     pub disable_swd: Option<bool>,
 

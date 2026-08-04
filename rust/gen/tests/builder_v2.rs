@@ -587,6 +587,39 @@ mod tests {
         assert_eq!(v.read_u8(HDR_TURBO_BOOT).unwrap(), 1);
     }
 
+    /// Boot logging with SWD disabled is a supported combination: SWD stays up
+    /// for the whole of boot, so the boot log is emitted in full, and is only
+    /// shut off when serving starts.  This pairing used to be rejected by
+    /// validate_config_v2.
+    ///
+    /// Asserts the build succeeds *and* that both flags reach the header with
+    /// the values asked for - a build that quietly forced swd_enabled back to
+    /// 1 would otherwise pass.
+    #[test]
+    fn v2_boot_logging_with_swd_disabled() {
+        let json = r#"{
+            "version": 1,
+            "description": "boot logging, SWD off",
+            "swd_enabled": false,
+            "boot_logging": true,
+            "chip_sets": [{
+                "type": "single",
+                "chips": [{ "file": "test.bin", "type": "2364", "cs1": "active_low" }]
+            }]
+        }"#;
+
+        let mut b = v2_builder(json);
+        b.add_file(FileData::new(0, vec![0xAAu8; 8192])).unwrap();
+
+        let (meta, _rom) = b
+            .build(v2_props(Board::Fire24A))
+            .expect("boot_logging with swd_enabled = false must build");
+        let v = view(&meta);
+
+        assert_eq!(v.read_u8(HDR_BOOT_LOGGING).unwrap(), 1);
+        assert_eq!(v.read_u8(HDR_SWD_ENABLED).unwrap(), 0);
+    }
+
     // ========================================================================
     // v2 firmware config: instance_name and serial_override
     // ========================================================================

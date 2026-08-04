@@ -1986,11 +1986,6 @@ fn validate_config_v2(
         }
     }
 
-    if !config.swd_enabled && config.boot_logging {
-        return Err(Error::InvalidConfig {
-            error: "Boot logging cannot be enabled when SWD is disabled".to_string(),
-        });
-    }
     if config.turbo_boot && num_non_plugin_slots > 1 {
         return Err(Error::InvalidConfig {
             error: "Turbo boot cannot be enabled when there is more than one non-plugin ROM slot"

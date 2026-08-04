@@ -441,7 +441,7 @@ These are rejected with `--no-config`.
 | `--instance-name <NAME>` (aliases `--onerom`, `--one-rom`, `--onerom-name`, `--one-rom-name`, …) | Give this One ROM a name. |
 | `--serial-override <NEW SERIAL>` | Override the device's reported serial number. |
 | `--logging [BOOL]` (aliases `--boot-logging`) | Enable boot logging. Takes an optional boolean; bare flag means `true`. |
-| `--disable-swd [BOOL]` (aliases `--swd-disable`) | Enable/disable SWD debugging. Optional boolean; bare flag means `true`. |
+| `--disable-swd [BOOL]` (aliases `--swd-disable`) | Shut SWD down before ROM serving starts, so debug port accesses to SRAM don't steal cycles from the serving DMAs. SWD is available for the whole of boot — including boot logging — and goes off until the next reset. Nothing is logged past that point, and plugins get no logging. This is not a debug lockout: the boot ROM runs before the One ROM firmware does, and BOOTSEL/PICOBOOT are unaffected. Optional boolean; bare flag means `true`. |
 | `--turbo-boot [BOOL]` | Enable turbo boot — starts serving faster but supports only a single programmed slot. Optional boolean; bare flag means `true`. |
 
 ### Board, version and output

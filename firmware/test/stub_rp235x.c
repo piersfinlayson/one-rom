@@ -126,6 +126,10 @@ void disable_sel_pins(void) {
     STUB_LOG("disable_sel_pins");
 }
 
+void disable_swd(void) {
+    STUB_LOG("disable_swd");
+}
+
 // Enters bootloader mode.
 void enter_bootloader(void) {
     STUB_LOG("enter_bootloader");

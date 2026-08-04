@@ -577,11 +577,22 @@ pub struct Config {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub serial_override: Option<String>,
 
-    /// Whether to enable boot logging, using SWD.
+    /// Whether to enable boot logging.  Logging is emitted over RTT, so a
+    /// debug probe must be attached to see it.  Compatible with
+    /// swd_enabled = false, as SWD stays up for the whole of boot.
     #[serde(default = "default_boot_logging")]
     pub boot_logging: bool,
 
-    /// Whether to enable SWD.  Must be enabled for boot logging.
+    /// Whether to leave SWD enabled once the One ROM starts serving.
+    ///
+    /// When false, SWD is available for the whole of boot and is shut off
+    /// immediately before serving starts, staying off until the next reset.
+    /// This stops debug port accesses to SRAM stealing cycles from the
+    /// serving DMAs.  Nothing is logged past that point, and plugins get no
+    /// logging.
+    ///
+    /// This is not a debug lockout - the boot ROM runs before the One ROM
+    /// firmware does, and BOOTSEL/PICOBOOT are unaffected.
     #[serde(default = "default_swd_enabled")]
     pub swd_enabled: bool,
 

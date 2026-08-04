@@ -150,7 +150,7 @@ Fire boards support 16MHz to 800MHz in various increments (as defined in the sch
 ```
 
 - __LED__ - Disable to save power or if you don't want a status LED on your ROM.  Note, if present and the device enters "limp mode" (e.g. due to a fault or unrecoverable configuration error), the LED will still blink to indicate an error.
-- __SWD__ - Disable the debug interface to reduce bus contention and improve serving performance.  Not yet supported, may be removed in a future release.
+- __SWD__ - Disable the debug interface to reduce bus contention and improve serving performance.  SWD is available for the whole of boot, including boot logging, and is shut off just before serving starts, staying off until the next reset.  Not a debug lockout - BOOTSEL/PICOBOOT are unaffected.
 
 ### Example: ROM-Specific Configuration
 

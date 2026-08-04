@@ -859,13 +859,13 @@ comment = "Number of populated ROM slots"
 name = "boot_logging"
 kind = "scalar"
 type = "u8"
-comment = "Enable boot logging (currently requires SWD). 0=off, 1=on."
+comment = "Enable boot logging, emitted over RTT (so needs a debug probe attached). 0=off, 1=on."
 
 [[structs.fields]]
 name = "swd_enabled"
 kind = "scalar"
 type = "u8"
-comment = "Enable SWD. 0=off, 1=on."
+comment = "Leave SWD enabled once serving starts. 0=off, 1=on. When 0, SWD is up for the whole of boot then shut off just before serving, to keep debug port SRAM accesses off the serving DMAs. Not a debug lockout."
 
 [[structs.fields]]
 name = "turbo_boot"
@@ -1401,7 +1401,7 @@ comment = "Live status-LED on/off state and plugin coordination channel; seeded 
 name = "swd_enabled"
 kind = "scalar"
 type = "u8"
-comment = "Whether SWD is enabled"
+comment = "Whether SWD is left enabled once serving starts. Applied just before serving, after any ROM slot override."
 
 [[structs.fields]]
 name = "fire_vreg"

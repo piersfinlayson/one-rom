@@ -136,6 +136,13 @@
   `--in`/`--out` unchanged).
 - New `Error` variants: `ImageTransform`, `IceBoardUnsupported`, and the GPIO
   control errors (device not running, pin in use, no free hold slot).
+- `--disable-swd` now takes effect on the device: SWD stays up for the whole of
+  boot and is shut off just before serving. It may now be combined with
+  `--logging`, previously rejected, and logging stops when SWD does. Its help
+  text now says what it does and does not do.
+- Fix `firmware build` accepting `--swd_disabled` where `program` accepted
+  `--swd_disable`, so each underscore spelling worked on only one subcommand.
+  `--disable-swd` and `--swd-disable` are unchanged and work on both.
 
 ## v0.2.0 - 2026-07-20
 

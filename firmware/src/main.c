@@ -113,5 +113,18 @@ int firmware_main(void) {
     // starts any plugins.  We do it from higher up the stack, so the minimum
     // stack is used for any plugin running on this core. 
     LOG("Setup ROM serving");
+
+    // Shut SWD down before serving starts, if configured to do so.  Done last
+    // so a probe is available for all of boot - including boot logging, which
+    // rides RTT over SWD.  Nothing is logged beyond this point, and plugins
+    // (started from vector.c once pio() returns) get no logging either.
+    //
+    // Cheap enough - a RAM test and a few register writes - to do even when
+    // turbo booting.
+    if (!RUNTIME->swd_enabled) {
+        LOG("Disabling SWD");
+        disable_swd();
+    }
+
     return pio();
 }

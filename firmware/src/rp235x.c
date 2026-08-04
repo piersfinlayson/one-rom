@@ -683,7 +683,7 @@ void disable_sel_pins(void) {
                 (pin == HW->gpio_swdio)) {
                 DEBUG("Restore pin %d", pin);
 
-                GPIO_CTRL(ii) = GPIO_CTRL_RESET;
+                GPIO_CTRL(pin) = GPIO_CTRL_RESET;
                 // Use measured value to restore function
                 if (pin == HW->gpio_swclk) {
                     GPIO_PAD(SWCLK_PAD) = 0x5A;
@@ -693,6 +693,27 @@ void disable_sel_pins(void) {
             }
         }
     }
+}
+
+// Shut SWD down for the remainder of this power cycle.
+//
+// Called just before we start serving, so a probe is usable for the whole of
+// boot (including boot logging, which rides RTT over SWD) and only goes away
+// once serving starts.  There is deliberately no path back - the pads stay
+// isolated until the next reset.
+//
+// The point is to stop the debug port's SRAM accesses stealing cycles from
+// the serving DMAs.  It is not a debug lockout: the boot ROM runs before we
+// do, and BOOTSEL/PICOBOOT are unaffected.
+//
+// Same mechanism as the shared image select pin handling in setup_sel_pins()
+// - force the debug port to attach internally, and isolate both SWD pads so
+// an external probe can no longer clock the port - but applied to both pads
+// unconditionally, as SWD may not be shared with a sel pin on this board.
+void disable_swd(void) {
+    SYSCFG_DBGFORCE |= SYSCFG_DBGFORCE_ATTACH_BIT;
+    GPIO_PAD(SWCLK_PAD) = (1 << PAD_ISO_BIT);
+    GPIO_PAD(SWDIO_PAD) = (1 << PAD_ISO_BIT);
 }
 #endif // !TEST_BUILD
 

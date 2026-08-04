@@ -54,6 +54,7 @@ void setup_mco(void);
 uint32_t setup_sel_pins(uint64_t *sel_mask, uint64_t *flip_bits);
 uint64_t get_sel_value(uint64_t sel_mask, uint64_t flip_bits);
 void disable_sel_pins(void);
+void disable_swd(void);
 void setup_status_led(void);
 void blink_pattern(uint32_t on_time, uint32_t off_time, uint8_t repeats);
 void enter_bootloader(void);
