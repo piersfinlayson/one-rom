@@ -39,16 +39,18 @@ cargo test -p onerom-protocol
 echo "Testing schema-gen..."
 cargo test -p schema-gen
 
-# Generated files that are checked in must match a fresh regeneration.  Both
-# generators resolve their output path from CARGO_MANIFEST_DIR, so it does not
+# Generated files that are checked in must match a fresh regeneration.  Every
+# generator resolves its output path from CARGO_MANIFEST_DIR, so it does not
 # matter that we are in rust/ rather than the repo root.
 echo "Checking generated files are up to date..."
 cargo run -p onerom-gen --bin compat
 cargo run -p schema-gen --bin schema-gen
+cargo run -q -p onerom-gen --bin layout -- --write-baseline
 
 GENERATED_FILES=(
     "docs/COMPATIBILITY.md"
     "onerom-config/schema.json"
+    "ci/layout-baseline.txt"
 )
 
 cd ..
@@ -61,6 +63,11 @@ elif ! git diff --quiet -- "${GENERATED_FILES[@]}"; then
     echo
     echo "They have been regenerated in your working tree.  Review the diff and"
     echo "commit it - do not hand-edit these files."
+    echo
+    echo "For ci/layout-baseline.txt, which records how much flash each chip type"
+    echo "costs on each board, run this to see whether a change is an improvement"
+    echo "or a regression before committing it:"
+    echo "  cargo run -p onerom-gen --bin layout -- --check"
     exit 1
 fi
 

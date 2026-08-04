@@ -19,6 +19,10 @@ path = "src/lib.rs"
 name = "compat"
 path = "src/bin/compat_bin.rs"
 
+[[bin]]
+name = "layout"
+path = "src/bin/layout_bin.rs"
+
 [features]
 # Used to generate JSON schema files
 schemars = ["dep:schemars", "onerom-config/schemars"]

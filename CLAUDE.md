@@ -206,6 +206,10 @@ Some checked-in files are generated and must stay in sync — `ci/rust-tests.sh`
 
 - `cargo run -p onerom-gen --bin compat` → `docs/COMPATIBILITY.md`
 - `cargo run -p schema-gen --bin schema-gen` → `onerom-config/schema.json`
+- `cargo run -p onerom-gen --bin layout -- --write-baseline` →
+  `ci/layout-baseline.txt`, the flash each chip type costs on each board.
+  A diff says the numbers moved; `cargo run -p onerom-gen --bin layout --
+  --check` says whether that is an improvement or a regression.
 
 (e.g. a version bump changes `COMPATIBILITY.md`.) These generators, along with
 `ci/rust-tests.sh` and `ci/rust-docs.sh` (slow — `rust-docs.sh` especially), are

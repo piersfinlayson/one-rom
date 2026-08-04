@@ -12,7 +12,9 @@
 
 use alloc::vec::Vec;
 
-use crate::image::{Chip, CsConfig, CsLogic};
+use onerom_config::chip::ChipType;
+
+use crate::image::{CsConfig, CsLogic};
 
 /// A chip control line, identified by its role on the chip. Used in
 /// `MultiChipCsConfig` to avoid a dependency on `cs_data_layout::SelectRole`
@@ -133,8 +135,17 @@ pub(crate) fn control_line_logic(name: &str, cs_config: &CsConfig) -> CsLogic {
 ///
 /// `check_cs_v2` guarantees all `chips[1+]` agree and that `chips[0]` does not
 /// ignore its per-chip select.
-pub fn derive_multi_cs_config(chips: &[Chip]) -> MultiChipCsConfig {
-    let chip0_type = *chips[0].chip_type();
+///
+/// Takes the chip types' configuration rather than the [`Chip`]s themselves,
+/// like every other derivation in `v2` — a `Chip` additionally carries ROM
+/// image data, filenames and sizes, none of which this needs, and requiring
+/// them would put this out of reach of anything that reasons about a chip set
+/// before there are images to build it from (see `compat`).
+pub fn derive_multi_cs_config(
+    chip0_type: ChipType,
+    chip0_config: &CsConfig,
+    secondary_config: &CsConfig,
+) -> MultiChipCsConfig {
     let control_lines = chip0_type.control_lines();
 
     // Only consider the chip's actual control lines (ce/oe/cs1/cs2/cs3).
@@ -156,9 +167,6 @@ pub fn derive_multi_cs_config(chips: &[Chip]) -> MultiChipCsConfig {
     // The secondary's single active line is the per-chip select; the rest are
     // Ignore there. chip0's own polarity then splits those into commoned
     // (active on chip0) vs truly ignored (Ignore on chip0).
-    let secondary_config = chips[1].cs_config();
-    let chip0_config = chips[0].cs_config();
-
     let mut per_chip_select = None;
     let mut commoned_lines = Vec::new();
     let mut ignored_lines = Vec::new();

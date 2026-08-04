@@ -15,9 +15,10 @@ use std::path::{Path, PathBuf};
 
 use onerom_config::chip::{CHIP_TYPE_NAMES, ChipType};
 use onerom_config::hw::{Board, Model};
+use onerom_gen::ChipSetType;
 use onerom_gen::compat::{
-    ChipCompat, CompatResult, check_chip_on_board, format_size, is_v2_chip, pin_offset_order,
-    supported_chips,
+    ChipCompat, CompatResult, check_chip_set_on_board, default_cs_config, format_size, is_v2_chip,
+    pin_offset_order, supported_chips,
 };
 
 // ── Repository paths ──────────────────────────────────────────────────────────
@@ -167,7 +168,16 @@ fn write_matrix_section(w: &mut impl Write, title: &str, boards: &[Board]) -> io
             }
             let results: Vec<Option<CompatResult>> = boards
                 .iter()
-                .map(|b| check_chip_on_board(*b, chip_type))
+                .map(|b| {
+                    check_chip_set_on_board(
+                        *b,
+                        chip_type,
+                        ChipSetType::Single,
+                        1,
+                        default_cs_config(chip_type),
+                    )
+                    .ok()
+                })
                 .collect();
             if results.iter().all(|r| r.is_none()) {
                 return None;
@@ -251,7 +261,7 @@ fn write_board_table(w: &mut impl Write, board: Board) -> io::Result<()> {
     writeln!(w, "## {} — {}", board.description(), board.name())?;
     writeln!(w)?;
 
-    let entries = supported_chips(board);
+    let entries = supported_chips(board, ChipSetType::Single, 1);
 
     if entries.is_empty() {
         writeln!(w, "*(no supported chips)*")?;
@@ -379,6 +389,16 @@ fn generate_document(w: &mut impl Write) -> io::Result<()> {
                  of the larger socket, with the top pins of the socket unpopulated. \
                  A short fly-lead must be run from each additional address pin of those \
                  socket pins to the X1 (and, if two are needed, X2) header pin on One ROM."
+    )?;
+    writeln!(w)?;
+    writeln!(
+        w,
+        "**Every image size below assumes One ROM monitors all of the chip's control \
+                 lines** — every chip select, or /CE and /OE — which is what the tools \
+                 produce unless told otherwise. A chip that One ROM can only serve with one \
+                 of those lines left unmonitored is shown as unsupported here, because \
+                 doing that requires the `allow_cs_ignore` config option and cannot be \
+                 expressed on the `onerom` command line at all."
     )?;
     writeln!(w)?;
     writeln!(w, "| Cell | Meaning |")?;

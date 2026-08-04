@@ -4,10 +4,10 @@
 
 //! Chip-board compatibility checking for v2 (Fire/RP2350) boards.
 //!
-//! [`check_chip_on_board`] runs the full v2 address and CS/data layout
-//! derivation for a (board, chip_type) pair and returns a [`CompatResult`]
-//! describing the ROM table parameters, or `None` if the combination is not
-//! supportable.
+//! [`check_chip_set_on_board`] runs the full v2 address and CS/data layout
+//! derivation for a (board, chip_type, set shape) triple and returns a
+//! [`CompatResult`] describing the ROM table parameters, or `None` if the
+//! combination is not supportable.
 //!
 //! Used by the `compat` binary to generate the compatibility matrix and
 //! per-board chip tables, and by the CLI's `chips` command - which share
@@ -18,16 +18,20 @@ use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use onerom_config::chip::{CHIP_TYPE_NAMES, ChipType};
 use onerom_config::hw::Board;
+#[cfg(test)]
+use onerom_config::hw::Model;
 use onerom_metadata::BitModes;
 
 use crate::image::{ChipSetType, CsConfig, CsLogic};
-use crate::v2::addr_layout::derive_addr_layout;
+use crate::v2::addr_layout::{LayoutError, derive_addr_layout};
 use crate::v2::alg_config::bit_mode_for;
 use crate::v2::cs_data_layout::derive_cs_data_layout;
+use crate::v2::multi_cs_config::derive_multi_cs_config;
 use crate::v2::slot_context::{SlotContext, socket_pin_offset};
 
 /// ROM table parameters for a supported chip-board combination.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct CompatResult {
     /// Address bits in the ROM table index. The table has `2^num_addr_pins`
     /// entries and `slot_size_bytes` bytes total.
@@ -48,9 +52,47 @@ pub struct CompatResult {
     /// combinations; 1 for a single fly-lead to X1, 2 for fly-leads to both
     /// X1 and X2.
     pub num_fly_lead_pins: u8,
+
+    /// The table-index bits that carry nothing: one bit set per GPIO inside
+    /// the address window `[gpio_base, gpio_base + num_addr_pins)` that is
+    /// neither one of the chip's address lines nor, for a banked set, X1/X2.
+    ///
+    /// Each such GPIO doubles the ROM table without addressing any more of
+    /// the chip, so [`CompatResult::excess_addr_bits`] is exactly the power
+    /// of two by which `slot_size_bytes` exceeds the smallest table that
+    /// could serve this slot. Note that floor is `2^(address lines)`, not the
+    /// chip's capacity: a 23QL384 holds 48KB but has 16 address lines, so
+    /// 64KB is the least any board can serve it from. A GPIO lands here
+    /// either because the board maps some unrelated signal into the middle of
+    /// the chip's address range, or because the range was widened to
+    /// `MIN_ADDR_PINS`.
+    ///
+    /// Absolute GPIO numbers, so bit `n` is GPIO `n`; the RP2350B's 48 GPIOs
+    /// all fit. Resolve a bit to the pin responsible with
+    /// [`Board::socket_pin_for_gpio`] / [`Board::x_pin_for_gpio`].
+    pub hole_gpios: u64,
 }
 
 impl CompatResult {
+    /// How many table-index bits address nothing — the population count of
+    /// [`CompatResult::hole_gpios`].
+    ///
+    /// `slot_size_bytes` is `2^excess_addr_bits` times the flash this chip
+    /// set would occupy on a board that placed its address lines
+    /// contiguously, so `0` means no board layout could serve this slot from
+    /// less flash and there is nothing left to win.
+    pub fn excess_addr_bits(&self) -> u32 {
+        self.hole_gpios.count_ones()
+    }
+
+    /// The GPIOs of [`CompatResult::hole_gpios`], ascending.
+    pub fn hole_gpio_list(&self) -> Vec<u8> {
+        (0..u64::BITS)
+            .filter(|bit| self.hole_gpios & (1u64 << bit) != 0)
+            .map(|bit| bit as u8)
+            .collect()
+    }
+
     /// True if the chip and board socket are the same size — no adapter or
     /// fly-leads needed.
     pub fn is_native(&self) -> bool {
@@ -122,7 +164,78 @@ pub fn is_v2_chip(chip_type: ChipType) -> bool {
     !chip_type.is_plugin() && crate::SUPPORTED_CHIP_TYPES_V2.contains(&chip_type)
 }
 
-/// Check if `chip_type` can be served on `board` in a single-chip slot.
+/// The CS configuration a user gets for `chip_type` without opting out of
+/// anything: every control line the chip has is monitored.
+///
+/// Which lines One ROM monitors changes the layout, because
+/// `derive_cs_data_layout` only pulls a line into the select range when it is
+/// configured active. Setting one to `Ignore` drops it out, which derives on
+/// boards the full configuration cannot reach — but `check_cs_v2` requires
+/// `allow_cs_ignore` to do that ("Misuse can cause bus contention"), and the
+/// CLI's `--slot` will not accept `ignore` at all. So this is the
+/// configuration compatibility should be reported against; anything looser
+/// describes hardware a user cannot ask for.
+///
+/// Polarity is left to `CsConfig::from_chip_type`, which takes fixed lines
+/// from the silicon. `ActiveLow` for the configurable ones is arbitrary and
+/// harmless: polarity places a line on the same GPIO either way and is
+/// resolved later by `cs_overrides`.
+pub fn default_cs_config(chip_type: ChipType) -> CsConfig {
+    let logic = |name: &str| {
+        chip_type
+            .control_lines()
+            .iter()
+            .any(|l| l.name == name)
+            .then_some(CsLogic::ActiveLow)
+    };
+
+    CsConfig::from_chip_type(
+        &chip_type,
+        logic("cs1"),
+        logic("cs2"),
+        logic("cs3"),
+        logic("cs4"),
+        logic("ce"),
+        logic("oe"),
+    )
+}
+
+/// The CS configuration a secondary chip of a multi set necessarily has.
+///
+/// A secondary reaches One ROM through a single fly-leaded select on an X
+/// pin, so exactly one of its control lines is monitored and the rest are
+/// `Ignore` — which `check_cs_v2` permits unconditionally for secondaries,
+/// and which `derive_multi_cs_config` reads to identify the per-chip select
+/// before using chip0's own configuration to split the remainder into
+/// commoned and truly-ignored. This is not a guess at the user's config: it
+/// is the only shape a secondary can take.
+///
+/// For a CE/OE chip that means [`CsConfig::CeOeExplicit`] with CE as the
+/// select and OE `Ignore`d — the variant exists for exactly this. Leaving
+/// both active (plain `CsConfig::CeOe`, where `control_line_logic` reports
+/// both as `ActiveLow`) would present two active lines and make
+/// `derive_multi_cs_config` pick whichever came last as the select.
+fn multi_secondary_config(chip_type: ChipType) -> CsConfig {
+    let has = |name: &str| chip_type.control_lines().iter().any(|l| l.name == name);
+
+    if has("ce") && has("oe") {
+        CsConfig::CeOeExplicit {
+            ce: CsLogic::ActiveLow,
+            oe: CsLogic::Ignore,
+        }
+    } else {
+        default_cs_config(chip_type)
+    }
+}
+
+/// The largest multi set the firmware can serve: the chip in the socket plus
+/// one secondary per X pin, and there are only ever X1 and X2.
+///
+/// Mirrors `builder::check_config`'s `TooManyChips` limit, so a shape the
+/// builder would reject is not reported here as servable.
+const MAX_MULTI_CHIPS: usize = 3;
+
+/// Check if a slot of `num_chips` × `chip_type` can be served on `board`.
 ///
 /// Returns `Some(CompatResult)` if both the address-layout and CS/data-layout
 /// derivation succeed. Returns `None` if:
@@ -131,7 +244,13 @@ pub fn is_v2_chip(chip_type: ChipType) -> bool {
 /// - `derive_addr_layout` fails — e.g. the GPIO span for the chip's address
 ///   lines does not fit any PIO window, or an overhanging address pin cannot
 ///   be assigned to an X pin.
-/// - `derive_cs_data_layout` fails.
+/// - `derive_cs_data_layout` fails — e.g. the chip's select lines do not land
+///   on contiguous GPIOs in this configuration.
+/// - The resulting ROM table would exceed `MAX_IMAGE_SIZE`, which
+///   `build_rom_slot` rejects. Reachable for banked sets of large chips.
+/// - `num_chips` does not match `set_type`: `Single` takes exactly 1, `Banked`
+///   2 or more, `Multi` between 2 and [`MAX_MULTI_CHIPS`]; or the board does
+///   not support that set type.
 ///
 /// Native, overhang (smaller chip in larger socket), and fly-lead (larger
 /// chip in smaller socket) combinations are all evaluated where
@@ -139,40 +258,63 @@ pub fn is_v2_chip(chip_type: ChipType) -> bool {
 /// indicates how many connections from the chip socket's address pins to One
 /// ROM's X1/X2 header pins are required.
 ///
-/// CS configuration for the layout check: cs1 = `ActiveLow`, cs2/cs3 =
-/// `Ignore`. This activates only the primary select line and is sufficient
-/// for layout compatibility checking — polarity does not affect GPIO
-/// placement. For CE/OE chips, the cs1 value is irrelevant (their
-/// control_lines() do not include cs1); CE and OE fall back to `ActiveLow`
-/// via `control_line_logic`'s `ChipSelect` match arm.
-pub fn check_chip_on_board(board: Board, chip_type: ChipType) -> Option<CompatResult> {
+/// `cs_config` names which control lines One ROM monitors, and is a genuine
+/// input rather than a detail: a line configured `Ignore` is left out of the
+/// select range entirely, so the same chip can derive on a board in one
+/// configuration and be refused in another. Use [`default_cs_config`] for the
+/// configuration a user gets by default. Polarity within that (`ActiveLow`
+/// vs `ActiveHigh`) does not affect GPIO placement.
+pub fn check_chip_set_on_board(
+    board: Board,
+    chip_type: ChipType,
+    set_type: ChipSetType,
+    num_chips: usize,
+    cs_config: CsConfig,
+) -> Result<CompatResult, crate::Error> {
     if !is_v2_chip(chip_type) {
-        return None;
+        return Err(crate::Error::UnsupportedBoardChipType { board, chip_type });
     }
 
-    let pin_offset = socket_pin_offset(chip_type.chip_pins(), board.chip_pins())?;
+    match set_type {
+        ChipSetType::Single if num_chips == 1 => {}
+        ChipSetType::Banked if num_chips >= 2 && board.supports_banked_roms() => {}
+        ChipSetType::Multi
+            if (2..=MAX_MULTI_CHIPS).contains(&num_chips) && board.supports_multi_chip_sets() => {}
+        // Anything else is not a slot shape.
+        ChipSetType::Single | ChipSetType::Banked | ChipSetType::Multi => {
+            return Err(crate::Error::UnsupportedBoardConfig {
+                board,
+                reason: alloc::format!("board cannot serve a {num_chips}-chip {set_type:?} set"),
+            });
+        }
+    }
+
+    let pin_offset = socket_pin_offset(chip_type.chip_pins(), board.chip_pins())
+        .ok_or(crate::Error::UnsupportedBoardChipType { board, chip_type })?;
     let bit_mode = bit_mode_for(chip_type, board);
 
-    let cs_config = CsConfig::new(
-        Some(CsLogic::ActiveLow),
-        Some(CsLogic::Ignore),
-        Some(CsLogic::Ignore),
-        None,
-    );
+    let multi_cs_config = match set_type {
+        ChipSetType::Multi => Some(derive_multi_cs_config(
+            chip_type,
+            &cs_config,
+            &multi_secondary_config(chip_type),
+        )),
+        ChipSetType::Single | ChipSetType::Banked => None,
+    };
 
     let ctx = SlotContext {
         board,
-        set_type: ChipSetType::Single,
-        chip_types: alloc::vec![chip_type],
+        set_type,
+        chip_types: alloc::vec![chip_type; num_chips],
         cs_config,
         bit_mode,
         pin_offset,
         force_16_bit: false,
-        multi_cs_config: None,
+        multi_cs_config,
     };
 
-    let addr_layout = derive_addr_layout(&ctx).ok()?;
-    derive_cs_data_layout(&ctx, Some(&addr_layout)).ok()?;
+    let addr_layout = derive_addr_layout(&ctx)?;
+    derive_cs_data_layout(&ctx, Some(&addr_layout))?;
 
     let bytes_per_word: u32 = if matches!(bit_mode, BitModes::BitMode16) {
         2
@@ -200,16 +342,51 @@ pub fn check_chip_on_board(board: Board, chip_type: ChipType) -> Option<CompatRe
         0
     };
 
-    Some(CompatResult {
+    let slot_size_bytes = (1u32 << addr_layout.num_addr_pins) * bytes_per_word;
+
+    // build_rom_slot rejects a table over MAX_IMAGE_SIZE, so a combination
+    // that produces one is not servable however the layout derives. Reported
+    // through the same LayoutError build_rom_slot would raise, so the message
+    // a caller shows is the one the builder would have shown.
+    if slot_size_bytes as usize > crate::MAX_IMAGE_SIZE {
+        return Err(LayoutError::RomTableTooLarge {
+            board,
+            chip_type,
+            set_type,
+            num_chips,
+            num_addr_pins: addr_layout.num_addr_pins,
+            table_size: slot_size_bytes as usize,
+        }
+        .into());
+    }
+
+    // The window's table-index bits that carry no address line and no bank
+    // select. Excess address pins are excluded by construction: they sit
+    // outside the window, acting as CS half-selects rather than table bits.
+    let live: u64 = addr_layout
+        .addr_pin_gpios
+        .iter()
+        .chain(addr_layout.x1_gpio.iter())
+        .chain(addr_layout.x2_gpio.iter())
+        .fold(0u64, |acc, &gpio| acc | (1u64 << gpio));
+
+    let window_end = addr_layout.gpio_base + addr_layout.num_addr_pins;
+    let hole_gpios = (addr_layout.gpio_base..window_end)
+        .filter(|gpio| live & (1u64 << gpio) == 0)
+        .fold(0u64, |acc, gpio| acc | (1u64 << gpio));
+
+    Ok(CompatResult {
         num_addr_pins: addr_layout.num_addr_pins,
-        slot_size_bytes: (1u32 << addr_layout.num_addr_pins) * bytes_per_word,
+        slot_size_bytes,
         pin_offset,
         num_fly_lead_pins,
+        hole_gpios,
     })
 }
 
 /// One chip type a board can emulate, as listed by [`supported_chips`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct ChipCompat {
     /// The chip type.
     pub chip_type: ChipType,
@@ -223,7 +400,8 @@ pub struct ChipCompat {
     /// the image occupies ([`CompatResult::slot_size_bytes`]).
     pub rom_size_bytes: u32,
 
-    /// How the chip fits this board, and how much flash its image uses.
+    /// How the chip fits this board, and how much flash its image uses, in
+    /// the configuration [`default_cs_config`] describes.
     pub result: CompatResult,
 }
 
@@ -236,24 +414,35 @@ pub fn pin_offset_order(pin_offset: i16) -> i32 {
     }
 }
 
-/// Every chip type `board` can emulate, with the flash each one's image uses.
+/// Every chip type `board` can emulate in a slot of `num_chips` × that chip,
+/// with the flash each one's image uses.
 ///
 /// Ordered as `docs/COMPATIBILITY.md` presents it - native fits first, then
 /// overhang, then fly-lead; within a class by how far the chip's pin count is
 /// from the board's, then ascending ROM size, then name - so a caller can group
 /// consecutive runs of equal `result.pin_offset` into that document's sections.
 ///
-/// Sizes are for a chip served alone in its slot. A banked or multi-chip set
-/// draws X1/X2 (and, for a multi set, the per-chip select and commoned control
-/// lines) into the slot's address window, which can make its table larger than
-/// the figure here; only the builder knows that, since it depends on the set's
-/// exact composition.
-pub fn supported_chips(board: Board) -> Vec<ChipCompat> {
+/// Pass `(ChipSetType::Single, 1)` for chips served alone. A banked set draws
+/// X1/X2 into the slot's address window, which can make its table more than
+/// `num_chips` times the single-chip figure, and can put the set beyond
+/// `MAX_IMAGE_SIZE` entirely - such entries are absent rather than listed.
+///
+/// Chips are checked in the configuration [`default_cs_config`] describes -
+/// every control line monitored. A chip that derives only with a line set to
+/// `Ignore` is absent, because reaching that needs `allow_cs_ignore`, and the
+/// CLI cannot express it at all.
+///
+/// [`ChipSetType::Multi`] lists a homogeneous set - `num_chips` of the same
+/// chip type. A heterogeneous set (a C64's 2364 + 2332 + 2364) is the
+/// builder's business: its layout turns on each member's own configuration.
+pub fn supported_chips(board: Board, set_type: ChipSetType, num_chips: usize) -> Vec<ChipCompat> {
     let mut entries: Vec<ChipCompat> = CHIP_TYPE_NAMES
         .iter()
         .filter_map(|alias| {
             let chip_type = ChipType::try_from_str(alias)?;
-            let result = check_chip_on_board(board, chip_type)?;
+            let cs_config = default_cs_config(chip_type);
+            let result =
+                check_chip_set_on_board(board, chip_type, set_type, num_chips, cs_config).ok()?;
             Some(ChipCompat {
                 chip_type,
                 alias,
@@ -280,7 +469,7 @@ mod tests {
     use super::*;
 
     fn find(board: Board, alias: &str) -> ChipCompat {
-        *supported_chips(board)
+        *supported_chips(board, ChipSetType::Single, 1)
             .iter()
             .find(|e| e.alias == alias)
             .unwrap_or_else(|| panic!("{alias} should be listed for {}", board.name()))
@@ -340,7 +529,7 @@ mod tests {
     #[test]
     fn orders_by_fit_class_without_interleaving() {
         for board in [Board::Fire24F, Board::Fire28C, Board::Fire32B] {
-            let entries = supported_chips(board);
+            let entries = supported_chips(board, ChipSetType::Single, 1);
             assert!(!entries.is_empty(), "{} lists no chips", board.name());
 
             let classes: Vec<i32> = entries
@@ -371,7 +560,7 @@ mod tests {
     /// number stamped on the chip rather than One ROM's preferred name for it.
     #[test]
     fn lists_each_alias_separately() {
-        let entries = supported_chips(Board::Fire24F);
+        let entries = supported_chips(Board::Fire24F, ChipSetType::Single, 1);
         for alias in ["2316", "9316", "9316A"] {
             assert!(
                 entries.iter().any(|e| e.alias == alias),
@@ -383,8 +572,208 @@ mod tests {
     /// A chip the board cannot serve has no size to report.
     #[test]
     fn omits_unsupported_chips() {
-        let entries = supported_chips(Board::Fire24F);
+        let entries = supported_chips(Board::Fire24F, ChipSetType::Single, 1);
         assert!(entries.iter().all(|e| e.alias != "27C400"));
-        assert!(check_chip_on_board(Board::Fire24F, ChipType::Chip27C400).is_none());
+        assert!(
+            check_chip_set_on_board(
+                Board::Fire24F,
+                ChipType::Chip27C400,
+                ChipSetType::Single,
+                1,
+                default_cs_config(ChipType::Chip27C400)
+            )
+            .is_err()
+        );
+    }
+
+    fn single(board: Board, chip_type: ChipType) -> CompatResult {
+        check_chip_set_on_board(
+            board,
+            chip_type,
+            ChipSetType::Single,
+            1,
+            default_cs_config(chip_type),
+        )
+        .expect("chip should be servable on this board")
+    }
+
+    /// The wasted table-index bits name the GPIO, and so the socket pin,
+    /// costing the flash.
+    ///
+    /// Fire28D's 23128 is the worked case: 14 address lines spanning GPIO
+    /// 13..=27, with socket pin 1 (A15, unused by a 23128) mapped to GPIO 18
+    /// in the middle of them. That one GPIO widens the window to 15 bits and
+    /// doubles the image to 32KB for a 16KB chip.
+    #[test]
+    fn wasted_bits_name_the_pin_responsible() {
+        let result = single(Board::Fire28D, ChipType::Chip23128);
+
+        assert_eq!(result.slot_size_bytes, 32 * 1024);
+        assert_eq!(result.excess_addr_bits(), 1);
+        assert_eq!(result.hole_gpio_list(), alloc::vec![18]);
+        assert_eq!(Board::Fire28D.socket_pin_for_gpio(18), Some(1));
+    }
+
+    /// A chip whose address lines the board places contiguously wastes
+    /// nothing, and says so with an empty hole set rather than an absent one.
+    /// Fire28D's 27512 uses all 16 GPIOs of its window.
+    #[test]
+    fn a_chip_at_its_floor_has_no_holes() {
+        let result = single(Board::Fire28D, ChipType::Chip27512);
+
+        assert_eq!(result.slot_size_bytes, 64 * 1024);
+        assert_eq!(result.excess_addr_bits(), 0);
+        assert_eq!(result.hole_gpios, 0);
+        assert!(result.hole_gpio_list().is_empty());
+    }
+
+    /// Excess bits and image size agree by construction: the image is
+    /// `2^excess` times the smallest table the chip's address lines could be
+    /// served from, on every board and chip the generator supports.
+    #[test]
+    fn excess_bits_account_for_the_whole_image() {
+        for board in Model::Fire.boards().iter().filter(|b| b.mcu_pio()) {
+            for entry in supported_chips(*board, ChipSetType::Single, 1) {
+                let floor = entry.result.slot_size_bytes >> entry.result.excess_addr_bits();
+                assert_eq!(
+                    floor << entry.result.excess_addr_bits(),
+                    entry.result.slot_size_bytes,
+                    "{} {}: {} excess bits does not account for a {}B image",
+                    board.name(),
+                    entry.alias,
+                    entry.result.excess_addr_bits(),
+                    entry.result.slot_size_bytes,
+                );
+                // The floor is never below the chip's own size, except for
+                // an oversized ROM (27C080 at 1MB): its top address lines are
+                // carved out as CS half-selects, so the table holds half the
+                // chip and MAX_IMAGE_SIZE is the real bound.
+                let bound = entry.rom_size_bytes.min(crate::MAX_IMAGE_SIZE as u32);
+                assert!(
+                    floor >= bound,
+                    "{} {}: floor {floor}B is below the {bound}B this chip needs",
+                    board.name(),
+                    entry.alias,
+                );
+            }
+        }
+    }
+
+    /// A banked set is a different layout problem from the same chip alone:
+    /// it draws X1/X2 into the address window. On Fire24F a single 2364 is
+    /// served from an 8KB table with nothing wasted, but a banked pair has to
+    /// reach X1 at GPIO 9 - below the whole address block - so the window
+    /// widens past every address line in between.
+    #[test]
+    fn a_banked_set_is_measured_separately_from_the_single() {
+        let alone = single(Board::Fire24F, ChipType::Chip2364);
+        assert_eq!(alone.slot_size_bytes, 8 * 1024);
+        assert_eq!(alone.excess_addr_bits(), 0);
+
+        let banked = check_chip_set_on_board(
+            Board::Fire24F,
+            ChipType::Chip2364,
+            ChipSetType::Banked,
+            2,
+            default_cs_config(ChipType::Chip2364),
+        )
+        .expect("Fire24F should serve a banked pair of 2364s");
+
+        assert_eq!(banked.slot_size_bytes, 32 * 1024);
+        assert_eq!(banked.excess_addr_bits(), 1);
+    }
+
+    /// A set whose table would exceed `MAX_IMAGE_SIZE` is not servable, and
+    /// is reported as such rather than as an oversized image `build_rom_slot`
+    /// would go on to reject. Fire28D serves a banked pair of 23QL384s from a
+    /// 512KB table - exactly the limit - so four of them cannot fit.
+    #[test]
+    fn a_set_beyond_the_image_limit_is_unsupported() {
+        for (num_chips, servable) in [(2, true), (4, false)] {
+            let result = check_chip_set_on_board(
+                Board::Fire28D,
+                ChipType::Chip23QL384,
+                ChipSetType::Banked,
+                num_chips,
+                default_cs_config(ChipType::Chip23QL384),
+            );
+            assert_eq!(
+                result.is_ok(),
+                servable,
+                "banked x{num_chips} of 23QL384 on Fire28D"
+            );
+        }
+    }
+
+    /// A (set type, chip count) pairing that is not a slot shape is declined
+    /// rather than derived from nonsense - a single set holds one chip, and a
+    /// banked or multi set holds at least two.
+    #[test]
+    fn shapes_that_are_not_slot_shapes_are_declined() {
+        for (set_type, num_chips) in [
+            (ChipSetType::Single, 2),
+            (ChipSetType::Banked, 1),
+            (ChipSetType::Multi, 1),
+        ] {
+            assert!(
+                check_chip_set_on_board(
+                    Board::Fire28D,
+                    ChipType::Chip27512,
+                    set_type,
+                    num_chips,
+                    default_cs_config(ChipType::Chip27512),
+                )
+                .is_err(),
+                "{set_type:?} x{num_chips} is not a slot shape"
+            );
+        }
+    }
+
+    /// A homogeneous multi set is checkable at board level, which is the
+    /// point of taking the chip set's configuration rather than its images.
+    ///
+    /// Fire24F serving two 2364s is the Commodore case - a Kernal and a Basic
+    /// in one One ROM, the second selected through X1. The pair costs 32KB
+    /// against 16KB of ROM, X1 sitting one GPIO below the address block.
+    #[test]
+    fn a_homogeneous_multi_set_is_checkable() {
+        let result = check_chip_set_on_board(
+            Board::Fire24F,
+            ChipType::Chip2364,
+            ChipSetType::Multi,
+            2,
+            default_cs_config(ChipType::Chip2364),
+        )
+        .expect("Fire24F should serve two 2364s as a multi set");
+
+        assert_eq!(result.slot_size_bytes, 32 * 1024);
+        assert_eq!(result.excess_addr_bits(), 1);
+    }
+
+    /// A multi set's secondaries have exactly one monitored control line, so
+    /// a CE/OE chip's secondary must ignore OE and select on CE. Modelling it
+    /// as plain `CeOe` would present both lines as active and leave
+    /// `derive_multi_cs_config` picking the last one it saw as the select.
+    #[test]
+    fn a_ce_oe_secondary_selects_on_ce_alone() {
+        assert_eq!(
+            multi_secondary_config(ChipType::Chip27512),
+            CsConfig::CeOeExplicit {
+                ce: CsLogic::ActiveLow,
+                oe: CsLogic::Ignore,
+            }
+        );
+
+        assert!(
+            check_chip_set_on_board(
+                Board::Fire28D,
+                ChipType::Chip27512,
+                ChipSetType::Multi,
+                2,
+                default_cs_config(ChipType::Chip27512),
+            )
+            .is_ok(),
+            "a CE/OE chip should be servable as a multi pair"
+        );
     }
 }

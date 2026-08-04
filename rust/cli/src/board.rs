@@ -108,7 +108,14 @@ fn resolve_socket_chip(board: &Board, name: &str) -> Result<ChipType, Error> {
         return Err(Error::UnsupportedChipType(name.to_string(), supported));
     }
     let emulatable = board.allows_chip_type(chip)
-        || onerom_gen::compat::check_chip_on_board(*board, chip).is_some();
+        || onerom_gen::compat::check_chip_set_on_board(
+            *board,
+            chip,
+            onerom_gen::ChipSetType::Single,
+            1,
+            onerom_gen::compat::default_cs_config(chip),
+        )
+        .is_ok();
     if !emulatable {
         return Err(Error::UnsupportedChipType(name.to_string(), supported));
     }

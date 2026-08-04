@@ -12,6 +12,8 @@ Some lower pin count ROMs can be emulated by larger One ROMs, by inserting the l
 
 Some greater pin count ROMs can be emulated by a smaller One ROM, provided the ROM's extra address pins fall on socket positions that One ROM does not use. In this case, the smaller One ROM gets installed to the bottom of the larger socket, with the top pins of the socket unpopulated. A short fly-lead must be run from each additional address pin of those socket pins to the X1 (and, if two are needed, X2) header pin on One ROM.
 
+**Every image size below assumes One ROM monitors all of the chip's control lines** — every chip select, or /CE and /OE — which is what the tools produce unless told otherwise. A chip that One ROM can only serve with one of those lines left unmonitored is shown as unsupported here, because doing that requires the `allow_cs_ignore` config option and cannot be expressed on the `onerom` command line at all.
+
 | Cell | Meaning |
 |:---|:---|
 | `64KB` | Chip is supported on this board; shows the image size |
@@ -26,7 +28,7 @@ Some greater pin count ROMs can be emulated by a smaller One ROM, provided the R
 | Chip | ROM size | 24A | 24B | 24C | 24D | 24E | 24F |
 |:---|---:|---:|---:|---:|---:|---:|---:|
 | 2704 | 512B | 2KB | 2KB | 512B | 512B | 512B | 512B |
-| HM7641 | 512B | - | - | 512B | 512B | 512B | 512B |
+| HM7641 | 512B | 2KB | 2KB | 512B | 512B | 512B | 512B |
 | 2708 | 1KB | 4KB | 4KB | 1KB | 1KB | 1KB | 1KB |
 | 2316 | 2KB | 32KB | 32KB | 2KB | 2KB | 2KB | 2KB |
 | 2716 | 2KB | 32KB | 32KB | 2KB | 2KB | 2KB | 2KB |
@@ -94,17 +96,12 @@ Some greater pin count ROMs can be emulated by a smaller One ROM, provided the R
 | Chip | ROM size | 28A | 28B | 28C | 28D |
 |:---|---:|---:|---:|---:|---:|
 | 2704 | 512B | 4KB* | 4KB* | 4KB* | 4KB* |
+| HM7641 | 512B | - | - | 4KB* | 4KB* |
 | 2708 | 1KB | 16KB* | 16KB* | 8KB* | 8KB* |
-| 2316 | 2KB | 32KB* | 32KB* | 32KB* | 32KB* |
 | 2716 | 2KB | 32KB* | 32KB* | 32KB* | 32KB* |
 | 28C16 | 2KB | 32KB* | 32KB* | 32KB* | 32KB* |
-| 9316 | 2KB | 32KB* | 32KB* | 32KB* | 32KB* |
-| 9316A | 2KB | 32KB* | 32KB* | 32KB* | 32KB* |
-| 2332 | 4KB | 128KB* | 128KB* | 256KB* | 256KB* |
 | 2732 | 4KB | 32KB* | 32KB* | 32KB* | 32KB* |
 | 27C32 | 4KB | 32KB* | 32KB* | 32KB* | 32KB* |
-| 4732 | 4KB | 128KB* | 128KB* | 256KB* | 256KB* |
-| 9332 | 4KB | 128KB* | 128KB* | 256KB* | 256KB* |
 | 2364 | 8KB | 128KB* | 128KB* | 256KB* | 256KB* |
 | 4764 | 8KB | 128KB* | 128KB* | 256KB* | 256KB* |
 | MCM68364 | 8KB | 128KB* | 128KB* | 256KB* | 256KB* |
@@ -167,7 +164,6 @@ Some greater pin count ROMs can be emulated by a smaller One ROM, provided the R
 | 27C64 | 8KB | 256KB* | 32KB* |
 | 27LC64 | 8KB | 256KB* | 32KB* |
 | 28C64 | 8KB | 256KB* | 32KB* |
-| 23128 | 16KB | 256KB* | 32KB* |
 | 27128 | 16KB | 256KB* | 32KB* |
 | 27C128 | 16KB | 256KB* | 32KB* |
 | 27LC128 | 16KB | 256KB* | 32KB* |
@@ -193,12 +189,10 @@ Some greater pin count ROMs can be emulated by a smaller One ROM, provided the R
 | Chip | ROM size | 32A | 32B |
 |:---|---:|---:|---:|
 | 2704 | 512B | 32KB* | 4KB* |
+| HM7641 | 512B | 32KB* | - |
 | 2708 | 1KB | 64KB* | 8KB* |
-| 2316 | 2KB | 256KB* | 32KB* |
 | 2716 | 2KB | 256KB* | 32KB* |
 | 28C16 | 2KB | 256KB* | 32KB* |
-| 9316 | 2KB | 256KB* | 32KB* |
-| 9316A | 2KB | 256KB* | 32KB* |
 | 2732 | 4KB | 256KB* | 32KB* |
 | 27C32 | 4KB | 256KB* | 32KB* |
 
@@ -244,6 +238,7 @@ Every fit other than `native` is a cross-size fit, and in all of them One ROM's 
 | Chip | ROM size | Image size | Fit |
 |:---|---:|---:|:---|
 | 2704 | 512B | 2KB | native |
+| HM7641 | 512B | 2KB | native |
 | 2708 | 1KB | 4KB | native |
 | 2316 | 2KB | 32KB | native |
 | 2716 | 2KB | 32KB | native |
@@ -280,6 +275,7 @@ Every fit other than `native` is a cross-size fit, and in all of them One ROM's 
 | Chip | ROM size | Image size | Fit |
 |:---|---:|---:|:---|
 | 2704 | 512B | 2KB | native |
+| HM7641 | 512B | 2KB | native |
 | 2708 | 1KB | 4KB | native |
 | 2316 | 2KB | 32KB | native |
 | 2716 | 2KB | 32KB | native |
@@ -496,16 +492,10 @@ Every fit other than `native` is a cross-size fit, and in all of them One ROM's 
 |:---|---:|---:|:---|
 | 2704 | 512B | 4KB | overhang |
 | 2708 | 1KB | 16KB | overhang |
-| 2316 | 2KB | 32KB | overhang |
 | 2716 | 2KB | 32KB | overhang |
 | 28C16 | 2KB | 32KB | overhang |
-| 9316 | 2KB | 32KB | overhang |
-| 9316A | 2KB | 32KB | overhang |
-| 2332 | 4KB | 128KB | overhang |
 | 2732 | 4KB | 32KB | overhang |
 | 27C32 | 4KB | 32KB | overhang |
-| 4732 | 4KB | 128KB | overhang |
-| 9332 | 4KB | 128KB | overhang |
 | 2364 | 8KB | 128KB | overhang |
 | 4764 | 8KB | 128KB | overhang |
 | MCM68364 | 8KB | 128KB | overhang |
@@ -560,16 +550,10 @@ Every fit other than `native` is a cross-size fit, and in all of them One ROM's 
 |:---|---:|---:|:---|
 | 2704 | 512B | 4KB | overhang |
 | 2708 | 1KB | 16KB | overhang |
-| 2316 | 2KB | 32KB | overhang |
 | 2716 | 2KB | 32KB | overhang |
 | 28C16 | 2KB | 32KB | overhang |
-| 9316 | 2KB | 32KB | overhang |
-| 9316A | 2KB | 32KB | overhang |
-| 2332 | 4KB | 128KB | overhang |
 | 2732 | 4KB | 32KB | overhang |
 | 27C32 | 4KB | 32KB | overhang |
-| 4732 | 4KB | 128KB | overhang |
-| 9332 | 4KB | 128KB | overhang |
 | 2364 | 8KB | 128KB | overhang |
 | 4764 | 8KB | 128KB | overhang |
 | MCM68364 | 8KB | 128KB | overhang |
@@ -623,17 +607,12 @@ Every fit other than `native` is a cross-size fit, and in all of them One ROM's 
 | Chip | ROM size | Image size | Fit |
 |:---|---:|---:|:---|
 | 2704 | 512B | 4KB | overhang |
+| HM7641 | 512B | 4KB | overhang |
 | 2708 | 1KB | 8KB | overhang |
-| 2316 | 2KB | 32KB | overhang |
 | 2716 | 2KB | 32KB | overhang |
 | 28C16 | 2KB | 32KB | overhang |
-| 9316 | 2KB | 32KB | overhang |
-| 9316A | 2KB | 32KB | overhang |
-| 2332 | 4KB | 256KB | overhang |
 | 2732 | 4KB | 32KB | overhang |
 | 27C32 | 4KB | 32KB | overhang |
-| 4732 | 4KB | 256KB | overhang |
-| 9332 | 4KB | 256KB | overhang |
 | 2364 | 8KB | 256KB | overhang |
 | 4764 | 8KB | 256KB | overhang |
 | MCM68364 | 8KB | 256KB | overhang |
@@ -694,17 +673,12 @@ Every fit other than `native` is a cross-size fit, and in all of them One ROM's 
 | Chip | ROM size | Image size | Fit |
 |:---|---:|---:|:---|
 | 2704 | 512B | 4KB | overhang |
+| HM7641 | 512B | 4KB | overhang |
 | 2708 | 1KB | 8KB | overhang |
-| 2316 | 2KB | 32KB | overhang |
 | 2716 | 2KB | 32KB | overhang |
 | 28C16 | 2KB | 32KB | overhang |
-| 9316 | 2KB | 32KB | overhang |
-| 9316A | 2KB | 32KB | overhang |
-| 2332 | 4KB | 256KB | overhang |
 | 2732 | 4KB | 32KB | overhang |
 | 27C32 | 4KB | 32KB | overhang |
-| 4732 | 4KB | 256KB | overhang |
-| 9332 | 4KB | 256KB | overhang |
 | 2364 | 8KB | 256KB | overhang |
 | 4764 | 8KB | 256KB | overhang |
 | MCM68364 | 8KB | 256KB | overhang |
@@ -762,7 +736,6 @@ Every fit other than `native` is a cross-size fit, and in all of them One ROM's 
 | 27C64 | 8KB | 256KB | overhang |
 | 27LC64 | 8KB | 256KB | overhang |
 | 28C64 | 8KB | 256KB | overhang |
-| 23128 | 16KB | 256KB | overhang |
 | 27128 | 16KB | 256KB | overhang |
 | 27C128 | 16KB | 256KB | overhang |
 | 27LC128 | 16KB | 256KB | overhang |
@@ -788,12 +761,10 @@ Every fit other than `native` is a cross-size fit, and in all of them One ROM's 
 | Chip | ROM size | Image size | Fit |
 |:---|---:|---:|:---|
 | 2704 | 512B | 32KB | overhang |
+| HM7641 | 512B | 32KB | overhang |
 | 2708 | 1KB | 64KB | overhang |
-| 2316 | 2KB | 256KB | overhang |
 | 2716 | 2KB | 256KB | overhang |
 | 28C16 | 2KB | 256KB | overhang |
-| 9316 | 2KB | 256KB | overhang |
-| 9316A | 2KB | 256KB | overhang |
 | 2732 | 4KB | 256KB | overhang |
 | 27C32 | 4KB | 256KB | overhang |
 
@@ -837,7 +808,6 @@ Every fit other than `native` is a cross-size fit, and in all of them One ROM's 
 | 27C64 | 8KB | 32KB | overhang |
 | 27LC64 | 8KB | 32KB | overhang |
 | 28C64 | 8KB | 32KB | overhang |
-| 23128 | 16KB | 32KB | overhang |
 | 27128 | 16KB | 32KB | overhang |
 | 27C128 | 16KB | 32KB | overhang |
 | 27LC128 | 16KB | 32KB | overhang |
@@ -864,11 +834,8 @@ Every fit other than `native` is a cross-size fit, and in all of them One ROM's 
 |:---|---:|---:|:---|
 | 2704 | 512B | 4KB | overhang |
 | 2708 | 1KB | 8KB | overhang |
-| 2316 | 2KB | 32KB | overhang |
 | 2716 | 2KB | 32KB | overhang |
 | 28C16 | 2KB | 32KB | overhang |
-| 9316 | 2KB | 32KB | overhang |
-| 9316A | 2KB | 32KB | overhang |
 | 2732 | 4KB | 32KB | overhang |
 | 27C32 | 4KB | 32KB | overhang |
 

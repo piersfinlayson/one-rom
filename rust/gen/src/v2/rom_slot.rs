@@ -115,7 +115,11 @@ pub fn build_rom_slot(
     let bit_mode = bit_mode_for(chip_types[0], board);
 
     let multi_cs_config: Option<MultiChipCsConfig> = if set_type == ChipSetType::Multi {
-        Some(derive_multi_cs_config(chips))
+        Some(derive_multi_cs_config(
+            chip_types[0],
+            chips[0].cs_config(),
+            chips[1].cs_config(),
+        ))
     } else {
         None
     };

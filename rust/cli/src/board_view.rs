@@ -29,7 +29,8 @@
 use onerom_config::chip::{CHIP_TYPES, ChipType};
 use onerom_config::hw::{Board, HeaderColumn, HeaderRole, HeaderSlot};
 use onerom_config::mcu::PinTolerance;
-use onerom_gen::compat::{check_chip_on_board, format_size};
+use onerom_gen::ChipSetType;
+use onerom_gen::compat::{check_chip_set_on_board, default_cs_config, format_size};
 use onerom_gen::socket_pin_offset;
 
 /// Inner text width of a header pad, between its side walls' margin spaces.
@@ -559,7 +560,9 @@ pub fn render_rom_socket(board: &Board, chip: Option<ChipType>, show_gpio: bool)
     if let Some(c) = chip {
         // The flash this chip costs on this board - the same figure
         // `onerom chips` and docs/COMPATIBILITY.md report.
-        if let Some(result) = check_chip_on_board(*board, c) {
+        if let Ok(result) =
+            check_chip_set_on_board(*board, c, ChipSetType::Single, 1, default_cs_config(c))
+        {
             out.push_str(&format!(
                 "  Image size {} (ROM size {}) — the flash One ROM uses to emulate this chip.\n",
                 format_size(result.slot_size_bytes),

@@ -12,7 +12,10 @@ use onerom_config::mcu::Variant;
 use onerom_fw::net::{Release, Releases, fetch_license_async};
 use onerom_fw::{assemble_firmware, get_rom_files_async, read_rom_config, validate_sizes};
 use onerom_fw_parser::{ParsedDevice, Parser, readers::MemoryReader};
-use onerom_gen::compat::{ChipCompat, check_chip_on_board, format_size, supported_chips};
+use onerom_gen::ChipSetType;
+use onerom_gen::compat::{
+    ChipCompat, check_chip_set_on_board, default_cs_config, format_size, supported_chips,
+};
 use onerom_gen::{Builder, FIRMWARE_SIZE, License};
 
 use crate::args;
@@ -753,7 +756,7 @@ fn chip_group_heading(board: &Board, entry: &ChipCompat) -> String {
 /// messages. Wider than `Board::supported_chip_type_names()`, which covers only
 /// the board's own pin count - this includes the overhang and fly-lead types.
 fn emulatable_chip_names(board: &Board) -> String {
-    supported_chips(*board)
+    supported_chips(*board, ChipSetType::Single, 1)
         .iter()
         .map(|e| e.alias)
         .collect::<Vec<_>>()
@@ -775,7 +778,7 @@ fn print_chip_names_for_board(board: &Board) {
 }
 
 fn print_chips_for_board(board: &Board) {
-    let entries = supported_chips(*board);
+    let entries = supported_chips(*board, ChipSetType::Single, 1);
     println!(
         "Supported chip types for {} ({}):",
         board.name(),
@@ -867,7 +870,14 @@ fn print_chip_on_board(board: &Board, name: &str) -> Result<(), Error> {
     let unsupported = || Error::UnsupportedChipType(name.to_string(), emulatable_chip_names(board));
 
     let chip_type = ChipType::try_from_str(name).ok_or_else(unsupported)?;
-    let result = check_chip_on_board(*board, chip_type).ok_or_else(unsupported)?;
+    let result = check_chip_set_on_board(
+        *board,
+        chip_type,
+        ChipSetType::Single,
+        1,
+        default_cs_config(chip_type),
+    )
+    .map_err(|_| unsupported())?;
 
     println!("{name} on {} ({}):", board.name(), board.description());
     println!(
