@@ -5,7 +5,7 @@
     "type": "object",
     "properties": {
         "boot_logging": {
-            "description": "Whether to enable boot logging, using SWD.",
+            "description": "Whether to enable boot logging.  Logging is emitted over RTT, so a\ndebug probe must be attached to see it.  Compatible with\nswd_enabled = false, as SWD stays up for the whole of boot.",
             "type": "boolean",
             "default": false
         },
@@ -66,7 +66,7 @@
             ]
         },
         "swd_enabled": {
-            "description": "Whether to enable SWD.  Must be enabled for boot logging.",
+            "description": "Whether to leave SWD enabled once the One ROM starts serving.\n\nWhen false, SWD is available for the whole of boot and is shut off\nimmediately before serving starts, staying off until the next reset.\nThis stops debug port accesses to SRAM stealing cycles from the\nserving DMAs.  Nothing is logged past that point, and plugins get no\nlogging.\n\nThis is not a debug lockout - the boot ROM runs before the One ROM\nfirmware does, and BOOTSEL/PICOBOOT are unaffected.",
             "type": "boolean",
             "default": true
         },
