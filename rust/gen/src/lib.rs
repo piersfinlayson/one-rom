@@ -247,8 +247,79 @@ pub enum Error {
         index: usize,
         source: transform::TransformError,
     },
+    /// Turbo boot was enabled on a config with more than one non-plugin ROM
+    /// slot.  Accept it with [`ConfigOverrides::allow_turbo_boot_multi_slot`],
+    /// which turns this into [`ConfigWarning::TurboBootMultiSlot`].
+    TurboBootMultiSlot {
+        slots: usize,
+    },
 }
 type Result<T> = core::result::Result<T, Error>;
+
+/// Config checks the caller is willing to accept, downgrading each from an
+/// error to a [`ConfigWarning`].
+///
+/// The default enforces every check, which is what [`Builder::from_json`]
+/// uses; [`Builder::from_json_with_overrides`] takes a value of this type.
+#[derive(Debug, Default, Clone, Copy, serde::Serialize, serde::Deserialize)]
+#[non_exhaustive]
+pub struct ConfigOverrides {
+    /// Whether to accept turbo boot on a config with more than one non-plugin
+    /// ROM slot.
+    pub turbo_boot_multi_slot: bool,
+}
+
+impl ConfigOverrides {
+    /// Accept turbo boot on a config with more than one non-plugin ROM slot.
+    ///
+    /// Turbo boot does not read the image select jumpers, so only the first
+    /// non-plugin slot is served at boot.  The remaining slots are still
+    /// programmed, and are reachable at runtime - by a bootloader in the
+    /// first slot, or by a plugin switching slots - so the combination is
+    /// deliberate in some configurations.
+    ///
+    /// [`ConfigOverrides`] is `#[non_exhaustive]`, so this (rather than a
+    /// struct literal) is how callers outside this crate set the field.
+    pub fn allow_turbo_boot_multi_slot(mut self, allow: bool) -> Self {
+        self.turbo_boot_multi_slot = allow;
+        self
+    }
+}
+
+/// A config problem the caller accepted via [`ConfigOverrides`], and which
+/// would otherwise have been an [`Error`].
+///
+/// Returned by [`Builder::from_json_with_overrides`], for the caller to
+/// report as it sees fit.
+///
+/// This enum is `#[non_exhaustive]`: new variants may be added in a
+/// backwards-compatible release, so a `match` on it outside this crate needs
+/// a wildcard arm.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[non_exhaustive]
+pub enum ConfigWarning {
+    /// Turbo boot is enabled on a config with `slots` non-plugin ROM slots.
+    TurboBootMultiSlot { slots: usize },
+}
+
+impl core::fmt::Display for ConfigWarning {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            ConfigWarning::TurboBootMultiSlot { slots } => {
+                write!(f, "{}", turbo_boot_multi_slot_msg(*slots))
+            }
+        }
+    }
+}
+
+/// The description shared by [`Error::TurboBootMultiSlot`] and
+/// [`ConfigWarning::TurboBootMultiSlot`], so the rejected and the accepted
+/// case describe the config identically.
+fn turbo_boot_multi_slot_msg(slots: usize) -> alloc::string::String {
+    alloc::format!(
+        "Turbo boot is enabled with {slots} non-plugin ROM slots.  Turbo boot does not read the image select jumpers, so only the first non-plugin slot is served at boot."
+    )
+}
 
 impl core::fmt::Display for Error {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
@@ -443,6 +514,9 @@ impl core::fmt::Display for Error {
             Error::Transform { index, source } => {
                 write!(f, "Chip {index}: {source}")
             }
+            Error::TurboBootMultiSlot { slots } => {
+                write!(f, "{}", turbo_boot_multi_slot_msg(*slots))
+            }
         }
     }
 }
@@ -596,7 +670,7 @@ pub struct Config {
     #[serde(default = "default_swd_enabled")]
     pub swd_enabled: bool,
 
-    /// Whethher to boot fast.  Disables reading the image select jumpers.
+    /// Whether to boot fast.  Disables reading the image select jumpers.
     /// The first non-plugin image is served.
     #[serde(default = "default_turbo_boot")]
     pub turbo_boot: bool,

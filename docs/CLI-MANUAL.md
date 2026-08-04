@@ -442,7 +442,7 @@ These are rejected with `--no-config`.
 | `--serial-override <NEW SERIAL>` | Override the device's reported serial number. |
 | `--logging [BOOL]` (aliases `--boot-logging`) | Enable boot logging. Takes an optional boolean; bare flag means `true`. |
 | `--disable-swd [BOOL]` (aliases `--swd-disable`) | Shut SWD down before ROM serving starts, so debug port accesses to SRAM don't steal cycles from the serving DMAs. SWD is available for the whole of boot — including boot logging — and goes off until the next reset. Nothing is logged past that point, and plugins get no logging. This is not a debug lockout: the boot ROM runs before the One ROM firmware does, and BOOTSEL/PICOBOOT are unaffected. Optional boolean; bare flag means `true`. |
-| `--turbo-boot [BOOL]` | Enable turbo boot — starts serving faster but supports only a single programmed slot. Optional boolean; bare flag means `true`. |
+| `--turbo-boot [BOOL]` | Enable turbo boot — starts serving faster by not reading the image select jumpers, so the first non-plugin slot is always the one served. More than one non-plugin slot is refused unless `--force` is given. Optional boolean; bare flag means `true`. |
 
 ### Board, version and output
 
@@ -462,7 +462,7 @@ These are rejected with `--no-config`.
 | `--fast` | Skip the re-enumeration pause after the final reboot. Conflicts with `--no-reboot`. |
 | `--msd, -m` | Mount mass storage when rebooting into stopped mode. |
 | `--verify` | Verify flash by reading back after programming. **(not yet supported)** |
-| `--force, -f` | Continue even if the assembled firmware has parse errors. |
+| `--force, -f` | Continue despite non-fatal problems: assembled firmware parse errors, a board type mismatch, and config warnings such as turbo boot with more than one non-plugin ROM slot. Each is reported as a warning instead. |
 | `--batch` (aliases `--multiple`, `--multi`) | Program multiple devices, pausing for confirmation between each. Every board is programmed with the same configuration as the first. |
 | `--scan-slots` | After programming, run `onerom scan --slots` to show the result. Conflicts with `--fast`. |
 
@@ -1158,7 +1158,7 @@ with `--no-config`). Build-specific options:
 | `--base-firmware <FILE>` | Use a local minimal firmware instead of downloading. Must be built with `EXCLUDE_METADATA=1` and `ROM_CONFIGS=`. Conflicts with `--version`. |
 | `--output, -o <FILE>` (alias `--out`) | Output file path. Defaults to `onerom-<board>-<version>.bin`. Conflicts with `--path`. |
 | `--path <DIR>` | Output directory, using the default filename. Conflicts with `--output`. |
-| `--force, -f` | Continue even if the assembled firmware has parse errors. |
+| `--force, -f` | Continue despite non-fatal problems: assembled firmware parse errors, a board type mismatch, and config warnings such as turbo boot with more than one non-plugin ROM slot. Each is reported as a warning instead. |
 
 Device required: no.
 

@@ -71,7 +71,7 @@
             "default": true
         },
         "turbo_boot": {
-            "description": "Whethher to boot fast.  Disables reading the image select jumpers.\nThe first non-plugin image is served.",
+            "description": "Whether to boot fast.  Disables reading the image select jumpers.\nThe first non-plugin image is served.",
             "type": "boolean",
             "default": false
         },
