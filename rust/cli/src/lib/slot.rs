@@ -559,7 +559,7 @@ fn serves_v2(version: &FirmwareVersion) -> bool {
 ///   documents, and refuses chip types no v2 firmware serves. A `--slot`
 ///   becomes a one-chip Single set, so this is the same derivation the build
 ///   will run. `default_cs_config` stands in for the slot's own polarities:
-///   every configurable line must have been supplied ([`parse_slot`]) and the
+///   every configurable line must have been supplied ([`parse_slots`]) and the
 ///   fixed ones come from the silicon, so the two differ only in polarity -
 ///   which places a line on the same GPIO either way.
 /// - **V1** (pre-0.7.0) serves a fixed set of chip types per board, so
