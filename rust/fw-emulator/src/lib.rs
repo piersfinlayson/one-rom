@@ -17,5 +17,5 @@ pub mod ffi;
 
 pub use emulator::{
     Emulator, FlashSlotInfo, GpioInfo, ORA_FLASH_SLOT_FLAG_EXCLUDE_NON_PLUGINS,
-    ORA_FLASH_SLOT_FLAG_EXCLUDE_PLUGINS, OraResult, RamSlotInfo,
+    ORA_FLASH_SLOT_FLAG_EXCLUDE_PLUGINS, OraResult, RamSlotInfo, ServingAlg,
 };

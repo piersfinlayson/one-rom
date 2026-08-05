@@ -25,6 +25,9 @@ use onerom_metadata::BitModes;
 use crate::image::{ChipSetType, CsConfig, CsLogic};
 use crate::v2::addr_layout::{LayoutError, derive_addr_layout};
 use crate::v2::alg_config::bit_mode_for;
+use crate::v2::alg_preference::{
+    AddrAlgPreference, CsAlgPreference, DataAlgPreference, cs_alg_preference,
+};
 use crate::v2::cs_data_layout::derive_cs_data_layout;
 use crate::v2::multi_cs_config::derive_multi_cs_config;
 use crate::v2::slot_context::{SlotContext, socket_pin_offset};
@@ -200,6 +203,106 @@ pub fn default_cs_config(chip_type: ChipType) -> CsConfig {
     )
 }
 
+/// How a chip is served on a board: the algorithms chosen, and the GPIO window
+/// the address state machine samples.
+///
+/// The window is the interesting part.  The address machine samples its pins
+/// free-running, ungated by chip select, so a control line inside the window is
+/// part of the SRAM index the DMA reads: asserting it changes which entry is
+/// fetched, and the fetch already in flight has to be discarded and redone.  A
+/// control line outside it only gates the data output drivers.  The two cost
+/// very different numbers of cycles, and which case applies depends on the
+/// board's routing as much as on the chip.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ServingAlgInfo {
+    /// First GPIO the address state machine samples.
+    pub addr_window_base: u8,
+    /// How many consecutive GPIOs it samples from `addr_window_base`.
+    pub addr_window_pins: u8,
+    pub cs_alg: CsAlgPreference,
+    pub addr_alg: AddrAlgPreference,
+    pub data_alg: DataAlgPreference,
+}
+
+impl ServingAlgInfo {
+    /// Whether `gpio` is inside the sampled address window, and so forms part
+    /// of the SRAM index.
+    pub fn samples_gpio(&self, gpio: u8) -> bool {
+        gpio >= self.addr_window_base && (gpio - self.addr_window_base) < self.addr_window_pins
+    }
+}
+
+/// Derive [`ServingAlgInfo`] for a chip set on a board, from configuration
+/// alone.
+///
+/// Deliberately independent of any built firmware: a test that wants to know
+/// what the device *should* be doing needs an answer that does not come from
+/// the device, or a firmware that programmed the wrong window would simply
+/// move the expectation along with it.
+///
+/// `cs_config` names which control lines One ROM monitors on chip 0 — see
+/// [`check_chip_set_on_board`], whose inputs these mirror.
+///
+/// `secondary_cs_config` is the first secondary chip's own configuration, for
+/// Multi sets: which of its lines is the per-chip select decides how chip 0's
+/// remaining lines split into commoned and ignored, and so which GPIOs end up
+/// in the select range.  Pass `None` for Single and Banked sets, or to fall
+/// back to `multi_secondary_config` when the real configuration is not to
+/// hand — but note that a set whose secondaries differ from that shape may then
+/// fail to derive even though it builds.
+pub fn serving_alg_info(
+    board: Board,
+    chip_type: ChipType,
+    set_type: ChipSetType,
+    num_chips: usize,
+    cs_config: CsConfig,
+    secondary_cs_config: Option<CsConfig>,
+    force_16_bit: bool,
+) -> Result<ServingAlgInfo, crate::Error> {
+    let pin_offset = socket_pin_offset(chip_type.chip_pins(), board.chip_pins())
+        .ok_or(crate::Error::UnsupportedBoardChipType { board, chip_type })?;
+    let bit_mode = bit_mode_for(chip_type, board);
+
+    let multi_cs_config = match set_type {
+        ChipSetType::Multi => Some(derive_multi_cs_config(
+            chip_type,
+            &cs_config,
+            &secondary_cs_config.unwrap_or_else(|| multi_secondary_config(chip_type)),
+        )),
+        ChipSetType::Single | ChipSetType::Banked => None,
+    };
+
+    let ctx = SlotContext {
+        board,
+        set_type,
+        chip_types: alloc::vec![chip_type; num_chips],
+        cs_config,
+        bit_mode,
+        pin_offset,
+        force_16_bit,
+        multi_cs_config,
+    };
+
+    let addr_layout = derive_addr_layout(&ctx)?;
+    let cs_data_layout = derive_cs_data_layout(&ctx, Some(&addr_layout))?;
+
+    // `base_addr_pin` is an offset within the PIO's GPIOBASE window, so the
+    // absolute first GPIO sampled is the layout's own gpio_base.
+    Ok(ServingAlgInfo {
+        addr_window_base: addr_layout.gpio_base,
+        addr_window_pins: addr_layout.num_addr_pins,
+        cs_alg: cs_alg_preference(
+            cs_data_layout.cs_ignore_index,
+            cs_data_layout.alg_cs2.as_ref(),
+        ),
+        addr_alg: AddrAlgPreference::AlgAddr0,
+        data_alg: match (bit_mode, force_16_bit) {
+            (BitModes::BitMode16, false) => DataAlgPreference::AlgData1,
+            _ => DataAlgPreference::AlgData0,
+        },
+    })
+}
+
 /// The CS configuration a secondary chip of a multi set necessarily has.
 ///
 /// A secondary reaches One ROM through a single fly-leaded select on an X
@@ -249,7 +352,7 @@ const MAX_MULTI_CHIPS: usize = 3;
 /// - The resulting ROM table would exceed `MAX_IMAGE_SIZE`, which
 ///   `build_rom_slot` rejects. Reachable for banked sets of large chips.
 /// - `num_chips` does not match `set_type`: `Single` takes exactly 1, `Banked`
-///   2 or more, `Multi` between 2 and [`MAX_MULTI_CHIPS`]; or the board does
+///   2 or more, `Multi` between 2 and `MAX_MULTI_CHIPS`; or the board does
 ///   not support that set type.
 ///
 /// Native, overhang (smaller chip in larger socket), and fly-lead (larger

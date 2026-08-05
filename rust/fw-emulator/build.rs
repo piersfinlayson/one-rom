@@ -188,6 +188,14 @@ fn main() {
         .allowlist_function("ffi_epio_arm_monitor")
         .allowlist_function("set_onerom_test_yield_hook")
         .allowlist_function("ffi_set_logging")
+        .allowlist_function("ffi_serving_alg")
+        .allowlist_type("ffi_serving_alg_t")
+        // The algorithm enums the reported ids belong to: a test that maps an
+        // id to an expected cycle cost must name the enumerators rather than
+        // hardcode their values.
+        .allowlist_type("onerom_alg_cs_t")
+        .allowlist_type("onerom_alg_addr_t")
+        .allowlist_type("onerom_alg_data_t")
         .allowlist_function("ora_fn_lookup")
         .allowlist_type("ora_result_t")
         .allowlist_type("ora_.*_fn_t")

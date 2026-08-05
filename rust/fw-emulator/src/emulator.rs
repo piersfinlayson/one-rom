@@ -108,6 +108,33 @@ impl OraResult {
     }
 }
 
+/// The serving algorithms and address-sampling window of the running ROM slot.
+///
+/// See [`Emulator::serving_alg`].  The window matters because the address state
+/// machine samples its pins free-running, ungated by chip select: a control line
+/// inside `addr_window` is part of the SRAM index, so asserting it forces a
+/// refetch, while one outside it only gates the data output drivers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ServingAlg {
+    pub addr_alg: ffi::onerom_alg_addr_t,
+    pub cs_alg: ffi::onerom_alg_cs_t,
+    pub data_alg: ffi::onerom_alg_data_t,
+
+    /// First GPIO the address state machine samples.
+    pub addr_window_base: u8,
+
+    /// How many consecutive GPIOs it samples from `addr_window_base`.
+    pub addr_window_pins: u8,
+}
+
+impl ServingAlg {
+    /// Whether `gpio` is inside the address state machine's sampled window,
+    /// and so forms part of the SRAM index the DMA reads.
+    pub fn samples_gpio(&self, gpio: u8) -> bool {
+        gpio >= self.addr_window_base && (gpio - self.addr_window_base) < self.addr_window_pins
+    }
+}
+
 // ── Plugin API helper types ───────────────────────────────────────────────────
 
 pub struct RamSlotInfo {
@@ -429,6 +456,31 @@ impl Emulator {
     /// Returns `true` if the PIO state machines are enabled.
     pub fn pios_enabled(&self) -> bool {
         unsafe { ffi::ffi_pios_enabled() as i32 != 0 }
+    }
+
+    /// The serving algorithms and address window the current ROM slot runs.
+    ///
+    /// `None` before a slot is being served.  Read from the live slot config,
+    /// so it is what the firmware is actually running rather than a host-side
+    /// re-derivation that could drift from it.
+    pub fn serving_alg(&self) -> Option<ServingAlg> {
+        let mut raw = ffi::ffi_serving_alg_t {
+            addr_alg: 0,
+            cs_alg: 0,
+            data_alg: 0,
+            addr_window_base: 0,
+            addr_window_pins: 0,
+        };
+        if unsafe { ffi::ffi_serving_alg(&mut raw) } == 0 {
+            return None;
+        }
+        Some(ServingAlg {
+            addr_alg: raw.addr_alg as ffi::onerom_alg_addr_t,
+            cs_alg: raw.cs_alg as ffi::onerom_alg_cs_t,
+            data_alg: raw.data_alg as ffi::onerom_alg_data_t,
+            addr_window_base: raw.addr_window_base,
+            addr_window_pins: raw.addr_window_pins,
+        })
     }
 
     // ── ROM image selection ──────────────────────────────────────────────────

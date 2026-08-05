@@ -32,6 +32,17 @@ pub struct ModeResult {
     /// byte when toggled.  Zero on sets with no address-window gaps (the
     /// adversarial re-read is skipped entirely there).
     pub forced_low_failures: u64,
+    /// CS-to-data timing checks run, and how many did not measure the expected
+    /// latency.  Kept apart from `failures` because a timing regression is a
+    /// change in how fast the PIO serving path runs, not a serving bug — the
+    /// bytes are correct, they just arrive at a different time.  Zero checks
+    /// when the pass could not run (see `timing_note`).
+    pub timing_checks: u64,
+    pub timing_failures: u64,
+    /// Why the timing pass did not run, when `timing_checks` is 0.  Recorded
+    /// rather than silently skipped: a check that quietly stops running looks
+    /// exactly like one that passes.
+    pub timing_note: Option<String>,
     /// Number of extra-address-bit combinations exercised.  1 for all single,
     /// banked, and equal-width multi sets.  > 1 for multi sets where the
     /// secondary chip has fewer address lines than the primary: each missing
@@ -41,7 +52,10 @@ pub struct ModeResult {
 
 impl ModeResult {
     pub fn passed(&self) -> bool {
-        self.failures == 0 && self.bus_failures == 0 && self.forced_low_failures == 0
+        self.failures == 0
+            && self.bus_failures == 0
+            && self.forced_low_failures == 0
+            && self.timing_failures == 0
     }
 }
 
@@ -199,6 +213,8 @@ impl TestReport {
         let mut grand_failures = 0u64;
         let mut grand_bus_failures = 0u64;
         let mut grand_forced_low = 0u64;
+        let mut grand_timing_checks = 0u64;
+        let mut grand_timing_failures = 0u64;
 
         for set in &self.set_results {
             if let Some(ref note) = set.note {
@@ -227,6 +243,16 @@ impl TestReport {
                     grand_failures += mode.failures;
                     grand_bus_failures += mode.bus_failures;
                     grand_forced_low += mode.forced_low_failures;
+                    grand_timing_checks += mode.timing_checks;
+                    grand_timing_failures += mode.timing_failures;
+
+                    if let Some(ref note) = mode.timing_note {
+                        println!(
+                            "  [NOTE] set={} chip={} mode={}bit: CS timing pass \
+                             did not run — {}",
+                            chip.set_idx, chip.chip_idx, mode.mode, note,
+                        );
+                    }
 
                     // combos > 1 means the secondary chip had fewer address
                     // lines than the primary; show the count so the inflated
@@ -239,7 +265,8 @@ impl TestReport {
 
                     println!(
                         "  [{}] set={} chip={} ({}) file={} mode={}bit{} \
-                         reads={} failures={} bus_failures={} forced_low_failures={}",
+                         reads={} failures={} bus_failures={} forced_low_failures={} \
+                         timing_checks={} timing_failures={}",
                         if mode.passed() { "PASS" } else { "FAIL" },
                         chip.set_idx,
                         chip.chip_idx,
@@ -251,6 +278,8 @@ impl TestReport {
                         mode.failures,
                         mode.bus_failures,
                         mode.forced_low_failures,
+                        mode.timing_checks,
+                        mode.timing_failures,
                     );
                 }
             }
@@ -259,11 +288,13 @@ impl TestReport {
         println!("-----");
         println!(
             "Total: {} bytes read, {} data failures, {} bus violations, \
-             {} forced-low failures — {}",
+             {} forced-low failures, {} CS timing checks with {} failures — {}",
             grand_reads,
             grand_failures,
             grand_bus_failures,
             grand_forced_low,
+            grand_timing_checks,
+            grand_timing_failures,
             if self.all_passed() { "PASS" } else { "FAIL" },
         );
     }

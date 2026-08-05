@@ -23,7 +23,7 @@
 pub(crate) mod addr_layout;
 pub(crate) mod alg_config;
 mod alg_cs;
-mod alg_preference;
+pub(crate) mod alg_preference;
 pub(crate) mod cs_data_layout;
 mod cs_overrides;
 pub(crate) mod firmware_config;

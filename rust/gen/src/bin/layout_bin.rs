@@ -21,9 +21,12 @@
 //! `docs/COMPATIBILITY.md`, which lists single chips only.
 //!
 //! Run with:
-//!   cargo run --bin layout -- [--board <name>] [--summary]
-//!   cargo run --bin layout -- --check
-//!   cargo run --bin layout -- --write-baseline
+//!
+//! ```text
+//! cargo run --bin layout -- [--board <name>] [--summary]
+//! cargo run --bin layout -- --check
+//! cargo run --bin layout -- --write-baseline
+//! ```
 //!
 //! `ci/layout-baseline.txt` records how much flash each chip type costs on
 //! each board. It is a checked-in generated file like `COMPATIBILITY.md`:

@@ -53,6 +53,7 @@ pub use v2::MAX_FW_VERSION as MAX_SUPPORTED_FIRMWARE_VERSION_V2;
 pub use v2::MIN_FW_VERSION as MIN_SUPPORTED_FIRMWARE_VERSION_V2;
 pub use v2::SUPPORTED_CHIP_TYPES as SUPPORTED_CHIP_TYPES_V2;
 pub use v2::UNSUPPORTED_FIRMWARE_VERSIONS as UNSUPPORTED_FIRMWARE_VERSIONS_V2;
+pub use v2::alg_preference::{AddrAlgPreference, CsAlgPreference, DataAlgPreference};
 pub use v2::slot_context::socket_pin_offset;
 
 /// Version of metadata produced by this version of the crate

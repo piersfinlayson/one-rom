@@ -235,6 +235,33 @@ rustfmt-formatted **at generation time** by the build script
 (`config/build/fmt.rs`) so the fmt gate stays green; keep that path intact if you
 touch the code generators.
 
+## CS-to-data timing (`onerom-fw-tester`)
+
+`pio-tester` asserts, on every run, how many cycles after CS assertion the
+device serves the byte **for that cycle** — `rust/fw-tester/src/cs_timing.rs`,
+reported as `timing_checks`/`timing_failures` alongside the data and bus
+counters. It exists because the bulk read pass cannot detect a serving
+slowdown on its own: a single-chip image is replicated across the SRAM index
+bits the chip's address lines do not drive, so a stale pre-CS fetch returns the
+right byte anyway.
+
+- The expected latency is derived from **config**, via
+  `onerom_gen::compat::serving_alg_info`, and the firmware's own report is used
+  only to cross-check that it programmed the window the config called for. Do
+  not invert that: an expectation taken from the device moves along with a
+  device bug.
+- New chip types need no change here. A new *algorithm* does, and will not
+  compile until it gets one — `cs_timing` mirrors the C algorithm enums and
+  asserts against the firmware's `NUM_*_ALGS`.
+- `timing.rs`'s `CYCLES_*` are **correctness margins** for the bulk pass, not
+  sensitivity knobs. Do not lower one to make a pass go green.
+
+To get the measured number rather than a pass/fail — after a timing assertion
+fails, or when adding an algorithm:
+
+    BASE_DIR=$(pwd) CONFIG=onerom-config/test/24-random-23xx.json \
+      BOARD=fire-24-a cargo run -p onerom-fw-tester --example cs_sweep
+
 ## Testing firmware on a device (CLI)
 
 To flash and test a **locally-built** firmware on a connected One ROM, use the

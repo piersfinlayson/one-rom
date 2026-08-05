@@ -3,6 +3,7 @@
 // MIT License
 
 #include "include.h"
+#include "test/ffi.h"
 #include "test/stub.h"
 #include "piodma/piodma.h"
 #include <epio.h>
@@ -31,6 +32,27 @@ uint8_t ffi_pios_enabled(void) {
 // for, rather than trusting the stub's own view of what it drove.
 uint8_t ffi_image_sel(void) {
     return (uint8_t)RUNTIME->image_sel;
+}
+
+// See ffi.h.  base_addr_pin is an offset within the PIO's GPIOBASE window, so
+// the absolute first GPIO sampled is gpio_base + base_addr_pin.
+uint8_t ffi_serving_alg(ffi_serving_alg_t *out) {
+    if (out == NULL || CURRENT_SLOT == NULL || CURRENT_SLOT->alg == NULL) {
+        return 0u;
+    }
+    const onerom_alg_config_t *alg = CURRENT_SLOT->alg;
+    if (alg->alg_addr == NULL || alg->alg_cs == NULL || alg->alg_data == NULL) {
+        return 0u;
+    }
+
+    out->addr_alg = (uint8_t)alg->alg_addr->alg;
+    out->cs_alg = (uint8_t)alg->alg_cs->alg;
+    out->data_alg = (uint8_t)alg->alg_data->alg;
+    out->addr_window_base =
+        (uint8_t)(alg->alg_addr->gpio_base + alg->alg_addr->base_addr_pin);
+    out->addr_window_pins = alg->alg_addr->num_addr_pins;
+
+    return 1u;
 }
 
 void ffi_epio_setup_sram(epio_t *epio) {
