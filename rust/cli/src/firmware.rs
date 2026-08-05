@@ -16,7 +16,7 @@ use onerom_gen::ChipSetType;
 use onerom_gen::compat::{
     ChipCompat, check_chip_set_on_board, default_cs_config, format_size, supported_chips,
 };
-use onerom_gen::{Builder, FIRMWARE_SIZE, License};
+use onerom_gen::{Builder, ConfigOverrides, Error as GenError, FIRMWARE_SIZE, License};
 
 use crate::args;
 use crate::utils::{check_fire_board, resolve_board, resolve_firmware_output};
@@ -253,15 +253,35 @@ async fn acquire_release_firmware(
 ///
 /// Takes the config as an already-resolved JSON string (not a file path).
 /// Use [`resolve_config_json`] to obtain the JSON from any config source.
+///
+/// `force` accepts the config checks that are refused by default, reporting
+/// each one that fires as a warning instead.
 pub async fn build_rom_image(
     options: &Options,
     config_json: &str,
     version: FirmwareVersion,
     board: Board,
     mcu: Variant,
+    force: bool,
 ) -> Result<(FirmwareProperties, Option<Vec<u8>>, Option<Vec<u8>>, String), Error> {
-    let mut builder =
-        Builder::from_json(version, mcu.family(), config_json).map_err(onerom_fw::Error::parse)?;
+    let overrides = ConfigOverrides::default().allow_turbo_boot_multi_slot(force);
+
+    let (mut builder, warnings) =
+        Builder::from_json_with_overrides(version, mcu.family(), config_json, &overrides).map_err(
+            |e| {
+                // Give the one check --force covers a message naming it;
+                // onerom-gen knows nothing about the CLI's flags.
+                if matches!(e, GenError::TurboBootMultiSlot { .. }) {
+                    Error::TurboBootMultiSlot(e)
+                } else {
+                    onerom_fw::Error::parse(e).into()
+                }
+            },
+        )?;
+
+    for warning in warnings {
+        eprintln!("Warning: {warning}\n  Continuing due to --force.");
+    }
 
     for license in builder.licenses() {
         accept_license(options, &license).await?;
@@ -380,7 +400,7 @@ pub async fn cmd_build(
     }
 
     let (fw_props, metadata, image_data, desc) =
-        build_rom_image(options, &config_json, version, board, mcu).await?;
+        build_rom_image(options, &config_json, version, board, mcu, args.force).await?;
 
     validate_sizes(&fw_props, &firmware_data, &metadata, &image_data)?;
 

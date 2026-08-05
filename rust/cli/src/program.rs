@@ -131,7 +131,7 @@ async fn build_and_assemble(
     }
 
     let (fw_props, metadata, image_data, desc) =
-        build_rom_image(options, &config_json, version, *board, *mcu).await?;
+        build_rom_image(options, &config_json, version, *board, *mcu, args.force).await?;
 
     validate_sizes(&fw_props, &firmware_data, &metadata, &image_data)?;
 

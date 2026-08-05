@@ -15,7 +15,7 @@ mod tests {
     use onerom_config::fw::{FirmwareProperties, FirmwareVersion, ServeAlg};
     use onerom_config::hw::Board;
     use onerom_config::mcu::{Family as McuFamily, Variant as McuVariant};
-    use onerom_gen::{Builder, FileData};
+    use onerom_gen::{Builder, ConfigOverrides, ConfigWarning, Error as GenError, FileData};
     use onerom_metadata::{
         CURRENT_METADATA_VERSION, DeviceMemoryView, METADATA_BASE, METADATA_SIZE,
         ONEROM_METADATA_MAGIC,
@@ -585,6 +585,80 @@ mod tests {
         assert_eq!(v.read_u8(HDR_BOOT_LOGGING).unwrap(), 1);
         assert_eq!(v.read_u8(HDR_SWD_ENABLED).unwrap(), 1);
         assert_eq!(v.read_u8(HDR_TURBO_BOOT).unwrap(), 1);
+    }
+
+    /// Turbo boot with more than one non-plugin slot is refused by default,
+    /// and accepted - reported as a warning - when the caller overrides it.
+    ///
+    /// Asserts the accepted build still sets the turbo boot header flag, so a
+    /// build that quietly dropped turbo boot to make the config legal would
+    /// not pass.
+    #[test]
+    fn v2_turbo_boot_multi_slot() {
+        let json = r#"{
+            "version": 1,
+            "description": "turbo boot, two slots",
+            "turbo_boot": true,
+            "chip_sets": [{
+                "type": "single",
+                "chips": [{ "file": "one.bin", "type": "2364", "cs1": "active_low" }]
+            }, {
+                "type": "single",
+                "chips": [{ "file": "two.bin", "type": "2364", "cs1": "active_low" }]
+            }]
+        }"#;
+
+        let version = FirmwareVersion::new(0, 7, 0, 0);
+
+        let err = Builder::from_json(version, McuFamily::Rp2350, json)
+            .expect_err("turbo boot with two slots must be refused by default");
+        assert!(
+            matches!(err, GenError::TurboBootMultiSlot { slots: 2 }),
+            "unexpected error: {err}"
+        );
+
+        let overrides = ConfigOverrides::default().allow_turbo_boot_multi_slot(true);
+        let (mut b, warnings) =
+            Builder::from_json_with_overrides(version, McuFamily::Rp2350, json, &overrides)
+                .expect("the override must allow the config to build");
+        assert!(
+            matches!(
+                warnings.as_slice(),
+                [ConfigWarning::TurboBootMultiSlot { slots: 2 }]
+            ),
+            "expected one turbo boot warning, got {warnings:?}"
+        );
+
+        b.add_file(FileData::new(0, vec![0xAAu8; 8192])).unwrap();
+        b.add_file(FileData::new(1, vec![0xBBu8; 8192])).unwrap();
+
+        let (meta, _rom) = b.build(v2_props(Board::Fire24A)).expect("build");
+        assert_eq!(view(&meta).read_u8(HDR_TURBO_BOOT).unwrap(), 1);
+    }
+
+    /// A single non-plugin slot is the ordinary turbo boot case, and needs no
+    /// override.
+    #[test]
+    fn v2_turbo_boot_single_slot_no_warning() {
+        let json = r#"{
+            "version": 1,
+            "description": "turbo boot, one slot",
+            "turbo_boot": true,
+            "chip_sets": [{
+                "type": "single",
+                "chips": [{ "file": "test.bin", "type": "2364", "cs1": "active_low" }]
+            }]
+        }"#;
+
+        let overrides = ConfigOverrides::default().allow_turbo_boot_multi_slot(true);
+        let (_b, warnings) = Builder::from_json_with_overrides(
+            FirmwareVersion::new(0, 7, 0, 0),
+            McuFamily::Rp2350,
+            json,
+            &overrides,
+        )
+        .expect("from_json_with_overrides should succeed");
+        assert!(warnings.is_empty(), "unexpected warnings: {warnings:?}");
     }
 
     /// Boot logging with SWD disabled is a supported combination: SWD stays up

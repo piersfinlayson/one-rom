@@ -93,6 +93,10 @@
 - Allow `--plugin` to be combined with `--config-file` on `program` and
   `firmware build`; the plugins are inserted ahead of the config's ROM slots.
   Errors if the config already defines a plugin of its own.
+- Turbo boot with more than one non-plugin ROM slot is now accepted under
+  `--force` rather than refused outright, for a first slot holding a bootloader
+  that selects the others itself. `--force` now covers config warnings as well
+  as firmware parse errors and a board type mismatch.
 - The ROM type is now stored in metadata using the exact spelling the user
   entered, on both the `--config-file` (`"type"`) and `--slot type=...` paths,
   instead of a canonicalised name (`27SF512` is retained rather than normalised
@@ -134,8 +138,9 @@
   clap short-option collision: `-i` was claimed by both the global `--vid-pid`
   and swap-bytes' `--input`. `--input`/`--output` are now long-only (aliases
   `--in`/`--out` unchanged).
-- New `Error` variants: `ImageTransform`, `IceBoardUnsupported`, and the GPIO
-  control errors (device not running, pin in use, no free hold slot).
+- New `Error` variants: `ImageTransform`, `IceBoardUnsupported`,
+  `TurboBootMultiSlot`, and the GPIO control errors (device not running, pin
+  in use, no free hold slot).
 - `--disable-swd` now takes effect on the device: SWD stays up for the whole of
   boot and is shut off just before serving. It may now be combined with
   `--logging`, previously rejected, and logging stops when SWD does. Its help

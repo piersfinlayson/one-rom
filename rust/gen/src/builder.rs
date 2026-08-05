@@ -21,8 +21,9 @@ use crate::v2::rom_image::build_rom_image;
 use crate::v2::rom_info::truncate_filename;
 use crate::v2::rom_slot::build_rom_slot;
 use crate::{
-    Chip, ChipConfig, ChipSet, ChipSetType, Config, CsConfig, CsLogic, Error, FileData, FileSpec,
-    FireServeMode, IHEX_BLANK_BYTE, License, MetadataWriter, PAD_BLANK_BYTE, Result, SizeHandling,
+    Chip, ChipConfig, ChipSet, ChipSetType, Config, ConfigOverrides, ConfigWarning, CsConfig,
+    CsLogic, Error, FileData, FileSpec, FireServeMode, IHEX_BLANK_BYTE, License, MetadataWriter,
+    PAD_BLANK_BYTE, Result, SizeHandling,
 };
 use crate::{
     MAX_SUPPORTED_FIRMWARE_VERSION_V1, MAX_SUPPORTED_FIRMWARE_VERSION_V2,
@@ -127,11 +128,39 @@ pub struct Builder {
 impl Builder {
     /// Create from JSON config
     ///
+    /// Every config check is enforced.  Use
+    /// [`Builder::from_json_with_overrides`] to accept specific ones.
+    ///
     /// Arguments:
     /// - `version`: Firmware version this config is for
     /// - `mcu_family`: MCU family this config is for
     /// - `json`: JSON string
     pub fn from_json(version: FirmwareVersion, mcu_family: Family, json: &str) -> Result<Self> {
+        // With no overrides set nothing is downgraded, so no warnings can be
+        // produced.
+        let (builder, _warnings) =
+            Self::from_json_with_overrides(version, mcu_family, json, &ConfigOverrides::default())?;
+
+        Ok(builder)
+    }
+
+    /// Create from JSON config, accepting the config checks named in
+    /// `overrides`
+    ///
+    /// Returns the builder, plus a [`ConfigWarning`] for each accepted check
+    /// that fired, for the caller to report as it sees fit.
+    ///
+    /// Arguments:
+    /// - `version`: Firmware version this config is for
+    /// - `mcu_family`: MCU family this config is for
+    /// - `json`: JSON string
+    /// - `overrides`: Config checks to accept rather than reject
+    pub fn from_json_with_overrides(
+        version: FirmwareVersion,
+        mcu_family: Family,
+        json: &str,
+        overrides: &ConfigOverrides,
+    ) -> Result<(Self, alloc::vec::Vec<ConfigWarning>)> {
         if version > MAX_SUPPORTED_FIRMWARE_VERSION_V2 {
             return Err(Error::FirmwareTooNew {
                 version,
@@ -141,11 +170,14 @@ impl Builder {
 
         let config: Config = serde_json::from_str(json)?;
 
-        if version >= MIN_SUPPORTED_FIRMWARE_VERSION_V2 {
-            validate_config_v2(&version, &mcu_family, &config)?;
+        // Only the v2 path has checks that can be accepted; the v1 path
+        // produces no warnings.
+        let warnings = if version >= MIN_SUPPORTED_FIRMWARE_VERSION_V2 {
+            validate_config_v2(&version, &mcu_family, &config, overrides)?
         } else {
             validate_config_v1(&version, &mcu_family, &config)?;
-        }
+            alloc::vec::Vec::new()
+        };
 
         let mut builder = Self {
             version,
@@ -157,7 +189,7 @@ impl Builder {
 
         build_file_id_map(&builder.config, &mut builder.file_id_map);
 
-        Ok(builder)
+        Ok((builder, warnings))
     }
 
     /// Get reference to config
@@ -1896,11 +1928,16 @@ fn validate_config_v1(
     Ok(())
 }
 
+/// Validate a config against v2 (firmware v0.7.0+) rules.
+///
+/// Returns a [`ConfigWarning`] for each check `overrides` accepts and which
+/// fired; any other failure is an error.
 fn validate_config_v2(
     version: &FirmwareVersion,
     mcu_family: &Family,
     config: &Config,
-) -> Result<()> {
+    overrides: &ConfigOverrides,
+) -> Result<alloc::vec::Vec<ConfigWarning>> {
     if !matches!(mcu_family, Family::Rp2350) {
         return Err(Error::UnsupportedMcuFamily {
             family: *mcu_family,
@@ -1986,12 +2023,22 @@ fn validate_config_v2(
         }
     }
 
+    // Turbo boot skips reading the image select jumpers, so only the first
+    // non-plugin slot is ever served at boot.  The other slots are still
+    // programmed and remain reachable at runtime, so this is refused rather
+    // than impossible - the caller can accept it.
+    let mut warnings = alloc::vec::Vec::new();
     if config.turbo_boot && num_non_plugin_slots > 1 {
-        return Err(Error::InvalidConfig {
-            error: "Turbo boot cannot be enabled when there is more than one non-plugin ROM slot"
-                .to_string(),
-        });
+        if overrides.turbo_boot_multi_slot {
+            warnings.push(ConfigWarning::TurboBootMultiSlot {
+                slots: num_non_plugin_slots,
+            });
+        } else {
+            return Err(Error::TurboBootMultiSlot {
+                slots: num_non_plugin_slots,
+            });
+        }
     }
 
-    Ok(())
+    Ok(warnings)
 }

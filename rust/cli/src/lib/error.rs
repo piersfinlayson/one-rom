@@ -236,6 +236,11 @@ pub enum Error {
     BoardMismatch(String, String),
 
     #[error(
+        "{0}\n  Use --force to program it anyway - for example when the first slot holds a bootloader that selects the others itself."
+    )]
+    TurboBootMultiSlot(onerom_gen::Error),
+
+    #[error(
         "Plugin '{0}' version '{1}' is not compatible with firmware {2} or later.\n  The selected firmware version is {3}."
     )]
     PluginIncompatibleNewer(String, PluginVersion, FirmwareVersion, FirmwareVersion),

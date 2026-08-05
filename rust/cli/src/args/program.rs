@@ -211,7 +211,9 @@ pub struct ProgramArgs {
     #[arg(long)]
     pub verify: bool,
 
-    /// Continue even if the assembled firmware has parse errors.
+    /// Continue despite non-fatal problems: assembled firmware parse errors, a
+    /// board type mismatch, and config warnings such as turbo boot with more
+    /// than one non-plugin ROM slot.
     #[arg(long, short)]
     pub force: bool,
 
@@ -262,8 +264,9 @@ pub struct ProgramArgs {
     #[arg(long, visible_aliases = ["swd-disable", "swd_disable"], default_missing_value = "true", num_args = 0..=1, conflicts_with_all = ["no_config"])]
     pub disable_swd: Option<bool>,
 
-    /// Enable turbo boot - starts ROM serving faster, but only supports a
-    /// single programmed slot
+    /// Enable turbo boot - starts ROM serving faster by not reading the image
+    /// select jumpers, so the first non-plugin slot is always the one served.
+    /// More than one non-plugin slot is refused unless --force is given.
     #[arg(long, visible_aliases = ["turbo-boot", "turbo_boot"], default_missing_value = "true", num_args = 0..=1, conflicts_with_all = ["no_config"])]
     pub turbo_boot: Option<bool>,
 }
