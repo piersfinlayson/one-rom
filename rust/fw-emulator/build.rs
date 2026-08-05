@@ -141,19 +141,25 @@ fn main() {
 
     // ── bindgen ──────────────────────────────────────────────────────────────
 
-    let mut builder =
-        bindgen::Builder::default().header(manifest_dir.join("src/wrapper.h").to_str().unwrap());
-
-    // When cross-compiling to wasm, cargo sets TARGET=wasm32-unknown-emscripten,
-    // so libclang would parse the firmware headers for the wasm target and fail
-    // to find libc headers (string.h etc.), which live in the Emscripten
-    // sysroot.  We only need the C *declarations* — no by-value C structs cross
-    // the FFI boundary whose layout differs between host and wasm — so parse
-    // with the host target and its system headers.  bindgen emits width-correct
-    // type aliases (c_long, usize, …) regardless of the parse target.
-    if is_wasm {
-        builder = builder.clang_arg(format!("--target={}", env::var("HOST").unwrap()));
-    }
+    // Parse the firmware headers for the host explicitly, rather than leaving
+    // libclang to use its own default target.  Two cases need this:
+    //
+    //   - Cross-compiling to wasm: cargo sets TARGET=wasm32-unknown-emscripten,
+    //     so libclang would parse for the wasm target and fail to find the libc
+    //     headers (string.h etc.), which live in the Emscripten sysroot.
+    //   - A native build where LIBCLANG_PATH names a cross-toolchain's libclang
+    //     (an ESP or AVR toolchain on PATH, say).  Its default target has no
+    //     host sysroot, so the same headers go missing, and the pointer width
+    //     it reports does not match the Rust target.
+    //
+    // We only need the C *declarations* — no by-value C structs cross the FFI
+    // boundary whose layout differs between host and target — so parsing with
+    // the host target and its system headers is safe.  bindgen emits
+    // width-correct type aliases (c_long, usize, …) regardless of the parse
+    // target.
+    let builder = bindgen::Builder::default()
+        .header(manifest_dir.join("src/wrapper.h").to_str().unwrap())
+        .clang_arg(format!("--target={}", env::var("HOST").unwrap()));
 
     let bindings = builder
         .clang_arg(format!("-I{}", c_root.join("include").display()))
