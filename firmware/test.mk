@@ -2,6 +2,12 @@
 # For native test builds only
 MAKEFLAGS += --no-builtin-rules --no-builtin-variables
 
+# Versions of apio and epio to build against.  Remove the apio/ or epio/
+# directory after changing these, so it is re-cloned.  Note that epio pins its
+# own apio version for its internal build, in epio/Makefile.
+APIO_VERSION ?= v0.2.0
+EPIO_VERSION ?= v0.2.0
+
 # Build mode.  WASM=1 cross-compiles the library to WebAssembly with the
 # Emscripten toolchain (for One ROM Lens); the default is a native host build.
 # In WASM mode we compile with emcc, link against epio's wasm build, and archive
@@ -77,12 +83,12 @@ all: $(LIB)
 
 apio:
 	@if [ ! -d "apio" ]; then \
-		git clone https://github.com/piersfinlayson/apio.git; \
+		git -c advice.detachedHead=false clone --quiet --depth 1 --branch $(APIO_VERSION) https://github.com/piersfinlayson/apio.git; \
 	fi
 
 epio-src:
 	@if [ ! -d "epio" ]; then \
-		git clone https://github.com/piersfinlayson/epio.git; \
+		git -c advice.detachedHead=false clone --quiet --depth 1 --branch $(EPIO_VERSION) https://github.com/piersfinlayson/epio.git; \
 	fi
 
 epio: epio-src
