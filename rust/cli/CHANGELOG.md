@@ -2,6 +2,16 @@
 
 ## v0.3.0 - 2026-??-??
 
+- **`--slot` now accepts every chip type the target firmware can serve on the
+  board.** For v0.7.0 firmware onwards that is the served layout itself, so the
+  overhang and fly-lead combinations `docs/COMPATIBILITY.md` documents — a
+  `2764` on a Fire 24, a `28C16` on a Fire 28 — are accepted where they were
+  previously refused as "not supported by this board". Building for v0.6.x is
+  unchanged, and a rejection lists what that firmware does serve.
+  - **Breaking: `--allow-unsupported-chip-type` is removed** from `program` and
+    `firmware build`. It only ever bypassed the old per-board list; nothing it
+    can now permit is buildable.
+
 - **Breaking: `onerom boards` is now `onerom board`**, and the bare listing it
   printed is `onerom board list`. There is no alias, so scripts calling
   `onerom boards` must be updated; the CLI suggests `board` rather than simply

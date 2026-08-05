@@ -22,8 +22,8 @@ use crate::args;
 use crate::utils::{check_fire_board, resolve_board, resolve_firmware_output};
 use onerom_cli::plugin::{PluginSpec, ResolvedPlugin, resolve_plugins};
 use onerom_cli::slot::{
-    ConfirmationsRequired, GlobalConfig, check_slot_confirmations, inject_plugins_into_config,
-    parse_slots, save_config, slots_to_config_json,
+    ConfirmationsRequired, GlobalConfig, check_slot_chip_types, check_slot_confirmations,
+    inject_plugins_into_config, parse_slots, save_config, slots_to_config_json,
 };
 use onerom_cli::{Error, Options};
 
@@ -32,16 +32,19 @@ use onerom_cli::{Error, Options};
 /// Resolve a ROM configuration to a JSON string from any of the three sources:
 /// a config file path, a list of slot specs, or an empty config (--no-config).
 ///
-/// `board` is required when `slots` is non-empty, for chip type validation.
-/// This is shared between `firmware build` and `program`.
+/// `board` and `version` are required when `slots` is non-empty, for chip type
+/// validation: which chip types a board can serve depends on which builder the
+/// target firmware uses. A config file is validated by the builder itself, so
+/// neither is consulted on that path. Shared between `firmware build` and
+/// `program`.
 pub fn resolve_config_json(
     config_file: Option<&str>,
     slots: &[String],
     no_config: bool,
     board: &Board,
+    version: &FirmwareVersion,
     global_config: Option<&GlobalConfig>,
     plugins: &[ResolvedPlugin],
-    allow_unsupported_chip_type: bool,
 ) -> Result<String, Error> {
     if let Some(path) = config_file {
         // A config file supplies the ROM slots; any --plugin entries are
@@ -56,7 +59,8 @@ pub fn resolve_config_json(
     } else if no_config || slots.is_empty() {
         slots_to_config_json(plugins, &[], global_config)
     } else {
-        let parsed = parse_slots(slots, board, allow_unsupported_chip_type)?;
+        let parsed = parse_slots(slots, board)?;
+        check_slot_chip_types(&parsed, board, version)?;
         slots_to_config_json(plugins, &parsed, global_config)
     }
 }
@@ -343,8 +347,7 @@ pub async fn cmd_build(
     let mcu = Variant::RP2350;
 
     if !args.slot.is_empty() {
-        let confirmations =
-            check_slot_confirmations(&args.slot, &board, args.allow_unsupported_chip_type)?;
+        let confirmations = check_slot_confirmations(&args.slot, &board)?;
         confirm_slot_overrides(options, &confirmations).await?;
     }
 
@@ -387,9 +390,9 @@ pub async fn cmd_build(
         &args.slot,
         args.no_config,
         &board,
+        &version,
         global_config.as_ref(),
         &plugins,
-        args.allow_unsupported_chip_type,
     )?;
 
     if let Some(path) = &args.save_config {
@@ -466,19 +469,11 @@ pub async fn accept_license(options: &Options, license: &License) -> Result<(), 
 /// Prompt the user for confirmation if any slot overrides require it.
 ///
 /// CPU frequencies above 150MHz and vreg voltages above 1.10V each require
-/// separate confirmation. Both are suppressed by `--yes`. Any chip types
-/// permitted via `--allow-unsupported-chip-type` are also surfaced here as a
-/// warning (not suppressed, since it is informational rather than a prompt).
+/// separate confirmation. Both are suppressed by `--yes`.
 pub async fn confirm_slot_overrides(
     options: &Options,
     confirmations: &ConfirmationsRequired,
 ) -> Result<(), Error> {
-    for chip_type in &confirmations.unsupported_chip_types {
-        eprintln!(
-            "Warning: chip type {chip_type} is not supported by this board - proceeding anyway (--allow-unsupported-chip-type)"
-        );
-    }
-
     if confirmations.cpu_freq {
         if options.yes {
             println!("Auto-accepted above-stock CPU frequency (--yes)");
@@ -773,14 +768,11 @@ fn chip_group_heading(board: &Board, entry: &ChipCompat) -> String {
 }
 
 /// The chip types `board` can emulate, as a comma-separated list for error
-/// messages. Wider than `Board::supported_chip_type_names()`, which covers only
-/// the board's own pin count - this includes the overhang and fly-lead types.
+/// messages. Plugins are excluded: they are listed separately by
+/// [`print_plugin_chips`], and `chips --chip-type` has no size to report for
+/// one.
 fn emulatable_chip_names(board: &Board) -> String {
-    supported_chips(*board, ChipSetType::Single, 1)
-        .iter()
-        .map(|e| e.alias)
-        .collect::<Vec<_>>()
-        .join(", ")
+    onerom_cli::slot::emulatable_chip_names(board).join(", ")
 }
 
 /// List a board's chip types by name only, without image sizes.

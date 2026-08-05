@@ -2,12 +2,14 @@
 //
 // MIT License
 
+use onerom_config::chip::ChipType;
 use onerom_config::hw::BOARDS;
 
 mod common;
 use common::{
-    FIXED_VERSION, FirmwareVersion, build_config_test, build_slots, fails, onerom, project_root,
-    representative_board, slot, slot_fails, slot_succeeds, succeeds,
+    FIXED_VERSION, FirmwareVersion, V1_VERSION, V2_VERSION, build_config_test,
+    build_slots_at_version, fails, onerom, project_root, representative_board, slot, slot_fails,
+    slot_succeeds, succeeds,
 };
 
 #[test]
@@ -748,21 +750,39 @@ fn firmware_build_slot_40pin_dual() {
     );
 }
 
+/// SRAM builds against V1 firmware, with and without an image, and must keep
+/// doing so: `6116` is in the V1 per-board chip type set, so anyone building
+/// for 0.6.x can use it.
 #[test]
-fn firmware_build_slot_sram() {
-    slot_succeeds(
-        representative_board(24),
-        &[slot("0_63_2048.rom", "6116", &[], None)],
-    );
+fn firmware_build_slot_sram_v1() {
+    for spec in [slot("0_63_2048.rom", "6116", &[], None), "type=6116".into()] {
+        let out = build_slots_at_version(representative_board(24), &[spec], Some(V1_VERSION));
+        assert!(
+            out.status.success(),
+            "stderr: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
 }
 
+/// Against V2 firmware, whether SRAM builds is whatever the V2 builder says:
+/// no V2 firmware serves `6116` at the time of writing, so it is refused.
+///
+/// The expectation is read from `SUPPORTED_CHIP_TYPES_V2` rather than written
+/// down, so this test follows the builder: it starts requiring success the day
+/// `Chip6116` joins that list, and fails if the firmware gains SRAM without it.
 #[test]
-fn firmware_build_slot_sram_no_image() {
-    let slot = "type=6116";
-    let output = build_slots(representative_board(24), &[slot.to_string()]);
-    println!("Output: {}", String::from_utf8_lossy(&output.stdout));
-    assert!(
-        output.status.success(),
-        "SRAM slot without image should succeed"
+fn firmware_build_slot_sram_tracks_the_v2_chip_list() {
+    let servable = onerom_gen::SUPPORTED_CHIP_TYPES_V2.contains(&ChipType::Chip6116);
+    let out = build_slots_at_version(
+        representative_board(24),
+        &[slot("0_63_2048.rom", "6116", &[], None)],
+        Some(V2_VERSION),
+    );
+    assert_eq!(
+        out.status.success(),
+        servable,
+        "SRAM build vs SUPPORTED_CHIP_TYPES_V2\nstderr: {}",
+        String::from_utf8_lossy(&out.stderr)
     );
 }

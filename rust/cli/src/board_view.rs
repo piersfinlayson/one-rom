@@ -403,7 +403,7 @@ fn socket_gpios(board: &Board, pin: u8) -> Option<String> {
 fn board_power_name(board: &Board, pin: u8) -> Option<String> {
     for chip in CHIP_TYPES {
         if chip.chip_pins() == board.chip_pins()
-            && board.allows_chip_type(*chip)
+            && board.supports_chip_type(*chip)
             && let Some(p) = chip.power_pins().iter().find(|p| p.pin == pin)
         {
             return Some(p.name.to_ascii_uppercase());

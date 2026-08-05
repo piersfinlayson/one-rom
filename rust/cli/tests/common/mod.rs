@@ -45,6 +45,14 @@ pub fn representative_board(pins: u8) -> &'static str {
 
 pub const FIXED_VERSION: &str = "v0.6.13";
 
+/// The last release the V1 builder serves, and the first the V2 builder does.
+///
+/// A test about which chip types a board can serve names one of these rather
+/// than relying on the latest release: the two builders answer differently, and
+/// which one "latest" reaches moves as releases are published.
+pub const V1_VERSION: &str = "v0.6.14";
+pub const V2_VERSION: &str = "v0.7.0";
+
 pub enum FirmwareVersion {
     Fixed(&'static str),
     Current,
@@ -176,6 +184,18 @@ pub fn slot(
 }
 
 pub fn build_slots(board: &str, slots: &[String]) -> std::process::Output {
+    build_slots_at_version(board, slots, None)
+}
+
+/// [`build_slots`] against a named firmware release rather than the latest.
+///
+/// Which chip types a board can serve depends on the builder the target
+/// firmware uses, so a test about that has to say which one it means.
+pub fn build_slots_at_version(
+    board: &str,
+    slots: &[String],
+    version: Option<&str>,
+) -> std::process::Output {
     let tmp = tempfile::TempDir::new().unwrap();
     let out = tmp.path().join("firmware.bin");
     let mut cmd = onerom();
@@ -183,6 +203,9 @@ pub fn build_slots(board: &str, slots: &[String]) -> std::process::Output {
         .args(["firmware", "build", "--board", board]);
     for s in slots {
         cmd.args(["--slot", s.as_str()]);
+    }
+    if let Some(version) = version {
+        cmd.args(["--version", version]);
     }
     cmd.args(["--output", out.to_str().unwrap()]);
     cmd.output().unwrap()

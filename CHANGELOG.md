@@ -14,7 +14,7 @@ Headline changes in this release:
 - One ROM Lens working again, and ported to a Rust/wasm crate.
 - CLI `--serial-override` to set a custom serial number, exposed via the USB plugin.
 - New plugin-API getters for device GPIOs and the exact per-ROM type string.
-- **Breaking:** `onerom boards` is now `onerom board list`, and the CLI now refuses Ice (STM32) boards, which it never supported.
+- **Breaking:** `onerom boards` is now `onerom board list`, the CLI now refuses Ice (STM32) boards, which it never supported, and `--allow-unsupported-chip-type` is gone.
 
 In detail:
 
@@ -32,6 +32,7 @@ In detail:
   - This required a firmware update and a USB plugin update.
 - Turbo boot with more than one non-plugin ROM slot is now a warning under the CLI's `--force`, rather than a hard error.  Only the first slot is served at boot, which is what you want when it holds a bootloader that selects the others itself.
 - The CLI now accepts `--plugin` alongside `--config-file` on `program` and `firmware build`; the plugins are inserted ahead of the config's ROM slots, so a plugin can be added to a stock config without editing it.  It is an error if the config already defines a plugin of its own.
+- `--slot` now accepts every chip type the target firmware can serve on the board, so the overhang and fly-lead combinations `docs/COMPATIBILITY.md` documents — a 2764 on a Fire 24, say — no longer have to be built from a config file.  **Breaking:** `--allow-unsupported-chip-type` is removed, having nothing left to permit.
 - **Breaking change: `onerom boards` is now `onerom board list`.**  There is deliberately no alias, so a script calling `onerom boards` must be updated — the CLI suggests `board` rather than simply failing.  A plural noun taking a singular argument read wrongly, and with three subcommands beneath it the listing deserved a name of its own.
 - Ice (STM32) boards are now listed separately by `onerom board list`, and refused where the CLI cannot use them.  The CLI has never had an STM32 path — every firmware path composes an RP2350 image and every device path speaks picoboot — but a single merged list implied otherwise, and `--board ice-24-d` then failed several layers down as a missing release.  `scan`, `program`, `firmware build`, `firmware download`, `firmware inspect --board`, `control pin`, `control reset` and `inspect gpio` now reject an Ice `--board` up front; the commands that only *describe* hardware still accept them.
 - `onerom inspect gpio` now shows a single `Function` column listing everything a GPIO is, in place of separate `Pad` and `Function` columns.  It names every function where a GPIO carries more than one (on a fire-24-f the status LED and the RGB LED are both GPIO 29, and only the first was listed), no longer claims a GPIO is `SWCLK` or `SWDIO`, and by default lists only the GPIOs connected to something, with `--all` for the rest.  The explanatory legend moves behind `--verbose`.

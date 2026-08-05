@@ -1528,7 +1528,7 @@ file=<path_or_url>,type=<romtype>[,cs1=<logic>][,cs2=<logic>][,cs3=<logic>]
 | Key | Values / notes |
 |---|---|
 | `file` | Local path or URL to the ROM image. |
-| `type` | Chip type (see [`chips`](#chips)), e.g. `2364`, `2332`, `2716`, `27C400`. Any accepted alias may be used; the exact spelling you enter is preserved in the device metadata (shown by `scan`/`inspect`), while the resolved type drives behaviour. |
+| `type` | Chip type, e.g. `2364`, `2332`, `2716`, `27C400`. Any type the target firmware can serve on the board is accepted — that is exactly what [`chips --board`](#chips) lists, including the overhang and fly-lead combinations (a `2764` on a Fire 24, say); see [COMPATIBILITY.md](COMPATIBILITY.md). Building for firmware older than v0.7.0 accepts a narrower set, and a rejection lists what that firmware serves. Any accepted alias may be used; the exact spelling you enter is preserved in the device metadata (shown by `scan`/`inspect`), while the resolved type drives behaviour. |
 | `cs1`, `cs2`, `cs3` | CS polarity: `active_low` (or `0`), `active_high` (or `1`). Which lines are required depends on the chip type (e.g. `2332` requires `cs1` and `cs2`). |
 | `size_handling` (alias `size`) | `none`, `duplicate` (or `dup`), `truncate` (or `trunc`), `pad`. For an Intel HEX image, padding fills with `0xFF` and `duplicate` is not permitted. |
 | `format` | `binary` (default) or `ihex` (Intel HEX). An `ihex` file is decoded to a binary image before use; unwritten bytes read as `0xFF`. |

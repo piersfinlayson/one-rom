@@ -95,28 +95,26 @@ fn view_needs_gpios(chip_type: &Option<String>, gpio: bool) -> bool {
 /// Resolve a `--chip-type` name to a [`ChipType`] this board can emulate,
 /// erroring with the board's supported list otherwise.
 ///
-/// A chip counts as emulatable if the board natively/overhang-accepts it
-/// (`allows_chip_type`) or `onerom-gen`'s compatibility check places it,
-/// including the fly-lead cases documented in `docs/COMPATIBILITY.md`. The
-/// socket renderer relies on that same geometry.
+/// A chip counts as emulatable if `onerom-gen`'s compatibility check places it
+/// on the board, including the fly-lead cases documented in
+/// `docs/COMPATIBILITY.md`. The socket renderer relies on that same geometry.
 fn resolve_socket_chip(board: &Board, name: &str) -> Result<ChipType, Error> {
-    let supported = board.supported_chip_type_names().join(", ");
+    let supported = onerom_cli::slot::emulatable_chip_names(board).join(", ");
     let chip = ChipType::try_from_str(name)
         .ok_or_else(|| Error::UnsupportedChipType(name.to_string(), supported.clone()))?;
     // Plugins (and any other 0-pin type) have no ROM socket to draw.
     if chip.chip_pins() == 0 {
         return Err(Error::UnsupportedChipType(name.to_string(), supported));
     }
-    let emulatable = board.allows_chip_type(chip)
-        || onerom_gen::compat::check_chip_set_on_board(
-            *board,
-            chip,
-            onerom_gen::ChipSetType::Single,
-            1,
-            onerom_gen::compat::default_cs_config(chip),
-        )
-        .is_ok();
-    if !emulatable {
+    if onerom_gen::compat::check_chip_set_on_board(
+        *board,
+        chip,
+        onerom_gen::ChipSetType::Single,
+        1,
+        onerom_gen::compat::default_cs_config(chip),
+    )
+    .is_err()
+    {
         return Err(Error::UnsupportedChipType(name.to_string(), supported));
     }
     Ok(chip)

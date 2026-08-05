@@ -50,10 +50,14 @@ impl Board {
     /// Whether this board permits `chip_type`, either as a natively supported
     /// type or via its extra chip type set.
     ///
-    /// This is the combined test used to gate ROM chip types against a board:
-    /// the CLI applies it when parsing `--slot` arguments, and the V1 firmware
-    /// builder applies it (unconditionally) at build time. Plugin chip types
-    /// are not covered here — callers handle those separately.
+    /// This is the **V1** (pre-0.7.0 firmware) gate, and the V1 firmware
+    /// builder is now its only consumer: V1 serves a fixed set of chip types
+    /// per board, so a type outside it genuinely cannot be served. V2 derives
+    /// what a board can serve from the address and CS/data layouts instead
+    /// (`onerom_gen::compat::check_chip_set_on_board`), which admits every
+    /// overhang and fly-lead combination `docs/COMPATIBILITY.md` documents —
+    /// so do not use this to gate a V2 build. Plugin chip types are not covered
+    /// here either; callers handle those separately.
     pub fn allows_chip_type(&self, chip_type: ChipType) -> bool {
         self.supports_chip_type(chip_type) || self.extra_chip_types().contains(&chip_type)
     }

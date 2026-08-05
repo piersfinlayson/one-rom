@@ -217,13 +217,6 @@ pub struct ProgramArgs {
     #[arg(long, short)]
     pub force: bool,
 
-    /// Allow a --slot chip type that is not in the target board's supported set.
-    ///
-    /// Bypasses only the supported-chip-type check. Board electrical
-    /// constraints (e.g. the 40-pin requirement for force_16bit) still apply.
-    #[arg(long, visible_alias = "allow-unsupported-chip")]
-    pub allow_unsupported_chip_type: bool,
-
     /// Mount mass storage device when rebooting into stopped mode.
     #[arg(long, short = 'm')]
     pub msd: bool,

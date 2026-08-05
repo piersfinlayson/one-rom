@@ -294,12 +294,12 @@ impl Builder {
         &self,
         props: FirmwareProperties,
     ) -> Result<(alloc::vec::Vec<u8>, alloc::vec::Vec<u8>)> {
-        // Reject chip types the target board does not support. This is the same
-        // board-level test the CLI applies when parsing --slot, but here it is
-        // enforced unconditionally: V1 firmware genuinely cannot serve an
-        // unsupported chip type, so the CLI's --allow-unsupported-chip-type
-        // override deliberately has no effect on the V1 path. Plugin chip types
-        // are gated separately and skipped here.
+        // Reject chip types the target board does not support. V1 serves a
+        // fixed set per board, so this board-level test is the whole answer
+        // here - unlike V2, which derives what it can serve from the address
+        // and CS/data layouts. The CLI applies the same split to `--slot`,
+        // choosing the test by target firmware version. Plugin chip types are
+        // gated separately and skipped here.
         let board = props.board();
         for chip_set in self.config.chip_sets.iter() {
             for chip in chip_set.chips.iter() {

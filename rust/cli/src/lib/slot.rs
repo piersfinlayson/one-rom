@@ -10,7 +10,10 @@
 use crate::Error;
 use crate::plugin::{ResolvedPlugin, plugin_to_chip_set_config};
 use onerom_config::chip::{CHIP_TYPE_NAMES_PLUGINS, ChipFunction, ChipType, ControlLineType};
-use onerom_config::hw::Board;
+use onerom_config::fw::FirmwareVersion;
+use onerom_config::hw::{Board, Model};
+use onerom_gen::MIN_SUPPORTED_FIRMWARE_VERSION_V2;
+use onerom_gen::compat::{check_chip_set_on_board, default_cs_config, supported_chips};
 use onerom_gen::{
     ChipConfig, ChipSetConfig, ChipSetType, ChipTypeSpec, Config, CsLogic, FileFormat, FireConfig,
     FireCpuFreq, FireVreg, FirmwareConfig, LedConfig, LoadAddress, SizeHandling, Transform,
@@ -36,9 +39,6 @@ pub struct ConfirmationsRequired {
     pub cpu_freq: bool,
     /// True if any slot has a vreg above the stock threshold.
     pub vreg: bool,
-    /// Names of chip types that the board does not support but were permitted
-    /// via `--allow-unsupported-chip-type`. Empty unless the override was used.
-    pub unsupported_chip_types: Vec<String>,
 }
 
 /// Check whether any slot specifications require user confirmation.
@@ -59,7 +59,6 @@ pub fn check_confirmations(slots: &[SlotSpec]) -> ConfirmationsRequired {
                 .map(|v| *v > FireVreg::stock_value())
                 .unwrap_or(false)
         }),
-        unsupported_chip_types: Vec::new(),
     }
 }
 
@@ -70,19 +69,8 @@ pub fn check_confirmations(slots: &[SlotSpec]) -> ConfirmationsRequired {
 pub fn check_slot_confirmations(
     slots: &[String],
     board: &Board,
-    allow_unsupported_chip_type: bool,
 ) -> Result<ConfirmationsRequired, Error> {
-    let parsed = parse_slots(slots, board, allow_unsupported_chip_type)?;
-    let mut confirmations = check_confirmations(&parsed);
-    // A parsed slot with an unsupported chip type can only be present because
-    // the override was set (parse_slot errors otherwise), so collect these for
-    // the caller to warn about.
-    confirmations.unsupported_chip_types = parsed
-        .iter()
-        .filter(|s| !board.allows_chip_type(s.chip_type.resolved()))
-        .map(|s| s.chip_type.resolved().name().to_string())
-        .collect();
-    Ok(confirmations)
+    Ok(check_confirmations(&parse_slots(slots, board)?))
 }
 
 // Handle tilde expansion for file paths in slot specifications, since these
@@ -285,17 +273,7 @@ const SLOT_KEYS: &[&str] = &[
 ];
 
 /// Parse a single `--slot` string into a [`SlotSpec`], validating against the given board.
-///
-/// When `allow_unsupported_chip_type` is set, a chip type outside the board's
-/// supported set is permitted rather than rejected; the caller is expected to
-/// warn (see [`ConfirmationsRequired::unsupported_chip_types`]). Board
-/// electrical constraints (e.g. the 40-pin requirement for `force_16bit`) are
-/// unaffected.
-fn parse_slot(
-    slot: &str,
-    board: &Board,
-    allow_unsupported_chip_type: bool,
-) -> Result<SlotSpec, Error> {
+fn parse_slot(slot: &str, board: &Board) -> Result<SlotSpec, Error> {
     let mut file = None;
     let mut label = None;
     let mut chip_type_str = None;
@@ -374,18 +352,13 @@ fn parse_slot(
         )
     })?;
     let chip_type = ChipType::try_from_str(&chip_type_str).ok_or_else(|| {
-        let supported = supported_chip_names_for_board(board);
+        let supported = candidate_chip_names_for_board(board);
         Error::UnsupportedChipType(chip_type_str.clone(), supported)
     })?;
 
-    if !allow_unsupported_chip_type && !board.allows_chip_type(chip_type) {
-        let supported = supported_chip_names_for_board(board);
-        return Err(Error::UnsupportedBoardChipType(
-            chip_type.name().to_string(),
-            chip_type.aliases().join(", "),
-            supported,
-        ));
-    }
+    // Whether the board can *serve* this chip type depends on which firmware
+    // is being built for, which is not known at parse time. See
+    // [`check_slot_chip_types`], applied once the version is resolved.
 
     if chip_type.chip_function() != ChipFunction::Ram && file.is_none() {
         return Err(Error::InvalidArgument(
@@ -518,26 +491,132 @@ fn validate_cs_lines(
     Ok(())
 }
 
-/// Build a human-readable sorted list of chip type names supported by a board,
-/// including plugins.
-pub fn supported_chip_names_for_board(board: &Board) -> String {
-    let mut names: Vec<&str> = board.supported_chip_type_names().to_vec();
+/// The chip types `board` can emulate, in the order [`supported_chips`] ranks
+/// them: native first, then overhang, then fly-lead.
+///
+/// Wider than [`Board::supported_chip_type_names`], which covers only the
+/// board's own pin count. This is the set `--slot` accepts and the set
+/// `firmware chips --board` lists, so the gate and the listing cannot disagree.
+pub fn emulatable_chip_names(board: &Board) -> Vec<&'static str> {
+    supported_chips(*board, ChipSetType::Single, 1)
+        .iter()
+        .map(|e| e.alias)
+        .collect()
+}
+
+/// Every chip type name `board` might take, under either builder, for the
+/// "that is not a chip type" error.
+///
+/// A name that resolves to no chip type at all is a typo, and the useful hint
+/// is everything the board could plausibly accept. Which of them the *target*
+/// firmware can actually serve is settled by [`check_slot_chip_types`], which
+/// is version-aware and names the right subset when it rejects one.
+fn candidate_chip_names_for_board(board: &Board) -> String {
+    let mut names: Vec<&'static str> = board.supported_chip_type_names().to_vec();
+    names.extend(board.extra_chip_types().iter().map(|c| c.name()));
+    if board.model() == Model::Fire {
+        names.extend(emulatable_chip_names(board));
+    }
     names.extend_from_slice(CHIP_TYPE_NAMES_PLUGINS);
     names.sort_unstable();
+    names.dedup();
     names.join(", ")
+}
+
+/// The chip type names `board` accepts in a `--slot` built for `version`,
+/// including plugins, as a comma-separated list for error messages.
+///
+/// Follows the same V1/V2 split as [`check_slot_chip_types`], so the list a
+/// rejection offers is the list that rejection was made against.
+pub fn supported_chip_names_for_board(board: &Board, version: &FirmwareVersion) -> String {
+    let mut names = if serves_v2(version) {
+        emulatable_chip_names(board)
+    } else {
+        let mut v1: Vec<&'static str> = board.supported_chip_type_names().to_vec();
+        // `supported_chip_type_names` is per pin count, so the board's extra
+        // types - the whole point of the V1 gate - are not in it.
+        v1.extend(board.extra_chip_types().iter().map(|c| c.name()));
+        v1.sort_unstable();
+        v1.dedup();
+        v1
+    };
+    names.extend_from_slice(CHIP_TYPE_NAMES_PLUGINS);
+    names.join(", ")
+}
+
+/// Whether `version` is served by the V2 builder.
+fn serves_v2(version: &FirmwareVersion) -> bool {
+    *version >= MIN_SUPPORTED_FIRMWARE_VERSION_V2
+}
+
+/// Reject any slot whose chip type the target firmware cannot serve on `board`.
+///
+/// The two builders decide this differently, so the gate has to know which one
+/// will run:
+///
+/// - **V2** (0.7.0 and later) derives the address and CS/data layouts, which
+///   admits every overhang and fly-lead combination `docs/COMPATIBILITY.md`
+///   documents, and refuses chip types no v2 firmware serves. A `--slot`
+///   becomes a one-chip Single set, so this is the same derivation the build
+///   will run. `default_cs_config` stands in for the slot's own polarities:
+///   every configurable line must have been supplied ([`parse_slot`]) and the
+///   fixed ones come from the silicon, so the two differ only in polarity -
+///   which places a line on the same GPIO either way.
+/// - **V1** (pre-0.7.0) serves a fixed set of chip types per board, so
+///   `Board::allows_chip_type` is the gate, exactly as `build_v1` applies it.
+///
+/// Plugins have no ROM layout to derive and are validated by the builder.
+pub fn check_slot_chip_types(
+    slots: &[SlotSpec],
+    board: &Board,
+    version: &FirmwareVersion,
+) -> Result<(), Error> {
+    // V2 firmware exists only for Fire (RP2350) boards, so its layout
+    // derivation would reject every chip type on an Ice board and offer an
+    // empty list of alternatives. The build and program commands refuse an Ice
+    // board long before this point; say so here too rather than let a direct
+    // caller of this library see that nonsense.
+    if serves_v2(version) && board.model() != Model::Fire {
+        return Err(Error::IceBoardUnsupported(board.name().to_string()));
+    }
+
+    for slot in slots {
+        let chip_type = slot.chip_type.resolved();
+        if chip_type.is_plugin() {
+            continue;
+        }
+        let servable = if serves_v2(version) {
+            check_chip_set_on_board(
+                *board,
+                chip_type,
+                ChipSetType::Single,
+                1,
+                default_cs_config(chip_type),
+            )
+            .is_ok()
+        } else {
+            board.allows_chip_type(chip_type)
+        };
+        if !servable {
+            return Err(Error::UnsupportedBoardChipType(
+                chip_type.name().to_string(),
+                chip_type.aliases().join(", "),
+                supported_chip_names_for_board(board, version),
+            ));
+        }
+    }
+
+    Ok(())
 }
 
 /// Parse all `--slot` strings against a resolved board, returning a vec of
 /// [`SlotSpec`] or the first error.
-pub fn parse_slots(
-    slots: &[String],
-    board: &Board,
-    allow_unsupported_chip_type: bool,
-) -> Result<Vec<SlotSpec>, Error> {
-    slots
-        .iter()
-        .map(|s| parse_slot(s, board, allow_unsupported_chip_type))
-        .collect()
+///
+/// Validates each slot's syntax, chip type name, CS lines and board electrical
+/// constraints. Whether the target firmware can *serve* those chip types is a
+/// separate, version-dependent question - see [`check_slot_chip_types`].
+pub fn parse_slots(slots: &[String], board: &Board) -> Result<Vec<SlotSpec>, Error> {
+    slots.iter().map(|s| parse_slot(s, board)).collect()
 }
 
 fn slot_to_chip_config(slot: &SlotSpec) -> ChipConfig {
@@ -719,13 +798,100 @@ mod tests {
             .collect()
     }
 
+    /// The last firmware the V1 builder serves, and the first the V2 builder
+    /// does. Both gates are exercised against a real released version.
+    const V1: FirmwareVersion = FirmwareVersion::new(0, 6, 14, 0);
+    const V2: FirmwareVersion = MIN_SUPPORTED_FIRMWARE_VERSION_V2;
+
+    /// Run the chip type gate over one slot spec, as the build path does.
+    fn gate(board: &str, slot: &str, version: &FirmwareVersion) -> Result<(), Error> {
+        let board = Board::try_from_str(board).unwrap();
+        let parsed = parse_slots(&[slot.to_string()], &board).expect("slot parses");
+        check_slot_chip_types(&parsed, &board, version)
+    }
+
+    /// V2 gates on the serving layout, not the board's pin count: a 28-pin chip
+    /// reached by a fly-lead to X1 is servable on a 24-pin board, exactly as
+    /// `docs/COMPATIBILITY.md` lists it. V1 has no such layout and refuses it -
+    /// `fire-24-*` carries no `extra_chip_types` at all - which is why the gate
+    /// cannot be applied without knowing the target firmware.
+    #[test]
+    fn a_fly_lead_chip_is_servable_only_under_v2() {
+        assert!(gate("fire-24-a", "file=rom.bin,type=2764", &V2).is_ok());
+        assert!(gate("fire-24-a", "file=rom.bin,type=2764", &V1).is_err());
+    }
+
+    /// Likewise for overhang. The 28-pin boards' `extra_chip_types` name five
+    /// 24-pin types, so V1 serves exactly those; V2 places every 24-pin type
+    /// the board can reach, and `28C16` is outside that list.
+    #[test]
+    fn an_overhang_chip_outside_the_extras_list_is_servable_only_under_v2() {
+        assert!(gate("fire-28-a", "file=rom.bin,type=28C16", &V2).is_ok());
+        assert!(gate("fire-28-a", "file=rom.bin,type=28C16", &V1).is_err());
+    }
+
+    /// And the other way round: a 24-pin SRAM is in V1's per-board set but no
+    /// V2 firmware serves it yet, so building one against 0.6.x must keep
+    /// working while 0.7.x refuses it up front.
+    ///
+    /// This flips on its own the day `Chip6116` joins `SUPPORTED_CHIP_TYPES_V2`
+    /// - the expectation is read from that list rather than written down here.
+    #[test]
+    fn sram_is_servable_under_v1_and_tracks_the_v2_chip_list() {
+        assert!(gate("fire-24-a", "type=6116", &V1).is_ok());
+        assert_eq!(
+            gate("fire-24-a", "type=6116", &V2).is_ok(),
+            onerom_gen::SUPPORTED_CHIP_TYPES_V2.contains(&ChipType::Chip6116),
+        );
+    }
+
+    /// A chip no 24-pin board can reach is refused by either builder, and the
+    /// error names what that builder does serve - so the alternatives offered
+    /// are ones that would actually have worked.
+    #[test]
+    fn an_unservable_chip_is_refused_with_the_right_alternatives() {
+        let err = gate("fire-24-a", "file=rom.bin,type=27C400", &V2).unwrap_err();
+        let msg = format!("{err}");
+        assert!(msg.contains("cannot serve chip types 27C400"), "{msg}");
+        // V2 offers the fly-lead types alongside the native ones.
+        assert!(msg.contains("2364"), "{msg}");
+        assert!(msg.contains("2764"), "{msg}");
+
+        // V1 offers only what V1 serves, so no fly-lead type appears.
+        let msg = format!(
+            "{}",
+            gate("fire-24-a", "file=rom.bin,type=27C400", &V1).unwrap_err()
+        );
+        assert!(msg.contains("2364"), "{msg}");
+        assert!(!msg.contains("2764"), "{msg}");
+    }
+
+    /// Plugins have no ROM layout to derive, so neither gate may eat them - the
+    /// builder validates plugin slots itself.
+    #[test]
+    fn a_plugin_chip_type_passes_both_gates() {
+        for version in [&V1, &V2] {
+            assert!(gate("fire-24-a", "file=plugin.bin,type=SystemPlugin", version).is_ok());
+        }
+    }
+
+    /// V2 firmware exists only for Fire boards, so its layout has nothing to
+    /// say about an Ice one: the answer is the same "not supported" the build
+    /// command gives up front, not a chip-type error listing no alternatives.
+    /// V1 firmware is what an Ice board runs, so that gate still applies.
+    #[test]
+    fn an_ice_board_is_refused_by_the_v2_gate_but_served_by_v1() {
+        let err = gate("ice-24-e", "file=rom.bin,type=2364,cs1=active_low", &V2).unwrap_err();
+        assert!(matches!(err, Error::IceBoardUnsupported(_)), "{err}");
+        assert!(gate("ice-24-e", "file=rom.bin,type=2364,cs1=active_low", &V1).is_ok());
+    }
+
     #[test]
     fn slot_parses_ihex_format_and_load_address() {
-        let board = Board::try_from_str("24-e").unwrap();
+        let board = Board::try_from_str("fire-24-e").unwrap();
         let slot = parse_slot(
             "file=rom.hex,type=2364,cs1=active_low,format=ihex,load_address=$E000",
             &board,
-            false,
         )
         .unwrap();
         assert_eq!(slot.format, Some(FileFormat::IntelHex));
@@ -739,8 +905,8 @@ mod tests {
 
     #[test]
     fn slot_defaults_to_binary_format() {
-        let board = Board::try_from_str("24-e").unwrap();
-        let slot = parse_slot("file=rom.bin,type=2364,cs1=active_low", &board, false).unwrap();
+        let board = Board::try_from_str("fire-24-e").unwrap();
+        let slot = parse_slot("file=rom.bin,type=2364,cs1=active_low", &board).unwrap();
         assert_eq!(slot.format, None);
         assert_eq!(slot.load_address, None);
         assert_eq!(slot_to_chip_config(&slot).format, FileFormat::Binary);
@@ -748,11 +914,10 @@ mod tests {
 
     #[test]
     fn slot_parses_a_single_transform() {
-        let board = Board::try_from_str("24-e").unwrap();
+        let board = Board::try_from_str("fire-24-e").unwrap();
         let slot = parse_slot(
             "file=rom.bin,type=2364,cs1=active_low,transform=swap_bytes",
             &board,
-            false,
         )
         .unwrap();
         assert_eq!(slot.transform, vec![Transform::SwapBytes]);
@@ -764,12 +929,11 @@ mod tests {
 
     #[test]
     fn slot_accepts_the_trans_key_alias() {
-        let board = Board::try_from_str("24-e").unwrap();
+        let board = Board::try_from_str("fire-24-e").unwrap();
         for key in ["transform", "trans"] {
             let slot = parse_slot(
                 &format!("file=rom.bin,type=2364,cs1=active_low,{key}=swap_bytes"),
                 &board,
-                false,
             )
             .unwrap_or_else(|e| panic!("slot key '{key}' rejected: {e}"));
             assert_eq!(slot.transform, vec![Transform::SwapBytes]);
@@ -778,11 +942,10 @@ mod tests {
 
     #[test]
     fn slot_parses_a_transform_list_in_order() {
-        let board = Board::try_from_str("24-e").unwrap();
+        let board = Board::try_from_str("fire-24-e").unwrap();
         let slot = parse_slot(
             "file=rom.bin,type=2364,cs1=active_low,transform=deinterleave:1/2/2+swap_bytes",
             &board,
-            false,
         )
         .unwrap();
         assert_eq!(
@@ -800,11 +963,10 @@ mod tests {
 
     #[test]
     fn slot_transform_unit_defaults_to_one() {
-        let board = Board::try_from_str("24-e").unwrap();
+        let board = Board::try_from_str("fire-24-e").unwrap();
         let slot = parse_slot(
             "file=rom.bin,type=2364,cs1=active_low,transform=deinterleave:0/4",
             &board,
-            false,
         )
         .unwrap();
         assert_eq!(
@@ -819,19 +981,18 @@ mod tests {
 
     #[test]
     fn slot_defaults_to_no_transform() {
-        let board = Board::try_from_str("24-e").unwrap();
-        let slot = parse_slot("file=rom.bin,type=2364,cs1=active_low", &board, false).unwrap();
+        let board = Board::try_from_str("fire-24-e").unwrap();
+        let slot = parse_slot("file=rom.bin,type=2364,cs1=active_low", &board).unwrap();
         assert!(slot.transform.is_empty());
         assert!(slot_to_chip_config(&slot).transform.is_empty());
     }
 
     #[test]
     fn slot_rejects_a_bad_transform() {
-        let board = Board::try_from_str("24-e").unwrap();
+        let board = Board::try_from_str("fire-24-e").unwrap();
         let err = parse_slot(
             "file=rom.bin,type=2364,cs1=active_low,transform=nonsense",
             &board,
-            false,
         )
         .unwrap_err();
         let msg = format!("{err}");
@@ -843,11 +1004,10 @@ mod tests {
 
     #[test]
     fn slot_rejects_a_duplicate_transform_key() {
-        let board = Board::try_from_str("24-e").unwrap();
+        let board = Board::try_from_str("fire-24-e").unwrap();
         let err = parse_slot(
             "file=rom.bin,type=2364,cs1=active_low,transform=swap_bytes,transform=swap_bytes",
             &board,
-            false,
         )
         .unwrap_err();
         assert!(format!("{err}").contains("Duplicate slot key 'transform'"));
@@ -855,11 +1015,10 @@ mod tests {
 
     #[test]
     fn slot_load_address_requires_ihex() {
-        let board = Board::try_from_str("24-e").unwrap();
+        let board = Board::try_from_str("fire-24-e").unwrap();
         let err = parse_slot(
             "file=rom.bin,type=2364,cs1=active_low,load_address=0x100",
             &board,
-            false,
         )
         .unwrap_err();
         assert!(format!("{err}").contains("load_address is only valid with format=ihex"));
