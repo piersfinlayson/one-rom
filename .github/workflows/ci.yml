@@ -36,26 +36,34 @@ on:
       - '!**.md'
       - '!docs/**'
 
+# The work is split across jobs rather than run as one sequence.  Each job gets
+# its own runner and, more to the point, its own 6 hour timeout: as one job the
+# suite reached 5h49m and was being cancelled outright.  Only the firmware job
+# needs the ARM cross-compiler, and only lint and lens need Emscripten, so each
+# job installs what it uses.
+
 jobs:
-  build:
+  lint:
+    name: Lint (rustfmt + clippy)
     runs-on: ubuntu-latest
-    
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
-      
+    - uses: actions/checkout@v4
+
     - name: Install build dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y gcc-arm-none-eabi libcurl4-openssl-dev libjson-c-dev libzip-dev make
-        
+        sudo apt-get install -y libcurl4-openssl-dev libjson-c-dev libzip-dev make
+
     - name: Install Rust
       uses: dtolnay/rust-toolchain@stable
       with:
         components: rustfmt, clippy
 
-    - name: Install Rust wasm-pack
-      run: cargo install wasm-pack
+    - name: Cache Emscripten SDK
+      uses: actions/cache@v4
+      with:
+        path: ~/emsdk
+        key: emsdk-${{ runner.os }}-${{ hashFiles('ci/install-emscripten.sh') }}
 
     - name: Install Emscripten (for One ROM Lens)
       run: |
@@ -68,26 +76,112 @@ jobs:
     - name: Install wasm target
       run: rustup target add wasm32-unknown-emscripten
 
+    - uses: Swatinem/rust-cache@v2
+      with:
+        workspaces: rust
+
     - name: Run Rust lint (rustfmt + clippy)
       run: |
         export TOOLCHAIN=/usr/bin
         ci/rust-lint.sh
+
+  rust-tests:
+    name: Rust tests
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install build dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libcurl4-openssl-dev libjson-c-dev libzip-dev make
+
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+
+    - uses: Swatinem/rust-cache@v2
+      with:
+        workspaces: rust
 
     - name: Run various Rust tests
       run: |
         export TOOLCHAIN=/usr/bin
         ci/rust-tests.sh
 
+  rust-docs:
+    name: Rust docs
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install build dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libcurl4-openssl-dev libjson-c-dev libzip-dev make
+
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+
+    - uses: Swatinem/rust-cache@v2
+      with:
+        workspaces: rust
+
     - name: Build Rust docs
       run: |
         export TOOLCHAIN=/usr/bin
         ci/rust-docs.sh
 
+  emulator-tests:
+    # One job per socket size.  The four are independent - every test in a group
+    # targets boards of that one size - and the 24 pin group is much the largest,
+    # so splitting this way puts the long pole on its own runner.
+    name: Emulator tests (${{ matrix.socket }} pin)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        socket: [24, 28, 32, 40]
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install build dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libcurl4-openssl-dev libjson-c-dev libzip-dev make
+
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+
+    - uses: Swatinem/rust-cache@v2
+      with:
+        workspaces: rust
+        # All four sockets build the same dependency graph, so they share one
+        # cache entry rather than populating four near-identical ones.
+        shared-key: emulator-tests
+
     - name: Run One ROM emulator tests
       run: |
         export TOOLCHAIN=/usr/bin
-        ci/test-emu.sh
-      
+        ci/test-emu.sh ${{ matrix.socket }}
+
+  firmware:
+    name: Firmware and plugins
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install build dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y gcc-arm-none-eabi libcurl4-openssl-dev libjson-c-dev libzip-dev make
+
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+
+    - uses: Swatinem/rust-cache@v2
+      with:
+        workspaces: rust
+
     - name: Build firmware
       run: |
         export TOOLCHAIN=/usr/bin
@@ -105,10 +199,63 @@ jobs:
         make -C plugins/user/rgb
         make -C firmware/ora/examples
 
+  tools:
+    name: Tools (One ROM Lab)
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install build dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libcurl4-openssl-dev libjson-c-dev libzip-dev make
+
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+
+    - uses: Swatinem/rust-cache@v2
+      with:
+        workspaces: rust
+
     - name: Build tools
       run: |
         export TOOLCHAIN=/usr/bin
         ci/rust-tools.sh
+
+  lens:
+    name: One ROM Lens (wasm)
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install build dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libcurl4-openssl-dev libjson-c-dev libzip-dev make
+
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Cache Emscripten SDK
+      uses: actions/cache@v4
+      with:
+        path: ~/emsdk
+        key: emsdk-${{ runner.os }}-${{ hashFiles('ci/install-emscripten.sh') }}
+
+    - name: Install Emscripten (for One ROM Lens)
+      run: |
+        ci/install-emscripten.sh "$HOME/emsdk"
+        source "$HOME/emsdk/emsdk_env.sh"
+        # Persist emcc/emar (and EMSDK) for subsequent steps.
+        echo "PATH=$PATH" >> "$GITHUB_ENV"
+        echo "EMSDK=$EMSDK" >> "$GITHUB_ENV"
+
+    - name: Install wasm target
+      run: rustup target add wasm32-unknown-emscripten
+
+    - uses: Swatinem/rust-cache@v2
+      with:
+        workspaces: rust
 
     - name: Build One ROM Lens (wasm)
       run: |

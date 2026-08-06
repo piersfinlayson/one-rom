@@ -288,151 +288,217 @@ test_40_config_api()       { run_boards run_config_api     "$1" $FIRE_40_BOARDS;
 test_40_config_monitor()   { run_boards run_config_monitor "$1" $FIRE_40_BOARDS; }
 test_40_config_rbcp()      { run_boards run_config_rbcp    "$1" $FIRE_40_BOARDS; }
 
-# Test every standard ROM type on every standard hardware revision.
-# Do just one 24/28/32/40 variant now, so we fail early if any ROM types are
-# broken.
-test_40pin fire-40-a
-test_40pin fire-40-a true
-test_28_all_rom_types fire-28-a
-test_24_all_rom_types fire-24-a
-test_32pin fire-32-a
-
-# Remaining 24 pin boards.
-test_24_all_rom_types fire-24-b
-test_24_all_rom_types fire-24-c
-test_24_all_rom_types fire-24-d
-test_24_all_rom_types fire-24-e
-test_24_all_rom_types fire-24-f
-
-# Remaining 28 pin boards.
-test_28_all_rom_types fire-28-c # First, as B is same as A
-test_28_all_rom_types fire-28-b
-test_28_all_rom_types fire-28-d
-
-# Remaining 32 pin boards.
-test_32pin fire-32-b
-
-# Remaining 40 pin boards.
-test_40pin fire-40-b
-test_40pin fire-40-b true
-
-# Extended set of 24 & 28 pin ROM tests
-test_24_config onerom-config/test/24-random-23xx.json
-test_24_config onerom-config/test/24-random-27xx.json
-test_24_config onerom-config/test/24-random-28xx.json
-test_28_config onerom-config/test/28-random-23xxx.json
-test_28_config onerom-config/test/28-random-23qlxxx.json
-test_28_config onerom-config/test/28-random-27xxx.json
-test_28_config onerom-config/test/28-random-28xxx.json
-
-# Test specific ROM configurations on all Fire 40 hardware revisions.
-test_40_config onerom-config/test/40-random.json
-test_40_config onerom-config/test/40-random-force-16bit.json
-
-# Test bank switched ROM configurations on all Fire 24 hardware revisions.
-# All 24 pin hardware revisions support bank switched ROMs with PIO support.
-test_24_config onerom-config/test/24-bank-23xx.json
-test_24_config onerom-config/test/24-bank-27xx.json
-test_24_config onerom-config/test/24-bank-28xx.json
-
-# Test bank switched ROM configurations on fire-28-c (no X pins on earlier
-# revisions)
-test_config fire-28-c onerom-config/test/28-bank-23xxx.json
-test_config fire-28-c onerom-config/test/28-bank-23qlxxx.json
-test_config fire-28-c onerom-config/test/28-bank-27xxx.json
-test_config fire-28-c onerom-config/test/28-bank-28xxx.json
-test_config fire-28-d onerom-config/test/28-bank-23xxx.json
-test_config fire-28-d onerom-config/test/28-bank-23qlxxx.json
-test_config fire-28-d onerom-config/test/28-bank-27xxx.json
-test_config fire-28-d onerom-config/test/28-bank-28xxx.json
-
-# Test multi-chip ROM configurations on all Fire 24 hardware revisions.
-test_24_config_c_onwards onerom-config/test/24-multi-2364.json
-test_24_config_c_onwards onerom-config/test/24-multi-2316.json
-test_28_config_c_onwards onerom-config/test/28-multi-231024.json
-
-# Test specific ROM configurations on all Fire 24 hardware revisions.
-# fire-24-c only has 2 image select jumpers so can only test the first
-# 4 sets within the PET config, but does check that the firmware
-# correctly wraps at that point.
-test_24_config onerom-config/pet-4-40-50.json
-test_24_config onerom-config/test/24-random-27xx.json
-
-# Test specific ROM configurations on all Fire 28 hardware revisions.
-test_28_config onerom-config/28-c64c.json
-test_28_config onerom-config/28-1541ii.json
-
-# Test specific ROM configurations on all Fire 32 hardware revisions.
-test_32_config onerom-config/test/32-random-27c080.json
-test_32_config onerom-config/test/32-random-27c301.json
-test_32_config onerom-config/test/32-random-27c0x0.json
-test_config fire-32-b onerom-config/test/32-random-23c1001.json
-
-# Plugin API tests
-test_24_config_api onerom-config/test/24-random-23xx.json
-test_24_config_api onerom-config/test/24-random-27xx.json
-test_24_config_api onerom-config/test/24-random-28xx.json
-test_28_config_api onerom-config/test/28-random-23xxx.json
-test_28_config_api onerom-config/test/28-random-23qlxxx.json
-test_28_config_api onerom-config/test/28-random-27xxx.json
-test_28_config_api onerom-config/test/28-random-28xxx.json
-test_32_config_api onerom-config/test/32-random-27c080.json
-test_32_config_api onerom-config/test/32-random-27c301.json
-test_32_config_api onerom-config/test/32-random-27c0x0.json
-test_config fire-32-b onerom-config/test/32-random-extra.json
-test_40_config_api onerom-config/test/40-random.json
-test_40_config_api onerom-config/test/40-random-force-16bit.json
-
-# Device metadata test: this config sets an instance name and serial override,
-# so the plugin API metadata getter is exercised on the present (non-NULL)
-# path.  Other configs leave these unset and cover the absent (NULL) path.
-test_config_api fire-24-a onerom-config/test/metadata.json
-
-# Address-monitor tests: drive the address-monitor plugin API (capture pipeline
-# and knock detection, the foundation an RBCP plugin builds on) across ROM types
-# and board sizes.  16-bit (40-pin) sets are covered too: command signalling
-# uses the observed (bus) address space, which on 40-pin omits the ROM's
-# least-significant address line, and each 16-bit set is driven in both /BYTE
-# modes — including a check that A-1 does not leak into the captured address.
-# Chip types the monitor cannot yet handle self-skip (see monitor_skip_reason).
-test_24_config_monitor onerom-config/test/24-random-23xx.json
-test_24_config_monitor onerom-config/test/24-random-27xx.json
-test_24_config_monitor onerom-config/test/24-random-28xx.json
-test_28_config_monitor onerom-config/test/28-random-23xxx.json
-test_28_config_monitor onerom-config/test/28-random-23qlxxx.json
-test_28_config_monitor onerom-config/test/28-random-27xxx.json
-test_28_config_monitor onerom-config/test/28-random-28xxx.json
-test_32_config_monitor onerom-config/test/32-random-27c080.json
-test_32_config_monitor onerom-config/test/32-random-27c301.json
-test_32_config_monitor onerom-config/test/32-random-27c0x0.json
-test_40_config_monitor onerom-config/test/40-random.json
-test_40_config_monitor onerom-config/test/40-random-force-16bit.json
-
-
-# RBCP tests: drive the host-control plugin's own C source over emulated ROM bus
-# cycles as a host would, asserting what the RBCP specification requires.  Two
-# layers, because the two things that can break are independent.
+# The tests, grouped by socket size, so that CI can run the four groups as
+# parallel jobs and each gets its own timeout budget.  A group is self-contained:
+# every test in it targets boards of that one size.
 #
-# Board coverage — one config per socket size, on every board of that family.
-# What varies between revisions of a board is the pin map, and the protocol runs
-# over the bus, so the whole of it has to work on each.
-test_24_config_rbcp onerom-config/test/24-random-23xx.json
-test_28_config_rbcp onerom-config/test/28-random-27xxx.json
-test_32_config_rbcp onerom-config/test/32-random-27c080.json
-test_40_config_rbcp onerom-config/test/40-random.json
+# There is deliberately no cross-family "one of each size first" pass any more.
+# That existed to fail early on a broken ROM type back when the whole suite ran
+# as a single sequence; now each group opens with its own all-ROM-types sweep on
+# its earliest board revision, and the groups run at the same time, so a broken
+# ROM type surfaces just as quickly.
 
-# Behaviour coverage — one board each, for the two serving arrangements the
-# board sweep above never reaches: a 23QL384's qualifier-based chip select, with
-# its deselected top quarter, and the force_16_bit data algorithm, which ignores
-# /BYTE so the host cannot select a half of the word.
-test_config_rbcp fire-28-a onerom-config/test/28-random-23qlxxx.json
-test_config_rbcp fire-40-a onerom-config/test/40-random-force-16bit.json
+test_family_24() {
+    # Every standard ROM type on every 24 pin hardware revision.
+    test_24_all_rom_types fire-24-a
+    test_24_all_rom_types fire-24-b
+    test_24_all_rom_types fire-24-c
+    test_24_all_rom_types fire-24-d
+    test_24_all_rom_types fire-24-e
+    test_24_all_rom_types fire-24-f
 
-# The tester drives chip set 0 only, and 27C200 is not the first set of any
-# other 40 pin config, so it needs one of its own.  Run on both 40 pin boards:
-# fire-40-b gives the 27C200 a 256KB ROM table region and so two RAM slots,
-# which makes it the only configuration where the NV storage write transaction
-# — and the flash erase and program it commits through — runs against a
-# word-organised ROM.  On fire-40-a the same part gets a 512KB region, one slot,
-# and a read-only NV storage.
-test_40_config_rbcp onerom-config/test/40-random-27c200.json
+    # Extended set of 24 pin ROM tests
+    test_24_config onerom-config/test/24-random-23xx.json
+    test_24_config onerom-config/test/24-random-27xx.json
+    test_24_config onerom-config/test/24-random-28xx.json
+
+    # Test bank switched ROM configurations on all Fire 24 hardware revisions.
+    # All 24 pin hardware revisions support bank switched ROMs with PIO support.
+    test_24_config onerom-config/test/24-bank-23xx.json
+    test_24_config onerom-config/test/24-bank-27xx.json
+    test_24_config onerom-config/test/24-bank-28xx.json
+
+    # Test multi-chip ROM configurations on all Fire 24 hardware revisions.
+    test_24_config_c_onwards onerom-config/test/24-multi-2364.json
+    test_24_config_c_onwards onerom-config/test/24-multi-2316.json
+
+    # Test specific ROM configurations on all Fire 24 hardware revisions.
+    # fire-24-c only has 2 image select jumpers so can only test the first
+    # 4 sets within the PET config, but does check that the firmware
+    # correctly wraps at that point.
+    test_24_config onerom-config/pet-4-40-50.json
+    test_24_config onerom-config/test/24-random-27xx.json
+
+    # Plugin API tests
+    test_24_config_api onerom-config/test/24-random-23xx.json
+    test_24_config_api onerom-config/test/24-random-27xx.json
+    test_24_config_api onerom-config/test/24-random-28xx.json
+
+    # Device metadata test: this config sets an instance name and serial
+    # override, so the plugin API metadata getter is exercised on the present
+    # (non-NULL) path.  Other configs leave these unset and cover the absent
+    # (NULL) path.
+    test_config_api fire-24-a onerom-config/test/metadata.json
+
+    # Address-monitor tests — see the note in test_family_40 for what these
+    # cover.
+    test_24_config_monitor onerom-config/test/24-random-23xx.json
+    test_24_config_monitor onerom-config/test/24-random-27xx.json
+    test_24_config_monitor onerom-config/test/24-random-28xx.json
+
+    # RBCP board coverage — see the note in test_family_40.
+    test_24_config_rbcp onerom-config/test/24-random-23xx.json
+}
+
+test_family_28() {
+    # Every standard ROM type on every 28 pin hardware revision.
+    test_28_all_rom_types fire-28-a
+    test_28_all_rom_types fire-28-c # Before B, as B is the same as A
+    test_28_all_rom_types fire-28-b
+    test_28_all_rom_types fire-28-d
+
+    # Extended set of 28 pin ROM tests
+    test_28_config onerom-config/test/28-random-23xxx.json
+    test_28_config onerom-config/test/28-random-23qlxxx.json
+    test_28_config onerom-config/test/28-random-27xxx.json
+    test_28_config onerom-config/test/28-random-28xxx.json
+
+    # Test bank switched ROM configurations on fire-28-c (no X pins on earlier
+    # revisions)
+    test_config fire-28-c onerom-config/test/28-bank-23xxx.json
+    test_config fire-28-c onerom-config/test/28-bank-23qlxxx.json
+    test_config fire-28-c onerom-config/test/28-bank-27xxx.json
+    test_config fire-28-c onerom-config/test/28-bank-28xxx.json
+    test_config fire-28-d onerom-config/test/28-bank-23xxx.json
+    test_config fire-28-d onerom-config/test/28-bank-23qlxxx.json
+    test_config fire-28-d onerom-config/test/28-bank-27xxx.json
+    test_config fire-28-d onerom-config/test/28-bank-28xxx.json
+
+    # Test multi-chip ROM configurations.
+    test_28_config_c_onwards onerom-config/test/28-multi-231024.json
+
+    # Test specific ROM configurations on all Fire 28 hardware revisions.
+    test_28_config onerom-config/28-c64c.json
+    test_28_config onerom-config/28-1541ii.json
+
+    # Plugin API tests
+    test_28_config_api onerom-config/test/28-random-23xxx.json
+    test_28_config_api onerom-config/test/28-random-23qlxxx.json
+    test_28_config_api onerom-config/test/28-random-27xxx.json
+    test_28_config_api onerom-config/test/28-random-28xxx.json
+
+    # Address-monitor tests — see the note in test_family_40 for what these
+    # cover.
+    test_28_config_monitor onerom-config/test/28-random-23xxx.json
+    test_28_config_monitor onerom-config/test/28-random-23qlxxx.json
+    test_28_config_monitor onerom-config/test/28-random-27xxx.json
+    test_28_config_monitor onerom-config/test/28-random-28xxx.json
+
+    # RBCP board coverage — see the note in test_family_40.
+    test_28_config_rbcp onerom-config/test/28-random-27xxx.json
+
+    # RBCP behaviour coverage — a 23QL384's qualifier-based chip select, with
+    # its deselected top quarter, which the board sweep never reaches.
+    test_config_rbcp fire-28-a onerom-config/test/28-random-23qlxxx.json
+}
+
+test_family_32() {
+    # Every standard ROM type on every 32 pin hardware revision.
+    test_32pin fire-32-a
+    test_32pin fire-32-b
+
+    # Test specific ROM configurations on all Fire 32 hardware revisions.
+    test_32_config onerom-config/test/32-random-27c080.json
+    test_32_config onerom-config/test/32-random-27c301.json
+    test_32_config onerom-config/test/32-random-27c0x0.json
+    test_config fire-32-b onerom-config/test/32-random-23c1001.json
+
+    # Plugin API tests
+    test_32_config_api onerom-config/test/32-random-27c080.json
+    test_32_config_api onerom-config/test/32-random-27c301.json
+    test_32_config_api onerom-config/test/32-random-27c0x0.json
+    test_config fire-32-b onerom-config/test/32-random-extra.json
+
+    # Address-monitor tests — see the note in test_family_40 for what these
+    # cover.
+    test_32_config_monitor onerom-config/test/32-random-27c080.json
+    test_32_config_monitor onerom-config/test/32-random-27c301.json
+    test_32_config_monitor onerom-config/test/32-random-27c0x0.json
+
+    # RBCP board coverage — see the note in test_family_40.
+    test_32_config_rbcp onerom-config/test/32-random-27c080.json
+}
+
+test_family_40() {
+    # Every standard ROM type on every 40 pin hardware revision.
+    test_40pin fire-40-a
+    test_40pin fire-40-a true
+    test_40pin fire-40-b
+    test_40pin fire-40-b true
+
+    # Test specific ROM configurations on all Fire 40 hardware revisions.
+    test_40_config onerom-config/test/40-random.json
+    test_40_config onerom-config/test/40-random-force-16bit.json
+
+    # Plugin API tests
+    test_40_config_api onerom-config/test/40-random.json
+    test_40_config_api onerom-config/test/40-random-force-16bit.json
+
+    # Address-monitor tests: drive the address-monitor plugin API (capture
+    # pipeline and knock detection, the foundation an RBCP plugin builds on)
+    # across ROM types and board sizes.  16-bit (40-pin) sets are covered too:
+    # command signalling uses the observed (bus) address space, which on 40-pin
+    # omits the ROM's least-significant address line, and each 16-bit set is
+    # driven in both /BYTE modes — including a check that A-1 does not leak into
+    # the captured address.  Chip types the monitor cannot yet handle self-skip
+    # (see monitor_skip_reason).
+    test_40_config_monitor onerom-config/test/40-random.json
+    test_40_config_monitor onerom-config/test/40-random-force-16bit.json
+
+    # RBCP tests: drive the host-control plugin's own C source over emulated ROM
+    # bus cycles as a host would, asserting what the RBCP specification
+    # requires.  Two layers, because the two things that can break are
+    # independent.
+    #
+    # Board coverage — one config per socket size, on every board of that
+    # family.  What varies between revisions of a board is the pin map, and the
+    # protocol runs over the bus, so the whole of it has to work on each.
+    test_40_config_rbcp onerom-config/test/40-random.json
+
+    # Behaviour coverage — the force_16_bit data algorithm, which ignores /BYTE
+    # so the host cannot select a half of the word, and which the board sweep
+    # above never reaches.
+    test_config_rbcp fire-40-a onerom-config/test/40-random-force-16bit.json
+
+    # The tester drives chip set 0 only, and 27C200 is not the first set of any
+    # other 40 pin config, so it needs one of its own.  Run on both 40 pin
+    # boards: fire-40-b gives the 27C200 a 256KB ROM table region and so two RAM
+    # slots, which makes it the only configuration where the NV storage write
+    # transaction — and the flash erase and program it commits through — runs
+    # against a word-organised ROM.  On fire-40-a the same part gets a 512KB
+    # region, one slot, and a read-only NV storage.
+    test_40_config_rbcp onerom-config/test/40-random-27c200.json
+}
+
+usage() {
+    echo "Usage: $0 [24|28|32|40|all]" >&2
+    echo "  Runs the emulator tests for one socket size, or all of them" >&2
+    echo "  (the default, and what a local full run wants)." >&2
+}
+
+# Run one of these at a time per working tree.  Every test regenerates the same
+# firmware/generated/gen-config.c and rebuilds the same firmware/build-test/, and
+# gen-config.c is written before cargo takes its build lock, so two runs with
+# different BOARDs can interleave there and build one board's firmware against
+# another's generated config.  CI is unaffected: each socket size gets its own
+# runner, and so its own tree.
+
+case "${1:-all}" in
+    24)  test_family_24 ;;
+    28)  test_family_28 ;;
+    32)  test_family_32 ;;
+    40)  test_family_40 ;;
+    all) test_family_40; test_family_28; test_family_24; test_family_32 ;;
+    -h|--help) usage; exit 0 ;;
+    *)   echo "Unknown socket size '$1'" >&2; usage; exit 1 ;;
+esac

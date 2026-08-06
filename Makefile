@@ -215,6 +215,29 @@ ifneq ($(SUPPRESS_OUTPUT),1)
 $(info -----)
 endif
 
+# Strip the environment cargo injects into a build script, so that a cargo we
+# launch sees the same ambient environment however we were reached.
+#
+# onerom-fw-emulator's build.rs runs `make libonerom-test`, which depends on
+# gen-config, so the cargo invocations below happen both directly from a shell
+# and nested inside that build script.  The nested one inherits CARGO_PKG_NAME,
+# CARGO_CFG_*, OUT_DIR and some forty others from its parent.  Cargo checks
+# `rerun-if-env-changed` variables against its own process environment, and
+# ring's build script declares a rerun dependency on thirteen of them, so the
+# two invocations disagree about ring and rebuild it — plus rustls, webpki,
+# tokio-rustls, hyper-rustls, reqwest and onerom-fw behind it — every time they
+# alternate.  That was ~18s on every one of the ~474 emulator tests.
+#
+# Scrub the whole injected set rather than the variables ring happens to read
+# today: a dependency that tracks a different one would silently bring the
+# rebuild back, and a partial scrub is indistinguishable from none.  Cargo's own
+# configuration (CARGO_HOME, CARGO_TARGET_DIR, CARGO_BUILD_*, ...) is not part
+# of that set and is deliberately left alone.
+SCRUB_CARGO_ENV = for v in $$(env | grep -oE '^(CARGO_CFG_[A-Z_0-9]+|CARGO_FEATURE_[A-Z_0-9]+|CARGO_PKG_[A-Z_0-9]+|DEP_[A-Za-z_0-9]+)=' | tr -d '='); do unset "$$v"; done; \
+	unset CARGO CARGO_MANIFEST_DIR CARGO_MANIFEST_PATH CARGO_MANIFEST_LINKS \
+	      CARGO_MAKEFLAGS CARGO_ENCODED_RUSTFLAGS CARGO_CRATE_NAME CARGO_BIN_NAME \
+	      OUT_DIR TARGET HOST NUM_JOBS OPT_LEVEL DEBUG PROFILE RUSTC RUSTDOC;
+
 .PHONY: all clean clean-firmware clean-firmware-build firmware run flash test test-emu test-api test-monitor test-rbcp generated clean-generated fw-config-gen libonerom-test libonerom-test-wasm gen-config clean-gen-config clean-libonerom-test clean-libonerom-test-wasm
 
 all: firmware
@@ -231,10 +254,10 @@ generated:
 	@echo "=========================================="
 	@echo "Building onerom-metadata, to generate metadata header file"
 	@echo "-----"
-	@cd rust && cargo build --$(CARGO_PROFILE) -p onerom-metadata
+	@$(SCRUB_CARGO_ENV) cd rust && cargo build --$(CARGO_PROFILE) -p onerom-metadata
 
 fw-config-gen:
-	@cd rust && cargo build --$(CARGO_PROFILE) -p fw-config-gen --quiet
+	@$(SCRUB_CARGO_ENV) cd rust && cargo build --$(CARGO_PROFILE) -p fw-config-gen --quiet
 
 firmware: generated
 	@echo "=========================================="
