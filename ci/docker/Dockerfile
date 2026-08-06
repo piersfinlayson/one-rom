@@ -100,10 +100,21 @@ RUN rustup target install \
 
 # Install the Emscripten SDK (for building One ROM Lens to wasm).  emcc/emar are
 # placed on PATH; EM_CONFIG points emcc at the activated SDK's config.
+#
+# Pinned, for the same reason as the Arm toolchain and with the same no-default
+# rule: the version comes from ci/emscripten-version via ci/docker/build.sh.
+# Tracking "latest" here means an emscripten release can break the container
+# with no change on our side.
+ARG EMSCRIPTEN_VERSION
 ENV EMSDK=/home/build/emsdk
-RUN git clone https://github.com/emscripten-core/emsdk.git "${EMSDK}" && \
-    "${EMSDK}/emsdk" install latest && \
-    "${EMSDK}/emsdk" activate latest
+RUN test -n "${EMSCRIPTEN_VERSION}" || { \
+        echo "EMSCRIPTEN_VERSION build-arg is required - build via ci/docker/build.sh," && \
+        echo "which passes the version pinned in ci/emscripten-version." && \
+        exit 1; \
+    } && \
+    git clone https://github.com/emscripten-core/emsdk.git "${EMSDK}" && \
+    "${EMSDK}/emsdk" install "${EMSCRIPTEN_VERSION}" && \
+    "${EMSDK}/emsdk" activate "${EMSCRIPTEN_VERSION}"
 ENV EM_CONFIG="${EMSDK}/.emscripten"
 ENV PATH="${EMSDK}:${EMSDK}/upstream/emscripten:${PATH}"
 

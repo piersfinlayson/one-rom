@@ -221,6 +221,15 @@ fn wasm_link_args() {
     arg("-sEXPORTED_RUNTIME_METHODS=ccall,cwrap,UTF8ToString");
     arg(&format!("-sEXPORTED_FUNCTIONS={}", EXPORTS.join(",")));
 
+    // Link the C++ runtime.  rustc drives emscripten through `emcc`, never
+    // `em++`, and emscripten 6.0.6 flipped DEFAULT_TO_CXX to false — so from
+    // that release libc++abi and libunwind stop being linked, and Rust's
+    // prebuilt libstd/libpanic_unwind fail to resolve `__cpp_exception` and
+    // `_Unwind_RaiseException`/`_Unwind_DeleteException`.  Re-asserting the old
+    // default fixes the link and is a no-op on earlier emscripten.  The
+    // otherwise-unused libc++ this drags in is dead-stripped.
+    arg("-sDEFAULT_TO_CXX");
+
     // epio's wasm `libepio.a` redundantly bundles the apio disassembler
     // (apio_instruction_decoder / apio_log_sm) that the firmware also provides —
     // both come from apio_dis.h.  epio_apio.o is mandatory (it provides

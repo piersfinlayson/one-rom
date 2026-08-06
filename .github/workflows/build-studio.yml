@@ -8,32 +8,13 @@ on:
       - '!rust/studio/README.md'
       - '!rust/studio/CHANGELOG.md'
 
+# Studio is fmt- and clippy-checked by ci/rust-lint.sh, with the rest of the
+# workspace, rather than here: this workflow only fires on rust/studio/**, so a
+# lint job here could not catch a workspace-wide change that breaks Studio.
+# What is left here is the cross-platform packaging, which ci.yml does not do -
+# it builds Studio for the host only.
+
 jobs:
-  # rustfmt + clippy for One ROM Studio.  Studio is excluded from the main
-  # ci.yml lint gate (it isn't built there), so it is linted here instead.  It
-  # compiles on Linux with just libudev/libusb (its file dialogs use the XDG
-  # portal, not GTK), so this job stays lightweight.
-  lint:
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions-rust-lang/setup-rust-toolchain@v1
-        with:
-          toolchain: stable
-          components: rustfmt, clippy
-
-      - name: Install build dependencies
-        run: sudo apt-get update && sudo apt-get install -y libudev-dev libusb-1.0-0-dev
-
-      - name: Check formatting
-        working-directory: rust
-        run: cargo fmt -p onerom-studio -- --check
-
-      - name: Run clippy
-        working-directory: rust
-        run: cargo clippy -p onerom-studio --all-targets -- -D warnings
-
   # Builds Windows (x86_64) installer
   # DO NOT RELEASE THIS VERSION
   # This version is not code signed

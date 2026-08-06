@@ -89,6 +89,7 @@ In detail:
 - Fix `docs/COMPATIBILITY.md` and `onerom chips` reporting compatibility for a chip-select configuration users cannot ask for.  Both checked each chip with only its primary select monitored, which needs the `allow_cs_ignore` config option and is rejected outright by `--slot`; they now check the configuration the tools actually produce, with every control line monitored.  HM7641 gains fire-24-a/b, the 28-pin and fire-32-a boards, which One ROM has always served; 2316, 9316, 9316A, 2332, 4732 and 9332 are no longer listed for fire-28-b/c/d, nor 23128 for fire-32-a/b, which One ROM has never been able to serve.
 - **Breaking:** `onerom-gen`'s `check_chip_on_board` becomes `check_chip_set_on_board`, taking a chip-set type, chip count and CS configuration, so banked and multi sets can be checked as well as single chips; `supported_chips` takes the set shape too.  `CompatResult` gains the GPIOs whose ROM table bits address nothing, and it and `ChipCompat` are now `#[non_exhaustive]`.
 - Removed `test-retired`, the old test mechanism, superseded by `onerom-fw-tester`.
+- GitHub releases no longer attach a base firmware binary.  The firmware Web and CLI build from is published to [images.onerom.org](https://images.onerom.org) and downloaded automatically; the attached copy was separately built and could differ from it.
 
 To publish:
 - Rust crates:

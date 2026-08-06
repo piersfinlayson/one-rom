@@ -198,8 +198,24 @@ CI / release firmware builds:
 Other `ci/` scripts: `build-images.sh` (populates the `images.onerom.org`
 channel), `build-cross-fw.sh` (cross-builds the `onerom-fw` **tool** —
 orthogonal to firmware variant builds, do not conflate), `rust-tests.sh`,
-`rust-docs.sh`, `rust-lint.sh`, `rust-tools.sh`, `test-emu.sh`. Reproducible
-builds use the container in `ci/docker/`.
+`rust-docs.sh`, `rust-lint.sh`, `rust-tools.sh`, `rust-binaries.sh`,
+`test-emu.sh`. Reproducible builds use the container in `ci/docker/`.
+
+`test-emu.sh` takes a socket size — `ci/test-emu.sh 24|28|32|40`, or no argument
+for all of them. CI runs the four as parallel jobs; run one at a time in a given
+working tree, since every test regenerates the same `firmware/generated/gen-config.c`
+and rebuilds the same `firmware/build-test/`.
+
+**Toolchain versions are pinned, in one place each:** `ci/arm-toolchain-version`
+(Arm GNU, for the firmware and plugins) and `ci/emscripten-version` (emsdk, for
+Lens). `ci/install-arm-toolchain.sh` and `ci/install-emscripten.sh` install the
+pinned version and are what CI, the container and a developer's machine all use,
+so a firmware binary is built by the same compiler wherever it is built. The
+`ci/docker/` image takes both as build args from `ci/docker/build.sh` — the
+Dockerfile deliberately has **no** default, because a stale default there is how
+the container silently ended up on a different compiler. Note Arm moved toolchain
+hosting to `gitlab.arm.com` from 15.3.Rel1; `developer.arm.com` carries 15.2.rel1
+and earlier only.
 
 Some checked-in files are generated and must stay in sync — `ci/rust-tests.sh`
 **fails** if the committed copy differs from a fresh regeneration:
@@ -226,9 +242,14 @@ and the wasm pair (`onerom-fw-emulator`, `onerom-lens`) with `CONFIG`/`BOARD` se
 because their build embeds the firmware emulator (the wasm pair targets
 `wasm32-unknown-emscripten`); and `onerom-lab` from its own dir on its pinned
 nightly (`--bins`). Like the other end-of-work scripts, run it as work wraps up,
-not per-change. `onerom-studio` is **not** in this gate (it isn't built in
-`ci.yml`); it is fmt-/clippy-checked by a `lint` job in
-`.github/workflows/build-studio.yml` instead. Note: `onerom-config`'s generated
+not per-change. `onerom-studio` is linted with the host crates (it needs
+libudev/libusb present), and `ci.yml` *builds* both Studio and the CLI via
+`ci/rust-binaries.sh` (host only, release profile).
+`.github/workflows/build-studio.yml` now only builds the cross-platform
+installers — it fires solely on `rust/studio/**`, so it could never have caught a
+workspace-wide change breaking Studio, which is why the linting lives in this
+gate instead. Neither workflow releases anything: Studio and CLI releases are
+built locally. Note: `onerom-config`'s generated
 modules
 (`src/{chip,hw}/generated.rs` and their `mod.rs` — all git-ignored) are
 rustfmt-formatted **at generation time** by the build script

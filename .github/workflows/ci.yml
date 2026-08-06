@@ -56,7 +56,8 @@ jobs:
     - name: Install build dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y libcurl4-openssl-dev libjson-c-dev libzip-dev make
+        sudo apt-get install -y libcurl4-openssl-dev libjson-c-dev libzip-dev make \
+                                libudev-dev libusb-1.0-0-dev
 
     - name: Install Rust
       uses: dtolnay/rust-toolchain@stable
@@ -76,12 +77,16 @@ jobs:
       uses: actions/cache@v4
       with:
         path: ~/emsdk
-        key: emsdk-${{ runner.os }}-${{ hashFiles('ci/install-emscripten.sh') }}
+        key: emsdk-${{ runner.os }}-${{ hashFiles('ci/install-emscripten.sh', 'ci/emscripten-version') }}
 
     - name: Install Emscripten (for One ROM Lens)
       run: |
         ci/install-emscripten.sh "$HOME/emsdk"
         source "$HOME/emsdk/emsdk_env.sh"
+        # Record the version in the log.  An emscripten release has broken this
+        # build before (6.0.6), and working out which version a past run used
+        # meant inferring it from release timestamps.
+        emcc --version | head -1
         # Persist emcc/emar (and EMSDK) for subsequent steps.
         echo "PATH=$PATH" >> "$GITHUB_ENV"
         echo "EMSDK=$EMSDK" >> "$GITHUB_ENV"
@@ -267,6 +272,39 @@ jobs:
     - name: Build tools
       run: ci/rust-tools.sh
 
+  binaries:
+    # The CLI and Studio binaries, built for the host.  Studio also needs
+    # libudev/libusb; its file dialogs use the XDG portal, so no GTK.
+    name: Binaries (CLI and Studio)
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install build dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libcurl4-openssl-dev libjson-c-dev libzip-dev make \
+                                libudev-dev libusb-1.0-0-dev
+
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Cache Arm GNU toolchain
+      uses: actions/cache@v4
+      with:
+        path: ~/arm-gnu-toolchain
+        key: arm-toolchain-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('ci/arm-toolchain-version') }}
+
+    - name: Install Arm GNU toolchain
+      run: echo "TOOLCHAIN=$(ci/install-arm-toolchain.sh)" >> "$GITHUB_ENV"
+
+    - uses: Swatinem/rust-cache@v2
+      with:
+        workspaces: rust
+
+    - name: Build CLI and Studio
+      run: ci/rust-binaries.sh
+
   lens:
     name: One ROM Lens (wasm)
     runs-on: ubuntu-latest
@@ -294,12 +332,16 @@ jobs:
       uses: actions/cache@v4
       with:
         path: ~/emsdk
-        key: emsdk-${{ runner.os }}-${{ hashFiles('ci/install-emscripten.sh') }}
+        key: emsdk-${{ runner.os }}-${{ hashFiles('ci/install-emscripten.sh', 'ci/emscripten-version') }}
 
     - name: Install Emscripten (for One ROM Lens)
       run: |
         ci/install-emscripten.sh "$HOME/emsdk"
         source "$HOME/emsdk/emsdk_env.sh"
+        # Record the version in the log.  An emscripten release has broken this
+        # build before (6.0.6), and working out which version a past run used
+        # meant inferring it from release timestamps.
+        emcc --version | head -1
         # Persist emcc/emar (and EMSDK) for subsequent steps.
         echo "PATH=$PATH" >> "$GITHUB_ENV"
         echo "EMSDK=$EMSDK" >> "$GITHUB_ENV"

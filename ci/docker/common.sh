@@ -22,6 +22,21 @@ get_arm_gcc_version() {
   tr -d '[:space:]' < "${version_file}"
 }
 
+# The Emscripten SDK version the container must build One ROM Lens with.
+# ci/emscripten-version is the single source of truth, shared with CI and
+# ci/install-emscripten.sh; the Dockerfile deliberately has no default.
+get_emscripten_version() {
+  local version_file
+  version_file="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/emscripten-version"
+
+  if [[ ! -f "${version_file}" ]]; then
+    echo "Error: ${version_file} not found" >&2
+    exit 1
+  fi
+
+  tr -d '[:space:]' < "${version_file}"
+}
+
 get_build_date() {
   date -u +%Y-%m-%d
 }
