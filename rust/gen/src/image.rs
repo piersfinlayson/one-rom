@@ -147,6 +147,16 @@ impl FileFormat {
         }
     }
 
+    /// The canonical name of this format, as spelled in a config file and on
+    /// the command line. `"Binary"`/`"Intel HEX"` is
+    /// [`FileFormat::display_name`]; this is `"binary"`/`"ihex"`.
+    pub fn name(&self) -> &'static str {
+        match self {
+            FileFormat::Binary => "binary",
+            FileFormat::IntelHex => "ihex",
+        }
+    }
+
     /// Parses a format name case-insensitively, for command-line parsing.
     /// Accepts `binary`/`bin`/`raw` for [`FileFormat::Binary`] and
     /// `ihex`/`intel_hex`/`intel-hex`/`intelhex`/`hex` for
@@ -160,17 +170,24 @@ impl FileFormat {
     }
 
     /// All supported format values, for enumerating in help text.
-    pub fn supported_values() -> &'static [Self; 2] {
+    ///
+    /// The CLI builds `--from`/`--to`'s accepted values from this, so a format
+    /// added here appears in `--help` and is accepted on the command line with
+    /// no CLI change. The match exists only to make that automatic: it forces a
+    /// new variant to be a compile error here rather than silently missing from
+    /// the list, which `Display` and [`FileFormat::try_from_str`] cannot do on
+    /// their own.
+    pub fn supported_values() -> &'static [Self] {
+        match FileFormat::Binary {
+            FileFormat::Binary | FileFormat::IntelHex => {}
+        }
         &[FileFormat::Binary, FileFormat::IntelHex]
     }
 }
 
 impl core::fmt::Display for FileFormat {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        match self {
-            FileFormat::Binary => write!(f, "binary"),
-            FileFormat::IntelHex => write!(f, "ihex"),
-        }
+        write!(f, "{}", self.name())
     }
 }
 
@@ -201,13 +218,44 @@ impl core::fmt::Display for CsLogic {
 }
 
 impl CsLogic {
+    /// The canonical name of this value, as accepted on the command line.
+    ///
+    /// Kebab-case, matching how the CLI spells everything else.
+    /// [`Display`](CsLogic) is the prose form (`"active low"`), which is for
+    /// reading rather than parsing.
+    pub fn name(&self) -> &'static str {
+        match self {
+            CsLogic::ActiveLow => "active-low",
+            CsLogic::ActiveHigh => "active-high",
+            CsLogic::Ignore => "ignore",
+        }
+    }
+
+    /// Parses a chip-select value case-insensitively.
+    ///
+    /// Accepts the kebab-case CLI spelling, the snake_case spelling a config
+    /// file uses, and the `0`/`1` shorthand. `ignore` is not a polarity - it
+    /// says this One ROM does not monitor the line at all - and whether a given
+    /// chip may use it is settled later, by `allow_cs_ignore`.
     pub fn try_from_str(s: &str) -> Option<Self> {
         match s.to_lowercase().as_str() {
-            "0" => Some(CsLogic::ActiveLow),
-            "1" => Some(CsLogic::ActiveHigh),
+            "active-low" | "active_low" | "0" => Some(CsLogic::ActiveLow),
+            "active-high" | "active_high" | "1" => Some(CsLogic::ActiveHigh),
             "ignore" => Some(CsLogic::Ignore),
             _ => None,
         }
+    }
+
+    /// All chip-select values, for enumerating in help and error text.
+    ///
+    /// The match forces a new variant to be a compile error here rather than
+    /// silently missing from what the CLI advertises - see
+    /// [`FileFormat::supported_values`].
+    pub fn supported_values() -> &'static [Self] {
+        match CsLogic::ActiveLow {
+            CsLogic::ActiveLow | CsLogic::ActiveHigh | CsLogic::Ignore => {}
+        }
+        &[CsLogic::ActiveLow, CsLogic::ActiveHigh, CsLogic::Ignore]
     }
 
     pub fn c_value(&self) -> &str {
@@ -1927,4 +1975,61 @@ fn handle_snowflake_chip_types(
         modified_map.push(Some(18));
     }
     modified_map
+}
+
+#[cfg(test)]
+mod value_spelling_tests {
+    use super::*;
+
+    /// Every value the CLI advertises parses back to the variant it names.
+    ///
+    /// `CsLogic` had two parsers - this one and a copy in the CLI - accepting
+    /// different subsets, so `active_low` worked only on the command line and
+    /// `ignore` only in a config file. There is now one parser; this pins the
+    /// round trip so a new variant cannot be added to the advertised list
+    /// without being parseable.
+    #[test]
+    fn every_advertised_cs_value_parses_back_to_itself() {
+        for value in CsLogic::supported_values() {
+            assert_eq!(
+                CsLogic::try_from_str(value.name()),
+                Some(*value),
+                "{} does not round trip",
+                value.name()
+            );
+        }
+    }
+
+    /// The config file's snake_case spellings and the `0`/`1` shorthand all
+    /// reach the same variants as the CLI's kebab-case ones.
+    #[test]
+    fn cs_values_accept_config_and_shorthand_spellings() {
+        for (s, expected) in [
+            ("active_low", CsLogic::ActiveLow),
+            ("active-low", CsLogic::ActiveLow),
+            ("0", CsLogic::ActiveLow),
+            ("active_high", CsLogic::ActiveHigh),
+            ("active-high", CsLogic::ActiveHigh),
+            ("1", CsLogic::ActiveHigh),
+            ("ignore", CsLogic::Ignore),
+        ] {
+            assert_eq!(CsLogic::try_from_str(s), Some(expected), "{s}");
+        }
+        assert_eq!(CsLogic::try_from_str("active low"), None);
+        assert_eq!(CsLogic::try_from_str("sideways"), None);
+    }
+
+    /// The same round trip for image formats, whose `--from`/`--to` values are
+    /// built from `supported_values()`.
+    #[test]
+    fn every_advertised_format_parses_back_to_itself() {
+        for value in FileFormat::supported_values() {
+            assert_eq!(
+                FileFormat::try_from_str(value.name()),
+                Some(*value),
+                "{} does not round trip",
+                value.name()
+            );
+        }
+    }
 }

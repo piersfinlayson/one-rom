@@ -104,15 +104,22 @@ pub fn check_device_nand_board(options: &Options, board_arg: &Option<String>) ->
 }
 
 /// Checks that a device is required and present if the command needs one.
+///
+/// A command that does *not* require a device is not an error without one -
+/// there is simply nothing to check, so the run-capable test is skipped rather
+/// than applied to a device that is not there.
 pub fn check_device(
     options: &Options,
     args: &impl CommandTrait,
     must_be_run_capable: bool,
 ) -> Result<(), Error> {
-    if args.requires_device() && options.device.is_none() {
-        return Err(Error::NoDevice);
-    }
-    let device = options.device.as_ref().unwrap();
+    let Some(device) = options.device.as_ref() else {
+        return if args.requires_device() {
+            Err(Error::NoDevice)
+        } else {
+            Ok(())
+        };
+    };
     if must_be_run_capable && !device.usb_can_run {
         return Err(Error::CannotRun(device.to_string()));
     }

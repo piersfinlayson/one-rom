@@ -115,7 +115,7 @@ The primary workflow. Build firmware from a JSON config and flash it in one
 step:
 
 ```
-onerom program --config-file c64.json
+onerom program --config c64.json
 ```
 
 `program` builds *and* flashes. To build a firmware binary **without** flashing,
@@ -123,7 +123,7 @@ use [`firmware build`](#firmware-build) instead. To build and also keep the
 binary while flashing, add `--output`:
 
 ```
-onerom program --config-file c64.json --out firmware.bin
+onerom program --config c64.json --out firmware.bin
 ```
 
 ### Program from `--slot` specifications
@@ -134,8 +134,8 @@ slot. The required chip-select lines depend on the chip type (e.g. a 2332 needs
 
 ```
 onerom program --board fire-24-e \
-    --slot file=kernal.bin,type=2364,cs1=active_low \
-    --slot file=basic.bin,type=2364,cs1=active_low
+    --slot file=kernal.bin,type=2364,cs1=active-low \
+    --slot file=basic.bin,type=2364,cs1=active-low
 ```
 
 The full slot spec grammar is documented under [ROM slot
@@ -150,16 +150,16 @@ slot 0, the user plugin in slot 1:
 
 ```
 onerom program --board fire-24-e \
-    --slot file=kernal.bin,type=2364,cs1=active_low \
+    --slot file=kernal.bin,type=2364,cs1=active-low \
     --plugin usb
 ```
 
-`--plugin` may also be combined with `--config-file`. The plugins are inserted
+`--plugin` may also be combined with `--config`. The plugins are inserted
 ahead of the config's ROM slots (which shift up accordingly), so you can add a
 plugin to a stock config without editing it:
 
 ```
-onerom program --config-file c64.json --plugin usb
+onerom program --config c64.json --plugin usb
 ```
 
 It is an error if the config already defines a plugin of its own — remove it
@@ -171,7 +171,7 @@ specification](#plugin-specification).
 ### Build firmware without flashing
 
 ```
-onerom firmware build --config-file c64.json --board fire-24-e --out firmware.bin
+onerom firmware build --config c64.json --board fire-24-e --out firmware.bin
 ```
 
 ### Download and flash a pre-built release
@@ -185,7 +185,7 @@ Or in one step — `program` will download the base firmware, build in your ROMs
 and flash:
 
 ```
-onerom program --config-file c64.json --version 0.6.5
+onerom program --config c64.json --version 0.6.5
 ```
 
 ### Inspect a device
@@ -240,7 +240,7 @@ Name the pad, or the MCU GPIO behind it — `onerom inspect header` shows which
 that is:
 
 ```
-onerom program --config-file c64.json
+onerom program --config c64.json
 onerom control reset --pin x1
 ```
 
@@ -338,7 +338,7 @@ any level).
 | Option | Description |
 |---|---|
 | `--serial, -s <DEVICE>` | Select a One ROM by serial number. Required when multiple are connected; auto-selected when exactly one is present. Accepts `*` and `?` wildcards. |
-| `--vid-pid, -i <VID:PID>` (alias `--id`) | USB vendor/product ID pair in hex (e.g. `1234:abcd`). Repeatable; when given, only these pairs are matched. Use with `--unrecognised`. |
+| `--vid-pid <VID:PID>` (alias `--id`) | USB vendor/product ID pair in hex (e.g. `1234:abcd`). Repeatable; when given, only these pairs are matched. Use with `--unrecognised`. |
 | `--unrecognised, -u` (alias `--unrecognized`) | Allow management of unrecognised/unprogrammed/bricked RP2350 boards. The unit must still expose a valid picoboot USB interface. Use with caution — permits programming any attached RP2350 board. |
 | `--yes, -y` | Auto-confirm all prompts. Also suppresses the over-limit CPU frequency/voltage confirmations. |
 | `--verbose, -v` | Enable verbose output. |
@@ -404,33 +404,33 @@ binary) and flash it to a connected One ROM. This is the primary workflow.
 `onerom firmware program` is an alias for this command.
 
 ```
-onerom program --config-file c64.json
-onerom program --serial '5*' --config-file c64.json
+onerom program --config c64.json
+onerom program --serial '5*' --config c64.json
 onerom program --board fire-24-e \
-    --slot file=kernal.bin,type=2364,cs1=active_low \
-    --slot file=basic.bin,type=2364,cs1=active_low
+    --slot file=kernal.bin,type=2364,cs1=active-low \
+    --slot file=basic.bin,type=2364,cs1=active-low
 onerom program --firmware firmware.bin
-onerom program --config-file c64.json --out firmware.bin
+onerom program --config c64.json --out firmware.bin
 ```
 
 ### Source of the firmware (mutually exclusive groups)
 
 | Option | Description |
 |---|---|
-| `--config-file, -j <FILE>` (aliases `--config-json`, `--config`, `--json`) | ROM configuration JSON file. Conflicts with `--slot`, `--config-name`, `--config-description`, `--save-config`, `--no-config`, `--firmware`. |
-| `--slot <SPEC>` (alias `--rom`) | ROM slot specification; repeatable. See [ROM slot specification](#rom-slot-specification). Conflicts with `--config-file`, `--no-config`, `--firmware`. |
-| `--firmware <FILE>` (alias `--fw`) | Flash a pre-built complete firmware binary directly. Conflicts with `--config-file`, `--slot`, `--base-firmware` and `--plugin` because a pre-built firmware already contains all ROMs/plugins. Also conflicts with `--version`. |
+| `--config, -j <FILE>` (aliases `--config-file`, `--config-json`, `--json`) | ROM configuration JSON file. Conflicts with `--slot`, `--config-name`, `--config-description`, `--save-config`, `--no-config`, `--firmware`. |
+| `--slot <SPEC>` (alias `--rom`) | ROM slot specification; repeatable. See [ROM slot specification](#rom-slot-specification). Conflicts with `--config`, `--no-config`, `--firmware`. |
+| `--firmware <FILE>` (alias `--fw`) | Flash a pre-built complete firmware binary directly. Conflicts with `--config`, `--slot`, `--base-firmware` and `--plugin` because a pre-built firmware already contains all ROMs/plugins. Also conflicts with `--version`. |
 | `--base-firmware <FILE>` | Use a local minimal firmware instead of downloading. With `--slot`, ROMs are built into it; alone, requires `--no-config`. Must be built with `EXCLUDE_METADATA=1` and `ROM_CONFIGS=`. Conflicts with `--firmware`, `--version`. |
-| `--no-config` | Confirm flashing a base firmware with no ROM configuration. Only valid with `--config-name` and/or `--config-description`. Conflicts with `--config-file`, `--slot`, `--firmware`, and the config-override options below. |
+| `--no-config` | Confirm flashing a base firmware with no ROM configuration. Only valid with `--config-name` and/or `--config-description`. Conflicts with `--config`, `--slot`, `--firmware`, and the config-override options below. |
 
 ### Configuration metadata
 
 | Option | Description |
 |---|---|
-| `--plugin <SPEC>` | Plugin specification; repeatable. See [Plugin specification](#plugin-specification). May be combined with `--config-file`: the plugins are inserted ahead of the config's ROM slots (which shift up), and it is an error if the config already defines a plugin of its own. Conflicts with `--firmware`. |
-| `--config-name <NAME>` (alias `--name`) | Name for the generated ROM configuration. Conflicts with `--config-file`. |
-| `--config-description <DESC>` (aliases `--desc`, `--description`) | Description for the generated configuration. Defaults to *"Created by the One ROM CLI"*. Conflicts with `--config-file`. |
-| `--save-config <FILE>` | Save the generated configuration to JSON. Only valid with `--slot` or `--no-config`. Conflicts with `--config-file`. |
+| `--plugin <SPEC>` | Plugin specification; repeatable. See [Plugin specification](#plugin-specification). May be combined with `--config`: the plugins are inserted ahead of the config's ROM slots (which shift up), and it is an error if the config already defines a plugin of its own. Conflicts with `--firmware`. |
+| `--config-name <NAME>` (alias `--name`) | Name for the generated ROM configuration. Conflicts with `--config`. |
+| `--config-description <DESC>` (aliases `--desc`, `--description`) | Description for the generated configuration. Defaults to *"Created by the One ROM CLI"*. Conflicts with `--config`. |
+| `--save-config <FILE>` | Save the generated configuration to JSON. Only valid with `--slot` or `--no-config`. Conflicts with `--config`. |
 
 ### Per-device overrides
 
@@ -520,7 +520,7 @@ Read (or save) the ROM image from a slot. **(not yet supported)**
 
 | Option | Description |
 |---|---|
-| `--slot, -l <INDEX>` | Slot index to read. Reads the active slot if omitted. |
+| `--slot <INDEX>` | Slot index to read. Reads the active slot if omitted. |
 | `--output, -o <FILE>` (alias `--out`) | Save the image data to this file. |
 
 ### inspect peek
@@ -694,12 +694,20 @@ GPIO state  ·  One ROM Fire 28 (rev C)  ·  RP235xB  ·  serving 27512
 
 Draw the connected device's pin (jumper / programming) header as ASCII. The
 board is inferred from the device. This is the device-oriented form of
-[`board header`](#board-header); see there for what the diagram shows. No
-options.
+[`board header`](#board-header); see there for what the diagram shows.
 
 ```
-onerom inspect header
+onerom inspect header [--board <board>]
 ```
+
+| Option | Description |
+|---|---|
+| `--board`, `-b` | Board type, overriding what the connected One ROM reports. Only needed on a One ROM whose board type this build does not recognise. |
+
+`--board` is an override, not a substitute for the device: this command draws
+the board of a *connected* One ROM, so one must still be present. To draw a
+board by name with nothing connected, use
+[`board header`](#board-header).
 
 ### inspect socket
 
@@ -708,13 +716,17 @@ from the device. This is the device-oriented form of
 [`board socket`](#board-socket).
 
 ```
-onerom inspect socket [--chip-type <chip>] [--gpio]
+onerom inspect socket [--board <board>] [--chip-type <chip>] [--gpio]
 ```
 
 | Option | Description |
 |---|---|
-| `--chip-type <chip>` | Label pins with this ROM type's functions instead of GPIOs, and report the chip's image size on this board. |
+| `--board`, `-b` | Board type, overriding what the connected One ROM reports. |
+| `--chip-type <chip>`, `-c` | Label pins with this ROM type's functions instead of GPIOs, and report the chip's image size on this board. |
 | `--gpio` | Overlay the GPIO(s) onto the `--chip-type` function view (requires `--chip-type`). |
+
+As with [`inspect header`](#inspect-header), `--board` overrides the connected
+One ROM's reported board type rather than standing in for the device.
 
 ---
 
@@ -796,8 +808,8 @@ onerom control poke memory --address 0x20000000 --input patch.bin
 | Option | Description |
 |---|---|
 | `--address, -a <ADDRESS>` (alias `--addr`) | Address to write to. Decimal or `0x` hex. |
-| `--byte, -b <BYTE>` (alias `--value`) | Single byte value to write. Decimal or hex. |
-| `--input <FILE>` (alias `--in`) | Write the contents of this binary file. |
+| `--byte <BYTE>` (alias `--value`) | Single byte value to write. Decimal or hex. |
+| `--input, -i <FILE>` (alias `--in`) | Write the contents of this binary file. |
 
 Exactly one of `--byte` / `--input` is required.
 
@@ -815,8 +827,8 @@ onerom control poke live --address 0 --input patch.bin
 | Option | Description |
 |---|---|
 | `--address, -a <ADDRESS>` (alias `--addr`) | Logical ROM address, starting at 0. Decimal or `0x` hex. Default `0`. |
-| `--byte, -b <BYTE>` (alias `--value`) | Single byte value to write. Decimal or hex. |
-| `--input <FILE>` (alias `--in`) | Write the contents of this binary file. |
+| `--byte <BYTE>` (alias `--value`) | Single byte value to write. Decimal or hex. |
+| `--input, -i <FILE>` (alias `--in`) | Write the contents of this binary file. |
 | `--delta` (alias `--deltas`) | Only write bytes that differ from current device content. Requires `--input`. |
 | `--dry-run` (alias `--dryrun`) | Show what would be written without writing. Requires `--delta`. |
 
@@ -874,7 +886,7 @@ Switch the device to serving the specified slot immediately (not persistent).
 
 | Option | Description |
 |---|---|
-| `--slot, -l <INDEX>` | Slot index to activate. Required. |
+| `--slot <INDEX>` | Slot index to activate. Required. |
 
 ### control pin
 
@@ -956,17 +968,17 @@ onerom control erase --offset 0x20000 --length 0x1000
 | Option | Description |
 |---|---|
 | `--all, -a` | Erase all flash contents. |
-| `--offset, -o <OFFSET>` | Erase at offset(s) from the flash base. 4096-aligned; pair each with a `--length`; repeatable. Conflicts with `--address`. |
+| `--offset <OFFSET>` | Erase at offset(s) from the flash base. 4096-aligned; pair each with a `--length`; repeatable. Conflicts with `--address`. |
 | `--address <ADDRESS>` (alias `--addr`) | Erase at absolute address(es). 4096-aligned; pair each with a `--length`; repeatable. Conflicts with `--offset`. |
 | `--length <LENGTH>` (aliases `--len`, `--size`) | Length of each range. 4096-aligned; specify once per `--offset`/`--address`; repeatable. Conflicts with `--all`. |
 | `--no-reboot, -n` | Don't reboot before or after erasing. Risky if One ROM is accessing the range. |
-| `--reboot-stopped, -p` | Reboot into stopped mode after erasing. |
-| `--reboot-running, -r` | Reboot into running mode after erasing. |
-| `--msd, -m` | Mount mass storage when rebooting into stopped mode. Requires `--reboot-stopped`. |
+| `--stopped, -p` | Reboot into stopped mode after erasing. |
+| `--running, -r` | Reboot into running mode after erasing. |
+| `--msd, -m` | Mount mass storage when rebooting into stopped mode. Requires `--stopped`. |
 | `--fast` | Don't pause for re-enumeration. Requires a reboot mode. |
 
-One of `--all` / `--offset` / `--address` is required. `--reboot-stopped` and
-`--reboot-running` are mutually exclusive, and both conflict with `--no-reboot`.
+One of `--all` / `--offset` / `--address` is required. `--stopped` and
+`--running` are mutually exclusive, and both conflict with `--no-reboot`.
 
 ---
 
@@ -996,8 +1008,8 @@ onerom update slot --slot 2 --image kernal.bin
 
 | Option | Description |
 |---|---|
-| `--slot, -l <INDEX>` | Flash slot index to write. Required. |
-| `--image, -m <FILE>` | ROM image file to write. Required. |
+| `--slot <INDEX>` | Flash slot index to write. Required. |
+| `--image <FILE>` | ROM image file to write. Required. |
 
 ### update commit
 
@@ -1011,7 +1023,7 @@ onerom update commit --slot 2
 
 | Option | Description |
 |---|---|
-| `--slot, -l <INDEX>` | Slot to commit. Commits the active slot if omitted. |
+| `--slot <INDEX>` | Slot to commit. Commits the active slot if omitted. |
 
 ### update otp
 
@@ -1047,8 +1059,8 @@ onerom image swap-bytes --input kick.bin --output kick-swapped.bin
 
 | Option | Description |
 |---|---|
-| `--input <FILE>` (alias `--in`) | Input ROM image file. |
-| `--output <FILE>` (alias `--out`) | Output file path. |
+| `--input, -i <FILE>` (alias `--in`) | Input ROM image file. |
+| `--output, -o <FILE>` (alias `--out`) | Output file path. |
 
 The same operation is available during a build as
 `--slot transform=swap_bytes`; see [Image transforms](#image-transforms).
@@ -1078,8 +1090,8 @@ onerom image deinterleave --input rom32.bin --output hi.bin --offset 1 --stride 
 
 | Option | Description |
 |---|---|
-| `--input <FILE>` (alias `--in`) | Input ROM image file. |
-| `--output <FILE>` (alias `--out`) | Output file path. |
+| `--input, -i <FILE>` (alias `--in`) | Input ROM image file. |
+| `--output, -o <FILE>` (alias `--out`) | Output file path. |
 | `--offset <N>` | Which lane to keep. Must be less than `--stride`. |
 | `--stride <N>` | How many lanes the image interleaves. Must be at least 2. |
 | `--bytes <N>` (alias `--unit`) | Width of one lane, in bytes. Defaults to `1`; use `2` to keep 16-bit words together. |
@@ -1106,8 +1118,8 @@ onerom image convert --from binary --to ihex --input rom.bin --output rom.hex --
 |---|---|
 | `--from <FORMAT>` | Input format: `binary` or `ihex`. |
 | `--to <FORMAT>` | Output format: `binary` or `ihex`. |
-| `--input <FILE>` (alias `--in`) | Input ROM image file. |
-| `--output <FILE>` (alias `--out`) | Output file path. |
+| `--input, -i <FILE>` (alias `--in`) | Input ROM image file. |
+| `--output, -o <FILE>` (alias `--out`) | Output file path. |
 | `--load-address <ADDR>` | Intel HEX load address (decimal, or `0x`/`$`-prefixed hex). Only valid when one side is `ihex`; subtracted when reading ihex, used as the base when writing ihex. Defaults to `0`. |
 
 Intel HEX output uses 16-byte records with a terminating EOF record; unwritten
@@ -1139,13 +1151,13 @@ Produce a flashable firmware binary for a board and MCU from a JSON config or
 inline `--slot` args, without flashing.
 
 ```
-onerom firmware build --config-file c64.json --board fire-24-e --out firmware.bin
+onerom firmware build --config c64.json --board fire-24-e --out firmware.bin
 onerom firmware build --board fire-24-e \
-    --slot file=kernal.bin,type=2364,cs1=active_low \
+    --slot file=kernal.bin,type=2364,cs1=active-low \
     --out firmware.bin
 ```
 
-The configuration options mirror [`program`](#program): `--config-file` (`-j`),
+The configuration options mirror [`program`](#program): `--config` (`-j`),
 `--slot`, `--plugin`, `--config-name`, `--config-description`, `--save-config`,
 `--no-config`, and the per-device overrides `--instance-name`,
 `--serial-override`, `--logging`, `--disable-swd`, `--turbo-boot` (all rejected
@@ -1414,18 +1426,21 @@ not be driven above 3.3V). See [Voltage Levels](VOLTAGE-LEVELS.md) for the ADC
 caveat.
 
 ```
-onerom board header [<board>]
+onerom board header [--board <board>]
 ```
 
-`<board>` is a board type (e.g. `fire-24-f`); if omitted, it is inferred from a
-connected One ROM. A board with no pin-header descriptor prints a short notice
-instead of a diagram.
+| Option | Description |
+|---|---|
+| `--board`, `-b` | Board type to draw (e.g. `fire-24-f`). Inferred from a connected One ROM if omitted. |
+
+A board with no pin-header descriptor prints a short notice instead of a
+diagram.
 
 ```
-onerom board header fire-24-f
+onerom board header --board fire-24-f
 ```
 
-Device required: no (a device is used only to infer `<board>` when it is
+Device required: no (a device is used only to infer `--board` when it is
 omitted).
 
 ### board socket
@@ -1433,8 +1448,14 @@ omitted).
 Draw a board's ROM socket pinout as a DIP diagram.
 
 ```
-onerom board socket [<board>] [--chip-type <chip>] [--gpio]
+onerom board socket [--board <board>] [--chip-type <chip>] [--gpio]
 ```
+
+| Option | Description |
+|---|---|
+| `--board`, `-b` | Board type to draw (e.g. `fire-24-f`). Inferred from a connected One ROM if omitted. |
+| `--chip-type`, `-c` | Label pins with this chip type's ROM functions instead of GPIOs. |
+| `--gpio` | Overlay the GPIO(s) behind each pin onto the `--chip-type` view. Requires `--chip-type`. |
 
 Without `--chip-type`, each socket pin is labelled with the GPIO(s) behind it (the
 GPIO map). With `--chip-type <chip>` (e.g. `2364`), the pins are labelled with that
@@ -1467,17 +1488,17 @@ With `--chip-type`, the diagram is followed by that chip's image size on this
 board — the flash One ROM uses to emulate it, as reported by
 [`onerom chips`](#chips).
 
-`<board>` is inferred from a connected One ROM when omitted. `--chip-type` must be a
-chip type the board can emulate (native, overhang or fly-lead; see
-[`onerom chips`](#chips) and [Chip Compatibility](COMPATIBILITY.md)).
+`--chip-type` must be a chip type the board can emulate (native, overhang or
+fly-lead; see [`onerom chips`](#chips) and
+[Chip Compatibility](COMPATIBILITY.md)).
 
 ```
-onerom board socket fire-24-f
-onerom board socket fire-24-f --chip-type 2364
-onerom board socket fire-24-f --chip-type 2364 --gpio
+onerom board socket --board fire-24-f
+onerom board socket --board fire-24-f --chip-type 2364
+onerom board socket --board fire-24-f --chip-type 2364 --gpio
 ```
 
-Device required: no (a device is used only to infer `<board>` when it is
+Device required: no (a device is used only to infer `--board` when it is
 omitted).
 
 ---
@@ -1520,37 +1541,37 @@ Repeat `--slot` once per slot. Comma-separated `key=value` pairs:
 
 ```
 file=<path_or_url>,type=<romtype>[,cs1=<logic>][,cs2=<logic>][,cs3=<logic>]
-    [,size_handling=<handling>][,format=<binary|ihex>][,load_address=<addr>]
+    [,size-handling=<handling>][,format=<binary|ihex>][,load-address=<addr>]
     [,transform=<list>]
-    [,cpu-freq=<freq>][,cpu-vreg=<voltage>][,led=<bool>][,force_16bit=<bool>]
+    [,cpu-freq=<freq>][,cpu-vreg=<voltage>][,led=<bool>][,force-16-bit=<bool>]
 ```
 
 | Key | Values / notes |
 |---|---|
 | `file` | Local path or URL to the ROM image. |
 | `type` | Chip type, e.g. `2364`, `2332`, `2716`, `27C400`. Any type the target firmware can serve on the board is accepted — that is exactly what [`chips --board`](#chips) lists, including the overhang and fly-lead combinations (a `2764` on a Fire 24, say); see [COMPATIBILITY.md](COMPATIBILITY.md). Building for firmware older than v0.7.0 accepts a narrower set, and a rejection lists what that firmware serves. Any accepted alias may be used; the exact spelling you enter is preserved in the device metadata (shown by `scan`/`inspect`), while the resolved type drives behaviour. |
-| `cs1`, `cs2`, `cs3` | CS polarity: `active_low` (or `0`), `active_high` (or `1`). Which lines are required depends on the chip type (e.g. `2332` requires `cs1` and `cs2`). |
-| `size_handling` (alias `size`) | `none`, `duplicate` (or `dup`), `truncate` (or `trunc`), `pad`. For an Intel HEX image, padding fills with `0xFF` and `duplicate` is not permitted. |
+| `cs1`, `cs2`, `cs3` | CS polarity: `active-low` (or `0`), `active-high` (or `1`), or `ignore`. The snake_case config spellings (`active_low`, `active_high`) are also accepted. Which lines are required depends on the chip type (e.g. `2332` requires `cs1` and `cs2`). `ignore` says One ROM does not monitor the line at all — it is not a polarity, and is only permitted where the chip type or set allows it (see `allow_cs_ignore`). |
+| `size-handling` (aliases `size`, `size_handling`) | `none`, `duplicate` (or `dup`), `truncate` (or `trunc`), `pad`. For an Intel HEX image, padding fills with `0xFF` and `duplicate` is not permitted. |
 | `format` | `binary` (default) or `ihex` (Intel HEX). An `ihex` file is decoded to a binary image before use; unwritten bytes read as `0xFF`. |
-| `load_address` (alias `load-address`) | Only valid with `format=ihex`. The absolute Intel HEX address that maps to byte 0 of the ROM, as a decimal or `0x`/`$`-prefixed hex value (e.g. `$E000`). Defaults to `0`. |
+| `load-address` (alias `load_address`) | Only valid with `format=ihex`. The absolute Intel HEX address that maps to byte 0 of the ROM, as a decimal or `0x`/`$`-prefixed hex value (e.g. `$E000`). Defaults to `0`. |
 | `transform` | Byte-level rearrangements of the image, applied in the order given and joined with `+`. See [Image transforms](#image-transforms). |
 | `cpu-freq` | e.g. `150`, `150mhz`, `150MHz`. Values above 150 MHz require confirmation (suppressed by `--yes`) and set overclock automatically. |
 | `cpu-vreg` | e.g. `1.1`, `1.10`, `1.10v`, `1.10V`. Values above 1.10 V require confirmation (suppressed by `--yes`). Must be a supported level. |
 | `led` | Boolean: `on`/`off`, `true`/`false`, `1`/`0`. |
-| `force_16bit` | Boolean (as above). Valid only on 40-pin boards. |
+| `force-16-bit` (alias `force_16bit`) | Boolean (as above). Valid only on 40-pin boards. |
 
 Examples:
 
 ```
---slot file=kernal.bin,type=2364,cs1=active_low
---slot file=chargen.bin,type=2332,cs1=active_low,cs2=active_high
+--slot file=kernal.bin,type=2364,cs1=active-low
+--slot file=chargen.bin,type=2332,cs1=active-low,cs2=active-high
 --slot file=https://example.com/basic.bin,type=2716
---slot file=small.bin,type=2364,cs1=active_low,size_handling=duplicate
---slot file=kernal.hex,type=2364,cs1=active_low,format=ihex
---slot file=kernal.hex,type=2364,cs1=active_low,format=ihex,load_address=$E000
---slot file=kernal.bin,type=2364,cs1=active_low,cpu-freq=200MHz,cpu-vreg=1.2V
---slot file=char.bin,type=2332,cs1=active_low,cs2=active_high,led=off
---slot file=amiga.bin,type=27C400,force_16bit=true
+--slot file=small.bin,type=2364,cs1=active-low,size-handling=duplicate
+--slot file=kernal.hex,type=2364,cs1=active-low,format=ihex
+--slot file=kernal.hex,type=2364,cs1=active-low,format=ihex,load-address=$E000
+--slot file=kernal.bin,type=2364,cs1=active-low,cpu-freq=200MHz,cpu-vreg=1.2V
+--slot file=char.bin,type=2332,cs1=active-low,cs2=active-high,led=off
+--slot file=amiga.bin,type=27C400,force-16-bit=true
 --slot file=undersized.bin,type=2732,size=pad
 --slot file=oversized.bin,type=2732,size=trunc
 --slot file=halfsized.bin,type=2732,size=dup
@@ -1604,9 +1625,9 @@ pairs. Note that `offset` selects which lane, not a named "high" or "low" half
 is what `swap_bytes` is for.
 
 Within the build pipeline, transforms run after any `location` window and after
-an Intel HEX image has been decoded, but before `size_handling` reconciles the
+an Intel HEX image has been decoded, but before `size-handling` reconciles the
 image against the chip size. A `swap_bytes` on an odd-length image is an error
-unless `size_handling` is `pad` (which appends one blank byte) or `truncate`
+unless `size-handling` is `pad` (which appends one blank byte) or `truncate`
 (which drops the trailing byte). Where the size handling is used this way it
 counts as having been needed, so it is not then reported as redundant even if
 the transformed image lands on exactly the chip size.

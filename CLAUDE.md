@@ -293,13 +293,13 @@ changes device state.
   command-line ROMs, use `--slot` mode:
 
       onerom program \
-        --slot file=<path|url>,type=23128,cs1=active_low,cs2=active_low,cs3=active_high \
+        --slot file=<path|url>,type=23128,cs1=active-low,cs2=active-low,cs3=active-high \
         --base-firmware firmware/build/onerom-rp235x.bin \
         --plugin usb --plugin rgb \
         --out /tmp/fw.bin
 
   Per-slot firmware overrides go in the `--slot` spec, e.g. `,led=off` (status
-  LED), `,cpu-freq=200MHz`, `,force_16bit=true` — the same overrides expressible
+  LED), `,cpu-freq=200MHz`, `,force-16-bit=true` — the same overrides expressible
   as `firmware_overrides` in a config file.
 - `--out <file>` saves the composed image *and* flashes; `onerom firmware build
   --out <file>` composes without flashing; `onerom firmware inspect --firmware
@@ -307,6 +307,43 @@ changes device state.
   options, never positional arguments. Board is inferred from the connected
   device (override with `--board`). `program` composes the image before writing, so a bad build aborts
   without touching the device.
+
+## CLI arguments (`rust/cli/src/args/`)
+
+Conventions the whole CLI holds to. `rust/cli/src/main.rs`'s `cli_assert`
+module walks the entire clap tree and fails the build on a breach of the first
+four, so a new option is checked mechanically rather than by review.
+
+- **Every argument is `--name value`. No positionals, anywhere.** `board header
+  <board>` was the one exception, and its own error told the user to pass
+  `--board`, which did not exist.
+- **A short flag means one thing across the whole CLI**, not just within a
+  command: `-b` board, `-o` output, `-i` input, `-c` chip-type, `-l` length,
+  `-f` force, `-n` no-reboot, `-m` msd, `-p`/`-r` stopped/running. Do not spend
+  a letter on a command-local meaning. `-s -i -u -y -v -h` are claimed by the
+  global options — a subcommand reusing one **panics at startup**, which is
+  why `verify_cli` exists. `-a` is the sole grandfathered exception
+  (`--address` vs `--all`), pinned by its own test.
+- **Long names are kebab-case.** A snake_case alias exists *only* where the
+  option names a JSON config key, and then it must match that key verbatim
+  (`turbo_boot`, `instance_name`, `boot_logging`, `serial_override`) so a
+  config key can be pasted straight onto the command line. Never alias an
+  option to its own long name.
+- **Every option needs a `///` doc comment** — a `//` comment silently gives
+  clap no help text — and a `value_name` of one uppercase word.
+- **Give values a `value_parser`** so a bad one fails at parse time rather than
+  part-way through the work. Where the values are an enum owned by another
+  crate, drive them from that type's `supported_values()` (see
+  `args/image.rs`'s `ImageFormatParser`) so a new variant flows through with no
+  CLI change — `onerom-gen` stays clap-free, so no `ValueEnum` derives there.
+- Do **not** write `required = true` on a non-`Option` field; clap already
+  requires it.
+- **Examples in doc comments must be runnable.** `firmware inspect
+  firmware.bin` sat in the help for months describing an argument form the
+  command never had.
+- A user-visible CLI change updates [docs/CLI-MANUAL.md](/docs/CLI-MANUAL.md)
+  in the same commit — see the Git & commits section, which covers this and the
+  other `docs/` files a CLI change can reach.
 
 ## Config (`onerom-config/`)
 

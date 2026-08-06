@@ -132,4 +132,155 @@ mod cli_assert {
     fn verify_cli() {
         Cli::command().debug_assert();
     }
+
+    /// Walk every subcommand, deepest first, yielding `(path, command)`.
+    fn walk(cmd: &clap::Command, path: &str, out: &mut Vec<(String, clap::Command)>) {
+        for sub in cmd.get_subcommands() {
+            let sub_path = if path.is_empty() {
+                sub.get_name().to_string()
+            } else {
+                format!("{path} {}", sub.get_name())
+            };
+            walk(sub, &sub_path, out);
+            out.push((sub_path, sub.clone()));
+        }
+    }
+
+    fn all_subcommands() -> Vec<(String, clap::Command)> {
+        let mut out = Vec::new();
+        walk(&Cli::command(), "", &mut out);
+        assert!(
+            out.len() > 20,
+            "command tree looks truncated: {}",
+            out.len()
+        );
+        out
+    }
+
+    /// A short flag means one thing across the whole CLI.
+    ///
+    /// Not the same claim as [`verify_cli`], which only catches two options
+    /// colliding on the *same* command. This catches `-b` meaning `--board` on
+    /// one command and `--byte` on another: legal clap, but the user has to
+    /// remember which is which. `-a` is the sole documented exception, covered
+    /// by its own test below.
+    #[test]
+    fn a_short_flag_means_the_same_thing_everywhere() {
+        const EXEMPT: &[char] = &['a'];
+        let mut seen: std::collections::HashMap<char, (String, String)> =
+            std::collections::HashMap::new();
+        for (path, cmd) in all_subcommands() {
+            for arg in cmd.get_arguments() {
+                let (Some(short), Some(long)) = (arg.get_short(), arg.get_long()) else {
+                    continue;
+                };
+                if EXEMPT.contains(&short) {
+                    continue;
+                }
+                let entry = seen
+                    .entry(short)
+                    .or_insert_with(|| (long.to_string(), path.clone()));
+                assert_eq!(
+                    entry.0, long,
+                    "-{short} is --{} on '{}' but --{long} on '{path}'",
+                    entry.0, entry.1
+                );
+            }
+        }
+        // Guard against the loop silently matching nothing.
+        assert_eq!(seen.get(&'b').map(|e| e.0.as_str()), Some("board"));
+        assert_eq!(seen.get(&'o').map(|e| e.0.as_str()), Some("output"));
+    }
+
+    /// `-a` is the one letter carrying two meanings, and no command has both.
+    ///
+    /// `--address` and `--all` are each long-established on their own commands
+    /// and never appear together, so the ambiguity is never presented to a
+    /// user. This test fixes that as a deliberate exception rather than an
+    /// oversight: adding `-a` to a third meaning, or to a command that already
+    /// has the other, fails here.
+    #[test]
+    fn the_short_a_exception_stays_unambiguous() {
+        let mut meanings = std::collections::BTreeSet::new();
+        for (path, cmd) in all_subcommands() {
+            let on_this_command: Vec<_> = cmd
+                .get_arguments()
+                .filter(|a| a.get_short() == Some('a'))
+                .filter_map(|a| a.get_long())
+                .collect();
+            assert!(
+                on_this_command.len() <= 1,
+                "'{path}' gives -a to more than one option: {on_this_command:?}"
+            );
+            meanings.extend(on_this_command.into_iter().map(str::to_string));
+        }
+        assert_eq!(
+            meanings,
+            ["address", "all", "all-versions"]
+                .iter()
+                .map(|s| s.to_string())
+                .collect::<std::collections::BTreeSet<_>>(),
+        );
+    }
+
+    /// Every argument is `--name value`; the CLI has no positionals.
+    ///
+    /// `board header <board>` used to be the one exception, and its error
+    /// message told the user to pass `--board` - advice the command could not
+    /// take. Keep the rule mechanical so the next one cannot creep in.
+    #[test]
+    fn no_command_takes_a_positional_argument() {
+        for (path, cmd) in all_subcommands() {
+            let positionals: Vec<_> = cmd
+                .get_positionals()
+                .filter_map(|a| a.get_id().as_str().into())
+                .collect();
+            assert!(
+                positionals.is_empty(),
+                "'{path}' takes positional argument(s): {positionals:?}"
+            );
+        }
+    }
+
+    /// An option never lists its own long name as an alias.
+    ///
+    /// A self-alias renders in `--help` as `--turbo-boot [aliases:
+    /// --turbo-boot]`, which reads as though the two spellings differ.
+    #[test]
+    fn no_option_aliases_itself() {
+        for (path, cmd) in all_subcommands() {
+            for arg in cmd.get_arguments() {
+                let Some(long) = arg.get_long() else { continue };
+                let aliases: Vec<_> = arg.get_visible_aliases().unwrap_or_default();
+                assert!(
+                    !aliases.contains(&long),
+                    "'{path}' --{long} lists itself as an alias"
+                );
+            }
+        }
+    }
+
+    /// Every option documents itself, and names its value in one word.
+    ///
+    /// `--serial-override` shipped with a `//` comment where clap needs `///`,
+    /// so it appeared in `--help` with no description at all, and with a
+    /// `<NEW SERIAL>` value name that a space made read as two arguments.
+    #[test]
+    fn every_option_is_documented_with_a_single_word_value_name() {
+        for (path, cmd) in all_subcommands() {
+            for arg in cmd.get_arguments() {
+                let Some(long) = arg.get_long() else { continue };
+                assert!(
+                    arg.get_help().is_some() || arg.get_long_help().is_some(),
+                    "'{path}' --{long} has no help text"
+                );
+                for value_name in arg.get_value_names().unwrap_or_default() {
+                    assert!(
+                        !value_name.as_str().contains(' '),
+                        "'{path}' --{long} value name '{value_name}' contains a space"
+                    );
+                }
+            }
+        }
+    }
 }

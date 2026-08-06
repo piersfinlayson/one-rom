@@ -20,7 +20,7 @@ use clap::Args;
 #[derive(Debug, Args)]
 pub struct ScanArgs {
     /// Only show devices matching this board type (e.g. fire-24-e).
-    #[arg(long, value_name = "BOARD", conflicts_with = "list_boards")]
+    #[arg(long, short, value_name = "BOARD", conflicts_with = "list_boards")]
     pub board: Option<String>,
 
     /// List all known board types.

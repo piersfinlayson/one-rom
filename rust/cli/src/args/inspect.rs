@@ -115,11 +115,13 @@ pub enum InspectCommands {
     /// Shows the 2xN header along the board's top edge, pad by pad, with the
     /// MCU GPIO behind each image-select and X pad and — on RP2350 (Fire)
     /// boards — whether that GPIO is 5V-tolerant or 3.3V-only (an ADC pin). The
-    /// board is inferred from the connected device.
+    /// board is inferred from the connected device, or taken from --board.
     ///
-    /// Example:
+    /// Examples:
     ///
     ///   onerom inspect header
+    ///
+    ///   onerom inspect header --board fire-24-f
     Header(InspectHeaderArgs),
 
     /// Draw the connected One ROM's ROM socket pinout as ASCII.
@@ -127,7 +129,7 @@ pub enum InspectCommands {
     /// Without --chip-type each socket pin is labelled with the GPIO(s) behind it;
     /// with --chip-type <chip> the pins show that ROM's functions (address / data /
     /// chip-select / …), and --gpio overlays both. The board is inferred from
-    /// the connected device.
+    /// the connected device, or taken from --board.
     ///
     /// Examples:
     ///
@@ -171,7 +173,7 @@ impl CommandTrait for InspectSlotsArgs {
 #[derive(Debug, Args)]
 pub struct InspectImageArgs {
     /// Slot index to read. Reads the currently active slot if omitted.
-    #[arg(long, short='l', value_name = "INDEX", value_parser = parse_u8)]
+    #[arg(long, value_name = "INDEX", value_parser = parse_u8)]
     pub slot: Option<u8>,
 
     /// Save the image data to this file.
@@ -296,7 +298,7 @@ pub struct InspectGpioArgs {
     ///
     /// Only needed to resolve a header pad name on a One ROM whose board type
     /// this build does not recognise. A GPIO named as gpio<N> needs no board.
-    #[arg(long, value_name = "BOARD")]
+    #[arg(long, short, value_name = "BOARD")]
     pub board: Option<String>,
 
     /// Also show GPIOs with no function at all.
@@ -305,7 +307,7 @@ pub struct InspectGpioArgs {
     /// board peripheral or a header pad - are listed. On a 48-GPIO board a
     /// quarter of them are connected to nothing, and listing them buries the
     /// rest.
-    #[arg(long, conflicts_with = "pin")]
+    #[arg(long, short, conflicts_with = "pin")]
     pub all: bool,
 }
 
@@ -316,7 +318,15 @@ impl CommandTrait for InspectGpioArgs {
 }
 
 #[derive(Debug, Args)]
-pub struct InspectHeaderArgs {}
+pub struct InspectHeaderArgs {
+    /// Board type, overriding what the connected One ROM reports.
+    ///
+    /// Only needed on a One ROM whose board type this build does not
+    /// recognise. To draw a board by name with no One ROM connected, use
+    /// 'onerom board header --board <board>'.
+    #[arg(long, short, value_name = "BOARD")]
+    pub board: Option<String>,
+}
 
 impl CommandTrait for InspectHeaderArgs {
     fn requires_device(&self) -> bool {
@@ -326,8 +336,16 @@ impl CommandTrait for InspectHeaderArgs {
 
 #[derive(Debug, Args)]
 pub struct InspectSocketArgs {
+    /// Board type, overriding what the connected One ROM reports.
+    ///
+    /// Only needed on a One ROM whose board type this build does not
+    /// recognise. To draw a board by name with no One ROM connected, use
+    /// 'onerom board socket --board <board>'.
+    #[arg(long, short, value_name = "BOARD")]
+    pub board: Option<String>,
+
     /// Show ROM pin functions for this chip type (e.g. 2364) instead of GPIOs.
-    #[arg(long, value_name = "CHIP")]
+    #[arg(long, short = 'c', value_name = "CHIP")]
     pub chip_type: Option<String>,
 
     /// Overlay the GPIO(s) behind each pin onto the --chip-type function view.

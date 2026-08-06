@@ -113,7 +113,7 @@ pub struct Cli {
     /// Use in conjunction with --unrecognised to manage One ROMs that do not
     /// have a known One ROM firmware signature, such as unprogrammed or
     /// bricked One ROMs.
-    #[arg(global = true, long, short='i', visible_alias="id", value_name = "VID:PID", value_parser = parse_vid_pid, action = clap::ArgAction::Append)]
+    #[arg(global = true, long, visible_alias="id", value_name = "VID:PID", value_parser = parse_vid_pid, action = clap::ArgAction::Append)]
     pub vid_pid: Vec<(u16, u16)>,
 
     /// Allow management of unrecognised and unprogrammed One ROMs.
@@ -294,12 +294,12 @@ pub enum BoardCommands {
     /// MCU GPIO behind each image-select and X pad and — on RP2350 (Fire)
     /// boards — whether that GPIO is 5V-tolerant or 3.3V-only (an ADC pin).
     ///
-    /// The board is taken from the argument, or inferred from a connected
-    /// One ROM when omitted.
+    /// The board is taken from --board, or inferred from a connected One ROM
+    /// when omitted.
     ///
     /// Examples:
     ///
-    ///   onerom board header fire-24-f
+    ///   onerom board header --board fire-24-f
     ///
     ///   onerom board header
     Header(BoardHeaderArgs),
@@ -310,16 +310,16 @@ pub enum BoardCommands {
     /// With --chip-type <chip> the pins are labelled with that ROM's functions
     /// (address / data / chip-select / …); add --gpio to overlay both.
     ///
-    /// The board is taken from the argument, or inferred from a connected
-    /// One ROM when omitted.
+    /// The board is taken from --board, or inferred from a connected One ROM
+    /// when omitted.
     ///
     /// Examples:
     ///
-    ///   onerom board socket fire-24-f
+    ///   onerom board socket --board fire-24-f
     ///
-    ///   onerom board socket fire-24-f --chip-type 2364
+    ///   onerom board socket --board fire-24-f --chip-type 2364
     ///
-    ///   onerom board socket fire-24-f --chip-type 2364 --gpio
+    ///   onerom board socket --board fire-24-f --chip-type 2364 --gpio
     Socket(BoardSocketArgs),
 }
 
@@ -336,7 +336,7 @@ impl CommandTrait for BoardListArgs {
 pub struct BoardHeaderArgs {
     /// Board type to show (e.g. fire-24-f). Inferred from a connected One ROM
     /// if omitted.
-    #[arg(value_name = "BOARD")]
+    #[arg(long, short, value_name = "BOARD")]
     pub board: Option<String>,
 }
 
@@ -350,11 +350,11 @@ impl CommandTrait for BoardHeaderArgs {
 pub struct BoardSocketArgs {
     /// Board type to show (e.g. fire-24-f). Inferred from a connected One ROM
     /// if omitted.
-    #[arg(value_name = "BOARD")]
+    #[arg(long, short, value_name = "BOARD")]
     pub board: Option<String>,
 
     /// Show ROM pin functions for this chip type (e.g. 2364) instead of GPIOs.
-    #[arg(long, value_name = "CHIP")]
+    #[arg(long, short = 'c', value_name = "CHIP")]
     pub chip_type: Option<String>,
 
     /// Overlay the GPIO(s) behind each pin onto the --chip-type function view.
@@ -542,9 +542,9 @@ pub enum Commands {
     ///
     ///   onerom board list
     ///
-    ///   onerom board header fire-24-f
+    ///   onerom board header --board fire-24-f
     ///
-    ///   onerom board socket fire-24-f --chip-type 2364
+    ///   onerom board socket --board fire-24-f --chip-type 2364
     #[command(
         subcommand_value_name = "COMMAND",
         subcommand_help_heading = "Commands"

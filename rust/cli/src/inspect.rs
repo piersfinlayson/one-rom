@@ -8,8 +8,9 @@ use crate::args::inspect::{
 };
 use crate::board_view::{gpio_header_role, gpio_rom_function, gpio_system_functions};
 use crate::utils::{
-    active_chip_type, check_device, check_device_running, check_fire_board_optional,
-    check_live_read_write, print_hex_dump, resolve_board, resolve_board_optional,
+    active_chip_type, check_device, check_device_running, check_fire_board,
+    check_fire_board_optional, check_live_read_write, print_hex_dump, resolve_board,
+    resolve_board_optional,
 };
 use onerom_cli::CliFetch;
 use onerom_cli::LIVE_ROM_BASE;
@@ -713,18 +714,44 @@ pub async fn cmd_gpio(options: &Options, args: &InspectGpioArgs) -> Result<(), E
 }
 
 pub async fn cmd_header(options: &Options, args: &InspectHeaderArgs) -> Result<(), Error> {
-    check_device(options, args, false)?;
-    let board = resolve_board(options, &None)?
-        .ok_or_else(|| Error::NoDeviceForBoardView("header".to_string()))?;
+    let board = resolve_device_board(options, args, "header", &args.board)?;
     crate::board::show_pin_header(&board);
     Ok(())
 }
 
 pub async fn cmd_socket(options: &Options, args: &InspectSocketArgs) -> Result<(), Error> {
-    check_device(options, args, false)?;
-    let board = resolve_board(options, &None)?
-        .ok_or_else(|| Error::NoDeviceForBoardView("socket".to_string()))?;
+    let board = resolve_device_board(options, args, "socket", &args.board)?;
     crate::board::show_rom_socket(&board, &args.chip_type, args.gpio)
+}
+
+/// The board a device-side view draws, with `--board` overriding what the
+/// connected One ROM reports.
+///
+/// These views describe the hardware of a *connected* One ROM, so the device is
+/// required even when `--board` is given: `--board` names the board this build
+/// failed to recognise the device as, it does not stand in for the device.
+/// `onerom board <view> --board <board>` is what draws a board by name with
+/// nothing plugged in.
+///
+/// The device check therefore comes first, which is what makes
+/// [`Error::NoDeviceForBoardView`] mean "connected, but its board type is
+/// unknown and you did not say" - and why that error's advice is `--board`
+/// rather than to connect something.
+///
+/// The board being named belongs to the connected Fire, so an Ice `--board`
+/// would draw hardware that is not there - the same reasoning as
+/// `inspect gpio`.
+fn resolve_device_board(
+    options: &Options,
+    args: &impl crate::args::CommandTrait,
+    view: &str,
+    board_arg: &Option<String>,
+) -> Result<Board, Error> {
+    check_device(options, args, false)?;
+    let board = resolve_board(options, board_arg)?
+        .ok_or_else(|| Error::NoDeviceForBoardView(view.to_string()))?;
+    check_fire_board(&board)?;
+    Ok(board)
 }
 
 #[cfg(test)]

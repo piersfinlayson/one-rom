@@ -106,18 +106,27 @@ pub struct SlotSpec {
     pub transform: Vec<Transform>,
 }
 
-/// Parse a CS logic value, accepting active_low/0 and active_high/1.
+/// Parse a CS logic value.
+///
+/// Delegates to [`CsLogic::try_from_str`], so `--slot` accepts exactly what a
+/// config file's chip-select field does - including `ignore`, which a 2332 or
+/// 2316 needs for a line One ROM does not monitor and which was previously
+/// expressible only in a config file. Whether `ignore` is legal for the chip in
+/// hand is settled downstream, by `validate_cs_lines` and `allow_cs_ignore`.
 fn parse_cs_logic(slot: &str, key: &str, value: &str) -> Result<CsLogic, Error> {
-    match value {
-        "active_low" | "0" => Ok(CsLogic::ActiveLow),
-        "active_high" | "1" => Ok(CsLogic::ActiveHigh),
-        other => Err(Error::InvalidArgument(
+    CsLogic::try_from_str(value).ok_or_else(|| {
+        let supported = CsLogic::supported_values()
+            .iter()
+            .map(|v| v.name())
+            .collect::<Vec<_>>()
+            .join("|");
+        Error::InvalidArgument(
             "--slot".to_string(),
             format!(
-                "Invalid CS logic '{other}': expected {key}=active_low|active_high|0|1\n   --slot '{slot}'"
+                "Invalid CS logic '{value}': expected {key}={supported}|0|1\n   --slot '{slot}'"
             ),
-        )),
-    }
+        )
+    })
 }
 
 // Use the SizeHandling deserialization to validate the value and get a
@@ -137,7 +146,7 @@ fn parse_size_handling(slot: &str, _key: &str, value: &str) -> Result<SizeHandli
         Error::InvalidArgument(
             "--slot".to_string(),
             format!(
-                "Invalid size_handling '{value}'\n    --slot '{slot}'\n  Supported values: {supported_variants}"
+                "Invalid size-handling '{value}'\n    --slot '{slot}'\n  Supported values: {supported_variants}"
             ),
         )
     })
@@ -253,6 +262,14 @@ fn parse_vreg(slot: &str, key: &str, value: &str) -> Result<FireVreg, Error> {
     })
 }
 
+/// The slot keys advertised when an unrecognised one is given.
+///
+/// Spelled kebab-case, matching the CLI's own convention for argument names.
+/// The parser also accepts the snake_case spelling of every key, so a config
+/// file's JSON key can be pasted straight into a `--slot` without translation;
+/// those are not listed here because listing every accepted spelling would bury
+/// the keys themselves. `size` is the exception: it is a genuine short form
+/// rather than a re-spelling, and is the one most people reach for.
 const SLOT_KEYS: &[&str] = &[
     "file",
     "label",
@@ -261,14 +278,14 @@ const SLOT_KEYS: &[&str] = &[
     "cs2",
     "cs3",
     "cs4",
-    "size_handling",
+    "size-handling",
     "size",
     "cpu-freq",
     "cpu-vreg",
     "led",
-    "force_16bit",
+    "force-16-bit",
     "format",
-    "load_address",
+    "load-address",
     "transform",
 ];
 
@@ -315,7 +332,7 @@ fn parse_slot(slot: &str, board: &Board) -> Result<SlotSpec, Error> {
             "cs2" => cs2 = Some(parse_cs_logic(slot, key, value)?),
             "cs3" => cs3 = Some(parse_cs_logic(slot, key, value)?),
             "cs4" => cs4 = Some(parse_cs_logic(slot, key, value)?),
-            "size_handling" | "size" => {
+            "size-handling" | "size_handling" | "size" => {
                 size_handling = Some(parse_size_handling(slot, key, value)?)
             }
             "cpu" | "freq" | "frequency" | "cpu-freq" | "cpu_freq" | "cpu_frequency"
@@ -372,7 +389,7 @@ fn parse_slot(slot: &str, board: &Board) -> Result<SlotSpec, Error> {
     if force_16bit.is_some() && board.chip_pins() != 40 {
         return Err(Error::InvalidArgument(
             "--slot".to_string(),
-            format!("force_16bit is only valid on 40-pin boards\n    --slot '{slot}'"),
+            format!("force-16-bit is only valid on 40-pin boards\n    --slot '{slot}'"),
         ));
     }
 
@@ -380,7 +397,7 @@ fn parse_slot(slot: &str, board: &Board) -> Result<SlotSpec, Error> {
     if load_address.is_some() && format != Some(FileFormat::IntelHex) {
         return Err(Error::InvalidArgument(
             "--slot".to_string(),
-            format!("load_address is only valid with format=ihex\n    --slot '{slot}'"),
+            format!("load-address is only valid with format=ihex\n    --slot '{slot}'"),
         ));
     }
 
@@ -912,6 +929,60 @@ mod tests {
         assert_eq!(slot_to_chip_config(&slot).format, FileFormat::Binary);
     }
 
+    /// Both spellings of a chip-select value reach the same variant.
+    ///
+    /// The config file writes `active_low`, the CLI's own convention is
+    /// `active-low`, and a user moving between the two should not have to
+    /// translate. Asserting the parsed variant rather than just success, so a
+    /// spelling that silently landed on the wrong polarity would fail.
+    #[test]
+    fn slot_accepts_both_spellings_of_a_cs_value() {
+        let board = Board::try_from_str("fire-24-e").unwrap();
+        for (spelling, expected) in [
+            ("active_low", CsLogic::ActiveLow),
+            ("active-low", CsLogic::ActiveLow),
+            ("ACTIVE-LOW", CsLogic::ActiveLow),
+            ("0", CsLogic::ActiveLow),
+            ("active_high", CsLogic::ActiveHigh),
+            ("active-high", CsLogic::ActiveHigh),
+            ("1", CsLogic::ActiveHigh),
+        ] {
+            let slot = parse_slot(&format!("file=rom.bin,type=2364,cs1={spelling}"), &board)
+                .unwrap_or_else(|e| panic!("cs1={spelling} rejected: {e}"));
+            assert_eq!(slot.cs1, Some(expected), "cs1={spelling}");
+        }
+    }
+
+    /// `ignore` parses on the command line, as it always has in a config file.
+    ///
+    /// It is not a polarity - it says One ROM does not monitor the line - so
+    /// whether a given chip may use it is settled downstream by
+    /// `allow_cs_ignore`. What matters here is that the *parser* no longer
+    /// rejects it as an invalid value, which made the config-file-only.
+    #[test]
+    fn slot_accepts_the_ignore_cs_value() {
+        let board = Board::try_from_str("fire-24-e").unwrap();
+        let slot = parse_slot("file=rom.bin,type=2332,cs1=active-low,cs2=ignore", &board)
+            .expect("cs2=ignore should parse");
+        assert_eq!(slot.cs2, Some(CsLogic::Ignore));
+    }
+
+    /// A bad value is still refused, and the message lists what is accepted.
+    #[test]
+    fn slot_rejects_an_unknown_cs_value_and_names_the_alternatives() {
+        let board = Board::try_from_str("fire-24-e").unwrap();
+        let err = parse_slot("file=rom.bin,type=2364,cs1=sideways", &board).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("sideways"), "{msg}");
+        for value in CsLogic::supported_values() {
+            assert!(
+                msg.contains(value.name()),
+                "{} missing from: {msg}",
+                value.name()
+            );
+        }
+    }
+
     #[test]
     fn slot_parses_a_single_transform() {
         let board = Board::try_from_str("fire-24-e").unwrap();
@@ -1021,7 +1092,7 @@ mod tests {
             &board,
         )
         .unwrap_err();
-        assert!(format!("{err}").contains("load_address is only valid with format=ihex"));
+        assert!(format!("{err}").contains("load-address is only valid with format=ihex"));
     }
 
     #[test]

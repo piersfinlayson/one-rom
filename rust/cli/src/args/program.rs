@@ -16,9 +16,9 @@ pub struct ProgramArgs {
     /// --config-name, --config-description, --save-config, --no-config,
     /// and --firmware.
     #[arg(
-        long,
+        long = "config",
         short='j',
-        visible_aliases = ["config-json", "config", "json"],
+        visible_aliases = ["config-file", "config-json", "json"],
         value_name = "FILE",
         conflicts_with_all = ["slot", "config_name", "config_description", "save_config", "no_config", "firmware"]
     )]
@@ -26,15 +26,16 @@ pub struct ProgramArgs {
 
     /// ROM slot specification. May be repeated for multiple slots.
     ///
-    /// Format: file=<path_or_url>,type=<romtype>[,cs1=<logic>][,cs2=<logic>][,cs3=<logic>][,size_handling=<handling>][,format=<binary|ihex>][,load_address=<addr>][,cpu-freq=<freq>][,cpu-vreg=<voltage>][,led=<bool>][,force_16bit=<bool>]
+    /// Format: file=<path_or_url>,type=<romtype>[,cs1=<logic>][,cs2=<logic>][,cs3=<logic>][,size-handling=<handling>][,format=<binary|ihex>][,load-address=<addr>][,cpu-freq=<freq>][,cpu-vreg=<voltage>][,led=<bool>][,force-16-bit=<bool>]
     ///
-    /// CS logic values: active_low (or 0), active_high (or 1).
+    /// CS logic values: active-low (or 0), active-high (or 1), ignore.  The
+    /// snake_case config spellings are also accepted.
     ///
     /// Required CS lines depend on chip type (e.g. 2332 requires cs1 and cs2).
     ///
     /// Size handling values: none, duplicate (or dup), truncate (or trunc), pad.
     ///
-    /// Format values: binary (default), ihex (Intel HEX). load_address is only
+    /// Format values: binary (default), ihex (Intel HEX). load-address is only
     /// valid with format=ihex and gives the Intel HEX address mapping to byte 0
     /// of the ROM, as a decimal or 0x-/$-prefixed hex value (e.g. $E000).
     ///
@@ -44,28 +45,28 @@ pub struct ProgramArgs {
     /// Vreg voltage: e.g. 1.1, 1.10, 1.10v, 1.10V. Values above 1.10V require
     /// confirmation (suppressed with --yes). Must be a supported voltage level.
     ///
-    /// Boolean values (led, force_16bit): on/off, true/false, 1/0.
-    /// force_16bit is only valid on 40-pin boards.
+    /// Boolean values (led, force-16-bit): on/off, true/false, 1/0.
+    /// force-16-bit is only valid on 40-pin boards.
     ///
     /// Examples:
     ///
-    ///   --slot file=kernal.bin,type=2364,cs1=active_low
+    ///   --slot file=kernal.bin,type=2364,cs1=active-low
     ///
-    ///   --slot file=chargen.bin,type=2332,cs1=active_low,cs2=active_high
+    ///   --slot file=chargen.bin,type=2332,cs1=active-low,cs2=active-high
     ///
     ///   --slot file=https://example.com/basic.bin,type=2716
     ///
-    ///   --slot file=small.bin,type=2364,cs1=active_low,size_handling=duplicate
+    ///   --slot file=small.bin,type=2364,cs1=active-low,size-handling=duplicate
     ///
-    ///   --slot file=kernal.bin,type=2364,cs1=active_low,cpu-freq=200MHz,cpu-vreg=1.2V
+    ///   --slot file=kernal.bin,type=2364,cs1=active-low,cpu-freq=200MHz,cpu-vreg=1.2V
     ///
-    ///   --slot file=char.bin,type=2332,cs1=active_low,cs2=active_high,led=off
+    ///   --slot file=char.bin,type=2332,cs1=active-low,cs2=active-high,led=off
     ///
-    ///   --slot file=amiga.bin,type=27C400,force_16bit=true
+    ///   --slot file=amiga.bin,type=27C400,force-16-bit=true
     ///
-    ///   --slot file=kernal.hex,type=2364,cs1=active_low,format=ihex
+    ///   --slot file=kernal.hex,type=2364,cs1=active-low,format=ihex
     ///
-    ///   --slot file=kernal.hex,type=2364,cs1=active_low,format=ihex,load_address=$E000
+    ///   --slot file=kernal.hex,type=2364,cs1=active-low,format=ihex,load-address=$E000
     ///
     ///   --slot file=undersized.bin,type=2732,size=pad
     ///
@@ -77,7 +78,7 @@ pub struct ProgramArgs {
     ///
     ///   --slot file=rom32.bin,type=27C010,transform=deinterleave:1/2/2+swap_bytes
     ///
-    /// Mutually exclusive with --config-file, --no-config, and --firmware.
+    /// Mutually exclusive with --config, --no-config, and --firmware.
     #[arg(
         long,
         value_name = "SPEC",
@@ -94,7 +95,7 @@ pub struct ProgramArgs {
     ///
     /// System plugins are always placed in slot 0, user plugins in slot 1.
     ///
-    /// May be combined with --config-file: the plugins are inserted ahead of
+    /// May be combined with --config: the plugins are inserted ahead of
     /// the config's ROM slots (shifting them up). It is an error if the config
     /// already defines a plugin of its own. Still mutually exclusive with
     /// --firmware, since a pre-built firmware already contains its plugins.
@@ -116,7 +117,7 @@ pub struct ProgramArgs {
 
     /// Name for the generated ROM configuration.
     ///
-    /// Mutually exclusive with --config-file.
+    /// Mutually exclusive with --config.
     #[arg(
         long,
         value_name = "NAME",
@@ -128,20 +129,20 @@ pub struct ProgramArgs {
     /// Description for the generated ROM configuration. Defaults to
     /// "Created by the One ROM CLI" if not specified.
     ///
-    /// Mutually exclusive with --config-file.
+    /// Mutually exclusive with --config.
     #[arg(long, value_name = "DESC", visible_aliases=["desc", "description"], conflicts_with = "config_file")]
     pub config_description: Option<String>,
 
     /// Save the generated ROM configuration to a JSON file.
     ///
     /// Only valid with --slot or --no-config. Mutually exclusive with
-    /// --config-file.
+    /// --config.
     #[arg(long, value_name = "FILE", conflicts_with = "config_file")]
     pub save_config: Option<String>,
 
     /// Flash a pre-built complete firmware binary directly.
     ///
-    /// Mutually exclusive with --config-file, --slot, --base-firmware,
+    /// Mutually exclusive with --config, --slot, --base-firmware,
     /// and --plugin because a pre-built firmware already contains all of the
     /// ROMs, plugins, etc.  Also conflicts with --version.
     #[arg(
@@ -171,7 +172,7 @@ pub struct ProgramArgs {
     /// Confirm flashing a base firmware with no ROM configuration.
     ///
     /// Only valid with --config-name and/or --config-description.
-    /// Mutually exclusive with --config-file, --slot, and --firmware.
+    /// Mutually exclusive with --config, --slot, and --firmware.
     #[arg(
         long,
         conflicts_with_all = ["config_file", "slot", "firmware", "instance_name", "serial_override", "logging", "disable_swd", "turbo_boot"]
@@ -204,7 +205,7 @@ pub struct ProgramArgs {
     pub running: bool,
 
     /// Do not reboot the device after flashing.
-    #[arg(long, conflicts_with = "stopped")]
+    #[arg(long, short, conflicts_with = "stopped")]
     pub no_reboot: bool,
 
     /// Verify flash contents after programming by reading back. (Not yet supported.)
@@ -239,11 +240,15 @@ pub struct ProgramArgs {
     pub scan_slots: bool,
 
     /// Provide this One ROM with a name
-    #[arg(long, visible_aliases = ["instance-name", "instance_name", "onerom", "onerom-name", "one-rom", "one-rom-name"], value_name = "NAME", conflicts_with_all = ["no_config"])]
+    #[arg(long, visible_aliases = ["instance_name", "onerom", "onerom-name", "one-rom", "one-rom-name"], value_name = "NAME", conflicts_with_all = ["no_config"])]
     pub instance_name: Option<String>,
 
-    // Provide a serial number to override this device's actual serial number
-    #[arg(long, visible_aliases = ["serial-override", "serial_override"], value_name = "NEW SERIAL", conflicts_with_all = ["no_config"])]
+    /// Give this One ROM a custom USB serial number, in place of the RP2350
+    /// chip ID it would otherwise report.
+    ///
+    /// Used by the USB plugin while One ROM is running. A stopped One ROM is on
+    /// the bootrom's USB stack and continues to report the chip ID.
+    #[arg(long, visible_aliases = ["serial_override"], value_name = "SERIAL", conflicts_with_all = ["no_config"])]
     pub serial_override: Option<String>,
 
     /// Enable logging on this One ROM firmware
@@ -260,7 +265,7 @@ pub struct ProgramArgs {
     /// Enable turbo boot - starts ROM serving faster by not reading the image
     /// select jumpers, so the first non-plugin slot is always the one served.
     /// More than one non-plugin slot is refused unless --force is given.
-    #[arg(long, visible_aliases = ["turbo-boot", "turbo_boot"], default_missing_value = "true", num_args = 0..=1, conflicts_with_all = ["no_config"])]
+    #[arg(long, visible_aliases = ["turbo_boot"], default_missing_value = "true", num_args = 0..=1, conflicts_with_all = ["no_config"])]
     pub turbo_boot: Option<bool>,
 }
 

@@ -5,8 +5,73 @@
 //! Argument definitions for `onerom image`.
 
 use crate::args::CommandTrait;
+use clap::builder::{PossibleValue, TypedValueParser};
 use clap::{Args, Subcommand};
 use enum_dispatch::enum_dispatch;
+use onerom_gen::{FileFormat, LoadAddress};
+
+/// Value parser for `--from`/`--to`, driven by `onerom-gen`'s format list.
+///
+/// A format added to [`FileFormat`] is accepted here and appears in `--help`
+/// with no CLI change, and a typo now fails at parse time rather than part-way
+/// through the conversion. `onerom-gen` deliberately carries no clap
+/// dependency, which is why this is a hand-written parser rather than a
+/// `ValueEnum` derived on `FileFormat` itself.
+///
+/// Parsing goes through [`FileFormat::try_from_str`] so every alias it accepts
+/// (`bin`, `raw`, `hex`, `intel-hex`, …) keeps working, while only the
+/// canonical spellings are advertised - a plain list of possible values would
+/// have accepted the canonical names alone.
+#[derive(Clone)]
+struct ImageFormatParser;
+
+impl TypedValueParser for ImageFormatParser {
+    type Value = FileFormat;
+
+    fn parse_ref(
+        &self,
+        cmd: &clap::Command,
+        arg: Option<&clap::Arg>,
+        value: &std::ffi::OsStr,
+    ) -> Result<Self::Value, clap::Error> {
+        let invalid = || {
+            let arg = arg
+                .map(|a| a.to_string())
+                .unwrap_or_else(|| "--from/--to".into());
+            cmd.clone().error(
+                clap::error::ErrorKind::InvalidValue,
+                format!(
+                    "invalid format '{}' for '{arg}'\n  Supported values: {}",
+                    value.to_string_lossy(),
+                    FileFormat::supported_values()
+                        .iter()
+                        .map(|f| f.name())
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                ),
+            )
+        };
+        let text = value.to_str().ok_or_else(invalid)?;
+        FileFormat::try_from_str(text).ok_or_else(invalid)
+    }
+
+    fn possible_values(&self) -> Option<Box<dyn Iterator<Item = PossibleValue> + '_>> {
+        Some(Box::new(
+            FileFormat::supported_values()
+                .iter()
+                .map(|f| PossibleValue::new(f.name())),
+        ))
+    }
+}
+
+/// Parse an Intel HEX load address, sharing the config file's spellings.
+///
+/// [`LoadAddress::parse_str`] is what the config and `--slot load-address=`
+/// both use, so all three accept a decimal, `0x`- or `$`-prefixed value
+/// identically.
+fn parse_load_address(s: &str) -> Result<LoadAddress, String> {
+    LoadAddress::parse_str(s).map_err(|e| e.to_string())
+}
 
 #[derive(Debug, Args)]
 pub struct ImageArgs {
@@ -80,11 +145,11 @@ pub enum ImageCommands {
 #[derive(Debug, Args)]
 pub struct ImageSwapBytesArgs {
     /// Input ROM image file.
-    #[arg(long, visible_alias = "in", value_name = "FILE")]
+    #[arg(long, short, visible_alias = "in", value_name = "FILE")]
     pub input: String,
 
     /// Output file path.
-    #[arg(long, visible_alias = "out", value_name = "FILE")]
+    #[arg(long, short, visible_alias = "out", value_name = "FILE")]
     pub output: String,
 }
 
@@ -97,11 +162,11 @@ impl CommandTrait for ImageSwapBytesArgs {
 #[derive(Debug, Args)]
 pub struct ImageDeinterleaveArgs {
     /// Input ROM image file.
-    #[arg(long, visible_alias = "in", value_name = "FILE")]
+    #[arg(long, short, visible_alias = "in", value_name = "FILE")]
     pub input: String,
 
     /// Output file path.
-    #[arg(long, visible_alias = "out", value_name = "FILE")]
+    #[arg(long, short, visible_alias = "out", value_name = "FILE")]
     pub output: String,
 
     /// Which lane to keep.  Must be less than --stride.
@@ -125,26 +190,28 @@ impl CommandTrait for ImageDeinterleaveArgs {
 
 #[derive(Debug, Args)]
 pub struct ImageConvertArgs {
-    /// Input format: `binary` (aliases `bin`, `raw`) or `ihex`.
-    #[arg(long, value_name = "FORMAT")]
-    pub from: String,
+    /// Input format. `binary` also accepts `bin` and `raw`; `ihex` also
+    /// accepts `intel-hex` and `hex`.
+    #[arg(long, value_name = "FORMAT", value_parser = ImageFormatParser)]
+    pub from: FileFormat,
 
-    /// Output format: `binary` (aliases `bin`, `raw`) or `ihex`.
-    #[arg(long, value_name = "FORMAT")]
-    pub to: String,
+    /// Output format. `binary` also accepts `bin` and `raw`; `ihex` also
+    /// accepts `intel-hex` and `hex`.
+    #[arg(long, value_name = "FORMAT", value_parser = ImageFormatParser)]
+    pub to: FileFormat,
 
     /// Input ROM image file.
-    #[arg(long, visible_alias = "in", value_name = "FILE")]
+    #[arg(long, short, visible_alias = "in", value_name = "FILE")]
     pub input: String,
 
     /// Output file path.
-    #[arg(long, visible_alias = "out", value_name = "FILE")]
+    #[arg(long, short, visible_alias = "out", value_name = "FILE")]
     pub output: String,
 
     /// Intel HEX load address (decimal, or `0x`/`$`-prefixed hex). Only valid
     /// when converting to or from ihex. Defaults to 0.
-    #[arg(long, value_name = "ADDR")]
-    pub load_address: Option<String>,
+    #[arg(long, value_name = "ADDR", value_parser = parse_load_address)]
+    pub load_address: Option<LoadAddress>,
 }
 
 impl CommandTrait for ImageConvertArgs {

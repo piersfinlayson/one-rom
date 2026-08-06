@@ -85,14 +85,16 @@ pub enum Error {
     #[error("Cannot determine the board type.\n  Either --board or --serial must be specified.")]
     NoBoardOrDevice,
 
-    /// A device-oriented view could not identify the board.
+    /// A device-oriented view could not identify the connected One ROM's board.
     ///
-    /// Distinct from [`Error::NoBoardOrDevice`] because these commands have no
-    /// `--board`: they draw the board of a *connected* One ROM, and the
-    /// board-oriented `onerom board ...` form is what draws a board by name.
-    /// Telling the user to pass `--board` here would be a dead end.
+    /// Reached only with a One ROM *connected*: the caller checks for a device
+    /// first, so a missing one is [`Error::NoDevice`]. What is left is a One ROM
+    /// reporting a board type this build does not recognise, which the
+    /// command's own `--board` override exists to answer. Unlike
+    /// [`Error::NoBoardOrDevice`] there is no point offering `--serial`, which
+    /// would only select a different One ROM.
     #[error(
-        "Cannot determine the board type.\n  This command draws the board of a connected One ROM.  Connect one, or use\n  'onerom board {0} <board>' to draw a board by name."
+        "Cannot determine the board type.\n  The connected One ROM reports a board type this build does not recognise.\n  Name it with --board, or use 'onerom board {0} --board <board>' to draw a\n  board by name."
     )]
     NoDeviceForBoardView(String),
 
@@ -385,23 +387,31 @@ impl From<onerom_app::Error<onerom_fw::Error>> for Error {
 mod tests {
     use super::*;
 
-    /// The board-view error names a command that can actually help.
+    /// The board-view error offers only advice that would actually work.
     ///
-    /// `inspect header` and `inspect socket` have no `--board`, so the shared
-    /// [`Error::NoBoardOrDevice`] - which tells the user to pass one - is a dead
-    /// end for them. This message exists to point at the `board` form instead,
-    /// and is easy to break by editing one and not the other.
+    /// Both routes it names have to be spelled the way the CLI accepts them,
+    /// and both have to be reachable from where the user is: a One ROM *is*
+    /// connected (the caller has already checked), it is just one whose board
+    /// this build does not know. So `--board` is the fix, and `--serial` -
+    /// which the shared [`Error::NoBoardOrDevice`] offers - would only pick a
+    /// different One ROM.
+    ///
+    /// This is easy to break by renaming an argument and not the message, which
+    /// is exactly what happened when `board header` took its board
+    /// positionally.
     #[test]
-    fn board_view_error_points_at_a_command_that_takes_a_board() {
+    fn board_view_error_offers_only_advice_that_works() {
         for view in ["header", "socket"] {
             let msg = Error::NoDeviceForBoardView(view.to_string()).to_string();
+            // The override on this very command, which resolves the situation.
+            assert!(msg.contains("--board"), "{view}: {msg}");
+            // The escape hatch, spelled as the `board` command actually parses
+            // it - not the positional form it once took.
             assert!(
-                msg.contains(&format!("onerom board {view} <board>")),
+                msg.contains(&format!("onerom board {view} --board <board>")),
                 "{view}: {msg}"
             );
-            // The advice the shared error gives, which these commands cannot
-            // act on.
-            assert!(!msg.contains("--board"), "{view}: {msg}");
+            // Would only select a different One ROM, not name this one's board.
             assert!(!msg.contains("--serial"), "{view}: {msg}");
         }
     }

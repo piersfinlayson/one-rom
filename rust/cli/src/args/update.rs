@@ -61,11 +61,11 @@ pub enum UpdateCommands {
 #[derive(Debug, Args)]
 pub struct UpdateSlotArgs {
     /// Flash slot index to write (0-15).
-    #[arg(long, short = 'l', value_name = "INDEX", required = true)]
+    #[arg(long, value_name = "INDEX")]
     pub slot: u8,
 
     /// ROM image file to write to the slot.
-    #[arg(long, short = 'm', value_name = "FILE", required = true)]
+    #[arg(long, value_name = "FILE")]
     pub image: String,
 }
 
@@ -78,7 +78,7 @@ impl CommandTrait for UpdateSlotArgs {
 #[derive(Debug, Args)]
 pub struct UpdateCommitArgs {
     /// Slot index to commit. Commits the currently active slot if omitted.
-    #[arg(long, short = 'l', value_name = "INDEX")]
+    #[arg(long, value_name = "INDEX")]
     pub slot: Option<u8>,
 }
 

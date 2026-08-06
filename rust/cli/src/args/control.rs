@@ -281,14 +281,14 @@ pub struct ControlResetArgs {
     ///
     /// A bare number is rejected - see 'onerom inspect header' for the GPIO
     /// behind each header pad.
-    #[arg(long, value_name = "PIN", required = true, value_parser = parse_pin)]
+    #[arg(long, value_name = "PIN", value_parser = parse_pin)]
     pub pin: Pin,
 
     /// Board type, overriding what the connected One ROM reports.
     ///
     /// Only needed to resolve a header pad name on a One ROM whose board type
     /// this build does not recognise. A GPIO named as gpio<N> needs no board.
-    #[arg(long, value_name = "BOARD")]
+    #[arg(long, short, value_name = "BOARD")]
     pub board: Option<String>,
 
     /// Duration in milliseconds to hold the reset signal asserted.
@@ -306,7 +306,7 @@ impl CommandTrait for ControlResetArgs {
 #[derive(Debug, Args)]
 pub struct ControlSelectArgs {
     /// Image slot index to activate (0-15).
-    #[arg(long, short = 'l', value_name = "INDEX", required = true)]
+    #[arg(long, value_name = "INDEX")]
     pub slot: u8,
 }
 
@@ -358,20 +358,20 @@ pub struct ControlPinArgs {
     ///
     /// A bare number is rejected - see 'onerom inspect header' for the GPIO
     /// behind each header pad.
-    #[arg(long, value_name = "PIN", required = true, value_parser = parse_pin)]
+    #[arg(long, value_name = "PIN", value_parser = parse_pin)]
     pub pin: Pin,
 
     /// Board type, overriding what the connected One ROM reports.
     ///
     /// Only needed to resolve a header pad name on a One ROM whose board type
     /// this build does not recognise. A GPIO named as gpio<N> needs no board.
-    #[arg(long, value_name = "BOARD")]
+    #[arg(long, short, value_name = "BOARD")]
     pub board: Option<String>,
 
     /// Desired pin state: high, low, or z (high-impedance).
     ///
     /// '1' and '0' are accepted for high and low.
-    #[arg(long, value_name = "STATE", required = true)]
+    #[arg(long, value_name = "STATE")]
     pub state: GpioState,
 
     /// Hold --state for this many milliseconds, then apply --then.
@@ -388,7 +388,7 @@ pub struct ControlPinArgs {
     pub then: Option<GpioState>,
 
     /// Drive the GPIO even though One ROM is using it for serving.
-    #[arg(long)]
+    #[arg(long, short)]
     pub force: bool,
 }
 
@@ -412,7 +412,7 @@ impl CommandTrait for ControlPokeArgs {
 
 #[derive(Debug, Args)]
 #[command(group = ArgGroup::new("erase_target").required(true).args(["all", "offset", "address"]))]
-#[command(group = ArgGroup::new("reboot_mode").required(false).args(["reboot_stopped", "reboot_running"]))]
+#[command(group = ArgGroup::new("reboot_mode").required(false).args(["stopped", "running"]))]
 pub struct ControlEraseArgs {
     /// Erase all flash contents.
     #[arg(long, short)]
@@ -423,7 +423,7 @@ pub struct ControlEraseArgs {
     /// Must be 4096-aligned. Pair each with a --length.
     /// Can be repeated for multiple ranges.
     /// Mutually exclusive with --address.
-    #[arg(long, short, value_name = "OFFSET", value_parser = parse_u32, action = clap::ArgAction::Append, conflicts_with = "address", requires = "length")]
+    #[arg(long, value_name = "OFFSET", value_parser = parse_u32, action = clap::ArgAction::Append, conflicts_with = "address", requires = "length")]
     pub offset: Vec<u32>,
 
     /// Erase at absolute address(es).
@@ -446,15 +446,15 @@ pub struct ControlEraseArgs {
     pub no_reboot: bool,
 
     /// Reboot One ROM into stopped (bootloader) mode after erasing.
-    #[arg(long, short = 'p', conflicts_with = "reboot_running")]
-    pub reboot_stopped: bool,
+    #[arg(long, short = 'p', conflicts_with = "running")]
+    pub stopped: bool,
 
     /// Reboot One ROM into running mode after erasing.
-    #[arg(long, short = 'r', conflicts_with = "reboot_stopped")]
-    pub reboot_running: bool,
+    #[arg(long, short = 'r', conflicts_with = "stopped")]
+    pub running: bool,
 
     /// Mount mass storage device when rebooting into stopped mode.
-    #[arg(long, short = 'm', requires = "reboot_stopped")]
+    #[arg(long, short = 'm', requires = "stopped")]
     pub msd: bool,
 
     /// Don't pause after reboot for One ROM to re-enumerate (reappear)
@@ -471,9 +471,9 @@ impl CommandTrait for ControlEraseArgs {
 
 impl From<&ControlEraseArgs> for RebootArgs {
     fn from(args: &ControlEraseArgs) -> Self {
-        if args.reboot_stopped {
+        if args.stopped {
             RebootArgs::stopped(args.msd, args.fast)
-        } else if args.reboot_running {
+        } else if args.running {
             RebootArgs::running(args.fast, true)
         } else {
             RebootArgs::none()
@@ -535,13 +535,19 @@ pub struct ControlPokeMemoryArgs {
     ///
     /// Accepts decimal and hexadecimal (0x prefix) formats.
     /// Mutually exclusive with --input.
-    #[arg(long, short, visible_alias = "value", value_name = "BYTE", value_parser = parse_u8, group = "poke_source")]
+    #[arg(long, visible_alias = "value", value_name = "BYTE", value_parser = parse_u8, group = "poke_source")]
     pub byte: Option<u8>,
 
     /// Write the contents of this binary file.
     ///
     /// Mutually exclusive with --value.
-    #[arg(long, visible_alias = "in", value_name = "FILE", group = "poke_source")]
+    #[arg(
+        long,
+        short,
+        visible_alias = "in",
+        value_name = "FILE",
+        group = "poke_source"
+    )]
     pub input: Option<String>,
 }
 
@@ -564,13 +570,19 @@ pub struct ControlPokeLiveArgs {
     ///
     /// Accepts decimal and hexadecimal (0x prefix) formats.
     /// Mutually exclusive with --input.
-    #[arg(long, short, visible_alias = "value", value_name = "BYTE", value_parser = parse_u8, group = "poke_source")]
+    #[arg(long, visible_alias = "value", value_name = "BYTE", value_parser = parse_u8, group = "poke_source")]
     pub byte: Option<u8>,
 
     /// Write the contents of this binary file.
     ///
     /// Mutually exclusive with --byte.
-    #[arg(long, visible_alias = "in", value_name = "FILE", group = "poke_source")]
+    #[arg(
+        long,
+        short,
+        visible_alias = "in",
+        value_name = "FILE",
+        group = "poke_source"
+    )]
     pub input: Option<String>,
 
     /// Only write bytes that differ from the current device's ROM content.

@@ -12,6 +12,43 @@
     `firmware build`. It only ever bypassed the old per-board list; nothing it
     can now permit is buildable.
 
+- **Breaking: the CLI's argument conventions are now consistent across every
+  command.** No command takes a positional argument — `board header` and
+  `board socket` take `--board`, where the error for omitting it already told
+  you to. Each short flag means one thing CLI-wide: `-b` is `--board` (was
+  `--byte` on `poke`), `-o` is `--output` (was `--offset` on `control erase`),
+  `-i` is `--input` (was the global `--vid-pid`, which keeps `--id`), `-l` is
+  `--length` (was `--slot`), and `-m` is `--msd` (was `--image` on
+  `update slot`). `--board`, `--chip-type`, `--all`, `--force`, `--no-reboot`,
+  `--input` and `--output` gain their short forms on the commands that lacked
+  them. Enforced by tests that walk the whole command tree.
+- **Breaking: `onerom control erase` uses `--stopped`/`--running`** for its
+  post-erase reboot mode, matching `control reboot` and `program`. As with
+  `onerom boards`, there is deliberately no alias for the old
+  `--reboot-stopped`/`--reboot-running`.
+- `--config` is now the primary spelling of the ROM configuration file option
+  on `program` and `firmware build`, matching how it is written throughout the
+  documentation; `--config-file`, `--config-json` and `--json` remain aliases.
+- `onerom image convert` validates `--from`/`--to` as the command line is
+  parsed and lists the accepted formats in `--help`, rather than failing
+  part-way through a conversion. The list comes from `onerom-gen`, so a format
+  added there needs no CLI change. `--load-address` is likewise parsed up
+  front, by the same code the config file uses, so `$E000` and a bad value
+  behave identically in both places.
+- `--slot` keys and values are documented kebab-case — `size-handling`,
+  `load-address`, `force-16-bit`, `cs1=active-low` — matching the CLI's own
+  argument naming. The snake_case config spellings are all still accepted, and
+  `size-handling`, the one key that took only the snake form, now parses.
+- **`--slot` accepts `cs<n>=ignore`**, which a config file always could.
+  Chip-select values now go through the same `onerom-gen` parser the config
+  file uses, replacing a second, narrower copy in the CLI — between them
+  `active_low` was accepted only on the command line and `ignore` only in a
+  config file, and neither took the full set. `ignore` says One ROM does not
+  monitor the line; whether a chip may use it is still settled by
+  `allow_cs_ignore`, so a 2332 asking for it now gets that rule explained
+  rather than "invalid CS logic".
+- `--serial-override` now has help text and a `<SERIAL>` value name; it shipped
+  with neither, from a `//` comment where clap needs `///`.
 - **Breaking: `onerom boards` is now `onerom board`**, and the bare listing it
   printed is `onerom board list`. There is no alias, so scripts calling
   `onerom boards` must be updated; the CLI suggests `board` rather than simply
@@ -53,17 +90,18 @@
   rather than surfacing a USB stall.
 
 - **Add ASCII views of a board's physical pin layouts.** `onerom board header
-  [<board>]` draws the pin (jumper / programming) header, annotating each
+  [--board <board>]` draws the pin (jumper / programming) header, annotating each
   image-select and X pad with the GPIO behind it and — on Fire boards —
   whether that GPIO is 5V-tolerant (`5V`) or 3.3V-only (`!!3V3!!`, an ADC pin).
-  `onerom board socket [<board>] [--chip-type <chip>] [--gpio]` draws the ROM
+  `onerom board socket [--board <board>] [--chip-type <chip>] [--gpio]` draws the ROM
   socket as a DIP pinout: GPIOs by default, ROM pin functions with
   `--chip-type`, and both with `--gpio`. A chip whose pin count differs from
   the board's is drawn at the larger of the two, bottom-justified, marking
   `overhang` and `(empty)` pins and the `X1`/`X2` fly-lead each overhanging
   address line needs. The board is inferred from a connected One ROM when
   omitted; `onerom inspect header` and `onerom inspect socket` are the
-  device-side forms.
+  device-side forms, and take `--board` to override the board type the
+  connected One ROM reports.
 - **`onerom chips --board <board>` now reports how much flash each chip type
   uses.** Each chip is listed with its ROM size and its image size — often
   larger than the chip (a 2364 costs 8KB on a 24-pin board but 256KB
@@ -136,18 +174,23 @@
 - `board header` and `inspect header` now say `command unsupported` for a board
   with no pin-header descriptor, where they said `nothing to draw` and called
   the descriptor missing "yet".
-- `onerom inspect header` and `onerom inspect socket` no longer tell you to
-  pass `--board` when they cannot identify the board. Neither has a `--board`;
-  they now point at `onerom board header <board>` / `onerom board socket
-  <board>`, which draw a board by name.
+- `onerom inspect header` and `onerom inspect socket` now take `--board`,
+  overriding the board type the connected One ROM reports, as `inspect gpio`
+  already did. It is an override, not a substitute for the device — both still
+  need a One ROM connected, and `onerom board header`/`board socket` remain the
+  way to draw a board by name without one.
+  - Their "cannot determine the board type" error now advises `--board`, which
+    resolves it. The error only arises with a One ROM connected whose board type
+    this build does not recognise, so the previous advice to connect one was
+    unreachable.
 - Stop hard-wrapping prose in console output. A handful of messages broke a
   sentence at a fixed width, which the terminal then wrapped again at its own.
   Multi-line messages that put a *separate* sentence on its own indented line
   are unchanged; that is structure, not wrapping.
 - Fix `onerom image swap-bytes` panicking at startup (even for `--help`) with a
   clap short-option collision: `-i` was claimed by both the global `--vid-pid`
-  and swap-bytes' `--input`. `--input`/`--output` are now long-only (aliases
-  `--in`/`--out` unchanged).
+  and swap-bytes' `--input`. `-i` now belongs to `--input` throughout, and
+  `--vid-pid` is long-only (alias `--id` unchanged).
 - New `Error` variants: `ImageTransform`, `IceBoardUnsupported`,
   `TurboBootMultiSlot`, and the GPIO control errors (device not running, pin
   in use, no free hold slot).

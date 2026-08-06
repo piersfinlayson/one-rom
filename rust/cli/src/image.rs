@@ -6,7 +6,7 @@
 
 use crate::args::image::{ImageConvertArgs, ImageDeinterleaveArgs, ImageSwapBytesArgs};
 use onerom_cli::{Error, Options};
-use onerom_gen::{FileFormat, LoadAddress, SizeHandling, Transform, decode_ihex, encode_ihex};
+use onerom_gen::{FileFormat, SizeHandling, Transform, decode_ihex, encode_ihex};
 
 /// Apply a single transform to a standalone image file.
 ///
@@ -88,24 +88,12 @@ pub async fn cmd_deinterleave(
     transform_file(options, &args.input, &args.output, &transform, &what)
 }
 
-fn parse_format(flag: &str, value: &str) -> Result<FileFormat, Error> {
-    FileFormat::try_from_str(value).ok_or_else(|| {
-        Error::InvalidArgument(
-            flag.to_string(),
-            format!("Invalid format '{value}': expected 'binary' or 'ihex'"),
-        )
-    })
-}
-
 pub async fn cmd_convert(options: &Options, args: &ImageConvertArgs) -> Result<(), Error> {
-    let from = parse_format("--from", &args.from)?;
-    let to = parse_format("--to", &args.to)?;
-
-    let load_address = match &args.load_address {
-        Some(s) => LoadAddress::parse_str(s)
-            .map_err(|e| Error::InvalidArgument("--load-address".to_string(), e.to_string()))?,
-        None => LoadAddress::default(),
-    };
+    // --from/--to are validated by clap against onerom-gen's format list, and
+    // --load-address by the same parser the config file uses, so both arrive
+    // already parsed.
+    let (from, to) = (args.from, args.to);
+    let load_address = args.load_address.unwrap_or_default();
 
     // A load address only means anything when Intel HEX is on one side.
     if from == FileFormat::Binary && to == FileFormat::Binary && !load_address.is_zero() {
