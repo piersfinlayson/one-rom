@@ -576,6 +576,18 @@ pub(crate) fn build_file_id_map(config: &Config, file_id_map: &mut BTreeMap<usiz
     }
 }
 
+// Whether any of this tool's builders can serve `chip_type` on `mcu_family`.
+//
+// A chip type declaring a `supported` firmware version in `chip-types.json` is
+// not necessarily one a builder implements: 62256 is declared for its name,
+// pinout and RBCP type alone.  So membership of a builder's list, rather than
+// the declared version, is what says the tool can serve the chip.  V2 exists
+// only for the RP2350, so an STM32 target can only be served by V1.
+fn chip_type_servable_by_tool(chip_type: ChipType, mcu_family: &Family) -> bool {
+    SUPPORTED_CHIP_TYPES_V1.contains(&chip_type)
+        || (*mcu_family == Family::Rp2350 && SUPPORTED_CHIP_TYPES_V2.contains(&chip_type))
+}
+
 // Returns number of non-plugin ROM slots.
 // Validates structural constraints only — chip counts, firmware version
 // compatibility, file specs, plugin rules.  CS/CE/OE validation is handled
@@ -640,6 +652,26 @@ pub(crate) fn check_chip_sets(
 
             // Check chip_type is supported
             if !supported_chip_types.contains(&chip.chip_type.resolved()) {
+                // The builder for the target firmware cannot serve this chip
+                // type, but another generation of builder may be able to - a
+                // 23C1001 needs V2, so a V1 target lands here.  Where that is
+                // the case, and the target firmware simply predates the chip
+                // type, name the firmware version required instead of claiming
+                // the tool does not know the chip at all.  Gated on the other
+                // builder being reachable for this MCU, so an STM32 build is
+                // not pointed at a firmware version that will only ever exist
+                // for the RP2350.
+                if let Some(min_version) =
+                    chip.chip_type.resolved().min_supported_firmware_version()
+                    && version < &min_version
+                    && chip_type_servable_by_tool(chip.chip_type.resolved(), mcu_family)
+                {
+                    return Err(Error::FirmwareTooOld {
+                        feat: chip.chip_type.resolved().name(),
+                        version: *version,
+                        minimum: min_version,
+                    });
+                }
                 return Err(Error::UnsupportedToolChipType {
                     chip_type: chip.chip_type.resolved(),
                 });
@@ -2041,4 +2073,50 @@ fn validate_config_v2(
     }
 
     Ok(warnings)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // A chip type only V2 serves is reachable on an RP2350 and nowhere else,
+    // so only an RP2350 build may be told which firmware version to move to.
+    #[test]
+    fn v2_only_chip_type_is_servable_on_rp2350_only() {
+        assert!(chip_type_servable_by_tool(
+            ChipType::Chip23C1001,
+            &Family::Rp2350
+        ));
+        assert!(!chip_type_servable_by_tool(
+            ChipType::Chip23C1001,
+            &Family::Stm32f4
+        ));
+    }
+
+    // A chip type V1 serves stays servable whichever MCU is targeted.
+    #[test]
+    fn v1_chip_type_is_servable_on_both_families() {
+        assert!(chip_type_servable_by_tool(
+            ChipType::Chip2364,
+            &Family::Rp2350
+        ));
+        assert!(chip_type_servable_by_tool(
+            ChipType::Chip2364,
+            &Family::Stm32f4
+        ));
+    }
+
+    // A chip type declared in chip-types.json but implemented by no builder is
+    // not servable, whatever it declares.  This is what stops a chip reserved
+    // for its name and pinout alone - 62256 today - from being reported as
+    // needing newer firmware, when no firmware version would serve it.
+    #[test]
+    fn chip_type_in_no_builder_list_is_not_servable() {
+        for family in [Family::Rp2350, Family::Stm32f4] {
+            assert!(
+                !chip_type_servable_by_tool(ChipType::Chip62256, &family),
+                "62256 reported servable on {family:?}"
+            );
+        }
+    }
 }

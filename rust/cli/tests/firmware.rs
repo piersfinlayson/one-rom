@@ -786,3 +786,41 @@ fn firmware_build_slot_sram_tracks_the_v2_chip_list() {
         String::from_utf8_lossy(&out.stderr)
     );
 }
+
+/// A chip type only V2 serves must name the firmware version it needs when
+/// built against V1, rather than reporting that the tool does not know it.
+///
+/// `23C1001` is the case in hand: V1 firmware has never served one, so a plain
+/// `firmware build` - which targets the latest release, still a 0.6.x - reached
+/// the tool-support error and sent the user looking for a missing chip type
+/// instead of a newer firmware.  The minimum is read from the chip type, so the
+/// test follows `chip-types.json` rather than restating it.
+#[test]
+fn firmware_build_slot_v2_only_chip_on_v1_names_the_minimum_version() {
+    let minimum = ChipType::Chip23C1001
+        .min_supported_firmware_version()
+        .expect("23C1001 declares a minimum firmware version");
+    let spec = slot(
+        "rand_128KB.rom",
+        "23C1001",
+        &[("cs1", "active-low"), ("cs2", "ignore")],
+        None,
+    );
+
+    let out = build_slots_at_version("fire-32-b", std::slice::from_ref(&spec), Some(V1_VERSION));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success(), "V1 built a 23C1001: {stderr}");
+    assert!(
+        stderr.contains(&minimum.to_string()),
+        "V1 failure does not name the {minimum} minimum: {stderr}"
+    );
+
+    // The same slot against the firmware that does serve it, so the V1 failure
+    // is known to be about the firmware version and nothing else.
+    let out = build_slots_at_version("fire-32-b", &[spec], Some(V2_VERSION));
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
