@@ -34,10 +34,22 @@ RUN apt-get update && apt-get install -y \
     wget \
     && rm -rf /var/lib/apt/lists/*
 
-# Download ARM toolchain based on target platform
-# See https://developer.arm.com/downloads/-/arm-gnu-toolchain-downloads
-ARG ARM_GCC_VERSION=15.2.rel1
-RUN PLATFORM="${TARGETPLATFORM:-linux/$(dpkg --print-architecture)}" && \
+# Download ARM toolchain based on target platform.
+#
+# No default: the version is pinned in ci/arm-toolchain-version and passed in by
+# ci/docker/build.sh and ci/docker/build-release.sh.  Baking a default here is
+# how this container came to be on a different compiler from everything else, so
+# an unset value is an error rather than a silent fallback.
+#
+# Arm moved toolchain hosting to gitlab.arm.com from 15.3.Rel1 onwards;
+# developer.arm.com carries 15.2.rel1 and earlier only.
+ARG ARM_GCC_VERSION
+RUN test -n "${ARM_GCC_VERSION}" || { \
+        echo "ARM_GCC_VERSION build-arg is required - build via ci/docker/build.sh," && \
+        echo "which passes the version pinned in ci/arm-toolchain-version." && \
+        exit 1; \
+    } && \
+    PLATFORM="${TARGETPLATFORM:-linux/$(dpkg --print-architecture)}" && \
     case "${PLATFORM}" in \
     "linux/amd64") \
         ARCH_SUFFIX="x86_64" ;; \
@@ -46,10 +58,14 @@ RUN PLATFORM="${TARGETPLATFORM:-linux/$(dpkg --print-architecture)}" && \
     *) \
         echo "Unsupported platform: ${PLATFORM}" && exit 1 ;; \
     esac && \
-    wget https://developer.arm.com/-/media/Files/downloads/gnu/${ARM_GCC_VERSION}/binrel/arm-gnu-toolchain-${ARM_GCC_VERSION}-${ARCH_SUFFIX}-arm-none-eabi.tar.xz && \
-    tar -xf arm-gnu-toolchain-${ARM_GCC_VERSION}-${ARCH_SUFFIX}-arm-none-eabi.tar.xz && \
+    TARBALL="arm-gnu-toolchain-${ARM_GCC_VERSION}-${ARCH_SUFFIX}-arm-none-eabi.tar.xz" && \
+    BASE_URL="https://gitlab.arm.com/api/v4/projects/tooling%2Fgnu-toolchains-for-arm/packages/generic/gnu-toolchain/${ARM_GCC_VERSION}" && \
+    wget "${BASE_URL}/${TARBALL}" && \
+    wget "${BASE_URL}/${TARBALL}.sha256asc" && \
+    sha256sum -c "${TARBALL}.sha256asc" && \
+    tar -xf "${TARBALL}" && \
     mv arm-gnu-toolchain-${ARM_GCC_VERSION}-${ARCH_SUFFIX}-arm-none-eabi /opt/ && \
-    rm arm-gnu-toolchain-${ARM_GCC_VERSION}-${ARCH_SUFFIX}-arm-none-eabi.tar.xz && \
+    rm "${TARBALL}" "${TARBALL}.sha256asc" && \
     ln -s /opt/arm-gnu-toolchain-${ARM_GCC_VERSION}-${ARCH_SUFFIX}-arm-none-eabi /opt/arm-toolchain
 
 # Create build user with passwordless sudo

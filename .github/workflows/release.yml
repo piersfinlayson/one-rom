@@ -9,64 +9,114 @@ permissions:
   contents: write
   actions: read
 
+# Structured like ci.yml: the checks fan out across jobs, and the release itself
+# waits on them.  The tests and the firmware build are here as a gate on the tag
+# - a release should not be cut from a commit whose firmware does not build.
+#
+# No firmware binary is attached to the release.  The firmware everyone actually
+# uses is published to images.onerom.org, and Web and CLI fetch it from there;
+# a second binary, built on a different machine under the same version number,
+# was only ever a way for the two to drift apart.
+
 jobs:
-  build-and-release:
+  emulator-tests:
+    name: Emulator tests (${{ matrix.socket }} pin)
     runs-on: ubuntu-latest
-    
+    strategy:
+      fail-fast: false
+      matrix:
+        socket: [24, 28, 32, 40]
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
-      
+    - uses: actions/checkout@v4
+
     - name: Install build dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y gcc-arm-none-eabi libcurl4-openssl-dev libjson-c-dev libzip-dev make zip
-        
+        sudo apt-get install -y libcurl4-openssl-dev libjson-c-dev libzip-dev make
+
     - name: Install Rust
       uses: dtolnay/rust-toolchain@stable
-      
-    - name: Install Rust wasm-pack
-      run: cargo install wasm-pack
+
+    - name: Cache Arm GNU toolchain
+      uses: actions/cache@v4
+      with:
+        path: ~/arm-gnu-toolchain
+        key: arm-toolchain-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('ci/arm-toolchain-version') }}
+
+    - name: Install Arm GNU toolchain
+      run: echo "TOOLCHAIN=$(ci/install-arm-toolchain.sh)" >> "$GITHUB_ENV"
+
+    - uses: Swatinem/rust-cache@v2
+      with:
+        workspaces: rust
+        shared-key: emulator-tests
+
+    - name: Run One ROM emulator tests
+      run: ci/test-emu.sh ${{ matrix.socket }}
+
+  firmware:
+    name: Firmware and plugins
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install build dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libcurl4-openssl-dev libjson-c-dev libzip-dev make
+
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Cache Arm GNU toolchain
+      uses: actions/cache@v4
+      with:
+        path: ~/arm-gnu-toolchain
+        key: arm-toolchain-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('ci/arm-toolchain-version') }}
+
+    - name: Install Arm GNU toolchain
+      run: echo "TOOLCHAIN=$(ci/install-arm-toolchain.sh)" >> "$GITHUB_ENV"
+
+    - uses: Swatinem/rust-cache@v2
+      with:
+        workspaces: rust
+
+    - name: Build firmware
+      run: ci/build.sh ci
+
+    - name: Build plugins
+      run: |
+        make clean
+        make
+        make -C plugins/system/usb
+        make -C plugins/user/activity
+        make -C plugins/user/blink
+        make -C plugins/user/host-control
+        make -C plugins/user/rgb
+        make -C firmware/ora/examples
+
+  release:
+    name: Create GitHub release
+    runs-on: ubuntu-latest
+    needs: [emulator-tests, firmware]
+    steps:
+    - uses: actions/checkout@v4
 
     - name: Extract version from tag
       id: version
       run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
 
-    - name: Run One ROM emulator tests
-      run: |
-        export TOOLCHAIN=/usr/bin
-        ci/test-emu.sh
-
-    - name: Build firmware
-      env:
-        TOOLCHAIN: /usr/bin
-      run: ci/build.sh ci
-      
-    - name: Package release
-      run: ci/build.sh release ${{ steps.version.outputs.VERSION }}
-
-    - name: Read release notes
-      id: release_notes
-      run: |
-        if [ -f "docs/release-notes-common.md" ]; then
-        echo "RELEASE_BODY<<EOF" >> $GITHUB_OUTPUT
-        cat docs/release-notes-common.md >> $GITHUB_OUTPUT
-        echo "EOF" >> $GITHUB_OUTPUT
-        else
-        echo "RELEASE_BODY=Release ${{ steps.version.outputs.VERSION }}" >> $GITHUB_OUTPUT
-        fi
-
-    - name: Extract changelog for this version
+    - name: Build release notes
       run: |
         VERSION="${{ steps.version.outputs.VERSION }}"
         if [ -f "CHANGELOG.md" ]; then
         # Find the version line and extract everything after it until next ## or end of file
         CHANGELOG_SECTION=$(awk "/^## ${VERSION}/ { found=1; next } found && /^## / { exit } found { print }" CHANGELOG.md)
-        
+
         if [ -z "$CHANGELOG_SECTION" ]; then
             CHANGELOG_SECTION="No changelog entry found for this version."
         fi
-        
+
         # Replace placeholder (escape newlines for sed)
         printf '%s\n' "$CHANGELOG_SECTION" > /tmp/changelog.txt
         sed -e '/\[CHANGELOG_PLACEHOLDER\]/{
@@ -77,18 +127,12 @@ jobs:
         sed -i 's/\[CHANGELOG_PLACEHOLDER\]/No CHANGELOG.md found./' docs/release-notes-common.md
         cp docs/release-notes-common.md release.md
         fi
-    
-    - name: Create GitHub Release with files
+
+    - name: Create GitHub Release
       run: |
-        VERSION="${{ steps.version.outputs.VERSION }}"
-        
-        # Create the release
-        gh release create ${VERSION} \
-          --title "Release ${VERSION}" \
+        gh release create ${{ steps.version.outputs.VERSION }} \
+          --title "Release ${{ steps.version.outputs.VERSION }}" \
           --notes-file release.md \
           --latest
-          
-        # Upload all files
-        gh release upload ${VERSION} builds/${VERSION}/firmware/*
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

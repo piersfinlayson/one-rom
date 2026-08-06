@@ -38,9 +38,13 @@ on:
 
 # The work is split across jobs rather than run as one sequence.  Each job gets
 # its own runner and, more to the point, its own 6 hour timeout: as one job the
-# suite reached 5h49m and was being cancelled outright.  Only the firmware job
-# needs the ARM cross-compiler, and only lint and lens need Emscripten, so each
-# job installs what it uses.
+# suite reached 5h49m and was being cancelled outright.
+#
+# Every job installs the Arm GNU toolchain pinned in ci/arm-toolchain-version -
+# the same one the build container and a developer's machine install - so the
+# firmware is always compiled by the same compiler wherever it is built.  It is
+# installed everywhere rather than only where it looks needed: the CLI's
+# integration tests build real firmware, which is not obvious from the job name.
 
 jobs:
   lint:
@@ -58,6 +62,15 @@ jobs:
       uses: dtolnay/rust-toolchain@stable
       with:
         components: rustfmt, clippy
+
+    - name: Cache Arm GNU toolchain
+      uses: actions/cache@v4
+      with:
+        path: ~/arm-gnu-toolchain
+        key: arm-toolchain-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('ci/arm-toolchain-version') }}
+
+    - name: Install Arm GNU toolchain
+      run: echo "TOOLCHAIN=$(ci/install-arm-toolchain.sh)" >> "$GITHUB_ENV"
 
     - name: Cache Emscripten SDK
       uses: actions/cache@v4
@@ -81,9 +94,7 @@ jobs:
         workspaces: rust
 
     - name: Run Rust lint (rustfmt + clippy)
-      run: |
-        export TOOLCHAIN=/usr/bin
-        ci/rust-lint.sh
+      run: ci/rust-lint.sh
 
   rust-tests:
     name: Rust tests
@@ -99,14 +110,21 @@ jobs:
     - name: Install Rust
       uses: dtolnay/rust-toolchain@stable
 
+    - name: Cache Arm GNU toolchain
+      uses: actions/cache@v4
+      with:
+        path: ~/arm-gnu-toolchain
+        key: arm-toolchain-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('ci/arm-toolchain-version') }}
+
+    - name: Install Arm GNU toolchain
+      run: echo "TOOLCHAIN=$(ci/install-arm-toolchain.sh)" >> "$GITHUB_ENV"
+
     - uses: Swatinem/rust-cache@v2
       with:
         workspaces: rust
 
     - name: Run various Rust tests
-      run: |
-        export TOOLCHAIN=/usr/bin
-        ci/rust-tests.sh
+      run: ci/rust-tests.sh
 
   rust-docs:
     name: Rust docs
@@ -122,14 +140,21 @@ jobs:
     - name: Install Rust
       uses: dtolnay/rust-toolchain@stable
 
+    - name: Cache Arm GNU toolchain
+      uses: actions/cache@v4
+      with:
+        path: ~/arm-gnu-toolchain
+        key: arm-toolchain-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('ci/arm-toolchain-version') }}
+
+    - name: Install Arm GNU toolchain
+      run: echo "TOOLCHAIN=$(ci/install-arm-toolchain.sh)" >> "$GITHUB_ENV"
+
     - uses: Swatinem/rust-cache@v2
       with:
         workspaces: rust
 
     - name: Build Rust docs
-      run: |
-        export TOOLCHAIN=/usr/bin
-        ci/rust-docs.sh
+      run: ci/rust-docs.sh
 
   emulator-tests:
     # One job per socket size.  The four are independent - every test in a group
@@ -152,6 +177,15 @@ jobs:
     - name: Install Rust
       uses: dtolnay/rust-toolchain@stable
 
+    - name: Cache Arm GNU toolchain
+      uses: actions/cache@v4
+      with:
+        path: ~/arm-gnu-toolchain
+        key: arm-toolchain-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('ci/arm-toolchain-version') }}
+
+    - name: Install Arm GNU toolchain
+      run: echo "TOOLCHAIN=$(ci/install-arm-toolchain.sh)" >> "$GITHUB_ENV"
+
     - uses: Swatinem/rust-cache@v2
       with:
         workspaces: rust
@@ -160,9 +194,7 @@ jobs:
         shared-key: emulator-tests
 
     - name: Run One ROM emulator tests
-      run: |
-        export TOOLCHAIN=/usr/bin
-        ci/test-emu.sh ${{ matrix.socket }}
+      run: ci/test-emu.sh ${{ matrix.socket }}
 
   firmware:
     name: Firmware and plugins
@@ -173,23 +205,29 @@ jobs:
     - name: Install build dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y gcc-arm-none-eabi libcurl4-openssl-dev libjson-c-dev libzip-dev make
+        sudo apt-get install -y libcurl4-openssl-dev libjson-c-dev libzip-dev make
 
     - name: Install Rust
       uses: dtolnay/rust-toolchain@stable
+
+    - name: Cache Arm GNU toolchain
+      uses: actions/cache@v4
+      with:
+        path: ~/arm-gnu-toolchain
+        key: arm-toolchain-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('ci/arm-toolchain-version') }}
+
+    - name: Install Arm GNU toolchain
+      run: echo "TOOLCHAIN=$(ci/install-arm-toolchain.sh)" >> "$GITHUB_ENV"
 
     - uses: Swatinem/rust-cache@v2
       with:
         workspaces: rust
 
     - name: Build firmware
-      run: |
-        export TOOLCHAIN=/usr/bin
-        ci/build.sh ci
+      run: ci/build.sh ci
 
     - name: Build plugins
       run: |
-        export TOOLCHAIN=/usr/bin
         make clean
         make
         make -C plugins/system/usb
@@ -213,14 +251,21 @@ jobs:
     - name: Install Rust
       uses: dtolnay/rust-toolchain@stable
 
+    - name: Cache Arm GNU toolchain
+      uses: actions/cache@v4
+      with:
+        path: ~/arm-gnu-toolchain
+        key: arm-toolchain-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('ci/arm-toolchain-version') }}
+
+    - name: Install Arm GNU toolchain
+      run: echo "TOOLCHAIN=$(ci/install-arm-toolchain.sh)" >> "$GITHUB_ENV"
+
     - uses: Swatinem/rust-cache@v2
       with:
         workspaces: rust
 
     - name: Build tools
-      run: |
-        export TOOLCHAIN=/usr/bin
-        ci/rust-tools.sh
+      run: ci/rust-tools.sh
 
   lens:
     name: One ROM Lens (wasm)
@@ -235,6 +280,15 @@ jobs:
 
     - name: Install Rust
       uses: dtolnay/rust-toolchain@stable
+
+    - name: Cache Arm GNU toolchain
+      uses: actions/cache@v4
+      with:
+        path: ~/arm-gnu-toolchain
+        key: arm-toolchain-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('ci/arm-toolchain-version') }}
+
+    - name: Install Arm GNU toolchain
+      run: echo "TOOLCHAIN=$(ci/install-arm-toolchain.sh)" >> "$GITHUB_ENV"
 
     - name: Cache Emscripten SDK
       uses: actions/cache@v4
@@ -258,6 +312,4 @@ jobs:
         workspaces: rust
 
     - name: Build One ROM Lens (wasm)
-      run: |
-        export TOOLCHAIN=/usr/bin
-        ci/build-lens.sh
+      run: ci/build-lens.sh
