@@ -2,6 +2,8 @@
 name = "onerom-fw-emulator"
 version = "0.1.0"
 edition = "2024"
+# Workspace-internal: needs CONFIG/BOARD and a firmware C tree to build.
+publish = false
 authors = ["Piers Finlayson <piers@piers.rocks>"]
 license = "MIT"
 description = "Emulate One ROM firmware on host systems, including PIOs and DMAs"
@@ -13,9 +15,14 @@ categories = ["embedded", "hardware-support"]
 [lib]
 name = "onerom_fw_emulator"
 
+# onerom-fw-driver, not onerom-fw-geometry: this crate re-exports the bitmask
+# builders as `driver`, and One ROM Lens compiles this crate to wasm, so
+# anything here lands in Lens's wasm binary.  onerom-fw-driver has no
+# dependencies at all; onerom-fw-geometry would bring onerom-gen and serde.
 [dependencies]
 onerom-config = { workspace = true }
- 
+onerom-fw-driver = { workspace = true }
+
 [build-dependencies]
 bindgen = "0.72"
 [lints]

@@ -2,6 +2,8 @@
 name = "onerom-lab"
 version = "0.2.0"
 edition = "2024"
+# Workspace-internal: the hardware tester binary, not a library.
+publish = false
 authors = ["Piers Finlayson <piers@piers.rocks>"]
 description = "One ROM Lab (V2)"
 repository = "https://github.com/piersfinlayson/one-rom"

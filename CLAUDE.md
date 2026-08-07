@@ -151,6 +151,11 @@ Directory → package name:
   `airfrog-rpc`. Not RBCP.
 - `fw-parser` → `onerom-fw-parser`; `fw-emulator` → `onerom-fw-emulator`;
   `fw-tester` → `onerom-fw-tester`; `fw-config-gen` → `fw-config-gen`.
+- `fw-driver` → `onerom-fw-driver` — GPIO bitmask builders and `ControlLine`.
+  **Zero dependencies, no build script**, by design — see below.
+- `fw-geometry` → `onerom-fw-geometry` — the pure, config-derived half of the
+  host-side test/visualisation stack: `pin_cache` (socket pin → MCU GPIO
+  resolution) and `substitution` (`chip_substitution`). **No build script.**
 - `app` → `onerom-app`; `studio` → `onerom-studio` (desktop GUI, released
   independently via `studio-*` tags); `lab` → `onerom-lab` (hardware tester);
   `database` → `onerom-database`.
@@ -160,6 +165,37 @@ Directory → package name:
   `onerom-gen` config type.
 
 Legacy `sdrr-*` crate names are gone; everything is `onerom-*` now.
+
+**Why `onerom-fw-driver` and `onerom-fw-geometry` are separate crates.**
+`onerom-fw-emulator`'s build script compiles the whole firmware C for a
+`CONFIG`/`BOARD`, so *anything* depending on that crate pays for a firmware
+build. `onerom-lens` needs the emulator for wasm **and** needs pure pin geometry
+in its **build script**. While the build-script side reached
+`onerom-fw-emulator` (through `onerom-fw-tester`), a single `cargo build -p
+onerom-lens --target wasm32-unknown-emscripten` built the emulator twice
+concurrently — once for the host, once for wasm — and the two `make` runs raced
+over the shared `firmware/generated/gen-config.c`, `firmware/apio` and
+`firmware/epio`, failing differently every run. Four things must stay true:
+
+- Nothing reachable from `onerom-lens`'s `[build-dependencies]` may depend on
+  `onerom-fw-emulator`.
+- Neither crate may gain a **build script**.
+- `onerom-fw-driver` has **no dependencies at all**, and that is the point of
+  it: the emulator re-exports `driver`, so anything this crate depends on is
+  compiled into Lens's wasm build. Here the rule is compiler-enforced — a
+  dependency that cannot build for `wasm32-unknown-emscripten` breaks Lens.
+- `onerom-fw-geometry` is **host-only**: its consumers are `onerom-fw-tester`
+  and `onerom-lens`'s *build script*, and it is absent from Lens's wasm graph.
+  So the wasm constraint does **not** bind it, and nothing will fail if it gains
+  a host-only dependency. What binds it is the first rule above. (The
+  metadata-reading half of `geometry` stayed in `onerom-fw-tester` because it
+  calls `onerom_fw::get_rom_files`, and `onerom-fw` pulls in `smol`, which
+  cannot build for wasm — a constraint that applied before `driver` was split
+  out. Moving it now would only make Lens's build script slower, so leave it.)
+
+`onerom-fw-emulator` re-exports `driver`, and `onerom-fw-tester` re-exports
+`driver` and `pin_cache`, so existing `onerom_fw_emulator::driver::…` and
+`onerom_fw_tester::pin_cache::…` paths keep working.
 
 **Direction — Studio onto `onerom-cli` lib.** The long-term plan is to rewrite
 `onerom-studio` so it relies mostly on the `onerom-cli` library rather than

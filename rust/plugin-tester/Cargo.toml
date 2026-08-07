@@ -2,6 +2,8 @@
 name = "onerom-plugin-tester"
 version = "0.1.0"
 edition = "2024"
+# Workspace-internal: needs CONFIG/BOARD and a firmware C tree to build.
+publish = false
 authors = ["Piers Finlayson <piers@piers.rocks>"]
 license = "MIT"
 description = "Runs One ROM plugins against the emulated firmware on a host"

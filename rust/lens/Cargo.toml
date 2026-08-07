@@ -20,11 +20,15 @@ categories = ["embedded", "hardware-support"]
 onerom-fw-emulator = { workspace = true }
 
 # Build-time only: compute the pin geometry (address/data GPIOs, control lines)
-# for CONFIG/BOARD and embed it as consts.  Build scripts compile for the host,
-# so fw-tester's non-wasm deps (onerom-fw networking, etc.) are fine here — none
-# of this reaches the wasm runtime.
+# for CONFIG/BOARD and embed it as consts.  None of this reaches the wasm
+# runtime.
+#
+# Depend on onerom-fw-geometry, never on onerom-fw-tester or
+# onerom-fw-emulator: build scripts compile for the host, so an emulator here
+# would have cargo build the firmware for the host at the same time as it builds
+# it for wasm above, and the two `make` runs race in the shared firmware tree.
 [build-dependencies]
-onerom-fw-tester = { workspace = true }
+onerom-fw-geometry = { workspace = true }
 onerom-gen = { workspace = true }
 onerom-config = { workspace = true }
 serde_json = "1"

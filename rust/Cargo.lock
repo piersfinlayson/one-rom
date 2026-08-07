@@ -4971,11 +4971,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "onerom-fw-driver"
+version = "0.1.0"
+
+[[package]]
 name = "onerom-fw-emulator"
 version = "0.1.0"
 dependencies = [
  "bindgen",
  "onerom-config",
+ "onerom-fw-driver",
+]
+
+[[package]]
+name = "onerom-fw-geometry"
+version = "0.1.0"
+dependencies = [
+ "log",
+ "onerom-config",
+ "onerom-fw-driver",
+ "onerom-gen",
 ]
 
 [[package]]
@@ -5002,6 +5017,7 @@ dependencies = [
  "onerom-config",
  "onerom-fw",
  "onerom-fw-emulator",
+ "onerom-fw-geometry",
  "onerom-gen",
  "onerom-metadata",
  "rand 0.10.2",
@@ -5058,7 +5074,7 @@ version = "0.1.0"
 dependencies = [
  "onerom-config",
  "onerom-fw-emulator",
- "onerom-fw-tester",
+ "onerom-fw-geometry",
  "onerom-gen",
  "serde_json",
 ]

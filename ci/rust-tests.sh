@@ -23,6 +23,12 @@ cargo test -p onerom-fw
 echo "Testing fw-config-gen..."
 cargo test -p fw-config-gen
 
+echo "Testing onerom-fw-driver..."
+cargo test -p onerom-fw-driver
+
+echo "Testing onerom-fw-geometry..."
+cargo test -p onerom-fw-geometry
+
 echo "Testing onerom-fw-parser..."
 cargo test -p onerom-fw-parser
 cargo test -p onerom-fw-parser --no-default-features

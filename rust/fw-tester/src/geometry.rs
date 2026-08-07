@@ -19,10 +19,15 @@
 //! former additionally uses [`slot_geometry`] for the forced-low gap check, and
 //! [`expected_rom_slot_size`] is the thin region-size caller the RAM-slot tests
 //! use.
+//!
+//! Running that gen build needs `onerom-fw` to fetch the ROM files, which does
+//! not compile for wasm, so this module stays here rather than joining the pure
+//! geometry in `onerom-fw-geometry`.  [`chip_substitution`] does live there —
+//! it is pure — and is re-exported below so `geometry::chip_substitution` still
+//! resolves.
 
 use std::path::Path;
 
-use onerom_config::chip::ChipType;
 use onerom_config::fw::{FirmwareProperties, FirmwareVersion, ServeAlg};
 use onerom_config::hw::Board;
 use onerom_config::mcu::{Family, Variant as McuVariant};
@@ -31,6 +36,8 @@ use onerom_metadata::{
     DeviceMemoryView, GpioOverride, METADATA_BASE, OneromAlgAddrConfig, OneromMetadataHeader,
     RomSlotType,
 };
+
+pub use onerom_fw_geometry::substitution::chip_substitution;
 
 /// `GpioOverLow` discriminant (top two bits of an override-config byte).
 const OVERRIDE_LOW: u8 = GpioOverride::GpioOverLow as u8;
@@ -240,21 +247,6 @@ pub fn slot_geometry(
         forced_low_gpios,
         region_size: slot.size,
     })
-}
-
-/// Board-specific chip substitution: some boards cannot drive a requested chip
-/// directly and serve it as a pin-compatible substitute instead.
-///
-/// Returns `Some(substitute)` when a substitution applies, `None` otherwise.
-/// Shared by the pio-tester and by One ROM Lens so both drive the substituted
-/// chip identically.
-pub fn chip_substitution(board: Board, chip_type: ChipType) -> Option<ChipType> {
-    match (board, chip_type) {
-        // fire-32-a cannot drive SST39SF040 directly; a pin-remap shim allows
-        // it to serve the image as a 27C040 instead.
-        (Board::Fire32A, ChipType::ChipSST39SF040) => Some(ChipType::Chip27C040),
-        _ => None,
-    }
 }
 
 /// Served region size in bytes for the `set_idx`-th non-plugin slot.

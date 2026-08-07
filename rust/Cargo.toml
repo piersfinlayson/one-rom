@@ -7,7 +7,9 @@ members = [
     "database",
     "fw",
     "fw-config-gen",
+    "fw-driver",
     "fw-emulator",
+    "fw-geometry",
     "fw-tester",
     "fw-parser",
     "gen",
@@ -53,7 +55,9 @@ onerom-cli = { path="cli", version="0.3.0" }
 onerom-config = { path="config", version="0.6.0" }
 onerom-database = { path="database", version="0.1.1" }
 onerom-fw = { path="fw", version="0.1.25" }
+onerom-fw-driver = { path="fw-driver", version="0.1.0" }
 onerom-fw-emulator = { path="fw-emulator", version="0.1.0" }
+onerom-fw-geometry = { path="fw-geometry", version="0.1.0" }
 onerom-fw-parser = { path="fw-parser", version="0.7.3" }
 onerom-fw-tester = { path="fw-tester", version="0.1.0" }
 onerom-gen = { path="gen", version="0.7.0" }

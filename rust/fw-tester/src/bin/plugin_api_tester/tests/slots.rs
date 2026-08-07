@@ -302,7 +302,7 @@ pub fn test_ram_slot_count(
 ///   and every RAM slot is of that type — so all slots report it, not just the
 ///   active one.
 /// - Slot 0: addr must be non-zero (region base).
-/// - Slots 1..: addr must be sequential (addr[i] = addr[0] + i * size).
+/// - Slots 1..: addr must be sequential (`addr[i]` = `addr[0]` + i * size).
 /// - Slot >= count: must return ORA_RESULT_INVALID_SLOT.
 pub fn test_ram_slot_info(
     emu: &Emulator,

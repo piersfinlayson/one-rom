@@ -33,6 +33,8 @@ cargo clippy \
     -p onerom-database \
     -p onerom-fw \
     -p fw-config-gen \
+    -p onerom-fw-driver \
+    -p onerom-fw-geometry \
     -p onerom-fw-parser \
     -p onerom-gen \
     -p onerom-metadata \

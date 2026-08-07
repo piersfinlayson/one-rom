@@ -2,6 +2,8 @@
 name = "schema-gen"
 version = "0.1.10"
 edition = "2024"
+# Workspace-internal build tool.
+publish = false
 authors = ["Piers Finlayson <piers@piers.rocks>"]
 license = "MIT"
 description = "One ROM Schema Generator - Generate One ROM schema files from JSON definitions"

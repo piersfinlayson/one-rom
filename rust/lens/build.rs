@@ -7,7 +7,7 @@
 //! Two jobs, both host-side (build scripts always compile for the host):
 //!
 //! 1. **Embed the pin geometry.**  Parse `CONFIG` for `BOARD` and compute the
-//!    address/data GPIO lists and control lines with `onerom-fw-tester`'s pure
+//!    address/data GPIO lists and control lines with `onerom-fw-geometry`'s pure
 //!    `PinCache::build`, then emit them as consts (`$OUT_DIR/geometry.rs`).  The
 //!    wasm runtime reads these consts — it never runs the generator itself, and
 //!    a new `CsLogic`/`CsConfig` variant becomes a build-time error here rather
@@ -18,8 +18,8 @@ use std::{env, fmt::Write as _, fs, path::PathBuf};
 
 use onerom_config::chip::ChipType;
 use onerom_config::hw::Board;
-use onerom_fw_tester::geometry::chip_substitution;
-use onerom_fw_tester::pin_cache::PinCache;
+use onerom_fw_geometry::pin_cache::PinCache;
+use onerom_fw_geometry::substitution::chip_substitution;
 use onerom_gen::Config;
 
 fn main() {
@@ -201,9 +201,10 @@ const EXPORTS: &[&str] = &[
     "_onerom_lens_get_rom_size",
 ];
 
-/// Emscripten/wasm-only link configuration.  Applies only to this crate's final
-/// link, and only when targeting wasm — never to deps or to the nested host
-/// build that `onerom-fw-emulator`'s build script runs.
+/// Emscripten/wasm-only link configuration.  `rustc-link-arg-bins` applies only
+/// to this crate's own final link, and only when targeting wasm — never to a
+/// dependency, and never to the C library `onerom-fw-emulator`'s build script
+/// produces.
 fn wasm_link_args() {
     if env::var("CARGO_CFG_TARGET_ARCH").as_deref() != Ok("wasm32") {
         return;
