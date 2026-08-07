@@ -45,6 +45,18 @@ on:
 # firmware is always compiled by the same compiler wherever it is built.  It is
 # installed everywhere rather than only where it looks needed: the CLI's
 # integration tests build real firmware, which is not obvious from the job name.
+#
+# libclang-dev is installed everywhere for the same reason: onerom-fw-emulator's
+# build script runs bindgen over the firmware headers, and three crates depend on
+# it (onerom-fw-tester, onerom-plugin-tester, onerom-lens), so which jobs pull it
+# in is not apparent from the job names either.  It is named explicitly rather
+# than relied on: the GitHub runner image happens to ship libclang, leaner
+# self-hosted runners do not, and there the bindgen build script panics.
+#
+# xz-utils and python3 are named for that same reason - both are present on the
+# GitHub image and may not be on a self-hosted one.  ci/install-arm-toolchain.sh
+# unpacks a .tar.xz, so every job needs xz-utils; only the two jobs that install
+# the Emscripten SDK need python3, which emsdk itself runs on.
 
 jobs:
   lint:
@@ -56,7 +68,8 @@ jobs:
     - name: Install build dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y libcurl4-openssl-dev libjson-c-dev libzip-dev make \
+        sudo apt-get install -y libclang-dev libcurl4-openssl-dev libjson-c-dev \
+                                libzip-dev make xz-utils python3 \
                                 libudev-dev libusb-1.0-0-dev
 
     - name: Install Rust
@@ -110,7 +123,8 @@ jobs:
     - name: Install build dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y libcurl4-openssl-dev libjson-c-dev libzip-dev make
+        sudo apt-get install -y libclang-dev libcurl4-openssl-dev libjson-c-dev \
+                                libzip-dev make xz-utils
 
     - name: Install Rust
       uses: dtolnay/rust-toolchain@stable
@@ -140,7 +154,8 @@ jobs:
     - name: Install build dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y libcurl4-openssl-dev libjson-c-dev libzip-dev make
+        sudo apt-get install -y libclang-dev libcurl4-openssl-dev libjson-c-dev \
+                                libzip-dev make xz-utils
 
     - name: Install Rust
       uses: dtolnay/rust-toolchain@stable
@@ -177,7 +192,8 @@ jobs:
     - name: Install build dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y libcurl4-openssl-dev libjson-c-dev libzip-dev make
+        sudo apt-get install -y libclang-dev libcurl4-openssl-dev libjson-c-dev \
+                                libzip-dev make xz-utils
 
     - name: Install Rust
       uses: dtolnay/rust-toolchain@stable
@@ -210,7 +226,8 @@ jobs:
     - name: Install build dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y libcurl4-openssl-dev libjson-c-dev libzip-dev make
+        sudo apt-get install -y libclang-dev libcurl4-openssl-dev libjson-c-dev \
+                                libzip-dev make xz-utils
 
     - name: Install Rust
       uses: dtolnay/rust-toolchain@stable
@@ -251,7 +268,8 @@ jobs:
     - name: Install build dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y libcurl4-openssl-dev libjson-c-dev libzip-dev make
+        sudo apt-get install -y libclang-dev libcurl4-openssl-dev libjson-c-dev \
+                                libzip-dev make xz-utils
 
     - name: Install Rust
       uses: dtolnay/rust-toolchain@stable
@@ -283,7 +301,8 @@ jobs:
     - name: Install build dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y libcurl4-openssl-dev libjson-c-dev libzip-dev make \
+        sudo apt-get install -y libclang-dev libcurl4-openssl-dev libjson-c-dev \
+                                libzip-dev make xz-utils \
                                 libudev-dev libusb-1.0-0-dev
 
     - name: Install Rust
@@ -314,7 +333,8 @@ jobs:
     - name: Install build dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y libcurl4-openssl-dev libjson-c-dev libzip-dev make
+        sudo apt-get install -y libclang-dev libcurl4-openssl-dev libjson-c-dev \
+                                libzip-dev make xz-utils python3
 
     - name: Install Rust
       uses: dtolnay/rust-toolchain@stable

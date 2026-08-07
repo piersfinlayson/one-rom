@@ -2,7 +2,12 @@
 //
 // MIT License
 
-use std::{env, path::PathBuf, process::Command};
+use std::{
+    env,
+    panic::{AssertUnwindSafe, catch_unwind},
+    path::PathBuf,
+    process::Command,
+};
 
 // Not defaults — used in error messages to show the caller what to set.
 const EXAMPLE_CONFIG: &str = "onerom-config/test-0.json";
@@ -161,7 +166,7 @@ fn main() {
         .header(manifest_dir.join("src/wrapper.h").to_str().unwrap())
         .clang_arg(format!("--target={}", env::var("HOST").unwrap()));
 
-    let bindings = builder
+    let builder = builder
         .clang_arg(format!("-I{}", c_root.join("include").display()))
         .clang_arg(format!("-I{}", c_root.join("generated").display()))
         .clang_arg(format!("-I{}", c_root.join("include/test").display()))
@@ -219,9 +224,35 @@ fn main() {
         .allowlist_var("_apio_emulated_gpios")
         .allowlist_function("ffi_runtime_info_ptr")
         .allowlist_function("ffi_runtime_info_size")
-        .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()))
-        .generate()
-        .expect("bindgen failed to generate bindings");
+        .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()));
+
+    // bindgen *panics* - it does not return an error - when it cannot load
+    // libclang, and the message it prints names only the LIBCLANG_PATH
+    // environment variable, not the package that provides the library.  Catch
+    // the panic so we can say which one to install.  By the time catch_unwind
+    // returns, the default hook has already printed bindgen's own message, so
+    // this adds to it rather than replacing it.  AssertUnwindSafe is sound
+    // because the build is abandoned in the panicking case either way.
+    let generated = catch_unwind(AssertUnwindSafe(|| builder.generate()));
+
+    let bindings = match generated {
+        Ok(Ok(bindings)) => bindings,
+        Ok(Err(e)) => panic!("bindgen failed to generate bindings: {e}"),
+        Err(_) => {
+            eprintln!();
+            eprintln!("onerom-fw-emulator generates its FFI bindings from the firmware C");
+            eprintln!("headers at build time, so libclang must be installed:");
+            eprintln!();
+            eprintln!("    Debian/Ubuntu   sudo apt-get install libclang-dev");
+            eprintln!("    Fedora          sudo dnf install clang-devel");
+            eprintln!("    Arch            sudo pacman -S clang");
+            eprintln!("    macOS           xcode-select --install (or: brew install llvm)");
+            eprintln!();
+            eprintln!("If libclang is installed somewhere unusual, set LIBCLANG_PATH to the");
+            eprintln!("directory holding libclang.so (libclang.dylib on macOS).");
+            std::process::exit(1);
+        }
+    };
 
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
     bindings

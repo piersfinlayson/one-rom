@@ -14,12 +14,17 @@ ARG BUILDPLATFORM
 ARG TARGETPLATFORM
 ARG TARGETARCH
 
-# Install base dependencies
+# Install base dependencies.
+#
+# libclang-dev is bindgen's, not the firmware's - nothing here is compiled with
+# clang.  onerom-fw-emulator's build script parses the firmware headers with
+# libclang to generate its FFI bindings, and panics if it cannot load it.
 RUN apt-get update && apt-get install -y \
     build-essential \
     cmake \
     curl \
     git \
+    libclang-dev \
     libcurl4-openssl-dev \
     libjson-c-dev \
     libusb-1.0-0-dev \
