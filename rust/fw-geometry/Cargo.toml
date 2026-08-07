@@ -1,0 +1,27 @@
+[package]
+name = "onerom-fw-geometry"
+version = "0.1.0"
+edition = "2024"
+# A workspace-internal support crate; never published to crates.io.
+publish = false
+authors = ["Piers Finlayson <piers@piers.rocks>"]
+license = "MIT"
+description = "Pin geometry and GPIO bitmask helpers shared by the One ROM host tester, emulator and Lens"
+repository = "https://github.com/piersfinlayson/one-rom"
+homepage = "https://onerom.org"
+keywords = ["retro", "rom", "commodore", "embedded"]
+categories = ["embedded", "hardware-support"]
+
+# Every dependency here is build-script-free and builds for wasm, and that is
+# the point of the crate: see the crate docs in src/lib.rs.  In particular, do
+# not add onerom-fw — its smol async stack does not build for wasm, and One ROM
+# Lens's build script depends on this crate.
+[dependencies]
+onerom-config = { workspace = true }
+onerom-fw-driver = { workspace = true }
+onerom-gen = { workspace = true }
+
+log = "0.4"
+
+[lints]
+workspace = true

@@ -1,0 +1,22 @@
+[package]
+name = "onerom-fw-driver"
+version = "0.1.0"
+edition = "2024"
+# A workspace-internal support crate; never published to crates.io.
+publish = false
+authors = ["Piers Finlayson <piers@piers.rocks>"]
+license = "MIT"
+description = "GPIO bitmask builders shared by the One ROM host tester, emulator and Lens"
+repository = "https://github.com/piersfinlayson/one-rom"
+homepage = "https://onerom.org"
+keywords = ["retro", "rom", "commodore", "embedded"]
+categories = ["embedded", "hardware-support"]
+
+# This crate has NO dependencies and NO build script, and that is the whole
+# reason it exists — see the crate docs in src/lib.rs.  `onerom-fw-emulator`
+# re-exports it, so anything added here lands in One ROM Lens's wasm build.
+# Adding a dependency, however small, is a change to what this crate is for.
+[dependencies]
+
+[lints]
+workspace = true
