@@ -61,8 +61,6 @@ cargo publish --dry-run -p onerom-protocol
 cargo publish -p onerom-protocol
 ```
 
-Update links to `onerom-database` and `onerom-protocol` in [lab/Cargo.toml](/rust/lab/Cargo.toml) to use the crates.io versions.
-
 ---
 
 Publish `onerom-config` to crates.io:
