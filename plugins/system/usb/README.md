@@ -89,4 +89,4 @@ Additional function is expected be added in the future.
 
 Currently, updating the firmware, ROM metadata and this USB plugin must be done with One ROM in BOOTSEL ("stopped") mode.  The picoboot REBOOT2 command can be used to reboot a running One ROM with this USB plugin into stopped mode.  ROM images stored on flash can be updated while One ROM is running.
 
-For more information about One ROM's plugin system, see the [plugin API documentation](/sdrr/ora/plugin.h).
+For more information about One ROM's plugin system, see the [plugin API documentation](/firmware/ora/plugin.h).

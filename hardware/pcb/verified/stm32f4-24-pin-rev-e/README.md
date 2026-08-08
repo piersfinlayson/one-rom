@@ -40,7 +40,7 @@ All corrections have been reflected in the BOM below, but not the schematic or g
 
 - **F401/411/446 vs F405/F415 have slightly different [BOMs](#bom)**
 - Now supports STM32F405 and STM32F415 variants, in addition to the STM32F401 and STM32F411 variants.
-- Includes [status LED](/docs/CONFIGURATION.md#status_led).
+- Includes [status LED](/docs/old/CONFIGURATION.md#status_led).
 - All passives are 0603, making it easier to hand solder.
 
 ## Changelog

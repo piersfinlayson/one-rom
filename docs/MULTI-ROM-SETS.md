@@ -31,9 +31,9 @@ For this feature, the following conditions must be met:
 
 This feature is currently available only for 2364 ROMs, and 2332/2316 ROMs whose CS2/CS3 lines are permanently tied to the active state.  This is true, for example, for the C64 character ROM.  You can mix ROM types, so long as this condition is met - so both C64 2364 kernal/basic ROM images can share a set with the C64 2332 character ROM image.
 
-You can find pre-built configurations in [`config`](/config/README.md), named `set-*.mk`.
+You can find pre-built configurations in [`config`](/onerom-config/README.md), named `set-*.mk`.
 
-[STM32 Selection](/docs/STM32-SELECTION.md) gives guidance on the STM32F4 clock speed requirement for serving Multi-ROM sets if using One ROM Ice.
+[MCU Selection](/docs/old/MCU-SELECTION.md) gives guidance on the STM32F4 clock speed requirement for serving Multi-ROM sets if using One ROM Ice.
 
 ## Set Configuration
 
@@ -113,7 +113,7 @@ A different ROM serving algorithm is used in the rom set case, to serve addresse
 
 It is this different algorithm that is roughly 10% less efficient than the single ROM image serving algorithm.  The pre-loading of 64KB at startup instead of 16KB probably also adds around 200-300us at boot.  Given systems typically have a decent reset circuit, this is not expected to be an issue.
 
-See [Multi-ROM Support](/docs/TECHNICAL-SUMMARY.md#multi-rom-support) for more details on the performance on this feature.
+See [Multi-ROM Support](/docs/old/TECHNICAL-SUMMARY.md#multi-rom-support) for more details on the performance on this feature.
 
 ### Dynamic Bank Switching Serving Details
 
