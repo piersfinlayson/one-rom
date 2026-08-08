@@ -241,12 +241,12 @@ that is:
 
 ```
 onerom program --config c64.json
-onerom control reset --pin x1
+onerom control reset --pin sel_c
 ```
 
-The pad is typically `X1`/`X2`, or an image-select pad whose jumper you have
-removed. The device times the pulse, so an interrupted CLI cannot leave the host
-held in reset. See [`control reset`](#control-reset), and
+The pad is typically an image-select pad whose jumper you have removed, usually
+`sel_c`, or an `X1`/`X2` pad. The device times the pulse, so an interrupted CLI
+cannot leave the host held in reset. See [`control reset`](#control-reset), and
 [`control pin`](#control-pin) for driving a GPIO to an arbitrary state.
 
 ### See what One ROM is doing with its GPIOs
@@ -839,10 +839,12 @@ Exactly one of `--byte` / `--input` is required.
 Pulse a GPIO low, then release it, to reset the host system One ROM is installed
 in — useful in scripted workflows after programming a new image.
 
-`--pin` is the pin your reset wire is soldered to, typically an `X1`/`X2` pad or
-an image-select pad whose jumper has been removed. Name it by pad (`x1`,
-`sel_a`) or by MCU GPIO (`gpio9`) — see [Pin values](#pin-values);
-[`inspect header`](#inspect-header) shows which GPIO is behind each pad.
+`--pin` is the pin your reset wire is soldered to, typically an image-select pad
+whose jumper has been removed — `sel_c` is the usual choice, as more boards have
+it than have X pads and it is 5V tolerant where it exists — or an `X1`/`X2` pad.
+Name it by pad (`sel_c`, `x1`) or by MCU GPIO (`gpio9`) — see
+[Pin values](#pin-values). [`inspect header`](#inspect-header) shows which GPIO
+is behind each pad.
 
 The line is only ever **driven low and then released to high impedance**. A reset
 net has its own pull-up and may have other drivers on it, so there is
@@ -857,7 +859,7 @@ The device must be **running** with the USB system plugin — see
 [Device states](#device-states).
 
 ```
-onerom control reset --pin x1
+onerom control reset --pin sel_c
 onerom control reset --pin gpio9
 onerom control reset --pin gpio9 --hold 500
 ```

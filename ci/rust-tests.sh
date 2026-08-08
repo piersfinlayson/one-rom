@@ -53,8 +53,13 @@ cargo run -p onerom-gen --bin compat
 cargo run -p schema-gen --bin schema-gen
 cargo run -q -p onerom-gen --bin layout -- --write-baseline
 
+# docs/CHIP-TYPES.md needs no command of its own - the onerom-config build
+# script rewrites it, and the runs above build that crate.  It is checked here
+# because otherwise a chip-types.json change can be committed without the
+# regenerated doc, and nothing notices.
 GENERATED_FILES=(
     "docs/COMPATIBILITY.md"
+    "docs/CHIP-TYPES.md"
     "onerom-config/schema.json"
     "ci/layout-baseline.txt"
 )

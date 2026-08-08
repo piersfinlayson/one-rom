@@ -81,6 +81,26 @@ it as a long-lived, production project.
     what you changed is also described in `docs/COMPATIBILITY.md`,
     `docs/CHIP-TYPES.md` or another `docs/` file — or in a **generator** that
     emits one — update that too, in the same commit.
+- **Hand-written docs describing behaviour go stale silently — keep them in the
+  same commit as the behaviour.** Nothing mechanical catches these, so they are
+  the ones that rot. The pairs that have bitten so far:
+  - `rust/lab/README.md` — One ROM Lab's interface. It drifted a whole rewrite
+    behind the code, still describing a build-time-configured RTT tool after Lab
+    became an interactive USB CDC shell. Touch `rust/lab/src/cli/`, its
+    `scripts/`, or the command set, and update it.
+  - `docs/ADDING-CHIP-TYPES.md` — the chip-type contribution path. It names
+    `chip-types.json` fields, `SUPPORTED_CHIP_TYPES` in `rust/gen/src/v2/`, the
+    generator commands and `ci/test-emu.sh`. Change any of those and the doc is
+    wrong. It also states that `rbcp_chip_type` requires a matching PR against
+    the `rom-bus-control-protocol` repo — that stays true.
+  - The root [README.md](/README.md) — its "Ways in" table, crate table and
+    regression-testing section describe the tree's shape. Adding, retiring or
+    renaming a crate, or changing what CI covers, reaches it. Deliberately keep
+    **counts** (of tests, boards, chip types) out of it, so growth does not make
+    it wrong.
+  - A crate that becomes deprecated or unmaintained says so in **its own
+    README** (`onerom-protocol`, `onerom-database`), rather than being quietly
+    dropped from mention.
 - **Before bumping any crate/component version, read the repo-root
   [CHANGELOG.md](/CHANGELOG.md) first.** Its "To publish" list under the current
   in-development heading is the source of truth for in-flight version bumps. A
@@ -208,7 +228,7 @@ there — not reimplemented in Studio, and not split into a separate crate.
 
 Base (empty) firmware, from the repo root:
 
-    scripts/build-empty-fw.sh [-d] [-l]     # -d debug logging, -l logging
+    make                                    # DEBUG_LOGGING=1 for debug logging
 
 Flashable image — use the CLI (`onerom-cli`, or download from
 https://onerom.org/cli). `onerom program` is the primary build-and-flash
@@ -262,6 +282,9 @@ Some checked-in files are generated and must stay in sync — `ci/rust-tests.sh`
   `ci/layout-baseline.txt`, the flash each chip type costs on each board.
   A diff says the numbers moved; `cargo run -p onerom-gen --bin layout --
   --check` says whether that is an improvement or a regression.
+- `docs/CHIP-TYPES.md` — no command of its own, the `onerom-config` build script
+  rewrites it on any build. Checked because otherwise a `chip-types.json` change
+  gets committed without the regenerated doc.
 
 (e.g. a version bump changes `COMPATIBILITY.md`.) These generators, along with
 `ci/rust-tests.sh` and `ci/rust-docs.sh` (slow — `rust-docs.sh` especially), are
