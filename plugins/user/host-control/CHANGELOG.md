@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.1.2] - 2026-??-??
+## [0.1.2] - 2026-08-09
 
 Report as many RAM slots as the RAM holds, rather than at most seven, and keep
 those a host cannot name for the plugin's own use.

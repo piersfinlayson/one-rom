@@ -371,7 +371,7 @@ pub fn validate_config(name: &str, config: &HwConfigJson) {
     }
     for bit_mode in &config.chip.bit_modes {
         // Check we didn't add a mode
-        if !matches![bit_mode, BitMode::Bit8 | BitMode::Bit16] {
+        if !matches!(bit_mode, BitMode::Bit8 | BitMode::Bit16) {
             panic!(
                 "{}: unsupported bit mode {:?}, must be 8 or 16",
                 name, bit_mode

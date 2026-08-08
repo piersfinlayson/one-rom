@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.1.2] - 2026-??-??
+## [0.1.2] - 2026-08-09
 
 - Discover the neopixel and status-LED GPIOs from device metadata at runtime
   (via `ORA_ID_GET_METADATA_UINT`) instead of hard-coding them by MCU package.

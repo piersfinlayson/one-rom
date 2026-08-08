@@ -1,6 +1,6 @@
 # CLI Changelog
 
-## v0.3.0 - 2026-??-??
+## v0.3.0 - 2026-08-09
 
 - **`--slot` now accepts every chip type the target firmware can serve on the
   board.** For v0.7.0 firmware onwards that is the served layout itself, so the

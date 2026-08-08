@@ -232,7 +232,7 @@ async fn cmd_chip_info(args: &mut Args<'_>, state: &mut SessionState) -> Result<
     let size_kb = size_bytes >> 10;
     let size_kb_str = if size_kb > 0 {
         format!("{} KB", size_kb)
-    } else if matches![chip, ChipType::Chip2704] {
+    } else if matches!(chip, ChipType::Chip2704) {
         "0.5 KB".to_string()
     } else {
         "0 KB".to_string()
@@ -377,7 +377,7 @@ async fn cmd_list_chips(state: &SessionState) -> Result<(), Error> {
             let size_kb = size_bytes >> 10;
             let size_kb_str = if size_kb > 0 {
                 format!("{} KB", size_kb)
-            } else if matches![chip, ChipType::Chip2704] {
+            } else if matches!(chip, ChipType::Chip2704) {
                 "0.5 KB".to_string()
             } else {
                 "0 KB".to_string()

@@ -1,14 +1,14 @@
 # Changelog
 
-# v0.2.1 - 2026-??-??
+## v0.2.1 - 2026-08-09
 
 - Support devices with overridden serials
 
-# v0.2.0 - 2026-07-20
+## v0.2.0 - 2026-07-20
 
 - Support firmware v0.7.x
 
-# v0.1.23 - 2026-06-05
+## v0.1.23 - 2026-06-05
 
 - Change USB Fire erase timeout to 20s from 10s (to match CLI).
 

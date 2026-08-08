@@ -54,10 +54,19 @@ CONFIG="$EMU_CONFIG" BOARD="$EMU_BOARD" \
 # .cargo/config.toml).  Lint it from its own directory so that toolchain and
 # target apply; add the target first (for the nightly toolchain), mirroring
 # lab's build-all.sh.
+#
+# --no-deps confines this pass to lab's own code.  Without it, clippy also lints
+# the workspace crates lab depends on - onerom-config, onerom-protocol and
+# onerom-database - under nightly's lint set rather than stable's, so a lint
+# promoted to warn-by-default in nightly fails the build over a file the host
+# pass above already covers on stable.  That is not hypothetical: it happened to
+# `matches![...]` in onerom-config's build script, which is nursery (allow) on
+# stable and warn-by-default on nightly.  All three crates are linted in the host
+# pass, so nothing loses coverage here.
 echo "Running clippy (onerom-lab)..."
 ( cd lab \
     && rustup target add thumbv8m.main-none-eabihf \
-    && cargo clippy --bins -- -D warnings )
+    && cargo clippy --no-deps --bins -- -D warnings )
 
 # onerom-fw-emulator and onerom-lens build for wasm (they compile the firmware
 # C to wasm via Emscripten), so they are linted against the wasm target.

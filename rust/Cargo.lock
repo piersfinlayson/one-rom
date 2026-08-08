@@ -4941,7 +4941,7 @@ dependencies = [
 
 [[package]]
 name = "onerom-database"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "csv",
  "hex-literal",
@@ -4952,7 +4952,7 @@ dependencies = [
 
 [[package]]
 name = "onerom-fw"
-version = "0.1.25"
+version = "0.2.0"
 dependencies = [
  "base64 0.22.1",
  "bytes",
@@ -4995,7 +4995,7 @@ dependencies = [
 
 [[package]]
 name = "onerom-fw-parser"
-version = "0.7.3"
+version = "0.8.0"
 dependencies = [
  "airfrog-rpc",
  "deku 0.19.1",
@@ -5058,8 +5058,6 @@ dependencies = [
  "log",
  "once_cell",
  "onerom-config",
- "onerom-database",
- "onerom-protocol",
  "panic-probe",
  "panic-rtt-target",
  "portable-atomic",
@@ -5106,7 +5104,7 @@ dependencies = [
 
 [[package]]
 name = "onerom-protocol"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "log",
  "onerom-database",

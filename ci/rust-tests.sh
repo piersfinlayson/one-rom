@@ -37,7 +37,7 @@ echo "Testing onerom-gen..."
 cargo test -p onerom-gen
 
 echo "Testing onerom-metadata..."
-cargo test -p onerom-protocol
+cargo test -p onerom-metadata
 
 echo "Testing onerom-protocol..."
 cargo test -p onerom-protocol

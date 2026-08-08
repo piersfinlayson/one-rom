@@ -2,7 +2,7 @@
 
 All notables changes between versions are documented in this file.
 
-## v0.7.1 - 2026-??-??
+## v0.7.1 - 2026-08-09
 
 Headline changes in this release:
 - Intel HEX ROM input in the programming tools, ihex<->binary conversion in the CLI, and image transforms (byte swap, deinterleave) applied during a build.
@@ -23,7 +23,7 @@ In detail:
 - Add image transforms — byte-level rearrangements applied to a ROM image before it is written into the firmware.  A chip may carry an ordered `"transform"` array, exposed by the CLI as `--slot transform=deinterleave:1/2/2+swap_bytes`.  `swap_bytes` reverses the byte order within each 16-bit word; `deinterleave:<offset>/<stride>[/<bytes>]` extracts one lane from an interleaved image, for a wide ROM set distributed as a single file.  The list is applied in the order given, which matters, and is recorded in the firmware metadata alongside the filename.
 - Add `onerom image deinterleave`, the standalone counterpart to `onerom image swap-bytes` (`--offset`, `--stride`, `--bytes`), for rewriting a file rather than transforming it during a build.  Both share the `onerom-gen` implementation used by `transform=`.  Neither reads Intel HEX; use `onerom image convert` first.
 - Add `onerom image convert` to convert ROM image files between raw binary and Intel HEX (`--from`/`--to`, with `--load-address` for the ihex side).
-- Add GPIO control, end to end.  `onerom control pin` drives a One ROM GPIO high, low or high impedance, optionally for a bounded period timed by the device (`--hold`, `--then`); `onerom control reset` pulses one low to reset the host system One ROM is installed in; `onerom inspect gpio` lists every GPIO with what One ROM is using it for.  `--pin` takes `gpio<N>` or a header pad name (`sel_a` to `sel_e`, `x1`/`x2`).  A GPIO One ROM is itself using is refused unless `--force`, and one that is not 5V-tolerant warns.  The primary use is a wire from a header pad to the machine's reset line, so a script can program an image and then reset the machine into it.  Plugins get the same primitives as `ORA_ID_GPIO_SET` and `ORA_ID_GPIO_QUERY`.  Requires firmware v0.7.1 and the v0.7.1 USB system plugin.
+- Add GPIO control, end to end.  `onerom control pin` drives a One ROM GPIO high, low or high impedance, optionally for a bounded period timed by the device (`--hold`, `--then`); `onerom control reset` pulses one low to reset the host system One ROM is installed in; `onerom inspect gpio` lists every GPIO with what One ROM is using it for.  `--pin` takes `gpio<N>` or a header pad name (`sel_a` to `sel_e`, `x1`/`x2`).  A GPIO One ROM is itself using is refused unless `--force`, and one that is not 5V-tolerant warns.  The primary use is a wire from a header pad to the machine's reset line, so a script can program an image and then reset the machine into it.  Plugins get the same primitives as `ORA_ID_GPIO_SET` and `ORA_ID_GPIO_QUERY`.  Requires firmware v0.7.1 and the v0.2.1 USB system plugin.
   - This required a firmware update and a USB plugin update.
 - Add CLI ASCII views of a board's physical pin layouts.  `onerom board header [--board <board>]` draws the pin (jumper / programming) header pad by pad, with the GPIO behind each image-select and X pad and, on Fire boards, whether that GPIO is 5V-tolerant.  `onerom board socket [--board <board>] [--chip-type <chip>] [--gpio]` draws the ROM socket as a DIP pinout — GPIOs, the chip's pin functions, or both.  Where the chip's pin count differs from the board's, the socket is drawn at the larger with the smaller device bottom-justified, marking `overhang` and `(empty)` pins and the `X1`/`X2` fly-lead each overhanging address line needs.  The board is inferred from a connected One ROM when omitted; `onerom inspect header` and `onerom inspect socket` are the device-side forms, and take `--board` to override what the connected One ROM reports.
 - `onerom chips --board <board>` now reports the flash each chip type costs to emulate, which is frequently larger than the chip — a 2364 costs 8KB on a 24-pin board but 256KB overhanging a 28-pin one — grouped by how the chip fits the socket, with `--chip-type <chip>` for a single type.  `board socket --chip-type` and `inspect socket --chip-type` report the same figure.  The listing now covers every chip the board can emulate, and a recognised type it cannot serve is named separately rather than listed as supported.  `docs/COMPATIBILITY.md` and `docs/CLI-MANUAL.md` now legend the Fit column.
@@ -89,13 +89,18 @@ In detail:
 - Fix `docs/COMPATIBILITY.md` and `onerom chips` reporting compatibility for a chip-select configuration users cannot ask for.  Both checked each chip with only its primary select monitored, which needs the `allow_cs_ignore` config option and is rejected outright by `--slot`; they now check the configuration the tools actually produce, with every control line monitored.  HM7641 gains fire-24-a/b, the 28-pin and fire-32-a boards, which One ROM has always served; 2316, 9316, 9316A, 2332, 4732 and 9332 are no longer listed for fire-28-b/c/d, nor 23128 for fire-32-a/b, which One ROM has never been able to serve.
 - **Breaking:** `onerom-gen`'s `check_chip_on_board` becomes `check_chip_set_on_board`, taking a chip-set type, chip count and CS configuration, so banked and multi sets can be checked as well as single chips; `supported_chips` takes the set shape too.  `CompatResult` gains the GPIOs whose ROM table bits address nothing, and it and `ChipCompat` are now `#[non_exhaustive]`.
 - Removed `test-retired`, the old test mechanism, superseded by `onerom-fw-tester`.
+- `onerom-protocol` is deprecated and `onerom-database` is unmaintained, and both now say so on crates.io.  `onerom-protocol` served the original STM32F4 One ROM Lab, which the current Fire-based Lab replaced; it also carries a `#![deprecated]` attribute, so a downstream consumer is warned at compile time rather than only in the README.  Neither is used by anything in the tree.
 - GitHub releases no longer attach a base firmware binary.  The firmware Web and CLI build from is published to [images.onerom.org](https://images.onerom.org) and downloaded automatically; the attached copy was separately built and could differ from it.
 
 To publish:
-- Rust crates:
+- Rust crates (in dependency order):
+  - onerom-database 0.1.2
   - onerom-config 0.6.0
+  - onerom-protocol 0.1.1
   - onerom-metadata 0.1.4
   - onerom-gen 0.7.0
+  - onerom-fw-parser 0.8.0
+  - onerom-fw 0.2.0
   - onerom-app 0.2.0
   - onerom-cli 0.3.0
 - Config schema

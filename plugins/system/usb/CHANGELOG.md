@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.2.1] - 2026-??-??
+## [0.2.1] - 2026-08-09
 
 Add support for overriden serial #s.
 
