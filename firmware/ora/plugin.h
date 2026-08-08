@@ -100,7 +100,7 @@
  * - There are two types of plugins available - system and user.  See system.h
  *   for more details, but in summary each must be installed in the correct
  *   image slot on flash using One ROM's config JSON file, and system is
- *   reserved for offical One ROM plugins, such as One ROM's built-in USB
+ *   intended to be for offical One ROM plugins, such as One ROM's built-in USB
  *   stack.
  * 
  * - You have access to all of the RP2350 registers, but accessing these
