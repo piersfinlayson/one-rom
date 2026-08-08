@@ -1,20 +1,20 @@
 # Logging
 
-This document is targetted at developers.  All logging below is enabled when building One ROM directly from source, using `make`.  For example:
+This document is targetted at developers.  It describes the logs One ROM emits over the SWD interface, using RTT.
+
+Boot logging is always built in.  Extra debug logging is off by default, and is enabled by building from the repo root with:
 
 ```bash
-HW_REV=fire-24-e BOOT_LOGGING=1 make
+DEBUG_LOGGING=1 make
 ```
 
 The log outputs below are representative of the type of logging that will be produced, but the log examples given are from very old firmware.
 
-The sections below describe different loggig options.  Only `BOOT_LOGGING` and `DEBUG_LOGGING` are actively maintained.
+## Boot logging
 
-## `BOOT_LOGGING`
+This logs the boot process.  It stops when the device enters its main ROM serving loop, as with logging enabled the device cannot hit the required performance.
 
-This logs the boot process to the SWD interface, using RTT.  It is enabled by default.  This type of logging stops when the device enters its main ROM serving loop, as with logging enabled the device cannot hit the required performance.
-
-In general, you should be able to leave `BOOT_LOGGING` on, as this only adds around 1.5ms to One ROM's startup time, increasing it to roughly 3ms total.  This is substantially below most retro systems' reset circuit timers, so One ROM should boot and be ready to serve the configured ROM image well before it is required.
+Boot logging costs around 1.5ms of One ROM's startup time, taking it to roughly 3ms total.  That is substantially below most retro systems' reset circuit timers, so One ROM boots and is ready to serve the configured ROM image well before it is required.
 
 Sample boot logs from a startup of firmware built with [`c64-no-destestmax.mk`](/old-config/c64-no-destestmax.mk), are shown below:
 
@@ -93,9 +93,9 @@ Pulling out some highlights:
 
 ## `DEBUG_LOGGING`
 
-This logs extra debug information to the SWD interface, using RTT.  Enabling debug logging can sometimes cause RTT to lose some logs due to its added verbosity - this is typically shown as blank logs.  However, the RTT buffer has been increased in size, so this should not be a problem in most cases.
+This logs extra debug information, on top of the boot logging above.  Its added verbosity can sometimes cause RTT to lose some logs - this is typically shown as blank logs.  However, the RTT buffer has been increased in size, so this should not be a problem in most cases.
 
-It is disabled by default, but can be enabled by setting the `DEBUG_LOGGING` configuration option to `1`.  This type of logging is useful for debugging One ROM itself.
+It is disabled by default, and is enabled by setting the `DEBUG_LOGGING` configuration option to `1`.  This type of logging is useful for debugging One ROM itself.
 
 Example debug logging:
 
@@ -175,23 +175,3 @@ Example debug logging:
 13:50:58.502: ROM table: 0x20000000
 13:50:58.502: -----
 ```
-
-## `MAIN_LOOP_LOGGING`
-
-This enables logging within the main_loop (see [`rom_impl.c`](/sdrr/src/rom_impl.c).  It does not control logging after every byte is served - see [`MAIN_LOOP_ONE_SHOT`](#main_loop_one_shot)
-
-You mus have `SWD` and `BOOT_LOGGING` enabled for this to work.
-
-## `MAIN_LOOP_ONE_SHOT`
-
-This makes a log after every requested byte has been served, once the chip select has gone inactive.
-
-Some notes:
-
-- It is **highly** likely that enabling this will cause the One ROM to not be able to keep up with the requested data, and so it is disabled by default.
-- It is also likely, unless you are only querying the odd byte here and there, that RTT will not be able to keep up with the logged data.
-- Although the address and data values served are logged, these are **mangled** versions of each - they are the value read directly from the STM32 GPIO port with the address and CS lines, and the value written directly to the STM32 GPIO port with the data lines.  As the pin mapping is complex, they are not the values you would naively expect to see.  See [Technical Details](/docs/TECHNICAL-DETAILS.md) for more information on the the pin mapping.
-
-This logging is disabled by default and can be enabled by setting the `MAIN_LOOP_ONE_SHOT` configuration option to `1`.  This type of logging is useful for debugging the One ROM's main loop.
-
-You must have `SWD`, `BOOT_LOGGING`, and `MAIN_LOOP_LOGGING` enabled for this to work.

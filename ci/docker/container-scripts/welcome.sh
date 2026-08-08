@@ -25,7 +25,7 @@ To get started:
   ./clone.sh && cd one-rom
 
 Build the base firmware (a single image for all Fire boards):
-  scripts/build-empty-fw.sh
+  make
 
 Copy the built firmware to the output directory:
   ../copy-fw.sh

@@ -52,37 +52,9 @@ BOOT_LOGGING ?= 0
 PLUGIN_LOGGING ?= 0
 # PLUGIN_LOGGING ?= 1
 
-# Main loop logging configuration
-#
-# This option enables/disabld logging within main_loop (see sdrr.rom_impl.c).
-#
-# It does not loop after every byte is served - that is enabled/disabled via
-# MAIN_LOOP_ONE_SHOT.
-#
-# BOOT_LOGGING and MAIN_LOOP_LOGGING are required for this option to work.
-
-MAIN_LOOP_LOGGING ?= 0
-#MAIN_LOOP_LOGGING ?= 1
-
-# Main loop one shot logging
-#
-# This option outputs logs after every byte is retrieved from the ROM.  While
-# the main loop that processes the chip select and retrieves ROM data remanins
-# functional, there is a gap between the CS line being released, and the ROM
-# detecting the next CS activation - to make these logs.
-#
-# Therefore, with this option, the ROM will not meet its timing requirements,
-# and it is not recommended to use this option unless you are debugging the
-# ROM code.
-#
-# BOOT_LOGGING is required for this option to work.
-
-MAIN_LOOP_ONE_SHOT ?= 0
-# MAIN_LOOP_ONE_SHOT ?= 1
-
 # Debug logging
 #
-# More extensive logging than the boot and main loop logging options.
+# More extensive logging than the boot logging option.
 #
 # May overwhelm the SWD interface, meaning logs are dropped.
 #
@@ -263,7 +235,7 @@ firmware: generated
 	@echo "=========================================="
 	@echo "Building One ROM firmware - RP235X"
 	@echo "-----"
-	@GEN_OUTPUT_DIR=$(GEN_OUTPUT_DIR) EXTRA_C_FLAGS="$(EXTRA_C_FLAGS)" BIN_PREFIX="$(BIN_PREFIX)" DEBUG_LOGGING=$(DEBUG_LOGGING) PLUGIN_LOGGGING=$(PLUGIN_LOGGING) make --no-print-directory -C $(FIRMWARE_DIR)
+	@GEN_OUTPUT_DIR=$(GEN_OUTPUT_DIR) EXTRA_C_FLAGS="$(EXTRA_C_FLAGS)" BIN_PREFIX="$(BIN_PREFIX)" DEBUG_LOGGING=$(DEBUG_LOGGING) PLUGIN_LOGGING=$(PLUGIN_LOGGING) make --no-print-directory -C $(FIRMWARE_DIR)
 	@if command -v picotool >/dev/null 2>&1; then \
 		picotool uf2 convert $(BUILD_DIR)/$(BIN_PREFIX).bin $(BUILD_DIR)/$(BIN_PREFIX).uf2; \
 	else \

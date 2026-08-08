@@ -22,7 +22,6 @@
 #define BOOT_LOGGING 1  // Enable boot logging.  Enabled/disabled via metadata
 // #define DEBUG_LOGGING 1  // Enable more verbose logging
 // #define OVERCLOCK 1  // Enable overclocking (may damage the part)
-// #define MAIN_LOOP_LOGGING 1  // Enable main loop logging
 // #define DEBUG_BUILD 1    // Enable debug checks.  If BOOT_LOGGING is
 //                          // defined, DEBUG_LOGGING is also enabled.
 // #define PLUGIN_LOGGING 1 // Enable logging from plugins.  Separate from
@@ -54,10 +53,6 @@ extern const onerom_info_t onerom_info;
 #define DEBUG_LOGGING 1
 #endif // !DEBUG_LOGGING
 #endif // DEBUG_BUILD && BOOT_LOGGING
-
-#if defined(MAIN_LOOP_LOGGING) && !defined(BOOT_LOGGING)
-#error "MAIN_LOOP_LOGGING requires BOOT_LOGGING to be defined"
-#endif // MAIN_LOOP_LOGGING/BOOT_LOGGING
 
 #if defined(DEBUG_LOGGING) && !defined(BOOT_LOGGING)
 #error "DEBUG_LOGGING requires BOOT_LOGGING to be defined"

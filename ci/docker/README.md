@@ -18,7 +18,7 @@ docker run --rm -v $(pwd)/output:/home/build/output \
     --name onerom-build ghcr.io/piersfinlayson/onerom-build:latest \
     sh -c './clone.sh && \
             cd one-rom && \
-            scripts/build-empty-fw.sh && \
+            make && \
             ../copy-fw.sh'
 ```
 
@@ -54,14 +54,14 @@ mkdir -p ./output
 docker run -it --rm -v $(pwd)/output:/home/build/output --hostname onerom-build --name onerom-build ghcr.io/piersfinlayson/onerom-build:latest bash
 ./clone.sh
 cd one-rom
-scripts/build-empty-fw.sh
+make
 ../copy-fw.sh
 exit
 ```
 
 You can now retrieve the built firmware from your host at `./output/`.
 
-The first time you run `scripts/build-empty-fw.sh` it will take a while to build all of the Rust toolchain components.  Subsequent builds using the same container will be much faster.
+The first time you run `make` it will take a while to build all of the Rust toolchain components.  Subsequent builds using the same container will be much faster.
 
 ### Background
 
@@ -71,7 +71,7 @@ This example is similar to the foreground example, but runs the container in the
 mkdir -p ./output
 docker run -d -v $(pwd)/output:/home/build/output --name onerom-build ghcr.io/piersfinlayson/onerom-build:latest
 docker exec -it onerom-build ./clone.sh
-docker exec -it onerom-build sh -c 'cd one-rom && scripts/build-empty-fw.sh && ../copy-fw.sh'
+docker exec -it onerom-build sh -c 'cd one-rom && make && ../copy-fw.sh'
 ```
 
 You can now retrieve the built firmware from your host at `./output/`.

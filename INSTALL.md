@@ -109,7 +109,7 @@ At this point you can follow the instructions below to build and flash the firmw
 
 ## Building the Firmware
 
-To build the base firmware, you use `scripts/build-empty-fw.sh` from the repo root.
+To build the base firmware, run `make` from the repo root.  Add `DEBUG_LOGGING=1` for debug logging.
 
 To build a firmware image to flash to a One ROM, you use the CLI tool, which you can build from `rust/cli` or download from [One ROM CLI](https://onerom.org/cli).  For example:
 
@@ -161,5 +161,5 @@ Note that as well as `firmware/build/onerom-rp235x.bin`, an ELF file is created 
 
 See [Pi-PICO-PROGRAMMER](/docs/PI-PICO-PROGRAMMER.md) for details of using a Raspberry Pi Pico as an inexpensive SWD programmer.  Many other SWD programmers are available, like the Raspberry Pi Debug Probe, generic DAPLink, ST-Link, etc. 
 
-Occassionally your One ROM may lock up, particularly if you are experimenting with overclocking or other advanced configuration options, or debugging firmware changes.  If this is is the case, try rebooting your programmer, One ROM, or both, and try again.  If you still have problems, see [Recovering a Bricked Device](docs/GETTING-STARTED.md#recovering-a-bricked-device) for help.
+Occassionally your One ROM may lock up, particularly if you are experimenting with overclocking or other advanced configuration options, or debugging firmware changes.  If this is is the case, try rebooting your programmer, One ROM, or both, and try again.  If you still have problems, see [Recovering a Bricked Device](docs/old/GETTING-STARTED.md#recovering-a-bricked-device) for help.
 
