@@ -20,7 +20,9 @@ use onerom_gen::{Builder, ConfigOverrides, Error as GenError, FIRMWARE_SIZE, Lic
 
 use crate::args;
 use crate::utils::{check_fire_board, resolve_board, resolve_firmware_output};
-use onerom_cli::plugin::{PluginSpec, ResolvedPlugin, resolve_plugins};
+use onerom_cli::plugin::{
+    PluginNote, PluginSpec, ResolvedPlugin, check_config_plugins, resolve_plugins,
+};
 use onerom_cli::slot::{
     ConfirmationsRequired, GlobalConfig, check_slot_chip_types, check_slot_confirmations,
     inject_plugins_into_config, parse_slots, save_config, slots_to_config_json,
@@ -296,6 +298,15 @@ pub async fn build_rom_image(
 
     get_rom_files_async(&mut builder).await?;
 
+    // A plugin named by the config has not been through the manifest, so its
+    // compatibility window is checked here.  Plugins named with --plugin were
+    // selected against the manifest already; re-checking them is harmless and
+    // keeps this independent of how the plugin arrived.
+    report_plugin_checks(
+        options,
+        check_config_plugins(&builder, &version, &onerom_cli::CliFetch).await?,
+    );
+
     let fw_props = FirmwareProperties::new(version, board, mcu, ServeAlg::default(), true)?;
     let (metadata, image_data) = builder.build(fw_props).map_err(onerom_fw::Error::build)?;
 
@@ -312,6 +323,37 @@ pub async fn build_rom_image(
     let desc = builder.description();
 
     Ok((fw_props, metadata, image_data, desc))
+}
+
+/// Report the non-fatal outcomes of checking the plugins a config named.
+///
+/// A skipped check is always reported, whatever the verbosity: the published
+/// compatibility window is the only thing standing between a stale plugin and a
+/// device that hard faults on boot, so a build that could not consult it must
+/// say so.  A check that ran, and a plugin there was nothing to check, are
+/// detail for --verbose.
+fn report_plugin_checks(options: &Options, notes: Vec<PluginNote<onerom_fw::Error>>) {
+    for note in notes {
+        match note {
+            PluginNote::Checked { name, version } => {
+                if options.verbose {
+                    println!("Plugin '{name}' v{version} is compatible with firmware");
+                }
+            }
+            PluginNote::Unofficial { source } => {
+                if options.verbose {
+                    println!(
+                        "Plugin {source} is not an official One ROM plugin - no published compatibility to check"
+                    );
+                }
+            }
+            PluginNote::Unchecked { source, error } => {
+                eprintln!(
+                    "Warning: could not check plugin {source} for firmware compatibility\n  {error}"
+                );
+            }
+        }
+    }
 }
 
 // ------------------------------- firmware build command -------------------------------

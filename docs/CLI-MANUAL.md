@@ -168,6 +168,49 @@ from the config, or drop `--plugin`.
 Plugin spec forms are listed under [Plugin
 specification](#plugin-specification).
 
+### Plugin compatibility
+
+Every plugin going into an image is checked against the compatibility window
+published on the images server, whether it arrived via `--plugin` or was named
+by the config's own slots. A plugin the target firmware falls outside the
+window of is refused, and no image is written or flashed:
+
+```
+$ onerom firmware build --config usb-0.1.2.json --board fire-24-a --output fw.bin
+Failed to execute command.
+Plugin 'usb' version '0.1.2' is not compatible with firmware 0.7.0 or later.
+  The selected firmware version is 0.7.1.
+  Plugin version 0.2.1 supports it: https://images.onerom.org/plugins/system/usb/v0.2.1/plugin.bin
+```
+
+The last line names the newest release that does support the firmware being
+built for, and the URL to point the config's plugin slot at. If no release of
+that plugin supports it, the message says so instead. A pinned `--plugin
+usb,version=0.1.2` is refused the same way, with the same suggestion.
+
+The check is worth having because a plugin binary declares only the *minimum*
+firmware it needs. A release withdrawn for some *newer* firmware — One ROM USB
+v0.1.2, which hard faults on firmware v0.7.0 — is recorded only in the manifest,
+so this is the one place it can be caught before the device stops booting.
+
+`--verbose` reports a plugin that passed:
+
+```
+Plugin 'usb' v0.2.1 is compatible with firmware
+```
+
+A plugin loaded from a local path, or from any URL that is not an official
+images-server one, has no published compatibility to check against and is built
+in as-is. Under `--verbose`:
+
+```
+Plugin /home/me/my-plugin.bin is not an official One ROM plugin - no published compatibility to check
+```
+
+If the images server cannot be reached the build is not blocked — an offline
+build of an otherwise valid config still works — but a `Warning:` line naming
+the plugin says the check was skipped.
+
 ### Build firmware without flashing
 
 ```
@@ -1669,6 +1712,10 @@ plugin. The system plugin is placed in slot 0, the user plugin in slot 1.
 | `--plugin usb,version=0.1.0` | Pinned version. |
 | `--plugin file=path/to/plugin.bin` | Local file. |
 | `--plugin file=https://example.com/plugin.bin` | Remote file. |
+
+Named forms are selected against the release manifest, so an incompatible one is
+refused at that point. A `file=` form, and a plugin named by a config, are
+checked separately — see [Plugin compatibility](#plugin-compatibility).
 ## Pin values
 
 Used by `--pin` in [`control pin`](#control-pin), [`control

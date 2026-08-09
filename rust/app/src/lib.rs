@@ -48,6 +48,9 @@ pub use error::{Error, PluginError};
 pub use plugin::{
     // Catalogue and core types.
     Catalogue,
+    // The newest release that supports a firmware, carried by the two
+    // incompatibility errors.
+    CompatibleRelease,
     // Fetch abstraction (host-implemented). `trait_variant` generates the
     // `Send` variant `PluginFetch` from the base `LocalPluginFetch`.
     LocalPluginFetch,
@@ -56,6 +59,8 @@ pub use plugin::{
     // source (manifest-backed or local).
     PluginDisplay,
     PluginFetch,
+    // Non-fatal outcome of checking the plugins a config names.
+    PluginNote,
     PluginOrigin,
     // Plugin specifications (parsed `--plugin` style inputs).
     PluginSpec,
@@ -67,6 +72,8 @@ pub use plugin::{
     ResolvedSource,
     // Verification target selector and result.
     VerifyTarget,
+    // Check the plugins a built config names (delegates fetching).
+    check_config_plugins,
     compatible_releases,
     // Async resolution (delegate fetching to `PluginFetch`).
     fetch_releases,

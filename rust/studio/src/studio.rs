@@ -8,6 +8,8 @@ use iced::{Element, Subscription, Task, time};
 use log::{debug, error, info, trace, warn};
 use std::time::Duration;
 
+use onerom_cli::CliFetch;
+use onerom_cli::plugin::{PluginNote, check_config_plugins};
 use onerom_config::fw::FirmwareVersion;
 use onerom_config::hw::Board;
 use onerom_config::mcu::Variant as McuVariant;
@@ -675,6 +677,33 @@ impl Studio {
             Ok(()) => (),
             Err(e) => {
                 warn!("Failed to get ROM files: {e:?}");
+                return CreateMessage::BuildImageResult(Err(e.to_string())).into();
+            }
+        }
+
+        // A config may name a plugin, which reaches the image without ever
+        // having been selected against the images server's manifest.  The
+        // binary header declares only a minimum firmware version, so a plugin
+        // withdrawn for a *newer* firmware - which hard faults the device on
+        // boot - is caught only here.
+        match check_config_plugins(&builder, &fw_ver, &CliFetch).await {
+            Ok(notes) => {
+                for note in notes {
+                    match note {
+                        PluginNote::Checked { name, version } => {
+                            debug!("Plugin '{name}' v{version} is compatible with firmware")
+                        }
+                        PluginNote::Unofficial { source } => {
+                            debug!("Plugin {source} is not an official plugin, cannot be checked")
+                        }
+                        PluginNote::Unchecked { source, error } => warn!(
+                            "Could not check plugin {source} for firmware compatibility: {error}"
+                        ),
+                    }
+                }
+            }
+            Err(e) => {
+                warn!("Plugin incompatible with selected firmware: {e}");
                 return CreateMessage::BuildImageResult(Err(e.to_string())).into();
             }
         }

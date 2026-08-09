@@ -2,6 +2,14 @@
 
 ## v0.4.0 - 2026-??-??
 
+- **A plugin named by a config is now checked for firmware compatibility**, as
+  one given with `--plugin` already was. A plugin binary declares only the
+  minimum firmware it needs, so a release withdrawn for a newer firmware — USB
+  v0.1.2, which hard faults on v0.7.0 — was previously built in and flashed.
+  A local or third-party plugin has nothing published to check against and is
+  still built in as-is; an unreachable images server warns rather than failing.
+  A refusal names the newest release that does support the firmware, with the
+  URL to point the config at.
 - **Motorola S-record images are now accepted alongside Intel HEX.**
   `--slot format=srec` decodes an S-record file to a binary image before it is
   built in, with the same optional `load-address=` giving the absolute address

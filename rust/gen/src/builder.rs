@@ -257,6 +257,19 @@ impl Builder {
         &self.file_id_map
     }
 
+    /// Get the loaded image data for the chip at `chip_index`
+    ///
+    /// `chip_index` is the flat index of the chip across all chip sets, in
+    /// config order - the same index [`Builder::file_id_map`] is keyed by.
+    ///
+    /// Returns `None` if `chip_index` names no chip, or if that chip's file
+    /// has not been loaded yet, so a `Some` result is always a fully loaded
+    /// image.
+    pub fn chip_data(&self, chip_index: usize) -> Option<&[u8]> {
+        let file_id = self.file_id_map.get(&chip_index)?;
+        self.files.get(file_id).map(|data| data.as_slice())
+    }
+
     /// Check that the config can be built
     pub fn build_validation(&self, props: &FirmwareProperties) -> Result<()> {
         check_all_files_loaded(&self.files, self.total_file_count())?;

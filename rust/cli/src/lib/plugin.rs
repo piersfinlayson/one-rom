@@ -17,6 +17,9 @@
 pub use onerom_app::{
     // Catalogue and core types.
     Catalogue,
+    // The newest release that supports a firmware, carried by the two
+    // incompatibility errors.
+    CompatibleRelease,
     // Fetch abstraction (implemented by `CliFetch`).
     LocalPluginFetch,
     Plugin,
@@ -25,6 +28,8 @@ pub use onerom_app::{
     PluginDisplay,
     PluginError,
     PluginFetch,
+    // Non-fatal outcome of checking the plugins a config names.
+    PluginNote,
     PluginOrigin,
     PluginSpec,
     PluginType,
@@ -35,6 +40,8 @@ pub use onerom_app::{
     ResolvedPlugin,
     ResolvedSource,
     VerifyTarget,
+    // Check the plugins a built config names (delegates fetching).
+    check_config_plugins,
     // Pure decision logic.
     compatible_releases,
     // Async fetch/resolution.

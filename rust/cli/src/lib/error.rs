@@ -7,7 +7,22 @@
 use onerom_config::fw::FirmwareVersion;
 use onerom_gen::FileFormat;
 
-use crate::plugin::{PluginType, PluginVersion};
+use crate::plugin::{CompatibleRelease, PluginType, PluginVersion};
+
+/// Render the way out of a plugin incompatibility as a further indented line.
+///
+/// A build that stops here cannot proceed until the user changes something, so
+/// naming the release that would work - and the URL a config has to point at to
+/// use it - is worth the extra line.
+fn plugin_way_out(newest_compatible: &Option<CompatibleRelease>) -> String {
+    match newest_compatible {
+        Some(r) => format!(
+            "\n  Plugin version {} supports it: {}",
+            r.version, r.binary_url
+        ),
+        None => "\n  No version of this plugin supports it.".to_string(),
+    }
+}
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -196,9 +211,16 @@ pub enum Error {
     PluginVersionNotFound(String, String),
 
     #[error(
-        "Plugin '{0}' version '{1}' requires firmware {2} or later.\n  The selected firmware version is {3}."
+        "Plugin '{name}' version '{version}' requires firmware {min_fw} or later.\n  The selected firmware version is {fw}.{}",
+        plugin_way_out(.newest_compatible)
     )]
-    PluginIncompatible(String, PluginVersion, FirmwareVersion, FirmwareVersion),
+    PluginIncompatible {
+        name: String,
+        version: PluginVersion,
+        min_fw: FirmwareVersion,
+        fw: FirmwareVersion,
+        newest_compatible: Option<CompatibleRelease>,
+    },
 
     #[error(
         "Plugin binary from '{0}' is too small to contain a valid header: {1} bytes (minimum {2})"
@@ -242,9 +264,16 @@ pub enum Error {
     TurboBootMultiSlot(onerom_gen::Error),
 
     #[error(
-        "Plugin '{0}' version '{1}' is not compatible with firmware {2} or later.\n  The selected firmware version is {3}."
+        "Plugin '{name}' version '{version}' is not compatible with firmware {from} or later.\n  The selected firmware version is {fw}.{}",
+        plugin_way_out(.newest_compatible)
     )]
-    PluginIncompatibleNewer(String, PluginVersion, FirmwareVersion, FirmwareVersion),
+    PluginIncompatibleNewer {
+        name: String,
+        version: PluginVersion,
+        from: FirmwareVersion,
+        fw: FirmwareVersion,
+        newest_compatible: Option<CompatibleRelease>,
+    },
 
     #[error("Failed to decode {} from '{path}':\n  {message}", .format.display_name())]
     ImageDecode {
@@ -348,13 +377,27 @@ impl From<onerom_app::PluginError> for Error {
                 version,
                 min_fw,
                 fw,
-            } => Error::PluginIncompatible(name, version, min_fw, fw),
+                newest_compatible,
+            } => Error::PluginIncompatible {
+                name,
+                version,
+                min_fw,
+                fw,
+                newest_compatible,
+            },
             P::IncompatibleNewer {
                 name,
                 version,
                 from,
                 fw,
-            } => Error::PluginIncompatibleNewer(name, version, from, fw),
+                newest_compatible,
+            } => Error::PluginIncompatibleNewer {
+                name,
+                version,
+                from,
+                fw,
+                newest_compatible,
+            },
             P::BinaryTooSmall(src, actual, min) => Error::PluginBinaryTooSmall(src, actual, min),
             P::InvalidMagic(src, got, expected) => Error::PluginInvalidMagic(src, got, expected),
             P::TypeMismatch(src, expected, got) => {
