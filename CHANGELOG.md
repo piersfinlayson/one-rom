@@ -28,6 +28,9 @@ To publish:
 To test (on hardware, before release):
 - Program a device from an S-record image and confirm it serves the right bytes — `onerom program --slot file=<rom>.s19,type=...,format=srec,load-address=$...`.  The build path is covered by tests; flashing and serving are not.
 - One ROM Lab's `f:srec` dump, which has no automated coverage at all: lab is a `thumbv8m` binary with no host tests, so its encoder is only verified against `onerom-gen`'s golden by inspection.  Dump a ROM as S-records and read it back with `onerom image convert --from srec --to binary`, comparing against the same ROM dumped as `ihex`.  Worth doing on a ROM larger than 64 KB too, which is the case that selects `S2`/`S8` records rather than `S1`/`S9`.
+- **On Windows:** flash an Ice from Studio.  nusb now implements control transfer timeouts on Windows, replacing the fork that did so, and the mass erase status poll is what needed them.  Vary the timeout to prove it is honoured rather than only that flashing works: a short one must fail after roughly that long, where before it always failed at WinUSB's fixed 5s.
+- **On Windows:** flash a Fire, and run `onerom scan` and `onerom inspect`.  picoboot's `GET_COMMAND_STATUS` read now genuinely uses its 1s timeout, where WinUSB previously gave it 5s regardless.  Both callers treat a failure as non-fatal, so a regression would show as a slower or noisier connect rather than an outright error.
+- Analyze a Fire from Studio with a debug probe attached — the path that panicked before v0.1.3 and was fixed in a probe-rs fork, now on upstream probe-rs 0.32.
 
 To do (before release):
 - Web programmer S-record support, in `one-rom-wasm` and `one-rom-site`.  The format picker is driven by `file_formats()` and will list `srec` on its own, but the site's `accept` list, its extension auto-select and its load-address reveal (currently shown for `ihex` only) all need widening.

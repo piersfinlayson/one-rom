@@ -80,7 +80,7 @@ hex = "0.4"
 iced = { version = "0.13", features = ["tokio", "image"] }
 log = "0.4"
 open = "5.3"
-probe-rs = { git = "https://github.com/piersfinlayson/probe-rs.git", version = "0.30", features = [] }
+probe-rs = { version = "0.32", features = [] }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "charset"] }
 resvg = "0.45"
 rfd = "0.15"

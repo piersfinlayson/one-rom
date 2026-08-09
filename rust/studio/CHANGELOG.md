@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.2.2 - 2026-??-??
+
+- Move to probe-rs 0.32 from crates.io.  The panic when analyzing a Fire with a debug probe, which v0.1.3 worked around by moving to a fork, is fixed upstream, and reports which target/debug port combination was at fault instead of crashing.
+
 ## v0.2.1 - 2026-08-09
 
 - Support devices with overridden serials
