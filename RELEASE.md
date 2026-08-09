@@ -63,12 +63,14 @@ cargo publish -p onerom-protocol
 
 ---
 
-Publish `onerom-config` to crates.io:
+Publish `onerom-config` to crates.io.  Its build script writes into `src/` and
+`../../docs/CHIP-TYPES.md`, which the verification build rejects, so this one
+needs `--no-verify` - and for the same reason `--dry-run` cannot be used to
+rehearse it:
 
 ```bash
 cd rust
-cargo publish --dry-run -p onerom-config
-cargo publish -p onerom-config
+cargo publish --no-verify -p onerom-config
 ```
 
 Update links to and `onerom-config` in others to use the crates.io versions.
@@ -147,6 +149,13 @@ cargo publish -p onerom-cli
 ---
 
 If on a branch, submit a pull request and merge it into main.
+
+## Plugins
+
+Build and release any plugins whose version changed this cycle, following
+[plugins/RELEASE.md](/plugins/RELEASE.md).  Build them individually rather than
+with `build-release-all.sh` unless every plugin is being released, since that
+script stages every plugin carrying a `plugin-meta.json`.
 
 Tag the version in git:
 

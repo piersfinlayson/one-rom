@@ -2,6 +2,17 @@
 
 All notables changes between versions are documented in this file.
 
+## v0.7.2 - 2026-??-??
+
+Headline changes in this release:
+-
+
+In detail:
+-
+
+To publish:
+-
+
 ## v0.7.1 - 2026-08-09
 
 Headline changes in this release:
