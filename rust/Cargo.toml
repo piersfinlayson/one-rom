@@ -51,7 +51,7 @@ wildcard_enum_match_arm = "warn"
 
 [workspace.dependencies]
 onerom-app = { path="app", version="0.2.0" }
-onerom-cli = { path="cli", version="0.3.0" }
+onerom-cli = { path="cli", version="0.3.1" }
 onerom-config = { path="config", version="0.6.0" }
 onerom-database = { path="database", version="0.1.2" }
 onerom-fw = { path="fw", version="0.2.0" }

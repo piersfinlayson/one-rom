@@ -11,7 +11,10 @@ In detail:
 -
 
 To publish:
--
+- Rust crates (in dependency order):
+  - onerom-cli 0.3.1
+- CLI bin 0.3.1
+- Studio 0.2.2
 
 ## v0.7.1 - 2026-08-09
 
