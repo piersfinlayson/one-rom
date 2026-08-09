@@ -38,6 +38,7 @@ firmware/ora/onerom_metadata_keys_generated.h
 
 dist/
 output/
+!rust/lab/src/output/
 !rust/lab-new/src/output/
 
 # Rust build artifacts

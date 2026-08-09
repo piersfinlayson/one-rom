@@ -114,6 +114,9 @@ fn main() {
                 report.begin_slot(idx, sel, &label);
                 run_slot_gpio_only(&mut report, board, &config, &base_dir, log_enabled, idx);
             }
+            // `ChipSetType` is `#[non_exhaustive]`; a new kind of set needs a
+            // decision on how it is exercised rather than being skipped.
+            ref other => panic!("plugin-api-tester has no handling for chip set type {other:?}"),
         }
     }
 

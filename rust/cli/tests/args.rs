@@ -248,7 +248,10 @@ fn image_convert_rejects_an_unknown_format_before_touching_files() {
 #[test]
 fn image_convert_lists_its_formats_in_help() {
     let help = stdout(onerom().args(["image", "convert", "--help"]));
-    assert!(help.contains("[possible values: binary, ihex]"), "{help}");
+    assert!(
+        help.contains("[possible values: binary, ihex, srec]"),
+        "{help}"
+    );
 }
 
 /// The aliases predate the value parser and must survive it - a plain list of

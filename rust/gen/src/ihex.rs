@@ -4,12 +4,19 @@
 
 //! Intel HEX decoding for supplied ROM images.
 //!
-//! A ROM image supplied to the generator may be a raw binary or an Intel HEX
-//! file (selected via [`FileFormat`](crate::FileFormat) on the chip config).
-//! Intel HEX is an ASCII, record-oriented format that carries a load address
-//! per record, so it describes *where* each chunk of data lands rather than a
-//! flat blob.  [`decode_ihex`] turns such a file into the contiguous binary
-//! image the rest of the generator expects.
+//! A ROM image supplied to the generator may be a raw binary, an Intel HEX file
+//! or a Motorola S-record file (selected via [`FileFormat`](crate::FileFormat)
+//! on the chip config).  Intel HEX is an ASCII, record-oriented format that
+//! carries a load address per record, so it describes *where* each chunk of
+//! data lands rather than a flat blob.  [`decode_ihex`] turns such a file into
+//! the contiguous binary image the rest of the generator expects.
+//!
+//! The image assembly itself — extent sizing, gap filling, overlap detection
+//! and the load-address mapping — is shared with [`srec`](crate::srec) and
+//! lives in [`hexfile`](crate::hexfile).  What is specific to Intel HEX, and so
+//! lives here, is the record framing: the `:` marker, the record types below,
+//! the two-byte address plus extended-base records, and the two's-complement
+//! checksum.
 //!
 //! ## Supported record types
 //!
@@ -32,9 +39,10 @@
 //! offset (so a ROM assembled at, say, `0xE000` uses `load_address = 0xE000`
 //! to land at offset 0).  A record addressing a byte below `load_address` is
 //! an error.  The returned image is sized to its own extent (highest ROM
-//! offset + 1); gaps within it are filled with [`IHEX_BLANK_BYTE`].
-//! Reconciling that image against the target chip size is the caller's job,
-//! via the usual [`SizeHandling`](crate::SizeHandling).
+//! offset + 1); gaps within it are filled with
+//! [`UNWRITTEN_BYTE`](crate::UNWRITTEN_BYTE).  Reconciling that image against
+//! the target chip size is the caller's job, via the usual
+//! [`SizeHandling`](crate::SizeHandling).
 //!
 //! ## Deliberate deviations and policy choices
 //!
@@ -50,158 +58,19 @@
 //! - **Overlapping data records are an error** — two records writing the same
 //!   ROM offset almost always indicates a malformed or misunderstood file.
 
-use alloc::borrow::ToOwned;
 use alloc::string::String;
 use alloc::vec::Vec;
 
-use crate::MAX_IMAGE_SIZE;
+use crate::hexfile::{ImageAccumulator, PlaceError, decode_hex_pairs, push_hex8};
 
-/// Fill byte for any address an Intel HEX image leaves unwritten.
-///
-/// Distinct from [`PAD_BLANK_BYTE`](crate::PAD_BLANK_BYTE) (`0xAA`), which
-/// pads raw binary images out to the chip size.  An unprogrammed ROM cell
-/// reads as `0xFF`, so that is what unwritten addresses in an Intel HEX image
-/// become — both gaps within the image and, when the user opts into
-/// [`SizeHandling::Pad`](crate::SizeHandling::Pad), the padding out to the
-/// chip size.
-pub const IHEX_BLANK_BYTE: u8 = 0xFF;
-
-/// An Intel HEX load address: the absolute address that maps to byte 0 of the
-/// decoded ROM image.
-///
-/// Deserialises from either a JSON number or a string.  String forms accept a
-/// plain decimal value, or hexadecimal prefixed with `0x` or `$`
-/// (e.g. `"0xE000"`, `"$E000"`).  Serialises back to a `0x`-prefixed
-/// hexadecimal string.  Defaults to 0.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-pub struct LoadAddress(pub usize);
-
-impl LoadAddress {
-    /// Returns true if this is the default (zero) load address.
-    pub fn is_zero(&self) -> bool {
-        self.0 == 0
-    }
-
-    /// Parses a load address from a string: a plain decimal value, or
-    /// hexadecimal prefixed with `0x`/`0X` or `$`.  Reused by the CLI `--slot`
-    /// parser so config and command line accept identical spellings.
-    pub fn parse_str(s: &str) -> Result<Self, AddressParseError> {
-        let trimmed = s.trim();
-        let value = if let Some(hex) = trimmed.strip_prefix('$') {
-            usize::from_str_radix(hex, 16)
-        } else if let Some(hex) = trimmed
-            .strip_prefix("0x")
-            .or_else(|| trimmed.strip_prefix("0X"))
-        {
-            usize::from_str_radix(hex, 16)
-        } else {
-            trimmed.parse::<usize>()
-        };
-        value
-            .map(LoadAddress)
-            .map_err(|_| AddressParseError::new(trimmed))
-    }
-}
-
-impl serde::Serialize for LoadAddress {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        // Emit as a `0x`-prefixed hex string; round-trips through parse_str and
-        // reads naturally for an address.
-        serializer.serialize_str(&alloc::format!("{:#x}", self.0))
-    }
-}
-
-impl<'de> serde::Deserialize<'de> for LoadAddress {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        struct LoadAddressVisitor;
-
-        impl serde::de::Visitor<'_> for LoadAddressVisitor {
-            type Value = LoadAddress;
-
-            fn expecting(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
-                f.write_str(
-                    "a load address as a non-negative number, or a decimal / 0x- / $-prefixed hex string",
-                )
-            }
-
-            fn visit_u64<E>(self, v: u64) -> Result<LoadAddress, E>
-            where
-                E: serde::de::Error,
-            {
-                usize::try_from(v)
-                    .map(LoadAddress)
-                    .map_err(|_| E::custom("load address out of range"))
-            }
-
-            fn visit_i64<E>(self, v: i64) -> Result<LoadAddress, E>
-            where
-                E: serde::de::Error,
-            {
-                usize::try_from(v)
-                    .map(LoadAddress)
-                    .map_err(|_| E::custom("load address must be non-negative and in range"))
-            }
-
-            fn visit_str<E>(self, v: &str) -> Result<LoadAddress, E>
-            where
-                E: serde::de::Error,
-            {
-                LoadAddress::parse_str(v).map_err(E::custom)
-            }
-        }
-
-        deserializer.deserialize_any(LoadAddressVisitor)
-    }
-}
-
-#[cfg(feature = "schemars")]
-impl schemars::JsonSchema for LoadAddress {
-    fn schema_name() -> alloc::borrow::Cow<'static, str> {
-        "LoadAddress".into()
-    }
-
-    fn json_schema(_generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
-        schemars::json_schema!({
-            "description": "Intel HEX load address: a non-negative integer, or a string in decimal or 0x-/$-prefixed hexadecimal.",
-            "oneOf": [
-                { "type": "integer", "minimum": 0 },
-                { "type": "string", "pattern": r"^(0[xX]|\$)?[0-9a-fA-F]+$" }
-            ]
-        })
-    }
-}
-
-/// Error returned when a [`LoadAddress`] string cannot be parsed.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct AddressParseError {
-    input: String,
-}
-
-impl AddressParseError {
-    fn new(input: &str) -> Self {
-        Self {
-            input: input.to_owned(),
-        }
-    }
-}
-
-impl core::fmt::Display for AddressParseError {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(
-            f,
-            "invalid load address '{}': expected a decimal value or hexadecimal prefixed with 0x or $",
-            self.input
-        )
-    }
-}
+// `LoadAddress` and `AddressParseError` describe a load address for any
+// record-oriented format, so they live in `hexfile` — re-exported here because
+// this is where they started life and `onerom_gen::ihex::LoadAddress` is a
+// path callers may have taken.
+pub use crate::hexfile::{AddressParseError, LoadAddress};
 
 /// Error returned when decoding an Intel HEX image.
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum IhexError {
     /// A record did not begin with the `:` start-of-record marker.
@@ -282,6 +151,26 @@ impl core::fmt::Display for IhexError {
     }
 }
 
+impl IhexError {
+    /// Attaches the offending line number to a [`PlaceError`] from the shared
+    /// image accumulator.  `OverlappingData` and `ImageTooLarge` are reported
+    /// against the image rather than a line, so they drop it.
+    fn from_place(source: PlaceError, line: usize) -> Self {
+        match source {
+            PlaceError::AddressBelowLoad {
+                address,
+                load_address,
+            } => IhexError::AddressBelowLoad {
+                line,
+                address,
+                load_address,
+            },
+            PlaceError::Overlap { offset } => IhexError::OverlappingData { offset },
+            PlaceError::TooLarge { size, max } => IhexError::ImageTooLarge { size, max },
+        }
+    }
+}
+
 /// A single decoded Intel HEX record.
 struct Record {
     address: u16,
@@ -293,22 +182,20 @@ struct Record {
 ///
 /// The returned image is sized to the Intel HEX image's own extent (its
 /// highest written ROM offset + 1); any gaps within that extent are filled
-/// with [`IHEX_BLANK_BYTE`].  `load_address` is subtracted from every record's
-/// absolute address to yield its ROM offset; a record addressing a byte below
-/// `load_address` is an error.  Reconciling the returned image against the
-/// target chip size (padding/truncating) is the caller's responsibility — this
-/// returns exactly what the Intel HEX file describes.
+/// with [`UNWRITTEN_BYTE`](crate::UNWRITTEN_BYTE).  `load_address` is
+/// subtracted from every record's absolute address to yield its ROM offset; a
+/// record addressing a byte below `load_address` is an error.  Reconciling the
+/// returned image against the target chip size (padding/truncating) is the
+/// caller's responsibility — this returns exactly what the Intel HEX file
+/// describes.
 ///
 /// See the [module documentation](self) for the supported record types and the
 /// validation and policy rules.
 pub fn decode_ihex(input: &[u8], load_address: usize) -> Result<Vec<u8>, IhexError> {
-    let mut image: Vec<u8> = Vec::new();
-    // Parallel "was this offset written?" map, for overlap detection.
-    let mut written: Vec<bool> = Vec::new();
+    let mut acc = ImageAccumulator::new();
     // Base address contributed by the most recent type 0x02/0x04 record.
     let mut extended_base: usize = 0;
     let mut seen_eof = false;
-    let mut any_data = false;
 
     for (idx, raw_line) in input.split(|&b| b == b'\n').enumerate() {
         let line_no = idx + 1;
@@ -325,41 +212,14 @@ pub fn decode_ihex(input: &[u8], load_address: usize) -> Result<Vec<u8>, IhexErr
         match record.record_type {
             // Data
             0x00 => {
-                if !record.data.is_empty() {
-                    any_data = true;
-                }
-                for (i, &byte) in record.data.iter().enumerate() {
-                    let address = extended_base
-                        .checked_add(record.address as usize)
-                        .and_then(|a| a.checked_add(i))
-                        .ok_or(IhexError::ImageTooLarge {
-                            size: usize::MAX,
-                            max: MAX_IMAGE_SIZE,
-                        })?;
-                    if address < load_address {
-                        return Err(IhexError::AddressBelowLoad {
-                            line: line_no,
-                            address,
-                            load_address,
-                        });
-                    }
-                    let offset = address - load_address;
-                    if offset >= MAX_IMAGE_SIZE {
-                        return Err(IhexError::ImageTooLarge {
-                            size: offset + 1,
-                            max: MAX_IMAGE_SIZE,
-                        });
-                    }
-                    if offset >= image.len() {
-                        image.resize(offset + 1, IHEX_BLANK_BYTE);
-                        written.resize(offset + 1, false);
-                    }
-                    if written[offset] {
-                        return Err(IhexError::OverlappingData { offset });
-                    }
-                    written[offset] = true;
-                    image[offset] = byte;
-                }
+                let address = extended_base.checked_add(record.address as usize).ok_or(
+                    IhexError::ImageTooLarge {
+                        size: usize::MAX,
+                        max: crate::MAX_IMAGE_SIZE,
+                    },
+                )?;
+                acc.place(address, load_address, &record.data)
+                    .map_err(|e| IhexError::from_place(e, line_no))?;
             }
             // End Of File
             0x01 => seen_eof = true,
@@ -394,11 +254,11 @@ pub fn decode_ihex(input: &[u8], load_address: usize) -> Result<Vec<u8>, IhexErr
     if !seen_eof {
         return Err(IhexError::MissingEof);
     }
-    if !any_data {
+    if acc.is_empty() {
         return Err(IhexError::NoData);
     }
 
-    Ok(image)
+    Ok(acc.into_image())
 }
 
 /// Parses one already-trimmed, non-empty Intel HEX record line.
@@ -406,20 +266,7 @@ fn parse_record(line: &[u8], line_no: usize) -> Result<Record, IhexError> {
     if line.first() != Some(&b':') {
         return Err(IhexError::MissingColon { line: line_no });
     }
-    let hex = &line[1..];
-    if !hex.len().is_multiple_of(2) {
-        return Err(IhexError::BadHex { line: line_no });
-    }
-
-    // Decode the hex pairs into raw bytes.
-    let mut bytes = Vec::with_capacity(hex.len() / 2);
-    let mut i = 0;
-    while i < hex.len() {
-        let hi = hex_val(hex[i]).ok_or(IhexError::BadHex { line: line_no })?;
-        let lo = hex_val(hex[i + 1]).ok_or(IhexError::BadHex { line: line_no })?;
-        bytes.push((hi << 4) | lo);
-        i += 2;
-    }
+    let bytes = decode_hex_pairs(&line[1..]).ok_or(IhexError::BadHex { line: line_no })?;
 
     // Minimum record is count(1) + address(2) + type(1) + checksum(1).
     if bytes.len() < 5 {
@@ -431,7 +278,8 @@ fn parse_record(line: &[u8], line_no: usize) -> Result<Record, IhexError> {
     }
 
     // The two's-complement checksum makes every byte (checksum included) sum to
-    // zero modulo 256.
+    // zero modulo 256.  (S-records use a ones' complement instead — see
+    // `srec`.)
     let sum = bytes.iter().fold(0u8, |acc, &b| acc.wrapping_add(b));
     if sum != 0 {
         let data_sum = bytes[..bytes.len() - 1]
@@ -452,16 +300,6 @@ fn parse_record(line: &[u8], line_no: usize) -> Result<Record, IhexError> {
         record_type,
         data,
     })
-}
-
-/// Converts a single ASCII hex digit to its value.
-fn hex_val(c: u8) -> Option<u8> {
-    match c {
-        b'0'..=b'9' => Some(c - b'0'),
-        b'a'..=b'f' => Some(c - b'a' + 10),
-        b'A'..=b'F' => Some(c - b'A' + 10),
-        _ => None,
-    }
 }
 
 /// Encodes a binary image as Intel HEX text.
@@ -501,13 +339,6 @@ pub fn encode_ihex(data: &[u8], load_address: usize) -> String {
     out
 }
 
-/// Appends one byte as two uppercase hex characters.
-fn push_hex8(out: &mut String, byte: u8) {
-    const HEX: &[u8; 16] = b"0123456789ABCDEF";
-    out.push(HEX[(byte >> 4) as usize] as char);
-    out.push(HEX[(byte & 0x0F) as usize] as char);
-}
-
 /// Appends a type-00 data record (`:LLAAAA00DD..CC`) plus CRLF.
 fn push_data_record(out: &mut String, address: u16, data: &[u8]) {
     let byte_count = data.len() as u8;
@@ -543,52 +374,7 @@ fn push_ela_record(out: &mut String, upper: u16) {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn parse_str_accepts_decimal_and_hex_forms() {
-        assert_eq!(LoadAddress::parse_str("0").unwrap(), LoadAddress(0));
-        assert_eq!(
-            LoadAddress::parse_str("57344").unwrap(),
-            LoadAddress(0xE000)
-        );
-        assert_eq!(
-            LoadAddress::parse_str("0xE000").unwrap(),
-            LoadAddress(0xE000)
-        );
-        assert_eq!(
-            LoadAddress::parse_str("0Xe000").unwrap(),
-            LoadAddress(0xE000)
-        );
-        assert_eq!(
-            LoadAddress::parse_str("$E000").unwrap(),
-            LoadAddress(0xE000)
-        );
-        assert_eq!(
-            LoadAddress::parse_str("  $E000 ").unwrap(),
-            LoadAddress(0xE000)
-        );
-        assert!(LoadAddress::parse_str("").is_err());
-        assert!(LoadAddress::parse_str("$").is_err());
-        assert!(LoadAddress::parse_str("0xZZ").is_err());
-        assert!(LoadAddress::parse_str("nope").is_err());
-    }
-
-    #[test]
-    fn load_address_serde_round_trips() {
-        // Number and string inputs both deserialise; output is a hex string.
-        let from_num: LoadAddress = serde_json::from_str("57344").unwrap();
-        assert_eq!(from_num, LoadAddress(0xE000));
-        let from_hex: LoadAddress = serde_json::from_str("\"0xE000\"").unwrap();
-        assert_eq!(from_hex, LoadAddress(0xE000));
-        let from_dollar: LoadAddress = serde_json::from_str("\"$E000\"").unwrap();
-        assert_eq!(from_dollar, LoadAddress(0xE000));
-        assert_eq!(
-            serde_json::to_string(&LoadAddress(0xE000)).unwrap(),
-            "\"0xe000\""
-        );
-        // A negative number is rejected.
-        assert!(serde_json::from_str::<LoadAddress>("-1").is_err());
-    }
+    use crate::UNWRITTEN_BYTE;
 
     /// Builds a single data record line for the given 16-bit address.
     fn data_record(address: u16, data: &[u8]) -> String {
@@ -624,7 +410,7 @@ mod tests {
         let out = decode_ihex(hex.as_bytes(), 0).unwrap();
         assert_eq!(
             out,
-            alloc::vec![0x11, 0x22, IHEX_BLANK_BYTE, IHEX_BLANK_BYTE, 0x33, 0x44]
+            alloc::vec![0x11, 0x22, UNWRITTEN_BYTE, UNWRITTEN_BYTE, 0x33, 0x44]
         );
     }
 
@@ -669,7 +455,7 @@ mod tests {
         let out = decode_ihex(hex.as_bytes(), 0).unwrap();
         assert_eq!(out.len(), 0x10001);
         assert_eq!(out[0x10000], 0x99);
-        assert_eq!(out[0], IHEX_BLANK_BYTE);
+        assert_eq!(out[0], UNWRITTEN_BYTE);
     }
 
     #[test]

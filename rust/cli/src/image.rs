@@ -6,7 +6,9 @@
 
 use crate::args::image::{ImageConvertArgs, ImageDeinterleaveArgs, ImageSwapBytesArgs};
 use onerom_cli::{Error, Options};
-use onerom_gen::{FileFormat, SizeHandling, Transform, decode_ihex, encode_ihex};
+use onerom_gen::{
+    FileFormat, SizeHandling, Transform, decode_ihex, decode_srec, encode_ihex, encode_srec,
+};
 
 /// Apply a single transform to a standalone image file.
 ///
@@ -88,6 +90,23 @@ pub async fn cmd_deinterleave(
     transform_file(options, &args.input, &args.output, &transform, &what)
 }
 
+/// A format `onerom-gen` knows but this command has no conversion for.
+///
+/// [`FileFormat`] is `#[non_exhaustive]`, so a format added there reaches
+/// `--from`/`--to` (which enumerate it) before it reaches the match arms here.
+/// Reporting it is better than a panic, and the workspace's
+/// `wildcard_enum_match_arm` lint fires on the arm that routes here as soon as
+/// that happens.
+fn unsupported_format(arg: &str, format: FileFormat) -> Error {
+    Error::InvalidArgument(
+        arg.to_string(),
+        format!(
+            "conversion is not implemented for {} images",
+            format.display_name()
+        ),
+    )
+}
+
 pub async fn cmd_convert(options: &Options, args: &ImageConvertArgs) -> Result<(), Error> {
     // --from/--to are validated by clap against onerom-gen's format list, and
     // --load-address by the same parser the config file uses, so both arrive
@@ -95,11 +114,12 @@ pub async fn cmd_convert(options: &Options, args: &ImageConvertArgs) -> Result<(
     let (from, to) = (args.from, args.to);
     let load_address = args.load_address.unwrap_or_default();
 
-    // A load address only means anything when Intel HEX is on one side.
-    if from == FileFormat::Binary && to == FileFormat::Binary && !load_address.is_zero() {
+    // A load address only means anything when a record-oriented format, whose
+    // records carry addresses, is on one side.
+    if from.is_binary() && to.is_binary() && !load_address.is_zero() {
         return Err(Error::InvalidArgument(
             "--load-address".to_string(),
-            "load address is only valid when converting to or from ihex".to_string(),
+            "load address is only valid when converting to or from ihex or srec".to_string(),
         ));
     }
 
@@ -109,14 +129,26 @@ pub async fn cmd_convert(options: &Options, args: &ImageConvertArgs) -> Result<(
     let data = std::fs::read(&args.input).map_err(|e| Error::io(&args.input, e))?;
 
     // Decode to a flat binary, then re-encode into the requested format.
+    let decode_err = |e: String| Error::ImageDecode {
+        path: args.input.clone(),
+        format: from,
+        message: e,
+    };
     let binary = match from {
         FileFormat::Binary => data,
-        FileFormat::IntelHex => decode_ihex(&data, load_address.0)
-            .map_err(|e| Error::IhexDecode(args.input.clone(), e.to_string()))?,
+        FileFormat::IntelHex => {
+            decode_ihex(&data, load_address.0).map_err(|e| decode_err(e.to_string()))?
+        }
+        FileFormat::Srec => {
+            decode_srec(&data, load_address.0).map_err(|e| decode_err(e.to_string()))?
+        }
+        _ => return Err(unsupported_format("--from", from)),
     };
     let output_bytes = match to {
         FileFormat::Binary => binary,
         FileFormat::IntelHex => encode_ihex(&binary, load_address.0).into_bytes(),
+        FileFormat::Srec => encode_srec(&binary, load_address.0).into_bytes(),
+        _ => return Err(unsupported_format("--to", to)),
     };
 
     std::fs::write(&args.output, &output_bytes).map_err(|e| Error::io(&args.output, e))?;

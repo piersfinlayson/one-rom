@@ -64,6 +64,7 @@ pub fn socket_pin_offset(chip_pins: u8, board_pins: u8) -> Option<i16> {
 /// Bundles the board, set-level configuration, and chip-type information
 /// that would otherwise be threaded individually through each derivation
 /// function.
+#[non_exhaustive]
 pub struct SlotContext {
     /// The board being targeted.
     pub board: Board,

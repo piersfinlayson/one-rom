@@ -1,5 +1,17 @@
 # CLI Changelog
 
+## v0.4.0 - 2026-??-??
+
+- **Motorola S-record images are now accepted alongside Intel HEX.**
+  `--slot format=srec` decodes an S-record file to a binary image before it is
+  built in, with the same optional `load-address=` giving the absolute address
+  that maps to byte 0 of the ROM. Unwritten bytes read as `0xFF`.
+- **`onerom image convert` gains `srec`** on either side of `--from`/`--to`, so
+  it now converts between `binary`, `ihex` and `srec` in any direction,
+  including `ihex` to `srec` directly. S-record output uses one data record
+  type throughout — the narrowest that addresses the whole image — with the
+  paired terminator.
+
 ## v0.3.0 - 2026-08-09
 
 - **`--slot` now accepts every chip type the target firmware can serve on the

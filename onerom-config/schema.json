@@ -525,7 +525,7 @@
             }
         },
         "FileFormat": {
-            "description": "Format of a supplied ROM image file.\n\nThe default, [`FileFormat::Binary`], treats the supplied file as a raw\nbinary image.  [`FileFormat::IntelHex`] decodes an Intel HEX file into a\nbinary image before it is placed into the firmware; see the\n[`ihex`](crate::ihex) module for the supported record types and the\ndecoding rules.",
+            "description": "Format of a supplied ROM image file.\n\nThe default, [`FileFormat::Binary`], treats the supplied file as a raw\nbinary image.  The other variants are record-oriented text formats, decoded\nto a binary image before it is placed into the firmware: see the\n[`ihex`](crate::ihex) and [`srec`](crate::srec) modules for the record types\neach supports and the decoding rules.\n\nThis enum is `#[non_exhaustive]`: new formats may be added in a\nbackwards-compatible release, so a `match` on it needs a wildcard arm.",
             "oneOf": [
                 {
                     "description": "Raw binary image (default).",
@@ -536,6 +536,11 @@
                     "description": "Intel HEX image, decoded to a binary image before use.",
                     "type": "string",
                     "const": "ihex"
+                },
+                {
+                    "description": "Motorola S-record image, decoded to a binary image before use.",
+                    "type": "string",
+                    "const": "srec"
                 }
             ]
         },
@@ -752,7 +757,7 @@
             }
         },
         "LoadAddress": {
-            "description": "Intel HEX load address: a non-negative integer, or a string in decimal or 0x-/$-prefixed hexadecimal.",
+            "description": "Load address for a record-oriented image (Intel HEX or S-record): a non-negative integer, or a string in decimal or 0x-/$-prefixed hexadecimal.",
             "oneOf": [
                 {
                     "type": "integer",

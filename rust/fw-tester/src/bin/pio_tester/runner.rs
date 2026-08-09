@@ -251,6 +251,9 @@ fn run_chip_set(
         ChipSetType::Banked => run_banked_set(
             board, config, chip_set, set_idx, served_idx, sel_image, base_dir,
         ),
+        // `ChipSetType` is `#[non_exhaustive]`; a new kind of set needs a
+        // runner of its own rather than being silently skipped.
+        ref other => panic!("pio-tester has no runner for chip set type {other:?}"),
     }
 }
 
@@ -1629,6 +1632,9 @@ fn first_active_cs_polarity(chip_config: &ChipConfig, chip_type: ChipType) -> bo
                 Some(CsLogic::ActiveHigh) => Some(true),
                 Some(CsLogic::ActiveLow) => Some(false),
                 Some(CsLogic::Ignore) | None => None,
+                // `CsLogic` is `#[non_exhaustive]`; a new polarity needs a
+                // decision here rather than a silent default.
+                Some(ref other) => unimplemented!("unhandled CS logic {other:?}"),
             }
         })
         .unwrap_or_else(|| {

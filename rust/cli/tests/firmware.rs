@@ -824,3 +824,115 @@ fn firmware_build_slot_v2_only_chip_on_v1_names_the_minimum_version() {
         String::from_utf8_lossy(&out.stderr)
     );
 }
+
+/// A firmware built from the same image in each supported format must be
+/// byte-identical.
+///
+/// The generator's own tests cover the decoders; this covers the CLI wiring
+/// between `--slot format=`/`load-address=` and them, which is what would
+/// silently pass the wrong load address or the wrong decoder.  `label=` is set
+/// so the filename recorded in the metadata is the same for all three and the
+/// comparison is about image content alone.
+#[test]
+fn binary_ihex_and_srec_slots_build_identical_firmware() {
+    let dir = tempfile::tempdir().unwrap();
+    let data: Vec<u8> = (0..8192u32)
+        .map(|i| (i.wrapping_mul(37) ^ 0x5A) as u8)
+        .collect();
+    let bin = dir.path().join("rom.bin");
+    std::fs::write(&bin, &data).unwrap();
+
+    // The images are assembled at 0xE000, so each record format also has to
+    // apply the load address to land back at ROM offset 0.
+    for (to, name) in [("ihex", "rom.hex"), ("srec", "rom.s19")] {
+        succeeds(onerom().args([
+            "image",
+            "convert",
+            "--from",
+            "binary",
+            "--to",
+            to,
+            "--input",
+            bin.to_str().unwrap(),
+            "--output",
+            dir.path().join(name).to_str().unwrap(),
+            "--load-address",
+            "0xE000",
+        ]));
+    }
+
+    let build = |file: &str, format: Option<&str>| -> Vec<u8> {
+        let out = dir.path().join(format!("fw-{file}.bin"));
+        let mut spec = format!(
+            "file={},label=rom,type=2364,cs1=active-low",
+            dir.path().join(file).to_str().unwrap()
+        );
+        if let Some(format) = format {
+            spec.push_str(&format!(",format={format},load-address=0xE000"));
+        }
+        let result = onerom()
+            .args([
+                "firmware",
+                "build",
+                "--board",
+                representative_board(24),
+                "--slot",
+                &spec,
+                "--output",
+                out.to_str().unwrap(),
+            ])
+            .output()
+            .unwrap();
+        assert!(
+            result.status.success(),
+            "build from {file} failed: {}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        std::fs::read(&out).unwrap()
+    };
+
+    let from_binary = build("rom.bin", None);
+    assert!(!from_binary.is_empty(), "build produced no firmware");
+    assert_eq!(build("rom.hex", Some("ihex")), from_binary);
+    assert_eq!(build("rom.s19", Some("srec")), from_binary);
+}
+
+/// Omitting the load address for an image assembled high in the address space
+/// makes its extent overshoot the chip — the clean error that catches the
+/// mistake, rather than a silently misplaced image.
+#[test]
+fn srec_slot_without_its_load_address_is_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    let bin = dir.path().join("rom.bin");
+    let srec = dir.path().join("rom.s19");
+    std::fs::write(&bin, vec![0x5Au8; 8192]).unwrap();
+    succeeds(onerom().args([
+        "image",
+        "convert",
+        "--from",
+        "binary",
+        "--to",
+        "srec",
+        "--input",
+        bin.to_str().unwrap(),
+        "--output",
+        srec.to_str().unwrap(),
+        "--load-address",
+        "0xE000",
+    ]));
+
+    let spec = |with_load_address: bool| {
+        let mut s = format!(
+            "file={},type=2364,cs1=active-low,format=srec",
+            srec.to_str().unwrap()
+        );
+        if with_load_address {
+            s.push_str(",load-address=0xE000");
+        }
+        s
+    };
+
+    // Control: with the load address it builds.
+    slot_succeeds(representative_board(24), &[spec(true)]);
+    slot_fails(representative_board(24), &[spec(false)]);
+}

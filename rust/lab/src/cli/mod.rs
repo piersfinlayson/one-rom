@@ -42,6 +42,9 @@ pub enum OutputFormat {
     /// Intel HEX records (16-byte data records; extended linear address
     /// records emitted as needed for ROMs larger than 64 KB)
     IntelHex,
+    /// Motorola S-records (16-byte data records; one record type throughout,
+    /// the narrowest that addresses the whole dump)
+    Srec,
 }
 
 impl Display for OutputFormat {
@@ -50,6 +53,7 @@ impl Display for OutputFormat {
             Self::Checksum => write!(f, "checksum"),
             Self::HexDump => write!(f, "hexdump"),
             Self::IntelHex => write!(f, "intelhex"),
+            Self::Srec => write!(f, "srec"),
         }
     }
 }
@@ -61,11 +65,13 @@ impl OutputFormat {
     /// - `cs` or `checksum`
     /// - `hex` or `hexdump`
     /// - `ihex` or `intelhex`
+    /// - `srec` or `s19`
     pub fn from_str(s: &str) -> Option<Self> {
         match s.to_ascii_lowercase().as_str() {
             "cs" | "checksum" => Some(Self::Checksum),
             "hex" | "hexdump" => Some(Self::HexDump),
             "ihx" | "ihex" | "intelhex" => Some(Self::IntelHex),
+            "srec" | "s19" | "srecord" => Some(Self::Srec),
             _ => None,
         }
     }
@@ -75,6 +81,7 @@ impl OutputFormat {
             Self::Checksum => "cs",
             Self::HexDump => "hex",
             Self::IntelHex => "ihex",
+            Self::Srec => "srec",
         }
     }
 }

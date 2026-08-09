@@ -24,6 +24,7 @@ use crate::image::{CsConfig, CsLogic};
 /// `ChipType::control_lines()`, allowing GPIO lookups for either the
 /// address-layout span or the CS-data-layout select lines.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum ControlLineKind {
     Ce,
     Oe,

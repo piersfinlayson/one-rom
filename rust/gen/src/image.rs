@@ -59,6 +59,7 @@ pub const MAX_IMAGE_SIZE: usize = 512 * 1024;
 #[derive(Debug, Default, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+#[non_exhaustive]
 pub enum SizeHandling {
     /// No special handling.  Errors if the image size does not exactly match
     /// the Chip size.
@@ -108,10 +109,14 @@ impl core::fmt::Display for SizeHandling {
 /// Format of a supplied ROM image file.
 ///
 /// The default, [`FileFormat::Binary`], treats the supplied file as a raw
-/// binary image.  [`FileFormat::IntelHex`] decodes an Intel HEX file into a
-/// binary image before it is placed into the firmware; see the
-/// [`ihex`](crate::ihex) module for the supported record types and the
-/// decoding rules.
+/// binary image.  The other variants are record-oriented text formats, decoded
+/// to a binary image before it is placed into the firmware: see the
+/// [`ihex`](crate::ihex) and [`srec`](crate::srec) modules for the record types
+/// each supports and the decoding rules.
+///
+/// This enum is `#[non_exhaustive]`: new formats may be added in a
+/// backwards-compatible release, so a `match` on it needs a wildcard arm.
+#[non_exhaustive]
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
@@ -129,6 +134,17 @@ pub enum FileFormat {
         alias = "hex"
     )]
     IntelHex,
+
+    /// Motorola S-record image, decoded to a binary image before use.
+    #[serde(
+        rename = "srec",
+        alias = "s_record",
+        alias = "s-record",
+        alias = "srecord",
+        alias = "motorola",
+        alias = "s19"
+    )]
+    Srec,
 }
 
 impl FileFormat {
@@ -144,27 +160,34 @@ impl FileFormat {
         match self {
             FileFormat::Binary => "Binary",
             FileFormat::IntelHex => "Intel HEX",
+            FileFormat::Srec => "S-record",
         }
     }
 
     /// The canonical name of this format, as spelled in a config file and on
-    /// the command line. `"Binary"`/`"Intel HEX"` is
-    /// [`FileFormat::display_name`]; this is `"binary"`/`"ihex"`.
+    /// the command line. `"Binary"`/`"Intel HEX"`/`"S-record"` is
+    /// [`FileFormat::display_name`]; this is `"binary"`/`"ihex"`/`"srec"`.
     pub fn name(&self) -> &'static str {
         match self {
             FileFormat::Binary => "binary",
             FileFormat::IntelHex => "ihex",
+            FileFormat::Srec => "srec",
         }
     }
 
     /// Parses a format name case-insensitively, for command-line parsing.
-    /// Accepts `binary`/`bin`/`raw` for [`FileFormat::Binary`] and
+    /// Accepts `binary`/`bin`/`raw` for [`FileFormat::Binary`],
     /// `ihex`/`intel_hex`/`intel-hex`/`intelhex`/`hex` for
-    /// [`FileFormat::IntelHex`].
+    /// [`FileFormat::IntelHex`], and
+    /// `srec`/`s_record`/`s-record`/`srecord`/`motorola`/`s19` for
+    /// [`FileFormat::Srec`].
     pub fn try_from_str(s: &str) -> Option<Self> {
         match s.to_lowercase().as_str() {
             "binary" | "bin" | "raw" => Some(FileFormat::Binary),
             "ihex" | "intel_hex" | "intel-hex" | "intelhex" | "hex" => Some(FileFormat::IntelHex),
+            "srec" | "s_record" | "s-record" | "srecord" | "motorola" | "s19" => {
+                Some(FileFormat::Srec)
+            }
             _ => None,
         }
     }
@@ -179,9 +202,9 @@ impl FileFormat {
     /// their own.
     pub fn supported_values() -> &'static [Self] {
         match FileFormat::Binary {
-            FileFormat::Binary | FileFormat::IntelHex => {}
+            FileFormat::Binary | FileFormat::IntelHex | FileFormat::Srec => {}
         }
-        &[FileFormat::Binary, FileFormat::IntelHex]
+        &[FileFormat::Binary, FileFormat::IntelHex, FileFormat::Srec]
     }
 }
 
@@ -195,6 +218,7 @@ impl core::fmt::Display for FileFormat {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum CsLogic {
     /// Chip Select line is active low
     ActiveLow,
@@ -322,6 +346,7 @@ pub const fn requires_half_select_cs1(chip_type: &ChipType) -> bool {
 /// and the other is tied active (Ignore).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+#[non_exhaustive]
 pub enum CsConfig {
     /// Configuration of the 4 possible Chip Select lines
     ChipSelect {
@@ -521,6 +546,7 @@ impl CsConfig {
 /// Single Chip image.  May be part of a Chip set
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+#[non_exhaustive]
 pub struct Chip {
     index: usize,
 
@@ -607,8 +633,9 @@ impl Chip {
     /// `blank_byte` is the value used to fill any padding introduced by
     /// [`SizeHandling::Pad`] (and the automatic padding applied to plugin
     /// images).  Callers pass [`PAD_BLANK_BYTE`] for raw binary images and
-    /// [`IHEX_BLANK_BYTE`](crate::ihex::IHEX_BLANK_BYTE) for Intel HEX images,
-    /// which have already been decoded to a binary image by the caller.
+    /// [`UNWRITTEN_BYTE`](crate::UNWRITTEN_BYTE) for the record-oriented
+    /// formats, which have already been decoded to a binary image by the
+    /// caller.
     ///
     /// `transforms` are applied to the image after any `location` slice and
     /// before it is reconciled against the chip size; see the
@@ -1027,6 +1054,7 @@ impl Chip {
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum ChipSetType {
     /// Single Chip - the default
     #[default]
@@ -1044,6 +1072,7 @@ pub enum ChipSetType {
 /// A set of Chips, where the set type is ChipSetType
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+#[non_exhaustive]
 pub struct ChipSet {
     /// ID of the Chip set
     pub id: usize,

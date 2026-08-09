@@ -5,16 +5,32 @@ All notables changes between versions are documented in this file.
 ## v0.7.2 - 2026-??-??
 
 Headline changes in this release:
--
+- Motorola S-record ROM images, alongside Intel HEX, in the programming tools, the CLI's image converter and One ROM Lab.
 
 In detail:
--
+- Add Motorola S-record (`srec`) as a ROM image input format, alongside Intel HEX.  A chip may set `"format": "srec"` in a config file, with the same optional `"load_address"`; the CLI exposes it as `--slot format=srec,load-address=...`, and `onerom image convert` converts between `binary`, `ihex` and `srec` in any direction.  Unwritten bytes read as `0xFF`, as for Intel HEX.
+- One ROM Lab can dump a ROM as S-records: `f:srec`, alongside the existing `ihex` and hex dump formats.
+- **Breaking (Rust crates only):** `onerom_gen::FileFormat` and most of the crate's other public enums are now `#[non_exhaustive]`, so a `match` on one needs a wildcard arm; `IHEX_BLANK_BYTE` is renamed `UNWRITTEN_BYTE`, now that it is shared by both record formats, with the old name kept as a deprecated alias.  `LoadAddress` moves to a new `hexfile` module, re-exported from its old paths.
 
 To publish:
 - Rust crates (in dependency order):
-  - onerom-cli 0.3.1
-- CLI bin 0.3.1
+  - onerom-config 0.6.1
+  - onerom-metadata 0.2.0
+  - onerom-gen 0.8.0
+  - onerom-fw-parser 0.9.0
+  - onerom-fw 0.3.0
+  - onerom-app 0.3.0
+  - onerom-cli 0.4.0
+- Config schema
+- CLI bin 0.4.0
 - Studio 0.2.2
+
+To test (on hardware, before release):
+- Program a device from an S-record image and confirm it serves the right bytes — `onerom program --slot file=<rom>.s19,type=...,format=srec,load-address=$...`.  The build path is covered by tests; flashing and serving are not.
+- One ROM Lab's `f:srec` dump, which has no automated coverage at all: lab is a `thumbv8m` binary with no host tests, so its encoder is only verified against `onerom-gen`'s golden by inspection.  Dump a ROM as S-records and read it back with `onerom image convert --from srec --to binary`, comparing against the same ROM dumped as `ihex`.  Worth doing on a ROM larger than 64 KB too, which is the case that selects `S2`/`S8` records rather than `S1`/`S9`.
+
+To do (before release):
+- Web programmer S-record support, in `one-rom-wasm` and `one-rom-site`.  The format picker is driven by `file_formats()` and will list `srec` on its own, but the site's `accept` list, its extension auto-select and its load-address reveal (currently shown for `ihex` only) all need widening.
 
 ## v0.7.1 - 2026-08-09
 

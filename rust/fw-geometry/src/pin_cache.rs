@@ -138,6 +138,9 @@ impl PinCache {
                     Some(CsLogic::ActiveHigh) => true,
                     Some(CsLogic::ActiveLow) => false,
                     Some(CsLogic::Ignore) => unreachable!("filtered above"),
+                    // `CsLogic` is `#[non_exhaustive]`; a polarity added to it
+                    // needs a decision here rather than a silent default.
+                    Some(other) => unimplemented!("unhandled CS logic {other:?}"),
                     None => panic!(
                         "Chip {} has configurable CS line '{}' but no polarity \
                          is specified in the config — add cs1/cs2/cs3/cs4 field",

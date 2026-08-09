@@ -5,6 +5,7 @@
 //! Shared error type for the One ROM CLI library.
 
 use onerom_config::fw::FirmwareVersion;
+use onerom_gen::FileFormat;
 
 use crate::plugin::{PluginType, PluginVersion};
 
@@ -245,8 +246,12 @@ pub enum Error {
     )]
     PluginIncompatibleNewer(String, PluginVersion, FirmwareVersion, FirmwareVersion),
 
-    #[error("Failed to decode Intel HEX from '{0}':\n  {1}")]
-    IhexDecode(String, String),
+    #[error("Failed to decode {} from '{path}':\n  {message}", .format.display_name())]
+    ImageDecode {
+        path: String,
+        format: FileFormat,
+        message: String,
+    },
 
     #[error("Failed to transform ROM image '{0}':\n  {1}")]
     ImageTransform(String, String),

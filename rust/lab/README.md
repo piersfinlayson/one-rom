@@ -66,9 +66,9 @@ your last answer.
   ?/h This help
 ```
 
-Formats are `cs` (checksum and SHA1, the default), `hex` (hex dump) and `ihex`
-(Intel HEX).  Addresses are decimal unless prefixed `0x`, `0X` or `$`, and
-`len=0` means to the end of the ROM.
+Formats are `cs` (checksum and SHA1, the default), `hex` (hex dump), `ihex`
+(Intel HEX) and `srec` (Motorola S-record).  Addresses are decimal unless
+prefixed `0x`, `0X` or `$`, and `len=0` means to the end of the ROM.
 
 Commands are case sensitive — `B` sets the board, `b` starts a batch read.
 

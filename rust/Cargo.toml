@@ -50,18 +50,18 @@ resolver = "2"
 wildcard_enum_match_arm = "warn"
 
 [workspace.dependencies]
-onerom-app = { path="app", version="0.2.0" }
-onerom-cli = { path="cli", version="0.3.1" }
-onerom-config = { path="config", version="0.6.0" }
+onerom-app = { path="app", version="0.3.0" }
+onerom-cli = { path="cli", version="0.4.0" }
+onerom-config = { path="config", version="0.6.1" }
 onerom-database = { path="database", version="0.1.2" }
-onerom-fw = { path="fw", version="0.2.0" }
+onerom-fw = { path="fw", version="0.3.0" }
 onerom-fw-driver = { path="fw-driver", version="0.1.0" }
 onerom-fw-emulator = { path="fw-emulator", version="0.1.0" }
 onerom-fw-geometry = { path="fw-geometry", version="0.1.0" }
-onerom-fw-parser = { path="fw-parser", version="0.8.0" }
+onerom-fw-parser = { path="fw-parser", version="0.9.0" }
 onerom-fw-tester = { path="fw-tester", version="0.1.0" }
-onerom-gen = { path="gen", version="0.7.0" }
-onerom-metadata = { path="metadata", version="0.1.4" }
+onerom-gen = { path="gen", version="0.8.0" }
+onerom-metadata = { path="metadata", version="0.2.0" }
 onerom-protocol = { path="protocol", version="0.1.1" }
 
 [profile.release]

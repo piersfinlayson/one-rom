@@ -8,7 +8,7 @@ This manual is in two parts. The **Guide** walks through installation and the
 common workflows. The **Reference** documents every command, subcommand and
 option.
 
-> This manual documents the `onerom` CLI as of release v0.3.0. Board,
+> This manual documents the `onerom` CLI as of release v0.4.0. Board,
 > chip and plugin lists shown in examples are illustrative — the set your build
 > supports may differ. Run `onerom --version` to check your version, and
 > `onerom board list` / `onerom chips` for the definitive lists your build knows
@@ -1107,25 +1107,31 @@ Device required: no.
 ### image convert
 
 Convert a ROM image between formats. Reads `--input` in the `--from` format and
-writes `--output` in the `--to` format. Formats: `binary` (aliases `bin`, `raw`)
-and `ihex` (Intel HEX; aliases `intel-hex`, `intel_hex`). The format set is
-designed to grow — further formats can be added without changing the command.
+writes `--output` in the `--to` format. Formats: `binary` (aliases `bin`,
+`raw`), `ihex` (Intel HEX; aliases `intel-hex`, `intel_hex`) and `srec`
+(Motorola S-record; aliases `s-record`, `s_record`, `srecord`, `motorola`,
+`s19`). Any format can be converted to any other, including `ihex` to `srec`.
+The format set is designed to grow — further formats can be added without
+changing the command.
 
 ```
 onerom image convert --from ihex --to binary --input rom.hex --output rom.bin
-onerom image convert --from binary --to ihex --input rom.bin --output rom.hex --load-address $E000
+onerom image convert --from binary --to srec --input rom.bin --output rom.s19 --load-address $E000
 ```
 
 | Option | Description |
 |---|---|
-| `--from <FORMAT>` | Input format: `binary` or `ihex`. |
-| `--to <FORMAT>` | Output format: `binary` or `ihex`. |
+| `--from <FORMAT>` | Input format: `binary`, `ihex` or `srec`. |
+| `--to <FORMAT>` | Output format: `binary`, `ihex` or `srec`. |
 | `--input, -i <FILE>` (alias `--in`) | Input ROM image file. |
 | `--output, -o <FILE>` (alias `--out`) | Output file path. |
-| `--load-address <ADDR>` | Intel HEX load address (decimal, or `0x`/`$`-prefixed hex). Only valid when one side is `ihex`; subtracted when reading ihex, used as the base when writing ihex. Defaults to `0`. |
+| `--load-address <ADDR>` | Load address (decimal, or `0x`/`$`-prefixed hex). Only valid when one side is `ihex` or `srec`; subtracted when reading that format, used as the base when writing it. Defaults to `0`. |
 
-Intel HEX output uses 16-byte records with a terminating EOF record; unwritten
-addresses read as `0xFF` when decoding. Device required: no.
+Both record formats are written with 16-byte data records and a terminating
+record; unwritten addresses read as `0xFF` when decoding. S-record output uses
+one data record type throughout, the narrowest that addresses the whole image —
+`S1` below 64 KB, then `S2`, then `S3` — with the paired `S9`/`S8`/`S7`
+terminator. Device required: no.
 
 ---
 
@@ -1543,7 +1549,7 @@ Repeat `--slot` once per slot. Comma-separated `key=value` pairs:
 
 ```
 file=<path_or_url>,type=<romtype>[,cs1=<logic>][,cs2=<logic>][,cs3=<logic>]
-    [,size-handling=<handling>][,format=<binary|ihex>][,load-address=<addr>]
+    [,size-handling=<handling>][,format=<binary|ihex|srec>][,load-address=<addr>]
     [,transform=<list>]
     [,cpu-freq=<freq>][,cpu-vreg=<voltage>][,led=<bool>][,force-16-bit=<bool>]
 ```
@@ -1553,9 +1559,9 @@ file=<path_or_url>,type=<romtype>[,cs1=<logic>][,cs2=<logic>][,cs3=<logic>]
 | `file` | Local path or URL to the ROM image. |
 | `type` | Chip type, e.g. `2364`, `2332`, `2716`, `27C400`. Any type the target firmware can serve on the board is accepted — that is exactly what [`chips --board`](#chips) lists, including the overhang and fly-lead combinations (a `2764` on a Fire 24, say); see [COMPATIBILITY.md](COMPATIBILITY.md). Building for firmware older than v0.7.0 accepts a narrower set, and a rejection lists what that firmware serves. Any accepted alias may be used; the exact spelling you enter is preserved in the device metadata (shown by `scan`/`inspect`), while the resolved type drives behaviour. |
 | `cs1`, `cs2`, `cs3` | CS polarity: `active-low` (or `0`), `active-high` (or `1`), or `ignore`. The snake_case config spellings (`active_low`, `active_high`) are also accepted. Which lines are required depends on the chip type (e.g. `2332` requires `cs1` and `cs2`). `ignore` says One ROM does not monitor the line at all — it is not a polarity, and is only permitted where the chip type or set allows it (see `allow_cs_ignore`). |
-| `size-handling` (aliases `size`, `size_handling`) | `none`, `duplicate` (or `dup`), `truncate` (or `trunc`), `pad`. For an Intel HEX image, padding fills with `0xFF` and `duplicate` is not permitted. |
-| `format` | `binary` (default) or `ihex` (Intel HEX). An `ihex` file is decoded to a binary image before use; unwritten bytes read as `0xFF`. |
-| `load-address` (alias `load_address`) | Only valid with `format=ihex`. The absolute Intel HEX address that maps to byte 0 of the ROM, as a decimal or `0x`/`$`-prefixed hex value (e.g. `$E000`). Defaults to `0`. |
+| `size-handling` (aliases `size`, `size_handling`) | `none`, `duplicate` (or `dup`), `truncate` (or `trunc`), `pad`. For an Intel HEX or S-record image, padding fills with `0xFF` and `duplicate` is not permitted. |
+| `format` | `binary` (default), `ihex` (Intel HEX) or `srec` (Motorola S-record). An `ihex` or `srec` file is decoded to a binary image before use; unwritten bytes read as `0xFF`. |
+| `load-address` (alias `load_address`) | Only valid with `format=ihex` or `format=srec`. The absolute address that maps to byte 0 of the ROM, as a decimal or `0x`/`$`-prefixed hex value (e.g. `$E000`). Defaults to `0`. |
 | `transform` | Byte-level rearrangements of the image, applied in the order given and joined with `+`. See [Image transforms](#image-transforms). |
 | `cpu-freq` | e.g. `150`, `150mhz`, `150MHz`. Values above 150 MHz require confirmation (suppressed by `--yes`) and set overclock automatically. |
 | `cpu-vreg` | e.g. `1.1`, `1.10`, `1.10v`, `1.10V`. Values above 1.10 V require confirmation (suppressed by `--yes`). Must be a supported level. |
@@ -1571,6 +1577,7 @@ Examples:
 --slot file=small.bin,type=2364,cs1=active-low,size-handling=duplicate
 --slot file=kernal.hex,type=2364,cs1=active-low,format=ihex
 --slot file=kernal.hex,type=2364,cs1=active-low,format=ihex,load-address=$E000
+--slot file=kernal.s19,type=2364,cs1=active-low,format=srec,load-address=$E000
 --slot file=kernal.bin,type=2364,cs1=active-low,cpu-freq=200MHz,cpu-vreg=1.2V
 --slot file=char.bin,type=2332,cs1=active-low,cs2=active-high,led=off
 --slot file=amiga.bin,type=27C400,force-16-bit=true
@@ -1627,7 +1634,7 @@ pairs. Note that `offset` selects which lane, not a named "high" or "low" half
 is what `swap_bytes` is for.
 
 Within the build pipeline, transforms run after any `location` window and after
-an Intel HEX image has been decoded, but before `size-handling` reconciles the
+an Intel HEX or S-record image has been decoded, but before `size-handling` reconciles the
 image against the chip size. A `swap_bytes` on an odd-length image is an error
 unless `size-handling` is `pad` (which appends one blank byte) or `truncate`
 (which drops the trailing byte). Where the size handling is used this way it

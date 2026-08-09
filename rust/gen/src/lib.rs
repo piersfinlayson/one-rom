@@ -12,9 +12,11 @@ pub mod builder;
 pub mod chip_type_spec;
 pub mod compat;
 pub mod firmware;
+pub mod hexfile;
 pub mod ihex;
 pub mod image;
 pub mod meta;
+pub mod srec;
 pub mod transform;
 pub mod v1;
 pub mod v2;
@@ -25,14 +27,16 @@ pub use firmware::{
     DebugConfig, FireConfig, FireCpuFreq, FireServeMode, FireVreg, FirmwareConfig, IceConfig,
     IceCpuFreq, LedConfig, ServeAlgParams,
 };
-pub use ihex::{
-    AddressParseError, IHEX_BLANK_BYTE, IhexError, LoadAddress, decode_ihex, encode_ihex,
-};
+#[expect(deprecated, reason = "re-exported for callers of the pre-0.8.0 name")]
+pub use hexfile::IHEX_BLANK_BYTE;
+pub use hexfile::{AddressParseError, LoadAddress, UNWRITTEN_BYTE};
+pub use ihex::{IhexError, decode_ihex, encode_ihex};
 pub use image::{Chip, ChipSet, ChipSetType, CsConfig, CsLogic, FileFormat, SizeHandling};
 pub use image::{MAX_IMAGE_SIZE, PAD_BLANK_BYTE, PAD_NO_CHIP_BYTE};
 pub use image::{num_excess_addr_lines, requires_half_select_cs1};
 pub use meta::{MAX_METADATA_LEN, Metadata, PAD_METADATA_BYTE};
 use onerom_config::mcu::Family;
+pub use srec::{SrecError, decode_srec, encode_srec};
 pub use transform::{
     TRANSFORM_LIST_SEPARATOR, Transform, TransformError, apply_transforms, format_transform_list,
     parse_transform_list,
@@ -234,13 +238,21 @@ pub enum Error {
         index: usize,
         source: ihex::IhexError,
     },
-    /// `size_handling: duplicate` was requested for an Intel HEX image, which
-    /// places data by address and cannot be meaningfully duplicated.
-    IhexDuplicateUnsupported {
+    /// A Motorola S-record image failed to decode.
+    Srec {
         index: usize,
+        source: srec::SrecError,
     },
-    /// A non-zero `load_address` was set on a chip that is not Intel HEX.
-    LoadAddressWithoutIhex {
+    /// `size_handling: duplicate` was requested for a record-oriented image
+    /// (Intel HEX or S-record), which places data by address and so cannot be
+    /// meaningfully duplicated.
+    DuplicateUnsupportedForFormat {
+        index: usize,
+        format: FileFormat,
+    },
+    /// A non-zero `load_address` was set on a chip whose image is raw binary,
+    /// where there are no record addresses for it to apply to.
+    LoadAddressWithBinary {
         index: usize,
     },
     /// A chip's `transform` list could not be applied to its image.
@@ -504,13 +516,18 @@ impl core::fmt::Display for Error {
                 f,
                 "The Intel HEX image for chip {index} could not be decoded:\n  {source}"
             ),
-            Error::IhexDuplicateUnsupported { index } => write!(
+            Error::Srec { index, source } => write!(
                 f,
-                "Chip {index}: the duplicate size-handling option is not supported for Intel HEX images, which place data by address"
+                "The S-record image for chip {index} could not be decoded:\n  {source}"
             ),
-            Error::LoadAddressWithoutIhex { index } => write!(
+            Error::DuplicateUnsupportedForFormat { index, format } => write!(
                 f,
-                "Chip {index}: load_address is only valid for Intel HEX images (format: ihex)"
+                "Chip {index}: the duplicate size-handling option is not supported for {} images, which place data by address",
+                format.display_name()
+            ),
+            Error::LoadAddressWithBinary { index } => write!(
+                f,
+                "Chip {index}: load_address is only valid for a record-oriented image (format: ihex or srec)"
             ),
             Error::Transform { index, source } => {
                 write!(f, "Chip {index}: {source}")

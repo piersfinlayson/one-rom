@@ -43,6 +43,7 @@ pub(crate) const CHIP_SET_SERVE_CONFIG_METADATA_LEN: usize = 64; // 0.6.0 onward
 
 /// Metadata for One ROM firmware
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
+#[non_exhaustive]
 pub struct Metadata {
     board: Board,
     chip_sets: Vec<ChipSet>,

@@ -154,10 +154,17 @@ fn parse_size_handling(slot: &str, _key: &str, value: &str) -> Result<SizeHandli
 
 fn parse_format(slot: &str, value: &str) -> Result<FileFormat, Error> {
     FileFormat::try_from_str(value).ok_or_else(|| {
+        // Driven by onerom-gen's own list, so a format added there is named
+        // here without a CLI change - as it already is by `image convert`.
+        let supported = FileFormat::supported_values()
+            .iter()
+            .map(|f| f.name())
+            .collect::<Vec<_>>()
+            .join(", ");
         Error::InvalidArgument(
             "--slot".to_string(),
             format!(
-                "Invalid format '{value}'\n    --slot '{slot}'\n  Supported values: binary, ihex"
+                "Invalid format '{value}'\n    --slot '{slot}'\n  Supported values: {supported}"
             ),
         )
     })
@@ -393,11 +400,14 @@ fn parse_slot(slot: &str, board: &Board) -> Result<SlotSpec, Error> {
         ));
     }
 
-    // A load address only makes sense for an Intel HEX image.
-    if load_address.is_some() && format != Some(FileFormat::IntelHex) {
+    // A load address only makes sense where the records carry addresses, so
+    // any format bar the default raw binary.
+    if load_address.is_some() && format.is_none_or(|f| f.is_binary()) {
         return Err(Error::InvalidArgument(
             "--slot".to_string(),
-            format!("load-address is only valid with format=ihex\n    --slot '{slot}'"),
+            format!(
+                "load-address is only valid with format=ihex or format=srec\n    --slot '{slot}'"
+            ),
         ));
     }
 
@@ -921,6 +931,45 @@ mod tests {
     }
 
     #[test]
+    fn slot_parses_srec_format_and_load_address() {
+        let board = Board::try_from_str("fire-24-e").unwrap();
+        let slot = parse_slot(
+            "file=rom.s19,type=2364,cs1=active_low,format=srec,load-address=$E000",
+            &board,
+        )
+        .unwrap();
+        assert_eq!(slot.format, Some(FileFormat::Srec));
+        assert_eq!(slot.load_address, Some(LoadAddress(0xE000)));
+
+        let chip = slot_to_chip_config(&slot);
+        assert_eq!(chip.format, FileFormat::Srec);
+        assert_eq!(chip.load_address, LoadAddress(0xE000));
+    }
+
+    #[test]
+    fn slot_load_address_requires_a_record_format() {
+        let board = Board::try_from_str("fire-24-e").unwrap();
+        // Binary explicitly...
+        let err = parse_slot(
+            "file=rom.bin,type=2364,cs1=active_low,format=binary,load-address=$E000",
+            &board,
+        )
+        .unwrap_err();
+        assert!(
+            format!("{err}").contains("load-address is only valid with format=ihex or format=srec"),
+            "{err}"
+        );
+        // ...and binary by default.
+        assert!(
+            parse_slot(
+                "file=rom.bin,type=2364,cs1=active_low,load_address=0x100",
+                &board,
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
     fn slot_defaults_to_binary_format() {
         let board = Board::try_from_str("fire-24-e").unwrap();
         let slot = parse_slot("file=rom.bin,type=2364,cs1=active_low", &board).unwrap();
@@ -1082,17 +1131,6 @@ mod tests {
         )
         .unwrap_err();
         assert!(format!("{err}").contains("Duplicate slot key 'transform'"));
-    }
-
-    #[test]
-    fn slot_load_address_requires_ihex() {
-        let board = Board::try_from_str("fire-24-e").unwrap();
-        let err = parse_slot(
-            "file=rom.bin,type=2364,cs1=active_low,load_address=0x100",
-            &board,
-        )
-        .unwrap_err();
-        assert!(format!("{err}").contains("load-address is only valid with format=ihex"));
     }
 
     #[test]

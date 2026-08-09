@@ -2036,10 +2036,197 @@ mod tests {
         for addr in [16, 4096, 8191] {
             assert_eq!(
                 read_rom_byte(&rom_images_buf, addr, props.board()),
-                onerom_gen::IHEX_BLANK_BYTE,
+                onerom_gen::UNWRITTEN_BYTE,
                 "pad mismatch at {addr:#X}"
             );
         }
+    }
+
+    #[test]
+    fn srec_pad_fills_the_tail_with_the_unwritten_byte() {
+        let json = r#"{
+            "version": 1,
+            "description": "S-record padded to the chip size",
+            "chip_sets": [{
+                "type": "single",
+                "chips": [{
+                    "file": "rom.s19",
+                    "type": "2364",
+                    "cs1": "active_low",
+                    "format": "srec",
+                    "size_handling": "pad"
+                }]
+            }]
+        }"#;
+
+        let mut builder = Builder::from_json(FW_VER, MCU_FAM, json).expect("Failed to parse JSON");
+        // Only the first 16 bytes are described; the rest is padding.
+        let srec = onerom_gen::encode_srec(&[0x11u8; 16], 0);
+        builder
+            .add_file(FileData::new(0, srec.into_bytes()))
+            .expect("Failed to add file");
+
+        let props = default_fw_props();
+        let (_metadata_buf, rom_images_buf) = builder.build(props).expect("Build should succeed");
+
+        for addr in 0..16 {
+            assert_eq!(
+                read_rom_byte(&rom_images_buf, addr, props.board()),
+                0x11,
+                "data mismatch at {addr:#X}"
+            );
+        }
+        for addr in [16, 4096, 8191] {
+            assert_eq!(
+                read_rom_byte(&rom_images_buf, addr, props.board()),
+                onerom_gen::UNWRITTEN_BYTE,
+                "pad mismatch at {addr:#X}"
+            );
+        }
+    }
+
+    #[test]
+    fn srec_and_ihex_of_the_same_image_build_identically() {
+        // The two decoders feed the same downstream path, so a chip built from
+        // either spelling of the same bytes must produce the same ROM image.
+        // This is the test that would catch a decoder that quietly dropped or
+        // misplaced a record.
+        let data: Vec<u8> = (0..8192u32)
+            .map(|i| (i.wrapping_mul(31) % 251) as u8)
+            .collect();
+
+        let build = |format: &str, encoded: Vec<u8>| {
+            let json = alloc_format(format);
+            let mut builder =
+                Builder::from_json(FW_VER, MCU_FAM, &json).expect("Failed to parse JSON");
+            builder
+                .add_file(FileData::new(0, encoded))
+                .expect("Failed to add file");
+            builder
+                .build(default_fw_props())
+                .expect("Build should succeed")
+                .1
+        };
+
+        fn alloc_format(format: &str) -> String {
+            format!(
+                r#"{{
+                "version": 1,
+                "description": "Format equivalence",
+                "chip_sets": [{{
+                    "type": "single",
+                    "chips": [{{
+                        "file": "rom.img",
+                        "type": "2364",
+                        "cs1": "active_low",
+                        "format": "{format}"
+                    }}]
+                }}]
+            }}"#
+            )
+        }
+
+        let from_ihex = build("ihex", onerom_gen::encode_ihex(&data, 0).into_bytes());
+        let from_srec = build("srec", onerom_gen::encode_srec(&data, 0).into_bytes());
+        assert_eq!(from_ihex, from_srec);
+    }
+
+    #[test]
+    fn srec_load_address_offsets_the_image() {
+        let json = r#"{
+            "version": 1,
+            "description": "S-record with a load address",
+            "chip_sets": [{
+                "type": "single",
+                "chips": [{
+                    "file": "rom.s19",
+                    "type": "2364",
+                    "cs1": "active_low",
+                    "format": "srec",
+                    "load_address": "0xE000",
+                    "size_handling": "pad"
+                }]
+            }]
+        }"#;
+
+        let mut builder = Builder::from_json(FW_VER, MCU_FAM, json).expect("Failed to parse JSON");
+        // Assembled at 0xE000, so with a matching load address byte 0 of the
+        // image lands at ROM offset 0.
+        let srec = onerom_gen::encode_srec(&[0x5Au8; 16], 0xE000);
+        builder
+            .add_file(FileData::new(0, srec.into_bytes()))
+            .expect("Failed to add file");
+
+        let props = default_fw_props();
+        let (_metadata_buf, rom_images_buf) = builder.build(props).expect("Build should succeed");
+        assert_eq!(read_rom_byte(&rom_images_buf, 0, props.board()), 0x5A);
+        assert_eq!(read_rom_byte(&rom_images_buf, 15, props.board()), 0x5A);
+        assert_eq!(
+            read_rom_byte(&rom_images_buf, 16, props.board()),
+            onerom_gen::UNWRITTEN_BYTE
+        );
+    }
+
+    #[test]
+    fn srec_without_the_load_address_overshoots_the_chip() {
+        // Forgetting the load address makes the extent run from 0 to the top of
+        // the assembled address, which no 8 KB chip can hold — the clean error
+        // that catches the mistake.
+        let json = r#"{
+            "version": 1,
+            "description": "S-record missing its load address",
+            "chip_sets": [{
+                "type": "single",
+                "chips": [{
+                    "file": "rom.s19",
+                    "type": "2364",
+                    "cs1": "active_low",
+                    "format": "srec",
+                    "size_handling": "pad"
+                }]
+            }]
+        }"#;
+
+        let mut builder = Builder::from_json(FW_VER, MCU_FAM, json).expect("Failed to parse JSON");
+        let srec = onerom_gen::encode_srec(&[0x5Au8; 16], 0xE000);
+        builder
+            .add_file(FileData::new(0, srec.into_bytes()))
+            .expect("Failed to add file");
+        assert!(builder.build(default_fw_props()).is_err());
+    }
+
+    #[test]
+    fn srec_decode_failure_is_reported_against_the_chip() {
+        let json = r#"{
+            "version": 1,
+            "description": "Truncated S-record",
+            "chip_sets": [{
+                "type": "single",
+                "chips": [{
+                    "file": "rom.s19",
+                    "type": "2364",
+                    "cs1": "active_low",
+                    "format": "srec",
+                    "size_handling": "pad"
+                }]
+            }]
+        }"#;
+
+        let mut builder = Builder::from_json(FW_VER, MCU_FAM, json).expect("Failed to parse JSON");
+        // Drop the terminator, as a truncated transfer would.
+        let srec = onerom_gen::encode_srec(&[0x11u8; 16], 0);
+        let truncated = srec.replace("S9030000FC\r\n", "");
+        builder
+            .add_file(FileData::new(0, truncated.into_bytes()))
+            .expect("Failed to add file");
+
+        let err = builder
+            .build(default_fw_props())
+            .expect_err("a missing terminator should fail the build");
+        assert!(
+            matches!(err, onerom_gen::Error::Srec { index: 0, .. }),
+            "unexpected error: {err}"
+        );
     }
 
     #[test]
