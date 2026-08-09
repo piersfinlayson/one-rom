@@ -34,6 +34,7 @@ To test (on hardware, before release):
 
 To do (before release):
 - Web programmer S-record support, in `one-rom-wasm` and `one-rom-site`.  The format picker is driven by `file_formats()` and will list `srec` on its own, but the site's `accept` list, its extension auto-select and its load-address reveal (currently shown for `ihex` only) all need widening.
+- Drop the libudev/libusb build requirement, which Studio no longer has: `CLAUDE.md`, the comment in `ci/rust-lint.sh`, and the comment and two `apt-get` lines in `ci.yml`.  probe-rs 0.32 takes hidapi's pure-Rust `basic-udev` backend in place of `libudev-sys`, and nothing in the graph has wanted libusb for some time.  Verified on Debian — with both hidden from `pkg-config`, Studio builds and links clean, where probe-rs 0.30 failed in `libudev-sys`'s build script.  Leave `ci/docker/Dockerfile` until it is checked separately; that image builds firmware, not Studio.  Do this only once the debug probe test above has passed, since falling back to the fork would reinstate the requirement.
 
 ## v0.7.1 - 2026-08-09
 
