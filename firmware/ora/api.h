@@ -229,8 +229,6 @@ void *ora_host_test_staged_fn_ptr(uint32_t addr);
  * @param code Two-character function code, packed low byte first
  * @param mask Bootrom table flags selecting the architecture and mode
  * @return The function's address, or NULL if the bootrom does not publish it
- *
- * @since firmware v0.7.2
  */
 #if defined(ORA_HOST_TEST)
 #define ORA_BOOTROM_LOOKUP(code, mask) ora_host_test_bootrom_lookup((code), (mask))
@@ -247,8 +245,6 @@ void *ora_host_test_staged_fn_ptr(uint32_t addr);
  *
  * On a device this reads that register.  Under a host-side test build there is
  * no QMI, and its address is not mapped.
- *
- * @since firmware v0.7.2
  */
 #if defined(ORA_HOST_TEST)
 #define ORA_XIP_CLKDIV() ora_host_test_xip_clkdiv()
@@ -272,8 +268,6 @@ void *ora_host_test_staged_fn_ptr(uint32_t addr);
  * it is standing the region in for.
  *
  * @param addr Pointer into the device's flash
- *
- * @since firmware v0.7.2
  */
 #if defined(ORA_HOST_TEST)
 #define ORA_FLASH_OFFSET(addr) ora_host_test_flash_offset((const void *)(addr))
@@ -298,8 +292,6 @@ void *ora_host_test_staged_fn_ptr(uint32_t addr);
  *
  * @param start First byte of the routine
  * @param end   One past its last byte
- *
- * @since firmware v0.7.2
  */
 #if defined(ORA_HOST_TEST)
 #define ORA_STAGED_FN_SIZE(start, end) ora_host_test_staged_fn_size((start), (end))
@@ -322,8 +314,6 @@ void *ora_host_test_staged_fn_ptr(uint32_t addr);
  *
  * @param type Function pointer type to produce
  * @param addr Device SRAM address the routine was copied to
- *
- * @since firmware v0.7.2
  */
 #if defined(ORA_HOST_TEST)
 #define ORA_STAGED_FN_PTR(type, addr) ((type)ora_host_test_staged_fn_ptr(addr))
