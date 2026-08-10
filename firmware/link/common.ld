@@ -105,8 +105,16 @@ SECTIONS
 
     ASSERT(. <= 0x20081000, "Error: RAM data/bss overlaps system plugin data region")
 
-    /* Stack section */
-    INCLUDE "stack.ld"
+    /* No stack section is reserved here.  The stacks are not placed by the */
+    /* linker: both cores' stacks are measured down from _estack at the top */
+    /* of RAM, by paint_stack_core0()/paint_stack_core1() in plugin.c, using */
+    /* the _Min_Stack_Size symbol from common_vars.ld.  The ASSERT above is */
+    /* what guarantees room for them, by keeping bss below the plugin data */
+    /* region.  A ._user_heap_stack section used to sit here, reserving */
+    /* _Min_Stack_Size of location counter immediately after bss - nowhere */
+    /* near where the stacks actually live, defining no symbols, and a */
+    /* strictly weaker check than the ASSERT.  There is no heap: libc, libm */
+    /* and libgcc are discarded below. */
 
     /* Remove information from standard libraries */
     /DISCARD/ :
@@ -125,10 +133,15 @@ _onerom_runtime_info_location = _end - 8192;
 /* Set initial stack pointer to end of RAM, except for reserved space */
 _estack = _end;
 
-/* Limit bss - this is all segger, and 4284 bytes as of adding this */
-/* 4096 is the UP buffer - reduce that and make clean-firmware; make */
-/* to reduce it */
-ASSERT(_bss_size <= 4284, "Error: BSS section too large")
+/* Limit bss.  Almost all of it is the RTT log region: the 3584 byte up */
+/* buffer, the 16 byte down buffer and the 168 byte control block, declared */
+/* in src/rtt.c.  Reduce ONEROM_RTT_UP_BUFFER_SIZE there to reduce it. */
+/* */
+/* 3840 is the space between the start of bss and the system plugin data */
+/* region at 0x20081000, matching the overlap ASSERT after ram_bss.ld above. */
+/* The previous limit of 4284 was above that boundary, so it could never */
+/* fire before the overlap check did. */
+ASSERT(_bss_size <= 3840, "Error: BSS section too large")
 
 /* That leaves < 4K for stack, for both processors */
 

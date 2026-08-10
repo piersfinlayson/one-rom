@@ -32,10 +32,16 @@ void preload_rom_image();
 #if defined(BOOT_LOGGING)
 void log_init();
 void log_roms();
-void do_log(const char *, ...);
-void err_log(const char *, ...);
+// The format attributes are what make a bad LOG()/ERR() call a build error
+// rather than a puzzling line in the log.  See firmware/test/README.md and
+// ci/check-log-formats.sh for the conversions this formatter supports; the
+// compiler checks argument types, that script checks for conversions we
+// deliberately do not implement.
+void do_log(const char *, ...) __attribute__((format(printf, 1, 2)));
+void err_log(const char *, ...) __attribute__((format(printf, 1, 2)));
 #endif // BOOT_LOGGING
-void do_log_v(const char* msg, va_list *args);
+void do_log_v(const char* msg, va_list *args)
+    __attribute__((format(printf, 1, 0)));
 void do_err_log_prefix();
 #if defined(DEBUG_LOGGING)
 void do_debug_log_prefix();

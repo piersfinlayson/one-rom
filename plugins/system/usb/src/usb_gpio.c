@@ -83,7 +83,7 @@ static uint8_t gpio_num_gpios(void) {
             // A variant this plugin has never heard of.  Reporting 0 disables
             // GPIO control rather than guessing a count that would let the host
             // ask for pins that may not exist.
-            ERR("Unknown RP235x variant %u in metadata", variant);
+            ERR("Unknown RP235x variant %lu in metadata", variant);
             return 0;
     }
 }
@@ -206,7 +206,7 @@ pb_status_t gpio_handle_set(const onerom_gpio_set_args_t *args) {
         release->after_state = args->after_state;
         release->deadline_ms = context.timer_ms + args->duration_ms;
         release->active = 1;
-        DEBUG("GPIO %u held at %u for %ums", args->gpio, args->state, args->duration_ms);
+        DEBUG("GPIO %u held at %u for %lums", args->gpio, args->state, args->duration_ms);
     } else if (existing != NULL) {
         // duration_ms 0 latches indefinitely, so the pending release goes.
         existing->active = 0;

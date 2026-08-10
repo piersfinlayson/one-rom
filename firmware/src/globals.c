@@ -13,9 +13,6 @@ extern char _metadata_start;
 #include "gen-config.c"
 #endif // REAL_HARDWARE
 
-// Pointer to the SEGGER RTT CB
-extern SEGGER_RTT_CB _SEGGER_RTT;
-
 // Build time/date string
 const char onerom_build_date[] = __DATE__ " " __TIME__;
 

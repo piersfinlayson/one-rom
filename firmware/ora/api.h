@@ -1115,10 +1115,17 @@ typedef const void *(*ora_get_firmware_info_fn_t)(void);
  * function logs via RTT.  If there is no logging support this function
  * silently fails.
  *
+ * The format string and arguments are checked by the compiler.  See the
+ * supported conversion list in the One ROM firmware's rtt.c: floating point,
+ * %n, and the j and t length modifiers are deliberately not implemented, and
+ * an unsupported conversion is logged as a visible marker such as %!f rather
+ * than silently dropped.
+ *
  * @param msg printf-style format string
  * @param ... Format arguments
  */
-typedef void (*ora_log_fn_t)(const char *msg, ...);
+typedef void (*ora_log_fn_t)(const char *msg, ...)
+    __attribute__((format(printf, 1, 2)));
 
 /**
  * @brief Log an error message
@@ -1133,7 +1140,8 @@ typedef void (*ora_log_fn_t)(const char *msg, ...);
  * @param msg printf-style format string
  * @param ... Format arguments
  */
-typedef void (*ora_err_log_fn_t)(const char *msg, ...);
+typedef void (*ora_err_log_fn_t)(const char *msg, ...)
+    __attribute__((format(printf, 1, 2)));
 
 /**
  * @brief Log a debug message
@@ -1148,7 +1156,8 @@ typedef void (*ora_err_log_fn_t)(const char *msg, ...);
  * @param msg printf-style format string
  * @param ... Format arguments
  */
-typedef void (*ora_debug_log_fn_t)(const char *msg, ...);
+typedef void (*ora_debug_log_fn_t)(const char *msg, ...)
+    __attribute__((format(printf, 1, 2)));
 
 /**
  * @brief Get the amount of free memory

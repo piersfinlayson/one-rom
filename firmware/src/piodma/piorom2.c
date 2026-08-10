@@ -476,7 +476,8 @@ int setup_serving_pios(const onerom_rom_slot_t *slot, uint32_t rom_table_addr) {
                 uint8_t rom_table_prefix_bits = 32 - addr_alg->num_rom_table_bits;
                 uint32_t rom_table_prefix = rom_table_addr >> (32 - rom_table_prefix_bits);
                 int8_t extra_addr_bits = addr_alg->num_rom_table_bits - addr_alg->num_addr_pins;
-                DEBUG("ROM table prefix 0x%08X, # bits: %u", rom_table_prefix, rom_table_prefix_bits);
+                DEBUG("ROM table prefix 0x%08lX, # bits: %u",
+                      (unsigned long)rom_table_prefix, rom_table_prefix_bits);
 
                 // Write the SM instructions
                 APIO_WRAP_BOTTOM();

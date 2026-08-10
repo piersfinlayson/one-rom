@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.2.2] - 2026-??-??
+
+Rebuilt for One ROM firmware v0.7.2, whose logging functions are now checked by
+the compiler.  Several log calls passed `uint32_t` to conversions expecting
+`unsigned int`; the output was already correct, so nothing behaves differently.
+
 ## [0.2.1] - 2026-08-09
 
 Add support for overriden serial #s.

@@ -145,6 +145,20 @@ jobs:
     - name: Run various Rust tests
       run: ci/rust-tests.sh
 
+  c-tests:
+    name: C tests
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    # No toolchain setup: these compile firmware C for the host with the
+    # runner's own cc, and need neither Rust nor the Arm toolchain.
+    - name: Check log format strings
+      run: ci/check-log-formats.sh
+
+    - name: Run host C tests
+      run: ci/c-tests.sh
+
   rust-docs:
     name: Rust docs
     runs-on: ubuntu-latest

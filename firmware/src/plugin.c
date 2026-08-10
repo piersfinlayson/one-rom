@@ -15,11 +15,11 @@ uint8_t check_plugin_valid(
     uint8_t index
 ) {
     if (header->magic != ORA_PLUGIN_MAGIC) {
-        ERR("ORA badmagic 0x%08x", header->magic);
+        ERR("ORA badmagic 0x%08lx", (unsigned long)header->magic);
         return 0;
     }
     if (header->api_version != ORA_PLUGIN_VERSION_1) {
-        ERR("ORA version 0x%08x", header->api_version);
+        ERR("ORA version 0x%08lx", (unsigned long)header->api_version);
         return 0;
     }
     if (header->plugin_type != expected_type) {
@@ -32,7 +32,8 @@ uint8_t check_plugin_valid(
     uint32_t expected_launch_region = (0x1001 + index) << 16;
     uint32_t entry_addr = (uint32_t)(uintptr_t)header->entry;
     if ((entry_addr & ~expected_launch_region) >= 0x10000) {
-        ERR("ORA 0x%08x vs ep 0x%08x", entry_addr, expected_launch_region);
+        ERR("ORA 0x%08lx vs ep 0x%08lx", (unsigned long)entry_addr,
+        (unsigned long)expected_launch_region);
         return 0;
     }
 
@@ -1178,7 +1179,7 @@ static void reset_core1(void) {
     // Wait for core 1 bootrom ready signal
     uint32_t value = fifo_pop_blocking();
     if (value != 0) {
-        ERR("Unexpected value from core 1 bootrom: 0x%08x", value);
+        ERR("Unexpected value from core 1 bootrom: 0x%08lx", (unsigned long)value);
     }
 }
 
@@ -1215,7 +1216,7 @@ static void core1_main(void) {
     uint32_t core1_plugin_entry = fifo_pop_blocking();
     core1_plugin_entry |= 1;
     ora_plugin_entry_t entry = (ora_plugin_entry_t)(uintptr_t)core1_plugin_entry;
-    DEBUG("Core 1 launching plugin at 0x%08x", core1_plugin_entry);
+    DEBUG("Core 1 launching plugin at 0x%08lx", (unsigned long)core1_plugin_entry);
     entry(ora_fn_lookup, ORA_PLUGIN_TYPE_SYSTEM, &system_plugin_args);
 
     ERR("System plugin returned unexpectedly");
@@ -1236,8 +1237,9 @@ void paint_stack_core1(void) {
     uint32_t core1_stack_size = total_stack_size / 2;
     uint32_t core1_stack_bottom = stack_top - total_stack_size;
     uint32_t core1_stack_top = core1_stack_bottom + core1_stack_size;
-    DEBUG("Painting core 1 stack from 0x%08x to 0x%08x with 0x%02x",
-          core1_stack_bottom, core1_stack_top, paint_val);
+    DEBUG("Painting core 1 stack from 0x%08lx to 0x%08lx with 0x%02x",
+          (unsigned long)core1_stack_bottom, (unsigned long)core1_stack_top,
+          paint_val);
     for (uint32_t addr = core1_stack_bottom; addr < core1_stack_top; addr++) {
         ((uint8_t *)addr)[0] = paint_val;
     }

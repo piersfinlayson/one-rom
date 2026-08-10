@@ -12,7 +12,7 @@ extern uint32_t _ram_rom_image_start[];
 
 // Logging function to output various debug information via RTT
 void log_init(void) {
-    LOG(log_divider);
+    LOG("%s", log_divider);
     LOG("%s v%d.%d.%d.%d %s", product, INFO->major_version, INFO->minor_version, INFO->patch_version, INFO->build_number, project_url);
     LOG("%s %s", copyright, author);
 #if defined(DEBUG_BUILD)
@@ -22,20 +22,20 @@ void log_init(void) {
 #endif // DEBUG_BUILD
     LOG("Commit: %s", INFO->commit);
 
-    DEBUG("onerom_info: 0x%08X", (uint32_t)(uintptr_t)INFO);
-    DEBUG("RAM ROM table: 0x%08X", (uint32_t)(uintptr_t)&_ram_rom_image_start);
-    DEBUG("runtime_info: 0x%08X", (uint32_t)(uintptr_t)RUNTIME);
-    DEBUG("RTT CB: 0x%08X", (uint32_t)(uintptr_t)INFO->rtt);
-    DEBUG(log_divider);
+    DEBUG("onerom_info: 0x%08lX", (unsigned long)(uintptr_t)INFO);
+    DEBUG("RAM ROM table: 0x%08lX", (unsigned long)(uintptr_t)&_ram_rom_image_start);
+    DEBUG("runtime_info: 0x%08lX", (unsigned long)(uintptr_t)RUNTIME);
+    DEBUG("RTT CB: 0x%08lX", (unsigned long)(uintptr_t)INFO->rtt);
+    DEBUG("%s", log_divider);
     DEBUG("RT Fire Freq: 0x%04X", RUNTIME->fire_freq);
     DEBUG("RT Overclock Enabled: 0x%02X", RUNTIME->overclock_enabled);
     DEBUG("RT Status LED Enabled: 0x%02X", RUNTIME->status_led_enabled);
     DEBUG("RT SWD Enabled: 0x%02X", RUNTIME->swd_enabled);
 
-    LOG(log_divider);
+    LOG("%s", log_divider);
     platform_logging();
 
-    LOG(log_divider);
+    LOG("%s", log_divider);
 }
 
 void log_roms() {
@@ -45,7 +45,7 @@ void log_roms() {
         for (uint8_t ii = 0; ii < METADATA->rom_slot_count; ii++) {
             const onerom_rom_slot_t *slot = &METADATA->rom_slots[ii];
 
-            LOG("Set #%d: %d ROM(s), size: %d bytes", ii, slot->rom_count, slot->size);
+            LOG("Set #%d: %d ROM(s), size: %lu bytes", ii, slot->rom_count, (unsigned long)slot->size);
 
 #if defined(DEBUG_LOGGING)
             for (uint8_t jj = 0; jj < slot->rom_count; jj++) {
@@ -61,21 +61,21 @@ void log_roms() {
 #if REAL_HARDWARE
 void __attribute__((noinline)) do_log_v(const char* msg, va_list* args) {
     if (BOOT_LOGGING_EN) {
-        SEGGER_RTT_vprintf(0, msg, args);
-        SEGGER_RTT_printf(0, "\n");
+        onerom_rtt_vprintf(ONEROM_RTT_CH_BOOT, msg, args);
+        onerom_rtt_printf(ONEROM_RTT_CH_BOOT, "\n");
     }
 }
 
 void do_err_log_prefix() {
     if (BOOT_LOGGING_EN) {
-        SEGGER_RTT_printf(0, "ERROR: ");
+        onerom_rtt_printf(ONEROM_RTT_CH_BOOT, "ERROR: ");
     }
 }
 
 #if defined(DEBUG_LOGGING)
 void do_debug_log_prefix() {
     if (BOOT_LOGGING_EN) {
-        SEGGER_RTT_printf(0, "DBG: ");
+        onerom_rtt_printf(ONEROM_RTT_CH_BOOT, "DBG: ");
     }
 }
 #endif // DEBUG_LOGGING

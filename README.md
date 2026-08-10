@@ -407,4 +407,6 @@ consider contributing it.
 
 ## License
 
-See [LICENSE](LICENSE.md) for software and hardware licensing information.
+See [LICENSE](LICENSE.md) for software and hardware licensing information, and
+[ACKNOWLEDGEMENTS](ACKNOWLEDGEMENTS.md) for third party work One ROM builds on
+or is compatible with.

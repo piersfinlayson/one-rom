@@ -136,8 +136,8 @@ uint8_t calculate_pll_settings(
     uint32_t target_freq_mhz = config->sys_clock_freq_mhz;
 
     if ((target_freq_mhz > RP235X_STOCK_CLOCK_SPEED_MHZ) && (!overclock)) {
-        ERR("Requested frequency %dMHz exceeds max %dMHz - cannot calculate PLL",
-            target_freq_mhz, RP235X_STOCK_CLOCK_SPEED_MHZ);
+        ERR("Requested frequency %luMHz exceeds max %dMHz - cannot calculate PLL",
+            (unsigned long)target_freq_mhz, RP235X_STOCK_CLOCK_SPEED_MHZ);
         return 0;
     }
     
@@ -335,13 +335,13 @@ void setup_qmi(rp235x_clock_config_t *config) {
         }
 
         uint32_t m0 = XIP_QMI_M0_TIMING;
-        DEBUG("Current QMI M0: 0x%08X", m0);
+        DEBUG("Current QMI M0: 0x%08lX", m0);
 
         m0 &= ~XIP_QMI_M0_CLKDIV_MASK;
         m0 |= (divider & XIP_QMI_M0_CLKDIV_MASK) << XIP_QMI_M0_CLKDIV_SHIFT;
 
         DEBUG("Update M0 clkdiv: %d", divider);
-        DEBUG("Update QMI M0: 0x%08X", m0);
+        DEBUG("Update QMI M0: 0x%08lX", m0);
 
         XIP_QMI_M0_TIMING = m0;
     }
@@ -351,9 +351,9 @@ void setup_vreg(rp235x_clock_config_t *config) {
     uint32_t vreg_ctrl = POWMAN_VREG_CTRL;
     uint32_t vreg = POWMAN_VREG;
     uint8_t voltage = config->vreg;
-    DEBUG("Current VREG_CTRL: 0x%08X", vreg_ctrl);
-    DEBUG("Current VREG_STATUS: 0x%08X", POWMAN_VREG_STATUS);
-    DEBUG("Current VREG: 0x%08X", vreg);
+    DEBUG("Current VREG_CTRL: 0x%08lX", vreg_ctrl);
+    DEBUG("Current VREG_STATUS: 0x%08lX", POWMAN_VREG_STATUS);
+    DEBUG("Current VREG: 0x%08lX", vreg);
     DEBUG("Target VREG setting: %d", voltage);
 
     if (voltage > 0b11111) {
@@ -386,7 +386,7 @@ void setup_vreg(rp235x_clock_config_t *config) {
         vreg_ctrl |= POWMAN_PASSWORD |
                         POWMAN_VREG_CTRL_HT_TH(high_temp);
         POWMAN_VREG_CTRL = vreg_ctrl;
-        DEBUG("Current VREG_CTRL: 0x%08X", POWMAN_VREG_CTRL);
+        DEBUG("Current VREG_CTRL: 0x%08lX", POWMAN_VREG_CTRL);
 
         DEBUG("Set VREG to %d", voltage);
         while (POWMAN_VREG & POWMAN_VREG_UPDATE);
@@ -395,7 +395,7 @@ void setup_vreg(rp235x_clock_config_t *config) {
         POWMAN_VREG = vreg;
         while (POWMAN_VREG & POWMAN_VREG_UPDATE);
 
-        DEBUG("POWMAN_VREG: 0x%08X", POWMAN_VREG);
+        DEBUG("POWMAN_VREG: 0x%08lX", POWMAN_VREG);
 
         for (volatile int ii = 0; ii < 5000; ii++) {
             // Wait a bit for the voltage to stabilise
@@ -798,8 +798,8 @@ void platform_logging(void) {
         } else {
             LOG("RP235XB");
         }
-        DEBUG("Chip ID: 0x%08X", SYSINFO_CHIP_ID);
-        DEBUG("Chip commit: 0x%08X", SYSINFO_GITREF_RP2350);
+        DEBUG("Chip ID: 0x%08lX", SYSINFO_CHIP_ID);
+        DEBUG("Chip commit: 0x%08lX", SYSINFO_GITREF_RP2350);
         if ((MCU_RAM_SIZE_KB != RP2350_RAM_SIZE_KB) || (MCU_RAM_SIZE != (RP2350_RAM_SIZE_KB * 1024))) {
             ERR("RAM error: actual %dKB, expected: %dKB",
                 MCU_RAM_SIZE_KB,

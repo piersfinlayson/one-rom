@@ -258,7 +258,7 @@ void tud_resume_cb(void) {
 void tud_cdc_rx_cb(uint8_t itf) {
     uint8_t buf[64];
     uint32_t count = tud_cdc_n_read(itf, buf, sizeof(buf));
-    LOG("CDC received %u bytes on interface %u", count, itf);
+    LOG("CDC received %lu bytes on interface %u", count, itf);
 }
 
 // Invoked when a control transfer is received on vendor interface

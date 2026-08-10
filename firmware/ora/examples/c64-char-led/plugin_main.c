@@ -71,7 +71,7 @@ void c64_char_led_main(
     for (int i = 3; i < 12; i++) {
         char_mask |= remap_addr(1u << i);
     }
-    log("LED on match: 0x%04x off match: 0x%04x, mask: 0x%04x", led_on_match, led_off_match, char_mask);
+    log("LED on match: 0x%04lx off match: 0x%04lx, mask: 0x%04lx", led_on_match, led_off_match, char_mask);
 
     start_address_monitor();
 

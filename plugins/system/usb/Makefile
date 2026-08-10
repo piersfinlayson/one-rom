@@ -9,7 +9,7 @@ OBJDUMP := $(if $(TOOLCHAIN),$(TOOLCHAIN)/arm-none-eabi-objdump,arm-none-eabi-ob
 
 MAJOR_VERSION := 0
 MINOR_VERSION := 2
-PATCH_VERSION := 1
+PATCH_VERSION := 2
 BUILD_VERSION := 0
 
 TINYUSB_DIR   := tinyusb
@@ -19,7 +19,6 @@ PICO_SDKLESS_DIR := pico-sdkless
 ORA_DIR := ../../../firmware/ora
 ORA_INCLUDE := -I$(ORA_DIR)
 SDRR_INCLUDE := -I../../../firmware/include -I../../../firmware/generated
-SEGGER_INCLUDE := -I../../../firmware/segger-rtt/RTT -I../../../firmware/segger-rtt/Config
 PLUGIN_INCLUDE := -I.
 
 BUILD_DIR := build
@@ -49,7 +48,7 @@ CFLAGS := -mcpu=cortex-m33 -mthumb -mfloat-abi=hard -mfpu=fpv5-sp-d16 \
           -MMD -MP -g \
 		  -DMAJOR_VERSION=$(MAJOR_VERSION) -DMINOR_VERSION=$(MINOR_VERSION) \
 		  -DPATCH_VERSION=$(PATCH_VERSION) -DBUILD_VERSION=$(BUILD_VERSION) \
-          $(SDRR_INCLUDE) $(SEGGER_INCLUDE) $(ORA_INCLUDE) $(PLUGIN_INCLUDE) \
+          $(SDRR_INCLUDE) $(ORA_INCLUDE) $(PLUGIN_INCLUDE) \
 		  -Iinclude -I$(PICO_SDKLESS_DIR)/include \
           $(addprefix -I,$(TINYUSB_INCLUDE_DIRS)) \
 		  $(addprefix -I,$(PICOBOOTX_INCLUDE_DIRS)) \

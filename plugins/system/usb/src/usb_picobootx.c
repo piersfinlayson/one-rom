@@ -274,7 +274,7 @@ pb_status_t app_picoboot_read_prepare(uint32_t addr, uint32_t size, void *ctx) {
 
     st = app_custom_prepare(addr, size, ctx);
     if (st == PB_STATUS_NOT_FOUND) {
-        DEBUG("read_prepare: no handler for addr=0x%08x size=%u", addr, size);
+        DEBUG("read_prepare: no handler for addr=0x%08lx size=%lu", addr, size);
         return PB_STATUS_INVALID_ADDRESS;
     }
     return st;
@@ -319,7 +319,7 @@ pb_status_t app_picoboot_write_prepare(
 
     if (addr < FLASH_PROTECTED_END &&
         (addr + size) > RP2350_FLASH_BASE) {
-        LOG("write_prepare: address in protected flash region: addr=0x%08x size=%u", addr, size);
+        LOG("write_prepare: address in protected flash region: addr=0x%08lx size=%lu", addr, size);
         return PB_STATUS_NOT_PERMITTED;
     }
 

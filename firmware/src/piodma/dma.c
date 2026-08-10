@@ -145,8 +145,9 @@ void dma_copy(
     // Enable the DMA channel to start the copy
     dma_reg->ctrl_trig |= DMA_CTRL_TRIG_EN;
 
-    DEBUG("DMA copy started: 0x%08X -> 0x%08X, words: 0x%08X",
-        src_addr, dst_addr, size_words);
+    DEBUG("DMA copy started: 0x%08lX -> 0x%08lX, words: 0x%08lX",
+        (unsigned long)src_addr, (unsigned long)dst_addr,
+        (unsigned long)size_words);
 }
 
 // Returns the number of words remaining to copy
