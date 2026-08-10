@@ -4722,6 +4722,7 @@ dependencies = [
  "onerom-metadata",
  "picoboot",
  "reqwest",
+ "semver 1.0.28",
  "serde",
  "serde_json",
  "sha2 0.11.0",

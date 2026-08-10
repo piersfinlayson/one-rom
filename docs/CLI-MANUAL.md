@@ -52,6 +52,25 @@ Verify it runs:
 onerom --version
 ```
 
+## Keeping the CLI up to date
+
+The CLI does not check for updates on its own — nothing here contacts the
+network unless you ask it to. [`onerom self check`](#self-check) compares this
+build against the newest release published for your platform, and
+[`onerom self download`](#self-download) fetches it:
+
+```
+onerom self check
+onerom self download
+```
+
+`self download` saves the same artifact you would get from
+<https://onerom.org/cli> — a `.deb` on Linux, a zip on Windows and macOS —
+verifies it against the SHA-256 published alongside it, and prints the install
+step for what it downloaded. It does not install anything itself: on Linux the
+`.deb` is owned by your package manager, and replacing the file underneath it
+would only confuse the two.
+
 ## How One ROM talks to the CLI
 
 The CLI communicates with a One ROM over USB using picoboot (the Raspberry Pi
@@ -412,6 +431,7 @@ hardware take them; each command's own entry below states what it accepts, and
 | [`plugin`](#plugin) | List available plugins | No |
 | [`chips`](#chips) | List supported chip types and their flash usage | No |
 | [`board`](#board) | List board types, or draw a board's pin header / socket | No |
+| [`self`](#self) | Check for and download new releases of the CLI itself | No |
 | [`peek`](#peek-top-level-alias) | Alias for `inspect peek live` | Yes |
 | [`poke`](#poke-top-level-alias) | Alias for `control poke live` | Yes |
 | [`reboot`](#reboot-top-level-alias) | Alias for `control reboot` | Yes |
@@ -1551,6 +1571,89 @@ onerom board socket --board fire-24-f --chip-type 2364 --gpio
 
 Device required: no (a device is used only to infer `--board` when it is
 omitted).
+
+---
+
+## self
+
+Check for, and download, new releases of the CLI itself. This is the CLI's own
+release channel — the binaries published at <https://onerom.org/cli> — and is
+separate from the One ROM firmware releases [`firmware
+releases`](#firmware-releases) lists.
+
+Nothing here runs unless you ask for it: the CLI performs no update check of its
+own accord, and neither command installs anything.
+
+```
+onerom self check
+onerom self download
+```
+
+Device required: no.
+
+### self check
+
+Compare this build against the newest release published for this platform.
+
+```
+onerom self check
+```
+
+This command takes no options.
+
+It prints the running version, then one of three things: that this is the latest
+release; that a newer one is available, with how to get it; or — for a build made
+from source — that this build is newer than anything published.
+
+Finding an update is not an error: the exit code is 0 in all three cases. A
+non-zero exit means the check itself failed, such as an unreachable images
+server, so a script can tell "no update" from "could not tell".
+
+### self download
+
+Download a published CLI release.
+
+```
+onerom self download
+onerom self download --version 0.3.0 --path ~/Downloads
+onerom self download --target aarch64-unknown-linux-gnu
+onerom self download --target all --path ./dist
+```
+
+| Option | Description |
+|---|---|
+| `--version <VERSION>` | Version to download (e.g. `0.3.0`). Defaults to the latest release. |
+| `--target <TARGET>` | Platform to download for, as a target triple. Defaults to this machine's. `all` downloads every platform's artifact for the version, and requires `--path`. |
+| `--output, -o <FILE>` (alias `--out`) | Output file path. Defaults to the published filename. Conflicts with `--path`. |
+| `--path <DIR>` | Output directory, using the published filename. Conflicts with `--output`. |
+| `--force, -f` | Overwrite an existing file. |
+
+The downloaded file is checked against the SHA-256 published alongside it; a
+mismatch is reported and the download discarded. That digest comes from the same
+server as the file, so it catches a corrupted or truncated download rather than
+a compromised server — it is not a signature. The Windows and macOS builds are
+digitally signed, and that signature is what your OS checks when you run them.
+
+The published filename already carries the version and architecture, so it is
+the default name in both the current directory and a `--path` directory. Every
+output path is checked before anything is downloaded, so an existing file or a
+missing directory fails immediately rather than part-way through a `--target
+all` run.
+
+Platform names are the Rust target triples the manifest publishes:
+`x86_64-unknown-linux-gnu`, `aarch64-unknown-linux-gnu`,
+`x86_64-pc-windows-msvc`, `aarch64-pc-windows-msvc`, and
+`universal-apple-darwin`. The last is not a real triple: the macOS build is a
+universal binary covering both Apple architectures. Naming an unknown one lists
+what is published.
+
+`--target` is there to fetch a build for a machine other than this one — the
+ARM `.deb` for a Raspberry Pi, say, from a desktop. When the artifact is not for
+this platform, no install step is printed, since the local one would not apply.
+
+Nothing is installed and the running `onerom` is not replaced. Install what was
+downloaded the same way you would install it from the website — see
+[Installation](#installation).
 
 ---
 

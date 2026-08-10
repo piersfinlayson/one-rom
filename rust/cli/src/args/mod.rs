@@ -12,6 +12,7 @@
 //!   onerom control <subcommand>  - Transient One ROM actions
 //!   onerom update <subcommand>   - Persistent One ROM modifications
 //!   onerom image <subcommand>    - ROM image file manipulation
+//!   onerom self <subcommand>     - One ROM CLI releases of this tool
 //!
 //! The --serial option is global and can be specified at any level to select
 //! a specific One ROM when multiple are connected.
@@ -30,6 +31,7 @@ pub mod inspect;
 pub mod plugin;
 pub mod program;
 pub mod scan;
+pub mod self_cmd;
 pub mod update;
 
 use clap::{Parser, Subcommand};
@@ -61,6 +63,7 @@ use inspect::{
 use plugin::PluginArgs;
 use program::ProgramArgs;
 use scan::ScanArgs;
+use self_cmd::{SelfArgs, SelfCheckArgs, SelfCommands, SelfDownloadArgs};
 use update::{UpdateArgs, UpdateCommands, UpdateCommitArgs, UpdateOtpArgs, UpdateSlotArgs};
 
 #[enum_dispatch]
@@ -550,4 +553,23 @@ pub enum Commands {
         subcommand_help_heading = "Commands"
     )]
     Board(BoardArgs),
+
+    /// Check for and download new releases of this tool.
+    ///
+    /// Reads the One ROM CLI's own release channel, which is separate from One
+    /// ROM firmware releases. Nothing is installed: `download` fetches the
+    /// published artifact for a platform, verifies it, and tells you how to
+    /// install it.
+    ///
+    /// Examples:
+    ///
+    ///   onerom self check
+    ///
+    ///   onerom self download
+    #[command(
+        name = "self",
+        subcommand_value_name = "COMMAND",
+        subcommand_help_heading = "Commands"
+    )]
+    SelfCmd(SelfArgs),
 }

@@ -18,6 +18,7 @@ mod inspect;
 mod plugin;
 mod program;
 mod scan;
+mod self_cmd;
 mod update;
 mod utils;
 
@@ -28,6 +29,7 @@ use args::control::{ControlCommands, ControlLedCommands, ControlPokeCommands};
 use args::firmware::FirmwareCommands;
 use args::image::ImageCommands;
 use args::inspect::{InspectCommands, InspectPeekCommands};
+use args::self_cmd::SelfCommands;
 use args::update::UpdateCommands;
 
 use onerom_cli::Error;
@@ -111,6 +113,10 @@ async fn sub_main() -> Result<(), Error> {
             BoardCommands::List(args) => board::cmd_list(&options, args).await,
             BoardCommands::Header(args) => board::cmd_header(&options, args).await,
             BoardCommands::Socket(args) => board::cmd_socket(&options, args).await,
+        },
+        Commands::SelfCmd(args) => match &args.command {
+            SelfCommands::Check(args) => self_cmd::cmd_check(&options, args).await,
+            SelfCommands::Download(args) => self_cmd::cmd_download(&options, args).await,
         },
     }
 }

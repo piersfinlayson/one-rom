@@ -16,6 +16,7 @@ pub mod fetch;
 pub mod picobootx;
 pub mod pin;
 pub mod plugin;
+pub mod release;
 pub mod scan;
 pub mod slot;
 pub mod usb;

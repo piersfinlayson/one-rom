@@ -334,6 +334,36 @@ pub enum Error {
         "This One ROM is already holding as many GPIOs as it can.\n  Release one first - drive it with no --hold, or wait for a hold to expire."
     )]
     GpioNoHoldSlot,
+
+    #[error(
+        "No One ROM CLI build is published for this platform ({0}).\n  Published platforms: {1}\n  Name one explicitly with --target to download it anyway."
+    )]
+    CliPlatformUnsupported(String, String),
+
+    #[error("Unknown --target '{0}'.\n  Published platforms: {1}")]
+    CliTargetUnknown(String, String),
+
+    #[error("One ROM CLI v{0} was not built for '{1}'.\n  It was built for: {2}")]
+    CliTargetNotInRelease(String, String, String),
+
+    #[error("Could not parse version '{0}':\n  {1}")]
+    CliVersionParse(String, String),
+
+    #[error(
+        "SHA256 mismatch for downloaded file '{file}':\n  expected {expected}\n  got      {got}\n  The download was discarded.  Try again, or download from {}.",
+        crate::release::DOWNLOAD_PAGE
+    )]
+    DownloadSha256Mismatch {
+        file: String,
+        expected: String,
+        got: String,
+    },
+
+    #[error("File already exists: {0}\n  Use --force to overwrite it.")]
+    OutputExists(String),
+
+    #[error("Output directory does not exist: {0}")]
+    OutputDirMissing(String),
 }
 
 impl Error {

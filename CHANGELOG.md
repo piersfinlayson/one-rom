@@ -7,8 +7,10 @@ All notables changes between versions are documented in this file.
 Headline changes in this release:
 - Motorola S-record ROM images, alongside Intel HEX, in the programming tools, the CLI's image converter and One ROM Lab.
 - A plugin that would hard fault the device is now refused at build time instead of being flashed.
+- The CLI can tell you when a newer CLI has been released, and download it for you.
 
 In detail:
+- Add `onerom self`, covering the CLI's own release channel: `self check` says whether a newer CLI has been published for your platform, and `self download` fetches a published artifact — for this platform, another (`--target`), or all of them — verified against its published SHA-256.  Nothing is installed, and the CLI still performs no update check unless asked.
 - Replace SEGGER RTT with a smaller One ROM implementation.  Debug probes are unaffected.
   - This required a firmware update.
 - Check plugins named by a config against the images server's published compatibility window, in the CLI and Studio.  A plugin binary declares only a minimum firmware version, so USB v0.1.2 — which hard faults on firmware v0.7.0 — was previously built in without complaint.  A local or third-party plugin has nothing published to check, and an unreachable server warns rather than failing.

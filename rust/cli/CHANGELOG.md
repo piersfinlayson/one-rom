@@ -2,6 +2,11 @@
 
 ## v0.4.0 - 2026-??-??
 
+- **`onerom self` reports and downloads new releases of the CLI itself.**
+  `self check` says whether a newer CLI has been published for your platform;
+  `self download` fetches a published artifact — for this platform, another
+  (`--target`), or all of them — and verifies it against its published SHA-256.
+  Nothing is installed, and no check runs unless you ask for one.
 - **A plugin named by a config is now checked for firmware compatibility**, as
   one given with `--plugin` already was. A plugin binary declares only the
   minimum firmware it needs, so a release withdrawn for a newer firmware — USB
