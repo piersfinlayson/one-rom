@@ -236,20 +236,6 @@ the plugin says the check was skipped.
 onerom firmware build --config c64.json --board fire-24-e --out firmware.bin
 ```
 
-### Download and flash a pre-built release
-
-```
-onerom firmware download --version 0.6.5 --board fire-24-e --out firmware.bin
-onerom program --firmware firmware.bin
-```
-
-Or in one step — `program` will download the base firmware, build in your ROMs,
-and flash:
-
-```
-onerom program --config c64.json --version 0.6.5
-```
-
 ### Inspect a device
 
 ```
@@ -1287,6 +1273,9 @@ onerom firmware download --version 0.6.5 --board fire-24-e --out firmware.bin
 | `--board, -b <BOARD>` | Target board type. Inferred from device if omitted. |
 | `--output, -o <FILE>` (alias `--out`) | Output file path. Defaults to `onerom_<board>_<version>.bin`. Conflicts with `--path`. |
 | `--path <DIR>` | Output directory, using the default filename. Conflicts with `--output`. |
+
+This firmware binary can then be used as a base for [`firmware build`](#firmware-build) or flashed with
+[`program`](#program) using the `--base-firmware` option.  Do not flash it directly, as it contains no ROM configuration and will not serve any ROMs.
 
 ### firmware chips
 
