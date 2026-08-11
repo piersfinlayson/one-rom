@@ -151,13 +151,22 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
-    # No toolchain setup: these compile firmware C for the host with the
-    # runner's own cc, and need neither Rust nor the Arm toolchain.
+    # These compile firmware C for the host, so they need neither Rust nor the
+    # Arm toolchain.  They do need a host compiler new enough for the C23 the
+    # firmware is built as: the runner's default cc is GCC 13, which predates
+    # -std=gnu23.
+    - name: Install host compiler
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y gcc-14
+
     - name: Check log format strings
       run: ci/check-log-formats.sh
 
     - name: Run host C tests
       run: ci/c-tests.sh
+      env:
+        CC: gcc-14
 
   rust-docs:
     name: Rust docs

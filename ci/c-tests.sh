@@ -8,6 +8,10 @@
 #
 # Built with AddressSanitizer, so a memory error is reported precisely rather
 # than showing up as an unexplained failure somewhere later.
+#
+# Compiled as C23, matching the Arm toolchain's default for the firmware
+# proper, so $CC must be GCC 14 or later, or Clang 18 or later.  CI sets CC
+# because the runner's default cc is older than that.
 set -e
 
 CC="${CC:-cc}"
