@@ -80,9 +80,34 @@ typedef struct {
 // probe resolves; it is One ROM's control block in every other respect.
 extern onerom_rtt_cb_t _SEGGER_RTT;
 
+// Prepare the log for plugins.  Call once at plugin launch, on core 0, before
+// either plugin runs.
+void onerom_rtt_plugins_init(void);
+
 // Append a record to a channel.  Returns len if the record was stored, 0 if it
 // was dropped.  Records are all or nothing.
 unsigned onerom_rtt_write(unsigned channel, const void *buf, unsigned len);
+
+// Take up to max_len bytes from a channel, freeing the space for the writer.
+// Returns the number copied, 0 if the channel is empty.  Serves the wrap
+// internally, so a caller never sees it.
+unsigned onerom_rtt_read(unsigned channel, void *buf, unsigned max_len);
+
+// Set the name a reader displays for a channel.  The string is stored, not
+// copied, so it must outlive the setting; NULL restores the firmware's own
+// name.  Returns 0 if the channel index is out of range.
+unsigned onerom_rtt_set_name(unsigned channel, const char *name);
+
+// Report a channel's total size, the bytes writable now, and the bytes written
+// but not yet read.  One consistent snapshot; any output pointer may be NULL.
+// A channel with no buffer reports zero for all three.
+//
+// The ring always leaves one byte free, so size = free + pending + 1 for a
+// populated channel.
+void onerom_rtt_query(unsigned channel,
+                      unsigned *size_out,
+                      unsigned *free_out,
+                      unsigned *pending_out);
 
 // Formatted output.  See the supported conversion list in rtt.c; anything
 // outside it is emitted as a visible marker rather than silently ignored.

@@ -655,6 +655,55 @@ typedef enum {
      */
     ORA_ID_GPIO_QUERY                = 0x00000030,
 
+    /**
+     * @brief Claim a log channel for this plugin to write to
+     * @sa ora_log_open_write_fn_t
+     * @since firmware 0.7.2
+     */
+    ORA_ID_LOG_OPEN_WRITE            = 0x00000031,
+
+    /**
+     * @brief Append bytes to a log channel
+     * @sa ora_log_write_fn_t
+     * @since firmware 0.7.2
+     */
+    ORA_ID_LOG_WRITE                 = 0x00000032,
+
+    /**
+     * @brief Relinquish this plugin's write claim on a log channel
+     * @sa ora_log_close_write_fn_t
+     * @since firmware 0.7.2
+     */
+    ORA_ID_LOG_CLOSE_WRITE           = 0x00000033,
+
+    /**
+     * @brief Claim a log channel for this plugin to read from
+     * @sa ora_log_open_read_fn_t
+     * @since firmware 0.7.2
+     */
+    ORA_ID_LOG_OPEN_READ             = 0x00000034,
+
+    /**
+     * @brief Read bytes from a log channel
+     * @sa ora_log_read_fn_t
+     * @since firmware 0.7.2
+     */
+    ORA_ID_LOG_READ                  = 0x00000035,
+
+    /**
+     * @brief Relinquish this plugin's read claim on a log channel
+     * @sa ora_log_close_read_fn_t
+     * @since firmware 0.7.2
+     */
+    ORA_ID_LOG_CLOSE_READ            = 0x00000036,
+
+    /**
+     * @brief Report a log channel's capacity and occupancy
+     * @sa ora_log_query_fn_t
+     * @since firmware 0.7.2
+     */
+    ORA_ID_LOG_QUERY                 = 0x00000037,
+
     /** Invalid API identifier */
     ORA_ID_INVALID = 0xFFFFFFFF,
 } api_id_t;
@@ -696,6 +745,34 @@ typedef enum {
     ORA_IRQ_INVALID = 0xFF,
 } ora_irq_t;
 STATIC_ASSERT(sizeof(ora_irq_t) == 1, "ora_irq_t must be 1 byte");
+
+/**
+ * @brief A log channel
+ *
+ * Channels are numbered rather than named for a purpose: a plugin picks the
+ * one it wants, and the firmware does not assign meaning to any of them.
+ *
+ * One ROM's boot log occupies channel 0, and until the per-core channel split
+ * lands that is the only channel there is. Further channels are added as the
+ * firmware gains buffers for them, which is a backwards compatible addition.
+ *
+ * A channel this header declares may therefore not exist on the firmware a
+ * plugin is running on, if that firmware is older than the header it was built
+ * against. Every call in this family reports that as
+ * @c ORA_RESULT_INVALID_ARG, and @ref ora_log_query_fn_t is the way to test for
+ * it without side effects. A plugin that wants to run on both should fall back
+ * to @c ORA_LOG_CHANNEL_0.
+ *
+ * @c ORA_LOG_CHANNEL_INVALID is both the invalid marker and what fixes this
+ * type at four bytes, since plugins build as C11 with @c -fshort-enums.
+ *
+ * @since firmware 0.7.2
+ */
+typedef enum {
+    ORA_LOG_CHANNEL_0       = 0,
+    ORA_LOG_CHANNEL_INVALID = 0xFFFFFFFF,
+} ora_log_channel_t;
+STATIC_ASSERT(sizeof(ora_log_channel_t) == 4, "ora_log_channel_t must be 4 bytes");
 
 /**
  * @brief Knock sequence state structure
@@ -1000,6 +1077,16 @@ typedef enum {
     ORA_RESULT_TYPE_MISMATCH = 11,
     /** @since firmware 0.7.1 */
     ORA_RESULT_GPIO_IN_USE = 12,
+    /** @since firmware 0.7.2 */
+    ORA_RESULT_LOG_CHANNEL_IN_USE = 13,
+    /**
+     * @brief A log record was dropped because the channel was full
+     *
+     * An outcome, not a failure: see @ref ora_log_write_fn_t.
+     *
+     * @since firmware 0.7.2
+     */
+    ORA_RESULT_LOG_FULL = 14,
 } ora_result_t;
 
 /**
@@ -2316,6 +2403,187 @@ typedef ora_result_t (*ora_gpio_set_fn_t)(
 typedef ora_result_t (*ora_gpio_query_fn_t)(
     uint8_t gpio,
     ora_gpio_info_t *info_out
+);
+
+/**
+ * @brief Claim a log channel for this plugin to write to
+ * @sa ORA_ID_LOG_OPEN_WRITE
+ * @since firmware 0.7.2
+ *
+ * Only the plugin that claimed a channel for writing may write to it. Claiming
+ * neither allocates nor clears anything: the buffers exist before any plugin
+ * runs, and a claim only records the writer and the name.
+ *
+ * The claim covers @ref ora_log_write_fn_t only. @ref ora_log_fn_t and
+ * @ref ora_err_log_fn_t claim nothing and write the boot channel regardless, so
+ * a plugin holding this claim can still have its bytes interleaved by the other
+ * plugin's logging - and interrupt masking does not cross cores, so concurrent
+ * writes from both cores corrupt rather than merely interleave. The per-core
+ * channel split removes this.
+ *
+ * @param channel Channel to claim
+ * @param name    Name shown by whatever reads the log, such as a probe front
+ *                end. Must be NUL-terminated, and must remain valid until the
+ *                channel is closed - the firmware keeps the pointer rather
+ *                than copying the string. A reader may truncate it for
+ *                display, so keep it short.
+ * @return ORA_RESULT_OK on success; ORA_RESULT_INVALID_ARG if @p channel does
+ *         not exist on this firmware or @p name is NULL;
+ *         ORA_RESULT_LOG_CHANNEL_IN_USE if the channel is already claimed for
+ *         writing
+ */
+typedef ora_result_t (*ora_log_open_write_fn_t)(
+    ora_log_channel_t channel,
+    const char *name
+);
+
+/**
+ * @brief Append bytes to a log channel
+ * @sa ORA_ID_LOG_WRITE
+ * @since firmware 0.7.2
+ *
+ * Raw append: no formatting and no varargs, so no scratch buffer and
+ * negligible stack. Use it where the plugin already holds the bytes, or where
+ * the stack budget rules out @ref ora_log_fn_t.
+ *
+ * A write is stored whole or dropped whole, and never blocks. When the channel
+ * has no room the record is dropped and ORA_RESULT_LOG_FULL is returned; that
+ * is normal operation rather than a failure, and a caller with nothing useful
+ * to do about it may ignore it. A caller that can slow down, or that wants to
+ * report how much it lost, has the information to do so.
+ *
+ * A zero-length write stores nothing, returns ORA_RESULT_OK, and is never
+ * reported as full.
+ *
+ * @param channel Channel this plugin claimed for writing
+ * @param buf     Bytes to append
+ * @param len     Number of bytes to append
+ * @return ORA_RESULT_OK if the record was stored, or if @p len was zero;
+ *         ORA_RESULT_LOG_FULL if it was dropped; ORA_RESULT_INVALID_ARG if
+ *         @p buf is NULL, or @p channel does not exist on this firmware or is
+ *         not claimed for writing by this plugin
+ */
+typedef ora_result_t (*ora_log_write_fn_t)(
+    ora_log_channel_t channel,
+    const void *buf,
+    uint32_t len
+);
+
+/**
+ * @brief Relinquish this plugin's write claim on a log channel
+ * @sa ORA_ID_LOG_CLOSE_WRITE
+ * @since firmware 0.7.2
+ *
+ * Nothing is freed and nothing is discarded: the channel remains advertised,
+ * and anything written but not yet read stays readable. Any read claim is
+ * unaffected. The firmware stops using the name passed to
+ * @ref ora_log_open_write_fn_t, so the plugin may reuse that memory.
+ *
+ * @param channel Channel this plugin claimed for writing
+ * @return ORA_RESULT_OK on success; ORA_RESULT_INVALID_ARG if @p channel does
+ *         not exist on this firmware, or is not claimed for writing by this
+ *         plugin
+ */
+typedef ora_result_t (*ora_log_close_write_fn_t)(ora_log_channel_t channel);
+
+/**
+ * @brief Claim a log channel for this plugin to read from
+ * @sa ORA_ID_LOG_OPEN_READ
+ * @since firmware 0.7.2
+ *
+ * Only the plugin that claimed a channel for reading may read from it. Read and
+ * write claims are independent, so one plugin may write a channel while another
+ * reads it, and a channel with no writer can still be read.
+ *
+ * A debug probe attached over SWD is also a reader, and does not go through
+ * this API, so the claim cannot exclude it. Both advance the same read
+ * position, so with both attached each sees only part of the log. Use one or
+ * the other.
+ *
+ * @param channel Channel to claim
+ * @return ORA_RESULT_OK on success; ORA_RESULT_INVALID_ARG if @p channel does
+ *         not exist on this firmware; ORA_RESULT_LOG_CHANNEL_IN_USE if the
+ *         channel is already claimed for reading
+ */
+typedef ora_result_t (*ora_log_open_read_fn_t)(ora_log_channel_t channel);
+
+/**
+ * @brief Read bytes from a log channel
+ * @sa ORA_ID_LOG_READ
+ * @since firmware 0.7.2
+ *
+ * Copies up to @p max_len bytes into @p buf and consumes them, freeing that
+ * space for the writer. Fewer bytes than asked for means the channel is now
+ * empty. The channel's internal wrap is served inside the call, so a short
+ * return never means "more is available from a second call".
+ *
+ * The bytes are consumed by this call, so a caller that reads more than it can
+ * pass on must hold the remainder itself. Where the destination can report its
+ * own free space, ask it first and read exactly that much.
+ *
+ * @param channel    Channel this plugin claimed for reading
+ * @param buf        Destination buffer
+ * @param max_len    Capacity of @p buf in bytes
+ * @param copied_out Receives the number of bytes copied, zero if the channel
+ *                   is empty or @p max_len is zero
+ * @return ORA_RESULT_OK on success, including when the channel is empty;
+ *         ORA_RESULT_INVALID_ARG if @p buf or @p copied_out is NULL, or
+ *         @p channel does not exist on this firmware or is not claimed for
+ *         reading by this plugin
+ */
+typedef ora_result_t (*ora_log_read_fn_t)(
+    ora_log_channel_t channel,
+    void *buf,
+    uint32_t max_len,
+    uint32_t *copied_out
+);
+
+/**
+ * @brief Relinquish this plugin's read claim on a log channel
+ * @sa ORA_ID_LOG_CLOSE_READ
+ * @since firmware 0.7.2
+ *
+ * Unread bytes stay unread and the read position is not disturbed. Any write
+ * claim is unaffected.
+ *
+ * @param channel Channel this plugin claimed for reading
+ * @return ORA_RESULT_OK on success; ORA_RESULT_INVALID_ARG if @p channel does
+ *         not exist on this firmware, or is not claimed for reading by this
+ *         plugin
+ */
+typedef ora_result_t (*ora_log_close_read_fn_t)(ora_log_channel_t channel);
+
+/**
+ * @brief Report a log channel's capacity and current occupancy
+ * @sa ORA_ID_LOG_QUERY
+ * @since firmware 0.7.2
+ *
+ * Distinguishes "this will never fit" from "this does not fit yet":
+ * @p size_out is fixed for the life of the device, while @p free_out varies as
+ * a reader drains. @p pending_out is the reader's view - whether there is
+ * anything to take.
+ *
+ * No claim is needed, in either direction, and the channel need not be claimed
+ * by anyone.
+ *
+ * The channel always holds one byte back, so that a full channel is
+ * distinguishable from an empty one: for a channel that exists,
+ * @p size_out equals @p free_out plus @p pending_out plus one. All three are
+ * one snapshot and so agree with each other, but anything else writing or
+ * draining the channel moves them straight afterwards.
+ *
+ * @param channel     Channel to report on
+ * @param size_out    Receives the channel's total size in bytes. May be NULL.
+ * @param free_out    Receives the bytes writable right now. May be NULL.
+ * @param pending_out Receives the bytes written but not yet read. May be NULL.
+ * @return ORA_RESULT_OK on success; ORA_RESULT_INVALID_ARG if @p channel does
+ *         not exist on this firmware
+ */
+typedef ora_result_t (*ora_log_query_fn_t)(
+    ora_log_channel_t channel,
+    uint32_t *size_out,
+    uint32_t *free_out,
+    uint32_t *pending_out
 );
 
 /** @} */ // plugin_api_functions

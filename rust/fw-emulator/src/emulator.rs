@@ -78,7 +78,11 @@ pub enum OraResult {
     NotSupported,
     TypeMismatch,
     GpioInUse,
-    Unknown(u32),
+    LogChannelInUse,
+    LogFull,
+    /// A code this binding does not know. Carries the C type's own width,
+    /// which `-fshort-enums` makes one byte.
+    Unknown(ffi::ora_result_t),
 }
 
 impl From<ffi::ora_result_t> for OraResult {
@@ -97,6 +101,8 @@ impl From<ffi::ora_result_t> for OraResult {
             ffi::ora_result_t_ORA_RESULT_NOT_SUPPORTED => Self::NotSupported,
             ffi::ora_result_t_ORA_RESULT_TYPE_MISMATCH => Self::TypeMismatch,
             ffi::ora_result_t_ORA_RESULT_GPIO_IN_USE => Self::GpioInUse,
+            ffi::ora_result_t_ORA_RESULT_LOG_CHANNEL_IN_USE => Self::LogChannelInUse,
+            ffi::ora_result_t_ORA_RESULT_LOG_FULL => Self::LogFull,
             other => Self::Unknown(other),
         }
     }
@@ -914,6 +920,102 @@ impl Emulator {
     /// `ORA_ID_GPIO_QUERY` with the full structure this build knows about.
     pub fn gpio_query(&self, gpio: u8) -> (OraResult, GpioInfo) {
         self.gpio_query_sized(gpio, size_of::<ffi::ora_gpio_info_t>() as u8)
+    }
+
+    // ── Logging plugin API ───────────────────────────────────────────────────
+
+    /// Act as `plugin` for subsequent logging API calls.
+    ///
+    /// On a device the calling core identifies the plugin. There is no core to
+    /// read here, so the harness says — which is what lets a test claim a
+    /// channel as one plugin and check the other is kept out.
+    pub fn set_calling_plugin(&self, plugin: ffi::ora_plugin_type_t) {
+        unsafe { ffi::set_host_calling_plugin(plugin) };
+    }
+
+    /// `ORA_ID_LOG_OPEN_WRITE`.
+    ///
+    /// `name` must outlive the claim, exactly as it must on a device: the
+    /// firmware stores the pointer rather than copying the string, so callers
+    /// pass a `&'static CStr`.
+    pub fn log_open_write(&self, channel: u32, name: &'static std::ffi::CStr) -> OraResult {
+        OraResult::from(plugin_call!(
+            ffi::api_id_t_ORA_ID_LOG_OPEN_WRITE,
+            ffi::ora_log_open_write_fn_t,
+            channel,
+            name.as_ptr()
+        ))
+    }
+
+    /// `ORA_ID_LOG_WRITE`.
+    pub fn log_write(&self, channel: u32, buf: &[u8]) -> OraResult {
+        OraResult::from(plugin_call!(
+            ffi::api_id_t_ORA_ID_LOG_WRITE,
+            ffi::ora_log_write_fn_t,
+            channel,
+            buf.as_ptr() as *const core::ffi::c_void,
+            buf.len() as u32
+        ))
+    }
+
+    /// `ORA_ID_LOG_CLOSE_WRITE`.
+    pub fn log_close_write(&self, channel: u32) -> OraResult {
+        OraResult::from(plugin_call!(
+            ffi::api_id_t_ORA_ID_LOG_CLOSE_WRITE,
+            ffi::ora_log_close_write_fn_t,
+            channel
+        ))
+    }
+
+    /// `ORA_ID_LOG_OPEN_READ`.
+    pub fn log_open_read(&self, channel: u32) -> OraResult {
+        OraResult::from(plugin_call!(
+            ffi::api_id_t_ORA_ID_LOG_OPEN_READ,
+            ffi::ora_log_open_read_fn_t,
+            channel
+        ))
+    }
+
+    /// `ORA_ID_LOG_READ`, returning the result and the bytes actually copied.
+    ///
+    /// The returned `Vec` is truncated to what the firmware reported copying,
+    /// so a test comparing it against what was written also checks the count.
+    pub fn log_read(&self, channel: u32, max_len: u32) -> (OraResult, Vec<u8>) {
+        let mut buf = vec![0u8; max_len as usize];
+        let mut copied: u32 = 0;
+        let r = plugin_call!(
+            ffi::api_id_t_ORA_ID_LOG_READ,
+            ffi::ora_log_read_fn_t,
+            channel,
+            buf.as_mut_ptr() as *mut core::ffi::c_void,
+            max_len,
+            &mut copied as *mut u32
+        );
+        buf.truncate(copied as usize);
+        (OraResult::from(r), buf)
+    }
+
+    /// `ORA_ID_LOG_CLOSE_READ`.
+    pub fn log_close_read(&self, channel: u32) -> OraResult {
+        OraResult::from(plugin_call!(
+            ffi::api_id_t_ORA_ID_LOG_CLOSE_READ,
+            ffi::ora_log_close_read_fn_t,
+            channel
+        ))
+    }
+
+    /// `ORA_ID_LOG_QUERY`, returning the result and (size, free, pending).
+    pub fn log_query(&self, channel: u32) -> (OraResult, u32, u32, u32) {
+        let (mut size, mut free, mut pending) = (0u32, 0u32, 0u32);
+        let r = plugin_call!(
+            ffi::api_id_t_ORA_ID_LOG_QUERY,
+            ffi::ora_log_query_fn_t,
+            channel,
+            &mut size as *mut u32,
+            &mut free as *mut u32,
+            &mut pending as *mut u32
+        );
+        (OraResult::from(r), size, free, pending)
     }
 
     pub fn get_chip_size_from_type(&self, chip_type: u32) -> u32 {

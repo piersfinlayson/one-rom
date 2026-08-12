@@ -193,8 +193,6 @@ void limp_mode(limp_mode_pattern_t pattern) {
     limp_mode_value = pattern;
 }
 
-onerom_rtt_cb_t _SEGGER_RTT = {0};
-
 uint8_t stub_rp235x_is_b = 0;
 
 void stub_set_rp_variant(uint8_t is_b) {

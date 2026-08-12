@@ -158,6 +158,8 @@ pub struct Algs {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct UnknownAlg {
     pub family: &'static str,
+    /// The raw id the firmware reported. `u32` rather than the C enum's own
+    /// width, so that config-side and firmware-side ids share one type.
     pub id: u32,
 }
 
@@ -188,20 +190,29 @@ impl Algs {
             ffi::onerom_alg_cs_t_ALG_CS_1 => CsAlg::Cs1,
             ffi::onerom_alg_cs_t_ALG_CS_2 => CsAlg::Cs2,
             id => {
-                return Err(UnknownAlg { family: "cs", id });
+                return Err(UnknownAlg {
+                    family: "cs",
+                    id: id.into(),
+                });
             }
         };
         let addr = match alg.addr_alg {
             ffi::onerom_alg_addr_t_ALG_ADDR_0 => AddrAlg::Addr0,
             id => {
-                return Err(UnknownAlg { family: "addr", id });
+                return Err(UnknownAlg {
+                    family: "addr",
+                    id: id.into(),
+                });
             }
         };
         let data = match alg.data_alg {
             ffi::onerom_alg_data_t_ALG_DATA_0 => DataAlg::Data0,
             ffi::onerom_alg_data_t_ALG_DATA_1 => DataAlg::Data1,
             id => {
-                return Err(UnknownAlg { family: "data", id });
+                return Err(UnknownAlg {
+                    family: "data",
+                    id: id.into(),
+                });
             }
         };
         Ok(Self { cs, addr, data })

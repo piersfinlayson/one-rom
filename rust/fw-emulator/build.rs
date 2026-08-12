@@ -162,9 +162,18 @@ fn main() {
     // the host target and its system headers is safe.  bindgen emits
     // width-correct type aliases (c_long, usize, …) regardless of the parse
     // target.
+    //
+    // `-fshort-enums` must match firmware/test.mk, which compiles the C that
+    // way.  Without it bindgen sizes every enum as a full int, so a parameter
+    // the C compiled as one byte is declared here as four.  That currently
+    // survives only because a narrow integer argument is passed in a full
+    // register and the callee reads the low byte, which is luck rather than
+    // ABI, and it would break outright the moment such an enum sits in a
+    // struct crossing the boundary.
     let builder = bindgen::Builder::default()
         .header(manifest_dir.join("src/wrapper.h").to_str().unwrap())
-        .clang_arg(format!("--target={}", env::var("HOST").unwrap()));
+        .clang_arg(format!("--target={}", env::var("HOST").unwrap()))
+        .clang_arg("-fshort-enums");
 
     let builder = builder
         .clang_arg(format!("-I{}", c_root.join("include").display()))
@@ -198,6 +207,7 @@ fn main() {
         .allowlist_function("ffi_epio_setup_dma_chain")
         .allowlist_function("ffi_epio_arm_monitor")
         .allowlist_function("set_onerom_test_yield_hook")
+        .allowlist_function("set_host_calling_plugin")
         .allowlist_function("ffi_set_logging")
         .allowlist_function("ffi_serving_alg")
         .allowlist_type("ffi_serving_alg_t")

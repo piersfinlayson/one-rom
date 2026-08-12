@@ -341,6 +341,17 @@
 #define SIO_FIFO_WR         (*((volatile uint32_t *)(SIO_BASE + 0x54)))
 #define SIO_FIFO_RD         (*((volatile uint32_t *)(SIO_BASE + 0x58)))
 
+// SIO hardware spinlocks.  Reading attempts to claim the lock, returning zero
+// if it is already held by either core and non-zero if this read took it.
+// Writing any value releases it.  This is the only cross core atomic primitive
+// on this part that does not depend on memory attributes.
+//
+// Erratum RP2350-E2 mis-decodes writes to SIO registers 0x180 and above as
+// writes to the spinlock 128 bytes below, releasing it.  Only locks 5, 6, 7,
+// 10, 11 and 18 through 31 can be used normally.  The bootrom does not compete
+// for these - it has its own Boot Locks at BOOTRAM_BASE + 0x800.
+#define SIO_SPINLOCK(n)     (*((volatile uint32_t *)(SIO_BASE + 0x100 + ((n) * 4))))
+
 #define SIO_GPIO_READ(pin)  ((pin < 32) ? \
                             (((*(volatile uint32_t*)(SIO_BASE + 0x004)) >> pin) & 1) : \
                             (((*(volatile uint32_t*)(SIO_BASE + 0x008)) >> (pin - 32)) & 1))

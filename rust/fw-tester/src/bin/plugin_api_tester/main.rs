@@ -188,6 +188,32 @@ fn run_slot(
         tests::lookup::test_lookup_coverage(&emulator),
     );
 
+    // Logging
+    report.add(
+        "log_write_claim",
+        tests::log::test_write_claim_excludes_other_plugin(&emulator),
+    );
+    report.add(
+        "log_claims_independent",
+        tests::log::test_read_and_write_claims_are_independent(&emulator),
+    );
+    report.add(
+        "log_close_write_keeps_bytes",
+        tests::log::test_close_write_leaves_unread_bytes(&emulator),
+    );
+    report.add(
+        "log_query_needs_no_claim",
+        tests::log::test_query_needs_no_claim(&emulator),
+    );
+    report.add(
+        "log_absent_channel",
+        tests::log::test_absent_channel_is_rejected(&emulator),
+    );
+    report.add(
+        "log_write_read_edges",
+        tests::log::test_write_and_read_edges(&emulator),
+    );
+
     // GPIO
     report.add(
         "gpio_use",

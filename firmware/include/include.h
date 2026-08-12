@@ -9,11 +9,31 @@
 
 #include <stdint.h>
 #include <string.h>
-#if !defined(TEST_BUILD)
+
+#if defined(TEST_BUILD)
+// Host substitutes for the only two Cortex-M operations in the ring, so that
+// src/rtt.c itself builds for the emulator.  A test therefore exercises the
+// ring a device runs, rather than a stand-in for it.
+//
+// A host cannot execute dmb; a compiler barrier preserves the ordering that
+// matters, which is the data stores before the write_offset store that
+// publishes them.  Nor can it mask interrupts; the emulator drives the
+// firmware from one thread, so the critical section is uncontended.  What
+// neither may do is change the ring logic under test.
+#define ONEROM_RTT_DMB()    __atomic_signal_fence(__ATOMIC_SEQ_CST)
+#define ONEROM_RTT_LOCK     1
+static inline uint32_t onerom_rtt_lock(void) { return 0u; }
+static inline void onerom_rtt_unlock(uint32_t primask) { (void)primask; }
+#endif // TEST_BUILD
+
 #include "rtt.h"
-#else // TEST_BUILD
-#include "test/rtt.h"
-#endif // !TEST_BUILD
+
+#if defined(TEST_BUILD)
+// Boot and plugin logging goes to the harness's stdout, not the ring, so
+// emulator output stays readable and the ring holds only what a test put
+// there.  The logging API operates on the real ring either way.
+#define do_log STUB_LOG
+#endif // TEST_BUILD
 
 // If you are not using sdrr-gen, you must define configuration options
 // manually.  Exmaples are given here:

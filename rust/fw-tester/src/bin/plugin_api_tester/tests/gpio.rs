@@ -311,16 +311,18 @@ pub fn test_gpio_use(
 
     for gpio in 0..max_gpios {
         let bit = 1u64 << gpio;
-        let expected: u8 = if serving.driven & bit != 0 {
-            ffi::ora_gpio_use_t_ORA_GPIO_USE_SERVING_DRIVEN as u8
+        // No cast: bindgen is given -fshort-enums to match the C, so this is
+        // already the enum's own width.
+        let expected: ffi::ora_gpio_use_t = if serving.driven & bit != 0 {
+            ffi::ora_gpio_use_t_ORA_GPIO_USE_SERVING_DRIVEN
         } else if serving.read & bit != 0 {
-            ffi::ora_gpio_use_t_ORA_GPIO_USE_SERVING_READ as u8
+            ffi::ora_gpio_use_t_ORA_GPIO_USE_SERVING_READ
         } else if system & bit != 0 {
             // Serving takes precedence: a system pin the active slot also uses
             // is reported as what serving is using it for.
-            ffi::ora_gpio_use_t_ORA_GPIO_USE_SYSTEM as u8
+            ffi::ora_gpio_use_t_ORA_GPIO_USE_SYSTEM
         } else {
-            ffi::ora_gpio_use_t_ORA_GPIO_USE_FREE as u8
+            ffi::ora_gpio_use_t_ORA_GPIO_USE_FREE
         };
 
         let (result, info) = emu.gpio_query(gpio);

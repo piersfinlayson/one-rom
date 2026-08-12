@@ -204,6 +204,15 @@ void set_host_monitor_write_slot(volatile uint32_t * volatile *slot);
 // only expected to.
 extern void (*onerom_test_yield_hook)(void);
 void set_onerom_test_yield_hook(void (*hook)(void));
+
+// Which plugin the logging API should treat an ORA call as coming from.
+//
+// On a device the calling core identifies the plugin, and a plugin can neither
+// pass nor spoof it.  There is no SIO_CPUID under emulation, and the harness
+// drives the firmware from one thread, so it says instead — which is also what
+// lets a test act as both plugins in turn and check that a claim held by one
+// keeps the other out.
+void set_host_calling_plugin(ora_plugin_type_t plugin);
 #endif // !REAL_HARDWARE
 
 // pio/dma.c

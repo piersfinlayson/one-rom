@@ -10,7 +10,6 @@
 #include "stdio.h"
 #include "assert.h"
 #include "stdlib.h"
-#include "test/rtt.h"
 #include "types.h"
 
 #define STUB_LOG stub_log

@@ -1037,6 +1037,248 @@ ora_result_t ora_gpio_query(uint8_t gpio, ora_gpio_info_t *info_out) {
     return ORA_RESULT_OK;
 }
 
+// ---------------------------------------------------------------------------
+// Logging API
+// ---------------------------------------------------------------------------
+
+// Which plugin holds each channel's write and read claim, indexed by channel.
+//
+// Zero means unclaimed, so .bss zeroing is the initialiser and this stays
+// correct however many channels the ring gains; a held claim stores the
+// claiming plugin's ora_plugin_type_t plus one.  Sized by the ring's channel
+// count rather than by the number of channels that currently have buffers, so
+// adding a buffer needs no change here.
+static uint8_t ora_log_writer[ONEROM_RTT_MAX_UP_BUFFERS];
+static uint8_t ora_log_reader[ONEROM_RTT_MAX_UP_BUFFERS];
+
+#if REAL_HARDWARE
+// Core 1 runs the system plugin and core 0 the user plugin; see
+// ora_launch_plugins().  An ORA call runs on the calling plugin's own core, so
+// the core identifies the caller with nothing for the plugin to pass and
+// nothing for it to spoof.
+static ora_plugin_type_t ora_calling_plugin(void) {
+    return (SIO_CPUID == 1u) ? ORA_PLUGIN_TYPE_SYSTEM : ORA_PLUGIN_TYPE_USER;
+}
+#else // !REAL_HARDWARE
+// There is no SIO_CPUID under emulation, and the harness drives the firmware
+// from one thread, so it says which plugin is calling instead.
+static ora_plugin_type_t ora_host_calling_plugin = ORA_PLUGIN_TYPE_SYSTEM;
+
+void set_host_calling_plugin(ora_plugin_type_t plugin) {
+    ora_host_calling_plugin = plugin;
+}
+
+static ora_plugin_type_t ora_calling_plugin(void) {
+    return ora_host_calling_plugin;
+}
+#endif // REAL_HARDWARE
+
+// A channel exists if it is in range and has a buffer.  Asking the ring rather
+// than keeping a count here means P6's extra channels appear on their own.
+static uint8_t ora_log_channel_exists(ora_log_channel_t channel) {
+    unsigned size = 0u;
+
+    if ((unsigned)channel >= ONEROM_RTT_MAX_UP_BUFFERS) {
+        return 0u;
+    }
+    onerom_rtt_query((unsigned)channel, &size, NULL, NULL);
+
+    return (size != 0u) ? 1u : 0u;
+}
+
+// Does the calling plugin hold this claim on this channel?
+static uint8_t ora_log_holds(const uint8_t *claims, ora_log_channel_t channel) {
+    if (!ora_log_channel_exists(channel)) {
+        return 0u;
+    }
+
+    return (claims[(unsigned)channel] ==
+            (uint8_t)(ora_calling_plugin() + 1u)) ? 1u : 0u;
+}
+
+// Spinlock guarding the log claim tables.
+//
+// A claim is a test and set across two cores, which PRIMASK cannot cover,
+// because masking interrupts on one core says nothing about the other.  The
+// exclusive monitor is not an alternative: it spans cores only when the memory
+// is marked shareable, and this firmware configures no MPU, so LDREX/STREX
+// would look correct and silently fail to exclude the other core.
+//
+// Lock 31 rather than any free number.  See SIO_SPINLOCK in reg-rp235x.h for
+// which locks erratum RP2350-E2 leaves usable.  Of those, an allocator handing
+// out locks from the SDK's claim free base of 26 reaches 31 last.
+#define ORA_LOG_SPINLOCK    31
+
+// Interrupts are masked for as long as the lock is held.  Plugins can register
+// interrupt handlers, and nothing stops one calling into the logging API, so a
+// handler could preempt its own core mid-claim and then spin forever on a lock
+// only the code it interrupted can release.  Masking removes that: the holder
+// cannot be preempted on its own core, and the other core is excluded by the
+// lock itself.
+#if defined(TEST_BUILD)
+static uint32_t ora_log_lock(void) { return 0u; }
+static void ora_log_unlock(uint32_t primask) { (void)primask; }
+#else
+static uint32_t ora_log_lock(void) {
+    uint32_t primask;
+
+    __asm volatile ("mrs %0, primask \n\t"
+                    "cpsid i"
+                    : "=r" (primask) :: "memory");
+
+    while (SIO_SPINLOCK(ORA_LOG_SPINLOCK) == 0u)
+        ;
+    __asm volatile ("dmb" ::: "memory");
+
+    return primask;
+}
+
+static void ora_log_unlock(uint32_t primask) {
+    __asm volatile ("dmb" ::: "memory");
+    SIO_SPINLOCK(ORA_LOG_SPINLOCK) = 0u;
+    __asm volatile ("msr primask, %0" :: "r" (primask) : "memory");
+}
+#endif // TEST_BUILD
+
+static ora_result_t ora_log_claim(uint8_t *claims, ora_log_channel_t channel) {
+    ora_result_t result;
+
+    if (!ora_log_channel_exists(channel)) {
+        return ORA_RESULT_INVALID_ARG;
+    }
+
+    uint32_t primask = ora_log_lock();
+    if (claims[(unsigned)channel] != 0u) {
+        result = ORA_RESULT_LOG_CHANNEL_IN_USE;
+    } else {
+        claims[(unsigned)channel] = (uint8_t)(ora_calling_plugin() + 1u);
+        result = ORA_RESULT_OK;
+    }
+    ora_log_unlock(primask);
+
+    return result;
+}
+
+ora_result_t ora_log_open_write(ora_log_channel_t channel, const char *name) {
+    ora_result_t result;
+
+    if (name == NULL) {
+        return ORA_RESULT_INVALID_ARG;
+    }
+
+    result = ora_log_claim(ora_log_writer, channel);
+    if (result != ORA_RESULT_OK) {
+        return result;
+    }
+
+    // The name is stored, not copied, which is why open documents that it must
+    // outlive the claim.  Closing puts the firmware's own name back.
+    onerom_rtt_set_name((unsigned)channel, name);
+
+    return ORA_RESULT_OK;
+}
+
+ora_result_t ora_log_write(ora_log_channel_t channel, const void *buf,
+                           uint32_t len) {
+    if ((buf == NULL) || !ora_log_holds(ora_log_writer, channel)) {
+        return ORA_RESULT_INVALID_ARG;
+    }
+
+    // Nothing to store is not a dropped record.
+    if (len == 0u) {
+        return ORA_RESULT_OK;
+    }
+
+    if (onerom_rtt_write((unsigned)channel, buf, (unsigned)len) == 0u) {
+        return ORA_RESULT_LOG_FULL;
+    }
+
+    return ORA_RESULT_OK;
+}
+
+ora_result_t ora_log_close_write(ora_log_channel_t channel) {
+    ora_result_t result;
+
+    if (!ora_log_channel_exists(channel)) {
+        return ORA_RESULT_INVALID_ARG;
+    }
+
+    uint32_t primask = ora_log_lock();
+    if (ora_log_writer[(unsigned)channel] !=
+        (uint8_t)(ora_calling_plugin() + 1u)) {
+        result = ORA_RESULT_INVALID_ARG;
+    } else {
+        // The name goes back before the claim is released, so the next owner
+        // cannot have its own name reverted under it.
+        onerom_rtt_set_name((unsigned)channel, NULL);
+        ora_log_writer[(unsigned)channel] = 0u;
+        result = ORA_RESULT_OK;
+    }
+    ora_log_unlock(primask);
+
+    return result;
+}
+
+ora_result_t ora_log_open_read(ora_log_channel_t channel) {
+    return ora_log_claim(ora_log_reader, channel);
+}
+
+ora_result_t ora_log_read(ora_log_channel_t channel, void *buf,
+                          uint32_t max_len, uint32_t *copied_out) {
+    if ((buf == NULL) || (copied_out == NULL) ||
+        !ora_log_holds(ora_log_reader, channel)) {
+        return ORA_RESULT_INVALID_ARG;
+    }
+
+    *copied_out =
+        (uint32_t)onerom_rtt_read((unsigned)channel, buf, (unsigned)max_len);
+
+    return ORA_RESULT_OK;
+}
+
+ora_result_t ora_log_close_read(ora_log_channel_t channel) {
+    ora_result_t result;
+
+    if (!ora_log_channel_exists(channel)) {
+        return ORA_RESULT_INVALID_ARG;
+    }
+
+    uint32_t primask = ora_log_lock();
+    if (ora_log_reader[(unsigned)channel] !=
+        (uint8_t)(ora_calling_plugin() + 1u)) {
+        result = ORA_RESULT_INVALID_ARG;
+    } else {
+        ora_log_reader[(unsigned)channel] = 0u;
+        result = ORA_RESULT_OK;
+    }
+    ora_log_unlock(primask);
+
+    return result;
+}
+
+ora_result_t ora_log_query(ora_log_channel_t channel, uint32_t *size_out,
+                           uint32_t *free_out, uint32_t *pending_out) {
+    unsigned size = 0u, avail = 0u, pending = 0u;
+
+    if (!ora_log_channel_exists(channel)) {
+        return ORA_RESULT_INVALID_ARG;
+    }
+
+    onerom_rtt_query((unsigned)channel, &size, &avail, &pending);
+
+    if (size_out != NULL) {
+        *size_out = (uint32_t)size;
+    }
+    if (free_out != NULL) {
+        *free_out = (uint32_t)avail;
+    }
+    if (pending_out != NULL) {
+        *pending_out = (uint32_t)pending;
+    }
+
+    return ORA_RESULT_OK;
+}
+
 void *ora_fn_lookup(api_id_t id) {
     switch (id) {
         case ORA_ID_REBOOT_BOOTSEL:
@@ -1135,6 +1377,21 @@ void *ora_fn_lookup(api_id_t id) {
             return ora_gpio_set;
         case ORA_ID_GPIO_QUERY:
             return ora_gpio_query;
+
+        case ORA_ID_LOG_OPEN_WRITE:
+            return ora_log_open_write;
+        case ORA_ID_LOG_WRITE:
+            return ora_log_write;
+        case ORA_ID_LOG_CLOSE_WRITE:
+            return ora_log_close_write;
+        case ORA_ID_LOG_OPEN_READ:
+            return ora_log_open_read;
+        case ORA_ID_LOG_READ:
+            return ora_log_read;
+        case ORA_ID_LOG_CLOSE_READ:
+            return ora_log_close_read;
+        case ORA_ID_LOG_QUERY:
+            return ora_log_query;
 
         // Deprecated functions
         case ORA_ID_GET_FIRMWARE_INFO:
@@ -1357,6 +1614,8 @@ __attribute__((noinline)) ora_plugin_entry_t launch_plugins_inner(uint8_t *launc
 }
 
 void ora_launch_plugins(void) {
+    onerom_rtt_plugins_init();
+
     uint8_t launched_plugins = 0;
     ora_plugin_entry_t core0_entry = launch_plugins_inner(&launched_plugins);
 

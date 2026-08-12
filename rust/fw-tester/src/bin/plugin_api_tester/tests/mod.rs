@@ -4,6 +4,7 @@
 
 pub mod gpio;
 pub mod info;
+pub mod log;
 pub mod lookup;
 pub mod mapping;
 pub mod reprogram;
