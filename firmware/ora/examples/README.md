@@ -2,6 +2,16 @@
 
 This directory contains some simple example One ROM plugins.
 
+| Example | What it does |
+| --- | --- |
+| [blink](blink) | Blinks One ROM's status LED |
+| [hello](hello) | Logs a message in a loop |
+| [c64-char-led](c64-char-led) | Watches C64 character ROM accesses and drives the status LED |
+| [c64-kernal-mod](c64-kernal-mod) | Rewrites the C64 kernal boot banner in response to a knock sequence |
+
+Plugins written to test the plugin API on a device, rather than to show how it
+is used, live in [tests](../tests/README.md).
+
 ## Pre-requisites
 
 ### Linux

@@ -132,7 +132,14 @@ and timing-critical; on RP2350 it runs on PIO/DMA.
 - `firmware/src`, `firmware/include`, `firmware/link` — sources, headers,
   linker scripts.
 - `firmware/ora/` — the plugin API: `api.h`, `plugin.h`, `system.h`,
-  `plugin.ld`, `plugin.mk`, `examples/`.
+  `plugin.ld`, `plugin.mk`, `examples/`, `tests/`.
+  - `examples/` teaches the API — small, single-idea plugins a plugin author
+    reads. `tests/` holds plugins that **test** the API on a device, and are
+    neither built nor run by CI: each needs a One ROM, a debug probe, and the
+    USB connector moved by hand between programming and running. A test there
+    is dormant by design, and its README says what it validated and what change
+    would make it worth running again. Do not put a test in `examples/` — the
+    two pull apart fast, and an instrument makes a terrible example.
 - `firmware/test` + `test.mk`. `test.mk`'s `WASM=1` mode cross-compiles the
   firmware to WebAssembly (via Emscripten) for One ROM Lens; the root
   `libonerom-test-wasm` target drives it.

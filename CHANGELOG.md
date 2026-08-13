@@ -38,7 +38,6 @@ To publish:
   exists.  Tag apio before committing this.
 
 To test (on hardware, before release):
-- The plugin logging API.  A plugin claims a channel, writes to it, and the output appears over probe-rs under the name it passed; a plugin on the other core claims it for reading and gets the same bytes back.  A second claim in the same direction must fail while the opposite direction succeeds.  The claim table is covered in the emulator, but the SIO spinlock arbitrating it between cores only runs on a device.
 - Studio building a config that names a plugin.  The check is shared with the CLI, which is covered by tests and was run against the live manifest both ways, but Studio's own path needs a connected device to reach at all: a config naming USB v0.1.2 should refuse to build, and one naming v0.2.1 should build and flash.
 - Program a device from an S-record image and confirm it serves the right bytes — `onerom program --slot file=<rom>.s19,type=...,format=srec,load-address=$...`.  The build path is covered by tests; flashing and serving are not.
 - One ROM Lab's `f:srec` dump, which has no automated coverage at all: lab is a `thumbv8m` binary with no host tests, so its encoder is only verified against `onerom-gen`'s golden by inspection.  Dump a ROM as S-records and read it back with `onerom image convert --from srec --to binary`, comparing against the same ROM dumped as `ihex`.  Worth doing on a ROM larger than 64 KB too, which is the case that selects `S2`/`S8` records rather than `S1`/`S9`.
