@@ -1,0 +1,325 @@
+/*
+ * docs.css - print house style for the One ROM PDF documentation set.
+ *
+ * This is the whole of the house style: cover, running header and footer, page
+ * numbering, code blocks, tables and page-break policy.  It is deliberately
+ * CSS rather than a template in a typesetting language, so that it shares a
+ * palette and a type stack with one-rom-site's style.css and there is only one
+ * design to maintain.
+ *
+ * The page furniture relies on CSS Paged Media: @page margin boxes for the
+ * running header and footer, counter(pages) for the page total, and
+ * target-counter() for the page numbers in the contents list.
+ */
+
+@font-face {
+    font-family: 'Michroma';
+    src: url('fonts/Michroma-Regular.ttf') format('truetype');
+}
+@font-face {
+    font-family: 'Inter';
+    src: url('fonts/Inter-Regular.ttf') format('truetype');
+    font-weight: 400;
+    font-style: normal;
+}
+@font-face {
+    font-family: 'Inter';
+    src: url('fonts/Inter-Italic.ttf') format('truetype');
+    font-weight: 400;
+    font-style: italic;
+}
+@font-face {
+    font-family: 'Inter';
+    src: url('fonts/Inter-SemiBold.ttf') format('truetype');
+    font-weight: 600;
+    font-style: normal;
+}
+@font-face {
+    font-family: 'Inter';
+    src: url('fonts/Inter-SemiBoldItalic.ttf') format('truetype');
+    font-weight: 600;
+    font-style: italic;
+}
+
+:root {
+    /* Palette.  Taken from one-rom-site's style.css, inverted for paper: the
+       site is light-on-dark, but a dark PDF is a poor thing to print or to
+       read next to a bench, so the ink and ground are swapped and the gold is
+       darkened enough to hold contrast against white. */
+    --gold: #ffb700;
+    --gold-dark: #a06f00;
+    --ink: #1a1a20;
+    --ink-muted: #5a5a62;
+    --rule: #d5d5dc;
+    --rule-light: #e8e8ee;
+    --code-bg: #f5f5f7;
+    --zebra: #fafafb;
+
+    --sans: 'Inter', sans-serif;
+    --mono: 'SF Mono', 'Menlo', 'DejaVu Sans Mono', 'Courier New', monospace;
+    --display: 'Michroma', var(--sans);
+}
+
+/* ---------------------------------------------------------------- pages -- */
+
+@page {
+    size: A4;
+    margin: 22mm 18mm 20mm 18mm;
+
+    @top-left {
+        content: string(doctitle);
+        font-family: var(--sans);
+        font-size: 7.5pt;
+        color: var(--ink-muted);
+        padding-bottom: 2mm;
+    }
+    @top-right {
+        content: string(section);
+        font-family: var(--sans);
+        font-size: 7.5pt;
+        color: var(--ink-muted);
+        padding-bottom: 2mm;
+    }
+    /* The notice itself comes from docs.toml, in the generated paper
+       stylesheet - this rule only says how it is set. */
+    @bottom-left {
+        font-family: var(--sans);
+        font-size: 7.5pt;
+        color: var(--ink-muted);
+        padding-top: 3mm;
+    }
+    @bottom-right {
+        content: 'Page ' counter(page) ' of ' counter(pages);
+        font-family: var(--sans);
+        font-size: 7.5pt;
+        color: var(--ink-muted);
+        padding-top: 3mm;
+    }
+}
+
+/* The cover carries its own furniture, so it takes none of the above. */
+@page cover {
+    margin: 0;
+    @top-left { content: none }
+    @top-right { content: none }
+    @bottom-left { content: none }
+    @bottom-right { content: none }
+}
+
+@page toc {
+    @top-left { content: none }
+    @top-right { content: none }
+}
+
+/* Wide reference tables - CHIP-TYPES runs to 14 columns, which no portrait
+   page will hold at a readable size.  A section marked .wide turns sideways
+   rather than being shrunk into illegibility. */
+@page wide {
+    size: A4 landscape;
+}
+.wide {
+    page: wide;
+    break-before: page;
+    break-after: page;
+}
+
+/* ------------------------------------------------------------- typography */
+
+html {
+    font-family: var(--sans);
+    font-size: 10pt;
+    line-height: 1.5;
+    color: var(--ink);
+    hyphens: none;
+}
+
+body { margin: 0 }
+
+p { margin: 0 0 0.65em 0; orphans: 2; widows: 2 }
+
+h1, h2, h3, h4, h5, h6 {
+    break-after: avoid;
+    margin: 0 0 0.4em 0;
+    line-height: 1.25;
+}
+
+/* h1 opens a part or the document.  Michroma is a wide display face - it earns
+   its place on the cover and on part titles, and would be unreadable as a
+   running head. */
+h1:not(.cover-title) {
+    font-family: var(--display);
+    font-size: 17pt;
+    letter-spacing: -0.01em;
+    break-before: page;
+    margin-top: 0;
+    padding-bottom: 3mm;
+    border-bottom: 2px solid var(--gold);
+    string-set: section '';
+}
+/* The document's own opening matter sits above the first h1, and is too short
+   to hold a page of its own - let the first part title follow it. */
+body > h1:first-of-type { break-before: auto }
+
+h2 {
+    font-size: 14pt;
+    font-weight: 600;
+    margin-top: 1.6em;
+    padding-bottom: 1.5mm;
+    border-bottom: 1px solid var(--rule);
+    string-set: section content(text);
+}
+
+h3 { font-size: 11.5pt; font-weight: 600; margin-top: 1.4em }
+h4 { font-size: 10pt; font-weight: 600; margin-top: 1.2em; color: var(--ink-muted) }
+
+a { color: var(--gold-dark); text-decoration: none }
+strong { font-weight: 600 }
+
+ul, ol { margin: 0 0 0.65em 0; padding-left: 1.3em }
+li { margin-bottom: 0.2em }
+
+blockquote {
+    margin: 1em 0;
+    padding: 0.6em 1em;
+    border-left: 3px solid var(--gold);
+    background: var(--code-bg);
+    color: var(--ink-muted);
+    break-inside: avoid;
+}
+blockquote p:last-child { margin-bottom: 0 }
+
+hr {
+    border: none;
+    border-top: 1px solid var(--rule);
+    margin: 1.6em 0;
+}
+
+/* ------------------------------------------------------------------ code -- */
+
+code {
+    font-family: var(--mono);
+    font-size: 0.88em;
+    background: var(--code-bg);
+    padding: 0.1em 0.3em;
+    border-radius: 2px;
+}
+
+/* Code blocks wrap rather than overflow.  The manual carries command lines up
+   to 174 characters, which no page width will hold at a readable size. */
+pre {
+    font-family: var(--mono);
+    font-size: 8pt;
+    line-height: 1.4;
+    background: var(--code-bg);
+    border-left: 3px solid var(--gold);
+    padding: 3mm 4mm;
+    margin: 0.8em 0;
+    white-space: pre-wrap;
+    overflow-wrap: break-word;
+    break-inside: avoid;
+}
+pre code { background: none; padding: 0; font-size: inherit }
+
+/* ---------------------------------------------------------------- tables -- */
+
+table {
+    border-collapse: collapse;
+    width: auto;
+    max-width: 100%;
+    margin: 0.9em 0;
+    font-size: 8.5pt;
+}
+thead { display: table-header-group }  /* repeat the header on each page */
+tr { break-inside: avoid }
+th {
+    text-align: left;
+    font-weight: 600;
+    background: var(--code-bg);
+    border-bottom: 1.5px solid var(--gold);
+    padding: 1.6mm 2mm;
+}
+td {
+    padding: 1.4mm 2mm;
+    border-bottom: 1px solid var(--rule-light);
+    vertical-align: top;
+}
+tbody tr:nth-child(even) { background: var(--zebra) }
+table code { background: none; padding: 0 }
+
+/* ----------------------------------------------------------------- cover -- */
+
+.cover {
+    page: cover;
+    break-after: page;
+    padding: 45mm 22mm 20mm 22mm;
+    box-sizing: border-box;
+    position: relative;
+}
+.cover-rule { border-top: 3px solid var(--gold); width: 40mm; margin-bottom: 12mm }
+.cover-wordmark {
+    font-family: var(--display);
+    font-size: 13pt;
+    letter-spacing: 0.02em;
+    color: var(--ink-muted);
+    margin-bottom: 4mm;
+}
+/* The cover title also supplies the running header for every later page. */
+.cover-title {
+    font-family: var(--display);
+    font-size: 26pt;
+    line-height: 1.25;
+    margin: 0 0 6mm 0;
+    string-set: doctitle content(text);
+}
+.cover-subtitle {
+    font-size: 12pt;
+    color: var(--ink-muted);
+    margin: 0;
+    max-width: 120mm;
+}
+.cover-meta {
+    position: absolute;
+    left: 22mm;
+    right: 22mm;
+    bottom: 22mm;
+    font-size: 9pt;
+    color: var(--ink-muted);
+    border-top: 1px solid var(--rule);
+    padding-top: 5mm;
+}
+.cover-meta div { margin-bottom: 1mm }
+.cover-meta .version {
+    font-size: 11pt;
+    color: var(--ink);
+    font-weight: 600;
+    margin-bottom: 3mm;
+}
+
+/* -------------------------------------------------------------- contents -- */
+
+#TOC {
+    page: toc;
+    break-after: page;
+}
+#TOC::before {
+    content: 'Contents';
+    display: block;
+    font-family: var(--display);
+    font-size: 17pt;
+    padding-bottom: 3mm;
+    border-bottom: 2px solid var(--gold);
+    margin-bottom: 6mm;
+}
+#TOC ul { list-style: none; padding-left: 0; margin: 0 }
+#TOC ul ul { padding-left: 6mm }
+#TOC li { margin-bottom: 0.15em }
+#TOC a {
+    color: var(--ink);
+    text-decoration: none;
+}
+/* Leader dots and the page number the entry lands on. */
+#TOC a::after {
+    content: leader('.') target-counter(attr(href), page);
+    color: var(--ink-muted);
+}
+#TOC > ul > li > a { font-weight: 600; margin-top: 0.4em; display: block }

@@ -187,3 +187,17 @@ git push origin v<x.y.z>
   - Ensure the image exists at `one-rom-images/vx.y.z/fire/rp2350/firmware.bin`
   - Commit and push changes to `one-rom-images` repo
   - Test using Studio
+- Update the documentation PDFs in `one-rom-images`
+  - Install the documentation toolchain once with `ci/install-doc-tools.sh`, and
+    put the directory it prints on `PATH`
+  - Within `one-rom` `main` branch run `ci/build-docs.sh ../one-rom-images`
+  - Each document carries the version of the thing it documents, so the CLI
+    manual moves only when the CLI version does, and the chip references only
+    when the firmware version does.  A document whose version has not changed
+    re-stages over the same files and replaces its own entry, so re-running
+    after a correction is safe
+  - The script merges the release into `one-rom-images/docs.json`, which keeps
+    every past edition so a reader on an older CLI or firmware can still fetch
+    the one matching their build.  It does not set `latest` - review the diff
+    and set it once the release is ready
+  - Commit and push changes to `one-rom-images` repo

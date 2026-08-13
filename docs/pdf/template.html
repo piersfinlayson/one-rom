@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>$title$</title>
+</head>
+<body>
+
+<section class="cover">
+  <div class="cover-rule"></div>
+  <div class="cover-wordmark">$wordmark$</div>
+  <h1 class="cover-title">$title$</h1>
+  <p class="cover-subtitle">$subtitle$</p>
+  <div class="cover-meta">
+    <div class="version">$versionlabel$</div>
+    <div>$date$</div>
+    <div>Built from $repo$ $commit$ &middot; source <code>$source$</code></div>
+    <div>$notice$</div>
+    <div>$url$</div>
+  </div>
+</section>
+
+$if(toc)$
+<nav id="TOC" role="doc-toc">
+$table-of-contents$
+</nav>
+$endif$
+
+$body$
+
+</body>
+</html>

@@ -15,9 +15,14 @@ In detail:
   - This required a firmware update.
 - Add a plugin logging API, so a plugin can write its own named log channel and another plugin can drain it — the groundwork for a retro system's output reaching a PC over One ROM's USB.
   - This required a firmware update.
+- One ROM's log now reaches a PC over USB.  Attach a terminal to the CDC serial port and the firmware's and plugins' output appears there, including whatever accumulated beforehand — so a device left running shows you its boot log when you connect, with no debug probe.  Nothing is forwarded until a terminal attaches, which keeps the log readable by a probe on a device that merely has USB.
+  - This required a firmware update.
+- Boot logging now switches the firmware's own boot messages, and nothing else.  Plugin logging and errors were previously silenced along with it, so a plugin logged nothing at all unless `--boot-logging` was set.  Errors are now always reported, whatever a build or a device is configured for.
+  - This required a firmware update.
 - Check plugins named by a config against the images server's published compatibility window, in the CLI and Studio.  A plugin binary declares only a minimum firmware version, so USB v0.1.2 — which hard faults on firmware v0.7.0 — was previously built in without complaint.  A local or third-party plugin has nothing published to check, and an unreachable server warns rather than failing.
 - Add Motorola S-record (`srec`) as a ROM image input format, alongside Intel HEX.  A chip may set `"format": "srec"` in a config file, with the same optional `"load_address"`; the CLI exposes it as `--slot format=srec,load-address=...`, and `onerom image convert` converts between `binary`, `ihex` and `srec` in any direction.  Unwritten bytes read as `0xFF`, as for Intel HEX.
 - One ROM Lab can dump a ROM as S-records: `f:srec`, alongside the existing `ihex` and hex dump formats.
+- Publish the CLI manual, chip type reference and compatibility reference as PDFs, in A4 and US Letter, for reading and printing away from a browser.  Each carries the version of the thing it documents rather than a repository version.
 - **Breaking (Rust crates only):** `onerom_gen::FileFormat` and most of the crate's other public enums are now `#[non_exhaustive]`, so a `match` on one needs a wildcard arm; `IHEX_BLANK_BYTE` is renamed `UNWRITTEN_BYTE`, now that it is shared by both record formats, with the old name kept as a deprecated alias.  `LoadAddress` moves to a new `hexfile` module, re-exported from its old paths.
 
 To publish:

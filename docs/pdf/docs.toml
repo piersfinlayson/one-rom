@@ -1,0 +1,60 @@
+# docs.toml - the One ROM PDF documentation set.
+#
+# Every piece of text that appears in a PDF but not in its source markdown
+# lives here.  Nothing in ci/build-docs.sh, docs/pdf/render.py or
+# docs/pdf/docs.css states it, so there is one place to change a licence, a
+# domain or the set of documents, and no second copy to fall behind.
+#
+# Cover titles and subtitles are deliberately absent: they are the document's
+# own leading H1 and the paragraph beneath it, read from the markdown at build
+# time.
+
+[project]
+name = "One ROM"
+url = "https://onerom.org"
+
+# The repository a build is attributed to on the cover, alongside the commit.
+repo = "one-rom"
+
+# {year} is the year the PDF is built.  The cover carries the full notice, the
+# page footer a compact one.
+cover_notice = "Copyright © {year} Piers Finlayson <piers@piers.rocks> · MIT licence"
+footer_notice = "© {year} Piers Finlayson · onerom.org · MIT licence"
+
+# Paper sizes built for every document.  height is the page height, which the
+# cover needs in order to anchor its metadata block to the foot of the page.
+[papers.a4]
+size = "A4"
+height = "297mm"
+
+[papers.letter]
+size = "Letter"
+height = "279mm"
+
+# Where a document's version comes from, and how the cover names it.  A
+# document is versioned as the thing it documents, not as the repository: the
+# CLI manual tracks the onerom-cli crate, the chip references track the
+# firmware.  {version} is substituted at build time.
+[version_sources.cli]
+label = "One ROM CLI v{version}"
+
+[version_sources.firmware]
+label = "One ROM firmware v{version}"
+
+# The documents.  basename is the published filename stem and the path segment
+# on images.onerom.org, so it is stated rather than derived from the source
+# filename - it is a URL people link to.
+[[documents]]
+source = "docs/CLI-MANUAL.md"
+basename = "one-rom-cli-manual"
+version_source = "cli"
+
+[[documents]]
+source = "docs/COMPATIBILITY.md"
+basename = "one-rom-compatibility"
+version_source = "firmware"
+
+[[documents]]
+source = "docs/CHIP-TYPES.md"
+basename = "one-rom-chip-types"
+version_source = "firmware"

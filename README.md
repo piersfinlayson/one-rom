@@ -234,7 +234,8 @@ cd rust/lab && scripts/flash.sh
 Dependencies are listed in [INSTALL.md](INSTALL.md), or use the
 [build container](ci/docker/README.md).  The ARM and
 Emscripten toolchain versions are pinned (`ci/arm-toolchain-version`,
-`ci/emscripten-version`) so a firmware binary is byte-identical wherever it is
+`ci/emscripten-version`), as are the documentation tools that render the PDF
+editions (`ci/pandoc-version`, `ci/weasyprint-version`), so a firmware binary is byte-identical wherever it is
 built.
 
 Build the base firmware:
@@ -361,6 +362,9 @@ wraps `onerom-gen` as WASM, and is what the
 | [Build Container](ci/docker/README.md) | Building the firmware reproducibly in Docker. |
 | [ROMs Glorious ROMs](docs/ROMS-GLORIOUS-ROMS.md) | Everything you wanted to know about 23/27 series ROMs but were afraid to ask. |
 | [Changelog](CHANGELOG.md) | What changed, and when. |
+
+The CLI manual, chip type and compatibility references are also published as
+PDFs, in A4 and US Letter, built by `ci/build-docs.sh`.
 
 More in [docs/](docs) — flash layout, logging, voltage levels, using a Pi Pico as
 an SWD programmer — plus [INSTALL.md](INSTALL.md) for build dependencies and
