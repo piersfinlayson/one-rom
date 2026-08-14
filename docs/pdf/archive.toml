@@ -5,13 +5,13 @@
 # matching their build.  The text comes from the object store, so building one
 # needs no checkout and leaves the working tree alone.
 #
-# Deliberately NOT part of docs.toml.  A published archive edition should keep
-# the bytes it was published with, and anything in docs.toml is rebuilt and
-# re-staged on every release - a later stylesheet change would silently
-# republish a past edition with different bytes and a different checksum.
-# Build this set on demand instead:
+# Deliberately NOT part of docs.toml.  An entry there is built whenever its
+# release cycle runs, and this one rides the CLI's - so every CLI release would
+# rebuild a past edition and re-stage it over the bytes readers already have,
+# with a different checksum the moment the stylesheet moves.  Build this set on
+# demand instead:
 #
-#   ci/build-docs.sh <dest-prefix> docs/pdf/archive.toml
+#   ci/build-docs.sh <dest-prefix> --config docs/pdf/archive.toml
 #
 # It shares docs.css, template.html and render.py with the live set, so an
 # archive edition is the old text printed by the current press - it is not a
@@ -21,6 +21,7 @@
 name = "One ROM"
 url = "https://onerom.org"
 repo = "one-rom"
+file_prefix = "onerom-"
 cover_notice = "Copyright © {year} Piers Finlayson <piers@piers.rocks> · MIT licence"
 footer_notice = "© {year} Piers Finlayson · onerom.org · MIT licence"
 
@@ -34,7 +35,7 @@ height = "279mm"
 
 # A past edition states its version rather than reading it from the tree, which
 # describes the present.
-[version_sources.cli-0-3-0]
+[version_sources.cli]
 label = "One ROM CLI v{version}"
 version = "0.3.0"
 
@@ -43,7 +44,7 @@ version = "0.3.0"
 # own release tag rather than the firmware tag that happens to share its commit.
 [[documents]]
 source = "docs/CLI-MANUAL.md"
-basename = "one-rom-cli-manual"
-version_source = "cli-0-3-0"
+slug = "cli-manual"
+version_source = "cli"
 version_banner = "as of release v{version}"
 ref = "cli-v0.3.0"

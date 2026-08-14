@@ -201,8 +201,9 @@ git push origin v<x.y.z>
     published by the CLI release instead, since it moves with the onerom-cli
     crate.  Without it the whole set is built, which would republish the manual
     at a version that had not moved
-  - The script merges the release into `one-rom-images/docs.json`, which keeps
-    every past edition so a reader on an older CLI or firmware can still fetch
-    the one matching their build.  It does not set `latest` - review the diff
-    and set it once the release is ready
+  - The script stages each document under `one-rom-images/docs/<slug>/v<x.y.z>/`
+    and merges the release into that document's `releases.json`, keeping every
+    past edition so a reader on an older firmware can still fetch the one
+    matching their build.  It does not set `latest` - review the diff and set it
+    once the release is ready
   - Commit and push changes to `one-rom-images` repo

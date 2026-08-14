@@ -178,11 +178,11 @@ def shorten_toc(html):
 
 def render(document, config, root, out_dir, commit, date, year):
     project = config["project"]
-    basename = document["basename"]
+    slug = document["slug"]
 
     version_source = document["version_source"]
     if version_source not in config["version_sources"]:
-        sys.exit(f"error: {basename}: unknown version source '{version_source}'")
+        sys.exit(f"error: {slug}: unknown version source '{version_source}'")
     spec = config["version_sources"][version_source]
 
     # A source may state its version outright rather than being read from the
@@ -250,7 +250,8 @@ def render(document, config, root, out_dir, commit, date, year):
         check=True,
     ).stdout
 
-    html_path = out_dir / f"{basename}.html"
+    stem = f"{project['file_prefix']}{slug}"
+    html_path = out_dir / f"{stem}.html"
     html_path.write_text(shorten_toc(html))
 
     footer = project["footer_notice"].format(year=year).replace("'", "\\27 ")
@@ -267,7 +268,7 @@ def render(document, config, root, out_dir, commit, date, year):
             f".cover {{ height: {spec['height']} }}\n"
             f"@page {{ @bottom-left {{ content: '{footer}' }} }}\n"
         )
-        pdf = out_dir / f"{basename}-v{version}-{paper}.pdf"
+        pdf = out_dir / f"{stem}-{version}-{paper}.pdf"
         subprocess.run(
             [
                 "weasyprint",
@@ -284,11 +285,14 @@ def render(document, config, root, out_dir, commit, date, year):
 
     html_path.unlink()
     return {
-        "basename": basename,
-        "source": document["source"],
+        "slug": slug,
+        "source": origin,
         "title": title,
+        # The document's opening sentence doubles as its catalogue description,
+        # the way a plugin's releases.json carries one.
+        "description": subtitle,
         "version": version,
-        "version_source": version_source,
+        "tracks": version_source,
         "files": built,
     }
 
@@ -330,7 +334,7 @@ def main():
 
     documents = []
     for document in documents_to_build:
-        print(f"building {document['basename']}")
+        print(f"building {document['slug']}")
         documents.append(
             render(document, config, root, out_dir, commit, date, today.year)
         )

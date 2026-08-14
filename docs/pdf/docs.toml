@@ -16,6 +16,11 @@ url = "https://onerom.org"
 # The repository a build is attributed to on the cover, alongside the commit.
 repo = "one-rom"
 
+# Published filenames are this prefix, the document slug, the version and the
+# paper - onerom-cli-manual-0.4.0-a4.pdf - matching onerom-cli-mac-0.3.0.zip
+# and the other artifacts on images.onerom.org.
+file_prefix = "onerom-"
+
 # {year} is the year the PDF is built.  The cover carries the full notice, the
 # page footer a compact one.
 cover_notice = "Copyright © {year} Piers Finlayson <piers@piers.rocks> · MIT licence"
@@ -41,21 +46,21 @@ label = "One ROM CLI v{version}"
 [version_sources.firmware]
 label = "One ROM firmware v{version}"
 
-# The documents.  basename is the published filename stem and the path segment
-# on images.onerom.org, so it is stated rather than derived from the source
+# The documents.  slug is the directory on images.onerom.org and the middle of
+# the published filename, so it is stated rather than derived from the source
 # filename - it is a URL people link to.
 [[documents]]
 source = "docs/CLI-MANUAL.md"
-basename = "one-rom-cli-manual"
+slug = "cli-manual"
 version_source = "cli"
 version_banner = "as of release v{version}"
 
 [[documents]]
 source = "docs/COMPATIBILITY.md"
-basename = "one-rom-compatibility"
+slug = "compatibility"
 version_source = "firmware"
 
 [[documents]]
 source = "docs/CHIP-TYPES.md"
-basename = "one-rom-chip-types"
+slug = "chip-types"
 version_source = "firmware"

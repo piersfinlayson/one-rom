@@ -43,17 +43,20 @@
 # US Letter - the readership is split across both, and a set built for one
 # prints with shifted margins on the other.
 #
-# With a destination prefix the PDFs are staged per document, mirroring how
-# cli/ and studio/ are laid out on images.onerom.org, and this release is merged
-# into that repository's docs.json.
+# With a destination prefix the PDFs are staged into images.onerom.org, laid out
+# as every other product there is:
 #
-# docs.json accumulates history, so that a reader on an older CLI or firmware can
-# still fetch the edition matching their build.  Unlike releases.json it carries
-# no hand-curated fields, so the merge is done here rather than by pasting a
-# fragment - inserting a release into a nested array by hand is a poor use of a
-# release evening.  Like build-images.sh, this script deliberately does not touch
-# `latest`: publishing a document and making it the current one stay separate
-# steps.
+#   docs/docs.json                        an index, as plugins/plugins.json is
+#   docs/<slug>/releases.json             as plugins/user/blink/releases.json is
+#   docs/<slug>/v<version>/<files>
+#
+# Each document's releases.json accumulates its editions, so a reader on an
+# older CLI or firmware can still fetch the one matching their build.  It
+# carries no hand-curated fields, so the merge is done here rather than by
+# pasting a fragment - inserting a release into a nested array by hand is a poor
+# use of a release evening.  Like build-images.sh, this script deliberately does
+# not touch `latest`: publishing a document and making it the current one stay
+# separate steps.
 #
 set -e
 
@@ -90,8 +93,13 @@ ls -la "${OUT_DIR}"
 
 [ -n "${DEST_PREFIX}" ] || exit 0
 
-# Staging and the manifest merge both read what the renderer actually produced,
-# rather than reconstructing the filenames from the config.
+# Staging and the manifests both read what the renderer actually produced,
+# rather than reconstructing filenames from the config.
+#
+# The layout follows every other product on images.onerom.org - files under
+# <slug>/v<version>/, a releases.json beside the version directories, and a thin
+# index above them, exactly as plugins/ does with plugins.json plus a
+# releases.json per plugin.
 python3 - "${MANIFEST}" "${DEST_PREFIX}" "${OUT_DIR}" <<'EOF'
 import hashlib, json, shutil, sys
 from pathlib import Path
@@ -99,57 +107,80 @@ from pathlib import Path
 manifest, dest_prefix, out_dir = (Path(a) for a in sys.argv[1:4])
 build = json.loads(manifest.read_text())
 
-docs_json = dest_prefix / "docs.json"
-if docs_json.exists():
-    catalogue = json.loads(docs_json.read_text())
-else:
-    catalogue = {"version": 1, "latest": {}, "documents": []}
+docs_root = dest_prefix / "docs"
+docs_root.mkdir(parents=True, exist_ok=True)
 
-by_slug = {d["slug"]: d for d in catalogue["documents"]}
+
+def load(path, default):
+    return json.loads(path.read_text()) if path.exists() else default
+
+
+def save(path, data):
+    path.write_text(json.dumps(data, indent=2) + "\n")
+
+
+index = load(docs_root / "docs.json", {"version": 1, "documents": []})
+by_slug = {d["slug"]: d for d in index["documents"]}
 
 for document in build["documents"]:
-    slug = document["basename"].removeprefix("one-rom-")
-    path = f"docs/{slug}"
-    dest = dest_prefix / path
+    slug = document["slug"]
+    version = document["version"]
+    version_dir = f"v{version}"
+    dest = docs_root / slug / version_dir
     dest.mkdir(parents=True, exist_ok=True)
 
     files = []
     for entry in document["files"]:
         source = out_dir / entry["filename"]
         shutil.copy2(source, dest / entry["filename"])
-        print(f"  staged at {path}/{entry['filename']}")
+        print(f"  staged at docs/{slug}/{version_dir}/{entry['filename']}")
         files.append({
             "paper": entry["paper"],
             "filename": entry["filename"],
             "sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
         })
 
-    entry = by_slug.get(slug)
-    if entry is None:
-        entry = {"slug": slug, "releases": []}
-        by_slug[slug] = entry
-        catalogue["documents"].append(entry)
-    entry["title"] = document["title"]
-    entry["tracks"] = document["version_source"]
-    entry["path"] = path
+    # The per-document catalogue, alongside its version directories.
+    releases_path = docs_root / slug / "releases.json"
+    catalogue = load(releases_path, {"version": 1, "latest": None, "releases": []})
+    catalogue["display_name"] = document["title"]
+    catalogue["description"] = document["description"]
+    catalogue["tracks"] = document["tracks"]
 
     # Re-running a release replaces its entry rather than duplicating it, so a
-    # rebuild after a correction is safe.
-    release = {"version": document["version"], "files": files}
-    entry["releases"] = [
-        r for r in entry["releases"] if r["version"] != document["version"]
+    # rebuild after a correction does not leave two entries for one version.
+    release = {"version": version, "path": version_dir, "files": files}
+    catalogue["releases"] = [
+        r for r in catalogue["releases"] if r["version"] != version
     ]
-    entry["releases"].append(release)
-    entry["releases"].sort(key=lambda r: [int(n) for n in r["version"].split(".")])
+    catalogue["releases"].append(release)
+    catalogue["releases"].sort(key=lambda r: [int(n) for n in r["version"].split(".")])
 
-    current = catalogue["latest"].get(slug)
-    if current != document["version"]:
-        print(f"  note: {slug} latest is {current or 'unset'},"
-              f" this release is {document['version']}")
+    # Ordered so a reader meets the document before its release history.
+    save(releases_path, {
+        "version": catalogue["version"],
+        "display_name": catalogue["display_name"],
+        "description": catalogue["description"],
+        "tracks": catalogue["tracks"],
+        "latest": catalogue["latest"],
+        "releases": catalogue["releases"],
+    })
 
-docs_json.write_text(json.dumps(catalogue, indent=2) + "\n")
+    if catalogue["latest"] != version:
+        print(f"  note: {slug} latest is {catalogue['latest'] or 'unset'},"
+              f" this release is {version}")
+
+    # The index carries nothing versioned, as plugins.json does not.
+    if slug not in by_slug:
+        entry = {"slug": slug, "title": None, "path": slug}
+        by_slug[slug] = entry
+        index["documents"].append(entry)
+    by_slug[slug]["title"] = document["title"]
+    by_slug[slug]["path"] = slug
+
+save(docs_root / "docs.json", index)
 EOF
 
 echo
-echo "merged into ${DEST_PREFIX}/docs.json"
+echo "merged into ${DEST_PREFIX}/docs/ - docs.json and each document's releases.json"
 echo "- review the diff, set 'latest' when ready, then commit and push"

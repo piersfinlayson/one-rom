@@ -58,8 +58,10 @@ cargo build --release
     published by its release instead.  The toolchain is installed once with
     `ci/install-doc-tools.sh`, which prints a directory to put on `PATH`.
 
-    The script merges the release into `one-rom-images/docs.json` but does not
-    set `latest`.  Review the diff and set `latest` for `cli-manual`.
+    The manual is staged at
+    `one-rom-images/docs/cli-manual/vX.Y.Z/` and merged into that document's
+    `releases.json`.  The script does not set `latest` - review the diff and set
+    it there.
 
 5. Commit the changes to the one-rom-images repo and push:
     ```bash
