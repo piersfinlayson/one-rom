@@ -364,7 +364,7 @@ wraps `onerom-gen` as WASM, and is what the
 | [Changelog](CHANGELOG.md) | What changed, and when. |
 
 The CLI manual, chip type and compatibility references are also published as
-PDFs, in A4 and US Letter, built by `ci/build-docs.sh`.
+PDFs, in A4 and US Letter, at [onerom.org/docs](https://onerom.org/docs/).
 
 More in [docs/](docs) — flash layout, logging, voltage levels, using a Pi Pico as
 an SWD programmer — plus [INSTALL.md](INSTALL.md) for build dependencies and
