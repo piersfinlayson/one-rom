@@ -48,6 +48,7 @@ label = "One ROM firmware v{version}"
 source = "docs/CLI-MANUAL.md"
 basename = "one-rom-cli-manual"
 version_source = "cli"
+version_banner = "as of release v{version}"
 
 [[documents]]
 source = "docs/COMPATIBILITY.md"

@@ -146,6 +146,10 @@ cargo publish --dry-run -p onerom-cli
 cargo publish -p onerom-cli
 ```
 
+The CLI **binary** releases on its own cycle, following
+[rust/cli/README.md](/rust/cli/README.md).  The CLI manual PDF is published by
+that release rather than this one, since the manual moves with the CLI version.
+
 ---
 
 If on a branch, submit a pull request and merge it into main.
@@ -190,12 +194,13 @@ git push origin v<x.y.z>
 - Update the documentation PDFs in `one-rom-images`
   - Install the documentation toolchain once with `ci/install-doc-tools.sh`, and
     put the directory it prints on `PATH`
-  - Within `one-rom` `main` branch run `ci/build-docs.sh ../one-rom-images`
-  - Each document carries the version of the thing it documents, so the CLI
-    manual moves only when the CLI version does, and the chip references only
-    when the firmware version does.  A document whose version has not changed
-    re-stages over the same files and replaces its own entry, so re-running
-    after a correction is safe
+  - Within `one-rom` `main` branch run
+    `ci/build-docs.sh ../one-rom-images --source firmware`
+  - `--source firmware` builds only the documents on the firmware's release
+    cycle - the chip compatibility and chip type references.  The CLI manual is
+    published by the CLI release instead, since it moves with the onerom-cli
+    crate.  Without it the whole set is built, which would republish the manual
+    at a version that had not moved
   - The script merges the release into `one-rom-images/docs.json`, which keeps
     every past edition so a reader on an older CLI or firmware can still fetch
     the one matching their build.  It does not set `latest` - review the diff

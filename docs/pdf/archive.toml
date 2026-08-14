@@ -1,0 +1,49 @@
+# archive.toml - past editions of the One ROM documentation set.
+#
+# These are documents whose version has already moved on, rendered from the git
+# ref they shipped at so a reader still on that release can fetch the edition
+# matching their build.  The text comes from the object store, so building one
+# needs no checkout and leaves the working tree alone.
+#
+# Deliberately NOT part of docs.toml.  A published archive edition should keep
+# the bytes it was published with, and anything in docs.toml is rebuilt and
+# re-staged on every release - a later stylesheet change would silently
+# republish a past edition with different bytes and a different checksum.
+# Build this set on demand instead:
+#
+#   ci/build-docs.sh <dest-prefix> docs/pdf/archive.toml
+#
+# It shares docs.css, template.html and render.py with the live set, so an
+# archive edition is the old text printed by the current press - it is not a
+# reproduction of a PDF that never existed at the time.
+
+[project]
+name = "One ROM"
+url = "https://onerom.org"
+repo = "one-rom"
+cover_notice = "Copyright © {year} Piers Finlayson <piers@piers.rocks> · MIT licence"
+footer_notice = "© {year} Piers Finlayson · onerom.org · MIT licence"
+
+[papers.a4]
+size = "A4"
+height = "297mm"
+
+[papers.letter]
+size = "Letter"
+height = "279mm"
+
+# A past edition states its version rather than reading it from the tree, which
+# describes the present.
+[version_sources.cli-0-3-0]
+label = "One ROM CLI v{version}"
+version = "0.3.0"
+
+# CLI 0.3.0 is the release currently published on images.onerom.org, so this is
+# the manual matching the CLI a reader can download today.  The ref is the CLI's
+# own release tag rather than the firmware tag that happens to share its commit.
+[[documents]]
+source = "docs/CLI-MANUAL.md"
+basename = "one-rom-cli-manual"
+version_source = "cli-0-3-0"
+version_banner = "as of release v{version}"
+ref = "cli-v0.3.0"

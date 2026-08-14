@@ -20,6 +20,25 @@
 # would only dirty the tree against the check that just passed.  Run the gate
 # before this script, not inside it.
 #
+# Usage: build-docs.sh [dest-prefix] [--source NAME] [--config PATH]
+#
+# --source names a version source from docs.toml, and so selects the documents
+# that ship on that release cycle.  This matters because the documents do not
+# all release together: the CLI manual moves with the onerom-cli crate, the chip
+# references with the firmware, and each is published by its own release.  Build
+# the whole set from one of them and you republish documents whose version has
+# not moved, overwriting bytes readers already have.
+#
+#   ci/build-docs.sh ../one-rom-images --source firmware   # firmware release
+#   ci/build-docs.sh ../one-rom-images --source cli        # CLI release
+#
+# With no --source every document is built, which is what CI wants - it renders
+# the whole set to prove none of them breaks the renderer, and publishes nothing.
+#
+# --config selects a different set - docs/pdf/archive.toml holds past editions,
+# rendered from the git ref they shipped at, built on demand rather than every
+# release.
+#
 # Every document is built in each paper size docs.toml lists, currently A4 and
 # US Letter - the readership is split across both, and a set built for one
 # prints with shifted margins on the other.
@@ -38,7 +57,17 @@
 #
 set -e
 
-DEST_PREFIX=$1
+DEST_PREFIX=""
+CONFIG=""
+SOURCE=""
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --config) CONFIG=$2; shift 2 ;;
+        --source) SOURCE=$2; shift 2 ;;
+        -*)       echo "error: unknown option $1"; exit 1 ;;
+        *)        DEST_PREFIX=$1; shift ;;
+    esac
+done
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
@@ -53,7 +82,9 @@ command -v pandoc >/dev/null || {
 command -v weasyprint >/dev/null || {
     echo "error: weasyprint not found - run ci/install-doc-tools.sh"; exit 1; }
 
-python3 "${PDF_DIR}/render.py" --out-dir "${OUT_DIR}"
+python3 "${PDF_DIR}/render.py" --out-dir "${OUT_DIR}" \
+    ${CONFIG:+--config "${PROJECT_ROOT}/${CONFIG}"} \
+    ${SOURCE:+--source "${SOURCE}"}
 
 ls -la "${OUT_DIR}"
 

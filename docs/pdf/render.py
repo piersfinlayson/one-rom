@@ -57,6 +57,13 @@ NOT_PROSE = re.compile(
 )
 
 
+def git(root, *args):
+    """Run git in the repository and return its trimmed stdout."""
+    return subprocess.run(
+        ["git", *args], capture_output=True, text=True, check=True, cwd=root,
+    ).stdout.strip()
+
+
 # -------------------------------------------------------------- versions --
 
 def cli_version(root):
@@ -114,9 +121,9 @@ def drop_hand_written_toc(lines):
     return out
 
 
-def read_document(path):
+def read_document(text, origin):
     """Return (title, subtitle, body) for a markdown document."""
-    lines = path.read_text().split("\n")
+    lines = text.split("\n")
 
     title = None
     start = 0
@@ -126,7 +133,7 @@ def read_document(path):
             start = i + 1
             break
     if title is None:
-        sys.exit(f"error: {path} has no leading H1 to use as a title")
+        sys.exit(f"error: {origin} has no leading H1 to use as a title")
 
     subtitle = ""
     paragraph = []
@@ -171,16 +178,51 @@ def shorten_toc(html):
 
 def render(document, config, root, out_dir, commit, date, year):
     project = config["project"]
-    source = root / document["source"]
     basename = document["basename"]
 
     version_source = document["version_source"]
     if version_source not in config["version_sources"]:
         sys.exit(f"error: {basename}: unknown version source '{version_source}'")
-    version = VERSION_READERS[version_source](root)
-    label = config["version_sources"][version_source]["label"].format(version=version)
+    spec = config["version_sources"][version_source]
 
-    title, subtitle, body = read_document(source)
+    # A source may state its version outright rather than being read from the
+    # tree.  That is what lets a past edition be rebuilt: the working tree says
+    # what the CLI is now, not what it was at the ref being rendered.
+    if "version" in spec:
+        version = spec["version"]
+    else:
+        version = VERSION_READERS[version_source](root)
+    label = spec["label"].format(version=version)
+
+    # A document may name a git ref, and is then read from the object store
+    # rather than the working tree - no checkout, and this tree is untouched.
+    # The cover is stamped with that ref's commit, so it does not misattribute
+    # the text to whatever HEAD happens to be.
+    ref = document.get("ref")
+    if ref:
+        text = git(root, "show", f"{ref}:{document['source']}")
+        commit = git(root, "rev-parse", "--short", f"{ref}^{{commit}}")
+        origin = f"{ref}:{document['source']}"
+    else:
+        text = (root / document["source"]).read_text()
+        origin = document["source"]
+
+    # A document may also state its version in its own prose, for readers of the
+    # markdown on GitHub, who get no cover and no versioned filename.  That is a
+    # second statement of the same fact, so it is checked rather than trusted -
+    # a manual must not be published whose banner disagrees with its cover.
+    banner = document.get("version_banner")
+    if banner:
+        expected = banner.format(version=version)
+        if expected not in text:
+            sys.exit(
+                f"error: {origin} does not say \"{expected}\".\n"
+                f"  The version being published is {version}. Update the "
+                f"document's own version statement to match, or correct the "
+                f"version source."
+            )
+
+    title, subtitle, body = read_document(text, origin)
 
     html = subprocess.run(
         [
@@ -197,7 +239,7 @@ def render(document, config, root, out_dir, commit, date, year):
             "--metadata", f"date={date}",
             "--metadata", f"commit={commit}",
             "--metadata", f"repo={project['repo']}",
-            "--metadata", f"source={document['source']}",
+            "--metadata", f"source={origin}",
             "--metadata", f"wordmark={project['name']}",
             "--metadata", f"url={project['url']}",
             "--metadata", f"notice={project['cover_notice'].format(year=year)}",
@@ -255,6 +297,10 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", default=str(PDF_DIR / "docs.toml"))
     parser.add_argument("--out-dir", required=True)
+    parser.add_argument(
+        "--source",
+        help="build only documents on this version source, e.g. cli or firmware",
+    )
     args = parser.parse_args()
 
     root = PDF_DIR.parent.parent
@@ -263,15 +309,27 @@ def main():
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    commit = subprocess.run(
-        ["git", "rev-parse", "--short", "HEAD"],
-        capture_output=True, text=True, check=True, cwd=root,
-    ).stdout.strip()
+    commit = git(root, "rev-parse", "--short", "HEAD")
     today = datetime.date.today()
     date = f"{today.day} {today:%B %Y}"
 
+    # A version source is the release cycle a document follows, so selecting one
+    # selects the documents that ship with it.  The CLI manual moves with the
+    # onerom-cli crate and the chip references with the firmware, and the two
+    # release separately - building the whole set from either would republish
+    # documents whose version had not moved.
+    documents_to_build = config["documents"]
+    if args.source:
+        if args.source not in config["version_sources"]:
+            sys.exit(f"error: unknown version source '{args.source}'")
+        documents_to_build = [
+            d for d in documents_to_build if d["version_source"] == args.source
+        ]
+        if not documents_to_build:
+            sys.exit(f"error: no documents on version source '{args.source}'")
+
     documents = []
-    for document in config["documents"]:
+    for document in documents_to_build:
         print(f"building {document['basename']}")
         documents.append(
             render(document, config, root, out_dir, commit, date, today.year)
