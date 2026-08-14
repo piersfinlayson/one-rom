@@ -37,6 +37,7 @@ height = "279mm"
 # describes the present.
 [version_sources.cli]
 label = "One ROM CLI v{version}"
+short_label = "CLI"
 version = "0.3.0"
 
 # CLI 0.3.0 is the release currently published on images.onerom.org, so this is

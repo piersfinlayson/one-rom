@@ -146,6 +146,8 @@ for document in build["documents"]:
     catalogue["display_name"] = document["title"]
     catalogue["description"] = document["description"]
     catalogue["tracks"] = document["tracks"]
+    catalogue["tracks_label"] = document["tracks_label"]
+    catalogue["source_path"] = document["source_path"]
 
     # Re-running a release replaces its entry rather than duplicating it, so a
     # rebuild after a correction does not leave two entries for one version.
@@ -162,6 +164,8 @@ for document in build["documents"]:
         "display_name": catalogue["display_name"],
         "description": catalogue["description"],
         "tracks": catalogue["tracks"],
+        "tracks_label": catalogue["tracks_label"],
+        "source_path": catalogue["source_path"],
         "latest": catalogue["latest"],
         "releases": catalogue["releases"],
     })

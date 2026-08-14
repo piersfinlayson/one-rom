@@ -42,9 +42,11 @@ height = "279mm"
 # firmware.  {version} is substituted at build time.
 [version_sources.cli]
 label = "One ROM CLI v{version}"
+short_label = "CLI"
 
 [version_sources.firmware]
 label = "One ROM firmware v{version}"
+short_label = "Firmware"
 
 # The documents.  slug is the directory on images.onerom.org and the middle of
 # the published filename, so it is stated rather than derived from the source

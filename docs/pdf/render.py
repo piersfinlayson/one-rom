@@ -257,15 +257,15 @@ def render(document, config, root, out_dir, commit, date, year):
     footer = project["footer_notice"].format(year=year).replace("'", "\\27 ")
 
     built = []
-    for paper, spec in config["papers"].items():
+    for paper, paper_spec in config["papers"].items():
         # The page size, the cover height that depends on it, and the footer
         # notice are the only style values that cannot be static.
         paper_css = out_dir / f"paper-{paper}.css"
         paper_css.write_text(
-            f"@page {{ size: {spec['size']} }}\n"
-            f"@page cover {{ size: {spec['size']} }}\n"
-            f"@page toc {{ size: {spec['size']} }}\n"
-            f".cover {{ height: {spec['height']} }}\n"
+            f"@page {{ size: {paper_spec['size']} }}\n"
+            f"@page cover {{ size: {paper_spec['size']} }}\n"
+            f"@page toc {{ size: {paper_spec['size']} }}\n"
+            f".cover {{ height: {paper_spec['height']} }}\n"
             f"@page {{ @bottom-left {{ content: '{footer}' }} }}\n"
         )
         pdf = out_dir / f"{stem}-{version}-{paper}.pdf"
@@ -287,6 +287,10 @@ def render(document, config, root, out_dir, commit, date, year):
     return {
         "slug": slug,
         "source": origin,
+        # The repository-relative path, for a link to the always-current
+        # markdown.  Not `origin`, which names a git ref for a past edition.
+        "source_path": document["source"],
+        "tracks_label": spec.get("short_label", version_source),
         "title": title,
         # The document's opening sentence doubles as its catalogue description,
         # the way a plugin's releases.json carries one.
