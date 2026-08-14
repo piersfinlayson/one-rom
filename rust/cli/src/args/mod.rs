@@ -9,6 +9,7 @@
 //!   onerom firmware <subcommand> - Firmware binary management
 //!   onerom program               - Build and flash firmware to a One ROM
 //!   onerom inspect <subcommand>  - Read-only One ROM state and information
+//!   onerom monitor <subcommand>  - Watch a running One ROM as it works
 //!   onerom control <subcommand>  - Transient One ROM actions
 //!   onerom update <subcommand>   - Persistent One ROM modifications
 //!   onerom image <subcommand>    - ROM image file manipulation
@@ -28,6 +29,7 @@ pub mod control;
 pub mod firmware;
 pub mod image;
 pub mod inspect;
+pub mod monitor;
 pub mod plugin;
 pub mod program;
 pub mod scan;
@@ -60,6 +62,7 @@ use inspect::{
     InspectInfoArgs, InspectPeekArgs, InspectPeekCommands, InspectPeekLiveArgs,
     InspectPeekMemoryArgs, InspectSlotsArgs, InspectSocketArgs, InspectTelemetryArgs,
 };
+use monitor::{MonitorArgs, MonitorCommands, MonitorLogArgs};
 use plugin::PluginArgs;
 use program::ProgramArgs;
 use scan::ScanArgs;
@@ -427,6 +430,13 @@ pub enum Commands {
         subcommand_help_heading = "Commands"
     )]
     Inspect(InspectArgs),
+
+    /// Watch a running One ROM as it works.
+    #[command(
+        subcommand_value_name = "COMMAND",
+        subcommand_help_heading = "Commands"
+    )]
+    Monitor(MonitorArgs),
 
     /// Perform transient actions on a connected One ROM.
     ///

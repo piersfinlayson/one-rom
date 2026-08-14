@@ -15,7 +15,7 @@ In detail:
   - This required a firmware update.
 - Add a plugin logging API, so a plugin can write its own named log channel and another plugin can drain it — the groundwork for a retro system's output reaching a PC over One ROM's USB.
   - This required a firmware update.
-- One ROM's log now reaches a PC over USB.  Attach a terminal to the CDC serial port and the firmware's and plugins' output appears there, including whatever accumulated beforehand — so a device left running shows you its boot log when you connect, with no debug probe.  Nothing is forwarded until a terminal attaches, which keeps the log readable by a probe on a device that merely has USB.
+- One ROM's log now reaches a PC over USB.  `onerom monitor log` — or any terminal on the CDC serial port — shows the firmware's and plugins' output, including whatever accumulated beforehand, so a device left running shows you its boot log when you connect, with no debug probe.  `onerom program --follow` goes straight from programming to watching.  Nothing is forwarded until something attaches, which keeps the log readable by a probe on a device that merely has USB.
   - This required a firmware update.
 - Boot logging now switches the firmware's own boot messages, and nothing else.  Plugin logging and errors were previously silenced along with it, so a plugin logged nothing at all unless `--boot-logging` was set.  Errors are now always reported, whatever a build or a device is configured for.
   - This required a firmware update.

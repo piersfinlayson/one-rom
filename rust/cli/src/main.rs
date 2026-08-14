@@ -15,6 +15,7 @@ mod control;
 mod firmware;
 mod image;
 mod inspect;
+mod monitor;
 mod plugin;
 mod program;
 mod scan;
@@ -29,6 +30,7 @@ use args::control::{ControlCommands, ControlLedCommands, ControlPokeCommands};
 use args::firmware::FirmwareCommands;
 use args::image::ImageCommands;
 use args::inspect::{InspectCommands, InspectPeekCommands};
+use args::monitor::MonitorCommands;
 use args::self_cmd::SelfCommands;
 use args::update::UpdateCommands;
 
@@ -77,6 +79,9 @@ async fn sub_main() -> Result<(), Error> {
                 InspectPeekCommands::Live(args) => inspect::cmd_peek_live(&options, args).await,
                 InspectPeekCommands::Memory(args) => inspect::cmd_peek_memory(&options, args).await,
             },
+        },
+        Commands::Monitor(args) => match &args.command {
+            MonitorCommands::Log(args) => monitor::cmd_log(&options, args).await,
         },
         Commands::Control(args) => match &args.command {
             ControlCommands::Led(args) => match &args.command {

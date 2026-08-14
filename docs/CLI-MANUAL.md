@@ -309,6 +309,19 @@ on — plus direction, level, 5V tolerance, and what One ROM itself is using it
 for. GPIOs connected to nothing are omitted unless you pass `--all`. Useful
 before driving a pin — see [`inspect gpio`](#inspect-gpio).
 
+### Watch a device's log
+
+```
+onerom monitor log
+```
+
+Prints the One ROM's firmware and plugin logging as it is written, and starts
+with whatever it has logged since anything last listened — so the boot log is
+still there when you attach. Needs a running One ROM with the USB system
+plugin. Add `--output <FILE>` to keep a transcript, or use
+`onerom program --config c64.json --follow` to go straight from programming to
+watching. See [`monitor log`](#monitor-log).
+
 ### Erase / recover a device
 
 Erase flash. This is best done while stopped; by default the command reboots the
@@ -410,6 +423,7 @@ hardware take them; each command's own entry below states what it accepts, and
 | [`scan`](#scan) | Discover connected One ROMs | No |
 | [`program`](#program) | Build and flash firmware to a One ROM | Yes |
 | [`inspect`](#inspect) | Read-only device state and information | Yes |
+| [`monitor`](#monitor) | Watch a running One ROM as it works | Yes |
 | [`control`](#control) | Transient (non-persistent) device actions | Yes |
 | [`update`](#update) | Persistent device modifications | Yes |
 | [`image`](#image) | ROM image file manipulation | No |
@@ -514,6 +528,7 @@ These are rejected with `--no-config`.
 | `--force, -f` | Continue despite non-fatal problems: assembled firmware parse errors, a board type mismatch, and config warnings such as turbo boot with more than one non-plugin ROM slot. Each is reported as a warning instead. |
 | `--batch` (aliases `--multiple`, `--multi`) | Program multiple devices, pausing for confirmation between each. Every board is programmed with the same configuration as the first. |
 | `--scan-slots` | After programming, run `onerom scan --slots` to show the result. Conflicts with `--fast`. |
+| `--follow` | After programming, monitor the One ROM's log, as [`monitor log`](#monitor-log) does. Runs after `--scan-slots`, and only once the One ROM is back on the USB bus, so it shows the boot log of the firmware just flashed. Conflicts with `--fast`, `--stopped`, `--no-reboot` and `--batch`. |
 
 Device required: yes.
 
@@ -776,6 +791,60 @@ onerom inspect socket [--board <board>] [--chip-type <chip>] [--gpio]
 
 As with [`inspect header`](#inspect-header), `--board` overrides the connected
 One ROM's reported board type rather than standing in for the device.
+
+---
+
+## monitor
+
+Watch a running One ROM as it works.
+
+```
+onerom monitor <COMMAND>
+```
+
+| Subcommand | Purpose | Device required |
+|---|---|---|
+| [`log`](#monitor-log) | Show the One ROM's log as it is written | Yes |
+
+### monitor log
+
+Attach to the One ROM's USB serial port and print the firmware and plugin
+logging it sends, until the One ROM is disconnected, rebooted or stopped, or you
+press Ctrl-C.
+
+What the One ROM has logged since anything last listened arrives first, so
+attaching after a reboot still shows the boot log.
+
+```
+onerom monitor log
+onerom --serial 1234abcd monitor log
+onerom monitor log --output boot.txt
+```
+
+| Option | Description |
+|---|---|
+| `--output, -o <FILE>` (alias `--out`) | Also write the One ROM's output to this file, replacing its contents. The file receives what the One ROM sends and nothing else, so it is a transcript of the device rather than of this command. The output still appears on screen as well. |
+
+The One ROM's output goes to stdout and everything this command says about
+itself goes to stderr, so `onerom monitor log > boot.txt` captures the log on
+its own. `--verbose` adds a line naming the serial port, for when you want to
+point another tool at it.
+
+What this command needs, and what it cannot do:
+
+- The One ROM must be **running**, and must have been programmed with the USB
+  system plugin. That plugin provides the serial port and forwards the log into
+  it.
+- Nothing is forwarded until this command — or another terminal — opens the
+  port. A One ROM nothing is listening to accumulates its log rather than
+  discarding it, which is why the boot log is still there when you attach.
+- A debug probe reading the log over SWD consumes the same bytes. With both
+  running the stream is split arbitrarily between them and neither sees all of
+  it, so use one at a time.
+- If nothing arrives within two seconds the command fails. That points at a USB
+  plugin not new enough to support logging.
+
+Device required: yes.
 
 ---
 

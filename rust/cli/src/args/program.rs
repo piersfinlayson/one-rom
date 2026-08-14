@@ -239,6 +239,19 @@ pub struct ProgramArgs {
     #[arg(long, conflicts_with = "fast")]
     pub scan_slots: bool,
 
+    /// After programming, show the One ROM's log as it is written, as
+    /// `onerom monitor log` does.
+    ///
+    /// Runs after --scan-slots, and only once the One ROM is back on the USB
+    /// bus, so it shows the boot log of the firmware just flashed.
+    ///
+    /// Requires the One ROM to reboot into running mode with a USB system
+    /// plugin, which is why it cannot be combined with --stopped or
+    /// --no-reboot, and needs the re-enumeration pause --fast skips.  With
+    /// --batch there would be no one One ROM to follow.
+    #[arg(long, conflicts_with_all = ["fast", "stopped", "no_reboot", "batch"])]
+    pub follow: bool,
+
     /// Provide this One ROM with a name
     #[arg(long, visible_aliases = ["instance_name", "onerom", "onerom-name", "one-rom", "one-rom-name"], value_name = "NAME", conflicts_with_all = ["no_config"])]
     pub instance_name: Option<String>,

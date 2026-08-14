@@ -2,6 +2,19 @@
 
 ## v0.4.0 - 2026-??-??
 
+- **`onerom monitor log` shows a running One ROM's log as it is written.**
+  It attaches to the One ROM's USB serial port and prints the firmware and
+  plugin logging it sends, until the One ROM is disconnected, rebooted or
+  stopped, or you press Ctrl-C. What the One ROM has logged since anything last
+  listened arrives first, so the boot log is still there when you attach.
+  `--output` keeps a transcript as well as showing it. Needs a running One ROM
+  programmed with the USB system plugin. On Linux the packaged udev rules now
+  tell ModemManager to leave One ROM alone — without that it probes the port and
+  consumes the log before you get to it, so a hand-installed copy of the rules
+  wants replacing.
+- **`onerom program --follow`** goes straight from programming to watching the
+  log, so you see the boot log of the firmware just flashed. It cannot be
+  combined with `--fast`, `--stopped`, `--no-reboot` or `--batch`.
 - **`onerom self` reports and downloads new releases of the CLI itself.**
   `self check` says whether a newer CLI has been published for your platform;
   `self download` fetches a published artifact — for this platform, another

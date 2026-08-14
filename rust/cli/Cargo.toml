@@ -42,8 +42,19 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "cha
 semver = "1.0"
 serde = { version = "1.0", default-features = false, features = ["derive"] }
 serde_json = "1.0"
+# default-features = false drops the libudev dependency on Linux. The fallback
+# enumeration reads the same USB vendor, product and serial out of sysfs
+# directly, so nothing is lost, and the CLI keeps building with no system
+# libraries and cross-compiling to arm64 unchanged.
+#
+# usbportinfo-interface adds a field to UsbPortInfo, so whether it is on decides
+# the shape of that struct. probe-rs turns it on, and a build that takes in both
+# this crate and Studio unifies the two, which changes the struct under code
+# that never asked for the feature. Ask for it here so the shape is the same in
+# every build.
+serialport = { version = "4.9", default-features = false, features = ["usbportinfo-interface"] }
 sha2 = "0.11"
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "time"] }
 thiserror = "2.0"
 wildmatch = "2.6"
 zip = "8.2"

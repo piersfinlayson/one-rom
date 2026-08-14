@@ -76,6 +76,35 @@ pub enum Error {
     #[error("The '{0}' command has not been implemented")]
     Unimplemented(String),
 
+    #[error("Hit an error accessing the serial port:\n  {0}")]
+    SerialPort(String),
+
+    /// No CDC serial port belongs to the selected One ROM.
+    ///
+    /// The device is running, so it is on the USB bus, but nothing on this host
+    /// presents a serial port for it. Either its USB plugin does not offer the
+    /// CDC interface, or the platform has not bound its CDC driver to it.
+    #[error(
+        "No serial port was found for this One ROM.\n  {0}\n  A serial port needs the USB system plugin - flash one with\n  'onerom program --plugin usb'."
+    )]
+    SerialPortNotFound(String),
+
+    #[error(
+        "Could not open this One ROM's serial port {0}:\n  {1}\n  Another program may already have it open."
+    )]
+    SerialPortOpen(String, String),
+
+    /// Nothing arrived within the attach window.
+    ///
+    /// The USB plugin writes a banner whenever a terminal opens the port - even
+    /// when the firmware is too old for the logging API, in which case the
+    /// banner says so. So silence is not any of the things that merely stop the
+    /// log flowing. It means the plugin is older than the banner.
+    #[error(
+        "No logs were received in {0} seconds.\n  This suggests this One ROM's USB plugin is not new enough to support logging."
+    )]
+    LogSilent(f32),
+
     #[error(
         "The operation attempted to access an unsupported memory region\n  Address {0:#010x}, length {1:#010x}"
     )]

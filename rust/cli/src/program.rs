@@ -267,6 +267,11 @@ pub async fn cmd_program(
             }
         }
 
+        if args.follow {
+            let device = options.device.as_ref().ok_or(Error::NoDevice)?;
+            crate::monitor::follow(device, None, options.verbose).await?;
+        }
+
         if !args.batch {
             break;
         }

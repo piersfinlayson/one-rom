@@ -10,6 +10,7 @@
 
 use clap::ValueEnum;
 
+pub mod cdc;
 pub mod device;
 pub mod error;
 pub mod fetch;
