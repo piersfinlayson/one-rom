@@ -7,8 +7,12 @@
 #include "plugin.h"
 
 // Logic to allow this plugin to be built as either a system or user plugin,
-// based on the PLUGIN_TYPE passed in on make.
-#if defined(PLUGIN_TYPE_NUM) && (PLUGIN_TYPE_NUM == ORA_PLUGIN_TYPE_SYSTEM)
+// based on the PLUGIN_TYPE passed in on make.  ora/plugin.mk defines
+// PLUGIN_IS_SYSTEM to 1 or 0 for every build.
+#ifndef PLUGIN_IS_SYSTEM
+#error "PLUGIN_IS_SYSTEM is not defined - build this with ora/plugin.mk"
+#endif
+#if PLUGIN_IS_SYSTEM
 ORA_DEFINE_SYSTEM_PLUGIN(plugin_main, 0, 1, 0, 0, 0, 6, 7);
 #else // User plugin
 ORA_DEFINE_USER_PLUGIN(plugin_main, 0, 1, 0, 0, 0, 6, 7);

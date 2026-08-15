@@ -792,26 +792,24 @@ void enter_bootloader(void) {
 
 #if !defined(TEST_BUILD)
 void platform_logging(void) {
-    if (BOOT_LOGGING_EN) {
-        if (RUNTIME->rp235x == RP235XA) {
-            LOG("RP235XA");
-        } else {
-            LOG("RP235XB");
-        }
-        DEBUG("Chip ID: 0x%08lX", SYSINFO_CHIP_ID);
-        DEBUG("Chip commit: 0x%08lX", SYSINFO_GITREF_RP2350);
-        if ((MCU_RAM_SIZE_KB != RP2350_RAM_SIZE_KB) || (MCU_RAM_SIZE != (RP2350_RAM_SIZE_KB * 1024))) {
-            ERR("RAM error: actual %dKB, expected: %dKB",
-                MCU_RAM_SIZE_KB,
-                RP2350_RAM_SIZE_KB);
-            limp_mode(LIMP_MODE_INVALID_BUILD);
-        } else {
-            LOG("RAM: %dKB", MCU_RAM_SIZE_KB);
-        }
-        LOG("Flash: %dKB", MCU_FLASH_SIZE_KB);
-        LOG("Freq: %dMHz", TARGET_FREQ_MHZ);
-        LOG("PLL: %d/%d/%d/%d", PLL_SYS_REFDIV, PLL_SYS_FBDIV, PLL_SYS_POSTDIV1, PLL_SYS_POSTDIV2);
+    if (RUNTIME->rp235x == RP235XA) {
+        LOG("RP235XA");
+    } else {
+        LOG("RP235XB");
     }
+    DEBUG("Chip ID: 0x%08lX", SYSINFO_CHIP_ID);
+    DEBUG("Chip commit: 0x%08lX", SYSINFO_GITREF_RP2350);
+    if ((MCU_RAM_SIZE_KB != RP2350_RAM_SIZE_KB) || (MCU_RAM_SIZE != (RP2350_RAM_SIZE_KB * 1024))) {
+        ERR("RAM error: actual %dKB, expected: %dKB",
+            MCU_RAM_SIZE_KB,
+            RP2350_RAM_SIZE_KB);
+        limp_mode(LIMP_MODE_INVALID_BUILD);
+    } else {
+        LOG("RAM: %dKB", MCU_RAM_SIZE_KB);
+    }
+    LOG("Flash: %dKB", MCU_FLASH_SIZE_KB);
+    LOG("Freq: %dMHz", TARGET_FREQ_MHZ);
+    LOG("PLL: %d/%d/%d/%d", PLL_SYS_REFDIV, PLL_SYS_FBDIV, PLL_SYS_POSTDIV1, PLL_SYS_POSTDIV2);
 }
 
 void setup_xosc(void) {

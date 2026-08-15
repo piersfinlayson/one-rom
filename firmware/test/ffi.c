@@ -19,6 +19,22 @@ uint32_t ffi_runtime_info_size(void) {
     return (uint32_t)sizeof(onerom_runtime_info);
 }
 
+// The two plugin context slots, read where an interrupt handler on a device
+// reads them.
+//
+// These are returned through a call rather than by binding the runtime info
+// struct itself.  Binding it would put its layout, and the layout of every
+// struct it contains, across the FFI boundary - and the bindings are parsed
+// for the host while also being compiled for wasm, where the pointer width
+// differs, so the sizes bindgen asserts do not hold there.
+void *ffi_system_plugin_context(void) {
+    return onerom_runtime_info.system_plugin_context;
+}
+
+void *ffi_user_plugin_context(void) {
+    return onerom_runtime_info.user_plugin_context;
+}
+
 uint8_t ffi_limp_mode(void) {
     return (uint8_t)limp_mode_value;
 }
@@ -106,8 +122,6 @@ void ffi_epio_arm_monitor(epio_t *epio) {
     s_monitor_epio = epio;
     set_host_monitor_dma_configure(monitor_dma_configure_cb);
 }
-
-extern uint8_t logging_enabled;
 
 void ffi_set_logging(uint8_t enabled) {
     logging_enabled = enabled;

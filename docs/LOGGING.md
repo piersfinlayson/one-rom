@@ -1,6 +1,6 @@
 # Logging
 
-This document is targetted at developers.  It describes the logs One ROM emits over the SWD interface, using RTT.
+This document is targetted at developers.  It describes the logs One ROM emits, and the two ways of reading them: over the SWD interface using RTT, which needs a debug probe, and over USB to a serial terminal, which does not.
 
 Boot logging is always built in.  Extra debug logging is off by default, and is enabled by building from the repo root with:
 
@@ -9,6 +9,54 @@ DEBUG_LOGGING=1 make
 ```
 
 The log outputs below are representative of the type of logging that will be produced, but the log examples given are from very old firmware.
+
+## Over USB
+
+One ROM's system USB plugin forwards the log to its CDC serial port.  Attach a terminal — `onerom monitor log`, or `screen`, `minicom` or any other — and the log appears there.  This needs the USB plugin, firmware v0.7.2 or later, and a device that is running.  It does not need a debug probe.
+
+**Nothing is forwarded until a terminal opens the port.**  That is deliberate: it leaves the log readable by a debug probe on a device that merely happens to have USB.  Until then the log accumulates exactly as it would on a device with nothing attached at all.
+
+**What accumulated before you attached is forwarded, not discarded.**  The log buffer drops the newest record when it is full rather than evicting the oldest, so what is waiting when you connect is the earliest output since anything last drained it.  On a device nothing has been listening to, that is its boot log.
+
+**A debug probe and a terminal must not both read the log.**  Both advance the same read position, so with both attached the output splits arbitrarily between them and neither sees all of it.  Nothing detects this — both look like correct readers.
+
+### The banner
+
+Every time a terminal opens the port, One ROM writes a short block identifying itself before any log content:
+
+<!-- TODO: replace with a verbatim capture from a device -->
+
+```
+-----
+One ROM fire-28-c v0.7.2
+Name: bench-a Serial: 2E4A671D1C92AE5C
+Logging: boot, plugin-internal, debug, error, plugin-application, plugin-debug
+-----
+```
+
+The board and firmware version follow the device.  `Name:` is present only when an instance name is set, leaving `Serial:` alone when it is not.  `Logging:` lists the kinds of output that are switched on — see below.
+
+Where the log cannot be forwarded at all, the block is followed by a line saying why:
+
+```
+!!! Firmware v0.7.2 or later needed for USB logging !!!
+!!! USB logging unavailable - another plugin is already reading the log !!!
+```
+
+### Why you may see less than you expect
+
+A quiet terminal does not mean the forwarding is broken.  Most of what One ROM can log is switched off in a released build, and the banner's `Logging:` line tells you which kinds are live on the device in front of you.
+
+| Kind | What produces it | Switched on by |
+| --- | --- | --- |
+| `boot` | One ROM's own boot messages | `onerom program --boot-logging true`, per device.  Suppressed by turbo boot |
+| `debug` | One ROM's verbose messages | firmware built `DEBUG_LOGGING=1`, plus boot logging as above |
+| `plugin-internal` | a plugin's log messages | firmware built `PLUGIN_LOGGING=1` |
+| `plugin-debug` | a plugin's verbose messages | firmware built with both of the above |
+| `error` | errors, from One ROM and from plugins | always |
+| `plugin-application` | output a plugin sends itself, rather than a log message | always |
+
+`PLUGIN_LOGGING` and `DEBUG_LOGGING` both default to off and are not set by release builds, so on a downloaded firmware only `error` and `plugin-application` are unconditional, and `boot` depends on how the device was programmed.  A plugin can ask which are live through the plugin API rather than guessing — see `ora_log_category_enabled` in [`api.h`](/firmware/ora/api.h).
 
 ## Boot logging
 

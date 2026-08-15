@@ -9,6 +9,7 @@
 #include "tusb.h"
 #include "usb_descriptors.h"
 #include "usb_picobootx.h"
+#include "picobootx.h"
 
 // Optimisations:
 // - Move timer handler to library and see if it can be better optimised
@@ -131,35 +132,65 @@ void usb_plugin_task(void) {
     gpio_handle_pending_releases();
 }
 
-// Resolve the USB serial override from device metadata and widen it into the
-// UTF-16 descriptor buffer.  Returns the number of code units written, or 0
-// when there is no override to apply - either the running firmware predates the
-// metadata getter, or no override is set - so the caller falls back to the
-// chip-ID serial.
+// Number of UTF-16 code units picoboot_get_serial() must be given room for: 16
+// hex digits and the NUL it terminates them with.
+#define USB_CHIP_ID_SERIAL_UNITS 17
+
+// Yield the device's effective USB serial.  See usb_plugin.h for the contract.
 //
-// The override string lives in flash and is read on demand (zero-copy); nothing
-// is cached, and the metadata getter is only looked up here, at descriptor
-// time.  An override longer than max_chars is truncated, so the descriptor
-// never overruns.  min_fw is unaffected: absence of the getter is handled, not
-// required.
-size_t usb_get_serial(uint16_t *desc_str, size_t max_chars) {
-    ora_get_metadata_str_fn_t get_metadata_str =
-        context.ora_lookup_fn(ORA_ID_GET_METADATA_STR);
-    if (get_metadata_str == NULL) {
+// The metadata getter is looked up per call rather than held, because both
+// callers are occasional - a descriptor request and a terminal attaching - and
+// a held pointer would cost static RAM the plugin has little of.  Its absence
+// on firmware that predates it (0.7.1) is handled rather than required, so
+// min_fw is unaffected: such a device has always presented the chip ID.
+size_t usb_get_serial(char *out, size_t out_size) {
+    if (out == NULL || out_size == 0) {
         return 0;
     }
+    out[0] = '\0';
 
-    const char *serial = NULL;
-    if (get_metadata_str(ORA_METADATA_KEY_SERIAL_OVERRIDE, &serial) != ORA_RESULT_OK
-        || serial == NULL) {
-        return 0;
+    const char *override = NULL;
+    ora_get_metadata_str_fn_t get_metadata_str =
+        context.ora_lookup_fn(ORA_ID_GET_METADATA_STR);
+    if (get_metadata_str != NULL) {
+        // The override string lives in flash and is read in place.  An unset
+        // field reports OK with a NULL pointer, which is the common case rather
+        // than a failure.
+        if (get_metadata_str(ORA_METADATA_KEY_SERIAL_OVERRIDE, &override)
+            != ORA_RESULT_OK) {
+            override = NULL;
+        }
+    }
+
+    // An override set to the empty string is treated as no override, so the
+    // chip ID is still used.  A device presenting a zero length serial cannot
+    // be told apart from its peers by anything selecting on serial, and the
+    // metadata accepts an empty string, so this is reachable rather than
+    // theoretical.
+    if (override != NULL && override[0] == '\0') {
+        override = NULL;
     }
 
     size_t len = 0;
-    while (serial[len] != '\0' && len < max_chars) {
-        desc_str[len] = (uint16_t)(uint8_t)serial[len];
+    if (override != NULL) {
+        while (override[len] != '\0' && len < out_size - 1) {
+            out[len] = override[len];
+            len++;
+        }
+        out[len] = '\0';
+        return len;
+    }
+
+    // picobootx produces the chip ID as UTF-16, for the descriptor that first
+    // wanted it.  Every code unit is a hex digit, so narrowing to ASCII here
+    // loses nothing.
+    uint16_t units[USB_CHIP_ID_SERIAL_UNITS];
+    size_t count = picoboot_get_serial(units, sizeof(units) / sizeof(units[0]));
+    while (len < count && len < out_size - 1) {
+        out[len] = (char)units[len];
         len++;
     }
+    out[len] = '\0';
     return len;
 }
 
@@ -185,6 +216,10 @@ void usb_init(ora_lookup_fn_t ora_lookup_fn) {
     // once, here, because none of it can change while the plugin runs - and
     // because probing it per request would put ORA lookups on the command path.
     gpio_init_caps();
+
+    // Resolved once here, with the rest of the one-time API resolution, since
+    // none of it changes while the plugin runs.
+    log_drain_init();
 
     // Set up USB.  tinyusb will register its own IRQ handler, using the API
     // functions we provide.
@@ -229,6 +264,7 @@ void usb_main(
         tud_task();
         usb_picoboot_task();
         usb_plugin_task();
+        log_drain_task();
         yield(NULL);
     }
 
@@ -258,7 +294,9 @@ void tud_resume_cb(void) {
 void tud_cdc_rx_cb(uint8_t itf) {
     uint8_t buf[64];
     uint32_t count = tud_cdc_n_read(itf, buf, sizeof(buf));
-    LOG("CDC received %lu bytes on interface %u", count, itf);
+
+    // Debug log the number of bytes received and drop it
+    DEBUG("CDC received %lu bytes on interface %u", count, itf);
 }
 
 // Invoked when a control transfer is received on vendor interface

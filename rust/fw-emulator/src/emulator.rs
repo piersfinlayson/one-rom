@@ -1004,6 +1004,47 @@ impl Emulator {
         ))
     }
 
+    /// `ORA_ID_SET_PLUGIN_CONTEXT`.
+    ///
+    /// `context` is an opaque value the firmware only stores, so a test can
+    /// pass any distinguishable number rather than a real pointer.
+    pub fn set_plugin_context(&self, plugin: ffi::ora_plugin_type_t, context: usize) {
+        plugin_call!(
+            ffi::api_id_t_ORA_ID_SET_PLUGIN_CONTEXT,
+            ffi::ora_set_plugin_context_fn_t,
+            plugin,
+            context as *mut core::ffi::c_void
+        )
+    }
+
+    /// `ORA_ID_GET_PLUGIN_CONTEXT`.
+    pub fn get_plugin_context(&self, plugin: ffi::ora_plugin_type_t) -> usize {
+        let p = plugin_call!(
+            ffi::api_id_t_ORA_ID_GET_PLUGIN_CONTEXT,
+            ffi::ora_get_plugin_context_fn_t,
+            plugin
+        );
+        p as usize
+    }
+
+    /// The two plugin context slots read straight out of the runtime info
+    /// block, as `(system, user)`.
+    ///
+    /// `api.h` publishes the addresses of these two fields as
+    /// `ORA_GET_PLUGIN_CONTEXT_SYSTEM` and `ORA_GET_PLUGIN_CONTEXT_USER`, so
+    /// reading them directly is what an interrupt handler on a device does.
+    /// A test comparing these against what the API stored therefore checks the
+    /// API and the macros agree, rather than only that the API is
+    /// self-consistent.
+    pub fn plugin_context_addrs(&self) -> (usize, usize) {
+        unsafe {
+            (
+                ffi::ffi_system_plugin_context() as usize,
+                ffi::ffi_user_plugin_context() as usize,
+            )
+        }
+    }
+
     /// `ORA_ID_LOG_QUERY`, returning the result and (size, free, pending).
     pub fn log_query(&self, channel: u32) -> (OraResult, u32, u32, u32) {
         let (mut size, mut free, mut pending) = (0u32, 0u32, 0u32);
@@ -1016,6 +1057,101 @@ impl Emulator {
             &mut pending as *mut u32
         );
         (OraResult::from(r), size, free, pending)
+    }
+
+    // ── Compile options and log categories ───────────────────────────────────
+
+    /// `ORA_ID_GET_COMPILE_OPTION_UINT`.
+    pub fn get_compile_option_uint(
+        &self,
+        option: ffi::ora_compile_option_t,
+    ) -> (OraResult, Option<u32>) {
+        let mut val: u32 = 0;
+        let r = plugin_call!(
+            ffi::api_id_t_ORA_ID_GET_COMPILE_OPTION_UINT,
+            ffi::ora_get_compile_option_uint_fn_t,
+            option,
+            &mut val as *mut u32
+        );
+        let r = OraResult::from(r);
+        let v = r.is_ok().then_some(val);
+        (r, v)
+    }
+
+    /// `ORA_ID_GET_COMPILE_OPTION_UINT` with a NULL out pointer.
+    ///
+    /// The NULL guard is what stops a plugin's mistake becoming a fault on a
+    /// device, so it is worth a test of its own, and a test cannot reach it
+    /// through a wrapper that always supplies somewhere to write.
+    pub fn get_compile_option_uint_null_out(&self, option: ffi::ora_compile_option_t) -> OraResult {
+        OraResult::from(plugin_call!(
+            ffi::api_id_t_ORA_ID_GET_COMPILE_OPTION_UINT,
+            ffi::ora_get_compile_option_uint_fn_t,
+            option,
+            std::ptr::null_mut::<u32>()
+        ))
+    }
+
+    /// `ORA_ID_GET_COMPILE_OPTION_STR`.
+    pub fn get_compile_option_str(
+        &self,
+        option: ffi::ora_compile_option_t,
+    ) -> (OraResult, Option<String>) {
+        let mut ptr: *const std::os::raw::c_char = std::ptr::null();
+        let r = plugin_call!(
+            ffi::api_id_t_ORA_ID_GET_COMPILE_OPTION_STR,
+            ffi::ora_get_compile_option_str_fn_t,
+            option,
+            &mut ptr as *mut *const std::os::raw::c_char
+        );
+        let r = OraResult::from(r);
+        let s = (r.is_ok() && !ptr.is_null()).then(|| {
+            unsafe { std::ffi::CStr::from_ptr(ptr) }
+                .to_string_lossy()
+                .into_owned()
+        });
+        (r, s)
+    }
+
+    /// `ORA_ID_GET_COMPILE_OPTION_STR` with a NULL out pointer.
+    ///
+    /// See [`Self::get_compile_option_uint_null_out`].
+    pub fn get_compile_option_str_null_out(&self, option: ffi::ora_compile_option_t) -> OraResult {
+        OraResult::from(plugin_call!(
+            ffi::api_id_t_ORA_ID_GET_COMPILE_OPTION_STR,
+            ffi::ora_get_compile_option_str_fn_t,
+            option,
+            std::ptr::null_mut::<*const std::os::raw::c_char>()
+        ))
+    }
+
+    /// `ORA_ID_LOG_CATEGORY_ENABLED`.
+    pub fn log_category_enabled(
+        &self,
+        category: ffi::ora_log_category_t,
+    ) -> (OraResult, Option<u32>) {
+        let mut enabled: u32 = 0;
+        let r = plugin_call!(
+            ffi::api_id_t_ORA_ID_LOG_CATEGORY_ENABLED,
+            ffi::ora_log_category_enabled_fn_t,
+            category,
+            &mut enabled as *mut u32
+        );
+        let r = OraResult::from(r);
+        let v = r.is_ok().then_some(enabled);
+        (r, v)
+    }
+
+    /// `ORA_ID_LOG_CATEGORY_ENABLED` with a NULL out pointer.
+    ///
+    /// See [`Self::get_compile_option_uint_null_out`].
+    pub fn log_category_enabled_null_out(&self, category: ffi::ora_log_category_t) -> OraResult {
+        OraResult::from(plugin_call!(
+            ffi::api_id_t_ORA_ID_LOG_CATEGORY_ENABLED,
+            ffi::ora_log_category_enabled_fn_t,
+            category,
+            std::ptr::null_mut::<u32>()
+        ))
     }
 
     pub fn get_chip_size_from_type(&self, chip_type: u32) -> u32 {

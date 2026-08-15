@@ -180,12 +180,25 @@ fn run_slot(
         "metadata_str",
         tests::info::test_metadata_str(&emulator, config),
     );
-    report.add("metadata_uint", tests::info::test_metadata_uint(&emulator));
+    report.add(
+        "metadata_uint",
+        tests::info::test_metadata_uint(&emulator, config),
+    );
+    report.add(
+        "compile_options",
+        tests::info::test_compile_options(&emulator, base_dir),
+    );
 
     // Lookup
     report.add(
         "lookup_coverage",
         tests::lookup::test_lookup_coverage(&emulator),
+    );
+
+    // Plugin context
+    report.add(
+        "plugin_context",
+        tests::context::test_plugin_context(&emulator),
     );
 
     // Logging
@@ -212,6 +225,10 @@ fn run_slot(
     report.add(
         "log_write_read_edges",
         tests::log::test_write_and_read_edges(&emulator),
+    );
+    report.add(
+        "log_categories",
+        tests::log::test_log_categories(&emulator, config, log_enabled),
     );
 
     // GPIO

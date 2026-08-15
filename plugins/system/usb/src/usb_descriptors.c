@@ -26,7 +26,6 @@
 #include "tusb.h"
 #include "usb_descriptors.h"
 #include "usb_plugin.h"
-#include "picobootx.h"
 
 /* A combination of interfaces must have a unique product id, since PC will save device driver after the first plug.
  * Same VID/PID with different interface e.g MSC (first), then CDC (later) will possibly cause system error on PC.
@@ -220,12 +219,13 @@ uint16_t const *tud_descriptor_string_cb(uint8_t index, uint16_t langid) {
       break;
 
     case STRID_SERIAL: {
-      // Prefer a configured USB serial override; fall back to the chip-ID
-      // serial when none is set.  Both use the full descriptor-string capacity.
-      size_t const avail = sizeof(_desc_str) / sizeof(_desc_str[0]) - 1;
-      chr_count = usb_get_serial(_desc_str + 1, avail);
-      if (chr_count == 0) {
-        chr_count = picoboot_get_serial(_desc_str + 1, avail);
+      // The serial the device presents, whichever source it comes from.  It is
+      // widened here rather than produced as UTF-16, because UTF-16 is this
+      // descriptor's requirement and no other caller's.
+      char serial[USB_SERIAL_MAX_CHARS + 1];
+      chr_count = usb_get_serial(serial, sizeof(serial));
+      for ( size_t i = 0; i < chr_count; i++ ) {
+        _desc_str[1 + i] = (uint16_t)(uint8_t)serial[i];
       }
       break;
     }

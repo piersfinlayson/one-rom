@@ -15,6 +15,22 @@
 #   make TOOLCHAIN=/opt/arm-gnu-toolchain-14.3.rel1-x86_64-arm-none-eabi/bin
 
 # Plugin type: SYSTEM or USER
+#
+# A source that builds as either type selects between the two header macros
+# with PLUGIN_IS_SYSTEM, which is defined to 1 or 0 in both directions:
+#
+#   #if PLUGIN_IS_SYSTEM
+#   ORA_DEFINE_SYSTEM_PLUGIN(...);
+#   #else
+#   ORA_DEFINE_USER_PLUGIN(...);
+#   #endif
+#
+# Do not compare PLUGIN_TYPE_NUM against ORA_PLUGIN_TYPE_SYSTEM or
+# ORA_PLUGIN_TYPE_USER in a #if.  Those are enum constants rather than macros,
+# and the preprocessor replaces an identifier it does not know with 0, so such
+# a comparison silently asks whether the build is a system one whichever name
+# is written.  PLUGIN_TYPE_NUM is still defined, and is the value the linker
+# places in the plugin header, so it remains correct in C code.
 PLUGIN_TYPE ?= USER
 
 TOOLCHAIN ?=
@@ -32,11 +48,13 @@ ifeq ($(PLUGIN_TYPE),SYSTEM)
 $(info Building system plugin)
 PLUGIN_BASE := 0x10010000
 PLUGIN_TYPE_NUM := 0
+PLUGIN_IS_SYSTEM := 1
 PLUGIN_PREFIX := plugin_system
 else ifeq ($(PLUGIN_TYPE),USER)
 $(info Building user plugin)
 PLUGIN_BASE := 0x10020000
 PLUGIN_TYPE_NUM := 1
+PLUGIN_IS_SYSTEM := 0
 PLUGIN_PREFIX := plugin_user
 else
     $(error PLUGIN_TYPE must be SYSTEM or USER)
@@ -48,6 +66,7 @@ BIN       := $(BUILD_DIR)/$(PLUGIN_PREFIX).bin
 CFLAGS  := -mcpu=cortex-m33 -mthumb -mfloat-abi=hard -mfpu=fpv5-sp-d16 \
            -nostdlib -O2 -Wall -Wextra -Werror \
            -ffunction-sections -fdata-sections \
+           -DPLUGIN_IS_SYSTEM=$(PLUGIN_IS_SYSTEM) \
            -DPLUGIN_TYPE_NUM=$(PLUGIN_TYPE_NUM) \
            -I $(ORA_INCLUDE) -I $(dir $(ORA_INCLUDE))include $(EXTRA_C_FLAGS) \
            -std=c11

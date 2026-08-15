@@ -170,10 +170,9 @@ void stub_log_prefix_v(const char* prefix, const char* msg, va_list args) {
 }
 
 void err_log(const char* msg, ...) {
-    printf("ERROR: ");
     va_list args;
     va_start(args, msg);
-    stub_log_v(msg, args);
+    stub_log_prefix_v("ERROR: ", msg, args);
     va_end(args);
 }
 

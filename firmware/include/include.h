@@ -33,6 +33,11 @@ static inline void onerom_rtt_unlock(uint32_t primask) { (void)primask; }
 // emulator output stays readable and the ring holds only what a test put
 // there.  The logging API operates on the real ring either way.
 #define do_log STUB_LOG
+
+// The harness's boot logging switch, set through ffi_set_logging().  It stands
+// in for the metadata's boot_logging flag under emulation - see
+// BOOT_LOGGING_EN in macros.h.
+extern uint8_t logging_enabled;
 #endif // TEST_BUILD
 
 // If you are not using sdrr-gen, you must define configuration options

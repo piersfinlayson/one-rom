@@ -6,7 +6,7 @@
 //
 // A One ROM implementation of real time transfer logging, binary compatible
 // with SEGGER RTT.  See include/rtt.h for exactly what "binary compatible"
-// covers; everything here is One ROM's own.
+// covers.  Everything here is One ROM's own.
 //
 // Design notes:
 //
@@ -65,8 +65,8 @@
 // not mask.
 //
 // The masked window covers the copy, so it scales with record length.  The
-// formatter flushes in ONEROM_RTT_PRINTF_BUFFER_SIZE chunks; a caller passing
-// a large buffer to onerom_rtt_write() directly should expect a
+// formatter flushes in ONEROM_RTT_PRINTF_BUFFER_SIZE chunks, and a caller that
+// passes a large buffer to onerom_rtt_write() directly should expect a
 // correspondingly longer window.
 #if !defined(ONEROM_RTT_LOCK)
 static inline uint32_t onerom_rtt_lock(void) {
@@ -109,7 +109,7 @@ onerom_rtt_cb_t _SEGGER_RTT;
 static char onerom_rtt_up_buffer[ONEROM_RTT_UP_BUFFER_SIZE];
 static char onerom_rtt_down_buffer[ONEROM_RTT_DOWN_BUFFER_SIZE];
 
-// Channel name.  Shown by probe front ends; never used to identify a channel,
+// Channel name.  Shown by probe front ends, never used to identify a channel,
 // which is done by index.
 static const char onerom_rtt_channel_name[] = "Terminal";
 
@@ -257,11 +257,6 @@ unsigned onerom_rtt_write(unsigned channel, const void *buf, unsigned len) {
     return len;
 }
 
-// Bytes written to a channel that a reader has not taken yet.
-//
-// Both offsets are range checked before use.  read_offset is host written and
-// so untrusted; write_offset is ours, but is checked on the same terms so that
-// a single bad value cannot make this return a length a caller then reads.
 // Bytes written to a channel that a reader has not taken yet.
 //
 // Both offsets are taken by the caller, once, and passed in already clamped.

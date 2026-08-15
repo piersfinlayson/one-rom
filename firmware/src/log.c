@@ -39,50 +39,46 @@ void log_init(void) {
 }
 
 void log_roms() {
-    if (BOOT_LOGGING_EN) {
-        LOG("# of ROM sets: %d", METADATA->rom_slot_count);
+    LOG("# of ROM sets: %d", METADATA->rom_slot_count);
 
-        for (uint8_t ii = 0; ii < METADATA->rom_slot_count; ii++) {
-            const onerom_rom_slot_t *slot = &METADATA->rom_slots[ii];
+    for (uint8_t ii = 0; ii < METADATA->rom_slot_count; ii++) {
+        const onerom_rom_slot_t *slot = &METADATA->rom_slots[ii];
 
-            LOG("Set #%d: %d ROM(s), size: %lu bytes", ii, slot->rom_count, (unsigned long)slot->size);
+        LOG("Set #%d: %d ROM(s), size: %lu bytes", ii, slot->rom_count, (unsigned long)slot->size);
 
 #if defined(DEBUG_LOGGING)
-            for (uint8_t jj = 0; jj < slot->rom_count; jj++) {
-                const onerom_rom_info_t *rom = slot->roms[jj];
-                DEBUG("  Chip #%d: %s, %s", jj, rom->filename ? rom->filename : "<unknown>", rom->rom_type);
-            }
-#endif // DEBUG_LOGGING
+        for (uint8_t jj = 0; jj < slot->rom_count; jj++) {
+            const onerom_rom_info_t *rom = slot->roms[jj];
+            DEBUG("  Chip #%d: %s, %s", jj, rom->filename ? rom->filename : "<unknown>", rom->rom_type);
         }
+#endif // DEBUG_LOGGING
     }
 }
 #endif // BOOT_LOGGING
 
 #if REAL_HARDWARE
+// These write the boot channel whenever they are called.  Whether boot logging
+// is enabled is decided by the caller: LOG() and DEBUG() test it, ERR() and the
+// plugin logging calls do not.
 void __attribute__((noinline)) do_log_v(const char* msg, va_list* args) {
-    if (BOOT_LOGGING_EN) {
-        onerom_rtt_vprintf(ONEROM_RTT_CH_BOOT, msg, args);
-        onerom_rtt_printf(ONEROM_RTT_CH_BOOT, "\n");
-    }
+    onerom_rtt_vprintf(ONEROM_RTT_CH_BOOT, msg, args);
+    onerom_rtt_printf(ONEROM_RTT_CH_BOOT, "\n");
 }
 
 void do_err_log_prefix() {
-    if (BOOT_LOGGING_EN) {
-        onerom_rtt_printf(ONEROM_RTT_CH_BOOT, "ERROR: ");
-    }
+    onerom_rtt_printf(ONEROM_RTT_CH_BOOT, "ERROR: ");
 }
 
 #if defined(DEBUG_LOGGING)
 void do_debug_log_prefix() {
-    if (BOOT_LOGGING_EN) {
-        onerom_rtt_printf(ONEROM_RTT_CH_BOOT, "DBG: ");
-    }
+    onerom_rtt_printf(ONEROM_RTT_CH_BOOT, "DBG: ");
 }
 #endif // DEBUG_LOGGING
 
 #if defined(BOOT_LOGGING)
 void __attribute__((noinline)) do_log(const char* msg, ...) {
-    if (BOOT_LOGGING_EN && !TURBO) {
+    // Turbo boot skips boot logging, to reach serving as quickly as possible.
+    if (!TURBO) {
         va_list args;
         va_start(args, msg);
         do_log_v(msg, &args);
@@ -92,13 +88,11 @@ void __attribute__((noinline)) do_log(const char* msg, ...) {
 
 void __attribute__((noinline)) err_log(const char* msg, ...) {
     // Do error logging even if turbo booting
-    if (BOOT_LOGGING_EN) {
-        do_err_log_prefix();
-        va_list args;
-        va_start(args, msg);
-        do_log_v(msg, &args);
-        va_end(args);
-    }
+    do_err_log_prefix();
+    va_list args;
+    va_start(args, msg);
+    do_log_v(msg, &args);
+    va_end(args);
 }
 #endif // BOOT_LOGGING
 #endif // REAL_HARDWARE

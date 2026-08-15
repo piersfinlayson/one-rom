@@ -8,6 +8,8 @@
 
 void *ffi_runtime_info_ptr(void);
 uint32_t ffi_runtime_info_size(void);
+void *ffi_system_plugin_context(void);
+void *ffi_user_plugin_context(void);
 uint8_t ffi_limp_mode(void);
 uint8_t ffi_pios_enabled(void);
 uint8_t ffi_image_sel(void);

@@ -871,6 +871,7 @@ comment = "Leave SWD enabled once serving starts. 0=off, 1=on. When 0, SWD is up
 name = "turbo_boot"
 kind = "scalar"
 type = "u8"
+plugin_key = { name = "TURBO_BOOT", id = 15 }
 comment = "Enable fast boot, disabling image select jumper reading. 0=off, 1=on."
 
 [[structs.fields]]

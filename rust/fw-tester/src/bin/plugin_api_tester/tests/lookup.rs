@@ -147,6 +147,18 @@ pub fn test_lookup_coverage(emu: &Emulator) -> Result<(), String> {
         (ffi::api_id_t_ORA_ID_LOG_READ, "ORA_ID_LOG_READ"),
         (ffi::api_id_t_ORA_ID_LOG_CLOSE_READ, "ORA_ID_LOG_CLOSE_READ"),
         (ffi::api_id_t_ORA_ID_LOG_QUERY, "ORA_ID_LOG_QUERY"),
+        (
+            ffi::api_id_t_ORA_ID_GET_COMPILE_OPTION_UINT,
+            "ORA_ID_GET_COMPILE_OPTION_UINT",
+        ),
+        (
+            ffi::api_id_t_ORA_ID_GET_COMPILE_OPTION_STR,
+            "ORA_ID_GET_COMPILE_OPTION_STR",
+        ),
+        (
+            ffi::api_id_t_ORA_ID_LOG_CATEGORY_ENABLED,
+            "ORA_ID_LOG_CATEGORY_ENABLED",
+        ),
     ];
 
     // Deprecated/invalid IDs — must resolve to null.

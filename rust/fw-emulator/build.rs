@@ -62,10 +62,33 @@ fn main() {
         }
     };
 
+    // The logging the C is compiled with — firmware/test.mk's TEST_LOGGING,
+    // whose default this repeats so the flags and the cfgs below agree with a
+    // build nobody set it for.  The two defaults cannot drift apart silently:
+    // the plugin API tester asserts what the firmware reports against these
+    // cfgs, so a disagreement fails that test.
+    let logging = env::var("TEST_LOGGING").unwrap_or_else(|_| "1".to_string());
+    let logging_on = match logging.as_str() {
+        "1" => true,
+        "0" => false,
+        other => panic!("TEST_LOGGING must be 0 or 1, got '{other}'"),
+    };
+
     // Re-run build.rs if these env vars change.
     println!("cargo:rerun-if-env-changed=CONFIG");
     println!("cargo:rerun-if-env-changed=BOARD");
     println!("cargo:rerun-if-env-changed=BASE_DIR");
+    println!("cargo:rerun-if-env-changed=TEST_LOGGING");
+
+    // What the C was built with, for the crate's build_options constants.  A
+    // cfg reaches only the crate whose build script emitted it, so those
+    // constants are how a downstream tester reads the same answer.
+    println!("cargo::rustc-check-cfg=cfg(fw_debug_logging)");
+    println!("cargo::rustc-check-cfg=cfg(fw_plugin_logging)");
+    if logging_on {
+        println!("cargo::rustc-cfg=fw_debug_logging");
+        println!("cargo::rustc-cfg=fw_plugin_logging");
+    }
 
     // ── C build ──────────────────────────────────────────────────────────────
 
@@ -95,11 +118,16 @@ fn main() {
         manifest_dir.join("src/wrapper.h").display()
     );
 
-    // Clean the C library if CONFIG or BOARD has changed since the last build.
-    // The Makefile has no visibility into these variables, so we track them
-    // ourselves via a stamp file in the build output directory.
+    // Clean the C library if the settings it was built with have changed since
+    // the last build.  The Makefile does not track them: it has no visibility
+    // into CONFIG or BOARD at all, and while test.mk reads TEST_LOGGING, an
+    // object file does not depend on the flags it was compiled with.  So we
+    // track all three via a stamp file in the build output directory.
     let stamp_path = c_root.join(build_subdir).join(".build-config");
-    let stamp = format!("CONFIG={}\nBOARD={board}\n", config_abs.display());
+    let stamp = format!(
+        "CONFIG={}\nBOARD={board}\nTEST_LOGGING={logging}\n",
+        config_abs.display()
+    );
     let needs_clean = std::fs::read_to_string(&stamp_path)
         .map(|s| s != stamp)
         .unwrap_or(true);
@@ -111,6 +139,7 @@ fn main() {
             .arg(clean_target)
             .env("CONFIG", &config_abs)
             .env("BOARD", &board)
+            .env("TEST_LOGGING", &logging)
             .status()
             .expect("could not run make clean target");
     }
@@ -121,6 +150,7 @@ fn main() {
         .arg(make_target)
         .env("CONFIG", &config_abs)
         .env("BOARD", &board)
+        .env("TEST_LOGGING", &logging)
         .status()
         .expect("could not run make — is it on PATH?");
     assert!(
@@ -183,7 +213,15 @@ fn main() {
         .clang_arg(format!("-I{}", c_root.join("epio/include").display()))
         .clang_arg(format!("-I{}", c_root.join("ora").display()))
         .clang_arg("-DTEST_BUILD=1".to_string())
-        .clang_arg("-DDEBUG_LOGGING=1".to_string())
+        // The two switchable logging options as the C was compiled with them,
+        // so a declaration sitting behind one of those gates is parsed here
+        // exactly when the library holds its definition.  BOOT_LOGGING needs
+        // no -D: include.h defines it unconditionally.
+        .clang_args(if logging_on {
+            &["-DDEBUG_LOGGING=1", "-DPLUGIN_LOGGING=1"][..]
+        } else {
+            &[][..]
+        })
         .allowlist_function("firmware_main")
         .allowlist_function("epio_from_apio")
         .allowlist_function("epio_get_sram_ptr")
@@ -231,6 +269,14 @@ fn main() {
         // to what the slot configuration says it should have done, and is the
         // plugin API tester's independent oracle for the GPIO classification.
         .allowlist_var("_apio_emulated_pio")
+        // The two plugin context slots.  api.h publishes their addresses as
+        // ORA_GET_PLUGIN_CONTEXT_SYSTEM and ORA_GET_PLUGIN_CONTEXT_USER, so a
+        // test can check that what the API stored is what an interrupt handler
+        // would read there.  Reached through calls rather than by binding the
+        // runtime info struct, which would break the no-struct-layout rule
+        // above and fail the wasm build.
+        .allowlist_function("ffi_system_plugin_context")
+        .allowlist_function("ffi_user_plugin_context")
         .allowlist_var("_apio_emulated_gpios")
         .allowlist_function("ffi_runtime_info_ptr")
         .allowlist_function("ffi_runtime_info_size")

@@ -267,13 +267,11 @@ void preload_rom_image(void) {
     }
 
     const char *filename = "";
-    if (BOOT_LOGGING_EN) {
-        if (slot->roms[0]->filename != NULL) {
-            filename = slot->roms[0]->filename;
-        }
-        LOG("ROM preload %s from 0x%08lX to 0x%08lX size 0x%08lX bytes",
-            filename, (uint32_t)(uintptr_t)img_src, (uint32_t)(uintptr_t)img_dst, img_size);
+    if (slot->roms[0]->filename != NULL) {
+        filename = slot->roms[0]->filename;
     }
+    LOG("ROM preload %s from 0x%08lX to 0x%08lX size 0x%08lX bytes",
+        filename, (uint32_t)(uintptr_t)img_src, (uint32_t)(uintptr_t)img_dst, img_size);
 
     if ((((uint32_t)img_src % 4) != 0) || (((uint32_t)img_dst % 4) != 0)) {
         ERR("ROM src/dest unaligned: 0x%08lX 0x%08lX", (unsigned long)img_src,
@@ -309,14 +307,12 @@ void preload_rom_image(void) {
 
     uint64_t *img_dst = ram_table_ptr;
 
-        const char *filename = "";
-    if (BOOT_LOGGING_EN) {
-        if (slot->roms[0]->filename != NULL) {
-            filename = slot->roms[0]->filename;
-        }
-        LOG("ROM preload %s from 0x%08X to 0x%08X size 0x%08X bytes",
-            filename, (uint32_t)(uintptr_t)img_src, (uint32_t)(uintptr_t)img_dst, img_size);
+    const char *filename = "";
+    if (slot->roms[0]->filename != NULL) {
+        filename = slot->roms[0]->filename;
     }
+    LOG("ROM preload %s from 0x%08X to 0x%08X size 0x%08X bytes",
+        filename, (uint32_t)(uintptr_t)img_src, (uint32_t)(uintptr_t)img_dst, img_size);
 
     // Set image (either single ROM or multiple ROMs) has been fully
     // pre-processed before embedding in the flash.

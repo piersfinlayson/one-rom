@@ -35,15 +35,10 @@ FLASH_BASE=0x10000000
 # disable any enabled features.
 #
 
-# Boot logging configuration
-#
-# Outputs diagnostics boot messages via SWD during the boot process.
-#
-# If you are using the ROM as a boot ROM in a machine with a very short reset
-# timer, you may want to disable this.
-
-BOOT_LOGGING ?= 0
-# BOOT_LOGGING ?= 1
+# Boot logging is not a build option.  It is compiled in unconditionally and
+# switched at runtime from metadata, so it is set when a device is programmed -
+# `onerom program --boot-logging true`.  A BOOT_LOGGING variable lived here
+# until v0.7.2 and was read by nothing, so setting it silently did nothing.
 
 # Plugin logging configuration
 #

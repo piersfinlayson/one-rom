@@ -15,9 +15,11 @@ In detail:
   - This required a firmware update.
 - Add a plugin logging API, so a plugin can write its own named log channel and another plugin can drain it — the groundwork for a retro system's output reaching a PC over One ROM's USB.
   - This required a firmware update.
-- One ROM's log now reaches a PC over USB.  `onerom monitor log` — or any terminal on the CDC serial port — shows the firmware's and plugins' output, including whatever accumulated beforehand, so a device left running shows you its boot log when you connect, with no debug probe.  `onerom program --follow` goes straight from programming to watching.  Nothing is forwarded until something attaches, which keeps the log readable by a probe on a device that merely has USB.
+- One ROM's log now reaches a PC over USB, with no debug probe.  Use `onerom monitor log`, any terminal on the CDC serial port, or `onerom program --follow` to go straight from programming to watching.  Attach after a reboot and the boot log is still there.
   - This required a firmware update.
-- Boot logging now switches the firmware's own boot messages, and nothing else.  Plugin logging and errors were previously silenced along with it, so a plugin logged nothing at all unless `--boot-logging` was set.  Errors are now always reported, whatever a build or a device is configured for.
+- Boot logging now switches the firmware's own boot messages, and nothing else.  A plugin previously logged nothing unless `--boot-logging` was set, and errors are now always reported.
+  - This required a firmware update.
+- A plugin can now ask which kinds of logging are active on its device, and how its firmware was built.
   - This required a firmware update.
 - Check plugins named by a config against the images server's published compatibility window, in the CLI and Studio.  A plugin binary declares only a minimum firmware version, so USB v0.1.2 — which hard faults on firmware v0.7.0 — was previously built in without complaint.  A local or third-party plugin has nothing published to check, and an unreachable server warns rather than failing.
 - Add Motorola S-record (`srec`) as a ROM image input format, alongside Intel HEX.  A chip may set `"format": "srec"` in a config file, with the same optional `"load_address"`; the CLI exposes it as `--slot format=srec,load-address=...`, and `onerom image convert` converts between `binary`, `ihex` and `srec` in any direction.  Unwritten bytes read as `0xFF`, as for Intel HEX.
@@ -43,6 +45,7 @@ To publish:
   exists.  Tag apio before committing this.
 
 To test (on hardware, before release):
+- **On Windows and Linux:** `onerom monitor log`, and `onerom program --follow`.  Only run on macOS so far, and the parts that differ by platform are the ones this depends on: finding the One ROM's serial port among the others, and whether opening it asserts DTR.  A port opened without DTR is forwarded nothing, which surfaces as the two second timeout — the same symptom as a device fault, so a platform difference here reads as a broken One ROM.
 - Studio building a config that names a plugin.  The check is shared with the CLI, which is covered by tests and was run against the live manifest both ways, but Studio's own path needs a connected device to reach at all: a config naming USB v0.1.2 should refuse to build, and one naming v0.2.1 should build and flash.
 - Program a device from an S-record image and confirm it serves the right bytes — `onerom program --slot file=<rom>.s19,type=...,format=srec,load-address=$...`.  The build path is covered by tests; flashing and serving are not.
 - One ROM Lab's `f:srec` dump, which has no automated coverage at all: lab is a `thumbv8m` binary with no host tests, so its encoder is only verified against `onerom-gen`'s golden by inspection.  Dump a ROM as S-records and read it back with `onerom image convert --from srec --to binary`, comparing against the same ROM dumped as `ihex`.  Worth doing on a ROM larger than 64 KB too, which is the case that selects `S2`/`S8` records rather than `S1`/`S9`.

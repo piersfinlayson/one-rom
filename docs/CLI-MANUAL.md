@@ -812,7 +812,12 @@ Attach to the One ROM's USB serial port and print the firmware and plugin
 logging it sends, until the One ROM is disconnected, rebooted or stopped, or you
 press Ctrl-C.
 
-What the One ROM has logged since anything last listened arrives first, so
+Every attach opens with the One ROM naming itself — its board, firmware version,
+instance name and serial, and which kinds of logging are switched on — between
+two `-----` divider lines. A One ROM that cannot forward its log says so there,
+rather than leaving you watching a silent port.
+
+What the One ROM has logged since anything last listened arrives after that, so
 attaching after a reboot still shows the boot log.
 
 ```
@@ -841,8 +846,9 @@ What this command needs, and what it cannot do:
 - A debug probe reading the log over SWD consumes the same bytes. With both
   running the stream is split arbitrarily between them and neither sees all of
   it, so use one at a time.
-- If nothing arrives within two seconds the command fails. That points at a USB
-  plugin not new enough to support logging.
+- If nothing arrives within two seconds the command fails. Since every attach
+  begins with the banner above, a One ROM with a current USB plugin always sends
+  something — so a timeout points at a plugin too old to forward the log at all.
 
 Device required: yes.
 

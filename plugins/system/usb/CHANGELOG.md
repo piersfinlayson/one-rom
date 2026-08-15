@@ -2,6 +2,22 @@
 
 ## [0.2.2] - 2026-??-??
 
+Forward One ROM's log to the CDC serial port.  Attach a terminal and the
+firmware's and the other plugin's logging appears there, including whatever
+accumulated before you attached — on a device nothing had been listening to,
+that is its boot log.  Nothing is forwarded until a terminal is present, so a
+debug probe still reads the log on a device that merely has USB.
+
+- Every time a terminal opens the port, One ROM names itself first — board,
+  firmware version, instance name and serial, and which kinds of logging are
+  switched on.  A device that cannot forward its log says so there, rather
+  than leaving the port silent.
+- On firmware older than v0.7.2, which has no logging API, the forwarding is
+  skipped and everything else is unaffected.  The plugin still runs on v0.7.0.
+- A debug probe and a terminal must not both read the log at once.  Both
+  advance the same read position, so the output splits arbitrarily between
+  them and neither sees all of it.
+
 Rebuilt for One ROM firmware v0.7.2, whose logging functions are now checked by
 the compiler.  Several log calls passed `uint32_t` to conversions expecting
 `unsigned int`; the output was already correct, so nothing behaves differently.

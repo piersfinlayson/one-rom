@@ -43,9 +43,9 @@ as one plugin only, it runs the checks a single instance can run and says so
 rather than claiming a pass it did not earn.
 
 Requires One ROM firmware v0.7.2 or later.  The `ora_log_*` calls are present
-whatever `PLUGIN_LOGGING` is set to — only `ora_log` and `ora_err_log` are
+whatever `PLUGIN_LOGGING` is set to — only `ora_log` and `ora_debug_log` are
 gated on it — so a plain firmware build is enough.  This plugin never calls
-`ora_log`, and its stack budget holds either way.
+either, and its stack budget holds either way.
 
 ## What it checks
 
@@ -308,15 +308,18 @@ alongside a user plugin.
 A test that has never failed has not been shown to check anything.  Break the
 claim enforcement in the firmware and reflash:
 
-In `firmware/src/plugin.c`, in `ora_log_write`, drop the claim from the guard:
+In `firmware/src/plugin.c`, in `ora_log_write`, **delete** the third of the
+three guards, leaving the NULL buffer and channel ones alone:
 
 ```c
-    if (buf == NULL) {                      // was:
-        return ORA_RESULT_INVALID_ARG;      //   if ((buf == NULL) ||
-    }                                       //       !ora_log_holds(ora_log_writer, channel)) {
+    if (!ora_log_holds(ora_log_writer, channel)) {   // delete these three
+        return ORA_RESULT_INVALID_ARG;               // lines
+    }                                                //
 ```
 
-Rebuild the firmware and reflash.  A write with no write claim is now allowed.
+Rebuild the firmware and reflash.  The build shrinks by a few dozen bytes,
+which is the quickest confirmation the guard really went.  A write with no
+write claim is now allowed.
 
 - **Two instances:** the instance that loses the claim race hits this on its
   very first check, before anything else can go wrong, and its code is the lower

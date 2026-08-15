@@ -139,10 +139,10 @@ void ora_log(const char* msg, ...) {
 #endif // PLUGIN_LOGGING
 }
 
+// Not gated on PLUGIN_LOGGING.  A plugin's errors are worth the wrapper this
+// costs, and the formatter it calls is in the build regardless.
 void ora_err_log(const char* msg, ...) {
-#if defined(PLUGIN_LOGGING)
 #if !defined(TEST_BUILD)
-
     do_err_log_prefix();
     va_list args;
     va_start(args, msg);
@@ -154,14 +154,10 @@ void ora_err_log(const char* msg, ...) {
     stub_log_prefix_v("ERROR: ", msg, args);
     va_end(args);
 #endif // !TEST_BUILD
-
-#else
-    (void)msg;
-#endif // PLUGIN_LOGGING
 }
 
 void ora_debug_log(const char* msg, ...) {
-#if defined(BOOT_LOGGING) && defined(DEBUG_LOGGING)
+#if defined(PLUGIN_LOGGING) && defined(DEBUG_LOGGING)
 #if !defined(TEST_BUILD)
     do_debug_log_prefix();
     va_list args;
@@ -176,7 +172,7 @@ void ora_debug_log(const char* msg, ...) {
 #endif // !TEST_BUILD
 #else
     (void)msg;
-#endif // BOOT_LOGGING && DEBUG_LOGGING
+#endif // PLUGIN_LOGGING && DEBUG_LOGGING
 }
 
 size_t plugin_get_free_mem(void) {
@@ -265,12 +261,34 @@ void ora_register_irq(ora_irq_t irq, ora_irq_handler_t handler) {
 #endif // !TEST_BUILD
 }
 
-void ora_set_plugin_context(void *context) {
-    RUNTIME->system_plugin_context = context;
+// Each plugin type has its own context slot, and ORA_GET_PLUGIN_CONTEXT_SYSTEM
+// and ORA_GET_PLUGIN_CONTEXT_USER are the addresses of those two slots, so a
+// context stored here must land in the one the matching macro reads.
+//
+// Only the system and user plugins have a slot.  A type without one stores
+// nothing and reads back NULL, rather than sharing another type's.
+void ora_set_plugin_context(ora_plugin_type_t plugin, void *context) {
+    switch (plugin) {
+        case ORA_PLUGIN_TYPE_SYSTEM:
+            RUNTIME->system_plugin_context = context;
+            break;
+        case ORA_PLUGIN_TYPE_USER:
+            RUNTIME->user_plugin_context = context;
+            break;
+        default:
+            break;
+    }
 }
 
-void *ora_get_plugin_context(void) {
-    return RUNTIME->system_plugin_context;
+void *ora_get_plugin_context(ora_plugin_type_t plugin) {
+    switch (plugin) {
+        case ORA_PLUGIN_TYPE_SYSTEM:
+            return RUNTIME->system_plugin_context;
+        case ORA_PLUGIN_TYPE_USER:
+            return RUNTIME->user_plugin_context;
+        default:
+            return NULL;
+    }
 }
 
 uint32_t ora_get_sysclk_mhz(void) {
@@ -1144,7 +1162,7 @@ static ora_result_t ora_log_claim(uint8_t *claims, ora_log_channel_t channel) {
     ora_result_t result;
 
     if (!ora_log_channel_exists(channel)) {
-        return ORA_RESULT_INVALID_ARG;
+        return ORA_RESULT_NOT_SUPPORTED;
     }
 
     uint32_t primask = ora_log_lock();
@@ -1180,7 +1198,18 @@ ora_result_t ora_log_open_write(ora_log_channel_t channel, const char *name) {
 
 ora_result_t ora_log_write(ora_log_channel_t channel, const void *buf,
                            uint32_t len) {
-    if ((buf == NULL) || !ora_log_holds(ora_log_writer, channel)) {
+    // A channel this firmware does not have is answered before the claim is
+    // considered.  Folded together, a plugin built for a firmware with more
+    // channels would be told it failed to claim one that does not exist here.
+    // A NULL buffer is the caller's own mistake whatever the channel, so it
+    // keeps its own answer and is tested first.
+    if (buf == NULL) {
+        return ORA_RESULT_INVALID_ARG;
+    }
+    if (!ora_log_channel_exists(channel)) {
+        return ORA_RESULT_NOT_SUPPORTED;
+    }
+    if (!ora_log_holds(ora_log_writer, channel)) {
         return ORA_RESULT_INVALID_ARG;
     }
 
@@ -1200,7 +1229,7 @@ ora_result_t ora_log_close_write(ora_log_channel_t channel) {
     ora_result_t result;
 
     if (!ora_log_channel_exists(channel)) {
-        return ORA_RESULT_INVALID_ARG;
+        return ORA_RESULT_NOT_SUPPORTED;
     }
 
     uint32_t primask = ora_log_lock();
@@ -1225,8 +1254,13 @@ ora_result_t ora_log_open_read(ora_log_channel_t channel) {
 
 ora_result_t ora_log_read(ora_log_channel_t channel, void *buf,
                           uint32_t max_len, uint32_t *copied_out) {
-    if ((buf == NULL) || (copied_out == NULL) ||
-        !ora_log_holds(ora_log_reader, channel)) {
+    if ((buf == NULL) || (copied_out == NULL)) {
+        return ORA_RESULT_INVALID_ARG;
+    }
+    if (!ora_log_channel_exists(channel)) {
+        return ORA_RESULT_NOT_SUPPORTED;
+    }
+    if (!ora_log_holds(ora_log_reader, channel)) {
         return ORA_RESULT_INVALID_ARG;
     }
 
@@ -1240,7 +1274,7 @@ ora_result_t ora_log_close_read(ora_log_channel_t channel) {
     ora_result_t result;
 
     if (!ora_log_channel_exists(channel)) {
-        return ORA_RESULT_INVALID_ARG;
+        return ORA_RESULT_NOT_SUPPORTED;
     }
 
     uint32_t primask = ora_log_lock();
@@ -1261,7 +1295,7 @@ ora_result_t ora_log_query(ora_log_channel_t channel, uint32_t *size_out,
     unsigned size = 0u, avail = 0u, pending = 0u;
 
     if (!ora_log_channel_exists(channel)) {
-        return ORA_RESULT_INVALID_ARG;
+        return ORA_RESULT_NOT_SUPPORTED;
     }
 
     onerom_rtt_query((unsigned)channel, &size, &avail, &pending);
@@ -1274,6 +1308,134 @@ ora_result_t ora_log_query(ora_log_channel_t channel, uint32_t *size_out,
     }
     if (pending_out != NULL) {
         *pending_out = (uint32_t)pending;
+    }
+
+    return ORA_RESULT_OK;
+}
+
+// ---------------------------------------------------------------------------
+// Compile options and log categories
+// ---------------------------------------------------------------------------
+
+// The compile options as values, so each accessor arm is an expression rather
+// than a preprocessor branch of its own.  Nothing carries these into
+// onerom_runtime_info_t: a build's switches are settled before it runs, and a
+// runtime structure is for what changes while it does.
+#if defined(PLUGIN_LOGGING)
+#define ORA_BUILT_PLUGIN_LOGGING    1u
+#else
+#define ORA_BUILT_PLUGIN_LOGGING    0u
+#endif
+#if defined(DEBUG_LOGGING)
+#define ORA_BUILT_DEBUG_LOGGING     1u
+#else
+#define ORA_BUILT_DEBUG_LOGGING     0u
+#endif
+#if defined(BOOT_LOGGING)
+#define ORA_BUILT_BOOT_LOGGING      1u
+#else
+#define ORA_BUILT_BOOT_LOGGING      0u
+#endif
+
+ora_result_t ora_get_compile_option_uint(ora_compile_option_t option,
+                                         uint32_t *out) {
+    if (out == NULL) {
+        return ORA_RESULT_INVALID_ARG;
+    }
+
+    switch (option) {
+        case ORA_COMPILE_OPTION_PLUGIN_LOGGING:
+            *out = ORA_BUILT_PLUGIN_LOGGING;
+            return ORA_RESULT_OK;
+        case ORA_COMPILE_OPTION_DEBUG_LOGGING:
+            *out = ORA_BUILT_DEBUG_LOGGING;
+            return ORA_RESULT_OK;
+        case ORA_COMPILE_OPTION_BOOT_LOGGING:
+            *out = ORA_BUILT_BOOT_LOGGING;
+            return ORA_RESULT_OK;
+        case ORA_COMPILE_OPTION_BUILD_NUMBER:
+            *out = (uint32_t)ONEROM_BUILD_NUMBER;
+            return ORA_RESULT_OK;
+        case ORA_COMPILE_OPTION_GIT_COMMIT:
+            return ORA_RESULT_TYPE_MISMATCH;
+        // An option this firmware does not know is a plugin built against
+        // newer firmware, which is a version difference for the caller to fall
+        // back from - not the caller getting the call wrong.
+        default:
+            return ORA_RESULT_NOT_SUPPORTED;
+    }
+}
+
+ora_result_t ora_get_compile_option_str(ora_compile_option_t option,
+                                        const char **out) {
+    if (out == NULL) {
+        return ORA_RESULT_INVALID_ARG;
+    }
+
+    switch (option) {
+        case ORA_COMPILE_OPTION_GIT_COMMIT:
+            *out = ONEROM_GIT_COMMIT;
+            return ORA_RESULT_OK;
+        case ORA_COMPILE_OPTION_PLUGIN_LOGGING:
+        case ORA_COMPILE_OPTION_DEBUG_LOGGING:
+        case ORA_COMPILE_OPTION_BOOT_LOGGING:
+        case ORA_COMPILE_OPTION_BUILD_NUMBER:
+            return ORA_RESULT_TYPE_MISMATCH;
+        default:
+            return ORA_RESULT_NOT_SUPPORTED;
+    }
+}
+
+ora_result_t ora_log_category_enabled(ora_log_category_t category,
+                                      uint32_t *enabled_out) {
+    if (enabled_out == NULL) {
+        return ORA_RESULT_INVALID_ARG;
+    }
+
+    switch (category) {
+        case ORA_LOG_CATEGORY_BOOT:
+            // BOOT_LOGGING_EN is the same test LOG() and DEBUG() make, so this
+            // tracks the gate rather than a copy of it.  do_log then drops
+            // everything on a turbo boot device, which is the second gate.
+            *enabled_out = (BOOT_LOGGING_EN && !TURBO) ? 1u : 0u;
+            break;
+
+        case ORA_LOG_CATEGORY_PLUGIN_INTERNAL:
+            // ora_log reaches the channel with no runtime test, so the compile
+            // gate is the whole answer.
+            *enabled_out = ORA_BUILT_PLUGIN_LOGGING;
+            break;
+
+        case ORA_LOG_CATEGORY_DEBUG:
+            // DEBUG() is a boot message that a build without debug logging
+            // does not contain at all, so it carries the boot gates and the
+            // compile gate on top.
+            *enabled_out =
+                (ORA_BUILT_DEBUG_LOGGING && BOOT_LOGGING_EN && !TURBO) ? 1u : 0u;
+            break;
+
+        case ORA_LOG_CATEGORY_ERROR:
+            // Neither ERR() nor ora_err_log carries a gate of any kind, by
+            // design: whoever hits an error is the least likely to have turned
+            // logging on first.  One answer therefore serves both.
+            *enabled_out = 1u;
+            break;
+
+        case ORA_LOG_CATEGORY_PLUGIN_APPLICATION:
+            // The ora_log_write family is a plugin's own channel, and the
+            // firmware never gates what a plugin puts there.
+            *enabled_out = 1u;
+            break;
+
+        case ORA_LOG_CATEGORY_PLUGIN_DEBUG:
+            // ora_debug_log is compiled away unless both options are on, and
+            // is not runtime gated, so the build settles this on its own.
+            *enabled_out =
+                (ORA_BUILT_PLUGIN_LOGGING && ORA_BUILT_DEBUG_LOGGING) ? 1u : 0u;
+            break;
+
+        default:
+            return ORA_RESULT_NOT_SUPPORTED;
     }
 
     return ORA_RESULT_OK;
@@ -1392,6 +1554,13 @@ void *ora_fn_lookup(api_id_t id) {
             return ora_log_close_read;
         case ORA_ID_LOG_QUERY:
             return ora_log_query;
+
+        case ORA_ID_GET_COMPILE_OPTION_UINT:
+            return ora_get_compile_option_uint;
+        case ORA_ID_GET_COMPILE_OPTION_STR:
+            return ora_get_compile_option_str;
+        case ORA_ID_LOG_CATEGORY_ENABLED:
+            return ora_log_category_enabled;
 
         // Deprecated functions
         case ORA_ID_GET_FIRMWARE_INFO:

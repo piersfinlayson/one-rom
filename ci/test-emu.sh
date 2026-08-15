@@ -124,6 +124,26 @@ run_config_api() {
     }
 }
 
+# The plugin API suite against a firmware built with its switchable logging
+# options off.
+#
+# The tester's expectations for the compile options and the log categories
+# follow whatever TEST_LOGGING the library was built with, so this is the run
+# that catches one of them answered from the wrong gate - or from no gate at
+# all, which a full-logging run cannot tell from a correct answer.
+run_config_api_logging_off() {
+    local board=$1
+    local config=$2
+
+    echo ""
+    echo "Testing: board=$board config=$config TEST_LOGGING=0"
+    env BOARD="$board" CONFIG="$config" TEST_LOGGING=0 make test-api || {
+        echo "FAILED: board=$board config=$config TEST_LOGGING=0"
+        echo "Reproduce:  env BOARD=$board CONFIG=$config TEST_LOGGING=0 make test-api"
+        exit 1
+    }
+}
+
 run_config_monitor() {
     local board=$1
     local config=$2
@@ -412,12 +432,13 @@ test_family_32() {
     test_32_config onerom-config/test/32-random-27c301.json
     test_32_config onerom-config/test/32-random-27c0x0.json
     test_config fire-32-b onerom-config/test/32-random-23c1001.json
+    test_config fire-32-b onerom-config/test/32-random-extra.json
 
     # Plugin API tests
     test_32_config_api onerom-config/test/32-random-27c080.json
     test_32_config_api onerom-config/test/32-random-27c301.json
     test_32_config_api onerom-config/test/32-random-27c0x0.json
-    test_config fire-32-b onerom-config/test/32-random-extra.json
+    test_config_api fire-32-b onerom-config/test/32-random-extra.json
 
     # Address-monitor tests — see the note in test_family_40 for what these
     # cover.
@@ -427,6 +448,15 @@ test_family_32() {
 
     # RBCP board coverage — see the note in test_family_40.
     test_32_config_rbcp onerom-config/test/32-random-27c080.json
+
+    # One run of the plugin API suite against a firmware compiled with its
+    # switchable logging options off.  What that setting reaches is the
+    # firmware's compile options and log categories, neither of which depends
+    # on socket size, so it runs here only - in this family because it is the
+    # shortest of the four and they run as parallel jobs, and last within it
+    # because changing the setting rebuilds the whole C library, so ending on
+    # it pays for that once rather than switching out and back.
+    run_config_api_logging_off fire-32-a onerom-config/test/32-random-27c080.json
 }
 
 test_family_40() {

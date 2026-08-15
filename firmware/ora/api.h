@@ -704,6 +704,27 @@ typedef enum {
      */
     ORA_ID_LOG_QUERY                 = 0x00000037,
 
+    /**
+     * @brief Get an unsigned option this firmware was compiled with
+     * @sa ora_get_compile_option_uint_fn_t
+     * @since firmware 0.7.2
+     */
+    ORA_ID_GET_COMPILE_OPTION_UINT   = 0x00000038,
+
+    /**
+     * @brief Get a string option this firmware was compiled with
+     * @sa ora_get_compile_option_str_fn_t
+     * @since firmware 0.7.2
+     */
+    ORA_ID_GET_COMPILE_OPTION_STR    = 0x00000039,
+
+    /**
+     * @brief Report whether output of a given log category appears
+     * @sa ora_log_category_enabled_fn_t
+     * @since firmware 0.7.2
+     */
+    ORA_ID_LOG_CATEGORY_ENABLED      = 0x0000003A,
+
     /** Invalid API identifier */
     ORA_ID_INVALID = 0xFFFFFFFF,
 } api_id_t;
@@ -752,16 +773,17 @@ STATIC_ASSERT(sizeof(ora_irq_t) == 1, "ora_irq_t must be 1 byte");
  * Channels are numbered rather than named for a purpose: a plugin picks the
  * one it wants, and the firmware does not assign meaning to any of them.
  *
- * One ROM's boot log occupies channel 0, and until the per-core channel split
- * lands that is the only channel there is. Further channels are added as the
- * firmware gains buffers for them, which is a backwards compatible addition.
+ * One ROM's own log is written to channel 0, and keeps being written there
+ * whatever a plugin does with it. A plugin may claim channel 0 like any
+ * other, which renames it and reserves @ref ora_log_write_fn_t on it - One
+ * ROM's log then arrives interleaved with the plugin's own.
  *
- * A channel this header declares may therefore not exist on the firmware a
- * plugin is running on, if that firmware is older than the header it was built
- * against. Every call in this family reports that as
- * @c ORA_RESULT_INVALID_ARG, and @ref ora_log_query_fn_t is the way to test for
- * it without side effects. A plugin that wants to run on both should fall back
- * to @c ORA_LOG_CHANNEL_0.
+ * A plugin built against this header may run on firmware that has fewer
+ * channels than the header declares. Every call in this family reports that as
+ * @c ORA_RESULT_NOT_SUPPORTED, distinct from the @c ORA_RESULT_INVALID_ARG
+ * that says the call itself was wrong, and @ref ora_log_query_fn_t is the way
+ * to test for it without side effects. A plugin that wants to run on both
+ * should fall back to @c ORA_LOG_CHANNEL_0.
  *
  * @c ORA_LOG_CHANNEL_INVALID is both the invalid marker and what fixes this
  * type at four bytes, since plugins build as C11 with @c -fshort-enums.
@@ -773,6 +795,137 @@ typedef enum {
     ORA_LOG_CHANNEL_INVALID = 0xFFFFFFFF,
 } ora_log_channel_t;
 STATIC_ASSERT(sizeof(ora_log_channel_t) == 4, "ora_log_channel_t must be 4 bytes");
+
+/**
+ * @brief An option this firmware was compiled with
+ *
+ * Every option here is fixed when the firmware is built, so its value is the
+ * same on every call for the life of the running firmware.
+ *
+ * The options form one key space across two accessors, split by the type of
+ * the value: @ref ora_get_compile_option_uint_fn_t resolves the unsigned ones
+ * and @ref ora_get_compile_option_str_fn_t the string ones.
+ *
+ * An option this header declares may not exist on the firmware a plugin is
+ * running on, if that firmware is older than the header it was built against.
+ * Both accessors report that as @c ORA_RESULT_NOT_SUPPORTED, which is a
+ * version difference to fall back from rather than a fault in the call.
+ *
+ * @c ORA_COMPILE_OPTION_INVALID is both the invalid marker and what fixes this
+ * type at four bytes, since plugins build as C11 with @c -fshort-enums.
+ *
+ * @since firmware 0.7.2
+ */
+typedef enum {
+    /**
+     * @brief Whether the firmware was compiled with plugin logging
+     *
+     * Unsigned, 1 or 0. When 0, @ref ora_log_fn_t emits nothing, and neither
+     * does @ref ora_debug_log_fn_t.
+     */
+    ORA_COMPILE_OPTION_PLUGIN_LOGGING = 0,
+
+    /**
+     * @brief Whether the firmware was compiled with debug logging
+     *
+     * Unsigned, 1 or 0. When 0, One ROM's own debug messages are absent from
+     * the build, and @ref ora_debug_log_fn_t emits nothing.
+     */
+    ORA_COMPILE_OPTION_DEBUG_LOGGING  = 1,
+
+    /** @brief The firmware's build number. Unsigned. */
+    ORA_COMPILE_OPTION_BUILD_NUMBER   = 2,
+
+    /**
+     * @brief The abbreviated git commit the firmware was built from
+     *
+     * A string. Reads @c unknown if no commit was available at build time.
+     */
+    ORA_COMPILE_OPTION_GIT_COMMIT     = 3,
+
+    /**
+     * @brief Whether the firmware was compiled with boot logging
+     *
+     * Unsigned, 1 or 0.
+     *
+     * This is what the build contains, not what the device is set to do. The
+     * device's boot logging setting is @c ORA_METADATA_KEY_BOOT_LOGGING via
+     * @ref ora_get_metadata_uint_fn_t.
+     */
+    ORA_COMPILE_OPTION_BOOT_LOGGING   = 4,
+
+    ORA_COMPILE_OPTION_INVALID        = 0xFFFFFFFF,
+} ora_compile_option_t;
+STATIC_ASSERT(sizeof(ora_compile_option_t) == 4, "ora_compile_option_t must be 4 bytes");
+
+/**
+ * @brief A category of log output
+ *
+ * A category names a kind of output, not a channel or a call. What gates each
+ * one differs - some are settled when the firmware is built, others depend on
+ * runtime state - and @ref ora_log_category_enabled_fn_t composes whichever
+ * apply into a single answer.
+ *
+ * A @c PLUGIN_ name is output a plugin itself produces. The rest is One ROM's
+ * own output, which a plugin cannot write but shares a channel with.
+ *
+ * A category this header declares may not exist on the firmware a plugin is
+ * running on, if that firmware is older than the header it was built against.
+ * @ref ora_log_category_enabled_fn_t reports that as
+ * @c ORA_RESULT_NOT_SUPPORTED, which is a version difference to fall back from
+ * rather than a fault in the call.
+ *
+ * @c ORA_LOG_CATEGORY_INVALID is both the invalid marker and what fixes this
+ * type at four bytes, since plugins build as C11 with @c -fshort-enums.
+ *
+ * @since firmware 0.7.2
+ */
+typedef enum {
+    /**
+     * @brief One ROM's own boot messages
+     *
+     * Gated by the device's boot logging setting
+     * (@c ORA_METADATA_KEY_BOOT_LOGGING) and by turbo boot, which suppresses
+     * boot messages whatever that setting says.
+     */
+    ORA_LOG_CATEGORY_BOOT               = 0,
+
+    /** @brief A plugin's @ref ora_log_fn_t output */
+    ORA_LOG_CATEGORY_PLUGIN_INTERNAL    = 1,
+
+    /**
+     * @brief One ROM's own debug messages
+     *
+     * Boot messages that a build without debug logging support does not
+     * contain, so this is @c ORA_LOG_CATEGORY_BOOT and
+     * @c ORA_COMPILE_OPTION_DEBUG_LOGGING together. A plugin's own debug
+     * output is @c ORA_LOG_CATEGORY_PLUGIN_DEBUG.
+     */
+    ORA_LOG_CATEGORY_DEBUG              = 2,
+
+    /**
+     * @brief Error messages, One ROM's own and a plugin's
+     *
+     * One category covers both, because @ref ora_err_log_fn_t and One ROM's
+     * own error path are gated by nothing.
+     */
+    ORA_LOG_CATEGORY_ERROR              = 3,
+
+    /** @brief A plugin's @ref ora_log_write_fn_t output */
+    ORA_LOG_CATEGORY_PLUGIN_APPLICATION = 4,
+
+    /**
+     * @brief A plugin's @ref ora_debug_log_fn_t output
+     *
+     * Settled entirely by how the firmware was built, so unlike
+     * @c ORA_LOG_CATEGORY_DEBUG it does not follow the device's boot logging
+     * setting or turbo boot.
+     */
+    ORA_LOG_CATEGORY_PLUGIN_DEBUG       = 5,
+
+    ORA_LOG_CATEGORY_INVALID            = 0xFFFFFFFF,
+} ora_log_category_t;
+STATIC_ASSERT(sizeof(ora_log_category_t) == 4, "ora_log_category_t must be 4 bytes");
 
 /**
  * @brief Knock sequence state structure
@@ -1187,10 +1340,15 @@ typedef const void *(*ora_get_firmware_info_fn_t)(void);
 /**
  * @brief Log a message
  * @sa ORA_ID_LOG
- * 
- * If the One ROM firmware is compiled with logging support enabled, this
- * function logs via RTT.  If there is no logging support this function
- * silently fails.
+ *
+ * Writes to the boot log channel, whichever plugin calls it, and whatever the
+ * device's boot logging setting (ORA_METADATA_KEY_BOOT_LOGGING).  That setting
+ * covers One ROM's own boot log only.
+ *
+ * Available only in firmware built with plugin logging support.  Without it
+ * this call does nothing, and the lookup still returns a valid pointer.  A
+ * plugin can test for it with @c ORA_COMPILE_OPTION_PLUGIN_LOGGING.
+ * @ref ora_err_log_fn_t is in every build, so a plugin can still report errors.
  *
  * The format string and arguments are checked by the compiler.  See the
  * supported conversion list in the One ROM firmware's rtt.c: floating point,
@@ -1209,10 +1367,10 @@ typedef void (*ora_log_fn_t)(const char *msg, ...)
  *
  * Equivalent to @ref ora_log but flags the log as an error.
  * @sa ORA_ID_ERR_LOG
- * 
- * If the One ROM firmware is compiled with logging support enabled, this
- * function logs via RTT.  If there is no logging support this function
- * silently fails.
+ *
+ * In every firmware build, whether or not it was built with plugin logging
+ * support, and unaffected by the device's boot logging setting.  A plugin's
+ * errors always reach the boot channel.
  *
  * @param msg printf-style format string
  * @param ... Format arguments
@@ -1226,9 +1384,11 @@ typedef void (*ora_err_log_fn_t)(const char *msg, ...)
  * Equivalent to @ref ora_log but flags the log as a debug message.
  * @sa ORA_ID_DEBUG_LOG
  *
- * If the One ROM firmware is compiled with debug logging support enabled,
- * this function logs via RTT.  If there is no logging support this function
- * silently fails.
+ * Available only in firmware built with both plugin logging and debug logging
+ * support.  Without either this call does nothing and the lookup still
+ * succeeds.  Where it is available it writes whatever the device's boot
+ * logging setting.  @c ORA_LOG_CATEGORY_PLUGIN_DEBUG is the single answer to
+ * whether it writes.
  *
  * @param msg printf-style format string
  * @param ... Format arguments
@@ -2414,12 +2574,17 @@ typedef ora_result_t (*ora_gpio_query_fn_t)(
  * neither allocates nor clears anything: the buffers exist before any plugin
  * runs, and a claim only records the writer and the name.
  *
+ * This call and the rest of the channel family - write, close, open read,
+ * read, close read and query - are in every firmware build, whether or not it
+ * was built with plugin logging support, and are unaffected by the device's
+ * boot logging setting.
+ *
  * The claim covers @ref ora_log_write_fn_t only. @ref ora_log_fn_t and
- * @ref ora_err_log_fn_t claim nothing and write the boot channel regardless, so
- * a plugin holding this claim can still have its bytes interleaved by the other
- * plugin's logging - and interrupt masking does not cross cores, so concurrent
- * writes from both cores corrupt rather than merely interleave. The per-core
- * channel split removes this.
+ * @ref ora_err_log_fn_t claim nothing and write the boot log channel
+ * regardless, so a plugin holding this claim can still have its bytes
+ * interleaved by One ROM's own log and by the other plugin's logging. Where
+ * two cores write the same channel at once the result is corrupted rather than
+ * merely interleaved, because interrupt masking does not cross cores.
  *
  * @param channel Channel to claim
  * @param name    Name shown by whatever reads the log, such as a probe front
@@ -2427,10 +2592,10 @@ typedef ora_result_t (*ora_gpio_query_fn_t)(
  *                channel is closed - the firmware keeps the pointer rather
  *                than copying the string. A reader may truncate it for
  *                display, so keep it short.
- * @return ORA_RESULT_OK on success; ORA_RESULT_INVALID_ARG if @p channel does
- *         not exist on this firmware or @p name is NULL;
- *         ORA_RESULT_LOG_CHANNEL_IN_USE if the channel is already claimed for
- *         writing
+ * @return ORA_RESULT_OK on success. ORA_RESULT_NOT_SUPPORTED if @p channel
+ *         does not exist on this firmware. ORA_RESULT_INVALID_ARG if @p name
+ *         is NULL. ORA_RESULT_LOG_CHANNEL_IN_USE if the channel is already
+ *         claimed for writing
  */
 typedef ora_result_t (*ora_log_open_write_fn_t)(
     ora_log_channel_t channel,
@@ -2442,9 +2607,14 @@ typedef ora_result_t (*ora_log_open_write_fn_t)(
  * @sa ORA_ID_LOG_WRITE
  * @since firmware 0.7.2
  *
- * Raw append: no formatting and no varargs, so no scratch buffer and
- * negligible stack. Use it where the plugin already holds the bytes, or where
- * the stack budget rules out @ref ora_log_fn_t.
+ * Appends exactly the bytes given. Nothing is added, removed or rewritten -
+ * no formatting, no prefix, and no line ending. A plugin that wants its
+ * output to appear as lines sends the terminators itself, and one sending
+ * binary gets it through unaltered.
+ *
+ * There are no varargs and no scratch buffer, so the stack cost is
+ * negligible. Use this where the plugin already holds the bytes, or where the
+ * stack budget rules out @ref ora_log_fn_t.
  *
  * A write is stored whole or dropped whole, and never blocks. When the channel
  * has no room the record is dropped and ORA_RESULT_LOG_FULL is returned; that
@@ -2458,10 +2628,11 @@ typedef ora_result_t (*ora_log_open_write_fn_t)(
  * @param channel Channel this plugin claimed for writing
  * @param buf     Bytes to append
  * @param len     Number of bytes to append
- * @return ORA_RESULT_OK if the record was stored, or if @p len was zero;
- *         ORA_RESULT_LOG_FULL if it was dropped; ORA_RESULT_INVALID_ARG if
- *         @p buf is NULL, or @p channel does not exist on this firmware or is
- *         not claimed for writing by this plugin
+ * @return ORA_RESULT_OK if the record was stored, or if @p len was zero.
+ *         ORA_RESULT_LOG_FULL if it was dropped. ORA_RESULT_NOT_SUPPORTED if
+ *         @p channel does not exist on this firmware. ORA_RESULT_INVALID_ARG
+ *         if @p buf is NULL, or @p channel is not claimed for writing by this
+ *         plugin
  */
 typedef ora_result_t (*ora_log_write_fn_t)(
     ora_log_channel_t channel,
@@ -2479,10 +2650,13 @@ typedef ora_result_t (*ora_log_write_fn_t)(
  * unaffected. The firmware stops using the name passed to
  * @ref ora_log_open_write_fn_t, so the plugin may reuse that memory.
  *
+ * The channel is then unclaimed for writing, so any plugin - including this
+ * one - may claim it again.
+ *
  * @param channel Channel this plugin claimed for writing
- * @return ORA_RESULT_OK on success; ORA_RESULT_INVALID_ARG if @p channel does
- *         not exist on this firmware, or is not claimed for writing by this
- *         plugin
+ * @return ORA_RESULT_OK on success. ORA_RESULT_NOT_SUPPORTED if @p channel
+ *         does not exist on this firmware. ORA_RESULT_INVALID_ARG if it is not
+ *         claimed for writing by this plugin
  */
 typedef ora_result_t (*ora_log_close_write_fn_t)(ora_log_channel_t channel);
 
@@ -2501,9 +2675,9 @@ typedef ora_result_t (*ora_log_close_write_fn_t)(ora_log_channel_t channel);
  * the other.
  *
  * @param channel Channel to claim
- * @return ORA_RESULT_OK on success; ORA_RESULT_INVALID_ARG if @p channel does
- *         not exist on this firmware; ORA_RESULT_LOG_CHANNEL_IN_USE if the
- *         channel is already claimed for reading
+ * @return ORA_RESULT_OK on success. ORA_RESULT_NOT_SUPPORTED if @p channel
+ *         does not exist on this firmware. ORA_RESULT_LOG_CHANNEL_IN_USE if
+ *         the channel is already claimed for reading
  */
 typedef ora_result_t (*ora_log_open_read_fn_t)(ora_log_channel_t channel);
 
@@ -2526,10 +2700,10 @@ typedef ora_result_t (*ora_log_open_read_fn_t)(ora_log_channel_t channel);
  * @param max_len    Capacity of @p buf in bytes
  * @param copied_out Receives the number of bytes copied, zero if the channel
  *                   is empty or @p max_len is zero
- * @return ORA_RESULT_OK on success, including when the channel is empty;
- *         ORA_RESULT_INVALID_ARG if @p buf or @p copied_out is NULL, or
- *         @p channel does not exist on this firmware or is not claimed for
- *         reading by this plugin
+ * @return ORA_RESULT_OK on success, including when the channel is empty.
+ *         ORA_RESULT_NOT_SUPPORTED if @p channel does not exist on this
+ *         firmware. ORA_RESULT_INVALID_ARG if @p buf or @p copied_out is NULL,
+ *         or @p channel is not claimed for reading by this plugin
  */
 typedef ora_result_t (*ora_log_read_fn_t)(
     ora_log_channel_t channel,
@@ -2546,10 +2720,13 @@ typedef ora_result_t (*ora_log_read_fn_t)(
  * Unread bytes stay unread and the read position is not disturbed. Any write
  * claim is unaffected.
  *
+ * The channel is then unclaimed for reading, so any plugin - including this
+ * one - may claim it again.
+ *
  * @param channel Channel this plugin claimed for reading
- * @return ORA_RESULT_OK on success; ORA_RESULT_INVALID_ARG if @p channel does
- *         not exist on this firmware, or is not claimed for reading by this
- *         plugin
+ * @return ORA_RESULT_OK on success. ORA_RESULT_NOT_SUPPORTED if @p channel
+ *         does not exist on this firmware. ORA_RESULT_INVALID_ARG if it is not
+ *         claimed for reading by this plugin
  */
 typedef ora_result_t (*ora_log_close_read_fn_t)(ora_log_channel_t channel);
 
@@ -2576,14 +2753,89 @@ typedef ora_result_t (*ora_log_close_read_fn_t)(ora_log_channel_t channel);
  * @param size_out    Receives the channel's total size in bytes. May be NULL.
  * @param free_out    Receives the bytes writable right now. May be NULL.
  * @param pending_out Receives the bytes written but not yet read. May be NULL.
- * @return ORA_RESULT_OK on success; ORA_RESULT_INVALID_ARG if @p channel does
- *         not exist on this firmware
+ * @return ORA_RESULT_OK on success. ORA_RESULT_NOT_SUPPORTED if @p channel
+ *         does not exist on this firmware
  */
 typedef ora_result_t (*ora_log_query_fn_t)(
     ora_log_channel_t channel,
     uint32_t *size_out,
     uint32_t *free_out,
     uint32_t *pending_out
+);
+
+/**
+ * @brief Get an unsigned option this firmware was compiled with
+ * @sa ORA_ID_GET_COMPILE_OPTION_UINT
+ * @since firmware 0.7.2
+ *
+ * Resolves the options in @ref ora_compile_option_t whose value is unsigned,
+ * zero-extending it into @p out. The value is settled at build time, so it is
+ * the same on every call.
+ *
+ * @param option  The option to retrieve. @sa ora_compile_option_t
+ * @param out     Receives the value. Must not be NULL.
+ * @return ORA_RESULT_OK on success.
+ *         ORA_RESULT_NOT_SUPPORTED if @p option is unknown to this firmware.
+ *         ORA_RESULT_TYPE_MISMATCH if @p option is valid but not an unsigned
+ *         value.
+ *         ORA_RESULT_INVALID_ARG if @p out is NULL.
+ */
+typedef ora_result_t (*ora_get_compile_option_uint_fn_t)(
+    ora_compile_option_t option,
+    uint32_t *out
+);
+
+/**
+ * @brief Get a string option this firmware was compiled with
+ * @sa ORA_ID_GET_COMPILE_OPTION_STR
+ * @since firmware 0.7.2
+ *
+ * String sibling of @ref ora_get_compile_option_uint_fn_t over the same key
+ * space. On success @p out receives a pointer directly into flash - no
+ * allocation is required, and the pointer is valid for the lifetime of the
+ * firmware.
+ *
+ * @param option  The option to retrieve. @sa ora_compile_option_t
+ * @param out     Receives the string pointer. Must not be NULL.
+ * @return ORA_RESULT_OK on success.
+ *         ORA_RESULT_NOT_SUPPORTED if @p option is unknown to this firmware.
+ *         ORA_RESULT_TYPE_MISMATCH if @p option is valid but not a string.
+ *         ORA_RESULT_INVALID_ARG if @p out is NULL.
+ */
+typedef ora_result_t (*ora_get_compile_option_str_fn_t)(
+    ora_compile_option_t option,
+    const char **out
+);
+
+/**
+ * @brief Report whether output of a log category appears
+ * @sa ORA_ID_LOG_CATEGORY_ENABLED
+ * @since firmware 0.7.2
+ *
+ * Answers whether the firmware's own gates let output of @p category through
+ * as things stand, composing every gate that applies to it - how the firmware
+ * was built, and for some categories the device's runtime state. A category
+ * with a runtime gate can therefore answer differently on a later call.
+ *
+ * It says nothing about whether anything is listening, or about whether a
+ * given write succeeds. A category answers 1 on a device with no debug probe
+ * and no terminal attached, and @ref ora_log_write_fn_t still reports
+ * @c ORA_RESULT_LOG_FULL when the channel is full.
+ *
+ * This is a different question from how the firmware was built, which
+ * @ref ora_get_compile_option_uint_fn_t answers. A build compiled with debug
+ * logging still emits no boot messages on a turbo boot device.
+ *
+ * @param category     The category to report on. @sa ora_log_category_t
+ * @param enabled_out  Receives 1 if output of this category appears, 0 if it
+ *                     does not. Must not be NULL.
+ * @return ORA_RESULT_OK on success.
+ *         ORA_RESULT_NOT_SUPPORTED if @p category is unknown to this firmware.
+ *         ORA_RESULT_INVALID_ARG if @p enabled_out is NULL.
+ */
+typedef ora_result_t (*ora_log_category_enabled_fn_t)(
+    ora_log_category_t category,
+    uint32_t *enabled_out
 );
 
 /** @} */ // plugin_api_functions

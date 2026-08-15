@@ -71,6 +71,22 @@ ifeq ($(DEBUG_LOGGING), 1)
 	CFLAGS += -DDEBUG_LOGGING=1
 endif
 
+# Rebuild every object when the compiler flags change.
+#
+# An object rule cannot depend on CFLAGS, so the flags are recorded in a stamp
+# file and the objects depend on that.  The file is rewritten only when the
+# flags differ, so an unchanged build does not retrigger.  This must come after
+# every CFLAGS assignment above.
+#
+# The objects used to depend on the top level Makefile instead, which was both
+# too much and too little - it rebuilt on any edit to that file, and missed a
+# flag given on the command line, so PLUGIN_LOGGING=1 on a built tree silently
+# produced the previous binary.
+CFLAGS_STAMP := $(BUILD_DIR)/.cflags
+$(shell mkdir -p $(BUILD_DIR); \
+        printf '%s' '$(CFLAGS)' | cmp -s - $(CFLAGS_STAMP) || \
+        printf '%s' '$(CFLAGS)' > $(CFLAGS_STAMP))
+
 # Phony targets
 .PHONY: all clean clean-apio-src apio size flash run
 
@@ -87,12 +103,12 @@ apio:
 	fi
 
 # sdrr object files
-$(BUILD_DIR)/%.o: src/%.c ../Makefile | $(BUILD_DIR) apio
+$(BUILD_DIR)/%.o: src/%.c $(CFLAGS_STAMP) | $(BUILD_DIR) apio
 	@mkdir -p $(@D)
 	@echo "- Compiling $(FIRMWARE_DIR)/$<"
 	@$(CC) $(CFLAGS) -c $< -o $@
 
-$(BUILD_DIR)/%.o: apio/src/%.c ../Makefile | $(BUILD_DIR)
+$(BUILD_DIR)/%.o: apio/src/%.c $(CFLAGS_STAMP) | $(BUILD_DIR)
 	@mkdir -p $(@D)
 	@echo "- Compiling $(FIRMWARE_DIR)/$<"
 	@$(CC) $(CFLAGS) -c $< -o $@

@@ -6,6 +6,7 @@ This directory contains some simple example One ROM plugins.
 | --- | --- |
 | [blink](blink) | Blinks One ROM's status LED |
 | [hello](hello) | Logs a message in a loop |
+| [log-write](log-write) | Claims a log channel and writes raw bytes to it |
 | [c64-char-led](c64-char-led) | Watches C64 character ROM accesses and drives the status LED |
 | [c64-kernal-mod](c64-kernal-mod) | Rewrites the C64 kernal boot banner in response to a knock sequence |
 
@@ -54,4 +55,4 @@ onerom program --slot file=examples/hello/build/plugin_system.bin,type=system_pl
                --slot file=some-rom.bin,type=27128
 ```
 
-The first plugin prints "Hello, world!" to RTT logging once the system has booted, and the other blinks One ROM's status LED.
+The first plugin prints "Hello One ROM" to RTT logging once the system has booted, and the other blinks One ROM's status LED.

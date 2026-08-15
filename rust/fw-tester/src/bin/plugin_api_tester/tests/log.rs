@@ -26,7 +26,8 @@
 //! a nuisance rather than a hazard, but it also makes an accidental leak
 //! visible instead of silent.
 
-use onerom_fw_emulator::{Emulator, OraResult, ffi};
+use onerom_fw_emulator::{Emulator, OraResult, build_options, ffi};
+use onerom_gen::Config;
 
 const CH0: u32 = 0;
 /// Declared by `ONEROM_RTT_MAX_UP_BUFFERS` but never given a buffer, so every
@@ -267,11 +268,16 @@ pub fn test_query_needs_no_claim(emu: &Emulator) -> Result<(), String> {
 }
 
 /// A channel the header declares but this firmware has no buffer for is
-/// rejected by every call, and so is one past the end of the table.
+/// `NotSupported` from every call, and so is one past the end of the table.
 ///
 /// This is the case a plugin built against a newer header hits on older
-/// firmware. `query` answering rather than faulting is what lets it detect
-/// that and fall back.
+/// firmware. The code has to be `NotSupported` and not the `InvalidArg` an
+/// unheld claim earns, because the two ask for different responses: fall back
+/// to a channel this firmware has, against fix the call. `test_write_claim_
+/// excludes_other_plugin` holds the other half of that pair, so swapping the
+/// two codes fails one test or the other whichever way round it is done.
+/// `query` answering rather than faulting is what lets a plugin detect the
+/// version difference without side effects.
 pub fn test_absent_channel_is_rejected(emu: &Emulator) -> Result<(), String> {
     emu.set_calling_plugin(SYSTEM);
 
@@ -279,37 +285,37 @@ pub fn test_absent_channel_is_rejected(emu: &Emulator) -> Result<(), String> {
         check(
             &format!("open_write on an {label} channel"),
             emu.log_open_write(channel, c"x"),
-            OraResult::InvalidArg,
+            OraResult::NotSupported,
         )?;
         check(
             &format!("open_read on an {label} channel"),
             emu.log_open_read(channel),
-            OraResult::InvalidArg,
+            OraResult::NotSupported,
         )?;
         check(
             &format!("write to an {label} channel"),
             emu.log_write(channel, b"x"),
-            OraResult::InvalidArg,
+            OraResult::NotSupported,
         )?;
         check(
             &format!("read from an {label} channel"),
             emu.log_read(channel, 16).0,
-            OraResult::InvalidArg,
+            OraResult::NotSupported,
         )?;
         check(
             &format!("close_write on an {label} channel"),
             emu.log_close_write(channel),
-            OraResult::InvalidArg,
+            OraResult::NotSupported,
         )?;
         check(
             &format!("close_read on an {label} channel"),
             emu.log_close_read(channel),
-            OraResult::InvalidArg,
+            OraResult::NotSupported,
         )?;
         check(
             &format!("query on an {label} channel"),
             emu.log_query(channel).0,
-            OraResult::InvalidArg,
+            OraResult::NotSupported,
         )?;
     }
 
@@ -374,6 +380,155 @@ pub fn test_write_and_read_edges(emu: &Emulator) -> Result<(), String> {
     emu.log_close_read(CH0);
     emu.set_calling_plugin(SYSTEM);
     emu.log_close_write(CH0);
+
+    Ok(())
+}
+
+/// Each log category answers for the gates that actually apply to it.
+///
+/// Two of the three gates a category can carry are moved under it here. Boot
+/// logging moves while the firmware runs, so the test flips it and checks that
+/// the categories carrying it follow and that the rest hold still. The compile
+/// options do not move within a run, so the other half of that coverage is a
+/// second run of this suite against a library built with `TEST_LOGGING=0` -
+/// which is what `ci/test-emu.sh` adds one of. Between them, a category wired
+/// to the wrong gate, or to none, holds still when it should move or moves
+/// when it should not.
+///
+/// The runtime flip is also what tells `DEBUG` from `PLUGIN_DEBUG`. One ROM's
+/// own `DEBUG()` lines are boot messages and stop when boot logging does, while
+/// a plugin's `ora_debug_log` has no runtime gate at all, so swapping the two
+/// answers fails this test in the boot-logging-off phase.
+///
+/// The turbo boot half of `BOOT` is asserted from the config rather than
+/// stimulated - turbo boot is fixed in flash metadata, so a run can only
+/// observe whichever way the config under test was built.
+pub fn test_log_categories(
+    emu: &Emulator,
+    config: &Config,
+    log_enabled: bool,
+) -> Result<(), String> {
+    // (category, label, answer with boot logging on, answer with it off).
+    //
+    // BOOT and DEBUG are the two that carry the runtime gate. The rest are
+    // settled by the build, and what settled them is `build_options`, taken
+    // from the `TEST_LOGGING` this library's C was compiled with rather than
+    // from the firmware's own account of it.
+    let boot_on = if config.turbo_boot { 0 } else { 1 };
+    let plugin = u32::from(build_options::PLUGIN_LOGGING);
+    let debug_boot = if build_options::DEBUG_LOGGING {
+        boot_on
+    } else {
+        0
+    };
+    let plugin_debug = u32::from(build_options::PLUGIN_LOGGING && build_options::DEBUG_LOGGING);
+    let categories: &[(ffi::ora_log_category_t, &str, u32, u32)] = &[
+        (
+            ffi::ora_log_category_t_ORA_LOG_CATEGORY_BOOT,
+            "BOOT",
+            boot_on,
+            0,
+        ),
+        // ora_log reaches the channel with no runtime test, so the compile
+        // gate is the whole answer.
+        (
+            ffi::ora_log_category_t_ORA_LOG_CATEGORY_PLUGIN_INTERNAL,
+            "PLUGIN_INTERNAL",
+            plugin,
+            plugin,
+        ),
+        // DEBUG() carries the boot gates and the compile gate on top.
+        (
+            ffi::ora_log_category_t_ORA_LOG_CATEGORY_DEBUG,
+            "DEBUG",
+            debug_boot,
+            0,
+        ),
+        // Neither ERR() nor ora_err_log carries a gate of any kind, so this
+        // one stays 1 in a build with every logging option off.
+        (
+            ffi::ora_log_category_t_ORA_LOG_CATEGORY_ERROR,
+            "ERROR",
+            1,
+            1,
+        ),
+        // The firmware never gates what a plugin puts in its own channel, and
+        // the ora_log_write family is not compiled out with PLUGIN_LOGGING.
+        (
+            ffi::ora_log_category_t_ORA_LOG_CATEGORY_PLUGIN_APPLICATION,
+            "PLUGIN_APPLICATION",
+            1,
+            1,
+        ),
+        // ora_debug_log needs both compile options and has no runtime gate.
+        (
+            ffi::ora_log_category_t_ORA_LOG_CATEGORY_PLUGIN_DEBUG,
+            "PLUGIN_DEBUG",
+            plugin_debug,
+            plugin_debug,
+        ),
+    ];
+
+    for (boot_logging, phase) in [(true, "boot logging on"), (false, "boot logging off")] {
+        Emulator::set_logging(boot_logging);
+
+        for (category, label, want_on, want_off) in categories {
+            let want = if boot_logging { *want_on } else { *want_off };
+            let (result, value) = emu.log_category_enabled(*category);
+            if !result.is_ok() {
+                Emulator::set_logging(log_enabled);
+                return Err(format!(
+                    "{} ({}): expected OK, got {:?}",
+                    label, phase, result
+                ));
+            }
+            let value = match value {
+                Some(v) => v,
+                None => {
+                    Emulator::set_logging(log_enabled);
+                    return Err(format!("{} ({}): OK but no value", label, phase));
+                }
+            };
+            if value != want {
+                Emulator::set_logging(log_enabled);
+                return Err(format!(
+                    "{} ({}): got {}, expected {}",
+                    label, phase, value, want
+                ));
+            }
+            if boot_logging {
+                println!("  {}: {}", label, value);
+            }
+        }
+    }
+
+    // Leave the harness's logging as the run was started with, so a later test
+    // sees what it would have seen.
+    Emulator::set_logging(log_enabled);
+
+    // A category this firmware does not know - what a plugin built against a
+    // newer header asks - is NotSupported, as is the sentinel. That is a
+    // different answer from the InvalidArg a NULL out pointer earns below,
+    // and the difference is the whole point: one says fall back, the other
+    // says the call was wrong.
+    const UNKNOWN_CATEGORY: ffi::ora_log_category_t = 99;
+    for (category, label) in [
+        (UNKNOWN_CATEGORY, "an unknown category"),
+        (ffi::ora_log_category_t_ORA_LOG_CATEGORY_INVALID, "INVALID"),
+    ] {
+        let (result, value) = emu.log_category_enabled(category);
+        check(label, result, OraResult::NotSupported)?;
+        if value.is_some() {
+            return Err(format!("{}: wrote a value on failure", label));
+        }
+    }
+
+    // A NULL out pointer is refused rather than written through.
+    check(
+        "NULL out pointer",
+        emu.log_category_enabled_null_out(ffi::ora_log_category_t_ORA_LOG_CATEGORY_ERROR),
+        OraResult::InvalidArg,
+    )?;
 
     Ok(())
 }
