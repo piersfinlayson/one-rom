@@ -19,7 +19,7 @@
 //! mode — see [`crate::driver::Probe`] for why they are framed as
 //! discriminations between two values rather than as "nothing changed".
 
-use crate::driver::{Bus, group, modify};
+use crate::driver::{Bus, control, group, modify};
 use crate::{Ctx, Outcome};
 
 /// A command's argument bytes are consumed exactly, no more and no less.
@@ -114,6 +114,92 @@ pub fn desync_recovers_within_ten_reads(bus: &mut Bus, ctx: &Ctx) -> Result<Outc
                  specification allows"
         )
     })?;
+
+    Ok(Outcome::Pass)
+}
+
+/// An unknown zero-argument command fails cleanly and leaves the session framed.
+///
+/// Specification: "Command Framing — Unknown GROUP and CMD".  A device with no
+/// definition for a GROUP+CMD pair cannot know its argument count, so it
+/// "consumes no argument bytes" and completes the processing sequence with
+/// response = failed.
+///
+/// Both halves matter and neither implies the other.  The failure is asserted
+/// through [`Bus::expect_rejected`], which requires the token to have moved —
+/// so a device that ignored the command entirely fails here rather than passing
+/// by silence.  The framing is asserted by the NOP afterwards: had the device
+/// taken any argument bytes for a command it does not implement, it would have
+/// swallowed the following frame.
+///
+/// The group used is one the specification has never assigned and this suite
+/// does not test, so the scenario stays honest as groups are added.
+pub fn unknown_group_consumes_no_arguments(bus: &mut Bus, ctx: &Ctx) -> Result<Outcome, String> {
+    const UNASSIGNED_GROUP: u8 = 0x7F;
+
+    let s = ctx.session();
+    bus.enter_cmd_resp(&s)
+        .map_err(|e| format!("ENTER_CMD_RESP: {e}"))?;
+
+    bus.expect_rejected(&s, UNASSIGNED_GROUP, 0x00, &[])?;
+
+    bus.issue_cmd(&s, group::CONTROL, control::NOP, &[])
+        .map_err(|e| format!("NOP after an unknown GROUP: {e}"))?;
+
+    Ok(Outcome::Pass)
+}
+
+/// An unknown CMD within a known group behaves the same way.
+///
+/// The device knows the group but has no definition for the pair, so it is in
+/// exactly the position the unknown-GROUP rule describes and must do the same
+/// thing.  Asserted separately because a device can plausibly dispatch on group
+/// first and get one of the two right.
+pub fn unknown_cmd_consumes_no_arguments(bus: &mut Bus, ctx: &Ctx) -> Result<Outcome, String> {
+    const UNASSIGNED_CMD: u8 = 0x7F;
+
+    let s = ctx.session();
+    bus.enter_cmd_resp(&s)
+        .map_err(|e| format!("ENTER_CMD_RESP: {e}"))?;
+
+    bus.expect_rejected(&s, group::CONTROL, UNASSIGNED_CMD, &[])?;
+
+    bus.issue_cmd(&s, group::CONTROL, control::NOP, &[])
+        .map_err(|e| format!("NOP after an unknown CMD: {e}"))?;
+
+    Ok(Outcome::Pass)
+}
+
+/// Every group carries a zero-argument discovery command at its lowest CMD.
+///
+/// Specification: "Every command group introduced by a version of this
+/// specification later than 0.1.1 must include a discovery command that takes
+/// zero argument bytes, and that command must be assigned the lowest CMD value
+/// in the group."  That rule is what makes CMD 0x00 safe to send blind, and it
+/// is only worth anything if the devices implementing those groups honour it.
+///
+/// Asserted over the groups this version defines by requiring CMD 0x00 to be
+/// answerable with no arguments and to leave the session framed — which is the
+/// property a host written against a later specification relies on.
+pub fn discovery_commands_take_no_arguments(bus: &mut Bus, ctx: &Ctx) -> Result<Outcome, String> {
+    let s = ctx.session();
+    bus.enter_cmd_resp(&s)
+        .map_err(|e| format!("ENTER_CMD_RESP: {e}"))?;
+
+    for probe in [group::READ, group::NV_STORAGE, group::PIPES] {
+        // The answer may be success or failure - an optional feature that is
+        // absent still answers.  What must not happen is the device taking
+        // argument bytes, which the following NOP detects.
+        let _ = bus.issue_cmd(&s, probe, 0x00, &[]);
+
+        bus.issue_cmd(&s, group::CONTROL, control::NOP, &[])
+            .map_err(|e| {
+                format!(
+                    "NOP after group 0x{probe:02X} CMD 0x00: {e} — the discovery command took \
+                     argument bytes off the wire"
+                )
+            })?;
+    }
 
     Ok(Outcome::Pass)
 }

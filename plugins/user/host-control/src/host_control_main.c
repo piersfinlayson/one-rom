@@ -111,7 +111,7 @@ static const uint32_t s_knock_seq[KNOCK_LEN] = {
 
 #define RBCP_PROTOCOL_VERSION_MAJOR 0u
 #define RBCP_PROTOCOL_VERSION_MINOR 1u
-#define RBCP_PROTOCOL_VERSION_PATCH 1u
+#define RBCP_PROTOCOL_VERSION_PATCH 2u
 const uint8_t protocol_version[4] = {
     RBCP_PROTOCOL_VERSION_MAJOR,
     RBCP_PROTOCOL_VERSION_MINOR,
@@ -138,6 +138,7 @@ const uint8_t protocol_version[4] = {
 #define GRP_READ        0x01u
 #define GRP_MODIFY      0x02u
 #define GRP_NV_STORAGE  0x03u
+#define GRP_PIPES       0x04u
 #define GRP_RESET       0xAAu
 
 // Control commands
@@ -171,6 +172,24 @@ const uint8_t protocol_version[4] = {
 #define CMD_NV_POKE_COMMIT              0x04u
 #define CMD_NV_POKE_DISCARD             0x05u
 #define CMD_NV_POKE_COMMIT_BYTE         0x06u
+
+// Pipe commands
+#define CMD_GET_PIPE_CAPABILITY         0x00u
+#define CMD_GET_PIPE_INFO               0x01u
+#define CMD_PIPE_WRITE                  0x02u
+
+// Pipe type identifiers, as reported by GET_PIPE_INFO.  Every pipe this plugin
+// exposes is an ORA log channel, which is what the protocol calls a Log pipe.
+#define PIPE_TYPE_LOG                   0x00u
+
+// Pipe flags, as reported by GET_PIPE_INFO.  Bit 1, the device-to-host
+// direction, is reserved by RBCP 0.1.2 and must be reported as zero.
+#define PIPE_FLAG_HOST_TO_DEVICE        0x01u
+
+// Largest payload PIPE_WRITE can carry, and so the largest valid count.  Fixed
+// by the protocol at four, which is what leaves room for the pipe and count
+// arguments within the nine-argument frame maximum.
+#define PIPE_WRITE_MAX_BYTES            4u
 
 // Reset commands
 #define CMD_RBCP_RESET                  0xAAu
@@ -247,6 +266,34 @@ static ora_get_device_version_fn_t          s_get_device_version;
 static ora_map_addr_to_phys_fn_t            s_map_addr_to_phys;
 static ora_map_data_to_phys_fn_t            s_map_data_to_phys;
 static ora_demangle_data_fn_t               s_demangle_data;
+
+// The log channel family, added in firmware 0.7.2 and used to serve the Pipes
+// group.  The plugin's min_fw_version stays at 0.7.1, so these may be NULL on
+// older firmware: ora_lookup returns NULL for an identifier the running
+// firmware does not implement.  A NULL here means the device exposes no pipes,
+// which the protocol already provides for, rather than meaning the plugin
+// cannot run.  See pipe_count().
+static ora_log_open_write_fn_t              s_log_open_write;
+static ora_log_write_fn_t                   s_log_write;
+static ora_log_query_fn_t                   s_log_query;
+
+// A plugin's debug output, which the firmware emits only where it was built
+// with plugin debug logging.  Used for PIPE_WRITE failures, which are ordinary
+// traffic rather than faults: a full channel is normal operation, and s_log
+// would put the report into the very channel the host is writing.
+static ora_debug_log_fn_t                   s_debug_log;
+
+// Which pipes this plugin holds ora_log_open_write on, one bit per pipe.
+// Claimed on the first PIPE_WRITE to a pipe rather than at startup, because
+// claiming renames the channel for anything reading the log, and a device whose
+// host never writes a pipe should not be renamed.  Held for the life of the
+// plugin once taken.
+//
+// A bitmask rather than a flag because the claim is per channel: one bit says
+// nothing about the next pipe, and a device gaining a second channel would
+// otherwise have its first claim answer for both.  Eight pipes fit, which
+// pipe_count() must not exceed - widen this first if it ever could.
+static uint8_t s_pipes_claimed;
 
 // ---------------------------------------------------------------------------
 // Ring buffer read helpers
@@ -1297,6 +1344,139 @@ static bool exec_nv_poke_commit_byte(void) {
 }
 
 // ---------------------------------------------------------------------------
+// Command handlers — Pipes group (0x04)
+// ---------------------------------------------------------------------------
+//
+// Everything in this group reports through s_debug_log rather than s_log.  The
+// pipe is an ORA log channel, and s_log writes that same channel, so anything
+// logged here on a normal build would land in the middle of the bytes the host
+// is sending.  Debug output is emitted only where the firmware was built for
+// it, which is where someone is watching the plugin rather than the stream.
+
+// The name a reader sees for the channel once a host has written to it.  const,
+// so it lives in .rodata and costs flash rather than any of the plugin's 512
+// bytes of static RAM.  ora_log_open_write keeps this pointer rather than
+// copying the string, so it must outlive the claim, which a literal does.
+static const char pipe_name[] = "RBCP pipe 0";
+
+// Number of pipes this device exposes.
+//
+// A pipe is an ORA log channel and pipe N is channel N, so this is the number
+// of channels the running firmware has.  Two ways it can be zero, and the
+// protocol treats them alike: firmware older than 0.7.2 has no log API, so the
+// lookups returned NULL, or the firmware has the API but no channel 0.  Either
+// way GET_PIPE_CAPABILITY reports zero and the other two commands fail, which
+// is what the specification says an optional feature looks like when absent.
+//
+// The API header declares one channel and states that firmware may have fewer
+// channels than the header declares, never more, so channel 0 is the only one
+// to test for.  ora_log_query needs no claim in either direction and has no
+// side effects, which is what makes it safe to use as the test.
+static uint8_t pipe_count(void) {
+    if ((s_log_open_write == NULL) || (s_log_write == NULL) ||
+        (s_log_query == NULL)) {
+        return 0u;
+    }
+    if (s_log_query(ORA_LOG_CHANNEL_0, NULL, NULL, NULL) != ORA_RESULT_OK) {
+        return 0u;
+    }
+    return 1u;
+}
+
+static bool exec_get_pipe_capability(void) {
+    if (s_state.cfg.data_size < 8u) {
+        s_debug_log("GET_PIPE_CAPABILITY failed: data section too small");
+        return false;
+    }
+
+    uint8_t resp[8];
+    zero_bytes(resp, sizeof(resp));
+    resp[0] = pipe_count();
+
+    data_write(s_state.active_slot, 0u, resp, sizeof(resp));
+    s_debug_log("GET_PIPE_CAPABILITY: pipes=%u", (unsigned)resp[0]);
+    return true;
+}
+
+static bool exec_get_pipe_info(void) {
+    uint8_t pipe = ring_read_byte();
+
+    s_debug_log("GET_PIPE_INFO: pipe=%u", (unsigned)pipe);
+
+    if (s_state.cfg.data_size < 8u) {
+        s_debug_log("GET_PIPE_INFO failed: data section too small");
+        return false;
+    }
+    if (pipe >= pipe_count()) {
+        s_debug_log("GET_PIPE_INFO failed: no such pipe");
+        return false;
+    }
+
+    uint32_t free_bytes = 0u;
+    if (s_log_query((ora_log_channel_t)pipe, NULL, &free_bytes, NULL) !=
+        ORA_RESULT_OK) {
+        s_debug_log("GET_PIPE_INFO failed: query error");
+        return false;
+    }
+
+    uint8_t resp[8];
+    zero_bytes(resp, sizeof(resp));
+    resp[0] = PIPE_TYPE_LOG;
+    resp[1] = PIPE_FLAG_HOST_TO_DEVICE;
+    resp[2] = (free_bytes > 0xFFu) ? 0xFFu : (uint8_t)free_bytes;
+
+    data_write(s_state.active_slot, 0u, resp, sizeof(resp));
+    return true;
+}
+
+static bool exec_pipe_write(void) {
+    uint8_t data[PIPE_WRITE_MAX_BYTES];
+    for (uint8_t i = 0; i < PIPE_WRITE_MAX_BYTES; i++) {
+        data[i] = ring_read_byte();
+    }
+    uint8_t pipe  = ring_read_byte();
+    uint8_t count = ring_read_byte();
+
+    // No separate check for the reserved 0xAA value here, unlike every other
+    // command taking a slot or an index.  count is the final argument and its
+    // valid range is 1 to 4, so the range check below rejects 0xAA already.
+    if ((count == 0u) || (count > PIPE_WRITE_MAX_BYTES)) {
+        s_debug_log("PIPE_WRITE failed: count %u out of range", (unsigned)count);
+        return false;
+    }
+    if (pipe >= pipe_count()) {
+        s_debug_log("PIPE_WRITE failed: no such pipe %u", (unsigned)pipe);
+        return false;
+    }
+
+    // Claimed on first use.  Only the claiming plugin may write the channel, so
+    // this cannot be skipped, but it renames the channel for anything reading
+    // the log, so it waits until a host actually sends bytes.
+    uint8_t claim_bit = (uint8_t)(1u << pipe);
+    if ((s_pipes_claimed & claim_bit) == 0u) {
+        ora_result_t rc = s_log_open_write((ora_log_channel_t)pipe, pipe_name);
+        if (rc != ORA_RESULT_OK) {
+            s_debug_log("PIPE_WRITE failed: cannot claim pipe %u (%d)",
+                        (unsigned)pipe, (int)rc);
+            return false;
+        }
+        s_pipes_claimed |= claim_bit;
+    }
+
+    // A write is stored whole or dropped whole and never blocks, which is what
+    // PIPE_WRITE's all-or-nothing rule requires.  ORA_RESULT_LOG_FULL is
+    // ordinary traffic rather than a fault - nothing has drained the channel
+    // yet - so it is reported at debug only, and never through s_log, which
+    // writes the same channel the host is reading.
+    if (s_log_write((ora_log_channel_t)pipe, data, count) != ORA_RESULT_OK) {
+        s_debug_log("PIPE_WRITE: pipe %u would not take %u bytes",
+                    (unsigned)pipe, (unsigned)count);
+        return false;
+    }
+    return true;
+}
+
+// ---------------------------------------------------------------------------
 // Command dispatch
 // ---------------------------------------------------------------------------
 
@@ -1327,6 +1507,13 @@ static uint8_t cmd_arg_count(uint8_t group, uint8_t cmd) {
             case CMD_NV_POKE_BEGIN:       return 1u;
             case CMD_NV_POKE:             return 3u;
             case CMD_NV_POKE_COMMIT_BYTE: return 4u;
+            default:                      return 0u;
+        }
+    }
+    if (group == GRP_PIPES) {
+        switch (cmd) {
+            case CMD_GET_PIPE_INFO:       return 1u;
+            case CMD_PIPE_WRITE:          return 6u;
             default:                      return 0u;
         }
     }
@@ -1513,6 +1700,30 @@ static bool dispatch(
             }
             break;
 
+        case GRP_PIPES:
+            // "All commands in this group are valid in command-response mode
+            // only."  Consume the frame, then discard it.
+            if (!s_state.active) {
+                discard_args(cmd_arg_count(group, cmd));
+                ok = false;
+                break;
+            }
+            switch (cmd) {
+                case CMD_GET_PIPE_CAPABILITY:
+                    ok = exec_get_pipe_capability();
+                    break;
+                case CMD_GET_PIPE_INFO:
+                    ok = exec_get_pipe_info();
+                    break;
+                case CMD_PIPE_WRITE:
+                    ok = exec_pipe_write();
+                    break;
+                default:
+                    ok = false;
+                    break;
+            }
+            break;
+
         case GRP_RESET:
             switch (cmd) {
                 case CMD_RBCP_RESET:
@@ -1533,7 +1744,14 @@ static bool dispatch(
     }
 
     if (!ok) {
-        s_log("CMD g=0x%02x c=0x%02x failed", group, cmd);
+        if (group == GRP_PIPES) {
+            // A failure here is ordinary traffic, most often a full channel,
+            // and s_log writes the same channel the host is reading - so this
+            // report would land in the middle of the host's own output.
+            s_debug_log("CMD g=0x%02x c=0x%02x failed", group, cmd);
+        } else {
+            s_log("CMD g=0x%02x c=0x%02x failed", group, cmd);
+        }
     }
 
     return ok;
@@ -1618,6 +1836,14 @@ __attribute__((noinline)) static void rbcp_setup(
     s_map_addr_to_phys     = ora_lookup_fn(ORA_ID_MAP_ADDR_TO_PHYS);
     s_map_data_to_phys     = ora_lookup_fn(ORA_ID_MAP_DATA_TO_PHYS);
     s_demangle_data        = ora_lookup_fn(ORA_ID_DEMANGLE_DATA);
+    s_debug_log            = ora_lookup_fn(ORA_ID_DEBUG_LOG);
+
+    // The log channel family arrived in firmware 0.7.2, later than this
+    // plugin's min_fw_version, so these three may be NULL.  Nothing here checks
+    // for that - pipe_count() does, once, and reports no pipes.
+    s_log_open_write       = ora_lookup_fn(ORA_ID_LOG_OPEN_WRITE);
+    s_log_write            = ora_lookup_fn(ORA_ID_LOG_WRITE);
+    s_log_query            = ora_lookup_fn(ORA_ID_LOG_QUERY);
 
     ora_start_address_monitor_fn_t start_address_monitor =
         ora_lookup_fn(ORA_ID_START_ADDRESS_MONITOR);

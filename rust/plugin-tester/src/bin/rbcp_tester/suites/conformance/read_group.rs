@@ -35,12 +35,9 @@
 //! Several requirements are about there being too little room in the response
 //! data section, so those scenarios enter command-response mode with a
 //! back-channel of their own size rather than [`Ctx::session`]'s — see
-//! [`enter_sized`].
+//! [`Bus::enter_sized`].
 
-use crate::driver::{
-    Bus, DEFAULT_COMPLETE, DEFAULT_STATUS_OK, HDR_SIZE, Session, control, group, read,
-    slot_peek_args,
-};
+use crate::driver::{Bus, HDR_SIZE, Session, control, group, read, slot_peek_args};
 use crate::{Ctx, Outcome};
 
 /// The RBCP version this module was written against.
@@ -51,7 +48,7 @@ use crate::{Ctx, Outcome};
 /// device outside those bounds is not one these scenarios can judge.
 const SPEC_MAJOR: u8 = 0;
 const SPEC_MINOR: u8 = 1;
-const SPEC_PATCH: u8 = 1;
+const SPEC_PATCH: u8 = 2;
 
 /// Size of one flash slot record: 1 byte of ROM type and a 31-byte name.
 const RECORD_SIZE: u32 = 32;
@@ -66,25 +63,6 @@ const ROM_TYPE_INVALID: u8 = 0xFF;
 /// sized to straddle any plausible one: 40 bytes crosses a 32-byte boundary and
 /// ends part way through the next chunk.
 const PEEK_LEN: u32 = 40;
-
-/// Enter command-response mode with a back-channel region of a chosen size.
-///
-/// [`Ctx::session`] is generous enough for every response format at once, which
-/// is exactly wrong for the requirements about insufficient space.  The start
-/// address stays where `Ctx` puts it — 4-byte aligned and clear of the command
-/// page — so only the size differs.
-fn enter_sized(bus: &mut Bus, ctx: &Ctx, bch_size: u16) -> Result<Session, String> {
-    let s = Session {
-        command_page: ctx.command_page(),
-        bch_start: ctx.bch_start(),
-        bch_size,
-        complete: DEFAULT_COMPLETE,
-        status_ok: DEFAULT_STATUS_OK,
-    };
-    bus.enter_cmd_resp(&s)
-        .map_err(|e| format!("ENTER_CMD_RESP with a {bch_size}-byte back-channel: {e}"))?;
-    Ok(s)
-}
 
 /// Read `len` bytes of the served image over the bus, as ordinary ROM data.
 fn served_bytes(bus: &mut Bus, addr: u32, len: u32) -> Result<Vec<u8>, String> {
@@ -265,7 +243,7 @@ pub fn get_flash_slot_info_needs_room_for_a_record(
     bus: &mut Bus,
     ctx: &Ctx,
 ) -> Result<Outcome, String> {
-    let s = enter_sized(bus, ctx, (HDR_SIZE + 16) as u16)?;
+    let s = bus.enter_sized(ctx, (HDR_SIZE + 16) as u16)?;
 
     bus.expect_rejected(&s, group::READ, read::GET_FLASH_SLOT_INFO, &[0])
         .map_err(|e| {
@@ -379,7 +357,7 @@ pub fn get_flash_slot_info_all_partial_record(bus: &mut Bus, ctx: &Ctx) -> Resul
 
     // Re-enter with a data section of exactly preamble + one record + ten.
     let data_size = PREAMBLE_SIZE + RECORD_SIZE + PARTIAL_BYTES;
-    let s = enter_sized(bus, ctx, (HDR_SIZE + data_size) as u16)?;
+    let s = bus.enter_sized(ctx, (HDR_SIZE + data_size) as u16)?;
 
     bus.issue_cmd(&s, group::READ, read::GET_FLASH_SLOT_INFO_ALL, &[])
         .map_err(|e| format!("GET_FLASH_SLOT_INFO_ALL: {e}"))?;
@@ -455,7 +433,7 @@ pub fn get_flash_slot_info_all_one_byte_partial(
         .map_err(|e| format!("EXIT_CMD_RESP_ACK: {e}"))?;
 
     let data_size = PREAMBLE_SIZE + RECORD_SIZE + 1;
-    let s = enter_sized(bus, ctx, (HDR_SIZE + data_size) as u16)?;
+    let s = bus.enter_sized(ctx, (HDR_SIZE + data_size) as u16)?;
 
     bus.issue_cmd(&s, group::READ, read::GET_FLASH_SLOT_INFO_ALL, &[])
         .map_err(|e| format!("GET_FLASH_SLOT_INFO_ALL: {e}"))?;
@@ -733,7 +711,7 @@ pub fn slot_peek_exceeding_data_section_fails(bus: &mut Bus, ctx: &Ctx) -> Resul
     }
     let src = peek_src(ctx);
 
-    let s = enter_sized(bus, ctx, (HDR_SIZE + 16) as u16)?;
+    let s = bus.enter_sized(ctx, (HDR_SIZE + 16) as u16)?;
 
     bus.expect_rejected(
         &s,

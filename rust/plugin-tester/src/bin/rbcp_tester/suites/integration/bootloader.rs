@@ -76,7 +76,7 @@ const RECORD_SIZE: u32 = 32;
 /// device implementing version 0.Y.w where w >= z."
 const SPEC_MAJOR: u8 = 0;
 const SPEC_MINOR: u8 = 1;
-const SPEC_PATCH: u8 = 1;
+const SPEC_PATCH: u8 = 2;
 
 /// How many bytes of the target slot are armed before LOAD_SLOT, to catch a
 /// copy that did not happen.  The vector's two, plus two more so the check does

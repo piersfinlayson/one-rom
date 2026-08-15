@@ -22,6 +22,20 @@ The plugin is designed to be driven by the host system's CPU directly.  A [C64 k
 
 To use, build the C64 kernal bootloader, and then install as the first non-plugin image on One ROM.  You will then need to follow it with one or more other C64 kernal images that you want to be able to switch between using the bootloader.
 
+## Sending bytes out through One ROM
+
+RBCP's Pipes group lets the host write bytes to a pipe on the device, and this plugin's pipe is One ROM's log channel — so a retro system can get its output to a PC over One ROM's USB, with no serial port or display of its own.  Read it with `onerom monitor log`, or any terminal on the CDC serial port.  See [Logging](/docs/LOGGING.md) for what else arrives there.
+
+Four bytes per command, transferred whole or not at all.  A refusal means the channel is full because nothing has drained it, and `GET_PIPE_INFO` reports the room left so a host can decide whether to retry or drop the bytes.  The device never waits for space — a host blocked on a stalled USB link would be a stalled retro system.
+
+Three things follow from the pipe being the log channel rather than a channel of its own, and a host cannot detect any of them:
+
+- **One ROM's own logging is interleaved with the host's bytes.**  Errors are always logged, and boot and plugin logging can be switched on, so a host writing text should expect One ROM's output mixed into it.  A released build carries none of the optional kinds, so in practice only errors arrive uninvited.  The plugin's own messages about the Pipes group are a step quieter again — they are debug output, so they stay out even of a build made with `PLUGIN_LOGGING=1`, where the rest of its RBCP messages would appear.
+- **Bytes can be corrupted, not merely interleaved.**  This plugin runs on core 0 and the USB plugin on core 1, and interrupt masking does not cross cores, so a write from each at the same moment can interleave *within* a record.  A dedicated channel is planned, which removes this.
+- **A debug probe reading the log will take the host's bytes too**, and both readers advance the same position, so attach one or the other.
+
+Pipes need **firmware v0.7.2 or later**, where the plugin logging API arrived.  On older firmware the plugin runs exactly as before and `GET_PIPE_CAPABILITY` reports no pipes, which the specification provides for — a host should query it before writing, as it should on any device.
+
 ## Address signalling
 
 RBCP command signalling (the knock and command bytes) travels on the address lines the device observes at the ROM socket — which are not always the host's own least-significant address lines.

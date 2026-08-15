@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.1.3] - 2026-??-??
+
+A host can now send bytes out through One ROM, over RBCP's new Pipes group, and
+read them on a PC — so a retro system can get its output off the machine without
+a serial port or a display.
+
+- A pipe is One ROM's log channel, so the device's own logging is interleaved
+  with the host's bytes, and two cores writing it at once corrupt rather than
+  merely interleave. 
+- Pipes need firmware v0.7.2 or later, where the logging API arrived.  On older
+  firmware the device reports no pipes and nothing else changes, so the plugin
+  still runs on v0.7.1.
+- Implements RBCP 0.1.2, which also specifies what a device does with a command
+  group or command it does not know.
+
 ## [0.1.2] - 2026-08-09
 
 Report as many RAM slots as the RAM holds, rather than at most seven, and keep

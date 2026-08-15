@@ -18,6 +18,7 @@ pub mod framing;
 pub mod knock;
 pub mod modify;
 pub mod nv_storage;
+pub mod pipes;
 pub mod processing_sequence;
 pub mod read_group;
 pub mod reset;
@@ -59,6 +60,21 @@ pub static SCENARIOS: &[Scenario] = &[
         name: "conformance.framing.desync_recovers_within_ten_reads",
         spec_ref: "Command Framing — Command Mode Constraint",
         run: framing::desync_recovers_within_ten_reads,
+    },
+    Scenario {
+        name: "conformance.framing.unknown_group_consumes_no_arguments",
+        spec_ref: "Command Framing — Unknown GROUP and CMD",
+        run: framing::unknown_group_consumes_no_arguments,
+    },
+    Scenario {
+        name: "conformance.framing.unknown_cmd_consumes_no_arguments",
+        spec_ref: "Command Framing — Unknown GROUP and CMD",
+        run: framing::unknown_cmd_consumes_no_arguments,
+    },
+    Scenario {
+        name: "conformance.framing.discovery_commands_take_no_arguments",
+        spec_ref: "Command Framing — Unknown GROUP and CMD (zero-argument discovery)",
+        run: framing::discovery_commands_take_no_arguments,
     },
     Scenario {
         name: "conformance.control.exit_silent_writes_no_response_header",
@@ -374,6 +390,61 @@ pub static SCENARIOS: &[Scenario] = &[
         name: "conformance.nv.not_valid_in_command_mode",
         spec_ref: "Group 0x03 — NV Storage (command-response mode only)",
         run: nv_storage::not_valid_in_command_mode,
+    },
+    Scenario {
+        name: "conformance.pipes.get_pipe_capability",
+        spec_ref: "Group 0x04 — GET_PIPE_CAPABILITY; GET_PIPE_CAPABILITY Response Format",
+        run: pipes::get_pipe_capability,
+    },
+    Scenario {
+        name: "conformance.pipes.get_pipe_info",
+        spec_ref: "Group 0x04 — GET_PIPE_INFO; GET_PIPE_INFO Response Format; Pipe Types",
+        run: pipes::get_pipe_info,
+    },
+    Scenario {
+        name: "conformance.pipes.commands_reject_an_absent_pipe",
+        spec_ref: "Group 0x04 — GET_PIPE_INFO, PIPE_WRITE (not a pipe the device exposes)",
+        run: pipes::commands_reject_an_absent_pipe,
+    },
+    Scenario {
+        name: "conformance.pipes.pipe_write_transfers_its_payload",
+        spec_ref: "Group 0x04 — PIPE_WRITE",
+        run: pipes::pipe_write_transfers_its_payload,
+    },
+    Scenario {
+        name: "conformance.pipes.pipe_write_rejects_a_bad_count",
+        spec_ref: "Group 0x04 — PIPE_WRITE (A5 must be in the range 0x01 to 0x04)",
+        run: pipes::pipe_write_rejects_a_bad_count,
+    },
+    Scenario {
+        name: "conformance.pipes.pipe_write_is_all_or_nothing",
+        spec_ref: "Group 0x04 — PIPE_WRITE (all count bytes are transferred or none are)",
+        run: pipes::pipe_write_is_all_or_nothing,
+    },
+    Scenario {
+        name: "conformance.pipes.free_reports_the_room_left",
+        spec_ref: "GET_PIPE_INFO Response Format — free (unsaturated)",
+        run: pipes::free_reports_the_room_left,
+    },
+    Scenario {
+        name: "conformance.pipes.pipe_write_carries_aa_in_every_position",
+        spec_ref: "Group 0x04 — PIPE_WRITE (all 256 values are valid in A0 to A3)",
+        run: pipes::pipe_write_carries_aa_in_every_position,
+    },
+    Scenario {
+        name: "conformance.pipes.query_commands_need_room_for_their_answer",
+        spec_ref: "Group 0x04 — GET_PIPE_CAPABILITY, GET_PIPE_INFO (data section under 8 bytes)",
+        run: pipes::query_commands_need_room_for_their_answer,
+    },
+    Scenario {
+        name: "conformance.pipes.not_valid_in_command_mode",
+        spec_ref: "Group 0x04 — Pipes (command-response mode only)",
+        run: pipes::not_valid_in_command_mode,
+    },
+    Scenario {
+        name: "conformance.pipes.query_commands_not_valid_in_command_mode",
+        spec_ref: "Group 0x04 — Pipes (command-response mode only)",
+        run: pipes::query_commands_not_valid_in_command_mode,
     },
     Scenario {
         name: "conformance.reset.group_and_command_bytes_match",

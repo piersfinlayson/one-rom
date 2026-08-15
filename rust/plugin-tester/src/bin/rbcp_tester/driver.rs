@@ -500,6 +500,31 @@ impl<'a> Bus<'a> {
         }
     }
 
+    /// Take everything waiting on a pipe's log channel, as a reader would.
+    ///
+    /// The far end of a pipe is the one thing in RBCP a host cannot observe:
+    /// PIPE_WRITE answers only whether the bytes were accepted, and nothing in
+    /// the protocol reads them back.  So a scenario asserting that a write
+    /// *arrived* has to stand where the device's reader stands, which is what
+    /// this does — the counterpart of [`Bus::nv_bytes`], and diagnostics in the
+    /// same way: the protocol-level assertion is the response field, and this
+    /// says whether the bytes went anywhere.
+    ///
+    /// Consuming, exactly as a real reader is.  Drain immediately before the
+    /// write under test, so that anything the device logged earlier is out of
+    /// the way and what comes back is attributable.
+    pub fn drain_pipe(&self, pipe: u8) -> Vec<u8> {
+        self.emu.log_open_read(u32::from(pipe));
+        let mut out = Vec::new();
+        loop {
+            let (_, chunk) = self.emu.log_read(u32::from(pipe), 256);
+            if chunk.is_empty() {
+                return out;
+            }
+            out.extend_from_slice(&chunk);
+        }
+    }
+
     /// Signal one command byte on the given page.  The data read back is
     /// meaningless — the host discards it.
     pub fn send_byte(&mut self, page: u16, byte: u8) -> Result<(), String> {
@@ -955,6 +980,28 @@ impl<'a> Bus<'a> {
         self.enter_cmd_resp_inner(s).map(|_| ())
     }
 
+    /// Enter command-response mode with a back-channel region of a chosen size.
+    ///
+    /// [`Ctx::session`] is generous enough for every response format at once,
+    /// which is exactly wrong for the requirements about insufficient space.
+    /// The start address stays where `Ctx` puts it — 4-byte aligned and clear
+    /// of the command page — so only the size differs.
+    ///
+    /// `bch_size` is the whole region, header included, so a data section of
+    /// `n` bytes needs `HDR_SIZE + n`.
+    pub fn enter_sized(&mut self, ctx: &Ctx, bch_size: u16) -> Result<Session, String> {
+        let s = Session {
+            command_page: ctx.command_page(),
+            bch_start: ctx.bch_start(),
+            bch_size,
+            complete: DEFAULT_COMPLETE,
+            status_ok: DEFAULT_STATUS_OK,
+        };
+        self.enter_cmd_resp(&s)
+            .map_err(|e| format!("ENTER_CMD_RESP with a {bch_size}-byte back-channel: {e}"))?;
+        Ok(s)
+    }
+
     /// As [`Bus::enter_cmd_resp`], returning every token LSB value the host
     /// observed while waiting for the entry to complete.
     ///
@@ -1063,6 +1110,7 @@ pub mod group {
     pub const READ: u8 = 0x01;
     pub const MODIFY: u8 = 0x02;
     pub const NV_STORAGE: u8 = 0x03;
+    pub const PIPES: u8 = 0x04;
     pub const RESET: u8 = 0xAA;
 }
 
@@ -1104,6 +1152,13 @@ pub mod nv {
     pub const NV_POKE_COMMIT: u8 = 0x04;
     pub const NV_POKE_DISCARD: u8 = 0x05;
     pub const NV_POKE_COMMIT_BYTE: u8 = 0x06;
+}
+
+#[allow(dead_code)]
+pub mod pipes {
+    pub const GET_PIPE_CAPABILITY: u8 = 0x00;
+    pub const GET_PIPE_INFO: u8 = 0x01;
+    pub const PIPE_WRITE: u8 = 0x02;
 }
 
 #[allow(dead_code)]

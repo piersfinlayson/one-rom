@@ -21,6 +21,7 @@ In detail:
   - This required a firmware update.
 - A plugin can now ask which kinds of logging are active on its device, and how its firmware was built.
   - This required a firmware update.
+- A host can now send bytes out through One ROM over the ROM bus and read them on a PC, using the new Pipes group of the ROM Bus Control Protocol — no serial port or display needed on the retro system.  The bytes share One ROM's log channel, so its own logging is interleaved with them.
 - Check plugins named by a config against the images server's published compatibility window, in the CLI and Studio.  A plugin binary declares only a minimum firmware version, so USB v0.1.2 — which hard faults on firmware v0.7.0 — was previously built in without complaint.  A local or third-party plugin has nothing published to check, and an unreachable server warns rather than failing.
 - Add Motorola S-record (`srec`) as a ROM image input format, alongside Intel HEX.  A chip may set `"format": "srec"` in a config file, with the same optional `"load_address"`; the CLI exposes it as `--slot format=srec,load-address=...`, and `onerom image convert` converts between `binary`, `ihex` and `srec` in any direction.  Unwritten bytes read as `0xFF`, as for Intel HEX.
 - One ROM Lab can dump a ROM as S-records: `f:srec`, alongside the existing `ihex` and hex dump formats.
@@ -41,11 +42,13 @@ To publish:
 - CLI bin 0.4.0
 - Studio 0.2.2
 - USB plugin 0.2.2
+- host-control plugin 0.1.3
 - apio v0.2.1 — a separate repo, and a blocker: `firmware/Makefile` pins
   `APIO_VERSION ?= v0.2.1`, so the firmware will not build until that tag
   exists.  Tag apio before committing this.
 
 To test (on hardware, before release):
+- **The host-control plugin on firmware older than v0.7.2.**  It reports no pipes where the logging API is absent, and that path cannot be reached from this tree — every firmware built here has the API, so the emulator suite only ever exercises the other branch.  `GET_PIPE_CAPABILITY` should report a count of zero, `GET_PIPE_INFO` and `PIPE_WRITE` should fail, and everything else in RBCP should be unaffected.
 - **On Windows and Linux:** `onerom monitor log`, and `onerom program --follow`.  Only run on macOS so far, and the parts that differ by platform are the ones this depends on: finding the One ROM's serial port among the others, and whether opening it asserts DTR.  A port opened without DTR is forwarded nothing, which surfaces as the two second timeout — the same symptom as a device fault, so a platform difference here reads as a broken One ROM.
 - Studio building a config that names a plugin.  The check is shared with the CLI, which is covered by tests and was run against the live manifest both ways, but Studio's own path needs a connected device to reach at all: a config naming USB v0.1.2 should refuse to build, and one naming v0.2.1 should build and flash.
 - Program a device from an S-record image and confirm it serves the right bytes — `onerom program --slot file=<rom>.s19,type=...,format=srec,load-address=$...`.  The build path is covered by tests; flashing and serving are not.

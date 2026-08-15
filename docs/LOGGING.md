@@ -54,6 +54,10 @@ A quiet terminal is usually correct.  Most of what One ROM can log is switched o
 | `error` | errors, from One ROM and from plugins | always |
 | `plugin-application` | output a plugin sends itself, rather than a log message | always |
 
+**Not all of it need come from One ROM.**  `plugin-application` covers whatever a plugin chooses to send, and the [host-control plugin](/plugins/user/host-control/README.md) sends what the retro system gives it: a host can write bytes over the ROM bus using RBCP's Pipes group, and they arrive here.  So text on this terminal may be output from the machine One ROM is fitted in — a C64 printing to it, or a diagnostic ROM reporting from an Amiga with no serial port — rather than anything One ROM has to say.
+
+It shares the one channel with everything above so a host's bytes and One ROM's own logging arrive interleaved.
+
 `PLUGIN_LOGGING` and `DEBUG_LOGGING` both default to off and are not set by release builds, so on a downloaded firmware only `error` and `plugin-application` are unconditional, and `boot` depends on how the device was programmed.  A plugin can ask which are live through the plugin API rather than guessing — see `ora_log_category_enabled` in [`api.h`](/firmware/ora/api.h).
 
 ## Boot logging
