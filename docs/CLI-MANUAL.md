@@ -812,13 +812,33 @@ Attach to the One ROM's USB serial port and print the firmware and plugin
 logging it sends, until the One ROM is disconnected, rebooted or stopped, or you
 press Ctrl-C.
 
-Every attach opens with the One ROM naming itself — its board, firmware version,
-instance name and serial, and which kinds of logging are switched on — between
-two `-----` divider lines. A One ROM that cannot forward its log says so there,
-rather than leaving you watching a silent port.
+Every attach opens with the One ROM naming itself, between two `-----` divider
+lines. What it has logged since anything last listened arrives after that, so
+attaching after a reboot still shows the boot log:
 
-What the One ROM has logged since anything last listened arrives after that, so
-attaching after a reboot still shows the boot log.
+```
+Monitoring log - press Ctrl-C to stop
+-----
+One ROM fire-28-c v0.7.2
+Serial: 2E4A671D1C92AE5C
+Logging: boot, plugin-internal, error, plugin-application
+-----
+-----
+One ROM v0.7.2.1 https://onerom.org
+Copyright (c) 2026 Piers Finlayson <piers@piers.rocks>
+Built: Aug 15 2026 08:40:27
+Commit: 4c06725
+-----
+RP235XB
+RAM: 520KB
+Flash: 2048KB
+Freq: 150MHz
+```
+
+`Name:` appears only when the One ROM has an instance name set, and `Logging:`
+lists the kinds of output switched on — see
+[Logging](/docs/LOGGING.md#over-usb). A One ROM that cannot forward its log says
+so there, rather than leaving you watching a silent port.
 
 ```
 onerom monitor log

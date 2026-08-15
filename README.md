@@ -357,6 +357,7 @@ wraps `onerom-gen` as WASM, and is what the
 | [Compatibility](docs/COMPATIBILITY.md) | Which chips each hardware variant can emulate, and at what flash cost. |
 | [Adding a Chip Type](docs/ADDING-CHIP-TYPES.md) | Teaching One ROM to emulate a chip it does not yet know. |
 | [Image Selection](docs/IMAGE-SELECTION.md) | Telling One ROM which installed image to serve. |
+| [Logging](docs/LOGGING.md) | Reading One ROM's log, over USB or with a debug probe. |
 | [Image Sets](docs/MULTI-ROM-SETS.md) | Serving several ROMs at once, and dynamic bank switching. |
 | [Plugins](plugins/README.md) | Building, configuring and writing plugins. |
 | [Build Container](ci/docker/README.md) | Building the firmware reproducibly in Docker. |
@@ -366,7 +367,7 @@ wraps `onerom-gen` as WASM, and is what the
 The CLI manual, chip type and compatibility references are also published as
 PDFs, in A4 and US Letter, at [onerom.org/docs](https://onerom.org/docs/).
 
-More in [docs/](docs) — flash layout, logging, voltage levels, using a Pi Pico as
+More in [docs/](docs) — flash layout, voltage levels, using a Pi Pico as
 an SWD programmer — plus [INSTALL.md](INSTALL.md) for build dependencies and
 [LICENSE.md](LICENSE.md).
 
