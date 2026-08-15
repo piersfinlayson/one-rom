@@ -188,10 +188,18 @@ blockquote {
 }
 blockquote p:last-child { margin-bottom: 0 }
 
+/* A horizontal rule is a page break, and draws nothing.  In a document written
+   for GitHub, where there are no pages, a rule is placed exactly where a major
+   section starts - CLI-MANUAL.md carries one before each of its top-level
+   command sections and before each part.  On paper that is where a page should
+   turn, and the author has already marked every one of them, which no heading
+   selector can match as precisely.  Drawing the line as well would put a stray
+   rule across the top of each new page. */
 hr {
     border: none;
-    border-top: 1px solid var(--rule);
-    margin: 1.6em 0;
+    margin: 0;
+    height: 0;
+    break-after: page;
 }
 
 /* ------------------------------------------------------------------ code -- */

@@ -17,6 +17,28 @@ option.
 
 ---
 
+# New Breaking Changes
+
+These change what an existing command line does, so a script written against an
+earlier release is worth checking before upgrading.
+
+The CLI is versioned `MAJOR.MINOR.PATCH`. While it is pre-v1.0.0, a change that
+breaks an existing command line lands in a minor release — v0.3.0 to v0.4.0 —
+and never in a patch. From v1.0.0 onwards such a change lands in a major
+release, and never in a minor or a patch.
+
+- **`--name` now names the One ROM, not the configuration.** It is an alias for
+  `--instance-name` on `program` and `firmware build`, where it was an alias for
+  `--config-name`. A command line using `--name` still runs, and names the
+  device instead of the configuration it is building. Spell `--config-name` in
+  full for the old meaning.
+
+Every release's breaking changes are collected in
+[Appendix: Breaking Change History](#appendix-breaking-change-history), at the
+end of this manual.
+
+---
+
 # Part 1 — Guide
 
 ## Installation
@@ -491,7 +513,7 @@ onerom program --config c64.json --out firmware.bin
 | Option | Description |
 |---|---|
 | `--plugin <SPEC>` | Plugin specification; repeatable. See [Plugin specification](#plugin-specification). May be combined with `--config`: the plugins are inserted ahead of the config's ROM slots (which shift up), and it is an error if the config already defines a plugin of its own. Conflicts with `--firmware`. |
-| `--config-name <NAME>` (alias `--name`) | Name for the generated ROM configuration. Conflicts with `--config`. |
+| `--config-name <NAME>` | Name for the generated ROM configuration. Conflicts with `--config`. |
 | `--config-description <DESC>` (aliases `--desc`, `--description`) | Description for the generated configuration. Defaults to *"Created by the One ROM CLI"*. Conflicts with `--config`. |
 | `--save-config <FILE>` | Save the generated configuration to JSON. Only valid with `--slot` or `--no-config`. Conflicts with `--config`. |
 
@@ -501,8 +523,8 @@ These are rejected with `--no-config`.
 
 | Option | Description |
 |---|---|
-| `--instance-name <NAME>` (aliases `--onerom`, `--one-rom`, `--onerom-name`, `--one-rom-name`, …) | Give this One ROM a name. |
-| `--serial-override <NEW SERIAL>` | Override the device's reported serial number. |
+| `--instance-name <NAME>` (aliases `--name`, `--onerom`, `--one-rom`, `--onerom-name`, `--one-rom-name`, `--instance_name`) | Give this One ROM a name. |
+| `--serial-override <SERIAL>` | Override the device's reported serial number. |
 | `--logging [BOOL]` (aliases `--boot-logging`) | Enable boot logging. Takes an optional boolean; bare flag means `true`. |
 | `--disable-swd [BOOL]` (aliases `--swd-disable`) | Shut SWD down before ROM serving starts, so debug port accesses to SRAM don't steal cycles from the serving DMAs. SWD is available for the whole of boot — including boot logging — and goes off until the next reset. Nothing is logged past that point, and plugins get no logging. This is not a debug lockout: the boot ROM runs before the One ROM firmware does, and BOOTSEL/PICOBOOT are unaffected. Optional boolean; bare flag means `true`. |
 | `--turbo-boot [BOOL]` | Enable turbo boot — starts serving faster by not reading the image select jumpers, so the first non-plugin slot is always the one served. More than one non-plugin slot is refused unless `--force` is given. Optional boolean; bare flag means `true`. |
@@ -1819,6 +1841,8 @@ Examples:
 --slot file=rom32.bin,type=27C010,transform=deinterleave:1/2/2+swap_bytes
 ```
 
+---
+
 ## Image transforms
 
 Some ROM images are not laid out the way the target chip needs them: a 16-bit
@@ -1887,6 +1911,8 @@ carries a record of how its ROM data was derived. Note that the metadata
 filename field is capped at 128 bytes, so the suffix can be truncated away for a
 very long path; use `label=` to keep it short.
 
+---
+
 ## Plugin specification
 
 Used by `--plugin` in [`program`](#program) and [`firmware build`](#firmware-build).
@@ -1904,6 +1930,9 @@ plugin. The system plugin is placed in slot 0, the user plugin in slot 1.
 Named forms are selected against the release manifest, so an incompatible one is
 refused at that point. A `file=` form, and a plugin named by a config, are
 checked separately — see [Plugin compatibility](#plugin-compatibility).
+
+---
+
 ## Pin values
 
 Used by `--pin` in [`control pin`](#control-pin), [`control
@@ -1948,3 +1977,37 @@ listing.
 The upper bound is the device's own GPIO count — 30 on an RP2350A, 48 on an
 RP2350B — read from the device rather than assumed, so a GPIO the device does not
 have is reported against what it does have.
+
+---
+
+## Appendix: Breaking Change History
+
+Changes that can alter or break a command line that worked on an earlier
+release. Newest release first.
+
+### v0.4.0
+
+- `--name` is an alias for `--instance-name` on `program` and `firmware build`.
+  It was an alias for `--config-name`. A command line using `--name` alongside
+  `--slot` still runs, and names the One ROM rather than the configuration.
+  With `--no-config` it is now rejected.
+
+### v0.3.0
+
+- `onerom boards` is now `onerom board`, and the bare listing it printed is
+  `onerom board list`. There is no alias.
+- `onerom control erase` takes `--stopped` / `--running` for its post-erase
+  reboot mode, in place of `--reboot-stopped` / `--reboot-running`. There is no
+  alias.
+- `--allow-unsupported-chip-type` is removed from `program` and
+  `firmware build`. Every chip type the target firmware can serve is accepted
+  without it.
+- No command takes a positional argument. `board header` and `board socket`
+  take `--board`.
+- Each short flag means one thing across the whole CLI: `-b` is `--board` (was
+  `--byte` on `poke`), `-o` is `--output` (was `--offset` on `control erase`),
+  `-i` is `--input` (was the global `--vid-pid`, which keeps `--id`), `-l` is
+  `--length` (was `--slot`), and `-m` is `--msd` (was `--image` on
+  `update slot`).
+- `firmware build` no longer accepts `--swd_disabled`. `--disable-swd` and
+  `--swd-disable` work on both it and `program`.

@@ -2,6 +2,12 @@
 
 ## v0.4.0 - 2026-??-??
 
+- **Breaking: `--name` now names the One ROM, not the configuration.** It is an
+  alias for `--instance-name` on `program` and `firmware build`, where it was an
+  alias for `--config-name` — a command line using `--name` still runs and names
+  the device instead, except with `--no-config`, where it is now rejected.
+  `docs/CLI-MANUAL.md` gains a breaking-changes section near the top and the
+  full history at the end.
 - **`onerom monitor log` shows a running One ROM's log as it is written.**
   It attaches to the One ROM's USB serial port and prints the firmware and
   plugin logging it sends, until the One ROM is disconnected, rebooted or

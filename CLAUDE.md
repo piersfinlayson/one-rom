@@ -77,6 +77,17 @@ it as a long-lived, production project.
     precisely because no option changed. Where the manual quotes example output,
     paste a **verbatim run**; hand-written examples drift and quietly become
     wrong.
+  - The manual carries **two** breaking-changes sections, and a CLI change that
+    breaks an existing command line updates both. `# New Breaking Changes`, near
+    the top, lists **only the release in development**. `## Appendix: Breaking
+    Change History` at the end keeps every release, newest first. At release
+    time the top section's entries move down under a new version heading in the
+    appendix, and the top section is emptied for the next cycle.
+  - **Neither section is ever deleted.** A release with no breaking changes
+    keeps `# New Breaking Changes` and says there are none. A reader who has
+    learned to look there must not find it missing.
+  - Every top-level section in the manual is preceded by `---`, which
+    `docs/pdf/docs.css` renders as a page break. A new section needs one.
   - The manual is not the only user-facing document a CLI change can reach. If
     what you changed is also described in `docs/COMPATIBILITY.md`,
     `docs/CHIP-TYPES.md` or another `docs/` file — or in a **generator** that
