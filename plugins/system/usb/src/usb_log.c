@@ -49,26 +49,40 @@
 // start.
 #define LOG_DRAIN_SETTLE_MS 250u
 
-// The banner's divider line.
+// The banner's rules.
 //
-// The same five hyphens as log_divider in firmware/src/constants.c, so that the
-// banner and the boot log it introduces divide their output alike.  That symbol
-// belongs to the firmware and is not linked into a plugin, so the two are kept
-// the same by hand.
-#define LOG_BANNER_DIVIDER "-----"
+// The banner opens with a titled rule and closes with a plain one of the same
+// width.  Both are deliberately unlike log_divider in
+// firmware/src/constants.c, which is the five hyphens the boot log opens with:
+// a banner that ruled its output the same way put two identical rules next to
+// each other at the join, and left the reader to work out that the product line
+// above them and the one below them describe the same device by different
+// routes.
+//
+// The banner is written on every attach, whether or not a boot log follows, so
+// it always closes - the closing rule is what says the port has finished
+// introducing itself, and when nothing is forwarded it is the end of the whole
+// message.
+#define LOG_BANNER_TITLE "----- One ROM USB log -----"
+#define LOG_BANNER_RULE "---------------------------"
+
+_Static_assert(
+    sizeof(LOG_BANNER_TITLE) == sizeof(LOG_BANNER_RULE),
+    "banner title and closing rule must be the same width"
+);
 
 // What ends a banner line.
 //
 // The banner shares a stream with the log, so it ends a line the way do_log_v()
 // in firmware/src/log.c ends one.  A change there is a change here.
-#define LOG_BANNER_LINE_END "\n"
+#define LOG_BANNER_LINE_END "\r\n"
 #define LOG_BANNER_LINE_END_LEN (sizeof(LOG_BANNER_LINE_END) - 1)
 
 // Longest banner line, in characters including its terminator.
 //
 // A line is resumed from a byte offset held in the context, so a longer line
 // could not be resumed.  Every line the banner writes is far shorter - the
-// longest is the category list at 79 characters - and the metadata strings a
+// longest is the category list at 80 characters - and the metadata strings a
 // line carries are bounded by the schema at MAX_UNIT_NAME_LEN and
 // MAX_SERIAL_NUMBER_LEN.  The cap is here for the hardware revision string,
 // which is the one input with no bound of its own.
@@ -201,8 +215,11 @@ static const char *banner_version(char *buf, uint32_t size) {
 static void banner_line(uint8_t line, banner_sink_t *sink) {
     switch (line) {
         case LOG_BANNER_LINE_TOP:
+            banner_put(sink, LOG_BANNER_TITLE);
+            break;
+
         case LOG_BANNER_LINE_BOTTOM:
-            banner_put(sink, LOG_BANNER_DIVIDER);
+            banner_put(sink, LOG_BANNER_RULE);
             break;
 
         case LOG_BANNER_LINE_PRODUCT: {

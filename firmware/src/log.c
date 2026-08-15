@@ -60,9 +60,21 @@ void log_roms() {
 // These write the boot channel whenever they are called.  Whether boot logging
 // is enabled is decided by the caller: LOG() and DEBUG() test it, ERR() and the
 // plugin logging calls do not.
+//
+// A line ends CRLF because the log reaches a serial terminal over USB CDC, and
+// a terminal in raw mode does no translation of its own - a bare LF there drops
+// a row without returning to column 0, so each line starts where the last one
+// ended.  A debug probe is unaffected: it writes to a cooked tty, which supplies
+// the CR itself, and the device's own CR arrives as a duplicate move to column
+// 0, which changes nothing.  That is also why the test stub in
+// firmware/test/stub_rp235x.c ends its lines with a bare LF - it writes to
+// stdout, which does the translation for it.
+//
+// The USB plugin's banner ends its lines the same way, and has to be changed
+// with this - see LOG_BANNER_LINE_END in plugins/system/usb/src/usb_log.c.
 void __attribute__((noinline)) do_log_v(const char* msg, va_list* args) {
     onerom_rtt_vprintf(ONEROM_RTT_CH_BOOT, msg, args);
-    onerom_rtt_printf(ONEROM_RTT_CH_BOOT, "\n");
+    onerom_rtt_printf(ONEROM_RTT_CH_BOOT, "\r\n");
 }
 
 void do_err_log_prefix() {

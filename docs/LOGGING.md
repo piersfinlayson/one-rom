@@ -23,14 +23,16 @@ One ROM's system USB plugin sends the log to its CDC serial port.  Attach a term
 Every time a terminal opens the port, One ROM writes a short block identifying itself before any log content:
 
 ```
------
+----- One ROM USB log -----
 One ROM fire-28-c v0.7.2
 Serial: 2E4A671D1C92AE5C
 Logging: boot, plugin-internal, error, plugin-application
------
+---------------------------
 ```
 
 The board and firmware version follow the device.  `Name:` is present only when an instance name is set, leaving `Serial:` alone when it is not.  `Logging:` lists the kinds of output that are switched on — see below.
+
+The banner's rules are deliberately unlike the `-----` the boot log opens with, so that the block the port writes about itself is not read as part of the log that follows it.
 
 Where One ROM cannot send its log at all, the block is followed by a line saying why:
 

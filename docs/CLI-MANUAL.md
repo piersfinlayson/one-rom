@@ -812,22 +812,23 @@ Attach to the One ROM's USB serial port and print the firmware and plugin
 logging it sends, until the One ROM is disconnected, rebooted or stopped, or you
 press Ctrl-C.
 
-Every attach opens with the One ROM naming itself, between two `-----` divider
-lines. What it has logged since anything last listened arrives after that, so
-attaching after a reboot still shows the boot log:
+Every attach opens with the One ROM naming itself, in a block headed
+`----- One ROM USB log -----`. What it has logged since anything last listened
+arrives after that, so attaching after a reboot still shows the boot log, which
+opens with a `-----` divider of its own:
 
 ```
 Monitoring log - press Ctrl-C to stop
------
+----- One ROM USB log -----
 One ROM fire-28-c v0.7.2
 Serial: 2E4A671D1C92AE5C
 Logging: boot, plugin-internal, error, plugin-application
------
+---------------------------
 -----
 One ROM v0.7.2.1 https://onerom.org
 Copyright (c) 2026 Piers Finlayson <piers@piers.rocks>
-Built: Aug 15 2026 08:40:27
-Commit: 4c06725
+Built: Aug 15 2026 14:09:53
+Commit: 5db495a
 -----
 RP235XB
 RAM: 520KB
