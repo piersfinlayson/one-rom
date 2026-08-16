@@ -186,7 +186,7 @@ pub fn discovery_commands_take_no_arguments(bus: &mut Bus, ctx: &Ctx) -> Result<
     bus.enter_cmd_resp(&s)
         .map_err(|e| format!("ENTER_CMD_RESP: {e}"))?;
 
-    for probe in [group::READ, group::NV_STORAGE, group::PIPES] {
+    for probe in [group::READ, group::NV_STORAGE, group::PIPES, group::AUX] {
         // The answer may be success or failure - an optional feature that is
         // absent still answers.  What must not happen is the device taking
         // argument bytes, which the following NOP detects.

@@ -78,4 +78,16 @@ const ora_host_test_flash_log_t *ora_host_test_flash_log(void);
 /// Clear the log.  The harness does this before every scenario.
 void ora_host_test_reset_flash_log(void);
 
+/// Most API identifiers the harness will withhold from the plugin at once.
+#define ORA_HOST_TEST_WITHHOLD_MAX 8
+
+/// Make the plugin's lookup answer NULL for each of `count` identifiers.
+///
+/// A plugin declares a minimum firmware version and then degrades where a
+/// later call is missing, and those branches are otherwise unreachable here:
+/// the emulator implements the whole API, so every lookup succeeds.  Applies
+/// from the next `ora_host_test_run_plugin`, since a plugin resolves its
+/// pointers once at entry.  A `count` of zero restores the full API.
+void ora_host_test_withhold_api(const uint32_t *ids, uint32_t count);
+
 #endif // ORA_HOST_SHIM_H

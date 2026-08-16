@@ -60,6 +60,8 @@
 //! It skips there rather than degenerating into a patch of the active slot,
 //! which is the thing the specification warns against.
 
+use onerom_gen::ChipSetConfig;
+
 use crate::driver::{Bus, Hdr, Session, control, group, modify, read};
 use crate::{Ctx, Outcome};
 
@@ -130,7 +132,10 @@ pub fn kernal_bootloader(bus: &mut Bus, ctx: &Ctx) -> Result<Outcome, String> {
 
     // Example steps 5 and 6: read the catalogue and build the menu.
     let menu = flash_slot_menu(bus, &s)?;
-    let chosen = select_slot(&menu, served_type)?;
+    let chosen = match select_slot(&menu, served_type, ctx)? {
+        Ok(chosen) => chosen,
+        Err(skip) => return Ok(skip),
+    };
 
     // Mark the served slot at the vector, so a switch that did not happen is
     // caught: the bus would go on serving this value.
@@ -362,26 +367,84 @@ fn flash_slot_menu(bus: &mut Bus, s: &Session) -> Result<Vec<MenuEntry>, String>
     Ok(menu)
 }
 
-/// The menu entry a bootloader would choose: the last image whose ROM type is
-/// the one the socket is being served as.
+/// The menu entry a bootloader would choose: an image of the ROM type the socket
+/// is being served as, in a flash slot shaped like the RAM slot it will replace.
 ///
-/// A real menu offers only images this socket can serve, and the last matching
-/// one rather than the first so that the choice is made from the response data
-/// rather than being index 0 by default wherever a device has more than one
-/// image of a type.
-fn select_slot(menu: &[MenuEntry], served_type: u8) -> Result<&MenuEntry, String> {
-    menu.iter()
-        .rfind(|e| e.rom_type == served_type)
-        .ok_or_else(|| {
-            format!(
-                "no flash slot holds a ROM of the type being served (0x{served_type:02X}); the \
-                 menu is {}",
-                menu.iter()
-                    .map(|e| format!("{}: 0x{:02X} \"{}\"", e.slot, e.rom_type, e.name))
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            )
-        })
+/// Matching on ROM type alone is not enough, and it is what this used to do.  A
+/// RAM slot is sized for the whole chip set it holds, so LOAD_SLOT of a
+/// single-image flash slot into a slot sized for a banked set of four is
+/// refused, and rightly — the device has no way to make that copy mean
+/// anything.  A bootloader replacing the active slot wants a set of the same
+/// shape: same set type, same chips, same types in the same order.
+///
+/// # Where the shape comes from, and why that is a compromise
+///
+/// Not from the protocol.  GET_FLASH_SLOT_INFO and GET_FLASH_SLOT_INFO_ALL
+/// report `rom_type` and `name` and nothing else, so a real bootloader cannot
+/// tell a single 2332 image from a banked set of four of them, and would hit
+/// exactly the refusal above with no way to have predicted it.  The firmware
+/// knows — `ora_get_flash_slot_info` has a `rom_count_out` — but RBCP never
+/// carries it.
+///
+/// So this reads the shape out of the configuration under test, as other
+/// scenarios read device facts the protocol does not carry.  That keeps the
+/// flow being tested the real one, at the cost of a choice a real host could not
+/// make.  Skipping instead would drop the whole scenario on every banked and
+/// multi configuration, which is where a slot switch matters most.
+fn select_slot<'a>(
+    menu: &'a [MenuEntry],
+    served_type: u8,
+    ctx: &Ctx,
+) -> Result<Result<&'a MenuEntry, Outcome>, String> {
+    let sets = &ctx.config.chip_sets;
+    if menu.len() != sets.len() {
+        return Ok(Err(Outcome::Skip(format!(
+            "the device offers {} flash slot(s) and the configuration describes {} chip set(s), \
+             so this scenario cannot tell which set each slot holds and cannot pick one of the \
+             right shape",
+            menu.len(),
+            sets.len()
+        ))));
+    }
+
+    let Some(active) = sets.get(ctx.set_idx) else {
+        return Err(format!(
+            "the configuration has no chip set {}, which is the one being served",
+            ctx.set_idx
+        ));
+    };
+    let shape = |set: &ChipSetConfig| {
+        (
+            set.set_type,
+            set.chips
+                .iter()
+                .map(|c| c.chip_type.resolved())
+                .collect::<Vec<_>>(),
+        )
+    };
+    let want = shape(active);
+
+    // rfind, so the load is from the highest compatible slot rather than
+    // whichever came first — on a device with several it is the one furthest
+    // from the slot already being served.
+    let chosen = menu
+        .iter()
+        .rfind(|e| e.rom_type == served_type && shape(&sets[e.slot as usize]) == want);
+
+    match chosen {
+        Some(e) => Ok(Ok(e)),
+        None => Ok(Err(Outcome::Skip(format!(
+            "no flash slot holds a {:?} set of {} ROM(s) of the type being served \
+             (0x{served_type:02X}), which is the shape of the slot the device is serving — the \
+             menu is {}",
+            want.0,
+            want.1.len(),
+            menu.iter()
+                .map(|e| format!("{}: 0x{:02X} \"{}\"", e.slot, e.rom_type, e.name))
+                .collect::<Vec<_>>()
+                .join(", ")
+        )))),
+    }
 }
 
 /// A value that is neither of two others.

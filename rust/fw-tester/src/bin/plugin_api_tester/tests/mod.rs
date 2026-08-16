@@ -10,3 +10,4 @@ pub mod lookup;
 pub mod mapping;
 pub mod reprogram;
 pub mod slots;
+pub mod time;

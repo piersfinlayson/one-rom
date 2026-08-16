@@ -10,11 +10,18 @@
 // therefore reaches user plugins; it deliberately contains only the identifier
 // space, never any access into the internal metadata structures.
 
+use crate::c_gen::format_const_value;
 use crate::schema::Schema;
 
 const GUARD: &str = "ONEROM_METADATA_KEYS_H";
 const ENUM_NAME: &str = "ora_metadata_key_t";
 const PREFIX: &str = "ORA_METADATA_KEY_";
+
+/// Schema constant naming the value that marks an unused GPIO array entry.
+/// Emitted into this header under `SENTINEL_NAME` so a plugin can compare
+/// against it without including the firmware's own metadata header.
+const SENTINEL_SOURCE: &str = "GPIO_NONE";
+const SENTINEL_NAME: &str = "ORA_GPIO_NONE";
 
 struct Variant {
     name: String,
@@ -34,11 +41,10 @@ pub fn generate(schema: &Schema) -> String {
         variants.push(Variant {
             name: format!("{PREFIX}{}", entry.key.name),
             value: entry.key.id,
-            comment: entry
-                .comment
-                .and_then(|c| c.lines().next())
-                .unwrap_or("")
-                .to_string(),
+            // The whole comment, not just its first line: an array key needs
+            // its sentinel convention stated here, where a plugin author reads
+            // it, rather than only in the firmware's own metadata header.
+            comment: entry.comment.unwrap_or("").to_string(),
         });
     }
     variants.push(Variant {
@@ -75,23 +81,67 @@ pub fn generate(schema: &Schema) -> String {
 
 #include <stdint.h>
 
-typedef enum {{
 "
     ));
 
+    // The sentinel marking an unused entry in a GPIO array, taken from the same
+    // schema constant the firmware's own header takes it from so the two cannot
+    // drift apart.  Without it here a plugin has no value to compare against,
+    // the firmware metadata header not being plugin-facing.
+    let sentinel = schema
+        .constants
+        .iter()
+        .find(|c| c.name == SENTINEL_SOURCE)
+        .unwrap_or_else(|| {
+            panic!(
+                "schema must define the {SENTINEL_SOURCE} constant, exposed here as {SENTINEL_NAME}"
+            )
+        });
+    out.push_str(&format!(
+        "\
+// Marks an entry of a GPIO array as unused.  The array keys below are filled
+// contiguously from index 0, so a caller reads upwards and stops at the first
+// entry equal to this rather than at the end of the array.
+#define {SENTINEL_NAME} {}
+
+typedef enum {{
+",
+        format_const_value(&sentinel.value, &sentinel.type_)
+    ));
+
     for v in &variants {
-        let comment = if v.comment.is_empty() {
-            String::new()
+        let lines: Vec<&str> = v
+            .comment
+            .lines()
+            .map(str::trim_end)
+            .filter(|l| !l.is_empty())
+            .collect();
+        // A one-line comment trails its enumerator, as it always has.  A longer
+        // one goes above it, so the sentinel convention an array key carries
+        // survives into this header instead of being truncated away.
+        if lines.len() > 1 {
+            for line in &lines {
+                out.push_str(&format!("    // {}\n", line));
+            }
+            out.push_str(&format!(
+                "    {:<width$} = 0x{:08X},\n",
+                v.name,
+                v.value,
+                width = width
+            ));
         } else {
-            format!("  // {}", v.comment)
-        };
-        out.push_str(&format!(
-            "    {:<width$} = 0x{:08X},{}\n",
-            v.name,
-            v.value,
-            comment,
-            width = width
-        ));
+            let comment = match lines.first() {
+                Some(c) => format!("  // {}", c),
+                None => String::new(),
+            };
+            out.push_str(&format!(
+                "    {:<width$} = 0x{:08X},{}\n",
+                v.name,
+                v.value,
+                comment,
+                width = width
+            ));
+        }
     }
 
     out.push_str(&format!("}} {ENUM_NAME};\n"));

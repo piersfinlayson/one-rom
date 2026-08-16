@@ -139,6 +139,7 @@ const uint8_t protocol_version[4] = {
 #define GRP_MODIFY      0x02u
 #define GRP_NV_STORAGE  0x03u
 #define GRP_PIPES       0x04u
+#define GRP_AUX         0x05u
 #define GRP_RESET       0xAAu
 
 // Control commands
@@ -190,6 +191,41 @@ const uint8_t protocol_version[4] = {
 // by the protocol at four, which is what leaves room for the pipe and count
 // arguments within the nine-argument frame maximum.
 #define PIPE_WRITE_MAX_BYTES            4u
+
+// Auxiliary I/O commands
+#define CMD_GET_AUX_CAPABILITY          0x00u
+#define CMD_GET_AUX_GROUP_INFO          0x01u
+#define CMD_GET_AUX_PIN_INFO            0x02u
+#define CMD_SET_AUX                     0x03u
+#define CMD_SET_AUX_AND_EXIT            0x04u
+#define CMD_SET_AUX_SWITCH_EXIT         0x05u
+
+// Auxiliary pin group types, as reported by GET_AUX_GROUP_INFO.  0x01 is the
+// protocol's own GPIO type.  The other two are this plugin's, from the range
+// the protocol reserves for an implementation.
+#define AUX_TYPE_GPIO                   0x01u
+#define AUX_TYPE_IMG_SEL                0x80u
+#define AUX_TYPE_X                      0x81u
+
+// Auxiliary pin states.  The three the protocol defines, which are the three
+// ora_gpio_state_t holds and in the same order, so a state byte is passed
+// through to ora_gpio_set unchanged.
+#define AUX_STATE_LOW                   0x00u
+#define AUX_STATE_HIGH                  0x01u
+#define AUX_STATE_INPUT                 0x02u
+
+// Auxiliary pin flags, as reported by GET_AUX_PIN_INFO.
+#define AUX_PIN_FLAG_DRIVABLE           0x01u
+#define AUX_PIN_FLAG_LEVEL              0x02u
+
+// Bit 0 of the SET_AUX_SWITCH_EXIT flags argument.  Every other bit is
+// reserved and rejected.
+#define AUX_SWITCH_FLAG_SLOT_FIRST      0x01u
+
+// Largest hold this device accepts, in the protocol's 10ms units.  The byte's
+// whole range: RBCP is unresponsive for the duration of a hold, and how long
+// the far end of the wire needs is the host's to know.
+#define AUX_MAX_HOLD                    0xFFu
 
 // Reset commands
 #define CMD_RBCP_RESET                  0xAAu
@@ -276,6 +312,16 @@ static ora_demangle_data_fn_t               s_demangle_data;
 static ora_log_open_write_fn_t              s_log_open_write;
 static ora_log_write_fn_t                   s_log_write;
 static ora_log_query_fn_t                   s_log_query;
+
+// The calls the Auxiliary I/O group is built from.  The GPIO pair arrived in
+// firmware 0.7.1 and the other two in 0.7.2, so any of them may be NULL here.
+// Each absence takes something away from the host rather than stopping the
+// plugin - see aux_available(), aux_kind_pins() and aux_max_hold().
+static ora_gpio_set_fn_t                    s_gpio_set;
+static ora_gpio_query_fn_t                  s_gpio_query;
+static ora_get_metadata_uint_fn_t           s_get_metadata_uint;
+static ora_get_metadata_uint_at_fn_t        s_get_metadata_uint_at;
+static ora_get_plugin_uptime_ms_fn_t        s_uptime_ms;
 
 // A plugin's debug output, which the firmware emits only where it was built
 // with plugin debug logging.  Used for PIPE_WRITE failures, which are ordinary
@@ -1477,6 +1523,478 @@ static bool exec_pipe_write(void) {
 }
 
 // ---------------------------------------------------------------------------
+// Command handlers — Auxiliary I/O group (0x05)
+// ---------------------------------------------------------------------------
+
+// The kinds of pin group this plugin can expose, in the order it numbers them.
+#define AUX_KIND_GPIO       0u
+#define AUX_KIND_IMG_SEL    1u
+#define AUX_KIND_X          2u
+#define AUX_KIND_COUNT      3u
+
+// The GPIOs one auxiliary pin reaches.  An X pad can reach two.
+#define AUX_PIN_MAX_GPIOS   2u
+typedef struct {
+    uint8_t gpio[AUX_PIN_MAX_GPIOS];
+    uint8_t count;
+} aux_pin_t;
+
+// GPIOs on the running variant, or zero where the firmware cannot say.
+//
+// Must be the firmware's own MAX_GPIOS, which is what ora_gpio_set and
+// ora_gpio_query range-check against.  That count is indexed by the variant
+// detected at boot, which is what ORA_METADATA_KEY_RP_VARIANT reports.
+static uint8_t aux_gpio_count(void) {
+    if (s_get_metadata_uint == NULL) {
+        return 0u;
+    }
+    uint32_t variant = 0u;
+    if (s_get_metadata_uint(ORA_METADATA_KEY_RP_VARIANT, &variant) != ORA_RESULT_OK) {
+        return 0u;
+    }
+    switch ((rp235x_variant_t)variant) {
+        case RP235XA: return 30u;
+        case RP235XB: return 48u;
+        default:      return 0u;
+    }
+}
+
+// Whether the device exposes auxiliary pins at all.  Without the GPIO calls, or
+// without a GPIO count to range-check against, nothing in the group can work -
+// which RBCP already provides for, as a group count of zero.
+static bool aux_available(void) {
+    return (s_gpio_set != NULL) && (s_gpio_query != NULL) && (aux_gpio_count() != 0u);
+}
+
+// The largest hold this device can time.  Zero where the firmware has no
+// millisecond counter, which the protocol defines as offering no timed holds
+// and requires the device to enforce.
+static uint8_t aux_max_hold(void) {
+    return (s_uptime_ms != NULL) ? AUX_MAX_HOLD : 0u;
+}
+
+// Entries a GPIO array metadata key holds, stopping at the first unused one.
+static uint8_t aux_meta_len(ora_metadata_key_t key) {
+    uint8_t n = 0u;
+    uint32_t gpio = 0u;
+    while ((n < 0xFFu) &&
+           (s_get_metadata_uint_at(key, n, &gpio) == ORA_RESULT_OK) &&
+           ((uint8_t)gpio != ORA_GPIO_NONE)) {
+        n++;
+    }
+    return n;
+}
+
+// The GPIOs X pad `pad` reaches - X1 is pad 0, X2 is pad 1 - none where the
+// board has no such pad.
+#define AUX_X_PADS  2u
+static void aux_x_pad(uint8_t pad, aux_pin_t *out) {
+    ora_metadata_key_t key = (pad == 0u) ? ORA_METADATA_KEY_GPIO_X1
+                                         : ORA_METADATA_KEY_GPIO_X2;
+    out->count = 0u;
+    for (uint8_t i = 0u; i < AUX_PIN_MAX_GPIOS; i++) {
+        uint32_t gpio = 0u;
+        if (s_get_metadata_uint_at(key, i, &gpio) != ORA_RESULT_OK) break;
+        if ((uint8_t)gpio == ORA_GPIO_NONE) break;
+        out->gpio[out->count++] = (uint8_t)gpio;
+    }
+}
+
+// X pads this board has.  One the board lacks is skipped rather than numbered,
+// so the pins of the group stay dense.
+static uint8_t aux_x_count(void) {
+    aux_pin_t pad;
+    uint8_t   pins = 0u;
+    for (uint8_t i = 0u; i < AUX_X_PADS; i++) {
+        aux_x_pad(i, &pad);
+        if (pad.count != 0u) pins++;
+    }
+    return pins;
+}
+
+// The GPIOs auxiliary pin `pin` of `kind` reaches, or false where there is no
+// such pin.
+static bool aux_pin_gpios(uint8_t kind, uint8_t pin, aux_pin_t *out) {
+    uint32_t gpio = 0u;
+    out->count = 0u;
+
+    switch (kind) {
+        case AUX_KIND_GPIO:
+            if (pin >= aux_gpio_count()) return false;
+            out->gpio[0] = pin;
+            out->count   = 1u;
+            return true;
+
+        case AUX_KIND_IMG_SEL:
+            if (pin >= aux_meta_len(ORA_METADATA_KEY_GPIO_SEL)) return false;
+            if (s_get_metadata_uint_at(ORA_METADATA_KEY_GPIO_SEL, pin, &gpio)
+                != ORA_RESULT_OK) {
+                return false;
+            }
+            out->gpio[0] = (uint8_t)gpio;
+            out->count   = 1u;
+            return true;
+
+        default: {
+            uint8_t seen = 0u;
+            for (uint8_t i = 0u; i < AUX_X_PADS; i++) {
+                aux_x_pad(i, out);
+                if (out->count == 0u) continue;
+                if (seen == pin) return true;
+                seen++;
+            }
+            out->count = 0u;
+            return false;
+        }
+    }
+}
+
+// Pins in a kind of group, or zero where this board or this firmware has none.
+static uint8_t aux_kind_pins(uint8_t kind) {
+    if (!aux_available()) {
+        return 0u;
+    }
+    if (kind == AUX_KIND_GPIO) {
+        return aux_gpio_count();
+    }
+    // Neither of the other two can be built without the indexed metadata
+    // getter, which arrived later than this plugin's minimum firmware.
+    if (s_get_metadata_uint_at == NULL) {
+        return 0u;
+    }
+    return (kind == AUX_KIND_IMG_SEL) ? aux_meta_len(ORA_METADATA_KEY_GPIO_SEL)
+                                      : aux_x_count();
+}
+
+static uint8_t aux_kind_type(uint8_t kind) {
+    switch (kind) {
+        case AUX_KIND_GPIO:    return AUX_TYPE_GPIO;
+        case AUX_KIND_IMG_SEL: return AUX_TYPE_IMG_SEL;
+        default:               return AUX_TYPE_X;
+    }
+}
+
+static uint8_t aux_group_count(void) {
+    uint8_t groups = 0u;
+    for (uint8_t kind = 0u; kind < AUX_KIND_COUNT; kind++) {
+        if (aux_kind_pins(kind) != 0u) groups++;
+    }
+    return groups;
+}
+
+// Resolve a group number to the kind it names and the pins it holds.
+//
+// Groups are numbered densely from zero, so a kind with no pins on this board
+// is skipped rather than exposed as an empty group, and the kinds after it move
+// down.  A host reads the numbering off GET_AUX_GROUP_INFO's type byte.
+static bool aux_group_kind(uint8_t group, uint8_t *kind_out, uint8_t *pins_out) {
+    uint8_t seen = 0u;
+    for (uint8_t kind = 0u; kind < AUX_KIND_COUNT; kind++) {
+        uint8_t pins = aux_kind_pins(kind);
+        if (pins == 0u) continue;
+        if (seen == group) {
+            *kind_out = kind;
+            *pins_out = pins;
+            return true;
+        }
+        seen++;
+    }
+    return false;
+}
+
+// The flags, level and driven bytes GET_AUX_PIN_INFO reports for a pin, written
+// in that order into `out` — which is the response's own first three bytes.
+// SET_AUX tests the drivable flag before driving anything.
+//
+// Every GPIO the pin reaches must be free: an X pad reaching two of them is one
+// net, so a use One ROM has for either is a use of the pad.  The level is that
+// of the first, which on such a pad is the level of both.
+#define AUX_PIN_INFO_BYTES  3u
+static void aux_pin_info(const aux_pin_t *pin, uint8_t *out) {
+    zero_bytes(out, AUX_PIN_INFO_BYTES);
+
+    bool    drivable = (pin->count > 0u);
+    uint8_t level    = 0u;
+    uint8_t driven   = 0u;
+    for (uint8_t i = 0u; i < pin->count; i++) {
+        ora_gpio_info_t info = { (uint8_t)sizeof(ora_gpio_info_t), 0u, 0u, 0u };
+        if (s_gpio_query(pin->gpio[i], &info) != ORA_RESULT_OK) {
+            return;
+        }
+        if (i == 0u) {
+            level  = info.level;
+            driven = info.is_output;
+        }
+        if (info.use != ORA_GPIO_USE_FREE) {
+            drivable = false;
+        }
+    }
+    // Written only once every GPIO has answered, so a failure part way through
+    // leaves all three bytes zero rather than a level with its flag clear.
+    out[0] = (uint8_t)(AUX_PIN_FLAG_LEVEL |
+                       (drivable ? AUX_PIN_FLAG_DRIVABLE : 0u));
+    out[1] = level;
+    out[2] = driven;
+}
+
+static bool aux_state_valid(uint8_t state) {
+    return (state == AUX_STATE_LOW) ||
+           (state == AUX_STATE_HIGH) ||
+           (state == AUX_STATE_INPUT);
+}
+
+// Validate the arguments common to the three SET_AUX commands and resolve the
+// pin they name.
+static bool aux_set_valid(
+    uint8_t state,
+    uint8_t after,
+    uint8_t hold,
+    uint8_t pin,
+    uint8_t group,
+    aux_pin_t *out
+) {
+    if (group == 0xAAu) {
+        s_log("SET_AUX failed: group value 0xAA is reserved");
+        return false;
+    }
+    uint8_t kind, pins;
+    if (!aux_group_kind(group, &kind, &pins)) {
+        s_log("SET_AUX failed: no such group %u", (unsigned)group);
+        return false;
+    }
+    if (pin >= pins) {
+        s_log("SET_AUX failed: no such pin %u in group %u",
+              (unsigned)pin, (unsigned)group);
+        return false;
+    }
+    if (!aux_state_valid(state)) {
+        s_log("SET_AUX failed: state 0x%02X undefined", (unsigned)state);
+        return false;
+    }
+    if (hold != 0u) {
+        if (hold > aux_max_hold()) {
+            s_log("SET_AUX failed: hold %u exceeds maximum %u",
+                  (unsigned)hold, (unsigned)aux_max_hold());
+            return false;
+        }
+        if (!aux_state_valid(after)) {
+            s_log("SET_AUX failed: after 0x%02X undefined", (unsigned)after);
+            return false;
+        }
+    }
+    if (!aux_pin_gpios(kind, pin, out)) {
+        return false;
+    }
+
+    uint8_t info[AUX_PIN_INFO_BYTES];
+    aux_pin_info(out, info);
+    if ((info[0] & AUX_PIN_FLAG_DRIVABLE) == 0u) {
+        s_log("SET_AUX failed: pin %u of group %u is not drivable",
+              (unsigned)pin, (unsigned)group);
+        return false;
+    }
+    return true;
+}
+
+static bool aux_pin_drive(const aux_pin_t *pin, uint8_t state) {
+    for (uint8_t i = 0u; i < pin->count; i++) {
+        if (s_gpio_set(pin->gpio[i], state, 0u) != ORA_RESULT_OK) {
+            s_log("SET_AUX failed: cannot drive GPIO %u", (unsigned)pin->gpio[i]);
+            return false;
+        }
+    }
+    return true;
+}
+
+// Spin until the hold has elapsed, then apply `after`.
+//
+// The plugin has no task loop, so a hold is the command handler waiting, and
+// RBCP is unresponsive until it ends.  Bus activity arriving meanwhile is
+// discarded: cmd_end resets the ring read index immediately before it signals
+// completion.  Unsigned subtraction is what stays correct across the counter's
+// 49.7 day wrap.
+static void aux_hold(
+    const aux_pin_t *pin,
+    uint8_t after,
+    uint8_t hold,
+    uint32_t start_ms
+) {
+    uint32_t hold_ms = (uint32_t)hold * 10u;
+    while ((s_uptime_ms() - start_ms) < hold_ms) {
+        ORA_TEST_YIELD();
+    }
+    (void)aux_pin_drive(pin, after);
+}
+
+static bool exec_get_aux_capability(void) {
+    if (s_state.cfg.data_size < 8u) {
+        s_log("GET_AUX_CAPABILITY failed: data section too small");
+        return false;
+    }
+
+    uint8_t resp[8];
+    zero_bytes(resp, sizeof(resp));
+    resp[0] = aux_group_count();
+    resp[1] = aux_max_hold();
+
+    data_write(s_state.active_slot, 0u, resp, sizeof(resp));
+    s_log("GET_AUX_CAPABILITY: groups=%u max_hold=%u",
+          (unsigned)resp[0], (unsigned)resp[1]);
+    return true;
+}
+
+static bool exec_get_aux_group_info(void) {
+    uint8_t group = ring_read_byte();
+
+    s_log("GET_AUX_GROUP_INFO: group=%u", (unsigned)group);
+
+    if (s_state.cfg.data_size < 8u) {
+        s_log("GET_AUX_GROUP_INFO failed: data section too small");
+        return false;
+    }
+    if (group == 0xAAu) {
+        s_log("GET_AUX_GROUP_INFO failed: group value 0xAA is reserved");
+        return false;
+    }
+    uint8_t kind, pins;
+    if (!aux_group_kind(group, &kind, &pins)) {
+        s_log("GET_AUX_GROUP_INFO failed: no such group");
+        return false;
+    }
+
+    uint8_t resp[8];
+    zero_bytes(resp, sizeof(resp));
+    resp[0] = aux_kind_type(kind);
+    resp[1] = pins;
+
+    data_write(s_state.active_slot, 0u, resp, sizeof(resp));
+    return true;
+}
+
+static bool exec_get_aux_pin_info(void) {
+    uint8_t pin   = ring_read_byte();
+    uint8_t group = ring_read_byte();
+
+    s_log("GET_AUX_PIN_INFO: pin=%u group=%u", (unsigned)pin, (unsigned)group);
+
+    if (s_state.cfg.data_size < 8u) {
+        s_log("GET_AUX_PIN_INFO failed: data section too small");
+        return false;
+    }
+    if (group == 0xAAu) {
+        s_log("GET_AUX_PIN_INFO failed: group value 0xAA is reserved");
+        return false;
+    }
+    uint8_t kind, pins;
+    if (!aux_group_kind(group, &kind, &pins)) {
+        s_log("GET_AUX_PIN_INFO failed: no such group");
+        return false;
+    }
+    aux_pin_t target;
+    if ((pin >= pins) || !aux_pin_gpios(kind, pin, &target)) {
+        s_log("GET_AUX_PIN_INFO failed: no such pin");
+        return false;
+    }
+
+    uint8_t resp[8];
+    zero_bytes(resp, sizeof(resp));
+    aux_pin_info(&target, resp);
+
+    data_write(s_state.active_slot, 0u, resp, sizeof(resp));
+    return true;
+}
+
+static bool exec_set_aux(void) {
+    uint8_t state = ring_read_byte();
+    uint8_t after = ring_read_byte();
+    uint8_t hold  = ring_read_byte();
+    uint8_t pin   = ring_read_byte();
+    uint8_t group = ring_read_byte();
+
+    s_log("SET_AUX: st=%u af=%u hd=%u pin=%u grp=%u", (unsigned)state,
+          (unsigned)after, (unsigned)hold, (unsigned)pin, (unsigned)group);
+
+    aux_pin_t target;
+    if (!aux_set_valid(state, after, hold, pin, group, &target)) {
+        return false;
+    }
+
+    uint32_t start_ms = (hold != 0u) ? s_uptime_ms() : 0u;
+    if (!aux_pin_drive(&target, state)) {
+        return false;
+    }
+    if (hold != 0u) {
+        aux_hold(&target, after, hold, start_ms);
+    }
+    return true;
+}
+
+static bool exec_set_aux_and_exit(void) {
+    bool ok = exec_set_aux();
+    s_state.active = false;
+    return ok;
+}
+
+static bool exec_set_aux_switch_exit(void) {
+    uint8_t state = ring_read_byte();
+    uint8_t after = ring_read_byte();
+    uint8_t hold  = ring_read_byte();
+    uint8_t flags = ring_read_byte();
+    uint8_t pin   = ring_read_byte();
+    uint8_t group = ring_read_byte();
+    uint8_t slot  = ring_read_byte();
+
+    // Terminal whatever follows, including the reserved 0xAA slot below, where
+    // neither operation happens but the exit still does.
+    s_state.active = false;
+
+    s_log("SET_AUX_SWITCH_EXIT: st=%u af=%u hd=%u fl=0x%02X pin=%u grp=%u sl=%u",
+          (unsigned)state, (unsigned)after, (unsigned)hold, (unsigned)flags,
+          (unsigned)pin, (unsigned)group, (unsigned)slot);
+
+    if (slot == 0xAAu) {
+        s_log("SET_AUX_SWITCH_EXIT failed: slot value 0xAA is reserved");
+        return false;
+    }
+    if ((flags & (uint8_t)~AUX_SWITCH_FLAG_SLOT_FIRST) != 0u) {
+        s_log("SET_AUX_SWITCH_EXIT failed: reserved flag bits set");
+        return false;
+    }
+    if (!host_slot_valid(slot)) {
+        s_log("SET_AUX_SWITCH_EXIT failed: slot %u is not one the host may name",
+              (unsigned)slot);
+        return false;
+    }
+
+    aux_pin_t target;
+    if (!aux_set_valid(state, after, hold, pin, group, &target)) {
+        return false;
+    }
+
+    bool     slot_first = (flags & AUX_SWITCH_FLAG_SLOT_FIRST) != 0u;
+    uint32_t start_ms   = 0u;
+
+    if (slot_first && (s_set_active_ram_slot(slot) != ORA_RESULT_OK)) {
+        return false;
+    }
+    if (hold != 0u) {
+        start_ms = s_uptime_ms();
+    }
+    if (!aux_pin_drive(&target, state)) {
+        return false;
+    }
+    if (!slot_first && (s_set_active_ram_slot(slot) != ORA_RESULT_OK)) {
+        return false;
+    }
+    if (hold != 0u) {
+        // Timed from the pin being driven, so under set-first ordering a switch
+        // that takes longer than the hold delays `after` until it is done.
+        aux_hold(&target, after, hold, start_ms);
+    }
+    return true;
+}
+
+// ---------------------------------------------------------------------------
 // Command dispatch
 // ---------------------------------------------------------------------------
 
@@ -1517,6 +2035,16 @@ static uint8_t cmd_arg_count(uint8_t group, uint8_t cmd) {
             default:                      return 0u;
         }
     }
+    if (group == GRP_AUX) {
+        switch (cmd) {
+            case CMD_GET_AUX_GROUP_INFO:  return 1u;
+            case CMD_GET_AUX_PIN_INFO:    return 2u;
+            case CMD_SET_AUX:             return 5u;
+            case CMD_SET_AUX_AND_EXIT:    return 5u;
+            case CMD_SET_AUX_SWITCH_EXIT: return 7u;
+            default:                      return 0u;
+        }
+    }
     return 0u;
 }
 
@@ -1529,8 +2057,8 @@ static void discard_args(uint8_t count) {
 
 // True for the commands the specification requires to leave the response
 // header untouched: RBCP_RESET ("there is never any response from this
-// command"), EXIT_CMD_RESP_SILENT and SWITCH_AND_EXIT (both "without updating
-// the response header").
+// command"), EXIT_CMD_RESP_SILENT, SWITCH_AND_EXIT, SET_AUX_AND_EXIT and
+// SET_AUX_SWITCH_EXIT (all "without updating the response header").
 //
 // Decided from GROUP and CMD alone, before the command runs.  Every other
 // command needs cmd_begin to run *before* it is processed — that ordering is
@@ -1542,6 +2070,9 @@ static bool cmd_is_silent(uint8_t group, uint8_t cmd) {
     }
     if (group == GRP_CONTROL) {
         return (cmd == CMD_EXIT_CMD_RESP_SILENT) || (cmd == CMD_SWITCH_AND_EXIT);
+    }
+    if (group == GRP_AUX) {
+        return (cmd == CMD_SET_AUX_AND_EXIT) || (cmd == CMD_SET_AUX_SWITCH_EXIT);
     }
     return false;
 }
@@ -1724,6 +2255,39 @@ static bool dispatch(
             }
             break;
 
+        case GRP_AUX:
+            // "All commands in this group are valid in command-response mode
+            // only."  Consume the frame, then discard it.
+            if (!s_state.active) {
+                discard_args(cmd_arg_count(group, cmd));
+                ok = false;
+                break;
+            }
+            switch (cmd) {
+                case CMD_GET_AUX_CAPABILITY:
+                    ok = exec_get_aux_capability();
+                    break;
+                case CMD_GET_AUX_GROUP_INFO:
+                    ok = exec_get_aux_group_info();
+                    break;
+                case CMD_GET_AUX_PIN_INFO:
+                    ok = exec_get_aux_pin_info();
+                    break;
+                case CMD_SET_AUX:
+                    ok = exec_set_aux();
+                    break;
+                case CMD_SET_AUX_AND_EXIT:
+                    ok = exec_set_aux_and_exit();
+                    break;
+                case CMD_SET_AUX_SWITCH_EXIT:
+                    ok = exec_set_aux_switch_exit();
+                    break;
+                default:
+                    ok = false;
+                    break;
+            }
+            break;
+
         case GRP_RESET:
             switch (cmd) {
                 case CMD_RBCP_RESET:
@@ -1844,6 +2408,14 @@ __attribute__((noinline)) static void rbcp_setup(
     s_log_open_write       = ora_lookup_fn(ORA_ID_LOG_OPEN_WRITE);
     s_log_write            = ora_lookup_fn(ORA_ID_LOG_WRITE);
     s_log_query            = ora_lookup_fn(ORA_ID_LOG_QUERY);
+
+    // As with the log channels, these may be NULL - the Auxiliary I/O group
+    // reports less rather than the plugin refusing to run.
+    s_gpio_set             = ora_lookup_fn(ORA_ID_GPIO_SET);
+    s_gpio_query           = ora_lookup_fn(ORA_ID_GPIO_QUERY);
+    s_get_metadata_uint    = ora_lookup_fn(ORA_ID_GET_METADATA_UINT);
+    s_get_metadata_uint_at = ora_lookup_fn(ORA_ID_GET_METADATA_UINT_AT);
+    s_uptime_ms            = ora_lookup_fn(ORA_ID_GET_PLUGIN_UPTIME_MS);
 
     ora_start_address_monitor_fn_t start_address_monitor =
         ora_lookup_fn(ORA_ID_START_ADDRESS_MONITOR);

@@ -25,15 +25,16 @@ void led_handle_pending_set(void) {
 
         case ONEROM_LED_BEACON:
             context.led_status.pre_beacon_state = context.led_status.led_state;
-            context.led_status.beacon_start_ms  = context.timer_ms;
-            context.led_status.last_toggle_ms   = context.timer_ms;
+            uint32_t start = context.get_plugin_uptime_ms();
+            context.led_status.beacon_start_ms  = start;
+            context.led_status.last_toggle_ms   = start;
             context.led_status.mode             = ONEROM_LED_BEACON;
             led_set(1);
             break;
 
         case ONEROM_LED_FLAME:
             context.led_status.flame_index = 0;
-            context.led_status.last_toggle_ms = context.timer_ms;
+            context.led_status.last_toggle_ms = context.get_plugin_uptime_ms();
             context.led_status.mode = ONEROM_LED_FLAME;
             led_set(flame_table[0].state);
             break;
@@ -49,7 +50,7 @@ void led_handle_ongoing_led_modes(void) {
     switch (context.led_status.mode) {
         case ONEROM_LED_BEACON:
             ;
-            uint32_t now = context.timer_ms;
+            uint32_t now = context.get_plugin_uptime_ms();
             if (now - context.led_status.beacon_start_ms >= ONEROM_BEACON_DURATION_MS) {
                 // Beacon done, restore prior state
                 led_set(context.led_status.pre_beacon_state);
@@ -63,7 +64,7 @@ void led_handle_ongoing_led_modes(void) {
 
         case ONEROM_LED_FLAME:
             ;
-            uint32_t now2 = context.timer_ms;
+            uint32_t now2 = context.get_plugin_uptime_ms();
             uint8_t idx = context.led_status.flame_index;
             if (now2 - context.led_status.last_toggle_ms >= flame_table[idx].ms) {
                 idx = (idx + 1) % FLAME_TABLE_LEN;

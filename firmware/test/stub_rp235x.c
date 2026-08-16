@@ -48,6 +48,13 @@ void setup_adc(void) {
     STUB_LOG("setup_adc");
 }
 
+// There is no TIMER0 to start.  Under a test build the counter behind
+// ora_get_plugin_uptime_ms() is the scripted sequence further down this file,
+// which a test drives directly.
+void setup_timer0(void) {
+    STUB_LOG("setup_timer0");
+}
+
 uint16_t get_temp(void) {
     STUB_LOG("get_temp");
     return 0;
@@ -196,4 +203,67 @@ uint8_t stub_rp235x_is_b = 0;
 
 void stub_set_rp_variant(uint8_t is_b) {
     stub_rp235x_is_b = is_b;
+}
+
+// The microsecond count ora_get_plugin_uptime_ms() reads under a test build.  Starts
+// at zero, as a device's counter does when the firmware releases TIMER0, and
+// moves only when a test moves it - nothing here advances with wall time, so a
+// run is repeatable.
+//
+// Held as a sequence of successive counter values rather than one number, with
+// each read of either half consuming a step.  That is what lets a test place a
+// high-half change between the firmware's two reads of it.
+static uint64_t stub_timer_script[STUB_TIMER_SCRIPT_MAX] = {0};
+static uint32_t stub_timer_script_len = 1;
+static uint32_t stub_timer_script_pos = 0;
+
+// The value the next half-read sees.  Holds at the final entry once the script
+// is spent, so a script shorter than the read sequence settles rather than
+// running off the end.
+static uint64_t stub_timer_current(void) {
+    uint32_t pos = stub_timer_script_pos;
+    if (pos >= stub_timer_script_len) {
+        pos = stub_timer_script_len - 1;
+    }
+    return stub_timer_script[pos];
+}
+
+static void stub_timer_step(void) {
+    if (stub_timer_script_pos < stub_timer_script_len) {
+        stub_timer_script_pos++;
+    }
+}
+
+uint32_t stub_timer_raw_hi(void) {
+    uint64_t value = stub_timer_current();
+    stub_timer_step();
+    return (uint32_t)(value >> 32);
+}
+
+uint32_t stub_timer_raw_lo(void) {
+    uint64_t value = stub_timer_current();
+    stub_timer_step();
+    return (uint32_t)value;
+}
+
+void stub_set_timer_us(uint64_t us) {
+    stub_timer_script[0] = us;
+    stub_timer_script_len = 1;
+    stub_timer_script_pos = 0;
+}
+
+void stub_advance_timer_us(uint64_t delta_us) {
+    stub_set_timer_us(stub_timer_script[stub_timer_script_len - 1] + delta_us);
+}
+
+void stub_set_timer_raw_script(const uint64_t *values, uint32_t count) {
+    STUB_ASSERT(
+        values != NULL && count >= 1 && count <= STUB_TIMER_SCRIPT_MAX,
+        "stub_set_timer_raw_script: count %u out of range", count
+    );
+    for (uint32_t i = 0; i < count; i++) {
+        stub_timer_script[i] = values[i];
+    }
+    stub_timer_script_len = count;
+    stub_timer_script_pos = 0;
 }

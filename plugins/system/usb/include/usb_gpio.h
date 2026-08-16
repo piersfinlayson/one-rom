@@ -16,9 +16,9 @@
 // A minute is two to three orders of magnitude beyond any plausible reset pulse
 // or diagnostic assertion, so the bound never gets in a real caller's way, and
 // it keeps the deadline comparison in gpio_handle_pending_releases() far inside
-// the window where unsigned millisecond arithmetic is unambiguous (context
-// .timer_ms wraps every ~49.7 days; the comparison is safe for intervals under
-// half that).
+// the window where the signed difference of two millisecond timestamps is
+// unambiguous - the firmware clock wraps every ~49.7 days, and the comparison
+// is safe for intervals under half that.
 //
 // The bound exists because a hold is only honoured while this plugin keeps
 // running.  A caller wanting a pin held for longer than a minute wants it
@@ -51,7 +51,7 @@ typedef struct {
     // 0 when this slot is free.
     uint8_t active;
 
-    // context.timer_ms value at or after which after_state is applied.
+    // Plugin uptime, in ms, at or after which after_state is applied.
     uint32_t deadline_ms;
 } gpio_release_t;
 

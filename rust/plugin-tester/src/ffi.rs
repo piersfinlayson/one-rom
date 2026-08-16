@@ -83,6 +83,12 @@ unsafe extern "C" {
     /// The plugin's own SRAM seam: what ORA_SRAM_PTR resolves to.
     pub fn ora_host_test_sram_ptr(addr: u32) -> *mut core::ffi::c_void;
 
+    /// Make the plugin's lookup answer NULL for each of these API identifiers,
+    /// so a scenario can exercise what the plugin does on firmware that
+    /// predates a call.  Must be set before the plugin starts, which is when
+    /// it resolves its pointers.  An empty slice restores the full API.
+    pub fn ora_host_test_withhold_api(ids: *const u32, count: u32);
+
     /// Enter the plugin.  Never returns.
     pub fn ora_host_test_run_plugin();
 

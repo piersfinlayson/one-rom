@@ -97,6 +97,9 @@ impl std::fmt::Display for Hdr {
 /// The response header is 8 bytes; the data section follows it.
 pub const HDR_SIZE: u32 = 8;
 
+/// `ORA_GPIO_USE_FREE`: One ROM is doing nothing with the pin.
+const GPIO_USE_FREE: u8 = 0;
+
 /// The knock this device implementation uses.  Not defined by the protocol —
 /// the specification requires only that device and host agree in advance.
 pub const KNOCK: [u8; 6] = *b"!RBCP!";
@@ -498,6 +501,38 @@ impl<'a> Bus<'a> {
             let base = ffi::ora_host_test_nv_storage().add(offset as usize);
             std::slice::from_raw_parts(base, len).to_vec()
         }
+    }
+
+    /// What One ROM is using a GPIO for, as the firmware itself reports it.
+    ///
+    /// Taken beside the protocol rather than through it, so a scenario can
+    /// require GET_AUX_PIN_INFO's drivable flag to agree with what the device
+    /// is actually doing with the pin.  `None` where the firmware declines to
+    /// answer, which it does for a GPIO the running part does not have.
+    ///
+    /// The level and driven bytes are deliberately not exposed: under a
+    /// host-test build the firmware answers 0 for both whatever the pin is
+    /// doing, so a scenario reading them here would be reading a constant.
+    pub fn gpio_in_use(&self, gpio: u8) -> Option<bool> {
+        let (r, info) = self.emu.gpio_query(gpio);
+        r.is_ok().then_some(info.gpio_use != GPIO_USE_FREE)
+    }
+
+    /// Put the millisecond counter the device times with at `us`
+    /// microseconds.
+    ///
+    /// A SET_AUX hold is the device waiting on that counter, and the counter
+    /// here is the harness's rather than a device's — nothing advances it but
+    /// a scenario.  So a hold ends exactly where the scenario says it does,
+    /// which is what lets the assertion be "still pending here, complete
+    /// there" rather than a sleep and a hope.
+    pub fn set_clock_us(&self, us: u64) {
+        self.emu.set_timer_us(us);
+    }
+
+    /// Move that counter on by `delta_us`.
+    pub fn advance_clock_us(&self, delta_us: u64) {
+        self.emu.advance_timer_us(delta_us);
     }
 
     /// Take everything waiting on a pipe's log channel, as a reader would.
@@ -1111,6 +1146,7 @@ pub mod group {
     pub const MODIFY: u8 = 0x02;
     pub const NV_STORAGE: u8 = 0x03;
     pub const PIPES: u8 = 0x04;
+    pub const AUX: u8 = 0x05;
     pub const RESET: u8 = 0xAA;
 }
 
@@ -1159,6 +1195,16 @@ pub mod pipes {
     pub const GET_PIPE_CAPABILITY: u8 = 0x00;
     pub const GET_PIPE_INFO: u8 = 0x01;
     pub const PIPE_WRITE: u8 = 0x02;
+}
+
+#[allow(dead_code)]
+pub mod aux {
+    pub const GET_AUX_CAPABILITY: u8 = 0x00;
+    pub const GET_AUX_GROUP_INFO: u8 = 0x01;
+    pub const GET_AUX_PIN_INFO: u8 = 0x02;
+    pub const SET_AUX: u8 = 0x03;
+    pub const SET_AUX_AND_EXIT: u8 = 0x04;
+    pub const SET_AUX_SWITCH_EXIT: u8 = 0x05;
 }
 
 #[allow(dead_code)]

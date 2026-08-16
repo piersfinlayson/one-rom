@@ -261,6 +261,8 @@
 // TIMER0 Registers
 #define TIMER0_TIMELR       (*((volatile uint32_t *)(TIMER0_BASE + 0x0C)))
 #define TIMER0_ALARM0       (*((volatile uint32_t *)(TIMER0_BASE + 0x10)))
+#define TIMER0_TIMERAWH     (*((volatile uint32_t *)(TIMER0_BASE + 0x24)))
+#define TIMER0_TIMERAWL     (*((volatile uint32_t *)(TIMER0_BASE + 0x28)))
 #define TIMER0_INTE         (*((volatile uint32_t *)(TIMER0_BASE + 0x40)))
 #define TIMER0_INTR         (*((volatile uint32_t *)(TIMER0_BASE + 0x3C)))
 
@@ -314,6 +316,7 @@
 // TICKS Registers
 #define TICKS_TIMER0_CTRL   (*((volatile uint32_t *)(TICKS_BASE + 0x18)))
 #define TICKS_TIMER0_CYCLES (*((volatile uint32_t *)(TICKS_BASE + 0x1C)))
+#define TICKS_CTRL_ENABLE   (1 << 0)
 
 // USB Registers
 #define SIE_STATUS         (*((volatile uint32_t *)(USBCTRL_REGS_BASE + 0x50)))

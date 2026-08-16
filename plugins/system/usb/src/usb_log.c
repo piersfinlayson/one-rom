@@ -174,10 +174,8 @@ static void banner_end_line(banner_sink_t *sink) {
     banner_put(sink, LOG_BANNER_LINE_END);
 }
 
-// A metadata string, or NULL when it cannot be had - either the running
-// firmware has no metadata getter, which is every firmware before 0.7.1, or the
-// field is unset.  Neither is an error: a value the banner has no source for is
-// left out of its line.
+// A metadata string, or NULL when the field is unset.  That is not an error - a
+// value the banner has no source for is left out of its line.
 static const char *banner_metadata_str(ora_metadata_key_t key) {
     ora_get_metadata_str_fn_t get_metadata_str =
         context.ora_lookup_fn(ORA_ID_GET_METADATA_STR);
@@ -266,9 +264,9 @@ static void banner_line(uint8_t line, banner_sink_t *sink) {
         }
 
         case LOG_BANNER_LINE_LOGGING: {
-            // Firmware before 0.7.2 cannot answer this, and a list assembled
-            // from anything else would be a claim the device has not made, so
-            // the line is left out entirely.
+            // A list assembled from anything but the firmware's own answer
+            // would be a claim the device has not made, so the line is left out
+            // entirely.
             ora_log_category_enabled_fn_t category_enabled =
                 context.ora_lookup_fn(ORA_ID_LOG_CATEGORY_ENABLED);
             if (category_enabled == NULL) {
@@ -296,13 +294,6 @@ static void banner_line(uint8_t line, banner_sink_t *sink) {
 
         case LOG_BANNER_LINE_NOTE:
             switch (context.log_banner_note) {
-                case LOG_BANNER_NOTE_FIRMWARE:
-                    banner_put(
-                        sink,
-                        "!!! Firmware v0.7.2 or later needed for USB logging !!!"
-                    );
-                    break;
-
                 case LOG_BANNER_NOTE_IN_USE:
                     banner_put(
                         sink,
@@ -382,12 +373,8 @@ void log_drain_init(void) {
     ora_log_open_read_fn_t open_read =
         context.ora_lookup_fn(ORA_ID_LOG_OPEN_READ);
 
-    // Firmware older than 0.7.2 has no logging API.  The rest of the plugin is
-    // unaffected, which is what keeps min_fw_version at 0.7.0 rather than
-    // costing those users USB altogether.
     if (open_read == NULL) {
         DEBUG("No logging API, CDC log forwarding disabled");
-        context.log_banner_note = LOG_BANNER_NOTE_FIRMWARE;
         return;
     }
 
@@ -418,10 +405,6 @@ void log_drain_init(void) {
             close_read(ORA_LOG_CHANNEL_0);
         }
         ERR("Log channel readable but not read, CDC log forwarding disabled");
-
-        // Half a logging API is not a claim anyone else is holding, so the
-        // banner points at the firmware.
-        context.log_banner_note = LOG_BANNER_NOTE_FIRMWARE;
         return;
     }
 
@@ -495,32 +478,40 @@ void log_drain_task(void) {
         return;
     }
 
-    if (context.log_cdc_new_session) {
-        // What is still in the channel is kept, not discarded.  The ring drops
-        // the newest record when it is full rather than evicting the oldest, so
-        // what is waiting here is the earliest output since the log was last
-        // drained - the boot log, on a device nothing has been listening to.
-        // That is the output a terminal attaching most wants, and it is bounded
-        // by the ring, so there is no flood to guard against.
-        //
-        // The endpoint is a different matter.  Bytes already handed to it came
-        // out of the channel for the session that has just ended, and would
-        // reach this terminal as a leading partial line.
-        tud_cdc_n_write_clear(LOG_DRAIN_CDC_ITF);
+    // Nothing goes out before the settle window elapses, so a banner already
+    // written means it has passed and the clock need not be read at all.
+    if (context.log_cdc_new_session ||
+        context.log_banner_line != LOG_BANNER_LINE_COMPLETE) {
+        uint32_t now = context.get_plugin_uptime_ms();
 
-        // This terminal gets the banner from the top, whatever the last one
-        // was given.
-        context.log_banner_line = LOG_BANNER_LINE_TOP;
-        context.log_banner_offset = 0;
+        if (context.log_cdc_new_session) {
+            // What is still in the channel is kept, not discarded.  The ring
+            // drops the newest record when it is full rather than evicting the
+            // oldest, so what is waiting here is the earliest output since the
+            // log was last drained - the boot log, on a device nothing has been
+            // listening to.  That is the output a terminal attaching most
+            // wants, and it is bounded by the ring, so there is no flood to
+            // guard against.
+            //
+            // The endpoint is a different matter.  Bytes already handed to it
+            // came out of the channel for the session that has just ended, and
+            // would reach this terminal as a leading partial line.
+            tud_cdc_n_write_clear(LOG_DRAIN_CDC_ITF);
 
-        context.log_cdc_settled_ms = context.timer_ms + LOG_DRAIN_SETTLE_MS;
-        context.log_cdc_new_session = 0;
-    }
+            // This terminal gets the banner from the top, whatever the last one
+            // was given.
+            context.log_banner_line = LOG_BANNER_LINE_TOP;
+            context.log_banner_offset = 0;
 
-    // Signed difference, so a timer_ms wrap inside the settle window does not
-    // mute the port for another 49.7 days.
-    if ((int32_t)(context.timer_ms - context.log_cdc_settled_ms) < 0) {
-        return;
+            context.log_cdc_settled_ms = now + LOG_DRAIN_SETTLE_MS;
+            context.log_cdc_new_session = 0;
+        }
+
+        // Signed difference, so a clock wrap inside the settle window does not
+        // mute the port for another 49.7 days.
+        if ((int32_t)(now - context.log_cdc_settled_ms) < 0) {
+            return;
+        }
     }
 
     // A suspended or unconfigured bus cannot carry anything.  The terminal is

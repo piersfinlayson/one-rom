@@ -35,6 +35,7 @@ pub fn generate(schema: &Schema) -> String {
     emit_simple_fam_defs(schema, &mut out);
     emit_metadata_str_cases(schema, &mut out);
     emit_metadata_uint_cases(schema, &mut out);
+    emit_metadata_uint_at_cases(schema, &mut out);
     emit_file_footer(schema, &mut out);
     out
 }
@@ -178,6 +179,73 @@ fn emit_metadata_uint_cases(schema: &Schema, out: &mut String) {
                 .plugin_key_access(entry.struct_name, entry.field_name)
                 .expect("plugin_key access paths are validated at schema load");
             lines.push(format!("        *(out) = (uint32_t)({});", access));
+            lines.push("        return ORA_RESULT_OK;".to_string());
+        } else {
+            lines.push("        return ORA_RESULT_TYPE_MISMATCH;".to_string());
+        }
+    }
+
+    let width = lines.iter().map(|l| l.len()).max().unwrap_or(0);
+    for (i, line) in lines.iter().enumerate() {
+        if i + 1 < lines.len() {
+            out.push_str(&format!("{:<width$} \\\n", line, width = width));
+        } else {
+            out.push_str(&format!("{}\n", line));
+        }
+    }
+    out.push('\n');
+}
+
+/// Emit ONEROM_METADATA_UINT_AT_CASES: the generated switch arms for the
+/// indexed metadata getter (ora_get_metadata_uint_at in firmware/src/plugin.c).
+///
+/// One arm per schema field tagged `plugin_key`: array-of-unsigned fields
+/// bounds-check the index and resolve the element.  Any other type returns
+/// ORA_RESULT_TYPE_MISMATCH.  The expanding function owns the switch, the
+/// argument guard, and the default arm.
+fn emit_metadata_uint_at_cases(schema: &Schema, out: &mut String) {
+    let keys = schema.plugin_keys();
+    if keys.is_empty() {
+        return;
+    }
+
+    let comment = wrap_comment_text(
+        "ONEROM_METADATA_UINT_AT_CASES(index, out) expands to the case arms of the \
+         switch in ora_get_metadata_uint_at() (firmware/src/plugin.c).\n\n\
+         The arms are generated from the schema fields tagged `plugin_key`: each \
+         field that is an array of unsigned elements resolves element `index` \
+         here, zero-extended to uint32_t. Any key that is not such an array \
+         returns ORA_RESULT_TYPE_MISMATCH. An `index` past the last element is \
+         rejected with ORA_RESULT_INVALID_ARG - the arrays these keys name are \
+         terminated by GPIO_NONE, so a caller scans rather than asking for a \
+         length, and reading past the end is a caller error. The expanding \
+         function supplies the surrounding switch, the `out == NULL` guard, and \
+         the `default:` arm that returns ORA_RESULT_NOT_SUPPORTED for keys \
+         unknown to this firmware.",
+        76,
+    );
+    emit_comment(&comment, "", out);
+
+    let mut lines: Vec<String> =
+        vec!["#define ONEROM_METADATA_UINT_AT_CASES(index, out)".to_string()];
+    for entry in &keys {
+        let key_name = format!("ORA_METADATA_KEY_{}", entry.key.name);
+        lines.push(format!("    case {}:", key_name));
+        if entry.kind == "inline_array" {
+            // Prefer the named bound, so the generated arm says what the limit
+            // means rather than repeating a number the schema owns.
+            let bound = entry
+                .count_ref
+                .map(str::to_string)
+                .or_else(|| entry.count.map(|c| c.to_string()))
+                .expect("array plugin_key counts are validated at schema load");
+            let access = schema
+                .plugin_key_access(entry.struct_name, entry.field_name)
+                .expect("plugin_key access paths are validated at schema load");
+            lines.push(format!("        if ((index) >= {}) {{", bound));
+            lines.push("            return ORA_RESULT_INVALID_ARG;".to_string());
+            lines.push("        }".to_string());
+            lines.push(format!("        *(out) = (uint32_t)({}[(index)]);", access));
             lines.push("        return ORA_RESULT_OK;".to_string());
         } else {
             lines.push("        return ORA_RESULT_TYPE_MISMATCH;".to_string());
@@ -771,7 +839,7 @@ fn c_array_dim(ref_name: Option<&str>, fallback: Option<u32>) -> String {
 }
 
 /// Format an integer constant value for C with a type-appropriate cast.
-fn format_const_value(value: &ConstantValue, type_: &str) -> String {
+pub fn format_const_value(value: &ConstantValue, type_: &str) -> String {
     match value {
         ConstantValue::Integer(n) => {
             let n = *n;

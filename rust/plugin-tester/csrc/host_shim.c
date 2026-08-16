@@ -316,9 +316,35 @@ uint32_t ora_host_test_nv_storage_size(void) {
 // This plugin voids both that and its plugin-type argument, and on a host its
 // data and stack are the host's, so a zeroed struct is passed rather than an
 // invented layout that nothing would honour.
+// Identifiers the harness is withholding, and how many of them there are.
+static uint32_t shim_withheld[ORA_HOST_TEST_WITHHOLD_MAX];
+static uint32_t shim_withheld_count;
+
+void ora_host_test_withhold_api(const uint32_t *ids, uint32_t count) {
+    if (count > ORA_HOST_TEST_WITHHOLD_MAX) {
+        count = ORA_HOST_TEST_WITHHOLD_MAX;
+    }
+    for (uint32_t i = 0; i < count; i++) {
+        shim_withheld[i] = ids[i];
+    }
+    shim_withheld_count = count;
+}
+
+// The lookup the plugin is given.  Stands in front of the firmware's own so
+// that a withheld identifier answers NULL, which is what a plugin sees on
+// firmware older than the call.
+static void *shim_fn_lookup(api_id_t id) {
+    for (uint32_t i = 0; i < shim_withheld_count; i++) {
+        if (shim_withheld[i] == (uint32_t)id) {
+            return NULL;
+        }
+    }
+    return ora_fn_lookup(id);
+}
+
 void ora_host_test_run_plugin(void) {
     static const ora_entry_args_t args = {0};
-    rbcp_main(ora_fn_lookup, ORA_PLUGIN_TYPE_USER, &args);
+    rbcp_main(shim_fn_lookup, ORA_PLUGIN_TYPE_USER, &args);
 }
 
 // Version fields from the plugin's own header, so the harness can report which

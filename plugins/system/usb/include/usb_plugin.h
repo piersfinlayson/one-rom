@@ -26,28 +26,23 @@ typedef struct {
     ora_get_ram_slot_info_fn_t get_ram_slot_info;
     ora_read_ram_rom_slot_fn_t read_ram_rom_slot;
     ora_reprogram_ram_rom_slot_fn_t reprogram_ram_rom_slot;
+    ora_get_plugin_uptime_ms_fn_t get_plugin_uptime_ms;
 
-    // GPIO control.  Both are NULL on firmware that predates the GPIO plugin
-    // API, added in firmware 0.7.1 - see gpio_init_caps().
+    // GPIO control, resolved in gpio_init_caps().
     ora_gpio_set_fn_t gpio_set;
     ora_gpio_query_fn_t gpio_query;
 
-    // What ONEROM_CMD_GET_CAPS reports, decided once at init.
-    //
-    // features is a ONEROM_FEAT_* bitmap, and num_gpios the running RP2350
-    // variant's GPIO count.  Both are zero when the running firmware cannot
-    // support GPIO control, which is what keeps the plugin's min_fw_version at
-    // 0.7.0: the host is told the commands are unavailable rather than the
-    // plugin refusing to load.
+    // What ONEROM_CMD_GET_CAPS reports, decided once at init.  features is a
+    // ONEROM_FEAT_* bitmap, and num_gpios the running RP2350 variant's GPIO
+    // count.  Both are zero when gpio_init_caps() could not settle them, and
+    // the host is then told the commands are unavailable.
     uint32_t features;
     uint8_t num_gpios;
 
-    // Reading the log for the CDC serial port.  log_read is NULL on firmware
-    // that predates the logging API, added in firmware 0.7.2, and also when
-    // another plugin already holds the channel's read claim.  Either way the
-    // forwarding is skipped and the rest of the plugin is unaffected, which is
-    // what keeps min_fw_version at 0.7.0.  Only the read call is held here,
-    // because it is the only one that runs more than once.
+    // Reading the log for the CDC serial port.  NULL when another plugin
+    // already holds the channel's read claim, in which case the forwarding is
+    // skipped and the rest of the plugin is unaffected.  Only the read call is
+    // held here, because it is the only one that runs more than once.
     ora_log_read_fn_t log_read;
 
     // Whether a terminal has the CDC port open, and whether a session it has
@@ -64,15 +59,13 @@ typedef struct {
     uint8_t log_banner_offset;
 
     // What the banner tells the reader about log forwarding, as a
-    // log_banner_note_t.  Settled by log_drain_init(), which is where the two
-    // reasons forwarding can be unavailable are told apart.
+    // log_banner_note_t.  Settled by log_drain_init().
     uint8_t log_banner_note;
 
     // Earliest point at which a newly attached terminal is sent anything.  See
     // LOG_DRAIN_SETTLE_MS in usb_log.c.
     uint32_t log_cdc_settled_ms;
 
-    uint32_t timer_ms;
     onerom_pending_t pending;
     onerom_in_xfer_t in_xfer;
     led_status_t led_status;
@@ -138,34 +131,5 @@ size_t usb_get_serial(char *out, size_t out_size);
         context.err_log(__VA_ARGS__); \
     } \
 } while (0)
-
-//--------------------------------------------------------------------+
-// TIMER0 peripheral
-//--------------------------------------------------------------------+
-#define TIMER0_BASE         0x400b0000
-
-// TIMER0 Registers
-#define TIMER0_TIMELR       (*((volatile uint32_t *)(TIMER0_BASE + 0x0C)))
-#define TIMER0_ALARM0       (*((volatile uint32_t *)(TIMER0_BASE + 0x10)))
-#define TIMER0_INTE         (*((volatile uint32_t *)(TIMER0_BASE + 0x40)))
-#define TIMER0_INTR         (*((volatile uint32_t *)(TIMER0_BASE + 0x3C)))
-
-//--------------------------------------------------------------------+
-// TICKS peripheral
-//--------------------------------------------------------------------+
-#define TICKS_BASE          0x40108000
-
-// TICKS Registers
-#define TICKS_TIMER0_CTRL   (*((volatile uint32_t *)(TICKS_BASE + 0x18)))
-#define TICKS_TIMER0_CYCLES (*((volatile uint32_t *)(TICKS_BASE + 0x1C)))
-
-//--------------------------------------------------------------------+
-// RESET peripheral
-//--------------------------------------------------------------------+
-#define RESETS_BASE         0x40020000
-
-#define RESET_RESET     (*((volatile uint32_t *)(RESETS_BASE + 0x00)))
-#define RESET_DONE      (*((volatile uint32_t *)(RESETS_BASE + 0x08)))
-#define RESET_TIMER0        (1 << 23)
 
 #endif // USB_PLUGIN_H

@@ -12,15 +12,25 @@ debug probe still reads the log on a device that merely has USB.
   firmware version, instance name and serial, and which kinds of logging are
   switched on.  A device that cannot forward its log says so there, rather
   than leaving the port silent.
-- On firmware older than v0.7.2, which has no logging API, the forwarding is
-  skipped and everything else is unaffected.  The plugin still runs on v0.7.0.
 - A debug probe and a terminal must not both read the log at once.  Both
   advance the same read position, so the output splits arbitrarily between
   them and neither sees all of it.
 
+Take the millisecond clock from the firmware instead of keeping one here.
+Firmware v0.7.2 counts plugin uptime itself, derived from TIMER0's free-running
+microsecond counter, so the plugin no longer takes TIMER0 out of reset, arms its
+alarm or handles an interrupt a thousand times a second.  LED beacons, bounded
+GPIO holds, the terminal settle window and tinyusb's own timing all read the
+firmware's count.
+
+- `min_fw_version` rises to v0.7.2.  The plugin does not load on firmware older
+  than that.
+- No `TIMER0_IRQ_0` handler is registered any more, so that interrupt is left
+  to whatever else wants it.  The firmware arms no alarm of its own.
+
 Rebuilt for One ROM firmware v0.7.2, whose logging functions are now checked by
 the compiler.  Several log calls passed `uint32_t` to conversions expecting
-`unsigned int`; the output was already correct, so nothing behaves differently.
+`unsigned int`.  The output was already correct, so nothing behaves differently.
 
 ## [0.2.1] - 2026-08-09
 

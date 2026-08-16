@@ -420,6 +420,14 @@ test_family_28() {
     # RBCP behaviour coverage — a 23QL384's qualifier-based chip select, with
     # its deselected top quarter, which the board sweep never reaches.
     test_config_rbcp fire-28-a onerom-config/test/28-random-23qlxxx.json
+
+    # RBCP behaviour coverage — a banked set, which is the only shape where an X
+    # pad's two GPIOs differ in what One ROM is doing with them.  On a random
+    # config both are free, so the Auxiliary I/O rule that a pad is drivable
+    # only when every GPIO it reaches is free has nothing to discriminate on.
+    # It is also the only shape where a flash slot and the RAM slot it is loaded
+    # into can differ in size, which the bootloader flow turns on.
+    test_config_rbcp fire-28-c onerom-config/test/28-bank-27xxx.json
 }
 
 test_family_32() {

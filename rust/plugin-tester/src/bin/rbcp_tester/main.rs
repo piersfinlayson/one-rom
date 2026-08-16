@@ -401,6 +401,13 @@ fn run_scenario(
     // SAFETY: `ring` is within epio's SRAM and outlives the plugin.
     unsafe { ffi::ora_host_test_set_ring_buf(ring) };
 
+    // Set for every scenario, almost always to nothing: the shim's list is
+    // process-global, so leaving it alone would carry one scenario's withheld
+    // calls into the next.
+    let withheld = suites::withheld_api(sc.name);
+    // SAFETY: the slice outlives the call, which copies what it needs.
+    unsafe { ffi::ora_host_test_withhold_api(withheld.as_ptr(), withheld.len() as u32) };
+
     // SAFETY: `emu` outlives `plugin`, which is dropped at the end of this fn.
     let plugin = unsafe { Plugin::start(&emu)? };
 

@@ -22,3 +22,19 @@ pub static SUITES: &[Suite] = &[
         scenarios: integration::SCENARIOS,
     },
 ];
+
+/// API identifiers to withhold from the plugin before running `scenario`.
+///
+/// A plugin degrades where a call its minimum firmware version does not
+/// guarantee is missing, and those branches are unreachable against the
+/// emulator, which implements the whole API.  Withholding is decided before
+/// the plugin starts — that is when it resolves its pointers — so it cannot be
+/// a scenario's own first act, and this table is where the scenarios that need
+/// it say so.
+pub fn withheld_api(scenario: &str) -> &'static [u32] {
+    conformance::aux::WITHHELD_API
+        .iter()
+        .find(|(name, _)| *name == scenario)
+        .map(|(_, ids)| *ids)
+        .unwrap_or(&[])
+}

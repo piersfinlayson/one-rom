@@ -238,6 +238,14 @@ fn main() {
         .allowlist_function("set_host_sram_ptr")
         .allowlist_function("stub_set_sel_image")
         .allowlist_function("stub_set_rp_variant")
+        // The microsecond counter behind ora_get_plugin_uptime_ms().  There is no
+        // TIMER0 in this process, so the harness owns the count - which also
+        // lets a test place the clock exactly where it wants it.
+        .allowlist_function("stub_set_timer_us")
+        .allowlist_function("stub_advance_timer_us")
+        // Scripts the counter across successive half-reads, so a test can drive
+        // the retry that assembles a consistent 64-bit value.
+        .allowlist_function("stub_set_timer_raw_script")
         .allowlist_function("ffi_limp_mode")
         .allowlist_function("ffi_pios_enabled")
         .allowlist_function("ffi_image_sel")

@@ -8,7 +8,9 @@
 use std::path::Path;
 
 use onerom_config::fw::FirmwareVersion;
+use onerom_config::hw::Board;
 use onerom_fw_emulator::{Emulator, OraResult, build_options, ffi};
+use onerom_fw_tester::geometry;
 use onerom_gen::Config;
 
 /// Verify that get_device_version returns a string that matches the parsed
@@ -173,6 +175,184 @@ pub fn test_metadata_uint(emu: &Emulator, config: &Config) -> Result<(), String>
     }
 
     Ok(())
+}
+
+/// Verify indexed retrieval of the array-valued metadata keys.
+///
+/// The GPIO numbers are checked against two sources the firmware had no hand
+/// in: `board.sel_pins()`, generated from the board's own configuration, and
+/// the metadata header rebuilt here by `geometry::build_header`. `sel_pins()`
+/// is the stronger of the two - it does not come from the metadata blob at all,
+/// so it catches the blob and the accessor being wrong together.
+///
+/// Also covers the rejections, which are what a caller scanning for the
+/// GPIO_NONE terminator relies on: an index past the end, a key that is not an
+/// array through this accessor, an array key through the non-indexed accessor,
+/// the sentinels, and a NULL out pointer.
+pub fn test_metadata_uint_at(
+    emu: &Emulator,
+    config: &Config,
+    board: Board,
+    fw_version: FirmwareVersion,
+    base_dir: &Path,
+) -> Result<(), String> {
+    let header = geometry::build_header(config, board, fw_version, base_dir)?;
+
+    // The stored arrays, GPIO_NONE entries and all - this accessor reports
+    // every slot, and the terminator is what tells a caller where to stop.
+    let arrays: &[(ffi::ora_metadata_key_t, &str, &[u8])] = &[
+        (
+            ffi::ora_metadata_key_t_ORA_METADATA_KEY_GPIO_SEL,
+            "GPIO_SEL",
+            &header.hw.gpio_sel,
+        ),
+        (
+            ffi::ora_metadata_key_t_ORA_METADATA_KEY_GPIO_X1,
+            "GPIO_X1",
+            &header.hw.gpio_x1,
+        ),
+        (
+            ffi::ora_metadata_key_t_ORA_METADATA_KEY_GPIO_X2,
+            "GPIO_X2",
+            &header.hw.gpio_x2,
+        ),
+    ];
+
+    let mut errors = Vec::new();
+
+    for (key, label, expected) in arrays {
+        let mut got = Vec::with_capacity(expected.len());
+        for index in 0..expected.len() {
+            let (result, value) = emu.get_metadata_uint_at(*key, index as u32);
+            if !result.is_ok() {
+                errors.push(format!(
+                    "{}[{}]: expected OK, got {:?}",
+                    label, index, result
+                ));
+                continue;
+            }
+            let Some(value) = value else {
+                errors.push(format!("{}[{}]: OK but no value", label, index));
+                continue;
+            };
+            if value != u32::from(expected[index]) {
+                errors.push(format!(
+                    "{}[{}]: got {}, expected {} from the metadata",
+                    label, index, value, expected[index]
+                ));
+            }
+            got.push(value);
+        }
+        println!("  {}: {:?}", label, got);
+
+        // One past the end is a caller error, not a terminator.
+        let (result, _) = emu.get_metadata_uint_at(*key, expected.len() as u32);
+        if result != OraResult::InvalidArg {
+            errors.push(format!(
+                "{}[{}]: expected InvalidArg past the end, got {:?}",
+                label,
+                expected.len(),
+                result
+            ));
+        }
+
+        // An array key is not readable through the non-indexed accessor.
+        let (result, _) = emu.get_metadata_uint(*key);
+        if result != OraResult::TypeMismatch {
+            errors.push(format!(
+                "{} via uint: expected TypeMismatch, got {:?}",
+                label, result
+            ));
+        }
+
+        let result = emu.get_metadata_uint_at_null_out(*key, 0);
+        if result != OraResult::InvalidArg {
+            errors.push(format!(
+                "{} with NULL out: expected InvalidArg, got {:?}",
+                label, result
+            ));
+        }
+    }
+
+    // The image select GPIOs, checked against the board configuration rather
+    // than against the metadata built from it.  They are stored contiguously
+    // from index 0, so the board's list must be a prefix of the array.
+    let sel_pins = board.sel_pins();
+    for (index, expected) in sel_pins.iter().enumerate() {
+        let (result, value) = emu.get_metadata_uint_at(
+            ffi::ora_metadata_key_t_ORA_METADATA_KEY_GPIO_SEL,
+            index as u32,
+        );
+        if !result.is_ok() {
+            errors.push(format!(
+                "GPIO_SEL[{}]: expected OK, got {:?}",
+                index, result
+            ));
+            continue;
+        }
+        if value != Some(u32::from(*expected)) {
+            errors.push(format!(
+                "GPIO_SEL[{}]: got {:?}, expected {} from the board configuration",
+                index, value, expected
+            ));
+        }
+    }
+    // The entry after the board's last select pin terminates the list.
+    if sel_pins.len() < header.hw.gpio_sel.len() {
+        let (result, value) = emu.get_metadata_uint_at(
+            ffi::ora_metadata_key_t_ORA_METADATA_KEY_GPIO_SEL,
+            sel_pins.len() as u32,
+        );
+        if !result.is_ok() || value != Some(u32::from(onerom_metadata::GPIO_NONE)) {
+            errors.push(format!(
+                "GPIO_SEL[{}]: expected GPIO_NONE terminator, got {:?}/{:?}",
+                sel_pins.len(),
+                result,
+                value
+            ));
+        }
+    }
+
+    // A scalar key and a string key are both TypeMismatch through this
+    // accessor, whatever the index.
+    let wrong_type: &[(ffi::ora_metadata_key_t, &str)] = &[
+        (
+            ffi::ora_metadata_key_t_ORA_METADATA_KEY_GPIO_STATUS,
+            "GPIO_STATUS",
+        ),
+        (ffi::ora_metadata_key_t_ORA_METADATA_KEY_HW_REV, "HW_REV"),
+    ];
+    for (key, label) in wrong_type {
+        let (result, _) = emu.get_metadata_uint_at(*key, 0);
+        if result != OraResult::TypeMismatch {
+            errors.push(format!(
+                "{} via uint_at: expected TypeMismatch, got {:?}",
+                label, result
+            ));
+        }
+    }
+
+    // Unknown / sentinel keys are NOT_SUPPORTED, as through the other
+    // accessors - the key space is one space, whichever accessor asks.
+    let unknown: &[(ffi::ora_metadata_key_t, &str)] = &[
+        (ffi::ora_metadata_key_t_ORA_METADATA_KEY_INVALID, "INVALID"),
+        (ffi::ora_metadata_key_t_ORA_METADATA_KEY_NONE, "NONE"),
+    ];
+    for (key, label) in unknown {
+        let (result, _) = emu.get_metadata_uint_at(*key, 0);
+        if result != OraResult::NotSupported {
+            errors.push(format!(
+                "{}: expected NotSupported, got {:?}",
+                label, result
+            ));
+        }
+    }
+
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors.join("; "))
+    }
 }
 
 /// Verify the options the firmware reports being compiled with.

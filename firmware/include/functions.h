@@ -67,6 +67,7 @@ void enter_bootloader(void);
 void platform_logging(void);
 void setup_usb_controller(void);
 void setup_usb_pll(void);
+void setup_timer0(void);
 void setup_adc(void);
 void setup_status_led(void);
 void blink_pattern(uint32_t on_time, uint32_t off_time, uint8_t repeats);
@@ -165,6 +166,9 @@ void irq_handler_timer0_irq_0(void);
 void irq_handler_usbctrl_irq(void);
 ora_result_t ora_get_ram_slot_info(uint8_t ram_slot, uint32_t *addr_out, uint32_t *size_out, uint32_t *rom_type_out);
 ora_result_t ora_get_active_ram_slot(uint8_t *ram_slot_out);
+// Also the firmware's own source of clk_ref, used by setup_timer0() to divide
+// it down to the microsecond tick.
+uint32_t ora_get_clkref_mhz(void);
 #if !REAL_HARDWARE
 uint8_t *sram_to_host(uint32_t addr);
 // Sets the SRAM buffer pointer used by sram_to_host().  Call after

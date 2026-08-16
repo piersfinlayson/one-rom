@@ -13,6 +13,7 @@
 
 use crate::Scenario;
 
+pub mod aux;
 pub mod control;
 pub mod framing;
 pub mod knock;
@@ -445,6 +446,136 @@ pub static SCENARIOS: &[Scenario] = &[
         name: "conformance.pipes.query_commands_not_valid_in_command_mode",
         spec_ref: "Group 0x04 — Pipes (command-response mode only)",
         run: pipes::query_commands_not_valid_in_command_mode,
+    },
+    Scenario {
+        name: "conformance.aux.get_aux_capability",
+        spec_ref: "Group 0x05 — GET_AUX_CAPABILITY; GET_AUX_CAPABILITY Response Format",
+        run: aux::get_aux_capability,
+    },
+    Scenario {
+        name: "conformance.aux.group_info_describes_every_group",
+        spec_ref: "Group 0x05 — GET_AUX_GROUP_INFO; Auxiliary Pin Group Types",
+        run: aux::group_info_describes_every_group,
+    },
+    Scenario {
+        name: "conformance.aux.pin_info_reports_flags",
+        spec_ref: "GET_AUX_PIN_INFO Response Format",
+        run: aux::pin_info_reports_flags,
+    },
+    Scenario {
+        name: "conformance.aux.one_rom_withholds_pins_it_is_serving_with",
+        spec_ref: "One ROM policy, not RBCP — GET_AUX_PIN_INFO flags bit 0",
+        run: aux::one_rom_withholds_pins_it_is_serving_with,
+    },
+    Scenario {
+        name: "conformance.aux.queries_reject_an_absent_group_or_pin",
+        spec_ref: "Group 0x05 — Auxiliary I/O (group or pin not one the device exposes)",
+        run: aux::queries_reject_an_absent_group_or_pin,
+    },
+    Scenario {
+        name: "conformance.aux.query_commands_need_room_for_their_answer",
+        spec_ref: "Group 0x05 — Auxiliary I/O (data section under 8 bytes)",
+        run: aux::query_commands_need_room_for_their_answer,
+    },
+    Scenario {
+        name: "conformance.aux.not_valid_in_command_mode",
+        spec_ref: "Group 0x05 — Auxiliary I/O (command-response mode only)",
+        run: aux::not_valid_in_command_mode,
+    },
+    Scenario {
+        name: "conformance.aux.argument_counts_are_consumed_exactly",
+        spec_ref: "Command Framing — Command Mode Constraint (Group 0x05)",
+        run: aux::argument_counts_are_consumed_exactly,
+    },
+    Scenario {
+        name: "conformance.aux.set_aux_drives_and_releases_a_pin",
+        spec_ref: "Group 0x05 — SET_AUX; Auxiliary Pin States",
+        run: aux::set_aux_drives_and_releases_a_pin,
+    },
+    Scenario {
+        name: "conformance.aux.pin_info_and_set_aux_agree_on_drivability",
+        spec_ref: "Group 0x05 — SET_AUX (the pin is not drivable); GET_AUX_PIN_INFO flags bit 0",
+        run: aux::pin_info_and_set_aux_agree_on_drivability,
+    },
+    Scenario {
+        name: "conformance.aux.set_aux_holds_before_completing",
+        spec_ref: "Group 0x05 — SET_AUX (the device times the hold)",
+        run: aux::set_aux_holds_before_completing,
+    },
+    Scenario {
+        name: "conformance.aux.set_aux_zero_hold_completes_at_once",
+        spec_ref: "Auxiliary Pin States — a hold of zero holds until a subsequent SET_AUX",
+        run: aux::set_aux_zero_hold_completes_at_once,
+    },
+    Scenario {
+        name: "conformance.aux.set_aux_rejects_an_undefined_state",
+        spec_ref: "Group 0x05 — SET_AUX (state is not a defined value)",
+        run: aux::set_aux_rejects_an_undefined_state,
+    },
+    Scenario {
+        name: "conformance.aux.set_aux_validates_after_only_with_a_hold",
+        spec_ref: "Group 0x05 — SET_AUX (hold is non-zero and after is not a defined value)",
+        run: aux::set_aux_validates_after_only_with_a_hold,
+    },
+    Scenario {
+        name: "conformance.aux.set_aux_accepts_a_hold_of_the_reported_maximum",
+        spec_ref: "Group 0x05 — SET_AUX (hold exceeds the maximum reported)",
+        run: aux::set_aux_accepts_a_hold_of_the_reported_maximum,
+    },
+    Scenario {
+        name: "conformance.aux.set_aux_rejects_a_hold_above_the_maximum",
+        spec_ref: "Group 0x05 — SET_AUX (hold exceeds the maximum reported)",
+        run: aux::set_aux_rejects_a_hold_above_the_maximum,
+    },
+    Scenario {
+        name: "conformance.aux.pin_state_survives_leaving_command_response_mode",
+        spec_ref: "Group 0x05 — Auxiliary I/O (a pin's state persists)",
+        run: aux::pin_state_survives_leaving_command_response_mode,
+    },
+    Scenario {
+        name: "conformance.aux.pin_state_survives_rbcp_reset",
+        spec_ref: "Group 0x05 — Auxiliary I/O (a pin's state persists across RBCP_RESET)",
+        run: aux::pin_state_survives_rbcp_reset,
+    },
+    Scenario {
+        name: "conformance.aux.set_aux_and_exit_writes_no_header_and_exits",
+        spec_ref: "Group 0x05 — SET_AUX_AND_EXIT",
+        run: aux::set_aux_and_exit_writes_no_header_and_exits,
+    },
+    Scenario {
+        name: "conformance.aux.terminal_commands_hold_before_exiting",
+        spec_ref: "Group 0x05 — SET_AUX_AND_EXIT, SET_AUX_SWITCH_EXIT (the device times the hold)",
+        run: aux::terminal_commands_hold_before_exiting,
+    },
+    Scenario {
+        name: "conformance.aux.set_aux_switch_exit_switches_and_exits",
+        spec_ref: "Group 0x05 — SET_AUX_SWITCH_EXIT; SET_AUX_SWITCH_EXIT Ordering",
+        run: aux::set_aux_switch_exit_switches_and_exits,
+    },
+    Scenario {
+        name: "conformance.aux.set_aux_switch_exit_rejects_reserved_flags",
+        spec_ref: "SET_AUX_SWITCH_EXIT Ordering — bits 7:1 reserved",
+        run: aux::set_aux_switch_exit_rejects_reserved_flags,
+    },
+    Scenario {
+        name: "conformance.aux.set_aux_switch_exit_slot_aa_neither_sets_nor_switches",
+        spec_ref: "Group 0x05 — SET_AUX_SWITCH_EXIT (an A6 value of 0xAA is invalid)",
+        run: aux::set_aux_switch_exit_slot_aa_neither_sets_nor_switches,
+    },
+    Scenario {
+        name: "conformance.aux.no_uptime_offers_no_timed_holds",
+        spec_ref: "GET_AUX_CAPABILITY Response Format — max_hold of zero",
+        run: aux::no_uptime_offers_no_timed_holds,
+    },
+    Scenario {
+        name: "conformance.aux.groups_stay_consistent_without_indexed_metadata",
+        spec_ref: "Group 0x05 — Auxiliary I/O (groups are contiguous and start from zero)",
+        run: aux::groups_stay_consistent_without_indexed_metadata,
+    },
+    Scenario {
+        name: "conformance.aux.no_groups_without_the_gpio_calls",
+        spec_ref: "Group 0x05 — Auxiliary I/O (a device exposing no auxiliary pins)",
+        run: aux::no_groups_without_the_gpio_calls,
     },
     Scenario {
         name: "conformance.reset.group_and_command_bytes_match",

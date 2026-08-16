@@ -185,8 +185,20 @@ fn run_slot(
         tests::info::test_metadata_uint(&emulator, config),
     );
     report.add(
+        "metadata_uint_at",
+        tests::info::test_metadata_uint_at(&emulator, config, board, fw_version, base_dir),
+    );
+    report.add(
         "compile_options",
         tests::info::test_compile_options(&emulator, base_dir),
+    );
+    report.add(
+        "plugin_uptime_ms",
+        tests::time::test_plugin_uptime_ms(&emulator),
+    );
+    report.add(
+        "plugin_uptime_raw_read",
+        tests::time::test_plugin_uptime_raw_read(&emulator),
     );
 
     // Lookup

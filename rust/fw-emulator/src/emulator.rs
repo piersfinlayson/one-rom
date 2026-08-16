@@ -886,6 +886,75 @@ impl Emulator {
         (r, v)
     }
 
+    /// `ORA_ID_GET_METADATA_UINT_AT`, reading element `index` of an
+    /// array-valued key.
+    pub fn get_metadata_uint_at(
+        &self,
+        key: ffi::ora_metadata_key_t,
+        index: u32,
+    ) -> (OraResult, Option<u32>) {
+        let mut val: u32 = 0;
+        let r = plugin_call!(
+            ffi::api_id_t_ORA_ID_GET_METADATA_UINT_AT,
+            ffi::ora_get_metadata_uint_at_fn_t,
+            key,
+            index,
+            &mut val as *mut u32
+        );
+        let r = OraResult::from(r);
+        let v = r.is_ok().then_some(val);
+        (r, v)
+    }
+
+    /// See [`Self::get_compile_option_uint_null_out`].
+    pub fn get_metadata_uint_at_null_out(
+        &self,
+        key: ffi::ora_metadata_key_t,
+        index: u32,
+    ) -> OraResult {
+        OraResult::from(plugin_call!(
+            ffi::api_id_t_ORA_ID_GET_METADATA_UINT_AT,
+            ffi::ora_get_metadata_uint_at_fn_t,
+            key,
+            index,
+            std::ptr::null_mut::<u32>()
+        ))
+    }
+
+    /// `ORA_ID_GET_PLUGIN_UPTIME_MS`.
+    pub fn get_plugin_uptime_ms(&self) -> u32 {
+        plugin_call!(
+            ffi::api_id_t_ORA_ID_GET_PLUGIN_UPTIME_MS,
+            ffi::ora_get_plugin_uptime_ms_fn_t
+        )
+    }
+
+    /// Place the microsecond counter behind `ORA_ID_GET_PLUGIN_UPTIME_MS` at `us`.
+    ///
+    /// The count is the harness's, not a device's - there is no TIMER0 in this
+    /// process - so a test can put it anywhere, including either side of the
+    /// 49.7 day wrap, without waiting for wall time.
+    pub fn set_timer_us(&self, us: u64) {
+        unsafe { ffi::stub_set_timer_us(us) };
+    }
+
+    /// Move the microsecond counter behind `ORA_ID_GET_PLUGIN_UPTIME_MS` on by
+    /// `delta_us`.
+    pub fn advance_timer_us(&self, delta_us: u64) {
+        unsafe { ffi::stub_advance_timer_us(delta_us) };
+    }
+
+    /// Script the counter's value across successive reads of its halves, one
+    /// entry consumed per half-read, holding at the last entry once spent.
+    ///
+    /// The firmware reads the high half, the low half, then the high half
+    /// again, retrying while the high half moved. Scripting a change part way
+    /// through that sequence is the only way to exercise the retry - on a
+    /// device the high half moves once every 71 minutes.
+    pub fn set_timer_raw_script(&self, values: &[u64]) {
+        unsafe { ffi::stub_set_timer_raw_script(values.as_ptr(), values.len() as u32) };
+    }
+
     /// `ORA_ID_GPIO_QUERY`, telling the firmware the caller's structure is
     /// `caller_size` bytes.
     ///

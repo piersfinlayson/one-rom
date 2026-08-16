@@ -36,6 +36,32 @@ Three things follow from the pipe being the log channel rather than a channel of
 
 Pipes need **firmware v0.7.2 or later**, where the plugin logging API arrived.  On older firmware the plugin runs exactly as before and `GET_PIPE_CAPABILITY` reports no pipes, which the specification provides for — a host should query it before writing, as it should on any device.
 
+## Driving One ROM's pins
+
+RBCP's Auxiliary I/O group lets the host drive and read device pins over the ROM bus, so a wire from a One ROM pad can reach a reset line, a drive, a relay or an indicator and the host can operate it from software.  RBCP describes mechanism only — a pin number, a level, a duration — because the device has no idea what is on the far end of the wire.
+
+Three pin groups are exposed, each with a type byte a host reads from `GET_AUX_GROUP_INFO`:
+
+| Type | Group | Pins |
+|------|-------|------|
+| `0x01` | GPIO | Every GPIO on the running RP2350 variant, numbered as the datasheet numbers them — 0 to 29 on an A, 0 to 47 on a B |
+| `0x80` | Image select | The image select pads, in the order the board's metadata lists them: pin 0 is SEL0 |
+| `0x81` | X | The X expansion pads, X1 then X2 |
+
+`0x80` and `0x81` are this implementation's own values, from the range RBCP reserves for exactly that (`0x80`–`0xFE`).  They are not portable to another RBCP device, and another device may use the same two values for something else entirely.  What they buy a host is that they *are* portable across One ROM boards: SEL1 means SEL1 on every board that has one, while the GPIO behind it changes from revision to revision.
+
+**Groups are numbered densely, so read the type rather than assuming an index.**  A board with no X pads — every 32- and 40-pin board, and the earlier 28-pin revisions — exposes two groups, not three, and the group a host would find at index 2 elsewhere is simply not there.
+
+A pin is reported drivable only where One ROM is using none of it.  That means the whole address, chip select and data set of the *active* slot is off limits, and so are the board's status LED, Neopixel, VBUS and external flash chip select pins.  Switching slots can change the answer, since a GPIO that is an address line for one ROM type is free for another.
+
+An X pad can reach two GPIOs on some boards.  Both are the same electrical net, so the pin is drivable only if both are free, and setting it drives both.
+
+`SET_AUX` with a non-zero hold does not complete until the hold has elapsed and the `after` state has been applied, so a host seeing the command complete knows the pin reached its final state.  This plugin accepts holds up to the protocol's maximum of 255 units, 2.55 seconds.  **RBCP is unresponsive for the whole of a hold** — the plugin has no task loop, so it waits in the command handler.
+
+A pin keeps whatever state it was left in when the session ends, and across `RBCP_RESET`.  Only a One ROM reset restores it.
+
+Auxiliary I/O is built on the GPIO API added in **firmware v0.7.1**, which is this plugin's minimum.  Timed holds and the image select and X groups need **v0.7.2**: on v0.7.1 the device reports a `max_hold` of zero — the specification's way of saying it offers no timed holds, and a host wanting a pulse must time it itself with two commands — and exposes the GPIO group alone.  A device that can offer nothing at all reports no groups, and every other command in the group then fails.
+
 ## Address signalling
 
 RBCP command signalling (the knock and command bytes) travels on the address lines the device observes at the ROM socket — which are not always the host's own least-significant address lines.

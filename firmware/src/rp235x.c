@@ -436,6 +436,30 @@ void setup_pll(rp235x_clock_config_t *config) {
     while ((CLOCK_SYS_SELECTED & (1 << 1)) == 0);
 }
 
+// Start TIMER0 counting microseconds, so ora_get_plugin_uptime_ms() has
+// something to read.  Only the reset release and the tick source are set here -
+// no alarm is armed and no interrupt is enabled, because nothing in the
+// firmware wants to be woken by the timer.  The counter free-runs and every
+// reader derives its own value from it, which is what keeps this off the
+// firmware's RAM budget.
+//
+// Called once ROM serving is set up and before any plugin runs, so the count a
+// plugin reads starts from about the moment plugins do.  The tick generator
+// divides clk_ref down to 1 MHz, so it must in any case run after setup_clock()
+// has settled clk_ref.
+void setup_timer0(void) {
+    // Take TIMER0 out of reset
+    RESET_RESET &= ~RESET_TIMER0;
+    while (!(RESET_DONE & RESET_TIMER0));
+
+    // One tick per microsecond, from clk_ref.  The datasheet requires the tick
+    // generator be stopped before its cycle count is changed, so clear ENABLE
+    // first rather than assume nothing has started it.
+    TICKS_TIMER0_CTRL &= ~TICKS_CTRL_ENABLE;
+    TICKS_TIMER0_CYCLES = ora_get_clkref_mhz();
+    TICKS_TIMER0_CTRL |= TICKS_CTRL_ENABLE;
+}
+
 void setup_usb_controller(void) {
     // Route USB clock to PLL_USB
     CLOCK_CLK_USB_CTRL = CLOCK_USB_CTRL_ENABLE | CLOCK_USB_CTRL_AUXSRC_PLL_USB;

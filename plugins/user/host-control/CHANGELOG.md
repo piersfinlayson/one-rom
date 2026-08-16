@@ -2,6 +2,22 @@
 
 ## [0.1.3] - 2026-??-??
 
+A host can now drive and read One ROM's own pins over the ROM bus, through
+RBCP's new Auxiliary I/O group — so a wire from a One ROM pad can reach a reset
+line, a drive, a relay or an indicator, and the retro system can operate it.
+
+- Three pin groups: the GPIOs of the running RP2350 variant, the image select
+  pads, and the X expansion pads.  The last two are RBCP group types `0x80` and
+  `0x81`, this implementation's own values from the range the protocol reserves
+  for that.  See the README for how a host should read them.
+- A pin is drivable only where One ROM is using none of it, which depends on the
+  active slot.
+- A timed hold does not complete until the pin has reached its final state, and
+  RBCP is unresponsive for its duration.
+- Timed holds and the image select and X groups need firmware v0.7.2.  On
+  v0.7.1 the device reports a `max_hold` of zero, which the specification
+  defines as offering no timed holds, and exposes the GPIO group alone.
+
 A host can now send bytes out through One ROM, over RBCP's new Pipes group, and
 read them on a PC — so a retro system can get its output off the machine without
 a serial port or a display.

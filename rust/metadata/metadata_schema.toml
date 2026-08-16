@@ -928,42 +928,42 @@ name = "gpio_vbus"
 kind = "scalar"
 type = "u8"
 plugin_key = { name = "GPIO_VBUS", id = 9 }
-comment = "GPIO pin for VBUS detection. GPIO_NONE if not present."
+comment = "GPIO pin for VBUS detection. Holds the GPIO-none sentinel if not present."
 
 [[structs.fields]]
 name = "gpio_ext_flash_cs"
 kind = "scalar"
 type = "u8"
 plugin_key = { name = "GPIO_EXT_FLASH_CS", id = 10 }
-comment = "GPIO for secondary flash chip select. GPIO_NONE if no secondary flash."
+comment = "GPIO for secondary flash chip select. Holds the GPIO-none sentinel if no secondary flash."
 
 [[structs.fields]]
 name = "gpio_status"
 kind = "scalar"
 type = "u8"
 plugin_key = { name = "GPIO_STATUS", id = 3 }
-comment = "GPIO for status LED. GPIO_NONE if not present."
+comment = "GPIO for status LED. Holds the GPIO-none sentinel if not present."
 
 [[structs.fields]]
 name = "gpio_neopixel"
 kind = "scalar"
 type = "u8"
 plugin_key = { name = "GPIO_NEOPIXEL", id = 4 }
-comment = "GPIO for Neopixel LED. GPIO_NONE if not present."
+comment = "GPIO for Neopixel LED. Holds the GPIO-none sentinel if not present."
 
 [[structs.fields]]
 name = "gpio_swdio"
 kind = "scalar"
 type = "u8"
 plugin_key = { name = "GPIO_SWDIO", id = 11 }
-comment = "GPIO also connected to SWDIO. GPIO_NONE if not present."
+comment = "GPIO also connected to SWDIO. Holds the GPIO-none sentinel if not present."
 
 [[structs.fields]]
 name = "gpio_swclk"
 kind = "scalar"
 type = "u8"
 plugin_key = { name = "GPIO_SWCLK", id = 12 }
-comment = "GPIO also connected to SWCLK. GPIO_NONE if not present."
+comment = "GPIO also connected to SWCLK. Holds the GPIO-none sentinel if not present."
 
 [[structs.fields]]
 name = "reserved1"
@@ -976,9 +976,11 @@ kind = "inline_array"
 element = "u8"
 count = 7
 count_ref = "MAX_IMG_SEL_PINS"
+plugin_key = { name = "GPIO_SEL", id = 16 }
 comment = """Image select GPIO pins (MAX_IMG_SEL_PINS entries).
-Fill contiguously from index 0; GPIO_NONE terminates the list.
-Firmware infers quantity by scanning for the first GPIO_NONE."""
+Filled contiguously from index 0. An unused entry holds the GPIO-none
+sentinel, so a reader stops at the first of those rather than at the end
+of the array - the array's length is not the number of pins fitted."""
 
 [[structs.fields]]
 name = "sel_jumper_pull"
@@ -1004,9 +1006,12 @@ kind = "inline_array"
 element = "u8"
 count = 2
 count_ref = "MAX_X_PIN_GPIOS"
+plugin_key = { name = "GPIO_X1", id = 17 }
 comment = """X1 expansion pin GPIO mapping (MAX_X_PIN_GPIOS entries).
-x1[0] is GPIO_NONE if X1 is not present on this board.
-x1[1] is GPIO_NONE if X1 connects to only one GPIO."""
+Filled contiguously from index 0. An unused entry holds the GPIO-none
+sentinel, so a reader stops at the first of those rather than at the end
+of the array. Entry 0 is unused when the board has no X1 pin, entry 1
+when X1 connects to only one GPIO."""
 
 [[structs.fields]]
 name = "gpio_x2"
@@ -1014,9 +1019,12 @@ kind = "inline_array"
 element = "u8"
 count = 2
 count_ref = "MAX_X_PIN_GPIOS"
+plugin_key = { name = "GPIO_X2", id = 18 }
 comment = """X2 expansion pin GPIO mapping (MAX_X_PIN_GPIOS entries).
-x2[0] is GPIO_NONE if X2 is not present on this board.
-x2[1] is GPIO_NONE if X2 connects to only one GPIO."""
+Filled contiguously from index 0. An unused entry holds the GPIO-none
+sentinel, so a reader stops at the first of those rather than at the end
+of the array. Entry 0 is unused when the board has no X2 pin, entry 1
+when X2 connects to only one GPIO."""
 
 [[structs.fields]]
 name = "reserved2"

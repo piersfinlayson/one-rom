@@ -95,10 +95,8 @@ void gpio_init_caps(void) {
     context.gpio_set = context.ora_lookup_fn(ORA_ID_GPIO_SET);
     context.gpio_query = context.ora_lookup_fn(ORA_ID_GPIO_QUERY);
 
-    // Runtime detection, not min_fw_version, is what makes this plugin run on
-    // firmware older than the GPIO API: ora_lookup returns NULL for an ID the
-    // firmware does not implement, and the capability bits stay clear so the
-    // host never sends the commands.  The same precedent is in usb_get_serial().
+    // Without both calls the capability bits stay clear, so the host never
+    // sends the commands.
     if (context.gpio_set == NULL || context.gpio_query == NULL) {
         LOG("Firmware has no GPIO API; GPIO control unavailable");
         return;
@@ -204,7 +202,7 @@ pb_status_t gpio_handle_set(const onerom_gpio_set_args_t *args) {
     if (release != NULL) {
         release->gpio = args->gpio;
         release->after_state = args->after_state;
-        release->deadline_ms = context.timer_ms + args->duration_ms;
+        release->deadline_ms = context.get_plugin_uptime_ms() + args->duration_ms;
         release->active = 1;
         DEBUG("GPIO %u held at %u for %lums", args->gpio, args->state, args->duration_ms);
     } else if (existing != NULL) {
@@ -222,7 +220,10 @@ void gpio_handle_pending_releases(void) {
         return;
     }
 
-    uint32_t now = context.timer_ms;
+    // Read once, and only once a slot is found waiting, so an idle pass does
+    // not pay for a call into the firmware.
+    uint32_t now = 0;
+    bool now_read = false;
 
     for (uint32_t i = 0u; i < ONEROM_GPIO_RELEASES; i++) {
         gpio_release_t *release = &context.gpio_status.releases[i];
@@ -230,7 +231,12 @@ void gpio_handle_pending_releases(void) {
             continue;
         }
 
-        // Signed difference, so a timer_ms wrap part-way through a hold does not
+        if (!now_read) {
+            now = context.get_plugin_uptime_ms();
+            now_read = true;
+        }
+
+        // Signed difference, so a clock wrap part-way through a hold does not
         // defer the release by another 49.7 days.  ONEROM_GPIO_MAX_HOLD_MS keeps
         // the interval far inside the range where this is unambiguous.
         if ((int32_t)(now - release->deadline_ms) < 0) {

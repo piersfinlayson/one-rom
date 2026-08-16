@@ -8,6 +8,7 @@ Headline changes in this release:
 - Motorola S-record ROM images, alongside Intel HEX, in the programming tools, the CLI's image converter and One ROM Lab.
 - A plugin that would hard fault the device is now refused at build time instead of being flashed.
 - The CLI can tell you when a newer CLI has been released, and download it for you.
+- A host can drive and read One ROM's own pins over the ROM bus, so a retro system can reset itself, or operate whatever a wire from a One ROM pad reaches.
 
 In detail:
 - Add `onerom self`, covering the CLI's own release channel: `self check` says whether a newer CLI has been published for your platform, and `self download` fetches a published artifact — for this platform, another (`--target`), or all of them — verified against its published SHA-256.  Nothing is installed, and the CLI still performs no update check unless asked.
@@ -22,6 +23,10 @@ In detail:
 - A plugin can now ask which kinds of logging are active on its device, and how its firmware was built.
   - This required a firmware update.
 - A host can now send bytes out through One ROM over the ROM bus and read them on a PC, using the new Pipes group of the ROM Bus Control Protocol — no serial port or display needed on the retro system.  The bytes share One ROM's log channel, so its own logging is interleaved with them.
+- A host can now drive and read One ROM's own pins over the ROM bus, using the new Auxiliary I/O group of the ROM Bus Control Protocol — so a wire from a One ROM pad can reach a reset line, a disk drive, a relay or an indicator, and the retro system can operate it.  Three groups of pins are offered: the GPIOs of the running RP2350 variant, the image select pads and the X expansion pads.  A pin is offered only where One ROM is using none of it, which depends on the ROM image being served.
+- Plugins can read a millisecond clock and indexed device metadata.  The firmware starts a free-running counter once ROM serving is set up and before it launches a plugin, so a plugin can time its own work without keeping a counter of its own.  The USB plugin now takes its clock from there and no longer runs a timer interrupt.
+  - This required a firmware update.
+  - USB plugin v0.2.2 needs firmware v0.7.2 as a result, and does not load on anything older.
 - Check plugins named by a config against the images server's published compatibility window, in the CLI and Studio.  A plugin binary declares only a minimum firmware version, so USB v0.1.2 — which hard faults on firmware v0.7.0 — was previously built in without complaint.  A local or third-party plugin has nothing published to check, and an unreachable server warns rather than failing.
 - Add Motorola S-record (`srec`) as a ROM image input format, alongside Intel HEX.  A chip may set `"format": "srec"` in a config file, with the same optional `"load_address"`; the CLI exposes it as `--slot format=srec,load-address=...`, and `onerom image convert` converts between `binary`, `ihex` and `srec` in any direction.  Unwritten bytes read as `0xFF`, as for Intel HEX.
 - One ROM Lab can dump a ROM as S-records: `f:srec`, alongside the existing `ihex` and hex dump formats.
@@ -42,10 +47,10 @@ To publish:
 - CLI bin 0.4.0
 - Studio 0.2.2
 - USB plugin 0.2.2
+- USB plugin 0.2.1 must be marked `incompatible_from` v0.7.2.  v0.7.2 starts the
+  TIMER0 tick generator itself, and 0.2.1 then writes `TICKS_TIMER0_CYCLES` to an
+  already-running generator, which the RP2350 datasheet forbids.
 - host-control plugin 0.1.3
-- apio v0.2.1 — a separate repo, and a blocker: `firmware/Makefile` pins
-  `APIO_VERSION ?= v0.2.1`, so the firmware will not build until that tag
-  exists.  Tag apio before committing this.
 
 To test (on hardware, before release):
 - **The host-control plugin on firmware older than v0.7.2.**  It reports no pipes where the logging API is absent, and that path cannot be reached from this tree — every firmware built here has the API, so the emulator suite only ever exercises the other branch.  `GET_PIPE_CAPABILITY` should report a count of zero, `GET_PIPE_INFO` and `PIPE_WRITE` should fail, and everything else in RBCP should be unaffected.
@@ -58,6 +63,17 @@ To test (on hardware, before release):
 - Analyze a Fire from Studio with a debug probe attached — the path that panicked before v0.1.3 and was fixed in a probe-rs fork, now on upstream probe-rs 0.32.
 
 To do (before release):
+- **Auxiliary I/O pin movement is untested.**  `ora_gpio_set` wraps every register
+  write in `#if !defined(TEST_BUILD)`, so under a host build it validates its
+  arguments, applies the in-use gate and logs, without touching a register or the
+  emulator.  No RBCP conformance test can therefore observe a pin being driven,
+  released or held, and the aux suite asserts on protocol responses alone.  epio
+  already reports driven pins via `epio_read_driven_pins()` — what is missing is
+  anything on the firmware side driving the emulated pin under test.  Whether
+  epio can represent an SIO-driven output level from the MCU side is unestablished,
+  and decides whether this is a firmware-only change or needs an epio release.
+  The precise list of what goes unverified is the "What this suite does not verify"
+  section in the `aux.rs` module header.
 - Web programmer S-record support, in `one-rom-wasm` and `one-rom-site`.  The format picker is driven by `file_formats()` and will list `srec` on its own, but the site's `accept` list, its extension auto-select and its load-address reveal (currently shown for `ihex` only) all need widening.
 - Drop the libudev/libusb build requirement, which Studio no longer has: `CLAUDE.md`, the comment in `ci/rust-lint.sh`, and the comment and two `apt-get` lines in `ci.yml`.  probe-rs 0.32 takes hidapi's pure-Rust `basic-udev` backend in place of `libudev-sys`, and nothing in the graph has wanted libusb for some time.  Verified on Debian — with both hidden from `pkg-config`, Studio builds and links clean, where probe-rs 0.30 failed in `libudev-sys`'s build script.  Leave `ci/docker/Dockerfile` until it is checked separately; that image builds firmware, not Studio.  Do this only once the debug probe test above has passed, since falling back to the fork would reinstate the requirement.
 

@@ -12,7 +12,6 @@
 #include "picobootx.h"
 
 // Optimisations:
-// - Move timer handler to library and see if it can be better optimised
 // - Add IRQ prioritisation a la SDK
 
 // Define this plugin's attribues
@@ -36,7 +35,7 @@ const ora_plugin_header_t ora_plugin_header = {
     .properties1 = ORA_PROPERTY1_SUPPORTS_USB_RUNNING | ORA_PROPERTY1_SUPPORTS_YIELD,
     .min_fw_major_version = 0,
     .min_fw_minor_version = 7,
-    .min_fw_patch_version = 0,
+    .min_fw_patch_version = 2,
     .reserved = {0},
 };
 
@@ -74,39 +73,13 @@ void init_data_bss(void) {
     }
 }
 
-// Timer0 IRQ handler to increment the timer_ms field in our plugin context
-void timer0_irq_0_handler(void) {
-    TIMER0_INTR = (1 << 0);
-    TIMER0_ALARM0 = TIMER0_TIMELR + 1000;
-    context.timer_ms++;
-}
-
-// Implement a function to get the current time in milliseconds, which the
-// USB stack can use for timing.
 uint32_t board_millis(void) {
-    return context.timer_ms;
+    return context.get_plugin_uptime_ms();
 }
 
 // tinyusb's name for it
 uint32_t tusb_time_millis_api(void) {
     return board_millis();
-}
-
-void setup_timer0(uint32_t clkref_mhz) {
-    // Release TIMER0 from reset
-    RESET_RESET &= ~RESET_TIMER0;
-    while (!(RESET_DONE & RESET_TIMER0));
-
-    // Set up TICKS
-    TICKS_TIMER0_CYCLES = clkref_mhz;
-    TICKS_TIMER0_CTRL = 1; 
-
-    // Enable alarm 0 interrupt
-    // ORA_IRQ_TIMER0_IRQ_0 corresponds to bit 0 in TIMER0_INTE
-    TIMER0_INTE |= (1 << (ORA_IRQ_TIMER0_IRQ_0 % 4));
-
-    // Fire first alarm 1ms from now
-    TIMER0_ALARM0 = TIMER0_TIMELR + 1000;
 }
 
 void usb_plugin_task(void) {
@@ -126,9 +99,8 @@ void usb_plugin_task(void) {
 
     led_handle_ongoing_led_modes();
 
-    // ONEROM_CMD_GPIO_SET is applied in the dispatch handler; only the timed
-    // release of a bounded hold is deferred to here, where the millisecond
-    // timer can be checked.
+    // ONEROM_CMD_GPIO_SET is applied in the dispatch handler.  Only the timed
+    // release of a bounded hold is deferred to here.
     gpio_handle_pending_releases();
 }
 
@@ -140,9 +112,7 @@ void usb_plugin_task(void) {
 //
 // The metadata getter is looked up per call rather than held, because both
 // callers are occasional - a descriptor request and a terminal attaching - and
-// a held pointer would cost static RAM the plugin has little of.  Its absence
-// on firmware that predates it (0.7.1) is handled rather than required, so
-// min_fw is unaffected: such a device has always presented the chip ID.
+// a held pointer would cost static RAM the plugin has little of.
 size_t usb_get_serial(char *out, size_t out_size) {
     if (out == NULL || out_size == 0) {
         return 0;
@@ -200,10 +170,8 @@ void usb_init(ora_lookup_fn_t ora_lookup_fn) {
     context.log = ora_lookup_fn(ORA_ID_LOG);
     context.debug = ora_lookup_fn(ORA_ID_DEBUG_LOG);
     context.err_log = ora_lookup_fn(ORA_ID_ERR_LOG);
-    ora_register_irq_fn_t register_irq = ora_lookup_fn(ORA_ID_REGISTER_IRQ);
     ora_setup_usb_fn_t setup_usb = ora_lookup_fn(ORA_ID_SETUP_USB);
-    ora_enable_irq_fn_t enable_irq = ora_lookup_fn(ORA_ID_ENABLE_IRQ);
-    ora_get_clkref_mhz_fn_t get_clkref_mhz = ora_lookup_fn(ORA_ID_GET_CLKREF_MHZ);
+    context.get_plugin_uptime_ms = ora_lookup_fn(ORA_ID_GET_PLUGIN_UPTIME_MS);
     context.set_status_led = ora_lookup_fn(ORA_ID_SET_STATUS_LED);
     context.get_active_ram_slot = ora_lookup_fn(ORA_ID_GET_ACTIVE_RAM_SLOT);
     context.get_ram_slot_info = ora_lookup_fn(ORA_ID_GET_RAM_SLOT_INFO);
@@ -224,12 +192,6 @@ void usb_init(ora_lookup_fn_t ora_lookup_fn) {
     // Set up USB.  tinyusb will register its own IRQ handler, using the API
     // functions we provide.
     setup_usb();
-
-    // Set up timer0
-    register_irq(ORA_IRQ_TIMER0_IRQ_0, timer0_irq_0_handler);
-    uint32_t clkref_mhz = get_clkref_mhz();
-    setup_timer0(clkref_mhz);
-    enable_irq(ORA_IRQ_TIMER0_IRQ_0, 1);
 
     usb_picoboot_init(EPNUM_VENDOR_OUT, EPNUM_VENDOR_IN);
 

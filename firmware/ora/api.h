@@ -725,6 +725,20 @@ typedef enum {
      */
     ORA_ID_LOG_CATEGORY_ENABLED      = 0x0000003A,
 
+    /**
+     * @brief Get milliseconds elapsed since plugins were started
+     * @sa ora_get_plugin_uptime_ms_fn_t
+     * @since firmware 0.7.2
+     */
+    ORA_ID_GET_PLUGIN_UPTIME_MS      = 0x0000003B,
+
+    /**
+     * @brief Get one element of an array-valued unsigned metadata datum
+     * @sa ora_get_metadata_uint_at_fn_t
+     * @since firmware 0.7.2
+     */
+    ORA_ID_GET_METADATA_UINT_AT      = 0x0000003C,
+
     /** Invalid API identifier */
     ORA_ID_INVALID = 0xFFFFFFFF,
 } api_id_t;
@@ -1517,6 +1531,23 @@ typedef void (*ora_enable_irq_fn_t)(ora_irq_t irq, uint8_t enable);
 typedef uint32_t (*ora_get_clkref_mhz_fn_t)(void);
 
 /**
+ * @brief Get milliseconds elapsed since plugins were started
+ * @sa ORA_ID_GET_PLUGIN_UPTIME_MS
+ *
+ * The counter starts once ROM serving is set up and before any plugin is
+ * launched, so zero is the moment plugins began rather than power-on.
+ *
+ * The value wraps to zero every 49.7 days. Compare timestamps by unsigned
+ * subtraction - @c (now - then) - which stays correct across the wrap for any
+ * interval shorter than that. Comparing two timestamps with @c < or @c > does
+ * not.
+ *
+ * @return Milliseconds since the firmware started the counter
+ * @since firmware 0.7.2
+ */
+typedef uint32_t (*ora_get_plugin_uptime_ms_fn_t)(void);
+
+/**
  * @brief Get a pointer to the runtime info structure
  * @sa ORA_ID_GET_RUNTIME_INFO
  * 
@@ -2262,6 +2293,38 @@ typedef ora_result_t (*ora_get_metadata_str_fn_t)(ora_metadata_key_t key, const 
 typedef ora_result_t (*ora_get_metadata_uint_fn_t)(ora_metadata_key_t key, uint32_t *out);
 
 /**
+ * @brief Get one element of an array-valued unsigned metadata datum
+ * @sa ORA_ID_GET_METADATA_UINT_AT
+ *
+ * Indexed sibling of @ref ora_get_metadata_uint_fn_t over the same unified key
+ * space - a key means the same datum whichever accessor is asked for it. This
+ * accessor resolves keys whose datum is an array of unsigned values, such as
+ * the image select and X expansion pin maps (ORA_METADATA_KEY_GPIO_SEL,
+ * ORA_METADATA_KEY_GPIO_X1, ORA_METADATA_KEY_GPIO_X2).
+ *
+ * There is no companion call reporting an array's length. A caller reads
+ * upwards from index 0 until the call stops returning @c ORA_RESULT_OK, which
+ * needs no sentinel value in the data and so works whatever the elements mean.
+ * Learning a length that way costs one call per element, plus one.
+ *
+ * @param key   The metadata datum to retrieve. @sa ora_metadata_key_t
+ * @param index Element to read, counting from 0.
+ * @param out   Output pointer to receive the value. Must not be NULL.
+ * @return ORA_RESULT_OK on success;
+ *         ORA_RESULT_NOT_SUPPORTED if @p key is unknown to this firmware;
+ *         ORA_RESULT_TYPE_MISMATCH if @p key is valid but not an array of
+ *         unsigned values;
+ *         ORA_RESULT_INVALID_ARG if @p out is NULL, or @p index is beyond the
+ *         last element of the array.
+ * @since firmware 0.7.2
+ */
+typedef ora_result_t (*ora_get_metadata_uint_at_fn_t)(
+    ora_metadata_key_t key,
+    uint32_t index,
+    uint32_t *out
+);
+
+/**
  * @brief Demangle a captured physical data byte back to a logical byte
  * @sa ORA_ID_DEMANGLE_DATA
  *
@@ -2356,9 +2419,11 @@ typedef ora_result_t (*ora_yield_fn_t)(uint8_t *was_paused_out);
  * correspond to the chip-visible address space and data values, with all
  * GPIO address scrambling and data pin permutation reversed.
  *
- * @param[in]  slot    RAM slot index (0-based) to read from.  Must
- *                     identify a slot that has been allocated via the
- *                     firmware slot management API.
+ * @param[in]  slot    RAM slot index (0-based) to read from.  Must be less
+ *                     than the count reported by
+ *                     @ref ora_get_ram_slot_count_fn_t.  A slot that has
+ *                     never been populated reads as uninitialised SRAM
+ *                     rather than failing.
  * @param[in]  offset  Logical byte offset within the slot, in the range
  *                     [0, chip_size).  @c chip_size is the size of the
  *                     ROM image in logical bytes as reported by the slot
@@ -2376,8 +2441,7 @@ typedef ora_result_t (*ora_yield_fn_t)(uint8_t *was_paused_out);
  * @retval ORA_RESULT_INVALID_ARG  @p buf is @c NULL, @p len is zero, or
  *                                  @p offset + @p len exceeds the slot's
  *                                  chip_size.
- * @retval ORA_RESULT_NOT_FOUND    @p slot is out of range or has not been
- *                                  allocated.
+ * @retval ORA_RESULT_INVALID_SLOT @p slot is out of range.
  *
  * @sa ORA_ID_READ_RAM_ROM_SLOT
  * @sa ora_reprogram_ram_rom_slot_fn_t

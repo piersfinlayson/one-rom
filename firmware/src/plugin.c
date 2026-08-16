@@ -305,6 +305,59 @@ uint32_t ora_get_clkref_mhz(void) {
     return (CLKREF_MHZ / clk_ref_div);
 }
 
+// The two halves of the raw microsecond counter.  Split out so that the
+// assembly below is one piece of code in both builds: on a device these read
+// the registers, and under a test build they draw from a scripted sequence,
+// which is what lets a test drive a high-half change a device only produces
+// once every 71 minutes.
+#if !defined(TEST_BUILD)
+static inline uint32_t timer_raw_hi(void) {
+    return TIMER0_TIMERAWH;
+}
+
+static inline uint32_t timer_raw_lo(void) {
+    return TIMER0_TIMERAWL;
+}
+#else // TEST_BUILD
+static inline uint32_t timer_raw_hi(void) {
+    return stub_timer_raw_hi();
+}
+
+static inline uint32_t timer_raw_lo(void) {
+    return stub_timer_raw_lo();
+}
+#endif // !TEST_BUILD
+
+// Assemble a consistent 64-bit microsecond count from the two halves.
+//
+// TIMERAWH/TIMERAWL, not the TIMELR/TIMEHR pair: reading TIMELR latches the
+// high half, and that latch is one piece of peripheral state shared by both
+// cores, so two plugins reading the time would hand each other the wrong high
+// half.  The raw registers have no read side effects, at the cost of the
+// reader assembling a consistent pair itself.
+//
+// Read the high half either side of the low one and retry while it moved.  On
+// exit the low half was read between two reads of an unchanged high half, so
+// the pair belongs to a single instant.
+static uint64_t timer_read_us64(void) {
+    uint32_t hi = timer_raw_hi();
+    uint32_t lo = timer_raw_lo();
+    uint32_t hi_again = timer_raw_hi();
+    while (hi_again != hi) {
+        hi = hi_again;
+        lo = timer_raw_lo();
+        hi_again = timer_raw_hi();
+    }
+    return ((uint64_t)hi << 32) | lo;
+}
+
+uint32_t ora_get_plugin_uptime_ms(void) {
+    // Divide the full 64-bit microsecond count, then truncate.  That is what
+    // puts the wrap at 49.7 days.  Dividing a 32-bit microsecond read instead
+    // would wrap every 71 minutes.
+    return (uint32_t)(timer_read_us64() / 1000u);
+}
+
 uint32_t ora_get_chip_size_from_type(uint32_t chip_type) {
     if (chip_type < NUM_CHIP_TYPES) {
         return onerom_chip_type_sizes[chip_type];
@@ -724,6 +777,29 @@ ora_result_t ora_get_metadata_uint(ora_metadata_key_t key, uint32_t *out) {
     // firmware fall through to the default below.
     switch (key) {
         ONEROM_METADATA_UINT_CASES(out)
+        default:
+            return ORA_RESULT_NOT_SUPPORTED;
+    }
+}
+
+ora_result_t ora_get_metadata_uint_at(
+    ora_metadata_key_t key,
+    uint32_t index,
+    uint32_t *out
+) {
+    if (out == NULL) {
+        return ORA_RESULT_INVALID_ARG;
+    }
+
+    // The per-key arms are generated from the schema `plugin_key` fields and
+    // expanded from ONEROM_METADATA_UINT_AT_CASES (onerom_metadata.h). A key
+    // whose datum is an array of unsigned elements resolves element `index`,
+    // zero-extended to uint32_t, or returns ORA_RESULT_INVALID_ARG if `index`
+    // is past the end. Any key that is not such an array returns
+    // ORA_RESULT_TYPE_MISMATCH. Keys unknown to this firmware fall through to
+    // the default below.
+    switch (key) {
+        ONEROM_METADATA_UINT_AT_CASES(index, out)
         default:
             return ORA_RESULT_NOT_SUPPORTED;
     }
@@ -1473,6 +1549,8 @@ void *ora_fn_lookup(api_id_t id) {
             return ora_enable_irq;
         case ORA_ID_GET_CLKREF_MHZ:
             return ora_get_clkref_mhz;
+        case ORA_ID_GET_PLUGIN_UPTIME_MS:
+            return ora_get_plugin_uptime_ms;
         case ORA_ID_GET_CHIP_SIZE_FROM_TYPE:
             return ora_get_chip_size_from_type;
         case ORA_ID_IS_PIN_OUTPUT:
@@ -1534,6 +1612,8 @@ void *ora_fn_lookup(api_id_t id) {
             return ora_get_metadata_str;
         case ORA_ID_GET_METADATA_UINT:
             return ora_get_metadata_uint;
+        case ORA_ID_GET_METADATA_UINT_AT:
+            return ora_get_metadata_uint_at;
 
         case ORA_ID_GPIO_SET:
             return ora_gpio_set;
@@ -1783,7 +1863,12 @@ __attribute__((noinline)) ora_plugin_entry_t launch_plugins_inner(uint8_t *launc
 }
 
 void ora_launch_plugins(void) {
+    // Plugin-facing setup, in the window where core 0 is in firmware code and
+    // core 1 is not yet running.  The timer starts here so a plugin reading
+    // ora_get_plugin_uptime_ms() sees time measured from just before launch.
     onerom_rtt_plugins_init();
+    DEBUG("Init timer");
+    setup_timer0();
 
     uint8_t launched_plugins = 0;
     ora_plugin_entry_t core0_entry = launch_plugins_inner(&launched_plugins);
