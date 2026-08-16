@@ -124,12 +124,20 @@
 
 #define GPIO_STATUS_INFROMPAD_BIT  17
 #define GPIO_STATUS_OETOPAD_BIT    13
-
-#define GPIO_IS_OUTPUT(pin)  ((GPIO_STATUS(pin) >> GPIO_STATUS_OETOPAD_BIT) & 1)
+#define GPIO_STATUS_OUTTOPAD_BIT   9
 
 #define GPIO_STATUS(pin)    (*(volatile uint32_t*)(IO_BANK0_BASE + GPIO_STATUS_OFFSET + pin*GPIO_SPACING))
 #define GPIO_CTRL(pin)      (*(volatile uint32_t*)(IO_BANK0_BASE + GPIO_CTRL_OFFSET + pin*GPIO_SPACING))
-#define GPIO_READ(pin)      ((GPIO_STATUS(pin) >> GPIO_STATUS_INFROMPAD_BIT) & 1)
+
+// Fields of a GPIOx_STATUS value already read, so a caller wanting more than
+// one of them reads the register once.  INFROMPAD is gated on the pad's input
+// enable, OUTTOPAD is not.
+#define GPIO_STATUS_OETOPAD(status)    (((status) >> GPIO_STATUS_OETOPAD_BIT) & 1)
+#define GPIO_STATUS_INFROMPAD(status)  (((status) >> GPIO_STATUS_INFROMPAD_BIT) & 1)
+#define GPIO_STATUS_OUTTOPAD(status)   (((status) >> GPIO_STATUS_OUTTOPAD_BIT) & 1)
+
+#define GPIO_IS_OUTPUT(pin)  GPIO_STATUS_OETOPAD(GPIO_STATUS(pin))
+#define GPIO_READ(pin)       GPIO_STATUS_INFROMPAD(GPIO_STATUS(pin))
 
 #define GPIO_CTRL_FUNC_SIO      0x05
 #define GPIO_CTRL_FUNC_PIO0     0x06

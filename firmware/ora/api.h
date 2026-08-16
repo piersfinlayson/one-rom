@@ -2553,7 +2553,14 @@ typedef struct {
     /** @brief What One ROM is using this GPIO for. @sa ora_gpio_use_t */
     uint8_t use;
 
-    /** @brief The level currently present on the pad, 0 or 1 */
+    /**
+     * @brief The GPIO's level, 0 or 1
+     *
+     * On a pin whose output driver is enabled this is the level the pin is
+     * driving, and on any other pin the level the pad reads back. A driven pin
+     * that something external is fighting therefore reports what One ROM is
+     * driving rather than what is on the wire.
+     */
     uint8_t level;
 
     /** @brief 1 if the pin's output driver is currently enabled, 0 if not */
@@ -2611,9 +2618,9 @@ typedef ora_result_t (*ora_gpio_set_fn_t)(
  * @sa ORA_ID_GPIO_QUERY
  * @since firmware 0.7.1
  *
- * Reports the GPIO's use, the level present on the pad, and whether its output
- * driver is enabled. There is deliberately no bulk form - a caller wanting the
- * whole device loops over this call.
+ * Reports the GPIO's use, its level and whether its output driver is enabled.
+ * All three describe the same instant. There is deliberately no bulk form - a
+ * caller wanting the whole device loops over this call.
  *
  * The caller must set @p info_out->size to its own sizeof(ora_gpio_info_t)
  * before calling; see @ref ora_gpio_info_t.

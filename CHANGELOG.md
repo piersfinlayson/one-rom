@@ -32,6 +32,8 @@ In detail:
 - One ROM Lab can dump a ROM as S-records: `f:srec`, alongside the existing `ihex` and hex dump formats.
 - Publish the CLI manual, chip type reference and compatibility reference as PDFs, in A4 and US Letter, for reading and printing away from a browser.  Each carries the version of the thing it documents rather than a repository version.
 - `onerom control led beacon` now leaves the status LED as it found it.  It previously restored the state the USB plugin had last set itself, which on a device nothing had told otherwise is off.
+- `onerom inspect gpio` reported `Level` 0 for the status LED and RGB LED pins whatever they were doing.  An output pin's level is now what it drives, rather than a pad read-back the firmware disables on those two pins.
+  - This required a firmware update.
 - **Breaking (CLI):** `--name` now names the One ROM rather than the configuration being built — it is an alias for `--instance-name`, where it was an alias for `--config-name`, which must now be spelled in full.  A command line using `--name` still runs and names the device instead.  The CLI manual now carries this release's breaking changes near the top, and the full history at the end.
 - **Breaking (Rust crates only):** `onerom_gen::FileFormat` and most of the crate's other public enums are now `#[non_exhaustive]`, so a `match` on one needs a wildcard arm; `IHEX_BLANK_BYTE` is renamed `UNWRITTEN_BYTE`, now that it is shared by both record formats, with the old name kept as a deprecated alias.  `LoadAddress` moves to a new `hexfile` module, re-exported from its old paths.
 

@@ -601,6 +601,8 @@ fn render_gpio_table(
         out.push('\n');
         out.push_str("  Dir is the pin's output driver - 'out' if enabled, 'in' if not.\n");
         out.push('\n');
+        out.push_str("  Level is what an 'out' pin is driving, and what an 'in' pin reads.\n");
+        out.push('\n');
         out.push_str(
             "  Current use is what One ROM is doing with the pin now, which can change:\n",
         );

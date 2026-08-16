@@ -691,7 +691,7 @@ Columns:
 | `GPIO` | MCU GPIO number. |
 | `Function` | Everything this GPIO is, comma-separated in a fixed order: its ROM socket signal under the image being served (`A5`, `D3`, `CS1`, `BYTE/VPP`), then the board peripheral (`Status LED`, `RGB LED`, `USB VBUS`, `ext flash CS`), then the header pad (`X1`, `X2`, `SEL_A`). `-` if the GPIO is connected to nothing. |
 | `Dir` | `out` if the pin's output driver is enabled, `in` if not. |
-| `Level` | The level currently on the pad, `0` or `1`. |
+| `Level` | The GPIO's level, `0` or `1`: what an `out` pin is driving, what an `in` pin reads. |
 | `Max V` | `5V` if the GPIO is 5V-tolerant, `3V3` if it is an RP2350 ADC pin and therefore 3.3V-only, `?` if the board is not characterised. |
 | `One ROM use` | What One ROM itself is using the GPIO for: `free`, `serving (read)`, `serving (driven)` or `system`. |
 
@@ -717,9 +717,9 @@ released; `serving (driven)` pins (the data pins) cannot be given back without a
 reboot — see [`control pin`](#control-pin).
 
 With `--verbose` (`-v`) the table is followed by a legend restating where each
-column comes from, what `Dir` means and what the `3V3`/`5V` tags mean. Nothing
-is lost without it: the cost of taking a serving pin over is stated at the point
-of action by `control pin` itself.
+column comes from, what `Dir` and `Level` mean and what the `3V3`/`5V` tags
+mean. Nothing is lost without it: the cost of taking a serving pin over is
+stated at the point of action by `control pin` itself.
 
 A board revision or ROM type this build does not recognise costs the derived
 names, not the listing: `Function` falls back to `-` (or, for a socket pin whose
@@ -731,7 +731,7 @@ pin-header descriptor, pad names come from the board's pin assignments alone and
 On a Fire 28 (rev C) serving a 27512:
 
 ```
-One ROM Fire 28 C - Firmware: v0.7.1 State: Running Serial: FC9D67248E8E8023
+One ROM Fire 28 C - Firmware: v0.7.2 State: Running Serial: 2E4A671D1C92AE5C
 
 GPIO state  ·  One ROM Fire 28 (rev C)  ·  RP235xB  ·  serving 27512
 

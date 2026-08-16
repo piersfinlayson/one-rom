@@ -1119,8 +1119,19 @@ ora_result_t ora_gpio_query(uint8_t gpio, ora_gpio_info_t *info_out) {
     info.size = caller_size;
     info.use = ora_gpio_get_use(gpio);
 #if !defined(TEST_BUILD)
-    info.level = GPIO_READ(gpio) ? 1 : 0;
-    info.is_output = GPIO_IS_OUTPUT(gpio) ? 1 : 0;
+    // One read of GPIOx_STATUS rather than one per field.  The other core's
+    // plugin can call ora_gpio_set at any point, so two reads can report a
+    // direction from one instant and a level from another - a row saying the
+    // pin is an input driving high.
+    uint32_t status = GPIO_STATUS(gpio);
+    info.is_output = GPIO_STATUS_OETOPAD(status);
+
+    // An output reports what it is driving, not what the pad reads back.  The
+    // read-back is gated on the pad's input enable, which setup_status_led()
+    // and the neopixel setup clear, so those two pins read 0 whatever they are
+    // driving.  Nothing here depends on which pins those are.
+    info.level = info.is_output ? GPIO_STATUS_OUTTOPAD(status)
+                                : GPIO_STATUS_INFROMPAD(status);
 #else // TEST_BUILD
     info.level = 0;
     info.is_output = 0;
