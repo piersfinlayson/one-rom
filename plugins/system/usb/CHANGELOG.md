@@ -28,6 +28,11 @@ firmware's count.
 - No `TIMER0_IRQ_0` handler is registered any more, so that interrupt is left
   to whatever else wants it.  The firmware arms no alarm of its own.
 
+Restore the status LED correctly after an LED beacon.  The state to restore now
+comes from the firmware, which is where the live one lives.  The plugin used its
+own record of what it had last set, so a beacon on a device it had not already
+driven the LED on left the LED off.
+
 Rebuilt for One ROM firmware v0.7.2, whose logging functions are now checked by
 the compiler.  Several log calls passed `uint32_t` to conversions expecting
 `unsigned int`.  The output was already correct, so nothing behaves differently.
