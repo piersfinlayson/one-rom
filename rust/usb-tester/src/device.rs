@@ -183,6 +183,14 @@ impl<'a> Device<'a> {
         )
     }
 
+    /// Drive the status LED as a second plugin would.
+    ///
+    /// The LED is a shared channel rather than this plugin's own, so a scenario
+    /// can move it from underneath and see whether the USB plugin puts it back.
+    pub fn set_status_led_elsewhere(&mut self, on: bool) {
+        self.emu.set_status_led(on);
+    }
+
     /// Move the device's clock on.
     ///
     /// What the plugin reads is the firmware's uptime, which a test build takes
@@ -190,6 +198,15 @@ impl<'a> Device<'a> {
     /// the plugin makes is stepped over rather than waited out.
     pub fn advance_ms(&mut self, ms: u64) {
         self.emu.advance_timer_us(ms * 1000);
+    }
+
+    /// What the device's clock reads, in the milliseconds the plugin sees.
+    ///
+    /// A scenario that cares only about an interval does not need this.  One
+    /// that has to be at a particular point on the clock does, because where
+    /// the clock starts is the harness's business rather than the scenario's.
+    pub fn uptime_ms(&self) -> u32 {
+        self.emu.get_plugin_uptime_ms()
     }
 }
 

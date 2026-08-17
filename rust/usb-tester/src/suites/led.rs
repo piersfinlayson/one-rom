@@ -157,6 +157,84 @@ fn a_beacon_restores_what_it_interrupted(dev: &mut Device, _ctx: &Ctx) -> Result
     Ok(Outcome::Pass)
 }
 
+/// A beacon restarted while one is running still restores what the first
+/// interrupted.
+///
+/// The restart arrives with the LED lit by the beacon itself, so a device that
+/// captured the state again at that point would save the blink rather than the
+/// LED the host left behind — and would finish by lighting an LED that started
+/// dark.
+fn a_restart_keeps_the_state_from_before_the_first_beacon(
+    dev: &mut Device,
+    _ctx: &Ctx,
+) -> Result<Outcome, String> {
+    set_led(dev, LED_OFF)?;
+    if led_state(dev)? {
+        return Err("the LED is on after being told to go off".to_string());
+    }
+
+    set_led(dev, LED_BEACON)?;
+    if !led_state(dev)? {
+        return Err("a beacon did not light the LED to begin with".to_string());
+    }
+
+    // Restarted inside the first toggle interval, so the LED is still lit and
+    // the state a second capture would take is the opposite of the right one.
+    dev.advance_ms(BEACON_TOGGLE_MS - 30);
+    set_led(dev, LED_BEACON)?;
+    if !led_state(dev)? {
+        return Err("the restarted beacon did not leave the LED lit".to_string());
+    }
+
+    dev.advance_ms(BEACON_DURATION_MS + BEACON_TOGGLE_MS);
+    dev.step()?;
+    if led_state(dev)? {
+        return Err(
+            "the restarted beacon left the LED on, which is the blink it interrupted rather \
+             than the dark LED the first beacon found"
+                .to_string(),
+        );
+    }
+
+    Ok(Outcome::Pass)
+}
+
+/// Once a beacon has finished, the plugin stops driving the LED.
+///
+/// The LED is shared, so "finished" has to mean the plugin has let go of it,
+/// not merely that it left the right value behind: a device still in beacon
+/// mode goes on writing its restored state every pass, and would overwrite
+/// whatever another plugin does with the LED next.
+fn a_finished_beacon_stops_driving_the_led(
+    dev: &mut Device,
+    _ctx: &Ctx,
+) -> Result<Outcome, String> {
+    set_led(dev, LED_ON)?;
+    set_led(dev, LED_BEACON)?;
+    dev.advance_ms(BEACON_DURATION_MS + BEACON_TOGGLE_MS);
+    dev.step()?;
+    if !led_state(dev)? {
+        return Err("the beacon did not restore the lit LED it interrupted".to_string());
+    }
+
+    // Another plugin takes the LED the other way.
+    dev.set_status_led_elsewhere(false);
+    if led_state(dev)? {
+        return Err("the LED did not follow the other plugin that drove it".to_string());
+    }
+
+    dev.step_n(5)?;
+    if led_state(dev)? {
+        return Err(
+            "the plugin lit the LED again after the beacon had finished, so it never left \
+             beacon mode"
+                .to_string(),
+        );
+    }
+
+    Ok(Outcome::Pass)
+}
+
 pub static SCENARIOS: &[Scenario] = &[
     Scenario {
         name: "led.the_led_is_driven_from_the_task_loop",
@@ -174,6 +252,18 @@ pub static SCENARIOS: &[Scenario] = &[
         name: "led.a_beacon_restores_what_it_interrupted",
         about: "a beacon ends by putting the LED back where it found it",
         run: a_beacon_restores_what_it_interrupted,
+        before_start: None,
+    },
+    Scenario {
+        name: "led.a_restart_keeps_the_state_from_before_the_first_beacon",
+        about: "a beacon restarted mid-beacon restores what the first one interrupted",
+        run: a_restart_keeps_the_state_from_before_the_first_beacon,
+        before_start: None,
+    },
+    Scenario {
+        name: "led.a_finished_beacon_stops_driving_the_led",
+        about: "a finished beacon leaves the shared LED to whoever drives it next",
+        run: a_finished_beacon_stops_driving_the_led,
         before_start: None,
     },
 ];

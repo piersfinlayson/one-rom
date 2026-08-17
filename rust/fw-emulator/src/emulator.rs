@@ -997,6 +997,20 @@ impl Emulator {
         self.gpio_query_sized(gpio, size_of::<ffi::ora_gpio_info_t>() as u8)
     }
 
+    /// `ORA_ID_SET_STATUS_LED`, driving the status LED as a plugin does.
+    ///
+    /// The LED is shared - every plugin reaches it through this one call, and
+    /// reads the result back through `ORA_METADATA_KEY_STATUS_LED_STATE`.  So a
+    /// harness calling it is standing in for the other plugin, which is what
+    /// lets a test check that the plugin under test leaves the LED alone.
+    pub fn set_status_led(&self, on: bool) {
+        plugin_call!(
+            ffi::api_id_t_ORA_ID_SET_STATUS_LED,
+            ffi::ora_set_status_led_fn_t,
+            u8::from(on)
+        )
+    }
+
     // ── Logging plugin API ───────────────────────────────────────────────────
 
     /// Act as `plugin` for subsequent logging API calls.

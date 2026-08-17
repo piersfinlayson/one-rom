@@ -29,6 +29,9 @@ use super::picobootx::{
 /// Release slots the plugin has, from usb_gpio.h.
 const RELEASES: u8 = 8;
 
+/// Where the device's uptime returns to zero, 49.7 days in.
+const WRAP_MS: u64 = 1u64 << 32;
+
 /// What a pin is doing, as the firmware reports it.
 fn pin(dev: &Device, gpio: u8) -> Result<(bool, bool), String> {
     let (result, info) = dev.emulator().gpio_query(gpio);
@@ -205,6 +208,55 @@ fn a_hold_with_no_slot_left_is_refused(dev: &mut Device, ctx: &Ctx) -> Result<Ou
     Ok(Outcome::Pass)
 }
 
+/// A hold placed just before the clock wraps runs for the length it was given.
+///
+/// A deadline past the wrap is a small number while the clock is still a large
+/// one, so for that last stretch the two cannot be compared as they stand: a
+/// device reading them as plain unsigned values sees `now` above the deadline
+/// and releases the pin the moment the command lands, most of a hold early.
+/// That is why the check before the wrap matters more than the one after it.
+fn a_hold_survives_the_clock_wrapping(dev: &mut Device, ctx: &Ctx) -> Result<Outcome, String> {
+    let gpio = free_pins(ctx, 1)[0];
+
+    // 20ms short of the wrap, holding for 50 - so the deadline lands 30ms the
+    // far side of it.  Placed against the clock the device actually has, not
+    // against a zero this scenario would otherwise be assuming: overshoot the
+    // wrap and every check below still passes, on a device that gets this
+    // wrong as much as on one that gets it right.
+    dev.advance_ms(WRAP_MS - 20 - u64::from(dev.uptime_ms()));
+    if drive(dev, gpio, GPIO_HIGH, GPIO_LOW, 50)? != OK {
+        return Err(format!("a hold across the wrap on GPIO {gpio} was refused"));
+    }
+
+    dev.step()?;
+    let (is_output, level) = pin(dev, gpio)?;
+    if !is_output || !level {
+        return Err(format!(
+            "GPIO {gpio} was released immediately, before the clock had even wrapped"
+        ));
+    }
+
+    // Over the wrap, with 30ms of the hold left to run.
+    dev.advance_ms(20);
+    dev.step()?;
+    let (is_output, level) = pin(dev, gpio)?;
+    if !is_output || !level {
+        return Err(format!("GPIO {gpio} was released by the wrap itself"));
+    }
+
+    // And the deadline, now an ordinary one, still ends the hold.
+    dev.advance_ms(30);
+    dev.step()?;
+    let (is_output, level) = pin(dev, gpio)?;
+    if !is_output || level {
+        return Err(format!(
+            "GPIO {gpio} did not end low at a deadline the other side of the wrap"
+        ));
+    }
+
+    Ok(Outcome::Pass)
+}
+
 pub static SCENARIOS: &[Scenario] = &[
     Scenario {
         name: "gpio.a_hold_ends_in_the_state_it_was_given",
@@ -228,6 +280,12 @@ pub static SCENARIOS: &[Scenario] = &[
         name: "gpio.a_hold_with_no_slot_left_is_refused",
         about: "with every release slot taken, a further hold is refused before driving",
         run: a_hold_with_no_slot_left_is_refused,
+        before_start: None,
+    },
+    Scenario {
+        name: "gpio.a_hold_survives_the_clock_wrapping",
+        about: "a hold whose deadline is past the 49.7-day wrap runs its full length",
+        run: a_hold_survives_the_clock_wrapping,
         before_start: None,
     },
 ];
