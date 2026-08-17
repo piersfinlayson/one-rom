@@ -19,22 +19,26 @@
 //! also where the "all other commands fail" rule is asserted, since that is the
 //! only place a zero count is a thing to test rather than a thing to skip on.
 //!
-//! # What a pin does cannot be observed here
+//! # What a pin does is read back through the firmware's test build
 //!
-//! The device drives real GPIOs, and against the firmware emulator those writes
-//! reach nothing: every register access in `ora_gpio_set` sits behind
-//! `#if !defined(TEST_BUILD)`, and `ora_gpio_query` answers level 0 and driven 0
-//! whatever the pin is doing.  There is therefore no pad for a scenario to read,
-//! and "the pin went low" cannot be asserted here at all.
+//! There is no silicon here, so `ora_gpio_set`'s register writes are compiled
+//! out.  What it does instead is record what it drove into the test build's pad
+//! model, and `ora_gpio_query` reads that back — so a scenario can assert that a
+//! pin was driven low, driven high or released, and the pin-state scenarios
+//! below do.
 //!
-//! Rather than assert nothing, the scenarios that turn on pin state ask the
-//! device first — [`pin_state_is_observable`] drives a pin both ways and looks
-//! for the reported state to differ — and skip, with that as the reason, where
-//! the answer never moves.  Against a device whose reporting is live they make
-//! the real assertion with no change here.
+//! What that does not prove is the register writes themselves.  The pad model is
+//! a second implementation of the same intent rather than a check on the shipped
+//! one, so "the firmware set the register" remains a hardware test.
 //!
-//! One part of a pin's condition *is* visible beside the protocol: what One ROM
-//! is using the GPIO for, which `ora_gpio_query` answers for real.  That is what
+//! The scenarios ask rather than assume: [`pin_state_is_observable`] drives a pin
+//! both ways and looks for the reported state to differ, and stands down with
+//! that as the reason where it does not.  That keeps them honest against a build
+//! whose reporting is not live, which is what this suite faced before the pad
+//! model existed.
+//!
+//! One part of a pin's condition is visible beside the protocol: what One ROM is
+//! using the GPIO for, which `ora_gpio_query` answers for real.  That is what
 //! [`one_rom_withholds_pins_it_is_serving_with`] holds the drivable flag to.
 //!
 //! Everything else is asserted throughout: which commands succeed and which are
@@ -45,63 +49,53 @@
 //!
 //! # What this suite does not verify
 //!
-//! Kept here because this is where it stays accurate.  Everything in the first
-//! list follows from the pin being unobservable, and would be asserted as
-//! written against a device whose GPIO writes reach a pad.
+//! Kept here because this is where it stays accurate.
 //!
-//! 1. SET_AUX "places the specified pin in the specified state" — that the pin
-//!    reaches drive low, drive high or high impedance.
-//! 2. SET_AUX with a non-zero hold "holds that state for the requested
-//!    duration" — that the state is held rather than merely set.
-//! 3. The same command "then applies `after`" — that `after` reaches the pin.
-//!    Only that the command does not complete early is asserted.
-//! 4. "A value of zero holds the state until a subsequent SET_AUX changes it" —
+//! The first list is reachable today and simply not written.  The pad model puts
+//! every one of these within a scenario's grasp, so each is work rather than a
+//! limitation:
+//!
+//! 1. SET_AUX with a non-zero hold "holds that state for the requested
+//!    duration" — that the state is held rather than merely set.  Only that the
+//!    command does not complete early is asserted.
+//! 2. The same command "then applies `after`" — that `after` reaches the pin.
+//! 3. "A value of zero holds the state until a subsequent SET_AUX changes it" —
 //!    the latch.  Only that such a command completes untimed is asserted.
-//! 5. "A pin's state persists across the end of a command-response session and
-//!    across RBCP_RESET."  Both scenarios exist and skip.
-//! 6. "Only a device reset restores a pin to its power-on state."  There is no
-//!    device reset in this harness, so this is out of reach for a second
-//!    reason.
-//! 7. "Driving it through one group is indistinguishable from driving it
+//! 4. SET_AUX_AND_EXIT "as SET_AUX" — the pin half.  The no-header, hold and
+//!    exit halves are asserted.
+//! 5. SET_AUX_SWITCH_EXIT "sets the specified pin ... in the order given by
+//!    flags" — the pin half, and with it the ordering, which is only visible
+//!    through the pin.
+//! 6. "Under set-first ordering the device does not apply `after` until the
+//!    slot switch has completed.  The effective hold is therefore the greater
+//!    of the requested hold and the time the switch takes."
+//! 7. "If received, neither the pin is set nor the slot switched" (slot 0xAA),
+//!    and the same clause for a reserved flags bit, and for a device exposing
+//!    no pins — the pin half of each.  The slot half and the exit are asserted
+//!    in all three.
+//!
+//! The rest are out of reach for other reasons, and a pad model does not help:
+//!
+//! 8. "Only a device reset restores a pin to its power-on state."  There is no
+//!    device reset in this harness.
+//! 9. "Driving it through one group is indistinguishable from driving it
 //!    through another."
-//! 8. "Where a pin appears in several groups, every group reports the same
-//!    properties for it."  Out of reach for a second reason: lining a group's
-//!    pins up with another group's would mean rebuilding the device's own
-//!    group-to-pin mapping in the tester.
-//! 9. GET_AUX_PIN_INFO `level` — "the level present on the pin at the instant
-//!    the command was processed".  Only the 0-or-1 range and the rule for a
-//!    clear flags bit 1 are asserted.
-//! 10. GET_AUX_PIN_INFO `driven` — "1 if the device is driving the pin, 0 if it
-//!     is not."  As `level`.
-//! 11. SET_AUX_AND_EXIT "as SET_AUX" — the pin half.  The no-header, hold and
-//!     exit halves are asserted.
-//! 12. SET_AUX_SWITCH_EXIT "sets the specified pin ... in the order given by
-//!     flags" — the pin half, and with it the ordering, which is only visible
-//!     through the pin.
-//! 13. "Under set-first ordering the device does not apply `after` until the
-//!     slot switch has completed.  The effective hold is therefore the greater
-//!     of the requested hold and the time the switch takes."
-//! 14. "If received, neither the pin is set nor the slot switched" (slot 0xAA),
-//!     and the same clause for a reserved flags bit, and for a device exposing
-//!     no pins — the pin half of each.  The slot half and the exit are
-//!     asserted in all three.
-//!
-//! The rest are out of reach for other reasons, and a device reporting a pad
-//! would not help:
-//!
-//! 15. Group type 0x00 (None).  This device never reports it, so it is checked
+//! 10. "Where a pin appears in several groups, every group reports the same
+//!     properties for it."  Lining a group's pins up with another group's would
+//!     mean rebuilding the device's own group-to-pin mapping in the tester.
+//! 11. Group type 0x00 (None).  This device never reports it, so it is checked
 //!     only as a value the protocol allows.
-//! 16. A `pin_count` of zero standing for 256 pins.  This device never reports
+//! 12. A `pin_count` of zero standing for 256 pins.  This device never reports
 //!     it.  The helpers here decode it, but nothing exercises the decoding
 //!     against a device.
-//! 17. The rule making 0xAA an invalid *group* distinguishable from an absent
+//! 13. The rule making 0xAA an invalid *group* distinguishable from an absent
 //!     one.  A device would have to expose 171 groups for the two to differ,
 //!     and this one exposes three.
-//! 18. A device declaring *fewer* argument bytes than a command carries.  The
+//! 14. A device declaring *fewer* argument bytes than a command carries.  The
 //!     leftover byte sits in front of the next knock and the knock detector
 //!     slides past it, so no host can see it — see
 //!     [`argument_counts_are_consumed_exactly`].
-//! 19. `GET_AUX_PIN_INFO` reporting a non-zero `level` or `driven` with flags
+//! 15. `GET_AUX_PIN_INFO` reporting a non-zero `level` or `driven` with flags
 //!     bit 1 clear.  [`pin_info_reports_flags`] asserts the rule for every pin
 //!     of every group, so this is verified as far as the device can be driven
 //!     into it — no argument reaches a state where this device reports bit 1
@@ -349,7 +343,8 @@ fn pin_state_not_observable(what: &str) -> Outcome {
 /// ENTER_CMD_RESP being defined to fail while the device is still in
 /// command-response mode.
 ///
-/// That the pin was not set is not observable here.  See this module's header.
+/// That the pin was not set is not asserted here — see this module's header,
+/// where it is the pin half of item 7.
 fn expect_zero_pin_rule(bus: &mut Bus, ctx: &Ctx, s: &Session) -> Result<(), String> {
     bus.expect_rejected(s, group::AUX, aux::GET_AUX_GROUP_INFO, &[0])?;
     bus.expect_rejected(s, group::AUX, aux::GET_AUX_PIN_INFO, &[0, 0])?;
@@ -1491,9 +1486,9 @@ pub fn terminal_commands_hold_before_exiting(bus: &mut Bus, ctx: &Ctx) -> Result
 /// "Sets the specified pin and activates the specified RAM slot, in the order
 /// given by flags, then exits command-response mode without updating the
 /// response header."  Which of the two happens first is not observable from the
-/// bus — the pin's state is not, and a slot switch is instantaneous here — so
-/// each ordering is asserted to do both things rather than to do them in a
-/// particular order.
+/// bus — a slot switch is instantaneous here, so there is no window in which to
+/// catch the pin having moved first — so each ordering is asserted to do both
+/// things rather than to do them in a particular order.
 ///
 /// Every slot is marked first, so what the bus serves afterwards says which one
 /// is active, and the fence is aimed at all of them so that a device on the
@@ -1567,7 +1562,8 @@ pub fn set_aux_switch_exit_switches_and_exits(bus: &mut Bus, ctx: &Ctx) -> Resul
 /// device masking the byte rather than testing it can pass on one and fail on
 /// another.
 ///
-/// That the pin was not set is not observable.  See this module's header.
+/// That the pin was not set is not asserted — see this module's header, where
+/// it is the pin half of item 7.
 pub fn set_aux_switch_exit_rejects_reserved_flags(
     bus: &mut Bus,
     ctx: &Ctx,
@@ -1637,8 +1633,8 @@ pub fn set_aux_switch_exit_rejects_reserved_flags(
 /// must succeed, ENTER_CMD_RESP being defined to fail while the device is
 /// already in command-response mode.
 ///
-/// That the pin was not set is not observable — see this module's header — so
-/// it is not claimed.
+/// That the pin was not set is not asserted — see this module's header, where
+/// it is the pin half of item 7.
 pub fn set_aux_switch_exit_slot_aa_neither_sets_nor_switches(
     bus: &mut Bus,
     ctx: &Ctx,

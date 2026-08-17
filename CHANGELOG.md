@@ -56,7 +56,7 @@ To publish:
 - host-control plugin 0.1.3
 
 To test (on hardware, before release):
-- **Auxiliary I/O has never run on a device.**  Driving a pin is the one thing the emulator cannot show — `ora_gpio_set` does nothing under a host build — so nothing verifies that `SET_AUX` drives a pin at all, that a timed hold releases it, or that an X pad reaching two GPIOs drives both.  Needs an RBCP host to drive it, so it follows the 6502 library gaining the group.  The full list of what goes unverified is in the `aux.rs` module header.
+- **Auxiliary I/O has never run on a device.**  Host tests now watch a pin move — `ora_gpio_set` records what it drove into the test build's pad model, and `ora_gpio_query` reads it back — so `SET_AUX`, a timed hold and its after-state are asserted against that model.  What no test reaches is the register writes themselves, which are compiled out on a host, and an X pad reaching two GPIOs.  Needs an RBCP host to drive it, so it follows the 6502 library gaining the group.  What the emulated suite does not verify is listed in the `aux.rs` module header.
 - **The host-control plugin on firmware older than v0.7.2.**  It reports no pipes where the logging API is absent, and that path cannot be reached from this tree — every firmware built here has the API, so the emulator suite only ever exercises the other branch.  `GET_PIPE_CAPABILITY` should report a count of zero, `GET_PIPE_INFO` and `PIPE_WRITE` should fail, and everything else in RBCP should be unaffected.
 - **On Windows and Linux:** `onerom monitor log`, and `onerom program --follow`.  Only run on macOS so far, and the parts that differ by platform are the ones this depends on: finding the One ROM's serial port among the others, and whether opening it asserts DTR.  A port opened without DTR is forwarded nothing, which surfaces as the two second timeout — the same symptom as a device fault, so a platform difference here reads as a broken One ROM.
 - Studio building a config that names a plugin.  The check is shared with the CLI, which is covered by tests and was run against the live manifest both ways, but Studio's own path needs a connected device to reach at all: a config naming USB v0.1.2 should refuse to build, and one naming v0.2.1 should build and flash.
@@ -67,17 +67,15 @@ To test (on hardware, before release):
 - Analyze a Fire from Studio with a debug probe attached — the path that panicked before v0.1.3 and was fixed in a probe-rs fork, now on upstream probe-rs 0.32.
 
 To do (before release):
-- **Auxiliary I/O pin movement is untested.**  `ora_gpio_set` wraps every register
-  write in `#if !defined(TEST_BUILD)`, so under a host build it validates its
-  arguments, applies the in-use gate and logs, without touching a register or the
-  emulator.  No RBCP conformance test can therefore observe a pin being driven,
-  released or held, and the aux suite asserts on protocol responses alone.  epio
-  already reports driven pins via `epio_read_driven_pins()` — what is missing is
-  anything on the firmware side driving the emulated pin under test.  Whether
-  epio can represent an SIO-driven output level from the MCU side is unestablished,
-  and decides whether this is a firmware-only change or needs an epio release.
-  The precise list of what goes unverified is the "What this suite does not verify"
-  section in the `aux.rs` module header.
+- **Auxiliary I/O's register writes are untested.**  `ora_gpio_set` records what
+  it drove into the test build's pad model, so a host test can assert that a pin
+  was driven, held and released — but every real register write sits behind
+  `#if !defined(TEST_BUILD)`, and the pad model is a second implementation of the
+  same intent rather than a check on the shipped one.  Closing this in an
+  emulated test would mean epio representing an SIO-driven output level from the
+  MCU side, which is unestablished and decides whether it is a firmware-only
+  change or needs an epio release.  The hardware test above settles the same
+  question for this release.
 - Web programmer S-record support, in `one-rom-wasm` and `one-rom-site`.  The format picker is driven by `file_formats()` and will list `srec` on its own, but the site's `accept` list, its extension auto-select and its load-address reveal (currently shown for `ihex` only) all need widening.
 - Drop the libudev/libusb build requirement, which Studio no longer has: `CLAUDE.md`, the comment in `ci/rust-lint.sh`, and the comment and two `apt-get` lines in `ci.yml`.  probe-rs 0.32 takes hidapi's pure-Rust `basic-udev` backend in place of `libudev-sys`, and nothing in the graph has wanted libusb for some time.  Verified on Debian — with both hidden from `pkg-config`, Studio builds and links clean, where probe-rs 0.30 failed in `libudev-sys`'s build script.  Leave `ci/docker/Dockerfile` until it is checked separately; that image builds firmware, not Studio.  Do this only once the debug probe test above has passed, since falling back to the fork would reinstate the requirement.
 

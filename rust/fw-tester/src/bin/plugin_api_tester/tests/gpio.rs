@@ -4,17 +4,19 @@
 
 //! Tests for the GPIO plugin API (`ORA_ID_GPIO_QUERY`).
 //!
-//! `ora_gpio_set`'s register writes are compiled out under `TEST_BUILD`, so
-//! only the query side — and in particular its `use` classification — is
-//! testable here.
+//! `ora_gpio_set`'s register writes are compiled out under `TEST_BUILD`, but it
+//! records what it drove into the test build's pad model and `ora_gpio_query`
+//! reads that back, so the set side is reachable from here.  What these tests
+//! cover is the query side, and in particular its `use` classification, which is
+//! where the firmware can silently disagree with itself.
 //!
-//! # The oracle
+//! # Where the expected answer comes from
 //!
 //! The classification lives in `pio_get_gpio_use()`
 //! (`firmware/src/piodma/piorom2.c`) and duplicates knowledge the PIO setup
-//! path also holds, so it can silently desync when slot layouts change.  The
-//! oracle therefore has to be something other than a restatement of the same
-//! derivation.  Two independent sources are used:
+//! path also holds, so it can silently desync when slot layouts change.  What
+//! these tests compare it against therefore has to be something other than a
+//! restatement of the same derivation.  Two independent sources are used:
 //!
 //! 1. **The serving algorithm configuration in the generated firmware
 //!    metadata**, read back through the same `onerom_gen` build the firmware
@@ -33,8 +35,8 @@
 //!    serving actually did rather than what its configuration says, and it
 //!    pins down the driven (data) pins exactly.
 //!
-//!    Note the companion `input_only` bit is *not* usable as an oracle for the
-//!    read pins: `setup_initial_gpios()` (`firmware/src/rp235x.c`) applies
+//!    Note the companion `input_only` bit cannot stand as the expected answer
+//!    for the read pins: `setup_initial_gpios()` (`firmware/src/rp235x.c`) applies
 //!    `APIO_GPIO_INPUT_ONLY` to every GPIO at boot, so after boot every pin
 //!    except the data pins has it set, whether serving reads it or not.  That
 //!    is the same reason the firmware needs this API at all — an address or CS
