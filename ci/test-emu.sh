@@ -170,6 +170,39 @@ run_config_rbcp() {
     }
 }
 
+# The USB plugin tester.  USB_TESTER_ARGS selects a suite: only the logical ROM
+# scenarios depend on the chip type and its organisation, so only those are worth
+# a config of their own.  The rest run once, from run_usb_once.
+run_config_usb() {
+    local board=$1
+    local config=$2
+
+    echo ""
+    echo "Testing: board=$board config=$config"
+    env BOARD="$board" CONFIG="$config" USB_TESTER_ARGS="--scenario logical_rom" \
+        make test-usb || {
+        echo "FAILED: board=$board config=$config"
+        echo "Reproduce:  env BOARD=$board CONFIG=$config USB_TESTER_ARGS=--scenario\ logical_rom make test-usb"
+        exit 1
+    }
+}
+
+# Everything in the USB tester that does not depend on the config.  Run on an A
+# variant and a B variant, because the GPIO count is the one thing that differs
+# between them and the plugin reports it.
+run_usb_once() {
+    local board=$1
+    local config=$2
+
+    echo ""
+    echo "Testing: board=$board config=$config (whole USB suite)"
+    env BOARD="$board" CONFIG="$config" make test-usb || {
+        echo "FAILED: board=$board config=$config"
+        echo "Reproduce:  env BOARD=$board CONFIG=$config make test-usb"
+        exit 1
+    }
+}
+
 test_24_all_rom_types() {
     local board=${1:-fire-24-e}
 
@@ -262,6 +295,13 @@ test_config_monitor() {
     run_config_monitor "$board" "$config"
 }
 
+test_config_usb() {
+    local board=${1:-fire-24-a}
+    local config=$2
+
+    run_config_usb "$board" "$config"
+}
+
 test_config_rbcp() {
     local board=${1:-fire-24-a}
     local config=$2
@@ -290,23 +330,27 @@ test_24_config()           { run_boards run_config         "$1" $FIRE_24_BOARDS;
 test_24_config_api()       { run_boards run_config_api     "$1" $FIRE_24_BOARDS; }
 test_24_config_monitor()   { run_boards run_config_monitor "$1" $FIRE_24_BOARDS; }
 test_24_config_rbcp()      { run_boards run_config_rbcp    "$1" $FIRE_24_BOARDS; }
+test_24_config_usb()       { run_boards run_config_usb     "$1" $FIRE_24_BOARDS; }
 test_24_config_c_onwards() { run_boards run_config         "$1" $FIRE_24_LATE_BOARDS; }
 
 test_28_config()           { run_boards run_config         "$1" $FIRE_28_BOARDS; }
 test_28_config_api()       { run_boards run_config_api     "$1" $FIRE_28_BOARDS; }
 test_28_config_monitor()   { run_boards run_config_monitor "$1" $FIRE_28_BOARDS; }
 test_28_config_rbcp()      { run_boards run_config_rbcp    "$1" $FIRE_28_BOARDS; }
+test_28_config_usb()       { run_boards run_config_usb     "$1" $FIRE_28_BOARDS; }
 test_28_config_c_onwards() { run_boards run_config         "$1" $FIRE_28_LATE_BOARDS; }
 
 test_32_config()           { run_boards run_config         "$1" $FIRE_32_BOARDS; }
 test_32_config_api()       { run_boards run_config_api     "$1" $FIRE_32_BOARDS; }
 test_32_config_monitor()   { run_boards run_config_monitor "$1" $FIRE_32_BOARDS; }
 test_32_config_rbcp()      { run_boards run_config_rbcp    "$1" $FIRE_32_BOARDS; }
+test_32_config_usb()       { run_boards run_config_usb     "$1" $FIRE_32_BOARDS; }
 
 test_40_config()           { run_boards run_config         "$1" $FIRE_40_BOARDS; }
 test_40_config_api()       { run_boards run_config_api     "$1" $FIRE_40_BOARDS; }
 test_40_config_monitor()   { run_boards run_config_monitor "$1" $FIRE_40_BOARDS; }
 test_40_config_rbcp()      { run_boards run_config_rbcp    "$1" $FIRE_40_BOARDS; }
+test_40_config_usb()       { run_boards run_config_usb     "$1" $FIRE_40_BOARDS; }
 
 # The tests, grouped by socket size, so that CI can run the four groups as
 # parallel jobs and each gets its own timeout budget.  A group is self-contained:
@@ -366,6 +410,12 @@ test_family_24() {
     test_24_config_monitor onerom-config/test/24-random-27xx.json
     test_24_config_monitor onerom-config/test/24-random-28xx.json
 
+    # USB plugin.  Everything that does not depend on the config runs once per
+    # RP2350 variant — fire-24-a is an A and fire-40-a a B, and the GPIO count is
+    # what differs — and the logical ROM scenarios run across the boards.
+    run_usb_once fire-24-a onerom-config/test/24-random-23xx.json
+    test_24_config_usb onerom-config/test/24-random-23xx.json
+
     # RBCP board coverage — see the note in test_family_40.
     test_24_config_rbcp onerom-config/test/24-random-23xx.json
 }
@@ -415,6 +465,7 @@ test_family_28() {
     test_28_config_monitor onerom-config/test/28-random-28xxx.json
 
     # RBCP board coverage — see the note in test_family_40.
+    test_28_config_usb onerom-config/test/28-random-27xxx.json
     test_28_config_rbcp onerom-config/test/28-random-27xxx.json
 
     # RBCP behaviour coverage — a 23QL384's qualifier-based chip select, with
@@ -455,6 +506,7 @@ test_family_32() {
     test_32_config_monitor onerom-config/test/32-random-27c0x0.json
 
     # RBCP board coverage — see the note in test_family_40.
+    test_32_config_usb onerom-config/test/32-random-27c080.json
     test_32_config_rbcp onerom-config/test/32-random-27c080.json
 
     # One run of the plugin API suite against a firmware compiled with its
@@ -501,6 +553,8 @@ test_family_40() {
     # Board coverage — one config per socket size, on every board of that
     # family.  What varies between revisions of a board is the pin map, and the
     # protocol runs over the bus, so the whole of it has to work on each.
+    run_usb_once fire-40-a onerom-config/test/40-random.json
+    test_40_config_usb onerom-config/test/40-random.json
     test_40_config_rbcp onerom-config/test/40-random.json
 
     # Behaviour coverage — the force_16_bit data algorithm, which ignores /BYTE

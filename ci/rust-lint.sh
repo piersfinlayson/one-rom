@@ -46,9 +46,9 @@ cargo clippy \
 # onerom-fw-tester embeds the firmware emulator, so it needs CONFIG/BOARD, and
 # onerom-rbcp-tester links against onerom-fw-tester's library.  onerom-plugin-tester
 # is the library the testers are built from, and comes in as their dependency.
-echo "Running clippy (onerom-fw-tester, onerom-rbcp-tester)..."
+echo "Running clippy (onerom-fw-tester, onerom-rbcp-tester, onerom-usb-tester)..."
 CONFIG="$EMU_CONFIG" BOARD="$EMU_BOARD" \
-    cargo clippy -p onerom-fw-tester -p onerom-rbcp-tester --all-targets -- -D warnings
+    cargo clippy -p onerom-fw-tester -p onerom-rbcp-tester -p onerom-usb-tester --all-targets -- -D warnings
 
 # onerom-lab pins its own nightly toolchain (rust-toolchain.toml) and is a
 # binary-only crate that builds for the RP2350 (thumbv8m via its

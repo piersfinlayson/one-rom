@@ -92,7 +92,55 @@ $(BIN): $(ELF)
 $(BUILD_DIR):
 	@mkdir -p $@
 
-clean:
+# ---------------------------------------------------------------------------
+# Host build
+#
+# Compiles the plugin natively so it can be run against the firmware emulator
+# for regression testing — see rust/usb-tester.  This produces object files, not
+# a plugin binary: there is no linker script and no plugin header placement, and
+# the harness supplies the linker symbols and the emulation seams (ORA_SECTION
+# and friends are no-ops under ORA_HOST_TEST).
+#
+# The flags here must match the firmware's own native test build
+# (firmware/test.mk), because the two link together:
+# - -fshort-enums, or ora_result_t is a different width on each side.
+# - -DTEST_BUILD=1, which selects REAL_HARDWARE 0 and drops the metadata layout
+#   STATIC_ASSERTs, which assert device offsets a 64-bit host cannot satisfy.
+#
+# tinyusb and picobootx are on the include path but neither is compiled: the
+# plugin only needs their headers to declare what it calls, and the harness
+# supplies the handful of entry points behind them.
+# ---------------------------------------------------------------------------
+
+HOST_CC        ?= cc
+HOST_BUILD_DIR := build-host
+HOST_OBJ       := $(patsubst src/%.c,$(HOST_BUILD_DIR)/%.o,$(SRC))
+
+HOST_CFLAGS := -DORA_HOST_TEST=1 -DTEST_BUILD=1 -fshort-enums \
+               -O1 -g -Wall -Wextra -Werror \
+               -DMAJOR_VERSION=$(MAJOR_VERSION) -DMINOR_VERSION=$(MINOR_VERSION) \
+               -DPATCH_VERSION=$(PATCH_VERSION) -DBUILD_VERSION=$(BUILD_VERSION) \
+               $(SDRR_INCLUDE) $(ORA_INCLUDE) $(PLUGIN_INCLUDE) \
+               -Iinclude -I$(PICO_SDKLESS_DIR)/include \
+               $(addprefix -I,$(TINYUSB_INCLUDE_DIRS)) \
+               $(addprefix -I,$(PICOBOOTX_INCLUDE_DIRS)) \
+               -std=c11 -MMD -MP
+
+.PHONY: host clean-host
+
+host: $(HOST_OBJ)
+
+$(HOST_BUILD_DIR):
+	@mkdir -p $@
+
+$(HOST_BUILD_DIR)/%.o: src/%.c | $(HOST_BUILD_DIR)
+	@echo "Compiling $< for host..."
+	@$(HOST_CC) $(HOST_CFLAGS) -c $< -o $@
+
+clean-host:
+	@rm -rf $(HOST_BUILD_DIR)
+
+clean: clean-host
 	@echo "Cleaning build artifacts..."
 	@rm -rf $(BUILD_DIR)
 

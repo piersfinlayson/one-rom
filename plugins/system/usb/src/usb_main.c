@@ -42,7 +42,15 @@ const ora_plugin_header_t ora_plugin_header = {
 // Plugin context, stored in .bss
 usb_plugin_context_t context;
 
+// Place the plugin's initialised data and clear its zeroed data.
+//
+// The addresses come from the plugin's linker script, so this has nothing to
+// act on in a host test build — the plugin's data is the host process's, placed
+// by its own toolchain before main runs.  The symbols do not exist there
+// either, which is why the whole body is compiled out rather than skipped at
+// run time.
 void init_data_bss(void) {
+#if !defined(ORA_HOST_TEST)
     extern uint32_t __ramfunc_start;
     extern uint32_t __ramfunc_end;
     extern uint32_t __ramfunc_load;
@@ -71,6 +79,7 @@ void init_data_bss(void) {
     while (dst < &__bss_end) {
         *dst++ = 0;
     }
+#endif // !ORA_HOST_TEST
 }
 
 uint32_t board_millis(void) {
@@ -228,6 +237,11 @@ void usb_main(
         usb_plugin_task();
         log_drain_task();
         yield(NULL);
+
+        // Nothing in this loop waits on anything a host test can change, so
+        // without a seam the loop would never hand control back and the
+        // emulation could never be advanced.  Compiles to nothing on a device.
+        ORA_TEST_YIELD();
     }
 
     ERR("USB plugin exiting");
@@ -294,6 +308,19 @@ bool tud_vendor_control_xfer_cb(
     return false;
 }
 
+// ---------------------------------------------------------------------------
+// The device's C library and interrupt glue
+//
+// None of this belongs to a host test build.  The host has a C library of its
+// own, and defining these there would take over the process's — _exit above all,
+// which would turn an ordinary exit into a hang.  The IRQ shims are called only
+// by tinyusb's RP2040 device controller driver, which a host build does not
+// compile, and panic and __assert_func are the bare-metal ends of routines the
+// host libraries already provide.
+// ---------------------------------------------------------------------------
+
+#if !defined(ORA_HOST_TEST)
+
 #include <sys/stat.h>
 
 void _exit(int status) { (void)status; while(1); }
@@ -344,3 +371,5 @@ void __assert_func(const char *file, int line, const char *func, const char *exp
     ERR("Assertion failed: %s, at %s:%d in function %s", expr, file, line, func);
     while (1);
 }
+
+#endif // !ORA_HOST_TEST

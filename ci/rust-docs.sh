@@ -61,6 +61,6 @@ echo "Generating documentation for onerom-fw-tester..."
 CONFIG="$EMU_CONFIG" BOARD="$EMU_BOARD" \
     RUSTDOCFLAGS="-D warnings" cargo doc -p onerom-fw-tester --no-deps
 
-echo "Generating documentation for onerom-plugin-tester and onerom-rbcp-tester..."
+echo "Generating documentation for the plugin testers..."
 CONFIG="$EMU_CONFIG" BOARD="$EMU_BOARD" \
-    RUSTDOCFLAGS="-D warnings" cargo doc -p onerom-plugin-tester -p onerom-rbcp-tester --no-deps
+    RUSTDOCFLAGS="-D warnings" cargo doc -p onerom-plugin-tester -p onerom-rbcp-tester -p onerom-usb-tester --no-deps

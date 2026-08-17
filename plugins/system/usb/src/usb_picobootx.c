@@ -82,6 +82,19 @@ static const picoboot_custom_ops_t onerom_picobootx_ops = {
     .fill     = onerom_picobootx_fill,
 };
 
+#if defined(ORA_HOST_TEST)
+// The One ROM commands, for a host test to drive directly.
+//
+// On a device these handlers are reached only through picoboot, which holds the
+// table this returns and calls them with the framing rules already applied.  A
+// host test stands where picoboot does, so it needs the same table — and taking
+// it from here rather than from a copy of its own is what makes the test assert
+// the plugin's registration as well as its handlers.
+const picoboot_custom_ops_t *onerom_picobootx_test_ops(void) {
+    return &onerom_picobootx_ops;
+}
+#endif // ORA_HOST_TEST
+
 // A flash write buffer required by picoboot to batch flash writes so it has
 // 256 bytes to write at a time - the flash page size.  It must be 4 byte
 // aligned.
@@ -441,9 +454,10 @@ static pb_status_t onerom_picobootx_dispatch(
     // Every One ROM command carries all 16 argument bytes.  The data phase is
     // per-command from here on: rejecting any command with a transfer_len, as
     // this did before ONEROM_CMD_GET_CAPS existed, would reject the two
-    // commands that have one.  That older behaviour is load-bearing in the
-    // other direction - it is how a host recognises a device that predates
-    // these commands - so it must not be reproduced by a plugin that has them.
+    // commands that have one.  A host relies on that older behaviour to
+    // recognise a device predating these commands - its rejection of a
+    // transfer_len is the signal - so a plugin that has them must not reproduce
+    // it.
     if (cmd->cmd_size != ONEROM_CMD_ARGS_LEN) {
         return PB_STATUS_INVALID_CMD_LENGTH;
     }

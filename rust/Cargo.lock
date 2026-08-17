@@ -4961,6 +4961,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "onerom-usb-tester"
+version = "0.1.0"
+dependencies = [
+ "env_logger",
+ "log",
+ "onerom-config",
+ "onerom-fw-emulator",
+ "onerom-gen",
+ "onerom-plugin-tester",
+ "serde_json",
+]
+
+[[package]]
 name = "open"
 version = "5.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

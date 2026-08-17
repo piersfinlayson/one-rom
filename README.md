@@ -327,6 +327,7 @@ published are on crates.io, for host-side Rust development.
 | [`onerom-fw-tester`](rust/fw-tester) | | Drives the emulator with generated configurations and checks the results. |
 | [`onerom-plugin-tester`](rust/plugin-tester) | | The harness a plugin tester is built from — runs a plugin's own C against the emulated firmware. |
 | [`onerom-rbcp-tester`](rust/rbcp-tester) | | Drives the host-control plugin over emulated ROM bus cycles, as an RBCP host would. |
+| [`onerom-usb-tester`](rust/usb-tester) | | Drives the USB system plugin's commands, log forwarding and GPIO control. |
 | [`onerom-fw-driver`](rust/fw-driver), [`onerom-fw-geometry`](rust/fw-geometry) | | Pin geometry and GPIO bitmask helpers, shared and dependency-free by design. |
 | [`fw-config-gen`](rust/fw-config-gen), [`schema-gen`](rust/schema-gen) | | Code and schema generators. |
 

@@ -205,7 +205,7 @@ SCRUB_CARGO_ENV = for v in $$(env | grep -oE '^(CARGO_CFG_[A-Z_0-9]+|CARGO_FEATU
 	      CARGO_MAKEFLAGS CARGO_ENCODED_RUSTFLAGS CARGO_CRATE_NAME CARGO_BIN_NAME \
 	      OUT_DIR TARGET HOST NUM_JOBS OPT_LEVEL DEBUG PROFILE RUSTC RUSTDOC;
 
-.PHONY: all clean clean-firmware clean-firmware-build firmware run flash test test-emu test-api test-monitor test-rbcp generated clean-generated fw-config-gen libonerom-test libonerom-test-wasm gen-config clean-gen-config clean-libonerom-test clean-libonerom-test-wasm
+.PHONY: all clean clean-firmware clean-firmware-build firmware run flash test test-emu test-api test-monitor test-rbcp test-usb generated clean-generated fw-config-gen libonerom-test libonerom-test-wasm gen-config clean-gen-config clean-libonerom-test clean-libonerom-test-wasm
 
 all: firmware
 	@echo "=========================================="
@@ -296,6 +296,12 @@ test-rbcp: gen-config
 	@echo "Running One ROM emulator tests"
 	@echo "-----"
 	@BASE_DIR=$(CURDIR) CONFIG=$(CONFIG) BOARD=$(BOARD) cargo run --manifest-path rust/Cargo.toml -p onerom-rbcp-tester --bin rbcp-tester --quiet
+
+test-usb: gen-config
+	@echo "=========================================="
+	@echo "Running One ROM USB plugin tests"
+	@echo "-----"
+	@BASE_DIR=$(CURDIR) CONFIG=$(CONFIG) BOARD=$(BOARD) cargo run --manifest-path rust/Cargo.toml -p onerom-usb-tester --bin usb-tester --quiet -- $(USB_TESTER_ARGS)
 
 libonerom-test: gen-config
 	@echo "=========================================="
