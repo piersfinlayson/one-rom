@@ -98,6 +98,7 @@ void setup_gpio(void) {
 // snapshot taken before the first boot.
 void onerom_test_reset(void) {
     stub_gpio_reset();
+    stub_timer_reset();
 }
 
 void setup_qmi(rp235x_clock_config_t *config) {
@@ -330,6 +331,10 @@ void stub_set_timer_us(uint64_t us) {
 
 void stub_advance_timer_us(uint64_t delta_us) {
     stub_set_timer_us(stub_timer_script[stub_timer_script_len - 1] + delta_us);
+}
+
+void stub_timer_reset(void) {
+    stub_set_timer_us(0);
 }
 
 void stub_set_timer_raw_script(const uint64_t *values, uint32_t count) {

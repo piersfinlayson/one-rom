@@ -52,6 +52,13 @@ uint32_t stub_timer_raw_lo(void);
 void stub_set_timer_us(uint64_t us);
 void stub_advance_timer_us(uint64_t delta_us);
 
+// Put the counter back to zero, where a device's is when TIMER0 starts.
+//
+// Called by onerom_test_reset() on every boot, so a scenario measuring an
+// interval from the clock it is given starts where the last one started rather
+// than wherever that one left it.
+void stub_timer_reset(void);
+
 // Script the counter's value across successive half-reads, one entry consumed
 // per read.  count must be between 1 and STUB_TIMER_SCRIPT_MAX.
 #define STUB_TIMER_SCRIPT_MAX 16u
