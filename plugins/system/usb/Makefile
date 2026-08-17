@@ -16,6 +16,10 @@ TINYUSB_DIR   := tinyusb
 PICOBOOTX_DIR := picobootx
 PICO_SDKLESS_DIR := pico-sdkless
 
+# Version of picobootx to build against.  Remove the picobootx/ directory after
+# changing this, so it is re-cloned.
+PICOBOOTX_VERSION ?= v0.2.0
+
 ORA_DIR := ../../../firmware/ora
 ORA_INCLUDE := -I$(ORA_DIR)
 SDRR_INCLUDE := -I../../../firmware/include -I../../../firmware/generated
@@ -26,7 +30,7 @@ BUILD_DIR := build
 $(shell [ -d $(TINYUSB_DIR) ] || git clone https://github.com/piersfinlayson/tinyusb.git $(TINYUSB_DIR))
 include tinyusb.mk
 
-$(shell [ -d $(PICOBOOTX_DIR) ] || git clone https://github.com/piersfinlayson/picobootx.git $(PICOBOOTX_DIR))
+$(shell [ -d $(PICOBOOTX_DIR) ] || git -c advice.detachedHead=false clone --quiet --depth 1 --branch $(PICOBOOTX_VERSION) https://github.com/piersfinlayson/picobootx.git $(PICOBOOTX_DIR))
 include picobootx/picobootx.mk
 
 $(shell [ -d $(PICO_SDKLESS_DIR) ] || git clone https://github.com/piersfinlayson/pico-sdkless.git $(PICO_SDKLESS_DIR))
