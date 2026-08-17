@@ -4898,13 +4898,7 @@ dependencies = [
 name = "onerom-plugin-tester"
 version = "0.1.0"
 dependencies = [
- "env_logger",
- "log",
- "onerom-config",
  "onerom-fw-emulator",
- "onerom-fw-tester",
- "onerom-gen",
- "serde_json",
 ]
 
 [[package]]
@@ -4914,6 +4908,20 @@ dependencies = [
  "log",
  "onerom-database",
  "serde",
+]
+
+[[package]]
+name = "onerom-rbcp-tester"
+version = "0.1.0"
+dependencies = [
+ "env_logger",
+ "log",
+ "onerom-config",
+ "onerom-fw-emulator",
+ "onerom-fw-tester",
+ "onerom-gen",
+ "onerom-plugin-tester",
+ "serde_json",
 ]
 
 [[package]]

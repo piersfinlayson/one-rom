@@ -17,6 +17,7 @@ members = [
     "lens",
     "metadata",
     "plugin-tester",
+    "rbcp-tester",
     "protocol",
     "schema-gen",
     "studio",
@@ -62,6 +63,7 @@ onerom-fw-parser = { path="fw-parser", version="0.9.0" }
 onerom-fw-tester = { path="fw-tester", version="0.1.0" }
 onerom-gen = { path="gen", version="0.8.0" }
 onerom-metadata = { path="metadata", version="0.2.0" }
+onerom-plugin-tester = { path="plugin-tester", version="0.1.0" }
 onerom-protocol = { path="protocol", version="0.1.1" }
 
 [profile.release]

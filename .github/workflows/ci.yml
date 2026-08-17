@@ -48,7 +48,7 @@ on:
 #
 # libclang-dev is installed everywhere for the same reason: onerom-fw-emulator's
 # build script runs bindgen over the firmware headers, and three crates depend on
-# it (onerom-fw-tester, onerom-plugin-tester, onerom-lens), so which jobs pull it
+# it (onerom-fw-tester, onerom-rbcp-tester, onerom-lens), so which jobs pull it
 # in is not apparent from the job names either.  It is named explicitly rather
 # than relied on: the GitHub runner image happens to ship libclang, leaner
 # self-hosted runners do not, and there the bindgen build script panics.

@@ -94,7 +94,7 @@ fn main() {
 
     // ── Archive ──────────────────────────────────────────────────────────────
 
-    let archive = out_dir.join("libonerom-plugin-host.a");
+    let archive = out_dir.join("libonerom-rbcp-host.a");
     let _ = std::fs::remove_file(&archive);
     let status = if cfg!(target_os = "macos") {
         // Same split as firmware/test.mk: the macOS ar cannot produce an
@@ -120,7 +120,7 @@ fn main() {
     // ── Linking ──────────────────────────────────────────────────────────────
 
     println!("cargo:rustc-link-search=native={}", out_dir.display());
-    println!("cargo:rustc-link-lib=static=onerom-plugin-host");
+    println!("cargo:rustc-link-lib=static=onerom-rbcp-host");
 
     // The plugin and shim call into the firmware test library, so it must
     // appear *after* this archive on the link line — GNU ld only pulls archive

@@ -325,7 +325,8 @@ published are on crates.io, for host-side Rust development.
 | [`onerom-lens`](rust/lens) | | One ROM Lens — compiles the firmware emulator to WebAssembly and draws PIO and DMA activity as waveforms in a browser, cycle by cycle. |
 | [`onerom-fw-emulator`](rust/fw-emulator) | | Compiles and runs the real firmware C on a host, PIOs and all. |
 | [`onerom-fw-tester`](rust/fw-tester) | | Drives the emulator with generated configurations and checks the results. |
-| [`onerom-plugin-tester`](rust/plugin-tester) | | Runs plugins against the emulated firmware. |
+| [`onerom-plugin-tester`](rust/plugin-tester) | | The harness a plugin tester is built from — runs a plugin's own C against the emulated firmware. |
+| [`onerom-rbcp-tester`](rust/rbcp-tester) | | Drives the host-control plugin over emulated ROM bus cycles, as an RBCP host would. |
 | [`onerom-fw-driver`](rust/fw-driver), [`onerom-fw-geometry`](rust/fw-geometry) | | Pin geometry and GPIO bitmask helpers, shared and dependency-free by design. |
 | [`fw-config-gen`](rust/fw-config-gen), [`schema-gen`](rust/schema-gen) | | Code and schema generators. |
 

@@ -295,7 +295,7 @@ test-rbcp: gen-config
 	@echo "=========================================="
 	@echo "Running One ROM emulator tests"
 	@echo "-----"
-	@BASE_DIR=$(CURDIR) CONFIG=$(CONFIG) BOARD=$(BOARD) cargo run --manifest-path rust/Cargo.toml -p onerom-plugin-tester --bin rbcp-tester --quiet
+	@BASE_DIR=$(CURDIR) CONFIG=$(CONFIG) BOARD=$(BOARD) cargo run --manifest-path rust/Cargo.toml -p onerom-rbcp-tester --bin rbcp-tester --quiet
 
 libonerom-test: gen-config
 	@echo "=========================================="

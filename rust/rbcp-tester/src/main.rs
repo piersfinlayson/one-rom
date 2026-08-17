@@ -44,7 +44,6 @@
 //! Exits 0 if every scenario that ran passed, 1 otherwise.
 
 use std::path::{Path, PathBuf};
-use std::process;
 
 use onerom_config::chip::ChipType;
 use onerom_config::hw::Board;
@@ -52,6 +51,7 @@ use onerom_fw_emulator::{Emulator, OraResult};
 use onerom_fw_tester::pin_cache::PinCache;
 use onerom_fw_tester::timing;
 use onerom_gen::Config;
+use onerom_plugin_tester::run::{Filters, Tally, suite_header};
 use onerom_plugin_tester::{ffi, harness::Plugin};
 
 mod driver;
@@ -170,16 +170,12 @@ impl Ctx {
 
 /// How a scenario ended.
 ///
-/// A scenario that cannot run against the device in front of it is neither a
-/// pass nor a failure.  Which scenarios those are is a property of the
+/// Re-exported so a scenario reaches it as `crate::Outcome`, alongside the
+/// [`Ctx`] it is handed.  Which scenarios skip is a property of the
 /// configuration under test — RAM slot count and slot size vary with the ROM
 /// type and the board — so the judgement belongs to the scenario, at the point
 /// it discovers it, rather than to a table written in advance.
-pub enum Outcome {
-    Pass,
-    /// Not applicable to this device, for the stated reason.
-    Skip(String),
-}
+pub use onerom_plugin_tester::run::Outcome;
 
 pub type ScenarioFn = fn(&mut Bus, &Ctx) -> Result<Outcome, String>;
 
@@ -201,19 +197,7 @@ pub struct Suite {
 fn main() {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn")).init();
 
-    let mut suite_filter: Option<String> = None;
-    let mut scenario_filter: Option<String> = None;
-    let mut args = std::env::args().skip(1);
-    while let Some(arg) = args.next() {
-        match arg.as_str() {
-            "--suite" => suite_filter = args.next(),
-            "--scenario" => scenario_filter = args.next(),
-            other => {
-                eprintln!("unknown argument '{other}' (expected --suite or --scenario)");
-                process::exit(2);
-            }
-        }
-    }
+    let filters = Filters::from_args();
 
     let board_str = std::env::var("BOARD").expect("BOARD env var must be set (e.g. fire-24-a)");
     let board =
@@ -232,29 +216,22 @@ fn main() {
 
     let modes = modes_to_run(&config);
 
-    let mut passed = 0u32;
-    let mut failed = 0u32;
-    let mut skipped = 0u32;
+    let mut tally = Tally::new();
 
     for suite in suites::SUITES {
-        if let Some(f) = &suite_filter
-            && suite.name != f
-        {
+        if !filters.suite_matches(suite.name) {
             continue;
         }
         let selected: Vec<&Scenario> = suite
             .scenarios
             .iter()
-            .filter(|s| match &scenario_filter {
-                Some(f) => s.name.contains(f.as_str()),
-                None => true,
-            })
+            .filter(|s| filters.scenario_matches(s.name))
             .collect();
         if selected.is_empty() {
             continue;
         }
 
-        println!("\n== {} — {}", suite.name, suite.blurb);
+        suite_header(suite.name, suite.blurb);
         for sc in selected {
             // A chip the host can read either as bytes or as words has to obey
             // the protocol both ways, and which applies is the host's wiring
@@ -262,31 +239,13 @@ fn main() {
             // once per mode the chip supports, as the PIO tester does.
             for &mode in modes {
                 let label = format!("{} [{mode}-bit]", sc.name);
-                match run_scenario(sc, board, &config, &base_dir, log_enabled, mode) {
-                    Ok(Outcome::Pass) => {
-                        println!("PASS  {label}");
-                        passed += 1;
-                    }
-                    Ok(Outcome::Skip(why)) => {
-                        println!("SKIP  {label}\n        {why}");
-                        skipped += 1;
-                    }
-                    Err(e) => {
-                        println!("FAIL  {label}\n        [{}]\n        {e}", sc.spec_ref);
-                        failed += 1;
-                    }
-                }
+                let result = run_scenario(sc, board, &config, &base_dir, log_enabled, mode);
+                tally.record(&label, sc.spec_ref, result);
             }
         }
     }
 
-    // Skips are always reported, count included when zero: a suite that
-    // quietly dropped scenarios would otherwise read as full coverage.
-    println!(
-        "\nrbcp: {passed} passed, {failed} failed, {skipped} skipped  \
-         [{board_str} / {config_path}]"
-    );
-    process::exit(if failed == 0 { 0 } else { 1 });
+    tally.finish("rbcp", &format!("{board_str} / {config_path}"));
 }
 
 /// The bit modes every scenario is run in.
