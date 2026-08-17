@@ -20,8 +20,84 @@ void vbus_connect_handler(void) {
     STUB_LOG("vbus_connect_handler");
 }
 
+// ---------------------------------------------------------------------------
+// GPIO pad model
+//
+// Mirrors what ora_gpio_query reads out of GPIOx_STATUS on a device: the output
+// enable, the level the output drives, and the level an input reads.  See
+// test/stub.h for what is deliberately not modelled.
+// ---------------------------------------------------------------------------
+
+// Pins the model covers.  The B variant has the most, at 48 - see max_gpios[]
+// in constants.c.  Sizing to the larger variant means the model covers whatever
+// stub_set_rp_variant() selected, and the firmware's own MAX_GPIOS is what
+// bounds the pin numbers that reach here.
+#define STUB_MAX_GPIOS 48u
+
+static uint8_t stub_gpio_oe[STUB_MAX_GPIOS];
+static uint8_t stub_gpio_out[STUB_MAX_GPIOS];
+static uint8_t stub_gpio_in[STUB_MAX_GPIOS];
+
+void stub_gpio_set(uint8_t gpio, uint8_t state) {
+    if (gpio >= STUB_MAX_GPIOS) {
+        return;
+    }
+    if (state == ORA_GPIO_STATE_INPUT) {
+        stub_gpio_oe[gpio] = 0;
+    } else {
+        stub_gpio_oe[gpio] = 1;
+        stub_gpio_out[gpio] = (state == ORA_GPIO_STATE_HIGH) ? 1 : 0;
+    }
+}
+
+void stub_set_gpio_input(uint8_t gpio, uint8_t level) {
+    if (gpio < STUB_MAX_GPIOS) {
+        stub_gpio_in[gpio] = level ? 1 : 0;
+    }
+}
+
+uint8_t stub_gpio_is_output(uint8_t gpio) {
+    return (gpio < STUB_MAX_GPIOS) ? stub_gpio_oe[gpio] : 0;
+}
+
+// An output reports what it drives, an input what it reads - the same rule
+// ora_gpio_query applies to GPIOx_STATUS on a device.
+uint8_t stub_gpio_level(uint8_t gpio) {
+    if (gpio >= STUB_MAX_GPIOS) {
+        return 0;
+    }
+    return stub_gpio_oe[gpio] ? stub_gpio_out[gpio] : stub_gpio_in[gpio];
+}
+
+// A device's pads come out of reset with their drivers off.
+void stub_gpio_reset(void) {
+    for (uint32_t ii = 0; ii < STUB_MAX_GPIOS; ii++) {
+        stub_gpio_oe[ii] = 0;
+        stub_gpio_out[ii] = 0;
+        stub_gpio_in[ii] = 0;
+    }
+}
+
 void setup_gpio(void) {
     STUB_LOG("setup_gpio");
+}
+
+// Put back what a reset puts back.
+//
+// A test build runs many boots in one process, and the firmware's own statics
+// are ordinary host objects there: nothing restores them the way a device's
+// reset restores RAM from flash.  The emulator calls this on every boot.
+//
+// Only firmware state with no counterpart in a plugin belongs here.  The log
+// channel claims do not: a plugin records which channels it holds in its own
+// statics, and those are not cleared unless that plugin's harness clears them,
+// so resetting one half alone leaves the two disagreeing.  A harness that
+// clears its plugin's state calls ora_log_reset_claims() alongside it.
+//
+// Runtime info is not here either — the emulator restores that itself, from a
+// snapshot taken before the first boot.
+void onerom_test_reset(void) {
+    stub_gpio_reset();
 }
 
 void setup_qmi(rp235x_clock_config_t *config) {

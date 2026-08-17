@@ -222,6 +222,12 @@ impl Emulator {
         // Reset_Handler re-establishes the firmware's RAM state from its flash
         // image on every reset; here it never runs, so an in-process reboot
         // would otherwise inherit the previous run's mutated runtime info.
+        // Put back the firmware's other process-global state.  In a test build
+        // its statics are ordinary host objects, so nothing restores them
+        // between the many boots one process runs — a channel a plugin claimed,
+        // a pin it drove.  See onerom_test_reset() in firmware/test.
+        unsafe { ffi::onerom_test_reset() };
+
         unsafe {
             let ptr = ffi::ffi_runtime_info_ptr() as *mut u8;
             let size = ffi::ffi_runtime_info_size() as usize;

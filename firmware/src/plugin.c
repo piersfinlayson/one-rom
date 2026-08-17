@@ -180,19 +180,26 @@ size_t plugin_get_free_mem(void) {
 }
 
 void ora_set_status_led(uint8_t on) {
-#if !defined(TEST_BUILD)
     uint8_t pin = HW->gpio_status;
+
     // Pin presence is the only gate: a plugin may drive the status LED even if
-    // it was configured off. status_led_enabled is the live state and plugin
-    // coordination channel (see ora_set_status_led_fn_t in api.h), so record
-    // the new state here as well as driving the pin.
-    if (pin < MAX_GPIOS) {
-        RUNTIME->status_led_enabled = on ? 1 : 0;
-        if (on) {
-            status_led_on(pin);
-        } else {
-            status_led_off(pin);
-        }
+    // it was configured off.
+    if (pin >= MAX_GPIOS) {
+        return;
+    }
+
+    // status_led_enabled is the live state and plugin coordination channel (see
+    // ora_set_status_led_fn_t in api.h), so it is recorded whether or not there
+    // is a pin to drive.  A test build keeps it for the same reason a device
+    // does - it is what the other plugin reads - and it is also the only way a
+    // host test can see that the LED moved.
+    RUNTIME->status_led_enabled = on ? 1 : 0;
+
+#if !defined(TEST_BUILD)
+    if (on) {
+        status_led_on(pin);
+    } else {
+        status_led_off(pin);
     }
 #else // TEST_BUILD
     LOG("ORA set status LED %d", on);
@@ -1094,6 +1101,9 @@ ora_result_t ora_gpio_set(uint8_t gpio, uint8_t state, uint32_t flags) {
         SIO_GPIO_OE_SET_PIN(gpio);
     }
 #else // TEST_BUILD
+    // The pad model stands in for the registers above, so a test can read back
+    // what this drove - see stub_gpio_set() in test/stub.h.
+    stub_gpio_set(gpio, state);
     LOG("ORA gpio set %d state %d flags 0x%08x", gpio, state, flags);
 #endif // !TEST_BUILD
 
@@ -1133,8 +1143,10 @@ ora_result_t ora_gpio_query(uint8_t gpio, ora_gpio_info_t *info_out) {
     info.level = info.is_output ? GPIO_STATUS_OUTTOPAD(status)
                                 : GPIO_STATUS_INFROMPAD(status);
 #else // TEST_BUILD
-    info.level = 0;
-    info.is_output = 0;
+    // Read back from the pad model, which applies the same output-reports-what-
+    // it-drives rule as the branch above.
+    info.is_output = stub_gpio_is_output(gpio);
+    info.level = stub_gpio_level(gpio);
 #endif // !TEST_BUILD
 
     memcpy(info_out, &info, caller_size);
@@ -1155,6 +1167,21 @@ ora_result_t ora_gpio_query(uint8_t gpio, ora_gpio_info_t *info_out) {
 // adding a buffer needs no change here.
 static uint8_t ora_log_writer[ONEROM_RTT_MAX_UP_BUFFERS];
 static uint8_t ora_log_reader[ONEROM_RTT_MAX_UP_BUFFERS];
+
+#if defined(TEST_BUILD)
+// Give the channels back, as a device does by coming up with its RAM zeroed.
+//
+// A test build runs many boots in one process, where these are ordinary statics
+// and nothing clears them.  A plugin that claimed a channel in one run would
+// then find it held by itself in the next, and behave as it does on a device
+// whose channel another plugin owns.  Called from onerom_test_reset().
+void ora_log_reset_claims(void) {
+    for (unsigned ii = 0; ii < ONEROM_RTT_MAX_UP_BUFFERS; ii++) {
+        ora_log_writer[ii] = 0u;
+        ora_log_reader[ii] = 0u;
+    }
+}
+#endif // TEST_BUILD
 
 #if REAL_HARDWARE
 // Core 1 runs the system plugin and core 0 the user plugin; see

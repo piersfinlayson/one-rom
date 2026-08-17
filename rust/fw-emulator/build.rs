@@ -253,6 +253,7 @@ fn main() {
         .allowlist_function("ffi_epio_setup_dma_chain")
         .allowlist_function("ffi_epio_arm_monitor")
         .allowlist_function("set_onerom_test_yield_hook")
+        .allowlist_function("onerom_test_reset")
         .allowlist_function("set_host_calling_plugin")
         .allowlist_function("ffi_set_logging")
         .allowlist_function("ffi_serving_alg")
