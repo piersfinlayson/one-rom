@@ -744,10 +744,11 @@ void disable_swd(void) {
 void setup_status_led(void) {
 #if REAL_HARDWARE
     // Configure the status LED GPIO as an SIO push-pull output, driven high so
-    // the LED is off (active-low wiring). Idempotent and self-contained, so it
-    // is safe to call repeatedly - e.g. a fault handler calls it to reclaim the
-    // pin (funcsel/drive/OE) before forcing the LED on, in case a plugin such
-    // as the neopixel driver had reconfigured it.
+    // the LED is off (active-low wiring). Every call writes the same registers
+    // from scratch and reads nothing back, so it is safe to call repeatedly -
+    // e.g. a fault handler calls it to reclaim the pin (funcsel/drive/OE)
+    // before forcing the LED on, in case a plugin such as the neopixel driver
+    // had reconfigured it.
     if (HW->gpio_status < MAX_GPIOS) {
         uint8_t pin = HW->gpio_status;
         GPIO_CTRL(pin) = GPIO_CTRL_RESET;   // SIO function
