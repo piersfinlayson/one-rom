@@ -214,10 +214,61 @@ void tud_task_ext(uint32_t timeout_ms, bool in_isr) {
     // scenario raises directly.
 }
 
+// What the plugin last offered to send, and how many times it has offered
+// anything.  On a device tinyusb would put these bytes on the wire, which is
+// the only place the answer to a control request is visible - so the shim keeps
+// them instead, and a scenario reads them as the host would have.
+//
+// The buffer is copied rather than kept by pointer: the plugin hands over a
+// pointer to its own const data, and a test that dereferenced it later would be
+// asserting on the descriptor rather than on what was sent.
+static uint8_t  s_control_xfer[512];
+static uint32_t s_control_xfer_len;
+static uint32_t s_control_xfer_count;
+
 bool tud_control_xfer(uint8_t rhport, const tusb_control_request_t *request,
                       void *buffer, uint16_t len) {
-    (void)rhport; (void)request; (void)buffer; (void)len;
+    (void)rhport; (void)request;
+
+    uint32_t copy = len;
+    if (copy > sizeof(s_control_xfer)) {
+        copy = sizeof(s_control_xfer);
+    }
+    if (buffer != NULL && copy > 0u) {
+        memcpy(s_control_xfer, buffer, copy);
+    }
+    s_control_xfer_len = len;
+    s_control_xfer_count++;
+
     return true;
+}
+
+uint32_t usb_host_test_control_xfer_count(void) { return s_control_xfer_count; }
+
+uint32_t usb_host_test_take_control_xfer(uint8_t *buf, uint32_t max_len) {
+    uint32_t copy = s_control_xfer_len;
+    if (copy > max_len) {
+        copy = max_len;
+    }
+    if (copy > sizeof(s_control_xfer)) {
+        copy = sizeof(s_control_xfer);
+    }
+    if (buf != NULL && copy > 0u) {
+        memcpy(buf, s_control_xfer, copy);
+    }
+    return s_control_xfer_len;
+}
+
+bool usb_host_test_vendor_control(uint8_t stage, uint8_t bm_request_type,
+                                  uint8_t b_request, uint16_t w_index) {
+    tusb_control_request_t request = {0};
+    request.bmRequestType = bm_request_type;
+    request.bRequest      = b_request;
+    request.wValue        = 0;
+    request.wIndex        = w_index;
+    request.wLength       = 0;
+
+    return tud_vendor_control_xfer_cb(0, stage, &request);
 }
 
 // ---------------------------------------------------------------------------
@@ -245,12 +296,19 @@ void picoboot_task(pb_state_block_t *state) { (void)state; }
 void picoboot_rx_cb(pb_state_block_t *state, uint32_t count) { (void)state; (void)count; }
 void picoboot_tx_cb(pb_state_block_t *state, uint32_t sent_bytes) { (void)state; (void)sent_bytes; }
 
+static uint8_t s_picoboot_claims_control;
+
+void usb_host_test_set_picoboot_claims_control(uint8_t claims) {
+    s_picoboot_claims_control = claims;
+}
+
 bool picoboot_control_xfer_cb(pb_state_block_t *state, uint8_t rhport,
                               uint8_t stage, const tusb_control_request_t *req) {
     (void)state; (void)rhport; (void)stage; (void)req;
-    // Not picoboot's: the plugin's own handler runs next, which is the one
-    // under test.
-    return false;
+    // Not picoboot's by default: the plugin's own handler runs next, which is
+    // the one under test.  A scenario turns this on to check the plugin stops
+    // there rather than answering a request picoboot has already taken.
+    return s_picoboot_claims_control != 0u;
 }
 
 // The chip ID a device reads out of OTP, as the UTF-16 hex string
@@ -457,6 +515,13 @@ void ora_host_test_run_plugin(void) {
 void usb_host_test_reset_plugin(void) {
     memset(&context, 0, sizeof(context));
     ora_log_reset_claims();
+
+    // The shim's own record of the last control transfer goes too, or a
+    // scenario asserting that nothing was offered would see the previous
+    // scenario's answer.
+    s_control_xfer_len = 0;
+    s_control_xfer_count = 0;
+    s_picoboot_claims_control = 0;
 }
 
 // Version fields from the plugin's own header, so the harness can report which

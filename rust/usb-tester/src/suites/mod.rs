@@ -6,6 +6,7 @@
 
 use crate::Suite;
 
+pub mod descriptors;
 pub mod gpio;
 pub mod led;
 pub mod log;
@@ -32,5 +33,10 @@ pub static SUITES: &[Suite] = &[
         name: "log",
         blurb: "does the CDC port carry the device's log?",
         scenarios: log::SCENARIOS,
+    },
+    Suite {
+        name: "descriptors",
+        blurb: "does the device say what it is?",
+        scenarios: descriptors::SCENARIOS,
     },
 ];

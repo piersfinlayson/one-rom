@@ -7,6 +7,7 @@
 #if !defined(ORA_USB_SHIM_H)
 #define ORA_USB_SHIM_H
 
+#include <stdbool.h>
 #include <stdint.h>
 
 // ---------------------------------------------------------------------------
@@ -69,5 +70,38 @@ void *usb_host_test_picoboot_ctx(void);
 // The chip ID the shim's picoboot_get_serial reports, as 16 hex digits.  A
 // device reads this out of OTP, which does not exist here.
 #define USB_SHIM_CHIP_ID 0x0123456789ABCDEFull
+
+// Whether the shim's picoboot_control_xfer_cb claims the transfer.  The plugin
+// offers every control request to picoboot before looking at it itself, so this
+// is what lets a scenario check that ordering rather than assume it.
+void usb_host_test_set_picoboot_claims_control(uint8_t claims);
+
+// ---------------------------------------------------------------------------
+// Control transfers
+//
+// A vendor control request is how Windows asks for the MS OS 2.0 descriptor,
+// and the plugin answers by handing tinyusb a buffer to send.  Neither half
+// exists here: there is no host to ask and no bus to send on.  So the shim
+// drives the request from one side and records the answer on the other.
+// ---------------------------------------------------------------------------
+
+// Call the plugin's tud_vendor_control_xfer_cb with a request assembled as it
+// arrives on the wire, and return what the plugin returned - true if it claimed
+// the request, false to stall it.
+//
+// wValue and wLength are not passed because the plugin reads neither.
+bool usb_host_test_vendor_control(uint8_t stage, uint8_t bm_request_type,
+                                  uint8_t b_request, uint16_t w_index);
+
+// How many times the plugin has offered a buffer through tud_control_xfer.
+// Zero distinguishes a request the plugin declined from one it answered with
+// nothing.
+uint32_t usb_host_test_control_xfer_count(void);
+
+// What the last tud_control_xfer was given.  Returns the length the plugin
+// offered, and copies the first max_len bytes of it - so a caller that passed
+// too small a buffer is told so by the return value rather than silently seeing
+// a short descriptor.
+uint32_t usb_host_test_take_control_xfer(uint8_t *buf, uint32_t max_len);
 
 #endif // ORA_USB_SHIM_H

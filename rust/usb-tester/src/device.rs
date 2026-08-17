@@ -172,6 +172,117 @@ impl<'a> Device<'a> {
         unsafe { ffi::usb_host_test_write(addr, data.as_ptr(), data.len() as u32) }
     }
 
+    /// The device descriptor, as long as its own `bLength` says it is.
+    pub fn device_descriptor(&self) -> Result<Vec<u8>, String> {
+        // SAFETY: the plugin returns a pointer to its own static descriptor.
+        let ptr = unsafe { ffi::tud_descriptor_device_cb() };
+        take_descriptor("device", ptr, |d| Ok(usize::from(d[0])), 1, DEVICE_DESC_LEN)
+    }
+
+    /// The configuration descriptor, as long as its own `wTotalLength` says.
+    pub fn configuration_descriptor(&self, index: u8) -> Result<Vec<u8>, String> {
+        // SAFETY: as above.
+        let ptr = unsafe { ffi::tud_descriptor_configuration_cb(index) };
+        take_descriptor(
+            "configuration",
+            ptr,
+            total_length,
+            4,
+            self.configuration_desc_size() as usize,
+        )
+    }
+
+    /// The BOS descriptor, as long as its own `wTotalLength` says.
+    pub fn bos_descriptor(&self) -> Result<Vec<u8>, String> {
+        // SAFETY: as above.
+        let ptr = unsafe { ffi::tud_descriptor_bos_cb() };
+        take_descriptor("BOS", ptr, total_length, 4, self.bos_desc_size() as usize)
+    }
+
+    /// How many bytes the configuration descriptor actually occupies, which is
+    /// what its `wTotalLength` is supposed to say.
+    pub fn configuration_desc_size(&self) -> u32 {
+        // SAFETY: reads a sizeof compiled into the plugin.
+        unsafe { ffi::onerom_usb_test_configuration_desc_size() }
+    }
+
+    /// The same, for the BOS descriptor.
+    pub fn bos_desc_size(&self) -> u32 {
+        // SAFETY: as above.
+        unsafe { ffi::onerom_usb_test_bos_desc_size() }
+    }
+
+    /// A string descriptor, or `None` where the plugin refuses the index.
+    ///
+    /// Returned as the UTF-16 code units it is made of, header included, so a
+    /// scenario can check the header the device built as well as the text.
+    pub fn string_descriptor(&self, index: u8) -> Result<Option<Vec<u16>>, String> {
+        // SAFETY: as above.  `langid` is English, which the plugin ignores.
+        let ptr = unsafe { ffi::tud_descriptor_string_cb(index, 0x0409) };
+        if ptr.is_null() {
+            return Ok(None);
+        }
+
+        // SAFETY: the header unit is always present when the pointer is not
+        // null, and its low byte is the total length in bytes.
+        let bytes = usize::from(unsafe { *ptr } & 0xff);
+        if bytes < 2 || bytes % 2 != 0 || bytes > STRING_DESC_MAX_LEN {
+            return Err(format!(
+                "string descriptor {index} declares {bytes} bytes, which is not a \
+                 whole number of code units within the {STRING_DESC_MAX_LEN} the \
+                 plugin's buffer holds"
+            ));
+        }
+
+        // SAFETY: the declared length has been bounded above.
+        let units = unsafe { std::slice::from_raw_parts(ptr, bytes / 2) };
+        Ok(Some(units.to_vec()))
+    }
+
+    /// Send a vendor control request, as a host asking for the Windows
+    /// descriptor does.  Returns whether the plugin claimed it.
+    pub fn vendor_control(
+        &mut self,
+        stage: u8,
+        bm_request_type: u8,
+        b_request: u8,
+        w_index: u16,
+    ) -> bool {
+        // SAFETY: calls the plugin's own callback while it is parked.
+        unsafe { ffi::usb_host_test_vendor_control(stage, bm_request_type, b_request, w_index) }
+    }
+
+    /// How many buffers the plugin has offered to send in reply to a control
+    /// request.  Zero tells a refusal apart from an empty answer.
+    pub fn control_xfer_count(&self) -> u32 {
+        // SAFETY: reads a shim counter.
+        unsafe { ffi::usb_host_test_control_xfer_count() }
+    }
+
+    /// What the plugin last offered to send.
+    pub fn take_control_xfer(&mut self) -> Result<Vec<u8>, String> {
+        let mut buf = vec![0u8; MAX_DESCRIPTOR_LEN];
+        // SAFETY: `buf` is `MAX_DESCRIPTOR_LEN` bytes.
+        let len =
+            unsafe { ffi::usb_host_test_take_control_xfer(buf.as_mut_ptr(), buf.len() as u32) }
+                as usize;
+        if len > buf.len() {
+            return Err(format!(
+                "the plugin offered {len} bytes, more than the {MAX_DESCRIPTOR_LEN} a \
+                 descriptor may be"
+            ));
+        }
+        buf.truncate(len);
+        Ok(buf)
+    }
+
+    /// Whether picoboot claims a control request before the plugin's own
+    /// handler sees it.
+    pub fn set_picoboot_claims_control(&mut self, claims: bool) {
+        // SAFETY: sets a shim flag.
+        unsafe { ffi::usb_host_test_set_picoboot_claims_control(u8::from(claims)) };
+    }
+
     /// What the device's status LED is doing.
     ///
     /// Read through the firmware's own `status_led_enabled`, which is the live
@@ -208,6 +319,60 @@ impl<'a> Device<'a> {
     pub fn uptime_ms(&self) -> u32 {
         self.emu.get_plugin_uptime_ms()
     }
+}
+
+/// The largest control transfer this harness will take.
+///
+/// Nothing the plugin sends is close to it.
+const MAX_DESCRIPTOR_LEN: usize = 512;
+
+/// A device descriptor is 18 bytes.  That is the USB specification, not this
+/// device's choice, so it is the bound as well as the expected value.
+const DEVICE_DESC_LEN: usize = 18;
+
+/// The plugin builds string descriptors in a 65-unit buffer, so 130 bytes is as
+/// long as one can be.  See `_desc_str` in `usb_descriptors.c`.
+const STRING_DESC_MAX_LEN: usize = 130;
+
+/// `wTotalLength`, at offset 2 of the configuration and BOS descriptors.
+fn total_length(d: &[u8]) -> Result<usize, String> {
+    Ok(usize::from(u16::from_le_bytes([d[2], d[3]])))
+}
+
+/// Take a descriptor as long as it says it is, within what it can be.
+///
+/// `header` is how many bytes must be readable before the length can be, and
+/// `len_of` reads the length out of them.  `limit` is how much there really is
+/// — a `sizeof` for the configuration and BOS descriptors, a fixed size for the
+/// others.
+///
+/// A declared length beyond `limit` is a failure rather than a longer read,
+/// because reading it is exactly the out-of-bounds access a real host would
+/// make: the point is to report the lie, not to reproduce its consequence.
+fn take_descriptor(
+    what: &str,
+    ptr: *const u8,
+    len_of: fn(&[u8]) -> Result<usize, String>,
+    header: usize,
+    limit: usize,
+) -> Result<Vec<u8>, String> {
+    if ptr.is_null() {
+        return Err(format!("the plugin has no {what} descriptor"));
+    }
+
+    // SAFETY: a descriptor is at least its own header, which is what the
+    // declared length is read from.
+    let head = unsafe { std::slice::from_raw_parts(ptr, header) };
+    let len = len_of(head)?;
+    if len < header || len > limit {
+        return Err(format!(
+            "the {what} descriptor declares {len} bytes, but there are {limit}"
+        ));
+    }
+
+    // SAFETY: the declared length has been bounded by the real one above.
+    let all = unsafe { std::slice::from_raw_parts(ptr, len) };
+    Ok(all.to_vec())
 }
 
 /// Put the shim's endpoint model back to how a device comes up: no terminal

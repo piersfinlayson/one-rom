@@ -150,6 +150,23 @@ uint8_t const * tud_descriptor_bos_cb(void)
   return desc_bos;
 }
 
+#if defined(ORA_HOST_TEST)
+// How long the configuration and BOS descriptors really are.
+//
+// Both declare their own length in a wTotalLength field, which is what a host
+// reads and what a test must therefore be able to check - and checking it means
+// knowing the true size, which only this file can measure.  A caller that took
+// the declared length instead would be comparing a field against itself, and a
+// wrong one would still read past the end of the array.
+uint32_t onerom_usb_test_configuration_desc_size(void) {
+  return (uint32_t)sizeof(desc_configuration);
+}
+
+uint32_t onerom_usb_test_bos_desc_size(void) {
+  return (uint32_t)sizeof(desc_bos);
+}
+#endif // ORA_HOST_TEST
+
 uint8_t const desc_ms_os_20[] =
 {
   // Set header: length, type, windows version, total length

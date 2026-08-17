@@ -140,4 +140,6 @@ clean: clean-host
 
 distclean: clean
 
--include $(ALL_OBJ:.o=.d)
+# The host objects are listed too, or a header change would rebuild nothing on
+# the host side and a test would go on asserting against the last build.
+-include $(ALL_OBJ:.o=.d) $(HOST_ALL_OBJ:.o=.d)

@@ -148,4 +148,6 @@ distclean: clean
 	@echo "Removing cloned repositories..."
 	@rm -rf $(TINYUSB_DIR) $(PICOBOOTX_DIR) $(PICO_SDKLESS_DIR)
 
--include $(ALL_OBJ:.o=.d)
+# The host objects are listed too, or a header change would rebuild nothing on
+# the host side and a test would go on asserting against the last build.
+-include $(ALL_OBJ:.o=.d) $(HOST_OBJ:.o=.d)

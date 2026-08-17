@@ -187,6 +187,23 @@ run_config_usb() {
     }
 }
 
+# The USB serial the device presents, which its metadata can override.  Needs a
+# config that sets the override, and the scenario skips itself where none is set
+# — as its opposite, the chip ID serial, skips itself here.
+run_config_usb_serial() {
+    local board=$1
+    local config=$2
+
+    echo ""
+    echo "Testing: board=$board config=$config"
+    env BOARD="$board" CONFIG="$config" USB_TESTER_ARGS="--scenario serial_override" \
+        make test-usb || {
+        echo "FAILED: board=$board config=$config"
+        echo "Reproduce:  env BOARD=$board CONFIG=$config USB_TESTER_ARGS=--scenario\ serial_override make test-usb"
+        exit 1
+    }
+}
+
 # Everything in the USB tester that does not depend on the config.  Run on an A
 # variant and a B variant, because the GPIO count is the one thing that differs
 # between them and the plugin reports it.
@@ -403,6 +420,7 @@ test_family_24() {
     # (non-NULL) path.  Other configs leave these unset and cover the absent
     # (NULL) path.
     test_config_api fire-24-a onerom-config/test/metadata.json
+    run_config_usb_serial fire-24-a onerom-config/test/metadata.json
 
     # Address-monitor tests — see the note in test_family_40 for what these
     # cover.
