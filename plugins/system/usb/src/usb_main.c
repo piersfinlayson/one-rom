@@ -272,7 +272,7 @@ void tud_cdc_rx_cb(uint8_t itf) {
     uint32_t count = tud_cdc_n_read(itf, buf, sizeof(buf));
 
     // Debug log the number of bytes received and drop it
-    DEBUG("CDC received %lu bytes on interface %u", count, itf);
+    DEBUG("CDC received %lu bytes on interface %u", (unsigned long)count, itf);
 }
 
 // Invoked when a control transfer is received on vendor interface
