@@ -27,8 +27,9 @@
 //! A value outside the table is reported the way the specification tells hosts
 //! to read one — "Host implementations must handle reserved values gracefully,
 //! as new ROM types may be defined in future protocol versions" — so it is
-//! named as reserved, as implementation-specific, or as "invalid / ROM not
-//! being served", rather than printed as an unexplained number.  It is still a
+//! named as reserved, as not available, as implementation-specific, or as
+//! "invalid / ROM not being served", rather than printed as an unexplained
+//! number.  It is still a
 //! failure when it appears here, because the chip being described is known and
 //! the table defines a value for it.
 //!
@@ -76,7 +77,7 @@ const SPEC_ROM_TYPES: &[(u8, &str)] = &[
     (0x13, "27C400"),
     (0x14, "6116"),
     (0x15, "27C301"),
-    // 0x16–0x18 Reserved.
+    // 0x16–0x18 Not available.
     (0x19, "SST39SF040"),
     (0x1A, "28C16"),
     (0x1B, "28C64"),
@@ -108,8 +109,14 @@ const WHOLE_COUNT_OFFSET: u32 = 1;
 enum SpecClass {
     /// A value the table assigns, to the named ROM type.
     Defined(&'static str),
-    /// Within one of the table's Reserved ranges — 0x16–0x18 or 0x25–0x7F.
+    /// 0x25–0x7F, which the table reserves.
     Reserved,
+    /// 0x16–0x18, which the table marks not available: an implementation had
+    /// assigned them before the implementation-specific range existed, so the
+    /// protocol will never assign them.  A host reads them as it reads a
+    /// reserved value, and this suite tells them apart only so that a device
+    /// reporting one is described accurately.
+    NotAvailable,
     /// 0x80–0xFE, "Reserved for implementation-specific use".
     ImplementationSpecific,
     /// 0xFF, "Invalid/ROM not being served".
@@ -121,6 +128,9 @@ impl std::fmt::Display for SpecClass {
         match self {
             Self::Defined(name) => write!(f, "the protocol's value for {name}"),
             Self::Reserved => f.write_str("a value the protocol reserves and does not define"),
+            Self::NotAvailable => {
+                f.write_str("a value the protocol marks not available and will never assign")
+            }
             Self::ImplementationSpecific => f.write_str("reserved for implementation-specific use"),
             Self::NotServed => f.write_str("the protocol's \"invalid / ROM not being served\""),
         }
@@ -134,6 +144,7 @@ fn classify(value: u8) -> SpecClass {
     match value {
         0xFF => SpecClass::NotServed,
         0x80..=0xFE => SpecClass::ImplementationSpecific,
+        0x16..=0x18 => SpecClass::NotAvailable,
         _ => SpecClass::Reserved,
     }
 }
