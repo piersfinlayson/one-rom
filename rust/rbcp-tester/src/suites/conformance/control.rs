@@ -594,3 +594,415 @@ fn expect_entry_discarded(
 
     Ok(())
 }
+
+/// LOAD_AND_EXIT must leave the response header untouched.
+///
+/// Asserted as the two exits above are, and with the same care over the slot:
+/// the reload names the slot being served, which is the case the command
+/// exists for and the only one in which the header stays observable.
+///
+/// The reload here would put the header back on its own, so the last command
+/// field is not what proves silence — the *image's* byte at that offset is
+/// what a correct device leaves, and a header write after the reload would
+/// replace it.  [`load_and_exit_restores_the_back_channel`] makes that the
+/// whole assertion.  This scenario asserts the weaker, independent thing: the
+/// device did exit, and did so without leaving a header behind.
+pub fn load_and_exit_writes_no_response_header(
+    bus: &mut Bus,
+    ctx: &Ctx,
+) -> Result<Outcome, String> {
+    let s = ctx.session();
+
+    // The image's own byte where the last command field sits, read before the
+    // region becomes a back-channel.  Flash slot 0 is the image the device
+    // booted serving, so this is what a reload of it must restore.
+    let hdr_group = bus.read(s.bch_start + Hdr::LastCmdGroup.offset())?;
+    let hdr_cmd = bus.read(s.bch_start + Hdr::LastCmdCmd.offset())?;
+
+    bus.enter_cmd_resp(&s)
+        .map_err(|e| format!("ENTER_CMD_RESP: {e}"))?;
+    bus.issue_cmd(&s, group::CONTROL, control::NOP, &[])
+        .map_err(|e| format!("NOP: {e}"))?;
+    bus.expect_hdr(&s, Hdr::LastCmdCmd, control::NOP)?;
+
+    bus.send_cmd(
+        s.command_page,
+        group::CONTROL,
+        control::LOAD_AND_EXIT,
+        &[ctx.active_ram_slot, 0],
+    )?;
+
+    fence_in_command_mode(bus, ctx)?;
+
+    bus.expect_hdr(&s, Hdr::LastCmdGroup, hdr_group)?;
+    bus.expect_hdr(&s, Hdr::LastCmdCmd, hdr_cmd).map_err(|e| {
+        format!(
+            "{e} — LOAD_AND_EXIT reloaded the image, which puts the image's own byte back at \
+             that offset, so anything else there is a response header the device wrote \
+             afterwards"
+        )
+    })?;
+
+    Ok(Outcome::Pass)
+}
+
+/// LOAD_AND_EXIT puts back every byte the back-channel displaced.
+///
+/// This is the command's whole purpose, so the assertion is the region itself,
+/// not a field of it: the bytes the image holds across the region are read
+/// before entry, the session then writes a header and a response over them,
+/// and after the reload every one of them must be back.
+///
+/// Only the header's eight bytes are compared.  The device writes response
+/// data beyond them only for commands that return some, and this scenario
+/// issues none — so eight bytes is the whole of what it dirtied, and a
+/// mismatch anywhere in them is the failure this command exists to prevent.
+///
+/// The NOP is what makes the assertion mean anything: without a command in the
+/// session the header would hold the entry's own writes, and a device that
+/// simply never wrote would pass.  The header is read back mid-session and
+/// required to *differ* first, so the comparison at the end is against damage
+/// known to have been done.
+pub fn load_and_exit_restores_the_back_channel(
+    bus: &mut Bus,
+    ctx: &Ctx,
+) -> Result<Outcome, String> {
+    let s = ctx.session();
+
+    let mut original = Vec::new();
+    for i in 0..crate::driver::HDR_SIZE {
+        original.push(bus.read(s.bch_start + i)?);
+    }
+
+    bus.enter_cmd_resp(&s)
+        .map_err(|e| format!("ENTER_CMD_RESP: {e}"))?;
+    bus.issue_cmd(&s, group::CONTROL, control::NOP, &[])
+        .map_err(|e| format!("NOP: {e}"))?;
+
+    // The damage, established rather than assumed.
+    bus.expect_hdr(&s, Hdr::LastCmdCmd, control::NOP)?;
+    bus.expect_hdr(&s, Hdr::Progress, s.complete)?;
+
+    bus.send_cmd(
+        s.command_page,
+        group::CONTROL,
+        control::LOAD_AND_EXIT,
+        &[ctx.active_ram_slot, 0],
+    )?;
+
+    fence_in_command_mode(bus, ctx)?;
+
+    let mut restored = Vec::new();
+    for i in 0..crate::driver::HDR_SIZE {
+        restored.push(bus.read(s.bch_start + i)?);
+    }
+    if restored != original {
+        let i = (0..original.len())
+            .find(|&i| restored[i] != original[i])
+            .unwrap_or(0);
+        return Err(format!(
+            "after LOAD_AND_EXIT of flash slot 0 into the served slot, byte {i} of the \
+             back-channel region is 0x{:02X}, expected the image's own 0x{:02X} — the region \
+             reads {restored:02X?} against the {original:02X?} it held before the session",
+            restored[i], original[i]
+        ));
+    }
+
+    Ok(Outcome::Pass)
+}
+
+/// EXIT_CMD_RESP_RESTORE writes the host's bytes and nothing of its own.
+///
+/// The bytes handed back are the ones the host read before entering, so a
+/// correct device leaves the region exactly as the image had it — the same
+/// end state as [`load_and_exit_restores_the_back_channel`], reached without
+/// flash.
+///
+/// A header write after the restore is what this would catch: the count covers
+/// all eight bytes, so every field the device could write is one the host has
+/// just supplied a value for, and any difference is the device's own.
+pub fn exit_restore_writes_the_hosts_bytes(bus: &mut Bus, ctx: &Ctx) -> Result<Outcome, String> {
+    let s = ctx.session();
+
+    let mut original = Vec::new();
+    for i in 0..crate::driver::HDR_SIZE {
+        original.push(bus.read(s.bch_start + i)?);
+    }
+
+    bus.enter_cmd_resp(&s)
+        .map_err(|e| format!("ENTER_CMD_RESP: {e}"))?;
+    bus.issue_cmd(&s, group::CONTROL, control::NOP, &[])
+        .map_err(|e| format!("NOP: {e}"))?;
+    bus.expect_hdr(&s, Hdr::LastCmdCmd, control::NOP)?;
+
+    let mut args = original.clone();
+    args.push(crate::driver::HDR_SIZE as u8);
+    bus.send_cmd(
+        s.command_page,
+        group::CONTROL,
+        control::EXIT_CMD_RESP_RESTORE,
+        &args,
+    )?;
+
+    fence_in_command_mode(bus, ctx)?;
+
+    let mut restored = Vec::new();
+    for i in 0..crate::driver::HDR_SIZE {
+        restored.push(bus.read(s.bch_start + i)?);
+    }
+    if restored != original {
+        let i = (0..original.len())
+            .find(|&i| restored[i] != original[i])
+            .unwrap_or(0);
+        return Err(format!(
+            "after EXIT_CMD_RESP_RESTORE of the region's original eight bytes, byte {i} is \
+             0x{:02X} and the host supplied 0x{:02X} — the region reads {restored:02X?} against \
+             the {original:02X?} handed back",
+            restored[i], original[i]
+        ));
+    }
+
+    Ok(Outcome::Pass)
+}
+
+/// EXIT_CMD_RESP_RESTORE writes only as many bytes as the count asks for.
+///
+/// "Writes count bytes, taken from A0 onwards", and the arguments beyond it
+/// "are ignored by the device, but are still transmitted, as the argument
+/// count is fixed".  A device writing all eight regardless would leave the
+/// last four holding argument bytes the host never asked it to use.
+pub fn exit_restore_writes_only_count_bytes(bus: &mut Bus, ctx: &Ctx) -> Result<Outcome, String> {
+    const COUNT: usize = 4;
+    let s = ctx.session();
+
+    bus.enter_cmd_resp(&s)
+        .map_err(|e| format!("ENTER_CMD_RESP: {e}"))?;
+    bus.issue_cmd(&s, group::CONTROL, control::NOP, &[])
+        .map_err(|e| format!("NOP: {e}"))?;
+
+    // What the session left in the bytes past the count, read from the device
+    // rather than predicted, so the assertion is that they did not move.
+    let mut untouched = Vec::new();
+    for i in COUNT as u32..crate::driver::HDR_SIZE {
+        untouched.push(bus.read(s.bch_start + i)?);
+    }
+
+    // A payload sharing no value with anything already there, so a stray write
+    // is visible wherever it lands.
+    let payload = [0x11u8, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88];
+    let mut args = payload.to_vec();
+    args.push(COUNT as u8);
+    bus.send_cmd(
+        s.command_page,
+        group::CONTROL,
+        control::EXIT_CMD_RESP_RESTORE,
+        &args,
+    )?;
+
+    fence_in_command_mode(bus, ctx)?;
+
+    for i in 0..COUNT as u32 {
+        let got = bus.read(s.bch_start + i)?;
+        if got != payload[i as usize] {
+            return Err(format!(
+                "byte {i} of the region is 0x{got:02X}, expected the 0x{:02X} the host supplied \
+                 within a count of {COUNT}",
+                payload[i as usize]
+            ));
+        }
+    }
+    for (n, &want) in untouched.iter().enumerate() {
+        let i = COUNT as u32 + n as u32;
+        let got = bus.read(s.bch_start + i)?;
+        if got != want {
+            return Err(format!(
+                "byte {i} of the region is 0x{got:02X} and held 0x{want:02X} before the \
+                 command — it lies past the count of {COUNT}, so the device must not have \
+                 written it"
+            ));
+        }
+    }
+
+    Ok(Outcome::Pass)
+}
+
+/// A count outside 1 to 8 writes nothing, and the exit still completes.
+///
+/// "A8 must be in the range 0x01 to 0x08.  If it is not, no bytes are written,
+/// but the exit DOES complete."  Both halves are asserted for each of the two
+/// bounds: the region is required to still hold what the session put there,
+/// and the device is required to have left command-response mode — which a
+/// fresh entry succeeding is positive proof of, ENTER_CMD_RESP being defined
+/// to fail while the device is already in that mode.
+pub fn exit_restore_rejects_count_out_of_range(
+    bus: &mut Bus,
+    ctx: &Ctx,
+) -> Result<Outcome, String> {
+    for count in [0u8, 9u8] {
+        let s = ctx.session();
+        bus.enter_cmd_resp(&s)
+            .map_err(|e| format!("ENTER_CMD_RESP before a count of {count}: {e}"))?;
+        bus.issue_cmd(&s, group::CONTROL, control::NOP, &[])
+            .map_err(|e| format!("NOP: {e}"))?;
+
+        let mut before = Vec::new();
+        for i in 0..crate::driver::HDR_SIZE {
+            before.push(bus.read(s.bch_start + i)?);
+        }
+
+        let payload = [0x11u8, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88];
+        let mut args = payload.to_vec();
+        args.push(count);
+        bus.send_cmd(
+            s.command_page,
+            group::CONTROL,
+            control::EXIT_CMD_RESP_RESTORE,
+            &args,
+        )?;
+
+        fence_in_command_mode(bus, ctx)
+            .map_err(|e| format!("{e} — a count of {count} must still complete the exit"))?;
+
+        for i in 0..crate::driver::HDR_SIZE {
+            let got = bus.read(s.bch_start + i)?;
+            if got != before[i as usize] {
+                return Err(format!(
+                    "with a count of {count}, byte {i} of the region changed from \
+                     0x{:02X} to 0x{got:02X} — the specification requires no bytes to be written",
+                    before[i as usize]
+                ));
+            }
+        }
+    }
+
+    Ok(Outcome::Pass)
+}
+
+/// EXIT_CMD_RESP_RESTORE is not valid in command mode.
+///
+/// "Not supported in command mode, where there is no back-channel region to
+/// write to — the device consumes the arguments and discards the command."
+/// Both halves are asserted.
+///
+/// *Discarded*: the bytes the region occupied are armed with values of this
+/// scenario's own, and the command asks for eight different ones at the same
+/// place.  A device acting on it in command mode would write them there, using
+/// a region offset that stopped meaning anything when the session ended.
+///
+/// *Arguments consumed*: a NOP follows, in the same command-mode session, and
+/// must be acted on.  Had the nine argument bytes been left on the wire the
+/// device would read the NOP's two bytes as arguments and the session would be
+/// desynchronised, which the fence would then catch.
+pub fn restore_not_valid_in_command_mode(bus: &mut Bus, ctx: &Ctx) -> Result<Outcome, String> {
+    let s = ctx.session();
+
+    // A session, then a clean exit: the device has been in command-response
+    // mode and knows a region offset, which is the state that makes acting on
+    // this command in command mode possible at all.
+    bus.enter_cmd_resp(&s)
+        .map_err(|e| format!("ENTER_CMD_RESP: {e}"))?;
+    bus.issue_cmd(&s, group::CONTROL, control::EXIT_CMD_RESP_ACK, &[])
+        .map_err(|e| format!("EXIT_CMD_RESP_ACK: {e}"))?;
+
+    let payload = [0x11u8, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88];
+    let mut armed = Vec::new();
+    for (i, &p) in payload.iter().enumerate() {
+        let a = p ^ 0xFF;
+        bus.poke_verified(ctx, s.bch_start + i as u32, a)
+            .map_err(|e| format!("arming byte {i} of the region: {e}"))?;
+        armed.push(a);
+    }
+
+    bus.knock(ctx.command_page())?;
+    let mut args = payload.to_vec();
+    args.push(crate::driver::HDR_SIZE as u8);
+    bus.send_cmd(
+        ctx.command_page(),
+        group::CONTROL,
+        control::EXIT_CMD_RESP_RESTORE,
+        &args,
+    )?;
+
+    // Still the same command-mode session: if the nine arguments were consumed
+    // this is a fresh frame, and the fence proves the device acted on it.
+    bus.send_cmd(ctx.command_page(), group::CONTROL, control::NOP, &[])?;
+    bus.fence(ctx).map_err(|e| {
+        format!(
+            "{e} — the device took no further command-mode session, which is what an \
+             EXIT_CMD_RESP_RESTORE whose nine argument bytes were left on the wire would cause"
+        )
+    })?;
+
+    for (i, &want) in armed.iter().enumerate() {
+        let got = bus.read(s.bch_start + i as u32)?;
+        if got != want {
+            return Err(format!(
+                "byte {i} of the former back-channel region serves 0x{got:02X}, expected the \
+                 armed 0x{want:02X}{} — the device is not in command-response mode, so there \
+                 is no region for this command to write to",
+                if got == payload[i] {
+                    ", and that is the byte the command carried"
+                } else {
+                    ""
+                }
+            ));
+        }
+    }
+
+    Ok(Outcome::Pass)
+}
+
+/// LOAD_AND_EXIT with a slot argument of 0xAA loads nothing and exits anyway.
+///
+/// "A0 or A1 values of 0xAA are invalid.  If received the slot is NOT loaded,
+/// but the exit DOES complete."  Both arguments are tried, and each is
+/// asserted twice over: the served image must still hold the byte this
+/// scenario poked, proving no reload happened, and a command-mode session must
+/// be available, proving the exit did.
+///
+/// The poked byte is what makes the first half visible.  A reload of flash
+/// slot 0 would put the image's own byte back there, so the poke is the only
+/// thing distinguishing a device that obeyed from one that loaded anyway.
+pub fn load_and_exit_slot_aa_loads_nothing_but_exits(
+    bus: &mut Bus,
+    ctx: &Ctx,
+) -> Result<Outcome, String> {
+    for args in [[0xAAu8, 0u8], [ctx.active_ram_slot, 0xAAu8]] {
+        let s = ctx.session();
+        bus.enter_cmd_resp(&s)
+            .map_err(|e| format!("ENTER_CMD_RESP before arguments {args:02X?}: {e}"))?;
+
+        let addr = ctx.scratch_addr();
+        let in_image = bus.read(addr)?;
+        let poked = in_image ^ 0xFF;
+        bus.poke_slot_verified(&s, ctx.active_ram_slot, addr, poked)
+            .map_err(|e| format!("poking the served slot: {e}"))?;
+
+        bus.send_cmd(
+            s.command_page,
+            group::CONTROL,
+            control::LOAD_AND_EXIT,
+            &args,
+        )?;
+
+        fence_in_command_mode(bus, ctx).map_err(|e| {
+            format!("{e} — LOAD_AND_EXIT with arguments {args:02X?} must still complete the exit")
+        })?;
+
+        let got = bus.read(addr)?;
+        if got != poked {
+            return Err(format!(
+                "after LOAD_AND_EXIT with arguments {args:02X?}, 0x{addr:06X} serves \
+                 0x{got:02X} rather than the 0x{poked:02X} poked into the served slot{} — a \
+                 0xAA argument means the slot is not loaded",
+                if got == in_image {
+                    ", which is the image's own byte"
+                } else {
+                    ""
+                }
+            ));
+        }
+    }
+
+    Ok(Outcome::Pass)
+}

@@ -1380,6 +1380,7 @@ comment = "Image select jumper state at boot. Initialised to 0xFF."
 name = "rom_slot_index"
 kind = "scalar"
 type = "u8"
+plugin_key = { name = "ROM_SLOT_INDEX", id = 19 }
 comment = "Index of currently selected ROM slot. Initialised to 0xFF."
 
 [[structs.fields]]

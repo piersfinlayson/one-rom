@@ -88,6 +88,51 @@ pub static SCENARIOS: &[Scenario] = &[
         run: control::switch_and_exit_writes_no_response_header,
     },
     Scenario {
+        name: "conformance.read_group.get_boot_slot_info",
+        spec_ref: "Group 0x01 — GET_BOOT_SLOT_INFO",
+        run: read_group::get_boot_slot_info,
+    },
+    Scenario {
+        name: "conformance.read_group.get_boot_slot_info_unchanged_by_a_load",
+        spec_ref: "Group 0x01 — GET_BOOT_SLOT_INFO (the fields describe the boot)",
+        run: read_group::get_boot_slot_info_unchanged_by_a_load,
+    },
+    Scenario {
+        name: "conformance.control.load_and_exit_slot_aa_loads_nothing_but_exits",
+        spec_ref: "Group 0x00 — LOAD_AND_EXIT (a slot argument of 0xAA)",
+        run: control::load_and_exit_slot_aa_loads_nothing_but_exits,
+    },
+    Scenario {
+        name: "conformance.control.restore_not_valid_in_command_mode",
+        spec_ref: "Group 0x00 — EXIT_CMD_RESP_RESTORE (not supported in command mode)",
+        run: control::restore_not_valid_in_command_mode,
+    },
+    Scenario {
+        name: "conformance.control.load_and_exit_writes_no_response_header",
+        spec_ref: "Group 0x00 — LOAD_AND_EXIT",
+        run: control::load_and_exit_writes_no_response_header,
+    },
+    Scenario {
+        name: "conformance.control.load_and_exit_restores_the_back_channel",
+        spec_ref: "Group 0x00 — LOAD_AND_EXIT (restores the bytes the region occupies)",
+        run: control::load_and_exit_restores_the_back_channel,
+    },
+    Scenario {
+        name: "conformance.control.exit_restore_writes_the_hosts_bytes",
+        spec_ref: "Group 0x00 — EXIT_CMD_RESP_RESTORE",
+        run: control::exit_restore_writes_the_hosts_bytes,
+    },
+    Scenario {
+        name: "conformance.control.exit_restore_writes_only_count_bytes",
+        spec_ref: "Group 0x00 — EXIT_CMD_RESP_RESTORE (count bytes from A0 onwards)",
+        run: control::exit_restore_writes_only_count_bytes,
+    },
+    Scenario {
+        name: "conformance.control.exit_restore_rejects_count_out_of_range",
+        spec_ref: "Group 0x00 — EXIT_CMD_RESP_RESTORE (count outside 1 to 8)",
+        run: control::exit_restore_rejects_count_out_of_range,
+    },
+    Scenario {
         name: "conformance.control.enter_discards_unaligned_back_channel",
         spec_ref: "Group 0x00 — ENTER_CMD_RESP (back-channel start must be 4-byte aligned)",
         run: control::enter_discards_unaligned_back_channel,

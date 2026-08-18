@@ -31,6 +31,22 @@ a serial port or a display.
 - Implements RBCP 0.1.2, which also specifies what a device does with a command
   group or command it does not know.
 
+A host can also put back the bytes the back-channel displaces in the image it is
+being served, which nothing could do before — the region is a hole punched in a
+running ROM, and every write a host made was followed by that command's own
+response header.
+
+- LOAD_AND_EXIT reloads a RAM slot from flash and leaves command-response mode
+  without touching the header, which restores the whole image where the slot
+  named is the one being served.
+- EXIT_CMD_RESP_RESTORE takes up to eight bytes from the host and writes them
+  over the start of the region on the way out, for an image with no flash source
+  or a patch worth keeping.
+- GET_BOOT_SLOT_INFO reports the flash slot One ROM booted and the RAM slot it
+  went into, which is what a host needs to name in LOAD_AND_EXIT.  It needs
+  firmware v0.7.2 or later, where the boot slot became readable through the
+  metadata API.  On older firmware both are reported as unknown.
+
 ## [0.1.2] - 2026-08-09
 
 Report as many RAM slots as the RAM holds, rather than at most seven, and keep

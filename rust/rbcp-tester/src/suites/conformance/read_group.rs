@@ -37,7 +37,7 @@
 //! back-channel of their own size rather than [`Ctx::session`]'s — see
 //! [`Bus::enter_sized`].
 
-use crate::driver::{Bus, HDR_SIZE, Session, control, group, read, slot_peek_args};
+use crate::driver::{Bus, HDR_SIZE, Session, control, group, modify, read, slot_peek_args};
 use crate::{Ctx, Outcome};
 
 /// The RBCP version this module was written against.
@@ -58,6 +58,9 @@ const PREAMBLE_SIZE: u32 = 4;
 
 /// The value the ROM Types table gives to "Invalid/ROM not being served".
 const ROM_TYPE_INVALID: u8 = 0xFF;
+
+/// GET_BOOT_SLOT_INFO's "none, or not known" value for either slot.
+const SLOT_UNKNOWN: u8 = 0xFF;
 
 /// The device's chunk size for SLOT_PEEK is not visible to a host, so peeks are
 /// sized to straddle any plausible one: 40 bytes crosses a 32-byte boundary and
@@ -811,4 +814,87 @@ pub fn not_valid_in_command_mode(bus: &mut Bus, ctx: &Ctx) -> Result<Outcome, St
         "0x{dst:06X} serves 0x{got:02X}, which is neither the armed 0x{armed:02X} nor the flash \
          slot count 0x{count:02X} — something other than these two writes reached it"
     ))
+}
+
+/// GET_BOOT_SLOT_INFO names the flash slot the device booted from and the RAM
+/// slot it put it in.
+///
+/// "Flash slot the device loaded at boot, or 0xFF where it loaded none or does
+/// not know."  0xFF is a failure here, not a skip: this device booted the
+/// image it is serving out of a flash slot it chose, and the field exists for
+/// exactly that — a host that did not load the slot itself has no other way to
+/// learn which image LOAD_AND_EXIT should put back.
+///
+/// Flash slot 0 and RAM slot 0 are what the device boots, which
+/// [`super::modify`] relies on for the same reason.
+pub fn get_boot_slot_info(bus: &mut Bus, ctx: &Ctx) -> Result<Outcome, String> {
+    let s = ctx.session();
+    bus.enter_cmd_resp(&s)
+        .map_err(|e| format!("ENTER_CMD_RESP: {e}"))?;
+
+    bus.issue_cmd(&s, group::READ, read::GET_BOOT_SLOT_INFO, &[])
+        .map_err(|e| format!("GET_BOOT_SLOT_INFO: {e}"))?;
+
+    let got = bus.read_data(&s, 0, 2)?;
+    if got[0] == SLOT_UNKNOWN || got[1] == SLOT_UNKNOWN {
+        return Err(format!(
+            "GET_BOOT_SLOT_INFO reports flash slot 0x{:02X} and RAM slot 0x{:02X}; the device \
+             booted an image of its own choosing, so 0x{SLOT_UNKNOWN:02X} leaves a host that \
+             did not load the slot itself unable to name the image to reload",
+            got[0], got[1]
+        ));
+    }
+    if got != [0, ctx.active_ram_slot] {
+        return Err(format!(
+            "GET_BOOT_SLOT_INFO reports flash slot {} into RAM slot {}, expected flash slot 0 \
+             into RAM slot {} — that is the image the device boots serving",
+            got[0], got[1], ctx.active_ram_slot
+        ));
+    }
+
+    bus.expect_data(&s, 2, &[0, 0], "GET_BOOT_SLOT_INFO reserved bytes")?;
+
+    Ok(Outcome::Pass)
+}
+
+/// A load does not change what GET_BOOT_SLOT_INFO reports.
+///
+/// "Both fields describe the boot, and the device does not update them."  A
+/// device that moved them to follow a LOAD_SLOT would tell a later host that
+/// the boot image came from a slot it did not, and the host has no way to know
+/// better.
+///
+/// Flash slot 0 loaded into the served slot is the load used, because every
+/// RAM slot takes an image of its own size and slot 0 is the served slot's.
+pub fn get_boot_slot_info_unchanged_by_a_load(bus: &mut Bus, ctx: &Ctx) -> Result<Outcome, String> {
+    let s = ctx.session();
+    bus.enter_cmd_resp(&s)
+        .map_err(|e| format!("ENTER_CMD_RESP: {e}"))?;
+
+    bus.issue_cmd(&s, group::READ, read::GET_BOOT_SLOT_INFO, &[])
+        .map_err(|e| format!("GET_BOOT_SLOT_INFO: {e}"))?;
+    let before = bus.read_data(&s, 0, 2)?;
+
+    bus.issue_cmd(
+        &s,
+        group::MODIFY,
+        modify::LOAD_SLOT,
+        &[ctx.active_ram_slot, 0],
+    )
+    .map_err(|e| format!("LOAD_SLOT of flash slot 0 into the served RAM slot: {e}"))?;
+
+    bus.issue_cmd(&s, group::READ, read::GET_BOOT_SLOT_INFO, &[])
+        .map_err(|e| format!("GET_BOOT_SLOT_INFO after the load: {e}"))?;
+    let after = bus.read_data(&s, 0, 2)?;
+
+    if after != before {
+        return Err(format!(
+            "GET_BOOT_SLOT_INFO moved from flash slot {} / RAM slot {} to flash slot {} / RAM \
+             slot {} after a LOAD_SLOT — these fields describe the boot, which a host\'s own \
+             load does not change",
+            before[0], before[1], after[0], after[1]
+        ));
+    }
+
+    Ok(Outcome::Pass)
 }

@@ -148,6 +148,13 @@ const uint8_t protocol_version[4] = {
 #define CMD_EXIT_CMD_RESP_ACK           0x02u
 #define CMD_EXIT_CMD_RESP_SILENT        0x03u
 #define CMD_SWITCH_AND_EXIT             0x04u
+#define CMD_LOAD_AND_EXIT               0x05u
+#define CMD_EXIT_CMD_RESP_RESTORE       0x06u
+
+// Most bytes EXIT_CMD_RESP_RESTORE can put back, and so the largest valid
+// count.  Fixed by the protocol at eight, the size of the response header,
+// which is the part of the region the device always writes.
+#define RESTORE_MAX_BYTES               8u
 
 // Read commands
 #define CMD_GET_FLASH_FLASH_SLOT_COUNT  0x00u
@@ -158,6 +165,7 @@ const uint8_t protocol_version[4] = {
 #define CMD_GET_DEVICE_VERSION          0x05u
 #define CMD_GET_PROTOCOL_VERSION        0x06u
 #define CMD_SLOT_PEEK                   0x07u
+#define CMD_GET_BOOT_SLOT_INFO          0x08u
 
 // Modify commands
 #define CMD_SLOT_POKE                   0x00u
@@ -281,6 +289,18 @@ static nv_state_t s_nv_state;
 // (host signalling stride = 1 << this).  Fixed for the served ROM type, so it
 // is read once at setup rather than per command.
 static uint8_t s_unobserved_addr_bits;
+
+// What the device loaded at boot, for GET_BOOT_SLOT_INFO. The flash slot it
+// came from and the RAM slot it went into.  0xFF in either means the plugin
+// does not know, which is what the protocol has a device report where it has
+// no answer.
+//
+// Two bytes, not a byte per RAM slot.  Nothing else needs recording. A host
+// that loads a slot itself already knows what it put there, so the boot is the
+// only load a host cannot account for.
+#define BOOT_SLOT_NONE      0xFFu
+static uint8_t s_boot_flash_slot;
+static uint8_t s_boot_ram_slot;
 
 // ---------------------------------------------------------------------------
 // API function pointers (populated at plugin entry)
@@ -527,6 +547,58 @@ static void init_back_channel(uint8_t slot) {
 static void zero_bytes(uint8_t *p, uint8_t n) {
     volatile uint8_t *vp = p;
     while (n--) *vp++ = 0u;
+}
+
+// Record what the device booted, for GET_BOOT_SLOT_INFO.
+//
+// The firmware reports the booted slot as an index into the whole slot table,
+// while every flash slot number crossing RBCP counts only the slots that are
+// not plugins.  The two differ by the number of plugin slots, which the flash
+// slot count gives up directly: asking with no filter counts every slot, and
+// asking with the plugins excluded counts the ones RBCP names, so the
+// difference is the plugins.  Taken from the same filter the numbering itself
+// is built from, so the two cannot disagree about what a plugin slot is.
+//
+// The RAM slot is asked for rather than assumed: this runs at setup, before
+// the host can have switched anything, so the slot being served now is the one
+// the firmware preloaded into.  A firmware that does not report a boot slot,
+// or an active slot, leaves both bytes at 0xFF, which is what the protocol has
+// a device say where it does not know.
+//
+// Called once at setup.  Nothing updates these afterwards. They describe the
+// boot, and RBCP_RESET does not change what the device booted any more than a
+// host's own LOAD_SLOT does.
+static void init_boot_slots(void) {
+    s_boot_flash_slot = BOOT_SLOT_NONE;
+    s_boot_ram_slot   = BOOT_SLOT_NONE;
+
+    uint32_t rom_slot_index = 0u;
+    if (s_get_metadata_uint == NULL) {
+        s_log("RBCP: no metadata getter; boot slots unknown");
+        return;
+    }
+    if (s_get_metadata_uint(ORA_METADATA_KEY_ROM_SLOT_INDEX,
+                            &rom_slot_index) != ORA_RESULT_OK) {
+        s_log("RBCP: firmware reports no boot slot");
+        return;
+    }
+    uint8_t plugin_slots = (uint8_t)(s_get_flash_slot_count(0u) -
+                                     s_get_flash_slot_count(ORA_FLASH_SLOT_FLAG_EXCLUDE_PLUGINS));
+    if (rom_slot_index < plugin_slots) {
+        s_log("RBCP: booted slot %u is a plugin slot", (unsigned)rom_slot_index);
+        return;
+    }
+
+    uint8_t ram_slot = 0u;
+    if (s_get_active_ram_slot(&ram_slot) != ORA_RESULT_OK) {
+        s_log("RBCP: no active RAM slot at setup; boot slots unknown");
+        return;
+    }
+
+    s_boot_flash_slot = (uint8_t)(rom_slot_index - plugin_slots);
+    s_boot_ram_slot   = ram_slot;
+    s_log("RBCP: booted ram_slot=%u from flash_slot=%u",
+          (unsigned)s_boot_ram_slot, (unsigned)s_boot_flash_slot);
 }
 
 static void init_nv_state(void) {
@@ -839,6 +911,14 @@ static bool exec_get_protocol_version(void) {
     return true;
 }
 
+static bool exec_get_boot_slot_info(void) {
+    uint8_t resp[4] = { s_boot_flash_slot, s_boot_ram_slot, 0u, 0u };
+    data_write(s_state.active_slot, 0u, resp, sizeof(resp));
+    s_log("GET_BOOT_SLOT_INFO: flash_slot=%u ram_slot=%u",
+          (unsigned)s_boot_flash_slot, (unsigned)s_boot_ram_slot);
+    return true;
+}
+
 static bool exec_slot_peek(void) {
     uint8_t count  = ring_read_byte();
     uint8_t a0     = ring_read_byte();
@@ -909,6 +989,63 @@ static bool exec_slot_peek(void) {
     return true;
 }
 
+// Defined with the Modify group, whose LOAD_SLOT is the same copy.
+static bool load_slot_impl(const char *name);
+
+// Reload a RAM slot and leave command-response mode without writing the
+// response header.  Where the slot named is the one being served, that puts
+// the whole image back, including the bytes the back-channel displaced.
+//
+// The exit happens whether or not the load did: the host is told not to poll
+// after this command, so a device that stayed in command-response mode on a
+// bad argument would be waiting for commands nobody is going to send.
+static bool exec_load_and_exit(void) {
+    bool ok = load_slot_impl("LOAD_AND_EXIT");
+    s_state.active = false;
+    return ok;
+}
+
+// Write the host's bytes over the start of the back-channel region and leave
+// command-response mode, writing nothing else.  The bytes are the region's
+// original contents, which only the host knows.
+//
+// Written through s_reprogram rather than hdr_write: these are the host's
+// bytes going back into its image, not header fields, and the region has
+// already stopped being a back-channel by the time anything reads them.
+static bool exec_exit_cmd_resp_restore(void) {
+    uint8_t bytes[RESTORE_MAX_BYTES];
+    for (uint8_t i = 0u; i < RESTORE_MAX_BYTES; i++) {
+        bytes[i] = ring_read_byte();
+    }
+    uint8_t count = ring_read_byte();
+
+    // Command mode has no back-channel region, so there is nothing to put
+    // back and cfg.region_offset means nothing.  All nine arguments are read
+    // above before the command is discarded, as ENTER_CMD_RESP does when it
+    // is the one arriving in the wrong mode.
+    if (!s_state.active) {
+        s_log("EXIT_CMD_RESP_RESTORE failed: not in command-response mode");
+        return false;
+    }
+
+    // The exit completes either way, as for any terminal command given an
+    // argument it cannot use.
+    s_state.active = false;
+
+    if ((count == 0u) || (count > RESTORE_MAX_BYTES)) {
+        s_log("EXIT_CMD_RESP_RESTORE failed: count %u out of range", (unsigned)count);
+        return false;
+    }
+
+    s_log("EXIT_CMD_RESP_RESTORE: count=%u", (unsigned)count);
+    if (s_reprogram(s_state.active_slot, s_state.cfg.region_offset,
+                    bytes, count, 1u) != ORA_RESULT_OK) {
+        s_log("EXIT_CMD_RESP_RESTORE failed: reprogram error");
+        return false;
+    }
+    return true;
+}
+
 // ---------------------------------------------------------------------------
 // Command handlers — Modify group (0x02)
 // ---------------------------------------------------------------------------
@@ -951,18 +1088,22 @@ static bool exec_switch_slot(void) {
     return (s_set_active_ram_slot(target) == ORA_RESULT_OK);
 }
 
-static bool exec_load_slot(void) {
+// Copy a flash slot into a RAM slot, shared by LOAD_SLOT and LOAD_AND_EXIT.
+// Reads both argument bytes whatever the outcome, so a rejected command still
+// takes its frame off the wire.
+//
+static bool load_slot_impl(const char *name) {
     uint8_t ram_slot   = ring_read_byte();
     uint8_t flash_slot = ring_read_byte();
 
-    s_log("LOAD_SLOT: ram_slot=%u flash_slot=%u", (unsigned)ram_slot, (unsigned)flash_slot);
+    s_log("%s: ram_slot=%u flash_slot=%u", name, (unsigned)ram_slot, (unsigned)flash_slot);
 
     if ((ram_slot == 0xAAu) || (flash_slot == 0xAAu)) {
-        s_log("LOAD_SLOT failed: slot value 0xAA is reserved");
+        s_log("%s failed: slot value 0xAA is reserved", name);
         return false;
     }
     if (!host_slot_valid(ram_slot)) {
-        s_log("LOAD_SLOT failed: slot %u is not one the host may name", (unsigned)ram_slot);
+        s_log("%s failed: slot %u is not one the host may name", name, (unsigned)ram_slot);
         return false;
     }
 
@@ -973,10 +1114,15 @@ static bool exec_load_slot(void) {
         0u
     );
     if (rc != ORA_RESULT_OK) {
-        s_log("LOAD_SLOT failed: copy_flash_to_ram error %d", (int)rc);
+        s_log("%s failed: copy_flash_to_ram error %d", name, (int)rc);
         return false;
     }
+
     return true;
+}
+
+static bool exec_load_slot(void) {
+    return load_slot_impl("LOAD_SLOT");
 }
 
 static bool exec_slot_poke_all_byte(void) {
@@ -2057,8 +2203,13 @@ static void discard_args(uint8_t count) {
 
 // True for the commands the specification requires to leave the response
 // header untouched: RBCP_RESET ("there is never any response from this
-// command"), EXIT_CMD_RESP_SILENT, SWITCH_AND_EXIT, SET_AUX_AND_EXIT and
-// SET_AUX_SWITCH_EXIT (all "without updating the response header").
+// command"), EXIT_CMD_RESP_SILENT, SWITCH_AND_EXIT, LOAD_AND_EXIT,
+// EXIT_CMD_RESP_RESTORE, SET_AUX_AND_EXIT and SET_AUX_SWITCH_EXIT (all
+// "without updating the response header").
+//
+// LOAD_AND_EXIT and EXIT_CMD_RESP_RESTORE are the two that need it most: each
+// exists to leave the region byte-perfect, and a header write after the
+// command had run would be the very damage they undo.
 //
 // Decided from GROUP and CMD alone, before the command runs.  Every other
 // command needs cmd_begin to run *before* it is processed — that ordering is
@@ -2069,7 +2220,10 @@ static bool cmd_is_silent(uint8_t group, uint8_t cmd) {
         return cmd == CMD_RBCP_RESET;
     }
     if (group == GRP_CONTROL) {
-        return (cmd == CMD_EXIT_CMD_RESP_SILENT) || (cmd == CMD_SWITCH_AND_EXIT);
+        return (cmd == CMD_EXIT_CMD_RESP_SILENT) ||
+               (cmd == CMD_SWITCH_AND_EXIT) ||
+               (cmd == CMD_LOAD_AND_EXIT) ||
+               (cmd == CMD_EXIT_CMD_RESP_RESTORE);
     }
     if (group == GRP_AUX) {
         return (cmd == CMD_SET_AUX_AND_EXIT) || (cmd == CMD_SET_AUX_SWITCH_EXIT);
@@ -2116,6 +2270,15 @@ static bool dispatch(
                     ok             = exec_switch_slot();
                     s_state.active = false;
                     break;
+                case CMD_LOAD_AND_EXIT:
+                    // Reload then exit silently.  active_slot is not updated:
+                    // the slot being served does not change, and no
+                    // back-channel write follows this command.
+                    ok = exec_load_and_exit();
+                    break;
+                case CMD_EXIT_CMD_RESP_RESTORE:
+                    ok = exec_exit_cmd_resp_restore();
+                    break;
                 default:
                     // Unknown command: no args consumed.  This will desync the
                     // session; the best the host can do is re-knock.
@@ -2156,6 +2319,9 @@ static bool dispatch(
                     break;
                 case CMD_SLOT_PEEK:
                     ok = exec_slot_peek();
+                    break;
+                case CMD_GET_BOOT_SLOT_INFO:
+                    ok = exec_get_boot_slot_info();
                     break;
                 default:
                     ok = false;
@@ -2428,6 +2594,7 @@ __attribute__((noinline)) static void rbcp_setup(
     s_log("RBCP plugin starting");
 
     init_rbcp(true);
+    init_boot_slots();
 
     // The observed-address geometry is fixed for the served ROM type, so read
     // the unobserved-LSB count once here and cache the value rather than the

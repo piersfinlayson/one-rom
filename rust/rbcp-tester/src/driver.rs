@@ -1157,6 +1157,8 @@ pub mod control {
     pub const EXIT_CMD_RESP_ACK: u8 = 0x02;
     pub const EXIT_CMD_RESP_SILENT: u8 = 0x03;
     pub const SWITCH_AND_EXIT: u8 = 0x04;
+    pub const LOAD_AND_EXIT: u8 = 0x05;
+    pub const EXIT_CMD_RESP_RESTORE: u8 = 0x06;
 }
 
 #[allow(dead_code)]
@@ -1169,6 +1171,7 @@ pub mod read {
     pub const GET_DEVICE_VERSION: u8 = 0x05;
     pub const GET_PROTOCOL_VERSION: u8 = 0x06;
     pub const SLOT_PEEK: u8 = 0x07;
+    pub const GET_BOOT_SLOT_INFO: u8 = 0x08;
 }
 
 #[allow(dead_code)]
