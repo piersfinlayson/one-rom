@@ -444,7 +444,7 @@ pub static SCENARIOS: &[Scenario] = &[
     },
     Scenario {
         name: "conformance.pipes.get_pipe_info",
-        spec_ref: "Group 0x04 — GET_PIPE_INFO; GET_PIPE_INFO Response Format; Pipe Types",
+        spec_ref: "Group 0x04 — GET_PIPE_INFO; GET_PIPE_INFO Response Format; Pipe Types; Far End Types",
         run: pipes::get_pipe_info,
     },
     Scenario {

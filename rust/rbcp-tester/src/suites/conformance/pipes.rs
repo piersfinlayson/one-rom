@@ -131,12 +131,12 @@ pub fn get_pipe_capability(bus: &mut Bus, ctx: &Ctx) -> Result<Outcome, String> 
 
 /// GET_PIPE_INFO describes a pipe the device has.
 ///
-/// The type is Log, the only value RBCP 0.1.2 defines, or an
-/// implementation-specific value from 0x80 upwards.  Bit 0 of the flags is set,
-/// because a pipe the device exposes in this version supports the only
-/// direction this version has, and bit 1 must be clear: the device-to-host
-/// direction is "reserved in this version of the protocol and must be set to
-/// zero by the device".
+/// The type is Raw, the only value the specification defines, or an
+/// implementation-specific value from 0x80 upwards.  "At least one of bits 0
+/// and 1 is always set", so a pipe the device exposes carries OUT, IN or both.
+/// Bit 3 is "meaningful only where bit 2 is set, and must be set to zero by the
+/// device where bit 2 is clear".  `waiting` reads "zero where the pipe does not
+/// support IN", and the far end follows the same range rules as the type.
 pub fn get_pipe_info(bus: &mut Bus, ctx: &Ctx) -> Result<Outcome, String> {
     let s = match session_with_a_pipe(bus, ctx)? {
         Ok(s) => s,
@@ -150,35 +150,50 @@ pub fn get_pipe_info(bus: &mut Bus, ctx: &Ctx) -> Result<Outcome, String> {
 
     if info[0] != 0x00 && info[0] < 0x80 {
         return Err(format!(
-            "pipe 0 reports type 0x{:02X}; RBCP 0.1.2 defines only 0x00 (Log), reserves \
+            "pipe 0 reports type 0x{:02X}; the specification defines only 0x00 (Raw), reserves \
              0x01-0x7F, and leaves 0x80-0xFE to the implementation",
             info[0]
         ));
     }
-    if info[1] & 0x01 == 0 {
+    if info[1] & 0x03 == 0 {
         return Err(format!(
-            "pipe 0 reports flags 0x{:02X}, with the host-to-device bit clear — the device \
-             exposes the pipe, and that is the only direction this version defines",
+            "pipe 0 reports flags 0x{:02X}, with both direction bits clear — the device exposes \
+             the pipe, and at least one of bits 0 and 1 is always set",
             info[1]
         ));
     }
-    if info[1] & 0x02 != 0 {
+    if info[1] & 0x04 == 0 && info[1] & 0x08 != 0 {
         return Err(format!(
-            "pipe 0 reports flags 0x{:02X}, with the device-to-host bit set — that direction \
-             is reserved in RBCP 0.1.2 and must be reported as zero",
+            "pipe 0 reports flags 0x{:02X}, with the attached bit set while the bit saying the \
+             device reports attachment is clear — bit 3 must be zero where bit 2 is",
             info[1]
         ));
     }
-
-    if info[1] & 0xFC != 0 {
+    if info[1] & 0xF0 != 0 {
         return Err(format!(
-            "pipe 0 reports flags 0x{:02X}, with a bit set above bit 1 — bits 2-7 are reserved \
+            "pipe 0 reports flags 0x{:02X}, with a bit set above bit 3 — bits 4-7 are reserved \
              and must be set to zero by the device",
             info[1]
         ));
     }
 
-    bus.expect_data(&s, 3, &[0x00; 5], "GET_PIPE_INFO reserved bytes 3-7")?;
+    if info[1] & 0x02 == 0 && info[3] != 0 {
+        return Err(format!(
+            "pipe 0 carries no IN direction but reports {} bytes waiting — waiting reads zero \
+             where the pipe does not support IN",
+            info[3]
+        ));
+    }
+
+    if info[4] > 0x03 && info[4] < 0x80 {
+        return Err(format!(
+            "pipe 0 reports far end 0x{:02X}; the specification defines 0x00-0x03, reserves \
+             0x04-0x7F, and leaves 0x80-0xFE to the implementation",
+            info[4]
+        ));
+    }
+
+    bus.expect_data(&s, 5, &[0x00; 3], "GET_PIPE_INFO reserved bytes 5-7")?;
 
     Ok(Outcome::Pass)
 }

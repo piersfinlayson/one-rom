@@ -6,6 +6,9 @@ A host can now drive and read One ROM's own pins over the ROM bus, through
 RBCP's new Auxiliary I/O group — so a wire from a One ROM pad can reach a reset
 line, a drive, a relay or an indicator, and the retro system can operate it.
 
+- `GET_PIPE_INFO` reports the two fields RBCP has added to it: the bytes waiting
+  to be read, always zero on a pipe carrying only the OUT direction, and what
+  kind of thing the pipe reaches, which One ROM reports as unspecified.
 - Three pin groups: the GPIOs of the running RP2350 variant, the image select
   pads, and the X expansion pads.  The last two are RBCP group types `0x80` and
   `0x81`, this implementation's own values from the range the protocol reserves

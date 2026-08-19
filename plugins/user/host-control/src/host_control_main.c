@@ -187,13 +187,23 @@ const uint8_t protocol_version[4] = {
 #define CMD_GET_PIPE_INFO               0x01u
 #define CMD_PIPE_WRITE                  0x02u
 
-// Pipe type identifiers, as reported by GET_PIPE_INFO.  Every pipe this plugin
-// exposes is an ORA log channel, which is what the protocol calls a Log pipe.
-#define PIPE_TYPE_LOG                   0x00u
+// Pipe type identifiers, as reported by GET_PIPE_INFO.  The type describes the
+// shape of the bytes, not what they are for, and an ORA log channel imposes no
+// framing of its own - which is what the protocol calls a Raw pipe.
+#define PIPE_TYPE_RAW                   0x00u
 
-// Pipe flags, as reported by GET_PIPE_INFO.  Bit 1, the device-to-host
-// direction, is reserved by RBCP 0.1.2 and must be reported as zero.
-#define PIPE_FLAG_HOST_TO_DEVICE        0x01u
+// Pipe flags, as reported by GET_PIPE_INFO.  This plugin's pipes carry OUT
+// only, so bit 1 stays clear.  Bits 2 and 3 report whether the far end is
+// attached, and both stay clear: nothing tells this plugin whether anything is
+// draining the channel, and a device that cannot tell says so rather than
+// guessing.
+#define PIPE_FLAG_OUT                   0x01u
+
+// Far end identifiers, as reported by GET_PIPE_INFO.  A pipe is an ORA log
+// channel and this plugin cannot see who drains it - the system USB plugin
+// usually does, but a debug probe or nothing at all are equally possible - so
+// it reports the far end as unspecified rather than naming one it has guessed.
+#define PIPE_FAR_END_UNSPECIFIED        0x00u
 
 // Largest payload PIPE_WRITE can carry, and so the largest valid count.  Fixed
 // by the protocol at four, which is what leaves room for the pipe and count
@@ -1595,6 +1605,10 @@ static bool exec_get_pipe_info(void) {
 
     s_debug_log("GET_PIPE_INFO: pipe=%u", (unsigned)pipe);
 
+    if (pipe == 0xAAu) {
+        s_debug_log("GET_PIPE_INFO failed: pipe value 0xAA is reserved");
+        return false;
+    }
     if (s_state.cfg.data_size < 8u) {
         s_debug_log("GET_PIPE_INFO failed: data section too small");
         return false;
@@ -1613,9 +1627,12 @@ static bool exec_get_pipe_info(void) {
 
     uint8_t resp[8];
     zero_bytes(resp, sizeof(resp));
-    resp[0] = PIPE_TYPE_LOG;
-    resp[1] = PIPE_FLAG_HOST_TO_DEVICE;
+    resp[0] = PIPE_TYPE_RAW;
+    resp[1] = PIPE_FLAG_OUT;
     resp[2] = (free_bytes > 0xFFu) ? 0xFFu : (uint8_t)free_bytes;
+    // waiting stays zero: the pipe carries no IN direction, so there is never
+    // anything for the host to read.
+    resp[4] = PIPE_FAR_END_UNSPECIFIED;
 
     data_write(s_state.active_slot, 0u, resp, sizeof(resp));
     return true;

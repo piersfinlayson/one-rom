@@ -33,6 +33,7 @@ In detail:
 - Add Motorola S-record (`srec`) as a ROM image input format, alongside Intel HEX.  A chip may set `"format": "srec"` in a config file, with the same optional `"load_address"`; the CLI exposes it as `--slot format=srec,load-address=...`, and `onerom image convert` converts between `binary`, `ihex` and `srec` in any direction.  Unwritten bytes read as `0xFF`, as for Intel HEX.
 - One ROM Lab can dump a ROM as S-records: `f:srec`, alongside the existing `ihex` and hex dump formats.
 - Publish the CLI manual, chip type reference and compatibility reference as PDFs, in A4 and US Letter, for reading and printing away from a browser.  Each carries the version of the thing it documents rather than a repository version.
+- RBCP's `GET_PIPE_INFO` reports two more things about a pipe: how many bytes are waiting to be read, and what kind of thing the pipe reaches.  A One ROM pipe carries the host-to-device direction only, so the first is always zero, and the second is reported as unspecified.
 - `onerom control led beacon` now leaves the status LED as it found it.  It previously restored the state the USB plugin had last set itself, which on a device nothing had told otherwise is off.
 - `onerom inspect gpio` reported `Level` 0 for the status LED and RGB LED pins whatever they were doing.  An output pin's level is now what it drives, rather than a pad read-back the firmware disables on those two pins.
   - This required a firmware update.
@@ -79,6 +80,13 @@ To do (before release):
   MCU side, which is unestablished and decides whether it is a firmware-only
   change or needs an epio release.  The hardware test above settles the same
   question for this release.
+- **The host-control plugin reports its pipe's far end as Unspecified.**  RBCP's
+  GET_PIPE_INFO now says what kind of thing a pipe reaches, and a One ROM pipe is
+  an ORA log channel whose reader the plugin cannot see — usually the system USB
+  plugin, but a debug probe or nothing at all are equally possible.  Reporting
+  USB CDC honestly would mean the plugin learning who holds a channel's read
+  claim, which no ORA call exposes, so a host is told nothing where it could be
+  told something useful.
 - Web programmer S-record support, in `one-rom-wasm` and `one-rom-site`.  The format picker is driven by `file_formats()` and will list `srec` on its own, but the site's `accept` list, its extension auto-select and its load-address reveal (currently shown for `ihex` only) all need widening.
 - Drop the libudev/libusb build requirement, which Studio no longer has: `CLAUDE.md`, the comment in `ci/rust-lint.sh`, and the comment and two `apt-get` lines in `ci.yml`.  probe-rs 0.32 takes hidapi's pure-Rust `basic-udev` backend in place of `libudev-sys`, and nothing in the graph has wanted libusb for some time.  Verified on Debian — with both hidden from `pkg-config`, Studio builds and links clean, where probe-rs 0.30 failed in `libudev-sys`'s build script.  Leave `ci/docker/Dockerfile` until it is checked separately; that image builds firmware, not Studio.  Do this only once the debug probe test above has passed, since falling back to the fork would reinstate the requirement.
 
