@@ -8,10 +8,13 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # The hardware revisions of each socket size, in one place, so that adding a
 # board is one edit.  The LATE lists are the revisions from C onwards, which
-# some configurations need: bank switching wants the X pins earlier revisions
-# do not have, and multi-chip sets want image-select jumpers fire-24-a and b
-# lack.  Every full list is defined in terms of its LATE list, so a new board
-# added to one is picked up by both.
+# some configurations need.  On 28 pin that is the X pins themselves, which
+# fire-28-a and b do not have.  On 24 pin every revision has X pins and serves
+# banked sets, but a multi-chip set additionally needs the chip's select line
+# and the X pins to land on adjacent GPIOs - on fire-24-a and fire-24-b the PCB
+# routing puts them apart, and the generator refuses the config.  Every full
+# list is defined in terms of its LATE list, so a new board added to one is
+# picked up by both.
 FIRE_24_LATE_BOARDS="fire-24-c fire-24-d fire-24-e fire-24-f"
 FIRE_24_BOARDS="fire-24-a fire-24-b $FIRE_24_LATE_BOARDS"
 FIRE_28_LATE_BOARDS="fire-28-c fire-28-d"
@@ -404,9 +407,11 @@ test_family_24() {
     test_24_config onerom-config/test/24-bank-27xx.json
     test_24_config onerom-config/test/24-bank-28xx.json
 
-    # Test multi-chip ROM configurations on all Fire 24 hardware revisions.
+    # Test multi-chip ROM configurations.  C onwards only - see the note on the
+    # LATE board lists above for why fire-24-a and b cannot serve these.
     test_24_config_c_onwards onerom-config/test/24-multi-2364.json
     test_24_config_c_onwards onerom-config/test/24-multi-2316.json
+    test_24_config_c_onwards onerom-config/test/24-multi-27xx.json
 
     # Test specific ROM configurations on all Fire 24 hardware revisions.
     # fire-24-c only has 2 image select jumpers so can only test the first
@@ -472,6 +477,7 @@ test_family_28() {
 
     # Test multi-chip ROM configurations.
     test_28_config_c_onwards onerom-config/test/28-multi-231024.json
+    test_28_config_c_onwards onerom-config/test/28-multi-27xxx.json
 
     # Test specific ROM configurations on all Fire 28 hardware revisions.
     test_28_config onerom-config/28-c64c.json

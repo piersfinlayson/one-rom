@@ -1,0 +1,131 @@
+{
+    "$schema": "https://images.onerom.org/configs/schema.json",
+    "version": 1,
+    "name": "24 pin One ROM multi-ROM tests - 27xx ROM types",
+    "description": "24 pin One ROM multi-ROM tests - 27xx ROM types - fixed CE/OE secondaries",
+    "categories": [],
+    "rom_sets": [
+        {
+            "type": "multi",
+            "description": "set 0 - 2 x 2732, CE select, OE commoned",
+            "roms": [
+                {
+                    "description": "1",
+                    "file": "images/test/rand_4KB.rom",
+                    "type": "2732"
+                },
+                {
+                    "description": "2",
+                    "file": "images/test/rand_8KB.rom",
+                    "type": "2732",
+                    "oe": "ignore",
+                    "size_handling": "truncate"
+                }
+            ]
+        },
+        {
+            "type": "multi",
+            "description": "set 1 - 3 x 2732, CE select, OE commoned",
+            "roms": [
+                {
+                    "description": "1",
+                    "file": "images/test/rand_4KB.rom",
+                    "type": "2732"
+                },
+                {
+                    "description": "2",
+                    "file": "images/test/rand_8KB.rom",
+                    "type": "2732",
+                    "oe": "ignore",
+                    "size_handling": "truncate"
+                },
+                {
+                    "description": "3",
+                    "file": "images/test/rand_16KB.rom",
+                    "type": "2732",
+                    "oe": "ignore",
+                    "size_handling": "truncate"
+                }
+            ]
+        },
+        {
+            "type": "multi",
+            "description": "set 2 - 2732 primary, 2716 secondary - one address line fewer",
+            "roms": [
+                {
+                    "description": "1",
+                    "file": "images/test/rand_4KB.rom",
+                    "type": "2732"
+                },
+                {
+                    "description": "2",
+                    "file": "images/test/rand_8KB.rom",
+                    "type": "2716",
+                    "oe": "ignore",
+                    "size_handling": "truncate"
+                }
+            ]
+        },
+        {
+            "type": "multi",
+            "description": "set 3 - 2 x 2716, CE select, OE commoned",
+            "roms": [
+                {
+                    "description": "1",
+                    "file": "images/test/rand_2KB.rom",
+                    "type": "2716"
+                },
+                {
+                    "description": "2",
+                    "file": "images/test/rand_4KB.rom",
+                    "type": "2716",
+                    "oe": "ignore",
+                    "size_handling": "truncate"
+                }
+            ]
+        },
+        {
+            "type": "multi",
+            "description": "set 4 - 2 x 2732, OE select, CE commoned",
+            "roms": [
+                {
+                    "description": "1",
+                    "file": "images/test/rand_4KB.rom",
+                    "type": "2732"
+                },
+                {
+                    "description": "2",
+                    "file": "images/test/rand_8KB.rom",
+                    "type": "2732",
+                    "ce": "ignore",
+                    "size_handling": "truncate"
+                }
+            ]
+        },
+        {
+            "type": "multi",
+            "description": "set 5 - 2732 primary, 2716 in the middle, 2732 last",
+            "roms": [
+                {
+                    "description": "1",
+                    "file": "images/test/rand_4KB.rom",
+                    "type": "2732"
+                },
+                {
+                    "description": "2",
+                    "file": "images/test/rand_8KB.rom",
+                    "type": "2716",
+                    "oe": "ignore",
+                    "size_handling": "truncate"
+                },
+                {
+                    "description": "3",
+                    "file": "images/test/rand_16KB.rom",
+                    "type": "2732",
+                    "oe": "ignore",
+                    "size_handling": "truncate"
+                }
+            ]
+        }
+    ]
+}

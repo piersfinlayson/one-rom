@@ -1,124 +1,197 @@
-# Multiple ROM Sets
+# Multiple ROM Slots
 
-One ROM 24 offers two models of run-time multi-ROM image support:
+One ROM offers two ways for a single One ROM to serve more than one ROM image
+simultaneously:
 
-- **Dynamic bank switched image sets**.  In this mode, the ROM images in a set can dynamically switched at runtime (requiring no One ROM or host reset).  This is done by using the X1 and X2 pins as bank select lines.
+- **Multiple simultaneous ROM image slots**.  A slot is a group of up to 3 ROM
+  images, all of which One ROM serves **at the same time**.  The chip select
+  lines of the other, empty, ROM sockets are connected to One ROM's X1 and X2
+  pins, so one device stands in for up to three ROMs on the same bus.
 
-- **Multiple simultaneous ROM image sets**.  A set is a group of up to 3 ROM images, all of which One ROM will serve **simultaneously**.  In this model, extra chip select lines from the extra ROM sockets to be served are connected to One ROM pins X1 and X2.  This allows a single One ROM to serve up to 3 ROM images.  (Restrictions apply, see below.)
+- **Dynamic bank switched image slots**.  A slot is a group of up to 4 ROM images,
+  one of which is served at a time.  X1 and X2 select which, and the selection
+  is read continuously, so an image can be changed **while the host is running**
+  with no reset of either the host or One ROM.
 
-Other versions of One ROM do currently not offer these features.
+A given slot uses one or the other, never both.
 
-The examples below show how to configure these features building One ROM from source.  A similar approach is taken when using CLI/Studio.  Example the CLI help and the [JSON config file readme](../onerom-config/README.md) for details on how to configure these features using CLI/Studio. 
+This article covers One ROM Fire.
+
+Slots were previously called sets, and the older name survives in the
+configuration file format (`chip_sets`, or `rom_sets` in older files), in the
+names of the ready-made configurations (`set-*.json`), and in the messages the
+generator prints.
+
+Selecting between different single ROM images at boot time, using the image
+select jumpers (the normal case), is a separate mechanism described in
+[Image Selection](/docs/IMAGE-SELECTION.md).  The two can be combined - choosing
+the slot at boot time and then using X1/X2 within the chosen slot.
+
+## Hardware Requirements
+
+Both features need the X1 and X2 pins, which not every board carries.  Multi-ROM
+slots ask for more than that - see [Why a slot may be
+refused](#why-a-slot-may-be-refused).
+
+| Board | Bank switching | Multi-ROM slots |
+| --- | --- | --- |
+| fire-24-a, fire-24-b | yes | no |
+| fire-24-c, fire-24-d, fire-24-e, fire-24-f | yes | yes |
+| fire-28-a, fire-28-b | no | no |
+| fire-28-c, fire-28-d | yes | yes |
+| fire-32-a, fire-32-b | no | no |
+| fire-40-a, fire-40-b | no | no |
 
 ## Dynamic Bank Switching
 
-Dynamic bank switching requires hardware revision F onwards, and firmware version v0.2.1 onwards.
+A banked slot holds 2, 3 or 4 images of the same chip type.  X1 and X2 are read
+as a bank number, and the image with that number is the one served:
 
-Dynamic bank switching supports all ROM types (2364, 2332 and 2316) with any CS configuration.
+- 2 images: X1 alone chooses, and X2 is unused.
+- 3 or 4 images: X1 is the low bit and X2 the high bit of a 2 bit bank number.
 
-In this mode, all ROMs in a particular set must share the same ROM type and CS configuration.the
+For a 3 image slot, bank 3 - both X1 and X2 closed - names an image that does not
+exist.  One ROM serves 0xAA throughout for that bank rather than wrapping round
+to the first image.
 
-## Multiple Simultaneous ROM Image Sets
-
-Multiple simultaneous ROM image sets requires hardware revision E onwards, and firmware version v0.2.1 onwards.
-
-For this feature, the following conditions must be met:
-
-- All the ROMs being replaced share the same address and data buses.
-- One ROM is installed in the socket of the first ROM in the set to be replaced.
-- The other ROM sockets to be replaced are empty.
-- The chip select line (pin 20) of the other, empty, ROM sockets to be replaced are connected to One ROM pins X1 (2nd image of set) and X2 (optional 3rd image of set).
-
-This feature is currently available only for 2364 ROMs, and 2332/2316 ROMs whose CS2/CS3 lines are permanently tied to the active state.  This is true, for example, for the C64 character ROM.  You can mix ROM types, so long as this condition is met - so both C64 2364 kernal/basic ROM images can share a set with the C64 2332 character ROM image.
-
-You can find pre-built configurations in [`config`](/onerom-config/README.md), named `set-*.mk`.
-
-[MCU Selection](/docs/old/MCU-SELECTION.md) gives guidance on the STM32F4 clock speed requirement for serving Multi-ROM sets if using One ROM Ice.
-
-## Set Configuration
-
-Under the covers, One ROM uses the concepts of sets, even if they are not specified - in this case, each ROM image is in its own set.  Hence the existing configuration model remains supported.  That single image set configuration looks like:
-
-```Makefile
-ROM_CONFIGS = \
-    file=rom_2364_1.bin,type=2364,cs1=0 \
-    file=rom_2332_1.bin,type=2332,cs1=0,cs2=0
-```
-
-That is still a perfectly valid approach, if you do not want multi-ROM sets, or dynamic bank switching.
-
-### Multi-ROM Set Configuration
-
-To define multi-ROM sets, in order to serve multiple ROM images simultaneously, use a `ROM_CONFIGS` setting like this:
-
-```Makefile
-ROM_CONFIGS = \
-    set=0,file=rom_2364_1.bin,type=2364,cs1=0 \
-    set=0,file=rom_2332_1.bin,type=2332,cs1=0,cs2=ignore \
-    set=0,file=rom_2364_2.bin,type=2364,cs1=0 \
-    set=1,file=rom_2364_3.bin,type=2364,cs1=0
-```
-
-Each set can contain 1, 2 or 3 images, and are selected by the regular CS line, X1 and X2 respectively.  All CS1 values must be the same within a set - `sdrr-gen` attempts to detect and reject invalid configurations.
-
-In the example above, the first set (select if the regular image select jumpers are all open), the ROM will serve
-
-- `rom_2361_1.bin` to the socket it is installed in, if that socket's CS line goes active.
-- `rom_2332_1.bin` to the same data bus, if the CS line from socket 2 is connected to X1, when this cs line goes active.
-- `rom_2364_2.bin` to the same data bus, if the CS line from socket 3 is connected to X2, when this CS line goes active.
+All images in a banked slot are the same chip type, and their chip select
+polarities must agree, because every image is reached through the same physical
+chip select pin on the board.
 
 ### Dynamic Bank Switching Configuration
 
-To define dynamic bank switching, use a `ROM_CONFIGS` setting like this:
-
-```Makefile
-ROM_CONFIGS = \
-    set=0,bank=0,file=rom_2364_1.bin,type=2364,cs1=0
-    set=0,bank=1,file=rom_2364_2.bin,type=2364,cs1=0
-    set=0,bank=2,file=rom_2364_3.bin,type=2364,cs1=0
-    set=1,filename=rom2364_5.bin,type=2364,cs1=0
+```json
+{
+    "version": 1,
+    "name": "C64 character sets",
+    "chip_sets": [
+        {
+            "type": "banked",
+            "description": "Switchable character sets",
+            "chips": [
+                { "file": "characters.901225-01.bin", "type": "2332",
+                  "cs1": "active_low", "cs2": "active_high" },
+                { "file": "characters.325018-02.bin", "type": "2332",
+                  "cs1": "active_low", "cs2": "active_high" }
+            ]
+        }
+    ]
+}
 ```
 
-Here, when set 0 is selected, by all the image select jumpers being open, the ROM within that set that is served is selected by using X1 and X2 as image select jumpers.
+Ready-made banked configurations are in [`onerom-config`](/onerom-config/), named
+`bank-*.json`.
 
-- X1/X2 open - `rom_2364_1.bin` is served
-- X1 closed/X2 open - `rom_2364_2.bin` is served
-- X1 open/X2 closed - `rom_2364_3.bin` is served
-- X1/X2 closed - `rom_2364_1.bin` is served
+## Multiple Simultaneous ROM Image Slots
 
-The last line takes some explaining.  As only 3 banks are configured, images 0-2 exist.  However, bank 3 has been selected by closing both X1 and X2.  One ROM takes the bank select **modulo** the number of images (i.e. wraps and starts counting again), so reverts to image 0.
+A multi-ROM slot holds 2 or 3 images, and One ROM serves all of them at once.
+The following must be true:
 
-## Future Enhancements
+- All the ROMs being replaced share the same address and data buses.
+- One ROM is installed in the socket of the first ROM in the slot.
+- The other ROM sockets in the slot are empty.
+- A chip select line of each other socket is connected by a flying lead to One
+  ROM's X1 pin (the second image) and X2 pin (the third).
 
-### Multi-ROM sets: 2332s With Varying CS2
+Which chip types can go in a slot is not a fixed list.  The rule is that each of
+the other chips reaches One ROM through exactly one control line - the one on the
+flying lead - and every other control line it has is either commoned across the
+whole slot or is not used to choose between chips.  So a slot can mix chip types,
+including chips of different sizes, as long as they agree on that.
 
-It should be possible to support a set of 2332 ROMs with CS2 varying, so long as all of the chips being replaced share the same CS2 line (i.e. are connected together).  The serving algorithm to implement this may be less efficient again than the stock mutli-rom set serving algorithm, but it is likely to be required by less powerful machines, so this is unlikely to be an issue.
+Two worked examples.  A C64 kernal (2364) can share a slot with the character ROM
+(2332), because the character ROM's CS2 is tied permanently active and CS1 does
+the choosing.  A pair of 2732 EPROMs can share a slot with /CE on the flying lead
+and /OE commoned between them.
 
-It may be possible support multiple 2316 ROMs with varying CS2/CS3, so long as all CS2s are tied together and all CS3s are tied together.
+A chip in the slot may have fewer address lines than the chip One ROM is
+installed as - a 2716 behind a 2732, or a 2332 behind a 2364.  The address lines
+the smaller chip does not have are simply not connected to it, and One ROM
+serves it the same byte whatever those lines are doing.
 
-It may also be possible to support combined 2332/2316 sets, so long as CS2 on the 2316 is permanantly active (and CS2 for all the 2332 and CS3 for the 2316s are all tied together).  (Somewhat confusingly, 2332 CS2 and 2316 CS3 are the same pin - 2316 CS2 is distinct.)
+The polarities of the choosing line do not have to match across the slot.
+
+### Multi-ROM Slot Configuration
+
+The first chip is the one One ROM is installed as.  Each later chip names the
+control line on its flying lead by leaving that line alone, and marks its other
+control lines `ignore`:
+
+```json
+{
+    "version": 1,
+    "name": "Bally -35 board, U2 and U6",
+    "chip_sets": [
+        {
+            "type": "multi",
+            "description": "U2 in the socket, U6 on a flying lead",
+            "chips": [
+                { "description": "U2", "file": "ballyu2.732", "type": "2732" },
+                { "description": "U6", "file": "ballyu6.732", "type": "2732",
+                  "oe": "ignore" }
+            ]
+        }
+    ]
+}
+```
+
+Here both chips are chosen by /CE, so U6's /CE goes to X1, and /OE is commoned
+between the two sockets.  Marking U6's `oe` as `ignore` is what says "/CE is the
+line on the flying lead".
+
+Ready-made multi-ROM configurations are in [`onerom-config`](/onerom-config/),
+named `set-*.json`.
+
+Configuration files also accept `rom_sets` and `roms` in place of `chip_sets`
+and `chips`, and the files shipped in `onerom-config` use those older names.
+
+## Why a Slot May Be Refused
+
+One ROM reads the address lines, the chip selects and the X pins as one
+contiguous run of MCU pins, in a single hardware operation.  For a multi-ROM
+slot, the line that chooses between chips and the X pins are all part of that
+read, so they have to sit next to each other on the MCU.  Which MCU pin each
+socket pin reaches is fixed by the PCB routing, and on some boards those pins
+are not neighbours.
+
+Where that happens the build stops and says so, rather than producing a
+firmware image that does not work:
+
+```
+The board fire-24-a does not support this configuration: 2364 select/control
+GPIOs [9, 13] are not contiguous on this board; Multi and Banked sets require
+all select, commoned, and X-pin GPIOs to form a contiguous range within a
+single PIO window
+```
+
+This is why fire-24-a and fire-24-b serve banked slots but not multi-ROM slots.
+Bank switching does not have the requirement, because there the X pins are read
+as part of the address rather than as extra chip selects.
 
 ## Technical Details
 
-In order to implemented this feature, all ROM images in the set are combined into a single 64KB image before storing into the firmware, and then the entirety of the STM32 port C GPIO state is read as an offset into that image. The ROM images are placed in the correct place for this lookup to work by the pre-processing step, using `sdrr-gen`.
+One ROM's address PIO reads a single contiguous window of MCU pins and uses the
+value it reads as an index into a table of bytes held in RAM.  That window
+covers more than the address lines: the chip selects and the X pins are inside
+it too.  Everything each feature does falls out of how that table is filled in,
+which is the generator's job.
 
-### Multi-ROM Set Serving Details
+For a **banked** slot, the X pins are two more index bits.  The table holds each
+image at the offset its bank number gives, so changing a jumper changes which
+part of the table the next read lands in.  This is why a bank change takes
+effect immediately and needs no reset - nothing is reloaded, the reads simply
+go elsewhere.
 
-If only 2 ROM images are in the set, the final bit of port C (PC15) is expected to be unconnected, and pulled low internally, just as when serving a single ROM image, PC14/PC15 are both pulled low, to ensure a 16KB offset into a 16KB image.  A 64Kb image is still used in the 2 ROM images in a set case, although a future enhancement could reduce the space required to 32KB.
+For a **multi-ROM** slot, the chosen chip's select line is the index bit.  The
+first chip's data sits where its own chip select bit is active, the second's
+where X1 is active, the third's where X2 is active.  Exactly one of those bits
+is active during a real read, and the table entries for the combinations
+hardware cannot produce are filled with a pad byte.
 
-A different ROM serving algorithm is used in the rom set case, to serve addresses only when a chip select line is active, and to detect if _any_ chip select line goes active.  The standard algorithm:
-
-- is constantly reading the address lines and looking up the data byte even when CS isn't selected - this isn't possible here as the CS line going active determines which byte to read
-- detects when _all_ chip selects (for that ROM type) go active, and only sets the data lines to output when this happens.
-
-It is this different algorithm that is roughly 10% less efficient than the single ROM image serving algorithm.  The pre-loading of 64KB at startup instead of 16KB probably also adds around 200-300us at boot.  Given systems typically have a decent reset circuit, this is not expected to be an issue.
-
-See [Multi-ROM Support](/docs/old/TECHNICAL-SUMMARY.md#multi-rom-support) for more details on the performance on this feature.
-
-### Dynamic Bank Switching Serving Details
-
-In this case, again, 64Kb is used for the total ROM image, and X1/X2 act as an index into that.  The total ROM image is created differently than in the multi-ROM set case, as the two cases vary in which byte should be returned given the precise CS/X1/X2 states.
+Both cost more RAM than a single image, because the table has to cover the whole
+window rather than one image's worth of addresses.  The generator reports the
+size it has produced, and refuses a slot that will not fit.
 
 ## Acknowledgements
 
-Original suggestion of Multi-ROM sets was made by [Adrian Black](https://www.youtube.com/@adriansdigitalbasement).
+Original suggestion of Multi-ROM slots was made by [Adrian Black](https://www.youtube.com/@adriansdigitalbasement).

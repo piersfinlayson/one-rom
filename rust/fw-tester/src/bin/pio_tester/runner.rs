@@ -46,7 +46,7 @@
 #[allow(unused_imports)]
 use log::{debug, error, info, trace, warn};
 
-use onerom_config::chip::{ChipType, ControlLineType};
+use onerom_config::chip::ChipType;
 use onerom_config::fw::FirmwareVersion;
 use onerom_config::hw::Board;
 use onerom_fw_emulator::Emulator;
@@ -420,7 +420,7 @@ fn run_multi_set(
     // chip0's commoned lines: active CS lines that are not the per-chip select
     // (the line the secondaries drive via X). Held deasserted, not enumerated,
     // during the tristate sweep — they qualify a read, they don't select a chip.
-    if let Some(select) = per_chip_select_name(&chip_set.chips[1]) {
+    if let Some((select, _)) = per_chip_select(&chip_set.chips[1]) {
         for cl in &mut primary_cache.control_lines {
             if cl.name != select {
                 cl.commoned = true;
@@ -459,8 +459,13 @@ fn run_multi_set(
         .enumerate()
         .map(|(i, chip_config)| {
             let (_, gpios) = board.x_pin_map()[i];
-            let assert_high =
-                first_active_cs_polarity(chip_config, chip_config.chip_type.resolved());
+            let (_, assert_high) = per_chip_select(chip_config).unwrap_or_else(|| {
+                panic!(
+                    "Multi-ROM secondary chip {} has no active (non-Ignore) control line \
+                     to act as its per-chip select — check_cs_v2 requires exactly one",
+                    chip_config.chip_type.resolved().name()
+                )
+            });
             (gpios.to_vec(), assert_high)
         })
         .collect();
@@ -1426,26 +1431,57 @@ fn gap_set_for_slot(
     Ok(gaps)
 }
 
-/// Name of the per-chip select line for a Multi set: the single active
-/// (non-Ignore) configurable CS line on a secondary chip. `None` if none
-/// (only configurable-CS chips are supported as secondaries, so this matches
-/// the polarity lookup in `first_active_cs_polarity`).
-fn per_chip_select_name(secondary: &ChipConfig) -> Option<&'static str> {
+/// The per-chip select of a Multi set's secondary chip: the one control line
+/// it does not ignore, and the level the X pin it is fly-leaded to must be
+/// driven to in order to assert it.
+///
+/// Both attributes come from one lookup because the two callers must agree on
+/// which line the select is: one marks chip0's *other* lines commoned, the
+/// other drives the X pin at this line's asserted level.
+///
+/// Fixed CE/OE lines count. A secondary states polarity only for a
+/// mask-programmed (configurable) line - on a fixed line the config can say
+/// nothing, or `ignore`, so the level comes from the chip type via
+/// `fixed_active_level`, exactly as `PinCache::build` resolves it for a
+/// primary.
+///
+/// `None` where no line qualifies, which `check_cs_v2` rejects before a
+/// config reaches here.
+fn per_chip_select(secondary: &ChipConfig) -> Option<(&'static str, bool)> {
     secondary
         .chip_type
         .resolved()
         .control_lines()
         .iter()
-        .filter(|spec| matches!(spec.line_type, ControlLineType::Configurable))
         .find_map(|spec| {
             let logic = match spec.name {
+                "ce" => secondary.ce,
+                "oe" => secondary.oe,
                 "cs1" => secondary.cs1,
                 "cs2" => secondary.cs2,
                 "cs3" => secondary.cs3,
-                _ => None,
+                "cs4" => secondary.cs4,
+                _ => return None,
             };
-            matches!(logic, Some(CsLogic::ActiveHigh) | Some(CsLogic::ActiveLow))
-                .then_some(spec.name)
+            if logic == Some(CsLogic::Ignore) {
+                return None;
+            }
+            let assert_high = match spec.line_type.fixed_active_level() {
+                // Polarity fixed by the silicon: the JEDEC CE/OE enables, and
+                // chips whose chip selects are not mask-programmable.
+                Some(active_high) => active_high,
+                // Mask-programmed at manufacture: the config states it, and a
+                // line it leaves unstated cannot be the fly-leaded select.
+                None => match logic? {
+                    CsLogic::ActiveHigh => true,
+                    CsLogic::ActiveLow => false,
+                    CsLogic::Ignore => return None,
+                    // `CsLogic` is `#[non_exhaustive]`; a polarity added to it
+                    // needs a decision here rather than a silent default.
+                    ref other => unimplemented!("unhandled CS logic {other:?}"),
+                },
+            };
+            Some((spec.name, assert_high))
         })
 }
 
@@ -1604,47 +1640,6 @@ fn get_force_16_bit(chip_set: &ChipSetConfig) -> bool {
         .and_then(|fw| fw.fire.as_ref())
         .map(|f| f.force_16_bit)
         .unwrap_or(false)
-}
-
-/// Find the assertion polarity for the first active (non-Ignore) configurable
-/// CS line on a secondary chip in a multi-ROM set.
-///
-/// Returns `true` if the corresponding X pin must be driven HIGH to assert CS.
-///
-/// # Panics
-/// Panics if `chip_type` has no active configurable CS line.  Only chips with
-/// at least one configurable CS are currently supported as secondary chips;
-/// chips with only fixed CE/OE lines require future config extensions to
-/// specify which CE/OE pin connects to the X pin.
-fn first_active_cs_polarity(chip_config: &ChipConfig, chip_type: ChipType) -> bool {
-    chip_type
-        .control_lines()
-        .iter()
-        .filter(|spec| matches!(spec.line_type, ControlLineType::Configurable))
-        .find_map(|spec| {
-            let logic = match spec.name {
-                "cs1" => chip_config.cs1,
-                "cs2" => chip_config.cs2,
-                "cs3" => chip_config.cs3,
-                _ => None,
-            };
-            match logic {
-                Some(CsLogic::ActiveHigh) => Some(true),
-                Some(CsLogic::ActiveLow) => Some(false),
-                Some(CsLogic::Ignore) | None => None,
-                // `CsLogic` is `#[non_exhaustive]`; a new polarity needs a
-                // decision here rather than a silent default.
-                Some(ref other) => unimplemented!("unhandled CS logic {other:?}"),
-            }
-        })
-        .unwrap_or_else(|| {
-            panic!(
-                "Multi-ROM secondary chip {} has no active (non-Ignore) configurable CS \
-                 line — only chips with a configurable CS are currently supported as \
-                 secondary chips; fixed CE/OE chips require future config extensions",
-                chip_type.name()
-            )
-        })
 }
 
 /// Build the GPIO background mask for X pins in a dynamically banked set.

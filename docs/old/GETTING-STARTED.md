@@ -170,7 +170,7 @@ See the [Multi-ROM Sets](/docs/MULTI-ROM-SETS.md) documentation for more informa
 
 ## Multi-ROM Sets
 
-When using [multi-ROM sets](/docs/MULTI-ROM-SETS.md#multi-rom-set-configuration) (those that start `set-`), One ROM serves ROM images up to 3 ROM sockets simultaneously, using pins X1 and X2 as extra chip select lines.  Connect flying leads from the X1 and X2 pins to the chip select pins of the other ROM sockets to be served.
+When using [multi-ROM slots](/docs/MULTI-ROM-SETS.md#multi-rom-slot-configuration) (those that start `set-`), One ROM serves ROM images up to 3 ROM sockets simultaneously, using pins X1 and X2 as extra chip select lines.  Connect flying leads from the X1 and X2 pins to the chip select pins of the other ROM sockets to be served.
 
 <img src="./images/x1-x2.png" alt="Bank Selection Jumpers" width="50%">
 
