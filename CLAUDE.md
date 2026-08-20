@@ -472,6 +472,39 @@ RBCP.
   is the live status-LED state and the cross-plugin coordination channel (written
   by `ora_set_status_led`, read via its `STATUS_LED_STATE` key).
 
+## Total parseability — non-negotiable
+
+**A host tool of the same generation as the device parses every single byte that
+device holds, and that must stay true.** Flash data, metadata, runtime info, the
+RTT control block and the ROM data are all parsed, and `onerom inspect info`
+dumps the lot as JSON
+(`rust/cli/src/inspect.rs`). Few users reach for it. It is core to One ROM's
+architecture and it is not up for trade.
+
+A host starts at one fixed address, `onerom_info_t` at the metadata base in
+flash, follows its `runtime` pointer to `onerom_runtime_info_t` in RAM and
+confirms the magic. Everything that only exists while the device runs hangs off
+runtime info. On a v0.7.0+ device the whole thing dumps as one tree.
+
+It falls out of the schema: a field declared in
+`rust/metadata/metadata_schema.toml` generates the C struct in
+`firmware/generated/onerom_metadata.h`, the Rust type, its parser and its
+`serde::Serialize` impl, and appears in the JSON with no host-side code written.
+
+So:
+
+- **Never leave device state nothing points to.** A `.bss` static sits at a
+  build-dependent address with no path from the anchor, so no host can find it
+  and the dump silently omits it. Four stranded bytes are as invisible as sixty.
+- **Never hand-write parsing for anything the schema could describe.**
+- **An older host ignores fields it does not know, and says that it did.** It is
+  not expected to parse a newer device's new fields. It is expected not to go
+  quiet about them - showing less without a word, or dropping a whole structure
+  because its shape moved, is a defect and not degradation.
+- **Every byte added to runtime info needs Piers's explicit approval**, one byte
+  at a time. Being reachable is not optional. What it costs in RAM is his call,
+  always, in advance.
+
 ## Metadata & manifest — two separate mechanisms
 
 Do not conflate these:
