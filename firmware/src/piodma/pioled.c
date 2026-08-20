@@ -337,10 +337,9 @@ static uint8_t led_breathe_level(uint8_t step) {
 
 // Hand one 24-bit GRB value to the state machine.
 //
-// apio's APIO_TXF needs the assembler's block and SM variables in scope, and
-// reaching them means APIO_SET_SM, which resets that SM's program bookkeeping.
-// That is right when building a program and wrong once per frame, so the FIFO
-// is addressed directly here - the same expressions APIO_TXF itself uses.
+// APIO_TXF_AT names the block and SM, so this reaches the FIFO without going
+// through APIO_SET_SM and resetting the program bookkeeping that belongs to
+// building a program rather than feeding one.
 #if defined(TEST_BUILD)
 // The last colour handed to the state machine, and how many have been handed
 // over.  A host test cannot watch the wire, and the emulated FIFO is four deep
@@ -355,19 +354,7 @@ static void led_pio_write(uint32_t grb) {
     led_pixel_count++;
 #endif // TEST_BUILD
 
-#if !defined(APIO_EMULATION)
-    volatile uint32_t *txf = (volatile uint32_t *)
-        ((uintptr_t)APIO0_BASE + APIO_TXF_OFFSET + (SM_LED * 0x04u));
-    *txf = grb << 8;
-#else // APIO_EMULATION
-    // Nothing drains the emulated FIFO between boots, so a caller sending more
-    // frames than it is deep would write past the row.  A device's FIFO drops
-    // the word instead of overrunning, which is what this mirrors.
-    uint8_t *count = &_apio_emulated_pio.tx_fifo_count[BLOCK_LED][SM_LED];
-    if (*count < APIO_MAX_FIFO_DEPTH) {
-        _apio_emulated_pio.tx_fifos[BLOCK_LED][SM_LED][(*count)++] = grb << 8;
-    }
-#endif // !APIO_EMULATION
+    APIO_TXF_AT(BLOCK_LED, SM_LED) = grb << 8;
 }
 
 // Program and enable the state machine that drives the RGB LED.

@@ -15,7 +15,7 @@ FIRMWARE_DIR := firmware
 
 # Version of apio to build against.  Remove the apio/ directory after changing
 # this, so it is re-cloned.
-APIO_VERSION ?= v0.2.1
+APIO_VERSION ?= v0.3.0
 
 OBJCOPY_EXTRA = --set-section-flags .metadata=contents,readonly -R .metadata -R .rom_data -R .padding_to_rom_data
 $(info - $(COLOUR_YELLOW)Excluding metadata and ROM images from binary$(COLOUR_RESET))
