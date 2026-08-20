@@ -196,12 +196,6 @@ void ora_set_status_led(uint8_t on) {
         // in api.h), so it is recorded whether or not there is a pin to drive.
         RUNTIME->status_led_enabled = on ? 1 : 0;
     }
-
-#if defined(TEST_BUILD)
-    // A host test sees the LED move through status_led_enabled.  The line is
-    // what makes the sequence readable in the harness's output.
-    LOG("ORA set status LED %d", on);
-#endif // TEST_BUILD
 }
 
 void ora_setup_usb(void) {
@@ -1242,10 +1236,7 @@ static uint8_t ora_log_holds(const uint8_t *claims, ora_log_channel_t channel) {
 // is marked shareable, and this firmware configures no MPU, so LDREX/STREX
 // would look correct and silently fail to exclude the other core.
 //
-// Lock 31 rather than any free number.  See SIO_SPINLOCK in reg-rp235x.h for
-// which locks erratum RP2350-E2 leaves usable.  Of those, an allocator handing
-// out locks from the SDK's claim free base of 26 reaches 31 last.
-#define ORA_LOG_SPINLOCK    31
+// The lock is SPINLOCK_ORA_LOG, allocated with the others in reg-rp235x.h.
 
 // Interrupts are masked for as long as the lock is held.  Plugins can register
 // interrupt handlers, and nothing stops one calling into the logging API, so a
@@ -1264,7 +1255,7 @@ static uint32_t ora_log_lock(void) {
                     "cpsid i"
                     : "=r" (primask) :: "memory");
 
-    while (SIO_SPINLOCK(ORA_LOG_SPINLOCK) == 0u)
+    while (SIO_SPINLOCK(SPINLOCK_ORA_LOG) == 0u)
         ;
     __asm volatile ("dmb" ::: "memory");
 
@@ -1273,7 +1264,7 @@ static uint32_t ora_log_lock(void) {
 
 static void ora_log_unlock(uint32_t primask) {
     __asm volatile ("dmb" ::: "memory");
-    SIO_SPINLOCK(ORA_LOG_SPINLOCK) = 0u;
+    SIO_SPINLOCK(SPINLOCK_ORA_LOG) = 0u;
     __asm volatile ("msr primask, %0" :: "r" (primask) : "memory");
 }
 #endif // TEST_BUILD

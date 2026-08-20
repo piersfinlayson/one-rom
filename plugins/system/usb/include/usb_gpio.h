@@ -20,12 +20,12 @@
 // unambiguous - the firmware clock wraps every ~49.7 days, and the comparison
 // is safe for intervals under half that.
 //
-// The bound exists because a hold is only honoured while this plugin keeps
-// running.  A caller wanting a pin held for longer than a minute wants it
-// latched, not held: ONEROM_CMD_GPIO_SET with duration_ms 0 latches
-// indefinitely and a later command releases it, which says what it means
-// instead of pretending a multi-hour timer is dependable.
-#define ONEROM_GPIO_MAX_HOLD_MS  60000u
+// The bound is ORA_GPIO_MAX_HOLD_MS, from the ORA API.
+//
+// A caller wanting a pin held for longer than that wants it latched, not held:
+// ONEROM_CMD_GPIO_SET with duration_ms 0 latches indefinitely and a later
+// command releases it, which says what it means instead of pretending a
+// multi-hour timer is dependable.
 
 // How many bounded holds can be outstanding at once.
 //

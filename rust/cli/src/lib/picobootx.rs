@@ -160,13 +160,13 @@ pub struct SetLedArgs {
     pub sub_cmd: LedSubCmd,
 
     /// Red, for the LEDs and modes that take a colour.
-    pub r: u8,
+    pub red: u8,
 
     /// Green, for the LEDs and modes that take a colour.
-    pub g: u8,
+    pub green: u8,
 
     /// Blue, for the LEDs and modes that take a colour.
-    pub b: u8,
+    pub blue: u8,
 
     /// Brightness as a percentage, 1 to 100. Zero is the device's default.
     pub brightness: u8,
@@ -186,9 +186,9 @@ impl SetLedArgs {
         Self {
             led_id: LedId::Status,
             sub_cmd,
-            r: 0,
-            g: 0,
-            b: 0,
+            red: 0,
+            green: 0,
+            blue: 0,
             brightness: 0,
             period_ms: 0,
             hold_ms: 0,
@@ -200,13 +200,13 @@ impl SetLedArgs {
     ///
     /// An all-zero colour is read by the device as red rather than leaving the
     /// LED dark, so a caller with no colour in mind still gets light.
-    pub fn rgb(sub_cmd: LedSubCmd, r: u8, g: u8, b: u8) -> Self {
+    pub fn rgb(sub_cmd: LedSubCmd, red: u8, green: u8, blue: u8) -> Self {
         Self {
             led_id: LedId::Rgb,
             sub_cmd,
-            r,
-            g,
-            b,
+            red,
+            green,
+            blue,
             brightness: 0,
             period_ms: 0,
             hold_ms: 0,
@@ -229,9 +229,9 @@ impl SetLedArgs {
         args[0] = self.led_id as u8;
         args[1] = self.sub_cmd as u8;
         // args[2..4] are reserved and stay zero.
-        args[4] = self.r;
-        args[5] = self.g;
-        args[6] = self.b;
+        args[4] = self.red;
+        args[5] = self.green;
+        args[6] = self.blue;
         args[7] = self.brightness;
         args[8..10].copy_from_slice(&self.period_ms.to_le_bytes());
         args[10..14].copy_from_slice(&self.hold_ms.to_le_bytes());
@@ -284,18 +284,14 @@ pub struct LedState {
     pub brightness: u8,
 
     /// Red of the colour in force.
-    pub r: u8,
+    pub red: u8,
     /// Green of the colour in force.
-    pub g: u8,
+    pub green: u8,
     /// Blue of the colour in force.
-    pub b: u8,
+    pub blue: u8,
 
     /// The GPIO this LED is on. Meaningless when `present` is false.
     pub gpio: u8,
-
-    /// Whether this LED shares its GPIO with the other one. Both work when
-    /// they do, and no mode is restricted.
-    pub shared_gpio: bool,
 
     /// How long one repetition of the mode takes, in milliseconds.
     pub period_ms: u16,
@@ -325,13 +321,12 @@ impl LedState {
             present: u8_at(3) != 0,
             mode: u8_at(4),
             brightness: u8_at(5),
-            r: u8_at(6),
-            g: u8_at(7),
-            b: u8_at(8),
+            red: u8_at(6),
+            green: u8_at(7),
+            blue: u8_at(8),
             gpio: u8_at(9),
-            shared_gpio: u8_at(10) != 0,
+            // Byte 10 is reserved0, bytes 13..16 reserved1.
             period_ms: u16_at(11),
-            // Bytes 13..16 are reserved0.
         })
     }
 
@@ -666,9 +661,9 @@ mod tests {
             40,   // brightness
             0x12, 0x34, 0x56, // colour
             29,   // gpio
-            1,    // shared_gpio
+            0xAA, // reserved0, set to catch a host reading it
             0x02, 0x01, // period_ms, little-endian
-            0, 0, 0, // reserved0
+            0xAA, 0xAA, 0xAA, // reserved1, likewise
         ];
         let state = LedState::decode(&buf).expect("a full response decodes");
         assert_eq!(state.struct_len, 16);
@@ -677,9 +672,10 @@ mod tests {
         assert_eq!(state.mode, 5);
         assert_eq!(state.mode_name(), Some("breathe"));
         assert_eq!(state.brightness, 40);
-        assert_eq!((state.r, state.g, state.b), (0x12, 0x34, 0x56));
+        assert_eq!((state.red, state.green, state.blue), (0x12, 0x34, 0x56));
         assert_eq!(state.gpio, 29);
-        assert!(state.shared_gpio);
+        // The reserved bytes carry 0xAA, so a field decoded from one of them
+        // would show it rather than the value its own bytes hold.
         assert_eq!(state.period_ms, 0x0102);
     }
 
@@ -698,10 +694,9 @@ mod tests {
         ];
         let state = LedState::decode(&buf).expect("a short response decodes");
         assert_eq!(state.mode_name(), Some("beacon"));
-        assert_eq!((state.r, state.g, state.b), (0, 0, 0));
+        assert_eq!((state.red, state.green, state.blue), (0, 0, 0));
         assert_eq!(state.gpio, 0);
         assert_eq!(state.period_ms, 0);
-        assert!(!state.shared_gpio);
     }
 
     #[test]

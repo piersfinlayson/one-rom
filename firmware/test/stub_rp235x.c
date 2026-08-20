@@ -37,9 +37,21 @@ void vbus_connect_handler(void) {
 static uint8_t stub_gpio_oe[STUB_MAX_GPIOS];
 static uint8_t stub_gpio_out[STUB_MAX_GPIOS];
 static uint8_t stub_gpio_in[STUB_MAX_GPIOS];
+static uint8_t stub_gpio_pio[STUB_MAX_GPIOS];
+
+void stub_gpio_set_pio_owned(uint8_t gpio, uint8_t owned) {
+    if (gpio < STUB_MAX_GPIOS) {
+        stub_gpio_pio[gpio] = owned ? 1 : 0;
+    }
+}
 
 void stub_gpio_set(uint8_t gpio, uint8_t state) {
     if (gpio >= STUB_MAX_GPIOS) {
+        return;
+    }
+    // The pad is the block's while it holds the pin, so an SIO write does not
+    // reach it.  See stub_gpio_set_pio_owned.
+    if (stub_gpio_pio[gpio]) {
         return;
     }
     if (state == ORA_GPIO_STATE_INPUT) {
@@ -75,6 +87,7 @@ void stub_gpio_reset(void) {
         stub_gpio_oe[ii] = 0;
         stub_gpio_out[ii] = 0;
         stub_gpio_in[ii] = 0;
+        stub_gpio_pio[ii] = 0;
     }
 }
 

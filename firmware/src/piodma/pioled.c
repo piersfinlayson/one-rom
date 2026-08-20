@@ -41,21 +41,16 @@
 #define LED_DELAY_BIT           6u
 #define LED_DELAY_LOW           6u
 
-// How long a beacon runs when a request does not say.  A beacon is a bounded
-// identify, not a mode a device sits in, and a hold is exactly that bound - so
-// this is the default hold rather than a rule of its own.
-#define LED_BEACON_DURATION_MS  2500u
-
-// Default periods, in milliseconds: one rotation of the hues, one fade up and
-// down, one on and off.
-#define LED_CYCLE_PERIOD_MS     5000u
-#define LED_BREATHE_PERIOD_MS   5000u
-#define LED_BLINK_PERIOD_MS     1000u
-#define LED_BEACON_PERIOD_MS    100u
+// The periods and holds a request can leave unsaid, and the floors it cannot go
+// below, are LED_*_DEFAULT_* and LED_*_MIN_PERIOD_MS, from the metadata schema.
+// The host CLI states them in its help and refuses what this engine would.
+//
+// A beacon takes a default duration rather than a rule of its own because a
+// beacon is a bounded identify, not a mode a device sits in, and a hold is
+// exactly that bound.
 
 // The flicker table below plays over this, so a period of its own length runs
 // it at the speed it is written at, and a shorter one hurries it.
-#define LED_FLAME_PERIOD_MS     575u
 
 // Steps a repetition is divided into.  The frame interval is the period over
 // these, so a longer period is smoother rather than slower.  Blink has two
@@ -65,20 +60,14 @@
 #define LED_BLINK_STEPS         2u
 #define LED_BEACON_STEPS        2u
 
-// The shortest period each repeating mode accepts.  A period is divided into
-// the mode's steps to give a frame interval, so below these the engine would
-// have to run frames closer together than LED_MIN_FRAME_MS and could not do
-// what was asked.  A shorter period is refused rather than quietly treated as
-// the minimum, which would have the engine report back a period it was not
-// running at.
+// Each mode's minimum comes from its steps: a period is divided into them to
+// give a frame interval, so below the minimum the engine would have to run
+// frames closer together than LED_MIN_FRAME_MS and could not do what was asked.
+// A shorter period is refused rather than quietly treated as the minimum, which
+// would have the engine report back a period it was not running at.
 //
 // Flame divides its own table instead, and its shortest entry is 10ms of 575,
-// so 500 leaves every entry whole.
-#define LED_CYCLE_MIN_PERIOD_MS    1000u
-#define LED_BREATHE_MIN_PERIOD_MS  1000u
-#define LED_BLINK_MIN_PERIOD_MS    50u
-#define LED_BEACON_MIN_PERIOD_MS   50u
-#define LED_FLAME_MIN_PERIOD_MS    500u
+// so its 500 leaves every entry whole.
 
 // The shortest frame interval the engine will schedule.  A period short enough
 // to want a faster one is being asked for an animation the eye cannot follow.
@@ -90,14 +79,9 @@
 
 // The colour any mode takes when a request names none.  One ROM is red, its
 // status LED is red, and a flame is red.
-#define LED_DEFAULT_R           0xFFu
-#define LED_DEFAULT_G           0x00u
-#define LED_DEFAULT_B           0x00u
-
-// The longest hold the engine accepts, matching the GPIO hold cap the USB
-// plugin enforces.  A request for longer is refused rather than clamped, so a
-// caller is never told it got something it did not.
-#define LED_MAX_HOLD_MS         60000u
+#define LED_DEFAULT_RED         0xFFu
+#define LED_DEFAULT_GREEN       0x00u
+#define LED_DEFAULT_BLUE        0x00u
 
 // The engine's state is written from two places at once: a caller in thread
 // context, and the frame interrupt.  Those can be on different cores - a user
@@ -105,12 +89,9 @@
 // runs on core 1 - so masking interrupts is not enough on its own, and neither
 // is LDREX/STREX, which spans cores only when the memory is marked shareable
 // and this firmware configures no MPU.  See the same reasoning at
-// ORA_LOG_SPINLOCK in plugin.c.
+// SPINLOCK_ORA_LOG in plugin.c.
 //
-// Lock 30 rather than any free number, for the reason lock 31 was chosen there:
-// of the locks erratum RP2350-E2 leaves usable, an allocator handing them out
-// from the SDK's claim free base of 26 reaches these last.
-#define LED_SPINLOCK            30
+// The lock is SPINLOCK_LED, allocated with the others in reg-rp235x.h.
 
 // How long after handing a pixel to the state machine the pin is given back, on
 // a board where the two LEDs share it.  The bits take about 30us at this clock
@@ -160,14 +141,14 @@ typedef struct {
     uint8_t  saved_mode;
     uint8_t  saved_brightness;
 
-    uint8_t  r;
-    uint8_t  g;
-    uint8_t  b;
+    uint8_t  red;
+    uint8_t  green;
+    uint8_t  blue;
     uint8_t  step;
 
-    uint8_t  saved_r;
-    uint8_t  saved_g;
-    uint8_t  saved_b;
+    uint8_t  saved_red;
+    uint8_t  saved_green;
+    uint8_t  saved_blue;
     uint8_t  lit;
 
     uint16_t period_ms;
@@ -196,7 +177,7 @@ static uint32_t led_lock(void) {
                     "cpsid i"
                     : "=r" (primask) :: "memory");
 
-    while (SIO_SPINLOCK(LED_SPINLOCK) == 0u)
+    while (SIO_SPINLOCK(SPINLOCK_LED) == 0u)
         ;
     __asm volatile ("dmb" ::: "memory");
 
@@ -205,7 +186,7 @@ static uint32_t led_lock(void) {
 
 static void led_unlock(uint32_t primask) {
     __asm volatile ("dmb" ::: "memory");
-    SIO_SPINLOCK(LED_SPINLOCK) = 0u;
+    SIO_SPINLOCK(SPINLOCK_LED) = 0u;
     __asm volatile ("msr primask, %0" :: "r" (primask) : "memory");
 }
 #endif // TEST_BUILD
@@ -277,11 +258,11 @@ static uint8_t led_mode_needs_colour(uint8_t mode) {
 // The default period for a repeating mode, in milliseconds.
 static uint16_t led_default_period(uint8_t mode) {
     switch (mode) {
-        case ORA_LED_MODE_CYCLE:   return LED_CYCLE_PERIOD_MS;
-        case ORA_LED_MODE_BREATHE: return LED_BREATHE_PERIOD_MS;
-        case ORA_LED_MODE_BLINK:   return LED_BLINK_PERIOD_MS;
-        case ORA_LED_MODE_BEACON:  return LED_BEACON_PERIOD_MS;
-        case ORA_LED_MODE_FLAME:   return LED_FLAME_PERIOD_MS;
+        case ORA_LED_MODE_CYCLE:   return LED_CYCLE_DEFAULT_PERIOD_MS;
+        case ORA_LED_MODE_BREATHE: return LED_BREATHE_DEFAULT_PERIOD_MS;
+        case ORA_LED_MODE_BLINK:   return LED_BLINK_DEFAULT_PERIOD_MS;
+        case ORA_LED_MODE_BEACON:  return LED_BEACON_DEFAULT_PERIOD_MS;
+        case ORA_LED_MODE_FLAME:   return LED_FLAME_DEFAULT_PERIOD_MS;
         default:                   return 0;
     }
 }
@@ -323,19 +304,19 @@ static uint32_t led_frame_interval(const led_channel_t *ch) {
 // The hue is given as a step out of LED_CYCLE_STEPS rather than in degrees, so
 // the arithmetic stays whole: the circle is six ramps, and a step falls at a
 // known place along one of them.
-static void led_hue(uint8_t step, uint8_t *r, uint8_t *g, uint8_t *b) {
+static void led_hue(uint8_t step, uint8_t *red, uint8_t *green, uint8_t *blue) {
     uint32_t position = (uint32_t)step * 1536u / LED_CYCLE_STEPS;
     uint8_t  ramp = (uint8_t)(position / 256u);
     uint8_t  along = (uint8_t)(position % 256u);
     uint8_t  back = (uint8_t)(255u - along);
 
     switch (ramp) {
-        case 0:  *r = 255;   *g = along; *b = 0;     break;
-        case 1:  *r = back;  *g = 255;   *b = 0;     break;
-        case 2:  *r = 0;     *g = 255;   *b = along; break;
-        case 3:  *r = 0;     *g = back;  *b = 255;   break;
-        case 4:  *r = along; *g = 0;     *b = 255;   break;
-        default: *r = 255;   *g = 0;     *b = back;  break;
+        case 0:  *red = 255;   *green = along; *blue = 0;     break;
+        case 1:  *red = back;  *green = 255;   *blue = 0;     break;
+        case 2:  *red = 0;     *green = 255;   *blue = along; break;
+        case 3:  *red = 0;     *green = back;  *blue = 255;   break;
+        case 4:  *red = along; *green = 0;     *blue = 255;   break;
+        default: *red = 255;   *green = 0;     *blue = back;  break;
     }
 }
 
@@ -475,17 +456,6 @@ static void led_pio_claim(uint8_t gpio) {
     }
 }
 
-#if defined(TEST_BUILD)
-// Whether the state machine holds the pin, so an SIO write would not reach the
-// pad.  Only ever true on a shared pin, and only for as long as a pixel takes.
-//
-// A device needs no such test - the hardware decides where a write lands - so
-// this exists to keep the pad model honest about the same thing.
-static uint8_t led_pio_holds_pin(void) {
-    return led_pin_is_shared() && LED_FLAG_IS_SET(LED_FLAG_PIN_WITH_PIO);
-}
-#endif // TEST_BUILD
-
 // Hand the shared pin back to the status LED.
 //
 // The state machine has long since clocked the pixel out and the LED has
@@ -501,21 +471,18 @@ static void led_park(void) {
     }
 
     LED_FLAG_CLEAR(LED_FLAG_PIN_WITH_PIO);
+    gpio_pio_release(gpio);
 
-#if !defined(TEST_BUILD)
     // Reclaims funcsel, drive and output enable, then applies the level the
-    // status LED is meant to be at.
+    // status LED is meant to be at.  Called unconditionally: setup_status_led
+    // carries its own REAL_HARDWARE guard, and on a host the other two drive
+    // the pad model.
     setup_status_led();
     if (RUNTIME->status_led_enabled) {
         status_led_on(gpio);
     } else {
         status_led_off(gpio);
     }
-#else // TEST_BUILD
-    stub_gpio_set(gpio,
-                  RUNTIME->status_led_enabled ? ORA_GPIO_STATE_LOW
-                                              : ORA_GPIO_STATE_HIGH);
-#endif // !TEST_BUILD
 
     // A status LED that is off leaves the line high, which is not a state a
     // WS2812 can read a frame out of.  The next pixel has to wait behind a
@@ -535,6 +502,7 @@ static void led_borrow_pin(uint8_t gpio) {
     }
 
     APIO_GPIO_INPUT_OUTPUT(gpio, BLOCK_LED);
+    gpio_pio_claim(gpio);
     LED_FLAG_SET(LED_FLAG_PIN_WITH_PIO);
     led_park_due_us = (uint32_t)onerom_timer_us64() + LED_PARK_DELAY_US;
     LED_FLAG_SET(LED_FLAG_PARK_PENDING);
@@ -549,16 +517,16 @@ static void led_borrow_pin(uint8_t gpio) {
 // brightness peaks at 40%.
 static void led_rgb_write(
     const led_channel_t *ch,
-    uint8_t r,
-    uint8_t g,
-    uint8_t b,
+    uint8_t red,
+    uint8_t green,
+    uint8_t blue,
     uint8_t level
 ) {
     uint32_t scale = (uint32_t)ch->brightness * (uint32_t)level;
     uint8_t  gpio = led_gpio(ORA_LED_RGB);
-    uint32_t out_r;
-    uint32_t out_g;
-    uint32_t out_b;
+    uint32_t out_red;
+    uint32_t out_green;
+    uint32_t out_blue;
 
     if (gpio == GPIO_NONE) {
         return;
@@ -574,13 +542,13 @@ static void led_rgb_write(
 
     // Brightness is a percentage and the envelope is out of 255, so the two
     // divisors are applied together to keep the rounding in one place.
-    out_r = ((uint32_t)r * scale) / (100u * 255u);
-    out_g = ((uint32_t)g * scale) / (100u * 255u);
-    out_b = ((uint32_t)b * scale) / (100u * 255u);
+    out_red   = ((uint32_t)red * scale) / (100u * 255u);
+    out_green = ((uint32_t)green * scale) / (100u * 255u);
+    out_blue  = ((uint32_t)blue * scale) / (100u * 255u);
 
     // A WS2812 reads green, then red, then blue.
     {
-        uint32_t pixel = (out_g << 16) | (out_r << 8) | out_b;
+        uint32_t pixel = (out_green << 16) | (out_red << 8) | out_blue;
 
         // What decides this is whether the line has been low long enough, not
         // who owns the pin.  Two things leave a reset owed: the state machine
@@ -613,7 +581,7 @@ static void led_rgb_write(
 
 // Show the channel's own colour, lit or dark.
 static void led_rgb_show(const led_channel_t *ch, uint8_t lit) {
-    led_rgb_write(ch, ch->r, ch->g, ch->b, lit ? 255u : 0u);
+    led_rgb_write(ch, ch->red, ch->green, ch->blue, lit ? 255u : 0u);
 }
 
 // ---------------------------------------------------------------------------
@@ -632,21 +600,15 @@ static void led_status_show(uint8_t lit) {
         return;
     }
 
-#if !defined(TEST_BUILD)
+    // The status LED is active low, so lit drives the pin low.  On a board that
+    // shares the pin, a write while the state machine holds it reaches nothing
+    // - the block drives the pad - and neither the hardware nor the pad model
+    // needs telling that here.
     if (lit) {
         status_led_on(gpio);
     } else {
         status_led_off(gpio);
     }
-#else // TEST_BUILD
-    // The status LED is active low, so lit drives the pin low.  Recorded in the
-    // pad model ora_gpio_query reads, which is the only way a host test can
-    // tell the pin apart from the flag - and on a board that shares the pin
-    // between the two LEDs, that difference is the whole question.
-    if (!led_pio_holds_pin()) {
-        stub_gpio_set(gpio, lit ? ORA_GPIO_STATE_LOW : ORA_GPIO_STATE_HIGH);
-    }
-#endif // !TEST_BUILD
 }
 
 // ---------------------------------------------------------------------------
@@ -769,9 +731,9 @@ static void led_rearm(void) {
 static void led_restore(uint8_t led, led_channel_t *ch) {
     ch->mode       = ch->saved_mode;
     ch->brightness = ch->saved_brightness;
-    ch->r          = ch->saved_r;
-    ch->g          = ch->saved_g;
-    ch->b          = ch->saved_b;
+    ch->red          = ch->saved_red;
+    ch->green        = ch->saved_green;
+    ch->blue         = ch->saved_blue;
     ch->period_ms  = ch->saved_period_ms;
     ch->step       = 0;
     ch->hold_expiry_ms = 0;
@@ -804,11 +766,11 @@ static void led_advance(uint8_t led, led_channel_t *ch, uint32_t now_ms) {
             ch->step = (uint8_t)((ch->step + 1u) % LED_FLAME_TABLE_LEN);
             led_show(led, ch, led_flame_table[ch->step].on);
 
-            // The table is written to play over LED_FLAME_PERIOD_MS, so a
+            // The table is written to play over LED_FLAME_DEFAULT_PERIOD_MS, so a
             // period scales every entry by the same amount and the flicker
             // keeps its shape.
             entry_ms = ((uint32_t)led_flame_table[ch->step].ms *
-                        (uint32_t)ch->period_ms) / LED_FLAME_PERIOD_MS;
+                        (uint32_t)ch->period_ms) / LED_FLAME_DEFAULT_PERIOD_MS;
             if (entry_ms < 1u) {
                 entry_ms = 1u;
             }
@@ -817,13 +779,13 @@ static void led_advance(uint8_t led, led_channel_t *ch, uint32_t now_ms) {
         }
 
         case ORA_LED_MODE_CYCLE: {
-            uint8_t r;
-            uint8_t g;
-            uint8_t b;
+            uint8_t red;
+            uint8_t green;
+            uint8_t blue;
 
             ch->step = (uint8_t)((ch->step + 1u) % LED_CYCLE_STEPS);
-            led_hue(ch->step, &r, &g, &b);
-            led_rgb_write(ch, r, g, b, 255u);
+            led_hue(ch->step, &red, &green, &blue);
+            led_rgb_write(ch, red, green, blue, 255u);
             ch->lit = 1;
             ch->next_frame_ms = now_ms + led_frame_interval(ch);
             break;
@@ -834,7 +796,7 @@ static void led_advance(uint8_t led, led_channel_t *ch, uint32_t now_ms) {
 
             ch->step = (uint8_t)((ch->step + 1u) % LED_BREATHE_STEPS);
             level = led_breathe_level(ch->step);
-            led_rgb_write(ch, ch->r, ch->g, ch->b, level);
+            led_rgb_write(ch, ch->red, ch->green, ch->blue, level);
             ch->lit = (level != 0u);
             ch->next_frame_ms = now_ms + led_frame_interval(ch);
             break;
@@ -955,6 +917,8 @@ ora_result_t pio_led_set(const ora_led_request_t *req) {
         return ORA_RESULT_INVALID_ARG;
     }
 
+    // Refused rather than clamped, so a caller is never told it got something
+    // it did not.
     if (req->hold_ms > LED_MAX_HOLD_MS) {
         return ORA_RESULT_INVALID_ARG;
     }
@@ -975,7 +939,7 @@ ora_result_t pio_led_set(const ora_led_request_t *req) {
     // bounded by definition - it is an identify, not a mode to sit in.
     hold_ms = req->hold_ms;
     if ((req->mode == ORA_LED_MODE_BEACON) && (hold_ms == 0u)) {
-        hold_ms = LED_BEACON_DURATION_MS;
+        hold_ms = LED_BEACON_DEFAULT_DURATION_MS;
     }
     hold = (hold_ms != 0u);
 
@@ -996,9 +960,9 @@ ora_result_t pio_led_set(const ora_led_request_t *req) {
     if (bounded && !already_bounded) {
         ch->saved_mode       = ch->mode;
         ch->saved_brightness = ch->brightness;
-        ch->saved_r          = ch->r;
-        ch->saved_g          = ch->g;
-        ch->saved_b          = ch->b;
+        ch->saved_red          = ch->red;
+        ch->saved_green        = ch->green;
+        ch->saved_blue         = ch->blue;
         ch->saved_period_ms  = ch->period_ms;
     }
 
@@ -1011,16 +975,16 @@ ora_result_t pio_led_set(const ora_led_request_t *req) {
         ch->brightness = (req->brightness != 0u) ? req->brightness
                                                  : LED_DEFAULT_BRIGHTNESS;
 
-        if ((req->r | req->g | req->b) != 0u) {
-            ch->r = req->r;
-            ch->g = req->g;
-            ch->b = req->b;
+        if ((req->red | req->green | req->blue) != 0u) {
+            ch->red = req->red;
+            ch->green = req->green;
+            ch->blue = req->blue;
         } else {
             // A caller that named no colour gets red rather than a dark LED.
             // One ROM is red, and so is its status LED.
-            ch->r = LED_DEFAULT_R;
-            ch->g = LED_DEFAULT_G;
-            ch->b = LED_DEFAULT_B;
+            ch->red = LED_DEFAULT_RED;
+            ch->green = LED_DEFAULT_GREEN;
+            ch->blue = LED_DEFAULT_BLUE;
         }
     } else {
         // An LED with no colour records none.  Filling these in from a request
@@ -1028,9 +992,9 @@ ora_result_t pio_led_set(const ora_led_request_t *req) {
         // status LED was lit some colour at some brightness, and it is lit or
         // it is dark.
         ch->brightness = 0;
-        ch->r = 0;
-        ch->g = 0;
-        ch->b = 0;
+        ch->red = 0;
+        ch->green = 0;
+        ch->blue = 0;
     }
 
     if (hold) {
@@ -1067,8 +1031,22 @@ ora_result_t pio_led_set(const ora_led_request_t *req) {
     return ORA_RESULT_OK;
 }
 
+void pio_led_boot(void) {
+    ora_led_request_t req = {0};
+
+    req.size = sizeof(req);
+    req.led  = ORA_LED_STATUS;
+    req.mode = RUNTIME->status_led_enabled ? ORA_LED_MODE_ON : ORA_LED_MODE_OFF;
+
+    DEBUG("Status LED %s", RUNTIME->status_led_enabled ? "on" : "off");
+
+    pio_led_set(&req);
+}
+
 ora_result_t pio_led_get(uint8_t led, ora_led_state_t *state_out) {
-    ora_led_state_t state;
+    // Zeroed so the reserved byte, and any padding a later field leaves,
+    // reach the caller as zero rather than as whatever the stack held.
+    ora_led_state_t state = {0};
     uint32_t primask;
     uint8_t want;
     const led_channel_t *ch;
@@ -1094,12 +1072,10 @@ ora_result_t pio_led_get(uint8_t led, ora_led_state_t *state_out) {
     state.present     = (led_gpio(led) != GPIO_NONE) ? 1u : 0u;
     state.mode        = ch->mode;
     state.brightness  = ch->brightness;
-    state.r           = ch->r;
-    state.g           = ch->g;
-    state.b           = ch->b;
+    state.red           = ch->red;
+    state.green           = ch->green;
+    state.blue           = ch->blue;
     state.gpio        = led_gpio(led);
-    state.shared_gpio = ((HW->gpio_status < MAX_GPIOS) &&
-                         (HW->gpio_status == HW->gpio_neopixel)) ? 1u : 0u;
     state.period_ms   = ch->period_ms;
 
     led_unlock(primask);

@@ -10,15 +10,16 @@ use crate::args::inspect::{
 use crate::board_view::{gpio_header_role, gpio_rom_function, gpio_system_functions};
 use crate::utils::{
     active_chip_type, check_device, check_device_running, check_fire_board,
-    check_fire_board_optional, check_live_read_write, colour_name, print_hex_dump, resolve_board,
+    check_fire_board_optional, check_live_read_write, print_hex_dump, resolve_board,
     resolve_board_optional,
 };
 use onerom_cli::CliFetch;
 use onerom_cli::LIVE_ROM_BASE;
+use onerom_cli::colour::RgbColour;
 use onerom_cli::plugin::{PluginOrigin, PluginType, resolve_plugin_display};
 use onerom_cli::usb::{
     GpioEntry, GpioUse, LedId, LedState, get_caps, gpio_query, gpio_query_all, led_query,
-    read_memory,
+    leds_share_gpio, read_memory,
 };
 use onerom_cli::{Device, Error, Options};
 use onerom_config::chip::ChipType;
@@ -72,7 +73,7 @@ const MODE_CYCLE: u8 = 4;
 ///
 /// The two differ only in which LED they name and whether a colour means
 /// anything, so what a user sees stays consistent between them.
-fn print_led(name: &str, state: &LedState, coloured: bool, verbose: bool) {
+fn print_led(name: &str, state: &LedState, coloured: bool, verbose: bool, shared: bool) {
     if !state.present {
         println!("{name}: this board does not have one");
         return;
@@ -93,10 +94,14 @@ fn print_led(name: &str, state: &LedState, coloured: bool, verbose: bool) {
         // printing that colour would name one the LED is not lit.  Brightness
         // still applies, and is still printed.
         if state.mode != MODE_CYCLE {
-            let hex = format!("#{:02X}{:02X}{:02X}", state.r, state.g, state.b);
-            match colour_name(state.r, state.g, state.b) {
-                Some(named) => println!("  Colour:     {hex} ({named})"),
-                None => println!("  Colour:     {hex}"),
+            let colour = RgbColour {
+                red: state.red,
+                green: state.green,
+                blue: state.blue,
+            };
+            match colour.name() {
+                Some(named) => println!("  Colour:     {colour} ({named})"),
+                None => println!("  Colour:     {colour}"),
             }
         }
         println!("  Brightness: {}%", state.brightness);
@@ -113,7 +118,7 @@ fn print_led(name: &str, state: &LedState, coloured: bool, verbose: bool) {
     if verbose {
         println!("  GPIO:       {}", state.gpio);
 
-        if state.shared_gpio {
+        if shared {
             println!("  Shared:     yes, with the other LED on this board");
         }
     }
@@ -124,7 +129,8 @@ pub async fn cmd_led(options: &Options, args: &InspectLedArgs) -> Result<(), Err
     let device = options.device.as_ref().unwrap();
 
     let state = led_query(device, LedId::Status).await?;
-    print_led("Status LED", &state, false, options.verbose);
+    let shared = options.verbose && leds_share_gpio(device, &state, LedId::Rgb).await;
+    print_led("Status LED", &state, false, options.verbose, shared);
 
     Ok(())
 }
@@ -134,7 +140,8 @@ pub async fn cmd_rgb(options: &Options, args: &InspectRgbArgs) -> Result<(), Err
     let device = options.device.as_ref().unwrap();
 
     let state = led_query(device, LedId::Rgb).await?;
-    print_led("RGB LED", &state, true, options.verbose);
+    let shared = options.verbose && leds_share_gpio(device, &state, LedId::Status).await;
+    print_led("RGB LED", &state, true, options.verbose, shared);
 
     Ok(())
 }

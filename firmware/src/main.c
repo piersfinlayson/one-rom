@@ -104,22 +104,7 @@ int firmware_main(void) {
 
     // Put the status LED where the configuration says, now we're ready to
     // serve the ROM.
-    //
-    // Through the engine rather than straight at the pin: the engine owns both
-    // LEDs, and one that learned the LED's state only when something first
-    // asked it to change would start out believing a lit LED was dark - which
-    // it would then report, and restore a beacon to.  Nothing is scheduled
-    // here, so this reads no clock and touches no timer.
-    {
-        ora_led_request_t req = {0};
-
-        req.size = sizeof(req);
-        req.led  = ORA_LED_STATUS;
-        req.mode = RUNTIME->status_led_enabled ? ORA_LED_MODE_ON
-                                               : ORA_LED_MODE_OFF;
-        DEBUG("Status LED %s", RUNTIME->status_led_enabled ? "on" : "off");
-        pio_led_set(&req);
-    }
+    pio_led_boot();
 
     // Start serving the ROM.  This returns once the PIOs and DMAs have been
     // setup.  We return back to the reset handler in vector.c, which then

@@ -472,6 +472,76 @@ RBCP.
   is the live status-LED state and the cross-plugin coordination channel (written
   by `ora_set_status_led`, read via its `STATUS_LED_STATE` key).
 
+## Cross-project constants
+
+**A value more than one of firmware, plugin and host has to agree on is
+declared once, in `rust/metadata/metadata_schema.toml`, and never written out
+by hand a second time.** Writing it twice does not merely risk drift — it makes
+drift silent, because nothing compares the two copies. Every constant there is
+emitted three ways from the one declaration:
+
+| Reaches | How | Name |
+| --- | --- | --- |
+| Firmware C | `firmware/generated/onerom_metadata.h` | the schema name |
+| Rust (CLI, tools, tests) | `pub const` on `onerom_metadata` | the schema name |
+| Plugins (`ora_api = true` only) | `firmware/ora/onerom_constants_generated.h`, included by `api.h` | `ORA_` + the schema name |
+
+Adding one:
+
+```toml
+[[constants]]
+name = "LED_MAX_HOLD_MS"
+type = "u32"
+value = 60000
+ora_api = true                     # omit unless a plugin needs it
+comment = """The longest hold either LED accepts, in milliseconds."""
+```
+
+- **`ora_api = true` puts it in the plugin API.** A plugin builds against
+  `firmware/ora` alone and cannot include the firmware's metadata header, so a
+  value it must agree with the firmware on needs this tag. The ORA name is the
+  schema name with an `ORA_` prefix, derived rather than given, so either can be
+  found from the other. Leave it off otherwise — most constants are
+  firmware-and-host only, and the plugin API is a published surface.
+- **Two constants that happen to share a value stay two constants.**
+  `ORA_LED_MAX_HOLD_MS` and `ORA_GPIO_MAX_HOLD_MS` are both 60000 for different
+  reasons.
+- **The `comment` becomes the doc comment in all three outputs**, so write it
+  for whoever reads it last.
+
+### Quoting a constant where Rust demands a literal
+
+A doc comment takes a literal, and a `pub const` is not one — so clap's help
+text cannot state a value by naming the constant. Hand-typing the number there
+is the defect above, in prose.
+
+`onerom-metadata` generates `ALL_CONSTANTS`, every constant as `(name, value)`
+in plain text, for a build script to write one file per constant into `OUT_DIR`
+(see `rust/cli/build.rs`). `include_str!` and `concat!` are accepted where a
+literal is required, so:
+
+```rust
+const HELP_BEACON_PERIOD: &str = concat!(
+    "Milliseconds for one blink. Defaults to ",
+    const_str!("LED_BEACON_DEFAULT_PERIOD_MS"),
+    "."
+);
+
+#[arg(long, value_name = "MS", value_parser = parse_beacon_period,
+      help = HELP_BEACON_PERIOD)]
+pub period: Option<u16>,
+```
+
+**`help = …` rather than a `///` comment, and only for this.** Clap reads a doc
+comment as a literal and would see an unexpanded macro, leaving the option with
+*no help at all* — which builds clean and is caught only by reading `--help`.
+Every other option keeps its `///` comment, as the CLI arguments section says.
+`ALL_CONSTANTS`' own doc comment carries the full recipe for a new consumer.
+
+A name with no matching constant fails the build and says which file it looked
+for, so a typo or a retired constant is caught rather than leaving a stale
+number behind.
+
 ## Total parseability — non-negotiable
 
 **A host tool of the same generation as the device parses every single byte that

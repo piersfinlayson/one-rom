@@ -94,9 +94,9 @@ typedef struct __attribute__((packed)) {
 
     // The colour, for the LEDs and modes that take one.  All three zero means
     // the host named no colour, which the device reads as red.
-    uint8_t  r;
-    uint8_t  g;
-    uint8_t  b;
+    uint8_t  red;
+    uint8_t  green;
+    uint8_t  blue;
 
     // Brightness as a percentage, 1 to 100.  Zero is the device's default.
     uint8_t  brightness;
@@ -148,20 +148,18 @@ typedef struct __attribute__((packed)) {
 
     uint8_t  mode;          // onerom_led_subcmd_t
     uint8_t  brightness;    // percentage, 0 on an LED that has no brightness
-    uint8_t  r;
-    uint8_t  g;
-    uint8_t  b;
+    uint8_t  red;
+    uint8_t  green;
+    uint8_t  blue;
 
     // The GPIO this LED is on, or GPIO_NONE where the board has none.
     uint8_t  gpio;
 
-    // Whether this LED shares its GPIO with the other one.  Both work when
-    // they do, and no mode is restricted.
-    uint8_t  shared_gpio;
+    uint8_t  reserved0;
 
     uint16_t period_ms;
 
-    uint8_t  reserved0[3];
+    uint8_t  reserved1[3];
 } onerom_led_state_t;
 _Static_assert(sizeof(onerom_led_state_t) == ONEROM_LED_STATE_LEN, "onerom_led_state_t size mismatch");
 
@@ -214,9 +212,8 @@ _Static_assert(sizeof(onerom_caps_t) == ONEROM_CAPS_LEN, "onerom_caps_t size mis
 // Bits 4 upwards are reserved for later: pulls, drive strength, slew, pulse
 // trains, named pins.
 
-// The longest hold SET_LED accepts, in milliseconds.  Matches the GPIO hold
-// cap, and a longer request is refused rather than clamped.
-#define ONEROM_LED_MAX_HOLD_MS  60000u
+// The longest hold SET_LED accepts is ORA_LED_MAX_HOLD_MS, from the ORA API.
+// A longer request is refused rather than clamped.
 
 // ---------------------------------------------------------------------------
 // ONEROM_CMD_GPIO_SET - drive a GPIO, optionally for a bounded period

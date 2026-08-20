@@ -133,8 +133,8 @@ pub async fn cmd_rgb_on(
     options: &Options,
     args: &args::control::ControlRgbOnArgs,
 ) -> Result<(), Error> {
-    let (r, g, b) = args.colour.rgb();
-    let mut led_args = SetLedArgs::rgb(LedSubCmd::On, r, g, b);
+    let (red, green, blue) = args.colour.rgb();
+    let mut led_args = SetLedArgs::rgb(LedSubCmd::On, red, green, blue);
     led_args.brightness = args.brightness.unwrap_or(0);
     led_args.hold_ms = args.hold.unwrap_or(0);
     rgb_request(options, args, led_args, "RGB LED on").await
@@ -153,8 +153,8 @@ pub async fn cmd_rgb_beacon(
     options: &Options,
     args: &args::control::ControlRgbBeaconArgs,
 ) -> Result<(), Error> {
-    let (r, g, b) = args.colour.rgb();
-    let mut led_args = SetLedArgs::rgb(LedSubCmd::Beacon, r, g, b);
+    let (red, green, blue) = args.colour.rgb();
+    let mut led_args = SetLedArgs::rgb(LedSubCmd::Beacon, red, green, blue);
     led_args.brightness = args.brightness.unwrap_or(0);
     led_args.period_ms = args.period.unwrap_or(0);
     led_args.hold_ms = args.hold.unwrap_or(0);
@@ -165,8 +165,8 @@ pub async fn cmd_rgb_flame(
     options: &Options,
     args: &args::control::ControlRgbFlameArgs,
 ) -> Result<(), Error> {
-    let (r, g, b) = args.colour.rgb();
-    let mut led_args = SetLedArgs::rgb(LedSubCmd::Flame, r, g, b);
+    let (red, green, blue) = args.colour.rgb();
+    let mut led_args = SetLedArgs::rgb(LedSubCmd::Flame, red, green, blue);
     led_args.brightness = args.brightness.unwrap_or(0);
     led_args.period_ms = args.period.unwrap_or(0);
     led_args.hold_ms = args.hold.unwrap_or(0);
@@ -189,8 +189,8 @@ pub async fn cmd_rgb_breathe(
     options: &Options,
     args: &args::control::ControlRgbBreatheArgs,
 ) -> Result<(), Error> {
-    let (r, g, b) = args.colour.rgb();
-    let mut led_args = SetLedArgs::rgb(LedSubCmd::Breathe, r, g, b);
+    let (red, green, blue) = args.colour.rgb();
+    let mut led_args = SetLedArgs::rgb(LedSubCmd::Breathe, red, green, blue);
     led_args.brightness = args.brightness.unwrap_or(0);
     led_args.period_ms = args.period.unwrap_or(0);
     led_args.hold_ms = args.hold.unwrap_or(0);
@@ -201,8 +201,8 @@ pub async fn cmd_rgb_blink(
     options: &Options,
     args: &args::control::ControlRgbBlinkArgs,
 ) -> Result<(), Error> {
-    let (r, g, b) = args.colour.rgb();
-    let mut led_args = SetLedArgs::rgb(LedSubCmd::Blink, r, g, b);
+    let (red, green, blue) = args.colour.rgb();
+    let mut led_args = SetLedArgs::rgb(LedSubCmd::Blink, red, green, blue);
     led_args.brightness = args.brightness.unwrap_or(0);
     led_args.period_ms = args.period.unwrap_or(0);
     led_args.hold_ms = args.hold.unwrap_or(0);

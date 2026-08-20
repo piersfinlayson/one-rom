@@ -70,16 +70,30 @@ void stub_set_timer_raw_script(const uint64_t *values, uint32_t count);
 // was refused but never what a permitted one did - which is most of what a
 // bounded GPIO hold is.
 //
-// Only the three fields ora_gpio_query reports are modelled: whether the output
-// driver is enabled, what it is driving, and what an input reads.  The pin's
-// use, its pulls and its function select are not, because nothing reads them
-// back through the API.
+// Only the three fields ora_gpio_query reports are modelled, plus one bit of
+// function select: whether the output driver is enabled, what it is driving,
+// what an input reads, and whether a PIO block has the pin.  The pin's use and
+// its pulls are not, because nothing reads them back through the API.
 //
 // Cleared by onerom_test_reset() on every boot, so a scenario starts with the
 // pads as a device's come up rather than carrying the previous one's state.
 void stub_gpio_set(uint8_t gpio, uint8_t state);
 uint8_t stub_gpio_is_output(uint8_t gpio);
 uint8_t stub_gpio_level(uint8_t gpio);
+
+// Hand a pin to a PIO block, or take it back.
+//
+// A pin whose function select names PIO is not SIO's to drive: an SIO write to
+// it changes nothing, because the block drives the pad.  On a device that falls
+// out of the hardware and no code tests for it, so the model does the same and
+// stub_gpio_set ignores a write to a pin a block holds.  That keeps the
+// knowledge here rather than in firmware that would otherwise have to ask
+// whether it was under test.
+//
+// One ROM reaches this on a board that wires both LEDs to one pin: the LED
+// engine borrows the pin for as long as a pixel takes, and the status LED
+// cannot drive it until the engine hands it back.
+void stub_gpio_set_pio_owned(uint8_t gpio, uint8_t owned);
 
 // What an input pin reads.  Nothing is attached to a pin in this process, so an
 // input reads low until a test says otherwise - which is what this is for: a

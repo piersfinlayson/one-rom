@@ -94,6 +94,15 @@ extern ora_result_t pio_setup_address_monitor(
 ora_result_t pio_led_set(const ora_led_request_t *req);
 ora_result_t pio_led_get(uint8_t led, ora_led_state_t *state_out);
 
+// Put the status LED where the configuration says, once serving is ready.
+//
+// Through the engine rather than straight at the pin: the engine owns both
+// LEDs, and one that learned the LED's state only when something first asked it
+// to change would start out believing a lit LED was dark - which it would then
+// report, and restore a beacon to.  Nothing is scheduled here, so this reads no
+// clock and touches no timer.
+void pio_led_boot(void);
+
 // Advance every LED whose mode repeats and end any hold that has expired.
 // Called from the TIMER0 alarm 1 handler, which it re-arms for whichever LED
 // next needs attention.

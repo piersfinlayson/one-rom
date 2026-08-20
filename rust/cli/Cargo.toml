@@ -61,6 +61,7 @@ zip = "8.2"
 
 [build-dependencies]
 built = { version = "0.8", features = ["git2"] }
+onerom-metadata = { workspace = true }
 embed-resource = "3"
 git2 = { version = "0.20", default-features = false }
 static_vcruntime = "3.0"

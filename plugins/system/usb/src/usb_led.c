@@ -63,7 +63,7 @@ pb_status_t led_handle_set(const onerom_set_led_args_t *args) {
         return PB_STATUS_NOT_FOUND;
     }
 
-    if (args->hold_ms > ONEROM_LED_MAX_HOLD_MS) {
+    if (args->hold_ms > ORA_LED_MAX_HOLD_MS) {
         return PB_STATUS_INVALID_ARG;
     }
 
@@ -71,9 +71,9 @@ pb_status_t led_handle_set(const onerom_set_led_args_t *args) {
     req.led        = ora_led;
     req.mode       = args->sub_cmd;
     req.brightness = args->brightness;
-    req.r          = args->r;
-    req.g          = args->g;
-    req.b          = args->b;
+    req.red        = args->red;
+    req.green      = args->green;
+    req.blue       = args->blue;
     req.period_ms  = args->period_ms;
     req.hold_ms    = args->hold_ms;
 
@@ -106,6 +106,11 @@ pb_status_t led_fill_state(uint8_t led_id, onerom_led_state_t *out) {
         return PB_STATUS_NOT_FOUND;
     }
 
+    // Every byte of the response is written here, reserved bytes included: the
+    // data phase copies the structure out verbatim, so anything left unwritten
+    // would put this plugin's stack on the wire.
+    memset(out, 0, sizeof(*out));
+
     // The firmware writes at most this many bytes and reports how many it did,
     // so a plugin built against a different version of the structure than the
     // running firmware reads only what that firmware wrote.
@@ -121,11 +126,10 @@ pb_status_t led_fill_state(uint8_t led_id, onerom_led_state_t *out) {
     out->present     = state.present;
     out->mode        = state.mode;
     out->brightness  = state.brightness;
-    out->r           = state.r;
-    out->g           = state.g;
-    out->b           = state.b;
+    out->red         = state.red;
+    out->green       = state.green;
+    out->blue        = state.blue;
     out->gpio        = state.gpio;
-    out->shared_gpio = state.shared_gpio;
     out->period_ms   = state.period_ms;
 
     return PB_STATUS_OK;

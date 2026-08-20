@@ -8,20 +8,15 @@
 // schema field tagged with a `plugin_key` (ordered by id), and the INVALID
 // sentinel.  This header is included by the plugin API (firmware/ora/api.h) and
 // therefore reaches user plugins; it deliberately contains only the identifier
-// space, never any access into the internal metadata structures.
+// space, never any access into the internal metadata structures.  Values a
+// plugin needs, ORA_GPIO_NONE among them, come from the sibling constants
+// header - see constants_gen.rs.
 
-use crate::c_gen::format_const_value;
 use crate::schema::Schema;
 
 const GUARD: &str = "ONEROM_METADATA_KEYS_H";
 const ENUM_NAME: &str = "ora_metadata_key_t";
 const PREFIX: &str = "ORA_METADATA_KEY_";
-
-/// Schema constant naming the value that marks an unused GPIO array entry.
-/// Emitted into this header under `SENTINEL_NAME` so a plugin can compare
-/// against it without including the firmware's own metadata header.
-const SENTINEL_SOURCE: &str = "GPIO_NONE";
-const SENTINEL_NAME: &str = "ORA_GPIO_NONE";
 
 struct Variant {
     name: String,
@@ -84,30 +79,7 @@ pub fn generate(schema: &Schema) -> String {
 "
     ));
 
-    // The sentinel marking an unused entry in a GPIO array, taken from the same
-    // schema constant the firmware's own header takes it from so the two cannot
-    // drift apart.  Without it here a plugin has no value to compare against,
-    // the firmware metadata header not being plugin-facing.
-    let sentinel = schema
-        .constants
-        .iter()
-        .find(|c| c.name == SENTINEL_SOURCE)
-        .unwrap_or_else(|| {
-            panic!(
-                "schema must define the {SENTINEL_SOURCE} constant, exposed here as {SENTINEL_NAME}"
-            )
-        });
-    out.push_str(&format!(
-        "\
-// Marks an entry of a GPIO array as unused.  The array keys below are filled
-// contiguously from index 0, so a caller reads upwards and stops at the first
-// entry equal to this rather than at the end of the array.
-#define {SENTINEL_NAME} {}
-
-typedef enum {{
-",
-        format_const_value(&sentinel.value, &sentinel.type_)
-    ));
+    out.push_str("typedef enum {\n");
 
     for v in &variants {
         let lines: Vec<&str> = v

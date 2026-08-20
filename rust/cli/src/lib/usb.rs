@@ -603,6 +603,28 @@ pub async fn set_rgb(device: &Device, caps: &Caps, args: SetLedArgs) -> Result<(
         })
 }
 
+/// Whether this board's two LEDs are on the same GPIO, as fire-24-f's are.
+///
+/// The device does not report this. Each [`led_query`] describes one LED, and
+/// the answer is the two GPIOs being equal, so a host asks twice rather than
+/// the wire format carrying a field it can derive. `state` is one LED already
+/// read, and `other` names the one to compare it against, so a caller that has
+/// a state in hand pays for one further query and no more.
+///
+/// A board whose other LED is absent shares nothing, and a device that refuses
+/// the second query answers the same way: not knowing is reported as not
+/// shared, which is what an older or partly featured device should read as.
+pub async fn leds_share_gpio(device: &Device, state: &LedState, other: LedId) -> bool {
+    if !state.present {
+        return false;
+    }
+
+    match led_query(device, other).await {
+        Ok(other) => other.present && other.gpio == state.gpio,
+        Err(_) => false,
+    }
+}
+
 /// Read what one of a One ROM's LEDs is doing.
 ///
 /// No capability check: a plugin that predates the command refuses it, so the

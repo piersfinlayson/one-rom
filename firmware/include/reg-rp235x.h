@@ -368,6 +368,16 @@
 // for these - it has its own Boot Locks at BOOTRAM_BASE + 0x800.
 #define SIO_SPINLOCK(n)     (*((volatile uint32_t *)(SIO_BASE + 0x100 + ((n) * 4))))
 
+// Which lock is whose.  Every lock this firmware takes is named here, so a new
+// user can see what is already spoken for.
+//
+// The numbers count down from 31 rather than up from the usable range's base:
+// of the locks the erratum above leaves alone, an allocator handing them out
+// from the SDK's claim free base of 26 reaches these last, so a plugin using
+// the SDK's allocator collides with them last.
+#define SPINLOCK_ORA_LOG    31
+#define SPINLOCK_LED        30
+
 #define SIO_GPIO_READ(pin)  ((pin < 32) ? \
                             (((*(volatile uint32_t*)(SIO_BASE + 0x004)) >> pin) & 1) : \
                             (((*(volatile uint32_t*)(SIO_BASE + 0x008)) >> (pin - 32)) & 1))

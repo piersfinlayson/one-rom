@@ -19,6 +19,7 @@
 #include <stddef.h>
 
 #include <onerom_metadata_keys_generated.h>
+#include <onerom_constants_generated.h>
 
 /**
  * @brief Place an object in a named linker section
@@ -1167,6 +1168,15 @@ typedef struct {
      * @brief The core the plugin is running on
      */
     ora_core_t core;
+
+    /**
+     * @brief Reserved. Set to zero.
+     *
+     * Declared rather than left to the compiler: @ref static_ram_base is
+     * four-byte aligned, so these three bytes exist either way, and a reader
+     * following the fields down should not have to work that out.
+     */
+    uint8_t reserved[3];
 
     /**
      * @brief The plugin's static RAM base address
@@ -2736,16 +2746,16 @@ typedef struct {
     uint8_t  brightness;
 
     /** @brief Red, for the modes that take a colour. Ignored otherwise. */
-    uint8_t  r;
+    uint8_t  red;
 
     /** @brief Green, for the modes that take a colour. Ignored otherwise. */
-    uint8_t  g;
+    uint8_t  green;
 
     /** @brief Blue, for the modes that take a colour. Ignored otherwise. */
-    uint8_t  b;
+    uint8_t  blue;
 
     /** @brief Reserved. Set to zero. */
-    uint8_t  reserved;
+    uint8_t  reserved0;
 
     /**
      * @brief How long one repetition of the mode takes, in milliseconds
@@ -2755,6 +2765,15 @@ typedef struct {
      * means the mode's own default. Ignored by the modes that do not repeat.
      */
     uint16_t period_ms;
+
+    /**
+     * @brief Reserved. Set to zero.
+     *
+     * Declared rather than left to the compiler: @ref hold_ms is four-byte
+     * aligned, so these two bytes exist either way, and a reader following the
+     * fields down should not have to work that out.
+     */
+    uint8_t  reserved1[2];
 
     /**
      * @brief How long to stay in this mode before going back, in milliseconds
@@ -2792,28 +2811,44 @@ typedef struct {
     /** @brief What it is doing now. @sa ora_led_mode_t */
     uint8_t  mode;
 
-    /** @brief Brightness as a percentage, 1 to 100 */
+    /**
+     * @brief Brightness as a percentage, 1 to 100
+     *
+     * Meaningful for ORA_LED_RGB only. The status LED is lit or dark and has
+     * no brightness, so the firmware writes zero here for it. Zero is not a
+     * brightness and must not be read as one.
+     */
     uint8_t  brightness;
 
-    /** @brief Red of the colour in force */
-    uint8_t  r;
+    /**
+     * @brief Red of the colour in force
+     *
+     * Meaningful for ORA_LED_RGB only, as for @ref brightness. The firmware
+     * writes zero for the status LED, which is not the colour black.
+     */
+    uint8_t  red;
 
-    /** @brief Green of the colour in force */
-    uint8_t  g;
+    /**
+     * @brief Green of the colour in force
+     *
+     * Meaningful for ORA_LED_RGB only, as for @ref brightness. The firmware
+     * writes zero for the status LED, which is not the colour black.
+     */
+    uint8_t  green;
 
-    /** @brief Blue of the colour in force */
-    uint8_t  b;
+    /**
+     * @brief Blue of the colour in force
+     *
+     * Meaningful for ORA_LED_RGB only, as for @ref brightness. The firmware
+     * writes zero for the status LED, which is not the colour black.
+     */
+    uint8_t  blue;
 
     /** @brief The GPIO this LED is on, or GPIO_NONE if the board has none */
     uint8_t  gpio;
 
-    /**
-     * @brief 1 if this LED shares its GPIO with another LED
-     *
-     * Both work when they share, and no mode is restricted. It is reported
-     * because a host explaining the board to someone wants to say so.
-     */
-    uint8_t  shared_gpio;
+    /** @brief Reserved, written as zero */
+    uint8_t  reserved;
 
     /** @brief The period in force, in milliseconds */
     uint16_t period_ms;

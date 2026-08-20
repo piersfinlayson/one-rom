@@ -7,6 +7,9 @@ use git2::Repository;
 use std::path::PathBuf;
 
 fn main() {
+    // Metadata-schema constants, as text the CLI can quote in its help.
+    write_constant_files();
+
     // Minimum macOS deployment target
     println!("cargo:rustc-env=MACOSX_DEPLOYMENT_TARGET=10.13");
 
@@ -23,6 +26,28 @@ fn main() {
 
     #[cfg(all(windows, target_env = "msvc"))]
     static_vcruntime::metabuild();
+}
+
+/// Write every metadata-schema constant to its own file under `OUT_DIR`, as the
+/// plain text a reader sees.
+///
+/// Rust demands a literal in some positions, a doc comment among them, and a
+/// `pub const` is not one - so the CLI cannot state the firmware's periods and
+/// holds in `--help` by naming the constant. It can `include_str!` a file,
+/// which is what these are for: see the `const_str!` macro in `src/args`.
+///
+/// Every constant is written, not a chosen few. Nothing here names one, so a
+/// constant added to the schema is available with no change to this function,
+/// and a name that no doc comment includes costs a file nobody opens.
+fn write_constant_files() {
+    let dir = PathBuf::from(std::env::var("OUT_DIR").expect("cargo sets OUT_DIR")).join("const");
+    std::fs::create_dir_all(&dir).expect("could not create the constants directory");
+
+    for (name, value) in onerom_metadata::ALL_CONSTANTS {
+        let path = dir.join(format!("{name}.txt"));
+        std::fs::write(&path, value)
+            .unwrap_or_else(|e| panic!("could not write {}: {e}", path.display()));
+    }
 }
 
 fn compile_windows_resources() {

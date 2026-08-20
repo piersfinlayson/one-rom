@@ -548,11 +548,11 @@ static void onerom_caps_bytes(uint8_t *buf, uint32_t offset, uint32_t len) {
     // A real bound, not zero: a host is entitled to treat a non-zero value as
     // authoritative and refuse a longer hold before it ever reaches the device.
     // Zero would mean "no opinion", which this plugin has never had - it always
-    // enforces ONEROM_GPIO_MAX_HOLD_MS - so saying so would be a lie of
+    // enforces ORA_GPIO_MAX_HOLD_MS - so saying so would be a lie of
     // omission.  It is reported only alongside the feature bit that makes holds
     // meaningful.
     caps.max_hold_ms = (context.features & ONEROM_FEAT_GPIO_HOLD) ?
-                       ONEROM_GPIO_MAX_HOLD_MS : 0u;
+                       ORA_GPIO_MAX_HOLD_MS : 0u;
 
     const uint8_t *src = (const uint8_t *)&caps;
     for (uint32_t i = 0u; i < len; i++) {

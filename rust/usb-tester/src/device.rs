@@ -312,11 +312,11 @@ impl<'a> Device<'a> {
             present: 0xFF,
             mode: 0xFF,
             brightness: 0xFF,
-            r: 0xFF,
-            g: 0xFF,
-            b: 0xFF,
+            red: 0xFF,
+            green: 0xFF,
+            blue: 0xFF,
             gpio: 0xFF,
-            shared_gpio: 0xFF,
+            reserved: 0xFF,
             period_ms: 0xFFFF,
         };
 
@@ -336,16 +336,25 @@ impl<'a> Device<'a> {
             return Err(format!("could not read LED {led}: {result:?}"));
         }
 
+        // Pre-filled with 0xFF above, so this says the firmware wrote the
+        // reserved byte rather than leaving whatever was in the caller's
+        // structure.  A reserved byte carrying stack is what reaches a host.
+        if state.reserved != 0 {
+            return Err(format!(
+                "LED {led}'s reserved byte came back {:#04x}, not zeroed",
+                state.reserved
+            ));
+        }
+
         Ok(LedState {
             present: state.present != 0,
             mode: state.mode,
             brightness: state.brightness,
-            r: state.r,
-            g: state.g,
-            b: state.b,
+            red: state.red,
+            green: state.green,
+            blue: state.blue,
             period_ms: state.period_ms,
             gpio: state.gpio,
-            shared_gpio: state.shared_gpio != 0,
         })
     }
 
@@ -422,15 +431,13 @@ pub struct LedState {
     pub mode: u8,
     /// Brightness as a percentage.
     pub brightness: u8,
-    pub r: u8,
-    pub g: u8,
-    pub b: u8,
+    pub red: u8,
+    pub green: u8,
+    pub blue: u8,
     /// How long one repetition of the mode takes, in milliseconds.
     pub period_ms: u16,
     /// The GPIO this LED is on, or 0xFF where the board has none.
     pub gpio: u8,
-    /// Whether this LED shares its GPIO with the other one.
-    pub shared_gpio: bool,
 }
 
 /// The largest control transfer this harness will take.

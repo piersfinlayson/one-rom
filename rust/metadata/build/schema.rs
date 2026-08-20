@@ -64,6 +64,32 @@ pub struct Constant {
     pub type_: String,
     pub value: ConstantValue,
     pub comment: Option<String>,
+
+    /// Whether this constant is part of the ORA plugin API.
+    ///
+    /// A plugin builds against firmware/ora alone and cannot include the
+    /// firmware's own metadata header, so a value it must agree with the
+    /// firmware on is emitted into firmware/ora/onerom_constants_generated.h
+    /// as well. False for a constant no plugin needs, which is most of them.
+    #[serde(default)]
+    pub ora_api: bool,
+}
+
+impl Constant {
+    /// The name this constant takes in the ORA plugin API.
+    ///
+    /// Derived rather than given, so the two names always correspond and
+    /// either can be found from the other.
+    pub fn ora_name(&self) -> String {
+        format!("ORA_{}", self.name)
+    }
+}
+
+impl Schema {
+    /// The constants the ORA plugin API carries, in schema order.
+    pub fn ora_constants(&self) -> impl Iterator<Item = &Constant> {
+        self.constants.iter().filter(|c| c.ora_api)
+    }
 }
 
 // ---------------------------------------------------------------------------

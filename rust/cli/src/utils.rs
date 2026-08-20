@@ -180,93 +180,6 @@ pub fn parse_u8(s: &str) -> Result<u8, std::num::ParseIntError> {
     }
 }
 
-/// A colour for the RGB LED, as the device takes it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Colour {
-    pub r: u8,
-    pub g: u8,
-    pub b: u8,
-}
-
-impl Colour {
-    /// The three components, in the order the wire wants them.
-    pub fn rgb(&self) -> (u8, u8, u8) {
-        (self.r, self.g, self.b)
-    }
-}
-
-impl std::fmt::Display for Colour {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "#{:02X}{:02X}{:02X}", self.r, self.g, self.b)
-    }
-}
-
-/// The colours nameable by word, rather than by hex.
-///
-/// A short list on purpose: it covers what someone marking one One ROM apart
-/// from another reaches for, and anything else is expressible as hex.
-const NAMED_COLOURS: &[(&str, (u8, u8, u8))] = &[
-    ("red", (0xFF, 0x00, 0x00)),
-    ("green", (0x00, 0xFF, 0x00)),
-    ("blue", (0x00, 0x00, 0xFF)),
-    ("white", (0xFF, 0xFF, 0xFF)),
-    ("yellow", (0xFF, 0xFF, 0x00)),
-    ("cyan", (0x00, 0xFF, 0xFF)),
-    ("magenta", (0xFF, 0x00, 0xFF)),
-    ("orange", (0xFF, 0x60, 0x00)),
-    ("purple", (0x80, 0x00, 0xFF)),
-    ("pink", (0xFF, 0x40, 0x60)),
-];
-
-/// The name for a colour, where it has one.
-///
-/// The reverse of the table [`parse_colour`] reads, so a colour a user could
-/// have asked for by name is shown back to them by that name. Exact matches
-/// only - a colour a shade off one of these has no name, and saying it did
-/// would name a colour the LED is not showing.
-pub fn colour_name(r: u8, g: u8, b: u8) -> Option<&'static str> {
-    NAMED_COLOURS
-        .iter()
-        .find(|(_, rgb)| *rgb == (r, g, b))
-        .map(|(name, _)| *name)
-}
-
-/// Parse a colour named by word, or written as `#RRGGBB` or `0xRRGGBB`.
-pub fn parse_colour(s: &str) -> Result<Colour, String> {
-    let lower = s.to_ascii_lowercase();
-
-    if let Some((_, (r, g, b))) = NAMED_COLOURS.iter().find(|(name, _)| *name == lower) {
-        return Ok(Colour {
-            r: *r,
-            g: *g,
-            b: *b,
-        });
-    }
-
-    let hex = lower
-        .strip_prefix('#')
-        .or_else(|| lower.strip_prefix("0x"))
-        .unwrap_or(&lower);
-
-    if hex.len() == 6 && hex.chars().all(|c| c.is_ascii_hexdigit()) {
-        let value = u32::from_str_radix(hex, 16).map_err(|e| e.to_string())?;
-        return Ok(Colour {
-            r: ((value >> 16) & 0xFF) as u8,
-            g: ((value >> 8) & 0xFF) as u8,
-            b: (value & 0xFF) as u8,
-        });
-    }
-
-    let names = NAMED_COLOURS
-        .iter()
-        .map(|(name, _)| *name)
-        .collect::<Vec<_>>()
-        .join(", ");
-    Err(format!(
-        "'{s}' is not a colour. Give one of {names}, or a hex colour such as #FF8000."
-    ))
-}
-
 /// Parse a brightness percentage, 1 to 100.
 pub fn parse_brightness(s: &str) -> Result<u8, String> {
     let value = s
@@ -282,10 +195,10 @@ pub fn parse_brightness(s: &str) -> Result<u8, String> {
 
 /// The longest hold a One ROM accepts for an LED, in milliseconds.
 ///
-/// Mirrors `ONEROM_LED_MAX_HOLD_MS` in the plugin's `usb_custom_pbx.h`, and the
-/// engine's own bound beneath it. Checked here so a value too large is a parse
-/// error rather than a refusal from the device.
-pub const LED_MAX_HOLD_MS: u32 = 60_000;
+/// From the metadata schema, which is where the firmware's engine and the USB
+/// plugin take the same bound from. Checked here so a value too large is a
+/// parse error rather than a refusal from the device.
+pub use onerom_metadata::LED_MAX_HOLD_MS;
 
 /// Parse a hold in milliseconds, bounded by what a device accepts.
 pub fn parse_hold_ms(s: &str) -> Result<u32, String> {
@@ -306,18 +219,17 @@ pub fn parse_hold_ms(s: &str) -> Result<u32, String> {
 
 /// The shortest period each repeating mode accepts, in milliseconds.
 ///
-/// Mirrors `LED_*_MIN_PERIOD_MS` in the firmware's `pioled.c`, which is where
-/// they are enforced for every caller. They are checked here too so a value the
+/// From the metadata schema, which is where the firmware takes them from and
+/// enforces them for every caller. They are checked here too so a value the
 /// device would refuse fails before the command is sent, naming the mode.
 ///
 /// Each comes from how many steps the mode divides a repetition into: below
 /// these the engine would have to run frames closer together than it schedules
 /// them, so it could not repeat at the period asked for.
-pub const CYCLE_MIN_PERIOD_MS: u16 = 1000;
-pub const BREATHE_MIN_PERIOD_MS: u16 = 1000;
-pub const BLINK_MIN_PERIOD_MS: u16 = 50;
-pub const BEACON_MIN_PERIOD_MS: u16 = 50;
-pub const FLAME_MIN_PERIOD_MS: u16 = 500;
+pub use onerom_metadata::{
+    LED_BEACON_MIN_PERIOD_MS, LED_BLINK_MIN_PERIOD_MS, LED_BREATHE_MIN_PERIOD_MS,
+    LED_CYCLE_MIN_PERIOD_MS, LED_FLAME_MIN_PERIOD_MS,
+};
 
 /// Parse a period in milliseconds, bounded below by what the mode can run at.
 ///
@@ -340,27 +252,27 @@ fn parse_period_min(s: &str, min: u16) -> Result<u16, String> {
 
 /// Parse a `cycle` period.
 pub fn parse_cycle_period(s: &str) -> Result<u16, String> {
-    parse_period_min(s, CYCLE_MIN_PERIOD_MS)
+    parse_period_min(s, LED_CYCLE_MIN_PERIOD_MS)
 }
 
 /// Parse a `breathe` period.
 pub fn parse_breathe_period(s: &str) -> Result<u16, String> {
-    parse_period_min(s, BREATHE_MIN_PERIOD_MS)
+    parse_period_min(s, LED_BREATHE_MIN_PERIOD_MS)
 }
 
 /// Parse a `blink` period.
 pub fn parse_blink_period(s: &str) -> Result<u16, String> {
-    parse_period_min(s, BLINK_MIN_PERIOD_MS)
+    parse_period_min(s, LED_BLINK_MIN_PERIOD_MS)
 }
 
 /// Parse a `beacon` period.
 pub fn parse_beacon_period(s: &str) -> Result<u16, String> {
-    parse_period_min(s, BEACON_MIN_PERIOD_MS)
+    parse_period_min(s, LED_BEACON_MIN_PERIOD_MS)
 }
 
 /// Parse a `flame` period.
 pub fn parse_flame_period(s: &str) -> Result<u16, String> {
-    parse_period_min(s, FLAME_MIN_PERIOD_MS)
+    parse_period_min(s, LED_FLAME_MIN_PERIOD_MS)
 }
 
 pub fn print_hex_dump(address: u32, data: &[u8]) {
@@ -619,46 +531,5 @@ mod tests {
         assert!(check_fire_board_optional(&None).is_ok());
         assert!(check_fire_board_optional(&Some(fire)).is_ok());
         assert!(check_fire_board_optional(&Some(ice)).is_err());
-    }
-}
-
-#[cfg(test)]
-mod colour_tests {
-    use super::*;
-
-    #[test]
-    fn every_name_survives_the_round_trip() {
-        // Each name parses to a colour, and that colour names itself again.
-        // Written over the table rather than a hand-copied list, so a colour
-        // added there is covered without touching this.
-        for (name, _) in NAMED_COLOURS {
-            let parsed = parse_colour(name).expect("a listed name parses");
-            assert_eq!(
-                colour_name(parsed.r, parsed.g, parsed.b),
-                Some(*name),
-                "{name} did not name itself again"
-            );
-        }
-    }
-
-    #[test]
-    fn the_names_are_distinct_colours() {
-        // The reverse lookup answers with the first match, so two names on one
-        // colour would make it silently pick one.  They must not collide.
-        for (i, (name, rgb)) in NAMED_COLOURS.iter().enumerate() {
-            for (other, other_rgb) in NAMED_COLOURS.iter().skip(i + 1) {
-                assert_ne!(rgb, other_rgb, "{name} and {other} are the same colour");
-            }
-        }
-    }
-
-    #[test]
-    fn a_colour_off_by_one_has_no_name() {
-        // Exact matches only.  #FE0000 is not red, and calling it red would
-        // name a colour the LED is not showing.
-        assert_eq!(colour_name(0xFF, 0x00, 0x00), Some("red"));
-        assert_eq!(colour_name(0xFE, 0x00, 0x00), None);
-        assert_eq!(colour_name(0x00, 0x00, 0x00), None);
-        assert_eq!(colour_name(0x12, 0x34, 0x56), None);
     }
 }

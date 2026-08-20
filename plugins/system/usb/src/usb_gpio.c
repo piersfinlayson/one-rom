@@ -151,7 +151,7 @@ pb_status_t gpio_handle_set(const onerom_gpio_set_args_t *args) {
     // the firmware's own idea of what exists; duplicating that here would be a
     // second source of truth.  after_state and duration_ms are ours.
     if (args->duration_ms != 0u) {
-        if (args->duration_ms > ONEROM_GPIO_MAX_HOLD_MS) {
+        if (args->duration_ms > ORA_GPIO_MAX_HOLD_MS) {
             return PB_STATUS_INVALID_ARG;
         }
         if (!gpio_state_valid(args->after_state)) {
@@ -238,7 +238,7 @@ void gpio_handle_pending_releases(void) {
         }
 
         // Signed difference, so a clock wrap part-way through a hold does not
-        // defer the release by another 49.7 days.  ONEROM_GPIO_MAX_HOLD_MS keeps
+        // defer the release by another 49.7 days.  ORA_GPIO_MAX_HOLD_MS keeps
         // the interval far inside the range where this is unambiguous.
         if ((int32_t)(now - release->deadline_ms) < 0) {
             continue;

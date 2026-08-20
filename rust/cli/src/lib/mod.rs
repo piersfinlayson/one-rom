@@ -11,6 +11,7 @@
 use clap::ValueEnum;
 
 pub mod cdc;
+pub mod colour;
 pub mod device;
 pub mod error;
 pub mod fetch;

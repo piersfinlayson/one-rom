@@ -50,6 +50,15 @@
 #   padding           - reserved bytes: present in C/binary, absent from Rust type
 #
 # ---------------------------------------------------------------------------
+# Constant attributes (used in [[constants]] entries)
+# ---------------------------------------------------------------------------
+#   name              - the constant's name, used verbatim in C and Rust
+#   type              - u8, u16, u32, usize or cstr
+#   value             - an integer, or a string for cstr
+#   comment           - becomes the doc comment on every output
+#   ora_api           - see "Constants in the plugin API" below
+#
+# ---------------------------------------------------------------------------
 # Field-level attributes
 # ---------------------------------------------------------------------------
 #   nullable            - cstr_ptr/struct_ptr: null pointer yields None rather
@@ -69,6 +78,24 @@
 #   "both"   - C definition + Rust parse + Rust serialize
 #   "parse"  - C definition + Rust parse only
 #   "none"   - C definition only
+#
+# ---------------------------------------------------------------------------
+# Constants in the plugin API
+# ---------------------------------------------------------------------------
+# A constant declared here reaches the firmware's C
+# (firmware/generated/onerom_metadata.h) and the Rust crate (a `pub const`)
+# under the name given. Neither is plugin-facing: a plugin builds against
+# firmware/ora alone and cannot include the firmware's metadata header.
+#
+# So a value a plugin must agree with the firmware on - the longest hold either
+# will accept, say - is marked `ora_api = true`, which also emits it into
+# firmware/ora/onerom_constants_generated.h, included by api.h. The ORA name is
+# the name here with an `ORA_` prefix, derived rather than given so that either
+# name can be found from the other.
+#
+# Leave it off otherwise. Most constants are firmware-and-host only, and the
+# plugin API is a published surface: a constant in it is one more thing that
+# cannot later be taken away.
 #
 # ---------------------------------------------------------------------------
 # Plugin keys
@@ -161,6 +188,7 @@ plus its terminator occupies 32 bytes."""
 name = "GPIO_NONE"
 type = "u8"
 value = 0xFF
+ora_api = true
 comment = "Sentinel: no GPIO is connected to this pin position"
 
 [[constants]]
@@ -1844,3 +1872,91 @@ Each byte encodes an absolute GPIO number with override type in the top 2 bits
 (gpio_override_t value shifted left by 6). Lower 6 bits are the GPIO number."""
 generate = "both"
 param_len_field = "param_len"
+# ---------------------------------------------------------------------------
+# The LED engine
+#
+# Values the firmware, the system USB plugin and the host CLI all have to agree
+# on.
+# ---------------------------------------------------------------------------
+
+[[constants]]
+name = "LED_MAX_HOLD_MS"
+type = "u32"
+value = 60000
+ora_api = true
+comment = "The longest hold either LED accepts, in milliseconds."
+
+[[constants]]
+name = "GPIO_MAX_HOLD_MS"
+type = "u32"
+value = 60000
+ora_api = true
+comment = "The longest bounded GPIO hold a plugin accepts, in milliseconds."
+
+[[constants]]
+name = "LED_CYCLE_MIN_PERIOD_MS"
+type = "u16"
+value = 1000
+comment = "Shortest period the cycle mode accepts, in milliseconds."
+
+[[constants]]
+name = "LED_BREATHE_MIN_PERIOD_MS"
+type = "u16"
+value = 1000
+comment = "Shortest period the breathe mode accepts, in milliseconds."
+
+[[constants]]
+name = "LED_BLINK_MIN_PERIOD_MS"
+type = "u16"
+value = 50
+comment = "Shortest period the blink mode accepts, in milliseconds."
+
+[[constants]]
+name = "LED_BEACON_MIN_PERIOD_MS"
+type = "u16"
+value = 50
+comment = "Shortest period the beacon mode accepts, in milliseconds."
+
+[[constants]]
+name = "LED_FLAME_MIN_PERIOD_MS"
+type = "u16"
+value = 500
+comment = "Shortest period the flame mode accepts, in milliseconds."
+
+[[constants]]
+name = "LED_CYCLE_DEFAULT_PERIOD_MS"
+type = "u16"
+value = 5000
+comment = "One rotation of the hues, when a request names no period."
+
+[[constants]]
+name = "LED_BREATHE_DEFAULT_PERIOD_MS"
+type = "u16"
+value = 5000
+comment = "One fade up and down, when a request names no period."
+
+[[constants]]
+name = "LED_BLINK_DEFAULT_PERIOD_MS"
+type = "u16"
+value = 1000
+comment = "One on and off, when a request names no period."
+
+[[constants]]
+name = "LED_BEACON_DEFAULT_PERIOD_MS"
+type = "u16"
+value = 100
+comment = "One blink of a beacon, when a request names no period."
+
+[[constants]]
+name = "LED_FLAME_DEFAULT_PERIOD_MS"
+type = "u16"
+value = 575
+comment = "One pass of the flicker, when a request names no period."
+
+[[constants]]
+name = "LED_BEACON_DEFAULT_DURATION_MS"
+type = "u32"
+value = 2500
+comment = """How long a beacon runs when a request names no hold. A beacon is
+bounded by definition, so it takes this rather than running until
+something changes it."""

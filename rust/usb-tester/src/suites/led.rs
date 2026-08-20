@@ -147,7 +147,7 @@ fn no_rgb_led() -> Outcome {
 fn describe(led: &LedState) -> String {
     format!(
         "mode {} colour {:02x},{:02x},{:02x} brightness {} period {}ms",
-        led.mode, led.r, led.g, led.b, led.brightness, led.period_ms
+        led.mode, led.red, led.green, led.blue, led.brightness, led.period_ms
     )
 }
 
@@ -440,11 +440,11 @@ fn the_rgb_led_takes_the_colour_and_mode_from_the_wire(
             led.mode
         ));
     }
-    if (led.r, led.g, led.b) != colour {
+    if (led.red, led.green, led.blue) != colour {
         return Err(format!(
             "the engine holds colour {:02x},{:02x},{:02x} where the wire carried \
              {:02x},{:02x},{:02x}",
-            led.r, led.g, led.b, colour.0, colour.1, colour.2
+            led.red, led.green, led.blue, colour.0, colour.1, colour.2
         ));
     }
     if led.brightness != 40 {
@@ -476,7 +476,7 @@ fn a_second_request_moves_the_rgb_led(dev: &mut Device, _ctx: &Ctx) -> Result<Ou
     let first_colour = (0x10u8, 0x20u8, 0x30u8);
     set_rgb(dev, &rgb_args(LED_ON, first_colour, 40, 250, 0))?;
     let first = rgb_state(dev)?;
-    if first.mode != LED_ON || (first.r, first.g, first.b) != first_colour {
+    if first.mode != LED_ON || (first.red, first.green, first.blue) != first_colour {
         return Err(format!(
             "the first request left the engine at {}",
             describe(&first)
@@ -494,7 +494,7 @@ fn a_second_request_moves_the_rgb_led(dev: &mut Device, _ctx: &Ctx) -> Result<Ou
         ));
     }
     if second.mode != LED_FLAME
-        || (second.r, second.g, second.b) != second_colour
+        || (second.red, second.green, second.blue) != second_colour
         || second.brightness != 80
         || second.period_ms != 500
     {
@@ -525,20 +525,20 @@ fn an_unnamed_colour_reads_as_red(dev: &mut Device, _ctx: &Ctx) -> Result<Outcom
     let colour = (0x10u8, 0x20u8, 0x30u8);
     set_rgb(dev, &rgb_args(LED_ON, colour, 40, 0, 0))?;
     let armed = rgb_state(dev)?;
-    if (armed.r, armed.g, armed.b) != colour {
+    if (armed.red, armed.green, armed.blue) != colour {
         return Err(format!(
             "the engine holds colour {:02x},{:02x},{:02x} where the wire carried \
              {:02x},{:02x},{:02x}",
-            armed.r, armed.g, armed.b, colour.0, colour.1, colour.2
+            armed.red, armed.green, armed.blue, colour.0, colour.1, colour.2
         ));
     }
 
     set_rgb(dev, &rgb_args(LED_ON, (0, 0, 0), 40, 0, 0))?;
     let led = rgb_state(dev)?;
-    if (led.r, led.g, led.b) != (0xFF, 0x00, 0x00) {
+    if (led.red, led.green, led.blue) != (0xFF, 0x00, 0x00) {
         return Err(format!(
             "a request naming no colour left the engine at {:02x},{:02x},{:02x}, not red",
-            led.r, led.g, led.b
+            led.red, led.green, led.blue
         ));
     }
 
@@ -838,7 +838,7 @@ fn a_hold_gives_the_rgb_led_back(dev: &mut Device, _ctx: &Ctx) -> Result<Outcome
 
     set_rgb(dev, &rgb_args(LED_ON, (0x00, 0x00, 0xFF), 100, 0, 5000))?;
     let held = rgb_state(dev)?;
-    if held.b != 0xFF {
+    if held.blue != 0xFF {
         return Err(format!(
             "the held request left the RGB LED at {}, not the colour it asked for",
             describe(&held)
@@ -849,7 +849,7 @@ fn a_hold_gives_the_rgb_led_back(dev: &mut Device, _ctx: &Ctx) -> Result<Outcome
     // handovers in between, which are wake-ups this is not waiting for.
     for _ in 0..8 {
         engine_frame(dev)?;
-        if rgb_state(dev)?.r == before.r {
+        if rgb_state(dev)?.red == before.red {
             break;
         }
         if dev.led_deadline_ms().is_none() {
@@ -858,7 +858,7 @@ fn a_hold_gives_the_rgb_led_back(dev: &mut Device, _ctx: &Ctx) -> Result<Outcome
     }
 
     let after = rgb_state(dev)?;
-    if after.r != before.r || after.g != before.g || after.b != before.b {
+    if after.red != before.red || after.green != before.green || after.blue != before.blue {
         return Err(format!(
             "the hold gave back {}, where it took over from {}",
             describe(&after),
@@ -869,6 +869,63 @@ fn a_hold_gives_the_rgb_led_back(dev: &mut Device, _ctx: &Ctx) -> Result<Outcome
         return Err(format!(
             "the hold gave back {:#08x}, not the {before_pixel:#08x} it took over from",
             pixel(dev)
+        ));
+    }
+
+    Ok(Outcome::Pass)
+}
+
+/// A status LED command while the state machine holds the shared pin waits for
+/// it, rather than reaching the pin or being lost.
+///
+/// On a device the pin's function select decides this: while the block has the
+/// pin an SIO write changes nothing, and the level the status LED asked for
+/// arrives when the engine hands the pin back.  The two halves are what make
+/// this a test rather than an observation - the pin not moving would also be
+/// true of firmware that threw the request away, and the pin moving later would
+/// also be true of firmware that drove it early and got lucky.
+fn a_status_led_command_waits_for_the_shared_pin(
+    dev: &mut Device,
+    _ctx: &Ctx,
+) -> Result<Outcome, String> {
+    let rgb = rgb_state(dev)?;
+    let status = dev.led(LED_ID_STATUS)?;
+
+    if !rgb.present || rgb.gpio != status.gpio {
+        return Ok(Outcome::Skip(
+            "this board wires the two LEDs to different pins".to_string(),
+        ));
+    }
+
+    // Start from a dark status LED.  Nothing has driven the RGB LED yet, so the
+    // pin is SIO's and this write lands on it.  A dark LED schedules nothing,
+    // so there is no frame to run here.
+    set_led(dev, LED_OFF)?;
+
+    // Take the pin for a pixel.  It is owed back, but not yet.
+    set_rgb(dev, &rgb_args(LED_ON, (0x10, 0x20, 0x30), 40, 0, 0))?;
+    let held = dev.gpio_level(rgb.gpio);
+
+    // Arm: ask for the status LED while the block still has the pin.
+    set_led(dev, LED_ON)?;
+
+    if dev.gpio_level(rgb.gpio) != held {
+        return Err(format!(
+            "the pin went to {} while the state machine held it, so an SIO \
+             write reached a pad it could not have",
+            dev.gpio_level(rgb.gpio)
+        ));
+    }
+
+    // The engine owes the pin back.  The request was not dropped - a lit status
+    // LED drives the pin low - so it lands as the pin changes hands.
+    engine_frame(dev)?;
+
+    if dev.gpio_level(rgb.gpio) != 0 {
+        return Err(format!(
+            "the pin reads {} once the engine handed it back, so the status \
+             LED command was lost rather than deferred",
+            dev.gpio_level(rgb.gpio)
         ));
     }
 
@@ -893,10 +950,6 @@ fn the_status_led_survives_the_rgb_led_on_a_shared_pin(
         return Ok(Outcome::Skip(
             "this board wires the two LEDs to different pins".to_string(),
         ));
-    }
-
-    if !rgb.shared_gpio {
-        return Err("the engine does not report the shared pin it is on".to_string());
     }
 
     // Take the pixel, which is what used to leave the status LED stranded.
@@ -1716,6 +1769,12 @@ pub static SCENARIOS: &[Scenario] = &[
         name: "led.a_hold_gives_the_rgb_led_back",
         about: "a hold expires back to the mode and colour before it",
         run: a_hold_gives_the_rgb_led_back,
+        before_start: None,
+    },
+    Scenario {
+        name: "led.a_status_led_command_waits_for_the_shared_pin",
+        about: "a status LED command lands when the state machine gives the pin back",
+        run: a_status_led_command_waits_for_the_shared_pin,
         before_start: None,
     },
     Scenario {

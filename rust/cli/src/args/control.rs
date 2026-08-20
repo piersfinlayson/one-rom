@@ -6,12 +6,13 @@
 
 use crate::args::CommandTrait;
 use crate::utils::{
-    Colour, parse_beacon_period, parse_blink_period, parse_breathe_period, parse_brightness,
-    parse_colour, parse_cycle_period, parse_flame_period, parse_hold_ms, parse_u8, parse_u32,
+    parse_beacon_period, parse_blink_period, parse_breathe_period, parse_brightness,
+    parse_cycle_period, parse_flame_period, parse_hold_ms, parse_u8, parse_u32,
 };
 use clap::{ArgGroup, Args, Subcommand, ValueEnum};
 use enum_dispatch::enum_dispatch;
 
+use onerom_cli::colour::{RgbColour, parse_colour};
 use onerom_cli::pin::{Pin, parse_pin};
 use onerom_cli::usb::{GpioState as WireGpioState, RebootArgs};
 
@@ -223,6 +224,49 @@ pub enum ControlLedCommands {
     Blink(ControlLedBlinkArgs),
 }
 
+// What `--period` and `--hold` say they default to, taken from the metadata
+// schema so the number a user reads is the number the firmware was built with.
+//
+// These are `help =` rather than doc comments because clap reads a doc comment
+// as a literal and would see an unexpanded macro here, leaving the option with
+// no help at all.  See the `const_str!` macro in this module's parent.
+const HELP_BEACON_PERIOD: &str = concat!(
+    "Milliseconds for one blink. Defaults to ",
+    const_str!("LED_BEACON_DEFAULT_PERIOD_MS"),
+    "."
+);
+
+const HELP_BEACON_HOLD: &str = concat!(
+    "Milliseconds to beacon for, before going back to what the LED was doing \
+     before. Defaults to ",
+    const_str!("LED_BEACON_DEFAULT_DURATION_MS"),
+    "."
+);
+
+const HELP_FLAME_PERIOD: &str = concat!(
+    "Milliseconds for one pass of the flicker. Defaults to ",
+    const_str!("LED_FLAME_DEFAULT_PERIOD_MS"),
+    "."
+);
+
+const HELP_CYCLE_PERIOD: &str = concat!(
+    "Milliseconds for one rotation of the hues. Defaults to ",
+    const_str!("LED_CYCLE_DEFAULT_PERIOD_MS"),
+    "."
+);
+
+const HELP_BREATHE_PERIOD: &str = concat!(
+    "Milliseconds for one fade up and down. Defaults to ",
+    const_str!("LED_BREATHE_DEFAULT_PERIOD_MS"),
+    "."
+);
+
+const HELP_BLINK_PERIOD: &str = concat!(
+    "Milliseconds for one on and off. Defaults to ",
+    const_str!("LED_BLINK_DEFAULT_PERIOD_MS"),
+    "."
+);
+
 #[derive(Debug, Args)]
 pub struct ControlLedOnArgs {
     /// Stay on for this many milliseconds, then go back to what the LED was
@@ -259,13 +303,10 @@ impl CommandTrait for ControlLedOffArgs {
 
 #[derive(Debug, Args)]
 pub struct ControlLedBeaconArgs {
-    /// Milliseconds for one blink. Defaults to 100.
-    #[arg(long, value_name = "MS", value_parser = parse_beacon_period)]
+    #[arg(long, value_name = "MS", value_parser = parse_beacon_period, help = HELP_BEACON_PERIOD)]
     pub period: Option<u16>,
 
-    /// Milliseconds to beacon for, before going back to what the LED was doing
-    /// before. Defaults to 2500.
-    #[arg(long, value_name = "MS", value_parser = parse_hold_ms)]
+    #[arg(long, value_name = "MS", value_parser = parse_hold_ms, help = HELP_BEACON_HOLD)]
     pub hold: Option<u32>,
 }
 
@@ -277,8 +318,7 @@ impl CommandTrait for ControlLedBeaconArgs {
 
 #[derive(Debug, Args)]
 pub struct ControlLedFlameArgs {
-    /// Milliseconds for one pass of the flicker. Defaults to 575.
-    #[arg(long, value_name = "MS", value_parser = parse_flame_period)]
+    #[arg(long, value_name = "MS", value_parser = parse_flame_period, help = HELP_FLAME_PERIOD)]
     pub period: Option<u16>,
 
     /// Flicker for this many milliseconds, then go back to what the LED was
@@ -332,7 +372,7 @@ pub struct ControlRgbOnArgs {
     /// Named colours are red, green, blue, white, yellow, cyan, magenta,
     /// orange, purple and pink.
     #[arg(long, visible_alias = "color", value_name = "COLOUR", value_parser = parse_colour, default_value = "red")]
-    pub colour: Colour,
+    pub colour: RgbColour,
 
     /// Brightness as a percentage, 1 to 100.
     ///
@@ -378,19 +418,16 @@ pub struct ControlRgbBeaconArgs {
     /// Colour to beacon: a name, or a hex colour written '#RRGGBB' or
     /// '0xRRGGBB'.
     #[arg(long, visible_alias = "color", value_name = "COLOUR", value_parser = parse_colour, default_value = "red")]
-    pub colour: Colour,
+    pub colour: RgbColour,
 
     /// Brightness as a percentage, 1 to 100.
     #[arg(long, value_name = "PERCENT", value_parser = parse_brightness)]
     pub brightness: Option<u8>,
 
-    /// Milliseconds for one blink. Defaults to 100.
-    #[arg(long, value_name = "MS", value_parser = parse_beacon_period)]
+    #[arg(long, value_name = "MS", value_parser = parse_beacon_period, help = HELP_BEACON_PERIOD)]
     pub period: Option<u16>,
 
-    /// Milliseconds to beacon for, before going back to what the LED was doing
-    /// before. Defaults to 2500.
-    #[arg(long, value_name = "MS", value_parser = parse_hold_ms)]
+    #[arg(long, value_name = "MS", value_parser = parse_hold_ms, help = HELP_BEACON_HOLD)]
     pub hold: Option<u32>,
 }
 
@@ -405,14 +442,13 @@ pub struct ControlRgbFlameArgs {
     /// Colour to flicker: a name, or a hex colour written '#RRGGBB' or
     /// '0xRRGGBB'.
     #[arg(long, visible_alias = "color", value_name = "COLOUR", value_parser = parse_colour, default_value = "red")]
-    pub colour: Colour,
+    pub colour: RgbColour,
 
     /// Brightness as a percentage, 1 to 100.
     #[arg(long, value_name = "PERCENT", value_parser = parse_brightness)]
     pub brightness: Option<u8>,
 
-    /// Milliseconds for one pass of the flicker. Defaults to 575.
-    #[arg(long, value_name = "MS", value_parser = parse_flame_period)]
+    #[arg(long, value_name = "MS", value_parser = parse_flame_period, help = HELP_FLAME_PERIOD)]
     pub period: Option<u16>,
 
     /// Hold this for this many milliseconds, then go back to what the LED was
@@ -429,8 +465,7 @@ impl CommandTrait for ControlRgbFlameArgs {
 
 #[derive(Debug, Args)]
 pub struct ControlRgbCycleArgs {
-    /// Milliseconds for one rotation of the hues. Defaults to 5000.
-    #[arg(long, value_name = "MS", value_parser = parse_cycle_period)]
+    #[arg(long, value_name = "MS", value_parser = parse_cycle_period, help = HELP_CYCLE_PERIOD)]
     pub period: Option<u16>,
 
     /// Brightness as a percentage, 1 to 100.
@@ -454,10 +489,9 @@ pub struct ControlRgbBreatheArgs {
     /// Colour to fade: a name, or a hex colour written '#RRGGBB' or
     /// '0xRRGGBB'.
     #[arg(long, visible_alias = "color", value_name = "COLOUR", value_parser = parse_colour, default_value = "red")]
-    pub colour: Colour,
+    pub colour: RgbColour,
 
-    /// Milliseconds for one fade up and down. Defaults to 5000.
-    #[arg(long, value_name = "MS", value_parser = parse_breathe_period)]
+    #[arg(long, value_name = "MS", value_parser = parse_breathe_period, help = HELP_BREATHE_PERIOD)]
     pub period: Option<u16>,
 
     /// Brightness as a percentage, 1 to 100. The fade peaks at this.
@@ -481,10 +515,9 @@ pub struct ControlRgbBlinkArgs {
     /// Colour to blink: a name, or a hex colour written '#RRGGBB' or
     /// '0xRRGGBB'.
     #[arg(long, visible_alias = "color", value_name = "COLOUR", value_parser = parse_colour, default_value = "red")]
-    pub colour: Colour,
+    pub colour: RgbColour,
 
-    /// Milliseconds for one on and off. Defaults to 1000.
-    #[arg(long, value_name = "MS", value_parser = parse_blink_period)]
+    #[arg(long, value_name = "MS", value_parser = parse_blink_period, help = HELP_BLINK_PERIOD)]
     pub period: Option<u16>,
 
     /// Brightness as a percentage, 1 to 100.
@@ -505,8 +538,7 @@ impl CommandTrait for ControlRgbBlinkArgs {
 
 #[derive(Debug, Args)]
 pub struct ControlLedBlinkArgs {
-    /// Milliseconds for one on and off. Defaults to 1000.
-    #[arg(long, value_name = "MS", value_parser = parse_blink_period)]
+    #[arg(long, value_name = "MS", value_parser = parse_blink_period, help = HELP_BLINK_PERIOD)]
     pub period: Option<u16>,
 
     /// Blink for this many milliseconds, then go back to what the LED was

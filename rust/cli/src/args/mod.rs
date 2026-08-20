@@ -25,6 +25,33 @@
 #![allow(rustdoc::invalid_html_tags)]
 #![allow(rustdoc::bare_urls)]
 
+/// A metadata-schema constant's value, as text, usable where Rust demands a
+/// literal.
+///
+/// Clap takes an option's help from its doc comment, and a doc comment takes a
+/// literal - so a help line stating a period or hold the firmware chose cannot
+/// name the constant. It can `include_str!` a file, which `build.rs` writes for
+/// every constant in the schema.
+///
+/// A name with no such constant fails the build, naming the file it looked for.
+///
+/// Build the whole help line as a `const` and give it to clap as `help = `.
+/// A `#[doc = concat!(...)]` compiles but leaves the option with no help at
+/// all: clap reads a doc comment as a literal and sees an unexpanded macro.
+///
+/// ```ignore
+/// const HELP_BEACON_PERIOD: &str = concat!(
+///     "Milliseconds for one blink. Defaults to ",
+///     const_str!("LED_BEACON_DEFAULT_PERIOD_MS"),
+///     "."
+/// );
+/// ```
+macro_rules! const_str {
+    ($name:literal) => {
+        include_str!(concat!(env!("OUT_DIR"), "/const/", $name, ".txt"))
+    };
+}
+
 pub mod control;
 pub mod firmware;
 pub mod image;

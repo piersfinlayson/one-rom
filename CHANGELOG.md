@@ -36,6 +36,8 @@ In detail:
 - Publish the CLI manual, chip type reference and compatibility reference as PDFs, in A4 and US Letter, for reading and printing away from a browser.  Each carries the version of the thing it documents rather than a repository version.
 - `onerom inspect led` and `onerom inspect rgb` report what each of One ROM's LEDs is doing — the mode, the speed, the GPIO, and the colour and brightness of the RGB one.  A board without an RGB LED says so rather than failing.
   - This required a firmware update.
+- Plugins can now take constants from the ORA API rather than writing the values out again.  A value the firmware and a plugin have to agree on — the longest hold either accepts, say — is declared once and reaches both, so a change to it cannot leave them disagreeing.
+  - This required a firmware update.
 - One ROM now drives its RGB LED itself from core firmware, on the models that have one, the USB plugin supports accessing this function and `onerom control rgb` drives it: on, off, beacon, flame, cycle, breathe and blink, each with a colour, a brightness and a speed.  `onerom inspect rgb` and `onerom inspect led` report what each LED is doing.  This needs no plugin, so the RGB user plugin is superseded and the user plugin slot it used to occupy is free.
   - This required a firmware update.
 - `onerom control led blink` blinks the status LED on and off and keeps going, where `beacon` stops itself after a couple of seconds.
