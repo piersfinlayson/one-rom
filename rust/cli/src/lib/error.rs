@@ -7,6 +7,7 @@
 use onerom_config::fw::FirmwareVersion;
 use onerom_gen::FileFormat;
 
+use crate::hint;
 use crate::plugin::{CompatibleRelease, PluginType, PluginVersion};
 
 /// Render the way out of a plugin incompatibility as a further indented line.
@@ -69,7 +70,8 @@ pub enum Error {
     Device,
 
     #[error(
-        "No One ROM was found or specified.\n  Specify a One ROM using --serial.\n  Use 'onerom scan' to list connected One ROMs."
+        "No One ROM was found or specified.\n  Specify a One ROM using --serial.\n  Use '{scan}' to list connected One ROMs.",
+        scan = hint::SCAN
     )]
     NoDevice,
 
@@ -85,7 +87,9 @@ pub enum Error {
     /// presents a serial port for it. Either its USB plugin does not offer the
     /// CDC interface, or the platform has not bound its CDC driver to it.
     #[error(
-        "No serial port was found for this One ROM.\n  {0}\n  A serial port needs the USB system plugin - flash one with\n  'onerom program --plugin usb'."
+        "No serial port was found for this One ROM.\n  {detail}\n  A serial port needs the USB system plugin - flash one with\n  '{usb}'.",
+        detail = .0,
+        usb = hint::PROGRAM_WITH_USB
     )]
     SerialPortNotFound(String),
 
@@ -139,7 +143,8 @@ pub enum Error {
     /// [`Error::NoBoardOrDevice`] there is no point offering `--serial`, which
     /// would only select a different One ROM.
     #[error(
-        "Cannot determine the board type.\n  The connected One ROM reports a board type this build does not recognise.\n  Name it with --board, or use 'onerom board {0} --board <board>' to draw a\n  board by name."
+        "Cannot determine the board type.\n  The connected One ROM reports a board type this build does not recognise.\n  Name it with --board, or use '{by_name}' to draw a\n  board by name.",
+        by_name = hint::board_view(.0)
     )]
     NoDeviceForBoardView(String),
 
@@ -175,6 +180,9 @@ pub enum Error {
 
     #[error("Invalid '{0}' argument found:\n  {1}")]
     InvalidArgument(String, String),
+
+    #[error("Aborted:\n  {0}")]
+    Aborted(String),
 
     #[error(
         "Cannot program One ROM as no configuration or firmware specified.\n  Use --config, --slot, --firmware, or --base-firmware."
@@ -230,12 +238,17 @@ pub enum Error {
     PluginTooLarge(usize, usize),
 
     #[error(
-        "Plugin '{0}' not found in the release manifest.\n  Use 'onerom plugin' to list available plugins."
+        "Plugin '{name}' not found in the release manifest.\n  Use '{list}' to list available plugins.",
+        name = .0,
+        list = hint::PLUGIN_LIST
     )]
     PluginNotFound(String),
 
     #[error(
-        "Plugin '{0}' version '{1}' not found in the release manifest.\n  Use 'onerom plugin --all-versions' to list available versions."
+        "Plugin '{name}' version '{version}' not found in the release manifest.\n  Use '{list}' to list available versions.",
+        name = .0,
+        version = .1,
+        list = hint::PLUGIN_ALL_VERSIONS
     )]
     PluginVersionNotFound(String, String),
 
@@ -318,7 +331,9 @@ pub enum Error {
     InvalidPin(String, String),
 
     #[error(
-        "This One ROM's USB system plugin predates GPIO control.\n  {0}\n  Reprogram it with the v0.7.1 or later USB system plugin, for example:\n    onerom program --config <your config> --plugin usb"
+        "This One ROM's USB system plugin predates GPIO control.\n  {detail}\n  Reprogram it with the v0.7.1 or later USB system plugin, for example:\n    {usb}",
+        detail = .0,
+        usb = hint::PROGRAM_WITH_USB
     )]
     PluginTooOldForGpio(String),
 
@@ -357,7 +372,9 @@ pub enum Error {
     GpioOutOfRange(u8, u8),
 
     #[error(
-        "GPIO{0} is in use by One ROM.\n  Use --force to drive it anyway - see 'onerom inspect gpio' for what it is doing."
+        "GPIO{gpio} is in use by One ROM.\n  Use --force to drive it anyway - see '{inspect}' for what it is doing.",
+        gpio = .0,
+        inspect = hint::INSPECT_GPIO
     )]
     GpioInUse(u8),
 
@@ -370,7 +387,9 @@ pub enum Error {
     PicobootxDecode(String),
 
     #[error(
-        "This One ROM is not running, so its GPIOs cannot be read or driven.\n  {0}\n  A stopped One ROM sits in the RP2350 bootloader, where One ROM's own\n  command handler is not running.\n  Start it with 'onerom control reboot --running'."
+        "This One ROM is not running, so its GPIOs cannot be read or driven.\n  {detail}\n  A stopped One ROM sits in the RP2350 bootloader, where One ROM's own\n  command handler is not running.\n  Start it with '{start}'.",
+        detail = .0,
+        start = hint::CONTROL_REBOOT_RUNNING
     )]
     DeviceNotRunning(String),
 
@@ -531,9 +550,11 @@ mod tests {
             // The override on this very command, which resolves the situation.
             assert!(msg.contains("--board"), "{view}: {msg}");
             // The escape hatch, spelled as the `board` command actually parses
-            // it - not the positional form it once took.
+            // it - not the positional form it once took. The spelling itself is
+            // kept honest by `hint`'s own test, which parses every command line
+            // the CLI hands out.
             assert!(
-                msg.contains(&format!("onerom board {view} --board <board>")),
+                msg.contains(&crate::hint::board_view(view)),
                 "{view}: {msg}"
             );
             // Would only select a different One ROM, not name this one's board.

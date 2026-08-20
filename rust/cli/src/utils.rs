@@ -217,6 +217,29 @@ pub fn parse_hold_ms(s: &str) -> Result<u32, String> {
     Ok(value)
 }
 
+/// The longest bounded hold a One ROM accepts for a GPIO, in milliseconds.
+///
+/// From the metadata schema, which is where the USB plugin takes the same bound
+/// from and enforces it. Checked here so a value too large is a parse error
+/// rather than a refusal from the device half way through a command.
+pub use onerom_metadata::GPIO_MAX_HOLD_MS;
+
+/// Parse a GPIO hold in milliseconds, bounded by what a device accepts.
+///
+/// Zero is a hold this can express, unlike [`parse_hold_ms`]: on the wire it
+/// means "latch until something changes it", which is what `control pin` asks
+/// for when `--hold` is omitted. A command for which that is not a sensible
+/// answer says so itself.
+pub fn parse_gpio_hold_ms(s: &str) -> Result<u32, String> {
+    let value = parse_u32(s).map_err(|_| "Hold must be a number of milliseconds".to_string())?;
+
+    if value > GPIO_MAX_HOLD_MS {
+        return Err(format!("Maximum hold is {GPIO_MAX_HOLD_MS}ms"));
+    }
+
+    Ok(value)
+}
+
 /// The shortest period each repeating mode accepts, in milliseconds.
 ///
 /// From the metadata schema, which is where the firmware takes them from and

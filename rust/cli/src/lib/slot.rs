@@ -785,6 +785,35 @@ pub fn save_config(path: &str, json: &str) -> Result<(), Error> {
     std::fs::write(path, json).map_err(|e| Error::io(path, e))
 }
 
+/// Every chip type a config's slots name, plugins excluded.
+///
+/// The config-side twin of [`crate::image::chip_types`], which asks the same
+/// question of a built image. This one can be asked before the image is built -
+/// before its ROM files have even been fetched - which is the only way to refuse
+/// a build for something the config says.
+pub fn chip_types(config: &Config) -> Vec<ChipType> {
+    let mut chips = Vec::new();
+    for set in &config.chip_sets {
+        for chip in &set.chips {
+            let chip_type = chip.chip_type.resolved();
+            if !chip_type.is_plugin() && !chips.contains(&chip_type) {
+                chips.push(chip_type);
+            }
+        }
+    }
+    chips
+}
+
+/// Whether the config places a system plugin, and so gives the device a USB
+/// stack of its own to serve with.
+pub fn has_system_plugin(config: &Config) -> bool {
+    config
+        .chip_sets
+        .iter()
+        .flat_map(|set| set.chips.iter())
+        .any(|chip| chip.chip_type.resolved() == ChipType::SystemPlugin)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

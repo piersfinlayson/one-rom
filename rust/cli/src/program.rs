@@ -4,6 +4,7 @@
 
 //! Implementation of `onerom program`.
 
+use onerom_config::chip::ChipType;
 use onerom_config::hw::Board;
 use onerom_config::mcu::Variant;
 use onerom_fw::{assemble_firmware, validate_sizes};
@@ -15,10 +16,12 @@ use crate::firmware::{
 };
 use crate::utils::{check_device, check_fire_board_optional, resolve_board};
 use onerom_cli::device::select_device_by_chip_id;
+use onerom_cli::pin::ResolvedPin;
 use onerom_cli::plugin::{parse_plugins, resolve_plugins};
-use onerom_cli::slot::{GlobalConfig, check_slot_confirmations, save_config};
+use onerom_cli::slot::{self, GlobalConfig, check_slot_confirmations, save_config};
 use onerom_cli::usb::{RebootArgs, flash_program, flash_program_read, reboot};
 use onerom_cli::{Error, Options};
+use onerom_metadata::GPIO_RESET_DEFAULT_HOLD_MS;
 
 // ------------------------------- Argument validation -------------------------------
 
@@ -52,6 +55,7 @@ async fn acquire_program_image(
     args: &args::program::ProgramArgs,
     board: &Option<Board>,
     mcu: &Variant,
+    reset_host: Option<ResolvedPin>,
 ) -> Result<Vec<u8>, Error> {
     if let Some(firmware) = &args.firmware {
         return load_prebuilt_firmware(options, firmware);
@@ -61,7 +65,7 @@ async fn acquire_program_image(
         return load_bare_base_firmware(options, args.base_firmware.as_deref().unwrap());
     }
 
-    build_and_assemble(options, args, board, mcu).await
+    build_and_assemble(options, args, board, mcu, reset_host).await
 }
 
 fn load_prebuilt_firmware(options: &Options, firmware: &str) -> Result<Vec<u8>, Error> {
@@ -89,6 +93,7 @@ async fn build_and_assemble(
     args: &args::program::ProgramArgs,
     board: &Option<Board>,
     mcu: &Variant,
+    reset_host: Option<ResolvedPin>,
 ) -> Result<Vec<u8>, Error> {
     let board = board.as_ref().ok_or(Error::NoBoardOrDevice)?;
 
@@ -130,8 +135,26 @@ async fn build_and_assemble(
         }
     }
 
-    let (fw_props, metadata, image_data, desc) =
-        build_rom_image(options, &config_json, version, *board, *mcu, args.force).await?;
+    let (fw_props, metadata, image_data, desc) = build_rom_image(
+        options,
+        &config_json,
+        version,
+        *board,
+        *mcu,
+        args.force,
+        // Runs with the config resolved and not one ROM image fetched, so a
+        // request this build cannot honour costs the user nothing to discover.
+        |config| {
+            refuse_unservable_request(
+                args,
+                Some(board),
+                reset_host,
+                &slot::chip_types(config),
+                slot::has_system_plugin(config),
+            )
+        },
+    )
+    .await?;
 
     validate_sizes(&fw_props, &firmware_data, &metadata, &image_data)?;
 
@@ -215,6 +238,57 @@ async fn reboot_and_rescan(options: &mut Options, reboot_args: &RebootArgs) -> R
     Ok(())
 }
 
+// ------------------------------- Host reset -------------------------------
+
+/// The error for an option that needs the One ROM on the USB bus while it runs.
+///
+/// Without a system plugin a running One ROM has no USB stack of its own, so it
+/// leaves the bus the moment it starts serving. Anything the host wants to say
+/// to it, or hear from it, after programming needs one.
+fn without_usb(option: &str, consequence: &str) -> Error {
+    Error::InvalidArgument(
+        option.to_string(),
+        format!(
+            "The image being programmed has no USB system plugin, so the One ROM\n  \
+             will not be on the USB bus once it is running{consequence}\n  \
+             Add '--plugin usb', or drop {option}."
+        ),
+    )
+}
+
+/// Refuse a request the image being programmed cannot honour.
+///
+/// `--follow` and `--reset-host` both need the device back on the USB bus after
+/// the flash, and `--reset-host` needs a pin One ROM is not serving with. All of
+/// that is settled by what is being flashed, so it is asked of the build - once
+/// from the config, which is known before any ROM image is fetched, and once
+/// from a pre-built image, which is all there is to go on when the user supplied
+/// one.
+fn refuse_unservable_request(
+    args: &args::program::ProgramArgs,
+    board: Option<&Board>,
+    reset_pin: Option<ResolvedPin>,
+    chips: &[ChipType],
+    usb_capable: bool,
+) -> Result<(), Error> {
+    if !usb_capable {
+        if reset_pin.is_some() {
+            return Err(without_usb("--reset-host", ", to take the reset."));
+        }
+        if args.follow {
+            return Err(without_usb("--follow", ", and there is no log to follow."));
+        }
+    }
+
+    // Without a board no pin can be named, let alone judged; `check_reset_pin`
+    // has already said so where it matters.
+    if let (Some(board), Some(pin)) = (board, reset_pin) {
+        crate::control::refuse_reset_pin_in_use(board, chips, pin)?;
+    }
+
+    Ok(())
+}
+
 // ------------------------------- program command -------------------------------
 
 pub async fn cmd_program(
@@ -237,8 +311,40 @@ pub async fn cmd_program(
         confirm_slot_overrides(options, &confirmations).await?;
     }
 
-    let data = acquire_program_image(options, args, &board, &mcu).await?;
-    verify_assembled_firmware(options, &data, args.force, board).await?;
+    // Everything about the reset pin that board metadata alone can settle - the
+    // pad exists, One ROM does not use it for the board's own peripherals, it can
+    // take 5V - is settled here, before a byte is read or fetched. What the image
+    // decides is asked of the image, below.
+    let reset_host = match &args.reset_host {
+        Some(pin) => Some(crate::control::check_reset_pin(
+            options,
+            pin,
+            board.as_ref(),
+            &[],
+        )?),
+        None => None,
+    };
+
+    let data =
+        acquire_program_image(options, args, &board, &mcu, reset_host.map(|(pin, _)| pin)).await?;
+    let image = verify_assembled_firmware(options, &data, args.force, board).await?;
+
+    // A pre-built image has no config to ask, so it is asked of the parse. A
+    // built one has already answered, before its ROMs were fetched.
+    if args.firmware.is_some() || is_bare_base_firmware(args) {
+        // An image whose metadata did not parse cannot answer - and
+        // verify_assembled_firmware has already said so, or been forced past -
+        // so it is left alone rather than refused on a reading nothing stands
+        // behind.
+        let usb_capable = !image.parse_errors().is_empty() || image.is_usb_run_capable();
+        refuse_unservable_request(
+            args,
+            board.as_ref(),
+            reset_host.map(|(pin, _)| pin),
+            &onerom_cli::image::chip_types(&image),
+            usb_capable,
+        )?;
+    }
 
     loop {
         if let Some(out) = &args.output {
@@ -265,6 +371,18 @@ pub async fn cmd_program(
                 eprintln!("Failed to read device after programming");
                 return Err(Error::NoDevice);
             }
+        }
+
+        // Before --follow, which does not return until the user stops watching.
+        if let Some((pin, tolerance_confirmed)) = reset_host {
+            crate::control::pulse_reset(
+                options,
+                pin,
+                board.as_ref(),
+                GPIO_RESET_DEFAULT_HOLD_MS,
+                tolerance_confirmed,
+            )
+            .await?;
         }
 
         if args.follow {

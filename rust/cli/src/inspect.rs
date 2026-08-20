@@ -7,7 +7,6 @@ use crate::args::inspect::{
     InspectPeekLiveArgs, InspectPeekMemoryArgs, InspectRgbArgs, InspectSlotsArgs,
     InspectSocketArgs, InspectTelemetryArgs,
 };
-use crate::board_view::{gpio_header_role, gpio_rom_function, gpio_system_functions};
 use crate::utils::{
     active_chip_type, check_device, check_device_running, check_fire_board,
     check_fire_board_optional, check_live_read_write, print_hex_dump, resolve_board,
@@ -16,6 +15,7 @@ use crate::utils::{
 use onerom_cli::CliFetch;
 use onerom_cli::LIVE_ROM_BASE;
 use onerom_cli::colour::RgbColour;
+use onerom_cli::gpio;
 use onerom_cli::plugin::{PluginOrigin, PluginType, resolve_plugin_display};
 use onerom_cli::usb::{
     GpioEntry, GpioUse, LedId, LedState, get_caps, gpio_query, gpio_query_all, led_query,
@@ -532,7 +532,7 @@ fn gpio_function_label(board: Option<&Board>, chip: Option<ChipType>, gpio: u8) 
 
     // 1. The ROM socket signal under the chip being served. With no resolvable
     //    chip type the socket position is still worth stating.
-    match chip.and_then(|chip| gpio_rom_function(board, chip, gpio)) {
+    match chip.and_then(|chip| gpio::rom_function(board, chip, gpio)) {
         Some(function) => add(function),
         None => {
             if let Some(socket_pin) = board.socket_pin_for_gpio(gpio) {
@@ -542,14 +542,14 @@ fn gpio_function_label(board: Option<&Board>, chip: Option<ChipType>, gpio: u8) 
     }
 
     // 2. The board peripheral(s).
-    for system in gpio_system_functions(board, gpio) {
+    for system in gpio::system_functions(board, gpio) {
         add(system.to_string());
     }
 
     // 3. The header pad. Named last because it is where the signal surfaces
     //    rather than what it carries - but named, because "which GPIO is X1" is
     //    the main thing this table is read to answer before wiring a reset line.
-    if let Some(role) = gpio_header_role(board, gpio) {
+    if let Some(role) = gpio::header_role(board, gpio) {
         add(role);
     }
 
@@ -1004,7 +1004,7 @@ mod tests {
             .addr_pins()
             .iter()
             .copied()
-            .find(|&g| gpio_header_role(&board, g).is_some_and(|r| r.starts_with('A')))
+            .find(|&g| gpio::header_role(&board, g).is_some_and(|r| r.starts_with('A')))
             .expect("fire-32-b breaks out address lines");
         assert!(
             !function_cell(&table, a_pad_gpio).contains(','),

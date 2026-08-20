@@ -7,7 +7,7 @@
 use crate::args::CommandTrait;
 use crate::utils::{
     parse_beacon_period, parse_blink_period, parse_breathe_period, parse_brightness,
-    parse_cycle_period, parse_flame_period, parse_hold_ms, parse_u8, parse_u32,
+    parse_cycle_period, parse_flame_period, parse_gpio_hold_ms, parse_hold_ms, parse_u8, parse_u32,
 };
 use clap::{ArgGroup, Args, Subcommand, ValueEnum};
 use enum_dispatch::enum_dispatch;
@@ -15,6 +15,7 @@ use enum_dispatch::enum_dispatch;
 use onerom_cli::colour::{RgbColour, parse_colour};
 use onerom_cli::pin::{Pin, parse_pin};
 use onerom_cli::usb::{GpioState as WireGpioState, RebootArgs};
+use onerom_metadata::GPIO_RESET_DEFAULT_HOLD_MS;
 
 #[derive(Debug, Args)]
 pub struct ControlArgs {
@@ -230,6 +231,12 @@ pub enum ControlLedCommands {
 // These are `help =` rather than doc comments because clap reads a doc comment
 // as a literal and would see an unexpanded macro here, leaving the option with
 // no help at all.  See the `const_str!` macro in this module's parent.
+const HELP_RESET_HOLD: &str = concat!(
+    "Milliseconds to hold the reset signal asserted. Defaults to ",
+    const_str!("GPIO_RESET_DEFAULT_HOLD_MS"),
+    "."
+);
+
 const HELP_BEACON_PERIOD: &str = concat!(
     "Milliseconds for one blink. Defaults to ",
     const_str!("LED_BEACON_DEFAULT_PERIOD_MS"),
@@ -610,9 +617,8 @@ pub struct ControlResetArgs {
     #[arg(long, short, value_name = "BOARD")]
     pub board: Option<String>,
 
-    /// Duration in milliseconds to hold the reset signal asserted.
-    /// Defaults to 100.
-    #[arg(long, value_name = "MS", default_value = "100", value_parser = parse_u32)]
+    // `help =` rather than a doc comment: see the LED period help above.
+    #[arg(long, value_name = "MS", default_value_t = GPIO_RESET_DEFAULT_HOLD_MS, value_parser = parse_gpio_hold_ms, help = HELP_RESET_HOLD)]
     pub hold: u32,
 }
 
@@ -697,7 +703,7 @@ pub struct ControlPinArgs {
     ///
     /// Omit to latch --state until something else changes it. The device times
     /// the hold, so it completes even if this command does not.
-    #[arg(long, value_name = "MS", value_parser = parse_u32)]
+    #[arg(long, value_name = "MS", value_parser = parse_gpio_hold_ms)]
     pub hold: Option<u32>,
 
     /// State to apply when --hold expires. Defaults to z. Requires --hold.

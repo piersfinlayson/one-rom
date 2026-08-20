@@ -1960,3 +1960,12 @@ value = 2500
 comment = """How long a beacon runs when a request names no hold. A beacon is
 bounded by definition, so it takes this rather than running until
 something changes it."""
+
+[[constants]]
+name = "GPIO_RESET_DEFAULT_HOLD_MS"
+type = "u32"
+value = 100
+comment = """How long a reset line is held low when a request names no hold.
+The device holds a pin for exactly as long as it is told, so nothing on the
+device applies this: it is the length the host sends when the user asks for a
+reset without saying how long."""

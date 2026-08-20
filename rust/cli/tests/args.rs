@@ -12,7 +12,7 @@
 //! genuinely gone rather than quietly still accepted.
 
 mod common;
-use common::{fails, onerom};
+use common::{NO_DEVICE, fails, onerom};
 use std::process::Command;
 
 /// Run and return stdout, asserting success.
@@ -103,15 +103,27 @@ fn board_views_without_a_board_name_an_option_that_exists() {
 /// `--board` on the device-side views is an override, not a way to run without
 /// a One ROM. With nothing connected the command must still fail, and must
 /// point at the `board` form rather than at --board, which would loop.
+///
+/// `NO_DEVICE` is what makes "with nothing connected" true here: run without it,
+/// this passes on a bare machine and fails on a bench with a One ROM plugged in,
+/// where the command finds the device and does exactly what it should.
 #[test]
 fn inspect_views_still_need_a_device_when_board_is_given() {
     for view in ["header", "socket"] {
-        let err = stderr(onerom().args(["inspect", view, "--board", "fire-24-f"]));
+        let err = stderr(
+            onerom()
+                .args(["inspect", view, "--board", "fire-24-f"])
+                .args(NO_DEVICE),
+        );
         assert!(
             err.contains("No One ROM") || err.contains("board"),
             "{view}: {err}"
         );
-        fails(onerom().args(["inspect", view, "--board", "fire-24-f"]));
+        fails(
+            onerom()
+                .args(["inspect", view, "--board", "fire-24-f"])
+                .args(NO_DEVICE),
+        );
     }
 }
 

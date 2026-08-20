@@ -2,6 +2,21 @@
 
 ## v0.4.0 - 2026-??-??
 
+- **`onerom program --reset-host <PIN>` resets the host system after
+  programming.** It waits for the One ROM to come back on the USB bus and then
+  pulses that pin low, as `control reset` does, so flashing an image and
+  restarting the machine into it is one command. The pin is checked against the
+  image being flashed - a pin One ROM will serve with, or one the board uses
+  itself, is refused before its ROM images are fetched - and it runs for each device in
+  a `--batch`. The pulse is 100ms; `control reset` remains the way to choose
+  another. Conflicts with `--fast`, `--stopped` and `--no-reboot`.
+- **`program --follow` says up front when the image cannot serve it.** An image
+  with no USB system plugin leaves the bus the moment the One ROM starts
+  serving, so there was never a log to follow - previously discovered after
+  programming, when the port could not be found.
+- **`--hold` is bounded where the device bounds it.** `control pin --hold` and
+  `control reset --hold` refuse anything above the 60 second limit the device
+  enforces, as the command line is read rather than after it has been sent.
 - **`onerom control rgb` drives the RGB LED on the models that have one.**
   `on`, `off`, `beacon`, `flame`, `cycle`, `breathe` and `blink`, with
   `--colour` (ten names or `#RRGGBB`), `--brightness`, `--period` and `--hold`.

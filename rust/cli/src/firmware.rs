@@ -16,7 +16,7 @@ use onerom_gen::ChipSetType;
 use onerom_gen::compat::{
     ChipCompat, check_chip_set_on_board, default_cs_config, format_size, supported_chips,
 };
-use onerom_gen::{Builder, ConfigOverrides, Error as GenError, FIRMWARE_SIZE, License};
+use onerom_gen::{Builder, Config, ConfigOverrides, Error as GenError, FIRMWARE_SIZE, License};
 
 use crate::args;
 use crate::utils::{check_fire_board, resolve_board, resolve_firmware_output};
@@ -103,13 +103,17 @@ fn apply_global_overrides(json: String, global_config: &GlobalConfig) -> Result<
 
 // ------------------------------- Firmware parsing and sizing -------------------------------
 
+/// Check an assembled image before it is flashed, and hand back the parse.
+///
+/// The parse is what the checks are made of, so returning it saves a caller with
+/// further questions about the image reading the same bytes a second time.
 #[allow(clippy::collapsible_if)]
 pub async fn verify_assembled_firmware(
     options: &Options,
     data: &[u8],
     force: bool,
     expected_board: Option<Board>,
-) -> Result<(), Error> {
+) -> Result<ParsedDevice, Error> {
     let info = parse_firmware(data).await?;
 
     if let (Some(expected), Some(actual)) = (expected_board, info.get_board()) {
@@ -152,7 +156,7 @@ pub async fn verify_assembled_firmware(
             );
         }
     }
-    Ok(())
+    Ok(info)
 }
 
 pub async fn parse_firmware(data: &[u8]) -> Result<ParsedDevice, Error> {
@@ -269,6 +273,7 @@ pub async fn build_rom_image(
     board: Board,
     mcu: Variant,
     force: bool,
+    before_fetch: impl FnOnce(&Config) -> Result<(), Error>,
 ) -> Result<(FirmwareProperties, Option<Vec<u8>>, Option<Vec<u8>>, String), Error> {
     let overrides = ConfigOverrides::default().allow_turbo_boot_multi_slot(force);
 
@@ -295,6 +300,12 @@ pub async fn build_rom_image(
             .accept_license(&license)
             .map_err(onerom_fw::Error::license)?;
     }
+
+    // The last point at which nothing has been fetched: the config is fully
+    // resolved, and the ROM images it names have not been downloaded. A caller
+    // with a reason to refuse this build gets to do it here, rather than after
+    // the user has waited for every ROM.
+    before_fetch(builder.config())?;
 
     get_rom_files_async(&mut builder).await?;
 
@@ -444,8 +455,16 @@ pub async fn cmd_build(
         }
     }
 
-    let (fw_props, metadata, image_data, desc) =
-        build_rom_image(options, &config_json, version, board, mcu, args.force).await?;
+    let (fw_props, metadata, image_data, desc) = build_rom_image(
+        options,
+        &config_json,
+        version,
+        board,
+        mcu,
+        args.force,
+        |_| Ok(()),
+    )
+    .await?;
 
     validate_sizes(&fw_props, &firmware_data, &metadata, &image_data)?;
 

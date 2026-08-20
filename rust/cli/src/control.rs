@@ -3,7 +3,6 @@
 // MIT License
 
 use crate::args::control::GpioState;
-use crate::board_view::{gpio_header_role, gpio_rom_function, gpio_system_functions};
 use crate::{
     args,
     utils::{
@@ -12,11 +11,14 @@ use crate::{
     },
 };
 use onerom_cli::device::{Device, select_device};
+use onerom_cli::gpio;
+use onerom_cli::hint;
 use onerom_cli::picobootx::{ONEROM_FEAT_GPIO_QUERY, ONEROM_GPIO_FLAG_FORCE};
-use onerom_cli::pin::ResolvedPin;
+use onerom_cli::pin::{Pin, ResolvedPin};
+use onerom_cli::reset::{self, PinObjection};
 use onerom_cli::usb::{
-    FLASH_BASE, GpioSetArgs, GpioUse, LedSubCmd, RebootArgs, SetLedArgs, flash_erase, get_caps,
-    gpio_query, gpio_set, read_memory, reboot, set_led, set_rgb, write_memory,
+    Caps, FLASH_BASE, GpioSetArgs, GpioUse, LedSubCmd, RebootArgs, SetLedArgs, flash_erase,
+    get_caps, gpio_query, gpio_set, read_memory, reboot, set_led, set_rgb, write_memory,
 };
 use onerom_cli::{Error, Options};
 use onerom_config::chip::ChipType;
@@ -249,7 +251,7 @@ fn describe_gpio(board: Option<&Board>, chip: Option<ChipType>, gpio: u8) -> Str
     let mut notes: Vec<String> = Vec::new();
     if let Some(board) = board {
         if let Some(chip) = chip
-            && let Some(function) = gpio_rom_function(board, chip, gpio)
+            && let Some(function) = gpio::rom_function(board, chip, gpio)
         {
             notes.push(function);
         }
@@ -257,11 +259,11 @@ fn describe_gpio(board: Option<&Board>, chip: Option<ChipType>, gpio: u8) -> Str
         // and its NeoPixel from GPIO 29 - and a refusal that named only one
         // would understate what driving it disturbs.
         notes.extend(
-            gpio_system_functions(board, gpio)
+            gpio::system_functions(board, gpio)
                 .into_iter()
                 .map(String::from),
         );
-        if let Some(role) = gpio_header_role(board, gpio) {
+        if let Some(role) = gpio::header_role(board, gpio) {
             notes.push(format!("{role} pad"));
         }
     }
@@ -296,6 +298,16 @@ fn describe_use(gpio_use: GpioUse) -> (&'static str, &'static str) {
             "Driving it will disturb whatever the board uses it for.",
         ),
     }
+}
+
+/// Say what a 3.3V-only pad risks, ahead of asking whether to go on.
+///
+/// Shared so that a pin vetted before programming and a pin driven directly are
+/// warned about in the same words.
+fn warn_three_volt_three(name: &str) {
+    println!("Warning: {name} is 3.3V-only (an RP2350 ADC pin), not 5V-tolerant.");
+    println!("  More than 3.3V on this pad can damage the MCU - including whatever the");
+    println!("  net sits at once One ROM releases the pin.");
 }
 
 /// Ask before doing something the user may not have meant. `--yes` (and, where
@@ -348,19 +360,27 @@ struct DriveRequest<'a> {
     /// Whether to override the device's in-use refusal.
     force: bool,
 
+    /// Whether the caller has already warned about a 3.3V-only pad and had the
+    /// user accept it. `program --reset-host` vets its pin before it flashes
+    /// anything, and asking a second time once the device is back on the bus
+    /// would be asking about a decision already taken.
+    tolerance_confirmed: bool,
+
     /// How the caller's command overrides the in-use refusal; `control reset`
     /// has no `--force` of its own and points elsewhere.
     force_hint: &'a str,
 }
 
-/// Drive one GPIO, having first asked the device what it is using it for.
+/// Ask the device what it is using a GPIO for, and the user whether to go on.
 ///
-/// Shared by `control pin` and `control reset` - the two differ in the request
-/// they build and what they print afterwards, not in what happens here.
+/// Shared by `control pin`, `control reset` and `program --reset-host` - they
+/// differ in the write they then make and in what they print, not in what is
+/// asked here.
 ///
-/// Returns `false` if the user declined a warning, in which case nothing was
+/// Returns the device's capabilities, which the caller needs for the write, or
+/// `None` if the user declined a warning - in which case nothing has been
 /// driven.
-async fn drive_gpio(options: &Options, req: DriveRequest<'_>) -> Result<bool, Error> {
+async fn vet_gpio(options: &Options, req: &DriveRequest<'_>) -> Result<Option<Caps>, Error> {
     let device = options.device.as_ref().unwrap();
     let gpio = req.pin.gpio();
 
@@ -407,19 +427,31 @@ async fn drive_gpio(options: &Options, req: DriveRequest<'_>) -> Result<bool, Er
     // only pads that are not 5V-tolerant. Nothing here knows or asks what is
     // wired to the pad.
     if let Some(board) = board
+        && !req.tolerance_confirmed
         && board.gpio_tolerance(gpio) == Some(PinTolerance::ThreeVolt3)
     {
-        println!("Warning: {name} is 3.3V-only (an RP2350 ADC pin), not 5V-tolerant.");
-        println!("  More than 3.3V on this pad can damage the MCU - including whatever the");
-        println!("  net sits at once One ROM releases the pin.");
+        warn_three_volt_three(&name);
         if !confirm_gpio(options, req.force)? {
             println!("Aborted");
-            return Ok(false);
+            return Ok(None);
         }
     }
 
+    Ok(Some(caps))
+}
+
+/// Drive one GPIO to `req`'s state, having vetted it first.
+///
+/// Returns `false` if the user declined a warning, in which case nothing was
+/// driven.
+async fn drive_gpio(options: &Options, req: DriveRequest<'_>) -> Result<bool, Error> {
+    let Some(caps) = vet_gpio(options, &req).await? else {
+        return Ok(false);
+    };
+    let device = options.device.as_ref().unwrap();
+
     let args = GpioSetArgs {
-        gpio,
+        gpio: req.pin.gpio(),
         state: req.state.into(),
         after_state: req.after.into(),
         flags: if req.force { ONEROM_GPIO_FLAG_FORCE } else { 0 },
@@ -428,6 +460,118 @@ async fn drive_gpio(options: &Options, req: DriveRequest<'_>) -> Result<bool, Er
     gpio_set(device, &caps, args).await?;
 
     Ok(true)
+}
+
+/// Pulse a host system's reset line low, and say so.
+///
+/// Shared by `control reset` and `program --reset-host`. The pin is vetted
+/// against the device the way any driven pin is, and the pulse itself is
+/// [`reset::pulse`], which is where "low, then released, never high" lives.
+///
+/// `tolerance_confirmed` says the caller has already put the 3.3V-only warning
+/// to the user.
+pub async fn pulse_reset(
+    options: &Options,
+    pin: ResolvedPin,
+    board: Option<&Board>,
+    hold_ms: u32,
+    tolerance_confirmed: bool,
+) -> Result<(), Error> {
+    let force_hint = format!(
+        "Use '{}' to drive it anyway.",
+        hint::force_pin_low(pin.pin())
+    );
+    let req = DriveRequest {
+        pin,
+        board,
+        state: GpioState::Low,
+        after: GpioState::Z,
+        hold_ms,
+        force: false,
+        force_hint: &force_hint,
+        tolerance_confirmed,
+    };
+    let Some(caps) = vet_gpio(options, &req).await? else {
+        return Ok(());
+    };
+
+    let device = options.device.as_ref().unwrap();
+    reset::pulse(device, &caps, pin.gpio(), hold_ms).await?;
+
+    println!(
+        "Asserted reset on {pin} for {hold_ms}ms - the device times the pulse and releases the pin"
+    );
+
+    Ok(())
+}
+
+/// Refuse a reset pin One ROM will be using itself.
+///
+/// `chips` is every chip type the image can serve. The device refuses to give up
+/// a pin it is serving with, so this is the same refusal, made early enough to
+/// be worth something - and made against the image about to be flashed rather
+/// than the one already running.
+pub fn refuse_reset_pin_in_use(
+    board: &Board,
+    chips: &[ChipType],
+    pin: ResolvedPin,
+) -> Result<(), Error> {
+    for objection in reset::vet_pin(board, chips, pin.gpio()) {
+        if let PinObjection::InUse(uses) = objection {
+            return Err(Error::InvalidArgument(
+                "--reset-host".to_string(),
+                format!(
+                    "{pin} is in use by the One ROM image being programmed: {}.\n  \
+                     One ROM will refuse to drive it.\n  \
+                     Use '{}' to drive it anyway.",
+                    uses.join(", "),
+                    hint::force_pin_low(pin.pin())
+                ),
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Vet a reset pin before anything is programmed, and resolve it.
+///
+/// Everything asked here comes from board metadata and `chips`, so it is asked
+/// before the device is touched and before a single ROM image is fetched: a pad
+/// this board does not have, a pin the new image will serve with, or a pad that
+/// cannot take 5V is the user's mistake, and finding it later means finding it
+/// with the host system already waiting to be reset.
+///
+/// Returns the resolved pin, and whether the user was asked about a 3.3V-only
+/// pad - which [`pulse_reset`] needs, so that accepting once is accepting.
+pub fn check_reset_pin(
+    options: &Options,
+    pin: &Pin,
+    board: Option<&Board>,
+    chips: &[ChipType],
+) -> Result<(ResolvedPin, bool), Error> {
+    let resolved = pin.resolve(board)?;
+
+    let Some(board) = board else {
+        // Without a board there is nothing to ask: the pin was named as a GPIO
+        // (a pad would have failed to resolve), and every objection is raised
+        // from board metadata. The device still gates the write.
+        return Ok((resolved, false));
+    };
+
+    refuse_reset_pin_in_use(board, chips, resolved)?;
+
+    let mut tolerance_confirmed = false;
+    if reset::vet_pin(board, chips, resolved.gpio()).contains(&PinObjection::NotFiveVoltTolerant) {
+        warn_three_volt_three(&describe_gpio(Some(board), None, resolved.gpio()));
+        if !confirm_gpio(options, false)? {
+            return Err(Error::Aborted(
+                "The reset pin is 3.3V-only, and nothing has been programmed.".to_string(),
+            ));
+        }
+        tolerance_confirmed = true;
+    }
+
+    Ok((resolved, tolerance_confirmed))
 }
 
 pub async fn cmd_reset(
@@ -442,9 +586,11 @@ pub async fn cmd_reset(
     if args.hold == 0 {
         return Err(Error::InvalidArgument(
             "--hold".to_string(),
-            "A reset pulse must have a duration.\n  \
-             Use 'onerom control pin --pin <PIN> --state low' to latch a pin low indefinitely."
-                .to_string(),
+            format!(
+                "A reset pulse must have a duration.\n  \
+                 Use '{}' to latch a pin low indefinitely.",
+                hint::latch_pin_low(args.pin)
+            ),
         ));
     }
 
@@ -457,31 +603,7 @@ pub async fn cmd_reset(
     check_fire_board_optional(&board)?;
     let pin = args.pin.resolve(board.as_ref())?;
 
-    let driven = drive_gpio(
-        options,
-        DriveRequest {
-            pin,
-            board: board.as_ref(),
-            state: GpioState::Low,
-            // Released, never driven high: a reset net has its own pull-up and
-            // may have other drivers on it.
-            after: GpioState::Z,
-            hold_ms: args.hold,
-            force: false,
-            force_hint:
-                "Use 'onerom control pin --pin <PIN> --state low --hold <MS> --force' to drive it anyway.",
-        },
-    )
-    .await?;
-
-    if driven {
-        println!(
-            "Asserted reset on {pin} for {}ms - the device times the pulse and releases the pin",
-            args.hold
-        );
-    }
-
-    Ok(())
+    pulse_reset(options, pin, board.as_ref(), args.hold, false).await
 }
 
 pub async fn cmd_select(
@@ -519,6 +641,7 @@ pub async fn cmd_pin(options: &Options, args: &args::control::ControlPinArgs) ->
             hold_ms,
             force: args.force,
             force_hint: "Use --force to drive it anyway.",
+            tolerance_confirmed: false,
         },
     )
     .await?;
@@ -820,5 +943,117 @@ pub async fn cmd_erase(
             println!("Not rebooting after erase");
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use onerom_cli::LogLevel;
+    use onerom_cli::pin::parse_pin;
+
+    /// fire-24-f, whose header is characterised and whose select pads sit behind
+    /// the RP2350A's ADC pins, so every case below is reachable on one board.
+    fn board() -> Board {
+        Board::try_from_str("fire-24-f").unwrap()
+    }
+
+    fn options(yes: bool) -> Options {
+        Options {
+            verbose: false,
+            log_level: LogLevel::Warn,
+            yes,
+            unrecognised: false,
+            device: None,
+            vid_pid: Vec::new(),
+        }
+    }
+
+    fn check(
+        pin: &str,
+        board: Option<&Board>,
+        chips: &[ChipType],
+    ) -> Result<(ResolvedPin, bool), Error> {
+        check_reset_pin(&options(true), &parse_pin(pin).unwrap(), board, chips)
+    }
+
+    #[test]
+    fn a_free_pad_is_accepted_and_resolved() {
+        // X1 is an expansion pad: no ROM function under any chip, no system
+        // function, and 5V-tolerant.
+        let (pin, confirmed) = check("x1", Some(&board()), &[ChipType::Chip2364]).unwrap();
+        assert_eq!(pin.gpio(), 9);
+        assert!(!confirmed);
+    }
+
+    #[test]
+    fn a_pin_the_new_image_serves_with_is_refused() {
+        // GPIO16 is A7 of a 2364 on this board.
+        let err = check("gpio16", Some(&board()), &[ChipType::Chip2364]).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("--reset-host"), "{msg}");
+        assert!(msg.contains("A7"), "{msg}");
+
+        // The refusal comes from the chip list and nothing else: the same pin is
+        // accepted for an image that serves nothing.
+        assert!(check("gpio16", Some(&board()), &[]).is_ok());
+    }
+
+    /// A pin one slot's chip type leaves alone is still refused when another
+    /// slot's reaches it.
+    ///
+    /// A 28-pin socket serving a 24-pin 2364 leaves GPIO10 outside the chip
+    /// body, where a 27256 drives it as A14 - so an image holding both must be
+    /// judged on every slot, not on the first.
+    #[test]
+    fn every_chip_type_in_the_image_is_checked() {
+        let board = Board::try_from_str("fire-28-a").unwrap();
+        assert!(check("gpio10", Some(&board), &[ChipType::Chip2364]).is_ok());
+        let err = check(
+            "gpio10",
+            Some(&board),
+            &[ChipType::Chip2364, ChipType::Chip27256],
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("A14"), "{err}");
+    }
+
+    #[test]
+    fn a_pin_the_board_uses_itself_is_refused() {
+        // GPIO29 drives fire-24-f's status LED and its RGB LED, and no ROM
+        // function reaches it - so only the system-function check can refuse it.
+        let err = check("gpio29", Some(&board()), &[]).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("Status LED"), "{msg}");
+        assert!(msg.contains("RGB LED"), "{msg}");
+    }
+
+    #[test]
+    fn a_three_volt_three_pad_has_to_be_accepted() {
+        // SEL_A is GPIO26, an ADC pin, so it is not 5V-tolerant. --yes answers
+        // the warning, and the answer is carried out so the pulse does not ask
+        // again.
+        let (pin, confirmed) = check("sel_a", Some(&board()), &[ChipType::Chip2364]).unwrap();
+        assert_eq!(pin.gpio(), 26);
+        assert!(confirmed);
+
+        // Declining is not exercised here: it is a stdin read, which would hang
+        // a `cargo test` run on a terminal. What it returns is Error::Aborted,
+        // so nothing is programmed.
+    }
+
+    #[test]
+    fn a_gpio_named_without_a_board_is_taken_as_given() {
+        // Nothing below the resolve can be asked without board metadata, and the
+        // device still gates the write.
+        let (pin, confirmed) = check("gpio16", None, &[ChipType::Chip2364]).unwrap();
+        assert_eq!(pin.gpio(), 16);
+        assert!(!confirmed);
+    }
+
+    #[test]
+    fn a_pad_named_without_a_board_is_refused() {
+        let err = check("sel_a", None, &[]).unwrap_err();
+        assert!(err.to_string().contains("--board"), "{err}");
     }
 }

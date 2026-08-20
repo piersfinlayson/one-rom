@@ -304,14 +304,21 @@ onerom control led beacon
 ### Reset the host system after programming
 
 If you have run a wire from a One ROM header pad to the reset line of the
-machine One ROM is installed in, `control reset` pulses that pad low and then
-releases it — resetting the host so it picks up the image you just flashed.
-Name the pad, or the MCU GPIO behind it — `onerom inspect header` shows which
-that is:
+machine One ROM is installed in, One ROM can pulse that pad low and then release
+it — resetting the host so it picks up the image you just flashed. Name the pad,
+or the MCU GPIO behind it — `onerom inspect header` shows which that is:
 
 ```
-onerom program --config c64.json
+onerom program --config c64.json --reset-host sel_c
+```
+
+`--reset-host` waits for the One ROM to come back on the USB bus and then sends
+the pulse, so programming and resetting are one command. To reset a host without
+programming it, or to choose the length of the pulse, use `control reset`:
+
+```
 onerom control reset --pin sel_c
+onerom control reset --pin sel_c --hold 500
 ```
 
 The pad is typically an image-select pad whose jumper you have removed, usually
@@ -550,7 +557,8 @@ These are rejected with `--no-config`.
 | `--force, -f` | Continue despite non-fatal problems: assembled firmware parse errors, a board type mismatch, and config warnings such as turbo boot with more than one non-plugin ROM slot. Each is reported as a warning instead. |
 | `--batch` (aliases `--multiple`, `--multi`) | Program multiple devices, pausing for confirmation between each. Every board is programmed with the same configuration as the first. |
 | `--scan-slots` | After programming, run `onerom scan --slots` to show the result. Conflicts with `--fast`. |
-| `--follow` | After programming, monitor the One ROM's log, as [`monitor log`](#monitor-log) does. Runs after `--scan-slots`, and only once the One ROM is back on the USB bus, so it shows the boot log of the firmware just flashed. Conflicts with `--fast`, `--stopped`, `--no-reboot` and `--batch`. |
+| `--follow` | After programming, monitor the One ROM's log, as [`monitor log`](#monitor-log) does. Runs after `--scan-slots`, and only once the One ROM is back on the USB bus, so it shows the boot log of the firmware just flashed. Refused before anything is flashed if the image has no USB system plugin, since such a One ROM leaves the bus as soon as it serves. Conflicts with `--fast`, `--stopped`, `--no-reboot` and `--batch`. |
+| `--reset-host <PIN>` (alias `--host-reset`) | After programming, pulse this pin low to reset the host system, as [`control reset`](#control-reset) does. Named as `gpio<N>` or as a header pad (see [Pin values](#pin-values)). Runs after `--scan-slots` and before `--follow`, once the One ROM is back on the USB bus, and for each device in a `--batch`. The pulse is 100ms; use `control reset` for a different hold. Conflicts with `--fast`, `--stopped` and `--no-reboot`. |
 
 Device required: yes.
 
@@ -1193,6 +1201,8 @@ Exactly one of `--byte` / `--input` is required.
 
 Pulse a GPIO low, then release it, to reset the host system One ROM is installed
 in — useful in scripted workflows after programming a new image.
+[`program --reset-host`](#program) does the same thing as the last step of
+programming, and is the shorter way to say it.
 
 `--pin` is the pin your reset wire is soldered to, typically an image-select pad
 whose jumper has been removed — `sel_c` is the usual choice, as more boards have
@@ -2124,7 +2134,8 @@ checked separately — see [Plugin compatibility](#plugin-compatibility).
 ## Pin values
 
 Used by `--pin` in [`control pin`](#control-pin), [`control
-reset`](#control-reset) and [`inspect gpio`](#inspect-gpio).
+reset`](#control-reset) and [`inspect gpio`](#inspect-gpio), and by
+`--reset-host` in [`program`](#program).
 
 `--pin` names one **MCU GPIO**, either directly or through a header pad that is
 wired to one. All spellings are case-insensitive (`GPIO23`, `SEL_A`).

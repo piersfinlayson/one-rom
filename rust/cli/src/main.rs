@@ -283,6 +283,65 @@ mod cli_assert {
         }
     }
 
+    /// A sample value for a placeholder a hint leaves to the user.
+    ///
+    /// Panics on one it does not know, so a new placeholder has to be given a
+    /// value here rather than quietly skipping the line that uses it.
+    fn sample_for(placeholder: &str) -> &'static str {
+        match placeholder {
+            "<CONFIG>" => "myconfig.json",
+            "<BOARD>" => "fire-24-f",
+            "<MS>" => "100",
+            other => panic!("hint placeholder {other} has no sample value - add one here"),
+        }
+    }
+
+    /// Parse one command line the way a user would type it.
+    fn parses(command: &str) -> Result<(), clap::Error> {
+        use clap::Parser;
+        let words: Vec<&str> = command
+            .split_whitespace()
+            .map(|w| if w.starts_with('<') { sample_for(w) } else { w })
+            .collect();
+        Cli::try_parse_from(words).map(|_| ())
+    }
+
+    /// Every command line the CLI tells a user to run actually parses.
+    ///
+    /// The messages in `onerom_cli::hint` quote other commands' option names,
+    /// and nothing about a string literal keeps that true. Renaming an option
+    /// used to leave the CLI printing advice that no longer ran; now it fails
+    /// here.
+    #[test]
+    fn every_hint_parses_as_a_command_line() {
+        let pin = onerom_cli::pin::parse_pin("sel_c").expect("sel_c is a pad");
+        let built = [
+            onerom_cli::hint::board_view("header"),
+            onerom_cli::hint::board_view("socket"),
+            onerom_cli::hint::latch_pin_low(pin),
+            onerom_cli::hint::force_pin_low(pin),
+        ];
+        let all = onerom_cli::hint::ALL_HINTS
+            .iter()
+            .map(|h| h.to_string())
+            .chain(built);
+
+        let mut checked = 0;
+        for hint in all {
+            assert!(
+                parses(&hint).is_ok(),
+                "hint does not parse: {hint}\n  {:?}",
+                parses(&hint).unwrap_err().to_string()
+            );
+            checked += 1;
+        }
+        assert!(checked >= 11, "only {checked} hints checked");
+
+        // The check discriminates: a command line missing a required option is
+        // rejected, so the assertions above are not passing vacuously.
+        assert!(parses("onerom control pin --state low").is_err());
+    }
+
     /// Every option documents itself, and names its value in one word.
     ///
     /// `--serial-override` shipped with a `//` comment where clap needs `///`,
