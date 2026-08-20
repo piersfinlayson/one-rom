@@ -3,19 +3,23 @@
 // MIT License
 
 use crate::args::inspect::{
-    InspectGpioArgs, InspectHeaderArgs, InspectImageArgs, InspectInfoArgs, InspectPeekLiveArgs,
-    InspectPeekMemoryArgs, InspectSlotsArgs, InspectSocketArgs, InspectTelemetryArgs,
+    InspectGpioArgs, InspectHeaderArgs, InspectImageArgs, InspectInfoArgs, InspectLedArgs,
+    InspectPeekLiveArgs, InspectPeekMemoryArgs, InspectRgbArgs, InspectSlotsArgs,
+    InspectSocketArgs, InspectTelemetryArgs,
 };
 use crate::board_view::{gpio_header_role, gpio_rom_function, gpio_system_functions};
 use crate::utils::{
     active_chip_type, check_device, check_device_running, check_fire_board,
-    check_fire_board_optional, check_live_read_write, print_hex_dump, resolve_board,
+    check_fire_board_optional, check_live_read_write, colour_name, print_hex_dump, resolve_board,
     resolve_board_optional,
 };
 use onerom_cli::CliFetch;
 use onerom_cli::LIVE_ROM_BASE;
 use onerom_cli::plugin::{PluginOrigin, PluginType, resolve_plugin_display};
-use onerom_cli::usb::{GpioEntry, GpioUse, get_caps, gpio_query, gpio_query_all, read_memory};
+use onerom_cli::usb::{
+    GpioEntry, GpioUse, LedId, LedState, get_caps, gpio_query, gpio_query_all, led_query,
+    read_memory,
+};
 use onerom_cli::{Device, Error, Options};
 use onerom_config::chip::ChipType;
 use onerom_config::hw::Board;
@@ -57,6 +61,80 @@ pub async fn cmd_info(options: &Options, args: &InspectInfoArgs) -> Result<(), E
             }
         }
     }
+
+    Ok(())
+}
+
+/// The one mode that picks its own colour rather than showing the stored one.
+const MODE_CYCLE: u8 = 4;
+
+/// Print one LED's state, as `inspect led` and `inspect rgb` both do.
+///
+/// The two differ only in which LED they name and whether a colour means
+/// anything, so what a user sees stays consistent between them.
+fn print_led(name: &str, state: &LedState, coloured: bool, verbose: bool) {
+    if !state.present {
+        println!("{name}: this board does not have one");
+        return;
+    }
+
+    let mode = state
+        .mode_name()
+        .map(str::to_string)
+        // A device newer than this CLI can be in a mode it has no word for.
+        // Saying so beats printing nothing or guessing.
+        .unwrap_or_else(|| format!("unknown (mode {})", state.mode));
+
+    println!("{name}:");
+    println!("  Mode:       {mode}");
+
+    if coloured {
+        // Cycle walks the hues itself and never shows the stored colour, so
+        // printing that colour would name one the LED is not lit.  Brightness
+        // still applies, and is still printed.
+        if state.mode != MODE_CYCLE {
+            let hex = format!("#{:02X}{:02X}{:02X}", state.r, state.g, state.b);
+            match colour_name(state.r, state.g, state.b) {
+                Some(named) => println!("  Colour:     {hex} ({named})"),
+                None => println!("  Colour:     {hex}"),
+            }
+        }
+        println!("  Brightness: {}%", state.brightness);
+    }
+
+    // Only the repeating modes have a period, and the device reports 0 for the
+    // rest.  Printing "0ms" there would read as a period of no time at all.
+    if state.period_ms != 0 {
+        println!("  Period:     {}ms", state.period_ms);
+    }
+
+    // Which pin the LED is on, and whether it shares it, describe the board
+    // rather than what the LED is doing.  They are the same on every read.
+    if verbose {
+        println!("  GPIO:       {}", state.gpio);
+
+        if state.shared_gpio {
+            println!("  Shared:     yes, with the other LED on this board");
+        }
+    }
+}
+
+pub async fn cmd_led(options: &Options, args: &InspectLedArgs) -> Result<(), Error> {
+    check_device(options, args, true)?;
+    let device = options.device.as_ref().unwrap();
+
+    let state = led_query(device, LedId::Status).await?;
+    print_led("Status LED", &state, false, options.verbose);
+
+    Ok(())
+}
+
+pub async fn cmd_rgb(options: &Options, args: &InspectRgbArgs) -> Result<(), Error> {
+    check_device(options, args, true)?;
+    let device = options.device.as_ref().unwrap();
+
+    let state = led_query(device, LedId::Rgb).await?;
+    print_led("RGB LED", &state, true, options.verbose);
 
     Ok(())
 }

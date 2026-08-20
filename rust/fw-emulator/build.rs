@@ -256,6 +256,12 @@ fn main() {
         .allowlist_function("onerom_test_reset")
         .allowlist_function("set_host_calling_plugin")
         .allowlist_function("ffi_set_logging")
+        // The LED engine's frame and its next deadline.  A device is driven by
+        // TIMER0 alarm 1, which this process does not have, so a harness moves
+        // the clock to the deadline and calls the frame itself.
+        .allowlist_function("ffi_led_frame")
+        .allowlist_function("ffi_led_next_deadline")
+        .allowlist_function("ffi_led_last_pixel")
         .allowlist_function("ffi_serving_alg")
         .allowlist_type("ffi_serving_alg_t")
         // The algorithm enums the reported ids belong to: a test that maps an

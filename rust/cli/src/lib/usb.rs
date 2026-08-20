@@ -19,13 +19,15 @@ use picoboot::{
 use std::time::Duration;
 
 use crate::Error;
+use crate::picobootx::LedQueryArgs;
 pub use crate::picobootx::{
-    Caps, GpioEntry, GpioSetArgs, GpioState, GpioUse, LedSubCmd, SetLedArgs,
+    Caps, GpioEntry, GpioSetArgs, GpioState, GpioUse, LedId, LedState, LedSubCmd, SetLedArgs,
 };
 use crate::picobootx::{
     GpioQueryArgs, ONEROM_CAPS_LEN, ONEROM_CMD_ARGS_LEN, ONEROM_CMD_GET_CAPS,
-    ONEROM_CMD_GPIO_QUERY, ONEROM_CMD_GPIO_SET, ONEROM_CMD_SET_LED, ONEROM_FEAT_GPIO_HOLD,
-    ONEROM_FEAT_GPIO_QUERY, ONEROM_FEAT_GPIO_SET, ONEROM_MAGIC, PICOBOOT_DIR_IN,
+    ONEROM_CMD_GPIO_QUERY, ONEROM_CMD_GPIO_SET, ONEROM_CMD_LED_QUERY, ONEROM_CMD_SET_LED,
+    ONEROM_FEAT_GPIO_HOLD, ONEROM_FEAT_GPIO_QUERY, ONEROM_FEAT_GPIO_SET, ONEROM_FEAT_LED_ARGS,
+    ONEROM_LED_STATE_LEN, ONEROM_MAGIC, PICOBOOT_DIR_IN,
 };
 use crate::{Device, DeviceState};
 
@@ -558,16 +560,75 @@ async fn pause_reenumeration() {
 }
 
 /// Set the status LED on a One ROM device.
-pub async fn set_led(device: &Device, led_id: u8, sub_cmd: LedSubCmd) -> Result<(), Error> {
-    let args = SetLedArgs { led_id, sub_cmd }.encode();
+///
+/// A plain mode is sent as it always was, in one packet. A request carrying a
+/// period or a hold costs a [`get_caps`] first: those bytes are ignored by a
+/// plugin that predates them, which would report success and do none of it.
+pub async fn set_led(device: &Device, args: SetLedArgs) -> Result<(), Error> {
+    if args.needs_led_args() {
+        let caps = get_caps(device).await?;
+        if !caps.has_feature(ONEROM_FEAT_LED_ARGS) {
+            return Err(Error::LedArgsUnsupported(device.to_string()));
+        }
+    }
 
-    send_onerom_cmd(device, "SET_LED", ONEROM_CMD_SET_LED, 0, args)
+    send_onerom_cmd(device, "SET_LED", ONEROM_CMD_SET_LED, 0, args.encode())
         .await
         .map(|_| ())
         // No "too old" arm here, unlike the GPIO commands: SET_LED is the
         // oldest One ROM command there is, so a plugin that does not know it
         // does not know any of them, and blaming GPIO control would mislead.
         .map_err(|failure| cmd_error("SET_LED", failure))
+}
+
+/// Set the RGB LED on a One ROM device.
+///
+/// `caps` must come from [`get_caps`] on the same device. The capability bit is
+/// checked here rather than left to the device, because an older plugin does
+/// not read the channel byte at all and would run the mode on the status LED.
+#[allow(clippy::wildcard_enum_match_arm)]
+pub async fn set_rgb(device: &Device, caps: &Caps, args: SetLedArgs) -> Result<(), Error> {
+    if !caps.has_feature(ONEROM_FEAT_LED_ARGS) {
+        return Err(Error::RgbUnsupported(device.to_string()));
+    }
+
+    send_onerom_cmd(device, "SET_LED", ONEROM_CMD_SET_LED, 0, args.encode())
+        .await
+        .map(|_| ())
+        .map_err(|failure| match failure {
+            // The device has the engine but this board has no RGB LED.
+            CmdFailure::NotFound => Error::RgbAbsent(device.to_string()),
+            failure if failure.means_too_old() => Error::RgbUnsupported(device.to_string()),
+            failure => cmd_error("SET_LED", failure),
+        })
+}
+
+/// Read what one of a One ROM's LEDs is doing.
+///
+/// No capability check: a plugin that predates the command refuses it, so the
+/// refusal is the answer. That is the opposite of [`set_led`]'s extended
+/// arguments, which an older plugin accepts and ignores.
+///
+/// An LED the board does not have still answers, with [`LedState::present`]
+/// clear, so a caller can ask about either LED without knowing the board.
+#[allow(clippy::wildcard_enum_match_arm)]
+pub async fn led_query(device: &Device, led_id: LedId) -> Result<LedState, Error> {
+    let args = LedQueryArgs { led_id };
+
+    let data = send_onerom_cmd(
+        device,
+        "LED_QUERY",
+        ONEROM_CMD_LED_QUERY | PICOBOOT_DIR_IN,
+        ONEROM_LED_STATE_LEN,
+        args.encode(),
+    )
+    .await
+    .map_err(|failure| match failure {
+        failure if failure.means_too_old() => Error::LedQueryUnsupported(device.to_string()),
+        failure => cmd_error("LED_QUERY", failure),
+    })?;
+
+    LedState::decode(&data).map_err(|e| Error::Other(e.to_string()))
 }
 
 // ===========================================================================
@@ -609,6 +670,10 @@ enum CmdFailure {
     /// plugin's pending-release slots is occupied by a different GPIO.
     PreconditionNotMet,
 
+    /// `PB_STATUS_NOT_FOUND` - for `SET_LED`, the device has the LED engine
+    /// but this board does not have the LED asked for.
+    NotFound,
+
     /// A USB-level failure, or a status this layer has no specific handling
     /// for. Carries the detail to show the user.
     Transport(String),
@@ -622,6 +687,7 @@ impl std::fmt::Display for CmdFailure {
             Self::NotPermitted => write!(f, "the device refused the command"),
             Self::InvalidArg => write!(f, "the device rejected the command's arguments"),
             Self::PreconditionNotMet => write!(f, "the device has no free hold slot"),
+            Self::NotFound => write!(f, "the device does not have what was asked for"),
             Self::Transport(detail) => write!(f, "{detail}"),
         }
     }
@@ -637,6 +703,7 @@ impl CmdFailure {
             Some(PicobootStatus::NotPermitted) => Self::NotPermitted,
             Some(PicobootStatus::InvalidArg) => Self::InvalidArg,
             Some(PicobootStatus::PreconditionNotMet) => Self::PreconditionNotMet,
+            Some(PicobootStatus::NotFound) => Self::NotFound,
             Some(other) => Self::Transport(format!("{detail}\n  Device status: {other:?}")),
             None => Self::Transport(detail),
         }

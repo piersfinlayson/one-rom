@@ -2,6 +2,12 @@
 
 ## [0.2.2] - 2026-??-??
 
+Answer what One ROM's LEDs are doing.  A new picobootx command reports one
+LED's mode, colour, brightness, period and GPIO, read from the firmware's LED
+engine rather than from anything the plugin remembers.  A board without the LED
+asked for still answers, saying it has none, which is what lets a host tell that
+apart from a One ROM too old to be asked.
+
 Forward One ROM's log to the CDC serial port.  Attach a terminal and the
 firmware's and the other plugin's logging appears there, including whatever
 accumulated before you attached — on a device nothing had been listening to,

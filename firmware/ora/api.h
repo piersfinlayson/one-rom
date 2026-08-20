@@ -739,6 +739,20 @@ typedef enum {
      */
     ORA_ID_GET_METADATA_UINT_AT      = 0x0000003C,
 
+    /**
+     * @brief Set an LED's mode, colour, brightness and period
+     * @sa ora_led_set_fn_t
+     * @since firmware 0.7.2
+     */
+    ORA_ID_LED_SET                   = 0x0000003D,
+
+    /**
+     * @brief Read an LED's presence, GPIO and live state
+     * @sa ora_led_get_fn_t
+     * @since firmware 0.7.2
+     */
+    ORA_ID_LED_GET                   = 0x0000003E,
+
     /** Invalid API identifier */
     ORA_ID_INVALID = 0xFFFFFFFF,
 } api_id_t;
@@ -1422,18 +1436,18 @@ typedef size_t (*ora_get_free_mem_fn_t)(void);
  * @brief Set the status LED on or off
  * @sa ORA_ID_SET_STATUS_LED
  *
- * Sets the live status-LED state. This is the single coordination channel for
- * the status LED: the call records the new state (readable by any plugin as
- * ORA_METADATA_KEY_STATUS_LED_STATE via ora_get_metadata_uint_fn_t) and drives
- * the status-LED GPIO. The board's configured default (the `led` option) only
- * seeds the initial state; a plugin may turn the LED on even if it was
- * configured off. If the board has no status-LED GPIO the call does nothing.
+ * Equivalent to ora_led_set_fn_t with ORA_LED_STATUS and ORA_LED_MODE_ON or
+ * ORA_LED_MODE_OFF, so it ends a beacon or flame the status LED was running.
  *
- * Coordination without cross-plugin awareness: on a board where the status LED
- * and a neopixel share a GPIO, the neopixel-driving plugin owns the pin and
- * should render the status LED by reading STATUS_LED_STATE each frame - so a
- * write here is reflected by that plugin without either plugin knowing about
- * the other. Neither plugin references the other; they meet at this flag.
+ * Records the new state, readable by any plugin as
+ * ORA_METADATA_KEY_STATUS_LED_STATE via ora_get_metadata_uint_fn_t. This is the
+ * single coordination channel for the status LED. The board's configured
+ * default (the `led` option) seeds the initial state only: a plugin may turn
+ * the LED on even if it was configured off. A board with no status-LED GPIO
+ * records the state and drives nothing.
+ *
+ * On a board where the status LED and the RGB LED share a GPIO, the firmware
+ * drives both and a plugin need do nothing extra.
  *
  * @param on Set to 1 to turn the LED on, or 0 to turn it off.
  */
@@ -2634,6 +2648,223 @@ typedef ora_result_t (*ora_gpio_set_fn_t)(
 typedef ora_result_t (*ora_gpio_query_fn_t)(
     uint8_t gpio,
     ora_gpio_info_t *info_out
+);
+
+/**
+ * @brief An LED a One ROM can have
+ * @since firmware 0.7.2
+ *
+ * The value is a channel number rather than a fixed set, so a One ROM that
+ * gains further LEDs numbers them from 2 upwards. A board need not have either
+ * of these - @ref ora_led_get_fn_t reports which it has.
+ */
+typedef enum {
+    /** @brief The discrete status LED */
+    ORA_LED_STATUS = 0,
+
+    /** @brief The RGB LED */
+    ORA_LED_RGB    = 1,
+} ora_led_t;
+
+/**
+ * @brief What an LED is doing
+ * @since firmware 0.7.2
+ *
+ * Every mode but ORA_LED_MODE_CYCLE and ORA_LED_MODE_BREATHE applies to every
+ * LED. Those two are built out of a colour, so they are refused for the status
+ * LED, which has none.
+ */
+typedef enum {
+    /** @brief Dark */
+    ORA_LED_MODE_OFF     = 0,
+
+    /** @brief Lit, at the requested colour and brightness */
+    ORA_LED_MODE_ON      = 1,
+
+    /**
+     * @brief Blinks for a bounded time so a unit can be picked out by eye
+     *
+     * Bounded by its hold, which a request either gives or takes the default
+     * of, so it ends by itself and puts back what it interrupted.
+     */
+    ORA_LED_MODE_BEACON  = 2,
+
+    /** @brief Flickers like a flame */
+    ORA_LED_MODE_FLAME   = 3,
+
+    /** @brief Rotates through the hues at full saturation */
+    ORA_LED_MODE_CYCLE   = 4,
+
+    /** @brief Fades the colour up and down */
+    ORA_LED_MODE_BREATHE = 5,
+
+    /** @brief Alternates the LED with dark, at its colour where it has one */
+    ORA_LED_MODE_BLINK   = 6,
+} ora_led_mode_t;
+
+/**
+ * @brief What to do with an LED, passed to @ref ora_led_set_fn_t
+ * @since firmware 0.7.2
+ *
+ * Zero in a field means the firmware chooses, so a caller that clears the
+ * structure and sets only what it cares about gets the defaults for the rest.
+ */
+typedef struct {
+    /**
+     * @brief In: sizeof this structure as known to the caller
+     *
+     * The caller sets this to sizeof(ora_led_request_t) as it knows it before
+     * calling. The firmware reads at most that many bytes, so a plugin built
+     * against an older or newer version of this structure than the running
+     * firmware still interoperates.
+     */
+    uint8_t  size;
+
+    /** @brief Which LED. @sa ora_led_t */
+    uint8_t  led;
+
+    /** @brief What it should do. @sa ora_led_mode_t */
+    uint8_t  mode;
+
+    /**
+     * @brief Brightness as a percentage, 1 to 100
+     *
+     * Zero means the firmware's default. The RGB LED supports brightness, and
+     * the status LED does not - it is lit or dark, and this field is ignored
+     * for it.
+     */
+    uint8_t  brightness;
+
+    /** @brief Red, for the modes that take a colour. Ignored otherwise. */
+    uint8_t  r;
+
+    /** @brief Green, for the modes that take a colour. Ignored otherwise. */
+    uint8_t  g;
+
+    /** @brief Blue, for the modes that take a colour. Ignored otherwise. */
+    uint8_t  b;
+
+    /** @brief Reserved. Set to zero. */
+    uint8_t  reserved;
+
+    /**
+     * @brief How long one repetition of the mode takes, in milliseconds
+     *
+     * A full rotation of the hues for ORA_LED_MODE_CYCLE, one fade up and down
+     * for ORA_LED_MODE_BREATHE, one on and off for ORA_LED_MODE_BLINK. Zero
+     * means the mode's own default. Ignored by the modes that do not repeat.
+     */
+    uint16_t period_ms;
+
+    /**
+     * @brief How long to stay in this mode before going back, in milliseconds
+     *
+     * The firmware restores the mode and colour that were in force when this
+     * call arrived. Zero holds the new mode until something changes it, except
+     * for ORA_LED_MODE_BEACON, which is bounded by definition and takes the
+     * firmware's own duration when a request names none.
+     *
+     * One state is remembered. A held request arriving while a hold is running
+     * leaves the remembered state alone, so the LED returns to what it was
+     * doing before the first of them.
+     */
+    uint32_t hold_ms;
+} ora_led_request_t;
+STATIC_ASSERT(sizeof(ora_led_request_t) == 16, "ora_led_request_t must be 16 bytes");
+
+/**
+ * @brief An LED's presence, wiring and live state, from @ref ora_led_get_fn_t
+ * @since firmware 0.7.2
+ */
+typedef struct {
+    /**
+     * @brief In: sizeof this structure as known to the caller.  Out: the
+     * number of bytes the firmware actually wrote.
+     */
+    uint8_t  size;
+
+    /** @brief Which LED this describes. @sa ora_led_t */
+    uint8_t  led;
+
+    /** @brief 1 if this board has this LED, 0 if not */
+    uint8_t  present;
+
+    /** @brief What it is doing now. @sa ora_led_mode_t */
+    uint8_t  mode;
+
+    /** @brief Brightness as a percentage, 1 to 100 */
+    uint8_t  brightness;
+
+    /** @brief Red of the colour in force */
+    uint8_t  r;
+
+    /** @brief Green of the colour in force */
+    uint8_t  g;
+
+    /** @brief Blue of the colour in force */
+    uint8_t  b;
+
+    /** @brief The GPIO this LED is on, or GPIO_NONE if the board has none */
+    uint8_t  gpio;
+
+    /**
+     * @brief 1 if this LED shares its GPIO with another LED
+     *
+     * Both work when they share, and no mode is restricted. It is reported
+     * because a host explaining the board to someone wants to say so.
+     */
+    uint8_t  shared_gpio;
+
+    /** @brief The period in force, in milliseconds */
+    uint16_t period_ms;
+} ora_led_state_t;
+STATIC_ASSERT(sizeof(ora_led_state_t) == 12, "ora_led_state_t must be 12 bytes");
+
+/**
+ * @brief Set an LED's mode, colour, brightness and period
+ * @sa ORA_ID_LED_SET
+ * @since firmware 0.7.2
+ *
+ * The firmware drives the LED from here on, including any repetition the mode
+ * calls for, so a caller sets a mode once and does not tick it. An animated
+ * mode is driven from a timer interrupt on the core that made this call.
+ *
+ * The RGB LED's GPIO is claimed on the first call that needs it. Until then the
+ * pin is left as it was, so a device nothing has asked about takes no
+ * interrupts and drives nothing.
+ *
+ * @param req  What to do, with its size field already set
+ * @return ORA_RESULT_OK on success; ORA_RESULT_INVALID_ARG if @p req is NULL,
+ *         its size is zero, @p req->led is not an LED this firmware knows,
+ *         @p req->mode is not a mode this LED supports, @p req->brightness is
+ *         above 100, or @p req->hold_ms exceeds the firmware's limit;
+ *         ORA_RESULT_NOT_SUPPORTED if the board does not have the requested
+ *         LED
+ */
+typedef ora_result_t (*ora_led_set_fn_t)(
+    const ora_led_request_t *req
+);
+
+/**
+ * @brief Read an LED's presence, GPIO and live state
+ * @sa ORA_ID_LED_GET
+ * @since firmware 0.7.2
+ *
+ * Answers for an LED the board does not have, with present set to 0, so a
+ * caller can ask about any LED without knowing the board.
+ *
+ * The caller must set @p state_out->size to its own sizeof(ora_led_state_t)
+ * before calling.
+ *
+ * @param led        Which LED to describe. @sa ora_led_t
+ * @param state_out  Structure to fill in, with its size field already set
+ * @return ORA_RESULT_OK on success; ORA_RESULT_INVALID_ARG if @p state_out is
+ *         NULL or @p led is not an LED this firmware knows;
+ *         ORA_RESULT_INVALID_SIZE if @p state_out->size is zero
+ */
+typedef ora_result_t (*ora_led_get_fn_t)(
+    uint8_t led,
+    ora_led_state_t *state_out
 );
 
 /**

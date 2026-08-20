@@ -776,6 +776,103 @@ GPIO state  ·  One ROM Fire 28 (rev C)  ·  RP235xB  ·  serving 27512
   13 GPIOs with no function are hidden - use --all to show them.
 ```
 
+### inspect led
+
+Show what the status LED is doing now — the mode it is in, how fast it is
+running, and which GPIO it is on. Use [`inspect rgb`](#inspect-rgb) for the RGB
+LED some models carry.
+
+```
+onerom inspect led
+```
+
+On a `fire-28-c` running `onerom control led flame --period 900`:
+
+```
+Status LED:
+  Mode:       flame
+  Period:     900ms
+```
+
+`Period` appears only for the modes that repeat.
+
+`--verbose` adds the GPIO the LED is on, and says so where the board wires both
+LEDs to one pin — a `fire-24-f` does, a `fire-28-c` does not.
+
+No options. Device required: yes, and it must be running with the USB system
+plugin.
+
+Needs One ROM firmware v0.7.2 or later with the v0.2.2 or later USB system
+plugin. An older One ROM says so rather than reporting something invented.
+
+### inspect rgb
+
+Show what the RGB LED is doing now — the mode, the colour, the brightness, how
+fast it is running, and which GPIO it is on.
+
+```
+onerom inspect rgb
+```
+
+On a `fire-28-c` running
+`onerom control rgb breathe --colour cyan --brightness 60 --period 4000`:
+
+```
+RGB LED:
+  Mode:       breathe
+  Colour:     #00FFFF (cyan)
+  Brightness: 60%
+  Period:     4000ms
+```
+
+A colour is named where it is one of the names `--colour` accepts. One that is
+not prints as hex alone — `#7F3C22`.
+
+Each repeating mode has a shortest period it can run at, and a shorter one is
+refused rather than quietly run at the minimum:
+
+| Mode | Shortest period |
+|---|---|
+| `cycle`, `breathe` | 1000ms |
+| `flame` | 500ms |
+| `beacon`, `blink` | 50ms |
+
+`cycle` walks the hues itself rather than showing a colour you set, so no
+`Colour` is reported while it runs:
+
+```
+RGB LED:
+  Mode:       cycle
+  Brightness: 25%
+  Period:     3000ms
+```
+
+`--verbose` adds the GPIO:
+
+```
+RGB LED:
+  Mode:       cycle
+  Brightness: 25%
+  Period:     3000ms
+  GPIO:       44
+```
+
+Only some One ROM models have an RGB LED. On a board without one this reports:
+
+```
+RGB LED: this board does not have one
+```
+
+Where the RGB LED and the status LED share a GPIO — as they do on a
+`fire-24-f` — both commands report the same pin and say that it is shared. Both
+LEDs still work, and no mode is restricted.
+
+No options. Device required: yes, and it must be running with the USB system
+plugin.
+
+Needs One ROM firmware v0.7.2 or later with the v0.2.2 or later USB system
+plugin.
+
 ### inspect header
 
 Draw the connected device's pin (jumper / programming) header as ASCII. The
@@ -937,9 +1034,15 @@ onerom control reboot
 
 ### control led
 
+Control the status LED — the single-colour LED every One ROM has. The RGB LED
+that some models carry is driven by `control rgb` instead.
+
 ```
 onerom control led on
 onerom control led off
+onerom control led beacon --hold 10000
+onerom control led flame --period 1200
+onerom control led blink
 ```
 
 | Subcommand | Description |
@@ -948,8 +1051,93 @@ onerom control led off
 | `off` | Turn the status LED off. |
 | `beacon` | Beacon the LED to identify a physical unit. |
 | `flame` | Flame effect on the LED. |
+| `blink` | Blink the LED on and off until something changes it. |
 
-None take options. Device required: yes.
+| Option | Description | Subcommands |
+|---|---|---|
+| `--hold <MS>` | Stay in this mode for this many milliseconds, then go back to what the LED was doing before. The device times it, so it completes even if the command does not. Maximum 60000. | all |
+| `--period <MS>` | Milliseconds for one repetition — one blink for `beacon` and `blink`, one pass of the flicker for `flame`. Defaults to 100, 1000 and 575 respectively. Minimum 50 for `beacon` and `blink`, 500 for `flame`. | `beacon`, `blink`, `flame` |
+
+`beacon` ends by itself after 2500ms unless `--hold` says otherwise. `blink` is
+the same on-and-off toggle but slower and unbounded — it runs until something
+changes it, or until a `--hold` you give it expires.
+
+The status LED is lit or dark, so it takes no colour and no brightness. `cycle`
+and `breathe` are built out of a colour and are the two modes it cannot do.
+
+`--hold` and `--period` need One ROM firmware v0.7.2 or later with the v0.2.2 or
+later USB system plugin. The CLI checks before sending, and says so rather than
+reporting success on a device that would ignore them. A plain `on`, `off`,
+`beacon` or `flame` works on any One ROM and costs no extra exchange with the
+device.
+
+Device required: yes.
+
+### control rgb
+
+Control the RGB LED that some One ROM models carry. For the single-colour status
+LED every model has, see [`control led`](#control-led).
+
+```
+onerom control rgb on --colour red
+onerom control rgb on --colour #FF8000 --brightness 40
+onerom control rgb cycle --period 3000
+onerom control rgb off
+```
+
+| Subcommand | Description |
+|---|---|
+| `on` | Light the LED at a colour. |
+| `off` | Turn the LED off. |
+| `beacon` | Beacon the LED to identify a physical unit. Ends by itself after 2500ms. |
+| `flame` | Flame effect on the LED. |
+| `cycle` | Rotate through the hues. |
+| `breathe` | Fade the colour up and down. |
+| `blink` | Alternate the colour with dark. |
+
+| Option | Description | Subcommands |
+|---|---|---|
+| `--colour <COLOUR>` (alias `--color`) | A name, or hex written `#RRGGBB` or `0xRRGGBB`. Defaults to red. | all but `off` and `cycle` |
+| `--brightness <PERCENT>` | 1 to 100. Omit for the device's default, which is deliberately modest — an RGB LED at full output is uncomfortable at desk distance. | all but `off` |
+| `--period <MS>` | Milliseconds for one repetition. | `beacon`, `flame`, `cycle`, `breathe`, `blink` |
+| `--hold <MS>` | Stay in this mode for this many milliseconds, then go back to what the LED was doing before. The device times it, so it completes even if the command does not. Maximum 60000. | all |
+
+The named colours are `red`, `green`, `blue`, `white`, `yellow`, `cyan`,
+`magenta`, `orange`, `purple` and `pink`.
+
+`cycle` chooses its own colours, so it takes no `--colour`.
+
+Each repeating mode has a shortest period it can run at, and a shorter one is
+refused rather than quietly run at the minimum:
+
+| Mode | Default period | Shortest period |
+|---|---|---|
+| `cycle`, `breathe` | 5000ms | 1000ms |
+| `flame` | 575ms | 500ms |
+| `blink` | 1000ms | 50ms |
+| `beacon` | 100ms | 50ms |
+
+Nothing is printed unless the CLI is verbose:
+
+```
+$ onerom --verbose control rgb on --colour orange --brightness 40
+RGB LED on
+```
+
+Read back what the LED is doing with [`inspect rgb`](#inspect-rgb):
+
+```
+RGB LED:
+  Mode:       on
+  Colour:     #FF6000 (orange)
+  Brightness: 40%
+```
+
+Only some One ROM models have an RGB LED. On a board without one, these commands
+say so rather than appearing to work. Needs One ROM firmware v0.7.2 or later
+with the v0.2.2 or later USB system plugin.
+
+Device required: yes, and it must be running with the USB system plugin.
 
 ### control poke
 

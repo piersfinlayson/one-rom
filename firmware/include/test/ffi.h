@@ -34,4 +34,7 @@ uint8_t ffi_serving_alg(ffi_serving_alg_t *out);
 void ffi_epio_setup_sram(epio_t *epio);
 void ffi_epio_setup_dma_chain(epio_t *epio, uint8_t word_size);
 void ffi_epio_arm_monitor(epio_t *epio);
+void ffi_led_frame(void);
+uint32_t ffi_led_last_pixel(uint32_t *count_out);
+uint8_t ffi_led_next_deadline(uint32_t *ms_out);
 void ffi_set_logging(uint8_t enabled);

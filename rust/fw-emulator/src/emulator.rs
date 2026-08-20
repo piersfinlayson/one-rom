@@ -950,6 +950,38 @@ impl Emulator {
         unsafe { ffi::stub_advance_timer_us(delta_us) };
     }
 
+    /// Run the LED engine's frame, the way TIMER0 alarm 1 does on a device.
+    ///
+    /// There is no alarm in this process, so a harness stands where the
+    /// interrupt does: move the clock to [`Emulator::led_next_deadline_ms`] and
+    /// call this. It advances whatever is animating and ends a hold that has
+    /// expired.
+    pub fn led_frame(&self) {
+        unsafe { ffi::ffi_led_frame() };
+    }
+
+    /// When the LED engine next wants a frame, in the milliseconds a plugin
+    /// sees, or `None` when nothing is animating and no hold is running.
+    pub fn led_next_deadline_ms(&self) -> Option<u32> {
+        let mut ms: u32 = 0;
+        let have = unsafe { ffi::ffi_led_next_deadline(&raw mut ms) };
+
+        (have != 0).then_some(ms)
+    }
+
+    /// The last colour the LED engine sent to the RGB LED, and how many it has
+    /// sent.
+    ///
+    /// The value is what the chip reads - green, red then blue, with brightness
+    /// and any fade already applied - so this is the LED's actual output rather
+    /// than what was asked for.
+    pub fn led_last_pixel(&self) -> (u32, u32) {
+        let mut count: u32 = 0;
+        let pixel = unsafe { ffi::ffi_led_last_pixel(&raw mut count) };
+
+        (pixel, count)
+    }
+
     /// Script the counter's value across successive reads of its halves, one
     /// entry consumed per half-read, holding at the last entry once spent.
     ///

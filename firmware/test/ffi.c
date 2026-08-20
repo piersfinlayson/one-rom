@@ -123,6 +123,24 @@ void ffi_epio_arm_monitor(epio_t *epio) {
     set_host_monitor_dma_configure(monitor_dma_configure_cb);
 }
 
+// The LED engine's frame, which a device reaches through TIMER0 alarm 1.  There
+// is no alarm in this process, so a harness stands where the interrupt does:
+// it moves the clock to ffi_led_next_deadline() and calls this.
+void ffi_led_frame(void) {
+    pio_led_frame();
+}
+
+// When the engine next wants a frame, in the milliseconds a plugin sees.
+// Returns 0 when nothing is animating and no hold is running.
+uint8_t ffi_led_next_deadline(uint32_t *ms_out) {
+    return pio_led_next_deadline(ms_out);
+}
+
+// The last colour the engine sent to the RGB LED, and how many it has sent.
+uint32_t ffi_led_last_pixel(uint32_t *count_out) {
+    return pio_led_last_pixel(count_out);
+}
+
 void ffi_set_logging(uint8_t enabled) {
     logging_enabled = enabled;
 }

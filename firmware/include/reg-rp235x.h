@@ -269,10 +269,15 @@
 // TIMER0 Registers
 #define TIMER0_TIMELR       (*((volatile uint32_t *)(TIMER0_BASE + 0x0C)))
 #define TIMER0_ALARM0       (*((volatile uint32_t *)(TIMER0_BASE + 0x10)))
+#define TIMER0_ALARM1       (*((volatile uint32_t *)(TIMER0_BASE + 0x14)))
 #define TIMER0_TIMERAWH     (*((volatile uint32_t *)(TIMER0_BASE + 0x24)))
 #define TIMER0_TIMERAWL     (*((volatile uint32_t *)(TIMER0_BASE + 0x28)))
 #define TIMER0_INTE         (*((volatile uint32_t *)(TIMER0_BASE + 0x40)))
 #define TIMER0_INTR         (*((volatile uint32_t *)(TIMER0_BASE + 0x3C)))
+
+// Alarm bits, the same positions in INTR, INTE and INTF
+#define TIMER0_INT_ALARM0   (1 << 0)
+#define TIMER0_INT_ALARM1   (1 << 1)
 
 // XIP_CTRL Registers
 #define XIP_CTRL_CTRL       (*((volatile uint32_t *)(XIP_CTRL_BASE + 0x00)))

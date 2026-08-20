@@ -2,6 +2,33 @@
 
 ## v0.4.0 - 2026-??-??
 
+- **`onerom control rgb` drives the RGB LED on the models that have one.**
+  `on`, `off`, `beacon`, `flame`, `cycle`, `breathe` and `blink`, with
+  `--colour` (ten names or `#RRGGBB`), `--brightness`, `--period` and `--hold`.
+  The device times a hold, so it completes even if the command does not. A
+  board without an RGB LED says so rather than appearing to work. Needs
+  firmware v0.7.2 with the v0.2.2 USB plugin.
+- **`onerom control led blink`** blinks the status LED on and off until
+  something changes it, or for a `--hold` if you give it one. A slower,
+  unbounded sibling of `beacon`.
+- **Each LED mode now has a shortest period it can run at**, and a shorter one
+  is refused with a message naming that mode's minimum rather than being
+  accepted and quietly run slower. 1000ms for `cycle` and `breathe`, 500ms for
+  `flame`, 50ms for `beacon` and `blink`.
+- **`onerom inspect led` and `onerom inspect rgb` say what each LED is doing.**
+  The mode it is in, how fast it is running and which GPIO it is on, plus the
+  colour and brightness for the RGB LED, read from the One ROM rather than
+  remembered by the CLI. A board with no RGB LED reports that rather than
+  failing, and where the two LEDs share a GPIO both commands say so. Needs
+  firmware v0.7.2 with the v0.2.2 USB plugin.
+- **`onerom control led` gains `--hold` and `--period`.** All four
+  subcommands take `--hold <MS>` to run the mode for a bounded time and then go
+  back to whatever the LED was doing, and `beacon` and `flame` take
+  `--period <MS>` for one blink and one pass of the flicker. The device times
+  the hold, so it finishes even if the command does not. Needs firmware v0.7.2
+  with the v0.2.2 USB plugin — the CLI checks first and says so, rather than
+  reporting success on a device that would ignore them. A plain `on`, `off`,
+  `beacon` or `flame` is unchanged and still works on any One ROM.
 - **Breaking: `--name` now names the One ROM, not the configuration.** It is an
   alias for `--instance-name` on `program` and `firmware build`, where it was an
   alias for `--config-name` — a command line using `--name` still runs and names

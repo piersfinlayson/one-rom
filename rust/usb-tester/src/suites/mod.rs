@@ -26,7 +26,7 @@ pub static SUITES: &[Suite] = &[
     },
     Suite {
         name: "led",
-        blurb: "does the status LED do as it is told?",
+        blurb: "do the device's LEDs do as they are told?",
         scenarios: led::SCENARIOS,
     },
     Suite {

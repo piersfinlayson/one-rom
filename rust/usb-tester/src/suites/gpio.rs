@@ -53,9 +53,33 @@ fn drive(
     Ok(dev.dispatch(CMD_GPIO_SET, 0, &args))
 }
 
-/// The highest GPIOs, which serving is least likely to want.
-fn free_pins(ctx: &Ctx, count: u8) -> Vec<u8> {
-    ((ctx.num_gpios - count)..ctx.num_gpios).collect()
+/// What ora_gpio_use_t calls a GPIO One ROM itself is not using.
+const GPIO_USE_FREE: u8 = 0;
+
+/// The highest GPIOs One ROM is not using, asked of the device.
+///
+/// Counting down from the top is not enough on its own.  A fire-24-f has 30
+/// GPIOs and its status LED on GPIO 29, so the top pin is one the firmware
+/// drives from boot - and a scenario asking "did my request drive this pin"
+/// cannot tell that apart from a pin that was already driven.  The device knows
+/// what it has claimed, so it is asked rather than guessed at.
+///
+/// Returns fewer than `count` where the board has fewer free GPIOs, which is
+/// what lets a scenario skip rather than assert against pins it could not get.
+fn free_pins(dev: &Device, ctx: &Ctx, count: u8) -> Vec<u8> {
+    let mut pins: Vec<u8> = (0..ctx.num_gpios)
+        .rev()
+        .filter(|&gpio| {
+            let (result, info) = dev.emulator().gpio_query(gpio);
+            result == OraResult::Ok && info.gpio_use == GPIO_USE_FREE
+        })
+        .take(usize::from(count))
+        .collect();
+
+    // Back into ascending order, so a scenario reporting a pin reports the same
+    // one whichever end it was taken from.
+    pins.reverse();
+    pins
 }
 
 // ---------------------------------------------------------------------------
@@ -66,7 +90,7 @@ fn free_pins(ctx: &Ctx, count: u8) -> Vec<u8> {
 /// always released to an input would be wrong in a way a test that only checked
 /// "no longer driven" would miss.
 fn a_hold_ends_in_the_state_it_was_given(dev: &mut Device, ctx: &Ctx) -> Result<Outcome, String> {
-    let gpio = free_pins(ctx, 1)[0];
+    let gpio = free_pins(dev, ctx, 1)[0];
 
     // High for 50ms, then low — driven, not released.
     if drive(dev, gpio, GPIO_HIGH, GPIO_LOW, 50)? != OK {
@@ -96,7 +120,7 @@ fn a_hold_ends_in_the_state_it_was_given(dev: &mut Device, ctx: &Ctx) -> Result<
 /// which is what would happen if the plugin claimed a second slot rather than
 /// reusing the pin's own.
 fn a_later_command_supersedes_a_hold(dev: &mut Device, ctx: &Ctx) -> Result<Outcome, String> {
-    let gpio = free_pins(ctx, 1)[0];
+    let gpio = free_pins(dev, ctx, 1)[0];
 
     if drive(dev, gpio, GPIO_HIGH, GPIO_INPUT, 50)? != OK {
         return Err("the first hold was refused".to_string());
@@ -137,7 +161,7 @@ fn a_later_command_supersedes_a_hold(dev: &mut Device, ctx: &Ctx) -> Result<Outc
 /// Otherwise the earlier hold's deadline would release a pin the host has since
 /// asked to hold indefinitely.
 fn an_unbounded_command_cancels_a_hold(dev: &mut Device, ctx: &Ctx) -> Result<Outcome, String> {
-    let gpio = free_pins(ctx, 1)[0];
+    let gpio = free_pins(dev, ctx, 1)[0];
 
     if drive(dev, gpio, GPIO_HIGH, GPIO_INPUT, 50)? != OK {
         return Err("the bounded hold was refused".to_string());
@@ -166,11 +190,12 @@ fn an_unbounded_command_cancels_a_hold(dev: &mut Device, ctx: &Ctx) -> Result<Ou
 /// holds exist to rule out, so the refusal has to come before anything is
 /// driven.
 fn a_hold_with_no_slot_left_is_refused(dev: &mut Device, ctx: &Ctx) -> Result<Outcome, String> {
-    let pins = free_pins(ctx, RELEASES + 1);
+    let pins = free_pins(dev, ctx, RELEASES + 1);
     if pins.len() < usize::from(RELEASES) + 1 {
         return Ok(Outcome::Skip(format!(
-            "the device has {} GPIOs, too few to fill {RELEASES} release slots and ask for another",
-            ctx.num_gpios
+            "this board has {} GPIOs One ROM is not using, too few to fill {RELEASES} release \
+             slots and ask for another",
+            pins.len()
         )));
     }
 
@@ -216,7 +241,7 @@ fn a_hold_with_no_slot_left_is_refused(dev: &mut Device, ctx: &Ctx) -> Result<Ou
 /// and releases the pin the moment the command lands, most of a hold early.
 /// That is why the check before the wrap matters more than the one after it.
 fn a_hold_survives_the_clock_wrapping(dev: &mut Device, ctx: &Ctx) -> Result<Outcome, String> {
-    let gpio = free_pins(ctx, 1)[0];
+    let gpio = free_pins(dev, ctx, 1)[0];
 
     // 20ms short of the wrap, holding for 50 - so the deadline lands 30ms the
     // far side of it.  Placed against the clock the device actually has, not

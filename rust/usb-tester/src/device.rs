@@ -294,12 +294,98 @@ impl<'a> Device<'a> {
         )
     }
 
+    /// What one of the device's LEDs is doing, read through the firmware's own
+    /// `ORA_ID_LED_GET`.
+    ///
+    /// The firmware's engine holds an LED's mode and drives it from there, so
+    /// this is the live state rather than the plugin's account of what it asked
+    /// for — which is what lets a scenario see whether the colour, brightness
+    /// and mode the wire carried arrived where they were aimed.
+    pub fn led(&self, led: u8) -> Result<LedState, String> {
+        use onerom_fw_emulator::ffi as fw;
+
+        // Pre-filled with a sentinel, so a field the firmware leaves alone is
+        // not read as one it wrote as zero.
+        let mut state = fw::ora_led_state_t {
+            size: size_of::<fw::ora_led_state_t>() as u8,
+            led: 0xFF,
+            present: 0xFF,
+            mode: 0xFF,
+            brightness: 0xFF,
+            r: 0xFF,
+            g: 0xFF,
+            b: 0xFF,
+            gpio: 0xFF,
+            shared_gpio: 0xFF,
+            period_ms: 0xFFFF,
+        };
+
+        // SAFETY: the firmware's own lookup, called with a structure whose size
+        // field bounds what it may write.
+        let result = unsafe {
+            let ptr = fw::ora_fn_lookup(fw::api_id_t_ORA_ID_LED_GET);
+            if ptr.is_null() {
+                return Err("this firmware has no LED engine to read".to_string());
+            }
+            let get: fw::ora_led_get_fn_t = std::mem::transmute(ptr);
+            get.unwrap()(led, &mut state)
+        };
+
+        let result = onerom_fw_emulator::OraResult::from(result);
+        if !result.is_ok() {
+            return Err(format!("could not read LED {led}: {result:?}"));
+        }
+
+        Ok(LedState {
+            present: state.present != 0,
+            mode: state.mode,
+            brightness: state.brightness,
+            r: state.r,
+            g: state.g,
+            b: state.b,
+            period_ms: state.period_ms,
+            gpio: state.gpio,
+            shared_gpio: state.shared_gpio != 0,
+        })
+    }
+
     /// Drive the status LED as a second plugin would.
     ///
     /// The LED is a shared channel rather than this plugin's own, so a scenario
     /// can move it from underneath and see whether the USB plugin puts it back.
     pub fn set_status_led_elsewhere(&mut self, on: bool) {
         self.emu.set_status_led(on);
+    }
+
+    /// Run the LED engine's frame, as TIMER0 alarm 1 does on a device.
+    ///
+    /// The engine drives itself from an interrupt this process does not have,
+    /// so a scenario stands where that interrupt does.  Pair it with
+    /// [`Device::led_deadline_ms`]: move the clock there, then call this.
+    pub fn led_frame(&mut self) {
+        self.emu.led_frame();
+    }
+
+    /// When the LED engine next wants a frame, in the milliseconds the plugin
+    /// sees, or `None` when nothing is animating and no hold is running.
+    pub fn led_deadline_ms(&self) -> Option<u32> {
+        self.emu.led_next_deadline_ms()
+    }
+
+    /// The colour the RGB LED is showing and how many the engine has sent.
+    ///
+    /// What the chip reads, with brightness and any fade applied, so this is
+    /// the LED's output rather than what a request asked for.
+    pub fn led_pixel(&self) -> (u32, u32) {
+        self.emu.led_last_pixel()
+    }
+
+    /// What a pin is actually at, from the pad model the firmware drives.
+    ///
+    /// A device's own `ora_gpio_query`, so this is the pin rather than what any
+    /// piece of firmware believes about it.
+    pub fn gpio_level(&self, gpio: u8) -> u8 {
+        self.emu.gpio_query(gpio).1.level
     }
 
     /// Move the device's clock on.
@@ -319,6 +405,32 @@ impl<'a> Device<'a> {
     pub fn uptime_ms(&self) -> u32 {
         self.emu.get_plugin_uptime_ms()
     }
+}
+
+/// What one of the device's LEDs is doing, as the firmware's LED engine
+/// reports it.
+///
+/// The fields the engine was told, and whether the board has the LED at all.
+/// Which GPIO it is on and whether that pin is shared describe the board rather
+/// than the request, so they are left where the firmware keeps them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LedState {
+    /// Whether this board has this LED.
+    pub present: bool,
+    /// `ora_led_mode_t` — off, on, beacon or flame, which SET_LED's
+    /// sub-commands number the same way.
+    pub mode: u8,
+    /// Brightness as a percentage.
+    pub brightness: u8,
+    pub r: u8,
+    pub g: u8,
+    pub b: u8,
+    /// How long one repetition of the mode takes, in milliseconds.
+    pub period_ms: u16,
+    /// The GPIO this LED is on, or 0xFF where the board has none.
+    pub gpio: u8,
+    /// Whether this LED shares its GPIO with the other one.
+    pub shared_gpio: bool,
 }
 
 /// The largest control transfer this harness will take.

@@ -177,7 +177,7 @@ own.
 |--------|------|--------------|
 | [usb](plugins/system/usb) | system | The device's own USB stack, so a running One ROM stays on the bus.  Exposes the ROM being served for live read and write, and the `picobootx` extended PICOBOOT interface. |
 | [host-control](plugins/user/host-control) | user | A full [RBCP](#rbcp--talking-to-the-host-system) implementation. |
-| [rgb](plugins/user/rgb) | user | Cycles the NeoPixel on RGB boards. |
+| [rgb](plugins/user/rgb) | user | Cycles the NeoPixel on RGB boards.  Superseded by the USB plugin's RGB support, reached with `onerom control rgb`. |
 | [activity](plugins/user/activity) | user | Blinks the status LED when the host is reading the ROM. |
 | [blink](plugins/user/blink) | user | Minimal example. |
 

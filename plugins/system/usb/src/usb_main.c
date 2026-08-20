@@ -92,24 +92,10 @@ uint32_t tusb_time_millis_api(void) {
 }
 
 void usb_plugin_task(void) {
-    // Handle incoming pending command
-    if (context.pending.cmd != ONEROM_PENDING_NONE) {
-        switch (context.pending.cmd) {
-            case ONEROM_PENDING_SET_LED:
-                led_handle_pending_set();
-                break;
-
-            default:
-                LOG("usb_plugin_task: unhandled pending cmd %u", context.pending.cmd);
-                break;
-        }
-        context.pending.cmd = ONEROM_PENDING_NONE;
-    }
-
-    led_handle_ongoing_led_modes();
-
-    // ONEROM_CMD_GPIO_SET is applied in the dispatch handler.  Only the timed
-    // release of a bounded hold is deferred to here.
+    // ONEROM_CMD_SET_LED and ONEROM_CMD_GPIO_SET are both applied in the
+    // dispatch handler.  Only the timed release of a bounded GPIO hold is
+    // deferred to here - an LED mode that runs on is the firmware engine's to
+    // keep going, not this plugin's.
     gpio_handle_pending_releases();
 }
 
@@ -193,6 +179,9 @@ void usb_init(ora_lookup_fn_t ora_lookup_fn) {
     // once, here, because none of it can change while the plugin runs - and
     // because probing it per request would put ORA lookups on the command path.
     gpio_init_caps();
+
+    // After gpio_init_caps(), which clears the capability word.
+    led_init_caps();
 
     // Resolved once here, with the rest of the one-time API resolution, since
     // none of it changes while the plugin runs.

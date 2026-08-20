@@ -335,6 +335,24 @@ pub enum Error {
     #[error("A hold of {0}ms is longer than this One ROM allows.\n  Its maximum is {1}ms.")]
     GpioHoldTooLong(u32, u32),
 
+    #[error(
+        "This One ROM does not support --hold or --period.\n  {0}\n  Its USB system plugin is too old."
+    )]
+    LedArgsUnsupported(String),
+
+    #[error(
+        "This One ROM does not support querying LED state.\n  {0}\n  Its firmware or USB system plugin is too old."
+    )]
+    LedQueryUnsupported(String),
+
+    #[error(
+        "This One ROM does not support RGB LED control.\n  {0}\n  Its firmware or USB system plugin is too old."
+    )]
+    RgbUnsupported(String),
+
+    #[error("This One ROM has no RGB LED.\n  {0}")]
+    RgbAbsent(String),
+
     #[error("This One ROM has no GPIO{0}.\n  It reports {1} GPIOs, GPIO0 upwards.")]
     GpioOutOfRange(u8, u8),
 

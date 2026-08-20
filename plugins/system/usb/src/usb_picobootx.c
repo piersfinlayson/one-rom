@@ -393,7 +393,8 @@ pb_status_t app_picoboot_flash_erase_prepare(
 // under-producing hangs its read and over-producing desynchronises the stream.
 static pb_status_t onerom_in_xfer_begin(
     const picoboot_cmd_t *cmd,
-    uint8_t first_gpio
+    uint8_t first_gpio,
+    uint8_t led_id
 ) {
     if (cmd->transfer_len == 0u ||
         cmd->transfer_len > ONEROM_MAX_TRANSFER_LEN) {
@@ -403,6 +404,7 @@ static pb_status_t onerom_in_xfer_begin(
     context.in_xfer.offset = 0u;
     context.in_xfer.total = cmd->transfer_len;
     context.in_xfer.first_gpio = first_gpio;
+    context.in_xfer.led_id = led_id;
 
     return PB_STATUS_OK;
 }
@@ -414,7 +416,32 @@ static pb_status_t onerom_in_xfer_begin(
 // for more gets zero padding, and an older host asking for less gets a prefix,
 // which is exactly what struct_len lets it make sense of.
 static pb_status_t onerom_caps_prepare(const picoboot_cmd_t *cmd) {
-    return onerom_in_xfer_begin(cmd, 0u);
+    return onerom_in_xfer_begin(cmd, 0u, 0u);
+}
+
+// Validate ONEROM_CMD_LED_QUERY and prepare its response.
+//
+// Any transfer_len within the bound is accepted rather than only
+// ONEROM_LED_STATE_LEN, for the reason onerom_caps_prepare gives.  An LED this
+// board does not have is not refused here - it is answered, with present clear.
+static pb_status_t onerom_led_query_prepare(const picoboot_cmd_t *cmd) {
+    const onerom_led_query_args_t *args =
+        (const onerom_led_query_args_t *)cmd->args;
+    onerom_led_state_t state;
+    pb_status_t status;
+
+    if (!led_can_query()) {
+        return PB_STATUS_UNKNOWN_CMD;
+    }
+
+    // Asked here rather than in fill, so a channel this device does not know is
+    // refused before a data phase the host would then have to drain.
+    status = led_fill_state(args->led_id, &state);
+    if (status != PB_STATUS_OK) {
+        return status;
+    }
+
+    return onerom_in_xfer_begin(cmd, 0u, args->led_id);
 }
 
 // Validate ONEROM_CMD_GPIO_QUERY and prepare its response.
@@ -441,7 +468,7 @@ static pb_status_t onerom_gpio_query_prepare(const picoboot_cmd_t *cmd) {
         return PB_STATUS_INVALID_TRANSFER_LEN;
     }
 
-    return onerom_in_xfer_begin(cmd, args->first_gpio);
+    return onerom_in_xfer_begin(cmd, args->first_gpio, 0u);
 }
 
 static pb_status_t onerom_picobootx_dispatch(
@@ -451,7 +478,10 @@ static pb_status_t onerom_picobootx_dispatch(
     uint32_t *bytes_written,
     void *ctx
 ) {
-    (void)buf; (void)buf_len; (void)bytes_written;
+    // ctx is the plugin context, which no command reaching this dispatch needs
+    // any longer: the LED commands go to the firmware's engine and the GPIO
+    // commands keep their own state.
+    (void)buf; (void)buf_len; (void)bytes_written; (void)ctx;
 
     // Every One ROM command carries all 16 argument bytes.  The data phase is
     // per-command from here on: rejecting any command with a transfer_len, as
@@ -464,8 +494,6 @@ static pb_status_t onerom_picobootx_dispatch(
         return PB_STATUS_INVALID_CMD_LENGTH;
     }
 
-    usb_plugin_context_t *uctx = (usb_plugin_context_t *)ctx;
-
     // PICOBOOT_DIR_IN is the host's statement that it will read data back, not
     // part of the command ID, so it has to come off before matching.  Without
     // this, ONEROM_CMD_GET_CAPS and ONEROM_CMD_GPIO_QUERY arrive as 0x82 and
@@ -477,13 +505,13 @@ static pb_status_t onerom_picobootx_dispatch(
             if (cmd->transfer_len != 0u) {
                 return PB_STATUS_INVALID_CMD_LENGTH;
             }
-            // Deferred to the task loop: an LED mode is a state machine that
-            // outlives the command, and nothing about it can be refused.
             const onerom_set_led_args_t *args = (const onerom_set_led_args_t *)cmd->args;
-            uctx->pending.cmd = ONEROM_PENDING_SET_LED;
-            uctx->pending.args.set_led.led_id = args->led_id;
-            uctx->pending.args.set_led.sub_cmd = (onerom_led_subcmd_t)args->sub_cmd;
-            return PB_STATUS_OK;
+
+            // Both LEDs go to the firmware's engine, which holds the mode
+            // itself, so the command is applied here and its refusal reaches
+            // the host.  A channel this device does not have, and a mode the
+            // named LED cannot do, are both refused by the engine.
+            return led_handle_set(args);
         }
 
         case ONEROM_CMD_GET_CAPS:
@@ -498,6 +526,9 @@ static pb_status_t onerom_picobootx_dispatch(
 
         case ONEROM_CMD_GPIO_QUERY:
             return onerom_gpio_query_prepare(cmd);
+
+        case ONEROM_CMD_LED_QUERY:
+            return onerom_led_query_prepare(cmd);
 
         default:
             return PB_STATUS_UNKNOWN_CMD;
@@ -551,6 +582,24 @@ static pb_status_t onerom_picobootx_fill(
             onerom_caps_bytes(buf, context.in_xfer.offset, len);
             break;
 
+        case ONEROM_CMD_LED_QUERY: {
+            // Read again rather than kept from prepare: the response is 16
+            // bytes and the engine can answer at any time, so re-reading costs
+            // nothing and keeps no copy of it in the plugin's context.
+            onerom_led_state_t state;
+            pb_status_t st = led_fill_state(context.in_xfer.led_id, &state);
+            if (st != PB_STATUS_OK) {
+                return st;
+            }
+
+            const uint8_t *src = (const uint8_t *)&state;
+            for (uint32_t i = 0u; i < len; i++) {
+                uint32_t pos = context.in_xfer.offset + i;
+                buf[i] = (pos < sizeof(state)) ? src[pos] : 0u;
+            }
+            break;
+        }
+
         case ONEROM_CMD_GPIO_QUERY: {
             // Entries are produced one at a time, straight from the firmware,
             // so nothing has to be buffered between calls; the offset is the
@@ -575,7 +624,7 @@ static pb_status_t onerom_picobootx_fill(
         }
 
         default:
-            // Unreachable: dispatch only starts a data phase for the two
+            // Unreachable: dispatch only starts a data phase for the three
             // commands above.
             ERR("Unexpected fill for cmd_id 0x%02x", cmd->cmd_id);
             return PB_STATUS_UNKNOWN_ERROR;

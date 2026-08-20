@@ -180,30 +180,28 @@ size_t plugin_get_free_mem(void) {
 }
 
 void ora_set_status_led(uint8_t on) {
-    uint8_t pin = HW->gpio_status;
+    ora_led_request_t req = {0};
 
-    // Pin presence is the only gate: a plugin may drive the status LED even if
-    // it was configured off.
-    if (pin >= MAX_GPIOS) {
-        return;
+    // The engine owns both LEDs, so this goes through it rather than driving
+    // the pin here.  Otherwise the engine's idea of what the status LED is
+    // doing and the pin's actual level part company the moment a plugin calls
+    // this during a beacon.
+    req.size = sizeof(req);
+    req.led  = ORA_LED_STATUS;
+    req.mode = on ? ORA_LED_MODE_ON : ORA_LED_MODE_OFF;
+
+    if (pio_led_set(&req) != ORA_RESULT_OK) {
+        // This board has no status LED pin.  status_led_enabled is the live
+        // state and plugin coordination channel (see ora_set_status_led_fn_t
+        // in api.h), so it is recorded whether or not there is a pin to drive.
+        RUNTIME->status_led_enabled = on ? 1 : 0;
     }
 
-    // status_led_enabled is the live state and plugin coordination channel (see
-    // ora_set_status_led_fn_t in api.h), so it is recorded whether or not there
-    // is a pin to drive.  A test build keeps it for the same reason a device
-    // does - it is what the other plugin reads - and it is also the only way a
-    // host test can see that the LED moved.
-    RUNTIME->status_led_enabled = on ? 1 : 0;
-
-#if !defined(TEST_BUILD)
-    if (on) {
-        status_led_on(pin);
-    } else {
-        status_led_off(pin);
-    }
-#else // TEST_BUILD
+#if defined(TEST_BUILD)
+    // A host test sees the LED move through status_led_enabled.  The line is
+    // what makes the sequence readable in the harness's output.
     LOG("ORA set status LED %d", on);
-#endif // !TEST_BUILD
+#endif // TEST_BUILD
 }
 
 void ora_setup_usb(void) {
@@ -346,7 +344,7 @@ static inline uint32_t timer_raw_lo(void) {
 // Read the high half either side of the low one and retry while it moved.  On
 // exit the low half was read between two reads of an unchanged high half, so
 // the pair belongs to a single instant.
-static uint64_t timer_read_us64(void) {
+uint64_t onerom_timer_us64(void) {
     uint32_t hi = timer_raw_hi();
     uint32_t lo = timer_raw_lo();
     uint32_t hi_again = timer_raw_hi();
@@ -362,7 +360,7 @@ uint32_t ora_get_plugin_uptime_ms(void) {
     // Divide the full 64-bit microsecond count, then truncate.  That is what
     // puts the wrap at 49.7 days.  Dividing a 32-bit microsecond read instead
     // would wrap every 71 minutes.
-    return (uint32_t)(timer_read_us64() / 1000u);
+    return (uint32_t)(onerom_timer_us64() / 1000u);
 }
 
 uint32_t ora_get_chip_size_from_type(uint32_t chip_type) {
@@ -414,6 +412,14 @@ ora_result_t ora_setup_address_monitor(
     void *reserved
 ) {
     return pio_setup_address_monitor(ring_buf, ring_entries_log2, mode, data_size, reserved);
+}
+
+ora_result_t ora_led_set(const ora_led_request_t *req) {
+    return pio_led_set(req);
+}
+
+ora_result_t ora_led_get(uint8_t led, ora_led_state_t *state_out) {
+    return pio_led_get(led, state_out);
 }
 
 uint32_t ora_map_addr_to_phys(uint32_t logical_addr) {
@@ -1650,6 +1656,10 @@ void *ora_fn_lookup(api_id_t id) {
             return ora_get_metadata_str;
         case ORA_ID_GET_METADATA_UINT:
             return ora_get_metadata_uint;
+        case ORA_ID_LED_SET:
+            return ora_led_set;
+        case ORA_ID_LED_GET:
+            return ora_led_get;
         case ORA_ID_GET_METADATA_UINT_AT:
             return ora_get_metadata_uint_at;
 
@@ -1933,6 +1943,13 @@ void irq_handler_timer0_irq_0(void) {
         ora_irq_handler_t handler = (ora_irq_handler_t)RUNTIME->timer0_irq_0_handler;
         handler();
     }
+}
+
+void irq_handler_timer0_irq_1(void) {
+    // The alarm is one-shot: acknowledging it here and re-arming inside the
+    // frame is what makes the next one land when the next LED needs it.
+    TIMER0_INTR = TIMER0_INT_ALARM1;
+    pio_led_frame();
 }
 
 void irq_handler_usbctrl_irq(void) {

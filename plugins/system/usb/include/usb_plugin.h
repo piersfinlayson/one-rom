@@ -32,6 +32,16 @@ typedef struct {
     ora_gpio_set_fn_t gpio_set;
     ora_gpio_query_fn_t gpio_query;
 
+    // The firmware's LED engine, resolved in led_init_caps().  NULL on
+    // firmware that predates it, and the RGB capability bit is then clear so a
+    // host never asks for the LED this drives.
+    ora_led_set_fn_t led_set;
+
+    // Reads an LED's live state, for ONEROM_CMD_LED_QUERY.  NULL on firmware
+    // that predates it, and the command is then refused outright rather than
+    // answered with something invented here.
+    ora_led_get_fn_t led_get;
+
     // What ONEROM_CMD_GET_CAPS reports, decided once at init.  features is a
     // ONEROM_FEAT_* bitmap, and num_gpios the running RP2350 variant's GPIO
     // count.  Both are zero when gpio_init_caps() could not settle them, and
@@ -66,9 +76,7 @@ typedef struct {
     // LOG_DRAIN_SETTLE_MS in usb_log.c.
     uint32_t log_cdc_settled_ms;
 
-    onerom_pending_t pending;
     onerom_in_xfer_t in_xfer;
-    led_status_t led_status;
     gpio_status_t gpio_status;
 } usb_plugin_context_t;
 

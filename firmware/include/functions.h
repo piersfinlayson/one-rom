@@ -88,6 +88,33 @@ extern ora_result_t pio_setup_address_monitor(
     uint8_t data_size,
     void *reserved
 );
+// One ROM's LED engine, in src/piodma/pioled.c.  Drives the status LED and the
+// RGB LED, including any repetition a mode calls for, so a caller sets a mode
+// once and does not tick it.  ora_led_set and ora_led_get forward here.
+ora_result_t pio_led_set(const ora_led_request_t *req);
+ora_result_t pio_led_get(uint8_t led, ora_led_state_t *state_out);
+
+// Advance every LED whose mode repeats and end any hold that has expired.
+// Called from the TIMER0 alarm 1 handler, which it re-arms for whichever LED
+// next needs attention.
+void pio_led_frame(void);
+
+#if defined(TEST_BUILD)
+// Start the engine cold.  Its channels are ordinary statics, which a host does
+// not clear between boots the way a device's power-on does.
+void pio_led_reset(void);
+
+// When the engine next wants a frame, in the milliseconds ora_get_plugin_uptime_ms
+// reports.  Returns 0 when no LED is animating and no hold is running, and
+// leaves ms_out alone.  A device reaches the same moment through TIMER0 alarm 1.
+uint8_t pio_led_next_deadline(uint32_t *ms_out);
+
+// The last colour the engine handed to the RGB LED, as the 24-bit green, red,
+// blue value the chip reads, with how many it has sent written to count_out.
+// Brightness and any fade are already applied, so this is what the LED shows.
+uint32_t pio_led_last_pixel(uint32_t *count_out);
+#endif // TEST_BUILD
+
 uint32_t pio_map_addr_to_phys(const onerom_rom_slot_t *slot, uint32_t logical_addr);
 uint32_t pio_map_data_to_phys(const onerom_rom_slot_t *slot, uint32_t logical_data);
 ora_result_t pio_demangle_addr(
@@ -163,12 +190,23 @@ uint8_t check_plugin_valid(
 uint8_t initial_plugin_parse(uint8_t *disable_vbus_det, uint8_t *num_plugins);
 void ora_launch_plugins(void);
 void irq_handler_timer0_irq_0(void);
+
+// TIMER0 alarm 1, which the LED engine owns.  Alarm 0 is left to plugins.
+void irq_handler_timer0_irq_1(void);
 void irq_handler_usbctrl_irq(void);
 ora_result_t ora_get_ram_slot_info(uint8_t ram_slot, uint32_t *addr_out, uint32_t *size_out, uint32_t *rom_type_out);
 ora_result_t ora_get_active_ram_slot(uint8_t *ram_slot_out);
 // Also the firmware's own source of clk_ref, used by setup_timer0() to divide
 // it down to the microsecond tick.
 uint32_t ora_get_clkref_mhz(void);
+uint32_t ora_get_sysclk_mhz(void);
+uint32_t ora_get_plugin_uptime_ms(void);
+
+// The microsecond count behind ora_get_plugin_uptime_ms(), assembled from both
+// halves of the timer so it does not wrap every 71 minutes.  The LED engine
+// needs it because a shared pin is handed back in microseconds, not
+// milliseconds.
+uint64_t onerom_timer_us64(void);
 #if !REAL_HARDWARE
 uint8_t *sram_to_host(uint32_t addr);
 // Sets the SRAM buffer pointer used by sram_to_host().  Call after

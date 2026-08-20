@@ -46,6 +46,13 @@ pub const ONEROM_CMD_GPIO_SET: u8 = 0x03;
 /// Read what One ROM is using a run of GPIOs for. Data IN.
 pub const ONEROM_CMD_GPIO_QUERY: u8 = 0x04;
 
+/// Read what one LED is doing. Data IN, so send it with [`PICOBOOT_DIR_IN`].
+///
+/// No capability bit gates this. A plugin that predates the command refuses it
+/// outright, unlike [`ONEROM_CMD_SET_LED`]'s extended arguments, which an older
+/// plugin accepts and ignores.
+pub const ONEROM_CMD_LED_QUERY: u8 = 0x05;
+
 /// Bytes of argument every picoboot command carries inline.
 pub const ONEROM_CMD_ARGS_LEN: usize = 16;
 
@@ -56,6 +63,9 @@ pub const ONEROM_CMD_ARGS_LEN: usize = 16;
 /// what lets the structure grow without a protocol change - so a host must
 /// accept any `struct_len` and must never require it to equal this.
 pub const ONEROM_CAPS_LEN: u32 = 32;
+
+/// `transfer_len` the host requests for [`ONEROM_CMD_LED_QUERY`].
+pub const ONEROM_LED_STATE_LEN: u32 = 16;
 
 /// Bytes per [`GpioEntry`] in an [`ONEROM_CMD_GPIO_QUERY`] response.
 pub const ONEROM_GPIO_ENTRY_LEN: usize = 4;
@@ -69,6 +79,19 @@ pub const ONEROM_FEAT_GPIO_QUERY: u32 = 1 << 1;
 /// [`GpioSetArgs::duration_ms`] and [`GpioSetArgs::after_state`] are honoured.
 pub const ONEROM_FEAT_GPIO_HOLD: u32 = 1 << 2;
 
+/// Every [`ONEROM_CMD_SET_LED`] argument after `sub_cmd` is honoured: the
+/// colour, the brightness, the period and the hold.
+///
+/// A plugin that predates them reads `led_id` and `sub_cmd` and ignores the
+/// rest, so a host that sends them regardless is told the command succeeded
+/// and gets none of what it asked for. Check this before sending any of them,
+/// on either LED.
+///
+/// The bit says the arguments reach the firmware's LED engine. It does not say
+/// this board has an RGB LED - one without refuses [`LedId::Rgb`], which is a
+/// different answer from a device that cannot be asked at all.
+pub const ONEROM_FEAT_LED_ARGS: u32 = 1 << 3;
+
 /// Drive the GPIO even though One ROM is using it.
 ///
 /// Mirrors the firmware's `ORA_GPIO_FLAG_FORCE`.
@@ -79,6 +102,10 @@ pub const ONEROM_GPIO_FLAG_FORCE: u8 = 1 << 0;
 pub enum DecodeError {
     #[error("Capabilities response is too short to decode: {0} bytes")]
     CapsTooShort(usize),
+
+    /// An LED query response too short to carry its own `struct_len`.
+    #[error("the device's LED state response was {0} bytes, too short to decode")]
+    LedStateTooShort(usize),
 
     #[error("GPIO query response is {0} bytes, not a whole number of 4-byte entries")]
     GpioEntriesMisaligned(usize),
@@ -91,28 +118,236 @@ pub enum LedSubCmd {
     On = 0x01,
     Beacon = 0x02,
     Flame = 0x03,
+
+    /// Rotates through the hues. RGB LED only.
+    Cycle = 0x04,
+
+    /// Fades the colour up and down. RGB LED only.
+    Breathe = 0x05,
+
+    /// Alternates the LED with dark, at its colour where it has one.
+    Blink = 0x06,
+}
+
+/// Which LED a [`ONEROM_CMD_SET_LED`] addresses.
+///
+/// A channel number rather than a fixed set, so a One ROM that gains further
+/// LEDs numbers them from 2 upwards. A device refuses a channel it does not
+/// have rather than driving another one.
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LedId {
+    /// The discrete status LED.
+    Status = 0,
+
+    /// The RGB LED. Requires [`ONEROM_FEAT_LED_ARGS`], and a board that has one.
+    Rgb = 1,
 }
 
 /// Arguments to [`ONEROM_CMD_SET_LED`], laid out as `onerom_set_led_args_t` in
 /// the plugin's `usb_custom_pbx.h`.
+///
+/// Every field after `sub_cmd` reads as "the device chooses" when zero, which
+/// is what lets a host that predates them send zeros and get the behaviour it
+/// always got.
 #[derive(Debug, Clone, Copy)]
+#[non_exhaustive]
 pub struct SetLedArgs {
-    /// Which LED. Only 0 exists today.
-    pub led_id: u8,
+    /// Which LED.
+    pub led_id: LedId,
 
     /// What to do with it.
     pub sub_cmd: LedSubCmd,
+
+    /// Red, for the LEDs and modes that take a colour.
+    pub r: u8,
+
+    /// Green, for the LEDs and modes that take a colour.
+    pub g: u8,
+
+    /// Blue, for the LEDs and modes that take a colour.
+    pub b: u8,
+
+    /// Brightness as a percentage, 1 to 100. Zero is the device's default.
+    pub brightness: u8,
+
+    /// How long one repetition of the mode takes, in milliseconds. Zero is the
+    /// mode's own default.
+    pub period_ms: u16,
+
+    /// How long to stay in this mode before returning to the one before it, in
+    /// milliseconds. Zero holds it until something changes it.
+    pub hold_ms: u32,
 }
 
 impl SetLedArgs {
+    /// A request for the status LED, which takes no colour.
+    pub fn status(sub_cmd: LedSubCmd) -> Self {
+        Self {
+            led_id: LedId::Status,
+            sub_cmd,
+            r: 0,
+            g: 0,
+            b: 0,
+            brightness: 0,
+            period_ms: 0,
+            hold_ms: 0,
+        }
+    }
+
+    /// A request for the RGB LED at a colour, with everything else left to the
+    /// device.
+    ///
+    /// An all-zero colour is read by the device as red rather than leaving the
+    /// LED dark, so a caller with no colour in mind still gets light.
+    pub fn rgb(sub_cmd: LedSubCmd, r: u8, g: u8, b: u8) -> Self {
+        Self {
+            led_id: LedId::Rgb,
+            sub_cmd,
+            r,
+            g,
+            b,
+            brightness: 0,
+            period_ms: 0,
+            hold_ms: 0,
+        }
+    }
+
+    /// Whether this request needs [`ONEROM_FEAT_LED_ARGS`] to mean anything.
+    ///
+    /// The colour and brightness are not counted. Those only ever accompany
+    /// the RGB LED, whose own channel byte an old plugin ignores too, so
+    /// [`ONEROM_FEAT_LED_ARGS`] is already checked before one is sent. A period
+    /// or a hold is the case a plain status LED request can carry.
+    pub fn needs_led_args(&self) -> bool {
+        self.period_ms != 0 || self.hold_ms != 0
+    }
+
     /// Pack into the 16 inline argument bytes of a picoboot command.
     pub fn encode(&self) -> [u8; ONEROM_CMD_ARGS_LEN] {
         let mut args = [0u8; ONEROM_CMD_ARGS_LEN];
-        args[0] = self.led_id;
+        args[0] = self.led_id as u8;
         args[1] = self.sub_cmd as u8;
-        // args[2..4] are reserved and args[4..16] are the unused p0/p1/p2
-        // parameter words; all stay zero.
+        // args[2..4] are reserved and stay zero.
+        args[4] = self.r;
+        args[5] = self.g;
+        args[6] = self.b;
+        args[7] = self.brightness;
+        args[8..10].copy_from_slice(&self.period_ms.to_le_bytes());
+        args[10..14].copy_from_slice(&self.hold_ms.to_le_bytes());
+        // args[14..16] are reserved and stay zero.
         args
+    }
+}
+
+/// Arguments to [`ONEROM_CMD_LED_QUERY`], laid out as `onerom_led_query_args_t`
+/// in the plugin's `usb_custom_pbx.h`.
+#[derive(Debug, Clone, Copy)]
+pub struct LedQueryArgs {
+    /// Which LED to describe.
+    pub led_id: LedId,
+}
+
+impl LedQueryArgs {
+    /// Pack into the 16 inline argument bytes of a picoboot command.
+    pub fn encode(&self) -> [u8; ONEROM_CMD_ARGS_LEN] {
+        let mut args = [0u8; ONEROM_CMD_ARGS_LEN];
+        args[0] = self.led_id as u8;
+        // args[1..16] are reserved and stay zero.
+        args
+    }
+}
+
+/// What one LED is doing, from an [`ONEROM_CMD_LED_QUERY`] response.
+///
+/// Mirrors `onerom_led_state_t` in the plugin's `usb_custom_pbx.h`, which in
+/// turn mirrors the firmware's own `ora_led_state_t`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct LedState {
+    /// Bytes of the response the device says are meaningful. Never assume this
+    /// equals [`ONEROM_LED_STATE_LEN`].
+    pub struct_len: u16,
+
+    /// Which LED this describes, echoing what was asked for.
+    pub led_id: u8,
+
+    /// Whether this board has this LED. A board without one still answers,
+    /// which is what tells a host "this board has no RGB LED" apart from "this
+    /// device cannot be asked".
+    pub present: bool,
+
+    /// What it is doing now, numbered as [`LedSubCmd`].
+    pub mode: u8,
+
+    /// Brightness as a percentage. Zero on an LED that has no brightness.
+    pub brightness: u8,
+
+    /// Red of the colour in force.
+    pub r: u8,
+    /// Green of the colour in force.
+    pub g: u8,
+    /// Blue of the colour in force.
+    pub b: u8,
+
+    /// The GPIO this LED is on. Meaningless when `present` is false.
+    pub gpio: u8,
+
+    /// Whether this LED shares its GPIO with the other one. Both work when
+    /// they do, and no mode is restricted.
+    pub shared_gpio: bool,
+
+    /// How long one repetition of the mode takes, in milliseconds.
+    pub period_ms: u16,
+}
+
+impl LedState {
+    /// Decode an LED query response, on the same terms as [`Caps::decode`].
+    pub fn decode(buf: &[u8]) -> Result<Self, DecodeError> {
+        if buf.len() < 2 {
+            return Err(DecodeError::LedStateTooShort(buf.len()));
+        }
+
+        let struct_len = u16::from_le_bytes([buf[0], buf[1]]);
+        let usable = (struct_len as usize).min(buf.len());
+        let u8_at = |off: usize| -> u8 { if off < usable { buf[off] } else { 0 } };
+        let u16_at = |off: usize| -> u16 {
+            if off + 2 <= usable {
+                u16::from_le_bytes([buf[off], buf[off + 1]])
+            } else {
+                0
+            }
+        };
+
+        Ok(Self {
+            struct_len,
+            led_id: u8_at(2),
+            present: u8_at(3) != 0,
+            mode: u8_at(4),
+            brightness: u8_at(5),
+            r: u8_at(6),
+            g: u8_at(7),
+            b: u8_at(8),
+            gpio: u8_at(9),
+            shared_gpio: u8_at(10) != 0,
+            period_ms: u16_at(11),
+            // Bytes 13..16 are reserved0.
+        })
+    }
+
+    /// The mode as the word the CLI uses for it, or `None` where this host does
+    /// not know the mode the device reported.
+    pub fn mode_name(&self) -> Option<&'static str> {
+        Some(match self.mode {
+            0 => "off",
+            1 => "on",
+            2 => "beacon",
+            3 => "flame",
+            4 => "cycle",
+            5 => "breathe",
+            6 => "blink",
+            _ => return None,
+        })
     }
 }
 
@@ -390,6 +625,164 @@ mod tests {
         assert_eq!(ONEROM_FEAT_GPIO_SET, 0x0000_0001);
         assert_eq!(ONEROM_FEAT_GPIO_QUERY, 0x0000_0002);
         assert_eq!(ONEROM_FEAT_GPIO_HOLD, 0x0000_0004);
+        assert_eq!(ONEROM_FEAT_LED_ARGS, 0x0000_0008);
+
+        assert_eq!(LedId::Status as u8, 0);
+        assert_eq!(LedId::Rgb as u8, 1);
+
+        assert_eq!(LedSubCmd::Off as u8, 0);
+        assert_eq!(LedSubCmd::On as u8, 1);
+        assert_eq!(LedSubCmd::Beacon as u8, 2);
+        assert_eq!(LedSubCmd::Flame as u8, 3);
+        assert_eq!(LedSubCmd::Cycle as u8, 4);
+        assert_eq!(LedSubCmd::Breathe as u8, 5);
+        assert_eq!(LedSubCmd::Blink as u8, 6);
+    }
+
+    #[test]
+    fn led_query_args_name_the_channel_and_nothing_else() {
+        assert_eq!(
+            LedQueryArgs {
+                led_id: LedId::Status
+            }
+            .encode(),
+            [0x00, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        );
+        assert_eq!(
+            LedQueryArgs { led_id: LedId::Rgb }.encode(),
+            [0x01, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        );
+    }
+
+    #[test]
+    fn led_state_decodes_the_layout_the_header_says() {
+        // A full response: every field in its own byte, so a field that moves
+        // fails here rather than on a device.
+        let buf = [
+            16, 0,    // struct_len
+            0x01, // led_id
+            1,    // present
+            0x05, // mode: breathe
+            40,   // brightness
+            0x12, 0x34, 0x56, // colour
+            29,   // gpio
+            1,    // shared_gpio
+            0x02, 0x01, // period_ms, little-endian
+            0, 0, 0, // reserved0
+        ];
+        let state = LedState::decode(&buf).expect("a full response decodes");
+        assert_eq!(state.struct_len, 16);
+        assert_eq!(state.led_id, 1);
+        assert!(state.present);
+        assert_eq!(state.mode, 5);
+        assert_eq!(state.mode_name(), Some("breathe"));
+        assert_eq!(state.brightness, 40);
+        assert_eq!((state.r, state.g, state.b), (0x12, 0x34, 0x56));
+        assert_eq!(state.gpio, 29);
+        assert!(state.shared_gpio);
+        assert_eq!(state.period_ms, 0x0102);
+    }
+
+    #[test]
+    fn a_led_state_shorter_than_this_host_expects_still_decodes() {
+        // What a device older than this host sends: struct_len says only the
+        // first six bytes mean anything, and everything past it reads as zero
+        // rather than as whatever happened to be transferred.
+        let buf = [
+            6, 0,    // struct_len
+            0x00, // led_id
+            1,    // present
+            0x02, // mode: beacon
+            0,    // brightness
+            0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+        ];
+        let state = LedState::decode(&buf).expect("a short response decodes");
+        assert_eq!(state.mode_name(), Some("beacon"));
+        assert_eq!((state.r, state.g, state.b), (0, 0, 0));
+        assert_eq!(state.gpio, 0);
+        assert_eq!(state.period_ms, 0);
+        assert!(!state.shared_gpio);
+    }
+
+    #[test]
+    fn a_led_state_too_short_to_carry_its_length_is_refused() {
+        assert!(matches!(
+            LedState::decode(&[16]),
+            Err(DecodeError::LedStateTooShort(1))
+        ));
+    }
+
+    #[test]
+    fn a_mode_this_host_does_not_know_has_no_name() {
+        // A device newer than this CLI can be in a mode it has no word for.
+        // Answering None is what lets the caller say so rather than guess.
+        let buf = [16, 0, 0x01, 1, 0x63, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+        let state = LedState::decode(&buf).expect("decodes");
+        assert_eq!(state.mode_name(), None);
+    }
+
+    #[test]
+    fn only_a_period_or_a_hold_needs_the_capability() {
+        // What every plugin has always understood: a mode and nothing else.
+        // Checking capabilities for one of these would cost an exchange with
+        // the device to learn nothing.
+        assert!(!SetLedArgs::status(LedSubCmd::Beacon).needs_led_args());
+        assert!(!SetLedArgs::status(LedSubCmd::Off).needs_led_args());
+
+        // Either one on its own is enough, since an old plugin honours
+        // neither.
+        let mut held = SetLedArgs::status(LedSubCmd::On);
+        held.hold_ms = 5_000;
+        assert!(held.needs_led_args());
+
+        let mut timed = SetLedArgs::status(LedSubCmd::Flame);
+        timed.period_ms = 1_200;
+        assert!(timed.needs_led_args());
+
+        // A status request carrying a period and a hold puts them where the
+        // RGB one does - the wire does not care which LED is addressed.
+        let mut both = SetLedArgs::status(LedSubCmd::Beacon);
+        both.period_ms = 0x0102;
+        both.hold_ms = 0x0A0B_0C0D;
+        assert_eq!(
+            both.encode(),
+            [
+                0x00, 0x02, 0, 0, // status channel, beacon, reserved
+                0, 0, 0, // no colour
+                0, // no brightness
+                0x02, 0x01, // period_ms, little-endian
+                0x0D, 0x0C, 0x0B, 0x0A, // hold_ms, little-endian
+                0, 0, // reserved
+            ],
+        );
+    }
+
+    #[test]
+    fn set_led_args_are_laid_out_as_the_header_says() {
+        // A status LED request is what a host that predates the RGB LED sends:
+        // the channel, the mode, and fourteen zero bytes.
+        assert_eq!(
+            SetLedArgs::status(LedSubCmd::Beacon).encode(),
+            [0x00, 0x02, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        );
+
+        // Every field of an RGB request, each in its own byte, so a field that
+        // moves fails here rather than on a device.
+        let mut args = SetLedArgs::rgb(LedSubCmd::On, 0x12, 0x34, 0x56);
+        args.brightness = 40;
+        args.period_ms = 0x0102;
+        args.hold_ms = 0x0A0B_0C0D;
+        assert_eq!(
+            args.encode(),
+            [
+                0x01, 0x01, 0, 0, // channel, mode, reserved
+                0x12, 0x34, 0x56, // colour
+                40,   // brightness
+                0x02, 0x01, // period_ms, little-endian
+                0x0D, 0x0C, 0x0B, 0x0A, // hold_ms, little-endian
+                0, 0, // reserved
+            ],
+        );
     }
 
     #[test]

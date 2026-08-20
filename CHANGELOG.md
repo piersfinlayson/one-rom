@@ -9,6 +9,7 @@ Headline changes in this release:
 - A plugin that would hard fault the device is now refused at build time instead of being flashed.
 - The CLI can tell you when a newer CLI has been released, and download it for you.
 - A host can drive and read One ROM's own pins over the ROM bus, so a retro system can reset itself, or operate whatever a wire from a One ROM pad reaches.
+- One ROM's USB plugin can now drive the RGB LED on the models that have one, with colour, brightness and effects from the CLI and no plugin needed.  The status of both LEDs can also be queried.
 
 In detail:
 - Add `onerom self`, covering the CLI's own release channel: `self check` says whether a newer CLI has been published for your platform, and `self download` fetches a published artifact — for this platform, another (`--target`), or all of them — verified against its published SHA-256.  Nothing is installed, and the CLI still performs no update check unless asked.
@@ -33,6 +34,16 @@ In detail:
 - Add Motorola S-record (`srec`) as a ROM image input format, alongside Intel HEX.  A chip may set `"format": "srec"` in a config file, with the same optional `"load_address"`; the CLI exposes it as `--slot format=srec,load-address=...`, and `onerom image convert` converts between `binary`, `ihex` and `srec` in any direction.  Unwritten bytes read as `0xFF`, as for Intel HEX.
 - One ROM Lab can dump a ROM as S-records: `f:srec`, alongside the existing `ihex` and hex dump formats.
 - Publish the CLI manual, chip type reference and compatibility reference as PDFs, in A4 and US Letter, for reading and printing away from a browser.  Each carries the version of the thing it documents rather than a repository version.
+- `onerom inspect led` and `onerom inspect rgb` report what each of One ROM's LEDs is doing — the mode, the speed, the GPIO, and the colour and brightness of the RGB one.  A board without an RGB LED says so rather than failing.
+  - This required a firmware update.
+- One ROM now drives its RGB LED itself from core firmware, on the models that have one, the USB plugin supports accessing this function and `onerom control rgb` drives it: on, off, beacon, flame, cycle, breathe and blink, each with a colour, a brightness and a speed.  `onerom inspect rgb` and `onerom inspect led` report what each LED is doing.  This needs no plugin, so the RGB user plugin is superseded and the user plugin slot it used to occupy is free.
+  - This required a firmware update.
+- `onerom control led blink` blinks the status LED on and off and keeps going, where `beacon` stops itself after a couple of seconds.
+  - This required a firmware update.
+- One ROM's LED modes now state how fast they can run, and refuse a `--period` shorter than that instead of accepting it and running slower than asked.  A full hue cycle or a breath takes at least a second, a flame half of one, and a beacon or blink 50ms.
+  - This required a firmware update.
+- `onerom control led` can now time itself: `--hold` runs a mode for a bounded period and then puts the LED back to what it was doing, and `beacon` and `flame` take a `--period` for how fast they run.  A plain `on`, `off`, `beacon` or `flame` is unchanged.
+  - This required a firmware update.
 - RBCP's `GET_PIPE_INFO` reports two more things about a pipe: how many bytes are waiting to be read, and what kind of thing the pipe reaches.  A One ROM pipe carries the host-to-device direction only, so the first is always zero, and the second is reported as unspecified.
 - `onerom control led beacon` now leaves the status LED as it found it.  It previously restored the state the USB plugin had last set itself, which on a device nothing had told otherwise is off.
 - `onerom inspect gpio` reported `Level` 0 for the status LED and RGB LED pins whatever they were doing.  An output pin's level is now what it drives, rather than a pad read-back the firmware disables on those two pins.

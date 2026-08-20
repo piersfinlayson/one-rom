@@ -15,8 +15,8 @@ use onerom_cli::device::{Device, select_device};
 use onerom_cli::picobootx::{ONEROM_FEAT_GPIO_QUERY, ONEROM_GPIO_FLAG_FORCE};
 use onerom_cli::pin::ResolvedPin;
 use onerom_cli::usb::{
-    FLASH_BASE, GpioSetArgs, GpioUse, LedSubCmd, RebootArgs, flash_erase, get_caps, gpio_query,
-    gpio_set, read_memory, reboot, set_led, write_memory,
+    FLASH_BASE, GpioSetArgs, GpioUse, LedSubCmd, RebootArgs, SetLedArgs, flash_erase, get_caps,
+    gpio_query, gpio_set, read_memory, reboot, set_led, set_rgb, write_memory,
 };
 use onerom_cli::{Error, Options};
 use onerom_config::chip::ChipType;
@@ -24,56 +24,189 @@ use onerom_config::hw::Board;
 use onerom_config::mcu::PinTolerance;
 use std::io::Write;
 
+/// Send one status LED request, reporting it when the CLI is verbose.
+///
+/// Every `control led` subcommand comes through here, so the device lookup and
+/// what the user is told stay in one place. The capability check lives in
+/// `set_led`, which pays for it only when the request carries a period or a
+/// hold.
+async fn led_request(
+    options: &Options,
+    args: &impl crate::args::CommandTrait,
+    sub_cmd: LedSubCmd,
+    period: Option<u16>,
+    hold: Option<u32>,
+    said: &str,
+) -> Result<(), Error> {
+    check_device(options, args, true)?;
+    let device = options.device.as_ref().unwrap();
+    let mut led_args = SetLedArgs::status(sub_cmd);
+    led_args.period_ms = period.unwrap_or(0);
+    led_args.hold_ms = hold.unwrap_or(0);
+    set_led(device, led_args).await?;
+    if options.verbose {
+        println!("{said}");
+    }
+    Ok(())
+}
+
 pub async fn cmd_led_on(
     options: &Options,
     args: &args::control::ControlLedOnArgs,
 ) -> Result<(), Error> {
-    check_device(options, args, true)?;
-    let device = options.device.as_ref().unwrap();
-    set_led(device, 0, LedSubCmd::On).await?;
-    if options.verbose {
-        println!("LED on");
-    }
-    Ok(())
+    led_request(options, args, LedSubCmd::On, None, args.hold, "LED on").await
 }
 
 pub async fn cmd_led_off(
     options: &Options,
     args: &args::control::ControlLedOffArgs,
 ) -> Result<(), Error> {
-    check_device(options, args, true)?;
-    let device = options.device.as_ref().unwrap();
-    set_led(device, 0, LedSubCmd::Off).await?;
-    if options.verbose {
-        println!("LED off");
-    }
-    Ok(())
+    led_request(options, args, LedSubCmd::Off, None, args.hold, "LED off").await
 }
 
 pub async fn cmd_led_beacon(
     options: &Options,
     args: &args::control::ControlLedBeaconArgs,
 ) -> Result<(), Error> {
-    check_device(options, args, true)?;
-    let device = options.device.as_ref().unwrap();
-    set_led(device, 0, LedSubCmd::Beacon).await?;
-    if options.verbose {
-        println!("LED beacon started");
-    }
-    Ok(())
+    led_request(
+        options,
+        args,
+        LedSubCmd::Beacon,
+        args.period,
+        args.hold,
+        "LED beacon started",
+    )
+    .await
 }
 
 pub async fn cmd_led_flame(
     options: &Options,
     args: &args::control::ControlLedFlameArgs,
 ) -> Result<(), Error> {
+    led_request(
+        options,
+        args,
+        LedSubCmd::Flame,
+        args.period,
+        args.hold,
+        "LED flame started",
+    )
+    .await
+}
+
+pub async fn cmd_led_blink(
+    options: &Options,
+    args: &args::control::ControlLedBlinkArgs,
+) -> Result<(), Error> {
+    led_request(
+        options,
+        args,
+        LedSubCmd::Blink,
+        args.period,
+        args.hold,
+        "LED blinking",
+    )
+    .await
+}
+
+/// Send one RGB request, reporting it when the CLI is verbose.
+///
+/// Every `control rgb` subcommand comes through here, so the capability check,
+/// the device lookup and what the user is told stay in one place.
+async fn rgb_request(
+    options: &Options,
+    args: &impl crate::args::CommandTrait,
+    led_args: SetLedArgs,
+    said: &str,
+) -> Result<(), Error> {
     check_device(options, args, true)?;
     let device = options.device.as_ref().unwrap();
-    set_led(device, 0, LedSubCmd::Flame).await?;
+    let caps = get_caps(device).await?;
+    set_rgb(device, &caps, led_args).await?;
     if options.verbose {
-        println!("LED flame started");
+        println!("{said}");
     }
     Ok(())
+}
+
+pub async fn cmd_rgb_on(
+    options: &Options,
+    args: &args::control::ControlRgbOnArgs,
+) -> Result<(), Error> {
+    let (r, g, b) = args.colour.rgb();
+    let mut led_args = SetLedArgs::rgb(LedSubCmd::On, r, g, b);
+    led_args.brightness = args.brightness.unwrap_or(0);
+    led_args.hold_ms = args.hold.unwrap_or(0);
+    rgb_request(options, args, led_args, "RGB LED on").await
+}
+
+pub async fn cmd_rgb_off(
+    options: &Options,
+    args: &args::control::ControlRgbOffArgs,
+) -> Result<(), Error> {
+    let mut led_args = SetLedArgs::rgb(LedSubCmd::Off, 0, 0, 0);
+    led_args.hold_ms = args.hold.unwrap_or(0);
+    rgb_request(options, args, led_args, "RGB LED off").await
+}
+
+pub async fn cmd_rgb_beacon(
+    options: &Options,
+    args: &args::control::ControlRgbBeaconArgs,
+) -> Result<(), Error> {
+    let (r, g, b) = args.colour.rgb();
+    let mut led_args = SetLedArgs::rgb(LedSubCmd::Beacon, r, g, b);
+    led_args.brightness = args.brightness.unwrap_or(0);
+    led_args.period_ms = args.period.unwrap_or(0);
+    led_args.hold_ms = args.hold.unwrap_or(0);
+    rgb_request(options, args, led_args, "RGB LED beacon started").await
+}
+
+pub async fn cmd_rgb_flame(
+    options: &Options,
+    args: &args::control::ControlRgbFlameArgs,
+) -> Result<(), Error> {
+    let (r, g, b) = args.colour.rgb();
+    let mut led_args = SetLedArgs::rgb(LedSubCmd::Flame, r, g, b);
+    led_args.brightness = args.brightness.unwrap_or(0);
+    led_args.period_ms = args.period.unwrap_or(0);
+    led_args.hold_ms = args.hold.unwrap_or(0);
+    rgb_request(options, args, led_args, "RGB LED flame started").await
+}
+
+pub async fn cmd_rgb_cycle(
+    options: &Options,
+    args: &args::control::ControlRgbCycleArgs,
+) -> Result<(), Error> {
+    // Cycle chooses its own colours, so the request carries none.
+    let mut led_args = SetLedArgs::rgb(LedSubCmd::Cycle, 0, 0, 0);
+    led_args.brightness = args.brightness.unwrap_or(0);
+    led_args.period_ms = args.period.unwrap_or(0);
+    led_args.hold_ms = args.hold.unwrap_or(0);
+    rgb_request(options, args, led_args, "RGB LED cycling").await
+}
+
+pub async fn cmd_rgb_breathe(
+    options: &Options,
+    args: &args::control::ControlRgbBreatheArgs,
+) -> Result<(), Error> {
+    let (r, g, b) = args.colour.rgb();
+    let mut led_args = SetLedArgs::rgb(LedSubCmd::Breathe, r, g, b);
+    led_args.brightness = args.brightness.unwrap_or(0);
+    led_args.period_ms = args.period.unwrap_or(0);
+    led_args.hold_ms = args.hold.unwrap_or(0);
+    rgb_request(options, args, led_args, "RGB LED breathing").await
+}
+
+pub async fn cmd_rgb_blink(
+    options: &Options,
+    args: &args::control::ControlRgbBlinkArgs,
+) -> Result<(), Error> {
+    let (r, g, b) = args.colour.rgb();
+    let mut led_args = SetLedArgs::rgb(LedSubCmd::Blink, r, g, b);
+    led_args.brightness = args.brightness.unwrap_or(0);
+    led_args.period_ms = args.period.unwrap_or(0);
+    led_args.hold_ms = args.hold.unwrap_or(0);
+    rgb_request(options, args, led_args, "RGB LED blinking").await
 }
 
 pub async fn cmd_reboot(

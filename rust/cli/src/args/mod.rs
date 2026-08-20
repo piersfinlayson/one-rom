@@ -46,9 +46,12 @@ use onerom_cli::{Error, Options};
 
 use control::{
     ControlArgs, ControlCommands, ControlEraseArgs, ControlLedArgs, ControlLedBeaconArgs,
-    ControlLedCommands, ControlLedFlameArgs, ControlLedOffArgs, ControlLedOnArgs, ControlPinArgs,
-    ControlPokeArgs, ControlPokeCommands, ControlPokeLiveArgs, ControlPokeMemoryArgs,
-    ControlRebootArgs, ControlResetArgs, ControlSelectArgs,
+    ControlLedBlinkArgs, ControlLedCommands, ControlLedFlameArgs, ControlLedOffArgs,
+    ControlLedOnArgs, ControlPinArgs, ControlPokeArgs, ControlPokeCommands, ControlPokeLiveArgs,
+    ControlPokeMemoryArgs, ControlRebootArgs, ControlResetArgs, ControlRgbArgs,
+    ControlRgbBeaconArgs, ControlRgbBlinkArgs, ControlRgbBreatheArgs, ControlRgbCommands,
+    ControlRgbCycleArgs, ControlRgbFlameArgs, ControlRgbOffArgs, ControlRgbOnArgs,
+    ControlSelectArgs,
 };
 use firmware::{
     FirmwareArgs, FirmwareBuildArgs, FirmwareChipsArgs, FirmwareCommands, FirmwareDownloadArgs,
@@ -59,8 +62,9 @@ use image::{
 };
 use inspect::{
     InspectArgs, InspectCommands, InspectGpioArgs, InspectHeaderArgs, InspectImageArgs,
-    InspectInfoArgs, InspectPeekArgs, InspectPeekCommands, InspectPeekLiveArgs,
-    InspectPeekMemoryArgs, InspectSlotsArgs, InspectSocketArgs, InspectTelemetryArgs,
+    InspectInfoArgs, InspectLedArgs, InspectPeekArgs, InspectPeekCommands, InspectPeekLiveArgs,
+    InspectPeekMemoryArgs, InspectRgbArgs, InspectSlotsArgs, InspectSocketArgs,
+    InspectTelemetryArgs,
 };
 use monitor::{MonitorArgs, MonitorCommands, MonitorLogArgs};
 use plugin::PluginArgs;

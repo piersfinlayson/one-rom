@@ -33,6 +33,7 @@ pub const INVALID_TRANSFER_LEN: i32 = 3;
 pub const NOT_PERMITTED: i32 = 10;
 pub const INVALID_ARG: i32 = 11;
 pub const PRECONDITION_NOT_MET: i32 = 13;
+pub const NOT_FOUND: i32 = 16;
 
 // Command identifiers, from usb_custom_pbx.h.  The two that return data travel
 // with picoboot's direction bit set, which is how a host sends them.
@@ -49,6 +50,7 @@ const EXT_MINOR: u8 = 0;
 const FEAT_GPIO_SET: u32 = 1 << 0;
 const FEAT_GPIO_QUERY: u32 = 1 << 1;
 const FEAT_GPIO_HOLD: u32 = 1 << 2;
+const FEAT_LED_ARGS: u32 = 1 << 3;
 const MAX_HOLD_MS: u32 = 60000;
 
 // A GPIO query entry, and the longest transfer a One ROM command may ask for.
@@ -258,6 +260,37 @@ fn the_capabilities_bound_a_hold(dev: &mut Device, _ctx: &Ctx) -> Result<Outcome
     }
 
     Ok(Outcome::Pass)
+}
+
+/// SET_LED's extended arguments are offered when the firmware has an engine to
+/// honour them.
+///
+/// The bit says the colour, brightness, period and hold reach the engine.  It
+/// does not say this board has an RGB LED - a board without one answers
+/// NOT_FOUND, and a host can only tell that apart from "too old to be asked"
+/// because the bit was set.  So what the bit must follow is whether the
+/// firmware resolves `ORA_ID_LED_SET`, which is asked of the firmware here
+/// rather than assumed — and both ways round, since a bit set unconditionally
+/// would tell a host a device predating the engine could be driven.
+fn the_capabilities_offer_the_led_args(dev: &mut Device, _ctx: &Ctx) -> Result<Outcome, String> {
+    let has_engine = dev
+        .emulator()
+        .plugin_lookup_valid(onerom_fw_emulator::ffi::api_id_t_ORA_ID_LED_SET);
+
+    let caps = caps(dev)?;
+    let offered = u32_at(&caps, 4) & FEAT_LED_ARGS != 0;
+
+    match (has_engine, offered) {
+        (true, false) => Err(
+            "this firmware has an LED engine, but the device does not offer its arguments"
+                .to_string(),
+        ),
+        (false, true) => Err(
+            "the device offers SET_LED's arguments, but this firmware has no engine to reach"
+                .to_string(),
+        ),
+        _ => Ok(Outcome::Pass),
+    }
 }
 
 /// The capabilities are meant to grow, so a host asking for a different length
@@ -720,6 +753,12 @@ pub static SCENARIOS: &[Scenario] = &[
         name: "picobootx.the_capabilities_bound_a_hold",
         about: "a device offering bounded holds reports how long one may be",
         run: the_capabilities_bound_a_hold,
+        before_start: None,
+    },
+    Scenario {
+        name: "picobootx.the_capabilities_offer_the_led_args",
+        about: "SET_LED's arguments are offered exactly when the firmware has an engine to honour them",
+        run: the_capabilities_offer_the_led_args,
         before_start: None,
     },
     Scenario {

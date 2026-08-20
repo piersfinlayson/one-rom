@@ -204,9 +204,10 @@ run_config_usb_serial() {
     }
 }
 
-# Everything in the USB tester that does not depend on the config.  Run on an A
-# variant and a B variant, because the GPIO count is the one thing that differs
-# between them and the plugin reports it.
+# Everything in the USB tester that does not depend on the config.  Run on every
+# board of a family: the GPIO count differs between the RP2350A and B parts and
+# the plugin reports it, and whether the board has an RGB LED decides which of
+# the LED scenarios can assert engine state rather than the refusal path.
 run_usb_once() {
     local board=$1
     local config=$2
@@ -348,6 +349,7 @@ test_24_config_api()       { run_boards run_config_api     "$1" $FIRE_24_BOARDS;
 test_24_config_monitor()   { run_boards run_config_monitor "$1" $FIRE_24_BOARDS; }
 test_24_config_rbcp()      { run_boards run_config_rbcp    "$1" $FIRE_24_BOARDS; }
 test_24_config_usb()       { run_boards run_config_usb     "$1" $FIRE_24_BOARDS; }
+test_24_usb_all()          { run_boards run_usb_once       "$1" $FIRE_24_BOARDS; }
 test_24_config_c_onwards() { run_boards run_config         "$1" $FIRE_24_LATE_BOARDS; }
 
 test_28_config()           { run_boards run_config         "$1" $FIRE_28_BOARDS; }
@@ -355,6 +357,7 @@ test_28_config_api()       { run_boards run_config_api     "$1" $FIRE_28_BOARDS;
 test_28_config_monitor()   { run_boards run_config_monitor "$1" $FIRE_28_BOARDS; }
 test_28_config_rbcp()      { run_boards run_config_rbcp    "$1" $FIRE_28_BOARDS; }
 test_28_config_usb()       { run_boards run_config_usb     "$1" $FIRE_28_BOARDS; }
+test_28_usb_all()          { run_boards run_usb_once       "$1" $FIRE_28_BOARDS; }
 test_28_config_c_onwards() { run_boards run_config         "$1" $FIRE_28_LATE_BOARDS; }
 
 test_32_config()           { run_boards run_config         "$1" $FIRE_32_BOARDS; }
@@ -362,12 +365,14 @@ test_32_config_api()       { run_boards run_config_api     "$1" $FIRE_32_BOARDS;
 test_32_config_monitor()   { run_boards run_config_monitor "$1" $FIRE_32_BOARDS; }
 test_32_config_rbcp()      { run_boards run_config_rbcp    "$1" $FIRE_32_BOARDS; }
 test_32_config_usb()       { run_boards run_config_usb     "$1" $FIRE_32_BOARDS; }
+test_32_usb_all()          { run_boards run_usb_once       "$1" $FIRE_32_BOARDS; }
 
 test_40_config()           { run_boards run_config         "$1" $FIRE_40_BOARDS; }
 test_40_config_api()       { run_boards run_config_api     "$1" $FIRE_40_BOARDS; }
 test_40_config_monitor()   { run_boards run_config_monitor "$1" $FIRE_40_BOARDS; }
 test_40_config_rbcp()      { run_boards run_config_rbcp    "$1" $FIRE_40_BOARDS; }
 test_40_config_usb()       { run_boards run_config_usb     "$1" $FIRE_40_BOARDS; }
+test_40_usb_all()          { run_boards run_usb_once       "$1" $FIRE_40_BOARDS; }
 
 # The tests, grouped by socket size, so that CI can run the four groups as
 # parallel jobs and each gets its own timeout budget.  A group is self-contained:
@@ -428,10 +433,13 @@ test_family_24() {
     test_24_config_monitor onerom-config/test/24-random-27xx.json
     test_24_config_monitor onerom-config/test/24-random-28xx.json
 
-    # USB plugin.  Everything that does not depend on the config runs once per
-    # RP2350 variant — fire-24-a is an A and fire-40-a a B, and the GPIO count is
-    # what differs — and the logical ROM scenarios run across the boards.
-    run_usb_once fire-24-a onerom-config/test/24-random-23xx.json
+    # USB plugin.  The whole suite runs on every board of the family, and the
+    # logical ROM scenarios run again for each config.  Board coverage is not a
+    # formality here: what the plugin reports and what the firmware beneath it
+    # can do both vary by board - the GPIO count differs between the RP2350A and
+    # B parts, and only some boards have an RGB LED, whose scenarios skip
+    # themselves where the firmware says there is none.
+    test_24_usb_all onerom-config/test/24-random-23xx.json
     test_24_config_usb onerom-config/test/24-random-23xx.json
 
     # RBCP board coverage — see the note in test_family_40.
@@ -483,6 +491,7 @@ test_family_28() {
     test_28_config_monitor onerom-config/test/28-random-28xxx.json
 
     # RBCP board coverage — see the note in test_family_40.
+    test_28_usb_all onerom-config/test/28-random-27xxx.json
     test_28_config_usb onerom-config/test/28-random-27xxx.json
     test_28_config_rbcp onerom-config/test/28-random-27xxx.json
 
@@ -524,6 +533,7 @@ test_family_32() {
     test_32_config_monitor onerom-config/test/32-random-27c0x0.json
 
     # RBCP board coverage — see the note in test_family_40.
+    test_32_usb_all onerom-config/test/32-random-27c080.json
     test_32_config_usb onerom-config/test/32-random-27c080.json
     test_32_config_rbcp onerom-config/test/32-random-27c080.json
 
@@ -571,7 +581,7 @@ test_family_40() {
     # Board coverage — one config per socket size, on every board of that
     # family.  What varies between revisions of a board is the pin map, and the
     # protocol runs over the bus, so the whole of it has to work on each.
-    run_usb_once fire-40-a onerom-config/test/40-random.json
+    test_40_usb_all onerom-config/test/40-random.json
     test_40_config_usb onerom-config/test/40-random.json
     test_40_config_rbcp onerom-config/test/40-random.json
 

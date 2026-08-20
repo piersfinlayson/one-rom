@@ -62,7 +62,7 @@ SRCS := src/constants.c src/globals.c src/log.c src/rtt.c \
 		src/main.c src/plugin.c src/utils.c \
 		src/vector.c src/rp235x.c src/piodma/pio.c \
 		src/piodma/piorom2.c src/piodma/pioram.c src/piodma/dma.c \
-		src/piodma/pioplugin.c \
+		src/piodma/pioplugin.c src/piodma/pioled.c \
         test/stub_rp235x.c test/ffi.c \
 		generated/gen-config.c
 OBJS := $(patsubst src/%.c,$(BUILD_DIR)/%.o,$(filter src/%,$(SRCS)))

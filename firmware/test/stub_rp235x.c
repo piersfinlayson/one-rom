@@ -99,6 +99,7 @@ void setup_gpio(void) {
 void onerom_test_reset(void) {
     stub_gpio_reset();
     stub_timer_reset();
+    pio_led_reset();
 }
 
 void setup_qmi(rp235x_clock_config_t *config) {

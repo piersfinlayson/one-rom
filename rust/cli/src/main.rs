@@ -26,7 +26,7 @@ mod utils;
 use args::BoardCommands;
 use args::Cli;
 use args::Commands;
-use args::control::{ControlCommands, ControlLedCommands, ControlPokeCommands};
+use args::control::{ControlCommands, ControlLedCommands, ControlPokeCommands, ControlRgbCommands};
 use args::firmware::FirmwareCommands;
 use args::image::ImageCommands;
 use args::inspect::{InspectCommands, InspectPeekCommands};
@@ -73,6 +73,8 @@ async fn sub_main() -> Result<(), Error> {
             InspectCommands::Slots(args) => inspect::cmd_slots(&options, args).await,
             InspectCommands::Image(args) => inspect::cmd_image(&options, args).await,
             InspectCommands::Gpio(args) => inspect::cmd_gpio(&options, args).await,
+            InspectCommands::Led(args) => inspect::cmd_led(&options, args).await,
+            InspectCommands::Rgb(args) => inspect::cmd_rgb(&options, args).await,
             InspectCommands::Header(args) => inspect::cmd_header(&options, args).await,
             InspectCommands::Socket(args) => inspect::cmd_socket(&options, args).await,
             InspectCommands::Peek(args) => match &args.command {
@@ -89,6 +91,16 @@ async fn sub_main() -> Result<(), Error> {
                 ControlLedCommands::Off(args) => control::cmd_led_off(&options, args).await,
                 ControlLedCommands::Beacon(args) => control::cmd_led_beacon(&options, args).await,
                 ControlLedCommands::Flame(args) => control::cmd_led_flame(&options, args).await,
+                ControlLedCommands::Blink(args) => control::cmd_led_blink(&options, args).await,
+            },
+            ControlCommands::Rgb(args) => match &args.command {
+                ControlRgbCommands::On(args) => control::cmd_rgb_on(&options, args).await,
+                ControlRgbCommands::Off(args) => control::cmd_rgb_off(&options, args).await,
+                ControlRgbCommands::Beacon(args) => control::cmd_rgb_beacon(&options, args).await,
+                ControlRgbCommands::Flame(args) => control::cmd_rgb_flame(&options, args).await,
+                ControlRgbCommands::Cycle(args) => control::cmd_rgb_cycle(&options, args).await,
+                ControlRgbCommands::Breathe(args) => control::cmd_rgb_breathe(&options, args).await,
+                ControlRgbCommands::Blink(args) => control::cmd_rgb_blink(&options, args).await,
             },
             ControlCommands::Reboot(args) => control::cmd_reboot(&options, args).await,
             ControlCommands::Reset(args) => control::cmd_reset(&options, args).await,

@@ -50,6 +50,7 @@ typedef enum {
     ONEROM_CMD_GET_CAPS   = 0x02,
     ONEROM_CMD_GPIO_SET   = 0x03,
     ONEROM_CMD_GPIO_QUERY = 0x04,
+    ONEROM_CMD_LED_QUERY  = 0x05,
 } onerom_cmd_id_t;
 
 // Every reserved field below is zero on send and ignored on receive.  That is
@@ -63,22 +64,106 @@ typedef enum {
 // ONEROM_CMD_SET_LED
 // ---------------------------------------------------------------------------
 
+// ONEROM_LED_CYCLE and ONEROM_LED_BREATHE are built out of a colour, so a
+// device refuses them for the status LED.  The rest apply to either LED.
 typedef enum {
-    ONEROM_LED_OFF    = 0x00,
-    ONEROM_LED_ON     = 0x01,
-    ONEROM_LED_BEACON = 0x02,
-    ONEROM_LED_FLAME  = 0x03,
+    ONEROM_LED_OFF     = 0x00,
+    ONEROM_LED_ON      = 0x01,
+    ONEROM_LED_BEACON  = 0x02,
+    ONEROM_LED_FLAME   = 0x03,
+    ONEROM_LED_CYCLE   = 0x04,
+    ONEROM_LED_BREATHE = 0x05,
+    ONEROM_LED_BLINK   = 0x06,
 } onerom_led_subcmd_t;
 
+// Which LED a SET_LED addresses.  A channel number rather than a fixed set, so
+// a One ROM that gains further LEDs numbers them from 2 upwards.  A device
+// refuses a channel it does not have rather than silently driving another.
+typedef enum {
+    ONEROM_LED_ID_STATUS = 0x00,
+    ONEROM_LED_ID_RGB    = 0x01,
+} onerom_led_id_t;
+
+// Every field after sub_cmd reads as "the device chooses" when zero, which is
+// what lets a host that predates them send zeros and get the behaviour it
+// always got.
 typedef struct __attribute__((packed)) {
-    uint8_t  led_id;
+    uint8_t  led_id;     // onerom_led_id_t
     uint8_t  sub_cmd;    // onerom_led_subcmd_t
     uint8_t  reserved[2];
-    uint32_t p0;
-    uint32_t p1;
-    uint32_t p2;
+
+    // The colour, for the LEDs and modes that take one.  All three zero means
+    // the host named no colour, which the device reads as red.
+    uint8_t  r;
+    uint8_t  g;
+    uint8_t  b;
+
+    // Brightness as a percentage, 1 to 100.  Zero is the device's default.
+    uint8_t  brightness;
+
+    // How long one repetition of the mode takes.  Zero is the mode's default.
+    uint16_t period_ms;
+
+    // How long to stay in this mode before returning to the one before it.
+    // Zero holds it until something changes it.
+    uint32_t hold_ms;
+
+    uint8_t  reserved1[2];
 } onerom_set_led_args_t;
 _Static_assert(sizeof(onerom_set_led_args_t) == 16, "onerom_set_led_args_t size mismatch");
+
+// ---------------------------------------------------------------------------
+// ONEROM_CMD_LED_QUERY - what one LED is doing now
+//
+// IN, transfer_len up to ONEROM_LED_STATE_LEN.  struct_len says how many bytes
+// are meaningful, on the same terms as ONEROM_CMD_GET_CAPS: a host must accept
+// any struct_len and must never require it to equal ONEROM_LED_STATE_LEN.
+//
+// No capability bit gates this.  A plugin that predates the command refuses it
+// outright with PB_STATUS_UNKNOWN_CMD, which a host can act on - unlike
+// SET_LED's extended arguments, which an older plugin accepts and ignores.
+// ---------------------------------------------------------------------------
+
+typedef struct __attribute__((packed)) {
+    uint8_t led_id;         // onerom_led_id_t
+    uint8_t reserved[15];
+} onerom_led_query_args_t;
+_Static_assert(sizeof(onerom_led_query_args_t) == 16, "onerom_led_query_args_t size mismatch");
+
+#define ONEROM_LED_STATE_LEN  16u
+
+// Mirrors the firmware's ora_led_state_t, which is where every field but
+// struct_len comes from.
+typedef struct __attribute__((packed)) {
+    // Bytes of this response that are meaningful.  Never assume this equals
+    // ONEROM_LED_STATE_LEN.
+    uint16_t struct_len;
+
+    uint8_t  led_id;        // onerom_led_id_t, echoing what was asked for
+
+    // Whether this board has this LED.  A board without one still answers,
+    // which is what tells a host "this board has no RGB LED" rather than "this
+    // device cannot be asked".
+    uint8_t  present;
+
+    uint8_t  mode;          // onerom_led_subcmd_t
+    uint8_t  brightness;    // percentage, 0 on an LED that has no brightness
+    uint8_t  r;
+    uint8_t  g;
+    uint8_t  b;
+
+    // The GPIO this LED is on, or GPIO_NONE where the board has none.
+    uint8_t  gpio;
+
+    // Whether this LED shares its GPIO with the other one.  Both work when
+    // they do, and no mode is restricted.
+    uint8_t  shared_gpio;
+
+    uint16_t period_ms;
+
+    uint8_t  reserved0[3];
+} onerom_led_state_t;
+_Static_assert(sizeof(onerom_led_state_t) == ONEROM_LED_STATE_LEN, "onerom_led_state_t size mismatch");
 
 // ---------------------------------------------------------------------------
 // ONEROM_CMD_GET_CAPS - what this device's picobootx extension supports
@@ -124,8 +209,14 @@ _Static_assert(sizeof(onerom_caps_t) == ONEROM_CAPS_LEN, "onerom_caps_t size mis
 #define ONEROM_FEAT_GPIO_SET    (1u << 0)   // ONEROM_CMD_GPIO_SET is available
 #define ONEROM_FEAT_GPIO_QUERY  (1u << 1)   // ONEROM_CMD_GPIO_QUERY is available
 #define ONEROM_FEAT_GPIO_HOLD   (1u << 2)   // duration_ms/after_state are honoured
-// Bits 3 upwards are reserved for later: pulls, drive strength, slew, pulse
+#define ONEROM_FEAT_LED_ARGS    (1u << 3)   // SET_LED's colour/brightness/
+                                            // period/hold are honoured
+// Bits 4 upwards are reserved for later: pulls, drive strength, slew, pulse
 // trains, named pins.
+
+// The longest hold SET_LED accepts, in milliseconds.  Matches the GPIO hold
+// cap, and a longer request is refused rather than clamped.
+#define ONEROM_LED_MAX_HOLD_MS  60000u
 
 // ---------------------------------------------------------------------------
 // ONEROM_CMD_GPIO_SET - drive a GPIO, optionally for a bounded period
@@ -188,22 +279,6 @@ _Static_assert(sizeof(onerom_gpio_entry_t) == 4, "onerom_gpio_entry_t size misma
 // ---------------------------------------------------------------------------
 // Internal types to handle One ROM picoboot protocol extensions
 // ---------------------------------------------------------------------------
-typedef enum {
-    ONEROM_PENDING_NONE = 0,
-    ONEROM_PENDING_SET_LED = 1,
-} onerom_pending_cmd_t;
-_Static_assert(sizeof(onerom_pending_cmd_t) == 1, "onerom_pending_cmd_t size mismatch");
-
-typedef struct {
-    onerom_pending_cmd_t cmd;
-    union {
-        struct {
-            uint8_t led_id;
-            onerom_led_subcmd_t sub_cmd;
-        } set_led;
-    } args;
-} onerom_pending_t;
-
 // State of an in-flight device -> host data phase for a custom command.
 //
 // picobootx keeps no cursor on our behalf: it calls the fill callback
@@ -224,6 +299,9 @@ typedef struct {
 
     // ONEROM_CMD_GPIO_QUERY only: the first GPIO of the run being reported.
     uint8_t first_gpio;
+
+    // ONEROM_CMD_LED_QUERY only: the LED being reported.
+    uint8_t led_id;
 } onerom_in_xfer_t;
 
 #endif // USB_CUSTOM_PBX_H

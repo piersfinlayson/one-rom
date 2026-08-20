@@ -5,7 +5,10 @@
 //! Argument definitions for `onerom control`.
 
 use crate::args::CommandTrait;
-use crate::utils::{parse_u8, parse_u32};
+use crate::utils::{
+    Colour, parse_beacon_period, parse_blink_period, parse_breathe_period, parse_brightness,
+    parse_colour, parse_cycle_period, parse_flame_period, parse_hold_ms, parse_u8, parse_u32,
+};
 use clap::{ArgGroup, Args, Subcommand, ValueEnum};
 use enum_dispatch::enum_dispatch;
 
@@ -52,6 +55,24 @@ pub enum ControlCommands {
         subcommand_help_heading = "Commands"
     )]
     Led(ControlLedArgs),
+
+    /// Control the RGB LED on a One ROM.
+    ///
+    /// Only some One ROM models have an RGB LED. Run 'onerom inspect gpio' to
+    /// see what a board has.
+    ///
+    /// Examples:
+    ///
+    ///   onerom control rgb on --colour red
+    ///
+    ///   onerom control rgb on --colour #FF8000 --brightness 40
+    ///
+    ///   onerom control rgb off
+    #[command(
+        subcommand_value_name = "COMMAND",
+        subcommand_help_heading = "Commands"
+    )]
+    Rgb(ControlRgbArgs),
 
     /// Write data to One ROM's SRAM or the live ROM image.
     ///
@@ -198,10 +219,20 @@ pub enum ControlLedCommands {
     Beacon(ControlLedBeaconArgs),
     /// Flame the status LED.
     Flame(ControlLedFlameArgs),
+    /// Blink the status LED until something changes it.
+    Blink(ControlLedBlinkArgs),
 }
 
 #[derive(Debug, Args)]
-pub struct ControlLedOnArgs;
+pub struct ControlLedOnArgs {
+    /// Stay on for this many milliseconds, then go back to what the LED was
+    /// doing before.
+    ///
+    /// The device times the hold, so it completes even if this command does
+    /// not.
+    #[arg(long, value_name = "MS", value_parser = parse_hold_ms)]
+    pub hold: Option<u32>,
+}
 
 impl CommandTrait for ControlLedOnArgs {
     fn requires_device(&self) -> bool {
@@ -210,7 +241,15 @@ impl CommandTrait for ControlLedOnArgs {
 }
 
 #[derive(Debug, Args)]
-pub struct ControlLedOffArgs;
+pub struct ControlLedOffArgs {
+    /// Stay off for this many milliseconds, then go back to what the LED was
+    /// doing before.
+    ///
+    /// The device times the hold, so it completes even if this command does
+    /// not.
+    #[arg(long, value_name = "MS", value_parser = parse_hold_ms)]
+    pub hold: Option<u32>,
+}
 
 impl CommandTrait for ControlLedOffArgs {
     fn requires_device(&self) -> bool {
@@ -219,7 +258,16 @@ impl CommandTrait for ControlLedOffArgs {
 }
 
 #[derive(Debug, Args)]
-pub struct ControlLedBeaconArgs;
+pub struct ControlLedBeaconArgs {
+    /// Milliseconds for one blink. Defaults to 100.
+    #[arg(long, value_name = "MS", value_parser = parse_beacon_period)]
+    pub period: Option<u16>,
+
+    /// Milliseconds to beacon for, before going back to what the LED was doing
+    /// before. Defaults to 2500.
+    #[arg(long, value_name = "MS", value_parser = parse_hold_ms)]
+    pub hold: Option<u32>,
+}
 
 impl CommandTrait for ControlLedBeaconArgs {
     fn requires_device(&self) -> bool {
@@ -228,9 +276,248 @@ impl CommandTrait for ControlLedBeaconArgs {
 }
 
 #[derive(Debug, Args)]
-pub struct ControlLedFlameArgs;
+pub struct ControlLedFlameArgs {
+    /// Milliseconds for one pass of the flicker. Defaults to 575.
+    #[arg(long, value_name = "MS", value_parser = parse_flame_period)]
+    pub period: Option<u16>,
+
+    /// Flicker for this many milliseconds, then go back to what the LED was
+    /// doing before.
+    #[arg(long, value_name = "MS", value_parser = parse_hold_ms)]
+    pub hold: Option<u32>,
+}
 
 impl CommandTrait for ControlLedFlameArgs {
+    fn requires_device(&self) -> bool {
+        true
+    }
+}
+
+#[derive(Debug, Args)]
+pub struct ControlRgbArgs {
+    #[command(subcommand)]
+    pub command: ControlRgbCommands,
+}
+
+impl CommandTrait for ControlRgbArgs {
+    fn requires_device(&self) -> bool {
+        self.command.requires_device()
+    }
+}
+
+#[enum_dispatch(CommandTrait)]
+#[derive(Debug, Subcommand)]
+pub enum ControlRgbCommands {
+    /// Light the RGB LED at a colour.
+    On(ControlRgbOnArgs),
+    /// Turn the RGB LED off.
+    Off(ControlRgbOffArgs),
+    /// Beacon the RGB LED to identify a physical One ROM.
+    Beacon(ControlRgbBeaconArgs),
+    /// Flame the RGB LED.
+    Flame(ControlRgbFlameArgs),
+    /// Rotate the RGB LED through the hues.
+    Cycle(ControlRgbCycleArgs),
+    /// Fade the RGB LED up and down.
+    Breathe(ControlRgbBreatheArgs),
+    /// Alternate the RGB LED between a colour and dark.
+    Blink(ControlRgbBlinkArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct ControlRgbOnArgs {
+    /// Colour to light: a name, or a hex colour written '#RRGGBB' or
+    /// '0xRRGGBB'.
+    ///
+    /// Named colours are red, green, blue, white, yellow, cyan, magenta,
+    /// orange, purple and pink.
+    #[arg(long, visible_alias = "color", value_name = "COLOUR", value_parser = parse_colour, default_value = "red")]
+    pub colour: Colour,
+
+    /// Brightness as a percentage, 1 to 100.
+    ///
+    /// Omit to use the device's default, which is deliberately modest - an RGB
+    /// LED at full output is uncomfortable at desk distance.
+    #[arg(long, value_name = "PERCENT", value_parser = parse_brightness)]
+    pub brightness: Option<u8>,
+
+    /// Hold this for this many milliseconds, then go back to what the LED was
+    /// doing before.
+    ///
+    /// The device times the hold, so it completes even if this command does
+    /// not.
+    #[arg(long, value_name = "MS", value_parser = parse_hold_ms)]
+    pub hold: Option<u32>,
+}
+
+impl CommandTrait for ControlRgbOnArgs {
+    fn requires_device(&self) -> bool {
+        true
+    }
+}
+
+#[derive(Debug, Args)]
+pub struct ControlRgbOffArgs {
+    /// Stay off for this many milliseconds, then go back to what the LED was
+    /// doing before.
+    ///
+    /// The device times the hold, so it completes even if this command does
+    /// not.
+    #[arg(long, value_name = "MS", value_parser = parse_hold_ms)]
+    pub hold: Option<u32>,
+}
+
+impl CommandTrait for ControlRgbOffArgs {
+    fn requires_device(&self) -> bool {
+        true
+    }
+}
+
+#[derive(Debug, Args)]
+pub struct ControlRgbBeaconArgs {
+    /// Colour to beacon: a name, or a hex colour written '#RRGGBB' or
+    /// '0xRRGGBB'.
+    #[arg(long, visible_alias = "color", value_name = "COLOUR", value_parser = parse_colour, default_value = "red")]
+    pub colour: Colour,
+
+    /// Brightness as a percentage, 1 to 100.
+    #[arg(long, value_name = "PERCENT", value_parser = parse_brightness)]
+    pub brightness: Option<u8>,
+
+    /// Milliseconds for one blink. Defaults to 100.
+    #[arg(long, value_name = "MS", value_parser = parse_beacon_period)]
+    pub period: Option<u16>,
+
+    /// Milliseconds to beacon for, before going back to what the LED was doing
+    /// before. Defaults to 2500.
+    #[arg(long, value_name = "MS", value_parser = parse_hold_ms)]
+    pub hold: Option<u32>,
+}
+
+impl CommandTrait for ControlRgbBeaconArgs {
+    fn requires_device(&self) -> bool {
+        true
+    }
+}
+
+#[derive(Debug, Args)]
+pub struct ControlRgbFlameArgs {
+    /// Colour to flicker: a name, or a hex colour written '#RRGGBB' or
+    /// '0xRRGGBB'.
+    #[arg(long, visible_alias = "color", value_name = "COLOUR", value_parser = parse_colour, default_value = "red")]
+    pub colour: Colour,
+
+    /// Brightness as a percentage, 1 to 100.
+    #[arg(long, value_name = "PERCENT", value_parser = parse_brightness)]
+    pub brightness: Option<u8>,
+
+    /// Milliseconds for one pass of the flicker. Defaults to 575.
+    #[arg(long, value_name = "MS", value_parser = parse_flame_period)]
+    pub period: Option<u16>,
+
+    /// Hold this for this many milliseconds, then go back to what the LED was
+    /// doing before.
+    #[arg(long, value_name = "MS", value_parser = parse_hold_ms)]
+    pub hold: Option<u32>,
+}
+
+impl CommandTrait for ControlRgbFlameArgs {
+    fn requires_device(&self) -> bool {
+        true
+    }
+}
+
+#[derive(Debug, Args)]
+pub struct ControlRgbCycleArgs {
+    /// Milliseconds for one rotation of the hues. Defaults to 5000.
+    #[arg(long, value_name = "MS", value_parser = parse_cycle_period)]
+    pub period: Option<u16>,
+
+    /// Brightness as a percentage, 1 to 100.
+    #[arg(long, value_name = "PERCENT", value_parser = parse_brightness)]
+    pub brightness: Option<u8>,
+
+    /// Hold this for this many milliseconds, then go back to what the LED was
+    /// doing before.
+    #[arg(long, value_name = "MS", value_parser = parse_hold_ms)]
+    pub hold: Option<u32>,
+}
+
+impl CommandTrait for ControlRgbCycleArgs {
+    fn requires_device(&self) -> bool {
+        true
+    }
+}
+
+#[derive(Debug, Args)]
+pub struct ControlRgbBreatheArgs {
+    /// Colour to fade: a name, or a hex colour written '#RRGGBB' or
+    /// '0xRRGGBB'.
+    #[arg(long, visible_alias = "color", value_name = "COLOUR", value_parser = parse_colour, default_value = "red")]
+    pub colour: Colour,
+
+    /// Milliseconds for one fade up and down. Defaults to 5000.
+    #[arg(long, value_name = "MS", value_parser = parse_breathe_period)]
+    pub period: Option<u16>,
+
+    /// Brightness as a percentage, 1 to 100. The fade peaks at this.
+    #[arg(long, value_name = "PERCENT", value_parser = parse_brightness)]
+    pub brightness: Option<u8>,
+
+    /// Hold this for this many milliseconds, then go back to what the LED was
+    /// doing before.
+    #[arg(long, value_name = "MS", value_parser = parse_hold_ms)]
+    pub hold: Option<u32>,
+}
+
+impl CommandTrait for ControlRgbBreatheArgs {
+    fn requires_device(&self) -> bool {
+        true
+    }
+}
+
+#[derive(Debug, Args)]
+pub struct ControlRgbBlinkArgs {
+    /// Colour to blink: a name, or a hex colour written '#RRGGBB' or
+    /// '0xRRGGBB'.
+    #[arg(long, visible_alias = "color", value_name = "COLOUR", value_parser = parse_colour, default_value = "red")]
+    pub colour: Colour,
+
+    /// Milliseconds for one on and off. Defaults to 1000.
+    #[arg(long, value_name = "MS", value_parser = parse_blink_period)]
+    pub period: Option<u16>,
+
+    /// Brightness as a percentage, 1 to 100.
+    #[arg(long, value_name = "PERCENT", value_parser = parse_brightness)]
+    pub brightness: Option<u8>,
+
+    /// Hold this for this many milliseconds, then go back to what the LED was
+    /// doing before.
+    #[arg(long, value_name = "MS", value_parser = parse_hold_ms)]
+    pub hold: Option<u32>,
+}
+
+impl CommandTrait for ControlRgbBlinkArgs {
+    fn requires_device(&self) -> bool {
+        true
+    }
+}
+
+#[derive(Debug, Args)]
+pub struct ControlLedBlinkArgs {
+    /// Milliseconds for one on and off. Defaults to 1000.
+    #[arg(long, value_name = "MS", value_parser = parse_blink_period)]
+    pub period: Option<u16>,
+
+    /// Blink for this many milliseconds, then go back to what the LED was
+    /// doing before.
+    ///
+    /// Omit to blink until something changes it.
+    #[arg(long, value_name = "MS", value_parser = parse_hold_ms)]
+    pub hold: Option<u32>,
+}
+
+impl CommandTrait for ControlLedBlinkArgs {
     fn requires_device(&self) -> bool {
         true
     }
