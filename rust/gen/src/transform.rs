@@ -389,7 +389,11 @@ fn swap_bytes(
     };
 
     Ok((
-        data.chunks_exact(2).flat_map(|w| [w[1], w[0]]).collect(),
+        data.as_chunks::<2>()
+            .0
+            .iter()
+            .flat_map(|&[a, b]| [b, a])
+            .collect(),
         used_size_handling,
     ))
 }

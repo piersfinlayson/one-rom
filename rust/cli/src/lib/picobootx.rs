@@ -490,7 +490,9 @@ impl GpioEntry {
         }
 
         Ok(buf
-            .chunks_exact(ONEROM_GPIO_ENTRY_LEN)
+            .as_chunks::<ONEROM_GPIO_ENTRY_LEN>()
+            .0
+            .iter()
             .map(|e| Self {
                 gpio_use_raw: e[0],
                 level: e[1],

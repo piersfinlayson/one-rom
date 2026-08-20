@@ -31,7 +31,11 @@ fn apply_transforms(raw: &[u8], transforms: &[Transform], source: &str) -> Vec<u
                      (the odd-length size_handling interaction is not modelled by the tester)",
                     data.len(),
                 );
-                data.chunks_exact(2).flat_map(|w| [w[1], w[0]]).collect()
+                data.as_chunks::<2>()
+                    .0
+                    .iter()
+                    .flat_map(|&[a, b]| [b, a])
+                    .collect()
             }
 
             Transform::Deinterleave {
