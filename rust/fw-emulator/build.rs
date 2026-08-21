@@ -262,6 +262,7 @@ fn main() {
         .allowlist_function("ffi_led_frame")
         .allowlist_function("ffi_led_next_deadline")
         .allowlist_function("ffi_led_last_pixel")
+        .allowlist_function("ffi_led_reset")
         .allowlist_function("ffi_serving_alg")
         .allowlist_type("ffi_serving_alg_t")
         // The algorithm enums the reported ids belong to: a test that maps an
@@ -279,6 +280,10 @@ fn main() {
         // the apio emulation's own record, and must name the enumerators
         // rather than hardcode their values.
         .allowlist_type("ora_gpio_.*_t")
+        // ora_led_t and ora_led_mode_t reach the API as uint8_t fields, so
+        // nothing drags them in transitively either.  The plugin API tester
+        // names the LEDs and the modes rather than hardcoding their values.
+        .allowlist_type("ora_led.*")
         // The apio emulation's record of how the firmware configured the PIO
         // blocks and the GPIOs.  This is what serving actually did, as opposed
         // to what the slot configuration says it should have done, and is the

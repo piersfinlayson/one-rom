@@ -6,10 +6,55 @@
 //!
 //! Verifies that every active API ID resolves to a non-null function pointer,
 //! and that deprecated/invalid IDs correctly return null.
+//!
+//! # Why the header is parsed
+//!
+//! The two lists below are written by hand, so an ID added to the API and to
+//! neither list is covered by nothing and reported by nothing — which is how
+//! `ORA_ID_LED_SET` and `ORA_ID_LED_GET` arrived without a test.  So the
+//! `api_id_t` enum in `firmware/ora/api.h` is read and every name in it must
+//! appear in one list or the other.  That is the API's own declaration of what
+//! it offers, rather than a second copy of these lists, so a new ID fails here
+//! until someone says which it is.
+//!
+//! Classifying an ID is the floor, not the job: a new call also needs a test
+//! that exercises what it does.
+
+use std::path::Path;
 
 use onerom_fw_emulator::{Emulator, ffi};
 
-pub fn test_lookup_coverage(emu: &Emulator) -> Result<(), String> {
+/// Every `ORA_ID_*` the `api_id_t` enum declares, in declaration order.
+///
+/// The enum body is the only place in the header where a line starts with
+/// `ORA_ID_` and assigns a value — a doc block's references to an ID are inside
+/// a comment, so they start with `*`.
+fn api_ids_in_header(base_dir: &Path) -> Result<Vec<String>, String> {
+    let path = base_dir.join("firmware/ora/api.h");
+    let text = std::fs::read_to_string(&path)
+        .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+
+    let ids: Vec<String> = text
+        .lines()
+        .map(str::trim_start)
+        .filter(|line| line.starts_with("ORA_ID_") && line.contains('='))
+        .map(|line| {
+            line.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+                .next()
+                .unwrap_or_default()
+                .to_string()
+        })
+        .collect();
+
+    // A header that parsed to nothing would pass every check below silently.
+    if ids.is_empty() {
+        return Err(format!("no ORA_ID_* names found in {}", path.display()));
+    }
+
+    Ok(ids)
+}
+
+pub fn test_lookup_coverage(emu: &Emulator, base_dir: &Path) -> Result<(), String> {
     // Active IDs — must resolve to non-null.
     let active_ids: &[(ffi::api_id_t, &str)] = &[
         (ffi::api_id_t_ORA_ID_REBOOT_BOOTSEL, "ORA_ID_REBOOT_BOOTSEL"),
@@ -167,6 +212,8 @@ pub fn test_lookup_coverage(emu: &Emulator) -> Result<(), String> {
             ffi::api_id_t_ORA_ID_GET_METADATA_UINT_AT,
             "ORA_ID_GET_METADATA_UINT_AT",
         ),
+        (ffi::api_id_t_ORA_ID_LED_SET, "ORA_ID_LED_SET"),
+        (ffi::api_id_t_ORA_ID_LED_GET, "ORA_ID_LED_GET"),
     ];
 
     // Deprecated/invalid IDs — must resolve to null.
@@ -196,9 +243,34 @@ pub fn test_lookup_coverage(emu: &Emulator) -> Result<(), String> {
         }
     }
 
+    // Every ID the API declares is classified above, and everything classified
+    // above is still an ID the API declares.
+    let declared = api_ids_in_header(base_dir)?;
+    let classified: Vec<&str> = active_ids
+        .iter()
+        .chain(null_ids.iter())
+        .map(|(_, name)| *name)
+        .collect();
+
+    for name in &declared {
+        if !classified.contains(&name.as_str()) {
+            errors.push(format!(
+                "{name} is in api.h and in neither list here — add it to \
+                 active_ids with a test that exercises it, or to null_ids"
+            ));
+        }
+    }
+
+    for name in &classified {
+        if !declared.iter().any(|d| d == name) {
+            errors.push(format!("{name} is listed here but no longer in api.h"));
+        }
+    }
+
     if errors.is_empty() {
+        println!("  {} API IDs declared, all classified", declared.len());
         Ok(())
     } else {
-        Err(errors.join(", "))
+        Err(errors.join("; "))
     }
 }

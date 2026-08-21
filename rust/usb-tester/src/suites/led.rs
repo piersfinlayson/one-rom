@@ -31,6 +31,11 @@
 //! refusal is covered.
 
 use onerom_fw_emulator::OraResult;
+use onerom_metadata::{
+    GPIO_NONE, LED_BEACON_DEFAULT_DURATION_MS, LED_BEACON_DEFAULT_PERIOD_MS, LED_BEACON_STEPS,
+    LED_BLINK_DEFAULT_PERIOD_MS, LED_BREATHE_DEFAULT_PERIOD_MS, LED_BREATHE_STEPS,
+    LED_CYCLE_DEFAULT_PERIOD_MS, LED_CYCLE_STEPS, LED_MAX_HOLD_MS,
+};
 
 use crate::device::{Device, LedState};
 use crate::{Ctx, Scenario};
@@ -47,22 +52,22 @@ const LED_CYCLE: u8 = 0x04;
 const LED_BREATHE: u8 = 0x05;
 const LED_BLINK: u8 = 0x06;
 
-// The default periods the engine applies when a request names none, from
-// pioled.c.
-const CYCLE_PERIOD_MS: u16 = 5000;
-const BREATHE_PERIOD_MS: u16 = 5000;
-const BLINK_PERIOD_MS: u16 = 1000;
-
-// The steps a repetition is divided into, from pioled.c.
-const CYCLE_STEPS: usize = 100;
-const BREATHE_STEPS: usize = 100;
+// What the engine does with a request that names no period, and how it divides
+// a repetition up.  These come from the metadata schema the firmware compiles
+// against, so this suite cannot predict a shape the engine is not running.
+const CYCLE_PERIOD_MS: u16 = LED_CYCLE_DEFAULT_PERIOD_MS;
+const BREATHE_PERIOD_MS: u16 = LED_BREATHE_DEFAULT_PERIOD_MS;
+const BLINK_PERIOD_MS: u16 = LED_BLINK_DEFAULT_PERIOD_MS;
+const CYCLE_STEPS: usize = LED_CYCLE_STEPS as usize;
+const BREATHE_STEPS: usize = LED_BREATHE_STEPS as usize;
 
 // The LEDs a SET_LED can address, from usb_custom_pbx.h.
 const LED_ID_STATUS: u8 = 0x00;
 const LED_ID_RGB: u8 = 0x01;
 
-// The longest hold SET_LED accepts, from usb_custom_pbx.h.
-const MAX_HOLD_MS: u32 = 60000;
+// The longest hold SET_LED accepts.  The plugin refuses beyond this itself, as
+// ORA_LED_MAX_HOLD_MS, and the engine behind it refuses the same value.
+const MAX_HOLD_MS: u32 = LED_MAX_HOLD_MS;
 
 // LED_QUERY and its response, from usb_custom_pbx.h.
 const CMD_LED_QUERY: u8 = 0x05 | 0x80;
@@ -77,12 +82,10 @@ const SUB_BREATHE: u8 = 0x05;
 const SUB_BLINK: u8 = 0x06;
 const SUB_FLAME: u8 = 0x03;
 
-// What the firmware reports for an LED the board does not have.
-const GPIO_NONE: u8 = 0xFF;
-
-// The beacon's shape, from usb_led.h.
-const BEACON_DURATION_MS: u64 = 2500;
-const BEACON_TOGGLE_MS: u64 = 50;
+// The beacon's shape.  It runs for its default duration, and one toggle is a
+// step of its default period - two steps, lit then dark.
+const BEACON_DURATION_MS: u64 = LED_BEACON_DEFAULT_DURATION_MS as u64;
+const BEACON_TOGGLE_MS: u64 = (LED_BEACON_DEFAULT_PERIOD_MS / LED_BEACON_STEPS as u16) as u64;
 
 /// A SET_LED argument block for the status LED.
 fn set_led_args(sub_cmd: u8) -> [u8; 16] {

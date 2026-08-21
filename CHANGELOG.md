@@ -38,7 +38,7 @@ In detail:
   - This required a firmware update.
 - Plugins can now take constants from the ORA API rather than writing the values out again.  A value the firmware and a plugin have to agree on — the longest hold either accepts, say — is declared once and reaches both, so a change to it cannot leave them disagreeing.
   - This required a firmware update.
-- One ROM now drives its RGB LED itself from core firmware, on the models that have one, the USB plugin supports accessing this function and `onerom control rgb` drives it: on, off, beacon, flame, cycle, breathe and blink, each with a colour, a brightness and a speed.  `onerom inspect rgb` and `onerom inspect led` report what each LED is doing.  This needs no plugin, so the RGB user plugin is superseded and the user plugin slot it used to occupy is free.
+- One ROM now drives its RGB LED itself from core firmware, on the models that have one, the USB plugin supports accessing this function and `onerom control rgb` drives it: on, off, beacon, flame, cycle, breathe and blink, each with a colour, a brightness and a speed.  `onerom inspect rgb` and `onerom inspect led` report what each LED is doing.  This needs no plugin, so the RGB user plugin is superseded and the user plugin slot it used to occupy is free.  A plugin can drive and read either LED through the plugin API.
   - This required a firmware update.
 - `onerom control led blink` blinks the status LED on and off and keeps going, where `beacon` stops itself after a couple of seconds.
   - This required a firmware update.

@@ -141,6 +141,14 @@ uint32_t ffi_led_last_pixel(uint32_t *count_out) {
     return pio_led_last_pixel(count_out);
 }
 
+// Take the engine back to the state it holds before boot sets an LED, so a
+// test starts from a known one rather than from what the test before it left.
+// Neither LED is driven from here - what a channel is doing is forgotten, not
+// turned off - so a test that cares about the pin sets a mode after it.
+void ffi_led_reset(void) {
+    pio_led_reset();
+}
+
 void ffi_set_logging(uint8_t enabled) {
     logging_enabled = enabled;
 }

@@ -41,47 +41,28 @@
 #define LED_DELAY_BIT           6u
 #define LED_DELAY_LOW           6u
 
-// The periods and holds a request can leave unsaid, and the floors it cannot go
-// below, are LED_*_DEFAULT_* and LED_*_MIN_PERIOD_MS, from the metadata schema.
-// The host CLI states them in its help and refuses what this engine would.
+// What a request can leave unsaid, and the floors it cannot go below, are in
+// the metadata schema: LED_*_DEFAULT_*, LED_*_MIN_PERIOD_MS, LED_*_STEPS,
+// LED_MIN_FRAME_MS and LED_DEFAULT_*.  The host CLI states them in its help and
+// refuses what this engine would, and the plugin API tester predicts this
+// engine's answers from them.
 //
 // A beacon takes a default duration rather than a rule of its own because a
 // beacon is a bounded identify, not a mode a device sits in, and a hold is
 // exactly that bound.
-
-// The flicker table below plays over this, so a period of its own length runs
-// it at the speed it is written at, and a shorter one hurries it.
-
-// Steps a repetition is divided into.  The frame interval is the period over
-// these, so a longer period is smoother rather than slower.  Blink has two
-// steps because it has two states.
-#define LED_CYCLE_STEPS         100u
-#define LED_BREATHE_STEPS       100u
-#define LED_BLINK_STEPS         2u
-#define LED_BEACON_STEPS        2u
-
-// Each mode's minimum comes from its steps: a period is divided into them to
-// give a frame interval, so below the minimum the engine would have to run
-// frames closer together than LED_MIN_FRAME_MS and could not do what was asked.
-// A shorter period is refused rather than quietly treated as the minimum, which
-// would have the engine report back a period it was not running at.
 //
-// Flame divides its own table instead, and its shortest entry is 10ms of 575,
-// so its 500 leaves every entry whole.
-
-// The shortest frame interval the engine will schedule.  A period short enough
-// to want a faster one is being asked for an animation the eye cannot follow.
-#define LED_MIN_FRAME_MS        10u
-
-// Brightness applied when a request asks for none.  A WS2812 at full output is
-// uncomfortable at desk distance.
-#define LED_DEFAULT_BRIGHTNESS  25u
-
-// The colour any mode takes when a request names none.  One ROM is red, its
-// status LED is red, and a flame is red.
-#define LED_DEFAULT_RED         0xFFu
-#define LED_DEFAULT_GREEN       0x00u
-#define LED_DEFAULT_BLUE        0x00u
+// The frame interval is a mode's period over its steps, so a longer period is
+// smoother rather than slower, and blink has two steps because it has two
+// states.  Each mode's minimum period is what keeps that interval at or above
+// LED_MIN_FRAME_MS: below it the engine would have to run frames closer
+// together than that and could not do what was asked.  A shorter period is
+// refused rather than quietly treated as the minimum, which would have the
+// engine report back a period it was not running at.
+//
+// Flame divides its own flicker table instead.  The table plays over
+// LED_FLAME_DEFAULT_PERIOD_MS, so a period of that length runs it at the speed
+// it is written at and a shorter one hurries it, and its shortest entry is 10ms
+// of 575 - so the 500 minimum leaves every entry whole.
 
 // The engine's state is written from two places at once: a caller in thread
 // context, and the frame interrupt.  Those can be on different cores - a user
@@ -113,6 +94,22 @@
 
 // How many LEDs this firmware knows.  ora_led_t numbers them.
 #define LED_COUNT               2u
+
+// A caller declares how big it believes each structure to be, and this engine
+// reads and writes no more than that.  LED_REQUEST_MIN_SIZE and
+// LED_STATE_MIN_SIZE, from the metadata schema, are the sizes those structures
+// first shipped at and the smallest a caller may declare - anything below is a
+// size no version of this API ever had.  These asserts catch a structure
+// shrinking below the floor it is checked against, which would let a caller
+// declare bytes the structure no longer has.
+STATIC_ASSERT(
+    sizeof(ora_led_request_t) >= LED_REQUEST_MIN_SIZE,
+    "ora_led_request_t is smaller than the size it first shipped at"
+);
+STATIC_ASSERT(
+    sizeof(ora_led_state_t) >= LED_STATE_MIN_SIZE,
+    "ora_led_state_t is smaller than the size it first shipped at"
+);
 
 // The first GPIO the state machine can address, given GPIOBASE 16.
 #define LED_GPIOBASE_FIRST      16u
@@ -881,8 +878,12 @@ ora_result_t pio_led_set(const ora_led_request_t *req) {
     uint8_t bounded;
     uint8_t already_bounded;
 
-    if ((req == NULL) || (req->size == 0u)) {
+    if (req == NULL) {
         return ORA_RESULT_INVALID_ARG;
+    }
+
+    if (req->size < LED_REQUEST_MIN_SIZE) {
+        return ORA_RESULT_INVALID_SIZE;
     }
 
     if (req->led >= LED_COUNT) {
@@ -985,7 +986,14 @@ ora_result_t pio_led_set(const ora_led_request_t *req) {
     }
 
     if (hold) {
+        // The sum is 32-bit millisecond arithmetic and wraps, and zero is this
+        // field's "no hold is running" - so a hold landing exactly there would
+        // read as no hold at all, and the frame would never take the LED back.
+        // Ending a millisecond later is a value the field can hold.
         ch->hold_expiry_ms = now_ms + hold_ms;
+        if (ch->hold_expiry_ms == 0u) {
+            ch->hold_expiry_ms = 1u;
+        }
     }
 
     switch (ch->mode) {
@@ -1043,7 +1051,7 @@ ora_result_t pio_led_get(uint8_t led, ora_led_state_t *state_out) {
     }
 
     want = state_out->size;
-    if (want == 0u) {
+    if (want < LED_STATE_MIN_SIZE) {
         return ORA_RESULT_INVALID_SIZE;
     }
     if (want > (uint8_t)sizeof(state)) {

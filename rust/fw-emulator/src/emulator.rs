@@ -170,6 +170,27 @@ pub struct GpioInfo {
     pub is_output: u8,
 }
 
+/// One LED's state as reported by `ORA_ID_LED_GET`.
+///
+/// `mode` is an [`ffi::ora_led_mode_t`] value, left raw for the reason
+/// [`GpioInfo`]'s `gpio_use` is: a test reports an unexpected one verbatim
+/// rather than collapsing it into a catch-all.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LedState {
+    /// Bytes the firmware reported writing.
+    pub size: u8,
+    pub led: u8,
+    pub present: u8,
+    pub mode: u8,
+    pub brightness: u8,
+    pub red: u8,
+    pub green: u8,
+    pub blue: u8,
+    pub gpio: u8,
+    pub reserved: u8,
+    pub period_ms: u16,
+}
+
 /// Per-ROM detail for one ROM within a flash slot (via
 /// `ORA_ID_GET_FLASH_SLOT_EXT_INFO`).
 pub struct FlashSlotExtInfo {
@@ -969,6 +990,15 @@ impl Emulator {
         (have != 0).then_some(ms)
     }
 
+    /// Forget what both LEDs are doing, so a test starts from a known state
+    /// rather than from what the test before it left.
+    ///
+    /// Nothing is driven from here - a channel's mode is forgotten, not turned
+    /// off - so a test that cares about the pin sets a mode after it.
+    pub fn led_reset(&self) {
+        unsafe { ffi::ffi_led_reset() };
+    }
+
     /// The last colour the LED engine sent to the RGB LED, and how many it has
     /// sent.
     ///
@@ -1027,6 +1057,110 @@ impl Emulator {
     /// `ORA_ID_GPIO_QUERY` with the full structure this build knows about.
     pub fn gpio_query(&self, gpio: u8) -> (OraResult, GpioInfo) {
         self.gpio_query_sized(gpio, size_of::<ffi::ora_gpio_info_t>() as u8)
+    }
+
+    /// A zeroed `ORA_ID_LED_SET` request, with its size field set as a caller
+    /// built against this header sets it.
+    ///
+    /// Zero in a field means the firmware chooses, so a caller fills in only
+    /// what it means to ask for.
+    pub fn led_request() -> ffi::ora_led_request_t {
+        ffi::ora_led_request_t {
+            size: size_of::<ffi::ora_led_request_t>() as u8,
+            led: 0,
+            mode: 0,
+            brightness: 0,
+            red: 0,
+            green: 0,
+            blue: 0,
+            reserved0: 0,
+            period_ms: 0,
+            reserved1: [0; 2],
+            hold_ms: 0,
+        }
+    }
+
+    /// `ORA_ID_LED_SET`.
+    ///
+    /// The request is passed exactly as given, size field included, so a caller
+    /// exercising the size contract states its own.
+    pub fn led_set(&self, req: &ffi::ora_led_request_t) -> OraResult {
+        let r = plugin_call!(
+            ffi::api_id_t_ORA_ID_LED_SET,
+            ffi::ora_led_set_fn_t,
+            req as *const ffi::ora_led_request_t
+        );
+        OraResult::from(r)
+    }
+
+    /// `ORA_ID_LED_SET` with a NULL request.
+    pub fn led_set_null(&self) -> OraResult {
+        let r = plugin_call!(
+            ffi::api_id_t_ORA_ID_LED_SET,
+            ffi::ora_led_set_fn_t,
+            std::ptr::null()
+        );
+        OraResult::from(r)
+    }
+
+    /// `ORA_ID_LED_GET`, telling the firmware the caller's structure is
+    /// `caller_size` bytes.
+    ///
+    /// Fields beyond what the firmware writes are returned as the sentinel
+    /// `0xFF` this function pre-fills them with, so a caller can tell "not
+    /// written" from "written as zero".
+    pub fn led_get_sized(&self, led: u8, caller_size: u8) -> (OraResult, LedState) {
+        let mut state = ffi::ora_led_state_t {
+            size: caller_size,
+            led: 0xFF,
+            present: 0xFF,
+            mode: 0xFF,
+            brightness: 0xFF,
+            red: 0xFF,
+            green: 0xFF,
+            blue: 0xFF,
+            gpio: 0xFF,
+            reserved: 0xFF,
+            period_ms: 0xFFFF,
+        };
+        let r = plugin_call!(
+            ffi::api_id_t_ORA_ID_LED_GET,
+            ffi::ora_led_get_fn_t,
+            led,
+            &mut state as *mut ffi::ora_led_state_t
+        );
+        (
+            OraResult::from(r),
+            LedState {
+                size: state.size,
+                led: state.led,
+                present: state.present,
+                mode: state.mode,
+                brightness: state.brightness,
+                red: state.red,
+                green: state.green,
+                blue: state.blue,
+                gpio: state.gpio,
+                reserved: state.reserved,
+                period_ms: state.period_ms,
+            },
+        )
+    }
+
+    /// `ORA_ID_LED_GET` with the full structure this build knows about.
+    pub fn led_get(&self, led: u8) -> (OraResult, LedState) {
+        self.led_get_sized(led, size_of::<ffi::ora_led_state_t>() as u8)
+    }
+
+    /// `ORA_ID_LED_GET` with a NULL state pointer.
+    pub fn led_get_null(&self, led: u8) -> OraResult {
+        let r = plugin_call!(
+            ffi::api_id_t_ORA_ID_LED_GET,
+            ffi::ora_led_get_fn_t,
+            led,
+            std::ptr::null_mut()
+        );
+        OraResult::from(r)
     }
 
     /// `ORA_ID_SET_STATUS_LED`, driving the status LED as a plugin does.

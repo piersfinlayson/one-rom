@@ -1962,6 +1962,81 @@ bounded by definition, so it takes this rather than running until
 something changes it."""
 
 [[constants]]
+name = "LED_REQUEST_MIN_SIZE"
+type = "u8"
+value = 16
+comment = """The size of ora_led_request_t as it first shipped, and the
+smallest a caller may declare in its size field. This never follows the
+structure's current size: a caller that knows a larger one is read for the
+fields the firmware knows and no further, which is what keeps a plugin built
+against a later header working on an earlier firmware."""
+
+[[constants]]
+name = "LED_STATE_MIN_SIZE"
+type = "u8"
+value = 12
+comment = """The size of ora_led_state_t as it first shipped, and the smallest
+a caller may declare in its size field. Frozen, for the reason
+LED_REQUEST_MIN_SIZE is."""
+
+[[constants]]
+name = "LED_CYCLE_STEPS"
+type = "u8"
+value = 100
+comment = "Steps one rotation of the hues is divided into."
+
+[[constants]]
+name = "LED_BREATHE_STEPS"
+type = "u8"
+value = 100
+comment = "Steps one fade up and down is divided into."
+
+[[constants]]
+name = "LED_BLINK_STEPS"
+type = "u8"
+value = 2
+comment = "Steps one on and off is divided into."
+
+[[constants]]
+name = "LED_BEACON_STEPS"
+type = "u8"
+value = 2
+comment = "Steps one blink of a beacon is divided into."
+
+[[constants]]
+name = "LED_MIN_FRAME_MS"
+type = "u16"
+value = 10
+comment = """The shortest interval the LED engine schedules frames at, in
+milliseconds. A mode's period divided by its steps gives that interval, which
+is what puts a floor under each mode's period."""
+
+[[constants]]
+name = "LED_DEFAULT_BRIGHTNESS"
+type = "u8"
+value = 25
+comment = """Brightness percentage the RGB LED takes when a request names none.
+A WS2812 at full output is uncomfortable at desk distance."""
+
+[[constants]]
+name = "LED_DEFAULT_RED"
+type = "u8"
+value = 255
+comment = "Red of the colour a mode takes when a request names none."
+
+[[constants]]
+name = "LED_DEFAULT_GREEN"
+type = "u8"
+value = 0
+comment = "Green of the colour a mode takes when a request names none."
+
+[[constants]]
+name = "LED_DEFAULT_BLUE"
+type = "u8"
+value = 0
+comment = "Blue of the colour a mode takes when a request names none."
+
+[[constants]]
 name = "GPIO_RESET_DEFAULT_HOLD_MS"
 type = "u32"
 value = 100

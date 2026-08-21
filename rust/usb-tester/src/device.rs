@@ -302,41 +302,12 @@ impl<'a> Device<'a> {
     /// for — which is what lets a scenario see whether the colour, brightness
     /// and mode the wire carried arrived where they were aimed.
     pub fn led(&self, led: u8) -> Result<LedState, String> {
-        use onerom_fw_emulator::ffi as fw;
-
-        // Pre-filled with a sentinel, so a field the firmware leaves alone is
-        // not read as one it wrote as zero.
-        let mut state = fw::ora_led_state_t {
-            size: size_of::<fw::ora_led_state_t>() as u8,
-            led: 0xFF,
-            present: 0xFF,
-            mode: 0xFF,
-            brightness: 0xFF,
-            red: 0xFF,
-            green: 0xFF,
-            blue: 0xFF,
-            gpio: 0xFF,
-            reserved: 0xFF,
-            period_ms: 0xFFFF,
-        };
-
-        // SAFETY: the firmware's own lookup, called with a structure whose size
-        // field bounds what it may write.
-        let result = unsafe {
-            let ptr = fw::ora_fn_lookup(fw::api_id_t_ORA_ID_LED_GET);
-            if ptr.is_null() {
-                return Err("this firmware has no LED engine to read".to_string());
-            }
-            let get: fw::ora_led_get_fn_t = std::mem::transmute(ptr);
-            get.unwrap()(led, &mut state)
-        };
-
-        let result = onerom_fw_emulator::OraResult::from(result);
+        let (result, state) = self.emu.led_get(led);
         if !result.is_ok() {
             return Err(format!("could not read LED {led}: {result:?}"));
         }
 
-        // Pre-filled with 0xFF above, so this says the firmware wrote the
+        // The wrapper pre-fills with 0xFF, so this says the firmware wrote the
         // reserved byte rather than leaving whatever was in the caller's
         // structure.  A reserved byte carrying stack is what reaches a host.
         if state.reserved != 0 {

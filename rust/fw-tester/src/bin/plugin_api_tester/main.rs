@@ -204,7 +204,7 @@ fn run_slot(
     // Lookup
     report.add(
         "lookup_coverage",
-        tests::lookup::test_lookup_coverage(&emulator),
+        tests::lookup::test_lookup_coverage(&emulator, base_dir),
     );
 
     // Plugin context
@@ -385,6 +385,38 @@ fn run_slot(
             &emulator, config, board, base_dir, set_idx, BOOT_SLOT,
         ),
     );
+
+    // LEDs, last.  Setting the RGB LED claims a PIO state machine, which
+    // extends the same apio configuration the serving tests above read, so they
+    // run first and this cannot move anything underneath them.
+    report.add("led_presence", tests::led::test_led_presence(&emulator));
+    report.add(
+        "led_size_contract",
+        tests::led::test_led_size_contract(&emulator),
+    );
+    report.add("led_rejects", tests::led::test_led_rejects(&emulator));
+    report.add("led_defaults", tests::led::test_led_defaults(&emulator));
+    report.add(
+        "led_status_channel",
+        tests::led::test_led_status_channel(&emulator),
+    );
+    report.add(
+        "led_hold_restores",
+        tests::led::test_led_hold_restores(&emulator),
+    );
+    report.add(
+        "led_hold_at_the_wrap",
+        tests::led::test_led_hold_at_the_wrap(&emulator),
+    );
+
+    if tests::led::has_rgb(&emulator) {
+        report.add(
+            "led_rgb_defaults",
+            tests::led::test_led_rgb_defaults(&emulator),
+        );
+    } else {
+        report.skip("led_rgb_defaults", "board has no RGB LED");
+    }
 
     // `emulator` dropped here; Drop impl frees the epio handle before the next
     // slot boots.

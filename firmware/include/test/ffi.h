@@ -37,4 +37,5 @@ void ffi_epio_arm_monitor(epio_t *epio);
 void ffi_led_frame(void);
 uint32_t ffi_led_last_pixel(uint32_t *count_out);
 uint8_t ffi_led_next_deadline(uint32_t *ms_out);
+void ffi_led_reset(void);
 void ffi_set_logging(uint8_t enabled);

@@ -5,6 +5,7 @@
 pub mod context;
 pub mod gpio;
 pub mod info;
+pub mod led;
 pub mod log;
 pub mod lookup;
 pub mod mapping;

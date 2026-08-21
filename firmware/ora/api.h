@@ -2724,9 +2724,13 @@ typedef struct {
      * @brief In: sizeof this structure as known to the caller
      *
      * The caller sets this to sizeof(ora_led_request_t) as it knows it before
-     * calling. The firmware reads at most that many bytes, so a plugin built
-     * against an older or newer version of this structure than the running
-     * firmware still interoperates.
+     * calling. The firmware reads at most that many bytes, and no more than
+     * the fields it knows itself, so a plugin built against a newer version of
+     * this structure than the running firmware still interoperates.
+     *
+     * A size smaller than this structure was when it first shipped is
+     * refused: no version of this API had one, so it is a caller that has not
+     * set the field rather than an older plugin.
      */
     uint8_t  size;
 
@@ -2799,6 +2803,14 @@ typedef struct {
     /**
      * @brief In: sizeof this structure as known to the caller.  Out: the
      * number of bytes the firmware actually wrote.
+     *
+     * The caller sets this to sizeof(ora_led_state_t) as it knows it before
+     * calling. The firmware writes at most that many bytes and sets this field
+     * to how many it wrote, so a plugin built against a newer version of this
+     * structure than the running firmware still interoperates.
+     *
+     * A size smaller than this structure was when it first shipped is
+     * refused, as it is for @ref ora_led_request_t.
      */
     uint8_t  size;
 
@@ -2870,11 +2882,13 @@ STATIC_ASSERT(sizeof(ora_led_state_t) == 12, "ora_led_state_t must be 12 bytes")
  *
  * @param req  What to do, with its size field already set
  * @return ORA_RESULT_OK on success; ORA_RESULT_INVALID_ARG if @p req is NULL,
- *         its size is zero, @p req->led is not an LED this firmware knows,
- *         @p req->mode is not a mode this LED supports, @p req->brightness is
- *         above 100, or @p req->hold_ms exceeds the firmware's limit;
- *         ORA_RESULT_NOT_SUPPORTED if the board does not have the requested
- *         LED
+ *         @p req->led is not an LED this firmware knows, @p req->mode is not a
+ *         mode this LED supports, @p req->brightness is above 100,
+ *         @p req->hold_ms exceeds the firmware's limit, or @p req->period_ms
+ *         is below the shortest the mode accepts;
+ *         ORA_RESULT_INVALID_SIZE if @p req->size is below this structure's
+ *         first shipped size; ORA_RESULT_NOT_SUPPORTED if the board does not
+ *         have the requested LED
  */
 typedef ora_result_t (*ora_led_set_fn_t)(
     const ora_led_request_t *req
@@ -2895,7 +2909,8 @@ typedef ora_result_t (*ora_led_set_fn_t)(
  * @param state_out  Structure to fill in, with its size field already set
  * @return ORA_RESULT_OK on success; ORA_RESULT_INVALID_ARG if @p state_out is
  *         NULL or @p led is not an LED this firmware knows;
- *         ORA_RESULT_INVALID_SIZE if @p state_out->size is zero
+ *         ORA_RESULT_INVALID_SIZE if @p state_out->size is below this
+ *         structure's first shipped size
  */
 typedef ora_result_t (*ora_led_get_fn_t)(
     uint8_t led,

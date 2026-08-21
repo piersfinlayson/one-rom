@@ -473,6 +473,21 @@ RBCP.
   firmware version it first shipped in — that version is what a plugin targets
   via `min_fw_version`. `api.h` itself is only version-bumped for a
   non-backwards-compatible change (which shouldn't happen).
+- **A new plugin API call is not done until the plugin API tester exercises
+  it, in the same commit.** That tester is
+  [rust/fw-tester/src/bin/plugin_api_tester/](/rust/fw-tester/src/bin/plugin_api_tester/),
+  run by `make test-api` and by `ci/test-emu.sh` against every board of a
+  family. A new `ORA_ID_*` needs three things: an entry in `tests/lookup.rs`'s
+  active list, a wrapper on `Emulator`
+  (`rust/fw-emulator/src/emulator.rs`) so a test can call it, and a test of
+  what the call actually does — its refusals and its edges, not just that it
+  resolves. `lookup.rs` reads the `api_id_t` enum out of `api.h` and fails on
+  an ID in neither of its lists, so the classification is caught mechanically.
+  Nothing catches a classified ID with no test behind it.
+  - A plugin that drives the new call is **not** that test. The USB plugin
+    tester (`rust/usb-tester`) reaches the LED engine through the plugin's own
+    commands and says only what its wire format can carry — the API's own
+    boundary, its sizes and its refusals, is what the plugin API tester owns.
 - **Exposing device metadata to plugins:** tag the field in
   `rust/metadata/metadata_schema.toml` with `plugin_key = { name = "…", id = N }`.
   String fields then resolve via `ORA_ID_GET_METADATA_STR`, unsigned
