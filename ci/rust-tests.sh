@@ -45,6 +45,16 @@ cargo test -p onerom-protocol
 echo "Testing schema-gen..."
 cargo test -p schema-gen
 
+echo "Testing doc-gen..."
+cargo test -p doc-gen
+
+# Values a document states and something else owns - a hold limit from the
+# metadata schema, the CLI's own version - are marked in the markdown and
+# checked here.  Nothing is rewritten: a stale value is an edit for whoever
+# moved the constant, not something a tool silently fixes in their prose.
+echo "Checking documentation values against their sources..."
+cargo run -q -p doc-gen
+
 # Generated files that are checked in must match a fresh regeneration.  Every
 # generator resolves its output path from CARGO_MANIFEST_DIR, so it does not
 # matter that we are in rust/ rather than the repo root.

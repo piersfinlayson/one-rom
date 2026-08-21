@@ -8,7 +8,7 @@ This manual is in two parts. The **Guide** walks through installation and the
 common workflows. The **Reference** documents every command, subcommand and
 option.
 
-> This manual documents the `onerom` CLI as of release v0.4.0. Board,
+> This manual documents the `onerom` CLI as of release v<!--[version:cli]-->0.4.0<!--[/]-->. Board,
 > chip and plugin lists shown in examples are illustrative — the set your build
 > supports may differ. Run `onerom --version` to check your version, and
 > `onerom board list` / `onerom chips` for the definitive lists your build knows
@@ -558,7 +558,7 @@ These are rejected with `--no-config`.
 | `--batch` (aliases `--multiple`, `--multi`) | Program multiple devices, pausing for confirmation between each. Every board is programmed with the same configuration as the first. |
 | `--scan-slots` | After programming, run `onerom scan --slots` to show the result. Conflicts with `--fast`. |
 | `--follow` | After programming, monitor the One ROM's log, as [`monitor log`](#monitor-log) does. Runs after `--scan-slots`, and only once the One ROM is back on the USB bus, so it shows the boot log of the firmware just flashed. Refused before anything is flashed if the image has no USB system plugin, since such a One ROM leaves the bus as soon as it serves. Conflicts with `--fast`, `--stopped`, `--no-reboot` and `--batch`. |
-| `--reset-host <PIN>` (alias `--host-reset`) | After programming, pulse this pin low to reset the host system, as [`control reset`](#control-reset) does. Named as `gpio<N>` or as a header pad (see [Pin values](#pin-values)). Runs after `--scan-slots` and before `--follow`, once the One ROM is back on the USB bus, and for each device in a `--batch`. The pulse is 100ms; use `control reset` for a different hold. Conflicts with `--fast`, `--stopped` and `--no-reboot`. |
+| `--reset-host <PIN>` (alias `--host-reset`) | After programming, pulse this pin low to reset the host system, as [`control reset`](#control-reset) does. Named as `gpio<N>` or as a header pad (see [Pin values](#pin-values)). Runs after `--scan-slots` and before `--follow`, once the One ROM is back on the USB bus, and for each device in a `--batch`. The pulse is <!--[const:GPIO_RESET_DEFAULT_HOLD_MS:ms]-->100ms<!--[/]-->; use `control reset` for a different hold. Conflicts with `--fast`, `--stopped` and `--no-reboot`. |
 
 Device required: yes.
 
@@ -841,9 +841,9 @@ refused rather than quietly run at the minimum:
 
 | Mode | Shortest period |
 |---|---|
-| `cycle`, `breathe` | 1000ms |
-| `flame` | 500ms |
-| `beacon`, `blink` | 50ms |
+| `cycle`, `breathe` | <!--[const:LED_CYCLE_MIN_PERIOD_MS+LED_BREATHE_MIN_PERIOD_MS:ms]-->1000ms<!--[/]--> |
+| `flame` | <!--[const:LED_FLAME_MIN_PERIOD_MS:ms]-->500ms<!--[/]--> |
+| `beacon`, `blink` | <!--[const:LED_BEACON_MIN_PERIOD_MS+LED_BLINK_MIN_PERIOD_MS:ms]-->50ms<!--[/]--> |
 
 `cycle` walks the hues itself rather than showing a colour you set, so no
 `Colour` is reported while it runs:
@@ -1063,10 +1063,10 @@ onerom control led blink
 
 | Option | Description | Subcommands |
 |---|---|---|
-| `--hold <MS>` | Stay in this mode for this many milliseconds, then go back to what the LED was doing before. The device times it, so it completes even if the command does not. Maximum 60000. | all |
-| `--period <MS>` | Milliseconds for one repetition — one blink for `beacon` and `blink`, one pass of the flicker for `flame`. Defaults to 100, 1000 and 575 respectively. Minimum 50 for `beacon` and `blink`, 500 for `flame`. | `beacon`, `blink`, `flame` |
+| `--hold <MS>` | Stay in this mode for this many milliseconds, then go back to what the LED was doing before. The device times it, so it completes even if the command does not. Maximum <!--[const:LED_MAX_HOLD_MS]-->60000<!--[/]-->. | all |
+| `--period <MS>` | Milliseconds for one repetition — one blink for `beacon` and `blink`, one pass of the flicker for `flame`. Defaults to <!--[const:LED_BEACON_DEFAULT_PERIOD_MS]-->100<!--[/]-->, <!--[const:LED_BLINK_DEFAULT_PERIOD_MS]-->1000<!--[/]--> and <!--[const:LED_FLAME_DEFAULT_PERIOD_MS]-->575<!--[/]--> respectively. Minimum <!--[const:LED_BEACON_MIN_PERIOD_MS+LED_BLINK_MIN_PERIOD_MS]-->50<!--[/]--> for `beacon` and `blink`, <!--[const:LED_FLAME_MIN_PERIOD_MS]-->500<!--[/]--> for `flame`. | `beacon`, `blink`, `flame` |
 
-`beacon` ends by itself after 2500ms unless `--hold` says otherwise. `blink` is
+`beacon` ends by itself after <!--[const:LED_BEACON_DEFAULT_DURATION_MS:ms]-->2500ms<!--[/]--> unless `--hold` says otherwise. `blink` is
 the same on-and-off toggle but slower and unbounded — it runs until something
 changes it, or until a `--hold` you give it expires.
 
@@ -1097,7 +1097,7 @@ onerom control rgb off
 |---|---|
 | `on` | Light the LED at a colour. |
 | `off` | Turn the LED off. |
-| `beacon` | Beacon the LED to identify a physical unit. Ends by itself after 2500ms. |
+| `beacon` | Beacon the LED to identify a physical unit. Ends by itself after <!--[const:LED_BEACON_DEFAULT_DURATION_MS:ms]-->2500ms<!--[/]-->. |
 | `flame` | Flame effect on the LED. |
 | `cycle` | Rotate through the hues. |
 | `breathe` | Fade the colour up and down. |
@@ -1108,7 +1108,7 @@ onerom control rgb off
 | `--colour <COLOUR>` (alias `--color`) | A name, or hex written `#RRGGBB` or `0xRRGGBB`. Defaults to red. | all but `off` and `cycle` |
 | `--brightness <PERCENT>` | 1 to 100. Omit for the device's default, which is deliberately modest — an RGB LED at full output is uncomfortable at desk distance. | all but `off` |
 | `--period <MS>` | Milliseconds for one repetition. | `beacon`, `flame`, `cycle`, `breathe`, `blink` |
-| `--hold <MS>` | Stay in this mode for this many milliseconds, then go back to what the LED was doing before. The device times it, so it completes even if the command does not. Maximum 60000. | all |
+| `--hold <MS>` | Stay in this mode for this many milliseconds, then go back to what the LED was doing before. The device times it, so it completes even if the command does not. Maximum <!--[const:LED_MAX_HOLD_MS]-->60000<!--[/]-->. | all |
 
 The named colours are `red`, `green`, `blue`, `white`, `yellow`, `cyan`,
 `magenta`, `orange`, `purple` and `pink`.
@@ -1120,10 +1120,10 @@ refused rather than quietly run at the minimum:
 
 | Mode | Default period | Shortest period |
 |---|---|---|
-| `cycle`, `breathe` | 5000ms | 1000ms |
-| `flame` | 575ms | 500ms |
-| `blink` | 1000ms | 50ms |
-| `beacon` | 100ms | 50ms |
+| `cycle`, `breathe` | <!--[const:LED_CYCLE_DEFAULT_PERIOD_MS+LED_BREATHE_DEFAULT_PERIOD_MS:ms]-->5000ms<!--[/]--> | <!--[const:LED_CYCLE_MIN_PERIOD_MS+LED_BREATHE_MIN_PERIOD_MS:ms]-->1000ms<!--[/]--> |
+| `flame` | <!--[const:LED_FLAME_DEFAULT_PERIOD_MS:ms]-->575ms<!--[/]--> | <!--[const:LED_FLAME_MIN_PERIOD_MS:ms]-->500ms<!--[/]--> |
+| `blink` | <!--[const:LED_BLINK_DEFAULT_PERIOD_MS:ms]-->1000ms<!--[/]--> | <!--[const:LED_BLINK_MIN_PERIOD_MS:ms]-->50ms<!--[/]--> |
+| `beacon` | <!--[const:LED_BEACON_DEFAULT_PERIOD_MS:ms]-->100ms<!--[/]--> | <!--[const:LED_BEACON_MIN_PERIOD_MS:ms]-->50ms<!--[/]--> |
 
 Nothing is printed unless the CLI is verbose:
 
@@ -1218,7 +1218,7 @@ need arbitrary states.
 
 The **device** times the pulse, not the CLI: if this command is interrupted, the
 terminal closes or the cable is pulled mid-pulse, the device still releases the
-pin. The device's own limit is 60 seconds.
+pin. The device's own limit is <!--[const:GPIO_MAX_HOLD_MS:seconds]-->60 seconds<!--[/]-->.
 
 The device must be **running** with the USB system plugin — see
 [Device states](#device-states).
@@ -1233,7 +1233,7 @@ onerom control reset --pin gpio9 --hold 500
 |---|---|
 | `--pin <PIN>` | Pin the reset wire is connected to, named as `gpio<N>` or as a header pad (see [Pin values](#pin-values)). Required. |
 | `--board <BOARD>` | Board type, overriding what the device reports. Only needed to resolve a `--pin` pad name on a board this build does not recognise. |
-| `--hold <MS>` | Milliseconds to hold reset asserted. Decimal or `0x` hex. Default `100`; `0` is rejected, because a reset pulse with no end is not a reset. |
+| `--hold <MS>` | Milliseconds to hold reset asserted. Decimal or `0x` hex. Default <!--[const:GPIO_RESET_DEFAULT_HOLD_MS:code]-->`100`<!--[/]-->; `0` is rejected, because a reset pulse with no end is not a reset. |
 
 If One ROM is itself using the GPIO the command is refused, naming what it is
 doing; `control reset` has no `--force` of its own, and the message points at
@@ -1286,7 +1286,7 @@ onerom control pin --pin sel_a --state z
 | `--pin <PIN>` | Pin to drive, named as `gpio<N>` or as a header pad (see [Pin values](#pin-values)). Required. |
 | `--board <BOARD>` | Board type, overriding what the device reports. Only needed to resolve a `--pin` pad name on a board this build does not recognise. |
 | `--state <STATE>` | `high`, `low`, or `z` (high-impedance). `1` and `0` are accepted for `high` and `low`. Required. |
-| `--hold <MS>` | Hold `--state` for this many milliseconds, then apply `--then`. Decimal or `0x` hex. Omit to latch indefinitely. The device's own limit is 60 seconds. |
+| `--hold <MS>` | Hold `--state` for this many milliseconds, then apply `--then`. Decimal or `0x` hex. Omit to latch indefinitely. The device's own limit is <!--[const:GPIO_MAX_HOLD_MS:seconds]-->60 seconds<!--[/]-->. |
 | `--then <STATE>` | State to apply when `--hold` expires: `high`, `low` or `z` (or `1`/`0`). Default `z`. Requires `--hold`. |
 | `--force` | Drive the GPIO even though One ROM is using it for serving. |
 

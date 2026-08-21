@@ -68,15 +68,20 @@ it as a long-lived, production project.
 - **When you touch the CLI, keep [docs/CLI-MANUAL.md](/docs/CLI-MANUAL.md) in
   sync, in the same commit.** Any user-facing CLI change — new/changed
   subcommands or options, altered conflicts, changed output — must be reflected
-  there, including the version banner near the top ("as of release vX.Y.Z"). The
-  manual is the user-facing reference; do not let it drift behind the CLI
-  CHANGELOG.
+  there. The manual is the user-facing reference; do not let it drift behind the
+  CLI CHANGELOG.
   - The trigger is **"the CLI prints something different"**, not "the CLI gained
     an option". Rewording a label, adding or dropping a line, changing what a
     column can contain — each is a manual change, and each is easy to miss
     precisely because no option changed. Where the manual quotes example output,
     paste a **verbatim run**; hand-written examples drift and quietly become
     wrong.
+  - **A value the manual states that something else owns is written inside a
+    marker naming that source, never bare** — a schema constant, or the CLI's
+    own version banner. See "Quoting a constant in a document" below. A number
+    inside a quoted run is the exception: it is a record of what the command
+    printed, so it stays a plain literal, and a marker inside a fenced code
+    block is refused.
   - The manual carries **two** breaking-changes sections, and a CLI change that
     breaks an existing command line updates both. `# New Breaking Changes`, near
     the top, lists **only the release in development**. `## Appendix: Breaking
@@ -303,6 +308,10 @@ Some checked-in files are generated and must stay in sync — `ci/rust-tests.sh`
 - `docs/CHIP-TYPES.md` — no command of its own, the `onerom-config` build script
   rewrites it on any build. Checked because otherwise a `chip-types.json` change
   gets committed without the regenerated doc.
+
+`cargo run -p doc-gen` is in the same gate but is **not** a generator: it writes
+nothing. It checks the values documents state against the sources that own them
+— see below.
 
 (e.g. a version bump changes `COMPATIBILITY.md`.) These generators, along with
 `ci/rust-tests.sh` and `ci/rust-docs.sh` (slow — `rust-docs.sh` especially), are
@@ -541,6 +550,41 @@ Every other option keeps its `///` comment, as the CLI arguments section says.
 A name with no matching constant fails the build and says which file it looked
 for, so a typo or a retired constant is caught rather than leaving a stale
 number behind.
+
+### Quoting a constant in a document
+
+A document has the same problem and the opposite solution. `docs/CLI-MANUAL.md`
+states hold limits, LED periods and the reset pulse, and those belong to the
+schema. It states them inside a marker naming the source:
+
+```markdown
+The device's own limit is <!--[const:GPIO_MAX_HOLD_MS:seconds]-->60 seconds<!--[/]-->.
+```
+
+`cargo run -p doc-gen` reads the schema and fails if the text between the
+markers is not what the source says today, naming file, line, expected and
+found. **It never writes a document** — a tool with write access to thousands of
+lines of hand-written prose, to save a hand edit on the day a constant changes,
+is a bad trade. The markers are HTML comments, so they are invisible to a reader
+and are stripped before the PDFs are rendered.
+
+- `source:name[:format]`. Sources are `const` (the metadata schema) and
+  `version` (a crate's version, e.g. `version:cli`). Formats are `raw`, `ms`,
+  `seconds` and `code`; an unknown one is an error, as is an unknown source or
+  name.
+- Several constants that share a value are named together —
+  `const:LED_BEACON_MIN_PERIOD_MS+LED_BLINK_MIN_PERIOD_MS` — and all must agree
+  with the text, so one moving apart from the other is caught.
+- **A marker inside a fenced code block is refused.** A number in a pasted run
+  is a record of what the command printed, not a claim about today.
+- The manual's own version banner is `version:cli`, so it is checked rather than
+  remembered.
+- The check runs in `ci/rust-tests.sh`, and again in `docs/pdf/render.py` for
+  every document read from the working tree — a release is built by hand and the
+  gate may not have been. Past editions, which name a git ref, are read as they
+  shipped and are not checked.
+- Marking a document up is opt-in, one value at a time: a document with no
+  markers passes, so any `docs/` file can adopt them when it is worth it.
 
 ## Total parseability — non-negotiable
 

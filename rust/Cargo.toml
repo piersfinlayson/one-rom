@@ -5,6 +5,7 @@ members = [
     "cli",
     "config",
     "database",
+    "doc-gen",
     "fw",
     "fw-config-gen",
     "fw-driver",

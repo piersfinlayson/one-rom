@@ -1,0 +1,23 @@
+[package]
+name = "doc-gen"
+version = "0.1.0"
+edition = "2024"
+# Workspace-internal build tool.
+publish = false
+authors = ["Piers Finlayson <piers@piers.rocks>"]
+license = "MIT"
+description = "One ROM documentation checker - keeps values quoted in docs/ in step with their source"
+repository = "https://github.com/piersfinlayson/one-rom"
+homepage = "https://onerom.org"
+keywords = ["retro", "rom", "documentation"]
+categories = ["development-tools"]
+
+[dependencies]
+onerom-metadata = { workspace = true }
+
+toml = "1.1"
+
+[dev-dependencies]
+tempfile = "3"
+[lints]
+workspace = true

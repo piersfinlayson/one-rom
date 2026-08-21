@@ -330,6 +330,7 @@ published are on crates.io, for host-side Rust development.
 | [`onerom-usb-tester`](rust/usb-tester) | | Drives the USB system plugin's commands, log forwarding and GPIO control. |
 | [`onerom-fw-driver`](rust/fw-driver), [`onerom-fw-geometry`](rust/fw-geometry) | | Pin geometry and GPIO bitmask helpers, shared and dependency-free by design. |
 | [`fw-config-gen`](rust/fw-config-gen), [`schema-gen`](rust/schema-gen) | | Code and schema generators. |
+| [`doc-gen`](rust/doc-gen) | | Checks the values `docs/` states against the sources that own them. Writes nothing. |
 
 For in-browser use, [one-rom-wasm](https://github.com/piersfinlayson/one-rom-wasm)
 wraps `onerom-gen` as WASM, and is what the

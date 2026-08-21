@@ -42,6 +42,20 @@ TOC_SPLIT = re.compile(r"\s+[-–—]\s+")
 # dropped rather than printed twice.
 HAND_WRITTEN_TOC = re.compile(r"^#{1,3}\s+(table of )?contents\s*$", re.I)
 
+# A document may state a value that something else owns - a hold limit from the
+# metadata schema, the CLI's own version - inside a marker naming that source:
+#
+#     the limit is <!--[const:GPIO_MAX_HOLD_MS:seconds]-->60 seconds<!--[/]-->.
+#
+# rust/doc-gen checks those values against their sources; this only has to take
+# the markers back out before rendering, so a PDF carries the text and not the
+# bookkeeping.  The delimiters are stated in both places, which is two copies of
+# a punctuation choice rather than of a fact - change one and the other's tests
+# say so.
+MARKER = re.compile(r"<!--\[[^\]]*\]-->|<!--\[/\]-->")
+MARKER_OPEN = re.compile(r"<!--\[(?!/)([^\]]*)\]-->")
+MARKER_CLOSE = "<!--[/]-->"
+
 NOT_PROSE = re.compile(
     r"""^(
         \#             |   # heading
@@ -91,6 +105,56 @@ VERSION_READERS = {"cli": cli_version, "firmware": firmware_version}
 
 
 # -------------------------------------------------------------- markdown --
+
+def check_markers(text, origin):
+    """Refuse a document whose markers would print into the PDF."""
+    opens = len(MARKER_OPEN.findall(text))
+    closes = text.count(MARKER_CLOSE)
+    if opens != closes:
+        sys.exit(
+            f"error: {origin} has {opens} opening and {closes} closing value "
+            f"markers.\n  An unclosed marker would print into the PDF.  Run "
+            f"'cargo run -p doc-gen' to see where."
+        )
+
+
+def strip_markers(text):
+    """The document as a reader sees it, with the value markers removed."""
+    return MARKER.sub("", text)
+
+
+def check_values(root, document, origin):
+    """Check the values a document states against the sources that own them.
+
+    Only for a document read from the working tree.  A past edition is read
+    from a git ref, where its values are what they were then and the checker
+    may not exist at all.
+
+    ci/rust-tests.sh runs the same check, but a release is built by hand and
+    the gate may not have been - and this is the last moment before a stale
+    number is published as a PDF.
+    """
+    try:
+        result = subprocess.run(
+            ["cargo", "run", "-q", "-p", "doc-gen", "--", "--check", document["source"]],
+            cwd=root / "rust",
+            capture_output=True,
+            text=True,
+        )
+    except FileNotFoundError:
+        sys.exit(
+            "error: cargo not found, so the values in "
+            f"{origin} cannot be checked against their sources.\n  A document "
+            "read from the working tree is checked before it is published.  "
+            "Past\n  editions, which name a git ref, are not - build those "
+            "without a Rust toolchain."
+        )
+    if result.returncode != 0:
+        sys.exit(
+            f"error: {origin} states values that no longer match their "
+            f"sources:\n{result.stdout}{result.stderr}"
+        )
+
 
 def is_prose(line):
     """True if a stripped line opens an ordinary paragraph."""
@@ -206,6 +270,10 @@ def render(document, config, root, out_dir, commit, date, year):
     else:
         text = (root / document["source"]).read_text()
         origin = document["source"]
+        check_values(root, document, origin)
+
+    check_markers(text, origin)
+    text = strip_markers(text)
 
     # A document may also state its version in its own prose, for readers of the
     # markdown on GitHub, who get no cover and no versioned filename.  That is a

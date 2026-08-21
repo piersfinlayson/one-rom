@@ -22,6 +22,9 @@ RUSTDOCFLAGS="-D warnings" cargo doc -p onerom-config --no-deps
 echo "Generating documentation for onerom-database..."
 RUSTDOCFLAGS="-D warnings" cargo doc -p onerom-database --no-deps
 
+echo "Generating documentation for doc-gen..."
+RUSTDOCFLAGS="-D warnings" cargo doc -p doc-gen --no-deps
+
 echo "Generating documentation for onerom-fw..."
 RUSTDOCFLAGS="-D warnings" cargo doc -p onerom-fw --no-deps
 

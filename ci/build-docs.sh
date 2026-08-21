@@ -20,6 +20,15 @@
 # would only dirty the tree against the check that just passed.  Run the gate
 # before this script, not inside it.
 #
+# A value a document states and something else owns - a hold limit from the
+# metadata schema, the CLI's own version - is different, because nothing here
+# would notice it going stale.  Those are marked in the markdown and checked by
+# rust/doc-gen, which render.py runs for every document it reads from the
+# working tree.  Nothing is rewritten: a stale value stops the build and is an
+# edit for whoever moved the constant.  Past editions, which name a git ref,
+# are read as they shipped and are not checked - so an archive build needs no
+# Rust toolchain.
+#
 # Usage: build-docs.sh [dest-prefix] [--source NAME] [--config PATH]
 #
 # --source names a version source from docs.toml, and so selects the documents
