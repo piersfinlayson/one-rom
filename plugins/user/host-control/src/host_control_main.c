@@ -140,6 +140,7 @@ const uint8_t protocol_version[4] = {
 #define GRP_NV_STORAGE  0x03u
 #define GRP_PIPES       0x04u
 #define GRP_AUX         0x05u
+#define GRP_LED         0x06u
 #define GRP_RESET       0xAAu
 
 // Control commands
@@ -244,6 +245,56 @@ const uint8_t protocol_version[4] = {
 // whole range: RBCP is unresponsive for the duration of a hold, and how long
 // the far end of the wire needs is the host's to know.
 #define AUX_MAX_HOLD                    0xFFu
+
+// LED commands
+#define CMD_GET_LED_CAPABILITY          0x00u
+#define CMD_GET_LED_INFO                0x01u
+#define CMD_GET_LED_MODE_INFO           0x02u
+#define CMD_SET_LED                     0x03u
+
+// LED types, as reported by GET_LED_INFO.
+#define LED_TYPE_MONO                   0x00u
+#define LED_TYPE_RGB                    0x01u
+
+// RBCP LED modes.  The protocol and the firmware number them differently, so
+// led_ora_mode() and led_rbcp_mode() translate.  Flame is One ROM's own, from
+// the range the protocol reserves for an implementation.
+#define LED_MODE_OFF                    0x00u
+#define LED_MODE_ON                     0x01u
+#define LED_MODE_BLINK                  0x02u
+#define LED_MODE_BREATHE                0x03u
+#define LED_MODE_CYCLE                  0x04u
+#define LED_MODE_BEACON                 0x05u
+#define LED_MODE_FLAME                  0x80u
+#define LED_MODE_INVALID                0xFFu
+
+// Modes each kind of LED supports, in the form GET_LED_INFO reports: bit N for
+// mode N.  Cycle and breathe are built out of a colour, so the status LED does
+// not offer them.  Flame lies outside the byte: accepted, never reported.
+#define LED_MODES_MONO  ((1u << LED_MODE_OFF)   | (1u << LED_MODE_ON) | \
+                         (1u << LED_MODE_BLINK) | (1u << LED_MODE_BEACON))
+#define LED_MODES_RGB   (LED_MODES_MONO | (1u << LED_MODE_BREATHE) | \
+                         (1u << LED_MODE_CYCLE))
+
+// GET_LED_MODE_INFO flags.
+#define LED_MODE_FLAG_PERIOD            0x01u
+
+// Largest period and hold this device accepts, in the protocol's 100ms units.
+// The byte's whole range, 25.5s, which is inside the firmware's own ceiling of
+// LED_MAX_HOLD_MS - so no byte a host can send exceeds either limit.
+#define LED_MAX_PERIOD                  0xFFu
+#define LED_MAX_HOLD                    0xFFu
+_Static_assert((uint32_t)LED_MAX_HOLD * 100u <= LED_MAX_HOLD_MS,
+               "LED hold range must fit the firmware's ceiling");
+
+// The colour the status LED shows when lit, red on every One ROM board.  The
+// firmware holds no record of it, and all-zero is the protocol's way of saying
+// a colour is not stated - so the plugin states it here.
+#define LED_STATUS_RED                  0xFFu
+
+// Highest ORA LED channel this plugin walks.  A One ROM gaining a third LED
+// numbers it from 2 up, which would need raising here.
+#define LED_ORA_LAST                    ORA_LED_RGB
 
 // Reset commands
 #define CMD_RBCP_RESET                  0xAAu
@@ -2158,6 +2209,297 @@ static bool exec_set_aux_switch_exit(void) {
 }
 
 // ---------------------------------------------------------------------------
+// LEDs
+// ---------------------------------------------------------------------------
+
+// The LED calls arrived in firmware 0.7.2, later than this plugin's
+// min_fw_version, so either may be NULL.  Looked up where they are used rather
+// than cached, as this group costs the plugin no state of its own.
+//
+// Only ORA_ID_LED_SET is tested here.  A missing ORA_ID_LED_GET takes every
+// channel away in led_ora_state(), which leaves the count at zero by itself.
+static bool led_available(void) {
+    return s_lookup(ORA_ID_LED_SET) != NULL;
+}
+
+// Read one ORA channel's state.  False where there is no LED engine to ask, or
+// the channel is not one this firmware knows.
+static bool led_ora_state(uint8_t ora_led, ora_led_state_t *out) {
+    ora_led_get_fn_t get = s_lookup(ORA_ID_LED_GET);
+    if (get == NULL) {
+        return false;
+    }
+    zero_bytes((uint8_t *)out, (uint8_t)sizeof(*out));
+    out->size = (uint8_t)sizeof(*out);
+    return get(ora_led, out) == ORA_RESULT_OK;
+}
+
+// LEDs this device has.  RBCP numbers only those, contiguously from zero, while
+// ORA numbers channels whether the board carries them or not - so the count is
+// of the channels reporting present.
+static uint8_t led_count(void) {
+    if (!led_available()) {
+        return 0u;
+    }
+    ora_led_state_t st;
+    uint8_t n = 0u;
+    for (uint8_t ch = 0u; ch <= LED_ORA_LAST; ch++) {
+        if (led_ora_state(ch, &st) && (st.present != 0u)) {
+            n++;
+        }
+    }
+    return n;
+}
+
+// Resolve an RBCP LED number to the ORA channel it names, and its state.
+static bool led_resolve(uint8_t led, uint8_t *ora_out, ora_led_state_t *state) {
+    if (!led_available()) {
+        return false;
+    }
+    uint8_t n = 0u;
+    for (uint8_t ch = 0u; ch <= LED_ORA_LAST; ch++) {
+        if (!led_ora_state(ch, state) || (state->present == 0u)) {
+            continue;
+        }
+        if (n == led) {
+            *ora_out = ch;
+            return true;
+        }
+        n++;
+    }
+    return false;
+}
+
+static uint8_t led_modes(uint8_t ora_led) {
+    return (ora_led == ORA_LED_RGB) ? (uint8_t)LED_MODES_RGB
+                                    : (uint8_t)LED_MODES_MONO;
+}
+
+// Map an RBCP mode onto the firmware's, refusing one this LED does not support.
+// The bitmap says what is supported and the switch says how it is numbered:
+// two separate facts, so neither is derived from the other.
+static bool led_ora_mode(uint8_t ora_led, uint8_t mode, uint8_t *out) {
+    if (mode == LED_MODE_FLAME) {
+        *out = ORA_LED_MODE_FLAME;
+        return true;
+    }
+    if ((mode > 7u) || ((led_modes(ora_led) & (uint8_t)(1u << mode)) == 0u)) {
+        return false;
+    }
+    switch (mode) {
+        case LED_MODE_OFF:     *out = ORA_LED_MODE_OFF;     return true;
+        case LED_MODE_ON:      *out = ORA_LED_MODE_ON;      return true;
+        case LED_MODE_BLINK:   *out = ORA_LED_MODE_BLINK;   return true;
+        case LED_MODE_BREATHE: *out = ORA_LED_MODE_BREATHE; return true;
+        case LED_MODE_CYCLE:   *out = ORA_LED_MODE_CYCLE;   return true;
+        case LED_MODE_BEACON:  *out = ORA_LED_MODE_BEACON;  return true;
+        default:               return false;
+    }
+}
+
+static uint8_t led_rbcp_mode(uint8_t ora_mode) {
+    switch (ora_mode) {
+        case ORA_LED_MODE_OFF:     return LED_MODE_OFF;
+        case ORA_LED_MODE_ON:      return LED_MODE_ON;
+        case ORA_LED_MODE_BLINK:   return LED_MODE_BLINK;
+        case ORA_LED_MODE_BREATHE: return LED_MODE_BREATHE;
+        case ORA_LED_MODE_CYCLE:   return LED_MODE_CYCLE;
+        case ORA_LED_MODE_BEACON:  return LED_MODE_BEACON;
+        case ORA_LED_MODE_FLAME:   return LED_MODE_FLAME;
+        default:                   return LED_MODE_INVALID;
+    }
+}
+
+// Milliseconds to the protocol's 100ms units, nearest and saturating.  Nothing
+// the firmware runs has a period under 50ms, so only a period of none rounds
+// to zero - which is what the protocol reads as no period in force.
+static uint8_t led_period_units(uint16_t period_ms) {
+    uint32_t units = ((uint32_t)period_ms + 50u) / 100u;
+    return (units > 0xFFu) ? 0xFFu : (uint8_t)units;
+}
+
+// The shortest period a mode accepts, in milliseconds, or zero for a mode that
+// takes no period.  The firmware bounds each repeating mode separately and the
+// bound is not reachable through ORA, so the values come from the same metadata
+// constants ora_led_set validates against.
+static uint16_t led_min_period_ms(uint8_t ora_mode) {
+    switch (ora_mode) {
+        case ORA_LED_MODE_CYCLE:   return LED_CYCLE_MIN_PERIOD_MS;
+        case ORA_LED_MODE_BREATHE: return LED_BREATHE_MIN_PERIOD_MS;
+        case ORA_LED_MODE_BLINK:   return LED_BLINK_MIN_PERIOD_MS;
+        case ORA_LED_MODE_BEACON:  return LED_BEACON_MIN_PERIOD_MS;
+        case ORA_LED_MODE_FLAME:   return LED_FLAME_MIN_PERIOD_MS;
+        default:                   return 0u;
+    }
+}
+
+// The floor as the protocol reports it: whole 100ms units, rounded up so that
+// the value named is one the firmware accepts.  A floor of one unit or less is
+// reported as zero, one being the smallest period a host can ask for anyway.
+static uint8_t led_min_period_units(uint8_t ora_mode) {
+    uint32_t units = ((uint32_t)led_min_period_ms(ora_mode) + 99u) / 100u;
+    return (units > 1u) ? (uint8_t)units : 0u;
+}
+
+static bool exec_get_led_capability(void) {
+    if (s_state.cfg.data_size < 8u) {
+        s_log("GET_LED_CAPABILITY failed: data section too small");
+        return false;
+    }
+
+    uint8_t resp[8];
+    zero_bytes(resp, sizeof(resp));
+    resp[0] = led_count();
+    if (resp[0] != 0u) {
+        resp[1] = LED_MAX_PERIOD;
+        resp[2] = LED_MAX_HOLD;
+    }
+
+    data_write(s_state.active_slot, 0u, resp, sizeof(resp));
+    s_log("GET_LED_CAPABILITY: count=%u", (unsigned)resp[0]);
+    return true;
+}
+
+static bool exec_get_led_info(void) {
+    uint8_t led = ring_read_byte();
+
+    if (s_state.cfg.data_size < 16u) {
+        s_log("GET_LED_INFO failed: data section too small");
+        return false;
+    }
+    if (led == 0xAAu) {
+        s_log("GET_LED_INFO failed: LED value 0xAA is reserved");
+        return false;
+    }
+    uint8_t ora_led;
+    ora_led_state_t st;
+    if (!led_resolve(led, &ora_led, &st)) {
+        s_log("GET_LED_INFO failed: no such LED %u", (unsigned)led);
+        return false;
+    }
+
+    uint8_t resp[16];
+    zero_bytes(resp, sizeof(resp));
+    resp[0] = (ora_led == ORA_LED_RGB) ? LED_TYPE_RGB : LED_TYPE_MONO;
+    resp[1] = led_rbcp_mode(st.mode);
+    if (ora_led == ORA_LED_RGB) {
+        resp[2] = st.red;
+        resp[3] = st.green;
+        resp[4] = st.blue;
+        resp[5] = st.brightness;
+    } else {
+        resp[2] = LED_STATUS_RED;
+    }
+    resp[6] = led_period_units(st.period_ms);
+    resp[8] = led_modes(ora_led);
+
+    data_write(s_state.active_slot, 0u, resp, sizeof(resp));
+    s_log("GET_LED_INFO: led=%u type=%u mode=%u",
+          (unsigned)led, (unsigned)resp[0], (unsigned)resp[1]);
+    return true;
+}
+
+static bool exec_get_led_mode_info(void) {
+    uint8_t mode = ring_read_byte();
+    uint8_t led  = ring_read_byte();
+
+    if (s_state.cfg.data_size < 8u) {
+        s_log("GET_LED_MODE_INFO failed: data section too small");
+        return false;
+    }
+    if (led == 0xAAu) {
+        s_log("GET_LED_MODE_INFO failed: LED value 0xAA is reserved");
+        return false;
+    }
+    uint8_t ora_led;
+    ora_led_state_t st;
+    if (!led_resolve(led, &ora_led, &st)) {
+        s_log("GET_LED_MODE_INFO failed: no such LED %u", (unsigned)led);
+        return false;
+    }
+    uint8_t ora_mode;
+    if (!led_ora_mode(ora_led, mode, &ora_mode)) {
+        s_log("GET_LED_MODE_INFO failed: LED %u does not support mode 0x%02X",
+              (unsigned)led, (unsigned)mode);
+        return false;
+    }
+
+    uint8_t resp[8];
+    zero_bytes(resp, sizeof(resp));
+    if (led_min_period_ms(ora_mode) != 0u) {
+        // Every mode the firmware gives a floor to is one that repeats, and
+        // only a repeating mode takes a period.
+        resp[0] = LED_MODE_FLAG_PERIOD;
+        resp[1] = led_min_period_units(ora_mode);
+    }
+
+    data_write(s_state.active_slot, 0u, resp, sizeof(resp));
+    s_log("GET_LED_MODE_INFO: led=%u mode=0x%02X flags=%u min=%u", (unsigned)led,
+          (unsigned)mode, (unsigned)resp[0], (unsigned)resp[1]);
+    return true;
+}
+
+// The device times the hold, and this command does not wait for it - unlike
+// SET_AUX, which spins.  The firmware's engine runs the hold from a timer and
+// puts back what the LED was doing when it ends, which is what lets the hold
+// outlive the session.
+static bool exec_set_led(void) {
+    uint8_t mode       = ring_read_byte();
+    uint8_t red        = ring_read_byte();
+    uint8_t green      = ring_read_byte();
+    uint8_t blue       = ring_read_byte();
+    uint8_t brightness = ring_read_byte();
+    uint8_t period     = ring_read_byte();
+    uint8_t hold       = ring_read_byte();
+    uint8_t led        = ring_read_byte();
+
+    if (led == 0xAAu) {
+        s_log("SET_LED failed: LED value 0xAA is reserved");
+        return false;
+    }
+    uint8_t ora_led;
+    ora_led_state_t st;  // led_resolve's working room; SET_LED reads none of it
+    if (!led_resolve(led, &ora_led, &st)) {
+        s_log("SET_LED failed: no such LED %u", (unsigned)led);
+        return false;
+    }
+    uint8_t ora_mode;
+    if (!led_ora_mode(ora_led, mode, &ora_mode)) {
+        s_log("SET_LED failed: LED %u does not support mode 0x%02X",
+              (unsigned)led, (unsigned)mode);
+        return false;
+    }
+    if (brightness > 100u) {
+        s_log("SET_LED failed: brightness %u above 100", (unsigned)brightness);
+        return false;
+    }
+    // Period and hold need no range check: LED_MAX_PERIOD and LED_MAX_HOLD are
+    // the byte's whole range, so no value a host can send exceeds them.
+
+    ora_led_set_fn_t set = s_lookup(ORA_ID_LED_SET);
+    ora_led_request_t req;
+    zero_bytes((uint8_t *)&req, (uint8_t)sizeof(req));
+    req.size       = (uint8_t)sizeof(req);
+    req.led        = ora_led;
+    req.mode       = ora_mode;
+    req.brightness = brightness;
+    req.red        = red;
+    req.green      = green;
+    req.blue       = blue;
+    req.period_ms  = (uint16_t)((uint16_t)period * 100u);
+    req.hold_ms    = (uint32_t)hold * 100u;
+
+    if (set(&req) != ORA_RESULT_OK) {
+        s_log("SET_LED failed: engine refused LED %u mode 0x%02X period %u",
+              (unsigned)led, (unsigned)mode, (unsigned)period);
+        return false;
+    }
+    s_log("SET_LED: led=%u mode=0x%02X hold=%u", (unsigned)led,
+          (unsigned)mode, (unsigned)hold);
+    return true;
+}
+
+// ---------------------------------------------------------------------------
 // Command dispatch
 // ---------------------------------------------------------------------------
 
@@ -2205,6 +2547,14 @@ static uint8_t cmd_arg_count(uint8_t group, uint8_t cmd) {
             case CMD_SET_AUX:             return 5u;
             case CMD_SET_AUX_AND_EXIT:    return 5u;
             case CMD_SET_AUX_SWITCH_EXIT: return 7u;
+            default:                      return 0u;
+        }
+    }
+    if (group == GRP_LED) {
+        switch (cmd) {
+            case CMD_GET_LED_INFO:        return 1u;
+            case CMD_GET_LED_MODE_INFO:   return 2u;
+            case CMD_SET_LED:             return 8u;
             default:                      return 0u;
         }
     }
@@ -2464,6 +2814,33 @@ static bool dispatch(
                     break;
                 case CMD_SET_AUX_SWITCH_EXIT:
                     ok = exec_set_aux_switch_exit();
+                    break;
+                default:
+                    ok = false;
+                    break;
+            }
+            break;
+
+        case GRP_LED:
+            // "All commands in this group are valid in command-response mode
+            // only."  Consume the frame, then discard it.
+            if (!s_state.active) {
+                discard_args(cmd_arg_count(group, cmd));
+                ok = false;
+                break;
+            }
+            switch (cmd) {
+                case CMD_GET_LED_CAPABILITY:
+                    ok = exec_get_led_capability();
+                    break;
+                case CMD_GET_LED_INFO:
+                    ok = exec_get_led_info();
+                    break;
+                case CMD_GET_LED_MODE_INFO:
+                    ok = exec_get_led_mode_info();
+                    break;
+                case CMD_SET_LED:
+                    ok = exec_set_led();
                     break;
                 default:
                     ok = false;

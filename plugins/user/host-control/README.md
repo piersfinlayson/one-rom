@@ -63,6 +63,39 @@ A pin keeps whatever state it was left in when the session ends, and across `RBC
 
 Auxiliary I/O is built on the GPIO API added in **firmware v0.7.1**, which is this plugin's minimum.  Timed holds and the image select and X groups need **v0.7.2**: on v0.7.1 the device reports a `max_hold` of zero — the specification's way of saying it offers no timed holds, and a host wanting a pulse must time it itself with two commands — and exposes the GPIO group alone.  A device that can offer nothing at all reports no groups, and every other command in the group then fails.
 
+## Driving One ROM's LEDs
+
+RBCP's LEDs group lets the host set the colour, brightness and mode of One ROM's LEDs over the ROM bus.  A bootloader can show a colour as it hands the machine over to the image it just loaded, and the colour stays after the session ends.
+
+Which LEDs a board has decides what a host sees.  RBCP numbers only the LEDs the board carries, contiguously from zero, so LED 0 is the status LED on a board that has one and the RGB LED on a board that has only that.  **Read the type from `GET_LED_INFO` rather than assuming a number** — the specification's own advice is to take the lowest-numbered LED of type RGB.
+
+| Type | LED | Colour | Brightness |
+|------|-----|--------|------------|
+| `0x00` | Status | Red, which the plugin states — the firmware holds no record of it | None: it is lit or dark, and `GET_LED_INFO` reports zero |
+| `0x01` | RGB | Whatever the host sets, or One ROM's own where the host names none | 1 to 100 percent |
+
+Modes map onto the firmware's own, which numbers them differently:
+
+| RBCP | Mode | Status LED | RGB LED |
+|------|------|------------|---------|
+| `0x00` | Off | yes | yes |
+| `0x01` | On | yes | yes |
+| `0x02` | Blink | yes | yes |
+| `0x03` | Breathe | no | yes |
+| `0x04` | Cycle | no | yes |
+| `0x05` | Beacon | yes | yes |
+| `0x80` | Flame | yes | yes |
+
+Breathe and Cycle are built out of a colour, so the status LED does not offer them.  `0x80` is this implementation's own value, from the range RBCP reserves for that — not portable to another device, and another device may use `0x80` for something else.  The supported-modes bitmap in `GET_LED_INFO` reports modes `0x00` to `0x07` only, so flame does not appear in it and a host asking for it does so knowing it is talking to a One ROM.
+
+`SET_LED` does **not** block for its hold, unlike `SET_AUX`.  The firmware's LED engine times the hold and puts back what the LED was doing when it ends, which may be long after the host has left command-response mode.  Periods and holds are in RBCP's 100ms units, up to 25.5 seconds.
+
+The firmware imposes its own minimum period per mode — a second for breathe and cycle, 50ms for blink and beacon — and refuses a shorter one.  `GET_LED_MODE_INFO` reports that floor, in the same 100ms units, so a host reads it and names a period that will work.  A floor under one unit reports as zero, which is every mode whose floor is 50ms: one unit is the smallest period a host can ask for anyway.
+
+An LED keeps whatever state it was left in when the session ends, and across `RBCP_RESET`.  Only a One ROM reset restores it.
+
+The LEDs group is built on the LED API added in **firmware v0.7.2**, later than this plugin's minimum of v0.7.1.  On v0.7.1 the device reports no LEDs, and every other command in the group fails.
+
 ## Address signalling
 
 RBCP command signalling (the knock and command bytes) travels on the address lines the device observes at the ROM socket — which are not always the host's own least-significant address lines.

@@ -34,6 +34,7 @@ pub static SUITES: &[Suite] = &[
 pub fn withheld_api(scenario: &str) -> &'static [u32] {
     conformance::aux::WITHHELD_API
         .iter()
+        .chain(conformance::led::WITHHELD_API)
         .find(|(name, _)| *name == scenario)
         .map(|(_, ids)| *ids)
         .unwrap_or(&[])

@@ -2,6 +2,27 @@
 
 ## [0.1.3] - 2026-??-??
 
+A host can now set One ROM's LEDs over the ROM bus, through RBCP's new LEDs
+group — so a bootloader can show a colour as it hands the machine over to the
+image it loaded, and the colour stays after the session ends.
+
+- LEDs are numbered contiguously over the ones the board has, so LED 0 is the
+  status LED on a board with one and the RGB LED on a board with only that.  A
+  host reads the type rather than assuming a number.
+- The status LED reports its colour as red, which the plugin states: the
+  firmware holds no record of what colour a monochrome LED is, and all-zero is
+  RBCP's way of saying the colour is unknown.
+- Flame is RBCP mode `0x80`, this implementation's own value from the range the
+  protocol reserves for that.  The supported-modes bitmap reports `0x00` to
+  `0x07` only, so flame does not appear in it.
+- `SET_LED` does not block for its hold.  The firmware times it and restores
+  what the LED was doing, which may be after the session has ended.
+- Periods and holds are in RBCP's 100ms units, up to 25.5 seconds.  The firmware
+  has a minimum period per mode and refuses a shorter one, which
+  `GET_LED_MODE_INFO` reports so a host can name a period that will work.
+- Needs firmware v0.7.2.  On v0.7.1 the device reports no LEDs and every other
+  command in the group fails.
+
 A host can now drive and read One ROM's own pins over the ROM bus, through
 RBCP's new Auxiliary I/O group — so a wire from a One ROM pad can reach a reset
 line, a drive, a relay or an indicator, and the retro system can operate it.

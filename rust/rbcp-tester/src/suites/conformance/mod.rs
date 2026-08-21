@@ -17,6 +17,7 @@ pub mod aux;
 pub mod control;
 pub mod framing;
 pub mod knock;
+pub mod led;
 pub mod modify;
 pub mod nv_storage;
 pub mod pipes;
@@ -621,6 +622,106 @@ pub static SCENARIOS: &[Scenario] = &[
         name: "conformance.aux.no_groups_without_the_gpio_calls",
         spec_ref: "Group 0x05 — Auxiliary I/O (a device exposing no auxiliary pins)",
         run: aux::no_groups_without_the_gpio_calls,
+    },
+    Scenario {
+        name: "conformance.led.get_led_capability",
+        spec_ref: "Group 0x06 — GET_LED_CAPABILITY; GET_LED_CAPABILITY Response Format",
+        run: led::get_led_capability,
+    },
+    Scenario {
+        name: "conformance.led.led_info_describes_every_led",
+        spec_ref: "GET_LED_INFO Response Format; LED Types; LED Modes",
+        run: led::led_info_describes_every_led,
+    },
+    Scenario {
+        name: "conformance.led.mono_led_reports_the_colour_it_shows",
+        spec_ref: "GET_LED_INFO Response Format — the colour an LED shows when lit",
+        run: led::mono_led_reports_the_colour_it_shows,
+    },
+    Scenario {
+        name: "conformance.led.set_led_drives_every_mode_it_claims",
+        spec_ref: "Group 0x06 — SET_LED; LED Modes",
+        run: led::set_led_drives_every_mode_it_claims,
+    },
+    Scenario {
+        name: "conformance.led.set_led_round_trips_colour_and_brightness",
+        spec_ref: "Group 0x06 — SET_LED; GET_LED_INFO Response Format",
+        run: led::set_led_round_trips_colour_and_brightness,
+    },
+    Scenario {
+        name: "conformance.led.all_zero_colour_is_the_device_s_own",
+        spec_ref: "Group 0x06 — Colour",
+        run: led::all_zero_colour_is_the_device_s_own,
+    },
+    Scenario {
+        name: "conformance.led.set_led_round_trips_a_period",
+        spec_ref: "Group 0x06 — SET_LED (period, in units of 100ms)",
+        run: led::set_led_round_trips_a_period,
+    },
+    Scenario {
+        name: "conformance.led.mode_info_describes_every_supported_mode",
+        spec_ref: "Group 0x06 — GET_LED_MODE_INFO; GET_LED_MODE_INFO Response Format",
+        run: led::mode_info_describes_every_supported_mode,
+    },
+    Scenario {
+        name: "conformance.led.set_led_honours_the_reported_floor",
+        spec_ref: "Group 0x06 — SET_LED (period outside the range GET_LED_MODE_INFO reports)",
+        run: led::set_led_honours_the_reported_floor,
+    },
+    Scenario {
+        name: "conformance.led.mode_info_rejects_what_it_cannot_describe",
+        spec_ref: "Group 0x06 — GET_LED_MODE_INFO (mode not supported; LED absent; 0xAA)",
+        run: led::mode_info_rejects_what_it_cannot_describe,
+    },
+    Scenario {
+        name: "conformance.led.set_led_hold_does_not_block",
+        spec_ref: "Group 0x06 — Hold",
+        run: led::set_led_hold_does_not_block,
+    },
+    Scenario {
+        name: "conformance.led.set_led_rejects_what_it_cannot_do",
+        spec_ref: "Group 0x06 — SET_LED (mode not supported, brightness above 100)",
+        run: led::set_led_rejects_what_it_cannot_do,
+    },
+    Scenario {
+        name: "conformance.led.implementation_specific_mode_is_honoured_or_refused",
+        spec_ref: "LED Modes — 0x80-0xFE reserved for implementation-specific use",
+        run: led::implementation_specific_mode_is_honoured_or_refused,
+    },
+    Scenario {
+        name: "conformance.led.commands_reject_an_absent_led",
+        spec_ref: "Group 0x06 — LEDs (LED not one the device has; 0xAA)",
+        run: led::commands_reject_an_absent_led,
+    },
+    Scenario {
+        name: "conformance.led.query_commands_need_room_for_their_answer",
+        spec_ref: "Group 0x06 — GET_LED_CAPABILITY, GET_LED_INFO (data section too small)",
+        run: led::query_commands_need_room_for_their_answer,
+    },
+    Scenario {
+        name: "conformance.led.not_valid_in_command_mode",
+        spec_ref: "Group 0x06 — LEDs; Command Framing — Command Mode Constraint",
+        run: led::not_valid_in_command_mode,
+    },
+    Scenario {
+        name: "conformance.led.argument_counts_are_consumed_exactly",
+        spec_ref: "Command Framing — argument counts are fixed per GROUP+CMD",
+        run: led::argument_counts_are_consumed_exactly,
+    },
+    Scenario {
+        name: "conformance.led.led_state_survives_the_session",
+        spec_ref: "Group 0x06 — an LED's state persists across the session and RBCP_RESET",
+        run: led::led_state_survives_the_session,
+    },
+    Scenario {
+        name: "conformance.led.led_state_survives_a_slot_switch",
+        spec_ref: "Group 0x06 — LEDs (One ROM: a slot switch leaves the LEDs alone)",
+        run: led::led_state_survives_a_slot_switch,
+    },
+    Scenario {
+        name: "conformance.led.no_leds_without_the_led_calls",
+        spec_ref: "Group 0x06 — a device that has no LEDs reports a count of zero",
+        run: led::no_leds_without_the_led_calls,
     },
     Scenario {
         name: "conformance.reset.group_and_command_bytes_match",

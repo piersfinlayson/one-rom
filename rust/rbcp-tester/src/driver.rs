@@ -535,6 +535,16 @@ impl<'a> Bus<'a> {
         self.emu.advance_timer_us(delta_us);
     }
 
+    /// Run one frame of the firmware's LED engine.
+    ///
+    /// A SET_LED hold is the engine's own timer rather than the device
+    /// blocking, and in this process nothing raises the interrupt that would
+    /// drive it.  So a scenario stands where the interrupt does: put the clock
+    /// past the deadline with [`Bus::set_clock_us`], then call this.
+    pub fn led_frame(&self) {
+        self.emu.led_frame();
+    }
+
     /// Take everything waiting on a pipe's log channel, as a reader would.
     ///
     /// The far end of a pipe is the one thing in RBCP a host cannot observe:
@@ -1147,6 +1157,7 @@ pub mod group {
     pub const NV_STORAGE: u8 = 0x03;
     pub const PIPES: u8 = 0x04;
     pub const AUX: u8 = 0x05;
+    pub const LED: u8 = 0x06;
     pub const RESET: u8 = 0xAA;
 }
 
@@ -1208,6 +1219,13 @@ pub mod aux {
     pub const SET_AUX: u8 = 0x03;
     pub const SET_AUX_AND_EXIT: u8 = 0x04;
     pub const SET_AUX_SWITCH_EXIT: u8 = 0x05;
+}
+
+pub mod led {
+    pub const GET_LED_CAPABILITY: u8 = 0x00;
+    pub const GET_LED_INFO: u8 = 0x01;
+    pub const GET_LED_MODE_INFO: u8 = 0x02;
+    pub const SET_LED: u8 = 0x03;
 }
 
 #[allow(dead_code)]
