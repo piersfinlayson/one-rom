@@ -55,12 +55,14 @@ Some variants offer multiple sets of BOM/POS files or different combinations of 
 
 You need to exercise care when submitting the order to ensure the correct options are selected.  In particular:
 
-- Select economic assembly, not standard assembly, for cost reasons.
+- Select economic assembly, not standard assembly, for cost reasons, if available for your choice of board.
 - Use standard 1.6mm PCB thickness.  You probably want HASL with lead finish for cost reasons.
 - You have to select the desired PCB colour as part of the PCB ordering process.  Red is recommended for Fire and blue for Ice.
 - As of late 2025 you no longer need to remove JLC's order ID from the PCBs, but it is worth checking this is still the case when you place your order.
+- When selecting assembly choose either top or top + bottom depending on whether your chosen design has parts on the bottom.
 - After uploading the BOM and position files for assembly, you need to ensure all parts are available and checked.
 - You must ensure JLC is showing the correct orientation for all components.  There are silkscreen markings for pin 1 on all ICs and polarized components - ensure this matches the pink dot of the component in the viewer.  Also ensure the USB connector is the correct orientation.
+- ** Make sure you check the bottom if components are supposed to be there. **
 
 Occasionally, some chosen parts are out of stock on JLCPCB.  One ROM has been designed with extremely common parts where possible, which JLC tend to hold large stocks of.  However, if a part is unavailable you may need to select an alternative part.  Ensure the alternative part has the same footprint and electrical characteristics (e.g. capacitance, voltage rating, etc) as the original part.  If in doubt, query within github discussions for advice. 
 
