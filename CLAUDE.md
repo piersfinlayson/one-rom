@@ -33,12 +33,12 @@ it as a long-lived, production project.
 ## Git & commits
 
 - All commits are **GPG-signed** with my key. You do **not** have the
-  passphrase, so you **cannot** create commits — never run `git commit`.
-  Prepare and stage the change, then hand me the exact command plus the commit
-  message to run myself.
+  passphrase, so you **cannot** create commits — never run `git commit`, and
+  never `git push`.
+- **Never offer a stage-and-commit command, or a commit message, unbidden.**
+  Make the change, say what you did, and stop.
 - **No `Co-Authored-By` trailer**, and no other Claude/AI attribution, in
   commit messages — keep it out of the history entirely.
-- Only commit when I ask; only push when I ask.
 - **Commit bodies are bullets, one line each, one per main thing the commit
   does.** Three or fewer; often none at all, where the subject says it. A
   bullet states *what*, and *why* only where the why is not obvious from the
