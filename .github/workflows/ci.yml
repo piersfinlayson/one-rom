@@ -277,6 +277,51 @@ jobs:
     - name: Run One ROM emulator tests
       run: ci/test-emu.sh ${{ matrix.socket }}
 
+  coverage:
+    # The coverage campaign - ci/coverage-campaign.txt - and the per-file floor
+    # gate.  Runs alongside the other jobs rather than gating them.
+    #
+    # One job, not a matrix, because the floors belong to the campaign as a
+    # whole: ci/coverage-report.sh refuses unless every tracefile the campaign
+    # names is present, and splitting would mean uploading them and merging in
+    # a further job.  If the wall-clock becomes a problem that split is the
+    # answer, not dropping runs from the campaign - fewer runs reach fewer
+    # lines, and the floors would have to come down to match.
+    name: Coverage
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install build dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libclang-dev libcurl4-openssl-dev libjson-c-dev \
+                                libzip-dev make xz-utils lcov
+
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+
+    - uses: Swatinem/rust-cache@v2
+      with:
+        workspaces: rust
+        shared-key: coverage
+
+    - name: Run the coverage campaign
+      run: ci/coverage-campaign.sh
+
+    - name: Coverage figures
+      run: ci/coverage-report.sh
+
+    - name: Check the floors
+      run: ci/coverage-report.sh --check
+
+    - name: Upload tracefiles
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: coverage-tracefiles
+        path: build/coverage/*.info
+
   firmware:
     name: Firmware and plugins
     runs-on: ubuntu-latest

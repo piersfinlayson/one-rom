@@ -1,0 +1,22 @@
+# The set of runs the coverage figures and the floors in
+# ci/coverage-baseline.txt are built from.
+#
+#   <board>    <config>
+#
+# This is part of the gate's contract, not an incidental choice.  A floor
+# raised from these runs cannot be met by a smaller set - fewer runs reach
+# fewer lines - so ci/coverage-report.sh refuses unless exactly these
+# tracefiles are present.  Change this file and the floors have to be raised
+# again from the new set.
+#
+# Two configs per board, the second differing in shape rather than only in
+# data: bank exercises the banked serving path, force-16-bit the 16-bit data
+# algorithm, and 23c1001 a V2 chip type.
+fire-24-f    onerom-config/test/24-random-23xx.json
+fire-24-f    onerom-config/test/24-bank-23xx.json
+fire-28-c    onerom-config/test/28-random-27xxx.json
+fire-28-c    onerom-config/test/28-bank-27xxx.json
+fire-32-b    onerom-config/test/32-random-27c080.json
+fire-32-b    onerom-config/test/32-random-23c1001.json
+fire-40-b    onerom-config/test/40-random.json
+fire-40-b    onerom-config/test/40-random-force-16bit.json

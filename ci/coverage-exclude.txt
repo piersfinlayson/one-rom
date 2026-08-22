@@ -1,0 +1,22 @@
+# Paths kept out of the coverage report, matched as a prefix of the path as it
+# appears in a tracefile (relative to the repo root).
+#
+# This is a blacklist, so anything of ours that is instrumented appears by
+# default.  Only add a path here when it genuinely is not our code under test,
+# and say why.
+#
+# Vendor sources are never instrumented in the first place - epio builds
+# through its own Makefile, and apio, tinyusb and picobootx are headers the
+# host build never compiles - so the only vendor code that reaches a tracefile
+# at all is `static inline` from their headers, inlined into our objects and
+# attributed back to the header.
+firmware/apio/
+firmware/epio/
+plugins/system/usb/tinyusb/
+plugins/system/usb/picobootx/
+plugins/system/usb/pico-sdkless/
+
+# Test harness, not code under test: the host stubs that stand in for the
+# RP2350, and the FFI shims the Rust testers drive the firmware through.
+firmware/test/
+firmware/include/test/

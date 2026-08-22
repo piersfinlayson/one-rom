@@ -35,6 +35,11 @@ firmware/generated
 !rust/metadata/build
 firmware/ora/onerom_metadata_keys_generated.h
 
+# Coverage builds and their gcov counter files - see ci/coverage-run.sh
+plugins/*/*/build-host-cov/
+*.gcda
+*.gcno
+
 dist/
 output/
 !rust/lab/src/output/

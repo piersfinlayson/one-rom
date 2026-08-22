@@ -1,0 +1,13 @@
+# The testers a coverage run drives, and the make target that runs each.
+#
+#   <name>    <make target>
+#
+# This is the only list of what gets measured.  The directories holding the
+# instrumented objects are not listed anywhere - they are found after the
+# build, so whatever a tester caused to be built is what gets captured.  A new
+# plugin needs a line here and nothing else.
+emu        test-emu
+api        test-api
+monitor    test-monitor
+rbcp       test-rbcp
+usb        test-usb

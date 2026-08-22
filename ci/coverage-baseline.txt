@@ -1,0 +1,23 @@
+# Per-file coverage floors.  A file may not drop below its floor.
+# Raised by ci/coverage-report.sh --raise.  Never lowered by hand
+# without saying why in the commit.
+firmware/include/include.h                           100.0
+firmware/src/log.c                                   0.0
+firmware/src/main.c                                  78.0
+firmware/src/piodma/pio.c                            100.0
+firmware/src/piodma/pioled.c                         95.1
+firmware/src/piodma/pioplugin.c                      59.8
+firmware/src/piodma/piorom2.c                        74.1
+firmware/src/plugin.c                                83.3
+firmware/src/rp235x.c                                62.6
+firmware/src/rtt.c                                   31.8
+firmware/src/utils.c                                 69.4
+plugins/user/host-control/src/flash_erase.c          100.0
+plugins/user/host-control/src/host_control_main.c    88.9
+plugins/system/usb/src/usb_descriptors.c             100.0
+plugins/system/usb/src/usb_gpio.c                    81.7
+plugins/system/usb/src/usb_led.c                     90.3
+plugins/system/usb/src/usb_log.c                     85.3
+plugins/system/usb/src/usb_main.c                    69.9
+plugins/system/usb/src/usb_picobootx.c               65.7
+plugins/system/usb/src/usb_rom.c                     50.0

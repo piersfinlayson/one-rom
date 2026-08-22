@@ -79,6 +79,7 @@ fn main() {
     println!("cargo:rerun-if-env-changed=BOARD");
     println!("cargo:rerun-if-env-changed=BASE_DIR");
     println!("cargo:rerun-if-env-changed=TEST_LOGGING");
+    println!("cargo:rerun-if-env-changed=COVERAGE_FW");
 
     // What the C was built with, for the crate's build_options constants.  A
     // cfg reaches only the crate whose build script emitted it, so those
@@ -96,12 +97,26 @@ fn main() {
     // is wasm we cross-compile the C library with Emscripten (for One ROM Lens)
     // into a separate build-wasm/, instead of the native host build-test/.  The
     // native path is unchanged.
+    //
+    // COVERAGE_FW=1 selects a third build: the same native C compiled with
+    // --coverage, into its own build-test-cov/.  ci/coverage-run.sh sets it
+    // for every tester, because they all execute firmware C.  It gets a
+    // separate directory for the same reason wasm does - the objects differ
+    // only in the flags they were built with, which is not something an
+    // object file records.
     let is_wasm = env::var("CARGO_CFG_TARGET_ARCH").as_deref() == Ok("wasm32");
+    let coverage = env::var("COVERAGE_FW").as_deref() == Ok("1");
     let (make_target, clean_target, build_subdir) = if is_wasm {
         (
             "libonerom-test-wasm",
             "clean-libonerom-test-wasm",
             "build-wasm",
+        )
+    } else if coverage {
+        (
+            "libonerom-test-cov",
+            "clean-libonerom-test-cov",
+            "build-test-cov",
         )
     } else {
         ("libonerom-test", "clean-libonerom-test", "build-test")
@@ -172,6 +187,13 @@ fn main() {
     // an explicit -lm.
     if !is_wasm {
         println!("cargo:rustc-link-lib=m");
+    }
+    // The gcov runtime the instrumented objects call into.  Named as a link
+    // lib rather than passed as a link arg because only a link lib propagates
+    // to the crate being linked - the tester binaries live in other crates,
+    // and a --coverage link arg emitted here would never reach them.
+    if coverage {
+        println!("cargo:rustc-link-lib=gcov");
     }
 
     // ── bindgen ──────────────────────────────────────────────────────────────

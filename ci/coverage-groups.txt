@@ -1,0 +1,11 @@
+# Which component each source path belongs to, longest prefix first.
+#
+#   <path prefix>    <component name>
+#
+# Anything instrumented that matches no prefix is reported under "Ungrouped"
+# rather than dropped.  That is deliberate: a new component appearing in the
+# report is the point, and silently omitting it would defeat the exercise.
+plugins/user/host-control/src/    Host-control plugin
+plugins/system/usb/src/           USB plugin
+firmware/src/                     Firmware
+firmware/include/                 Firmware

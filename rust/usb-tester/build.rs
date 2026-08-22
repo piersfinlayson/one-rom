@@ -12,16 +12,17 @@
 use std::{env, path::PathBuf, process::Command};
 
 /// Plugin directory, relative to the project root, and the objects `make host`
-/// leaves behind.
+/// leaves behind - named without a directory, because which one they land in
+/// depends on whether this is a coverage build.
 const PLUGIN_DIR: &str = "plugins/system/usb";
 const PLUGIN_OBJS: &[&str] = &[
-    "build-host/usb_descriptors.o",
-    "build-host/usb_picobootx.o",
-    "build-host/usb_rom.o",
-    "build-host/usb_led.o",
-    "build-host/usb_gpio.o",
-    "build-host/usb_log.o",
-    "build-host/usb_main.o",
+    "usb_descriptors.o",
+    "usb_picobootx.o",
+    "usb_rom.o",
+    "usb_led.o",
+    "usb_gpio.o",
+    "usb_log.o",
+    "usb_main.o",
 ];
 
 /// Flags the shim is compiled with.  These must stay in step with the plugin's
@@ -73,18 +74,43 @@ fn main() {
 
     // ── Plugin objects ───────────────────────────────────────────────────────
 
-    let status = Command::new("make")
-        .arg("-C")
+    // COVERAGE_PLUGIN=1 builds the plugin with --coverage, into a build
+    // directory of its own.  ci/coverage-run.sh sets it.  The separate
+    // directory matters: the plugin Makefile has no record of the flags an
+    // existing object was built with, so sharing one would let a coverage run
+    // link uninstrumented objects and report no coverage at all.
+    let coverage = env::var("COVERAGE_PLUGIN").as_deref() == Ok("1");
+    println!("cargo:rerun-if-env-changed=COVERAGE_PLUGIN");
+    let host_build_dir = if coverage {
+        "build-host-cov"
+    } else {
+        "build-host"
+    };
+
+    let mut make = Command::new("make");
+    make.arg("-C")
         .arg(&plugin_dir)
         .arg("host")
-        .status()
-        .expect("could not run make — is it on PATH?");
+        .arg(format!("HOST_BUILD_DIR={host_build_dir}"));
+    if coverage {
+        // -O0 overrides the -O1 the ordinary host build uses.  At -O1 gcc
+        // folds lines out of the instrumented set entirely - they are absent
+        // from the report rather than shown as uncovered - and a report whose
+        // purpose is finding untested code must not hide code from itself.
+        // The ordinary host build keeps -O1 and its optimisation-dependent
+        // warnings.
+        make.arg("HOST_EXTRA_CFLAGS=--coverage -O0");
+    }
+    let status = make.status().expect("could not run make — is it on PATH?");
     assert!(
         status.success(),
         "make host failed in {}",
         plugin_dir.display()
     );
-    let plugin_objs: Vec<PathBuf> = PLUGIN_OBJS.iter().map(|o| plugin_dir.join(o)).collect();
+    let plugin_objs: Vec<PathBuf> = PLUGIN_OBJS
+        .iter()
+        .map(|o| plugin_dir.join(host_build_dir).join(o))
+        .collect();
 
     // ── Shim object ──────────────────────────────────────────────────────────
     //
@@ -162,9 +188,27 @@ fn main() {
     // members that resolve an already-pending reference.  onerom-fw-emulator
     // emits it too, but as a dependency its flags land first, which is the
     // wrong order.
+    // Which build of it, though, is onerom-fw-emulator's choice, and it is
+    // COVERAGE_FW that decides - naming build-test unconditionally here put a
+    // second, stale library on the link line whenever the firmware was built
+    // instrumented, and the tester then ran against firmware configured for
+    // whatever board built build-test last.  That links and runs.  It just
+    // fails almost every scenario.
+    let fw_build_dir = if env::var("COVERAGE_FW").as_deref() == Ok("1") {
+        "build-test-cov"
+    } else {
+        "build-test"
+    };
+    println!("cargo:rerun-if-env-changed=COVERAGE_FW");
     println!(
         "cargo:rustc-link-search=native={}",
-        firmware.join("build-test").display()
+        firmware.join(fw_build_dir).display()
     );
     println!("cargo:rustc-link-lib=static=onerom-test");
+
+    // The gcov runtime the instrumented objects call into.  Last, so it
+    // follows everything that references it on the link line.
+    if coverage {
+        println!("cargo:rustc-link-lib=gcov");
+    }
 }

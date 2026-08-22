@@ -113,8 +113,15 @@ $(BUILD_DIR):
 # ---------------------------------------------------------------------------
 
 HOST_CC        ?= cc
-HOST_BUILD_DIR := build-host
+HOST_BUILD_DIR ?= build-host
 HOST_OBJ       := $(patsubst src/%.c,$(HOST_BUILD_DIR)/%.o,$(SRC))
+
+# Extra flags for the host objects, and the directory they land in.  A
+# coverage build sets both: --coverage here, and a build directory of its own.
+# The two must not share a directory, because nothing here compares the flags
+# an existing object was built with - a coverage run that reused
+# uninstrumented objects would report no coverage rather than fail.
+HOST_EXTRA_CFLAGS ?=
 
 HOST_CFLAGS := -DORA_HOST_TEST=1 -DTEST_BUILD=1 -fshort-enums \
                -O1 -g -Wall -Wextra -Werror \
@@ -124,7 +131,7 @@ HOST_CFLAGS := -DORA_HOST_TEST=1 -DTEST_BUILD=1 -fshort-enums \
                -Iinclude -I$(PICO_SDKLESS_DIR)/include \
                $(addprefix -I,$(TINYUSB_INCLUDE_DIRS)) \
                $(addprefix -I,$(PICOBOOTX_INCLUDE_DIRS)) \
-               -std=c11 -MMD -MP
+               -std=c11 -MMD -MP $(HOST_EXTRA_CFLAGS)
 
 .PHONY: host clean-host
 
