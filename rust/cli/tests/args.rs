@@ -85,10 +85,14 @@ fn board_views_reject_a_positional_board() {
 /// Omitting the board with nothing connected must give advice the command can
 /// actually take. This used to name --board while the command had no such
 /// option.
+///
+/// `NO_DEVICE` for the same reason as the tests below it: without it the
+/// command finds a One ROM on the developer's bench, infers the board from it
+/// and succeeds, so there is no advice to assert on.
 #[test]
 fn board_views_without_a_board_name_an_option_that_exists() {
     for view in ["header", "socket"] {
-        let err = stderr(onerom().args(["board", view]));
+        let err = stderr(onerom().args(["board", view]).args(NO_DEVICE));
         assert!(err.contains("--board"), "{view}: {err}");
         // The advice is only good if the option is real.
         let help = stdout(onerom().args(["board", view, "--help"]));
