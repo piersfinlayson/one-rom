@@ -278,12 +278,24 @@ Other `ci/` scripts: `build-images.sh` (populates the `images.onerom.org`
 channel), `build-cross-fw.sh` (cross-builds the `onerom-fw` **tool** —
 orthogonal to firmware variant builds, do not conflate), `rust-tests.sh`,
 `rust-docs.sh`, `rust-lint.sh`, `rust-tools.sh`, `rust-binaries.sh`,
-`test-emu.sh`. Reproducible builds use the container in `ci/docker/`.
+`test-emu.sh`, `coverage-run.sh`, `coverage-campaign.sh`,
+`coverage-report.sh`. Reproducible builds use the container in `ci/docker/`.
 
 `test-emu.sh` takes a socket size — `ci/test-emu.sh 24|28|32|40`, or no argument
 for all of them. CI runs the four as parallel jobs; run one at a time in a given
 working tree, since every test regenerates the same `firmware/generated/gen-config.c`
 and rebuilds the same `firmware/build-test/`.
+
+`ci/coverage-*.sh` measure line coverage of the C the testers drive, and CI
+gates it on every push: `ci/coverage-baseline.txt` holds a floor per file, and
+a file may not drop below its. `--raise` moves a floor up, never down —
+lowering one is a hand edit and the commit says why.
+
+Floors come from the run set in `ci/coverage-campaign.txt` **and from CI's own
+figures** — a smaller set, or any local machine, measures lower and sets them
+wrong. Running the campaign locally is expensive, so ask first;
+`ci/coverage-run.sh <board> <config>` against one pair is the development
+loop.
 
 **Toolchain versions are pinned, in one place each:** `ci/arm-toolchain-version`
 (Arm GNU, for the firmware and plugins) and `ci/emscripten-version` (emsdk, for

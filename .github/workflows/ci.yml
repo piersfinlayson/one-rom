@@ -309,11 +309,37 @@ jobs:
     - name: Run the coverage campaign
       run: ci/coverage-campaign.sh
 
+    # tee, so the figures reach the job summary as well as the log.  pipefail
+    # or tee's exit status hides a failing gate.
     - name: Coverage figures
-      run: ci/coverage-report.sh
+      run: |
+        set -o pipefail
+        ci/coverage-report.sh | tee coverage-figures.txt
 
     - name: Check the floors
-      run: ci/coverage-report.sh --check
+      run: |
+        set -o pipefail
+        ci/coverage-report.sh --check | tee coverage-check.txt
+
+    # The numbers are the point of the job, and a log needs an account to read.
+    # This puts them on the run page instead, readable by anyone who can see
+    # the repo.  always(), so a failed gate is shown rather than hidden.
+    - name: Figures in the job summary
+      if: always()
+      run: |
+        {
+          echo '## Coverage'
+          echo
+          echo '```'
+          cat coverage-figures.txt 2>/dev/null || echo "(the campaign did not complete)"
+          echo '```'
+          echo
+          echo '### Floors'
+          echo
+          echo '```'
+          cat coverage-check.txt 2>/dev/null || echo "(the check did not run)"
+          echo '```'
+        } >> "$GITHUB_STEP_SUMMARY"
 
     - name: Upload tracefiles
       if: always()
