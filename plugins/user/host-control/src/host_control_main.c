@@ -1461,12 +1461,6 @@ static bool exec_nv_poke_discard(void) {
     return true;
 }
 
-// Shared magics that the USB stack watches for to pause and resume the flash
-// operations in the commit sequence below.
-#define FLASH_PAUSE_REQUEST  0x464C5348u    // FLSH
-#define FLASH_PAUSE_ACK      0x464C4F4Bu    // FLOK
-#define FLASH_RESUME         0x464C5245u    // FLRE
-
 static bool exec_nv_poke_commit(void) {
     if (!s_nv_state.active) {
         s_log("NPC: no transaction in progress");
@@ -1514,16 +1508,37 @@ static bool exec_nv_poke_commit(void) {
     }
     
     // Get the exclusive mode functions, which we'll use to ensure the flash
-    // isn't accessed during the critical section of the commit.
+    // isn't accessed during the critical section of the commit.  Checked like
+    // the bootrom lookups above: the firmware this plugin declares a minimum
+    // version for has both, but nothing in the build ties that declaration to
+    // this call, and calling through a null pointer faults the core.
     ora_enter_exclusive_mode_fn_t enter_exclusive =
         s_lookup(ORA_ID_ENTER_EXCLUSIVE_MODE);
     ora_exit_exclusive_mode_fn_t exit_exclusive =
         s_lookup(ORA_ID_EXIT_EXCLUSIVE_MODE);
+    if (enter_exclusive == NULL || exit_exclusive == NULL) {
+        s_log("NPC: exclusive mode not available");
+        return false;
+    }
 
     if (enter_exclusive() != ORA_RESULT_OK) {
         s_log("NPC: enter exclusive mode failed");
         return false;
     }
+
+    const uint8_t *staging = ORA_SRAM_PTR(s_nv_state.staging_base);
+    nv_flash_erase_critical_fn_t erase_fn = ORA_STAGED_FN_PTR(
+        nv_flash_erase_critical_fn_t, s_nv_state.staging_base + NV_STORAGE_SIZE);
+
+    // Exclusive mode parks the other core with its interrupts masked.  This
+    // core has to mask its own, and from here rather than from inside the
+    // staged routine: connect_internal_flash() has already taken the flash off
+    // the settings the running system configured, and an interrupt taken
+    // between here and the XIP restore runs a handler that lives in flash.
+    // Nothing on this core took interrupts at all until the firmware's LED
+    // engine began servicing animations from a timer, which it does on
+    // whichever core asked for one - this one, whenever a host drives SET_LED.
+    uint32_t primask = flash_irq_disable();
 
     connect_internal_flash();
 
@@ -1531,31 +1546,28 @@ static bool exec_nv_poke_commit(void) {
     uint8_t  clkdiv     = ORA_XIP_CLKDIV();
     uint32_t flash_offs = ORA_FLASH_OFFSET(__nv_storage_start);
 
-    s_log("NPC: offs=0x%08X clkdiv=%u", (unsigned)flash_offs, (unsigned)clkdiv);
-
-    // Erase the NV sector via the function blob copied into the RAM slot.
-    nv_flash_erase_critical_fn_t erase_fn = ORA_STAGED_FN_PTR(
-        nv_flash_erase_critical_fn_t, s_nv_state.staging_base + NV_STORAGE_SIZE);
+    // Erase and program the NV sector via the function blob copied into the
+    // RAM slot.  Both run between one exit from XIP and one restore of it, so
+    // the bootrom's program function gets the flash in the serial command mode
+    // it needs.  It returns void, so a failed write is not detectable here.
     erase_fn(
         flash_exit_xip,
         flash_range_erase,
+        flash_range_program,
         flash_flush_cache,
         flash_select_xip_read_mode,
         flash_offs,
+        staging,
         NV_STORAGE_SIZE,
         clkdiv
     );
 
-    s_log("NPC: flash erase complete, exiting XIP");
-
-    // XIP is restored. Write staging buffer to flash.
-    // flash_range_program is a bootrom function and returns void;
-    // failure is not detectable here.
-    flash_range_program(flash_offs, ORA_SRAM_PTR(s_nv_state.staging_base), NV_STORAGE_SIZE);
+    flash_irq_restore(primask);
 
     exit_exclusive();
 
-    s_log("NPC: complete");
+    s_log("NPC: complete offs=0x%08X clkdiv=%u", (unsigned)flash_offs,
+          (unsigned)clkdiv);
     nv_discard_impl();
     return true;
 }

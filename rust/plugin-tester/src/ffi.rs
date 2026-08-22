@@ -51,9 +51,11 @@ pub struct FlashLog {
     /// Non-zero if an erase arrived with XIP active, or named a range outside
     /// the modelled region.
     pub bad_erase: u32,
-    /// Non-zero if a program arrived with XIP inactive, or named a range
+    /// Non-zero if a program arrived with XIP active, or named a range
     /// outside the modelled region.
     pub bad_program: u32,
+    /// Non-zero if any call in the sequence arrived with interrupts unmasked.
+    pub bad_unmasked: u32,
 }
 
 unsafe extern "C" {

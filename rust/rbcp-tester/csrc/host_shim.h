@@ -19,13 +19,13 @@
 
 /// What the plugin asked the flash hardware to do.
 ///
-/// The commit path is a fixed sequence — connect, exit XIP, erase, restore
-/// XIP, program — whose ordering matters: a program issued before XIP came
-/// back, or an erase issued while it was still active, would be a real defect
-/// on a device and is invisible in the resulting bytes alone.  So the calls
-/// are counted and their arguments recorded, and the two `bad_*` flags mark a
-/// call the model refused to honour because it arrived in the wrong state or
-/// named the wrong range.
+/// The commit path is a fixed sequence — connect, exit XIP, erase, program,
+/// restore XIP — whose ordering matters: the bootrom needs the flash in serial
+/// command mode for both the erase and the program, so either one issued while
+/// XIP was still active would be a real defect on a device and is invisible in
+/// the resulting bytes alone.  So the calls are counted and their arguments
+/// recorded, and the two `bad_*` flags mark a call the model refused to honour
+/// because it arrived in the wrong state or named the wrong range.
 typedef struct {
     uint32_t connect_calls;
     uint32_t exit_xip_calls;
@@ -50,9 +50,9 @@ typedef struct {
 
     /// Order in which the calls arrived: each is the value of a counter that
     /// increments on every flash call, or 0 if the call never came.  The
-    /// commit sequence is fixed — connect, exit XIP, erase, restore XIP,
-    /// program — and a device that programmed before XIP came back would
-    /// produce the right bytes here while failing on hardware, so the order is
+    /// commit sequence is fixed — connect, exit XIP, erase, program, restore
+    /// XIP — and a device that programmed after XIP came back would produce
+    /// the right bytes here while failing on hardware, so the order is
     /// asserted rather than inferred from the outcome.
     uint32_t connect_seq;
     uint32_t exit_xip_seq;
@@ -67,9 +67,13 @@ typedef struct {
     /// Non-zero if an erase arrived with XIP active, or named a range outside
     /// the modelled region.
     uint32_t bad_erase;
-    /// Non-zero if a program arrived with XIP inactive, or named a range
+    /// Non-zero if a program arrived with XIP active, or named a range
     /// outside the modelled region.
     uint32_t bad_program;
+    /// Non-zero if any call in the sequence arrived with interrupts unmasked.
+    /// On a device the handler an interrupt would run lives in flash, which is
+    /// unreadable from the exit out of XIP until the restore back into it.
+    uint32_t bad_unmasked;
 } ora_host_test_flash_log_t;
 
 /// The log of what the last commit asked for.  Valid until the next reset.

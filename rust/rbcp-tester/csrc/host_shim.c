@@ -156,12 +156,44 @@ const ora_host_test_flash_log_t *ora_host_test_flash_log(void) {
     return &s_flash_log;
 }
 
+// How many nested masked regions the plugin is inside.  A device masks
+// interrupts around the flash sequence because the handlers it would otherwise
+// run live in flash, which is unreadable for the duration.  Nothing in this
+// process is interruptible, so the depth is all there is to check - but a
+// commit that stopped masking would be a device that faults the moment
+// anything on its core takes an interrupt, and that is worth catching here
+// rather than on hardware.
+static uint32_t s_irq_depth;
+
+uint32_t ora_host_test_irq_disable(void) {
+    uint32_t previous = s_irq_depth;
+    s_irq_depth++;
+    return previous;
+}
+
+void ora_host_test_irq_restore(uint32_t primask) {
+    // The plugin hands back what it saved, so this models save-and-restore
+    // rather than a decrement, and an unbalanced pair shows as a depth that
+    // never returns to zero.
+    s_irq_depth = primask;
+}
+
+// Record a flash call made with interrupts unmasked.  Every call in the commit
+// sequence is made from inside the masked region, connect included: by then the
+// flash has been taken off the settings the running system configured.
+static void note_masked(void) {
+    if (s_irq_depth == 0u) {
+        s_flash_log.bad_unmasked = 1;
+    }
+}
+
 void ora_host_test_reset_flash_log(void) {
     s_flash_log = (ora_host_test_flash_log_t){0};
     // A device is running from XIP when a commit starts; that is what the
     // erase sequence has to take it out of and put it back into.
     s_flash_log.xip_active = 1;
     s_seq = 0;
+    s_irq_depth = 0;
 }
 
 // The XIP clock divisor a device would have configured.  Any non-zero value
@@ -196,11 +228,13 @@ uint32_t ora_host_test_staged_fn_size(const void *start, const void *end) {
 // --- the bootrom stand-ins ------------------------------------------------
 
 static void shim_connect_internal_flash(void) {
+    note_masked();
     s_flash_log.connect_calls++;
     s_flash_log.connect_seq = next_seq();
 }
 
 static void shim_flash_exit_xip(void) {
+    note_masked();
     s_flash_log.exit_xip_calls++;
     s_flash_log.exit_xip_seq = next_seq();
     s_flash_log.xip_active = 0;
@@ -208,6 +242,7 @@ static void shim_flash_exit_xip(void) {
 
 static void shim_flash_range_erase(uint32_t offs, uint32_t count, uint32_t block_size,
                                    uint8_t block_cmd) {
+    note_masked();
     s_flash_log.erase_calls++;
     s_flash_log.erase_seq = next_seq();
     s_flash_log.erase_offs = offs;
@@ -223,11 +258,13 @@ static void shim_flash_range_erase(uint32_t offs, uint32_t count, uint32_t block
 }
 
 static void shim_flash_flush_cache(void) {
+    note_masked();
     s_flash_log.flush_calls++;
     s_flash_log.flush_seq = next_seq();
 }
 
 static void shim_flash_select_xip_read_mode(uint8_t mode, uint8_t clkdiv) {
+    note_masked();
     s_flash_log.select_xip_calls++;
     s_flash_log.select_xip_seq = next_seq();
     s_flash_log.select_xip_mode = mode;
@@ -236,11 +273,12 @@ static void shim_flash_select_xip_read_mode(uint8_t mode, uint8_t clkdiv) {
 }
 
 static void shim_flash_range_program(uint32_t offs, const uint8_t *data, uint32_t count) {
+    note_masked();
     s_flash_log.program_calls++;
     s_flash_log.program_seq = next_seq();
     s_flash_log.program_offs = offs;
     s_flash_log.program_count = count;
-    if (s_flash_log.xip_active && offs == SHIM_NV_FLASH_OFFSET
+    if (!s_flash_log.xip_active && offs == SHIM_NV_FLASH_OFFSET
         && count <= SHIM_NV_STORAGE_SIZE) {
         // Real flash can only clear bits; a program over unerased storage
         // leaves the AND of the two.  Modelling that rather than a plain copy

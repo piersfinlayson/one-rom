@@ -55,6 +55,7 @@
 
 use crate::driver::{Bus, CmdFailure, HDR_SIZE, Session, control, group, nv, read};
 use crate::{Ctx, Outcome};
+use onerom_fw_emulator::ffi;
 
 /// "The NV storage address space is a maximum of 32KB.  The location MSB in
 /// NV_PEEK and NV_POKE encodes the upper address bits; values above 0x7F are
@@ -1032,21 +1033,41 @@ pub fn nv_poke_commit_writes_the_staging_buffer(
     Ok(Outcome::Pass)
 }
 
-/// A commit erases before it programs, and restores XIP before it does.
+/// API identifiers withheld from the plugin for the scenarios that need them.
+///
+/// Exclusive mode is what parks the other core for the duration of a commit,
+/// and the plugin's minimum firmware version has it — so the branch it takes
+/// when the call is absent is unreachable against the emulator, which
+/// implements the whole API.  Withholding is the only way to reach it.
+pub static WITHHELD_API: &[(&str, &[u32])] = &[(
+    "conformance.nv.nv_poke_commit_needs_exclusive_mode",
+    &[
+        ffi::api_id_t_ORA_ID_ENTER_EXCLUSIVE_MODE,
+        ffi::api_id_t_ORA_ID_EXIT_EXCLUSIVE_MODE,
+    ],
+)];
+
+/// A commit erases before it programs, and both run before XIP is restored.
 ///
 /// Not a requirement of the protocol — it is a requirement of the hardware, and
 /// the reason the specification warns that a commit "is likely to involve the
 /// device erasing flash".  Flash can only clear bits, so a program over
 /// unerased storage yields the bitwise AND of the two rather than what was
-/// asked for; and the routine that performs the erase runs with the flash
-/// unreadable, so a program issued before XIP is restored reads its source from
-/// a bus that is not answering.
+/// asked for.  Both the erase and the program need the flash taken out of XIP
+/// and put into serial command mode first, so either one issued after XIP has
+/// been restored is issued into a flash that is no longer listening.
 ///
 /// Neither fault shows in the committed bytes when the staged value happens to
 /// be a subset of the bits already there, so the sequence is asserted directly:
 /// the harness's model refuses a call that arrives in the wrong state and says
 /// so.  The staged value is chosen to *set* a bit that NV storage does not
 /// have, so the outcome catches a missing erase as well.
+///
+/// The masking is asserted for the same reason.  Flash is unreadable from the
+/// exit out of XIP until the restore back into it, and every interrupt handler
+/// the core would run lives in flash, so the whole sequence has to run with
+/// interrupts masked.  A commit that stopped masking commits the right bytes
+/// and faults on hardware the moment anything on that core takes an interrupt.
 pub fn nv_poke_commit_erases_before_programming(
     bus: &mut Bus,
     ctx: &Ctx,
@@ -1088,9 +1109,17 @@ pub fn nv_poke_commit_erases_before_programming(
     }
     if log.bad_program != 0 {
         return Err(
-            "the program arrived before XIP was restored, or named a range outside the NV \
-             region — flash_range_program reads its source over a bus that is not answering \
-             until flash_select_xip_read_mode has run"
+            "the program arrived with XIP still active, or named a range outside the NV \
+             region — flash_range_program needs the flash in serial command mode, which is \
+             what flash_exit_xip puts it in and flash_select_xip_read_mode takes it out of"
+                .to_string(),
+        );
+    }
+    if log.bad_unmasked != 0 {
+        return Err(
+            "a call in the commit sequence arrived with interrupts unmasked — every handler \
+             this core would run lives in flash, which is unreadable from flash_exit_xip \
+             until flash_select_xip_read_mode has put it back"
                 .to_string(),
         );
     }
@@ -1101,21 +1130,21 @@ pub fn nv_poke_commit_erases_before_programming(
         ));
     }
 
-    // The order, not merely the presence.  A device that programmed before
+    // The order, not merely the presence.  A device that programmed after
     // restoring XIP would produce exactly the right bytes here and fail on
-    // hardware, because flash_range_program reads its source over a bus that
-    // is not answering yet.
+    // hardware, because the flash is back in XIP mode and no longer reading
+    // the command the bootrom sends it.
     let sequence = [
         ("connect_internal_flash", log.connect_seq),
         ("flash_exit_xip", log.exit_xip_seq),
         ("flash_range_erase", log.erase_seq),
-        ("flash_select_xip_read_mode", log.select_xip_seq),
         ("flash_range_program", log.program_seq),
+        ("flash_select_xip_read_mode", log.select_xip_seq),
     ];
     if let Some(w) = sequence.windows(2).find(|w| w[0].1 >= w[1].1) {
         return Err(format!(
-            "the commit called {} before {} — the sequence must be {}, because the erase runs \
-             with flash unreadable and the program reads its source back over XIP",
+            "the commit called {} before {} — the sequence must be {}, because the erase and \
+             the program both need the flash out of XIP and in serial command mode",
             w[1].0,
             w[0].0,
             sequence
@@ -1188,6 +1217,67 @@ pub fn nv_poke_commit_needs_a_transaction(bus: &mut Bus, ctx: &Ctx) -> Result<Ou
         LOCATION,
         &[VALUE],
         "a rejected commit writes nothing, so the seeded byte must survive it",
+    )?;
+
+    Ok(Outcome::Pass)
+}
+
+/// A commit refuses rather than faulting when it cannot park the other core.
+///
+/// Not a protocol requirement — a hardware one, and the reason this is a
+/// scenario rather than a comment.  A commit takes flash away from both cores,
+/// and the other one is running code out of it, so the commit first parks it
+/// through the exclusive-mode calls.  Those arrived in firmware before this
+/// plugin's declared minimum, so on any firmware it loads on they are there.
+///
+/// Nothing in the build ties that reasoning to the code, though, and the cost
+/// of being wrong is not a refused command: a call through a pointer the lookup
+/// answered NULL for faults the core outright.  So the plugin checks, and this
+/// withholds the calls to prove it — the transaction must be refused, and flash
+/// must be left alone.
+pub fn nv_poke_commit_needs_exclusive_mode(bus: &mut Bus, ctx: &Ctx) -> Result<Outcome, String> {
+    const LOCATION: u32 = 0x11;
+    const SEEDED: u8 = 0x3C;
+    const STAGED: u8 = 0xC3;
+
+    let s = ctx.session();
+    bus.enter_cmd_resp(&s)
+        .map_err(|e| format!("ENTER_CMD_RESP: {e}"))?;
+
+    let Some(slot) = staging_slot(bus, &s, ctx)? else {
+        return Ok(needs_staging_slot(ctx));
+    };
+
+    bus.seed_nv(LOCATION, &[SEEDED]);
+
+    bus.issue_cmd(&s, group::NV_STORAGE, nv::NV_POKE_BEGIN, &[slot])
+        .map_err(|e| format!("NV_POKE_BEGIN with staging slot {slot}: {e}"))?;
+    bus.issue_cmd(
+        &s,
+        group::NV_STORAGE,
+        nv::NV_POKE,
+        &poke_args(STAGED, LOCATION),
+    )
+    .map_err(|e| format!("NV_POKE: {e}"))?;
+
+    bus.expect_rejected(&s, group::NV_STORAGE, nv::NV_POKE_COMMIT, &[])
+        .map_err(|e| format!("{e} — the device cannot park its other core"))?;
+
+    let log = bus.flash_log();
+    if log.connect_calls != 0 || log.erase_calls != 0 || log.program_calls != 0 {
+        return Err(format!(
+            "the commit touched flash — {} connect(s), {} erase(s), {} program(s) — with the \
+             other core still running out of it",
+            log.connect_calls, log.erase_calls, log.program_calls
+        ));
+    }
+
+    expect_nv(
+        bus,
+        &s,
+        LOCATION,
+        &[SEEDED],
+        "a refused commit writes nothing, so the seeded byte must survive it",
     )?;
 
     Ok(Outcome::Pass)

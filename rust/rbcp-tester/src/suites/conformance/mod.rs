@@ -409,6 +409,11 @@ pub static SCENARIOS: &[Scenario] = &[
         run: nv_storage::nv_poke_commit_writes_the_staging_buffer,
     },
     Scenario {
+        name: "conformance.nv.nv_poke_commit_needs_exclusive_mode",
+        spec_ref: "Group 0x03 — NV_POKE_COMMIT (device erase/program sequence)",
+        run: nv_storage::nv_poke_commit_needs_exclusive_mode,
+    },
+    Scenario {
         name: "conformance.nv.nv_poke_commit_erases_before_programming",
         spec_ref: "Group 0x03 — NV_POKE_COMMIT (device erase/program sequence)",
         run: nv_storage::nv_poke_commit_erases_before_programming,
