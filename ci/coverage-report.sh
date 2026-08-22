@@ -250,8 +250,8 @@ END {
         exit 0
     }
 
-    printf "%-52s %7s %7s %7s\n", "File", "Lines", "Hit", "Rate"
-    printf "%-52s %7s %7s %7s\n", "----", "-----", "---", "----"
+    printf "%-52s %7s %7s %7s %7s\n", "File", "Lines", "Hit", "Rate", "Floor"
+    printf "%-52s %7s %7s %7s %7s\n", "----", "-----", "---", "----", "-----"
     prev = ""
     for (i = 1; i <= nf; i++) {
         f = flist[i]; g = name_of(f)
@@ -261,7 +261,22 @@ END {
         }
         prev = g; gt += total[f]; gh += hit[f]
         at += total[f]; ah += hit[f]
-        printf "  %-50s %7d %7d %6.1f%%\n", f, total[f], hit[f], pct(hit[f], total[f])
+        # A file with no floor is new, and --check is what fails on it.  Here
+        # it just reads as having none.
+        rate = pct(hit[f], total[f])
+        if (f in floor_of) {
+            fl = sprintf("%6.1f%%", floor_of[f])
+            # Named, not left to the reader to spot by comparing two numbers.
+            # BELOW is the failure the gate reports, and the headroom above a
+            # floor is what --raise would take up.
+            if (rate + 0.05 < floor_of[f])        mark = "  BELOW"
+            else if (rate > floor_of[f] + 0.05)   mark = sprintf("  +%.1f", rate - floor_of[f])
+            else                                  mark = ""
+        } else {
+            fl = "      -"
+            mark = "  NEW"
+        }
+        printf "  %-50s %7d %7d %6.1f%% %s%s\n", f, total[f], hit[f], rate, fl, mark
     }
     if (prev != "") printf "%-52s %7d %7d %6.1f%%\n", prev, gt, gh, pct(gh, gt)
     printf "\n%-52s %7d %7d %6.1f%%\n", "ALL", at, ah, pct(ah, at)
