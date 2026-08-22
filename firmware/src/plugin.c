@@ -350,11 +350,38 @@ uint64_t onerom_timer_us64(void) {
     return ((uint64_t)hi << 32) | lo;
 }
 
+// Milliseconds since the timer started, wrapping at 49.7 days.
+//
+// The whole 64-bit microsecond count is divided, which is what puts the wrap
+// there.  Dividing a 32-bit microsecond read instead would wrap every 71
+// minutes.
+//
+// Written out in 32-bit pieces rather than as a plain 64-bit divide, because
+// this core has no 64-bit divide instruction and one written that way costs a
+// call to __udivmoddi4 - 822 bytes of flash, and 48 bytes of stack across the
+// helper and its wrapper.  This is called from the LED engine's frame
+// interrupt, so that stack is charged on top of whatever the interrupt
+// preempted, out of a plugin stack measured in hundreds of bytes.  Each divide
+// below is 32-bit, which the core does in hardware.
+//
+// It rests on 2^32 = 1000 * 4294967 + 296.  Writing the count as hi * 2^32 + lo
+// and substituting, the quotient is
+//
+//     (hi / 1000) * 2^32  +  (hi % 1000) * 4294967
+//                         +  lo / 1000
+//                         +  ((hi % 1000) * 296 + lo % 1000) / 1000
+//
+// The first term is a multiple of 2^32, so it contributes nothing to a uint32_t
+// and is left out.  That is the same truncation the 49.7 day wrap already is,
+// not a second one.  The largest intermediate is 999 * 296 + 999 = 296703, so
+// nothing here overflows 32 bits.
 uint32_t ora_get_plugin_uptime_ms(void) {
-    // Divide the full 64-bit microsecond count, then truncate.  That is what
-    // puts the wrap at 49.7 days.  Dividing a 32-bit microsecond read instead
-    // would wrap every 71 minutes.
-    return (uint32_t)(onerom_timer_us64() / 1000u);
+    uint64_t us = onerom_timer_us64();
+    uint32_t hi = (uint32_t)(us >> 32);
+    uint32_t lo = (uint32_t)us;
+    uint32_t r  = hi % 1000u;
+
+    return (r * 4294967u) + (lo / 1000u) + (((r * 296u) + (lo % 1000u)) / 1000u);
 }
 
 uint32_t ora_get_chip_size_from_type(uint32_t chip_type) {
@@ -871,6 +898,12 @@ static void yield_wait_for_resume(void) {
 }
 #endif // !TEST_BUILD
 
+// Not inlined, because of where it is called from.  ora_launch_plugins() calls
+// this in its no-user-plugin loop, and it also calls the user plugin - so its
+// frame is live for as long as the plugin runs.  Inlined, this function's
+// 64-byte stub buffer lands in that frame and is held for the plugin's whole
+// life on a path the plugin never takes, off a stack the plugin shares.
+__attribute__((noinline))
 ora_result_t ora_yield(uint8_t *was_paused_out) {
 #if !defined(TEST_BUILD)
     if (was_paused_out != NULL) {

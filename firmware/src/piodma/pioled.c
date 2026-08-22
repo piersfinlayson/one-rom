@@ -627,8 +627,13 @@ static uint8_t  led_have_deadline;
 // The core that arms the alarm is the core that services it, since the NVIC is
 // per core.  Neither core serves ROM bytes, so it does not matter which, but it
 // is worth knowing which one an animation runs on.
-static void led_rearm(void) {
-    uint32_t now_ms = ora_get_plugin_uptime_ms();
+//
+// now_ms is passed in rather than read here.  Both callers have just read it,
+// so reading it again costs a call out of a frame this reaches from a timer
+// interrupt, on a stack a plugin shares.  It also means the deadlines a caller
+// acted on and the alarm armed for them are the same instant, where two reads
+// could straddle a millisecond and arm for one already gone.
+static void led_rearm(uint32_t now_ms) {
     uint32_t earliest = 0;
     uint8_t  have_deadline = 0;
     uint32_t wait_us;
@@ -830,7 +835,7 @@ void pio_led_frame(void) {
         }
     }
 
-    led_rearm();
+    led_rearm(now_ms);
     led_unlock(primask);
 }
 
@@ -1020,7 +1025,7 @@ ora_result_t pio_led_set(const ora_led_request_t *req) {
             break;
     }
 
-    led_rearm();
+    led_rearm(now_ms);
     led_unlock(primask);
 
     return ORA_RESULT_OK;

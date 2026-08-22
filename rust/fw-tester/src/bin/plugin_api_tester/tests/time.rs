@@ -84,6 +84,44 @@ pub fn test_plugin_uptime_ms(emu: &Emulator) -> Result<(), String> {
     }
     println!("  wraps at {} ms", u32::MAX);
 
+    // The conversion is written out in 32-bit pieces, because this core has no
+    // 64-bit divide instruction and the library one is too expensive to call
+    // from an interrupt - see ora_get_plugin_uptime_ms.  That splits the count
+    // at bit 32 and recombines the parts, so the cases that matter are the ones
+    // a wrong recombination gets wrong: a high half that is not zero, a high
+    // half whose remainder mod 1000 is at its largest, a low half at its
+    // largest, and the point where the two parts carry into each other.  All of
+    // these read the same on a plain 64-bit divide, so the expectations here are
+    // simply us / 1000 truncated to 32 bits.
+    const SPLIT_CASES: &[u64] = &[
+        1u64 << 32,         // exactly one high unit, low half zero
+        (1u64 << 32) - 1,   // low half at its largest, high zero
+        (1u64 << 32) + 999, // carries only in the remainder term
+        (1u64 << 32) + 1_000,
+        999 * (1u64 << 32), // high remainder at its largest
+        999 * (1u64 << 32) + u32::MAX as u64,
+        1_000 * (1u64 << 32), // high remainder back to zero
+        1_001 * (1u64 << 32), // high half past a multiple of 1000
+        123_456_789 * (1u64 << 32) + 987_654_321,
+        u64::MAX,
+        u64::MAX - 999,
+    ];
+    for us in SPLIT_CASES {
+        let expected = (us / 1_000) as u32;
+        emu.set_timer_us(*us);
+        let got = emu.get_plugin_uptime_ms();
+        if got != expected {
+            errors.push(format!(
+                "split at {} us: got {} ms, expected {}",
+                us, got, expected
+            ));
+        }
+    }
+    println!(
+        "  {} split cases agree with a 64-bit divide",
+        SPLIT_CASES.len()
+    );
+
     // Leave the clock where the run found it, so a later test in this process
     // does not inherit a clock parked past the wrap.
     emu.set_timer_us(0);

@@ -51,8 +51,17 @@ DISASM := $(BUILD_DIR)/$(BIN_PREFIX).dis
 LDSCRIPT=link/linker.ld
 
 # Flags
-COMMON_FLAGS := -mthumb -mfloat-abi=hard -ffast-math -fshort-enums
-COMMON_FLAGS += -mcpu=cortex-m33 -mfpu=fpv5-sp-d16
+#
+# Built soft-float, deliberately.  Nothing in the firmware does floating point
+# arithmetic, but with the FPU enabled the compiler uses a double register as an
+# 8-byte move - zeroing two adjacent uint64_t in setup_sel_pins was enough - and
+# the first such instruction sets CONTROL.FPCA on that core for good.  From then
+# on every interrupt pushes the extended exception frame, 104 bytes instead of
+# 32, out of a plugin stack that is measured in hundreds.  Re-enabling
+# -mfloat-abi=hard and -mfpu costs those 72 bytes on every interrupt and buys
+# nothing.
+COMMON_FLAGS := -mthumb -ffast-math -fshort-enums
+COMMON_FLAGS += -mcpu=cortex-m33
 
 CFLAGS := $(EXTRA_C_FLAGS) $(COMMON_FLAGS) -Werror \
           -I include \
