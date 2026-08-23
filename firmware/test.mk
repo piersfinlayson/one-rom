@@ -22,11 +22,20 @@ ifeq ($(WASM),1)
   AR_EXTRACT := emar x
   AR_COMBINE := emar rcs
 else
-  # Overridable, and the coverage and C-test paths do override it: both are
-  # measured or gated, so both pin the compiler to ci/c-compiler-version rather
-  # than taking whatever gcc a machine happens to have.  See ci/coverage-run.sh
-  # and ci/c-tests.sh.
-  CC ?= gcc
+  # Overridable, and the coverage path does override it: its figures belong to
+  # one compiler, so it pins CC to ci/c-compiler-version rather than taking
+  # whatever gcc a machine happens to have.  See ci/coverage-run.sh.
+  #
+  # The test is on where CC came from, and neither CC ?= gcc nor a test for an
+  # empty value works here.  --no-builtin-variables above takes effect only
+  # once this file has been read, so while it is read CC still holds make's
+  # built-in "cc" - ?= assigns to an undefined variable and this one is
+  # "default", and an emptiness test sees "cc" and passes.  By the time a
+  # recipe runs the built-in is gone and CC is empty, so every compile runs its
+  # first flag as the command.  Only a caller's own value counts as a choice.
+  ifeq ($(filter environment command,$(firstword $(origin CC))),)
+    CC := gcc
+  endif
   EPIO_MAKE_TARGET :=
   EPIO_LIB := epio/build/libepio.a
   ifeq ($(shell uname -s),Darwin)
