@@ -69,9 +69,9 @@ fi
 # you look at one board, and that is a legitimate thing to want.
 if [ $# -eq 0 ] && [ -f "$CAMPAIGN" ]; then
     missing=""
-    while read -r board config; do
+    while read -r board config variant; do
         [ -n "$board" ] || continue
-        want="$OUT_DIR/$board--$(basename "$config" .json).info"
+        want="$OUT_DIR/$board--$(basename "$config" .json)${variant:+--$variant}.info"
         [ -f "$want" ] || missing="$missing  $(basename "$want")\n"
     done <<EOF
 $(grep -vE '^\s*(#|$)' "$CAMPAIGN")

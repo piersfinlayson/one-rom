@@ -27,11 +27,11 @@ fi
 
 total=$(grep -cvE '^\s*(#|$)' "$CAMPAIGN")
 n=0
-grep -vE '^\s*(#|$)' "$CAMPAIGN" | while read -r board config; do
+grep -vE '^\s*(#|$)' "$CAMPAIGN" | while read -r board config variant; do
     n=$((n + 1))
     echo
-    echo "########## [$n/$total] $board  $config"
-    "$ROOT/ci/coverage-run.sh" "$board" "$config"
+    echo "########## [$n/$total] $board  $config${variant:+  [$variant]}"
+    "$ROOT/ci/coverage-run.sh" ${variant:+--variant "$variant"} "$board" "$config"
 done
 
 echo

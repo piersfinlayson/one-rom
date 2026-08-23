@@ -2,15 +2,15 @@
 # Raised by ci/coverage-report.sh --raise.  Never lowered by hand
 # without saying why in the commit.
 firmware/include/include.h                           100.0
-firmware/src/log.c                                   0.0
-firmware/src/main.c                                  78.0
+firmware/src/log.c                                   100.0
+firmware/src/main.c                                  82.9
 firmware/src/piodma/pio.c                            100.0
 firmware/src/piodma/pioled.c                         100.0
 firmware/src/piodma/pioplugin.c                      59.8
 firmware/src/piodma/piorom2.c                        74.1
 firmware/src/plugin.c                                83.4
 firmware/src/rp235x.c                                62.9
-firmware/src/rtt.c                                   31.8
+firmware/src/rtt.c                                   91.0
 firmware/src/utils.c                                 69.4
 plugins/user/host-control/src/flash_erase.c          100.0
 plugins/user/host-control/src/flash_erase.h          100.0

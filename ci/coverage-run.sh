@@ -30,14 +30,42 @@ all_testers() { grep -vE '^\s*(#|$)' "$TESTER_LIST" | awk '{print $1}'; }
 target_for()  { grep -vE '^\s*(#|$)' "$TESTER_LIST" | awk -v n="$1" '$1 == n {print $2}'; }
 
 usage() {
-    echo "usage: $0 <board> <config> [tester ...]" >&2
-    echo "  testers: $(all_testers | tr '\n' ' ')(default: all)" >&2
+    echo "usage: $0 [--variant <name>] <board> <config> [tester ...]" >&2
+    echo "  testers:  $(all_testers | tr '\n' ' ')(default: all)" >&2
+    echo "  variants: no-logging" >&2
     exit 2
 }
+
+# A variant is a second build of the same board and config, differing in what
+# the C was compiled with rather than in what it serves.  It gets a tracefile
+# of its own: the flags change, so the objects change, and coverage cannot
+# accumulate in place across that.  Merging is a union, so a variant can only
+# add lines to the figures.
+#
+#   no-logging  TEST_LOGGING=0 and the boot log off, which is the only way to
+#               reach code that runs when a log category is disabled - there is
+#               no runtime switch for a category, only the build.
+VARIANT=""
+if [ "${1:-}" = "--variant" ]; then
+    VARIANT="${2:-}"
+    case "$VARIANT" in
+        no-logging) ;;
+        *) echo "unknown variant '$VARIANT'" >&2; usage ;;
+    esac
+    shift 2
+fi
 
 [ $# -ge 2 ] || usage
 BOARD="$1"; CONFIG="$2"; shift 2
 TESTERS="${*:-$(all_testers)}"
+
+if [ "$VARIANT" = "no-logging" ]; then
+    VARIANT_ENV="TEST_LOGGING=0"
+    VARIANT_LOG=0
+else
+    VARIANT_ENV=""
+    VARIANT_LOG=1
+fi
 
 [ "$(uname -s)" = "Linux" ] || {
     echo "Coverage runs on Linux only (found $(uname -s)) - see ci/docker." >&2
@@ -102,19 +130,23 @@ for d in $(gcov_dirs); do
     find "$d" -name '*.gcda' -delete 2>/dev/null || true
 done
 
-tag="$BOARD--$(basename "$CONFIG" .json)"
+tag="$BOARD--$(basename "$CONFIG" .json)${VARIANT:+--$VARIANT}"
 echo "=== coverage: $tag [$(echo $TESTERS)]"
 
-# ONEROM_LOG=1 because the firmware's own boot logging is code under test.
-# Every tester reads it and defaults it off, which leaves BOOT_LOGGING_EN false
-# for the whole run - so main.c never calls log_init() or log_roms(), and all
-# of firmware/src/log.c measures as unreached.  The output goes to the tester's
-# log beside the tracefile.
+# ONEROM_LOG because the firmware's own boot logging is code under test.  Every
+# tester reads it and defaults it off, which leaves BOOT_LOGGING_EN false for
+# the whole run - so main.c never calls log_init() or log_roms(), and all of
+# firmware/src/log.c measures as unreached.  The no-logging variant turns it
+# back off, which is the state the rest of the code branches on.  The output
+# goes to the tester's log beside the tracefile.
 for t in $TESTERS; do
     target=$(target_for "$t")
     [ -n "$target" ] || { echo "unknown tester '$t' - see $TESTER_LIST" >&2; exit 2; }
     printf '    %-8s ' "$t"
-    if COVERAGE_FW=1 COVERAGE_PLUGIN=1 ONEROM_LOG=1 BOARD="$BOARD" CONFIG="$CONFIG" \
+    # env, because a variable holding "NAME=value" is a command name to the
+    # shell rather than an assignment - only a literal one is a prefix.
+    if env COVERAGE_FW=1 COVERAGE_PLUGIN=1 ONEROM_LOG=$VARIANT_LOG $VARIANT_ENV \
+        BOARD="$BOARD" CONFIG="$CONFIG" \
         make --no-print-directory -C "$ROOT" "$target" >"$OUT/$tag.$t.log" 2>&1; then
         echo "ok"
     else
