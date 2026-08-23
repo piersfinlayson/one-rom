@@ -38,22 +38,37 @@ CC_NAME="gcc-${VERSION}"
 SUDO=""
 [ "$(id -u)" -eq 0 ] || SUDO="sudo"
 
+# apt on a CI runner fails often enough to matter - a mirror times out, or the
+# PPA's key fetch does - and under set -e one of those ends the install with a
+# transient error that a re-run clears.  Three tries with a backoff rather than
+# a re-run of the whole job.
+apt_try() {
+    local n
+    for n in 1 2 3; do
+        "$@" >&2 && return 0
+        echo "apt step failed (attempt ${n}/3): $*" >&2
+        sleep $((n * 5))
+    done
+    echo "giving up after 3 attempts: $*" >&2
+    return 1
+}
+
 if ! command -v "${CC_NAME}" >/dev/null; then
     echo "Installing ${CC_NAME}..." >&2
 
     export DEBIAN_FRONTEND=noninteractive
-    ${SUDO} apt-get update >&2
+    apt_try ${SUDO} apt-get update
 
     # The PPA only where the archive cannot supply it, so an image whose
     # distribution has caught up stops carrying a third party source.
     if ! apt-cache policy "${CC_NAME}" 2>/dev/null | grep -q 'Candidate: [0-9]'; then
         echo "${CC_NAME} is not in the archive - adding ppa:ubuntu-toolchain-r/test" >&2
-        ${SUDO} apt-get install -y --no-install-recommends software-properties-common >&2
-        ${SUDO} add-apt-repository -y ppa:ubuntu-toolchain-r/test >&2
-        ${SUDO} apt-get update >&2
+        apt_try ${SUDO} apt-get install -y --no-install-recommends software-properties-common
+        apt_try ${SUDO} add-apt-repository -y ppa:ubuntu-toolchain-r/test
+        apt_try ${SUDO} apt-get update
     fi
 
-    ${SUDO} apt-get install -y --no-install-recommends "${CC_NAME}" >&2
+    apt_try ${SUDO} apt-get install -y --no-install-recommends "${CC_NAME}"
 else
     echo "${CC_NAME} already present" >&2
 fi
