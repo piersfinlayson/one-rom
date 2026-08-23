@@ -408,8 +408,16 @@ fn run_slot(
         "led_hold_at_the_wrap",
         tests::led::test_led_hold_at_the_wrap(&emulator),
     );
+    report.add(
+        "led_flame_advances",
+        tests::led::test_led_flame_advances(&emulator),
+    );
 
     if tests::led::has_rgb(&emulator) {
+        report.add(
+            "led_park_with_status_led_off",
+            tests::led::test_led_park_with_status_led_off(&emulator),
+        );
         report.add(
             "led_rgb_defaults",
             tests::led::test_led_rgb_defaults(&emulator),

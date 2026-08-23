@@ -297,6 +297,17 @@ wrong. Running the campaign locally is expensive, so ask first;
 `ci/coverage-run.sh <board> <config>` against one pair is the development
 loop.
 
+Coverage needs GNU gcc, so `coverage-run.sh` refuses to run anywhere but Linux.
+From another platform use `ci/coverage-docker.sh <board> <config>`, which runs
+the same script in the `onerom-cov` container against a copy of the tree, and
+brings the tracefiles back to `build/coverage` for `ci/coverage-report.sh` to
+read on the host.
+
+Code that genuinely cannot be reached is marked `LCOV_EXCL_START` /
+`LCOV_EXCL_STOP` with a comment saying why. Where the reason is arithmetic
+rather than a runtime check, a `STATIC_ASSERT` holds the thing that makes it
+unreachable — see the flame table in `firmware/src/piodma/pioled.c`.
+
 **Toolchain versions are pinned, in one place each:** `ci/arm-toolchain-version`
 (Arm GNU, for the firmware and plugins) and `ci/emscripten-version` (emsdk, for
 Lens). `ci/install-arm-toolchain.sh` and `ci/install-emscripten.sh` install the

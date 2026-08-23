@@ -751,6 +751,153 @@ pub fn test_led_hold_restores(emu: &Emulator) -> Result<(), String> {
     })
 }
 
+/// Verify that a flame actually runs, and flickers rather than ticks.
+///
+/// Both this tester and the RBCP one already set flame and check it is
+/// accepted, and neither has ever let one advance - so the case that reads the
+/// flicker table and works out when the next frame is due has never run at all.
+///
+/// What tells a flame from any other repeating mode is that its frames are
+/// unevenly spaced: every other mode divides its period into equal steps, and
+/// flame takes each interval from a table.  So the assertion is that the
+/// intervals are not all the same.  A flame reduced to an even tick would still
+/// be a running animation, and would still pass anything that only asked
+/// whether a frame happened.
+pub fn test_led_flame_advances(emu: &Emulator) -> Result<(), String> {
+    with_engine(emu, |emu| {
+        if !present(emu, STATUS)? {
+            return Err("board has no status LED".to_string());
+        }
+
+        // Enough frames to cross several table entries.  The table is what
+        // makes the intervals differ, so too few frames could sit inside one
+        // run of equal entries and prove nothing.
+        const FRAMES: usize = 12;
+
+        set(emu, &request(STATUS, FLAME))?;
+
+        let mut due = emu
+            .led_next_deadline_ms()
+            .ok_or("a flame scheduled no frame, so it is not running")?;
+
+        let mut intervals = Vec::with_capacity(FRAMES);
+        for frame in 0..FRAMES {
+            emu.set_timer_us(ms_to_us(due));
+            emu.led_frame();
+
+            let next = emu.led_next_deadline_ms().ok_or_else(|| {
+                format!("the flame stopped scheduling frames after frame {frame}")
+            })?;
+            if next == due {
+                return Err(format!(
+                    "frame {frame} at {due} ms did not move the deadline, so the flame is \
+                     not advancing"
+                ));
+            }
+            intervals.push(next.wrapping_sub(due));
+            due = next;
+        }
+
+        let first = intervals[0];
+        if intervals.iter().all(|i| *i == first) {
+            return Err(format!(
+                "every one of {FRAMES} flame frames was {first} ms apart - a flame takes its \
+                 intervals from the flicker table, so evenly spaced frames mean the table is \
+                 not being read"
+            ));
+        }
+
+        let shortest = intervals.iter().min().unwrap();
+        let longest = intervals.iter().max().unwrap();
+        println!("  flame frames {shortest} to {longest} ms apart over {FRAMES} frames");
+
+        Ok(())
+    })
+}
+
+/// Verify that handing a shared pin back leaves it where a dark status LED
+/// wants it, and makes the next pixel wait out a reset.
+///
+/// Only a board that wires both LEDs to one GPIO reaches this.  The state
+/// machine borrows the pin for as long as a pixel takes and the status LED has
+/// it the rest of the time, so every pixel is followed by a handover.  Which
+/// level the handover leaves behind depends on the status LED: lit drives the
+/// line low, dark leaves it high, and a WS2812 cannot read a frame out of a
+/// line that has been sitting high - so the next pixel owes a reset first.
+///
+/// With the status LED dark that is the whole of the interesting path, and it
+/// is the case a test that leaves the status LED alone never reaches, because
+/// the engine boots it lit.
+pub fn test_led_park_with_status_led_off(emu: &Emulator) -> Result<(), String> {
+    with_engine(emu, |emu| {
+        if !present(emu, STATUS)? {
+            return Err("board has no status LED".to_string());
+        }
+        if state(emu, STATUS)?.gpio != state(emu, RGB)?.gpio {
+            println!("  skipped: this board's LEDs are on separate pins");
+            return Ok(());
+        }
+
+        // Dark, so the handover leaves the line high and the next pixel owes a
+        // reset.  This is the state the rest of the path is being tested in.
+        set(emu, &request(STATUS, OFF))?;
+
+        let (_, before) = emu.led_last_pixel();
+
+        // A colour on the RGB LED borrows the pin and owes it straight back.
+        let mut lit = request(RGB, ON);
+        lit.red = 0x20;
+        set(emu, &lit)?;
+
+        let due = emu
+            .led_next_deadline_ms()
+            .ok_or("a pixel on a shared pin owed no handover")?;
+
+        // Past the handover, and the frame the timer interrupt would have run.
+        emu.set_timer_us(ms_to_us(due) + ms_to_us(1));
+        emu.led_frame();
+
+        // The status LED has the pin again and is dark, which is what makes the
+        // next pixel wait.
+        if status_led_state(emu)? {
+            return Err("the handover lit a status LED that was off".to_string());
+        }
+
+        // A second colour now, which must be held behind the reset rather than
+        // going straight out.
+        let mut again = request(RGB, ON);
+        again.red = 0x40;
+        set(emu, &again)?;
+
+        let (_, held) = emu.led_last_pixel();
+        if held != before + 1 {
+            return Err(format!(
+                "{} pixels reached the state machine, expected the first one only - a pixel \
+                 after a handover that left the line high has to wait out a reset",
+                held - before
+            ));
+        }
+
+        // And it goes once that wait is over.
+        let due = emu
+            .led_next_deadline_ms()
+            .ok_or("the held pixel was never scheduled to go")?;
+        emu.set_timer_us(ms_to_us(due) + ms_to_us(1));
+        emu.led_frame();
+
+        let (pixel, after) = emu.led_last_pixel();
+        if after != held + 1 {
+            return Err(format!(
+                "the pixel held behind the reset never went - {} reached the state machine",
+                after - before
+            ));
+        }
+        println!("  pixel held behind a reset, then sent as 0x{pixel:06X}");
+
+        Ok(())
+    })
+}
+
 /// Verify that a hold whose expiry falls on the millisecond counter's wrap
 /// still ends.
 ///

@@ -14,6 +14,7 @@
 # algorithm, and 23c1001 a V2 chip type.
 fire-24-f    onerom-config/test/24-random-23xx.json
 fire-24-f    onerom-config/test/24-bank-23xx.json
+fire-28-a    onerom-config/test/28-random-23xxx.json
 fire-28-c    onerom-config/test/28-random-27xxx.json
 fire-28-c    onerom-config/test/28-bank-27xxx.json
 fire-32-b    onerom-config/test/32-random-27c080.json

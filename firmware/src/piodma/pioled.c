@@ -119,16 +119,48 @@ STATIC_ASSERT(
 #define LED_TIMER_IRQ           1u
 
 // The flame's flicker, as on and off times in milliseconds.
+//
+// Written through a macro so the table and the assertions below it come from
+// one list.  A hand-kept copy of the shortest entry would be free to drift from
+// the entries themselves, and it is exactly that number the frame interval's
+// lower bound rests on.
+#define LED_FLAME_ENTRIES \
+    X(1, 60) X(1, 40) X(0, 15) X(1, 35) X(1, 55) \
+    X(0, 20) X(1, 70) X(0, 10) X(1, 45) X(1, 30) \
+    X(0, 25) X(1, 50) X(1, 65) X(0, 15) X(1, 40)
+
 static const struct {
     uint8_t  on;
     uint16_t ms;
 } led_flame_table[] = {
-    {1, 60}, {1, 40}, {0, 15}, {1, 35}, {1, 55},
-    {0, 20}, {1, 70}, {0, 10}, {1, 45}, {1, 30},
-    {0, 25}, {1, 50}, {1, 65}, {0, 15}, {1, 40},
+#define X(on_, ms_) { on_, ms_ },
+    LED_FLAME_ENTRIES
+#undef X
 };
 #define LED_FLAME_TABLE_LEN \
     (sizeof(led_flame_table) / sizeof(led_flame_table[0]))
+
+// The shortest entry above.  Asserted rather than trusted.
+#define LED_FLAME_TABLE_MIN_MS  10u
+
+#define X(on_, ms_) \
+    STATIC_ASSERT((ms_) >= LED_FLAME_TABLE_MIN_MS, \
+                  "a flame table entry is shorter than LED_FLAME_TABLE_MIN_MS");
+LED_FLAME_ENTRIES
+#undef X
+
+// A flame frame is never shorter than a millisecond, so led_advance never has
+// to floor it.
+//
+// The interval is an entry scaled by the channel's period over the default one,
+// and a flame channel's period is either the default or a stated value the
+// engine refused to take below LED_FLAME_MIN_PERIOD_MS.  The smallest the
+// arithmetic can produce is therefore the shortest entry at that minimum.
+STATIC_ASSERT(
+    ((uint32_t)LED_FLAME_TABLE_MIN_MS * (uint32_t)LED_FLAME_MIN_PERIOD_MS)
+        / (uint32_t)LED_FLAME_DEFAULT_PERIOD_MS >= 1u,
+    "a flame frame can round to zero milliseconds - led_advance needs its floor"
+);
 
 // What one LED is doing.  24 bytes, and the saved half is what a hold returns
 // the LED to.
@@ -450,9 +482,14 @@ static void led_park(void) {
 
     LED_FLAG_CLEAR(LED_FLAG_PARK_PENDING);
 
+    // LCOV_EXCL_START - unreachable: this runs only when the pin is owed back,
+    // and the only two places that record a pin as owed are behind a shared-pin
+    // check of their own.  A board with separate pins never owes one, so it
+    // never gets here.  The guard stays as the local statement of that.
     if (!led_pin_is_shared()) {
         return;
     }
+    // LCOV_EXCL_STOP
 
     LED_FLAG_CLEAR(LED_FLAG_PIN_WITH_PIO);
     gpio_pio_release(gpio);
@@ -512,9 +549,12 @@ static void led_rgb_write(
     uint32_t out_green;
     uint32_t out_blue;
 
+    // LCOV_EXCL_START - unreachable: pio_led_set refuses an RGB mode on a board
+    // with no RGB LED, so no channel is ever in a mode that reaches here.
     if (gpio == GPIO_NONE) {
         return;
     }
+    // LCOV_EXCL_STOP
 
     if (!led_pio_claimed) {
         led_pio_claim(gpio);
@@ -580,9 +620,13 @@ static void led_status_show(uint8_t lit) {
     // channel, so it is recorded whether or not there is a pin to drive.
     RUNTIME->status_led_enabled = lit ? 1u : 0u;
 
+    // LCOV_EXCL_START - unreachable: every One ROM board has a status LED, so
+    // nothing under test can arrive here with no pin.  The guard stays because
+    // it is the board metadata that says so, not this file.
     if (gpio == GPIO_NONE) {
         return;
     }
+    // LCOV_EXCL_STOP
 
     // The status LED is active low, so lit drives the pin low.  On a board that
     // shares the pin, a write while the state machine holds it reaches nothing
@@ -760,9 +804,16 @@ static void led_advance(uint8_t led, led_channel_t *ch, uint32_t now_ms) {
             // keeps its shape.
             entry_ms = ((uint32_t)led_flame_table[ch->step].ms *
                         (uint32_t)ch->period_ms) / LED_FLAME_DEFAULT_PERIOD_MS;
+            // LCOV_EXCL_START - unreachable.  Two assertions where the flame
+            // table is defined are what make it so: that no table entry is
+            // shorter than LED_FLAME_TABLE_MIN_MS, and that that entry scaled
+            // by LED_FLAME_MIN_PERIOD_MS over LED_FLAME_DEFAULT_PERIOD_MS is
+            // still at least 1.  Break either and the build fails there rather
+            // than letting this line quietly start mattering again.
             if (entry_ms < 1u) {
                 entry_ms = 1u;
             }
+            // LCOV_EXCL_STOP
             ch->next_frame_ms = now_ms + entry_ms;
             break;
         }
@@ -797,8 +848,11 @@ static void led_advance(uint8_t led, led_channel_t *ch, uint32_t now_ms) {
             ch->next_frame_ms = now_ms + led_frame_interval(ch);
             break;
 
+        // LCOV_EXCL_START - unreachable: pio_led_set refuses a mode this
+        // switch does not name, so a channel never holds one.
         default:
             break;
+        // LCOV_EXCL_STOP
     }
 }
 
@@ -1021,8 +1075,11 @@ ora_result_t pio_led_set(const ora_led_request_t *req) {
             ch->next_frame_ms = now_ms + led_frame_interval(ch);
             break;
 
+        // LCOV_EXCL_START - unreachable: the mode was validated above, before
+        // it was stored, so every mode a channel can hold is named here.
         default:
             break;
+        // LCOV_EXCL_STOP
     }
 
     led_rearm(now_ms);
