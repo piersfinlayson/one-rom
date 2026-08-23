@@ -39,6 +39,9 @@ OUT_DIR="$ROOT/build/coverage"
 GROUP_MAP="$ROOT/ci/coverage-groups.txt"
 EXCLUDE="$ROOT/ci/coverage-exclude.txt"
 
+# shellcheck source=ci/coverage-lib.sh
+. "$ROOT/ci/coverage-lib.sh"
+
 MODE="table"
 FILTER=""
 case "${1:-}" in
@@ -93,15 +96,7 @@ fi
 #
 # Refuse rather than quietly skip: skipping silently is the same failure in
 # the other direction.
-SUM=$(command -v sha256sum || command -v shasum) || {
-    echo "neither sha256sum nor shasum found on PATH." >&2; exit 1; }
-
-now=$(for d in "$ROOT/firmware/src" "$ROOT/firmware/include" "$ROOT"/plugins/*/*/src; do
-        [ -d "$d" ] || continue
-        find "$d" -type f \( -name '*.c' -o -name '*.h' \) -print0 |
-            sort -z | xargs -0 "$SUM" |
-            sed "s#$ROOT/##" | awk '{printf "#SRC:%s %s\n", $2, $1}'
-      done)
+now=$(coverage_src_manifest "$ROOT")
 
 for tf in $TRACEFILES; do
     was=$(grep '^#SRC:' "$tf" || true)

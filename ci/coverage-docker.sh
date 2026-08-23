@@ -49,6 +49,11 @@ docker exec "$NAME" mkdir -p "$WORK"
 # pattern for build output also matches rust/config/build and its siblings,
 # which are build scripts and are source.
 #
+# Untracked files too, filtered by the ignore rules, because a new script is
+# source before it is committed - and a coverage run is how one gets tested.
+# Without this the container silently runs the tree as it was, and the failure
+# it produces points anywhere but here.
+#
 # apio and epio are their own repositories and so are not tracked here, but the
 # firmware does not build without them.  Their build output is left behind: a
 # host-built libepio.a copied into the container is the wrong architecture, and
@@ -57,6 +62,7 @@ docker exec "$NAME" mkdir -p "$WORK"
 echo "=== copying the tree into $NAME"
 {
     git -C "$ROOT" ls-files
+    git -C "$ROOT" ls-files --others --exclude-standard
     for d in firmware/apio firmware/epio; do
         [ -d "$ROOT/$d" ] || continue
         find "$d" -type f -not -path '*/.git/*' -not -path '*/build/*'

@@ -23,6 +23,9 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 TESTER_LIST="$ROOT/ci/coverage-testers.txt"
 OUT="$ROOT/build/coverage"
 
+# shellcheck source=ci/coverage-lib.sh
+. "$ROOT/ci/coverage-lib.sh"
+
 all_testers() { grep -vE '^\s*(#|$)' "$TESTER_LIST" | awk '{print $1}'; }
 target_for()  { grep -vE '^\s*(#|$)' "$TESTER_LIST" | awk -v n="$1" '$1 == n {print $2}'; }
 
@@ -41,28 +44,38 @@ TESTERS="${*:-$(all_testers)}"
     exit 1
 }
 
-# The version the pin names is the minimum a run accepts.  Below it lcov has no
-# notion of LCOV_UNREACHABLE_START and reads it as an ordinary comment, so the
-# lines the source says cannot run count as unreached and the floors fail with
-# nothing saying why - a silence worth a check of its own.  ci/install-lcov.sh
-# installs the pinned version on a machine that has an older one.
-command -v lcov >/dev/null || {
-    echo "lcov not found on PATH - install it with ci/install-lcov.sh." >&2
-    exit 1
-}
-want=$(tr -d '[:space:]v' < "$ROOT/ci/lcov-version")
-have=$(lcov --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+' | head -1)
-[ -n "$have" ] || { echo "cannot read a version from 'lcov --version'." >&2; exit 1; }
-if [ "$(printf '%s\n%s\n' "$want" "$have" | sort -V | head -1)" != "$want" ]; then
-    echo "lcov $have found, $want or newer needed." >&2
-    echo "Older lcov ignores the source's LCOV_UNREACHABLE markers rather than" >&2
-    echo "checking them, and measures the marked lines as unreached." >&2
-    echo "Install the pinned version with ci/install-lcov.sh." >&2
-    exit 1
-fi
+coverage_require_lcov "$ROOT"
 
-SUM=$(command -v sha256sum || command -v shasum) || {
-    echo "neither sha256sum nor shasum found on PATH." >&2; exit 1; }
+# The compiler is pinned for the same reason lcov is: it owns the numbers.  A
+# different gcc inlines differently and attributes lines differently, so a floor
+# raised from one machine is not a floor another can meet.  gcov has to be the
+# matching one - it reads a counter file only from its own version of gcc - and
+# lcov is told which rather than left to find "gcov" on PATH, which is the
+# distribution's and belongs to a different compiler.
+#
+# HOST_CC as well as CC, because the plugins' host builds take their compiler
+# from that one - see HOST_CC in plugins/*/*/Makefile and in the testers' build
+# scripts.  Left at its default it would be the distribution's cc, putting one
+# compiler's counters and another's in the same capture.
+CC_VERSION=$(tr -d '[:space:]' < "$ROOT/ci/c-compiler-version")
+export CC="gcc-$CC_VERSION"
+export HOST_CC="$CC"
+GCOV="gcov-$CC_VERSION"
+
+# rustc links the tester binaries, and its default driver is the distribution's
+# cc.  The instrumented objects are the pinned compiler's, and the -lgcov the
+# build scripts ask for has to be that compiler's runtime too - resolved by the
+# driver, so the driver is the one to change.  Left alone the link succeeds
+# against the wrong libgcov and the run writes no counters at all, which reads
+# as "nothing was instrumented" rather than as a mismatch.
+export RUSTFLAGS="${RUSTFLAGS:+$RUSTFLAGS }-C linker=$CC"
+for t in "$CC" "$GCOV"; do
+    command -v "$t" >/dev/null || {
+        echo "$t not found on PATH - install it with ci/install-c-compiler.sh." >&2
+        exit 1
+    }
+done
+
 [ -f "$TESTER_LIST" ] || { echo "missing $TESTER_LIST" >&2; exit 1; }
 
 mkdir -p "$OUT"
@@ -74,30 +87,9 @@ mkdir -p "$OUT"
 # of these exist yet.
 gcov_dirs() {
     local d
-    for d in "$ROOT/firmware/build-test-cov" "$ROOT"/plugins/*/*/build-host-cov; do
+    for d in "$ROOT/firmware/build-test-cov" "$ROOT"/plugins/*/*/build-host-cov \
+             "$ROOT"/build/c-tests-cov/*; do
         [ -d "$d" ] && printf '%s\n' "$d"
-    done
-}
-
-# The source the measurement describes, one line per file.
-#
-# A tracefile taken before an edit describes code that is no longer there, and
-# because merging is a union it can only ever add coverage - so a stale one
-# inflates the figure and says nothing.  Git state cannot detect this: the
-# whole point of the tool is to run it before committing, so the commit never
-# moves between the edit and the check.
-#
-# Hashing the source does detect it, and the manifest goes inside the
-# tracefile so it cannot be separated from the data it describes.  The trees
-# are hashed whole rather than per component, because one run measures all
-# three and an edit anywhere invalidates all of it.
-src_manifest() {
-    local d
-    for d in "$ROOT/firmware/src" "$ROOT/firmware/include" "$ROOT"/plugins/*/*/src; do
-        [ -d "$d" ] || continue
-        find "$d" -type f \( -name '*.c' -o -name '*.h' \) -print0 |
-            sort -z | xargs -0 "$SUM" |
-            sed "s#$ROOT/##" | awk '{printf "#SRC:%s %s\n", $2, $1}'
     done
 }
 
@@ -113,11 +105,16 @@ done
 tag="$BOARD--$(basename "$CONFIG" .json)"
 echo "=== coverage: $tag [$(echo $TESTERS)]"
 
+# ONEROM_LOG=1 because the firmware's own boot logging is code under test.
+# Every tester reads it and defaults it off, which leaves BOOT_LOGGING_EN false
+# for the whole run - so main.c never calls log_init() or log_roms(), and all
+# of firmware/src/log.c measures as unreached.  The output goes to the tester's
+# log beside the tracefile.
 for t in $TESTERS; do
     target=$(target_for "$t")
     [ -n "$target" ] || { echo "unknown tester '$t' - see $TESTER_LIST" >&2; exit 2; }
     printf '    %-8s ' "$t"
-    if COVERAGE_FW=1 COVERAGE_PLUGIN=1 BOARD="$BOARD" CONFIG="$CONFIG" \
+    if COVERAGE_FW=1 COVERAGE_PLUGIN=1 ONEROM_LOG=1 BOARD="$BOARD" CONFIG="$CONFIG" \
         make --no-print-directory -C "$ROOT" "$target" >"$OUT/$tag.$t.log" 2>&1; then
         echo "ok"
     else
@@ -140,7 +137,8 @@ for d in $dirs; do capture_args="$capture_args --directory $d"; done
 # it names the file and line on stderr, and that message is the whole point of
 # marking the region rather than excluding it.
 # shellcheck disable=SC2086
-if ! lcov --capture $capture_args --output-file "$OUT/$tag.raw" >/dev/null; then
+if ! lcov --capture --gcov-tool "$GCOV" $capture_args \
+        --output-file "$OUT/$tag.raw" >/dev/null; then
     echo >&2
     echo "lcov failed to capture $tag - no tracefile written." >&2
     echo "An 'unreachable' error above means a line the source marks as" >&2
@@ -151,7 +149,7 @@ fi
 # Paths as they are written everywhere else.  sed over the SF: lines rather
 # than lcov --substitute, since the manifest is prepended in the same pass.
 out="$OUT/$tag.info"
-{ src_manifest; sed "s#^SF:$ROOT/#SF:#" "$OUT/$tag.raw"; } > "$out"
+{ coverage_src_manifest "$ROOT"; sed "s#^SF:$ROOT/#SF:#" "$OUT/$tag.raw"; } > "$out"
 rm -f "$OUT/$tag.raw"
 
 echo "    -> $out"

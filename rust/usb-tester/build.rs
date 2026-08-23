@@ -81,6 +81,11 @@ fn main() {
     // link uninstrumented objects and report no coverage at all.
     let coverage = env::var("COVERAGE_PLUGIN").as_deref() == Ok("1");
     println!("cargo:rerun-if-env-changed=COVERAGE_PLUGIN");
+    // The compiler too: an object does not record what built it, so a coverage
+    // run that changed compilers would otherwise link the last one's objects
+    // and hand lcov counters its gcov cannot read.
+    println!("cargo:rerun-if-env-changed=CC");
+    println!("cargo:rerun-if-env-changed=HOST_CC");
     let host_build_dir = if coverage {
         "build-host-cov"
     } else {

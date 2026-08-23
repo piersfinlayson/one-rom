@@ -205,7 +205,7 @@ SCRUB_CARGO_ENV = for v in $$(env | grep -oE '^(CARGO_CFG_[A-Z_0-9]+|CARGO_FEATU
 	      CARGO_MAKEFLAGS CARGO_ENCODED_RUSTFLAGS CARGO_CRATE_NAME CARGO_BIN_NAME \
 	      OUT_DIR TARGET HOST NUM_JOBS OPT_LEVEL DEBUG PROFILE RUSTC RUSTDOC;
 
-.PHONY: all clean clean-firmware clean-firmware-build firmware run flash test test-emu test-api test-monitor test-rbcp test-usb generated clean-generated fw-config-gen libonerom-test libonerom-test-wasm gen-config clean-gen-config clean-libonerom-test clean-libonerom-test-wasm libonerom-test-cov clean-libonerom-test-cov cov-run cov-campaign cov-report cov-check cov-raise clean-coverage
+.PHONY: all clean clean-firmware clean-firmware-build firmware run flash test test-emu test-api test-monitor test-rbcp test-usb test-c generated clean-generated fw-config-gen libonerom-test libonerom-test-wasm gen-config clean-gen-config clean-libonerom-test clean-libonerom-test-wasm libonerom-test-cov clean-libonerom-test-cov cov-run cov-campaign cov-report cov-check cov-raise clean-coverage
 
 all: firmware
 	@echo "=========================================="
@@ -297,6 +297,14 @@ test-rbcp: gen-config
 	@echo "-----"
 	@BASE_DIR=$(CURDIR) CONFIG=$(CONFIG) BOARD=$(BOARD) cargo run --manifest-path rust/Cargo.toml -p onerom-rbcp-tester --bin rbcp-tester --quiet
 
+# The host C tests.  A coverage run drives this like any other tester - see
+# ci/coverage-testers.txt - and COVERAGE_FW=1 is what makes it instrument.
+test-c:
+	@echo "=========================================="
+	@echo "Running One ROM host C tests"
+	@echo "-----"
+	@COVERAGE_C=$(if $(COVERAGE_FW),1,0) ci/c-tests.sh
+
 test-usb: gen-config
 	@echo "=========================================="
 	@echo "Running One ROM USB plugin tests"
@@ -326,6 +334,7 @@ cov-raise:
 clean-coverage: clean-libonerom-test-cov
 	@echo "Cleaning coverage build output"
 	@rm -rf build/coverage
+	@rm -rf build/c-tests-cov
 	@rm -rf plugins/*/*/build-host-cov
 
 libonerom-test: gen-config

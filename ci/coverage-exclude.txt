@@ -20,3 +20,10 @@ plugins/system/usb/pico-sdkless/
 # RP2350, and the FFI shims the Rust testers drive the firmware through.
 firmware/test/
 firmware/include/test/
+
+# The C library's own fortified inlines, attributed back to its headers.  They
+# reach a tracefile because ci/c-tests.sh builds at -O1, which is where glibc
+# turns _FORTIFY_SOURCE on - the emulator build is -O0 and never sees them.
+# The prefix stops at /usr/ because the directory below it names the
+# architecture, and CI's is not the one a developer on Apple silicon measures.
+/usr/

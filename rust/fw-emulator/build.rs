@@ -80,6 +80,11 @@ fn main() {
     println!("cargo:rerun-if-env-changed=BASE_DIR");
     println!("cargo:rerun-if-env-changed=TEST_LOGGING");
     println!("cargo:rerun-if-env-changed=COVERAGE_FW");
+    // The compiler too: an object does not record what built it, so a coverage
+    // run that changed compilers would otherwise link the last one's objects
+    // and hand lcov counters its gcov cannot read.
+    println!("cargo:rerun-if-env-changed=CC");
+    println!("cargo:rerun-if-env-changed=HOST_CC");
 
     // What the C was built with, for the crate's build_options constants.  A
     // cfg reaches only the crate whose build script emitted it, so those

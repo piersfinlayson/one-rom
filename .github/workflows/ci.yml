@@ -189,21 +189,18 @@ jobs:
     - uses: actions/checkout@v4
 
     # These compile firmware C for the host, so they need neither Rust nor the
-    # Arm toolchain.  They do need a host compiler new enough for the C23 the
-    # firmware is built as: the runner's default cc is GCC 13, which predates
-    # -std=gnu23.
+    # Arm toolchain.  They do need the host compiler pinned in
+    # ci/c-compiler-version: the runner's default cc is GCC 13, which predates
+    # the -std=gnu23 these are built as.  ci/c-tests.sh defaults $CC to the
+    # pinned one, so nothing here names a version.
     - name: Install host compiler
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y gcc-14
+      run: ci/install-c-compiler.sh
 
     - name: Check log format strings
       run: ci/check-log-formats.sh
 
     - name: Run host C tests
       run: ci/c-tests.sh
-      env:
-        CC: gcc-14
 
   rust-docs:
     name: Rust docs
@@ -306,6 +303,12 @@ jobs:
     # container and a developer's machine.
     - name: Install lcov
       run: echo "$(ci/install-lcov.sh)" >> "$GITHUB_PATH"
+
+    # The compiler the figures are measured with, pinned in
+    # ci/c-compiler-version and shared with the C tests job and the container.
+    # ci/coverage-run.sh picks it up from the pin, along with its gcov.
+    - name: Install host compiler
+      run: ci/install-c-compiler.sh
 
     - name: Install Rust
       uses: dtolnay/rust-toolchain@stable

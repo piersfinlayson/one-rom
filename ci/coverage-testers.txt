@@ -11,3 +11,7 @@ api        test-api
 monitor    test-monitor
 rbcp       test-rbcp
 usb        test-usb
+# Not an emulator tester: the host C tests, which compile firmware C directly
+# and exercise it without booting it.  Board and config independent, so it
+# measures the same thing in every run and merges to the same lines.
+ctest      test-c

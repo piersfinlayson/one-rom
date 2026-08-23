@@ -22,7 +22,11 @@ ifeq ($(WASM),1)
   AR_EXTRACT := emar x
   AR_COMBINE := emar rcs
 else
-  CC := gcc
+  # Overridable, and the coverage and C-test paths do override it: both are
+  # measured or gated, so both pin the compiler to ci/c-compiler-version rather
+  # than taking whatever gcc a machine happens to have.  See ci/coverage-run.sh
+  # and ci/c-tests.sh.
+  CC ?= gcc
   EPIO_MAKE_TARGET :=
   EPIO_LIB := epio/build/libepio.a
   ifeq ($(shell uname -s),Darwin)

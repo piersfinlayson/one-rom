@@ -98,6 +98,34 @@ RUN test -n "${LCOV_VERSION}" || { \
     rm -rf /tmp/lcov && \
     lcov --version
 
+# Install the host C compiler the firmware's host builds are measured with.
+#
+# The firmware sets no -std, so the C the device ships as is whatever the Arm
+# toolchain defaults to.  A host build that is meant to be a test of that C -
+# ci/c-tests.sh, and every coverage figure taken from firmware/test.mk - has to
+# be the same compiler generation, or it gates on different warnings and
+# measures a different compilation.
+#
+# From ppa:ubuntu-toolchain-r/test because the 24.04 archive stops at gcc-14.
+# gcov comes with it, and ci/coverage-run.sh hands that gcov to lcov.
+#
+# Pinned, with the same no-default rule as the toolchains above: the version
+# comes from ci/c-compiler-version via ci/docker/build.sh.
+ARG C_COMPILER_VERSION
+RUN test -n "${C_COMPILER_VERSION}" || { \
+        echo "C_COMPILER_VERSION build-arg is required - build via ci/docker/build.sh," && \
+        echo "which passes the version pinned in ci/c-compiler-version." && \
+        exit 1; \
+    } && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends software-properties-common && \
+    add-apt-repository -y ppa:ubuntu-toolchain-r/test && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends "gcc-${C_COMPILER_VERSION}" && \
+    rm -rf /var/lib/apt/lists/* && \
+    "gcc-${C_COMPILER_VERSION}" --version && \
+    "gcov-${C_COMPILER_VERSION}" --version
+
 # Create build user with passwordless sudo
 RUN useradd -m -s /bin/bash build && \
     echo "build ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers

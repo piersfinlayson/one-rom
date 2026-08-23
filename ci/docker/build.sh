@@ -31,6 +31,7 @@ docker build \
   --build-arg ARM_GCC_VERSION="$(get_arm_gcc_version)" \
   --build-arg EMSCRIPTEN_VERSION="$(get_emscripten_version)" \
   --build-arg LCOV_VERSION="$(get_lcov_version)" \
+  --build-arg C_COMPILER_VERSION="$(get_c_compiler_version)" \
   -t ${CONT_NAME} \
   "${SCRIPT_DIR}"
 
