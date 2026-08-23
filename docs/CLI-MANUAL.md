@@ -1,3 +1,40 @@
+<!--
+Conventions of this manual, for whoever edits it.  These are invisible to a
+reader: HTML comments survive pandoc into the PDF unrendered.
+
+* Example output is a verbatim run, pasted from the command.  Hand-written
+  examples drift and quietly become wrong.
+
+* A value this manual states that something else owns sits inside a marker
+  naming that source, rather than bare:
+
+      The device's own limit is <!==[const:GPIO_MAX_HOLD_MS:seconds]==>60 seconds<!==[/]==>.
+
+  (written there with `=` in place of `-`, so this note is not itself a
+  marker).  `cargo run -p doc-gen` checks every one of them and fails naming
+  the file, line, expected and found.  It writes nothing.  The sources, the
+  formats and the syntax for naming several constants at once are documented in
+  `rust/doc-gen/src/main.rs` and its `marker` and `format` modules.
+
+  A number inside a quoted run is the exception and stays a plain literal: it
+  records what the command printed rather than claiming what is true today.  A
+  marker inside a fenced code block is refused for that reason.
+
+* Breaking changes are carried in two sections, and a change that breaks an
+  existing command line updates both.  `# New Breaking Changes`, near the top,
+  lists the release in development alone.  `## Appendix: Breaking Change
+  History`, at the end, keeps every release, newest first.  At release time the
+  top section's entries move down under a new version heading in the appendix,
+  and the top section empties for the next cycle.
+
+* Both sections are present in every release.  Where a release has no breaking
+  changes, `# New Breaking Changes` says so, so a reader who has learned to
+  look there finds an answer.
+
+* Every top-level section is preceded by `---`, which `docs/pdf/docs.css`
+  renders as a page break.  A new section needs one.
+-->
+
 # One ROM CLI Manual
 
 `onerom` (`onerom.exe` on Windows) is the command-line tool for managing One ROM

@@ -2,547 +2,374 @@
 
 One ROM (formerly SDRR, "Software Defined Retro ROM") is an open-source ROM
 replacement for retro systems. It emulates 24/28/32/40-pin mask ROMs, EPROMs,
-some flash, and 2K SRAM, using an RP2350 (**Fire**) or, on legacy hardware, an
-STM32F4 (**Ice**). Shipped in the thousands; other vendors sell it too. Treat
-it as a long-lived, production project.
+some flash and 2K SRAM, on an RP2350 (**Fire**) or, on legacy hardware, an
+STM32F4 (**Ice**). It has shipped in the thousands, and other vendors sell it
+too. Treat it as a long-lived, production project.
 
 ## Working style (read first)
 
-- Do it **right**, for the long term. No hacks, no throwaway "make it pass"
-  fixes. If the clean solution is more work, that is the one we want.
-- Explain the **why** before the change — in discussion, not in the commit
-  message or the CHANGELOG. Reasoning first, not a diff dumped on the wall.
-- **Do not switch technical approach without asking first.** If you think a
-  chosen path is wrong, stop and raise it — do not quietly re-architect. I
-  usually have a better read on feasibility than you do.
-- Do not give up on a hard task. Persistence is my call, not yours.
-- Do not assert from memory. Read the code before making claims about how it
-  behaves; verify against the tree.
-- If this guide looks wrong or incomplete, verify against the code, then tell
-  me and propose a specific correction. Do not edit `CLAUDE.md` without my
-  go-ahead.
-- Hold the existing bar for code style, accurate comments, and API docs.
-- Answer the question actually asked; do not infer extra scope.
-- **Ask questions as free-form text, not multiple-choice.** I dislike the
-  predefined-answer question UI — it is too limiting. When you need a decision,
-  put the options and your recommendation in prose and let me reply in my own
-  words.
-- Discuss and review designs with me before you start coding. For anything
-  beyond a trivial change, propose the design, and wait for my go-ahead.
+- Do it **right**, for the long term. Where the clean solution is more work,
+  that is the one we want.
+- Explain the **why** before the change, in discussion. Reasoning first, not a
+  diff dropped on the wall.
+- Discuss the design with me before you code. For anything beyond a trivial
+  change, propose it and wait for my go-ahead.
+- Raise it with me before switching technical approach. I usually have a
+  better read on feasibility than you do.
+- Persistence on a hard task is my call. Keep going until I say otherwise.
+- Read the code before claiming how it behaves. Verify against the tree.
+- Answer the question actually asked, at the scope asked.
+- Ask in prose — the options and your recommendation — and let me reply in my
+  own words.
+- Hold the existing bar for code style, accurate comments and API docs.
 
-## Git & commits
+## Editing this guide
 
-- All commits are **GPG-signed** with my key. You do **not** have the
-  passphrase, so you **cannot** create commits — never run `git commit`, and
-  never `git push`.
-- **Never offer a stage-and-commit command, or a commit message, unbidden.**
-  Make the change, say what you did, and stop.
-- **No `Co-Authored-By` trailer**, and no other Claude/AI attribution, in
-  commit messages — keep it out of the history entirely.
-- **Commit bodies are bullets, one line each, one per main thing the commit
-  does.** Three or fewer; often none at all, where the subject says it. A
-  bullet states *what*, and *why* only where the why is not obvious from the
-  what. Prose paragraphs in a commit body are the failure mode to avoid.
-  - Leave out: mechanism the diff already shows, alternatives considered and
-    rejected, notes that tests were added, and verification run-logs (one
-    line — `Verified on fire-28-a/b/c/d, single and banked` — not a
-    transcript). Reasoning a future reader genuinely needs goes in a code
-    comment next to the thing it explains, or in the issue.
-- **CHANGELOG entries are one or two sentences — 40 words is already long.**
-  The headline list at the top of a release carries the story; a detail
-  bullet says what changed and, where it is not obvious, what it means for a
-  user. Same for the component CHANGELOGs. Keep the existing
-  `- This required a firmware update.` sub-bullet convention.
-  - **One entry per user-visible change, not per commit.** A feature built
-    over several commits — device side, plugin, CLI — is one entry, not one
-    per layer. Corrections made before release fold into the entry for the
-    thing they correct.
-  - Internal-only work (refactors, test-harness fixes, CI, CLAUDE.md) gets no
-    entry unless a user or a downstream crate can see it.
-- Keep **CHANGELOGs** current. When a change is user-facing, add an entry —
-  under the current in-development version heading — to the repo-root
-  [CHANGELOG.md](/CHANGELOG.md) **and** the affected component's own:
-  `rust/cli/CHANGELOG.md`, `rust/studio/CHANGELOG.md`, or the relevant plugin's
-  `CHANGELOG.md` (e.g. `plugins/system/usb/CHANGELOG.md`). Leave vendored
-  changelogs (tinyusb, `firmware/apio`, `firmware/epio`) alone.
-- **When you touch the CLI, keep [docs/CLI-MANUAL.md](/docs/CLI-MANUAL.md) in
-  sync, in the same commit.** Any user-facing CLI change — new/changed
-  subcommands or options, altered conflicts, changed output — must be reflected
-  there. The manual is the user-facing reference; do not let it drift behind the
-  CLI CHANGELOG.
-  - The trigger is **"the CLI prints something different"**, not "the CLI gained
-    an option". Rewording a label, adding or dropping a line, changing what a
-    column can contain — each is a manual change, and each is easy to miss
-    precisely because no option changed. Where the manual quotes example output,
-    paste a **verbatim run**; hand-written examples drift and quietly become
-    wrong.
-  - **A value the manual states that something else owns is written inside a
-    marker naming that source, never bare** — a schema constant, or the CLI's
-    own version banner. See "Quoting a constant in a document" below. A number
-    inside a quoted run is the exception: it is a record of what the command
-    printed, so it stays a plain literal, and a marker inside a fenced code
-    block is refused.
-  - The manual carries **two** breaking-changes sections, and a CLI change that
-    breaks an existing command line updates both. `# New Breaking Changes`, near
-    the top, lists **only the release in development**. `## Appendix: Breaking
-    Change History` at the end keeps every release, newest first. At release
-    time the top section's entries move down under a new version heading in the
-    appendix, and the top section is emptied for the next cycle.
-  - **Neither section is ever deleted.** A release with no breaking changes
-    keeps `# New Breaking Changes` and says there are none. A reader who has
-    learned to look there must not find it missing.
-  - Every top-level section in the manual is preceded by `---`, which
-    `docs/pdf/docs.css` renders as a page break. A new section needs one.
-  - The manual is not the only user-facing document a CLI change can reach. If
-    what you changed is also described in `docs/COMPATIBILITY.md`,
-    `docs/CHIP-TYPES.md` or another `docs/` file — or in a **generator** that
-    emits one — update that too, in the same commit.
-- **Hand-written docs describing behaviour go stale silently — keep them in the
-  same commit as the behaviour.** Nothing mechanical catches these, so they are
-  the ones that rot. The pairs that have bitten so far:
-  - `rust/lab/README.md` — One ROM Lab's interface. It drifted a whole rewrite
-    behind the code, still describing a build-time-configured RTT tool after Lab
-    became an interactive USB CDC shell. Touch `rust/lab/src/cli/`, its
-    `scripts/`, or the command set, and update it.
-  - `docs/ADDING-CHIP-TYPES.md` — the chip-type contribution path. It names
-    `chip-types.json` fields, `SUPPORTED_CHIP_TYPES` in `rust/gen/src/v2/`, the
-    generator commands and `ci/test-emu.sh`. Change any of those and the doc is
-    wrong. It also states that `rbcp_chip_type` requires a matching PR against
-    the `rom-bus-control-protocol` repo — that stays true.
-  - The root [README.md](/README.md) — its "Ways in" table, crate table and
-    regression-testing section describe the tree's shape. Adding, retiring or
-    renaming a crate, or changing what CI covers, reaches it. Deliberately keep
-    **counts** (of tests, boards, chip types) out of it, so growth does not make
-    it wrong.
-  - A crate that becomes deprecated or unmaintained says so in **its own
-    README** (`onerom-protocol`, `onerom-database`), rather than being quietly
-    dropped from mention.
-- **Before bumping any crate/component version, read the repo-root
-  [CHANGELOG.md](/CHANGELOG.md) first.** Its "To publish" list under the current
-  in-development heading is the source of truth for in-flight version bumps. A
-  crate or plugin already listed there is bumped-but-unpublished — do **not**
-  bump it again for a further change in the same cycle; just add the CHANGELOG
-  entry. Crates without their own `CHANGELOG.md` (`onerom-metadata`,
-  `onerom-gen`, …) are tracked **only** via that list.
-- These crates are published to crates.io with external consumers, so **SemVer
-  governs**. A non-backwards-compatible public-API change requires a **minor**
-  bump (pre-1.0: `0.MINOR.PATCH`, so `0.6.x → 0.7.0`), never a patch. The
-  "already listed → don't bump again" rule assumes the further change is
-  backwards-compatible *with the planned bump*: if a crate is listed at a
-  **patch** bump and your new change **breaks its public API**, escalate that
-  listed entry from patch to minor. Breaking = altering/removing a public item's
-  signature or a public field's type, or transitively re-exposing a
-  dependency's breaking bump through your own public API.
-- The **firmware is not separately versioned** beyond the in-development branch
-  version (e.g. `0.7.1`); that version is what signals newly available plugin
-  APIs and is what a plugin's `min_fw_version` targets. `firmware/ora/api.h` is
-  **not** version-bumped for backwards-compatible additions — only a
-  non-backwards-compatible change would bump it, and those are off the table.
+This file loads on every turn of every session, so it stays short. Three kinds
+of content, and the first belongs here:
+
+| Content | Home |
+| --- | --- |
+| A rule — what to do, what to ask about, what I decide | Here |
+| A fact about the tree — crates, directories, commands | [README.md](/README.md), `docs/`, the script's own `--help` |
+| Why a thing is the way it is | A doc comment or a comment beside the code |
+
+Where a rule needs its reasoning, put the rule here in a sentence and link the
+code that carries the argument. A second copy is a copy nothing compares, and
+it goes stale in silence.
+
+Tell me what is wrong here and propose a specific correction, then wait for my
+go-ahead before editing this file.
+
+## Git and commits
+
+- Every commit is GPG-signed with my key, and the passphrase is mine. Make the
+  change, say what you did, and stop — staging, the commit and the push are
+  mine, and a commit message comes when I ask for one.
+- The history carries my authorship alone: leave out `Co-Authored-By` and any
+  other AI attribution.
+- **A commit body is bullets, one line each, one per main thing the commit
+  does.** Three or fewer, and often none where the subject says it. A bullet
+  earns its place by saying what the diff does not show: *what* changed, and
+  *why* where the why is unobvious.
+  - Reasoning a future reader genuinely needs goes in a code comment beside
+    the thing it explains, or in the issue. Verification fits on one line —
+    `Verified on fire-28-a/b/c/d, single and banked`.
+
+## CHANGELOGs
+
+- **An entry is one or two sentences — 40 words is already long.** The
+  headline list at the top of a release carries the story. A detail bullet
+  says what changed and, where it is unobvious, what it means for a user. Keep
+  the `- This required a firmware update.` sub-bullet convention.
+- **One entry per user-visible change, not per commit.** A feature built over
+  several commits — device side, plugin, CLI — is one entry. A correction made
+  before release folds into the entry for the thing it corrects.
+- An entry exists where a user or a downstream crate can see the change.
+  Refactors, test-harness fixes, CI and this file are invisible to both.
+- A user-facing change goes under the current in-development heading in the
+  repo-root [CHANGELOG.md](/CHANGELOG.md) **and** in the affected component's
+  own: `rust/cli/CHANGELOG.md`, `rust/studio/CHANGELOG.md`, or the plugin's
+  (e.g. `plugins/system/usb/CHANGELOG.md`). Vendored changelogs (tinyusb,
+  `firmware/apio`, `firmware/epio`) belong to their upstreams.
+
+## Versioning
+
+- **Read the repo-root [CHANGELOG.md](/CHANGELOG.md) before bumping anything.**
+  Its "To publish" list under the current in-development heading owns in-flight
+  bumps. A crate already listed there is bumped-but-unpublished: add the
+  CHANGELOG entry and leave the version as it stands. Crates without their own
+  `CHANGELOG.md` (`onerom-metadata`, `onerom-gen`, …) are tracked there alone.
+- These crates are on crates.io with external consumers, so **SemVer governs**.
+  A non-backwards-compatible public-API change takes a **minor** bump (pre-1.0:
+  `0.6.x → 0.7.0`). Breaking means altering or removing a public item's
+  signature or a public field's type, or re-exposing a dependency's breaking
+  bump through your own public API. Where a listed entry is a patch bump and
+  your change breaks the API, escalate that entry to minor.
+- The **firmware carries the in-development branch version** (e.g. `0.7.1`) and
+  nothing else. That version signals newly available plugin APIs and is what a
+  plugin's `min_fw_version` targets. `firmware/ora/api.h` bumps only for a
+  non-backwards-compatible change, which stays off the table.
+
+## Documents that go stale
+
+Nothing mechanical catches a hand-written document describing behaviour, so
+update it in the same commit as the behaviour.
+
+- **[docs/CLI-MANUAL.md](/docs/CLI-MANUAL.md), whenever the CLI prints
+  something different.** That is the trigger, wider than "the CLI gained an
+  option": a reworded label, an added or dropped line, a column that can now
+  hold something new. The manual's own conventions — verbatim example output,
+  the doc-gen markers, its two breaking-changes sections, the `---` before
+  every top-level section — are in a comment at the top of that file.
+  - Where the change is also described in `docs/COMPATIBILITY.md`,
+    `docs/CHIP-TYPES.md`, another `docs/` file, or a **generator** that emits
+    one, update that too, in the same commit.
+- **`rust/lab/README.md`** — One ROM Lab's interface. Touch `rust/lab/src/cli/`,
+  its `scripts/`, or the command set, and update it.
+- **`docs/ADDING-CHIP-TYPES.md`** — the chip-type contribution path. It names
+  `chip-types.json` fields, `SUPPORTED_CHIP_TYPES` in `rust/gen/src/v2/`, the
+  generator commands and `ci/test-emu.sh`. It also states that
+  `rbcp_chip_type` requires a matching PR against the `rom-bus-control-protocol`
+  repo, which stays true.
+- **[README.md](/README.md)** — its "Ways in" table, crate table and
+  regression-testing section describe the tree's shape, so adding, retiring or
+  renaming a crate reaches it, as does changing what CI covers. Keep **counts**
+  (of tests, boards, chip types) out of it, so growth leaves it right.
+- A crate that becomes deprecated or unmaintained says so in **its own README**
+  (`onerom-protocol`, `onerom-database`).
 
 ## Firmware
 
-`firmware/` is the C + hand-optimised ARM (thumb) core firmware. It is **fully
-bare metal — no SDK, no HAL** (no pico-sdk, no vendor HAL). Serving is cycle-
-and timing-critical; on RP2350 it runs on PIO/DMA.
+`firmware/` is the C and hand-optimised Thumb core firmware, fully bare metal —
+registers directly, with no pico-sdk or vendor HAL. Serving is cycle- and
+timing-critical, and on RP2350 it runs on PIO and DMA. Build output is
+`firmware/build/onerom-rp235x.bin`.
 
-- `firmware/src`, `firmware/include`, `firmware/link` — sources, headers,
-  linker scripts.
-- `firmware/ora/` — the plugin API: `api.h`, `plugin.h`, `system.h`,
+- `firmware/ora/` is the plugin API: `api.h`, `plugin.h`, `system.h`,
   `plugin.ld`, `plugin.mk`, `examples/`, `tests/`.
   - `examples/` teaches the API — small, single-idea plugins a plugin author
-    reads. `tests/` holds plugins that **test** the API on a device, and are
-    neither built nor run by CI: each needs a One ROM, a debug probe, and the
+    reads. `tests/` holds plugins that **test** the API on a device, and CI
+    neither builds nor runs them: each needs a One ROM, a debug probe, and the
     USB connector moved by hand between programming and running. A test there
     is dormant by design, and its README says what it validated and what change
-    would make it worth running again. Do not put a test in `examples/` — the
-    two pull apart fast, and an instrument makes a terrible example.
+    would make it worth running again. A test belongs in `tests/` — the two
+    directories pull apart fast, and an instrument makes a poor example.
 - `firmware/test` + `test.mk`. `test.mk`'s `WASM=1` mode cross-compiles the
-  firmware to WebAssembly (via Emscripten) for One ROM Lens; the root
-  `libonerom-test-wasm` target drives it.
-- Build output: `firmware/build/onerom-rp235x.bin` (`BIN_PREFIX ?= onerom-rp235x`).
-
-One ROM Lens — a cycle-exact PIO emulator / browser tool — now lives in the Rust
-workspace as [rust/lens](/rust/lens) (`onerom-lens`), built on `onerom-fw-emulator`
-and compiled to wasm; see its [README](/rust/lens/README.md). (The old C shim
-`firmware/lens/` + `firmware/lens.mk` are gone.)
-- Build output: `firmware/build/onerom-rp235x.bin` (`BIN_PREFIX ?= onerom-rp235x`).
-
-On invalid config/build the firmware enters **limp mode** (LED blink patterns;
-`utils.c` / `globals.c`). The firmware **enforces plugin `min_fw_version`**: at
-plugin launch (`firmware/src/plugin.c`) it compares the plugin header's
-`min_fw_{major,minor,patch}_version` against the running firmware and refuses to
-run a plugin that requires newer firmware.
+  firmware to WebAssembly for One ROM Lens, driven by the root
+  `libonerom-test-wasm` target.
+- On invalid config or build the firmware enters **limp mode** (LED blink
+  patterns, `utils.c` / `globals.c`).
+- The firmware **enforces plugin `min_fw_version`**: at plugin launch
+  (`firmware/src/plugin.c`) it compares the plugin header's
+  `min_fw_{major,minor,patch}_version` against the running firmware and refuses
+  a plugin needing newer firmware.
 
 ## Rust workspace (`rust/`)
 
-Directory → package name:
+[README.md](/README.md)'s crate table says what each crate is for. Three things
+the table leaves out:
 
-- `fw` → `onerom-fw` — firmware-image composition; resolves/downloads base
-  firmware via `releases.json` (`src/net.rs`).
-- `cli` → `onerom-cli` — the One ROM CLI (binary `onerom`). Full device tool,
-  not a front-end: subcommands `scan`, `program`, `inspect`, `control`,
-  `update`, `image`, `peek`, `poke`, `reboot`, `firmware`. Talks to devices
-  over USB via `picoboot` / the `picobootx` extension (`nusb`), and uses
-  `onerom-fw`, `onerom-gen`, `onerom-fw-parser`, `onerom-metadata`,
-  `onerom-app`, `onerom-config` among others.
-- `gen` → `onerom-gen` — firmware/metadata generator; also driven by the
-  `one-rom-wasm` repo.
-- `config` → `onerom-config` — ROM/RAM config model.
-- `metadata` → `onerom-metadata` — embedded firmware metadata.
-- `protocol` → `onerom-protocol` — the One ROM Lab wire protocol, spoken
-  between an airfrog (over SWD) and a One ROM Lab device; carried over
-  `airfrog-rpc`. Not RBCP.
-- `fw-parser` → `onerom-fw-parser`; `fw-emulator` → `onerom-fw-emulator`;
-  `fw-tester` → `onerom-fw-tester`; `fw-config-gen` → `fw-config-gen`.
-- `fw-driver` → `onerom-fw-driver` — GPIO bitmask builders and `ControlLine`.
-  **Zero dependencies, no build script**, by design — see below.
-- `fw-geometry` → `onerom-fw-geometry` — the pure, config-derived half of the
-  host-side test/visualisation stack: `pin_cache` (socket pin → MCU GPIO
-  resolution) and `substitution` (`chip_substitution`). **No build script.**
-- `app` → `onerom-app`; `studio` → `onerom-studio` (desktop GUI, released
-  independently via `studio-*` tags); `lab` → `onerom-lab` (hardware tester);
-  `database` → `onerom-database`.
-- `lens` → `onerom-lens` — One ROM Lens, the browser PIO/DMA waveform viewer;
-  a wasm (`wasm32-unknown-emscripten`) binary built on `onerom-fw-emulator`.
-- `schema-gen` → `schema-gen` — emits `onerom-config/schema.json` from the
-  `onerom-gen` config type.
-
-Legacy `sdrr-*` crate names are gone; everything is `onerom-*` now.
-
-**Why `onerom-fw-driver` and `onerom-fw-geometry` are separate crates.**
-`onerom-fw-emulator`'s build script compiles the whole firmware C for a
-`CONFIG`/`BOARD`, so *anything* depending on that crate pays for a firmware
-build. `onerom-lens` needs the emulator for wasm **and** needs pure pin geometry
-in its **build script**. While the build-script side reached
-`onerom-fw-emulator` (through `onerom-fw-tester`), a single `cargo build -p
-onerom-lens --target wasm32-unknown-emscripten` built the emulator twice
-concurrently — once for the host, once for wasm — and the two `make` runs raced
-over the shared `firmware/generated/gen-config.c`, `firmware/apio` and
-`firmware/epio`, failing differently every run. Four things must stay true:
-
-- Nothing reachable from `onerom-lens`'s `[build-dependencies]` may depend on
-  `onerom-fw-emulator`.
-- Neither crate may gain a **build script**.
-- `onerom-fw-driver` has **no dependencies at all**, and that is the point of
-  it: the emulator re-exports `driver`, so anything this crate depends on is
-  compiled into Lens's wasm build. Here the rule is compiler-enforced — a
-  dependency that cannot build for `wasm32-unknown-emscripten` breaks Lens.
-- `onerom-fw-geometry` is **host-only**: its consumers are `onerom-fw-tester`
-  and `onerom-lens`'s *build script*, and it is absent from Lens's wasm graph.
-  So the wasm constraint does **not** bind it, and nothing will fail if it gains
-  a host-only dependency. What binds it is the first rule above. (The
-  metadata-reading half of `geometry` stayed in `onerom-fw-tester` because it
-  calls `onerom_fw::get_rom_files`, and `onerom-fw` pulls in `smol`, which
-  cannot build for wasm — a constraint that applied before `driver` was split
-  out. Moving it now would only make Lens's build script slower, so leave it.)
-
-`onerom-fw-emulator` re-exports `driver`, and `onerom-fw-tester` re-exports
-`driver` and `pin_cache`, so existing `onerom_fw_emulator::driver::…` and
-`onerom_fw_tester::pin_cache::…` paths keep working.
-
-**Direction — Studio onto `onerom-cli` lib.** The long-term plan is to rewrite
-`onerom-studio` so it relies mostly on the `onerom-cli` library rather than
-carrying its own duplicate device logic. So `onerom-studio` depends on
-`onerom-cli`, and new shared device logic (chip-ID identity, GET_INFO reads,
-reboot/reconnect handling) belongs in `onerom-cli` and should be consumed from
-there — not reimplemented in Studio, and not split into a separate crate.
+- **`onerom-fw-driver` and `onerom-fw-geometry` are separate crates on purpose,
+  and four constraints keep them that way.** Nothing reachable from
+  `onerom-lens`'s `[build-dependencies]` may depend on `onerom-fw-emulator`,
+  neither crate may gain a **build script**, `onerom-fw-driver` keeps **zero
+  dependencies**, and `onerom-fw-geometry` stays host-only. The reasoning is in
+  each crate's own `src/lib.rs` docs — read those before touching either
+  manifest.
+- `onerom-fw-emulator` re-exports `driver`, and `onerom-fw-tester` re-exports
+  `driver` and `pin_cache`, so `onerom_fw_emulator::driver::…` and
+  `onerom_fw_tester::pin_cache::…` keep working.
+- **Shared device logic belongs in `onerom-cli`.** `onerom-studio` depends on
+  it, and chip-ID identity, GET_INFO reads and reboot/reconnect handling are
+  written there and consumed from there rather than reimplemented in Studio or
+  split into a crate of their own.
 
 ## Building
 
-Base (empty) firmware, from the repo root:
+    make                            # base (empty) firmware, DEBUG_LOGGING=1 for logs
+    ci/build.sh ci                  # clean + build base -> builds/ci/
+    ci/build.sh release <version>   # package a prior ci build -> builds/<version>/
 
-    make                                    # DEBUG_LOGGING=1 for debug logging
+Flashable images come from the CLI — see [Testing firmware on a device](#testing-firmware-on-a-device-cli)
+and README.md's build section. Every script under `ci/` documents itself in its
+header comment. The ones with rules attached:
 
-Flashable image — use the CLI (`onerom-cli`, or download from
-https://onerom.org/cli). `onerom program` is the primary build-and-flash
-workflow; `onerom firmware` builds a binary without programming a device:
+- **`ci/test-emu.sh <24|28|32|40>`**, or no argument for all four. CI runs them
+  as parallel jobs. Run one at a time in a given working tree, since each
+  regenerates the same `firmware/generated/gen-config.c` and rebuilds the same
+  `firmware/build-test/`.
+- **`ci/coverage-*.sh`** measure line coverage of the C the testers drive, and
+  CI gates every push against the per-file floors in
+  `ci/coverage-baseline.txt`. `--raise` moves a floor up. Lowering one is a
+  hand edit, and the commit says why.
+  - Floors come from the run set in `ci/coverage-campaign.txt` **and from CI's
+    own figures**, since a smaller set or a local machine measures lower. The
+    campaign is expensive to run locally, so ask me first.
+    `ci/coverage-run.sh <board> <config>` against one pair is the development
+    loop, on Linux alone — `ci/coverage-docker.sh` gets you there from macOS.
+  - Genuinely unreachable code is marked `LCOV_UNREACHABLE_START` /
+    `LCOV_UNREACHABLE_STOP` with a comment saying why, and lcov checks the
+    claim against the counters. Writing one:
+    - **A region covers the arm's body, from inside the opening brace.** The
+      line carrying the condition runs on every call, so a marker above the
+      `if` claims a line that executes and the capture fails naming it.
+    - Where the reason is arithmetic rather than a runtime check, a
+      `STATIC_ASSERT` holds the thing that makes it unreachable — see the flame
+      table in `firmware/src/piodma/pioled.c`.
+    - A marker added to make a number work turns the figure into a lie. Where a
+      branch is hard to reach, write the test.
 
-    # build + flash a connected One ROM (board inferred from the device):
-    onerom program --config onerom-config/vic20-pal.json
+**Toolchain versions are pinned, one file each:** `ci/arm-toolchain-version`,
+`ci/emscripten-version` and `ci/lcov-version`. The matching
+`ci/install-*.sh` scripts install the pinned version, and CI, the container and
+a developer's machine all use them, so one compiler builds a given binary
+wherever it is built. `ci/docker/` takes all three as build args from
+`ci/docker/build.sh`, and the Dockerfile deliberately carries no default, since
+a stale default there is how the container once ended up on a different
+compiler.
 
-    # build a firmware binary without flashing (--board is required unless a
-    # One ROM is connected to infer it from):
-    onerom firmware build \
-      --base-firmware firmware/build/onerom-rp235x.bin \
-      --config onerom-config/vic20-pal.json \
-      --board fire-24-e \
-      --output /tmp/firmware.bin
-
-CI / release firmware builds:
-
-    ci/build.sh ci                  # clean + build base -> builds/ci/onerom-rp235x.bin
-    ci/build.sh release <version>   # package a prior ci build -> builds/<version>/...
-    ci/build.sh clean
-
-Other `ci/` scripts: `build-images.sh` (populates the `images.onerom.org`
-channel), `build-cross-fw.sh` (cross-builds the `onerom-fw` **tool** —
-orthogonal to firmware variant builds, do not conflate), `rust-tests.sh`,
-`rust-docs.sh`, `rust-lint.sh`, `rust-tools.sh`, `rust-binaries.sh`,
-`test-emu.sh`, `coverage-run.sh`, `coverage-campaign.sh`,
-`coverage-report.sh`. Reproducible builds use the container in `ci/docker/`.
-
-`test-emu.sh` takes a socket size — `ci/test-emu.sh 24|28|32|40`, or no argument
-for all of them. CI runs the four as parallel jobs; run one at a time in a given
-working tree, since every test regenerates the same `firmware/generated/gen-config.c`
-and rebuilds the same `firmware/build-test/`.
-
-`ci/coverage-*.sh` measure line coverage of the C the testers drive, and CI
-gates it on every push: `ci/coverage-baseline.txt` holds a floor per file, and
-a file may not drop below its. `--raise` moves a floor up, never down —
-lowering one is a hand edit and the commit says why.
-
-Floors come from the run set in `ci/coverage-campaign.txt` **and from CI's own
-figures** — a smaller set, or any local machine, measures lower and sets them
-wrong. Running the campaign locally is expensive, so ask first;
-`ci/coverage-run.sh <board> <config>` against one pair is the development
-loop.
-
-Coverage needs GNU gcc, so `coverage-run.sh` refuses to run anywhere but Linux.
-From another platform use `ci/coverage-docker.sh <board> <config>`, which runs
-the same script in the `onerom-build` container against a copy of the tree, and
-brings the tracefiles back to `build/coverage` for `ci/coverage-report.sh` to
-read on the host.
-
-Code that genuinely cannot be reached is marked `LCOV_UNREACHABLE_START` /
-`LCOV_UNREACHABLE_STOP` with a comment saying why. lcov **fails the capture**,
-writing no tracefile at all, if a marked line turns out to have been reached, so
-the comment's claim is checked against the counters rather than taken. That is
-the whole reason for the marker over `LCOV_EXCL_*`, which drops the lines
-quietly and would let a stale claim sit there for as long as it liked.
-
-- **A region covers the arm's body, from inside the opening brace.** The line
-  carrying the condition is evaluated on every call, so a marker placed above
-  the `if` claims a line that runs, and the capture fails naming it.
-- Where the reason is arithmetic rather than a runtime check, a `STATIC_ASSERT`
-  holds the thing that makes it unreachable — see the flame table in
-  `firmware/src/piodma/pioled.c`.
-- A marker added to make a number work turns the figure into a lie. If a branch
-  is hard to reach, that is the signal to write the test.
-
-**Toolchain versions are pinned, in one place each:** `ci/arm-toolchain-version`
-(Arm GNU, for the firmware and plugins), `ci/emscripten-version` (emsdk, for
-Lens) and `ci/lcov-version` (lcov, for coverage).
-`ci/install-arm-toolchain.sh`, `ci/install-emscripten.sh` and
-`ci/install-lcov.sh` install the pinned version and are what CI, the container
-and a developer's machine all use, so a firmware binary is built by the same
-compiler wherever it is built. lcov is built from source rather than installed
-from the distribution because Ubuntu packages 2.0, which reads
-`LCOV_UNREACHABLE_START` as an ordinary comment — `ci/coverage-run.sh` refuses
-to run below the pinned version rather than measure with a marker nothing
-checks. The `ci/docker/` image takes all three as build args from
-`ci/docker/build.sh` — the Dockerfile deliberately has **no** default, because a
-stale default there is how the container silently ended up on a different
-compiler. Note Arm moved toolchain
-hosting to `gitlab.arm.com` from 15.3.Rel1; `developer.arm.com` carries 15.2.rel1
-and earlier only.
-
-Some checked-in files are generated and must stay in sync — `ci/rust-tests.sh`
-**fails** if the committed copy differs from a fresh regeneration:
+Some checked-in files are generated, and `ci/rust-tests.sh` fails where the
+committed copy differs from a fresh regeneration:
 
 - `cargo run -p onerom-gen --bin compat` → `docs/COMPATIBILITY.md`
 - `cargo run -p schema-gen --bin schema-gen` → `onerom-config/schema.json`
 - `cargo run -p onerom-gen --bin layout -- --write-baseline` →
-  `ci/layout-baseline.txt`, the flash each chip type costs on each board.
-  A diff says the numbers moved; `cargo run -p onerom-gen --bin layout --
-  --check` says whether that is an improvement or a regression.
-- `docs/CHIP-TYPES.md` — no command of its own, the `onerom-config` build script
-  rewrites it on any build. Checked because otherwise a `chip-types.json` change
-  gets committed without the regenerated doc.
+  `ci/layout-baseline.txt`, the flash each chip type costs on each board. A
+  diff says the numbers moved, and `… --check` says whether that is an
+  improvement or a regression.
+- `docs/CHIP-TYPES.md` — the `onerom-config` build script rewrites it on any
+  build, and it is checked so a `chip-types.json` change lands with its
+  regenerated doc.
 
-`cargo run -p doc-gen` is in the same gate but is **not** a generator: it writes
-nothing. It checks the values documents state against the sources that own them
-— see below.
+**Run the end-of-work gates as work wraps up, and check with me first.** There
+are three: `ci/rust-lint.sh` (fmt and clippy at `-D warnings`),
+`ci/rust-tests.sh` and `ci/rust-docs.sh`, the last two slow. During iteration,
+per-crate `cargo check`, `clippy` and targeted tests are enough. `cargo run -p
+doc-gen` sits in the test gate and generates nothing — it checks the values
+documents state against the sources that own them.
 
-(e.g. a version bump changes `COMPATIBILITY.md`.) These generators, along with
-`ci/rust-tests.sh` and `ci/rust-docs.sh` (slow — `rust-docs.sh` especially), are
-end-of-work validation, **not** per-change checks. **Do not run them
-proactively.** As a piece of work approaches completion, check with me before
-running them; during iteration, per-crate `cargo check` / `clippy` / targeted
-tests are enough.
-
-**Formatting & clippy** are a CI gate: `ci/rust-lint.sh` runs
-`cargo fmt --all -- --check` and `clippy` with `-D warnings` across the whole
-workspace. A single `cargo clippy --workspace` can't build the tree, so the
-script groups crates by how they build: host crates in one pass; `onerom-fw-tester`
-and the wasm pair (`onerom-fw-emulator`, `onerom-lens`) with `CONFIG`/`BOARD` set
-because their build embeds the firmware emulator (the wasm pair targets
-`wasm32-unknown-emscripten`); and `onerom-lab` from its own dir on its pinned
-nightly (`--bins`). Like the other end-of-work scripts, run it as work wraps up,
-not per-change. `onerom-studio` is linted with the host crates (it needs
-libudev/libusb present), and `ci.yml` *builds* both Studio and the CLI via
-`ci/rust-binaries.sh` (host only, release profile).
-`.github/workflows/build-studio.yml` now only builds the cross-platform
-installers — it fires solely on `rust/studio/**`, so it could never have caught a
-workspace-wide change breaking Studio, which is why the linting lives in this
-gate instead. Neither workflow releases anything: Studio and CLI releases are
-built locally. Note: `onerom-config`'s generated
-modules
-(`src/{chip,hw}/generated.rs` and their `mod.rs` — all git-ignored) are
-rustfmt-formatted **at generation time** by the build script
-(`config/build/fmt.rs`) so the fmt gate stays green; keep that path intact if you
-touch the code generators.
-
-## CS-to-data timing (`onerom-fw-tester`)
-
-`pio-tester` asserts, on every run, how many cycles after CS assertion the
-device serves the byte **for that cycle** — `rust/fw-tester/src/cs_timing.rs`,
-reported as `timing_checks`/`timing_failures` alongside the data and bus
-counters. It exists because the bulk read pass cannot detect a serving
-slowdown on its own: a single-chip image is replicated across the SRAM index
-bits the chip's address lines do not drive, so a stale pre-CS fetch returns the
-right byte anyway.
-
-- The expected latency is derived from **config**, via
-  `onerom_gen::compat::serving_alg_info`, and the firmware's own report is used
-  only to cross-check that it programmed the window the config called for. Do
-  not invert that: an expectation taken from the device moves along with a
-  device bug.
-- New chip types need no change here. A new *algorithm* does, and will not
-  compile until it gets one — `cs_timing` mirrors the C algorithm enums and
-  asserts against the firmware's `NUM_*_ALGS`.
-- `timing.rs`'s `CYCLES_*` are **correctness margins** for the bulk pass, not
-  sensitivity knobs. Do not lower one to make a pass go green.
-
-To get the measured number rather than a pass/fail — after a timing assertion
-fails, or when adding an algorithm:
-
-    BASE_DIR=$(pwd) CONFIG=onerom-config/test/24-random-23xx.json \
-      BOARD=fire-24-a cargo run -p onerom-fw-tester --example cs_sweep
+`onerom-config`'s generated modules (`src/{chip,hw}/generated.rs` and their
+`mod.rs`, all git-ignored) are rustfmt-formatted at generation time by
+`config/build/fmt.rs`, which is what keeps the fmt gate green. Keep that path
+intact when touching the code generators.
 
 ## Testing firmware on a device (CLI)
 
-To flash and test a **locally-built** firmware on a connected One ROM, use the
-installed `onerom` CLI (on `PATH`; or build the matching one from this tree with
-`cargo build -p onerom-cli` → `target/debug/onerom`). Ask before flashing — it
-changes device state.
+Use the installed `onerom` CLI, or build this tree's with `cargo build -p
+onerom-cli`. Ask me before flashing, since it changes device state.
 
-- `onerom scan` — read-only device discovery; shows board, firmware version,
-  state (`Running`/`Stopped`), serial. Run it first, and again after flashing to
+- `onerom scan` — read-only discovery, showing board, firmware version, state
+  (`Running`/`Stopped`) and serial. Run it first, and again after flashing to
   confirm the device came back up `Running`.
-- **Test the local build, not a download.** Pass
-  `--base-firmware firmware/build/onerom-rp235x.bin` to `program`/`firmware
-  build`. Without it the CLI downloads the *released* base firmware and your
-  firmware changes are not under test.
-- **Discoverability never requires a plugin.** A stopped One ROM sits in the
-  RP2350 bootloader (picoboot), so `scan` always finds it and `scan --slots`
-  reads its slot metadata — with no plugins flashed. The system USB plugin does
-  **not** provide discoverability; what it provides is the device's *own* USB
-  stack, which a **Running** device needs to **serve while staying on the USB
-  bus** (without it, a Running device drops off the bus until it is stopped back
-  into the bootloader). So add `--plugin usb` only when the test needs the
-  device to *serve while remaining USB-visible* — never "so it's discoverable".
-  Add `--plugin rgb` too when testing RGB One ROMs (Piers's usual test
-  hardware). Max one system + one user plugin; `usb` is system,
-  `rgb`/`host-control`/`blink` are user.
-- `--plugin` **can** be combined with `--config` (as well as with `--slot`): the
-  plugins are inserted ahead of the config's ROM slots, and it is an error if the
-  config already defines a plugin of its own. To pass plugins alongside
-  command-line ROMs, use `--slot` mode:
+- **Test the local build.** Pass `--base-firmware
+  firmware/build/onerom-rp235x.bin` to `program` or `firmware build`. Left off,
+  the CLI downloads the *released* base firmware and your changes sit outside
+  the test.
+- A stopped One ROM sits in the RP2350 bootloader, so `scan` finds it and
+  `scan --slots` reads its slot metadata with no plugins flashed. Add
+  `--plugin usb` where the test needs the device to **serve while staying on
+  the USB bus**. One system plus one user plugin is the maximum: `usb` is
+  system, `host-control` and `blink` are user.
+- `--plugin` combines with `--config` as well as `--slot` — the plugins go
+  ahead of the config's ROM slots, and a config defining its own plugin is an
+  error. To pass plugins alongside command-line ROMs, use `--slot`:
 
       onerom program \
         --slot file=<path|url>,type=23128,cs1=active-low,cs2=active-low,cs3=active-high \
         --base-firmware firmware/build/onerom-rp235x.bin \
-        --plugin usb --plugin rgb \
+        --plugin usb \
         --out /tmp/fw.bin
 
-  Per-slot firmware overrides go in the `--slot` spec, e.g. `,led=off` (status
-  LED), `,cpu-freq=200MHz`, `,force-16-bit=true` — the same overrides expressible
-  as `firmware_overrides` in a config file.
-- `--out <file>` saves the composed image *and* flashes; `onerom firmware build
-  --out <file>` composes without flashing; `onerom firmware inspect --firmware
-  <bin>` dumps contents. The output path and the firmware to inspect are always
-  options, never positional arguments. Board is inferred from the connected
-  device (override with `--board`). `program` composes the image before writing, so a bad build aborts
-  without touching the device.
+  Per-slot firmware overrides go in the spec — `,led=off`, `,cpu-freq=200MHz`,
+  `,force-16-bit=true` — the same set expressible as `firmware_overrides` in a
+  config file.
+- The RGB LED needs no plugin from firmware v0.7.2: the firmware drives it and
+  `onerom control rgb` reaches it, with `onerom inspect rgb` reading back.
+- `--out <file>` saves the composed image *and* flashes. `onerom firmware build
+  --out <file>` composes alone, and `onerom firmware inspect --firmware <bin>`
+  dumps contents. The output path and the firmware to inspect are options,
+  never positional. Board is inferred from the connected device, and `--board`
+  overrides. `program` composes before writing, so a bad build aborts with the
+  device untouched.
+
+## CS-to-data timing (`onerom-fw-tester`)
+
+`pio-tester` asserts on every run how many cycles after CS assertion the device
+serves the byte for that cycle — `rust/fw-tester/src/cs_timing.rs`, whose module
+docs explain why the bulk read pass cannot see a serving slowdown on its own.
+
+- The expected latency comes from **config**, via
+  `onerom_gen::compat::serving_alg_info`, and the firmware's own report serves
+  only to cross-check that it programmed the window the config called for. An
+  expectation taken from the device would move along with a device bug.
+- A new chip type needs no change here. A new *algorithm* does, and will fail
+  to compile until it gets one.
+- `timing.rs`'s `CYCLES_*` are **correctness margins** for the bulk pass rather
+  than sensitivity knobs. Keep them where they are and fix the serving.
+
+For the measured number rather than a pass or fail:
+
+    BASE_DIR=$(pwd) CONFIG=onerom-config/test/24-random-23xx.json \
+      BOARD=fire-24-a cargo run -p onerom-fw-tester --example cs_sweep
 
 ## CLI arguments (`rust/cli/src/args/`)
 
-Conventions the whole CLI holds to. `rust/cli/src/main.rs`'s `cli_assert`
-module walks the entire clap tree and fails the build on a breach of the first
-four, so a new option is checked mechanically rather than by review.
+`rust/cli/src/main.rs`'s `cli_assert` module walks the whole clap tree and fails
+the build on a breach of the first four, so a new option is checked
+mechanically.
 
-- **Every argument is `--name value`. No positionals, anywhere.** `board header
-  <board>` was the one exception, and its own error told the user to pass
-  `--board`, which did not exist.
-- **A short flag means one thing across the whole CLI**, not just within a
-  command: `-b` board, `-o` output, `-i` input, `-c` chip-type, `-l` length,
-  `-f` force, `-n` no-reboot, `-m` msd, `-p`/`-r` stopped/running. Do not spend
-  a letter on a command-local meaning. `-s -i -u -y -v -h` are claimed by the
-  global options — a subcommand reusing one **panics at startup**, which is
-  why `verify_cli` exists. `-a` is the sole grandfathered exception
-  (`--address` vs `--all`), pinned by its own test.
-- **Long names are kebab-case.** A snake_case alias exists *only* where the
-  option names a JSON config key, and then it must match that key verbatim
-  (`turbo_boot`, `instance_name`, `boot_logging`, `serial_override`) so a
-  config key can be pasted straight onto the command line. Never alias an
-  option to its own long name.
-- **Every option needs a `///` doc comment** — a `//` comment silently gives
-  clap no help text — and a `value_name` of one uppercase word.
-- **Give values a `value_parser`** so a bad one fails at parse time rather than
-  part-way through the work. Where the values are an enum owned by another
-  crate, drive them from that type's `supported_values()` (see
-  `args/image.rs`'s `ImageFormatParser`) so a new variant flows through with no
-  CLI change — `onerom-gen` stays clap-free, so no `ValueEnum` derives there.
-- Do **not** write `required = true` on a non-`Option` field; clap already
-  requires it.
-- **Examples in doc comments must be runnable.** `firmware inspect
-  firmware.bin` sat in the help for months describing an argument form the
-  command never had.
-- A user-visible CLI change updates [docs/CLI-MANUAL.md](/docs/CLI-MANUAL.md)
-  in the same commit — see the Git & commits section, which covers this and the
-  other `docs/` files a CLI change can reach.
+- **Every argument is `--name value`.** The CLI has no positionals anywhere.
+- **A short flag means one thing across the whole CLI**: `-b` board, `-o`
+  output, `-i` input, `-c` chip-type, `-l` length, `-f` force, `-n` no-reboot,
+  `-m` msd, `-p`/`-r` stopped/running. The global options claim `-s -i -u -y -v
+  -h`, and a subcommand reusing one panics at startup, which is what
+  `verify_cli` catches. `-a` is the sole grandfathered exception (`--address`
+  vs `--all`), pinned by its own test.
+- **Long names are kebab-case.** A snake_case alias exists where the option
+  names a JSON config key, and then it matches that key verbatim (`turbo_boot`,
+  `instance_name`, `boot_logging`, `serial_override`) so a config key pastes
+  straight onto the command line.
+- **Every option carries a `///` doc comment** — clap reads help text from
+  there, and a `//` comment leaves it silently empty — plus a `value_name` of
+  one uppercase word.
+- **Give values a `value_parser`** so a bad one fails at parse time. Where the
+  values are an enum owned by another crate, drive them from that type's
+  `supported_values()` (see `args/image.rs`'s `ImageFormatParser`) so a new
+  variant flows through with no CLI change. `onerom-gen` stays clap-free.
+- clap already requires a non-`Option` field, so leave `required = true` off.
+- **Examples in doc comments are runnable.** `firmware inspect firmware.bin`
+  sat in the help for months describing an argument form the command never had.
 
 ## Config (`onerom-config/`)
 
-JSON ROM/RAM config files plus `schema.json` (generated by `schema-gen`).
-Config uses `chip_sets`/`chips`; the old `rom_sets`/`roms` keys still parse for
-back-compat.
+JSON ROM and RAM config files plus `schema.json`, generated by `schema-gen`.
+Config uses `chip_sets`/`chips`, and the old `rom_sets`/`roms` keys still parse
+for back-compat.
 
 ## Plugins (`plugins/`)
 
 Plugins are separate binaries run on a spare RP2350 core once serving has
-started (system + user types, ~1KB stack each, no sandbox). The plugin API
-(`firmware/ora/`) is **stable**: it may be extended, but changes are guaranteed
+started — system and user types, ~1KB stack each, no sandbox. The plugin API
+(`firmware/ora/`) is **stable**: it may be extended, and changes stay
 backwards compatible. The system USB plugin provides the device-side USB stack
-and exposes the `picobootx` interface. The `host-control` plugin implements
-RBCP.
+and exposes the `picobootx` interface. `host-control` implements RBCP.
 
-- **Extending the plugin API:** add new `ORA_ID_*` values additively (never
-  renumber or repurpose an existing one), and give every new ID an `@since
-  firmware vX.Y.Z` line in its `firmware/ora/api.h` doc block, naming the
-  firmware version it first shipped in — that version is what a plugin targets
-  via `min_fw_version`. `api.h` itself is only version-bumped for a
-  non-backwards-compatible change (which shouldn't happen).
-- **A new plugin API call is not done until the plugin API tester exercises
-  it, in the same commit.** That tester is
+- **Extending the API:** add `ORA_ID_*` values additively, each taking the next
+  unused number, with existing ones keeping their meaning for good. Give every
+  new ID an `@since firmware vX.Y.Z` line in its `firmware/ora/api.h` doc block,
+  naming the firmware version it first shipped in — that is what a plugin
+  targets via `min_fw_version`.
+- **A new plugin API call is done when the plugin API tester exercises it, in
+  the same commit.** That tester is
   [rust/fw-tester/src/bin/plugin_api_tester/](/rust/fw-tester/src/bin/plugin_api_tester/),
   run by `make test-api` and by `ci/test-emu.sh` against every board of a
   family. A new `ORA_ID_*` needs three things: an entry in `tests/lookup.rs`'s
-  active list, a wrapper on `Emulator`
-  (`rust/fw-emulator/src/emulator.rs`) so a test can call it, and a test of
-  what the call actually does — its refusals and its edges, not just that it
-  resolves. `lookup.rs` reads the `api_id_t` enum out of `api.h` and fails on
-  an ID in neither of its lists, so the classification is caught mechanically.
-  Nothing catches a classified ID with no test behind it.
-  - A plugin that drives the new call is **not** that test. The USB plugin
-    tester (`rust/usb-tester`) reaches the LED engine through the plugin's own
-    commands and says only what its wire format can carry — the API's own
-    boundary, its sizes and its refusals, is what the plugin API tester owns.
+  active list, a wrapper on `Emulator` (`rust/fw-emulator/src/emulator.rs`) so a
+  test can call it, and a test of what the call does — its refusals and its
+  edges, beyond that it resolves. `lookup.rs` reads the `api_id_t` enum out of
+  `api.h` and fails on an ID in neither of its lists, so classification is
+  caught mechanically. A classified ID with no test behind it is caught by you.
+  - A plugin driving the new call is a separate thing. The USB plugin tester
+    (`rust/usb-tester`) reaches the LED engine through the plugin's own
+    commands and says what its wire format can carry. The API's own boundary,
+    its sizes and its refusals belong to the plugin API tester.
 - **Exposing device metadata to plugins:** tag the field in
-  `rust/metadata/metadata_schema.toml` with `plugin_key = { name = "…", id = N }`.
-  String fields then resolve via `ORA_ID_GET_METADATA_STR`, unsigned
-  scalar/enum fields via `ORA_ID_GET_METADATA_UINT` — no hand-written firmware.
-  Key ids are one permanent namespace: never renumber or reuse. `status_led_enabled`
-  is the live status-LED state and the cross-plugin coordination channel (written
-  by `ora_set_status_led`, read via its `STATUS_LED_STATE` key).
+  `rust/metadata/metadata_schema.toml` with
+  `plugin_key = { name = "…", id = N }`. String fields then resolve via
+  `ORA_ID_GET_METADATA_STR` and unsigned scalar or enum fields via
+  `ORA_ID_GET_METADATA_UINT`, with no hand-written firmware. Key ids are one
+  permanent namespace, each number keeping its meaning for good.
+  `status_led_enabled` is the live status-LED state and the cross-plugin
+  coordination channel, written by `ora_set_status_led` and read via its
+  `STATUS_LED_STATE` key.
 
 ## Cross-project constants
 
-**A value more than one of firmware, plugin and host has to agree on is
-declared once, in `rust/metadata/metadata_schema.toml`, and never written out
-by hand a second time.** Writing it twice does not merely risk drift — it makes
-drift silent, because nothing compares the two copies. Every constant there is
-emitted three ways from the one declaration:
+**A value more than one of firmware, plugin and host must agree on is declared
+once, in `rust/metadata/metadata_schema.toml`, and every consumer reads it from
+there.** A second hand-written copy makes drift silent, because nothing
+compares the two. One declaration reaches all three:
 
 | Reaches | How | Name |
 | --- | --- | --- |
@@ -550,22 +377,19 @@ emitted three ways from the one declaration:
 | Rust (CLI, tools, tests) | `pub const` on `onerom_metadata` | the schema name |
 | Plugins (`ora_api = true` only) | `firmware/ora/onerom_constants_generated.h`, included by `api.h` | `ORA_` + the schema name |
 
-Adding one:
-
 ```toml
 [[constants]]
 name = "LED_MAX_HOLD_MS"
 type = "u32"
 value = 60000
-ora_api = true                     # omit unless a plugin needs it
+ora_api = true                     # where a plugin needs it
 comment = """The longest hold either LED accepts, in milliseconds."""
 ```
 
 - **`ora_api = true` puts it in the plugin API.** A plugin builds against
   `firmware/ora` alone and cannot include the firmware's metadata header, so a
-  value it must agree with the firmware on needs this tag. The ORA name is the
-  schema name with an `ORA_` prefix, derived rather than given, so either can be
-  found from the other. Leave it off otherwise — most constants are
+  value it must agree with the firmware on needs this tag. The ORA name is
+  derived rather than given, so either name finds the other. Most constants are
   firmware-and-host only, and the plugin API is a published surface.
 - **Two constants that happen to share a value stay two constants.**
   `ORA_LED_MAX_HOLD_MS` and `ORA_GPIO_MAX_HOLD_MS` are both 60000 for different
@@ -573,139 +397,78 @@ comment = """The longest hold either LED accepts, in milliseconds."""
 - **The `comment` becomes the doc comment in all three outputs**, so write it
   for whoever reads it last.
 
-### Quoting a constant where Rust demands a literal
+Two places need a value where the language wants a literal, and each has a
+mechanism with the full recipe at its home:
 
-A doc comment takes a literal, and a `pub const` is not one — so clap's help
-text cannot state a value by naming the constant. Hand-typing the number there
-is the defect above, in prose.
+- **Rust, where a doc comment is the only place clap will read help text
+  from.** `onerom-metadata` generates `ALL_CONSTANTS` for a build script to
+  write one file per constant into `OUT_DIR` (see `rust/cli/build.rs`), and
+  `include_str!` plus `concat!` do the rest. Its doc comment carries the
+  recipe, including why the option must use `help = …` rather than `///`.
+- **A document, where the text has to match what the source says today.** The
+  value goes inside a marker naming its source, and `cargo run -p doc-gen`
+  fails where the two disagree. It never writes a document.
+  `rust/doc-gen/src/main.rs` and its `marker` and `format` modules carry the
+  syntax, the sources and the formats.
 
-`onerom-metadata` generates `ALL_CONSTANTS`, every constant as `(name, value)`
-in plain text, for a build script to write one file per constant into `OUT_DIR`
-(see `rust/cli/build.rs`). `include_str!` and `concat!` are accepted where a
-literal is required, so:
-
-```rust
-const HELP_BEACON_PERIOD: &str = concat!(
-    "Milliseconds for one blink. Defaults to ",
-    const_str!("LED_BEACON_DEFAULT_PERIOD_MS"),
-    "."
-);
-
-#[arg(long, value_name = "MS", value_parser = parse_beacon_period,
-      help = HELP_BEACON_PERIOD)]
-pub period: Option<u16>,
-```
-
-**`help = …` rather than a `///` comment, and only for this.** Clap reads a doc
-comment as a literal and would see an unexpanded macro, leaving the option with
-*no help at all* — which builds clean and is caught only by reading `--help`.
-Every other option keeps its `///` comment, as the CLI arguments section says.
-`ALL_CONSTANTS`' own doc comment carries the full recipe for a new consumer.
-
-A name with no matching constant fails the build and says which file it looked
-for, so a typo or a retired constant is caught rather than leaving a stale
-number behind.
-
-### Quoting a constant in a document
-
-A document has the same problem and the opposite solution. `docs/CLI-MANUAL.md`
-states hold limits, LED periods and the reset pulse, and those belong to the
-schema. It states them inside a marker naming the source:
-
-```markdown
-The device's own limit is <!--[const:GPIO_MAX_HOLD_MS:seconds]-->60 seconds<!--[/]-->.
-```
-
-`cargo run -p doc-gen` reads the schema and fails if the text between the
-markers is not what the source says today, naming file, line, expected and
-found. **It never writes a document** — a tool with write access to thousands of
-lines of hand-written prose, to save a hand edit on the day a constant changes,
-is a bad trade. The markers are HTML comments, so they are invisible to a reader
-and are stripped before the PDFs are rendered.
-
-- `source:name[:format]`. Sources are `const` (the metadata schema) and
-  `version` (a crate's version, e.g. `version:cli`). Formats are `raw`, `ms`,
-  `seconds` and `code`; an unknown one is an error, as is an unknown source or
-  name.
-- Several constants that share a value are named together —
-  `const:LED_BEACON_MIN_PERIOD_MS+LED_BLINK_MIN_PERIOD_MS` — and all must agree
-  with the text, so one moving apart from the other is caught.
-- **A marker inside a fenced code block is refused.** A number in a pasted run
-  is a record of what the command printed, not a claim about today.
-- The manual's own version banner is `version:cli`, so it is checked rather than
-  remembered.
-- The check runs in `ci/rust-tests.sh`, and again in `docs/pdf/render.py` for
-  every document read from the working tree — a release is built by hand and the
-  gate may not have been. Past editions, which name a git ref, are read as they
-  shipped and are not checked.
-- Marking a document up is opt-in, one value at a time: a document with no
-  markers passes, so any `docs/` file can adopt them when it is worth it.
+Both fail the build on a name with no matching constant, so a typo or a retired
+constant surfaces rather than leaving a stale number behind.
 
 ## Total parseability — non-negotiable
 
-**A host tool of the same generation as the device parses every single byte that
-device holds, and that must stay true.** Flash data, metadata, runtime info, the
-RTT control block and the ROM data are all parsed, and `onerom inspect info`
-dumps the lot as JSON
-(`rust/cli/src/inspect.rs`). Few users reach for it. It is core to One ROM's
-architecture and it is not up for trade.
+**A host tool of the same generation as the device parses every single byte
+that device holds, and that stays true.** Flash data, metadata, runtime info,
+the RTT control block and the ROM data are all parsed, and `onerom inspect info`
+dumps the lot as JSON (`rust/cli/src/inspect.rs`). Few users reach for it. It is
+core to One ROM's architecture, and it is not up for trade.
 
 A host starts at one fixed address, `onerom_info_t` at the metadata base in
 flash, follows its `runtime` pointer to `onerom_runtime_info_t` in RAM and
-confirms the magic. Everything that only exists while the device runs hangs off
-runtime info. On a v0.7.0+ device the whole thing dumps as one tree.
+confirms the magic. Everything existing only while the device runs hangs off
+runtime info. It falls out of the schema: a field declared in
+`rust/metadata/metadata_schema.toml` generates the C struct, the Rust type, its
+parser and its `serde::Serialize` impl, and appears in the JSON with no
+host-side code written.
 
-It falls out of the schema: a field declared in
-`rust/metadata/metadata_schema.toml` generates the C struct in
-`firmware/generated/onerom_metadata.h`, the Rust type, its parser and its
-`serde::Serialize` impl, and appears in the JSON with no host-side code written.
+- **Every byte of device state is reachable from the anchor.** A `.bss` static
+  sits at a build-dependent address with no path to it, so no host can find it
+  and the dump omits it in silence. Four stranded bytes are as invisible as
+  sixty.
+- **Anything the schema can describe is described there**, and its parser falls
+  out.
+- **An older host ignores fields it does not know, and says that it did.** It
+  is not expected to parse a newer device's new fields. It is expected to speak
+  up about them — showing less without a word, or dropping a whole structure
+  because its shape moved, is a defect.
+- **Every byte added to runtime info needs my explicit approval**, one byte at
+  a time. What it costs in RAM is my call, always, in advance.
 
-So:
-
-- **Never leave device state nothing points to.** A `.bss` static sits at a
-  build-dependent address with no path from the anchor, so no host can find it
-  and the dump silently omits it. Four stranded bytes are as invisible as sixty.
-- **Never hand-write parsing for anything the schema could describe.**
-- **An older host ignores fields it does not know, and says that it did.** It is
-  not expected to parse a newer device's new fields. It is expected not to go
-  quiet about them - showing less without a word, or dropping a whole structure
-  because its shape moved, is a defect and not degradation.
-- **Every byte added to runtime info needs Piers's explicit approval**, one byte
-  at a time. Being reachable is not optional. What it costs in RAM is his call,
-  always, in advance.
-
-## Metadata & manifest — two separate mechanisms
-
-Do not conflate these:
+## Metadata and manifest — two separate mechanisms
 
 1. **Embedded firmware metadata (the v0.7.0 "v2" schema).** Defined by
-   `onerom-metadata`; `MIN_SCHEMA_VERSION = 0.7.0`
-   (`rust/metadata/src/lib.rs`). `onerom-fw-parser` reads both old and new
-   layouts by branching on `version >= MIN_SCHEMA_VERSION`. This is the real
-   versioned dual-schema, living in the firmware metadata parser.
+   `onerom-metadata`, with `MIN_SCHEMA_VERSION = 0.7.0`
+   (`rust/metadata/src/lib.rs`). `onerom-fw-parser` reads both layouts by
+   branching on `version >= MIN_SCHEMA_VERSION`. This is the real versioned
+   dual-schema, and it lives in the firmware metadata parser.
+2. **The `releases.json` manifest at `images.onerom.org`.** Consumed in
+   `rust/fw/src/net.rs` (`Releases`, `Release`, `Board`, `Mcu`), and in
+   `rust/studio/src/app/manifest.rs` and `rust/app/src/plugin.rs`. There is a
+   **single** consumer schema with **no** version-sniffing branch: back-compat
+   across every historical release comes from `Option<String> path` overrides.
+   The top-level `version: usize` is a data marker.
 
-2. **The `releases.json` manifest at `images.onerom.org`** (not the deprecated
-   local-repo copy). Consumed in `rust/fw/src/net.rs` (`Releases` / `Release` /
-   `Board` / `Mcu`), and also in `rust/studio/src/app/manifest.rs` and
-   `rust/app/src/plugin.rs`. There is a **single** consumer schema with **no**
-   version-sniffing branch; back-compat across all historical releases is
-   achieved via `Option<String> path` overrides, not a second schema. The
-   top-level `version: usize` is a data marker only.
-
-Consequences to respect:
-
-- `images.onerom.org` archives **all** historical releases (v0.5.x, per-board
+- `images.onerom.org` archives all historical releases (v0.5.x, per-board
   v0.6.x, v0.7.0). v0.7.0 entries still enumerate `boards`/`mcus`, so pre-0.7.0
-  clients keep working; the shared board/MCU-agnostic base firmware is expressed
-  by pointing multiple entries at the same `path`.
-- The base firmware became board/MCU-agnostic, but the composed **full image
-  and its metadata are still per-hardware-variant**.
-- Do **not** collapse old releases into a single model-level entry, and do not
-  add a version-sniffing branch to the manifest consumer — that breaks pre-0.7.0
-  clients and is off the table.
-- Plugin manifest `min_fw_version` is enforced by the firmware (see Firmware);
-  the manifest's `incompatible_from` upper bound is advisory only (discovered
-  post-build, not in the binary header).
+  clients keep working, and the shared board- and MCU-agnostic base firmware is
+  expressed by pointing several entries at the same `path`.
+- The base firmware became board- and MCU-agnostic, and the composed **full
+  image and its metadata stay per-hardware-variant**.
+- Old releases keep their own entries, and the manifest consumer keeps its
+  single schema. Collapsing the first or version-sniffing in the second breaks
+  pre-0.7.0 clients, and both are off the table.
+- The firmware enforces a plugin manifest's `min_fw_version`. Its
+  `incompatible_from` upper bound is advisory, discovered post-build rather
+  than carried in the binary header.
 
 ## Related repositories
 
@@ -714,17 +477,18 @@ Consequences to respect:
   plugin manifests, Studio releases).
 - `one-rom-wasm` — WASM build of `onerom-gen` for in-browser firmware
   generation (wasm.onerom.org).
-- `rom-bus-control-protocol` (RBCP) — protocol spec; the device side is
-  implemented by the `host-control` plugin. There is no host-side RBCP
-  implementation in this repo (in particular, `onerom-protocol` is not it).
+- `rom-bus-control-protocol` (RBCP) — protocol spec, implemented device-side by
+  the `host-control` plugin. The host side lives outside this repo, and
+  `onerom-protocol` is a different thing: the One ROM Lab wire protocol spoken
+  between an airfrog (over SWD) and a Lab device, carried over `airfrog-rpc`.
 - `picoboot` — host-side Rust crate for the RP2040/RP2350 PICOBOOT USB
-  interface (used by `onerom-cli`).
-- `picobootx` — device-side PICOBOOT extension library adding custom commands;
+  interface, used by `onerom-cli`.
+- `picobootx` — device-side PICOBOOT extension library adding custom commands,
   exposed by One ROM's system USB plugin.
 
 ## Hardware notes
 
-- `hardware/pcb/` holds KiCad files, per revision, verified/unverified.
+- `hardware/pcb/` holds KiCad files, per revision, verified and unverified.
 - RP2350 runs 5V-tolerant with no level shifters.
-- GPIO-to-ROM-pin mapping is driven by 2-layer PCB routing, so data/address
-  lines are not in logical GPIO order; pre-processing accounts for this.
+- 2-layer PCB routing drives the GPIO-to-ROM-pin mapping, so data and address
+  lines sit outside logical GPIO order and pre-processing accounts for it.
