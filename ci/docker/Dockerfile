@@ -24,14 +24,18 @@ RUN apt-get update && apt-get install -y \
     cmake \
     curl \
     git \
+    libcapture-tiny-perl \
     libclang-dev \
     libcurl4-openssl-dev \
+    libdatetime-perl \
     libjson-c-dev \
+    libjson-xs-perl \
     libusb-1.0-0-dev \
     libudev-dev \
     libzip-dev \
     mingw-w64 \
     nano \
+    perl \
     pkg-config \
     sudo \
     vim \
@@ -72,6 +76,27 @@ RUN test -n "${ARM_GCC_VERSION}" || { \
     mv arm-gnu-toolchain-${ARM_GCC_VERSION}-${ARCH_SUFFIX}-arm-none-eabi /opt/ && \
     rm "${TARBALL}" "${TARBALL}.sha256asc" && \
     ln -s /opt/arm-gnu-toolchain-${ARM_GCC_VERSION}-${ARCH_SUFFIX}-arm-none-eabi /opt/arm-toolchain
+
+# Install lcov, which captures the coverage ci/coverage-run.sh measures.
+#
+# Built from source rather than taken from the distribution because Ubuntu
+# packages lcov 2.0, which has no notion of LCOV_UNREACHABLE_START and reads it
+# as an ordinary comment - the lines the marker covers then count as unreached.
+# The perl modules it needs are in the apt list above.
+#
+# Pinned, with the same no-default rule as the toolchains above: the version
+# comes from ci/lcov-version via ci/docker/build.sh.
+ARG LCOV_VERSION
+RUN test -n "${LCOV_VERSION}" || { \
+        echo "LCOV_VERSION build-arg is required - build via ci/docker/build.sh," && \
+        echo "which passes the version pinned in ci/lcov-version." && \
+        exit 1; \
+    } && \
+    git clone --depth 1 --branch "${LCOV_VERSION}" \
+        https://github.com/linux-test-project/lcov.git /tmp/lcov && \
+    make -C /tmp/lcov install && \
+    rm -rf /tmp/lcov && \
+    lcov --version
 
 # Create build user with passwordless sudo
 RUN useradd -m -s /bin/bash build && \

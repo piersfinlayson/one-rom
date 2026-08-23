@@ -40,7 +40,27 @@ TESTERS="${*:-$(all_testers)}"
     echo "Coverage runs on Linux only (found $(uname -s)) - see ci/docker." >&2
     exit 1
 }
-command -v lcov >/dev/null || { echo "lcov not found on PATH." >&2; exit 1; }
+
+# The version the pin names is the minimum a run accepts.  Below it lcov has no
+# notion of LCOV_UNREACHABLE_START and reads it as an ordinary comment, so the
+# lines the source says cannot run count as unreached and the floors fail with
+# nothing saying why - a silence worth a check of its own.  ci/install-lcov.sh
+# installs the pinned version on a machine that has an older one.
+command -v lcov >/dev/null || {
+    echo "lcov not found on PATH - install it with ci/install-lcov.sh." >&2
+    exit 1
+}
+want=$(tr -d '[:space:]v' < "$ROOT/ci/lcov-version")
+have=$(lcov --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+' | head -1)
+[ -n "$have" ] || { echo "cannot read a version from 'lcov --version'." >&2; exit 1; }
+if [ "$(printf '%s\n%s\n' "$want" "$have" | sort -V | head -1)" != "$want" ]; then
+    echo "lcov $have found, $want or newer needed." >&2
+    echo "Older lcov ignores the source's LCOV_UNREACHABLE markers rather than" >&2
+    echo "checking them, and measures the marked lines as unreached." >&2
+    echo "Install the pinned version with ci/install-lcov.sh." >&2
+    exit 1
+fi
+
 SUM=$(command -v sha256sum || command -v shasum) || {
     echo "neither sha256sum nor shasum found on PATH." >&2; exit 1; }
 [ -f "$TESTER_LIST" ] || { echo "missing $TESTER_LIST" >&2; exit 1; }
@@ -115,12 +135,21 @@ dirs=$(gcov_dirs)
 
 capture_args=""
 for d in $dirs; do capture_args="$capture_args --directory $d"; done
+# Progress to /dev/null, errors kept.  lcov fails the capture, writing no
+# tracefile at all, when a line inside an LCOV_UNREACHABLE region was reached -
+# it names the file and line on stderr, and that message is the whole point of
+# marking the region rather than excluding it.
 # shellcheck disable=SC2086
-lcov --capture $capture_args --output-file "$OUT/$tag.raw" >/dev/null 2>&1
+if ! lcov --capture $capture_args --output-file "$OUT/$tag.raw" >/dev/null; then
+    echo >&2
+    echo "lcov failed to capture $tag - no tracefile written." >&2
+    echo "An 'unreachable' error above means a line the source marks as" >&2
+    echo "unreachable was reached: the code, the marker, or both are wrong." >&2
+    exit 1
+fi
 
 # Paths as they are written everywhere else.  sed over the SF: lines rather
-# than lcov --substitute, which only exists in lcov 2.x - nothing here needs a
-# hand-built lcov.
+# than lcov --substitute, since the manifest is prepended in the same pass.
 out="$OUT/$tag.info"
 { src_manifest; sed "s#^SF:$ROOT/#SF:#" "$OUT/$tag.raw"; } > "$out"
 rm -f "$OUT/$tag.raw"

@@ -299,23 +299,40 @@ loop.
 
 Coverage needs GNU gcc, so `coverage-run.sh` refuses to run anywhere but Linux.
 From another platform use `ci/coverage-docker.sh <board> <config>`, which runs
-the same script in the `onerom-cov` container against a copy of the tree, and
+the same script in the `onerom-build` container against a copy of the tree, and
 brings the tracefiles back to `build/coverage` for `ci/coverage-report.sh` to
 read on the host.
 
-Code that genuinely cannot be reached is marked `LCOV_EXCL_START` /
-`LCOV_EXCL_STOP` with a comment saying why. Where the reason is arithmetic
-rather than a runtime check, a `STATIC_ASSERT` holds the thing that makes it
-unreachable — see the flame table in `firmware/src/piodma/pioled.c`.
+Code that genuinely cannot be reached is marked `LCOV_UNREACHABLE_START` /
+`LCOV_UNREACHABLE_STOP` with a comment saying why. lcov **fails the capture**,
+writing no tracefile at all, if a marked line turns out to have been reached, so
+the comment's claim is checked against the counters rather than taken. That is
+the whole reason for the marker over `LCOV_EXCL_*`, which drops the lines
+quietly and would let a stale claim sit there for as long as it liked.
+
+- **A region covers the arm's body, from inside the opening brace.** The line
+  carrying the condition is evaluated on every call, so a marker placed above
+  the `if` claims a line that runs, and the capture fails naming it.
+- Where the reason is arithmetic rather than a runtime check, a `STATIC_ASSERT`
+  holds the thing that makes it unreachable — see the flame table in
+  `firmware/src/piodma/pioled.c`.
+- A marker added to make a number work turns the figure into a lie. If a branch
+  is hard to reach, that is the signal to write the test.
 
 **Toolchain versions are pinned, in one place each:** `ci/arm-toolchain-version`
-(Arm GNU, for the firmware and plugins) and `ci/emscripten-version` (emsdk, for
-Lens). `ci/install-arm-toolchain.sh` and `ci/install-emscripten.sh` install the
-pinned version and are what CI, the container and a developer's machine all use,
-so a firmware binary is built by the same compiler wherever it is built. The
-`ci/docker/` image takes both as build args from `ci/docker/build.sh` — the
-Dockerfile deliberately has **no** default, because a stale default there is how
-the container silently ended up on a different compiler. Note Arm moved toolchain
+(Arm GNU, for the firmware and plugins), `ci/emscripten-version` (emsdk, for
+Lens) and `ci/lcov-version` (lcov, for coverage).
+`ci/install-arm-toolchain.sh`, `ci/install-emscripten.sh` and
+`ci/install-lcov.sh` install the pinned version and are what CI, the container
+and a developer's machine all use, so a firmware binary is built by the same
+compiler wherever it is built. lcov is built from source rather than installed
+from the distribution because Ubuntu packages 2.0, which reads
+`LCOV_UNREACHABLE_START` as an ordinary comment — `ci/coverage-run.sh` refuses
+to run below the pinned version rather than measure with a marker nothing
+checks. The `ci/docker/` image takes all three as build args from
+`ci/docker/build.sh` — the Dockerfile deliberately has **no** default, because a
+stale default there is how the container silently ended up on a different
+compiler. Note Arm moved toolchain
 hosting to `gitlab.arm.com` from 15.3.Rel1; `developer.arm.com` carries 15.2.rel1
 and earlier only.
 

@@ -20,7 +20,7 @@
 set -e
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-IMAGE="${COVERAGE_IMAGE:-onerom-cov:latest}"
+IMAGE="${COVERAGE_IMAGE:-onerom-build:latest}"
 NAME="onerom-cov-run-$$"
 WORK=/home/build/work
 

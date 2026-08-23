@@ -296,7 +296,16 @@ jobs:
       run: |
         sudo apt-get update
         sudo apt-get install -y libclang-dev libcurl4-openssl-dev libjson-c-dev \
-                                libzip-dev make xz-utils lcov
+                                libzip-dev make xz-utils \
+                                perl libcapture-tiny-perl libdatetime-perl \
+                                libjson-xs-perl
+
+    # Not the packaged lcov: Ubuntu's is 2.0, which reads
+    # LCOV_UNREACHABLE_START as an ordinary comment rather than checking the
+    # claim it makes.  ci/lcov-version pins the version, shared with the
+    # container and a developer's machine.
+    - name: Install lcov
+      run: echo "$(ci/install-lcov.sh)" >> "$GITHUB_PATH"
 
     - name: Install Rust
       uses: dtolnay/rust-toolchain@stable

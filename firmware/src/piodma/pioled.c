@@ -482,14 +482,15 @@ static void led_park(void) {
 
     LED_FLAG_CLEAR(LED_FLAG_PARK_PENDING);
 
-    // LCOV_EXCL_START - unreachable: this runs only when the pin is owed back,
-    // and the only two places that record a pin as owed are behind a shared-pin
-    // check of their own.  A board with separate pins never owes one, so it
-    // never gets here.  The guard stays as the local statement of that.
     if (!led_pin_is_shared()) {
+        // LCOV_UNREACHABLE_START - this runs only when the pin is owed back,
+        // and the only two places that record a pin as owed are behind a
+        // shared-pin check of their own.  A board with separate pins never owes
+        // one, so it never gets here.  The guard stays as the local statement
+        // of that.
         return;
+        // LCOV_UNREACHABLE_STOP
     }
-    // LCOV_EXCL_STOP
 
     LED_FLAG_CLEAR(LED_FLAG_PIN_WITH_PIO);
     gpio_pio_release(gpio);
@@ -549,12 +550,12 @@ static void led_rgb_write(
     uint32_t out_green;
     uint32_t out_blue;
 
-    // LCOV_EXCL_START - unreachable: pio_led_set refuses an RGB mode on a board
-    // with no RGB LED, so no channel is ever in a mode that reaches here.
     if (gpio == GPIO_NONE) {
+        // LCOV_UNREACHABLE_START - pio_led_set refuses an RGB mode on a board
+        // with no RGB LED, so no channel is ever in a mode that reaches here.
         return;
+        // LCOV_UNREACHABLE_STOP
     }
-    // LCOV_EXCL_STOP
 
     if (!led_pio_claimed) {
         led_pio_claim(gpio);
@@ -620,13 +621,13 @@ static void led_status_show(uint8_t lit) {
     // channel, so it is recorded whether or not there is a pin to drive.
     RUNTIME->status_led_enabled = lit ? 1u : 0u;
 
-    // LCOV_EXCL_START - unreachable: every One ROM board has a status LED, so
-    // nothing under test can arrive here with no pin.  The guard stays because
-    // it is the board metadata that says so, not this file.
     if (gpio == GPIO_NONE) {
+        // LCOV_UNREACHABLE_START - every One ROM board has a status LED, so
+        // nothing under test can arrive here with no pin.  The guard stays
+        // because it is the board metadata that says so, not this file.
         return;
+        // LCOV_UNREACHABLE_STOP
     }
-    // LCOV_EXCL_STOP
 
     // The status LED is active low, so lit drives the pin low.  On a board that
     // shares the pin, a write while the state machine holds it reaches nothing
@@ -804,16 +805,17 @@ static void led_advance(uint8_t led, led_channel_t *ch, uint32_t now_ms) {
             // keeps its shape.
             entry_ms = ((uint32_t)led_flame_table[ch->step].ms *
                         (uint32_t)ch->period_ms) / LED_FLAME_DEFAULT_PERIOD_MS;
-            // LCOV_EXCL_START - unreachable.  Two assertions where the flame
-            // table is defined are what make it so: that no table entry is
-            // shorter than LED_FLAME_TABLE_MIN_MS, and that that entry scaled
-            // by LED_FLAME_MIN_PERIOD_MS over LED_FLAME_DEFAULT_PERIOD_MS is
-            // still at least 1.  Break either and the build fails there rather
-            // than letting this line quietly start mattering again.
             if (entry_ms < 1u) {
+                // LCOV_UNREACHABLE_START - two assertions where the flame table
+                // is defined are what make it so: that no table entry is
+                // shorter than LED_FLAME_TABLE_MIN_MS, and that that entry
+                // scaled by LED_FLAME_MIN_PERIOD_MS over
+                // LED_FLAME_DEFAULT_PERIOD_MS is still at least 1.  Break
+                // either and the build fails there rather than letting this
+                // line quietly start mattering again.
                 entry_ms = 1u;
+                // LCOV_UNREACHABLE_STOP
             }
-            // LCOV_EXCL_STOP
             ch->next_frame_ms = now_ms + entry_ms;
             break;
         }
@@ -848,11 +850,11 @@ static void led_advance(uint8_t led, led_channel_t *ch, uint32_t now_ms) {
             ch->next_frame_ms = now_ms + led_frame_interval(ch);
             break;
 
-        // LCOV_EXCL_START - unreachable: pio_led_set refuses a mode this
-        // switch does not name, so a channel never holds one.
+        // LCOV_UNREACHABLE_START - pio_led_set refuses a mode this switch does
+        // not name, so a channel never holds one.
         default:
             break;
-        // LCOV_EXCL_STOP
+        // LCOV_UNREACHABLE_STOP
     }
 }
 
@@ -1075,11 +1077,11 @@ ora_result_t pio_led_set(const ora_led_request_t *req) {
             ch->next_frame_ms = now_ms + led_frame_interval(ch);
             break;
 
-        // LCOV_EXCL_START - unreachable: the mode was validated above, before
-        // it was stored, so every mode a channel can hold is named here.
+        // LCOV_UNREACHABLE_START - the mode was validated above, before it was
+        // stored, so every mode a channel can hold is named here.
         default:
             break;
-        // LCOV_EXCL_STOP
+        // LCOV_UNREACHABLE_STOP
     }
 
     led_rearm(now_ms);
