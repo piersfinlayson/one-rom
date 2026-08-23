@@ -3055,11 +3055,55 @@ __attribute__((noinline)) static void rbcp_setup(
 // Plugin entry point
 // ---------------------------------------------------------------------------
 
+// Place the plugin's initialised data and clear its zeroed data.
+//
+// A plugin owns its own RAM sections (see firmware/ora/plugin.h), and the
+// static RAM it is handed holds whatever the firmware last left there - so a
+// static relying on zero initialisation starts with garbage in it.
+//
+// A host test build's data belongs to the host process, and these symbols do
+// not exist there, so the body is compiled out rather than skipped at run time.
+static void init_data_bss(void) {
+#if !defined(ORA_HOST_TEST)
+    extern uint32_t __ramfunc_start;
+    extern uint32_t __ramfunc_end;
+    extern uint32_t __ramfunc_load;
+    extern uint32_t __data_start;
+    extern uint32_t __data_end;
+    extern uint32_t __data_load;
+    extern uint32_t __bss_start;
+    extern uint32_t __bss_end;
+
+    // Copy .ramfunc from LMA (flash) to VMA (RAM)
+    uint32_t *src = &__ramfunc_load;
+    uint32_t *dst = &__ramfunc_start;
+    while (dst < &__ramfunc_end) {
+        *dst++ = *src++;
+    }
+
+    // Copy .data from LMA (flash) to VMA (RAM)
+    src = &__data_load;
+    dst = &__data_start;
+    while (dst < &__data_end) {
+        *dst++ = *src++;
+    }
+
+    // Zero .bss
+    dst = &__bss_start;
+    while (dst < &__bss_end) {
+        *dst++ = 0;
+    }
+#endif // !ORA_HOST_TEST
+}
+
 void rbcp_main(
     ora_lookup_fn_t         ora_lookup_fn,
     ora_plugin_type_t       plugin_type,
     const ora_entry_args_t *entry_args
 ) {
+    // Before anything reads a static.
+    init_data_bss();
+
     (void)plugin_type;
     (void)entry_args;
 
