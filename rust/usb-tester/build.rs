@@ -214,6 +214,32 @@ fn main() {
     // The gcov runtime the instrumented objects call into.  Last, so it
     // follows everything that references it on the link line.
     if coverage {
+        if let Some(dir) = gcov_lib_dir() {
+            println!("cargo:rustc-link-search=native={dir}");
+        }
         println!("cargo:rustc-link-lib=gcov");
     }
+}
+
+/// The directory holding the pinned compiler's gcov runtime.
+///
+/// The instrumented objects call into the libgcov that ships with the compiler
+/// that built them, and the link driver is the distribution's cc, which would
+/// otherwise find its own.  Naming the directory is enough - pointing rustc at
+/// a different linker would relink the whole workspace through a compiler it
+/// has no other reason to use, and that costs more than it fixes.
+fn gcov_lib_dir() -> Option<String> {
+    let cc = env::var("HOST_CC")
+        .or_else(|_| env::var("CC"))
+        .unwrap_or_else(|_| "cc".to_string());
+    let out = std::process::Command::new(&cc)
+        .arg("-print-file-name=libgcov.a")
+        .output()
+        .ok()?;
+    let path = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    let dir = std::path::Path::new(&path).parent()?;
+    if dir.as_os_str().is_empty() {
+        return None;
+    }
+    Some(dir.display().to_string())
 }

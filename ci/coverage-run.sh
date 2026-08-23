@@ -89,14 +89,6 @@ CC_VERSION=$(tr -d '[:space:]' < "$ROOT/ci/c-compiler-version")
 export CC="gcc-$CC_VERSION"
 export HOST_CC="$CC"
 GCOV="gcov-$CC_VERSION"
-
-# rustc links the tester binaries, and its default driver is the distribution's
-# cc.  The instrumented objects are the pinned compiler's, and the -lgcov the
-# build scripts ask for has to be that compiler's runtime too - resolved by the
-# driver, so the driver is the one to change.  Left alone the link succeeds
-# against the wrong libgcov and the run writes no counters at all, which reads
-# as "nothing was instrumented" rather than as a mismatch.
-export RUSTFLAGS="${RUSTFLAGS:+$RUSTFLAGS }-C linker=$CC"
 for t in "$CC" "$GCOV"; do
     command -v "$t" >/dev/null || {
         echo "$t not found on PATH - install it with ci/install-c-compiler.sh." >&2
