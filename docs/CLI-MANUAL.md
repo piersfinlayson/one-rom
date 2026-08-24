@@ -22,7 +22,7 @@ reader: HTML comments survive pandoc into the PDF unrendered.
 
 * Breaking changes are carried in two sections, and a change that breaks an
   existing command line updates both.  `# New Breaking Changes`, near the top,
-  lists the release in development alone.  `## Appendix: Breaking Change
+  lists the release in development alone.  `# Appendix: Breaking Change
   History`, at the end, keeps every release, newest first.  At release time the
   top section's entries move down under a new version heading in the appendix,
   and the top section empties for the next cycle.
@@ -37,13 +37,20 @@ reader: HTML comments survive pandoc into the PDF unrendered.
 
 # One ROM CLI Manual
 
+# Introduction
+
 `onerom` (`onerom.exe` on Windows) is the command-line tool for managing One ROM
 ROM emulators: discovering connected devices, building and flashing firmware,
 inspecting device state, and manipulating ROM image files.
 
-This manual is in two parts. The **Guide** walks through installation and the
-common workflows. The **Reference** documents every command, subcommand and
-option.
+## About This Document
+
+This One ROM CLI manual is in three parts:
+
+- **Guide** — installation and the common workflows.
+- **Reference** — every command, subcommand and option.
+- **Problems** — symptoms and their fixes, including [a One ROM the CLI cannot
+  find](#recovering-a-one-rom-the-cli-cannot-find).
 
 > This manual documents the `onerom` CLI as of release v<!--[version:cli]-->0.4.0<!--[/]-->. Board,
 > chip and plugin lists shown in examples are illustrative — the set your build
@@ -139,9 +146,9 @@ situations:
 
 - **Running** — normal firmware is running and serving ROMs; its USB stack
   (provided by the system USB plugin) exposes the picobootx interface.
-- **Stopped** — the device is in the RP2350 bootloader (BOOTSEL). A bare RP2350
+- **Stopped** — the device is in One ROM's bootloader (BOOTSEL). A bare RP2350
   bootloader is also reachable here, which is how unprogrammed or bricked units
-  are recovered.
+  are [recovered](#recovering-a-one-rom-the-cli-cannot-find).
 
 Some commands work in either state; some require one specifically. Each
 reference entry notes when a device connection is required, and the state model
@@ -178,7 +185,9 @@ Two situations need extra flags:
 
 - **Unrecognised / unprogrammed / bricked** units: add `--unrecognised` (`-u`)
   and supply `--board`, since the board type can't be inferred. The unit must
-  still expose a valid picoboot USB interface.
+  still expose a valid picoboot USB interface. It reports no serial at all, so
+  `--serial` cannot pick between two of them — attach one at a time, and see
+  [Recovering a One ROM the CLI cannot find](#recovering-a-one-rom-the-cli-cannot-find).
 - **Non-standard USB IDs**: add `--vid-pid <VID:PID>` (hex), repeatable. When
   supplied, only the given VID/PID pairs are matched.
 
@@ -388,11 +397,12 @@ plugin. Add `--output <FILE>` to keep a transcript, or use
 `onerom program --config c64.json --follow` to go straight from programming to
 watching. See [`monitor log`](#monitor-log).
 
-### Erase / recover a device
+### Erase a device
 
 Erase flash. This is best done while stopped; by default the command reboots the
-device into the required state first. A fully erased unit falls back to the
-RP2350 bootloader and is then reprogrammed with `--unrecognised` + `--board`:
+device into the required state first. A fully erased unit falls back to One
+ROM's bootloader and is then reprogrammed with `--unrecognised` + `--board`, as
+[Recovering a One ROM the CLI cannot find](#recovering-a-one-rom-the-cli-cannot-find) describes:
 
 ```
 onerom control erase --all
@@ -428,7 +438,8 @@ Many commands reboot the device and, by default, pause briefly afterwards to let
 it re-enumerate on the USB bus.
 
 - **Running** (default reboot target) — firmware active, serving ROMs.
-- **Stopped** — RP2350 bootloader (BOOTSEL); required for some flash operations.
+- **Stopped** — One ROM/RP2350 bootloader (BOOTSEL), required for some flash
+  operations.
 
 Common controls, where a command supports them:
 
@@ -466,7 +477,7 @@ any level).
 |---|---|
 | `--serial, -s <DEVICE>` | Select a One ROM by serial number. Required when multiple are connected; auto-selected when exactly one is present. Accepts `*` and `?` wildcards. |
 | `--vid-pid <VID:PID>` (alias `--id`) | USB vendor/product ID pair in hex (e.g. `1234:abcd`). Repeatable; when given, only these pairs are matched. Use with `--unrecognised`. |
-| `--unrecognised, -u` (alias `--unrecognized`) | Allow management of unrecognised/unprogrammed/bricked RP2350 boards. The unit must still expose a valid picoboot USB interface. Use with caution — permits programming any attached RP2350 board. |
+| `--unrecognised, -u` (alias `--unrecognized`) | Allow management of unrecognised/unprogrammed/bricked RP2350 boards. The unit must still expose a valid picoboot USB interface. Use with caution — permits programming any attached RP2350 board. See [Recovering a One ROM the CLI cannot find](#recovering-a-one-rom-the-cli-cannot-find). |
 | `--yes, -y` | Auto-confirm all prompts. Also suppresses the over-limit CPU frequency/voltage confirmations. |
 | `--verbose, -v` | Enable verbose output. |
 | `--log-level <LEVEL>` | Set log level. Defaults to `warn`. |
@@ -521,6 +532,14 @@ onerom scan --slots
 | `--board <BOARD>` | Only show devices matching this board type. Conflicts with `--list-boards`. Must be a Fire board — a scan cannot find an Ice board. |
 | `--list-boards` | List the known board types, the same listing as [`board list`](#board-list). |
 | `--slots` (alias `--slot`) | Also show the ROM slot contents for each device found. Conflicts with `--list-boards`. |
+
+Example output:
+
+```
+Scanning ... 
+found 1 connected device:
+  One ROM Fire 28 C - Firmware: v0.7.2 State: Running Serial: FC9D67248E8E8023
+```
 
 Device required: no.
 
@@ -1351,14 +1370,15 @@ Set x1 (gpio9) low for 2000ms - the device times the hold and then sets it high 
 ### control erase
 
 Permanently erase flash contents — firmware, metadata and ROM images. A fully
-erased unit boots into the RP2350 bootloader and is reprogrammed with
+erased unit boots into One ROM's bootloader and is reprogrammed with
 `--unrecognised` + `--board`.
 
 Best performed while stopped; by default the command reboots into the required
 state first. Erasing the core firmware or the system plugin while **running**
-takes down the USB stack (requiring manual BOOTSEL via the header pins), and
-large erases may cause a temporary USB drop and re-enumerate — in which case the
-erase likely succeeded and can be checked with `inspect peek memory`. Anything
+takes down the USB stack (requiring
+[manual BOOTSEL](#recovering-a-one-rom-the-cli-cannot-find)), and large erases
+may cause a temporary USB drop and re-enumerate — in which case the erase likely
+succeeded and can be checked with `inspect peek memory`. Anything
 else running from flash (e.g. a user plugin) may crash during an erase.
 
 Offsets are relative to the flash base `0x10000000`. Ranges must be 4096-aligned.
@@ -1853,6 +1873,20 @@ diagram.
 onerom board header --board fire-24-f
 ```
 
+With no `--board`, the CLI takes the board type from the connected One ROM. It
+cannot do that for a device whose firmware it cannot read, and says so:
+
+```
+$ onerom board header --unrecognised
+Failed to execute command.
+Could not determine board type from the connected device Unknown           - Firmware: n/a   State: Unknown Serial: (no serial).
+  It may be an unprogrammed One ROM or have corrupt firmware.
+  Supply the board type with --board
+```
+
+The header carries the `BOOTSEL` pad used to boot a One ROM into its own
+bootloader — see [Recovering a One ROM the CLI cannot find](#recovering-a-one-rom-the-cli-cannot-find).
+
 Device required: no (a device is used only to infer `--board` when it is
 omitted).
 
@@ -2219,7 +2253,73 @@ have is reported against what it does have.
 
 ---
 
-## Appendix: Breaking Change History
+# Part 3 — Problems
+
+## Recovering a One ROM the CLI cannot find
+
+`onerom scan` finds nothing, and any command needing a device refuses:
+
+```
+$ onerom scan
+Scanning ... 
+No matching One ROM devices found.
+
+$ onerom inspect info
+Failed to execute command.
+No One ROM was found or specified.
+  Specify a One ROM using --serial.
+  Use 'onerom scan' to list connected One ROMs.
+```
+
+A One ROM in this state is often called bricked. Nothing is damaged. Its
+firmware is not running, so nothing answers on the USB bus — programming was
+interrupted, or the firmware on it is not right for the board. One ROM has a
+hardware bootloader which cannot be bricked, so the solution is to boot One ROM
+into its bootloader and then re-program it.
+
+1. Unplug the One ROM.
+
+2. Connect the **BOOTSEL** pad to ground. It is normally the middle pad of the
+   header's top row, and the USB shield is a good source of ground.
+   [`onerom board header --board <BOARD>`](#board-header) shows it.
+
+   > Fire 24 rev A and Fire 24 USB rev B are the exceptions, and both are rare.
+   > Rev A brings BOOTSEL out as a pin towards the bottom of the board, and USB
+   > rev B as a very small pad on the underside.
+
+3. Plug the One ROM into USB with that connection still made. The status LED
+   lights dimly.
+
+4. Remove the BOOTSEL to ground connection — it is needed only as power comes
+   up.
+
+5. Check the CLI can see it. `--unrecognised` (`-u`) matches any attached
+   RP2350 board, a Raspberry Pi Pico 2 included, so ensure only One ROM is
+   attached:
+
+   ```
+   $ onerom scan --unrecognised
+   Scanning ... 
+   found 1 connected device:
+     Unknown           - Firmware: n/a   State: Unknown Serial: (no serial)
+   ```
+
+   The CLI names a device's board, firmware and serial from the firmware it is
+   holding, and there is none in this example it can read.
+
+6. Program it, naming the board yourself:
+
+   ```
+   onerom program --unrecognised --board fire-24-f --config c64.json
+   ```
+
+   The board name is the pin count and the revision letter from the silkscreen
+   — `fire-24-f` is a 24-pin board, revision F.
+   [`onerom board list`](#board-list) prints them all.
+
+---
+
+# Appendix: Breaking Change History
 
 Changes that can alter or break a command line that worked on an earlier
 release. Newest release first.

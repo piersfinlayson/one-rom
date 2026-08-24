@@ -4,7 +4,7 @@ This article describes stock image switching, which allows different images, or 
 
 As above, up to 16 ROM images can be stored on One ROM (although the number varies by ROM type and One ROM pin count) and selected at boot time using the jumpers on the PCB.  The One ROM image select jumpers are labelled om the underside `1`, `2`, `4` and `8`, or `A`, `B`, `C` and `D`.  The jumper being open is a `0` and closed is a `1`.
 
-Do not confuse the image select jumpers with the BOOTSEL/BOOT0 jumper, labelled `B0` or `B`.  This is provided to assist with [problems flashing](/README.md#flashing-problems).
+Do not confuse the image select jumpers with the BOOTSEL/BOOT0 jumper, labelled `B0` or `B`.  This is provided to [recover a One ROM a programmer cannot find](/docs/CLI-MANUAL.md#recovering-a-one-rom-the-cli-cannot-find).
 
 The images with the One ROM firmware are numbered from 0 onwards, so, to select image 5 (the 6th image), you would close jumpers `1` and `4`, or `A` and `C`.
 

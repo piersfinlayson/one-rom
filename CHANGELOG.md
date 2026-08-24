@@ -34,6 +34,7 @@ In detail:
 - Add Motorola S-record (`srec`) as a ROM image input format, alongside Intel HEX.  A chip may set `"format": "srec"` in a config file, with the same optional `"load_address"`; the CLI exposes it as `--slot format=srec,load-address=...`, and `onerom image convert` converts between `binary`, `ihex` and `srec` in any direction.  Unwritten bytes read as `0xFF`, as for Intel HEX.
 - One ROM Lab can dump a ROM as S-records: `f:srec`, alongside the existing `ihex` and hex dump formats.
 - Publish the CLI manual, chip type reference and compatibility reference as PDFs, in A4 and US Letter, for reading and printing away from a browser.  Each carries the version of the thing it documents rather than a repository version.
+- The CLI manual now has a Problems part, covering how to recover a One ROM the programming tools cannot find.
 - `onerom inspect led` and `onerom inspect rgb` report what each of One ROM's LEDs is doing — the mode, the speed, the GPIO, and the colour and brightness of the RGB one.  A board without an RGB LED says so rather than failing.
   - This required a firmware update.
 - Plugins can now take constants from the ORA API rather than writing the values out again.  A value the firmware and a plugin have to agree on — the longest hold either accepts, say — is declared once and reaches both, so a change to it cannot leave them disagreeing.
