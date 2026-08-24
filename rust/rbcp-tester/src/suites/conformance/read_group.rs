@@ -37,8 +37,22 @@
 //! back-channel of their own size rather than [`Ctx::session`]'s — see
 //! [`Bus::enter_sized`].
 
-use crate::driver::{Bus, HDR_SIZE, Session, control, group, modify, read, slot_peek_args};
+use onerom_fw_emulator::ffi;
+
+use crate::driver::{Bus, HDR_SIZE, Session, aux, control, group, modify, read, slot_peek_args};
 use crate::{Ctx, Outcome};
+
+/// API identifiers withheld from the plugin for the scenarios that need them.
+///
+/// The firmware's metadata getter is how the plugin learns which flash slot the
+/// device booted, and the emulator implements the whole API — so the branch the
+/// plugin takes without it is unreachable unless the call is taken away.
+/// Consulted by [`crate::suites::withheld_api`] before the plugin starts, which
+/// is when a plugin resolves its pointers.
+pub static WITHHELD_API: &[(&str, &[u32])] = &[(
+    "conformance.read.no_boot_slots_without_metadata",
+    &[ffi::api_id_t_ORA_ID_GET_METADATA_UINT],
+)];
 
 /// The RBCP version this module was written against.
 ///
@@ -814,6 +828,290 @@ pub fn not_valid_in_command_mode(bus: &mut Bus, ctx: &Ctx) -> Result<Outcome, St
         "0x{dst:06X} serves 0x{got:02X}, which is neither the armed 0x{armed:02X} nor the flash \
          slot count 0x{count:02X} — something other than these two writes reached it"
     ))
+}
+
+/// A Read command refused for its mode still takes its arguments off the wire.
+///
+/// "A command refused because it is not valid in the current mode is nonetheless
+/// framed like any other."  [`not_valid_in_command_mode`] sends
+/// GET_FLASH_SLOT_COUNT, which carries no arguments, so it says nothing about
+/// the count — and the two commands in this group that do carry arguments are
+/// where a device gets this wrong.
+///
+/// Each is sent in command mode, properly knocked and otherwise well formed, and
+/// followed by a properly knocked SLOT_POKE.  That poke lands only if the device
+/// stopped at the declared count: one byte over and it swallows the first byte
+/// of the poke's knock, which is then read misaligned and the poke never
+/// arrives.
+///
+/// One byte *under* is not visible this way, and that is the specification's
+/// doing rather than a gap: in command mode the next thing the device looks for
+/// is a knock, and "a host recovering from desync in command mode need transmit
+/// at most 10 additional address reads before a knock can re-establish framing"
+/// — a single byte left behind is absorbed by exactly that.  Where a short count
+/// does desync a session is command-response mode, and
+/// [`super::led::argument_counts_are_consumed_exactly`] asserts it there.
+pub fn command_mode_refusal_takes_its_arguments(
+    bus: &mut Bus,
+    ctx: &Ctx,
+) -> Result<Outcome, String> {
+    let addr = ctx.scratch_addr();
+    let peek = slot_peek_args(peek_src(ctx), 1, ctx.active_ram_slot);
+
+    for (cmd, args) in [
+        (read::GET_FLASH_SLOT_INFO, &[0u8][..]),
+        (read::SLOT_PEEK, &peek[..]),
+    ] {
+        let armed = bus.read(addr)? ^ 0xFF;
+
+        bus.knock(ctx.command_page())?;
+        bus.send_cmd(ctx.command_page(), group::READ, cmd, args)?;
+
+        bus.knock(ctx.command_page())?;
+        bus.send_poke(ctx, addr, armed)?;
+
+        bus.await_byte(addr, armed).map_err(|e| {
+            format!(
+                "{e} — the SLOT_POKE after a command-mode 0x01/0x{cmd:02X} never landed, so the \
+                 device took more than that command's {} argument byte(s) off the wire before \
+                 discarding it",
+                args.len()
+            )
+        })?;
+    }
+
+    Ok(Outcome::Pass)
+}
+
+/// SLOT_PEEK must reject a read running past the end of the slot.
+///
+/// "Fails if ... the address range specified is outside the slot."  The slot is
+/// one the host may name and the count fits the data section, so the only thing
+/// wrong is where the read would end — and the same peek shortened to end
+/// exactly at the slot's last byte must succeed, which puts the bound under test
+/// from both sides rather than only the permissive one.
+pub fn slot_peek_rejects_a_range_past_the_slot_end(
+    bus: &mut Bus,
+    ctx: &Ctx,
+) -> Result<Outcome, String> {
+    const FITS: u8 = 4;
+
+    let s = ctx.session();
+    bus.enter_cmd_resp(&s)
+        .map_err(|e| format!("ENTER_CMD_RESP: {e}"))?;
+
+    let start = ctx.ram_slot_size - u32::from(FITS);
+
+    bus.expect_rejected(
+        &s,
+        group::READ,
+        read::SLOT_PEEK,
+        &slot_peek_args(start, FITS * 2, ctx.active_ram_slot),
+    )
+    .map_err(|e| {
+        format!(
+            "{e} — {} bytes from 0x{start:06X} run {FITS} bytes past the end of this device's \
+             {}-byte RAM slot",
+            FITS * 2,
+            ctx.ram_slot_size
+        )
+    })?;
+
+    bus.issue_cmd(
+        &s,
+        group::READ,
+        read::SLOT_PEEK,
+        &slot_peek_args(start, FITS, ctx.active_ram_slot),
+    )
+    .map_err(|e| {
+        format!(
+            "SLOT_PEEK of the {FITS} bytes ending at the slot's last: {e} — the refusal above \
+             cannot be attributed to the range if a read that does fit is refused too"
+        )
+    })?;
+
+    Ok(Outcome::Pass)
+}
+
+/// An answer longer than the data section is written up to its end and no
+/// further.
+///
+/// GET_DEVICE_TYPE is not one of the commands the specification lets a device
+/// refuse for want of room, and its answer is 24 bytes, so a host that set aside
+/// fewer gets as much of it as fits.  What must not happen is the rest landing
+/// past the region the host gave the device, which is memory the host is using
+/// for something else.
+///
+/// Both halves are asserted against values learnt from the device beforehand:
+/// the bytes that fit against the answer read from a session large enough to
+/// hold it, and the byte immediately above the region against the byte the
+/// answer would have put there, inverted and written by a verified command-mode
+/// poke.  So the byte can only fail to discriminate if the device writes
+/// something that is neither.
+pub fn get_device_type_is_clamped_to_the_data_section(
+    bus: &mut Bus,
+    ctx: &Ctx,
+) -> Result<Outcome, String> {
+    /// Data section the small session offers, a third of the answer.
+    const ROOM: u32 = 8;
+
+    let full = ctx.session();
+    bus.enter_cmd_resp(&full)
+        .map_err(|e| format!("ENTER_CMD_RESP: {e}"))?;
+
+    bus.issue_cmd(&full, group::READ, read::GET_DEVICE_TYPE, &[])
+        .map_err(|e| format!("GET_DEVICE_TYPE: {e}"))?;
+    let want = bus.read_data(&full, 0, ROOM + 1)?;
+
+    bus.issue_cmd(&full, group::CONTROL, control::EXIT_CMD_RESP_ACK, &[])
+        .map_err(|e| format!("EXIT_CMD_RESP_ACK: {e}"))?;
+
+    // The first byte above the small region, armed with the opposite of what an
+    // unclamped write would put there.
+    let over = ctx.bch_start() + HDR_SIZE + ROOM;
+    let armed = want[ROOM as usize] ^ 0xFF;
+    bus.poke_verified(ctx, over, armed)
+        .map_err(|e| format!("arming the byte above the back-channel: {e}"))?;
+
+    let s = bus.enter_sized(ctx, (HDR_SIZE + ROOM) as u16)?;
+
+    bus.issue_cmd(&s, group::READ, read::GET_DEVICE_TYPE, &[])
+        .map_err(|e| {
+            format!(
+                "GET_DEVICE_TYPE with a {ROOM}-byte data section: {e} — the command has no \
+                 requirement to have room for its whole answer"
+            )
+        })?;
+
+    bus.expect_data(
+        &s,
+        0,
+        &want[..ROOM as usize],
+        "GET_DEVICE_TYPE clamped to the data section",
+    )?;
+
+    let got = bus.read(over)?;
+    if got != armed {
+        return Err(format!(
+            "0x{over:06X}, the first byte above a {ROOM}-byte data section, serves 0x{got:02X} \
+             rather than the armed 0x{armed:02X} — GET_DEVICE_TYPE's 24-byte answer was written \
+             past the region the host set aside (byte {ROOM} of it is 0x{:02X})",
+            want[ROOM as usize]
+        ));
+    }
+
+    Ok(Outcome::Pass)
+}
+
+/// GET_FLASH_SLOT_INFO_ALL answers even where its preamble does not fit.
+///
+/// The preamble is four bytes and the command is not one the specification lets
+/// a device refuse for want of room, so a data section shorter than that gets
+/// the bytes that do fit — starting with the total, which is the first of them —
+/// and nothing past its end.  Every length below the preamble is exercised,
+/// because a device clamping on the wrong side of the comparison gets one of
+/// them right.
+pub fn get_flash_slot_info_all_below_the_preamble(
+    bus: &mut Bus,
+    ctx: &Ctx,
+) -> Result<Outcome, String> {
+    let full = ctx.session();
+    bus.enter_cmd_resp(&full)
+        .map_err(|e| format!("ENTER_CMD_RESP: {e}"))?;
+
+    let total = flash_slot_count(bus, &full)?;
+    let preamble = [total, 0x00, 0x00, 0x00];
+
+    bus.issue_cmd(&full, group::CONTROL, control::EXIT_CMD_RESP_ACK, &[])
+        .map_err(|e| format!("EXIT_CMD_RESP_ACK: {e}"))?;
+
+    for room in 1..PREAMBLE_SIZE {
+        let over = ctx.bch_start() + HDR_SIZE + room;
+        let armed = preamble[room as usize] ^ 0xFF;
+        bus.poke_verified(ctx, over, armed)
+            .map_err(|e| format!("arming the byte above a {room}-byte data section: {e}"))?;
+
+        let s = bus.enter_sized(ctx, (HDR_SIZE + room) as u16)?;
+
+        bus.issue_cmd(&s, group::READ, read::GET_FLASH_SLOT_INFO_ALL, &[])
+            .map_err(|e| {
+                format!(
+                    "GET_FLASH_SLOT_INFO_ALL with a {room}-byte data section: {e} — the command \
+                     has no requirement to have room for its preamble"
+                )
+            })?;
+
+        bus.expect_data(
+            &s,
+            0,
+            &preamble[..room as usize],
+            &format!("GET_FLASH_SLOT_INFO_ALL preamble clamped to {room} byte(s)"),
+        )?;
+
+        let got = bus.read(over)?;
+        if got != armed {
+            return Err(format!(
+                "0x{over:06X}, the first byte above a {room}-byte data section, serves \
+                 0x{got:02X} rather than the armed 0x{armed:02X} — the preamble was written past \
+                 the region the host set aside (byte {room} of it is 0x{:02X})",
+                preamble[room as usize]
+            ));
+        }
+
+        bus.issue_cmd(&s, group::CONTROL, control::EXIT_CMD_RESP_ACK, &[])
+            .map_err(|e| format!("EXIT_CMD_RESP_ACK after a {room}-byte data section: {e}"))?;
+    }
+
+    Ok(Outcome::Pass)
+}
+
+/// Without the firmware's metadata getter the device says it does not know which
+/// slot it booted.
+///
+/// "Flash slot the device loaded at boot, or 0xFF where it loaded none or does
+/// not know."  [`get_boot_slot_info`] refuses 0xFF from a device that does know;
+/// this is the case the value was put in the protocol for.  The plugin learns
+/// the boot slot by asking the firmware, and on firmware that cannot answer it
+/// has nothing to report — reached by withholding `ORA_ID_GET_METADATA_UINT`,
+/// since the emulator implements the whole API.
+///
+/// The same call is also the only way the plugin learns which RP2350 variant it
+/// is running on, and the auxiliary pins are range-checked against that variant's
+/// GPIO count, so the same firmware exposes no pins either.  Asserted here
+/// because one withholding produces both, and because it is the sentinel: 0xFF
+/// on its own would also be what a mis-keyed [`WITHHELD_API`] entry produced on
+/// a device that genuinely booted no slot.
+pub fn no_boot_slots_without_metadata(bus: &mut Bus, ctx: &Ctx) -> Result<Outcome, String> {
+    let s = ctx.session();
+    bus.enter_cmd_resp(&s)
+        .map_err(|e| format!("ENTER_CMD_RESP: {e}"))?;
+
+    bus.issue_cmd(&s, group::READ, read::GET_BOOT_SLOT_INFO, &[])
+        .map_err(|e| format!("GET_BOOT_SLOT_INFO: {e}"))?;
+
+    let got = bus.read_data(&s, 0, 2)?;
+    if got != [SLOT_UNKNOWN, SLOT_UNKNOWN] {
+        return Err(format!(
+            "GET_BOOT_SLOT_INFO reports flash slot 0x{:02X} and RAM slot 0x{:02X} with the \
+             firmware's metadata getter withheld; without it the plugin has no way to learn \
+             which slot the device booted, and 0x{SLOT_UNKNOWN:02X} is what the protocol has a \
+             device say where it does not know",
+            got[0], got[1]
+        ));
+    }
+
+    bus.issue_cmd(&s, group::AUX, aux::GET_AUX_CAPABILITY, &[])
+        .map_err(|e| format!("GET_AUX_CAPABILITY: {e}"))?;
+    let groups = bus.read_data(&s, 0, 1)?[0];
+    if groups != 0 {
+        return Err(format!(
+            "the device reports {groups} auxiliary pin group(s) with the firmware's metadata \
+             getter withheld; the GPIO count a pin is range-checked against is indexed by the \
+             variant that call reports, so without it there is nothing to check against"
+        ));
+    }
+
+    Ok(Outcome::Pass)
 }
 
 /// GET_BOOT_SLOT_INFO names the flash slot the device booted from and the RAM

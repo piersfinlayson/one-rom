@@ -2,6 +2,11 @@
 
 ## [0.1.3] - 2026-??-??
 
+An ENTER_CMD_RESP naming a back-channel start within 8 bytes of the end of the
+RAM slot wrote its response header onto the start of the image being served.
+Such a start is now discarded in silence, as the specification requires, and
+nothing is written.
+
 A host can now set One ROM's LEDs over the ROM bus, through RBCP's new LEDs
 group — so a bootloader can show a colour as it hands the machine over to the
 image it loaded, and the colour stays after the session ends.

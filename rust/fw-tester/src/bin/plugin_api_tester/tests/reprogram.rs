@@ -445,3 +445,100 @@ pub fn test_copy_flash_pio_verify(
         )
     })
 }
+
+/// Every way `ora_copy_flash_slot_to_ram_slot` refuses, told apart from each
+/// other.
+///
+/// The call takes two indices and a size relation, and each has its own answer:
+/// a flash slot that does not exist and a RAM slot that does not exist are both
+/// `INVALID_SLOT`, while a flash image whose size is not the RAM slot's is
+/// `INVALID_SIZE`. A plugin picking a slot to load into needs the third told
+/// apart from the first two — the slot it named is fine, the image it named
+/// simply does not fit the region being served.
+///
+/// The size case is stimulated with a real flash slot holding a real image, so
+/// it is not a disguised bad index: the same call with the matching flash slot
+/// is what `test_copy_flash_to_ram` runs, and it succeeds. Slots that all serve
+/// the same size leave nothing to compare, so the size case is skipped rather
+/// than faked.
+pub fn test_copy_flash_refusals(
+    emu: &Emulator,
+    config: &Config,
+    board: Board,
+    fw_version: onerom_config::fw::FirmwareVersion,
+    base_dir: &Path,
+    set_idx: usize,
+    dst_ram: u8,
+) -> Result<(), String> {
+    let flash_count = emu.get_flash_slot_count(ORA_FLASH_SLOT_FLAG_EXCLUDE_PLUGINS);
+    let ram_count = emu.get_ram_slot_count();
+    let mut errors = Vec::new();
+
+    fn note(errors: &mut Vec<String>, what: String, got: OraResult, want: OraResult) {
+        if got != want {
+            errors.push(format!("{what}: got {got:?}, want {want:?}"));
+        }
+    }
+
+    note(
+        &mut errors,
+        format!("flash slot {flash_count}, past the last one"),
+        emu.copy_flash_slot_to_ram_slot(
+            flash_count,
+            ORA_FLASH_SLOT_FLAG_EXCLUDE_PLUGINS,
+            dst_ram,
+            0,
+        ),
+        OraResult::InvalidSlot,
+    );
+    note(
+        &mut errors,
+        format!("RAM slot {ram_count}, past the last one"),
+        emu.copy_flash_slot_to_ram_slot(
+            set_idx as u8,
+            ORA_FLASH_SLOT_FLAG_EXCLUDE_PLUGINS,
+            ram_count,
+            0,
+        ),
+        OraResult::InvalidSlot,
+    );
+
+    // A RAM slot is exactly one served region, so the region size is the size
+    // every flash image must match to be copied into one.
+    let region_size = onerom_fw_tester::geometry::expected_rom_slot_size(
+        config, board, fw_version, base_dir, set_idx,
+    )?;
+    let mismatched = (0..flash_count as usize)
+        .filter(|&i| i != set_idx)
+        .find_map(|i| {
+            let size = onerom_fw_tester::geometry::expected_rom_slot_size(
+                config, board, fw_version, base_dir, i,
+            )
+            .ok()?;
+            (size != region_size).then_some((i, size))
+        });
+
+    match mismatched {
+        Some((flash_slot, size)) => {
+            note(
+                &mut errors,
+                format!("a {size} byte image into a {region_size} byte slot"),
+                emu.copy_flash_slot_to_ram_slot(
+                    flash_slot as u8,
+                    ORA_FLASH_SLOT_FLAG_EXCLUDE_PLUGINS,
+                    dst_ram,
+                    0,
+                ),
+                OraResult::InvalidSize,
+            );
+            println!("  bad indices and a {size} byte image into a {region_size} byte slot");
+        }
+        None => println!("  bad indices (every flash slot serves {region_size} bytes)"),
+    }
+
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors.join("; "))
+    }
+}

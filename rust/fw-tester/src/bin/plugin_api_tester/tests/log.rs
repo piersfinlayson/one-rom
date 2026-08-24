@@ -532,3 +532,161 @@ pub fn test_log_categories(
 
     Ok(())
 }
+
+/// `ora_err_log` writes without holding anything, and takes nothing away from a
+/// plugin that does hold a claim.
+///
+/// This is the contract that lets a plugin report an error from anywhere:
+/// error logging is outside the claim system entirely, so one plugin's errors
+/// cannot lock the other out of the channel it owns and cannot earn the caller
+/// a claim it never took. Arm by giving the channel to one plugin, stimulate
+/// with errors logged as the other, then discriminate — the holder still
+/// writes, and the error logger is still refused a write it never claimed.
+///
+/// Where the message itself lands is not checked, and cannot be here: under
+/// `TEST_BUILD` the boot channel's formatter is the host's `printf`, so the
+/// bytes go to this process's stdout rather than into the ring a reader would
+/// drain.
+pub fn test_err_log_claims_nothing(emu: &Emulator) -> Result<(), String> {
+    emu.set_calling_plugin(USER);
+    check(
+        "user claims channel 0 for writing",
+        emu.log_open_write(CH0, c"user"),
+        OraResult::Ok,
+    )?;
+
+    // The system plugin logs errors while holding no claim at all, with and
+    // without a conversion, since the two take different paths through the
+    // formatter.
+    emu.set_calling_plugin(SYSTEM);
+    emu.err_log(c"plugin api tester: a plain error");
+    emu.err_log_uint(c"plugin api tester: error with a value %u", 0xDEAD_BEEF);
+
+    check(
+        "error logger still cannot write the channel it never claimed",
+        emu.log_write(CH0, b"nope"),
+        OraResult::InvalidArg,
+    )?;
+    check(
+        "error logger still cannot close a claim it never took",
+        emu.log_close_write(CH0),
+        OraResult::InvalidArg,
+    )?;
+
+    emu.set_calling_plugin(USER);
+    check(
+        "holder still writes after the other plugin logged errors",
+        emu.log_write(CH0, b"still mine"),
+        OraResult::Ok,
+    )?;
+    check(
+        "holder releases the channel",
+        emu.log_close_write(CH0),
+        OraResult::Ok,
+    )?;
+
+    // Drain what this test wrote so the next one starts from an empty channel.
+    check(
+        "user claims for reading",
+        emu.log_open_read(CH0),
+        OraResult::Ok,
+    )?;
+    let (r, _) = emu.log_read(CH0, 4096);
+    check("user drains", r, OraResult::Ok)?;
+    check(
+        "user releases the read claim",
+        emu.log_close_read(CH0),
+        OraResult::Ok,
+    )?;
+
+    Ok(())
+}
+
+/// A NULL pointer is the caller's own mistake, and is answered as one before
+/// anything about the channel is considered.
+///
+/// The ordering is the point rather than the code. `test_absent_channel_is_
+/// rejected` fixes what a channel this firmware does not have earns —
+/// `NotSupported`, meaning fall back — so every NULL argument is passed here
+/// against an absent channel as well as a real one. Both must answer
+/// `InvalidArg`: a plugin that passed NULL has a bug to fix, and telling it to
+/// fall back to another channel would send it looking in the wrong place.
+///
+/// The unheld `close_read` closes the last gap in the claim table's refusals:
+/// `test_write_claim_excludes_other_plugin` covers write, open and close_write
+/// for a plugin that does not hold the claim, and this is the read side.
+pub fn test_null_arguments_and_unheld_close(emu: &Emulator) -> Result<(), String> {
+    emu.set_calling_plugin(SYSTEM);
+
+    for (label, channel) in [("a real", CH0), ("an absent", CH_ABSENT)] {
+        check(
+            &format!("open_write with a NULL name on {label} channel"),
+            emu.log_open_write_null_name(channel),
+            OraResult::InvalidArg,
+        )?;
+        check(
+            &format!("write with a NULL buffer on {label} channel"),
+            emu.log_write_null_buf(channel, 4),
+            OraResult::InvalidArg,
+        )?;
+        check(
+            &format!("read with a NULL buffer on {label} channel"),
+            emu.log_read_null_buf(channel, 4),
+            OraResult::InvalidArg,
+        )?;
+        check(
+            &format!("read with a NULL copied count on {label} channel"),
+            emu.log_read_null_copied(channel, 4),
+            OraResult::InvalidArg,
+        )?;
+    }
+
+    // Holding the claim does not make a NULL buffer acceptable.
+    check(
+        "system claims channel 0 for writing",
+        emu.log_open_write(CH0, c"system"),
+        OraResult::Ok,
+    )?;
+    check(
+        "the holder writes a NULL buffer",
+        emu.log_write_null_buf(CH0, 4),
+        OraResult::InvalidArg,
+    )?;
+    // ...and the claim it does hold still works, so the refusal above is about
+    // the pointer and not about the claim.
+    check(
+        "the holder writes a real buffer",
+        emu.log_write(CH0, b"ok"),
+        OraResult::Ok,
+    )?;
+    check(
+        "system releases the write claim",
+        emu.log_close_write(CH0),
+        OraResult::Ok,
+    )?;
+
+    // The read side of the unheld-claim refusals.
+    check(
+        "system claims channel 0 for reading",
+        emu.log_open_read(CH0),
+        OraResult::Ok,
+    )?;
+    emu.set_calling_plugin(USER);
+    check(
+        "user closes a read claim it does not hold",
+        emu.log_close_read(CH0),
+        OraResult::InvalidArg,
+    )?;
+    emu.set_calling_plugin(SYSTEM);
+    // Discriminate: the holder can still close it, so the refusal was about
+    // who asked rather than about the channel.
+    let (r, _) = emu.log_read(CH0, 4096);
+    check("holder drains what this test wrote", r, OraResult::Ok)?;
+    check(
+        "holder closes its own read claim",
+        emu.log_close_read(CH0),
+        OraResult::Ok,
+    )?;
+
+    Ok(())
+}

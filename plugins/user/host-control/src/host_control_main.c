@@ -759,6 +759,15 @@ static bool exec_enter_cmd_resp(void) {
     }
     uint32_t region_end = region_offset + (uint32_t)region_size;
 
+    // A start with no room behind it for the header is discarded in silence,
+    // because there is nowhere to write the failure that would report it.
+    // Checked before anything is committed, so nothing is written at all.
+    if (region_offset + HDR_SIZE > slot_size) {
+        s_log("ENTER_CMD_RESP discarded: start 0x%06X leaves no room for the response header",
+              (unsigned)region_offset);
+        return false;
+    }
+
     // Commit the fields the response header is written through, before the
     // size check rather than after it.  An oversized region is the one
     // ENTER_CMD_RESP error the specification requires the device to *report*
@@ -777,12 +786,8 @@ static bool exec_enter_cmd_resp(void) {
     }
 
     if (region_end > slot_size) {
-        // Report the failure and stay in command mode.  The start address is
-        // already known to be 4-byte aligned and, where the 8-byte header fits
-        // inside the slot, there is somewhere to write it even though the
-        // region as a whole does not fit.  hdr_write bounds-checks each byte,
-        // so a start address too close to the end of the slot degrades to the
-        // silent discard that is then the only thing available.
+        // Report the failure and stay in command mode.  The check above has
+        // already established there is room for the header to report it in.
         s_log("ENTER_CMD_RESP failed: back-channel region exceeds slot size");
         cmd_begin(active_slot, GRP_CONTROL, CMD_ENTER_CMD_RESP);
         cmd_end(active_slot, false);

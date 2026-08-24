@@ -143,6 +143,11 @@ static void sweep_signed(void) {
                         diff(fmt, (long)val);
                         build(fmt, FLAGS[f], WIDTHS[w], PRECS[p], "ll", conv);
                         diff(fmt, (long long)val);
+                        // z on a signed conversion takes the signed type of
+                        // the same width as size_t, which is the one branch of
+                        // the signed argument fetch nothing else reaches.
+                        build(fmt, FLAGS[f], WIDTHS[w], PRECS[p], "z", conv);
+                        diff(fmt, (ptrdiff_t)val);
                     }
                 }
             }
@@ -311,6 +316,32 @@ static void explicit_cases(void) {
     expect("a%!qb",        "a%qb");
 }
 
+// onerom_rtt_printf is the entry point the firmware and plugins call.
+// Everything above goes in through onerom_rtt_vprintf, so nothing else
+// exercises the variadic wrapper or the channel it forwards.
+static void printf_entry(void) {
+    static const char want[] = "abc -42 0xbeef Z%";
+    char got[512];
+
+    fmt_reset();
+    onerom_rtt_printf(0, "%s %d %#x %c%%", "abc", -42, 0xbeefu, 'Z');
+    fmt_capture(got, sizeof(got));
+    fmt_checks++;
+    if (strcmp(want, got) != 0) {
+        fmt_record("printf entry", want, got);
+    }
+
+    // The channel is forwarded rather than assumed: channel 1 has no buffer,
+    // so the record is dropped and channel 0 stays empty.
+    fmt_reset();
+    onerom_rtt_printf(1, "dropped %d", 7);
+    fmt_capture(got, sizeof(got));
+    fmt_checks++;
+    if (got[0] != '\0') {
+        fmt_record("printf channel 1", "", got);
+    }
+}
+
 void fmt_tests(int *checks, int *failures, const char *const **first,
                int *first_count) {
     fmt_checks = 0;
@@ -324,6 +355,7 @@ void fmt_tests(int *checks, int *failures, const char *const **first,
     sweep_chunking();
     sweep_real_world();
     explicit_cases();
+    printf_entry();
 
     *checks = fmt_checks;
     *failures = fmt_failures;

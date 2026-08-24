@@ -54,35 +54,38 @@ static void start_serving_pios(void);
 #endif
 
 int piorom2(void) {
-    const onerom_rom_slot_t *slot = RUNTIME->current_rom_slot;
     const uint32_t rom_table_addr = (uint32_t)(uintptr_t)RUNTIME->rom_table;
     int rc;
 
     // Validate the serving algorithm configuration.  This allows subsequent
     // functions to avoid error checking.  This is a no-op when TURBO_BOOT is
     // defined.
-    rc = validate_serving_algs(slot);
+    rc = validate_serving_algs(CURRENT_SLOT);
     if (rc != 0) {
         limp_mode(LIMP_MODE_INVALID_CONFIG);
         return rc;
     }
 
-    rc = setup_serving_gpios(slot);
+    rc = setup_serving_gpios(CURRENT_SLOT);
     if (rc != 0) {
         return rc;
     }
 
-    rc = setup_serving_dma(slot, rom_table_addr);
+    rc = setup_serving_dma(CURRENT_SLOT, rom_table_addr);
     if (rc != 0) {
         return rc;
     }
 
-    rc = setup_serving_pios(slot, rom_table_addr);
+    rc = setup_serving_pios(CURRENT_SLOT, rom_table_addr);
     if (rc != 0) {
         return rc;
     }
 
     start_serving_pios();
+
+    // Serving is running, so record the width it runs at. Done here so that
+    // a device that never serves leaves the field at its initial value.
+    RUNTIME->bit_mode = BIT_MODE;
 
     return 0;
 }

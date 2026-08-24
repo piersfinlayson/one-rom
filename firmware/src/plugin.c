@@ -406,11 +406,12 @@ uint8_t ora_is_pin_output(uint8_t pin) {
 uint8_t ora_get_data_pin_nums(uint8_t *data_pins_out, uint8_t num_pins) {
     uint8_t got_pins = 0;
 
-    // First, get the pin map from the current ROM and the base address pin
+    // pin_map->data[] holds absolute GPIO numbers, which is what a plugin
+    // wants - pio_map_data_to_phys subtracts the data base from the same array
+    // to get a bit position.
     const onerom_rom_pin_map_t *pin_map = RUNTIME->current_rom_slot->roms[0]->pin_map;
-    uint8_t base_data_pin = BASE_DATA_PIN;
     uint8_t num_data_pins;
-    if (RUNTIME->bit_mode == BIT_MODE_16) {
+    if (BIT_MODE == BIT_MODE_16) {
         num_data_pins = 16;
     } else {
         num_data_pins = 8;
@@ -418,7 +419,7 @@ uint8_t ora_get_data_pin_nums(uint8_t *data_pins_out, uint8_t num_pins) {
 
     // Retrieve the data pins
     for (uint8_t ii = 0; (ii < num_data_pins) && (got_pins < num_pins); ii++) {
-        data_pins_out[got_pins] = pin_map->data[ii] + base_data_pin;
+        data_pins_out[got_pins] = pin_map->data[ii];
         got_pins++;
     }
 

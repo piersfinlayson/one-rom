@@ -60,7 +60,7 @@ use onerom_metadata::{
 ///
 /// A board with no RP variant boots the emulation as an RP235xA, matching
 /// [`Emulator::set_rp_variant`].
-fn max_gpios(board: Board) -> u8 {
+pub fn max_gpios(board: Board) -> u8 {
     match board.rp_variant() {
         Some(RpVariant::Rp235xB) => 48,
         _ => 30,
@@ -220,7 +220,7 @@ fn serving_set(header: &OneromMetadataHeader, set_idx: usize) -> Result<ServingS
 
 /// GPIOs the apio emulation records as PIO-driven outputs, i.e. those
 /// `setup_serving_gpios()` passed to `APIO_GPIO_INPUT_OUTPUT`.
-fn apio_driven_pins(max_gpios: u8) -> u64 {
+pub fn apio_driven_pins(max_gpios: u8) -> u64 {
     // SAFETY: `_apio_emulated_gpios` is a plain C global written by the
     // firmware under emulation; this reads it through a raw pointer without
     // forming a reference to the `static mut`.
@@ -380,12 +380,267 @@ pub fn test_gpio_use(
             "zero-size query: expected InvalidSize, got {result:?}"
         ));
     }
+    // The other end of the same contract, for a caller built against a header
+    // with more fields than this firmware knows: the size is clamped to what
+    // the firmware has to write, and reported back as that, rather than the
+    // caller's own number being echoed and the extra fields left as whatever
+    // the caller had there.
+    let (result, info) = emu.gpio_query_sized(0, u8::MAX);
+    if !result.is_ok() {
+        errors.push(format!("oversized query: expected OK, got {result:?}"));
+    } else if info.size as usize != size_of::<ffi::ora_gpio_info_t>() {
+        errors.push(format!(
+            "oversized query: reported {} bytes written, expected {}",
+            info.size,
+            size_of::<ffi::ora_gpio_info_t>()
+        ));
+    }
 
     if errors.is_empty() {
         println!(
             "  {} GPIOs: {} free, {} serving-read, {} serving-driven, {} system",
             max_gpios, counts[0], counts[1], counts[2], counts[3]
         );
+        Ok(())
+    } else {
+        Err(errors.join("; "))
+    }
+}
+
+/// Record a mismatch between what a call returned and what it had to return.
+fn note(errors: &mut Vec<String>, what: &str, got: OraResult, want: OraResult) {
+    if got != want {
+        errors.push(format!("{what}: got {got:?}, want {want:?}"));
+    }
+}
+
+/// The first GPIO `ora_gpio_query` classifies as `want`, or an error naming
+/// what the sweep did find.
+///
+/// Which GPIO is free, read or driven depends on the board and the slot under
+/// test, so every pin these tests touch is chosen from the firmware's own
+/// classification rather than named here.
+fn first_gpio_with_use(
+    emu: &Emulator,
+    max_gpios: u8,
+    want: ffi::ora_gpio_use_t,
+) -> Result<u8, String> {
+    for gpio in 0..max_gpios {
+        let (result, info) = emu.gpio_query(gpio);
+        if result.is_ok() && info.gpio_use == want {
+            return Ok(gpio);
+        }
+    }
+    Err(format!("no GPIO classified {}", use_name(want)))
+}
+
+/// `ora_gpio_set` drives, releases and refuses.
+///
+/// Arm by asking the firmware which pin is free and which two it is serving
+/// with.  Stimulate the free pin through all three states and read each back
+/// through `ora_gpio_query`, which is a different code path reading the same
+/// pad.  Fence the refusals: an out-of-range pin and a state that is not one
+/// of the three are `INVALID_ARG`, and a pin serving is using is `GPIO_IN_USE`
+/// without `ORA_GPIO_FLAG_FORCE`.  Discriminate on both sides — a refused call
+/// must leave its pin exactly as it was, and the same call with the force flag
+/// must go through, so the test cannot pass by refusing everything.
+///
+/// The pad the test build models is not the one serving reads: `stub_gpio_set`
+/// writes an array only `ora_gpio_query` reads, so forcing a serving pin here
+/// changes nothing the PIO emulation sees.  Every pin is put back the way it
+/// was found regardless.
+pub fn test_gpio_set(emu: &Emulator, board: Board) -> Result<(), String> {
+    const LOW: ffi::ora_gpio_state_t = ffi::ora_gpio_state_t_ORA_GPIO_STATE_LOW;
+    const HIGH: ffi::ora_gpio_state_t = ffi::ora_gpio_state_t_ORA_GPIO_STATE_HIGH;
+    const INPUT: ffi::ora_gpio_state_t = ffi::ora_gpio_state_t_ORA_GPIO_STATE_INPUT;
+    /// Past the three `ora_gpio_state_t` values.
+    const NOT_A_STATE: ffi::ora_gpio_state_t = 99;
+
+    let max_gpios = max_gpios(board);
+    let free = first_gpio_with_use(emu, max_gpios, ffi::ora_gpio_use_t_ORA_GPIO_USE_FREE)?;
+    let read = first_gpio_with_use(
+        emu,
+        max_gpios,
+        ffi::ora_gpio_use_t_ORA_GPIO_USE_SERVING_READ,
+    )?;
+    let driven = first_gpio_with_use(
+        emu,
+        max_gpios,
+        ffi::ora_gpio_use_t_ORA_GPIO_USE_SERVING_DRIVEN,
+    )?;
+
+    let mut errors = Vec::new();
+
+    // What the two serving pins look like before anything is refused.
+    let (_, read_before) = emu.gpio_query(read);
+    let (_, driven_before) = emu.gpio_query(driven);
+
+    // Drive the free pin high, then low, then release it.
+    for (state, label, want_output, want_level) in [
+        (HIGH, "high", 1u8, 1u8),
+        (LOW, "low", 1, 0),
+        (INPUT, "input", 0, 0),
+    ] {
+        note(
+            &mut errors,
+            &format!("set free GPIO {free} {label}"),
+            emu.gpio_set(free, state, false),
+            OraResult::Ok,
+        );
+        let (result, info) = emu.gpio_query(free);
+        if !result.is_ok() {
+            errors.push(format!("query after {label}: {result:?}"));
+        } else if info.is_output != want_output || info.level != want_level {
+            errors.push(format!(
+                "GPIO {free} after {label}: is_output={} level={}, want is_output={want_output} level={want_level}",
+                info.is_output, info.level
+            ));
+        }
+    }
+
+    // Refusals.
+    for gpio in [max_gpios, 63, 255] {
+        note(
+            &mut errors,
+            &format!("set out-of-range GPIO {gpio}"),
+            emu.gpio_set(gpio, LOW, false),
+            OraResult::InvalidArg,
+        );
+    }
+    note(
+        &mut errors,
+        "set a state that is not one of the three",
+        emu.gpio_set(free, NOT_A_STATE, false),
+        OraResult::InvalidArg,
+    );
+    // Forcing does not excuse a bad state or a bad pin.
+    note(
+        &mut errors,
+        "force a state that is not one of the three",
+        emu.gpio_set(free, NOT_A_STATE, true),
+        OraResult::InvalidArg,
+    );
+    note(
+        &mut errors,
+        &format!("set serving-read GPIO {read} unforced"),
+        emu.gpio_set(read, HIGH, false),
+        OraResult::GpioInUse,
+    );
+    note(
+        &mut errors,
+        &format!("set serving-driven GPIO {driven} unforced"),
+        emu.gpio_set(driven, HIGH, false),
+        OraResult::GpioInUse,
+    );
+
+    // A refused call left its pin alone.
+    let (_, read_after) = emu.gpio_query(read);
+    let (_, driven_after) = emu.gpio_query(driven);
+    if read_after != read_before {
+        errors.push(format!(
+            "refused set moved serving-read GPIO {read}: {read_before:?} -> {read_after:?}"
+        ));
+    }
+    if driven_after != driven_before {
+        errors.push(format!(
+            "refused set moved serving-driven GPIO {driven}: {driven_before:?} -> {driven_after:?}"
+        ));
+    }
+
+    // ...and the same call with the force flag goes through.
+    note(
+        &mut errors,
+        &format!("force serving-read GPIO {read} high"),
+        emu.gpio_set(read, HIGH, true),
+        OraResult::Ok,
+    );
+    let (_, forced) = emu.gpio_query(read);
+    if forced.is_output != 1 || forced.level != 1 {
+        errors.push(format!(
+            "forced GPIO {read}: is_output={} level={}, want 1/1",
+            forced.is_output, forced.level
+        ));
+    }
+    // Releasing a forced serving-read pin restores it, which is the contract
+    // that makes forcing one recoverable.
+    note(
+        &mut errors,
+        &format!("release forced GPIO {read}"),
+        emu.gpio_set(read, INPUT, true),
+        OraResult::Ok,
+    );
+    let (_, released) = emu.gpio_query(read);
+    if released != read_before {
+        errors.push(format!(
+            "released GPIO {read}: {released:?}, want {read_before:?}"
+        ));
+    }
+
+    if errors.is_empty() {
+        println!("  free GPIO {free}, serving read {read}, serving driven {driven}");
+        Ok(())
+    } else {
+        Err(errors.join("; "))
+    }
+}
+
+/// `ora_is_pin_output` answers 0xFF for a pin this device does not have, and
+/// never contradicts `ora_gpio_query` about one it does.
+///
+/// The test drives a free pin so the two calls have something to disagree
+/// about: with the pin driving, an answer of 0 would be wrong.  Under
+/// `TEST_BUILD` the call reads `GPIO_STATUS`, which this build has no model
+/// of, so it returns 0xFF for every pin — hence "0xFF or the same answer" and
+/// not a bare equality.  The out-of-range half is the same on a device and
+/// here, and it is what a wrong constant fails.
+pub fn test_is_pin_output(emu: &Emulator, board: Board) -> Result<(), String> {
+    /// The value `ora_is_pin_output` returns for a pin the device does not
+    /// have — and, in the test build, for every pin.
+    const NOT_A_PIN: u8 = 0xFF;
+
+    let max_gpios = max_gpios(board);
+    let free = first_gpio_with_use(emu, max_gpios, ffi::ora_gpio_use_t_ORA_GPIO_USE_FREE)?;
+    let mut errors = Vec::new();
+
+    for gpio in [max_gpios, 63, 255] {
+        let got = emu.is_pin_output(gpio);
+        if got != NOT_A_PIN {
+            errors.push(format!("GPIO {gpio} is out of range: got {got}, want 0xFF"));
+        }
+    }
+
+    let result = emu.gpio_set(free, ffi::ora_gpio_state_t_ORA_GPIO_STATE_HIGH, false);
+    if !result.is_ok() {
+        return Err(format!("could not drive free GPIO {free}: {result:?}"));
+    }
+
+    let mut answered = 0usize;
+    for gpio in 0..max_gpios {
+        let got = emu.is_pin_output(gpio);
+        let (result, info) = emu.gpio_query(gpio);
+        if !result.is_ok() {
+            errors.push(format!("GPIO {gpio}: query failed: {result:?}"));
+            continue;
+        }
+        if got == NOT_A_PIN {
+            continue;
+        }
+        answered += 1;
+        if u8::from(got != 0) != info.is_output {
+            errors.push(format!(
+                "GPIO {gpio}: is_pin_output says {got}, gpio_query says is_output={}",
+                info.is_output
+            ));
+        }
+    }
+
+    let result = emu.gpio_set(free, ffi::ora_gpio_state_t_ORA_GPIO_STATE_INPUT, false);
+    if !result.is_ok() {
+        errors.push(format!("could not release free GPIO {free}: {result:?}"));
+    }
+
+    if errors.is_empty() {
+        println!("  0xFF out of range, {answered}/{max_gpios} pins answered in this build");
         Ok(())
     } else {
         Err(errors.join("; "))

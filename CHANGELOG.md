@@ -51,6 +51,9 @@ In detail:
 - `onerom control led beacon` now leaves the status LED as it found it.  It previously restored the state the USB plugin had last set itself, which on a device nothing had told otherwise is off.
 - `onerom inspect gpio` reported `Level` 0 for the status LED and RGB LED pins whatever they were doing.  An output pin's level is now what it drives, rather than a pad read-back the firmware disables on those two pins.
   - This required a firmware update.
+- Fix the data pin numbers a plugin reads, which were offset by the data base and never reported more than eight.  A plugin now gets the served slot's actual GPIOs, and the API documents that the count follows the slot rather than the board.
+  - This required a firmware update.
+- Fix the ROM Bus Control Protocol corrupting the image it serves.  A host naming a back-channel that started within 8 bytes of the end of the RAM slot had the response header written over the start of the served image, where the specification requires the request to be discarded in silence.
 - `onerom program --reset-host <PIN>` resets the host system as the last step of programming, so flashing an image and restarting the machine into it is one command.  The pin is checked against the image being built before its ROM images are fetched, so a pin One ROM would be serving with costs nothing to discover.
 - `onerom program --follow` now refuses before programming when the image has no USB system plugin, rather than programming and then failing to find the serial port.  Such an image leaves the USB bus as soon as the One ROM starts serving, so there is no log to follow.
 - `onerom control pin --hold` and `onerom control reset --hold` now refuse a hold longer than the device's own 60 second limit as the command line is read, instead of sending it and having the device refuse.

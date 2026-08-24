@@ -170,6 +170,56 @@ pub fn unknown_cmd_consumes_no_arguments(bus: &mut Bus, ctx: &Ctx) -> Result<Out
     Ok(Outcome::Pass)
 }
 
+/// Every other group answers an unknown CMD the same way.
+///
+/// The rule is about a GROUP+CMD pair the device has no definition for, and it
+/// does not care which half is the unfamiliar one — so a device that dispatches
+/// on group first owes the same behaviour once per group it knows.
+/// [`unknown_cmd_consumes_no_arguments`] puts the Control group's to the test;
+/// this puts the rest of them to it.
+///
+/// Sent from inside a session, for two reasons.  Five of these groups are valid
+/// in command-response mode only, and a device refusing one for its mode never
+/// reaches the arm this scenario is about.  And a session is what makes the
+/// refusal readable: [`Bus::expect_rejected`] requires the token to have moved
+/// and the response field to say failed, so a device that quietly swallowed the
+/// frame fails here rather than passing by silence.  The NOP after each carries
+/// the framing half, exactly as it does above.
+pub fn unknown_cmd_in_every_group_consumes_no_arguments(
+    bus: &mut Bus,
+    ctx: &Ctx,
+) -> Result<Outcome, String> {
+    const UNASSIGNED_CMD: u8 = 0x7F;
+
+    let s = ctx.session();
+    bus.enter_cmd_resp(&s)
+        .map_err(|e| format!("ENTER_CMD_RESP: {e}"))?;
+
+    for probe in [
+        group::READ,
+        group::MODIFY,
+        group::NV_STORAGE,
+        group::PIPES,
+        group::AUX,
+        group::LED,
+        group::RESET,
+    ] {
+        bus.expect_rejected(&s, probe, UNASSIGNED_CMD, &[])
+            .map_err(|e| format!("group 0x{probe:02X}: {e}"))?;
+
+        bus.issue_cmd(&s, group::CONTROL, control::NOP, &[])
+            .map_err(|e| {
+                format!(
+                    "NOP after group 0x{probe:02X} CMD 0x{UNASSIGNED_CMD:02X}: {e} — the device \
+                     took argument bytes for a command it has no definition for, and cannot know \
+                     the count of"
+                )
+            })?;
+    }
+
+    Ok(Outcome::Pass)
+}
+
 /// Every group carries a zero-argument discovery command at its lowest CMD.
 ///
 /// Specification: "Every command group introduced by a version of this

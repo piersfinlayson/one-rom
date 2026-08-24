@@ -14,7 +14,13 @@ use onerom_fw_tester::geometry;
 use onerom_gen::Config;
 
 /// Verify that get_device_version returns a string that matches the parsed
-/// firmware version.
+/// firmware version, and that it writes only into a buffer big enough for it.
+///
+/// The size check is the one a plugin gets wrong: the firmware copies the whole
+/// string including its terminator, so a buffer of exactly `strlen` bytes is one
+/// short and must be refused rather than filled without a NUL. The two calls
+/// either side of that boundary are what make it a boundary and not just a
+/// refusal — one byte fewer is `INVALID_SIZE`, exactly enough is the string.
 pub fn test_device_version(emu: &Emulator, fw_version: &FirmwareVersion) -> Result<(), String> {
     let (result, version_str) = emu.get_device_version(64);
     if !result.is_ok() {
@@ -30,7 +36,25 @@ pub fn test_device_version(emu: &Emulator, fw_version: &FirmwareVersion) -> Resu
         ));
     }
 
-    println!("  version: {}", version_str);
+    // The terminator is part of what gets copied, so the smallest buffer that
+    // works is one byte longer than the string.
+    let needed = version_str.len() as u32 + 1;
+    let (result, got) = emu.get_device_version(needed);
+    if !result.is_ok() || got.as_deref() != Some(version_str.as_str()) {
+        return Err(format!(
+            "a {needed} byte buffer: got {result:?}/{got:?}, want Ok and '{version_str}'"
+        ));
+    }
+    for max_len in [0, needed - 1] {
+        let (result, _) = emu.get_device_version(max_len);
+        if result != OraResult::InvalidSize {
+            return Err(format!(
+                "a {max_len} byte buffer: expected InvalidSize, got {result:?}"
+            ));
+        }
+    }
+
+    println!("  version: {} ({} bytes)", version_str, needed);
     Ok(())
 }
 
@@ -83,6 +107,17 @@ pub fn test_metadata_str(emu: &Emulator, config: &Config) -> Result<(), String> 
                 label, result
             ));
         }
+    }
+
+    // A NULL out pointer is refused rather than written through, and refused
+    // for a key this firmware knows - so the code says "your call was wrong",
+    // not "this firmware does not have that key".
+    let result = emu.get_metadata_str_null_out(ffi::ora_metadata_key_t_ORA_METADATA_KEY_UNIT_NAME);
+    if result != OraResult::InvalidArg {
+        return Err(format!(
+            "UNIT_NAME with NULL out: expected InvalidArg, got {:?}",
+            result
+        ));
     }
 
     Ok(())
@@ -172,6 +207,18 @@ pub fn test_metadata_uint(emu: &Emulator, config: &Config) -> Result<(), String>
                 label, result
             ));
         }
+    }
+
+    // As above: a NULL out pointer on a key this firmware knows is InvalidArg,
+    // which is the answer that tells a plugin to fix the call rather than to
+    // fall back to another key.
+    let result =
+        emu.get_metadata_uint_null_out(ffi::ora_metadata_key_t_ORA_METADATA_KEY_GPIO_STATUS);
+    if result != OraResult::InvalidArg {
+        return Err(format!(
+            "GPIO_STATUS with NULL out: expected InvalidArg, got {:?}",
+            result
+        ));
     }
 
     Ok(())

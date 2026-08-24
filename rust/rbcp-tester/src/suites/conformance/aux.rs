@@ -704,13 +704,16 @@ pub fn query_commands_need_room_for_their_answer(
 /// command refused for being in the wrong mode "is nonetheless framed like any
 /// other: the device consumes its argument bytes before discarding it".
 ///
-/// Three things are asserted at once, because in command mode none is
-/// observable on its own.  The frame must be consumed, which the SLOT_POKE at
-/// the end says: it is properly knocked, so it lands only if the device took
-/// all twenty argument bytes of the six commands off the wire first, and a
-/// device one byte out anywhere reads that poke's knock wrong and it never
-/// arrives.  The queries must not answer, which the armed data section says.
+/// Two things are asserted, because in command mode neither is observable on
+/// its own.  The queries must not answer, which the armed data section says.
 /// And SET_AUX_SWITCH_EXIT must not switch, which the slot marks say.
+///
+/// Consumption is deliberately not asserted here, and cannot be.  A knocked
+/// command afterwards cannot see a missing discard, because the knock is
+/// matched by the firmware's address monitor as a sliding window and leftover
+/// argument bytes slide past it.  The SLOT_POKE below is a liveness check, not
+/// a framing one.  [`argument_counts_are_consumed_exactly`] covers consumption
+/// in command-response mode, where the token makes it observable.
 pub fn not_valid_in_command_mode(bus: &mut Bus, ctx: &Ctx) -> Result<Outcome, String> {
     let s = ctx.session();
     bus.enter_cmd_resp(&s)
@@ -744,16 +747,15 @@ pub fn not_valid_in_command_mode(bus: &mut Bus, ctx: &Ctx) -> Result<Outcome, St
         bus.send_cmd(ctx.command_page(), group::AUX, cmd, args)?;
     }
 
-    // One knock, so a device left owing an argument byte — or one byte ahead —
-    // reads this knock wrong and the poke never lands.  The fence below sends a
-    // knock per slot and would recover from that, which is why the framing
-    // verdict is taken here and separately.
+    // A liveness check: the device must still be taking commands after six
+    // refusals.  It says nothing about whether their argument bytes were
+    // consumed - see the note on this function.
     let scratch = ctx.scratch_addr();
     let framed = bus.read(scratch)? ^ 0xFF;
     bus.poke_verified(ctx, scratch, framed).map_err(|e| {
         format!(
-            "{e} — the device did not consume the twenty argument bytes of the six Auxiliary \
-             I/O commands sent in command mode"
+            "{e} — the device stopped answering after the six Auxiliary I/O commands sent in \
+             command mode"
         )
     })?;
 
@@ -1669,6 +1671,107 @@ pub fn set_aux_switch_exit_slot_aa_neither_sets_nor_switches(
         format!(
             "ENTER_CMD_RESP after SET_AUX_SWITCH_EXIT with a slot of 0xAA: {e} — the invalid \
              slot must not stop the exit completing"
+        )
+    })?;
+
+    Ok(Outcome::Pass)
+}
+
+/// SET_AUX_SWITCH_EXIT with a slot the device lacks switches nothing and still
+/// exits.
+///
+/// The companion to [`set_aux_switch_exit_slot_aa_neither_sets_nor_switches`],
+/// for the other way a slot argument can be invalid: an index past the last the
+/// device has.  A device checking only for 0xAA passes that scenario and still
+/// switches to a slot it does not own, so neither implies the other.
+///
+/// The consequences are the ones the specification attaches to an invalid slot
+/// here, and both are asserted: the bus must still serve the slot that was
+/// active, and the entry afterwards must succeed, ENTER_CMD_RESP being defined
+/// to fail while the device is already in command-response mode.
+///
+/// Which index is absent comes from [`super::slots::absent_slot`], which reads
+/// it off the device.
+///
+/// That the pin was not set is not asserted — see this module's header, where
+/// it is the pin half of item 7.
+pub fn set_aux_switch_exit_absent_slot_neither_sets_nor_switches(
+    bus: &mut Bus,
+    ctx: &Ctx,
+) -> Result<Outcome, String> {
+    let (s, pin) = match session_with_a_drivable_pin(bus, ctx)? {
+        Ok(found) => found,
+        Err(skip) => return Ok(skip),
+    };
+
+    let absent = super::slots::absent_slot(bus, &s)?;
+    let slots = host_slots(bus, &s)?;
+    let from = active_slot(bus, &s)?;
+    let marks = mark_slots(bus, &s, slots, ctx.probe_addr())?;
+
+    bus.send_cmd(
+        s.command_page,
+        group::AUX,
+        aux::SET_AUX_SWITCH_EXIT,
+        &switch_args(DRIVE_HIGH, 0, 0x00, &pin, absent),
+    )?;
+
+    fence_every_slot(bus, ctx, slots)?;
+
+    let serving = served_slot(bus, &marks, ctx.probe_addr())?;
+    if serving != from {
+        return Err(format!(
+            "SET_AUX_SWITCH_EXIT naming slot {absent} switched from slot {from} to slot \
+             {serving} — slot {absent} is not one this device has, and an invalid slot is not \
+             switched to"
+        ));
+    }
+
+    bus.enter_cmd_resp(&s).map_err(|e| {
+        format!(
+            "ENTER_CMD_RESP after SET_AUX_SWITCH_EXIT naming slot {absent}: {e} — the invalid \
+             slot must not stop the exit completing"
+        )
+    })?;
+
+    Ok(Outcome::Pass)
+}
+
+/// SET_AUX must reject a group argument of 0xAA.
+///
+/// A4 is SET_AUX's final argument, so the blanket rule covers it: "If a device
+/// received a command with the final argument set to 0xAA, it rejects the
+/// command."  Every other argument names a pin the device has just said a host
+/// may drive, and the same command with the pin's real group is accepted — so
+/// the rejection is on account of the 0xAA and nothing else.
+pub fn set_aux_rejects_group_aa(bus: &mut Bus, ctx: &Ctx) -> Result<Outcome, String> {
+    let (s, pin) = match session_with_a_drivable_pin(bus, ctx)? {
+        Ok(found) => found,
+        Err(skip) => return Ok(skip),
+    };
+
+    let reserved = Pin {
+        group: 0xAA,
+        pin: pin.pin,
+    };
+    bus.expect_rejected(
+        &s,
+        group::AUX,
+        aux::SET_AUX,
+        &set_args(RELEASE, RELEASE, 0, &reserved),
+    )?;
+
+    bus.issue_cmd(
+        &s,
+        group::AUX,
+        aux::SET_AUX,
+        &set_args(RELEASE, RELEASE, 0, &pin),
+    )
+    .map_err(|e| {
+        format!(
+            "the same SET_AUX with group {} rather than 0xAA: {e} — the rejection above cannot \
+             be attributed to the group value if the device refuses this too",
+            pin.group
         )
     })?;
 

@@ -671,10 +671,19 @@ fn active_slot_size(dev: &Device) -> Result<u32, String> {
     }
 }
 
+/// Where the logical ROM range starts, from `APP_RANGE_LOGICAL_ROM_BASE` in
+/// `usb_picobootx.h`.  A protocol constant a host also holds.
+const BASE: u32 = 0x9000_0000;
+
+/// The device's flash, and how much of it the plugin will not let a host
+/// touch: `RP2350_FLASH_BASE` from `picobootx_impl.h` and
+/// `FLASH_PROTECTED_END` from `usb_picobootx.h`, which is the firmware, its
+/// metadata and the system plugin slot.
+const FLASH_BASE: u32 = 0x1000_0000;
+const FLASH_PROTECTED_END: u32 = FLASH_BASE + 128 * 1024;
+
 /// The logical ROM range reads the image the device is serving.
 fn the_logical_rom_range_is_readable(dev: &mut Device, _ctx: &Ctx) -> Result<Outcome, String> {
-    const BASE: u32 = 0x9000_0000;
-
     let (st, bytes) = dev.pb_read(BASE, 16);
     if st != OK {
         return Err(format!("reading the start of the ROM answered {st}"));
@@ -699,8 +708,6 @@ fn the_logical_rom_range_is_readable(dev: &mut Device, _ctx: &Ctx) -> Result<Out
 
 /// A read past the end of the served image is refused.
 fn the_logical_rom_range_is_bounded(dev: &mut Device, _ctx: &Ctx) -> Result<Outcome, String> {
-    const BASE: u32 = 0x9000_0000;
-
     let size = active_slot_size(dev)?;
 
     let (last, _) = dev.pb_read(BASE + size - 1, 1);
@@ -713,6 +720,189 @@ fn the_logical_rom_range_is_bounded(dev: &mut Device, _ctx: &Ctx) -> Result<Outc
     let (past, _) = dev.pb_read(BASE + size, 1);
     if past == OK {
         return Err("a read one byte past the end of the image was allowed".to_string());
+    }
+
+    Ok(Outcome::Pass)
+}
+
+/// A write to the logical ROM range changes the image the device is serving.
+///
+/// The range is the host's way of editing a live ROM, so the assertion is not
+/// that the write was accepted but that the bytes moved: each one is read back
+/// as what was written and away from what was there, and through the firmware's
+/// own view of the served slot as well as through the plugin — a write landing
+/// in a buffer of the plugin's own would satisfy a read-back and nothing else.
+/// The bytes either side are read before and after to fence a write that runs
+/// wider than it was asked to.
+fn the_logical_rom_range_is_writable(dev: &mut Device, _ctx: &Ctx) -> Result<Outcome, String> {
+    // Away from either end of the image, so a defect in the addressing has
+    // somewhere to go wrong rather than landing on offset zero anyway.
+    let offset = active_slot_size(dev)? / 2;
+    let window = offset - 1;
+
+    // The neighbours and the four bytes between them, as they stand.
+    let (st, before) = dev.pb_read(BASE + window, 6);
+    if st != OK {
+        return Err(format!("reading the image before the write answered {st}"));
+    }
+
+    // Different in every bit that matters, so "unchanged" cannot pass for
+    // "written".
+    let want: Vec<u8> = before[1..5].iter().map(|b| b ^ 0xa5).collect();
+
+    let st = dev.pb_write(BASE + offset, &want);
+    if st != OK {
+        return Err(format!(
+            "writing four bytes at offset {offset} of the image answered {st}, not OK"
+        ));
+    }
+
+    let (st, after) = dev.pb_read(BASE + window, 6);
+    if st != OK {
+        return Err(format!("reading the image back answered {st}"));
+    }
+    if after[1..5] != want[..] {
+        return Err(format!(
+            "offset {offset} reads back {:02x?} after {:02x?} was written there",
+            &after[1..5],
+            want
+        ));
+    }
+    if after[0] != before[0] || after[5] != before[5] {
+        return Err(format!(
+            "the bytes either side of the write changed from {:02x?} to {:02x?}",
+            [before[0], before[5]],
+            [after[0], after[5]]
+        ));
+    }
+
+    // And through the firmware's own view of the slot it is serving, so this is
+    // the served image rather than anything the plugin kept to itself.
+    let slot = active_slot(dev)?;
+    let mut served = [0u8; 4];
+    let r = dev.emulator().read_ram_rom_slot(slot, offset, &mut served);
+    if r != onerom_fw_emulator::OraResult::Ok {
+        return Err(format!("could not read the served slot back: {r:?}"));
+    }
+    if served != want[..] {
+        return Err(format!(
+            "the served slot holds {served:02x?} at offset {offset}, not the {want:02x?} written"
+        ));
+    }
+
+    Ok(Outcome::Pass)
+}
+
+/// A write past the end of the served image is refused, and as NOT_FOUND.
+///
+/// The status is the discriminating part: NOT_FOUND is what says no range owns
+/// the address, which is how a host tells an address this device does not have
+/// from one it has and will not write.
+fn a_write_past_the_logical_rom_range_is_refused(
+    dev: &mut Device,
+    _ctx: &Ctx,
+) -> Result<Outcome, String> {
+    let size = active_slot_size(dev)?;
+
+    // The last byte of the image, which is exactly in range.
+    let last = dev.pb_write(BASE + size - 1, &[0x5a]);
+    if last != OK {
+        return Err(format!(
+            "writing the last byte of the image answered {last}, not OK"
+        ));
+    }
+
+    let past = dev.pb_write(BASE + size, &[0x5a]);
+    if past != NOT_FOUND {
+        return Err(format!(
+            "writing one byte past the end of the image answered {past}, not NOT_FOUND"
+        ));
+    }
+
+    // A write that starts inside the image and runs off the end of it takes the
+    // whole range with it, rather than being trimmed to what fits.
+    let straddling = dev.pb_write(BASE + size - 2, &[0x5a; 4]);
+    if straddling != NOT_FOUND {
+        return Err(format!(
+            "a write straddling the end of the image answered {straddling}, not NOT_FOUND"
+        ));
+    }
+
+    Ok(Outcome::Pass)
+}
+
+/// The firmware's own flash is not writable through picoboot.
+///
+/// A host that overwrites the first 128KB of flash bricks the device, so the
+/// plugin refuses that range outright — and refuses it as NOT_PERMITTED,
+/// "understood and refused", rather than as the NOT_FOUND that means no range
+/// owns the address.  What must be refused with it is a write that starts below
+/// flash and runs into it, which is why the check is a range overlap rather than
+/// a test of where the write begins.
+fn a_write_into_protected_flash_is_refused(
+    dev: &mut Device,
+    _ctx: &Ctx,
+) -> Result<Outcome, String> {
+    let at_base = dev.pb_write(FLASH_BASE, &[0x5a; 256]);
+    if at_base != NOT_PERMITTED {
+        return Err(format!(
+            "writing the first page of flash answered {at_base}, not NOT_PERMITTED"
+        ));
+    }
+
+    let running_in = dev.pb_write(FLASH_BASE - 128, &[0x5a; 256]);
+    if running_in != NOT_PERMITTED {
+        return Err(format!(
+            "a write starting below flash and running into it answered {running_in}, \
+             not NOT_PERMITTED"
+        ));
+    }
+
+    // Ending exactly where flash begins, so nothing protected is touched.  This
+    // is what says the refusal above followed the overlap rather than the
+    // address being anywhere near flash.
+    let stopping_short = dev.pb_write(FLASH_BASE - 256, &[0x5a; 256]);
+    if stopping_short == NOT_PERMITTED {
+        return Err(
+            "a write ending exactly where flash begins was refused as protected".to_string(),
+        );
+    }
+
+    Ok(Outcome::Pass)
+}
+
+/// Flash past the protected region is left to picoboot's own handler.
+///
+/// The plugin protects a region, not flash, so the byte after it must reach the
+/// default range handler.  That is what tells a bounded protection apart from a
+/// blanket refusal of every flash address, and the two answers are adjacent: the
+/// last protected byte is NOT_PERMITTED and the first unprotected one is not.
+/// This harness stubs the default handlers, so what arrives is the stub's
+/// NOT_FOUND — reaching it at all is the assertion, and the device's own default
+/// range checks are picobootx's suite to make.
+fn a_write_past_protected_flash_reaches_the_default_range(
+    dev: &mut Device,
+    _ctx: &Ctx,
+) -> Result<Outcome, String> {
+    let last_protected = dev.pb_write(FLASH_PROTECTED_END - 1, &[0x5a]);
+    if last_protected != NOT_PERMITTED {
+        return Err(format!(
+            "writing the last protected byte of flash answered {last_protected}, \
+             not NOT_PERMITTED"
+        ));
+    }
+
+    let first_free = dev.pb_write(FLASH_PROTECTED_END, &[0x5a]);
+    if first_free == NOT_PERMITTED {
+        return Err(
+            "writing the byte after the protected region was refused as protected".to_string(),
+        );
+    }
+    if first_free != NOT_FOUND {
+        return Err(format!(
+            "writing the byte after the protected region answered {first_free}, so it did not \
+             reach the default range handler"
+        ));
     }
 
     Ok(Outcome::Pass)
@@ -831,6 +1021,30 @@ pub static SCENARIOS: &[Scenario] = &[
         name: "picobootx.the_logical_rom_range_is_bounded",
         about: "a read past the end of the served image is refused",
         run: the_logical_rom_range_is_bounded,
+        before_start: None,
+    },
+    Scenario {
+        name: "picobootx.the_logical_rom_range_is_writable",
+        about: "a write to the logical ROM range changes the image being served",
+        run: the_logical_rom_range_is_writable,
+        before_start: None,
+    },
+    Scenario {
+        name: "picobootx.a_write_past_the_logical_rom_range_is_refused",
+        about: "a write past the end of the served image answers NOT_FOUND",
+        run: a_write_past_the_logical_rom_range_is_refused,
+        before_start: None,
+    },
+    Scenario {
+        name: "picobootx.a_write_into_protected_flash_is_refused",
+        about: "a write overlapping the firmware's own flash answers NOT_PERMITTED",
+        run: a_write_into_protected_flash_is_refused,
+        before_start: None,
+    },
+    Scenario {
+        name: "picobootx.a_write_past_protected_flash_reaches_the_default_range",
+        about: "flash past the protected region is left to the default range handler",
+        run: a_write_past_protected_flash_reaches_the_default_range,
         before_start: None,
     },
 ];

@@ -44,7 +44,7 @@
 //! SLOT_PEEK the only way to inspect the bottom of a slot — and the fill
 //! scenario needs it for exactly that.
 
-use crate::driver::{Bus, Hdr, Session, control, group, modify, slot_poke_args};
+use crate::driver::{Bus, Hdr, Session, control, group, modify, read, slot_poke_args};
 use crate::{Ctx, Outcome};
 
 /// Why a scenario about a second slot cannot run on this device.
@@ -486,6 +486,63 @@ pub fn load_slot_rejects_slot_aa(bus: &mut Bus, ctx: &Ctx) -> Result<Outcome, St
         &[ctx.active_ram_slot, 0xAA],
     )
     .map_err(|e| format!("{e} — A1, the flash slot, was 0xAA"))?;
+
+    Ok(Outcome::Pass)
+}
+
+/// LOAD_SLOT must reject a flash slot the device does not have.
+///
+/// "Fails if ... the flash slot specified is invalid."  Flash slots are numbered
+/// contiguously from zero, so the count the device reports through
+/// GET_FLASH_SLOT_COUNT is itself the first number that is not one of them.
+///
+/// The RAM slot named is the one being served, and the same load with flash slot
+/// 0 is required to succeed — so what the device refused is the flash slot and
+/// not the load.  That control is also why the served slot is the destination:
+/// flash slot 0 is the image it is already serving, so a load that does go ahead
+/// puts back what is there.
+pub fn load_slot_rejects_an_absent_flash_slot(bus: &mut Bus, ctx: &Ctx) -> Result<Outcome, String> {
+    let s = ctx.session();
+    bus.enter_cmd_resp(&s)
+        .map_err(|e| format!("ENTER_CMD_RESP: {e}"))?;
+
+    bus.issue_cmd(&s, group::READ, read::GET_FLASH_SLOT_COUNT, &[])
+        .map_err(|e| format!("GET_FLASH_SLOT_COUNT: {e}"))?;
+    let absent = bus.read_data(&s, 0, 1)?[0];
+    if absent == 0xAA {
+        return Ok(Outcome::Skip(
+            "the device has 170 flash slots, so the first absent index is 0xAA and \
+             load_slot_rejects_slot_aa already covers it"
+                .into(),
+        ));
+    }
+
+    bus.expect_rejected(
+        &s,
+        group::MODIFY,
+        modify::LOAD_SLOT,
+        &[ctx.active_ram_slot, absent],
+    )
+    .map_err(|e| {
+        format!(
+            "{e} — flash slot {absent} is one past the {absent} the device reports, and there is \
+             no image there to copy"
+        )
+    })?;
+
+    bus.issue_cmd(
+        &s,
+        group::MODIFY,
+        modify::LOAD_SLOT,
+        &[ctx.active_ram_slot, 0],
+    )
+    .map_err(|e| {
+        format!(
+            "LOAD_SLOT of flash slot 0 into the served RAM slot: {e} — the refusal above cannot \
+             be attributed to the flash slot if a load from one the device does have is refused \
+             too"
+        )
+    })?;
 
     Ok(Outcome::Pass)
 }

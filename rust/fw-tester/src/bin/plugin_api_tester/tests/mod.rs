@@ -9,6 +9,7 @@ pub mod led;
 pub mod log;
 pub mod lookup;
 pub mod mapping;
+pub mod platform;
 pub mod reprogram;
 pub mod slots;
 pub mod time;

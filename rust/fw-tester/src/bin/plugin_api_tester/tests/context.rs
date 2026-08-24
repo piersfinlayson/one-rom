@@ -79,3 +79,56 @@ pub fn test_plugin_context(emu: &Emulator) -> Result<(), String> {
 
     Ok(())
 }
+
+/// A plugin type with no slot of its own stores nothing and reads back NULL.
+///
+/// Only the system and user plugins have a context slot. `ORA_PLUGIN_TYPE_PIO`
+/// is the third type the API declares, and the store must neither invent a slot
+/// for it nor share one of the other two: a PIO plugin that could overwrite the
+/// system plugin's context would take that plugin's IRQ handler out with it.
+///
+/// Run after [`test_plugin_context`], which leaves both real slots holding
+/// values this test can watch for damage. Storing a value here that neither of
+/// those slots holds is what makes a shared slot visible: it would come back
+/// from a type it was never stored for.
+pub fn test_plugin_context_third_type(emu: &Emulator) -> Result<(), String> {
+    /// Distinct from both real contexts, so a slot shared with either shows up.
+    const PIO_CONTEXT: usize = 0x2008_0300;
+    const PIO: ffi::ora_plugin_type_t = ffi::ora_plugin_type_t_ORA_PLUGIN_TYPE_PIO;
+
+    // Arm: the two real slots hold what test_plugin_context left there.
+    let sys_before = emu.get_plugin_context(SYSTEM);
+    let usr_before = emu.get_plugin_context(USER);
+    if sys_before != SYSTEM_CONTEXT || usr_before != USER_CONTEXT {
+        return Err(format!(
+            "expected the system and user contexts left by test_plugin_context, \
+             found system {sys_before:#x}, user {usr_before:#x}"
+        ));
+    }
+
+    if emu.get_plugin_context(PIO) != 0 {
+        return Err(
+            "a type with no slot returned a context before anything stored one".to_string(),
+        );
+    }
+
+    emu.set_plugin_context(PIO, PIO_CONTEXT);
+
+    let got = emu.get_plugin_context(PIO);
+    if got != 0 {
+        return Err(format!(
+            "a type with no slot read back {got:#x} - the store found it a slot"
+        ));
+    }
+
+    let sys = emu.get_plugin_context(SYSTEM);
+    let usr = emu.get_plugin_context(USER);
+    if sys != SYSTEM_CONTEXT || usr != USER_CONTEXT {
+        return Err(format!(
+            "storing a third type's context moved the real slots: system {sys:#x} \
+             (want {SYSTEM_CONTEXT:#x}), user {usr:#x} (want {USER_CONTEXT:#x})"
+        ));
+    }
+
+    Ok(())
+}

@@ -42,7 +42,9 @@
 //! command-response mode, so an entry that *succeeds* is positive proof the
 //! device had left.
 
-use crate::driver::{Bus, CmdFailure, Hdr, Session, control, group, read, slot_peek_args};
+use crate::driver::{
+    Bus, CmdFailure, HDR_SIZE, Hdr, Session, control, group, read, slot_peek_args,
+};
 use crate::{Ctx, Outcome};
 
 /// EXIT_CMD_RESP_SILENT must leave the response header untouched.
@@ -193,6 +195,96 @@ pub fn enter_discards_status_ok_of_aa(bus: &mut Bus, ctx: &Ctx) -> Result<Outcom
         ..ctx.session()
     };
     expect_entry_discarded(bus, ctx, &bad, "a status-OK value of 0xAA")?;
+    Ok(Outcome::Pass)
+}
+
+/// A back-channel region too small to hold the response header is discarded.
+///
+/// The response header is eight bytes, and every field a host polls to see a
+/// command through lives in it — so a region smaller than that is one the device
+/// could never answer in, including never report this refusal in.  That is what
+/// makes this the silent kind rather than the reported one: the failure has
+/// nowhere to be written.
+///
+/// Seven bytes, one short, so a device comparing the wrong way round is caught
+/// as surely as one not comparing at all.
+pub fn enter_discards_a_back_channel_too_small_for_the_header(
+    bus: &mut Bus,
+    ctx: &Ctx,
+) -> Result<Outcome, String> {
+    let short = (HDR_SIZE - 1) as u16;
+    let bad = Session {
+        bch_size: short,
+        ..ctx.session()
+    };
+    expect_entry_discarded(
+        bus,
+        ctx,
+        &bad,
+        &format!("a back-channel of {short} bytes, one short of the 8-byte response header"),
+    )?;
+    Ok(Outcome::Pass)
+}
+
+/// A back-channel start with no room behind it for the header is discarded,
+/// and nothing anywhere is written.
+///
+/// The start address "must leave room for at least the 8-byte response header
+/// within the RAM slot - if it is not aligned, or if it does not leave that
+/// room (including where it lies outside the slot entirely), the device
+/// silently discards the command".
+///
+/// [`enter_discards_a_back_channel_too_small_for_the_header`] names a region
+/// whose *size* is too small.  This names a start with fewer than eight bytes
+/// behind it, which is the other half of the same clause and the half a device
+/// gets wrong by taking the reported-failure path instead - there is nowhere in
+/// the slot to put that failure header, so writing one lands on whatever the
+/// address mapping folds it onto.  The first bytes of the served image are
+/// armed here because that is where it goes.
+///
+/// Four bytes short rather than one, and 4-byte aligned, so neither alignment
+/// nor an off-by-one is what is being refused.
+pub fn enter_discards_a_start_with_no_room_for_the_header(
+    bus: &mut Bus,
+    ctx: &Ctx,
+) -> Result<Outcome, String> {
+    let start = ctx.ram_slot_size - 4;
+    let bad = Session {
+        bch_start: start,
+        ..ctx.session()
+    };
+
+    // The first two bytes of the served image, which is where a header written
+    // through a wrapping address mapping ends up.
+    let armed: Vec<u8> = (0..2u32)
+        .map(|a| bus.read(a).map(|b| b ^ 0xFF))
+        .collect::<Result<_, _>>()?;
+    for (a, &v) in armed.iter().enumerate() {
+        bus.poke_verified(ctx, a as u32, v)
+            .map_err(|e| format!("arming byte {a} of the served image: {e}"))?;
+    }
+
+    bus.knock(ctx.command_page())?;
+    bus.send_enter_cmd_resp(ctx.command_page(), &bad)?;
+
+    bus.fence(ctx).map_err(|e| {
+        format!(
+            "after an ENTER_CMD_RESP starting at 0x{start:06X}, four bytes short of the eight \
+             the response header needs: {e}"
+        )
+    })?;
+
+    for (a, &want) in armed.iter().enumerate() {
+        let got = bus.read(a as u32)?;
+        if got != want {
+            return Err(format!(
+                "byte {a} of the served image went 0x{want:02X} to 0x{got:02X}: the device \
+                 answered an ENTER_CMD_RESP it is required to discard silently, and the \
+                 response header landed on the image it is serving"
+            ));
+        }
+    }
+
     Ok(Outcome::Pass)
 }
 
@@ -882,17 +974,18 @@ pub fn exit_restore_rejects_count_out_of_range(
 ///
 /// "Not supported in command mode, where there is no back-channel region to
 /// write to — the device consumes the arguments and discards the command."
-/// Both halves are asserted.
+/// The discard half is asserted, the consumption half cannot be.
 ///
 /// *Discarded*: the bytes the region occupied are armed with values of this
 /// scenario's own, and the command asks for eight different ones at the same
 /// place.  A device acting on it in command mode would write them there, using
 /// a region offset that stopped meaning anything when the session ended.
 ///
-/// *Arguments consumed*: a NOP follows, in the same command-mode session, and
-/// must be acted on.  Had the nine argument bytes been left on the wire the
-/// device would read the NOP's two bytes as arguments and the session would be
-/// desynchronised, which the fence would then catch.
+/// *Arguments consumed*: not asserted.  The NOP and fence that follow are a
+/// liveness check.  Leftover argument bytes cannot desynchronise the device,
+/// because the knock is matched by the firmware's address monitor as a sliding
+/// window and they slide past it - removing the discard leaves this scenario
+/// passing.
 pub fn restore_not_valid_in_command_mode(bus: &mut Bus, ctx: &Ctx) -> Result<Outcome, String> {
     let s = ctx.session();
 
@@ -923,13 +1016,13 @@ pub fn restore_not_valid_in_command_mode(bus: &mut Bus, ctx: &Ctx) -> Result<Out
         &args,
     )?;
 
-    // Still the same command-mode session: if the nine arguments were consumed
-    // this is a fresh frame, and the fence proves the device acted on it.
+    // A liveness check: the device must still take a command-mode frame after
+    // the refusal.  It says nothing about consumption - see the note above.
     bus.send_cmd(ctx.command_page(), group::CONTROL, control::NOP, &[])?;
     bus.fence(ctx).map_err(|e| {
         format!(
-            "{e} — the device took no further command-mode session, which is what an \
-             EXIT_CMD_RESP_RESTORE whose nine argument bytes were left on the wire would cause"
+            "{e} — the device took no further command-mode session after a command-mode \
+             EXIT_CMD_RESP_RESTORE"
         )
     })?;
 

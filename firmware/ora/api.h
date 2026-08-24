@@ -1631,10 +1631,15 @@ typedef uint8_t (*ora_is_pin_output_fn_t)(uint8_t pin);
  * which is useful for plugins that want to monitor or interact with the data
  * lines.
  * 
+ * The pins are those of the slot currently being served, in D0 upwards order,
+ * and are absolute GPIO numbers.  An 8-bit slot has 8 of them and a 16-bit slot
+ * 16, so the count depends on the ROM being served rather than on the board -
+ * a 40-pin board serving an 8-bit ROM reports 8.
+ * 
  * The data pin numbers are returned in the data_pins_out array, which must be
  * allocated by the caller and have space for at least num_pins elements.  The
- * function returns the number of data pins actually returned, which may be less
- * than num_pins if there are not that many data pins available.
+ * function returns the number of data pins actually returned, which is the
+ * lower of num_pins and the slot's width.
  * 
  * @param data_pins_out Output array to be filled with the data pin numbers
  * @param num_pins The maximum number of data pin numbers to return

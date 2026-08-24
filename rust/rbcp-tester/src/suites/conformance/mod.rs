@@ -26,6 +26,7 @@ pub mod read_group;
 pub mod reset;
 pub mod ring;
 pub mod rom_types;
+pub mod slots;
 
 pub static SCENARIOS: &[Scenario] = &[
     Scenario {
@@ -72,6 +73,11 @@ pub static SCENARIOS: &[Scenario] = &[
         name: "conformance.framing.unknown_cmd_consumes_no_arguments",
         spec_ref: "Command Framing — Unknown GROUP and CMD",
         run: framing::unknown_cmd_consumes_no_arguments,
+    },
+    Scenario {
+        name: "conformance.framing.unknown_cmd_in_every_group_consumes_no_arguments",
+        spec_ref: "Command Framing — Unknown GROUP and CMD",
+        run: framing::unknown_cmd_in_every_group_consumes_no_arguments,
     },
     Scenario {
         name: "conformance.framing.discovery_commands_take_no_arguments",
@@ -152,6 +158,16 @@ pub static SCENARIOS: &[Scenario] = &[
         name: "conformance.control.enter_discards_status_ok_of_aa",
         spec_ref: "Group 0x00 — ENTER_CMD_RESP (neither A7 nor A8 may be 0xAA)",
         run: control::enter_discards_status_ok_of_aa,
+    },
+    Scenario {
+        name: "conformance.control.enter_discards_a_back_channel_too_small_for_the_header",
+        spec_ref: "Group 0x00 — ENTER_CMD_RESP; Command-Response Mode — Response Header",
+        run: control::enter_discards_a_back_channel_too_small_for_the_header,
+    },
+    Scenario {
+        name: "conformance.control.enter_discards_a_start_with_no_room_for_the_header",
+        spec_ref: "Group 0x00 — ENTER_CMD_RESP (a start leaving no room for the header is discarded)",
+        run: control::enter_discards_a_start_with_no_room_for_the_header,
     },
     Scenario {
         name: "conformance.control.enter_fails_when_back_channel_exceeds_slot",
@@ -259,9 +275,34 @@ pub static SCENARIOS: &[Scenario] = &[
         run: read_group::slot_peek_rejects_slot_aa,
     },
     Scenario {
+        name: "conformance.read.slot_peek_rejects_a_range_past_the_slot_end",
+        spec_ref: "Group 0x01 — SLOT_PEEK (the address range specified is outside the slot)",
+        run: read_group::slot_peek_rejects_a_range_past_the_slot_end,
+    },
+    Scenario {
+        name: "conformance.read.get_device_type_is_clamped_to_the_data_section",
+        spec_ref: "Command-Response Mode — Response Data Section; GET_DEVICE_TYPE",
+        run: read_group::get_device_type_is_clamped_to_the_data_section,
+    },
+    Scenario {
+        name: "conformance.read.get_flash_slot_info_all_below_the_preamble",
+        spec_ref: "Group 0x01 — GET_FLASH_SLOT_INFO_ALL (data section under the preamble)",
+        run: read_group::get_flash_slot_info_all_below_the_preamble,
+    },
+    Scenario {
+        name: "conformance.read.no_boot_slots_without_metadata",
+        spec_ref: "GET_BOOT_SLOT_INFO Response Format — 0xFF where the device does not know",
+        run: read_group::no_boot_slots_without_metadata,
+    },
+    Scenario {
         name: "conformance.read.not_valid_in_command_mode",
         spec_ref: "Group 0x01 — Read (command-response mode only); Group 0x00 — EXIT_CMD_RESP_ACK",
         run: read_group::not_valid_in_command_mode,
+    },
+    Scenario {
+        name: "conformance.read.command_mode_refusal_takes_its_arguments",
+        spec_ref: "Command Mode Constraint — a refused command is framed like any other",
+        run: read_group::command_mode_refusal_takes_its_arguments,
     },
     Scenario {
         name: "conformance.modify.slot_poke_in_both_modes",
@@ -302,6 +343,11 @@ pub static SCENARIOS: &[Scenario] = &[
         name: "conformance.modify.load_slot_rejects_slot_aa",
         spec_ref: "Group 0x02 — LOAD_SLOT (A0 or A1 of 0xAA is invalid and rejected)",
         run: modify::load_slot_rejects_slot_aa,
+    },
+    Scenario {
+        name: "conformance.modify.load_slot_rejects_an_absent_flash_slot",
+        spec_ref: "Group 0x02 — LOAD_SLOT (the flash slot specified is invalid)",
+        run: modify::load_slot_rejects_an_absent_flash_slot,
     },
     Scenario {
         name: "conformance.modify.slot_poke_all_byte_fills_the_slot",
@@ -444,6 +490,11 @@ pub static SCENARIOS: &[Scenario] = &[
         run: nv_storage::not_valid_in_command_mode,
     },
     Scenario {
+        name: "conformance.nv.command_mode_refusal_takes_its_arguments",
+        spec_ref: "Command Mode Constraint — a refused command is framed like any other",
+        run: nv_storage::command_mode_refusal_takes_its_arguments,
+    },
+    Scenario {
         name: "conformance.pipes.get_pipe_capability",
         spec_ref: "Group 0x04 — GET_PIPE_CAPABILITY; GET_PIPE_CAPABILITY Response Format",
         run: pipes::get_pipe_capability,
@@ -457,6 +508,16 @@ pub static SCENARIOS: &[Scenario] = &[
         name: "conformance.pipes.commands_reject_an_absent_pipe",
         spec_ref: "Group 0x04 — GET_PIPE_INFO, PIPE_WRITE (not a pipe the device exposes)",
         run: pipes::commands_reject_an_absent_pipe,
+    },
+    Scenario {
+        name: "conformance.pipes.get_pipe_info_rejects_pipe_aa",
+        spec_ref: "Group 0x04 — GET_PIPE_INFO (a final argument of 0xAA is rejected)",
+        run: pipes::get_pipe_info_rejects_pipe_aa,
+    },
+    Scenario {
+        name: "conformance.pipes.no_pipes_without_the_log_calls",
+        spec_ref: "Group 0x04 — a device that exposes no pipes reports a count of zero",
+        run: pipes::no_pipes_without_the_log_calls,
     },
     Scenario {
         name: "conformance.pipes.pipe_write_transfers_its_payload",
@@ -614,6 +675,16 @@ pub static SCENARIOS: &[Scenario] = &[
         run: aux::set_aux_switch_exit_slot_aa_neither_sets_nor_switches,
     },
     Scenario {
+        name: "conformance.aux.set_aux_switch_exit_absent_slot_neither_sets_nor_switches",
+        spec_ref: "Group 0x05 — SET_AUX_SWITCH_EXIT (the RAM slot specified is invalid)",
+        run: aux::set_aux_switch_exit_absent_slot_neither_sets_nor_switches,
+    },
+    Scenario {
+        name: "conformance.aux.set_aux_rejects_group_aa",
+        spec_ref: "Group 0x05 — SET_AUX (a final argument of 0xAA is rejected)",
+        run: aux::set_aux_rejects_group_aa,
+    },
+    Scenario {
         name: "conformance.aux.no_uptime_offers_no_timed_holds",
         spec_ref: "GET_AUX_CAPABILITY Response Format — max_hold of zero",
         run: aux::no_uptime_offers_no_timed_holds,
@@ -727,6 +798,16 @@ pub static SCENARIOS: &[Scenario] = &[
         name: "conformance.led.no_leds_without_the_led_calls",
         spec_ref: "Group 0x06 — a device that has no LEDs reports a count of zero",
         run: led::no_leds_without_the_led_calls,
+    },
+    Scenario {
+        name: "conformance.led.no_leds_without_the_led_get_call",
+        spec_ref: "Group 0x06 — a device that has no LEDs reports a count of zero",
+        run: led::no_leds_without_the_led_get_call,
+    },
+    Scenario {
+        name: "conformance.slots.commands_reject_a_slot_the_device_lacks",
+        spec_ref: "Groups 0x01, 0x02, 0x03 — commands naming a RAM slot (the slot is invalid)",
+        run: slots::commands_reject_a_slot_the_device_lacks,
     },
     Scenario {
         name: "conformance.reset.group_and_command_bytes_match",

@@ -46,11 +46,30 @@
 //! "is able to accept", so a write of more than that must fail, and nothing
 //! else touches this pipe to make the value stale.
 
+use onerom_fw_emulator::ffi;
+
 use crate::driver::{Bus, CmdFailure, HDR_SIZE, Session, control, group, pipes};
 use crate::{Ctx, Outcome};
 
 /// Payload bytes PIPE_WRITE carries at most, and so the largest valid count.
 const MAX_PAYLOAD: u8 = 4;
+
+/// API identifiers withheld from the plugin for the scenarios that need them.
+///
+/// A pipe is one of the firmware's log channels, and the calls that reach them
+/// arrived in firmware later than this plugin's minimum — so the plugin degrades
+/// where they are absent, and the emulator, which implements the whole API,
+/// cannot reach that path unless they are taken away.  Consulted by
+/// [`crate::suites::withheld_api`] before the plugin starts, which is when a
+/// plugin resolves its pointers.
+pub static WITHHELD_API: &[(&str, &[u32])] = &[(
+    "conformance.pipes.no_pipes_without_the_log_calls",
+    &[
+        ffi::api_id_t_ORA_ID_LOG_OPEN_WRITE,
+        ffi::api_id_t_ORA_ID_LOG_WRITE,
+        ffi::api_id_t_ORA_ID_LOG_QUERY,
+    ],
+)];
 
 /// Response data section both query commands need, in bytes.
 const REQUIRED_DATA_SIZE: u32 = 8;
@@ -217,6 +236,69 @@ pub fn commands_reject_an_absent_pipe(bus: &mut Bus, ctx: &Ctx) -> Result<Outcom
         pipes::PIPE_WRITE,
         &[b'x', 0, 0, 0, absent, 1],
     )?;
+
+    Ok(Outcome::Pass)
+}
+
+/// GET_PIPE_INFO must reject a pipe number of 0xAA.
+///
+/// Its only argument is also its final one, so the blanket rule covers it: "If a
+/// device received a command with the final argument set to 0xAA, it rejects the
+/// command."  That is a rule about the value, not about the count — a device
+/// that happened to expose 171 pipes would still have to refuse this one.
+///
+/// Where the device has a pipe, the same command naming pipe 0 is required to
+/// succeed, so the refusal is on account of the 0xAA rather than of the command
+/// being unavailable.  With no pipes there is no such control, and the rule that
+/// every command but the capability one fails is asserted by
+/// [`commands_reject_an_absent_pipe`] instead.
+pub fn get_pipe_info_rejects_pipe_aa(bus: &mut Bus, ctx: &Ctx) -> Result<Outcome, String> {
+    let s = ctx.session();
+    bus.enter_cmd_resp(&s)
+        .map_err(|e| format!("ENTER_CMD_RESP: {e}"))?;
+
+    bus.expect_rejected(&s, group::PIPES, pipes::GET_PIPE_INFO, &[0xAA])?;
+
+    if pipe_count(bus, &s)? > 0 {
+        bus.issue_cmd(&s, group::PIPES, pipes::GET_PIPE_INFO, &[0])
+            .map_err(|e| {
+                format!(
+                    "GET_PIPE_INFO for pipe 0: {e} — the refusal above cannot be attributed to \
+                     the 0xAA if a pipe the device exposes is refused too"
+                )
+            })?;
+    }
+
+    Ok(Outcome::Pass)
+}
+
+/// Without the firmware's log calls the device exposes no pipes.
+///
+/// A pipe is one of the firmware's log channels, so a plugin running on firmware
+/// with no log API has nothing to expose.  The protocol already provides for
+/// that — a count of zero — so the group goes quiet rather than the plugin
+/// refusing to run, and "all other commands in this group return failure on such
+/// a device".
+///
+/// Reached by withholding the three log calls the plugin uses; see
+/// [`WITHHELD_API`].  The count being zero is the sentinel that the withholding
+/// took effect, since the refusals below are what a device with no pipes does
+/// anyway.
+pub fn no_pipes_without_the_log_calls(bus: &mut Bus, ctx: &Ctx) -> Result<Outcome, String> {
+    let s = ctx.session();
+    bus.enter_cmd_resp(&s)
+        .map_err(|e| format!("ENTER_CMD_RESP: {e}"))?;
+
+    let count = pipe_count(bus, &s)?;
+    if count != 0 {
+        return Err(format!(
+            "the device reports {count} pipe(s) with the firmware's log calls withheld; a pipe \
+             is a log channel, and without those calls there is none to reach"
+        ));
+    }
+
+    bus.expect_rejected(&s, group::PIPES, pipes::GET_PIPE_INFO, &[0])?;
+    bus.expect_rejected(&s, group::PIPES, pipes::PIPE_WRITE, &[b'x', 0, 0, 0, 0, 1])?;
 
     Ok(Outcome::Pass)
 }
@@ -397,14 +479,14 @@ pub fn free_reports_the_room_left(bus: &mut Bus, ctx: &Ctx) -> Result<Outcome, S
 
 /// The group is command-response mode only, and refusing costs the host nothing.
 ///
-/// Two things at once, because in command mode neither is observable on its
-/// own.  The bytes must not reach the pipe, which the drain says.  And the
-/// frame must still be consumed — "a command refused because it is not valid in
-/// the current mode is nonetheless framed like any other" — which the SLOT_POKE
-/// afterwards says: it is properly knocked, so it lands only if the device took
-/// all six of PIPE_WRITE's arguments off the wire first.  A device that
-/// discarded the command without its arguments reads the poke's knock one byte
-/// out and the poke never arrives.
+/// The bytes must not reach the pipe, which the drain says.  The SLOT_POKE
+/// afterwards is a liveness check - the device must still be taking commands.
+///
+/// Consumption is deliberately not asserted, and cannot be from here.  A
+/// knocked command afterwards cannot see a missing discard, because the knock
+/// is matched by the firmware's address monitor as a sliding window and
+/// leftover argument bytes slide past it.  Command-response mode is where the
+/// token makes consumption observable.
 pub fn not_valid_in_command_mode(bus: &mut Bus, ctx: &Ctx) -> Result<Outcome, String> {
     let addr = ctx.scratch_addr();
     let armed = bus.read(addr)? ^ 0xFF;
@@ -425,7 +507,7 @@ pub fn not_valid_in_command_mode(bus: &mut Bus, ctx: &Ctx) -> Result<Outcome, St
     bus.await_byte(addr, armed).map_err(|e| {
         format!(
             "{e} — the SLOT_POKE after a command-mode PIPE_WRITE never landed, so the device \
-             did not consume PIPE_WRITE's six argument bytes before discarding it"
+             stopped answering after a command-mode PIPE_WRITE"
         )
     })?;
 
@@ -473,9 +555,10 @@ pub fn query_commands_need_room_for_their_answer(
 /// exited command-response mode and the back-channel region is no longer
 /// maintained."
 ///
-/// The SLOT_POKE at the end carries the framing half, for GET_PIPE_INFO's one
-/// argument byte — a device that discarded the command without taking it would
-/// read the poke's knock one byte out.
+/// The SLOT_POKE at the end is a liveness check.  It carries no framing
+/// verdict: a knocked command cannot see a missing discard, because the knock
+/// is matched by the firmware's address monitor as a sliding window and
+/// leftover argument bytes slide past it.
 pub fn query_commands_not_valid_in_command_mode(
     bus: &mut Bus,
     ctx: &Ctx,
@@ -510,7 +593,7 @@ pub fn query_commands_not_valid_in_command_mode(
     bus.await_byte(scratch, framed).map_err(|e| {
         format!(
             "{e} — the SLOT_POKE after a command-mode GET_PIPE_INFO never landed, so the device \
-             did not consume its argument byte before discarding it"
+             stopped answering after the command-mode queries"
         )
     })?;
 

@@ -64,6 +64,43 @@ static void test_lazy_init(void) {
     CHECK(n == 1 && buf[0] == 'x', "drained %u bytes, first '%c'", n, buf[0]);
 }
 
+// Plugin launch builds the control block up front, so that a plugin's first log
+// finds it built however little the firmware has logged before that point.
+static void test_plugins_init(void) {
+    // Arm: the control block as .bss leaves it at reset.
+    memset(&_SEGGER_RTT, 0, sizeof(_SEGGER_RTT));
+    CHECK(_SEGGER_RTT.id[0] == '\0', "CB not zeroed before plugins init");
+
+    // Stimulate: no write, just the plugin launch hook.
+    onerom_rtt_plugins_init();
+
+    // Fence: a probe scanning for the block now finds a complete one.
+    CHECK(memcmp(_SEGGER_RTT.id, "SEGGER RTT", 10) == 0,
+          "plugins init left no identifier");
+    CHECK(_SEGGER_RTT.max_up_buffers == 3,
+          "max_up_buffers %d after plugins init, want 3",
+          _SEGGER_RTT.max_up_buffers);
+    CHECK(up0()->buffer != NULL, "up[0] has no buffer after plugins init");
+    CHECK(up0()->size == 3584, "up[0] size %u after plugins init, want 3584",
+          up0()->size);
+    CHECK(up0()->write_offset == 0u, "WrOff %u after plugins init, want 0",
+          up0()->write_offset);
+
+    // Discriminate: a second call must leave a block that is already in use
+    // alone, rather than rebuilding it and throwing away pending records.
+    CHECK(onerom_rtt_write(0, "kept", 4) == 4u,
+          "write after plugins init refused");
+    onerom_rtt_plugins_init();
+    CHECK(up0()->write_offset == 4u, "second plugins init moved WrOff to %u",
+          up0()->write_offset);
+    CHECK(memcmp(up0()->buffer, "kept", 4) == 0,
+          "second plugins init cleared the buffer");
+
+    char got[8];
+    CHECK(onerom_rtt_read(0, got, sizeof(got)) == 4u,
+          "record lost across a second plugins init");
+}
+
 static void test_records_are_whole_and_ordered(void) {
     char expect[512];
     unsigned e = 0;
@@ -177,6 +214,77 @@ static void test_rdoff_clamp(void) {
     w = onerom_rtt_write(0, "ok", 2);
     CHECK(w == 2, "legal record refused with wild RdOff (returned %u)", w);
     CHECK(memcmp(r->buffer, "ok", 2) == 0, "legal record not stored");
+}
+
+// The free space calculation has two branches, and the tests above only reach
+// one of them.  A read_offset above write_offset means the ring has wrapped and
+// the writer is behind the reader, and free space is then the gap between the
+// two rather than the room to the end plus the room at the front.
+static void test_write_when_wrapped(void) {
+    onerom_rtt_up_t *r = up0();
+    static char filler[128];
+    memset(filler, 'W', sizeof(filler));
+
+    // Arm: a wrapped ring with 90 bytes between writer and reader, one of which
+    // is always held back - so 89 bytes are usable.
+    r->write_offset = 10u;
+    r->read_offset = 100u;
+    r->buffer[99] = '!';
+
+    // Discriminate: one byte more than that is refused...
+    CHECK(onerom_rtt_write(0, filler, 90u) == 0u,
+          "wrapped ring accepted a record one byte too long");
+    CHECK(r->write_offset == 10u, "WrOff moved on a dropped record");
+
+    // ...and exactly that is taken, without touching the byte held back.
+    CHECK(onerom_rtt_write(0, filler, 89u) == 89u,
+          "wrapped ring refused a record that exactly fits");
+    CHECK(r->write_offset == 99u, "WrOff %u after wrapped write, want 99",
+          r->write_offset);
+    CHECK(r->buffer[99] == '!', "wrapped write consumed the held back byte");
+
+    // Cross-check against query, which derives free from the pending count and
+    // so does not share the arithmetic under test.
+    unsigned free_now = 99u;
+    onerom_rtt_query(0, NULL, &free_now, NULL);
+    CHECK(free_now == 0u, "free %u after filling the gap, want 0", free_now);
+}
+
+// write_offset is the firmware's own, so a value outside the buffer means
+// something has already gone wrong.  The clamp is what stops that becoming a
+// copy past the end of the buffer, and it has to repair the field as well as
+// the local copy - a dropped record would otherwise leave the bad value in
+// place for the next writer to trip over.
+static void test_write_offset_clamp(void) {
+    onerom_rtt_up_t *r = up0();
+    unsigned size = r->size;
+    static char big[4096];
+    memset(big, 'B', sizeof(big));
+
+    // Arm: a wild WrOff, and a record too big to fit even once it is clamped.
+    r->read_offset = 0u;
+    r->write_offset = size + 50u;
+
+    // Fence: the record is dropped, and the field is repaired even though
+    // nothing was written.
+    CHECK(onerom_rtt_write(0, big, size) == 0u,
+          "oversized record accepted with a wild WrOff");
+    CHECK(r->write_offset == 0u, "WrOff %u left out of range, want 0",
+          r->write_offset);
+
+    // Arm again, this time with a record that fits.
+    r->read_offset = 0u;
+    r->write_offset = size + 50u;
+    memset(r->buffer, '.', size);
+
+    // Fence: the bytes land at the start of the buffer rather than 50 bytes
+    // past its end, and the offset that publishes them follows from there.
+    CHECK(onerom_rtt_write(0, "HELLO", 5) == 5u,
+          "legal record refused with a wild WrOff");
+    CHECK(r->write_offset == 5u, "WrOff %u after clamped write, want 5",
+          r->write_offset);
+    CHECK(memcmp(r->buffer, "HELLO", 5) == 0,
+          "clamped write stored the record elsewhere");
 }
 
 static void test_inactive_channel_drops(void) {
@@ -430,6 +538,72 @@ static void test_read_rdoff_clamp(void) {
     CHECK(pending == 5u, "pending %u after recovery, want 5", pending);
 }
 
+// The reader clamps write_offset for the same reason the writer does, and the
+// clamp is what keeps the pending count describing bytes that were really
+// written.
+static void test_read_wroff_clamp(void) {
+    onerom_rtt_up_t *r = up0();
+    char got[32];
+
+    // Arm: four bytes at the very end of the buffer, so WrOff has legitimately
+    // wrapped to zero - then put a wild value there.
+    arm_at(r->size - 4u);
+    CHECK(onerom_rtt_write(0, "WXYZ", 4) == 4u, "setup write rejected");
+    CHECK(r->write_offset == 0u, "setup left WrOff %u, want 0",
+          r->write_offset);
+    r->write_offset = r->size + 6u;
+
+    // Stimulate.
+    unsigned n = onerom_rtt_read(0, got, sizeof(got));
+
+    // Fence on the count and the bytes.  Without the clamp the arithmetic
+    // reports ten bytes pending here - the four that exist, plus six of
+    // whatever the front of the buffer happens to hold.
+    CHECK(n == 4u, "read with a wild WrOff returned %u, want 4", n);
+    CHECK(memcmp(got, "WXYZ", 4) == 0, "read with a wild WrOff returned wrong bytes");
+    CHECK(r->read_offset == 0u, "RdOff %u after the clamped read, want 0",
+          r->read_offset);
+}
+
+// query clamps both offsets, and reports what the clamp leaves rather than
+// arithmetic on nonsense.  Both branches matter: an unclamped offset here
+// underflows free to something near four gigabytes, and a caller that sizes a
+// write to it walks off the end of the buffer.
+static void test_query_offset_clamps(void) {
+    onerom_rtt_up_t *r = up0();
+    unsigned size = 0u, free_now = 0u, pending = 0u;
+
+    // Arm: five real bytes in the ring, then a wild WrOff.
+    arm_at(0u);
+    CHECK(onerom_rtt_write(0, "12345", 5) == 5u, "setup write rejected");
+    r->write_offset = r->size + 7u;
+
+    // Fence: nothing is claimed to be pending, and the whole buffer bar the
+    // held back byte is reported free.
+    onerom_rtt_query(0, &size, &free_now, &pending);
+    CHECK(size == r->size, "query size %u with a wild WrOff, want %u", size,
+          r->size);
+    CHECK(pending == 0u, "pending %u with a wild WrOff, want 0", pending);
+    CHECK(free_now == size - 1u, "free %u with a wild WrOff, want %u", free_now,
+          size - 1u);
+
+    // Arm again: the same five bytes, and this time a wild RdOff.  The clamp
+    // puts the reader back at zero, which is where the record starts, so all
+    // five are still pending.
+    arm_at(0u);
+    CHECK(onerom_rtt_write(0, "12345", 5) == 5u, "setup write rejected");
+    r->read_offset = r->size + 9u;
+
+    size = free_now = pending = 0u;
+    onerom_rtt_query(0, &size, &free_now, &pending);
+    CHECK(pending == 5u, "pending %u with a wild RdOff, want 5", pending);
+    CHECK(size == free_now + pending + 1u,
+          "wild RdOff: size %u != free %u + pending %u + 1", size, free_now,
+          pending);
+
+    r->read_offset = 0u;
+}
+
 static void test_read_inactive_channel(void) {
     onerom_rtt_up_t *r = up0();
     char *saved = r->buffer;
@@ -477,10 +651,13 @@ void fmt_tests(int *checks, int *failures, const char *const **first,
 int main(void) {
     printf("rtt ring tests\n");
     test_lazy_init();
+    test_plugins_init();
     test_records_are_whole_and_ordered();
     test_wrap();
     test_skip_is_all_or_nothing();
     test_rdoff_clamp();
+    test_write_when_wrapped();
+    test_write_offset_clamp();
     test_inactive_channel_drops();
     test_read_round_trip();
     test_read_respects_max_len();
@@ -488,8 +665,10 @@ int main(void) {
     test_read_lands_exactly_on_end();
     test_read_frees_space_for_the_writer();
     test_query_arithmetic();
+    test_query_offset_clamps();
     test_set_name();
     test_read_rdoff_clamp();
+    test_read_wroff_clamp();
     test_read_inactive_channel();
     printf("  ring: %d checks, %d failures\n", checks, failures);
 

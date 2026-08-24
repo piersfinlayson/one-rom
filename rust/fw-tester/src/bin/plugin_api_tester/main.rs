@@ -201,6 +201,17 @@ fn run_slot(
         tests::time::test_plugin_uptime_raw_read(&emulator),
     );
 
+    // Platform: memory, clocks, peripherals and the cooperative yield.
+    report.add(
+        "no_allocator",
+        tests::platform::test_no_allocator(&emulator),
+    );
+    report.add(
+        "peripheral_and_irq_calls",
+        tests::platform::test_peripheral_and_irq_calls(&emulator, tests::gpio::max_gpios(board)),
+    );
+    report.add("yield", tests::platform::test_yield(&emulator));
+
     // Lookup
     report.add(
         "lookup_coverage",
@@ -211,6 +222,10 @@ fn run_slot(
     report.add(
         "plugin_context",
         tests::context::test_plugin_context(&emulator),
+    );
+    report.add(
+        "plugin_context_third_type",
+        tests::context::test_plugin_context_third_type(&emulator),
     );
 
     // Logging
@@ -239,6 +254,14 @@ fn run_slot(
         tests::log::test_write_and_read_edges(&emulator),
     );
     report.add(
+        "log_err_claims_nothing",
+        tests::log::test_err_log_claims_nothing(&emulator),
+    );
+    report.add(
+        "log_null_arguments",
+        tests::log::test_null_arguments_and_unheld_close(&emulator),
+    );
+    report.add(
         "log_categories",
         tests::log::test_log_categories(&emulator, config, log_enabled),
     );
@@ -247,6 +270,11 @@ fn run_slot(
     report.add(
         "gpio_use",
         tests::gpio::test_gpio_use(&emulator, config, board, fw_version, base_dir, set_idx),
+    );
+    report.add("gpio_set", tests::gpio::test_gpio_set(&emulator, board));
+    report.add(
+        "is_pin_output",
+        tests::gpio::test_is_pin_output(&emulator, board),
     );
 
     // Mapping
@@ -261,6 +289,10 @@ fn run_slot(
     report.add(
         "data_mapping",
         tests::mapping::test_data_mapping(&emulator, config),
+    );
+    report.add(
+        "data_pin_nums",
+        tests::mapping::test_data_pin_nums(&emulator, config, board, fw_version, base_dir, set_idx),
     );
 
     // Slots
@@ -287,6 +319,10 @@ fn run_slot(
     report.add(
         "active_ram_slot",
         tests::slots::test_active_ram_slot(&emulator, BOOT_SLOT),
+    );
+    report.add(
+        "active_ram_slot_refusals",
+        tests::slots::test_active_ram_slot_refusals(&emulator, BOOT_SLOT),
     );
     report.add(
         "read_initial_slot",
@@ -361,6 +397,18 @@ fn run_slot(
             ),
         );
         report.add(
+            "copy_flash_refusals",
+            tests::reprogram::test_copy_flash_refusals(
+                &emulator,
+                config,
+                board,
+                fw_version,
+                base_dir,
+                set_idx,
+                SCRATCH_SLOT,
+            ),
+        );
+        report.add(
             "switch_active_slot",
             tests::reprogram::test_switch_active_slot(&emulator, SCRATCH_SLOT),
         );
@@ -368,6 +416,7 @@ fn run_slot(
         let reason = "requires a second RAM slot (region size leaves only one)";
         report.skip("reprogram_round_trip", reason);
         report.skip("copy_flash_to_ram", reason);
+        report.skip("copy_flash_refusals", reason);
         report.skip("switch_active_slot", reason);
     }
 

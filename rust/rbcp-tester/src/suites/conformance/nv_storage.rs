@@ -1465,6 +1465,58 @@ pub fn not_valid_in_command_mode(bus: &mut Bus, ctx: &Ctx) -> Result<Outcome, St
     ))
 }
 
+/// An NV command refused for its mode still takes its arguments off the wire.
+///
+/// "A command refused because it is not valid in the current mode is nonetheless
+/// framed like any other."  [`not_valid_in_command_mode`] sends
+/// GET_NV_CAPABILITY, which carries no arguments, so it says nothing about the
+/// count — and all four of this group's argument-carrying commands are where a
+/// device gets this wrong.
+///
+/// Each is sent in command mode, properly knocked and otherwise well formed, and
+/// followed by a properly knocked SLOT_POKE, which lands only if the device
+/// stopped at the declared count — see
+/// [`super::read_group::command_mode_refusal_takes_its_arguments`] for why that
+/// catches a device taking one byte too many and not one taking one too few.
+pub fn command_mode_refusal_takes_its_arguments(
+    bus: &mut Bus,
+    ctx: &Ctx,
+) -> Result<Outcome, String> {
+    const LOCATION: u32 = 0x0010;
+
+    let addr = ctx.scratch_addr();
+    let peek = peek_args(1, LOCATION);
+    let poke = poke_args(0x5A, LOCATION);
+    let commit = commit_byte_args(0x5A, LOCATION, ctx.active_ram_slot);
+    let begin = [ctx.active_ram_slot];
+
+    for (cmd, args) in [
+        (nv::NV_PEEK, &peek[..]),
+        (nv::NV_POKE_BEGIN, &begin[..]),
+        (nv::NV_POKE, &poke[..]),
+        (nv::NV_POKE_COMMIT_BYTE, &commit[..]),
+    ] {
+        let armed = bus.read(addr)? ^ 0xFF;
+
+        bus.knock(ctx.command_page())?;
+        bus.send_cmd(ctx.command_page(), group::NV_STORAGE, cmd, args)?;
+
+        bus.knock(ctx.command_page())?;
+        bus.send_poke(ctx, addr, armed)?;
+
+        bus.await_byte(addr, armed).map_err(|e| {
+            format!(
+                "{e} — the SLOT_POKE after a command-mode 0x03/0x{cmd:02X} never landed, so the \
+                 device took more than that command's {} argument byte(s) off the wire before \
+                 discarding it",
+                args.len()
+            )
+        })?;
+    }
+
+    Ok(Outcome::Pass)
+}
+
 /// The Read group's own peek must not answer from NV storage, nor NV_PEEK from
 /// a slot.
 ///

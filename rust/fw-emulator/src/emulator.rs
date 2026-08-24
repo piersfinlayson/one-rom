@@ -1426,6 +1426,307 @@ impl Emulator {
             ffi::ora_get_sysclk_mhz_fn_t
         )
     }
+
+    /// Current CLKREF frequency in MHz (`ORA_ID_GET_CLKREF_MHZ`).
+    ///
+    /// **Faults under the test build.**  The firmware reads `CLOCK_REF_DIV`,
+    /// which `reg-rp235x.h` defines as a dereference of the absolute address
+    /// 0x40010034.  That is a peripheral register on the device and unmapped
+    /// memory in this process, and nothing stands in for it, so the call
+    /// segfaults rather than returning.  The binding is here so that a test
+    /// build which stands something in for the clocks block can call it.
+    pub fn clkref_mhz(&self) -> u32 {
+        plugin_call!(
+            ffi::api_id_t_ORA_ID_GET_CLKREF_MHZ,
+            ffi::ora_get_clkref_mhz_fn_t
+        )
+    }
+
+    // ── Memory, peripherals and interrupts ───────────────────────────────────
+
+    /// `ORA_ID_ALLOC`, returning the allocation as an address rather than a
+    /// pointer.
+    ///
+    /// The firmware has no allocator, so the answer is always 0 (NULL) and
+    /// there is nothing for a caller to dereference.  An address keeps that
+    /// visible and keeps the wrapper safe.
+    pub fn alloc(&self, size: usize) -> usize {
+        let p = plugin_call!(ffi::api_id_t_ORA_ID_ALLOC, ffi::ora_alloc_fn_t, size);
+        p as usize
+    }
+
+    /// `ORA_ID_GET_FREE_MEM`.
+    pub fn get_free_mem(&self) -> usize {
+        plugin_call!(
+            ffi::api_id_t_ORA_ID_GET_FREE_MEM,
+            ffi::ora_get_free_mem_fn_t
+        )
+    }
+
+    /// `ORA_ID_ERR_LOG` with a message carrying no conversions.
+    pub fn err_log(&self, msg: &std::ffi::CStr) {
+        plugin_call!(
+            ffi::api_id_t_ORA_ID_ERR_LOG,
+            ffi::ora_err_log_fn_t,
+            msg.as_ptr()
+        )
+    }
+
+    /// `ORA_ID_ERR_LOG` with one unsigned argument.
+    ///
+    /// # Panics
+    ///
+    /// The call is a C variadic, so `msg` must carry exactly one conversion and
+    /// it must take an `unsigned int`.  Anything else is undefined behaviour in
+    /// the formatter rather than a Rust error, so this asserts the count of
+    /// `%` signs before calling.
+    pub fn err_log_uint(&self, msg: &std::ffi::CStr, value: u32) {
+        assert_eq!(
+            msg.to_bytes().iter().filter(|&&b| b == b'%').count(),
+            1,
+            "err_log_uint needs exactly one conversion in the format string"
+        );
+        plugin_call!(
+            ffi::api_id_t_ORA_ID_ERR_LOG,
+            ffi::ora_err_log_fn_t,
+            msg.as_ptr(),
+            value as std::os::raw::c_uint
+        )
+    }
+
+    /// `ORA_ID_SETUP_ADC`.
+    pub fn setup_adc(&self) {
+        plugin_call!(ffi::api_id_t_ORA_ID_SETUP_ADC, ffi::ora_setup_adc_fn_t)
+    }
+
+    /// `ORA_ID_ENABLE_IRQ`.
+    pub fn enable_irq(&self, irq: ffi::ora_irq_t, enable: bool) {
+        plugin_call!(
+            ffi::api_id_t_ORA_ID_ENABLE_IRQ,
+            ffi::ora_enable_irq_fn_t,
+            irq,
+            u8::from(enable)
+        )
+    }
+
+    /// `ORA_ID_REGISTER_IRQ`.  A `None` handler deregisters.
+    pub fn register_irq(&self, irq: ffi::ora_irq_t, handler: ffi::ora_irq_handler_t) {
+        plugin_call!(
+            ffi::api_id_t_ORA_ID_REGISTER_IRQ,
+            ffi::ora_register_irq_fn_t,
+            irq,
+            handler
+        )
+    }
+
+    // ── Pins ─────────────────────────────────────────────────────────────────
+
+    /// `ORA_ID_IS_PIN_OUTPUT`: 1 if the pin drives, 0 if it does not, 0xFF if
+    /// the pin number is not one this device has.
+    pub fn is_pin_output(&self, pin: u8) -> u8 {
+        plugin_call!(
+            ffi::api_id_t_ORA_ID_IS_PIN_OUTPUT,
+            ffi::ora_is_pin_output_fn_t,
+            pin
+        )
+    }
+
+    /// `ORA_ID_GET_DATA_PIN_NUMS`, filling the front of `buf` and returning how
+    /// many pin numbers were written.
+    ///
+    /// `num_pins` is the caller's own cap, passed through unchanged so a test
+    /// can ask for fewer pins than the bus has and see the call stop there.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `num_pins` exceeds `buf.len()`, which the API documents as the
+    /// caller's responsibility and which would otherwise be a write past the
+    /// end of the slice.
+    pub fn get_data_pin_nums(&self, buf: &mut [u8], num_pins: u8) -> u8 {
+        assert!(
+            num_pins as usize <= buf.len(),
+            "get_data_pin_nums: buffer holds {} pins, {num_pins} asked for",
+            buf.len()
+        );
+        plugin_call!(
+            ffi::api_id_t_ORA_ID_GET_DATA_PIN_NUMS,
+            ffi::ora_get_data_pin_nums_fn_t,
+            buf.as_mut_ptr(),
+            num_pins
+        )
+    }
+
+    /// `ORA_ID_GPIO_SET`.
+    ///
+    /// `force` is `ORA_GPIO_FLAG_FORCE`, the only flag the call defines: set,
+    /// it overrides the refusal to drive a GPIO One ROM is already using.
+    pub fn gpio_set(&self, gpio: u8, state: ffi::ora_gpio_state_t, force: bool) -> OraResult {
+        const ORA_GPIO_FLAG_FORCE: u32 = 1 << 0;
+        OraResult::from(plugin_call!(
+            ffi::api_id_t_ORA_ID_GPIO_SET,
+            ffi::ora_gpio_set_fn_t,
+            gpio,
+            state,
+            if force { ORA_GPIO_FLAG_FORCE } else { 0 }
+        ))
+    }
+
+    // ── Yield ────────────────────────────────────────────────────────────────
+
+    /// `ORA_ID_YIELD`, returning the result and whether the core was paused.
+    pub fn plugin_yield(&self) -> (OraResult, u8) {
+        let mut was_paused: u8 = 0xFF;
+        let r = plugin_call!(
+            ffi::api_id_t_ORA_ID_YIELD,
+            ffi::ora_yield_fn_t,
+            &mut was_paused as *mut u8
+        );
+        (OraResult::from(r), was_paused)
+    }
+
+    /// `ORA_ID_YIELD` with a NULL out pointer, which the API documents as
+    /// allowed for a caller that does not care whether it was paused.
+    pub fn plugin_yield_null_out(&self) -> OraResult {
+        OraResult::from(plugin_call!(
+            ffi::api_id_t_ORA_ID_YIELD,
+            ffi::ora_yield_fn_t,
+            std::ptr::null_mut::<u8>()
+        ))
+    }
+
+    // ── NULL-argument forms ──────────────────────────────────────────────────
+    //
+    // Each of these reaches a guard that a wrapper always supplying somewhere
+    // to write cannot: on a device the guard is what stops a plugin's mistake
+    // becoming a fault.  See `get_compile_option_uint_null_out`.
+
+    /// `ORA_ID_GET_ACTIVE_RAM_SLOT` with a NULL out pointer.
+    pub fn get_active_ram_slot_null_out(&self) -> OraResult {
+        OraResult::from(plugin_call!(
+            ffi::api_id_t_ORA_ID_GET_ACTIVE_RAM_SLOT,
+            ffi::ora_get_active_ram_slot_fn_t,
+            std::ptr::null_mut::<u8>()
+        ))
+    }
+
+    /// `ORA_ID_GET_METADATA_STR` with a NULL out pointer.
+    pub fn get_metadata_str_null_out(&self, key: ffi::ora_metadata_key_t) -> OraResult {
+        OraResult::from(plugin_call!(
+            ffi::api_id_t_ORA_ID_GET_METADATA_STR,
+            ffi::ora_get_metadata_str_fn_t,
+            key,
+            std::ptr::null_mut::<*const std::os::raw::c_char>()
+        ))
+    }
+
+    /// `ORA_ID_GET_METADATA_UINT` with a NULL out pointer.
+    pub fn get_metadata_uint_null_out(&self, key: ffi::ora_metadata_key_t) -> OraResult {
+        OraResult::from(plugin_call!(
+            ffi::api_id_t_ORA_ID_GET_METADATA_UINT,
+            ffi::ora_get_metadata_uint_fn_t,
+            key,
+            std::ptr::null_mut::<u32>()
+        ))
+    }
+
+    /// `ORA_ID_DEMANGLE_DATA` with a NULL out pointer.
+    pub fn demangle_data_null_out(&self, physical_data: u8) -> OraResult {
+        OraResult::from(plugin_call!(
+            ffi::api_id_t_ORA_ID_DEMANGLE_DATA,
+            ffi::ora_demangle_data_fn_t,
+            physical_data,
+            std::ptr::null_mut::<u8>()
+        ))
+    }
+
+    /// `ORA_ID_LOG_OPEN_WRITE` with a NULL name.
+    pub fn log_open_write_null_name(&self, channel: u32) -> OraResult {
+        OraResult::from(plugin_call!(
+            ffi::api_id_t_ORA_ID_LOG_OPEN_WRITE,
+            ffi::ora_log_open_write_fn_t,
+            channel,
+            std::ptr::null::<std::os::raw::c_char>()
+        ))
+    }
+
+    /// `ORA_ID_LOG_WRITE` with a NULL buffer and a non-zero length.
+    pub fn log_write_null_buf(&self, channel: u32, len: u32) -> OraResult {
+        OraResult::from(plugin_call!(
+            ffi::api_id_t_ORA_ID_LOG_WRITE,
+            ffi::ora_log_write_fn_t,
+            channel,
+            std::ptr::null::<core::ffi::c_void>(),
+            len
+        ))
+    }
+
+    /// `ORA_ID_LOG_READ` with a NULL destination buffer.
+    pub fn log_read_null_buf(&self, channel: u32, max_len: u32) -> OraResult {
+        let mut copied: u32 = 0;
+        OraResult::from(plugin_call!(
+            ffi::api_id_t_ORA_ID_LOG_READ,
+            ffi::ora_log_read_fn_t,
+            channel,
+            std::ptr::null_mut::<core::ffi::c_void>(),
+            max_len,
+            &mut copied as *mut u32
+        ))
+    }
+
+    /// `ORA_ID_LOG_READ` with a NULL copied-count pointer.
+    pub fn log_read_null_copied(&self, channel: u32, max_len: u32) -> OraResult {
+        let mut buf = vec![0u8; max_len as usize];
+        OraResult::from(plugin_call!(
+            ffi::api_id_t_ORA_ID_LOG_READ,
+            ffi::ora_log_read_fn_t,
+            channel,
+            buf.as_mut_ptr() as *mut core::ffi::c_void,
+            max_len,
+            std::ptr::null_mut::<u32>()
+        ))
+    }
+
+    // ── Runtime info bytes ───────────────────────────────────────────────────
+
+    /// A copy of the whole runtime info block as raw bytes.
+    ///
+    /// The block's layout deliberately does not cross this FFI boundary (see
+    /// `ffi_system_plugin_context` in `firmware/test/ffi.c`), so this hands
+    /// back bytes and no field names.  It exists so a test can reach a field
+    /// the plugin API only ever reads — `rom_table` is the one — by finding
+    /// the word currently holding a value the API itself reports, confirming
+    /// the find by what the API then says, and putting it back.
+    pub fn runtime_info_bytes(&self) -> Vec<u8> {
+        unsafe {
+            let ptr = ffi::ffi_runtime_info_ptr() as *const u8;
+            let size = ffi::ffi_runtime_info_size() as usize;
+            std::slice::from_raw_parts(ptr, size).to_vec()
+        }
+    }
+
+    /// Overwrite one 32-bit word of the runtime info block.
+    ///
+    /// # Safety
+    ///
+    /// `offset` must be within the block and 4-byte aligned, and the caller
+    /// must know which field it is writing — see [`Self::runtime_info_bytes`].
+    /// Writing a field the firmware dereferences puts a value of the caller's
+    /// choosing behind a pointer the next call follows.
+    pub unsafe fn poke_runtime_u32(&self, offset: usize, value: u32) {
+        let size = unsafe { ffi::ffi_runtime_info_size() } as usize;
+        assert!(
+            offset.is_multiple_of(4),
+            "poke_runtime_u32: offset must be aligned"
+        );
+        assert!(
+            offset + 4 <= size,
+            "poke_runtime_u32: offset {offset} past the {size} byte block"
+        );
+        unsafe {
+            let ptr = (ffi::ffi_runtime_info_ptr() as *mut u8).add(offset) as *mut u32;
+            ptr.write_unaligned(value);
+        }
+    }
 }
 
 impl Drop for Emulator {

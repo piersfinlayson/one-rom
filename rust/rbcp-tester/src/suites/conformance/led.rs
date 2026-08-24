@@ -110,10 +110,16 @@ const SETTLE_POLLS: u32 = 8;
 /// The LED calls arrived in firmware later than this plugin's minimum, so it
 /// degrades where they are absent.  The emulator implements the whole API, so
 /// withholding is the only way to reach that path.
-pub static WITHHELD_API: &[(&str, &[u32])] = &[(
-    "conformance.led.no_leds_without_the_led_calls",
-    &[ffi::api_id_t_ORA_ID_LED_SET, ffi::api_id_t_ORA_ID_LED_GET],
-)];
+pub static WITHHELD_API: &[(&str, &[u32])] = &[
+    (
+        "conformance.led.no_leds_without_the_led_calls",
+        &[ffi::api_id_t_ORA_ID_LED_SET, ffi::api_id_t_ORA_ID_LED_GET],
+    ),
+    (
+        "conformance.led.no_leds_without_the_led_get_call",
+        &[ffi::api_id_t_ORA_ID_LED_GET],
+    ),
+];
 
 /// What GET_LED_CAPABILITY reports.
 #[derive(Clone, Copy)]
@@ -969,21 +975,56 @@ pub fn query_commands_need_room_for_their_answer(
     Ok(Outcome::Pass)
 }
 
-/// All three commands are refused in command mode, and cost the host nothing.
+/// All four commands are refused in command mode, and cost the host nothing.
 ///
-/// "All commands in this group are valid in command-response mode only", and a
-/// command refused for being in the wrong mode "is nonetheless framed like any
-/// other: the device consumes its argument bytes before discarding it".
+/// "All commands in this group are valid in command-response mode only", so
+/// neither a query nor a SET_LED may act.  Two assertions, because the group's
+/// two kinds of command fail differently.
 ///
-/// Both halves at once, because in command mode neither is observable alone.
-/// The frame must be consumed, which the SLOT_POKE at the end says: it is
-/// properly knocked, so it lands only if the device took all nine argument
-/// bytes of the three commands off the wire first.  And the queries must not
-/// answer, which the armed data section says.
+/// The queries must not answer, which the armed data section says: a device
+/// that answered would write its response where the host last asked for one.
+///
+/// SET_LED must not act, which the LED itself says.  An RGB LED is put in a
+/// known state before the session ends, the command-mode SET_LED names a
+/// different colour and brightness, and the LED must still hold the first when
+/// the next session reads it back.  That is the half with teeth - the data
+/// section is no longer maintained once the session is over, so a device that
+/// acted on the query would likely miss it anyway.
+///
+/// Each command is knocked in its own right.  In command mode the device is
+/// waiting for a knock, so a bare command frame is read as junk and never
+/// dispatched.
+///
+/// The other half of the requirement is deliberately not asserted here.  A
+/// refused command "is nonetheless framed like any other: the device consumes
+/// its argument bytes before discarding it", and a knocked command afterwards
+/// cannot see a missing discard, because the knock is matched by the firmware's
+/// address monitor as a sliding window and leftover argument bytes slide past
+/// it.  `argument_counts_are_consumed_exactly` covers consumption in
+/// command-response mode, where the token makes it observable.
 pub fn not_valid_in_command_mode(bus: &mut Bus, ctx: &Ctx) -> Result<Outcome, String> {
-    let s = ctx.session();
-    bus.enter_cmd_resp(&s)
-        .map_err(|e| format!("ENTER_CMD_RESP: {e}"))?;
+    let (s, cap) = match session_with_an_led(bus, ctx)? {
+        Ok(v) => v,
+        Err(o) => return Ok(o),
+    };
+
+    // An RGB LED, so that colour and brightness read back.  Where the board has
+    // none the command loop below still runs - reaching the device's refusal is
+    // the point, and only the SET_LED half of the assertion needs the LED.
+    let armed_led = match find_type(bus, &s, cap.count, TYPE_RGB)? {
+        Some((n, _)) => {
+            bus.issue_cmd(
+                &s,
+                group::LED,
+                led::SET_LED,
+                &set_args(ON, TEST_COLOUR, TEST_BRIGHTNESS, 0, 0, n),
+            )
+            .map_err(|e| format!("SET_LED arming LED {n}: {e}"))?;
+            Some((n, info(bus, &s, n)?))
+        }
+        None => None,
+    };
+
     bus.issue_cmd(&s, group::CONTROL, control::EXIT_CMD_RESP_ACK, &[])
         .map_err(|e| format!("EXIT_CMD_RESP_ACK: {e}"))?;
 
@@ -992,24 +1033,37 @@ pub fn not_valid_in_command_mode(bus: &mut Bus, ctx: &Ctx) -> Result<Outcome, St
     bus.poke_verified(ctx, dst, armed)
         .map_err(|e| format!("arming the response data section: {e}"))?;
 
+    // A colour and brightness the armed LED is not already showing, so a
+    // SET_LED that took effect cannot be mistaken for one that did not.
+    let n = armed_led.map_or(0, |(n, _)| n);
     for (cmd, args) in [
         (led::GET_LED_CAPABILITY, &[][..]),
-        (led::GET_LED_INFO, &[0][..]),
-        (led::GET_LED_MODE_INFO, &[ON, 0][..]),
-        (led::SET_LED, &plain(ON, 0)[..]),
+        (led::GET_LED_INFO, &[n][..]),
+        (led::GET_LED_MODE_INFO, &[ON, n][..]),
+        (
+            led::SET_LED,
+            &set_args(ON, (0xFF, 0x00, 0x00), 99, 0, 0, n)[..],
+        ),
     ] {
+        bus.knock(s.command_page)?;
         bus.send_cmd(s.command_page, group::LED, cmd, args)?;
     }
 
-    bus.poke_verified(ctx, dst, armed ^ 0xFF).map_err(|e| {
-        format!(
-            "{e} — the poke after the four commands never landed, so the device did not \
-             consume their eleven argument bytes exactly"
-        )
-    })?;
+    if bus.read(dst)? != armed {
+        return Err("a command-mode LED query wrote to the response data section".into());
+    }
 
-    if bus.read(dst)? != (armed ^ 0xFF) {
-        return Err("a command-mode LED command wrote to the response data section".into());
+    if let Some((n, want)) = armed_led {
+        let s = ctx.session();
+        bus.enter_cmd_resp(&s)
+            .map_err(|e| format!("re-entering command-response mode: {e}"))?;
+        let got = info(bus, &s, n)?;
+        if got != want {
+            return Err(format!(
+                "a SET_LED issued in command mode took effect on LED {n}: it was {want:?} and \
+                 is now {got:?}"
+            ));
+        }
     }
 
     Ok(Outcome::Pass)
@@ -1112,6 +1166,38 @@ pub fn no_leds_without_the_led_calls(bus: &mut Bus, ctx: &Ctx) -> Result<Outcome
         return Err(format!(
             "the plugin reports {} LEDs with the firmware's LED calls withheld; without them \
              it has no engine to reach",
+            cap.count
+        ));
+    }
+    expect_zero_led_rule(bus, &s)?;
+
+    Ok(Outcome::Pass)
+}
+
+/// A device that can drive an LED but not read one back reports no LEDs.
+///
+/// The other half of the degradation [`no_leds_without_the_led_calls`] covers,
+/// and not the same path: there the plugin has no engine at all, here it has one
+/// it can write to but cannot ask about.  RBCP numbers only the LEDs a board
+/// actually carries, and reading a channel back is how the plugin finds out
+/// which those are — so a channel it cannot read is one it cannot advertise,
+/// however willing the engine is to be told about it.
+///
+/// The distinction matters because a device getting this wrong looks fine from
+/// the capability command and falls apart from GET_LED_INFO onwards: it would be
+/// offering a host LEDs whose type, mode and colour it has no way to report.
+/// Reached by withholding `ORA_ID_LED_GET` alone — see [`WITHHELD_API`] — since
+/// the emulator implements the whole API.
+pub fn no_leds_without_the_led_get_call(bus: &mut Bus, ctx: &Ctx) -> Result<Outcome, String> {
+    let s = ctx.session();
+    bus.enter_cmd_resp(&s)
+        .map_err(|e| format!("ENTER_CMD_RESP: {e}"))?;
+
+    let cap = capability(bus, &s)?;
+    if cap.count != 0 {
+        return Err(format!(
+            "the plugin reports {} LED(s) with the firmware's LED read call withheld; it cannot \
+             tell which channels the board carries, nor answer GET_LED_INFO for any of them",
             cap.count
         ));
     }
