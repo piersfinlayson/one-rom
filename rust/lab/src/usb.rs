@@ -14,9 +14,15 @@
 //!
 //! # Public API
 //!
-//! - [`cdc_wait_connection`] — await a new host connection
-//! - [`cdc_send`]           — queue a string for transmission (non-blocking)
-//! - [`cdc_recv`]           — await the next byte from the host
+//! - [`cdc_wait_connection`] — await enumeration by a host
+//! - [`cdc_wait_dtr`]        — await a terminal opening the port
+//! - [`cdc_send`]            — queue a string for transmission (non-blocking)
+//! - [`cdc_recv`]            — await the next byte from the host
+//! - [`cdc_drain_rx`]        — discard anything received but not yet read
+//!
+//! Enumeration and a terminal opening the port are separate events.  A host
+//! enumerates the device as soon as it is plugged in, whether or not anybody
+//! is watching, and raises DTR when a terminal opens the port.
 
 #![allow(static_mut_refs)]
 
@@ -33,7 +39,7 @@ use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Channel;
 use embassy_sync::signal::Signal;
 use embassy_time::Timer;
-use embassy_usb::class::cdc_acm::{CdcAcmClass, Receiver, Sender, State};
+use embassy_usb::class::cdc_acm::{CdcAcmClass, ControlChanged, Receiver, Sender, State};
 use embassy_usb::msos::{self, windows_version};
 use embassy_usb::{Builder, Config as UsbConfig, UsbDevice};
 use static_cell::StaticCell;
@@ -58,11 +64,31 @@ static CONNECTED: AtomicBool = AtomicBool::new(false);
 /// Messages queued for transmission to the host.
 static CDC_TX: Channel<CriticalSectionRawMutex, String, 8> = Channel::new();
 
-/// Bytes received from the host.  `None` is the disconnection sentinel.
-static CDC_RX: Channel<CriticalSectionRawMutex, Option<u8>, 8> = Channel::new();
+/// Bytes received from the host.
+///
+/// Deep enough to take a whole 64-byte packet without the reader having to
+/// stop for the consumer mid-packet.  `cdc_reader` blocks rather than dropping
+/// when it does fill, so a host that sends faster than the session consumes is
+/// held up by USB flow control instead of losing characters.
+static CDC_RX: Channel<CriticalSectionRawMutex, u8, 64> = Channel::new();
+
+/// Raised when the session's other end goes away - the host disconnecting, or a
+/// terminal closing the port.
+///
+/// Separate from `CDC_RX` so that it cannot be lost behind bytes the consumer
+/// has not read yet.  As a sentinel in the byte channel it was dropped whenever
+/// the channel was full, which is exactly when a session most needs to end.
+static CDC_GONE: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 
 /// Fired by `cdc_writer` each time the host connects.
 static CDC_CONNECTED: Signal<CriticalSectionRawMutex, ()> = Signal::new();
+
+/// True while DTR is raised, which is what says a terminal has the port open.
+/// Written only by `cdc_control`.
+static DTR: AtomicBool = AtomicBool::new(false);
+
+/// Fired by `cdc_control` each time DTR is raised.
+static CDC_DTR: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 
 const VID: u16 = 0x1209;
 const PID: u16 = 0xF542;
@@ -146,10 +172,11 @@ impl Usb {
 }
 
 pub fn run(spawner: Spawner, usb: Usb) {
-    let (sender, receiver) = usb.cdc.split();
+    let (sender, receiver, control) = usb.cdc.split_with_control();
     spawner.spawn(usb_task(usb.device).unwrap());
     spawner.spawn(cdc_writer(sender).unwrap());
     spawner.spawn(cdc_reader(receiver).unwrap());
+    spawner.spawn(cdc_control(control).unwrap());
 }
 
 #[embassy_executor::task]
@@ -189,10 +216,10 @@ async fn cdc_writer(mut sender: Sender<'static, Driver<'static, USB>>) -> ! {
             }
         }
 
-        // Mark disconnected and push the sentinel before looping, so that any
-        // task blocked in cdc_recv() is unblocked with Err(Error::Disconnected).
+        // Mark disconnected and say so before looping, so that any task blocked
+        // in cdc_recv() is unblocked with Err(Error::Disconnected).
         CONNECTED.store(false, Ordering::Relaxed);
-        let _ = CDC_RX.try_send(None);
+        CDC_GONE.signal(());
     }
 }
 
@@ -203,16 +230,49 @@ async fn cdc_reader(mut receiver: Receiver<'static, Driver<'static, USB>>) -> ! 
         let mut buf = [0u8; 64];
         while let Ok(n) = receiver.read_packet(&mut buf).await {
             for &b in &buf[..n] {
-                // Drop silently if the RX channel is full.
-                let _ = CDC_RX.try_send(Some(b));
+                // Wait rather than drop.  A full channel means the session has
+                // not caught up, and stopping here NAKs the endpoint until it
+                // does, which is what keeps a pasted line intact.
+                CDC_RX.send(b).await;
             }
         }
     }
 }
 
-/// Wait until the host connects.
+/// Track DTR, so a terminal opening and closing the port is an event rather
+/// than something only the bytes flowing reveal.
 ///
-/// Returns immediately if a connection event is already pending.  Typical
+/// A rising edge is published for whoever is waiting to start a session.  A
+/// falling edge raises the same signal `cdc_writer` raises on disconnect, so a
+/// session in progress ends through the path it already has and nothing reading
+/// input needs a second one.
+///
+/// `control_changed` also fires for RTS and the line coding, so both edges are
+/// taken from DTR itself rather than from the notification.  A bus reset clears
+/// DTR and reports the change, which is how an unplug arrives here.
+#[embassy_executor::task]
+async fn cdc_control(control: ControlChanged<'static>) -> ! {
+    loop {
+        control.control_changed().await;
+
+        let raised = control.dtr();
+        if DTR.swap(raised, Ordering::Relaxed) == raised {
+            continue;
+        }
+
+        if raised {
+            CDC_DTR.signal(());
+        } else {
+            CDC_GONE.signal(());
+        }
+    }
+}
+
+/// Wait until a host enumerates the device.
+///
+/// Returns immediately if one already has, so a caller that arrives after the
+/// event, or comes back round its own loop while the host is still there, is
+/// not left waiting for a connection that has already happened.  Typical
 /// usage:
 /// ```ignore
 /// loop {
@@ -227,7 +287,40 @@ async fn cdc_reader(mut receiver: Receiver<'static, Driver<'static, USB>>) -> ! 
 /// }
 /// ```
 pub async fn cdc_wait_connection() {
-    CDC_CONNECTED.wait().await;
+    loop {
+        if CONNECTED.load(Ordering::Relaxed) {
+            CDC_CONNECTED.reset();
+            return;
+        }
+        CDC_CONNECTED.wait().await;
+    }
+}
+
+/// Wait until a terminal opens the port.
+///
+/// Returns immediately if one already has it open, so a caller arriving after
+/// the edge is not left waiting for the next one.  The signal is only a nudge
+/// to look: what is returned on is DTR itself, so a signal left over from a
+/// terminal that has since closed the port does not read as one opening it.
+pub async fn cdc_wait_dtr() {
+    loop {
+        if DTR.load(Ordering::Relaxed) {
+            CDC_DTR.reset();
+            return;
+        }
+        CDC_DTR.wait().await;
+    }
+}
+
+/// Discard anything received but not yet read, and forget that a previous
+/// session's other end went away.
+///
+/// What a terminal sent while it was being opened is not input, and neither is
+/// anything typed at a session that has since ended.  Called as a session
+/// starts, so a stale departure cannot end the new one before it begins.
+pub fn cdc_drain_rx() {
+    while CDC_RX.try_receive().is_ok() {}
+    CDC_GONE.reset();
 }
 
 /// Queue a string for transmission to the host.  Never blocks.
@@ -249,9 +342,11 @@ pub fn cdc_send(s: String) -> Result<(), Error> {
 /// - `Ok(b)`                    — a byte was received
 /// - `Err(Error::Disconnected)` — the host has disconnected
 pub async fn cdc_recv() -> Result<u8, Error> {
-    match CDC_RX.receive().await {
-        Some(b) => Ok(b),
-        None => Err(Error::Disconnected),
+    // Going away is checked ahead of the next byte, so a session ends promptly
+    // rather than after working through whatever was typed before it did.
+    match select(CDC_GONE.wait(), CDC_RX.receive()).await {
+        Either::First(()) => Err(Error::Disconnected),
+        Either::Second(b) => Ok(b),
     }
 }
 

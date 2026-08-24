@@ -16,6 +16,7 @@ use log::{debug, error, info, trace, warn};
 use alloc::format;
 use alloc::string::ToString;
 
+use embassy_futures::select::{Either, select};
 use embassy_time::Timer;
 
 use onerom_config::chip::ChipType;
@@ -211,20 +212,77 @@ impl CsSettings {
 /// for the full application lifetime.  Never returns.
 pub async fn run(state: &mut SessionState) -> ! {
     loop {
-        // Wait silently for a USB host connection — no banner.
+        // Nothing can be written until the host has enumerated the device,
+        // whatever the terminal on the other end does about DTR.
         usb::cdc_wait_connection().await;
         debug!("CDC host connected");
 
-        // Enter-to-wake: discard everything until the first CR or LF.
-        // The user opens their terminal and presses Enter to get a prompt
-        // without seeing unsolicited output on connect.
-        if !wait_for_enter().await {
-            continue; // disconnected before the wake keystroke arrived
+        // A terminal opening the port raises DTR, and that is what normally
+        // starts a session.  Enter starts one too, for a terminal configured to
+        // leave DTR alone, which would otherwise never see anything at all.
+        match select(usb::cdc_wait_dtr(), wait_for_enter()).await {
+            Either::First(()) => debug!("Terminal opened the port"),
+            Either::Second(true) => debug!("Woken by Enter"),
+            Either::Second(false) => continue, // disconnected before either
+        }
+
+        // Whatever arrived while the terminal was opening is not input.
+        usb::cdc_drain_rx();
+
+        // A host raises DTR partway through opening the port and discards
+        // whatever arrives before it has finished, so a greeting sent the
+        // instant DTR rises is thrown away by the terminal rather than by us -
+        // pyserial, and so miniterm, does exactly this.  It is a heuristic: a
+        // host slower than this still misses the greeting.
+        Timer::after_millis(OPEN_SETTLE_MS).await;
+
+        if send_banner(state).await.is_err() {
+            continue;
         }
 
         session_loop(state).await;
         debug!("CDC session ended");
     }
+}
+
+/// How long to let a host finish opening the port before greeting it.
+///
+/// The same 250ms the USB system plugin waits before draining the log to a
+/// terminal, for the same reason and honed there - see LOG_DRAIN_SETTLE_MS in
+/// plugins/system/usb/src/usb_log.c.  Lab shares no build with that plugin, so
+/// the two cannot share a constant, but they should not disagree either.
+const OPEN_SETTLE_MS: u64 = 250;
+
+/// Greet a terminal that has just opened the port.
+///
+/// The same shape as the USB system plugin's log banner - a titled rule, what
+/// the device is, what it is called, then a plain rule of the same width, with
+/// anything that is not identity following it.  One product, so one banner.
+///
+/// A token with no value is left out rather than filled with a placeholder the
+/// reader would have to know to discount, which is why the board appears only
+/// once one is set.
+async fn send_banner(state: &SessionState) -> Result<(), Error> {
+    const TITLE: &str = "----- One ROM Lab -----";
+    const RULE: &str = "-----------------------";
+    const _: () = assert!(TITLE.len() == RULE.len());
+
+    send_line(TITLE).await?;
+    match state.board {
+        Some(board) => {
+            send_line(&format!(
+                "One ROM Lab {} v{}",
+                board.name(),
+                crate::PKG_VERSION
+            ))
+            .await?;
+        }
+        None => send_line(&format!("One ROM Lab v{}", crate::PKG_VERSION)).await?,
+    }
+    send_line(&format!("Serial: {}", crate::serial_id())).await?;
+    send_line(RULE).await?;
+    send_line("Type ? for help.").await?;
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -288,7 +346,7 @@ async fn session_loop(state: &mut SessionState) {
 async fn wait_for_enter() -> bool {
     loop {
         match usb::cdc_recv().await {
-            Ok(b'\r') => return true,
+            Ok(b'\r' | b'\n') => return true,
             Ok(_) => continue,
             Err(_) => return false,
         }

@@ -37,10 +37,25 @@ Lab presents a USB CDC serial port.  Connect at 115200:
 scripts/serial.sh /dev/cu.usbmodem1103
 ```
 
-Nothing is printed until you press Enter — input is discarded until then, so a
-terminal opening mid-boot cannot leave you looking at a blank screen wondering.
-You then get a `> ` prompt, with line editing, arrow keys and a 16 entry command
-history.
+Lab greets you as your terminal opens the port:
+
+```text
+----- One ROM Lab -----
+One ROM Lab fire-40-a v0.2.0
+Serial: 62CD9AE3C0771A7E
+-----------------------
+Type ? for help.
+```
+
+The board line appears once a board is set.  You then get a `> ` prompt, with
+line editing, arrow keys and a 16 entry command history.
+
+Closing the terminal ends the session, and reopening it starts a new one and
+greets you again — with the board, chip type and output format you had set still
+in place.
+
+A terminal configured not to raise DTR sees nothing on opening the port.  Press
+Enter and the greeting follows.
 
 ## Commands
 
