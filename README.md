@@ -1,5 +1,6 @@
 # One ROM
 
+![Test coverage](https://img.shields.io/badge/Test%20coverage%3A-555)
 ![Base firmware](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/piersfinlayson/one-rom/badges/firmware.json&label=Base%20firmware)
 ![Plugin - USB](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/piersfinlayson/one-rom/badges/plugin-usb.json&label=Plugin%20-%20USB)
 ![Plugin - Host Control](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/piersfinlayson/one-rom/badges/plugin-host-control.json&label=Plugin%20-%20Host%20Control)
