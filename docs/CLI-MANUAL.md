@@ -45,12 +45,14 @@ inspecting device state, and manipulating ROM image files.
 
 ## About This Document
 
-This One ROM CLI manual is in three parts:
+This One ROM CLI manual covers:
 
+- **Overview** — what One ROM is, its hardware, and the vocabulary the rest of
+  this manual uses.
 - **Guide** — installation and the common workflows.
 - **Reference** — every command, subcommand and option.
-- **Problems** — symptoms and their fixes, including [a One ROM the CLI cannot
-  find](#recovering-a-one-rom-the-cli-cannot-find).
+- **Problems** — symptoms and their fixes, including [recovering a bricked One
+  ROM](#recovering-a-bricked-one-rom).
 
 > This manual documents the `onerom` CLI as of release v<!--[version:cli]-->0.4.0<!--[/]-->. Board,
 > chip and plugin lists shown in examples are illustrative — the set your build
@@ -83,6 +85,194 @@ end of this manual.
 
 ---
 
+<!--[fragment:docs/OVERVIEW.md:peer]-->
+# One ROM Overview
+
+## Background - ROM Replacements
+
+ROM (Read-Only Memory) chips are used in a huge assortment of electronic
+devices to supply those systems with pre-programmed data - Operating System
+and BIOS images, character sets, programming languages, games, etc.  On old
+systems these sometimes fail and need replacing, or users would like to
+upgrade their system, by replacing with a ROM with newer data.  The original
+ROM chip is removed from the system and a replacement is installed in its place.
+
+Traditional ROM replacements are built around EPROMs, EEPROMs and flash chips.
+Those are similar devices to the ROM being replaced - that is dumb devices
+that have a persistent memory store and some control lines - but with higher capacity
+than the original ROM and/or different chip select behaviour.  The chip
+select logic is typically fixed with additional on-board logic.
+
+## Introduction to One ROM
+
+One ROM takes a different approach - it consists of a microcontroller paired
+with flash and RAM, physically laid out on a PCB so that the original ROM's
+address, data and chip select lines connect to the MCU's general-purpose
+input/output (GPIO) pins.  This makes One ROM a ROM emulator, also known as a
+Software Defined ROM.
+
+Firmware is loaded to One ROM's flash, along with the ROM image(s) to be
+served.  One ROM is installed in the system.  On power on, it boots and first
+loads and runs its firmware, and then loads the ROM image(s) to be served into
+RAM, and serves them from there.
+
+Because One ROM is microcontroller based, it is controlled by software rather
+than by hardwired, hardware-based logic.  This makes One ROM the most powerful
+and flexible ROM replacement available.   Nearly any original ROM of a
+particular form factor can be replaced by an equivalent One ROM.
+
+One ROM's software is open source and has a modular architecture with a rich
+plugin API.  This means One ROM is a platform that can be extended with new
+capabilities, not just a ROM replacement.  Some examples of ways in which
+people have extended One ROM include:
+
+- A comprehensive USB stack and interface to allow One ROM to be managed
+  while running, built on the public plugin API.
+- Communication between a retro system and a PC using One ROM's USB port.
+- A retro system controlling its own reset line using one of One ROM's header
+  pins.
+- Reprogramming One ROM dynamically as part of a car's ECU tuning process.
+
+## Hardware
+
+One ROM comes in multiple physical variants to support each supported ROM package
+size - 24, 28, 32 and 40 pin.  All One ROMs replace original 600 mil (15.24mm)
+wide DIP packages.  The supported ROM types are listed in
+[COMPATIBILITY](/docs/COMPATIBILITY.md).  Each pin variant has multiple hardware
+revisions, marked on the board.
+
+One ROM Fire, based on the RP2350 microcontroller, is the current family and is
+available in all four sizes.
+
+One ROM Ice is a deprecated 24 pin only family based on an STM32F4.  It is
+supported on Base Firmware v0.6.x.  New feature releases for One ROM Ice are not
+anticipated.
+
+## Important concepts
+
+- **Base Firmware** - a binary including the core code that causes a One ROM to
+  serve ROM images.  Does not include any information about the One ROM hardware
+  variant or the ROM images to serve.  Should not be used on its own to program
+  a One ROM device.
+
+- **ROM image** - a binary blob that is the contents of a ROM to be served.  Can
+  be supplied to the programming tool as a raw binary file, or in other formats,
+  including Intel HEX and Motorola S-record.  The programming tool converts the
+  ROM image to the format One ROM requires.
+
+- **Slot** - a region of One ROM's flash holding a single ROM image, set of ROM
+  images, or plugin.
+
+- **Image selection** - the choice of which ROM image a One ROM serves.  A One
+  ROM can hold multiple images, selected at boot using the image select jumpers
+  on the board.
+
+- **Configuration** - the description of what a One ROM should do, provided to
+  the programmer.  It names the ROM images to serve, the chip type and chip
+  select behaviour of each, and any settings.
+
+- **Programmer** - a tool that composes ROM images, configuration, Base Firmware
+  and metadata into a complete image, and flashes it to the device.  There are
+  three - the [web programmer](https://onerom.org/web), the
+  [CLI](https://onerom.org/cli) and [Studio](https://onerom.org/studio).
+
+- **Metadata** - a binary block that describes the hardware properties of a
+  physical One ROM device, and the properties of the ROM images to be served.
+  The programmer generates this metadata from the configuration provided, and
+  it is included in the firmware that is flashed to the device.
+
+- **Bootloader** - a small program contained in One ROM's own read-only memory
+  that allows One ROM to be reflashed with new firmware and metadata.  The
+  bootloader is always accessible, even if the firmware and metadata are
+  corrupted or missing and, because it is ROM based itself, it cannot be
+  corrupted or erased.
+
+- **Header pins** - pins on the One ROM board exposing power, ground, the image
+  select lines, the debug interface and spare pins for expansion.  They allow
+  One ROM to be wired to the system it is installed in, or to external hardware.
+
+- **Plugin** - a binary blob consisting of code that extends One ROM's
+  capabilities beyond those provided by the core firmware.  The most common
+  plugin is the System Plugin.  A user chooses which plugins to include in
+  their firmware (if any) at programming time.  Up to two plugins can be
+  included with a single One ROM firmware image - the System Plugin, and a
+  User Plugin.
+
+- **System Plugin** - a plugin that provides a USB stack and other capabilities
+  to One ROM.  One ROM's System Plugin is shipped alongside One ROM's Base
+  Firmware.  Its use is recommended for all users, except those who want to
+  replace it with their own custom, replacement plugin.
+
+- **User Plugin** - a plugin installed alongside the System Plugin providing
+  additional capabilities to One ROM.  User Plugins can be developed by anyone,
+  and a number of them are shipped alongside Base Firmware and System Plugin.
+  User Plugins require a System Plugin to be included.  An example User Plugin
+  is One ROM's Host Control plugin, which allows One ROM to be controlled by the
+  system it is installed in, with no extra wiring using the ROM Bus Control
+  Protocol (RBCP).
+
+- **Setting** - a named value that changes how a One ROM behaves rather than
+  what it serves.  Settings are configured by the user and written by the
+  programmer.  The status LED and the CPU frequency are example settings
+  supported by the Base Firmware.  Plugins may have their own settings.
+
+- **ROM Bus Control Protocol (RBCP)** - a
+  [protocol](https://github.com/piersfinlayson/rom-bus-control-protocol) that
+  allows ROM emulators like One ROM to be controlled by a system it is
+  installed in, with no extra wiring.  Supported by One ROM's Host Control plugin.
+
+- **Bricked One ROM** - a One ROM device that is non-functional because it has
+  been flashed with corrupted firmware or metadata, metadata for a different
+  physical One ROM device, no metadata, or firmware or metadata with some other
+  issue.  Bricked One ROMs can be recovered by entering One ROM's bootloader
+  and reflashing them with valid firmware and metadata.  It is very unlikely
+  that a bricked One ROM cannot be recovered.
+
+## Types of One ROM Deployments
+
+### Minimal
+
+Consists of:
+
+- Base Firmware
+- Metadata
+- At least one ROM image
+
+Contains no plugins.  Serves the ROM image(s) to the system it is installed in,
+but cannot be managed while running.
+
+In this deployment type, when One ROM is plugged in via USB it drops
+automatically into its bootloader, allowing the device to be reprogrammed, and
+simultaneously stops serving the ROM image(s) to the system it is installed in.
+
+### Standard
+
+A Minimal Deployment plus One ROM's System Plugin, which includes a USB stack
+enabling comprehensive management of the device while it is running.
+
+This is the recommended deployment type for most users.
+
+### Extended
+
+A Standard Deployment plus a User Plugin.  The User Plugin may be One ROM's own,
+or one written by a third party.
+
+### Custom
+
+A Custom Deployment is one where one or more of the following holds:
+
+- The physical One ROM device is not manufactured from a
+  [published design](/hardware/pcb/README.md).  It may be a derivative, or a
+  fully custom design.
+
+- The Base Firmware is a fork of or replacement for One ROM's Base Firmware.
+
+- The System Plugin is replaced with a fork of or replacement for One ROM's
+  System Plugin.
+<!--[/]-->
+
+---
+
 # Part 1 — Guide
 
 ## Installation
@@ -90,7 +280,7 @@ end of this manual.
 Download the CLI from **<https://onerom.org/cli>**. Builds are provided for:
 
 - Windows — x86 64-bit and ARM 64-bit
-- macOS
+- macOS - a single universal build for Intel and Apple Silicon
 - Ubuntu/Debian — x86 64-bit, and ARM 64-bit (also for Raspberry Pi)
 
 The Windows and macOS builds are digitally signed. A sha256 checksum is published
@@ -120,9 +310,9 @@ onerom --version
 
 ## Keeping the CLI up to date
 
-The CLI does not check for updates on its own — nothing here contacts the
-network unless you ask it to. [`onerom self check`](#self-check) compares this
-build against the newest release published for your platform, and
+The CLI does not check for updates on its own.
+[`onerom self check`](#self-check) compares the current build
+against the newest release published for your platform, and
 [`onerom self download`](#self-download) fetches it:
 
 ```
@@ -133,9 +323,7 @@ onerom self download
 `self download` saves the same artifact you would get from
 <https://onerom.org/cli> — a `.deb` on Linux, a zip on Windows and macOS —
 verifies it against the SHA-256 published alongside it, and prints the install
-step for what it downloaded. It does not install anything itself: on Linux the
-`.deb` is owned by your package manager, and replacing the file underneath it
-would only confuse the two.
+step for what it downloaded. You must install the new version.
 
 ## How One ROM talks to the CLI
 
@@ -148,7 +336,7 @@ situations:
   (provided by the system USB plugin) exposes the picobootx interface.
 - **Stopped** — the device is in One ROM's bootloader (BOOTSEL). A bare RP2350
   bootloader is also reachable here, which is how unprogrammed or bricked units
-  are [recovered](#recovering-a-one-rom-the-cli-cannot-find).
+  are [recovered](#recovering-a-bricked-one-rom).
 
 Some commands work in either state; some require one specifically. Each
 reference entry notes when a device connection is required, and the state model
@@ -187,7 +375,7 @@ Two situations need extra flags:
   and supply `--board`, since the board type can't be inferred. The unit must
   still expose a valid picoboot USB interface. It reports no serial at all, so
   `--serial` cannot pick between two of them — attach one at a time, and see
-  [Recovering a One ROM the CLI cannot find](#recovering-a-one-rom-the-cli-cannot-find).
+  [Recovering a bricked One ROM](#recovering-a-bricked-one-rom).
 - **Non-standard USB IDs**: add `--vid-pid <VID:PID>` (hex), repeatable. When
   supplied, only the given VID/PID pairs are matched.
 
@@ -402,7 +590,7 @@ watching. See [`monitor log`](#monitor-log).
 Erase flash. This is best done while stopped; by default the command reboots the
 device into the required state first. A fully erased unit falls back to One
 ROM's bootloader and is then reprogrammed with `--unrecognised` + `--board`, as
-[Recovering a One ROM the CLI cannot find](#recovering-a-one-rom-the-cli-cannot-find) describes:
+[Recovering a bricked One ROM](#recovering-a-bricked-one-rom) describes:
 
 ```
 onerom control erase --all
@@ -477,7 +665,7 @@ any level).
 |---|---|
 | `--serial, -s <DEVICE>` | Select a One ROM by serial number. Required when multiple are connected; auto-selected when exactly one is present. Accepts `*` and `?` wildcards. |
 | `--vid-pid <VID:PID>` (alias `--id`) | USB vendor/product ID pair in hex (e.g. `1234:abcd`). Repeatable; when given, only these pairs are matched. Use with `--unrecognised`. |
-| `--unrecognised, -u` (alias `--unrecognized`) | Allow management of unrecognised/unprogrammed/bricked RP2350 boards. The unit must still expose a valid picoboot USB interface. Use with caution — permits programming any attached RP2350 board. See [Recovering a One ROM the CLI cannot find](#recovering-a-one-rom-the-cli-cannot-find). |
+| `--unrecognised, -u` (alias `--unrecognized`) | Allow management of unrecognised/unprogrammed/bricked RP2350 boards. The unit must still expose a valid picoboot USB interface. Use with caution — permits programming any attached RP2350 board. See [Recovering a bricked One ROM](#recovering-a-bricked-one-rom). |
 | `--yes, -y` | Auto-confirm all prompts. Also suppresses the over-limit CPU frequency/voltage confirmations. |
 | `--verbose, -v` | Enable verbose output. |
 | `--log-level <LEVEL>` | Set log level. Defaults to `warn`. |
@@ -1376,7 +1564,7 @@ erased unit boots into One ROM's bootloader and is reprogrammed with
 Best performed while stopped; by default the command reboots into the required
 state first. Erasing the core firmware or the system plugin while **running**
 takes down the USB stack (requiring
-[manual BOOTSEL](#recovering-a-one-rom-the-cli-cannot-find)), and large erases
+[manual BOOTSEL](#recovering-a-bricked-one-rom)), and large erases
 may cause a temporary USB drop and re-enumerate — in which case the erase likely
 succeeded and can be checked with `inspect peek memory`. Anything
 else running from flash (e.g. a user plugin) may crash during an erase.
@@ -1885,7 +2073,7 @@ Could not determine board type from the connected device Unknown           - Fir
 ```
 
 The header carries the `BOOTSEL` pad used to boot a One ROM into its own
-bootloader — see [Recovering a One ROM the CLI cannot find](#recovering-a-one-rom-the-cli-cannot-find).
+bootloader — see [Recovering a bricked One ROM](#recovering-a-bricked-one-rom).
 
 Device required: no (a device is used only to infer `--board` when it is
 omitted).
@@ -2255,9 +2443,19 @@ have is reported against what it does have.
 
 # Part 3 — Problems
 
-## Recovering a One ROM the CLI cannot find
+<!--[fragment:docs/fragments/unbrick.md]-->
+## Recovering a bricked One ROM
 
-`onerom scan` finds nothing, and any command needing a device refuses:
+You can recover a One ROM that is not responding using any of the One ROM
+programming tools by following the instructions below.  The One ROM CLI is
+recommended as it gives greatest control over One ROM.  The CLI commands
+are shown below.
+
+### Situation
+
+No tool can find the device. `onerom scan` reports nothing, the browser
+programmer sees nothing to connect to, and any command needing a device refuses.
+The Web programmer cannot detect it and the CLI reports:
 
 ```
 $ onerom scan
@@ -2271,51 +2469,96 @@ No One ROM was found or specified.
   Use 'onerom scan' to list connected One ROMs.
 ```
 
-A One ROM in this state is often called bricked. Nothing is damaged. Its
+A One ROM in this state is called bricked. Nothing is damaged. Its
 firmware is not running, so nothing answers on the USB bus — programming was
 interrupted, or the firmware on it is not right for the board. One ROM has a
-hardware bootloader which cannot be bricked, so the solution is to boot One ROM
-into its bootloader and then re-program it.
+hardware bootloader which cannot be bricked, so the recovery is to boot the
+device into that bootloader and program it again.
+
+If the One ROM programming tool you are using does find the device, it is not
+bricked. Program it as normal.
+
+### Booting into the bootloader
+
+This works on any Fire (RP2350) board whatever state its flash is in.
 
 1. Unplug the One ROM.
 
-2. Connect the **BOOTSEL** pad to ground. It is normally the middle pad of the
-   header's top row, and the USB shield is a good source of ground.
-   [`onerom board header --board <BOARD>`](#board-header) shows it.
+2. Connect the **BOOTSEL** pad to ground. It is normally the middle pad/pin on
+   the header pins' top row, and the USB shield is a good source of ground.
+   The CLI command
+   [`onerom board header --board <BOARD>`](#board-header)
+   shows the header pins.
 
    > Fire 24 rev A and Fire 24 USB rev B are the exceptions, and both are rare.
    > Rev A brings BOOTSEL out as a pin towards the bottom of the board, and USB
-   > rev B as a very small pad on the underside.
+   > rev B as a small pad on the underside.
 
 3. Plug the One ROM into USB with that connection still made. The status LED
-   lights dimly.
+   lights dimly, which is how you know the bootloader is running.
 
 4. Remove the BOOTSEL to ground connection — it is needed only as power comes
    up.
 
-5. Check the CLI can see it. `--unrecognised` (`-u`) matches any attached
-   RP2350 board, a Raspberry Pi Pico 2 included, so ensure only One ROM is
-   attached:
+### Checking the host can see it
 
-   ```
-   $ onerom scan --unrecognised
-   Scanning ... 
-   found 1 connected device:
-     Unknown           - Firmware: n/a   State: Unknown Serial: (no serial)
-   ```
+Connect to One ROM using the programming tool as normal.
 
-   The CLI names a device's board, firmware and serial from the firmware it is
-   holding, and there is none in this example it can read.
+Using the CLI `--unrecognised` (`-u`) matches any attached RP2350 board, a
+including a Raspberry Pi Pico 2, so make sure only the One ROM is attached:
 
-6. Program it, naming the board yourself:
+```
+$ onerom scan --unrecognised
+Scanning ... 
+found 1 connected device:
+  Unknown           - Firmware: n/a   State: Unknown Serial: (no serial)
+```
 
-   ```
-   onerom program --unrecognised --board fire-24-f --config c64.json
-   ```
+The CLI names a device's board, firmware and serial from the firmware it is
+holding, and there is none in this example's bricked One ROM it can read.
 
-   The board name is the pin count and the revision letter from the silkscreen
-   — `fire-24-f` is a 24-pin board, revision F.
-   [`onerom board list`](#board-list) prints them all.
+### Programming it again
+
+**You have to supply the One ROM board information.** A One ROM board type is
+only identifiable from the firmware already programmed to it, and that
+is the thing that is missing or wrong. The board name is the pin count and the
+revision letter silkscreened on the board — `fire-24-f` is a 24-pin board,
+revision F. The marking is small.
+[`onerom board list`](#board-list) prints every name.
+
+To re-program with the CLI, add `--unrecognised` and `--board`:
+
+```
+onerom program --unrecognised --board fire-24-f --config c64.json
+```
+
+With the [browser programmer](https://onerom.org/web), pick the board yourself
+in the same way. It will ask you to confirm the board type before it writes.
+
+If the board was mis-flashed rather than left blank, both tools notice — the
+wrong firmware is still in flash and they read the board from it.  The CLI
+refuses, and needs `--force` alongside `--board`.  The browser programmer warns
+and lets you continue.  Check the silkscreen once more before you do either,
+because the same objection appears when the board is right and the name you
+picked is wrong.
+
+Then confirm the device came back up.  With the CLI:
+
+```
+onerom scan
+```
+
+Getting the board wrong writes the wrong firmware and leaves you with a bricked
+device.  In this case, follow the instructions again.
+
+### Ice boards
+
+Ice (STM32) boards use `BOOT0` rather than BOOTSEL, and it is pulled **high**,
+to 3.3V, rather than to ground. It is the jumper labelled `B0` or `B`. The
+0.7.x CLI does not program Ice boards at all — use the
+[Web Programmer](https://onerom.org/web) or
+[One ROM Studio](https://onerom.org/studio).
+<!--[/]-->
 
 ---
 

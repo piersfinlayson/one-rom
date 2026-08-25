@@ -74,6 +74,23 @@ GENERATED_FILES=(
     "ci/layout-baseline.txt"
 )
 
+# A markdown file in docs/ may carry a fragment region, whose text belongs to
+# another file and is written into the committed one so a reader on GitHub sees
+# a whole document.  The assembler fills every region in, and names each host on
+# stdout - so a region left stale by an edit to the fragment fails the same
+# check as any other generated file.  The paths are repository-relative, as the
+# git command below wants, and the run is from rust/ like everything above it.
+# Assigned first rather than piped, so a failure in the assembler - an unclosed
+# region, a fragment that is not there - stops the script under set -e instead
+# of feeding an empty list to a loop that then reports nothing wrong.
+echo "Filling in documentation fragment regions..."
+FRAGMENT_HOSTS=$(cargo run -q -p doc-gen --bin doc-assemble -- --fragments docs INSTALL.md README.md)
+while IFS= read -r host; do
+    if [ -n "${host}" ]; then
+        GENERATED_FILES+=("${host}")
+    fi
+done <<< "${FRAGMENT_HOSTS}"
+
 cd ..
 if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
     echo "Not a git work tree - skipping the generated file check"
@@ -84,6 +101,10 @@ elif ! git diff --quiet -- "${GENERATED_FILES[@]}"; then
     echo
     echo "They have been regenerated in your working tree.  Review the diff and"
     echo "commit it - do not hand-edit these files."
+    echo
+    echo "A docs/*.md file here is one carrying a fragment region, and only the"
+    echo "text between its markers was rewritten.  Edit the file the marker"
+    echo "names, not the region."
     echo
     echo "For ci/layout-baseline.txt, which records how much flash each chip type"
     echo "costs on each board, run this to see whether a change is an improvement"

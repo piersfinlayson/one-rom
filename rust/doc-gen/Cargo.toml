@@ -4,6 +4,10 @@ version = "0.1.0"
 edition = "2024"
 # Workspace-internal build tool.
 publish = false
+# The crate has two binaries, and `cargo run -p doc-gen` means the checker -
+# that is what the test gate runs and what a document's own notes tell an
+# author to run.
+default-run = "doc-gen"
 authors = ["Piers Finlayson <piers@piers.rocks>"]
 license = "MIT"
 description = "One ROM documentation checker - keeps values quoted in docs/ in step with their source"
@@ -11,6 +15,18 @@ repository = "https://github.com/piersfinlayson/one-rom"
 homepage = "https://onerom.org"
 keywords = ["retro", "rom", "documentation"]
 categories = ["development-tools"]
+
+# doc-gen checks the values a document states, and writes nothing at all.
+# doc-assemble joins whole documents into the one markdown file a PDF is
+# rendered from, and fills in the fragment regions of the documents in docs/ -
+# the text between a pair of markers, and nothing outside one.
+[[bin]]
+name = "doc-gen"
+path = "src/main.rs"
+
+[[bin]]
+name = "doc-assemble"
+path = "src/assemble/main.rs"
 
 [dependencies]
 onerom-metadata = { workspace = true }

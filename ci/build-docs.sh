@@ -94,6 +94,26 @@ command -v pandoc >/dev/null || {
 command -v weasyprint >/dev/null || {
     echo "error: weasyprint not found - run ci/install-doc-tools.sh"; exit 1; }
 
+# A document may be assembled from several of the markdown files in docs/ - the
+# CLI manual is the overview followed by the manual.  The assembler writes one
+# markdown file per such document into the build directory, and the renderer
+# then renders it exactly as it renders a single-source document.  The order is
+# set here: no Python process runs Rust to assemble, and no Rust process runs
+# Python to render.
+#
+# Only run where the set has an assembled document, so an archive build - whose
+# documents each name one file at a git ref - still needs no Rust toolchain.
+# The test is coarse on purpose: get it wrong and the renderer stops, naming the
+# assembled file it could not find.
+CONFIG_PATH="${PROJECT_ROOT}/${CONFIG:-docs/pdf/docs.toml}"
+if grep -q '^\[\[documents\.members\]\]' "${CONFIG_PATH}"; then
+    cargo run -q --manifest-path "${PROJECT_ROOT}/rust/Cargo.toml" \
+        -p doc-gen --bin doc-assemble -- \
+        --out-dir "${OUT_DIR}" \
+        ${CONFIG:+--config "${PROJECT_ROOT}/${CONFIG}"} \
+        ${SOURCE:+--source "${SOURCE}"}
+fi
+
 python3 "${PDF_DIR}/render.py" --out-dir "${OUT_DIR}" \
     ${CONFIG:+--config "${PROJECT_ROOT}/${CONFIG}"} \
     ${SOURCE:+--source "${SOURCE}"}
@@ -156,7 +176,9 @@ for document in build["documents"]:
     catalogue["description"] = document["description"]
     catalogue["tracks"] = document["tracks"]
     catalogue["tracks_label"] = document["tracks_label"]
-    catalogue["source_path"] = document["source_path"]
+    # Every document the PDF was made from, in order.  Always a list, so a
+    # reader needs one shape whether the PDF came from one document or several.
+    catalogue["sources"] = document["sources"]
 
     # Re-running a release replaces its entry rather than duplicating it, so a
     # rebuild after a correction does not leave two entries for one version.
@@ -168,16 +190,17 @@ for document in build["documents"]:
     catalogue["releases"].sort(key=lambda r: [int(n) for n in r["version"].split(".")])
 
     # Ordered so a reader meets the document before its release history.
-    save(releases_path, {
+    ordered = {
         "version": catalogue["version"],
         "display_name": catalogue["display_name"],
         "description": catalogue["description"],
         "tracks": catalogue["tracks"],
         "tracks_label": catalogue["tracks_label"],
-        "source_path": catalogue["source_path"],
-        "latest": catalogue["latest"],
-        "releases": catalogue["releases"],
-    })
+        "sources": catalogue["sources"],
+    }
+    ordered["latest"] = catalogue["latest"]
+    ordered["releases"] = catalogue["releases"]
+    save(releases_path, ordered)
 
     if catalogue["latest"] != version:
         print(f"  note: {slug} latest is {catalogue['latest'] or 'unset'},"

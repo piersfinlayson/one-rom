@@ -331,3 +331,16 @@ table code { background: none; padding: 0 }
     color: var(--ink-muted);
 }
 #TOC > ul > li > a { font-weight: 600; margin-top: 0.4em; display: block }
+/* A document assembled from several markdown files spends its top level on
+   their titles, so every contents entry belongs to one of them.  A rule above
+   each title but the first groups the entries under the member they came from,
+   which an indent alone does not do once the list runs past a page.
+
+   Only for an assembled document.  Where the top level is the document's own
+   sections, as in CHIP-TYPES, a rule above each one separates entries that
+   belong together. */
+#TOC.assembled > ul > li + li > a {
+    border-top: 1px solid var(--rule-light);
+    margin-top: 2.5mm;
+    padding-top: 2.5mm;
+}

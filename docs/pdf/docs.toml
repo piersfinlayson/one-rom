@@ -5,9 +5,10 @@
 # docs/pdf/docs.css states it, so there is one place to change a licence, a
 # domain or the set of documents, and no second copy to fall behind.
 #
-# Cover titles and subtitles are deliberately absent: they are the document's
-# own leading H1 and the paragraph beneath it, read from the markdown at build
-# time.
+# A document built from a single markdown file takes its cover title and
+# subtitle from that file - its leading H1 and the paragraph beneath it - so
+# neither is stated here.  A document assembled from several states both, at its
+# entry below, because no one member names the whole.
 
 [project]
 name = "One ROM"
@@ -15,6 +16,13 @@ url = "https://onerom.org"
 
 # The repository a build is attributed to on the cover, alongside the commit.
 repo = "one-rom"
+
+# Where a link out of the document set is sent.  A PDF reader cannot follow
+# `](COMPATIBILITY.md)`, so the assembler turns a link to a file the document
+# does not contain into a URL at the repository.  Stated in full because `url`
+# is the project's website and `repo` is a bare name - neither composes into a
+# link to a file.
+repo_url = "https://github.com/piersfinlayson/one-rom"
 
 # Published filenames are this prefix, the document slug, the version and the
 # paper - onerom-cli-manual-0.4.0-a4.pdf - matching onerom-cli-mac-0.3.0.zip
@@ -51,11 +59,22 @@ short_label = "Firmware"
 # The documents.  slug is the directory on images.onerom.org and the middle of
 # the published filename, so it is stated rather than derived from the source
 # filename - it is a URL people link to.
+#
+# A document names either one `source` or a list of `members`, never both.
+# Members are assembled into a single markdown file by
+# `cargo run -p doc-gen --bin doc-assemble`, which ci/build-docs.sh runs before
+# the renderer.  Each member keeps its own leading H1 as a top-level heading and
+# everything under it is shifted to sit beneath - so a member needs no rule
+# here, and no edit of its own, to be published both alone and as part of
+# something larger.
 [[documents]]
 source = "docs/CLI-MANUAL.md"
 slug = "cli-manual"
 version_source = "cli"
 version_banner = "as of release v{version}"
+title = "One ROM CLI Manual"
+subtitle = "The command-line tool for managing One ROMs."
+toc_depth = 3
 
 [[documents]]
 source = "docs/COMPATIBILITY.md"

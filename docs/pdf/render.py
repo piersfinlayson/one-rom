@@ -10,6 +10,14 @@ already opens by naming itself and saying in a sentence what it covers, so a
 second copy of that text kept alongside the build would only be a copy to let
 drift.  The H1 is dropped from the body, since the cover now carries it.
 
+A document assembled from several markdown files is the exception: no one member
+names the whole, so its cover text is declared in docs.toml, and every member
+keeps its own H1 as a top-level heading.  This renders one file either way -
+the assembling is done before this runs, by
+`cargo run -p doc-gen --bin doc-assemble`, which writes <slug>.md into the same
+output directory.  ci/build-docs.sh runs the two in order.  Neither calls the
+other.
+
 A manifest of what was built is written to the output directory, for
 ci/build-docs.sh to stage from.
 """
@@ -41,6 +49,10 @@ TOC_SPLIT = re.compile(r"\s+[-–—]\s+")
 # as CHIP-TYPES.md does.  The generated contents supersedes it, so it is
 # dropped rather than printed twice.
 HAND_WRITTEN_TOC = re.compile(r"^#{1,3}\s+(table of )?contents\s*$", re.I)
+
+# How deep the contents goes for a document that does not say.  An assembled
+# document spends its first level on member titles, so it usually says.
+DEFAULT_TOC_DEPTH = 3
 
 # A document may state a value that something else owns - a hold limit from the
 # metadata schema, the CLI's own version - inside a marker naming that source:
@@ -123,7 +135,7 @@ def strip_markers(text):
     return MARKER.sub("", text)
 
 
-def check_values(root, document, origin):
+def check_values(root, source, origin):
     """Check the values a document states against the sources that own them.
 
     Only for a document read from the working tree.  A past edition is read
@@ -136,7 +148,8 @@ def check_values(root, document, origin):
     """
     try:
         result = subprocess.run(
-            ["cargo", "run", "-q", "-p", "doc-gen", "--", "--check", document["source"]],
+            ["cargo", "run", "-q", "-p", "doc-gen", "--bin", "doc-gen",
+             "--", "--check", source],
             cwd=root / "rust",
             capture_output=True,
             text=True,
@@ -240,6 +253,20 @@ def shorten_toc(html):
 
 # ----------------------------------------------------------------- build --
 
+def members_of(document, slug):
+    """The document's members, or None where it names a single source."""
+    members = document.get("members")
+    if members and "source" in document:
+        sys.exit(
+            f"error: {slug}: has both source and members.\n  A document is one "
+            f"file or a list of them, not both - drop whichever is not what you "
+            f"meant."
+        )
+    if not members and "source" not in document:
+        sys.exit(f"error: {slug}: has neither source nor members")
+    return members
+
+
 def render(document, config, root, out_dir, commit, date, year):
     project = config["project"]
     slug = document["slug"]
@@ -258,19 +285,41 @@ def render(document, config, root, out_dir, commit, date, year):
         version = VERSION_READERS[version_source](root)
     label = spec["label"].format(version=version)
 
+    members = members_of(document, slug)
+    ref = document.get("ref")
+
     # A document may name a git ref, and is then read from the object store
     # rather than the working tree - no checkout, and this tree is untouched.
     # The cover is stamped with that ref's commit, so it does not misattribute
     # the text to whatever HEAD happens to be.
-    ref = document.get("ref")
-    if ref:
+    if members:
+        if ref:
+            sys.exit(
+                f"error: {slug}: names both members and a ref.\n  An assembled "
+                f"document is built from the working tree.  A past edition names "
+                f"one\n  file, as it shipped."
+            )
+        sources = [member["source"] for member in members]
+        assembled = out_dir / f"{slug}.md"
+        if not assembled.exists():
+            sys.exit(
+                f"error: {slug} is assembled from {', '.join(sources)}, and "
+                f"{assembled} is not there.\n  Run 'cargo run -p doc-gen --bin "
+                f"doc-assemble -- --out-dir {out_dir}' first, or run\n  "
+                f"ci/build-docs.sh, which runs the two in order."
+            )
+        text = assembled.read_text()
+        origin = ", ".join(sources)
+        for source in sources:
+            check_values(root, source, source)
+    elif ref:
         text = git(root, "show", f"{ref}:{document['source']}")
         commit = git(root, "rev-parse", "--short", f"{ref}^{{commit}}")
         origin = f"{ref}:{document['source']}"
     else:
         text = (root / document["source"]).read_text()
         origin = document["source"]
-        check_values(root, document, origin)
+        check_values(root, origin, origin)
 
     check_markers(text, origin)
     text = strip_markers(text)
@@ -290,7 +339,29 @@ def render(document, config, root, out_dir, commit, date, year):
                 f"version source."
             )
 
-    title, subtitle, body = read_document(text, origin)
+    if members:
+        # Declared rather than read: the cover names the whole document, and no
+        # member of it does.  Each member's H1 stays in the body as a top-level
+        # heading, so nothing is dropped here.
+        for key in ("title", "subtitle"):
+            if key not in document:
+                sys.exit(
+                    f"error: {slug}: is assembled from members, so it needs a "
+                    f"{key} - no member names the whole document."
+                )
+        title = strip_inline_markup(document["title"])
+        subtitle = strip_inline_markup(document["subtitle"])
+        body = text
+    else:
+        title, subtitle, body = read_document(text, origin)
+        # A single-source document takes its cover from the markdown, which is
+        # what a reader on GitHub sees first.  Where the document set says
+        # otherwise it wins - a cover has a line to fill and a page to fill it
+        # on, and the markdown's opening sentence is written for neither.
+        if "title" in document:
+            title = strip_inline_markup(document["title"])
+        if "subtitle" in document:
+            subtitle = strip_inline_markup(document["subtitle"])
 
     html = subprocess.run(
         [
@@ -300,7 +371,7 @@ def render(document, config, root, out_dir, commit, date, year):
             "--standalone",
             f"--template={PDF_DIR / 'template.html'}",
             "--toc",
-            "--toc-depth=3",
+            f"--toc-depth={document.get('toc_depth', DEFAULT_TOC_DEPTH)}",
             "--metadata", f"title={title}",
             "--metadata", f"subtitle={subtitle}",
             "--metadata", f"versionlabel={label}",
@@ -308,6 +379,9 @@ def render(document, config, root, out_dir, commit, date, year):
             "--metadata", f"commit={commit}",
             "--metadata", f"repo={project['repo']}",
             "--metadata", f"source={origin}",
+            # The contents page groups its entries by member, which only makes
+            # sense where the top level is member titles.
+            *(["--metadata", "assembled=true"] if members else []),
             "--metadata", f"wordmark={project['name']}",
             "--metadata", f"url={project['url']}",
             "--metadata", f"notice={project['cover_notice'].format(year=year)}",
@@ -352,12 +426,9 @@ def render(document, config, root, out_dir, commit, date, year):
         built.append({"paper": paper, "filename": pdf.name})
 
     html_path.unlink()
-    return {
+    built_document = {
         "slug": slug,
         "source": origin,
-        # The repository-relative path, for a link to the always-current
-        # markdown.  Not `origin`, which names a git ref for a past edition.
-        "source_path": document["source"],
         "tracks_label": spec.get("short_label", version_source),
         "title": title,
         # The document's opening sentence doubles as its catalogue description,
@@ -367,6 +438,16 @@ def render(document, config, root, out_dir, commit, date, year):
         "tracks": version_source,
         "files": built,
     }
+
+    # Every document this PDF was made from, in order, so a catalogue reader can
+    # reach the always-current markdown.  A list in every case - a PDF made from
+    # one document has a list of one - because a PDF made from several has no
+    # single source and there is nothing for a reader to prefer.  These are
+    # repository-relative paths, not `origin`, which names a git ref for a past
+    # edition.
+    built_document["sources"] = sources if members else [document["source"]]
+
+    return built_document
 
 
 def main():

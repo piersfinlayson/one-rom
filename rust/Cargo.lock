@@ -4851,7 +4851,7 @@ dependencies = [
 
 [[package]]
 name = "onerom-lab"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "airfrog-rpc",
  "built",
@@ -4874,7 +4874,11 @@ dependencies = [
  "onerom-config",
  "panic-probe",
  "panic-rtt-target",
+ "picobootx",
+ "picobootx-embassy",
+ "picobootx-rp2350",
  "portable-atomic",
+ "rp-binary-info",
  "rtt-target",
  "sha1 0.11.0",
  "static_cell",
@@ -5239,6 +5243,27 @@ dependencies = [
  "rustix 1.1.4",
  "serde",
  "thiserror 2.0.18",
+]
+
+[[package]]
+name = "picobootx"
+version = "0.1.0"
+
+[[package]]
+name = "picobootx-embassy"
+version = "0.1.0"
+dependencies = [
+ "embassy-usb",
+ "embassy-usb-driver",
+ "picobootx",
+ "picobootx-rp2350",
+]
+
+[[package]]
+name = "picobootx-rp2350"
+version = "0.1.0"
+dependencies = [
+ "picobootx",
 ]
 
 [[package]]
@@ -6078,6 +6103,12 @@ name = "roxmltree"
 version = "0.20.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6c20b6793b5c2fa6553b250154b78d6d0db37e72700ae35fad9387a46f487c97"
+
+[[package]]
+name = "rp-binary-info"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f582261945fa215d40e2988b4df595d11c0908c0fff97a0fe23df766d117b790"
 
 [[package]]
 name = "rp-pac"

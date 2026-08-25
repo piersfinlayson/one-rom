@@ -29,8 +29,10 @@ cargo build --release
 ### Binary release
 
 1. Check whether [the CLI manual](/docs/CLI-MANUAL.md) needs updating for this
-    release, including its "as of release vX.Y.Z" banner.  Do this first — step
-    4 renders the manual to PDF, so any correction has to be in before then.
+    release, including its "as of release vX.Y.Z" banner.  The manual's PDF also
+    contains [the overview](/docs/OVERVIEW.md), so check that too.  Do this
+    first — step 4 renders the manual to PDF, so any correction has to be in
+    before then.
 
 2. Build the release artifacts for all platforms:
 

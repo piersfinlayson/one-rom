@@ -161,5 +161,4 @@ Note that as well as `firmware/build/onerom-rp235x.bin`, an ELF file is created 
 
 See [Pi-PICO-PROGRAMMER](/docs/PI-PICO-PROGRAMMER.md) for details of using a Raspberry Pi Pico as an inexpensive SWD programmer.  Many other SWD programmers are available, like the Raspberry Pi Debug Probe, generic DAPLink, ST-Link, etc. 
 
-Occassionally your One ROM may lock up, particularly if you are experimenting with overclocking or other advanced configuration options, or debugging firmware changes.  If this is is the case, try rebooting your programmer, One ROM, or both, and try again.  If you still have problems, see [Recovering a Bricked Device](docs/old/GETTING-STARTED.md#recovering-a-bricked-device) for help.
-
+If you cannot detect your One ROM, it may be bricked.  See [Recovering a bricked One ROM](/docs/CLI-MANUAL.md#recovering-a-bricked-one-rom).

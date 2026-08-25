@@ -12,8 +12,14 @@
 //! The device's own limit is <!--[const:GPIO_MAX_HOLD_MS:seconds]-->60 seconds<!--[/]-->.
 //! ```
 //!
-//! This checks those spans and nothing else. **It never writes a document.**
-//! Rewriting them would give a tool write access to thousands of lines of
+//! This checks those spans and nothing else. **It writes nothing at all.** The
+//! crate's other binary, `doc-assemble`, is what writes: it fills in the
+//! fragment regions of the `docs/` files, and joins whole `docs/` files into
+//! the single markdown file a PDF is rendered from. Between the two, no tool
+//! here rewrites a word of prose - `doc-assemble` writes only the regions
+//! between markers, whose text belongs to the file the marker names.
+//!
+//! Rewriting a marked span would give a tool write access to thousands of lines of
 //! hand-written prose, in exchange for saving a hand edit on the day a constant
 //! changes - and these are values the firmware, its plugins and the host have
 //! all agreed on, so that day is rare. The value being written twice is what
@@ -31,12 +37,10 @@
 //! from anywhere. A directory is walked; a document with no markers passes,
 //! because marking one up is opt-in, one value at a time.
 
-mod format;
-mod marker;
-mod source;
-
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::ExitCode;
+
+use doc_gen::{documents, format, marker, repo_root, source};
 
 const USAGE: &str = "\
 One ROM documentation checker.
@@ -49,18 +53,6 @@ Paths are relative to the repository root.  Nothing is ever written.
 
 /// Checked when no path is named.
 const DEFAULT_PATH: &str = "docs";
-
-/// Levels up from `CARGO_MANIFEST_DIR` to the repository root.
-/// `CARGO_MANIFEST_DIR` = `<repo>/rust/doc-gen`, so two pops reach `<repo>`.
-const LEVELS_UP_TO_REPO_ROOT: usize = 2;
-
-fn repo_root() -> PathBuf {
-    let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    for _ in 0..LEVELS_UP_TO_REPO_ROOT {
-        path.pop();
-    }
-    path
-}
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -136,37 +128,6 @@ fn main() -> ExitCode {
 struct Report {
     line: usize,
     detail: String,
-}
-
-/// The markdown files under `path`, or `path` itself when it names a file.
-fn documents(path: &Path) -> Result<Vec<PathBuf>, String> {
-    if path.is_file() {
-        return Ok(vec![path.to_path_buf()]);
-    }
-    if !path.is_dir() {
-        return Err(format!(
-            "{} is neither a file nor a directory",
-            path.display()
-        ));
-    }
-
-    let mut found = Vec::new();
-    let mut stack = vec![path.to_path_buf()];
-    while let Some(dir) = stack.pop() {
-        let entries = std::fs::read_dir(&dir)
-            .map_err(|e| format!("could not read {}: {e}", dir.display()))?;
-        for entry in entries {
-            let entry = entry.map_err(|e| format!("could not read {}: {e}", dir.display()))?;
-            let path = entry.path();
-            if path.is_dir() {
-                stack.push(path);
-            } else if path.extension().is_some_and(|e| e == "md") {
-                found.push(path);
-            }
-        }
-    }
-    found.sort();
-    Ok(found)
 }
 
 /// Check one document, returning how many spans it checked.
