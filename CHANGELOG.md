@@ -79,6 +79,11 @@ To publish:
   TIMER0 tick generator itself, and 0.2.1 then writes `TICKS_TIMER0_CYCLES` to an
   already-running generator, which the RP2350 datasheet forbids.
 - host-control plugin 0.1.3
+- Point the coverage badges at `main` once this release has merged.  In the
+  "Publish the coverage badges" step in `.github/workflows/ci.yml`, change
+  `if: github.ref == 'refs/heads/releases/0.7.2'` to
+  `if: github.ref == 'refs/heads/main'`.  Until then the README badges show
+  this release branch's figures.
 
 To test (on hardware, before release):
 - **Auxiliary I/O has never run on a device.**  Host tests now watch a pin move — `ora_gpio_set` records what it drove into the test build's pad model, and `ora_gpio_query` reads it back — so `SET_AUX`, a timed hold and its after-state are asserted against that model.  What no test reaches is the register writes themselves, which are compiled out on a host, and an X pad reaching two GPIOs.  Needs an RBCP host to drive it, so it follows the 6502 library gaining the group.  What the emulated suite does not verify is listed in the `aux.rs` module header.

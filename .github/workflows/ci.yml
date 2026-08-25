@@ -333,6 +333,31 @@ jobs:
         set -o pipefail
         ci/coverage-report.sh --check | tee coverage-check.txt
 
+    # The three badges on README.md read these files.  Only from the release
+    # branch, and only once the floors have passed - a badge is a published
+    # number, so it comes from the branch being shipped and from a run that
+    # met the gate.  RELEASE.md carries the line that repoints this at the
+    # next release branch.
+    - name: Publish the coverage badges
+      if: github.ref == 'refs/heads/releases/0.7.2'
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        ci/coverage-report.sh --badges
+        git clone --depth 1 --branch badges \
+          "https://x-access-token:$GH_TOKEN@github.com/${{ github.repository }}" badges-branch
+        # Clear the branch first.  A component whose id changes leaves its old
+        # JSON behind otherwise, and shields would serve that figure for good.
+        # Gone, its badge 404s and reads as broken.
+        rm -f badges-branch/*.json
+        cp build/coverage/badges/*.json badges-branch/
+        cd badges-branch
+        git config user.name  "github-actions[bot]"
+        git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+        git add -A
+        git diff --cached --quiet || git commit -m "Coverage badges for ${{ github.sha }}"
+        git push origin badges
+
     # The numbers are the point of the job, and a log needs an account to read.
     # This puts them on the run page instead, readable by anyone who can see
     # the repo.  always(), so a failed gate is shown rather than hidden.

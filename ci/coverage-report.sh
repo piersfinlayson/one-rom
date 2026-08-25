@@ -7,6 +7,7 @@
 #   --uncovered [PATH] the lines nothing reached, optionally for one file
 #   --check            fail if any file is below its baseline floor
 #   --raise            raise the baseline to today's figures
+#   --badges           write a badge JSON per component into build/coverage/badges
 #
 # Tracefiles default to every build/coverage/*.info, which is every
 # (board, config) captured so far - so the same command gives one variant or
@@ -36,6 +37,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 BASELINE="$ROOT/ci/coverage-baseline.txt"
 CAMPAIGN="$ROOT/ci/coverage-campaign.txt"
 OUT_DIR="$ROOT/build/coverage"
+BADGE_DIR="$OUT_DIR/badges"
 GROUP_MAP="$ROOT/ci/coverage-groups.txt"
 EXCLUDE="$ROOT/ci/coverage-exclude.txt"
 
@@ -49,6 +51,7 @@ case "${1:-}" in
                  case "${1:-}" in *.c|*.h) FILTER="$1"; shift;; esac ;;
     --check)     MODE="check"; shift ;;
     --raise)     MODE="raise"; shift ;;
+    --badges)    MODE="badges"; shift ;;
     --*)         echo "unknown option '$1'" >&2; exit 2 ;;
 esac
 
@@ -120,8 +123,11 @@ if [ "$MODE" = raise ]; then
     trap 'rm -f "$dest"' EXIT
 fi
 
+[ "$MODE" != badges ] || mkdir -p "$BADGE_DIR"
+
 # shellcheck disable=SC2086
 awk -v mode="$MODE" -v filter="$FILTER" -v groups="$GROUP_MAP" -v exclude="$EXCLUDE" \
+    -v badgedir="$BADGE_DIR" \
     -v baseline="$BASELINE" -v root="$ROOT" '
 function name_of(path,   i) {
     for (i = 1; i <= ngroup; i++)
@@ -142,8 +148,15 @@ BEGIN {
         if (line ~ /^ *#/ || line ~ /^ *$/) continue
         n = split(line, fld, /[ \t]+/)
         ngroup++; gpath[ngroup] = fld[1]
-        gname[ngroup] = fld[2]
-        for (i = 3; i <= n; i++) gname[ngroup] = gname[ngroup] " " fld[i]
+        gname[ngroup] = fld[3]
+        for (i = 4; i <= n; i++) gname[ngroup] = gname[ngroup] " " fld[i]
+        # A component with two prefixes writes its id on both lines, and they
+        # have to agree - the id is what names its badge.
+        if (gname[ngroup] in gid && gid[gname[ngroup]] != fld[2]) {
+            printf "%s has two ids in %s\n", gname[ngroup], groups > "/dev/stderr"
+            fatal = 1
+        }
+        gid[gname[ngroup]] = fld[2]
     }
     while ((getline line < exclude) > 0) {
         if (line ~ /^ *#/ || line ~ /^ *$/) continue
@@ -167,6 +180,10 @@ skip    { next }
 }
 
 END {
+    # A BEGIN that cannot go on lands here rather than exiting outright, so
+    # say nothing further and carry the status out.
+    if (fatal) exit 1
+
     if (mode == "uncovered") {
         for (k in seen) {
             split(k, kp, SUBSEP)
@@ -192,6 +209,28 @@ END {
                 line = line " " ln[a]
             }
             if (line != "   ") print line
+        }
+        exit 0
+    }
+
+    # One JSON per component, in the shape the shields.io endpoint badge
+    # reads.  The text a badge shows comes from the &label= in the badge URL
+    # in README.md, so what is written here is the figure and the colour that
+    # goes with it.  The label below is the fallback without that override.
+    if (mode == "badges") {
+        for (f in files) { g = name_of(f); btot[g] += total[f]; bhit[g] += hit[f] }
+        if (n_ungrouped()) {
+            printf "%d file(s) match no entry in %s - the group map is stale\n", n_ungrouped(), groups
+            for (u in ungrouped) print "   " u
+            exit 1
+        }
+        for (g in btot) {
+            rate = pct(bhit[g], btot[g])
+            colour = rate >= 90 ? "brightgreen" : (rate >= 80 ? "orange" : "red")
+            jf = badgedir "/" gid[g] ".json"
+            printf "{\"schemaVersion\":1,\"label\":\"%s\",\"message\":\"%.1f%%\",\"color\":\"%s\"}\n", g, rate, colour > jf
+            close(jf)
+            printf "  %-24s %6.1f%%  %s\n", g, rate, jf
         }
         exit 0
     }

@@ -1,5 +1,9 @@
 # One ROM
 
+![Base firmware](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/piersfinlayson/one-rom/badges/firmware.json&label=Base%20firmware)
+![Plugin - USB](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/piersfinlayson/one-rom/badges/plugin-usb.json&label=Plugin%20-%20USB)
+![Plugin - Host Control](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/piersfinlayson/one-rom/badges/plugin-host-control.json&label=Plugin%20-%20Host%20Control)
+
 **[One ROM](https://onerom.org) - One ROM To Rule Them All**
 
 The most flexible and powerful ROM replacement for your retro computer.  A single Raspberry Pi
@@ -330,7 +334,7 @@ published are on crates.io, for host-side Rust development.
 | [`onerom-usb-tester`](rust/usb-tester) | | Drives the USB system plugin's commands, log forwarding and GPIO control. |
 | [`onerom-fw-driver`](rust/fw-driver), [`onerom-fw-geometry`](rust/fw-geometry) | | Pin geometry and GPIO bitmask helpers, shared and dependency-free by design. |
 | [`fw-config-gen`](rust/fw-config-gen), [`schema-gen`](rust/schema-gen) | | Code and schema generators. |
-| [`doc-gen`](rust/doc-gen) | | Checks the values `docs/` states against the sources that own them. Writes nothing. |
+| [`doc-gen`](rust/doc-gen) | | Checks the values `docs/` states against the sources that own them, assembles the markdown a multi-part PDF is rendered from, and fills in the fragment regions of the documents in `docs/`. |
 
 For in-browser use, [one-rom-wasm](https://github.com/piersfinlayson/one-rom-wasm)
 wraps `onerom-gen` as WASM, and is what the

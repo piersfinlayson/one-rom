@@ -1,11 +1,16 @@
 # Which component each source path belongs to, longest prefix first.
 #
-#   <path prefix>    <component name>
+#   <path prefix>    <id>    <component name>
+#
+# The id names the badge JSON that ci/coverage-report.sh --badges writes, and
+# it is what appears in the badge URLs in README.md.  The name heads the
+# subtotal row in the report.  Rename an id and the README's URL has to move
+# with it - the old badge 404s, which is how you find out.
 #
 # Anything instrumented that matches no prefix is reported under "Ungrouped"
 # rather than dropped.  That is deliberate: a new component appearing in the
 # report is the point, and silently omitting it would defeat the exercise.
-plugins/user/host-control/src/    Host-control plugin
-plugins/system/usb/src/           USB plugin
-firmware/src/                     Firmware
-firmware/include/                 Firmware
+plugins/user/host-control/src/    plugin-host-control    Host-control plugin
+plugins/system/usb/src/           plugin-usb             USB plugin
+firmware/src/                     firmware               Firmware
+firmware/include/                 firmware               Firmware
