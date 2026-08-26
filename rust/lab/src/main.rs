@@ -29,12 +29,27 @@ mod error;
 mod hw;
 mod logs;
 mod output;
+mod picoboot;
 mod rom;
 mod usb;
 
 use rom::CsPolarities;
 
 pub const PKG_VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// What `picotool info` reports about this image.
+///
+/// picotool reads these out of flash, so a board answers for itself rather than
+/// leaving whoever is holding it to work out which firmware it is running.  The
+/// linker keeps them in `.bi_entries`, and the header pointing at that section
+/// comes from `rp_binary_info` itself.
+#[unsafe(link_section = ".bi_entries")]
+#[used]
+pub static PICOTOOL_ENTRIES: [rp_binary_info::EntryAddr; 3] = [
+    rp_binary_info::rp_program_name!(c"One ROM Lab"),
+    rp_binary_info::rp_cargo_version!(),
+    rp_binary_info::rp_program_description!(c"Use the One ROM hardware to read ROMs"),
+];
 
 static SERIAL_BUF: StaticCell<[u8; 16]> = StaticCell::new();
 pub static SERIAL_ID: OnceCell<&'static str> = OnceCell::new();

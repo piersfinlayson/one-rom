@@ -1,6 +1,6 @@
 [package]
 name = "onerom-lab"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 # Workspace-internal: the hardware tester binary, not a library.
 publish = false
@@ -29,6 +29,11 @@ rp235xb = [ "embassy-rp/rp235xb" ]
 [dependencies]
 onerom-config = { workspace = true }
 
+picobootx = "0.1.0"
+picobootx-embassy = { version = "0.1.0", features = ["rp2350"] }
+picobootx-rp2350 = "0.1.0"
+# ###################################################################
+
 airfrog-rpc = { version = "0.1.2" }
 embassy-executor = { version = "0.10.0", features = ["executor-thread", "platform-cortex-m", "nightly" ]}
 embassy-futures = { version = "0.1.1" }
@@ -51,6 +56,7 @@ sha1 = { version = "0.11", default-features = false }
 rtt-target = { version = "0.6", features = [ "log" ] }
 panic-probe = { version = "1.0" }
 panic-rtt-target = "0.2"
+rp-binary-info = { version = "0.1.2", features = ["binary-info"] }
 
 [build-dependencies]
 built = "0.8"

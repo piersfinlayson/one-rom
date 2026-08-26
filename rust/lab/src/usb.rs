@@ -6,11 +6,18 @@
 //!
 //! Presents a composite device matching VID/PID 1209:F542 with:
 //!   Interface 0 - dummy (0xFF/0x00/0x00, no endpoints) — reserves slot for picoboot
-//!   Interface 1 - vendor / WinUSB (bulk in + out)
+//!   Interface 1 - vendor / WinUSB (bulk in + out), serving PICOBOOT
 //!   Interface 2 - CDC ACM control
 //!   Interface 3 - CDC ACM data
 //!
 //! The MS OS 2.0 descriptor scopes WinUSB to interface 1 only.
+//!
+//! # PICOBOOT
+//!
+//! Interface 1 serves PICOBOOT through `picobootx-embassy`, which needs two
+//! halves running: the control endpoint's, handed to the USB builder as a
+//! handler, and the bulk endpoints', which is a task of its own.  What Lab
+//! answers and what it refuses is [`crate::picoboot::LabOps`].
 //!
 //! # Public API
 //!
@@ -40,11 +47,15 @@ use embassy_sync::channel::Channel;
 use embassy_sync::signal::Signal;
 use embassy_time::Timer;
 use embassy_usb::class::cdc_acm::{CdcAcmClass, ControlChanged, Receiver, Sender, State};
+use embassy_usb::driver::Endpoint as _;
 use embassy_usb::msos::{self, windows_version};
 use embassy_usb::{Builder, Config as UsbConfig, UsbDevice};
+use picobootx::{Endpoints, NoCustom};
+use picobootx_embassy::{PicobootClass, Rp2350EndpointControl};
 use static_cell::StaticCell;
 
 use super::serial_id;
+use crate::picoboot::{self, EpIn, EpOut, LabOps};
 
 bind_interrupts!(struct Irqs {
     USBCTRL_IRQ => InterruptHandler<USB>;
@@ -57,6 +68,12 @@ static mut CONTROL_BUF: [u8; 64] = [0; 64];
 
 // CDC ACM internal state.
 static CDC_STATE: StaticCell<State> = StaticCell::new();
+
+// picobootx and its control handler.  Both outlive `Usb::new`: the handler is
+// borrowed by the USB builder for the device's lifetime, and the protocol it
+// reads is shared with the task holding the bulk endpoints.
+static PICOBOOT: StaticCell<picoboot::Device> = StaticCell::new();
+static PICOBOOT_CONTROL: StaticCell<picoboot::Control> = StaticCell::new();
 
 /// True while the host is connected.  Set by `cdc_writer`.
 static CONNECTED: AtomicBool = AtomicBool::new(false);
@@ -108,6 +125,9 @@ pub enum Error {
 pub struct Usb {
     cdc: CdcAcmClass<'static, Driver<'static, USB>>,
     device: UsbDevice<'static, Driver<'static, USB>>,
+    picoboot: &'static picoboot::Device,
+    picoboot_out: EpOut,
+    picoboot_in: EpIn,
 }
 
 impl Usb {
@@ -146,10 +166,9 @@ impl Usb {
             let _alt = iface.alt_setting(0xFF, 0, 0, None);
         }
 
-        // Interface 1: vendor / WinUSB, bulk endpoints.
+        // Interface 1: vendor / WinUSB, bulk endpoints, carrying PICOBOOT.
         // MS OS 2.0 features scoped to this function only.
-        // Used for exposing picobootx.
-        {
+        let (picoboot_out, picoboot_in) = {
             let mut func = builder.function(0xFF, 0, 0);
             func.msos_feature(msos::CompatibleIdFeatureDescriptor::new("WINUSB", ""));
             func.msos_feature(msos::RegistryPropertyFeatureDescriptor::new(
@@ -158,22 +177,49 @@ impl Usb {
             ));
             let mut iface = func.interface();
             let mut alt = iface.alt_setting(0xFF, 0, 0, None);
-            let _ep_out = alt.endpoint_bulk_out(None, 64);
-            let _ep_in = alt.endpoint_bulk_in(None, 64);
-        }
+            let ep_out = alt.endpoint_bulk_out(None, 64);
+            let ep_in = alt.endpoint_bulk_in(None, 64);
+            (ep_out, ep_in)
+        };
+
+        // picobootx halts an endpoint by address and serves in packets of the
+        // size the endpoint was allocated with, so both come from the endpoints
+        // themselves rather than being restated here.  Both are allocated at 64,
+        // which is the most a full-speed bulk endpoint carries.
+        let picoboot = PICOBOOT.init(PicobootClass::new(
+            LabOps::new(),
+            NoCustom,
+            // Lab refuses a flash write, so there is nothing for a page buffer
+            // to accumulate.
+            None,
+            Endpoints {
+                out: picoboot_out.info().addr.into(),
+                r#in: picoboot_in.info().addr.into(),
+            },
+            picoboot_out.info().max_packet_size,
+            Rp2350EndpointControl,
+        ));
+        builder.handler(PICOBOOT_CONTROL.init(picoboot.handler()));
 
         // Interfaces 2+3: CDC ACM.
         let cdc = CdcAcmClass::new(&mut builder, CDC_STATE.init(State::new()), 64);
 
         let device = builder.build();
 
-        Self { cdc, device }
+        Self {
+            cdc,
+            device,
+            picoboot,
+            picoboot_out,
+            picoboot_in,
+        }
     }
 }
 
 pub fn run(spawner: Spawner, usb: Usb) {
     let (sender, receiver, control) = usb.cdc.split_with_control();
     spawner.spawn(usb_task(usb.device).unwrap());
+    spawner.spawn(picoboot_task(usb.picoboot, usb.picoboot_out, usb.picoboot_in).unwrap());
     spawner.spawn(cdc_writer(sender).unwrap());
     spawner.spawn(cdc_reader(receiver).unwrap());
     spawner.spawn(cdc_control(control).unwrap());
@@ -182,6 +228,14 @@ pub fn run(spawner: Spawner, usb: Usb) {
 #[embassy_executor::task]
 async fn usb_task(mut device: UsbDevice<'static, Driver<'static, USB>>) -> ! {
     device.run().await
+}
+
+/// The bulk half of PICOBOOT.  The control half is the handler `usb_task`
+/// calls, and the two share the protocol, so both have to run for a command to
+/// complete.
+#[embassy_executor::task]
+async fn picoboot_task(dev: &'static picoboot::Device, ep_out: EpOut, ep_in: EpIn) -> ! {
+    dev.run(ep_out, ep_in).await
 }
 
 #[embassy_executor::task]
