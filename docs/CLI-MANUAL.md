@@ -47,10 +47,10 @@ inspecting device state, and manipulating ROM image files.
 
 This One ROM CLI manual covers:
 
-- **Overview** — what One ROM is, its hardware, and the vocabulary the rest of
-  this manual uses.
-- **Guide** — installation and the common workflows.
-- **Reference** — every command, subcommand and option.
+- **One ROM Overview** — what One ROM is, its hardware, and the vocabulary the
+  rest of this manual uses.
+- **CLI Guide** — installation and the common workflows.
+- **CLI Reference** — every command, subcommand and option.
 - **Problems** — symptoms and their fixes, including [recovering a bricked One
   ROM](#recovering-a-bricked-one-rom).
 
@@ -273,7 +273,7 @@ A Custom Deployment is one where one or more of the following holds:
 
 ---
 
-# Part 1 — Guide
+# CLI Guide
 
 ## Installation
 
@@ -648,7 +648,7 @@ Common controls, where a command supports them:
 
 ---
 
-# Part 2 — Reference
+# CLI Reference
 
 ## Synopsis
 
@@ -2441,7 +2441,7 @@ have is reported against what it does have.
 
 ---
 
-# Part 3 — Problems
+# Problems
 
 <!--[fragment:docs/fragments/unbrick.md]-->
 ## Recovering a bricked One ROM
