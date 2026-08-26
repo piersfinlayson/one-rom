@@ -25,6 +25,9 @@ on:
       # one differs from what is committed, so the edit that can leave a region
       # stale has to reach CI.
       - 'docs/**.md'
+      # The renderer's own inputs, so the docs-pdf job runs for a change to the
+      # thing it tests.
+      - 'docs/pdf/**'
   pull_request:
     branches: [ main ]
     paths:
@@ -45,6 +48,9 @@ on:
       # one differs from what is committed, so the edit that can leave a region
       # stale has to reach CI.
       - 'docs/**.md'
+      # The renderer's own inputs, so the docs-pdf job runs for a change to the
+      # thing it tests.
+      - 'docs/pdf/**'
 
 # The work is split across jobs rather than run as one sequence.  Each job gets
 # its own runner and, more to the point, its own 6 hour timeout: as one job the
