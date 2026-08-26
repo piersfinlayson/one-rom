@@ -20,6 +20,11 @@ on:
       - '!.github/workflows/release.yml'
       - '!**.md'
       - '!docs/**'
+      # A document under docs/ can carry a fragment region, whose text belongs
+      # to another file.  ci/rust-tests.sh refills every region and fails where
+      # one differs from what is committed, so the edit that can leave a region
+      # stale has to reach CI.
+      - 'docs/**.md'
   pull_request:
     branches: [ main ]
     paths:
@@ -35,6 +40,11 @@ on:
       - '!.github/workflows/release.yml'
       - '!**.md'
       - '!docs/**'
+      # A document under docs/ can carry a fragment region, whose text belongs
+      # to another file.  ci/rust-tests.sh refills every region and fails where
+      # one differs from what is committed, so the edit that can leave a region
+      # stale has to reach CI.
+      - 'docs/**.md'
 
 # The work is split across jobs rather than run as one sequence.  Each job gets
 # its own runner and, more to the point, its own 6 hour timeout: as one job the
