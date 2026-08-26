@@ -9,6 +9,7 @@ apio/
 epio/
 pico-sdk/
 build-test/
+plugins/*/*/build-host/
 firmware/build*
 build/
 builds/
