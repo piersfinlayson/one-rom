@@ -20,6 +20,11 @@ PICO_SDKLESS_DIR := pico-sdkless
 # changing this, so it is re-cloned.
 PICOBOOTX_VERSION ?= v0.2.0
 
+# Commit of the One ROM tinyusb fork to build against.  A commit rather than a
+# tag, because the fork tracks a project this one does not version.  Remove the
+# tinyusb/ directory after changing this, so it is re-cloned.
+TINYUSB_COMMIT ?= d95b27b3c
+
 ORA_DIR := ../../../firmware/ora
 ORA_INCLUDE := -I$(ORA_DIR)
 SDRR_INCLUDE := -I../../../firmware/include -I../../../firmware/generated
@@ -27,7 +32,8 @@ PLUGIN_INCLUDE := -I.
 
 BUILD_DIR := build
 
-$(shell [ -d $(TINYUSB_DIR) ] || git clone https://github.com/piersfinlayson/tinyusb.git $(TINYUSB_DIR))
+$(shell [ -d $(TINYUSB_DIR) ] || git clone --quiet https://github.com/piersfinlayson/tinyusb.git $(TINYUSB_DIR))
+$(shell git -c advice.detachedHead=false -C $(TINYUSB_DIR) checkout --quiet $(TINYUSB_COMMIT))
 include tinyusb.mk
 
 $(shell [ -d $(PICOBOOTX_DIR) ] || git -c advice.detachedHead=false clone --quiet --depth 1 --branch $(PICOBOOTX_VERSION) https://github.com/piersfinlayson/picobootx.git $(PICOBOOTX_DIR))

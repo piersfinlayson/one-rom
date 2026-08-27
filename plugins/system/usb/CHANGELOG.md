@@ -2,6 +2,10 @@
 
 ## [0.3.0] - 2026-??-??
 
+The command a host sends after one the device refused is no longer lost.
+Refusing halts both USB endpoints, and clearing them left the device and the
+host expecting different packets, so the next command was discarded.
+
 Four GPIOs can be under a timed hold at once, rather than eight.  Four is every
 spare pin a board exposes that a caller can realistically drive, so the old
 figure reserved plugin RAM for pins that do not exist.
