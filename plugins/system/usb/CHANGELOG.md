@@ -1,6 +1,10 @@
 # Changelog
 
-## [0.2.2] - 2026-??-??
+## [0.3.0] - 2026-??-??
+
+Four GPIOs can be under a timed hold at once, rather than eight.  Four is every
+spare pin a board exposes that a caller can realistically drive, so the old
+figure reserved plugin RAM for pins that do not exist.
 
 Answer what One ROM's LEDs are doing.  A new picobootx command reports one
 LED's mode, colour, brightness, period and GPIO, read from the firmware's LED

@@ -399,7 +399,7 @@ pub enum Error {
     #[error(
         "This One ROM is already holding as many GPIOs as it can.\n  Release one first - drive it with no --hold, or wait for a hold to expire."
     )]
-    GpioNoHoldSlot,
+    GpioHoldLimit,
 
     #[error(
         "No One ROM CLI build is published for this platform ({0}).\n  Published platforms: {1}\n  Name one explicitly with --target to download it anyway."

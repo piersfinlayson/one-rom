@@ -77,7 +77,7 @@ typedef struct {
     uint32_t log_cdc_settled_ms;
 
     onerom_in_xfer_t in_xfer;
-    gpio_status_t gpio_status;
+    gpio_hold_t holds[ONEROM_GPIO_MAX_HOLDS];
 } usb_plugin_context_t;
 
 // Forward declaration of the context, which we define in usb_main.c

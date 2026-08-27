@@ -41,6 +41,7 @@ In detail:
   - This required a firmware update.
 - One ROM now drives its RGB LED itself from core firmware, on the models that have one, the USB plugin supports accessing this function and `onerom control rgb` drives it: on, off, beacon, flame, cycle, breathe and blink, each with a colour, a brightness and a speed.  `onerom inspect rgb` and `onerom inspect led` report what each LED is doing.  This needs no plugin, so the RGB user plugin is superseded and the user plugin slot it used to occupy is free.  A plugin can drive and read either LED through the plugin API.
   - This required a firmware update.
+- Four GPIOs can be under a timed `--hold` at once, rather than eight.  Four is every spare pin a board exposes that can realistically be driven, so the old figure reserved plugin memory for pins that do not exist.
 - `onerom control led blink` blinks the status LED on and off and keeps going, where `beacon` stops itself after a couple of seconds.
   - This required a firmware update.
 - One ROM's LED modes now state how fast they can run, and refuse a `--period` shorter than that instead of accepting it and running slower than asked.  A full hue cycle or a breath takes at least a second, a flame half of one, and a beacon or blink 50ms.
@@ -75,7 +76,7 @@ To publish:
 - Config schema
 - CLI bin 0.4.0
 - Studio 0.2.2
-- USB plugin 0.2.2
+- USB plugin 0.3.0
 - USB plugin 0.2.1 must be marked `incompatible_from` v0.7.2.  v0.7.2 starts the
   TIMER0 tick generator itself, and 0.2.1 then writes `TICKS_TIMER0_CYCLES` to an
   already-running generator, which the RP2350 datasheet forbids.

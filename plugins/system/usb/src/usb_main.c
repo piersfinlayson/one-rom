@@ -96,7 +96,7 @@ void usb_plugin_task(void) {
     // dispatch handler.  Only the timed release of a bounded GPIO hold is
     // deferred to here - an LED mode that runs on is the firmware engine's to
     // keep going, not this plugin's.
-    gpio_handle_pending_releases();
+    gpio_release_expired_holds();
 }
 
 // Number of UTF-16 code units picoboot_get_serial() must be given room for: 16

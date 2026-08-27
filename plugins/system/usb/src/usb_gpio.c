@@ -118,25 +118,25 @@ void gpio_init_caps(void) {
     DEBUG("GPIO control available on %u GPIOs", context.num_gpios);
 }
 
-// The pending release for a GPIO, or NULL if it has none.
+// The pending hold for a GPIO, or NULL if it has none.
 //
-// At most one slot is ever active for a given GPIO: gpio_handle_set() reuses
-// this slot rather than claiming a second one.
-static gpio_release_t *gpio_find_release(uint8_t gpio) {
-    for (uint32_t i = 0u; i < ONEROM_GPIO_RELEASES; i++) {
-        gpio_release_t *release = &context.gpio_status.releases[i];
-        if (release->active && release->gpio == gpio) {
-            return release;
+// At most one entry is ever active for a given GPIO: gpio_handle_set() reuses
+// this entry rather than claiming a second one.
+static gpio_hold_t *gpio_find_hold(uint8_t gpio) {
+    for (uint32_t i = 0u; i < ONEROM_GPIO_MAX_HOLDS; i++) {
+        gpio_hold_t *hold = &context.holds[i];
+        if (hold->active && hold->gpio == gpio) {
+            return hold;
         }
     }
     return NULL;
 }
 
-// Claim a free release slot, or NULL if all are in use.
-static gpio_release_t *gpio_claim_release(void) {
-    for (uint32_t i = 0u; i < ONEROM_GPIO_RELEASES; i++) {
-        if (!context.gpio_status.releases[i].active) {
-            return &context.gpio_status.releases[i];
+// Claim a free hold entry, or NULL if all are in use.
+static gpio_hold_t *gpio_claim_hold(void) {
+    for (uint32_t i = 0u; i < ONEROM_GPIO_MAX_HOLDS; i++) {
+        if (!context.holds[i].active) {
+            return &context.holds[i];
         }
     }
     return NULL;
@@ -172,17 +172,17 @@ pb_status_t gpio_handle_set(const onerom_gpio_set_args_t *args) {
     // assertion latched with nothing scheduled to end it, which is exactly the
     // outcome bounded holds exist to rule out.  So the old release is found
     // now and disturbed only on success.
-    gpio_release_t *existing = gpio_find_release(args->gpio);
+    gpio_hold_t *existing = gpio_find_hold(args->gpio);
 
-    // The slot is settled before anything is driven, for the same reason: a pin
+    // The entry is settled before anything is driven, for the same reason: a pin
     // must never be asserted with no way to release it.  Reusing this GPIO's
-    // own slot when it has one also means a repeated hold on the same pin can
+    // own entry when it has one also means a repeated hold on the same pin can
     // never run out of room, however many other pins are held.
-    gpio_release_t *release = NULL;
+    gpio_hold_t *hold = NULL;
     if (args->duration_ms != 0u) {
-        release = (existing != NULL) ? existing : gpio_claim_release();
-        if (release == NULL) {
-            LOG("No free GPIO release slot for GPIO %u", args->gpio);
+        hold = (existing != NULL) ? existing : gpio_claim_hold();
+        if (hold == NULL) {
+            LOG("No free GPIO hold entry for GPIO %u", args->gpio);
             return PB_STATUS_PRECONDITION_NOT_MET;
         }
     }
@@ -199,11 +199,11 @@ pb_status_t gpio_handle_set(const onerom_gpio_set_args_t *args) {
         return gpio_status_from_ora(result);
     }
 
-    if (release != NULL) {
-        release->gpio = args->gpio;
-        release->after_state = args->after_state;
-        release->deadline_ms = context.get_plugin_uptime_ms() + args->duration_ms;
-        release->active = 1;
+    if (hold != NULL) {
+        hold->gpio = args->gpio;
+        hold->after_state = args->after_state;
+        hold->deadline_ms = context.get_plugin_uptime_ms() + args->duration_ms;
+        hold->active = 1;
         DEBUG("GPIO %u held at %u for %lums", args->gpio, args->state,
               (unsigned long)args->duration_ms);
     } else if (existing != NULL) {
@@ -214,21 +214,21 @@ pb_status_t gpio_handle_set(const onerom_gpio_set_args_t *args) {
     return PB_STATUS_OK;
 }
 
-void gpio_handle_pending_releases(void) {
-    // No slot can be claimed without the feature bit, so there is nothing to do
+void gpio_release_expired_holds(void) {
+    // No entry can be claimed without the feature bit, so there is nothing to do
     // and - more to the point - context.gpio_set below cannot be NULL.
     if (!(context.features & ONEROM_FEAT_GPIO_HOLD)) {
         return;
     }
 
-    // Read once, and only once a slot is found waiting, so an idle pass does
+    // Read once, and only once an entry is found waiting, so an idle pass does
     // not pay for a call into the firmware.
     uint32_t now = 0;
     bool now_read = false;
 
-    for (uint32_t i = 0u; i < ONEROM_GPIO_RELEASES; i++) {
-        gpio_release_t *release = &context.gpio_status.releases[i];
-        if (!release->active) {
+    for (uint32_t i = 0u; i < ONEROM_GPIO_MAX_HOLDS; i++) {
+        gpio_hold_t *hold = &context.holds[i];
+        if (!hold->active) {
             continue;
         }
 
@@ -240,25 +240,25 @@ void gpio_handle_pending_releases(void) {
         // Signed difference, so a clock wrap part-way through a hold does not
         // defer the release by another 49.7 days.  ORA_GPIO_MAX_HOLD_MS keeps
         // the interval far inside the range where this is unambiguous.
-        if ((int32_t)(now - release->deadline_ms) < 0) {
+        if ((int32_t)(now - hold->deadline_ms) < 0) {
             continue;
         }
 
-        release->active = 0;
+        hold->active = 0;
 
         // Forced, always.  The assertion that scheduled this release was itself
         // permitted - either the pin was free, or the host passed force - so the
         // release must not be second-guessed: refusing it would leave the pin
         // latched, which is the one outcome a bounded hold exists to rule out.
         // On a pin that was free anyway the flag changes nothing.
-        ora_result_t result = context.gpio_set(release->gpio,
-                                               release->after_state,
+        ora_result_t result = context.gpio_set(hold->gpio,
+                                               hold->after_state,
                                                ORA_GPIO_FLAG_FORCE);
         if (result != ORA_RESULT_OK) {
             ERR("GPIO %u release to %u failed: %u",
-                release->gpio, release->after_state, result);
+                hold->gpio, hold->after_state, result);
         } else {
-            DEBUG("GPIO %u released to %u", release->gpio, release->after_state);
+            DEBUG("GPIO %u released to %u", hold->gpio, hold->after_state);
         }
     }
 }

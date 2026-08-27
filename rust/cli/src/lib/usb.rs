@@ -688,8 +688,9 @@ enum CmdFailure {
     /// rejected its arguments.
     InvalidArg,
 
-    /// `PB_STATUS_PRECONDITION_NOT_MET` - for `GPIO_SET`, every one of the
-    /// plugin's pending-release slots is occupied by a different GPIO.
+    /// `PB_STATUS_PRECONDITION_NOT_MET` - the device understood the command
+    /// and was not in a state to carry it out. For `GPIO_SET`, every one of the
+    /// plugin's bounded-hold entries is occupied by a different GPIO.
     PreconditionNotMet,
 
     /// `PB_STATUS_NOT_FOUND` - for `SET_LED`, the device has the LED engine
@@ -708,7 +709,10 @@ impl std::fmt::Display for CmdFailure {
             Self::InvalidCmdLength => write!(f, "the device rejected the command's length"),
             Self::NotPermitted => write!(f, "the device refused the command"),
             Self::InvalidArg => write!(f, "the device rejected the command's arguments"),
-            Self::PreconditionNotMet => write!(f, "the device has no free hold slot"),
+            Self::PreconditionNotMet => write!(
+                f,
+                "the device is already timing as many GPIO holds as it can"
+            ),
             Self::NotFound => write!(f, "the device does not have what was asked for"),
             Self::Transport(detail) => write!(f, "{detail}"),
         }
@@ -907,8 +911,8 @@ pub async fn gpio_set(device: &Device, caps: &Caps, args: GpioSetArgs) -> Result
             // refusal.
             CmdFailure::NotPermitted => Error::GpioInUse(args.gpio),
             CmdFailure::InvalidArg => Error::GpioRejected(args.gpio),
-            // Every pending-release slot is held by a different GPIO.
-            CmdFailure::PreconditionNotMet => Error::GpioNoHoldSlot,
+            // Every bounded-hold entry is held by a different GPIO.
+            CmdFailure::PreconditionNotMet => Error::GpioHoldLimit,
             failure if failure.means_too_old() => Error::PluginTooOldForGpio(device.to_string()),
             failure => cmd_error("GPIO_SET", failure),
         })

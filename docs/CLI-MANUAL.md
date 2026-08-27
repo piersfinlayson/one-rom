@@ -1485,6 +1485,9 @@ doing; `control reset` has no `--force` of its own, and the message points at
 GPIO is not 5V-tolerant the command warns and asks for confirmation, which
 `--yes` answers.
 
+The pulse counts toward the device's limit on pins under a timed hold at once —
+see [`control pin`](#control-pin).
+
 ```
 $ onerom control reset --pin x1
 Asserted reset on x1 (gpio9) for 100ms - the device times the pulse and releases the pin
@@ -1512,6 +1515,10 @@ Without `--hold` the state is latched until something else changes it. With
 applies `--then` — high impedance unless you say otherwise. As with
 [`control reset`](#control-reset), the hold is timed on the device, so an
 interrupted CLI cannot leave a pin latched.
+
+A limited number of pins can have a timed `--hold` at once. A pin driven without
+`--hold` is latched indefinitely and is not included in that limit. One ROM
+rejects a hold on a further pin once the limit is reached.
 
 The device must be **running** with the USB system plugin — see
 [Device states](#device-states). [`inspect gpio`](#inspect-gpio) shows what each

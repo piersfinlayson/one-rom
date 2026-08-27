@@ -9,7 +9,7 @@
 //! What the plugin owns is the timing of a bounded hold, and the rule the whole
 //! feature exists for: a pin must never be left asserted with nothing scheduled
 //! to release it.  Every scenario here is a way that could go wrong — a hold
-//! superseded, a hold cancelled, the release slots exhausted — and what the pin
+//! superseded, a hold cancelled, the hold entries exhausted — and what the pin
 //! is doing afterwards is read back through the firmware.
 //!
 //! The commands themselves are covered in the picobootx suite.  This is what
@@ -26,8 +26,8 @@ use super::picobootx::{
     gpio_set_args,
 };
 
-/// Release slots the plugin has, from usb_gpio.h.
-const RELEASES: u8 = 8;
+/// Bounded holds the plugin can have outstanding at once, from usb_gpio.h.
+const MAX_HOLDS: u8 = 4;
 
 /// Where the device's uptime returns to zero, 49.7 days in.
 const WRAP_MS: u64 = 1u64 << 32;
@@ -117,7 +117,7 @@ fn a_hold_ends_in_the_state_it_was_given(dev: &mut Device, ctx: &Ctx) -> Result<
 /// A second command on the same pin supersedes the first hold.
 ///
 /// The pin must not be released by the hold the second command replaced —
-/// which is what would happen if the plugin claimed a second slot rather than
+/// which is what would happen if the plugin claimed a second entry rather than
 /// reusing the pin's own.
 fn a_later_command_supersedes_a_hold(dev: &mut Device, ctx: &Ctx) -> Result<Outcome, String> {
     let gpio = free_pins(dev, ctx, 1)[0];
@@ -183,33 +183,33 @@ fn an_unbounded_command_cancels_a_hold(dev: &mut Device, ctx: &Ctx) -> Result<Ou
     Ok(Outcome::Pass)
 }
 
-/// With every release slot in use, a further hold is refused rather than
+/// With every hold entry in use, a further hold is refused rather than
 /// asserted.
 ///
 /// A pin driven with nothing scheduled to release it is the one outcome bounded
 /// holds exist to rule out, so the refusal has to come before anything is
 /// driven.
-fn a_hold_with_no_slot_left_is_refused(dev: &mut Device, ctx: &Ctx) -> Result<Outcome, String> {
-    let pins = free_pins(dev, ctx, RELEASES + 1);
-    if pins.len() < usize::from(RELEASES) + 1 {
+fn a_hold_beyond_the_limit_is_refused(dev: &mut Device, ctx: &Ctx) -> Result<Outcome, String> {
+    let pins = free_pins(dev, ctx, MAX_HOLDS + 1);
+    if pins.len() < usize::from(MAX_HOLDS) + 1 {
         return Ok(Outcome::Skip(format!(
-            "this board has {} GPIOs One ROM is not using, too few to fill {RELEASES} release \
-             slots and ask for another",
+            "this board has {} GPIOs One ROM is not using, too few to fill {MAX_HOLDS} hold \
+             entries and ask for another",
             pins.len()
         )));
     }
 
-    for &gpio in &pins[..usize::from(RELEASES)] {
+    for &gpio in &pins[..usize::from(MAX_HOLDS)] {
         if drive(dev, gpio, GPIO_HIGH, GPIO_INPUT, 10_000)? != OK {
-            return Err(format!("filling the slots: GPIO {gpio} was refused"));
+            return Err(format!("filling the entries: GPIO {gpio} was refused"));
         }
     }
 
-    let spare = pins[usize::from(RELEASES)];
+    let spare = pins[usize::from(MAX_HOLDS)];
     let st = drive(dev, spare, GPIO_HIGH, GPIO_INPUT, 10_000)?;
     if st != PRECONDITION_NOT_MET {
         return Err(format!(
-            "a hold with no slot left answered {st}, not PRECONDITION_NOT_MET"
+            "a hold beyond the limit answered {st}, not PRECONDITION_NOT_MET"
         ));
     }
 
@@ -221,12 +221,12 @@ fn a_hold_with_no_slot_left_is_refused(dev: &mut Device, ctx: &Ctx) -> Result<Ou
         ));
     }
 
-    // A pin that already holds a slot is not refused, however full they are:
-    // the slot is reused rather than claimed again.
+    // A pin that already holds an entry is not refused, however full they are:
+    // the entry is reused rather than claimed again.
     let held = pins[0];
     if drive(dev, held, GPIO_HIGH, GPIO_INPUT, 10_000)? != OK {
         return Err(format!(
-            "GPIO {held}, which already holds a slot, was refused when the slots were full"
+            "GPIO {held}, which already holds an entry, was refused when they were full"
         ));
     }
 
@@ -302,9 +302,9 @@ pub static SCENARIOS: &[Scenario] = &[
         before_start: None,
     },
     Scenario {
-        name: "gpio.a_hold_with_no_slot_left_is_refused",
-        about: "with every release slot taken, a further hold is refused before driving",
-        run: a_hold_with_no_slot_left_is_refused,
+        name: "gpio.a_hold_beyond_the_limit_is_refused",
+        about: "with every hold entry taken, a further hold is refused before driving",
+        run: a_hold_beyond_the_limit_is_refused,
         before_start: None,
     },
     Scenario {

@@ -68,7 +68,8 @@ else
 fi
 
 [ "$(uname -s)" = "Linux" ] || {
-    echo "Coverage runs on Linux only (found $(uname -s)) - see ci/docker." >&2
+    echo "Coverage runs on Linux only (found $(uname -s)) - run it in a" >&2
+    echo "container with ci/coverage-docker.sh, which takes the same args." >&2
     exit 1
 }
 

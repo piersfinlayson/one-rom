@@ -184,10 +184,11 @@ header comment. The ones with rules attached:
   `ci/coverage-baseline.txt`. `--raise` moves a floor up. Lowering one is a
   hand edit, and the commit says why.
   - Floors come from the run set in `ci/coverage-campaign.txt` **and from CI's
-    own figures**, since a smaller set or a local machine measures lower. The
-    campaign is expensive to run locally, so ask me first.
+    own figures**, since a smaller set or a local machine measures lower.
     `ci/coverage-run.sh <board> <config>` against one pair is the development
-    loop, on Linux alone — `ci/coverage-docker.sh` gets you there from macOS.
+    loop, and needs Linux. From macOS, `ci/coverage-docker.sh` takes the same
+    arguments and runs it in the container, `--campaign` for the whole set.
+    **Ask me before running any of it** — it is expensive, not impossible.
   - Genuinely unreachable code is marked `LCOV_UNREACHABLE_START` /
     `LCOV_UNREACHABLE_STOP` with a comment saying why, and lcov checks the
     claim against the counters. Writing one:
