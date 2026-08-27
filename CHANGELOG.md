@@ -53,7 +53,7 @@ In detail:
 - `onerom inspect gpio` reported `Level` 0 for the status LED and RGB LED pins whatever they were doing.  An output pin's level is now what it drives, rather than a pad read-back the firmware disables on those two pins.
   - This required a firmware update.
 - `onerom control pin`, `control rgb` and `inspect gpio` now work first time against a One ROM running an older USB plugin.  They previously waited and then failed, and succeeded when run again.
-  - This required a USB plugin update.
+  - This required a USB plugin update and a new CLI.
 - Fix the data pin numbers a plugin reads, which were offset by the data base and never reported more than eight.  A plugin now gets the served slot's actual GPIOs, and the API documents that the count follows the slot rather than the board.
   - This required a firmware update.
 - Fix the ROM Bus Control Protocol corrupting the image it serves.  A host naming a back-channel that started within 8 bytes of the end of the RAM slot had the response header written over the start of the served image, where the specification requires the request to be discarded in silence.
