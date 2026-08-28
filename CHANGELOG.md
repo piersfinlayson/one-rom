@@ -61,6 +61,8 @@ In detail:
 - `onerom program --follow` now refuses before programming when the image has no USB system plugin, rather than programming and then failing to find the serial port.  Such an image leaves the USB bus as soon as the One ROM starts serving, so there is no log to follow.
 - `onerom control pin --hold` and `onerom control reset --hold` now refuse a hold longer than the device's own 60 second limit as the command line is read, instead of sending it and having the device refuse.
 - One ROM Lab now serves PICOBOOT while it runs, so `picotool info` names the board and its version, and `picotool reboot -u` puts one into BOOTSEL over USB even when its shell is not answering.
+- `picotool` is now told that One ROM and One ROM Lab take no UF2 download.  Both previously reported the UF2 families the RP2350's own tables list, and neither presents a drive for one to be dragged onto.
+  - This required a USB plugin update and a new One ROM Lab.
 - `picotool info` now describes a One ROM - its name, version, web site, description and build date - where it reported only the chip.  The information is carried in the firmware image, so nothing needs to be running on the device to read it.
   - This required a firmware update.
 - Fix the firmware's build date.  It recorded the local time of whenever one source file last happened to compile, rather than when the firmware was built, and is now UTC and moves whenever the firmware is actually rebuilt.

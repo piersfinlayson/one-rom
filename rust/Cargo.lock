@@ -5247,15 +5247,15 @@ dependencies = [
 
 [[package]]
 name = "picobootx"
-version = "0.2.0"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1b86cffa19d7f59b045080cd9b5d3af8d8f860a5ee20d44381f18fc2fa80d4a1"
+checksum = "6adf8310c4b44b82415e34a012acceedf2484606cb9cb2001f8f50b2726f7475"
 
 [[package]]
 name = "picobootx-embassy"
-version = "0.2.0"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "01e9ac822aba7d67392c786d2053162504d452159c0dd38935691c306d2ee175"
+checksum = "b33bd6700184b9b41d7741e435fbd7e6cc8a09a84608a64f9fc2f39081ecf1d7"
 dependencies = [
  "embassy-usb",
  "embassy-usb-driver",
@@ -5265,9 +5265,9 @@ dependencies = [
 
 [[package]]
 name = "picobootx-rp2350"
-version = "0.2.0"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "10035b4cd939f995aaa1ecd3ce40a2bd3da52cacb44f184c5056bdf61eee2668"
+checksum = "32e3a4542490f1ba858984efd99c7941dd57df8f20f7f40a8ca0ff85732741d0"
 dependencies = [
  "picobootx",
 ]

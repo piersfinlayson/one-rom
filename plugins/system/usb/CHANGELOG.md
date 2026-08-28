@@ -6,10 +6,14 @@ The command a host sends after one the device refused is no longer lost.
 Refusing halts both USB endpoints, and clearing them left the device and the
 host expecting different packets, so the next command was discarded.
 
-Answer a picoboot host's request for device information as the RP2350 datasheet
-specifies, from picobootx v0.3.0.  The flags word saying what was answered was
-missing and the leading count was one short, and a request naming anything this
-part cannot answer was refused rather than answered in part.
+Answer a picoboot host as the RP2350 datasheet specifies, from picobootx v0.4.0.
+
+- Device information was missing the flags word saying what was answered, and
+  its leading count was one short.
+- A request naming anything this part cannot answer was refused, rather than
+  answered in part.
+- The flash was reported as taking UF2 downloads, and One ROM has no drive to
+  receive one.
 
 Four GPIOs can be under a timed hold at once, rather than eight.  Four is every
 spare pin a board exposes that a caller can realistically drive, so the old

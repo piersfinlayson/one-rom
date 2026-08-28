@@ -48,7 +48,7 @@ pub const PKG_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub static PICOTOOL_ENTRIES: [rp_binary_info::EntryAddr; 3] = [
     rp_binary_info::rp_program_name!(c"One ROM Lab"),
     rp_binary_info::rp_cargo_version!(),
-    rp_binary_info::rp_program_description!(c"Use the One ROM hardware to read ROMs"),
+    rp_binary_info::rp_program_description!(c"Use One ROM as a ROM reader"),
 ];
 
 static SERIAL_BUF: StaticCell<[u8; 16]> = StaticCell::new();
