@@ -848,7 +848,7 @@
                     "const": "duplicate"
                 },
                 {
-                    "description": "Truncates the image to fit the Chip size.  Errors if the image is an\nexact match size-wise.",
+                    "description": "Truncates the image to fit the Chip size.  Errors if the image is\nalready the Chip size, or smaller than it.",
                     "type": "string",
                     "const": "truncate"
                 },
