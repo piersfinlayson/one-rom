@@ -5232,9 +5232,9 @@ checksum = "5be167a7af36ee22fe3115051bc51f6e6c7054c9348e28deb4f49bd6f705a315"
 
 [[package]]
 name = "picoboot"
-version = "0.2.5"
+version = "0.2.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2f05132181168f595378f448dd62ffed9f897154359f52447ccd8d6174603f3e"
+checksum = "f6b0507a4ed7dc0c38ed559b9415f81cb3eaf4f3c99eb7df20d17dd08d1689b7"
 dependencies = [
  "airfrog-rpc",
  "deku 0.20.3",

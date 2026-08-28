@@ -48,13 +48,9 @@ go-ahead before editing this file.
   mine, and a commit message comes when I ask for one.
 - The history carries my authorship alone: leave out `Co-Authored-By` and any
   other AI attribution.
-- **A commit body is bullets, one line each, one per main thing the commit
-  does.** Three or fewer, and often none where the subject says it. A bullet
-  earns its place by saying what the diff does not show: *what* changed, and
-  *why* where the why is unobvious.
-  - Reasoning a future reader genuinely needs goes in a code comment beside
-    the thing it explains, or in the issue. Verification fits on one line —
-    `Verified on fire-28-a/b/c/d, single and banked`.
+- Reasoning a future reader genuinely needs goes in a code comment beside
+  the thing it explains, or in the issue. Verification fits on one line —
+  `Verified on fire-28-a/b/c/d, single and banked`.  Not in a commit.
 
 ## CHANGELOGs
 
