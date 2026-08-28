@@ -20,6 +20,10 @@ PICO_SDKLESS_DIR := pico-sdkless
 # changing this, so it is re-cloned.
 PICOBOOTX_VERSION ?= v0.4.0
 
+# Version of pico-sdkless to build against.  Remove the pico-sdkless/ directory
+# after changing this, so it is re-cloned.
+PICO_SDKLESS_VERSION ?= v0.1.1
+
 # Commit of the One ROM tinyusb fork to build against.  A commit rather than a
 # tag, because the fork tracks a project this one does not version.  Remove the
 # tinyusb/ directory after changing this, so it is re-cloned.
@@ -39,7 +43,7 @@ include tinyusb.mk
 $(shell [ -d $(PICOBOOTX_DIR) ] || git -c advice.detachedHead=false clone --quiet --depth 1 --branch $(PICOBOOTX_VERSION) https://github.com/piersfinlayson/picobootx.git $(PICOBOOTX_DIR))
 include picobootx/picobootx.mk
 
-$(shell [ -d $(PICO_SDKLESS_DIR) ] || git clone https://github.com/piersfinlayson/pico-sdkless.git $(PICO_SDKLESS_DIR))
+$(shell [ -d $(PICO_SDKLESS_DIR) ] || git -c advice.detachedHead=false clone --quiet --depth 1 --branch $(PICO_SDKLESS_VERSION) https://github.com/piersfinlayson/pico-sdkless.git $(PICO_SDKLESS_DIR))
 
 PICOBOOTX_SRC_C := $(addprefix picobootx/,$(PICOBOOTX_SRC_C))
 PICOBOOTX_INCLUDE_DIRS := $(addprefix picobootx/,$(PICOBOOTX_INCLUDE_DIRS))
