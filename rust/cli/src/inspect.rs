@@ -129,7 +129,11 @@ pub async fn cmd_led(options: &Options, args: &InspectLedArgs) -> Result<(), Err
     let device = options.device.as_ref().unwrap();
 
     let state = led_query(device, LedId::Status).await?;
-    let shared = options.verbose && leds_share_gpio(device, &state, LedId::Rgb).await;
+    let shared = if options.verbose {
+        leds_share_gpio(device, &state, LedId::Rgb).await?
+    } else {
+        false
+    };
     print_led("Status LED", &state, false, options.verbose, shared);
 
     Ok(())
@@ -140,7 +144,11 @@ pub async fn cmd_rgb(options: &Options, args: &InspectRgbArgs) -> Result<(), Err
     let device = options.device.as_ref().unwrap();
 
     let state = led_query(device, LedId::Rgb).await?;
-    let shared = options.verbose && leds_share_gpio(device, &state, LedId::Status).await;
+    let shared = if options.verbose {
+        leds_share_gpio(device, &state, LedId::Status).await?
+    } else {
+        false
+    };
     print_led("RGB LED", &state, true, options.verbose, shared);
 
     Ok(())

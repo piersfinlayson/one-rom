@@ -611,17 +611,24 @@ pub async fn set_rgb(device: &Device, caps: &Caps, args: SetLedArgs) -> Result<(
 /// read, and `other` names the one to compare it against, so a caller that has
 /// a state in hand pays for one further query and no more.
 ///
-/// A board whose other LED is absent shares nothing, and a device that refuses
-/// the second query answers the same way: not knowing is reported as not
-/// shared, which is what an older or partly featured device should read as.
-pub async fn leds_share_gpio(device: &Device, state: &LedState, other: LedId) -> bool {
+/// A board whose other LED is absent shares nothing, and a device too old to
+/// answer the second query reads the same way: not knowing is reported as not
+/// shared, which is what a partly featured device should read as. Any other
+/// failure is the caller's to report, since a device that could not be reached
+/// has not said the LEDs are unshared - it has said nothing.
+pub async fn leds_share_gpio(
+    device: &Device,
+    state: &LedState,
+    other: LedId,
+) -> Result<bool, Error> {
     if !state.present {
-        return false;
+        return Ok(false);
     }
 
     match led_query(device, other).await {
-        Ok(other) => other.present && other.gpio == state.gpio,
-        Err(_) => false,
+        Ok(other) => Ok(other.present && other.gpio == state.gpio),
+        Err(Error::LedQueryUnsupported(_)) => Ok(false),
+        Err(e) => Err(e),
     }
 }
 

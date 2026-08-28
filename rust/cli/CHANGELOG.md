@@ -17,6 +17,9 @@
 - **`--hold` is bounded where the device bounds it.** `control pin --hold` and
   `control reset --hold` refuse anything above the 60 second limit the device
   enforces, as the command line is read rather than after it has been sent.
+- **`onerom inspect led --verbose` and `inspect rgb --verbose` now say when
+  they could not reach the device**, instead of reporting that the two LEDs are
+  not on the same GPIO.
 - **`onerom control pin`, `control rgb` and `inspect gpio` now work first time
   against a One ROM running an older USB plugin.** They previously waited and
   then failed, and succeeded when run again.
