@@ -51,6 +51,12 @@ DISASM := $(BUILD_DIR)/$(BIN_PREFIX).dis
 # Linker script selection
 LDSCRIPT=link/linker.ld
 
+# linker.ld INCLUDEs common_vars.ld and common.ld, and common.ld INCLUDEs the
+# rest.  make cannot see through an INCLUDE, so the whole directory is named
+# here.  Depending on linker.ld alone meant editing an included script relinked
+# nothing - the ELF kept the old layout and that script's ASSERTs never ran.
+LDSCRIPTS := $(wildcard link/*.ld)
+
 # Flags
 #
 # Built soft-float, deliberately.  Nothing in the firmware does floating point
@@ -117,12 +123,13 @@ apio:
 # Depending on every other object is what makes the date honest: this is
 # recompiled when, and only when, something else was, so the stamp is the
 # moment the firmware was actually built rather than whenever this file last
-# happened to compile.
+# happened to compile.  The linker scripts are in that list too, because a
+# change to one of them relinks the firmware and so is a rebuild.
 #
 # The date is given here rather than in CFLAGS on purpose.  CFLAGS is recorded
 # in $(CFLAGS_STAMP) and every object depends on it, so a date in there would
 # differ on every invocation and rebuild the whole firmware each time.
-$(BUILD_DIR)/build_date.o: $(filter-out $(BUILD_DIR)/build_date.o,$(OBJS))
+$(BUILD_DIR)/build_date.o: $(filter-out $(BUILD_DIR)/build_date.o,$(OBJS)) $(LDSCRIPTS)
 $(BUILD_DIR)/build_date.o: CFLAGS += -DONEROM_BUILD_DATE='"$(shell date -u +'%b %e %Y %H:%M:%SZ')"'
 
 # sdrr object files
@@ -137,7 +144,7 @@ $(BUILD_DIR)/%.o: apio/src/%.c $(CFLAGS_STAMP) | $(BUILD_DIR)
 	@$(CC) $(CFLAGS) -c $< -o $@
 
 # Link
-$(ELF): $(OBJS) $(LDSCRIPT) | $(BUILD_DIR)
+$(ELF): $(OBJS) $(LDSCRIPTS) | $(BUILD_DIR)
 	@echo "- Linking object files to create ELF -> $(FIRMWARE_DIR)/$@"
 	@$(CC) $(LDFLAGS) -T $(LDSCRIPT) $(OBJS) -o $@
 
