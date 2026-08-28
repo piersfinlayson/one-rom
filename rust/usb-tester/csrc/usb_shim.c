@@ -374,9 +374,18 @@ pb_status_t picoboot_default_otp_write(uint16_t row, uint8_t ecc, const uint8_t 
                                        uint32_t len, void *ctx) {
     (void)row; (void)ecc; (void)buf; (void)len; (void)ctx; return PB_DEFAULT_REFUSED;
 }
-pb_status_t picoboot_default_get_info_sys(const pb_get_info_args_t *args, uint8_t *buf,
-                                          uint32_t max_len, uint32_t *written, void *ctx) {
-    (void)args; (void)buf; (void)max_len; (void)ctx;
+pb_status_t picoboot_default_get_info_prepare(pb_info_type_t type, uint32_t param0,
+                                              uint32_t *words, void *ctx) {
+    (void)type; (void)param0; (void)ctx;
+    if (words != NULL) {
+        *words = 0;
+    }
+    return PB_DEFAULT_REFUSED;
+}
+pb_status_t picoboot_default_get_info(pb_info_type_t type, uint32_t param0, uint32_t at_word,
+                                      uint8_t *buf, uint32_t max_len, uint32_t *written,
+                                      void *ctx) {
+    (void)type; (void)param0; (void)at_word; (void)buf; (void)max_len; (void)ctx;
     if (written != NULL) {
         *written = 0;
     }

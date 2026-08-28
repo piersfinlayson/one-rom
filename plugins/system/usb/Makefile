@@ -18,7 +18,7 @@ PICO_SDKLESS_DIR := pico-sdkless
 
 # Version of picobootx to build against.  Remove the picobootx/ directory after
 # changing this, so it is re-cloned.
-PICOBOOTX_VERSION ?= v0.2.0
+PICOBOOTX_VERSION ?= v0.3.0
 
 # Commit of the One ROM tinyusb fork to build against.  A commit rather than a
 # tag, because the fork tracks a project this one does not version.  Remove the

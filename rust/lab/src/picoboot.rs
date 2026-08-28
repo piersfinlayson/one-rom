@@ -10,7 +10,7 @@
 //! The wiring — the two bulk endpoints, the control handler and the driver task
 //! — is in [`usb`](crate::usb).
 
-use picobootx::{Ecc, Exclusive, NoCustom, Ops, Reboot, Result, Status, Target};
+use picobootx::{Ecc, Exclusive, Info, NoCustom, Ops, Reboot, Result, Status, Target};
 
 /// The reboot flag a host sets to ask for the bootloader rather than a restart,
 /// per the RP2350 datasheet's reboot flags.
@@ -93,14 +93,16 @@ impl Ops for LabOps {
         self.part.read(addr, buf)
     }
 
-    // GET_INFO, answered by the bootrom.  The partition info type never reaches
-    // here - the library answers that one itself.
-    fn get_info_sys_prepare(&mut self, flags: u32) -> Result {
-        self.part.get_info_sys_prepare(flags)
+    // GET_INFO, answered by the bootrom.  Every information type the protocol
+    // defines comes through here, and each is a read, so Lab passes the lot to
+    // the part: system information and the partition table from the ROM's own
+    // routines, the UF2 target as nowhere, and the UF2 download status refused.
+    fn get_info_prepare(&mut self, info: Info, param0: u32) -> Result<u32> {
+        self.part.get_info_prepare(info, param0)
     }
 
-    fn get_info_sys(&mut self, flag: u32, buf: &mut [u8]) -> Result {
-        self.part.get_info_sys(flag, buf)
+    fn get_info(&mut self, info: Info, param0: u32, at_word: u32, buf: &mut [u8]) -> Result<usize> {
+        self.part.get_info(info, param0, at_word, buf)
     }
 
     // REBOOT2, which is how a host puts Lab into BOOTSEL over USB.  The library

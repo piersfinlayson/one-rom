@@ -166,10 +166,10 @@ pub struct ChipInfo {
 /// three of those words. Locating them relative to the count word handles both
 /// layouts seen in the field:
 ///
-/// - the stock RP2350 bootrom returns `[count=4, flags, package_sel, lo, hi]`;
-/// - picobootx (running) currently returns `[count=3, package_sel, lo, hi]`,
-///   omitting the returned-flags word (a picobootx bug; once fixed it will
-///   return `count=4` like the bootrom, which this parser also accepts).
+/// - the stock RP2350 bootrom, and a One ROM running USB plugin v0.3.0 or
+///   later, return `[count=4, flags, package_sel, lo, hi]`
+/// - a One ROM running an earlier USB plugin returns
+///   `[count=3, package_sel, lo, hi]`, omitting the returned-flags word
 ///
 /// `package_sel` yields the package variant; an unrecognised value is warned
 /// and returned as `None`, without failing the chip-ID read.

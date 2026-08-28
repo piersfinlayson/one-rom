@@ -61,6 +61,8 @@ In detail:
 - `onerom program --follow` now refuses before programming when the image has no USB system plugin, rather than programming and then failing to find the serial port.  Such an image leaves the USB bus as soon as the One ROM starts serving, so there is no log to follow.
 - `onerom control pin --hold` and `onerom control reset --hold` now refuse a hold longer than the device's own 60 second limit as the command line is read, instead of sending it and having the device refuse.
 - One ROM Lab now serves PICOBOOT while it runs, so `picotool info` names the board and its version, and `picotool reboot -u` puts one into BOOTSEL over USB even when its shell is not answering.
+- `picotool` now gets the right answers when it asks a running One ROM, or One ROM Lab, about the board.  Asking for several details at once was refused outright, rather than answering the ones the board knew.
+  - This required a USB plugin update and a new One ROM Lab.
 - One ROM Lab greets a terminal when it opens the port, naming itself and its board, rather than staying silent until you press Enter.
 - Fix One ROM Lab dropping characters from a pasted command line.
 - Fix a nonsensical error when a ROM image is smaller than the chip and `size_handling` is set to truncate.  It reported the image as too large for the chip while printing a size smaller than the chip's, where what the image needs is padding or duplication.

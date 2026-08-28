@@ -29,9 +29,9 @@ rp235xb = [ "embassy-rp/rp235xb" ]
 [dependencies]
 onerom-config = { workspace = true }
 
-picobootx = "0.1.0"
-picobootx-embassy = { version = "0.1.0", features = ["rp2350"] }
-picobootx-rp2350 = "0.1.0"
+picobootx = "0.2.0"
+picobootx-embassy = { version = "0.2.0", features = ["rp2350"] }
+picobootx-rp2350 = "0.2.0"
 # ###################################################################
 
 airfrog-rpc = { version = "0.1.2" }
