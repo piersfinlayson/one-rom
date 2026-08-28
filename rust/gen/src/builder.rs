@@ -1801,7 +1801,9 @@ pub(crate) fn build_chip_sets(
 
             // A load address is only meaningful where records carry addresses.
             if chip_config.format.is_binary() && !chip_config.load_address.is_zero() {
-                return Err(Error::LoadAddressWithBinary { index: chip_id });
+                return Err(Error::LoadAddressWithBinary {
+                    filename: chip_config.filename(),
+                });
             }
 
             // Decode a record-oriented image up front so `from_raw_rom_image`
@@ -1812,7 +1814,7 @@ pub(crate) fn build_chip_sets(
             let no_duplicate = |format| {
                 if matches!(chip_config.size_handling, SizeHandling::Duplicate) {
                     return Err(Error::DuplicateUnsupportedForFormat {
-                        index: chip_id,
+                        filename: chip_config.filename(),
                         format,
                     });
                 }

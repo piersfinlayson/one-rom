@@ -11,7 +11,7 @@ use onerom_config::hw::Board;
 use onerom_config::mcu::Variant;
 use onerom_fw::net::{Release, Releases, fetch_license_async};
 use onerom_fw::{assemble_firmware, get_rom_files_async, read_rom_config, validate_sizes};
-use onerom_fw_parser::{ParsedDevice, Parser, readers::MemoryReader};
+use onerom_fw_parser::{ParsedDevice, Parser, SlotKind, readers::MemoryReader};
 use onerom_gen::ChipSetType;
 use onerom_gen::compat::{
     ChipCompat, check_chip_set_on_board, default_cs_config, format_size, supported_chips,
@@ -635,7 +635,7 @@ fn print_firmware_info(options: &Options, info: &ParsedDevice) -> Result<(), Err
 
     match info {
         ParsedDevice::Original(sdrr) => print_original_firmware_info(options, sdrr),
-        ParsedDevice::Schema(onerom) => print_schema_firmware_info(options, onerom),
+        ParsedDevice::Schema(onerom) => print_schema_firmware_info(options, info, onerom),
     }
 }
 
@@ -670,8 +670,16 @@ fn print_original_firmware_info(
     Ok(())
 }
 
+/// Print a firmware binary's schema-format summary.
+///
+/// Plugins are listed separately from ROM slots, and ROM slots are numbered
+/// from 0 with plugins excluded, the same way [`crate::inspect`] numbers a
+/// connected device's slots.  A plugin is named by the image source recorded
+/// in the firmware, with no manifest lookup - there is no device here, and the
+/// binary already carries the name.
 fn print_schema_firmware_info(
     options: &Options,
+    parsed: &ParsedDevice,
     onerom: &onerom_fw_parser::OneRom,
 ) -> Result<(), Error> {
     let Some(info) = onerom.info() else {
@@ -691,10 +699,31 @@ fn print_schema_firmware_info(
         println!("Build:    {}", info.build_number);
         println!("Format:   Schema (v0.7.0+)");
         println!("Board:    {board_name}");
-        if let Some(metadata) = onerom.metadata() {
-            println!("Slots: {}", metadata.rom_slot_count);
-            for (i, slot) in metadata.rom_slots.iter().enumerate() {
-                println!("  Slot {i}: {} ROM(s)", slot.rom_count);
+        if onerom.metadata().is_some() {
+            let mut plugins: Vec<String> = Vec::new();
+            let mut rom_slots: Vec<(usize, usize)> = Vec::new();
+            for slot in parsed.slots() {
+                match slot.kind {
+                    SlotKind::Plugin => plugins.push(
+                        slot.roms()
+                            .next()
+                            .and_then(|r| r.filename.map(|s| s.to_string()))
+                            .unwrap_or_else(|| "unknown".to_string()),
+                    ),
+                    SlotKind::Rom => {
+                        rom_slots.push((slot.user_index.unwrap_or(0), slot.roms().count()))
+                    }
+                }
+            }
+            if !plugins.is_empty() {
+                println!("Plugins:");
+                for plugin in &plugins {
+                    println!("  {plugin}");
+                }
+            }
+            println!("Slots: {}", rom_slots.len());
+            for (user_index, rom_count) in &rom_slots {
+                println!("  Slot {user_index}: {rom_count} ROM(s)");
             }
         }
     } else {

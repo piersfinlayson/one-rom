@@ -2,6 +2,19 @@
 
 ## v0.4.0 - 2026-??-??
 
+- **A ROM image smaller than the chip, with `size_handling=trunc`, no longer
+  reports the image as too large.** It said the image was larger than the chip
+  supported while printing a size smaller than the chip's. It now reads as too
+  small, and points at padding or duplication.
+- **Build errors name the ROM image at fault by its file.** They gave a chip
+  number that counted plugin slots and every chip in a set, so nothing a
+  `--slot` or a config entry produced it. A `location` window running past the
+  end of its file now says so, instead of advising padding that cannot reach
+  it, and an image too large for a 27C080 says that one One ROM serves half of
+  one.
+- **`onerom firmware inspect --verbose` lists plugins separately** and numbers
+  ROM slots from 0 with plugins excluded, as `onerom inspect slots` already
+  did. An image holding the USB plugin and two ROM images reported three slots.
 - **`onerom program --reset-host <PIN>` resets the host system after
   programming.** It waits for the One ROM to come back on the USB bus and then
   pulses that pin low, as `control reset` does, so flashing an image and
