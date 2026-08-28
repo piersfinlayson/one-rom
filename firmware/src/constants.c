@@ -12,6 +12,7 @@ const char project_url[] = "https://onerom.org";
 const char copyright[] = "Copyright (c) 2026";
 const char author[] = "Piers Finlayson <piers@piers.rocks>";
 const char product[] = "One ROM";
+const char description[] = "The most flexible and powerful replacement ROM";
 const char log_divider[] = "-----";
 const char inverted[] = "~";
 const char r2364[] = "2364";

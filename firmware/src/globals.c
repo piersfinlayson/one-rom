@@ -13,9 +13,6 @@ extern char _metadata_start;
 #include "gen-config.c"
 #endif // REAL_HARDWARE
 
-// Build time/date string
-const char onerom_build_date[] = __DATE__ " " __TIME__;
-
 // Main One ROM runtime info structure, located in RAM and updated at
 // runtime.  Pointed to by onerom_info, which is located at a known point in
 // flash.

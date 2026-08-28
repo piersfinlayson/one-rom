@@ -33,7 +33,8 @@ OBJCOPY := $(TOOLCHAIN)/arm-none-eabi-objcopy
 SIZE := $(TOOLCHAIN)/arm-none-eabi-size
 
 # Source files
-SRCS := src/constants.c src/globals.c src/log.c src/rtt.c \
+SRCS := src/constants.c src/binary_info.c src/build_date.c \
+		src/globals.c src/log.c src/rtt.c \
 		src/main.c src/plugin.c src/utils.c \
 		src/vector.c src/rp235x.c src/piodma/pio.c \
 		src/piodma/piorom2.c src/piodma/pioram.c src/piodma/dma.c \
@@ -110,6 +111,19 @@ apio:
 	@if [ ! -d "$@" ]; then \
 		git -c advice.detachedHead=false clone --quiet --depth 1 --branch $(APIO_VERSION) https://github.com/piersfinlayson/apio.git; \
 	fi
+
+# The build date stamp.
+#
+# Depending on every other object is what makes the date honest: this is
+# recompiled when, and only when, something else was, so the stamp is the
+# moment the firmware was actually built rather than whenever this file last
+# happened to compile.
+#
+# The date is given here rather than in CFLAGS on purpose.  CFLAGS is recorded
+# in $(CFLAGS_STAMP) and every object depends on it, so a date in there would
+# differ on every invocation and rebuild the whole firmware each time.
+$(BUILD_DIR)/build_date.o: $(filter-out $(BUILD_DIR)/build_date.o,$(OBJS))
+$(BUILD_DIR)/build_date.o: CFLAGS += -DONEROM_BUILD_DATE='"$(shell date -u +'%b %e %Y %H:%M:%SZ')"'
 
 # sdrr object files
 $(BUILD_DIR)/%.o: src/%.c $(CFLAGS_STAMP) | $(BUILD_DIR) apio

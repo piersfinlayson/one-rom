@@ -36,6 +36,10 @@ SECTIONS
     /* about the specific firmware build, pointers to ROM metadata, etc */
     INCLUDE "flash_onerom_info.ld"
 
+    /* Next the binary info header, which picotool only finds if it is inside */
+    /* the first 1KB of the image.  Its own script asserts that it is. */
+    INCLUDE "flash_binary_info.ld"
+
     /* Next goes text. */
     INCLUDE "flash_text.ld"
 
