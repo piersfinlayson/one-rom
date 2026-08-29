@@ -24,6 +24,7 @@ use static_cell::StaticCell;
 
 use onerom_config::hw::Board;
 
+mod cdc;
 mod cli;
 mod error;
 mod hw;

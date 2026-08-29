@@ -33,6 +33,8 @@ In detail:
 - Check plugins named by a config against the images server's published compatibility window, in the CLI and Studio.  A plugin binary declares only a minimum firmware version, so USB v0.1.2 — which hard faults on firmware v0.7.0 — was previously built in without complaint.  A local or third-party plugin has nothing published to check, and an unreachable server warns rather than failing.
 - Add Motorola S-record (`srec`) as a ROM image input format, alongside Intel HEX.  A chip may set `"format": "srec"` in a config file, with the same optional `"load_address"`; the CLI exposes it as `--slot format=srec,load-address=...`, and `onerom image convert` converts between `binary`, `ihex` and `srec` in any direction.  Unwritten bytes read as `0xFF`, as for Intel HEX.
 - One ROM Lab can dump a ROM as S-records: `f:srec`, alongside the existing `ihex` and hex dump formats.
+- One ROM Lab now presents the same USB descriptors as One ROM: the same interface names, endpoint addresses, device class and CDC settings.  The two share a VID and PID, so a host that has met one and then meets the other now finds the same device.
+- One ROM Lab now stops a running command when a terminal sends a break, as it already does for any keystroke.
 - Publish the CLI manual, chip type reference and compatibility reference as PDFs, in A4 and US Letter, for reading and printing away from a browser.  Each carries the version of the thing it documents rather than a repository version.
 - The CLI manual now has a Problems part, covering how to recover a One ROM the programming tools cannot find.
 - `onerom inspect led` and `onerom inspect rgb` report what each of One ROM's LEDs is doing — the mode, the speed, the GPIO, and the colour and brightness of the RGB one.  A board without an RGB LED says so rather than failing.
@@ -91,6 +93,7 @@ To publish:
 - Config schema
 - CLI bin 0.4.0
 - Studio 0.2.2
+- One ROM Lab 0.3.0.  Nothing publishes Lab today.
 - USB plugin 0.3.0
 - USB plugin 0.2.1 must be marked `incompatible_from` v0.7.2.  v0.7.2 starts the
   TIMER0 tick generator itself, and 0.2.1 then writes `TICKS_TIMER0_CYCLES` to an

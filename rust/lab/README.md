@@ -95,6 +95,8 @@ Type ? for help.
 The board line appears once a board is set.  You then get a `> ` prompt, with
 line editing, arrow keys and a 16 entry command history.
 
+Any keystroke stops a running command, as does a break from your terminal.
+
 Closing the terminal ends the session, and reopening it starts a new one and
 greets you again — with the board, chip type and output format you had set still
 in place.
