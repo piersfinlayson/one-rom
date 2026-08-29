@@ -5,6 +5,7 @@
 //! Implementation of `onerom image` subcommands.
 
 use crate::args::image::{ImageConvertArgs, ImageDeinterleaveArgs, ImageSwapBytesArgs};
+use onerom_cli::byte_order::{Intent, report as report_byte_order};
 use onerom_cli::{Error, Options};
 use onerom_gen::{
     FileFormat, SizeHandling, Transform, decode_ihex, decode_srec, encode_ihex, encode_srec,
@@ -54,6 +55,12 @@ pub async fn cmd_swap_bytes(options: &Options, args: &ImageSwapBytesArgs) -> Res
     if !len.is_multiple_of(2) {
         return Err(Error::OddLengthImage(args.input.clone(), len));
     }
+
+    // Say what the input looks like before writing anything, so a user
+    // swapping an image that is already the right way round hears about it
+    // rather than getting a file that will not serve.
+    let data = std::fs::read(&args.input).map_err(|e| Error::io(&args.input, e))?;
+    report_byte_order(&data, &args.input, &Intent::Swapping, options.verbose);
 
     transform_file(
         options,

@@ -1685,6 +1685,20 @@ onerom image swap-bytes --input kick.bin --output kick-swapped.bin
 The same operation is available during a build as
 `--slot transform=swap_bytes`; see [Image transforms](#image-transforms).
 
+Before writing, the input is checked against a list of known 16-bit ROM
+headers. Where it is recognised and swapping it would be incorrect to program
+with One ROM, a warning is printed and the swap still goes ahead:
+
+```
+$ onerom image swap-bytes --input kick-swapped.bin --output out.bin
+Warning: kick-swapped.bin starts with an Amiga ROM header, low byte of each pair first.
+  It is already the way One ROM needs it, and swapping the bytes will stop it
+  working with One ROM.
+Written to out.bin
+```
+
+See [16-bit ROM image byte ordering](#16-bit-rom-image-byte-ordering).
+
 Device required: no.
 
 ### image deinterleave
@@ -2378,6 +2392,56 @@ alongside its filename — as `kick.bin|transform=swap_bytes` — so a built ima
 carries a record of how its ROM data was derived. Note that the metadata
 filename field is capped at 128 bytes, so the suffix can be truncated away for a
 very long path; use `label=` to keep it short.
+
+### 16-bit ROM image byte ordering
+
+A 16-bit ROM supplies two bytes at a time, and an image of one may hold each
+pair in either order. One ROM reads the low byte of each pair first. An image
+holding the high byte first needs `swap_bytes`, and without it every pair is
+served reversed and the machine does not work.
+
+The CLI checks for this. It compares the first bytes of the image against a
+list of known ROM headers, including ones seen in Amiga Kickstart,
+DiagROM and Atari ST TOS images. An image matching no entry is left alone.
+
+A 16-bit image holding the high byte of each pair first, with no transform:
+
+```
+$ onerom firmware build --board fire-40-a --slot file=kick.bin,type=27C400 --out fw.bin
+Warning: kick.bin starts with an Amiga ROM header, high byte of each pair first.
+  One ROM needs the low byte of each pair first.  Add transform=swap_bytes to
+  this slot.
+```
+
+`swap_bytes` applied to an image that did not need it:
+
+```
+$ onerom firmware build --board fire-40-a --slot file=kick-swapped.bin,type=27C400,transform=swap_bytes --out fw.bin
+Warning: kick-swapped.bin starts with an Amiga ROM header and was already the way One
+  ROM needs it.  transform=swap_bytes has swapped it the wrong way round.
+  Remove transform=swap_bytes from this slot.
+```
+
+Neither is refused. The build and the programming go ahead.
+
+The check is skipped for an 8-bit chip, whose image holds no 16-bit words, and
+for a slot carrying any transform besides `swap_bytes`, since the check then
+reads bytes that are not the ones served.
+
+`--verbose` also reports a recognised image that needs no change, and one the
+check could not identify:
+
+```
+$ onerom --verbose image swap-bytes --input kick.bin --output out.bin
+kick.bin starts with an Amiga ROM header, high byte of each pair first.
+  Swapping the bytes makes it correct for One ROM.
+```
+
+```
+$ onerom --verbose firmware build --board fire-40-a --slot file=blank.bin,type=27C400 --out fw.bin
+Unable to tell which way around the byte pairs are in blank.bin.  If the slot
+  does not work, try transform=swap_bytes.
+```
 
 ---
 

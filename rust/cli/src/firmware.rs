@@ -309,6 +309,10 @@ pub async fn build_rom_image(
 
     get_rom_files_async(&mut builder).await?;
 
+    // Before the image is assembled, so a 16-bit ROM supplied the wrong way
+    // round is reported before the user waits for a build.
+    onerom_cli::byte_order::report_slots(&builder, options.verbose);
+
     // A plugin named by the config has not been through the manifest, so its
     // compatibility window is checked here.  Plugins named with --plugin were
     // selected against the manifest already; re-checking them is harmless and

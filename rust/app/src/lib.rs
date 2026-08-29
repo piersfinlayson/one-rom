@@ -42,6 +42,7 @@
 extern crate alloc;
 
 mod error;
+pub mod identity;
 mod plugin;
 
 pub use error::{Error, PluginError};

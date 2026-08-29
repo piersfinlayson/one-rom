@@ -17,6 +17,12 @@
   end of its file now says so, instead of advising padding that cannot reach
   it, and an image too large for a 27C080 says that one One ROM serves half of
   one.
+- **The CLI warns when a 16-bit ROM image looks to be stored the wrong way
+  round.** A 16-bit ROM supplies two bytes at a time, an image may hold each
+  pair in either order, and One ROM reads the low byte first. `program`,
+  `firmware build` and `image swap-bytes` now compare the image's first bytes
+  against known ROM headers and say what they recognised. An image matching
+  none is left alone, and nothing is refused.
 - **`onerom firmware inspect --verbose` lists plugins separately** and numbers
   ROM slots from 0 with plugins excluded, as `onerom inspect slots` already
   did. An image holding the USB plugin and two ROM images reported three slots.

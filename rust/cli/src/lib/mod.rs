@@ -10,6 +10,7 @@
 
 use clap::ValueEnum;
 
+pub mod byte_order;
 pub mod cdc;
 pub mod colour;
 pub mod device;
