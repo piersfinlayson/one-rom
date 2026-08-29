@@ -62,7 +62,7 @@ In detail:
 - `onerom program --reset-host <PIN>` resets the host system as the last step of programming, so flashing an image and restarting the machine into it is one command.  The pin is checked against the image being built before its ROM images are fetched, so a pin One ROM would be serving with costs nothing to discover.
 - `onerom program --follow` now refuses before programming when the image has no USB system plugin, rather than programming and then failing to find the serial port.  Such an image leaves the USB bus as soon as the One ROM starts serving, so there is no log to follow.
 - `onerom control pin --hold` and `onerom control reset --hold` now refuse a hold longer than the device's own 60 second limit as the command line is read, instead of sending it and having the device refuse.
-- `onerom scan` now says in one plain line when a device on One ROM's VID/PID cannot be read — either in use by another program, or unreadable — and ignores it.  It warns only where nothing else was found, and no longer offers such a device to `--unrecognised`.
+- `onerom scan` now says in one line when a device on One ROM's VID/PID could not be opened or could not be read, and ignores it.  It warns only where nothing else was found, and `--unrecognised` no longer picks one to program.
 - One ROM Lab now serves PICOBOOT while it runs, so `picotool info` names the board and its version, and `picotool reboot -u` puts one into BOOTSEL over USB even when its shell is not answering.
 - `picotool` is now told that One ROM and One ROM Lab take no UF2 download.  Both previously reported the UF2 families the RP2350's own tables list, and neither presents a drive for one to be dragged onto.
   - This required a USB plugin update and a new One ROM Lab.

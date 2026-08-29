@@ -2,11 +2,11 @@
 
 ## v0.4.0 - 2026-??-??
 
-- **A device that cannot be read is now named in one plain line and ignored.**
-  `onerom scan` says whether another program holds it or it simply could not be
-  read, warns only where nothing else was found, and adds the USB identity and
-  the underlying error under `--verbose`. Such a device is also no longer a
-  `--unrecognised` programming target, since it could not be programmed anyway.
+- **A device that cannot be read is now named in one line and ignored.**
+  `onerom scan` says whether it could not be opened or could not be read, warns
+  only where nothing else was found, and adds the USB identity and the
+  underlying error under `--verbose`. `--unrecognised` no longer picks one to
+  program, since a device that will not answer cannot be programmed.
 - **A ROM image smaller than the chip, with `size_handling=trunc`, no longer
   reports the image as too large.** It said the image was larger than the chip
   supported while printing a size smaller than the chip's. It now reads as too

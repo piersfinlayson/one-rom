@@ -59,8 +59,12 @@ pub const DEFAULT_ONEROM_PICOBOOT_TARGETS: [Target; 3] = [
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AccessFailure {
     /// The device could not be opened, or its interface could not be claimed.
-    /// Another program holds it, or this host's permissions do not allow it.
-    InUse,
+    ///
+    /// Another program holding the device and this host refusing us permission
+    /// fail the same way, and on Linux a missing udev rule is at least as
+    /// common as a rival program. The underlying error names the real reason
+    /// under `--verbose`.
+    NotOpened,
 
     /// Anything else that stopped the device being read.
     ///
@@ -76,7 +80,7 @@ impl std::fmt::Display for AccessFailure {
     /// it has to read as a verb applied to "Device ...".
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::InUse => write!(f, "is in use by another program"),
+            Self::NotOpened => write!(f, "could not be opened"),
             Self::Unreadable => write!(f, "could not be read"),
         }
     }
@@ -87,7 +91,7 @@ impl std::fmt::Display for AccessFailure {
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[error("{detail}")]
 pub struct AccessError {
-    /// Which of the three things the user is told happened.
+    /// Which of the two things the user is told happened.
     pub failure: AccessFailure,
 
     /// The underlying error, shown only behind `--verbose`.
@@ -103,9 +107,10 @@ impl AccessError {
     #[allow(clippy::wildcard_enum_match_arm)]
     fn classify(e: &picoboot::Error) -> AccessFailure {
         match e {
-            // Neither of these got as far as speaking PICOBOOT.
+            // Neither of these got as far as speaking PICOBOOT, and neither
+            // can tell a rival program from a permissions problem.
             picoboot::Error::UsbOpenError(..) | picoboot::Error::UsbClaimInterfaceFailure(..) => {
-                AccessFailure::InUse
+                AccessFailure::NotOpened
             }
             _ => AccessFailure::Unreadable,
         }
@@ -1259,23 +1264,26 @@ mod tests {
     }
 
     #[test]
-    fn a_device_another_program_holds_blames_that_program() {
+    fn a_device_that_would_not_open_does_not_say_why() {
         // `picoboot::Error::UsbOpenError` and `UsbClaimInterfaceFailure` both
         // carry an `nusb::Error`, which nusb gives no way to build outside its
         // own crate, so the classify arm cannot be driven from a test. What the
         // arm produces is checked here instead.
-        assert_eq!(
-            AccessFailure::InUse.to_string(),
-            "is in use by another program"
-        );
-        assert_ne!(AccessFailure::InUse, AccessFailure::Unreadable);
+        assert_eq!(AccessFailure::NotOpened.to_string(), "could not be opened");
+        assert_ne!(AccessFailure::NotOpened, AccessFailure::Unreadable);
+
+        // A rival program and a permissions problem look identical here, so
+        // the message must not name either.
+        let msg = skipped(AccessFailure::NotOpened, Some("A")).message();
+        assert!(!msg.contains("another program"), "{msg}");
+        assert!(!msg.contains("permission"), "{msg}");
     }
 
     #[test]
     fn a_skipped_device_is_named_by_its_serial() {
         assert_eq!(
-            skipped(AccessFailure::InUse, Some("62CD9AE3C0771A7E")).message(),
-            "Device with serial 62CD9AE3C0771A7E is in use by another program - ignored"
+            skipped(AccessFailure::NotOpened, Some("62CD9AE3C0771A7E")).message(),
+            "Device with serial 62CD9AE3C0771A7E could not be opened - ignored"
         );
         assert_eq!(
             skipped(AccessFailure::Unreadable, Some("62CD9AE3C0771A7E")).message(),
@@ -1286,8 +1294,8 @@ mod tests {
     #[test]
     fn a_skipped_device_with_no_serial_is_named_by_its_address() {
         assert_eq!(
-            skipped(AccessFailure::InUse, None).message(),
-            "Device 1209:f542 at address 3 on bus 01 is in use by another program - ignored"
+            skipped(AccessFailure::NotOpened, None).message(),
+            "Device 1209:f542 at address 3 on bus 01 could not be opened - ignored"
         );
         assert_eq!(
             skipped(AccessFailure::Unreadable, None).message(),

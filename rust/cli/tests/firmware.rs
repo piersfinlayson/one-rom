@@ -7,7 +7,7 @@ use onerom_config::hw::BOARDS;
 
 mod common;
 use common::{
-    FIXED_VERSION, FirmwareVersion, V1_VERSION, V2_VERSION, build_config_test,
+    FIXED_VERSION, FirmwareVersion, NO_DEVICE, V1_VERSION, V2_VERSION, build_config_test,
     build_slots_at_version, fails, onerom, project_root, representative_board, slot, slot_fails,
     slot_succeeds, succeeds,
 };
@@ -24,7 +24,15 @@ fn log_level_debug_with_chips_all_succeeds() {
 
 #[test]
 fn unrecognised_with_chips_all_succeeds() {
-    succeeds(onerom().args(["--unrecognised", "firmware", "chips", "--all"]));
+    // NO_DEVICE because --unrecognised reaches device discovery, and without it
+    // this passes or fails according to what is plugged into the machine
+    // running it - two devices on One ROM's VID/PID and the CLI asks for a
+    // --serial rather than listing chips.
+    succeeds(
+        onerom()
+            .args(NO_DEVICE)
+            .args(["--unrecognised", "firmware", "chips", "--all"]),
+    );
 }
 
 #[test]
