@@ -8,7 +8,7 @@
 //! PICOBOOT protocol.
 
 #[allow(unused_imports)]
-use log::{debug, warn};
+use log::{Level, debug, log, warn};
 use onerom_config::mcu::{Rp235xChipId, RpVariant};
 use onerom_fw_parser::Parser;
 use picoboot::cmd::PicobootStatus;
@@ -29,7 +29,7 @@ use crate::picobootx::{
     ONEROM_FEAT_GPIO_HOLD, ONEROM_FEAT_GPIO_QUERY, ONEROM_FEAT_GPIO_SET, ONEROM_FEAT_LED_ARGS,
     ONEROM_LED_STATE_LEN, ONEROM_MAGIC, PICOBOOT_DIR_IN,
 };
-use crate::{Device, DeviceState};
+use crate::{Device, DeviceState, Options};
 
 /// Flash start address on RP2350.
 pub const FLASH_BASE: u32 = 0x1000_0000;
@@ -51,16 +51,191 @@ pub const DEFAULT_ONEROM_PICOBOOT_TARGETS: [Target; 3] = [
     },
 ];
 
+/// Why a device found on a scan target could not be read.
+///
+/// The classification is made on the [`picoboot::Error`] variant, never on its
+/// text, so a reworded message in that crate cannot quietly change what the
+/// user is told.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AccessFailure {
+    /// The device could not be opened, or its interface could not be claimed.
+    /// Another program holds it, or this host's permissions do not allow it.
+    InUse,
+
+    /// Anything else that stopped the device being read.
+    ///
+    /// Deliberately says nothing about whose fault it was. A failed transfer
+    /// on this host reports the same status whether the device stayed silent
+    /// or the host never got the request onto the wire, so naming the device
+    /// as the culprit would be a guess dressed up as a finding.
+    Unreadable,
+}
+
+impl std::fmt::Display for AccessFailure {
+    /// The phrase that goes in the middle of the sentence the user reads, so
+    /// it has to read as a verb applied to "Device ...".
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::InUse => write!(f, "is in use by another program"),
+            Self::Unreadable => write!(f, "could not be read"),
+        }
+    }
+}
+
+/// A failed attempt to read a device: what class of failure it was, and the
+/// underlying error's own words for `--verbose`.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("{detail}")]
+pub struct AccessError {
+    /// Which of the three things the user is told happened.
+    pub failure: AccessFailure,
+
+    /// The underlying error, shown only behind `--verbose`.
+    pub detail: String,
+}
+
+impl AccessError {
+    /// Classify a picoboot failure into the two classes the user is told
+    /// about.
+    ///
+    /// Every unlisted variant is "could not be read", which is the honest
+    /// answer for a failure this layer has nothing more specific to say about.
+    #[allow(clippy::wildcard_enum_match_arm)]
+    fn classify(e: &picoboot::Error) -> AccessFailure {
+        match e {
+            // Neither of these got as far as speaking PICOBOOT.
+            picoboot::Error::UsbOpenError(..) | picoboot::Error::UsbClaimInterfaceFailure(..) => {
+                AccessFailure::InUse
+            }
+            _ => AccessFailure::Unreadable,
+        }
+    }
+
+    /// Build from a picoboot error, keeping both its class and its words.
+    fn from_picoboot(e: picoboot::Error) -> Self {
+        Self {
+            failure: Self::classify(&e),
+            detail: e.to_string(),
+        }
+    }
+
+    /// Build from a failure that reached us as text alone, with no variant
+    /// left to classify.
+    fn unreadable(detail: String) -> Self {
+        Self {
+            failure: AccessFailure::Unreadable,
+            detail,
+        }
+    }
+}
+
+/// A device on a scan target that could not be read, and why.
+///
+/// The USB identity is copied out of the [`Device`] rather than the device
+/// being kept: the report is written after the enumeration loop, once the scan
+/// knows whether it found anything else.
+struct SkippedDevice {
+    error: AccessError,
+    serial: Option<String>,
+    vid: u16,
+    pid: u16,
+    bus_id: String,
+    address: u8,
+}
+
+impl SkippedDevice {
+    fn new(device: &Device, error: AccessError) -> Self {
+        Self {
+            error,
+            serial: device.serial.clone(),
+            vid: device.vid,
+            pid: device.pid,
+            bus_id: device.bus_id.clone(),
+            address: device.address,
+        }
+    }
+
+    fn vid_pid(&self) -> String {
+        format!("{:04x}:{:04x}", self.vid, self.pid)
+    }
+
+    /// The single line the user reads.
+    ///
+    /// Not "One ROM device": the default scan targets include the raw RP2350
+    /// BOOTSEL VID/PID and `--vid-pid` points the CLI at whatever the user
+    /// names, so a device that never answered could be anything.
+    ///
+    /// A device presenting no USB serial is named by its address instead, so
+    /// the message always identifies something the user can go and find.
+    fn message(&self) -> String {
+        match self.serial.as_deref() {
+            Some(serial) => format!(
+                "Device with serial {serial} {} - ignored",
+                self.error.failure
+            ),
+            None => format!(
+                "Device {} at address {} on bus {} {} - ignored",
+                self.vid_pid(),
+                self.address,
+                self.bus_id,
+                self.error.failure
+            ),
+        }
+    }
+
+    /// The message, plus the USB identity and the underlying error on their
+    /// own indented lines when `--verbose` is set.
+    ///
+    /// The identity gets a line to itself rather than going inline: nusb's bus
+    /// id is `01` on macOS and Linux but a location path like
+    /// `PCIROOT(0)#PCI(0201)#PCI(0000)#USBROOT(0)` on Windows, which would
+    /// wreck a one-line sentence.
+    fn report(&self, verbose: bool) -> String {
+        let mut out = self.message();
+        if verbose {
+            out.push_str(&format!(
+                "\n  {}, address {}, bus {}\n  {}",
+                self.vid_pid(),
+                self.address,
+                self.bus_id,
+                self.error.detail
+            ));
+        }
+        out
+    }
+}
+
+/// The level a skipped device is reported at.
+///
+/// A device that could not be read is only ever the answer to "where is my One
+/// ROM?" when the scan listed nothing at all, so it warns then and is a note
+/// otherwise.
+fn skip_level(found_any: bool) -> Level {
+    if found_any { Level::Info } else { Level::Warn }
+}
+
+/// Whether an enumerated device belongs in the scan's results.
+///
+/// `answered` is whether the device answered PICOBOOT at all. One that
+/// answered nothing is left out even under `--unrecognised`, and nothing is
+/// lost by that: a bricked One ROM sits in the RP2350 bootloader and answers
+/// PICOBOOT fine, while a device that answers nothing cannot be programmed
+/// anyway. Including it would let `onerom program --unrecognised` pick a
+/// wedged device that is not a One ROM at all.
+fn include_device(answered: bool, recognised: bool, unrecognised: bool) -> bool {
+    answered && (recognised || unrecognised)
+}
+
 /// Enumerate all connected One ROM Fire (RP2350) devices.
 ///
-/// Returns an empty Vec rather than an error if no devices are found.
-pub async fn enumerate_devices(
-    unrecognised: bool,
-    vid_pid: &[(u16, u16)],
-) -> Result<Vec<Device>, Error> {
+/// Returns an empty Vec rather than an error if no devices are found. A device
+/// on a scan target that could not be read is left out and reported after the
+/// loop, at a level that depends on whether anything else was found.
+pub async fn enumerate_devices(options: &Options) -> Result<Vec<Device>, Error> {
     // Create the list of targets to use Picoboot to scan for.  We only use
     // the default RP2350 if no custom VID/PID pairs were provided.
-    let targets: Vec<Target> = vid_pid
+    let targets: Vec<Target> = options
+        .vid_pid
         .iter()
         .map(|&(vid, pid)| Target::Custom { vid, pid })
         .collect();
@@ -75,6 +250,7 @@ pub async fn enumerate_devices(
         .map_err(|e| Error::Usb(e.to_string()))?;
 
     let mut devices = Vec::new();
+    let mut skipped: Vec<SkippedDevice> = Vec::new();
     for info in device_infos {
         debug!(
             "Found Fire device: {:04x}:{:04x} bus {} addr {}",
@@ -98,24 +274,46 @@ pub async fn enumerate_devices(
             rp_variant: None,
         };
 
-        if let Err(e) = read_device_info(&mut device).await {
-            warn!("Failed to read device info on {device:?}: {e}");
-        }
+        let answered = match read_device_info(&mut device).await {
+            Ok(()) => true,
+            Err(error) => {
+                debug!("Failed to read device info on {device:?}: {error}");
+                skipped.push(SkippedDevice::new(&device, error));
+                false
+            }
+        };
 
-        if device.is_recognised() || unrecognised {
+        if include_device(answered, device.is_recognised(), options.unrecognised) {
             devices.push(device);
         } else {
-            debug!("Excluding unrecognised device: {device:?}");
+            debug!("Excluding device: {device:?}");
         }
+    }
+
+    // Reported here rather than inside the loop, because whether a skipped
+    // device is the answer to "where is my One ROM?" depends on what the rest
+    // of the scan found.
+    let level = skip_level(!devices.is_empty());
+    for skipped in &skipped {
+        log!(level, "{}", skipped.report(options.verbose));
     }
 
     Ok(devices)
 }
 
 async fn get_picoboot(device: &Device, long: bool) -> Result<Picoboot, Error> {
-    let mut picoboot = Picoboot::new(device.device_info.clone())
+    open_picoboot(device, long)
         .await
-        .map_err(|e| Error::Usb(e.to_string()))?;
+        .map_err(|e| Error::Usb(e.to_string()))
+}
+
+/// Open a picoboot handle, keeping the picoboot error rather than its text.
+///
+/// [`get_picoboot`] is the same thing for every caller that only reports the
+/// failure. The scan path needs the variant, because that is what separates
+/// "another program has this device" from "it never answered".
+async fn open_picoboot(device: &Device, long: bool) -> Result<Picoboot, picoboot::Error> {
+    let mut picoboot = Picoboot::new(device.device_info.clone()).await?;
 
     let timeout = if long {
         // Flash erase can take a long time, so use a longer timeout for all
@@ -222,13 +420,38 @@ pub async fn read_chip_info(pb: &mut Picoboot) -> Result<ChipInfo, Error> {
 /// Connects to the device via PICOBOOT, reads from the flash start address,
 /// and returns the raw bytes. The caller is responsible for parsing the
 /// contents.
-pub async fn read_device_info(device: &mut Device) -> Result<(), Error> {
+///
+/// The failure is classified rather than flattened to a string, because the
+/// scan tells the user which of three things happened.
+pub async fn read_device_info(device: &mut Device) -> Result<(), AccessError> {
     debug!("Reading {FLASH_READ_SIZE_KB}KB from {FLASH_BASE:#010x} on {device}");
 
     // Parse the device's flash first, to establish its state and recognition.
-    let picoboot = get_picoboot(device, false).await?;
+    let mut picoboot = open_picoboot(device, false)
+        .await
+        .map_err(AccessError::from_picoboot)?;
+
+    // Connect and reset here rather than leaving both to PicobootReader::new,
+    // which reports a string. The picoboot error variant is the only thing
+    // that separates a device another program is holding from one that opened
+    // and then said nothing, and a string cannot be matched on. The reader
+    // does its own connect and reset afterwards - the connect is a no-op on an
+    // already-connected handle, and the second reset costs one control
+    // transfer on a path that already opens the device twice.
+    {
+        let conn = picoboot
+            .connect()
+            .await
+            .map_err(AccessError::from_picoboot)?;
+        conn.reset_interface()
+            .await
+            .map_err(AccessError::from_picoboot)?;
+    }
+
     let onerom = {
-        let mut reader = PicobootReader::new(picoboot).await.map_err(Error::Usb)?;
+        let mut reader = PicobootReader::new(picoboot)
+            .await
+            .map_err(AccessError::unreadable)?;
         let mut parser = Parser::with_base_flash_address(&mut reader, FLASH_BASE, RAM_BASE);
         parser.parse_device().await
     };
@@ -979,6 +1202,147 @@ pub async fn gpio_query_all(device: &Device, caps: &Caps) -> Result<Vec<GpioEntr
 #[cfg(test)]
 mod tests {
     use super::*;
+    use nusb::transfer::TransferError;
+
+    /// A device that could not be read, with everything but the class fixed,
+    /// so a test says only what it is about.
+    fn skipped(failure: AccessFailure, serial: Option<&str>) -> SkippedDevice {
+        SkippedDevice {
+            error: AccessError {
+                failure,
+                detail: "Failed to reset PICOBOOT interface: 1209:f542".to_string(),
+            },
+            serial: serial.map(str::to_owned),
+            vid: 0x1209,
+            pid: 0xf542,
+            bus_id: "01".to_string(),
+            address: 3,
+        }
+    }
+
+    const TARGET: Target = Target::Custom {
+        vid: 0x1209,
+        pid: 0xf542,
+    };
+
+    #[test]
+    fn a_failed_transfer_does_not_blame_the_device() {
+        // A transfer that failed says nothing about which end failed it, so
+        // every one of these reads as "could not be read". This host reports
+        // the same status for a silent device and for a request that never
+        // reached the wire.
+        for e in [
+            picoboot::Error::PicobootResetInterfaceFailure(TARGET, TransferError::Stall),
+            picoboot::Error::PicobootGetCommandStatusFailure(TARGET, TransferError::Cancelled),
+            picoboot::Error::UsbReadBulkFailure(TARGET, TransferError::Stall),
+            picoboot::Error::UsbWriteBulkFailure(TARGET, TransferError::Stall),
+        ] {
+            assert_eq!(AccessError::classify(&e), AccessFailure::Unreadable, "{e}");
+        }
+    }
+
+    #[test]
+    fn anything_else_is_reported_as_unreadable() {
+        for e in [
+            picoboot::Error::PicobootInterfaceNotFound(TARGET),
+            picoboot::Error::UsbEndpointsNotFound(TARGET),
+            picoboot::Error::UsbReadBulkMismatch(TARGET, 4, 8),
+        ] {
+            assert_eq!(AccessError::classify(&e), AccessFailure::Unreadable, "{e}");
+        }
+
+        // And a failure that arrived as text alone, with no variant left.
+        assert_eq!(
+            AccessError::unreadable("no words of its own".to_string()).failure,
+            AccessFailure::Unreadable
+        );
+    }
+
+    #[test]
+    fn a_device_another_program_holds_blames_that_program() {
+        // `picoboot::Error::UsbOpenError` and `UsbClaimInterfaceFailure` both
+        // carry an `nusb::Error`, which nusb gives no way to build outside its
+        // own crate, so the classify arm cannot be driven from a test. What the
+        // arm produces is checked here instead.
+        assert_eq!(
+            AccessFailure::InUse.to_string(),
+            "is in use by another program"
+        );
+        assert_ne!(AccessFailure::InUse, AccessFailure::Unreadable);
+    }
+
+    #[test]
+    fn a_skipped_device_is_named_by_its_serial() {
+        assert_eq!(
+            skipped(AccessFailure::InUse, Some("62CD9AE3C0771A7E")).message(),
+            "Device with serial 62CD9AE3C0771A7E is in use by another program - ignored"
+        );
+        assert_eq!(
+            skipped(AccessFailure::Unreadable, Some("62CD9AE3C0771A7E")).message(),
+            "Device with serial 62CD9AE3C0771A7E could not be read - ignored"
+        );
+    }
+
+    #[test]
+    fn a_skipped_device_with_no_serial_is_named_by_its_address() {
+        assert_eq!(
+            skipped(AccessFailure::InUse, None).message(),
+            "Device 1209:f542 at address 3 on bus 01 is in use by another program - ignored"
+        );
+        assert_eq!(
+            skipped(AccessFailure::Unreadable, None).message(),
+            "Device 1209:f542 at address 3 on bus 01 could not be read - ignored"
+        );
+
+        // Whichever way it is named, the device is never called a One ROM: the
+        // default scan targets include the raw RP2350 BOOTSEL VID/PID.
+        for serial in [Some("62CD9AE3C0771A7E"), None] {
+            let msg = skipped(AccessFailure::Unreadable, serial).report(true);
+            assert!(!msg.contains("One ROM"), "{msg}");
+        }
+    }
+
+    #[test]
+    fn verbose_adds_the_usb_identity_and_the_underlying_error() {
+        let device = skipped(AccessFailure::Unreadable, Some("62CD9AE3C0771A7E"));
+
+        // Without --verbose the message stands alone, with no trailing detail.
+        assert_eq!(device.report(false), device.message());
+
+        assert_eq!(
+            device.report(true),
+            "Device with serial 62CD9AE3C0771A7E could not be read - ignored\n  \
+             1209:f542, address 3, bus 01\n  \
+             Failed to reset PICOBOOT interface: 1209:f542"
+        );
+    }
+
+    #[test]
+    fn a_skipped_device_warns_only_when_nothing_else_was_found() {
+        // Nothing else was listed, so this may be the answer to "where is my
+        // One ROM?".
+        assert_eq!(skip_level(false), Level::Warn);
+        // A One ROM was listed, so it is a note.
+        assert_eq!(skip_level(true), Level::Info);
+    }
+
+    #[test]
+    fn a_device_that_never_answered_is_not_a_programming_target() {
+        // Recognised: always listed.
+        assert!(include_device(true, true, false));
+        assert!(include_device(true, true, true));
+
+        // Answered, carries no recognised One ROM firmware: listed only when
+        // asked for.
+        assert!(!include_device(true, false, false));
+        assert!(include_device(true, false, true));
+
+        // Never answered: left out either way, so `program --unrecognised`
+        // cannot pick it.
+        assert!(!include_device(false, false, false));
+        assert!(!include_device(false, false, true));
+        assert!(!include_device(false, true, true));
+    }
 
     // The transport itself needs a device, but the classification of a failure
     // - the part that decides what the user is told - is pure.

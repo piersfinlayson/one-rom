@@ -204,8 +204,7 @@ async fn reboot_to_stopped_if_running(options: &mut Options) -> Result<(), Error
     let chip_id = device.chip_id;
     reboot(device, &RebootArgs::stopped(false, false)).await?;
 
-    let new_device =
-        select_device_by_chip_id(chip_id, options.unrecognised, &options.vid_pid).await?;
+    let new_device = select_device_by_chip_id(chip_id, options).await?;
     if new_device.is_running() {
         return Err(Error::DeviceStillRunning);
     }
@@ -228,8 +227,7 @@ async fn reboot_and_rescan(options: &mut Options, reboot_args: &RebootArgs) -> R
     reboot(device, reboot_args).await?;
 
     if !reboot_args.fast {
-        let device =
-            select_device_by_chip_id(chip_id, options.unrecognised, &options.vid_pid).await?;
+        let device = select_device_by_chip_id(chip_id, options).await?;
         if options.verbose {
             println!("{device}");
         }
@@ -402,8 +400,7 @@ pub async fn cmd_program(
         }
 
         // Try and get a new device
-        match onerom_cli::device::select_device(None, options.unrecognised, &options.vid_pid).await
-        {
+        match onerom_cli::device::select_device(None, options).await {
             Ok(device) => {
                 options.device = Some(device);
             }

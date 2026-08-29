@@ -14,6 +14,7 @@ use onerom_config::mcu::{Rp235xChipId, RpVariant};
 use onerom_fw_parser::ParsedDevice;
 use wildmatch::WildMatch;
 
+use crate::Options;
 use crate::error::Error;
 use crate::usb::enumerate_devices;
 
@@ -285,12 +286,8 @@ pub fn matches_serial(serial: Option<&str>, pattern: &str) -> bool {
 /// - No selector, one device found: returns that device.
 /// - No selector, multiple devices found: returns an error listing serials.
 /// - Selector provided: matches against serial number, errors if not found.
-pub async fn select_device(
-    selector: Option<&str>,
-    unrecognised: bool,
-    vid_pid: &[(u16, u16)],
-) -> Result<Device, Error> {
-    let devices = enumerate_devices(unrecognised, vid_pid).await?;
+pub async fn select_device(selector: Option<&str>, options: &Options) -> Result<Device, Error> {
+    let devices = enumerate_devices(options).await?;
 
     if devices.is_empty() {
         debug!("No devices found");
@@ -345,10 +342,9 @@ pub async fn select_device(
 /// present.
 pub async fn select_device_by_chip_id(
     chip_id: Option<Rp235xChipId>,
-    unrecognised: bool,
-    vid_pid: &[(u16, u16)],
+    options: &Options,
 ) -> Result<Device, Error> {
-    let devices = enumerate_devices(unrecognised, vid_pid).await?;
+    let devices = enumerate_devices(options).await?;
 
     if devices.is_empty() {
         debug!("No devices found");

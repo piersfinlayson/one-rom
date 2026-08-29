@@ -159,8 +159,10 @@ pub struct Cli {
     /// this tool to manage RP2350-based One ROMs that do not have a known One
     /// ROM firmware signature, such as unprogrammed or bricked One ROMs.
     ///
-    /// Note that even unrecognised One ROMs must expose a valid picoboot USB
-    /// interface to be detected and managed by this tool.
+    /// Note that even unrecognised One ROMs must answer on a valid picoboot
+    /// USB interface to be detected and managed by this tool.  A device that
+    /// does not answer at all is ignored, with or without this flag, since it
+    /// cannot be programmed either.
     ///
     /// Use with caution as this allows programming of any non-One ROM RP2350
     /// boards that are attached.
@@ -251,13 +253,7 @@ impl Cli {
             if options.verbose {
                 println!("Scanning for device with serial '{}' ...", serial);
             }
-            match onerom_cli::device::select_device(
-                Some(serial),
-                options.unrecognised,
-                &options.vid_pid,
-            )
-            .await
-            {
+            match onerom_cli::device::select_device(Some(serial), &options).await {
                 Ok(device) => {
                     if options.verbose {
                         println!("Found device: {device}");
@@ -276,9 +272,7 @@ impl Cli {
             if options.verbose {
                 println!("No device specified, scanning for connected devices ...");
             }
-            match onerom_cli::device::select_device(None, options.unrecognised, &options.vid_pid)
-                .await
-            {
+            match onerom_cli::device::select_device(None, &options).await {
                 Ok(device) => {
                     if options.verbose {
                         println!("Found device: {device}");

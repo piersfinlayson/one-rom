@@ -373,9 +373,10 @@ Two situations need extra flags:
 
 - **Unrecognised / unprogrammed / bricked** units: add `--unrecognised` (`-u`)
   and supply `--board`, since the board type can't be inferred. The unit must
-  still expose a valid picoboot USB interface. It reports no serial at all, so
-  `--serial` cannot pick between two of them — attach one at a time, and see
-  [Recovering a bricked One ROM](#recovering-a-bricked-one-rom).
+  still answer on its picoboot USB interface — one that answers nothing is
+  ignored either way, since it cannot be programmed. It reports no serial at
+  all, so `--serial` cannot pick between two of them — attach one at a time,
+  and see [Recovering a bricked One ROM](#recovering-a-bricked-one-rom).
 - **Non-standard USB IDs**: add `--vid-pid <VID:PID>` (hex), repeatable. When
   supplied, only the given VID/PID pairs are matched.
 
@@ -665,7 +666,7 @@ any level).
 |---|---|
 | `--serial, -s <DEVICE>` | Select a One ROM by serial number. Required when multiple are connected; auto-selected when exactly one is present. Accepts `*` and `?` wildcards. |
 | `--vid-pid <VID:PID>` (alias `--id`) | USB vendor/product ID pair in hex (e.g. `1234:abcd`). Repeatable; when given, only these pairs are matched. Use with `--unrecognised`. |
-| `--unrecognised, -u` (alias `--unrecognized`) | Allow management of unrecognised/unprogrammed/bricked RP2350 boards. The unit must still expose a valid picoboot USB interface. Use with caution — permits programming any attached RP2350 board. See [Recovering a bricked One ROM](#recovering-a-bricked-one-rom). |
+| `--unrecognised, -u` (alias `--unrecognized`) | Allow management of unrecognised/unprogrammed/bricked RP2350 boards. The unit must still answer on its picoboot USB interface — a device that answers nothing is ignored either way. Use with caution — permits programming any attached RP2350 board. See [Recovering a bricked One ROM](#recovering-a-bricked-one-rom). |
 | `--yes, -y` | Auto-confirm all prompts. Also suppresses the over-limit CPU frequency/voltage confirmations. |
 | `--verbose, -v` | Enable verbose output. |
 | `--log-level <LEVEL>` | Set log level. Defaults to `warn`. |
