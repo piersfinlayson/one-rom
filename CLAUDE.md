@@ -185,6 +185,8 @@ header comment. The ones with rules attached:
     loop, and needs Linux. From macOS, `ci/coverage-docker.sh` takes the same
     arguments and runs it in the container, `--campaign` for the whole set.
     **Ask me before running any of it** — it is expensive, not impossible.
+  - The published figures are CI's, on the `badges` branch — anything under
+    `build/` is a local measurement.
   - Genuinely unreachable code is marked `LCOV_UNREACHABLE_START` /
     `LCOV_UNREACHABLE_STOP` with a comment saying why, and lcov checks the
     claim against the counters. Writing one:

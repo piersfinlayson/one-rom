@@ -14,11 +14,15 @@
 # again from the new set.
 #
 # Two configs per board, the second differing in shape rather than only in
-# data: bank exercises the banked serving path, force-16-bit the 16-bit data
-# algorithm, and 23c1001 a V2 chip type.
+# data:
+#   - bank exercises the banked serving path
+#   - 23qlxxx the AlgCs2 CS algorithm
+#   - force-16-bit the 16-bit data algorithm
+#   - 23c1001 a V2 chip type
 fire-24-f    onerom-config/test/24-random-23xx.json
 fire-24-f    onerom-config/test/24-bank-23xx.json
 fire-28-a    onerom-config/test/28-random-23xxx.json
+fire-28-a    onerom-config/test/28-random-23qlxxx.json
 fire-28-c    onerom-config/test/28-random-27xxx.json
 fire-28-c    onerom-config/test/28-bank-27xxx.json
 fire-32-b    onerom-config/test/32-random-27c080.json
