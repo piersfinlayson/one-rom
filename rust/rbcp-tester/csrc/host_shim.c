@@ -44,6 +44,9 @@ void *ora_fn_lookup(api_id_t id);
 // set_host_sram_ptr (i.e. after setup_epio).
 uint8_t *sram_to_host(uint32_t addr);
 
+// firmware/src/piodma/pioplugin.c — reports the bytes a reprogram writes.
+void set_host_sram_write_hook(void (*hook)(uint32_t addr, uint8_t val));
+
 // ---------------------------------------------------------------------------
 // The plugin under test
 // ---------------------------------------------------------------------------
@@ -124,6 +127,46 @@ void ora_host_test_yield(void) {
         abort();
     }
     s_yield_hook();
+}
+
+// ---------------------------------------------------------------------------
+// RAM slot write log
+//
+// The plugin runs a whole command between two of the harness's turns, so
+// nothing read off the bus shows the order it wrote the header in.  This does.
+//
+// Two paths write a slot: the plugin's own stores through ORA_SRAM_WRITE8, and
+// the firmware's pio_reprogram_ram_rom_slot through the hook below.
+// ---------------------------------------------------------------------------
+
+static ora_host_test_sram_log_t s_sram_log;
+
+static void note_sram_write(uint32_t addr, uint8_t val) {
+    if (s_sram_log.count >= ORA_HOST_TEST_SRAM_LOG_MAX) {
+        s_sram_log.overflowed = 1;
+        return;
+    }
+    s_sram_log.writes[s_sram_log.count].addr = addr;
+    s_sram_log.writes[s_sram_log.count].val  = val;
+    s_sram_log.count++;
+}
+
+// ORA_SRAM_WRITE8.  Writes the byte where the plugin asked, and records it.
+void ora_host_test_sram_write8(uint32_t addr, uint8_t val) {
+    *(volatile uint8_t *)sram_to_host(addr) = val;
+    note_sram_write(addr, val);
+}
+
+const ora_host_test_sram_log_t *ora_host_test_sram_log(void) {
+    return &s_sram_log;
+}
+
+void ora_host_test_reset_sram_log(void) {
+    s_sram_log.count = 0;
+    s_sram_log.overflowed = 0;
+    // Armed here rather than at start-up: this is the only entry point the
+    // harness is obliged to call, and installing twice costs nothing.
+    set_host_sram_write_hook(note_sram_write);
 }
 
 // ---------------------------------------------------------------------------

@@ -55,6 +55,13 @@ void *ora_host_test_sram_ptr(uint32_t addr);
  * Provided by the test harness, not by the firmware.  See @ref ORA_TEST_YIELD.
  */
 void ora_host_test_yield(void);
+
+/**
+ * @brief Host-test interface: write a byte to device SRAM and record it
+ *
+ * Provided by the test harness, not by the firmware.  See @ref ORA_SRAM_WRITE8.
+ */
+void ora_host_test_sram_write8(uint32_t addr, uint8_t val);
 #endif
 
 /**
@@ -93,6 +100,25 @@ void ora_host_test_yield(void);
 #define ORA_SRAM_PTR(addr) ora_host_test_sram_ptr(addr)
 #else
 #define ORA_SRAM_PTR(addr) ((void *)(uintptr_t)(addr))
+#endif
+
+/**
+ * @brief Write one byte to a device SRAM address
+ *
+ * Use this rather than storing through @ref ORA_SRAM_PTR where a test needs to
+ * see the write.  On a device it is the same volatile byte store.  Under a
+ * host-side test build the harness records the address and the value.
+ *
+ * @param addr Device SRAM address
+ * @param val  Byte to write
+ *
+ * @since firmware 0.7.2
+ */
+#if defined(ORA_HOST_TEST)
+#define ORA_SRAM_WRITE8(addr, val) ora_host_test_sram_write8((addr), (val))
+#else
+#define ORA_SRAM_WRITE8(addr, val) \
+    (*(volatile uint8_t *)(uintptr_t)(addr) = (uint8_t)(val))
 #endif
 
 /**

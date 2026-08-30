@@ -205,16 +205,9 @@ void irq_handler_timer0_irq_1(void);
 void irq_handler_usbctrl_irq(void);
 ora_result_t ora_get_ram_slot_info(uint8_t ram_slot, uint32_t *addr_out, uint32_t *size_out, uint32_t *rom_type_out);
 ora_result_t ora_get_active_ram_slot(uint8_t *ram_slot_out);
-// Also the firmware's own source of clk_ref, used by setup_timer0() to divide
-// it down to the microsecond tick.
 uint32_t ora_get_clkref_mhz(void);
 uint32_t ora_get_sysclk_mhz(void);
 uint32_t ora_get_plugin_uptime_ms(void);
-
-// The microsecond count behind ora_get_plugin_uptime_ms(), assembled from both
-// halves of the timer so it does not wrap every 71 minutes.  The LED engine
-// needs it because a shared pin is handed back in microseconds, not
-// milliseconds.
 uint64_t onerom_timer_us64(void);
 #if !REAL_HARDWARE
 uint8_t *sram_to_host(uint32_t addr);
@@ -223,6 +216,9 @@ uint8_t *sram_to_host(uint32_t addr);
 // backing store with epio's, so subsequent firmware writes are immediately
 // visible to the running epio simulation.
 void set_host_sram_ptr(uint8_t *ptr);
+// Reports every byte pio_reprogram_ram_rom_slot writes, physical address and
+// physical data.  NULL until a harness installs one.
+void set_host_sram_write_hook(void (*hook)(uint32_t addr, uint8_t val));
 
 // Address-monitor emulation seams (see pioplugin.c).  There are no DMA
 // registers under emulation, so the firmware routes the address-monitor DMA

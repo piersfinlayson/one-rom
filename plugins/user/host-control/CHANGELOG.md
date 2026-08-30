@@ -7,6 +7,10 @@ RAM slot wrote its response header onto the start of the image being served.
 Such a start is now discarded in silence, as the specification requires, and
 nothing is written.
 
+ENTER_CMD_RESP cleared the whole response header on entry, so the token passed
+through zero — which a host reads as its command having arrived.  Only the
+reserved pair is written now, after the response field and before complete.
+
 A host can now set One ROM's LEDs over the ROM bus, through RBCP's new LEDs
 group — so a bootloader can show a colour as it hands the machine over to the
 image it loaded, and the colour stays after the session ends.

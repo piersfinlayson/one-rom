@@ -37,7 +37,7 @@
 //! [`Bus::read_without_resuming`].
 
 use onerom_config::chip::ChipType;
-use onerom_fw_emulator::{Emulator, driver as gpio};
+use onerom_fw_emulator::{Emulator, OraResult, driver as gpio};
 use onerom_fw_tester::pin_cache::PinCache;
 use onerom_fw_tester::{runner, timing};
 use onerom_plugin_tester::ffi;
@@ -63,7 +63,42 @@ pub enum Hdr {
     Reserved1,
 }
 
+/// One byte the device wrote into the back-channel region, with its address
+/// and data mappings undone.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RegionWrite {
+    /// The header field written, or None past the header.
+    pub field: Option<Hdr>,
+    /// Byte offset within the region.
+    pub offset: u32,
+    pub val: u8,
+}
+
+impl std::fmt::Display for RegionWrite {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.field {
+            Some(field) => write!(f, "{field} = 0x{:02X}", self.val),
+            None => write!(f, "region+{} = 0x{:02X}", self.offset, self.val),
+        }
+    }
+}
+
 impl Hdr {
+    /// The header field at a region offset, or None past the header.
+    pub fn at(offset: u32) -> Option<Self> {
+        match offset {
+            0 => Some(Hdr::LastCmdGroup),
+            1 => Some(Hdr::LastCmdCmd),
+            2 => Some(Hdr::TokenLsb),
+            3 => Some(Hdr::TokenMsb),
+            4 => Some(Hdr::Progress),
+            5 => Some(Hdr::Response),
+            6 => Some(Hdr::Reserved0),
+            7 => Some(Hdr::Reserved1),
+            _ => None,
+        }
+    }
+
     /// Byte offset within the back-channel region.
     pub fn offset(self) -> u32 {
         match self {
@@ -1022,7 +1057,7 @@ impl<'a> Bus<'a> {
     /// is already at that location — so the host snapshots it beforehand and
     /// waits for that value to change, as it would for any other command.
     pub fn enter_cmd_resp(&mut self, s: &Session) -> Result<(), CmdFailure> {
-        self.enter_cmd_resp_inner(s).map(|_| ())
+        self.enter_cmd_resp_inner(s)
     }
 
     /// Enter command-response mode with a back-channel region of a chosen size.
@@ -1047,20 +1082,70 @@ impl<'a> Bus<'a> {
         Ok(s)
     }
 
-    /// As [`Bus::enter_cmd_resp`], returning every token LSB value the host
-    /// observed while waiting for the entry to complete.
+    /// Clear the record of what the device writes into its RAM slots, and
+    /// start recording.
     ///
-    /// A host detects a command by watching that byte change, so the values it
-    /// passes through are part of the contract and not merely internal: any
-    /// value other than the one before and the one after is a change a host
-    /// can act on.
-    pub fn enter_cmd_resp_sampling_token(&mut self, s: &Session) -> Result<Vec<u8>, String> {
-        self.enter_cmd_resp_inner(s)
-            .map_err(|e| format!("ENTER_CMD_RESP: {e}"))
+    /// Reset immediately before the command under examination.  Nothing else
+    /// writes through the recorded paths, so the log holds only what the
+    /// device did.
+    pub fn reset_write_log(&mut self) {
+        unsafe { ffi::ora_host_test_reset_sram_log() }
     }
 
-    fn enter_cmd_resp_inner(&mut self, s: &Session) -> Result<Vec<u8>, CmdFailure> {
-        let mut seen = Vec::new();
+    /// What the device wrote into the back-channel region since the log was
+    /// reset, in the order it wrote it.
+    ///
+    /// The only place write ordering is observable.  The device runs a whole
+    /// command between two yields, so a scenario reading the region over the
+    /// bus sees the state it was left in and never the states it passed
+    /// through.  Writes outside the region are dropped.
+    pub fn region_writes(&mut self, s: &Session) -> Result<Vec<RegionWrite>, String> {
+        let (r, slot) = self.emu.get_active_ram_slot();
+        let slot = slot.ok_or_else(|| format!("no active RAM slot: {r:?}"))?;
+        let (r, info) = self.emu.get_ram_slot_info(slot);
+        let base = info
+            .ok_or_else(|| format!("no info for RAM slot {slot}: {r:?}"))?
+            .addr;
+
+        // Built forwards, one entry per region byte, rather than inverting the
+        // device's address mapping — which a test has no business redoing.
+        let mut offset_of = std::collections::HashMap::new();
+        for off in 0..u32::from(s.bch_size) {
+            offset_of.insert(base + self.emu.map_addr_to_phys(s.bch_start + off), off);
+        }
+
+        let log = unsafe { &*ffi::ora_host_test_sram_log() };
+        if log.overflowed != 0 {
+            return Err(format!(
+                "the device wrote more than the {} entries the log holds, so a write \
+                 missing from it does not mean the device did not make it",
+                ffi::SRAM_LOG_MAX
+            ));
+        }
+
+        let mut out = Vec::new();
+        for w in &log.writes[..log.count as usize] {
+            let Some(&offset) = offset_of.get(&w.addr) else {
+                continue;
+            };
+            let (r, val) = self.emu.demangle_data(w.val);
+            if r != OraResult::Ok {
+                return Err(format!(
+                    "the device wrote 0x{:02X} at region offset {offset}, which does not \
+                     demangle: {r:?}",
+                    w.val
+                ));
+            }
+            out.push(RegionWrite {
+                field: Hdr::at(offset),
+                offset,
+                val,
+            });
+        }
+        Ok(out)
+    }
+
+    fn enter_cmd_resp_inner(&mut self, s: &Session) -> Result<(), CmdFailure> {
         let before = self
             .read_hdr(s, Hdr::TokenLsb)
             .map_err(|_| CmdFailure::NotReceived)?;
@@ -1071,16 +1156,13 @@ impl<'a> Bus<'a> {
         self.send_enter_cmd_resp(s.command_page, s)
             .map_err(|_| CmdFailure::NotReceived)?;
 
-        let mut samples = Vec::new();
-        let changed = self.poll(|b| match b.read_hdr(s, Hdr::TokenLsb) {
-            Ok(t) => {
-                samples.push(t);
-                t != before
-            }
-            Err(_) => false,
-        });
-        seen.append(&mut samples);
-        changed.then_some(()).ok_or(CmdFailure::NotReceived)?;
+        self.poll(|b| {
+            b.read_hdr(s, Hdr::TokenLsb)
+                .map(|t| t != before)
+                .unwrap_or(false)
+        })
+        .then_some(())
+        .ok_or(CmdFailure::NotReceived)?;
 
         self.poll(|b| {
             b.read_hdr(s, Hdr::Progress)
@@ -1091,7 +1173,7 @@ impl<'a> Bus<'a> {
         .ok_or(CmdFailure::NeverCompleted)?;
 
         match self.read_hdr(s, Hdr::Response) {
-            Ok(r) if r == s.status_ok => Ok(seen),
+            Ok(r) if r == s.status_ok => Ok(()),
             _ => Err(CmdFailure::Failed),
         }
     }

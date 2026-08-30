@@ -850,6 +850,22 @@ pub static SCENARIOS: &[Scenario] = &[
         run: processing_sequence::token_wraps,
     },
     Scenario {
+        name: "conformance.processing_sequence.entry_writes_the_header_in_order",
+        spec_ref: "Command-Response Mode — Command Processing Sequence; Response Header; \
+                   Bootstrap — Entering Command-Response Mode",
+        run: processing_sequence::entry_writes_the_header_in_order,
+    },
+    Scenario {
+        name: "conformance.processing_sequence.nop_writes_the_header_in_order",
+        spec_ref: "Command-Response Mode — Command Processing Sequence; Response Header",
+        run: processing_sequence::nop_writes_the_header_in_order,
+    },
+    Scenario {
+        name: "conformance.processing_sequence.entry_zeroes_the_reserved_bytes",
+        spec_ref: "Response Header — Reserved",
+        run: processing_sequence::entry_zeroes_the_reserved_bytes,
+    },
+    Scenario {
         name: "conformance.rom_types.served_type_from_ram_slot_info",
         spec_ref: "ROM Types; GET_RAM_SLOT_INFO Response Format",
         run: rom_types::served_type_from_ram_slot_info,

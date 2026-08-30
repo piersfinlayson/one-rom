@@ -1245,6 +1245,14 @@ void set_host_sram_ptr(uint8_t *ptr) {
     s_host_sram_ptr = ptr;
 }
 
+// A hook rather than a direct call, because the test library is linked by
+// testers that have no recorder to call.
+static void (*s_sram_write_hook)(uint32_t addr, uint8_t val);
+
+void set_host_sram_write_hook(void (*hook)(uint32_t addr, uint8_t val)) {
+    s_sram_write_hook = hook;
+}
+
 uint8_t *sram_to_host(uint32_t addr) {
     if (s_host_sram_ptr != NULL) {
         return s_host_sram_ptr + (addr - SRAM_BASE);
@@ -1458,6 +1466,13 @@ ora_result_t pio_reprogram_ram_rom_slot(
         uint32_t physical_addr = pio_map_addr_to_phys(CURRENT_SLOT, offset + i);
         uint8_t  physical_data = pio_map_data_to_phys(CURRENT_SLOT, data[i]);
         sram[physical_addr] = physical_data;
+#if !REAL_HARDWARE
+        // Under the device address, as ORA_SRAM_WRITE8 reports a plugin's own
+        // stores, so the two interleave in one record.
+        if (s_sram_write_hook != NULL) {
+            s_sram_write_hook(addr + physical_addr, physical_data);
+        }
+#endif
     }
 
     return ORA_RESULT_OK;

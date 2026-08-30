@@ -58,12 +58,44 @@ pub struct FlashLog {
     pub bad_unmasked: u32,
 }
 
+/// Mirrors `ORA_HOST_TEST_SRAM_LOG_MAX` in `csrc/host_shim.h`.
+pub const SRAM_LOG_MAX: usize = 2048;
+
+/// One byte a command wrote into a RAM slot.  Physical address, physical data.
+///
+/// Mirrors `ora_host_test_sram_write_t` in `csrc/host_shim.h`.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct SramWrite {
+    pub addr: u32,
+    pub val: u8,
+}
+
+/// What the device wrote since the log was reset, in order.
+///
+/// Mirrors `ora_host_test_sram_log_t` in `csrc/host_shim.h`, field for field.
+/// The two must be kept in step.
+#[repr(C)]
+pub struct SramLog {
+    pub count: u32,
+    pub overflowed: u32,
+    pub writes: [SramWrite; SRAM_LOG_MAX],
+}
+
 unsafe extern "C" {
     /// The shim's record of the last commit's flash calls.
     pub fn ora_host_test_flash_log() -> *const FlashLog;
 
     /// Clear that record.  The harness does this before every scenario.
     pub fn ora_host_test_reset_flash_log();
+
+    /// The shim's record of what the device wrote into its RAM slots.  The
+    /// only place write ordering is observable — the plugin runs a whole
+    /// command between two yields.
+    pub fn ora_host_test_sram_log() -> *const SramLog;
+
+    /// Clear that record and start recording.
+    pub fn ora_host_test_reset_sram_log();
 
     /// The XIP clock divisor the shim answers `ORA_XIP_CLKDIV` with.
     pub fn ora_host_test_xip_clkdiv() -> u8;

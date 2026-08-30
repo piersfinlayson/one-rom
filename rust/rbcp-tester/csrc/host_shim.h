@@ -82,6 +82,30 @@ const ora_host_test_flash_log_t *ora_host_test_flash_log(void);
 /// Clear the log.  The harness does this before every scenario.
 void ora_host_test_reset_flash_log(void);
 
+/// One byte a command wrote into a RAM slot.  Physical address, physical data.
+typedef struct {
+    uint32_t addr;
+    uint8_t  val;
+} ora_host_test_sram_write_t;
+
+/// Writes the log holds.  Several commands at the largest region the tester
+/// configures.
+#define ORA_HOST_TEST_SRAM_LOG_MAX 2048
+
+/// What the device wrote since the last reset, in order.  Where `overflowed`
+/// is set the entries are the first ones only, and a write missing from them
+/// does not mean the device did not make it.
+typedef struct {
+    uint32_t count;
+    uint32_t overflowed;
+    ora_host_test_sram_write_t writes[ORA_HOST_TEST_SRAM_LOG_MAX];
+} ora_host_test_sram_log_t;
+
+const ora_host_test_sram_log_t *ora_host_test_sram_log(void);
+
+/// Clear the log and start recording.
+void ora_host_test_reset_sram_log(void);
+
 /// Most API identifiers the harness will withhold from the plugin at once.
 #define ORA_HOST_TEST_WITHHOLD_MAX 8
 

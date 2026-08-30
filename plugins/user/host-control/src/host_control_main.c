@@ -523,7 +523,7 @@ static void hdr_write(uint8_t slot, uint32_t hdr_offset, uint8_t val, bool reset
     if (reset_ring) {
         RING_BUF_RESET_READ_INDEX();
     }
-    ((volatile uint8_t *)ORA_SRAM_PTR(slot_base))[phys_addr] = phys_data;
+    ORA_SRAM_WRITE8(slot_base + phys_addr, phys_data);
 }
 
 // Read one byte from the back-channel region at the given header-relative offset.
@@ -577,25 +577,20 @@ static void cmd_begin(uint8_t slot, uint8_t group, uint8_t cmd) {
 }
 
 // Steps 5-6: write response field then set progress=complete.
-static void cmd_end(uint8_t slot, bool ok) {
+//
+// entering is set on ENTER_CMD_RESP, where the specification also has the
+// reserved pair zeroed - after the response field and before complete.
+static void cmd_end(uint8_t slot, bool ok, bool entering) {
     // First update the status byte.
     hdr_write(slot, HDR_RESPONSE, ok ? s_state.cfg.status_ok : failed_val(), false);
 
+    if (entering) {
+        hdr_write(slot, HDR_RESERVED_0, 0u, false);
+        hdr_write(slot, HDR_RESERVED_1, 0u, false);
+    }
+
     // Now, set progress to complete, which must be the last step.
     hdr_write(slot, HDR_PROGRESS, s_state.cfg.complete, true);
-}
-
-// ---------------------------------------------------------------------------
-// Back-channel region setup
-// ---------------------------------------------------------------------------
-
-// Zero-initialise the response header in the back-channel region.
-static void init_back_channel(uint8_t slot) {
-    static const uint8_t zeros[HDR_SIZE] = {0u};
-    if (s_reprogram(slot, s_state.cfg.region_offset,
-                    zeros, HDR_SIZE, 1u) != ORA_RESULT_OK) {
-        s_log("RBCP: init_back_channel failed for slot %u", (unsigned)slot);
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -790,7 +785,7 @@ static bool exec_enter_cmd_resp(void) {
         // already established there is room for the header to report it in.
         s_log("ENTER_CMD_RESP failed: back-channel region exceeds slot size");
         cmd_begin(active_slot, GRP_CONTROL, CMD_ENTER_CMD_RESP);
-        cmd_end(active_slot, false);
+        cmd_end(active_slot, false, false);
         return false;
     }
     s_log("ECR: cp=0x%04X ro=%u rsz=%u cplt=0x%02X stok=0x%02X token=0x%02X%02X",
@@ -801,7 +796,6 @@ static bool exec_enter_cmd_resp(void) {
     s_state.cfg.region_end    = region_end;
     s_state.cfg.data_size     = (uint32_t)region_size - HDR_SIZE;
     s_state.active_slot       = active_slot;
-    init_back_channel(active_slot);
     s_state.active = true;
 
     s_log("ENTER_CMD_RESP succeeded: as=%u, ro=%u, re=%u",
@@ -2932,14 +2926,14 @@ static bool run_command(uint8_t group, uint8_t cmd) {
         // Normal Command-Response mode: complete the processing sequence.
         // s_state.active_slot may have been updated by CMD_SWITCH_SLOT
         // inside dispatch, so use the current cached value.
-        cmd_end(s_state.active_slot, ok);
+        cmd_end(s_state.active_slot, ok, false);
     } else if (!was_active && now_active) {
         // ENTER_CMD_RESP: the device has just transitioned into
         // Command-Response mode.  s_state.active_slot is now valid.
         // Write the initial response so the host can confirm entry by
         // polling the token and progress fields.
         cmd_begin(s_state.active_slot, group, cmd);
-        cmd_end(s_state.active_slot, ok);
+        cmd_end(s_state.active_slot, ok, true);
     }
     
     if (was_active && !now_active) {
