@@ -769,6 +769,14 @@ ora_result_t ora_copy_flash_slot_to_ram_slot(
     memcpy((void *)(uintptr_t)addr, set->data, size);
 #else
     memcpy(sram_to_host(addr), set->data, size);
+    // The copy is left as it is on hardware and reported afterwards, so a
+    // host-side test observes the copy the device makes rather than an
+    // instrumented rewrite of it.  Under the device address, as
+    // ORA_SRAM_WRITE8 reports a plugin's own stores, so the two interleave in
+    // one record.
+    for (uint32_t i = 0u; i < size; i++) {
+        report_host_sram_write(addr + i, set->data[i]);
+    }
 #endif
 
     return ORA_RESULT_OK;

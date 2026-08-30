@@ -468,6 +468,125 @@ pub fn load_slot_copies_without_activating(bus: &mut Bus, ctx: &Ctx) -> Result<O
     Ok(Outcome::Pass)
 }
 
+/// Loading the active slot never shows a third value at any address.
+///
+/// "LOAD_SLOT and LOAD_AND_EXIT may name the active RAM slot, which the device
+/// continues to serve while the copy runs.  Throughout the copy every address
+/// must present either its previous byte or its new byte, and never a third
+/// value.  A device that clears the slot before copying into it does not meet
+/// this requirement."
+///
+/// "The host cannot detect a device that breaks this.  It may read any address
+/// at any time, for any purpose, and a transient value it reads is
+/// indistinguishable from ROM content."  So it is asserted where the
+/// specification says a host cannot: over [`Bus::device_writes`], which is what
+/// the device wrote while the copy ran.  A clearing pass appears there as a
+/// write of a value that is neither.
+///
+/// Issued in command mode.  The copy covers the whole slot, back-channel region
+/// included, so a device asked to do this from inside a session would be
+/// writing over the header it has to answer through — the case LOAD_AND_EXIT
+/// exists for.  Command mode has no header to lose, and the fence afterwards is
+/// what proves the device processed the command.
+///
+/// A sample of addresses rather than all of them, for two reasons: each one has
+/// to be given a value of its own first, which is a command apiece, and a copy
+/// over a whole slot writes more bytes than the log holds.  The sample spans the
+/// slot, and a device that clears before copying clears all of it, so a sample
+/// anywhere catches one.
+pub fn loading_the_active_slot_shows_no_third_value(
+    bus: &mut Bus,
+    ctx: &Ctx,
+) -> Result<Outcome, String> {
+    /// Addresses sampled across the slot.
+    const SAMPLES: u32 = 24;
+
+    // From the first readable address up: a read below the command page is a
+    // command byte, so the bottom of the slot cannot be sampled this way.  The
+    // three bytes the command-mode scenarios use are skipped, so the fence
+    // below is the only thing besides the copy that writes a sampled address.
+    let lowest = ctx.bch_start();
+    let step = (ctx.ram_slot_size - lowest) / SAMPLES;
+    let addrs: Vec<u32> = (0..SAMPLES)
+        .map(|i| lowest + i * step)
+        .filter(|a| *a != ctx.probe_addr() && *a != ctx.fence_addr() && *a != ctx.scratch_addr())
+        .collect();
+
+    // Give each sampled address a value of its own: not the image byte the copy
+    // will put back, and not either value a device clearing a slot would write.
+    let mut before = Vec::new();
+    for &addr in &addrs {
+        let image = bus.read(addr)?;
+        let mut seeded = image ^ 0x5A;
+        if seeded == 0x00 || seeded == 0xFF {
+            seeded = image ^ 0x3C;
+        }
+        bus.poke_verified(ctx, addr, seeded)
+            .map_err(|e| format!("seeding 0x{addr:06X}: {e}"))?;
+        before.push(seeded);
+    }
+
+    let watched: Vec<u32> = addrs
+        .iter()
+        .map(|&a| bus.sram_addr_of(a))
+        .collect::<Result<_, _>>()?;
+    bus.reset_write_log_watching(&watched)?;
+
+    bus.knock(ctx.command_page())?;
+    bus.send_cmd(
+        ctx.command_page(),
+        group::MODIFY,
+        modify::LOAD_SLOT,
+        &[ctx.active_ram_slot, 0],
+    )?;
+
+    // Fenced before the log is read, so the device has demonstrably run the
+    // copy.  The fence writes one byte of its own, at an address no sample
+    // names.
+    bus.fence(ctx).map_err(|e| {
+        format!("after a command-mode LOAD_SLOT of flash slot 0 into the active slot: {e}")
+    })?;
+    let writes = bus.device_writes()?;
+
+    for (i, &addr) in addrs.iter().enumerate() {
+        let after = bus.read(addr)?;
+        if after == before[i] {
+            return Err(format!(
+                "0x{addr:06X} still serves the 0x{:02X} it was seeded with after LOAD_SLOT of \
+                 flash slot 0 into the active slot, so the copy did not reach it and nothing \
+                 here is under test",
+                before[i]
+            ));
+        }
+
+        let at = watched[i];
+        let allowed = [bus.sram_val_of(before[i]), bus.sram_val_of(after)];
+        let mut seen = 0u32;
+        for w in writes.iter().filter(|w| w.addr == at) {
+            seen += 1;
+            if !allowed.contains(&w.val) {
+                return Err(format!(
+                    "while copying flash slot 0 over the active slot the device wrote \
+                     0x{:02X} at 0x{addr:06X}, which is neither the 0x{:02X} that address \
+                     held nor the 0x{after:02X} it now holds — every address must present one \
+                     or the other throughout the copy",
+                    w.val, before[i]
+                ));
+            }
+        }
+        if seen == 0 {
+            return Err(format!(
+                "0x{addr:06X} went 0x{:02X} to 0x{after:02X} over the copy with no write \
+                 recorded there — the log has missed writes, so nothing it holds says what \
+                 the device did",
+                before[i]
+            ));
+        }
+    }
+
+    Ok(Outcome::Pass)
+}
+
 /// LOAD_SLOT must reject either slot argument being 0xAA.
 ///
 /// "A0 or A1 values of 0xAA are invalid and rejected."  Each is tried with the

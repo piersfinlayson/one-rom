@@ -231,12 +231,22 @@ pub fn unknown_cmd_in_every_group_consumes_no_arguments(
 /// Asserted over the groups this version defines by requiring CMD 0x00 to be
 /// answerable with no arguments and to leave the session framed — which is the
 /// property a host written against a later specification relies on.
+///
+/// Pipes, Auxiliary I/O and LEDs are the groups the rule was written for, all
+/// three arriving in 0.1.2.  Read and NV Storage predate it and owe nothing,
+/// and are walked because they comply and a device is free to stop.
 pub fn discovery_commands_take_no_arguments(bus: &mut Bus, ctx: &Ctx) -> Result<Outcome, String> {
     let s = ctx.session();
     bus.enter_cmd_resp(&s)
         .map_err(|e| format!("ENTER_CMD_RESP: {e}"))?;
 
-    for probe in [group::READ, group::NV_STORAGE, group::PIPES, group::AUX] {
+    for probe in [
+        group::READ,
+        group::NV_STORAGE,
+        group::PIPES,
+        group::AUX,
+        group::LED,
+    ] {
         // The answer may be success or failure - an optional feature that is
         // absent still answers.  What must not happen is the device taking
         // argument bytes, which the following NOP detects.

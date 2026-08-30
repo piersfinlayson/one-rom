@@ -830,6 +830,108 @@ pub fn set_led_hold_does_not_block(bus: &mut Bus, ctx: &Ctx) -> Result<Outcome, 
     Ok(Outcome::Pass)
 }
 
+/// A second bounded mode does not replace the restore point.
+///
+/// "Only one restore point is remembered.  A bounded mode arriving while
+/// another is running takes effect, but does not replace it, so the LED returns
+/// to what it was doing before the first of them."
+///
+/// So the LED is put into a mode of the scenario's choosing, then given two
+/// held modes one after the other while the first is still running, and what it
+/// comes back to must be the first mode of the three and not the second.  A
+/// device remembering per command would come back to the second, which is the
+/// whole of what this distinguishes.
+///
+/// The second hold outlasts the first, so that one clock advance ends both and
+/// nothing turns on which of the two deadlines the device took.
+pub fn a_second_bounded_mode_keeps_the_first_restore_point(
+    bus: &mut Bus,
+    ctx: &Ctx,
+) -> Result<Outcome, String> {
+    let (s, cap) = match session_with_an_led(bus, ctx)? {
+        Ok(v) => v,
+        Err(o) => return Ok(o),
+    };
+    if cap.max_hold < 2 {
+        return Ok(Outcome::Skip(format!(
+            "the device accepts a hold of at most {} units, and this needs two that differ",
+            cap.max_hold
+        )));
+    }
+
+    // Three modes that differ, so what the LED comes back to says which of them
+    // it came back to.  Off and On are the two every LED has; the third is
+    // whatever else it claims.
+    let n = 0;
+    let armed = info(bus, &s, n)?;
+    let Some(third) = [BLINK, BREATHE, CYCLE, BEACON]
+        .into_iter()
+        .find(|&m| supports(&armed, m))
+    else {
+        return Ok(Outcome::Skip(format!(
+            "LED {n} claims modes 0x{:02X}, and this needs three it supports",
+            armed.modes
+        )));
+    };
+
+    bus.set_clock_us(CLOCK_BASE_US);
+    bus.issue_cmd(&s, group::LED, led::SET_LED, &plain(third, n))
+        .map_err(|e| format!("SET_LED arming LED {n} to mode 0x{third:02X}: {e}"))?;
+    let restore_to = info(bus, &s, n)?;
+
+    // The first held mode, which is the one the LED must come back from.
+    let first_hold = cap.max_hold.min(10);
+    bus.issue_cmd(
+        &s,
+        group::LED,
+        led::SET_LED,
+        &set_args(OFF, (0, 0, 0), 0, 0, first_hold, n),
+    )
+    .map_err(|e| format!("SET_LED with a hold of {first_hold} units on LED {n}: {e}"))?;
+
+    // The second, arriving while the first is still running and outlasting it.
+    // Nothing has moved the clock, so the first cannot have ended.
+    let second_hold = first_hold.saturating_add(1).min(cap.max_hold);
+    if second_hold <= first_hold {
+        return Ok(Outcome::Skip(format!(
+            "the device accepts a hold of at most {} units, so a second hold cannot outlast \
+             a first",
+            cap.max_hold
+        )));
+    }
+    bus.issue_cmd(
+        &s,
+        group::LED,
+        led::SET_LED,
+        &set_args(ON, (0, 0, 0), 0, 0, second_hold, n),
+    )
+    .map_err(|e| format!("SET_LED with a hold of {second_hold} units on LED {n}: {e}"))?;
+
+    let held = info(bus, &s, n)?;
+    if held.mode != ON {
+        return Err(format!(
+            "LED {n} was set to mode 0x{ON:02X} over a mode already held and reports \
+             0x{:02X}; a bounded mode arriving while another runs takes effect",
+            held.mode
+        ));
+    }
+
+    // Past both deadlines, then the frame the device's own timer would run.
+    bus.advance_clock_us(u64::from(second_hold) * 100_000 + 1_000);
+    bus.led_frame();
+
+    let after = info(bus, &s, n)?;
+    if after != restore_to {
+        return Err(format!(
+            "LED {n} was {restore_to:?}, was held at mode 0x{OFF:02X} and then at mode \
+             0x{ON:02X}, and after both holds reports {after:?}; only one restore point is \
+             remembered, so it returns to what it was doing before the first of them"
+        ));
+    }
+
+    Ok(Outcome::Pass)
+}
+
 /// SET_LED refuses a mode the LED does not claim, and an out-of-range
 /// brightness.
 ///

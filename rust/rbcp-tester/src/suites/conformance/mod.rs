@@ -14,6 +14,7 @@
 use crate::Scenario;
 
 pub mod aux;
+pub mod command_page;
 pub mod control;
 pub mod framing;
 pub mod knock;
@@ -85,6 +86,16 @@ pub static SCENARIOS: &[Scenario] = &[
         run: framing::discovery_commands_take_no_arguments,
     },
     Scenario {
+        name: "conformance.command_page.off_page_knock_and_command_are_filtered",
+        spec_ref: "Command-Response Mode — Command Page",
+        run: command_page::off_page_knock_and_command_are_filtered,
+    },
+    Scenario {
+        name: "conformance.command_page.the_configured_page_is_the_one_filtered_on",
+        spec_ref: "Command-Response Mode — Command Page; Group 0x00 — ENTER_CMD_RESP (A0/A1)",
+        run: command_page::the_configured_page_is_the_one_filtered_on,
+    },
+    Scenario {
         name: "conformance.control.exit_silent_writes_no_response_header",
         spec_ref: "Group 0x00 — EXIT_CMD_RESP_SILENT",
         run: control::exit_silent_writes_no_response_header,
@@ -148,6 +159,11 @@ pub static SCENARIOS: &[Scenario] = &[
         name: "conformance.control.enter_discards_out_of_range_command_page",
         spec_ref: "Group 0x00 — ENTER_CMD_RESP (command page out of range for the ROM served)",
         run: control::enter_discards_out_of_range_command_page,
+    },
+    Scenario {
+        name: "conformance.control.enter_discards_a_page_past_the_served_rom",
+        spec_ref: "Group 0x00 — ENTER_CMD_RESP (command page out of range for the ROM served)",
+        run: control::enter_discards_a_page_past_the_served_rom,
     },
     Scenario {
         name: "conformance.control.enter_discards_complete_of_aa",
@@ -338,6 +354,11 @@ pub static SCENARIOS: &[Scenario] = &[
         name: "conformance.modify.load_slot_copies_without_activating",
         spec_ref: "Group 0x02 — LOAD_SLOT",
         run: modify::load_slot_copies_without_activating,
+    },
+    Scenario {
+        name: "conformance.modify.loading_the_active_slot_shows_no_third_value",
+        spec_ref: "Group 0x02 — Loading the Active Slot",
+        run: modify::loading_the_active_slot_shows_no_third_value,
     },
     Scenario {
         name: "conformance.modify.load_slot_rejects_slot_aa",
@@ -755,6 +776,11 @@ pub static SCENARIOS: &[Scenario] = &[
         run: led::set_led_hold_does_not_block,
     },
     Scenario {
+        name: "conformance.led.a_second_bounded_mode_keeps_the_first_restore_point",
+        spec_ref: "Group 0x06 — Hold (only one restore point is remembered)",
+        run: led::a_second_bounded_mode_keeps_the_first_restore_point,
+    },
+    Scenario {
         name: "conformance.led.set_led_rejects_what_it_cannot_do",
         spec_ref: "Group 0x06 — SET_LED (mode not supported, brightness above 100)",
         run: led::set_led_rejects_what_it_cannot_do,
@@ -859,6 +885,21 @@ pub static SCENARIOS: &[Scenario] = &[
         name: "conformance.processing_sequence.nop_writes_the_header_in_order",
         spec_ref: "Command-Response Mode — Command Processing Sequence; Response Header",
         run: processing_sequence::nop_writes_the_header_in_order,
+    },
+    Scenario {
+        name: "conformance.processing_sequence.refusal_writes_the_header_in_order",
+        spec_ref: "Command Processing Sequence (a command the device refuses)",
+        run: processing_sequence::refusal_writes_the_header_in_order,
+    },
+    Scenario {
+        name: "conformance.processing_sequence.oversized_entry_leaves_the_reserved_bytes_alone",
+        spec_ref: "Response Header — Reserved (not written where the entry fails)",
+        run: processing_sequence::oversized_entry_leaves_the_reserved_bytes_alone,
+    },
+    Scenario {
+        name: "conformance.processing_sequence.refused_re_entry_leaves_the_reserved_bytes_alone",
+        spec_ref: "Response Header — Reserved (not written where the entry fails)",
+        run: processing_sequence::refused_re_entry_leaves_the_reserved_bytes_alone,
     },
     Scenario {
         name: "conformance.processing_sequence.entry_zeroes_the_reserved_bytes",

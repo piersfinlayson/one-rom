@@ -11,6 +11,10 @@ ENTER_CMD_RESP cleared the whole response header on entry, so the token passed
 through zero — which a host reads as its command having arrived.  Only the
 reserved pair is written now, after the response field and before complete.
 
+ENTER_CMD_RESP took the command page's range from the RAM slot, which a banked
+slot makes larger than the image served, so it accepted a page no host could
+drive.  The range is now the served ROM's, and a page past it is discarded.
+
 A host can now set One ROM's LEDs over the ROM bus, through RBCP's new LEDs
 group — so a bootloader can show a colour as it hands the machine over to the
 image it loaded, and the colour stays after the session ends.

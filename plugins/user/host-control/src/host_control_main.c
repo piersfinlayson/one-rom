@@ -738,15 +738,22 @@ static bool exec_enter_cmd_resp(void) {
         return false;
     }
     uint32_t slot_size;
-    if (s_get_ram_slot_info(active_slot, NULL, &slot_size, NULL) != ORA_RESULT_OK) {
+    uint32_t rom_type = 0xFFu;
+    if (s_get_ram_slot_info(active_slot, NULL, &slot_size, &rom_type) != ORA_RESULT_OK) {
         s_log("ENTER_CMD_RESP failed: get_ram_slot_info error");
         return false;
     }
+    // The page has to be one the host can drive, and the host drives the
+    // address lines of the ROM being served rather than those of the slot
+    // holding it - a banked slot holds several images and is the larger.  A
+    // ROM type with no size leaves the slot as the only bound there is.
+    uint32_t chip_size = s_get_chip_size(rom_type);
+    uint32_t addressable = (chip_size != 0u && chip_size < slot_size) ? chip_size : slot_size;
     // The command page is in observed (bus) address space, which on a word- or
-    // otherwise LSB-omitting ROM is narrower than the byte-addressed slot: the
-    // observed span is slot_size >> (unobserved low address bits, cached at
+    // otherwise LSB-omitting ROM is narrower than the byte-addressed image: the
+    // observed span is addressable >> (unobserved low address bits, cached at
     // setup as it is fixed for the served ROM type).
-    uint32_t observed_span = slot_size >> s_unobserved_addr_bits;
+    uint32_t observed_span = addressable >> s_unobserved_addr_bits;
     if (((uint32_t)command_page << 8u) >= observed_span) {
         s_log("ENTER_CMD_RESP discarded: command page 0x%04X out of range for observed span %u",
               (unsigned)command_page, (unsigned)observed_span);

@@ -61,6 +61,9 @@ pub struct FlashLog {
 /// Mirrors `ORA_HOST_TEST_SRAM_LOG_MAX` in `csrc/host_shim.h`.
 pub const SRAM_LOG_MAX: usize = 2048;
 
+/// Mirrors `ORA_HOST_TEST_SRAM_WATCH_MAX` in `csrc/host_shim.h`.
+pub const SRAM_WATCH_MAX: usize = 64;
+
 /// One byte a command wrote into a RAM slot.  Physical address, physical data.
 ///
 /// Mirrors `ora_host_test_sram_write_t` in `csrc/host_shim.h`.
@@ -94,8 +97,12 @@ unsafe extern "C" {
     /// command between two yields.
     pub fn ora_host_test_sram_log() -> *const SramLog;
 
-    /// Clear that record and start recording.
+    /// Clear that record and start recording every write.
     pub fn ora_host_test_reset_sram_log();
+
+    /// Clear that record and record only writes to `count` addresses at
+    /// `addrs`.  For a command writing more of a slot than the log holds.
+    pub fn ora_host_test_reset_sram_log_watching(addrs: *const u32, count: u32);
 
     /// The XIP clock divisor the shim answers `ORA_XIP_CLKDIV` with.
     pub fn ora_host_test_xip_clkdiv() -> u8;

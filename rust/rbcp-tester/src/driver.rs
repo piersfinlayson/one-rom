@@ -83,6 +83,23 @@ impl std::fmt::Display for RegionWrite {
     }
 }
 
+/// One byte the device wrote, as it addressed it.
+///
+/// Both fields are physical: a device SRAM address, and a byte carrying the
+/// device's data mapping.  Undoing either needs a slot to do it against, and a
+/// write has none until one is chosen.  See [`Bus::device_writes`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DeviceWrite {
+    pub addr: u32,
+    pub val: u8,
+}
+
+impl std::fmt::Display for DeviceWrite {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "0x{:08X} = 0x{:02X}", self.addr, self.val)
+    }
+}
+
 impl Hdr {
     /// The header field at a region offset, or None past the header.
     pub fn at(offset: u32) -> Option<Self> {
@@ -1092,13 +1109,86 @@ impl<'a> Bus<'a> {
         unsafe { ffi::ora_host_test_reset_sram_log() }
     }
 
+    /// As [`Bus::reset_write_log`], recording only writes to these device SRAM
+    /// addresses.
+    ///
+    /// A command that copies a whole slot writes more bytes than the log holds,
+    /// and [`Bus::device_writes`] refuses a log that overflowed rather than let
+    /// a scenario mistake truncation for absence.
+    pub fn reset_write_log_watching(&mut self, addrs: &[u32]) -> Result<(), String> {
+        if addrs.len() > ffi::SRAM_WATCH_MAX {
+            return Err(format!(
+                "{} addresses to watch, and the log holds {}",
+                addrs.len(),
+                ffi::SRAM_WATCH_MAX
+            ));
+        }
+        unsafe { ffi::ora_host_test_reset_sram_log_watching(addrs.as_ptr(), addrs.len() as u32) }
+        Ok(())
+    }
+
+    /// The byte a RAM slot holds when it is serving `val`.
+    ///
+    /// The data half of [`Bus::sram_addr_of`]: what a scenario holding a value
+    /// the host can see compares [`Bus::device_writes`] against.
+    pub fn sram_val_of(&mut self, val: u8) -> u8 {
+        self.emu.map_data_to_phys(val)
+    }
+
+    /// The device SRAM address a byte of the active RAM slot is written at.
+    ///
+    /// What [`Bus::device_writes`] reports, for a slot address a scenario
+    /// already knows — so it can say which of the writes is one it made itself.
+    pub fn sram_addr_of(&mut self, slot_addr: u32) -> Result<u32, String> {
+        let (r, slot) = self.emu.get_active_ram_slot();
+        let slot = slot.ok_or_else(|| format!("no active RAM slot: {r:?}"))?;
+        let (r, info) = self.emu.get_ram_slot_info(slot);
+        let base = info
+            .ok_or_else(|| format!("no info for RAM slot {slot}: {r:?}"))?
+            .addr;
+        Ok(base + self.emu.map_addr_to_phys(slot_addr))
+    }
+
+    /// Everything the device wrote since the log was reset, in the order it
+    /// wrote it.
+    ///
+    /// Nothing is dropped, which is what makes "the device wrote nothing"
+    /// assertable: a command the specification requires the device to discard
+    /// must appear here as an empty list, wherever a device getting it wrong
+    /// would have written.
+    ///
+    /// Addressed physically, because that is the only address a write has.  A
+    /// slot address does not come back out of one: the served image is
+    /// replicated across the address bits the device does not observe, so a
+    /// physical address answers to every slot address in its replication set.
+    /// Compare with [`Bus::sram_addr_of`] rather than the other way about.
+    pub fn device_writes(&mut self) -> Result<Vec<DeviceWrite>, String> {
+        let log = unsafe { &*ffi::ora_host_test_sram_log() };
+        if log.overflowed != 0 {
+            return Err(format!(
+                "the device wrote more than the {} entries the log holds, so a write \
+                 missing from it does not mean the device did not make it",
+                ffi::SRAM_LOG_MAX
+            ));
+        }
+
+        Ok(log.writes[..log.count as usize]
+            .iter()
+            .map(|w| DeviceWrite {
+                addr: w.addr,
+                val: w.val,
+            })
+            .collect())
+    }
+
     /// What the device wrote into the back-channel region since the log was
     /// reset, in the order it wrote it.
     ///
     /// The only place write ordering is observable.  The device runs a whole
     /// command between two yields, so a scenario reading the region over the
     /// bus sees the state it was left in and never the states it passed
-    /// through.  Writes outside the region are dropped.
+    /// through.  Writes outside the region are dropped — [`Bus::device_writes`]
+    /// is where they are answered for.
     pub fn region_writes(&mut self, s: &Session) -> Result<Vec<RegionWrite>, String> {
         let (r, slot) = self.emu.get_active_ram_slot();
         let slot = slot.ok_or_else(|| format!("no active RAM slot: {r:?}"))?;

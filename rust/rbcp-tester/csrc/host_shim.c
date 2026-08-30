@@ -23,6 +23,7 @@
 
 #include <stdint.h>
 #include <stddef.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -141,7 +142,33 @@ void ora_host_test_yield(void) {
 
 static ora_host_test_sram_log_t s_sram_log;
 
+// Addresses to record, or none at all, which records every write.  A whole-slot
+// copy reports every byte it wrote, so the bounds are what keeps the common
+// case to one comparison rather than a scan of the list.
+static uint32_t s_sram_watch[ORA_HOST_TEST_SRAM_WATCH_MAX];
+static uint32_t s_sram_watch_count;
+static uint32_t s_sram_watch_lo;
+static uint32_t s_sram_watch_hi;
+
+static bool sram_watched(uint32_t addr) {
+    if (s_sram_watch_count == 0u) {
+        return true;
+    }
+    if ((addr < s_sram_watch_lo) || (addr > s_sram_watch_hi)) {
+        return false;
+    }
+    for (uint32_t i = 0u; i < s_sram_watch_count; i++) {
+        if (s_sram_watch[i] == addr) {
+            return true;
+        }
+    }
+    return false;
+}
+
 static void note_sram_write(uint32_t addr, uint8_t val) {
+    if (!sram_watched(addr)) {
+        return;
+    }
     if (s_sram_log.count >= ORA_HOST_TEST_SRAM_LOG_MAX) {
         s_sram_log.overflowed = 1;
         return;
@@ -164,9 +191,25 @@ const ora_host_test_sram_log_t *ora_host_test_sram_log(void) {
 void ora_host_test_reset_sram_log(void) {
     s_sram_log.count = 0;
     s_sram_log.overflowed = 0;
+    s_sram_watch_count = 0;
     // Armed here rather than at start-up: this is the only entry point the
     // harness is obliged to call, and installing twice costs nothing.
     set_host_sram_write_hook(note_sram_write);
+}
+
+void ora_host_test_reset_sram_log_watching(const uint32_t *addrs, uint32_t count) {
+    ora_host_test_reset_sram_log();
+    if (count > ORA_HOST_TEST_SRAM_WATCH_MAX) {
+        count = ORA_HOST_TEST_SRAM_WATCH_MAX;
+    }
+    s_sram_watch_lo = 0xFFFFFFFFu;
+    s_sram_watch_hi = 0u;
+    for (uint32_t i = 0u; i < count; i++) {
+        s_sram_watch[i] = addrs[i];
+        if (addrs[i] < s_sram_watch_lo) s_sram_watch_lo = addrs[i];
+        if (addrs[i] > s_sram_watch_hi) s_sram_watch_hi = addrs[i];
+    }
+    s_sram_watch_count = count;
 }
 
 // ---------------------------------------------------------------------------

@@ -133,12 +133,65 @@ pub fn enter_discards_unaligned_back_channel(bus: &mut Bus, ctx: &Ctx) -> Result
     Ok(Outcome::Pass)
 }
 
-/// A command page beyond the ROM being served is discarded.
+/// A command page past the end of the ROM being served is discarded.
+///
+/// "If the command page is out of range for the ROM type currently being
+/// served, the device silently discards the command."  The ROM, not the RAM
+/// slot holding it: a banked slot holds several images, and a host reaching
+/// only the served one's address lines cannot signal above them.
+///
+/// [`enter_discards_out_of_range_command_page`] names a page past the end of
+/// the slot, which a device bounding the page by the slot refuses as well.  The
+/// page here lies between the two, so only a device bounding it by the ROM
+/// refuses it, and it exists only where the slot is the larger of the two.
+///
+/// A host given such a page and not refused enters command-response mode, sees
+/// the token increment, and can then never issue a command.
+pub fn enter_discards_a_page_past_the_served_rom(
+    bus: &mut Bus,
+    ctx: &Ctx,
+) -> Result<Outcome, String> {
+    let rom_size = ctx.chip_type.size_bytes() as u32;
+    if rom_size >= ctx.ram_slot_size {
+        return Ok(Outcome::Skip(format!(
+            "this {} fills its {}-byte RAM slot, so no page lies past the ROM and inside \
+             the slot",
+            ctx.chip_type.name(),
+            ctx.ram_slot_size
+        )));
+    }
+
+    // The first page whose bytes lie past the end of the ROM.
+    let page = ((rom_size >> ctx.unobserved) >> 8) as u16;
+    let bad = Session {
+        command_page: page,
+        ..ctx.session()
+    };
+    expect_entry_discarded(
+        bus,
+        ctx,
+        &bad,
+        &format!(
+            "command page 0x{page:04X}, past the end of the {}-byte {} being served but \
+             inside its {}-byte RAM slot",
+            rom_size,
+            ctx.chip_type.name(),
+            ctx.ram_slot_size
+        ),
+    )?;
+    Ok(Outcome::Pass)
+}
+
+/// A command page beyond the RAM slot is discarded.
 ///
 /// "If the command page is out of range for the ROM type currently being
 /// served, the device silently discards the command."  Such a page could never
 /// be signalled on — no address the host can drive would reach it — so a device
 /// accepting it would enter a mode in which it could receive nothing.
+///
+/// The page named is the first past the end of the slot, which is out of range
+/// whichever of the slot and the ROM a device bounds it by.
+/// [`enter_discards_a_page_past_the_served_rom`] separates the two.
 pub fn enter_discards_out_of_range_command_page(
     bus: &mut Bus,
     ctx: &Ctx,
@@ -239,8 +292,9 @@ pub fn enter_discards_a_back_channel_too_small_for_the_header(
 /// behind it, which is the other half of the same clause and the half a device
 /// gets wrong by taking the reported-failure path instead - there is nowhere in
 /// the slot to put that failure header, so writing one lands on whatever the
-/// address mapping folds it onto.  The first bytes of the served image are
-/// armed here because that is where it goes.
+/// address mapping folds it onto.  Which byte that is depends on the mapping,
+/// so nothing here predicts it: [`expect_entry_discarded`] requires the device
+/// to have written nothing at all, wherever it would have gone.
 ///
 /// Four bytes short rather than one, and 4-byte aligned, so neither alignment
 /// nor an off-by-one is what is being refused.
@@ -254,37 +308,15 @@ pub fn enter_discards_a_start_with_no_room_for_the_header(
         ..ctx.session()
     };
 
-    // The first two bytes of the served image, which is where a header written
-    // through a wrapping address mapping ends up.
-    let armed: Vec<u8> = (0..2u32)
-        .map(|a| bus.read(a).map(|b| b ^ 0xFF))
-        .collect::<Result<_, _>>()?;
-    for (a, &v) in armed.iter().enumerate() {
-        bus.poke_verified(ctx, a as u32, v)
-            .map_err(|e| format!("arming byte {a} of the served image: {e}"))?;
-    }
-
-    bus.knock(ctx.command_page())?;
-    bus.send_enter_cmd_resp(ctx.command_page(), &bad)?;
-
-    bus.fence(ctx).map_err(|e| {
-        format!(
-            "after an ENTER_CMD_RESP starting at 0x{start:06X}, four bytes short of the eight \
-             the response header needs: {e}"
-        )
-    })?;
-
-    for (a, &want) in armed.iter().enumerate() {
-        let got = bus.read(a as u32)?;
-        if got != want {
-            return Err(format!(
-                "byte {a} of the served image went 0x{want:02X} to 0x{got:02X}: the device \
-                 answered an ENTER_CMD_RESP it is required to discard silently, and the \
-                 response header landed on the image it is serving"
-            ));
-        }
-    }
-
+    expect_entry_discarded(
+        bus,
+        ctx,
+        &bad,
+        &format!(
+            "a back-channel starting at 0x{start:06X}, four bytes short of the eight the \
+             response header needs"
+        ),
+    )?;
     Ok(Outcome::Pass)
 }
 
@@ -636,6 +668,14 @@ fn fence_in_command_mode(bus: &mut Bus, ctx: &Ctx) -> Result<(), String> {
 /// The entry at the end is the positive control.  Without it a discard would be
 /// indistinguishable from a device that was wedged, or that never saw the frame
 /// at all — both of which also leave the token alone.
+///
+/// The token byte is where a device that honoured the entry writes *first*, but
+/// it is not the only place one can write.  A response header built at a start
+/// address the device should have refused lands wherever that address maps to,
+/// and the case that put this scenario here — a start within 8 bytes of the end
+/// of the slot — wrapped it onto the beginning of the served image.  So the
+/// write log carries the general assertion: silence means the device wrote
+/// nothing, anywhere.
 fn expect_entry_discarded(
     bus: &mut Bus,
     ctx: &Ctx,
@@ -649,11 +689,32 @@ fn expect_entry_discarded(
     bus.poke_verified(ctx, token, armed)
         .map_err(|e| format!("arming the token byte at 0x{token:06X}: {e}"))?;
 
+    bus.reset_write_log();
     bus.knock(ctx.command_page())?;
     bus.send_enter_cmd_resp(ctx.command_page(), bad)?;
 
     bus.fence(ctx)
         .map_err(|e| format!("after an ENTER_CMD_RESP with {what}: {e}"))?;
+
+    // Read after the fence rather than before it, so the device has
+    // demonstrably run: an empty log taken from a device that had not yet
+    // processed the frame would say nothing.  The fence's own poke is the one
+    // write that belongs here, and it is the only one this leaves out.
+    let fence_at = bus.sram_addr_of(ctx.fence_addr())?;
+    let stray: Vec<String> = bus
+        .device_writes()?
+        .into_iter()
+        .filter(|w| w.addr != fence_at)
+        .map(|w| w.to_string())
+        .collect();
+    if !stray.is_empty() {
+        return Err(format!(
+            "the device wrote {} byte(s) while discarding an ENTER_CMD_RESP with {what}: {} — \
+             a command the specification requires it to discard silently writes nothing",
+            stray.len(),
+            stray.join(", ")
+        ));
+    }
 
     // Any value but the armed one means the device wrote there, and the only
     // reason it would is having honoured the entry: an accepted one leaves the

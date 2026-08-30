@@ -219,6 +219,9 @@ void set_host_sram_ptr(uint8_t *ptr);
 // Reports every byte pio_reprogram_ram_rom_slot writes, physical address and
 // physical data.  NULL until a harness installs one.
 void set_host_sram_write_hook(void (*hook)(uint32_t addr, uint8_t val));
+// Report one byte to that hook.  For the paths that write a slot without going
+// through pio_reprogram_ram_rom_slot, which cannot reach the hook themselves.
+void report_host_sram_write(uint32_t addr, uint8_t val);
 
 // Address-monitor emulation seams (see pioplugin.c).  There are no DMA
 // registers under emulation, so the firmware routes the address-monitor DMA

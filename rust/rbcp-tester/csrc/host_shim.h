@@ -103,8 +103,19 @@ typedef struct {
 
 const ora_host_test_sram_log_t *ora_host_test_sram_log(void);
 
-/// Clear the log and start recording.
+/// Clear the log and start recording every write.
 void ora_host_test_reset_sram_log(void);
+
+/// Addresses the log will watch at once.
+#define ORA_HOST_TEST_SRAM_WATCH_MAX 64
+
+/// Clear the log and record only writes to these device SRAM addresses.
+///
+/// For a command that writes more of a slot than the log holds - a copy over a
+/// whole slot does - where the scenario is about particular bytes rather than
+/// everything the device did.  A `count` above ORA_HOST_TEST_SRAM_WATCH_MAX is
+/// clamped, so the caller checks it first.
+void ora_host_test_reset_sram_log_watching(const uint32_t *addrs, uint32_t count);
 
 /// Most API identifiers the harness will withhold from the plugin at once.
 #define ORA_HOST_TEST_WITHHOLD_MAX 8

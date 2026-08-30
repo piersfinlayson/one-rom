@@ -1253,6 +1253,12 @@ void set_host_sram_write_hook(void (*hook)(uint32_t addr, uint8_t val)) {
     s_sram_write_hook = hook;
 }
 
+void report_host_sram_write(uint32_t addr, uint8_t val) {
+    if (s_sram_write_hook != NULL) {
+        s_sram_write_hook(addr, val);
+    }
+}
+
 uint8_t *sram_to_host(uint32_t addr) {
     if (s_host_sram_ptr != NULL) {
         return s_host_sram_ptr + (addr - SRAM_BASE);
