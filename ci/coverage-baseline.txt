@@ -6,8 +6,8 @@ firmware/src/log.c                                   100.0
 firmware/src/main.c                                  82.9
 firmware/src/piodma/pio.c                            100.0
 firmware/src/piodma/pioled.c                         100.0
-firmware/src/piodma/pioplugin.c                      60.3
-firmware/src/piodma/piorom2.c                        74.1
+firmware/src/piodma/pioplugin.c                      67.3
+firmware/src/piodma/piorom2.c                        80.8
 firmware/src/plugin.c                                91.9
 firmware/src/rp235x.c                                62.9
 firmware/src/rtt.c                                   94.9
