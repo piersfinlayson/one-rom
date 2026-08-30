@@ -84,6 +84,17 @@ pub struct Ctx {
 }
 
 impl Ctx {
+    /// Bytes of the active RAM slot the host can reach over the bus.
+    ///
+    /// Not the whole slot, which holds whole banks where the ROM served is
+    /// smaller.  The host drives that ROM's address lines and no more, so a
+    /// read above this aliases below it, and a scenario reading back what it
+    /// wrote stays under this rather than under [`Ctx::ram_slot_size`].  A
+    /// device-side read, as SLOT_PEEK makes, reaches the whole slot.
+    pub fn addressable(&self) -> u32 {
+        self.ram_slot_size.min(self.chip_type.size_bytes() as u32)
+    }
+
     /// A command page clear of the back-channel, mirroring the reference
     /// host's layout: page 0 for signalling, the back-channel above it.
     pub fn command_page(&self) -> u16 {

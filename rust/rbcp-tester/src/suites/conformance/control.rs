@@ -35,7 +35,9 @@
 //! anything but the armed value means the device wrote there and an accepted
 //! entry's increment says by how much.  It finishes by entering properly,
 //! which proves the refusal was about the argument rather than a wedged device
-//! or a frame the device never saw.
+//! or a frame the device never saw.  Where the malformed start puts that byte
+//! past the ROM being served, the host cannot read it and the write log carries
+//! the assertion alone.
 //!
 //! Exit is asserted through re-entry throughout, for the reason [`super::reset`]
 //! gives: ENTER_CMD_RESP is defined to fail while the device is already in
@@ -682,12 +684,21 @@ fn expect_entry_discarded(
     bad: &Session,
     what: &str,
 ) -> Result<(), String> {
-    // Where the token would land had the device honoured this entry.
+    // Where the token would land had the device honoured this entry.  A start
+    // near the end of the slot puts it past the ROM being served, where the
+    // host cannot read.  The arming and the verdict below are skipped there,
+    // and the write log carries the assertion on its own.
     let token = bad.bch_start + Hdr::TokenLsb.offset();
+    let readable = token < ctx.addressable();
 
-    let armed = bus.read(token)? ^ 0xFF;
-    bus.poke_verified(ctx, token, armed)
-        .map_err(|e| format!("arming the token byte at 0x{token:06X}: {e}"))?;
+    let armed = if readable {
+        let armed = bus.read(token)? ^ 0xFF;
+        bus.poke_verified(ctx, token, armed)
+            .map_err(|e| format!("arming the token byte at 0x{token:06X}: {e}"))?;
+        armed
+    } else {
+        0
+    };
 
     bus.reset_write_log();
     bus.knock(ctx.command_page())?;
@@ -721,13 +732,15 @@ fn expect_entry_discarded(
     // incremented token, and a device that then went on processing commands in
     // the mode it should never have entered leaves a later one still.
     let acted = armed.wrapping_add(1);
-    let got = bus.read(token)?;
-    if got != armed {
-        return Err(format!(
-            "the token at 0x{token:06X} went 0x{armed:02X} → 0x{got:02X} (an accepted entry \
-             leaves 0x{acted:02X}): the device acted on an ENTER_CMD_RESP with {what}, which \
-             the specification requires it to discard silently"
-        ));
+    if readable {
+        let got = bus.read(token)?;
+        if got != armed {
+            return Err(format!(
+                "the token at 0x{token:06X} went 0x{armed:02X} → 0x{got:02X} (an accepted \
+                 entry leaves 0x{acted:02X}): the device acted on an ENTER_CMD_RESP with \
+                 {what}, which the specification requires it to discard silently"
+            ));
+        }
     }
 
     // Positive control: the same command with that one argument sound is acted
@@ -739,7 +752,7 @@ fn expect_entry_discarded(
              attributed to the argument if a sound entry is refused too"
         )
     })?;
-    if good.bch_start == bad.bch_start {
+    if readable && good.bch_start == bad.bch_start {
         bus.expect_hdr(&good, Hdr::TokenLsb, acted).map_err(|e| {
             format!("{e} — an accepted entry increments the very byte the discard left alone")
         })?;

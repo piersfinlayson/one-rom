@@ -501,12 +501,13 @@ pub fn loading_the_active_slot_shows_no_third_value(
     /// Addresses sampled across the slot.
     const SAMPLES: u32 = 24;
 
-    // From the first readable address up: a read below the command page is a
-    // command byte, so the bottom of the slot cannot be sampled this way.  The
-    // three bytes the command-mode scenarios use are skipped, so the fence
-    // below is the only thing besides the copy that writes a sampled address.
+    // Every sampled address is read back over the bus, so the range is what
+    // the host can reach rather than the whole slot, and it starts above the
+    // command page, whose reads are command bytes.  The probe, fence and
+    // scratch bytes are skipped, leaving the fence the only thing besides the
+    // copy that writes a sampled address.
     let lowest = ctx.bch_start();
-    let step = (ctx.ram_slot_size - lowest) / SAMPLES;
+    let step = (ctx.addressable() - lowest) / SAMPLES;
     let addrs: Vec<u32> = (0..SAMPLES)
         .map(|i| lowest + i * step)
         .filter(|a| *a != ctx.probe_addr() && *a != ctx.fence_addr() && *a != ctx.scratch_addr())

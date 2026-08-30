@@ -108,12 +108,9 @@ pub fn the_configured_page_is_the_one_filtered_on(
     bus: &mut Bus,
     ctx: &Ctx,
 ) -> Result<Outcome, String> {
-    // The page has to be one the *host* can drive, so it is bounded by the ROM
-    // being served and not by the RAM slot holding it.  A banked configuration
-    // puts several images in one slot, and a host reaching only the served
-    // one's address lines cannot signal on a page above them.  The slot bounds
-    // it too, where the ROM type is the larger of the two.
-    let addressable = ctx.ram_slot_size.min(ctx.chip_type.size_bytes() as u32);
+    // The page has to be one the host can drive, which is what
+    // [`Ctx::addressable`] bounds.
+    let addressable = ctx.addressable();
     let pages = (addressable >> ctx.unobserved) >> 8;
     if pages < 2 {
         return Ok(Outcome::Skip(format!(
