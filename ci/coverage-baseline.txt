@@ -6,7 +6,7 @@ firmware/src/log.c                                   100.0
 firmware/src/main.c                                  82.9
 firmware/src/piodma/pio.c                            100.0
 firmware/src/piodma/pioled.c                         100.0
-firmware/src/piodma/pioplugin.c                      59.8
+firmware/src/piodma/pioplugin.c                      60.3
 firmware/src/piodma/piorom2.c                        74.1
 firmware/src/plugin.c                                91.9
 firmware/src/rp235x.c                                62.9
@@ -14,7 +14,7 @@ firmware/src/rtt.c                                   94.9
 firmware/src/utils.c                                 69.4
 plugins/user/host-control/src/flash_erase.c          100.0
 plugins/user/host-control/src/flash_erase.h          100.0
-plugins/user/host-control/src/host_control_main.c    93.4
+plugins/user/host-control/src/host_control_main.c    93.5
 plugins/system/usb/src/usb_descriptors.c             100.0
 plugins/system/usb/src/usb_gpio.c                    81.9
 plugins/system/usb/src/usb_led.c                     94.4
