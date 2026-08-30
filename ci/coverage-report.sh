@@ -226,7 +226,7 @@ END {
         }
         for (g in btot) {
             rate = pct(bhit[g], btot[g])
-            colour = rate >= 90 ? "brightgreen" : (rate >= 80 ? "yellow" : "red")
+            colour = rate >= 90 ? "brightgreen" : (rate >= 80 ? "green" : (rate >= 70 ? "yellow" : (rate >= 60 ? "orange" : "red")))
             jf = badgedir "/" gid[g] ".json"
             printf "{\"schemaVersion\":1,\"label\":\"%s\",\"message\":\"%.1f%%\",\"color\":\"%s\"}\n", g, rate, colour > jf
             close(jf)
