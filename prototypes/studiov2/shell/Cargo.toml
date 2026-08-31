@@ -1,0 +1,13 @@
+[package]
+name = "studiov2-shell"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+iced = { workspace = true, features = ["canvas", "tokio", "advanced"] }
+studiov2-shared = { workspace = true }
+studiov2-slot-builder = { workspace = true }
+studiov2-log-viewer = { workspace = true }
+png = { workspace = true }
+tokio = { version = "1", features = ["time", "rt"] }

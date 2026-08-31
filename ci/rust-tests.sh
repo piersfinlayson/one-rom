@@ -89,6 +89,11 @@ cargo test -p schema-gen
 echo "Testing doc-gen..."
 cargo test -p doc-gen
 
+# The Studio v2 prototypes are their own workspace, so a cargo command here does
+# not reach them.  Gated so they keep building as the crates they use move.
+echo "Testing the Studio v2 prototypes..."
+( cd ../prototypes/studiov2 && cargo test )
+
 # Values a document states and something else owns - a hold limit from the
 # metadata schema, the CLI's own version - are marked in the markdown and
 # checked here.  Nothing is rewritten: a stale value is an edit for whoever

@@ -1,0 +1,28 @@
+[package]
+name = "studiov2-log-viewer"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[lib]
+name = "studiov2_log_viewer"
+path = "src/lib.rs"
+
+[[bin]]
+name = "studiov2-log-viewer"
+path = "src/main.rs"
+
+[dependencies]
+iced = { workspace = true, features = ["tokio", "advanced"] }
+studiov2-shared = { workspace = true }
+# Only for `--shot`, which writes the prototype's own window to a PNG so the
+# scrollbar and a selection can be looked at without a screen-recording grant.
+png = { workspace = true }
+thiserror = { workspace = true }
+tokio = { version = "1", features = ["process", "time", "rt"] }
+
+[dev-dependencies]
+# The test drives a real, headless iced interface.  These must be the exact
+# versions `iced` 0.14 itself depends on, or the widget tree in the test and
+# the widget tree in the app are different types.
+iced_runtime = "0.14.0"

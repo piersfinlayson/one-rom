@@ -77,4 +77,11 @@ CONFIG="$EMU_CONFIG" BOARD="$EMU_BOARD" \
     cargo clippy -p onerom-fw-emulator -p onerom-lens \
     --target wasm32-unknown-emscripten -- -D warnings
 
+# The Studio v2 prototypes are their own workspace, so a cargo command here does
+# not reach them.  Gated so they keep building as the crates they use move.
+echo "Linting the Studio v2 prototypes..."
+( cd ../prototypes/studiov2 \
+    && cargo fmt --all -- --check \
+    && cargo clippy --all-targets -- -D warnings )
+
 echo "Rust lint passed."

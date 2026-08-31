@@ -67,3 +67,9 @@ CONFIG="$EMU_CONFIG" BOARD="$EMU_BOARD" \
 echo "Generating documentation for the plugin testers..."
 CONFIG="$EMU_CONFIG" BOARD="$EMU_BOARD" \
     RUSTDOCFLAGS="-D warnings" cargo doc -p onerom-plugin-tester -p onerom-rbcp-tester -p onerom-usb-tester --no-deps
+
+# The Studio v2 prototypes are their own workspace, so a cargo command here does
+# not reach them.  Gated so they keep building as the crates they use move.
+echo "Generating documentation for the Studio v2 prototypes..."
+( cd ../prototypes/studiov2 \
+    && RUSTDOCFLAGS="-D warnings" cargo doc --no-deps )
