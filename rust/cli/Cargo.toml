@@ -79,7 +79,7 @@ extended-description = "Command line interface to manage One ROM - the most flex
 depends = "$auto"
 section = "utils"
 priority = "optional"
-maintainer-scripts = "scripts/linux/maintainer"
+maintainer-scripts = "scripts/maintainer"
 profile = "release"
 assets = [
     ["target/release/onerom", "usr/bin/", "755"],
