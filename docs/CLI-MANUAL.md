@@ -798,7 +798,7 @@ These are rejected with `--no-config`.
 | `--no-reboot` | Do not reboot after flashing. Conflicts with `--stopped`. |
 | `--fast` | Skip the re-enumeration pause after the final reboot. Conflicts with `--no-reboot`. |
 | `--msd, -m` | Mount mass storage when rebooting into stopped mode. |
-| `--verify` | Verify flash by reading back after programming. **(not yet supported)** |
+| `--verify` | Verify flash by reading back after programming. |
 | `--force, -f` | Continue despite non-fatal problems: assembled firmware parse errors, a board type mismatch, and config warnings such as turbo boot with more than one non-plugin ROM slot. Each is reported as a warning instead. |
 | `--batch` (aliases `--multiple`, `--multi`) | Program multiple devices, pausing for confirmation between each. Every board is programmed with the same configuration as the first. |
 | `--scan-slots` | After programming, run `onerom scan --slots` to show the result. Conflicts with `--fast`. |

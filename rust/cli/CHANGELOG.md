@@ -115,6 +115,9 @@
   including `ihex` to `srec` directly. S-record output uses one data record
   type throughout — the narrowest that addresses the whole image — with the
   paired terminator.
+- **`onerom program --verify` is supported**, and its help text and the CLI
+  manual now say so. It reads flash back after programming and compares it
+  against the image, and always did — both described it as not yet supported.
 
 ## v0.3.0 - 2026-08-09
 

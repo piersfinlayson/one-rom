@@ -229,7 +229,7 @@ pub struct ProgramArgs {
     #[arg(long, short, conflicts_with = "stopped")]
     pub no_reboot: bool,
 
-    /// Verify flash contents after programming by reading back. (Not yet supported.)
+    /// Verify flash contents after programming by reading back.
     #[arg(long)]
     pub verify: bool,
 

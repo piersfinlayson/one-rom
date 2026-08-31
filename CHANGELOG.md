@@ -86,6 +86,7 @@ In detail:
 - Writing One ROM's flash over picoboot now works.  A page program left the flash in execute-in-place, so on a real device it wrote nothing and reported success.  A reply a host walked away from is also no longer served to the command after it, which left every answer that followed belonging to the question before it.  Both from picobootx v0.5.1.
   - This required a USB plugin update.
 - **Breaking (Rust crates only):** `onerom_gen::Error` identifies a chip by image name rather than by index.  `RightSize`, `ImageTooLarge`, `DuplicationNotExactDivisor` and `BadLocation` gain a `filename` field, and `ImageTooSmall`, `DuplicateUnsupportedForFormat`, `LoadAddressWithBinary` and `Transform` swap their `index` for one.  A new `ImageExceedsServedSize` variant reports an image too large for the part of a chip One ROM serves.
+- Clarify in `--help` and the CLI manual that `onerom program --verify` is supported.
 
 To publish:
 - Rust crates (in dependency order):
