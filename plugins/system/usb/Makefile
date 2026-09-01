@@ -18,7 +18,7 @@ PICO_SDKLESS_DIR := pico-sdkless
 
 # Version of picobootx to build against.  Remove the picobootx/ directory after
 # changing this, so it is re-cloned.
-PICOBOOTX_VERSION ?= v0.5.1
+PICOBOOTX_VERSION ?= v0.6.0
 
 # Version of pico-sdkless to build against.  Remove the pico-sdkless/ directory
 # after changing this, so it is re-cloned.

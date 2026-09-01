@@ -6,7 +6,7 @@ The command a host sends after one the device refused is no longer lost.
 Refusing halts both USB endpoints, and clearing them left the device and the
 host expecting different packets, so the next command was discarded.
 
-Answer a picoboot host as the RP2350 datasheet specifies, from picobootx v0.5.1.
+Answer a picoboot host as the RP2350 datasheet specifies, from picobootx 0.6.0.
 
 - Device information was missing the flags word saying what was answered, and
   its leading count was one short.
@@ -15,12 +15,11 @@ Answer a picoboot host as the RP2350 datasheet specifies, from picobootx v0.5.1.
 - The flash was reported as taking UF2 downloads, and One ROM has no drive to
   receive one.
 
-Writing flash over picoboot now works.  A page program left the flash in
-execute-in-place, so on a real device it wrote nothing and reported success.
+Writing flash over picoboot now works.  A page program wrote nothing and
+reported success, and could hang the device.
 
-A reply a host walked away from is no longer served to the command after it.
-It was left waiting on the USB endpoint, so every answer that followed belonged
-to the question before it until the interface was reset again.
+A host that walks away from a reply no longer leaves the device unable to take
+another command, and is not served what was left of the reply it abandoned.
 
 Four GPIOs can be under a timed hold at once, rather than eight.  Four is every
 spare pin a board exposes that a caller can realistically drive, so the old
