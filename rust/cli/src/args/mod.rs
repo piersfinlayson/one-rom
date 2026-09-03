@@ -504,11 +504,7 @@ pub enum Commands {
     ///
     /// Example:
     ///
-    ///   onerom peek live --address 0x100 --length 64
-    #[command(
-        subcommand_value_name = "COMMAND",
-        subcommand_help_heading = "Commands"
-    )]
+    ///   onerom peek --address 0x100 --length 64
     Peek(InspectPeekLiveArgs),
 
     /// Write data to One ROM's live ROM image.
@@ -518,11 +514,7 @@ pub enum Commands {
     ///
     /// Example:
     ///
-    ///   onerom poke live --address 0x100 --input patch.bin
-    #[command(
-        subcommand_value_name = "COMMAND",
-        subcommand_help_heading = "Commands"
-    )]
+    ///   onerom poke --address 0x100 --input patch.bin
     Poke(ControlPokeLiveArgs),
 
     /// Reboot a One ROM.

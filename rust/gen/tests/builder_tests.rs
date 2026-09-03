@@ -2199,7 +2199,7 @@ mod tests {
     fn srec_decode_failure_is_reported_against_the_chip() {
         let json = r#"{
             "version": 1,
-            "description": "Truncated S-record",
+            "description": "Corrupt S-record",
             "chip_sets": [{
                 "type": "single",
                 "chips": [{
@@ -2213,16 +2213,16 @@ mod tests {
         }"#;
 
         let mut builder = Builder::from_json(FW_VER, MCU_FAM, json).expect("Failed to parse JSON");
-        // Drop the terminator, as a truncated transfer would.
+        // Flip a data digit, leaving that record's checksum stale.
         let srec = onerom_gen::encode_srec(&[0x11u8; 16], 0);
-        let truncated = srec.replace("S9030000FC\r\n", "");
+        let damaged = srec.replacen("S113000011", "S113000022", 1);
         builder
-            .add_file(FileData::new(0, truncated.into_bytes()))
+            .add_file(FileData::new(0, damaged.into_bytes()))
             .expect("Failed to add file");
 
         let err = builder
             .build(default_fw_props())
-            .expect_err("a missing terminator should fail the build");
+            .expect_err("a bad checksum should fail the build");
         assert!(
             matches!(err, onerom_gen::Error::Srec { index: 0, .. }),
             "unexpected error: {err}"

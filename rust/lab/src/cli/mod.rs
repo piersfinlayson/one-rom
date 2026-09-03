@@ -14,7 +14,7 @@ use core::fmt::Display;
 use log::{debug, error, info, trace, warn};
 
 use alloc::format;
-use alloc::string::ToString;
+use alloc::string::{String, ToString};
 
 use embassy_futures::select::{Either, select};
 use embassy_time::Timer;
@@ -84,6 +84,35 @@ impl OutputFormat {
             Self::IntelHex => "ihex",
             Self::Srec => "srec",
         }
+    }
+
+    /// Every format, in the order the help and the prompts list them.
+    ///
+    /// The help, the format prompt and its error message are all built from
+    /// this, so a new variant reaches all three or fails to compile.  Each of
+    /// them was a separate hand-written list, and `srec` reached none of them.
+    pub const ALL: [Self; 4] = [Self::Checksum, Self::HexDump, Self::IntelHex, Self::Srec];
+
+    /// What the format produces, for the help.
+    pub fn describe(self) -> &'static str {
+        match self {
+            Self::Checksum => "checksum+SHA1 (default)",
+            Self::HexDump => "hex dump",
+            Self::IntelHex => "Intel HEX",
+            Self::Srec => "Motorola S-record",
+        }
+    }
+
+    /// The accepted tokens, separated by `sep`, for a prompt or an error.
+    pub fn token_list(sep: &str) -> String {
+        let mut out = String::new();
+        for (i, f) in Self::ALL.iter().enumerate() {
+            if i > 0 {
+                out.push_str(sep);
+            }
+            out.push_str(f.as_str());
+        }
+        out
     }
 }
 
@@ -386,9 +415,10 @@ pub async fn show_help(_state: &SessionState) -> Result<(), Error> {
     send_line("  z   Reset to bootloader").await?;
     send_line("  ?/h This help").await?;
     send_line("").await?;
-    send_line("Formats:   cs   - checksum+SHA1 (default)").await?;
-    send_line("           hex  - hex dump").await?;
-    send_line("           ihex - Intel HEX").await?;
+    for (i, f) in OutputFormat::ALL.iter().enumerate() {
+        let label = if i == 0 { "Formats:  " } else { "          " };
+        send_line(&format!("{label} {:<4} - {}", f.as_str(), f.describe())).await?;
+    }
     send_line("").await?;
     send_line("Addresses: decimal by default.").await?;
     send_line("           Prefix with 0x, 0X, or $ for hexadecimal.").await?;

@@ -57,8 +57,12 @@
 //!
 //! These mirror [`ihex`](crate::ihex)'s where the formats correspond:
 //!
-//! - **A termination record (`S7`/`S8`/`S9`) is required.**  Its absence
-//!   usually means a truncated or corrupt file.
+//! - **A termination record (`S7`/`S8`/`S9`) is optional.**  The standard asks
+//!   for one, but a tool writing a pure data image often has no execution
+//!   start address to put in it and leaves it out - `srec_cat` does so unless
+//!   given `-execution_start_address`.  Where a file has none, the `S5`/`S6`
+//!   count record is what is left to catch a truncated transfer, and the same
+//!   tools do emit one.
 //! - **Bytes after the termination record are ignored.**
 //! - **Overlapping data records are an error.**
 //! - **`S5`/`S6` record counts are validated** against the number of data
@@ -117,8 +121,6 @@ pub enum SrecError {
     /// An `S5`/`S6` record's count did not match the number of data records in
     /// the file.
     RecordCountMismatch { declared: usize, actual: usize },
-    /// The file did not contain a terminating `S7`/`S8`/`S9` record.
-    MissingTerminator,
     /// The file contained no data records.
     NoData,
 }
@@ -165,9 +167,6 @@ impl core::fmt::Display for SrecError {
                 f,
                 "the record count declares {declared} data records but the file contains {actual}"
             ),
-            SrecError::MissingTerminator => {
-                write!(f, "missing termination record ('S7', 'S8' or 'S9')")
-            }
             SrecError::NoData => write!(f, "the S-record file contained no data records"),
         }
     }
@@ -271,9 +270,6 @@ pub fn decode_srec(input: &[u8], load_address: usize) -> Result<Vec<u8>, SrecErr
         }
     }
 
-    if !seen_terminator {
-        return Err(SrecError::MissingTerminator);
-    }
     if let Some(declared) = declared_count
         && declared != data_records
     {
@@ -562,12 +558,11 @@ mod tests {
     }
 
     #[test]
-    fn missing_terminator_is_an_error() {
+    fn a_missing_terminator_is_accepted() {
+        // `srec_cat` writes no termination record unless given an execution
+        // start address, so its default output ends at the count record.
         let src = alloc::format!("{}\n", s1(0, &[0x01]));
-        assert!(matches!(
-            decode_srec(src.as_bytes(), 0),
-            Err(SrecError::MissingTerminator)
-        ));
+        assert_eq!(decode_srec(src.as_bytes(), 0).unwrap(), alloc::vec![0x01]);
     }
 
     #[test]

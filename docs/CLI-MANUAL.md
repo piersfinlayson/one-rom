@@ -506,8 +506,8 @@ Read what the device would serve for a given logical ROM address (device must be
 running). The top-level `peek` is an alias for `inspect peek live`:
 
 ```
-onerom peek live --address 0x100 --length 64
-onerom peek live --address 0 --length 8192 --output rom-image.bin
+onerom peek --address 0x100 --length 64
+onerom peek --address 0 --length 8192 --output rom-image.bin
 ```
 
 ### Patch a running image
@@ -517,15 +517,15 @@ offset. Changes are transient — lost on reboot. The top-level `poke` is an ali
 for `control poke live`:
 
 ```
-onerom poke live --address 0x100 --byte 0xEA
-onerom poke live --address 0 --input patch.bin
+onerom poke --address 0x100 --byte 0xEA
+onerom poke --address 0 --input patch.bin
 ```
 
 For file patches you can write only the differing bytes, and preview first:
 
 ```
-onerom poke live --input patch.bin --delta --dry-run
-onerom poke live --input patch.bin --delta
+onerom poke --input patch.bin --delta --dry-run
+onerom poke --input patch.bin --delta
 ```
 
 ### Identify a physical unit
@@ -1763,7 +1763,9 @@ Both record formats are written with 16-byte data records and a terminating
 record; unwritten addresses read as `0xFF` when decoding. S-record output uses
 one data record type throughout, the narrowest that addresses the whole image —
 `S1` below 64 KB, then `S2`, then `S3` — with the paired `S9`/`S8`/`S7`
-terminator. Device required: no.
+terminator. An S-record file that ends without a termination record is read,
+which is what `srec_cat` writes unless it is given an execution start address.
+Device required: no.
 
 ---
 
@@ -2253,7 +2255,7 @@ options as their targets.
 Alias for [`inspect peek live`](#inspect-peek-live).
 
 ```
-onerom peek live --address 0x100 --length 64
+onerom peek --address 0x100 --length 64
 ```
 
 ### poke (top-level alias)
@@ -2261,7 +2263,7 @@ onerom peek live --address 0x100 --length 64
 Alias for [`control poke live`](#control-poke-live).
 
 ```
-onerom poke live --address 0x100 --input patch.bin
+onerom poke --address 0x100 --input patch.bin
 ```
 
 ### reboot (top-level alias)

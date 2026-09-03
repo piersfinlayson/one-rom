@@ -2,6 +2,9 @@
 
 ## v0.4.0 - 2026-??-??
 
+- **`peek` and `poke` help no longer show an argument the commands reject.**
+  Both gave `onerom peek live ...`, and the top-level aliases take their options
+  directly.
 - **A device that cannot be read is now named in one line and ignored.**
   `onerom scan` says whether it could not be opened or could not be read, warns
   only where nothing else was found, and adds the USB identity and the

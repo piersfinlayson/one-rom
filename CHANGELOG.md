@@ -31,7 +31,7 @@ In detail:
   - This required a firmware update.
   - USB plugin v0.2.2 needs firmware v0.7.2 as a result, and does not load on anything older.
 - Check plugins named by a config against the images server's published compatibility window, in the CLI and Studio.  A plugin binary declares only a minimum firmware version, so USB v0.1.2 — which hard faults on firmware v0.7.0 — was previously built in without complaint.  A local or third-party plugin has nothing published to check, and an unreachable server warns rather than failing.
-- Add Motorola S-record (`srec`) as a ROM image input format, alongside Intel HEX.  A chip may set `"format": "srec"` in a config file, with the same optional `"load_address"`; the CLI exposes it as `--slot format=srec,load-address=...`, and `onerom image convert` converts between `binary`, `ihex` and `srec` in any direction.  Unwritten bytes read as `0xFF`, as for Intel HEX.
+- Add Motorola S-record (`srec`) as a ROM image format, alongside Intel HEX and with the same `load_address` handling.  A file with no termination record is read, which is what `srec_cat` writes by default.
 - One ROM Lab can dump a ROM as S-records: `f:srec`, alongside the existing `ihex` and hex dump formats.
 - One ROM Lab now presents the same USB descriptors as One ROM: the same interface names, endpoint addresses, device class and CDC settings.  The two share a VID and PID, so a host that has met one and then meets the other now finds the same device.
 - One ROM Lab now stops a running command when a terminal sends a break, as it already does for any keystroke.
@@ -88,6 +88,7 @@ In detail:
 - **Breaking (Rust crates only):** `onerom_gen::Error` identifies a chip by image name rather than by index.  `RightSize`, `ImageTooLarge`, `DuplicationNotExactDivisor` and `BadLocation` gain a `filename` field, and `ImageTooSmall`, `DuplicateUnsupportedForFormat`, `LoadAddressWithBinary` and `Transform` swap their `index` for one.  A new `ImageExceedsServedSize` variant reports an image too large for the part of a chip One ROM serves.
 - **Breaking (Rust crates only):** `onerom_config::hw::Board` is now `#[non_exhaustive]`, so a `match` on one needs a wildcard arm.  A new board revision no longer breaks the crate's API.
 - Clarify in `--help` and the CLI manual that `onerom program --verify` is supported.
+- Correct the `peek` and `poke` help, which showed a `live` argument the top-level aliases do not take.
 - Add the fire-24-g, fire-32-c and fire-40-c hardware revisions — fire-24-f, fire-32-b and fire-40-b with an upright USB-C connector, and otherwise identical.
 
 To publish:
@@ -114,19 +115,6 @@ To publish:
   `if: github.ref == 'refs/heads/main'`.  Until then the README badges show
   this release branch's figures.
 
-To test (on hardware, before release):
-- **Auxiliary I/O has never run on a device.**  Host tests now watch a pin move — `ora_gpio_set` records what it drove into the test build's pad model, and `ora_gpio_query` reads it back — so `SET_AUX`, a timed hold and its after-state are asserted against that model.  What no test reaches is the register writes themselves, which are compiled out on a host, and an X pad reaching two GPIOs.  Needs an RBCP host to drive it, so it follows the 6502 library gaining the group.  What the emulated suite does not verify is listed in the `aux.rs` module header.
-- **The back-channel restore commands have never run on a device.**  The emulated suite asserts all three — that a reload leaves the region byte-identical to the image, that the host's own bytes go back and only as many as the count asks for, and that the boot slots are reported and do not move when a host loads a slot itself.  What it cannot reach is the device's own plugin slots: the tester runs the plugin natively rather than as a ROM slot, so the boot slot arithmetic is only ever exercised with no plugin slots present, where a real device has two.
-- **The host-control plugin on firmware older than v0.7.2.**  It reports no pipes where the logging API is absent, and that path cannot be reached from this tree — every firmware built here has the API, so the emulator suite only ever exercises the other branch.  `GET_PIPE_CAPABILITY` should report a count of zero, `GET_PIPE_INFO` and `PIPE_WRITE` should fail, and everything else in RBCP should be unaffected.
-- **On Windows and Linux:** `onerom monitor log`, and `onerom program --follow`.  Only run on macOS so far, and the parts that differ by platform are the ones this depends on: finding the One ROM's serial port among the others, and whether opening it asserts DTR.  A port opened without DTR is forwarded nothing, which surfaces as the two second timeout — the same symptom as a device fault, so a platform difference here reads as a broken One ROM.
-- Studio building a config that names a plugin.  The check is shared with the CLI, which is covered by tests and was run against the live manifest both ways, but Studio's own path needs a connected device to reach at all: a config naming USB v0.1.2 should refuse to build, and one naming v0.2.1 should build and flash.
-- Program a device from an S-record image and confirm it serves the right bytes — `onerom program --slot file=<rom>.s19,type=...,format=srec,load-address=$...`.  The build path is covered by tests; flashing and serving are not.
-- **One ROM Lab's greeting when a terminal opens the port.**  Lab has no automated coverage at all, so this is only ever exercised by hand.  Opening a terminal should produce the banner with no keystroke; closing and reopening it should produce it again with the board, chip type and format still set; and a terminal configured not to raise DTR should see nothing until Enter, and the banner then.
-- One ROM Lab's `f:srec` dump, which has no automated coverage at all: lab is a `thumbv8m` binary with no host tests, so its encoder is only verified against `onerom-gen`'s golden by inspection.  Dump a ROM as S-records and read it back with `onerom image convert --from srec --to binary`, comparing against the same ROM dumped as `ihex`.  Worth doing on a ROM larger than 64 KB too, which is the case that selects `S2`/`S8` records rather than `S1`/`S9`.
-- **On Windows:** flash an Ice from Studio.  nusb now implements control transfer timeouts on Windows, replacing the fork that did so, and the mass erase status poll is what needed them.  Vary the timeout to prove it is honoured rather than only that flashing works: a short one must fail after roughly that long, where before it always failed at WinUSB's fixed 5s.
-- **On Windows:** flash a Fire, and run `onerom scan` and `onerom inspect`.  picoboot's `GET_COMMAND_STATUS` read now genuinely uses its 1s timeout, where WinUSB previously gave it 5s regardless.  Both callers treat a failure as non-fatal, so a regression would show as a slower or noisier connect rather than an outright error.
-- Analyze a Fire from Studio with a debug probe attached — the path that panicked before v0.1.3 and was fixed in a probe-rs fork, now on upstream probe-rs 0.32.
-
 To do (before release):
 - **Auxiliary I/O's register writes are untested.**  `ora_gpio_set` records what
   it drove into the test build's pad model, so a host test can assert that a pin
@@ -135,8 +123,8 @@ To do (before release):
   same intent rather than a check on the shipped one.  Closing this in an
   emulated test would mean epio representing an SIO-driven output level from the
   MCU side, which is unestablished and decides whether it is a firmware-only
-  change or needs an epio release.  The hardware test above settles the same
-  question for this release.
+  change or needs an epio release.  Driving a pad from a host on real hardware
+  settles the same question for this release.
 - **The host-control plugin reports its pipe's far end as Unspecified.**  RBCP's
   GET_PIPE_INFO now says what kind of thing a pipe reaches, and a One ROM pipe is
   an ORA log channel whose reader the plugin cannot see — usually the system USB
@@ -145,7 +133,7 @@ To do (before release):
   claim, which no ORA call exposes, so a host is told nothing where it could be
   told something useful.
 - Web programmer S-record support, in `one-rom-wasm` and `one-rom-site`.  The format picker is driven by `file_formats()` and will list `srec` on its own, but the site's `accept` list, its extension auto-select and its load-address reveal (currently shown for `ihex` only) all need widening.
-- Drop the libudev/libusb build requirement, which Studio no longer has: `CLAUDE.md`, the comment in `ci/rust-lint.sh`, and the comment and two `apt-get` lines in `ci.yml`.  probe-rs 0.32 takes hidapi's pure-Rust `basic-udev` backend in place of `libudev-sys`, and nothing in the graph has wanted libusb for some time.  Verified on Debian — with both hidden from `pkg-config`, Studio builds and links clean, where probe-rs 0.30 failed in `libudev-sys`'s build script.  Leave `ci/docker/Dockerfile` until it is checked separately; that image builds firmware, not Studio.  Do this only once the debug probe test above has passed, since falling back to the fork would reinstate the requirement.
+- Drop the libudev/libusb build requirement, which Studio no longer has: `CLAUDE.md`, the comment in `ci/rust-lint.sh`, and the comment and two `apt-get` lines in `ci.yml`.  probe-rs 0.32 takes hidapi's pure-Rust `basic-udev` backend in place of `libudev-sys`, and nothing in the graph has wanted libusb for some time.  Verified on Debian — with both hidden from `pkg-config`, Studio builds and links clean, where probe-rs 0.30 failed in `libudev-sys`'s build script.  Leave `ci/docker/Dockerfile` until it is checked separately; that image builds firmware, not Studio.  Do this only once Studio has analysed a Fire with a debug probe attached, since falling back to the fork would reinstate the requirement.
 
 ## v0.7.1 - 2026-08-09
 

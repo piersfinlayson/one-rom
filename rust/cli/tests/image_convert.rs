@@ -297,17 +297,27 @@ fn corrupt_srec_is_rejected(damage: impl Fn(String) -> String, expected: &str) {
 }
 
 #[test]
-fn srec_missing_its_terminator_fails() {
-    // What a truncated transfer looks like.
-    corrupt_srec_is_rejected(
-        |text| {
-            text.lines()
-                .filter(|l| !l.starts_with("S9"))
-                .collect::<Vec<_>>()
-                .join("\r\n")
-        },
-        "missing termination record",
-    );
+fn srec_without_a_terminator_converts() {
+    // `srec_cat` writes no termination record unless given an execution start
+    // address, so its default output is a file that ends at the count record.
+    let dir = tempfile::tempdir().unwrap();
+    let data = sample(1024);
+    let srec = make_srec(dir.path(), &data, None);
+    let text = std::fs::read_to_string(&srec).unwrap();
+
+    let trimmed = dir.path().join("no-terminator.s19");
+    std::fs::write(
+        &trimmed,
+        text.lines()
+            .filter(|l| !l.starts_with("S9"))
+            .collect::<Vec<_>>()
+            .join("\r\n"),
+    )
+    .unwrap();
+
+    let out = dir.path().join("out.bin");
+    convert("srec", "binary", &trimmed, &out, None);
+    assert_eq!(std::fs::read(&out).unwrap(), data);
 }
 
 #[test]
