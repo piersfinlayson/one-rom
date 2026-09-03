@@ -36,11 +36,11 @@ refused](#why-a-slot-may-be-refused).
 | Board | Bank switching | Multi-ROM slots |
 | --- | --- | --- |
 | fire-24-a, fire-24-b | yes | no |
-| fire-24-c, fire-24-d, fire-24-e, fire-24-f | yes | yes |
+| fire-24-c, fire-24-d, fire-24-e, fire-24-f, fire-24-g | yes | yes |
 | fire-28-a, fire-28-b | no | no |
 | fire-28-c, fire-28-d | yes | yes |
-| fire-32-a, fire-32-b | no | no |
-| fire-40-a, fire-40-b | no | no |
+| fire-32-a, fire-32-b, fire-32-c | no | no |
+| fire-40-a, fire-40-b, fire-40-c | no | no |
 
 ## Dynamic Bank Switching
 

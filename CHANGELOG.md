@@ -86,11 +86,13 @@ In detail:
 - Writing One ROM's flash over picoboot now works, and no longer hangs the device.  A host that walks away from a reply part way through no longer leaves One ROM unable to take another command, and is not served the leftovers of the reply it abandoned.  From picobootx 0.6.0.
   - This required a USB plugin update and a new One ROM Lab.
 - **Breaking (Rust crates only):** `onerom_gen::Error` identifies a chip by image name rather than by index.  `RightSize`, `ImageTooLarge`, `DuplicationNotExactDivisor` and `BadLocation` gain a `filename` field, and `ImageTooSmall`, `DuplicateUnsupportedForFormat`, `LoadAddressWithBinary` and `Transform` swap their `index` for one.  A new `ImageExceedsServedSize` variant reports an image too large for the part of a chip One ROM serves.
+- **Breaking (Rust crates only):** `onerom_config::hw::Board` is now `#[non_exhaustive]`, so a `match` on one needs a wildcard arm.  A new board revision no longer breaks the crate's API.
 - Clarify in `--help` and the CLI manual that `onerom program --verify` is supported.
+- Add the fire-24-g, fire-32-c and fire-40-c hardware revisions — fire-24-f, fire-32-b and fire-40-b with an upright USB-C connector, and otherwise identical.
 
 To publish:
 - Rust crates (in dependency order):
-  - onerom-config 0.6.1
+  - onerom-config 0.7.0
   - onerom-metadata 0.2.0
   - onerom-gen 0.8.0
   - onerom-fw-parser 0.9.0

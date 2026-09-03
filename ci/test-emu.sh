@@ -15,12 +15,12 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # routing puts them apart, and the generator refuses the config.  Every full
 # list is defined in terms of its LATE list, so a new board added to one is
 # picked up by both.
-FIRE_24_LATE_BOARDS="fire-24-c fire-24-d fire-24-e fire-24-f"
+FIRE_24_LATE_BOARDS="fire-24-c fire-24-d fire-24-e fire-24-f fire-24-g"
 FIRE_24_BOARDS="fire-24-a fire-24-b $FIRE_24_LATE_BOARDS"
 FIRE_28_LATE_BOARDS="fire-28-c fire-28-d"
 FIRE_28_BOARDS="fire-28-a fire-28-b $FIRE_28_LATE_BOARDS"
-FIRE_32_BOARDS="fire-32-a fire-32-b"
-FIRE_40_BOARDS="fire-40-a fire-40-b"
+FIRE_32_BOARDS="fire-32-a fire-32-b fire-32-c"
+FIRE_40_BOARDS="fire-40-a fire-40-b fire-40-c"
 
 cs_logic() {
     [ "$1" -eq 0 ] && echo "active_low" || echo "active_high"
@@ -275,7 +275,7 @@ test_32pin() {
         echo "Skipping SST39SF040 test on $board (not supported)"
         return
     fi
-    run_no_cs  fire-32-b images/test/rand_512KB.rom type=SST39SF040
+    run_no_cs  $board images/test/rand_512KB.rom type=SST39SF040
 }
 
 test_40pin() {
@@ -395,6 +395,7 @@ test_family_24() {
     test_24_all_rom_types fire-24-d
     test_24_all_rom_types fire-24-e
     test_24_all_rom_types fire-24-f
+    test_24_all_rom_types fire-24-g
 
     # Extended set of 24 pin ROM tests
     test_24_config onerom-config/test/24-random-23xx.json
@@ -518,6 +519,7 @@ test_family_32() {
     # Every standard ROM type on every 32 pin hardware revision.
     test_32pin fire-32-a
     test_32pin fire-32-b
+    test_32pin fire-32-c
 
     # Test specific ROM configurations on all Fire 32 hardware revisions.
     test_32_config onerom-config/test/32-random-27c080.json
@@ -525,12 +527,15 @@ test_family_32() {
     test_32_config onerom-config/test/32-random-27c0x0.json
     test_config fire-32-b onerom-config/test/32-random-23c1001.json
     test_config fire-32-b onerom-config/test/32-random-extra.json
+    test_config fire-32-c onerom-config/test/32-random-23c1001.json
+    test_config fire-32-c onerom-config/test/32-random-extra.json
 
     # Plugin API tests
     test_32_config_api onerom-config/test/32-random-27c080.json
     test_32_config_api onerom-config/test/32-random-27c301.json
     test_32_config_api onerom-config/test/32-random-27c0x0.json
     test_config_api fire-32-b onerom-config/test/32-random-extra.json
+    test_config_api fire-32-c onerom-config/test/32-random-extra.json
 
     # Address-monitor tests — see the note in test_family_40 for what these
     # cover.
@@ -559,6 +564,8 @@ test_family_40() {
     test_40pin fire-40-a true
     test_40pin fire-40-b
     test_40pin fire-40-b true
+    test_40pin fire-40-c
+    test_40pin fire-40-c true
 
     # Test specific ROM configurations on all Fire 40 hardware revisions.
     test_40_config onerom-config/test/40-random.json
@@ -597,12 +604,12 @@ test_family_40() {
     test_config_rbcp fire-40-a onerom-config/test/40-random-force-16bit.json
 
     # The tester drives chip set 0 only, and 27C200 is not the first set of any
-    # other 40 pin config, so it needs one of its own.  Run on both 40 pin
-    # boards: fire-40-b gives the 27C200 a 256KB ROM table region and so two RAM
-    # slots, which makes it the only configuration where the NV storage write
-    # transaction — and the flash erase and program it commits through — runs
-    # against a word-organised ROM.  On fire-40-a the same part gets a 512KB
-    # region, one slot, and a read-only NV storage.
+    # other 40 pin config, so it needs one of its own.  Run on every 40 pin
+    # board: fire-40-b and fire-40-c give the 27C200 a 256KB ROM table region
+    # and so two RAM slots, which makes those the only configurations where the
+    # NV storage write transaction — and the flash erase and program it commits
+    # through — runs against a word-organised ROM.  On fire-40-a the same part
+    # gets a 512KB region, one slot, and a read-only NV storage.
     test_40_config_rbcp onerom-config/test/40-random-27c200.json
 }
 

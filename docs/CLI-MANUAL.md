@@ -2048,7 +2048,7 @@ Example output (illustrative — your build may differ):
 
 ```
 Supported One ROM board types:
-  fire-24-a, fire-24-c, fire-24-d, fire-24-e, fire-24-eadb01, fire-24-f, fire-24-usb-b, fire-28-a, fire-28-b, fire-28-c, fire-28-d, fire-32-a, fire-32-b, fire-40-a, fire-40-b
+  fire-24-a, fire-24-c, fire-24-d, fire-24-e, fire-24-eadb01, fire-24-f, fire-24-g, fire-24-usb-b, fire-28-a, fire-28-b, fire-28-c, fire-28-d, fire-32-a, fire-32-b, fire-32-c, fire-40-a, fire-40-b, fire-40-c
 
 Recognised, but not supported by the CLI:
   ice-24-d, ice-24-e, ice-24-f, ice-24-g, ice-24-i, ice-24-j, ice-24-usb-h, ice-28-a
