@@ -18,6 +18,7 @@ mod dev;
 use iced::widget::{button, column, container, pick_list, row, rule, text};
 use iced::{Alignment, Element, Font, Length, Subscription, Task, window};
 
+use studiov2_generated as generated;
 use studiov2_log_viewer::screen as logs;
 use studiov2_shared::{Device, Shared, device, style};
 use studiov2_slot_builder as builder;
@@ -50,6 +51,8 @@ pub enum Showing {
     Builder,
     /// The log and console panes.
     Logs,
+    /// A pane per CLI command, generated from a description of them.
+    Commands,
 }
 
 /// A device the picker offers, or none.
@@ -79,6 +82,8 @@ pub enum Message {
     Builder(builder::Message),
     /// A message for the log screen.
     Logs(logs::Message),
+    /// A message for the generated command screen.
+    Commands(generated::Message),
     /// A development screenshot arrived.  See [`dev`].
     Shot(window::Screenshot),
 }
@@ -95,6 +100,8 @@ struct Shell {
     builder: builder::Screen,
     /// The log and console panes.
     logs: logs::Screen,
+    /// The generated command panes.
+    commands: generated::Screen,
     /// The log revision the shell last told the screens about.
     log_revision: u64,
 }
@@ -111,7 +118,16 @@ impl Shell {
         };
 
         let (builder, builder_task) = builder::Screen::boot(&mut shared);
-        let (logs, logs_task) = logs::Screen::boot(logs::Options::default(), &mut shared);
+        // The synthetic source stands in for a device, and the shell has no
+        // device attached at boot, so it starts paused.  On its own the log
+        // viewer starts it, because measuring it is what that binary is for.
+        // The Stream button turns it on here.
+        let logs_options = logs::Options {
+            streaming: false,
+            ..logs::Options::default()
+        };
+        let (logs, logs_task) = logs::Screen::boot(logs_options, &mut shared);
+        let (commands, commands_task) = generated::Screen::boot(&mut shared);
 
         let devices = std::iter::once(DeviceChoice(None))
             .chain(
@@ -129,13 +145,15 @@ impl Shell {
             showing: Showing::Builder,
             builder,
             logs,
+            commands,
             log_revision,
         };
 
         let mut start = window::latest()
             .and_then(window::gain_focus)
             .chain(builder_task.map(Message::Builder))
-            .chain(logs_task.map(Message::Logs));
+            .chain(logs_task.map(Message::Logs))
+            .chain(commands_task.map(Message::Commands));
 
         if dev::shot_path().is_some() {
             start = start.chain(dev::capture());
@@ -162,6 +180,11 @@ impl Shell {
                         self.logs
                             .update(logs::Message::DeviceChanged, &mut self.shared)
                             .map(Message::Logs),
+                    )
+                    .chain(
+                        self.commands
+                            .update(generated::Message::DeviceChanged, &mut self.shared)
+                            .map(Message::Commands),
                     );
                 self.spread(task)
             }
@@ -179,6 +202,14 @@ impl Shell {
                     .logs
                     .update(message, &mut self.shared)
                     .map(Message::Logs);
+                self.spread(task)
+            }
+
+            Message::Commands(message) => {
+                let task = self
+                    .commands
+                    .update(message, &mut self.shared)
+                    .map(Message::Commands);
                 self.spread(task)
             }
 
@@ -218,6 +249,11 @@ impl Shell {
                 .update(logs::Message::LogGrew, &mut self.shared)
                 .map(Message::Logs),
         )
+        .chain(
+            self.commands
+                .update(generated::Message::LogGrew, &mut self.shared)
+                .map(Message::Commands),
+        )
     }
 
     /// Draws the chrome, and whichever screen is showing inside it.
@@ -225,6 +261,7 @@ impl Shell {
         let body = match self.showing {
             Showing::Builder => self.builder.view(&self.shared).map(Message::Builder),
             Showing::Logs => self.logs.view(&self.shared).map(Message::Logs),
+            Showing::Commands => self.commands.view(&self.shared).map(Message::Commands),
         };
 
         column![
@@ -249,6 +286,7 @@ impl Shell {
             row![
                 tab("Builder", Showing::Builder, self.showing),
                 tab("Logs", Showing::Logs, self.showing),
+                tab("Commands", Showing::Commands, self.showing),
                 iced::widget::Space::new().width(Length::Fill),
                 text(image).size(style::NOTE).style(style::dim),
                 pick_list(

@@ -24,7 +24,7 @@
 //! scroll offset stays valid across a window move — which is what stops the
 //! view jumping when the window slides.
 //!
-//! # The three things that had to be worked around
+//! # The four things that had to be worked around
 //!
 //! 1. **The editor eats the wheel.** `text_editor` captures every
 //!    `WheelScrolled` whose cursor is over it, whether or not it has anything
@@ -45,6 +45,11 @@
 //! 3. **`Content::move_to` cannot clear a selection.** It sets one when given
 //!    `Some` and leaves the old one alone when given `None`, so clearing is
 //!    done by setting a zero-length selection at the caret.
+//! 4. **`Content` has no append and no trim**, so a window that slides forward
+//!    over lines the widget already holds pastes the arriving lines at the end
+//!    and deletes the departing ones from the top.  Handing the widget a fresh
+//!    buffer instead would re-shape every line that had not moved, twice over,
+//!    on every batch of lines the device sent.
 //!
 //! # What is not worked around
 //!
@@ -59,7 +64,7 @@ use std::ops::Range;
 use std::sync::Arc;
 use std::time::Instant;
 
-use iced::widget::text_editor::{Action, Content, Cursor, Motion, Position};
+use iced::widget::text_editor::{Action, Content, Cursor, Edit, Motion, Position};
 
 use crate::store::{Pos, Store, StoreError};
 
@@ -73,12 +78,13 @@ pub const LINE_H: f32 = 16.0;
 
 /// How many lines the window holds unless told otherwise.
 ///
-/// Rebuilding the window costs about 35 microseconds a line — see
-/// [`Timings::shape_us`] — so this is the size of the stall every window move
-/// puts on the update thread, and it is chosen to fit inside a frame.  A
-/// larger window moves less often but stalls harder each time, and measuring
-/// 60, 120, 400 and 1200 over a million lines found the total work rising with
-/// the window as well.
+/// Putting a line into the widget costs about 35 microseconds, so this is the
+/// size of the stall a jump puts on the update thread — a jump rebuilds the
+/// whole window, and it is chosen to fit inside a frame.  A larger window
+/// moves less often but stalls harder each time, and measuring 60, 120, 400
+/// and 1200 over a million lines found the total work rising with the window
+/// as well.  A live tail is not what sets it: that slides, and pays for the
+/// lines arriving alone.
 pub const WINDOW_DEFAULT: usize = 120;
 
 /// The smallest window, as a multiple of what is on screen.
@@ -128,26 +134,31 @@ pub enum ScrollRequest {
 /// What the last window move cost.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Timings {
-    /// Microseconds the last window rebuild took, reading included.
+    /// Microseconds the last window move took, reading included.
     pub rebuild_us: u128,
     /// Microseconds of that spent reading the store.
     pub read_us: u128,
-    /// Microseconds of that spent in `Content::with_text`.
+    /// Microseconds of that spent putting the new lines into the widget.
     ///
-    /// This is where a window move's time goes.  `Content::with_text` builds a
-    /// cosmic-text buffer and, because a fresh buffer has no size set, shapes
-    /// every line of it — at `Shaping::Advanced` and at a placeholder font
-    /// size of 1.0, which the widget then throws away and re-shapes at the
-    /// real size on the next draw.  iced offers no way to hand an existing
-    /// `Content` a new body, so the double shaping cannot be avoided.
+    /// This is where a window move's time goes, because putting a line into
+    /// the widget means shaping it at `Shaping::Advanced`.  A slide shapes the
+    /// lines arriving and no others.  A rebuild shapes the whole window twice
+    /// over, once at the placeholder size a fresh buffer carries and once at
+    /// the real size, so a move that can slide costs a fraction of one that
+    /// cannot.
     pub shape_us: u128,
-    /// Microseconds of that spent letting go of the window it replaced.
+    /// Microseconds of that spent getting rid of the lines leaving the window.
+    ///
+    /// Letting go of the replaced buffer, for a rebuild, or deleting the lines
+    /// that fell off the top, for a slide.
     pub drop_us: u128,
-    /// Lines the last rebuild read out of the store.
+    /// Lines the last move read out of the store.
     pub rebuild_lines: usize,
-    /// Window rebuilds since the pane was created.
+    /// Window moves since the pane was created.
     pub rebuilds: u64,
-    /// Microseconds spent rebuilding since the pane was created.
+    /// Whether the last window move was a rebuild rather than a slide.
+    pub rebuilt: bool,
+    /// Microseconds spent moving the window since the pane was created.
     pub total_rebuild_us: u128,
     /// Microseconds the last copy took, and how many bytes it produced.
     pub copy_us: u128,
@@ -454,15 +465,64 @@ impl LogView {
         self.set_window(store, self.wanted_start(store), wanted_len)
     }
 
-    /// Rebuilds the window from the store and puts the selection back.
+    /// Moves the window to `start..start + len` and puts the selection back.
+    ///
+    /// A move forward that keeps some of what the widget already holds slides
+    /// — the lines arriving are pasted on and the lines leaving are deleted —
+    /// and every line that stays keeps the shaped layout it already has.  That
+    /// is the difference between a live tail costing a fifth of a core and
+    /// costing half of one, because a rebuild pays for the whole window twice
+    /// on every batch of lines however few arrived.  A jump rebuilds, and so
+    /// does a move backwards: reading history is a moment's work and a live
+    /// tail is every tick of the session.
     fn set_window(&mut self, store: &Store, start: usize, len: usize) -> Result<(), StoreError> {
         let total = store.len();
         let len = len.min(total);
         let start = start.min(total - len);
 
         let started = Instant::now();
+        let old_start = self.window_start;
+        let old_end = old_start + self.window_len;
+
+        let slides =
+            self.window_len > 0 && start >= old_start && start <= old_end && start + len >= old_end;
+
+        if slides {
+            self.slide_window(store, start, len)?;
+        } else {
+            self.rebuild_window(store, start, len)?;
+        }
+
+        self.timings.rebuilt = !slides;
+        self.window_start = start;
+        self.window_len = len;
+        self.apply_selection();
+
+        self.timings.rebuild_us = started.elapsed().as_micros();
+        self.timings.rebuilds += 1;
+        self.timings.total_rebuild_us += self.timings.rebuild_us;
+
+        Ok(())
+    }
+
+    /// Replaces the whole window with a fresh buffer.
+    ///
+    /// The expensive path, and unavoidably so.  `Content::with_text` builds a
+    /// cosmic-text buffer and, because a fresh buffer has no size set, shapes
+    /// every line of it — at `Shaping::Advanced` and at a placeholder font
+    /// size of 1.0, which the widget then throws away and re-shapes at the
+    /// real size on its next layout.  iced offers no way to hand an existing
+    /// `Content` a new body, so a jump pays for the window twice.
+    fn rebuild_window(
+        &mut self,
+        store: &Store,
+        start: usize,
+        len: usize,
+    ) -> Result<(), StoreError> {
+        let reading = Instant::now();
         let text = store.text(start..start + len)?;
-        self.timings.read_us = started.elapsed().as_micros();
+        self.timings.read_us = reading.elapsed().as_micros();
+        self.timings.rebuild_lines = len;
 
         let shaping = Instant::now();
         let previous = std::mem::replace(&mut self.content, Content::with_text(&text));
@@ -475,14 +535,45 @@ impl LogView {
         drop(previous);
         self.timings.drop_us = dropping.elapsed().as_micros();
 
-        self.window_start = start;
-        self.window_len = len;
-        self.apply_selection();
+        Ok(())
+    }
 
-        self.timings.rebuild_us = started.elapsed().as_micros();
-        self.timings.rebuild_lines = len;
-        self.timings.rebuilds += 1;
-        self.timings.total_rebuild_us += self.timings.rebuild_us;
+    /// Slides the window forward over lines the widget already holds.
+    ///
+    /// iced gives a `Content` no append and no trim, so both are worked around
+    /// the way [`crate::logpane`] does: the arriving lines go in as a paste at
+    /// the end, and the departing ones are selected from the top and deleted.
+    /// The caller has already checked that the two ranges overlap.
+    fn slide_window(&mut self, store: &Store, start: usize, len: usize) -> Result<(), StoreError> {
+        let old_start = self.window_start;
+        let old_end = old_start + self.window_len;
+
+        let reading = Instant::now();
+        let arriving = store.text(old_end..start + len)?;
+        self.timings.read_us = reading.elapsed().as_micros();
+        self.timings.rebuild_lines = start + len - old_end;
+
+        let shaping = Instant::now();
+        if !arriving.is_empty() {
+            self.content.perform(Action::Move(Motion::DocumentEnd));
+            self.content
+                .perform(Action::Edit(Edit::Paste(Arc::new(format!("\n{arriving}")))));
+        }
+        self.timings.shape_us = shaping.elapsed().as_micros();
+
+        let leaving = start - old_start;
+        let dropping = Instant::now();
+        if leaving > 0 {
+            self.content.move_to(Cursor {
+                position: Position { line: 0, column: 0 },
+                selection: Some(Position {
+                    line: leaving,
+                    column: 0,
+                }),
+            });
+            self.content.perform(Action::Edit(Edit::Delete));
+        }
+        self.timings.drop_us = dropping.elapsed().as_micros();
 
         Ok(())
     }
@@ -1000,6 +1091,47 @@ mod tests {
         assert_eq!(view.top_line(), top, "the view must not move");
         assert_eq!(view.total_lines(&store), 11_000, "the log must still grow");
         assert_eq!(view.hold(), Some(HoldReason::ScrolledUp));
+    }
+
+    /// The lines the widget holds, in order.
+    fn widget_lines(view: &LogView) -> Vec<String> {
+        (0..view.content.line_count())
+            .filter_map(|index| view.content.line(index))
+            .map(|line| line.text.into_owned())
+            .collect()
+    }
+
+    /// The lines the store holds over the widget's window.
+    fn store_lines(view: &LogView, store: &Store) -> Vec<String> {
+        store
+            .text(view.window())
+            .expect("the store to serve the window")
+            .lines()
+            .map(str::to_owned)
+            .collect()
+    }
+
+    #[test]
+    fn a_slid_window_holds_what_a_rebuilt_one_would() {
+        let (mut view, mut store) = filled(400, 120);
+
+        // A tail that slides, a jump that rebuilds, a scroll forward that
+        // slides again: after each the widget must hold its window exactly.
+        for batch in 1..40usize {
+            let lines: Vec<Arc<str>> = (0..batch)
+                .map(|i| Arc::from(format!("tail {batch:03}-{i:03}")))
+                .collect();
+            view.append(&mut store, &lines).expect("an append");
+            assert_eq!(widget_lines(&view), store_lines(&view, &store), "{batch}");
+        }
+
+        view.jump_to_line(&store, 200).expect("a jump");
+        assert_eq!(widget_lines(&view), store_lines(&view, &store));
+        assert!(view.timings().rebuilt, "a jump must rebuild");
+
+        view.jump_to_line(&store, 260).expect("a short scroll");
+        assert_eq!(widget_lines(&view), store_lines(&view, &store));
+        assert!(!view.timings().rebuilt, "an overlapping move must slide");
     }
 
     #[test]

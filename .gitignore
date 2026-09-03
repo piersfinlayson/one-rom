@@ -12,6 +12,14 @@ build-test/
 plugins/*/*/build-host/
 firmware/build*
 build/
+
+# Three crates keep their build script in a build/ directory, so the rule
+# above hides their source. Those files are tracked, which is why nobody has
+# noticed - an ignore rule does not reach a tracked file. A new one added
+# beside them would be skipped in silence.
+!rust/config/build/
+!rust/metadata/build/
+!prototypes/studiov2/commands/build/
 builds/
 test/build
 hw-config/user/*

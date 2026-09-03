@@ -1,0 +1,17 @@
+[package]
+name = "studiov2-commands"
+version = "0.1.0"
+edition = "2024"
+publish = false
+build = "build/main.rs"
+
+[dependencies]
+
+[build-dependencies]
+syn = { version = "2", features = ["full", "parsing", "printing", "extra-traits"] }
+proc-macro2 = "1"
+quote = "1"
+# The firmware constants an option's help quotes.  The CLI reads the same list
+# in its own build.rs, so a period this describes is the period the firmware
+# was built with.
+onerom-metadata = { path = "../../../rust/metadata" }

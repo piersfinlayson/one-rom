@@ -9,5 +9,6 @@ iced = { workspace = true, features = ["canvas", "tokio", "advanced"] }
 studiov2-shared = { workspace = true }
 studiov2-slot-builder = { workspace = true }
 studiov2-log-viewer = { workspace = true }
+studiov2-generated = { workspace = true }
 png = { workspace = true }
 tokio = { version = "1", features = ["time", "rt"] }

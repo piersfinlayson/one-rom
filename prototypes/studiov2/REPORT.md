@@ -262,10 +262,12 @@ capability lands once.
 ## P. Generating the GUI from the CLI
 
 **P1. Across all 44 shipping commands: 27% generate well, 61% generate badly,
-11% cannot.** clap does not carry what a good pane needs — of 176 options, four have a value set clap can see, and `--board` is a
-bare string on fourteen commands. Colour, pin, chip type and firmware version
-all sit behind opaque parsers, and the legal pin set depends on the connected
-board.
+11% cannot.** Judged, not measured. Section V built them and counted 49 leaf
+commands and 173 options, and V1 has the real split. clap does not carry what a
+good pane needs — of the options, five have a value set clap can see, and
+`--board` is a bare string on fourteen commands. Colour, pin, chip type and
+firmware version all sit behind opaque parsers, and the legal pin set depends on
+the connected board.
 
 The finding that decides this: **generation is strongest where a GUI adds least,
 and weakest where it adds most.** It handles file-in, file-out image conversion
@@ -336,48 +338,201 @@ log stream rather than a generated one, and what a device in the wrong state
 does to the screen. It fails if the async plumbing pushes the design back
 towards Studio's shape.
 
-**U3. Generated panes across the whole CLI.** The value of generation is that a
-new CLI capability reaches the GUI with nobody writing a pane. A handful of
-commands cannot test that. Point the generator at the entire clap tree, produce
-a pane for all 44 commands, and look at what comes out.
+**U3. Generated panes across the whole CLI. Built — section V has the answer.**
+It asked for the real split rather than the judged one, what the generator costs
+to write, and what an annotation file has to carry measured against the whole
+surface. All three came back, along with a fourth thing nobody asked for: what it
+would take to make a generated pane actually run its command.
 
-That gives what a paper classification cannot. The real split rather than the
-judged one, what the generator costs to write, what the annotation file has to
-carry measured against the whole surface, and whether generated panes sit beside
-hand-built ones without looking out of place. It also puts the twelve LED and
-RGB commands on screen as twelve entries (S3), which is easier to judge in the
-flesh than in the abstract.
+**Order.** U2 does not need U1 — the device surface it wants is already in the
+CLI library. U1 is the first piece of product work rather than a dependency.
 
-Three are worth looking at hardest. `image convert` has the only real value sets
-in the CLI and should come out well. `control rgb on` wants a colour swatch and
-a brightness slider and should come out badly. `inspect gpio` is the case that
-decides it, with real fields, a real table, and a pin picker that depends on the
-connected board. If that one is usable, generation is worth more than the 27% on
-paper.
+---
 
-U3 doubles as the test T9 asks for, since a generated pane would be the third
-screen in the shell.
+## V. Generated panes across the whole CLI
 
-**Order.** U2 and U3 are independent and either can start now. Neither needs U1.
-The device surface U2 wants is already in the CLI library, and the commands U3
-generates well are already library-backed. U1 is the first piece of product work
-rather than a dependency for the other two.
+The third prototype, answering U3. Two crates and a third tab in the shell.
+`commands/`'s build script reads `rust/cli/src/args/` with `syn` and emits plain
+data — 49 leaf commands, 167 command options, 6 globals — as `no_std` with
+`alloc`, no clap and no iced, so a browser through WASM could read the same
+description. `generated/` is an Iced screen that draws a pane from that data and
+nothing else. **No line of GUI code names a command.**
+
+```
+cargo run -p studiov2-generated   # the panes alone, --list names them
+cargo run -p studiov2-shell       # beside the builder and the log panes
+```
+
+fmt, clippy, tests and docs are all green. 103 tests across the workspace, 78 of
+them here.
+
+**V1. All 49 panes generate, and 45 of them have no field a user must type into
+blind.** A command added to the CLI gets a pane on the next build with nobody
+writing GUI code. 62 of the 173 options carry a value set, and every one of them
+was a bare box before: 28 files and directories, 14 boards, 5 firmware versions,
+5 colours, 4 pins, 3 chip types, a plugin type, a serial and a CLI release. 15
+options stay a bare box, 6 of those genuinely free text — names and
+descriptions. The four panes with a blind field are `program`, `firmware build`,
+`image convert` and `self download`.
+
+**V2. The annotation costs 38 lines, against about 330 lines of clap
+definition.** P2c expected the opposite. Two tables, neither holding a value —
+both name the crate to ask. 10 lines derive 36 options from the CLI's own
+placeholders, and 28 lines name the other 26 one at a time.
+
+`BOARD`, `COLOUR`, `PIN` and `CHIP` already say what the values are, because the
+CLI author wrote the placeholder for a user. 25 of the 26 hand-named options are
+`FILE`, the one placeholder covering two different things — a file to read has
+to exist and a file to write must not. Only 5 of the 173 options have a value
+set clap itself advertises, which is P1's point, and the placeholder recovers
+most of what P1 thought was lost.
+
+**V3. clap carries argument relationships, which was not expected.** 4 commands
+declare an `ArgGroup`, and 16 say something of the kind once `conflicts_with`
+and `requires` are counted, across 92 conflict names and 9 requirements. It is
+the only grouping written down anywhere. `control erase` is the case to look at:
+exactly one of `--all`, `--offset` and `--address` is required, `--offset` needs
+`--length`, and `--stopped` and `--running` exclude each other. The pane draws
+that as two labelled groups, and enforces it.
+
+**V4. The three commands U3 named.**
+
+| command | expected | came out |
+| --- | --- | --- |
+| `image convert` | well | two real value sets, two file pickers, runs for real — `--load-address` is the bare box |
+| `control rgb on` | badly | swatch yes, brightness slider no, because no bound is written down |
+| `inspect gpio` | decides it | pin, board and flag all real. The table it prints is guessed |
+
+The pattern across all three: the **input** half of a pane generates well, and
+the **output** half is where the description runs out.
+
+**V5. Nothing outside the CLI binary can run a CLI command.** Four commands run
+for real — the three under `image`, plus `firmware chips` — and they are **454
+lines of re-implementation inside the GUI crate** calling `onerom-gen` and
+`onerom-config`, not calls into the CLI. Every `cmd_*` lives in the binary
+(`rust/cli/src/image.rs` and its siblings) and the dispatch is one match from
+`rust/cli/src/main.rs:59` onwards. `rust/cli/src/lib/` holds device primitives,
+not commands.
+
+That is a limit of the prototype rather than of the approach. It cannot edit the
+CLI, so it re-implemented four commands and found them by matching on the
+options a command takes, to avoid writing a command's name down. Studio v2 moves
+that dispatch and the `cmd_*` functions into `onerom-cli`'s library behind one
+entry point, and a pane hands over the command it already holds — no per-command
+GUI code, no name, all 49. It is the same lift as J and belongs with it.
+
+**V6. What the description does not carry**, found by building the panes:
+
+- **A bound on a number.** 22 of the 46 numeric options are milliseconds and 6 a
+  percentage, so none of them can be a slider. The bounds exist as named
+  firmware constants.
+- **Which option belongs beside which.** V3's relationships cover the
+  constraint. Nothing covers the layout.
+- **Whether a command needs a device.** `requires_device()` is a trait
+  implementation on the parsed arguments, invisible to anything walking the
+  definitions.
+- **What a command prints, and the prose it prints around it.** `firmware chips`
+  prints a trailing note and a plugin-type list, and the pane drops both without
+  a word. `stub::shape` guesses table, tree or drawing from the first and last
+  word of a command's path, which is the one placeholder that reads command
+  words at all.
+- **That one option scopes another.** A chip-type list could narrow to the board
+  chosen in `--board`.
+
+**V7. Costs and limits.**
+
+- **`program` (28 options) and `firmware build` (18) are the worst panes.**
+  `program --slot` takes `file=…,type=23128,cs1=active-low` — a language inside
+  one option — and will not generate however much the description carries. The
+  slot builder is the hand-written answer to the same command, and the shell
+  shows both.
+- **A pane per leaf command is not obviously right**, which is S3 in the flesh.
+  Six commands are a title and a Run button. `control rgb` is seven panes, four
+  of them with the same four options.
+- **Faked, and the screen says so.** Browse fills in a sample path rather than
+  opening a dialog, the version lists are written out rather than fetched, and
+  the device list is invented. 45 panes are stubbed, and every pane says which
+  it is.
+
+**V8. A pane is generated or hand-written, never both.** A generated pane is a
+fair starting point for a hand-written one. Editing it moves that command onto
+the list P3 already needs — the commands a hand-written screen declares it
+covers — and it stops being generated.
+
+That answers the first half of P4, the escape hatch that quietly stops the
+generator being the source of truth. There is no half-generated pane to patch,
+so an exception has to be a whole pane and is visible as one. P4's other half, a
+description contorted to suit a GUI, is untouched by this, and V6 is where it
+would show.
+
+The cost is that a hand-written pane stops picking up a new CLI option for free,
+where a generated one has it on the next build. P3's gate is what catches that.
+
+**V9. A command should return its output rather than print it.** V6 records that
+the description says nothing about what a command prints, so `stub::shape`
+guesses from the words in a command's path. This is the answer to that bullet.
+
+Today a `cmd_*` writes to stdout, so what it produced exists only as text on a
+terminal. Return a value instead, and the CLI binary formats it for a terminal
+while a GUI renders the same value its own way. The prototype's own model took
+real output without changing:
+
+```rust
+enum Output {
+    Line(String),
+    Table { headers, body },   // body is flat rows, or rows under headings
+    Drawing(String),           // fixed-pitch, a socket or a jumper header
+    Tree(Node),                // a parsed firmware image
+    Nothing,
+}
+```
+
+Those five carried the four commands V5 runs for real. They do not carry the
+prose a command prints around a table — `firmware chips` prints a trailing note
+and a plugin-type list, and both are lost.
+
+It is not annotation. It falls out of the signature, `cmd_chips(...) ->
+Result<Output, Error>`, so the compiler holds it to what the command does. It is
+the same lift V5 describes rather than work beside it, because a `cmd_*` cannot
+move into the library while it prints and prompts. The CLI gains on its own too:
+every command could answer in JSON, where `inspect telemetry` is the only one
+that does today.
+
+Two of the design questions below moved during this work. **S2** was answered by
+running these panes in the shell, and **S4** was found here.
 
 ---
 
 ## Design questions found, not answered
 
-Recorded so they are not lost. None needs deciding to start.
+Recorded so they are not lost. P2c and S2 have since been answered and say
+where. The rest still stand.
 
-- **P2c** — whether to generate GUI panes from the CLI's clap definitions plus a
-  small annotation file. It pays for about a dozen commands out of 44.
+- **P2c** — answered by V2. The annotation is 38 lines against about 330 lines
+  of clap definition, and it covers the whole CLI rather than the dozen commands
+  this expected. Most of it derives from the placeholders the CLI already
+  writes, so the file names a source and never carries a value.
 - **P3** — whether the CI gate is satisfied per command or per option. Per
   command lets a pane expose a command while missing half its flags.
 - **S1** — the ROM-type sort order belongs in Rust, reachable from the apps and
   from WASM, rather than in `js/site/utils.js`. It is the visible end of a wider
   question: what else in that JS is logic that should sit in Rust.
-- **S2** — the log pane's window rebuild costs about 7 ms of work Iced then
-  repeats. Appending rather than rebuilding removes most of it, and so would a
-  small addition to Iced itself.
+- **S2** — answered, and it was worse than stated. The log pane rebuilt its
+  whole 120-line window on every tick, and the slot builder its 200-line tail,
+  each shaping every line twice. That cost the same at 20 lines a second as at
+  5,000, and left no headroom for macOS App Nap, which demotes a background
+  window to an efficiency core after about 30 seconds and runs it four times
+  slower. The shell pinned a core and stopped drawing. Sliding the window
+  instead of rebuilding it holds 22% where it used to pin at 99%, and the cost
+  now tracks the lines arriving.
 - **S3** — whether the twelve LED and RGB commands become two panes with a mode
-  selector. They are 27% of the CLI's leaves, so the answer generalises.
+  selector. They are twelve of the CLI's 49 leaves, so the answer generalises.
+  V7 has them on screen.
+- **S4** — 11 of the CLI's 173 help texts name another option in CLI spelling,
+  e.g. `--length` reads "paired with --offset or --address". A generated pane
+  labels its controls `Offset` and `Address`, so the pane shows two spellings
+  of the same thing. Closing it means rewording those doc comments in
+  `rust/cli/src/args/`, which changes what `--help` prints — and a CLI reader
+  may want the dashes. Not all 11 are the same case: one quotes a whole command
+  line a user would type, where the spelling is right. Production needs this
+  settled. The U3 prototype carries it as a known rough edge.

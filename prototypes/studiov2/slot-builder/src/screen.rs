@@ -9,6 +9,7 @@
 //! [`Shared`], because a programmer screen and an analysis screen want the
 //! same three things and there can only be one of each.
 
+use std::ops::Range;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -147,10 +148,12 @@ pub struct Screen {
     ///
     /// A cache of [`Shared::log`] and not a second copy of it: nothing is
     /// ever written here that was not written there first, and
-    /// [`Screen::refresh_log`] rebuilds it whenever the log moves on.
+    /// [`Screen::refresh_log`] brings it up to date whenever the log moves on.
     pub log_tail: text_editor::Content,
     /// The log revision `log_tail` was built from.
     log_revision: u64,
+    /// The lines of the shared log `log_tail` holds.
+    tail: Range<usize>,
 }
 
 impl Screen {
@@ -193,6 +196,7 @@ impl Screen {
             help_open: true,
             log_tail: text_editor::Content::new(),
             log_revision: u64::MAX,
+            tail: 0..0,
         };
         app.version = app.versions.last().copied();
         app.adopt_device(shared);
@@ -300,21 +304,71 @@ impl Screen {
         self.refresh_log(&shared.log);
     }
 
-    /// Rebuilds the tail pane if the shared log has moved on.
+    /// Brings the tail pane up to date if the shared log has moved on.
     ///
     /// Cheap when nothing changed, which is what lets the shell call it after
     /// every message without thinking about who wrote what.
+    ///
+    /// Where the pane already holds part of what it now needs, the new lines
+    /// are pasted on and the ones that fell off the top are deleted, rather
+    /// than the widget being handed a fresh buffer.  A fresh buffer re-shapes
+    /// every line the pane holds, and a talking device would have it re-shaping
+    /// two hundred of them twenty times a second to show ten new ones.
     pub fn refresh_log(&mut self, log: &Store) {
         if self.log_revision == log.revision() {
             return;
         }
         self.log_revision = log.revision();
 
-        let start = log.len().saturating_sub(TAIL_LINES);
-        match log.text(start..log.len()) {
-            Ok(text) => self.log_tail = text_editor::Content::with_text(&text),
-            Err(error) => eprintln!("log: {error}"),
+        let wanted = log.len().saturating_sub(TAIL_LINES)..log.len();
+        let slides = !self.tail.is_empty()
+            && wanted.start >= self.tail.start
+            && wanted.start <= self.tail.end
+            && wanted.end >= self.tail.end;
+
+        let text = match log.text(if slides {
+            self.tail.end..wanted.end
+        } else {
+            wanted.clone()
+        }) {
+            Ok(text) => text,
+            Err(error) => {
+                eprintln!("log: {error}");
+                return;
+            }
+        };
+
+        if !slides {
+            self.log_tail = text_editor::Content::with_text(&text);
+            self.tail = wanted;
+            return;
         }
+
+        if !text.is_empty() {
+            self.log_tail
+                .perform(text_editor::Action::Move(text_editor::Motion::DocumentEnd));
+            self.log_tail
+                .perform(text_editor::Action::Edit(text_editor::Edit::Paste(
+                    Arc::new(format!("\n{text}")),
+                )));
+        }
+
+        let leaving = wanted.start - self.tail.start;
+        if leaving > 0 {
+            // iced gives a `Content` no trim, so the departing lines are
+            // selected from the top and deleted.
+            self.log_tail.move_to(text_editor::Cursor {
+                position: text_editor::Position { line: 0, column: 0 },
+                selection: Some(text_editor::Position {
+                    line: leaving,
+                    column: 0,
+                }),
+            });
+            self.log_tail
+                .perform(text_editor::Action::Edit(text_editor::Edit::Delete));
+        }
+
+        self.tail = wanted;
     }
 
     pub fn update(&mut self, message: Message, shared: &mut Shared) -> Task<Message> {

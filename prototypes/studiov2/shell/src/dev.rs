@@ -5,8 +5,9 @@
 //! Driving the shell without a screen-recording grant.
 //!
 //! `ONEROM_SHELL_SHOT` is a path to write a PNG to and `ONEROM_SHELL_SETUP` is
-//! a comma-separated script: `logs` shows the log screen, `device:SERIAL`
-//! picks a device, `stream` lets the log source run for a second first.
+//! a comma-separated script: `logs` shows the log screen, `commands` shows the
+//! generated command panes, `device:SERIAL` picks a device, `stream` lets the
+//! log source run for a second first.
 
 use std::path::PathBuf;
 
@@ -37,6 +38,7 @@ pub fn capture() -> iced::Task<Message> {
         let parts: Vec<&str> = step.split(':').collect();
         task = match parts.as_slice() {
             ["logs"] => task.chain(iced::Task::done(Message::Show(Showing::Logs))),
+            ["commands"] => task.chain(iced::Task::done(Message::Show(Showing::Commands))),
             ["device", serial] => {
                 let device = studiov2_shared::device::attached()
                     .into_iter()
@@ -45,7 +47,12 @@ pub fn capture() -> iced::Task<Message> {
                     device,
                 ))))
             }
-            ["stream"] => task.chain(settle(1_200)),
+            ["stream"] => task
+                .chain(iced::Task::done(Message::Show(Showing::Logs)))
+                .chain(iced::Task::done(Message::Logs(
+                    studiov2_log_viewer::screen::Message::StreamToggled,
+                )))
+                .chain(settle(1_200)),
             _ => {
                 eprintln!("unrecognised setup step: {step}");
                 task

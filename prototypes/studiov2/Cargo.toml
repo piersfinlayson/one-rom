@@ -3,13 +3,15 @@
 # with the rest of the tree, and depend on it only by path.
 [workspace]
 resolver = "3"
-members = ["shared", "slot-builder", "log-viewer", "shell"]
+members = ["shared", "commands", "generated", "slot-builder", "log-viewer", "shell"]
 
 [workspace.dependencies]
 iced = "0.14"
 thiserror = "2"
 png = "0.17"
 studiov2-shared = { path = "shared" }
+studiov2-commands = { path = "commands" }
+studiov2-generated = { path = "generated" }
 studiov2-slot-builder = { path = "slot-builder" }
 studiov2-log-viewer = { path = "log-viewer" }
 

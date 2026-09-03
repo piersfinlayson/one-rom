@@ -138,13 +138,20 @@ impl Store {
 
     /// Creates a store backed by a temporary file, removed on drop.
     pub fn temporary() -> Result<Self, StoreError> {
+        // The clock is not fine enough to separate two stores opened in the
+        // same instant, and two tests in one process do exactly that.  Both
+        // would name the same file, and `open` truncates, so each would serve
+        // the other's lines.  The counter is what makes the name unique.
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
         let name = format!(
-            "onerom-log-viewer-{}-{}.log",
+            "onerom-log-viewer-{}-{}-{}.log",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_nanos())
-                .unwrap_or_default()
+                .unwrap_or_default(),
+            NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
         );
 
         Self::open(std::env::temp_dir().join(name), false)

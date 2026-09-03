@@ -155,6 +155,22 @@ impl Harness {
         ))]);
     }
 
+    /// Clicks twice where the cursor is, as one burst of events.
+    ///
+    /// Iced decides a double click from the wall clock: two presses more than
+    /// 300 ms apart are two single clicks, whatever the events say.  Every
+    /// `feed` builds and lays out the interface afresh, so the pair has to
+    /// reach the widget inside a single update — which is also how a real
+    /// double click arrives, as several events in one frame's batch.
+    fn double_click(&mut self) {
+        self.feed(&[
+            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+            Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)),
+            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+            Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)),
+        ]);
+    }
+
     /// Moves the mouse to a window position, reporting the move.
     fn move_to(&mut self, x: f32, y: f32) {
         self.point_at(x, y);
@@ -273,15 +289,14 @@ fn double_click_selects_a_word() {
     let advance = probe / column as f32;
     println!("measured glyph advance: {advance:.2} px");
 
-    // Aim at the middle of `serve`, which is unambiguously one word.
+    // Aim at the middle of `serve`, which is unambiguously one word.  The
+    // probe click above is far enough away in x that it cannot be read as the
+    // first half of this double click.
     let target = LINES[0].find("serve").expect("line 0 contains `serve`");
     let x = PADDING + (target as f32 + 2.5) * advance;
 
     harness.point_at(x, Harness::line_y(0));
-    harness.press();
-    harness.release();
-    harness.press();
-    harness.release();
+    harness.double_click();
 
     let selection = harness
         .pane

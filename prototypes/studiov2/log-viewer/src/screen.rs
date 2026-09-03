@@ -57,6 +57,9 @@ const FIND_INPUT: &str = "find-input";
 /// ones — which is also how a real device's USB reads arrive.
 const STREAM_INTERVAL: Duration = Duration::from_millis(50);
 
+/// How often the resident set size is re-read while measuring.
+const RSS_INTERVAL: Duration = Duration::from_secs(1);
+
 /// How often a drag held outside the pane scrolls it.
 const DRAG_SCROLL_INTERVAL: Duration = Duration::from_millis(16);
 
@@ -194,6 +197,8 @@ pub enum Message {
     Rss(Result<u64, Arc<error::RssError>>),
     /// Forget the recorded frame timings.
     ResetFrames,
+    /// Start or stop the frame clock and the memory poll.
+    MeasuringToggled,
 
     /// Write the next `FILL_STEP` lines of a `--fill`.
     FillStep(usize),
@@ -266,6 +271,11 @@ pub struct Screen {
     found_line: Option<usize>,
     /// What is typed in the go-to-line box.
     goto: String,
+    /// Whether the frame clock and the memory poll are running.
+    ///
+    /// Off unless a measurement asked for them.  See [`Self::subscription`]
+    /// for what they cost.
+    measuring: bool,
     /// Rolling frame timings.
     frames: metrics::Frames,
     /// The last resident-set-size reading, in kilobytes.
@@ -329,6 +339,7 @@ impl Screen {
             found: None,
             found_line: None,
             goto: String::new(),
+            measuring: options.probe || !options.bench.is_empty(),
             frames: metrics::Frames::default(),
             rss_kb: None,
             last_generate_us: 0,
@@ -432,11 +443,20 @@ impl Screen {
     }
 
     /// What the app listens to.
+    ///
+    /// The frame clock and the memory poll are the measurement harness, and
+    /// they run only while the screen is measuring.  `window::frames()`
+    /// asks for a callback on every display frame for as long as it is
+    /// subscribed, which redraws the whole window at the refresh rate whether
+    /// or not anything changed — about 40% of a core here, and a screen a
+    /// shell hosts cannot charge that for sitting still.
     pub fn subscription(&self) -> Subscription<Message> {
-        let mut subscriptions = vec![
-            iced::window::frames().map(Message::Frame),
-            iced::time::every(Duration::from_secs(1)).map(|_| Message::PollRss),
-        ];
+        let mut subscriptions = Vec::new();
+
+        if self.measuring {
+            subscriptions.push(iced::window::frames().map(Message::Frame));
+            subscriptions.push(iced::time::every(RSS_INTERVAL).map(|_| Message::PollRss));
+        }
 
         if self.streaming {
             subscriptions.push(iced::time::every(STREAM_INTERVAL).map(|_| Message::StreamTick));
@@ -890,6 +910,17 @@ impl Screen {
                 Task::none()
             }
 
+            Message::MeasuringToggled => {
+                self.measuring = !self.measuring;
+                self.frames.reset();
+                if self.measuring {
+                    // A fresh reading, rather than whatever the last one left
+                    // on screen.
+                    return Task::done(Message::PollRss);
+                }
+                Task::none()
+            }
+
             Message::FillStep(done) => self.fill_step(shared, done),
 
             Message::ProbeStep(index) => self.probe_step(shared, index),
@@ -1133,7 +1164,7 @@ impl Screen {
                 let before = self.rebuilds();
                 let task = self.timed_jump(&shared.log, LogView::jump_to_top);
                 println!(
-                    "jump to top        {:.2} ms, {} window rebuild(s), \
+                    "jump to top        {:.2} ms, {} window move(s), \
                      read {:.2} / build {:.2} / drop {:.2} / total {:.2} ms",
                     self.jump_ms(),
                     self.rebuilds() - before,
@@ -1153,7 +1184,7 @@ impl Screen {
                     view.jump_to_line(store, middle)
                 });
                 println!(
-                    "jump to line {middle:<9}{:.2} ms, {} window rebuild(s)",
+                    "jump to line {middle:<9}{:.2} ms, {} window move(s)",
                     self.jump_ms(),
                     self.rebuilds() - before
                 );
@@ -1165,7 +1196,7 @@ impl Screen {
                 let before = self.rebuilds();
                 let task = self.timed_jump(&shared.log, LogView::jump_to_tail);
                 println!(
-                    "jump to tail       {:.2} ms, {} window rebuild(s)",
+                    "jump to tail       {:.2} ms, {} window move(s)",
                     self.jump_ms(),
                     self.rebuilds() - before
                 );
@@ -1206,7 +1237,7 @@ impl Screen {
 
                 self.report_frames("scrolling, stream running");
                 println!(
-                    "  {rebuilds} window rebuilds in {seconds:.1} s, \
+                    "  {rebuilds} window moves in {seconds:.1} s, \
                      {:.2} ms each, {:.0}% of the update thread",
                     spent / rebuilds.max(1) as f64,
                     100.0 * spent / (seconds * 1000.0),
@@ -1233,7 +1264,7 @@ impl Screen {
 
                 self.report_frames(&format!("live tail at {} lines/s", self.options.rate));
                 println!(
-                    "  {rebuilds} window rebuilds in {seconds:.1} s, \
+                    "  {rebuilds} window moves in {seconds:.1} s, \
                      {:.0}% of the update thread",
                     100.0 * spent / (seconds * 1000.0),
                 );
@@ -1728,8 +1759,9 @@ impl Screen {
             Log::Windowed(view) => {
                 let timings = view.timings();
                 format!(
-                    "window rebuild {:.2} ms ({} lines)   \
+                    "window {} {:.2} ms ({} lines)   \
                      jump {:.2} ms   copy {:.1} ms / {} bytes",
+                    if timings.rebuilt { "rebuild" } else { "slide" },
                     timings.rebuild_us as f64 / 1000.0,
                     timings.rebuild_lines,
                     self.jump_ms(),
@@ -1759,9 +1791,18 @@ impl Screen {
                     self.frames.worst_ms(),
                     self.slowest_update_ms,
                 ),
+                _ if !self.measuring => "frames not measured".to_owned(),
                 _ => "frames —".to_owned(),
             })
             .size(TEXT_SIZE),
+            plain(
+                if self.measuring {
+                    "Stop measuring"
+                } else {
+                    "Measure"
+                },
+                Message::MeasuringToggled,
+            ),
             plain("Reset frames", Message::ResetFrames),
         ]
         .spacing(10)

@@ -212,6 +212,29 @@ impl Harness {
         ))]);
     }
 
+    /// Releases the left mouse button.
+    fn release(&mut self) {
+        self.feed(&[Event::Mouse(mouse::Event::ButtonReleased(
+            mouse::Button::Left,
+        ))]);
+    }
+
+    /// Clicks twice where the cursor is, as one burst of events.
+    ///
+    /// Iced decides a double click from the wall clock: two presses more than
+    /// 300 ms apart are two single clicks, whatever the events say.  Every
+    /// `feed` builds the interface and lays out the whole window afresh, which
+    /// on a busy machine costs more than that, so the pair has to reach the
+    /// widget inside a single update — which is also how a real double click
+    /// arrives, as several events in one frame's batch.
+    fn double_click(&mut self) {
+        self.feed(&[
+            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+            Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)),
+            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+        ]);
+    }
+
     /// Moves the mouse to an editor position, reporting the move.
     fn move_to(&mut self, x: f32, y: f32) {
         self.cursor = mouse::Cursor::Available(Point::new(x, y));
@@ -450,22 +473,17 @@ fn double_click_still_selects_a_word() {
     let line = harness.view.window_start() + 3;
     harness.point_at(200.0, harness.global_y(line));
     harness.press();
-    harness.feed(&[Event::Mouse(mouse::Event::ButtonReleased(
-        mouse::Button::Left,
-    ))]);
+    harness.release();
 
     let column = harness.view.caret().column;
     assert!(column > 0, "the probe click should land past column zero");
     let advance = 200.0 / column as f32;
 
-    // Aim at the middle of `brown`.
+    // Aim at the middle of `brown`.  The probe click above is far enough away
+    // in x that it cannot be read as the first half of this double click.
     let x = ("0000000 the quick ".len() as f32 + 2.5) * advance;
     harness.point_at(x, harness.global_y(line));
-    harness.press();
-    harness.feed(&[Event::Mouse(mouse::Event::ButtonReleased(
-        mouse::Button::Left,
-    ))]);
-    harness.press();
+    harness.double_click();
 
     harness.command("c");
     assert_eq!(harness.clipboard.written().as_deref(), Some("brown"));
