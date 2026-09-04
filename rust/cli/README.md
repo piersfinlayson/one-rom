@@ -14,6 +14,9 @@ With the One ROM [build environment](/INSTALL.md) installed, from this directory
 cargo build --release
 ```
 
+To build the Windows artifacts you need a Windows build machine — see
+[Setting up a Windows build machine](/docs/SETUP-WINDOWS-BUILD-MACHINE.md).
+
 ## Releasing
 
 `onerom-cli` has two release channels:

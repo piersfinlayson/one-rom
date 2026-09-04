@@ -17,7 +17,7 @@ Steps:
     cp manifest/app-schema.json ../../../one-rom-images/studio/app-schema.json
     ```
 
-2. Use the `build-release.sh` script to build Studio for all platforms and architectures.  This requires ssh access to build machines for each platform and clones the current main branch to build from:
+2. Use the `build-release.sh` script to build Studio for all platforms and architectures.  This requires ssh access to build machines for each platform and clones the current main branch to build from.  To set up the Windows machine, see [Setting up a Windows build machine](/docs/SETUP-WINDOWS-BUILD-MACHINE.md):
 
     ```bash
     scripts/build-release.sh pin=WIN_SIGNING_PIN

@@ -12,6 +12,8 @@ Other hosts (Mac, Windows) are possible, and it is recommended to use macOS for 
 
 However, we strongly recommend sticking to a *nix based host (Linux or macOS) for building the One ROM firmware itself, and instructions for settig up a full Windows build host are not included below.
 
+If you need to do Windows builds of the CLI or Studio, see [Setting up a Windows build machine](/docs/SETUP-WINDOWS-BUILD-MACHINE.md).
+
 0. Install pre-requisites
 
     ```bash
