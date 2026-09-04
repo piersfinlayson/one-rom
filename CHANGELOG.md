@@ -89,6 +89,7 @@ In detail:
 - **Breaking (Rust crates only):** `onerom_config::hw::Board` is now `#[non_exhaustive]`, so a `match` on one needs a wildcard arm.  A new board revision no longer breaks the crate's API.
 - Clarify in `--help` and the CLI manual that `onerom program --verify` is supported.
 - Correct the `peek` and `poke` help, which showed a `live` argument the top-level aliases do not take.
+- Building Studio no longer needs libudev or libusb.  probe-rs 0.32 takes hidapi's pure-Rust `basic-udev` backend in place of `libudev-sys`, and nothing else in the graph wants libusb.
 - Add the fire-24-g, fire-32-c and fire-40-c hardware revisions — fire-24-f, fire-32-b and fire-40-b with an upright USB-C connector, and otherwise identical.
 
 To publish:
@@ -133,7 +134,6 @@ To do (before release):
   claim, which no ORA call exposes, so a host is told nothing where it could be
   told something useful.
 - Web programmer S-record support, in `one-rom-wasm` and `one-rom-site`.  The format picker is driven by `file_formats()` and will list `srec` on its own, but the site's `accept` list, its extension auto-select and its load-address reveal (currently shown for `ihex` only) all need widening.
-- Drop the libudev/libusb build requirement, which Studio no longer has: `CLAUDE.md`, the comment in `ci/rust-lint.sh`, and the comment and two `apt-get` lines in `ci.yml`.  probe-rs 0.32 takes hidapi's pure-Rust `basic-udev` backend in place of `libudev-sys`, and nothing in the graph has wanted libusb for some time.  Verified on Debian — with both hidden from `pkg-config`, Studio builds and links clean, where probe-rs 0.30 failed in `libudev-sys`'s build script.  Leave `ci/docker/Dockerfile` until it is checked separately; that image builds firmware, not Studio.  Do this only once Studio has analysed a Fire with a debug probe attached, since falling back to the fork would reinstate the requirement.
 
 ## v0.7.1 - 2026-08-09
 

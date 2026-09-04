@@ -85,8 +85,7 @@ jobs:
       run: |
         sudo apt-get update
         sudo apt-get install -y libclang-dev libcurl4-openssl-dev libjson-c-dev \
-                                libzip-dev make xz-utils python3 \
-                                libudev-dev libusb-1.0-0-dev
+                                libzip-dev make xz-utils python3
 
     - name: Install Rust
       uses: dtolnay/rust-toolchain@stable
@@ -475,8 +474,8 @@ jobs:
       run: ci/rust-tools.sh
 
   binaries:
-    # The CLI and Studio binaries, built for the host.  Studio also needs
-    # libudev/libusb; its file dialogs use the XDG portal, so no GTK.
+    # The CLI and Studio binaries, built for the host.  Studio's file dialogs
+    # use the XDG portal, so no GTK.
     name: Binaries (CLI and Studio)
     runs-on: ubuntu-latest
     steps:
@@ -486,8 +485,7 @@ jobs:
       run: |
         sudo apt-get update
         sudo apt-get install -y libclang-dev libcurl4-openssl-dev libjson-c-dev \
-                                libzip-dev make xz-utils \
-                                libudev-dev libusb-1.0-0-dev
+                                libzip-dev make xz-utils
 
     - name: Install Rust
       uses: dtolnay/rust-toolchain@stable

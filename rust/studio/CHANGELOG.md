@@ -5,7 +5,7 @@
 - Build errors now name the ROM image at fault by its file, and an image smaller than the chip with truncate set reads as too small rather than too large.
 - Check a plugin named by a config for firmware compatibility before building.  A plugin binary declares only the minimum firmware it needs, so a release withdrawn for a newer firmware - USB v0.1.2, which hard faults on v0.7.0 - was previously built in and flashed.
 - New 24, 32 and 40 pin boards - fire-24-g, fire-32-c and fire-40-c.
-- Move to probe-rs 0.32 from crates.io.  The panic when analyzing a Fire with a debug probe, which v0.1.3 worked around by moving to a fork, is fixed upstream, and reports which target/debug port combination was at fault instead of crashing.
+- Move to probe-rs 0.32 from crates.io.  The panic when analyzing a Fire with a debug probe, which v0.1.3 worked around by moving to a fork, is fixed upstream, and reports which target/debug port combination was at fault instead of crashing.  Building Studio no longer needs libudev or libusb, since probe-rs 0.32 takes hidapi's pure-Rust `basic-udev` backend.
 
 ## v0.2.1 - 2026-08-09
 
