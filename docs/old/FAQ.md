@@ -270,7 +270,7 @@ A: Order the latest revision from [OSH Park](https://oshpark.com) using the prov
 
 **Q: Is One ROM open source?**
 
-A: Yes! Software/firmware uses MIT license, hardware uses CC BY-SA 4.0. You can modify, improve, and share the designs within the license terms.
+A: Yes! Software/firmware uses the MIT license, hardware uses CERN-OHL-W-2.0. You can modify, improve, and share the designs within the license terms.
 
 **Q: Is there a warranty?**
 
