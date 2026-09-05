@@ -39,7 +39,7 @@
 use onerom_config::chip::ChipType;
 use onerom_fw_emulator::{Emulator, OraResult, driver as gpio};
 use onerom_fw_tester::pin_cache::PinCache;
-use onerom_fw_tester::{runner, timing};
+use onerom_fw_tester::runner;
 use onerom_plugin_tester::ffi;
 use onerom_plugin_tester::harness::Plugin;
 
@@ -187,17 +187,21 @@ const POLL_LIMIT: u32 = 512;
 /// over the bus — which is exactly what RBCP's back-channel does.
 const CS_TO_DATA_CYCLES: u32 = 12;
 
-/// Total cycles CS is held active for one host read.
+// The two constants below set the fastest bus timing the firmware can serve.
+
+/// Cycles CS is held active for one host read.
 ///
-/// Covers [`CS_TO_DATA_CYCLES`] for the data, plus a hold before release.  The
-/// hold matters independently: the device's address monitor captures the
-/// access while CS is active, and its capture path is slower than its serving
-/// path.  A window sized only for data validity is never observed at all — at
-/// six cycles the knock is not detected, at sixteen it is.
+/// The data takes 12 or 13 cycles depending on the chip, and CS stays active
+/// for the rest so the device's CS monitor sees it.
+const CS_ACTIVE_CYCLES: u32 = 17;
+
+/// Cycles CS is inactive after the read, before the address moves on.
 ///
-/// At 150 MHz this is ~107 ns, an order of magnitude shorter than a real
-/// host's bus cycle, so it does not flatter the device.
-const CS_ACTIVE_CYCLES: u32 = 16;
+/// This is long enough for the device's CS monitor to see that CS has gone
+/// before the next access starts.  The RBCP host needs its own figure here,
+/// because `onerom_fw_tester::timing`'s is a settling margin for the bulk read
+/// pass.
+const CYCLES_AFTER_READ: u32 = 3;
 
 /// Which step of the host polling sequence failed.
 ///
@@ -463,12 +467,12 @@ impl<'a> Bus<'a> {
         };
         let data = gpio::extract_byte(self.emu.read_pin_states(), lane);
 
-        // Hold CS for the rest of the host's bus cycle — see CS_ACTIVE_CYCLES.
+        // Hold CS for the rest of the window — see CS_ACTIVE_CYCLES.
         self.emu
             .step_cycles(CS_ACTIVE_CYCLES.saturating_sub(self.cs_to_data));
 
         self.emu.drive_gpios(settle.0, settle.1);
-        self.emu.step_cycles(timing::CYCLES_AFTER_READ);
+        self.emu.step_cycles(CYCLES_AFTER_READ);
 
         self.reads += 1;
         data
