@@ -36,14 +36,51 @@ PLUGIN_INCLUDE := -I.
 
 BUILD_DIR := build
 
-$(shell [ -d $(TINYUSB_DIR) ] || git clone --quiet https://github.com/piersfinlayson/tinyusb.git $(TINYUSB_DIR))
-$(shell git -c advice.detachedHead=false -C $(TINYUSB_DIR) checkout --quiet $(TINYUSB_COMMIT))
+# The three dependencies below are cloned while this file is being read, before
+# any target runs, so a clone that takes a while is make appearing to hang with
+# nothing on screen.  Three things keep that from happening:
+#
+# - Each says what it is about to do, since $(shell) has no output until it
+#   finishes.
+# - git's own progress goes to stderr, which $(shell) does not capture, so it
+#   reaches the terminal as it happens.
+# - The exit status is checked.  A failed clone used to surface much later as a
+#   missing header, naming a file rather than the network.
+#
+# tinyusb is pinned to a commit rather than a tag, so `--depth 1 --branch`
+# cannot reach it.  `--filter=blob:none` fetches the history without the file
+# contents, which leaves an arbitrary commit checkout working on a fraction of
+# the data.  The other two are pinned to tags and take a shallow clone.
+
+ifeq ($(wildcard $(TINYUSB_DIR)),)
+$(info Cloning tinyusb into $(TINYUSB_DIR) ...)
+TINYUSB_CLONE := $(shell git clone --filter=blob:none https://github.com/piersfinlayson/tinyusb.git $(TINYUSB_DIR) >&2; echo $$?)
+ifneq ($(TINYUSB_CLONE),0)
+$(error Failed to clone tinyusb - see the git output above)
+endif
+endif
+TINYUSB_CHECKOUT := $(shell git -c advice.detachedHead=false -C $(TINYUSB_DIR) checkout --quiet $(TINYUSB_COMMIT) >&2; echo $$?)
+ifneq ($(TINYUSB_CHECKOUT),0)
+$(error Failed to check out tinyusb $(TINYUSB_COMMIT) - see the git output above)
+endif
 include tinyusb.mk
 
-$(shell [ -d $(PICOBOOTX_DIR) ] || git -c advice.detachedHead=false clone --quiet --depth 1 --branch $(PICOBOOTX_VERSION) https://github.com/piersfinlayson/picobootx.git $(PICOBOOTX_DIR))
+ifeq ($(wildcard $(PICOBOOTX_DIR)),)
+$(info Cloning picobootx $(PICOBOOTX_VERSION) into $(PICOBOOTX_DIR) ...)
+PICOBOOTX_CLONE := $(shell git -c advice.detachedHead=false clone --depth 1 --branch $(PICOBOOTX_VERSION) https://github.com/piersfinlayson/picobootx.git $(PICOBOOTX_DIR) >&2; echo $$?)
+ifneq ($(PICOBOOTX_CLONE),0)
+$(error Failed to clone picobootx $(PICOBOOTX_VERSION) - see the git output above)
+endif
+endif
 include picobootx/picobootx.mk
 
-$(shell [ -d $(PICO_SDKLESS_DIR) ] || git -c advice.detachedHead=false clone --quiet --depth 1 --branch $(PICO_SDKLESS_VERSION) https://github.com/piersfinlayson/pico-sdkless.git $(PICO_SDKLESS_DIR))
+ifeq ($(wildcard $(PICO_SDKLESS_DIR)),)
+$(info Cloning pico-sdkless $(PICO_SDKLESS_VERSION) into $(PICO_SDKLESS_DIR) ...)
+PICO_SDKLESS_CLONE := $(shell git -c advice.detachedHead=false clone --depth 1 --branch $(PICO_SDKLESS_VERSION) https://github.com/piersfinlayson/pico-sdkless.git $(PICO_SDKLESS_DIR) >&2; echo $$?)
+ifneq ($(PICO_SDKLESS_CLONE),0)
+$(error Failed to clone pico-sdkless $(PICO_SDKLESS_VERSION) - see the git output above)
+endif
+endif
 
 PICOBOOTX_SRC_C := $(addprefix picobootx/,$(PICOBOOTX_SRC_C))
 PICOBOOTX_INCLUDE_DIRS := $(addprefix picobootx/,$(PICOBOOTX_INCLUDE_DIRS))
