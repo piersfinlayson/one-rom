@@ -91,6 +91,8 @@ In detail:
 - Correct the `peek` and `poke` help, which showed a `live` argument the top-level aliases do not take.
 - Building Studio no longer needs libudev or libusb.  probe-rs 0.32 takes hidapi's pure-Rust `basic-udev` backend in place of `libudev-sys`, and nothing else in the graph wants libusb.
 - Add the fire-24-g, fire-32-c and fire-40-c hardware revisions — fire-24-f, fire-32-b and fire-40-b with an upright USB-C connector, and otherwise identical.
+- Both CS activate and de-activate paths of the address monitor PIO now require 3 matching reads, a total of 9 PIO cycles, to register/de-register and access.
+  - This required a firmware update.
 
 To publish:
 - Rust crates (in dependency order):
