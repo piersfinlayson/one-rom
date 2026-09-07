@@ -44,3 +44,10 @@ body:
           required: true
         - label: A plugin-meta.json
           required: true
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional information
+      description: Anything else that would help with your submission
+    validations:
+      required: false
