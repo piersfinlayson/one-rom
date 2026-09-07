@@ -13,6 +13,11 @@
 
 use crate::Scenario;
 
+// `aux.rs` is not a filename Windows can hold - AUX is a reserved device
+// name there, with any extension, so a checkout of this branch failed
+// outright.  The module keeps its name, which every `aux::` reference and
+// the scenario names depend on, and only the file moves.
+#[path = "aux_group.rs"]
 pub mod aux;
 pub mod command_page;
 pub mod control;
