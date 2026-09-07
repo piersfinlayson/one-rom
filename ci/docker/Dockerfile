@@ -30,8 +30,6 @@ RUN apt-get update && apt-get install -y \
     libdatetime-perl \
     libjson-c-dev \
     libjson-xs-perl \
-    libusb-1.0-0-dev \
-    libudev-dev \
     libzip-dev \
     mingw-w64 \
     nano \
