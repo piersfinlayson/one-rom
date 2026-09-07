@@ -164,12 +164,10 @@ fn spec_value(chip: &str) -> Option<u8> {
 /// host is shown.  Taking the *chips* from the configuration is not circular —
 /// what is under test is the byte the device uses to describe each of them.
 fn flash_slots(ctx: &Ctx) -> Vec<(u8, &'static str)> {
-    ctx.config
-        .chip_sets
+    ctx.flash_sets()
         .iter()
         .filter_map(|set| set.chips.first())
         .map(|chip| chip.chip_type.resolved())
-        .filter(|chip_type| !chip_type.is_plugin())
         .enumerate()
         .map(|(i, chip_type)| (i as u8, chip_type.name()))
         .collect()

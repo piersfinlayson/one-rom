@@ -450,6 +450,12 @@ test_family_24() {
 
     # RBCP board coverage — see the note in test_family_40.
     test_24_config_rbcp onerom-config/test/24-random-23xx.json
+
+    # The only config with plugin slots, so the only one where the firmware's
+    # slot index and the flash slot number RBCP reports differ.  One board is
+    # enough: what this exercises is slot numbering, which does not vary with
+    # the pin map.
+    test_config_rbcp fire-24-a onerom-config/test/24-plugins-23xx.json
 }
 
 test_family_28() {

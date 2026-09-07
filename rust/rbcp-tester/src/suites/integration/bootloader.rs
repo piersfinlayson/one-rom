@@ -396,7 +396,10 @@ fn select_slot<'a>(
     served_type: u8,
     ctx: &Ctx,
 ) -> Result<Result<&'a MenuEntry, Outcome>, String> {
-    let sets = &ctx.config.chip_sets;
+    // The menu holds RBCP flash slot numbers, which name only the chip sets a
+    // host is offered, so a plugin set is not in either count nor at either
+    // index.
+    let sets = ctx.flash_sets();
     if menu.len() != sets.len() {
         return Ok(Err(Outcome::Skip(format!(
             "the device offers {} flash slot(s) and the configuration describes {} chip set(s), \
@@ -407,10 +410,10 @@ fn select_slot<'a>(
         ))));
     }
 
-    let Some(active) = sets.get(ctx.set_idx) else {
+    let Some(active) = sets.get(ctx.boot_flash_slot() as usize) else {
         return Err(format!(
-            "the configuration has no chip set {}, which is the one being served",
-            ctx.set_idx
+            "the configuration has no flash slot {}, which is the one being served",
+            ctx.boot_flash_slot()
         ));
     };
     let shape = |set: &ChipSetConfig| {

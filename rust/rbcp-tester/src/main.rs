@@ -50,7 +50,7 @@ use onerom_config::hw::Board;
 use onerom_fw_emulator::{Emulator, OraResult};
 use onerom_fw_tester::pin_cache::PinCache;
 use onerom_fw_tester::timing;
-use onerom_gen::Config;
+use onerom_gen::{ChipSetConfig, Config};
 use onerom_plugin_tester::run::{Filters, Tally, suite_header};
 use onerom_plugin_tester::{ffi, harness::Plugin};
 
@@ -69,7 +69,11 @@ pub struct Ctx {
     pub config: Config,
     pub base_dir: PathBuf,
     pub board: Board,
+    /// Index into the configuration's chip sets of the set being served, which
+    /// is the firmware's own slot numbering and counts plugin slots.
     pub set_idx: usize,
+    /// How many chip sets ahead of the ROM slots hold a plugin.
+    pub plugin_sets: usize,
     pub chip_type: ChipType,
     /// Low address lines the device does not observe.
     pub unobserved: u8,
@@ -84,6 +88,19 @@ pub struct Ctx {
 }
 
 impl Ctx {
+    /// The chip sets a host is offered as flash slots.
+    ///
+    /// A host is never offered a plugin slot, so an RBCP flash slot number
+    /// indexes this tail rather than the whole table.
+    pub fn flash_sets(&self) -> &[ChipSetConfig] {
+        &self.config.chip_sets[self.plugin_sets..]
+    }
+
+    /// The flash slot number a host is given for the set the device booted.
+    pub fn boot_flash_slot(&self) -> u8 {
+        (self.set_idx - self.plugin_sets) as u8
+    }
+
     /// Bytes of the active RAM slot the host can reach over the bus.
     ///
     /// Not the whole slot, which holds whole banks where the ROM served is
@@ -259,6 +276,36 @@ fn main() {
     tally.finish("rbcp", &format!("{board_str} / {config_path}"));
 }
 
+/// The image-select jumper value every scenario is run against.
+const SEL_IMAGE: u8 = 0;
+
+/// How many of the configuration's chip sets hold a plugin.
+///
+/// A plugin always comes before the ROM slots, so counting from the front is
+/// the whole answer.
+fn plugin_sets(config: &Config) -> usize {
+    config
+        .chip_sets
+        .iter()
+        .take_while(|s| {
+            s.chips
+                .first()
+                .is_some_and(|c| c.chip_type.resolved().is_plugin())
+        })
+        .count()
+}
+
+/// The chip set the firmware serves at jumper [`SEL_IMAGE`].
+///
+/// The jumpers count only the ROM slots, so a jumper value is not a chip set
+/// index.  Everything that needs the set under test asks here, so the two
+/// cannot drift apart.
+fn served_set(config: &Config) -> Option<&ChipSetConfig> {
+    config
+        .chip_sets
+        .get(plugin_sets(config) + SEL_IMAGE as usize)
+}
+
 /// The bit modes every scenario is run in.
 ///
 /// A chip the host can read either as bytes or as words has to obey the
@@ -271,7 +318,7 @@ fn main() {
 /// so there is no 8-bit behaviour to test and an 8-bit pass would be asserting
 /// against something the device was never asked to do.
 fn modes_to_run(config: &Config) -> &'static [u8] {
-    let Some(set) = config.chip_sets.first() else {
+    let Some(set) = served_set(config) else {
         return &[8];
     };
     let force_16_bit = set
@@ -299,9 +346,7 @@ fn modes_to_run(config: &Config) -> &'static [u8] {
 /// the `BYTE#`/A-1 handling entirely — the device then serves the low half of
 /// every word whatever the host asks for.
 fn native_word_size(config: &Config) -> u8 {
-    config
-        .chip_sets
-        .first()
+    served_set(config)
         .and_then(|s| s.chips.first())
         .and_then(|c| c.chip_type.resolved().bit_modes().iter().max().copied())
         .unwrap_or(8)
@@ -337,10 +382,9 @@ fn run_scenario(
     log_enabled: bool,
     word_size: u8,
 ) -> Result<Outcome, String> {
-    let set_idx = 0usize;
-    let chip = config
-        .chip_sets
-        .get(set_idx)
+    let plugin_sets = plugin_sets(config);
+    let set_idx = plugin_sets + SEL_IMAGE as usize;
+    let chip = served_set(config)
         .and_then(|s| s.chips.first())
         .ok_or("config has no chip sets")?;
     let chip_type = chip.chip_type.resolved();
@@ -351,12 +395,12 @@ fn run_scenario(
 
     Emulator::set_logging(log_enabled);
     Emulator::set_rp_variant(board.rp_variant());
-    Emulator::set_sel_image(set_idx as u8);
+    Emulator::set_sel_image(SEL_IMAGE);
     let mut emu = Emulator::boot();
 
-    if emu.sel_image() != set_idx as u8 {
+    if emu.sel_image() != SEL_IMAGE {
         return Err(format!(
-            "firmware selected image {}, not {set_idx}",
+            "firmware selected image {}, not {SEL_IMAGE}",
             emu.sel_image()
         ));
     }
@@ -423,6 +467,7 @@ fn run_scenario(
         base_dir: base_dir.to_path_buf(),
         board,
         set_idx,
+        plugin_sets,
         chip_type,
         unobserved,
         ram_slot_size,

@@ -198,7 +198,7 @@ pub fn get_flash_slot_count(bus: &mut Bus, ctx: &Ctx) -> Result<Outcome, String>
     bus.issue_cmd(&s, group::READ, read::GET_FLASH_SLOT_COUNT, &[])
         .map_err(|e| format!("GET_FLASH_SLOT_COUNT: {e}"))?;
 
-    let want = u8::try_from(ctx.config.chip_sets.len())
+    let want = u8::try_from(ctx.flash_sets().len())
         .map_err(|_| "the configuration has more chip sets than a slot count can hold")?;
     bus.expect_data(&s, 0, &[want], "GET_FLASH_SLOT_COUNT response")
         .map_err(|e| format!("{e} — the device is built from {want} flash slot(s)"))?;
@@ -1142,11 +1142,14 @@ pub fn get_boot_slot_info(bus: &mut Bus, ctx: &Ctx) -> Result<Outcome, String> {
             got[0], got[1]
         ));
     }
-    if got != [0, ctx.active_ram_slot] {
+    if got != [ctx.boot_flash_slot(), ctx.active_ram_slot] {
         return Err(format!(
-            "GET_BOOT_SLOT_INFO reports flash slot {} into RAM slot {}, expected flash slot 0 \
+            "GET_BOOT_SLOT_INFO reports flash slot {} into RAM slot {}, expected flash slot {} \
              into RAM slot {} — that is the image the device boots serving",
-            got[0], got[1], ctx.active_ram_slot
+            got[0],
+            got[1],
+            ctx.boot_flash_slot(),
+            ctx.active_ram_slot
         ));
     }
 

@@ -104,6 +104,8 @@ flamegraph.svg
 
 # Embedded development
 *.bin
+# Stub plugin images, checked in so a test config can declare plugin slots.
+!images/test/*.bin
 *.hex
 *.elf
 *.uf2
