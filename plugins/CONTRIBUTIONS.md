@@ -99,9 +99,10 @@ https://images.onerom.org.
 
 ## Disclaimer
 
-One ROM's maintainer reserves the right to refuse a plugin submission at their
-discretion, and to yank any plugin from https://images.onerom.org at any time,
-for any reason.
+One ROM's maintainer reserves the right to:
+- decline a plugin submission at their discretion
+- modify any published plugin's metadata at any time for any reason
+- yank any plugin from https://images.onerom.org at any time, for any reason.
 
 One ROM's maintainer provides no warranty for third-party plugins. The plugin's
 license governs any warranties or lack thereof.
