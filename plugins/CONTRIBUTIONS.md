@@ -65,7 +65,7 @@ To release a new version of your plugin, follow the
 
 ## Raising an Issue
 
-Raise an issue [here](https://github.com/piersfinlayson/one-rom/issues/new/choose).
+Raise an issue [here](https://github.com/piersfinlayson/one-rom/issues/new?template=plugin-publish.yml).
 
 Include:
 - The URL of a public repository holding your plugin's source.

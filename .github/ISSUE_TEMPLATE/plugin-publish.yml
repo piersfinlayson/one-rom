@@ -30,7 +30,7 @@ body:
     id: name
     attributes:
       label: Proposed name
-      description: Lower case, dashes not spaces, scoped to the machine or job
+      description: Lower case, dashes not spaces, scoped to the machine or purpose
     validations:
       required: true
   - type: checkboxes
