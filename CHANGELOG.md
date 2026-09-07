@@ -117,6 +117,8 @@ To publish:
   `if: github.ref == 'refs/heads/releases/0.7.2'` to
   `if: github.ref == 'refs/heads/main'`.  Until then the README badges show
   this release branch's figures.
+- one-rom-wasm: move to the new Rust crates.
+- one-rom-site: add S-record support.
 
 To do (before release):
 - **Auxiliary I/O's register writes are untested.**  `ora_gpio_set` records what
@@ -135,7 +137,6 @@ To do (before release):
   USB CDC honestly would mean the plugin learning who holds a channel's read
   claim, which no ORA call exposes, so a host is told nothing where it could be
   told something useful.
-- Web programmer S-record support, in `one-rom-wasm` and `one-rom-site`.  The format picker is driven by `file_formats()` and will list `srec` on its own, but the site's `accept` list, its extension auto-select and its load-address reveal (currently shown for `ihex` only) all need widening.
 
 ## v0.7.1 - 2026-08-09
 
