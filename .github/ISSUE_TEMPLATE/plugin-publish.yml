@@ -1,0 +1,46 @@
+name: Plugin publication request
+description: Request that your plugin be built and published at images.onerom.org
+title: "[plugin] "
+body:
+  - type: markdown
+    attributes:
+      value: Read [CONTRIBUTIONS](https://github.com/piersfinlayson/one-rom/blob/main/plugins/CONTRIBUTIONS.md) before raising this.
+  - type: input
+    id: repository
+    attributes:
+      label: Repository URL
+      description: Public repository holding your plugin source
+    validations:
+      required: true
+  - type: input
+    id: directory
+    attributes:
+      label: Plugin directory
+      description: Path to the plugin directory within the repository
+    validations:
+      required: true
+  - type: input
+    id: tag
+    attributes:
+      label: Tag
+      description: The tag to build and publish
+    validations:
+      required: true
+  - type: input
+    id: name
+    attributes:
+      label: Proposed name
+      description: Lower case, dashes not spaces, scoped to the machine or job
+    validations:
+      required: true
+  - type: checkboxes
+    id: contents
+    attributes:
+      label: The plugin at that tag includes
+      options:
+        - label: A Makefile
+          required: true
+        - label: A valid plugin header
+          required: true
+        - label: A plugin-meta.json
+          required: true

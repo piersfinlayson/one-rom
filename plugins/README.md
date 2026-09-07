@@ -117,3 +117,12 @@ Start with the [One ROM Plugin API](../firmware/ora/api.h) documentation.
 Then view the [examples](../firmware/ora/examples/) and the released plugins:
 - [The system USB plugin](system/usb/).
 - [The user blink plugin](user/blink/).
+
+## Publishing Third-party Plugins
+
+If you have written a plugin for One ROM you can submit it for hosting at
+https://images.onerom.org. This means that it appears alongside official plugins
+in the web programmer drop-downs, and can be selected by short name using the 
+CLI `--plugin` options.
+
+See [CONTRIBUTIONS](CONTRIBUTIONS.md) for the submissions process.

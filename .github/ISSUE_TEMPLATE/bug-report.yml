@@ -1,0 +1,31 @@
+name: Bug report
+description: Report a problem with One ROM
+title: "[bug] "
+body:
+  - type: input
+    id: board
+    attributes:
+      label: One ROM PCB type and revision
+      description: Attach a photo below if you are unsure
+    validations:
+      required: true
+  - type: input
+    id: system
+    attributes:
+      label: Retro system
+      description: The machine One ROM is being used with
+    validations:
+      required: true
+  - type: input
+    id: firmware
+    attributes:
+      label: One ROM Firmware version
+    validations:
+      required: false
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What happened, what you expected, and how to reproduce it
+    validations:
+      required: true

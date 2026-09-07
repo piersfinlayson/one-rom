@@ -1,0 +1,24 @@
+name: Enhancement request
+description: Suggest an improvement to One ROM
+title: "[enhancement] "
+body:
+  - type: textarea
+    id: request
+    attributes:
+      label: What you would like
+    validations:
+      required: true
+  - type: textarea
+    id: why
+    attributes:
+      label: Why
+      description: What you are trying to do that One ROM does not do today
+    validations:
+      required: true
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional information
+      description: Any additional context or information that might help explain your request
+    validations:
+      required: false

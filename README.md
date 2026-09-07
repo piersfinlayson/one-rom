@@ -414,9 +414,10 @@ Please include:
 
 ## Contributing
 
-Pull requests are welcome — firmware, tools, hardware, documentation, and
-especially plugins.  If you write a user plugin you think others would want,
-consider contributing it.
+Pull requests are welcome — firmware, tools, hardware and documentation.  If you
+write a plugin you think others would want to use, consider contributing it
+so it can be published.  The plugins publishing process is documented in
+[plugins/CONTRIBUTIONS](plugins/CONTRIBUTIONS.md)
 
 ## License
 
