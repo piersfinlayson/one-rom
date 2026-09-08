@@ -66,7 +66,7 @@ uint8_t initial_plugin_parse(uint8_t *disable_vbus_det, uint8_t *num_plugins) {
             const ora_plugin_header_t *header = (ora_plugin_header_t *)(uintptr_t)(set->data);
             if (check_plugin_valid(header, ORA_PLUGIN_TYPE_SYSTEM, 0)) {
                 *disable_vbus_det = header->overrides1 & ORA_OVERRIDE1_DISABLE_VBUS_DETECT ? 1 : 0;
-                LOG("Valid system plugin=, disable_vbus_det=%d", *disable_vbus_det);
+                LOG("Valid system plugin, disable_vbus_det=%d", *disable_vbus_det);
             }
 
             // Have system plugin (1)
