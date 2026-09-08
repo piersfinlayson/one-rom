@@ -696,9 +696,8 @@ pub struct Config {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub serial_override: Option<String>,
 
-    /// Whether to enable boot logging.  Logging is emitted over RTT, so a
-    /// debug probe must be attached to see it.  Compatible with
-    /// swd_enabled = false, as SWD stays up for the whole of boot.
+    /// Whether to enable One ROM firmware logging. The log can be read over
+    /// USB (if the USB plugin is installed) or RTT using a debug probe.
     #[serde(default = "default_boot_logging")]
     pub boot_logging: bool,
 

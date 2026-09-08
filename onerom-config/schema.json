@@ -5,7 +5,7 @@
     "type": "object",
     "properties": {
         "boot_logging": {
-            "description": "Whether to enable boot logging.  Logging is emitted over RTT, so a\ndebug probe must be attached to see it.  Compatible with\nswd_enabled = false, as SWD stays up for the whole of boot.",
+            "description": "Whether to enable One ROM firmware logging. The log can be read over\nUSB (if the USB plugin is installed) or RTT using a debug probe.",
             "type": "boolean",
             "default": false
         },

@@ -30,7 +30,7 @@ In detail:
   - This required a firmware update: the booted slot is now readable by a plugin through the metadata API.
 - Plugins can read a millisecond clock and indexed device metadata.  The firmware starts a free-running counter once ROM serving is set up and before it launches a plugin, so a plugin can time its own work without keeping a counter of its own.  The USB plugin now takes its clock from there and no longer runs a timer interrupt.
   - This required a firmware update.
-  - USB plugin v0.2.2 needs firmware v0.7.2 as a result, and does not load on anything older.
+  - USB plugin v0.3.0 needs firmware v0.7.2 as a result, and does not load on anything older.
 - Check plugins named by a config against the images server's published compatibility window, in the CLI and Studio.  A plugin binary declares only a minimum firmware version, so USB v0.1.2 — which hard faults on firmware v0.7.0 — was previously built in without complaint.  A local or third-party plugin has nothing published to check, and an unreachable server warns rather than failing.
 - Add Motorola S-record (`srec`) as a ROM image format, alongside Intel HEX and with the same `load_address` handling.  A file with no termination record is read, which is what `srec_cat` writes by default.
 - One ROM Lab can dump a ROM as S-records: `f:srec`, alongside the existing `ihex` and hex dump formats.
@@ -112,6 +112,9 @@ To publish:
   TIMER0 tick generator itself, and 0.2.1 then writes `TICKS_TIMER0_CYCLES` to an
   already-running generator, which the RP2350 datasheet forbids.
 - host-control plugin 0.1.3
+- Chip type and compatibility reference PDFs — their first edition:
+  `ci/build-docs.sh ../one-rom-images --source firmware`, then set each
+  `latest` by hand.  The CLI manual moves with the CLI release, not this one.
 - Point the coverage badges at `main` once this release has merged.  In the
   "Publish the coverage badges" step in `.github/workflows/ci.yml`, change
   `if: github.ref == 'refs/heads/releases/0.7.2'` to
