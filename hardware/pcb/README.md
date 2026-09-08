@@ -9,24 +9,22 @@ Before using any of the designs, review the hardware [LICENSE](/LICENSE.md#cern-
 
 ## Recommended Revisions
 
-Last Updated 4th July 2026.
+Last Updated 8th September 2026.
 
 The following table lists the recommended verified designs.  Each design has been manufactured and assembled using JLCPCB's PCB assembly service, and verified to work correctly.
 
 | Model | MCU | Pins | USB | SWD | Image Select Pins | X Pins | RGB | PCB |
 |-------|-----|------|-----|-----|-------------------|--------|-----|-------|
-| Fire  | RP2350A | 24 | Micro-B | ✓ | 4 | 2 | - | [fire-24-d](./verified/fire-24-d/README.md) |
-| Fire  | RP2354A | 24 | C | ✓ | 4 | 2 | - | [fire-24-e](./verified/fire-24-e/README.md) |
 | Fire  | RP2354A | 24 | C | ✓ | 4 | 2 | ✓ | [fire-24-f](./verified/fire-24-f/README.md) |
-| Fire  | RP2350A or RP2354A | 28 | C | ✓ | 2 | n/a | - | [fire-28-a4](./verified/fire-28-a4/README.md) |
-| Fire  | RP2350A or RP2354A | 28 | C (upright) | ✓ | 2 | n/a | - | [fire-28-b](./verified/fire-28-b/README.md) |
-| Fire  | RP2354B | 28 | C | ✓ | 2 | 2 | ✓ | [fire-28-c](./verified/fire-28-c/README.md) |
-| Fire  | RP2350B or RP2354B | 32 | C | ✓ | 4 | n/a | - | [fire-32-a](./verified/fire-32-a/README.md) |
-| Fire  | RP2350B or RP2354B | 32 | C | ✓ | 4 | n/a | ✓ | [fire-32-b2](./verified/fire-32-b2/README.md) |
-| Fire  | RP2350B or RP2354B | 40 | C | ✓ | 4 | n/a | - | [fire-40-a](./verified/fire-40-a/README.md) |
-| Fire  | RP2350B or RP2354B | 40 | C | ✓ | 4 | n/a | ✓ | [fire-40-b](./verified/fire-40-b/README.md) |
+| Fire  | RP2354A | 24 | C (upright) | ✓ | 4 | 2 | ✓ | [fire-24-g](./verified/fire-24-g/README.md) |
+| Fire  | RP2354B | 28 | C | ✓ | 4 | 2 | ✓ | [fire-28-c](./verified/fire-28-c/README.md) |
+| Fire  | RP2354B | 28 | C (upright) | ✓ | 4 | 2 | ✓ | [fire-28-d](./verified/fire-28-d/README.md) |
+| Fire  | RP2354B | 32 | C | ✓ | 4 | n/a | ✓ | [fire-32-b2](./verified/fire-32-b2/README.md) |
+| Fire  | RP2354B | 32 | C (upright) | ✓ | 4 | n/a | ✓ | [fire-32-c](./verified/fire-32-c/README.md) |
+| Fire  | RP2354B | 40 | C | ✓ | 4 | n/a | ✓ | [fire-40-b](./verified/fire-40-b/README.md) |
+| Fire  | RP2354B | 40 | C (upright) | ✓ | 4 | n/a | ✓ | [fire-40-c](./verified/fire-40-c/README.md) |
 
-**One ROM 28C, 32 and 40 require components on the top and bottom of the PCB**
+**One ROM 28C onwards, 32 and 40 require components on the top and bottom of the PCB**
 
 There may be later, unverified, revisions not in the list above.  These may have improvements over the recommended revisions, but they have not been verified to work.  If you want to use one of these later revisions, read the relevant README before ordering.
 
@@ -38,12 +36,13 @@ Sometimes your PCB manufacturer/assembler may be out of stock of a particular co
 |-|-|-|-|-|-|
 | Diodes Inc AP2112K-3.3TRG1 | C51118 | Tech Public AP2112K-3.3TRG1 | C23380830 | Yes | Jelly bean part, same specs |
 | Uniroyal 0201WMF1002TEE | C473048 | Yageo RC0201FR-0710KL | C106225 | No | Jelly bean part, same specs |
-| Raspberry Pi RP2350A | C42411118 | Raspberry Pi RP2354A | C41378174 | Yes | If using RP2354A, do not populate the external flash chip, as the RP2354A has internal flash. |
-| Raspberry Pi RP2350B | C42415655 | Raspberry Pi RP2354B | C39843328 | Yes | If using RP2354B, do not populate the external flash chip, as the RP2354B has internal flash. |
+| Samsung CL03A104KO3NNNC | C307380 | Murata GRM033Z71C104KE14D | C668346 | Yes | 0.1uF decoupler.  X7R rather than X5R - this is the part used on all boards fabbed to date. |
 
-The RP2354A can be replaced with the RP2350A _if the design supports external flash and it is populated_.
-- Some designs, such as fire-24-e, do not support external flash, so the RP2354A cannot be replaced with the RP2350A.
-- Some designs, such as fire-40-a, have hardware support for both external flash plus an RP2354B, so two lots of flash.  Fabricating this option requires the correct 0R resistors to be populated/not populated.  See the board schematic for more details.
+The RP2354B can be replaced with the RP2350B _if the design supports external flash and it is populated with the correct resistors present/missing_.
+
+Some designs, such as fire-40-c, have hardware support for both external flash plus an RP2354B, so two lots of flash.  Fabricating this option requires the correct 0R resistors to be populated/not populated.  See the board schematic for more details.
+
+**The external flash option has not been tested on the current recommended designs.**
 
 In some cases, alternative BOM/POS files are already provided for some alternative components.  In other cases, you may need to edit the BOM/POS files yourself to substitute the alternative component.  _Always_ double check component values, part numbers and placement before ordering.
 
