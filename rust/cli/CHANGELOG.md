@@ -1,6 +1,6 @@
 # CLI Changelog
 
-## v0.4.0 - 2026-??-??
+## v0.4.0 - 2026-09-08
 
 - **`peek` and `poke` help no longer show an argument the commands reject.**
   Both gave `onerom peek live ...`, and the top-level aliases take their options

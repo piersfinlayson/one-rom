@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.3.0] - 2026-??-??
+## [0.3.0] - 2026-09-08
 
 The command a host sends after one the device refused is no longer lost.
 Refusing halts both USB endpoints, and clearing them left the device and the

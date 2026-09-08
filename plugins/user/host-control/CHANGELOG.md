@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.1.3] - 2026-??-??
+## [0.1.3] - 2026-09-08
 
 An ENTER_CMD_RESP naming a back-channel start within 8 bytes of the end of the
 RAM slot wrote its response header onto the start of the image being served.

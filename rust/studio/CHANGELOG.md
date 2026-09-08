@@ -1,6 +1,6 @@
 # Changelog
 
-## v0.2.2 - 2026-??-??
+## v0.2.2 - 2026-09-08
 
 - Build errors now name the ROM image at fault by its file, and an image smaller than the chip with truncate set reads as too small rather than too large.
 - Check a plugin named by a config for firmware compatibility before building.  A plugin binary declares only the minimum firmware it needs, so a release withdrawn for a newer firmware - USB v0.1.2, which hard faults on v0.7.0 - was previously built in and flashed.

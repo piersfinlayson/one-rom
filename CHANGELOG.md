@@ -2,7 +2,7 @@
 
 All notables changes between versions are documented in this file.
 
-## v0.7.2 - 2026-??-??
+## v0.7.2 - 2026-09-08
 
 Headline changes in this release:
 - Motorola S-record ROM images, alongside Intel HEX, in the programming tools, the CLI's image converter and One ROM Lab.
