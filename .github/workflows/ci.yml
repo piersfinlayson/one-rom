@@ -348,13 +348,11 @@ jobs:
         set -o pipefail
         ci/coverage-report.sh --check | tee coverage-check.txt
 
-    # The three badges on README.md read these files.  Only from the release
-    # branch, and only once the floors have passed - a badge is a published
-    # number, so it comes from the branch being shipped and from a run that
-    # met the gate.  RELEASE.md carries the line that repoints this at the
-    # next release branch.
+    # The three badges on README.md read these files.  Only from main, and
+    # only once the floors have passed - a badge is a published number, so it
+    # comes from a run that met the gate.
     - name: Publish the coverage badges
-      if: github.ref == 'refs/heads/releases/0.7.2'
+      if: github.ref == 'refs/heads/main'
       env:
         GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: |

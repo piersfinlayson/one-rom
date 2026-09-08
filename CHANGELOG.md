@@ -115,11 +115,6 @@ To publish:
 - Chip type and compatibility reference PDFs — their first edition:
   `ci/build-docs.sh ../one-rom-images --source firmware`, then set each
   `latest` by hand.  The CLI manual moves with the CLI release, not this one.
-- Point the coverage badges at `main` once this release has merged.  In the
-  "Publish the coverage badges" step in `.github/workflows/ci.yml`, change
-  `if: github.ref == 'refs/heads/releases/0.7.2'` to
-  `if: github.ref == 'refs/heads/main'`.  Until then the README badges show
-  this release branch's figures.
 - one-rom-wasm: move to the new Rust crates.
 - one-rom-site: add S-record support.
 
