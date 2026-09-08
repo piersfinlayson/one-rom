@@ -124,12 +124,20 @@
 
 #define GPIO_STATUS_INFROMPAD_BIT  17
 #define GPIO_STATUS_OETOPAD_BIT    13
-
-#define GPIO_IS_OUTPUT(pin)  ((GPIO_STATUS(pin) >> GPIO_STATUS_OETOPAD_BIT) & 1)
+#define GPIO_STATUS_OUTTOPAD_BIT   9
 
 #define GPIO_STATUS(pin)    (*(volatile uint32_t*)(IO_BANK0_BASE + GPIO_STATUS_OFFSET + pin*GPIO_SPACING))
 #define GPIO_CTRL(pin)      (*(volatile uint32_t*)(IO_BANK0_BASE + GPIO_CTRL_OFFSET + pin*GPIO_SPACING))
-#define GPIO_READ(pin)      ((GPIO_STATUS(pin) >> GPIO_STATUS_INFROMPAD_BIT) & 1)
+
+// Fields of a GPIOx_STATUS value already read, so a caller wanting more than
+// one of them reads the register once.  INFROMPAD is gated on the pad's input
+// enable, OUTTOPAD is not.
+#define GPIO_STATUS_OETOPAD(status)    (((status) >> GPIO_STATUS_OETOPAD_BIT) & 1)
+#define GPIO_STATUS_INFROMPAD(status)  (((status) >> GPIO_STATUS_INFROMPAD_BIT) & 1)
+#define GPIO_STATUS_OUTTOPAD(status)   (((status) >> GPIO_STATUS_OUTTOPAD_BIT) & 1)
+
+#define GPIO_IS_OUTPUT(pin)  GPIO_STATUS_OETOPAD(GPIO_STATUS(pin))
+#define GPIO_READ(pin)       GPIO_STATUS_INFROMPAD(GPIO_STATUS(pin))
 
 #define GPIO_CTRL_FUNC_SIO      0x05
 #define GPIO_CTRL_FUNC_PIO0     0x06
@@ -261,8 +269,15 @@
 // TIMER0 Registers
 #define TIMER0_TIMELR       (*((volatile uint32_t *)(TIMER0_BASE + 0x0C)))
 #define TIMER0_ALARM0       (*((volatile uint32_t *)(TIMER0_BASE + 0x10)))
+#define TIMER0_ALARM1       (*((volatile uint32_t *)(TIMER0_BASE + 0x14)))
+#define TIMER0_TIMERAWH     (*((volatile uint32_t *)(TIMER0_BASE + 0x24)))
+#define TIMER0_TIMERAWL     (*((volatile uint32_t *)(TIMER0_BASE + 0x28)))
 #define TIMER0_INTE         (*((volatile uint32_t *)(TIMER0_BASE + 0x40)))
 #define TIMER0_INTR         (*((volatile uint32_t *)(TIMER0_BASE + 0x3C)))
+
+// Alarm bits, the same positions in INTR, INTE and INTF
+#define TIMER0_INT_ALARM0   (1 << 0)
+#define TIMER0_INT_ALARM1   (1 << 1)
 
 // XIP_CTRL Registers
 #define XIP_CTRL_CTRL       (*((volatile uint32_t *)(XIP_CTRL_BASE + 0x00)))
@@ -314,6 +329,7 @@
 // TICKS Registers
 #define TICKS_TIMER0_CTRL   (*((volatile uint32_t *)(TICKS_BASE + 0x18)))
 #define TICKS_TIMER0_CYCLES (*((volatile uint32_t *)(TICKS_BASE + 0x1C)))
+#define TICKS_CTRL_ENABLE   (1 << 0)
 
 // USB Registers
 #define SIE_STATUS         (*((volatile uint32_t *)(USBCTRL_REGS_BASE + 0x50)))
@@ -340,6 +356,27 @@
 #define SIO_FIFO_ST         (*((volatile uint32_t *)(SIO_BASE + 0x50)))
 #define SIO_FIFO_WR         (*((volatile uint32_t *)(SIO_BASE + 0x54)))
 #define SIO_FIFO_RD         (*((volatile uint32_t *)(SIO_BASE + 0x58)))
+
+// SIO hardware spinlocks.  Reading attempts to claim the lock, returning zero
+// if it is already held by either core and non-zero if this read took it.
+// Writing any value releases it.  This is the only cross core atomic primitive
+// on this part that does not depend on memory attributes.
+//
+// Erratum RP2350-E2 mis-decodes writes to SIO registers 0x180 and above as
+// writes to the spinlock 128 bytes below, releasing it.  Only locks 5, 6, 7,
+// 10, 11 and 18 through 31 can be used normally.  The bootrom does not compete
+// for these - it has its own Boot Locks at BOOTRAM_BASE + 0x800.
+#define SIO_SPINLOCK(n)     (*((volatile uint32_t *)(SIO_BASE + 0x100 + ((n) * 4))))
+
+// Which lock is whose.  Every lock this firmware takes is named here, so a new
+// user can see what is already spoken for.
+//
+// The numbers count down from 31 rather than up from the usable range's base:
+// of the locks the erratum above leaves alone, an allocator handing them out
+// from the SDK's claim free base of 26 reaches these last, so a plugin using
+// the SDK's allocator collides with them last.
+#define SPINLOCK_ORA_LOG    31
+#define SPINLOCK_LED        30
 
 #define SIO_GPIO_READ(pin)  ((pin < 32) ? \
                             (((*(volatile uint32_t*)(SIO_BASE + 0x004)) >> pin) & 1) : \

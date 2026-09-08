@@ -90,6 +90,7 @@ const MIN_ADDR_PINS: u8 = 8;
 /// value indexes the ROM table directly
 /// (`num_rom_table_bits == num_addr_pins`, per agreement).
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct AddrLayout {
     pub gpio_base: u8,
     pub num_addr_pins: u8,
@@ -125,6 +126,7 @@ pub struct AddrLayout {
 /// Carries `board` so [`From<LayoutError> for Error`] can build a
 /// user-facing [`Error`] without needing extra context from the caller.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum LayoutError {
     /// A physical pin required by this chip type has no GPIO mapping on
     /// this board (`socket_pin_map`/`x_pin_map` returned empty).

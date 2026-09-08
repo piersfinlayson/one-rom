@@ -8,7 +8,9 @@
 // schema field tagged with a `plugin_key` (ordered by id), and the INVALID
 // sentinel.  This header is included by the plugin API (firmware/ora/api.h) and
 // therefore reaches user plugins; it deliberately contains only the identifier
-// space, never any access into the internal metadata structures.
+// space, never any access into the internal metadata structures.  Values a
+// plugin needs, ORA_GPIO_NONE among them, come from the sibling constants
+// header - see constants_gen.rs.
 
 use crate::schema::Schema;
 
@@ -34,11 +36,10 @@ pub fn generate(schema: &Schema) -> String {
         variants.push(Variant {
             name: format!("{PREFIX}{}", entry.key.name),
             value: entry.key.id,
-            comment: entry
-                .comment
-                .and_then(|c| c.lines().next())
-                .unwrap_or("")
-                .to_string(),
+            // The whole comment, not just its first line: an array key needs
+            // its sentinel convention stated here, where a plugin author reads
+            // it, rather than only in the firmware's own metadata header.
+            comment: entry.comment.unwrap_or("").to_string(),
         });
     }
     variants.push(Variant {
@@ -75,23 +76,44 @@ pub fn generate(schema: &Schema) -> String {
 
 #include <stdint.h>
 
-typedef enum {{
 "
     ));
 
+    out.push_str("typedef enum {\n");
+
     for v in &variants {
-        let comment = if v.comment.is_empty() {
-            String::new()
+        let lines: Vec<&str> = v
+            .comment
+            .lines()
+            .map(str::trim_end)
+            .filter(|l| !l.is_empty())
+            .collect();
+        // A one-line comment trails its enumerator, as it always has.  A longer
+        // one goes above it, so the sentinel convention an array key carries
+        // survives into this header instead of being truncated away.
+        if lines.len() > 1 {
+            for line in &lines {
+                out.push_str(&format!("    // {}\n", line));
+            }
+            out.push_str(&format!(
+                "    {:<width$} = 0x{:08X},\n",
+                v.name,
+                v.value,
+                width = width
+            ));
         } else {
-            format!("  // {}", v.comment)
-        };
-        out.push_str(&format!(
-            "    {:<width$} = 0x{:08X},{}\n",
-            v.name,
-            v.value,
-            comment,
-            width = width
-        ));
+            let comment = match lines.first() {
+                Some(c) => format!("  // {}", c),
+                None => String::new(),
+            };
+            out.push_str(&format!(
+                "    {:<width$} = 0x{:08X},{}\n",
+                v.name,
+                v.value,
+                comment,
+                width = width
+            ));
+        }
     }
 
     out.push_str(&format!("}} {ENUM_NAME};\n"));

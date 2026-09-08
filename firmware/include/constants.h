@@ -13,6 +13,9 @@ extern const char project_url[];
 extern const char copyright[];
 extern const char author[];
 extern const char product[];
+// Defined in build_date.c - see there for why it is on its own.
+extern const char onerom_build_date[];
+extern const char description[];
 extern const char rom_type[];
 extern const char log_divider[];
 extern const char inverted[];

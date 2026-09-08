@@ -10,6 +10,7 @@
 
 pub mod hexdump;
 pub mod ihex;
+pub mod srec;
 
 // ---------------------------------------------------------------------------
 // Shared hex-formatting helpers

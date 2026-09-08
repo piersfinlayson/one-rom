@@ -114,6 +114,9 @@ fn main() {
                 report.begin_slot(idx, sel, &label);
                 run_slot_gpio_only(&mut report, board, &config, &base_dir, log_enabled, idx);
             }
+            // `ChipSetType` is `#[non_exhaustive]`; a new kind of set needs a
+            // decision on how it is exercised rather than being skipped.
+            ref other => panic!("plugin-api-tester has no handling for chip set type {other:?}"),
         }
     }
 
@@ -177,18 +180,101 @@ fn run_slot(
         "metadata_str",
         tests::info::test_metadata_str(&emulator, config),
     );
-    report.add("metadata_uint", tests::info::test_metadata_uint(&emulator));
+    report.add(
+        "metadata_uint",
+        tests::info::test_metadata_uint(&emulator, config),
+    );
+    report.add(
+        "metadata_uint_at",
+        tests::info::test_metadata_uint_at(&emulator, config, board, fw_version, base_dir),
+    );
+    report.add(
+        "compile_options",
+        tests::info::test_compile_options(&emulator, base_dir),
+    );
+    report.add(
+        "plugin_uptime_ms",
+        tests::time::test_plugin_uptime_ms(&emulator),
+    );
+    report.add(
+        "plugin_uptime_raw_read",
+        tests::time::test_plugin_uptime_raw_read(&emulator),
+    );
+
+    // Platform: memory, clocks, peripherals and the cooperative yield.
+    report.add(
+        "no_allocator",
+        tests::platform::test_no_allocator(&emulator),
+    );
+    report.add(
+        "peripheral_and_irq_calls",
+        tests::platform::test_peripheral_and_irq_calls(&emulator, tests::gpio::max_gpios(board)),
+    );
+    report.add("yield", tests::platform::test_yield(&emulator));
 
     // Lookup
     report.add(
         "lookup_coverage",
-        tests::lookup::test_lookup_coverage(&emulator),
+        tests::lookup::test_lookup_coverage(&emulator, base_dir),
+    );
+
+    // Plugin context
+    report.add(
+        "plugin_context",
+        tests::context::test_plugin_context(&emulator),
+    );
+    report.add(
+        "plugin_context_third_type",
+        tests::context::test_plugin_context_third_type(&emulator),
+    );
+
+    // Logging
+    report.add(
+        "log_write_claim",
+        tests::log::test_write_claim_excludes_other_plugin(&emulator),
+    );
+    report.add(
+        "log_claims_independent",
+        tests::log::test_read_and_write_claims_are_independent(&emulator),
+    );
+    report.add(
+        "log_close_write_keeps_bytes",
+        tests::log::test_close_write_leaves_unread_bytes(&emulator),
+    );
+    report.add(
+        "log_query_needs_no_claim",
+        tests::log::test_query_needs_no_claim(&emulator),
+    );
+    report.add(
+        "log_absent_channel",
+        tests::log::test_absent_channel_is_rejected(&emulator),
+    );
+    report.add(
+        "log_write_read_edges",
+        tests::log::test_write_and_read_edges(&emulator),
+    );
+    report.add(
+        "log_err_claims_nothing",
+        tests::log::test_err_log_claims_nothing(&emulator),
+    );
+    report.add(
+        "log_null_arguments",
+        tests::log::test_null_arguments_and_unheld_close(&emulator),
+    );
+    report.add(
+        "log_categories",
+        tests::log::test_log_categories(&emulator, config, log_enabled),
     );
 
     // GPIO
     report.add(
         "gpio_use",
         tests::gpio::test_gpio_use(&emulator, config, board, fw_version, base_dir, set_idx),
+    );
+    report.add("gpio_set", tests::gpio::test_gpio_set(&emulator, board));
+    report.add(
+        "is_pin_output",
+        tests::gpio::test_is_pin_output(&emulator, board),
     );
 
     // Mapping
@@ -203,6 +289,10 @@ fn run_slot(
     report.add(
         "data_mapping",
         tests::mapping::test_data_mapping(&emulator, config),
+    );
+    report.add(
+        "data_pin_nums",
+        tests::mapping::test_data_pin_nums(&emulator, config, board, fw_version, base_dir, set_idx),
     );
 
     // Slots
@@ -229,6 +319,10 @@ fn run_slot(
     report.add(
         "active_ram_slot",
         tests::slots::test_active_ram_slot(&emulator, BOOT_SLOT),
+    );
+    report.add(
+        "active_ram_slot_refusals",
+        tests::slots::test_active_ram_slot_refusals(&emulator, BOOT_SLOT),
     );
     report.add(
         "read_initial_slot",
@@ -303,6 +397,18 @@ fn run_slot(
             ),
         );
         report.add(
+            "copy_flash_refusals",
+            tests::reprogram::test_copy_flash_refusals(
+                &emulator,
+                config,
+                board,
+                fw_version,
+                base_dir,
+                set_idx,
+                SCRATCH_SLOT,
+            ),
+        );
+        report.add(
             "switch_active_slot",
             tests::reprogram::test_switch_active_slot(&emulator, SCRATCH_SLOT),
         );
@@ -310,6 +416,7 @@ fn run_slot(
         let reason = "requires a second RAM slot (region size leaves only one)";
         report.skip("reprogram_round_trip", reason);
         report.skip("copy_flash_to_ram", reason);
+        report.skip("copy_flash_refusals", reason);
         report.skip("switch_active_slot", reason);
     }
 
@@ -327,6 +434,46 @@ fn run_slot(
             &emulator, config, board, base_dir, set_idx, BOOT_SLOT,
         ),
     );
+
+    // LEDs, last.  Setting the RGB LED claims a PIO state machine, which
+    // extends the same apio configuration the serving tests above read, so they
+    // run first and this cannot move anything underneath them.
+    report.add("led_presence", tests::led::test_led_presence(&emulator));
+    report.add(
+        "led_size_contract",
+        tests::led::test_led_size_contract(&emulator),
+    );
+    report.add("led_rejects", tests::led::test_led_rejects(&emulator));
+    report.add("led_defaults", tests::led::test_led_defaults(&emulator));
+    report.add(
+        "led_status_channel",
+        tests::led::test_led_status_channel(&emulator),
+    );
+    report.add(
+        "led_hold_restores",
+        tests::led::test_led_hold_restores(&emulator),
+    );
+    report.add(
+        "led_hold_at_the_wrap",
+        tests::led::test_led_hold_at_the_wrap(&emulator),
+    );
+    report.add(
+        "led_flame_advances",
+        tests::led::test_led_flame_advances(&emulator),
+    );
+
+    if tests::led::has_rgb(&emulator) {
+        report.add(
+            "led_park_with_status_led_off",
+            tests::led::test_led_park_with_status_led_off(&emulator),
+        );
+        report.add(
+            "led_rgb_defaults",
+            tests::led::test_led_rgb_defaults(&emulator),
+        );
+    } else {
+        report.skip("led_rgb_defaults", "board has no RGB LED");
+    }
 
     // `emulator` dropped here; Drop impl frees the epio handle before the next
     // slot boots.

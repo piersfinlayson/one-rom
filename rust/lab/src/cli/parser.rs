@@ -271,7 +271,11 @@ pub async fn get_format(
     loop {
         let input = prompt(
             editor,
-            &format!("Format (cs/hex/ihex) [{}]: ", default.as_str()),
+            &format!(
+                "Format ({}) [{}]: ",
+                OutputFormat::token_list("/"),
+                default.as_str()
+            ),
         )
         .await?;
 
@@ -284,7 +288,11 @@ pub async fn get_format(
         match OutputFormat::from_str(&s) {
             Some(f) => return Ok(f),
             None => {
-                super::send_line("Unknown format. Choose: cs, hex, ihex.").await?;
+                super::send_line(&format!(
+                    "Unknown format. Choose: {}.",
+                    OutputFormat::token_list(", ")
+                ))
+                .await?;
             }
         }
     }

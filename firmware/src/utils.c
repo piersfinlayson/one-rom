@@ -52,7 +52,7 @@ uint32_t check_sel_pins(uint32_t *sel_mask) {
         }
     }
 
-    DEBUG("Sel value: 0x%08X mask: 0x%08X", sel_value, *sel_mask);
+    DEBUG("Sel value: 0x%08lX mask: 0x%08lX", sel_value, *sel_mask);
 
     // Store the value of the pins
     RUNTIME->image_sel = sel_value;
@@ -267,20 +267,19 @@ void preload_rom_image(void) {
     }
 
     const char *filename = "";
-    if (BOOT_LOGGING_EN) {
-        if (slot->roms[0]->filename != NULL) {
-            filename = slot->roms[0]->filename;
-        }
-        LOG("ROM preload %s from 0x%08X to 0x%08X size 0x%08X bytes",
-            filename, (uint32_t)(uintptr_t)img_src, (uint32_t)(uintptr_t)img_dst, img_size);
+    if (slot->roms[0]->filename != NULL) {
+        filename = slot->roms[0]->filename;
     }
+    LOG("ROM preload %s from 0x%08lX to 0x%08lX size 0x%08lX bytes",
+        filename, (uint32_t)(uintptr_t)img_src, (uint32_t)(uintptr_t)img_dst, img_size);
 
     if ((((uint32_t)img_src % 4) != 0) || (((uint32_t)img_dst % 4) != 0)) {
-        ERR("ROM src/dest unaligned: 0x%08X 0x%08X", (uint32_t)img_src, (uint32_t)img_dst);
+        ERR("ROM src/dest unaligned: 0x%08lX 0x%08lX", (unsigned long)img_src,
+            (unsigned long)img_dst);
         limp_mode(LIMP_MODE_INVALID_CONFIG);
     }
     dma_copy((uint32_t)img_src, (uint32_t)img_dst, (img_size + 3) / 4);
-    LOG("DMA preload initiated from 0x%08X to 0x%08X size 0x%08X %s",
+    LOG("DMA preload initiated from 0x%08lX to 0x%08lX size 0x%08lX %s",
         (uint32_t)(uintptr_t)img_src, (uint32_t)(uintptr_t)img_dst, img_size, filename);
 
     LOG("Slot ROM count: %d", slot->rom_count);
@@ -308,14 +307,12 @@ void preload_rom_image(void) {
 
     uint64_t *img_dst = ram_table_ptr;
 
-        const char *filename = "";
-    if (BOOT_LOGGING_EN) {
-        if (slot->roms[0]->filename != NULL) {
-            filename = slot->roms[0]->filename;
-        }
-        LOG("ROM preload %s from 0x%08X to 0x%08X size 0x%08X bytes",
-            filename, (uint32_t)(uintptr_t)img_src, (uint32_t)(uintptr_t)img_dst, img_size);
+    const char *filename = "";
+    if (slot->roms[0]->filename != NULL) {
+        filename = slot->roms[0]->filename;
     }
+    LOG("ROM preload %s from 0x%08X to 0x%08X size 0x%08X bytes",
+        filename, (uint32_t)(uintptr_t)img_src, (uint32_t)(uintptr_t)img_dst, img_size);
 
     // Set image (either single ROM or multiple ROMs) has been fully
     // pre-processed before embedding in the flash.

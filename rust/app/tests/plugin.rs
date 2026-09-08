@@ -14,8 +14,8 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 
 use onerom_app::{
-    Catalogue, Error, LocalPluginFetch, PluginError, PluginType, PluginVersion, ResolvedSource,
-    parse_plugins, resolve_plugins,
+    Catalogue, Error, LocalPluginFetch, PluginError, PluginNote, PluginType, PluginVersion,
+    ResolvedSource, check_config_plugins, parse_plugins, resolve_plugins,
 };
 
 const BASE: &str = "https://images.onerom.org/plugins";
@@ -366,6 +366,393 @@ async fn catalogue_resilient_load_tolerates_one_failure() {
     // usb is fully loaded; rgb kept its empty releases rather than aborting all.
     assert_eq!(cat.plugin_by_name("usb").unwrap().releases.len(), 1);
     assert!(cat.plugin_by_name("rgb").unwrap().releases.is_empty());
+}
+
+// ------------------------------------------------------------
+// check_config_plugins: plugins named by a config
+// ------------------------------------------------------------
+
+/// A `releases.json` body for a single release carrying an upper bound as well
+/// as a minimum - the window that exists only in the manifest, and the whole
+/// reason [`check_config_plugins`] exists.
+fn releases_json_bounded(
+    version: &str,
+    min_fw: &str,
+    incompatible_from: &str,
+    sha: &str,
+) -> Vec<u8> {
+    format!(
+        r#"{{
+            "version": 1,
+            "display_name": "One ROM USB",
+            "description": "A test plugin",
+            "latest": "{version}",
+            "releases": [
+                {{
+                    "version": "{version}",
+                    "path": "v{version}",
+                    "filename": "plugin.bin",
+                    "sha256": "{sha}",
+                    "api_version": 1,
+                    "plugin_type": "system_plugin",
+                    "min_fw_version": "{min_fw}",
+                    "incompatible_from": "{incompatible_from}"
+                }}
+            ]
+        }}"#
+    )
+    .into_bytes()
+}
+
+/// A `releases.json` body mirroring the shape of the real `usb` manifest:
+/// a current release, newest first, and an older one withdrawn from the
+/// firmware the current one requires.
+fn releases_json_usb_pair(current_sha: &str, withdrawn_sha: &str) -> Vec<u8> {
+    format!(
+        r#"{{
+            "version": 1,
+            "display_name": "One ROM USB",
+            "description": "A test plugin",
+            "latest": "0.2.1",
+            "releases": [
+                {{
+                    "version": "0.2.1",
+                    "path": "v0.2.1",
+                    "filename": "plugin.bin",
+                    "sha256": "{current_sha}",
+                    "api_version": 1,
+                    "plugin_type": "system_plugin",
+                    "min_fw_version": "0.7.0"
+                }},
+                {{
+                    "version": "0.1.2",
+                    "path": "v0.1.2",
+                    "filename": "plugin.bin",
+                    "sha256": "{withdrawn_sha}",
+                    "api_version": 1,
+                    "plugin_type": "system_plugin",
+                    "min_fw_version": "0.6.9",
+                    "incompatible_from": "0.7.0"
+                }}
+            ]
+        }}"#
+    )
+    .into_bytes()
+}
+
+/// The URL a system `usb` plugin binary of the given version lives at.
+fn usb_binary_url(version: &str) -> String {
+    format!("{BASE}/system/usb/v{version}/plugin.bin")
+}
+
+/// A minimal config naming a single system plugin loaded from `source`.
+///
+/// A system plugin must occupy the first chip set, and one ROM follows it so
+/// the config is one the builder accepts.
+fn plugin_config_json(source: &str) -> String {
+    format!(
+        r#"{{
+            "version": 1,
+            "name": "plugin test",
+            "description": "A config naming a plugin",
+            "chip_sets": [
+                {{
+                    "type": "single",
+                    "chips": [
+                        {{ "file": "{source}", "type": "system_plugin", "size_handling": "pad" }}
+                    ]
+                }},
+                {{
+                    "type": "single",
+                    "chips": [
+                        {{ "file": "/tmp/rom.bin", "type": "2364", "cs1": "active_low" }}
+                    ]
+                }}
+            ]
+        }}"#
+    )
+}
+
+/// Build a loaded [`Builder`] for a config naming one system plugin at
+/// `source`, with `plugin` as that plugin's image.
+fn loaded_builder(source: &str, plugin: &[u8]) -> onerom_gen::Builder {
+    let mut builder = onerom_gen::Builder::from_json(
+        fw("0.7.0"),
+        onerom_config::mcu::Family::Rp2350,
+        &plugin_config_json(source),
+    )
+    .expect("config should build");
+
+    // Load every file the config names: the plugin image, and a blank ROM.
+    for spec in builder.file_specs() {
+        let data = if spec.source == source {
+            plugin.to_vec()
+        } else {
+            vec![0xFFu8; 8 * 1024]
+        };
+        builder
+            .add_file(onerom_gen::FileData::new(spec.id, data))
+            .expect("file should load");
+    }
+
+    builder
+}
+
+#[tokio::test]
+async fn config_plugin_withdrawn_for_this_firmware_is_rejected() {
+    // The real case from issue #288: One ROM USB v0.1.2 declares min_fw 0.6.9
+    // in its binary header - which firmware 0.7.0 satisfies - but the manifest
+    // withdraws it from 0.7.0, where it hard faults. Only the manifest knows.
+    let bin = header(0, (0, 1, 2, 0));
+    let current = header(0, (0, 2, 1, 0));
+    let url = usb_binary_url("0.1.2");
+    let fetch = MockFetch::new().with(
+        &format!("{BASE}/system/usb/releases.json"),
+        releases_json_usb_pair(&sha_hex(&current), &sha_hex(&bin)),
+    );
+
+    let builder = loaded_builder(&url, &bin);
+
+    let err = check_config_plugins(&builder, &fw("0.7.0"), &fetch)
+        .await
+        .expect_err("a withdrawn plugin must be refused");
+
+    let PluginError::IncompatibleNewer {
+        ref name,
+        version,
+        from,
+        fw: got,
+        ref newest_compatible,
+    } = err
+    else {
+        panic!("expected IncompatibleNewer, got {err:?}");
+    };
+
+    assert_eq!(name, "usb");
+    assert_eq!(version, PluginVersion::new(0, 1, 2, 0));
+    assert_eq!(from, fw("0.7.0"));
+    assert_eq!(got, fw("0.7.0"));
+
+    // The way out: the newest release that does support this firmware, and the
+    // URL a config has to be pointed at to use it.
+    let suggested = newest_compatible
+        .as_ref()
+        .expect("0.2.1 supports 0.7.0, so it should be suggested");
+    assert_eq!(suggested.version, PluginVersion::new(0, 2, 1, 0));
+    assert_eq!(suggested.binary_url, usb_binary_url("0.2.1"));
+
+    // And it reaches the rendered message, which is what a user actually sees.
+    let rendered = err.to_string();
+    assert!(
+        rendered.contains("plugin version 0.2.1 supports it"),
+        "message should name the way out: {rendered}"
+    );
+    assert!(
+        rendered.contains(&usb_binary_url("0.2.1")),
+        "message should carry the URL: {rendered}"
+    );
+}
+
+#[tokio::test]
+async fn config_plugin_with_no_way_out_says_so() {
+    // Every release of this plugin is withdrawn from 0.7.0, so there is no
+    // version to suggest. Discriminates a real suggestion from one that just
+    // echoes the newest release whether or not it helps.
+    let bin = header(0, (0, 1, 2, 0));
+    let url = usb_binary_url("0.1.2");
+    let fetch = MockFetch::new().with(
+        &format!("{BASE}/system/usb/releases.json"),
+        releases_json_bounded("0.1.2", "0.6.9", "0.7.0", &sha_hex(&bin)),
+    );
+
+    let builder = loaded_builder(&url, &bin);
+
+    let err = check_config_plugins(&builder, &fw("0.7.0"), &fetch)
+        .await
+        .expect_err("a withdrawn plugin must be refused");
+
+    let PluginError::IncompatibleNewer {
+        ref newest_compatible,
+        ..
+    } = err
+    else {
+        panic!("expected IncompatibleNewer, got {err:?}");
+    };
+
+    assert!(newest_compatible.is_none());
+    assert!(
+        err.to_string().contains("no version of this plugin"),
+        "message should say there is no way out: {err}"
+    );
+}
+
+#[tokio::test]
+async fn config_plugin_inside_its_window_is_accepted() {
+    // The same plugin, the same manifest, on the last firmware it supports.
+    // Discriminates the check above from one that rejects any bounded release.
+    let bin = header(0, (0, 1, 2, 0));
+    let url = usb_binary_url("0.1.2");
+    let fetch = MockFetch::new().with(
+        &format!("{BASE}/system/usb/releases.json"),
+        releases_json_bounded("0.1.2", "0.6.9", "0.7.0", &sha_hex(&bin)),
+    );
+
+    let builder = loaded_builder(&url, &bin);
+
+    let notes = check_config_plugins(&builder, &fw("0.6.9"), &fetch)
+        .await
+        .expect("a plugin inside its window is fine");
+
+    assert!(matches!(
+        notes.as_slice(),
+        [PluginNote::Checked { name, version }]
+            if name == "usb" && *version == PluginVersion::new(0, 1, 2, 0)
+    ));
+}
+
+#[tokio::test]
+async fn config_plugin_below_its_minimum_is_rejected() {
+    // The lower bound still applies here, so both ends of the window are
+    // enforced from one place.
+    let bin = header(0, (0, 1, 2, 0));
+    let url = usb_binary_url("0.1.2");
+    let fetch = MockFetch::new().with(
+        &format!("{BASE}/system/usb/releases.json"),
+        releases_json_bounded("0.1.2", "0.6.9", "0.7.0", &sha_hex(&bin)),
+    );
+
+    let builder = loaded_builder(&url, &bin);
+
+    let err = check_config_plugins(&builder, &fw("0.6.8"), &fetch)
+        .await
+        .expect_err("firmware below the minimum must be refused");
+
+    assert!(
+        matches!(err, PluginError::Incompatible { .. }),
+        "got {err:?}"
+    );
+}
+
+#[tokio::test]
+async fn config_plugin_binary_not_matching_the_manifest_is_rejected() {
+    // The binary at the official URL is not the one the manifest published.
+    // The digest is the only thing that catches this, and it is the check
+    // `onerom-gen` cannot do.
+    let published = header(0, (0, 1, 2, 0));
+    let actual = header(0, (0, 1, 2, 1)); // different build: different digest
+    let url = usb_binary_url("0.1.2");
+    let fetch = MockFetch::new().with(
+        &format!("{BASE}/system/usb/releases.json"),
+        releases_json_bounded("0.1.2", "0.6.9", "0.8.0", &sha_hex(&published)),
+    );
+
+    let builder = loaded_builder(&url, &actual);
+
+    let err = check_config_plugins(&builder, &fw("0.7.0"), &fetch)
+        .await
+        .expect_err("a binary that is not the published one must be refused");
+
+    assert!(
+        matches!(err, PluginError::Sha256Mismatch { .. }),
+        "got {err:?}"
+    );
+}
+
+#[tokio::test]
+async fn config_plugin_from_a_local_path_is_not_checked() {
+    // A local path names no release, so there is nothing to check it against.
+    // It must not be rejected, and no manifest should be fetched for it.
+    let bin = header(0, (0, 1, 2, 0));
+    let fetch = MockFetch::new();
+
+    let builder = loaded_builder("/tmp/my-plugin.bin", &bin);
+
+    let notes = check_config_plugins(&builder, &fw("0.7.0"), &fetch)
+        .await
+        .expect("a local plugin is its author's business");
+
+    assert!(matches!(
+        notes.as_slice(),
+        [PluginNote::Unofficial { source }] if source == "/tmp/my-plugin.bin"
+    ));
+    assert!(fetch.requested().is_empty());
+}
+
+#[tokio::test]
+async fn config_plugin_survives_an_unreachable_manifest() {
+    // Offline, or the images server down: the check cannot run, but an
+    // otherwise valid build must not be blocked - it is reported instead.
+    let bin = header(0, (0, 1, 2, 0));
+    let url = usb_binary_url("0.1.2");
+    let fetch = MockFetch::new(); // no releases.json: the fetch fails
+
+    let builder = loaded_builder(&url, &bin);
+
+    let notes = check_config_plugins(&builder, &fw("0.7.0"), &fetch)
+        .await
+        .expect("an unreachable manifest must not fail the build");
+
+    assert!(matches!(
+        notes.as_slice(),
+        [PluginNote::Unchecked { source, error: Error::Fetch { .. } }] if *source == url
+    ));
+}
+
+#[tokio::test]
+async fn config_plugin_absent_from_the_manifest_is_not_checked() {
+    // The binary exists on the server but the manifest no longer lists that
+    // release. Nothing to check it against, and no grounds to refuse it.
+    let bin = header(0, (0, 1, 1, 0));
+    let url = usb_binary_url("0.1.1");
+    let fetch = MockFetch::new().with(
+        &format!("{BASE}/system/usb/releases.json"),
+        releases_json_bounded("0.1.2", "0.6.9", "0.7.0", &sha_hex(&bin)),
+    );
+
+    let builder = loaded_builder(&url, &bin);
+
+    let notes = check_config_plugins(&builder, &fw("0.7.0"), &fetch)
+        .await
+        .expect("an unlisted release must not fail the build");
+
+    assert!(matches!(
+        notes.as_slice(),
+        [PluginNote::Unchecked {
+            error: Error::Plugin(PluginError::VersionNotFound(..)),
+            ..
+        }]
+    ));
+}
+
+#[tokio::test]
+async fn config_without_plugins_checks_nothing() {
+    // A ROM-only config must not fetch anything, so the overwhelmingly common
+    // build gains no network round trip from this check.
+    let builder = onerom_gen::Builder::from_json(
+        fw("0.7.0"),
+        onerom_config::mcu::Family::Rp2350,
+        r#"{
+            "version": 1,
+            "description": "ROMs only",
+            "chip_sets": [
+                {
+                    "type": "single",
+                    "chips": [
+                        { "file": "/tmp/rom.bin", "type": "2364", "cs1": "active_low" }
+                    ]
+                }
+            ]
+        }"#,
+    )
+    .expect("config should build");
+
+    let fetch = MockFetch::new();
+    let notes = check_config_plugins(&builder, &fw("0.7.0"), &fetch)
+        .await
+        .unwrap();
+
+    assert!(notes.is_empty());
+    assert!(fetch.requested().is_empty());
 }
 
 /// Fetches the real plugins manifest and confirms it still deserialises into

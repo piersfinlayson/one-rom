@@ -64,7 +64,7 @@ impl TypedValueParser for ImageFormatParser {
     }
 }
 
-/// Parse an Intel HEX load address, sharing the config file's spellings.
+/// Parse a record-format load address, sharing the config file's spellings.
 ///
 /// [`LoadAddress::parse_str`] is what the config and `--slot load-address=`
 /// both use, so all three accept a decimal, `0x`- or `$`-prefixed value
@@ -126,19 +126,19 @@ pub enum ImageCommands {
     /// Convert a ROM image between formats.
     ///
     /// Reads --input in the --from format and writes --output in the --to
-    /// format. Formats: `binary` (raw) and `ihex` (Intel HEX). Extensible to
-    /// further formats in future.
+    /// format. Formats: `binary` (raw), `ihex` (Intel HEX) and `srec`
+    /// (Motorola S-record). Extensible to further formats in future.
     ///
-    /// --load-address applies only when one side is Intel HEX: it is the
-    /// absolute Intel HEX address that maps to byte 0 of the ROM (subtracted
-    /// when reading ihex, used as the base when writing ihex). Accepts a
+    /// --load-address applies only when one side is a record-oriented format
+    /// (ihex or srec): it is the absolute address that maps to byte 0 of the
+    /// ROM (subtracted when reading, used as the base when writing). Accepts a
     /// decimal or `0x`/`$`-prefixed hex value; defaults to 0.
     ///
     /// Examples:
     ///
     ///   onerom image convert --from ihex --to binary --input rom.hex --output rom.bin
     ///
-    ///   onerom image convert --from binary --to ihex --input rom.bin --output rom.hex --load-address $E000
+    ///   onerom image convert --from binary --to srec --input rom.bin --output rom.s19 --load-address $E000
     Convert(ImageConvertArgs),
 }
 
@@ -191,12 +191,14 @@ impl CommandTrait for ImageDeinterleaveArgs {
 #[derive(Debug, Args)]
 pub struct ImageConvertArgs {
     /// Input format. `binary` also accepts `bin` and `raw`; `ihex` also
-    /// accepts `intel-hex` and `hex`.
+    /// accepts `intel-hex` and `hex`; `srec` also accepts `s-record`,
+    /// `motorola` and `s19`.
     #[arg(long, value_name = "FORMAT", value_parser = ImageFormatParser)]
     pub from: FileFormat,
 
     /// Output format. `binary` also accepts `bin` and `raw`; `ihex` also
-    /// accepts `intel-hex` and `hex`.
+    /// accepts `intel-hex` and `hex`; `srec` also accepts `s-record`,
+    /// `motorola` and `s19`.
     #[arg(long, value_name = "FORMAT", value_parser = ImageFormatParser)]
     pub to: FileFormat,
 
@@ -208,8 +210,8 @@ pub struct ImageConvertArgs {
     #[arg(long, short, visible_alias = "out", value_name = "FILE")]
     pub output: String,
 
-    /// Intel HEX load address (decimal, or `0x`/`$`-prefixed hex). Only valid
-    /// when converting to or from ihex. Defaults to 0.
+    /// Load address (decimal, or `0x`/`$`-prefixed hex). Only valid when
+    /// converting to or from ihex or srec. Defaults to 0.
     #[arg(long, value_name = "ADDR", value_parser = parse_load_address)]
     pub load_address: Option<LoadAddress>,
 }

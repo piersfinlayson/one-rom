@@ -15,19 +15,23 @@ mod control;
 mod firmware;
 mod image;
 mod inspect;
+mod monitor;
 mod plugin;
 mod program;
 mod scan;
+mod self_cmd;
 mod update;
 mod utils;
 
 use args::BoardCommands;
 use args::Cli;
 use args::Commands;
-use args::control::{ControlCommands, ControlLedCommands, ControlPokeCommands};
+use args::control::{ControlCommands, ControlLedCommands, ControlPokeCommands, ControlRgbCommands};
 use args::firmware::FirmwareCommands;
 use args::image::ImageCommands;
 use args::inspect::{InspectCommands, InspectPeekCommands};
+use args::monitor::MonitorCommands;
+use args::self_cmd::SelfCommands;
 use args::update::UpdateCommands;
 
 use onerom_cli::Error;
@@ -69,6 +73,8 @@ async fn sub_main() -> Result<(), Error> {
             InspectCommands::Slots(args) => inspect::cmd_slots(&options, args).await,
             InspectCommands::Image(args) => inspect::cmd_image(&options, args).await,
             InspectCommands::Gpio(args) => inspect::cmd_gpio(&options, args).await,
+            InspectCommands::Led(args) => inspect::cmd_led(&options, args).await,
+            InspectCommands::Rgb(args) => inspect::cmd_rgb(&options, args).await,
             InspectCommands::Header(args) => inspect::cmd_header(&options, args).await,
             InspectCommands::Socket(args) => inspect::cmd_socket(&options, args).await,
             InspectCommands::Peek(args) => match &args.command {
@@ -76,12 +82,25 @@ async fn sub_main() -> Result<(), Error> {
                 InspectPeekCommands::Memory(args) => inspect::cmd_peek_memory(&options, args).await,
             },
         },
+        Commands::Monitor(args) => match &args.command {
+            MonitorCommands::Log(args) => monitor::cmd_log(&options, args).await,
+        },
         Commands::Control(args) => match &args.command {
             ControlCommands::Led(args) => match &args.command {
                 ControlLedCommands::On(args) => control::cmd_led_on(&options, args).await,
                 ControlLedCommands::Off(args) => control::cmd_led_off(&options, args).await,
                 ControlLedCommands::Beacon(args) => control::cmd_led_beacon(&options, args).await,
                 ControlLedCommands::Flame(args) => control::cmd_led_flame(&options, args).await,
+                ControlLedCommands::Blink(args) => control::cmd_led_blink(&options, args).await,
+            },
+            ControlCommands::Rgb(args) => match &args.command {
+                ControlRgbCommands::On(args) => control::cmd_rgb_on(&options, args).await,
+                ControlRgbCommands::Off(args) => control::cmd_rgb_off(&options, args).await,
+                ControlRgbCommands::Beacon(args) => control::cmd_rgb_beacon(&options, args).await,
+                ControlRgbCommands::Flame(args) => control::cmd_rgb_flame(&options, args).await,
+                ControlRgbCommands::Cycle(args) => control::cmd_rgb_cycle(&options, args).await,
+                ControlRgbCommands::Breathe(args) => control::cmd_rgb_breathe(&options, args).await,
+                ControlRgbCommands::Blink(args) => control::cmd_rgb_blink(&options, args).await,
             },
             ControlCommands::Reboot(args) => control::cmd_reboot(&options, args).await,
             ControlCommands::Reset(args) => control::cmd_reset(&options, args).await,
@@ -111,6 +130,10 @@ async fn sub_main() -> Result<(), Error> {
             BoardCommands::List(args) => board::cmd_list(&options, args).await,
             BoardCommands::Header(args) => board::cmd_header(&options, args).await,
             BoardCommands::Socket(args) => board::cmd_socket(&options, args).await,
+        },
+        Commands::SelfCmd(args) => match &args.command {
+            SelfCommands::Check(args) => self_cmd::cmd_check(&options, args).await,
+            SelfCommands::Download(args) => self_cmd::cmd_download(&options, args).await,
         },
     }
 }
@@ -258,6 +281,65 @@ mod cli_assert {
                 );
             }
         }
+    }
+
+    /// A sample value for a placeholder a hint leaves to the user.
+    ///
+    /// Panics on one it does not know, so a new placeholder has to be given a
+    /// value here rather than quietly skipping the line that uses it.
+    fn sample_for(placeholder: &str) -> &'static str {
+        match placeholder {
+            "<CONFIG>" => "myconfig.json",
+            "<BOARD>" => "fire-24-f",
+            "<MS>" => "100",
+            other => panic!("hint placeholder {other} has no sample value - add one here"),
+        }
+    }
+
+    /// Parse one command line the way a user would type it.
+    fn parses(command: &str) -> Result<(), clap::Error> {
+        use clap::Parser;
+        let words: Vec<&str> = command
+            .split_whitespace()
+            .map(|w| if w.starts_with('<') { sample_for(w) } else { w })
+            .collect();
+        Cli::try_parse_from(words).map(|_| ())
+    }
+
+    /// Every command line the CLI tells a user to run actually parses.
+    ///
+    /// The messages in `onerom_cli::hint` quote other commands' option names,
+    /// and nothing about a string literal keeps that true. Renaming an option
+    /// used to leave the CLI printing advice that no longer ran; now it fails
+    /// here.
+    #[test]
+    fn every_hint_parses_as_a_command_line() {
+        let pin = onerom_cli::pin::parse_pin("sel_c").expect("sel_c is a pad");
+        let built = [
+            onerom_cli::hint::board_view("header"),
+            onerom_cli::hint::board_view("socket"),
+            onerom_cli::hint::latch_pin_low(pin),
+            onerom_cli::hint::force_pin_low(pin),
+        ];
+        let all = onerom_cli::hint::ALL_HINTS
+            .iter()
+            .map(|h| h.to_string())
+            .chain(built);
+
+        let mut checked = 0;
+        for hint in all {
+            assert!(
+                parses(&hint).is_ok(),
+                "hint does not parse: {hint}\n  {:?}",
+                parses(&hint).unwrap_err().to_string()
+            );
+            checked += 1;
+        }
+        assert!(checked >= 11, "only {checked} hints checked");
+
+        // The check discriminates: a command line missing a required option is
+        // rejected, so the assertions above are not passing vacuously.
+        assert!(parses("onerom control pin --state low").is_err());
     }
 
     /// Every option documents itself, and names its value in one word.

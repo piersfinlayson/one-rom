@@ -229,6 +229,7 @@ impl Default for FireConfig {
 /// Fire serve mode
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+#[non_exhaustive]
 pub enum FireServeMode {
     /// PIO mode
     Pio,
@@ -571,6 +572,7 @@ impl JsonSchema for FireCpuFreq {
 #[repr(u8)]
 #[derive(Debug, Default, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+#[non_exhaustive]
 pub enum FireVreg {
     #[serde(rename = "0.55V")]
     V0_55 = 0x00,

@@ -13,8 +13,9 @@
 #include "piodma/dmareg.h"
 
 // Address and the CS/Data PIOs are in different blocks, as they may need
-// different GPIO_BASE settings
-#define BLOCK_MONITOR               0
+// different GPIO_BASE settings.  Block 0 is used for non-serving
+// functionality
+#define BLOCK_LED                   0
 #define BLOCK_ADDR                  1
 #define BLOCK_CS_DATA               2
 #define SM_ADDR_READ                0
@@ -22,6 +23,7 @@
 #define SM_DATA_OUTPUT              0
 #define SM_DATA_WRITE               1
 #define SM_ADDR_MONITOR_CS_MONITOR  2
+#define SM_LED                      0
 
 // IRQs
 

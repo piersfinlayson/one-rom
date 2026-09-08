@@ -154,10 +154,17 @@ fn parse_size_handling(slot: &str, _key: &str, value: &str) -> Result<SizeHandli
 
 fn parse_format(slot: &str, value: &str) -> Result<FileFormat, Error> {
     FileFormat::try_from_str(value).ok_or_else(|| {
+        // Driven by onerom-gen's own list, so a format added there is named
+        // here without a CLI change - as it already is by `image convert`.
+        let supported = FileFormat::supported_values()
+            .iter()
+            .map(|f| f.name())
+            .collect::<Vec<_>>()
+            .join(", ");
         Error::InvalidArgument(
             "--slot".to_string(),
             format!(
-                "Invalid format '{value}'\n    --slot '{slot}'\n  Supported values: binary, ihex"
+                "Invalid format '{value}'\n    --slot '{slot}'\n  Supported values: {supported}"
             ),
         )
     })
@@ -393,11 +400,14 @@ fn parse_slot(slot: &str, board: &Board) -> Result<SlotSpec, Error> {
         ));
     }
 
-    // A load address only makes sense for an Intel HEX image.
-    if load_address.is_some() && format != Some(FileFormat::IntelHex) {
+    // A load address only makes sense where the records carry addresses, so
+    // any format bar the default raw binary.
+    if load_address.is_some() && format.is_none_or(|f| f.is_binary()) {
         return Err(Error::InvalidArgument(
             "--slot".to_string(),
-            format!("load-address is only valid with format=ihex\n    --slot '{slot}'"),
+            format!(
+                "load-address is only valid with format=ihex or format=srec\n    --slot '{slot}'"
+            ),
         ));
     }
 
@@ -775,6 +785,35 @@ pub fn save_config(path: &str, json: &str) -> Result<(), Error> {
     std::fs::write(path, json).map_err(|e| Error::io(path, e))
 }
 
+/// Every chip type a config's slots name, plugins excluded.
+///
+/// The config-side twin of [`crate::image::chip_types`], which asks the same
+/// question of a built image. This one can be asked before the image is built -
+/// before its ROM files have even been fetched - which is the only way to refuse
+/// a build for something the config says.
+pub fn chip_types(config: &Config) -> Vec<ChipType> {
+    let mut chips = Vec::new();
+    for set in &config.chip_sets {
+        for chip in &set.chips {
+            let chip_type = chip.chip_type.resolved();
+            if !chip_type.is_plugin() && !chips.contains(&chip_type) {
+                chips.push(chip_type);
+            }
+        }
+    }
+    chips
+}
+
+/// Whether the config places a system plugin, and so gives the device a USB
+/// stack of its own to serve with.
+pub fn has_system_plugin(config: &Config) -> bool {
+    config
+        .chip_sets
+        .iter()
+        .flat_map(|set| set.chips.iter())
+        .any(|chip| chip.chip_type.resolved() == ChipType::SystemPlugin)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -918,6 +957,45 @@ mod tests {
         let chip = slot_to_chip_config(&slot);
         assert_eq!(chip.format, FileFormat::IntelHex);
         assert_eq!(chip.load_address, LoadAddress(0xE000));
+    }
+
+    #[test]
+    fn slot_parses_srec_format_and_load_address() {
+        let board = Board::try_from_str("fire-24-e").unwrap();
+        let slot = parse_slot(
+            "file=rom.s19,type=2364,cs1=active_low,format=srec,load-address=$E000",
+            &board,
+        )
+        .unwrap();
+        assert_eq!(slot.format, Some(FileFormat::Srec));
+        assert_eq!(slot.load_address, Some(LoadAddress(0xE000)));
+
+        let chip = slot_to_chip_config(&slot);
+        assert_eq!(chip.format, FileFormat::Srec);
+        assert_eq!(chip.load_address, LoadAddress(0xE000));
+    }
+
+    #[test]
+    fn slot_load_address_requires_a_record_format() {
+        let board = Board::try_from_str("fire-24-e").unwrap();
+        // Binary explicitly...
+        let err = parse_slot(
+            "file=rom.bin,type=2364,cs1=active_low,format=binary,load-address=$E000",
+            &board,
+        )
+        .unwrap_err();
+        assert!(
+            format!("{err}").contains("load-address is only valid with format=ihex or format=srec"),
+            "{err}"
+        );
+        // ...and binary by default.
+        assert!(
+            parse_slot(
+                "file=rom.bin,type=2364,cs1=active_low,load_address=0x100",
+                &board,
+            )
+            .is_err()
+        );
     }
 
     #[test]
@@ -1082,17 +1160,6 @@ mod tests {
         )
         .unwrap_err();
         assert!(format!("{err}").contains("Duplicate slot key 'transform'"));
-    }
-
-    #[test]
-    fn slot_load_address_requires_ihex() {
-        let board = Board::try_from_str("fire-24-e").unwrap();
-        let err = parse_slot(
-            "file=rom.bin,type=2364,cs1=active_low,load_address=0x100",
-            &board,
-        )
-        .unwrap_err();
-        assert!(format!("{err}").contains("load-address is only valid with format=ihex"));
     }
 
     #[test]

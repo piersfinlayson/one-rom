@@ -5,7 +5,7 @@
 
 VERSION_MAJOR := 0
 VERSION_MINOR := 7
-VERSION_PATCH := 1
+VERSION_PATCH := 2
 BUILD_NUMBER := 1
 GIT_COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 export VERSION_MAJOR VERSION_MINOR VERSION_PATCH BUILD_NUMBER GIT_COMMIT
@@ -35,15 +35,10 @@ FLASH_BASE=0x10000000
 # disable any enabled features.
 #
 
-# Boot logging configuration
-#
-# Outputs diagnostics boot messages via SWD during the boot process.
-#
-# If you are using the ROM as a boot ROM in a machine with a very short reset
-# timer, you may want to disable this.
-
-BOOT_LOGGING ?= 0
-# BOOT_LOGGING ?= 1
+# Boot logging is not a build option.  It is compiled in unconditionally and
+# switched at runtime from metadata, so it is set when a device is programmed -
+# `onerom program --boot-logging true`.  A BOOT_LOGGING variable lived here
+# until v0.7.2 and was read by nothing, so setting it silently did nothing.
 
 # Plugin logging configuration
 #
@@ -210,7 +205,7 @@ SCRUB_CARGO_ENV = for v in $$(env | grep -oE '^(CARGO_CFG_[A-Z_0-9]+|CARGO_FEATU
 	      CARGO_MAKEFLAGS CARGO_ENCODED_RUSTFLAGS CARGO_CRATE_NAME CARGO_BIN_NAME \
 	      OUT_DIR TARGET HOST NUM_JOBS OPT_LEVEL DEBUG PROFILE RUSTC RUSTDOC;
 
-.PHONY: all clean clean-firmware clean-firmware-build firmware run flash test test-emu test-api test-monitor test-rbcp generated clean-generated fw-config-gen libonerom-test libonerom-test-wasm gen-config clean-gen-config clean-libonerom-test clean-libonerom-test-wasm
+.PHONY: all clean clean-firmware clean-firmware-build firmware run flash test test-emu test-api test-monitor test-rbcp test-usb test-c generated clean-generated fw-config-gen libonerom-test libonerom-test-wasm gen-config clean-gen-config clean-libonerom-test clean-libonerom-test-wasm libonerom-test-cov clean-libonerom-test-cov cov-run cov-campaign cov-report cov-check cov-raise clean-coverage
 
 all: firmware
 	@echo "=========================================="
@@ -300,7 +295,47 @@ test-rbcp: gen-config
 	@echo "=========================================="
 	@echo "Running One ROM emulator tests"
 	@echo "-----"
-	@BASE_DIR=$(CURDIR) CONFIG=$(CONFIG) BOARD=$(BOARD) cargo run --manifest-path rust/Cargo.toml -p onerom-plugin-tester --bin rbcp-tester --quiet
+	@BASE_DIR=$(CURDIR) CONFIG=$(CONFIG) BOARD=$(BOARD) cargo run --manifest-path rust/Cargo.toml -p onerom-rbcp-tester --bin rbcp-tester --quiet
+
+# The host C tests.  A coverage run drives this like any other tester - see
+# ci/coverage-testers.txt - and COVERAGE_FW=1 is what makes it instrument.
+test-c:
+	@echo "=========================================="
+	@echo "Running One ROM host C tests"
+	@echo "-----"
+	@COVERAGE_C=$(if $(COVERAGE_FW),1,0) ci/c-tests.sh
+
+test-usb: gen-config
+	@echo "=========================================="
+	@echo "Running One ROM USB plugin tests"
+	@echo "-----"
+	@BASE_DIR=$(CURDIR) CONFIG=$(CONFIG) BOARD=$(BOARD) cargo run --manifest-path rust/Cargo.toml -p onerom-usb-tester --bin usb-tester --quiet -- $(USB_TESTER_ARGS)
+
+# Coverage.  BOARD and CONFIG select what the testers run against, and are
+# required - there is no sensible default, and a wrong one would be measured
+# without comment.  See ci/coverage-run.sh.
+cov-run:
+	@ci/coverage-run.sh $(BOARD) $(CONFIG)
+
+# The whole campaign - hours, and what moves the floors.  For the edit loop
+# use cov-run against one board and config.
+cov-campaign:
+	@ci/coverage-campaign.sh
+
+cov-report:
+	@ci/coverage-report.sh
+
+cov-check:
+	@ci/coverage-report.sh --check
+
+cov-raise:
+	@ci/coverage-report.sh --raise
+
+clean-coverage: clean-libonerom-test-cov
+	@echo "Cleaning coverage build output"
+	@rm -rf build/coverage
+	@rm -rf build/c-tests-cov
+	@rm -rf plugins/*/*/build-host-cov
 
 libonerom-test: gen-config
 	@echo "=========================================="
@@ -321,6 +356,19 @@ libonerom-test-wasm: gen-config
 	EXTRA_C_FLAGS="$(EXTRA_C_FLAGS)" make --no-print-directory -C $(FIRMWARE_DIR) -f test.mk WASM=1 BUILD_DIR=build-wasm
 	@echo "-----"
 	@echo "Done building libonerom-test (WebAssembly)"
+
+# Coverage build of libonerom-test, for the firmware coverage figures.  Built
+# with --coverage into a separate build-test-cov/ so it never clashes with the
+# ordinary build-test/ objects: the two differ only in flags, and an object
+# does not depend on the flags it was compiled with.  Driven by
+# onerom-fw-emulator's build.rs when COVERAGE_FW=1.
+libonerom-test-cov: gen-config
+	@echo "=========================================="
+	@echo "Building libonerom-test (coverage)"
+	@echo "-----"
+	EXTRA_C_FLAGS="--coverage $(EXTRA_C_FLAGS)" make --no-print-directory -C $(FIRMWARE_DIR) -f test.mk BUILD_DIR=build-test-cov
+	@echo "-----"
+	@echo "Done building libonerom-test (coverage)"
 
 -include $(GEN_OUTPUT_DIR)/generated.mk
 
@@ -346,4 +394,7 @@ clean-libonerom-test: clean-gen-config
 clean-libonerom-test-wasm: clean-gen-config
 	+cd $(FIRMWARE_DIR) && make -f test.mk clean-test BUILD_DIR=build-wasm
 
-clean: clean-firmware clean-rust clean-generated clean-gen-config clean-libonerom-test clean-libonerom-test-wasm
+clean-libonerom-test-cov: clean-gen-config
+	+cd $(FIRMWARE_DIR) && make -f test.mk clean-test BUILD_DIR=build-test-cov
+
+clean: clean-firmware clean-rust clean-generated clean-gen-config clean-libonerom-test clean-libonerom-test-wasm clean-coverage

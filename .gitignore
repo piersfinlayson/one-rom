@@ -5,13 +5,21 @@ Packager_temp.toml
 *.elf
 *.map
 build/
-segger-rtt/
 apio/
 epio/
 pico-sdk/
 build-test/
+plugins/*/*/build-host/
 firmware/build*
 build/
+
+# Three crates keep their build script in a build/ directory, so the rule
+# above hides their source. Those files are tracked, which is why nobody has
+# noticed - an ignore rule does not reach a tracked file. A new one added
+# beside them would be skipped in silence.
+!rust/config/build/
+!rust/metadata/build/
+!prototypes/studiov2/commands/build/
 builds/
 test/build
 hw-config/user/*
@@ -36,8 +44,14 @@ firmware/generated
 !rust/metadata/build
 firmware/ora/onerom_metadata_keys_generated.h
 
+# Coverage builds and their gcov counter files - see ci/coverage-run.sh
+plugins/*/*/build-host-cov/
+*.gcda
+*.gcno
+
 dist/
 output/
+!rust/lab/src/output/
 !rust/lab-new/src/output/
 
 # Rust build artifacts
@@ -90,6 +104,8 @@ flamegraph.svg
 
 # Embedded development
 *.bin
+# Stub plugin images, checked in so a test config can declare plugin slots.
+!images/test/*.bin
 *.hex
 *.elf
 *.uf2

@@ -12,9 +12,11 @@ pub mod builder;
 pub mod chip_type_spec;
 pub mod compat;
 pub mod firmware;
+pub mod hexfile;
 pub mod ihex;
 pub mod image;
 pub mod meta;
+pub mod srec;
 pub mod transform;
 pub mod v1;
 pub mod v2;
@@ -25,14 +27,16 @@ pub use firmware::{
     DebugConfig, FireConfig, FireCpuFreq, FireServeMode, FireVreg, FirmwareConfig, IceConfig,
     IceCpuFreq, LedConfig, ServeAlgParams,
 };
-pub use ihex::{
-    AddressParseError, IHEX_BLANK_BYTE, IhexError, LoadAddress, decode_ihex, encode_ihex,
-};
+#[expect(deprecated, reason = "re-exported for callers of the pre-0.8.0 name")]
+pub use hexfile::IHEX_BLANK_BYTE;
+pub use hexfile::{AddressParseError, LoadAddress, UNWRITTEN_BYTE};
+pub use ihex::{IhexError, decode_ihex, encode_ihex};
 pub use image::{Chip, ChipSet, ChipSetType, CsConfig, CsLogic, FileFormat, SizeHandling};
 pub use image::{MAX_IMAGE_SIZE, PAD_BLANK_BYTE, PAD_NO_CHIP_BYTE};
 pub use image::{num_excess_addr_lines, requires_half_select_cs1};
 pub use meta::{MAX_METADATA_LEN, Metadata, PAD_METADATA_BYTE};
 use onerom_config::mcu::Family;
+pub use srec::{SrecError, decode_srec, encode_srec};
 pub use transform::{
     TRANSFORM_LIST_SEPARATOR, Transform, TransformError, apply_transforms, format_transform_list,
     parse_transform_list,
@@ -99,22 +103,39 @@ pub const MIN_FIRMWARE_OVERRIDES_VERSION: FirmwareVersion = FirmwareVersion::new
 pub enum Error {
     RightSize {
         chip_type: ChipType,
+        filename: String,
         size: usize,
         size_handling: SizeHandling,
     },
     ImageTooSmall {
         chip_type: ChipType,
-        index: usize,
+        filename: String,
         expected: usize,
         actual: usize,
     },
     ImageTooLarge {
         chip_type: ChipType,
+        filename: String,
         image_size: usize,
         expected_size: usize,
     },
+    /// The image is larger than the part of the chip One ROM serves, on a
+    /// chip type One ROM serves only part of.
+    ///
+    /// Separate from [`Error::ImageTooLarge`] because the limit is not the
+    /// chip's own size, and the remedy is not to shrink the image: it is to
+    /// spread the image across more than one One ROM.  `served_size` is what
+    /// one One ROM holds for this chip type, and the chip's own size comes
+    /// from `chip_type`.
+    ImageExceedsServedSize {
+        chip_type: ChipType,
+        filename: String,
+        image_size: usize,
+        served_size: usize,
+    },
     DuplicationNotExactDivisor {
         chip_type: ChipType,
+        filename: String,
         image_size: usize,
         expected_size: usize,
     },
@@ -180,7 +201,7 @@ pub enum Error {
         id: usize,
     },
     BadLocation {
-        id: usize,
+        filename: String,
         reason: String,
     },
     UnsupportedFrequency {
@@ -234,18 +255,26 @@ pub enum Error {
         index: usize,
         source: ihex::IhexError,
     },
-    /// `size_handling: duplicate` was requested for an Intel HEX image, which
-    /// places data by address and cannot be meaningfully duplicated.
-    IhexDuplicateUnsupported {
+    /// A Motorola S-record image failed to decode.
+    Srec {
         index: usize,
+        source: srec::SrecError,
     },
-    /// A non-zero `load_address` was set on a chip that is not Intel HEX.
-    LoadAddressWithoutIhex {
-        index: usize,
+    /// `size_handling: duplicate` was requested for a record-oriented image
+    /// (Intel HEX or S-record), which places data by address and so cannot be
+    /// meaningfully duplicated.
+    DuplicateUnsupportedForFormat {
+        filename: String,
+        format: FileFormat,
+    },
+    /// A non-zero `load_address` was set on a chip whose image is raw binary,
+    /// where there are no record addresses for it to apply to.
+    LoadAddressWithBinary {
+        filename: String,
     },
     /// A chip's `transform` list could not be applied to its image.
     Transform {
-        index: usize,
+        filename: String,
         source: transform::TransformError,
     },
     /// Turbo boot was enabled on a config with more than one non-plugin ROM
@@ -327,36 +356,49 @@ impl core::fmt::Display for Error {
         match self {
             Error::RightSize {
                 chip_type,
+                filename,
                 size,
                 size_handling,
             } => write!(
                 f,
-                "The provided image is already the correct size ({size} bytes) for a {chip_type}.  The {size_handling} option should not be used.  Remove it."
+                "{filename} is already the correct size ({size} bytes) for a {chip_type}.  The {size_handling} option should not be used.  Remove it."
             ),
             Error::ImageTooSmall {
                 chip_type,
-                index: _,
+                filename,
                 expected,
                 actual,
             } => write!(
                 f,
-                "The provided image is too small for a {chip_type}.\n  Expected at least {expected} bytes, got {actual} bytes.\n  Consider using the duplicate or padding options to make the image larger."
+                "{filename} is too small for a {chip_type}.\n  Expected at least {expected} bytes, got {actual} bytes.\n  Consider using the duplicate or padding options to make the image larger."
             ),
             Error::ImageTooLarge {
                 chip_type,
+                filename,
                 image_size,
                 expected_size,
             } => write!(
                 f,
-                "The provided chip image is larger than the size supported by a {chip_type}: expected at most {expected_size} bytes, got {image_size} bytes"
+                "{filename} is larger than a {chip_type} holds.\n  Expected at most {expected_size} bytes, got {image_size} bytes."
+            ),
+            Error::ImageExceedsServedSize {
+                chip_type,
+                filename,
+                image_size,
+                served_size,
+            } => write!(
+                f,
+                "{filename} is {image_size} bytes, and one One ROM serves {served_size} bytes of a {chip_type}, not its full {} bytes.\n  Program part of the image into each of several One ROMs, with the chip select lines configured so each serves a different part.",
+                chip_type.size_bytes()
             ),
             Error::DuplicationNotExactDivisor {
                 chip_type,
+                filename,
                 image_size,
                 expected_size,
             } => write!(
                 f,
-                "Image duplication requires that the size of the provided image is an exact divisor of the size required by a {chip_type}.\n  {image_size} is not an exact divisor of {expected_size}.\n  Consider using the padding option instead."
+                "Image duplication requires that the size of the provided image is an exact divisor of the size required by a {chip_type}.\n  {filename} is {image_size} bytes, which is not an exact divisor of {expected_size}.\n  Consider using the padding option instead."
             ),
             Error::BufferTooSmall {
                 location,
@@ -439,11 +481,8 @@ impl core::fmt::Display for Error {
                 f,
                 "Internal error: A license with internal id {id} has not been validated"
             ),
-            Error::BadLocation { id, reason } => {
-                write!(
-                    f,
-                    "An invalid location was specified for the file with internal id {id}\n  {reason}"
-                )
+            Error::BadLocation { filename, reason } => {
+                write!(f, "{filename} has an invalid location.\n  {reason}")
             }
             Error::UnsupportedFrequency { frequency_mhz } => {
                 write!(
@@ -504,16 +543,21 @@ impl core::fmt::Display for Error {
                 f,
                 "The Intel HEX image for chip {index} could not be decoded:\n  {source}"
             ),
-            Error::IhexDuplicateUnsupported { index } => write!(
+            Error::Srec { index, source } => write!(
                 f,
-                "Chip {index}: the duplicate size-handling option is not supported for Intel HEX images, which place data by address"
+                "The S-record image for chip {index} could not be decoded:\n  {source}"
             ),
-            Error::LoadAddressWithoutIhex { index } => write!(
+            Error::DuplicateUnsupportedForFormat { filename, format } => write!(
                 f,
-                "Chip {index}: load_address is only valid for Intel HEX images (format: ihex)"
+                "{filename}: the duplicate size-handling option is not supported for {} images, which place data by address",
+                format.display_name()
             ),
-            Error::Transform { index, source } => {
-                write!(f, "Chip {index}: {source}")
+            Error::LoadAddressWithBinary { filename } => write!(
+                f,
+                "{filename}: load_address is only valid for a record-oriented image (format: ihex or srec)"
+            ),
+            Error::Transform { filename, source } => {
+                write!(f, "{filename}: {source}")
             }
             Error::TurboBootMultiSlot { slots } => {
                 write!(f, "{}", turbo_boot_multi_slot_msg(*slots))
@@ -652,9 +696,8 @@ pub struct Config {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub serial_override: Option<String>,
 
-    /// Whether to enable boot logging.  Logging is emitted over RTT, so a
-    /// debug probe must be attached to see it.  Compatible with
-    /// swd_enabled = false, as SWD stays up for the whole of boot.
+    /// Whether to enable One ROM firmware logging. The log can be read over
+    /// USB (if the USB plugin is installed) or RTT using a debug probe.
     #[serde(default = "default_boot_logging")]
     pub boot_logging: bool,
 

@@ -2,6 +2,8 @@
 
 The software and firmware files which are part of this repository are licensed under the [MIT license](#mit-license).
 
+The documentation which is part of this repository, in particular the files in the [docs directory](docs/) and the PDF editions built from them, is also licensed under the [MIT license](#mit-license).
+
 The schematic, PCB files, 3d models and other hardware files which are part of this repository, in particular those in the [hardware directory](hardware/) are licensed under the [CERN Open Hardware Licence Version 2 - Weakly Reciprocal (CERN-OHL-W-2.0)](#cern-ohl-w-20-license).
 
 ## MIT License

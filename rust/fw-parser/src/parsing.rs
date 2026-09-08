@@ -9,11 +9,11 @@
 use deku::prelude::*;
 use onerom_config::fw::FirmwareVersion;
 use onerom_gen::firmware::{FirmwareConfig, ServeAlgParams};
+use onerom_metadata::MIN_SCHEMA_VERSION;
 use static_assertions::const_assert_eq;
 
 use crate::Reader;
 use crate::types::{BitMode, FireServeMode, FireVreg, LimpMode};
-use crate::{MAX_VERSION_MAJOR, MAX_VERSION_MINOR, MAX_VERSION_PATCH};
 use crate::{McuLine, McuStorage, SdrrCsState, SdrrRomType, SdrrServe};
 use crate::{SdrrExtraInfo, SdrrMcuPort, SdrrPins, SdrrRomInfo, SdrrRomSet};
 
@@ -494,22 +494,17 @@ pub(crate) fn parse_and_validate_header(data: &[u8]) -> Result<SdrrInfoHeader, S
     let (_, mut header) = SdrrInfoHeader::from_bytes((data, 0))
         .map_err(|e| format!("Failed to parse header: {}", e))?;
 
-    // Validate version
-    if header.major_version > MAX_VERSION_MAJOR
-        || (header.major_version == MAX_VERSION_MAJOR && header.minor_version > MAX_VERSION_MINOR)
-        || (header.major_version == MAX_VERSION_MAJOR
-            && header.minor_version == MAX_VERSION_MINOR
-            && header.patch_version > MAX_VERSION_PATCH)
-    {
-        return Err(format!(
-            "One ROM firmware version v{}.{}.{} unsupported - max version v{}.{}.{}",
-            header.major_version,
-            header.minor_version,
-            header.patch_version,
-            MAX_VERSION_MAJOR,
-            MAX_VERSION_MINOR,
-            MAX_VERSION_PATCH
-        ));
+    // Refuse schema-format firmware here rather than in the caller, so a
+    // header of this type cannot exist holding a version whose layout it does
+    // not describe.
+    let version = FirmwareVersion::new(
+        header.major_version,
+        header.minor_version,
+        header.patch_version,
+        header.build_number,
+    );
+    if version >= MIN_SCHEMA_VERSION {
+        return Err("Firmware >= v0.7.0 uses schema format; use parse_format_schema()".into());
     }
 
     if header.major_version == 0 && header.minor_version < 4 {

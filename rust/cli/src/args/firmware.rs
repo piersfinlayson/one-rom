@@ -193,12 +193,7 @@ pub struct FirmwareBuildArgs {
     /// Name for the generated ROM configuration.
     ///
     /// Mutually exclusive with --config.
-    #[arg(
-        long,
-        value_name = "NAME",
-        visible_alias = "name",
-        conflicts_with = "config_file"
-    )]
+    #[arg(long, value_name = "NAME", conflicts_with = "config_file")]
     pub config_name: Option<String>,
 
     /// Description for the generated ROM configuration. Defaults to
@@ -264,7 +259,7 @@ pub struct FirmwareBuildArgs {
     pub no_config: bool,
 
     /// Provide this One ROM with a name
-    #[arg(long, visible_aliases = ["instance_name", "onerom", "onerom-name", "one-rom", "one-rom-name"], value_name = "NAME", conflicts_with_all = ["no_config"])]
+    #[arg(long, visible_aliases = ["name", "instance_name", "onerom", "onerom-name", "one-rom", "one-rom-name"], value_name = "NAME", conflicts_with_all = ["no_config"])]
     pub instance_name: Option<String>,
 
     /// Give this One ROM a custom USB serial number, in place of the RP2350

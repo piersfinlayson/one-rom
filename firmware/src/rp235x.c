@@ -136,8 +136,8 @@ uint8_t calculate_pll_settings(
     uint32_t target_freq_mhz = config->sys_clock_freq_mhz;
 
     if ((target_freq_mhz > RP235X_STOCK_CLOCK_SPEED_MHZ) && (!overclock)) {
-        ERR("Requested frequency %dMHz exceeds max %dMHz - cannot calculate PLL",
-            target_freq_mhz, RP235X_STOCK_CLOCK_SPEED_MHZ);
+        ERR("Requested frequency %luMHz exceeds max %dMHz - cannot calculate PLL",
+            (unsigned long)target_freq_mhz, RP235X_STOCK_CLOCK_SPEED_MHZ);
         return 0;
     }
     
@@ -335,13 +335,13 @@ void setup_qmi(rp235x_clock_config_t *config) {
         }
 
         uint32_t m0 = XIP_QMI_M0_TIMING;
-        DEBUG("Current QMI M0: 0x%08X", m0);
+        DEBUG("Current QMI M0: 0x%08lX", m0);
 
         m0 &= ~XIP_QMI_M0_CLKDIV_MASK;
         m0 |= (divider & XIP_QMI_M0_CLKDIV_MASK) << XIP_QMI_M0_CLKDIV_SHIFT;
 
         DEBUG("Update M0 clkdiv: %d", divider);
-        DEBUG("Update QMI M0: 0x%08X", m0);
+        DEBUG("Update QMI M0: 0x%08lX", m0);
 
         XIP_QMI_M0_TIMING = m0;
     }
@@ -351,9 +351,9 @@ void setup_vreg(rp235x_clock_config_t *config) {
     uint32_t vreg_ctrl = POWMAN_VREG_CTRL;
     uint32_t vreg = POWMAN_VREG;
     uint8_t voltage = config->vreg;
-    DEBUG("Current VREG_CTRL: 0x%08X", vreg_ctrl);
-    DEBUG("Current VREG_STATUS: 0x%08X", POWMAN_VREG_STATUS);
-    DEBUG("Current VREG: 0x%08X", vreg);
+    DEBUG("Current VREG_CTRL: 0x%08lX", vreg_ctrl);
+    DEBUG("Current VREG_STATUS: 0x%08lX", POWMAN_VREG_STATUS);
+    DEBUG("Current VREG: 0x%08lX", vreg);
     DEBUG("Target VREG setting: %d", voltage);
 
     if (voltage > 0b11111) {
@@ -386,7 +386,7 @@ void setup_vreg(rp235x_clock_config_t *config) {
         vreg_ctrl |= POWMAN_PASSWORD |
                         POWMAN_VREG_CTRL_HT_TH(high_temp);
         POWMAN_VREG_CTRL = vreg_ctrl;
-        DEBUG("Current VREG_CTRL: 0x%08X", POWMAN_VREG_CTRL);
+        DEBUG("Current VREG_CTRL: 0x%08lX", POWMAN_VREG_CTRL);
 
         DEBUG("Set VREG to %d", voltage);
         while (POWMAN_VREG & POWMAN_VREG_UPDATE);
@@ -395,7 +395,7 @@ void setup_vreg(rp235x_clock_config_t *config) {
         POWMAN_VREG = vreg;
         while (POWMAN_VREG & POWMAN_VREG_UPDATE);
 
-        DEBUG("POWMAN_VREG: 0x%08X", POWMAN_VREG);
+        DEBUG("POWMAN_VREG: 0x%08lX", POWMAN_VREG);
 
         for (volatile int ii = 0; ii < 5000; ii++) {
             // Wait a bit for the voltage to stabilise
@@ -434,6 +434,30 @@ void setup_pll(rp235x_clock_config_t *config) {
     // Switch to the PLL
     CLOCK_SYS_CTRL = CLOCK_SYS_SRC_AUX | CLOCK_SYS_AUXSRC_PLL_SYS;
     while ((CLOCK_SYS_SELECTED & (1 << 1)) == 0);
+}
+
+// Start TIMER0 counting microseconds, so ora_get_plugin_uptime_ms() has
+// something to read.  Only the reset release and the tick source are set here -
+// no alarm is armed and no interrupt is enabled, because nothing in the
+// firmware wants to be woken by the timer.  The counter free-runs and every
+// reader derives its own value from it, which is what keeps this off the
+// firmware's RAM budget.
+//
+// Called once ROM serving is set up and before any plugin runs, so the count a
+// plugin reads starts from about the moment plugins do.  The tick generator
+// divides clk_ref down to 1 MHz, so it must in any case run after setup_clock()
+// has settled clk_ref.
+void setup_timer0(void) {
+    // Take TIMER0 out of reset
+    RESET_RESET &= ~RESET_TIMER0;
+    while (!(RESET_DONE & RESET_TIMER0));
+
+    // One tick per microsecond, from clk_ref.  The datasheet requires the tick
+    // generator be stopped before its cycle count is changed, so clear ENABLE
+    // first rather than assume nothing has started it.
+    TICKS_TIMER0_CTRL &= ~TICKS_CTRL_ENABLE;
+    TICKS_TIMER0_CYCLES = ora_get_clkref_mhz();
+    TICKS_TIMER0_CTRL |= TICKS_CTRL_ENABLE;
 }
 
 void setup_usb_controller(void) {
@@ -720,10 +744,11 @@ void disable_swd(void) {
 void setup_status_led(void) {
 #if REAL_HARDWARE
     // Configure the status LED GPIO as an SIO push-pull output, driven high so
-    // the LED is off (active-low wiring). Idempotent and self-contained, so it
-    // is safe to call repeatedly - e.g. a fault handler calls it to reclaim the
-    // pin (funcsel/drive/OE) before forcing the LED on, in case a plugin such
-    // as the neopixel driver had reconfigured it.
+    // the LED is off (active-low wiring). Every call writes the same registers
+    // from scratch and reads nothing back, so it is safe to call repeatedly -
+    // e.g. a fault handler calls it to reclaim the pin (funcsel/drive/OE)
+    // before forcing the LED on, in case a plugin such as the neopixel driver
+    // had reconfigured it.
     if (HW->gpio_status < MAX_GPIOS) {
         uint8_t pin = HW->gpio_status;
         GPIO_CTRL(pin) = GPIO_CTRL_RESET;   // SIO function
@@ -792,26 +817,24 @@ void enter_bootloader(void) {
 
 #if !defined(TEST_BUILD)
 void platform_logging(void) {
-    if (BOOT_LOGGING_EN) {
-        if (RUNTIME->rp235x == RP235XA) {
-            LOG("RP235XA");
-        } else {
-            LOG("RP235XB");
-        }
-        DEBUG("Chip ID: 0x%08X", SYSINFO_CHIP_ID);
-        DEBUG("Chip commit: 0x%08X", SYSINFO_GITREF_RP2350);
-        if ((MCU_RAM_SIZE_KB != RP2350_RAM_SIZE_KB) || (MCU_RAM_SIZE != (RP2350_RAM_SIZE_KB * 1024))) {
-            ERR("RAM error: actual %dKB, expected: %dKB",
-                MCU_RAM_SIZE_KB,
-                RP2350_RAM_SIZE_KB);
-            limp_mode(LIMP_MODE_INVALID_BUILD);
-        } else {
-            LOG("RAM: %dKB", MCU_RAM_SIZE_KB);
-        }
-        LOG("Flash: %dKB", MCU_FLASH_SIZE_KB);
-        LOG("Freq: %dMHz", TARGET_FREQ_MHZ);
-        LOG("PLL: %d/%d/%d/%d", PLL_SYS_REFDIV, PLL_SYS_FBDIV, PLL_SYS_POSTDIV1, PLL_SYS_POSTDIV2);
+    if (RUNTIME->rp235x == RP235XA) {
+        LOG("RP235XA");
+    } else {
+        LOG("RP235XB");
     }
+    DEBUG("Chip ID: 0x%08lX", SYSINFO_CHIP_ID);
+    DEBUG("Chip commit: 0x%08lX", SYSINFO_GITREF_RP2350);
+    if ((MCU_RAM_SIZE_KB != RP2350_RAM_SIZE_KB) || (MCU_RAM_SIZE != (RP2350_RAM_SIZE_KB * 1024))) {
+        ERR("RAM error: actual %dKB, expected: %dKB",
+            MCU_RAM_SIZE_KB,
+            RP2350_RAM_SIZE_KB);
+        limp_mode(LIMP_MODE_INVALID_BUILD);
+    } else {
+        LOG("RAM: %dKB", MCU_RAM_SIZE_KB);
+    }
+    LOG("Flash: %dKB", MCU_FLASH_SIZE_KB);
+    LOG("Freq: %dMHz", TARGET_FREQ_MHZ);
+    LOG("PLL: %d/%d/%d/%d", PLL_SYS_REFDIV, PLL_SYS_FBDIV, PLL_SYS_POSTDIV1, PLL_SYS_POSTDIV2);
 }
 
 void setup_xosc(void) {

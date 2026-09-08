@@ -9,9 +9,9 @@
 #include "tusb.h"
 #include "usb_descriptors.h"
 #include "usb_picobootx.h"
+#include "picobootx.h"
 
 // Optimisations:
-// - Move timer handler to library and see if it can be better optimised
 // - Add IRQ prioritisation a la SDK
 
 // Define this plugin's attribues
@@ -35,14 +35,22 @@ const ora_plugin_header_t ora_plugin_header = {
     .properties1 = ORA_PROPERTY1_SUPPORTS_USB_RUNNING | ORA_PROPERTY1_SUPPORTS_YIELD,
     .min_fw_major_version = 0,
     .min_fw_minor_version = 7,
-    .min_fw_patch_version = 0,
+    .min_fw_patch_version = 2,
     .reserved = {0},
 };
 
 // Plugin context, stored in .bss
 usb_plugin_context_t context;
 
+// Place the plugin's initialised data and clear its zeroed data.
+//
+// The addresses come from the plugin's linker script, so this has nothing to
+// act on in a host test build — the plugin's data is the host process's, placed
+// by its own toolchain before main runs.  The symbols do not exist there
+// either, which is why the whole body is compiled out rather than skipped at
+// run time.
 void init_data_bss(void) {
+#if !defined(ORA_HOST_TEST)
     extern uint32_t __ramfunc_start;
     extern uint32_t __ramfunc_end;
     extern uint32_t __ramfunc_load;
@@ -71,19 +79,11 @@ void init_data_bss(void) {
     while (dst < &__bss_end) {
         *dst++ = 0;
     }
+#endif // !ORA_HOST_TEST
 }
 
-// Timer0 IRQ handler to increment the timer_ms field in our plugin context
-void timer0_irq_0_handler(void) {
-    TIMER0_INTR = (1 << 0);
-    TIMER0_ALARM0 = TIMER0_TIMELR + 1000;
-    context.timer_ms++;
-}
-
-// Implement a function to get the current time in milliseconds, which the
-// USB stack can use for timing.
 uint32_t board_millis(void) {
-    return context.timer_ms;
+    return context.get_plugin_uptime_ms();
 }
 
 // tinyusb's name for it
@@ -91,75 +91,71 @@ uint32_t tusb_time_millis_api(void) {
     return board_millis();
 }
 
-void setup_timer0(uint32_t clkref_mhz) {
-    // Release TIMER0 from reset
-    RESET_RESET &= ~RESET_TIMER0;
-    while (!(RESET_DONE & RESET_TIMER0));
-
-    // Set up TICKS
-    TICKS_TIMER0_CYCLES = clkref_mhz;
-    TICKS_TIMER0_CTRL = 1; 
-
-    // Enable alarm 0 interrupt
-    // ORA_IRQ_TIMER0_IRQ_0 corresponds to bit 0 in TIMER0_INTE
-    TIMER0_INTE |= (1 << (ORA_IRQ_TIMER0_IRQ_0 % 4));
-
-    // Fire first alarm 1ms from now
-    TIMER0_ALARM0 = TIMER0_TIMELR + 1000;
-}
-
 void usb_plugin_task(void) {
-    // Handle incoming pending command
-    if (context.pending.cmd != ONEROM_PENDING_NONE) {
-        switch (context.pending.cmd) {
-            case ONEROM_PENDING_SET_LED:
-                led_handle_pending_set();
-                break;
-
-            default:
-                LOG("usb_plugin_task: unhandled pending cmd %u", context.pending.cmd);
-                break;
-        }
-        context.pending.cmd = ONEROM_PENDING_NONE;
-    }
-
-    led_handle_ongoing_led_modes();
-
-    // ONEROM_CMD_GPIO_SET is applied in the dispatch handler; only the timed
-    // release of a bounded hold is deferred to here, where the millisecond
-    // timer can be checked.
-    gpio_handle_pending_releases();
+    // ONEROM_CMD_SET_LED and ONEROM_CMD_GPIO_SET are both applied in the
+    // dispatch handler.  Only the timed release of a bounded GPIO hold is
+    // deferred to here - an LED mode that runs on is the firmware engine's to
+    // keep going, not this plugin's.
+    gpio_release_expired_holds();
 }
 
-// Resolve the USB serial override from device metadata and widen it into the
-// UTF-16 descriptor buffer.  Returns the number of code units written, or 0
-// when there is no override to apply - either the running firmware predates the
-// metadata getter, or no override is set - so the caller falls back to the
-// chip-ID serial.
+// Number of UTF-16 code units picoboot_get_serial() must be given room for: 16
+// hex digits and the NUL it terminates them with.
+#define USB_CHIP_ID_SERIAL_UNITS 17
+
+// Yield the device's effective USB serial.  See usb_plugin.h for the contract.
 //
-// The override string lives in flash and is read on demand (zero-copy); nothing
-// is cached, and the metadata getter is only looked up here, at descriptor
-// time.  An override longer than max_chars is truncated, so the descriptor
-// never overruns.  min_fw is unaffected: absence of the getter is handled, not
-// required.
-size_t usb_get_serial(uint16_t *desc_str, size_t max_chars) {
+// The metadata getter is looked up per call rather than held, because both
+// callers are occasional - a descriptor request and a terminal attaching - and
+// a held pointer would cost static RAM the plugin has little of.
+size_t usb_get_serial(char *out, size_t out_size) {
+    if (out == NULL || out_size == 0) {
+        return 0;
+    }
+    out[0] = '\0';
+
+    const char *override = NULL;
     ora_get_metadata_str_fn_t get_metadata_str =
         context.ora_lookup_fn(ORA_ID_GET_METADATA_STR);
-    if (get_metadata_str == NULL) {
-        return 0;
+    if (get_metadata_str != NULL) {
+        // The override string lives in flash and is read in place.  An unset
+        // field reports OK with a NULL pointer, which is the common case rather
+        // than a failure.
+        if (get_metadata_str(ORA_METADATA_KEY_SERIAL_OVERRIDE, &override)
+            != ORA_RESULT_OK) {
+            override = NULL;
+        }
     }
 
-    const char *serial = NULL;
-    if (get_metadata_str(ORA_METADATA_KEY_SERIAL_OVERRIDE, &serial) != ORA_RESULT_OK
-        || serial == NULL) {
-        return 0;
+    // An override set to the empty string is treated as no override, so the
+    // chip ID is still used.  A device presenting a zero length serial cannot
+    // be told apart from its peers by anything selecting on serial, and the
+    // metadata accepts an empty string, so this is reachable rather than
+    // theoretical.
+    if (override != NULL && override[0] == '\0') {
+        override = NULL;
     }
 
     size_t len = 0;
-    while (serial[len] != '\0' && len < max_chars) {
-        desc_str[len] = (uint16_t)(uint8_t)serial[len];
+    if (override != NULL) {
+        while (override[len] != '\0' && len < out_size - 1) {
+            out[len] = override[len];
+            len++;
+        }
+        out[len] = '\0';
+        return len;
+    }
+
+    // picobootx produces the chip ID as UTF-16, for the descriptor that first
+    // wanted it.  Every code unit is a hex digit, so narrowing to ASCII here
+    // loses nothing.
+    uint16_t units[USB_CHIP_ID_SERIAL_UNITS];
+    size_t count = picoboot_get_serial(units, sizeof(units) / sizeof(units[0]));
+    while (len < count && len < out_size - 1) {
+        out[len] = (char)units[len];
         len++;
     }
+    out[len] = '\0';
     return len;
 }
 
@@ -169,10 +165,8 @@ void usb_init(ora_lookup_fn_t ora_lookup_fn) {
     context.log = ora_lookup_fn(ORA_ID_LOG);
     context.debug = ora_lookup_fn(ORA_ID_DEBUG_LOG);
     context.err_log = ora_lookup_fn(ORA_ID_ERR_LOG);
-    ora_register_irq_fn_t register_irq = ora_lookup_fn(ORA_ID_REGISTER_IRQ);
     ora_setup_usb_fn_t setup_usb = ora_lookup_fn(ORA_ID_SETUP_USB);
-    ora_enable_irq_fn_t enable_irq = ora_lookup_fn(ORA_ID_ENABLE_IRQ);
-    ora_get_clkref_mhz_fn_t get_clkref_mhz = ora_lookup_fn(ORA_ID_GET_CLKREF_MHZ);
+    context.get_plugin_uptime_ms = ora_lookup_fn(ORA_ID_GET_PLUGIN_UPTIME_MS);
     context.set_status_led = ora_lookup_fn(ORA_ID_SET_STATUS_LED);
     context.get_active_ram_slot = ora_lookup_fn(ORA_ID_GET_ACTIVE_RAM_SLOT);
     context.get_ram_slot_info = ora_lookup_fn(ORA_ID_GET_RAM_SLOT_INFO);
@@ -186,15 +180,16 @@ void usb_init(ora_lookup_fn_t ora_lookup_fn) {
     // because probing it per request would put ORA lookups on the command path.
     gpio_init_caps();
 
+    // After gpio_init_caps(), which clears the capability word.
+    led_init_caps();
+
+    // Resolved once here, with the rest of the one-time API resolution, since
+    // none of it changes while the plugin runs.
+    log_drain_init();
+
     // Set up USB.  tinyusb will register its own IRQ handler, using the API
     // functions we provide.
     setup_usb();
-
-    // Set up timer0
-    register_irq(ORA_IRQ_TIMER0_IRQ_0, timer0_irq_0_handler);
-    uint32_t clkref_mhz = get_clkref_mhz();
-    setup_timer0(clkref_mhz);
-    enable_irq(ORA_IRQ_TIMER0_IRQ_0, 1);
 
     usb_picoboot_init(EPNUM_VENDOR_OUT, EPNUM_VENDOR_IN);
 
@@ -229,7 +224,13 @@ void usb_main(
         tud_task();
         usb_picoboot_task();
         usb_plugin_task();
+        log_drain_task();
         yield(NULL);
+
+        // Nothing in this loop waits on anything a host test can change, so
+        // without a seam the loop would never hand control back and the
+        // emulation could never be advanced.  Compiles to nothing on a device.
+        ORA_TEST_YIELD();
     }
 
     ERR("USB plugin exiting");
@@ -258,7 +259,9 @@ void tud_resume_cb(void) {
 void tud_cdc_rx_cb(uint8_t itf) {
     uint8_t buf[64];
     uint32_t count = tud_cdc_n_read(itf, buf, sizeof(buf));
-    LOG("CDC received %u bytes on interface %u", count, itf);
+
+    // Debug log the number of bytes received and drop it
+    DEBUG("CDC received %lu bytes on interface %u", (unsigned long)count, itf);
 }
 
 // Invoked when a control transfer is received on vendor interface
@@ -293,6 +296,19 @@ bool tud_vendor_control_xfer_cb(
 
     return false;
 }
+
+// ---------------------------------------------------------------------------
+// The device's C library and interrupt glue
+//
+// None of this belongs to a host test build.  The host has a C library of its
+// own, and defining these there would take over the process's — _exit above all,
+// which would turn an ordinary exit into a hang.  The IRQ shims are called only
+// by tinyusb's RP2040 device controller driver, which a host build does not
+// compile, and panic and __assert_func are the bare-metal ends of routines the
+// host libraries already provide.
+// ---------------------------------------------------------------------------
+
+#if !defined(ORA_HOST_TEST)
 
 #include <sys/stat.h>
 
@@ -344,3 +360,5 @@ void __assert_func(const char *file, int line, const char *func, const char *exp
     ERR("Assertion failed: %s, at %s:%d in function %s", expr, file, line, func);
     while (1);
 }
+
+#endif // !ORA_HOST_TEST

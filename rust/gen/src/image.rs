@@ -59,6 +59,7 @@ pub const MAX_IMAGE_SIZE: usize = 512 * 1024;
 #[derive(Debug, Default, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+#[non_exhaustive]
 pub enum SizeHandling {
     /// No special handling.  Errors if the image size does not exactly match
     /// the Chip size.
@@ -70,8 +71,8 @@ pub enum SizeHandling {
     #[serde(alias = "dup")]
     Duplicate,
 
-    /// Truncates the image to fit the Chip size.  Errors if the image is an
-    /// exact match size-wise.
+    /// Truncates the image to fit the Chip size.  Errors if the image is
+    /// already the Chip size, or smaller than it.
     #[serde(alias = "trunc")]
     Truncate,
 
@@ -108,10 +109,14 @@ impl core::fmt::Display for SizeHandling {
 /// Format of a supplied ROM image file.
 ///
 /// The default, [`FileFormat::Binary`], treats the supplied file as a raw
-/// binary image.  [`FileFormat::IntelHex`] decodes an Intel HEX file into a
-/// binary image before it is placed into the firmware; see the
-/// [`ihex`](crate::ihex) module for the supported record types and the
-/// decoding rules.
+/// binary image.  The other variants are record-oriented text formats, decoded
+/// to a binary image before it is placed into the firmware: see the
+/// [`ihex`](crate::ihex) and [`srec`](crate::srec) modules for the record types
+/// each supports and the decoding rules.
+///
+/// This enum is `#[non_exhaustive]`: new formats may be added in a
+/// backwards-compatible release, so a `match` on it needs a wildcard arm.
+#[non_exhaustive]
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
@@ -129,6 +134,17 @@ pub enum FileFormat {
         alias = "hex"
     )]
     IntelHex,
+
+    /// Motorola S-record image, decoded to a binary image before use.
+    #[serde(
+        rename = "srec",
+        alias = "s_record",
+        alias = "s-record",
+        alias = "srecord",
+        alias = "motorola",
+        alias = "s19"
+    )]
+    Srec,
 }
 
 impl FileFormat {
@@ -144,27 +160,34 @@ impl FileFormat {
         match self {
             FileFormat::Binary => "Binary",
             FileFormat::IntelHex => "Intel HEX",
+            FileFormat::Srec => "S-record",
         }
     }
 
     /// The canonical name of this format, as spelled in a config file and on
-    /// the command line. `"Binary"`/`"Intel HEX"` is
-    /// [`FileFormat::display_name`]; this is `"binary"`/`"ihex"`.
+    /// the command line. `"Binary"`/`"Intel HEX"`/`"S-record"` is
+    /// [`FileFormat::display_name`]; this is `"binary"`/`"ihex"`/`"srec"`.
     pub fn name(&self) -> &'static str {
         match self {
             FileFormat::Binary => "binary",
             FileFormat::IntelHex => "ihex",
+            FileFormat::Srec => "srec",
         }
     }
 
     /// Parses a format name case-insensitively, for command-line parsing.
-    /// Accepts `binary`/`bin`/`raw` for [`FileFormat::Binary`] and
+    /// Accepts `binary`/`bin`/`raw` for [`FileFormat::Binary`],
     /// `ihex`/`intel_hex`/`intel-hex`/`intelhex`/`hex` for
-    /// [`FileFormat::IntelHex`].
+    /// [`FileFormat::IntelHex`], and
+    /// `srec`/`s_record`/`s-record`/`srecord`/`motorola`/`s19` for
+    /// [`FileFormat::Srec`].
     pub fn try_from_str(s: &str) -> Option<Self> {
         match s.to_lowercase().as_str() {
             "binary" | "bin" | "raw" => Some(FileFormat::Binary),
             "ihex" | "intel_hex" | "intel-hex" | "intelhex" | "hex" => Some(FileFormat::IntelHex),
+            "srec" | "s_record" | "s-record" | "srecord" | "motorola" | "s19" => {
+                Some(FileFormat::Srec)
+            }
             _ => None,
         }
     }
@@ -179,9 +202,9 @@ impl FileFormat {
     /// their own.
     pub fn supported_values() -> &'static [Self] {
         match FileFormat::Binary {
-            FileFormat::Binary | FileFormat::IntelHex => {}
+            FileFormat::Binary | FileFormat::IntelHex | FileFormat::Srec => {}
         }
-        &[FileFormat::Binary, FileFormat::IntelHex]
+        &[FileFormat::Binary, FileFormat::IntelHex, FileFormat::Srec]
     }
 }
 
@@ -195,6 +218,7 @@ impl core::fmt::Display for FileFormat {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum CsLogic {
     /// Chip Select line is active low
     ActiveLow,
@@ -322,6 +346,7 @@ pub const fn requires_half_select_cs1(chip_type: &ChipType) -> bool {
 /// and the other is tied active (Ignore).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+#[non_exhaustive]
 pub enum CsConfig {
     /// Configuration of the 4 possible Chip Select lines
     ChipSelect {
@@ -521,6 +546,7 @@ impl CsConfig {
 /// Single Chip image.  May be part of a Chip set
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+#[non_exhaustive]
 pub struct Chip {
     index: usize,
 
@@ -607,8 +633,9 @@ impl Chip {
     /// `blank_byte` is the value used to fill any padding introduced by
     /// [`SizeHandling::Pad`] (and the automatic padding applied to plugin
     /// images).  Callers pass [`PAD_BLANK_BYTE`] for raw binary images and
-    /// [`IHEX_BLANK_BYTE`](crate::ihex::IHEX_BLANK_BYTE) for Intel HEX images,
-    /// which have already been decoded to a binary image by the caller.
+    /// [`UNWRITTEN_BYTE`](crate::UNWRITTEN_BYTE) for the record-oriented
+    /// formats, which have already been decoded to a binary image by the
+    /// caller.
     ///
     /// `transforms` are applied to the image after any `location` slice and
     /// before it is reconciled against the chip size; see the
@@ -635,10 +662,16 @@ impl Chip {
         // Validate transforms before the source-less early return below, so a
         // misconfigured transform on a chip with no image (a RAM chip) is still
         // reported rather than being carried silently into the metadata.
+        // Both transform failure points name the same image.  A helper keeps
+        // each `map_err` to one line, and the closure form would reformat the
+        // block it sits in.
+        let transform_err = |e: crate::transform::TransformError| Error::Transform {
+            filename: filename.clone(),
+            source: e,
+        };
+
         for transform in transforms {
-            transform
-                .validate()
-                .map_err(|e| Error::Transform { index, source: e })?;
+            transform.validate().map_err(&transform_err)?;
         }
 
         if source.is_none() {
@@ -667,19 +700,24 @@ impl Chip {
                 .start
                 .checked_add(loc.length)
                 .ok_or(Error::BadLocation {
-                    id: index,
+                    filename: filename.clone(),
                     reason: format!(
                         "Location overflow: start={:#X} length={:#X}",
                         loc.start, loc.length
                     ),
                 })?;
 
+            // The window is checked against the file, not the chip: the
+            // location slice happens before any size handling, so padding or
+            // duplication cannot make a short file reach the window's end.
             if end > source.len() {
-                return Err(Error::ImageTooSmall {
-                    chip_type: *chip_type,
-                    index,
-                    expected: end,
-                    actual: source.len(),
+                return Err(Error::BadLocation {
+                    filename: filename.clone(),
+                    reason: format!(
+                        "The {}-byte file is shorter than the location's end at {:#X}",
+                        source.len(),
+                        end
+                    ),
                 });
             }
 
@@ -697,26 +735,30 @@ impl Chip {
             source
         } else {
             transformed = apply_transforms(source, transforms, size_handling, blank_byte)
-                .map_err(|e| Error::Transform { index, source: e })?;
+                .map_err(&transform_err)?;
             transform_used_size_handling = transformed.used_size_handling;
             &transformed.data
         };
 
-        let expected_size = chip_type.size_bytes();
-        if dest.len() < expected_size {
+        let chip_size = chip_type.size_bytes();
+        if dest.len() < chip_size {
             return Err(Error::BufferTooSmall {
                 location: "Chip::from_raw_rom_image",
-                expected: expected_size,
+                expected: chip_size,
                 actual: dest.len(),
             });
         }
         let expected_size = if *chip_type == ChipType::Chip27C080 {
             // For a 27C080, we only use a half size image, as a single One
             // ROM can only serve half.
-            expected_size / 2
+            chip_size / 2
         } else {
-            expected_size
+            chip_size
         };
+        // True where the image this One ROM holds is smaller than the chip it
+        // presents, which changes what an oversized image means and what the
+        // user can do about it.
+        let part_served = expected_size != chip_size;
 
         // See what handling is required, if any
         match source.len().cmp(&expected_size) {
@@ -739,6 +781,7 @@ impl Chip {
                     SizeHandling::Duplicate | SizeHandling::Pad | SizeHandling::Truncate => {
                         return Err(Error::RightSize {
                             chip_type: *chip_type,
+                            filename: filename.clone(),
                             size: expected_size,
                             size_handling: size_handling.clone(),
                         });
@@ -758,7 +801,7 @@ impl Chip {
                         } else {
                             return Err(Error::ImageTooSmall {
                                 chip_type: *chip_type,
-                                index,
+                                filename: filename.clone(),
                                 expected: expected_size,
                                 actual: source.len(),
                             });
@@ -768,6 +811,7 @@ impl Chip {
                         if !expected_size.is_multiple_of(source.len()) {
                             return Err(Error::DuplicationNotExactDivisor {
                                 chip_type: *chip_type,
+                                filename: filename.clone(),
                                 image_size: source.len(),
                                 expected_size,
                             });
@@ -793,10 +837,14 @@ impl Chip {
                         }
                     }
                     SizeHandling::Truncate => {
-                        return Err(Error::ImageTooLarge {
+                        // Truncate cannot lengthen an image, so this is the
+                        // plain too-small case, and the remedy is pad or
+                        // duplicate rather than truncate.
+                        return Err(Error::ImageTooSmall {
                             chip_type: *chip_type,
-                            image_size: source.len(),
-                            expected_size,
+                            filename: filename.clone(),
+                            expected: expected_size,
+                            actual: source.len(),
                         });
                     }
                 }
@@ -807,9 +855,20 @@ impl Chip {
                         // Copy only up to expected size
                         dest[..expected_size].copy_from_slice(&source[..expected_size]);
                     }
+                    SizeHandling::None | SizeHandling::Duplicate | SizeHandling::Pad
+                        if part_served =>
+                    {
+                        return Err(Error::ImageExceedsServedSize {
+                            chip_type: *chip_type,
+                            filename: filename.clone(),
+                            image_size: source.len(),
+                            served_size: expected_size,
+                        });
+                    }
                     SizeHandling::None | SizeHandling::Duplicate | SizeHandling::Pad => {
                         return Err(Error::ImageTooLarge {
                             chip_type: *chip_type,
+                            filename: filename.clone(),
                             image_size: source.len(),
                             expected_size,
                         });
@@ -1027,6 +1086,7 @@ impl Chip {
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum ChipSetType {
     /// Single Chip - the default
     #[default]
@@ -1044,6 +1104,7 @@ pub enum ChipSetType {
 /// A set of Chips, where the set type is ChipSetType
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+#[non_exhaustive]
 pub struct ChipSet {
     /// ID of the Chip set
     pub id: usize,
@@ -2031,5 +2092,116 @@ mod value_spelling_tests {
                 value.name()
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod size_reconciliation_tests {
+    use super::*;
+    use alloc::vec;
+
+    /// Builds a chip from `image` bytes, with everything but the size
+    /// reconciliation held constant.
+    fn build(
+        chip_type: ChipType,
+        image: &[u8],
+        size_handling: SizeHandling,
+        location: Option<Location>,
+    ) -> Result<Chip> {
+        Chip::from_raw_rom_image(
+            3,
+            "LEDS.rom".to_string(),
+            None,
+            Some(image),
+            vec![0u8; chip_type.size_bytes()],
+            &chip_type.into(),
+            CsConfig::new(Some(CsLogic::ActiveLow), None, None, None),
+            &size_handling,
+            PAD_BLANK_BYTE,
+            location,
+            &[],
+        )
+    }
+
+    /// Truncate cannot lengthen an image, so a short image with truncate asked
+    /// for is the too-small case.  It used to report the too-large error,
+    /// which read as nonsense: it said the image was larger than the chip
+    /// while printing a smaller number than the chip's size.
+    #[test]
+    fn truncate_on_a_short_image_reports_too_small() {
+        let image = vec![0u8; 32308];
+        let err = build(ChipType::Chip27C010, &image, SizeHandling::Truncate, None)
+            .expect_err("a short image with truncate must be refused");
+        assert!(
+            matches!(
+                err,
+                Error::ImageTooSmall {
+                    chip_type: ChipType::Chip27C010,
+                    expected: 131072,
+                    actual: 32308,
+                    ..
+                }
+            ),
+            "got {err:?}"
+        );
+    }
+
+    /// A location window running past the end of the file is a bad location,
+    /// not a short image: the window is sliced before any size handling, so
+    /// padding or duplication cannot make the file reach its end.
+    #[test]
+    fn a_location_past_the_end_of_the_file_is_a_bad_location() {
+        let image = vec![0u8; 32308];
+        let err = build(
+            ChipType::Chip27C010,
+            &image,
+            SizeHandling::None,
+            Some(Location::new(0, 131072)),
+        )
+        .expect_err("a window past the end of the file must be refused");
+        assert!(matches!(err, Error::BadLocation { .. }), "got {err:?}");
+    }
+
+    /// One ROM serves half a 27C080, so a whole-chip image is refused with the
+    /// served size rather than with the plain too-large error, whose text
+    /// would claim a 1MB part holds at most 512KB.
+    #[test]
+    fn a_whole_27c080_image_reports_the_served_size() {
+        let image = vec![0u8; ChipType::Chip27C080.size_bytes()];
+        let err = build(ChipType::Chip27C080, &image, SizeHandling::None, None)
+            .expect_err("a whole 27C080 image must be refused");
+        assert!(
+            matches!(
+                err,
+                Error::ImageExceedsServedSize {
+                    chip_type: ChipType::Chip27C080,
+                    served_size: 524_288,
+                    image_size: 1_048_576,
+                    ..
+                }
+            ),
+            "got {err:?}"
+        );
+    }
+
+    /// A chip One ROM serves whole keeps the plain too-large error, and every
+    /// error in this family names the image it came from rather than a chip
+    /// index the user never sees.
+    #[test]
+    fn an_oversized_image_names_the_file_it_came_from() {
+        let image = vec![0u8; 131_073];
+        let err = build(ChipType::Chip27C010, &image, SizeHandling::None, None)
+            .expect_err("an oversized image must be refused");
+        let Error::ImageTooLarge {
+            ref filename,
+            expected_size,
+            image_size,
+            ..
+        } = err
+        else {
+            panic!("got {err:?}");
+        };
+        assert_eq!(filename.as_str(), "LEDS.rom");
+        assert_eq!((expected_size, image_size), (131_072, 131_073));
     }
 }

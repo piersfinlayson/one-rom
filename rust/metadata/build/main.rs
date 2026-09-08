@@ -16,6 +16,7 @@
 // Rust source generation (parse + serialize) is added in subsequent steps.
 
 mod c_gen;
+mod constants_gen;
 mod host_gen;
 mod keys_gen;
 mod rust_gen;
@@ -27,9 +28,11 @@ use std::path::PathBuf;
 
 const ENV_C_HEADER_OUT: &str = "ONEROM_C_HEADER_OUT";
 const ENV_KEYS_HEADER_OUT: &str = "ONEROM_KEYS_HEADER_OUT";
+const ENV_CONSTANTS_HEADER_OUT: &str = "ONEROM_CONSTANTS_HEADER_OUT";
 const METADATA_SCHEMA_FILE: &str = "metadata_schema.toml";
 const C_HEADER_FILE: &str = "firmware/generated/onerom_metadata.h";
 const KEYS_HEADER_FILE: &str = "firmware/ora/onerom_metadata_keys_generated.h";
+const CONSTANTS_HEADER_FILE: &str = "firmware/ora/onerom_constants_generated.h";
 const RUST_GENERATED: &str = "metadata_generated.rs";
 const RUST_SERIALIZE_GENERATED: &str = "serialize_generated.rs";
 const RUST_HOST_GENERATED: &str = "host_generated.rs";
@@ -60,6 +63,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let keys_header_path = env::var(ENV_KEYS_HEADER_OUT)
         .map(PathBuf::from)
         .unwrap_or_else(|_| manifest_dir.join(KEYS_HEADER_FILE));
+
+    // Plugin-facing constants header, redirected the same way.
+    let constants_header_path = env::var(ENV_CONSTANTS_HEADER_OUT)
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| manifest_dir.join(CONSTANTS_HEADER_FILE));
 
     // -------------------------------------------------------------------------
     // Cargo rerun-if-changed directives
@@ -95,6 +103,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!(
         "cargo:rerun-if-changed={}",
         build_dir.join("keys_gen.rs").display()
+    );
+    println!(
+        "cargo:rerun-if-changed={}",
+        build_dir.join("constants_gen.rs").display()
     );
 
     // -------------------------------------------------------------------------
@@ -144,6 +156,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         format!(
             "Failed to write keys header to {}: {}",
             keys_header_path.display(),
+            e
+        )
+    })?;
+
+    // -------------------------------------------------------------------------
+    // Plugin-facing constants header generation
+    // -------------------------------------------------------------------------
+
+    let constants_header = constants_gen::generate(&schema);
+
+    if let Some(parent) = constants_header_path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(&constants_header_path, &constants_header).map_err(|e| {
+        format!(
+            "Failed to write constants header to {}: {}",
+            constants_header_path.display(),
             e
         )
     })?;

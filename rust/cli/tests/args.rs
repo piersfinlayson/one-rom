@@ -12,7 +12,7 @@
 //! genuinely gone rather than quietly still accepted.
 
 mod common;
-use common::{fails, onerom};
+use common::{NO_DEVICE, fails, onerom};
 use std::process::Command;
 
 /// Run and return stdout, asserting success.
@@ -85,10 +85,14 @@ fn board_views_reject_a_positional_board() {
 /// Omitting the board with nothing connected must give advice the command can
 /// actually take. This used to name --board while the command had no such
 /// option.
+///
+/// `NO_DEVICE` for the same reason as the tests below it: without it the
+/// command finds a One ROM on the developer's bench, infers the board from it
+/// and succeeds, so there is no advice to assert on.
 #[test]
 fn board_views_without_a_board_name_an_option_that_exists() {
     for view in ["header", "socket"] {
-        let err = stderr(onerom().args(["board", view]));
+        let err = stderr(onerom().args(["board", view]).args(NO_DEVICE));
         assert!(err.contains("--board"), "{view}: {err}");
         // The advice is only good if the option is real.
         let help = stdout(onerom().args(["board", view, "--help"]));
@@ -103,15 +107,27 @@ fn board_views_without_a_board_name_an_option_that_exists() {
 /// `--board` on the device-side views is an override, not a way to run without
 /// a One ROM. With nothing connected the command must still fail, and must
 /// point at the `board` form rather than at --board, which would loop.
+///
+/// `NO_DEVICE` is what makes "with nothing connected" true here: run without it,
+/// this passes on a bare machine and fails on a bench with a One ROM plugged in,
+/// where the command finds the device and does exactly what it should.
 #[test]
 fn inspect_views_still_need_a_device_when_board_is_given() {
     for view in ["header", "socket"] {
-        let err = stderr(onerom().args(["inspect", view, "--board", "fire-24-f"]));
+        let err = stderr(
+            onerom()
+                .args(["inspect", view, "--board", "fire-24-f"])
+                .args(NO_DEVICE),
+        );
         assert!(
             err.contains("No One ROM") || err.contains("board"),
             "{view}: {err}"
         );
-        fails(onerom().args(["inspect", view, "--board", "fire-24-f"]));
+        fails(
+            onerom()
+                .args(["inspect", view, "--board", "fire-24-f"])
+                .args(NO_DEVICE),
+        );
     }
 }
 
@@ -248,7 +264,10 @@ fn image_convert_rejects_an_unknown_format_before_touching_files() {
 #[test]
 fn image_convert_lists_its_formats_in_help() {
     let help = stdout(onerom().args(["image", "convert", "--help"]));
-    assert!(help.contains("[possible values: binary, ihex]"), "{help}");
+    assert!(
+        help.contains("[possible values: binary, ihex, srec]"),
+        "{help}"
+    );
 }
 
 /// The aliases predate the value parser and must survive it - a plain list of

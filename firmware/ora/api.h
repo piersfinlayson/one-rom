@@ -19,6 +19,7 @@
 #include <stddef.h>
 
 #include <onerom_metadata_keys_generated.h>
+#include <onerom_constants_generated.h>
 
 /**
  * @brief Place an object in a named linker section
@@ -54,6 +55,13 @@ void *ora_host_test_sram_ptr(uint32_t addr);
  * Provided by the test harness, not by the firmware.  See @ref ORA_TEST_YIELD.
  */
 void ora_host_test_yield(void);
+
+/**
+ * @brief Host-test interface: write a byte to device SRAM and record it
+ *
+ * Provided by the test harness, not by the firmware.  See @ref ORA_SRAM_WRITE8.
+ */
+void ora_host_test_sram_write8(uint32_t addr, uint8_t val);
 #endif
 
 /**
@@ -92,6 +100,25 @@ void ora_host_test_yield(void);
 #define ORA_SRAM_PTR(addr) ora_host_test_sram_ptr(addr)
 #else
 #define ORA_SRAM_PTR(addr) ((void *)(uintptr_t)(addr))
+#endif
+
+/**
+ * @brief Write one byte to a device SRAM address
+ *
+ * Use this rather than storing through @ref ORA_SRAM_PTR where a test needs to
+ * see the write.  On a device it is the same volatile byte store.  Under a
+ * host-side test build the harness records the address and the value.
+ *
+ * @param addr Device SRAM address
+ * @param val  Byte to write
+ *
+ * @since firmware 0.7.2
+ */
+#if defined(ORA_HOST_TEST)
+#define ORA_SRAM_WRITE8(addr, val) ora_host_test_sram_write8((addr), (val))
+#else
+#define ORA_SRAM_WRITE8(addr, val) \
+    (*(volatile uint8_t *)(uintptr_t)(addr) = (uint8_t)(val))
 #endif
 
 /**
@@ -229,8 +256,6 @@ void *ora_host_test_staged_fn_ptr(uint32_t addr);
  * @param code Two-character function code, packed low byte first
  * @param mask Bootrom table flags selecting the architecture and mode
  * @return The function's address, or NULL if the bootrom does not publish it
- *
- * @since firmware v0.7.2
  */
 #if defined(ORA_HOST_TEST)
 #define ORA_BOOTROM_LOOKUP(code, mask) ora_host_test_bootrom_lookup((code), (mask))
@@ -247,8 +272,6 @@ void *ora_host_test_staged_fn_ptr(uint32_t addr);
  *
  * On a device this reads that register.  Under a host-side test build there is
  * no QMI, and its address is not mapped.
- *
- * @since firmware v0.7.2
  */
 #if defined(ORA_HOST_TEST)
 #define ORA_XIP_CLKDIV() ora_host_test_xip_clkdiv()
@@ -272,8 +295,6 @@ void *ora_host_test_staged_fn_ptr(uint32_t addr);
  * it is standing the region in for.
  *
  * @param addr Pointer into the device's flash
- *
- * @since firmware v0.7.2
  */
 #if defined(ORA_HOST_TEST)
 #define ORA_FLASH_OFFSET(addr) ora_host_test_flash_offset((const void *)(addr))
@@ -298,8 +319,6 @@ void *ora_host_test_staged_fn_ptr(uint32_t addr);
  *
  * @param start First byte of the routine
  * @param end   One past its last byte
- *
- * @since firmware v0.7.2
  */
 #if defined(ORA_HOST_TEST)
 #define ORA_STAGED_FN_SIZE(start, end) ora_host_test_staged_fn_size((start), (end))
@@ -322,8 +341,6 @@ void *ora_host_test_staged_fn_ptr(uint32_t addr);
  *
  * @param type Function pointer type to produce
  * @param addr Device SRAM address the routine was copied to
- *
- * @since firmware v0.7.2
  */
 #if defined(ORA_HOST_TEST)
 #define ORA_STAGED_FN_PTR(type, addr) ((type)ora_host_test_staged_fn_ptr(addr))
@@ -665,6 +682,104 @@ typedef enum {
      */
     ORA_ID_GPIO_QUERY                = 0x00000030,
 
+    /**
+     * @brief Claim a log channel for this plugin to write to
+     * @sa ora_log_open_write_fn_t
+     * @since firmware 0.7.2
+     */
+    ORA_ID_LOG_OPEN_WRITE            = 0x00000031,
+
+    /**
+     * @brief Append bytes to a log channel
+     * @sa ora_log_write_fn_t
+     * @since firmware 0.7.2
+     */
+    ORA_ID_LOG_WRITE                 = 0x00000032,
+
+    /**
+     * @brief Relinquish this plugin's write claim on a log channel
+     * @sa ora_log_close_write_fn_t
+     * @since firmware 0.7.2
+     */
+    ORA_ID_LOG_CLOSE_WRITE           = 0x00000033,
+
+    /**
+     * @brief Claim a log channel for this plugin to read from
+     * @sa ora_log_open_read_fn_t
+     * @since firmware 0.7.2
+     */
+    ORA_ID_LOG_OPEN_READ             = 0x00000034,
+
+    /**
+     * @brief Read bytes from a log channel
+     * @sa ora_log_read_fn_t
+     * @since firmware 0.7.2
+     */
+    ORA_ID_LOG_READ                  = 0x00000035,
+
+    /**
+     * @brief Relinquish this plugin's read claim on a log channel
+     * @sa ora_log_close_read_fn_t
+     * @since firmware 0.7.2
+     */
+    ORA_ID_LOG_CLOSE_READ            = 0x00000036,
+
+    /**
+     * @brief Report a log channel's capacity and occupancy
+     * @sa ora_log_query_fn_t
+     * @since firmware 0.7.2
+     */
+    ORA_ID_LOG_QUERY                 = 0x00000037,
+
+    /**
+     * @brief Get an unsigned option this firmware was compiled with
+     * @sa ora_get_compile_option_uint_fn_t
+     * @since firmware 0.7.2
+     */
+    ORA_ID_GET_COMPILE_OPTION_UINT   = 0x00000038,
+
+    /**
+     * @brief Get a string option this firmware was compiled with
+     * @sa ora_get_compile_option_str_fn_t
+     * @since firmware 0.7.2
+     */
+    ORA_ID_GET_COMPILE_OPTION_STR    = 0x00000039,
+
+    /**
+     * @brief Report whether output of a given log category appears
+     * @sa ora_log_category_enabled_fn_t
+     * @since firmware 0.7.2
+     */
+    ORA_ID_LOG_CATEGORY_ENABLED      = 0x0000003A,
+
+    /**
+     * @brief Get milliseconds elapsed since plugins were started
+     * @sa ora_get_plugin_uptime_ms_fn_t
+     * @since firmware 0.7.2
+     */
+    ORA_ID_GET_PLUGIN_UPTIME_MS      = 0x0000003B,
+
+    /**
+     * @brief Get one element of an array-valued unsigned metadata datum
+     * @sa ora_get_metadata_uint_at_fn_t
+     * @since firmware 0.7.2
+     */
+    ORA_ID_GET_METADATA_UINT_AT      = 0x0000003C,
+
+    /**
+     * @brief Set an LED's mode, colour, brightness and period
+     * @sa ora_led_set_fn_t
+     * @since firmware 0.7.2
+     */
+    ORA_ID_LED_SET                   = 0x0000003D,
+
+    /**
+     * @brief Read an LED's presence, GPIO and live state
+     * @sa ora_led_get_fn_t
+     * @since firmware 0.7.2
+     */
+    ORA_ID_LED_GET                   = 0x0000003E,
+
     /** Invalid API identifier */
     ORA_ID_INVALID = 0xFFFFFFFF,
 } api_id_t;
@@ -706,6 +821,166 @@ typedef enum {
     ORA_IRQ_INVALID = 0xFF,
 } ora_irq_t;
 STATIC_ASSERT(sizeof(ora_irq_t) == 1, "ora_irq_t must be 1 byte");
+
+/**
+ * @brief A log channel
+ *
+ * Channels are numbered rather than named for a purpose: a plugin picks the
+ * one it wants, and the firmware does not assign meaning to any of them.
+ *
+ * One ROM's own log is written to channel 0, and keeps being written there
+ * whatever a plugin does with it. A plugin may claim channel 0 like any
+ * other, which renames it and reserves @ref ora_log_write_fn_t on it - One
+ * ROM's log then arrives interleaved with the plugin's own.
+ *
+ * A plugin built against this header may run on firmware that has fewer
+ * channels than the header declares. Every call in this family reports that as
+ * @c ORA_RESULT_NOT_SUPPORTED, distinct from the @c ORA_RESULT_INVALID_ARG
+ * that says the call itself was wrong, and @ref ora_log_query_fn_t is the way
+ * to test for it without side effects. A plugin that wants to run on both
+ * should fall back to @c ORA_LOG_CHANNEL_0.
+ *
+ * @c ORA_LOG_CHANNEL_INVALID is both the invalid marker and what fixes this
+ * type at four bytes, since plugins build as C11 with @c -fshort-enums.
+ *
+ * @since firmware 0.7.2
+ */
+typedef enum {
+    ORA_LOG_CHANNEL_0       = 0,
+    ORA_LOG_CHANNEL_INVALID = 0xFFFFFFFF,
+} ora_log_channel_t;
+STATIC_ASSERT(sizeof(ora_log_channel_t) == 4, "ora_log_channel_t must be 4 bytes");
+
+/**
+ * @brief An option this firmware was compiled with
+ *
+ * Every option here is fixed when the firmware is built, so its value is the
+ * same on every call for the life of the running firmware.
+ *
+ * The options form one key space across two accessors, split by the type of
+ * the value: @ref ora_get_compile_option_uint_fn_t resolves the unsigned ones
+ * and @ref ora_get_compile_option_str_fn_t the string ones.
+ *
+ * An option this header declares may not exist on the firmware a plugin is
+ * running on, if that firmware is older than the header it was built against.
+ * Both accessors report that as @c ORA_RESULT_NOT_SUPPORTED, which is a
+ * version difference to fall back from rather than a fault in the call.
+ *
+ * @c ORA_COMPILE_OPTION_INVALID is both the invalid marker and what fixes this
+ * type at four bytes, since plugins build as C11 with @c -fshort-enums.
+ *
+ * @since firmware 0.7.2
+ */
+typedef enum {
+    /**
+     * @brief Whether the firmware was compiled with plugin logging
+     *
+     * Unsigned, 1 or 0. When 0, @ref ora_log_fn_t emits nothing, and neither
+     * does @ref ora_debug_log_fn_t.
+     */
+    ORA_COMPILE_OPTION_PLUGIN_LOGGING = 0,
+
+    /**
+     * @brief Whether the firmware was compiled with debug logging
+     *
+     * Unsigned, 1 or 0. When 0, One ROM's own debug messages are absent from
+     * the build, and @ref ora_debug_log_fn_t emits nothing.
+     */
+    ORA_COMPILE_OPTION_DEBUG_LOGGING  = 1,
+
+    /** @brief The firmware's build number. Unsigned. */
+    ORA_COMPILE_OPTION_BUILD_NUMBER   = 2,
+
+    /**
+     * @brief The abbreviated git commit the firmware was built from
+     *
+     * A string. Reads @c unknown if no commit was available at build time.
+     */
+    ORA_COMPILE_OPTION_GIT_COMMIT     = 3,
+
+    /**
+     * @brief Whether the firmware was compiled with boot logging
+     *
+     * Unsigned, 1 or 0.
+     *
+     * This is what the build contains, not what the device is set to do. The
+     * device's boot logging setting is @c ORA_METADATA_KEY_BOOT_LOGGING via
+     * @ref ora_get_metadata_uint_fn_t.
+     */
+    ORA_COMPILE_OPTION_BOOT_LOGGING   = 4,
+
+    ORA_COMPILE_OPTION_INVALID        = 0xFFFFFFFF,
+} ora_compile_option_t;
+STATIC_ASSERT(sizeof(ora_compile_option_t) == 4, "ora_compile_option_t must be 4 bytes");
+
+/**
+ * @brief A category of log output
+ *
+ * A category names a kind of output, not a channel or a call. What gates each
+ * one differs - some are settled when the firmware is built, others depend on
+ * runtime state - and @ref ora_log_category_enabled_fn_t composes whichever
+ * apply into a single answer.
+ *
+ * A @c PLUGIN_ name is output a plugin itself produces. The rest is One ROM's
+ * own output, which a plugin cannot write but shares a channel with.
+ *
+ * A category this header declares may not exist on the firmware a plugin is
+ * running on, if that firmware is older than the header it was built against.
+ * @ref ora_log_category_enabled_fn_t reports that as
+ * @c ORA_RESULT_NOT_SUPPORTED, which is a version difference to fall back from
+ * rather than a fault in the call.
+ *
+ * @c ORA_LOG_CATEGORY_INVALID is both the invalid marker and what fixes this
+ * type at four bytes, since plugins build as C11 with @c -fshort-enums.
+ *
+ * @since firmware 0.7.2
+ */
+typedef enum {
+    /**
+     * @brief One ROM's own boot messages
+     *
+     * Gated by the device's boot logging setting
+     * (@c ORA_METADATA_KEY_BOOT_LOGGING) and by turbo boot, which suppresses
+     * boot messages whatever that setting says.
+     */
+    ORA_LOG_CATEGORY_BOOT               = 0,
+
+    /** @brief A plugin's @ref ora_log_fn_t output */
+    ORA_LOG_CATEGORY_PLUGIN_INTERNAL    = 1,
+
+    /**
+     * @brief One ROM's own debug messages
+     *
+     * Boot messages that a build without debug logging support does not
+     * contain, so this is @c ORA_LOG_CATEGORY_BOOT and
+     * @c ORA_COMPILE_OPTION_DEBUG_LOGGING together. A plugin's own debug
+     * output is @c ORA_LOG_CATEGORY_PLUGIN_DEBUG.
+     */
+    ORA_LOG_CATEGORY_DEBUG              = 2,
+
+    /**
+     * @brief Error messages, One ROM's own and a plugin's
+     *
+     * One category covers both, because @ref ora_err_log_fn_t and One ROM's
+     * own error path are gated by nothing.
+     */
+    ORA_LOG_CATEGORY_ERROR              = 3,
+
+    /** @brief A plugin's @ref ora_log_write_fn_t output */
+    ORA_LOG_CATEGORY_PLUGIN_APPLICATION = 4,
+
+    /**
+     * @brief A plugin's @ref ora_debug_log_fn_t output
+     *
+     * Settled entirely by how the firmware was built, so unlike
+     * @c ORA_LOG_CATEGORY_DEBUG it does not follow the device's boot logging
+     * setting or turbo boot.
+     */
+    ORA_LOG_CATEGORY_PLUGIN_DEBUG       = 5,
+
+    ORA_LOG_CATEGORY_INVALID            = 0xFFFFFFFF,
+} ora_log_category_t;
+STATIC_ASSERT(sizeof(ora_log_category_t) == 4, "ora_log_category_t must be 4 bytes");
 
 /**
  * @brief Knock sequence state structure
@@ -921,6 +1196,15 @@ typedef struct {
     ora_core_t core;
 
     /**
+     * @brief Reserved. Set to zero.
+     *
+     * Declared rather than left to the compiler: @ref static_ram_base is
+     * four-byte aligned, so these three bytes exist either way, and a reader
+     * following the fields down should not have to work that out.
+     */
+    uint8_t reserved[3];
+
+    /**
      * @brief The plugin's static RAM base address
      * 
      * Can be used by the plugin at runtime to validate it has been built with
@@ -1010,6 +1294,16 @@ typedef enum {
     ORA_RESULT_TYPE_MISMATCH = 11,
     /** @since firmware 0.7.1 */
     ORA_RESULT_GPIO_IN_USE = 12,
+    /** @since firmware 0.7.2 */
+    ORA_RESULT_LOG_CHANNEL_IN_USE = 13,
+    /**
+     * @brief A log record was dropped because the channel was full
+     *
+     * An outcome, not a failure: see @ref ora_log_write_fn_t.
+     *
+     * @since firmware 0.7.2
+     */
+    ORA_RESULT_LOG_FULL = 14,
 } ora_result_t;
 
 /**
@@ -1110,30 +1404,43 @@ typedef const void *(*ora_get_firmware_info_fn_t)(void);
 /**
  * @brief Log a message
  * @sa ORA_ID_LOG
- * 
- * If the One ROM firmware is compiled with logging support enabled, this
- * function logs via RTT.  If there is no logging support this function
- * silently fails.
+ *
+ * Writes to the boot log channel, whichever plugin calls it, and whatever the
+ * device's boot logging setting (ORA_METADATA_KEY_BOOT_LOGGING).  That setting
+ * covers One ROM's own boot log only.
+ *
+ * Available only in firmware built with plugin logging support.  Without it
+ * this call does nothing, and the lookup still returns a valid pointer.  A
+ * plugin can test for it with @c ORA_COMPILE_OPTION_PLUGIN_LOGGING.
+ * @ref ora_err_log_fn_t is in every build, so a plugin can still report errors.
+ *
+ * The format string and arguments are checked by the compiler.  See the
+ * supported conversion list in the One ROM firmware's rtt.c: floating point,
+ * %n, and the j and t length modifiers are deliberately not implemented, and
+ * an unsupported conversion is logged as a visible marker such as %!f rather
+ * than silently dropped.
  *
  * @param msg printf-style format string
  * @param ... Format arguments
  */
-typedef void (*ora_log_fn_t)(const char *msg, ...);
+typedef void (*ora_log_fn_t)(const char *msg, ...)
+    __attribute__((format(printf, 1, 2)));
 
 /**
  * @brief Log an error message
  *
  * Equivalent to @ref ora_log but flags the log as an error.
  * @sa ORA_ID_ERR_LOG
- * 
- * If the One ROM firmware is compiled with logging support enabled, this
- * function logs via RTT.  If there is no logging support this function
- * silently fails.
+ *
+ * In every firmware build, whether or not it was built with plugin logging
+ * support, and unaffected by the device's boot logging setting.  A plugin's
+ * errors always reach the boot channel.
  *
  * @param msg printf-style format string
  * @param ... Format arguments
  */
-typedef void (*ora_err_log_fn_t)(const char *msg, ...);
+typedef void (*ora_err_log_fn_t)(const char *msg, ...)
+    __attribute__((format(printf, 1, 2)));
 
 /**
  * @brief Log a debug message
@@ -1141,14 +1448,17 @@ typedef void (*ora_err_log_fn_t)(const char *msg, ...);
  * Equivalent to @ref ora_log but flags the log as a debug message.
  * @sa ORA_ID_DEBUG_LOG
  *
- * If the One ROM firmware is compiled with debug logging support enabled,
- * this function logs via RTT.  If there is no logging support this function
- * silently fails.
+ * Available only in firmware built with both plugin logging and debug logging
+ * support.  Without either this call does nothing and the lookup still
+ * succeeds.  Where it is available it writes whatever the device's boot
+ * logging setting.  @c ORA_LOG_CATEGORY_PLUGIN_DEBUG is the single answer to
+ * whether it writes.
  *
  * @param msg printf-style format string
  * @param ... Format arguments
  */
-typedef void (*ora_debug_log_fn_t)(const char *msg, ...);
+typedef void (*ora_debug_log_fn_t)(const char *msg, ...)
+    __attribute__((format(printf, 1, 2)));
 
 /**
  * @brief Get the amount of free memory
@@ -1162,18 +1472,18 @@ typedef size_t (*ora_get_free_mem_fn_t)(void);
  * @brief Set the status LED on or off
  * @sa ORA_ID_SET_STATUS_LED
  *
- * Sets the live status-LED state. This is the single coordination channel for
- * the status LED: the call records the new state (readable by any plugin as
- * ORA_METADATA_KEY_STATUS_LED_STATE via ora_get_metadata_uint_fn_t) and drives
- * the status-LED GPIO. The board's configured default (the `led` option) only
- * seeds the initial state; a plugin may turn the LED on even if it was
- * configured off. If the board has no status-LED GPIO the call does nothing.
+ * Equivalent to ora_led_set_fn_t with ORA_LED_STATUS and ORA_LED_MODE_ON or
+ * ORA_LED_MODE_OFF, so it ends a beacon or flame the status LED was running.
  *
- * Coordination without cross-plugin awareness: on a board where the status LED
- * and a neopixel share a GPIO, the neopixel-driving plugin owns the pin and
- * should render the status LED by reading STATUS_LED_STATE each frame - so a
- * write here is reflected by that plugin without either plugin knowing about
- * the other. Neither plugin references the other; they meet at this flag.
+ * Records the new state, readable by any plugin as
+ * ORA_METADATA_KEY_STATUS_LED_STATE via ora_get_metadata_uint_fn_t. This is the
+ * single coordination channel for the status LED. The board's configured
+ * default (the `led` option) seeds the initial state only: a plugin may turn
+ * the LED on even if it was configured off. A board with no status-LED GPIO
+ * records the state and drives nothing.
+ *
+ * On a board where the status LED and the RGB LED share a GPIO, the firmware
+ * drives both and a plugin need do nothing extra.
  *
  * @param on Set to 1 to turn the LED on, or 0 to turn it off.
  */
@@ -1271,6 +1581,23 @@ typedef void (*ora_enable_irq_fn_t)(ora_irq_t irq, uint8_t enable);
 typedef uint32_t (*ora_get_clkref_mhz_fn_t)(void);
 
 /**
+ * @brief Get milliseconds elapsed since plugins were started
+ * @sa ORA_ID_GET_PLUGIN_UPTIME_MS
+ *
+ * The counter starts once ROM serving is set up and before any plugin is
+ * launched, so zero is the moment plugins began rather than power-on.
+ *
+ * The value wraps to zero every 49.7 days. Compare timestamps by unsigned
+ * subtraction - @c (now - then) - which stays correct across the wrap for any
+ * interval shorter than that. Comparing two timestamps with @c < or @c > does
+ * not.
+ *
+ * @return Milliseconds since the firmware started the counter
+ * @since firmware 0.7.2
+ */
+typedef uint32_t (*ora_get_plugin_uptime_ms_fn_t)(void);
+
+/**
  * @brief Get a pointer to the runtime info structure
  * @sa ORA_ID_GET_RUNTIME_INFO
  * 
@@ -1330,10 +1657,15 @@ typedef uint8_t (*ora_is_pin_output_fn_t)(uint8_t pin);
  * which is useful for plugins that want to monitor or interact with the data
  * lines.
  * 
+ * The pins are those of the slot currently being served, in D0 upwards order,
+ * and are absolute GPIO numbers.  An 8-bit slot has 8 of them and a 16-bit slot
+ * 16, so the count depends on the ROM being served rather than on the board -
+ * a 40-pin board serving an 8-bit ROM reports 8.
+ * 
  * The data pin numbers are returned in the data_pins_out array, which must be
  * allocated by the caller and have space for at least num_pins elements.  The
- * function returns the number of data pins actually returned, which may be less
- * than num_pins if there are not that many data pins available.
+ * function returns the number of data pins actually returned, which is the
+ * lower of num_pins and the slot's width.
  * 
  * @param data_pins_out Output array to be filled with the data pin numbers
  * @param num_pins The maximum number of data pin numbers to return
@@ -2016,6 +2348,38 @@ typedef ora_result_t (*ora_get_metadata_str_fn_t)(ora_metadata_key_t key, const 
 typedef ora_result_t (*ora_get_metadata_uint_fn_t)(ora_metadata_key_t key, uint32_t *out);
 
 /**
+ * @brief Get one element of an array-valued unsigned metadata datum
+ * @sa ORA_ID_GET_METADATA_UINT_AT
+ *
+ * Indexed sibling of @ref ora_get_metadata_uint_fn_t over the same unified key
+ * space - a key means the same datum whichever accessor is asked for it. This
+ * accessor resolves keys whose datum is an array of unsigned values, such as
+ * the image select and X expansion pin maps (ORA_METADATA_KEY_GPIO_SEL,
+ * ORA_METADATA_KEY_GPIO_X1, ORA_METADATA_KEY_GPIO_X2).
+ *
+ * There is no companion call reporting an array's length. A caller reads
+ * upwards from index 0 until the call stops returning @c ORA_RESULT_OK, which
+ * needs no sentinel value in the data and so works whatever the elements mean.
+ * Learning a length that way costs one call per element, plus one.
+ *
+ * @param key   The metadata datum to retrieve. @sa ora_metadata_key_t
+ * @param index Element to read, counting from 0.
+ * @param out   Output pointer to receive the value. Must not be NULL.
+ * @return ORA_RESULT_OK on success;
+ *         ORA_RESULT_NOT_SUPPORTED if @p key is unknown to this firmware;
+ *         ORA_RESULT_TYPE_MISMATCH if @p key is valid but not an array of
+ *         unsigned values;
+ *         ORA_RESULT_INVALID_ARG if @p out is NULL, or @p index is beyond the
+ *         last element of the array.
+ * @since firmware 0.7.2
+ */
+typedef ora_result_t (*ora_get_metadata_uint_at_fn_t)(
+    ora_metadata_key_t key,
+    uint32_t index,
+    uint32_t *out
+);
+
+/**
  * @brief Demangle a captured physical data byte back to a logical byte
  * @sa ORA_ID_DEMANGLE_DATA
  *
@@ -2110,9 +2474,11 @@ typedef ora_result_t (*ora_yield_fn_t)(uint8_t *was_paused_out);
  * correspond to the chip-visible address space and data values, with all
  * GPIO address scrambling and data pin permutation reversed.
  *
- * @param[in]  slot    RAM slot index (0-based) to read from.  Must
- *                     identify a slot that has been allocated via the
- *                     firmware slot management API.
+ * @param[in]  slot    RAM slot index (0-based) to read from.  Must be less
+ *                     than the count reported by
+ *                     @ref ora_get_ram_slot_count_fn_t.  A slot that has
+ *                     never been populated reads as uninitialised SRAM
+ *                     rather than failing.
  * @param[in]  offset  Logical byte offset within the slot, in the range
  *                     [0, chip_size).  @c chip_size is the size of the
  *                     ROM image in logical bytes as reported by the slot
@@ -2130,8 +2496,7 @@ typedef ora_result_t (*ora_yield_fn_t)(uint8_t *was_paused_out);
  * @retval ORA_RESULT_INVALID_ARG  @p buf is @c NULL, @p len is zero, or
  *                                  @p offset + @p len exceeds the slot's
  *                                  chip_size.
- * @retval ORA_RESULT_NOT_FOUND    @p slot is out of range or has not been
- *                                  allocated.
+ * @retval ORA_RESULT_INVALID_SLOT @p slot is out of range.
  *
  * @sa ORA_ID_READ_RAM_ROM_SLOT
  * @sa ora_reprogram_ram_rom_slot_fn_t
@@ -2243,7 +2608,14 @@ typedef struct {
     /** @brief What One ROM is using this GPIO for. @sa ora_gpio_use_t */
     uint8_t use;
 
-    /** @brief The level currently present on the pad, 0 or 1 */
+    /**
+     * @brief The GPIO's level, 0 or 1
+     *
+     * On a pin whose output driver is enabled this is the level the pin is
+     * driving, and on any other pin the level the pad reads back. A driven pin
+     * that something external is fighting therefore reports what One ROM is
+     * driving rather than what is on the wire.
+     */
     uint8_t level;
 
     /** @brief 1 if the pin's output driver is currently enabled, 0 if not */
@@ -2301,9 +2673,9 @@ typedef ora_result_t (*ora_gpio_set_fn_t)(
  * @sa ORA_ID_GPIO_QUERY
  * @since firmware 0.7.1
  *
- * Reports the GPIO's use, the level present on the pad, and whether its output
- * driver is enabled. There is deliberately no bulk form - a caller wanting the
- * whole device loops over this call.
+ * Reports the GPIO's use, its level and whether its output driver is enabled.
+ * All three describe the same instant. There is deliberately no bulk form - a
+ * caller wanting the whole device loops over this call.
  *
  * The caller must set @p info_out->size to its own sizeof(ora_gpio_info_t)
  * before calling; see @ref ora_gpio_info_t.
@@ -2317,6 +2689,536 @@ typedef ora_result_t (*ora_gpio_set_fn_t)(
 typedef ora_result_t (*ora_gpio_query_fn_t)(
     uint8_t gpio,
     ora_gpio_info_t *info_out
+);
+
+/**
+ * @brief An LED a One ROM can have
+ * @since firmware 0.7.2
+ *
+ * The value is a channel number rather than a fixed set, so a One ROM that
+ * gains further LEDs numbers them from 2 upwards. A board need not have either
+ * of these - @ref ora_led_get_fn_t reports which it has.
+ */
+typedef enum {
+    /** @brief The discrete status LED */
+    ORA_LED_STATUS = 0,
+
+    /** @brief The RGB LED */
+    ORA_LED_RGB    = 1,
+} ora_led_t;
+
+/**
+ * @brief What an LED is doing
+ * @since firmware 0.7.2
+ *
+ * Every mode but ORA_LED_MODE_CYCLE and ORA_LED_MODE_BREATHE applies to every
+ * LED. Those two are built out of a colour, so they are refused for the status
+ * LED, which has none.
+ */
+typedef enum {
+    /** @brief Dark */
+    ORA_LED_MODE_OFF     = 0,
+
+    /** @brief Lit, at the requested colour and brightness */
+    ORA_LED_MODE_ON      = 1,
+
+    /**
+     * @brief Blinks for a bounded time so a unit can be picked out by eye
+     *
+     * Bounded by its hold, which a request either gives or takes the default
+     * of, so it ends by itself and puts back what it interrupted.
+     */
+    ORA_LED_MODE_BEACON  = 2,
+
+    /** @brief Flickers like a flame */
+    ORA_LED_MODE_FLAME   = 3,
+
+    /** @brief Rotates through the hues at full saturation */
+    ORA_LED_MODE_CYCLE   = 4,
+
+    /** @brief Fades the colour up and down */
+    ORA_LED_MODE_BREATHE = 5,
+
+    /** @brief Alternates the LED with dark, at its colour where it has one */
+    ORA_LED_MODE_BLINK   = 6,
+} ora_led_mode_t;
+
+/**
+ * @brief What to do with an LED, passed to @ref ora_led_set_fn_t
+ * @since firmware 0.7.2
+ *
+ * Zero in a field means the firmware chooses, so a caller that clears the
+ * structure and sets only what it cares about gets the defaults for the rest.
+ */
+typedef struct {
+    /**
+     * @brief In: sizeof this structure as known to the caller
+     *
+     * The caller sets this to sizeof(ora_led_request_t) as it knows it before
+     * calling. The firmware reads at most that many bytes, and no more than
+     * the fields it knows itself, so a plugin built against a newer version of
+     * this structure than the running firmware still interoperates.
+     *
+     * A size smaller than this structure was when it first shipped is
+     * refused: no version of this API had one, so it is a caller that has not
+     * set the field rather than an older plugin.
+     */
+    uint8_t  size;
+
+    /** @brief Which LED. @sa ora_led_t */
+    uint8_t  led;
+
+    /** @brief What it should do. @sa ora_led_mode_t */
+    uint8_t  mode;
+
+    /**
+     * @brief Brightness as a percentage, 1 to 100
+     *
+     * Zero means the firmware's default. The RGB LED supports brightness, and
+     * the status LED does not - it is lit or dark, and this field is ignored
+     * for it.
+     */
+    uint8_t  brightness;
+
+    /** @brief Red, for the modes that take a colour. Ignored otherwise. */
+    uint8_t  red;
+
+    /** @brief Green, for the modes that take a colour. Ignored otherwise. */
+    uint8_t  green;
+
+    /** @brief Blue, for the modes that take a colour. Ignored otherwise. */
+    uint8_t  blue;
+
+    /** @brief Reserved. Set to zero. */
+    uint8_t  reserved0;
+
+    /**
+     * @brief How long one repetition of the mode takes, in milliseconds
+     *
+     * A full rotation of the hues for ORA_LED_MODE_CYCLE, one fade up and down
+     * for ORA_LED_MODE_BREATHE, one on and off for ORA_LED_MODE_BLINK. Zero
+     * means the mode's own default. Ignored by the modes that do not repeat.
+     */
+    uint16_t period_ms;
+
+    /**
+     * @brief Reserved. Set to zero.
+     *
+     * Declared rather than left to the compiler: @ref hold_ms is four-byte
+     * aligned, so these two bytes exist either way, and a reader following the
+     * fields down should not have to work that out.
+     */
+    uint8_t  reserved1[2];
+
+    /**
+     * @brief How long to stay in this mode before going back, in milliseconds
+     *
+     * The firmware restores the mode and colour that were in force when this
+     * call arrived. Zero holds the new mode until something changes it, except
+     * for ORA_LED_MODE_BEACON, which is bounded by definition and takes the
+     * firmware's own duration when a request names none.
+     *
+     * One state is remembered. A held request arriving while a hold is running
+     * leaves the remembered state alone, so the LED returns to what it was
+     * doing before the first of them.
+     */
+    uint32_t hold_ms;
+} ora_led_request_t;
+STATIC_ASSERT(sizeof(ora_led_request_t) == 16, "ora_led_request_t must be 16 bytes");
+
+/**
+ * @brief An LED's presence, wiring and live state, from @ref ora_led_get_fn_t
+ * @since firmware 0.7.2
+ */
+typedef struct {
+    /**
+     * @brief In: sizeof this structure as known to the caller.  Out: the
+     * number of bytes the firmware actually wrote.
+     *
+     * The caller sets this to sizeof(ora_led_state_t) as it knows it before
+     * calling. The firmware writes at most that many bytes and sets this field
+     * to how many it wrote, so a plugin built against a newer version of this
+     * structure than the running firmware still interoperates.
+     *
+     * A size smaller than this structure was when it first shipped is
+     * refused, as it is for @ref ora_led_request_t.
+     */
+    uint8_t  size;
+
+    /** @brief Which LED this describes. @sa ora_led_t */
+    uint8_t  led;
+
+    /** @brief 1 if this board has this LED, 0 if not */
+    uint8_t  present;
+
+    /** @brief What it is doing now. @sa ora_led_mode_t */
+    uint8_t  mode;
+
+    /**
+     * @brief Brightness as a percentage, 1 to 100
+     *
+     * Meaningful for ORA_LED_RGB only. The status LED is lit or dark and has
+     * no brightness, so the firmware writes zero here for it. Zero is not a
+     * brightness and must not be read as one.
+     */
+    uint8_t  brightness;
+
+    /**
+     * @brief Red of the colour in force
+     *
+     * Meaningful for ORA_LED_RGB only, as for @ref brightness. The firmware
+     * writes zero for the status LED, which is not the colour black.
+     */
+    uint8_t  red;
+
+    /**
+     * @brief Green of the colour in force
+     *
+     * Meaningful for ORA_LED_RGB only, as for @ref brightness. The firmware
+     * writes zero for the status LED, which is not the colour black.
+     */
+    uint8_t  green;
+
+    /**
+     * @brief Blue of the colour in force
+     *
+     * Meaningful for ORA_LED_RGB only, as for @ref brightness. The firmware
+     * writes zero for the status LED, which is not the colour black.
+     */
+    uint8_t  blue;
+
+    /** @brief The GPIO this LED is on, or GPIO_NONE if the board has none */
+    uint8_t  gpio;
+
+    /** @brief Reserved, written as zero */
+    uint8_t  reserved;
+
+    /** @brief The period in force, in milliseconds */
+    uint16_t period_ms;
+} ora_led_state_t;
+STATIC_ASSERT(sizeof(ora_led_state_t) == 12, "ora_led_state_t must be 12 bytes");
+
+/**
+ * @brief Set an LED's mode, colour, brightness and period
+ * @sa ORA_ID_LED_SET
+ * @since firmware 0.7.2
+ *
+ * The firmware drives the LED from here on, including any repetition the mode
+ * calls for, so a caller sets a mode once and does not tick it. An animated
+ * mode is driven from a timer interrupt on the core that made this call.
+ *
+ * The RGB LED's GPIO is claimed on the first call that needs it. Until then the
+ * pin is left as it was, so a device nothing has asked about takes no
+ * interrupts and drives nothing.
+ *
+ * @param req  What to do, with its size field already set
+ * @return ORA_RESULT_OK on success; ORA_RESULT_INVALID_ARG if @p req is NULL,
+ *         @p req->led is not an LED this firmware knows, @p req->mode is not a
+ *         mode this LED supports, @p req->brightness is above 100,
+ *         @p req->hold_ms exceeds the firmware's limit, or @p req->period_ms
+ *         is below the shortest the mode accepts;
+ *         ORA_RESULT_INVALID_SIZE if @p req->size is below this structure's
+ *         first shipped size; ORA_RESULT_NOT_SUPPORTED if the board does not
+ *         have the requested LED
+ */
+typedef ora_result_t (*ora_led_set_fn_t)(
+    const ora_led_request_t *req
+);
+
+/**
+ * @brief Read an LED's presence, GPIO and live state
+ * @sa ORA_ID_LED_GET
+ * @since firmware 0.7.2
+ *
+ * Answers for an LED the board does not have, with present set to 0, so a
+ * caller can ask about any LED without knowing the board.
+ *
+ * The caller must set @p state_out->size to its own sizeof(ora_led_state_t)
+ * before calling.
+ *
+ * @param led        Which LED to describe. @sa ora_led_t
+ * @param state_out  Structure to fill in, with its size field already set
+ * @return ORA_RESULT_OK on success; ORA_RESULT_INVALID_ARG if @p state_out is
+ *         NULL or @p led is not an LED this firmware knows;
+ *         ORA_RESULT_INVALID_SIZE if @p state_out->size is below this
+ *         structure's first shipped size
+ */
+typedef ora_result_t (*ora_led_get_fn_t)(
+    uint8_t led,
+    ora_led_state_t *state_out
+);
+
+/**
+ * @brief Claim a log channel for this plugin to write to
+ * @sa ORA_ID_LOG_OPEN_WRITE
+ * @since firmware 0.7.2
+ *
+ * Only the plugin that claimed a channel for writing may write to it. Claiming
+ * neither allocates nor clears anything: the buffers exist before any plugin
+ * runs, and a claim only records the writer and the name.
+ *
+ * This call and the rest of the channel family - write, close, open read,
+ * read, close read and query - are in every firmware build, whether or not it
+ * was built with plugin logging support, and are unaffected by the device's
+ * boot logging setting.
+ *
+ * The claim covers @ref ora_log_write_fn_t only. @ref ora_log_fn_t and
+ * @ref ora_err_log_fn_t claim nothing and write the boot log channel
+ * regardless, so a plugin holding this claim can still have its bytes
+ * interleaved by One ROM's own log and by the other plugin's logging. Where
+ * two cores write the same channel at once the result is corrupted rather than
+ * merely interleaved, because interrupt masking does not cross cores.
+ *
+ * @param channel Channel to claim
+ * @param name    Name shown by whatever reads the log, such as a probe front
+ *                end. Must be NUL-terminated, and must remain valid until the
+ *                channel is closed - the firmware keeps the pointer rather
+ *                than copying the string. A reader may truncate it for
+ *                display, so keep it short.
+ * @return ORA_RESULT_OK on success. ORA_RESULT_NOT_SUPPORTED if @p channel
+ *         does not exist on this firmware. ORA_RESULT_INVALID_ARG if @p name
+ *         is NULL. ORA_RESULT_LOG_CHANNEL_IN_USE if the channel is already
+ *         claimed for writing
+ */
+typedef ora_result_t (*ora_log_open_write_fn_t)(
+    ora_log_channel_t channel,
+    const char *name
+);
+
+/**
+ * @brief Append bytes to a log channel
+ * @sa ORA_ID_LOG_WRITE
+ * @since firmware 0.7.2
+ *
+ * Appends exactly the bytes given. Nothing is added, removed or rewritten -
+ * no formatting, no prefix, and no line ending. A plugin that wants its
+ * output to appear as lines sends the terminators itself, and one sending
+ * binary gets it through unaltered.
+ *
+ * There are no varargs and no scratch buffer, so the stack cost is
+ * negligible. Use this where the plugin already holds the bytes, or where the
+ * stack budget rules out @ref ora_log_fn_t.
+ *
+ * A write is stored whole or dropped whole, and never blocks. When the channel
+ * has no room the record is dropped and ORA_RESULT_LOG_FULL is returned; that
+ * is normal operation rather than a failure, and a caller with nothing useful
+ * to do about it may ignore it. A caller that can slow down, or that wants to
+ * report how much it lost, has the information to do so.
+ *
+ * A zero-length write stores nothing, returns ORA_RESULT_OK, and is never
+ * reported as full.
+ *
+ * @param channel Channel this plugin claimed for writing
+ * @param buf     Bytes to append
+ * @param len     Number of bytes to append
+ * @return ORA_RESULT_OK if the record was stored, or if @p len was zero.
+ *         ORA_RESULT_LOG_FULL if it was dropped. ORA_RESULT_NOT_SUPPORTED if
+ *         @p channel does not exist on this firmware. ORA_RESULT_INVALID_ARG
+ *         if @p buf is NULL, or @p channel is not claimed for writing by this
+ *         plugin
+ */
+typedef ora_result_t (*ora_log_write_fn_t)(
+    ora_log_channel_t channel,
+    const void *buf,
+    uint32_t len
+);
+
+/**
+ * @brief Relinquish this plugin's write claim on a log channel
+ * @sa ORA_ID_LOG_CLOSE_WRITE
+ * @since firmware 0.7.2
+ *
+ * Nothing is freed and nothing is discarded: the channel remains advertised,
+ * and anything written but not yet read stays readable. Any read claim is
+ * unaffected. The firmware stops using the name passed to
+ * @ref ora_log_open_write_fn_t, so the plugin may reuse that memory.
+ *
+ * The channel is then unclaimed for writing, so any plugin - including this
+ * one - may claim it again.
+ *
+ * @param channel Channel this plugin claimed for writing
+ * @return ORA_RESULT_OK on success. ORA_RESULT_NOT_SUPPORTED if @p channel
+ *         does not exist on this firmware. ORA_RESULT_INVALID_ARG if it is not
+ *         claimed for writing by this plugin
+ */
+typedef ora_result_t (*ora_log_close_write_fn_t)(ora_log_channel_t channel);
+
+/**
+ * @brief Claim a log channel for this plugin to read from
+ * @sa ORA_ID_LOG_OPEN_READ
+ * @since firmware 0.7.2
+ *
+ * Only the plugin that claimed a channel for reading may read from it. Read and
+ * write claims are independent, so one plugin may write a channel while another
+ * reads it, and a channel with no writer can still be read.
+ *
+ * A debug probe attached over SWD is also a reader, and does not go through
+ * this API, so the claim cannot exclude it. Both advance the same read
+ * position, so with both attached each sees only part of the log. Use one or
+ * the other.
+ *
+ * @param channel Channel to claim
+ * @return ORA_RESULT_OK on success. ORA_RESULT_NOT_SUPPORTED if @p channel
+ *         does not exist on this firmware. ORA_RESULT_LOG_CHANNEL_IN_USE if
+ *         the channel is already claimed for reading
+ */
+typedef ora_result_t (*ora_log_open_read_fn_t)(ora_log_channel_t channel);
+
+/**
+ * @brief Read bytes from a log channel
+ * @sa ORA_ID_LOG_READ
+ * @since firmware 0.7.2
+ *
+ * Copies up to @p max_len bytes into @p buf and consumes them, freeing that
+ * space for the writer. Fewer bytes than asked for means the channel is now
+ * empty. The channel's internal wrap is served inside the call, so a short
+ * return never means "more is available from a second call".
+ *
+ * The bytes are consumed by this call, so a caller that reads more than it can
+ * pass on must hold the remainder itself. Where the destination can report its
+ * own free space, ask it first and read exactly that much.
+ *
+ * @param channel    Channel this plugin claimed for reading
+ * @param buf        Destination buffer
+ * @param max_len    Capacity of @p buf in bytes
+ * @param copied_out Receives the number of bytes copied, zero if the channel
+ *                   is empty or @p max_len is zero
+ * @return ORA_RESULT_OK on success, including when the channel is empty.
+ *         ORA_RESULT_NOT_SUPPORTED if @p channel does not exist on this
+ *         firmware. ORA_RESULT_INVALID_ARG if @p buf or @p copied_out is NULL,
+ *         or @p channel is not claimed for reading by this plugin
+ */
+typedef ora_result_t (*ora_log_read_fn_t)(
+    ora_log_channel_t channel,
+    void *buf,
+    uint32_t max_len,
+    uint32_t *copied_out
+);
+
+/**
+ * @brief Relinquish this plugin's read claim on a log channel
+ * @sa ORA_ID_LOG_CLOSE_READ
+ * @since firmware 0.7.2
+ *
+ * Unread bytes stay unread and the read position is not disturbed. Any write
+ * claim is unaffected.
+ *
+ * The channel is then unclaimed for reading, so any plugin - including this
+ * one - may claim it again.
+ *
+ * @param channel Channel this plugin claimed for reading
+ * @return ORA_RESULT_OK on success. ORA_RESULT_NOT_SUPPORTED if @p channel
+ *         does not exist on this firmware. ORA_RESULT_INVALID_ARG if it is not
+ *         claimed for reading by this plugin
+ */
+typedef ora_result_t (*ora_log_close_read_fn_t)(ora_log_channel_t channel);
+
+/**
+ * @brief Report a log channel's capacity and current occupancy
+ * @sa ORA_ID_LOG_QUERY
+ * @since firmware 0.7.2
+ *
+ * Distinguishes "this will never fit" from "this does not fit yet":
+ * @p size_out is fixed for the life of the device, while @p free_out varies as
+ * a reader drains. @p pending_out is the reader's view - whether there is
+ * anything to take.
+ *
+ * No claim is needed, in either direction, and the channel need not be claimed
+ * by anyone.
+ *
+ * The channel always holds one byte back, so that a full channel is
+ * distinguishable from an empty one: for a channel that exists,
+ * @p size_out equals @p free_out plus @p pending_out plus one. All three are
+ * one snapshot and so agree with each other, but anything else writing or
+ * draining the channel moves them straight afterwards.
+ *
+ * @param channel     Channel to report on
+ * @param size_out    Receives the channel's total size in bytes. May be NULL.
+ * @param free_out    Receives the bytes writable right now. May be NULL.
+ * @param pending_out Receives the bytes written but not yet read. May be NULL.
+ * @return ORA_RESULT_OK on success. ORA_RESULT_NOT_SUPPORTED if @p channel
+ *         does not exist on this firmware
+ */
+typedef ora_result_t (*ora_log_query_fn_t)(
+    ora_log_channel_t channel,
+    uint32_t *size_out,
+    uint32_t *free_out,
+    uint32_t *pending_out
+);
+
+/**
+ * @brief Get an unsigned option this firmware was compiled with
+ * @sa ORA_ID_GET_COMPILE_OPTION_UINT
+ * @since firmware 0.7.2
+ *
+ * Resolves the options in @ref ora_compile_option_t whose value is unsigned,
+ * zero-extending it into @p out. The value is settled at build time, so it is
+ * the same on every call.
+ *
+ * @param option  The option to retrieve. @sa ora_compile_option_t
+ * @param out     Receives the value. Must not be NULL.
+ * @return ORA_RESULT_OK on success.
+ *         ORA_RESULT_NOT_SUPPORTED if @p option is unknown to this firmware.
+ *         ORA_RESULT_TYPE_MISMATCH if @p option is valid but not an unsigned
+ *         value.
+ *         ORA_RESULT_INVALID_ARG if @p out is NULL.
+ */
+typedef ora_result_t (*ora_get_compile_option_uint_fn_t)(
+    ora_compile_option_t option,
+    uint32_t *out
+);
+
+/**
+ * @brief Get a string option this firmware was compiled with
+ * @sa ORA_ID_GET_COMPILE_OPTION_STR
+ * @since firmware 0.7.2
+ *
+ * String sibling of @ref ora_get_compile_option_uint_fn_t over the same key
+ * space. On success @p out receives a pointer directly into flash - no
+ * allocation is required, and the pointer is valid for the lifetime of the
+ * firmware.
+ *
+ * @param option  The option to retrieve. @sa ora_compile_option_t
+ * @param out     Receives the string pointer. Must not be NULL.
+ * @return ORA_RESULT_OK on success.
+ *         ORA_RESULT_NOT_SUPPORTED if @p option is unknown to this firmware.
+ *         ORA_RESULT_TYPE_MISMATCH if @p option is valid but not a string.
+ *         ORA_RESULT_INVALID_ARG if @p out is NULL.
+ */
+typedef ora_result_t (*ora_get_compile_option_str_fn_t)(
+    ora_compile_option_t option,
+    const char **out
+);
+
+/**
+ * @brief Report whether output of a log category appears
+ * @sa ORA_ID_LOG_CATEGORY_ENABLED
+ * @since firmware 0.7.2
+ *
+ * Answers whether the firmware's own gates let output of @p category through
+ * as things stand, composing every gate that applies to it - how the firmware
+ * was built, and for some categories the device's runtime state. A category
+ * with a runtime gate can therefore answer differently on a later call.
+ *
+ * It says nothing about whether anything is listening, or about whether a
+ * given write succeeds. A category answers 1 on a device with no debug probe
+ * and no terminal attached, and @ref ora_log_write_fn_t still reports
+ * @c ORA_RESULT_LOG_FULL when the channel is full.
+ *
+ * This is a different question from how the firmware was built, which
+ * @ref ora_get_compile_option_uint_fn_t answers. A build compiled with debug
+ * logging still emits no boot messages on a turbo boot device.
+ *
+ * @param category     The category to report on. @sa ora_log_category_t
+ * @param enabled_out  Receives 1 if output of this category appears, 0 if it
+ *                     does not. Must not be NULL.
+ * @return ORA_RESULT_OK on success.
+ *         ORA_RESULT_NOT_SUPPORTED if @p category is unknown to this firmware.
+ *         ORA_RESULT_INVALID_ARG if @p enabled_out is NULL.
+ */
+typedef ora_result_t (*ora_log_category_enabled_fn_t)(
+    ora_log_category_t category,
+    uint32_t *enabled_out
 );
 
 /** @} */ // plugin_api_functions

@@ -6,7 +6,33 @@
 
 use crate::args::CommandTrait;
 use clap::Args;
+use onerom_cli::pin::{Pin, parse_pin};
 use onerom_cli::usb::RebootArgs;
+
+const HELP_RESET_HOST: &str = "After programming, pulse this pin low to reset \
+     the host system the One ROM is installed in, so it boots the ROM image just \
+     flashed.";
+
+const LONG_HELP_RESET_HOST: &str = concat!(
+    "After programming, pulse this pin low to reset the host system the One ROM \
+     is installed in, so it boots the ROM image just flashed.\n\n\
+     Name the pin the reset wire is soldered to - typically an X pad, or an \
+     image-select pad whose jumper you have removed. Use a pad name ('x1', \
+     'sel_a') or an MCU GPIO ('gpio9'). Run 'onerom inspect header' to see which \
+     GPIO is behind each pad.\n\n\
+     The pin is checked against the image being flashed before anything is \
+     written, and the pulse is sent once the programmed One ROM is back on the \
+     USB bus, after --scan-slots and before --follow. It runs for each device in \
+     a --batch.\n\n\
+     The pulse is ",
+    const_str!("GPIO_RESET_DEFAULT_HOLD_MS"),
+    "ms, and the line is only ever driven low and then released. Use 'onerom \
+     control reset' for a different hold, or to reset a host without programming \
+     it.\n\n\
+     Requires the One ROM to reboot into running mode with a USB system plugin, \
+     which is why it cannot be combined with --stopped or --no-reboot, and needs \
+     the re-enumeration pause --fast skips."
+);
 
 // See Commands::Program in args/mod.rs for the top-level documentation of
 // this command and examples.
@@ -118,12 +144,7 @@ pub struct ProgramArgs {
     /// Name for the generated ROM configuration.
     ///
     /// Mutually exclusive with --config.
-    #[arg(
-        long,
-        value_name = "NAME",
-        visible_alias = "name",
-        conflicts_with = "config_file"
-    )]
+    #[arg(long, value_name = "NAME", conflicts_with = "config_file")]
     pub config_name: Option<String>,
 
     /// Description for the generated ROM configuration. Defaults to
@@ -208,7 +229,7 @@ pub struct ProgramArgs {
     #[arg(long, short, conflicts_with = "stopped")]
     pub no_reboot: bool,
 
-    /// Verify flash contents after programming by reading back. (Not yet supported.)
+    /// Verify flash contents after programming by reading back.
     #[arg(long)]
     pub verify: bool,
 
@@ -239,8 +260,36 @@ pub struct ProgramArgs {
     #[arg(long, conflicts_with = "fast")]
     pub scan_slots: bool,
 
+    /// After programming, show the One ROM's log as it is written, as
+    /// `onerom monitor log` does.
+    ///
+    /// Runs after --scan-slots, and only once the One ROM is back on the USB
+    /// bus, so it shows the boot log of the firmware just flashed.
+    ///
+    /// Requires the One ROM to reboot into running mode with a USB system
+    /// plugin, which is why it cannot be combined with --stopped or
+    /// --no-reboot, and needs the re-enumeration pause --fast skips.  With
+    /// --batch there would be no one One ROM to follow.
+    #[arg(long, conflicts_with_all = ["fast", "stopped", "no_reboot", "batch"])]
+    pub follow: bool,
+
+    // `help` and `long_help` rather than a doc comment, because the pulse length
+    // is quoted from the metadata schema and clap reads a doc comment as a
+    // literal - it would print the macro unexpanded.  See the `const_str!` macro
+    // in this module's parent.
+    #[arg(
+        long,
+        alias = "host-reset",
+        value_name = "PIN",
+        value_parser = parse_pin,
+        conflicts_with_all = ["fast", "stopped", "no_reboot"],
+        help = HELP_RESET_HOST,
+        long_help = LONG_HELP_RESET_HOST
+    )]
+    pub reset_host: Option<Pin>,
+
     /// Provide this One ROM with a name
-    #[arg(long, visible_aliases = ["instance_name", "onerom", "onerom-name", "one-rom", "one-rom-name"], value_name = "NAME", conflicts_with_all = ["no_config"])]
+    #[arg(long, visible_aliases = ["name", "instance_name", "onerom", "onerom-name", "one-rom", "one-rom-name"], value_name = "NAME", conflicts_with_all = ["no_config"])]
     pub instance_name: Option<String>,
 
     /// Give this One ROM a custom USB serial number, in place of the RP2350

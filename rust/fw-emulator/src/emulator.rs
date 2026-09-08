@@ -78,7 +78,11 @@ pub enum OraResult {
     NotSupported,
     TypeMismatch,
     GpioInUse,
-    Unknown(u32),
+    LogChannelInUse,
+    LogFull,
+    /// A code this binding does not know. Carries the C type's own width,
+    /// which `-fshort-enums` makes one byte.
+    Unknown(ffi::ora_result_t),
 }
 
 impl From<ffi::ora_result_t> for OraResult {
@@ -97,6 +101,8 @@ impl From<ffi::ora_result_t> for OraResult {
             ffi::ora_result_t_ORA_RESULT_NOT_SUPPORTED => Self::NotSupported,
             ffi::ora_result_t_ORA_RESULT_TYPE_MISMATCH => Self::TypeMismatch,
             ffi::ora_result_t_ORA_RESULT_GPIO_IN_USE => Self::GpioInUse,
+            ffi::ora_result_t_ORA_RESULT_LOG_CHANNEL_IN_USE => Self::LogChannelInUse,
+            ffi::ora_result_t_ORA_RESULT_LOG_FULL => Self::LogFull,
             other => Self::Unknown(other),
         }
     }
@@ -164,6 +170,27 @@ pub struct GpioInfo {
     pub is_output: u8,
 }
 
+/// One LED's state as reported by `ORA_ID_LED_GET`.
+///
+/// `mode` is an [`ffi::ora_led_mode_t`] value, left raw for the reason
+/// [`GpioInfo`]'s `gpio_use` is: a test reports an unexpected one verbatim
+/// rather than collapsing it into a catch-all.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LedState {
+    /// Bytes the firmware reported writing.
+    pub size: u8,
+    pub led: u8,
+    pub present: u8,
+    pub mode: u8,
+    pub brightness: u8,
+    pub red: u8,
+    pub green: u8,
+    pub blue: u8,
+    pub gpio: u8,
+    pub reserved: u8,
+    pub period_ms: u16,
+}
+
 /// Per-ROM detail for one ROM within a flash slot (via
 /// `ORA_ID_GET_FLASH_SLOT_EXT_INFO`).
 pub struct FlashSlotExtInfo {
@@ -216,6 +243,12 @@ impl Emulator {
         // Reset_Handler re-establishes the firmware's RAM state from its flash
         // image on every reset; here it never runs, so an in-process reboot
         // would otherwise inherit the previous run's mutated runtime info.
+        // Put back the firmware's other process-global state.  In a test build
+        // its statics are ordinary host objects, so nothing restores them
+        // between the many boots one process runs — a channel a plugin claimed,
+        // a pin it drove.  See onerom_test_reset() in firmware/test.
+        unsafe { ffi::onerom_test_reset() };
+
         unsafe {
             let ptr = ffi::ffi_runtime_info_ptr() as *mut u8;
             let size = ffi::ffi_runtime_info_size() as usize;
@@ -880,6 +913,116 @@ impl Emulator {
         (r, v)
     }
 
+    /// `ORA_ID_GET_METADATA_UINT_AT`, reading element `index` of an
+    /// array-valued key.
+    pub fn get_metadata_uint_at(
+        &self,
+        key: ffi::ora_metadata_key_t,
+        index: u32,
+    ) -> (OraResult, Option<u32>) {
+        let mut val: u32 = 0;
+        let r = plugin_call!(
+            ffi::api_id_t_ORA_ID_GET_METADATA_UINT_AT,
+            ffi::ora_get_metadata_uint_at_fn_t,
+            key,
+            index,
+            &mut val as *mut u32
+        );
+        let r = OraResult::from(r);
+        let v = r.is_ok().then_some(val);
+        (r, v)
+    }
+
+    /// See [`Self::get_compile_option_uint_null_out`].
+    pub fn get_metadata_uint_at_null_out(
+        &self,
+        key: ffi::ora_metadata_key_t,
+        index: u32,
+    ) -> OraResult {
+        OraResult::from(plugin_call!(
+            ffi::api_id_t_ORA_ID_GET_METADATA_UINT_AT,
+            ffi::ora_get_metadata_uint_at_fn_t,
+            key,
+            index,
+            std::ptr::null_mut::<u32>()
+        ))
+    }
+
+    /// `ORA_ID_GET_PLUGIN_UPTIME_MS`.
+    pub fn get_plugin_uptime_ms(&self) -> u32 {
+        plugin_call!(
+            ffi::api_id_t_ORA_ID_GET_PLUGIN_UPTIME_MS,
+            ffi::ora_get_plugin_uptime_ms_fn_t
+        )
+    }
+
+    /// Place the microsecond counter behind `ORA_ID_GET_PLUGIN_UPTIME_MS` at `us`.
+    ///
+    /// The count is the harness's, not a device's - there is no TIMER0 in this
+    /// process - so a test can put it anywhere, including either side of the
+    /// 49.7 day wrap, without waiting for wall time.
+    pub fn set_timer_us(&self, us: u64) {
+        unsafe { ffi::stub_set_timer_us(us) };
+    }
+
+    /// Move the microsecond counter behind `ORA_ID_GET_PLUGIN_UPTIME_MS` on by
+    /// `delta_us`.
+    pub fn advance_timer_us(&self, delta_us: u64) {
+        unsafe { ffi::stub_advance_timer_us(delta_us) };
+    }
+
+    /// Run the LED engine's frame, the way TIMER0 alarm 1 does on a device.
+    ///
+    /// There is no alarm in this process, so a harness stands where the
+    /// interrupt does: move the clock to [`Emulator::led_next_deadline_ms`] and
+    /// call this. It advances whatever is animating and ends a hold that has
+    /// expired.
+    pub fn led_frame(&self) {
+        unsafe { ffi::ffi_led_frame() };
+    }
+
+    /// When the LED engine next wants a frame, in the milliseconds a plugin
+    /// sees, or `None` when nothing is animating and no hold is running.
+    pub fn led_next_deadline_ms(&self) -> Option<u32> {
+        let mut ms: u32 = 0;
+        let have = unsafe { ffi::ffi_led_next_deadline(&raw mut ms) };
+
+        (have != 0).then_some(ms)
+    }
+
+    /// Forget what both LEDs are doing, so a test starts from a known state
+    /// rather than from what the test before it left.
+    ///
+    /// Nothing is driven from here - a channel's mode is forgotten, not turned
+    /// off - so a test that cares about the pin sets a mode after it.
+    pub fn led_reset(&self) {
+        unsafe { ffi::ffi_led_reset() };
+    }
+
+    /// The last colour the LED engine sent to the RGB LED, and how many it has
+    /// sent.
+    ///
+    /// The value is what the chip reads - green, red then blue, with brightness
+    /// and any fade already applied - so this is the LED's actual output rather
+    /// than what was asked for.
+    pub fn led_last_pixel(&self) -> (u32, u32) {
+        let mut count: u32 = 0;
+        let pixel = unsafe { ffi::ffi_led_last_pixel(&raw mut count) };
+
+        (pixel, count)
+    }
+
+    /// Script the counter's value across successive reads of its halves, one
+    /// entry consumed per half-read, holding at the last entry once spent.
+    ///
+    /// The firmware reads the high half, the low half, then the high half
+    /// again, retrying while the high half moved. Scripting a change part way
+    /// through that sequence is the only way to exercise the retry - on a
+    /// device the high half moves once every 71 minutes.
+    pub fn set_timer_raw_script(&self, values: &[u64]) {
+        unsafe { ffi::stub_set_timer_raw_script(values.as_ptr(), values.len() as u32) };
+    }
+
     /// `ORA_ID_GPIO_QUERY`, telling the firmware the caller's structure is
     /// `caller_size` bytes.
     ///
@@ -916,6 +1059,356 @@ impl Emulator {
         self.gpio_query_sized(gpio, size_of::<ffi::ora_gpio_info_t>() as u8)
     }
 
+    /// A zeroed `ORA_ID_LED_SET` request, with its size field set as a caller
+    /// built against this header sets it.
+    ///
+    /// Zero in a field means the firmware chooses, so a caller fills in only
+    /// what it means to ask for.
+    pub fn led_request() -> ffi::ora_led_request_t {
+        ffi::ora_led_request_t {
+            size: size_of::<ffi::ora_led_request_t>() as u8,
+            led: 0,
+            mode: 0,
+            brightness: 0,
+            red: 0,
+            green: 0,
+            blue: 0,
+            reserved0: 0,
+            period_ms: 0,
+            reserved1: [0; 2],
+            hold_ms: 0,
+        }
+    }
+
+    /// `ORA_ID_LED_SET`.
+    ///
+    /// The request is passed exactly as given, size field included, so a caller
+    /// exercising the size contract states its own.
+    pub fn led_set(&self, req: &ffi::ora_led_request_t) -> OraResult {
+        let r = plugin_call!(
+            ffi::api_id_t_ORA_ID_LED_SET,
+            ffi::ora_led_set_fn_t,
+            req as *const ffi::ora_led_request_t
+        );
+        OraResult::from(r)
+    }
+
+    /// `ORA_ID_LED_SET` with a NULL request.
+    pub fn led_set_null(&self) -> OraResult {
+        let r = plugin_call!(
+            ffi::api_id_t_ORA_ID_LED_SET,
+            ffi::ora_led_set_fn_t,
+            std::ptr::null()
+        );
+        OraResult::from(r)
+    }
+
+    /// `ORA_ID_LED_GET`, telling the firmware the caller's structure is
+    /// `caller_size` bytes.
+    ///
+    /// Fields beyond what the firmware writes are returned as the sentinel
+    /// `0xFF` this function pre-fills them with, so a caller can tell "not
+    /// written" from "written as zero".
+    pub fn led_get_sized(&self, led: u8, caller_size: u8) -> (OraResult, LedState) {
+        let mut state = ffi::ora_led_state_t {
+            size: caller_size,
+            led: 0xFF,
+            present: 0xFF,
+            mode: 0xFF,
+            brightness: 0xFF,
+            red: 0xFF,
+            green: 0xFF,
+            blue: 0xFF,
+            gpio: 0xFF,
+            reserved: 0xFF,
+            period_ms: 0xFFFF,
+        };
+        let r = plugin_call!(
+            ffi::api_id_t_ORA_ID_LED_GET,
+            ffi::ora_led_get_fn_t,
+            led,
+            &mut state as *mut ffi::ora_led_state_t
+        );
+        (
+            OraResult::from(r),
+            LedState {
+                size: state.size,
+                led: state.led,
+                present: state.present,
+                mode: state.mode,
+                brightness: state.brightness,
+                red: state.red,
+                green: state.green,
+                blue: state.blue,
+                gpio: state.gpio,
+                reserved: state.reserved,
+                period_ms: state.period_ms,
+            },
+        )
+    }
+
+    /// `ORA_ID_LED_GET` with the full structure this build knows about.
+    pub fn led_get(&self, led: u8) -> (OraResult, LedState) {
+        self.led_get_sized(led, size_of::<ffi::ora_led_state_t>() as u8)
+    }
+
+    /// `ORA_ID_LED_GET` with a NULL state pointer.
+    pub fn led_get_null(&self, led: u8) -> OraResult {
+        let r = plugin_call!(
+            ffi::api_id_t_ORA_ID_LED_GET,
+            ffi::ora_led_get_fn_t,
+            led,
+            std::ptr::null_mut()
+        );
+        OraResult::from(r)
+    }
+
+    /// `ORA_ID_SET_STATUS_LED`, driving the status LED as a plugin does.
+    ///
+    /// The LED is shared - every plugin reaches it through this one call, and
+    /// reads the result back through `ORA_METADATA_KEY_STATUS_LED_STATE`.  So a
+    /// harness calling it is standing in for the other plugin, which is what
+    /// lets a test check that the plugin under test leaves the LED alone.
+    pub fn set_status_led(&self, on: bool) {
+        plugin_call!(
+            ffi::api_id_t_ORA_ID_SET_STATUS_LED,
+            ffi::ora_set_status_led_fn_t,
+            u8::from(on)
+        )
+    }
+
+    // ── Logging plugin API ───────────────────────────────────────────────────
+
+    /// Act as `plugin` for subsequent logging API calls.
+    ///
+    /// On a device the calling core identifies the plugin. There is no core to
+    /// read here, so the harness says — which is what lets a test claim a
+    /// channel as one plugin and check the other is kept out.
+    pub fn set_calling_plugin(&self, plugin: ffi::ora_plugin_type_t) {
+        unsafe { ffi::set_host_calling_plugin(plugin) };
+    }
+
+    /// `ORA_ID_LOG_OPEN_WRITE`.
+    ///
+    /// `name` must outlive the claim, exactly as it must on a device: the
+    /// firmware stores the pointer rather than copying the string, so callers
+    /// pass a `&'static CStr`.
+    pub fn log_open_write(&self, channel: u32, name: &'static std::ffi::CStr) -> OraResult {
+        OraResult::from(plugin_call!(
+            ffi::api_id_t_ORA_ID_LOG_OPEN_WRITE,
+            ffi::ora_log_open_write_fn_t,
+            channel,
+            name.as_ptr()
+        ))
+    }
+
+    /// `ORA_ID_LOG_WRITE`.
+    pub fn log_write(&self, channel: u32, buf: &[u8]) -> OraResult {
+        OraResult::from(plugin_call!(
+            ffi::api_id_t_ORA_ID_LOG_WRITE,
+            ffi::ora_log_write_fn_t,
+            channel,
+            buf.as_ptr() as *const core::ffi::c_void,
+            buf.len() as u32
+        ))
+    }
+
+    /// `ORA_ID_LOG_CLOSE_WRITE`.
+    pub fn log_close_write(&self, channel: u32) -> OraResult {
+        OraResult::from(plugin_call!(
+            ffi::api_id_t_ORA_ID_LOG_CLOSE_WRITE,
+            ffi::ora_log_close_write_fn_t,
+            channel
+        ))
+    }
+
+    /// `ORA_ID_LOG_OPEN_READ`.
+    pub fn log_open_read(&self, channel: u32) -> OraResult {
+        OraResult::from(plugin_call!(
+            ffi::api_id_t_ORA_ID_LOG_OPEN_READ,
+            ffi::ora_log_open_read_fn_t,
+            channel
+        ))
+    }
+
+    /// `ORA_ID_LOG_READ`, returning the result and the bytes actually copied.
+    ///
+    /// The returned `Vec` is truncated to what the firmware reported copying,
+    /// so a test comparing it against what was written also checks the count.
+    pub fn log_read(&self, channel: u32, max_len: u32) -> (OraResult, Vec<u8>) {
+        let mut buf = vec![0u8; max_len as usize];
+        let mut copied: u32 = 0;
+        let r = plugin_call!(
+            ffi::api_id_t_ORA_ID_LOG_READ,
+            ffi::ora_log_read_fn_t,
+            channel,
+            buf.as_mut_ptr() as *mut core::ffi::c_void,
+            max_len,
+            &mut copied as *mut u32
+        );
+        buf.truncate(copied as usize);
+        (OraResult::from(r), buf)
+    }
+
+    /// `ORA_ID_LOG_CLOSE_READ`.
+    pub fn log_close_read(&self, channel: u32) -> OraResult {
+        OraResult::from(plugin_call!(
+            ffi::api_id_t_ORA_ID_LOG_CLOSE_READ,
+            ffi::ora_log_close_read_fn_t,
+            channel
+        ))
+    }
+
+    /// `ORA_ID_SET_PLUGIN_CONTEXT`.
+    ///
+    /// `context` is an opaque value the firmware only stores, so a test can
+    /// pass any distinguishable number rather than a real pointer.
+    pub fn set_plugin_context(&self, plugin: ffi::ora_plugin_type_t, context: usize) {
+        plugin_call!(
+            ffi::api_id_t_ORA_ID_SET_PLUGIN_CONTEXT,
+            ffi::ora_set_plugin_context_fn_t,
+            plugin,
+            context as *mut core::ffi::c_void
+        )
+    }
+
+    /// `ORA_ID_GET_PLUGIN_CONTEXT`.
+    pub fn get_plugin_context(&self, plugin: ffi::ora_plugin_type_t) -> usize {
+        let p = plugin_call!(
+            ffi::api_id_t_ORA_ID_GET_PLUGIN_CONTEXT,
+            ffi::ora_get_plugin_context_fn_t,
+            plugin
+        );
+        p as usize
+    }
+
+    /// The two plugin context slots read straight out of the runtime info
+    /// block, as `(system, user)`.
+    ///
+    /// `api.h` publishes the addresses of these two fields as
+    /// `ORA_GET_PLUGIN_CONTEXT_SYSTEM` and `ORA_GET_PLUGIN_CONTEXT_USER`, so
+    /// reading them directly is what an interrupt handler on a device does.
+    /// A test comparing these against what the API stored therefore checks the
+    /// API and the macros agree, rather than only that the API is
+    /// self-consistent.
+    pub fn plugin_context_addrs(&self) -> (usize, usize) {
+        unsafe {
+            (
+                ffi::ffi_system_plugin_context() as usize,
+                ffi::ffi_user_plugin_context() as usize,
+            )
+        }
+    }
+
+    /// `ORA_ID_LOG_QUERY`, returning the result and (size, free, pending).
+    pub fn log_query(&self, channel: u32) -> (OraResult, u32, u32, u32) {
+        let (mut size, mut free, mut pending) = (0u32, 0u32, 0u32);
+        let r = plugin_call!(
+            ffi::api_id_t_ORA_ID_LOG_QUERY,
+            ffi::ora_log_query_fn_t,
+            channel,
+            &mut size as *mut u32,
+            &mut free as *mut u32,
+            &mut pending as *mut u32
+        );
+        (OraResult::from(r), size, free, pending)
+    }
+
+    // ── Compile options and log categories ───────────────────────────────────
+
+    /// `ORA_ID_GET_COMPILE_OPTION_UINT`.
+    pub fn get_compile_option_uint(
+        &self,
+        option: ffi::ora_compile_option_t,
+    ) -> (OraResult, Option<u32>) {
+        let mut val: u32 = 0;
+        let r = plugin_call!(
+            ffi::api_id_t_ORA_ID_GET_COMPILE_OPTION_UINT,
+            ffi::ora_get_compile_option_uint_fn_t,
+            option,
+            &mut val as *mut u32
+        );
+        let r = OraResult::from(r);
+        let v = r.is_ok().then_some(val);
+        (r, v)
+    }
+
+    /// `ORA_ID_GET_COMPILE_OPTION_UINT` with a NULL out pointer.
+    ///
+    /// The NULL guard is what stops a plugin's mistake becoming a fault on a
+    /// device, so it is worth a test of its own, and a test cannot reach it
+    /// through a wrapper that always supplies somewhere to write.
+    pub fn get_compile_option_uint_null_out(&self, option: ffi::ora_compile_option_t) -> OraResult {
+        OraResult::from(plugin_call!(
+            ffi::api_id_t_ORA_ID_GET_COMPILE_OPTION_UINT,
+            ffi::ora_get_compile_option_uint_fn_t,
+            option,
+            std::ptr::null_mut::<u32>()
+        ))
+    }
+
+    /// `ORA_ID_GET_COMPILE_OPTION_STR`.
+    pub fn get_compile_option_str(
+        &self,
+        option: ffi::ora_compile_option_t,
+    ) -> (OraResult, Option<String>) {
+        let mut ptr: *const std::os::raw::c_char = std::ptr::null();
+        let r = plugin_call!(
+            ffi::api_id_t_ORA_ID_GET_COMPILE_OPTION_STR,
+            ffi::ora_get_compile_option_str_fn_t,
+            option,
+            &mut ptr as *mut *const std::os::raw::c_char
+        );
+        let r = OraResult::from(r);
+        let s = (r.is_ok() && !ptr.is_null()).then(|| {
+            unsafe { std::ffi::CStr::from_ptr(ptr) }
+                .to_string_lossy()
+                .into_owned()
+        });
+        (r, s)
+    }
+
+    /// `ORA_ID_GET_COMPILE_OPTION_STR` with a NULL out pointer.
+    ///
+    /// See [`Self::get_compile_option_uint_null_out`].
+    pub fn get_compile_option_str_null_out(&self, option: ffi::ora_compile_option_t) -> OraResult {
+        OraResult::from(plugin_call!(
+            ffi::api_id_t_ORA_ID_GET_COMPILE_OPTION_STR,
+            ffi::ora_get_compile_option_str_fn_t,
+            option,
+            std::ptr::null_mut::<*const std::os::raw::c_char>()
+        ))
+    }
+
+    /// `ORA_ID_LOG_CATEGORY_ENABLED`.
+    pub fn log_category_enabled(
+        &self,
+        category: ffi::ora_log_category_t,
+    ) -> (OraResult, Option<u32>) {
+        let mut enabled: u32 = 0;
+        let r = plugin_call!(
+            ffi::api_id_t_ORA_ID_LOG_CATEGORY_ENABLED,
+            ffi::ora_log_category_enabled_fn_t,
+            category,
+            &mut enabled as *mut u32
+        );
+        let r = OraResult::from(r);
+        let v = r.is_ok().then_some(enabled);
+        (r, v)
+    }
+
+    /// `ORA_ID_LOG_CATEGORY_ENABLED` with a NULL out pointer.
+    ///
+    /// See [`Self::get_compile_option_uint_null_out`].
+    pub fn log_category_enabled_null_out(&self, category: ffi::ora_log_category_t) -> OraResult {
+        OraResult::from(plugin_call!(
+            ffi::api_id_t_ORA_ID_LOG_CATEGORY_ENABLED,
+            ffi::ora_log_category_enabled_fn_t,
+            category,
+            std::ptr::null_mut::<u32>()
+        ))
+    }
+
     pub fn get_chip_size_from_type(&self, chip_type: u32) -> u32 {
         plugin_call!(
             ffi::api_id_t_ORA_ID_GET_CHIP_SIZE_FROM_TYPE,
@@ -932,6 +1425,307 @@ impl Emulator {
             ffi::api_id_t_ORA_ID_GET_SYSCLK_MHZ,
             ffi::ora_get_sysclk_mhz_fn_t
         )
+    }
+
+    /// Current CLKREF frequency in MHz (`ORA_ID_GET_CLKREF_MHZ`).
+    ///
+    /// **Faults under the test build.**  The firmware reads `CLOCK_REF_DIV`,
+    /// which `reg-rp235x.h` defines as a dereference of the absolute address
+    /// 0x40010034.  That is a peripheral register on the device and unmapped
+    /// memory in this process, and nothing stands in for it, so the call
+    /// segfaults rather than returning.  The binding is here so that a test
+    /// build which stands something in for the clocks block can call it.
+    pub fn clkref_mhz(&self) -> u32 {
+        plugin_call!(
+            ffi::api_id_t_ORA_ID_GET_CLKREF_MHZ,
+            ffi::ora_get_clkref_mhz_fn_t
+        )
+    }
+
+    // ── Memory, peripherals and interrupts ───────────────────────────────────
+
+    /// `ORA_ID_ALLOC`, returning the allocation as an address rather than a
+    /// pointer.
+    ///
+    /// The firmware has no allocator, so the answer is always 0 (NULL) and
+    /// there is nothing for a caller to dereference.  An address keeps that
+    /// visible and keeps the wrapper safe.
+    pub fn alloc(&self, size: usize) -> usize {
+        let p = plugin_call!(ffi::api_id_t_ORA_ID_ALLOC, ffi::ora_alloc_fn_t, size);
+        p as usize
+    }
+
+    /// `ORA_ID_GET_FREE_MEM`.
+    pub fn get_free_mem(&self) -> usize {
+        plugin_call!(
+            ffi::api_id_t_ORA_ID_GET_FREE_MEM,
+            ffi::ora_get_free_mem_fn_t
+        )
+    }
+
+    /// `ORA_ID_ERR_LOG` with a message carrying no conversions.
+    pub fn err_log(&self, msg: &std::ffi::CStr) {
+        plugin_call!(
+            ffi::api_id_t_ORA_ID_ERR_LOG,
+            ffi::ora_err_log_fn_t,
+            msg.as_ptr()
+        )
+    }
+
+    /// `ORA_ID_ERR_LOG` with one unsigned argument.
+    ///
+    /// # Panics
+    ///
+    /// The call is a C variadic, so `msg` must carry exactly one conversion and
+    /// it must take an `unsigned int`.  Anything else is undefined behaviour in
+    /// the formatter rather than a Rust error, so this asserts the count of
+    /// `%` signs before calling.
+    pub fn err_log_uint(&self, msg: &std::ffi::CStr, value: u32) {
+        assert_eq!(
+            msg.to_bytes().iter().filter(|&&b| b == b'%').count(),
+            1,
+            "err_log_uint needs exactly one conversion in the format string"
+        );
+        plugin_call!(
+            ffi::api_id_t_ORA_ID_ERR_LOG,
+            ffi::ora_err_log_fn_t,
+            msg.as_ptr(),
+            value as std::os::raw::c_uint
+        )
+    }
+
+    /// `ORA_ID_SETUP_ADC`.
+    pub fn setup_adc(&self) {
+        plugin_call!(ffi::api_id_t_ORA_ID_SETUP_ADC, ffi::ora_setup_adc_fn_t)
+    }
+
+    /// `ORA_ID_ENABLE_IRQ`.
+    pub fn enable_irq(&self, irq: ffi::ora_irq_t, enable: bool) {
+        plugin_call!(
+            ffi::api_id_t_ORA_ID_ENABLE_IRQ,
+            ffi::ora_enable_irq_fn_t,
+            irq,
+            u8::from(enable)
+        )
+    }
+
+    /// `ORA_ID_REGISTER_IRQ`.  A `None` handler deregisters.
+    pub fn register_irq(&self, irq: ffi::ora_irq_t, handler: ffi::ora_irq_handler_t) {
+        plugin_call!(
+            ffi::api_id_t_ORA_ID_REGISTER_IRQ,
+            ffi::ora_register_irq_fn_t,
+            irq,
+            handler
+        )
+    }
+
+    // ── Pins ─────────────────────────────────────────────────────────────────
+
+    /// `ORA_ID_IS_PIN_OUTPUT`: 1 if the pin drives, 0 if it does not, 0xFF if
+    /// the pin number is not one this device has.
+    pub fn is_pin_output(&self, pin: u8) -> u8 {
+        plugin_call!(
+            ffi::api_id_t_ORA_ID_IS_PIN_OUTPUT,
+            ffi::ora_is_pin_output_fn_t,
+            pin
+        )
+    }
+
+    /// `ORA_ID_GET_DATA_PIN_NUMS`, filling the front of `buf` and returning how
+    /// many pin numbers were written.
+    ///
+    /// `num_pins` is the caller's own cap, passed through unchanged so a test
+    /// can ask for fewer pins than the bus has and see the call stop there.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `num_pins` exceeds `buf.len()`, which the API documents as the
+    /// caller's responsibility and which would otherwise be a write past the
+    /// end of the slice.
+    pub fn get_data_pin_nums(&self, buf: &mut [u8], num_pins: u8) -> u8 {
+        assert!(
+            num_pins as usize <= buf.len(),
+            "get_data_pin_nums: buffer holds {} pins, {num_pins} asked for",
+            buf.len()
+        );
+        plugin_call!(
+            ffi::api_id_t_ORA_ID_GET_DATA_PIN_NUMS,
+            ffi::ora_get_data_pin_nums_fn_t,
+            buf.as_mut_ptr(),
+            num_pins
+        )
+    }
+
+    /// `ORA_ID_GPIO_SET`.
+    ///
+    /// `force` is `ORA_GPIO_FLAG_FORCE`, the only flag the call defines: set,
+    /// it overrides the refusal to drive a GPIO One ROM is already using.
+    pub fn gpio_set(&self, gpio: u8, state: ffi::ora_gpio_state_t, force: bool) -> OraResult {
+        const ORA_GPIO_FLAG_FORCE: u32 = 1 << 0;
+        OraResult::from(plugin_call!(
+            ffi::api_id_t_ORA_ID_GPIO_SET,
+            ffi::ora_gpio_set_fn_t,
+            gpio,
+            state,
+            if force { ORA_GPIO_FLAG_FORCE } else { 0 }
+        ))
+    }
+
+    // ── Yield ────────────────────────────────────────────────────────────────
+
+    /// `ORA_ID_YIELD`, returning the result and whether the core was paused.
+    pub fn plugin_yield(&self) -> (OraResult, u8) {
+        let mut was_paused: u8 = 0xFF;
+        let r = plugin_call!(
+            ffi::api_id_t_ORA_ID_YIELD,
+            ffi::ora_yield_fn_t,
+            &mut was_paused as *mut u8
+        );
+        (OraResult::from(r), was_paused)
+    }
+
+    /// `ORA_ID_YIELD` with a NULL out pointer, which the API documents as
+    /// allowed for a caller that does not care whether it was paused.
+    pub fn plugin_yield_null_out(&self) -> OraResult {
+        OraResult::from(plugin_call!(
+            ffi::api_id_t_ORA_ID_YIELD,
+            ffi::ora_yield_fn_t,
+            std::ptr::null_mut::<u8>()
+        ))
+    }
+
+    // ── NULL-argument forms ──────────────────────────────────────────────────
+    //
+    // Each of these reaches a guard that a wrapper always supplying somewhere
+    // to write cannot: on a device the guard is what stops a plugin's mistake
+    // becoming a fault.  See `get_compile_option_uint_null_out`.
+
+    /// `ORA_ID_GET_ACTIVE_RAM_SLOT` with a NULL out pointer.
+    pub fn get_active_ram_slot_null_out(&self) -> OraResult {
+        OraResult::from(plugin_call!(
+            ffi::api_id_t_ORA_ID_GET_ACTIVE_RAM_SLOT,
+            ffi::ora_get_active_ram_slot_fn_t,
+            std::ptr::null_mut::<u8>()
+        ))
+    }
+
+    /// `ORA_ID_GET_METADATA_STR` with a NULL out pointer.
+    pub fn get_metadata_str_null_out(&self, key: ffi::ora_metadata_key_t) -> OraResult {
+        OraResult::from(plugin_call!(
+            ffi::api_id_t_ORA_ID_GET_METADATA_STR,
+            ffi::ora_get_metadata_str_fn_t,
+            key,
+            std::ptr::null_mut::<*const std::os::raw::c_char>()
+        ))
+    }
+
+    /// `ORA_ID_GET_METADATA_UINT` with a NULL out pointer.
+    pub fn get_metadata_uint_null_out(&self, key: ffi::ora_metadata_key_t) -> OraResult {
+        OraResult::from(plugin_call!(
+            ffi::api_id_t_ORA_ID_GET_METADATA_UINT,
+            ffi::ora_get_metadata_uint_fn_t,
+            key,
+            std::ptr::null_mut::<u32>()
+        ))
+    }
+
+    /// `ORA_ID_DEMANGLE_DATA` with a NULL out pointer.
+    pub fn demangle_data_null_out(&self, physical_data: u8) -> OraResult {
+        OraResult::from(plugin_call!(
+            ffi::api_id_t_ORA_ID_DEMANGLE_DATA,
+            ffi::ora_demangle_data_fn_t,
+            physical_data,
+            std::ptr::null_mut::<u8>()
+        ))
+    }
+
+    /// `ORA_ID_LOG_OPEN_WRITE` with a NULL name.
+    pub fn log_open_write_null_name(&self, channel: u32) -> OraResult {
+        OraResult::from(plugin_call!(
+            ffi::api_id_t_ORA_ID_LOG_OPEN_WRITE,
+            ffi::ora_log_open_write_fn_t,
+            channel,
+            std::ptr::null::<std::os::raw::c_char>()
+        ))
+    }
+
+    /// `ORA_ID_LOG_WRITE` with a NULL buffer and a non-zero length.
+    pub fn log_write_null_buf(&self, channel: u32, len: u32) -> OraResult {
+        OraResult::from(plugin_call!(
+            ffi::api_id_t_ORA_ID_LOG_WRITE,
+            ffi::ora_log_write_fn_t,
+            channel,
+            std::ptr::null::<core::ffi::c_void>(),
+            len
+        ))
+    }
+
+    /// `ORA_ID_LOG_READ` with a NULL destination buffer.
+    pub fn log_read_null_buf(&self, channel: u32, max_len: u32) -> OraResult {
+        let mut copied: u32 = 0;
+        OraResult::from(plugin_call!(
+            ffi::api_id_t_ORA_ID_LOG_READ,
+            ffi::ora_log_read_fn_t,
+            channel,
+            std::ptr::null_mut::<core::ffi::c_void>(),
+            max_len,
+            &mut copied as *mut u32
+        ))
+    }
+
+    /// `ORA_ID_LOG_READ` with a NULL copied-count pointer.
+    pub fn log_read_null_copied(&self, channel: u32, max_len: u32) -> OraResult {
+        let mut buf = vec![0u8; max_len as usize];
+        OraResult::from(plugin_call!(
+            ffi::api_id_t_ORA_ID_LOG_READ,
+            ffi::ora_log_read_fn_t,
+            channel,
+            buf.as_mut_ptr() as *mut core::ffi::c_void,
+            max_len,
+            std::ptr::null_mut::<u32>()
+        ))
+    }
+
+    // ── Runtime info bytes ───────────────────────────────────────────────────
+
+    /// A copy of the whole runtime info block as raw bytes.
+    ///
+    /// The block's layout deliberately does not cross this FFI boundary (see
+    /// `ffi_system_plugin_context` in `firmware/test/ffi.c`), so this hands
+    /// back bytes and no field names.  It exists so a test can reach a field
+    /// the plugin API only ever reads — `rom_table` is the one — by finding
+    /// the word currently holding a value the API itself reports, confirming
+    /// the find by what the API then says, and putting it back.
+    pub fn runtime_info_bytes(&self) -> Vec<u8> {
+        unsafe {
+            let ptr = ffi::ffi_runtime_info_ptr() as *const u8;
+            let size = ffi::ffi_runtime_info_size() as usize;
+            std::slice::from_raw_parts(ptr, size).to_vec()
+        }
+    }
+
+    /// Overwrite one 32-bit word of the runtime info block.
+    ///
+    /// # Safety
+    ///
+    /// `offset` must be within the block and 4-byte aligned, and the caller
+    /// must know which field it is writing — see [`Self::runtime_info_bytes`].
+    /// Writing a field the firmware dereferences puts a value of the caller's
+    /// choosing behind a pointer the next call follows.
+    pub unsafe fn poke_runtime_u32(&self, offset: usize, value: u32) {
+        let size = unsafe { ffi::ffi_runtime_info_size() } as usize;
+        assert!(
+            offset.is_multiple_of(4),
+            "poke_runtime_u32: offset must be aligned"
+        );
+        assert!(
+            offset + 4 <= size,
+            "poke_runtime_u32: offset {offset} past the {size} byte block"
+        );
+        unsafe {
+            let ptr = (ffi::ffi_runtime_info_ptr() as *mut u8).add(offset) as *mut u32;
+            ptr.write_unaligned(value);
+        }
     }
 }
 

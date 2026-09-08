@@ -1,0 +1,36 @@
+# The set of runs the coverage figures and the floors in
+# ci/coverage-baseline.txt are built from.
+#
+#   <board>    <config>    [variant]
+#
+# A variant is a second build of the same board and config, differing in what
+# the C was compiled with.  It has its own tracefile, and merging is a union,
+# so it only ever adds lines.  See ci/coverage-run.sh for the list.
+#
+# This is part of the gate's contract, not an incidental choice.  A floor
+# raised from these runs cannot be met by a smaller set - fewer runs reach
+# fewer lines - so ci/coverage-report.sh refuses unless exactly these
+# tracefiles are present.  Change this file and the floors have to be raised
+# again from the new set.
+#
+# Two configs per board, the second differing in shape rather than only in
+# data:
+#   - bank exercises the banked serving path
+#   - 23qlxxx the AlgCs2 CS algorithm
+#   - force-16-bit the 16-bit data algorithm
+#   - 23c1001 a V2 chip type
+fire-24-f    onerom-config/test/24-random-23xx.json
+fire-24-f    onerom-config/test/24-bank-23xx.json
+fire-28-a    onerom-config/test/28-random-23xxx.json
+fire-28-a    onerom-config/test/28-random-23qlxxx.json
+fire-28-c    onerom-config/test/28-random-27xxx.json
+fire-28-c    onerom-config/test/28-bank-27xxx.json
+fire-32-b    onerom-config/test/32-random-27c080.json
+fire-32-b    onerom-config/test/32-random-23c1001.json
+fire-40-b    onerom-config/test/40-random.json
+fire-40-b    onerom-config/test/40-random-force-16bit.json
+
+# One build with the logging options off.  A log category cannot be turned off
+# at runtime - ORA_ID_LOG_CATEGORY_ENABLED only reports - so this build is the
+# only thing that reaches the code that runs when one is.
+fire-24-f    onerom-config/test/24-random-23xx.json    no-logging

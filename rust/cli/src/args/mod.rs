@@ -9,9 +9,11 @@
 //!   onerom firmware <subcommand> - Firmware binary management
 //!   onerom program               - Build and flash firmware to a One ROM
 //!   onerom inspect <subcommand>  - Read-only One ROM state and information
+//!   onerom monitor <subcommand>  - Watch a running One ROM as it works
 //!   onerom control <subcommand>  - Transient One ROM actions
 //!   onerom update <subcommand>   - Persistent One ROM modifications
 //!   onerom image <subcommand>    - ROM image file manipulation
+//!   onerom self <subcommand>     - One ROM CLI releases of this tool
 //!
 //! The --serial option is global and can be specified at any level to select
 //! a specific One ROM when multiple are connected.
@@ -23,13 +25,42 @@
 #![allow(rustdoc::invalid_html_tags)]
 #![allow(rustdoc::bare_urls)]
 
+/// A metadata-schema constant's value, as text, usable where Rust demands a
+/// literal.
+///
+/// Clap takes an option's help from its doc comment, and a doc comment takes a
+/// literal - so a help line stating a period or hold the firmware chose cannot
+/// name the constant. It can `include_str!` a file, which `build.rs` writes for
+/// every constant in the schema.
+///
+/// A name with no such constant fails the build, naming the file it looked for.
+///
+/// Build the whole help line as a `const` and give it to clap as `help = `.
+/// A `#[doc = concat!(...)]` compiles but leaves the option with no help at
+/// all: clap reads a doc comment as a literal and sees an unexpanded macro.
+///
+/// ```ignore
+/// const HELP_BEACON_PERIOD: &str = concat!(
+///     "Milliseconds for one blink. Defaults to ",
+///     const_str!("LED_BEACON_DEFAULT_PERIOD_MS"),
+///     "."
+/// );
+/// ```
+macro_rules! const_str {
+    ($name:literal) => {
+        include_str!(concat!(env!("OUT_DIR"), "/const/", $name, ".txt"))
+    };
+}
+
 pub mod control;
 pub mod firmware;
 pub mod image;
 pub mod inspect;
+pub mod monitor;
 pub mod plugin;
 pub mod program;
 pub mod scan;
+pub mod self_cmd;
 pub mod update;
 
 use clap::{Parser, Subcommand};
@@ -42,9 +73,12 @@ use onerom_cli::{Error, Options};
 
 use control::{
     ControlArgs, ControlCommands, ControlEraseArgs, ControlLedArgs, ControlLedBeaconArgs,
-    ControlLedCommands, ControlLedFlameArgs, ControlLedOffArgs, ControlLedOnArgs, ControlPinArgs,
-    ControlPokeArgs, ControlPokeCommands, ControlPokeLiveArgs, ControlPokeMemoryArgs,
-    ControlRebootArgs, ControlResetArgs, ControlSelectArgs,
+    ControlLedBlinkArgs, ControlLedCommands, ControlLedFlameArgs, ControlLedOffArgs,
+    ControlLedOnArgs, ControlPinArgs, ControlPokeArgs, ControlPokeCommands, ControlPokeLiveArgs,
+    ControlPokeMemoryArgs, ControlRebootArgs, ControlResetArgs, ControlRgbArgs,
+    ControlRgbBeaconArgs, ControlRgbBlinkArgs, ControlRgbBreatheArgs, ControlRgbCommands,
+    ControlRgbCycleArgs, ControlRgbFlameArgs, ControlRgbOffArgs, ControlRgbOnArgs,
+    ControlSelectArgs,
 };
 use firmware::{
     FirmwareArgs, FirmwareBuildArgs, FirmwareChipsArgs, FirmwareCommands, FirmwareDownloadArgs,
@@ -55,12 +89,15 @@ use image::{
 };
 use inspect::{
     InspectArgs, InspectCommands, InspectGpioArgs, InspectHeaderArgs, InspectImageArgs,
-    InspectInfoArgs, InspectPeekArgs, InspectPeekCommands, InspectPeekLiveArgs,
-    InspectPeekMemoryArgs, InspectSlotsArgs, InspectSocketArgs, InspectTelemetryArgs,
+    InspectInfoArgs, InspectLedArgs, InspectPeekArgs, InspectPeekCommands, InspectPeekLiveArgs,
+    InspectPeekMemoryArgs, InspectRgbArgs, InspectSlotsArgs, InspectSocketArgs,
+    InspectTelemetryArgs,
 };
+use monitor::{MonitorArgs, MonitorCommands, MonitorLogArgs};
 use plugin::PluginArgs;
 use program::ProgramArgs;
 use scan::ScanArgs;
+use self_cmd::{SelfArgs, SelfCheckArgs, SelfCommands, SelfDownloadArgs};
 use update::{UpdateArgs, UpdateCommands, UpdateCommitArgs, UpdateOtpArgs, UpdateSlotArgs};
 
 #[enum_dispatch]
@@ -122,8 +159,10 @@ pub struct Cli {
     /// this tool to manage RP2350-based One ROMs that do not have a known One
     /// ROM firmware signature, such as unprogrammed or bricked One ROMs.
     ///
-    /// Note that even unrecognised One ROMs must expose a valid picoboot USB
-    /// interface to be detected and managed by this tool.
+    /// Note that even unrecognised One ROMs must answer on a valid picoboot
+    /// USB interface to be detected and managed by this tool.  A device that
+    /// does not answer at all is ignored, with or without this flag, since it
+    /// cannot be programmed either.
     ///
     /// Use with caution as this allows programming of any non-One ROM RP2350
     /// boards that are attached.
@@ -214,13 +253,7 @@ impl Cli {
             if options.verbose {
                 println!("Scanning for device with serial '{}' ...", serial);
             }
-            match onerom_cli::device::select_device(
-                Some(serial),
-                options.unrecognised,
-                &options.vid_pid,
-            )
-            .await
-            {
+            match onerom_cli::device::select_device(Some(serial), &options).await {
                 Ok(device) => {
                     if options.verbose {
                         println!("Found device: {device}");
@@ -239,9 +272,7 @@ impl Cli {
             if options.verbose {
                 println!("No device specified, scanning for connected devices ...");
             }
-            match onerom_cli::device::select_device(None, options.unrecognised, &options.vid_pid)
-                .await
-            {
+            match onerom_cli::device::select_device(None, &options).await {
                 Ok(device) => {
                     if options.verbose {
                         println!("Found device: {device}");
@@ -425,6 +456,13 @@ pub enum Commands {
     )]
     Inspect(InspectArgs),
 
+    /// Watch a running One ROM as it works.
+    #[command(
+        subcommand_value_name = "COMMAND",
+        subcommand_help_heading = "Commands"
+    )]
+    Monitor(MonitorArgs),
+
     /// Perform transient actions on a connected One ROM.
     ///
     /// These actions affect the One ROM's current state but do not persist
@@ -466,11 +504,7 @@ pub enum Commands {
     ///
     /// Example:
     ///
-    ///   onerom peek live --address 0x100 --length 64
-    #[command(
-        subcommand_value_name = "COMMAND",
-        subcommand_help_heading = "Commands"
-    )]
+    ///   onerom peek --address 0x100 --length 64
     Peek(InspectPeekLiveArgs),
 
     /// Write data to One ROM's live ROM image.
@@ -480,11 +514,7 @@ pub enum Commands {
     ///
     /// Example:
     ///
-    ///   onerom poke live --address 0x100 --input patch.bin
-    #[command(
-        subcommand_value_name = "COMMAND",
-        subcommand_help_heading = "Commands"
-    )]
+    ///   onerom poke --address 0x100 --input patch.bin
     Poke(ControlPokeLiveArgs),
 
     /// Reboot a One ROM.
@@ -550,4 +580,23 @@ pub enum Commands {
         subcommand_help_heading = "Commands"
     )]
     Board(BoardArgs),
+
+    /// Check for and download new releases of this tool.
+    ///
+    /// Reads the One ROM CLI's own release channel, which is separate from One
+    /// ROM firmware releases. Nothing is installed: `download` fetches the
+    /// published artifact for a platform, verifies it, and tells you how to
+    /// install it.
+    ///
+    /// Examples:
+    ///
+    ///   onerom self check
+    ///
+    ///   onerom self download
+    #[command(
+        name = "self",
+        subcommand_value_name = "COMMAND",
+        subcommand_help_heading = "Commands"
+    )]
+    SelfCmd(SelfArgs),
 }

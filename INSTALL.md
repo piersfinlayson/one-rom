@@ -58,7 +58,7 @@ If you need to do Windows builds of the CLI or Studio, see [Setting up a Windows
 3. Install the following packages required for building and testing.  `vice` is optional.  (`vice` is used to build some Commodore demo programs.):
 
     ```bash
-    sudo apt -y install jq libcurl4-openssl-dev libzip-dev libjson-c-dev libudev-dev vice
+    sudo apt -y install jq libcurl4-openssl-dev libzip-dev libjson-c-dev vice
     ```
 
     If you are using a different package manager, the package name may vary slightly, e.g., `libcurl-devel` on Fedora.
@@ -105,7 +105,25 @@ If you need to do Windows builds of the CLI or Studio, see [Setting up a Windows
     probe-rs complete install
     ```
 
-6. Connect up One ROM to your [programmer](README.md#programmer).
+6. Give yourself access to a One ROM over USB.  Without this the CLI and Studio
+   find your device but cannot open it, reporting `could not be opened`, and
+   `onerom monitor log` loses One ROM's boot log to ModemManager.
+
+    ```bash
+    sudo cp rust/cli/scripts/69-onerom-cli.rules /etc/udev/rules.d/
+    sudo udevadm control --reload
+    sudo usermod -aG plugdev $USER
+    ```
+
+    The rule applies to a device node as it is created, so unplug and replug the
+    One ROM afterwards.  Group membership is picked up by a new login, so start
+    a new session too - over SSH that means dropping any multiplexed connection
+    first, or `newgrp plugdev` in the shell you have.
+
+    The packaged Studio installs this rule for you, so this step is for building
+    from source.
+
+7. Connect up One ROM to your [programmer](README.md#programmer).
 
 At this point you can follow the instructions below to build and flash the firmware.
 
@@ -163,5 +181,4 @@ Note that as well as `firmware/build/onerom-rp235x.bin`, an ELF file is created 
 
 See [Pi-PICO-PROGRAMMER](/docs/PI-PICO-PROGRAMMER.md) for details of using a Raspberry Pi Pico as an inexpensive SWD programmer.  Many other SWD programmers are available, like the Raspberry Pi Debug Probe, generic DAPLink, ST-Link, etc. 
 
-Occassionally your One ROM may lock up, particularly if you are experimenting with overclocking or other advanced configuration options, or debugging firmware changes.  If this is is the case, try rebooting your programmer, One ROM, or both, and try again.  If you still have problems, see [Recovering a Bricked Device](docs/old/GETTING-STARTED.md#recovering-a-bricked-device) for help.
-
+If you cannot detect your One ROM, it may be bricked.  See [Recovering a bricked One ROM](/docs/CLI-MANUAL.md#recovering-a-bricked-one-rom).

@@ -15,7 +15,7 @@ FIRMWARE_DIR := firmware
 
 # Version of apio to build against.  Remove the apio/ directory after changing
 # this, so it is re-cloned.
-APIO_VERSION ?= v0.2.0
+APIO_VERSION ?= v0.3.0
 
 OBJCOPY_EXTRA = --set-section-flags .metadata=contents,readonly -R .metadata -R .rom_data -R .padding_to_rom_data
 $(info - $(COLOUR_YELLOW)Excluding metadata and ROM images from binary$(COLOUR_RESET))
@@ -33,14 +33,13 @@ OBJCOPY := $(TOOLCHAIN)/arm-none-eabi-objcopy
 SIZE := $(TOOLCHAIN)/arm-none-eabi-size
 
 # Source files
-SRCS := src/constants.c src/globals.c src/log.c \
+SRCS := src/constants.c src/binary_info.c src/build_date.c \
+		src/globals.c src/log.c src/rtt.c \
 		src/main.c src/plugin.c src/utils.c \
 		src/vector.c src/rp235x.c src/piodma/pio.c \
 		src/piodma/piorom2.c src/piodma/pioram.c src/piodma/dma.c \
-		src/piodma/pioplugin.c
+		src/piodma/pioplugin.c src/piodma/pioled.c
 OBJS := $(patsubst src/%,$(BUILD_DIR)/%,$(SRCS:.c=.o))
-SEGGER_SRCS := segger-rtt/RTT/SEGGER_RTT.c segger-rtt/RTT/SEGGER_RTT_printf.c
-SEGGER_OBJS := $(BUILD_DIR)/SEGGER_RTT.o $(BUILD_DIR)/SEGGER_RTT_printf.o
 
 # Output files
 BIN_PREFIX ?= onerom-rp235x
@@ -52,13 +51,27 @@ DISASM := $(BUILD_DIR)/$(BIN_PREFIX).dis
 # Linker script selection
 LDSCRIPT=link/linker.ld
 
-# Flags
-COMMON_FLAGS := -mthumb -mfloat-abi=hard -ffast-math -fshort-enums
-COMMON_FLAGS += -mcpu=cortex-m33 -mfpu=fpv5-sp-d16
+# linker.ld INCLUDEs common_vars.ld and common.ld, and common.ld INCLUDEs the
+# rest.  make cannot see through an INCLUDE, so the whole directory is named
+# here.  Depending on linker.ld alone meant editing an included script relinked
+# nothing - the ELF kept the old layout and that script's ASSERTs never ran.
+LDSCRIPTS := $(wildcard link/*.ld)
 
-SEGGER_RTT_FLAGS := -DBUFFER_SIZE_UP=3584
-CFLAGS := $(EXTRA_C_FLAGS) $(COMMON_FLAGS) $(SEGGER_RTT_FLAGS) -Werror \
-          -I include -I segger-rtt/RTT -I segger-rtt/Config \
+# Flags
+#
+# Built soft-float, deliberately.  Nothing in the firmware does floating point
+# arithmetic, but with the FPU enabled the compiler uses a double register as an
+# 8-byte move - zeroing two adjacent uint64_t in setup_sel_pins was enough - and
+# the first such instruction sets CONTROL.FPCA on that core for good.  From then
+# on every interrupt pushes the extended exception frame, 104 bytes instead of
+# 32, out of a plugin stack that is measured in hundreds.  Re-enabling
+# -mfloat-abi=hard and -mfpu costs those 72 bytes on every interrupt and buys
+# nothing.
+COMMON_FLAGS := -mthumb -ffast-math -fshort-enums
+COMMON_FLAGS += -mcpu=cortex-m33
+
+CFLAGS := $(EXTRA_C_FLAGS) $(COMMON_FLAGS) -Werror \
+          -I include \
 		  -I apio/include -I epio/include -I ora -I generated \
 		  -g -nostdlib -O3 -ffunction-sections -fomit-frame-pointer -fdata-sections \
 		  -Wall -Wextra -MMD -MP -fstack-usage \
@@ -74,8 +87,24 @@ ifeq ($(DEBUG_LOGGING), 1)
 	CFLAGS += -DDEBUG_LOGGING=1
 endif
 
+# Rebuild every object when the compiler flags change.
+#
+# An object rule cannot depend on CFLAGS, so the flags are recorded in a stamp
+# file and the objects depend on that.  The file is rewritten only when the
+# flags differ, so an unchanged build does not retrigger.  This must come after
+# every CFLAGS assignment above.
+#
+# The objects used to depend on the top level Makefile instead, which was both
+# too much and too little - it rebuilt on any edit to that file, and missed a
+# flag given on the command line, so PLUGIN_LOGGING=1 on a built tree silently
+# produced the previous binary.
+CFLAGS_STAMP := $(BUILD_DIR)/.cflags
+$(shell mkdir -p $(BUILD_DIR); \
+        printf '%s' '$(CFLAGS)' | cmp -s - $(CFLAGS_STAMP) || \
+        printf '%s' '$(CFLAGS)' > $(CFLAGS_STAMP))
+
 # Phony targets
-.PHONY: all clean clean-segger clean-apio-src segger segger-rtt apio size flash run
+.PHONY: all clean clean-apio-src apio size flash run
 
 # Default target
 all: $(BIN) size
@@ -84,43 +113,40 @@ all: $(BIN) size
 $(BUILD_DIR):
 	mkdir -p $@
 
-# Clone the  repo
-segger-rtt:
-	@if [ ! -d "$@" ]; then \
-		git clone https://github.com/piersfinlayson/segger-rtt.git; \
-	fi
-
 apio:
 	@if [ ! -d "$@" ]; then \
 		git -c advice.detachedHead=false clone --quiet --depth 1 --branch $(APIO_VERSION) https://github.com/piersfinlayson/apio.git; \
 	fi
 
+# The build date stamp.
+#
+# Depending on every other object is what makes the date honest: this is
+# recompiled when, and only when, something else was, so the stamp is the
+# moment the firmware was actually built rather than whenever this file last
+# happened to compile.  The linker scripts are in that list too, because a
+# change to one of them relinks the firmware and so is a rebuild.
+#
+# The date is given here rather than in CFLAGS on purpose.  CFLAGS is recorded
+# in $(CFLAGS_STAMP) and every object depends on it, so a date in there would
+# differ on every invocation and rebuild the whole firmware each time.
+$(BUILD_DIR)/build_date.o: $(filter-out $(BUILD_DIR)/build_date.o,$(OBJS)) $(LDSCRIPTS)
+$(BUILD_DIR)/build_date.o: CFLAGS += -DONEROM_BUILD_DATE='"$(shell date -u +'%b %e %Y %H:%M:%SZ')"'
+
 # sdrr object files
-$(BUILD_DIR)/%.o: src/%.c ../Makefile | $(BUILD_DIR) segger-rtt apio
+$(BUILD_DIR)/%.o: src/%.c $(CFLAGS_STAMP) | $(BUILD_DIR) apio
 	@mkdir -p $(@D)
 	@echo "- Compiling $(FIRMWARE_DIR)/$<"
 	@$(CC) $(CFLAGS) -c $< -o $@
 
-# Explicit rules for SEGGER files
-$(BUILD_DIR)/SEGGER_RTT.o: segger-rtt/RTT/SEGGER_RTT.c ../Makefile  | $(BUILD_DIR)
-	@echo "- Compiling $(FIRMWARE_DIR)/$<"
-	@$(CC) $(CFLAGS) -c $< -o $@
-
-$(BUILD_DIR)/SEGGER_RTT_printf.o: segger-rtt/RTT/SEGGER_RTT_printf.c ../Makefile | $(BUILD_DIR)
-	@echo "- Compiling $(FIRMWARE_DIR)/$<"
-	@$(CC) $(CFLAGS) -c $< -o $@
-
-$(BUILD_DIR)/%.o: apio/src/%.c ../Makefile | $(BUILD_DIR)
+$(BUILD_DIR)/%.o: apio/src/%.c $(CFLAGS_STAMP) | $(BUILD_DIR)
 	@mkdir -p $(@D)
 	@echo "- Compiling $(FIRMWARE_DIR)/$<"
 	@$(CC) $(CFLAGS) -c $< -o $@
-
-segger-rtt/RTT/SEGGER_RTT.c segger-rtt/RTT/SEGGER_RTT_printf.c: segger-rtt
 
 # Link
-$(ELF): $(OBJS) $(SEGGER_OBJS) $(LDSCRIPT) | $(BUILD_DIR)
+$(ELF): $(OBJS) $(LDSCRIPTS) | $(BUILD_DIR)
 	@echo "- Linking object files to create ELF -> $(FIRMWARE_DIR)/$@"
-	@$(CC) $(LDFLAGS) -T $(LDSCRIPT) $(OBJS) $(SEGGER_OBJS) -o $@
+	@$(CC) $(LDFLAGS) -T $(LDSCRIPT) $(OBJS) -o $@
 
 # Generate binary
 $(BIN): $(ELF)
@@ -136,10 +162,6 @@ size: $(ELF)
 	@ls -ltr $(ELF) 
 	@ls -ltr $(BIN) 
 
-# Clean segger
-clean-segger-src:
-	rm -rf segger-rtt/
-
 clean-apio-src:
 	rm -rf apio/
 
@@ -148,7 +170,7 @@ clean-build:
 	rm -fr $(BUILD_DIR)
 
 # Clean
-clean: clean-build clean-segger-src clean-apio-src
+clean: clean-build clean-apio-src
 	rm generated/* 2>/dev/null || true
 
 # Include dependency files

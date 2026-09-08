@@ -180,6 +180,124 @@ pub fn parse_u8(s: &str) -> Result<u8, std::num::ParseIntError> {
     }
 }
 
+/// Parse a brightness percentage, 1 to 100.
+pub fn parse_brightness(s: &str) -> Result<u8, String> {
+    let value = s
+        .parse::<u16>()
+        .map_err(|_| "Brightness must be a number".to_string())?;
+
+    if (1..=100).contains(&value) {
+        Ok(value as u8)
+    } else {
+        Err("Brightness is a percentage, 1 to 100".to_string())
+    }
+}
+
+/// The longest hold a One ROM accepts for an LED, in milliseconds.
+///
+/// From the metadata schema, which is where the firmware's engine and the USB
+/// plugin take the same bound from. Checked here so a value too large is a
+/// parse error rather than a refusal from the device.
+pub use onerom_metadata::LED_MAX_HOLD_MS;
+
+/// Parse a hold in milliseconds, bounded by what a device accepts.
+pub fn parse_hold_ms(s: &str) -> Result<u32, String> {
+    let value = parse_u32(s).map_err(|_| "Hold must be a number of milliseconds".to_string())?;
+
+    // Zero on the wire means "hold until something changes it", which is what
+    // omitting --hold asks for, so it is not a hold this can express.
+    if value == 0 {
+        return Err("Minimum hold is 1ms".to_string());
+    }
+
+    if value > LED_MAX_HOLD_MS {
+        return Err(format!("Maximum hold is {LED_MAX_HOLD_MS}ms"));
+    }
+
+    Ok(value)
+}
+
+/// The longest bounded hold a One ROM accepts for a GPIO, in milliseconds.
+///
+/// From the metadata schema, which is where the USB plugin takes the same bound
+/// from and enforces it. Checked here so a value too large is a parse error
+/// rather than a refusal from the device half way through a command.
+pub use onerom_metadata::GPIO_MAX_HOLD_MS;
+
+/// Parse a GPIO hold in milliseconds, bounded by what a device accepts.
+///
+/// Zero is a hold this can express, unlike [`parse_hold_ms`]: on the wire it
+/// means "latch until something changes it", which is what `control pin` asks
+/// for when `--hold` is omitted. A command for which that is not a sensible
+/// answer says so itself.
+pub fn parse_gpio_hold_ms(s: &str) -> Result<u32, String> {
+    let value = parse_u32(s).map_err(|_| "Hold must be a number of milliseconds".to_string())?;
+
+    if value > GPIO_MAX_HOLD_MS {
+        return Err(format!("Maximum hold is {GPIO_MAX_HOLD_MS}ms"));
+    }
+
+    Ok(value)
+}
+
+/// The shortest period each repeating mode accepts, in milliseconds.
+///
+/// From the metadata schema, which is where the firmware takes them from and
+/// enforces them for every caller. They are checked here too so a value the
+/// device would refuse fails before the command is sent, naming the mode.
+///
+/// Each comes from how many steps the mode divides a repetition into: below
+/// these the engine would have to run frames closer together than it schedules
+/// them, so it could not repeat at the period asked for.
+pub use onerom_metadata::{
+    LED_BEACON_MIN_PERIOD_MS, LED_BLINK_MIN_PERIOD_MS, LED_BREATHE_MIN_PERIOD_MS,
+    LED_CYCLE_MIN_PERIOD_MS, LED_FLAME_MIN_PERIOD_MS,
+};
+
+/// Parse a period in milliseconds, bounded below by what the mode can run at.
+///
+/// The upper bound is what fits the wire's `u16` rather than a judgement about
+/// what is useful.
+fn parse_period_min(s: &str, min: u16) -> Result<u16, String> {
+    let value = parse_u32(s).map_err(|_| "Period must be a number of milliseconds".to_string())?;
+
+    // Zero is below every mode's minimum, so it needs no message of its own.
+    // On the wire it means "the mode's own default", which is what omitting
+    // --period asks for.
+    let value = u16::try_from(value).map_err(|_| format!("Maximum period is {}ms", u16::MAX))?;
+
+    if value < min {
+        return Err(format!("Minimum period is {min}ms"));
+    }
+
+    Ok(value)
+}
+
+/// Parse a `cycle` period.
+pub fn parse_cycle_period(s: &str) -> Result<u16, String> {
+    parse_period_min(s, LED_CYCLE_MIN_PERIOD_MS)
+}
+
+/// Parse a `breathe` period.
+pub fn parse_breathe_period(s: &str) -> Result<u16, String> {
+    parse_period_min(s, LED_BREATHE_MIN_PERIOD_MS)
+}
+
+/// Parse a `blink` period.
+pub fn parse_blink_period(s: &str) -> Result<u16, String> {
+    parse_period_min(s, LED_BLINK_MIN_PERIOD_MS)
+}
+
+/// Parse a `beacon` period.
+pub fn parse_beacon_period(s: &str) -> Result<u16, String> {
+    parse_period_min(s, LED_BEACON_MIN_PERIOD_MS)
+}
+
+/// Parse a `flame` period.
+pub fn parse_flame_period(s: &str) -> Result<u16, String> {
+    parse_period_min(s, LED_FLAME_MIN_PERIOD_MS)
+}
+
 pub fn print_hex_dump(address: u32, data: &[u8]) {
     const BYTES_PER_ROW: usize = 16;
     const GROUP_SIZE: usize = 4;

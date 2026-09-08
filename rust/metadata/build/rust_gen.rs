@@ -599,6 +599,106 @@ fn push_constants(out: &mut String, schema: &Schema) {
             }
         }
     }
+
+    push_constant_table(out, schema);
+}
+
+/// Emit every constant a second time, as name and value in plain text.
+///
+/// A `pub const` cannot be used where Rust demands a literal - a doc comment
+/// among them, which is where the CLI states the periods and holds a One ROM
+/// takes when a command names none. A consumer's build script walks this table
+/// and writes each value to a file it can then `include_str!`, so the number a
+/// user reads in `--help` is the number the firmware was built with.
+///
+/// Every constant is here rather than a tagged subset: a name nobody includes
+/// costs nothing, and gating it would be one more thing to remember when adding
+/// a constant. Integers are rendered in decimal, because this is what a person
+/// reads, not what a compiler takes.
+fn push_constant_table(out: &mut String, schema: &Schema) {
+    out.push_str(
+        r####"// ---------------------------------------------------------------------------
+// Constants as text
+// ---------------------------------------------------------------------------
+
+/// Every schema constant, as `(name, value)` with the value rendered as the
+/// plain text a reader sees - integers in decimal, strings as themselves.
+///
+/// # Why this exists
+///
+/// Rust demands a *literal* in some positions, and a `pub const` is not one.
+/// A doc comment is the position that matters here: clap takes an option's
+/// help text from it, so a tool wanting to state a value the firmware chose -
+/// the period a mode runs at when a command names none, the longest hold a
+/// device accepts - cannot do it by naming the constant. Written out by hand
+/// instead, the number silently stops matching the firmware the day the schema
+/// changes.
+///
+/// `include_str!` is accepted there, and so is `concat!`. So a consumer writes
+/// each value to its own file at build time and includes the one it wants.
+///
+/// # How to use it
+///
+/// Take this crate as a build dependency:
+///
+/// ```toml
+/// [build-dependencies]
+/// onerom-metadata = "0.2"
+/// ```
+///
+/// Write every constant to `OUT_DIR` from `build.rs`. Name no constant here,
+/// and one added to the schema later needs no change:
+///
+/// ```no_run
+/// use std::{env, fs, path::PathBuf};
+///
+/// let dir = PathBuf::from(env::var("OUT_DIR").unwrap()).join("const");
+/// fs::create_dir_all(&dir).unwrap();
+/// for (name, value) in onerom_metadata::ALL_CONSTANTS {
+///     fs::write(dir.join(format!("{name}.txt")), value).unwrap();
+/// }
+/// ```
+///
+/// Then read one where a literal is required. A macro keeps the call sites
+/// short:
+///
+/// ```ignore
+/// macro_rules! const_str {
+///     ($name:literal) => {
+///         include_str!(concat!(env!("OUT_DIR"), "/const/", $name, ".txt"))
+///     };
+/// }
+///
+/// const HELP_PERIOD: &str = concat!(
+///     "Milliseconds for one blink. Defaults to ",
+///     const_str!("LED_BEACON_DEFAULT_PERIOD_MS"),
+///     "."
+/// );
+/// ```
+///
+/// Note the `const`. A `#[doc = concat!(...)]` on the field compiles, but a
+/// consumer using clap gets an option with no help at all, because clap reads
+/// a doc comment as a literal and sees an unexpanded macro.
+///
+/// A name with no such constant fails the build and says which file it looked
+/// for, so a typo or a retired constant is caught rather than leaving a stale
+/// number in place.
+///
+/// Every constant is listed, not a tagged subset: a name nobody includes costs
+/// a file nobody opens, and gating it would be one more thing to remember when
+/// adding a constant.
+pub const ALL_CONSTANTS: &[(&str, &str)] = &[
+"####,
+    );
+    for c in &schema.constants {
+        let name = &c.name;
+        let text = match &c.value {
+            ConstantValue::Integer(v) => v.to_string(),
+            ConstantValue::Text(s) => s.clone(),
+        };
+        out.push_str(&format!("    ({name:?}, {text:?}),\n"));
+    }
+    out.push_str("];\n\n");
 }
 
 // ---------------------------------------------------------------------------

@@ -32,10 +32,16 @@ void preload_rom_image();
 #if defined(BOOT_LOGGING)
 void log_init();
 void log_roms();
-void do_log(const char *, ...);
-void err_log(const char *, ...);
+// The format attributes are what make a bad LOG()/ERR() call a build error
+// rather than a puzzling line in the log.  See firmware/test/README.md and
+// ci/check-log-formats.sh for the conversions this formatter supports; the
+// compiler checks argument types, that script checks for conversions we
+// deliberately do not implement.
+void do_log(const char *, ...) __attribute__((format(printf, 1, 2)));
+void err_log(const char *, ...) __attribute__((format(printf, 1, 2)));
 #endif // BOOT_LOGGING
-void do_log_v(const char* msg, va_list *args);
+void do_log_v(const char* msg, va_list *args)
+    __attribute__((format(printf, 1, 0)));
 void do_err_log_prefix();
 #if defined(DEBUG_LOGGING)
 void do_debug_log_prefix();
@@ -61,6 +67,7 @@ void enter_bootloader(void);
 void platform_logging(void);
 void setup_usb_controller(void);
 void setup_usb_pll(void);
+void setup_timer0(void);
 void setup_adc(void);
 void setup_status_led(void);
 void blink_pattern(uint32_t on_time, uint32_t off_time, uint8_t repeats);
@@ -81,6 +88,42 @@ extern ora_result_t pio_setup_address_monitor(
     uint8_t data_size,
     void *reserved
 );
+// One ROM's LED engine, in src/piodma/pioled.c.  Drives the status LED and the
+// RGB LED, including any repetition a mode calls for, so a caller sets a mode
+// once and does not tick it.  ora_led_set and ora_led_get forward here.
+ora_result_t pio_led_set(const ora_led_request_t *req);
+ora_result_t pio_led_get(uint8_t led, ora_led_state_t *state_out);
+
+// Put the status LED where the configuration says, once serving is ready.
+//
+// Through the engine rather than straight at the pin: the engine owns both
+// LEDs, and one that learned the LED's state only when something first asked it
+// to change would start out believing a lit LED was dark - which it would then
+// report, and restore a beacon to.  Nothing is scheduled here, so this reads no
+// clock and touches no timer.
+void pio_led_boot(void);
+
+// Advance every LED whose mode repeats and end any hold that has expired.
+// Called from the TIMER0 alarm 1 handler, which it re-arms for whichever LED
+// next needs attention.
+void pio_led_frame(void);
+
+#if defined(TEST_BUILD)
+// Start the engine cold.  Its channels are ordinary statics, which a host does
+// not clear between boots the way a device's power-on does.
+void pio_led_reset(void);
+
+// When the engine next wants a frame, in the milliseconds ora_get_plugin_uptime_ms
+// reports.  Returns 0 when no LED is animating and no hold is running, and
+// leaves ms_out alone.  A device reaches the same moment through TIMER0 alarm 1.
+uint8_t pio_led_next_deadline(uint32_t *ms_out);
+
+// The last colour the engine handed to the RGB LED, as the 24-bit green, red,
+// blue value the chip reads, with how many it has sent written to count_out.
+// Brightness and any fade are already applied, so this is what the LED shows.
+uint32_t pio_led_last_pixel(uint32_t *count_out);
+#endif // TEST_BUILD
+
 uint32_t pio_map_addr_to_phys(const onerom_rom_slot_t *slot, uint32_t logical_addr);
 uint32_t pio_map_data_to_phys(const onerom_rom_slot_t *slot, uint32_t logical_data);
 ora_result_t pio_demangle_addr(
@@ -156,9 +199,16 @@ uint8_t check_plugin_valid(
 uint8_t initial_plugin_parse(uint8_t *disable_vbus_det, uint8_t *num_plugins);
 void ora_launch_plugins(void);
 void irq_handler_timer0_irq_0(void);
+
+// TIMER0 alarm 1, which the LED engine owns.  Alarm 0 is left to plugins.
+void irq_handler_timer0_irq_1(void);
 void irq_handler_usbctrl_irq(void);
 ora_result_t ora_get_ram_slot_info(uint8_t ram_slot, uint32_t *addr_out, uint32_t *size_out, uint32_t *rom_type_out);
 ora_result_t ora_get_active_ram_slot(uint8_t *ram_slot_out);
+uint32_t ora_get_clkref_mhz(void);
+uint32_t ora_get_sysclk_mhz(void);
+uint32_t ora_get_plugin_uptime_ms(void);
+uint64_t onerom_timer_us64(void);
 #if !REAL_HARDWARE
 uint8_t *sram_to_host(uint32_t addr);
 // Sets the SRAM buffer pointer used by sram_to_host().  Call after
@@ -166,6 +216,12 @@ uint8_t *sram_to_host(uint32_t addr);
 // backing store with epio's, so subsequent firmware writes are immediately
 // visible to the running epio simulation.
 void set_host_sram_ptr(uint8_t *ptr);
+// Reports every byte pio_reprogram_ram_rom_slot writes, physical address and
+// physical data.  NULL until a harness installs one.
+void set_host_sram_write_hook(void (*hook)(uint32_t addr, uint8_t val));
+// Report one byte to that hook.  For the paths that write a slot without going
+// through pio_reprogram_ram_rom_slot, which cannot reach the hook themselves.
+void report_host_sram_write(uint32_t addr, uint8_t val);
 
 // Address-monitor emulation seams (see pioplugin.c).  There are no DMA
 // registers under emulation, so the firmware routes the address-monitor DMA
@@ -198,6 +254,15 @@ void set_host_monitor_write_slot(volatile uint32_t * volatile *slot);
 // only expected to.
 extern void (*onerom_test_yield_hook)(void);
 void set_onerom_test_yield_hook(void (*hook)(void));
+
+// Which plugin the logging API should treat an ORA call as coming from.
+//
+// On a device the calling core identifies the plugin, and a plugin can neither
+// pass nor spoof it.  There is no SIO_CPUID under emulation, and the harness
+// drives the firmware from one thread, so it says instead — which is also what
+// lets a test act as both plugins in turn and check that a claim held by one
+// keeps the other out.
+void set_host_calling_plugin(ora_plugin_type_t plugin);
 #endif // !REAL_HARDWARE
 
 // pio/dma.c

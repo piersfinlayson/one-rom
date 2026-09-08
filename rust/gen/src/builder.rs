@@ -22,8 +22,8 @@ use crate::v2::rom_info::truncate_filename;
 use crate::v2::rom_slot::build_rom_slot;
 use crate::{
     Chip, ChipConfig, ChipSet, ChipSetType, Config, ConfigOverrides, ConfigWarning, CsConfig,
-    CsLogic, Error, FileData, FileSpec, FireServeMode, IHEX_BLANK_BYTE, License, MetadataWriter,
-    PAD_BLANK_BYTE, Result, SizeHandling,
+    CsLogic, Error, FileData, FileSpec, FireServeMode, License, MetadataWriter, PAD_BLANK_BYTE,
+    Result, SizeHandling, UNWRITTEN_BYTE,
 };
 use crate::{
     MAX_SUPPORTED_FIRMWARE_VERSION_V1, MAX_SUPPORTED_FIRMWARE_VERSION_V2,
@@ -255,6 +255,19 @@ impl Builder {
     /// Get file ID map (mapping from ROM index to file index)
     pub fn file_id_map(&self) -> &BTreeMap<usize, usize> {
         &self.file_id_map
+    }
+
+    /// Get the loaded image data for the chip at `chip_index`
+    ///
+    /// `chip_index` is the flat index of the chip across all chip sets, in
+    /// config order - the same index [`Builder::file_id_map`] is keyed by.
+    ///
+    /// Returns `None` if `chip_index` names no chip, or if that chip's file
+    /// has not been loaded yet, so a `Some` result is always a fully loaded
+    /// image.
+    pub fn chip_data(&self, chip_index: usize) -> Option<&[u8]> {
+        let file_id = self.file_id_map.get(&chip_index)?;
+        self.files.get(file_id).map(|data| data.as_slice())
     }
 
     /// Check that the config can be built
@@ -1786,27 +1799,50 @@ pub(crate) fn build_chip_sets(
                 None
             };
 
-            // A load address is only meaningful for an Intel HEX image.
+            // A load address is only meaningful where records carry addresses.
             if chip_config.format.is_binary() && !chip_config.load_address.is_zero() {
-                return Err(Error::LoadAddressWithoutIhex { index: chip_id });
+                return Err(Error::LoadAddressWithBinary {
+                    filename: chip_config.filename(),
+                });
             }
 
-            // Decode Intel HEX up front so `from_raw_rom_image` still receives a
-            // flat binary image; its own SizeHandling then reconciles the
-            // decoded image against the chip size (padding with 0xFF rather than
-            // the raw-binary 0xAA).  Duplicate has no meaning for an
-            // address-placed image.
+            // Decode a record-oriented image up front so `from_raw_rom_image`
+            // still receives a flat binary image; its own SizeHandling then
+            // reconciles the decoded image against the chip size (padding with
+            // 0xFF rather than the raw-binary 0xAA).  Duplicate has no meaning
+            // for an address-placed image.
+            let no_duplicate = |format| {
+                if matches!(chip_config.size_handling, SizeHandling::Duplicate) {
+                    return Err(Error::DuplicateUnsupportedForFormat {
+                        filename: chip_config.filename(),
+                        format,
+                    });
+                }
+                Ok(())
+            };
+            let load_address = chip_config.load_address.0;
             let (source, blank_byte) = match (chip_config.format, data) {
                 (crate::FileFormat::IntelHex, Some(raw)) => {
-                    if matches!(chip_config.size_handling, SizeHandling::Duplicate) {
-                        return Err(Error::IhexDuplicateUnsupported { index: chip_id });
-                    }
-                    let decoded = crate::ihex::decode_ihex(raw, chip_config.load_address.0)
-                        .map_err(|source| Error::IntelHex {
-                            index: chip_id,
-                            source,
+                    no_duplicate(crate::FileFormat::IntelHex)?;
+                    let decoded =
+                        crate::ihex::decode_ihex(raw, load_address).map_err(|source| {
+                            Error::IntelHex {
+                                index: chip_id,
+                                source,
+                            }
                         })?;
-                    (Some(decoded), IHEX_BLANK_BYTE)
+                    (Some(decoded), UNWRITTEN_BYTE)
+                }
+                (crate::FileFormat::Srec, Some(raw)) => {
+                    no_duplicate(crate::FileFormat::Srec)?;
+                    let decoded =
+                        crate::srec::decode_srec(raw, load_address).map_err(|source| {
+                            Error::Srec {
+                                index: chip_id,
+                                source,
+                            }
+                        })?;
+                    (Some(decoded), UNWRITTEN_BYTE)
                 }
                 _ => (None, PAD_BLANK_BYTE),
             };

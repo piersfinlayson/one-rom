@@ -64,6 +64,32 @@ pub struct Constant {
     pub type_: String,
     pub value: ConstantValue,
     pub comment: Option<String>,
+
+    /// Whether this constant is part of the ORA plugin API.
+    ///
+    /// A plugin builds against firmware/ora alone and cannot include the
+    /// firmware's own metadata header, so a value it must agree with the
+    /// firmware on is emitted into firmware/ora/onerom_constants_generated.h
+    /// as well. False for a constant no plugin needs, which is most of them.
+    #[serde(default)]
+    pub ora_api: bool,
+}
+
+impl Constant {
+    /// The name this constant takes in the ORA plugin API.
+    ///
+    /// Derived rather than given, so the two names always correspond and
+    /// either can be found from the other.
+    pub fn ora_name(&self) -> String {
+        format!("ORA_{}", self.name)
+    }
+}
+
+impl Schema {
+    /// The constants the ORA plugin API carries, in schema order.
+    pub fn ora_constants(&self) -> impl Iterator<Item = &Constant> {
+        self.constants.iter().filter(|c| c.ora_api)
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -194,6 +220,12 @@ pub struct PluginKeyEntry<'a> {
     pub field_name: &'a str,
     /// Field kind, e.g. "cstr_ptr" - selects which typed accessor resolves it.
     pub kind: &'a str,
+    /// Element count, for the array kinds.  None for a scalar field.
+    pub count: Option<u32>,
+    /// C constant naming that count, e.g. "MAX_IMG_SEL_PINS".  Preferred over
+    /// `count` when emitting a bound, so the generated code reads as the
+    /// constant rather than a bare number.
+    pub count_ref: Option<&'a str>,
 }
 
 #[derive(Deserialize, Debug, Clone)]
@@ -358,6 +390,8 @@ impl Schema {
                         struct_name: &s.name,
                         field_name: &f.name,
                         kind: &f.kind,
+                        count: f.count,
+                        count_ref: f.count_ref.as_deref(),
                     });
                 }
             }
@@ -395,11 +429,21 @@ impl Schema {
                             format!("plugin_key name '{}' used more than once", pk.name).into()
                         );
                     }
-                    // String keys resolve a stored value, so their access path
-                    // from the metadata root must exist.  Fail the build now
-                    // (with a clear message) rather than emit a broken path.
-                    if f.kind == "cstr_ptr" {
+                    // String and array keys resolve a stored value, so their
+                    // access path from the metadata root must exist.  Fail the
+                    // build now (with a clear message) rather than emit a
+                    // broken path.
+                    if f.kind == "cstr_ptr" || f.kind == "inline_array" {
                         self.plugin_key_access(&s.name, &f.name)?;
+                    }
+                    // The indexed getter bounds-checks against the array's
+                    // length, so an array key without one cannot be generated.
+                    if f.kind == "inline_array" && f.count.is_none() {
+                        return Err(format!(
+                            "plugin_key '{}' is on inline_array {}.{}, which has no count",
+                            pk.name, s.name, f.name
+                        )
+                        .into());
                     }
                 }
             }

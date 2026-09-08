@@ -22,6 +22,9 @@ RUSTDOCFLAGS="-D warnings" cargo doc -p onerom-config --no-deps
 echo "Generating documentation for onerom-database..."
 RUSTDOCFLAGS="-D warnings" cargo doc -p onerom-database --no-deps
 
+echo "Generating documentation for doc-gen..."
+RUSTDOCFLAGS="-D warnings" cargo doc -p doc-gen --no-deps
+
 echo "Generating documentation for onerom-fw..."
 RUSTDOCFLAGS="-D warnings" cargo doc -p onerom-fw --no-deps
 
@@ -61,6 +64,12 @@ echo "Generating documentation for onerom-fw-tester..."
 CONFIG="$EMU_CONFIG" BOARD="$EMU_BOARD" \
     RUSTDOCFLAGS="-D warnings" cargo doc -p onerom-fw-tester --no-deps
 
-echo "Generating documentation for onerom-plugin-tester..."
+echo "Generating documentation for the plugin testers..."
 CONFIG="$EMU_CONFIG" BOARD="$EMU_BOARD" \
-    RUSTDOCFLAGS="-D warnings" cargo doc -p onerom-plugin-tester --no-deps
+    RUSTDOCFLAGS="-D warnings" cargo doc -p onerom-plugin-tester -p onerom-rbcp-tester -p onerom-usb-tester --no-deps
+
+# The Studio v2 prototypes are their own workspace, so a cargo command here does
+# not reach them.  Gated so they keep building as the crates they use move.
+echo "Generating documentation for the Studio v2 prototypes..."
+( cd ../prototypes/studiov2 \
+    && RUSTDOCFLAGS="-D warnings" cargo doc --no-deps )

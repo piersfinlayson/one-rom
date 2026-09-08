@@ -22,12 +22,29 @@
 //!   (for example distinguishing a connection failure from an HTTP status
 //!   code). The crate never inspects or stringifies `E`.
 
-use alloc::string::String;
+use alloc::string::{String, ToString};
 use core::fmt;
 
 use onerom_config::fw::FirmwareVersion;
 
-use crate::plugin::{PluginType, PluginVersion};
+use crate::plugin::{CompatibleRelease, PluginType, PluginVersion};
+
+/// Render the way out of an incompatibility: the newest release that does work,
+/// or a statement that there is none.
+///
+/// Both incompatibility errors end with this, so a report names the fix and not
+/// just the fault. It stays a statement of fact - which release, and where its
+/// binary is - leaving any "edit your config" phrasing to the application.
+fn way_out(newest_compatible: &Option<CompatibleRelease>) -> String {
+    match newest_compatible {
+        Some(r) => alloc::format!(
+            "; plugin version {} supports it: {}",
+            r.version,
+            r.binary_url
+        ),
+        None => "; no version of this plugin supports it".to_string(),
+    }
+}
 
 /// A pure, structured error from `onerom-app`'s decision logic.
 ///
@@ -63,9 +80,11 @@ pub enum PluginError {
 
     /// The selected release requires a newer firmware than the one in use. The
     /// fields are the plugin name, its version, the minimum firmware it
-    /// requires, and the firmware actually selected.
+    /// requires, the firmware actually selected, and the newest release that
+    /// does support it.
     #[error(
-        "plugin '{name}' version {version} requires firmware {min_fw} or later (selected firmware is {fw})"
+        "plugin '{name}' version {version} requires firmware {min_fw} or later (selected firmware is {fw}){}",
+        way_out(.newest_compatible)
     )]
     Incompatible {
         /// Plugin name.
@@ -76,14 +95,19 @@ pub enum PluginError {
         min_fw: FirmwareVersion,
         /// The firmware version actually selected.
         fw: FirmwareVersion,
+        /// The newest release that does support `fw`, or `None` if no release
+        /// of this plugin does.
+        newest_compatible: Option<CompatibleRelease>,
     },
 
     /// The selected release is known to be incompatible with the firmware in
     /// use because that firmware is at or beyond the release's upper bound. The
     /// fields are the plugin name, its version, the first firmware version the
-    /// release is incompatible with, and the firmware actually selected.
+    /// release is incompatible with, the firmware actually selected, and the
+    /// newest release that does support it.
     #[error(
-        "plugin '{name}' version {version} is not compatible with firmware {from} or later (selected firmware is {fw})"
+        "plugin '{name}' version {version} is not compatible with firmware {from} or later (selected firmware is {fw}){}",
+        way_out(.newest_compatible)
     )]
     IncompatibleNewer {
         /// Plugin name.
@@ -94,6 +118,9 @@ pub enum PluginError {
         from: FirmwareVersion,
         /// The firmware version actually selected.
         fw: FirmwareVersion,
+        /// The newest release that does support `fw`, or `None` if no release
+        /// of this plugin does.
+        newest_compatible: Option<CompatibleRelease>,
     },
 
     /// A plugin binary was too small to contain a valid header. The fields are

@@ -1,6 +1,6 @@
 [package]
 name = "onerom-cli"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2024"
 authors = ["Piers Finlayson <piers@piers.rocks>"]
 license = "MIT"
@@ -27,7 +27,7 @@ onerom-gen = { workspace = true }
 onerom-fw-parser = { workspace = true }
 onerom-metadata = { workspace = true }
 
-picoboot = { version = "0.2.5", features = ["reader", "tokio"] }
+picoboot = { version = "0.2.6", features = ["reader", "tokio"] }
 
 base64 = { version = "0.22" }
 bytes = "1.10"
@@ -37,18 +37,31 @@ enum_dispatch = "0.3"
 env_logger = "0.11"
 hex = { version = "0.4" }
 log = "0.4"
-nusb = { version = "0.2", features = ["tokio"] }
+nusb = { version = "0.2.5", features = ["tokio"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "charset", "blocking", "rustls-tls"] }
+semver = "1.0"
 serde = { version = "1.0", default-features = false, features = ["derive"] }
 serde_json = "1.0"
+# default-features = false drops the libudev dependency on Linux. The fallback
+# enumeration reads the same USB vendor, product and serial out of sysfs
+# directly, so nothing is lost, and the CLI keeps building with no system
+# libraries and cross-compiling to arm64 unchanged.
+#
+# usbportinfo-interface adds a field to UsbPortInfo, so whether it is on decides
+# the shape of that struct. probe-rs turns it on, and a build that takes in both
+# this crate and Studio unifies the two, which changes the struct under code
+# that never asked for the feature. Ask for it here so the shape is the same in
+# every build.
+serialport = { version = "4.9", default-features = false, features = ["usbportinfo-interface"] }
 sha2 = "0.11"
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "time"] }
 thiserror = "2.0"
 wildmatch = "2.6"
 zip = "8.2"
 
 [build-dependencies]
 built = { version = "0.8", features = ["git2"] }
+onerom-metadata = { workspace = true }
 embed-resource = "3"
 git2 = { version = "0.20", default-features = false }
 static_vcruntime = "3.0"
@@ -66,7 +79,7 @@ extended-description = "Command line interface to manage One ROM - the most flex
 depends = "$auto"
 section = "utils"
 priority = "optional"
-maintainer-scripts = "scripts/linux/maintainer"
+maintainer-scripts = "scripts/maintainer"
 profile = "release"
 assets = [
     ["target/release/onerom", "usr/bin/", "755"],

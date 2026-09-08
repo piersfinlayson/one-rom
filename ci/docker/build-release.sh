@@ -52,6 +52,7 @@ docker buildx build \
   --build-arg VCS_REF="${GIT_HASH}" \
   --build-arg ARM_GCC_VERSION="$(get_arm_gcc_version)" \
   --build-arg EMSCRIPTEN_VERSION="$(get_emscripten_version)" \
+  --build-arg LCOV_VERSION="$(get_lcov_version)" \
   -t ${REPO}/${CONT_NAME}:${VERSION} \
   -t ${REPO}/${CONT_NAME}:latest \
   --push \

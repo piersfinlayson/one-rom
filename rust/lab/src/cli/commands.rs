@@ -666,6 +666,7 @@ async fn do_read(
         OutputFormat::Checksum => output_checksum(&mut reader, chip, start, count).await,
         OutputFormat::HexDump => crate::output::hexdump::dump(&mut reader, start, count).await,
         OutputFormat::IntelHex => crate::output::ihex::dump(&mut reader, start, count).await,
+        OutputFormat::Srec => crate::output::srec::dump(&mut reader, start, count).await,
     }
 }
 

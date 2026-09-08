@@ -57,7 +57,8 @@ static const picoboot_ops_t picoboot_ops = {
     .write = app_picoboot_write,
     .otp_read = picoboot_default_otp_read,
     .otp_write = picoboot_default_otp_write,
-    .get_info_sys = picoboot_default_get_info_sys,
+    .get_info_prepare = picoboot_default_get_info_prepare,
+    .get_info = picoboot_default_get_info,
 };
 
 // One ROM picoboot protocol extenson handler
@@ -81,6 +82,19 @@ static const picoboot_custom_ops_t onerom_picobootx_ops = {
     .dispatch = onerom_picobootx_dispatch,
     .fill     = onerom_picobootx_fill,
 };
+
+#if defined(ORA_HOST_TEST)
+// The One ROM commands, for a host test to drive directly.
+//
+// On a device these handlers are reached only through picoboot, which holds the
+// table this returns and calls them with the framing rules already applied.  A
+// host test stands where picoboot does, so it needs the same table — and taking
+// it from here rather than from a copy of its own is what makes the test assert
+// the plugin's registration as well as its handlers.
+const picoboot_custom_ops_t *onerom_picobootx_test_ops(void) {
+    return &onerom_picobootx_ops;
+}
+#endif // ORA_HOST_TEST
 
 // A flash write buffer required by picoboot to batch flash writes so it has
 // 256 bytes to write at a time - the flash page size.  It must be 4 byte
@@ -274,7 +288,8 @@ pb_status_t app_picoboot_read_prepare(uint32_t addr, uint32_t size, void *ctx) {
 
     st = app_custom_prepare(addr, size, ctx);
     if (st == PB_STATUS_NOT_FOUND) {
-        DEBUG("read_prepare: no handler for addr=0x%08x size=%u", addr, size);
+        DEBUG("read_prepare: no handler for addr=0x%08lx size=%lu",
+              (unsigned long)addr, (unsigned long)size);
         return PB_STATUS_INVALID_ADDRESS;
     }
     return st;
@@ -319,7 +334,8 @@ pb_status_t app_picoboot_write_prepare(
 
     if (addr < FLASH_PROTECTED_END &&
         (addr + size) > RP2350_FLASH_BASE) {
-        LOG("write_prepare: address in protected flash region: addr=0x%08x size=%u", addr, size);
+        LOG("write_prepare: address in protected flash region: addr=0x%08lx size=%lu",
+            (unsigned long)addr, (unsigned long)size);
         return PB_STATUS_NOT_PERMITTED;
     }
 
@@ -378,7 +394,8 @@ pb_status_t app_picoboot_flash_erase_prepare(
 // under-producing hangs its read and over-producing desynchronises the stream.
 static pb_status_t onerom_in_xfer_begin(
     const picoboot_cmd_t *cmd,
-    uint8_t first_gpio
+    uint8_t first_gpio,
+    uint8_t led_id
 ) {
     if (cmd->transfer_len == 0u ||
         cmd->transfer_len > ONEROM_MAX_TRANSFER_LEN) {
@@ -388,6 +405,7 @@ static pb_status_t onerom_in_xfer_begin(
     context.in_xfer.offset = 0u;
     context.in_xfer.total = cmd->transfer_len;
     context.in_xfer.first_gpio = first_gpio;
+    context.in_xfer.led_id = led_id;
 
     return PB_STATUS_OK;
 }
@@ -399,7 +417,32 @@ static pb_status_t onerom_in_xfer_begin(
 // for more gets zero padding, and an older host asking for less gets a prefix,
 // which is exactly what struct_len lets it make sense of.
 static pb_status_t onerom_caps_prepare(const picoboot_cmd_t *cmd) {
-    return onerom_in_xfer_begin(cmd, 0u);
+    return onerom_in_xfer_begin(cmd, 0u, 0u);
+}
+
+// Validate ONEROM_CMD_LED_QUERY and prepare its response.
+//
+// Any transfer_len within the bound is accepted rather than only
+// ONEROM_LED_STATE_LEN, for the reason onerom_caps_prepare gives.  An LED this
+// board does not have is not refused here - it is answered, with present clear.
+static pb_status_t onerom_led_query_prepare(const picoboot_cmd_t *cmd) {
+    const onerom_led_query_args_t *args =
+        (const onerom_led_query_args_t *)cmd->args;
+    onerom_led_state_t state;
+    pb_status_t status;
+
+    if (!led_can_query()) {
+        return PB_STATUS_UNKNOWN_CMD;
+    }
+
+    // Asked here rather than in fill, so a channel this device does not know is
+    // refused before a data phase the host would then have to drain.
+    status = led_fill_state(args->led_id, &state);
+    if (status != PB_STATUS_OK) {
+        return status;
+    }
+
+    return onerom_in_xfer_begin(cmd, 0u, args->led_id);
 }
 
 // Validate ONEROM_CMD_GPIO_QUERY and prepare its response.
@@ -426,7 +469,7 @@ static pb_status_t onerom_gpio_query_prepare(const picoboot_cmd_t *cmd) {
         return PB_STATUS_INVALID_TRANSFER_LEN;
     }
 
-    return onerom_in_xfer_begin(cmd, args->first_gpio);
+    return onerom_in_xfer_begin(cmd, args->first_gpio, 0u);
 }
 
 static pb_status_t onerom_picobootx_dispatch(
@@ -436,19 +479,21 @@ static pb_status_t onerom_picobootx_dispatch(
     uint32_t *bytes_written,
     void *ctx
 ) {
-    (void)buf; (void)buf_len; (void)bytes_written;
+    // ctx is the plugin context, which no command reaching this dispatch needs
+    // any longer: the LED commands go to the firmware's engine and the GPIO
+    // commands keep their own state.
+    (void)buf; (void)buf_len; (void)bytes_written; (void)ctx;
 
     // Every One ROM command carries all 16 argument bytes.  The data phase is
     // per-command from here on: rejecting any command with a transfer_len, as
     // this did before ONEROM_CMD_GET_CAPS existed, would reject the two
-    // commands that have one.  That older behaviour is load-bearing in the
-    // other direction - it is how a host recognises a device that predates
-    // these commands - so it must not be reproduced by a plugin that has them.
+    // commands that have one.  A host relies on that older behaviour to
+    // recognise a device predating these commands - its rejection of a
+    // transfer_len is the signal - so a plugin that has them must not reproduce
+    // it.
     if (cmd->cmd_size != ONEROM_CMD_ARGS_LEN) {
         return PB_STATUS_INVALID_CMD_LENGTH;
     }
-
-    usb_plugin_context_t *uctx = (usb_plugin_context_t *)ctx;
 
     // PICOBOOT_DIR_IN is the host's statement that it will read data back, not
     // part of the command ID, so it has to come off before matching.  Without
@@ -461,13 +506,13 @@ static pb_status_t onerom_picobootx_dispatch(
             if (cmd->transfer_len != 0u) {
                 return PB_STATUS_INVALID_CMD_LENGTH;
             }
-            // Deferred to the task loop: an LED mode is a state machine that
-            // outlives the command, and nothing about it can be refused.
             const onerom_set_led_args_t *args = (const onerom_set_led_args_t *)cmd->args;
-            uctx->pending.cmd = ONEROM_PENDING_SET_LED;
-            uctx->pending.args.set_led.led_id = args->led_id;
-            uctx->pending.args.set_led.sub_cmd = (onerom_led_subcmd_t)args->sub_cmd;
-            return PB_STATUS_OK;
+
+            // Both LEDs go to the firmware's engine, which holds the mode
+            // itself, so the command is applied here and its refusal reaches
+            // the host.  A channel this device does not have, and a mode the
+            // named LED cannot do, are both refused by the engine.
+            return led_handle_set(args);
         }
 
         case ONEROM_CMD_GET_CAPS:
@@ -482,6 +527,9 @@ static pb_status_t onerom_picobootx_dispatch(
 
         case ONEROM_CMD_GPIO_QUERY:
             return onerom_gpio_query_prepare(cmd);
+
+        case ONEROM_CMD_LED_QUERY:
+            return onerom_led_query_prepare(cmd);
 
         default:
             return PB_STATUS_UNKNOWN_CMD;
@@ -501,11 +549,11 @@ static void onerom_caps_bytes(uint8_t *buf, uint32_t offset, uint32_t len) {
     // A real bound, not zero: a host is entitled to treat a non-zero value as
     // authoritative and refuse a longer hold before it ever reaches the device.
     // Zero would mean "no opinion", which this plugin has never had - it always
-    // enforces ONEROM_GPIO_MAX_HOLD_MS - so saying so would be a lie of
+    // enforces ORA_GPIO_MAX_HOLD_MS - so saying so would be a lie of
     // omission.  It is reported only alongside the feature bit that makes holds
     // meaningful.
     caps.max_hold_ms = (context.features & ONEROM_FEAT_GPIO_HOLD) ?
-                       ONEROM_GPIO_MAX_HOLD_MS : 0u;
+                       ORA_GPIO_MAX_HOLD_MS : 0u;
 
     const uint8_t *src = (const uint8_t *)&caps;
     for (uint32_t i = 0u; i < len; i++) {
@@ -535,6 +583,24 @@ static pb_status_t onerom_picobootx_fill(
             onerom_caps_bytes(buf, context.in_xfer.offset, len);
             break;
 
+        case ONEROM_CMD_LED_QUERY: {
+            // Read again rather than kept from prepare: the response is 16
+            // bytes and the engine can answer at any time, so re-reading costs
+            // nothing and keeps no copy of it in the plugin's context.
+            onerom_led_state_t state;
+            pb_status_t st = led_fill_state(context.in_xfer.led_id, &state);
+            if (st != PB_STATUS_OK) {
+                return st;
+            }
+
+            const uint8_t *src = (const uint8_t *)&state;
+            for (uint32_t i = 0u; i < len; i++) {
+                uint32_t pos = context.in_xfer.offset + i;
+                buf[i] = (pos < sizeof(state)) ? src[pos] : 0u;
+            }
+            break;
+        }
+
         case ONEROM_CMD_GPIO_QUERY: {
             // Entries are produced one at a time, straight from the firmware,
             // so nothing has to be buffered between calls; the offset is the
@@ -559,7 +625,7 @@ static pb_status_t onerom_picobootx_fill(
         }
 
         default:
-            // Unreachable: dispatch only starts a data phase for the two
+            // Unreachable: dispatch only starts a data phase for the three
             // commands above.
             ERR("Unexpected fill for cmd_id 0x%02x", cmd->cmd_id);
             return PB_STATUS_UNKNOWN_ERROR;

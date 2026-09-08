@@ -3,10 +3,10 @@
 // MIT License
 
 use crate::args::inspect::{
-    InspectGpioArgs, InspectHeaderArgs, InspectImageArgs, InspectInfoArgs, InspectPeekLiveArgs,
-    InspectPeekMemoryArgs, InspectSlotsArgs, InspectSocketArgs, InspectTelemetryArgs,
+    InspectGpioArgs, InspectHeaderArgs, InspectImageArgs, InspectInfoArgs, InspectLedArgs,
+    InspectPeekLiveArgs, InspectPeekMemoryArgs, InspectRgbArgs, InspectSlotsArgs,
+    InspectSocketArgs, InspectTelemetryArgs,
 };
-use crate::board_view::{gpio_header_role, gpio_rom_function, gpio_system_functions};
 use crate::utils::{
     active_chip_type, check_device, check_device_running, check_fire_board,
     check_fire_board_optional, check_live_read_write, print_hex_dump, resolve_board,
@@ -14,8 +14,13 @@ use crate::utils::{
 };
 use onerom_cli::CliFetch;
 use onerom_cli::LIVE_ROM_BASE;
+use onerom_cli::colour::RgbColour;
+use onerom_cli::gpio;
 use onerom_cli::plugin::{PluginOrigin, PluginType, resolve_plugin_display};
-use onerom_cli::usb::{GpioEntry, GpioUse, get_caps, gpio_query, gpio_query_all, read_memory};
+use onerom_cli::usb::{
+    GpioEntry, GpioUse, LedId, LedState, get_caps, gpio_query, gpio_query_all, led_query,
+    leds_share_gpio, read_memory,
+};
 use onerom_cli::{Device, Error, Options};
 use onerom_config::chip::ChipType;
 use onerom_config::hw::Board;
@@ -57,6 +62,94 @@ pub async fn cmd_info(options: &Options, args: &InspectInfoArgs) -> Result<(), E
             }
         }
     }
+
+    Ok(())
+}
+
+/// The one mode that picks its own colour rather than showing the stored one.
+const MODE_CYCLE: u8 = 4;
+
+/// Print one LED's state, as `inspect led` and `inspect rgb` both do.
+///
+/// The two differ only in which LED they name and whether a colour means
+/// anything, so what a user sees stays consistent between them.
+fn print_led(name: &str, state: &LedState, coloured: bool, verbose: bool, shared: bool) {
+    if !state.present {
+        println!("{name}: this board does not have one");
+        return;
+    }
+
+    let mode = state
+        .mode_name()
+        .map(str::to_string)
+        // A device newer than this CLI can be in a mode it has no word for.
+        // Saying so beats printing nothing or guessing.
+        .unwrap_or_else(|| format!("unknown (mode {})", state.mode));
+
+    println!("{name}:");
+    println!("  Mode:       {mode}");
+
+    if coloured {
+        // Cycle walks the hues itself and never shows the stored colour, so
+        // printing that colour would name one the LED is not lit.  Brightness
+        // still applies, and is still printed.
+        if state.mode != MODE_CYCLE {
+            let colour = RgbColour {
+                red: state.red,
+                green: state.green,
+                blue: state.blue,
+            };
+            match colour.name() {
+                Some(named) => println!("  Colour:     {colour} ({named})"),
+                None => println!("  Colour:     {colour}"),
+            }
+        }
+        println!("  Brightness: {}%", state.brightness);
+    }
+
+    // Only the repeating modes have a period, and the device reports 0 for the
+    // rest.  Printing "0ms" there would read as a period of no time at all.
+    if state.period_ms != 0 {
+        println!("  Period:     {}ms", state.period_ms);
+    }
+
+    // Which pin the LED is on, and whether it shares it, describe the board
+    // rather than what the LED is doing.  They are the same on every read.
+    if verbose {
+        println!("  GPIO:       {}", state.gpio);
+
+        if shared {
+            println!("  Shared:     yes, with the other LED on this board");
+        }
+    }
+}
+
+pub async fn cmd_led(options: &Options, args: &InspectLedArgs) -> Result<(), Error> {
+    check_device(options, args, true)?;
+    let device = options.device.as_ref().unwrap();
+
+    let state = led_query(device, LedId::Status).await?;
+    let shared = if options.verbose {
+        leds_share_gpio(device, &state, LedId::Rgb).await?
+    } else {
+        false
+    };
+    print_led("Status LED", &state, false, options.verbose, shared);
+
+    Ok(())
+}
+
+pub async fn cmd_rgb(options: &Options, args: &InspectRgbArgs) -> Result<(), Error> {
+    check_device(options, args, true)?;
+    let device = options.device.as_ref().unwrap();
+
+    let state = led_query(device, LedId::Rgb).await?;
+    let shared = if options.verbose {
+        leds_share_gpio(device, &state, LedId::Status).await?
+    } else {
+        false
+    };
+    print_led("RGB LED", &state, true, options.verbose, shared);
 
     Ok(())
 }
@@ -447,7 +540,7 @@ fn gpio_function_label(board: Option<&Board>, chip: Option<ChipType>, gpio: u8) 
 
     // 1. The ROM socket signal under the chip being served. With no resolvable
     //    chip type the socket position is still worth stating.
-    match chip.and_then(|chip| gpio_rom_function(board, chip, gpio)) {
+    match chip.and_then(|chip| gpio::rom_function(board, chip, gpio)) {
         Some(function) => add(function),
         None => {
             if let Some(socket_pin) = board.socket_pin_for_gpio(gpio) {
@@ -457,14 +550,14 @@ fn gpio_function_label(board: Option<&Board>, chip: Option<ChipType>, gpio: u8) 
     }
 
     // 2. The board peripheral(s).
-    for system in gpio_system_functions(board, gpio) {
+    for system in gpio::system_functions(board, gpio) {
         add(system.to_string());
     }
 
     // 3. The header pad. Named last because it is where the signal surfaces
     //    rather than what it carries - but named, because "which GPIO is X1" is
     //    the main thing this table is read to answer before wiring a reset line.
-    if let Some(role) = gpio_header_role(board, gpio) {
+    if let Some(role) = gpio::header_role(board, gpio) {
         add(role);
     }
 
@@ -600,6 +693,8 @@ fn render_gpio_table(
         out.push_str("  that order; Current use, Dir and Level are what the device reports.\n");
         out.push('\n');
         out.push_str("  Dir is the pin's output driver - 'out' if enabled, 'in' if not.\n");
+        out.push('\n');
+        out.push_str("  Level is what an 'out' pin is driving, and what an 'in' pin reads.\n");
         out.push('\n');
         out.push_str(
             "  Current use is what One ROM is doing with the pin now, which can change:\n",
@@ -917,7 +1012,7 @@ mod tests {
             .addr_pins()
             .iter()
             .copied()
-            .find(|&g| gpio_header_role(&board, g).is_some_and(|r| r.starts_with('A')))
+            .find(|&g| gpio::header_role(&board, g).is_some_and(|r| r.starts_with('A')))
             .expect("fire-32-b breaks out address lines");
         assert!(
             !function_cell(&table, a_pad_gpio).contains(','),

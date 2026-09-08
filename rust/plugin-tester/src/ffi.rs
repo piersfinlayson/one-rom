@@ -51,9 +51,38 @@ pub struct FlashLog {
     /// Non-zero if an erase arrived with XIP active, or named a range outside
     /// the modelled region.
     pub bad_erase: u32,
-    /// Non-zero if a program arrived with XIP inactive, or named a range
+    /// Non-zero if a program arrived with XIP active, or named a range
     /// outside the modelled region.
     pub bad_program: u32,
+    /// Non-zero if any call in the sequence arrived with interrupts unmasked.
+    pub bad_unmasked: u32,
+}
+
+/// Mirrors `ORA_HOST_TEST_SRAM_LOG_MAX` in `csrc/host_shim.h`.
+pub const SRAM_LOG_MAX: usize = 2048;
+
+/// Mirrors `ORA_HOST_TEST_SRAM_WATCH_MAX` in `csrc/host_shim.h`.
+pub const SRAM_WATCH_MAX: usize = 64;
+
+/// One byte a command wrote into a RAM slot.  Physical address, physical data.
+///
+/// Mirrors `ora_host_test_sram_write_t` in `csrc/host_shim.h`.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct SramWrite {
+    pub addr: u32,
+    pub val: u8,
+}
+
+/// What the device wrote since the log was reset, in order.
+///
+/// Mirrors `ora_host_test_sram_log_t` in `csrc/host_shim.h`, field for field.
+/// The two must be kept in step.
+#[repr(C)]
+pub struct SramLog {
+    pub count: u32,
+    pub overflowed: u32,
+    pub writes: [SramWrite; SRAM_LOG_MAX],
 }
 
 unsafe extern "C" {
@@ -62,6 +91,18 @@ unsafe extern "C" {
 
     /// Clear that record.  The harness does this before every scenario.
     pub fn ora_host_test_reset_flash_log();
+
+    /// The shim's record of what the device wrote into its RAM slots.  The
+    /// only place write ordering is observable — the plugin runs a whole
+    /// command between two yields.
+    pub fn ora_host_test_sram_log() -> *const SramLog;
+
+    /// Clear that record and start recording every write.
+    pub fn ora_host_test_reset_sram_log();
+
+    /// Clear that record and record only writes to `count` addresses at
+    /// `addrs`.  For a command writing more of a slot than the log holds.
+    pub fn ora_host_test_reset_sram_log_watching(addrs: *const u32, count: u32);
 
     /// The XIP clock divisor the shim answers `ORA_XIP_CLKDIV` with.
     pub fn ora_host_test_xip_clkdiv() -> u8;
@@ -82,6 +123,12 @@ unsafe extern "C" {
 
     /// The plugin's own SRAM seam: what ORA_SRAM_PTR resolves to.
     pub fn ora_host_test_sram_ptr(addr: u32) -> *mut core::ffi::c_void;
+
+    /// Make the plugin's lookup answer NULL for each of these API identifiers,
+    /// so a scenario can exercise what the plugin does on firmware that
+    /// predates a call.  Must be set before the plugin starts, which is when
+    /// it resolves its pointers.  An empty slice restores the full API.
+    pub fn ora_host_test_withhold_api(ids: *const u32, count: u32);
 
     /// Enter the plugin.  Never returns.
     pub fn ora_host_test_run_plugin();

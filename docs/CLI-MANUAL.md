@@ -1,14 +1,60 @@
+<!--
+Conventions of this manual, for whoever edits it.  These are invisible to a
+reader: HTML comments survive pandoc into the PDF unrendered.
+
+* Example output is a verbatim run, pasted from the command.  Hand-written
+  examples drift and quietly become wrong.
+
+* A value this manual states that something else owns sits inside a marker
+  naming that source, rather than bare:
+
+      The device's own limit is <!==[const:GPIO_MAX_HOLD_MS:seconds]==>60 seconds<!==[/]==>.
+
+  (written there with `=` in place of `-`, so this note is not itself a
+  marker).  `cargo run -p doc-gen` checks every one of them and fails naming
+  the file, line, expected and found.  It writes nothing.  The sources, the
+  formats and the syntax for naming several constants at once are documented in
+  `rust/doc-gen/src/main.rs` and its `marker` and `format` modules.
+
+  A number inside a quoted run is the exception and stays a plain literal: it
+  records what the command printed rather than claiming what is true today.  A
+  marker inside a fenced code block is refused for that reason.
+
+* Breaking changes are carried in two sections, and a change that breaks an
+  existing command line updates both.  `# New Breaking Changes`, near the top,
+  lists the release in development alone.  `# Appendix: Breaking Change
+  History`, at the end, keeps every release, newest first.  At release time the
+  top section's entries move down under a new version heading in the appendix,
+  and the top section empties for the next cycle.
+
+* Both sections are present in every release.  Where a release has no breaking
+  changes, `# New Breaking Changes` says so, so a reader who has learned to
+  look there finds an answer.
+
+* Every top-level section is preceded by `---`, which `docs/pdf/docs.css`
+  renders as a page break.  A new section needs one.
+-->
+
 # One ROM CLI Manual
+
+# Introduction
 
 `onerom` (`onerom.exe` on Windows) is the command-line tool for managing One ROM
 ROM emulators: discovering connected devices, building and flashing firmware,
 inspecting device state, and manipulating ROM image files.
 
-This manual is in two parts. The **Guide** walks through installation and the
-common workflows. The **Reference** documents every command, subcommand and
-option.
+## About This Document
 
-> This manual documents the `onerom` CLI as of release v0.3.0. Board,
+This One ROM CLI manual covers:
+
+- **One ROM Overview** — what One ROM is, its hardware, and the vocabulary the
+  rest of this manual uses.
+- **CLI Guide** — installation and the common workflows.
+- **CLI Reference** — every command, subcommand and option.
+- **Problems** — symptoms and their fixes, including [recovering a bricked One
+  ROM](#recovering-a-bricked-one-rom).
+
+> This manual documents the `onerom` CLI as of release v<!--[version:cli]-->0.4.0<!--[/]-->. Board,
 > chip and plugin lists shown in examples are illustrative — the set your build
 > supports may differ. Run `onerom --version` to check your version, and
 > `onerom board list` / `onerom chips` for the definitive lists your build knows
@@ -17,14 +63,224 @@ option.
 
 ---
 
-# Part 1 — Guide
+# New Breaking Changes
+
+These change what an existing command line does, so a script written against an
+earlier release is worth checking before upgrading.
+
+The CLI is versioned `MAJOR.MINOR.PATCH`. While it is pre-v1.0.0, a change that
+breaks an existing command line lands in a minor release — v0.3.0 to v0.4.0 —
+and never in a patch. From v1.0.0 onwards such a change lands in a major
+release, and never in a minor or a patch.
+
+- **`--name` now names the One ROM, not the configuration.** It is an alias for
+  `--instance-name` on `program` and `firmware build`, where it was an alias for
+  `--config-name`. A command line using `--name` still runs, and names the
+  device instead of the configuration it is building. Spell `--config-name` in
+  full for the old meaning.
+
+Every release's breaking changes are collected in
+[Appendix: Breaking Change History](#appendix-breaking-change-history), at the
+end of this manual.
+
+---
+
+<!--[fragment:docs/OVERVIEW.md:peer]-->
+# One ROM Overview
+
+## Background - ROM Replacements
+
+ROM (Read-Only Memory) chips are used in a huge assortment of electronic
+devices to supply those systems with pre-programmed data - Operating System
+and BIOS images, character sets, programming languages, games, etc.  On old
+systems these sometimes fail and need replacing, or users would like to
+upgrade their system, by replacing with a ROM with newer data.  The original
+ROM chip is removed from the system and a replacement is installed in its place.
+
+Traditional ROM replacements are built around EPROMs, EEPROMs and flash chips.
+Those are similar devices to the ROM being replaced - that is dumb devices
+that have a persistent memory store and some control lines - but with higher capacity
+than the original ROM and/or different chip select behaviour.  The chip
+select logic is typically fixed with additional on-board logic.
+
+## Introduction to One ROM
+
+One ROM takes a different approach - it consists of a microcontroller paired
+with flash and RAM, physically laid out on a PCB so that the original ROM's
+address, data and chip select lines connect to the MCU's general-purpose
+input/output (GPIO) pins.  This makes One ROM a ROM emulator, also known as a
+Software Defined ROM.
+
+Firmware is loaded to One ROM's flash, along with the ROM image(s) to be
+served.  One ROM is installed in the system.  On power on, it boots and first
+loads and runs its firmware, and then loads the ROM image(s) to be served into
+RAM, and serves them from there.
+
+Because One ROM is microcontroller based, it is controlled by software rather
+than by hardwired, hardware-based logic.  This makes One ROM the most powerful
+and flexible ROM replacement available.   Nearly any original ROM of a
+particular form factor can be replaced by an equivalent One ROM.
+
+One ROM's software is open source and has a modular architecture with a rich
+plugin API.  This means One ROM is a platform that can be extended with new
+capabilities, not just a ROM replacement.  Some examples of ways in which
+people have extended One ROM include:
+
+- A comprehensive USB stack and interface to allow One ROM to be managed
+  while running, built on the public plugin API.
+- Communication between a retro system and a PC using One ROM's USB port.
+- A retro system controlling its own reset line using one of One ROM's header
+  pins.
+- Reprogramming One ROM dynamically as part of a car's ECU tuning process.
+
+## Hardware
+
+One ROM comes in multiple physical variants to support each supported ROM package
+size - 24, 28, 32 and 40 pin.  All One ROMs replace original 600 mil (15.24mm)
+wide DIP packages.  The supported ROM types are listed in
+[COMPATIBILITY](/docs/COMPATIBILITY.md).  Each pin variant has multiple hardware
+revisions, marked on the board.
+
+One ROM Fire, based on the RP2350 microcontroller, is the current family and is
+available in all four sizes.
+
+One ROM Ice is a deprecated 24 pin only family based on an STM32F4.  It is
+supported on Base Firmware v0.6.x.  New feature releases for One ROM Ice are not
+anticipated.
+
+## Important concepts
+
+- **Base Firmware** - a binary including the core code that causes a One ROM to
+  serve ROM images.  Does not include any information about the One ROM hardware
+  variant or the ROM images to serve.  Should not be used on its own to program
+  a One ROM device.
+
+- **ROM image** - a binary blob that is the contents of a ROM to be served.  Can
+  be supplied to the programming tool as a raw binary file, or in other formats,
+  including Intel HEX and Motorola S-record.  The programming tool converts the
+  ROM image to the format One ROM requires.
+
+- **Slot** - a region of One ROM's flash holding a single ROM image, set of ROM
+  images, or plugin.
+
+- **Image selection** - the choice of which ROM image a One ROM serves.  A One
+  ROM can hold multiple images, selected at boot using the image select jumpers
+  on the board.
+
+- **Configuration** - the description of what a One ROM should do, provided to
+  the programmer.  It names the ROM images to serve, the chip type and chip
+  select behaviour of each, and any settings.
+
+- **Programmer** - a tool that composes ROM images, configuration, Base Firmware
+  and metadata into a complete image, and flashes it to the device.  There are
+  three - the [web programmer](https://onerom.org/web), the
+  [CLI](https://onerom.org/cli) and [Studio](https://onerom.org/studio).
+
+- **Metadata** - a binary block that describes the hardware properties of a
+  physical One ROM device, and the properties of the ROM images to be served.
+  The programmer generates this metadata from the configuration provided, and
+  it is included in the firmware that is flashed to the device.
+
+- **Bootloader** - a small program contained in One ROM's own read-only memory
+  that allows One ROM to be reflashed with new firmware and metadata.  The
+  bootloader is always accessible, even if the firmware and metadata are
+  corrupted or missing and, because it is ROM based itself, it cannot be
+  corrupted or erased.
+
+- **Header pins** - pins on the One ROM board exposing power, ground, the image
+  select lines, the debug interface and spare pins for expansion.  They allow
+  One ROM to be wired to the system it is installed in, or to external hardware.
+
+- **Plugin** - a binary blob consisting of code that extends One ROM's
+  capabilities beyond those provided by the core firmware.  The most common
+  plugin is the System Plugin.  A user chooses which plugins to include in
+  their firmware (if any) at programming time.  Up to two plugins can be
+  included with a single One ROM firmware image - the System Plugin, and a
+  User Plugin.
+
+- **System Plugin** - a plugin that provides a USB stack and other capabilities
+  to One ROM.  One ROM's System Plugin is shipped alongside One ROM's Base
+  Firmware.  Its use is recommended for all users, except those who want to
+  replace it with their own custom, replacement plugin.
+
+- **User Plugin** - a plugin installed alongside the System Plugin providing
+  additional capabilities to One ROM.  User Plugins can be developed by anyone,
+  and a number of them are shipped alongside Base Firmware and System Plugin.
+  User Plugins require a System Plugin to be included.  An example User Plugin
+  is One ROM's Host Control plugin, which allows One ROM to be controlled by the
+  system it is installed in, with no extra wiring using the ROM Bus Control
+  Protocol (RBCP).
+
+- **Setting** - a named value that changes how a One ROM behaves rather than
+  what it serves.  Settings are configured by the user and written by the
+  programmer.  The status LED and the CPU frequency are example settings
+  supported by the Base Firmware.  Plugins may have their own settings.
+
+- **ROM Bus Control Protocol (RBCP)** - a
+  [protocol](https://github.com/piersfinlayson/rom-bus-control-protocol) that
+  allows ROM emulators like One ROM to be controlled by a system it is
+  installed in, with no extra wiring.  Supported by One ROM's Host Control plugin.
+
+- **Bricked One ROM** - a One ROM device that is non-functional because it has
+  been flashed with corrupted firmware or metadata, metadata for a different
+  physical One ROM device, no metadata, or firmware or metadata with some other
+  issue.  Bricked One ROMs can be recovered by entering One ROM's bootloader
+  and reflashing them with valid firmware and metadata.  It is very unlikely
+  that a bricked One ROM cannot be recovered.
+
+## Types of One ROM Deployments
+
+### Minimal
+
+Consists of:
+
+- Base Firmware
+- Metadata
+- At least one ROM image
+
+Contains no plugins.  Serves the ROM image(s) to the system it is installed in,
+but cannot be managed while running.
+
+In this deployment type, when One ROM is plugged in via USB it drops
+automatically into its bootloader, allowing the device to be reprogrammed, and
+simultaneously stops serving the ROM image(s) to the system it is installed in.
+
+### Standard
+
+A Minimal Deployment plus One ROM's System Plugin, which includes a USB stack
+enabling comprehensive management of the device while it is running.
+
+This is the recommended deployment type for most users.
+
+### Extended
+
+A Standard Deployment plus a User Plugin.  The User Plugin may be One ROM's own,
+or one written by a third party.
+
+### Custom
+
+A Custom Deployment is one where one or more of the following holds:
+
+- The physical One ROM device is not manufactured from a
+  [published design](/hardware/pcb/README.md).  It may be a derivative, or a
+  fully custom design.
+
+- The Base Firmware is a fork of or replacement for One ROM's Base Firmware.
+
+- The System Plugin is replaced with a fork of or replacement for One ROM's
+  System Plugin.
+<!--[/]-->
+
+---
+
+# CLI Guide
 
 ## Installation
 
 Download the CLI from **<https://onerom.org/cli>**. Builds are provided for:
 
 - Windows — x86 64-bit and ARM 64-bit
-- macOS
+- macOS - a single universal build for Intel and Apple Silicon
 - Ubuntu/Debian — x86 64-bit, and ARM 64-bit (also for Raspberry Pi)
 
 The Windows and macOS builds are digitally signed. A sha256 checksum is published
@@ -52,6 +308,23 @@ Verify it runs:
 onerom --version
 ```
 
+## Keeping the CLI up to date
+
+The CLI does not check for updates on its own.
+[`onerom self check`](#self-check) compares the current build
+against the newest release published for your platform, and
+[`onerom self download`](#self-download) fetches it:
+
+```
+onerom self check
+onerom self download
+```
+
+`self download` saves the same artifact you would get from
+<https://onerom.org/cli> — a `.deb` on Linux, a zip on Windows and macOS —
+verifies it against the SHA-256 published alongside it, and prints the install
+step for what it downloaded. You must install the new version.
+
 ## How One ROM talks to the CLI
 
 The CLI communicates with a One ROM over USB using picoboot (the Raspberry Pi
@@ -61,9 +334,9 @@ situations:
 
 - **Running** — normal firmware is running and serving ROMs; its USB stack
   (provided by the system USB plugin) exposes the picobootx interface.
-- **Stopped** — the device is in the RP2350 bootloader (BOOTSEL). A bare RP2350
+- **Stopped** — the device is in One ROM's bootloader (BOOTSEL). A bare RP2350
   bootloader is also reachable here, which is how unprogrammed or bricked units
-  are recovered.
+  are [recovered](#recovering-a-bricked-one-rom).
 
 Some commands work in either state; some require one specifically. Each
 reference entry notes when a device connection is required, and the state model
@@ -100,7 +373,10 @@ Two situations need extra flags:
 
 - **Unrecognised / unprogrammed / bricked** units: add `--unrecognised` (`-u`)
   and supply `--board`, since the board type can't be inferred. The unit must
-  still expose a valid picoboot USB interface.
+  still answer on its picoboot USB interface — one that answers nothing is
+  ignored either way, since it cannot be programmed. It reports no serial at
+  all, so `--serial` cannot pick between two of them — attach one at a time,
+  and see [Recovering a bricked One ROM](#recovering-a-bricked-one-rom).
 - **Non-standard USB IDs**: add `--vid-pid <VID:PID>` (hex), repeatable. When
   supplied, only the given VID/PID pairs are matched.
 
@@ -168,6 +444,49 @@ from the config, or drop `--plugin`.
 Plugin spec forms are listed under [Plugin
 specification](#plugin-specification).
 
+### Plugin compatibility
+
+Every plugin going into an image is checked against the compatibility window
+published on the images server, whether it arrived via `--plugin` or was named
+by the config's own slots. A plugin the target firmware falls outside the
+window of is refused, and no image is written or flashed:
+
+```
+$ onerom firmware build --config usb-0.1.2.json --board fire-24-a --output fw.bin
+Failed to execute command.
+Plugin 'usb' version '0.1.2' is not compatible with firmware 0.7.0 or later.
+  The selected firmware version is 0.7.1.
+  Plugin version 0.2.1 supports it: https://images.onerom.org/plugins/system/usb/v0.2.1/plugin.bin
+```
+
+The last line names the newest release that does support the firmware being
+built for, and the URL to point the config's plugin slot at. If no release of
+that plugin supports it, the message says so instead. A pinned `--plugin
+usb,version=0.1.2` is refused the same way, with the same suggestion.
+
+The check is worth having because a plugin binary declares only the *minimum*
+firmware it needs. A release withdrawn for some *newer* firmware — One ROM USB
+v0.1.2, which hard faults on firmware v0.7.0 — is recorded only in the manifest,
+so this is the one place it can be caught before the device stops booting.
+
+`--verbose` reports a plugin that passed:
+
+```
+Plugin 'usb' v0.2.1 is compatible with firmware
+```
+
+A plugin loaded from a local path, or from any URL that is not an official
+images-server one, has no published compatibility to check against and is built
+in as-is. Under `--verbose`:
+
+```
+Plugin /home/me/my-plugin.bin is not an official One ROM plugin - no published compatibility to check
+```
+
+If the images server cannot be reached the build is not blocked — an offline
+build of an otherwise valid config still works — but a `Warning:` line naming
+the plugin says the check was skipped.
+
 ### Build firmware without flashing
 
 ```
@@ -187,8 +506,8 @@ Read what the device would serve for a given logical ROM address (device must be
 running). The top-level `peek` is an alias for `inspect peek live`:
 
 ```
-onerom peek live --address 0x100 --length 64
-onerom peek live --address 0 --length 8192 --output rom-image.bin
+onerom peek --address 0x100 --length 64
+onerom peek --address 0 --length 8192 --output rom-image.bin
 ```
 
 ### Patch a running image
@@ -198,15 +517,15 @@ offset. Changes are transient — lost on reboot. The top-level `poke` is an ali
 for `control poke live`:
 
 ```
-onerom poke live --address 0x100 --byte 0xEA
-onerom poke live --address 0 --input patch.bin
+onerom poke --address 0x100 --byte 0xEA
+onerom poke --address 0 --input patch.bin
 ```
 
 For file patches you can write only the differing bytes, and preview first:
 
 ```
-onerom poke live --input patch.bin --delta --dry-run
-onerom poke live --input patch.bin --delta
+onerom poke --input patch.bin --delta --dry-run
+onerom poke --input patch.bin --delta
 ```
 
 ### Identify a physical unit
@@ -220,14 +539,21 @@ onerom control led beacon
 ### Reset the host system after programming
 
 If you have run a wire from a One ROM header pad to the reset line of the
-machine One ROM is installed in, `control reset` pulses that pad low and then
-releases it — resetting the host so it picks up the image you just flashed.
-Name the pad, or the MCU GPIO behind it — `onerom inspect header` shows which
-that is:
+machine One ROM is installed in, One ROM can pulse that pad low and then release
+it — resetting the host so it picks up the image you just flashed. Name the pad,
+or the MCU GPIO behind it — `onerom inspect header` shows which that is:
 
 ```
-onerom program --config c64.json
+onerom program --config c64.json --reset-host sel_c
+```
+
+`--reset-host` waits for the One ROM to come back on the USB bus and then sends
+the pulse, so programming and resetting are one command. To reset a host without
+programming it, or to choose the length of the pulse, use `control reset`:
+
+```
 onerom control reset --pin sel_c
+onerom control reset --pin sel_c --hold 500
 ```
 
 The pad is typically an image-select pad whose jumper you have removed, usually
@@ -247,11 +573,25 @@ on — plus direction, level, 5V tolerance, and what One ROM itself is using it
 for. GPIOs connected to nothing are omitted unless you pass `--all`. Useful
 before driving a pin — see [`inspect gpio`](#inspect-gpio).
 
-### Erase / recover a device
+### Watch a device's log
+
+```
+onerom monitor log
+```
+
+Prints the One ROM's firmware and plugin logging as it is written, and starts
+with whatever it has logged since anything last listened — so the boot log is
+still there when you attach. Needs a running One ROM with the USB system
+plugin. Add `--output <FILE>` to keep a transcript, or use
+`onerom program --config c64.json --follow` to go straight from programming to
+watching. See [`monitor log`](#monitor-log).
+
+### Erase a device
 
 Erase flash. This is best done while stopped; by default the command reboots the
-device into the required state first. A fully erased unit falls back to the
-RP2350 bootloader and is then reprogrammed with `--unrecognised` + `--board`:
+device into the required state first. A fully erased unit falls back to One
+ROM's bootloader and is then reprogrammed with `--unrecognised` + `--board`, as
+[Recovering a bricked One ROM](#recovering-a-bricked-one-rom) describes:
 
 ```
 onerom control erase --all
@@ -287,7 +627,8 @@ Many commands reboot the device and, by default, pause briefly afterwards to let
 it re-enumerate on the USB bus.
 
 - **Running** (default reboot target) — firmware active, serving ROMs.
-- **Stopped** — RP2350 bootloader (BOOTSEL); required for some flash operations.
+- **Stopped** — One ROM/RP2350 bootloader (BOOTSEL), required for some flash
+  operations.
 
 Common controls, where a command supports them:
 
@@ -308,7 +649,7 @@ Common controls, where a command supports them:
 
 ---
 
-# Part 2 — Reference
+# CLI Reference
 
 ## Synopsis
 
@@ -325,7 +666,7 @@ any level).
 |---|---|
 | `--serial, -s <DEVICE>` | Select a One ROM by serial number. Required when multiple are connected; auto-selected when exactly one is present. Accepts `*` and `?` wildcards. |
 | `--vid-pid <VID:PID>` (alias `--id`) | USB vendor/product ID pair in hex (e.g. `1234:abcd`). Repeatable; when given, only these pairs are matched. Use with `--unrecognised`. |
-| `--unrecognised, -u` (alias `--unrecognized`) | Allow management of unrecognised/unprogrammed/bricked RP2350 boards. The unit must still expose a valid picoboot USB interface. Use with caution — permits programming any attached RP2350 board. |
+| `--unrecognised, -u` (alias `--unrecognized`) | Allow management of unrecognised/unprogrammed/bricked RP2350 boards. The unit must still answer on its picoboot USB interface — a device that answers nothing is ignored either way. Use with caution — permits programming any attached RP2350 board. See [Recovering a bricked One ROM](#recovering-a-bricked-one-rom). |
 | `--yes, -y` | Auto-confirm all prompts. Also suppresses the over-limit CPU frequency/voltage confirmations. |
 | `--verbose, -v` | Enable verbose output. |
 | `--log-level <LEVEL>` | Set log level. Defaults to `warn`. |
@@ -348,6 +689,7 @@ hardware take them; each command's own entry below states what it accepts, and
 | [`scan`](#scan) | Discover connected One ROMs | No |
 | [`program`](#program) | Build and flash firmware to a One ROM | Yes |
 | [`inspect`](#inspect) | Read-only device state and information | Yes |
+| [`monitor`](#monitor) | Watch a running One ROM as it works | Yes |
 | [`control`](#control) | Transient (non-persistent) device actions | Yes |
 | [`update`](#update) | Persistent device modifications | Yes |
 | [`image`](#image) | ROM image file manipulation | No |
@@ -355,6 +697,7 @@ hardware take them; each command's own entry below states what it accepts, and
 | [`plugin`](#plugin) | List available plugins | No |
 | [`chips`](#chips) | List supported chip types and their flash usage | No |
 | [`board`](#board) | List board types, or draw a board's pin header / socket | No |
+| [`self`](#self) | Check for and download new releases of the CLI itself | No |
 | [`peek`](#peek-top-level-alias) | Alias for `inspect peek live` | Yes |
 | [`poke`](#poke-top-level-alias) | Alias for `control poke live` | Yes |
 | [`reboot`](#reboot-top-level-alias) | Alias for `control reboot` | Yes |
@@ -378,6 +721,14 @@ onerom scan --slots
 | `--board <BOARD>` | Only show devices matching this board type. Conflicts with `--list-boards`. Must be a Fire board — a scan cannot find an Ice board. |
 | `--list-boards` | List the known board types, the same listing as [`board list`](#board-list). |
 | `--slots` (alias `--slot`) | Also show the ROM slot contents for each device found. Conflicts with `--list-boards`. |
+
+Example output:
+
+```
+Scanning ... 
+found 1 connected device:
+  One ROM Fire 28 C - Firmware: v0.7.2 State: Running Serial: FC9D67248E8E8023
+```
 
 Device required: no.
 
@@ -414,7 +765,7 @@ onerom program --config c64.json --out firmware.bin
 | Option | Description |
 |---|---|
 | `--plugin <SPEC>` | Plugin specification; repeatable. See [Plugin specification](#plugin-specification). May be combined with `--config`: the plugins are inserted ahead of the config's ROM slots (which shift up), and it is an error if the config already defines a plugin of its own. Conflicts with `--firmware`. |
-| `--config-name <NAME>` (alias `--name`) | Name for the generated ROM configuration. Conflicts with `--config`. |
+| `--config-name <NAME>` | Name for the generated ROM configuration. Conflicts with `--config`. |
 | `--config-description <DESC>` (aliases `--desc`, `--description`) | Description for the generated configuration. Defaults to *"Created by the One ROM CLI"*. Conflicts with `--config`. |
 | `--save-config <FILE>` | Save the generated configuration to JSON. Only valid with `--slot` or `--no-config`. Conflicts with `--config`. |
 
@@ -424,8 +775,8 @@ These are rejected with `--no-config`.
 
 | Option | Description |
 |---|---|
-| `--instance-name <NAME>` (aliases `--onerom`, `--one-rom`, `--onerom-name`, `--one-rom-name`, …) | Give this One ROM a name. |
-| `--serial-override <NEW SERIAL>` | Override the device's reported serial number. |
+| `--instance-name <NAME>` (aliases `--name`, `--onerom`, `--one-rom`, `--onerom-name`, `--one-rom-name`, `--instance_name`) | Give this One ROM a name. |
+| `--serial-override <SERIAL>` | Override the device's reported serial number. |
 | `--logging [BOOL]` (aliases `--boot-logging`) | Enable boot logging. Takes an optional boolean; bare flag means `true`. |
 | `--disable-swd [BOOL]` (aliases `--swd-disable`) | Shut SWD down before ROM serving starts, so debug port accesses to SRAM don't steal cycles from the serving DMAs. SWD is available for the whole of boot — including boot logging — and goes off until the next reset. Nothing is logged past that point, and plugins get no logging. This is not a debug lockout: the boot ROM runs before the One ROM firmware does, and BOOTSEL/PICOBOOT are unaffected. Optional boolean; bare flag means `true`. |
 | `--turbo-boot [BOOL]` | Enable turbo boot — starts serving faster by not reading the image select jumpers, so the first non-plugin slot is always the one served. More than one non-plugin slot is refused unless `--force` is given. Optional boolean; bare flag means `true`. |
@@ -447,10 +798,12 @@ These are rejected with `--no-config`.
 | `--no-reboot` | Do not reboot after flashing. Conflicts with `--stopped`. |
 | `--fast` | Skip the re-enumeration pause after the final reboot. Conflicts with `--no-reboot`. |
 | `--msd, -m` | Mount mass storage when rebooting into stopped mode. |
-| `--verify` | Verify flash by reading back after programming. **(not yet supported)** |
+| `--verify` | Verify flash by reading back after programming. |
 | `--force, -f` | Continue despite non-fatal problems: assembled firmware parse errors, a board type mismatch, and config warnings such as turbo boot with more than one non-plugin ROM slot. Each is reported as a warning instead. |
 | `--batch` (aliases `--multiple`, `--multi`) | Program multiple devices, pausing for confirmation between each. Every board is programmed with the same configuration as the first. |
 | `--scan-slots` | After programming, run `onerom scan --slots` to show the result. Conflicts with `--fast`. |
+| `--follow` | After programming, monitor the One ROM's log, as [`monitor log`](#monitor-log) does. Runs after `--scan-slots`, and only once the One ROM is back on the USB bus, so it shows the boot log of the firmware just flashed. Refused before anything is flashed if the image has no USB system plugin, since such a One ROM leaves the bus as soon as it serves. Conflicts with `--fast`, `--stopped`, `--no-reboot` and `--batch`. |
+| `--reset-host <PIN>` (alias `--host-reset`) | After programming, pulse this pin low to reset the host system, as [`control reset`](#control-reset) does. Named as `gpio<N>` or as a header pad (see [Pin values](#pin-values)). Runs after `--scan-slots` and before `--follow`, once the One ROM is back on the USB bus, and for each device in a `--batch`. The pulse is <!--[const:GPIO_RESET_DEFAULT_HOLD_MS:ms]-->100ms<!--[/]-->; use `control reset` for a different hold. Conflicts with `--fast`, `--stopped` and `--no-reboot`. |
 
 Device required: yes.
 
@@ -591,7 +944,7 @@ Columns:
 | `GPIO` | MCU GPIO number. |
 | `Function` | Everything this GPIO is, comma-separated in a fixed order: its ROM socket signal under the image being served (`A5`, `D3`, `CS1`, `BYTE/VPP`), then the board peripheral (`Status LED`, `RGB LED`, `USB VBUS`, `ext flash CS`), then the header pad (`X1`, `X2`, `SEL_A`). `-` if the GPIO is connected to nothing. |
 | `Dir` | `out` if the pin's output driver is enabled, `in` if not. |
-| `Level` | The level currently on the pad, `0` or `1`. |
+| `Level` | The GPIO's level, `0` or `1`: what an `out` pin is driving, what an `in` pin reads. |
 | `Max V` | `5V` if the GPIO is 5V-tolerant, `3V3` if it is an RP2350 ADC pin and therefore 3.3V-only, `?` if the board is not characterised. |
 | `One ROM use` | What One ROM itself is using the GPIO for: `free`, `serving (read)`, `serving (driven)` or `system`. |
 
@@ -617,9 +970,9 @@ released; `serving (driven)` pins (the data pins) cannot be given back without a
 reboot — see [`control pin`](#control-pin).
 
 With `--verbose` (`-v`) the table is followed by a legend restating where each
-column comes from, what `Dir` means and what the `3V3`/`5V` tags mean. Nothing
-is lost without it: the cost of taking a serving pin over is stated at the point
-of action by `control pin` itself.
+column comes from, what `Dir` and `Level` mean and what the `3V3`/`5V` tags
+mean. Nothing is lost without it: the cost of taking a serving pin over is
+stated at the point of action by `control pin` itself.
 
 A board revision or ROM type this build does not recognise costs the derived
 names, not the listing: `Function` falls back to `-` (or, for a socket pin whose
@@ -631,7 +984,7 @@ pin-header descriptor, pad names come from the board's pin assignments alone and
 On a Fire 28 (rev C) serving a 27512:
 
 ```
-One ROM Fire 28 C - Firmware: v0.7.1 State: Running Serial: FC9D67248E8E8023
+One ROM Fire 28 C - Firmware: v0.7.2 State: Running Serial: 2E4A671D1C92AE5C
 
 GPIO state  ·  One ROM Fire 28 (rev C)  ·  RP235xB  ·  serving 27512
 
@@ -676,6 +1029,103 @@ GPIO state  ·  One ROM Fire 28 (rev C)  ·  RP235xB  ·  serving 27512
   13 GPIOs with no function are hidden - use --all to show them.
 ```
 
+### inspect led
+
+Show what the status LED is doing now — the mode it is in, how fast it is
+running, and which GPIO it is on. Use [`inspect rgb`](#inspect-rgb) for the RGB
+LED some models carry.
+
+```
+onerom inspect led
+```
+
+On a `fire-28-c` running `onerom control led flame --period 900`:
+
+```
+Status LED:
+  Mode:       flame
+  Period:     900ms
+```
+
+`Period` appears only for the modes that repeat.
+
+`--verbose` adds the GPIO the LED is on, and says so where the board wires both
+LEDs to one pin — a `fire-24-f` does, a `fire-28-c` does not.
+
+No options. Device required: yes, and it must be running with the USB system
+plugin.
+
+Needs One ROM firmware v0.7.2 or later with the v0.2.2 or later USB system
+plugin. An older One ROM says so rather than reporting something invented.
+
+### inspect rgb
+
+Show what the RGB LED is doing now — the mode, the colour, the brightness, how
+fast it is running, and which GPIO it is on.
+
+```
+onerom inspect rgb
+```
+
+On a `fire-28-c` running
+`onerom control rgb breathe --colour cyan --brightness 60 --period 4000`:
+
+```
+RGB LED:
+  Mode:       breathe
+  Colour:     #00FFFF (cyan)
+  Brightness: 60%
+  Period:     4000ms
+```
+
+A colour is named where it is one of the names `--colour` accepts. One that is
+not prints as hex alone — `#7F3C22`.
+
+Each repeating mode has a shortest period it can run at, and a shorter one is
+refused rather than quietly run at the minimum:
+
+| Mode | Shortest period |
+|---|---|
+| `cycle`, `breathe` | <!--[const:LED_CYCLE_MIN_PERIOD_MS+LED_BREATHE_MIN_PERIOD_MS:ms]-->1000ms<!--[/]--> |
+| `flame` | <!--[const:LED_FLAME_MIN_PERIOD_MS:ms]-->500ms<!--[/]--> |
+| `beacon`, `blink` | <!--[const:LED_BEACON_MIN_PERIOD_MS+LED_BLINK_MIN_PERIOD_MS:ms]-->50ms<!--[/]--> |
+
+`cycle` walks the hues itself rather than showing a colour you set, so no
+`Colour` is reported while it runs:
+
+```
+RGB LED:
+  Mode:       cycle
+  Brightness: 25%
+  Period:     3000ms
+```
+
+`--verbose` adds the GPIO:
+
+```
+RGB LED:
+  Mode:       cycle
+  Brightness: 25%
+  Period:     3000ms
+  GPIO:       44
+```
+
+Only some One ROM models have an RGB LED. On a board without one this reports:
+
+```
+RGB LED: this board does not have one
+```
+
+Where the RGB LED and the status LED share a GPIO — as they do on a
+`fire-24-f` — both commands report the same pin and say that it is shared. Both
+LEDs still work, and no mode is restricted.
+
+No options. Device required: yes, and it must be running with the USB system
+plugin.
+
+Needs One ROM firmware v0.7.2 or later with the v0.2.2 or later USB system
+plugin.
+
 ### inspect header
 
 Draw the connected device's pin (jumper / programming) header as ASCII. The
@@ -713,6 +1163,87 @@ onerom inspect socket [--board <board>] [--chip-type <chip>] [--gpio]
 
 As with [`inspect header`](#inspect-header), `--board` overrides the connected
 One ROM's reported board type rather than standing in for the device.
+
+---
+
+## monitor
+
+Watch a running One ROM as it works.
+
+```
+onerom monitor <COMMAND>
+```
+
+| Subcommand | Purpose | Device required |
+|---|---|---|
+| [`log`](#monitor-log) | Show the One ROM's log as it is written | Yes |
+
+### monitor log
+
+Attach to the One ROM's USB serial port and print the firmware and plugin
+logging it sends, until the One ROM is disconnected, rebooted or stopped, or you
+press Ctrl-C.
+
+Every attach opens with the One ROM naming itself, in a block headed
+`----- One ROM USB log -----`. What it has logged since anything last listened
+arrives after that, so attaching after a reboot still shows the boot log, which
+opens with a `-----` divider of its own:
+
+```
+Monitoring log - press Ctrl-C to stop
+----- One ROM USB log -----
+One ROM fire-28-c v0.7.2
+Serial: 2E4A671D1C92AE5C
+Logging: boot, plugin-internal, error, plugin-application
+---------------------------
+-----
+One ROM v0.7.2.1 https://onerom.org
+Copyright (c) 2026 Piers Finlayson <piers@piers.rocks>
+Built: Aug 15 2026 14:09:53
+Commit: 5db495a
+-----
+RP235XB
+RAM: 520KB
+Flash: 2048KB
+Freq: 150MHz
+```
+
+`Name:` appears only when the One ROM has an instance name set, and `Logging:`
+lists the kinds of output switched on — see
+[Logging](/docs/LOGGING.md#over-usb). A One ROM that cannot forward its log says
+so there, rather than leaving you watching a silent port.
+
+```
+onerom monitor log
+onerom --serial 1234abcd monitor log
+onerom monitor log --output boot.txt
+```
+
+| Option | Description |
+|---|---|
+| `--output, -o <FILE>` (alias `--out`) | Also write the One ROM's output to this file, replacing its contents. The file receives what the One ROM sends and nothing else, so it is a transcript of the device rather than of this command. The output still appears on screen as well. |
+
+The One ROM's output goes to stdout and everything this command says about
+itself goes to stderr, so `onerom monitor log > boot.txt` captures the log on
+its own. `--verbose` adds a line naming the serial port, for when you want to
+point another tool at it.
+
+What this command needs, and what it cannot do:
+
+- The One ROM must be **running**, and must have been programmed with the USB
+  system plugin. That plugin provides the serial port and forwards the log into
+  it.
+- Nothing is forwarded until this command — or another terminal — opens the
+  port. A One ROM nothing is listening to accumulates its log rather than
+  discarding it, which is why the boot log is still there when you attach.
+- A debug probe reading the log over SWD consumes the same bytes. With both
+  running the stream is split arbitrarily between them and neither sees all of
+  it, so use one at a time.
+- If nothing arrives within two seconds the command fails. Since every attach
+  begins with the banner above, a One ROM with a current USB plugin always sends
+  something — so a timeout points at a plugin too old to forward the log at all.
+
+Device required: yes.
 
 ---
 
@@ -756,9 +1287,15 @@ onerom control reboot
 
 ### control led
 
+Control the status LED — the single-colour LED every One ROM has. The RGB LED
+that some models carry is driven by `control rgb` instead.
+
 ```
 onerom control led on
 onerom control led off
+onerom control led beacon --hold 10000
+onerom control led flame --period 1200
+onerom control led blink
 ```
 
 | Subcommand | Description |
@@ -767,8 +1304,93 @@ onerom control led off
 | `off` | Turn the status LED off. |
 | `beacon` | Beacon the LED to identify a physical unit. |
 | `flame` | Flame effect on the LED. |
+| `blink` | Blink the LED on and off until something changes it. |
 
-None take options. Device required: yes.
+| Option | Description | Subcommands |
+|---|---|---|
+| `--hold <MS>` | Stay in this mode for this many milliseconds, then go back to what the LED was doing before. The device times it, so it completes even if the command does not. Maximum <!--[const:LED_MAX_HOLD_MS]-->60000<!--[/]-->. | all |
+| `--period <MS>` | Milliseconds for one repetition — one blink for `beacon` and `blink`, one pass of the flicker for `flame`. Defaults to <!--[const:LED_BEACON_DEFAULT_PERIOD_MS]-->100<!--[/]-->, <!--[const:LED_BLINK_DEFAULT_PERIOD_MS]-->1000<!--[/]--> and <!--[const:LED_FLAME_DEFAULT_PERIOD_MS]-->575<!--[/]--> respectively. Minimum <!--[const:LED_BEACON_MIN_PERIOD_MS+LED_BLINK_MIN_PERIOD_MS]-->50<!--[/]--> for `beacon` and `blink`, <!--[const:LED_FLAME_MIN_PERIOD_MS]-->500<!--[/]--> for `flame`. | `beacon`, `blink`, `flame` |
+
+`beacon` ends by itself after <!--[const:LED_BEACON_DEFAULT_DURATION_MS:ms]-->2500ms<!--[/]--> unless `--hold` says otherwise. `blink` is
+the same on-and-off toggle but slower and unbounded — it runs until something
+changes it, or until a `--hold` you give it expires.
+
+The status LED is lit or dark, so it takes no colour and no brightness. `cycle`
+and `breathe` are built out of a colour and are the two modes it cannot do.
+
+`--hold` and `--period` need One ROM firmware v0.7.2 or later with the v0.2.2 or
+later USB system plugin. The CLI checks before sending, and says so rather than
+reporting success on a device that would ignore them. A plain `on`, `off`,
+`beacon` or `flame` works on any One ROM and costs no extra exchange with the
+device.
+
+Device required: yes.
+
+### control rgb
+
+Control the RGB LED that some One ROM models carry. For the single-colour status
+LED every model has, see [`control led`](#control-led).
+
+```
+onerom control rgb on --colour red
+onerom control rgb on --colour #FF8000 --brightness 40
+onerom control rgb cycle --period 3000
+onerom control rgb off
+```
+
+| Subcommand | Description |
+|---|---|
+| `on` | Light the LED at a colour. |
+| `off` | Turn the LED off. |
+| `beacon` | Beacon the LED to identify a physical unit. Ends by itself after <!--[const:LED_BEACON_DEFAULT_DURATION_MS:ms]-->2500ms<!--[/]-->. |
+| `flame` | Flame effect on the LED. |
+| `cycle` | Rotate through the hues. |
+| `breathe` | Fade the colour up and down. |
+| `blink` | Alternate the colour with dark. |
+
+| Option | Description | Subcommands |
+|---|---|---|
+| `--colour <COLOUR>` (alias `--color`) | A name, or hex written `#RRGGBB` or `0xRRGGBB`. Defaults to red. | all but `off` and `cycle` |
+| `--brightness <PERCENT>` | 1 to 100. Omit for the device's default, which is deliberately modest — an RGB LED at full output is uncomfortable at desk distance. | all but `off` |
+| `--period <MS>` | Milliseconds for one repetition. | `beacon`, `flame`, `cycle`, `breathe`, `blink` |
+| `--hold <MS>` | Stay in this mode for this many milliseconds, then go back to what the LED was doing before. The device times it, so it completes even if the command does not. Maximum <!--[const:LED_MAX_HOLD_MS]-->60000<!--[/]-->. | all |
+
+The named colours are `red`, `green`, `blue`, `white`, `yellow`, `cyan`,
+`magenta`, `orange`, `purple` and `pink`.
+
+`cycle` chooses its own colours, so it takes no `--colour`.
+
+Each repeating mode has a shortest period it can run at, and a shorter one is
+refused rather than quietly run at the minimum:
+
+| Mode | Default period | Shortest period |
+|---|---|---|
+| `cycle`, `breathe` | <!--[const:LED_CYCLE_DEFAULT_PERIOD_MS+LED_BREATHE_DEFAULT_PERIOD_MS:ms]-->5000ms<!--[/]--> | <!--[const:LED_CYCLE_MIN_PERIOD_MS+LED_BREATHE_MIN_PERIOD_MS:ms]-->1000ms<!--[/]--> |
+| `flame` | <!--[const:LED_FLAME_DEFAULT_PERIOD_MS:ms]-->575ms<!--[/]--> | <!--[const:LED_FLAME_MIN_PERIOD_MS:ms]-->500ms<!--[/]--> |
+| `blink` | <!--[const:LED_BLINK_DEFAULT_PERIOD_MS:ms]-->1000ms<!--[/]--> | <!--[const:LED_BLINK_MIN_PERIOD_MS:ms]-->50ms<!--[/]--> |
+| `beacon` | <!--[const:LED_BEACON_DEFAULT_PERIOD_MS:ms]-->100ms<!--[/]--> | <!--[const:LED_BEACON_MIN_PERIOD_MS:ms]-->50ms<!--[/]--> |
+
+Nothing is printed unless the CLI is verbose:
+
+```
+$ onerom --verbose control rgb on --colour orange --brightness 40
+RGB LED on
+```
+
+Read back what the LED is doing with [`inspect rgb`](#inspect-rgb):
+
+```
+RGB LED:
+  Mode:       on
+  Colour:     #FF6000 (orange)
+  Brightness: 40%
+```
+
+Only some One ROM models have an RGB LED. On a board without one, these commands
+say so rather than appearing to work. Needs One ROM firmware v0.7.2 or later
+with the v0.2.2 or later USB system plugin.
+
+Device required: yes, and it must be running with the USB system plugin.
 
 ### control poke
 
@@ -824,6 +1446,8 @@ Exactly one of `--byte` / `--input` is required.
 
 Pulse a GPIO low, then release it, to reset the host system One ROM is installed
 in — useful in scripted workflows after programming a new image.
+[`program --reset-host`](#program) does the same thing as the last step of
+programming, and is the shorter way to say it.
 
 `--pin` is the pin your reset wire is soldered to, typically an image-select pad
 whose jumper has been removed — `sel_c` is the usual choice, as more boards have
@@ -839,7 +1463,7 @@ need arbitrary states.
 
 The **device** times the pulse, not the CLI: if this command is interrupted, the
 terminal closes or the cable is pulled mid-pulse, the device still releases the
-pin. The device's own limit is 60 seconds.
+pin. The device's own limit is <!--[const:GPIO_MAX_HOLD_MS:seconds]-->60 seconds<!--[/]-->.
 
 The device must be **running** with the USB system plugin — see
 [Device states](#device-states).
@@ -854,13 +1478,16 @@ onerom control reset --pin gpio9 --hold 500
 |---|---|
 | `--pin <PIN>` | Pin the reset wire is connected to, named as `gpio<N>` or as a header pad (see [Pin values](#pin-values)). Required. |
 | `--board <BOARD>` | Board type, overriding what the device reports. Only needed to resolve a `--pin` pad name on a board this build does not recognise. |
-| `--hold <MS>` | Milliseconds to hold reset asserted. Decimal or `0x` hex. Default `100`; `0` is rejected, because a reset pulse with no end is not a reset. |
+| `--hold <MS>` | Milliseconds to hold reset asserted. Decimal or `0x` hex. Default <!--[const:GPIO_RESET_DEFAULT_HOLD_MS:code]-->`100`<!--[/]-->; `0` is rejected, because a reset pulse with no end is not a reset. |
 
 If One ROM is itself using the GPIO the command is refused, naming what it is
 doing; `control reset` has no `--force` of its own, and the message points at
 `control pin --force` for the case where that is genuinely what you want. If the
 GPIO is not 5V-tolerant the command warns and asks for confirmation, which
 `--yes` answers.
+
+The pulse counts toward the device's limit on pins under a timed hold at once —
+see [`control pin`](#control-pin).
 
 ```
 $ onerom control reset --pin x1
@@ -890,6 +1517,10 @@ applies `--then` — high impedance unless you say otherwise. As with
 [`control reset`](#control-reset), the hold is timed on the device, so an
 interrupted CLI cannot leave a pin latched.
 
+A limited number of pins can have a timed `--hold` at once. A pin driven without
+`--hold` is latched indefinitely and is not included in that limit. One ROM
+rejects a hold on a further pin once the limit is reached.
+
 The device must be **running** with the USB system plugin — see
 [Device states](#device-states). [`inspect gpio`](#inspect-gpio) shows what each
 GPIO is and what One ROM is using it for.
@@ -907,7 +1538,7 @@ onerom control pin --pin sel_a --state z
 | `--pin <PIN>` | Pin to drive, named as `gpio<N>` or as a header pad (see [Pin values](#pin-values)). Required. |
 | `--board <BOARD>` | Board type, overriding what the device reports. Only needed to resolve a `--pin` pad name on a board this build does not recognise. |
 | `--state <STATE>` | `high`, `low`, or `z` (high-impedance). `1` and `0` are accepted for `high` and `low`. Required. |
-| `--hold <MS>` | Hold `--state` for this many milliseconds, then apply `--then`. Decimal or `0x` hex. Omit to latch indefinitely. The device's own limit is 60 seconds. |
+| `--hold <MS>` | Hold `--state` for this many milliseconds, then apply `--then`. Decimal or `0x` hex. Omit to latch indefinitely. The device's own limit is <!--[const:GPIO_MAX_HOLD_MS:seconds]-->60 seconds<!--[/]-->. |
 | `--then <STATE>` | State to apply when `--hold` expires: `high`, `low` or `z` (or `1`/`0`). Default `z`. Requires `--hold`. |
 | `--force` | Drive the GPIO even though One ROM is using it for serving. |
 
@@ -935,14 +1566,15 @@ Set x1 (gpio9) low for 2000ms - the device times the hold and then sets it high 
 ### control erase
 
 Permanently erase flash contents — firmware, metadata and ROM images. A fully
-erased unit boots into the RP2350 bootloader and is reprogrammed with
+erased unit boots into One ROM's bootloader and is reprogrammed with
 `--unrecognised` + `--board`.
 
 Best performed while stopped; by default the command reboots into the required
 state first. Erasing the core firmware or the system plugin while **running**
-takes down the USB stack (requiring manual BOOTSEL via the header pins), and
-large erases may cause a temporary USB drop and re-enumerate — in which case the
-erase likely succeeded and can be checked with `inspect peek memory`. Anything
+takes down the USB stack (requiring
+[manual BOOTSEL](#recovering-a-bricked-one-rom)), and large erases
+may cause a temporary USB drop and re-enumerate — in which case the erase likely
+succeeded and can be checked with `inspect peek memory`. Anything
 else running from flash (e.g. a user plugin) may crash during an erase.
 
 Offsets are relative to the flash base `0x10000000`. Ranges must be 4096-aligned.
@@ -1053,6 +1685,20 @@ onerom image swap-bytes --input kick.bin --output kick-swapped.bin
 The same operation is available during a build as
 `--slot transform=swap_bytes`; see [Image transforms](#image-transforms).
 
+Before writing, the input is checked against a list of known 16-bit ROM
+headers. Where it is recognised and swapping it would be incorrect to program
+with One ROM, a warning is printed and the swap still goes ahead:
+
+```
+$ onerom image swap-bytes --input kick-swapped.bin --output out.bin
+Warning: kick-swapped.bin starts with an Amiga ROM header, low byte of each pair first.
+  It is already the way One ROM needs it, and swapping the bytes will stop it
+  working with One ROM.
+Written to out.bin
+```
+
+See [16-bit ROM image byte ordering](#16-bit-rom-image-byte-ordering).
+
 Device required: no.
 
 ### image deinterleave
@@ -1093,25 +1739,33 @@ Device required: no.
 ### image convert
 
 Convert a ROM image between formats. Reads `--input` in the `--from` format and
-writes `--output` in the `--to` format. Formats: `binary` (aliases `bin`, `raw`)
-and `ihex` (Intel HEX; aliases `intel-hex`, `intel_hex`). The format set is
-designed to grow — further formats can be added without changing the command.
+writes `--output` in the `--to` format. Formats: `binary` (aliases `bin`,
+`raw`), `ihex` (Intel HEX; aliases `intel-hex`, `intel_hex`) and `srec`
+(Motorola S-record; aliases `s-record`, `s_record`, `srecord`, `motorola`,
+`s19`). Any format can be converted to any other, including `ihex` to `srec`.
+The format set is designed to grow — further formats can be added without
+changing the command.
 
 ```
 onerom image convert --from ihex --to binary --input rom.hex --output rom.bin
-onerom image convert --from binary --to ihex --input rom.bin --output rom.hex --load-address $E000
+onerom image convert --from binary --to srec --input rom.bin --output rom.s19 --load-address $E000
 ```
 
 | Option | Description |
 |---|---|
-| `--from <FORMAT>` | Input format: `binary` or `ihex`. |
-| `--to <FORMAT>` | Output format: `binary` or `ihex`. |
+| `--from <FORMAT>` | Input format: `binary`, `ihex` or `srec`. |
+| `--to <FORMAT>` | Output format: `binary`, `ihex` or `srec`. |
 | `--input, -i <FILE>` (alias `--in`) | Input ROM image file. |
 | `--output, -o <FILE>` (alias `--out`) | Output file path. |
-| `--load-address <ADDR>` | Intel HEX load address (decimal, or `0x`/`$`-prefixed hex). Only valid when one side is `ihex`; subtracted when reading ihex, used as the base when writing ihex. Defaults to `0`. |
+| `--load-address <ADDR>` | Load address (decimal, or `0x`/`$`-prefixed hex). Only valid when one side is `ihex` or `srec`; subtracted when reading that format, used as the base when writing it. Defaults to `0`. |
 
-Intel HEX output uses 16-byte records with a terminating EOF record; unwritten
-addresses read as `0xFF` when decoding. Device required: no.
+Both record formats are written with 16-byte data records and a terminating
+record; unwritten addresses read as `0xFF` when decoding. S-record output uses
+one data record type throughout, the narrowest that addresses the whole image —
+`S1` below 64 KB, then `S2`, then `S3` — with the paired `S9`/`S8`/`S7`
+terminator. An S-record file that ends without a termination record is read,
+which is what `srec_cat` writes unless it is given an execution start address.
+Device required: no.
 
 ---
 
@@ -1396,7 +2050,7 @@ Example output (illustrative — your build may differ):
 
 ```
 Supported One ROM board types:
-  fire-24-a, fire-24-c, fire-24-d, fire-24-e, fire-24-eadb01, fire-24-f, fire-24-usb-b, fire-28-a, fire-28-b, fire-28-c, fire-28-d, fire-32-a, fire-32-b, fire-40-a, fire-40-b
+  fire-24-a, fire-24-c, fire-24-d, fire-24-e, fire-24-eadb01, fire-24-f, fire-24-g, fire-24-usb-b, fire-28-a, fire-28-b, fire-28-c, fire-28-d, fire-32-a, fire-32-b, fire-32-c, fire-40-a, fire-40-b, fire-40-c
 
 Recognised, but not supported by the CLI:
   ice-24-d, ice-24-e, ice-24-f, ice-24-g, ice-24-i, ice-24-j, ice-24-usb-h, ice-28-a
@@ -1430,6 +2084,20 @@ diagram.
 ```
 onerom board header --board fire-24-f
 ```
+
+With no `--board`, the CLI takes the board type from the connected One ROM. It
+cannot do that for a device whose firmware it cannot read, and says so:
+
+```
+$ onerom board header --unrecognised
+Failed to execute command.
+Could not determine board type from the connected device Unknown           - Firmware: n/a   State: Unknown Serial: (no serial).
+  It may be an unprogrammed One ROM or have corrupt firmware.
+  Supply the board type with --board
+```
+
+The header carries the `BOOTSEL` pad used to boot a One ROM into its own
+bootloader — see [Recovering a bricked One ROM](#recovering-a-bricked-one-rom).
 
 Device required: no (a device is used only to infer `--board` when it is
 omitted).
@@ -1494,6 +2162,89 @@ omitted).
 
 ---
 
+## self
+
+Check for, and download, new releases of the CLI itself. This is the CLI's own
+release channel — the binaries published at <https://onerom.org/cli> — and is
+separate from the One ROM firmware releases [`firmware
+releases`](#firmware-releases) lists.
+
+Nothing here runs unless you ask for it: the CLI performs no update check of its
+own accord, and neither command installs anything.
+
+```
+onerom self check
+onerom self download
+```
+
+Device required: no.
+
+### self check
+
+Compare this build against the newest release published for this platform.
+
+```
+onerom self check
+```
+
+This command takes no options.
+
+It prints the running version, then one of three things: that this is the latest
+release; that a newer one is available, with how to get it; or — for a build made
+from source — that this build is newer than anything published.
+
+Finding an update is not an error: the exit code is 0 in all three cases. A
+non-zero exit means the check itself failed, such as an unreachable images
+server, so a script can tell "no update" from "could not tell".
+
+### self download
+
+Download a published CLI release.
+
+```
+onerom self download
+onerom self download --version 0.3.0 --path ~/Downloads
+onerom self download --target aarch64-unknown-linux-gnu
+onerom self download --target all --path ./dist
+```
+
+| Option | Description |
+|---|---|
+| `--version <VERSION>` | Version to download (e.g. `0.3.0`). Defaults to the latest release. |
+| `--target <TARGET>` | Platform to download for, as a target triple. Defaults to this machine's. `all` downloads every platform's artifact for the version, and requires `--path`. |
+| `--output, -o <FILE>` (alias `--out`) | Output file path. Defaults to the published filename. Conflicts with `--path`. |
+| `--path <DIR>` | Output directory, using the published filename. Conflicts with `--output`. |
+| `--force, -f` | Overwrite an existing file. |
+
+The downloaded file is checked against the SHA-256 published alongside it; a
+mismatch is reported and the download discarded. That digest comes from the same
+server as the file, so it catches a corrupted or truncated download rather than
+a compromised server — it is not a signature. The Windows and macOS builds are
+digitally signed, and that signature is what your OS checks when you run them.
+
+The published filename already carries the version and architecture, so it is
+the default name in both the current directory and a `--path` directory. Every
+output path is checked before anything is downloaded, so an existing file or a
+missing directory fails immediately rather than part-way through a `--target
+all` run.
+
+Platform names are the Rust target triples the manifest publishes:
+`x86_64-unknown-linux-gnu`, `aarch64-unknown-linux-gnu`,
+`x86_64-pc-windows-msvc`, `aarch64-pc-windows-msvc`, and
+`universal-apple-darwin`. The last is not a real triple: the macOS build is a
+universal binary covering both Apple architectures. Naming an unknown one lists
+what is published.
+
+`--target` is there to fetch a build for a machine other than this one — the
+ARM `.deb` for a Raspberry Pi, say, from a desktop. When the artifact is not for
+this platform, no install step is printed, since the local one would not apply.
+
+Nothing is installed and the running `onerom` is not replaced. Install what was
+downloaded the same way you would install it from the website — see
+[Installation](#installation).
+
+---
+
 ## Top-level aliases
 
 Convenience aliases for frequently used nested commands. They take the same
@@ -1504,7 +2255,7 @@ options as their targets.
 Alias for [`inspect peek live`](#inspect-peek-live).
 
 ```
-onerom peek live --address 0x100 --length 64
+onerom peek --address 0x100 --length 64
 ```
 
 ### poke (top-level alias)
@@ -1512,7 +2263,7 @@ onerom peek live --address 0x100 --length 64
 Alias for [`control poke live`](#control-poke-live).
 
 ```
-onerom poke live --address 0x100 --input patch.bin
+onerom poke --address 0x100 --input patch.bin
 ```
 
 ### reboot (top-level alias)
@@ -1531,8 +2282,9 @@ Used by `--slot` in [`program`](#program) and [`firmware build`](#firmware-build
 Repeat `--slot` once per slot. Comma-separated `key=value` pairs:
 
 ```
-file=<path_or_url>,type=<romtype>[,cs1=<logic>][,cs2=<logic>][,cs3=<logic>]
-    [,size-handling=<handling>][,format=<binary|ihex>][,load-address=<addr>]
+file=<path_or_url>,type=<romtype>[,label=<text>]
+    [,cs1=<logic>][,cs2=<logic>][,cs3=<logic>][,cs4=<logic>]
+    [,size-handling=<handling>][,format=<binary|ihex|srec>][,load-address=<addr>]
     [,transform=<list>]
     [,cpu-freq=<freq>][,cpu-vreg=<voltage>][,led=<bool>][,force-16-bit=<bool>]
 ```
@@ -1540,11 +2292,12 @@ file=<path_or_url>,type=<romtype>[,cs1=<logic>][,cs2=<logic>][,cs3=<logic>]
 | Key | Values / notes |
 |---|---|
 | `file` | Local path or URL to the ROM image. |
+| `label` (alias `name`) | A name for this image, recorded in the device metadata in place of the filename, and shown by [`scan --slots`](#scan), [`inspect slots`](#inspect-slots) and [`firmware inspect`](#firmware-inspect). Worth setting when the file is a long path or URL, or when the recorded name would otherwise be truncated — see [Image transforms](#image-transforms). The same field is `label` in a config file. |
 | `type` | Chip type, e.g. `2364`, `2332`, `2716`, `27C400`. Any type the target firmware can serve on the board is accepted — that is exactly what [`chips --board`](#chips) lists, including the overhang and fly-lead combinations (a `2764` on a Fire 24, say); see [COMPATIBILITY.md](COMPATIBILITY.md). Building for firmware older than v0.7.0 accepts a narrower set, and a rejection lists what that firmware serves. Any accepted alias may be used; the exact spelling you enter is preserved in the device metadata (shown by `scan`/`inspect`), while the resolved type drives behaviour. |
-| `cs1`, `cs2`, `cs3` | CS polarity: `active-low` (or `0`), `active-high` (or `1`), or `ignore`. The snake_case config spellings (`active_low`, `active_high`) are also accepted. Which lines are required depends on the chip type (e.g. `2332` requires `cs1` and `cs2`). `ignore` says One ROM does not monitor the line at all — it is not a polarity, and is only permitted where the chip type or set allows it (see `allow_cs_ignore`). |
-| `size-handling` (aliases `size`, `size_handling`) | `none`, `duplicate` (or `dup`), `truncate` (or `trunc`), `pad`. For an Intel HEX image, padding fills with `0xFF` and `duplicate` is not permitted. |
-| `format` | `binary` (default) or `ihex` (Intel HEX). An `ihex` file is decoded to a binary image before use; unwritten bytes read as `0xFF`. |
-| `load-address` (alias `load_address`) | Only valid with `format=ihex`. The absolute Intel HEX address that maps to byte 0 of the ROM, as a decimal or `0x`/`$`-prefixed hex value (e.g. `$E000`). Defaults to `0`. |
+| `cs1`, `cs2`, `cs3`, `cs4` | CS polarity: `active-low` (or `0`), `active-high` (or `1`), or `ignore`. The snake_case config spellings (`active_low`, `active_high`) are also accepted. Which lines are required depends on the chip type (e.g. `2332` requires `cs1` and `cs2`). A chip type without that line, or with its polarity fixed in silicon, rejects it — [CHIP-TYPES.md](CHIP-TYPES.md) lists each type's control lines. `ignore` says One ROM does not monitor the line at all — it is not a polarity, and is only permitted where the chip type or set allows it (see `allow_cs_ignore`). |
+| `size-handling` (aliases `size`, `size_handling`) | `none`, `duplicate` (or `dup`), `truncate` (or `trunc`), `pad`. For an Intel HEX or S-record image, padding fills with `0xFF` and `duplicate` is not permitted. |
+| `format` | `binary` (default), `ihex` (Intel HEX) or `srec` (Motorola S-record). An `ihex` or `srec` file is decoded to a binary image before use; unwritten bytes read as `0xFF`. |
+| `load-address` (alias `load_address`) | Only valid with `format=ihex` or `format=srec`. The absolute address that maps to byte 0 of the ROM, as a decimal or `0x`/`$`-prefixed hex value (e.g. `$E000`). Defaults to `0`. |
 | `transform` | Byte-level rearrangements of the image, applied in the order given and joined with `+`. See [Image transforms](#image-transforms). |
 | `cpu-freq` | e.g. `150`, `150mhz`, `150MHz`. Values above 150 MHz require confirmation (suppressed by `--yes`) and set overclock automatically. |
 | `cpu-vreg` | e.g. `1.1`, `1.10`, `1.10v`, `1.10V`. Values above 1.10 V require confirmation (suppressed by `--yes`). Must be a supported level. |
@@ -1557,9 +2310,11 @@ Examples:
 --slot file=kernal.bin,type=2364,cs1=active-low
 --slot file=chargen.bin,type=2332,cs1=active-low,cs2=active-high
 --slot file=https://example.com/basic.bin,type=2716
+--slot file=https://example.com/c64/roms/901227-03.bin,type=2364,cs1=active-low,label=kernal
 --slot file=small.bin,type=2364,cs1=active-low,size-handling=duplicate
 --slot file=kernal.hex,type=2364,cs1=active-low,format=ihex
 --slot file=kernal.hex,type=2364,cs1=active-low,format=ihex,load-address=$E000
+--slot file=kernal.s19,type=2364,cs1=active-low,format=srec,load-address=$E000
 --slot file=kernal.bin,type=2364,cs1=active-low,cpu-freq=200MHz,cpu-vreg=1.2V
 --slot file=char.bin,type=2332,cs1=active-low,cs2=active-high,led=off
 --slot file=amiga.bin,type=27C400,force-16-bit=true
@@ -1569,6 +2324,8 @@ Examples:
 --slot file=amiga.bin,type=27C400,transform=swap_bytes
 --slot file=rom32.bin,type=27C010,transform=deinterleave:1/2/2+swap_bytes
 ```
+
+---
 
 ## Image transforms
 
@@ -1616,7 +2373,7 @@ pairs. Note that `offset` selects which lane, not a named "high" or "low" half
 is what `swap_bytes` is for.
 
 Within the build pipeline, transforms run after any `location` window and after
-an Intel HEX image has been decoded, but before `size-handling` reconciles the
+an Intel HEX or S-record image has been decoded, but before `size-handling` reconciles the
 image against the chip size. A `swap_bytes` on an odd-length image is an error
 unless `size-handling` is `pad` (which appends one blank byte) or `truncate`
 (which drops the trailing byte). Where the size handling is used this way it
@@ -1638,6 +2395,58 @@ carries a record of how its ROM data was derived. Note that the metadata
 filename field is capped at 128 bytes, so the suffix can be truncated away for a
 very long path; use `label=` to keep it short.
 
+### 16-bit ROM image byte ordering
+
+A 16-bit ROM supplies two bytes at a time, and an image of one may hold each
+pair in either order. One ROM reads the low byte of each pair first. An image
+holding the high byte first needs `swap_bytes`, and without it every pair is
+served reversed and the machine does not work.
+
+The CLI checks for this. It compares the first bytes of the image against a
+list of known ROM headers, including ones seen in Amiga Kickstart,
+DiagROM and Atari ST TOS images. An image matching no entry is left alone.
+
+A 16-bit image holding the high byte of each pair first, with no transform:
+
+```
+$ onerom firmware build --board fire-40-a --slot file=kick.bin,type=27C400 --out fw.bin
+Warning: kick.bin starts with an Amiga ROM header, high byte of each pair first.
+  One ROM needs the low byte of each pair first.  Add transform=swap_bytes to
+  this slot.
+```
+
+`swap_bytes` applied to an image that did not need it:
+
+```
+$ onerom firmware build --board fire-40-a --slot file=kick-swapped.bin,type=27C400,transform=swap_bytes --out fw.bin
+Warning: kick-swapped.bin starts with an Amiga ROM header and was already the way One
+  ROM needs it.  transform=swap_bytes has swapped it the wrong way round.
+  Remove transform=swap_bytes from this slot.
+```
+
+Neither is refused. The build and the programming go ahead.
+
+The check is skipped for an 8-bit chip, whose image holds no 16-bit words, and
+for a slot carrying any transform besides `swap_bytes`, since the check then
+reads bytes that are not the ones served.
+
+`--verbose` also reports a recognised image that needs no change, and one the
+check could not identify:
+
+```
+$ onerom --verbose image swap-bytes --input kick.bin --output out.bin
+kick.bin starts with an Amiga ROM header, high byte of each pair first.
+  Swapping the bytes makes it correct for One ROM.
+```
+
+```
+$ onerom --verbose firmware build --board fire-40-a --slot file=blank.bin,type=27C400 --out fw.bin
+Unable to tell which way around the byte pairs are in blank.bin.  If the slot
+  does not work, try transform=swap_bytes.
+```
+
+---
+
 ## Plugin specification
 
 Used by `--plugin` in [`program`](#program) and [`firmware build`](#firmware-build).
@@ -1651,10 +2460,18 @@ plugin. The system plugin is placed in slot 0, the user plugin in slot 1.
 | `--plugin usb,version=0.1.0` | Pinned version. |
 | `--plugin file=path/to/plugin.bin` | Local file. |
 | `--plugin file=https://example.com/plugin.bin` | Remote file. |
+
+Named forms are selected against the release manifest, so an incompatible one is
+refused at that point. A `file=` form, and a plugin named by a config, are
+checked separately — see [Plugin compatibility](#plugin-compatibility).
+
+---
+
 ## Pin values
 
 Used by `--pin` in [`control pin`](#control-pin), [`control
-reset`](#control-reset) and [`inspect gpio`](#inspect-gpio).
+reset`](#control-reset) and [`inspect gpio`](#inspect-gpio), and by
+`--reset-host` in [`program`](#program).
 
 `--pin` names one **MCU GPIO**, either directly or through a header pad that is
 wired to one. All spellings are case-insensitive (`GPIO23`, `SEL_A`).
@@ -1695,3 +2512,158 @@ listing.
 The upper bound is the device's own GPIO count — 30 on an RP2350A, 48 on an
 RP2350B — read from the device rather than assumed, so a GPIO the device does not
 have is reported against what it does have.
+
+---
+
+# Problems
+
+<!--[fragment:docs/fragments/unbrick.md]-->
+## Recovering a bricked One ROM
+
+You can recover a One ROM that is not responding using any of the One ROM
+programming tools by following the instructions below.  The One ROM CLI is
+recommended as it gives greatest control over One ROM.  The CLI commands
+are shown below.
+
+### Situation
+
+No tool can find the device. `onerom scan` reports nothing, the browser
+programmer sees nothing to connect to, and any command needing a device refuses.
+The Web programmer cannot detect it and the CLI reports:
+
+```
+$ onerom scan
+Scanning ... 
+No matching One ROM devices found.
+
+$ onerom inspect info
+Failed to execute command.
+No One ROM was found or specified.
+  Specify a One ROM using --serial.
+  Use 'onerom scan' to list connected One ROMs.
+```
+
+A One ROM in this state is called bricked. Nothing is damaged. Its
+firmware is not running, so nothing answers on the USB bus — programming was
+interrupted, or the firmware on it is not right for the board. One ROM has a
+hardware bootloader which cannot be bricked, so the recovery is to boot the
+device into that bootloader and program it again.
+
+If the One ROM programming tool you are using does find the device, it is not
+bricked. Program it as normal.
+
+### Booting into the bootloader
+
+This works on any Fire (RP2350) board whatever state its flash is in.
+
+1. Unplug the One ROM.
+
+2. Connect the **BOOTSEL** pad to ground. It is normally the middle pad/pin on
+   the header pins' top row, and the USB shield is a good source of ground.
+   The CLI command
+   [`onerom board header --board <BOARD>`](#board-header)
+   shows the header pins.
+
+   > Fire 24 rev A and Fire 24 USB rev B are the exceptions, and both are rare.
+   > Rev A brings BOOTSEL out as a pin towards the bottom of the board, and USB
+   > rev B as a small pad on the underside.
+
+3. Plug the One ROM into USB with that connection still made. The status LED
+   lights dimly, which is how you know the bootloader is running.
+
+4. Remove the BOOTSEL to ground connection — it is needed only as power comes
+   up.
+
+### Checking the host can see it
+
+Connect to One ROM using the programming tool as normal.
+
+Using the CLI `--unrecognised` (`-u`) matches any attached RP2350 board, a
+including a Raspberry Pi Pico 2, so make sure only the One ROM is attached:
+
+```
+$ onerom scan --unrecognised
+Scanning ... 
+found 1 connected device:
+  Unknown           - Firmware: n/a   State: Unknown Serial: (no serial)
+```
+
+The CLI names a device's board, firmware and serial from the firmware it is
+holding, and there is none in this example's bricked One ROM it can read.
+
+### Programming it again
+
+**You have to supply the One ROM board information.** A One ROM board type is
+only identifiable from the firmware already programmed to it, and that
+is the thing that is missing or wrong. The board name is the pin count and the
+revision letter silkscreened on the board — `fire-24-f` is a 24-pin board,
+revision F. The marking is small.
+[`onerom board list`](#board-list) prints every name.
+
+To re-program with the CLI, add `--unrecognised` and `--board`:
+
+```
+onerom program --unrecognised --board fire-24-f --config c64.json
+```
+
+With the [browser programmer](https://onerom.org/web), pick the board yourself
+in the same way. It will ask you to confirm the board type before it writes.
+
+If the board was mis-flashed rather than left blank, both tools notice — the
+wrong firmware is still in flash and they read the board from it.  The CLI
+refuses, and needs `--force` alongside `--board`.  The browser programmer warns
+and lets you continue.  Check the silkscreen once more before you do either,
+because the same objection appears when the board is right and the name you
+picked is wrong.
+
+Then confirm the device came back up.  With the CLI:
+
+```
+onerom scan
+```
+
+Getting the board wrong writes the wrong firmware and leaves you with a bricked
+device.  In this case, follow the instructions again.
+
+### Ice boards
+
+Ice (STM32) boards use `BOOT0` rather than BOOTSEL, and it is pulled **high**,
+to 3.3V, rather than to ground. It is the jumper labelled `B0` or `B`. The
+0.7.x CLI does not program Ice boards at all — use the
+[Web Programmer](https://onerom.org/web) or
+[One ROM Studio](https://onerom.org/studio).
+<!--[/]-->
+
+---
+
+# Appendix: Breaking Change History
+
+Changes that can alter or break a command line that worked on an earlier
+release. Newest release first.
+
+### v0.4.0
+
+- `--name` is an alias for `--instance-name` on `program` and `firmware build`.
+  It was an alias for `--config-name`. A command line using `--name` alongside
+  `--slot` still runs, and names the One ROM rather than the configuration.
+  With `--no-config` it is now rejected.
+
+### v0.3.0
+
+- `onerom boards` is now `onerom board`, and the bare listing it printed is
+  `onerom board list`. There is no alias.
+- `onerom control erase` takes `--stopped` / `--running` for its post-erase
+  reboot mode, in place of `--reboot-stopped` / `--reboot-running`. There is no
+  alias.
+- `--allow-unsupported-chip-type` is removed from `program` and
+  `firmware build`. Every chip type the target firmware can serve is accepted
+  without it.
+- No command takes a positional argument. `board header` and `board socket`
+  take `--board`.
+- Each short flag means one thing across the whole CLI: `-b` is `--board` (was
+  `--byte` on `poke`), `-o` is `--output` (was `--offset` on `control erase`),
+  `-i` is `--input` (was the global `--vid-pid`, which keeps `--id`), `-l` is
+  `--length` (was `--slot`), and `-m` is `--msd` (was `--image` on
+  `update slot`).
+- `firmware build` no longer accepts `--swd_disabled`. `--disable-swd` and
+  `--swd-disable` work on both it and `program`.

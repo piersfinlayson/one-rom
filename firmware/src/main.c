@@ -102,11 +102,9 @@ int firmware_main(void) {
         limp_mode(LIMP_MODE_NO_ROMS);
     }
 
-    // Turn the LED on as we're ready to serve the ROM.
-    if (RUNTIME->status_led_enabled) {
-        DEBUG("Status LED on");
-        status_led_on(HW->gpio_status);
-    }
+    // Put the status LED where the configuration says, now we're ready to
+    // serve the ROM.
+    pio_led_boot();
 
     // Start serving the ROM.  This returns once the PIOs and DMAs have been
     // setup.  We return back to the reset handler in vector.c, which then

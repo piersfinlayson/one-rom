@@ -1,0 +1,245 @@
+// Copyright (C) 2026 Piers Finlayson <piers@piers.rocks>
+//
+// MIT License
+
+//! Builds the USB plugin natively and archives it with the host shim.
+//!
+//! The plugin objects come from the plugin's own Makefile (`make host`), so the
+//! flags that must match the firmware's native test build live next to the ARM
+//! build rather than being restated here.  The shim is compiled here with the
+//! same flag set — see `SHIM_FLAGS`.
+
+use std::{env, path::PathBuf, process::Command};
+
+/// Plugin directory, relative to the project root, and the objects `make host`
+/// leaves behind - named without a directory, because which one they land in
+/// depends on whether this is a coverage build.
+const PLUGIN_DIR: &str = "plugins/system/usb";
+const PLUGIN_OBJS: &[&str] = &[
+    "usb_descriptors.o",
+    "usb_picobootx.o",
+    "usb_rom.o",
+    "usb_led.o",
+    "usb_gpio.o",
+    "usb_log.o",
+    "usb_main.o",
+];
+
+/// Flags the shim is compiled with.  These must stay in step with the plugin's
+/// `host` target and with `firmware/test.mk`: all the objects link together, so
+/// `-fshort-enums` and `-DTEST_BUILD=1` have to agree across every one of them
+/// or the C types they exchange differ in width or layout.
+const SHIM_FLAGS: &[&str] = &[
+    "-DORA_HOST_TEST=1",
+    "-DTEST_BUILD=1",
+    "-fshort-enums",
+    "-O1",
+    "-g",
+    "-Wall",
+    "-Wextra",
+    "-Werror",
+    "-std=c11",
+];
+
+fn main() {
+    let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
+    let project_root = manifest_dir
+        .parent()
+        .expect("missing rust/ parent")
+        .parent()
+        .expect("missing project root")
+        .to_path_buf();
+
+    let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
+    let plugin_dir = project_root.join(PLUGIN_DIR);
+    let firmware = project_root.join("firmware");
+
+    println!(
+        "cargo:rerun-if-changed={}",
+        plugin_dir.join("src").display()
+    );
+    println!(
+        "cargo:rerun-if-changed={}",
+        plugin_dir.join("include").display()
+    );
+    println!(
+        "cargo:rerun-if-changed={}",
+        plugin_dir.join("Makefile").display()
+    );
+    println!("cargo:rerun-if-changed={}", firmware.join("ora").display());
+    println!(
+        "cargo:rerun-if-changed={}",
+        manifest_dir.join("csrc/usb_shim.c").display()
+    );
+
+    // ── Plugin objects ───────────────────────────────────────────────────────
+
+    // COVERAGE_PLUGIN=1 builds the plugin with --coverage, into a build
+    // directory of its own.  ci/coverage-run.sh sets it.  The separate
+    // directory matters: the plugin Makefile has no record of the flags an
+    // existing object was built with, so sharing one would let a coverage run
+    // link uninstrumented objects and report no coverage at all.
+    let coverage = env::var("COVERAGE_PLUGIN").as_deref() == Ok("1");
+    println!("cargo:rerun-if-env-changed=COVERAGE_PLUGIN");
+    // The compiler too: an object does not record what built it, so a coverage
+    // run that changed compilers would otherwise link the last one's objects
+    // and hand lcov counters its gcov cannot read.
+    println!("cargo:rerun-if-env-changed=CC");
+    println!("cargo:rerun-if-env-changed=HOST_CC");
+    let host_build_dir = if coverage {
+        "build-host-cov"
+    } else {
+        "build-host"
+    };
+
+    let mut make = Command::new("make");
+    make.arg("-C")
+        .arg(&plugin_dir)
+        .arg("host")
+        .arg(format!("HOST_BUILD_DIR={host_build_dir}"));
+    if coverage {
+        // -O0 overrides the -O1 the ordinary host build uses.  At -O1 gcc
+        // folds lines out of the instrumented set entirely - they are absent
+        // from the report rather than shown as uncovered - and a report whose
+        // purpose is finding untested code must not hide code from itself.
+        // The ordinary host build keeps -O1 and its optimisation-dependent
+        // warnings.
+        make.arg("HOST_EXTRA_CFLAGS=--coverage -O0");
+    }
+    let status = make.status().expect("could not run make — is it on PATH?");
+    assert!(
+        status.success(),
+        "make host failed in {}",
+        plugin_dir.display()
+    );
+    let plugin_objs: Vec<PathBuf> = PLUGIN_OBJS
+        .iter()
+        .map(|o| plugin_dir.join(host_build_dir).join(o))
+        .collect();
+
+    // ── Shim object ──────────────────────────────────────────────────────────
+    //
+    // The shim stands in for tinyusb and picobootx, so it needs their headers
+    // for the types it exchanges with the plugin.  Both are cloned by the
+    // plugin's Makefile, which `make host` above has already run.
+
+    let shim_obj = out_dir.join("usb_shim.o");
+    let cc = env::var("HOST_CC").unwrap_or_else(|_| "cc".to_string());
+    let status = Command::new(&cc)
+        .args(SHIM_FLAGS)
+        .arg(format!("-I{}", firmware.join("include").display()))
+        .arg(format!("-I{}", firmware.join("generated").display()))
+        .arg(format!("-I{}", firmware.join("ora").display()))
+        .arg(format!("-I{}", plugin_dir.display()))
+        .arg(format!("-I{}", plugin_dir.join("include").display()))
+        .arg(format!("-I{}", plugin_dir.join("src").display()))
+        .arg(format!(
+            "-I{}",
+            plugin_dir.join("picobootx/include").display()
+        ))
+        .arg(format!("-I{}", plugin_dir.join("tinyusb/src").display()))
+        .arg(format!(
+            "-I{}",
+            plugin_dir.join("tinyusb/src/common").display()
+        ))
+        .arg(format!(
+            "-I{}",
+            plugin_dir.join("tinyusb/src/device").display()
+        ))
+        .arg(format!(
+            "-I{}",
+            plugin_dir.join("tinyusb/src/class/cdc").display()
+        ))
+        .arg("-c")
+        .arg(manifest_dir.join("csrc/usb_shim.c"))
+        .arg("-o")
+        .arg(&shim_obj)
+        .status()
+        .expect("could not run the host C compiler");
+    assert!(status.success(), "compiling usb_shim.c failed");
+
+    // ── Archive ──────────────────────────────────────────────────────────────
+
+    let archive = out_dir.join("libonerom-usb-host.a");
+    let _ = std::fs::remove_file(&archive);
+    let status = if cfg!(target_os = "macos") {
+        // Same split as firmware/test.mk: the macOS ar cannot produce an
+        // archive rustc will accept here, so use libtool.
+        Command::new("libtool")
+            .arg("-static")
+            .arg("-o")
+            .arg(&archive)
+            .args(&plugin_objs)
+            .arg(&shim_obj)
+            .status()
+    } else {
+        Command::new("ar")
+            .arg("rcs")
+            .arg(&archive)
+            .args(&plugin_objs)
+            .arg(&shim_obj)
+            .status()
+    }
+    .expect("could not run the archiver");
+    assert!(status.success(), "archiving the plugin objects failed");
+
+    // ── Linking ──────────────────────────────────────────────────────────────
+
+    println!("cargo:rustc-link-search=native={}", out_dir.display());
+    println!("cargo:rustc-link-lib=static=onerom-usb-host");
+
+    // The plugin and shim call into the firmware test library, so it must
+    // appear *after* this archive on the link line — GNU ld only pulls archive
+    // members that resolve an already-pending reference.  onerom-fw-emulator
+    // emits it too, but as a dependency its flags land first, which is the
+    // wrong order.
+    // Which build of it, though, is onerom-fw-emulator's choice, and it is
+    // COVERAGE_FW that decides - naming build-test unconditionally here put a
+    // second, stale library on the link line whenever the firmware was built
+    // instrumented, and the tester then ran against firmware configured for
+    // whatever board built build-test last.  That links and runs.  It just
+    // fails almost every scenario.
+    let fw_build_dir = if env::var("COVERAGE_FW").as_deref() == Ok("1") {
+        "build-test-cov"
+    } else {
+        "build-test"
+    };
+    println!("cargo:rerun-if-env-changed=COVERAGE_FW");
+    println!(
+        "cargo:rustc-link-search=native={}",
+        firmware.join(fw_build_dir).display()
+    );
+    println!("cargo:rustc-link-lib=static=onerom-test");
+
+    // The gcov runtime the instrumented objects call into.  Last, so it
+    // follows everything that references it on the link line.
+    if coverage {
+        if let Some(dir) = gcov_lib_dir() {
+            println!("cargo:rustc-link-search=native={dir}");
+        }
+        println!("cargo:rustc-link-lib=gcov");
+    }
+}
+
+/// The directory holding the pinned compiler's gcov runtime.
+///
+/// The instrumented objects call into the libgcov that ships with the compiler
+/// that built them, and the link driver is the distribution's cc, which would
+/// otherwise find its own.  Naming the directory is enough - pointing rustc at
+/// a different linker would relink the whole workspace through a compiler it
+/// has no other reason to use, and that costs more than it fixes.
+fn gcov_lib_dir() -> Option<String> {
+    let cc = env::var("HOST_CC")
+        .or_else(|_| env::var("CC"))
+        .unwrap_or_else(|_| "cc".to_string());
+    let out = std::process::Command::new(&cc)
+        .arg("-print-file-name=libgcov.a")
+        .output()
+        .ok()?;
+    let path = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    let dir = std::path::Path::new(&path).parent()?;
+    if dir.as_os_str().is_empty() {
+        return None;
+    }
+    Some(dir.display().to_string())
+}

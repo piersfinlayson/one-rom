@@ -214,6 +214,7 @@ pub fn default_cs_config(chip_type: ChipType) -> CsConfig {
 /// very different numbers of cycles, and which case applies depends on the
 /// board's routing as much as on the chip.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct ServingAlgInfo {
     /// First GPIO the address state machine samples.
     pub addr_window_base: u8,

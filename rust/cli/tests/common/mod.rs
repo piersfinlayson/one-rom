@@ -12,6 +12,15 @@ pub fn onerom() -> Command {
     Command::new(env!("CARGO_BIN_EXE_onerom"))
 }
 
+/// A VID:PID pair no One ROM can have, for a test that means "with nothing
+/// connected".
+///
+/// `--vid-pid` replaces the default target list rather than adding to it, so
+/// discovery matches nothing and the command behaves as it does on a bare
+/// machine. Without it such a test passes or fails according to what happens to
+/// be plugged into the developer's USB, and fails on the bench where it matters.
+pub const NO_DEVICE: [&str; 2] = ["--vid-pid", "0000:0000"];
+
 pub fn succeeds(cmd: &mut Command) {
     let out = cmd.output().unwrap();
     assert!(

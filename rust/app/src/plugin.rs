@@ -48,7 +48,7 @@ use core::fmt;
 
 use onerom_config::chip::ChipType as OraChipType;
 use onerom_config::fw::FirmwareVersion;
-use onerom_gen::{ChipConfig, ChipSetConfig, ChipSetType, SizeHandling};
+use onerom_gen::{Builder, ChipConfig, ChipSetConfig, ChipSetType, SizeHandling};
 use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, PluginError};
@@ -1160,25 +1160,50 @@ pub fn newest_compatible<'a>(plugin: &'a Plugin, fw: &FirmwareVersion) -> Option
         .find(|r| release_incompat(r, fw).is_none())
 }
 
-/// Build a [`PluginError`] describing why `release` is incompatible with `fw`.
+/// The newest release of a plugin that does support the firmware in use.
+///
+/// Carried by the two incompatibility errors so that a report can name the way
+/// out rather than only the problem. The URL is the binary's location on the
+/// images server, which is what a config naming a plugin has to be pointed at.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CompatibleRelease {
+    /// The release version.
+    pub version: PluginVersion,
+    /// The URL of that release's binary on the images server.
+    pub binary_url: String,
+}
+
+/// Build a [`PluginError`] describing why `release` is incompatible with `fw`,
+/// naming the newest release of `plugin` that is not.
+///
+/// The suggestion is `None` when no release supports `fw` at all, which is the
+/// normal outcome for an unpinned specification: the selector takes the newest
+/// compatible release, so reaching this at all means there was none.
 fn incompat_error(
-    name: &str,
+    plugin: &Plugin,
     release: &Release,
     reason: FwIncompat,
     fw: &FirmwareVersion,
 ) -> PluginError {
+    let newest_compatible = newest_compatible(plugin, fw).map(|r| CompatibleRelease {
+        version: r.version,
+        binary_url: plugin.binary_url(r),
+    });
+
     match reason {
         FwIncompat::TooOld => PluginError::Incompatible {
-            name: name.into(),
+            name: plugin.name.clone(),
             version: release.version,
             min_fw: release.min_fw_version,
             fw: *fw,
+            newest_compatible,
         },
         FwIncompat::TooNew(from) => PluginError::IncompatibleNewer {
-            name: name.into(),
+            name: plugin.name.clone(),
             version: release.version,
             from,
             fw: *fw,
+            newest_compatible,
         },
     }
 }
@@ -1498,7 +1523,7 @@ fn select_release<'a>(
             .ok_or_else(|| PluginError::VersionNotFound(name.into(), v))?;
         // Enforce the pin's compatibility (too old or too new is a hard error).
         if let Some(reason) = release_incompat(release, fw) {
-            return Err(incompat_error(name, release, reason, fw));
+            return Err(incompat_error(plugin, release, reason, fw));
         }
         Ok(release)
     } else {
@@ -1506,7 +1531,7 @@ fn select_release<'a>(
         // release's incompatibility.
         newest_compatible(plugin, fw).ok_or_else(|| match plugin.releases.first() {
             Some(newest) => match release_incompat(newest, fw) {
-                Some(reason) => incompat_error(name, newest, reason, fw),
+                Some(reason) => incompat_error(plugin, newest, reason, fw),
                 // Newest is compatible yet newest_compatible returned None: not
                 // possible, but map to NotFound rather than panic.
                 None => PluginError::NotFound(name.into()),
@@ -1554,6 +1579,188 @@ fn file_stem_str(path: &str) -> &str {
 /// any extension removed.
 fn file_stem(path: &str) -> String {
     file_stem_str(path).to_string()
+}
+
+// ------------------------------------------------------------
+// Checking the plugins named by a config
+// ------------------------------------------------------------
+
+/// A non-fatal observation from [`check_config_plugins`].
+///
+/// Anything that makes a plugin unusable comes back as a [`PluginError`], which
+/// the caller is expected to treat as fatal. A note records the outcome for a
+/// plugin that is *not* being rejected, for the application to report however
+/// it sees fit - the crate itself has no opinion on how loudly.
+#[derive(Debug)]
+pub enum PluginNote<E> {
+    /// The plugin was identified on the images server and falls inside its
+    /// published compatibility window.
+    Checked {
+        /// Plugin slug, recovered from the image source URL.
+        name: String,
+        /// The release version the image source names.
+        version: PluginVersion,
+    },
+
+    /// The image source is not an official plugin URL, so there is no manifest
+    /// to check it against. A locally built or third-party plugin is its
+    /// author's business; its header is still validated by `onerom-gen`.
+    Unofficial {
+        /// The image source recorded in the config.
+        source: String,
+    },
+
+    /// The plugin is an official one, but its compatibility could not be
+    /// established: the release manifest could not be fetched or parsed, or it
+    /// lists no release matching the version the source names. The build is not
+    /// blocked - an unreachable images server must not stop an otherwise valid
+    /// offline build - so the caller should say that the check was skipped.
+    Unchecked {
+        /// The image source recorded in the config.
+        source: String,
+        /// Why the check could not be completed.
+        error: Error<E>,
+    },
+}
+
+/// Check the plugins a built config names against the images server's published
+/// compatibility windows.
+///
+/// [`resolve_plugins`] covers plugins named as a specification (the CLI's
+/// `--plugin`), which are selected against the manifest in the first place.
+/// This covers the other way a plugin reaches an image: as a chip in the config
+/// itself, which is how Studio gets one and how the CLI's `--config-file` and
+/// `--slot` do. Those paths otherwise reach the device having had only
+/// `onerom-gen`'s header checks applied, and the header carries a *minimum*
+/// firmware version and nothing else - a release's upper bound
+/// (`incompatible_from`) exists only in the manifest, because it is discovered
+/// after the plugin ships. That is the gap this closes: One ROM USB v0.1.2
+/// declares `min_fw` 0.6.9 in its header and hard faults on firmware v0.7.0,
+/// which only the manifest knows.
+///
+/// A plugin is identified from its image source URL, so this only sees official
+/// plugins; a local path or a third-party URL yields
+/// [`PluginNote::Unofficial`]. For an official one the plugin's release
+/// manifest is fetched and the binary verified against the named release
+/// exactly as the `--plugin` path verifies it: SHA-256 digest, plugin type, and
+/// header-versus-manifest version.
+///
+/// Errors are fatal and mean the image must not be built. A failure to *reach*
+/// the manifest is not one: it becomes [`PluginNote::Unchecked`] and the build
+/// continues.
+///
+/// `builder`'s files must already be loaded - a plugin chip whose image is not
+/// yet present is skipped, since there is nothing to verify.
+pub async fn check_config_plugins<F: LocalPluginFetch>(
+    builder: &Builder,
+    fw: &FirmwareVersion,
+    fetch: &F,
+) -> Result<Vec<PluginNote<F::Error>>, PluginError> {
+    let mut notes = Vec::new();
+
+    for (chip_index, chip) in builder
+        .config()
+        .chip_sets
+        .iter()
+        .flat_map(|set| set.chips.iter())
+        .enumerate()
+        .filter(|(_, chip)| chip.chip_type.resolved().is_plugin())
+    {
+        let source = &chip.file;
+
+        // Only an official URL identifies which plugin this is: the binary
+        // header carries a type and a version but no name, and "user plugin
+        // 0.1.0" is both blink (fine on 0.7.x) and host-control (not).
+        let Some((url_type, name, version)) = official_plugin_from_source(source) else {
+            notes.push(PluginNote::Unofficial {
+                source: source.clone(),
+            });
+            continue;
+        };
+
+        // The chip type is what the image will actually do with the binary, so
+        // it - not the URL - is what the header is verified against.
+        let chip_type = match plugin_type_of_chip(chip.chip_type.resolved()) {
+            Some(t) => t,
+            None => return Err(PluginError::PioNotSupported(source.clone())),
+        };
+
+        // The URL's own type locates the manifest, since it is where the binary
+        // demonstrably came from.
+        let mut plugin = Plugin {
+            name,
+            plugin_type: url_type,
+            display_name: None,
+            description: None,
+            releases: Vec::new(),
+        };
+
+        if let Err(error) = fetch_releases(&mut plugin, fetch).await {
+            notes.push(PluginNote::Unchecked {
+                source: source.clone(),
+                error,
+            });
+            continue;
+        }
+
+        let Some(release) = plugin.releases.iter().find(|r| r.version == version) else {
+            // The binary fetched, so the server has it; the manifest simply does
+            // not list it. Nothing to check it against, but no reason to block.
+            notes.push(PluginNote::Unchecked {
+                source: source.clone(),
+                error: Error::Plugin(PluginError::VersionNotFound(plugin.name.clone(), version)),
+            });
+            continue;
+        };
+
+        // The check this whole function exists for.
+        if let Some(reason) = release_incompat(release, fw) {
+            return Err(incompat_error(&plugin, release, reason, fw));
+        }
+
+        // A plugin whose image has not been loaded cannot be verified, but its
+        // compatibility window has been checked, which is the point here.
+        if let Some(data) = builder.chip_data(chip_index) {
+            let verification = verify_binary(
+                data,
+                VerifyTarget::Release {
+                    release,
+                    expected_type: chip_type,
+                },
+                source,
+            )?;
+
+            if verification.version != release.version {
+                return Err(PluginError::VersionMismatch(
+                    plugin.name.clone(),
+                    release.version,
+                    verification.version,
+                ));
+            }
+        }
+
+        notes.push(PluginNote::Checked {
+            name: plugin.name,
+            version,
+        });
+    }
+
+    Ok(notes)
+}
+
+/// The [`PluginType`] a plugin chip type denotes, or `None` for a PIO plugin,
+/// which this crate does not support.
+///
+/// Written as comparisons rather than a `match`, so that adding a chip type -
+/// there are dozens, nearly all of them ROMs - does not have to be listed here.
+fn plugin_type_of_chip(chip_type: OraChipType) -> Option<PluginType> {
+    if chip_type == OraChipType::SystemPlugin {
+        Some(PluginType::System)
+    } else if chip_type == OraChipType::UserPlugin {
+        Some(PluginType::User)
+    } else {
+        None
+    }
 }
 
 // ============================================================

@@ -62,10 +62,39 @@ fn main() {
         }
     };
 
+    // The logging the C is compiled with — firmware/test.mk's TEST_LOGGING,
+    // whose default this repeats so the flags and the cfgs below agree with a
+    // build nobody set it for.  The two defaults cannot drift apart silently:
+    // the plugin API tester asserts what the firmware reports against these
+    // cfgs, so a disagreement fails that test.
+    let logging = env::var("TEST_LOGGING").unwrap_or_else(|_| "1".to_string());
+    let logging_on = match logging.as_str() {
+        "1" => true,
+        "0" => false,
+        other => panic!("TEST_LOGGING must be 0 or 1, got '{other}'"),
+    };
+
     // Re-run build.rs if these env vars change.
     println!("cargo:rerun-if-env-changed=CONFIG");
     println!("cargo:rerun-if-env-changed=BOARD");
     println!("cargo:rerun-if-env-changed=BASE_DIR");
+    println!("cargo:rerun-if-env-changed=TEST_LOGGING");
+    println!("cargo:rerun-if-env-changed=COVERAGE_FW");
+    // The compiler too: an object does not record what built it, so a coverage
+    // run that changed compilers would otherwise link the last one's objects
+    // and hand lcov counters its gcov cannot read.
+    println!("cargo:rerun-if-env-changed=CC");
+    println!("cargo:rerun-if-env-changed=HOST_CC");
+
+    // What the C was built with, for the crate's build_options constants.  A
+    // cfg reaches only the crate whose build script emitted it, so those
+    // constants are how a downstream tester reads the same answer.
+    println!("cargo::rustc-check-cfg=cfg(fw_debug_logging)");
+    println!("cargo::rustc-check-cfg=cfg(fw_plugin_logging)");
+    if logging_on {
+        println!("cargo::rustc-cfg=fw_debug_logging");
+        println!("cargo::rustc-cfg=fw_plugin_logging");
+    }
 
     // ── C build ──────────────────────────────────────────────────────────────
 
@@ -73,12 +102,26 @@ fn main() {
     // is wasm we cross-compile the C library with Emscripten (for One ROM Lens)
     // into a separate build-wasm/, instead of the native host build-test/.  The
     // native path is unchanged.
+    //
+    // COVERAGE_FW=1 selects a third build: the same native C compiled with
+    // --coverage, into its own build-test-cov/.  ci/coverage-run.sh sets it
+    // for every tester, because they all execute firmware C.  It gets a
+    // separate directory for the same reason wasm does - the objects differ
+    // only in the flags they were built with, which is not something an
+    // object file records.
     let is_wasm = env::var("CARGO_CFG_TARGET_ARCH").as_deref() == Ok("wasm32");
+    let coverage = env::var("COVERAGE_FW").as_deref() == Ok("1");
     let (make_target, clean_target, build_subdir) = if is_wasm {
         (
             "libonerom-test-wasm",
             "clean-libonerom-test-wasm",
             "build-wasm",
+        )
+    } else if coverage {
+        (
+            "libonerom-test-cov",
+            "clean-libonerom-test-cov",
+            "build-test-cov",
         )
     } else {
         ("libonerom-test", "clean-libonerom-test", "build-test")
@@ -95,11 +138,16 @@ fn main() {
         manifest_dir.join("src/wrapper.h").display()
     );
 
-    // Clean the C library if CONFIG or BOARD has changed since the last build.
-    // The Makefile has no visibility into these variables, so we track them
-    // ourselves via a stamp file in the build output directory.
+    // Clean the C library if the settings it was built with have changed since
+    // the last build.  The Makefile does not track them: it has no visibility
+    // into CONFIG or BOARD at all, and while test.mk reads TEST_LOGGING, an
+    // object file does not depend on the flags it was compiled with.  So we
+    // track all three via a stamp file in the build output directory.
     let stamp_path = c_root.join(build_subdir).join(".build-config");
-    let stamp = format!("CONFIG={}\nBOARD={board}\n", config_abs.display());
+    let stamp = format!(
+        "CONFIG={}\nBOARD={board}\nTEST_LOGGING={logging}\n",
+        config_abs.display()
+    );
     let needs_clean = std::fs::read_to_string(&stamp_path)
         .map(|s| s != stamp)
         .unwrap_or(true);
@@ -111,6 +159,7 @@ fn main() {
             .arg(clean_target)
             .env("CONFIG", &config_abs)
             .env("BOARD", &board)
+            .env("TEST_LOGGING", &logging)
             .status()
             .expect("could not run make clean target");
     }
@@ -121,6 +170,7 @@ fn main() {
         .arg(make_target)
         .env("CONFIG", &config_abs)
         .env("BOARD", &board)
+        .env("TEST_LOGGING", &logging)
         .status()
         .expect("could not run make — is it on PATH?");
     assert!(
@@ -143,6 +193,16 @@ fn main() {
     if !is_wasm {
         println!("cargo:rustc-link-lib=m");
     }
+    // The gcov runtime the instrumented objects call into.  Named as a link
+    // lib rather than passed as a link arg because only a link lib propagates
+    // to the crate being linked - the tester binaries live in other crates,
+    // and a --coverage link arg emitted here would never reach them.
+    if coverage {
+        if let Some(dir) = gcov_lib_dir() {
+            println!("cargo:rustc-link-search=native={dir}");
+        }
+        println!("cargo:rustc-link-lib=gcov");
+    }
 
     // ── bindgen ──────────────────────────────────────────────────────────────
 
@@ -162,9 +222,18 @@ fn main() {
     // the host target and its system headers is safe.  bindgen emits
     // width-correct type aliases (c_long, usize, …) regardless of the parse
     // target.
+    //
+    // `-fshort-enums` must match firmware/test.mk, which compiles the C that
+    // way.  Without it bindgen sizes every enum as a full int, so a parameter
+    // the C compiled as one byte is declared here as four.  That currently
+    // survives only because a narrow integer argument is passed in a full
+    // register and the callee reads the low byte, which is luck rather than
+    // ABI, and it would break outright the moment such an enum sits in a
+    // struct crossing the boundary.
     let builder = bindgen::Builder::default()
         .header(manifest_dir.join("src/wrapper.h").to_str().unwrap())
-        .clang_arg(format!("--target={}", env::var("HOST").unwrap()));
+        .clang_arg(format!("--target={}", env::var("HOST").unwrap()))
+        .clang_arg("-fshort-enums");
 
     let builder = builder
         .clang_arg(format!("-I{}", c_root.join("include").display()))
@@ -174,7 +243,15 @@ fn main() {
         .clang_arg(format!("-I{}", c_root.join("epio/include").display()))
         .clang_arg(format!("-I{}", c_root.join("ora").display()))
         .clang_arg("-DTEST_BUILD=1".to_string())
-        .clang_arg("-DDEBUG_LOGGING=1".to_string())
+        // The two switchable logging options as the C was compiled with them,
+        // so a declaration sitting behind one of those gates is parsed here
+        // exactly when the library holds its definition.  BOOT_LOGGING needs
+        // no -D: include.h defines it unconditionally.
+        .clang_args(if logging_on {
+            &["-DDEBUG_LOGGING=1", "-DPLUGIN_LOGGING=1"][..]
+        } else {
+            &[][..]
+        })
         .allowlist_function("firmware_main")
         .allowlist_function("epio_from_apio")
         .allowlist_function("epio_get_sram_ptr")
@@ -191,6 +268,14 @@ fn main() {
         .allowlist_function("set_host_sram_ptr")
         .allowlist_function("stub_set_sel_image")
         .allowlist_function("stub_set_rp_variant")
+        // The microsecond counter behind ora_get_plugin_uptime_ms().  There is no
+        // TIMER0 in this process, so the harness owns the count - which also
+        // lets a test place the clock exactly where it wants it.
+        .allowlist_function("stub_set_timer_us")
+        .allowlist_function("stub_advance_timer_us")
+        // Scripts the counter across successive half-reads, so a test can drive
+        // the retry that assembles a consistent 64-bit value.
+        .allowlist_function("stub_set_timer_raw_script")
         .allowlist_function("ffi_limp_mode")
         .allowlist_function("ffi_pios_enabled")
         .allowlist_function("ffi_image_sel")
@@ -198,7 +283,16 @@ fn main() {
         .allowlist_function("ffi_epio_setup_dma_chain")
         .allowlist_function("ffi_epio_arm_monitor")
         .allowlist_function("set_onerom_test_yield_hook")
+        .allowlist_function("onerom_test_reset")
+        .allowlist_function("set_host_calling_plugin")
         .allowlist_function("ffi_set_logging")
+        // The LED engine's frame and its next deadline.  A device is driven by
+        // TIMER0 alarm 1, which this process does not have, so a harness moves
+        // the clock to the deadline and calls the frame itself.
+        .allowlist_function("ffi_led_frame")
+        .allowlist_function("ffi_led_next_deadline")
+        .allowlist_function("ffi_led_last_pixel")
+        .allowlist_function("ffi_led_reset")
         .allowlist_function("ffi_serving_alg")
         .allowlist_type("ffi_serving_alg_t")
         // The algorithm enums the reported ids belong to: a test that maps an
@@ -216,11 +310,23 @@ fn main() {
         // the apio emulation's own record, and must name the enumerators
         // rather than hardcode their values.
         .allowlist_type("ora_gpio_.*_t")
+        // ora_led_t and ora_led_mode_t reach the API as uint8_t fields, so
+        // nothing drags them in transitively either.  The plugin API tester
+        // names the LEDs and the modes rather than hardcoding their values.
+        .allowlist_type("ora_led.*")
         // The apio emulation's record of how the firmware configured the PIO
         // blocks and the GPIOs.  This is what serving actually did, as opposed
         // to what the slot configuration says it should have done, and is the
         // plugin API tester's independent oracle for the GPIO classification.
         .allowlist_var("_apio_emulated_pio")
+        // The two plugin context slots.  api.h publishes their addresses as
+        // ORA_GET_PLUGIN_CONTEXT_SYSTEM and ORA_GET_PLUGIN_CONTEXT_USER, so a
+        // test can check that what the API stored is what an interrupt handler
+        // would read there.  Reached through calls rather than by binding the
+        // runtime info struct, which would break the no-struct-layout rule
+        // above and fail the wasm build.
+        .allowlist_function("ffi_system_plugin_context")
+        .allowlist_function("ffi_user_plugin_context")
         .allowlist_var("_apio_emulated_gpios")
         .allowlist_function("ffi_runtime_info_ptr")
         .allowlist_function("ffi_runtime_info_size")
@@ -258,4 +364,27 @@ fn main() {
     bindings
         .write_to_file(out_dir.join("bindings.rs"))
         .expect("could not write bindings.rs");
+}
+
+/// The directory holding the pinned compiler's gcov runtime.
+///
+/// The instrumented objects call into the libgcov that ships with the compiler
+/// that built them, and the link driver is the distribution's cc, which would
+/// otherwise find its own.  Naming the directory is enough - pointing rustc at
+/// a different linker would relink the whole workspace through a compiler it
+/// has no other reason to use, and that costs more than it fixes.
+fn gcov_lib_dir() -> Option<String> {
+    let cc = env::var("HOST_CC")
+        .or_else(|_| env::var("CC"))
+        .unwrap_or_else(|_| "cc".to_string());
+    let out = std::process::Command::new(&cc)
+        .arg("-print-file-name=libgcov.a")
+        .output()
+        .ok()?;
+    let path = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    let dir = std::path::Path::new(&path).parent()?;
+    if dir.as_os_str().is_empty() {
+        return None;
+    }
+    Some(dir.display().to_string())
 }

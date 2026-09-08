@@ -111,7 +111,7 @@ static const uint32_t s_knock_seq[KNOCK_LEN] = {
 
 #define RBCP_PROTOCOL_VERSION_MAJOR 0u
 #define RBCP_PROTOCOL_VERSION_MINOR 1u
-#define RBCP_PROTOCOL_VERSION_PATCH 1u
+#define RBCP_PROTOCOL_VERSION_PATCH 2u
 const uint8_t protocol_version[4] = {
     RBCP_PROTOCOL_VERSION_MAJOR,
     RBCP_PROTOCOL_VERSION_MINOR,
@@ -138,6 +138,9 @@ const uint8_t protocol_version[4] = {
 #define GRP_READ        0x01u
 #define GRP_MODIFY      0x02u
 #define GRP_NV_STORAGE  0x03u
+#define GRP_PIPES       0x04u
+#define GRP_AUX         0x05u
+#define GRP_LED         0x06u
 #define GRP_RESET       0xAAu
 
 // Control commands
@@ -146,6 +149,13 @@ const uint8_t protocol_version[4] = {
 #define CMD_EXIT_CMD_RESP_ACK           0x02u
 #define CMD_EXIT_CMD_RESP_SILENT        0x03u
 #define CMD_SWITCH_AND_EXIT             0x04u
+#define CMD_LOAD_AND_EXIT               0x05u
+#define CMD_EXIT_CMD_RESP_RESTORE       0x06u
+
+// Most bytes EXIT_CMD_RESP_RESTORE can put back, and so the largest valid
+// count.  Fixed by the protocol at eight, the size of the response header,
+// which is the part of the region the device always writes.
+#define RESTORE_MAX_BYTES               8u
 
 // Read commands
 #define CMD_GET_FLASH_FLASH_SLOT_COUNT  0x00u
@@ -156,6 +166,7 @@ const uint8_t protocol_version[4] = {
 #define CMD_GET_DEVICE_VERSION          0x05u
 #define CMD_GET_PROTOCOL_VERSION        0x06u
 #define CMD_SLOT_PEEK                   0x07u
+#define CMD_GET_BOOT_SLOT_INFO          0x08u
 
 // Modify commands
 #define CMD_SLOT_POKE                   0x00u
@@ -171,6 +182,119 @@ const uint8_t protocol_version[4] = {
 #define CMD_NV_POKE_COMMIT              0x04u
 #define CMD_NV_POKE_DISCARD             0x05u
 #define CMD_NV_POKE_COMMIT_BYTE         0x06u
+
+// Pipe commands
+#define CMD_GET_PIPE_CAPABILITY         0x00u
+#define CMD_GET_PIPE_INFO               0x01u
+#define CMD_PIPE_WRITE                  0x02u
+
+// Pipe type identifiers, as reported by GET_PIPE_INFO.  The type describes the
+// shape of the bytes, not what they are for, and an ORA log channel imposes no
+// framing of its own - which is what the protocol calls a Raw pipe.
+#define PIPE_TYPE_RAW                   0x00u
+
+// Pipe flags, as reported by GET_PIPE_INFO.  This plugin's pipes carry OUT
+// only, so bit 1 stays clear.  Bits 2 and 3 report whether the far end is
+// attached, and both stay clear: nothing tells this plugin whether anything is
+// draining the channel, and a device that cannot tell says so rather than
+// guessing.
+#define PIPE_FLAG_OUT                   0x01u
+
+// Far end identifiers, as reported by GET_PIPE_INFO.  A pipe is an ORA log
+// channel and this plugin cannot see who drains it - the system USB plugin
+// usually does, but a debug probe or nothing at all are equally possible - so
+// it reports the far end as unspecified rather than naming one it has guessed.
+#define PIPE_FAR_END_UNSPECIFIED        0x00u
+
+// Largest payload PIPE_WRITE can carry, and so the largest valid count.  Fixed
+// by the protocol at four, which is what leaves room for the pipe and count
+// arguments within the nine-argument frame maximum.
+#define PIPE_WRITE_MAX_BYTES            4u
+
+// Auxiliary I/O commands
+#define CMD_GET_AUX_CAPABILITY          0x00u
+#define CMD_GET_AUX_GROUP_INFO          0x01u
+#define CMD_GET_AUX_PIN_INFO            0x02u
+#define CMD_SET_AUX                     0x03u
+#define CMD_SET_AUX_AND_EXIT            0x04u
+#define CMD_SET_AUX_SWITCH_EXIT         0x05u
+
+// Auxiliary pin group types, as reported by GET_AUX_GROUP_INFO.  0x01 is the
+// protocol's own GPIO type.  The other two are this plugin's, from the range
+// the protocol reserves for an implementation.
+#define AUX_TYPE_GPIO                   0x01u
+#define AUX_TYPE_IMG_SEL                0x80u
+#define AUX_TYPE_X                      0x81u
+
+// Auxiliary pin states.  The three the protocol defines, which are the three
+// ora_gpio_state_t holds and in the same order, so a state byte is passed
+// through to ora_gpio_set unchanged.
+#define AUX_STATE_LOW                   0x00u
+#define AUX_STATE_HIGH                  0x01u
+#define AUX_STATE_INPUT                 0x02u
+
+// Auxiliary pin flags, as reported by GET_AUX_PIN_INFO.
+#define AUX_PIN_FLAG_DRIVABLE           0x01u
+#define AUX_PIN_FLAG_LEVEL              0x02u
+
+// Bit 0 of the SET_AUX_SWITCH_EXIT flags argument.  Every other bit is
+// reserved and rejected.
+#define AUX_SWITCH_FLAG_SLOT_FIRST      0x01u
+
+// Largest hold this device accepts, in the protocol's 10ms units.  The byte's
+// whole range: RBCP is unresponsive for the duration of a hold, and how long
+// the far end of the wire needs is the host's to know.
+#define AUX_MAX_HOLD                    0xFFu
+
+// LED commands
+#define CMD_GET_LED_CAPABILITY          0x00u
+#define CMD_GET_LED_INFO                0x01u
+#define CMD_GET_LED_MODE_INFO           0x02u
+#define CMD_SET_LED                     0x03u
+
+// LED types, as reported by GET_LED_INFO.
+#define LED_TYPE_MONO                   0x00u
+#define LED_TYPE_RGB                    0x01u
+
+// RBCP LED modes.  The protocol and the firmware number them differently, so
+// led_ora_mode() and led_rbcp_mode() translate.  Flame is One ROM's own, from
+// the range the protocol reserves for an implementation.
+#define LED_MODE_OFF                    0x00u
+#define LED_MODE_ON                     0x01u
+#define LED_MODE_BLINK                  0x02u
+#define LED_MODE_BREATHE                0x03u
+#define LED_MODE_CYCLE                  0x04u
+#define LED_MODE_BEACON                 0x05u
+#define LED_MODE_FLAME                  0x80u
+#define LED_MODE_INVALID                0xFFu
+
+// Modes each kind of LED supports, in the form GET_LED_INFO reports: bit N for
+// mode N.  Cycle and breathe are built out of a colour, so the status LED does
+// not offer them.  Flame lies outside the byte: accepted, never reported.
+#define LED_MODES_MONO  ((1u << LED_MODE_OFF)   | (1u << LED_MODE_ON) | \
+                         (1u << LED_MODE_BLINK) | (1u << LED_MODE_BEACON))
+#define LED_MODES_RGB   (LED_MODES_MONO | (1u << LED_MODE_BREATHE) | \
+                         (1u << LED_MODE_CYCLE))
+
+// GET_LED_MODE_INFO flags.
+#define LED_MODE_FLAG_PERIOD            0x01u
+
+// Largest period and hold this device accepts, in the protocol's 100ms units.
+// The byte's whole range, 25.5s, which is inside the firmware's own ceiling of
+// LED_MAX_HOLD_MS - so no byte a host can send exceeds either limit.
+#define LED_MAX_PERIOD                  0xFFu
+#define LED_MAX_HOLD                    0xFFu
+_Static_assert((uint32_t)LED_MAX_HOLD * 100u <= LED_MAX_HOLD_MS,
+               "LED hold range must fit the firmware's ceiling");
+
+// The colour the status LED shows when lit, red on every One ROM board.  The
+// firmware holds no record of it, and all-zero is the protocol's way of saying
+// a colour is not stated - so the plugin states it here.
+#define LED_STATUS_RED                  0xFFu
+
+// Highest ORA LED channel this plugin walks.  A One ROM gaining a third LED
+// numbers it from 2 up, which would need raising here.
+#define LED_ORA_LAST                    ORA_LED_RGB
 
 // Reset commands
 #define CMD_RBCP_RESET                  0xAAu
@@ -227,6 +351,18 @@ static nv_state_t s_nv_state;
 // is read once at setup rather than per command.
 static uint8_t s_unobserved_addr_bits;
 
+// What the device loaded at boot, for GET_BOOT_SLOT_INFO. The flash slot it
+// came from and the RAM slot it went into.  0xFF in either means the plugin
+// does not know, which is what the protocol has a device report where it has
+// no answer.
+//
+// Two bytes, not a byte per RAM slot.  Nothing else needs recording. A host
+// that loads a slot itself already knows what it put there, so the boot is the
+// only load a host cannot account for.
+#define BOOT_SLOT_NONE      0xFFu
+static uint8_t s_boot_flash_slot;
+static uint8_t s_boot_ram_slot;
+
 // ---------------------------------------------------------------------------
 // API function pointers (populated at plugin entry)
 // ---------------------------------------------------------------------------
@@ -247,6 +383,44 @@ static ora_get_device_version_fn_t          s_get_device_version;
 static ora_map_addr_to_phys_fn_t            s_map_addr_to_phys;
 static ora_map_data_to_phys_fn_t            s_map_data_to_phys;
 static ora_demangle_data_fn_t               s_demangle_data;
+
+// The log channel family, added in firmware 0.7.2 and used to serve the Pipes
+// group.  The plugin's min_fw_version stays at 0.7.1, so these may be NULL on
+// older firmware: ora_lookup returns NULL for an identifier the running
+// firmware does not implement.  A NULL here means the device exposes no pipes,
+// which the protocol already provides for, rather than meaning the plugin
+// cannot run.  See pipe_count().
+static ora_log_open_write_fn_t              s_log_open_write;
+static ora_log_write_fn_t                   s_log_write;
+static ora_log_query_fn_t                   s_log_query;
+
+// The calls the Auxiliary I/O group is built from.  The GPIO pair arrived in
+// firmware 0.7.1 and the other two in 0.7.2, so any of them may be NULL here.
+// Each absence takes something away from the host rather than stopping the
+// plugin - see aux_available(), aux_kind_pins() and aux_max_hold().
+static ora_gpio_set_fn_t                    s_gpio_set;
+static ora_gpio_query_fn_t                  s_gpio_query;
+static ora_get_metadata_uint_fn_t           s_get_metadata_uint;
+static ora_get_metadata_uint_at_fn_t        s_get_metadata_uint_at;
+static ora_get_plugin_uptime_ms_fn_t        s_uptime_ms;
+
+// A plugin's debug output, which the firmware emits only where it was built
+// with plugin debug logging.  Used for PIPE_WRITE failures, which are ordinary
+// traffic rather than faults: a full channel is normal operation, and s_log
+// would put the report into the very channel the host is writing.
+static ora_debug_log_fn_t                   s_debug_log;
+
+// Which pipes this plugin holds ora_log_open_write on, one bit per pipe.
+// Claimed on the first PIPE_WRITE to a pipe rather than at startup, because
+// claiming renames the channel for anything reading the log, and a device whose
+// host never writes a pipe should not be renamed.  Held for the life of the
+// plugin once taken.
+//
+// A bitmask rather than a flag because the claim is per channel: one bit says
+// nothing about the next pipe, and a device gaining a second channel would
+// otherwise have its first claim answer for both.  Eight pipes fit, which
+// pipe_count() must not exceed - widen this first if it ever could.
+static uint8_t s_pipes_claimed;
 
 // ---------------------------------------------------------------------------
 // Ring buffer read helpers
@@ -349,7 +523,7 @@ static void hdr_write(uint8_t slot, uint32_t hdr_offset, uint8_t val, bool reset
     if (reset_ring) {
         RING_BUF_RESET_READ_INDEX();
     }
-    ((volatile uint8_t *)ORA_SRAM_PTR(slot_base))[phys_addr] = phys_data;
+    ORA_SRAM_WRITE8(slot_base + phys_addr, phys_data);
 }
 
 // Read one byte from the back-channel region at the given header-relative offset.
@@ -403,25 +577,20 @@ static void cmd_begin(uint8_t slot, uint8_t group, uint8_t cmd) {
 }
 
 // Steps 5-6: write response field then set progress=complete.
-static void cmd_end(uint8_t slot, bool ok) {
+//
+// entering is set on ENTER_CMD_RESP, where the specification also has the
+// reserved pair zeroed - after the response field and before complete.
+static void cmd_end(uint8_t slot, bool ok, bool entering) {
     // First update the status byte.
     hdr_write(slot, HDR_RESPONSE, ok ? s_state.cfg.status_ok : failed_val(), false);
 
+    if (entering) {
+        hdr_write(slot, HDR_RESERVED_0, 0u, false);
+        hdr_write(slot, HDR_RESERVED_1, 0u, false);
+    }
+
     // Now, set progress to complete, which must be the last step.
     hdr_write(slot, HDR_PROGRESS, s_state.cfg.complete, true);
-}
-
-// ---------------------------------------------------------------------------
-// Back-channel region setup
-// ---------------------------------------------------------------------------
-
-// Zero-initialise the response header in the back-channel region.
-static void init_back_channel(uint8_t slot) {
-    static const uint8_t zeros[HDR_SIZE] = {0u};
-    if (s_reprogram(slot, s_state.cfg.region_offset,
-                    zeros, HDR_SIZE, 1u) != ORA_RESULT_OK) {
-        s_log("RBCP: init_back_channel failed for slot %u", (unsigned)slot);
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -434,6 +603,58 @@ static void init_back_channel(uint8_t slot) {
 static void zero_bytes(uint8_t *p, uint8_t n) {
     volatile uint8_t *vp = p;
     while (n--) *vp++ = 0u;
+}
+
+// Record what the device booted, for GET_BOOT_SLOT_INFO.
+//
+// The firmware reports the booted slot as an index into the whole slot table,
+// while every flash slot number crossing RBCP counts only the slots that are
+// not plugins.  The two differ by the number of plugin slots, which the flash
+// slot count gives up directly: asking with no filter counts every slot, and
+// asking with the plugins excluded counts the ones RBCP names, so the
+// difference is the plugins.  Taken from the same filter the numbering itself
+// is built from, so the two cannot disagree about what a plugin slot is.
+//
+// The RAM slot is asked for rather than assumed: this runs at setup, before
+// the host can have switched anything, so the slot being served now is the one
+// the firmware preloaded into.  A firmware that does not report a boot slot,
+// or an active slot, leaves both bytes at 0xFF, which is what the protocol has
+// a device say where it does not know.
+//
+// Called once at setup.  Nothing updates these afterwards. They describe the
+// boot, and RBCP_RESET does not change what the device booted any more than a
+// host's own LOAD_SLOT does.
+static void init_boot_slots(void) {
+    s_boot_flash_slot = BOOT_SLOT_NONE;
+    s_boot_ram_slot   = BOOT_SLOT_NONE;
+
+    uint32_t rom_slot_index = 0u;
+    if (s_get_metadata_uint == NULL) {
+        s_log("RBCP: no metadata getter; boot slots unknown");
+        return;
+    }
+    if (s_get_metadata_uint(ORA_METADATA_KEY_ROM_SLOT_INDEX,
+                            &rom_slot_index) != ORA_RESULT_OK) {
+        s_log("RBCP: firmware reports no boot slot");
+        return;
+    }
+    uint8_t plugin_slots = (uint8_t)(s_get_flash_slot_count(0u) -
+                                     s_get_flash_slot_count(ORA_FLASH_SLOT_FLAG_EXCLUDE_PLUGINS));
+    if (rom_slot_index < plugin_slots) {
+        s_log("RBCP: booted slot %u is a plugin slot", (unsigned)rom_slot_index);
+        return;
+    }
+
+    uint8_t ram_slot = 0u;
+    if (s_get_active_ram_slot(&ram_slot) != ORA_RESULT_OK) {
+        s_log("RBCP: no active RAM slot at setup; boot slots unknown");
+        return;
+    }
+
+    s_boot_flash_slot = (uint8_t)(rom_slot_index - plugin_slots);
+    s_boot_ram_slot   = ram_slot;
+    s_log("RBCP: booted ram_slot=%u from flash_slot=%u",
+          (unsigned)s_boot_ram_slot, (unsigned)s_boot_flash_slot);
 }
 
 static void init_nv_state(void) {
@@ -517,21 +738,37 @@ static bool exec_enter_cmd_resp(void) {
         return false;
     }
     uint32_t slot_size;
-    if (s_get_ram_slot_info(active_slot, NULL, &slot_size, NULL) != ORA_RESULT_OK) {
+    uint32_t rom_type = 0xFFu;
+    if (s_get_ram_slot_info(active_slot, NULL, &slot_size, &rom_type) != ORA_RESULT_OK) {
         s_log("ENTER_CMD_RESP failed: get_ram_slot_info error");
         return false;
     }
+    // The page has to be one the host can drive, and the host drives the
+    // address lines of the ROM being served rather than those of the slot
+    // holding it - a banked slot holds several images and is the larger.  A
+    // ROM type with no size leaves the slot as the only bound there is.
+    uint32_t chip_size = s_get_chip_size(rom_type);
+    uint32_t addressable = (chip_size != 0u && chip_size < slot_size) ? chip_size : slot_size;
     // The command page is in observed (bus) address space, which on a word- or
-    // otherwise LSB-omitting ROM is narrower than the byte-addressed slot: the
-    // observed span is slot_size >> (unobserved low address bits, cached at
+    // otherwise LSB-omitting ROM is narrower than the byte-addressed image: the
+    // observed span is addressable >> (unobserved low address bits, cached at
     // setup as it is fixed for the served ROM type).
-    uint32_t observed_span = slot_size >> s_unobserved_addr_bits;
+    uint32_t observed_span = addressable >> s_unobserved_addr_bits;
     if (((uint32_t)command_page << 8u) >= observed_span) {
         s_log("ENTER_CMD_RESP discarded: command page 0x%04X out of range for observed span %u",
               (unsigned)command_page, (unsigned)observed_span);
         return false;
     }
     uint32_t region_end = region_offset + (uint32_t)region_size;
+
+    // A start with no room behind it for the header is discarded in silence,
+    // because there is nowhere to write the failure that would report it.
+    // Checked before anything is committed, so nothing is written at all.
+    if (region_offset + HDR_SIZE > slot_size) {
+        s_log("ENTER_CMD_RESP discarded: start 0x%06X leaves no room for the response header",
+              (unsigned)region_offset);
+        return false;
+    }
 
     // Commit the fields the response header is written through, before the
     // size check rather than after it.  An oversized region is the one
@@ -551,15 +788,11 @@ static bool exec_enter_cmd_resp(void) {
     }
 
     if (region_end > slot_size) {
-        // Report the failure and stay in command mode.  The start address is
-        // already known to be 4-byte aligned and, where the 8-byte header fits
-        // inside the slot, there is somewhere to write it even though the
-        // region as a whole does not fit.  hdr_write bounds-checks each byte,
-        // so a start address too close to the end of the slot degrades to the
-        // silent discard that is then the only thing available.
+        // Report the failure and stay in command mode.  The check above has
+        // already established there is room for the header to report it in.
         s_log("ENTER_CMD_RESP failed: back-channel region exceeds slot size");
         cmd_begin(active_slot, GRP_CONTROL, CMD_ENTER_CMD_RESP);
-        cmd_end(active_slot, false);
+        cmd_end(active_slot, false, false);
         return false;
     }
     s_log("ECR: cp=0x%04X ro=%u rsz=%u cplt=0x%02X stok=0x%02X token=0x%02X%02X",
@@ -570,7 +803,6 @@ static bool exec_enter_cmd_resp(void) {
     s_state.cfg.region_end    = region_end;
     s_state.cfg.data_size     = (uint32_t)region_size - HDR_SIZE;
     s_state.active_slot       = active_slot;
-    init_back_channel(active_slot);
     s_state.active = true;
 
     s_log("ENTER_CMD_RESP succeeded: as=%u, ro=%u, re=%u",
@@ -746,6 +978,14 @@ static bool exec_get_protocol_version(void) {
     return true;
 }
 
+static bool exec_get_boot_slot_info(void) {
+    uint8_t resp[4] = { s_boot_flash_slot, s_boot_ram_slot, 0u, 0u };
+    data_write(s_state.active_slot, 0u, resp, sizeof(resp));
+    s_log("GET_BOOT_SLOT_INFO: flash_slot=%u ram_slot=%u",
+          (unsigned)s_boot_flash_slot, (unsigned)s_boot_ram_slot);
+    return true;
+}
+
 static bool exec_slot_peek(void) {
     uint8_t count  = ring_read_byte();
     uint8_t a0     = ring_read_byte();
@@ -816,6 +1056,63 @@ static bool exec_slot_peek(void) {
     return true;
 }
 
+// Defined with the Modify group, whose LOAD_SLOT is the same copy.
+static bool load_slot_impl(const char *name);
+
+// Reload a RAM slot and leave command-response mode without writing the
+// response header.  Where the slot named is the one being served, that puts
+// the whole image back, including the bytes the back-channel displaced.
+//
+// The exit happens whether or not the load did: the host is told not to poll
+// after this command, so a device that stayed in command-response mode on a
+// bad argument would be waiting for commands nobody is going to send.
+static bool exec_load_and_exit(void) {
+    bool ok = load_slot_impl("LOAD_AND_EXIT");
+    s_state.active = false;
+    return ok;
+}
+
+// Write the host's bytes over the start of the back-channel region and leave
+// command-response mode, writing nothing else.  The bytes are the region's
+// original contents, which only the host knows.
+//
+// Written through s_reprogram rather than hdr_write: these are the host's
+// bytes going back into its image, not header fields, and the region has
+// already stopped being a back-channel by the time anything reads them.
+static bool exec_exit_cmd_resp_restore(void) {
+    uint8_t bytes[RESTORE_MAX_BYTES];
+    for (uint8_t i = 0u; i < RESTORE_MAX_BYTES; i++) {
+        bytes[i] = ring_read_byte();
+    }
+    uint8_t count = ring_read_byte();
+
+    // Command mode has no back-channel region, so there is nothing to put
+    // back and cfg.region_offset means nothing.  All nine arguments are read
+    // above before the command is discarded, as ENTER_CMD_RESP does when it
+    // is the one arriving in the wrong mode.
+    if (!s_state.active) {
+        s_log("EXIT_CMD_RESP_RESTORE failed: not in command-response mode");
+        return false;
+    }
+
+    // The exit completes either way, as for any terminal command given an
+    // argument it cannot use.
+    s_state.active = false;
+
+    if ((count == 0u) || (count > RESTORE_MAX_BYTES)) {
+        s_log("EXIT_CMD_RESP_RESTORE failed: count %u out of range", (unsigned)count);
+        return false;
+    }
+
+    s_log("EXIT_CMD_RESP_RESTORE: count=%u", (unsigned)count);
+    if (s_reprogram(s_state.active_slot, s_state.cfg.region_offset,
+                    bytes, count, 1u) != ORA_RESULT_OK) {
+        s_log("EXIT_CMD_RESP_RESTORE failed: reprogram error");
+        return false;
+    }
+    return true;
+}
+
 // ---------------------------------------------------------------------------
 // Command handlers — Modify group (0x02)
 // ---------------------------------------------------------------------------
@@ -858,18 +1155,22 @@ static bool exec_switch_slot(void) {
     return (s_set_active_ram_slot(target) == ORA_RESULT_OK);
 }
 
-static bool exec_load_slot(void) {
+// Copy a flash slot into a RAM slot, shared by LOAD_SLOT and LOAD_AND_EXIT.
+// Reads both argument bytes whatever the outcome, so a rejected command still
+// takes its frame off the wire.
+//
+static bool load_slot_impl(const char *name) {
     uint8_t ram_slot   = ring_read_byte();
     uint8_t flash_slot = ring_read_byte();
 
-    s_log("LOAD_SLOT: ram_slot=%u flash_slot=%u", (unsigned)ram_slot, (unsigned)flash_slot);
+    s_log("%s: ram_slot=%u flash_slot=%u", name, (unsigned)ram_slot, (unsigned)flash_slot);
 
     if ((ram_slot == 0xAAu) || (flash_slot == 0xAAu)) {
-        s_log("LOAD_SLOT failed: slot value 0xAA is reserved");
+        s_log("%s failed: slot value 0xAA is reserved", name);
         return false;
     }
     if (!host_slot_valid(ram_slot)) {
-        s_log("LOAD_SLOT failed: slot %u is not one the host may name", (unsigned)ram_slot);
+        s_log("%s failed: slot %u is not one the host may name", name, (unsigned)ram_slot);
         return false;
     }
 
@@ -880,10 +1181,15 @@ static bool exec_load_slot(void) {
         0u
     );
     if (rc != ORA_RESULT_OK) {
-        s_log("LOAD_SLOT failed: copy_flash_to_ram error %d", (int)rc);
+        s_log("%s failed: copy_flash_to_ram error %d", name, (int)rc);
         return false;
     }
+
     return true;
+}
+
+static bool exec_load_slot(void) {
+    return load_slot_impl("LOAD_SLOT");
 }
 
 static bool exec_slot_poke_all_byte(void) {
@@ -1161,12 +1467,6 @@ static bool exec_nv_poke_discard(void) {
     return true;
 }
 
-// Shared magics that the USB stack watches for to pause and resume the flash
-// operations in the commit sequence below.
-#define FLASH_PAUSE_REQUEST  0x464C5348u    // FLSH
-#define FLASH_PAUSE_ACK      0x464C4F4Bu    // FLOK
-#define FLASH_RESUME         0x464C5245u    // FLRE
-
 static bool exec_nv_poke_commit(void) {
     if (!s_nv_state.active) {
         s_log("NPC: no transaction in progress");
@@ -1214,16 +1514,37 @@ static bool exec_nv_poke_commit(void) {
     }
     
     // Get the exclusive mode functions, which we'll use to ensure the flash
-    // isn't accessed during the critical section of the commit.
+    // isn't accessed during the critical section of the commit.  Checked like
+    // the bootrom lookups above: the firmware this plugin declares a minimum
+    // version for has both, but nothing in the build ties that declaration to
+    // this call, and calling through a null pointer faults the core.
     ora_enter_exclusive_mode_fn_t enter_exclusive =
         s_lookup(ORA_ID_ENTER_EXCLUSIVE_MODE);
     ora_exit_exclusive_mode_fn_t exit_exclusive =
         s_lookup(ORA_ID_EXIT_EXCLUSIVE_MODE);
+    if (enter_exclusive == NULL || exit_exclusive == NULL) {
+        s_log("NPC: exclusive mode not available");
+        return false;
+    }
 
     if (enter_exclusive() != ORA_RESULT_OK) {
         s_log("NPC: enter exclusive mode failed");
         return false;
     }
+
+    const uint8_t *staging = ORA_SRAM_PTR(s_nv_state.staging_base);
+    nv_flash_erase_critical_fn_t erase_fn = ORA_STAGED_FN_PTR(
+        nv_flash_erase_critical_fn_t, s_nv_state.staging_base + NV_STORAGE_SIZE);
+
+    // Exclusive mode parks the other core with its interrupts masked.  This
+    // core has to mask its own, and from here rather than from inside the
+    // staged routine: connect_internal_flash() has already taken the flash off
+    // the settings the running system configured, and an interrupt taken
+    // between here and the XIP restore runs a handler that lives in flash.
+    // Nothing on this core took interrupts at all until the firmware's LED
+    // engine began servicing animations from a timer, which it does on
+    // whichever core asked for one - this one, whenever a host drives SET_LED.
+    uint32_t primask = flash_irq_disable();
 
     connect_internal_flash();
 
@@ -1231,31 +1552,28 @@ static bool exec_nv_poke_commit(void) {
     uint8_t  clkdiv     = ORA_XIP_CLKDIV();
     uint32_t flash_offs = ORA_FLASH_OFFSET(__nv_storage_start);
 
-    s_log("NPC: offs=0x%08X clkdiv=%u", (unsigned)flash_offs, (unsigned)clkdiv);
-
-    // Erase the NV sector via the function blob copied into the RAM slot.
-    nv_flash_erase_critical_fn_t erase_fn = ORA_STAGED_FN_PTR(
-        nv_flash_erase_critical_fn_t, s_nv_state.staging_base + NV_STORAGE_SIZE);
+    // Erase and program the NV sector via the function blob copied into the
+    // RAM slot.  Both run between one exit from XIP and one restore of it, so
+    // the bootrom's program function gets the flash in the serial command mode
+    // it needs.  It returns void, so a failed write is not detectable here.
     erase_fn(
         flash_exit_xip,
         flash_range_erase,
+        flash_range_program,
         flash_flush_cache,
         flash_select_xip_read_mode,
         flash_offs,
+        staging,
         NV_STORAGE_SIZE,
         clkdiv
     );
 
-    s_log("NPC: flash erase complete, exiting XIP");
-
-    // XIP is restored. Write staging buffer to flash.
-    // flash_range_program is a bootrom function and returns void;
-    // failure is not detectable here.
-    flash_range_program(flash_offs, ORA_SRAM_PTR(s_nv_state.staging_base), NV_STORAGE_SIZE);
+    flash_irq_restore(primask);
 
     exit_exclusive();
 
-    s_log("NPC: complete");
+    s_log("NPC: complete offs=0x%08X clkdiv=%u", (unsigned)flash_offs,
+          (unsigned)clkdiv);
     nv_discard_impl();
     return true;
 }
@@ -1297,6 +1615,909 @@ static bool exec_nv_poke_commit_byte(void) {
 }
 
 // ---------------------------------------------------------------------------
+// Command handlers — Pipes group (0x04)
+// ---------------------------------------------------------------------------
+//
+// Everything in this group reports through s_debug_log rather than s_log.  The
+// pipe is an ORA log channel, and s_log writes that same channel, so anything
+// logged here on a normal build would land in the middle of the bytes the host
+// is sending.  Debug output is emitted only where the firmware was built for
+// it, which is where someone is watching the plugin rather than the stream.
+
+// The name a reader sees for the channel once a host has written to it.  const,
+// so it lives in .rodata and costs flash rather than any of the plugin's 512
+// bytes of static RAM.  ora_log_open_write keeps this pointer rather than
+// copying the string, so it must outlive the claim, which a literal does.
+static const char pipe_name[] = "RBCP pipe 0";
+
+// Number of pipes this device exposes.
+//
+// A pipe is an ORA log channel and pipe N is channel N, so this is the number
+// of channels the running firmware has.  Two ways it can be zero, and the
+// protocol treats them alike: firmware older than 0.7.2 has no log API, so the
+// lookups returned NULL, or the firmware has the API but no channel 0.  Either
+// way GET_PIPE_CAPABILITY reports zero and the other two commands fail, which
+// is what the specification says an optional feature looks like when absent.
+//
+// The API header declares one channel and states that firmware may have fewer
+// channels than the header declares, never more, so channel 0 is the only one
+// to test for.  ora_log_query needs no claim in either direction and has no
+// side effects, which is what makes it safe to use as the test.
+static uint8_t pipe_count(void) {
+    if ((s_log_open_write == NULL) || (s_log_write == NULL) ||
+        (s_log_query == NULL)) {
+        return 0u;
+    }
+    if (s_log_query(ORA_LOG_CHANNEL_0, NULL, NULL, NULL) != ORA_RESULT_OK) {
+        return 0u;
+    }
+    return 1u;
+}
+
+static bool exec_get_pipe_capability(void) {
+    if (s_state.cfg.data_size < 8u) {
+        s_debug_log("GET_PIPE_CAPABILITY failed: data section too small");
+        return false;
+    }
+
+    uint8_t resp[8];
+    zero_bytes(resp, sizeof(resp));
+    resp[0] = pipe_count();
+
+    data_write(s_state.active_slot, 0u, resp, sizeof(resp));
+    s_debug_log("GET_PIPE_CAPABILITY: pipes=%u", (unsigned)resp[0]);
+    return true;
+}
+
+static bool exec_get_pipe_info(void) {
+    uint8_t pipe = ring_read_byte();
+
+    s_debug_log("GET_PIPE_INFO: pipe=%u", (unsigned)pipe);
+
+    if (pipe == 0xAAu) {
+        s_debug_log("GET_PIPE_INFO failed: pipe value 0xAA is reserved");
+        return false;
+    }
+    if (s_state.cfg.data_size < 8u) {
+        s_debug_log("GET_PIPE_INFO failed: data section too small");
+        return false;
+    }
+    if (pipe >= pipe_count()) {
+        s_debug_log("GET_PIPE_INFO failed: no such pipe");
+        return false;
+    }
+
+    uint32_t free_bytes = 0u;
+    if (s_log_query((ora_log_channel_t)pipe, NULL, &free_bytes, NULL) !=
+        ORA_RESULT_OK) {
+        s_debug_log("GET_PIPE_INFO failed: query error");
+        return false;
+    }
+
+    uint8_t resp[8];
+    zero_bytes(resp, sizeof(resp));
+    resp[0] = PIPE_TYPE_RAW;
+    resp[1] = PIPE_FLAG_OUT;
+    resp[2] = (free_bytes > 0xFFu) ? 0xFFu : (uint8_t)free_bytes;
+    // waiting stays zero: the pipe carries no IN direction, so there is never
+    // anything for the host to read.
+    resp[4] = PIPE_FAR_END_UNSPECIFIED;
+
+    data_write(s_state.active_slot, 0u, resp, sizeof(resp));
+    return true;
+}
+
+static bool exec_pipe_write(void) {
+    uint8_t data[PIPE_WRITE_MAX_BYTES];
+    for (uint8_t i = 0; i < PIPE_WRITE_MAX_BYTES; i++) {
+        data[i] = ring_read_byte();
+    }
+    uint8_t pipe  = ring_read_byte();
+    uint8_t count = ring_read_byte();
+
+    // No separate check for the reserved 0xAA value here, unlike every other
+    // command taking a slot or an index.  count is the final argument and its
+    // valid range is 1 to 4, so the range check below rejects 0xAA already.
+    if ((count == 0u) || (count > PIPE_WRITE_MAX_BYTES)) {
+        s_debug_log("PIPE_WRITE failed: count %u out of range", (unsigned)count);
+        return false;
+    }
+    if (pipe >= pipe_count()) {
+        s_debug_log("PIPE_WRITE failed: no such pipe %u", (unsigned)pipe);
+        return false;
+    }
+
+    // Claimed on first use.  Only the claiming plugin may write the channel, so
+    // this cannot be skipped, but it renames the channel for anything reading
+    // the log, so it waits until a host actually sends bytes.
+    uint8_t claim_bit = (uint8_t)(1u << pipe);
+    if ((s_pipes_claimed & claim_bit) == 0u) {
+        ora_result_t rc = s_log_open_write((ora_log_channel_t)pipe, pipe_name);
+        if (rc != ORA_RESULT_OK) {
+            s_debug_log("PIPE_WRITE failed: cannot claim pipe %u (%d)",
+                        (unsigned)pipe, (int)rc);
+            return false;
+        }
+        s_pipes_claimed |= claim_bit;
+    }
+
+    // A write is stored whole or dropped whole and never blocks, which is what
+    // PIPE_WRITE's all-or-nothing rule requires.  ORA_RESULT_LOG_FULL is
+    // ordinary traffic rather than a fault - nothing has drained the channel
+    // yet - so it is reported at debug only, and never through s_log, which
+    // writes the same channel the host is reading.
+    if (s_log_write((ora_log_channel_t)pipe, data, count) != ORA_RESULT_OK) {
+        s_debug_log("PIPE_WRITE: pipe %u would not take %u bytes",
+                    (unsigned)pipe, (unsigned)count);
+        return false;
+    }
+    return true;
+}
+
+// ---------------------------------------------------------------------------
+// Command handlers — Auxiliary I/O group (0x05)
+// ---------------------------------------------------------------------------
+
+// The kinds of pin group this plugin can expose, in the order it numbers them.
+#define AUX_KIND_GPIO       0u
+#define AUX_KIND_IMG_SEL    1u
+#define AUX_KIND_X          2u
+#define AUX_KIND_COUNT      3u
+
+// The GPIOs one auxiliary pin reaches.  An X pad can reach two.
+#define AUX_PIN_MAX_GPIOS   2u
+typedef struct {
+    uint8_t gpio[AUX_PIN_MAX_GPIOS];
+    uint8_t count;
+} aux_pin_t;
+
+// GPIOs on the running variant, or zero where the firmware cannot say.
+//
+// Must be the firmware's own MAX_GPIOS, which is what ora_gpio_set and
+// ora_gpio_query range-check against.  That count is indexed by the variant
+// detected at boot, which is what ORA_METADATA_KEY_RP_VARIANT reports.
+static uint8_t aux_gpio_count(void) {
+    if (s_get_metadata_uint == NULL) {
+        return 0u;
+    }
+    uint32_t variant = 0u;
+    if (s_get_metadata_uint(ORA_METADATA_KEY_RP_VARIANT, &variant) != ORA_RESULT_OK) {
+        return 0u;
+    }
+    switch ((rp235x_variant_t)variant) {
+        case RP235XA: return 30u;
+        case RP235XB: return 48u;
+        default:      return 0u;
+    }
+}
+
+// Whether the device exposes auxiliary pins at all.  Without the GPIO calls, or
+// without a GPIO count to range-check against, nothing in the group can work -
+// which RBCP already provides for, as a group count of zero.
+static bool aux_available(void) {
+    return (s_gpio_set != NULL) && (s_gpio_query != NULL) && (aux_gpio_count() != 0u);
+}
+
+// The largest hold this device can time.  Zero where the firmware has no
+// millisecond counter, which the protocol defines as offering no timed holds
+// and requires the device to enforce.
+static uint8_t aux_max_hold(void) {
+    return (s_uptime_ms != NULL) ? AUX_MAX_HOLD : 0u;
+}
+
+// Entries a GPIO array metadata key holds, stopping at the first unused one.
+static uint8_t aux_meta_len(ora_metadata_key_t key) {
+    uint8_t n = 0u;
+    uint32_t gpio = 0u;
+    while ((n < 0xFFu) &&
+           (s_get_metadata_uint_at(key, n, &gpio) == ORA_RESULT_OK) &&
+           ((uint8_t)gpio != ORA_GPIO_NONE)) {
+        n++;
+    }
+    return n;
+}
+
+// The GPIOs X pad `pad` reaches - X1 is pad 0, X2 is pad 1 - none where the
+// board has no such pad.
+#define AUX_X_PADS  2u
+static void aux_x_pad(uint8_t pad, aux_pin_t *out) {
+    ora_metadata_key_t key = (pad == 0u) ? ORA_METADATA_KEY_GPIO_X1
+                                         : ORA_METADATA_KEY_GPIO_X2;
+    out->count = 0u;
+    for (uint8_t i = 0u; i < AUX_PIN_MAX_GPIOS; i++) {
+        uint32_t gpio = 0u;
+        if (s_get_metadata_uint_at(key, i, &gpio) != ORA_RESULT_OK) break;
+        if ((uint8_t)gpio == ORA_GPIO_NONE) break;
+        out->gpio[out->count++] = (uint8_t)gpio;
+    }
+}
+
+// X pads this board has.  One the board lacks is skipped rather than numbered,
+// so the pins of the group stay dense.
+static uint8_t aux_x_count(void) {
+    aux_pin_t pad;
+    uint8_t   pins = 0u;
+    for (uint8_t i = 0u; i < AUX_X_PADS; i++) {
+        aux_x_pad(i, &pad);
+        if (pad.count != 0u) pins++;
+    }
+    return pins;
+}
+
+// The GPIOs auxiliary pin `pin` of `kind` reaches, or false where there is no
+// such pin.
+static bool aux_pin_gpios(uint8_t kind, uint8_t pin, aux_pin_t *out) {
+    uint32_t gpio = 0u;
+    out->count = 0u;
+
+    switch (kind) {
+        case AUX_KIND_GPIO:
+            if (pin >= aux_gpio_count()) return false;
+            out->gpio[0] = pin;
+            out->count   = 1u;
+            return true;
+
+        case AUX_KIND_IMG_SEL:
+            if (pin >= aux_meta_len(ORA_METADATA_KEY_GPIO_SEL)) return false;
+            if (s_get_metadata_uint_at(ORA_METADATA_KEY_GPIO_SEL, pin, &gpio)
+                != ORA_RESULT_OK) {
+                return false;
+            }
+            out->gpio[0] = (uint8_t)gpio;
+            out->count   = 1u;
+            return true;
+
+        default: {
+            uint8_t seen = 0u;
+            for (uint8_t i = 0u; i < AUX_X_PADS; i++) {
+                aux_x_pad(i, out);
+                if (out->count == 0u) continue;
+                if (seen == pin) return true;
+                seen++;
+            }
+            out->count = 0u;
+            return false;
+        }
+    }
+}
+
+// Pins in a kind of group, or zero where this board or this firmware has none.
+static uint8_t aux_kind_pins(uint8_t kind) {
+    if (!aux_available()) {
+        return 0u;
+    }
+    if (kind == AUX_KIND_GPIO) {
+        return aux_gpio_count();
+    }
+    // Neither of the other two can be built without the indexed metadata
+    // getter, which arrived later than this plugin's minimum firmware.
+    if (s_get_metadata_uint_at == NULL) {
+        return 0u;
+    }
+    return (kind == AUX_KIND_IMG_SEL) ? aux_meta_len(ORA_METADATA_KEY_GPIO_SEL)
+                                      : aux_x_count();
+}
+
+static uint8_t aux_kind_type(uint8_t kind) {
+    switch (kind) {
+        case AUX_KIND_GPIO:    return AUX_TYPE_GPIO;
+        case AUX_KIND_IMG_SEL: return AUX_TYPE_IMG_SEL;
+        default:               return AUX_TYPE_X;
+    }
+}
+
+static uint8_t aux_group_count(void) {
+    uint8_t groups = 0u;
+    for (uint8_t kind = 0u; kind < AUX_KIND_COUNT; kind++) {
+        if (aux_kind_pins(kind) != 0u) groups++;
+    }
+    return groups;
+}
+
+// Resolve a group number to the kind it names and the pins it holds.
+//
+// Groups are numbered densely from zero, so a kind with no pins on this board
+// is skipped rather than exposed as an empty group, and the kinds after it move
+// down.  A host reads the numbering off GET_AUX_GROUP_INFO's type byte.
+static bool aux_group_kind(uint8_t group, uint8_t *kind_out, uint8_t *pins_out) {
+    uint8_t seen = 0u;
+    for (uint8_t kind = 0u; kind < AUX_KIND_COUNT; kind++) {
+        uint8_t pins = aux_kind_pins(kind);
+        if (pins == 0u) continue;
+        if (seen == group) {
+            *kind_out = kind;
+            *pins_out = pins;
+            return true;
+        }
+        seen++;
+    }
+    return false;
+}
+
+// The flags, level and driven bytes GET_AUX_PIN_INFO reports for a pin, written
+// in that order into `out` — which is the response's own first three bytes.
+// SET_AUX tests the drivable flag before driving anything.
+//
+// Every GPIO the pin reaches must be free: an X pad reaching two of them is one
+// net, so a use One ROM has for either is a use of the pad.  The level is that
+// of the first, which on such a pad is the level of both.
+#define AUX_PIN_INFO_BYTES  3u
+static void aux_pin_info(const aux_pin_t *pin, uint8_t *out) {
+    zero_bytes(out, AUX_PIN_INFO_BYTES);
+
+    bool    drivable = (pin->count > 0u);
+    uint8_t level    = 0u;
+    uint8_t driven   = 0u;
+    for (uint8_t i = 0u; i < pin->count; i++) {
+        ora_gpio_info_t info = { (uint8_t)sizeof(ora_gpio_info_t), 0u, 0u, 0u };
+        if (s_gpio_query(pin->gpio[i], &info) != ORA_RESULT_OK) {
+            return;
+        }
+        if (i == 0u) {
+            level  = info.level;
+            driven = info.is_output;
+        }
+        if (info.use != ORA_GPIO_USE_FREE) {
+            drivable = false;
+        }
+    }
+    // Written only once every GPIO has answered, so a failure part way through
+    // leaves all three bytes zero rather than a level with its flag clear.
+    out[0] = (uint8_t)(AUX_PIN_FLAG_LEVEL |
+                       (drivable ? AUX_PIN_FLAG_DRIVABLE : 0u));
+    out[1] = level;
+    out[2] = driven;
+}
+
+static bool aux_state_valid(uint8_t state) {
+    return (state == AUX_STATE_LOW) ||
+           (state == AUX_STATE_HIGH) ||
+           (state == AUX_STATE_INPUT);
+}
+
+// Validate the arguments common to the three SET_AUX commands and resolve the
+// pin they name.
+static bool aux_set_valid(
+    uint8_t state,
+    uint8_t after,
+    uint8_t hold,
+    uint8_t pin,
+    uint8_t group,
+    aux_pin_t *out
+) {
+    if (group == 0xAAu) {
+        s_log("SET_AUX failed: group value 0xAA is reserved");
+        return false;
+    }
+    uint8_t kind, pins;
+    if (!aux_group_kind(group, &kind, &pins)) {
+        s_log("SET_AUX failed: no such group %u", (unsigned)group);
+        return false;
+    }
+    if (pin >= pins) {
+        s_log("SET_AUX failed: no such pin %u in group %u",
+              (unsigned)pin, (unsigned)group);
+        return false;
+    }
+    if (!aux_state_valid(state)) {
+        s_log("SET_AUX failed: state 0x%02X undefined", (unsigned)state);
+        return false;
+    }
+    if (hold != 0u) {
+        if (hold > aux_max_hold()) {
+            s_log("SET_AUX failed: hold %u exceeds maximum %u",
+                  (unsigned)hold, (unsigned)aux_max_hold());
+            return false;
+        }
+        if (!aux_state_valid(after)) {
+            s_log("SET_AUX failed: after 0x%02X undefined", (unsigned)after);
+            return false;
+        }
+    }
+    if (!aux_pin_gpios(kind, pin, out)) {
+        return false;
+    }
+
+    uint8_t info[AUX_PIN_INFO_BYTES];
+    aux_pin_info(out, info);
+    if ((info[0] & AUX_PIN_FLAG_DRIVABLE) == 0u) {
+        s_log("SET_AUX failed: pin %u of group %u is not drivable",
+              (unsigned)pin, (unsigned)group);
+        return false;
+    }
+    return true;
+}
+
+static bool aux_pin_drive(const aux_pin_t *pin, uint8_t state) {
+    for (uint8_t i = 0u; i < pin->count; i++) {
+        if (s_gpio_set(pin->gpio[i], state, 0u) != ORA_RESULT_OK) {
+            s_log("SET_AUX failed: cannot drive GPIO %u", (unsigned)pin->gpio[i]);
+            return false;
+        }
+    }
+    return true;
+}
+
+// Spin until the hold has elapsed, then apply `after`.
+//
+// The plugin has no task loop, so a hold is the command handler waiting, and
+// RBCP is unresponsive until it ends.  Bus activity arriving meanwhile is
+// discarded: cmd_end resets the ring read index immediately before it signals
+// completion.  Unsigned subtraction is what stays correct across the counter's
+// 49.7 day wrap.
+static void aux_hold(
+    const aux_pin_t *pin,
+    uint8_t after,
+    uint8_t hold,
+    uint32_t start_ms
+) {
+    uint32_t hold_ms = (uint32_t)hold * 10u;
+    while ((s_uptime_ms() - start_ms) < hold_ms) {
+        ORA_TEST_YIELD();
+    }
+    (void)aux_pin_drive(pin, after);
+}
+
+static bool exec_get_aux_capability(void) {
+    if (s_state.cfg.data_size < 8u) {
+        s_log("GET_AUX_CAPABILITY failed: data section too small");
+        return false;
+    }
+
+    uint8_t resp[8];
+    zero_bytes(resp, sizeof(resp));
+    resp[0] = aux_group_count();
+    resp[1] = aux_max_hold();
+
+    data_write(s_state.active_slot, 0u, resp, sizeof(resp));
+    s_log("GET_AUX_CAPABILITY: groups=%u max_hold=%u",
+          (unsigned)resp[0], (unsigned)resp[1]);
+    return true;
+}
+
+static bool exec_get_aux_group_info(void) {
+    uint8_t group = ring_read_byte();
+
+    s_log("GET_AUX_GROUP_INFO: group=%u", (unsigned)group);
+
+    if (s_state.cfg.data_size < 8u) {
+        s_log("GET_AUX_GROUP_INFO failed: data section too small");
+        return false;
+    }
+    if (group == 0xAAu) {
+        s_log("GET_AUX_GROUP_INFO failed: group value 0xAA is reserved");
+        return false;
+    }
+    uint8_t kind, pins;
+    if (!aux_group_kind(group, &kind, &pins)) {
+        s_log("GET_AUX_GROUP_INFO failed: no such group");
+        return false;
+    }
+
+    uint8_t resp[8];
+    zero_bytes(resp, sizeof(resp));
+    resp[0] = aux_kind_type(kind);
+    resp[1] = pins;
+
+    data_write(s_state.active_slot, 0u, resp, sizeof(resp));
+    return true;
+}
+
+static bool exec_get_aux_pin_info(void) {
+    uint8_t pin   = ring_read_byte();
+    uint8_t group = ring_read_byte();
+
+    s_log("GET_AUX_PIN_INFO: pin=%u group=%u", (unsigned)pin, (unsigned)group);
+
+    if (s_state.cfg.data_size < 8u) {
+        s_log("GET_AUX_PIN_INFO failed: data section too small");
+        return false;
+    }
+    if (group == 0xAAu) {
+        s_log("GET_AUX_PIN_INFO failed: group value 0xAA is reserved");
+        return false;
+    }
+    uint8_t kind, pins;
+    if (!aux_group_kind(group, &kind, &pins)) {
+        s_log("GET_AUX_PIN_INFO failed: no such group");
+        return false;
+    }
+    aux_pin_t target;
+    if ((pin >= pins) || !aux_pin_gpios(kind, pin, &target)) {
+        s_log("GET_AUX_PIN_INFO failed: no such pin");
+        return false;
+    }
+
+    uint8_t resp[8];
+    zero_bytes(resp, sizeof(resp));
+    aux_pin_info(&target, resp);
+
+    data_write(s_state.active_slot, 0u, resp, sizeof(resp));
+    return true;
+}
+
+static bool exec_set_aux(void) {
+    uint8_t state = ring_read_byte();
+    uint8_t after = ring_read_byte();
+    uint8_t hold  = ring_read_byte();
+    uint8_t pin   = ring_read_byte();
+    uint8_t group = ring_read_byte();
+
+    s_log("SET_AUX: st=%u af=%u hd=%u pin=%u grp=%u", (unsigned)state,
+          (unsigned)after, (unsigned)hold, (unsigned)pin, (unsigned)group);
+
+    aux_pin_t target;
+    if (!aux_set_valid(state, after, hold, pin, group, &target)) {
+        return false;
+    }
+
+    uint32_t start_ms = (hold != 0u) ? s_uptime_ms() : 0u;
+    if (!aux_pin_drive(&target, state)) {
+        return false;
+    }
+    if (hold != 0u) {
+        aux_hold(&target, after, hold, start_ms);
+    }
+    return true;
+}
+
+static bool exec_set_aux_and_exit(void) {
+    bool ok = exec_set_aux();
+    s_state.active = false;
+    return ok;
+}
+
+static bool exec_set_aux_switch_exit(void) {
+    uint8_t state = ring_read_byte();
+    uint8_t after = ring_read_byte();
+    uint8_t hold  = ring_read_byte();
+    uint8_t flags = ring_read_byte();
+    uint8_t pin   = ring_read_byte();
+    uint8_t group = ring_read_byte();
+    uint8_t slot  = ring_read_byte();
+
+    // Terminal whatever follows, including the reserved 0xAA slot below, where
+    // neither operation happens but the exit still does.
+    s_state.active = false;
+
+    s_log("SET_AUX_SWITCH_EXIT: st=%u af=%u hd=%u fl=0x%02X pin=%u grp=%u sl=%u",
+          (unsigned)state, (unsigned)after, (unsigned)hold, (unsigned)flags,
+          (unsigned)pin, (unsigned)group, (unsigned)slot);
+
+    if (slot == 0xAAu) {
+        s_log("SET_AUX_SWITCH_EXIT failed: slot value 0xAA is reserved");
+        return false;
+    }
+    if ((flags & (uint8_t)~AUX_SWITCH_FLAG_SLOT_FIRST) != 0u) {
+        s_log("SET_AUX_SWITCH_EXIT failed: reserved flag bits set");
+        return false;
+    }
+    if (!host_slot_valid(slot)) {
+        s_log("SET_AUX_SWITCH_EXIT failed: slot %u is not one the host may name",
+              (unsigned)slot);
+        return false;
+    }
+
+    aux_pin_t target;
+    if (!aux_set_valid(state, after, hold, pin, group, &target)) {
+        return false;
+    }
+
+    bool     slot_first = (flags & AUX_SWITCH_FLAG_SLOT_FIRST) != 0u;
+    uint32_t start_ms   = 0u;
+
+    if (slot_first && (s_set_active_ram_slot(slot) != ORA_RESULT_OK)) {
+        return false;
+    }
+    if (hold != 0u) {
+        start_ms = s_uptime_ms();
+    }
+    if (!aux_pin_drive(&target, state)) {
+        return false;
+    }
+    if (!slot_first && (s_set_active_ram_slot(slot) != ORA_RESULT_OK)) {
+        return false;
+    }
+    if (hold != 0u) {
+        // Timed from the pin being driven, so under set-first ordering a switch
+        // that takes longer than the hold delays `after` until it is done.
+        aux_hold(&target, after, hold, start_ms);
+    }
+    return true;
+}
+
+// ---------------------------------------------------------------------------
+// LEDs
+// ---------------------------------------------------------------------------
+
+// The LED calls arrived in firmware 0.7.2, later than this plugin's
+// min_fw_version, so either may be NULL.  Looked up where they are used rather
+// than cached, as this group costs the plugin no state of its own.
+//
+// Only ORA_ID_LED_SET is tested here.  A missing ORA_ID_LED_GET takes every
+// channel away in led_ora_state(), which leaves the count at zero by itself.
+static bool led_available(void) {
+    return s_lookup(ORA_ID_LED_SET) != NULL;
+}
+
+// Read one ORA channel's state.  False where there is no LED engine to ask, or
+// the channel is not one this firmware knows.
+static bool led_ora_state(uint8_t ora_led, ora_led_state_t *out) {
+    ora_led_get_fn_t get = s_lookup(ORA_ID_LED_GET);
+    if (get == NULL) {
+        return false;
+    }
+    zero_bytes((uint8_t *)out, (uint8_t)sizeof(*out));
+    out->size = (uint8_t)sizeof(*out);
+    return get(ora_led, out) == ORA_RESULT_OK;
+}
+
+// LEDs this device has.  RBCP numbers only those, contiguously from zero, while
+// ORA numbers channels whether the board carries them or not - so the count is
+// of the channels reporting present.
+static uint8_t led_count(void) {
+    if (!led_available()) {
+        return 0u;
+    }
+    ora_led_state_t st;
+    uint8_t n = 0u;
+    for (uint8_t ch = 0u; ch <= LED_ORA_LAST; ch++) {
+        if (led_ora_state(ch, &st) && (st.present != 0u)) {
+            n++;
+        }
+    }
+    return n;
+}
+
+// Resolve an RBCP LED number to the ORA channel it names, and its state.
+static bool led_resolve(uint8_t led, uint8_t *ora_out, ora_led_state_t *state) {
+    if (!led_available()) {
+        return false;
+    }
+    uint8_t n = 0u;
+    for (uint8_t ch = 0u; ch <= LED_ORA_LAST; ch++) {
+        if (!led_ora_state(ch, state) || (state->present == 0u)) {
+            continue;
+        }
+        if (n == led) {
+            *ora_out = ch;
+            return true;
+        }
+        n++;
+    }
+    return false;
+}
+
+static uint8_t led_modes(uint8_t ora_led) {
+    return (ora_led == ORA_LED_RGB) ? (uint8_t)LED_MODES_RGB
+                                    : (uint8_t)LED_MODES_MONO;
+}
+
+// Map an RBCP mode onto the firmware's, refusing one this LED does not support.
+// The bitmap says what is supported and the switch says how it is numbered:
+// two separate facts, so neither is derived from the other.
+static bool led_ora_mode(uint8_t ora_led, uint8_t mode, uint8_t *out) {
+    if (mode == LED_MODE_FLAME) {
+        *out = ORA_LED_MODE_FLAME;
+        return true;
+    }
+    if ((mode > 7u) || ((led_modes(ora_led) & (uint8_t)(1u << mode)) == 0u)) {
+        return false;
+    }
+    switch (mode) {
+        case LED_MODE_OFF:     *out = ORA_LED_MODE_OFF;     return true;
+        case LED_MODE_ON:      *out = ORA_LED_MODE_ON;      return true;
+        case LED_MODE_BLINK:   *out = ORA_LED_MODE_BLINK;   return true;
+        case LED_MODE_BREATHE: *out = ORA_LED_MODE_BREATHE; return true;
+        case LED_MODE_CYCLE:   *out = ORA_LED_MODE_CYCLE;   return true;
+        case LED_MODE_BEACON:  *out = ORA_LED_MODE_BEACON;  return true;
+        default:               return false;
+    }
+}
+
+static uint8_t led_rbcp_mode(uint8_t ora_mode) {
+    switch (ora_mode) {
+        case ORA_LED_MODE_OFF:     return LED_MODE_OFF;
+        case ORA_LED_MODE_ON:      return LED_MODE_ON;
+        case ORA_LED_MODE_BLINK:   return LED_MODE_BLINK;
+        case ORA_LED_MODE_BREATHE: return LED_MODE_BREATHE;
+        case ORA_LED_MODE_CYCLE:   return LED_MODE_CYCLE;
+        case ORA_LED_MODE_BEACON:  return LED_MODE_BEACON;
+        case ORA_LED_MODE_FLAME:   return LED_MODE_FLAME;
+        default:                   return LED_MODE_INVALID;
+    }
+}
+
+// Milliseconds to the protocol's 100ms units, nearest and saturating.  Nothing
+// the firmware runs has a period under 50ms, so only a period of none rounds
+// to zero - which is what the protocol reads as no period in force.
+static uint8_t led_period_units(uint16_t period_ms) {
+    uint32_t units = ((uint32_t)period_ms + 50u) / 100u;
+    return (units > 0xFFu) ? 0xFFu : (uint8_t)units;
+}
+
+// The shortest period a mode accepts, in milliseconds, or zero for a mode that
+// takes no period.  The firmware bounds each repeating mode separately and the
+// bound is not reachable through ORA, so the values come from the same metadata
+// constants ora_led_set validates against.
+static uint16_t led_min_period_ms(uint8_t ora_mode) {
+    switch (ora_mode) {
+        case ORA_LED_MODE_CYCLE:   return LED_CYCLE_MIN_PERIOD_MS;
+        case ORA_LED_MODE_BREATHE: return LED_BREATHE_MIN_PERIOD_MS;
+        case ORA_LED_MODE_BLINK:   return LED_BLINK_MIN_PERIOD_MS;
+        case ORA_LED_MODE_BEACON:  return LED_BEACON_MIN_PERIOD_MS;
+        case ORA_LED_MODE_FLAME:   return LED_FLAME_MIN_PERIOD_MS;
+        default:                   return 0u;
+    }
+}
+
+// The floor as the protocol reports it: whole 100ms units, rounded up so that
+// the value named is one the firmware accepts.  A floor of one unit or less is
+// reported as zero, one being the smallest period a host can ask for anyway.
+static uint8_t led_min_period_units(uint8_t ora_mode) {
+    uint32_t units = ((uint32_t)led_min_period_ms(ora_mode) + 99u) / 100u;
+    return (units > 1u) ? (uint8_t)units : 0u;
+}
+
+static bool exec_get_led_capability(void) {
+    if (s_state.cfg.data_size < 8u) {
+        s_log("GET_LED_CAPABILITY failed: data section too small");
+        return false;
+    }
+
+    uint8_t resp[8];
+    zero_bytes(resp, sizeof(resp));
+    resp[0] = led_count();
+    if (resp[0] != 0u) {
+        resp[1] = LED_MAX_PERIOD;
+        resp[2] = LED_MAX_HOLD;
+    }
+
+    data_write(s_state.active_slot, 0u, resp, sizeof(resp));
+    s_log("GET_LED_CAPABILITY: count=%u", (unsigned)resp[0]);
+    return true;
+}
+
+static bool exec_get_led_info(void) {
+    uint8_t led = ring_read_byte();
+
+    if (s_state.cfg.data_size < 16u) {
+        s_log("GET_LED_INFO failed: data section too small");
+        return false;
+    }
+    if (led == 0xAAu) {
+        s_log("GET_LED_INFO failed: LED value 0xAA is reserved");
+        return false;
+    }
+    uint8_t ora_led;
+    ora_led_state_t st;
+    if (!led_resolve(led, &ora_led, &st)) {
+        s_log("GET_LED_INFO failed: no such LED %u", (unsigned)led);
+        return false;
+    }
+
+    uint8_t resp[16];
+    zero_bytes(resp, sizeof(resp));
+    resp[0] = (ora_led == ORA_LED_RGB) ? LED_TYPE_RGB : LED_TYPE_MONO;
+    resp[1] = led_rbcp_mode(st.mode);
+    if (ora_led == ORA_LED_RGB) {
+        resp[2] = st.red;
+        resp[3] = st.green;
+        resp[4] = st.blue;
+        resp[5] = st.brightness;
+    } else {
+        resp[2] = LED_STATUS_RED;
+    }
+    resp[6] = led_period_units(st.period_ms);
+    resp[8] = led_modes(ora_led);
+
+    data_write(s_state.active_slot, 0u, resp, sizeof(resp));
+    s_log("GET_LED_INFO: led=%u type=%u mode=%u",
+          (unsigned)led, (unsigned)resp[0], (unsigned)resp[1]);
+    return true;
+}
+
+static bool exec_get_led_mode_info(void) {
+    uint8_t mode = ring_read_byte();
+    uint8_t led  = ring_read_byte();
+
+    if (s_state.cfg.data_size < 8u) {
+        s_log("GET_LED_MODE_INFO failed: data section too small");
+        return false;
+    }
+    if (led == 0xAAu) {
+        s_log("GET_LED_MODE_INFO failed: LED value 0xAA is reserved");
+        return false;
+    }
+    uint8_t ora_led;
+    ora_led_state_t st;
+    if (!led_resolve(led, &ora_led, &st)) {
+        s_log("GET_LED_MODE_INFO failed: no such LED %u", (unsigned)led);
+        return false;
+    }
+    uint8_t ora_mode;
+    if (!led_ora_mode(ora_led, mode, &ora_mode)) {
+        s_log("GET_LED_MODE_INFO failed: LED %u does not support mode 0x%02X",
+              (unsigned)led, (unsigned)mode);
+        return false;
+    }
+
+    uint8_t resp[8];
+    zero_bytes(resp, sizeof(resp));
+    if (led_min_period_ms(ora_mode) != 0u) {
+        // Every mode the firmware gives a floor to is one that repeats, and
+        // only a repeating mode takes a period.
+        resp[0] = LED_MODE_FLAG_PERIOD;
+        resp[1] = led_min_period_units(ora_mode);
+    }
+
+    data_write(s_state.active_slot, 0u, resp, sizeof(resp));
+    s_log("GET_LED_MODE_INFO: led=%u mode=0x%02X flags=%u min=%u", (unsigned)led,
+          (unsigned)mode, (unsigned)resp[0], (unsigned)resp[1]);
+    return true;
+}
+
+// The device times the hold, and this command does not wait for it - unlike
+// SET_AUX, which spins.  The firmware's engine runs the hold from a timer and
+// puts back what the LED was doing when it ends, which is what lets the hold
+// outlive the session.
+static bool exec_set_led(void) {
+    uint8_t mode       = ring_read_byte();
+    uint8_t red        = ring_read_byte();
+    uint8_t green      = ring_read_byte();
+    uint8_t blue       = ring_read_byte();
+    uint8_t brightness = ring_read_byte();
+    uint8_t period     = ring_read_byte();
+    uint8_t hold       = ring_read_byte();
+    uint8_t led        = ring_read_byte();
+
+    if (led == 0xAAu) {
+        s_log("SET_LED failed: LED value 0xAA is reserved");
+        return false;
+    }
+    uint8_t ora_led;
+    ora_led_state_t st;  // led_resolve's working room; SET_LED reads none of it
+    if (!led_resolve(led, &ora_led, &st)) {
+        s_log("SET_LED failed: no such LED %u", (unsigned)led);
+        return false;
+    }
+    uint8_t ora_mode;
+    if (!led_ora_mode(ora_led, mode, &ora_mode)) {
+        s_log("SET_LED failed: LED %u does not support mode 0x%02X",
+              (unsigned)led, (unsigned)mode);
+        return false;
+    }
+    if (brightness > 100u) {
+        s_log("SET_LED failed: brightness %u above 100", (unsigned)brightness);
+        return false;
+    }
+    // Period and hold need no range check: LED_MAX_PERIOD and LED_MAX_HOLD are
+    // the byte's whole range, so no value a host can send exceeds them.
+
+    ora_led_set_fn_t set = s_lookup(ORA_ID_LED_SET);
+    ora_led_request_t req;
+    zero_bytes((uint8_t *)&req, (uint8_t)sizeof(req));
+    req.size       = (uint8_t)sizeof(req);
+    req.led        = ora_led;
+    req.mode       = ora_mode;
+    req.brightness = brightness;
+    req.red        = red;
+    req.green      = green;
+    req.blue       = blue;
+    req.period_ms  = (uint16_t)((uint16_t)period * 100u);
+    req.hold_ms    = (uint32_t)hold * 100u;
+
+    if (set(&req) != ORA_RESULT_OK) {
+        s_log("SET_LED failed: engine refused LED %u mode 0x%02X period %u",
+              (unsigned)led, (unsigned)mode, (unsigned)period);
+        return false;
+    }
+    s_log("SET_LED: led=%u mode=0x%02X hold=%u", (unsigned)led,
+          (unsigned)mode, (unsigned)hold);
+    return true;
+}
+
+// ---------------------------------------------------------------------------
 // Command dispatch
 // ---------------------------------------------------------------------------
 
@@ -1330,6 +2551,31 @@ static uint8_t cmd_arg_count(uint8_t group, uint8_t cmd) {
             default:                      return 0u;
         }
     }
+    if (group == GRP_PIPES) {
+        switch (cmd) {
+            case CMD_GET_PIPE_INFO:       return 1u;
+            case CMD_PIPE_WRITE:          return 6u;
+            default:                      return 0u;
+        }
+    }
+    if (group == GRP_AUX) {
+        switch (cmd) {
+            case CMD_GET_AUX_GROUP_INFO:  return 1u;
+            case CMD_GET_AUX_PIN_INFO:    return 2u;
+            case CMD_SET_AUX:             return 5u;
+            case CMD_SET_AUX_AND_EXIT:    return 5u;
+            case CMD_SET_AUX_SWITCH_EXIT: return 7u;
+            default:                      return 0u;
+        }
+    }
+    if (group == GRP_LED) {
+        switch (cmd) {
+            case CMD_GET_LED_INFO:        return 1u;
+            case CMD_GET_LED_MODE_INFO:   return 2u;
+            case CMD_SET_LED:             return 8u;
+            default:                      return 0u;
+        }
+    }
     return 0u;
 }
 
@@ -1342,8 +2588,13 @@ static void discard_args(uint8_t count) {
 
 // True for the commands the specification requires to leave the response
 // header untouched: RBCP_RESET ("there is never any response from this
-// command"), EXIT_CMD_RESP_SILENT and SWITCH_AND_EXIT (both "without updating
-// the response header").
+// command"), EXIT_CMD_RESP_SILENT, SWITCH_AND_EXIT, LOAD_AND_EXIT,
+// EXIT_CMD_RESP_RESTORE, SET_AUX_AND_EXIT and SET_AUX_SWITCH_EXIT (all
+// "without updating the response header").
+//
+// LOAD_AND_EXIT and EXIT_CMD_RESP_RESTORE are the two that need it most: each
+// exists to leave the region byte-perfect, and a header write after the
+// command had run would be the very damage they undo.
 //
 // Decided from GROUP and CMD alone, before the command runs.  Every other
 // command needs cmd_begin to run *before* it is processed — that ordering is
@@ -1354,7 +2605,13 @@ static bool cmd_is_silent(uint8_t group, uint8_t cmd) {
         return cmd == CMD_RBCP_RESET;
     }
     if (group == GRP_CONTROL) {
-        return (cmd == CMD_EXIT_CMD_RESP_SILENT) || (cmd == CMD_SWITCH_AND_EXIT);
+        return (cmd == CMD_EXIT_CMD_RESP_SILENT) ||
+               (cmd == CMD_SWITCH_AND_EXIT) ||
+               (cmd == CMD_LOAD_AND_EXIT) ||
+               (cmd == CMD_EXIT_CMD_RESP_RESTORE);
+    }
+    if (group == GRP_AUX) {
+        return (cmd == CMD_SET_AUX_AND_EXIT) || (cmd == CMD_SET_AUX_SWITCH_EXIT);
     }
     return false;
 }
@@ -1398,6 +2655,15 @@ static bool dispatch(
                     ok             = exec_switch_slot();
                     s_state.active = false;
                     break;
+                case CMD_LOAD_AND_EXIT:
+                    // Reload then exit silently.  active_slot is not updated:
+                    // the slot being served does not change, and no
+                    // back-channel write follows this command.
+                    ok = exec_load_and_exit();
+                    break;
+                case CMD_EXIT_CMD_RESP_RESTORE:
+                    ok = exec_exit_cmd_resp_restore();
+                    break;
                 default:
                     // Unknown command: no args consumed.  This will desync the
                     // session; the best the host can do is re-knock.
@@ -1438,6 +2704,9 @@ static bool dispatch(
                     break;
                 case CMD_SLOT_PEEK:
                     ok = exec_slot_peek();
+                    break;
+                case CMD_GET_BOOT_SLOT_INFO:
+                    ok = exec_get_boot_slot_info();
                     break;
                 default:
                     ok = false;
@@ -1513,6 +2782,90 @@ static bool dispatch(
             }
             break;
 
+        case GRP_PIPES:
+            // "All commands in this group are valid in command-response mode
+            // only."  Consume the frame, then discard it.
+            if (!s_state.active) {
+                discard_args(cmd_arg_count(group, cmd));
+                ok = false;
+                break;
+            }
+            switch (cmd) {
+                case CMD_GET_PIPE_CAPABILITY:
+                    ok = exec_get_pipe_capability();
+                    break;
+                case CMD_GET_PIPE_INFO:
+                    ok = exec_get_pipe_info();
+                    break;
+                case CMD_PIPE_WRITE:
+                    ok = exec_pipe_write();
+                    break;
+                default:
+                    ok = false;
+                    break;
+            }
+            break;
+
+        case GRP_AUX:
+            // "All commands in this group are valid in command-response mode
+            // only."  Consume the frame, then discard it.
+            if (!s_state.active) {
+                discard_args(cmd_arg_count(group, cmd));
+                ok = false;
+                break;
+            }
+            switch (cmd) {
+                case CMD_GET_AUX_CAPABILITY:
+                    ok = exec_get_aux_capability();
+                    break;
+                case CMD_GET_AUX_GROUP_INFO:
+                    ok = exec_get_aux_group_info();
+                    break;
+                case CMD_GET_AUX_PIN_INFO:
+                    ok = exec_get_aux_pin_info();
+                    break;
+                case CMD_SET_AUX:
+                    ok = exec_set_aux();
+                    break;
+                case CMD_SET_AUX_AND_EXIT:
+                    ok = exec_set_aux_and_exit();
+                    break;
+                case CMD_SET_AUX_SWITCH_EXIT:
+                    ok = exec_set_aux_switch_exit();
+                    break;
+                default:
+                    ok = false;
+                    break;
+            }
+            break;
+
+        case GRP_LED:
+            // "All commands in this group are valid in command-response mode
+            // only."  Consume the frame, then discard it.
+            if (!s_state.active) {
+                discard_args(cmd_arg_count(group, cmd));
+                ok = false;
+                break;
+            }
+            switch (cmd) {
+                case CMD_GET_LED_CAPABILITY:
+                    ok = exec_get_led_capability();
+                    break;
+                case CMD_GET_LED_INFO:
+                    ok = exec_get_led_info();
+                    break;
+                case CMD_GET_LED_MODE_INFO:
+                    ok = exec_get_led_mode_info();
+                    break;
+                case CMD_SET_LED:
+                    ok = exec_set_led();
+                    break;
+                default:
+                    ok = false;
+                    break;
+            }
+            break;
+
         case GRP_RESET:
             switch (cmd) {
                 case CMD_RBCP_RESET:
@@ -1533,7 +2886,14 @@ static bool dispatch(
     }
 
     if (!ok) {
-        s_log("CMD g=0x%02x c=0x%02x failed", group, cmd);
+        if (group == GRP_PIPES) {
+            // A failure here is ordinary traffic, most often a full channel,
+            // and s_log writes the same channel the host is reading - so this
+            // report would land in the middle of the host's own output.
+            s_debug_log("CMD g=0x%02x c=0x%02x failed", group, cmd);
+        } else {
+            s_log("CMD g=0x%02x c=0x%02x failed", group, cmd);
+        }
     }
 
     return ok;
@@ -1573,14 +2933,14 @@ static bool run_command(uint8_t group, uint8_t cmd) {
         // Normal Command-Response mode: complete the processing sequence.
         // s_state.active_slot may have been updated by CMD_SWITCH_SLOT
         // inside dispatch, so use the current cached value.
-        cmd_end(s_state.active_slot, ok);
+        cmd_end(s_state.active_slot, ok, false);
     } else if (!was_active && now_active) {
         // ENTER_CMD_RESP: the device has just transitioned into
         // Command-Response mode.  s_state.active_slot is now valid.
         // Write the initial response so the host can confirm entry by
         // polling the token and progress fields.
         cmd_begin(s_state.active_slot, group, cmd);
-        cmd_end(s_state.active_slot, ok);
+        cmd_end(s_state.active_slot, ok, true);
     }
     
     if (was_active && !now_active) {
@@ -1618,6 +2978,22 @@ __attribute__((noinline)) static void rbcp_setup(
     s_map_addr_to_phys     = ora_lookup_fn(ORA_ID_MAP_ADDR_TO_PHYS);
     s_map_data_to_phys     = ora_lookup_fn(ORA_ID_MAP_DATA_TO_PHYS);
     s_demangle_data        = ora_lookup_fn(ORA_ID_DEMANGLE_DATA);
+    s_debug_log            = ora_lookup_fn(ORA_ID_DEBUG_LOG);
+
+    // The log channel family arrived in firmware 0.7.2, later than this
+    // plugin's min_fw_version, so these three may be NULL.  Nothing here checks
+    // for that - pipe_count() does, once, and reports no pipes.
+    s_log_open_write       = ora_lookup_fn(ORA_ID_LOG_OPEN_WRITE);
+    s_log_write            = ora_lookup_fn(ORA_ID_LOG_WRITE);
+    s_log_query            = ora_lookup_fn(ORA_ID_LOG_QUERY);
+
+    // As with the log channels, these may be NULL - the Auxiliary I/O group
+    // reports less rather than the plugin refusing to run.
+    s_gpio_set             = ora_lookup_fn(ORA_ID_GPIO_SET);
+    s_gpio_query           = ora_lookup_fn(ORA_ID_GPIO_QUERY);
+    s_get_metadata_uint    = ora_lookup_fn(ORA_ID_GET_METADATA_UINT);
+    s_get_metadata_uint_at = ora_lookup_fn(ORA_ID_GET_METADATA_UINT_AT);
+    s_uptime_ms            = ora_lookup_fn(ORA_ID_GET_PLUGIN_UPTIME_MS);
 
     ora_start_address_monitor_fn_t start_address_monitor =
         ora_lookup_fn(ORA_ID_START_ADDRESS_MONITOR);
@@ -1630,6 +3006,7 @@ __attribute__((noinline)) static void rbcp_setup(
     s_log("RBCP plugin starting");
 
     init_rbcp(true);
+    init_boot_slots();
 
     // The observed-address geometry is fixed for the served ROM type, so read
     // the unobserved-LSB count once here and cache the value rather than the
@@ -1684,11 +3061,55 @@ __attribute__((noinline)) static void rbcp_setup(
 // Plugin entry point
 // ---------------------------------------------------------------------------
 
+// Place the plugin's initialised data and clear its zeroed data.
+//
+// A plugin owns its own RAM sections (see firmware/ora/plugin.h), and the
+// static RAM it is handed holds whatever the firmware last left there - so a
+// static relying on zero initialisation starts with garbage in it.
+//
+// A host test build's data belongs to the host process, and these symbols do
+// not exist there, so the body is compiled out rather than skipped at run time.
+static void init_data_bss(void) {
+#if !defined(ORA_HOST_TEST)
+    extern uint32_t __ramfunc_start;
+    extern uint32_t __ramfunc_end;
+    extern uint32_t __ramfunc_load;
+    extern uint32_t __data_start;
+    extern uint32_t __data_end;
+    extern uint32_t __data_load;
+    extern uint32_t __bss_start;
+    extern uint32_t __bss_end;
+
+    // Copy .ramfunc from LMA (flash) to VMA (RAM)
+    uint32_t *src = &__ramfunc_load;
+    uint32_t *dst = &__ramfunc_start;
+    while (dst < &__ramfunc_end) {
+        *dst++ = *src++;
+    }
+
+    // Copy .data from LMA (flash) to VMA (RAM)
+    src = &__data_load;
+    dst = &__data_start;
+    while (dst < &__data_end) {
+        *dst++ = *src++;
+    }
+
+    // Zero .bss
+    dst = &__bss_start;
+    while (dst < &__bss_end) {
+        *dst++ = 0;
+    }
+#endif // !ORA_HOST_TEST
+}
+
 void rbcp_main(
     ora_lookup_fn_t         ora_lookup_fn,
     ora_plugin_type_t       plugin_type,
     const ora_entry_args_t *entry_args
 ) {
+    // Before anything reads a static.
+    init_data_bss();
+
     (void)plugin_type;
     (void)entry_args;
 

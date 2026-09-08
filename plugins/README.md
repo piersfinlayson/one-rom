@@ -96,15 +96,15 @@ You should save this off the in the `onerom-config/user/` directory, and then re
 
 ### Building and Flashing Firmware
 
-The recommended build scripts are documented in the [Scripts README](../scripts/README.md).  In particular, you can use `scripts/onerom.sh` to build a firmware image that includes the plugins, and optionally flash it to a connected One ROM device using a connected SWD probe:
+Build a firmware image containing the plugins and flash it with the CLI:
 
 ```bash
-scripts/onerom.sh -d -l -f fire-24-e onerom-config/user/24-plugin.json
+onerom program --config onerom-config/28-c64c.json --plugin usb --plugin rgb
 ```
 
-Alternatively, omit the `-f` flag to build it and upload the created `.bin` or `.elf` file to One ROM Web or Studio to flash to the device.
+Add `--out <file>` to keep the composed image, or use `onerom firmware build` to compose one without flashing, for uploading to One ROM Web or Studio.
 
-`-l` and `-d` enable logging and debug logging respectively, which can be helpful when developing and testing plugins.
+Plugin logging needs a firmware built with `PLUGIN_LOGGING=1`, and `DEBUG_LOGGING=1` adds the verbose messages.  See [Logging](../docs/LOGGING.md) for reading the output.
 
 ### Testing
 

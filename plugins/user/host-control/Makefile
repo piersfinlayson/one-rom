@@ -9,7 +9,7 @@ OBJDUMP := $(if $(TOOLCHAIN),$(TOOLCHAIN)/arm-none-eabi-objdump,arm-none-eabi-ob
 
 MAJOR_VERSION := 0
 MINOR_VERSION := 1
-PATCH_VERSION := 2
+PATCH_VERSION := 3
 BUILD_VERSION := 0
 
 ORA_DIR := ../../../firmware/ora
@@ -43,7 +43,6 @@ CFLAGS := -mcpu=cortex-m33 -mthumb -mfloat-abi=hard -mfpu=fpv5-sp-d16 \
 
 LDFLAGS := -nostdlib \
            -T host_control_plugin.ld \
-           -Wl,--defsym,PLUGIN_TYPE=0 \
            -Wl,--fatal-warnings \
 		   -Wl,--no-warn-rwx-segments \
            -Wl,-Map=$(BUILD_DIR)/$(PLUGIN_PREFIX).map
@@ -75,10 +74,17 @@ ALL_OBJ    := $(PLUGIN_OBJ) $(FLASH_ERASE_OBJ)
 # ---------------------------------------------------------------------------
 
 HOST_CC          ?= cc
-HOST_BUILD_DIR   := build-host
+HOST_BUILD_DIR   ?= build-host
 HOST_OBJ         := $(HOST_BUILD_DIR)/host_control_main.o
 HOST_FLASH_ERASE := $(HOST_BUILD_DIR)/flash_erase.o
 HOST_ALL_OBJ     := $(HOST_OBJ) $(HOST_FLASH_ERASE)
+
+# Extra flags for the host objects, and the directory they land in.  A
+# coverage build sets both: --coverage here, and a build directory of its own.
+# The two must not share a directory, because nothing here compares the flags
+# an existing object was built with - a coverage run that reused
+# uninstrumented objects would report no coverage rather than fail.
+HOST_EXTRA_CFLAGS ?=
 
 HOST_CFLAGS := -DORA_HOST_TEST=1 -DTEST_BUILD=1 -fshort-enums \
                -O1 -g -Wall -Wextra -Werror \
@@ -86,7 +92,7 @@ HOST_CFLAGS := -DORA_HOST_TEST=1 -DTEST_BUILD=1 -fshort-enums \
                -DPATCH_VERSION=$(PATCH_VERSION) -DBUILD_VERSION=$(BUILD_VERSION) \
                $(SDRR_INCLUDE) $(ORA_INCLUDE) $(PLUGIN_INCLUDE) \
                -Iinclude \
-               -MMD -MP
+               -MMD -MP $(HOST_EXTRA_CFLAGS)
 
 .PHONY: all clean distclean host clean-host
 
@@ -141,4 +147,6 @@ clean: clean-host
 
 distclean: clean
 
--include $(ALL_OBJ:.o=.d)
+# The host objects are listed too, or a header change would rebuild nothing on
+# the host side and a test would go on asserting against the last build.
+-include $(ALL_OBJ:.o=.d) $(HOST_ALL_OBJ:.o=.d)

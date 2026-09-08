@@ -63,12 +63,14 @@ cargo publish -p onerom-protocol
 
 ---
 
-Publish `onerom-config` to crates.io:
+Publish `onerom-config` to crates.io.  Its build script writes into `src/` and
+`../../docs/CHIP-TYPES.md`, which the verification build rejects, so this one
+needs `--no-verify` - and for the same reason `--dry-run` cannot be used to
+rehearse it:
 
 ```bash
 cd rust
-cargo publish --dry-run -p onerom-config
-cargo publish -p onerom-config
+cargo publish --no-verify -p onerom-config
 ```
 
 Update links to and `onerom-config` in others to use the crates.io versions.
@@ -144,9 +146,20 @@ cargo publish --dry-run -p onerom-cli
 cargo publish -p onerom-cli
 ```
 
+The CLI **binary** releases on its own cycle, following
+[rust/cli/README.md](/rust/cli/README.md).  The CLI manual PDF is published by
+that release rather than this one, since the manual moves with the CLI version.
+
 ---
 
 If on a branch, submit a pull request and merge it into main.
+
+## Plugins
+
+Build and release any plugins whose version changed this cycle, following
+[plugins/RELEASE.md](/plugins/RELEASE.md).  Build them individually rather than
+with `build-release-all.sh` unless every plugin is being released, since that
+script stages every plugin carrying a `plugin-meta.json`.
 
 Tag the version in git:
 
@@ -178,3 +191,19 @@ git push origin v<x.y.z>
   - Ensure the image exists at `one-rom-images/vx.y.z/fire/rp2350/firmware.bin`
   - Commit and push changes to `one-rom-images` repo
   - Test using Studio
+- Update the documentation PDFs in `one-rom-images`
+  - Install the documentation toolchain once with `ci/install-doc-tools.sh`, and
+    put the directory it prints on `PATH`
+  - Within `one-rom` `main` branch run
+    `ci/build-docs.sh ../one-rom-images --source firmware`
+  - `--source firmware` builds only the documents on the firmware's release
+    cycle - the chip compatibility and chip type references.  The CLI manual is
+    published by the CLI release instead, since it moves with the onerom-cli
+    crate.  Without it the whole set is built, which would republish the manual
+    at a version that had not moved
+  - The script stages each document under `one-rom-images/docs/<slug>/v<x.y.z>/`
+    and merges the release into that document's `releases.json`, keeping every
+    past edition so a reader on an older firmware can still fetch the one
+    matching their build.  It does not set `latest` - review the diff and set it
+    once the release is ready
+  - Commit and push changes to `one-rom-images` repo

@@ -68,6 +68,7 @@ pub const MIN_SCHEMA_VERSION: FirmwareVersion = FirmwareVersion::new(0, 7, 0, 0)
 
 /// Errors produced by generated `parse` implementations.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum ParseError {
     /// The address or the range `addr..addr+size` lies outside all registered
     /// memory regions.

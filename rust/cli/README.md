@@ -31,7 +31,13 @@ To build the Windows artifacts you need a Windows build machine — see
 
 ### Binary release
 
-1. Build the release artifacts for all platforms:
+1. Check whether [the CLI manual](/docs/CLI-MANUAL.md) needs updating for this
+    release, including its "as of release vX.Y.Z" banner.  The manual's PDF also
+    contains [the overview](/docs/OVERVIEW.md), so check that too.  Do this
+    first — step 4 renders the manual to PDF, so any correction has to be in
+    before then.
+
+2. Build the release artifacts for all platforms:
 
     ```bash
     scripts/build-release.sh pin=WIN_SIGNING_PIN
@@ -39,13 +45,30 @@ To build the Windows artifacts you need a Windows build machine — see
 
     Artifacts are placed in the `dist/` directory.
 
-2. Update the CLI release manifest and copy the artifacts to the One ROM images repo.  Assuming ../../../one-rom-images exists:
+3. Update the CLI release manifest and copy the artifacts to the One ROM images repo.  Assuming ../../../one-rom-images exists:
 
     ```bash
     scripts/release.py --input-dir dist --output-dir ../../../one-rom-images
     ```
 
-3. Commit the changes to the one-rom-images repo and push:
+4. Build and stage the CLI manual PDF, so the manual is published with the
+    binary it documents.  From the repository root:
+
+    ```bash
+    ci/build-docs.sh ../one-rom-images --source cli
+    ```
+
+    `--source cli` selects the documents on the CLI's release cycle, which is
+    the manual alone — the chip references move with the firmware and are
+    published by its release instead.  The toolchain is installed once with
+    `ci/install-doc-tools.sh`, which prints a directory to put on `PATH`.
+
+    The manual is staged at
+    `one-rom-images/docs/cli-manual/vX.Y.Z/` and merged into that document's
+    `releases.json`.  The script does not set `latest` - review the diff and set
+    it there.
+
+5. Commit the changes to the one-rom-images repo and push:
     ```bash
     cd ../../../one-rom-images
     git add .
@@ -53,13 +76,11 @@ To build the Windows artifacts you need a Windows build machine — see
     git push
     ```
 
-4. Tag the current commit with the version and push:
+6. Tag the current commit with the version and push:
 
     ```bash
     git tag cli-vX.Y.Z
     git push origin cli-vX.Y.Z
     ```
 
-5. Check new releases appear at https://onerom.org/cli/
-
-6. Consider whether the [CLI Manual](/docs/CLI-MANUAL.md) needs updating for the new release.
+7. Check new releases appear at https://onerom.org/cli/

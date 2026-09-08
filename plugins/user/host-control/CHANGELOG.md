@@ -1,5 +1,89 @@
 # Changelog
 
+## [0.1.3] - 2026-??-??
+
+An ENTER_CMD_RESP naming a back-channel start within 8 bytes of the end of the
+RAM slot wrote its response header onto the start of the image being served.
+Such a start is now discarded in silence, as the specification requires, and
+nothing is written.
+
+ENTER_CMD_RESP cleared the whole response header on entry, so the token passed
+through zero — which a host reads as its command having arrived.  Only the
+reserved pair is written now, after the response field and before complete.
+
+ENTER_CMD_RESP took the command page's range from the RAM slot, which a banked
+slot makes larger than the image served, so it accepted a page no host could
+drive.  The range is now the served ROM's, and a page past it is discarded.
+
+A host can now set One ROM's LEDs over the ROM bus, through RBCP's new LEDs
+group — so a bootloader can show a colour as it hands the machine over to the
+image it loaded, and the colour stays after the session ends.
+
+- LEDs are numbered contiguously over the ones the board has, so LED 0 is the
+  status LED on a board with one and the RGB LED on a board with only that.  A
+  host reads the type rather than assuming a number.
+- The status LED reports its colour as red, which the plugin states: the
+  firmware holds no record of what colour a monochrome LED is, and all-zero is
+  RBCP's way of saying the colour is unknown.
+- Flame is RBCP mode `0x80`, this implementation's own value from the range the
+  protocol reserves for that.  The supported-modes bitmap reports `0x00` to
+  `0x07` only, so flame does not appear in it.
+- `SET_LED` does not block for its hold.  The firmware times it and restores
+  what the LED was doing, which may be after the session has ended.
+- Periods and holds are in RBCP's 100ms units, up to 25.5 seconds.  The firmware
+  has a minimum period per mode and refuses a shorter one, which
+  `GET_LED_MODE_INFO` reports so a host can name a period that will work.
+- Needs firmware v0.7.2.  On v0.7.1 the device reports no LEDs and every other
+  command in the group fails.
+
+A host can now drive and read One ROM's own pins over the ROM bus, through
+RBCP's new Auxiliary I/O group — so a wire from a One ROM pad can reach a reset
+line, a drive, a relay or an indicator, and the retro system can operate it.
+
+- `GET_PIPE_INFO` reports the two fields RBCP has added to it: the bytes waiting
+  to be read, always zero on a pipe carrying only the OUT direction, and what
+  kind of thing the pipe reaches, which One ROM reports as unspecified.
+- Three pin groups: the GPIOs of the running RP2350 variant, the image select
+  pads, and the X expansion pads.  The last two are RBCP group types `0x80` and
+  `0x81`, this implementation's own values from the range the protocol reserves
+  for that.  See the README for how a host should read them.
+- A pin is drivable only where One ROM is using none of it, which depends on the
+  active slot.
+- A timed hold does not complete until the pin has reached its final state, and
+  RBCP is unresponsive for its duration.
+- Timed holds and the image select and X groups need firmware v0.7.2.  On
+  v0.7.1 the device reports a `max_hold` of zero, which the specification
+  defines as offering no timed holds, and exposes the GPIO group alone.
+
+A host can now send bytes out through One ROM, over RBCP's new Pipes group, and
+read them on a PC — so a retro system can get its output off the machine without
+a serial port or a display.
+
+- A pipe is One ROM's log channel, so the device's own logging is interleaved
+  with the host's bytes, and two cores writing it at once corrupt rather than
+  merely interleave. 
+- Pipes need firmware v0.7.2 or later, where the logging API arrived.  On older
+  firmware the device reports no pipes and nothing else changes, so the plugin
+  still runs on v0.7.1.
+- Implements RBCP 0.1.2, which also specifies what a device does with a command
+  group or command it does not know.
+
+A host can also put back the bytes the back-channel displaces in the image it is
+being served, which nothing could do before — the region is a hole punched in a
+running ROM, and every write a host made was followed by that command's own
+response header.
+
+- LOAD_AND_EXIT reloads a RAM slot from flash and leaves command-response mode
+  without touching the header, which restores the whole image where the slot
+  named is the one being served.
+- EXIT_CMD_RESP_RESTORE takes up to eight bytes from the host and writes them
+  over the start of the region on the way out, for an image with no flash source
+  or a patch worth keeping.
+- GET_BOOT_SLOT_INFO reports the flash slot One ROM booted and the RAM slot it
+  went into, which is what a host needs to name in LOAD_AND_EXIT.  It needs
+  firmware v0.7.2 or later, where the boot slot became readable through the
+  metadata API.  On older firmware both are reported as unknown.
+
 ## [0.1.2] - 2026-08-09
 
 Report as many RAM slots as the RAM holds, rather than at most seven, and keep

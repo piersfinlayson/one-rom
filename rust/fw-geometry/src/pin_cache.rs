@@ -138,6 +138,9 @@ impl PinCache {
                     Some(CsLogic::ActiveHigh) => true,
                     Some(CsLogic::ActiveLow) => false,
                     Some(CsLogic::Ignore) => unreachable!("filtered above"),
+                    // `CsLogic` is `#[non_exhaustive]`; a polarity added to it
+                    // needs a decision here rather than a silent default.
+                    Some(other) => unimplemented!("unhandled CS logic {other:?}"),
                     None => panic!(
                         "Chip {} has configurable CS line '{}' but no polarity \
                          is specified in the config — add cs1/cs2/cs3/cs4 field",
@@ -220,10 +223,11 @@ impl PinCache {
     /// Data GPIOs are always taken from the primary cache; the data bus is
     /// fully shared and its GPIO mapping does not vary by chip type.
     ///
-    /// Fixed CE/OE lines on the secondary chip are handled by the target PCB
-    /// (typically tied permanently active) and are not driven by the tester.
-    /// Only configurable CS lines can serve as the unique X pin selector; chips
-    /// with only fixed CS lines are not supported as secondary chips.
+    /// The secondary's per-chip select is whichever one control line it does
+    /// not ignore, fixed CE/OE included.  Its polarity reaches this function
+    /// as `x_assert_high`.  Every other control line it has is handled by the
+    /// target PCB (typically tied permanently active) and is not driven by the
+    /// tester.
     ///
     /// 27C400/27C200-family chips are not supported as secondary chips in
     /// multi-ROM sets; `byte_n_gpio` is always `None`.

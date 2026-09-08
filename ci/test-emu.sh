@@ -8,16 +8,19 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # The hardware revisions of each socket size, in one place, so that adding a
 # board is one edit.  The LATE lists are the revisions from C onwards, which
-# some configurations need: bank switching wants the X pins earlier revisions
-# do not have, and multi-chip sets want image-select jumpers fire-24-a and b
-# lack.  Every full list is defined in terms of its LATE list, so a new board
-# added to one is picked up by both.
-FIRE_24_LATE_BOARDS="fire-24-c fire-24-d fire-24-e fire-24-f"
+# some configurations need.  On 28 pin that is the X pins themselves, which
+# fire-28-a and b do not have.  On 24 pin every revision has X pins and serves
+# banked sets, but a multi-chip set additionally needs the chip's select line
+# and the X pins to land on adjacent GPIOs - on fire-24-a and fire-24-b the PCB
+# routing puts them apart, and the generator refuses the config.  Every full
+# list is defined in terms of its LATE list, so a new board added to one is
+# picked up by both.
+FIRE_24_LATE_BOARDS="fire-24-c fire-24-d fire-24-e fire-24-f fire-24-g"
 FIRE_24_BOARDS="fire-24-a fire-24-b $FIRE_24_LATE_BOARDS"
 FIRE_28_LATE_BOARDS="fire-28-c fire-28-d"
 FIRE_28_BOARDS="fire-28-a fire-28-b $FIRE_28_LATE_BOARDS"
-FIRE_32_BOARDS="fire-32-a fire-32-b"
-FIRE_40_BOARDS="fire-40-a fire-40-b"
+FIRE_32_BOARDS="fire-32-a fire-32-b fire-32-c"
+FIRE_40_BOARDS="fire-40-a fire-40-b fire-40-c"
 
 cs_logic() {
     [ "$1" -eq 0 ] && echo "active_low" || echo "active_high"
@@ -124,6 +127,26 @@ run_config_api() {
     }
 }
 
+# The plugin API suite against a firmware built with its switchable logging
+# options off.
+#
+# The tester's expectations for the compile options and the log categories
+# follow whatever TEST_LOGGING the library was built with, so this is the run
+# that catches one of them answered from the wrong gate - or from no gate at
+# all, which a full-logging run cannot tell from a correct answer.
+run_config_api_logging_off() {
+    local board=$1
+    local config=$2
+
+    echo ""
+    echo "Testing: board=$board config=$config TEST_LOGGING=0"
+    env BOARD="$board" CONFIG="$config" TEST_LOGGING=0 make test-api || {
+        echo "FAILED: board=$board config=$config TEST_LOGGING=0"
+        echo "Reproduce:  env BOARD=$board CONFIG=$config TEST_LOGGING=0 make test-api"
+        exit 1
+    }
+}
+
 run_config_monitor() {
     local board=$1
     local config=$2
@@ -146,6 +169,57 @@ run_config_rbcp() {
     env BOARD="$board" CONFIG="$config" make test-rbcp || {
         echo "FAILED: board=$board config=$config"
         echo "Reproduce:  env BOARD=$board CONFIG=$config make test-rbcp"
+        exit 1
+    }
+}
+
+# The USB plugin tester.  USB_TESTER_ARGS selects a suite: only the logical ROM
+# scenarios depend on the chip type and its organisation, so only those are worth
+# a config of their own.  The rest run once, from run_usb_once.
+run_config_usb() {
+    local board=$1
+    local config=$2
+
+    echo ""
+    echo "Testing: board=$board config=$config"
+    env BOARD="$board" CONFIG="$config" USB_TESTER_ARGS="--scenario logical_rom" \
+        make test-usb || {
+        echo "FAILED: board=$board config=$config"
+        echo "Reproduce:  env BOARD=$board CONFIG=$config USB_TESTER_ARGS=--scenario\ logical_rom make test-usb"
+        exit 1
+    }
+}
+
+# The USB serial the device presents, which its metadata can override.  Needs a
+# config that sets the override, and the scenario skips itself where none is set
+# — as its opposite, the chip ID serial, skips itself here.
+run_config_usb_serial() {
+    local board=$1
+    local config=$2
+
+    echo ""
+    echo "Testing: board=$board config=$config"
+    env BOARD="$board" CONFIG="$config" USB_TESTER_ARGS="--scenario serial_override" \
+        make test-usb || {
+        echo "FAILED: board=$board config=$config"
+        echo "Reproduce:  env BOARD=$board CONFIG=$config USB_TESTER_ARGS=--scenario\ serial_override make test-usb"
+        exit 1
+    }
+}
+
+# Everything in the USB tester that does not depend on the config.  Run on every
+# board of a family: the GPIO count differs between the RP2350A and B parts and
+# the plugin reports it, and whether the board has an RGB LED decides which of
+# the LED scenarios can assert engine state rather than the refusal path.
+run_usb_once() {
+    local board=$1
+    local config=$2
+
+    echo ""
+    echo "Testing: board=$board config=$config (whole USB suite)"
+    env BOARD="$board" CONFIG="$config" make test-usb || {
+        echo "FAILED: board=$board config=$config"
+        echo "Reproduce:  env BOARD=$board CONFIG=$config make test-usb"
         exit 1
     }
 }
@@ -201,7 +275,7 @@ test_32pin() {
         echo "Skipping SST39SF040 test on $board (not supported)"
         return
     fi
-    run_no_cs  fire-32-b images/test/rand_512KB.rom type=SST39SF040
+    run_no_cs  $board images/test/rand_512KB.rom type=SST39SF040
 }
 
 test_40pin() {
@@ -242,6 +316,13 @@ test_config_monitor() {
     run_config_monitor "$board" "$config"
 }
 
+test_config_usb() {
+    local board=${1:-fire-24-a}
+    local config=$2
+
+    run_config_usb "$board" "$config"
+}
+
 test_config_rbcp() {
     local board=${1:-fire-24-a}
     local config=$2
@@ -270,23 +351,31 @@ test_24_config()           { run_boards run_config         "$1" $FIRE_24_BOARDS;
 test_24_config_api()       { run_boards run_config_api     "$1" $FIRE_24_BOARDS; }
 test_24_config_monitor()   { run_boards run_config_monitor "$1" $FIRE_24_BOARDS; }
 test_24_config_rbcp()      { run_boards run_config_rbcp    "$1" $FIRE_24_BOARDS; }
+test_24_config_usb()       { run_boards run_config_usb     "$1" $FIRE_24_BOARDS; }
+test_24_usb_all()          { run_boards run_usb_once       "$1" $FIRE_24_BOARDS; }
 test_24_config_c_onwards() { run_boards run_config         "$1" $FIRE_24_LATE_BOARDS; }
 
 test_28_config()           { run_boards run_config         "$1" $FIRE_28_BOARDS; }
 test_28_config_api()       { run_boards run_config_api     "$1" $FIRE_28_BOARDS; }
 test_28_config_monitor()   { run_boards run_config_monitor "$1" $FIRE_28_BOARDS; }
 test_28_config_rbcp()      { run_boards run_config_rbcp    "$1" $FIRE_28_BOARDS; }
+test_28_config_usb()       { run_boards run_config_usb     "$1" $FIRE_28_BOARDS; }
+test_28_usb_all()          { run_boards run_usb_once       "$1" $FIRE_28_BOARDS; }
 test_28_config_c_onwards() { run_boards run_config         "$1" $FIRE_28_LATE_BOARDS; }
 
 test_32_config()           { run_boards run_config         "$1" $FIRE_32_BOARDS; }
 test_32_config_api()       { run_boards run_config_api     "$1" $FIRE_32_BOARDS; }
 test_32_config_monitor()   { run_boards run_config_monitor "$1" $FIRE_32_BOARDS; }
 test_32_config_rbcp()      { run_boards run_config_rbcp    "$1" $FIRE_32_BOARDS; }
+test_32_config_usb()       { run_boards run_config_usb     "$1" $FIRE_32_BOARDS; }
+test_32_usb_all()          { run_boards run_usb_once       "$1" $FIRE_32_BOARDS; }
 
 test_40_config()           { run_boards run_config         "$1" $FIRE_40_BOARDS; }
 test_40_config_api()       { run_boards run_config_api     "$1" $FIRE_40_BOARDS; }
 test_40_config_monitor()   { run_boards run_config_monitor "$1" $FIRE_40_BOARDS; }
 test_40_config_rbcp()      { run_boards run_config_rbcp    "$1" $FIRE_40_BOARDS; }
+test_40_config_usb()       { run_boards run_config_usb     "$1" $FIRE_40_BOARDS; }
+test_40_usb_all()          { run_boards run_usb_once       "$1" $FIRE_40_BOARDS; }
 
 # The tests, grouped by socket size, so that CI can run the four groups as
 # parallel jobs and each gets its own timeout budget.  A group is self-contained:
@@ -306,6 +395,7 @@ test_family_24() {
     test_24_all_rom_types fire-24-d
     test_24_all_rom_types fire-24-e
     test_24_all_rom_types fire-24-f
+    test_24_all_rom_types fire-24-g
 
     # Extended set of 24 pin ROM tests
     test_24_config onerom-config/test/24-random-23xx.json
@@ -318,9 +408,11 @@ test_family_24() {
     test_24_config onerom-config/test/24-bank-27xx.json
     test_24_config onerom-config/test/24-bank-28xx.json
 
-    # Test multi-chip ROM configurations on all Fire 24 hardware revisions.
+    # Test multi-chip ROM configurations.  C onwards only - see the note on the
+    # LATE board lists above for why fire-24-a and b cannot serve these.
     test_24_config_c_onwards onerom-config/test/24-multi-2364.json
     test_24_config_c_onwards onerom-config/test/24-multi-2316.json
+    test_24_config_c_onwards onerom-config/test/24-multi-27xx.json
 
     # Test specific ROM configurations on all Fire 24 hardware revisions.
     # fire-24-c only has 2 image select jumpers so can only test the first
@@ -339,6 +431,7 @@ test_family_24() {
     # (non-NULL) path.  Other configs leave these unset and cover the absent
     # (NULL) path.
     test_config_api fire-24-a onerom-config/test/metadata.json
+    run_config_usb_serial fire-24-a onerom-config/test/metadata.json
 
     # Address-monitor tests — see the note in test_family_40 for what these
     # cover.
@@ -346,8 +439,23 @@ test_family_24() {
     test_24_config_monitor onerom-config/test/24-random-27xx.json
     test_24_config_monitor onerom-config/test/24-random-28xx.json
 
+    # USB plugin.  The whole suite runs on every board of the family, and the
+    # logical ROM scenarios run again for each config.  Board coverage is not a
+    # formality here: what the plugin reports and what the firmware beneath it
+    # can do both vary by board - the GPIO count differs between the RP2350A and
+    # B parts, and only some boards have an RGB LED, whose scenarios skip
+    # themselves where the firmware says there is none.
+    test_24_usb_all onerom-config/test/24-random-23xx.json
+    test_24_config_usb onerom-config/test/24-random-23xx.json
+
     # RBCP board coverage — see the note in test_family_40.
     test_24_config_rbcp onerom-config/test/24-random-23xx.json
+
+    # The only config with plugin slots, so the only one where the firmware's
+    # slot index and the flash slot number RBCP reports differ.  One board is
+    # enough: what this exercises is slot numbering, which does not vary with
+    # the pin map.
+    test_config_rbcp fire-24-a onerom-config/test/24-plugins-23xx.json
 }
 
 test_family_28() {
@@ -376,6 +484,7 @@ test_family_28() {
 
     # Test multi-chip ROM configurations.
     test_28_config_c_onwards onerom-config/test/28-multi-231024.json
+    test_28_config_c_onwards onerom-config/test/28-multi-27xxx.json
 
     # Test specific ROM configurations on all Fire 28 hardware revisions.
     test_28_config onerom-config/28-c64c.json
@@ -395,29 +504,44 @@ test_family_28() {
     test_28_config_monitor onerom-config/test/28-random-28xxx.json
 
     # RBCP board coverage — see the note in test_family_40.
+    test_28_usb_all onerom-config/test/28-random-27xxx.json
+    test_28_config_usb onerom-config/test/28-random-27xxx.json
     test_28_config_rbcp onerom-config/test/28-random-27xxx.json
 
     # RBCP behaviour coverage — a 23QL384's qualifier-based chip select, with
     # its deselected top quarter, which the board sweep never reaches.
     test_config_rbcp fire-28-a onerom-config/test/28-random-23qlxxx.json
+
+    # RBCP behaviour coverage — a banked set, which is the only shape where an X
+    # pad's two GPIOs differ in what One ROM is doing with them.  On a random
+    # config both are free, so the Auxiliary I/O rule that a pad is drivable
+    # only when every GPIO it reaches is free has nothing to discriminate on.
+    # It is also the only shape where a flash slot and the RAM slot it is loaded
+    # into can differ in size, which the bootloader flow turns on.
+    test_config_rbcp fire-28-c onerom-config/test/28-bank-27xxx.json
 }
 
 test_family_32() {
     # Every standard ROM type on every 32 pin hardware revision.
     test_32pin fire-32-a
     test_32pin fire-32-b
+    test_32pin fire-32-c
 
     # Test specific ROM configurations on all Fire 32 hardware revisions.
     test_32_config onerom-config/test/32-random-27c080.json
     test_32_config onerom-config/test/32-random-27c301.json
     test_32_config onerom-config/test/32-random-27c0x0.json
     test_config fire-32-b onerom-config/test/32-random-23c1001.json
+    test_config fire-32-b onerom-config/test/32-random-extra.json
+    test_config fire-32-c onerom-config/test/32-random-23c1001.json
+    test_config fire-32-c onerom-config/test/32-random-extra.json
 
     # Plugin API tests
     test_32_config_api onerom-config/test/32-random-27c080.json
     test_32_config_api onerom-config/test/32-random-27c301.json
     test_32_config_api onerom-config/test/32-random-27c0x0.json
-    test_config fire-32-b onerom-config/test/32-random-extra.json
+    test_config_api fire-32-b onerom-config/test/32-random-extra.json
+    test_config_api fire-32-c onerom-config/test/32-random-extra.json
 
     # Address-monitor tests — see the note in test_family_40 for what these
     # cover.
@@ -426,7 +550,18 @@ test_family_32() {
     test_32_config_monitor onerom-config/test/32-random-27c0x0.json
 
     # RBCP board coverage — see the note in test_family_40.
+    test_32_usb_all onerom-config/test/32-random-27c080.json
+    test_32_config_usb onerom-config/test/32-random-27c080.json
     test_32_config_rbcp onerom-config/test/32-random-27c080.json
+
+    # One run of the plugin API suite against a firmware compiled with its
+    # switchable logging options off.  What that setting reaches is the
+    # firmware's compile options and log categories, neither of which depends
+    # on socket size, so it runs here only - in this family because it is the
+    # shortest of the four and they run as parallel jobs, and last within it
+    # because changing the setting rebuilds the whole C library, so ending on
+    # it pays for that once rather than switching out and back.
+    run_config_api_logging_off fire-32-a onerom-config/test/32-random-27c080.json
 }
 
 test_family_40() {
@@ -435,6 +570,8 @@ test_family_40() {
     test_40pin fire-40-a true
     test_40pin fire-40-b
     test_40pin fire-40-b true
+    test_40pin fire-40-c
+    test_40pin fire-40-c true
 
     # Test specific ROM configurations on all Fire 40 hardware revisions.
     test_40_config onerom-config/test/40-random.json
@@ -463,6 +600,8 @@ test_family_40() {
     # Board coverage — one config per socket size, on every board of that
     # family.  What varies between revisions of a board is the pin map, and the
     # protocol runs over the bus, so the whole of it has to work on each.
+    test_40_usb_all onerom-config/test/40-random.json
+    test_40_config_usb onerom-config/test/40-random.json
     test_40_config_rbcp onerom-config/test/40-random.json
 
     # Behaviour coverage — the force_16_bit data algorithm, which ignores /BYTE
@@ -471,12 +610,12 @@ test_family_40() {
     test_config_rbcp fire-40-a onerom-config/test/40-random-force-16bit.json
 
     # The tester drives chip set 0 only, and 27C200 is not the first set of any
-    # other 40 pin config, so it needs one of its own.  Run on both 40 pin
-    # boards: fire-40-b gives the 27C200 a 256KB ROM table region and so two RAM
-    # slots, which makes it the only configuration where the NV storage write
-    # transaction — and the flash erase and program it commits through — runs
-    # against a word-organised ROM.  On fire-40-a the same part gets a 512KB
-    # region, one slot, and a read-only NV storage.
+    # other 40 pin config, so it needs one of its own.  Run on every 40 pin
+    # board: fire-40-b and fire-40-c give the 27C200 a 256KB ROM table region
+    # and so two RAM slots, which makes those the only configurations where the
+    # NV storage write transaction — and the flash erase and program it commits
+    # through — runs against a word-organised ROM.  On fire-40-a the same part
+    # gets a 512KB region, one slot, and a read-only NV storage.
     test_40_config_rbcp onerom-config/test/40-random-27c200.json
 }
 

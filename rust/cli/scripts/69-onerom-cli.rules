@@ -18,11 +18,17 @@ SUBSYSTEM=="gpio", MODE="0660", GROUP="plugdev", TAG+="uaccess"
 
 SUBSYSTEM!="usb|tty|hidraw", GOTO="onerom_cli_rules_end"
 
+# ID_MM_DEVICE_IGNORE keeps ModemManager away from One ROM's CDC serial port.
+# ModemManager opens a new ttyACM port and probes it with AT commands, which
+# asserts DTR - and DTR is what makes One ROM start sending its log.  Without
+# this, the log accumulated since boot is drained into ModemManager and lost
+# before "onerom monitor log" ever attaches.
+
 # One ROM Bootloader
-ATTRS{idVendor}=="1209", ATTRS{idProduct}=="f540", MODE="660", GROUP="plugdev", TAG+="uaccess"
+ATTRS{idVendor}=="1209", ATTRS{idProduct}=="f540", MODE="660", GROUP="plugdev", TAG+="uaccess", ENV{ID_MM_DEVICE_IGNORE}="1"
 
 # One ROM
-ATTRS{idVendor}=="1209", ATTRS{idProduct}=="f542", MODE="660", GROUP="plugdev", TAG+="uaccess"
+ATTRS{idVendor}=="1209", ATTRS{idProduct}=="f542", MODE="660", GROUP="plugdev", TAG+="uaccess", ENV{ID_MM_DEVICE_IGNORE}="1"
 
 # RP2350
 ATTRS{idVendor}=="2e8a", ATTRS{idProduct}=="000f", MODE="660", GROUP="plugdev", TAG+="uaccess"

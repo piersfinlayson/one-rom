@@ -10,7 +10,6 @@
 #include "stdio.h"
 #include "assert.h"
 #include "stdlib.h"
-#include "test/SEGGER_RTT.h"
 #include "types.h"
 
 #define STUB_LOG stub_log
@@ -34,5 +33,90 @@ void stub_log_prefix_v(const char* prefix, const char* msg, va_list args);
 uint64_t *get_ram_rom_image_table_aligned(void);
 uint8_t stub_set_sel_image(uint8_t image_index);
 void stub_set_rp_variant(uint8_t is_b);
+
+// Stands in for TIMER0's free-running microsecond counter, which
+// ora_get_plugin_uptime_ms() reads on a device.  There is no TIMER0 in this process
+// and its address is not mapped, so the harness owns the count instead - which
+// also lets a test put the clock exactly where it wants it, including either
+// side of the 49.7 day wrap, rather than waiting for wall time to get there.
+//
+// The two halves are read separately, as they are on a device.  Each read
+// consumes one step of a scripted sequence of counter values, so a test can
+// make the counter move between the firmware's two reads of the high half and
+// exercise the retry that assembles a consistent pair.  Once the script runs
+// out the last value stands, so a single-valued script simply holds still.
+uint32_t stub_timer_raw_hi(void);
+uint32_t stub_timer_raw_lo(void);
+
+// Park the counter at a single value, which every subsequent half-read sees.
+void stub_set_timer_us(uint64_t us);
+void stub_advance_timer_us(uint64_t delta_us);
+
+// Put the counter back to zero, where a device's is when TIMER0 starts.
+//
+// Called by onerom_test_reset() on every boot, so a scenario measuring an
+// interval from the clock it is given starts where the last one started rather
+// than wherever that one left it.
+void stub_timer_reset(void);
+
+// Script the counter's value across successive half-reads, one entry consumed
+// per read.  count must be between 1 and STUB_TIMER_SCRIPT_MAX.
+#define STUB_TIMER_SCRIPT_MAX 16u
+void stub_set_timer_raw_script(const uint64_t *values, uint32_t count);
+
+// Stands in for the pads and the SIO output registers, which ora_gpio_set
+// drives and ora_gpio_query reads back on a device.  Without it a test build
+// reports every pin as an input reading low, so a test can assert that a set
+// was refused but never what a permitted one did - which is most of what a
+// bounded GPIO hold is.
+//
+// Only the three fields ora_gpio_query reports are modelled, plus one bit of
+// function select: whether the output driver is enabled, what it is driving,
+// what an input reads, and whether a PIO block has the pin.  The pin's use and
+// its pulls are not, because nothing reads them back through the API.
+//
+// Cleared by onerom_test_reset() on every boot, so a scenario starts with the
+// pads as a device's come up rather than carrying the previous one's state.
+void stub_gpio_set(uint8_t gpio, uint8_t state);
+uint8_t stub_gpio_is_output(uint8_t gpio);
+uint8_t stub_gpio_level(uint8_t gpio);
+
+// Hand a pin to a PIO block, or take it back.
+//
+// A pin whose function select names PIO is not SIO's to drive: an SIO write to
+// it changes nothing, because the block drives the pad.  On a device that falls
+// out of the hardware and no code tests for it, so the model does the same and
+// stub_gpio_set ignores a write to a pin a block holds.  That keeps the
+// knowledge here rather than in firmware that would otherwise have to ask
+// whether it was under test.
+//
+// One ROM reaches this on a board that wires both LEDs to one pin: the LED
+// engine borrows the pin for as long as a pixel takes, and the status LED
+// cannot drive it until the engine hands it back.
+void stub_gpio_set_pio_owned(uint8_t gpio, uint8_t owned);
+
+// What an input pin reads.  Nothing is attached to a pin in this process, so an
+// input reads low until a test says otherwise - which is what this is for: a
+// pin released to input with a pull-up on the board reads high, and a test that
+// cares can say so.  Has no effect while the pin is an output, which reports
+// what it drives.
+void stub_set_gpio_input(uint8_t gpio, uint8_t level);
+
+// Put the process-global state a device's reset would clear back to cold boot.
+//
+// The firmware's statics are ordinary host objects in a test build, so nothing
+// restores them between the many boots one process runs.  The emulator calls
+// this on every boot.  What it covers is firmware state with no counterpart in
+// a plugin - see the comment on its definition.
+void onerom_test_reset(void);
+void stub_gpio_reset(void);
+
+// Give every log channel back.
+//
+// Called by a harness that also clears its plugin's own state, and only by such
+// a harness: a plugin records which channels it holds itself, so releasing the
+// firmware's claim without clearing the plugin's leaves the plugin believing it
+// holds a channel the firmware says is free.
+void ora_log_reset_claims(void);
 
 #endif // TEST_STUB_H

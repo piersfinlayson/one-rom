@@ -24,14 +24,16 @@ RUN apt-get update && apt-get install -y \
     cmake \
     curl \
     git \
+    libcapture-tiny-perl \
     libclang-dev \
     libcurl4-openssl-dev \
+    libdatetime-perl \
     libjson-c-dev \
-    libusb-1.0-0-dev \
-    libudev-dev \
+    libjson-xs-perl \
     libzip-dev \
     mingw-w64 \
     nano \
+    perl \
     pkg-config \
     sudo \
     vim \
@@ -72,6 +74,55 @@ RUN test -n "${ARM_GCC_VERSION}" || { \
     mv arm-gnu-toolchain-${ARM_GCC_VERSION}-${ARCH_SUFFIX}-arm-none-eabi /opt/ && \
     rm "${TARBALL}" "${TARBALL}.sha256asc" && \
     ln -s /opt/arm-gnu-toolchain-${ARM_GCC_VERSION}-${ARCH_SUFFIX}-arm-none-eabi /opt/arm-toolchain
+
+# Install lcov, which captures the coverage ci/coverage-run.sh measures.
+#
+# Built from source rather than taken from the distribution because Ubuntu
+# packages lcov 2.0, which has no notion of LCOV_UNREACHABLE_START and reads it
+# as an ordinary comment - the lines the marker covers then count as unreached.
+# The perl modules it needs are in the apt list above.
+#
+# Pinned, with the same no-default rule as the toolchains above: the version
+# comes from ci/lcov-version via ci/docker/build.sh.
+ARG LCOV_VERSION
+RUN test -n "${LCOV_VERSION}" || { \
+        echo "LCOV_VERSION build-arg is required - build via ci/docker/build.sh," && \
+        echo "which passes the version pinned in ci/lcov-version." && \
+        exit 1; \
+    } && \
+    git clone --depth 1 --branch "${LCOV_VERSION}" \
+        https://github.com/linux-test-project/lcov.git /tmp/lcov && \
+    make -C /tmp/lcov install && \
+    rm -rf /tmp/lcov && \
+    lcov --version
+
+# Install the host C compiler the firmware's host builds are measured with.
+#
+# The firmware sets no -std, so the C the device ships as is whatever the Arm
+# toolchain defaults to.  A host build that is meant to be a test of that C -
+# ci/c-tests.sh, and every coverage figure taken from firmware/test.mk - has to
+# be the same compiler generation, or it gates on different warnings and
+# measures a different compilation.
+#
+# From ppa:ubuntu-toolchain-r/test because the 24.04 archive stops at gcc-14.
+# gcov comes with it, and ci/coverage-run.sh hands that gcov to lcov.
+#
+# Pinned, with the same no-default rule as the toolchains above: the version
+# comes from ci/c-compiler-version via ci/docker/build.sh.
+ARG C_COMPILER_VERSION
+RUN test -n "${C_COMPILER_VERSION}" || { \
+        echo "C_COMPILER_VERSION build-arg is required - build via ci/docker/build.sh," && \
+        echo "which passes the version pinned in ci/c-compiler-version." && \
+        exit 1; \
+    } && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends software-properties-common && \
+    add-apt-repository -y ppa:ubuntu-toolchain-r/test && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends "gcc-${C_COMPILER_VERSION}" && \
+    rm -rf /var/lib/apt/lists/* && \
+    "gcc-${C_COMPILER_VERSION}" --version && \
+    "gcov-${C_COMPILER_VERSION}" --version
 
 # Create build user with passwordless sudo
 RUN useradd -m -s /bin/bash build && \

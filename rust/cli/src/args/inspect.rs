@@ -110,6 +110,27 @@ pub enum InspectCommands {
     ///   onerom inspect gpio --pin x1
     Gpio(InspectGpioArgs),
 
+    /// Show what the connected One ROM's status LED is doing.
+    ///
+    /// Reports the mode it is in, how fast it is running, and which GPIO it is
+    /// on. Use 'onerom inspect rgb' for the RGB LED some models carry.
+    ///
+    /// Examples:
+    ///
+    ///   onerom inspect led
+    Led(InspectLedArgs),
+
+    /// Show what the connected One ROM's RGB LED is doing.
+    ///
+    /// Reports the mode, the colour, the brightness, how fast it is running,
+    /// and which GPIO it is on. Says so rather than failing on a board with no
+    /// RGB LED.
+    ///
+    /// Examples:
+    ///
+    ///   onerom inspect rgb
+    Rgb(InspectRgbArgs),
+
     /// Draw the connected One ROM's pin (jumper / programming) header as ASCII.
     ///
     /// Shows the 2xN header along the board's top edge, pad by pad, with the
@@ -156,6 +177,24 @@ pub struct InspectTelemetryArgs {
 }
 
 impl CommandTrait for InspectTelemetryArgs {
+    fn requires_device(&self) -> bool {
+        true
+    }
+}
+
+#[derive(Debug, Args)]
+pub struct InspectLedArgs {}
+
+impl CommandTrait for InspectLedArgs {
+    fn requires_device(&self) -> bool {
+        true
+    }
+}
+
+#[derive(Debug, Args)]
+pub struct InspectRgbArgs {}
+
+impl CommandTrait for InspectRgbArgs {
     fn requires_device(&self) -> bool {
         true
     }

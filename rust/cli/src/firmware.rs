@@ -11,16 +11,18 @@ use onerom_config::hw::Board;
 use onerom_config::mcu::Variant;
 use onerom_fw::net::{Release, Releases, fetch_license_async};
 use onerom_fw::{assemble_firmware, get_rom_files_async, read_rom_config, validate_sizes};
-use onerom_fw_parser::{ParsedDevice, Parser, readers::MemoryReader};
+use onerom_fw_parser::{ParsedDevice, Parser, SlotKind, readers::MemoryReader};
 use onerom_gen::ChipSetType;
 use onerom_gen::compat::{
     ChipCompat, check_chip_set_on_board, default_cs_config, format_size, supported_chips,
 };
-use onerom_gen::{Builder, ConfigOverrides, Error as GenError, FIRMWARE_SIZE, License};
+use onerom_gen::{Builder, Config, ConfigOverrides, Error as GenError, FIRMWARE_SIZE, License};
 
 use crate::args;
 use crate::utils::{check_fire_board, resolve_board, resolve_firmware_output};
-use onerom_cli::plugin::{PluginSpec, ResolvedPlugin, resolve_plugins};
+use onerom_cli::plugin::{
+    PluginNote, PluginSpec, ResolvedPlugin, check_config_plugins, resolve_plugins,
+};
 use onerom_cli::slot::{
     ConfirmationsRequired, GlobalConfig, check_slot_chip_types, check_slot_confirmations,
     inject_plugins_into_config, parse_slots, save_config, slots_to_config_json,
@@ -101,13 +103,17 @@ fn apply_global_overrides(json: String, global_config: &GlobalConfig) -> Result<
 
 // ------------------------------- Firmware parsing and sizing -------------------------------
 
+/// Check an assembled image before it is flashed, and hand back the parse.
+///
+/// The parse is what the checks are made of, so returning it saves a caller with
+/// further questions about the image reading the same bytes a second time.
 #[allow(clippy::collapsible_if)]
 pub async fn verify_assembled_firmware(
     options: &Options,
     data: &[u8],
     force: bool,
     expected_board: Option<Board>,
-) -> Result<(), Error> {
+) -> Result<ParsedDevice, Error> {
     let info = parse_firmware(data).await?;
 
     if let (Some(expected), Some(actual)) = (expected_board, info.get_board()) {
@@ -150,7 +156,7 @@ pub async fn verify_assembled_firmware(
             );
         }
     }
-    Ok(())
+    Ok(info)
 }
 
 pub async fn parse_firmware(data: &[u8]) -> Result<ParsedDevice, Error> {
@@ -267,6 +273,7 @@ pub async fn build_rom_image(
     board: Board,
     mcu: Variant,
     force: bool,
+    before_fetch: impl FnOnce(&Config) -> Result<(), Error>,
 ) -> Result<(FirmwareProperties, Option<Vec<u8>>, Option<Vec<u8>>, String), Error> {
     let overrides = ConfigOverrides::default().allow_turbo_boot_multi_slot(force);
 
@@ -294,7 +301,26 @@ pub async fn build_rom_image(
             .map_err(onerom_fw::Error::license)?;
     }
 
+    // The last point at which nothing has been fetched: the config is fully
+    // resolved, and the ROM images it names have not been downloaded. A caller
+    // with a reason to refuse this build gets to do it here, rather than after
+    // the user has waited for every ROM.
+    before_fetch(builder.config())?;
+
     get_rom_files_async(&mut builder).await?;
+
+    // Before the image is assembled, so a 16-bit ROM supplied the wrong way
+    // round is reported before the user waits for a build.
+    onerom_cli::byte_order::report_slots(&builder, options.verbose);
+
+    // A plugin named by the config has not been through the manifest, so its
+    // compatibility window is checked here.  Plugins named with --plugin were
+    // selected against the manifest already; re-checking them is harmless and
+    // keeps this independent of how the plugin arrived.
+    report_plugin_checks(
+        options,
+        check_config_plugins(&builder, &version, &onerom_cli::CliFetch).await?,
+    );
 
     let fw_props = FirmwareProperties::new(version, board, mcu, ServeAlg::default(), true)?;
     let (metadata, image_data) = builder.build(fw_props).map_err(onerom_fw::Error::build)?;
@@ -312,6 +338,37 @@ pub async fn build_rom_image(
     let desc = builder.description();
 
     Ok((fw_props, metadata, image_data, desc))
+}
+
+/// Report the non-fatal outcomes of checking the plugins a config named.
+///
+/// A skipped check is always reported, whatever the verbosity: the published
+/// compatibility window is the only thing standing between a stale plugin and a
+/// device that hard faults on boot, so a build that could not consult it must
+/// say so.  A check that ran, and a plugin there was nothing to check, are
+/// detail for --verbose.
+fn report_plugin_checks(options: &Options, notes: Vec<PluginNote<onerom_fw::Error>>) {
+    for note in notes {
+        match note {
+            PluginNote::Checked { name, version } => {
+                if options.verbose {
+                    println!("Plugin '{name}' v{version} is compatible with firmware");
+                }
+            }
+            PluginNote::Unofficial { source } => {
+                if options.verbose {
+                    println!(
+                        "Plugin {source} is not an official One ROM plugin - no published compatibility to check"
+                    );
+                }
+            }
+            PluginNote::Unchecked { source, error } => {
+                eprintln!(
+                    "Warning: could not check plugin {source} for firmware compatibility\n  {error}"
+                );
+            }
+        }
+    }
 }
 
 // ------------------------------- firmware build command -------------------------------
@@ -402,8 +459,16 @@ pub async fn cmd_build(
         }
     }
 
-    let (fw_props, metadata, image_data, desc) =
-        build_rom_image(options, &config_json, version, board, mcu, args.force).await?;
+    let (fw_props, metadata, image_data, desc) = build_rom_image(
+        options,
+        &config_json,
+        version,
+        board,
+        mcu,
+        args.force,
+        |_| Ok(()),
+    )
+    .await?;
 
     validate_sizes(&fw_props, &firmware_data, &metadata, &image_data)?;
 
@@ -574,7 +639,7 @@ fn print_firmware_info(options: &Options, info: &ParsedDevice) -> Result<(), Err
 
     match info {
         ParsedDevice::Original(sdrr) => print_original_firmware_info(options, sdrr),
-        ParsedDevice::Schema(onerom) => print_schema_firmware_info(options, onerom),
+        ParsedDevice::Schema(onerom) => print_schema_firmware_info(options, info, onerom),
     }
 }
 
@@ -609,8 +674,16 @@ fn print_original_firmware_info(
     Ok(())
 }
 
+/// Print a firmware binary's schema-format summary.
+///
+/// Plugins are listed separately from ROM slots, and ROM slots are numbered
+/// from 0 with plugins excluded, the same way [`crate::inspect`] numbers a
+/// connected device's slots.  A plugin is named by the image source recorded
+/// in the firmware, with no manifest lookup - there is no device here, and the
+/// binary already carries the name.
 fn print_schema_firmware_info(
     options: &Options,
+    parsed: &ParsedDevice,
     onerom: &onerom_fw_parser::OneRom,
 ) -> Result<(), Error> {
     let Some(info) = onerom.info() else {
@@ -630,10 +703,31 @@ fn print_schema_firmware_info(
         println!("Build:    {}", info.build_number);
         println!("Format:   Schema (v0.7.0+)");
         println!("Board:    {board_name}");
-        if let Some(metadata) = onerom.metadata() {
-            println!("Slots: {}", metadata.rom_slot_count);
-            for (i, slot) in metadata.rom_slots.iter().enumerate() {
-                println!("  Slot {i}: {} ROM(s)", slot.rom_count);
+        if onerom.metadata().is_some() {
+            let mut plugins: Vec<String> = Vec::new();
+            let mut rom_slots: Vec<(usize, usize)> = Vec::new();
+            for slot in parsed.slots() {
+                match slot.kind {
+                    SlotKind::Plugin => plugins.push(
+                        slot.roms()
+                            .next()
+                            .and_then(|r| r.filename.map(|s| s.to_string()))
+                            .unwrap_or_else(|| "unknown".to_string()),
+                    ),
+                    SlotKind::Rom => {
+                        rom_slots.push((slot.user_index.unwrap_or(0), slot.roms().count()))
+                    }
+                }
+            }
+            if !plugins.is_empty() {
+                println!("Plugins:");
+                for plugin in &plugins {
+                    println!("  {plugin}");
+                }
+            }
+            println!("Slots: {}", rom_slots.len());
+            for (user_index, rom_count) in &rom_slots {
+                println!("  Slot {user_index}: {rom_count} ROM(s)");
             }
         }
     } else {

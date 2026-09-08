@@ -393,7 +393,11 @@ fn generate_hw_config_enum(configs: &[HwConfigData]) -> String {
         "/// Defines pin mappings and capabilities for different One ROM board revisions.\n",
     );
     code.push_str("#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]\n");
-    code.push_str("#[cfg_attr(feature = \"schemars\", derive(schemars::JsonSchema))]");
+    code.push_str("#[cfg_attr(feature = \"schemars\", derive(schemars::JsonSchema))]\n");
+    // Marked non-exhaustive so adding a new board revision in a later release
+    // is a backwards-compatible change: external matches must carry a wildcard
+    // arm.
+    code.push_str("#[non_exhaustive]\n");
     code.push_str("pub enum Board {\n");
 
     for config in configs {

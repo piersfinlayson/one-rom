@@ -1,5 +1,10 @@
 # One ROM
 
+![Test coverage](https://img.shields.io/badge/Test%20coverage%3A-555)
+![Base firmware](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/piersfinlayson/one-rom/badges/firmware.json&label=Base%20firmware)
+![Plugin - USB](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/piersfinlayson/one-rom/badges/plugin-usb.json&label=Plugin%20-%20USB)
+![Plugin - Host Control](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/piersfinlayson/one-rom/badges/plugin-host-control.json&label=Plugin%20-%20Host%20Control)
+
 **[One ROM](https://onerom.org) - One ROM To Rule Them All**
 
 The most flexible and powerful ROM replacement for your retro computer.  A single Raspberry Pi
@@ -177,7 +182,7 @@ own.
 |--------|------|--------------|
 | [usb](plugins/system/usb) | system | The device's own USB stack, so a running One ROM stays on the bus.  Exposes the ROM being served for live read and write, and the `picobootx` extended PICOBOOT interface. |
 | [host-control](plugins/user/host-control) | user | A full [RBCP](#rbcp--talking-to-the-host-system) implementation. |
-| [rgb](plugins/user/rgb) | user | Cycles the NeoPixel on RGB boards. |
+| [rgb](plugins/user/rgb) | user | Cycles the NeoPixel on RGB boards.  Superseded by the USB plugin's RGB support, reached with `onerom control rgb`. |
 | [activity](plugins/user/activity) | user | Blinks the status LED when the host is reading the ROM. |
 | [blink](plugins/user/blink) | user | Minimal example. |
 
@@ -234,7 +239,8 @@ cd rust/lab && scripts/flash.sh
 Dependencies are listed in [INSTALL.md](INSTALL.md), or use the
 [build container](ci/docker/README.md).  The ARM and
 Emscripten toolchain versions are pinned (`ci/arm-toolchain-version`,
-`ci/emscripten-version`) so a firmware binary is byte-identical wherever it is
+`ci/emscripten-version`), as are the documentation tools that render the PDF
+editions (`ci/pandoc-version`, `ci/weasyprint-version`), so a firmware binary is byte-identical wherever it is
 built.
 
 Build the base firmware:
@@ -324,9 +330,12 @@ published are on crates.io, for host-side Rust development.
 | [`onerom-lens`](rust/lens) | | One ROM Lens — compiles the firmware emulator to WebAssembly and draws PIO and DMA activity as waveforms in a browser, cycle by cycle. |
 | [`onerom-fw-emulator`](rust/fw-emulator) | | Compiles and runs the real firmware C on a host, PIOs and all. |
 | [`onerom-fw-tester`](rust/fw-tester) | | Drives the emulator with generated configurations and checks the results. |
-| [`onerom-plugin-tester`](rust/plugin-tester) | | Runs plugins against the emulated firmware. |
+| [`onerom-plugin-tester`](rust/plugin-tester) | | The harness a plugin tester is built from — runs a plugin's own C against the emulated firmware. |
+| [`onerom-rbcp-tester`](rust/rbcp-tester) | | Drives the host-control plugin over emulated ROM bus cycles, as an RBCP host would. |
+| [`onerom-usb-tester`](rust/usb-tester) | | Drives the USB system plugin's commands, log forwarding and GPIO control. |
 | [`onerom-fw-driver`](rust/fw-driver), [`onerom-fw-geometry`](rust/fw-geometry) | | Pin geometry and GPIO bitmask helpers, shared and dependency-free by design. |
 | [`fw-config-gen`](rust/fw-config-gen), [`schema-gen`](rust/schema-gen) | | Code and schema generators. |
+| [`doc-gen`](rust/doc-gen) | | Checks the values `docs/` states against the sources that own them, assembles the markdown a multi-part PDF is rendered from, and fills in the fragment regions of the documents in `docs/`. |
 
 For in-browser use, [one-rom-wasm](https://github.com/piersfinlayson/one-rom-wasm)
 wraps `onerom-gen` as WASM, and is what the
@@ -356,13 +365,17 @@ wraps `onerom-gen` as WASM, and is what the
 | [Compatibility](docs/COMPATIBILITY.md) | Which chips each hardware variant can emulate, and at what flash cost. |
 | [Adding a Chip Type](docs/ADDING-CHIP-TYPES.md) | Teaching One ROM to emulate a chip it does not yet know. |
 | [Image Selection](docs/IMAGE-SELECTION.md) | Telling One ROM which installed image to serve. |
+| [Logging](docs/LOGGING.md) | Reading One ROM's log, over USB or with a debug probe. |
 | [Image Sets](docs/MULTI-ROM-SETS.md) | Serving several ROMs at once, and dynamic bank switching. |
 | [Plugins](plugins/README.md) | Building, configuring and writing plugins. |
 | [Build Container](ci/docker/README.md) | Building the firmware reproducibly in Docker. |
 | [ROMs Glorious ROMs](docs/ROMS-GLORIOUS-ROMS.md) | Everything you wanted to know about 23/27 series ROMs but were afraid to ask. |
 | [Changelog](CHANGELOG.md) | What changed, and when. |
 
-More in [docs/](docs) — flash layout, logging, voltage levels, using a Pi Pico as
+The CLI manual, chip type and compatibility references are also published as
+PDFs, in A4 and US Letter, at [onerom.org/docs](https://onerom.org/docs/).
+
+More in [docs/](docs) — flash layout, voltage levels, using a Pi Pico as
 an SWD programmer — plus [INSTALL.md](INSTALL.md) for build dependencies and
 [LICENSE.md](LICENSE.md).
 
@@ -408,4 +421,6 @@ so it can be published.  The plugins publishing process is documented in
 
 ## License
 
-See [LICENSE](LICENSE.md) for software and hardware licensing information.
+See [LICENSE](LICENSE.md) for software and hardware licensing information, and
+[ACKNOWLEDGEMENTS](ACKNOWLEDGEMENTS.md) for third party work One ROM builds on
+or is compatible with.

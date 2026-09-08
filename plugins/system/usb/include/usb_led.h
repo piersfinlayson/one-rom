@@ -5,30 +5,26 @@
 #if !defined(USB_LED_H)
 #define USB_LED_H
 
-void led_handle_pending_set(void);
-void led_handle_ongoing_led_modes(void);
+#include <stdint.h>
 
-// LED timing constants
-#define ONEROM_BEACON_DURATION_MS   2500u
-#define ONEROM_BEACON_TOGGLE_MS     50u     // 10Hz
+#include "picobootx.h"
+#include "usb_custom_pbx.h"
 
-typedef struct {
-    onerom_led_subcmd_t mode;
-    uint8_t led_state;
-    uint8_t flame_index;
-    uint8_t pre_beacon_state;
-    uint32_t last_toggle_ms;
-    uint32_t beacon_start_ms;
-} led_status_t;
+// Resolve the firmware's LED engine and set the RGB capability bit if it is
+// there.  Called once at init, after gpio_init_caps(), which clears the
+// capability word.
+void led_init_caps(void);
 
-static const struct {
-    uint8_t state;
-    uint16_t ms;
-} flame_table[] = {
-    {1, 60}, {1, 40}, {0, 15}, {1, 35}, {1, 55},
-    {0, 20}, {1, 70}, {0, 10}, {1, 45}, {1, 30},
-    {0, 25}, {1, 50}, {1, 65}, {0, 15}, {1, 40},
-};
-#define FLAME_TABLE_LEN (sizeof(flame_table) / sizeof(flame_table[0]))
+// Hand a SET_LED to the firmware's engine, whichever LED it names, and report
+// what the engine made of it.
+pb_status_t led_handle_set(const onerom_set_led_args_t *args);
+
+// Whether this device can answer ONEROM_CMD_LED_QUERY at all, which needs
+// firmware with an LED engine to read.
+uint8_t led_can_query(void);
+
+// Fill in what one LED is doing.  The caller has already checked
+// led_can_query().
+pb_status_t led_fill_state(uint8_t led_id, onerom_led_state_t *out);
 
 #endif //USB_LED_H

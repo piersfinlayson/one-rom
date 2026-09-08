@@ -2,6 +2,127 @@
 
 All notables changes between versions are documented in this file.
 
+## v0.7.2 - 2026-??-??
+
+Headline changes in this release:
+- Motorola S-record ROM images, alongside Intel HEX, in the programming tools, the CLI's image converter and One ROM Lab.
+- A plugin that would hard fault the device is now refused at build time instead of being flashed.
+- The CLI can tell you when a newer CLI has been released, and download it for you.
+- A host can drive and read One ROM's own pins over the ROM bus, so a retro system can reset itself, or operate whatever a wire from a One ROM pad reaches.
+- One ROM's USB plugin can now drive the RGB LED on the models that have one, with colour, brightness and effects from the CLI and no plugin needed.  The status of both LEDs can also be queried.
+- New upright USB-C connector Fire designs have been released: [24G, 28D, 32C and 40C](hardware/pcb/README.md).
+
+In detail:
+- Add `onerom self`, covering the CLI's own release channel: `self check` says whether a newer CLI has been published for your platform, and `self download` fetches a published artifact — for this platform, another (`--target`), or all of them — verified against its published SHA-256.  Nothing is installed, and the CLI still performs no update check unless asked.
+- Replace SEGGER RTT with a smaller One ROM implementation.  Debug probes are unaffected.
+  - This required a firmware update.
+- Add a plugin logging API, so a plugin can write its own named log channel and another plugin can drain it — the groundwork for a retro system's output reaching a PC over One ROM's USB.
+  - This required a firmware update.
+- One ROM's log now reaches a PC over USB, with no debug probe.  Use `onerom monitor log`, any terminal on the CDC serial port, or `onerom program --follow` to go straight from programming to watching.  Attach after a reboot and the boot log is still there.
+  - This required a firmware update.
+- Boot logging now switches the firmware's own boot messages, and nothing else.  A plugin previously logged nothing unless `--boot-logging` was set, and errors are now always reported.
+  - This required a firmware update.
+- A plugin can now ask which kinds of logging are active on its device, and how its firmware was built.
+  - This required a firmware update.
+- A host can now send bytes out through One ROM over the ROM bus and read them on a PC, using the new Pipes group of the ROM Bus Control Protocol — no serial port or display needed on the retro system.  The bytes share One ROM's log channel, so its own logging is interleaved with them.
+- A host can now drive and read One ROM's own pins over the ROM bus, using the new Auxiliary I/O group of the ROM Bus Control Protocol — so a wire from a One ROM pad can reach a reset line, a disk drive, a relay or an indicator, and the retro system can operate it.  Three groups of pins are offered: the GPIOs of the running RP2350 variant, the image select pads and the X expansion pads.  A pin is offered only where One ROM is using none of it, which depends on the ROM image being served.
+- A host can now put back the bytes the ROM Bus Control Protocol's back-channel displaces in the image it is being served.  The region is a hole punched in a running ROM and nothing could fill it back in, because every write a host made was followed by that command's own response header.  Two new commands close it: one reloads a RAM slot from flash and leaves without touching the header, the other takes the bytes from the host and writes them on the way out.  A third reports which flash slot One ROM booted and which RAM slot it went into, which is what a host needs to name in the reload.
+  - This required a firmware update: the booted slot is now readable by a plugin through the metadata API.
+- Plugins can read a millisecond clock and indexed device metadata.  The firmware starts a free-running counter once ROM serving is set up and before it launches a plugin, so a plugin can time its own work without keeping a counter of its own.  The USB plugin now takes its clock from there and no longer runs a timer interrupt.
+  - This required a firmware update.
+  - USB plugin v0.3.0 needs firmware v0.7.2 as a result, and does not load on anything older.
+- Check plugins named by a config against the images server's published compatibility window, in the CLI and Studio.  A plugin binary declares only a minimum firmware version, so USB v0.1.2 — which hard faults on firmware v0.7.0 — was previously built in without complaint.  A local or third-party plugin has nothing published to check, and an unreachable server warns rather than failing.
+- Add Motorola S-record (`srec`) as a ROM image format, alongside Intel HEX and with the same `load_address` handling.  A file with no termination record is read, which is what `srec_cat` writes by default.
+- One ROM Lab can dump a ROM as S-records: `f:srec`, alongside the existing `ihex` and hex dump formats.
+- One ROM Lab now presents the same USB descriptors as One ROM: the same interface names, endpoint addresses, device class and CDC settings.  The two share a VID and PID, so a host that has met one and then meets the other now finds the same device.
+- One ROM Lab now stops a running command when a terminal sends a break, as it already does for any keystroke.
+- Publish the CLI manual, chip type reference and compatibility reference as PDFs, in A4 and US Letter, for reading and printing away from a browser.  Each carries the version of the thing it documents rather than a repository version.
+- The CLI manual now has a Problems part, covering how to recover a One ROM the programming tools cannot find.
+- `onerom inspect led` and `onerom inspect rgb` report what each of One ROM's LEDs is doing — the mode, the speed, the GPIO, and the colour and brightness of the RGB one.  A board without an RGB LED says so rather than failing.
+  - This required a firmware update.
+- Plugins can now take constants from the ORA API rather than writing the values out again.  A value the firmware and a plugin have to agree on — the longest hold either accepts, say — is declared once and reaches both, so a change to it cannot leave them disagreeing.
+  - This required a firmware update.
+- One ROM now drives its RGB LED itself from core firmware, on the models that have one, the USB plugin supports accessing this function and `onerom control rgb` drives it: on, off, beacon, flame, cycle, breathe and blink, each with a colour, a brightness and a speed.  `onerom inspect rgb` and `onerom inspect led` report what each LED is doing.  This needs no plugin, so the RGB user plugin is superseded and the user plugin slot it used to occupy is free.  A plugin can drive and read either LED through the plugin API.
+  - This required a firmware update.
+- Four GPIOs can be under a timed `--hold` at once, rather than eight.  Four is every spare pin a board exposes that can realistically be driven, so the old figure reserved plugin memory for pins that do not exist.
+- `onerom control led blink` blinks the status LED on and off and keeps going, where `beacon` stops itself after a couple of seconds.
+  - This required a firmware update.
+- One ROM's LED modes now state how fast they can run, and refuse a `--period` shorter than that instead of accepting it and running slower than asked.  A full hue cycle or a breath takes at least a second, a flame half of one, and a beacon or blink 50ms.
+  - This required a firmware update.
+- `onerom control led` can now time itself: `--hold` runs a mode for a bounded period and then puts the LED back to what it was doing, and `beacon` and `flame` take a `--period` for how fast they run.  A plain `on`, `off`, `beacon` or `flame` is unchanged.
+  - This required a firmware update.
+- RBCP's `GET_PIPE_INFO` reports two more things about a pipe: how many bytes are waiting to be read, and what kind of thing the pipe reaches.  A One ROM pipe carries the host-to-device direction only, so the first is always zero, and the second is reported as unspecified.
+- `onerom control led beacon` now leaves the status LED as it found it.  It previously restored the state the USB plugin had last set itself, which on a device nothing had told otherwise is off.
+- `onerom inspect gpio` reported `Level` 0 for the status LED and RGB LED pins whatever they were doing.  An output pin's level is now what it drives, rather than a pad read-back the firmware disables on those two pins.
+  - This required a firmware update.
+- `onerom control pin`, `control rgb` and `inspect gpio` now work first time against a One ROM running an older USB plugin.  They previously waited and then failed, and succeeded when run again.
+  - This required a USB plugin update and a new CLI.
+- Fix the data pin numbers a plugin reads, which were offset by the data base and never reported more than eight.  A plugin now gets the served slot's actual GPIOs, and the API documents that the count follows the slot rather than the board.
+  - This required a firmware update.
+- Fix the ROM Bus Control Protocol corrupting the image it serves.  A host naming a back-channel that started within 8 bytes of the end of the RAM slot had the response header written over the start of the served image, where the specification requires the request to be discarded in silence.
+- Fix the ROM Bus Control Protocol telling a host its ENTER_CMD_RESP had arrived before it had.  The device cleared the response header on entry, and a host watches the token for the change that says a command has been received.
+- Fix the ROM Bus Control Protocol accepting a command page no host could reach.  The device measured it against the RAM slot rather than the ROM it serves, so on a banked slot a host entered command-response mode and was never heard from.
+- `onerom program --reset-host <PIN>` resets the host system as the last step of programming, so flashing an image and restarting the machine into it is one command.  The pin is checked against the image being built before its ROM images are fetched, so a pin One ROM would be serving with costs nothing to discover.
+- `onerom program --follow` now refuses before programming when the image has no USB system plugin, rather than programming and then failing to find the serial port.  Such an image leaves the USB bus as soon as the One ROM starts serving, so there is no log to follow.
+- `onerom control pin --hold` and `onerom control reset --hold` now refuse a hold longer than the device's own 60 second limit as the command line is read, instead of sending it and having the device refuse.
+- `onerom scan` now says in one line when a device on One ROM's VID/PID could not be opened or could not be read, and ignores it.  It warns only where nothing else was found, and `--unrecognised` no longer picks one to program.
+- One ROM Lab now serves PICOBOOT while it runs, so `picotool info` names the board and its version, and `picotool reboot -u` puts one into BOOTSEL over USB even when its shell is not answering.
+- `picotool` is now told that One ROM and One ROM Lab take no UF2 download.  Both previously reported the UF2 families the RP2350's own tables list, and neither presents a drive for one to be dragged onto.
+  - This required a USB plugin update and a new One ROM Lab.
+- `picotool info` now describes a One ROM - its name, version, web site, description and build date - where it reported only the chip.  The information is carried in the firmware image, so nothing needs to be running on the device to read it.
+  - This required a firmware update.
+- Fix the firmware's build date.  It recorded the local time of whenever one source file last happened to compile, rather than when the firmware was built, and is now UTC and moves whenever the firmware is actually rebuilt.
+  - This required a firmware update.
+- `picotool` now gets the right answers when it asks a running One ROM, or One ROM Lab, about the board.  Asking for several details at once was refused outright, rather than answering the ones the board knew.
+  - This required a USB plugin update and a new One ROM Lab.
+- One ROM Lab greets a terminal when it opens the port, naming itself and its board, rather than staying silent until you press Enter.
+- Fix One ROM Lab dropping characters from a pasted command line.
+- Fix a nonsensical error when a ROM image is smaller than the chip and `size_handling` is set to truncate.  It reported the image as too large for the chip while printing a size smaller than the chip's, where what the image needs is padding or duplication.
+- Build errors now name the ROM image at fault by its file, where they gave a chip number that counted plugin slots and every chip in a set, so nothing a user typed produced it.  A `location` window running past the end of its file now says so, instead of advising padding that cannot reach it, and an image too large for a 27C080 says that one One ROM serves half of one.
+- The CLI now warns when a 16-bit ROM image looks to be stored the wrong way round, in `onerom program`, `firmware build` and `image swap-bytes`.  It compares the image's first bytes against known ROM headers, and leaves one matching nothing alone.
+- `onerom firmware inspect --verbose` now lists plugins separately and numbers ROM slots from 0 with plugins excluded, as `onerom inspect slots` already did.  An image holding the USB plugin and two ROM images reported three slots.
+- A One ROM running firmware newer than these tools can read — v0.8 onwards — now shows as unrecognised, rather than as a device whose details were read incorrectly.  This restores previous, pre-v0.7.0 tool behaviour.
+- **Breaking (CLI):** `--name` now names the One ROM rather than the configuration being built — it is an alias for `--instance-name`, where it was an alias for `--config-name`, which must now be spelled in full.  A command line using `--name` still runs and names the device instead.  The CLI manual now carries this release's breaking changes near the top, and the full history at the end.
+- **Breaking (Rust crates only):** `onerom_gen::FileFormat` and most of the crate's other public enums are now `#[non_exhaustive]`, so a `match` on one needs a wildcard arm; `IHEX_BLANK_BYTE` is renamed `UNWRITTEN_BYTE`, now that it is shared by both record formats, with the old name kept as a deprecated alias.  `LoadAddress` moves to a new `hexfile` module, re-exported from its old paths.
+- Writing One ROM's flash over picoboot now works, and no longer hangs the device.  A host that walks away from a reply part way through no longer leaves One ROM unable to take another command, and is not served the leftovers of the reply it abandoned.  From picobootx 0.6.0.
+  - This required a USB plugin update and a new One ROM Lab.
+- **Breaking (Rust crates only):** `onerom_gen::Error` identifies a chip by image name rather than by index.  `RightSize`, `ImageTooLarge`, `DuplicationNotExactDivisor` and `BadLocation` gain a `filename` field, and `ImageTooSmall`, `DuplicateUnsupportedForFormat`, `LoadAddressWithBinary` and `Transform` swap their `index` for one.  A new `ImageExceedsServedSize` variant reports an image too large for the part of a chip One ROM serves.
+- **Breaking (Rust crates only):** `onerom_config::hw::Board` is now `#[non_exhaustive]`, so a `match` on one needs a wildcard arm.  A new board revision no longer breaks the crate's API.
+- Clarify in `--help` and the CLI manual that `onerom program --verify` is supported.
+- Correct the `peek` and `poke` help, which showed a `live` argument the top-level aliases do not take.
+- Building Studio no longer needs libudev or libusb.  probe-rs 0.32 takes hidapi's pure-Rust `basic-udev` backend in place of `libudev-sys`, and nothing else in the graph wants libusb.
+- Both CS activate and de-activate paths of the address monitor PIO now require 3 matching reads, a total of 9 PIO cycles, to register/de-register and access.
+  - This required a firmware update.
+
+To publish:
+- Rust crates (in dependency order):
+  - onerom-config 0.7.0
+  - onerom-metadata 0.2.0
+  - onerom-gen 0.8.0
+  - onerom-fw-parser 0.9.0
+  - onerom-fw 0.3.0
+  - onerom-app 0.3.0
+  - onerom-cli 0.4.0
+- Config schema
+- CLI bin 0.4.0
+- Studio 0.2.2
+- One ROM Lab 0.3.0.  Nothing publishes Lab today.
+- USB plugin 0.3.0
+- USB plugin 0.2.1 must be marked `incompatible_from` v0.7.2.  v0.7.2 starts the
+  TIMER0 tick generator itself, and 0.2.1 then writes `TICKS_TIMER0_CYCLES` to an
+  already-running generator, which the RP2350 datasheet forbids.
+- host-control plugin 0.1.3
+- Chip type and compatibility reference PDFs — their first edition:
+  `ci/build-docs.sh ../one-rom-images --source firmware`, then set each
+  `latest` by hand.  The CLI manual moves with the CLI release, not this one.
+- Point the coverage badges at `main` once this release has merged.  In the
+  "Publish the coverage badges" step in `.github/workflows/ci.yml`, change
+  `if: github.ref == 'refs/heads/releases/0.7.2'` to
+  `if: github.ref == 'refs/heads/main'`.  Until then the README badges show
+  this release branch's figures.
+- one-rom-wasm: move to the new Rust crates.
+- one-rom-site: add S-record support.
+
 ## v0.7.1 - 2026-08-09
 
 Headline changes in this release:

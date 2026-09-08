@@ -231,6 +231,20 @@ pub fn test_flash_slot_ext_info(emu: &Emulator, config: &Config) -> Result<(), S
         }
     }
 
+    // A flash slot past the end of the filtered set is InvalidSlot, which is a
+    // different answer from the InvalidArg an out-of-range rom_index earns
+    // above: one says the slot does not exist, the other that the ROM within
+    // it does not.
+    let slot_count = emu.get_flash_slot_count(ORA_FLASH_SLOT_FLAG_EXCLUDE_PLUGINS);
+    let (result, _) =
+        emu.get_flash_slot_ext_info(slot_count, 0, ORA_FLASH_SLOT_FLAG_EXCLUDE_PLUGINS);
+    if result != onerom_fw_emulator::OraResult::InvalidSlot {
+        errors.push(format!(
+            "flash slot {}: expected InvalidSlot, got {:?}",
+            slot_count, result
+        ));
+    }
+
     if errors.is_empty() {
         println!("  {} flash slot(s) ext-verified", config.chip_sets.len());
         Ok(())
@@ -470,5 +484,168 @@ pub fn test_read_initial_slot(
             total_failures,
             failures.join("; ")
         ))
+    }
+}
+
+/// Locate the runtime info word holding `rom_table`, by the value it is known
+/// to hold and by what the API says once it is changed.
+///
+/// The runtime info block's layout deliberately does not cross the FFI
+/// boundary, so there is no field offset to look up. What there is instead is
+/// an address the API itself reports — `ora_get_active_ram_slot` divides
+/// `rom_table` by the region size, so the active slot's base address is the
+/// value the field currently holds. Scanning the block for that value narrows
+/// it to the candidates, and moving one of them by a byte confirms which:
+/// `rom_table` is the only word `ora_get_active_ram_slot` reads, so it is the
+/// only one whose misalignment it will report.
+///
+/// Both halves are required. An ambiguous scan is an error rather than a guess.
+fn find_rom_table_word(emu: &Emulator, active_addr: u32) -> Result<usize, String> {
+    let bytes = emu.runtime_info_bytes();
+    let candidates: Vec<usize> = bytes
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .enumerate()
+        .filter(|(_, w)| u32::from_le_bytes(**w) == active_addr)
+        .map(|(i, _)| i * 4)
+        .collect();
+
+    let mut confirmed = Vec::new();
+    for &offset in &candidates {
+        // A byte past the base is still inside the region and still the active
+        // slot's, so only the field the call actually reads turns this into a
+        // misalignment it reports.
+        // SAFETY: the offset is inside the block, aligned, and put back below
+        // before anything else runs.
+        unsafe { emu.poke_runtime_u32(offset, active_addr + 1) };
+        let (result, _) = emu.get_active_ram_slot();
+        unsafe { emu.poke_runtime_u32(offset, active_addr) };
+        if result == onerom_fw_emulator::OraResult::InternalError {
+            confirmed.push(offset);
+        }
+    }
+
+    match confirmed.len() {
+        1 => Ok(confirmed[0]),
+        0 => Err(format!(
+            "no runtime info word behaves like rom_table ({} held 0x{active_addr:08X})",
+            candidates.len()
+        )),
+        n => Err(format!("{n} runtime info words behave like rom_table")),
+    }
+}
+
+/// Every way `ora_get_active_ram_slot` can refuse, and the answer it goes back
+/// to once the cause is removed.
+///
+/// The call reports which RAM slot is being served by reading `rom_table` — the
+/// SRAM address the serving DMA is pointed at — and dividing. Three of its four
+/// refusals cannot be reached through the API at all, because
+/// `ora_set_active_ram_slot` only ever writes an address it derived from a slot
+/// index it validated. They are reachable on a device, where the field is one
+/// DMA misconfiguration away from any of them, and this is what the firmware
+/// does when it finds one: `NO_SLOT_ACTIVE` for the two values that mean
+/// nothing is being served, and `INTERNAL_ERROR` for an address that is being
+/// served but is not a slot — which is the firmware telling a plugin its own
+/// state is inconsistent rather than blaming the caller.
+///
+/// So the field is written directly, one value at a time, and put back after
+/// each. The restore at the end is the discriminating half: the call has to
+/// come back with the original slot, or the refusals above prove nothing more
+/// than that something was broken.
+pub fn test_active_ram_slot_refusals(emu: &Emulator, expected_slot: u8) -> Result<(), String> {
+    /// One byte past the region base — inside the served region, so it passes
+    /// the range test and fails the alignment one.
+    const MISALIGNED_BY: u32 = 1;
+
+    // A NULL out pointer needs no poke, and is the one refusal a plugin can
+    // earn for itself.
+    let result = emu.get_active_ram_slot_null_out();
+    if result != onerom_fw_emulator::OraResult::InvalidArg {
+        return Err(format!("NULL out: expected InvalidArg, got {result:?}"));
+    }
+
+    let (result, slot) = emu.get_active_ram_slot();
+    if !result.is_ok() || slot != Some(expected_slot) {
+        return Err(format!(
+            "before poking: got {result:?}/{slot:?}, want Ok and slot {expected_slot}"
+        ));
+    }
+    let (result, info) = emu.get_ram_slot_info(expected_slot);
+    let info = match (result.is_ok(), info) {
+        (true, Some(info)) => info,
+        _ => return Err(format!("get_ram_slot_info({expected_slot}): {result:?}")),
+    };
+    let region_size = info.size;
+    let sram_base = info.addr - (expected_slot as u32 * region_size);
+    let slot_count = emu.get_ram_slot_count();
+    let sram_limit = sram_base + (region_size * slot_count as u32);
+
+    let offset = find_rom_table_word(emu, info.addr)?;
+
+    // (poked value, what it means, the answer it must earn).
+    let cases: &[(u32, &str, onerom_fw_emulator::OraResult)] = &[
+        (
+            0,
+            "a null rom table",
+            onerom_fw_emulator::OraResult::NoSlotActive,
+        ),
+        (
+            0xFFFF_FFFF,
+            "an erased rom table",
+            onerom_fw_emulator::OraResult::NoSlotActive,
+        ),
+        (
+            sram_base - 4,
+            "an address below the slot region",
+            onerom_fw_emulator::OraResult::InternalError,
+        ),
+        (
+            sram_limit,
+            "an address past the last slot",
+            onerom_fw_emulator::OraResult::InternalError,
+        ),
+        (
+            info.addr + MISALIGNED_BY,
+            "an address inside a slot but not at its base",
+            onerom_fw_emulator::OraResult::InternalError,
+        ),
+    ];
+
+    let mut errors = Vec::new();
+    for (value, label, want) in cases {
+        // SAFETY: `offset` was confirmed to be rom_table above, and the
+        // original value goes straight back.
+        unsafe { emu.poke_runtime_u32(offset, *value) };
+        let (result, slot) = emu.get_active_ram_slot();
+        unsafe { emu.poke_runtime_u32(offset, info.addr) };
+
+        if result != *want {
+            errors.push(format!(
+                "{label} (0x{value:08X}): got {result:?}, want {want:?}"
+            ));
+        }
+        if slot.is_some() {
+            errors.push(format!("{label}: reported a slot on a failed call"));
+        }
+    }
+
+    // Discriminate: with the field back as it was, the call answers as it did.
+    let (result, slot) = emu.get_active_ram_slot();
+    if !result.is_ok() || slot != Some(expected_slot) {
+        errors.push(format!(
+            "after restoring: got {result:?}/{slot:?}, want Ok and slot {expected_slot}"
+        ));
+    }
+
+    if errors.is_empty() {
+        println!(
+            "  {} refusals, slot {expected_slot} restored",
+            cases.len() + 1
+        );
+        Ok(())
+    } else {
+        Err(errors.join("; "))
     }
 }

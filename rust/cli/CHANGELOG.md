@@ -1,5 +1,128 @@
 # CLI Changelog
 
+## v0.4.0 - 2026-??-??
+
+- **`peek` and `poke` help no longer show an argument the commands reject.**
+  Both gave `onerom peek live ...`, and the top-level aliases take their options
+  directly.
+- **A device that cannot be read is now named in one line and ignored.**
+  `onerom scan` says whether it could not be opened or could not be read, warns
+  only where nothing else was found, and adds the USB identity and the
+  underlying error under `--verbose`. `--unrecognised` no longer picks one to
+  program, since a device that will not answer cannot be programmed.
+- **A ROM image smaller than the chip, with `size_handling=trunc`, no longer
+  reports the image as too large.** It said the image was larger than the chip
+  supported while printing a size smaller than the chip's. It now reads as too
+  small, and points at padding or duplication.
+- **Build errors name the ROM image at fault by its file.** They gave a chip
+  number that counted plugin slots and every chip in a set, so nothing a
+  `--slot` or a config entry produced it. A `location` window running past the
+  end of its file now says so, instead of advising padding that cannot reach
+  it, and an image too large for a 27C080 says that one One ROM serves half of
+  one.
+- **The CLI warns when a 16-bit ROM image looks to be stored the wrong way
+  round.** A 16-bit ROM supplies two bytes at a time, an image may hold each
+  pair in either order, and One ROM reads the low byte first. `program`,
+  `firmware build` and `image swap-bytes` now compare the image's first bytes
+  against known ROM headers and say what they recognised. An image matching
+  none is left alone, and nothing is refused.
+- **`onerom firmware inspect --verbose` lists plugins separately** and numbers
+  ROM slots from 0 with plugins excluded, as `onerom inspect slots` already
+  did. An image holding the USB plugin and two ROM images reported three slots.
+- **`onerom program --reset-host <PIN>` resets the host system after
+  programming.** It waits for the One ROM to come back on the USB bus and then
+  pulses that pin low, as `control reset` does, so flashing an image and
+  restarting the machine into it is one command. The pin is checked against the
+  image being flashed - a pin One ROM will serve with, or one the board uses
+  itself, is refused before its ROM images are fetched - and it runs for each device in
+  a `--batch`. The pulse is 100ms; `control reset` remains the way to choose
+  another. Conflicts with `--fast`, `--stopped` and `--no-reboot`.
+- **`program --follow` says up front when the image cannot serve it.** An image
+  with no USB system plugin leaves the bus the moment the One ROM starts
+  serving, so there was never a log to follow - previously discovered after
+  programming, when the port could not be found.
+- **`--hold` is bounded where the device bounds it.** `control pin --hold` and
+  `control reset --hold` refuse anything above the 60 second limit the device
+  enforces, as the command line is read rather than after it has been sent.
+- **`onerom inspect led --verbose` and `inspect rgb --verbose` now say when
+  they could not reach the device**, instead of reporting that the two LEDs are
+  not on the same GPIO.
+- **`onerom control pin`, `control rgb` and `inspect gpio` now work first time
+  against a One ROM running an older USB plugin.** They previously waited and
+  then failed, and succeeded when run again.
+- **`onerom control rgb` drives the RGB LED on the models that have one.**
+  `on`, `off`, `beacon`, `flame`, `cycle`, `breathe` and `blink`, with
+  `--colour` (ten names or `#RRGGBB`), `--brightness`, `--period` and `--hold`.
+  The device times a hold, so it completes even if the command does not. A
+  board without an RGB LED says so rather than appearing to work. Needs
+  firmware v0.7.2 with the v0.2.2 USB plugin.
+- **`onerom control led blink`** blinks the status LED on and off until
+  something changes it, or for a `--hold` if you give it one. A slower,
+  unbounded sibling of `beacon`.
+- **Each LED mode now has a shortest period it can run at**, and a shorter one
+  is refused with a message naming that mode's minimum rather than being
+  accepted and quietly run slower. 1000ms for `cycle` and `breathe`, 500ms for
+  `flame`, 50ms for `beacon` and `blink`.
+- **`onerom inspect led` and `onerom inspect rgb` say what each LED is doing.**
+  The mode it is in, how fast it is running and which GPIO it is on, plus the
+  colour and brightness for the RGB LED, read from the One ROM rather than
+  remembered by the CLI. A board with no RGB LED reports that rather than
+  failing, and where the two LEDs share a GPIO both commands say so. Needs
+  firmware v0.7.2 with the v0.2.2 USB plugin.
+- **`onerom control led` gains `--hold` and `--period`.** All four
+  subcommands take `--hold <MS>` to run the mode for a bounded time and then go
+  back to whatever the LED was doing, and `beacon` and `flame` take
+  `--period <MS>` for one blink and one pass of the flicker. The device times
+  the hold, so it finishes even if the command does not. Needs firmware v0.7.2
+  with the v0.2.2 USB plugin — the CLI checks first and says so, rather than
+  reporting success on a device that would ignore them. A plain `on`, `off`,
+  `beacon` or `flame` is unchanged and still works on any One ROM.
+- **Breaking: `--name` now names the One ROM, not the configuration.** It is an
+  alias for `--instance-name` on `program` and `firmware build`, where it was an
+  alias for `--config-name` — a command line using `--name` still runs and names
+  the device instead, except with `--no-config`, where it is now rejected.
+  `docs/CLI-MANUAL.md` gains a breaking-changes section near the top and the
+  full history at the end.
+- **`onerom monitor log` shows a running One ROM's log as it is written.**
+  It attaches to the One ROM's USB serial port and prints the firmware and
+  plugin logging it sends, until the One ROM is disconnected, rebooted or
+  stopped, or you press Ctrl-C. What the One ROM has logged since anything last
+  listened arrives first, so the boot log is still there when you attach.
+  `--output` keeps a transcript as well as showing it. Needs a running One ROM
+  programmed with the USB system plugin. On Linux the packaged udev rules now
+  tell ModemManager to leave One ROM alone — without that it probes the port and
+  consumes the log before you get to it, so a hand-installed copy of the rules
+  wants replacing.
+- **`onerom program --follow`** goes straight from programming to watching the
+  log, so you see the boot log of the firmware just flashed. It cannot be
+  combined with `--fast`, `--stopped`, `--no-reboot` or `--batch`.
+- **`onerom self` reports and downloads new releases of the CLI itself.**
+  `self check` says whether a newer CLI has been published for your platform;
+  `self download` fetches a published artifact — for this platform, another
+  (`--target`), or all of them — and verifies it against its published SHA-256.
+  Nothing is installed, and no check runs unless you ask for one.
+- **A plugin named by a config is now checked for firmware compatibility**, as
+  one given with `--plugin` already was. A plugin binary declares only the
+  minimum firmware it needs, so a release withdrawn for a newer firmware — USB
+  v0.1.2, which hard faults on v0.7.0 — was previously built in and flashed.
+  A local or third-party plugin has nothing published to check against and is
+  still built in as-is; an unreachable images server warns rather than failing.
+  A refusal names the newest release that does support the firmware, with the
+  URL to point the config at.
+- **Motorola S-record images are now accepted alongside Intel HEX.**
+  `--slot format=srec` decodes an S-record file to a binary image before it is
+  built in, with the same optional `load-address=` giving the absolute address
+  that maps to byte 0 of the ROM. Unwritten bytes read as `0xFF`.
+- **`onerom image convert` gains `srec`** on either side of `--from`/`--to`, so
+  it now converts between `binary`, `ihex` and `srec` in any direction,
+  including `ihex` to `srec` directly. S-record output uses one data record
+  type throughout — the narrowest that addresses the whole image — with the
+  paired terminator.
+- **`onerom program --verify` is supported**, and its help text and the CLI
+  manual now say so. It reads flash back after programming and compares it
+  against the image, and always did — both described it as not yet supported.
+- **New 24, 32 and 40 pin boards** — `fire-24-g`, `fire-32-c` and `fire-40-c`.
+
 ## v0.3.0 - 2026-08-09
 
 - **`--slot` now accepts every chip type the target firmware can serve on the

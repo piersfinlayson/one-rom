@@ -39,10 +39,20 @@ use onerom_config::fw::FirmwareVersion;
 use onerom_config::hw::Board;
 use onerom_config::mcu::{RP235X_BASE_FLASH, RP235X_BASE_SRAM, Variant as McuVariant};
 
-/// Maximum SDRR firmware versions supported by this version of`sdrr-fw-parser`
+/// Newest schema-format (v0.7.0+) firmware this build understands.
+///
+/// [`Parser::parse_format_schema`] reads fields at offsets that are only
+/// known to be correct up to this version, and refuses anything above it.
+/// The pre-v0.7.0 format has no ceiling of its own.  It ends below v0.7.0,
+/// and [`Parser::parse_flash`] refuses everything from there up.
 pub const MAX_VERSION_MAJOR: u16 = 0;
 pub const MAX_VERSION_MINOR: u16 = 7;
 pub const MAX_VERSION_PATCH: u16 = 999;
+
+/// [`MAX_VERSION_MAJOR`], [`MAX_VERSION_MINOR`] and [`MAX_VERSION_PATCH`] as
+/// one comparable value.
+pub const MAX_VERSION: FirmwareVersion =
+    FirmwareVersion::new(MAX_VERSION_MAJOR, MAX_VERSION_MINOR, MAX_VERSION_PATCH, 0);
 
 // lib.rs - Public API and core traits
 pub mod device;
@@ -312,14 +322,15 @@ impl<'a, R: Reader> Parser<'a, R> {
 
     /// Function to do a brief check whether this is an SDRR device.
     ///
+    /// Answers for either firmware generation, and for a version newer than
+    /// this build can parse.  The question is whether the device is a One ROM,
+    /// not whether this build can read it.
+    ///
     /// Returns:
-    /// - `true` if the SDRR header was found and is valid
-    /// - `false` if the header was not found (or an error occured)
+    /// - `true` if the SDRR magic was found
+    /// - `false` if it was not (or an error occured)
     pub async fn detect(&mut self) -> bool {
-        match self.retrieve_header().await {
-            Ok(_header) => true,
-            Err(_) => false,
-        }
+        self.detect_format().await.is_some()
     }
 
     /// Parses both flash and RAM
@@ -444,11 +455,6 @@ impl<'a, R: Reader> Parser<'a, R> {
     pub async fn parse_flash(&mut self) -> Result<SdrrInfo, String> {
         // Parse and validate header using the helper
         let mut header = self.retrieve_header().await?;
-
-        // Schema-format firmware cannot be parsed by this path.
-        if header.major_version == 0 && header.minor_version >= 7 {
-            return Err("Firmware >= v0.7.0 uses schema format; use parse_format_schema()".into());
-        }
 
         // Get firmware version
         let version = FirmwareVersion::new(
@@ -696,11 +702,20 @@ impl<'a, R: Reader> Parser<'a, R> {
 
         let major = u16::from_le_bytes([info_buf[4], info_buf[5]]);
         let minor = u16::from_le_bytes([info_buf[6], info_buf[7]]);
-        let version = FirmwareVersion::new(major, minor, 0, 0);
+        let patch = u16::from_le_bytes([info_buf[8], info_buf[9]]);
+        let version = FirmwareVersion::new(major, minor, patch, 0);
 
         if version < MIN_SCHEMA_VERSION {
             return Err(format!(
                 "Firmware v{major}.{minor} is not schema format; use parse_format_original()"
+            ));
+        }
+
+        // The pointer offsets read below are only known to be correct up to
+        // MAX_VERSION.
+        if version > MAX_VERSION {
+            return Err(format!(
+                "One ROM firmware version v{version} unsupported - max version v{MAX_VERSION}"
             ));
         }
 

@@ -15,11 +15,11 @@ uint8_t check_plugin_valid(
     uint8_t index
 ) {
     if (header->magic != ORA_PLUGIN_MAGIC) {
-        ERR("ORA badmagic 0x%08x", header->magic);
+        ERR("ORA badmagic 0x%08lx", (unsigned long)header->magic);
         return 0;
     }
     if (header->api_version != ORA_PLUGIN_VERSION_1) {
-        ERR("ORA version 0x%08x", header->api_version);
+        ERR("ORA version 0x%08lx", (unsigned long)header->api_version);
         return 0;
     }
     if (header->plugin_type != expected_type) {
@@ -32,7 +32,8 @@ uint8_t check_plugin_valid(
     uint32_t expected_launch_region = (0x1001 + index) << 16;
     uint32_t entry_addr = (uint32_t)(uintptr_t)header->entry;
     if ((entry_addr & ~expected_launch_region) >= 0x10000) {
-        ERR("ORA 0x%08x vs ep 0x%08x", entry_addr, expected_launch_region);
+        ERR("ORA 0x%08lx vs ep 0x%08lx", (unsigned long)entry_addr,
+        (unsigned long)expected_launch_region);
         return 0;
     }
 
@@ -65,7 +66,7 @@ uint8_t initial_plugin_parse(uint8_t *disable_vbus_det, uint8_t *num_plugins) {
             const ora_plugin_header_t *header = (ora_plugin_header_t *)(uintptr_t)(set->data);
             if (check_plugin_valid(header, ORA_PLUGIN_TYPE_SYSTEM, 0)) {
                 *disable_vbus_det = header->overrides1 & ORA_OVERRIDE1_DISABLE_VBUS_DETECT ? 1 : 0;
-                LOG("Valid system plugin=, disable_vbus_det=%d", *disable_vbus_det);
+                LOG("Valid system plugin, disable_vbus_det=%d", *disable_vbus_det);
             }
 
             // Have system plugin (1)
@@ -138,10 +139,10 @@ void ora_log(const char* msg, ...) {
 #endif // PLUGIN_LOGGING
 }
 
+// Not gated on PLUGIN_LOGGING.  A plugin's errors are worth the wrapper this
+// costs, and the formatter it calls is in the build regardless.
 void ora_err_log(const char* msg, ...) {
-#if defined(PLUGIN_LOGGING)
 #if !defined(TEST_BUILD)
-
     do_err_log_prefix();
     va_list args;
     va_start(args, msg);
@@ -153,14 +154,10 @@ void ora_err_log(const char* msg, ...) {
     stub_log_prefix_v("ERROR: ", msg, args);
     va_end(args);
 #endif // !TEST_BUILD
-
-#else
-    (void)msg;
-#endif // PLUGIN_LOGGING
 }
 
 void ora_debug_log(const char* msg, ...) {
-#if defined(BOOT_LOGGING) && defined(DEBUG_LOGGING)
+#if defined(PLUGIN_LOGGING) && defined(DEBUG_LOGGING)
 #if !defined(TEST_BUILD)
     do_debug_log_prefix();
     va_list args;
@@ -175,7 +172,7 @@ void ora_debug_log(const char* msg, ...) {
 #endif // !TEST_BUILD
 #else
     (void)msg;
-#endif // BOOT_LOGGING && DEBUG_LOGGING
+#endif // PLUGIN_LOGGING && DEBUG_LOGGING
 }
 
 size_t plugin_get_free_mem(void) {
@@ -183,23 +180,22 @@ size_t plugin_get_free_mem(void) {
 }
 
 void ora_set_status_led(uint8_t on) {
-#if !defined(TEST_BUILD)
-    uint8_t pin = HW->gpio_status;
-    // Pin presence is the only gate: a plugin may drive the status LED even if
-    // it was configured off. status_led_enabled is the live state and plugin
-    // coordination channel (see ora_set_status_led_fn_t in api.h), so record
-    // the new state here as well as driving the pin.
-    if (pin < MAX_GPIOS) {
+    ora_led_request_t req = {0};
+
+    // The engine owns both LEDs, so this goes through it rather than driving
+    // the pin here.  Otherwise the engine's idea of what the status LED is
+    // doing and the pin's actual level part company the moment a plugin calls
+    // this during a beacon.
+    req.size = sizeof(req);
+    req.led  = ORA_LED_STATUS;
+    req.mode = on ? ORA_LED_MODE_ON : ORA_LED_MODE_OFF;
+
+    if (pio_led_set(&req) != ORA_RESULT_OK) {
+        // This board has no status LED pin.  status_led_enabled is the live
+        // state and plugin coordination channel (see ora_set_status_led_fn_t
+        // in api.h), so it is recorded whether or not there is a pin to drive.
         RUNTIME->status_led_enabled = on ? 1 : 0;
-        if (on) {
-            status_led_on(pin);
-        } else {
-            status_led_off(pin);
-        }
     }
-#else // TEST_BUILD
-    LOG("ORA set status LED %d", on);
-#endif // !TEST_BUILD
 }
 
 void ora_setup_usb(void) {
@@ -264,12 +260,34 @@ void ora_register_irq(ora_irq_t irq, ora_irq_handler_t handler) {
 #endif // !TEST_BUILD
 }
 
-void ora_set_plugin_context(void *context) {
-    RUNTIME->system_plugin_context = context;
+// Each plugin type has its own context slot, and ORA_GET_PLUGIN_CONTEXT_SYSTEM
+// and ORA_GET_PLUGIN_CONTEXT_USER are the addresses of those two slots, so a
+// context stored here must land in the one the matching macro reads.
+//
+// Only the system and user plugins have a slot.  A type without one stores
+// nothing and reads back NULL, rather than sharing another type's.
+void ora_set_plugin_context(ora_plugin_type_t plugin, void *context) {
+    switch (plugin) {
+        case ORA_PLUGIN_TYPE_SYSTEM:
+            RUNTIME->system_plugin_context = context;
+            break;
+        case ORA_PLUGIN_TYPE_USER:
+            RUNTIME->user_plugin_context = context;
+            break;
+        default:
+            break;
+    }
 }
 
-void *ora_get_plugin_context(void) {
-    return RUNTIME->system_plugin_context;
+void *ora_get_plugin_context(ora_plugin_type_t plugin) {
+    switch (plugin) {
+        case ORA_PLUGIN_TYPE_SYSTEM:
+            return RUNTIME->system_plugin_context;
+        case ORA_PLUGIN_TYPE_USER:
+            return RUNTIME->user_plugin_context;
+        default:
+            return NULL;
+    }
 }
 
 uint32_t ora_get_sysclk_mhz(void) {
@@ -284,6 +302,86 @@ uint32_t ora_get_clkref_mhz(void) {
     uint32_t clk_ref_div = (CLOCK_REF_DIV >> 16) & 0xFF;
     clk_ref_div = clk_ref_div ? clk_ref_div : 1;
     return (CLKREF_MHZ / clk_ref_div);
+}
+
+// The two halves of the raw microsecond counter.  Split out so that the
+// assembly below is one piece of code in both builds: on a device these read
+// the registers, and under a test build they draw from a scripted sequence,
+// which is what lets a test drive a high-half change a device only produces
+// once every 71 minutes.
+#if !defined(TEST_BUILD)
+static inline uint32_t timer_raw_hi(void) {
+    return TIMER0_TIMERAWH;
+}
+
+static inline uint32_t timer_raw_lo(void) {
+    return TIMER0_TIMERAWL;
+}
+#else // TEST_BUILD
+static inline uint32_t timer_raw_hi(void) {
+    return stub_timer_raw_hi();
+}
+
+static inline uint32_t timer_raw_lo(void) {
+    return stub_timer_raw_lo();
+}
+#endif // !TEST_BUILD
+
+// Assemble a consistent 64-bit microsecond count from the two halves.
+//
+// TIMERAWH/TIMERAWL, not the TIMELR/TIMEHR pair: reading TIMELR latches the
+// high half, and that latch is one piece of peripheral state shared by both
+// cores, so two plugins reading the time would hand each other the wrong high
+// half.  The raw registers have no read side effects, at the cost of the
+// reader assembling a consistent pair itself.
+//
+// Read the high half either side of the low one and retry while it moved.  On
+// exit the low half was read between two reads of an unchanged high half, so
+// the pair belongs to a single instant.
+uint64_t onerom_timer_us64(void) {
+    uint32_t hi = timer_raw_hi();
+    uint32_t lo = timer_raw_lo();
+    uint32_t hi_again = timer_raw_hi();
+    while (hi_again != hi) {
+        hi = hi_again;
+        lo = timer_raw_lo();
+        hi_again = timer_raw_hi();
+    }
+    return ((uint64_t)hi << 32) | lo;
+}
+
+// Milliseconds since the timer started, wrapping at 49.7 days.
+//
+// The whole 64-bit microsecond count is divided, which is what puts the wrap
+// there.  Dividing a 32-bit microsecond read instead would wrap every 71
+// minutes.
+//
+// Written out in 32-bit pieces rather than as a plain 64-bit divide, because
+// this core has no 64-bit divide instruction and one written that way costs a
+// call to __udivmoddi4 - 822 bytes of flash, and 48 bytes of stack across the
+// helper and its wrapper.  This is called from the LED engine's frame
+// interrupt, so that stack is charged on top of whatever the interrupt
+// preempted, out of a plugin stack measured in hundreds of bytes.  Each divide
+// below is 32-bit, which the core does in hardware.
+//
+// It rests on 2^32 = 1000 * 4294967 + 296.  Writing the count as hi * 2^32 + lo
+// and substituting, the quotient is
+//
+//     (hi / 1000) * 2^32  +  (hi % 1000) * 4294967
+//                         +  lo / 1000
+//                         +  ((hi % 1000) * 296 + lo % 1000) / 1000
+//
+// The first term is a multiple of 2^32, so it contributes nothing to a uint32_t
+// and is left out.  That is the same truncation the 49.7 day wrap already is,
+// not a second one.  The largest intermediate is 999 * 296 + 999 = 296703, so
+// nothing here overflows 32 bits.
+uint32_t ora_get_plugin_uptime_ms(void) {
+    uint64_t us = onerom_timer_us64();
+    uint32_t hi = (uint32_t)(us >> 32);
+    uint32_t lo = (uint32_t)us;
+    uint32_t r  = hi % 1000u;
+
+    return (r * 4294967u) + (lo / 1000u) + (((r * 296u) + (lo % 1000u)) / 1000u);
 }
 
 uint32_t ora_get_chip_size_from_type(uint32_t chip_type) {
@@ -308,11 +406,12 @@ uint8_t ora_is_pin_output(uint8_t pin) {
 uint8_t ora_get_data_pin_nums(uint8_t *data_pins_out, uint8_t num_pins) {
     uint8_t got_pins = 0;
 
-    // First, get the pin map from the current ROM and the base address pin
+    // pin_map->data[] holds absolute GPIO numbers, which is what a plugin
+    // wants - pio_map_data_to_phys subtracts the data base from the same array
+    // to get a bit position.
     const onerom_rom_pin_map_t *pin_map = RUNTIME->current_rom_slot->roms[0]->pin_map;
-    uint8_t base_data_pin = BASE_DATA_PIN;
     uint8_t num_data_pins;
-    if (RUNTIME->bit_mode == BIT_MODE_16) {
+    if (BIT_MODE == BIT_MODE_16) {
         num_data_pins = 16;
     } else {
         num_data_pins = 8;
@@ -320,7 +419,7 @@ uint8_t ora_get_data_pin_nums(uint8_t *data_pins_out, uint8_t num_pins) {
 
     // Retrieve the data pins
     for (uint8_t ii = 0; (ii < num_data_pins) && (got_pins < num_pins); ii++) {
-        data_pins_out[got_pins] = pin_map->data[ii] + base_data_pin;
+        data_pins_out[got_pins] = pin_map->data[ii];
         got_pins++;
     }
 
@@ -335,6 +434,14 @@ ora_result_t ora_setup_address_monitor(
     void *reserved
 ) {
     return pio_setup_address_monitor(ring_buf, ring_entries_log2, mode, data_size, reserved);
+}
+
+ora_result_t ora_led_set(const ora_led_request_t *req) {
+    return pio_led_set(req);
+}
+
+ora_result_t ora_led_get(uint8_t led, ora_led_state_t *state_out) {
+    return pio_led_get(led, state_out);
 }
 
 uint32_t ora_map_addr_to_phys(uint32_t logical_addr) {
@@ -662,6 +769,14 @@ ora_result_t ora_copy_flash_slot_to_ram_slot(
     memcpy((void *)(uintptr_t)addr, set->data, size);
 #else
     memcpy(sram_to_host(addr), set->data, size);
+    // The copy is left as it is on hardware and reported afterwards, so a
+    // host-side test observes the copy the device makes rather than an
+    // instrumented rewrite of it.  Under the device address, as
+    // ORA_SRAM_WRITE8 reports a plugin's own stores, so the two interleave in
+    // one record.
+    for (uint32_t i = 0u; i < size; i++) {
+        report_host_sram_write(addr + i, set->data[i]);
+    }
 #endif
 
     return ORA_RESULT_OK;
@@ -705,6 +820,29 @@ ora_result_t ora_get_metadata_uint(ora_metadata_key_t key, uint32_t *out) {
     // firmware fall through to the default below.
     switch (key) {
         ONEROM_METADATA_UINT_CASES(out)
+        default:
+            return ORA_RESULT_NOT_SUPPORTED;
+    }
+}
+
+ora_result_t ora_get_metadata_uint_at(
+    ora_metadata_key_t key,
+    uint32_t index,
+    uint32_t *out
+) {
+    if (out == NULL) {
+        return ORA_RESULT_INVALID_ARG;
+    }
+
+    // The per-key arms are generated from the schema `plugin_key` fields and
+    // expanded from ONEROM_METADATA_UINT_AT_CASES (onerom_metadata.h). A key
+    // whose datum is an array of unsigned elements resolves element `index`,
+    // zero-extended to uint32_t, or returns ORA_RESULT_INVALID_ARG if `index`
+    // is past the end. Any key that is not such an array returns
+    // ORA_RESULT_TYPE_MISMATCH. Keys unknown to this firmware fall through to
+    // the default below.
+    switch (key) {
+        ONEROM_METADATA_UINT_AT_CASES(index, out)
         default:
             return ORA_RESULT_NOT_SUPPORTED;
     }
@@ -769,6 +907,12 @@ static void yield_wait_for_resume(void) {
 }
 #endif // !TEST_BUILD
 
+// Not inlined, because of where it is called from.  ora_launch_plugins() calls
+// this in its no-user-plugin loop, and it also calls the user plugin - so its
+// frame is live for as long as the plugin runs.  Inlined, this function's
+// 64-byte stub buffer lands in that frame and is held for the plugin's whole
+// life on a path the plugin never takes, off a stack the plugin shares.
+__attribute__((noinline))
 ora_result_t ora_yield(uint8_t *was_paused_out) {
 #if !defined(TEST_BUILD)
     if (was_paused_out != NULL) {
@@ -999,6 +1143,9 @@ ora_result_t ora_gpio_set(uint8_t gpio, uint8_t state, uint32_t flags) {
         SIO_GPIO_OE_SET_PIN(gpio);
     }
 #else // TEST_BUILD
+    // The pad model stands in for the registers above, so a test can read back
+    // what this drove - see stub_gpio_set() in test/stub.h.
+    stub_gpio_set(gpio, state);
     LOG("ORA gpio set %d state %d flags 0x%08x", gpio, state, flags);
 #endif // !TEST_BUILD
 
@@ -1024,14 +1171,425 @@ ora_result_t ora_gpio_query(uint8_t gpio, ora_gpio_info_t *info_out) {
     info.size = caller_size;
     info.use = ora_gpio_get_use(gpio);
 #if !defined(TEST_BUILD)
-    info.level = GPIO_READ(gpio) ? 1 : 0;
-    info.is_output = GPIO_IS_OUTPUT(gpio) ? 1 : 0;
+    // One read of GPIOx_STATUS rather than one per field.  The other core's
+    // plugin can call ora_gpio_set at any point, so two reads can report a
+    // direction from one instant and a level from another - a row saying the
+    // pin is an input driving high.
+    uint32_t status = GPIO_STATUS(gpio);
+    info.is_output = GPIO_STATUS_OETOPAD(status);
+
+    // An output reports what it is driving, not what the pad reads back.  The
+    // read-back is gated on the pad's input enable, which setup_status_led()
+    // and the neopixel setup clear, so those two pins read 0 whatever they are
+    // driving.  Nothing here depends on which pins those are.
+    info.level = info.is_output ? GPIO_STATUS_OUTTOPAD(status)
+                                : GPIO_STATUS_INFROMPAD(status);
 #else // TEST_BUILD
-    info.level = 0;
-    info.is_output = 0;
+    // Read back from the pad model, which applies the same output-reports-what-
+    // it-drives rule as the branch above.
+    info.is_output = stub_gpio_is_output(gpio);
+    info.level = stub_gpio_level(gpio);
 #endif // !TEST_BUILD
 
     memcpy(info_out, &info, caller_size);
+
+    return ORA_RESULT_OK;
+}
+
+// ---------------------------------------------------------------------------
+// Logging API
+// ---------------------------------------------------------------------------
+
+// Which plugin holds each channel's write and read claim, indexed by channel.
+//
+// Zero means unclaimed, so .bss zeroing is the initialiser and this stays
+// correct however many channels the ring gains; a held claim stores the
+// claiming plugin's ora_plugin_type_t plus one.  Sized by the ring's channel
+// count rather than by the number of channels that currently have buffers, so
+// adding a buffer needs no change here.
+static uint8_t ora_log_writer[ONEROM_RTT_MAX_UP_BUFFERS];
+static uint8_t ora_log_reader[ONEROM_RTT_MAX_UP_BUFFERS];
+
+#if defined(TEST_BUILD)
+// Give the channels back, as a device does by coming up with its RAM zeroed.
+//
+// A test build runs many boots in one process, where these are ordinary statics
+// and nothing clears them.  A plugin that claimed a channel in one run would
+// then find it held by itself in the next, and behave as it does on a device
+// whose channel another plugin owns.  Called from onerom_test_reset().
+void ora_log_reset_claims(void) {
+    for (unsigned ii = 0; ii < ONEROM_RTT_MAX_UP_BUFFERS; ii++) {
+        ora_log_writer[ii] = 0u;
+        ora_log_reader[ii] = 0u;
+    }
+}
+#endif // TEST_BUILD
+
+#if REAL_HARDWARE
+// Core 1 runs the system plugin and core 0 the user plugin; see
+// ora_launch_plugins().  An ORA call runs on the calling plugin's own core, so
+// the core identifies the caller with nothing for the plugin to pass and
+// nothing for it to spoof.
+static ora_plugin_type_t ora_calling_plugin(void) {
+    return (SIO_CPUID == 1u) ? ORA_PLUGIN_TYPE_SYSTEM : ORA_PLUGIN_TYPE_USER;
+}
+#else // !REAL_HARDWARE
+// There is no SIO_CPUID under emulation, and the harness drives the firmware
+// from one thread, so it says which plugin is calling instead.
+static ora_plugin_type_t ora_host_calling_plugin = ORA_PLUGIN_TYPE_SYSTEM;
+
+void set_host_calling_plugin(ora_plugin_type_t plugin) {
+    ora_host_calling_plugin = plugin;
+}
+
+static ora_plugin_type_t ora_calling_plugin(void) {
+    return ora_host_calling_plugin;
+}
+#endif // REAL_HARDWARE
+
+// A channel exists if it is in range and has a buffer.  Asking the ring rather
+// than keeping a count here means P6's extra channels appear on their own.
+static uint8_t ora_log_channel_exists(ora_log_channel_t channel) {
+    unsigned size = 0u;
+
+    if ((unsigned)channel >= ONEROM_RTT_MAX_UP_BUFFERS) {
+        return 0u;
+    }
+    onerom_rtt_query((unsigned)channel, &size, NULL, NULL);
+
+    return (size != 0u) ? 1u : 0u;
+}
+
+// Does the calling plugin hold this claim on this channel?
+static uint8_t ora_log_holds(const uint8_t *claims, ora_log_channel_t channel) {
+    if (!ora_log_channel_exists(channel)) {
+        return 0u;
+    }
+
+    return (claims[(unsigned)channel] ==
+            (uint8_t)(ora_calling_plugin() + 1u)) ? 1u : 0u;
+}
+
+// Spinlock guarding the log claim tables.
+//
+// A claim is a test and set across two cores, which PRIMASK cannot cover,
+// because masking interrupts on one core says nothing about the other.  The
+// exclusive monitor is not an alternative: it spans cores only when the memory
+// is marked shareable, and this firmware configures no MPU, so LDREX/STREX
+// would look correct and silently fail to exclude the other core.
+//
+// The lock is SPINLOCK_ORA_LOG, allocated with the others in reg-rp235x.h.
+
+// Interrupts are masked for as long as the lock is held.  Plugins can register
+// interrupt handlers, and nothing stops one calling into the logging API, so a
+// handler could preempt its own core mid-claim and then spin forever on a lock
+// only the code it interrupted can release.  Masking removes that: the holder
+// cannot be preempted on its own core, and the other core is excluded by the
+// lock itself.
+#if defined(TEST_BUILD)
+static uint32_t ora_log_lock(void) { return 0u; }
+static void ora_log_unlock(uint32_t primask) { (void)primask; }
+#else
+static uint32_t ora_log_lock(void) {
+    uint32_t primask;
+
+    __asm volatile ("mrs %0, primask \n\t"
+                    "cpsid i"
+                    : "=r" (primask) :: "memory");
+
+    while (SIO_SPINLOCK(SPINLOCK_ORA_LOG) == 0u)
+        ;
+    __asm volatile ("dmb" ::: "memory");
+
+    return primask;
+}
+
+static void ora_log_unlock(uint32_t primask) {
+    __asm volatile ("dmb" ::: "memory");
+    SIO_SPINLOCK(SPINLOCK_ORA_LOG) = 0u;
+    __asm volatile ("msr primask, %0" :: "r" (primask) : "memory");
+}
+#endif // TEST_BUILD
+
+static ora_result_t ora_log_claim(uint8_t *claims, ora_log_channel_t channel) {
+    ora_result_t result;
+
+    if (!ora_log_channel_exists(channel)) {
+        return ORA_RESULT_NOT_SUPPORTED;
+    }
+
+    uint32_t primask = ora_log_lock();
+    if (claims[(unsigned)channel] != 0u) {
+        result = ORA_RESULT_LOG_CHANNEL_IN_USE;
+    } else {
+        claims[(unsigned)channel] = (uint8_t)(ora_calling_plugin() + 1u);
+        result = ORA_RESULT_OK;
+    }
+    ora_log_unlock(primask);
+
+    return result;
+}
+
+ora_result_t ora_log_open_write(ora_log_channel_t channel, const char *name) {
+    ora_result_t result;
+
+    if (name == NULL) {
+        return ORA_RESULT_INVALID_ARG;
+    }
+
+    result = ora_log_claim(ora_log_writer, channel);
+    if (result != ORA_RESULT_OK) {
+        return result;
+    }
+
+    // The name is stored, not copied, which is why open documents that it must
+    // outlive the claim.  Closing puts the firmware's own name back.
+    onerom_rtt_set_name((unsigned)channel, name);
+
+    return ORA_RESULT_OK;
+}
+
+ora_result_t ora_log_write(ora_log_channel_t channel, const void *buf,
+                           uint32_t len) {
+    // A channel this firmware does not have is answered before the claim is
+    // considered.  Folded together, a plugin built for a firmware with more
+    // channels would be told it failed to claim one that does not exist here.
+    // A NULL buffer is the caller's own mistake whatever the channel, so it
+    // keeps its own answer and is tested first.
+    if (buf == NULL) {
+        return ORA_RESULT_INVALID_ARG;
+    }
+    if (!ora_log_channel_exists(channel)) {
+        return ORA_RESULT_NOT_SUPPORTED;
+    }
+    if (!ora_log_holds(ora_log_writer, channel)) {
+        return ORA_RESULT_INVALID_ARG;
+    }
+
+    // Nothing to store is not a dropped record.
+    if (len == 0u) {
+        return ORA_RESULT_OK;
+    }
+
+    if (onerom_rtt_write((unsigned)channel, buf, (unsigned)len) == 0u) {
+        return ORA_RESULT_LOG_FULL;
+    }
+
+    return ORA_RESULT_OK;
+}
+
+ora_result_t ora_log_close_write(ora_log_channel_t channel) {
+    ora_result_t result;
+
+    if (!ora_log_channel_exists(channel)) {
+        return ORA_RESULT_NOT_SUPPORTED;
+    }
+
+    uint32_t primask = ora_log_lock();
+    if (ora_log_writer[(unsigned)channel] !=
+        (uint8_t)(ora_calling_plugin() + 1u)) {
+        result = ORA_RESULT_INVALID_ARG;
+    } else {
+        // The name goes back before the claim is released, so the next owner
+        // cannot have its own name reverted under it.
+        onerom_rtt_set_name((unsigned)channel, NULL);
+        ora_log_writer[(unsigned)channel] = 0u;
+        result = ORA_RESULT_OK;
+    }
+    ora_log_unlock(primask);
+
+    return result;
+}
+
+ora_result_t ora_log_open_read(ora_log_channel_t channel) {
+    return ora_log_claim(ora_log_reader, channel);
+}
+
+ora_result_t ora_log_read(ora_log_channel_t channel, void *buf,
+                          uint32_t max_len, uint32_t *copied_out) {
+    if ((buf == NULL) || (copied_out == NULL)) {
+        return ORA_RESULT_INVALID_ARG;
+    }
+    if (!ora_log_channel_exists(channel)) {
+        return ORA_RESULT_NOT_SUPPORTED;
+    }
+    if (!ora_log_holds(ora_log_reader, channel)) {
+        return ORA_RESULT_INVALID_ARG;
+    }
+
+    *copied_out =
+        (uint32_t)onerom_rtt_read((unsigned)channel, buf, (unsigned)max_len);
+
+    return ORA_RESULT_OK;
+}
+
+ora_result_t ora_log_close_read(ora_log_channel_t channel) {
+    ora_result_t result;
+
+    if (!ora_log_channel_exists(channel)) {
+        return ORA_RESULT_NOT_SUPPORTED;
+    }
+
+    uint32_t primask = ora_log_lock();
+    if (ora_log_reader[(unsigned)channel] !=
+        (uint8_t)(ora_calling_plugin() + 1u)) {
+        result = ORA_RESULT_INVALID_ARG;
+    } else {
+        ora_log_reader[(unsigned)channel] = 0u;
+        result = ORA_RESULT_OK;
+    }
+    ora_log_unlock(primask);
+
+    return result;
+}
+
+ora_result_t ora_log_query(ora_log_channel_t channel, uint32_t *size_out,
+                           uint32_t *free_out, uint32_t *pending_out) {
+    unsigned size = 0u, avail = 0u, pending = 0u;
+
+    if (!ora_log_channel_exists(channel)) {
+        return ORA_RESULT_NOT_SUPPORTED;
+    }
+
+    onerom_rtt_query((unsigned)channel, &size, &avail, &pending);
+
+    if (size_out != NULL) {
+        *size_out = (uint32_t)size;
+    }
+    if (free_out != NULL) {
+        *free_out = (uint32_t)avail;
+    }
+    if (pending_out != NULL) {
+        *pending_out = (uint32_t)pending;
+    }
+
+    return ORA_RESULT_OK;
+}
+
+// ---------------------------------------------------------------------------
+// Compile options and log categories
+// ---------------------------------------------------------------------------
+
+// The compile options as values, so each accessor arm is an expression rather
+// than a preprocessor branch of its own.  Nothing carries these into
+// onerom_runtime_info_t: a build's switches are settled before it runs, and a
+// runtime structure is for what changes while it does.
+#if defined(PLUGIN_LOGGING)
+#define ORA_BUILT_PLUGIN_LOGGING    1u
+#else
+#define ORA_BUILT_PLUGIN_LOGGING    0u
+#endif
+#if defined(DEBUG_LOGGING)
+#define ORA_BUILT_DEBUG_LOGGING     1u
+#else
+#define ORA_BUILT_DEBUG_LOGGING     0u
+#endif
+#if defined(BOOT_LOGGING)
+#define ORA_BUILT_BOOT_LOGGING      1u
+#else
+#define ORA_BUILT_BOOT_LOGGING      0u
+#endif
+
+ora_result_t ora_get_compile_option_uint(ora_compile_option_t option,
+                                         uint32_t *out) {
+    if (out == NULL) {
+        return ORA_RESULT_INVALID_ARG;
+    }
+
+    switch (option) {
+        case ORA_COMPILE_OPTION_PLUGIN_LOGGING:
+            *out = ORA_BUILT_PLUGIN_LOGGING;
+            return ORA_RESULT_OK;
+        case ORA_COMPILE_OPTION_DEBUG_LOGGING:
+            *out = ORA_BUILT_DEBUG_LOGGING;
+            return ORA_RESULT_OK;
+        case ORA_COMPILE_OPTION_BOOT_LOGGING:
+            *out = ORA_BUILT_BOOT_LOGGING;
+            return ORA_RESULT_OK;
+        case ORA_COMPILE_OPTION_BUILD_NUMBER:
+            *out = (uint32_t)ONEROM_BUILD_NUMBER;
+            return ORA_RESULT_OK;
+        case ORA_COMPILE_OPTION_GIT_COMMIT:
+            return ORA_RESULT_TYPE_MISMATCH;
+        // An option this firmware does not know is a plugin built against
+        // newer firmware, which is a version difference for the caller to fall
+        // back from - not the caller getting the call wrong.
+        default:
+            return ORA_RESULT_NOT_SUPPORTED;
+    }
+}
+
+ora_result_t ora_get_compile_option_str(ora_compile_option_t option,
+                                        const char **out) {
+    if (out == NULL) {
+        return ORA_RESULT_INVALID_ARG;
+    }
+
+    switch (option) {
+        case ORA_COMPILE_OPTION_GIT_COMMIT:
+            *out = ONEROM_GIT_COMMIT;
+            return ORA_RESULT_OK;
+        case ORA_COMPILE_OPTION_PLUGIN_LOGGING:
+        case ORA_COMPILE_OPTION_DEBUG_LOGGING:
+        case ORA_COMPILE_OPTION_BOOT_LOGGING:
+        case ORA_COMPILE_OPTION_BUILD_NUMBER:
+            return ORA_RESULT_TYPE_MISMATCH;
+        default:
+            return ORA_RESULT_NOT_SUPPORTED;
+    }
+}
+
+ora_result_t ora_log_category_enabled(ora_log_category_t category,
+                                      uint32_t *enabled_out) {
+    if (enabled_out == NULL) {
+        return ORA_RESULT_INVALID_ARG;
+    }
+
+    switch (category) {
+        case ORA_LOG_CATEGORY_BOOT:
+            // BOOT_LOGGING_EN is the same test LOG() and DEBUG() make, so this
+            // tracks the gate rather than a copy of it.  do_log then drops
+            // everything on a turbo boot device, which is the second gate.
+            *enabled_out = (BOOT_LOGGING_EN && !TURBO) ? 1u : 0u;
+            break;
+
+        case ORA_LOG_CATEGORY_PLUGIN_INTERNAL:
+            // ora_log reaches the channel with no runtime test, so the compile
+            // gate is the whole answer.
+            *enabled_out = ORA_BUILT_PLUGIN_LOGGING;
+            break;
+
+        case ORA_LOG_CATEGORY_DEBUG:
+            // DEBUG() is a boot message that a build without debug logging
+            // does not contain at all, so it carries the boot gates and the
+            // compile gate on top.
+            *enabled_out =
+                (ORA_BUILT_DEBUG_LOGGING && BOOT_LOGGING_EN && !TURBO) ? 1u : 0u;
+            break;
+
+        case ORA_LOG_CATEGORY_ERROR:
+            // Neither ERR() nor ora_err_log carries a gate of any kind, by
+            // design: whoever hits an error is the least likely to have turned
+            // logging on first.  One answer therefore serves both.
+            *enabled_out = 1u;
+            break;
+
+        case ORA_LOG_CATEGORY_PLUGIN_APPLICATION:
+            // The ora_log_write family is a plugin's own channel, and the
+            // firmware never gates what a plugin puts there.
+            *enabled_out = 1u;
+            break;
+
+        case ORA_LOG_CATEGORY_PLUGIN_DEBUG:
+            // ora_debug_log is compiled away unless both options are on, and
+            // is not runtime gated, so the build settles this on its own.
+            *enabled_out =
+                (ORA_BUILT_PLUGIN_LOGGING && ORA_BUILT_DEBUG_LOGGING) ? 1u : 0u;
+            break;
+
+        default:
+            return ORA_RESULT_NOT_SUPPORTED;
+    }
 
     return ORA_RESULT_OK;
 }
@@ -1068,6 +1626,8 @@ void *ora_fn_lookup(api_id_t id) {
             return ora_enable_irq;
         case ORA_ID_GET_CLKREF_MHZ:
             return ora_get_clkref_mhz;
+        case ORA_ID_GET_PLUGIN_UPTIME_MS:
+            return ora_get_plugin_uptime_ms;
         case ORA_ID_GET_CHIP_SIZE_FROM_TYPE:
             return ora_get_chip_size_from_type;
         case ORA_ID_IS_PIN_OUTPUT:
@@ -1129,11 +1689,39 @@ void *ora_fn_lookup(api_id_t id) {
             return ora_get_metadata_str;
         case ORA_ID_GET_METADATA_UINT:
             return ora_get_metadata_uint;
+        case ORA_ID_LED_SET:
+            return ora_led_set;
+        case ORA_ID_LED_GET:
+            return ora_led_get;
+        case ORA_ID_GET_METADATA_UINT_AT:
+            return ora_get_metadata_uint_at;
 
         case ORA_ID_GPIO_SET:
             return ora_gpio_set;
         case ORA_ID_GPIO_QUERY:
             return ora_gpio_query;
+
+        case ORA_ID_LOG_OPEN_WRITE:
+            return ora_log_open_write;
+        case ORA_ID_LOG_WRITE:
+            return ora_log_write;
+        case ORA_ID_LOG_CLOSE_WRITE:
+            return ora_log_close_write;
+        case ORA_ID_LOG_OPEN_READ:
+            return ora_log_open_read;
+        case ORA_ID_LOG_READ:
+            return ora_log_read;
+        case ORA_ID_LOG_CLOSE_READ:
+            return ora_log_close_read;
+        case ORA_ID_LOG_QUERY:
+            return ora_log_query;
+
+        case ORA_ID_GET_COMPILE_OPTION_UINT:
+            return ora_get_compile_option_uint;
+        case ORA_ID_GET_COMPILE_OPTION_STR:
+            return ora_get_compile_option_str;
+        case ORA_ID_LOG_CATEGORY_ENABLED:
+            return ora_log_category_enabled;
 
         // Deprecated functions
         case ORA_ID_GET_FIRMWARE_INFO:
@@ -1178,7 +1766,7 @@ static void reset_core1(void) {
     // Wait for core 1 bootrom ready signal
     uint32_t value = fifo_pop_blocking();
     if (value != 0) {
-        ERR("Unexpected value from core 1 bootrom: 0x%08x", value);
+        ERR("Unexpected value from core 1 bootrom: 0x%08lx", (unsigned long)value);
     }
 }
 
@@ -1215,7 +1803,7 @@ static void core1_main(void) {
     uint32_t core1_plugin_entry = fifo_pop_blocking();
     core1_plugin_entry |= 1;
     ora_plugin_entry_t entry = (ora_plugin_entry_t)(uintptr_t)core1_plugin_entry;
-    DEBUG("Core 1 launching plugin at 0x%08x", core1_plugin_entry);
+    DEBUG("Core 1 launching plugin at 0x%08lx", (unsigned long)core1_plugin_entry);
     entry(ora_fn_lookup, ORA_PLUGIN_TYPE_SYSTEM, &system_plugin_args);
 
     ERR("System plugin returned unexpectedly");
@@ -1236,8 +1824,9 @@ void paint_stack_core1(void) {
     uint32_t core1_stack_size = total_stack_size / 2;
     uint32_t core1_stack_bottom = stack_top - total_stack_size;
     uint32_t core1_stack_top = core1_stack_bottom + core1_stack_size;
-    DEBUG("Painting core 1 stack from 0x%08x to 0x%08x with 0x%02x",
-          core1_stack_bottom, core1_stack_top, paint_val);
+    DEBUG("Painting core 1 stack from 0x%08lx to 0x%08lx with 0x%02x",
+          (unsigned long)core1_stack_bottom, (unsigned long)core1_stack_top,
+          paint_val);
     for (uint32_t addr = core1_stack_bottom; addr < core1_stack_top; addr++) {
         ((uint8_t *)addr)[0] = paint_val;
     }
@@ -1355,6 +1944,13 @@ __attribute__((noinline)) ora_plugin_entry_t launch_plugins_inner(uint8_t *launc
 }
 
 void ora_launch_plugins(void) {
+    // Plugin-facing setup, in the window where core 0 is in firmware code and
+    // core 1 is not yet running.  The timer starts here so a plugin reading
+    // ora_get_plugin_uptime_ms() sees time measured from just before launch.
+    onerom_rtt_plugins_init();
+    DEBUG("Init timer");
+    setup_timer0();
+
     uint8_t launched_plugins = 0;
     ora_plugin_entry_t core0_entry = launch_plugins_inner(&launched_plugins);
 
@@ -1380,6 +1976,13 @@ void irq_handler_timer0_irq_0(void) {
         ora_irq_handler_t handler = (ora_irq_handler_t)RUNTIME->timer0_irq_0_handler;
         handler();
     }
+}
+
+void irq_handler_timer0_irq_1(void) {
+    // The alarm is one-shot: acknowledging it here and re-arming inside the
+    // frame is what makes the next one land when the next LED needs it.
+    TIMER0_INTR = TIMER0_INT_ALARM1;
+    pio_led_frame();
 }
 
 void irq_handler_usbctrl_irq(void) {

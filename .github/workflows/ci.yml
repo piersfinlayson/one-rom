@@ -20,6 +20,14 @@ on:
       - '!.github/workflows/release.yml'
       - '!**.md'
       - '!docs/**'
+      # A document under docs/ can carry a fragment region, whose text belongs
+      # to another file.  ci/rust-tests.sh refills every region and fails where
+      # one differs from what is committed, so the edit that can leave a region
+      # stale has to reach CI.
+      - 'docs/**.md'
+      # The renderer's own inputs, so the docs-pdf job runs for a change to the
+      # thing it tests.
+      - 'docs/pdf/**'
   pull_request:
     branches: [ main ]
     paths:
@@ -35,6 +43,14 @@ on:
       - '!.github/workflows/release.yml'
       - '!**.md'
       - '!docs/**'
+      # A document under docs/ can carry a fragment region, whose text belongs
+      # to another file.  ci/rust-tests.sh refills every region and fails where
+      # one differs from what is committed, so the edit that can leave a region
+      # stale has to reach CI.
+      - 'docs/**.md'
+      # The renderer's own inputs, so the docs-pdf job runs for a change to the
+      # thing it tests.
+      - 'docs/pdf/**'
 
 # The work is split across jobs rather than run as one sequence.  Each job gets
 # its own runner and, more to the point, its own 6 hour timeout: as one job the
@@ -48,7 +64,7 @@ on:
 #
 # libclang-dev is installed everywhere for the same reason: onerom-fw-emulator's
 # build script runs bindgen over the firmware headers, and three crates depend on
-# it (onerom-fw-tester, onerom-plugin-tester, onerom-lens), so which jobs pull it
+# it (onerom-fw-tester, onerom-rbcp-tester, onerom-lens), so which jobs pull it
 # in is not apparent from the job names either.  It is named explicitly rather
 # than relied on: the GitHub runner image happens to ship libclang, leaner
 # self-hosted runners do not, and there the bindgen build script panics.
@@ -69,8 +85,7 @@ jobs:
       run: |
         sudo apt-get update
         sudo apt-get install -y libclang-dev libcurl4-openssl-dev libjson-c-dev \
-                                libzip-dev make xz-utils python3 \
-                                libudev-dev libusb-1.0-0-dev
+                                libzip-dev make xz-utils python3
 
     - name: Install Rust
       uses: dtolnay/rust-toolchain@stable
@@ -145,6 +160,63 @@ jobs:
     - name: Run various Rust tests
       run: ci/rust-tests.sh
 
+  docs-pdf:
+    name: Documentation PDFs
+    runs-on: ubuntu-latest
+    # The PDFs are rendered from the committed markdown, and rust-tests is what
+    # proves the generated documents (COMPATIBILITY.md, CHIP-TYPES.md) match a
+    # fresh regeneration.  Building before that gate could publish a PDF that
+    # disagrees with the repository.
+    needs: rust-tests
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install build dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libpango-1.0-0 libpangoft2-1.0-0
+
+    - name: Cache documentation toolchain
+      uses: actions/cache@v4
+      with:
+        path: ~/onerom-doc-tools
+        key: doc-tools-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('ci/pandoc-version', 'ci/weasyprint-version') }}
+
+    - name: Install documentation toolchain
+      run: echo "$(ci/install-doc-tools.sh)" >> "$GITHUB_PATH"
+
+    # A gate only.  The PDFs are published from a local release build, via
+    # ci/build-docs.sh - this job exists so that a document which breaks the
+    # renderer fails on the push rather than on release day.
+    - name: Build documentation PDFs
+      run: ci/build-docs.sh
+
+    - name: Upload documentation PDFs
+      uses: actions/upload-artifact@v4
+      with:
+        name: docs-pdf
+        path: docs/pdf/build/*.pdf
+
+  c-tests:
+    name: C tests
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    # These compile firmware C for the host, so they need neither Rust nor the
+    # Arm toolchain.  They do need the host compiler pinned in
+    # ci/c-compiler-version: the runner's default cc is GCC 13, which predates
+    # the -std=gnu23 these are built as.  ci/c-tests.sh defaults $CC to the
+    # pinned one, so nothing here names a version.
+    - name: Install host compiler
+      run: ci/install-c-compiler.sh
+
+    - name: Check log format strings
+      run: ci/check-log-formats.sh
+
+    - name: Run host C tests
+      run: ci/c-tests.sh
+
   rust-docs:
     name: Rust docs
     runs-on: ubuntu-latest
@@ -216,6 +288,117 @@ jobs:
 
     - name: Run One ROM emulator tests
       run: ci/test-emu.sh ${{ matrix.socket }}
+
+  coverage:
+    # The coverage campaign - ci/coverage-campaign.txt - and the per-file floor
+    # gate.  Runs alongside the other jobs rather than gating them.
+    #
+    # One job, not a matrix, because the floors belong to the campaign as a
+    # whole: ci/coverage-report.sh refuses unless every tracefile the campaign
+    # names is present, and splitting would mean uploading them and merging in
+    # a further job.  If the wall-clock becomes a problem that split is the
+    # answer, not dropping runs from the campaign - fewer runs reach fewer
+    # lines, and the floors would have to come down to match.
+    name: Coverage
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install build dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libclang-dev libcurl4-openssl-dev libjson-c-dev \
+                                libzip-dev make xz-utils \
+                                perl libcapture-tiny-perl libdatetime-perl \
+                                libjson-xs-perl
+
+    # Not the packaged lcov: Ubuntu's is 2.0, which reads
+    # LCOV_UNREACHABLE_START as an ordinary comment rather than checking the
+    # claim it makes.  ci/lcov-version pins the version, shared with the
+    # container and a developer's machine.
+    - name: Install lcov
+      run: echo "$(ci/install-lcov.sh)" >> "$GITHUB_PATH"
+
+    # The compiler the figures are measured with, pinned in
+    # ci/c-compiler-version and shared with the C tests job and the container.
+    # ci/coverage-run.sh picks it up from the pin, along with its gcov.
+    - name: Install host compiler
+      run: ci/install-c-compiler.sh
+
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+
+    - uses: Swatinem/rust-cache@v2
+      with:
+        workspaces: rust
+        shared-key: coverage
+
+    - name: Run the coverage campaign
+      run: ci/coverage-campaign.sh
+
+    # tee, so the figures reach the job summary as well as the log.  pipefail
+    # or tee's exit status hides a failing gate.
+    - name: Coverage figures
+      run: |
+        set -o pipefail
+        ci/coverage-report.sh | tee coverage-figures.txt
+
+    - name: Check the floors
+      run: |
+        set -o pipefail
+        ci/coverage-report.sh --check | tee coverage-check.txt
+
+    # The three badges on README.md read these files.  Only from the release
+    # branch, and only once the floors have passed - a badge is a published
+    # number, so it comes from the branch being shipped and from a run that
+    # met the gate.  RELEASE.md carries the line that repoints this at the
+    # next release branch.
+    - name: Publish the coverage badges
+      if: github.ref == 'refs/heads/releases/0.7.2'
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        ci/coverage-report.sh --badges
+        git clone --depth 1 --branch badges \
+          "https://x-access-token:$GH_TOKEN@github.com/${{ github.repository }}" badges-branch
+        # Clear the branch first.  A component whose id changes leaves its old
+        # JSON behind otherwise, and shields would serve that figure for good.
+        # Gone, its badge 404s and reads as broken.
+        rm -f badges-branch/*.json
+        cp build/coverage/badges/*.json badges-branch/
+        cd badges-branch
+        git config user.name  "github-actions[bot]"
+        git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+        git add -A
+        git diff --cached --quiet || git commit -m "Coverage badges for ${{ github.sha }}"
+        git push origin badges
+
+    # The numbers are the point of the job, and a log needs an account to read.
+    # This puts them on the run page instead, readable by anyone who can see
+    # the repo.  always(), so a failed gate is shown rather than hidden.
+    - name: Figures in the job summary
+      if: always()
+      run: |
+        {
+          echo '## Coverage'
+          echo
+          echo '```'
+          cat coverage-figures.txt 2>/dev/null || echo "(the campaign did not complete)"
+          echo '```'
+          echo
+          echo '### Floors'
+          echo
+          echo '```'
+          cat coverage-check.txt 2>/dev/null || echo "(the check did not run)"
+          echo '```'
+        } >> "$GITHUB_STEP_SUMMARY"
+
+    - name: Upload tracefiles
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: coverage-tracefiles
+        path: build/coverage/*.info
 
   firmware:
     name: Firmware and plugins
@@ -291,8 +474,8 @@ jobs:
       run: ci/rust-tools.sh
 
   binaries:
-    # The CLI and Studio binaries, built for the host.  Studio also needs
-    # libudev/libusb; its file dialogs use the XDG portal, so no GTK.
+    # The CLI and Studio binaries, built for the host.  Studio's file dialogs
+    # use the XDG portal, so no GTK.
     name: Binaries (CLI and Studio)
     runs-on: ubuntu-latest
     steps:
@@ -302,8 +485,7 @@ jobs:
       run: |
         sudo apt-get update
         sudo apt-get install -y libclang-dev libcurl4-openssl-dev libjson-c-dev \
-                                libzip-dev make xz-utils \
-                                libudev-dev libusb-1.0-0-dev
+                                libzip-dev make xz-utils
 
     - name: Install Rust
       uses: dtolnay/rust-toolchain@stable

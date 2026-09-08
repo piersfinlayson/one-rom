@@ -1,0 +1,29 @@
+[package]
+name = "studiov2-generated"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[lib]
+name = "studiov2_generated"
+path = "src/lib.rs"
+
+[[bin]]
+name = "studiov2-generated"
+path = "src/main.rs"
+
+[dependencies]
+iced = { workspace = true, features = ["tokio", "advanced"] }
+studiov2-shared = { workspace = true }
+studiov2-commands = { workspace = true }
+# The crates that own the values an option's source names: boards and chip
+# types, pins, colours and plugin types.
+onerom-config = { path = "../../../rust/config" }
+onerom-cli = { path = "../../../rust/cli" }
+# The crates behind the commands this build actually runs: the image
+# conversions and transforms, and the chip fit figures.
+onerom-gen = { path = "../../../rust/gen" }
+# Only for the screenshot hook, which writes the window to a PNG so every pane
+# can be reviewed without a screen-recording grant.
+png = { workspace = true }
+tokio = { version = "1", features = ["time", "rt"] }

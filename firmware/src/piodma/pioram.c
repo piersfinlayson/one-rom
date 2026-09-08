@@ -377,15 +377,18 @@ static void pioram_load_programs(pioram_config_t *config) {
     uint32_t high_bits_mask = (1 << ram_table_num_addr_bits) - 1;
     uint32_t low_bits_mask = (1 << config->num_addr_pins) - 1;
     uint32_t __attribute__((unused)) alignment_size = (1 << config->num_addr_pins) / 1024;
-    DEBUG("Checking RAM table address 0x%08X is %uKB aligned", config->ram_table_addr, alignment_size);
-    DEBUG("High bits mask: 0x%08X, low bits mask: 0x%08X", high_bits_mask, low_bits_mask);
+    DEBUG("Checking RAM table address 0x%08lX is %luKB aligned",
+          (unsigned long)config->ram_table_addr, (unsigned long)alignment_size);
+    DEBUG("High bits mask: 0x%08lX, low bits mask: 0x%08lX",
+          (unsigned long)high_bits_mask, (unsigned long)low_bits_mask);
     if (config->ram_table_addr & low_bits_mask) {
-        ERR("PIO RAM serving requires RAM table address to be %uKB aligned",
-            alignment_size);
+        ERR("PIO RAM serving requires RAM table address to be %luKB aligned",
+            (unsigned long)alignment_size);
         limp_mode(LIMP_MODE_INVALID_CONFIG);
     }
     uint32_t ram_table_high_bits = (config->ram_table_addr >> config->num_addr_pins) & high_bits_mask;
-    DEBUG("RAM table high %d bits: 0x%08X", ram_table_num_addr_bits, ram_table_high_bits);
+    DEBUG("RAM table high %d bits: 0x%08lX", ram_table_num_addr_bits,
+          (unsigned long)ram_table_high_bits);
 
 #if defined(DEBUG_LOGGING)
     // Log other config values
@@ -949,7 +952,7 @@ int pioram(
         uint32_t new_write_addr = dma3->write_addr;
         if (new_read_addr == last_read_addr) {
             if (read_addr_still_unchanged > 1) {
-                DEBUG("!!! RAM READ address unchanged: 0x%08X", new_read_addr);
+                DEBUG("!!! RAM READ address unchanged: 0x%08lX", (unsigned long)new_read_addr);
             }
             read_addr_still_unchanged++;
         } else {
@@ -957,7 +960,7 @@ int pioram(
         }
         if (new_write_addr == last_write_addr) {
             if (write_addr_still_unchanged > 1) {
-                DEBUG("!!! RAM WRITE address unchanged: 0x%08X", new_write_addr);
+                DEBUG("!!! RAM WRITE address unchanged: 0x%08lX", (unsigned long)new_write_addr);
             }
             write_addr_still_unchanged++;
         } else {
