@@ -10,6 +10,7 @@ Headline changes in this release:
 - The CLI can tell you when a newer CLI has been released, and download it for you.
 - A host can drive and read One ROM's own pins over the ROM bus, so a retro system can reset itself, or operate whatever a wire from a One ROM pad reaches.
 - One ROM's USB plugin can now drive the RGB LED on the models that have one, with colour, brightness and effects from the CLI and no plugin needed.  The status of both LEDs can also be queried.
+- New upright USB-C connector Fire designs have been released: [24G, 28D, 32C and 40C](hardware/pcb/README.md).
 
 In detail:
 - Add `onerom self`, covering the CLI's own release channel: `self check` says whether a newer CLI has been published for your platform, and `self download` fetches a published artifact — for this platform, another (`--target`), or all of them — verified against its published SHA-256.  Nothing is installed, and the CLI still performs no update check unless asked.
@@ -90,7 +91,6 @@ In detail:
 - Clarify in `--help` and the CLI manual that `onerom program --verify` is supported.
 - Correct the `peek` and `poke` help, which showed a `live` argument the top-level aliases do not take.
 - Building Studio no longer needs libudev or libusb.  probe-rs 0.32 takes hidapi's pure-Rust `basic-udev` backend in place of `libudev-sys`, and nothing else in the graph wants libusb.
-- Add the fire-24-g, fire-32-c and fire-40-c hardware revisions — fire-24-f, fire-32-b and fire-40-b with an upright USB-C connector, and otherwise identical.
 - Both CS activate and de-activate paths of the address monitor PIO now require 3 matching reads, a total of 9 PIO cycles, to register/de-register and access.
   - This required a firmware update.
 
