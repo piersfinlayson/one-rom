@@ -60,8 +60,14 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
-    # No toolchain setup: these compile firmware C for the host with the
-    # runner's own cc, and need neither Rust nor the Arm toolchain.
+    # These compile firmware C for the host, so they need neither Rust nor the
+    # Arm toolchain.  They do need the host compiler pinned in
+    # ci/c-compiler-version: the runner's default cc is GCC 13, which predates
+    # the -std=gnu23 these are built as.  ci/c-tests.sh defaults $CC to the
+    # pinned one, so nothing here names a version.
+    - name: Install host compiler
+      run: ci/install-c-compiler.sh
+
     - name: Check log format strings
       run: ci/check-log-formats.sh
 
