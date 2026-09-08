@@ -120,24 +120,6 @@ To publish:
 - one-rom-wasm: move to the new Rust crates.
 - one-rom-site: add S-record support.
 
-To do (before release):
-- **Auxiliary I/O's register writes are untested.**  `ora_gpio_set` records what
-  it drove into the test build's pad model, so a host test can assert that a pin
-  was driven, held and released — but every real register write sits behind
-  `#if !defined(TEST_BUILD)`, and the pad model is a second implementation of the
-  same intent rather than a check on the shipped one.  Closing this in an
-  emulated test would mean epio representing an SIO-driven output level from the
-  MCU side, which is unestablished and decides whether it is a firmware-only
-  change or needs an epio release.  Driving a pad from a host on real hardware
-  settles the same question for this release.
-- **The host-control plugin reports its pipe's far end as Unspecified.**  RBCP's
-  GET_PIPE_INFO now says what kind of thing a pipe reaches, and a One ROM pipe is
-  an ORA log channel whose reader the plugin cannot see — usually the system USB
-  plugin, but a debug probe or nothing at all are equally possible.  Reporting
-  USB CDC honestly would mean the plugin learning who holds a channel's read
-  claim, which no ORA call exposes, so a host is told nothing where it could be
-  told something useful.
-
 ## v0.7.1 - 2026-08-09
 
 Headline changes in this release:
