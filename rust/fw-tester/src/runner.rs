@@ -364,35 +364,22 @@ pub fn run_mode(
         }
     }
 
-    // Enumerate only the discriminating (non-commoned) control lines. A commoned
-    // line (Multi primary: a CS line shared across the set) is asserted on every
-    // real read and selects nothing, so toggling it independently is unphysical
-    // — and, being in the CS-detect range, an asserted commoned line fires the
-    // gate alone. Hold every commoned line deasserted (idle level) throughout
-    // and vary only the selects, so "chip not selected" is modelled faithfully.
-    let select_lines: Vec<_> = cache
-        .control_lines
-        .iter()
-        .filter(|cl| !cl.commoned)
-        .collect();
-    let commoned_deasserted: (u64, u64) = cache
-        .control_lines
-        .iter()
-        .filter(|cl| cl.commoned)
-        .map(|cl| driver::ctrl_mask(std::slice::from_ref(cl), false))
-        .fold((0u64, 0u64), driver::merge);
-    let combo_const = driver::merge(const_mask, commoned_deasserted);
+    // Enumerate every control line the chip has, commoned lines included.  A
+    // read of this chip is valid only when all of them are active together: the
+    // per-chip select says which chip, and a commoned line qualifies the access
+    // for the whole set.  Every other combination must leave the data bus
+    // released, and that includes a commoned line active while no select is —
+    // the state a line tied permanently active leaves the bus in between
+    // accesses, which is most of the time.
+    let select_lines: Vec<_> = cache.control_lines.iter().collect();
+    let combo_const = const_mask;
 
     let n = select_lines.len();
     if n > 0 {
         let all_asserted: u64 = (1u64 << n) - 1;
         debug!(
-            "Mode {}bit combo test: {} select line(s) ({} commoned held deasserted), \
-             {} non-active combinations",
-            mode,
-            n,
-            cache.control_lines.len() - n,
-            all_asserted
+            "Mode {}bit combo test: {} control line(s), {} non-active combinations",
+            mode, n, all_asserted
         );
 
         for combo in 0u64..all_asserted {

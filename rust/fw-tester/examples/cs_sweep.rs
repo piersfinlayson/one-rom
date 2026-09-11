@@ -127,7 +127,17 @@ fn sweep_set(board: Board, chip_set: &ChipSetConfig, set_idx: usize, max_cycles:
 
     let cache = PinCache::build(chip_type, chip_config, board);
     let addr_before_cs = addr_before_cs_cycles(chip_type);
-    let algs = Algs::from_config(&info);
+    let algs = match Algs::from_config(&info) {
+        Ok(a) => a,
+        Err(u) => {
+            println!(
+                "\nset {set_idx}: skipped - config derives a {} algorithm id {} \
+                 this build has no variant for",
+                u.family, u.id
+            );
+            return;
+        }
+    };
     let cs_in_window = cache
         .control_lines
         .iter()

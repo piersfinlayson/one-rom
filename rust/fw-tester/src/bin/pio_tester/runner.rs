@@ -491,9 +491,18 @@ fn run_multi_set(
         .iter()
         .fold((0u64, 0u64), |acc, &m| driver::merge(acc, m));
 
-    // Primary socket CS deassert mask, folded into every secondary chip's
-    // background to prevent chips[0] from driving the bus during their tests.
-    let primary_cs_deassert = driver::ctrl_mask(&primary_cache.control_lines, false);
+    // The primary socket's control lines as a real read of a secondary leaves
+    // them, folded into every secondary chip's background.  chip0's per-chip
+    // select is deasserted, so chip0 cannot drive the bus while a secondary is
+    // under test.  Its commoned lines are held *active*: they qualify a read of
+    // any chip in the set, so a read of a secondary has them asserted, and on a
+    // board that ties one permanently active they are asserted whatever the bus
+    // is doing.
+    let primary_cs_deassert = primary_cache
+        .control_lines
+        .iter()
+        .map(|cl| driver::ctrl_mask(std::slice::from_ref(cl), cl.commoned))
+        .fold((0u64, 0u64), driver::merge);
 
     let mut chip_results = Vec::new();
 

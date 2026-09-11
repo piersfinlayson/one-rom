@@ -165,21 +165,44 @@ pub struct UnknownAlg {
 
 impl Algs {
     /// Resolve `onerom-gen`'s config-side answer to this module's enums.
-    pub fn from_config(info: &ServingAlgInfo) -> Self {
-        Self {
-            cs: match info.cs_alg {
-                CsAlgPreference::AlgCs0 => CsAlg::Cs0,
-                CsAlgPreference::AlgCs1 => CsAlg::Cs1,
-                CsAlgPreference::AlgCs2 => CsAlg::Cs2,
-            },
-            addr: match info.addr_alg {
-                AddrAlgPreference::AlgAddr0 => AddrAlg::Addr0,
-            },
-            data: match info.data_alg {
-                DataAlgPreference::AlgData0 => DataAlg::Data0,
-                DataAlgPreference::AlgData1 => DataAlg::Data1,
-            },
-        }
+    ///
+    /// The preference enums are `#[non_exhaustive]`, so a variant this build
+    /// has no mirror for is an `UnknownAlg` rather than a compile error - the
+    /// same shape as [`Self::from_serving`].  Reaching it means `onerom-gen`
+    /// gained an algorithm and the `NUM_*_ALGS` assertions above were updated
+    /// without the mirror enums getting a variant.
+    pub fn from_config(info: &ServingAlgInfo) -> Result<Self, UnknownAlg> {
+        let cs = match info.cs_alg {
+            CsAlgPreference::AlgCs0 => CsAlg::Cs0,
+            CsAlgPreference::AlgCs1 => CsAlg::Cs1,
+            CsAlgPreference::AlgCs2 => CsAlg::Cs2,
+            other => {
+                return Err(UnknownAlg {
+                    family: "cs",
+                    id: other as u32,
+                });
+            }
+        };
+        let addr = match info.addr_alg {
+            AddrAlgPreference::AlgAddr0 => AddrAlg::Addr0,
+            other => {
+                return Err(UnknownAlg {
+                    family: "addr",
+                    id: other as u32,
+                });
+            }
+        };
+        let data = match info.data_alg {
+            DataAlgPreference::AlgData0 => DataAlg::Data0,
+            DataAlgPreference::AlgData1 => DataAlg::Data1,
+            other => {
+                return Err(UnknownAlg {
+                    family: "data",
+                    id: other as u32,
+                });
+            }
+        };
+        Ok(Self { cs, addr, data })
     }
 
     /// Resolve the ids the running firmware reports, for cross-checking
@@ -910,7 +933,15 @@ pub fn run_pass(
     // the wrong address window self-consistent: the expected latency would move
     // along with the bug.  The firmware's own report is used to check that it
     // programmed what the configuration called for.
-    let algs = Algs::from_config(info);
+    let algs = match Algs::from_config(info) {
+        Ok(a) => a,
+        Err(u) => {
+            return PassResult::skipped(format!(
+                "config derives a {} algorithm id {} this build has no variant for",
+                u.family, u.id
+            ));
+        }
+    };
 
     let Some(serving) = emulator.serving_alg() else {
         return PassResult::skipped("firmware reported no slot being served");

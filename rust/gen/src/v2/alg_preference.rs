@@ -35,6 +35,13 @@ use super::cs_data_layout::AlgCs2Config;
 /// - `AlgCs0`: contiguous CS range — simplest PIO implementation.
 /// - `AlgCs1`: one gap in CS range — requires mask, otherwise identical.
 /// - `AlgCs2`: enable + address-qualified — additional qualifier check.
+///
+/// `#[non_exhaustive]`: an algorithm added here must not break a downstream
+/// crate that matches on it.  The compile-time check that a new algorithm gets
+/// a cycle cost lives in `onerom-fw-tester`'s own mirror enums and its
+/// assertions against the firmware's `NUM_*_ALGS`, not in this enum's
+/// exhaustiveness.
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum CsAlgPreference {
     AlgCs0 = 0,
@@ -44,6 +51,13 @@ pub enum CsAlgPreference {
 
 /// Address algorithm preference: lower = simpler = preferred.
 /// `AlgAddr0` is currently the only variant.
+///
+/// `#[non_exhaustive]`: an algorithm added here must not break a downstream
+/// crate that matches on it.  The compile-time check that a new algorithm gets
+/// a cycle cost lives in `onerom-fw-tester`'s own mirror enums and its
+/// assertions against the firmware's `NUM_*_ALGS`, not in this enum's
+/// exhaustiveness.
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum AddrAlgPreference {
     AlgAddr0 = 0,
@@ -53,6 +67,13 @@ pub enum AddrAlgPreference {
 ///
 /// - `AlgData0`: direct data output (8-bit, or 16-bit with `force_16_bit`).
 /// - `AlgData1`: 16-bit with `/BYTE` + A-1 read — more PIO cycles required.
+///
+/// `#[non_exhaustive]`: an algorithm added here must not break a downstream
+/// crate that matches on it.  The compile-time check that a new algorithm gets
+/// a cycle cost lives in `onerom-fw-tester`'s own mirror enums and its
+/// assertions against the firmware's `NUM_*_ALGS`, not in this enum's
+/// exhaustiveness.
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum DataAlgPreference {
     AlgData0 = 0,
@@ -61,6 +82,13 @@ pub enum DataAlgPreference {
 
 /// DMA algorithm preference: lower = simpler = preferred.
 /// `AlgDma0` is currently the only variant.
+///
+/// `#[non_exhaustive]`: an algorithm added here must not break a downstream
+/// crate that matches on it.  The compile-time check that a new algorithm gets
+/// a cycle cost lives in `onerom-fw-tester`'s own mirror enums and its
+/// assertions against the firmware's `NUM_*_ALGS`, not in this enum's
+/// exhaustiveness.
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum DmaAlgPreference {
     AlgDma0 = 0,
