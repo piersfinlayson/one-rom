@@ -114,6 +114,8 @@ fn field_rust_type(field: &Field) -> String {
             }
         }
 
+        "trailing_array" => format!("Vec<{}>", field.element.as_deref().unwrap_or("u8")),
+
         // Both kinds collapse to Vec<ElemType> in Rust.
         "struct_array_ptr" | "struct_ptr_array_ptr" => {
             format!(
@@ -1109,6 +1111,32 @@ fn push_tagged_fam_parse(
         // Variant param fields, continuing from byte_off (= base_size).
         let mut vbyte_off = byte_off;
         for f in &v.fields {
+            if f.kind == "trailing_array" {
+                // Length is whatever param_len leaves after the fixed params.
+                // param_len counts bytes, so a wider element divides down.
+                let fixed = vbyte_off - byte_off;
+                let name = &f.name;
+                let width = trailing_elem_size(f);
+                let (method, _) = scalar_rw(f.element.as_deref().unwrap_or("u8"));
+                let count = if width > 1 {
+                    format!("(_param_len as usize).saturating_sub({fixed}) / {width}")
+                } else {
+                    format!("(_param_len as usize).saturating_sub({fixed})")
+                };
+                let index = if width > 1 {
+                    format!("(i * {width}) as u32")
+                } else {
+                    "i as u32".to_string()
+                };
+                out.push_str(&format!(
+                    "                let {name}_len = {count};\n\
+                     let mut {name} = Vec::with_capacity({name}_len);\n\
+                     for i in 0..{name}_len {{\n\
+                     {name}.push(view.{method}(addr + {vbyte_off}u32 + {index})?);\n\
+                     }}\n"
+                ));
+                continue;
+            }
             emit_field_at_addr(out, f, vbyte_off, "                ", schema);
             vbyte_off += field_size(f, schema);
         }

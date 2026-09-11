@@ -724,6 +724,9 @@ fn push_tagged_fam_host(out: &mut String, tf: &TaggedFam, schema: &Schema) {
     out.push_str("    }\n\n");
 
     // host_define_fields() ------------------------------------------------
+    // Each variant's params are built a byte at a time, which the lint reads
+    // as a vec![] written the long way.
+    out.push_str("    #[allow(clippy::vec_init_then_push)]\n");
     out.push_str("    pub fn host_define_fields(&self, ctx: &mut HostGenContext) -> alloc::string::String {\n");
     out.push_str("        let mut s = alloc::string::String::new();\n");
     out.push_str(
@@ -754,11 +757,27 @@ fn push_tagged_fam_host(out: &mut String, tf: &TaggedFam, schema: &Schema) {
             "                s.push_str(\"    .{} = {},\\n\");\n",
             tf.discriminant_field, v.discriminant
         ));
-        // param_len — statically known constant name from the schema.
-        out.push_str(&format!(
-            "                s.push_str(\"    .{} = {},\\n\");\n",
-            tf.param_len_field, v.params_len_constant
-        ));
+        // param_len — the schema constant, plus the trailing array's byte
+        // count where the variant has one.  Bytes, not elements: the firmware
+        // subtracts the constant from param_len to find the array's extent.
+        match v.fields.iter().find(|f| f.kind == "trailing_array") {
+            Some(f) => {
+                let width = trailing_elem_size(f);
+                let count = if width > 1 {
+                    format!("{}.len() * {width}", f.name)
+                } else {
+                    format!("{}.len()", f.name)
+                };
+                out.push_str(&format!(
+                    "                s.push_str(&alloc::format!(\"    .{} = {} + {{}},\\n\", {count}));\n",
+                    tf.param_len_field, v.params_len_constant
+                ))
+            }
+            None => out.push_str(&format!(
+                "                s.push_str(\"    .{} = {},\\n\");\n",
+                tf.param_len_field, v.params_len_constant
+            )),
+        }
 
         // Common fields.
         for f in &tf.common_fields {
@@ -826,7 +845,7 @@ fn emit_fam_params_expr(fields: &[Field]) -> String {
                     "u8" => {
                         out.push_str(&format!("                    bytes.push(*{name});\n"));
                     }
-                    "u16" => {
+                    "u16" | "u32" => {
                         out.push_str(&format!(
                             "                    bytes.extend_from_slice(&{name}.to_le_bytes());\n"
                         ));
@@ -841,10 +860,26 @@ fn emit_fam_params_expr(fields: &[Field]) -> String {
             "enum" => {
                 out.push_str(&format!("                    bytes.push(*{name} as u8);\n"));
             }
+            "trailing_array" => {
+                if trailing_elem_size(f) > 1 {
+                    out.push_str(&format!(
+                        "                    for e in {name} {{\n\
+                         bytes.extend_from_slice(&e.to_le_bytes());\n\
+                         }}\n"
+                    ));
+                } else {
+                    out.push_str(&format!(
+                        "                    bytes.extend_from_slice({name});\n"
+                    ));
+                }
+            }
             "padding" => {
                 let sz = f.size.unwrap_or(0);
                 out.push_str(&format!(
-                    "                    bytes.extend(core::iter::repeat(0u8).take({sz}));\n"
+                    // Reserved bytes read back 0xFF from a device, because the
+                    // binary serializer leaves erased flash alone.  The C the
+                    // firmware build compiles has to say the same.
+                    "                    bytes.extend_from_slice(&[0xFFu8; {sz}]);\n"
                 ));
             }
             other => {

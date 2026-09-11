@@ -726,6 +726,10 @@ fn field_c_decl(field: &Field, const_fields: bool) -> String {
             let cdim = c_array_dim(field.cols_ref.as_deref(), field.cols);
             format!("    {}{} {}[{}][{}];\n", ck, etype, field.name, rdim, cdim)
         }
+        "trailing_array" => {
+            let etype = c_primitive(field.element.as_deref().unwrap_or("u8"));
+            format!("    {}{} {}[];\n", ck, etype, field.name)
+        }
         "cstr_ptr" => {
             // const char * regardless of the struct's const_fields setting
             format!("    const char *{};\n", field.name)

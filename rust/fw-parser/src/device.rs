@@ -78,6 +78,12 @@ use crate::types::SdrrRomType;
 /// [`as_original`]: ParsedDevice::as_original
 /// [`as_schema`]: ParsedDevice::as_schema
 /// [`Parser::parse_device`]: crate::Parser::parse_device
+// `OneRom` is several hundred bytes larger than `Sdrr`, which clippy reads as
+// waste.  It is not: a `ParsedDevice` is one parse result, held one at a time,
+// and a v0.7.0-or-later device — the Schema variant — is what nearly every
+// parse produces.  Boxing it would pay an allocation and an indirection on
+// almost every parse to shrink a value nothing holds in bulk.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum ParsedDevice {
     /// Pre-v0.7.0 hand-crafted format.

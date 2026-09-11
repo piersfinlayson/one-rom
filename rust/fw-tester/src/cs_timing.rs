@@ -110,6 +110,8 @@ pub enum CsAlg {
     Cs1,
     /// Enable plus address-qualified select.
     Cs2,
+    /// Field descriptor: common fields, then per-chip select groups.
+    Cs3,
 }
 
 /// Address algorithm, mirroring `onerom_alg_addr_t`.
@@ -128,7 +130,7 @@ pub enum DataAlg {
 }
 
 const _: () = assert!(
-    ffi::onerom_alg_cs_t_NUM_CS_ALGS == 3,
+    ffi::onerom_alg_cs_t_NUM_CS_ALGS == 4,
     "a CS algorithm was added or removed: update CsAlg and give the new \
      variant a CS-to-data cost in expected_cs_to_data"
 );
@@ -176,6 +178,7 @@ impl Algs {
             CsAlgPreference::AlgCs0 => CsAlg::Cs0,
             CsAlgPreference::AlgCs1 => CsAlg::Cs1,
             CsAlgPreference::AlgCs2 => CsAlg::Cs2,
+            CsAlgPreference::AlgCs3 => CsAlg::Cs3,
             other => {
                 return Err(UnknownAlg {
                     family: "cs",
@@ -212,6 +215,7 @@ impl Algs {
             ffi::onerom_alg_cs_t_ALG_CS_0 => CsAlg::Cs0,
             ffi::onerom_alg_cs_t_ALG_CS_1 => CsAlg::Cs1,
             ffi::onerom_alg_cs_t_ALG_CS_2 => CsAlg::Cs2,
+            ffi::onerom_alg_cs_t_ALG_CS_3 => CsAlg::Cs3,
             id => {
                 return Err(UnknownAlg {
                     family: "cs",
@@ -305,9 +309,11 @@ pub fn expected_cs_to_data(algs: Algs, mode: u8, cs_in_window: bool, drive_addr:
             (CsAlg::Cs0, DataAlg::Data0) => CS_REFETCH,
             (CsAlg::Cs1, DataAlg::Data0) => CS_REFETCH,
             (CsAlg::Cs2, DataAlg::Data0) => CS_REFETCH,
+            (CsAlg::Cs3, DataAlg::Data0) => CS_REFETCH,
             (CsAlg::Cs0, DataAlg::Data1) => CS_REFETCH,
             (CsAlg::Cs1, DataAlg::Data1) => CS_REFETCH,
             (CsAlg::Cs2, DataAlg::Data1) => CS_REFETCH,
+            (CsAlg::Cs3, DataAlg::Data1) => CS_REFETCH,
         };
     }
 
@@ -318,18 +324,22 @@ pub fn expected_cs_to_data(algs: Algs, mode: u8, cs_in_window: bool, drive_addr:
         (CsAlg::Cs0, DataAlg::Data0, 16) => CS_OUTPUT_ENABLE_WORD,
         (CsAlg::Cs1, DataAlg::Data0, 16) => CS_OUTPUT_ENABLE_WORD,
         (CsAlg::Cs2, DataAlg::Data0, 16) => CS_OUTPUT_ENABLE_WORD,
+        (CsAlg::Cs3, DataAlg::Data0, 16) => CS_OUTPUT_ENABLE_WORD,
         (CsAlg::Cs0, DataAlg::Data0, _) => CS_OUTPUT_ENABLE,
         (CsAlg::Cs1, DataAlg::Data0, _) => CS_OUTPUT_ENABLE,
         (CsAlg::Cs2, DataAlg::Data0, _) => CS_OUTPUT_ENABLE,
+        (CsAlg::Cs3, DataAlg::Data0, _) => CS_OUTPUT_ENABLE,
 
         // /BYTE-aware output: the CS machine tests /BYTE before choosing which
         // pindirs write to make, so both modes cost more than AlgData0's.
         (CsAlg::Cs0, DataAlg::Data1, 16) => CS_OUTPUT_ENABLE_BYTE_ALG_WORD,
         (CsAlg::Cs1, DataAlg::Data1, 16) => CS_OUTPUT_ENABLE_BYTE_ALG_WORD,
         (CsAlg::Cs2, DataAlg::Data1, 16) => CS_OUTPUT_ENABLE_BYTE_ALG_WORD,
+        (CsAlg::Cs3, DataAlg::Data1, 16) => CS_OUTPUT_ENABLE_BYTE_ALG_WORD,
         (CsAlg::Cs0, DataAlg::Data1, _) => CS_OUTPUT_ENABLE_BYTE_ALG_BYTE + high_half,
         (CsAlg::Cs1, DataAlg::Data1, _) => CS_OUTPUT_ENABLE_BYTE_ALG_BYTE + high_half,
         (CsAlg::Cs2, DataAlg::Data1, _) => CS_OUTPUT_ENABLE_BYTE_ALG_BYTE + high_half,
+        (CsAlg::Cs3, DataAlg::Data1, _) => CS_OUTPUT_ENABLE_BYTE_ALG_BYTE + high_half,
     }
 }
 

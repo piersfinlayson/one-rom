@@ -66,6 +66,12 @@ pub fn startup_task() -> Task<AppMessage> {
 
 /// Top level Message enum - container for all sub-module messages
 #[derive(Debug, Clone)]
+// Studio's messages differ in size by a few hundred bytes, which clippy reads
+// as waste.  Boxing the largest only promotes the next one, and these are
+// desktop GUI events - constructed on user actions and background completions,
+// never in a hot path - so the plumbing an allocation per message would add
+// buys nothing measurable.
+#[allow(clippy::large_enum_variant)]
 pub enum AppMessage {
     /// Analyse pane messages
     Analyse(AnalyseMessage),

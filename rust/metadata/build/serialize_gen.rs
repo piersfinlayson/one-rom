@@ -134,6 +134,18 @@ fn scalar_write(ty: &str) -> (&'static str, usize) {
     }
 }
 
+/// Level-1 expression for the byte count a trailing array occupies.  The
+/// field is bound by reference in the match arm, so this reads its length and
+/// scales it by the element width.
+fn trailing_bytes_expr(field: &Field) -> String {
+    let width = trailing_elem_size(field);
+    if width > 1 {
+        format!("{}.len() * {width}", field.name)
+    } else {
+        format!("{}.len()", field.name)
+    }
+}
+
 /// (write-method name, byte width) for an enum field.
 fn enum_write(field: &Field, schema: &Schema) -> (&'static str, usize) {
     let sz = schema
@@ -931,9 +943,19 @@ fn push_tagged_fam_layout(
         let vn = fam_variant_ident(&v.discriminant, strip);
         let params_len = const_value(schema, &v.params_len_constant);
         let total = tf.base_size as usize + params_len;
-        out.push_str(&format!(
-            "            Self::{vn} {{ .. }} => {total}usize,\n"
-        ));
+        // A variant ending in a trailing array is sized from its length, with
+        // params_len_constant naming the fixed part before it.  The array's
+        // contribution is in bytes, so a wider element multiplies up.
+        match v.fields.iter().find(|f| f.kind == "trailing_array") {
+            Some(f) => out.push_str(&format!(
+                "            Self::{vn} {{ {}, .. }} => {total}usize + {},\n",
+                f.name,
+                trailing_bytes_expr(f)
+            )),
+            None => out.push_str(&format!(
+                "            Self::{vn} {{ .. }} => {total}usize,\n"
+            )),
+        }
     }
     out.push_str("        };\n");
     out.push_str("        let addr = ctx.alloc_aligned(size)?;\n");
@@ -990,12 +1012,20 @@ fn push_tagged_fam_write(
             "                ctx.{disc_method}(addr, {disc_val} as _);\n"
         ));
 
-        // param_len byte.
+        // param_len byte.  Where the variant ends in a trailing array,
+        // params_len_constant is the fixed part and the array's byte count is
+        // added to it.
         let params_len = const_value(schema, &v.params_len_constant);
         let a = addr_expr(disc_size);
-        out.push_str(&format!(
-            "                ctx.write_u8({a}, {params_len}u8);\n"
-        ));
+        match v.fields.iter().find(|f| f.kind == "trailing_array") {
+            Some(f) => out.push_str(&format!(
+                "                ctx.write_u8({a}, ({params_len}usize + {}) as u8);\n",
+                trailing_bytes_expr(f)
+            )),
+            None => out.push_str(&format!(
+                "                ctx.write_u8({a}, {params_len}u8);\n"
+            )),
+        }
 
         // Common fields at [disc_size+1 .. base_size).
         let mut off = disc_size + 1;
@@ -1035,6 +1065,21 @@ fn emit_fam_field_write(out: &mut String, f: &Field, off: usize, schema: &Schema
             let a = addr_expr(off);
             out.push_str(&format!(
                 "                ctx.{method}({a}, *{name} as {repr});\n"
+            ));
+        }
+        "trailing_array" => {
+            let a = addr_expr(off);
+            let width = trailing_elem_size(f);
+            let (method, _) = scalar_write(f.element.as_deref().unwrap_or("u8"));
+            let step = if width > 1 {
+                format!("(i * {width}) as u32")
+            } else {
+                "i as u32".to_string()
+            };
+            out.push_str(&format!(
+                "                for (i, b) in {name}.iter().enumerate() {{\n\
+                 ctx.{method}({a} + {step}, *b);\n\
+                 }}\n"
             ));
         }
         "type_alias" => {

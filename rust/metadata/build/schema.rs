@@ -542,6 +542,13 @@ pub fn prim_size(type_: &str) -> usize {
     }
 }
 
+/// Byte width of one element of a `trailing_array` field.  The element type
+/// defaults to `u8` when the schema leaves it out.  Callers need this to turn
+/// an element count into the byte count that `param_len` carries.
+pub fn trailing_elem_size(field: &Field) -> usize {
+    prim_size(field.element.as_deref().unwrap_or("u8"))
+}
+
 /// Byte size of a struct field.  Used for layout offset tracking in
 /// generated C comments and for Rust struct layout verification.
 pub fn field_size(field: &Field, schema: &Schema) -> usize {
@@ -576,6 +583,10 @@ pub fn field_size(field: &Field, schema: &Schema) -> usize {
         | "opaque_ptr"
         | "fn_ptr" => 4,
         "padding" => field.size.unwrap_or(0) as usize,
+        // Occupies whatever the length prefix leaves, so contributes nothing
+        // to the fixed layout.  Only valid as a tagged FAM variant's last
+        // field, where param_len gives its length.
+        "trailing_array" => 0,
         _ => 0,
     }
 }

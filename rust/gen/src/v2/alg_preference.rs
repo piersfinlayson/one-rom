@@ -47,6 +47,7 @@ pub enum CsAlgPreference {
     AlgCs0 = 0,
     AlgCs1 = 1,
     AlgCs2 = 2,
+    AlgCs3 = 3,
 }
 
 /// Address algorithm preference: lower = simpler = preferred.
@@ -141,6 +142,7 @@ impl From<&OneromAlgCsConfig> for CsAlgPreference {
             OneromAlgCsConfig::AlgCs0 { .. } => Self::AlgCs0,
             OneromAlgCsConfig::AlgCs1 { .. } => Self::AlgCs1,
             OneromAlgCsConfig::AlgCs2 { .. } => Self::AlgCs2,
+            OneromAlgCsConfig::AlgCs3 { .. } => Self::AlgCs3,
         }
     }
 }

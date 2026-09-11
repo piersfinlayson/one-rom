@@ -185,12 +185,16 @@ static v2_x_pin_gpios_t v2_get_x_pin_gpios(
 #define MONITOR_CS_0_INSTRS 9
 #define MONITOR_CS_1_INSTRS 20
 #define MONITOR_CS_2_INSTRS 14
+// Two instructions per arming sample, then the IRQ set, the three instruction
+// active poll and the two instruction release check.
+#define MONITOR_CS_3_INSTRS (2 * MONITOR_CS_SAMPLES + 6)
 
 static uint8_t monitor_cs_instrs(uint8_t alg) {
     switch (alg) {
         case ALG_CS_0: return MONITOR_CS_0_INSTRS;
         case ALG_CS_1: return MONITOR_CS_1_INSTRS;
         case ALG_CS_2: return MONITOR_CS_2_INSTRS;
+        case ALG_CS_3: return MONITOR_CS_3_INSTRS;
         default:       return APIO_MAX_PIO_INSTRS;
     }
 }
@@ -431,6 +435,58 @@ static void pio_setup_address_monitor_pios() {
             // Preload Y with the qualifier deselect pattern via TXF rather
             // than SET_Y, as the pattern may exceed the 5-bit SET immediate.
             APIO_TXF = params->qualifier_inactive_pattern;
+            APIO_SM_EXEC_INSTR(APIO_PULL_BLOCK);
+            APIO_SM_EXEC_INSTR(APIO_MOV_Y_OSR);
+            break;
+        }
+
+        case ALG_CS_3: {
+            // Field descriptor select.  Like the AlgCs0 multi-ROM monitor this
+            // watches the first ROM's own select alone - the chip in One ROM's
+            // socket - rather than the whole predicate the serving SM applies,
+            // so an access to one of the other chips in the set is not
+            // captured.  The select is contiguous and reads active high, so
+            // all ones is selected, and Y carries that mask.
+            //
+            // Debouncing is unrolled rather than counted, because Y is taken.
+            // Three agreeing samples arm it and a second look confirms the
+            // release, as in the other algorithms.
+            //
+            // setup_serving_pios() ran first and refused a descriptor whose
+            // first ROM select falls outside the CS window, so the pins named
+            // here are good.
+            const onerom_alg_cs3_param_t *params =
+                (const onerom_alg_cs3_param_t *)cs_alg->params;
+
+            APIO_LABEL_NEW(cs3_inactive);
+            for (uint8_t ii = 0; ii < MONITOR_CS_SAMPLES; ii++) {
+                APIO_ADD_INSTR(APIO_MOV_X_PINS);
+                APIO_ADD_INSTR(APIO_JMP_X_NOT_Y(APIO_LABEL(cs3_inactive)));
+            }
+
+            APIO_ADD_INSTR(irq_set_instr);
+
+            // The wrap goes back to the active poll, so a glitch during an
+            // access does not re-arm the detector and capture the address
+            // twice.
+            APIO_WRAP_BOTTOM();
+            APIO_LABEL_NEW(cs3_active);
+            APIO_ADD_INSTR(APIO_MOV_X_PINS);
+            APIO_LABEL_NEW_OFFSET(cs3_releasing, 2);
+            APIO_ADD_INSTR(APIO_JMP_X_NOT_Y(APIO_LABEL(cs3_releasing)));
+            APIO_ADD_INSTR(APIO_JMP(APIO_LABEL(cs3_active)));
+
+            // cs3_releasing: deselected on a second look too means the access
+            // is over.
+            APIO_ADD_INSTR(APIO_MOV_X_PINS);
+            APIO_WRAP_TOP();
+            APIO_ADD_INSTR(APIO_JMP_X_NOT_Y(APIO_LABEL(cs3_inactive)));
+
+            base_cs_pin = params->first_rom_cs_base;
+            num_cs_pins = params->first_rom_num_cs_pins;
+
+            // Preload Y with the first ROM's select, all ones being selected
+            APIO_TXF = (uint32_t)(((uint64_t)1 << num_cs_pins) - 1);
             APIO_SM_EXEC_INSTR(APIO_PULL_BLOCK);
             APIO_SM_EXEC_INSTR(APIO_MOV_Y_OSR);
             break;

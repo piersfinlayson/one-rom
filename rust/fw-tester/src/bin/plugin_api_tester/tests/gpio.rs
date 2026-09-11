@@ -190,6 +190,28 @@ fn serving_set(header: &OneromMetadataHeader, set_idx: usize) -> Result<ServingS
             // samples to decide whether this bank is selected.
             span(gpio_base + base_qualifier_pin, num_qualifier_pins),
         ),
+        OneromAlgCsConfig::AlgCs3 {
+            gpio_base,
+            base_cs_pin,
+            num_cs_pins,
+            base_data_pin,
+            num_data_pins,
+            byte_pin,
+            ..
+        } => (
+            gpio_base + base_cs_pin,
+            num_cs_pins,
+            gpio_base + base_data_pin,
+            num_data_pins,
+            // A SKIP field names a pin the descriptor steps over, but it is
+            // inside the CS span and still sampled, so the span covers it.
+            // The /BYTE pin is outside, as in AlgCs0.
+            if byte_pin == GPIO_NONE {
+                0
+            } else {
+                pin(gpio_base + byte_pin)
+            },
+        ),
     };
 
     let OneromAlgAddrConfig::AlgAddr0 {

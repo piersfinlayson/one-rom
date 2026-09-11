@@ -13,11 +13,11 @@
 use onerom_config::chip::ChipType;
 use onerom_config::mcu::{RP235X_BASE_FLASH, RP235X_BASE_SRAM, RP235X_END_SRAM};
 use onerom_metadata::{
-    BitModes, CURRENT_METADATA_VERSION, DeviceMemoryView, FireVreg, GPIO_NONE, OneromAlgAddrConfig,
-    OneromAlgConfig, OneromAlgCsConfig, OneromAlgDataConfig, OneromAlgDmaConfig,
-    OneromAlgOverrideConfig, OneromAlgPullConfig, OneromFirmwareConfig, OneromFirmwareOverrides,
-    OneromHardwareInfo, OneromMetadataHeader, OneromRomInfo, OneromRomPinMap, OneromRomSlot,
-    Pointer, RomSlotType, Rp235xVariant, generate_host_metadata_c,
+    ALG_CS3_PARAMS_PRE_PROG_LEN, BitModes, CURRENT_METADATA_VERSION, DeviceMemoryView, FireVreg,
+    GPIO_NONE, OneromAlgAddrConfig, OneromAlgConfig, OneromAlgCsConfig, OneromAlgDataConfig,
+    OneromAlgDmaConfig, OneromAlgOverrideConfig, OneromAlgPullConfig, OneromFirmwareConfig,
+    OneromFirmwareOverrides, OneromHardwareInfo, OneromMetadataHeader, OneromRomInfo,
+    OneromRomPinMap, OneromRomSlot, Pointer, RomSlotType, Rp235xVariant, generate_host_metadata_c,
 };
 use onerom_metadata::{METADATA_BASE, METADATA_SIZE, SerializeError, serialize};
 
@@ -97,6 +97,59 @@ fn default_alg() -> Option<OneromAlgConfig> {
         gpio_pull_config: None,
         gpio_override_config: None,
     })
+}
+
+// ---------------------------------------------------------------------------
+// ALG_CS_3 fixture
+// ---------------------------------------------------------------------------
+// The three ALG_CS_3 tests share one configuration so the byte checks and the
+// generated-C check pin the same values.  The register values are plausible
+// rather than taken from a real board, chosen so that each has its non-zero
+// bytes in a different position - a swapped field or a wrong endianness shows
+// up rather than cancelling out.
+
+/// A four-instruction chip select program.  The first word is executed through
+/// SM_EXEC, the remaining three are the loaded program.
+const CS3_PROG: [u16; 4] = [0xE081, 0x2020, 0x6008, 0x0002];
+
+/// `CS3_PROG` little-endian, as it lands in `params[]`.
+const CS3_PROG_BYTES: [u8; 8] = [0x81, 0xE0, 0x20, 0x20, 0x08, 0x60, 0x02, 0x00];
+
+/// The fixed params ahead of the two reserved bytes: execctrl, shiftctrl,
+/// pinctrl and txf_preload little-endian, then has_preload and exec_words.
+/// The reserved bytes are not part of this - both output paths leave them
+/// 0xFF, and each test appends them itself.
+const CS3_FIXED_HEAD: [u8; ALG_CS3_PARAMS_PRE_PROG_LEN - 2] = [
+    0x00, 0x10, 0x04, 0x00, // execctrl    = 0x0004_1000
+    0x00, 0x00, 0x0C, 0x00, // shiftctrl   = 0x000C_0000
+    0x07, 0x00, 0x00, 0x1A, // pinctrl     = 0x1A00_0007
+    0x3F, 0x00, 0x00, 0x00, // txf_preload = 0x0000_003F
+    0x01, // has_preload
+    0x01, // exec_words
+];
+
+fn alg_cs3() -> OneromAlgConfig {
+    OneromAlgConfig {
+        alg_cs: OneromAlgCsConfig::AlgCs3 {
+            clkdiv_int: 1,
+            clkdiv_frac: 0,
+            gpio_base: 0,
+            base_cs_pin: 9,
+            num_cs_pins: 4,
+            base_data_pin: 0,
+            num_data_pins: 8,
+            cs_active_delay: 0,
+            cs_inactive_delay: 0,
+            execctrl: 0x0004_1000,
+            shiftctrl: 0x000C_0000,
+            pinctrl: 0x1A00_0007,
+            txf_preload: 0x0000_003F,
+            has_preload: 1,
+            exec_words: 1,
+            prog: CS3_PROG.to_vec(),
+        },
+        ..default_alg().unwrap()
+    }
 }
 
 fn make_slot(roms: Vec<OneromRomInfo>) -> OneromRomSlot {
@@ -392,6 +445,74 @@ fn round_trip_alg_cs2() {
         ..minimal_header()
     };
     assert_round_trips(&original);
+}
+
+/// 5c. CS algorithm variant 3 (host-supplied PIO program).
+///
+/// The only variant whose params end in a `trailing_array`, and the only one
+/// whose array element is wider than a byte, so this covers what no other
+/// round trip does: `param_len` is derived as the fixed params plus the
+/// program's *bytes*, and the program's words follow the fixed params in the
+/// same `params[]`.
+#[test]
+fn round_trip_alg_cs3() {
+    let original = OneromMetadataHeader {
+        rom_slots: vec![OneromRomSlot {
+            alg: Some(alg_cs3()),
+            ..make_slot(vec![make_rom_info("2332")])
+        }],
+        ..minimal_header()
+    };
+    assert_round_trips(&original);
+}
+
+/// The bytes `round_trip_alg_cs3` puts on the wire, checked directly: a
+/// `param_len` derived as the fixed params plus the program's bytes, and the
+/// program's words little-endian immediately after the fixed params in the
+/// same `params[]`.
+#[test]
+fn byte_check_alg_cs3_trailing_prog() {
+    let header = OneromMetadataHeader {
+        rom_slots: vec![OneromRomSlot {
+            alg: Some(alg_cs3()),
+            ..make_slot(vec![make_rom_info("2332")])
+        }],
+        ..minimal_header()
+    };
+    let buf = do_serialize(&header);
+
+    // header.rom_slots -> slot.alg (offset 16) -> alg.alg_cs (offset 0).
+    let slots_off = ptr_to_off(read_u32_le(&buf, 32), METADATA_BASE);
+    let alg_off = ptr_to_off(read_u32_le(&buf, slots_off + 16), METADATA_BASE);
+    let cs_off = ptr_to_off(read_u32_le(&buf, alg_off), METADATA_BASE);
+
+    assert_eq!(buf[cs_off], 3, "discriminant should be ALG_CS_3");
+    assert_eq!(
+        buf[cs_off + 1],
+        (ALG_CS3_PARAMS_PRE_PROG_LEN + CS3_PROG.len() * 2) as u8,
+        "param_len should be the fixed params plus the program's bytes",
+    );
+
+    // Fixed params start at base_size (12), the program right after them.
+    let params_off = cs_off + 12;
+    assert_eq!(
+        &buf[params_off..params_off + CS3_FIXED_HEAD.len()],
+        &CS3_FIXED_HEAD,
+        "execctrl, shiftctrl, pinctrl, txf_preload, has_preload, exec_words",
+    );
+    // The serializer starts from an erased-flash buffer and does not write
+    // padding, so the two reserved bytes read back as 0xFF.
+    assert_eq!(
+        &buf[params_off + CS3_FIXED_HEAD.len()..params_off + ALG_CS3_PARAMS_PRE_PROG_LEN],
+        &[0xFF, 0xFF],
+        "the reserved bytes are left erased",
+    );
+    let prog_off = params_off + ALG_CS3_PARAMS_PRE_PROG_LEN;
+    assert_eq!(
+        &buf[prog_off..prog_off + CS3_PROG.len() * 2],
+        &CS3_PROG_BYTES,
+        "the program continues the same params array, little-endian per word",
+    );
 }
 
 /// 6. Data algorithm variant 1 (byte-mode, with byte_pin and a_minus_1_pin).
@@ -917,4 +1038,44 @@ fn round_trip_opaque_ptr_addr32() {
         ..minimal_header()
     };
     assert_round_trips(&original);
+}
+
+/// 26. The host C generator's `param_len` for a variant ending in a trailing
+///     array is the fixed part plus the array's bytes, matching what the
+///     binary serializer writes.  Emitting the constant alone would leave the
+///     firmware reading the fixed params and never seeing the program, and
+///     counting elements rather than bytes would stop it short of the end.
+#[test]
+fn host_c_gen_alg_cs3_param_len_includes_prog() {
+    let header = OneromMetadataHeader {
+        rom_slots: vec![OneromRomSlot {
+            alg: Some(alg_cs3()),
+            ..make_slot(vec![make_rom_info("2332")])
+        }],
+        ..minimal_header()
+    };
+    let c_src = generate_host_metadata_c(&header, dummy_rom_data(1));
+
+    let expected_len = format!(
+        ".param_len = ALG_CS3_PARAMS_PRE_PROG_LEN + {},",
+        CS3_PROG.len() * 2
+    );
+    assert!(
+        c_src.contains(&expected_len),
+        "param_len must carry the program's byte length, got:\n{c_src}"
+    );
+
+    // The C path builds the params array from nothing, so it zeroes the two
+    // reserved bytes rather than leaving them erased as the binary path does.
+    let params: Vec<String> = CS3_FIXED_HEAD
+        .iter()
+        .chain([0xFFu8, 0xFF].iter())
+        .chain(CS3_PROG_BYTES.iter())
+        .map(|b| format!("0x{b:02X}"))
+        .collect();
+    let expected_params = format!(".params = {{ {} }},", params.join(", "));
+    assert!(
+        c_src.contains(&expected_params),
+        "the program must follow the fixed params in the same array, got:\n{c_src}"
+    );
 }

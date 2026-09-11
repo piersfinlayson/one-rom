@@ -39,6 +39,12 @@
 #   type_alias        - reference to a [[type_aliases]] entry
 #   inline_array      - fixed-size array, element + count
 #   inline_array2d    - fixed 2D array, element + rows + cols
+#   trailing_array    - variable-length array of element, filling whatever the
+#                       length prefix leaves.  Only as a tagged_fam variant's
+#                       last field, where params_len_constant gives the fixed
+#                       part before it.  The length prefix counts bytes, so an
+#                       element wider than u8 needs the fixed part padded to
+#                       its alignment
 #   cstr_ptr          - const char* null-terminated string pointer
 #   struct_ptr        - const T* pointer to struct (nullable flag)
 #   struct_array_ptr  - const T* as array, length from count_field
@@ -256,6 +262,12 @@ name = "ALG_CS2_PARAMS_LEN"
 type = "usize"
 value = 3
 comment = "Parameter byte length for CS algorithm 2 (enable/address-qualified)"
+
+[[constants]]
+name = "ALG_CS3_PARAMS_PRE_PROG_LEN"
+type = "usize"
+value = 20
+comment = "Parameter byte length for CS algorithm 3 (raw PIO program), before the program itself"
 
 [[constants]]
 name = "ALG_ADDR0_PARAMS_PRE_LIST_LEN"
@@ -676,8 +688,13 @@ value = 2
 comment = "Enable/address-qualified CS algorithm"
 
 [[enums.variants]]
-name = "NUM_CS_ALGS"
+name = "ALG_CS_3"
 value = 3
+comment = "Host-supplied PIO program CS algorithm"
+
+[[enums.variants]]
+name = "NUM_CS_ALGS"
+value = 4
 sentinel = true
 comment = "Count of CS algorithms. Not a valid algorithm."
 
@@ -1693,6 +1710,58 @@ name = "qualifier_inactive_pattern"
 kind = "scalar"
 type = "u8"
 comment = "Bit pattern on qualifier pins when bank is NOT selected (Y preload value)"
+
+[[tagged_fams.variants]]
+discriminant = "ALG_CS_3"
+comment = "Host-supplied PIO program CS algorithm. The host builds the chip select program and the state machine configuration to run it, and the firmware loads them as given. Supports a chip select of more than one line, and gaps within the CS window."
+params_len_constant = "ALG_CS3_PARAMS_PRE_PROG_LEN"
+
+[[tagged_fams.variants.fields]]
+name = "execctrl"
+kind = "scalar"
+type = "u32"
+comment = "State machine EXECCTRL value. Its WRAP_TOP and WRAP_BOTTOM are instruction addresses within prog, and the firmware adds the program's base address in the PIO instruction memory to each before writing the register."
+
+[[tagged_fams.variants.fields]]
+name = "shiftctrl"
+kind = "scalar"
+type = "u32"
+comment = "State machine SHIFTCTRL value, written to the register unchanged"
+
+[[tagged_fams.variants.fields]]
+name = "pinctrl"
+kind = "scalar"
+type = "u32"
+comment = "State machine PINCTRL value, written to the register unchanged"
+
+[[tagged_fams.variants.fields]]
+name = "txf_preload"
+kind = "scalar"
+type = "u32"
+comment = "Value pushed to the state machine's TX FIFO before the exec words run"
+
+[[tagged_fams.variants.fields]]
+name = "has_preload"
+kind = "scalar"
+type = "u8"
+comment = "0 = leave the TX FIFO empty, 1 = push txf_preload"
+
+[[tagged_fams.variants.fields]]
+name = "exec_words"
+kind = "scalar"
+type = "u8"
+comment = "How many leading words of prog are run through SM_EXEC rather than loaded"
+
+[[tagged_fams.variants.fields]]
+name = "reserved"
+kind = "padding"
+size = 2
+
+[[tagged_fams.variants.fields]]
+name = "prog"
+kind = "trailing_array"
+element = "u16"
+comment = "The PIO instructions. The first exec_words are executed through SM_EXEC before the state machine starts, and the rest are the program loaded into instruction memory."
 
 # ---
 

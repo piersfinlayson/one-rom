@@ -135,6 +135,15 @@ static uint8_t retrieve_gpio_init(const onerom_rom_slot_t *slot, gpio_init_t *gp
             break;
         }
 
+        case ALG_CS_3: {
+            const onerom_alg_cs3_param_t *params = (const onerom_alg_cs3_param_t *)slot->alg->alg_cs->params;
+            // As for ALG_CS_0, only offset a /BYTE pin that is actually there.
+            if (params->byte_pin != GPIO_NONE) {
+                gpio_init->byte_pin = params->byte_pin + cs_alg->gpio_base;
+            }
+            break;
+        }
+
         default:
             // Unreachable as we validate the algorithm earlier
             return -1;
@@ -422,6 +431,428 @@ int validate_serving_algs(const onerom_rom_slot_t *slot) {
     }
 
     return 0;
+}
+
+// ---------------------------------------------------------------------------
+// ALG_CS_3 - field descriptor chip select
+// ---------------------------------------------------------------------------
+//
+// ALG_CS_0's multi-ROM gate ORs the whole chip select window together and
+// serves whenever any line in it reads active.  A line commoned across every
+// socket in the slot sits inside that window - an Apple II /INH is pulled up,
+// so it is asserted almost always - and the OR then fires with no chip
+// selected at all, leaving One ROM driving the data bus permanently.
+// ALG_CS_3 replaces the OR with the predicate the socket actually implements:
+// serve when every common field is active and one chip's select is fully
+// active.
+//
+// The descriptor cuts the chip select window into fields, one parameter byte
+// each, carrying an operation and a width in bits.  The window is sampled once
+// into the OSR and each field is shifted off it in turn, so every field is read
+// from the same instant.  Sampling twice would undo the debouncing the CS
+// monitor goes to trouble over.
+//
+// Every line here reads active high, the GPIO input override having normalised
+// it, so a field is active when its bits are ones.  Y holds the all-ones
+// constant the COMMON and GROUP tests compare against, which is why every such
+// field in one descriptor must share a width.
+//
+// Two or more chip selects are alternatives, and the first to match leaves the
+// OSR at a different point from the others.  Each alternative therefore
+// carries its own copy of the fields that follow it, at the position that path
+// has actually reached.
+
+// One field byte: the operation in the top two bits, the width in bits in the
+// low six.
+#define CS3_FIELD_OP(BYTE)     ((uint8_t)((BYTE) >> 6))
+#define CS3_FIELD_WIDTH(BYTE)  ((uint8_t)((BYTE) & 0x3F))
+
+// Stands in for the address just past a pass while that pass is being built,
+// since the address is only known once the pass is complete.  Jumps carrying
+// it are recorded in the build's pending mask and filled in afterwards.
+#define CS3_ADDR_END  0xFFu
+
+// The most chip selects one descriptor may offer.  Every select past the first
+// duplicates the fields that follow it, once for having matched and once for
+// not, and the program is built twice over - an acquire loop and a hold loop -
+// so a fifth cannot fit the 32 instruction block.  The cap also bounds the
+// measuring the emitter does to place its forward jumps.
+#define CS3_MAX_SELECTS  4
+
+// State of one ALG_CS_3 program build.  The program is assembled into a buffer
+// rather than straight into the PIO, so that a descriptor needing more than the
+// block has left is refused with nothing written.
+typedef struct {
+    uint16_t *prog;         // Instruction buffer, NULL while measuring
+    const uint8_t *fields;
+    uint32_t pending;       // Bit per prog index awaiting the end address
+    uint8_t base;           // PIO address prog[0] is loaded at
+    uint8_t len;            // Instructions placed so far
+    uint8_t max_len;        // Instructions the buffer and the block can hold
+    uint8_t overflow;       // Set once the program no longer fits
+    uint8_t num_fields;
+    uint8_t num_cs_pins;
+    uint8_t high_gpio_first;
+    uint8_t direct;         // The window is one field, so it goes into X whole
+} cs3_build_t;
+
+// Where the caller must place the PIO assembler's wrap and end markers, and
+// what the program needs preloaded before it runs.
+typedef struct {
+    uint8_t wrap_top;       // Index of the instruction the program wraps from
+    uint8_t end;            // Index of the last instruction
+    uint32_t y_mask;        // Y preload, 0 where no field compares against it
+} cs3_layout_t;
+
+static void cs3_add(cs3_build_t *b, uint16_t instr) {
+    if (b->len >= b->max_len) {
+        b->overflow = 1;
+        return;
+    }
+    if (b->prog != NULL) {
+        b->prog[b->len] = instr;
+    }
+    b->len++;
+}
+
+// Adds a jump, recording it where its target is the end of the pass.
+static void cs3_add_jmp(cs3_build_t *b, uint16_t opcode, uint8_t target) {
+    if (target == CS3_ADDR_END) {
+        if (b->len < APIO_MAX_PIO_INSTRS) {
+            b->pending |= (uint32_t)1 << b->len;
+        }
+        cs3_add(b, opcode);
+    } else {
+        cs3_add(b, (uint16_t)(opcode | (target & 0x1F)));
+    }
+}
+
+// Jumps to target, except where target is the next instruction anyway.
+static void cs3_goto(cs3_build_t *b, uint8_t target) {
+    if ((target != CS3_ADDR_END) && (target == (uint8_t)(b->base + b->len))) {
+        return;
+    }
+    cs3_add_jmp(b, APIO_JMP(0), target);
+}
+
+// Fills in the jumps that were waiting on the address past the pass, dropping
+// a trailing unconditional one that would only jump to the next instruction.
+static void cs3_resolve_end(cs3_build_t *b) {
+    if (b->prog == NULL || b->overflow) {
+        b->pending = 0;
+        return;
+    }
+
+    if ((b->len > 0) &&
+        ((b->pending & ((uint32_t)1 << (b->len - 1))) != 0) &&
+        (b->prog[b->len - 1] == APIO_JMP(0))) {
+        b->pending &= ~((uint32_t)1 << (b->len - 1));
+        b->len--;
+    }
+
+    uint8_t end = (uint8_t)(b->base + b->len);
+    for (uint8_t ii = 0; ii < b->len; ii++) {
+        if ((b->pending & ((uint32_t)1 << ii)) != 0) {
+            b->prog[ii] |= (uint16_t)(end & 0x1F);
+        }
+    }
+    b->pending = 0;
+}
+
+// Whether any chip select is left from field ii onwards.
+static uint8_t cs3_has_select_from(const cs3_build_t *b, uint8_t ii) {
+    for (; ii < b->num_fields; ii++) {
+        uint8_t op = CS3_FIELD_OP(b->fields[ii]);
+        if ((op == ALG_CS3_OP_GROUP) || (op == ALG_CS3_OP_ANY)) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+// Emits the tests for fields ii onwards.  found says a chip select has already
+// matched on this path, so the selects that follow no longer decide anything.
+// succ is where a path that serves goes and fail where one that does not, each
+// either a PIO address or CS3_ADDR_END.
+static void cs3_emit_fields(
+    cs3_build_t *b,
+    uint8_t ii,
+    uint8_t found,
+    uint8_t succ,
+    uint8_t fail
+) {
+    if (b->overflow) {
+        return;
+    }
+
+    // Consume the fields this path no longer tests - a SKIP, or a chip select
+    // once one has matched.  Their bits still have to leave the OSR so the
+    // fields after them line up.
+    uint8_t skip_bits = 0;
+    while (ii < b->num_fields) {
+        uint8_t op = CS3_FIELD_OP(b->fields[ii]);
+        if ((op == ALG_CS3_OP_SKIP) || (found && (op != ALG_CS3_OP_COMMON))) {
+            skip_bits = (uint8_t)(skip_bits + CS3_FIELD_WIDTH(b->fields[ii]));
+            ii++;
+            continue;
+        }
+        break;
+    }
+
+    // Nothing left to test, so the verdict is settled and whatever is left in
+    // the OSR does not matter.
+    if (ii >= b->num_fields) {
+        cs3_goto(b, found ? succ : fail);
+        return;
+    }
+
+    // No chip select left to match, so this path cannot serve however the
+    // common fields read.
+    if (!found && !cs3_has_select_from(b, ii)) {
+        cs3_goto(b, fail);
+        return;
+    }
+
+    if (skip_bits > 0) {
+        cs3_add(b, APIO_OUT_NULL(skip_bits));
+    }
+
+    uint8_t op = CS3_FIELD_OP(b->fields[ii]);
+    cs3_add(b, APIO_OUT_X(CS3_FIELD_WIDTH(b->fields[ii])));
+
+    if (op == ALG_CS3_OP_COMMON) {
+        // Nothing is read here without this field, so its failure is the whole
+        // path's, and the shift position is the same either way it goes.
+        cs3_add_jmp(b, APIO_JMP_X_NOT_Y(0), fail);
+        cs3_emit_fields(b, (uint8_t)(ii + 1), found, succ, fail);
+        return;
+    }
+
+    // A chip select, and found is 0 here because a matched path skipped it
+    // above.  ANY is a run of one-line selects, so one bit set is enough.
+    uint16_t test = (op == ALG_CS3_OP_ANY) ? APIO_JMP_NOT_X(0) : APIO_JMP_X_NOT_Y(0);
+
+    if (!cs3_has_select_from(b, (uint8_t)(ii + 1))) {
+        // The last select in the descriptor, so its failure is the whole
+        // path's and the test can jump straight there.
+        cs3_add_jmp(b, test, fail);
+        cs3_emit_fields(b, (uint8_t)(ii + 1), 1, succ, fail);
+        return;
+    }
+
+    // A select with alternatives after it.  Measure what the matched path
+    // emits so the test knows where the alternative starts, then emit both.
+    cs3_build_t measure = *b;
+    measure.prog = NULL;
+    measure.len = (uint8_t)(b->len + 1);
+    cs3_emit_fields(&measure, (uint8_t)(ii + 1), 1, succ, fail);
+    uint8_t alt = (uint8_t)(measure.base + measure.len);
+    if (measure.overflow || (alt >= APIO_MAX_PIO_INSTRS)) {
+        b->overflow = 1;
+        return;
+    }
+
+    cs3_add_jmp(b, test, alt);
+    cs3_emit_fields(b, (uint8_t)(ii + 1), 1, succ, fail);
+    cs3_emit_fields(b, (uint8_t)(ii + 1), 0, succ, fail);
+}
+
+// Emits one pass of the test: the window sample, then the fields.
+static void cs3_emit_pass(cs3_build_t *b, uint8_t succ, uint8_t fail) {
+    if (b->direct) {
+        // One field covering the whole window, so no staging in the OSR is
+        // needed.  This is the program three 2364s in a multi slot already run
+        // under ALG_CS_0, and it stays that program.
+        uint8_t op = CS3_FIELD_OP(b->fields[0]);
+        cs3_add(b, APIO_MOV_X_PINS);
+        if ((op == ALG_CS3_OP_ANY) && (succ != CS3_ADDR_END)) {
+            // The hold loop, where staying selected is what happens nearly
+            // every time round.  JMP X-- tests X for non-zero before
+            // decrementing it, and X is reloaded each pass, so the decrement
+            // is thrown away.
+            cs3_add(b, APIO_JMP_X_DEC(succ));
+        } else {
+            cs3_add_jmp(b,
+                (op == ALG_CS3_OP_ANY) ? APIO_JMP_NOT_X(0) : APIO_JMP_X_NOT_Y(0),
+                fail);
+            cs3_goto(b, succ);
+        }
+        cs3_resolve_end(b);
+        return;
+    }
+
+    cs3_add(b, APIO_MOV_OSR_PINS);
+    if (b->high_gpio_first && (b->num_cs_pins < 32)) {
+        // Left shift takes the top of the register first, so the padding above
+        // the window has to go before the highest pin in it does.
+        cs3_add(b, APIO_OUT_NULL(32 - b->num_cs_pins));
+    }
+    cs3_emit_fields(b, 0, 0, succ, fail);
+    cs3_resolve_end(b);
+}
+
+// Checks the descriptor and works out the Y constant it needs.  Returns 0 on a
+// descriptor this can serve, -1 on one it cannot.
+static int cs3_validate(
+    const onerom_alg_cs_config_t *cs_alg,
+    const onerom_alg_cs3_param_t *params,
+    uint8_t num_fields,
+    uint32_t *y_mask,
+    uint8_t *direct
+) {
+    if (num_fields < 1) {
+        ERR("CS3: no fields");
+        return -1;
+    }
+    if (params->high_gpio_first > 1) {
+        ERR("CS3: bad field order %u", params->high_gpio_first);
+        return -1;
+    }
+
+    uint8_t total_bits = 0;
+    uint8_t num_selects = 0;
+    uint8_t y_width = 0;
+    for (uint8_t ii = 0; ii < num_fields; ii++) {
+        uint8_t op = CS3_FIELD_OP(params->fields[ii]);
+        uint8_t width = CS3_FIELD_WIDTH(params->fields[ii]);
+
+        if (op >= NUM_ALG_CS3_OPS) {
+            ERR("CS3: field %u bad op %u", ii, op);
+            return -1;
+        }
+        if ((width < 1) || (width > cs_alg->num_cs_pins)) {
+            ERR("CS3: field %u bad width %u", ii, width);
+            return -1;
+        }
+        total_bits = (uint8_t)(total_bits + width);
+        if (total_bits > cs_alg->num_cs_pins) {
+            ERR("CS3: fields overrun the %u pin window", cs_alg->num_cs_pins);
+            return -1;
+        }
+
+        if ((op == ALG_CS3_OP_GROUP) || (op == ALG_CS3_OP_ANY)) {
+            num_selects++;
+        }
+        if ((op == ALG_CS3_OP_GROUP) || (op == ALG_CS3_OP_COMMON)) {
+            // Both compare against all ones held in Y, and there is one Y.
+            if ((y_width != 0) && (y_width != width)) {
+                ERR("CS3: field widths %u and %u both need Y", y_width, width);
+                return -1;
+            }
+            y_width = width;
+        }
+    }
+
+    if (num_selects < 1) {
+        ERR("CS3: no chip select");
+        return -1;
+    }
+    if (num_selects > CS3_MAX_SELECTS) {
+        ERR("CS3: %u chip selects, %u is the most", num_selects, CS3_MAX_SELECTS);
+        return -1;
+    }
+
+    // The first ROM's own select is what the CS monitor watches, so it has to
+    // name pins inside the window.
+    if ((params->first_rom_num_cs_pins < 1) ||
+        (params->first_rom_cs_base < cs_alg->base_cs_pin) ||
+        ((uint16_t)params->first_rom_cs_base + params->first_rom_num_cs_pins >
+         (uint16_t)cs_alg->base_cs_pin + cs_alg->num_cs_pins)) {
+        ERR("CS3: first ROM select %u+%u outside window %u+%u",
+            params->first_rom_cs_base, params->first_rom_num_cs_pins,
+            cs_alg->base_cs_pin, cs_alg->num_cs_pins);
+        return -1;
+    }
+
+    *y_mask = (y_width == 0) ? 0 : (uint32_t)(((uint64_t)1 << y_width) - 1);
+    *direct = ((num_fields == 1) &&
+               (CS3_FIELD_WIDTH(params->fields[0]) == cs_alg->num_cs_pins) &&
+               (CS3_FIELD_OP(params->fields[0]) != ALG_CS3_OP_SKIP) &&
+               (CS3_FIELD_OP(params->fields[0]) != ALG_CS3_OP_COMMON)) ? 1 : 0;
+
+    return 0;
+}
+
+// Builds the whole ALG_CS_3 program - the acquire loop that decides to drive
+// the data bus and the hold loop that decides to stop - into prog.  Returns the
+// program's length in instructions, or 0 where the descriptor cannot be served
+// or will not fit.
+static uint8_t cs3_build(
+    const onerom_alg_cs_config_t *cs_alg,
+    const onerom_alg_cs3_param_t *params,
+    uint8_t num_fields,
+    uint8_t base,
+    uint16_t *prog,
+    uint8_t max_len,
+    cs3_layout_t *layout
+) {
+    uint32_t y_mask = 0;
+    uint8_t direct = 0;
+    if (cs3_validate(cs_alg, params, num_fields, &y_mask, &direct) != 0) {
+        return 0;
+    }
+
+    cs3_build_t b = {
+        .prog = prog,
+        .fields = params->fields,
+        .pending = 0,
+        .base = base,
+        .len = 0,
+        .max_len = max_len,
+        .overflow = 0,
+        .num_fields = num_fields,
+        .num_cs_pins = cs_alg->num_cs_pins,
+        .high_gpio_first = params->high_gpio_first,
+        .direct = direct,
+    };
+
+    // The acquire loop: sample the window until a chip is selected, then fall
+    // through to drive the data bus.
+    cs3_emit_pass(&b, CS3_ADDR_END, base);
+
+    if (cs_alg->cs_active_delay > 0) {
+        cs3_add(&b, APIO_ADD_DELAY(APIO_NOP, (cs_alg->cs_active_delay - 1)));
+    }
+
+    uint8_t byte_jmp = 0xFF;
+    if (params->byte_pin != GPIO_NONE) {
+        byte_jmp = b.len;
+        cs3_add(&b, APIO_JMP_PIN(0));
+    }
+    cs3_add(&b, APIO_MOV_PINDIRS_NOT_NULL);
+
+    // The hold loop: sample the window until no chip is selected any more.
+    uint8_t poll_hold = (uint8_t)(base + b.len);
+    cs3_emit_pass(&b, poll_hold, CS3_ADDR_END);
+
+    if (cs_alg->cs_inactive_delay > 0) {
+        cs3_add(&b, APIO_ADD_DELAY(APIO_NOP, (cs_alg->cs_inactive_delay - 1)));
+    }
+
+    // Releasing the data bus is where the program wraps, and the wrap lands
+    // back at the acquire loop.
+    layout->wrap_top = b.len;
+    cs3_add(&b, APIO_MOV_PINDIRS_NULL);
+    layout->end = (uint8_t)(b.len - 1);
+
+    if (params->byte_pin != GPIO_NONE) {
+        // /BYTE asserted, so only the low 8 data pins become outputs.  The mask
+        // comes from ISR rather than Y as it does in ALG_CS_0, because Y holds
+        // the constant the field tests compare against.
+        if (!b.overflow) {
+            prog[byte_jmp] |= (uint16_t)((base + b.len) & 0x1F);
+        }
+        cs3_add(&b, APIO_MOV_PINDIRS_ISR);
+        layout->end = b.len;
+        cs3_add(&b, APIO_JMP(poll_hold));
+    }
+
+    if (b.overflow) {
+        return 0;
+    }
+
+    layout->y_mask = y_mask;
+    return b.len;
 }
 
 int setup_serving_pios(const onerom_rom_slot_t *slot, uint32_t rom_table_addr) {
@@ -753,6 +1184,96 @@ int setup_serving_pios(const onerom_rom_slot_t *slot, uint32_t rom_table_addr) {
             APIO_TXF = params->qualifier_inactive_pattern;
             APIO_SM_EXEC_INSTR(APIO_PULL_BLOCK);
             APIO_SM_EXEC_INSTR(APIO_MOV_Y_OSR);
+        }
+        break;
+
+        case ALG_CS_3: {
+            if (cs_param_len < ALG_CS3_PARAMS_PRE_FIELDS_LEN) {
+                ERR("CS alg error");
+                limp_mode(LIMP_MODE_INVALID_CONFIG);
+                return 0;
+            }
+            const onerom_alg_cs3_param_t *params = (const onerom_alg_cs3_param_t *)cs_params;
+            uint8_t num_fields = (uint8_t)(cs_param_len - ALG_CS3_PARAMS_PRE_FIELDS_LEN);
+            DEBUG("CS3: high_first=%u byte=%u first_cs=%u first_ncs=%u fields=%u",
+                params->high_gpio_first, params->byte_pin,
+                params->first_rom_cs_base, params->first_rom_num_cs_pins,
+                num_fields);
+
+            // Build into a buffer first.  APIO_ADD_INSTR does not bounds check,
+            // and how much a descriptor emits is only known once it has been
+            // walked, so a descriptor that does not fit is refused here with
+            // nothing written to the block.
+            uint16_t prog[APIO_MAX_PIO_INSTRS];
+            cs3_layout_t layout = {0, 0, 0};
+            uint8_t base = APIO_INSTR_COUNT();
+            uint8_t prog_len = cs3_build(
+                cs_alg,
+                params,
+                num_fields,
+                base,
+                prog,
+                (uint8_t)(APIO_MAX_PIO_INSTRS - base),
+                &layout
+            );
+            if (prog_len == 0) {
+                ERR("CS3: descriptor cannot be served");
+                limp_mode(LIMP_MODE_INVALID_CONFIG);
+                return 0;
+            }
+            DEBUG("CS3: %u instructions, wrap_top=%u y=0x%08lx",
+                prog_len, layout.wrap_top, (unsigned long)layout.y_mask);
+
+            // Write the SM instructions
+            APIO_WRAP_BOTTOM();
+            for (uint8_t ii = 0; ii < prog_len; ii++) {
+                if (ii == layout.wrap_top) {
+                    APIO_WRAP_TOP();
+                }
+                if (ii == layout.end) {
+                    APIO_END();
+                }
+                APIO_ADD_INSTR(prog[ii]);
+            }
+
+            // Configure the SM registers.  OUT shifts right to take the pin at
+            // IN_BASE first, and left where the descriptor reads the window
+            // from its highest GPIO down.
+            if (params->byte_pin == GPIO_NONE) {
+                APIO_SM_EXECCTRL_SET(0);
+            } else {
+                APIO_SM_EXECCTRL_SET(APIO_EXECCTRL_JMP_PIN(params->byte_pin));
+            }
+            APIO_SM_SHIFTCTRL_SET(
+                APIO_IN_COUNT(cs_alg->num_cs_pins) |
+                APIO_IN_SHIFTDIR_L |
+                (params->high_gpio_first ? APIO_OUT_SHIFTDIR_L : APIO_OUT_SHIFTDIR_R)
+            );
+            APIO_SM_PINCTRL_SET(
+                APIO_OUT_COUNT(cs_alg->num_data_pins) |
+                APIO_OUT_BASE(cs_alg->base_data_pin) |
+                APIO_IN_BASE(cs_alg->base_cs_pin)
+            );
+
+            // ALG_CS_0's program opens with a release, which this one does not
+            // - its first instruction is already the acquire loop.  Set the
+            // data pins to inputs here instead, which costs no instruction in
+            // the block.
+            APIO_SM_EXEC_INSTR(APIO_MOV_PINDIRS_NULL);
+
+            if (layout.y_mask != 0) {
+                // Preload Y with the all-ones constant the COMMON and GROUP
+                // tests compare against.
+                APIO_TXF = layout.y_mask;
+                APIO_SM_EXEC_INSTR(APIO_PULL_BLOCK);
+                APIO_SM_EXEC_INSTR(APIO_MOV_Y_OSR);
+            }
+            if (params->byte_pin != GPIO_NONE) {
+                // Preload ISR with 0b11111111 for the byte mode handling
+                APIO_TXF = 0xFF;
+                APIO_SM_EXEC_INSTR(APIO_PULL_BLOCK);
+                APIO_SM_EXEC_INSTR(APIO_MOV_ISR_OSR);
+            }
         }
         break;
 

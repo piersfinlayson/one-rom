@@ -2,6 +2,14 @@
 
 All notables changes between versions are documented in this file.
 
+## v0.7.3 - in development
+
+To publish:
+- `onerom-gen` 0.8.0 -> 0.9.0
+
+In detail:
+- `onerom-gen`'s algorithm preference enums are now `#[non_exhaustive]`, so a downstream crate matching on one needs a wildcard arm.  A future serving algorithm can then be added without breaking them again.
+
 ## v0.7.2 - 2026-09-08
 
 Headline changes in this release:

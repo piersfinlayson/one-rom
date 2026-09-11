@@ -53,7 +53,8 @@ const uint8_t max_gpios[2] = {
 const uint8_t alg_cs_params_len[NUM_CS_ALGS] = {
     ALG_CS0_PARAMS_LEN,
     ALG_CS1_PARAMS_LEN,
-    ALG_CS2_PARAMS_LEN
+    ALG_CS2_PARAMS_LEN,
+    ALG_CS3_PARAMS_PRE_FIELDS_LEN
 };
 const uint8_t alg_addr_params_len[NUM_ADDR_ALGS] = {
     ALG_ADDR0_PARAMS_PRE_LIST_LEN

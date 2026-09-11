@@ -283,6 +283,13 @@ pub enum Error {
     TurboBootMultiSlot {
         slots: usize,
     },
+    /// A chip set's `ALG_CS_3` descriptor holds more fields than the generator
+    /// serves.  Accept it with [`ConfigOverrides::allow_cs3_fields`], which
+    /// turns this into [`ConfigWarning::Cs3TooManyFields`].
+    Cs3TooManyFields {
+        fields: usize,
+        max: usize,
+    },
 }
 type Result<T> = core::result::Result<T, Error>;
 
@@ -297,6 +304,10 @@ pub struct ConfigOverrides {
     /// Whether to accept turbo boot on a config with more than one non-plugin
     /// ROM slot.
     pub turbo_boot_multi_slot: bool,
+
+    /// Whether to accept an `ALG_CS_3` descriptor with more fields than the
+    /// generator serves.
+    pub cs3_fields: bool,
 }
 
 impl ConfigOverrides {
@@ -312,6 +323,19 @@ impl ConfigOverrides {
     /// struct literal) is how callers outside this crate set the field.
     pub fn allow_turbo_boot_multi_slot(mut self, allow: bool) -> Self {
         self.turbo_boot_multi_slot = allow;
+        self
+    }
+
+    /// Accept an `ALG_CS_3` descriptor with more fields than the generator
+    /// serves.
+    ///
+    /// The limit is a conservative one, chosen well below what the CS window
+    /// can produce, so that a descriptor is refused here rather than by the
+    /// firmware at boot.  Lifting it moves that judgement to the firmware,
+    /// which counts the instructions the descriptor will emit against the
+    /// space its PIO block has left.
+    pub fn allow_cs3_fields(mut self, allow: bool) -> Self {
+        self.cs3_fields = allow;
         self
     }
 }
@@ -330,6 +354,8 @@ impl ConfigOverrides {
 pub enum ConfigWarning {
     /// Turbo boot is enabled on a config with `slots` non-plugin ROM slots.
     TurboBootMultiSlot { slots: usize },
+    /// A chip set's `ALG_CS_3` descriptor holds `fields` fields.
+    Cs3TooManyFields { fields: usize, max: usize },
 }
 
 impl core::fmt::Display for ConfigWarning {
@@ -338,8 +364,20 @@ impl core::fmt::Display for ConfigWarning {
             ConfigWarning::TurboBootMultiSlot { slots } => {
                 write!(f, "{}", turbo_boot_multi_slot_msg(*slots))
             }
+            ConfigWarning::Cs3TooManyFields { fields, max } => {
+                write!(f, "{}", cs3_too_many_fields_msg(*fields, *max))
+            }
         }
     }
+}
+
+/// The description shared by [`Error::TurboBootMultiSlot`] and
+/// [`ConfigWarning::TurboBootMultiSlot`], so the rejected and the accepted
+/// case describe the config identically.
+fn cs3_too_many_fields_msg(fields: usize, max: usize) -> alloc::string::String {
+    alloc::format!(
+        "This chip set needs a chip select descriptor of {fields} fields, and the limit is {max}."
+    )
 }
 
 /// The description shared by [`Error::TurboBootMultiSlot`] and
@@ -561,6 +599,9 @@ impl core::fmt::Display for Error {
             }
             Error::TurboBootMultiSlot { slots } => {
                 write!(f, "{}", turbo_boot_multi_slot_msg(*slots))
+            }
+            Error::Cs3TooManyFields { fields, max } => {
+                write!(f, "{}", cs3_too_many_fields_msg(*fields, *max))
             }
         }
     }
