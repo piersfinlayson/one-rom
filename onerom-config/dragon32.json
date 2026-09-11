@@ -1,0 +1,54 @@
+{
+    "$schema": "https://images.onerom.org/configs/schema.json",
+    "version": 1,
+    "name": "Dragon32 Complete ROM Sets",
+    "description": "Serves Stock and Enahnced set of ROMs for the Dragon32 - lo and hi ROMs - when installed in the lo (IC18) socket",
+    "detail": "Instructions:\n1. Install OneROM 24 in IC18 socket\n2. Connect ROM IC17 socket CS pin (20) to SDRR pin X1 on the OneROM.\n3. Use jumper on bank A of OneROM to select enhanced rom set, jumper off for stock.",
+    "categories": [
+        "computer",
+        "firmware",
+        "dragon",
+        "32"
+    ],
+    "rom_sets": [
+        {
+            "type": "multi",
+            "description": "Stock Dragon32 ROM set taken and split from https://colorcomputerarchive.com/repo/ROMs/XRoar/Dragon/BASIC_OS/d32.rom",
+            "roms": [
+                {
+                    "description": "lo ROM",
+                    "file": "https://colorcomputerarchive.com/repo/ROMs/XRoar/Dragon/BASIC_OS/d32.rom",
+					"location": { "start": 0, "length": 8192 },
+                    "type": "2364",
+                    "cs1": "active_low"
+                },
+                {
+                    "description": "hi ROM",
+                    "file": "https://colorcomputerarchive.com/repo/ROMs/XRoar/Dragon/BASIC_OS/d32.rom",
+					"location": { "start": 8192, "length": 8192 },
+                    "type": "2364",
+                    "cs1": "active_low"
+                }
+            ]
+        },
+        {
+            "type": "multi",
+            "description": "Enhanced Dragon32 ROM set taken from https://colorcomputerarchive.com/repo/ROMs/XRoar/Dragon/BASIC_OS/D32_&_D64_ENHANCED_ROMs_v3/REAL_DRAGON/D32/",
+            "roms": [
+							{
+                    "description": "Enhanced lo ROM",
+                    "file": "https://colorcomputerarchive.com/repo/ROMs/XRoar/Dragon/BASIC_OS/D32_&_D64_ENHANCED_ROMs_v3/REAL_DRAGON/D32/8000.BIN",
+                    "type": "2364",
+                    "cs1": "active_low"
+                },
+			    {
+                    "description": "Enhanced hi ROM",
+                    "file": "https://colorcomputerarchive.com/repo/ROMs/XRoar/Dragon/BASIC_OS/D32_&_D64_ENHANCED_ROMs_v3/REAL_DRAGON/D32/A000.BIN",
+                    "type": "2364",
+                    "cs1": "active_low"
+                }
+            ]
+        }
+    ],
+    "notes": "Use jumper on bank A of OneROM to select enhanced rom set, jumper off for stock."
+}
