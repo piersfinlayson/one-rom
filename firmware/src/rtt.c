@@ -165,19 +165,27 @@ static void onerom_rtt_init(void) {
     ONEROM_RTT_DMB();
 }
 
-// The descriptor for a channel, or NULL if there is none.
+// The descriptor for a channel, or NULL if there is none or it has no buffer.
 //
 // Channel 0 is up[0], the log.  Channel 1 is down[0], input from a probe or a
 // plugin.  Probes use the arrays directly, so channel numbers exist only here.
 static onerom_rtt_ring_t *onerom_rtt_ring(unsigned channel) {
+    onerom_rtt_ring_t *ring;
+
     switch (channel) {
         case 0u:
-            return &_SEGGER_RTT.up[0];
+            ring = &_SEGGER_RTT.up[0];
+            break;
         case 1u:
-            return &_SEGGER_RTT.down[0];
+            ring = &_SEGGER_RTT.down[0];
+            break;
         default:
             return 0;
     }
+    if ((ring->buffer == 0) || (ring->size == 0u)) {
+        return 0;
+    }
+    return ring;
 }
 
 // Prepare the log for plugins.
@@ -231,17 +239,12 @@ unsigned onerom_rtt_write(unsigned channel, const void *buf, unsigned len) {
 
     onerom_rtt_init();
 
+    // An unknown channel, or one with no buffer, drops silently.
     ring = onerom_rtt_ring(channel);
     if (ring == 0) {
         return 0u;
     }
-
-    // A channel with no buffer drops silently.  That is what an unpopulated
-    // channel looks like, and what a retired one will look like.
     size = ring->size;
-    if ((ring->buffer == 0) || (size == 0u)) {
-        return 0u;
-    }
 
     // On an up channel write_offset is ours and this never fires.  On a down
     // channel the host writes it, and this clamp protects the copy below.
@@ -301,11 +304,7 @@ unsigned onerom_rtt_read(unsigned channel, void *buf, unsigned max_len) {
     if ((ring == 0) || (buf == 0)) {
         return 0u;
     }
-
     size = ring->size;
-    if ((ring->buffer == 0) || (size == 0u)) {
-        return 0u;
-    }
 
     // One sample of each offset, clamped once, and everything below derived
     // from those locals.  One of them is host written, so a second load could
@@ -396,20 +395,16 @@ void onerom_rtt_query(unsigned channel,
         ring = onerom_rtt_ring(channel);
         if (ring != 0) {
             size = ring->size;
-            if ((ring->buffer == 0) || (size == 0u)) {
-                size = 0u;
-            } else {
-                write_offset = ring->write_offset;
-                if (write_offset >= size) {
-                    write_offset = 0u;
-                }
-                read_offset = ring->read_offset;
-                if (read_offset >= size) {
-                    read_offset = 0u;
-                }
-                pending = onerom_rtt_pending(size, write_offset, read_offset);
-                free = size - 1u - pending;
+            write_offset = ring->write_offset;
+            if (write_offset >= size) {
+                write_offset = 0u;
             }
+            read_offset = ring->read_offset;
+            if (read_offset >= size) {
+                read_offset = 0u;
+            }
+            pending = onerom_rtt_pending(size, write_offset, read_offset);
+            free = size - 1u - pending;
         }
     }
 

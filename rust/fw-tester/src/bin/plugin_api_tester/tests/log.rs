@@ -28,6 +28,22 @@
 
 use onerom_fw_emulator::{Emulator, OraResult, build_options, ffi};
 use onerom_gen::Config;
+use std::ffi::{c_char, c_uint, c_void};
+
+// The ring itself, from firmware/src/rtt.c.  The plugin API refuses a channel
+// past the table before the ring sees it, so the ring's own refusal has no
+// caller through the API and is driven here directly.
+unsafe extern "C" {
+    fn onerom_rtt_write(channel: c_uint, buf: *const c_void, len: c_uint) -> c_uint;
+    fn onerom_rtt_read(channel: c_uint, buf: *mut c_void, max_len: c_uint) -> c_uint;
+    fn onerom_rtt_set_name(channel: c_uint, name: *const c_char) -> c_uint;
+    fn onerom_rtt_query(
+        channel: c_uint,
+        size_out: *mut c_uint,
+        free_out: *mut c_uint,
+        pending_out: *mut c_uint,
+    );
+}
 
 const CH0: u32 = 0;
 /// The channel the firmware never writes, from 0.7.3.
@@ -765,6 +781,42 @@ pub fn test_null_arguments_and_unheld_close(emu: &Emulator) -> Result<(), String
         emu.log_close_read(CH0),
         OraResult::Ok,
     )?;
+
+    Ok(())
+}
+
+/// The ring refuses a channel past its table: writes drop, reads return
+/// nothing, naming fails, and a query reports zeros.
+///
+/// The plugin API never passes such a channel through, so this calls the ring
+/// directly.  The ring's own host test covers the same lines, but it is not in
+/// the coverage campaign.
+pub fn test_ring_refuses_a_channel_past_the_table(_emu: &Emulator) -> Result<(), String> {
+    let channel: c_uint = 99;
+    let mut buf = [0u8; 8];
+    let mut size: c_uint = 1;
+    let mut free: c_uint = 1;
+    let mut pending: c_uint = 1;
+
+    // SAFETY: the buffers outlive the calls, and the name is NUL-terminated.
+    let (wrote, read, named) = unsafe {
+        let wrote = onerom_rtt_write(channel, b"x".as_ptr().cast(), 1);
+        let read = onerom_rtt_read(channel, buf.as_mut_ptr().cast(), buf.len() as c_uint);
+        let named = onerom_rtt_set_name(channel, c"none".as_ptr());
+        onerom_rtt_query(channel, &mut size, &mut free, &mut pending);
+        (wrote, read, named)
+    };
+
+    if wrote != 0 || read != 0 || named != 0 {
+        return Err(format!(
+            "channel 99: write {wrote}, read {read}, set_name {named}, want all 0"
+        ));
+    }
+    if size != 0 || free != 0 || pending != 0 {
+        return Err(format!(
+            "channel 99: query reported {size}/{free}/{pending}, want 0/0/0"
+        ));
+    }
 
     Ok(())
 }
