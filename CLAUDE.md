@@ -208,6 +208,10 @@ from `ci/docker/build.sh`, and the Dockerfile deliberately carries no default,
 since a stale default there is how the container once ended up on a different
 compiler.
 
+- The pinned compilers may be installed but not on PATH. `ci/c-tests.sh`
+  takes `CC=`, the plugin Makefiles take `TOOLCHAIN=`. Look in `/opt` and the
+  install scripts' target directories before reporting a compiler missing.
+
 Some checked-in files are generated, and `ci/rust-tests.sh` fails where the
 committed copy differs from a fresh regeneration:
 
