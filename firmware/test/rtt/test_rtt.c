@@ -21,11 +21,11 @@ static int checks = 0;
         }                                                                     \
     } while (0)
 
-static onerom_rtt_up_t *up0(void) { return &_SEGGER_RTT.up[0]; }
+static onerom_rtt_ring_t *up0(void) { return &_SEGGER_RTT.up[0]; }
 
 // Drain the ring the way a host does: advance RdOff, copying out.
 static unsigned drain(char *out, unsigned max) {
-    onerom_rtt_up_t *r = up0();
+    onerom_rtt_ring_t *r = up0();
     unsigned n = 0;
     while (r->read_offset != r->write_offset && n < max) {
         out[n++] = r->buffer[r->read_offset];
@@ -51,12 +51,13 @@ static void test_lazy_init(void) {
           _SEGGER_RTT.max_up_buffers);
     CHECK(_SEGGER_RTT.max_down_buffers == 3, "max_down_buffers %d, want 3",
           _SEGGER_RTT.max_down_buffers);
-    CHECK(up0()->size == 3584, "up[0] size %u, want 3584",
+    CHECK(up0()->size == 3072, "up[0] size %u, want 3072",
           up0()->size);
     CHECK(up0()->buffer != NULL, "up[0] has no buffer");
     CHECK(up0()->flags == ONEROM_RTT_MODE_NO_BLOCK_SKIP, "up[0] not skip mode");
-    CHECK(_SEGGER_RTT.down[0].size == 16, "down[0] size %u, want 16",
+    CHECK(_SEGGER_RTT.down[0].size == 512, "down[0] size %u, want 512",
           _SEGGER_RTT.down[0].size);
+    CHECK(_SEGGER_RTT.down[0].buffer != NULL, "down[0] has no buffer");
     CHECK(up0()->write_offset == 1, "WrOff %u, want 1", up0()->write_offset);
 
     char buf[8];
@@ -81,7 +82,7 @@ static void test_plugins_init(void) {
           "max_up_buffers %d after plugins init, want 3",
           _SEGGER_RTT.max_up_buffers);
     CHECK(up0()->buffer != NULL, "up[0] has no buffer after plugins init");
-    CHECK(up0()->size == 3584, "up[0] size %u after plugins init, want 3584",
+    CHECK(up0()->size == 3072, "up[0] size %u after plugins init, want 3072",
           up0()->size);
     CHECK(up0()->write_offset == 0u, "WrOff %u after plugins init, want 0",
           up0()->write_offset);
@@ -121,7 +122,7 @@ static void test_records_are_whole_and_ordered(void) {
 }
 
 static void test_wrap(void) {
-    onerom_rtt_up_t *r = up0();
+    onerom_rtt_ring_t *r = up0();
     unsigned size = r->size;
 
     // Arm: position the write pointer 4 bytes from the end, ring empty.
@@ -144,7 +145,7 @@ static void test_wrap(void) {
 }
 
 static void test_skip_is_all_or_nothing(void) {
-    onerom_rtt_up_t *r = up0();
+    onerom_rtt_ring_t *r = up0();
     unsigned size = r->size;
 
     // Arm: leave exactly 10 bytes of free space.  One byte is always held
@@ -186,7 +187,7 @@ static void test_skip_is_all_or_nothing(void) {
 // passes for a record larger than the whole buffer, and the second memcpy of
 // the wrap path then writes past the end of the buffer.
 static void test_rdoff_clamp(void) {
-    onerom_rtt_up_t *r = up0();
+    onerom_rtt_ring_t *r = up0();
     unsigned size = r->size;
     static char big[8192];
     memset(big, 'A', sizeof(big));
@@ -221,7 +222,7 @@ static void test_rdoff_clamp(void) {
 // the writer is behind the reader, and free space is then the gap between the
 // two rather than the room to the end plus the room at the front.
 static void test_write_when_wrapped(void) {
-    onerom_rtt_up_t *r = up0();
+    onerom_rtt_ring_t *r = up0();
     static char filler[128];
     memset(filler, 'W', sizeof(filler));
 
@@ -256,7 +257,7 @@ static void test_write_when_wrapped(void) {
 // the local copy - a dropped record would otherwise leave the bad value in
 // place for the next writer to trip over.
 static void test_write_offset_clamp(void) {
-    onerom_rtt_up_t *r = up0();
+    onerom_rtt_ring_t *r = up0();
     unsigned size = r->size;
     static char big[4096];
     memset(big, 'B', sizeof(big));
@@ -288,7 +289,7 @@ static void test_write_offset_clamp(void) {
 }
 
 static void test_inactive_channel_drops(void) {
-    onerom_rtt_up_t *r = up0();
+    onerom_rtt_ring_t *r = up0();
     char *saved = r->buffer;
     unsigned saved_size = r->size;
 
@@ -300,8 +301,9 @@ static void test_inactive_channel_drops(void) {
     r->buffer = saved;
     r->size = saved_size;
 
-    // Out of range channel index.
-    CHECK(onerom_rtt_write(3, "x", 1) == 0, "write to channel 3 accepted");
+    // Out of range channel index.  The first number past the table, and one
+    // well past it.
+    CHECK(onerom_rtt_write(2, "x", 1) == 0, "write to channel 2 accepted");
     CHECK(onerom_rtt_write(99, "x", 1) == 0, "write to channel 99 accepted");
 }
 
@@ -311,7 +313,7 @@ static void test_inactive_channel_drops(void) {
 
 // Put the ring in a known empty state at a chosen offset.
 static void arm_at(unsigned offset) {
-    onerom_rtt_up_t *r = up0();
+    onerom_rtt_ring_t *r = up0();
     r->write_offset = offset;
     r->read_offset = offset;
 }
@@ -366,7 +368,7 @@ static void test_read_respects_max_len(void) {
 
 static void test_read_serves_the_wrap(void) {
     char got[32];
-    onerom_rtt_up_t *r = up0();
+    onerom_rtt_ring_t *r = up0();
 
     // Arm: 4 bytes from the end, so a 10 byte record straddles the wrap.
     arm_at(r->size - 4u);
@@ -384,7 +386,7 @@ static void test_read_serves_the_wrap(void) {
 }
 
 static void test_read_lands_exactly_on_end(void) {
-    onerom_rtt_up_t *r = up0();
+    onerom_rtt_ring_t *r = up0();
     char got[32];
 
     // Arm: the record ends exactly on the last byte of the buffer, so the
@@ -407,7 +409,7 @@ static void test_read_lands_exactly_on_end(void) {
 }
 
 static void test_read_frees_space_for_the_writer(void) {
-    onerom_rtt_up_t *r = up0();
+    onerom_rtt_ring_t *r = up0();
     unsigned size = r->size;
     char got[64];
 
@@ -438,13 +440,13 @@ static void test_read_frees_space_for_the_writer(void) {
 }
 
 static void test_query_arithmetic(void) {
-    onerom_rtt_up_t *r = up0();
+    onerom_rtt_ring_t *r = up0();
     unsigned size = 0u, avail = 0u, pending = 0u;
 
     // Empty.
     arm_at(0u);
     onerom_rtt_query(0, &size, &avail, &pending);
-    CHECK(size == 3584u, "query size %u, want 3584", size);
+    CHECK(size == 3072u, "query size %u, want 3072", size);
     CHECK(pending == 0u, "query pending %u on an empty ring", pending);
     CHECK(avail == size - 1u, "query free %u on an empty ring, want %u",
           avail, size - 1u);
@@ -485,7 +487,7 @@ static void test_query_arithmetic(void) {
 }
 
 static void test_set_name(void) {
-    onerom_rtt_up_t *r = up0();
+    onerom_rtt_ring_t *r = up0();
     static const char plugin_name[] = "plugin";
 
     // Arm: capture the firmware's own name, so the test does not need the
@@ -510,7 +512,7 @@ static void test_set_name(void) {
 }
 
 static void test_read_rdoff_clamp(void) {
-    onerom_rtt_up_t *r = up0();
+    onerom_rtt_ring_t *r = up0();
     char got[64];
 
     // Arm: a record in the ring, then a host writes nonsense into RdOff.
@@ -542,7 +544,7 @@ static void test_read_rdoff_clamp(void) {
 // clamp is what keeps the pending count describing bytes that were really
 // written.
 static void test_read_wroff_clamp(void) {
-    onerom_rtt_up_t *r = up0();
+    onerom_rtt_ring_t *r = up0();
     char got[32];
 
     // Arm: four bytes at the very end of the buffer, so WrOff has legitimately
@@ -570,7 +572,7 @@ static void test_read_wroff_clamp(void) {
 // underflows free to something near four gigabytes, and a caller that sizes a
 // write to it walks off the end of the buffer.
 static void test_query_offset_clamps(void) {
-    onerom_rtt_up_t *r = up0();
+    onerom_rtt_ring_t *r = up0();
     unsigned size = 0u, free_now = 0u, pending = 0u;
 
     // Arm: five real bytes in the ring, then a wild WrOff.
@@ -605,7 +607,7 @@ static void test_query_offset_clamps(void) {
 }
 
 static void test_read_inactive_channel(void) {
-    onerom_rtt_up_t *r = up0();
+    onerom_rtt_ring_t *r = up0();
     char *saved = r->buffer;
     unsigned saved_size = r->size;
     char got[8];
@@ -623,8 +625,9 @@ static void test_read_inactive_channel(void) {
     r->buffer = saved;
     r->size = saved_size;
 
-    // Out of range channel index.
-    CHECK(onerom_rtt_read(3, got, sizeof(got)) == 0u, "read of channel 3 accepted");
+    // Out of range channel index.  The first number past the table, and one
+    // well past it.
+    CHECK(onerom_rtt_read(2, got, sizeof(got)) == 0u, "read of channel 2 accepted");
     CHECK(onerom_rtt_read(99, got, sizeof(got)) == 0u, "read of channel 99 accepted");
 
     // A NULL destination and a zero length, with data actually pending.  State
@@ -643,6 +646,61 @@ static void test_read_inactive_channel(void) {
     onerom_rtt_query(99, &size, &avail, &pending);
     CHECK(size == 0u && avail == 0u && pending == 0u,
           "out of range query reported %u/%u/%u, want 0/0/0", size, avail, pending);
+}
+
+// ---------------------------------------------------------------------------
+// Channel 1, the down buffer
+// ---------------------------------------------------------------------------
+
+// Channel 1 is down[0].  Every call must reach that descriptor and no other.
+static void test_down_channel(void) {
+    onerom_rtt_ring_t *d = &_SEGGER_RTT.down[0];
+    char got[16];
+    unsigned size = 0u, avail = 0u, pending = 0u;
+
+    // Arm: both rings empty at a known place.
+    arm_at(0u);
+    d->write_offset = 0u;
+    d->read_offset = 0u;
+
+    // Fence: query reports the down buffer's size.
+    onerom_rtt_query(1, &size, &avail, &pending);
+    CHECK(size == 512u, "channel 1 size %u, want 512", size);
+    CHECK(pending == 0u && avail == 511u,
+          "empty channel 1 reported free %u pending %u", avail, pending);
+
+    // Stimulate: a write to channel 1 lands in down[0], and channel 0 does not
+    // move.  A mapping to up[1] fails the first check, one to up[0] the second.
+    CHECK(onerom_rtt_write(1, "down", 4) == 4u, "write to channel 1 refused");
+    CHECK(d->write_offset == 4u, "down[0] WrOff %u after write, want 4",
+          d->write_offset);
+    CHECK(memcmp(d->buffer, "down", 4) == 0, "down[0] does not hold the record");
+    CHECK(up0()->write_offset == 0u, "channel 1 write moved up[0] WrOff to %u",
+          up0()->write_offset);
+
+    // Read gets it back from the same buffer.
+    CHECK(onerom_rtt_read(1, got, sizeof(got)) == 4u, "read of channel 1 short");
+    CHECK(memcmp(got, "down", 4) == 0, "channel 1 read returned wrong bytes");
+    CHECK(d->read_offset == 4u, "down[0] RdOff %u after read, want 4",
+          d->read_offset);
+
+    // The host owns write_offset on a down channel.  A value it leaves outside
+    // the buffer is clamped, not used.
+    d->write_offset = 100000u;
+    d->read_offset = 0u;
+    CHECK(onerom_rtt_write(1, "x", 1) == 1u, "write after bad WrOff refused");
+    CHECK(d->write_offset == 1u, "bad WrOff clamped to %u, want 1",
+          d->write_offset);
+
+    // set_name changes down[0]'s name and nothing else.
+    static const char name[] = "in";
+    CHECK(onerom_rtt_set_name(1, name) == 1u, "set_name on channel 1 refused");
+    CHECK(d->name == name, "channel 1 name not set on down[0]");
+    CHECK(up0()->name != name, "channel 1 name set on up[0]");
+    onerom_rtt_set_name(1, NULL);
+
+    d->write_offset = 0u;
+    d->read_offset = 0u;
 }
 
 void fmt_tests(int *checks, int *failures, const char *const **first,
@@ -670,6 +728,7 @@ int main(void) {
     test_read_rdoff_clamp();
     test_read_wroff_clamp();
     test_read_inactive_channel();
+    test_down_channel();
     printf("  ring: %d checks, %d failures\n", checks, failures);
 
     int fchecks = 0, ffailures = 0, fcount = 0;

@@ -16,10 +16,10 @@ use studiov2_commands::{COMMANDS, Command, GLOBALS, Group, Kind, Opt};
 
 /// Every option the CLI has, counted by hand from `rust/cli/src/args/`.
 ///
-/// 167 belong to a command and 6 are global.  A reader that quietly stops
+/// 171 belong to a command and 6 are global.  A reader that quietly stops
 /// understanding an attribute drops options rather than failing, and this is
 /// what turns that into a test failure.
-const TOTAL_OPTIONS: usize = 173;
+const TOTAL_OPTIONS: usize = 177;
 
 /// The command the CLI puts at that path.
 fn command(path: &[&str]) -> &'static Command {

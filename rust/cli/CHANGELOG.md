@@ -1,5 +1,11 @@
 # CLI Changelog
 
+## v0.4.1 - 2026-??-??
+
+- **Add `onerom console`.**  Displays what One ROM sends, like `monitor log`,
+  and sends what you type to the retro system, which reads it with RBCP
+  `PIPE_READ`.  Requires firmware v0.7.3 with the USB and host-control plugins.
+
 ## v0.4.0 - 2026-09-08
 
 - **`peek` and `poke` help no longer show an argument the commands reject.**

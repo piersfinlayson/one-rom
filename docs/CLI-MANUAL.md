@@ -54,7 +54,7 @@ This One ROM CLI manual covers:
 - **Problems** — symptoms and their fixes, including [recovering a bricked One
   ROM](#recovering-a-bricked-one-rom).
 
-> This manual documents the `onerom` CLI as of release v<!--[version:cli]-->0.4.0<!--[/]-->. Board,
+> This manual documents the `onerom` CLI as of release v<!--[version:cli]-->0.4.1<!--[/]-->. Board,
 > chip and plugin lists shown in examples are illustrative — the set your build
 > supports may differ. Run `onerom --version` to check your version, and
 > `onerom board list` / `onerom chips` for the definitive lists your build knows
@@ -690,6 +690,7 @@ hardware take them; each command's own entry below states what it accepts, and
 | [`program`](#program) | Build and flash firmware to a One ROM | Yes |
 | [`inspect`](#inspect) | Read-only device state and information | Yes |
 | [`monitor`](#monitor) | Watch a running One ROM as it works | Yes |
+| [`console`](#console) | Send data to and receive data from the machine One ROM is fitted in | Yes |
 | [`control`](#control) | Transient (non-persistent) device actions | Yes |
 | [`update`](#update) | Persistent device modifications | Yes |
 | [`image`](#image) | ROM image file manipulation | No |
@@ -1242,6 +1243,60 @@ What this command needs, and what it cannot do:
 - If nothing arrives within two seconds the command fails. Since every attach
   begins with the banner above, a One ROM with a current USB plugin always sends
   something — so a timeout points at a plugin too old to forward the log at all.
+
+Device required: yes.
+
+---
+
+## console
+
+Talk to the host system through One ROM's USB port.
+
+```
+onerom console [OPTIONS]
+```
+
+This command displays what One ROM sends, like [`monitor log`](#monitor-log),
+and additionally sends what you type to the retro system. Whether and how the
+retro system receives the input depends on the plugin(s) used.
+
+By default you type a line, edit it, and press Enter to send it.  `--raw` sends
+each key as you press it, for programs that read single keys.  Ctrl-C exits and
+is never sent to the retro system.
+
+```
+onerom console
+onerom console --raw
+onerom console --line-ending crlf --output session.txt
+echo 'LOAD "*",8' | onerom console
+```
+
+| Option | Description |
+|---|---|
+| `--output, -o <FILE>` (alias `--out`) | Also write One ROM's output to this file, replacing its contents.  The file contains only what One ROM sends.  Output is still displayed. |
+| `--line-ending <ENDING>` | What Enter sends: `cr`, `lf` or `crlf`.  Default `cr`, which retro systems expect. |
+| `--raw` | Send each key as you press it, not a line at a time.  No line editing.  Enter sends the line ending.  Ctrl-C exits. |
+| `--no-echo` | Don't display what you type.  Use when the retro system echoes what it receives back.  Only applies with `--raw`.  In line mode the terminal displays the line as you edit it. |
+
+If stdin is not a terminal, its contents are sent unchanged, and the command
+then keeps displaying output until One ROM disconnects or you press Ctrl-C.
+This can be used to send a file.
+
+If the retro system is not reading the input pipe, typed input waits.  Once One ROM's
+buffer is full, the command reports this on stderr after a second:
+
+```
+One ROM is not reading the input data
+```
+
+Input is sent, in order, once the retro system reads, and the command reports `Input resumed`.
+
+Requirements:
+
+- Firmware v0.7.3 or later.
+- One ROM running, with both the USB and host-control plugins.
+- The notes under [`monitor log`](#monitor-log) about the port, the banner,
+  debug probes and the silence timeout also apply.
 
 Device required: yes.
 

@@ -37,6 +37,17 @@ Three things follow from the pipe being the log channel rather than a channel of
 
 Pipes need **firmware v0.7.2 or later**, where the plugin logging API arrived.  On older firmware the plugin runs exactly as before and `GET_PIPE_CAPABILITY` reports no pipes, which the specification provides for — a host should query it before writing, as it should on any device.
 
+## Reading bytes in
+
+Pipe 1 carries bytes the other way, from One ROM to the host.  Anything typed into a terminal on One ROM's USB serial port ends up on pipe 1, and the host collects it with `PIPE_READ`.
+
+- A read returns up to 256 bytes and consumes them.
+- Reading an empty pipe succeeds and returns nothing.
+- `GET_PIPE_INFO` says how many bytes are waiting.
+- Nothing is ever dropped, so the discarded flag in the response is always clear.  When the pipe is full the terminal is held off until the host reads.
+
+Pipe 1 needs firmware v0.7.3.  On older firmware there is one pipe, as before.
+
 ## Driving One ROM's pins
 
 RBCP's Auxiliary I/O group lets the host drive and read device pins over the ROM bus, so a wire from a One ROM pad can reach a reset line, a drive, a relay or an indicator and the host can operate it from software.  RBCP describes mechanism only — a pin number, a level, a duration — because the device has no idea what is on the far end of the wire.

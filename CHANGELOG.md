@@ -2,6 +2,29 @@
 
 All notables changes between versions are documented in this file.
 
+## v0.7.3 - 2026-??-??
+
+Headline changes in this release:
+- One ROM supports receiving data from a USB host, and transmitting it to a retro system using RBCP over the ROM bus.
+
+In detail:
+- Add log channel 1 to the plugin API for exclusive use by plugin.  Channel 0 remains available to both firmware logging and plugins.
+  - This required a firmware update.
+- The USB system plugin receives data on the CDC OUT endpoint and places it in log channel 1.
+  - This required a firmware update and USB plugin 0.3.1.
+- The host-control plugin exposes log channel 1 as a second RBCP pipe, and implemented `PIPE_READ` for this channel.
+  - This required a firmware update and host-control plugin 0.1.4.
+- Add `onerom console`, which shows what a running One ROM sends and sends what you type to the retro system, a line at a time or key by key.
+
+To publish:
+- Rust crates (in dependency order):
+  - onerom-cli 0.4.1
+- CLI bin 0.4.1
+
+To test:
+- `onerom console`
+- A debug probe against the new slightly larger RTT down buffer.  The boot log still arrives on channel 0, and text typed into the probe's terminal lands on channel 1.
+
 ## v0.7.2 - 2026-09-08
 
 Headline changes in this release:

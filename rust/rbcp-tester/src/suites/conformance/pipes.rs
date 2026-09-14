@@ -4,9 +4,9 @@
 
 //! Specification: "Group 0x04 — Pipes".
 //!
-//! Three commands over a device's pipes: one reporting how many there are, one
-//! describing a single pipe, and one transferring bytes to it.  Only the
-//! host-to-device direction exists in RBCP 0.1.2.
+//! Four commands over a device's pipes: one reporting how many there are, one
+//! describing a single pipe, one transferring bytes to it and one taking bytes
+//! from it.
 //!
 //! # Pipes are optional, and absence is a legitimate answer
 //!
@@ -28,6 +28,7 @@
 //! that what comes back afterwards is attributable to that write and not to
 //! something the device logged earlier.  The protocol-level assertion is still
 //! the response field — the drain says whether a status-OK meant anything.
+//! [`Bus::fill_pipe`] does the same for the IN direction.
 //!
 //! # Asserting `free`
 //!
@@ -62,14 +63,23 @@ const MAX_PAYLOAD: u8 = 4;
 /// cannot reach that path unless they are taken away.  Consulted by
 /// [`crate::suites::withheld_api`] before the plugin starts, which is when a
 /// plugin resolves its pointers.
-pub static WITHHELD_API: &[(&str, &[u32])] = &[(
-    "conformance.pipes.no_pipes_without_the_log_calls",
-    &[
-        ffi::api_id_t_ORA_ID_LOG_OPEN_WRITE,
-        ffi::api_id_t_ORA_ID_LOG_WRITE,
-        ffi::api_id_t_ORA_ID_LOG_QUERY,
-    ],
-)];
+pub static WITHHELD_API: &[(&str, &[u32])] = &[
+    (
+        "conformance.pipes.no_pipes_without_the_log_calls",
+        &[
+            ffi::api_id_t_ORA_ID_LOG_OPEN_WRITE,
+            ffi::api_id_t_ORA_ID_LOG_WRITE,
+            ffi::api_id_t_ORA_ID_LOG_QUERY,
+        ],
+    ),
+    (
+        "conformance.pipes.one_pipe_without_the_read_calls",
+        &[
+            ffi::api_id_t_ORA_ID_LOG_OPEN_READ,
+            ffi::api_id_t_ORA_ID_LOG_READ,
+        ],
+    ),
+];
 
 /// Response data section both query commands need, in bytes.
 const REQUIRED_DATA_SIZE: u32 = 8;
@@ -654,6 +664,411 @@ pub fn pipe_write_carries_aa_in_every_position(
                  {payload:02X?} — every value is valid in A0 to A3"
             ));
         }
+    }
+
+    Ok(Outcome::Pass)
+}
+
+// ---------------------------------------------------------------------------
+// The IN direction
+// ---------------------------------------------------------------------------
+
+/// Find the IN pipe, or skip if there is none.
+///
+/// One ROM's IN pipe is pipe 1.  A device without one is conformant, and there
+/// is nothing to assert.
+///
+/// The pipe is drained with PIPE_READ, not [`Bus::drain_pipe`], because
+/// drain_pipe takes the read claim and that belongs to the plugin.  Draining is
+/// needed because the ring buffers are statics in the test library and keep
+/// whatever an earlier scenario left.
+fn session_with_an_in_pipe(
+    bus: &mut Bus,
+    ctx: &Ctx,
+) -> Result<Result<(Session, u8), Outcome>, String> {
+    let s = ctx.session();
+    bus.enter_cmd_resp(&s)
+        .map_err(|e| format!("ENTER_CMD_RESP: {e}"))?;
+
+    let count = pipe_count(bus, &s)?;
+    for pipe in 0..count {
+        bus.issue_cmd(&s, group::PIPES, pipes::GET_PIPE_INFO, &[pipe])
+            .map_err(|e| format!("GET_PIPE_INFO on pipe {pipe}: {e}"))?;
+        if bus.read_data(&s, 1, 1)?[0] & 0x02 != 0 {
+            // Bounded, since the channel holds under 4 reads of 256.
+            for _ in 0..4 {
+                if pipe_read(bus, &s, pipe, 0)?.data.is_empty() {
+                    break;
+                }
+            }
+            return Ok(Ok((s, pipe)));
+        }
+    }
+    Ok(Err(Outcome::Skip(
+        "the device exposes no pipe carrying the IN direction, which the specification permits"
+            .into(),
+    )))
+}
+
+/// The PIPE_READ response header, parsed.
+struct ReadResponse {
+    count: u8,
+    flags: u8,
+    waiting: u8,
+    data: Vec<u8>,
+}
+
+/// Issue PIPE_READ and return what came back.  `count` is the byte the command
+/// carries, so 0 asks for 256.
+fn pipe_read(bus: &mut Bus, s: &Session, pipe: u8, count: u8) -> Result<ReadResponse, String> {
+    bus.issue_cmd(s, group::PIPES, pipes::PIPE_READ, &[count, pipe])
+        .map_err(|e| format!("PIPE_READ of {count} from pipe {pipe}: {e}"))?;
+    let hdr = bus.read_data(s, 0, 8)?;
+    let full = hdr[1] & 0x02 != 0;
+    let returned = if full {
+        if count == 0 { 256 } else { u32::from(count) }
+    } else {
+        u32::from(hdr[0])
+    };
+    let data = if returned == 0 {
+        Vec::new()
+    } else {
+        bus.read_data(s, 8, returned)?
+    };
+    Ok(ReadResponse {
+        count: hdr[0],
+        flags: hdr[1],
+        waiting: hdr[2],
+        data,
+    })
+}
+
+/// GET_PIPE_INFO on the IN pipe reports IN, and `waiting` counts the bytes.
+///
+/// `free` is zero on a pipe without OUT.  `waiting` is checked against a known
+/// number of bytes, since only then does the value mean anything.
+pub fn get_pipe_info_on_an_in_pipe(bus: &mut Bus, ctx: &Ctx) -> Result<Outcome, String> {
+    let (s, pipe) = match session_with_an_in_pipe(bus, ctx)? {
+        Ok(v) => v,
+        Err(skip) => return Ok(skip),
+    };
+
+    bus.fill_pipe(pipe, b"hello")?;
+    bus.issue_cmd(&s, group::PIPES, pipes::GET_PIPE_INFO, &[pipe])
+        .map_err(|e| format!("GET_PIPE_INFO: {e}"))?;
+    let info = bus.read_data(&s, 0, 8)?;
+
+    if info[1] & 0x01 != 0 && info[2] == 0 {
+        return Err(format!(
+            "pipe {pipe} carries OUT but reports no room — free reads zero only where the pipe \
+             does not support OUT"
+        ));
+    }
+    if info[1] & 0x01 == 0 && info[2] != 0 {
+        return Err(format!(
+            "pipe {pipe} carries no OUT direction but reports free {} — free reads zero where \
+             the pipe does not support OUT",
+            info[2]
+        ));
+    }
+    if info[3] != 5 {
+        return Err(format!(
+            "pipe {pipe} reports {} bytes waiting with 5 on the channel",
+            info[3]
+        ));
+    }
+
+    Ok(Outcome::Pass)
+}
+
+/// PIPE_READ returns what the channel holds and consumes it.  An empty pipe
+/// then reads as success with no data.
+///
+/// "Reads up to count bytes ... consuming what it returns", and "an empty pipe
+/// is a success carrying no data".  The second read is the real check: a
+/// device that did not consume would return the bytes again.
+pub fn pipe_read_returns_and_consumes(bus: &mut Bus, ctx: &Ctx) -> Result<Outcome, String> {
+    let (s, pipe) = match session_with_an_in_pipe(bus, ctx)? {
+        Ok(v) => v,
+        Err(skip) => return Ok(skip),
+    };
+
+    bus.fill_pipe(pipe, b"hello")?;
+    let r = pipe_read(bus, &s, pipe, 16)?;
+    if r.data != b"hello" {
+        return Err(format!(
+            "PIPE_READ of 16 returned {:02X?}, want the 5 bytes waiting",
+            r.data
+        ));
+    }
+    if r.count != 5 || r.flags & 0x02 != 0 {
+        return Err(format!(
+            "PIPE_READ of 16 with 5 waiting reported count {} flags 0x{:02X} — a short read \
+             carries the number returned and leaves the full-count bit clear",
+            r.count, r.flags
+        ));
+    }
+    if r.flags & 0x01 != 0 {
+        return Err("PIPE_READ reports bytes discarded, and nothing was".into());
+    }
+    if r.waiting != 0 {
+        return Err(format!(
+            "{} bytes waiting after a read that took everything",
+            r.waiting
+        ));
+    }
+    bus.expect_data(&s, 3, &[0x00; 5], "PIPE_READ reserved bytes 3-7")?;
+
+    let again = pipe_read(bus, &s, pipe, 16)?;
+    if again.count != 0 || !again.data.is_empty() {
+        return Err(format!(
+            "a second PIPE_READ returned {} bytes — the first did not consume them",
+            again.data.len()
+        ));
+    }
+
+    Ok(Outcome::Pass)
+}
+
+/// A read of fewer bytes than are waiting returns exactly that many, in order,
+/// and reports it.
+///
+/// The full-count bit is "set on every read that returns it, not only on a read
+/// of 256 bytes", the count then "carries it as the command did", and waiting
+/// is measured "after this read has taken its own".
+pub fn pipe_read_takes_up_to_count(bus: &mut Bus, ctx: &Ctx) -> Result<Outcome, String> {
+    let (s, pipe) = match session_with_an_in_pipe(bus, ctx)? {
+        Ok(v) => v,
+        Err(skip) => return Ok(skip),
+    };
+
+    bus.fill_pipe(pipe, b"0123456789")?;
+    let r = pipe_read(bus, &s, pipe, 4)?;
+    if r.data != b"0123" {
+        return Err(format!(
+            "PIPE_READ of 4 returned {:02X?}, want the first 4 waiting",
+            r.data
+        ));
+    }
+    if r.count != 4 || r.flags & 0x02 == 0 {
+        return Err(format!(
+            "PIPE_READ of 4 with 10 waiting reported count {} flags 0x{:02X} — a full read \
+             sets the full-count bit and carries the count as the command did",
+            r.count, r.flags
+        ));
+    }
+    if r.waiting != 6 {
+        return Err(format!(
+            "{} bytes waiting after 4 of 10 were read, want 6",
+            r.waiting
+        ));
+    }
+
+    let rest = pipe_read(bus, &s, pipe, 16)?;
+    if rest.data != b"456789" {
+        return Err(format!(
+            "the next PIPE_READ returned {:02X?}, want the remaining 6",
+            rest.data
+        ));
+    }
+
+    Ok(Outcome::Pass)
+}
+
+/// A count of zero reads 256 bytes, and a full read of 256 reports zero.
+///
+/// "A count of zero indicates 256 bytes", and in the response "a full 256-byte
+/// read reads as zero here" with the full-count bit set.  Both are checked,
+/// since an empty pipe also reports a count of zero.
+pub fn pipe_read_of_zero_is_256(bus: &mut Bus, ctx: &Ctx) -> Result<Outcome, String> {
+    let (s, pipe) = match session_with_an_in_pipe(bus, ctx)? {
+        Ok(v) => v,
+        Err(skip) => return Ok(skip),
+    };
+
+    let sent: Vec<u8> = (0..300u32).map(|i| (i % 251) as u8).collect();
+    bus.fill_pipe(pipe, &sent)?;
+
+    let r = pipe_read(bus, &s, pipe, 0)?;
+    if r.flags & 0x02 == 0 || r.count != 0 {
+        return Err(format!(
+            "PIPE_READ of 0 with 300 waiting reported count {} flags 0x{:02X} — a full 256 \
+             sets the full-count bit and reads as zero",
+            r.count, r.flags
+        ));
+    }
+    if r.data != sent[..256] {
+        return Err(format!(
+            "PIPE_READ of 0 returned {} bytes, want the first 256 in order",
+            r.data.len()
+        ));
+    }
+    if r.waiting != 44 {
+        return Err(format!(
+            "{} bytes waiting after 256 of 300 were read, want 44",
+            r.waiting
+        ));
+    }
+
+    Ok(Outcome::Pass)
+}
+
+/// PIPE_READ's refusals: the wrong direction, an absent pipe, and 0xAA.
+/// PIPE_WRITE on a pipe without OUT is the same rule the other way.
+///
+/// A refusal consumes nothing, so the bytes put on the IN pipe are still there
+/// afterwards.
+pub fn pipe_read_refusals(bus: &mut Bus, ctx: &Ctx) -> Result<Outcome, String> {
+    let (s, in_pipe) = match session_with_an_in_pipe(bus, ctx)? {
+        Ok(v) => v,
+        Err(skip) => return Ok(skip),
+    };
+    let absent = pipe_count(bus, &s)?;
+    bus.fill_pipe(in_pipe, b"kept")?;
+
+    // On this device every other pipe has no IN.
+    for pipe in 0..absent {
+        if pipe == in_pipe {
+            continue;
+        }
+        bus.expect_rejected(&s, group::PIPES, pipes::PIPE_READ, &[4, pipe])
+            .map_err(|e| format!("{e} — pipe {pipe} carries no IN direction"))?;
+    }
+    bus.expect_rejected(
+        &s,
+        group::PIPES,
+        pipes::PIPE_WRITE,
+        &[b'x', 0, 0, 0, in_pipe, 1],
+    )
+    .map_err(|e| format!("{e} — pipe {in_pipe} carries no OUT direction"))?;
+    bus.expect_rejected(&s, group::PIPES, pipes::PIPE_READ, &[4, absent])?;
+    bus.expect_rejected(&s, group::PIPES, pipes::PIPE_READ, &[4, 0xAA])?;
+
+    let r = pipe_read(bus, &s, in_pipe, 16)?;
+    if r.data != b"kept" {
+        return Err(format!(
+            "a refused read consumed bytes: {:02X?} left, want b\"kept\"",
+            r.data
+        ));
+    }
+
+    Ok(Outcome::Pass)
+}
+
+/// PIPE_READ needs room for its header and the bytes asked for, and is refused
+/// without it.
+///
+/// "Fails, consuming nothing, if ... the response data section cannot hold 8
+/// bytes plus the number of bytes requested."  A 12-byte section accepts a read
+/// of 4 and refuses a read of 8.  The refused read leaves the bytes for the one
+/// that fits.
+pub fn pipe_read_needs_room_for_its_answer(bus: &mut Bus, ctx: &Ctx) -> Result<Outcome, String> {
+    let s = bus.enter_sized(ctx, HDR_SIZE as u16 + 12)?;
+
+    let count = pipe_count(bus, &s)?;
+    let mut in_pipe = None;
+    for pipe in 0..count {
+        bus.issue_cmd(&s, group::PIPES, pipes::GET_PIPE_INFO, &[pipe])
+            .map_err(|e| format!("GET_PIPE_INFO on pipe {pipe}: {e}"))?;
+        if bus.read_data(&s, 1, 1)?[0] & 0x02 != 0 {
+            in_pipe = Some(pipe);
+            break;
+        }
+    }
+    let Some(in_pipe) = in_pipe else {
+        return Ok(Outcome::Skip(
+            "the device exposes no pipe carrying the IN direction, which the specification permits"
+                .into(),
+        ));
+    };
+
+    // Drain what an earlier scenario left, 4 bytes at a time, since that is
+    // all this section holds.
+    for _ in 0..128 {
+        if pipe_read(bus, &s, in_pipe, 4)?.data.is_empty() {
+            break;
+        }
+    }
+
+    bus.fill_pipe(in_pipe, b"12345678")?;
+    bus.expect_rejected(&s, group::PIPES, pipes::PIPE_READ, &[8, in_pipe])
+        .map_err(|e| format!("{e} — the data section is 12 bytes and the answer is 8 plus 8"))?;
+    let r = pipe_read(bus, &s, in_pipe, 4)?;
+    if r.data != b"1234" {
+        return Err(format!(
+            "PIPE_READ of 4 into a 12-byte section returned {:02X?}",
+            r.data
+        ));
+    }
+
+    Ok(Outcome::Pass)
+}
+
+/// Firmware with the write calls but not the read calls has one pipe.
+///
+/// Without `ora_log_open_read` and `ora_log_read` the plugin reports only
+/// pipe 0.  PIPE_READ is refused.  PIPE_WRITE still works.
+pub fn one_pipe_without_the_read_calls(bus: &mut Bus, ctx: &Ctx) -> Result<Outcome, String> {
+    let s = ctx.session();
+    bus.enter_cmd_resp(&s)
+        .map_err(|e| format!("ENTER_CMD_RESP: {e}"))?;
+
+    let count = pipe_count(bus, &s)?;
+    if count != 1 {
+        return Err(format!(
+            "the device reports {count} pipe(s) with the firmware's read calls withheld, want 1"
+        ));
+    }
+
+    bus.expect_rejected(&s, group::PIPES, pipes::PIPE_READ, &[4, 0])?;
+    bus.expect_rejected(&s, group::PIPES, pipes::PIPE_READ, &[4, 1])?;
+    bus.issue_cmd(&s, group::PIPES, pipes::PIPE_WRITE, &[b'x', 0, 0, 0, 0, 1])
+        .map_err(|e| format!("PIPE_WRITE with the read calls withheld: {e}"))?;
+
+    Ok(Outcome::Pass)
+}
+
+/// PIPE_READ is refused, consuming nothing, when another plugin holds the read
+/// claim.
+///
+/// Only one reader is allowed per channel.  The other plugin claims first, so
+/// this one cannot read.
+pub fn pipe_read_refused_when_another_reader_holds_the_channel(
+    bus: &mut Bus,
+    ctx: &Ctx,
+) -> Result<Outcome, String> {
+    let s = ctx.session();
+    bus.enter_cmd_resp(&s)
+        .map_err(|e| format!("ENTER_CMD_RESP: {e}"))?;
+
+    let count = pipe_count(bus, &s)?;
+    let mut in_pipe = None;
+    for pipe in 0..count {
+        bus.issue_cmd(&s, group::PIPES, pipes::GET_PIPE_INFO, &[pipe])
+            .map_err(|e| format!("GET_PIPE_INFO on pipe {pipe}: {e}"))?;
+        if bus.read_data(&s, 1, 1)?[0] & 0x02 != 0 {
+            in_pipe = Some(pipe);
+            break;
+        }
+    }
+    let Some(in_pipe) = in_pipe else {
+        return Ok(Outcome::Skip(
+            "the device exposes no pipe carrying the IN direction, which the specification permits"
+                .into(),
+        ));
+    };
+
+    bus.other_plugin_takes_reader(in_pipe)?;
+    bus.fill_pipe(in_pipe, b"held")?;
+
+    bus.expect_rejected(&s, group::PIPES, pipes::PIPE_READ, &[4, in_pipe])
+        .map_err(|e| format!("{e} — another reader holds pipe {in_pipe}'s channel"))?;
+
+    let left = bus.other_plugin_drains(in_pipe);
+    if left != b"held" {
+        return Err(format!(
+            "the refused read consumed bytes: {left:02X?} left, want b\"held\""
+        ));
     }
 
     Ok(Outcome::Pass)

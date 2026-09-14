@@ -521,6 +521,46 @@ pub static SCENARIOS: &[Scenario] = &[
         run: nv_storage::command_mode_refusal_takes_its_arguments,
     },
     Scenario {
+        name: "conformance.pipes.get_pipe_info_on_an_in_pipe",
+        spec_ref: "Group 0x04 — GET_PIPE_INFO; GET_PIPE_INFO Response Format (free, waiting)",
+        run: pipes::get_pipe_info_on_an_in_pipe,
+    },
+    Scenario {
+        name: "conformance.pipes.pipe_read_returns_and_consumes",
+        spec_ref: "Group 0x04 — PIPE_READ; PIPE_READ Response Format",
+        run: pipes::pipe_read_returns_and_consumes,
+    },
+    Scenario {
+        name: "conformance.pipes.pipe_read_takes_up_to_count",
+        spec_ref: "Group 0x04 — PIPE_READ; PIPE_READ Response Format (count, flags bit 1, waiting)",
+        run: pipes::pipe_read_takes_up_to_count,
+    },
+    Scenario {
+        name: "conformance.pipes.pipe_read_of_zero_is_256",
+        spec_ref: "Group 0x04 — PIPE_READ (a count of zero); PIPE_READ Response Format (count)",
+        run: pipes::pipe_read_of_zero_is_256,
+    },
+    Scenario {
+        name: "conformance.pipes.pipe_read_refusals",
+        spec_ref: "Group 0x04 — PIPE_READ, PIPE_WRITE (direction, absent pipe, 0xAA)",
+        run: pipes::pipe_read_refusals,
+    },
+    Scenario {
+        name: "conformance.pipes.one_pipe_without_the_read_calls",
+        spec_ref: "Group 0x04 — GET_PIPE_CAPABILITY (a device without the IN direction)",
+        run: pipes::one_pipe_without_the_read_calls,
+    },
+    Scenario {
+        name: "conformance.pipes.pipe_read_refused_when_another_reader_holds_the_channel",
+        spec_ref: "Group 0x04 — PIPE_READ (fails, consuming nothing)",
+        run: pipes::pipe_read_refused_when_another_reader_holds_the_channel,
+    },
+    Scenario {
+        name: "conformance.pipes.pipe_read_needs_room_for_its_answer",
+        spec_ref: "Group 0x04 — PIPE_READ (response data section too small)",
+        run: pipes::pipe_read_needs_room_for_its_answer,
+    },
+    Scenario {
         name: "conformance.pipes.get_pipe_capability",
         spec_ref: "Group 0x04 — GET_PIPE_CAPABILITY; GET_PIPE_CAPABILITY Response Format",
         run: pipes::get_pipe_capability,

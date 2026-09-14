@@ -187,18 +187,30 @@ const uint8_t protocol_version[4] = {
 #define CMD_GET_PIPE_CAPABILITY         0x00u
 #define CMD_GET_PIPE_INFO               0x01u
 #define CMD_PIPE_WRITE                  0x02u
+#define CMD_PIPE_READ                   0x03u
 
 // Pipe type identifiers, as reported by GET_PIPE_INFO.  The type describes the
 // shape of the bytes, not what they are for, and an ORA log channel imposes no
 // framing of its own - which is what the protocol calls a Raw pipe.
 #define PIPE_TYPE_RAW                   0x00u
 
-// Pipe flags, as reported by GET_PIPE_INFO.  This plugin's pipes carry OUT
-// only, so bit 1 stays clear.  Bits 2 and 3 report whether the far end is
-// attached, and both stay clear: nothing tells this plugin whether anything is
-// draining the channel, and a device that cannot tell says so rather than
-// guessing.
+// Pipe flags, as reported by GET_PIPE_INFO.  Pipe 0 carries OUT and pipe 1
+// carries IN - see pipe_flags().  Bits 2 and 3 report whether the far end is
+// attached, and both stay clear, as this plugin cannot tell whether anything
+// is at the other end.
 #define PIPE_FLAG_OUT                   0x01u
+#define PIPE_FLAG_IN                    0x02u
+
+// PIPE_READ response flags.  Bit 0, bytes discarded, is never set, as a full
+// channel refuses writes rather than dropping data.
+#define PIPE_READ_FLAG_FULL_COUNT       0x02u
+
+// Stack buffer for moving bytes from ora_log_read into a PIPE_READ response.
+// Matches SLOT_PEEK_BUF_SIZE, which does the same job.
+#define PIPE_READ_CHUNK                 32u
+
+// Size of the PIPE_READ response header.
+#define PIPE_READ_HDR_SIZE              8u
 
 // Far end identifiers, as reported by GET_PIPE_INFO.  A pipe is an ORA log
 // channel and this plugin cannot see who drains it - the system USB plugin
@@ -393,6 +405,8 @@ static ora_demangle_data_fn_t               s_demangle_data;
 static ora_log_open_write_fn_t              s_log_open_write;
 static ora_log_write_fn_t                   s_log_write;
 static ora_log_query_fn_t                   s_log_query;
+static ora_log_open_read_fn_t               s_log_open_read;
+static ora_log_read_fn_t                    s_log_read;
 
 // The calls the Auxiliary I/O group is built from.  The GPIO pair arrived in
 // firmware 0.7.1 and the other two in 0.7.2, so any of them may be NULL here.
@@ -421,6 +435,18 @@ static ora_debug_log_fn_t                   s_debug_log;
 // otherwise have its first claim answer for both.  Eight pipes fit, which
 // pipe_count() must not exceed - widen this first if it ever could.
 static uint8_t s_pipes_claimed;
+
+// The same for ora_log_open_read, claimed on the first PIPE_READ of a pipe.
+static uint8_t s_pipes_read_claimed;
+
+#if defined(ORA_HOST_TEST)
+// Clear all claims, as a reboot does.  The test harness calls this before each
+// scenario, alongside the firmware's own claim reset.
+void host_control_test_reset(void) {
+    s_pipes_claimed = 0u;
+    s_pipes_read_claimed = 0u;
+}
+#endif
 
 // ---------------------------------------------------------------------------
 // Ring buffer read helpers
@@ -1630,19 +1656,8 @@ static bool exec_nv_poke_commit_byte(void) {
 // copying the string, so it must outlive the claim, which a literal does.
 static const char pipe_name[] = "RBCP pipe 0";
 
-// Number of pipes this device exposes.
-//
-// A pipe is an ORA log channel and pipe N is channel N, so this is the number
-// of channels the running firmware has.  Two ways it can be zero, and the
-// protocol treats them alike: firmware older than 0.7.2 has no log API, so the
-// lookups returned NULL, or the firmware has the API but no channel 0.  Either
-// way GET_PIPE_CAPABILITY reports zero and the other two commands fail, which
-// is what the specification says an optional feature looks like when absent.
-//
-// The API header declares one channel and states that firmware may have fewer
-// channels than the header declares, never more, so channel 0 is the only one
-// to test for.  ora_log_query needs no claim in either direction and has no
-// side effects, which is what makes it safe to use as the test.
+// Number of pipes.  Pipe N is channel N, and a channel exists where
+// ora_log_query answers.  Zero on firmware without the log API.
 static uint8_t pipe_count(void) {
     if ((s_log_open_write == NULL) || (s_log_write == NULL) ||
         (s_log_query == NULL)) {
@@ -1651,7 +1666,25 @@ static uint8_t pipe_count(void) {
     if (s_log_query(ORA_LOG_CHANNEL_0, NULL, NULL, NULL) != ORA_RESULT_OK) {
         return 0u;
     }
-    return 1u;
+    if ((s_log_open_read == NULL) || (s_log_read == NULL)) {
+        return 1u;
+    }
+    if (s_log_query(ORA_LOG_CHANNEL_1, NULL, NULL, NULL) != ORA_RESULT_OK) {
+        return 1u;
+    }
+    return 2u;
+}
+
+// Which direction a pipe carries.  Pipe 0 is the log channel, which the host
+// writes.  Pipe 1 is the channel the USB plugin fills with a terminal's input,
+// which the host reads.
+static uint8_t pipe_flags(uint8_t pipe) {
+    return (pipe == 0u) ? PIPE_FLAG_OUT : PIPE_FLAG_IN;
+}
+
+// A byte count for a response field, saturating at 0xFF.
+static uint8_t saturate(uint32_t n) {
+    return (n > 0xFFu) ? 0xFFu : (uint8_t)n;
 }
 
 static bool exec_get_pipe_capability(void) {
@@ -1687,20 +1720,21 @@ static bool exec_get_pipe_info(void) {
         return false;
     }
 
-    uint32_t free_bytes = 0u;
-    if (s_log_query((ora_log_channel_t)pipe, NULL, &free_bytes, NULL) !=
+    uint32_t free_bytes = 0u, waiting = 0u;
+    if (s_log_query((ora_log_channel_t)pipe, NULL, &free_bytes, &waiting) !=
         ORA_RESULT_OK) {
         s_debug_log("GET_PIPE_INFO failed: query error");
         return false;
     }
 
+    // free applies to OUT and waiting to IN.  Each is zero for the other.
+    uint8_t flags = pipe_flags(pipe);
     uint8_t resp[8];
     zero_bytes(resp, sizeof(resp));
     resp[0] = PIPE_TYPE_RAW;
-    resp[1] = PIPE_FLAG_OUT;
-    resp[2] = (free_bytes > 0xFFu) ? 0xFFu : (uint8_t)free_bytes;
-    // waiting stays zero: the pipe carries no IN direction, so there is never
-    // anything for the host to read.
+    resp[1] = flags;
+    resp[2] = (flags & PIPE_FLAG_OUT) ? saturate(free_bytes) : 0u;
+    resp[3] = (flags & PIPE_FLAG_IN) ? saturate(waiting) : 0u;
     resp[4] = PIPE_FAR_END_UNSPECIFIED;
 
     data_write(s_state.active_slot, 0u, resp, sizeof(resp));
@@ -1724,6 +1758,10 @@ static bool exec_pipe_write(void) {
     }
     if (pipe >= pipe_count()) {
         s_debug_log("PIPE_WRITE failed: no such pipe %u", (unsigned)pipe);
+        return false;
+    }
+    if ((pipe_flags(pipe) & PIPE_FLAG_OUT) == 0u) {
+        s_debug_log("PIPE_WRITE failed: pipe %u carries no OUT", (unsigned)pipe);
         return false;
     }
 
@@ -1751,6 +1789,85 @@ static bool exec_pipe_write(void) {
                     (unsigned)pipe, (unsigned)count);
         return false;
     }
+    return true;
+}
+
+static bool exec_pipe_read(void) {
+    uint8_t count_arg = ring_read_byte();
+    uint8_t pipe      = ring_read_byte();
+
+    // A count of zero asks for 256.
+    uint32_t wanted = (count_arg == 0u) ? 256u : (uint32_t)count_arg;
+
+    s_debug_log("PIPE_READ: pipe=%u count=%u", (unsigned)pipe, (unsigned)wanted);
+
+    if (pipe == 0xAAu) {
+        s_debug_log("PIPE_READ failed: pipe value 0xAA is reserved");
+        return false;
+    }
+    if (s_state.cfg.data_size < PIPE_READ_HDR_SIZE + wanted) {
+        s_debug_log("PIPE_READ failed: data section too small");
+        return false;
+    }
+    if (pipe >= pipe_count()) {
+        s_debug_log("PIPE_READ failed: no such pipe %u", (unsigned)pipe);
+        return false;
+    }
+    if ((pipe_flags(pipe) & PIPE_FLAG_IN) == 0u) {
+        s_debug_log("PIPE_READ failed: pipe %u carries no IN", (unsigned)pipe);
+        return false;
+    }
+
+    // Claimed on first use, as the write side is.  Only the claiming plugin
+    // may read the channel.
+    uint8_t claim_bit = (uint8_t)(1u << pipe);
+    if ((s_pipes_read_claimed & claim_bit) == 0u) {
+        ora_result_t rc = s_log_open_read((ora_log_channel_t)pipe);
+        if (rc != ORA_RESULT_OK) {
+            s_debug_log("PIPE_READ failed: cannot claim pipe %u (%d)",
+                        (unsigned)pipe, (int)rc);
+            return false;
+        }
+        s_pipes_read_claimed |= claim_bit;
+    }
+
+    // Copy from the channel into the response a chunk at a time.  Each read
+    // consumes what it returns.
+    uint8_t  buf[PIPE_READ_CHUNK];
+    uint32_t total = 0u;
+    while (total < wanted) {
+        uint32_t ask = wanted - total;
+        if (ask > sizeof(buf)) {
+            ask = sizeof(buf);
+        }
+        uint32_t copied = 0u;
+        if (s_log_read((ora_log_channel_t)pipe, buf, ask, &copied) !=
+            ORA_RESULT_OK) {
+            // LCOV_UNREACHABLE_START - cannot fail: the pointers are locals,
+            // the channel exists, and this plugin holds the read claim.
+            s_debug_log("PIPE_READ failed: read error");
+            return false;
+            // LCOV_UNREACHABLE_STOP
+        }
+        if (copied == 0u) {
+            break;
+        }
+        data_write(s_state.active_slot, PIPE_READ_HDR_SIZE + total, buf, copied);
+        total += copied;
+    }
+
+    uint32_t waiting = 0u;
+    (void)s_log_query((ora_log_channel_t)pipe, NULL, NULL, &waiting);
+
+    // A full read reports the count as the command gave it, so a full 256
+    // reads as zero.
+    uint8_t resp[PIPE_READ_HDR_SIZE];
+    zero_bytes(resp, sizeof(resp));
+    bool full = (total == wanted);
+    resp[0] = full ? count_arg : (uint8_t)total;
+    resp[1] = full ? PIPE_READ_FLAG_FULL_COUNT : 0u;
+    resp[2] = saturate(waiting);
+    data_write(s_state.active_slot, 0u, resp, sizeof(resp));
     return true;
 }
 
@@ -2555,6 +2672,7 @@ static uint8_t cmd_arg_count(uint8_t group, uint8_t cmd) {
         switch (cmd) {
             case CMD_GET_PIPE_INFO:       return 1u;
             case CMD_PIPE_WRITE:          return 6u;
+            case CMD_PIPE_READ:           return 2u;
             default:                      return 0u;
         }
     }
@@ -2800,6 +2918,9 @@ static bool dispatch(
                 case CMD_PIPE_WRITE:
                     ok = exec_pipe_write();
                     break;
+                case CMD_PIPE_READ:
+                    ok = exec_pipe_read();
+                    break;
                 default:
                     ok = false;
                     break;
@@ -2986,6 +3107,8 @@ __attribute__((noinline)) static void rbcp_setup(
     s_log_open_write       = ora_lookup_fn(ORA_ID_LOG_OPEN_WRITE);
     s_log_write            = ora_lookup_fn(ORA_ID_LOG_WRITE);
     s_log_query            = ora_lookup_fn(ORA_ID_LOG_QUERY);
+    s_log_open_read        = ora_lookup_fn(ORA_ID_LOG_OPEN_READ);
+    s_log_read             = ora_lookup_fn(ORA_ID_LOG_READ);
 
     // As with the log channels, these may be NULL - the Auxiliary I/O group
     // reports less rather than the plugin refusing to run.

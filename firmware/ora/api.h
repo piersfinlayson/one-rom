@@ -823,15 +823,13 @@ typedef enum {
 STATIC_ASSERT(sizeof(ora_irq_t) == 1, "ora_irq_t must be 1 byte");
 
 /**
- * @brief A log channel
+ * @brief A channel used for logging and other purposes
  *
- * Channels are numbered rather than named for a purpose: a plugin picks the
- * one it wants, and the firmware does not assign meaning to any of them.
+ * A channel has a writer and a reader - a writer places stuff in the
+ * channel. A reader takes stuff out of the channel.
  *
- * One ROM's own log is written to channel 0, and keeps being written there
- * whatever a plugin does with it. A plugin may claim channel 0 like any
- * other, which renames it and reserves @ref ora_log_write_fn_t on it - One
- * ROM's log then arrives interleaved with the plugin's own.
+ * Channels are numbered rather than named for a purpose. A plugin picks the
+ * one it wants.
  *
  * A plugin built against this header may run on firmware that has fewer
  * channels than the header declares. Every call in this family reports that as
@@ -846,7 +844,26 @@ STATIC_ASSERT(sizeof(ora_irq_t) == 1, "ora_irq_t must be 1 byte");
  * @since firmware 0.7.2
  */
 typedef enum {
+    /**
+     * @brief Channel 0 - Primary log channel
+     *
+     * One ROM's firmware logging and plugin logging use this channel. A plugin
+     * may also claim it and write to it, in which case the writes are
+     * interleaved.
+     *
+     * @since firmware 0.7.2
+     */
     ORA_LOG_CHANNEL_0       = 0,
+
+    /**
+     * @brief Channel 1 - No fixed purpose
+     *
+     * Guaranteed not written to by the firmware. Smaller than channel 0.
+     *
+     * @since firmware 0.7.3
+     */
+    ORA_LOG_CHANNEL_1       = 1,
+
     ORA_LOG_CHANNEL_INVALID = 0xFFFFFFFF,
 } ora_log_channel_t;
 STATIC_ASSERT(sizeof(ora_log_channel_t) == 4, "ora_log_channel_t must be 4 bytes");

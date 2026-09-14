@@ -273,6 +273,16 @@ static void note_masked(void) {
     }
 }
 
+// Clear the plugin's claim record and the firmware's claim table together, so
+// they agree.  See onerom_test_reset() in firmware/test/stub_rp235x.c.
+void host_control_test_reset(void);
+void ora_log_reset_claims(void);
+
+void rbcp_host_test_reset_plugin(void) {
+    host_control_test_reset();
+    ora_log_reset_claims();
+}
+
 void ora_host_test_reset_flash_log(void) {
     s_flash_log = (ora_host_test_flash_log_t){0};
     // A device is running from XIP when a commit starts; that is what the

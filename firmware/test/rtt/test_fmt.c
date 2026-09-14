@@ -24,7 +24,7 @@ static int fmt_failure_count;
 
 // Collect our formatter's output by draining the ring it writes into.
 static void fmt_capture(char *out, size_t max) {
-    onerom_rtt_up_t *r = &_SEGGER_RTT.up[0];
+    onerom_rtt_ring_t *r = &_SEGGER_RTT.up[0];
     size_t n = 0;
     while ((r->read_offset != r->write_offset) && (n + 1 < max)) {
         out[n++] = r->buffer[r->read_offset];
@@ -34,7 +34,7 @@ static void fmt_capture(char *out, size_t max) {
 }
 
 static void fmt_reset(void) {
-    onerom_rtt_up_t *r = &_SEGGER_RTT.up[0];
+    onerom_rtt_ring_t *r = &_SEGGER_RTT.up[0];
     // A write must have happened for the control block to be initialised.
     if (r->size == 0u) {
         onerom_rtt_write(0, "", 0);

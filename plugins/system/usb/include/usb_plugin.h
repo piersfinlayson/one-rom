@@ -49,11 +49,17 @@ typedef struct {
     uint32_t features;
     uint8_t num_gpios;
 
-    // Reading the log for the CDC serial port.  NULL when another plugin
+    // Reading the log for the CDC IN endpoint.  NULL when another plugin
     // already holds the channel's read claim, in which case the forwarding is
     // skipped and the rest of the plugin is unaffected.  Only the read call is
     // held here, because it is the only one that runs more than once.
     ora_log_read_fn_t log_read;
+
+    // Writing what a USB host sends to the plugin on the CDC OUT endpoint.
+    // Both NULL when the firmware has no such channel or another plugin already
+    // owns the channel.
+    ora_log_write_fn_t log_write;
+    ora_log_query_fn_t log_query;
 
     // Whether a terminal has the CDC port open, and whether a session it has
     // just started is still to be set up.  Both are set from tud_cdc_line_state_cb(),

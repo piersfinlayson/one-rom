@@ -78,6 +78,7 @@ pub static ANNOTATIONS: &[(&str, &str, Source)] = &[
     ("control poke live", "input", Source::OpenFile),
     ("control poke memory", "input", Source::OpenFile),
     ("monitor log", "output", Source::SaveFile),
+    ("console", "output", Source::SaveFile),
     ("update slot", "image", Source::OpenFile),
     ("firmware build", "config", Source::OpenFile),
     ("firmware build", "save-config", Source::SaveFile),

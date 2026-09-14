@@ -30,11 +30,13 @@ use onerom_fw_emulator::{Emulator, OraResult, build_options, ffi};
 use onerom_gen::Config;
 
 const CH0: u32 = 0;
-/// Declared by `ONEROM_RTT_MAX_UP_BUFFERS` but never given a buffer, so every
-/// call in the family must reject it. This is the "declared in a newer header,
-/// absent on this firmware" case a plugin has to cope with.
-const CH_ABSENT: u32 = 1;
-/// Past `ONEROM_RTT_MAX_UP_BUFFERS` entirely.
+/// The channel the firmware never writes, from 0.7.3.
+const CH1: u32 = 1;
+/// One past `ONEROM_RTT_CHANNELS`, the first channel this firmware does not
+/// have. Every call must reject it. This is what a plugin built against a
+/// newer header hits on older firmware.
+const CH_ABSENT: u32 = 2;
+/// Past `ONEROM_RTT_CHANNELS` entirely.
 const CH_OUT_OF_RANGE: u32 = 99;
 
 const SYSTEM: ffi::ora_plugin_type_t = ffi::ora_plugin_type_t_ORA_PLUGIN_TYPE_SYSTEM;
@@ -318,6 +320,82 @@ pub fn test_absent_channel_is_rejected(emu: &Emulator) -> Result<(), String> {
             OraResult::NotSupported,
         )?;
     }
+
+    Ok(())
+}
+
+/// Channel 1 exists, is smaller than channel 0, and shares nothing with it:
+/// claims, bytes, or firmware logging, which its documentation guarantees
+/// never goes there.
+pub fn test_channel_1_is_independent(emu: &Emulator) -> Result<(), String> {
+    // Present and smaller, with no claim needed to ask.
+    emu.set_calling_plugin(USER);
+    let (r, size0, _, _) = emu.log_query(CH0);
+    check("query channel 0", r, OraResult::Ok)?;
+    let (r, size1, _, pending1) = emu.log_query(CH1);
+    check("query channel 1", r, OraResult::Ok)?;
+    if size1 == 0 || size1 >= size0 {
+        return Err(format!(
+            "channel 1 size {size1} is not smaller than channel 0's {size0}"
+        ));
+    }
+    if pending1 != 0 {
+        return Err(format!(
+            "channel 1 has {pending1} bytes pending before anything wrote it"
+        ));
+    }
+
+    // Claims are per channel.
+    emu.set_calling_plugin(SYSTEM);
+    check(
+        "system claims channel 0 for writing",
+        emu.log_open_write(CH0, c"system"),
+        OraResult::Ok,
+    )?;
+    emu.set_calling_plugin(USER);
+    check(
+        "user claims channel 1 for writing while system holds channel 0",
+        emu.log_open_write(CH1, c"user"),
+        OraResult::Ok,
+    )?;
+    check(
+        "user claims channel 1 for reading",
+        emu.log_open_read(CH1),
+        OraResult::Ok,
+    )?;
+
+    // Bytes stay on the channel they were written to.
+    let (_, _, _, pending0_before) = emu.log_query(CH0);
+    check(
+        "user writes channel 1",
+        emu.log_write(CH1, b"one"),
+        OraResult::Ok,
+    )?;
+    let (_, _, _, pending0_after) = emu.log_query(CH0);
+    if pending0_after != pending0_before {
+        return Err(format!(
+            "a write to channel 1 moved channel 0's pending from {pending0_before} to {pending0_after}"
+        ));
+    }
+    let (r, got) = emu.log_read(CH1, 16);
+    check("user reads channel 1", r, OraResult::Ok)?;
+    if got != b"one" {
+        return Err(format!("channel 1 read back {got:?}, want b\"one\""));
+    }
+
+    // The firmware's own logging never lands on channel 1.
+    emu.err_log(c"plugin api tester: an error while channel 1 is watched");
+    let (_, _, _, pending1) = emu.log_query(CH1);
+    if pending1 != 0 {
+        return Err(format!(
+            "firmware logging left {pending1} bytes on channel 1"
+        ));
+    }
+
+    emu.log_close_read(CH1);
+    emu.log_close_write(CH1);
+    emu.set_calling_plugin(SYSTEM);
+    emu.log_close_write(CH0);
 
     Ok(())
 }

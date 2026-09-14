@@ -11,8 +11,8 @@
 // 1. tinyusb.  The plugin calls ten of its functions and tinyusb calls back
 //    into the plugin; nothing below that boundary — the device controller, the
 //    USB bus itself — is modelled, because none of it is One ROM's code.  What
-//    is modelled is the CDC IN endpoint, in enough detail for the log drain's
-//    behaviour to be a response to something.
+//    is modelled is the CDC endpoint in both directions, in enough detail for
+//    the log drain's and the input's behaviour to be a response to something.
 //
 // 2. picoboot.  picobootx has its own conformance suite in its own repository,
 //    so it is not compiled here.  The shim keeps what the plugin registered and
@@ -185,11 +185,63 @@ bool tud_cdc_n_connected(uint8_t itf) {
     return s_connected != 0;
 }
 
+// The receive side.
+//
+// tinyusb keeps received data in a FIFO and re-arms the OUT endpoint only when
+// the FIFO has room for a whole packet.  At full speed the FIFO is one packet,
+// so the next packet arrives only once the plugin has emptied it.  The host
+// waits.  Modelled as two queues: the FIFO, and what the host still has to
+// send.  Emptying the FIFO lets the next packet in.
+#define USB_SHIM_RX_FIFO_SIZE ((uint32_t)CFG_TUD_CDC_RX_BUFSIZE)
+#define USB_SHIM_RX_HOST_SIZE 4096u
+static uint8_t  s_rx_fifo[USB_SHIM_RX_FIFO_SIZE];
+static uint32_t s_rx_fifo_len;
+static uint8_t  s_rx_host[USB_SHIM_RX_HOST_SIZE];
+static uint32_t s_rx_host_len;
+
+static void rx_arm(void) {
+    if ((s_rx_fifo_len != 0u) || (s_rx_host_len == 0u)) {
+        return;
+    }
+    uint32_t n = (s_rx_host_len < USB_SHIM_RX_FIFO_SIZE) ? s_rx_host_len
+                                                          : USB_SHIM_RX_FIFO_SIZE;
+    memcpy(s_rx_fifo, s_rx_host, n);
+    s_rx_fifo_len = n;
+    memmove(s_rx_host, s_rx_host + n, s_rx_host_len - n);
+    s_rx_host_len -= n;
+}
+
+uint32_t usb_host_test_push_rx(const uint8_t *buf, uint32_t len) {
+    uint32_t room = USB_SHIM_RX_HOST_SIZE - s_rx_host_len;
+    uint32_t n = (len < room) ? len : room;
+    memcpy(&s_rx_host[s_rx_host_len], buf, n);
+    s_rx_host_len += n;
+    rx_arm();
+    return n;
+}
+
+uint32_t usb_host_test_rx_waiting(void) {
+    return s_rx_fifo_len + s_rx_host_len;
+}
+
+void usb_host_test_clear_rx(void) {
+    s_rx_fifo_len = 0;
+    s_rx_host_len = 0;
+}
+
+uint32_t tud_cdc_n_available(uint8_t itf) {
+    (void)itf;
+    return s_rx_fifo_len;
+}
+
 uint32_t tud_cdc_n_read(uint8_t itf, void *buffer, uint32_t bufsize) {
-    (void)itf; (void)buffer; (void)bufsize;
-    // Nothing is sent to the device over CDC.  The plugin logs and drops what
-    // arrives, so there is nothing here for a scenario to assert.
-    return 0;
+    (void)itf;
+    uint32_t n = (s_rx_fifo_len < bufsize) ? s_rx_fifo_len : bufsize;
+    memcpy(buffer, s_rx_fifo, n);
+    memmove(s_rx_fifo, s_rx_fifo + n, s_rx_fifo_len - n);
+    s_rx_fifo_len -= n;
+    rx_arm();
+    return n;
 }
 
 void usb_host_test_set_dtr(uint8_t dtr) {

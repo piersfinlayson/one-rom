@@ -250,6 +250,10 @@ fn run_slot(
         tests::log::test_absent_channel_is_rejected(&emulator),
     );
     report.add(
+        "log_channel_1_independent",
+        tests::log::test_channel_1_is_independent(&emulator),
+    );
+    report.add(
         "log_write_read_edges",
         tests::log::test_write_and_read_edges(&emulator),
     );

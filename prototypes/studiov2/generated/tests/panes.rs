@@ -234,7 +234,14 @@ fn a_flag_a_choice_and_a_default_build_one_whole_line() {
     let mut harness = Harness::new();
     harness.select(index);
 
+    // A global with a default is on every line, ahead of the path.
     let mut expected = vec!["onerom".to_owned()];
+    for global in GLOBALS.iter() {
+        if let Some(default) = global.default {
+            expected.push(format!("--{}", global.long));
+            expected.push(default.to_owned());
+        }
+    }
     expected.extend(command.path.iter().map(|word| (*word).to_owned()));
 
     for (opt, spec) in command.opts.iter().enumerate() {

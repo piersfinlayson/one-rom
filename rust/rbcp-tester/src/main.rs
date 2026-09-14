@@ -54,6 +54,12 @@ use onerom_gen::{ChipSetConfig, Config};
 use onerom_plugin_tester::run::{Filters, Tally, suite_header};
 use onerom_plugin_tester::{ffi, harness::Plugin};
 
+unsafe extern "C" {
+    /// Clear the plugin's claims and the firmware's claim table, as a reboot
+    /// does.  Declared here because only this tester's shim defines it.
+    fn rbcp_host_test_reset_plugin();
+}
+
 mod driver;
 mod suites;
 
@@ -423,6 +429,10 @@ fn run_scenario(
     unsafe { ffi::ora_host_test_withhold_api(withheld.as_ptr(), withheld.len() as u32) };
 
     // SAFETY: `emu` outlives `plugin`, which is dropped at the end of this fn.
+    // Before the plugin starts, so every scenario claims from a clean table.
+    // SAFETY: no plugin is running.
+    unsafe { rbcp_host_test_reset_plugin() };
+
     let plugin = unsafe { Plugin::start(&emu)? };
 
     let (r, unobserved) = emu.get_unobserved_addr_bits();

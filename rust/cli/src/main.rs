@@ -11,6 +11,7 @@ use log::{debug, error, info, trace, warn};
 mod args;
 mod board;
 mod board_view;
+mod console;
 mod control;
 mod firmware;
 mod image;
@@ -85,6 +86,7 @@ async fn sub_main() -> Result<(), Error> {
         Commands::Monitor(args) => match &args.command {
             MonitorCommands::Log(args) => monitor::cmd_log(&options, args).await,
         },
+        Commands::Console(args) => console::cmd_console(&options, args).await,
         Commands::Control(args) => match &args.command {
             ControlCommands::Led(args) => match &args.command {
                 ControlLedCommands::On(args) => control::cmd_led_on(&options, args).await,

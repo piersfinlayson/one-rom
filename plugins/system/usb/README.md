@@ -79,7 +79,7 @@ As of firmware 0.6.7 One ROM supports up to 2 plugins.  It launches these after 
 The USB system plugin uses tinyusb to implement a USB device containing:
 - a dummy vendor interface (required to provide compatibility with Raspberry Pi's picotool)
 - the picobootx vendor interface used to manage One ROM live
-- a CDC interface (currently unused).
+- a bi-directional CDC interface, carrying One ROM's logs out to and data in from a terminal and data what the terminal sends back in. See [Logging](/docs/LOGGING.md).
 
 The majority of the picoboot protocol is supported, and there are also extensions to provide additional functionality:
 - Live ROM image reading/writing (using a virtual address located at 0x9000_0000)
