@@ -2,5 +2,8 @@
     "name": "activity",
     "display_name": "One ROM Activity",
     "description": "Blinks the status LED when there's ROM reading activity.",
+    "author": "Piers Finlayson",
+    "source": "https://github.com/piersfinlayson/one-rom",
+    "license": "MIT",
     "build_output": "build/plugin_user.bin"
 }

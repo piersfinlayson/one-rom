@@ -13,7 +13,7 @@ The plugin source stays in the third-party's own repository.
 
 ## Contribution Steps
 
-1. Write and test a plugin.
+1. Write a plugin and test it on the latest released firmware.
 2. Include a [`plugin-meta.json`](#plugin-metajson) file in your plugin directory.
 3. Commit and push your plugin source to a public repository.
 4. Tag the commit you want published.
@@ -78,8 +78,13 @@ The plugin must include a:
 - valid plugin header
 - [`plugin-meta.json`](#plugin-metajson) file.
 
-The plugin must compile against the latest released version of the One ROM source
-tree.
+The plugin must:
+- build without warnings against the latest released One ROM source tree,
+  using the Arm GNU toolchain version pinned in
+  [`ci/arm-toolchain-version`](../ci/arm-toolchain-version).
+  `ci/install-arm-toolchain.sh` can be used to install it.
+- run on the latest released firmware, unmodified.  A plugin that needs a
+  firmware change needs that change released before contributing.
 
 ## Publishing
 
