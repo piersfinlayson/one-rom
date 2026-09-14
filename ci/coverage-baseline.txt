@@ -10,7 +10,7 @@ firmware/src/piodma/pioplugin.c                      68.6
 firmware/src/piodma/piorom2.c                        80.8
 firmware/src/plugin.c                                91.9
 firmware/src/rp235x.c                                62.9
-firmware/src/rtt.c                                   94.9
+firmware/src/rtt.c                                   96.2
 firmware/src/utils.c                                 69.4
 plugins/user/host-control/src/flash_erase.c          100.0
 plugins/user/host-control/src/flash_erase.h          100.0
