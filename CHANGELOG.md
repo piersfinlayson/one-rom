@@ -15,6 +15,8 @@ In detail:
 - The host-control plugin exposes log channel 1 as a second RBCP pipe, and implemented `PIPE_READ` for this channel.
   - This required a firmware update and host-control plugin 0.1.4.
 - Add `onerom console`, which shows what a running One ROM sends and sends what you type to the retro system, a line at a time or key by key.
+- Add option to allow plugin to prioritise address monitoring over ROM serving using ORA API.
+  - This required a firmware update.
 
 To publish:
 - Rust crates (in dependency order):

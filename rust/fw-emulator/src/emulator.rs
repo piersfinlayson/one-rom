@@ -395,6 +395,31 @@ impl Emulator {
         mode: ffi::ora_monitor_mode_t,
         data_size: u8,
     ) -> OraResult {
+        unsafe {
+            self.setup_address_monitor_with_options(
+                ring_buf,
+                ring_entries_log2,
+                mode,
+                data_size,
+                core::ptr::null(),
+            )
+        }
+    }
+
+    /// `ORA_ID_SETUP_ADDRESS_MONITOR` with an options structure, or a null
+    /// pointer for the defaults - what [`Self::setup_address_monitor`] passes.
+    ///
+    /// # Safety
+    /// As [`Self::setup_address_monitor`].  `options` must be null or point at
+    /// a valid `ora_address_monitor_options_t` for the duration of the call.
+    pub unsafe fn setup_address_monitor_with_options(
+        &self,
+        ring_buf: *mut u32,
+        ring_entries_log2: u8,
+        mode: ffi::ora_monitor_mode_t,
+        data_size: u8,
+        options: *const ffi::ora_address_monitor_options_t,
+    ) -> OraResult {
         OraResult::from(plugin_call!(
             ffi::api_id_t_ORA_ID_SETUP_ADDRESS_MONITOR,
             ffi::ora_setup_address_monitor_fn_t,
@@ -402,8 +427,17 @@ impl Emulator {
             ring_entries_log2,
             mode,
             data_size,
-            core::ptr::null_mut()
+            options
         ))
+    }
+
+    /// An `ora_address_monitor_options_t` with its size filled in and the
+    /// given capture DMA priority.
+    pub fn address_monitor_options(priority: u8) -> ffi::ora_address_monitor_options_t {
+        ffi::ora_address_monitor_options_t {
+            size: size_of::<ffi::ora_address_monitor_options_t>() as u8,
+            priority,
+        }
     }
 
     /// `ORA_ID_INIT_KNOCK`.  Fills the caller-allocated `knock` structure.

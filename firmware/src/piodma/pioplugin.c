@@ -517,7 +517,8 @@ static void pio_setup_address_monitor_dma(
     uint8_t sm_addr_read,
     volatile uint32_t *ring_buf,
     uint8_t ring_size_log2,
-    uint8_t data_size
+    uint8_t data_size,
+    uint8_t high_priority
 ) {
 #if REAL_HARDWARE
     uint32_t dma_data_size;
@@ -538,6 +539,10 @@ static void pio_setup_address_monitor_dma(
     dma_reg->ctrl_trig =
         DMA_CTRL_TRIG_EN |
         dma_data_size |
+        // ROM serving's channels (piorom2.c) run at normal priority, so at
+        // high priority this channel is arbitrated ahead of them - see
+        // ora_address_monitor_priority_t for the trade.
+        (high_priority ? DMA_CTRL_TRIG_PRIORITY_HIGH : 0) |
         DMA_CTRL_RING_SIZE(ring_size_log2) |
         DMA_CTRL_RING_SEL |
         DMA_CTRL_INCR_WRITE |
@@ -553,6 +558,7 @@ static void pio_setup_address_monitor_dma(
     // chose to the injected configure seam, which wires up epio's capture
     // channel from that choice (so a wrong block choice is caught).
     (void)dma_ch;
+    (void)high_priority;
     if (s_host_monitor_dma_configure != NULL) {
         s_host_monitor_dma_configure(block, sm_addr_read, (void *)ring_buf,
                                      ring_size_log2, data_size);
@@ -565,10 +571,22 @@ ora_result_t pio_setup_address_monitor(
     uint8_t ring_entries_log2,
     ora_monitor_mode_t mode,
     uint8_t data_size,
-    void *reserved
+    const ora_address_monitor_options_t *options
 ) {
     (void)mode;
-    (void)reserved;
+
+    // Read only the fields the caller's size covers.  Both fields shipped
+    // together, so one check covers them.
+    uint8_t high_priority = 0;
+    if (options != NULL) {
+        if (options->size < sizeof(ora_address_monitor_options_t)) {
+            return ORA_RESULT_INVALID_SIZE;
+        }
+        if (options->priority > ORA_ADDRESS_MONITOR_PRIORITY_HIGH) {
+            return ORA_RESULT_INVALID_ARG;
+        }
+        high_priority = (options->priority == ORA_ADDRESS_MONITOR_PRIORITY_HIGH);
+    }
 
     uint32_t bytes_per_entry_log2 = __builtin_ctz(data_size / 8); // 8->0, 16->1, 32->2
     uint32_t ring_size_log2 = ring_entries_log2 + bytes_per_entry_log2;
@@ -591,7 +609,8 @@ ora_result_t pio_setup_address_monitor(
         SM_ADDR_MONITOR_ADDR_READ,
         ring_buf,
         ring_size_log2,
-        data_size
+        data_size,
+        high_priority
     );
 
     return ORA_RESULT_OK;

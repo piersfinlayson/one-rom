@@ -431,9 +431,9 @@ ora_result_t ora_setup_address_monitor(
     uint8_t ring_entries_log2,
     ora_monitor_mode_t mode,
     uint8_t data_size,
-    void *reserved
+    const ora_address_monitor_options_t *options
 ) {
-    return pio_setup_address_monitor(ring_buf, ring_entries_log2, mode, data_size, reserved);
+    return pio_setup_address_monitor(ring_buf, ring_entries_log2, mode, data_size, options);
 }
 
 ora_result_t ora_led_set(const ora_led_request_t *req) {

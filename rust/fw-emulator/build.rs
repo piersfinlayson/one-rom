@@ -314,6 +314,10 @@ fn main() {
         // nothing drags them in transitively either.  The plugin API tester
         // names the LEDs and the modes rather than hardcoding their values.
         .allowlist_type("ora_led.*")
+        // ora_address_monitor_priority_t reaches the API as a uint8_t field of
+        // ora_address_monitor_options_t, so it is not pulled in by the setup
+        // function's type and is named here so the monitor tester can use it.
+        .allowlist_type("ora_address_monitor_priority_t")
         // The apio emulation's record of how the firmware configured the PIO
         // blocks and the GPIOs.  This is what serving actually did, as opposed
         // to what the slot configuration says it should have done, and is the

@@ -86,7 +86,7 @@ extern ora_result_t pio_setup_address_monitor(
     uint8_t ring_entries_log2,
     ora_monitor_mode_t mode,
     uint8_t data_size,
-    void *reserved
+    const ora_address_monitor_options_t *options
 );
 // One ROM's LED engine, in src/piodma/pioled.c.  Drives the status LED and the
 // RGB LED, including any repetition a mode calls for, so a caller sets a mode
