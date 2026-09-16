@@ -1621,9 +1621,7 @@ fn word_size_for_set(chip_set: &ChipSetConfig) -> u8 {
         .chips
         .first()
         .map(|c| {
-            if c.chip_type.resolved() == ChipType::Chip27C400
-                || c.chip_type.resolved() == ChipType::Chip27C200
-            {
+            if c.chip_type.resolved().bit_modes().contains(&16) {
                 16
             } else {
                 8

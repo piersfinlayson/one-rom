@@ -17,11 +17,19 @@ In detail:
 - Add `onerom console`, which shows what a running One ROM sends and sends what you type to the retro system, a line at a time or key by key.
 - Add option to allow plugin to prioritise address monitoring over ROM serving using ORA API.
   - This required a firmware update.
+- Add chip types `27C400Pin31A17` and `27C200Pin31NC` for the Amiga A500 rev 5 Kickstart socket, which puts A17 on pin 31 and has no /BYTE.
 
 To publish:
 - Rust crates (in dependency order):
+  - onerom-config 0.7.1
+  - onerom-gen 0.8.1
   - onerom-cli 0.4.1
+- Config schema
 - CLI bin 0.4.1
+- Studio 0.2.3
+- Chip type and compatibility reference PDFs, for the two new chip types.
+- one-rom-wasm: move to onerom-config 0.7.1 and onerom-gen 0.8.1.
+- one-rom-site: the two new chip types.
 
 To test:
 - `onerom console`

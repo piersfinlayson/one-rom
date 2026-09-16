@@ -4746,7 +4746,7 @@ dependencies = [
 
 [[package]]
 name = "onerom-config"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "schemars",
  "serde",
@@ -4840,7 +4840,7 @@ dependencies = [
 
 [[package]]
 name = "onerom-gen"
-version = "0.8.0"
+version = "0.8.1"
 dependencies = [
  "onerom-config",
  "onerom-metadata",
@@ -4939,7 +4939,7 @@ dependencies = [
 
 [[package]]
 name = "onerom-studio"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "arc-swap",
  "built",

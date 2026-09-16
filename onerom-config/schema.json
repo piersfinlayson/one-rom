@@ -487,9 +487,19 @@
                     "const": "27C200"
                 },
                 {
+                    "description": "0.25MB EPROM with pin 31 unused and no /BYTE, as the Amiga A500 rev 5 PCB wires it - 262144 bytes, 40-pin package",
+                    "type": "string",
+                    "const": "27C200Pin31NC"
+                },
+                {
                     "description": "0.5MB EPROM with fixed active-low CE/OE - 524288 bytes, 40-pin package",
                     "type": "string",
                     "const": "27C400"
+                },
+                {
+                    "description": "0.5MB EPROM with A17 on pin 31 and no /BYTE, as the Amiga A500 rev 5 PCB wires it - 524288 bytes, 40-pin package",
+                    "type": "string",
+                    "const": "27C400Pin31A17"
                 }
             ]
         },

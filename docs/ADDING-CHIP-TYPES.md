@@ -74,7 +74,8 @@ compacted onto single lines:
 - **`address`** lists the address lines in bit order, lowest first, as physical
   pin numbers, and **`data`** does the same for the data lines from D0.  `size`
   must equal `2^address.len()` (the 48KB 23QL384 is the sole exception).
-- **`bit_modes`** is `[8]`, or `[8, 16]` for a 16-bit part with a `/BYTE` line.
+- **`bit_modes`** is `[8]`, `[8, 16]` for a 16-bit part with a `/BYTE` line,
+  or `[16]` for one without a `/BYTE` line, always served 16-bit.
   On a 16-bit part the lowest address line is **A-1**, not A0 — it selects which
   half of the word a byte-mode read returns, and it shares a pin with the top
   data line.  So the 27C400's 19 entries are A-1 to A18, and `2^19` is still its

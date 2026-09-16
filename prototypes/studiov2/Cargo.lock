@@ -3487,7 +3487,7 @@ dependencies = [
 
 [[package]]
 name = "onerom-config"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -3529,7 +3529,7 @@ dependencies = [
 
 [[package]]
 name = "onerom-gen"
-version = "0.8.0"
+version = "0.8.1"
 dependencies = [
  "onerom-config",
  "onerom-metadata",

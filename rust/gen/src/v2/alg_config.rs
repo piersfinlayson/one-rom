@@ -55,7 +55,8 @@ const ALG_DATA1_NUM_DELAY_CYCLES_16_BIT: u8 = 4;
 
 /// Determine the bit mode (8 vs 16) for serving `chip_type` on `board`.
 ///
-/// 16-bit serving requires both a board /BYTE pin and chip support for it.
+/// 16-bit serving needs chip support for it, plus a board /BYTE pin where the
+/// chip also has an 8-bit mode.
 ///
 /// This is independent of `force_16_bit`: for a `BitMode16`-capable chip,
 /// `rom_data_buf` is always `2^num_addr_pins * 2` bytes (one 16-bit word
@@ -63,22 +64,35 @@ const ALG_DATA1_NUM_DELAY_CYCLES_16_BIT: u8 = 4;
 /// only changes *how* the chip is served (`AlgData0` vs `AlgData1`, see
 /// `build_alg_data`), not the table layout/contents.
 pub fn bit_mode_for(chip_type: ChipType, board: Board) -> BitModes {
-    if board.pin_byte() != GPIO_NONE && chip_type.supports_bit_mode(16) {
+    let word_only = !chip_type.supports_bit_mode(8);
+    if chip_type.supports_bit_mode(16) && (word_only || board.pin_byte() != GPIO_NONE) {
         BitModes::BitMode16
     } else {
         BitModes::BitMode8
     }
 }
 
+/// Whether serving reads the chip's /BYTE line (`AlgData1`), switching
+/// between 8 and 16 bits as the host drives it.
+///
+/// False under `force_16_bit`, and for a chip with no 8-bit mode, which has
+/// no /BYTE line: the 27C400Pin31A17 carries A17 on that pin, and reading it
+/// as /BYTE would serve half the ROM 8-bit.
+pub fn reads_byte_pin(chip_type: ChipType, bit_mode: BitModes, force_16_bit: bool) -> bool {
+    matches!(bit_mode, BitModes::BitMode16) && chip_type.supports_bit_mode(8) && !force_16_bit
+}
+
 /// Build `OneromAlgDataConfig` from the CS/data layout.
 ///
 /// - `BitMode8`: `AlgData0`, `word_size: 8` - as for any other 8-bit chip.
-/// - `BitMode16` with `force_16_bit`: `AlgData0`, `word_size: 16`. `/BYTE`
+/// - `BitMode16` where `reads_byte_pin` is false (`force_16_bit`, or a chip
+///   with no 8-bit mode): `AlgData0`, `word_size: 16`. `/BYTE`
 ///   is ignored entirely (not read, not driven) - the chip is served in
 ///   its native 16-bit/word mode, with whatever 16-bit value DMA provides
 ///   written straight across `[base_data_pin, base_data_pin+16)`. Faster
 ///   than `AlgData1` (`build_alg_addr` gives this `num_delay_cycles=2`).
-/// - `BitMode16` without `force_16_bit` (default): `AlgData1`. `byte_pin`
+/// - `BitMode16` otherwise (the default for a chip with a /BYTE line):
+///   `AlgData1`. `byte_pin`
 ///   is `board.pin_byte()`, an *input* read by the data-write PIO each
 ///   access (driven by the host system, not One ROM) - if low, the chip
 ///   is in byte/8-bit mode and the host also drives A-1
@@ -100,6 +114,7 @@ pub fn bit_mode_for(chip_type: ChipType, board: Board) -> BitModes {
 pub fn build_alg_data(
     layout: &CsDataLayout,
     board: Board,
+    chip_type: ChipType,
     bit_mode: BitModes,
     force_16_bit: bool,
 ) -> OneromAlgDataConfig {
@@ -111,13 +126,15 @@ pub fn build_alg_data(
             base_data_pin: layout.base_data_pin,
             word_size: 8,
         },
-        BitModes::BitMode16 if force_16_bit => OneromAlgDataConfig::AlgData0 {
-            clkdiv_int: DEFAULT_CLKDIV_INT,
-            clkdiv_frac: DEFAULT_CLKDIV_FRAC,
-            gpio_base: layout.gpio_base,
-            base_data_pin: layout.base_data_pin,
-            word_size: 16,
-        },
+        BitModes::BitMode16 if !reads_byte_pin(chip_type, bit_mode, force_16_bit) => {
+            OneromAlgDataConfig::AlgData0 {
+                clkdiv_int: DEFAULT_CLKDIV_INT,
+                clkdiv_frac: DEFAULT_CLKDIV_FRAC,
+                gpio_base: layout.gpio_base,
+                base_data_pin: layout.base_data_pin,
+                word_size: 16,
+            }
+        }
         BitModes::BitMode16 => {
             let byte_pin = board.pin_byte() - layout.gpio_base;
             let a_minus_1_pin =
@@ -242,7 +259,13 @@ pub fn build_alg_config(
     let num_chips = ctx.chip_types.len();
     let cs_config = &ctx.cs_config;
 
-    let alg_data = build_alg_data(cs_data_layout, board, bit_mode, force_16_bit);
+    let alg_data = build_alg_data(
+        cs_data_layout,
+        board,
+        ctx.chip_types[0],
+        bit_mode,
+        force_16_bit,
+    );
     let alg_addr = build_alg_addr(addr_layout, &alg_data);
     let alg_cs = build_alg_cs(cs_data_layout, set_type, &alg_data);
     let alg_dma = build_alg_dma(bit_mode);
@@ -342,7 +365,13 @@ mod tests {
             alg_cs2: None,
         };
 
-        let alg_data = build_alg_data(&cs_data_layout, Board::Fire24A, BitModes::BitMode8, false);
+        let alg_data = build_alg_data(
+            &cs_data_layout,
+            Board::Fire24A,
+            ChipType::Chip2364,
+            BitModes::BitMode8,
+            false,
+        );
         assert_eq!(
             alg_data,
             OneromAlgDataConfig::AlgData0 {
@@ -607,7 +636,13 @@ mod tests {
             excess_addr_pin_gpios: alloc::vec![],
         };
 
-        let alg_data = build_alg_data(&cs_data_layout, Board::Fire40A, BitModes::BitMode16, false);
+        let alg_data = build_alg_data(
+            &cs_data_layout,
+            Board::Fire40A,
+            ChipType::Chip27C400,
+            BitModes::BitMode16,
+            false,
+        );
         assert_eq!(
             alg_data,
             OneromAlgDataConfig::AlgData1 {
@@ -675,7 +710,13 @@ mod tests {
             excess_addr_pin_gpios: alloc::vec![],
         };
 
-        let alg_data = build_alg_data(&cs_data_layout, Board::Fire40A, BitModes::BitMode16, true);
+        let alg_data = build_alg_data(
+            &cs_data_layout,
+            Board::Fire40A,
+            ChipType::Chip27C400,
+            BitModes::BitMode16,
+            true,
+        );
         assert_eq!(
             alg_data,
             OneromAlgDataConfig::AlgData0 {
@@ -707,6 +748,45 @@ mod tests {
             OneromAlgDmaConfig::AlgDma0 {
                 bit_mode: BitModes::BitMode16,
                 continuous: 1,
+            }
+        );
+    }
+
+    /// The 27C400Pin31A17 has no 8-bit mode, so it takes the `AlgData0` word
+    /// path with `force_16_bit` off.
+    #[test]
+    fn fire40b_27c400pin31a17_algdata0_without_force() {
+        let cs_data_layout = CsDataLayout {
+            gpio_base: 0,
+            base_data_pin: 0,
+            num_data_pins: 16,
+            data_pin_gpios: alloc::vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+            base_cs_pin: 17,
+            num_cs_pins: 1,
+            cs_ignore_index: None,
+            select_lines: alloc::vec![super::super::cs_data_layout::SelectLine {
+                role: super::super::cs_data_layout::SelectRole::Ce,
+                gpio: 17,
+            }],
+            commoned_lines: alloc::vec![],
+            alg_cs2: None,
+        };
+
+        let alg_data = build_alg_data(
+            &cs_data_layout,
+            Board::Fire40B,
+            ChipType::Chip27C400Pin31A17,
+            BitModes::BitMode16,
+            false,
+        );
+        assert_eq!(
+            alg_data,
+            OneromAlgDataConfig::AlgData0 {
+                clkdiv_int: 1,
+                clkdiv_frac: 0,
+                gpio_base: 0,
+                base_data_pin: 0,
+                word_size: 16,
             }
         );
     }

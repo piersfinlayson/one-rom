@@ -5,6 +5,8 @@
 - **Add `onerom console`.**  Displays what One ROM sends, like `monitor log`,
   and sends what you type to the retro system, which reads it with RBCP
   `PIPE_READ`.  Requires firmware v0.7.3 with the USB and host-control plugins.
+- **Add the `27C400Pin31A17` and `27C200Pin31NC` chip types**, for the Amiga
+  A500 rev 5 Kickstart socket.
 
 ## v0.4.0 - 2026-09-08
 
