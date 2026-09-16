@@ -1,0 +1,59 @@
+{
+    "$schema": "https://images.onerom.org/configs/schema.json",
+    "version": 1,
+    "name": "ColecoVision",
+    "description": "ColecoVision BIOS ROMs sourced and hosted from https://cvaddict.com/article.php?articleid=26",
+    "detail": "Instructions:\n1. Install One ROM 24 in U2 socket\n2. Use Jumpers A (1) + B (2) as required, 0 = NTSC Fire Skip (recommended), 1 = PAL Fire Skip (recommended), 2 = NTSC No Delay, 3 = NTSC Short Delay\n3. Power on the console and enjoy!",
+    "categories": [
+        "console",
+        "firmware",
+        "bios",
+        "colecovision"
+    ],
+    "chip_sets": [
+        {
+            "type": "single",
+            "chips": [
+                {
+                    "description": "NTSC Fire Skip Title Screen (recommended)",
+                    "file": "https://cvaddict.com/roms/bios/ColecoVision-Fire-Skip-NTSC.bin",
+                    "type": "2364",
+                    "cs1": "active_low"
+                }
+            ]
+        },
+        {
+            "type": "single",
+            "chips": [
+                {
+                    "description": "PAL Fire Skip Title Screen (recommended)",
+                    "file": "https://cvaddict.com/roms/bios/ColecoVision-Fire-Skip-PAL.bin",
+                    "type": "2364",
+                    "cs1": "active_low"
+                }
+            ]
+        },
+        {
+            "type": "single",
+            "chips": [
+                {
+                    "description": "NTSC No Title Screen Delay",
+                    "file": "https://cvaddict.com/roms/bios/ColecoVision-No-Delay-NTSC.bin",
+                    "type": "2364",
+                    "cs1": "active_low"
+                }
+            ]
+        },
+        {
+            "type": "single",
+            "chips": [
+                {
+                    "description": "NTSC Short Title Screen Delay",
+                    "file": "https://cvaddict.com/roms/bios/ColecoVision-Short-Delay-NTSC.bin",
+                    "type": "2364",
+                    "cs1": "active_low"
+                }
+            ]
+        }
+    ]
+}
