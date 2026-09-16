@@ -72,6 +72,7 @@ Some greater pin count ROMs can be emulated by a smaller One ROM, provided the R
 | 27128 | 16KB | 32KB | 32KB | 32KB | 32KB |
 | 27C128 | 16KB | 32KB | 32KB | 32KB | 32KB |
 | 27LC128 | 16KB | 32KB | 32KB | 32KB | 32KB |
+| HN613128P | 16KB | 32KB | 32KB | 32KB | 32KB |
 | 23256 | 32KB | 64KB | 64KB | 64KB | 64KB |
 | 27256 | 32KB | 64KB | 64KB | 64KB | 64KB |
 | 27C256 | 32KB | 64KB | 64KB | 64KB | 64KB |
@@ -506,6 +507,7 @@ Every fit other than `native` is a cross-size fit, and in all of them One ROM's 
 | 27128 | 16KB | 32KB | native |
 | 27C128 | 16KB | 32KB | native |
 | 27LC128 | 16KB | 32KB | native |
+| HN613128P | 16KB | 32KB | native |
 | 23256 | 32KB | 64KB | native |
 | 27256 | 32KB | 64KB | native |
 | 27C256 | 32KB | 64KB | native |
@@ -564,6 +566,7 @@ Every fit other than `native` is a cross-size fit, and in all of them One ROM's 
 | 27128 | 16KB | 32KB | native |
 | 27C128 | 16KB | 32KB | native |
 | 27LC128 | 16KB | 32KB | native |
+| HN613128P | 16KB | 32KB | native |
 | 23256 | 32KB | 64KB | native |
 | 27256 | 32KB | 64KB | native |
 | 27C256 | 32KB | 64KB | native |
@@ -622,6 +625,7 @@ Every fit other than `native` is a cross-size fit, and in all of them One ROM's 
 | 27128 | 16KB | 32KB | native |
 | 27C128 | 16KB | 32KB | native |
 | 27LC128 | 16KB | 32KB | native |
+| HN613128P | 16KB | 32KB | native |
 | 23256 | 32KB | 64KB | native |
 | 27256 | 32KB | 64KB | native |
 | 27C256 | 32KB | 64KB | native |
@@ -688,6 +692,7 @@ Every fit other than `native` is a cross-size fit, and in all of them One ROM's 
 | 27128 | 16KB | 32KB | native |
 | 27C128 | 16KB | 32KB | native |
 | 27LC128 | 16KB | 32KB | native |
+| HN613128P | 16KB | 32KB | native |
 | 23256 | 32KB | 64KB | native |
 | 27256 | 32KB | 64KB | native |
 | 27C256 | 32KB | 64KB | native |

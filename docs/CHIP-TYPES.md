@@ -45,7 +45,7 @@ There are also some other inconsistencies between types:
 
 | Chip Type | Aliases | Size | Address Lines | Control Lines | Programming | Supported |
 |-----------|---------|------|---------------|---------------|-------------|-----------|
-| 23128 |  | 16KB | 14 (A0-A13) | CS1 (pin 20), CS2 (pin 22), CS3 (pin 27) | None | ✓ |
+| 23128 | HN613128P | 16KB | 14 (A0-A13) | CS1 (pin 20), CS2 (pin 22), CS3 (pin 27) | None | ✓ |
 | 23256 |  | 32KB | 15 (A0-A14) | CS1 (pin 20), CS2 (pin 22) | None | ✓ |
 | 23QL384 |  | 48KB | 16 (A0-A15) | CS1 (pin 22) | None | ✓ |
 | 23512 |  | 64KB | 16 (A0-A15) | CS1 (pin 20), CS2 (pin 22) | None | ✓ |

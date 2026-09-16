@@ -222,6 +222,9 @@
             "function": "ROM",
             "rbcp_chip_type": 3,
             "supported": "0.5.8",
+            "aliases": [
+                "HN613128P"
+            ],
             "bit_modes": [8],
             "pins": 28,
             "size": 16384,
