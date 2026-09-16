@@ -1,53 +1,35 @@
 # ROM Configs
 
-This directory contains configuration files that can be used to generate various ROM collections for use with One ROM.
+A config is a JSON file naming the ROM images a One ROM serves and, per set, any firmware settings that differ from the defaults.  Studio and the CLI build a complete flashable image from it, and the CLI and Web programmer use it internally to create firmware from per-slot configuration.
 
-There is a [schema file](schema.json) that describes the structure of these configuration files. You can use this schema to validate your own configuration files or to generate new ones.
+| Reader | Use |
+| --- | --- |
+| [One ROM Studio](https://onerom.org/studio) | Pick a published config or local config file, build, flash |
+| `onerom` CLI | `onerom program --config <file>` and `onerom firmware build --config <file>`, see [CLI-MANUAL.md](/docs/CLI-MANUAL.md) |
 
-If you would like a more human readable version of the schema use a tool like [json-schema.app](https://json-schema.app/view/%23?url=https%3A%2F%2Fimages.onerom.org%2Fconfigs%2Fschema.json), pasting in https://images.onerom.org/configs/schema.json as the URL.
+The format is defined by [schema.json](schema.json), also published at https://images.onerom.org/configs/schema.json.  [json-schema.app](https://json-schema.app/view/%23?url=https%3A%2F%2Fimages.onerom.org%2Fconfigs%2Fschema.json) renders it readably.
 
-To be precise, these config files are used to generate the __metadata__ that is embedded on One ROM's flash __alongside__ the core firmware, adding:
+## What is here
 
-- ROM images
-- (optionally) overrides to stock firmware behaviour, on a per ROM basis.
+| Path | Contents |
+| --- | --- |
+| `*.json` | Published configs.  `set-` holds several jumper-selected sets, `bank-` bank-switched sets, `28-` targets 28-pin boards. |
+| `blank.json` | No ROMs.  Flashes a One ROM that ships empty. |
+| `test/` | Configs CI builds and tests on hardware (`ci/test-emu.sh`). |
+| `user/` | Your own configs.  Git-ignored. |
 
-A config file following this format can be used with [One ROM Studio](https://onerom.org/studio) to generate a complete One ROM image and flash it to your One ROM.
-
-## Local File Names
-
-Where ROM images are on the local filesystem, it is safest to use full file paths.  On Windows, use double backslashes in the file path (e.g. "C:\\\\Users\\\\piers\\\\local-chargen-custom.bin"), or forward slashes (e.g. "c:/Users/piers/local-chargen-custom.bin").
-
-## Minimal Config
-
-This is a minimal config:
-
-```json
-{
-    "$schema": "https://images.onerom.org/configs/schema.json",
-    "version": 1,
-    "description": "A minimal ROM config",
-    "rom_sets": []
-}
-```
-
-This produces One ROM image with no ROMs in it. This may be useful for manufacturing purposes - in order to flash and ship One ROM with no ROMs installed.
-
-This is essentially the configuration that is used to generate the base One ROM images that One ROM Studio then adds the ROMs you select to.
-
-## Simple Config
-
-A slightly more advanced config with 2 ROM images:
+## A config
 
 ```json
 {
     "$schema": "https://images.onerom.org/configs/schema.json",
     "version": 1,
     "name": "Simple Config",
-    "description": "A simple ROM config with 2 ROMs",
-    "rom_sets": [
+    "description": "Two 2364 ROMs, selected by jumper",
+    "chip_sets": [
         {
             "type": "single",
-            "roms": [
+            "chips": [
                 {
                     "description": "ROM 1",
                     "file": "http://example.com/rom1.bin",
@@ -58,7 +40,7 @@ A slightly more advanced config with 2 ROM images:
         },
         {
             "type": "single",
-            "roms": [
+            "chips": [
                 {
                     "description": "ROM 2",
                     "file": "http://example.com/rom2.bin",
@@ -71,183 +53,94 @@ A slightly more advanced config with 2 ROM images:
 }
 ```
 
-As can be seen, this config contains 2 ROM sets, each with a single 2364 mask programmed ROM image, each with the CS line active low.
+- Each set is one image-select jumper position, the first with all jumpers open: [IMAGE-SELECTION.md](/docs/IMAGE-SELECTION.md).
+- `multi` and `banked` sets serve several chips at once: [MULTI-ROM-SETS.md](/docs/MULTI-ROM-SETS.md).  [set-vic20-pal.json](set-vic20-pal.json) and [bank-c64-char.json](bank-c64-char.json) are real examples.
+- Chip types, 24 to 40 pins and RAM, and the select lines each takes: [CHIP-TYPES.md](/docs/CHIP-TYPES.md).  27-series EPROMs need no select lines.
+- The older `rom_sets` and `roms` keys still parse.
 
-One ROM Studio reads this config, downloads the 2 ROM images from the specified URLs, and builds a One ROM image containing these 2 ROMs.
+### Top-level keys
 
-The two ROM images are selected, at One ROM boot (power on) time, via the on-board image select jumpers.  The first ROM set is selected when all the jumpers are open.  The second ROM set is selected when the first jumper is closed.
+| Key | Meaning |
+| --- | --- |
+| `version` | Format version, `1`. |
+| `description` | Required.  Shown by the builder after `name`. |
+| `name`, `detail`, `notes` | Optional text shown by the builder, `notes` after the set list. |
+| `categories` | Tags Studio groups and searches on. |
+| `instance_name` | A name for this One ROM. |
+| `serial_override` | Replaces the USB serial number. |
+| `turbo_boot` | Skip reading the jumpers and serve the first image. |
+| `boot_logging` | Log boot over USB (with the USB plugin) or RTT. |
+| `swd_enabled` | `false` shuts SWD off as ROM serving starts, so debug-port reads cannot steal cycles from the serving DMAs.  BOOTSEL and PICOBOOT are unaffected. |
 
-(If you close more jumpers than there are ROM sets, the firmware will select the image indicates by the binary value encoded by the jumpers, modulo the number of installed images.)
+### Per-set keys
 
-## 23 vs 27 Series ROMs
+| Key | Meaning |
+| --- | --- |
+| `type` | `single`, `multi` or `banked`. |
+| `description` | Shown by the builder. |
+| `chips` | The chips in the set.  Order sets the X-pin assignment in a `multi` set. |
+| `firmware_overrides` | Firmware settings for this set, below. |
 
-If specifying a 27 series (EP)ROM, instead of a 23 (mask programmed) ROM, the `type` field should be set to the appropriate 27 series type (e.g. "27256" instead of "2364").
+### Per-chip keys
 
-In this case, there is no need to specify CS line behaviour, as 27 series ROMs use /CE and /OE (both active low) logic by default.
+| Key | Meaning |
+| --- | --- |
+| `file` | Path or URL. |
+| `type` | Chip type, e.g. `2364`, `27256`, `6116`. |
+| `cs1`..`cs4`, `ce`, `oe` | `active_low`, `active_high` or `ignore`, for the lines the chip type has.  `allow_cs_ignore: true` permits `ignore` where the chip type does not explicitly allow it. |
+| `description`, `label` | `label` replaces the filename in the device metadata. |
+| `license` | URL the builder asks the user to accept first. |
+| `extract` | Path inside the archive when `file` is a zip or tar. |
+| `location` | `start` and `length` of the image inside a larger file. |
+| `format`, `load_address` | `ihex` decodes Intel HEX, `load_address` mapping to byte 0. |
+| `transform` | Byte transforms applied in order, see [Image transforms](/docs/CLI-MANUAL.md#image-transforms). |
+| `size_handling` | `duplicate`, `pad` or `truncate` when the image is not the chip's size. |
 
-For more details on the differences between 23 and 27 series ROMs, see the [One ROM Visualizer](https://onerom.org/visualizer).
+Windows paths take doubled backslashes (`"C:\\roms\\kernal.bin"`) or forward slashes.
 
-## Firmware Configuration
+## Firmware overrides
 
-The `firmware_overrides` section __within a ROM set__ allows fine-tuning of One ROM hardware behavior for __that specific ROM/set of ROMs__. Each base firmware image has built-in defaults - these overrides change the behavior when serving a particular ROM set.
+Fire (RP2350) boards only.  Each set carries its own, and a set without one uses the firmware defaults.
 
-Any ROM set can have its own `firmware_overrides` section, allowing different ROM sets to have different hardware configurations.  It can also have no `firmware_overrides` section, in which case the default firmware behavior is used.
-
-The `firmware_overrides` fields are optional - only include the fields you wish to override from the defaults.
-
-### Primary Use Cases
-
-1. __Performance requirements__ - Some ROM images (particularly character ROMs) require specific clock speeds or voltage settings to serve reliably in certain host systems
-2. __Hardware experimentation__ - Testing different configurations to determine optimal settings for specific host platforms and ROM types
-3. __Power/performance/preference__ - Disabling features like LEDs (power saving or user preference) or debug interfaces (performance)
-
-### Ice/Fire Specific Configuration
-
-#### Ice Boards (STM32F4-based)
-
-```json
-"firmware_overrides": {
-    "ice": {
-        "cpu_freq": "72MHz",
-        "overclock": false
-    }
-}
-```
-
-Ice boards support frequencies from 1MHz to 450MHz.
-
-Set `overclock: true` for frequencies above the rated maximum for a specific STM32F4 MCU.
-
-#### Fire Boards (RP2350-based)
+| Key | Meaning |
+| --- | --- |
+| `fire.cpu_freq` | Default `150MHz`.  Above that, set `overclock: true`. |
+| `fire.overclock` | Permits a frequency above the rated maximum. |
+| `fire.vreg` | Core voltage, e.g. `1.20V`.  Left out, the firmware picks a conservative value for the frequency. |
+| `fire.force_16_bit` | Combined 8/16 bit ROM types.  Ignores `/BYTE` and serves 16 bits always, which reads the address lines a third more often. |
+| `led.enabled` | `false` turns the status LED off while serving.  Limp mode still blinks it. |
+| `swd.swd_enabled` | As the top-level key, for this set. |
 
 ```json
 "firmware_overrides": {
     "fire": {
-        "cpu_freq": "300MHz",
+        "cpu_freq": "200MHz",
         "overclock": true,
-        "vreg": "1.20V",
-        "serve_mode": "Pio"
-    }
-}
-```
-
-Fire boards support 16MHz to 800MHz in various increments (as defined in the schema). For higher frequencies than 150MHz:
-
-- set `overclock: true`.
-- you may need to tune `vreg` (internal voltage regulator) - different RP2350 silicon may need different core voltages for stability at high speeds. One ROM firmware will use its own (conservative) voltage regulator settings for higher clock speeds if this is not specified.
-
-### Other Hardware Settings
-
-```json
-"firmware_overrides": {
+        "vreg": "1.15V"
+    },
     "led": {
         "enabled": false
-    },
-    "swd": {
-        "swd_enabled": false
     }
 }
 ```
 
-- __LED__ - Disable to save power or if you don't want a status LED on your ROM.  Note, if present and the device enters "limp mode" (e.g. due to a fault or unrecoverable configuration error), the LED will still blink to indicate an error.
-- __SWD__ - Disable the debug interface to reduce bus contention and improve serving performance.  SWD is available for the whole of boot, including boot logging, and is shut off just before serving starts, staying off until the next reset.  Not a debug lockout - BOOTSEL/PICOBOOT are unaffected.
+A frequency the PLL cannot hit is rounded to the nearest it can.  A setting the firmware cannot recover from puts the device in limp mode, blinking the status LED.  Change the setting and reflash, or read the boot log: [LOGGING.md](/docs/LOGGING.md).
 
-### Example: ROM-Specific Configuration
+## Checking a config
 
-```json
-{
-    "rom_sets": [
-        {
-            "description": "C64 Character ROM - requires high clock speed",
-            "firmware_overrides": {
-                "ice": {
-                    "cpu_freq": "150MHz",
-                    "overclock": true
-                }
-            },
-            "roms": [
-                {
-                    "description": "C64 Character ROM",
-                    "file": "http://example.com/c64-char.bin",
-                    "type": "2332",
-                    "cs1": "active_low",
-                    "cs2": "active_high"
-                }
-            ]
-        }
-    ]
-}
+Build the image without a device attached:
+
+```bash
+onerom firmware build --config user/mine.json --board fire-24-e --out /tmp/onerom.bin
 ```
 
-### Advanced: PIO Serving Algorithm Parameters
+## Publishing a config
 
-For Fire boards using the PIO serving algorithm, low-level timing can be tuned via `serve_alg_params`. This is primarily for experimentation to determine what settings are required for specific ROM/host combinations.
+Studio lists every config in `configs.json` at [one-rom-images](https://github.com/piersfinlayson/one-rom-images), sorted by name with Blank first.
 
-```json
-"firmware_overrides": {
-    "serve_alg_params": {
-        "params": [254, 0, 2, 0, 0, 0, 254, 255]
-    }
-}
-```
+1. Add the file here and commit.
+2. Copy it to `one-rom-images/configs/`.
+3. Add `"configs/<name>.json"` to the `configs` list in `one-rom-images/configs.json`.
+4. Push `one-rom-images` main.  GitHub Pages deploys it.
 
-As of firmware 0.6.0, the parameter array format is 8 bytes long, as follows:
-
-- Byte 0: `0xFE` (signature)
-- Byte 1: `addr_read_irq` (0=disabled, 1=enabled) - whether to use IRQ to trigger address reads
-- Byte 2: `addr_read_delay` (0-31) - PIO cycles to delay between address reads
-- Byte 3: `cs_active_delay` (0-31) - PIO cycles to wait after CS active before setting data pins to outputs
-- Byte 4: `cs_inactive_delay` (0-31) - PIO cycles to hold data as outputs after CS goes inactive
-- Byte 5: `no_dma` (0=use DMA, 1=CPU) - whether to use DMA or CPU for byte serving
-- Byte 6: `0xFE` (end signature)
-- Byte 7: `0xFF` (padding)
-
-These parameters adjust the PIO state machine timing for specific ROM types or host systems. At 150MHz, each PIO cycle is ~6.67ns. See the PIO implementation source code for detailed timing analysis and pre-defined configurations.
-
-It is likely that in future firmware versions, more PIO settings will be exposed via the config file.
-
-### Firmware Defaults
-
-As of 0.6.0 the following firmware defaults are used if no overrides are specified:
-
-- Ice Clock: F401=84MHz, F411=100MHz, F405=168MHz, F446=180MHz, no overclocking.
-- Fire Clock: 150MHz, overclocking enabled, VREG 1.10V.
-- LED: Enabled (if hardware support is present)
-- SWD: Enabled (if hardware support is present)
-- PIO Serve Algorithm Params: [254, 0, 2, 0, 0, 0, 254, 255]
-
-### Error Handling
-
-Where possible, One ROM attempts to gracefully recover from incorrect or invalid configuration settings. 
-
-For example, if it cannot calculate PLL values for a specific requested clock speed, it will attempt to find a close match, and if not found fall back to the values built into the firmware (likely to be the stock maximum rated speed for the MCU).
-
-However, there are some situations where recover is not possible, or it is deemed better to enter "limp mode" (where the device hangs and flashes its status LED, irrespective of the LED enabled setting) to indicate a fault.
-
-If the device enters limp mode, you have two choices:
-- Try changing the settings and reflashing.
-- Connecting a debug probe and using a build with BOOT_LOGGING/DEBUG_LOGGING included, to diagnose the issue.
-
-The stock builds provided as part of One ROM releases _do not_ include debug or boot logging for performance reasons.
-
-## Complex Configs
-
-There's some advanced ROM options including the following:
-
-- ROM Set types "multi" and "banked" for multi-ROM sets and dynamically bank switched ROM sets
-- Local file and URL file sources (most generators only support URLs)
-- The ability to specify licenses which must be accepted before building a config
-- The ability to configure chip selects in multiple directions
-- Support for all 24 and 28 pin ROM types
-- Optional categories for better organization
-- Support for archived ROM files (zips)
-- Retrieve sections of a larger ROM file
-- Duplicate and pad ROM images, if the ROM file provided is smaller than the expected size, and truncate if larger
-
-Use the configs in this directory and the schema to build your own complex configs.
-
-## Future Plans
-
-The "end-game" is to have a repository of officially supported ROM configs for popular systems that can be used with One ROM Studio to build custom One ROM images.
-
-It is intended that eventually ROM configs will specify the original ROM chip's access times and other characteristics, with the One ROM firmware to dynamically adjust its serving behavior to match the original hardware as closely as possible.
+When `schema.json` changes, the copy in `one-rom-images/configs/` goes with the release.
