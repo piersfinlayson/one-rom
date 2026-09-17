@@ -2,7 +2,7 @@
 
 All notables changes between versions are documented in this file.
 
-## v0.7.3 - 2026-??-??
+## v0.7.3 - 2026-09-17
 
 Headline changes in this release:
 - One ROM supports receiving data from a USB host, and transmitting it to a retro system using RBCP over the ROM bus.

@@ -1,6 +1,6 @@
 # Changelog
 
-## v0.2.3 - 2026-??-??
+## v0.2.3 - 2026-09-17
 
 - Add the `27C400Pin31A17` and `27C200Pin31NC` chip types, for the Amiga A500 rev 5 Kickstart socket.
 

@@ -1,6 +1,6 @@
 # CLI Changelog
 
-## v0.4.1 - 2026-??-??
+## v0.4.1 - 2026-09-17
 
 - **Add `onerom console`.**  Displays what One ROM sends, like `monitor log`,
   and sends what you type to the retro system, which reads it with RBCP

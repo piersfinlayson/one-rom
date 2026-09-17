@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.1.4] - 2026-??-??
+## [0.1.4] - 2026-09-17
 
 This release adds a second pipe, carrying bytes in to One ROM from a far-end.
 Pipe 1 is used by a USB terminal to send bytes to the USB plugin over the CDC
