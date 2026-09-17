@@ -8,7 +8,7 @@ Headline changes in this release:
 - One ROM supports receiving data from a USB host, and transmitting it to a retro system using RBCP over the ROM bus.
 
 In detail:
-- Add log channel 1 to the plugin API for exclusive use by plugin.  Channel 0 remains available to both firmware logging and plugins.
+- Add log channel 1 to the plugin API for exclusive use by plugin.  Channel 0 remains available to both firmware logging and plugins, and is 512 bytes smaller.
   - This required a firmware update.
 - The USB system plugin receives data on the CDC OUT endpoint and places it in log channel 1.
   - This required a firmware update and USB plugin 0.3.1.
@@ -28,13 +28,11 @@ To publish:
 - Config schema
 - CLI bin 0.4.1
 - Studio 0.2.3
+- USB plugin 0.3.1
+- host-control plugin 0.1.4
 - Chip type and compatibility reference PDFs, for the two new chip types.
 - one-rom-wasm: move to onerom-config 0.7.1 and onerom-gen 0.8.1.
 - one-rom-site: the two new chip types and the `HN613128P` alias.
-
-To test:
-- `onerom console`
-- A debug probe against the new slightly larger RTT down buffer.  The boot log still arrives on channel 0, and text typed into the probe's terminal lands on channel 1.
 
 ## v0.7.2 - 2026-09-08
 
