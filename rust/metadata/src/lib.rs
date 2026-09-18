@@ -38,11 +38,6 @@
 //! RP2350 reading its own XIP flash) can create a [`DeviceMemoryView`]
 //! directly over the mapped address space with no copying and no additional
 //! allocation.
-//!
-//! A future revision may introduce a lazy, reader-backed view that fetches
-//! memory on demand and avoids holding the full metadata blob in RAM.  Until
-//! then, callers that cannot afford a 16 KB working buffer should defer use
-//! of the generated parsers until that interface is available.
 
 #![no_std]
 
@@ -63,6 +58,27 @@ mod firmware_overrides_impl;
 pub const MIN_SCHEMA_VERSION: FirmwareVersion = FirmwareVersion::new(0, 7, 0, 0);
 
 // ---------------------------------------------------------------------------
+// Metadata generations
+// ---------------------------------------------------------------------------
+
+/// The metadata generation firmware `version` reads.
+///
+/// A tool composes at the generation the firmware it is composing for
+/// understands, so that firmware never meets metadata newer than itself.
+///
+/// A `version` newer than every generation in [`METADATA_GENERATIONS`] gets
+/// the newest one there - that firmware fills in the rest through its own
+/// accessors.  `None` where `version` predates the first generation, which is
+/// firmware predating this schema - see [`MIN_SCHEMA_VERSION`].
+pub fn metadata_generation_for(version: FirmwareVersion) -> Option<u32> {
+    METADATA_GENERATIONS
+        .iter()
+        .rev()
+        .find(|(first, _)| version >= *first)
+        .map(|(_, generation)| *generation)
+}
+
+// ---------------------------------------------------------------------------
 // Parse errors
 // ---------------------------------------------------------------------------
 
@@ -76,12 +92,125 @@ pub enum ParseError {
     /// A pointer field that must not be null contained zero.
     /// `field` is the schema field name.
     NullPointer { field: &'static str },
-    /// An enum discriminant value was not recognised.
-    UnknownDiscriminant { type_name: &'static str, value: u32 },
     /// A C string contained bytes that are not valid UTF-8.
     InvalidUtf8,
     /// A C string did not contain the expected magic value
     BadMagic { field: &'static str },
+}
+
+// ---------------------------------------------------------------------------
+// Fixed-list field values
+// ---------------------------------------------------------------------------
+
+/// The value of a field the schema declares as one of a fixed list.
+///
+/// The lists grow.  A serving algorithm, a limp-mode pattern or a silicon
+/// variant added after a host was built reaches that host as a byte it has no
+/// name for, and refusing the byte would cost the whole structure it sits in
+/// over one field.  So the value is kept as it was found and the field says it
+/// is unknown.
+///
+/// [`MaybeKnown::Unknown`] widens the stored value to `u32` whatever width the
+/// list is stored at, and one type serves every such field.  A variable-length
+/// structure's own discriminant is the same problem one level up, answered by
+/// an `Unknown` arm on each generated algorithm-config enum, carrying the
+/// discriminant, the common fields and the parameter bytes.
+///
+/// # JSON
+///
+/// A known value serialises by variant name, as the list's own type does.  An
+/// unknown one serialises as `{"unknown": 66}`, so a reader can tell the two
+/// apart by shape and still has the byte:
+///
+/// ```json
+/// "slot_type": "RomSlotTypeSingleRom"
+/// "slot_type": { "unknown": 66 }
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum MaybeKnown<T> {
+    /// A value this build has a name for.
+    Known(T),
+    /// A value this build has no name for, as the device stored it.
+    Unknown(u32),
+}
+
+impl<T> MaybeKnown<T> {
+    /// Returns the value, or `None` where this build has no name for it.
+    pub fn known(&self) -> Option<&T> {
+        match self {
+            Self::Known(value) => Some(value),
+            Self::Unknown(_) => None,
+        }
+    }
+
+    /// Returns the stored value, or `None` where this build has a name for it.
+    pub fn unknown(&self) -> Option<u32> {
+        match self {
+            Self::Known(_) => None,
+            Self::Unknown(raw) => Some(*raw),
+        }
+    }
+
+    /// Returns `true` if this build has a name for the value.
+    pub fn is_known(&self) -> bool {
+        matches!(self, Self::Known(_))
+    }
+}
+
+impl<T> From<T> for MaybeKnown<T> {
+    fn from(value: T) -> Self {
+        Self::Known(value)
+    }
+}
+
+impl<T: core::fmt::Display> core::fmt::Display for MaybeKnown<T> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Known(value) => value.fmt(f),
+            Self::Unknown(raw) => write!(f, "unknown ({raw:#04x})"),
+        }
+    }
+}
+
+impl<T: serde::Serialize> serde::Serialize for MaybeKnown<T> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::ser::SerializeMap;
+        match self {
+            Self::Known(value) => value.serialize(serializer),
+            Self::Unknown(raw) => {
+                let mut map = serializer.serialize_map(Some(1))?;
+                map.serialize_entry("unknown", raw)?;
+                map.end()
+            }
+        }
+    }
+}
+
+/// The two shapes [`MaybeKnown`] takes on the wire.
+///
+/// serde's untagged handling needs a type to derive against, and the public
+/// enum's `Unknown` is a tuple variant - untagged would read a bare number
+/// rather than the `{"unknown": …}` shape.
+#[derive(serde::Deserialize)]
+#[serde(untagged)]
+enum MaybeKnownRepr<T> {
+    Known(T),
+    Unknown { unknown: u32 },
+}
+
+impl<'de, T: serde::Deserialize<'de>> serde::Deserialize<'de> for MaybeKnown<T> {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        Ok(match MaybeKnownRepr::deserialize(deserializer)? {
+            MaybeKnownRepr::Known(value) => Self::Known(value),
+            MaybeKnownRepr::Unknown { unknown } => Self::Unknown(unknown),
+        })
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -350,6 +479,17 @@ pub enum SerializeError {
         /// Name of the count field that would overflow.
         field: &'static str,
     },
+    /// A field newer than the generation being written holds a value other
+    /// than the default a reader of that generation uses.
+    ///
+    /// That generation has nowhere to put the value, and leaving it out would
+    /// produce an image that behaves differently from what was asked for.
+    FieldTooNew {
+        /// The field, as `<struct>.<field>`.
+        field: &'static str,
+        /// Oldest firmware whose metadata carries the field.
+        minimum: FirmwareVersion,
+    },
 }
 
 // ---------------------------------------------------------------------------
@@ -372,15 +512,29 @@ pub enum SerializeError {
 /// before calling; the serializer copies them verbatim via [`Pointer::raw`].
 ///
 /// ## Derived count fields
-/// `OneromMetadataHeader::rom_slot_count` and `OneromRomSlot::rom_count`
-/// are written from the corresponding `Vec` length.  Any value set by the
-/// caller is ignored.
+/// A field named as another's `count_field` is written from that `Vec`'s
+/// length.  Any value set by the caller is ignored.
+///
+/// ## Generation
+/// `root.version` is the metadata generation being written, and it decides
+/// which fields go in: one introduced after it is left out, its bytes left at
+/// the `0xFF` a device's unwritten flash reads back.  It comes from the header
+/// rather than from an argument, so there is one statement of it.  Set it with
+/// [`metadata_generation_for`], from the firmware version being composed for.
+///
+/// Such a field holding anything but its declared default has nowhere to go,
+/// so it returns [`SerializeError::FieldTooNew`] rather than dropping the
+/// value.
 pub fn serialize(
     root: &OneromMetadataHeader,
     base_addr: u32,
     buf: &mut [u8],
 ) -> Result<(), SerializeError> {
-    let mut ctx = SerializeContext::new(base_addr, buf);
+    let generation = root.version;
+    // Refuse before anything is written, so a rejected build leaves no
+    // half-composed buffer behind.
+    root.check_generation(generation)?;
+    let mut ctx = SerializeContext::new(base_addr, generation, buf);
     // Phase 1: assign flash addresses to every reachable object.
     root.layout(&mut ctx)?;
     // Phase 2: write bytes.  Root is always at base_addr.

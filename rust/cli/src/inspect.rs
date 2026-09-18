@@ -25,7 +25,7 @@ use onerom_cli::{Device, Error, Options};
 use onerom_config::chip::ChipType;
 use onerom_config::hw::Board;
 use onerom_config::mcu::PinTolerance;
-use onerom_fw_parser::{ParsedDevice, SdrrCsState, SlotKind};
+use onerom_fw_parser::{ParsedDevice, RuntimeAbsence, SdrrCsState, SlotKind};
 
 pub async fn cmd_info(options: &Options, args: &InspectInfoArgs) -> Result<(), Error> {
     // Print the device summary
@@ -60,10 +60,80 @@ pub async fn cmd_info(options: &Options, args: &InspectInfoArgs) -> Result<(), E
                 println!("Device information:");
                 println!("{json}");
             }
+            print_parser_notes(schema)?;
         }
     }
 
     Ok(())
+}
+
+fn print_parser_notes(schema: &onerom_fw_parser::OneRom) -> Result<(), Error> {
+    if let Some(json) = parser_notes(schema)? {
+        println!("Parser notes:");
+        println!("{json}");
+    }
+
+    Ok(())
+}
+
+/// What the parser could not show, printed as its own JSON block.
+///
+/// A block of its own rather than keys added to the dump, so anything already
+/// reading that dump - `"runtime": null` included - sees exactly what it saw
+/// before.  Each note carries a word a caller can match on and a sentence for
+/// whoever is reading it.
+#[derive(serde::Serialize)]
+struct ParserNotes {
+    /// Why there is no runtime structure, absent where there is one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    runtime_absent: Option<RuntimeAbsentNote>,
+
+    /// The structures newer than this build knows, absent where there are
+    /// none.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    newer_generations: Vec<NewerGenerationNote>,
+}
+
+#[derive(serde::Serialize)]
+struct RuntimeAbsentNote {
+    reason: RuntimeAbsence,
+    detail: String,
+}
+
+#[derive(serde::Serialize)]
+struct NewerGenerationNote {
+    structure: &'static str,
+    device_generation: u32,
+    known_generation: u32,
+    detail: String,
+}
+
+/// Build the notes block, or `None` where there is nothing to say.
+fn parser_notes(schema: &onerom_fw_parser::OneRom) -> Result<Option<String>, Error> {
+    let notes = ParserNotes {
+        runtime_absent: schema.runtime_absence().map(|absence| RuntimeAbsentNote {
+            reason: absence,
+            detail: absence.to_string(),
+        }),
+        newer_generations: schema
+            .newer_generations()
+            .iter()
+            .map(|g| NewerGenerationNote {
+                structure: g.structure,
+                device_generation: g.device_generation,
+                known_generation: g.known_generation,
+                detail: g.to_string(),
+            })
+            .collect(),
+    };
+
+    if notes.runtime_absent.is_none() && notes.newer_generations.is_empty() {
+        return Ok(None);
+    }
+
+    serde_json::to_string_pretty(&notes)
+        .map(Some)
+        .map_err(|e| Error::Other(e.to_string()))
 }
 
 /// The one mode that picks its own colour rather than showing the stored one.
@@ -852,6 +922,60 @@ fn resolve_device_board(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The keys `parser_notes` puts in its block, and what a consumer reading
+    /// the dump beside it still sees.
+    ///
+    /// The image is a v0.8.0 info header claiming a generation past this
+    /// build's and naming no runtime info, so both notes appear at once.
+    #[tokio::test]
+    async fn parser_notes_sit_beside_an_untouched_dump() {
+        use onerom_fw_parser::{Parser, SDRR_INFO_FW_OFFSET, readers::MemoryReader};
+
+        const FLASH_BASE: u32 = 0x1000_0000;
+        const RAM_BASE: u32 = 0x2008_0000;
+        let generation = onerom_metadata::ONEROM_INFO_VERSION + 1;
+
+        let mut image = vec![0u8; 0x400];
+        let base = SDRR_INFO_FW_OFFSET as usize;
+        image[base..base + 4].copy_from_slice(b"SDRR");
+        image[base + 6..base + 8].copy_from_slice(&8u16.to_le_bytes());
+        // build_date, into the zeroed tail of the image
+        image[base + 12..base + 16].copy_from_slice(&(FLASH_BASE + 0x300).to_le_bytes());
+        const VERSION_OFF: usize = onerom_metadata::ONEROM_INFO_VERSION_OFFSET;
+        image[base + VERSION_OFF..base + VERSION_OFF + 4]
+            .copy_from_slice(&generation.to_le_bytes());
+
+        let mut reader = MemoryReader::new(image, FLASH_BASE);
+        let mut parser = Parser::with_base_flash_address(&mut reader, FLASH_BASE, RAM_BASE);
+        let onerom = parser
+            .parse_format_schema()
+            .await
+            .expect("image should parse");
+
+        // The dump itself is the info structure, and still says what it said.
+        let dump: serde_json::Value =
+            serde_json::to_value(onerom.info().expect("info should be present")).unwrap();
+        assert_eq!(dump["runtime"], serde_json::Value::Null);
+
+        let notes: serde_json::Value =
+            serde_json::from_str(&parser_notes(&onerom).unwrap().expect("notes expected")).unwrap();
+        assert_eq!(notes["runtime_absent"]["reason"], "no_pointer");
+        assert!(
+            notes["runtime_absent"]["detail"]
+                .as_str()
+                .is_some_and(|d| !d.is_empty())
+        );
+        assert_eq!(notes["newer_generations"][0]["structure"], "onerom_info_t");
+        assert_eq!(
+            notes["newer_generations"][0]["device_generation"],
+            generation
+        );
+        assert_eq!(
+            notes["newer_generations"][0]["known_generation"],
+            onerom_metadata::ONEROM_INFO_VERSION
+        );
+    }
 
     /// A device's worth of entries, using the same `use` category throughout so
     /// a test can pick out the column it cares about. The wire's fourth byte is

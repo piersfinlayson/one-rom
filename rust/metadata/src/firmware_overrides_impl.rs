@@ -20,7 +20,7 @@
 //!   - bit 2: Status LED enabled
 //!   - bit 3: SWD enabled
 
-use crate::{FireFreq, FireVreg, OneromFirmwareOverrides};
+use crate::{FireFreq, FireVreg, MaybeKnown, OneromFirmwareOverrides};
 
 impl OneromFirmwareOverrides {
     // override_present[0] bit positions
@@ -47,7 +47,10 @@ impl OneromFirmwareOverrides {
     }
 
     /// VREG voltage override, or `None` if not overridden.
-    pub fn vreg(&self) -> Option<FireVreg> {
+    ///
+    /// The level is a fixed list the firmware can add to, so it arrives
+    /// wrapped - see [`MaybeKnown`].
+    pub fn vreg(&self) -> Option<MaybeKnown<FireVreg>> {
         (self.override_present[0] & Self::PRESENT_FIRE_VREG != 0).then_some(self.fire_vreg)
     }
 
@@ -80,7 +83,7 @@ mod tests {
             override_value: [value, 0, 0, 0, 0, 0, 0, 0],
             ice_freq: 0,
             fire_freq: 0,
-            fire_vreg: FireVreg::FireVregStock,
+            fire_vreg: MaybeKnown::Known(FireVreg::FireVregStock),
         }
     }
 
@@ -114,8 +117,8 @@ mod tests {
     #[test]
     fn vreg_present() {
         let mut o = overrides_with(1 << 4, 0);
-        o.fire_vreg = FireVreg::FireVreg110v;
-        assert_eq!(o.vreg(), Some(FireVreg::FireVreg110v));
+        o.fire_vreg = MaybeKnown::Known(FireVreg::FireVreg110v);
+        assert_eq!(o.vreg(), Some(MaybeKnown::Known(FireVreg::FireVreg110v)));
     }
 
     #[test]

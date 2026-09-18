@@ -13,7 +13,7 @@ use onerom_config::chip::ChipType;
 use onerom_config::hw::Board;
 
 use onerom_metadata::{
-    BitModes, OneromAlgDmaConfig, OneromFirmwareOverrides, OneromRomSlot, Pointer,
+    BitModes, MaybeKnown, OneromAlgDmaConfig, OneromFirmwareOverrides, OneromRomSlot, Pointer,
 };
 
 use crate::MAX_IMAGE_SIZE;
@@ -35,13 +35,23 @@ use super::slot_context::{SlotContext, socket_pin_offset};
 pub(crate) fn bytes_per_word(alg_dma: &OneromAlgDmaConfig) -> u32 {
     match alg_dma {
         OneromAlgDmaConfig::AlgDma0 {
-            bit_mode: BitModes::BitMode8,
+            bit_mode: MaybeKnown::Known(BitModes::BitMode8),
             ..
         } => 1,
         OneromAlgDmaConfig::AlgDma0 {
-            bit_mode: BitModes::BitMode16,
+            bit_mode: MaybeKnown::Known(BitModes::BitMode16),
             ..
         } => 2,
+        // `build_alg_dma` only ever names a bit mode this build knows, and one
+        // with no name brings no width to size a table at.  Same for the
+        // algorithm itself, one level up.
+        OneromAlgDmaConfig::AlgDma0 {
+            bit_mode: MaybeKnown::Unknown(raw),
+            ..
+        } => panic!("bit mode {raw} is not one this build can size a ROM table for"),
+        OneromAlgDmaConfig::Unknown { alg, .. } => {
+            panic!("DMA algorithm {alg} is not one this build can size a ROM table for")
+        }
     }
 }
 
@@ -176,7 +186,7 @@ pub fn build_rom_slot(
         size,
         roms,
         rom_count: chips.len() as u8,
-        slot_type,
+        slot_type: MaybeKnown::Known(slot_type),
         alg: Some(alg),
         firmware_overrides,
     };
@@ -236,7 +246,10 @@ mod tests {
         assert_eq!(slot.data, Pointer::Null);
         assert_eq!(slot.size, 1 << 16); // 2^16 * 1 byte/word
         assert_eq!(slot.rom_count, 1);
-        assert_eq!(slot.slot_type, RomSlotType::RomSlotTypeSingleRom);
+        assert_eq!(
+            slot.slot_type,
+            MaybeKnown::Known(RomSlotType::RomSlotTypeSingleRom)
+        );
         assert_eq!(slot.firmware_overrides, None);
 
         assert_eq!(
@@ -274,7 +287,7 @@ mod tests {
                     word_size: 8,
                 },
                 alg_dma: OneromAlgDmaConfig::AlgDma0 {
-                    bit_mode: BitModes::BitMode8,
+                    bit_mode: MaybeKnown::Known(BitModes::BitMode8),
                     continuous: 1,
                 },
                 gpio_pull_config: None,
@@ -347,7 +360,10 @@ mod tests {
         assert_eq!(slot.data, Pointer::Null);
         assert_eq!(slot.size, 1 << 17);
         assert_eq!(slot.rom_count, 1);
-        assert_eq!(slot.slot_type, RomSlotType::RomSlotTypeSingleRom);
+        assert_eq!(
+            slot.slot_type,
+            MaybeKnown::Known(RomSlotType::RomSlotTypeSingleRom)
+        );
         assert_eq!(slot.firmware_overrides, None);
 
         let alg = slot.alg.as_ref().expect("alg must be present");
@@ -355,7 +371,7 @@ mod tests {
         assert_eq!(
             alg.alg_dma,
             OneromAlgDmaConfig::AlgDma0 {
-                bit_mode: BitModes::BitMode8,
+                bit_mode: MaybeKnown::Known(BitModes::BitMode8),
                 continuous: 1
             }
         );
@@ -445,7 +461,10 @@ mod tests {
         assert_eq!(slot.data, Pointer::Null);
         assert_eq!(slot.size, 1 << 16);
         assert_eq!(slot.rom_count, 2);
-        assert_eq!(slot.slot_type, RomSlotType::RomSlotTypeBankedRom);
+        assert_eq!(
+            slot.slot_type,
+            MaybeKnown::Known(RomSlotType::RomSlotTypeBankedRom)
+        );
         assert_eq!(slot.firmware_overrides, None);
 
         let alg = slot.alg.as_ref().expect("alg must be present");
@@ -453,7 +472,7 @@ mod tests {
         assert_eq!(
             alg.alg_dma,
             OneromAlgDmaConfig::AlgDma0 {
-                bit_mode: BitModes::BitMode8,
+                bit_mode: MaybeKnown::Known(BitModes::BitMode8),
                 continuous: 1
             }
         );

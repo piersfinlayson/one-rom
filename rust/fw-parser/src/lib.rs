@@ -45,8 +45,13 @@ use onerom_config::mcu::{RP235X_BASE_FLASH, RP235X_BASE_SRAM, Variant as McuVari
 /// known to be correct up to this version, and refuses anything above it.
 /// The pre-v0.7.0 format has no ceiling of its own.  It ends below v0.7.0,
 /// and [`Parser::parse_flash`] refuses everything from there up.
+///
+/// The major and minor track VERSION_MAJOR and VERSION_MINOR in the repo-root
+/// Makefile - left behind, this parser refuses the firmware built beside it.
+/// `cargo run -p doc-gen` compares the two.  The patch is 999, standing for
+/// any patch of that minor.
 pub const MAX_VERSION_MAJOR: u16 = 0;
-pub const MAX_VERSION_MINOR: u16 = 7;
+pub const MAX_VERSION_MINOR: u16 = 8;
 pub const MAX_VERSION_PATCH: u16 = 999;
 
 /// [`MAX_VERSION_MAJOR`], [`MAX_VERSION_MINOR`] and [`MAX_VERSION_PATCH`] as
@@ -76,7 +81,7 @@ use log::{debug, error, info, trace, warn};
 pub use device::{ParsedDevice, RomView, SlotKind, SlotView, Slots};
 pub use info::{Sdrr, SdrrExtraInfo, SdrrInfo, SdrrPins, SdrrRomInfo, SdrrRomSet, SdrrRuntimeInfo};
 pub use lab::{LabFlash, LabParser, LabRam, OneRomLab};
-pub use onerom::{FirmwareFormat, OneRom};
+pub use onerom::{FirmwareFormat, NewerGeneration, OneRom, RuntimeAbsence};
 pub use types::{
     McuLine, McuStorage, SdrrAddress, SdrrCsSet, SdrrCsState, SdrrLogicalAddress, SdrrMcuPort,
     SdrrRomType, SdrrServe, Source,
@@ -90,7 +95,10 @@ use crate::parsing::{
 use onerom::parse_onerom_from_view;
 use onerom_metadata::{
     BUILD_DATE_BUF_LEN, DeviceMemoryView, METADATA_SIZE, MIN_SCHEMA_VERSION,
-    ONEROM_RUNTIME_INFO_SIZE,
+    ONEROM_INFO_BUILD_DATE_OFFSET, ONEROM_INFO_MAGIC, ONEROM_INFO_MAGIC_OFFSET,
+    ONEROM_INFO_MAJOR_VERSION_OFFSET, ONEROM_INFO_METADATA_OFFSET,
+    ONEROM_INFO_MINOR_VERSION_OFFSET, ONEROM_INFO_PATCH_VERSION_OFFSET, ONEROM_INFO_RUNTIME_OFFSET,
+    ONEROM_INFO_SIZE, ONEROM_RUNTIME_INFO_SIZE, RUNTIME_INFO_MAGIC,
 };
 
 /// Offset from start of the firmware where the SDRR info header is located.
@@ -385,6 +393,7 @@ impl<'a, R: Reader> Parser<'a, R> {
                 Err(e) => ParsedDevice::Schema(OneRom::new(
                     None,
                     vec![ParseError::new("parse_format_schema", e)],
+                    None,
                 )),
             },
             _ => ParsedDevice::Original(self.parse().await),
@@ -663,24 +672,23 @@ impl<'a, R: Reader> Parser<'a, R> {
     /// Parse schema-format (v0.7.0+) firmware.
     ///
     /// Reads the minimum set of memory regions required — the info header
-    /// (64 bytes), the build_date string, the metadata blob
+    /// (`ONEROM_INFO_SIZE`), the build_date string, the metadata blob
     /// ([`METADATA_SIZE`] bytes), and the runtime info (if present) — then
     /// assembles a [`DeviceMemoryView`] and calls the generated parser.
     ///
     /// # Memory usage
     ///
-    /// The dominant allocation is the metadata blob (~16 KB).  Callers on
-    /// deeply resource-constrained systems should be aware of this; see the
-    /// crate-level documentation for the known limitation and the deferred
-    /// lazy-parse plan.
+    /// The dominant allocation is the metadata blob (~16 KB), which has to be
+    /// held in the reader's own RAM.
     ///
     /// # Errors
     ///
     /// Returns `Err` only for truly fatal failures: inability to read the
     /// info header, or an invalid magic value.  Failures to read the
-    /// build_date string, metadata, or runtime are recorded as non-fatal
-    /// errors in [`OneRom::parse_errors`] and result in the corresponding
-    /// field being `None`.
+    /// build_date string or metadata are recorded as non-fatal errors in
+    /// [`OneRom::parse_errors`] and result in the corresponding field being
+    /// `None`.  An absent runtime is usually no fault at all, so its reason
+    /// goes to [`OneRom::runtime_absence`] rather than among the errors.
     pub async fn parse_format_schema(&mut self) -> Result<OneRom, String> {
         // Schema-format firmware is RP2350-only.
         self.base_flash_address = RP235X_BASE_FLASH;
@@ -689,20 +697,25 @@ impl<'a, R: Reader> Parser<'a, R> {
 
         let info_addr = self.base_flash_address + SDRR_INFO_FW_OFFSET;
 
-        // ---- Read and validate info header (64 bytes) -------------------
-        let mut info_buf = [0u8; 64];
+        // ---- Read and validate info header -------------------------------
+        //
+        // Picked out by hand rather than by the generated parser: these
+        // pointers say which memory regions to load, and the generated parser
+        // has nothing to run over until they are.  Every offset comes from
+        // the expected_offset fields in metadata_schema.toml.
+        let mut info_buf = [0u8; ONEROM_INFO_SIZE];
         self.reader
             .read(info_addr, &mut info_buf)
             .await
             .map_err(|_| "Failed to read info header".to_string())?;
 
-        if &info_buf[0..4] != b"SDRR" {
+        if !info_buf[ONEROM_INFO_MAGIC_OFFSET..].starts_with(ONEROM_INFO_MAGIC.as_bytes()) {
             return Err("Invalid magic: not an SDRR firmware image".into());
         }
 
-        let major = u16::from_le_bytes([info_buf[4], info_buf[5]]);
-        let minor = u16::from_le_bytes([info_buf[6], info_buf[7]]);
-        let patch = u16::from_le_bytes([info_buf[8], info_buf[9]]);
+        let major = info_u16(&info_buf, ONEROM_INFO_MAJOR_VERSION_OFFSET);
+        let minor = info_u16(&info_buf, ONEROM_INFO_MINOR_VERSION_OFFSET);
+        let patch = info_u16(&info_buf, ONEROM_INFO_PATCH_VERSION_OFFSET);
         let version = FirmwareVersion::new(major, minor, patch, 0);
 
         if version < MIN_SCHEMA_VERSION {
@@ -720,9 +733,9 @@ impl<'a, R: Reader> Parser<'a, R> {
         }
 
         // ---- Extract pointers from info header --------------------------
-        let build_date_ptr = u32::from_le_bytes(info_buf[12..16].try_into().unwrap());
-        let metadata_ptr = u32::from_le_bytes(info_buf[28..32].try_into().unwrap());
-        let runtime_ptr = u32::from_le_bytes(info_buf[36..40].try_into().unwrap());
+        let build_date_ptr = info_u32(&info_buf, ONEROM_INFO_BUILD_DATE_OFFSET);
+        let metadata_ptr = info_u32(&info_buf, ONEROM_INFO_METADATA_OFFSET);
+        let runtime_ptr = info_u32(&info_buf, ONEROM_INFO_RUNTIME_OFFSET);
 
         // ---- Load memory regions ----------------------------------------
         let mut parse_errors = Vec::new();
@@ -766,28 +779,30 @@ impl<'a, R: Reader> Parser<'a, R> {
         };
 
         // Runtime info — present only when the device is actively running.
+        // Three of RuntimeAbsence's four reasons are known here.
         let mut runtime_buf = [0u8; ONEROM_RUNTIME_INFO_SIZE];
-        let runtime_ok = if runtime_ptr != 0 && runtime_ptr != 0xFFFF_FFFF {
+        let runtime_absence = if runtime_ptr != 0 && runtime_ptr != 0xFFFF_FFFF {
             match self.reader.read(runtime_ptr, &mut runtime_buf).await {
                 Ok(()) => {
-                    let magic_ok = &runtime_buf[0..4] == b"sdrr";
-                    if !magic_ok {
+                    if runtime_buf.starts_with(RUNTIME_INFO_MAGIC.as_bytes()) {
+                        None
+                    } else {
                         debug!(
                             "Runtime struct at {:#010X} has invalid magic - device not running",
                             runtime_ptr
                         );
+                        Some(RuntimeAbsence::NotRunning)
                     }
-                    magic_ok
                 }
                 Err(_) => {
-                    // Not treated as an error: device may simply not be running.
                     debug!("Could not read runtime info at {:#010X}", runtime_ptr);
-                    false
+                    Some(RuntimeAbsence::Unreadable)
                 }
             }
         } else {
-            false
+            Some(RuntimeAbsence::NoPointer)
         };
+        let runtime_ok = runtime_absence.is_none();
 
         // ---- Patch unreadable pointers in info_buf ----------------------
         //
@@ -797,10 +812,10 @@ impl<'a, R: Reader> Parser<'a, R> {
         // cause OutOfBounds and fail the whole parse.  Null the pointer out
         // in our working copy of info_buf so the parser treats it as absent.
         if !meta_ok {
-            info_buf[28..32].copy_from_slice(&0u32.to_le_bytes());
+            info_clear_u32(&mut info_buf, ONEROM_INFO_METADATA_OFFSET);
         }
         if !runtime_ok {
-            info_buf[36..40].copy_from_slice(&0u32.to_le_bytes());
+            info_clear_u32(&mut info_buf, ONEROM_INFO_RUNTIME_OFFSET);
         }
 
         // ---- Assemble DeviceMemoryView ----------------------------------
@@ -811,11 +826,6 @@ impl<'a, R: Reader> Parser<'a, R> {
         // synchronous, slice-based view over pre-loaded memory regions.
         // All async I/O is completed above; from here the parse is fully
         // synchronous.
-        //
-        // A future revision may introduce a lazy Reader-backed view to avoid
-        // pre-loading the full metadata blob into RAM.  The seam for that
-        // work is here — everything above and the OneRom construction below
-        // can remain unchanged.
         let mut view = DeviceMemoryView::new(&info_buf, info_addr);
         view.add_region(&build_date_buf, build_date_ptr);
         if meta_ok {
@@ -825,7 +835,12 @@ impl<'a, R: Reader> Parser<'a, R> {
             view.add_region(&runtime_buf, runtime_ptr);
         }
 
-        Ok(parse_onerom_from_view(&view, info_addr, parse_errors))
+        Ok(parse_onerom_from_view(
+            &view,
+            info_addr,
+            parse_errors,
+            runtime_absence,
+        ))
     }
 
     async fn parse_ram_from_runtime_info(
@@ -935,6 +950,29 @@ impl fmt::Display for ParseError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}: {}", self.field, self.reason)
     }
+}
+
+/// Read a little-endian `u16` out of the info header.
+///
+/// `offset` is one of the schema's `ONEROM_INFO_*_OFFSET` constants and the
+/// buffer is a whole header, so the read is always inside it.
+fn info_u16(buf: &[u8; ONEROM_INFO_SIZE], offset: usize) -> u16 {
+    u16::from_le_bytes([buf[offset], buf[offset + 1]])
+}
+
+/// Read a little-endian `u32` out of the info header, as [`info_u16`] does.
+fn info_u32(buf: &[u8; ONEROM_INFO_SIZE], offset: usize) -> u32 {
+    u32::from_le_bytes([
+        buf[offset],
+        buf[offset + 1],
+        buf[offset + 2],
+        buf[offset + 3],
+    ])
+}
+
+/// Zero a `u32` pointer field in a working copy of the info header.
+fn info_clear_u32(buf: &mut [u8; ONEROM_INFO_SIZE], offset: usize) {
+    buf[offset..offset + 4].fill(0);
 }
 
 async fn read_string_at_ptr<R: Reader>(reader: &mut R, ptr: u32) -> Result<String, String> {

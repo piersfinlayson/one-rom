@@ -95,6 +95,9 @@ void setup_gpio(void) {
     STUB_LOG("setup_gpio");
 }
 
+// Set by enter_bootloader() below, read by stub_bootloader_entered().
+static uint8_t stub_entered_bootloader;
+
 // Put back what a reset puts back.
 //
 // A test build runs many boots in one process, and the firmware's own statics
@@ -113,6 +116,7 @@ void onerom_test_reset(void) {
     stub_gpio_reset();
     stub_timer_reset();
     pio_led_reset();
+    stub_entered_bootloader = 0;
 }
 
 void setup_qmi(rp235x_clock_config_t *config) {
@@ -228,9 +232,14 @@ void disable_swd(void) {
     STUB_LOG("disable_swd");
 }
 
-// Enters bootloader mode.
+// Enters bootloader mode.  See stub.h for why the call is recorded.
 void enter_bootloader(void) {
     STUB_LOG("enter_bootloader");
+    stub_entered_bootloader = 1;
+}
+
+uint8_t stub_bootloader_entered(void) {
+    return stub_entered_bootloader;
 }
 
 void platform_logging(void) {

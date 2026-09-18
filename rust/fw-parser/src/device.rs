@@ -61,7 +61,7 @@ use std::borrow::Cow;
 
 use onerom_config::fw::FirmwareVersion;
 use onerom_config::hw::Board;
-use onerom_metadata::{OneromRomInfo, OneromRomSlot, RomSlotType};
+use onerom_metadata::{MaybeKnown, OneromRomInfo, OneromRomSlot, RomSlotType};
 
 use crate::ParseError;
 use crate::info::{Sdrr, SdrrRomInfo, SdrrRomSet};
@@ -78,6 +78,11 @@ use crate::types::SdrrRomType;
 /// [`as_original`]: ParsedDevice::as_original
 /// [`as_schema`]: ParsedDevice::as_schema
 /// [`Parser::parse_device`]: crate::Parser::parse_device
+// The schema variant carries the whole parsed tree and always will, so the
+// two will keep differing by more than clippy's threshold.  Boxing one would
+// put an allocation on every caller to quiet a lint.  Studio's device enum
+// carries the same allow.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum ParsedDevice {
     /// Pre-v0.7.0 hand-crafted format.
@@ -443,16 +448,25 @@ fn sdrr_set_kind(set: &SdrrRomSet) -> SlotKind {
 }
 
 /// Classify a schema-format slot by its declared slot type.
+///
+/// A slot type this build has no name for counts as a ROM, as it does in
+/// `sdrr_set_kind` - calling it a plugin would hide it from the user-facing
+/// numbering.
 fn schema_slot_kind(slot: &OneromRomSlot) -> SlotKind {
     match slot.slot_type {
-        RomSlotType::RomSlotTypePluginSystem
-        | RomSlotType::RomSlotTypePluginUser
-        | RomSlotType::RomSlotTypePluginPio => SlotKind::Plugin,
+        MaybeKnown::Known(
+            RomSlotType::RomSlotTypePluginSystem
+            | RomSlotType::RomSlotTypePluginUser
+            | RomSlotType::RomSlotTypePluginPio,
+        ) => SlotKind::Plugin,
         // A RAM slot is user-placed and counted in the user-facing numbering,
         // so it belongs here rather than with the plugins.
-        RomSlotType::RomSlotTypeSingleRom
-        | RomSlotType::RomSlotTypeBankedRom
-        | RomSlotType::RomSlotTypeMultiRom
-        | RomSlotType::RomSlotTypeSingleRam => SlotKind::Rom,
+        MaybeKnown::Known(
+            RomSlotType::RomSlotTypeSingleRom
+            | RomSlotType::RomSlotTypeBankedRom
+            | RomSlotType::RomSlotTypeMultiRom
+            | RomSlotType::RomSlotTypeSingleRam,
+        ) => SlotKind::Rom,
+        MaybeKnown::Unknown(_) => SlotKind::Rom,
     }
 }

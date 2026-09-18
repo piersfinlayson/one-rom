@@ -51,8 +51,8 @@ use onerom_fw_emulator::{Emulator, OraResult, ffi};
 use onerom_fw_tester::geometry;
 use onerom_gen::Config;
 use onerom_metadata::{
-    GPIO_NONE, OneromAlgAddrConfig, OneromAlgCsConfig, OneromAlgDataConfig, OneromMetadataHeader,
-    RomSlotType,
+    GPIO_NONE, MaybeKnown, OneromAlgAddrConfig, OneromAlgCsConfig, OneromAlgDataConfig,
+    OneromMetadataHeader, RomSlotType,
 };
 
 /// GPIOs on the running RP2350 variant, mirroring the firmware's `max_gpios[]`
@@ -111,12 +111,14 @@ struct ServingSet {
 /// its own base — which is exactly the arithmetic `retrieve_gpio_init()` does,
 /// including only offsetting the /BYTE pin when one is present.
 fn serving_set(header: &OneromMetadataHeader, set_idx: usize) -> Result<ServingSet, String> {
-    let is_plugin = |t: RomSlotType| {
+    let is_plugin = |t: MaybeKnown<RomSlotType>| {
         matches!(
             t,
-            RomSlotType::RomSlotTypePluginSystem
-                | RomSlotType::RomSlotTypePluginUser
-                | RomSlotType::RomSlotTypePluginPio
+            MaybeKnown::Known(
+                RomSlotType::RomSlotTypePluginSystem
+                    | RomSlotType::RomSlotTypePluginUser
+                    | RomSlotType::RomSlotTypePluginPio
+            )
         )
     };
 
@@ -190,14 +192,28 @@ fn serving_set(header: &OneromMetadataHeader, set_idx: usize) -> Result<ServingS
             // samples to decide whether this bank is selected.
             span(gpio_base + base_qualifier_pin, num_qualifier_pins),
         ),
+        // The pins a variant samples beyond the common fields are its own, and
+        // an expectation missing them would pass against the wrong pin set.
+        OneromAlgCsConfig::Unknown { alg, .. } => {
+            return Err(format!(
+                "CS algorithm {alg} is not one this build knows the sampled pins of"
+            ));
+        }
     };
 
-    let OneromAlgAddrConfig::AlgAddr0 {
+    // Every field the address window needs is common to the family.
+    let (OneromAlgAddrConfig::AlgAddr0 {
         gpio_base,
         base_addr_pin,
         num_addr_pins,
         ..
-    } = alg.alg_addr;
+    }
+    | OneromAlgAddrConfig::Unknown {
+        gpio_base,
+        base_addr_pin,
+        num_addr_pins,
+        ..
+    }) = alg.alg_addr;
     let addr = span(gpio_base + base_addr_pin, num_addr_pins);
 
     // The data algorithm names the /BYTE pin again, plus the A-1 pin the
@@ -210,6 +226,12 @@ fn serving_set(header: &OneromMetadataHeader, set_idx: usize) -> Result<ServingS
             a_minus_1_pin,
             ..
         } => pin(gpio_base + byte_pin) | pin(gpio_base + a_minus_1_pin),
+        // As for the CS algorithm above.
+        OneromAlgDataConfig::Unknown { alg, .. } => {
+            return Err(format!(
+                "data algorithm {alg} is not one this build knows the sampled pins of"
+            ));
+        }
     };
 
     let driven = span(data_base, data_pins);

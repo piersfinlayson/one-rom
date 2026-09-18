@@ -25,7 +25,9 @@ use crate::schema::*;
 pub fn generate(schema: &Schema) -> String {
     let mut out = String::with_capacity(128 * 1024);
     push_file_header(&mut out);
+    push_generations(&mut out);
     push_constants(&mut out, schema);
+    push_metadata_generation_table(&mut out, schema);
     push_type_aliases(&mut out, schema);
     push_enums(&mut out, schema);
     push_structs(&mut out, schema);
@@ -73,6 +75,72 @@ pub(crate) fn variant_ident(c_name: &str, _strip_prefix: &str) -> String {
 }
 
 // ---------------------------------------------------------------------------
+// Section: structure generations
+// ---------------------------------------------------------------------------
+
+/// Emit `Generations`, the generation each top-level structure was found to
+/// carry, which every generated `parse` takes and passes down its tree.
+fn push_generations(out: &mut String) {
+    out.push_str(
+        "// ---------------------------------------------------------------------------\n\
+         // Structure generations\n\
+         // ---------------------------------------------------------------------------\n\n",
+    );
+
+    out.push_str(
+        "/// The generation each top-level structure was found to carry.\n\
+         ///\n\
+         /// One is threaded through every `parse`, because a field added after its\n\
+         /// structure's first generation is not present in a structure written before\n\
+         /// it, and nothing in the bytes says so - unwritten metadata is 0xFF, which\n\
+         /// the schema also uses as a real value.  Such a field yields its declared\n\
+         /// default instead of whatever sits at its offset.\n\
+         ///\n\
+         /// A structure fills in its own slot from the bytes as it parses, and passes\n\
+         /// the result down.  A slot nothing has filled in reads 0, older than any\n\
+         /// generation a device carries, so a field gated on one yields its default\n\
+         /// until the structure that governs it has been read.\n",
+    );
+    out.push_str(
+        "///\n\
+         /// A slot is added here whenever a structure starts carrying a generation,\n\
+         /// so the struct is non_exhaustive and reached through [`Generations::UNKNOWN`]\n\
+         /// and the `with_` methods rather than built as a literal.\n",
+    );
+    out.push_str("#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]\n");
+    out.push_str("#[non_exhaustive]\n");
+    out.push_str("pub struct Generations {\n");
+    for (name, slot) in generation_slots() {
+        out.push_str(&format!("    /// Generation `{name}` carries.\n"));
+        out.push_str(&format!("    pub {slot}: u32,\n"));
+    }
+    out.push_str("}\n\n");
+
+    out.push_str("impl Generations {\n");
+    out.push_str("    /// No generation read yet.  Every slot is older than anything a\n");
+    out.push_str("    /// device carries, so every gated field yields its default.\n");
+    out.push_str("    pub const UNKNOWN: Self = Self {\n");
+    for (_, slot) in generation_slots() {
+        out.push_str(&format!("        {slot}: 0,\n"));
+    }
+    out.push_str("    };\n");
+
+    for (name, slot) in generation_slots() {
+        out.push('\n');
+        out.push_str(&format!(
+            "    /// This, with the generation `{name}` was found to carry.\n"
+        ));
+        out.push_str(&format!(
+            "    pub const fn with_{slot}(mut self, generation: u32) -> Self {{\n"
+        ));
+        out.push_str(&format!("        self.{slot} = generation;\n"));
+        out.push_str("        self\n");
+        out.push_str("    }\n");
+    }
+    out.push_str("}\n\n");
+}
+
+// ---------------------------------------------------------------------------
 // Field Rust type string
 // ---------------------------------------------------------------------------
 
@@ -80,7 +148,13 @@ fn field_rust_type(field: &Field) -> String {
     match field.kind.as_str() {
         "scalar" => field.type_.as_deref().unwrap_or("u8").to_string(),
 
-        "enum" => rust_type_name(field.type_.as_deref().unwrap_or("")),
+        // An enum field holds a value the list may have grown past, so the
+        // wrapper is the field's type rather than the enum itself.  See
+        // `MaybeKnown` in src/lib.rs.
+        "enum" => format!(
+            "MaybeKnown<{}>",
+            rust_type_name(field.type_.as_deref().unwrap_or(""))
+        ),
 
         "type_alias" => rust_type_name(field.type_.as_deref().unwrap_or("")),
 
@@ -178,8 +252,60 @@ fn alias_rw(field: &Field, schema: &Schema) -> (&'static str, usize) {
 }
 
 // ---------------------------------------------------------------------------
+// Fixed-list field helpers
+// ---------------------------------------------------------------------------
+
+/// Emit the binding that turns `{name}_raw` into the field's `MaybeKnown`.
+///
+/// A value the list has grown past is kept rather than refused, so a structure
+/// carrying one still parses and its other fields still hold what the device
+/// holds.
+fn push_maybe_known_bind(out: &mut String, name: &str, rust_type: &str, indent: &str) {
+    out.push_str(&format!(
+        "{indent}let {name} = match {rust_type}::try_from({name}_raw) {{\n\
+         {indent}    Ok(value) => MaybeKnown::Known(value),\n\
+         {indent}    Err(_) => MaybeKnown::Unknown({name}_raw as u32),\n\
+         {indent}}};\n"
+    ));
+}
+
+/// The expression giving an enum field's stored value back as `repr`, so a
+/// value this build has no name for goes back out as it came in.
+///
+/// Emitted on one line, because the caller decides the indentation of the
+/// statement this sits inside and a wrapped arm would not follow it.
+pub fn maybe_known_raw_expr(field_expr: &str, repr: &str) -> String {
+    format!(
+        "match {field_expr} {{ \
+         MaybeKnown::Known(value) => value as {repr}, \
+         MaybeKnown::Unknown(raw) => raw as {repr} }}"
+    )
+}
+
+// ---------------------------------------------------------------------------
 // Parse code emission — mutable-offset style (structs)
 // ---------------------------------------------------------------------------
+
+/// Emit the expected-offset assertion for an ABI-stable field.
+///
+/// Unconditional, not a debug_assert: it compares the parser's own walk
+/// against the offset the schema declares, so only a generator bug can make it
+/// fire, and a release build without it would read the wrong bytes in silence.
+///
+/// It sits ahead of the read so a field the generation gates is checked for
+/// position whether its bytes are read or skipped.
+fn emit_expected_offset_assert(out: &mut String, field: &Field, indent: &str) {
+    let name = &field.name;
+    if let Some(expected) = field.expected_offset {
+        out.push_str(&format!(
+            "{indent}assert_eq!(\n\
+             {indent}    (offset - addr) as usize,\n\
+             {indent}    {expected}usize,\n\
+             {indent}    \"field `{name}` not at expected offset {expected}\",\n\
+             {indent});\n"
+        ));
+    }
+}
 
 /// Emit the DeviceMemoryView read + `offset +=` code for one struct field.
 ///
@@ -190,17 +316,6 @@ fn alias_rw(field: &Field, schema: &Schema) -> (&'static str, usize) {
 /// `emit_array_loop_body` separately instead of this function.
 fn emit_field_parse_offset(out: &mut String, field: &Field, indent: &str, schema: &Schema) {
     let name = &field.name;
-
-    // Expected-offset assertion for ABI-stable fields.
-    if let Some(expected) = field.expected_offset {
-        out.push_str(&format!(
-            "{indent}debug_assert_eq!(\n\
-             {indent}    (offset - addr) as usize,\n\
-             {indent}    {expected}usize,\n\
-             {indent}    \"field `{name}` not at expected offset {expected}\",\n\
-             {indent});\n"
-        ));
-    }
 
     match field.kind.as_str() {
         "scalar" => {
@@ -216,14 +331,7 @@ fn emit_field_parse_offset(out: &mut String, field: &Field, indent: &str, schema
             out.push_str(&format!(
                 "{indent}let {name}_raw = view.{method}(offset)?; offset += {sz};\n"
             ));
-            out.push_str(&format!(
-                "{indent}let {name} = {rtn}::try_from({name}_raw).map_err(|_| {{\n\
-                 {indent}    ParseError::UnknownDiscriminant {{\n\
-                 {indent}        type_name: \"{rtn}\",\n\
-                 {indent}        value: {name}_raw as u32,\n\
-                 {indent}    }}\n\
-                 {indent}}})?;\n"
-            ));
+            push_maybe_known_bind(out, name, &rtn, indent);
         }
 
         "type_alias" => {
@@ -290,9 +398,9 @@ fn emit_field_parse_offset(out: &mut String, field: &Field, indent: &str, schema
                 // propagating (e.g. a runtime pointer into RAM that holds
                 // stale/absent data on a stopped device).
                 let parse_expr = if field.none_on_parse_error.unwrap_or(false) {
-                    format!("{tn}::parse(view, {name}_ptr).ok()")
+                    format!("{tn}::parse(view, {name}_ptr, generations).ok()")
                 } else {
-                    format!("Some({tn}::parse(view, {name}_ptr)?)")
+                    format!("Some({tn}::parse(view, {name}_ptr, generations)?)")
                 };
                 out.push_str(&format!(
                     "{indent}let {name} = if {name}_ptr == 0 || {name}_ptr == 0xFFFF_FFFF {{\n\
@@ -303,10 +411,10 @@ fn emit_field_parse_offset(out: &mut String, field: &Field, indent: &str, schema
                 ));
             } else {
                 out.push_str(&format!(
-                    "{indent}if {name}_ptr == 0 {{\n\
+                    "{indent}if {name}_ptr == 0 || {name}_ptr == 0xFFFF_FFFF {{\n\
                      {indent}    return Err(ParseError::NullPointer {{ field: \"{name}\" }});\n\
                      {indent}}}\n\
-                     {indent}let {name} = {tn}::parse(view, {name}_ptr)?;\n"
+                     {indent}let {name} = {tn}::parse(view, {name}_ptr, generations)?;\n"
                 ));
             }
         }
@@ -323,9 +431,9 @@ fn emit_field_parse_offset(out: &mut String, field: &Field, indent: &str, schema
             ));
             if field.nullable.unwrap_or(false) {
                 let parse_expr = if field.none_on_parse_error.unwrap_or(false) {
-                    format!("{tn}::parse(view, {name}_ptr).ok()")
+                    format!("{tn}::parse(view, {name}_ptr, generations).ok()")
                 } else {
-                    format!("Some({tn}::parse(view, {name}_ptr)?)")
+                    format!("Some({tn}::parse(view, {name}_ptr, generations)?)")
                 };
                 out.push_str(&format!(
                     "{indent}let {name} = if {name}_ptr == 0 || {name}_ptr == 0xFFFF_FFFF {{\n\
@@ -336,10 +444,10 @@ fn emit_field_parse_offset(out: &mut String, field: &Field, indent: &str, schema
                 ));
             } else {
                 out.push_str(&format!(
-                    "{indent}if {name}_ptr == 0 {{\n\
+                    "{indent}if {name}_ptr == 0 || {name}_ptr == 0xFFFF_FFFF {{\n\
                      {indent}    return Err(ParseError::NullPointer {{ field: \"{name}\" }});\n\
                      {indent}}}\n\
-                     {indent}let {name} = {tn}::parse(view, {name}_ptr)?;\n"
+                     {indent}let {name} = {tn}::parse(view, {name}_ptr, generations)?;\n"
                 ));
             }
         }
@@ -409,7 +517,7 @@ fn emit_array_loop_body(out: &mut String, field: &Field, indent: &str, schema: &
 
             if !nullable {
                 out.push_str(&format!(
-                    "{indent}if {name}_ptr == 0 {{\n\
+                    "{indent}if {name}_ptr == 0 || {name}_ptr == 0xFFFF_FFFF {{\n\
                      {indent}    return Err(ParseError::NullPointer {{ field: \"{name}\" }});\n\
                      {indent}}}\n"
                 ));
@@ -417,7 +525,9 @@ fn emit_array_loop_body(out: &mut String, field: &Field, indent: &str, schema: &
             out.push_str(&format!("{indent}let mut {name} = Vec::new();\n"));
 
             let li = if nullable {
-                out.push_str(&format!("{indent}if {name}_ptr != 0 {{\n"));
+                out.push_str(&format!(
+                    "{indent}if {name}_ptr != 0 && {name}_ptr != 0xFFFF_FFFF {{\n"
+                ));
                 format!("{indent}    ")
             } else {
                 indent.to_string()
@@ -427,7 +537,7 @@ fn emit_array_loop_body(out: &mut String, field: &Field, indent: &str, schema: &
                 "{li}    let ea = {name}_ptr + (i as u32 * {stride}u32);\n"
             ));
             out.push_str(&format!(
-                "{li}    {name}.push({elem_rn}::parse(view, ea)?);\n"
+                "{li}    {name}.push({elem_rn}::parse(view, ea, generations)?);\n"
             ));
             out.push_str(&format!("{li}}}\n"));
 
@@ -461,12 +571,12 @@ fn emit_array_loop_body(out: &mut String, field: &Field, indent: &str, schema: &
                 "{li}    let inner_ptr = view.read_ptr({name}_outer + (i as u32 * 4u32))?;\n"
             ));
             out.push_str(&format!(
-                "{li}    if inner_ptr == 0 {{\n\
+                "{li}    if inner_ptr == 0 || inner_ptr == 0xFFFF_FFFF {{\n\
                  {li}        return Err(ParseError::NullPointer {{ field: \"{name}[]\" }});\n\
                  {li}    }}\n"
             ));
             out.push_str(&format!(
-                "{li}    {name}.push({elem_rn}::parse(view, inner_ptr)?);\n"
+                "{li}    {name}.push({elem_rn}::parse(view, inner_ptr, generations)?);\n"
             ));
             out.push_str(&format!("{li}}}\n"));
 
@@ -511,14 +621,7 @@ fn emit_field_at_addr(
             out.push_str(&format!(
                 "{indent}let {name}_raw = view.{method}(addr + {byte_offset}u32)?;\n"
             ));
-            out.push_str(&format!(
-                "{indent}let {name} = {rtn}::try_from({name}_raw).map_err(|_| {{\n\
-                 {indent}    ParseError::UnknownDiscriminant {{\n\
-                 {indent}        type_name: \"{rtn}\",\n\
-                 {indent}        value: {name}_raw as u32,\n\
-                 {indent}    }}\n\
-                 {indent}}})?;\n"
-            ));
+            push_maybe_known_bind(out, name, &rtn, indent);
         }
 
         "type_alias" => {
@@ -576,8 +679,8 @@ fn push_constants(out: &mut String, schema: &Schema) {
          // ---------------------------------------------------------------------------\n\n",
     );
     for c in &schema.constants {
-        if let Some(cmt) = &c.comment {
-            push_doc_comment(out, "", cmt);
+        if let Some(cmt) = c.documentation() {
+            push_doc_comment(out, "", &cmt);
         }
         let rust_ty = match c.type_.as_str() {
             "u8" => "u8",
@@ -601,6 +704,37 @@ fn push_constants(out: &mut String, schema: &Schema) {
     }
 
     push_constant_table(out, schema);
+}
+
+/// Emit the `[[versions]]` entries for the metadata header, as the release
+/// each generation arrived in.  A tool composing an image turns the target
+/// firmware's version into a generation, and the schema is the only answer.
+fn push_metadata_generation_table(out: &mut String, schema: &Schema) {
+    let generations = schema.metadata_generations();
+    if generations.is_empty() {
+        return;
+    }
+
+    out.push_str(
+        "// ---------------------------------------------------------------------------\n\
+         // Metadata generations\n\
+         // ---------------------------------------------------------------------------\n\n",
+    );
+    out.push_str(
+        "/// Every metadata generation, oldest first, with the firmware release that\n\
+         /// introduced it.\n\
+         ///\n\
+         /// A host writes the metadata and the firmware reads it, and the two are of\n\
+         /// different ages.  This is what says which generation a given firmware\n\
+         /// reads - see [`metadata_generation_for`], which is how a caller asks.\n",
+    );
+    out.push_str("pub const METADATA_GENERATIONS: &[(FirmwareVersion, u32)] = &[\n");
+    for (generation, (major, minor, patch)) in generations {
+        out.push_str(&format!(
+            "    (FirmwareVersion::new({major}, {minor}, {patch}, 0), {generation}),\n"
+        ));
+    }
+    out.push_str("];\n\n");
 }
 
 /// Emit every constant a second time, as name and value in plain text.
@@ -857,7 +991,7 @@ fn push_structs(out: &mut String, schema: &Schema) {
         if s.generate == Generate::Skip {
             continue;
         }
-        push_struct_def(out, s);
+        push_struct_def(out, s, schema);
         push_struct_parse(out, s, schema);
     }
 }
@@ -873,7 +1007,7 @@ fn field_needs_big_array(f: &Field) -> bool {
     }
 }
 
-fn push_struct_def(out: &mut String, s: &Struct) {
+fn push_struct_def(out: &mut String, s: &Struct, schema: &Schema) {
     let tn = rust_type_name(&s.name);
 
     if let Some(cmt) = &s.comment {
@@ -887,6 +1021,8 @@ fn push_struct_def(out: &mut String, s: &Struct) {
     };
     out.push_str(derives);
     out.push('\n');
+    // The allow covers this item alone, so code outside still hears the note.
+    push_deprecated_allow(out, s.fields.iter(), "");
     out.push_str(&format!("pub struct {tn} {{\n"));
 
     for f in s.fields.iter().filter(|f| f.kind != "padding") {
@@ -896,6 +1032,8 @@ fn push_struct_def(out: &mut String, s: &Struct) {
                 out.push_str(&format!("    /// {}\n", first.trim()));
             }
         }
+        push_since_doc(out, f, "    ");
+        push_deprecated_attribute(out, f, "    ");
         if field_needs_big_array(f) {
             out.push_str("    #[serde(with = \"serde_big_array::BigArray\")]\n");
         }
@@ -904,21 +1042,350 @@ fn push_struct_def(out: &mut String, s: &Struct) {
     }
     out.push_str("}\n\n");
 
+    let stem = s.name.strip_suffix("_t").unwrap_or(&s.name).to_uppercase();
+
     if let Some(sz) = s.size {
         out.push_str(&format!(
-            "/// Binary size of [`{tn}`] in bytes.\npub const {}_SIZE: usize = {sz};\n\n",
-            s.name.strip_suffix("_t").unwrap_or(&s.name).to_uppercase()
+            "/// Binary size of [`{tn}`] in bytes.\npub const {stem}_SIZE: usize = {sz};\n\n"
         ));
+    }
+
+    push_field_offsets(out, s, schema, &stem, &tn);
+}
+
+/// Emit a byte-offset constant for each field carrying `expected_offset`.
+///
+/// A host bootstrapping its parse of `onerom_info_t` reads pointers out of the
+/// header before it knows enough to run the generated parser, and these
+/// constants are what it reads them at, in place of a literal that would go
+/// stale in silence.
+///
+/// The value emitted is the generator's own layout walk.  `Schema::load` has
+/// already refused a schema where that disagrees with `expected_offset`.
+fn push_field_offsets(out: &mut String, s: &Struct, schema: &Schema, stem: &str, tn: &str) {
+    let offsets = field_offsets(s, schema);
+    for (f, offset) in s.fields.iter().zip(offsets) {
+        if f.expected_offset.is_none() {
+            continue;
+        }
+        let fname = f.name.to_uppercase();
+        out.push_str(&format!(
+            "/// Byte offset of `{}` within [`{tn}`].\npub const {stem}_{fname}_OFFSET: usize = {offset};\n\n",
+            f.name
+        ));
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Generation markers on the generated types
+// ---------------------------------------------------------------------------
+
+/// Say, on the field, which generation brought it in and what a reader of an
+/// older structure gets instead.
+fn push_since_doc(out: &mut String, field: &Field, indent: &str) {
+    let Some((governor, generation)) = field.since_marker() else {
+        return;
+    };
+    // `"null"` is how the schema says a pointer is not there, which is not
+    // how a doc comment says it.
+    let default = match field.default_if_absent.as_ref() {
+        Some(v) if v.as_str() == Some(NULL_DEFAULT) => "nothing".to_string(),
+        Some(v) => v.to_string(),
+        None => String::new(),
+    };
+    out.push_str(&format!(
+        "{indent}/// Arrived in `{governor}` generation {generation}.  An older \
+         structure reads {default} here.\n"
+    ));
+}
+
+/// Mark a deprecated field, so anything reaching for it is told.  Its bytes
+/// are still written and still parsed - what changes is that nothing should be
+/// decided from them.
+fn push_deprecated_attribute(out: &mut String, field: &Field, indent: &str) {
+    let Some((governor, generation)) = field.deprecated_marker() else {
+        return;
+    };
+    out.push_str(&format!(
+        "{indent}#[deprecated(note = \"deprecated from {governor} generation {generation}\")]\n"
+    ));
+}
+
+/// Emit `#[allow(deprecated)]` where any of `fields` is deprecated.
+///
+/// Generated code reads every field it was given, so it would raise the note
+/// on the reader's behalf and say nothing about the reader's own code.
+pub(crate) fn push_deprecated_allow<'a>(
+    out: &mut String,
+    mut fields: impl Iterator<Item = &'a Field>,
+    indent: &str,
+) {
+    if fields.any(|f| f.deprecated_marker().is_some()) {
+        out.push_str(&format!("{indent}#[allow(deprecated)]\n"));
+    }
+}
+
+/// Emit the signature every generated `parse` shares.
+///
+/// A parse that gates nothing and points at nothing still takes `generations`,
+/// so a structure that later gains a gated field does not change shape.
+fn push_parse_signature(out: &mut String) {
+    out.push_str("    pub fn parse(\n");
+    out.push_str("        view: &DeviceMemoryView,\n");
+    out.push_str("        addr: u32,\n");
+    out.push_str("        #[allow(unused_variables)] generations: Generations,\n");
+    out.push_str("    ) -> Result<Self, ParseError> {\n");
+}
+
+/// Emit the read for one struct field, behind its generation where it has one.
+///
+/// Below the generation the bytes are not read, but the offset still moves on
+/// so the walk stays in step, and the field takes the schema's declared
+/// default.
+fn emit_gated_field_parse(out: &mut String, field: &Field, indent: &str, schema: &Schema) {
+    emit_expected_offset_assert(out, field, indent);
+
+    let Some((governor, generation)) = field.since_marker() else {
+        emit_field_parse_offset(out, field, indent, schema);
+        return;
+    };
+    let slot = generation_slot(governor).expect("a marker names a versioned structure");
+    let name = &field.name;
+    let size = field_size(field, schema);
+    let default = rust_default_expr(field, schema);
+
+    out.push_str(&format!(
+        "{indent}// {name} arrived in {governor} generation {generation}.\n"
+    ));
+    out.push_str(&format!(
+        "{indent}let {name} = if generations.{slot} >= {generation}u32 {{\n"
+    ));
+    emit_field_parse_offset(out, field, &format!("{indent}    "), schema);
+    out.push_str(&format!("{indent}    {name}\n"));
+    out.push_str(&format!("{indent}}} else {{\n"));
+    out.push_str(&format!("{indent}    offset += {size};\n"));
+    out.push_str(&format!("{indent}    {default}\n"));
+    out.push_str(&format!("{indent}}};\n"));
+}
+
+/// Emit the pointer read for an array field whose count comes later, behind
+/// its generation where it has one.
+///
+/// The two halves of such a field are emitted apart, so each is gated on its
+/// own.  Below the generation the walk carries a null the loop half never
+/// reaches.
+fn emit_deferred_array_ptr_read(out: &mut String, field: &Field, indent: &str) {
+    let Some((governor, generation)) = field.since_marker() else {
+        emit_array_ptr_read(out, field, indent);
+        return;
+    };
+    let slot = generation_slot(governor).expect("a marker names a versioned structure");
+    let var = deferred_ptr_var(field);
+
+    out.push_str(&format!(
+        "{indent}// {} arrived in {governor} generation {generation}.\n",
+        field.name
+    ));
+    out.push_str(&format!(
+        "{indent}let {var} = if generations.{slot} >= {generation}u32 {{\n"
+    ));
+    emit_array_ptr_read(out, field, &format!("{indent}    "));
+    out.push_str(&format!("{indent}    {var}\n"));
+    out.push_str(&format!("{indent}}} else {{\n"));
+    out.push_str(&format!("{indent}    offset += 4;\n"));
+    out.push_str(&format!("{indent}    0u32\n"));
+    out.push_str(&format!("{indent}}};\n"));
+}
+
+/// Emit the iteration for an array field whose count comes later, behind its
+/// generation where it has one.
+fn emit_deferred_array_loop_body(out: &mut String, field: &Field, indent: &str, schema: &Schema) {
+    let Some((governor, generation)) = field.since_marker() else {
+        emit_array_loop_body(out, field, indent, schema);
+        return;
+    };
+    let slot = generation_slot(governor).expect("a marker names a versioned structure");
+    let name = &field.name;
+
+    out.push_str(&format!(
+        "{indent}let {name} = if generations.{slot} >= {generation}u32 {{\n"
+    ));
+    emit_array_loop_body(out, field, &format!("{indent}    "), schema);
+    out.push_str(&format!("{indent}    {name}\n"));
+    out.push_str(&format!("{indent}}} else {{\n"));
+    out.push_str(&format!("{indent}    Vec::new()\n"));
+    out.push_str(&format!("{indent}}};\n"));
+}
+
+/// The variable [`emit_array_ptr_read`] binds the pointer to.
+fn deferred_ptr_var(field: &Field) -> String {
+    match field.kind.as_str() {
+        "struct_ptr_array_ptr" => format!("{}_outer", field.name),
+        _ => format!("{}_ptr", field.name),
+    }
+}
+
+/// Emit the `generations` update a just-parsed field calls for.
+///
+/// Two fields do: the one holding this structure's own generation, and one
+/// pointing at a versioned structure a later field will be measured against.
+/// `onerom_info_t` is where both happen.
+fn emit_generation_update(
+    out: &mut String,
+    s: &Struct,
+    field: &Field,
+    indent: &str,
+    schema: &Schema,
+) {
+    let name = &field.name;
+
+    if s.version_field.as_deref() == Some(name.as_str())
+        && let Some(slot) = generation_slot(&s.name)
+    {
+        let widen = widen_to_u32(field);
+        out.push_str(&format!(
+            "{indent}let generations = generations.with_{slot}({name}{widen});\n"
+        ));
+        return;
+    }
+
+    if field.kind != "struct_ptr" {
+        return;
+    }
+    let Some(target) = field.type_.as_deref() else {
+        return;
+    };
+    let Some(slot) = generation_slot(target) else {
+        return;
+    };
+    let Some(t) = schema.structs.iter().find(|t| t.name == target) else {
+        return;
+    };
+    let Some(version_field) = t.version_field.as_deref() else {
+        return;
+    };
+    let Some(vf) = t.fields.iter().find(|f| f.name == version_field) else {
+        return;
+    };
+    let widen = widen_to_u32(vf);
+
+    if field.nullable.unwrap_or(false) {
+        out.push_str(&format!("{indent}let generations = match &{name} {{\n"));
+        out.push_str(&format!(
+            "{indent}    Some(v) => generations.with_{slot}(v.{version_field}{widen}),\n"
+        ));
+        out.push_str(&format!("{indent}    None => generations,\n"));
+        out.push_str(&format!("{indent}}};\n"));
+    } else {
+        out.push_str(&format!(
+            "{indent}let generations = generations.with_{slot}({name}.{version_field}{widen});\n"
+        ));
+    }
+}
+
+/// The cast a generation-number field needs to become the `u32` a
+/// `Generations` slot holds, or nothing where it is one already.
+fn widen_to_u32(version_field: &Field) -> &'static str {
+    match version_field.type_.as_deref() {
+        Some("u32") => "",
+        _ => " as u32",
+    }
+}
+
+/// The literal a gated field takes where the structure predates it.
+///
+/// It is the C accessor's default said in Rust: `None` and an empty `Vec` and
+/// a null [`Pointer`] are each what that accessor's `NULL` means for the kind
+/// in front of it, and an array's elements are the same bytes.
+pub fn rust_default_expr(field: &Field, schema: &Schema) -> String {
+    match field.kind.as_str() {
+        "cstr_ptr" | "struct_ptr" | "tagged_fam_ptr" | "simple_fam_ptr" => {
+            return "None".to_string();
+        }
+        "struct_array_ptr" | "struct_ptr_array_ptr" => return "Vec::new()".to_string(),
+        "opaque_ptr" | "fn_ptr" => return "Pointer::Null".to_string(),
+        "inline_array" => {
+            return format!(
+                "[{}]",
+                array_default_elements(field)
+                    .iter()
+                    .map(|b| format!("{b}u8"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
+        }
+        "inline_array2d" => {
+            let cols = field.cols.unwrap_or(0) as usize;
+            let rows: Vec<String> = array_default_elements(field)
+                .chunks(cols.max(1))
+                .map(|row| {
+                    format!(
+                        "[{}]",
+                        row.iter()
+                            .map(|b| format!("{b}u8"))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    )
+                })
+                .collect();
+            return format!("[{}]", rows.join(", "));
+        }
+        _ => {}
+    }
+
+    let value = field
+        .default_if_absent
+        .as_ref()
+        .and_then(|v| v.as_integer())
+        .expect("a gated field of this kind has a whole-number default");
+
+    match field.kind.as_str() {
+        "enum" => {
+            let named = field.type_.as_deref().unwrap_or("");
+            let e = schema
+                .enums
+                .iter()
+                .find(|e| e.name == named)
+                .expect("a gated enum field names a declared enum");
+            let strip = e.strip_prefix.as_deref().unwrap_or("");
+            let v = e
+                .variants
+                .iter()
+                .find(|v| v.value == value)
+                .expect("a gated enum field defaults to a declared variant");
+            format!(
+                "MaybeKnown::Known({}::{})",
+                rust_type_name(named),
+                variant_ident(&v.name, strip)
+            )
+        }
+        "type_alias" => {
+            let named = field.type_.as_deref().unwrap_or("");
+            let underlying = schema
+                .type_aliases
+                .iter()
+                .find(|a| a.name == named)
+                .map(|a| a.underlying.as_str())
+                .expect("a gated type_alias field names a declared alias");
+            format!("{value}{underlying}")
+        }
+        _ => format!("{value}{}", field.type_.as_deref().unwrap_or("u8")),
     }
 }
 
 fn push_struct_parse(out: &mut String, s: &Struct, schema: &Schema) {
     let tn = rust_type_name(&s.name);
 
+    // The struct literal at the end names every field, so a deprecated one
+    // would raise its note against the generator rather than a reader.
+    push_deprecated_allow(out, s.fields.iter(), "");
     out.push_str(&format!("impl {tn} {{\n"));
-    out.push_str(
-        "    pub fn parse(view: &DeviceMemoryView, addr: u32) -> Result<Self, ParseError> {\n",
-    );
+    // A gated read sits in a block yielding the field, and for the kinds whose
+    // read is a single `let` that block ends on the binding it just made.
+    if s.fields.iter().any(|f| f.since_marker().is_some()) {
+        out.push_str("    #[allow(clippy::let_and_return)]\n");
+    }
+    push_parse_signature(out);
     out.push_str("        #[allow(unused_variables)]\n");
     out.push_str("        let mut offset = addr;\n");
 
@@ -936,11 +1403,13 @@ fn push_struct_parse(out: &mut String, s: &Struct, schema: &Schema) {
         };
 
         if defer {
-            emit_array_ptr_read(out, f, "        ");
+            emit_deferred_array_ptr_read(out, f, "        ");
             pending.push(idx);
         } else {
-            emit_field_parse_offset(out, f, "        ", schema);
+            emit_gated_field_parse(out, f, "        ", schema);
         }
+
+        emit_generation_update(out, s, f, "        ", schema);
 
         // After emitting this field, emit any loops that are now unblocked.
         let fname = f.name.as_str();
@@ -950,7 +1419,7 @@ fn push_struct_parse(out: &mut String, s: &Struct, schema: &Schema) {
             .filter(|&pi| s.fields[pi].count_field.as_deref() == Some(fname))
             .collect();
         for pi in unblocked {
-            emit_array_loop_body(out, &s.fields[pi], "        ", schema);
+            emit_deferred_array_loop_body(out, &s.fields[pi], "        ", schema);
             pending.retain(|&x| x != pi);
         }
     }
@@ -967,6 +1436,9 @@ fn push_struct_parse(out: &mut String, s: &Struct, schema: &Schema) {
 
     // Return Ok(Self { field, ... }) — padding fields excluded.
     out.push_str("        let _ = offset;\n"); // silence unused offset warning
+    // Each generation update shadows the last, so only the final binding can
+    // go unused.
+    out.push_str("        let _ = generations;\n");
     out.push_str("        Ok(Self {\n");
     for f in s.fields.iter().filter(|f| f.kind != "padding") {
         out.push_str(&format!("            {},\n", f.name));
@@ -1050,10 +1522,47 @@ fn push_tagged_fam(out: &mut String, tf: &TaggedFam, schema: &Schema) {
         }
         out.push_str("    },\n");
     }
+
+    push_tagged_fam_unknown_variant(out, tf);
+
     out.push_str("}\n\n");
 
     // ---- parse impl --------------------------------------------------
     push_tagged_fam_parse(out, tf, schema, &tn, strip, disc_enum);
+}
+
+/// Emit the arm for a discriminant this build has no name for.
+///
+/// A serving algorithm added after a host was built reaches it as a
+/// discriminant with no name, and refusing it would cost the whole metadata
+/// tree over one structure.  Everything at an offset the layout fixes is still
+/// readable, and the parameter length bounds the bytes whose layout is not, so
+/// the structure round-trips.
+///
+/// Both field names come from the schema, so neither can collide with a
+/// common field - in C the discriminant, `params[]` and the common fields are
+/// members of one struct.
+fn push_tagged_fam_unknown_variant(out: &mut String, tf: &TaggedFam) {
+    out.push_str("    /// A discriminant this build has no name for.\n");
+    out.push_str("    ///\n");
+    out.push_str(
+        "    /// The common fields are read as they stand.  Only the parameter\n\
+         \x20   /// layout is unknown, so the parameter bytes are carried whole.\n",
+    );
+    out.push_str("    Unknown {\n");
+    out.push_str("        /// The discriminant value, as the device stored it.\n");
+    out.push_str(&format!("        {}: u32,\n", tf.discriminant_field));
+    for f in tf.common_fields.iter().filter(|f| f.kind != "padding") {
+        if let Some(cmt) = &f.comment {
+            if let Some(first) = cmt.lines().next() {
+                out.push_str(&format!("        /// {}\n", first.trim()));
+            }
+        }
+        out.push_str(&format!("        {}: {},\n", f.name, field_rust_type(f)));
+    }
+    out.push_str("        /// The parameter bytes, exactly as the device stored them.\n");
+    out.push_str("        params: Vec<u8>,\n");
+    out.push_str("    },\n");
 }
 
 fn push_tagged_fam_parse(
@@ -1075,16 +1584,15 @@ fn push_tagged_fam_parse(
     let common_start = disc_size + 1; // byte offset of first common field
 
     out.push_str(&format!("impl {tn} {{\n"));
-    out.push_str(
-        "    pub fn parse(view: &DeviceMemoryView, addr: u32) -> Result<Self, ParseError> {\n",
-    );
+    push_parse_signature(out);
 
-    // Discriminant and param_len (param_len is read for future use / validation).
+    // Discriminant and param_len.  param_len is what bounds the parameter
+    // bytes of a discriminant this build has no name for.
     out.push_str(&format!(
         "        let discriminant = view.{disc_reader}(addr)?;\n"
     ));
     out.push_str(&format!(
-        "        let _param_len = view.read_u8(addr + {param_len_off}u32)?;\n"
+        "        let param_len = view.read_u8(addr + {param_len_off}u32)?;\n"
     ));
 
     // Common fields at statically known addresses (no mutable offset variable
@@ -1124,14 +1632,23 @@ fn push_tagged_fam_parse(
         out.push_str("            }\n");
     }
 
+    // A discriminant this build has no name for.  The parameter bytes run
+    // from the end of the common fields for the length the header gave.
+    out.push_str("            _ => {\n");
     out.push_str(&format!(
-        "            _ => Err(ParseError::UnknownDiscriminant {{\n\
-         {SP}type_name: \"{tn}\",\n\
-         {SP}value: discriminant as u32,\n\
-         {SP}}}\n\
-         {SP}),\n",
-        SP = "                "
+        "                let params = view.slice_at(addr + {byte_off}u32, param_len as usize)?.to_vec();\n"
     ));
+    out.push_str("                Ok(Self::Unknown {\n");
+    out.push_str(&format!(
+        "                    {}: discriminant as u32,\n",
+        tf.discriminant_field
+    ));
+    for f in tf.common_fields.iter().filter(|f| f.kind != "padding") {
+        out.push_str(&format!("                    {},\n", f.name));
+    }
+    out.push_str("                    params,\n");
+    out.push_str("                })\n");
+    out.push_str("            }\n");
     out.push_str("        }\n");
     out.push_str("    }\n");
     out.push_str("}\n\n");
@@ -1181,9 +1698,7 @@ fn push_simple_fam(out: &mut String, sf: &SimpleFam) {
 
     // Parse: read param_len byte, then slice_at for the bytes.
     out.push_str(&format!("impl {tn} {{\n"));
-    out.push_str(
-        "    pub fn parse(view: &DeviceMemoryView, addr: u32) -> Result<Self, ParseError> {\n",
-    );
+    push_parse_signature(out);
     out.push_str("        let param_len = view.read_u8(addr)? as usize;\n");
     out.push_str("        let params = view.slice_at(addr + 1, param_len)?.to_vec();\n");
     out.push_str("        Ok(Self { params })\n");

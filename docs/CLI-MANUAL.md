@@ -54,7 +54,7 @@ This One ROM CLI manual covers:
 - **Problems** — symptoms and their fixes, including [recovering a bricked One
   ROM](#recovering-a-bricked-one-rom).
 
-> This manual documents the `onerom` CLI as of release v<!--[version:cli]-->0.4.0<!--[/]-->. Board,
+> This manual documents the `onerom` CLI as of release v<!--[version:cli]-->0.5.0<!--[/]-->. Board,
 > chip and plugin lists shown in examples are illustrative — the set your build
 > supports may differ. Run `onerom --version` to check your version, and
 > `onerom board list` / `onerom chips` for the definitive lists your build knows
@@ -833,6 +833,10 @@ onerom inspect <COMMAND>
 Show the device's serial number, user-assigned name, board type, MCU, firmware
 version and hardware revision. With `--verbose` (`-v`), also shows the MCU
 variant and chip ID.
+
+The command then dumps the device's parsed structures as JSON. A
+`Parser notes:` block follows it when a structure is missing, or when the
+CLI is parsing a firmware newer than it understands.
 
 ```
 onerom inspect info

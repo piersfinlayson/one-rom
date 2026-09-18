@@ -176,8 +176,12 @@ impl Device {
                 };
 
                 if let Some(runtime_info) = &onerom.runtime() {
+                    // A pattern this build has no name for is still a pattern
+                    // the device is blinking, so it counts as limping.
                     self.state = match runtime_info.limp_mode {
-                        onerom_metadata::LimpModePattern::LimpModeNone => DeviceState::Running,
+                        onerom_metadata::MaybeKnown::Known(
+                            onerom_metadata::LimpModePattern::LimpModeNone,
+                        ) => DeviceState::Running,
                         _ => DeviceState::Limp,
                     }
                 } else {

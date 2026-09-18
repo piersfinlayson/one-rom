@@ -6,7 +6,8 @@
 //   1. File header
 //   2. Schema constants   (METADATA_BASE, METADATA_SIZE)
 //   3. SerializeContext   (struct + impl)
-//   4. Struct impls       (layout, layout_sub_objects, write)   generate == Both
+//   4. Struct impls       (layout, layout_sub_objects,
+//                          check_generation, write)             generate == Both
 //   5. Tagged FAM impls   (layout, write)                       generate == Both
 //   6. Simple FAM impls   (layout, write)                       generate == Both
 //
@@ -28,6 +29,15 @@
 //   byte offset.  For pointer fields, call layout() on the sub-object
 //   (idempotent by this point) to recover its address, write the u32
 //   pointer, then recurse into write().
+//
+// Generations
+// -----------
+// The metadata is written at the generation the target firmware reads, which
+// the caller states once and `new` takes onto the context.  A field introduced
+// after that generation is not written.  check_generation() runs the whole
+// tree first and refuses such a field where it holds anything but its declared
+// default, because dropping a value that was asked for would compose an image
+// serving something else.
 //
 // Copyright (C) 2026 Piers Finlayson <piers@piers.rocks>
 // MIT License
@@ -205,6 +215,11 @@ fn push_serialize_context(out: &mut String, schema: &Schema) {
     out.push_str("pub struct SerializeContext<'buf> {\n");
     out.push_str("    base_addr: u32,\n");
     out.push_str("    next_addr: u32,\n");
+    out.push_str(
+        "    /// Metadata generation being written.  A field introduced after it is\n\
+         /// left out - see [`SerializeContext::new`].\n",
+    );
+    out.push_str("    metadata_generation: u32,\n");
     out.push_str("    pub buf: &'buf mut [u8],\n");
     out.push_str("    /// Addresses written in Phase 2; prevents writing the same object twice.\n");
     out.push_str("    written: hashbrown::HashSet<u32>,\n");
@@ -280,12 +295,20 @@ fn push_serialize_context_impl(out: &mut String, schema: &Schema) {
     out.push_str("impl<'buf> SerializeContext<'buf> {\n");
 
     // new() -----------------------------------------------------------------
-    out.push_str("    /// Construct a fresh context.  Fills `buf` with `0xFF`.\n");
-    out.push_str("    pub fn new(base_addr: u32, buf: &'buf mut [u8]) -> Self {\n");
+    out.push_str(
+        "    /// Construct a fresh context writing metadata of generation\n\
+         /// `metadata_generation`.  Fills `buf` with `0xFF`, which is what a\n\
+         /// device's unwritten metadata reads back - so a field this generation\n\
+         /// leaves out is indistinguishable from one never written.\n",
+    );
+    out.push_str(
+        "    pub fn new(base_addr: u32, metadata_generation: u32, buf: &'buf mut [u8]) -> Self {\n",
+    );
     out.push_str("        buf.fill(0xFF);\n");
     out.push_str("        Self {\n");
     out.push_str("            base_addr,\n");
     out.push_str("            next_addr: base_addr,\n");
+    out.push_str("            metadata_generation,\n");
     out.push_str("            buf,\n");
     out.push_str("            written:      hashbrown::HashSet::new(),\n");
     out.push_str("            string_addrs: hashbrown::HashMap::new(),\n");
@@ -340,6 +363,15 @@ fn push_serialize_context_impl(out: &mut String, schema: &Schema) {
         }
     }
     out.push_str("        }\n");
+    out.push_str("    }\n\n");
+
+    // metadata_generation() -------------------------------------------------
+    out.push_str(
+        "    /// The metadata generation this context is writing.  A generated `write`\n\
+         /// asks before laying down a field introduced after it.\n",
+    );
+    out.push_str("    pub fn metadata_generation(&self) -> u32 {\n");
+    out.push_str("        self.metadata_generation\n");
     out.push_str("    }\n\n");
 
     // alloc_aligned() -------------------------------------------------------
@@ -457,11 +489,175 @@ fn push_struct_serialize(out: &mut String, s: &Struct, schema: &Schema) {
         })
         .collect();
 
+    crate::rust_gen::push_deprecated_allow(out, s.fields.iter(), "");
     out.push_str(&format!("impl {tn} {{\n"));
     push_struct_layout(out, sn, size);
     push_struct_layout_sub_objects(out, s, sn, schema);
+    push_struct_check_generation(out, s, schema);
     push_struct_write(out, s, sn, &derived_counts, schema);
     out.push_str("}\n\n");
+}
+
+/// Emit `check_generation`, which refuses a value the metadata generation
+/// being written has nowhere to put.
+///
+/// The walk goes only where a gated field can be found.  The shipped schema
+/// has none, so every one of these is a body that returns `Ok`.
+fn push_struct_check_generation(out: &mut String, s: &Struct, schema: &Schema) {
+    let gated: Vec<&Field> = s
+        .fields
+        .iter()
+        .filter(|f| f.metadata_since().is_some())
+        .collect();
+    let recurse: Vec<&Field> = s
+        .fields
+        .iter()
+        .filter(|f| {
+            f.referenced_type()
+                .is_some_and(|t| carries_gated_field(schema, t))
+        })
+        .collect();
+
+    out.push_str(
+        "    /// Refuse a field metadata of `generation` cannot carry and that holds\n\
+         /// anything but the default a reader of that generation uses.\n\
+         ///\n\
+         /// Walks everything this object reaches, so one call on the root covers\n\
+         /// the whole tree.  Called by `serialize` before anything is written.\n",
+    );
+    let param = if gated.is_empty() && recurse.is_empty() {
+        "_generation"
+    } else {
+        "generation"
+    };
+    out.push_str(&format!(
+        "    pub fn check_generation(&self, {param}: u32) -> Result<(), SerializeError> {{\n"
+    ));
+
+    for f in gated {
+        let generation = f
+            .metadata_since()
+            .expect("the field was filtered on carrying a metadata generation");
+        let (major, minor, patch) = schema
+            .metadata_generation_release(generation)
+            .unwrap_or_else(|| {
+                panic!(
+                    "{}.{} arrived in metadata generation {generation}, and no [[versions]] \
+                     entry says which release that is",
+                    s.name, f.name
+                )
+            });
+        out.push_str(&format!(
+            "        if {param} < {generation}u32 && {} {{\n",
+            away_from_default(f, schema),
+        ));
+        out.push_str("            return Err(SerializeError::FieldTooNew {\n");
+        out.push_str(&format!(
+            "                field: \"{}.{}\",\n",
+            s.name, f.name
+        ));
+        out.push_str(&format!(
+            "                minimum: FirmwareVersion::new({major}, {minor}, {patch}, 0),\n"
+        ));
+        out.push_str("            });\n");
+        out.push_str("        }\n");
+    }
+
+    for f in recurse {
+        emit_check_generation_recursion(out, f);
+    }
+
+    out.push_str("        Ok(())\n");
+    out.push_str("    }\n\n");
+}
+
+/// The test that a gated field holds something other than its declared
+/// default.  A number is compared against the literal, and the kinds whose
+/// default is "nothing there" are asked whether they hold anything - which
+/// says the same thing and is what clippy wants of an `Option`.
+fn away_from_default(f: &Field, schema: &Schema) -> String {
+    let name = &f.name;
+    match f.kind.as_str() {
+        "cstr_ptr" | "struct_ptr" | "tagged_fam_ptr" | "simple_fam_ptr" => {
+            format!("self.{name}.is_some()")
+        }
+        "struct_array_ptr" | "struct_ptr_array_ptr" => format!("!self.{name}.is_empty()"),
+        "opaque_ptr" | "fn_ptr" => format!("!self.{name}.is_null()"),
+        _ => format!(
+            "self.{name} != {}",
+            crate::rust_gen::rust_default_expr(f, schema)
+        ),
+    }
+}
+
+/// Emit the walk into one field that reaches a gated field.
+fn emit_check_generation_recursion(out: &mut String, f: &Field) {
+    let name = &f.name;
+    let ind = "        ";
+
+    match f.kind.as_str() {
+        "struct_ptr" => {
+            if f.nullable.unwrap_or(false) {
+                out.push_str(&format!(
+                    "{ind}if let Some(sub) = &self.{name} {{\n\
+                     {ind}    sub.check_generation(generation)?;\n\
+                     {ind}}}\n"
+                ));
+            } else {
+                out.push_str(&format!(
+                    "{ind}self.{name}.check_generation(generation)?;\n"
+                ));
+            }
+        }
+
+        "struct_array_ptr" | "struct_ptr_array_ptr" => {
+            out.push_str(&format!(
+                "{ind}for elem in &self.{name} {{\n\
+                 {ind}    elem.check_generation(generation)?;\n\
+                 {ind}}}\n"
+            ));
+        }
+
+        // A FAM's fields are scalars and enums, and a generation marker is
+        // refused on one, so nothing gated can sit under a FAM pointer.
+        kind => panic!("{name} is a {kind}, which reaches no gated field"),
+    }
+}
+
+/// Whether `type_name`, or anything it reaches, has a field the metadata
+/// generation gates.
+///
+/// This is what prunes the `check_generation` walk: a branch with nothing
+/// gated under it is not entered at all.
+fn carries_gated_field(schema: &Schema, type_name: &str) -> bool {
+    // A type reached twice was settled the first time: had it carried a gated
+    // field the walk would have stopped there, so the second answer is no.
+    fn walk<'a>(schema: &'a Schema, type_name: &'a str, seen: &mut Vec<&'a str>) -> bool {
+        if seen.contains(&type_name) {
+            return false;
+        }
+        seen.push(type_name);
+
+        // A FAM's fields are scalars and enums and a marker is refused on one,
+        // so a FAM ends the walk.  So does a name no struct answers to, which
+        // the schema's own reference checks have already ruled out.
+        let Some(s) = schema.structs.iter().find(|s| s.name == type_name) else {
+            return false;
+        };
+        for f in &s.fields {
+            if f.metadata_since().is_some() {
+                return true;
+            }
+            if let Some(referenced) = f.referenced_type()
+                && walk(schema, referenced, seen)
+            {
+                return true;
+            }
+        }
+        false
+    }
+
+    walk(schema, type_name, &mut Vec::new())
 }
 
 fn push_struct_layout(out: &mut String, sn: &str, size: usize) {
@@ -659,7 +855,41 @@ fn addr_expr(off: usize) -> String {
     }
 }
 
+/// Emit the write for one struct field, behind the generation that brought it
+/// in where it has one.  The offset of everything after it is unaffected,
+/// because a field's place in the layout is fixed whether or not this
+/// generation writes it.
 fn emit_struct_write_field(
+    out: &mut String,
+    f: &Field,
+    byte_off: usize,
+    parent_sn: &str,
+    derived_counts: &HashMap<String, String>,
+    schema: &Schema,
+) {
+    let Some(generation) = f.metadata_since() else {
+        emit_struct_write_field_body(out, f, byte_off, parent_sn, derived_counts, schema);
+        return;
+    };
+
+    let mut body = String::new();
+    emit_struct_write_field_body(&mut body, f, byte_off, parent_sn, derived_counts, schema);
+
+    let name = &f.name;
+    out.push_str(&format!(
+        "        // {name} arrived in metadata generation {generation}, so older\n"
+    ));
+    out.push_str("        // metadata leaves its bytes unwritten.\n");
+    out.push_str(&format!(
+        "        if ctx.metadata_generation() >= {generation}u32 {{\n"
+    ));
+    for line in body.lines() {
+        out.push_str(&format!("    {line}\n"));
+    }
+    out.push_str("        }\n");
+}
+
+fn emit_struct_write_field_body(
     out: &mut String,
     f: &Field,
     byte_off: usize,
@@ -690,7 +920,8 @@ fn emit_struct_write_field(
             let (method, sz) = enum_write(f, schema);
             let repr = if sz == 1 { "u8" } else { "u16" };
             let a = addr_expr(byte_off);
-            out.push_str(&format!("{ind}ctx.{method}({a}, self.{name} as {repr});\n"));
+            let value = crate::rust_gen::maybe_known_raw_expr(&format!("self.{name}"), repr);
+            out.push_str(&format!("{ind}ctx.{method}({a}, {value});\n"));
         }
 
         "type_alias" => {
@@ -935,6 +1166,12 @@ fn push_tagged_fam_layout(
             "            Self::{vn} {{ .. }} => {total}usize,\n"
         ));
     }
+    // A discriminant this build has no name for keeps its parameter bytes
+    // whole, so their count is what the variant costs beyond the base.
+    out.push_str(&format!(
+        "            Self::Unknown {{ params, .. }} => {}usize + params.len(),\n",
+        tf.base_size
+    ));
     out.push_str("        };\n");
     out.push_str("        let addr = ctx.alloc_aligned(size)?;\n");
     out.push_str(&format!(
@@ -1014,8 +1251,73 @@ fn push_tagged_fam_write(
         out.push_str("            }\n");
     }
 
+    push_tagged_fam_unknown_write(out, tf, disc_size, schema);
+
     out.push_str("        }\n");
     out.push_str("    }\n");
+}
+
+/// Emit the write arm for a discriminant this build has no name for.
+///
+/// Everything read back out goes back as it came in - the discriminant, the
+/// parameter length, the common fields and the parameter bytes - so a host
+/// that reads a device and composes from what it read does not silently
+/// rewrite an algorithm it has never heard of.
+fn push_tagged_fam_unknown_write(
+    out: &mut String,
+    tf: &TaggedFam,
+    disc_size: usize,
+    schema: &Schema,
+) {
+    let disc = &tf.discriminant_field;
+    let fields: Vec<&str> = tf
+        .common_fields
+        .iter()
+        .filter(|f| f.kind != "padding")
+        .map(|f| f.name.as_str())
+        .collect();
+    let mut bindings = vec![disc.as_str()];
+    bindings.extend(fields);
+    bindings.push("params");
+    out.push_str(&format!(
+        "            Self::Unknown {{ {} }} => {{\n",
+        bindings.join(", ")
+    ));
+
+    // Note: the {} below is a format specifier in the GENERATED code's
+    // debug_assert!, not in our generator.
+    out.push_str("                debug_assert!(\n");
+    out.push_str("                    params.len() <= 255,\n");
+    out.push_str("                    \"unknown variant params length {} exceeds u8 range\",\n");
+    out.push_str("                    params.len(),\n");
+    out.push_str("                );\n");
+
+    let disc_method = if disc_size == 1 {
+        "write_u8"
+    } else {
+        "write_u16_le"
+    };
+    out.push_str(&format!(
+        "                ctx.{disc_method}(addr, *{disc} as _);\n"
+    ));
+    let a = addr_expr(disc_size);
+    out.push_str(&format!(
+        "                ctx.write_u8({a}, params.len() as u8);\n"
+    ));
+
+    let mut off = disc_size + 1;
+    for f in &tf.common_fields {
+        emit_fam_field_write(out, f, off, schema);
+        off += field_size(f, schema);
+    }
+
+    let params_at = addr_expr(tf.base_size as usize);
+    out.push_str("                if !params.is_empty() {\n");
+    out.push_str(&format!(
+        "                    ctx.write_bytes({params_at}, params);\n"
+    ));
+    out.push_str("                }\n");
+    out.push_str("            }\n");
 }
 
 /// Emit one write call for a tagged FAM field (scalar / enum / type_alias only).
@@ -1033,9 +1335,8 @@ fn emit_fam_field_write(out: &mut String, f: &Field, off: usize, schema: &Schema
             let (method, sz) = enum_write(f, schema);
             let repr = if sz == 1 { "u8" } else { "u16" };
             let a = addr_expr(off);
-            out.push_str(&format!(
-                "                ctx.{method}({a}, *{name} as {repr});\n"
-            ));
+            let value = crate::rust_gen::maybe_known_raw_expr(&format!("*{name}"), repr);
+            out.push_str(&format!("                ctx.{method}({a}, {value});\n"));
         }
         "type_alias" => {
             let underlying = schema

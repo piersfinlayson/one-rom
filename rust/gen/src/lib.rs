@@ -283,6 +283,13 @@ pub enum Error {
     TurboBootMultiSlot {
         slots: usize,
     },
+    /// A field this build sets did not exist in the target firmware.
+    MetadataFieldTooNew {
+        /// The metadata field, as `<struct>.<field>`.
+        field: &'static str,
+        /// Oldest firmware whose metadata carries it.
+        minimum: FirmwareVersion,
+    },
 }
 type Result<T> = core::result::Result<T, Error>;
 
@@ -561,6 +568,9 @@ impl core::fmt::Display for Error {
             }
             Error::TurboBootMultiSlot { slots } => {
                 write!(f, "{}", turbo_boot_multi_slot_msg(*slots))
+            }
+            Error::MetadataFieldTooNew { field: _, minimum } => {
+                write!(f, "This config needs firmware {minimum} or newer")
             }
         }
     }

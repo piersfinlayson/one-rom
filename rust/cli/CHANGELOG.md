@@ -1,5 +1,9 @@
 # CLI Changelog
 
+## v0.5.0 - unreleased
+
+- **`inspect info` now says what it could not show you, and why.**
+
 ## v0.4.0 - 2026-09-08
 
 - **`peek` and `poke` help no longer show an argument the commands reject.**

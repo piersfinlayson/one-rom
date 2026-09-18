@@ -91,9 +91,13 @@ pub fn build_alg_cs(
 
     match layout.cs_ignore_index {
         None => {
+            // Only AlgData1 reads /BYTE, and a data algorithm this build has
+            // no name for carries no pin to name either way.
             let byte_pin = match alg_data {
                 OneromAlgDataConfig::AlgData1 { byte_pin, .. } => *byte_pin,
-                _ => GPIO_NONE,
+                OneromAlgDataConfig::AlgData0 { .. } | OneromAlgDataConfig::Unknown { .. } => {
+                    GPIO_NONE
+                }
             };
             let (first_rom_cs_base, first_rom_num_cs_pins) = first_rom_cs(layout, set_type);
 

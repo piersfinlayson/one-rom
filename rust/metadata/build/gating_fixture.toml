@@ -1,0 +1,453 @@
+# A schema carrying generation-gated fields, for tests/generation_roundtrip.rs.
+#
+# No field of metadata_schema.toml carries a generation marker - nothing has
+# been added since v0.7.0 - so running the generated writer against the
+# generated parser with a gated field between them needs a schema that has one.
+# The build script generates this schema's Rust into OUT_DIR alongside the real
+# one, and that one test includes it as a module.
+#
+# It carries one gated field of every kind a marker may sit on, in the three
+# places one can sit: on the metadata header itself, on a structure the header
+# points at, and on an element of the header's ROM slot array.  Every default
+# is neither 0 nor 0xFF, so a test cannot pass on a zeroed or an unwritten
+# byte - except for the pointers, whose own default is nothing.  There the gate
+# shows in the writer rather than the parser: an unwritten pointer reads as
+# absent whatever the generation, and what the gate adds is a build refused for
+# asking.
+#
+# Copyright (C) 2026 Piers Finlayson <piers@piers.rocks>
+# MIT License
+
+[schema]
+format_version = 1
+firmware_release = "0.8.0"
+name = "OneROMGatingFixture"
+description = "Generation-gating round trip fixture"
+flash_base = 0x10000000
+metadata_base = 0x1000C000
+metadata_size = 4096
+root_struct = "onerom_metadata_header_t"
+
+[[versions]]
+struct_name = "onerom_info_t"
+version = 2
+first_release = "0.7.0"
+
+[[versions]]
+struct_name = "onerom_metadata_header_t"
+version = 2
+first_release = "0.7.0"
+
+[[versions]]
+struct_name = "onerom_metadata_header_t"
+version = 3
+first_release = "0.8.0"
+
+[[versions]]
+struct_name = "onerom_runtime_info_t"
+version = 2
+first_release = "0.7.0"
+
+[[constants]]
+name = "ONEROM_INFO_VERSION"
+type = "u32"
+value = 2
+comment = "Generation of onerom_info_t this fixture describes"
+
+[[constants]]
+name = "CURRENT_METADATA_VERSION"
+type = "u32"
+value = 3
+comment = "Newest metadata generation this fixture describes"
+
+[[constants]]
+name = "RUNTIME_INFO_VERSION"
+type = "u32"
+value = 2
+comment = "Generation of onerom_runtime_info_t this fixture describes"
+
+[[constants]]
+name = "ALG_ONE_PARAMS_LEN"
+type = "u32"
+value = 1
+comment = "Parameter bytes the one algorithm variant carries"
+
+[[type_aliases]]
+name = "onerom_revision_t"
+underlying = "u16"
+comment = "A board revision, as the fixture's one type alias"
+
+[[enums]]
+name = "onerom_mode_t"
+size = 1
+strip_prefix = "MODE_"
+comment = "How the fixture device serves"
+
+[[enums.variants]]
+name = "MODE_SLOW"
+value = 0
+
+[[enums.variants]]
+name = "MODE_FAST"
+value = 7
+
+[[enums]]
+name = "onerom_alg_t"
+size = 1
+strip_prefix = "ALG_"
+comment = "Which serving algorithm the tagged FAM configures"
+
+[[enums.variants]]
+name = "ALG_NONE"
+value = 0
+
+[[enums.variants]]
+name = "ALG_ONE"
+value = 1
+
+# ===========================================================================
+# Variable-length structures the header points at
+# ===========================================================================
+
+[[tagged_fams]]
+name = "onerom_alg_config_t"
+comment = "A tagged FAM, for the one gated tagged_fam_ptr"
+generate = "both"
+discriminant_field = "alg"
+discriminant_type = "onerom_alg_t"
+param_len_field = "param_len"
+base_size = 4
+
+[[tagged_fams.common_fields]]
+name = "clkdiv"
+kind = "scalar"
+type = "u16"
+comment = "Clock divider"
+
+[[tagged_fams.variants]]
+discriminant = "ALG_ONE"
+params_len_constant = "ALG_ONE_PARAMS_LEN"
+comment = "The one variant"
+
+[[tagged_fams.variants.fields]]
+name = "pin"
+kind = "scalar"
+type = "u8"
+comment = "A pin the algorithm drives"
+
+[[simple_fams]]
+name = "onerom_pull_config_t"
+comment = "A simple FAM, for the one gated simple_fam_ptr"
+generate = "both"
+param_len_field = "param_len"
+
+# ===========================================================================
+# Structures
+# ===========================================================================
+
+[[structs]]
+name = "onerom_metadata_header_t"
+comment = "Root of the fixture metadata region"
+generate = "both"
+size = 56
+root = true
+version_field = "version"
+version_constant = "CURRENT_METADATA_VERSION"
+
+[[structs.fields]]
+name = "version"
+kind = "scalar"
+type = "u32"
+comment = "Metadata generation these bytes were written at"
+
+[[structs.fields]]
+name = "hw"
+kind = "struct_ptr"
+type = "onerom_hardware_info_t"
+nullable = false
+comment = "Hardware information"
+
+[[structs.fields]]
+name = "slot_count"
+kind = "scalar"
+type = "u8"
+comment = "Number of ROM slots"
+
+[[structs.fields]]
+name = "turbo_boot"
+kind = "scalar"
+type = "u8"
+since_metadata_version = 3
+default_if_absent = 1
+comment = "Whether the device boots straight into its slot"
+
+[[structs.fields]]
+name = "reserved"
+kind = "padding"
+size = 2
+comment = "Reserved"
+
+[[structs.fields]]
+name = "slots"
+kind = "struct_array_ptr"
+element = "onerom_rom_slot_t"
+count_field = "slot_count"
+comment = "ROM slots, inline in the metadata region"
+
+[[structs.fields]]
+name = "build_name"
+kind = "cstr_ptr"
+nullable = true
+since_metadata_version = 3
+default_if_absent = "null"
+comment = "Name this image was built under"
+
+[[structs.fields]]
+name = "extra"
+kind = "struct_ptr"
+type = "onerom_extra_t"
+nullable = true
+since_metadata_version = 3
+default_if_absent = "null"
+comment = "A structure that arrived with the field pointing at it"
+
+[[structs.fields]]
+name = "tags"
+kind = "struct_ptr_array_ptr"
+element = "onerom_tag_t"
+count_field = "tag_count"
+nullable = true
+since_metadata_version = 3
+default_if_absent = "null"
+comment = "Tags, counted by a field declared after this one"
+
+[[structs.fields]]
+name = "tag_count"
+kind = "scalar"
+type = "u8"
+since_metadata_version = 3
+default_if_absent = 0
+comment = "Number of tags"
+
+[[structs.fields]]
+name = "reserved2"
+kind = "padding"
+size = 3
+comment = "Reserved"
+
+[[structs.fields]]
+name = "blob"
+kind = "opaque_ptr"
+pointed_type = "u8"
+since_metadata_version = 3
+default_if_absent = "null"
+comment = "Bytes the parser stores the address of and does not follow"
+
+[[structs.fields]]
+name = "hook"
+kind = "fn_ptr"
+since_metadata_version = 3
+default_if_absent = "null"
+comment = "A function the parser stores the address of"
+
+[[structs.fields]]
+name = "alg"
+kind = "tagged_fam_ptr"
+type = "onerom_alg_config_t"
+nullable = true
+since_metadata_version = 3
+default_if_absent = "null"
+comment = "Serving algorithm configuration"
+
+[[structs.fields]]
+name = "pulls"
+kind = "simple_fam_ptr"
+type = "onerom_pull_config_t"
+nullable = true
+since_metadata_version = 3
+default_if_absent = "null"
+comment = "GPIO pull configuration"
+
+[[structs.fields]]
+name = "extra_count"
+kind = "scalar"
+type = "u8"
+since_metadata_version = 3
+default_if_absent = 0
+comment = "Number of extras, declared ahead of the array it counts"
+
+[[structs.fields]]
+name = "reserved3"
+kind = "padding"
+size = 3
+comment = "Reserved"
+
+[[structs.fields]]
+name = "extras"
+kind = "struct_array_ptr"
+element = "onerom_extra_t"
+count_field = "extra_count"
+nullable = true
+since_metadata_version = 3
+default_if_absent = "null"
+comment = "Extras, counted by a field declared before this one"
+
+[[structs]]
+name = "onerom_hardware_info_t"
+comment = "A structure the header points at"
+generate = "both"
+size = 16
+
+[[structs.fields]]
+name = "board_id"
+kind = "scalar"
+type = "u16"
+since_metadata_version = 3
+default_if_absent = 4660
+comment = "Board this image was built for"
+
+[[structs.fields]]
+name = "mode"
+kind = "enum"
+type = "onerom_mode_t"
+comment = "How this device serves"
+
+[[structs.fields]]
+name = "pin_count"
+kind = "scalar"
+type = "u8"
+comment = "Pins on the emulated chip"
+
+[[structs.fields]]
+name = "revision"
+kind = "type_alias"
+type = "onerom_revision_t"
+since_metadata_version = 3
+default_if_absent = 291
+comment = "Board revision"
+
+[[structs.fields]]
+name = "pins"
+kind = "inline_array"
+element = "u8"
+count = 4
+since_metadata_version = 3
+default_if_absent = [1, 2, 3, 4]
+comment = "Image select pads, stated element by element"
+
+[[structs.fields]]
+name = "matrix"
+kind = "inline_array2d"
+element = "u8"
+rows = 2
+cols = 3
+since_metadata_version = 3
+default_if_absent = 9
+comment = "A table whose default fills it"
+
+[[structs]]
+name = "onerom_rom_slot_t"
+comment = "An element of the header's ROM slot array"
+generate = "both"
+size = 8
+
+[[structs.fields]]
+name = "size"
+kind = "scalar"
+type = "u32"
+comment = "Bytes of ROM data in this slot"
+
+[[structs.fields]]
+name = "bank"
+kind = "scalar"
+type = "u8"
+since_metadata_version = 3
+default_if_absent = 7
+comment = "Bank this slot serves"
+
+[[structs.fields]]
+name = "serve_mode"
+kind = "enum"
+type = "onerom_mode_t"
+since_metadata_version = 3
+default_if_absent = 7
+comment = "How this slot serves"
+
+[[structs.fields]]
+name = "reserved"
+kind = "padding"
+size = 2
+comment = "Reserved"
+
+[[structs]]
+name = "onerom_extra_t"
+comment = "The target of the header's gated struct_ptr"
+generate = "both"
+size = 4
+
+[[structs.fields]]
+name = "value"
+kind = "scalar"
+type = "u32"
+comment = "Anything at all"
+
+[[structs]]
+name = "onerom_tag_t"
+comment = "An element of the header's gated tag array"
+generate = "both"
+size = 4
+
+[[structs.fields]]
+name = "id"
+kind = "scalar"
+type = "u32"
+comment = "Anything at all"
+
+# The other two versioned structures.  Neither is written by a host, so the
+# fixture declares only enough of each for the schema to validate.
+
+[[structs]]
+name = "onerom_info_t"
+comment = "Fixed-address structure the firmware places in flash"
+generate = "parse"
+version_field = "version"
+version_constant = "ONEROM_INFO_VERSION"
+
+[[structs.fields]]
+name = "version"
+kind = "scalar"
+type = "u32"
+comment = "Generation of this structure"
+
+[[structs.fields]]
+name = "metadata"
+kind = "struct_ptr"
+type = "onerom_metadata_header_t"
+nullable = true
+comment = "Pointer to the metadata header"
+
+[[structs.fields]]
+name = "runtime"
+kind = "struct_ptr"
+type = "onerom_runtime_info_t"
+nullable = true
+comment = "Pointer to the runtime structure"
+
+[[structs]]
+name = "onerom_runtime_info_t"
+comment = "Structure the firmware keeps in RAM while it runs"
+generate = "parse"
+version_field = "version"
+version_constant = "RUNTIME_INFO_VERSION"
+
+[[structs.fields]]
+name = "version"
+kind = "scalar"
+type = "u32"
+comment = "Generation of this structure"
+
+[[structs.fields]]
+name = "image_sel"
+kind = "scalar"
+type = "u8"
+comment = "Image select pads as read at boot"

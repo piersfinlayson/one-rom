@@ -11,7 +11,8 @@ use onerom_config::hw::Board;
 use onerom_config::mcu::RpVariant;
 
 use onerom_metadata::{
-    GPIO_NONE, MAX_IMG_SEL_PINS, MAX_PHYS_PINS, MAX_X_PIN_GPIOS, OneromHardwareInfo, Rp235xVariant,
+    GPIO_NONE, MAX_IMG_SEL_PINS, MAX_PHYS_PINS, MAX_X_PIN_GPIOS, MaybeKnown, OneromHardwareInfo,
+    Rp235xVariant,
 };
 
 /// Build `OneromHardwareInfo` for `board`.
@@ -81,7 +82,7 @@ pub fn build_hardware_info(board: Board) -> OneromHardwareInfo {
 
     OneromHardwareInfo {
         hw_rev,
-        rp235x,
+        rp235x: MaybeKnown::Known(rp235x),
         num_phys_pins,
         usb_capable,
         gpio_vbus,
@@ -118,7 +119,7 @@ mod tests {
         assert_eq!(hw.num_phys_pins, 24);
         assert!(matches!(
             hw.rp235x,
-            Rp235xVariant::Rp235xa | Rp235xVariant::Rp235xb
+            MaybeKnown::Known(Rp235xVariant::Rp235xa | Rp235xVariant::Rp235xb)
         ));
 
         assert_eq!(hw.usb_capable, 0);

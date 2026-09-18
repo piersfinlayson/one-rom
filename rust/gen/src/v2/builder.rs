@@ -8,7 +8,7 @@ use onerom_config::chip::ChipType;
 use onerom_config::fw::FirmwareVersion;
 
 pub const MIN_FW_VERSION: FirmwareVersion = FirmwareVersion::new(0, 7, 0, 0);
-pub const MAX_FW_VERSION: FirmwareVersion = FirmwareVersion::new(0, 7, 999, 999);
+pub const MAX_FW_VERSION: FirmwareVersion = FirmwareVersion::new(0, 8, 999, 999);
 pub const UNSUPPORTED_FIRMWARE_VERSIONS: &[FirmwareVersion] = &[];
 
 pub const SUPPORTED_CHIP_TYPES: &[ChipType; 35] = &[

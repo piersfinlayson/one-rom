@@ -34,6 +34,14 @@ uint64_t *get_ram_rom_image_table_aligned(void);
 uint8_t stub_set_sel_image(uint8_t image_index);
 void stub_set_rp_variant(uint8_t is_b);
 
+// Whether the firmware asked for the bootloader on this boot.
+//
+// On a device enter_bootloader() never returns and the One ROM stops serving.
+// The stub returns and firmware_main() carries on, so a refusal to boot leaves
+// no other trace for a test to find.  Cleared by onerom_test_reset(), so it
+// reads per boot.
+uint8_t stub_bootloader_entered(void);
+
 // Stands in for TIMER0's free-running microsecond counter, which
 // ora_get_plugin_uptime_ms() reads on a device.  There is no TIMER0 in this process
 // and its address is not mapped, so the harness owns the count instead - which

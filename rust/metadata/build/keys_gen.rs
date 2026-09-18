@@ -11,6 +11,9 @@
 // space, never any access into the internal metadata structures.  Values a
 // plugin needs, ORA_GPIO_NONE among them, come from the sibling constants
 // header - see constants_gen.rs.
+//
+// Each key carries an `@since firmware X.Y.Z` line naming the release it
+// arrived in, as api.h does for every identifier.
 
 use crate::schema::Schema;
 
@@ -22,6 +25,9 @@ struct Variant {
     name: String,
     value: u32,
     comment: String,
+    /// The release this key arrived in.  The two sentinels came with the
+    /// header itself and name none.
+    since: Option<String>,
 }
 
 /// Generate the plugin-facing key header.
@@ -31,6 +37,7 @@ pub fn generate(schema: &Schema) -> String {
         name: format!("{PREFIX}NONE"),
         value: 0x0000_0000,
         comment: "Reserved. Never a live key; a zero-initialised value is invalid.".to_string(),
+        since: None,
     }];
     for entry in schema.plugin_keys() {
         variants.push(Variant {
@@ -40,12 +47,14 @@ pub fn generate(schema: &Schema) -> String {
             // its sentinel convention stated here, where a plugin author reads
             // it, rather than only in the firmware's own metadata header.
             comment: entry.comment.unwrap_or("").to_string(),
+            since: Some(entry.key.first_release.clone()),
         });
     }
     variants.push(Variant {
         name: format!("{PREFIX}INVALID"),
         value: 0xFFFF_FFFF,
         comment: "Invalid metadata key".to_string(),
+        since: None,
     });
 
     let width = variants.iter().map(|v| v.name.len()).max().unwrap_or(0);
@@ -63,6 +72,10 @@ pub fn generate(schema: &Schema) -> String {
 // key value is a stable, permanent identifier: once assigned it is never
 // renumbered or reused.  New metadata is exposed by tagging a schema field
 // with a `plugin_key`; retired keys keep returning ORA_RESULT_NOT_SUPPORTED.
+//
+// A key's `@since firmware X.Y.Z` line names the release it first appeared in
+// here.  A plugin using it asks for that release, or a later one, in its
+// min_fw_version.
 //
 // Copyright (C) 2026 Piers Finlayson <piers@piers.rocks>
 //
@@ -82,16 +95,22 @@ pub fn generate(schema: &Schema) -> String {
     out.push_str("typedef enum {\n");
 
     for v in &variants {
-        let lines: Vec<&str> = v
+        let mut lines: Vec<String> = v
             .comment
             .lines()
             .map(str::trim_end)
             .filter(|l| !l.is_empty())
+            .map(str::to_string)
             .collect();
-        // A one-line comment trails its enumerator, as it always has.  A longer
-        // one goes above it, so the sentinel convention an array key carries
-        // survives into this header instead of being truncated away.
-        if lines.len() > 1 {
+        // The @since line closes the block, as it does in api.h.
+        if let Some(release) = &v.since {
+            lines.push(format!("@since firmware {release}"));
+        }
+        // A lone sentinel comment trails its enumerator, as it always has.
+        // Everything else goes above it, so the sentinel convention an array
+        // key carries survives into this header instead of being truncated
+        // away, and so does the release the key arrived in.
+        if v.since.is_some() || lines.len() > 1 {
             for line in &lines {
                 out.push_str(&format!("    // {}\n", line));
             }

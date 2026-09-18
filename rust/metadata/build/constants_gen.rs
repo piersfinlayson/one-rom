@@ -15,6 +15,9 @@
 // This header carries values.  The identifier space plugins use with the
 // metadata getters is a separate concern and lives in
 // onerom_metadata_keys_generated.h.
+//
+// Each constant carries an `@since firmware X.Y.Z` line naming the release it
+// reached the plugin API in, as api.h does for every identifier.
 
 use crate::c_gen::format_const_value;
 use crate::schema::Schema;
@@ -31,6 +34,10 @@ pub fn generate(schema: &Schema) -> String {
          // Values a plugin must agree with the firmware on, taken from the same\n\
          // schema the firmware's own definitions come from.\n\
          //\n\
+         // A constant's `@since firmware X.Y.Z` line names the release it first\n\
+         // reached this header in.  A plugin using it asks for that release, or a\n\
+         // later one, in its min_fw_version.\n\
+         //\n\
          // Copyright (C) 2026 Piers Finlayson <piers@piers.rocks>\n\
          //\n\
          // MIT License\n\
@@ -43,7 +50,7 @@ pub fn generate(schema: &Schema) -> String {
     out.push_str("#include <stdint.h>\n\n");
 
     for constant in schema.ora_constants() {
-        if let Some(comment) = &constant.comment {
+        if let Some(comment) = constant.plugin_documentation() {
             for line in comment.lines() {
                 out.push_str(&format!("// {line}\n"));
             }

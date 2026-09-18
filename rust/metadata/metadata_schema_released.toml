@@ -4,20 +4,27 @@
 
 # OneROM Metadata Type Schema
 #
-# The source of truth for One ROM's C header and its Rust types, parsers and
-# generators. Change a field here and both sides follow, so neither has to be
-# kept in step by hand. The C that uses the generated header is hand-written -
-# see firmware/src/globals.c.
+# Source of truth for OneROM C header and Rust type/code generation.
 #
-# Do not use `\n` in a comment string. Use a """ triple-quoted string """ and
-# the Rust generator inserts newlines as needed.
+# This allows for this single file to modified when adding/changing/removing
+# metadata or other firmware fields and the corresponding Rust code to both
+# parse and generate firmware blobs.
+#
+# This avoids the needs to keep C and Rust code in sync manually.
+#
+# While the C header `firmware/generated/onerom_metadata.h` is generated from
+# this file, the C code to use it must be hand-written.  See in particular
+# `firmware/src/globals.c`.
+#
+# Do not use `\n` inside comment strings - use """ triple-quoted strings"""
+# for multi-line comments instead.  The Rust code generator inserts newlines
+# as needed.
 #
 # ---------------------------------------------------------------------------
-# Sections
+# Schema sections
 # ---------------------------------------------------------------------------
-#   [schema]          - addresses, codegen options, the release this describes
-#   [[versions]]      - firmware release each structure generation arrived in
-#   [[constants]]     - #define (C) / pub const (Rust)
+#   [schema]          - metadata, addresses, codegen options
+#   [[constants]]     - #define constants (C) / pub const (Rust)
 #   [[type_aliases]]  - typedef uint16_t aliases
 #   [[enums]]         - typedef enum types
 #   [[structs]]       - fixed-layout structs
@@ -25,7 +32,7 @@
 #   [[simple_fams]]   - variable-length structs: length prefix + byte array
 #
 # ---------------------------------------------------------------------------
-# Field kinds
+# Field kinds (used in struct/tagged_fam fields)
 # ---------------------------------------------------------------------------
 #   scalar            - u8, u16, u32
 #   enum              - reference to an [[enums]] entry
@@ -33,115 +40,87 @@
 #   inline_array      - fixed-size array, element + count
 #   inline_array2d    - fixed 2D array, element + rows + cols
 #   cstr_ptr          - const char* null-terminated string pointer
-#   struct_ptr        - const T* pointer to struct
+#   struct_ptr        - const T* pointer to struct (nullable flag)
 #   struct_array_ptr  - const T* as array, length from count_field
-#   struct_ptr_array_ptr - const T* const *, length from count_field
+#   struct_ptr_array_ptr - const T* const * (double-indirect array + count_field)
 #   tagged_fam_ptr    - pointer to a [[tagged_fams]] type
 #   simple_fam_ptr    - pointer to a [[simple_fams]] type
-#   opaque_ptr        - void*, stored as Pointer, not dereferenced
+#   opaque_ptr        - void* pointer, stored as Pointer, not dereferenced
 #   fn_ptr            - function pointer, stored as Pointer, not dereferenced
-#   padding           - reserved bytes: in C and the binary, absent from Rust
-#
-#   generate = "both" | "parse" | "none" on a struct selects C definition plus
-#   Rust parse and serialize, C plus parse, or C alone.
+#   padding           - reserved bytes: present in C/binary, absent from Rust type
 #
 # ---------------------------------------------------------------------------
-# Constant attributes
+# Constant attributes (used in [[constants]] entries)
 # ---------------------------------------------------------------------------
-#   name, type, value - u8, u16, u32, usize or cstr
+#   name              - the constant's name, used verbatim in C and Rust
+#   type              - u8, u16, u32, usize or cstr
+#   value             - an integer, or a string for cstr
 #   comment           - becomes the doc comment on every output
-#   ora_api           - also emit into firmware/ora/onerom_constants_generated.h
-#                       as ORA_<name>, for values a plugin must agree with the
-#                       firmware on. A plugin cannot include the firmware's own
-#                       metadata header. The plugin API is published, so leave
-#                       this off unless a plugin needs the value.
-#   first_release     - release the constant reached the plugin API, as X.Y.Z.
-#                       Required of an ora_api constant and allowed on no other.
-#                       Emitted as an `@since firmware X.Y.Z` line, which is
-#                       what a plugin author sets min_fw_version from.
-#   deprecated_release - release from which nothing should use it. A shipped
-#                       constant is never removed, only deprecated, and that is
-#                       permanent.
+#   ora_api           - see "Constants in the plugin API" below
 #
 # ---------------------------------------------------------------------------
-# Field attributes
+# Field-level attributes
 # ---------------------------------------------------------------------------
-#   nullable            - a null pointer yields None rather than NullPointer
-#   expected_const      - inline_array: bytes the parsed array must begin with,
-#                         else BadMagic. Used for magic fields.
-#   none_on_parse_error - nullable pointer: a target that fails to parse yields
-#                         None rather than propagating. Used where the target
-#                         may be stale, such as RAM on a stopped device.
-#   plugin_key          - { name, id, first_release }: expose to plugins through
-#                         the metadata getters, with no hand-written firmware.
-#                         A cstr_ptr resolves via ORA_ID_GET_METADATA_STR, an
-#                         unsigned scalar or enum via ..._UINT. Ids are one
-#                         permanent namespace, never renumbered or reused. The
-#                         whole comment reaches the generated key header, so
-#                         write it for a plugin author. Do not tag plumbing,
-#                         per-slot or reserved fields.
-#   since_<S>_version   - generation of structure <S> this field arrived in,
-#                         where <S> is info, metadata or runtime. Pairs with
-#                         default_if_absent - neither stands alone.
-#   default_if_absent   - what a reader of an older structure gets instead.
-#                         A number for scalar, enum and type_alias. For an
-#                         array, a number filling every element or a list
-#                         stating them, u8 only. For any pointer, "null".
-#   deprecated_<S>_version - generation from which readers ignore this field.
+#   nullable            - cstr_ptr/struct_ptr: null pointer yields None rather
+#                         than ParseError::NullPointer
+#   expected_const      - inline_array: name of a generated constant whose bytes
+#                         the parsed array must begin with; a mismatch yields
+#                         ParseError::BadMagic. Used for struct magic fields.
+#   none_on_parse_error - nullable struct_ptr/tagged_fam_ptr/simple_fam_ptr: a
+#                         non-null pointer whose target fails to parse yields
+#                         None rather than propagating the error. Used where the
+#                         target may be absent or stale (e.g. a runtime pointer
+#                         into RAM on a stopped device).
 #
 # ---------------------------------------------------------------------------
-# Structure generations
+# 'generate' field values
 # ---------------------------------------------------------------------------
-# Three structures carry a generation number - onerom_info_t,
-# onerom_metadata_header_t, onerom_runtime_info_t.
+#   "both"   - C definition + Rust parse + Rust serialize
+#   "parse"  - C definition + Rust parse only
+#   "none"   - C definition only
 #
-#   - The number lives in the field version_field names.
-#   - Raise it by hand when the structure's layout changes.
-#   - Add a [[versions]] entry naming the release it arrived in.
-#   - A field's marker names the top-level structure governing it, not the one
-#     it sits in. A shared structure belongs to the tree that writes its bytes,
-#     so a ROM slot field takes since_metadata_version.
-#   - A new field's bytes come from the trailing reserved padding. The padding
-#     shrinks, the structure keeps its declared size, nothing moves.
+# ---------------------------------------------------------------------------
+# Constants in the plugin API
+# ---------------------------------------------------------------------------
+# A constant declared here reaches the firmware's C
+# (firmware/generated/onerom_metadata.h) and the Rust crate (a `pub const`)
+# under the name given. Neither is plugin-facing: a plugin builds against
+# firmware/ora alone and cannot include the firmware's metadata header.
 #
-# metadata_schema_released.toml is this file as the last release shipped it.
-# The build compares the two and fails on a changed layout with an unchanged
-# number, a moved field, or a changed constant value.
+# So a value a plugin must agree with the firmware on - the longest hold either
+# will accept, say - is marked `ora_api = true`, which also emits it into
+# firmware/ora/onerom_constants_generated.h, included by api.h. The ORA name is
+# the name here with an `ORA_` prefix, derived rather than given so that either
+# name can be found from the other.
 #
-# Refresh it with ci/update-released-schema.sh once per cycle, in the same
-# commit as the firmware_release bump.
+# Leave it off otherwise. Most constants are firmware-and-host only, and the
+# plugin API is a published surface: a constant in it is one more thing that
+# cannot later be taken away.
+#
+# ---------------------------------------------------------------------------
+# Plugin keys
+# ---------------------------------------------------------------------------
+# Tagging a field `plugin_key = { name = "NAME", id = N }` exposes it to plugins
+# through the metadata getter API automatically - no hand-written firmware:
+#   - cstr_ptr fields          -> ORA_ID_GET_METADATA_STR
+#   - unsigned scalar / enum   -> ORA_ID_GET_METADATA_UINT (zero-extended to u32)
+# Fields in onerom_hardware_info_t (and the metadata header) resolve via the
+# METADATA root; fields in onerom_runtime_info_t resolve via the RUNTIME root.
+# Keys are one unified namespace across all typed getters. An id is a permanent,
+# stable identifier: once assigned it is NEVER renumbered or reused - pick the
+# next free id; a retired field's id returns NOT_SUPPORTED. Only the first
+# comment line reaches the generated key header, so keep fuller docs in
+# firmware/ora/api.h. Do not tag internal/plumbing, per-slot, or reserved
+# fields.
 
 [schema]
-format_version = 1           # version of this file's own set of tables and keys
-firmware_release = "0.8.0"   # firmware release this schema describes
+version = 1
 name = "OneROM"
 description = "OneROM firmware metadata structures"
 flash_base   = 0x10000000    # RP2350 flash base address
 metadata_base = 0x1000C000   # flash_base + 48KB: root of metadata region
 metadata_size = 16384        # 16KB reserved for metadata
 root_struct = "onerom_metadata_header_t"
-
-# ===========================================================================
-# Structure generations
-# ===========================================================================
-#
-# Which firmware release introduced each generation. See "Structure
-# generations" in the header comment for what a generation governs.
-
-[[versions]]
-struct_name = "onerom_info_t"
-version = 2
-first_release = "0.7.0"
-
-[[versions]]
-struct_name = "onerom_metadata_header_t"
-version = 2
-first_release = "0.7.0"
-
-[[versions]]
-struct_name = "onerom_runtime_info_t"
-version = 2
-first_release = "0.7.0"
 
 # ===========================================================================
 # Constants
@@ -210,7 +189,6 @@ name = "GPIO_NONE"
 type = "u8"
 value = 0xFF
 ora_api = true
-first_release = "0.7.2"
 comment = "Sentinel: no GPIO is connected to this pin position"
 
 [[constants]]
@@ -771,37 +749,15 @@ comment = "Count of DMA algorithms. Not a valid algorithm."
 # 'size'            - byte size where a STATIC_ASSERT exists in the C source
 # 'root'            - true for the struct placed at metadata_base
 # 'generate'        - "both" | "parse" | "none"
-# 'version_field'   - name of the field holding this structure's generation
-#                     number. Only the three structures listed under
-#                     [[versions]] carry one. Declared rather than found by
-#                     name, so a struct that breaks the convention is caught.
-# 'version_constant'- name of the constant holding that generation's current
-#                     value. version_field says where a device carries the
-#                     number and this says where the schema states it, so a
-#                     structure declares both or neither. It has to equal the
-#                     newest [[versions]] entry for the structure, and it is
-#                     what an older schema's generation is read from, that
-#                     file having no [[versions]] table.
-# 'expected_offset' - per-field: the field's position is frozen, because
-#                     something outside the schema reads it by hand. A schema
-#                     whose layout disagrees fails the build. C gets an
-#                     offsetof STATIC_ASSERT, the Rust parser gets a matching
-#                     assert, and Rust gets a <STRUCT>_<FIELD>_OFFSET const
-#                     for the hand-written reader to use in place of a
-#                     literal.
+# 'expected_offset' - per-field: offset verified by STATIC_ASSERT in C source
 
 [[structs]]
 name = "onerom_info_t"
 comment = """Main OneROM information structure.
 Placed in flash by the C firmware build at a fixed location.
-Not generated by the Rust pre-processor; parsed only.
-The fields carrying expected_offset are the ones a host reads by hand while
-bootstrapping - it needs the pointers before it can run the generated parser
-at all - so their offsets are frozen."""
+Not generated by the Rust pre-processor; parsed only."""
 generate = "parse"
 size = 64
-version_field = "version"
-version_constant = "ONEROM_INFO_VERSION"
 
 [[structs.fields]]
 name = "magic"
@@ -809,28 +765,24 @@ kind = "inline_array"
 element = "u8"
 count = 4
 expected_const = "ONEROM_INFO_MAGIC"
-expected_offset = 0
 comment = "Magic bytes: See ONEROM_INFO_MAGIC const"
 
 [[structs.fields]]
 name = "major_version"
 kind = "scalar"
 type = "u16"
-expected_offset = 4
 comment = "Firmware major version"
 
 [[structs.fields]]
 name = "minor_version"
 kind = "scalar"
 type = "u16"
-expected_offset = 6
 comment = "Firmware minor version"
 
 [[structs.fields]]
 name = "patch_version"
 kind = "scalar"
 type = "u16"
-expected_offset = 8
 comment = "Firmware patch version"
 
 [[structs.fields]]
@@ -843,7 +795,6 @@ comment = "Firmware build number"
 name = "build_date"
 kind = "cstr_ptr"
 nullable = false
-expected_offset = 12
 comment = "Pointer to build date/time string"
 
 [[structs.fields]]
@@ -857,7 +808,6 @@ comment = "Git commit hash, null-terminated, 8 bytes"
 name = "version"
 kind = "scalar"
 type = "u32"
-expected_offset = 24
 comment = "Info structure version (ONEROM_INFO_VERSION)"
 
 [[structs.fields]]
@@ -865,7 +815,6 @@ name = "metadata"
 kind = "struct_ptr"
 type = "onerom_metadata_header_t"
 nullable = true
-expected_offset = 28
 comment = "Pointer to the metadata header (at metadata_base)"
 
 [[structs.fields]]
@@ -880,7 +829,6 @@ kind = "struct_ptr"
 type = "onerom_runtime_info_t"
 nullable = true
 none_on_parse_error = true
-expected_offset = 36
 comment = """Pointer to runtime info structure.
 Points into RAM; on a stopped device that RAM is absent or stale, so a failed
 parse (e.g. bad magic) yields None rather than failing the whole struct."""
@@ -901,8 +849,6 @@ All sub-structures must be 4-byte aligned."""
 generate = "both"
 size = 256
 root = true
-version_field = "version"
-version_constant = "CURRENT_METADATA_VERSION"
 
 [[structs.fields]]
 name = "magic"
@@ -953,7 +899,7 @@ comment = "Leave SWD enabled once serving starts. 0=off, 1=on. When 0, SWD is up
 name = "turbo_boot"
 kind = "scalar"
 type = "u8"
-plugin_key = { name = "TURBO_BOOT", id = 15, first_release = "0.7.2" }
+plugin_key = { name = "TURBO_BOOT", id = 15 }
 comment = "Enable fast boot, disabling image select jumper reading. 0=off, 1=on."
 
 [[structs.fields]]
@@ -982,7 +928,7 @@ size = 128
 name = "hw_rev"
 kind = "cstr_ptr"
 nullable = false
-plugin_key = { name = "HW_REV", id = 6, first_release = "0.7.1" }
+plugin_key = { name = "HW_REV", id = 6 }
 comment = "Hardware revision string. Must be present."
 
 [[structs.fields]]
@@ -995,56 +941,56 @@ comment = "Expected RP235x silicon variant for this board"
 name = "num_phys_pins"
 kind = "scalar"
 type = "u8"
-plugin_key = { name = "NUM_PHYS_PINS", id = 7, first_release = "0.7.1" }
+plugin_key = { name = "NUM_PHYS_PINS", id = 7 }
 comment = "Number of physical pins on the emulated ROM package"
 
 [[structs.fields]]
 name = "usb_capable"
 kind = "scalar"
 type = "u8"
-plugin_key = { name = "USB_CAPABLE", id = 8, first_release = "0.7.1" }
+plugin_key = { name = "USB_CAPABLE", id = 8 }
 comment = "Whether this board has a USB port. 0=no, 1=yes."
 
 [[structs.fields]]
 name = "gpio_vbus"
 kind = "scalar"
 type = "u8"
-plugin_key = { name = "GPIO_VBUS", id = 9, first_release = "0.7.1" }
+plugin_key = { name = "GPIO_VBUS", id = 9 }
 comment = "GPIO pin for VBUS detection. Holds the GPIO-none sentinel if not present."
 
 [[structs.fields]]
 name = "gpio_ext_flash_cs"
 kind = "scalar"
 type = "u8"
-plugin_key = { name = "GPIO_EXT_FLASH_CS", id = 10, first_release = "0.7.1" }
+plugin_key = { name = "GPIO_EXT_FLASH_CS", id = 10 }
 comment = "GPIO for secondary flash chip select. Holds the GPIO-none sentinel if no secondary flash."
 
 [[structs.fields]]
 name = "gpio_status"
 kind = "scalar"
 type = "u8"
-plugin_key = { name = "GPIO_STATUS", id = 3, first_release = "0.7.1" }
+plugin_key = { name = "GPIO_STATUS", id = 3 }
 comment = "GPIO for status LED. Holds the GPIO-none sentinel if not present."
 
 [[structs.fields]]
 name = "gpio_neopixel"
 kind = "scalar"
 type = "u8"
-plugin_key = { name = "GPIO_NEOPIXEL", id = 4, first_release = "0.7.1" }
+plugin_key = { name = "GPIO_NEOPIXEL", id = 4 }
 comment = "GPIO for Neopixel LED. Holds the GPIO-none sentinel if not present."
 
 [[structs.fields]]
 name = "gpio_swdio"
 kind = "scalar"
 type = "u8"
-plugin_key = { name = "GPIO_SWDIO", id = 11, first_release = "0.7.1" }
+plugin_key = { name = "GPIO_SWDIO", id = 11 }
 comment = "GPIO also connected to SWDIO. Holds the GPIO-none sentinel if not present."
 
 [[structs.fields]]
 name = "gpio_swclk"
 kind = "scalar"
 type = "u8"
-plugin_key = { name = "GPIO_SWCLK", id = 12, first_release = "0.7.1" }
+plugin_key = { name = "GPIO_SWCLK", id = 12 }
 comment = "GPIO also connected to SWCLK. Holds the GPIO-none sentinel if not present."
 
 [[structs.fields]]
@@ -1058,7 +1004,7 @@ kind = "inline_array"
 element = "u8"
 count = 7
 count_ref = "MAX_IMG_SEL_PINS"
-plugin_key = { name = "GPIO_SEL", id = 16, first_release = "0.7.2" }
+plugin_key = { name = "GPIO_SEL", id = 16 }
 comment = """Image select GPIO pins (MAX_IMG_SEL_PINS entries).
 Filled contiguously from index 0. An unused entry holds the GPIO-none
 sentinel, so a reader stops at the first of those rather than at the end
@@ -1088,7 +1034,7 @@ kind = "inline_array"
 element = "u8"
 count = 2
 count_ref = "MAX_X_PIN_GPIOS"
-plugin_key = { name = "GPIO_X1", id = 17, first_release = "0.7.2" }
+plugin_key = { name = "GPIO_X1", id = 17 }
 comment = """X1 expansion pin GPIO mapping (MAX_X_PIN_GPIOS entries).
 Filled contiguously from index 0. An unused entry holds the GPIO-none
 sentinel, so a reader stops at the first of those rather than at the end
@@ -1101,7 +1047,7 @@ kind = "inline_array"
 element = "u8"
 count = 2
 count_ref = "MAX_X_PIN_GPIOS"
-plugin_key = { name = "GPIO_X2", id = 18, first_release = "0.7.2" }
+plugin_key = { name = "GPIO_X2", id = 18 }
 comment = """X2 expansion pin GPIO mapping (MAX_X_PIN_GPIOS entries).
 Filled contiguously from index 0. An unused entry holds the GPIO-none
 sentinel, so a reader stops at the first of those rather than at the end
@@ -1126,14 +1072,14 @@ size = 8
 name = "name"
 kind = "cstr_ptr"
 nullable = true
-plugin_key = { name = "UNIT_NAME", id = 1, first_release = "0.7.1" }
+plugin_key = { name = "UNIT_NAME", id = 1 }
 comment = "Name of this One ROM unit. May be NULL. At most MAX_UNIT_NAME_LEN bytes."
 
 [[structs.fields]]
 name = "serial_number"
 kind = "cstr_ptr"
 nullable = true
-plugin_key = { name = "SERIAL_OVERRIDE", id = 2, first_release = "0.7.1" }
+plugin_key = { name = "SERIAL_OVERRIDE", id = 2 }
 comment = "Override serial number. NULL = derive from unique MCU chip ID. At most MAX_SERIAL_NUMBER_LEN bytes."
 
 # ---
@@ -1424,8 +1370,6 @@ Parsed only."""
 generate = "parse"
 size = 60
 const_fields = false
-version_field = "version"
-version_constant = "RUNTIME_INFO_VERSION"
 
 [[structs.fields]]
 name = "magic"
@@ -1451,7 +1395,7 @@ comment = "Size of this structure in bytes"
 name = "rp235x"
 kind = "enum"
 type = "rp235x_variant_t"
-plugin_key = { name = "RP_VARIANT", id = 14, first_release = "0.7.1" }
+plugin_key = { name = "RP_VARIANT", id = 14 }
 comment = "Detected RP235x silicon variant"
 
 [[structs.fields]]
@@ -1464,7 +1408,7 @@ comment = "Image select jumper state at boot. Initialised to 0xFF."
 name = "rom_slot_index"
 kind = "scalar"
 type = "u8"
-plugin_key = { name = "ROM_SLOT_INDEX", id = 19, first_release = "0.7.2" }
+plugin_key = { name = "ROM_SLOT_INDEX", id = 19 }
 comment = "Index of currently selected ROM slot. Initialised to 0xFF."
 
 [[structs.fields]]
@@ -1488,7 +1432,7 @@ comment = "Whether overclocking is active"
 name = "status_led_enabled"
 kind = "scalar"
 type = "u8"
-plugin_key = { name = "STATUS_LED_STATE", id = 5, first_release = "0.7.1" }
+plugin_key = { name = "STATUS_LED_STATE", id = 5 }
 comment = "Live status-LED on/off state and plugin coordination channel; seeded from the led config default, then updated via ora_set_status_led (see api.h)"
 
 [[structs.fields]]
@@ -1547,7 +1491,7 @@ comment = "Active serving bus width (8 or 16 bit)"
 name = "boot_logging"
 kind = "scalar"
 type = "u8"
-plugin_key = { name = "BOOT_LOGGING", id = 13, first_release = "0.7.1" }
+plugin_key = { name = "BOOT_LOGGING", id = 13 }
 comment = "Whether boot logging is active"
 
 [[structs.fields]]
@@ -1940,7 +1884,6 @@ name = "LED_MAX_HOLD_MS"
 type = "u32"
 value = 60000
 ora_api = true
-first_release = "0.7.2"
 comment = "The longest hold either LED accepts, in milliseconds."
 
 [[constants]]
@@ -1948,7 +1891,6 @@ name = "GPIO_MAX_HOLD_MS"
 type = "u32"
 value = 60000
 ora_api = true
-first_release = "0.7.2"
 comment = "The longest bounded GPIO hold a plugin accepts, in milliseconds."
 
 [[constants]]

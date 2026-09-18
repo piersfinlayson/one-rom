@@ -81,11 +81,14 @@ pub fn build_rom_info(
 
 /// Determine the `RomSlotType` for a chip set.
 ///
-/// QUESTION/TODO: `RomSlotTypeSingleRam` is assumed to apply when a
-/// Single set's chip is `ChipType::Chip6116` (the only SRAM type) -
-/// confirm this is the right (and only) trigger before relying on it.
-/// `RomSlotTypePlugin*` aren't handled here - plugin slots aren't
-/// `ChipSet`s (presumably a separate path, shared with v1 - point 4).
+/// `RomSlotTypePlugin*` is not produced here - `build_v2` sets a plugin
+/// slot's type itself, on a path that never reaches `build_rom_slot`.
+///
+/// QUESTION/TODO: `RomSlotTypeSingleRam` is assumed to apply when a Single
+/// set's chip is `ChipType::Chip6116` (the only SRAM type) - confirm this is
+/// the right, and the only, trigger before relying on it.  `Chip6116` is
+/// commented out of `SUPPORTED_CHIP_TYPES`, so the arm is unreachable through
+/// a v2 config today, which is why nothing has hit it.
 pub fn rom_slot_type(set_type: ChipSetType, chip0_type: ChipType) -> RomSlotType {
     match set_type {
         ChipSetType::Multi => RomSlotType::RomSlotTypeMultiRom,

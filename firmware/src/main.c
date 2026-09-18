@@ -32,6 +32,12 @@ int firmware_main(void) {
         LOG_INIT();
     }
 
+    if (METADATA->version != CURRENT_METADATA_VERSION) {
+        LOG("Metadata gen: %lu (firmware %lu)",
+            (unsigned long)METADATA->version,
+            (unsigned long)CURRENT_METADATA_VERSION);
+    }
+
     // Do initial plugin parsing.  The system plugin can potentially override
     // USB DFU support, which is why we do it now.
     // Must be done even when turbo booting.

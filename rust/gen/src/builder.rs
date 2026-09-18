@@ -9,9 +9,9 @@ use onerom_config::chip::ChipType;
 use onerom_config::fw::{FirmwareProperties, FirmwareVersion};
 use onerom_config::mcu::Family;
 use onerom_metadata::{
-    CURRENT_METADATA_VERSION, MAX_SERIAL_NUMBER_LEN, MAX_UNIT_NAME_LEN, METADATA_BASE,
-    METADATA_SIZE, ONEROM_METADATA_MAGIC, OneromMetadataHeader, OneromRomInfo, OneromRomSlot,
-    Pointer, RomSlotType, serialize,
+    MAX_SERIAL_NUMBER_LEN, MAX_UNIT_NAME_LEN, METADATA_BASE, METADATA_SIZE, MIN_SCHEMA_VERSION,
+    MaybeKnown, ONEROM_METADATA_MAGIC, OneromMetadataHeader, OneromRomInfo, OneromRomSlot, Pointer,
+    RomSlotType, metadata_generation_for, serialize,
 };
 
 use crate::image::requires_half_select_cs1;
@@ -399,6 +399,19 @@ impl Builder {
         props: FirmwareProperties,
     ) -> Result<(alloc::vec::Vec<u8>, alloc::vec::Vec<u8>)> {
         let board = props.board();
+
+        // Write at the generation the target firmware understands, so it never
+        // has to read metadata newer than itself.  A target newer than
+        // anything this build knows gets this build's newest.
+        //
+        // The refusal below cannot fire: from_json has already rejected a
+        // version between the V1 maximum and the V2 minimum.
+        let generation = metadata_generation_for(self.version).ok_or(Error::FirmwareTooOld {
+            feat: "the v2 metadata schema",
+            version: self.version,
+            minimum: MIN_SCHEMA_VERSION,
+        })?;
+
         let chip_sets = build_chip_sets(&self.config, &self.files, &self.file_id_map, &props)?;
 
         let mut rom_slots = alloc::vec::Vec::with_capacity(chip_sets.len());
@@ -428,7 +441,7 @@ impl Builder {
                         rbcp_rom_type: chip.chip_type().rbcp_chip_type(),
                     }],
                     rom_count: 1,
-                    slot_type,
+                    slot_type: MaybeKnown::Known(slot_type),
                     alg: None,
                     firmware_overrides,
                 };
@@ -506,7 +519,7 @@ impl Builder {
 
         let header = OneromMetadataHeader {
             magic,
-            version: CURRENT_METADATA_VERSION,
+            version: generation,
             hw,
             fw,
             rom_slot_count: rom_slots.len() as u8,

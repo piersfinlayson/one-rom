@@ -14,6 +14,15 @@ uint8_t ffi_limp_mode(void);
 uint8_t ffi_pios_enabled(void);
 uint8_t ffi_image_sel(void);
 
+// The generation recorded in the metadata header, and a way to change it.
+//
+// On a device the two differ routinely - see firmware/src/utils.c.  A host
+// build compiles both from one tree and only ever sees them agree, so these
+// let a test put a different generation in front of the firmware before it
+// boots.
+uint32_t ffi_metadata_generation(void);
+void ffi_set_metadata_generation(uint32_t generation);
+
 // The serving algorithms and address window the current ROM slot is running.
 //
 // A test needs the address state machine's sampled pin window to know whether a

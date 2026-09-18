@@ -336,7 +336,7 @@ and exposes the `picobootx` interface. `host-control` implements RBCP.
 
 - **Extending the API:** add `ORA_ID_*` values additively, each taking the next
   unused number, with existing ones keeping their meaning for good. Give every
-  new ID an `@since firmware vX.Y.Z` line in its `firmware/ora/api.h` doc block,
+  new ID an `@since firmware X.Y.Z` line in its `firmware/ora/api.h` doc block,
   naming the firmware version it first shipped in — that is what a plugin
   targets via `min_fw_version`.
 - **A new plugin API call is done when the plugin API tester exercises it, in
@@ -355,10 +355,12 @@ and exposes the `picobootx` interface. `host-control` implements RBCP.
     its sizes and its refusals belong to the plugin API tester.
 - **Exposing device metadata to plugins:** tag the field in
   `rust/metadata/metadata_schema.toml` with
-  `plugin_key = { name = "…", id = N }`. String fields then resolve via
-  `ORA_ID_GET_METADATA_STR` and unsigned scalar or enum fields via
-  `ORA_ID_GET_METADATA_UINT`, with no hand-written firmware. Key ids are one
-  permanent namespace, each number keeping its meaning for good.
+  `plugin_key = { name = "…", id = N, first_release = "X.Y.Z" }`. String fields
+  then resolve via `ORA_ID_GET_METADATA_STR` and unsigned scalar or enum fields
+  via `ORA_ID_GET_METADATA_UINT`, with no hand-written firmware. Key ids are one
+  permanent namespace, each number keeping its meaning for good, and
+  `first_release` names the release the key arrived in, which the released
+  schema copy holds it to.
   `status_led_enabled` is the live status-LED state and the cross-plugin
   coordination channel, written by `ora_set_status_led` and read via its
   `STATUS_LED_STATE` key.
@@ -395,6 +397,7 @@ comment = """The longest hold either LED accepts, in milliseconds."""
   reasons.
 - **The `comment` becomes the doc comment in all three outputs**, so write it
   for whoever reads it last.
+- **A shipped constant is deprecated with `deprecated_release`, never removed.**
 
 Two places need a value where the language wants a literal, and each has a
 mechanism with the full recipe at its home:

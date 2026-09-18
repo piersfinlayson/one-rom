@@ -228,6 +228,64 @@ pub fn run_all(board: Board, config: &Config, base_dir: &std::path::Path, report
         result.set_note(note);
         report.add_set_result(result);
     }
+
+    if num_sets > 0 {
+        run_generation_passes(board, config, base_dir, num_sets, report);
+    }
+}
+
+/// Serve set 0 again with the metadata claiming a generation the firmware was
+/// not built at, once below and once above.
+///
+/// A device meets this routinely.  Every other test here builds both halves
+/// from one tree, so they always agree.
+///
+/// The generation is put back afterwards - it outlives a boot, like every
+/// other global in this process.
+fn run_generation_passes(
+    board: Board,
+    config: &Config,
+    base_dir: &std::path::Path,
+    num_sets: usize,
+    report: &mut TestReport,
+) {
+    let built_at = Emulator::metadata_generation();
+
+    // Zero is not a generation, so a firmware built at the first has nothing
+    // below it to try.
+    let below = (built_at > 1).then(|| built_at - 1);
+    let generations = [below, Some(built_at + 1)];
+
+    // Label these past the configured sets, as the one-beyond test does - they
+    // all serve set 0, and a repeated label would read as a repeated set.
+    let labelled = (num_sets + 1..).zip(generations.into_iter().flatten());
+
+    for (label_idx, generation) in labelled {
+        info!(
+            "Running metadata generation test: metadata claims generation {}, \
+             firmware built at {}",
+            generation, built_at
+        );
+        Emulator::set_metadata_generation(generation);
+
+        let mut result = run_chip_set(
+            board,
+            config,
+            &config.chip_sets[0],
+            label_idx,
+            0,
+            0,
+            base_dir,
+        );
+        result.set_note(format!(
+            "metadata generation test: metadata claims generation {} \
+             (firmware built at {}), set 0 must still serve",
+            generation, built_at,
+        ));
+        report.add_set_result(result);
+    }
+
+    Emulator::set_metadata_generation(built_at);
 }
 
 // ── Per chip set (dispatch) ───────────────────────────────────────────────────
@@ -1101,6 +1159,16 @@ fn boot_set(
         return Err(SetResult::boot_error(
             set_idx,
             "firmware selected a different image — the set would have tested the wrong ROM",
+        ));
+    }
+    // A device that asks for the bootloader stops serving, but the stub
+    // returns and the firmware carries on.  Without this check the run would
+    // read bytes from a firmware that had refused to start.
+    if emulator.bootloader_entered() {
+        error!("Set {}: firmware asked for the bootloader", set_idx);
+        return Err(SetResult::boot_error(
+            set_idx,
+            "firmware asked for the bootloader",
         ));
     }
     if emulator.limp_mode() {

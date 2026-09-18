@@ -54,6 +54,9 @@ impl From<SerializeError> for Error {
                     "Too many entries for metadata field '{field}' (maximum 255)"
                 ),
             },
+            SerializeError::FieldTooNew { field, minimum } => {
+                Error::MetadataFieldTooNew { field, minimum }
+            }
         }
     }
 }

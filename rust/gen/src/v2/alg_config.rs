@@ -18,17 +18,16 @@
 //! infallible.
 //!
 //! `bit_mode` (chip0's *effective* bit mode, from `bit_mode_for`) and
-//! `force_16_bit` are both computed once by `build_rom_slot` and passed
-//! in - `bit_mode` is also needed by `derive_addr_layout` (for the A-1
-//! carve-out), so computing it once and sharing avoids the two
-//! disagreeing.
+//! `force_16_bit` are computed once by `build_rom_slot` and reached through
+//! `ctx`.  `derive_addr_layout` needs `bit_mode` too, for the A-1 carve-out,
+//! so computing it once keeps the two from disagreeing.
 
 use onerom_config::chip::ChipType;
 use onerom_config::hw::Board;
 
 use onerom_metadata::{
-    BitModes, GPIO_NONE, GpioOverride, OneromAlgAddrConfig, OneromAlgConfig, OneromAlgDataConfig,
-    OneromAlgDmaConfig, OneromAlgOverrideConfig,
+    BitModes, GPIO_NONE, GpioOverride, MaybeKnown, OneromAlgAddrConfig, OneromAlgConfig,
+    OneromAlgDataConfig, OneromAlgDmaConfig, OneromAlgOverrideConfig,
 };
 
 use crate::image::CsConfig;
@@ -166,6 +165,11 @@ pub fn build_alg_addr(layout: &AddrLayout, alg_data: &OneromAlgDataConfig) -> On
         OneromAlgDataConfig::AlgData1 { .. } => {
             (ALG_DATA1_NUM_DELAY_CYCLES_16_BIT, layout.num_addr_pins + 1)
         }
+        // `build_alg_data` only ever names a data algorithm this build knows,
+        // and one with no name brings no pipeline depth with it.
+        OneromAlgDataConfig::Unknown { alg, .. } => {
+            panic!("data algorithm {alg} is not one this build can time an address read against")
+        }
     };
 
     // AddrLayout::gpio_base is the min GPIO of the address range (not
@@ -190,7 +194,7 @@ pub fn build_alg_addr(layout: &AddrLayout, alg_data: &OneromAlgDataConfig) -> On
 /// G: always continuous for now (IRQ-based DMA later).
 pub fn build_alg_dma(bit_mode: BitModes) -> OneromAlgDmaConfig {
     OneromAlgDmaConfig::AlgDma0 {
-        bit_mode,
+        bit_mode: MaybeKnown::Known(bit_mode),
         continuous: 1,
     }
 }
@@ -219,16 +223,14 @@ pub fn combined_alg_preference(alg: &OneromAlgConfig) -> CombinedAlgPreference {
 /// (`cs_overrides`), Banked X1/X2 address-pin inversion overrides
 /// (`gpio_x_overrides`), and Banked X1/X2 pulls (`gpio_pull_config`).
 ///
-/// `bit_mode`/`force_16_bit` determine `alg_data`/`alg_dma` (see
-/// `build_alg_data`/`bit_mode_for`) - both computed once by the caller
-/// (`build_rom_slot`), since `bit_mode` is also needed by
-/// `derive_addr_layout`. `num_chips` is `chip_types.len()` (==
-/// `chips.len()`) for the set.
+/// `ctx` carries `bit_mode`/`force_16_bit`, which determine
+/// `alg_data`/`alg_dma` (see `build_alg_data`/`bit_mode_for`), and the chip
+/// types whose count is the set's `num_chips`. `build_rom_slot` computes
+/// `bit_mode` once, since `derive_addr_layout` needs it too.
 ///
 /// `secondary_cs_configs` carries the CS configs for `chips[1..]` in a
 /// Multi set (empty for Single/Banked). X1/X2 override decisions use the
 /// respective secondary chip's `cs1_logic` rather than `chip[0]`'s.
-#[allow(clippy::too_many_arguments)]
 pub fn build_alg_config(
     ctx: &SlotContext,
     addr_layout: &AddrLayout,
@@ -372,7 +374,7 @@ mod tests {
         assert_eq!(
             alg_dma,
             OneromAlgDmaConfig::AlgDma0 {
-                bit_mode: BitModes::BitMode8,
+                bit_mode: MaybeKnown::Known(BitModes::BitMode8),
                 continuous: 1,
             }
         );
@@ -440,7 +442,7 @@ mod tests {
                     word_size: 8,
                 },
                 alg_dma: OneromAlgDmaConfig::AlgDma0 {
-                    bit_mode: BitModes::BitMode8,
+                    bit_mode: MaybeKnown::Known(BitModes::BitMode8),
                     continuous: 1,
                 },
                 gpio_pull_config: None,
@@ -546,7 +548,7 @@ mod tests {
         assert_eq!(
             config.alg_dma,
             OneromAlgDmaConfig::AlgDma0 {
-                bit_mode: BitModes::BitMode8,
+                bit_mode: MaybeKnown::Known(BitModes::BitMode8),
                 continuous: 1
             }
         );
@@ -639,7 +641,7 @@ mod tests {
         assert_eq!(
             alg_dma,
             OneromAlgDmaConfig::AlgDma0 {
-                bit_mode: BitModes::BitMode16,
+                bit_mode: MaybeKnown::Known(BitModes::BitMode16),
                 continuous: 1,
             }
         );
@@ -705,7 +707,7 @@ mod tests {
         assert_eq!(
             alg_dma,
             OneromAlgDmaConfig::AlgDma0 {
-                bit_mode: BitModes::BitMode16,
+                bit_mode: MaybeKnown::Known(BitModes::BitMode16),
                 continuous: 1,
             }
         );

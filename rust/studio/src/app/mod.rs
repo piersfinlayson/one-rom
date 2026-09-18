@@ -65,6 +65,10 @@ pub fn startup_task() -> Task<AppMessage> {
 }
 
 /// Top level Message enum - container for all sub-module messages
+// The variants carry whole sub-module messages, so they differ in size by more
+// than clippy's threshold and always will.  Boxing one would put an allocation
+// on every message the app sends.  device/mod.rs carries the same allow.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone)]
 pub enum AppMessage {
     /// Analyse pane messages

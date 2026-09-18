@@ -2,6 +2,27 @@
 
 All notables changes between versions are documented in this file.
 
+## v0.8.0 - unreleased
+
+Headline changes in this release:
+
+In detail:
+- `onerom inspect info` now says what it could not show you, and why.
+- The plugin API's generated metadata-key and constant headers now say which firmware release each entry first shipped in.
+
+To publish:
+- Rust crates (in dependency order):
+  - onerom-metadata 0.3.0
+  - onerom-gen 0.9.0
+  - onerom-fw-parser 0.10.0
+  - onerom-fw 0.4.0
+  - onerom-app 0.4.0
+  - onerom-cli 0.5.0
+- CLI bin 0.5.0
+- Studio 0.2.3: rebuild against the new Rust crates to support v0.8.0
+- one-rom-wasm: rebuild against the new Rust crates to support v0.8.0
+- one-rom-site: pick up wasm to support v0.8.0
+
 ## v0.7.2 - 2026-09-08
 
 Headline changes in this release:

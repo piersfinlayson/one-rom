@@ -50,6 +50,21 @@ uint8_t ffi_image_sel(void) {
     return (uint8_t)RUNTIME->image_sel;
 }
 
+// See ffi.h.  gen-config.c defines the host build's metadata root, and leaves
+// it writable so the harness can stand where the CLI does on a device.
+extern onerom_metadata_header_t _metadata_start;
+
+uint32_t ffi_metadata_generation(void) {
+    return _metadata_start.version;
+}
+
+void ffi_set_metadata_generation(uint32_t generation) {
+    // Metadata members are const-qualified, which is what stops firmware code
+    // writing one.  The harness stands where the CLI does, not where the
+    // firmware does.
+    *(uint32_t *)(uintptr_t)&_metadata_start.version = generation;
+}
+
 // See ffi.h.  base_addr_pin is an offset within the PIO's GPIOBASE window, so
 // the absolute first GPIO sampled is gpio_base + base_addr_pin.
 uint8_t ffi_serving_alg(ffi_serving_alg_t *out) {

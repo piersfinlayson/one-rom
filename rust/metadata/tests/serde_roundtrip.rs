@@ -20,7 +20,7 @@
 //! the web details pane and any stored dumps depend on the current shape.
 
 use onerom_metadata::{
-    OneromAlgCsConfig, OneromHardwareInfo, OneromRomInfo, OneromRomPinMap, RomSlotType,
+    MaybeKnown, OneromAlgCsConfig, OneromHardwareInfo, OneromRomInfo, OneromRomPinMap, RomSlotType,
     Rp235xVariant,
 };
 
@@ -47,7 +47,7 @@ where
 fn hardware_info_round_trips_including_big_array() {
     let hw = OneromHardwareInfo {
         hw_rev: "fire-28-c".into(),
-        rp235x: Rp235xVariant::Rp235xa,
+        rp235x: MaybeKnown::Known(Rp235xVariant::Rp235xa),
         num_phys_pins: 28,
         usb_capable: 1,
         gpio_vbus: 24,
@@ -137,4 +137,69 @@ fn rom_slot_type_variant_names_are_stable() {
     assert_eq!(json, "\"RomSlotTypeSingleRom\"");
     let decoded: RomSlotType = serde_json::from_str(&json).expect("deserialize");
     assert_eq!(decoded, RomSlotType::RomSlotTypeSingleRom);
+}
+
+/// A field whose value the list has grown past reads as `{"unknown": N}`,
+/// which a reader can tell from a variant name by shape alone, and it carries
+/// the byte the device stored.  A value the list does have a name for still
+/// writes as the bare variant name, so a stored dump reads as it did before.
+#[test]
+fn an_unknown_value_says_so_in_json_and_carries_its_byte() {
+    let known: MaybeKnown<RomSlotType> = MaybeKnown::Known(RomSlotType::RomSlotTypeSingleRom);
+    assert_eq!(
+        serde_json::to_string(&known).expect("serialize"),
+        "\"RomSlotTypeSingleRom\"",
+    );
+
+    let unknown: MaybeKnown<RomSlotType> = MaybeKnown::Unknown(0x5A);
+    assert_eq!(
+        serde_json::to_string(&unknown).expect("serialize"),
+        "{\"unknown\":90}",
+    );
+
+    // Both shapes come back as what went in.
+    for value in [known, unknown] {
+        let json = serde_json::to_string(&value).expect("serialize");
+        let decoded: MaybeKnown<RomSlotType> = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(decoded, value, "round-trip changed the value");
+    }
+}
+
+/// The wrapper does not change the shape of the structure around it: a
+/// recognised value sits in the dump exactly where the bare variant did.
+#[test]
+fn a_known_value_sits_in_the_dump_where_it_always_did() {
+    let hw = OneromHardwareInfo {
+        hw_rev: "fire-28-c".into(),
+        rp235x: MaybeKnown::Known(Rp235xVariant::Rp235xa),
+        num_phys_pins: 28,
+        usb_capable: 1,
+        gpio_vbus: 24,
+        gpio_ext_flash_cs: 255,
+        gpio_status: 25,
+        gpio_neopixel: 255,
+        gpio_swdio: 26,
+        gpio_swclk: 27,
+        gpio_sel: [0, 1, 2, 3, 4, 5, 6],
+        sel_jumper_pull: 0b0000_0011,
+        gpio_from_phys_pin: core::array::from_fn(|r| [r as u8, (r as u8).wrapping_add(0x40)]),
+        gpio_x1: [10, 11],
+        gpio_x2: [12, 13],
+    };
+
+    let json = serde_json::to_string(&hw).expect("serialize");
+    assert!(
+        json.contains("\"rp235x\":\"Rp235xa\""),
+        "expected the bare variant name, got: {json}"
+    );
+
+    let with_unknown = OneromHardwareInfo {
+        rp235x: MaybeKnown::Unknown(0x42),
+        ..hw
+    };
+    let json = serde_json::to_string(&with_unknown).expect("serialize");
+    assert!(
+        json.contains("\"rp235x\":{\"unknown\":66}"),
+        "expected the unknown shape, got: {json}"
+    );
 }

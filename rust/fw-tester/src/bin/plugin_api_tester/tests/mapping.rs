@@ -15,7 +15,9 @@ use onerom_config::hw::Board;
 use onerom_fw_emulator::{Emulator, ORA_FLASH_SLOT_FLAG_EXCLUDE_PLUGINS, OraResult};
 use onerom_fw_tester::geometry;
 use onerom_gen::Config;
-use onerom_metadata::{GPIO_NONE, OneromAlgDataConfig, OneromMetadataHeader, RomSlotType};
+use onerom_metadata::{
+    GPIO_NONE, MaybeKnown, OneromAlgDataConfig, OneromMetadataHeader, RomSlotType,
+};
 
 const MAX_FAILURES: usize = 5;
 
@@ -173,12 +175,14 @@ fn data_pin_expectation(
     header: &OneromMetadataHeader,
     set_idx: usize,
 ) -> Result<(Vec<u8>, u8), String> {
-    let is_plugin = |t: RomSlotType| {
+    let is_plugin = |t: MaybeKnown<RomSlotType>| {
         matches!(
             t,
-            RomSlotType::RomSlotTypePluginSystem
-                | RomSlotType::RomSlotTypePluginUser
-                | RomSlotType::RomSlotTypePluginPio
+            MaybeKnown::Known(
+                RomSlotType::RomSlotTypePluginSystem
+                    | RomSlotType::RomSlotTypePluginUser
+                    | RomSlotType::RomSlotTypePluginPio
+            )
         )
     };
 
@@ -195,7 +199,10 @@ fn data_pin_expectation(
 
     let word_size = match alg.alg_data {
         OneromAlgDataConfig::AlgData0 { word_size, .. }
-        | OneromAlgDataConfig::AlgData1 { word_size, .. } => word_size,
+        | OneromAlgDataConfig::AlgData1 { word_size, .. }
+        // word_size is common to the family, so an unnamed data algorithm
+        // still says how wide it serves.
+        | OneromAlgDataConfig::Unknown { word_size, .. } => word_size,
     };
     if word_size != 8 && word_size != 16 {
         return Err(format!("alg_data word_size is {word_size}, want 8 or 16"));

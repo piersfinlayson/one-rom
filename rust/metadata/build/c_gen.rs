@@ -12,11 +12,15 @@
 //   structs               (typedef struct … + STATIC_ASSERT)
 //   tagged FAM structs    (main struct + per-variant param structs + STATIC_ASSERTs)
 //   simple FAM structs    (length-prefixed byte-array structs)
+//   accessors             (static inline readers for generation-gated fields)
 //   header guard close
 
 use onerom_config::chip::{CHIP_TYPES, ChipType};
 
-use crate::schema::{ConstantValue, Field, Schema, SimpleFam, Struct, TaggedFam, field_size};
+use crate::schema::{
+    ARRAY_KINDS, ConstantValue, Field, POINTER_KINDS, Schema, SimpleFam, Struct, TaggedFam,
+    array_default_elements, field_size,
+};
 
 // ---------------------------------------------------------------------------
 // Public entry point
@@ -26,6 +30,7 @@ use crate::schema::{ConstantValue, Field, Schema, SimpleFam, Struct, TaggedFam, 
 pub fn generate(schema: &Schema) -> String {
     let mut out = String::with_capacity(65536);
     emit_file_header(schema, &mut out);
+    emit_deprecation_macro(schema, &mut out);
     emit_forward_declarations(schema, &mut out);
     emit_type_aliases(schema, &mut out);
     emit_constants(schema, &mut out);
@@ -33,6 +38,7 @@ pub fn generate(schema: &Schema) -> String {
     emit_struct_defs(schema, &mut out);
     emit_tagged_fam_defs(schema, &mut out);
     emit_simple_fam_defs(schema, &mut out);
+    emit_accessors(schema, &mut out);
     emit_metadata_str_cases(schema, &mut out);
     emit_metadata_uint_cases(schema, &mut out);
     emit_metadata_uint_at_cases(schema, &mut out);
@@ -79,6 +85,301 @@ fn emit_file_header(schema: &Schema, out: &mut String) {
         size = schema.schema.metadata_size,
         guard = guard,
     ));
+}
+
+// ---------------------------------------------------------------------------
+// Deprecation
+// ---------------------------------------------------------------------------
+
+/// Emit the attribute macro a deprecated field's declaration carries.
+///
+/// Nothing is emitted where the schema deprecates nothing, so the macro
+/// reaches the header only in the release something first needs it.
+fn emit_deprecation_macro(schema: &Schema, out: &mut String) {
+    if !schema
+        .all_fields()
+        .iter()
+        .any(|(_, f)| f.deprecated_marker().is_some())
+    {
+        return;
+    }
+
+    emit_major_section_header("Deprecation", out);
+    let comment = wrap_comment_text(
+        "ONEROM_DEPRECATED(reason) marks what a reader of a deprecated field would \
+         reach for. A field is deprecated where its bytes are still written and \
+         still parsed, and nothing should be decided from what they hold - so the \
+         declaration says so where somebody would otherwise use it, and the \
+         firmware's -Werror build turns that into a stop.\n\n\
+         It lands on the accessor where the field has one and on the member \
+         otherwise, which in both cases is what a reader names. A generated \
+         writer names the member of a gated field directly and is unaffected.",
+        76,
+    );
+    emit_comment(&comment, "", out);
+    out.push_str(
+        "#if defined(__GNUC__) || defined(__clang__)\n\
+         #define ONEROM_DEPRECATED(reason) __attribute__((deprecated(reason)))\n\
+         #else\n\
+         #define ONEROM_DEPRECATED(reason)\n\
+         #endif\n\n",
+    );
+}
+
+/// The `ONEROM_DEPRECATED(...)` text a field carries, with a trailing space,
+/// or an empty string where the field is not deprecated.
+fn deprecation_attribute(field: &Field) -> String {
+    match field.deprecated_marker() {
+        Some((governor, generation)) => format!(
+            "ONEROM_DEPRECATED(\"{} is deprecated from {} generation {}\") ",
+            field.name, governor, generation
+        ),
+        None => String::new(),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Generation-gated field accessors
+// ---------------------------------------------------------------------------
+
+/// Emit a reader for every field the metadata generation gates.
+///
+/// The metadata is the one structure a device does not compile for itself, so
+/// it is the one read through an accessor - see [`Field::metadata_since`].
+///
+/// Each reader takes the header the generation lives in and the object the
+/// bytes live in.  Both are pointers the caller already holds, and asking for
+/// the header rather than a bare number leaves no way to check against the
+/// wrong structure's generation.
+fn emit_accessors(schema: &Schema, out: &mut String) {
+    let gated = schema.metadata_gated_fields();
+    if gated.is_empty() {
+        return;
+    }
+    let Some(header) = schema.metadata_header() else {
+        return;
+    };
+    let version_field = header
+        .version_field
+        .as_deref()
+        .expect("the metadata header declares a version_field");
+
+    emit_major_section_header("Generation-gated field accessors", out);
+
+    for (s, field) in gated {
+        emit_accessor(s, field, header, version_field, schema, out);
+    }
+}
+
+fn emit_accessor(
+    s: &Struct,
+    field: &Field,
+    header: &Struct,
+    version_field: &str,
+    schema: &Schema,
+    out: &mut String,
+) {
+    let generation = field
+        .metadata_since()
+        .expect("only gated fields reach here");
+    let name = accessor_name(s, field);
+    let default = c_default_expr(field, schema, &name);
+    let on_header = s.name == header.name;
+    let object = if on_header { "header" } else { "obj" };
+
+    out.push_str(
+        "// ---------------------------------------------------------------------------\n",
+    );
+    let mut doc = String::new();
+    if let Some(c) = &field.comment {
+        doc.push_str(c);
+        doc.push_str("\n\n");
+    }
+    doc.push_str(&format!(
+        "{}.{} arrived in {} generation {}. Metadata written before that \
+         generation has no such field, and this reads {} in its place.",
+        s.name, field.name, header.name, generation, default,
+    ));
+    if let Some((_, retired)) = field.deprecated_marker() {
+        doc.push_str(&format!(
+            "\n\nDeprecated from generation {retired}: the bytes are still there and \
+             nothing should be decided from them."
+        ));
+    }
+    emit_comment(&wrap_comment_text(&doc, 76), "", out);
+
+    emit_accessor_default_object(field, &name, out);
+
+    let deprecated = deprecation_attribute(field);
+    let params = if on_header {
+        format!("const {} *header", header.name)
+    } else {
+        format!("const {} *header, const {} *obj", header.name, s.name)
+    };
+    out.push_str(&format!(
+        "static inline {deprecated}{} {{\n",
+        accessor_declarator(field, &name, &params),
+    ));
+    out.push_str(&format!(
+        "    return (header->{version_field} >= {generation}u) ? {stored} : {default};\n",
+        stored = c_stored_expr(field, object),
+    ));
+    out.push_str("}\n\n");
+}
+
+/// The accessor's name: the struct's own name without its `_t`, then the
+/// field's.  It is the name the member would have had, so the compiler's
+/// "did you mean" points at it when hand-written code reaches for the member.
+fn accessor_name(s: &Struct, field: &Field) -> String {
+    format!(
+        "{}_{}",
+        crate::schema::strip_type_suffix(&s.name),
+        field.name
+    )
+}
+
+/// The C type a gated field's accessor returns.
+///
+/// A field whose value is a number is returned by value.  Everything else is
+/// returned as a pointer to it - to the member on a device new enough, and to
+/// the static default otherwise - because the firmware has nowhere to copy an
+/// array or a string to.
+fn c_value_type(field: &Field) -> String {
+    match field.kind.as_str() {
+        "scalar" => c_primitive(field.type_.as_deref().unwrap_or("u8")).to_string(),
+        "inline_array" => format!(
+            "const {} *",
+            c_primitive(field.element.as_deref().unwrap_or("u8"))
+        ),
+        "cstr_ptr" => "const char *".to_string(),
+        "struct_ptr" | "tagged_fam_ptr" | "simple_fam_ptr" => {
+            format!("const {} *", field.type_.as_deref().unwrap_or("void"))
+        }
+        "struct_array_ptr" => format!("const {} *", field.element.as_deref().unwrap_or("void")),
+        "struct_ptr_array_ptr" => format!(
+            "const {} * const *",
+            field.element.as_deref().unwrap_or("void")
+        ),
+        "opaque_ptr" => format!(
+            "const {} *",
+            c_primitive(field.pointed_type.as_deref().unwrap_or("void"))
+        ),
+        _ => field.type_.as_deref().unwrap_or("uint8_t").to_string(),
+    }
+}
+
+/// The accessor's return type, name and parameter list, less `static inline`.
+///
+/// Two kinds wrap the name rather than standing in front of it - a function
+/// returning a pointer to a row, and one returning a function pointer - so
+/// the whole declarator is built here rather than from a type and a name.
+fn accessor_declarator(field: &Field, name: &str, params: &str) -> String {
+    match field.kind.as_str() {
+        "inline_array2d" => format!(
+            "const {} (*{name}({params}))[{}]",
+            c_primitive(field.element.as_deref().unwrap_or("u8")),
+            c_array_dim(field.cols_ref.as_deref(), field.cols),
+        ),
+        "fn_ptr" => format!("void (*{name}({params}))(void)"),
+        _ => {
+            let ctype = c_value_type(field);
+            let gap = if ctype.ends_with('*') { "" } else { " " };
+            format!("{ctype}{gap}{name}({params})")
+        }
+    }
+}
+
+/// The member read, as the accessor's return type.
+///
+/// A 2-D array is the one kind needing a cast: a member of a structure whose
+/// fields are not const decays to a pointer to a non-const row, and C does
+/// not convert that to a pointer to a const one.
+fn c_stored_expr(field: &Field, object: &str) -> String {
+    let member = field.c_member();
+    match field.kind.as_str() {
+        "inline_array2d" => format!(
+            "(const {} (*)[{}]){object}->{member}",
+            c_primitive(field.element.as_deref().unwrap_or("u8")),
+            c_array_dim(field.cols_ref.as_deref(), field.cols),
+        ),
+        _ => format!("{object}->{member}"),
+    }
+}
+
+/// The name of the static object holding an array field's default.
+fn c_default_object_name(accessor: &str) -> String {
+    format!("{accessor}_default")
+}
+
+/// Emit the static object an array field's accessor hands back, where the
+/// field is one that needs one.
+///
+/// The array's bytes are in the structure whatever the generation, so what is
+/// absent is anything having been written there.  It costs the array's own
+/// size in flash, once, for a field that carries a marker.
+fn emit_accessor_default_object(field: &Field, accessor: &str, out: &mut String) {
+    if !ARRAY_KINDS.contains(&field.kind.as_str()) {
+        return;
+    }
+    let elements = array_default_elements(field);
+    let bytes = |row: &[u8]| -> String {
+        row.iter()
+            .map(|b| format!("0x{b:02X}"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    let name = c_default_object_name(accessor);
+    let etype = c_primitive(field.element.as_deref().unwrap_or("u8"));
+
+    if field.kind == "inline_array2d" {
+        let cols = field.cols.unwrap_or(0) as usize;
+        let rows: Vec<String> = elements
+            .chunks(cols.max(1))
+            .map(|row| format!("{{ {} }}", bytes(row)))
+            .collect();
+        out.push_str(&format!(
+            "static const {etype} {name}[{}][{}] = {{ {} }};\n",
+            c_array_dim(field.rows_ref.as_deref(), field.rows),
+            c_array_dim(field.cols_ref.as_deref(), field.cols),
+            rows.join(", "),
+        ));
+    } else {
+        out.push_str(&format!(
+            "static const {etype} {name}[{}] = {{ {} }};\n",
+            c_array_dim(field.count_ref.as_deref(), field.count),
+            bytes(&elements),
+        ));
+    }
+}
+
+/// The C expression for `default_if_absent`.
+///
+/// An enum's default is written as the variant's own name rather than its
+/// number, so the header says which state a reader of older metadata sees.
+/// A pointer's is `NULL`, and an array's is the static object above.
+fn c_default_expr(field: &Field, schema: &Schema, accessor: &str) -> String {
+    if POINTER_KINDS.contains(&field.kind.as_str()) {
+        return "NULL".to_string();
+    }
+    if ARRAY_KINDS.contains(&field.kind.as_str()) {
+        return c_default_object_name(accessor);
+    }
+
+    let value = field
+        .default_if_absent
+        .as_ref()
+        .and_then(|v| v.as_integer())
+        .expect("a gated field of this kind has a whole-number default");
+
+    if field.kind == "enum" {
+        let named = field.type_.as_deref().unwrap_or("");
+        if let Some(e) = schema.enums.iter().find(|e| e.name == named)
+            && let Some(v) = e.variants.iter().find(|v| v.value == value)
+        {
+            return v.name.clone();
+        }
+    }
+    format!("({}){}", c_value_type(field), value)
 }
 
 // ---------------------------------------------------------------------------
@@ -346,8 +647,8 @@ fn emit_constants(schema: &Schema, out: &mut String) {
     }
     emit_major_section_header("Constants", out);
     for c in &schema.constants {
-        if let Some(comment) = &c.comment {
-            emit_comment(comment, "", out);
+        if let Some(comment) = c.documentation() {
+            emit_comment(&comment, "", out);
         }
         out.push_str(&format!(
             "#define {} {}\n\n",
@@ -566,7 +867,7 @@ fn emit_struct(s: &Struct, schema: &Schema, out: &mut String) {
                 "STATIC_ASSERT(offsetof({sname}, {fname}) == {off}, \
                  \"{sname}.{fname} must be at offset {off}\");\n",
                 sname = s.name,
-                fname = field.name,
+                fname = field.c_member(),
                 off = expected,
             ));
         }
@@ -703,64 +1004,80 @@ fn emit_field_with_offset(
 
 /// Produces the C declaration line (with leading indent and trailing newline)
 /// for a single field.
+///
+/// A generation-gated field is declared under [`Field::c_member`] rather than
+/// its own name, which belongs to the accessor.
 fn field_c_decl(field: &Field, const_fields: bool) -> String {
     let ck = if const_fields { "const " } else { "" };
+    let member = field.c_member();
+
+    // A deprecated field with an accessor carries the note there, since that
+    // is what a reader names.  Without one, the member is.
+    let dep = if field.metadata_since().is_some() {
+        String::new()
+    } else {
+        let attribute = deprecation_attribute(field);
+        match attribute.is_empty() {
+            true => attribute,
+            false => format!(" {}", attribute.trim_end()),
+        }
+    };
 
     match field.kind.as_str() {
         "scalar" => {
             let prim = c_primitive(field.type_.as_deref().unwrap_or("u8"));
-            format!("    {}{} {};\n", ck, prim, field.name)
+            format!("    {}{} {}{};\n", ck, prim, member, dep)
         }
         "enum" | "type_alias" => {
             let tname = field.type_.as_deref().unwrap_or("uint8_t");
-            format!("    {}{} {};\n", ck, tname, field.name)
+            format!("    {}{} {}{};\n", ck, tname, member, dep)
         }
         "inline_array" => {
             let etype = c_primitive(field.element.as_deref().unwrap_or("u8"));
             let dim = c_array_dim(field.count_ref.as_deref(), field.count);
-            format!("    {}{} {}[{}];\n", ck, etype, field.name, dim)
+            format!("    {}{} {}[{}];\n", ck, etype, member, dim)
         }
         "inline_array2d" => {
             let etype = c_primitive(field.element.as_deref().unwrap_or("u8"));
             let rdim = c_array_dim(field.rows_ref.as_deref(), field.rows);
             let cdim = c_array_dim(field.cols_ref.as_deref(), field.cols);
-            format!("    {}{} {}[{}][{}];\n", ck, etype, field.name, rdim, cdim)
+            format!("    {}{} {}[{}][{}];\n", ck, etype, member, rdim, cdim)
         }
         "cstr_ptr" => {
             // const char * regardless of the struct's const_fields setting
-            format!("    const char *{};\n", field.name)
+            format!("    const char *{};\n", member)
         }
         "struct_ptr" | "tagged_fam_ptr" | "simple_fam_ptr" => {
             let tname = field.type_.as_deref().unwrap_or("void");
             if field.const_ptr.unwrap_or(false) {
-                format!("    const {} * const {};\n", tname, field.name)
+                format!("    const {} * const {};\n", tname, member)
             } else {
-                format!("    const {} *{};\n", tname, field.name)
+                format!("    const {} *{};\n", tname, member)
             }
         }
         "struct_array_ptr" => {
             let etype = field.element.as_deref().unwrap_or("void");
-            format!("    const {} *{};\n", etype, field.name)
+            format!("    const {} *{};\n", etype, member)
         }
         "struct_ptr_array_ptr" => {
             // Pointer to an array of const pointers: const T * const *name
             let etype = field.element.as_deref().unwrap_or("void");
-            format!("    const {} * const *{};\n", etype, field.name)
+            format!("    const {} * const *{};\n", etype, member)
         }
         "opaque_ptr" => {
             let base = c_primitive(field.pointed_type.as_deref().unwrap_or("void"));
             if const_fields {
-                format!("    const {} *{};\n", base, field.name)
+                format!("    const {} *{};\n", base, member)
             } else {
-                format!("    {} *{};\n", base, field.name)
+                format!("    {} *{};\n", base, member)
             }
         }
         "fn_ptr" => {
-            format!("    void (*{})(void);\n", field.name)
+            format!("    void (*{})(void);\n", member)
         }
         "padding" => {
             let sz = field.size.unwrap_or(0);
-            format!("    {}uint8_t {}[{}];\n", ck, field.name, sz)
+            format!("    {}uint8_t {}[{}];\n", ck, member, sz)
         }
         other => format!("    /* unhandled field kind: {} */\n", other),
     }

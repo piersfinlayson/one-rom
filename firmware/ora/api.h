@@ -94,7 +94,7 @@ void ora_host_test_sram_write8(uint32_t addr, uint8_t val);
  *
  * @param addr Device SRAM address, as returned by the plugin API
  *
- * @since firmware v0.7.1
+ * @since firmware 0.7.1
  */
 #if defined(ORA_HOST_TEST)
 #define ORA_SRAM_PTR(addr) ora_host_test_sram_ptr(addr)
@@ -148,7 +148,7 @@ void ora_host_test_sram_write8(uint32_t addr, uint8_t val);
  * }
  * @endcode
  *
- * @since firmware v0.7.1
+ * @since firmware 0.7.1
  */
 #if defined(ORA_HOST_TEST)
 #define ORA_TEST_YIELD() ora_host_test_yield()
@@ -368,7 +368,7 @@ void *ora_host_test_staged_fn_ptr(uint32_t addr);
  * This enumeration defines the identifiers for the API functions available
  * to plugins. Each identifier corresponds to a specific API function.
  *
- * Every new identifier MUST carry an `@since firmware vX.Y.Z` line in its doc
+ * Every new identifier MUST carry an `@since firmware X.Y.Z` line in its doc
  * block, naming the firmware version in which it first became available (which
  * a plugin targets via its min_fw_version). Identifiers predating this
  * convention are left unannotated rather than labelled with a guessed version.

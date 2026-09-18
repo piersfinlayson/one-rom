@@ -294,6 +294,24 @@ impl Emulator {
         unsafe { ffi::stub_set_rp_variant(is_b as u8) };
     }
 
+    /// The generation recorded in the metadata header the firmware reads.
+    pub fn metadata_generation() -> u32 {
+        unsafe { ffi::ffi_metadata_generation() }
+    }
+
+    /// Put a different generation in the metadata header before booting.
+    ///
+    /// On a device the metadata's generation and the firmware's differ
+    /// routinely.  A host build compiles both from one tree and only ever
+    /// meets them in step, so a test wanting the mismatch sets it here.
+    ///
+    /// The value persists across boots, like every other firmware global in
+    /// this process, so put it back to [`Self::metadata_generation`]'s
+    /// original reading afterwards.
+    pub fn set_metadata_generation(generation: u32) {
+        unsafe { ffi::ffi_set_metadata_generation(generation) };
+    }
+
     /// Create and configure the emulated PIO handle.
     ///
     /// `word_size` is passed to `ffi_epio_setup_dma_chain`.
@@ -489,6 +507,15 @@ impl Emulator {
     /// Returns `true` if the PIO state machines are enabled.
     pub fn pios_enabled(&self) -> bool {
         unsafe { ffi::ffi_pios_enabled() as i32 != 0 }
+    }
+
+    /// Returns `true` if the firmware asked for the bootloader on this boot.
+    ///
+    /// On a device that call never returns and the One ROM stops serving.  The
+    /// stub returns, and the firmware carries on as if it had not asked, so
+    /// this is the only trace a refusal to boot leaves.
+    pub fn bootloader_entered(&self) -> bool {
+        unsafe { ffi::stub_bootloader_entered() != 0 }
     }
 
     /// The serving algorithms and address window the current ROM slot runs.

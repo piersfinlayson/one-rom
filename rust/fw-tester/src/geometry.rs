@@ -33,8 +33,8 @@ use onerom_config::hw::Board;
 use onerom_config::mcu::{Family, Variant as McuVariant};
 use onerom_gen::{Builder, Config};
 use onerom_metadata::{
-    DeviceMemoryView, GpioOverride, METADATA_BASE, OneromAlgAddrConfig, OneromMetadataHeader,
-    RomSlotType,
+    DeviceMemoryView, Generations, GpioOverride, METADATA_BASE, MaybeKnown, OneromAlgAddrConfig,
+    OneromMetadataHeader, RomSlotType,
 };
 
 pub use onerom_fw_geometry::substitution::chip_substitution;
@@ -90,12 +90,14 @@ pub struct SlotGeometry {
 
 /// `true` if a slot is a plugin slot (excluded from the flash-slot enumeration
 /// the firmware exposes under EXCLUDE_PLUGINS).
-fn is_plugin(slot_type: RomSlotType) -> bool {
+fn is_plugin(slot_type: MaybeKnown<RomSlotType>) -> bool {
     matches!(
         slot_type,
-        RomSlotType::RomSlotTypePluginSystem
-            | RomSlotType::RomSlotTypePluginUser
-            | RomSlotType::RomSlotTypePluginPio
+        MaybeKnown::Known(
+            RomSlotType::RomSlotTypePluginSystem
+                | RomSlotType::RomSlotTypePluginUser
+                | RomSlotType::RomSlotTypePluginPio
+        )
     )
 }
 
@@ -156,7 +158,8 @@ pub fn build_header(
         .map_err(|e| format!("builder.build: {e}"))?;
 
     let view = DeviceMemoryView::new(&metadata_buf, METADATA_BASE);
-    OneromMetadataHeader::parse(&view, METADATA_BASE).map_err(|e| format!("metadata parse: {e:?}"))
+    OneromMetadataHeader::parse(&view, METADATA_BASE, Generations::UNKNOWN)
+        .map_err(|e| format!("metadata parse: {e:?}"))
 }
 
 /// Parse the metadata and return the [`SlotGeometry`] for the `set_idx`-th
@@ -183,8 +186,16 @@ pub fn slot_geometry(
         .as_ref()
         .ok_or_else(|| format!("ROM slot {set_idx} has no alg config (plugin?)"))?;
 
+    // All three fields are common to the family, so an unnamed address
+    // algorithm still says which pins it reads.
     let (addr_window_base, addr_window_len) = match alg.alg_addr {
         OneromAlgAddrConfig::AlgAddr0 {
+            gpio_base,
+            base_addr_pin,
+            num_addr_pins,
+            ..
+        }
+        | OneromAlgAddrConfig::Unknown {
             gpio_base,
             base_addr_pin,
             num_addr_pins,

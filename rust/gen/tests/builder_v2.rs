@@ -18,7 +18,7 @@ mod tests {
     use onerom_gen::{Builder, ConfigOverrides, ConfigWarning, Error as GenError, FileData};
     use onerom_metadata::{
         CURRENT_METADATA_VERSION, DeviceMemoryView, METADATA_BASE, METADATA_SIZE,
-        ONEROM_METADATA_MAGIC,
+        ONEROM_METADATA_MAGIC, metadata_generation_for,
     };
 
     // ROM images are placed immediately after the 16KB metadata region.
@@ -176,6 +176,22 @@ mod tests {
             .expect("from_json should succeed")
     }
 
+    /// A builder and matching properties for `version`, for tests that care
+    /// which firmware the image is composed for.
+    fn v2_builder_for(version: FirmwareVersion, json: &str) -> (Builder, FirmwareProperties) {
+        let builder =
+            Builder::from_json(version, McuFamily::Rp2350, json).expect("from_json should succeed");
+        let props = FirmwareProperties::new(
+            version,
+            Board::Fire24A,
+            McuVariant::RP2350,
+            ServeAlg::Default,
+            false,
+        )
+        .unwrap();
+        (builder, props)
+    }
+
     fn view(buf: &[u8]) -> DeviceMemoryView<'_> {
         DeviceMemoryView::new(buf, METADATA_BASE)
     }
@@ -218,7 +234,7 @@ mod tests {
         assert!(magic.starts_with(ONEROM_METADATA_MAGIC.as_bytes()));
         assert_eq!(
             v.read_u32_le(HDR_VERSION).unwrap(),
-            CURRENT_METADATA_VERSION
+            metadata_generation_for(FirmwareVersion::new(0, 7, 0, 0)).unwrap()
         );
         assert_eq!(v.read_u8(HDR_SLOT_COUNT).unwrap(), 1);
 
@@ -2862,5 +2878,47 @@ mod tests {
             }
             other => panic!("expected Error::BufferTooSmall, got {other:?}"),
         }
+    }
+
+    // ========================================================================
+    // v2 metadata generation: the header carries the target's own
+    // ========================================================================
+
+    const GEN_JSON: &str = r#"{
+        "version": 1,
+        "description": "generation sentinel",
+        "chip_sets": [{
+            "type": "single",
+            "chips": [{ "file": "test.bin", "type": "2364", "cs1": "active_low" }]
+        }]
+    }"#;
+
+    fn compose_for(version: FirmwareVersion) -> Vec<u8> {
+        let (mut b, props) = v2_builder_for(version, GEN_JSON);
+        b.add_file(FileData::new(0, vec![0xAAu8; 8192])).unwrap();
+        b.build(props).expect("build").0
+    }
+
+    /// The header carries the generation the target firmware reads, so that
+    /// firmware never meets metadata newer than itself.
+    #[test]
+    fn v2_header_carries_the_targets_own_generation() {
+        let version = FirmwareVersion::new(0, 7, 0, 0);
+        let meta = compose_for(version);
+        assert_eq!(
+            view(&meta).read_u32_le(HDR_VERSION).unwrap(),
+            metadata_generation_for(version).expect("0.7.0 reads a generation")
+        );
+    }
+
+    /// A target newer than any generation this build of the tool knows gets
+    /// the newest one it has.
+    #[test]
+    fn v2_header_for_newer_firmware_carries_the_newest_known_generation() {
+        let meta = compose_for(FirmwareVersion::new(0, 8, 999, 0));
+        assert_eq!(
+            view(&meta).read_u32_le(HDR_VERSION).unwrap(),
+            CURRENT_METADATA_VERSION
+        );
     }
 }

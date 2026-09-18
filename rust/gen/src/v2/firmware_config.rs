@@ -19,7 +19,7 @@
 //! `ice_freq` is always `0` for the same reason as the Ice bits above.
 
 use onerom_metadata::{
-    FireFreq, FireVreg as OneromFireVreg, OneromFirmwareConfig, OneromFirmwareOverrides,
+    FireFreq, FireVreg as OneromFireVreg, MaybeKnown, OneromFirmwareConfig, OneromFirmwareOverrides,
 };
 
 use crate::{Config, FirmwareConfig};
@@ -91,7 +91,7 @@ pub fn build_firmware_overrides(overrides: &FirmwareConfig) -> OneromFirmwareOve
         override_present,
         ice_freq: 0, // Ice rejected by validate_config_for_v2 - always 0.
         fire_freq,
-        fire_vreg,
+        fire_vreg: MaybeKnown::Known(fire_vreg),
         override_value,
     }
 }
@@ -145,7 +145,10 @@ mod tests {
         assert_eq!(result.override_present, [0u8; 8]);
         assert_eq!(result.ice_freq, 0);
         assert_eq!(result.fire_freq, 0);
-        assert_eq!(result.fire_vreg, OneromFireVreg::FireVregNone);
+        assert_eq!(
+            result.fire_vreg,
+            MaybeKnown::Known(OneromFireVreg::FireVregNone)
+        );
         assert_eq!(result.override_value, [0u8; 8]);
     }
 
@@ -179,7 +182,10 @@ mod tests {
         assert_eq!(result.override_present[1..], [0u8; 7]);
         assert_eq!(result.ice_freq, 0);
         assert_eq!(result.fire_freq, 200);
-        assert_eq!(result.fire_vreg, OneromFireVreg::FireVreg110v);
+        assert_eq!(
+            result.fire_vreg,
+            MaybeKnown::Known(OneromFireVreg::FireVreg110v)
+        );
         assert_eq!(
             result.override_value[0],
             VALUE_FIRE_OVERCLOCK | VALUE_LED_ENABLED | VALUE_SWD_ENABLED

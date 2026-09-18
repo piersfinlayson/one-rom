@@ -8,7 +8,8 @@
 //! own copy of the rules:
 //!
 //! - `doc-gen` checks the values a document states against the sources that own
-//!   them. It writes nothing.
+//!   them, and the claims one file in the tree makes about another. It writes
+//!   nothing.
 //! - `doc-assemble` fills in the fragment regions of the documents in `docs/`,
 //!   and joins whole documents into the single markdown file a PDF is rendered
 //!   from.
@@ -19,6 +20,7 @@
 //! same code, so the two cannot drift apart.
 
 pub mod assembly;
+pub mod claims;
 pub mod format;
 pub mod fragment;
 pub mod marker;

@@ -43,7 +43,10 @@
 // matching the existing `extern char _metadata_start;` linker-symbol
 // convention in globals.c.  No forward declaration is emitted for it (the
 // existing `extern char _metadata_start;` declaration in globals.c already
-// covers it — see the file-level doc comment in the generated output).
+// covers it — see the file-level doc comment in the generated output).  It is
+// also the one object emitted without `const`: a device's metadata is flash
+// the CLI programmed, and in a host build the harness stands where the CLI
+// does when a test needs a generation other than the one generated here.
 //
 // ROM image data
 // ---------------
@@ -311,6 +314,21 @@ fn emit_field_line(out: &mut String, field: &str, value_expr: &str) {
     out.push_str("));\n");
 }
 
+/// The expression naming an enum field's value in the emitted C.
+///
+/// A value this build has a name for goes out as the C enum constant.  One it
+/// has no name for goes out as the plain number - a C enum member takes an
+/// integer, so the source still compiles and still says what the device said.
+///
+/// One line, for the reason [`rust_gen::maybe_known_raw_expr`] gives.
+fn maybe_known_c_name_expr(field_expr: &str) -> String {
+    format!(
+        "match {field_expr} {{ \
+         MaybeKnown::Known(value) => alloc::string::String::from(value.c_name()), \
+         MaybeKnown::Unknown(raw) => alloc::format!(\"{{raw}}\") }}"
+    )
+}
+
 /// Emit a u8-array literal expression `{ 0x01, 0x02, ... }` from an
 /// iterator expression `ITER_EXPR` yielding `&u8`.
 fn array_literal_expr(iter_expr: &str) -> String {
@@ -367,6 +385,7 @@ fn push_struct_host(out: &mut String, s: &Struct, schema: &Schema) {
         })
         .collect();
 
+    crate::rust_gen::push_deprecated_allow(out, s.fields.iter(), "");
     out.push_str(&format!("impl {tn} {{\n"));
 
     // host_name() ------------------------------------------------------------
@@ -427,29 +446,36 @@ fn emit_host_define_field(
     schema: &Schema,
 ) {
     let name = &f.name;
+    // A gated field's bytes are declared under a member name of their own, so
+    // the designated initializer names that rather than the field.
+    let member = f.c_member();
 
     match f.kind.as_str() {
         "scalar" => {
             if let Some(vec_field) = derived_counts.get(name.as_str()) {
-                emit_field_line(out, name, &format!("self.{vec_field}.len()"));
+                emit_field_line(out, &member, &format!("self.{vec_field}.len()"));
             } else {
-                emit_field_line(out, name, &format!("self.{name}"));
+                emit_field_line(out, &member, &format!("self.{name}"));
             }
         }
 
         "enum" => {
-            emit_field_line(out, name, &format!("self.{name}.c_name()"));
+            emit_field_line(
+                out,
+                &member,
+                &maybe_known_c_name_expr(&format!("self.{name}")),
+            );
         }
 
         "type_alias" => {
-            emit_field_line(out, name, &format!("self.{name}"));
+            emit_field_line(out, &member, &format!("self.{name}"));
         }
 
         "inline_array" => {
             let elem = f.element.as_deref().unwrap_or("u8");
             if elem == "u8" || elem == "char" {
                 out.push_str("        s.push_str(&alloc::format!(\"    .");
-                out.push_str(name);
+                out.push_str(&member);
                 out.push_str(" = {{ {} }},\\n\", self.");
                 out.push_str(name);
                 out.push_str(".iter().map(|b| alloc::format!(\"0x{:02X}\", b)).collect::<alloc::vec::Vec<_>>().join(\", \")));\n");
@@ -462,7 +488,7 @@ fn emit_host_define_field(
         "inline_array2d" => {
             // { {row0...}, {row1...}, ... }
             out.push_str("        s.push_str(\"    .");
-            out.push_str(name);
+            out.push_str(&member);
             out.push_str(" = { \");\n");
             out.push_str(&format!(
                 "        for (i, row) in self.{name}.iter().enumerate() {{\n"
@@ -479,24 +505,24 @@ fn emit_host_define_field(
         "cstr_ptr" => {
             if f.nullable.unwrap_or(false) {
                 out.push_str(&format!("        match &self.{name} {{\n"));
-                emit_cstr_none_arm(out, name, "            ");
+                emit_cstr_none_arm(out, &member, "            ");
                 out.push_str("            Some(v) => {\n");
-                emit_cstr_some_body(out, name, "v", "                ");
+                emit_cstr_some_body(out, &member, "v", "                ");
                 out.push_str("            }\n");
                 out.push_str("        }\n");
             } else {
-                emit_cstr_some_body(out, name, &format!("&self.{name}"), "        ");
+                emit_cstr_some_body(out, &member, &format!("&self.{name}"), "        ");
             }
         }
 
         "struct_ptr" | "tagged_fam_ptr" | "simple_fam_ptr" => {
             if f.nullable.unwrap_or(false) {
                 out.push_str(&format!("        match &self.{name} {{\n"));
-                emit_field_none_arm(out, name, "            ");
+                emit_field_none_arm(out, &member, "            ");
                 out.push_str("            Some(sub) => {\n");
                 out.push_str("                let n = sub.host_name(ctx);\n");
                 out.push_str("                s.push_str(\"    .");
-                out.push_str(name);
+                out.push_str(&member);
                 out.push_str(" = &\");\n");
                 out.push_str("                s.push_str(&n);\n");
                 out.push_str("                s.push_str(\",\\n\");\n");
@@ -508,7 +534,7 @@ fn emit_host_define_field(
                     "            let n = self.{name}.host_name(ctx);\n"
                 ));
                 out.push_str("            s.push_str(\"    .");
-                out.push_str(name);
+                out.push_str(&member);
                 out.push_str(" = &\");\n");
                 out.push_str("            s.push_str(&n);\n");
                 out.push_str("            s.push_str(\",\\n\");\n");
@@ -539,7 +565,7 @@ fn emit_host_define_field(
                 "            ctx.defs.push(alloc::format!(\"const {elem_c} {{}}[] = {{{{ {{}} }}}};\\n\", arr_name, items.join(\", \")));\n"
             ));
             out.push_str("            s.push_str(\"    .");
-            out.push_str(name);
+            out.push_str(&member);
             out.push_str(" = \");\n");
             out.push_str("            s.push_str(&arr_name);\n");
             out.push_str("            s.push_str(\",\\n\");\n");
@@ -569,7 +595,7 @@ fn emit_host_define_field(
                 "            ctx.defs.push(alloc::format!(\"const {elem_c} * const {{}}[] = {{{{ {{}} }}}};\\n\", arr_name, refs.join(\", \")));\n"
             ));
             out.push_str("            s.push_str(\"    .");
-            out.push_str(name);
+            out.push_str(&member);
             out.push_str(" = \");\n");
             out.push_str("            s.push_str(&arr_name);\n");
             out.push_str("            s.push_str(\",\\n\");\n");
@@ -594,7 +620,7 @@ fn emit_host_define_field(
                 "            ctx.defs.push(alloc::format!(\"const uint8_t {}[] = {{ {} }};\\n\", arr_name, bytelist));\n",
             );
             out.push_str("            s.push_str(\"    .");
-            out.push_str(name);
+            out.push_str(&member);
             out.push_str(" = \");\n");
             out.push_str("            s.push_str(&arr_name);\n");
             out.push_str("            s.push_str(\",\\n\");\n");
@@ -608,9 +634,11 @@ fn emit_host_define_field(
         }
 
         "padding" => {
-            // Omitted: unspecified designated-initializer members are
-            // zero-initialized by C, which is fine for host test builds
-            // (padding has no semantic meaning on host).
+            // Spelled out rather than omitted - see [`reserved_bytes`].
+            out.push_str(&format!(
+                "        s.push_str(\"    .{member} = {{{}}},\\n\");\n",
+                reserved_bytes(f)
+            ));
         }
 
         kind => {
@@ -773,10 +801,76 @@ fn push_tagged_fam_host(out: &mut String, tf: &TaggedFam, schema: &Schema) {
         out.push_str("            }\n");
     }
 
+    push_tagged_fam_unknown_host(out, tf);
+
     out.push_str("        }\n");
     out.push_str("        s\n");
     out.push_str("    }\n");
     out.push_str("}\n\n");
+}
+
+/// Emit the C for a discriminant this build has no name for.
+///
+/// The discriminant goes out as the plain number, the way an unknown enum
+/// value does, since there is no C name to write.  The parameter bytes are
+/// emitted as they were read, so the C says what the device held.
+fn push_tagged_fam_unknown_host(out: &mut String, tf: &TaggedFam) {
+    let disc = &tf.discriminant_field;
+    let fields: Vec<&str> = tf
+        .common_fields
+        .iter()
+        .filter(|f| f.kind != "padding")
+        .map(|f| f.name.as_str())
+        .collect();
+    let mut bindings = vec![disc.as_str()];
+    bindings.extend(fields);
+    bindings.push("params");
+    out.push_str(&format!(
+        "            Self::Unknown {{ {} }} => {{\n",
+        bindings.join(", ")
+    ));
+
+    out.push_str(&format!(
+        "                s.push_str(&alloc::format!(\"    .{disc} = {{}},\\n\", {disc}));\n"
+    ));
+    out.push_str(&format!(
+        "                s.push_str(&alloc::format!(\"    .{} = {{}},\\n\", params.len()));\n",
+        tf.param_len_field
+    ));
+
+    for f in &tf.common_fields {
+        emit_fam_common_field(out, f);
+    }
+
+    out.push_str("                s.push_str(\"    .params = \");\n");
+    out.push_str(&format!(
+        "                s.push_str(&{});\n",
+        array_literal_expr("params.iter()")
+    ));
+    out.push_str("                s.push_str(\",\\n\");\n");
+    out.push_str("            }\n");
+}
+
+/// The byte list a reserved member is initialised with, wrapped for reading.
+///
+/// A device's reserved bytes read back 0xFF, because the serializer fills the
+/// metadata buffer with 0xFF before laying any object into it.  C zero-fills a
+/// member left out of a designated initialiser, so every one is spelled out.
+fn reserved_bytes(f: &Field) -> String {
+    const PER_LINE: usize = 16;
+    let size = f.size.unwrap_or(0) as usize;
+    let mut out = String::new();
+    for i in 0..size {
+        if i % PER_LINE == 0 {
+            out.push_str("\\n        ");
+        }
+        out.push_str("0xFF");
+        if i + 1 < size {
+            out.push_str(", ");
+        }
+    }
+    out.push_str("\\n    ");
+    out
 }
 
 /// Common (shared-across-variants) field: scalar / enum / type_alias only.
@@ -795,10 +889,16 @@ fn emit_fam_common_field(out: &mut String, f: &Field) {
             out.push_str("                s.push_str(&alloc::format!(\"    .");
             out.push_str(name);
             out.push_str(" = {},\\n\", ");
-            out.push_str(name);
-            out.push_str(".c_name()));\n");
+            out.push_str(&maybe_known_c_name_expr(&format!("*{name}")));
+            out.push_str("));\n");
         }
-        "padding" => {}
+        "padding" => {
+            // As in host_define_field - see [`reserved_bytes`].
+            out.push_str(&format!(
+                "                s.push_str(\"    .{name} = {{{}}},\\n\");\n",
+                reserved_bytes(f)
+            ));
+        }
         other => {
             out.push_str(&format!(
                 "                compile_error!(\"unexpected FAM common field kind `{other}` for `{name}`\");\n"
@@ -839,7 +939,8 @@ fn emit_fam_params_expr(fields: &[Field]) -> String {
                 }
             }
             "enum" => {
-                out.push_str(&format!("                    bytes.push(*{name} as u8);\n"));
+                let value = crate::rust_gen::maybe_known_raw_expr(&format!("*{name}"), "u8");
+                out.push_str(&format!("                    bytes.push({value});\n"));
             }
             "padding" => {
                 let sz = f.size.unwrap_or(0);
@@ -970,7 +1071,8 @@ fn push_top_level_entry_point(out: &mut String, schema: &Schema) {
     out.push_str("///\n");
     out.push_str("/// The root object is emitted as `_metadata_start`, matching the\n");
     out.push_str("/// `extern char _metadata_start;` linker-symbol convention already used\n");
-    out.push_str("/// in globals.c — no forward declaration is emitted for it.\n");
+    out.push_str("/// in globals.c — no forward declaration is emitted for it.  It is not\n");
+    out.push_str("/// const, so a harness can write the generation the firmware reads.\n");
     out.push_str(&format!(
         "pub fn generate_host_metadata_c(root: &{root_tn}, rom_data: alloc::vec::Vec<alloc::vec::Vec<u8>>) -> alloc::string::String {{\n"
     ));
@@ -983,8 +1085,11 @@ fn push_top_level_entry_point(out: &mut String, schema: &Schema) {
     out.push_str("    let body = root.host_define_fields(&mut ctx);\n");
     out.push_str("    {\n");
     out.push_str("        let mut d = alloc::string::String::new();\n");
+    // Not const - see the "Root object" note at the top of this file.  Every
+    // member is const-qualified in its own declaration, so dropping it here
+    // costs the firmware none of its own protection.
     out.push_str(&format!(
-        "        d.push_str(\"const {root_c} _metadata_start = {{\\n\");\n"
+        "        d.push_str(\"{root_c} _metadata_start = {{\\n\");\n"
     ));
     out.push_str("        d.push_str(&body);\n");
     out.push_str("        d.push_str(\"};\\n\");\n");
@@ -999,13 +1104,40 @@ fn push_top_level_entry_point(out: &mut String, schema: &Schema) {
     out.push_str("         //\\n\\\n");
     out.push_str("         // Host test-build metadata: real C objects with real pointers.\\n\\\n");
     out.push_str("         // `_metadata_start` is the root onerom_metadata_header_t — see\\n\\\n");
-    out.push_str("         // globals.c's `extern char _metadata_start;` convention.\\n\\\n");
+    out.push_str(
+        "         // globals.c's `extern char _metadata_start;` convention.  It is not\\n\\\n",
+    );
+    out.push_str(
+        "         // const: a device's metadata is flash the CLI programmed, and the\\n\\\n",
+    );
+    out.push_str(
+        "         // harness stands where the CLI does.  Every member is const-qualified\\n\\\n",
+    );
+    out.push_str(
+        "         // in its own declaration, so firmware code still cannot write one.\\n\\\n",
+    );
     out.push_str("         #include \\\"onerom_metadata.h\\\"\\n\\n\\\n");
     out.push_str("         // The root object is deliberately NOT forward-declared here:\\n\\\n");
     out.push_str(
         "         // globals.c already declares `extern char _metadata_start;`.\\n\\n\"\n",
     );
     out.push_str("    );\n\n");
+
+    let deprecates = schema
+        .all_fields()
+        .iter()
+        .any(|(_, f)| f.deprecated_marker().is_some());
+    if deprecates {
+        out.push_str("    out.push_str(\n");
+        out.push_str("        \"// Every member is written here, deprecated ones included: their bytes\\n\\\n");
+        out.push_str("         // are still part of the structure, and it is a reader that is asked to\\n\\\n");
+        out.push_str("         // ignore them.\\n\\\n");
+        out.push_str("         #pragma GCC diagnostic push\\n\\\n");
+        out.push_str(
+            "         #pragma GCC diagnostic ignored \\\"-Wdeprecated-declarations\\\"\\n\\n\"\n",
+        );
+        out.push_str("    );\n\n");
+    }
 
     out.push_str("    out.push_str(\"// ---------------------------------------------------------------------------\\n\");\n");
     out.push_str("    out.push_str(\"// Forward declarations\\n\");\n");
@@ -1023,8 +1155,10 @@ fn push_top_level_entry_point(out: &mut String, schema: &Schema) {
     out.push_str("        out.push('\\n');\n");
     out.push_str("    }\n\n");
 
+    if deprecates {
+        out.push_str("    out.push_str(\"#pragma GCC diagnostic pop\\n\");\n\n");
+    }
+
     out.push_str("    out\n");
     out.push_str("}\n");
-
-    let _ = schema;
 }

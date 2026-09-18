@@ -1,6 +1,6 @@
 [package]
 name = "onerom-metadata"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 authors = ["Piers Finlayson <piers@piers.rocks>"]
 license = "MIT"
@@ -11,6 +11,8 @@ documentation = "https://docs.rs/onerom-config"
 keywords = ["retro", "rom", "embedded"]
 categories = ["embedded", "hardware-support"]
 build = "build/main.rs"
+# Test-only. See build/main.rs.
+exclude = ["build/gating_fixture.toml", "tests/generation_roundtrip.rs"]
 
 [lib]
 name = "onerom_metadata"
@@ -29,5 +31,6 @@ toml  = { version = "1.1" }
 [dev-dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+toml  = { version = "1.1" }
 [lints]
 workspace = true

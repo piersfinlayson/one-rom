@@ -102,15 +102,17 @@ uint8_t metadata_valid(void) {
         return 1;
     }
 
-    // Make sure the header and version are as expected.
+    // Make sure the header is as expected.  Pre-v0.7.0 metadata carries
+    // different magic, so this is what separates the two.
     for (int ii = 0; ii < 16; ii++) {
         if (METADATA->magic[ii] != ONEROM_METADATA_MAGIC[ii]) {
             return 0;
         }
     }
-    if (METADATA->version != CURRENT_METADATA_VERSION) {
-        return 0;
-    }
+
+    // The generation is deliberately not a gate.  Whichever way the metadata
+    // and the firmware differ in age, every field this firmware knows is
+    // readable, so refusing would mean not serving at all.
 
     // Make sure the hardware info pointer is valid
     if (HW == NULL || HW == (void*)0xFFFFFFFF) {
