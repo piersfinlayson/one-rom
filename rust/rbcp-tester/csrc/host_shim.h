@@ -48,6 +48,10 @@ typedef struct {
     /// Address the plugin formed its staged-routine pointer from.
     uint32_t staged_fn_addr;
 
+    /// Set where the bytes at the staged routine's address do not match the
+    /// routine the plugin was told to copy.
+    uint32_t bad_staged_copy;
+
     /// Order in which the calls arrived: each is the value of a counter that
     /// increments on every flash call, or 0 if the call never came.  The
     /// commit sequence is fixed — connect, exit XIP, erase, program, restore

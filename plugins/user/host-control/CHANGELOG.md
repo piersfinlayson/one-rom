@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.5] - 2026-09-18
+
+Implements RBCP draft 0.1.3.
+
+NV storage can now be written on a device with no spare RAM slots per the 0.1.3
+spec draft.
+
 ## [0.1.4] - 2026-09-17
 
 This release adds a second pipe, carrying bytes in to One ROM from a far-end.

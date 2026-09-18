@@ -85,14 +85,25 @@ uint8_t __nv_storage_start[SHIM_NV_STORAGE_SIZE];
 // may lay them out in either order — which is exactly why the plugin asks
 // ORA_STAGED_FN_SIZE rather than subtracting them.
 //
-// The size is deliberately small, so a staging slot can be sized either side
-// of NV_STORAGE_SIZE + this, exercising both branches of the too-small-slot
-// check in nv_poke_begin_impl.  The bytes the plugin copies are never
-// executed: ORA_STAGED_FN_PTR hands it the real `flash_erase_critical`
-// compiled for this host instead.
-#define SHIM_ERASE_FN_SIZE 256u
+// The real routine is copied onto the stack into a buffer with a fixed ceiling,
+// so a stand-in above that ceiling would have the plugin refuse every commit
+// here while working on hardware.  The bytes the plugin copies are never
+// executed:
+// ORA_STAGED_FN_PTR hands it the real `flash_erase_critical` compiled for this
+// host instead.
+#define SHIM_ERASE_FN_SIZE 64u
+_Static_assert(SHIM_ERASE_FN_SIZE <= NV_ERASE_FN_MAX,
+               "the stand-in routine must fit the buffer the plugin copies it into");
 
 uint8_t __flash_erase_fn_start[SHIM_ERASE_FN_SIZE];
+
+// Filled with a pattern rather than left zero, so a copy of it can be told
+// apart from a buffer the copy never reached.
+static void shim_fill_erase_fn(void) {
+    for (uint32_t i = 0; i < SHIM_ERASE_FN_SIZE; i++) {
+        __flash_erase_fn_start[i] = (uint8_t)((i * 0x9Du) ^ 0x5Bu);
+    }
+}
 uint8_t __flash_erase_fn_end[1];
 
 // ---------------------------------------------------------------------------
@@ -285,6 +296,7 @@ void rbcp_host_test_reset_plugin(void) {
 
 void ora_host_test_reset_flash_log(void) {
     s_flash_log = (ora_host_test_flash_log_t){0};
+    shim_fill_erase_fn();
     // A device is running from XIP when a commit starts; that is what the
     // erase sequence has to take it out of and put it back into.
     s_flash_log.xip_active = 1;
@@ -374,13 +386,18 @@ static void shim_flash_range_program(uint32_t offs, const uint8_t *data, uint32_
     s_flash_log.program_seq = next_seq();
     s_flash_log.program_offs = offs;
     s_flash_log.program_count = count;
-    if (!s_flash_log.xip_active && offs == SHIM_NV_FLASH_OFFSET
-        && count <= SHIM_NV_STORAGE_SIZE) {
+    // A program addresses a page, not the region.  A device that writes back
+    // less than the whole sector erases all of it and writes one page, which
+    // need not be the page the region starts with.
+    uint32_t within = offs - SHIM_NV_FLASH_OFFSET;
+    if (!s_flash_log.xip_active && offs >= SHIM_NV_FLASH_OFFSET
+        && within < SHIM_NV_STORAGE_SIZE
+        && count <= SHIM_NV_STORAGE_SIZE - within) {
         // Real flash can only clear bits; a program over unerased storage
         // leaves the AND of the two.  Modelling that rather than a plain copy
         // is what makes an erase the device skipped visible in the result.
         for (uint32_t i = 0; i < count; i++) {
-            __nv_storage_start[i] &= data[i];
+            __nv_storage_start[within + i] &= data[i];
         }
     } else {
         s_flash_log.bad_program = 1;
@@ -408,8 +425,19 @@ void *ora_host_test_bootrom_lookup(uint32_t code, uint32_t mask) {
 // The address is checked rather than ignored: the plugin is required to stage
 // the routine immediately above the staging buffer, and a scenario would
 // otherwise not notice if it called through a pointer to somewhere else.
-void *ora_host_test_staged_fn_ptr(uint32_t addr) {
-    s_flash_log.staged_fn_addr = addr;
+void *ora_host_test_staged_fn_ptr(uintptr_t addr) {
+    s_flash_log.staged_fn_addr = (uint32_t)addr;
+
+    // Nothing here executes the copied bytes - the real flash_erase_critical
+    // is handed back instead - so this is the only check that the plugin
+    // copied the routine, and copied all of it.
+    const uint8_t *copy = (const uint8_t *)addr;
+    for (uint32_t i = 0; i < SHIM_ERASE_FN_SIZE; i++) {
+        if (copy[i] != __flash_erase_fn_start[i]) {
+            s_flash_log.bad_staged_copy = 1;
+            break;
+        }
+    }
     return (void *)flash_erase_critical;
 }
 

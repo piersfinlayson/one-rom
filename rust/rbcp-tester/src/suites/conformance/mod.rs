@@ -511,6 +511,26 @@ pub static SCENARIOS: &[Scenario] = &[
         run: nv_storage::nv_poke_commit_byte_refused_when_read_only,
     },
     Scenario {
+        name: "conformance.nv.no_slot_write_leaves_the_window",
+        spec_ref: "Group 0x03 — NV_POKE_COMMIT_BYTE; GET_NV_CAPABILITY Response Format",
+        run: nv_storage::no_slot_write_leaves_the_window,
+    },
+    Scenario {
+        name: "conformance.nv.no_slot_write_rejects_a_location_outside_the_window",
+        spec_ref: "Group 0x03 — NV_POKE_COMMIT_BYTE; GET_NV_CAPABILITY Response Format",
+        run: nv_storage::no_slot_write_rejects_a_location_outside_the_window,
+    },
+    Scenario {
+        name: "conformance.nv.no_slot_write_refused_during_a_transaction",
+        spec_ref: "Group 0x03 — NV_POKE_COMMIT_BYTE",
+        run: nv_storage::no_slot_write_refused_during_a_transaction,
+    },
+    Scenario {
+        name: "conformance.nv.no_slot_begin_is_refused",
+        spec_ref: "Group 0x03 — NV_POKE_BEGIN",
+        run: nv_storage::no_slot_begin_is_refused,
+    },
+    Scenario {
         name: "conformance.nv.not_valid_in_command_mode",
         spec_ref: "Group 0x03 — NV Storage (command-response mode only)",
         run: nv_storage::not_valid_in_command_mode,

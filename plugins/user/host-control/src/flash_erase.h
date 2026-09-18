@@ -52,9 +52,11 @@ typedef void (*nv_flash_erase_critical_fn_t)(
     flash_range_program_fn_t        range_program,
     flash_flush_cache_fn_t          flush_cache,
     flash_select_xip_read_mode_fn_t select_xip,
-    uint32_t                        flash_offs,
+    uint32_t                        erase_offs,
+    uint32_t                        program_offs,
     const uint8_t                  *data,
-    uint32_t                        size,
+    uint32_t                        erase_size,
+    uint32_t                        program_size,
     uint8_t                         clkdiv
 );
 
@@ -64,9 +66,11 @@ void flash_erase_critical(
     flash_range_program_fn_t        range_program,
     flash_flush_cache_fn_t          flush_cache,
     flash_select_xip_read_mode_fn_t select_xip,
-    uint32_t                        flash_offs,
+    uint32_t                        erase_offs,
+    uint32_t                        program_offs,
     const uint8_t                  *data,
-    uint32_t                        size,
+    uint32_t                        erase_size,
+    uint32_t                        program_size,
     uint8_t                         clkdiv
 );
 

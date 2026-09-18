@@ -9,8 +9,17 @@ OBJDUMP := $(if $(TOOLCHAIN),$(TOOLCHAIN)/arm-none-eabi-objdump,arm-none-eabi-ob
 
 MAJOR_VERSION := 0
 MINOR_VERSION := 1
-PATCH_VERSION := 4
+PATCH_VERSION := 5
 BUILD_VERSION := 0
+
+# Maximum size of the flash erase routine.  This is copied onto the stack at
+# NV commit time.  Used to size the buffer and checked at link time.
+NV_ERASE_FN_MAX := 80
+
+# Maximum bytes of static data (ring buffer, .ramfunc, .data, .bss). The
+# remainder of a user plugin's static RAM is stack.
+# Increasing this required explicit sign off.
+PLUGIN_STATIC_MAX := 420
 
 ORA_DIR := ../../../firmware/ora
 ORA_INCLUDE := -I$(ORA_DIR)
@@ -38,11 +47,14 @@ CFLAGS := -mcpu=cortex-m33 -mthumb -mfloat-abi=hard -mfpu=fpv5-sp-d16 \
           -MMD -MP \
 		  -DMAJOR_VERSION=$(MAJOR_VERSION) -DMINOR_VERSION=$(MINOR_VERSION) \
 		  -DPATCH_VERSION=$(PATCH_VERSION) -DBUILD_VERSION=$(BUILD_VERSION) \
+		  -DNV_ERASE_FN_MAX=$(NV_ERASE_FN_MAX)u \
           $(SDRR_INCLUDE) $(ORA_INCLUDE) $(PLUGIN_INCLUDE) \
 		  -Iinclude
 
 LDFLAGS := -nostdlib \
            -T host_control_plugin.ld \
+           -Wl,--defsym=NV_ERASE_FN_MAX=$(NV_ERASE_FN_MAX) \
+           -Wl,--defsym=PLUGIN_STATIC_MAX=$(PLUGIN_STATIC_MAX) \
            -Wl,--fatal-warnings \
 		   -Wl,--no-warn-rwx-segments \
            -Wl,-Map=$(BUILD_DIR)/$(PLUGIN_PREFIX).map
@@ -90,6 +102,7 @@ HOST_CFLAGS := -DORA_HOST_TEST=1 -DTEST_BUILD=1 -fshort-enums \
                -O1 -g -Wall -Wextra -Werror \
                -DMAJOR_VERSION=$(MAJOR_VERSION) -DMINOR_VERSION=$(MINOR_VERSION) \
                -DPATCH_VERSION=$(PATCH_VERSION) -DBUILD_VERSION=$(BUILD_VERSION) \
+               -DNV_ERASE_FN_MAX=$(NV_ERASE_FN_MAX)u \
                $(SDRR_INCLUDE) $(ORA_INCLUDE) $(PLUGIN_INCLUDE) \
                -Iinclude \
                -MMD -MP $(HOST_EXTRA_CFLAGS)

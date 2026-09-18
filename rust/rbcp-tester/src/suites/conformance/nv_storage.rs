@@ -99,6 +99,33 @@ fn advertised_writable(bus: &mut Bus, s: &Session) -> Result<bool, String> {
     Ok(bus.read_data(s, 2, 1)?[0] != 0)
 }
 
+/// The RAM slot argument that says the host provides no slot at all.
+const NO_SLOT: u8 = 0xFE;
+
+/// The window a write with no RAM slot provided leaves unchanged.
+///
+/// Bits 0-3 of the byte after the writable flag are N, the window being 2^N
+/// bytes, and an N of zero means the device needs a slot.  Bit 7 says which
+/// end of NV storage the window sits at.  Returns its size and whether it is
+/// at the end.
+fn advertised_no_slot(bus: &mut Bus, s: &Session) -> Result<(u32, bool), String> {
+    bus.issue_cmd(s, group::NV_STORAGE, nv::GET_NV_CAPABILITY, &[])
+        .map_err(|e| format!("GET_NV_CAPABILITY: {e}"))?;
+    let byte = bus.read_data(s, 3, 1)?[0];
+    let n = byte & 0x0F;
+    if n == 0 {
+        return Ok((0, false));
+    }
+    Ok((1u32 << n, (byte & 0x80) != 0))
+}
+
+/// Why a no-slot scenario cannot run on this device.
+fn needs_no_slot_writes() -> Outcome {
+    Outcome::Skip(
+        "the device reports it cannot write NV storage without a RAM slot provided".to_string(),
+    )
+}
+
 /// A RAM slot to name in a write transaction, if the device can perform one.
 ///
 /// The device's own writable flag decides, because how it stages a transaction
@@ -183,11 +210,17 @@ pub fn nv_capability_matches_behaviour(bus: &mut Bus, ctx: &Ctx) -> Result<Outco
         }
     }
 
-    if writable && accepted.is_empty() {
+    // A device may write NV storage without being given a slot at all, and one
+    // that reports such a write is free to refuse every NV_POKE_BEGIN.  The
+    // route it advertises is NV_POKE_COMMIT_BYTE with slot 0xFE, which
+    // no_slot_write_leaves_the_window checks in full.  What must not happen is a
+    // device claiming writable with neither route open.
+    let no_slot = advertised_no_slot(bus, &s)?.0 != 0;
+    if writable && accepted.is_empty() && !no_slot {
         return Err(format!(
             "GET_NV_CAPABILITY reports NV storage writable, but NV_POKE_BEGIN was refused for \
-             every one of the {total} RAM slot(s) the device advertises — a host told it may \
-             write has no way left to do so"
+             every one of the {total} RAM slot(s) the device advertises and it reports no write \
+             without one — a host told it may write has no way left to do so"
         ));
     }
     if !writable && !accepted.is_empty() {
@@ -341,14 +374,25 @@ pub fn get_nv_capability(bus: &mut Bus, ctx: &Ctx) -> Result<Outcome, String> {
         &[ctx.nv_size as u8, (ctx.nv_size >> 8) as u8],
         "GET_NV_CAPABILITY size",
     )?;
-    bus.expect_data(&s, 3, &[0x00], "GET_NV_CAPABILITY reserved byte")?;
+    let no_slot = bus.read_data(&s, 3, 1)?[0];
+    if (no_slot & 0x70) != 0 {
+        return Err(format!(
+            "GET_NV_CAPABILITY no-slot write byte is 0x{no_slot:02X}, and bits 4-6 are reserved"
+        ));
+    }
+    if (no_slot & 0x0F) == 0 && (no_slot & 0x80) != 0 {
+        return Err(format!(
+            "GET_NV_CAPABILITY no-slot write byte is 0x{no_slot:02X} — a device supporting no \
+             write without a RAM slot must not set bit 7, which the host is to ignore"
+        ));
+    }
 
-    if total == 1 {
+    if total == 1 && (no_slot & 0x0F) == 0 {
         bus.expect_data(&s, 2, &[0x00], "GET_NV_CAPABILITY writable")
             .map_err(|e| {
                 format!(
-                    "{e} — the device advertises a single RAM slot, and one with a single slot \
-                     cannot free it to stage a transaction in, so it must report NV storage \
+                    "{e} — the device advertises a single RAM slot and no write without one, so \
+                     it cannot free a slot to stage a transaction in and must report NV storage \
                      read-only"
                 )
             })?;
@@ -1115,6 +1159,14 @@ pub fn nv_poke_commit_erases_before_programming(
                 .to_string(),
         );
     }
+    if log.bad_staged_copy != 0 {
+        return Err(
+            "the bytes at the staged routine's address do not match the routine the plugin was \
+             told to copy — the routine runs with flash unreadable, so all of it has to reach \
+             RAM before it is entered"
+                .to_string(),
+        );
+    }
     if log.bad_unmasked != 0 {
         return Err(
             "a call in the commit sequence arrived with interrupts unmasked — every handler \
@@ -1559,6 +1611,209 @@ pub fn nv_peek_and_slot_peek_read_different_stores(
              there — NV storage holds 0x{in_nv:02X}, and the two are separate stores"
         ));
     }
+
+    Ok(Outcome::Pass)
+}
+
+/// A write with no RAM slot provided leaves the window it advertises unchanged.
+///
+/// The device cannot stage the whole of NV storage without somewhere to put it,
+/// so a no-slot write erases the lot and puts back only the window.  Those
+/// bytes are the last of NV storage, and they must all come back - the one the
+/// host wrote changed, and every other one as it was.
+pub fn no_slot_write_leaves_the_window(bus: &mut Bus, ctx: &Ctx) -> Result<Outcome, String> {
+    let s = ctx.session();
+    bus.enter_cmd_resp(&s)
+        .map_err(|e| format!("ENTER_CMD_RESP: {e}"))?;
+
+    let (window, at_end) = advertised_no_slot(bus, &s)?;
+    if window == 0 {
+        return Ok(needs_no_slot_writes());
+    }
+
+    let base = if at_end { ctx.nv_size - window } else { 0 };
+    let seed: Vec<u8> = (0..window)
+        .map(|i| (i as u8).wrapping_mul(0x13) ^ 0x5C)
+        .collect();
+    bus.seed_nv(base, &seed);
+
+    let offset = (window / 2) as usize;
+    let value = seed[offset] ^ 0xFF;
+    bus.issue_cmd(
+        &s,
+        group::NV_STORAGE,
+        nv::NV_POKE_COMMIT_BYTE,
+        &commit_byte_args(value, base + offset as u32, NO_SLOT),
+    )
+    .map_err(|e| format!("NV_POKE_COMMIT_BYTE with no slot provided: {e}"))?;
+
+    // The no-slot path stages the routine on its own stack, and on a device with
+    // one RAM slot it is the only path that runs, so the sequence is checked
+    // here as well as in nv_poke_commit_erases_before_programming.
+    let log = bus.flash_log();
+    if log.bad_staged_copy != 0 {
+        return Err(
+            "the bytes at the staged routine's address do not match the routine the plugin was \
+             told to copy — the routine runs with flash unreadable, so all of it has to reach \
+             RAM before it is entered"
+                .to_string(),
+        );
+    }
+    if log.bad_erase != 0 || log.bad_program != 0 {
+        return Err(
+            "the erase or the program arrived with XIP still active, or named a range outside \
+             the NV region"
+                .to_string(),
+        );
+    }
+    if log.bad_unmasked != 0 {
+        return Err("a call in the commit sequence arrived with interrupts unmasked".to_string());
+    }
+
+    let mut want = seed.clone();
+    want[offset] = value;
+    expect_nv(
+        bus,
+        &s,
+        base,
+        &want,
+        "a no-slot write stages the advertised window, so every byte in it survives the erase \
+         and reprogram that the one byte requires",
+    )?;
+
+    Ok(Outcome::Pass)
+}
+
+/// A no-slot write is refused outside the window it advertises.
+///
+/// Everything outside the window is erased by the same operation that would
+/// write it, so the device must refuse rather than accept a byte it is about
+/// to destroy.
+pub fn no_slot_write_rejects_a_location_outside_the_window(
+    bus: &mut Bus,
+    ctx: &Ctx,
+) -> Result<Outcome, String> {
+    let s = ctx.session();
+    bus.enter_cmd_resp(&s)
+        .map_err(|e| format!("ENTER_CMD_RESP: {e}"))?;
+
+    let (window, at_end) = advertised_no_slot(bus, &s)?;
+    if window == 0 {
+        return Ok(needs_no_slot_writes());
+    }
+
+    // The byte immediately outside the window, whichever end it sits at.
+    let outside = if at_end {
+        ctx.nv_size - window - 1
+    } else {
+        window
+    };
+
+    // Seeded with the value the command asks for.  A device that takes its
+    // unchanged-byte short cut before checking the location would report
+    // success here, so the seed is what makes the rejection mean something.
+    bus.seed_nv(outside, &[0x5A]);
+
+    bus.expect_rejected(
+        &s,
+        group::NV_STORAGE,
+        nv::NV_POKE_COMMIT_BYTE,
+        &commit_byte_args(0x5A, outside, NO_SLOT),
+    )
+    .map_err(|e| {
+        format!(
+            "{e} - 0x{outside:04X} is one byte outside the {window}-byte no-slot window, and a \
+             no-slot write there would be erased by the same operation that wrote it"
+        )
+    })?;
+
+    Ok(Outcome::Pass)
+}
+
+/// A no-slot write is refused while a transaction is open.
+///
+/// "Fails if NV storage is not writable, if a write transaction is already in
+/// progress, or if the RAM slot specified is invalid, active or too small."
+/// The slot named is 0xFE, which uses no staging buffer at all, and the rule
+/// still holds.
+pub fn no_slot_write_refused_during_a_transaction(
+    bus: &mut Bus,
+    ctx: &Ctx,
+) -> Result<Outcome, String> {
+    let s = ctx.session();
+    bus.enter_cmd_resp(&s)
+        .map_err(|e| format!("ENTER_CMD_RESP: {e}"))?;
+
+    let (window, at_end) = advertised_no_slot(bus, &s)?;
+    if window == 0 {
+        return Ok(needs_no_slot_writes());
+    }
+    let Some(slot) = staging_slot(bus, &s, ctx)? else {
+        return Ok(needs_staging_slot(ctx));
+    };
+
+    let target = if at_end { ctx.nv_size - window } else { 0 };
+
+    // Seeded with the value the command asks for, so a device taking its
+    // unchanged-byte short cut before this check would report success.
+    bus.seed_nv(target, &[0x71]);
+
+    bus.issue_cmd(&s, group::NV_STORAGE, nv::NV_POKE_BEGIN, &[slot])
+        .map_err(|e| format!("NV_POKE_BEGIN with slot {slot}: {e}"))?;
+
+    bus.expect_rejected(
+        &s,
+        group::NV_STORAGE,
+        nv::NV_POKE_COMMIT_BYTE,
+        &commit_byte_args(0x71, target, NO_SLOT),
+    )
+    .map_err(|e| format!("{e} - a write transaction was already in progress"))?;
+
+    bus.issue_cmd(&s, group::NV_STORAGE, nv::NV_POKE_DISCARD, &[])
+        .map_err(|e| format!("NV_POKE_DISCARD: {e}"))?;
+
+    Ok(Outcome::Pass)
+}
+
+/// NV_POKE_BEGIN refuses the no-slot argument, and NV_POKE_COMMIT_BYTE accepts
+/// it.
+///
+/// A transaction spans several commands, and a device with nowhere to stage but
+/// its own stack has nothing that outlives the command that opened it.  So the
+/// no-slot argument belongs to NV_POKE_COMMIT_BYTE, which is one command start
+/// to finish, and NV_POKE_BEGIN must refuse it rather than open a transaction
+/// it cannot carry.
+pub fn no_slot_begin_is_refused(bus: &mut Bus, ctx: &Ctx) -> Result<Outcome, String> {
+    let s = ctx.session();
+    bus.enter_cmd_resp(&s)
+        .map_err(|e| format!("ENTER_CMD_RESP: {e}"))?;
+
+    let (window, at_end) = advertised_no_slot(bus, &s)?;
+    if window == 0 {
+        return Ok(needs_no_slot_writes());
+    }
+
+    bus.expect_rejected(&s, group::NV_STORAGE, nv::NV_POKE_BEGIN, &[NO_SLOT])
+        .map_err(|e| {
+            format!("{e} - NV_POKE_BEGIN cannot open a transaction with no slot to stage it in")
+        })?;
+
+    // The refusal above would also come from a device that treated 0xFE as an
+    // out-of-range slot, which is the answer it gives to 0xFD.  This pins it
+    // to 0xFE having a meaning the device knows.
+    let window_start = if at_end { ctx.nv_size - window } else { 0 };
+    bus.issue_cmd(
+        &s,
+        group::NV_STORAGE,
+        nv::NV_POKE_COMMIT_BYTE,
+        &commit_byte_args(0x3C, window_start, NO_SLOT),
+    )
+    .map_err(|e| {
+        format!(
+            "NV_POKE_COMMIT_BYTE with 0xFE: {e} - a device that refuses NV_POKE_BEGIN's 0xFE \
+                 must still accept it here, or 0xFE is simply an invalid slot to it"
+        )
+    })?;
 
     Ok(Outcome::Pass)
 }

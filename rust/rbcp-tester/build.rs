@@ -32,6 +32,24 @@ const SHIM_FLAGS: &[&str] = &[
     "-Werror",
 ];
 
+/// The erase-routine ceiling, read from the plugin's Makefile.
+///
+/// Defined once there and given to the plugin's compiler and linker.  The shim
+/// needs it too, to check its stand-in routine against.
+fn nv_erase_fn_max(plugin_dir: &std::path::Path) -> u32 {
+    let makefile = std::fs::read_to_string(plugin_dir.join("Makefile"))
+        .expect("could not read the plugin Makefile");
+    for line in makefile.lines() {
+        if let Some(value) = line.strip_prefix("NV_ERASE_FN_MAX") {
+            let value = value.trim_start().trim_start_matches(":=").trim();
+            return value
+                .parse()
+                .unwrap_or_else(|e| panic!("NV_ERASE_FN_MAX is not a number: {e}"));
+        }
+    }
+    panic!("NV_ERASE_FN_MAX is not defined in the plugin Makefile");
+}
+
 fn main() {
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
     let project_root = manifest_dir
@@ -110,6 +128,12 @@ fn main() {
     let cc = env::var("HOST_CC").unwrap_or_else(|_| "cc".to_string());
     let status = Command::new(&cc)
         .args(SHIM_FLAGS)
+        // The shim's stand-in routine has to fit the buffer the plugin copies
+        // it into, and the plugin's Makefile owns that ceiling.
+        .arg(format!(
+            "-DNV_ERASE_FN_MAX={}",
+            nv_erase_fn_max(&plugin_dir)
+        ))
         .arg(format!("-I{}", firmware.join("include").display()))
         .arg(format!("-I{}", firmware.join("generated").display()))
         .arg(format!("-I{}", firmware.join("ora").display()))

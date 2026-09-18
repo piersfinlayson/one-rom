@@ -37,6 +37,10 @@ pub struct FlashLog {
     /// Address the plugin formed its staged-routine pointer from.
     pub staged_fn_addr: u32,
 
+    /// Set where the bytes at the staged routine's address do not match the
+    /// routine the plugin was told to copy.
+    pub bad_staged_copy: u32,
+
     /// Order in which the calls arrived: each is the value of a counter that
     /// increments on every flash call, or 0 if the call never came.
     pub connect_seq: u32,

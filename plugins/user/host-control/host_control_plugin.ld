@@ -78,3 +78,13 @@ __nv_storage_start = USER_PLUGIN_BASE + USER_PLUGIN_SIZE - 4K;
 ASSERT(__text_end + SIZEOF(.ramfunc) + SIZEOF(.data) <= __nv_storage_start,
        "ERROR: plugin code/data overlaps NV storage region")
 ASSERT(__flash_erase_fn_end - __flash_erase_fn_start > 0, "ERROR: flash erase code is empty")
+
+/* NV_ERASE_FN_MAX comes from the Makefile, which gives the same value to the
+ * compiler to size the buffer the routine is copied into. */
+ASSERT(__flash_erase_fn_end - __flash_erase_fn_start <= NV_ERASE_FN_MAX,
+    "ERROR: flash erase code exceeds NV_ERASE_FN_MAX")
+
+/* PLUGIN_STATIC_MAX comes from the Makefile.  Everything static the plugin has
+ * sits between DATA_BASE and __bss_end, and the rest of the window is stack. */
+ASSERT(__bss_end - DATA_BASE <= PLUGIN_STATIC_MAX,
+    "ERROR: static data exceeds PLUGIN_STATIC_MAX, leaving less stack")

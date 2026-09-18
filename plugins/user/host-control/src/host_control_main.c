@@ -111,7 +111,7 @@ static const uint32_t s_knock_seq[KNOCK_LEN] = {
 
 #define RBCP_PROTOCOL_VERSION_MAJOR 0u
 #define RBCP_PROTOCOL_VERSION_MINOR 1u
-#define RBCP_PROTOCOL_VERSION_PATCH 2u
+#define RBCP_PROTOCOL_VERSION_PATCH 3u
 const uint8_t protocol_version[4] = {
     RBCP_PROTOCOL_VERSION_MAJOR,
     RBCP_PROTOCOL_VERSION_MINOR,
@@ -315,6 +315,29 @@ _Static_assert((uint32_t)LED_MAX_HOLD * 100u <= LED_MAX_HOLD_MS,
 #define NV_STORAGE_SIZE 4096u
 _Static_assert(NV_STORAGE_SIZE <= 32768u, "Max NV_STORAGE_SIZE is 32KB per the RBCP specification");
 
+// Flash program granularity.  Erase granularity is NV_STORAGE_SIZE.
+#define NV_FLASH_PAGE   256u
+
+// The no-slot window: bytes that survive a write made with no RAM slot.  It is
+// the last NV_NOSLOT_SIZE bytes of NV storage, so it ends NV_NOSLOT_PAGE, the
+// page written back.  The rest of NV storage is lost to the erase.
+#define NV_NOSLOT_SIZE  32u
+#define NV_NOSLOT_BASE  (NV_STORAGE_SIZE - NV_NOSLOT_SIZE)
+#define NV_NOSLOT_PAGE  (NV_STORAGE_SIZE - NV_FLASH_PAGE)
+_Static_assert(NV_NOSLOT_SIZE <= NV_FLASH_PAGE,
+               "The no-slot window must fit in the page written back");
+
+// GET_NV_CAPABILITY byte 3.  Bits 0-3 are N for a 2^N window, bit 7 is set
+// where the window ends NV storage.
+#define NV_NOSLOT_N     5u
+#define NV_NOSLOT_AT_END 0x80u
+#define NV_NOSLOT_CODE  (NV_NOSLOT_AT_END | NV_NOSLOT_N)
+_Static_assert((1u << NV_NOSLOT_N) == NV_NOSLOT_SIZE,
+               "NV_NOSLOT_N must encode NV_NOSLOT_SIZE");
+
+// The RAM slot argument meaning no slot provided.
+#define NV_SLOT_NONE    0xFEu
+
 // ---------------------------------------------------------------------------
 // Linker symbols required by NV storage implementation
 // ---------------------------------------------------------------------------
@@ -355,8 +378,24 @@ typedef struct {
     uint32_t staging_size;
 } nv_state_t;
 
+// An NV commit type.
+typedef enum {
+    NV_DEFER_NONE   = 0u,
+    NV_DEFER_SLOT   = 1u,  // stage in a RAM slot
+    NV_DEFER_NOSLOT = 2u,  // stage on the stack
+} __attribute__((packed)) nv_defer_kind_t;
+_Static_assert(sizeof(nv_defer_kind_t) == 1,
+               "nv_defer_kind_t must be one byte");
+
+typedef struct {
+    nv_defer_kind_t kind;
+    uint8_t byte;    // NOSLOT: the byte to write
+    uint8_t offset;  // NOSLOT: where in the window to write it
+} nv_deferred_t;
+
 static rbcp_state_t s_state;
 static nv_state_t s_nv_state;
+static nv_deferred_t s_nv_deferred;
 
 // Number of low observed-address bits the device omits for the served ROM
 // (host signalling stride = 1 << this).  Fixed for the served ROM type, so it
@@ -688,6 +727,9 @@ static void init_nv_state(void) {
     s_nv_state.staging_slot = 0u;
     s_nv_state.staging_base = 0u;
     s_nv_state.staging_size = 0u;
+    s_nv_deferred.kind   = NV_DEFER_NONE;
+    s_nv_deferred.byte   = 0u;
+    s_nv_deferred.offset = 0u;
 }
 
 static void init_rbcp(bool reset_slot_info) {
@@ -1273,30 +1315,10 @@ static void nv_discard_impl(void) {
 static bool nv_private_staging(uint32_t *base_out, uint8_t *first_out);
 static uint32_t nv_staging_required(void);
 
-// Whether a write transaction can be staged anywhere at all.
-//
-// Two routes, and either will do: this plugin's own slots above the
-// host-visible range, or a slot the host lends us — which needs there to be
-// more than one, so that the one being served is not the one overwritten, and
-// needs that slot to be big enough.
-//
-// One function rather than the test written at each site, so that what
-// GET_NV_CAPABILITY reports and what the write commands do cannot drift apart.
-// A device that answered "writable" and then failed every transaction would be
-// worse than one that admitted it could not.
+// Always true here.  A no-slot write needs no RAM slot from the host.
+#define NV_STORAGE_WRITEABLE true
 static bool nv_writable(void) {
-    uint32_t base;
-    if (nv_private_staging(&base, NULL)) {
-        return true;
-    }
-    if (host_slot_count() <= 1u) {
-        return false;
-    }
-    uint32_t slot_size;
-    if (s_get_ram_slot_info(0u, NULL, &slot_size, NULL) != ORA_RESULT_OK) {
-        return false;
-    }
-    return slot_size >= nv_staging_required();
+    return NV_STORAGE_WRITEABLE;
 }
 
 static bool exec_get_nv_capability(void) {
@@ -1305,7 +1327,7 @@ static bool exec_get_nv_capability(void) {
         (uint8_t)(NV_STORAGE_SIZE & 0xFFu),
         (uint8_t)((NV_STORAGE_SIZE >> 8u) & 0xFFu),
         writable ? 0x01u : 0x00u,
-        0x00u
+        (uint8_t)NV_NOSLOT_CODE
     };
     data_write(s_state.active_slot, 0u, resp, 4u);
     return true;
@@ -1334,11 +1356,9 @@ static bool exec_nv_peek(void) {
     return true;
 }
 
-// Bytes a staging area must hold: the whole of NV storage, plus the erase
-// routine copied in immediately above it.
+// Bytes a staging area must hold.  The erase routine goes on the stack.
 static uint32_t nv_staging_required(void) {
-    return NV_STORAGE_SIZE
-         + ORA_STAGED_FN_SIZE(__flash_erase_fn_start, __flash_erase_fn_end);
+    return NV_STORAGE_SIZE;
 }
 
 // Find a staging area among this plugin's own RAM slots, if it has any.
@@ -1401,8 +1421,6 @@ static bool nv_poke_begin_impl(uint8_t slot) {
         return false;
     }
 
-    uint32_t erase_fn_size =
-        ORA_STAGED_FN_SIZE(__flash_erase_fn_start, __flash_erase_fn_end);
     uint32_t required = nv_staging_required();
 
     // Prefer our own slots; fall back to the one the host lent us.  Only the
@@ -1433,20 +1451,12 @@ static bool nv_poke_begin_impl(uint8_t slot) {
         staging[i] = __nv_storage_start[i];
     }
 
-    // Copy erase function binary immediately after staging data.
-    // Set Thumb bit on the function pointer at call time, not here.
-    volatile uint8_t *erase_dest = staging + NV_STORAGE_SIZE;
-    for (uint32_t i = 0u; i < erase_fn_size; i++) {
-        erase_dest[i] = __flash_erase_fn_start[i];
-    }
-
     s_nv_state.active       = true;
     s_nv_state.staging_slot = slot;
     s_nv_state.staging_base = slot_base;
     s_nv_state.staging_size = slot_size;
 
-    s_log("NPB: slot=%u base=0x%08X fn_size=%u",
-          (unsigned)slot, (unsigned)slot_base, (unsigned)erase_fn_size);
+    s_log("NPB: slot=%u base=0x%08X", (unsigned)slot, (unsigned)slot_base);
     return true;
 }
 
@@ -1454,6 +1464,12 @@ static bool exec_nv_poke_begin(void) {
     uint8_t slot = ring_read_byte();
     if (slot == 0xAAu) {
         s_log("NPB: slot 0xAA invalid");
+        return false;
+    }
+    // A stack buffer does not survive to the next command, so no-slot writes
+    // are NV_POKE_COMMIT_BYTE only.
+    if (slot == NV_SLOT_NONE) {
+        s_log("NPB: no-slot writes are NV_POKE_COMMIT_BYTE only");
         return false;
     }
     return nv_poke_begin_impl(slot);
@@ -1493,12 +1509,18 @@ static bool exec_nv_poke_discard(void) {
     return true;
 }
 
-static bool exec_nv_poke_commit(void) {
-    if (!s_nv_state.active) {
-        s_log("NPC: no transaction in progress");
-        return false;
-    }
-
+// Erase the whole NV sector and write program_size bytes back at
+// program_offset within it.
+//
+// The bootrom reads program_size bytes from src, however few the caller filled
+// in.  src needs that many bytes of readable memory behind it.
+//
+// Not inlined, so its frame exists only while it runs.
+static bool __attribute__((noinline)) nv_flash_write(
+    const uint8_t *src,
+    uint32_t       program_offset,
+    uint32_t       program_size
+) {
     // Look up all bootrom functions while XIP is still active.
     // On any lookup failure, leave the transaction active so the host
     // can retry or discard per the spec.
@@ -1538,7 +1560,7 @@ static bool exec_nv_poke_commit(void) {
         s_log("NPC: flash_range_program not found");
         return false;
     }
-    
+
     // Get the exclusive mode functions, which we'll use to ensure the flash
     // isn't accessed during the critical section of the commit.  Checked like
     // the bootrom lookups above: the firmware this plugin declares a minimum
@@ -1553,14 +1575,38 @@ static bool exec_nv_poke_commit(void) {
         return false;
     }
 
+    // The routine cannot run from flash while flash is unreadable, so it is
+    // copied onto this frame.
+    uint32_t fn_size =
+        ORA_STAGED_FN_SIZE(__flash_erase_fn_start, __flash_erase_fn_end);
+    if (fn_size > NV_ERASE_FN_MAX) {
+        // LCOV_UNREACHABLE_START - a device build fails the linker ASSERT if
+        // the routine exceeds NV_ERASE_FN_MAX.  A host build uses
+        // SHIM_ERASE_FN_SIZE, which does not exceed NV_ERASE_FN_MAX.
+        s_log("NPC: erase routine %u exceeds %u", (unsigned)fn_size,
+              (unsigned)NV_ERASE_FN_MAX);
+        return false;
+        // LCOV_UNREACHABLE_STOP
+    }
+    _Static_assert((NV_ERASE_FN_MAX % 4u) == 0u,
+                   "NV_ERASE_FN_MAX must be a multiple of 4");
+    uint32_t         code[NV_ERASE_FN_MAX / 4u];
+    volatile uint8_t *code_bytes = (volatile uint8_t *)code;
+    for (uint32_t i = 0u; i < fn_size; i++) {
+        code_bytes[i] = __flash_erase_fn_start[i];
+    }
+#if !defined(ORA_HOST_TEST)
+    // The copy went out as data.  Make it visible to instruction fetch before
+    // branching to it.
+    __asm volatile ("dsb \n\t isb" ::: "memory");
+#endif
+    nv_flash_erase_critical_fn_t erase_fn =
+        ORA_STAGED_FN_PTR(nv_flash_erase_critical_fn_t, (uintptr_t)code);
+
     if (enter_exclusive() != ORA_RESULT_OK) {
         s_log("NPC: enter exclusive mode failed");
         return false;
     }
-
-    const uint8_t *staging = ORA_SRAM_PTR(s_nv_state.staging_base);
-    nv_flash_erase_critical_fn_t erase_fn = ORA_STAGED_FN_PTR(
-        nv_flash_erase_critical_fn_t, s_nv_state.staging_base + NV_STORAGE_SIZE);
 
     // Exclusive mode parks the other core with its interrupts masked.  This
     // core has to mask its own, and from here rather than from inside the
@@ -1578,10 +1624,10 @@ static bool exec_nv_poke_commit(void) {
     uint8_t  clkdiv     = ORA_XIP_CLKDIV();
     uint32_t flash_offs = ORA_FLASH_OFFSET(__nv_storage_start);
 
-    // Erase and program the NV sector via the function blob copied into the
-    // RAM slot.  Both run between one exit from XIP and one restore of it, so
-    // the bootrom's program function gets the flash in the serial command mode
-    // it needs.  It returns void, so a failed write is not detectable here.
+    // Erase the whole sector and write back the one page the caller staged.
+    // Both run between one exit from XIP and one restore of it, so the
+    // bootrom's program function gets the flash in the serial command mode it
+    // needs.  It returns void, so a failed write is not detectable here.
     erase_fn(
         flash_exit_xip,
         flash_range_erase,
@@ -1589,8 +1635,10 @@ static bool exec_nv_poke_commit(void) {
         flash_flush_cache,
         flash_select_xip_read_mode,
         flash_offs,
-        staging,
+        flash_offs + program_offset,
+        src,
         NV_STORAGE_SIZE,
+        program_size,
         clkdiv
     );
 
@@ -1600,7 +1648,16 @@ static bool exec_nv_poke_commit(void) {
 
     s_log("NPC: complete offs=0x%08X clkdiv=%u", (unsigned)flash_offs,
           (unsigned)clkdiv);
-    nv_discard_impl();
+    return true;
+}
+
+static bool exec_nv_poke_commit(void) {
+    if (!s_nv_state.active) {
+        s_log("NPC: no transaction in progress");
+        return false;
+    }
+    // Performed by nv_deferred_run, once this frame and dispatch's have gone.
+    s_nv_deferred.kind = NV_DEFER_SLOT;
     return true;
 }
 
@@ -1614,19 +1671,44 @@ static bool exec_nv_poke_commit_byte(void) {
         return false;
     }
 
-    // Checked before the unchanged-byte short cut below, not after.  The
-    // command "fails if NV storage is not writable", and a host that gets
-    // status-OK from a write command has been told the write happened; on a
-    // read-only device it cannot have, whatever the byte was.
+    // A read-only device always rejects a poke.
+    _Static_assert(NV_STORAGE_WRITEABLE, "NV storage always writeable");
     if (!nv_writable()) {
+        // LCOV_UNREACHABLE_START - nv_writable always returns true on this
+        // device.
         s_log("NV_POKE_COMMIT_BYTE: NV storage is read-only");
         return false;
+        // LCOV_UNREACHABLE_STOP
+    }
+
+    uint32_t location = (uint32_t)loc_lsb | ((uint32_t)loc_msb << 8u);
+
+    // Validate a no-slot request above the short cut below, so an invalid one
+    // fails rather than returning success.
+    if (slot == NV_SLOT_NONE) {
+        if (loc_msb > 0x7Fu || location < NV_NOSLOT_BASE ||
+            location >= NV_STORAGE_SIZE) {
+            s_log("NV_POKE_COMMIT_BYTE: location %u outside the no-slot "
+                  "window %u..%u", (unsigned)location, (unsigned)NV_NOSLOT_BASE,
+                  (unsigned)(NV_STORAGE_SIZE - 1u));
+            return false;
+        }
+        if (s_nv_state.active) {
+            s_log("NV_POKE_COMMIT_BYTE: transaction already in progress");
+            return false;
+        }
     }
 
     // Avoid erasing/writing flash if the byte hasn't changed.
-    uint32_t location = (uint32_t)loc_lsb | ((uint32_t)loc_msb << 8u);
     if (loc_msb <= 0x7Fu && location < NV_STORAGE_SIZE &&
         __nv_storage_start[location] == byte) {
+        return true;
+    }
+
+    if (slot == NV_SLOT_NONE) {
+        s_nv_deferred.kind   = NV_DEFER_NOSLOT;
+        s_nv_deferred.byte   = byte;
+        s_nv_deferred.offset = (uint8_t)(location - NV_NOSLOT_BASE);
         return true;
     }
 
@@ -1638,6 +1720,52 @@ static bool exec_nv_poke_commit_byte(void) {
         return false;
     }
     return exec_nv_poke_commit();
+}
+
+// Do the flash write for a commit command.  Called from run_command, with
+// dispatch's frame gone.
+static bool __attribute__((noinline)) nv_deferred_run(void) {
+    nv_defer_kind_t kind = s_nv_deferred.kind;
+    s_nv_deferred.kind = NV_DEFER_NONE;
+
+    // No default, so -Wswitch names a kind added later.
+    switch (kind) {
+    case NV_DEFER_SLOT: {
+        bool ok = nv_flash_write(ORA_SRAM_PTR(s_nv_state.staging_base),
+                                 0u, NV_STORAGE_SIZE);
+        if (ok) {
+            nv_discard_impl();
+        }
+        // A failed commit leaves the transaction in place, for the host to
+        // retry or discard.
+        return ok;
+    }
+    case NV_DEFER_NOSLOT:
+        break;
+    case NV_DEFER_NONE:
+        // LCOV_UNREACHABLE_START - run_command calls this only when kind is
+        // not NV_DEFER_NONE.
+        return false;
+        // LCOV_UNREACHABLE_STOP
+    }
+
+    // Read the window out of flash, apply the byte, write the page back.
+    uint8_t buf[NV_NOSLOT_SIZE];
+
+    for (uint32_t i = 0u; i < NV_NOSLOT_SIZE; i++) {
+        buf[i] = __nv_storage_start[NV_NOSLOT_BASE + i];
+    }
+    buf[s_nv_deferred.offset] = s_nv_deferred.byte;
+
+    // The program writes NV_FLASH_PAGE bytes starting at page.  buf holds the
+    // last NV_NOSLOT_SIZE of them, so page is NV_FLASH_PAGE bytes below the end
+    // of buf.  The bytes before buf are stack, and they are programmed into NV
+    // storage outside the window, where their value is unspecified.  Cast
+    // because the address is outside buf.
+    const uint8_t *page = (const uint8_t *)((uintptr_t)buf
+                                            + NV_NOSLOT_SIZE - NV_FLASH_PAGE);
+
+    return nv_flash_write(page, NV_NOSLOT_PAGE, NV_FLASH_PAGE);
 }
 
 // ---------------------------------------------------------------------------
@@ -3047,6 +3175,12 @@ static bool run_command(uint8_t group, uint8_t cmd) {
     }
 
     bool ok = dispatch(group, cmd);
+
+    // The flash sequence needs the stack dispatch was standing on.  It runs
+    // before cmd_end, so completion is not signalled early.
+    if (s_nv_deferred.kind != NV_DEFER_NONE) {
+        ok = nv_deferred_run();
+    }
 
     bool now_active = s_state.active;
 
