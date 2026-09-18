@@ -517,8 +517,13 @@ fire-32-c 27C040 single 0
 fire-32-c SST39SF040 single 0
 fire-32-c 27C080 single 0
 fire-40-a 27C200 single 1
+fire-40-a 27C200Pin31NC single 1
 fire-40-a 27C400 single 0
 fire-40-b 27C200 single 0
+fire-40-b 27C200Pin31NC single 0
 fire-40-b 27C400 single 0
+fire-40-b 27C400Pin31A17 single 0
 fire-40-c 27C200 single 0
+fire-40-c 27C200Pin31NC single 0
 fire-40-c 27C400 single 0
+fire-40-c 27C400Pin31A17 single 0

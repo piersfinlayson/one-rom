@@ -29,12 +29,14 @@
 
 // Number of channel descriptors declared in the control block.
 //
-// Held at SEGGER's default of 3 for now.  Only channel 0 is populated; a probe
+// Held at SEGGER's default of 3.  Only the first of each is populated.  A probe
 // reads the counts from the control block, so unpopulated descriptors cost 96
-// bytes of RAM and nothing else.  Sizing these to what is actually used is a
-// question for the per core channel split, which owns the channel count.
+// bytes of RAM and nothing else.
 #define ONEROM_RTT_MAX_UP_BUFFERS       3
 #define ONEROM_RTT_MAX_DOWN_BUFFERS     3
+
+// Number of channels.  onerom_rtt_ring() in rtt.c maps each to its descriptor.
+#define ONEROM_RTT_CHANNELS             2
 
 // Channel operating mode.  Only skip is implemented: a record that does not
 // fit is dropped whole, and the calling core is never blocked.
@@ -43,37 +45,27 @@
 // Log channel indices.  Fixed by contract - never identified by name.
 #define ONEROM_RTT_CH_BOOT              0u
 
-// Target to host channel.
+// A channel descriptor, the same layout in both directions.
 //
-// read_offset is written by the host, and is therefore untrusted; see
-// onerom_rtt_write().
-typedef struct {
-    const char *name;
-    char *buffer;
-    unsigned size;
-    unsigned write_offset;
-    volatile unsigned read_offset;
-    unsigned flags;
-} onerom_rtt_up_t;
-
-// Host to target channel.  Declared for layout compatibility; nothing in the
-// firmware reads host to target data yet.
+// A probe writes read_offset on an up channel and write_offset on a down one.
+// Both are volatile and clamped before use, since the probe's value cannot be
+// trusted.  See onerom_rtt_write().
 typedef struct {
     const char *name;
     char *buffer;
     unsigned size;
     volatile unsigned write_offset;
-    unsigned read_offset;
+    volatile unsigned read_offset;
     unsigned flags;
-} onerom_rtt_down_t;
+} onerom_rtt_ring_t;
 
 // The control block.  A probe locates this and walks the descriptors.
 typedef struct {
     char id[16];
     int max_up_buffers;
     int max_down_buffers;
-    onerom_rtt_up_t up[ONEROM_RTT_MAX_UP_BUFFERS];
-    onerom_rtt_down_t down[ONEROM_RTT_MAX_DOWN_BUFFERS];
+    onerom_rtt_ring_t up[ONEROM_RTT_MAX_UP_BUFFERS];
+    onerom_rtt_ring_t down[ONEROM_RTT_MAX_DOWN_BUFFERS];
 } onerom_rtt_cb_t;
 
 // The control block object.  Named _SEGGER_RTT because that is the symbol a
@@ -122,26 +114,22 @@ void onerom_rtt_vprintf(unsigned channel, const char *fmt, va_list *args)
 // whole design rests on.
 //
 // Layout, from SEGGER_RTT.h: 16 byte id, two ints, then 24 byte descriptors,
-// up buffers before down.
+// up buffers before down.  SEGGER's two descriptor structs share this layout,
+// so one struct covers both.
 //
 // The layout is a property of the 32 bit target, where the two pointers in a
 // descriptor are four bytes each.  A 64 bit host - firmware/test/rtt/ compiles
 // this header natively - cannot satisfy it and is not asked to; the firmware
 // build is what enforces it, and that is the build that has to be right.
 #if UINTPTR_MAX == 0xFFFFFFFFu
-_Static_assert(sizeof(onerom_rtt_up_t) == 24,
-               "up descriptor must be 24 bytes for SEGGER RTT compatibility");
-_Static_assert(sizeof(onerom_rtt_down_t) == 24,
-               "down descriptor must be 24 bytes for SEGGER RTT compatibility");
-_Static_assert(__builtin_offsetof(onerom_rtt_up_t, name) == 0, "up.name offset");
-_Static_assert(__builtin_offsetof(onerom_rtt_up_t, buffer) == 4, "up.buffer offset");
-_Static_assert(__builtin_offsetof(onerom_rtt_up_t, size) == 8, "up.size offset");
-_Static_assert(__builtin_offsetof(onerom_rtt_up_t, write_offset) == 12, "up.write_offset offset");
-_Static_assert(__builtin_offsetof(onerom_rtt_up_t, read_offset) == 16, "up.read_offset offset");
-_Static_assert(__builtin_offsetof(onerom_rtt_up_t, flags) == 20, "up.flags offset");
-// The down descriptor swaps the two offsets: the host owns write_offset there.
-_Static_assert(__builtin_offsetof(onerom_rtt_down_t, write_offset) == 12, "down.write_offset offset");
-_Static_assert(__builtin_offsetof(onerom_rtt_down_t, read_offset) == 16, "down.read_offset offset");
+_Static_assert(sizeof(onerom_rtt_ring_t) == 24,
+               "descriptor must be 24 bytes for SEGGER RTT compatibility");
+_Static_assert(__builtin_offsetof(onerom_rtt_ring_t, name) == 0, "ring.name offset");
+_Static_assert(__builtin_offsetof(onerom_rtt_ring_t, buffer) == 4, "ring.buffer offset");
+_Static_assert(__builtin_offsetof(onerom_rtt_ring_t, size) == 8, "ring.size offset");
+_Static_assert(__builtin_offsetof(onerom_rtt_ring_t, write_offset) == 12, "ring.write_offset offset");
+_Static_assert(__builtin_offsetof(onerom_rtt_ring_t, read_offset) == 16, "ring.read_offset offset");
+_Static_assert(__builtin_offsetof(onerom_rtt_ring_t, flags) == 20, "ring.flags offset");
 _Static_assert(__builtin_offsetof(onerom_rtt_cb_t, id) == 0, "cb.id offset");
 _Static_assert(__builtin_offsetof(onerom_rtt_cb_t, max_up_buffers) == 16, "cb.max_up_buffers offset");
 _Static_assert(__builtin_offsetof(onerom_rtt_cb_t, max_down_buffers) == 20, "cb.max_down_buffers offset");

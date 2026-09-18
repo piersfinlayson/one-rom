@@ -26,4 +26,14 @@ void log_drain_init(void);
 // log accumulated before the terminal attached is replayed rather than dropped.
 void log_drain_task(void);
 
+// Claim the input channel for writing, so that the task below can fill it.
+// Called once at plugin start.  Input remains off when if the channel is
+// unavailable.
+void log_input_init(void);
+
+// Move data sent to the CDC OUT endpoint into the input channel.
+// Call once per main loop pass.  Only takes as much as the input chanel can
+// hold, ensuring back pressure is applied to the host.
+void log_input_task(void);
+
 #endif // USB_LOG_H

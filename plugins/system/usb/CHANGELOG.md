@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.3.1] - 2026-09-17
+
+Data received on the CDC OUT endpoint is placed in log channel 1 (if available) for a plugin to read.  If the channel is full, back pressure reaches the host which cannot send more data until space is available.
+- Requires firmware 0.7.3.
+
 ## [0.3.0] - 2026-09-08
 
 The command a host sends after one the device refused is no longer lost.

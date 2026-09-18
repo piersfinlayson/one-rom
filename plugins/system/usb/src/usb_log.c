@@ -2,14 +2,13 @@
 //
 // MIT License
 
-// Forwarding One ROM's log to the CDC serial port.
+// Forwarding One ROM's log to the CDC serial port, and the terminal's input
+// back.
 //
-// The plugin claims the log channel for reading at startup and, while a
-// terminal is attached, copies what the firmware and the other plugin write
-// into the CDC IN endpoint.  Each session opens with a banner naming the
-// device, written before any log content - and written whether or not there is
-// any log content to come, because a reader that gets nothing at all cannot
-// tell a quiet device from the wrong port.
+// The plugin claims the channels 0 and 1 for reading and writing respectively.
+// When a terminal is attached the CDC interface.
+// 
+// Each terminal session opens with a banner naming the device.
 //
 // Nothing is forwarded until a terminal opens the port, so that a debug probe
 // can still read the log on a device that merely has USB.  What has already
@@ -32,9 +31,21 @@
 // Bytes moved per pass.  The CDC TX FIFO is 64 bytes at full speed, so a
 // larger buffer could not be handed on in one go anyway.
 #define LOG_DRAIN_CHUNK     64
+_Static_assert(LOG_DRAIN_CHUNK == CFG_TUD_CDC_TX_BUFSIZE,
+               "LOG_DRAIN_CHUNK must match tinyusb's CDC TX FIFO");
 
 // The CDC interface carrying the log.  One is configured.
 #define LOG_DRAIN_CDC_ITF   0
+
+// The channel a terminal's input goes to, and the name a probe shows for it.
+#define LOG_INPUT_CHANNEL   ORA_LOG_CHANNEL_1
+#define LOG_INPUT_NAME      "usb-in"
+
+// Bytes moved per pass.  A full speed CDC packet, so one pass can clear what
+// one transfer brought.
+#define LOG_INPUT_CHUNK     64
+_Static_assert(LOG_INPUT_CHUNK == CFG_TUD_CDC_RX_BUFSIZE,
+               "LOG_INPUT_CHUNK must match tinyusb's CDC RX FIFO");
 
 // How long after a terminal opens the port before anything is sent to it.
 //
@@ -534,4 +545,64 @@ void log_drain_task(void) {
     }
 
     log_drain_bytes();
+}
+
+void log_input_init(void) {
+    ora_log_open_write_fn_t open_write =
+        context.ora_lookup_fn(ORA_ID_LOG_OPEN_WRITE);
+    ora_log_write_fn_t log_write = context.ora_lookup_fn(ORA_ID_LOG_WRITE);
+    ora_log_query_fn_t log_query = context.ora_lookup_fn(ORA_ID_LOG_QUERY);
+
+    if ((open_write == NULL) || (log_write == NULL) || (log_query == NULL)) {
+        DEBUG("No logging API, CDC input disabled");
+        return;
+    }
+
+    // Two possible failures:
+    // - Firmware prior to v0.7.3 has no second channel
+    // - Another plugin having claimed the channel already.
+    ora_result_t result = open_write(LOG_INPUT_CHANNEL, LOG_INPUT_NAME);
+    if (result != ORA_RESULT_OK) {
+        LOG("Input channel unavailable (%d), CDC input disabled", result);
+        return;
+    }
+
+    context.log_write = log_write;
+    context.log_query = log_query;
+}
+
+void log_input_task(void) {
+    uint8_t buf[LOG_INPUT_CHUNK];
+    uint32_t free = 0;
+
+    if (context.log_write == NULL) {
+        return;
+    }
+
+    // Take only what the channel can hold. Ensures back pressure is applied
+    // to the host, as tinyusb only rearms once the endpoint's FIFO has room
+    // for another whole packet.
+    if (context.log_query(LOG_INPUT_CHANNEL, NULL, &free, NULL) !=
+        ORA_RESULT_OK) {
+        return;
+    }
+    if (free == 0) {
+        return;
+    }
+    if (free > sizeof(buf)) {
+        free = sizeof(buf);
+    }
+
+    uint32_t count = tud_cdc_n_read(LOG_DRAIN_CDC_ITF, buf, free);
+    if (count == 0) {
+        return;
+    }
+
+    // If this fails, it most likely means that something else (like a debug
+    // probe, as other plugins should be blocked) wrote to the channel during
+    // this function.  We have already taken the bytes out of the USB FIFO so
+    // we have to drop them.
+    if (context.log_write(LOG_INPUT_CHANNEL, buf, count) != ORA_RESULT_OK) {
+        ERR("CDC input dropped %lu bytes", (unsigned long)count);
+    }
 }

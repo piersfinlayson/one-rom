@@ -2,5 +2,8 @@
     "name": "usb",
     "display_name": "One ROM USB",
     "description": "Adds live USB support to One ROM",
+    "author": "Piers Finlayson",
+    "source": "https://github.com/piersfinlayson/one-rom",
+    "license": "MIT",
     "build_output": "build/usb_system_plugin.bin"
 }

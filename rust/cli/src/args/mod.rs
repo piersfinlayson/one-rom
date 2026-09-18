@@ -10,6 +10,7 @@
 //!   onerom program               - Build and flash firmware to a One ROM
 //!   onerom inspect <subcommand>  - Read-only One ROM state and information
 //!   onerom monitor <subcommand>  - Watch a running One ROM as it works
+//!   onerom console               - Talk to the retro system
 //!   onerom control <subcommand>  - Transient One ROM actions
 //!   onerom update <subcommand>   - Persistent One ROM modifications
 //!   onerom image <subcommand>    - ROM image file manipulation
@@ -52,6 +53,7 @@ macro_rules! const_str {
     };
 }
 
+pub mod console;
 pub mod control;
 pub mod firmware;
 pub mod image;
@@ -71,6 +73,7 @@ use onerom_cli::LogLevel;
 use crate::utils::parse_u16_hex_only;
 use onerom_cli::{Error, Options};
 
+use console::ConsoleArgs;
 use control::{
     ControlArgs, ControlCommands, ControlEraseArgs, ControlLedArgs, ControlLedBeaconArgs,
     ControlLedBlinkArgs, ControlLedCommands, ControlLedFlameArgs, ControlLedOffArgs,
@@ -462,6 +465,33 @@ pub enum Commands {
         subcommand_help_heading = "Commands"
     )]
     Monitor(MonitorArgs),
+
+    /// Talk to the retro system through One ROM's USB port.
+    ///
+    /// Displays what One ROM sends, like 'monitor log', and additionally sends
+    /// what you type to the retro system.
+    ///
+    /// Line by line by default: type, edit, press Enter.  --raw sends each key
+    /// as you press it.  Ctrl-C exits.
+    ///
+    /// If the retro system is not reading its input pipe, typed input waits and this
+    /// command says so after a second.
+    ///
+    /// Requirements:
+    /// - Minimum firmware v0.7.3
+    /// - One ROM running
+    /// - USB and host-control (or other compatible) plugins
+    ///
+    /// Examples:
+    ///
+    ///   onerom console
+    ///
+    ///   onerom console --raw
+    ///
+    ///   onerom console --line-ending crlf --output session.txt
+    ///
+    ///   echo 'LOAD "*",8' | onerom console
+    Console(ConsoleArgs),
 
     /// Perform transient actions on a connected One ROM.
     ///

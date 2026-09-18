@@ -186,6 +186,7 @@ void usb_init(ora_lookup_fn_t ora_lookup_fn) {
     // Resolved once here, with the rest of the one-time API resolution, since
     // none of it changes while the plugin runs.
     log_drain_init();
+    log_input_init();
 
     // Set up USB.  tinyusb will register its own IRQ handler, using the API
     // functions we provide.
@@ -225,6 +226,7 @@ void usb_main(
         usb_picoboot_task();
         usb_plugin_task();
         log_drain_task();
+        log_input_task();
         yield(NULL);
 
         // Nothing in this loop waits on anything a host test can change, so
@@ -253,15 +255,6 @@ void tud_suspend_cb(bool remote_wakeup_en) {
 
 void tud_resume_cb(void) {
     LOG("USB bus resumed");
-}
-
-// Invoked when CDC data is received
-void tud_cdc_rx_cb(uint8_t itf) {
-    uint8_t buf[64];
-    uint32_t count = tud_cdc_n_read(itf, buf, sizeof(buf));
-
-    // Debug log the number of bytes received and drop it
-    DEBUG("CDC received %lu bytes on interface %u", (unsigned long)count, itf);
 }
 
 // Invoked when a control transfer is received on vendor interface

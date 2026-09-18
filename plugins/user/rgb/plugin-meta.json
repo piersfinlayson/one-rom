@@ -2,5 +2,8 @@
     "name": "rgb",
     "display_name": "One ROM RGB",
     "description": "Drives One ROM's RGB neo-pixel (supported models only)",
+    "author": "Piers Finlayson",
+    "source": "https://github.com/piersfinlayson/one-rom",
+    "license": "MIT",
     "build_output": "build/plugin_user.bin"
 }

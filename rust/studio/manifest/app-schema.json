@@ -29,7 +29,7 @@
     "latest_app_version": {
       "description": "Latest application version available",
       "type": "string",
-      "default": "0.1.16"
+      "default": "0.2.3"
     },
     "link_urls": {
       "description": "Links used by the application within the UI",
@@ -100,17 +100,17 @@
           "$ref": "#/$defs/Version",
           "default": {
             "major": 0,
-            "minor": 1,
-            "patch": 16
+            "minor": 2,
+            "patch": 3
           }
         },
         "max_buildable_firmware_version": {
           "description": "Maximum firmware version this app can build (not flash - any version can be flashed)",
           "$ref": "#/$defs/FirmwareVersion",
           "default": {
-            "build": 0,
+            "build": 999,
             "major": 0,
-            "minor": 6,
+            "minor": 7,
             "patch": 999
           }
         }
@@ -290,14 +290,14 @@
         "minor": {
           "type": "integer",
           "format": "uint16",
-          "default": 1,
+          "default": 2,
           "maximum": 65535,
           "minimum": 0
         },
         "patch": {
           "type": "integer",
           "format": "uint16",
-          "default": 16,
+          "default": 3,
           "maximum": 65535,
           "minimum": 0
         }

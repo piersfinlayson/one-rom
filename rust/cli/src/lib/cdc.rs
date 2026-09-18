@@ -23,6 +23,7 @@
 //!   advance the same read position, so a probe and this command running at
 //!   once split the stream arbitrarily between them and neither sees all of it.
 
+use serialport::SerialPort;
 use std::io::{ErrorKind, Read, Write};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -52,6 +53,14 @@ const READ_TIMEOUT: Duration = Duration::from_millis(100);
 
 /// Bytes read per pass.
 const READ_CHUNK: usize = 256;
+
+/// How long a write may stall before the caller is told the device is not
+/// taking input.
+///
+/// When the input channel is full the USB plugin stops accepting data and the
+/// write blocks in the operating system.  A blocked write and a slow one look
+/// the same until this long has passed.
+pub const STALL_NOTICE: Duration = Duration::from_secs(1);
 
 /// Find the serial port `device` presents.
 ///
@@ -153,17 +162,79 @@ pub fn stream(
     silence: Duration,
     stop: &AtomicBool,
 ) -> Result<u64, Error> {
+    let port = open(port_name)?;
+    stream_port(port, capture, silence, stop)
+}
+
+/// Open `port_name` and assert DTR.
+///
+/// The device forwards only while DTR is asserted.  Every platform raises it at
+/// open, but it is asserted explicitly because the stream depends on it.
+///
+/// Reads and writes time out after `READ_TIMEOUT`, so a loop on either can
+/// check whether it has been told to stop.
+pub fn open(port_name: &str) -> Result<Box<dyn SerialPort>, Error> {
     let mut port = serialport::new(port_name, BAUD)
         .timeout(READ_TIMEOUT)
         .open()
         .map_err(|e| Error::SerialPortOpen(port_name.to_string(), e.to_string()))?;
-
-    // The device forwards only while DTR is asserted. Every platform raises it
-    // at open, but this is the whole reason the stream flows, so say it rather
-    // than inherit it.
     port.write_data_terminal_ready(true)
         .map_err(|e| Error::SerialPortOpen(port_name.to_string(), e.to_string()))?;
+    Ok(port)
+}
 
+/// Write all of `bytes` to the device, waiting while the channel is full.
+///
+/// After [`STALL_NOTICE`] without progress, calls `notify(true)` once.  The
+/// next successful write calls `notify(false)`.  `stalled` carries that state
+/// between calls, so a caller sending line by line is told once per stall.
+///
+/// Returns early, with bytes unsent, only when `stop` is set.
+pub fn send(
+    port: &mut dyn SerialPort,
+    mut bytes: &[u8],
+    stop: &AtomicBool,
+    stalled: &mut bool,
+    notify: &mut dyn FnMut(bool),
+) -> Result<(), Error> {
+    let mut since = Instant::now();
+    while !bytes.is_empty() {
+        if stop.load(Ordering::Relaxed) {
+            return Ok(());
+        }
+        match port.write(bytes) {
+            Ok(n) if n > 0 => {
+                bytes = &bytes[n..];
+                since = Instant::now();
+                if *stalled {
+                    *stalled = false;
+                    notify(false);
+                }
+            }
+            Ok(_) => {}
+            Err(e) if e.kind() == ErrorKind::TimedOut => {
+                if !*stalled && since.elapsed() >= STALL_NOTICE {
+                    *stalled = true;
+                    notify(true);
+                }
+            }
+            Err(e) => {
+                return Err(Error::SerialPort(format!(
+                    "Failed to send data to One ROM: {e}"
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// [`stream`], on a port already opened by [`open`].
+pub fn stream_port(
+    mut port: Box<dyn SerialPort>,
+    capture: Option<&Path>,
+    silence: Duration,
+    stop: &AtomicBool,
+) -> Result<u64, Error> {
     // Deliberately unbuffered. Ctrl-C is how a session normally ends, and it
     // takes the process with it, so anything held back here would be lost from
     // the transcript.

@@ -285,6 +285,18 @@ test_40pin() {
     run_no_cs  $board images/test/rand_512KB.rom type=27C400 "$force_16_bit"
     run_no_cs  $board images/test/rand_256KB.rom type=27C200 "$force_16_bit"
 
+    # The A500 rev 5 variants have no /BYTE, so force_16_bit changes nothing
+    # and one run each is enough.  fire-40-a cannot hold the 27C400Pin31A17:
+    # A17 on GPIO 18 widens its address window to 19 bits and a 1MB table.
+    if [ "$force_16_bit" != "true" ]; then
+        run_no_cs  $board images/test/rand_256KB.rom type=27C200Pin31NC
+        if [ "$board" = "fire-40-a" ]; then
+            echo "Skipping 27C400Pin31A17 test on $board (not supported)"
+        else
+            run_no_cs  $board images/test/rand_512KB.rom type=27C400Pin31A17
+        fi
+    fi
+
     # One test per image transform, so that deleting or breaking a transform
     # shows up here and not only in the unit tests.  The arithmetic itself is
     # covered by onerom-gen's tests; what these prove is that the transformed

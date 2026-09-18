@@ -52,6 +52,13 @@ TOP_MANIFEST            = "plugins.json"
 MANIFEST_SCHEMA_VERSION = 1
 TOP_MANIFEST_SCHEMA_VERSION = 1
 
+# Key order of a written per-plugin manifest, so one fetched without a newer
+# field gains it in place rather than at the end
+MANIFEST_KEY_ORDER = (
+    "version", "display_name", "description", "author", "source", "license",
+    "latest", "releases",
+)
+
 
 def error(msg):
     print(f"ERROR: {msg}", file=sys.stderr)
@@ -122,7 +129,7 @@ def read_meta(meta_path):
     with open(meta_path) as f:
         meta = json.load(f)
 
-    for field in ("name", "display_name", "description"):
+    for field in ("name", "display_name", "description", "author", "source", "license"):
         if field not in meta:
             error(f"Missing field '{field}' in {meta_path}")
 
@@ -239,6 +246,15 @@ def main():
             meta["description"],
         )
 
+        # source and license are fixed for the life of a plugin (see
+        # CONTRIBUTIONS.md), so a change is a mistake, not an update.
+        for field in ("source", "license"):
+            if field in plugin_manifest and plugin_manifest[field] != meta[field]:
+                error(
+                    f"{field} '{meta[field]}' differs from the published "
+                    f"'{plugin_manifest[field]}' for {path_type}/{path_name}"
+                )
+
         # Check version not already released
         existing = [r for r in plugin_manifest.get("releases", []) if r["version"] == version]
         if existing:
@@ -283,12 +299,17 @@ def main():
         plugin_manifest["latest"] = version
         plugin_manifest["display_name"] = meta["display_name"]
         plugin_manifest["description"]  = meta["description"]
+        plugin_manifest["author"]       = meta["author"]
+        plugin_manifest["source"]       = meta["source"]
+        plugin_manifest["license"]      = meta["license"]
 
         # Write per-plugin manifest
         manifest_path = output_dir / "plugins" / path_type / path_name / PLUGIN_MANIFEST
         manifest_path.parent.mkdir(parents=True, exist_ok=True)
+        ordered = {k: plugin_manifest[k] for k in MANIFEST_KEY_ORDER if k in plugin_manifest}
+        ordered.update({k: v for k, v in plugin_manifest.items() if k not in ordered})
         with open(manifest_path, "w") as f:
-            json.dump(plugin_manifest, f, indent=2)
+            json.dump(ordered, f, indent=2)
         info(f"  Written manifest to {manifest_path}")
 
         # Update top-level manifest - add plugin if not already listed

@@ -128,3 +128,4 @@ rust/lens/build/
 
 # GPIO control working notes (not shipped)
 .onerom-plan/
+plugins/user/drivewire

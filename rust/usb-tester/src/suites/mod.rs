@@ -8,6 +8,7 @@ use crate::Suite;
 
 pub mod descriptors;
 pub mod gpio;
+pub mod input;
 pub mod led;
 pub mod log;
 pub mod picobootx;
@@ -33,6 +34,11 @@ pub static SUITES: &[Suite] = &[
         name: "log",
         blurb: "does the CDC port carry the device's log?",
         scenarios: log::SCENARIOS,
+    },
+    Suite {
+        name: "input",
+        blurb: "does what a terminal types reach the input channel?",
+        scenarios: input::SCENARIOS,
     },
     Suite {
         name: "descriptors",

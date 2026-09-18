@@ -87,6 +87,19 @@ impl<'a> Device<'a> {
         Ok(out)
     }
 
+    /// Send bytes from the terminal to the device.  Returns how many were
+    /// queued.
+    pub fn push_cdc(&mut self, bytes: &[u8]) -> u32 {
+        // SAFETY: `bytes` outlives the call.
+        unsafe { ffi::usb_host_test_push_rx(bytes.as_ptr(), bytes.len() as u32) }
+    }
+
+    /// Bytes the terminal sent that the plugin has not yet read.
+    pub fn cdc_waiting(&self) -> u32 {
+        // SAFETY: reads a counter the shim owns.
+        unsafe { ffi::usb_host_test_rx_waiting() }
+    }
+
     /// Everything flushed to the CDC endpoint since this was last called.
     pub fn take_cdc(&mut self) -> Vec<u8> {
         // SAFETY: the length is asked for first and the buffer is that size.
@@ -477,6 +490,7 @@ pub fn reset_endpoint() {
         ffi::usb_host_test_set_dtr(0);
         ffi::usb_host_test_set_connected(1);
         ffi::usb_host_test_set_tx_capacity(u32::MAX);
+        ffi::usb_host_test_clear_rx();
         let pending = ffi::usb_host_test_tx_pending();
         if pending > 0 {
             let mut buf = vec![0u8; pending as usize];

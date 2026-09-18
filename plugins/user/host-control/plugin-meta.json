@@ -2,5 +2,8 @@
     "name": "host-control",
     "display_name": "Host Control of One ROM",
     "description": "Allows hosts to control One ROM using the ROM Bus Control Protocol",
+    "author": "Piers Finlayson",
+    "source": "https://github.com/piersfinlayson/one-rom",
+    "license": "MIT",
     "build_output": "build/host_control_plugin.bin"
 }

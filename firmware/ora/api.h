@@ -823,15 +823,13 @@ typedef enum {
 STATIC_ASSERT(sizeof(ora_irq_t) == 1, "ora_irq_t must be 1 byte");
 
 /**
- * @brief A log channel
+ * @brief A channel used for logging and other purposes
  *
- * Channels are numbered rather than named for a purpose: a plugin picks the
- * one it wants, and the firmware does not assign meaning to any of them.
+ * A channel has a writer and a reader - a writer places stuff in the
+ * channel. A reader takes stuff out of the channel.
  *
- * One ROM's own log is written to channel 0, and keeps being written there
- * whatever a plugin does with it. A plugin may claim channel 0 like any
- * other, which renames it and reserves @ref ora_log_write_fn_t on it - One
- * ROM's log then arrives interleaved with the plugin's own.
+ * Channels are numbered rather than named for a purpose. A plugin picks the
+ * one it wants.
  *
  * A plugin built against this header may run on firmware that has fewer
  * channels than the header declares. Every call in this family reports that as
@@ -846,7 +844,26 @@ STATIC_ASSERT(sizeof(ora_irq_t) == 1, "ora_irq_t must be 1 byte");
  * @since firmware 0.7.2
  */
 typedef enum {
+    /**
+     * @brief Channel 0 - Primary log channel
+     *
+     * One ROM's firmware logging and plugin logging use this channel. A plugin
+     * may also claim it and write to it, in which case the writes are
+     * interleaved.
+     *
+     * @since firmware 0.7.2
+     */
     ORA_LOG_CHANNEL_0       = 0,
+
+    /**
+     * @brief Channel 1 - No fixed purpose
+     *
+     * Guaranteed not written to by the firmware. Smaller than channel 0.
+     *
+     * @since firmware 0.7.3
+     */
+    ORA_LOG_CHANNEL_1       = 1,
+
     ORA_LOG_CHANNEL_INVALID = 0xFFFFFFFF,
 } ora_log_channel_t;
 STATIC_ASSERT(sizeof(ora_log_channel_t) == 4, "ora_log_channel_t must be 4 bytes");
@@ -1277,6 +1294,43 @@ typedef enum {
 } ora_monitor_mode_t;
 
 /**
+ * @brief Whether address capture takes precedence over ROM serving
+ * @since firmware 0.7.3
+ *
+ * At normal priority a sustained burst of ROM reads can cause captures to be
+ * lost, with no indication.  At high priority captures are never lost to
+ * serving load, and serving may wait briefly for a capture.
+ */
+typedef enum {
+    /** @brief Serving first.  The default. */
+    ORA_ADDRESS_MONITOR_PRIORITY_NORMAL = 0,
+
+    /** @brief Capture first */
+    ORA_ADDRESS_MONITOR_PRIORITY_HIGH   = 1,
+} ora_address_monitor_priority_t;
+
+/**
+ * @brief Options for @ref ora_setup_address_monitor_fn_t
+ * @since firmware 0.7.3
+ *
+ * Passing NULL instead of this structure gives the defaults for every field.
+ */
+typedef struct {
+    /**
+     * @brief sizeof this structure, set by the caller
+     *
+     * The firmware reads only the fields it knows, so a plugin built against
+     * a newer version of this structure runs on older firmware.  A size below
+     * 2, the structure's size when introduced, is refused.
+     */
+    uint8_t size;
+
+    /** @brief Capture priority. @sa ora_address_monitor_priority_t */
+    uint8_t priority;
+} ora_address_monitor_options_t;
+STATIC_ASSERT(sizeof(ora_address_monitor_options_t) == 2, "ora_address_monitor_options_t must be 2 bytes");
+
+/**
  * @brief Return code for One ROM API functions
  */
 typedef enum {
@@ -1698,14 +1752,19 @@ typedef uint8_t (*ora_get_data_pin_nums_fn_t)(uint8_t *data_pins_out, uint8_t nu
  * @param mode            The monitor mode to operate in
  * @param data_size       Number of bits to capture for each address.  Must be
  *                        8, 16 or 32.
- * @param reserved        Reserved for future use, must be NULL
+ * @param options         Options, or NULL for the defaults.  Before firmware
+ *                        0.7.3 this argument had to be NULL.
+ *                        @since firmware 0.7.3
+ * @return ORA_RESULT_INVALID_SIZE if @p options->size is smaller than the
+ *         structure was when it first shipped, ORA_RESULT_INVALID_ARG if
+ *         @p options->priority is not an @ref ora_address_monitor_priority_t
  */
 typedef ora_result_t (*ora_setup_address_monitor_fn_t)(
     volatile uint32_t *ring_buf,
     uint8_t ring_entries_log2,
     ora_monitor_mode_t mode,
     uint8_t data_size,
-    void *reserved
+    const ora_address_monitor_options_t *options
 );
 
 /**
@@ -2752,16 +2811,11 @@ typedef enum {
  */
 typedef struct {
     /**
-     * @brief In: sizeof this structure as known to the caller
+     * @brief sizeof this structure, set by the caller
      *
-     * The caller sets this to sizeof(ora_led_request_t) as it knows it before
-     * calling. The firmware reads at most that many bytes, and no more than
-     * the fields it knows itself, so a plugin built against a newer version of
-     * this structure than the running firmware still interoperates.
-     *
-     * A size smaller than this structure was when it first shipped is
-     * refused: no version of this API had one, so it is a caller that has not
-     * set the field rather than an older plugin.
+     * The firmware reads only the fields it knows, so a plugin built against
+     * a newer version of this structure runs on older firmware.  A size below
+     * 16, the structure's size when introduced, is refused.
      */
     uint8_t  size;
 
@@ -2832,16 +2886,12 @@ STATIC_ASSERT(sizeof(ora_led_request_t) == 16, "ora_led_request_t must be 16 byt
  */
 typedef struct {
     /**
-     * @brief In: sizeof this structure as known to the caller.  Out: the
-     * number of bytes the firmware actually wrote.
+     * @brief In: sizeof this structure, set by the caller.  Out: the number of
+     * bytes the firmware wrote.
      *
-     * The caller sets this to sizeof(ora_led_state_t) as it knows it before
-     * calling. The firmware writes at most that many bytes and sets this field
-     * to how many it wrote, so a plugin built against a newer version of this
-     * structure than the running firmware still interoperates.
-     *
-     * A size smaller than this structure was when it first shipped is
-     * refused, as it is for @ref ora_led_request_t.
+     * The firmware writes only the fields it knows, so a plugin built against
+     * a newer version of this structure runs on older firmware.  A size below
+     * 12, the structure's size when introduced, is refused.
      */
     uint8_t  size;
 

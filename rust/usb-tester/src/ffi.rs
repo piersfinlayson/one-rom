@@ -31,6 +31,17 @@ unsafe extern "C" {
     /// Bytes flushed and not yet taken.
     pub fn usb_host_test_tx_pending() -> u32;
 
+    /// Queue bytes from the terminal.  They enter the endpoint's FIFO a packet
+    /// at a time, as the plugin empties it.  Returns how many were queued.
+    pub fn usb_host_test_push_rx(buf: *const u8, len: u32) -> u32;
+
+    /// Bytes the terminal sent that the plugin has not yet read, in the FIFO
+    /// or waiting behind it.
+    pub fn usb_host_test_rx_waiting() -> u32;
+
+    /// Drop everything the terminal sent.
+    pub fn usb_host_test_clear_rx();
+
     /// Call the plugin's `dispatch` with a command packet built as it would
     /// arrive on the wire.  Returns a `pb_status_t`, or -1 if the plugin
     /// registered no handler.

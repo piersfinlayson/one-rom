@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.2.4 - unreleased
+
+- Rebuilt against the Rust crates released with firmware v0.8.0.
+
+## v0.2.3 - 2026-09-17
+
+- Add the `27C400Pin31A17` and `27C200Pin31NC` chip types, for the Amiga A500 rev 5 Kickstart socket.
+
 ## v0.2.2 - 2026-09-08
 
 - Build errors now name the ROM image at fault by its file, and an image smaller than the chip with truncate set reads as too small rather than too large.

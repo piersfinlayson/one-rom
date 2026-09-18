@@ -73,11 +73,7 @@ breaks an existing command line lands in a minor release — v0.3.0 to v0.4.0 �
 and never in a patch. From v1.0.0 onwards such a change lands in a major
 release, and never in a minor or a patch.
 
-- **`--name` now names the One ROM, not the configuration.** It is an alias for
-  `--instance-name` on `program` and `firmware build`, where it was an alias for
-  `--config-name`. A command line using `--name` still runs, and names the
-  device instead of the configuration it is building. Spell `--config-name` in
-  full for the old meaning.
+- No breaking changes in this release.
 
 Every release's breaking changes are collected in
 [Appendix: Breaking Change History](#appendix-breaking-change-history), at the
@@ -690,6 +686,7 @@ hardware take them; each command's own entry below states what it accepts, and
 | [`program`](#program) | Build and flash firmware to a One ROM | Yes |
 | [`inspect`](#inspect) | Read-only device state and information | Yes |
 | [`monitor`](#monitor) | Watch a running One ROM as it works | Yes |
+| [`console`](#console) | Send data to and receive data from the machine One ROM is fitted in | Yes |
 | [`control`](#control) | Transient (non-persistent) device actions | Yes |
 | [`update`](#update) | Persistent device modifications | Yes |
 | [`image`](#image) | ROM image file manipulation | No |
@@ -1246,6 +1243,60 @@ What this command needs, and what it cannot do:
 - If nothing arrives within two seconds the command fails. Since every attach
   begins with the banner above, a One ROM with a current USB plugin always sends
   something — so a timeout points at a plugin too old to forward the log at all.
+
+Device required: yes.
+
+---
+
+## console
+
+Talk to the host system through One ROM's USB port.
+
+```
+onerom console [OPTIONS]
+```
+
+This command displays what One ROM sends, like [`monitor log`](#monitor-log),
+and additionally sends what you type to the retro system. Whether and how the
+retro system receives the input depends on the plugin(s) used.
+
+By default you type a line, edit it, and press Enter to send it.  `--raw` sends
+each key as you press it, for programs that read single keys.  Ctrl-C exits and
+is never sent to the retro system.
+
+```
+onerom console
+onerom console --raw
+onerom console --line-ending crlf --output session.txt
+echo 'LOAD "*",8' | onerom console
+```
+
+| Option | Description |
+|---|---|
+| `--output, -o <FILE>` (alias `--out`) | Also write One ROM's output to this file, replacing its contents.  The file contains only what One ROM sends.  Output is still displayed. |
+| `--line-ending <ENDING>` | What Enter sends: `cr`, `lf` or `crlf`.  Default `cr`, which retro systems expect. |
+| `--raw` | Send each key as you press it, not a line at a time.  No line editing.  Enter sends the line ending.  Ctrl-C exits. |
+| `--no-echo` | Don't display what you type.  Use when the retro system echoes what it receives back.  Only applies with `--raw`.  In line mode the terminal displays the line as you edit it. |
+
+If stdin is not a terminal, its contents are sent unchanged, and the command
+then keeps displaying output until One ROM disconnects or you press Ctrl-C.
+This can be used to send a file.
+
+If the retro system is not reading the input pipe, typed input waits.  Once One ROM's
+buffer is full, the command reports this on stderr after a second:
+
+```
+One ROM is not reading the input data
+```
+
+Input is sent, in order, once the retro system reads, and the command reports `Input resumed`.
+
+Requirements:
+
+- Firmware v0.7.3 or later.
+- One ROM running, with both the USB and host-control plugins.
+- The notes under [`monitor log`](#monitor-log) about the port, the banner,
+  debug probes and the silence timeout also apply.
 
 Device required: yes.
 
@@ -2013,7 +2064,7 @@ Supported 28-pin chips:
 Supported 32-pin chips:
   23C1001, 23C1010, 27C010, 27C020, 27C040, 29F010, 39SF010, SST39SF040, ...
 Supported 40-pin chips:
-  23C4100, 27C200, 27C400, 27C4100, AT27C400, HN62402, M27C400, MX23C4100, ...
+  23C4100, 27C200, 27C200Pin31NC, 27C400, 27C400Pin31A17, 27C4100, AT27C400, ...
 ```
 
 Device required: no (a device is used only to infer the board when `--board` is

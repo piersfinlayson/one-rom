@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.4] - 2026-09-17
+
+This release adds a second pipe, carrying bytes in to One ROM from a far-end.
+Pipe 1 is used by a USB terminal to send bytes to the USB plugin over the CDC
+OUT endpoint. `PIPE_READ` returns the bytes sent this way. This feature
+requires firmware 0.7.3. If using older firmware, continues to report a single
+pipe.
+
 ## [0.1.3] - 2026-09-08
 
 An ENTER_CMD_RESP naming a back-channel start within 8 bytes of the end of the

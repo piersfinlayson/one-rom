@@ -40,10 +40,12 @@ Steps:
     git push
     ```
 
-5. Tag the current commit with the version and push:
+5. Tag the current commit in `one-rom` and push.  Tags are signed, so they
+    take a message:
 
     ```bash
-    git tag studio-vX.Y.Z
+    cd ../one-rom
+    git tag -s -a studio-vX.Y.Z -m "One ROM Studio vX.Y.Z"
     git push origin studio-vX.Y.Z
     ```
 

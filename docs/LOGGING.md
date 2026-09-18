@@ -16,6 +16,8 @@ One ROM's system USB plugin sends the log to its CDC serial port.  Attach a term
 
 **What built up before you attached is sent too, not thrown away.**  The log buffer drops the newest record when it is full rather than evicting the oldest, so what is waiting when you connect is the earliest output since anything last drained it.  On a device nothing has been listening to, that is its boot log.
 
+**What you type goes to the device.**  Terminal input goes to log channel 1, for a plugin to read.  `onerom console` sends as well as displays.  Needs firmware v0.7.3 or later.  If nothing on the device reads channel 1 it fills, and the terminal is held off.  No data is lost.
+
 **A debug probe and a terminal must not both read the log.**  Both advance the same read position, so with both attached the output splits arbitrarily between them and neither sees all of it.  Nothing detects this — both look like correct readers.
 
 ### The banner

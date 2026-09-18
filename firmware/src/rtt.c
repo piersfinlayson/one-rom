@@ -15,11 +15,12 @@
 //   buffer, and on a device whose job is serving a ROM bus to a running retro
 //   system that is a correctness hazard, not just a slow path.  A record that
 //   does not fit is dropped whole, so a reader never sees a partial record.
-// - read_offset is host written, and is range checked before it is used in any
-//   arithmetic.  See onerom_rtt_avail().
+// - One offset of each channel is host written, and both are range checked
+//   before they are used in any arithmetic.  See onerom_rtt_avail().
 // - Interrupts are masked across the ring's read-modify-write, because an
 //   interrupt handler may log.  See onerom_rtt_lock().
 // - No lock between cores.  There is one writer per channel.
+// - A channel number is mapped to its descriptor by onerom_rtt_ring().
 
 #include "include.h"
 #include <stddef.h>
@@ -30,12 +31,11 @@
 // this file's header.  Everything else is portable C, so the ring a test
 // exercises is the ring a device runs.
 
-// Size of the up buffer.
-#define ONEROM_RTT_UP_BUFFER_SIZE       3584
+// Size of the up buffer, channel 0.
+#define ONEROM_RTT_UP_BUFFER_SIZE       3072
 
-// Size of the down buffer.  Nothing reads host to target data yet, but the
-// channel is declared so a probe sees a complete control block.
-#define ONEROM_RTT_DOWN_BUFFER_SIZE     16
+// Size of the down buffer, channel 1.
+#define ONEROM_RTT_DOWN_BUFFER_SIZE     512
 
 // Formatter chunk size.  Output is collected here and flushed to the ring as
 // it fills, so a line longer than this spans more than one record.
@@ -165,6 +165,29 @@ static void onerom_rtt_init(void) {
     ONEROM_RTT_DMB();
 }
 
+// The descriptor for a channel, or NULL if there is none or it has no buffer.
+//
+// Channel 0 is up[0], the log.  Channel 1 is down[0], input from a probe or a
+// plugin.  Probes use the arrays directly, so channel numbers exist only here.
+static onerom_rtt_ring_t *onerom_rtt_ring(unsigned channel) {
+    onerom_rtt_ring_t *ring;
+
+    switch (channel) {
+        case 0u:
+            ring = &_SEGGER_RTT.up[0];
+            break;
+        case 1u:
+            ring = &_SEGGER_RTT.down[0];
+            break;
+        default:
+            return 0;
+    }
+    if ((ring->buffer == 0) || (ring->size == 0u)) {
+        return 0;
+    }
+    return ring;
+}
+
 // Prepare the log for plugins.
 //
 // Plugin launch is the one point where core 0 is in firmware code and core 1
@@ -182,13 +205,14 @@ void onerom_rtt_plugins_init(void) {
 // One byte is always left free, which is how a full buffer is told apart from
 // an empty one.
 //
-// read_offset is the one field of an up channel the host owns, and it is
+// read_offset is the field of an up channel the host owns, and it is
 // therefore untrusted.  A confused or hostile host can leave a value outside
 // the buffer there, and the arithmetic below would then hand back a free space
 // figure large enough to walk the write off the end of the buffer.  A clamped
 // local copy keeps the writer in bounds without fighting the host for
-// ownership of the field.
-static unsigned onerom_rtt_avail(const onerom_rtt_up_t *ring,
+// ownership of the field.  On a down channel the host owns write_offset
+// instead, which the caller clamps the same way.
+static unsigned onerom_rtt_avail(const onerom_rtt_ring_t *ring,
                                  unsigned size,
                                  unsigned write_offset) {
     unsigned read_offset = ring->read_offset;
@@ -206,7 +230,7 @@ static unsigned onerom_rtt_avail(const onerom_rtt_up_t *ring,
 
 unsigned onerom_rtt_write(unsigned channel, const void *buf, unsigned len) {
     const char *data = (const char *)buf;
-    onerom_rtt_up_t *ring;
+    onerom_rtt_ring_t *ring;
     unsigned size, write_offset, to_end;
 
     // The control block init and the read-modify-write of the ring are one
@@ -215,21 +239,15 @@ unsigned onerom_rtt_write(unsigned channel, const void *buf, unsigned len) {
 
     onerom_rtt_init();
 
-    if (channel >= (unsigned)_SEGGER_RTT.max_up_buffers) {
+    // An unknown channel, or one with no buffer, drops silently.
+    ring = onerom_rtt_ring(channel);
+    if (ring == 0) {
         return 0u;
     }
-    ring = &_SEGGER_RTT.up[channel];
-
-    // A channel with no buffer drops silently.  That is what an unpopulated
-    // channel looks like, and what a retired one will look like.
     size = ring->size;
-    if ((ring->buffer == 0) || (size == 0u)) {
-        return 0u;
-    }
 
-    // write_offset is ours, so this should never fire.  Checking it costs two
-    // instructions and removes any question of a value the host could have
-    // reached reaching the copy below.
+    // On an up channel write_offset is ours and this never fires.  On a down
+    // channel the host writes it, and this clamp protects the copy below.
     write_offset = ring->write_offset;
     if (write_offset >= size) {
         write_offset = 0u;
@@ -275,25 +293,21 @@ static unsigned onerom_rtt_pending(unsigned size,
 
 unsigned onerom_rtt_read(unsigned channel, void *buf, unsigned max_len) {
     char *dest = (char *)buf;
-    onerom_rtt_up_t *ring;
+    onerom_rtt_ring_t *ring;
     unsigned size, write_offset, read_offset, pending, to_end;
 
     ONEROM_RTT_CRITICAL_SECTION();
 
     onerom_rtt_init();
 
-    if ((channel >= (unsigned)_SEGGER_RTT.max_up_buffers) || (buf == 0)) {
+    ring = onerom_rtt_ring(channel);
+    if ((ring == 0) || (buf == 0)) {
         return 0u;
     }
-    ring = &_SEGGER_RTT.up[channel];
-
     size = ring->size;
-    if ((ring->buffer == 0) || (size == 0u)) {
-        return 0u;
-    }
 
     // One sample of each offset, clamped once, and everything below derived
-    // from those locals.  read_offset is host written, so a second load could
+    // from those locals.  One of them is host written, so a second load could
     // return a different value: the copy would then start somewhere the
     // pending count never covered, and publishing read_offset afterwards could
     // put it past write_offset, which reads as a nearly full ring of stale
@@ -342,7 +356,8 @@ unsigned onerom_rtt_set_name(unsigned channel, const char *name) {
 
     onerom_rtt_init();
 
-    if (channel >= (unsigned)_SEGGER_RTT.max_up_buffers) {
+    onerom_rtt_ring_t *ring = onerom_rtt_ring(channel);
+    if (ring == 0) {
         return 0u;
     }
 
@@ -355,8 +370,7 @@ unsigned onerom_rtt_set_name(unsigned channel, const char *name) {
     // before the pointer that exposes them, exactly as for a record and its
     // write_offset.
     ONEROM_RTT_DMB();
-    _SEGGER_RTT.up[channel].name =
-        (name != 0) ? name : onerom_rtt_channel_name;
+    ring->name = (name != 0) ? name : onerom_rtt_channel_name;
 
     return 1u;
 }
@@ -365,7 +379,7 @@ void onerom_rtt_query(unsigned channel,
                       unsigned *size_out,
                       unsigned *free_out,
                       unsigned *pending_out) {
-    const onerom_rtt_up_t *ring;
+    const onerom_rtt_ring_t *ring;
     unsigned size = 0u, free = 0u, pending = 0u, write_offset, read_offset;
 
     // One sample of each offset, and both results derived from those locals.
@@ -378,23 +392,19 @@ void onerom_rtt_query(unsigned channel,
 
         onerom_rtt_init();
 
-        if (channel < (unsigned)_SEGGER_RTT.max_up_buffers) {
-            ring = &_SEGGER_RTT.up[channel];
+        ring = onerom_rtt_ring(channel);
+        if (ring != 0) {
             size = ring->size;
-            if ((ring->buffer == 0) || (size == 0u)) {
-                size = 0u;
-            } else {
-                write_offset = ring->write_offset;
-                if (write_offset >= size) {
-                    write_offset = 0u;
-                }
-                read_offset = ring->read_offset;
-                if (read_offset >= size) {
-                    read_offset = 0u;
-                }
-                pending = onerom_rtt_pending(size, write_offset, read_offset);
-                free = size - 1u - pending;
+            write_offset = ring->write_offset;
+            if (write_offset >= size) {
+                write_offset = 0u;
             }
+            read_offset = ring->read_offset;
+            if (read_offset >= size) {
+                read_offset = 0u;
+            }
+            pending = onerom_rtt_pending(size, write_offset, read_offset);
+            free = size - 1u - pending;
         }
     }
 

@@ -45,7 +45,7 @@ There are also some other inconsistencies between types:
 
 | Chip Type | Aliases | Size | Address Lines | Control Lines | Programming | Supported |
 |-----------|---------|------|---------------|---------------|-------------|-----------|
-| 23128 |  | 16KB | 14 (A0-A13) | CS1 (pin 20), CS2 (pin 22), CS3 (pin 27) | None | ✓ |
+| 23128 | HN613128P | 16KB | 14 (A0-A13) | CS1 (pin 20), CS2 (pin 22), CS3 (pin 27) | None | ✓ |
 | 23256 |  | 32KB | 15 (A0-A14) | CS1 (pin 20), CS2 (pin 22) | None | ✓ |
 | 23QL384 |  | 48KB | 16 (A0-A15) | CS1 (pin 22) | None | ✓ |
 | 23512 |  | 64KB | 16 (A0-A15) | CS1 (pin 20), CS2 (pin 22) | None | ✓ |
@@ -93,7 +93,9 @@ There are also some other inconsistencies between types:
 | Chip Type | Aliases | Size | Address Lines | Control Lines | Programming | Supported |
 |-----------|---------|------|---------------|---------------|-------------|-----------|
 | 27C200 | HN62402 | 256KB | 18 (A0-A17) | /BYTE (pin 31), /CE (pin 10), /OE (pin 12) | None | ✓ |
+| 27C200Pin31NC |  | 256KB | 18 (A0-A17) | /CE (pin 10), /OE (pin 12) | None | ✓ |
 | 27C400 | AT27C400, M27C400, 23C4100, MX23C4100, TCS534200, 27C4100, MX27C4100, HN62404, HN62424, MB834200 | 512KB | 19 (A0-A18) | /BYTE (pin 31), /CE (pin 10), /OE (pin 12) | VPP: pin 31 (Selects word size during read); /PGM: pin 10 (Acts as /OE) | ✓ |
+| 27C400Pin31A17 |  | 512KB | 19 (A0-A18) | /CE (pin 10), /OE (pin 12) | None | ✓ |
 
 ## 24-pin EEPROM Family (28Cxx)
 
@@ -230,48 +232,48 @@ There are also some other inconsistencies between types:
 
 ### 40-pin Package
 
-| Pin | 27C200 | 27C400 |
-|-----|------|------|
-| 1 | NC | A18 |
-| 2 | A8 | A8 |
-| 3 | A7 | A7 |
-| 4 | A6 | A6 |
-| 5 | A5 | A5 |
-| 6 | A4 | A4 |
-| 7 | A3 | A3 |
-| 8 | A2 | A2 |
-| 9 | A1 | A1 |
-| 10 | /CE | /CE+/PGM |
-| 11 | GND | GND |
-| 12 | /OE | /OE |
-| 13 | D0 | D0 |
-| 14 | D8 | D8 |
-| 15 | D1 | D1 |
-| 16 | D9 | D9 |
-| 17 | D2 | D2 |
-| 18 | D10 | D10 |
-| 19 | D3 | D3 |
-| 20 | D11 | D11 |
-| 21 | VCC | VCC |
-| 22 | D4 | D4 |
-| 23 | D12 | D12 |
-| 24 | D5 | D5 |
-| 25 | D13 | D13 |
-| 26 | D6 | D6 |
-| 27 | D14 | D14 |
-| 28 | D7 | D7 |
-| 29 | A0+D15 | A0+D15 |
-| 30 | GND | GND |
-| 31 | /BYTE | /BYTE+VPP |
-| 32 | A17 | A17 |
-| 33 | A16 | A16 |
-| 34 | A15 | A15 |
-| 35 | A14 | A14 |
-| 36 | A13 | A13 |
-| 37 | A12 | A12 |
-| 38 | A11 | A11 |
-| 39 | A10 | A10 |
-| 40 | A9 | A9 |
+| Pin | 27C200 | 27C200Pin31NC | 27C400 | 27C400Pin31A17 |
+|-----|------|------|------|------|
+| 1 | NC | NC | A18 | NC |
+| 2 | A8 | A8 | A8 | A8 |
+| 3 | A7 | A7 | A7 | A7 |
+| 4 | A6 | A6 | A6 | A6 |
+| 5 | A5 | A5 | A5 | A5 |
+| 6 | A4 | A4 | A4 | A4 |
+| 7 | A3 | A3 | A3 | A3 |
+| 8 | A2 | A2 | A2 | A2 |
+| 9 | A1 | A1 | A1 | A1 |
+| 10 | /CE | /CE | /CE+/PGM | /CE |
+| 11 | GND | GND | GND | GND |
+| 12 | /OE | /OE | /OE | /OE |
+| 13 | D0 | D0 | D0 | D0 |
+| 14 | D8 | D8 | D8 | D8 |
+| 15 | D1 | D1 | D1 | D1 |
+| 16 | D9 | D9 | D9 | D9 |
+| 17 | D2 | D2 | D2 | D2 |
+| 18 | D10 | D10 | D10 | D10 |
+| 19 | D3 | D3 | D3 | D3 |
+| 20 | D11 | D11 | D11 | D11 |
+| 21 | VCC | VCC | VCC | VCC |
+| 22 | D4 | D4 | D4 | D4 |
+| 23 | D12 | D12 | D12 | D12 |
+| 24 | D5 | D5 | D5 | D5 |
+| 25 | D13 | D13 | D13 | D13 |
+| 26 | D6 | D6 | D6 | D6 |
+| 27 | D14 | D14 | D14 | D14 |
+| 28 | D7 | D7 | D7 | D7 |
+| 29 | A0+D15 | A0+D15 | A0+D15 | A0+D15 |
+| 30 | GND | GND | GND | GND |
+| 31 | /BYTE | NC | /BYTE+VPP | A18 |
+| 32 | A17 | A17 | A17 | A17 |
+| 33 | A16 | A16 | A16 | A16 |
+| 34 | A15 | A15 | A15 | A15 |
+| 35 | A14 | A14 | A14 | A14 |
+| 36 | A13 | A13 | A13 | A13 |
+| 37 | A12 | A12 | A12 | A12 |
+| 38 | A11 | A11 | A11 | A11 |
+| 39 | A10 | A10 | A10 | A10 |
+| 40 | A9 | A9 | A9 | A9 |
 
 ## Detailed Pinouts
 
@@ -763,6 +765,22 @@ There are also some other inconsistencies between types:
 | GND | 11 | 0V |
 | GND | 30 | 0V |
 
+### 27C200Pin31NC - 0.25MB EPROM with pin 31 unused and no /BYTE, as the Amiga A500 rev 5 PCB wires it
+
+**Package:** 40-pin DIP  
+**Capacity:** 262144 bytes  
+**Control:** /CE, /OE  
+
+| Function | Pins | Notes |
+|----------|------|-------|
+| Address (A0-A17) | 29,9,8,7,6,5,4,3,2,40,39,38,37,36,35,34,33,32 | 18 address lines |
+| Data (D0-D15) | 13,15,17,19,22,24,26,28,14,16,18,20,23,25,27,29 | 16 data lines |
+| /CE | 10 | Active low |
+| /OE | 12 | Active low |
+| VCC | 21 | +5V |
+| GND | 11 | 0V |
+| GND | 30 | 0V |
+
 ### 27C040 - 512KB EPROM with fixed active-low CE/OE
 
 **Package:** 32-pin DIP  
@@ -795,6 +813,22 @@ There are also some other inconsistencies between types:
 | /OE | 12 | Active low |
 | VPP | 31 | Selects word size during read during read |
 | /PGM | 10 | Acts as /OE during read |
+| VCC | 21 | +5V |
+| GND | 11 | 0V |
+| GND | 30 | 0V |
+
+### 27C400Pin31A17 - 0.5MB EPROM with A17 on pin 31 and no /BYTE, as the Amiga A500 rev 5 PCB wires it
+
+**Package:** 40-pin DIP  
+**Capacity:** 524288 bytes  
+**Control:** /CE, /OE  
+
+| Function | Pins | Notes |
+|----------|------|-------|
+| Address (A0-A18) | 29,9,8,7,6,5,4,3,2,40,39,38,37,36,35,34,33,32,31 | 19 address lines |
+| Data (D0-D15) | 13,15,17,19,22,24,26,28,14,16,18,20,23,25,27,29 | 16 data lines |
+| /CE | 10 | Active low |
+| /OE | 12 | Active low |
 | VCC | 21 | +5V |
 | GND | 11 | 0V |
 | GND | 30 | 0V |

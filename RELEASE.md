@@ -31,7 +31,8 @@ git pull
 git push
 ```
 
-Locally run the following tests:
+Locally run the following.  `ci/test-emu.sh` is run by CI on every push, so it
+can be left out here:
 
 ```bash
 ci/test-emu.sh
@@ -41,109 +42,25 @@ ci/build.sh release v<x.y.z>
 
 ---
 
-Publish `onerom-database` to crates.io:
+Publish the crates whose version moved this cycle.  The CHANGELOG's "To
+publish" list says which.
+
+`onerom-config` publishes first, on its own, with `--no-verify`.  Its build
+script writes into `src/` and `docs/CHIP-TYPES.md`, which the verification build
+rejects.  Add `--dry-run` to rehearse:
 
 ```bash
-cd rust
-cargo publish --dry-run -p onerom-database
-cargo publish -p onerom-database
+cargo publish --manifest-path rust/Cargo.toml --no-verify -p onerom-config
 ```
 
-Update link to `onerom-database` in [protocol/Cargo.toml](/rust/protocol/Cargo.toml) to use the crates.io version.
-
----
-
-Publish `onerom-protocol` to crates.io:
+The rest publish together, verified.  Name each crate that moved:
 
 ```bash
-cd rust
-cargo publish --dry-run -p onerom-protocol
-cargo publish -p onerom-protocol
+cargo publish --manifest-path rust/Cargo.toml --dry-run -p <crate> -p <crate>
 ```
 
----
-
-Publish `onerom-config` to crates.io.  Its build script writes into `src/` and
-`../../docs/CHIP-TYPES.md`, which the verification build rejects, so this one
-needs `--no-verify` - and for the same reason `--dry-run` cannot be used to
-rehearse it:
-
 ```bash
-cd rust
-cargo publish --no-verify -p onerom-config
-```
-
-Update links to and `onerom-config` in others to use the crates.io versions.
-
----
-
-Publish `onerom-metadata` to crates.io:
-
-```bash
-cd rust
-cargo publish --dry-run -p onerom-metadata
-cargo publish -p onerom-metadata
-```
-
-Update links to and `onerom-metadata` in others to use the crates.io versions.
-
----
-
-Publish `onerom-gen` to crates.io:
-
-```bash
-cd rust
-cargo publish --dry-run -p onerom-gen
-cargo publish -p onerom-gen
-```
-
-Update links to and `onerom-gen` in others to use the crates.io versions.
-
----
-
-Publish the new version of `onerom-fw-parser` to crates.io:
-
-```bash
-cd rust
-cargo publish --dry-run -p onerom-fw-parser
-cargo publish -p onerom-fw-parser
-```
-
----
-
-Publish `onerom-fw` to crates.io:
-
-```bash
-cd rust
-cargo publish --dry-run -p onerom-fw
-cargo publish -p onerom-fw
-```
-
-Update links to and `onerom-fw` in others to use the crates.io versions.
-
----
-
-Publish `onerom-app` to crates.io (depends on `onerom-config` and
-`onerom-gen`, so publish those first):
-
-```bash
-cd rust
-cargo publish --dry-run -p onerom-app
-cargo publish -p onerom-app
-```
-
-Update links to `onerom-app` in others to use the crates.io version.
-
----
-
-Publish `onerom-cli` to crates.io (depends on `onerom-app`, `onerom-config`,
-`onerom-fw`, `onerom-gen`, `onerom-fw-parser` and `onerom-metadata`, so publish
-those first):
-
-```bash
-cd rust
-cargo publish --dry-run -p onerom-cli
-cargo publish -p onerom-cli
+cargo publish --manifest-path rust/Cargo.toml -p <crate> -p <crate>
 ```
 
 The CLI **binary** releases on its own cycle, following
@@ -187,7 +104,8 @@ git push origin v<x.y.z>
   - From v0.7.0 there is a single base firmware for all Fire boards (no Ice)
   - Within `one-rom` `main` branch run `ci/build-images.sh x.y.z ../one-rom-images`
   - Paste the new release manifest fragment (from `/tmp/releases.json`) into
-    `one-rom-images/releases.json` and update `latest`
+    `one-rom-images/releases.json`.  The script leaves `latest` alone - see
+    [The `latest` fields](#the-latest-fields)
   - Ensure the image exists at `one-rom-images/vx.y.z/fire/rp2350/firmware.bin`
   - Commit and push changes to `one-rom-images` repo
   - Test using Studio
@@ -204,6 +122,34 @@ git push origin v<x.y.z>
   - The script stages each document under `one-rom-images/docs/<slug>/v<x.y.z>/`
     and merges the release into that document's `releases.json`, keeping every
     past edition so a reader on an older firmware can still fetch the one
-    matching their build.  It does not set `latest` - review the diff and set it
-    once the release is ready
+    matching their build.  It leaves `latest` alone - see
+    [The `latest` fields](#the-latest-fields)
   - Commit and push changes to `one-rom-images` repo
+
+## The `latest` fields
+
+Several manifests in `one-rom-images` carry a `latest`.  Three scripts move it
+as part of staging:
+
+| Manifest | Moved by |
+| --- | --- |
+| `plugins/<type>/<name>/releases.json` | `plugins/scripts/release.py` |
+| `cli/releases.json` | `rust/cli/scripts/release.py` |
+| `studio/releases.json` | `rust/studio/scripts/release.py` |
+
+These five are hand edits, made once everything is published and serving:
+
+| Manifest | Field | Moves to |
+| --- | --- | --- |
+| `releases.json` | `latest` | the firmware version |
+| `docs/chip-types/releases.json` | `latest` | the firmware version |
+| `docs/compatibility/releases.json` | `latest` | the firmware version |
+| `docs/cli-manual/releases.json` | `latest` | the onerom-cli version |
+| `studio.json` | `latest_app_version` | the Studio version |
+
+`studio.json` also carries a `revision`, which increments whenever anything in
+that file changes.
+
+`ci/build-images.sh` and `ci/build-docs.sh` stage their files and leave `latest`
+as it stands, so the release can be assembled and pushed before it becomes the
+version a client fetches.

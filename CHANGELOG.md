@@ -19,9 +19,41 @@ To publish:
   - onerom-app 0.4.0
   - onerom-cli 0.5.0
 - CLI bin 0.5.0
-- Studio 0.2.3: rebuild against the new Rust crates to support v0.8.0
+- Studio 0.2.4: rebuild against the new Rust crates to support v0.8.0
 - one-rom-wasm: rebuild against the new Rust crates to support v0.8.0
 - one-rom-site: pick up wasm to support v0.8.0
+
+## v0.7.3 - 2026-09-17
+
+Headline changes in this release:
+- One ROM supports receiving data from a USB host, and transmitting it to a retro system using RBCP over the ROM bus.
+
+In detail:
+- Add log channel 1 to the plugin API for exclusive use by plugin.  Channel 0 remains available to both firmware logging and plugins, and is 512 bytes smaller.
+  - This required a firmware update.
+- The USB system plugin receives data on the CDC OUT endpoint and places it in log channel 1.
+  - This required a firmware update and USB plugin 0.3.1.
+- The host-control plugin exposes log channel 1 as a second RBCP pipe, and implemented `PIPE_READ` for this channel.
+  - This required a firmware update and host-control plugin 0.1.4.
+- Add `onerom console`, which shows what a running One ROM sends and sends what you type to the retro system, a line at a time or key by key.
+- Add option to allow plugin to prioritise address monitoring over ROM serving using ORA API.
+  - This required a firmware update.
+- Add chip types `27C400Pin31A17` and `27C200Pin31NC` for the Amiga A500 rev 5 Kickstart socket, which puts A17 on pin 31 and has no /BYTE.
+- Add `HN613128P` as an alias for `23128`.
+
+To publish:
+- Rust crates (in dependency order):
+  - onerom-config 0.7.1
+  - onerom-gen 0.8.1
+  - onerom-cli 0.4.1
+- Config schema
+- CLI bin 0.4.1
+- Studio 0.2.3
+- USB plugin 0.3.1
+- host-control plugin 0.1.4
+- Chip type and compatibility reference PDFs, for the two new chip types.
+- one-rom-wasm: move to onerom-config 0.7.1 and onerom-gen 0.8.1.
+- one-rom-site: the two new chip types and the `HN613128P` alias.
 
 ## v0.7.2 - 2026-09-08
 

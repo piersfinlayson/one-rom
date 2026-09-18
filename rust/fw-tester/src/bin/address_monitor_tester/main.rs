@@ -347,15 +347,55 @@ fn boot(board: Board, sel: u8, word_size: u8, log_enabled: bool) -> Result<Emula
 fn setup_monitor(emu: &Emulator) -> Result<(), String> {
     emu.arm_monitor();
     let ring = emu.sram_host_ptr(RING_BASE);
+
+    // Options the firmware must refuse, each before it touches any PIO or DMA
+    // state, so the real setup below starts from nothing.  Only the
+    // validation is observable here: there are no DMA registers under
+    // emulation for the priority bit to land in.
+    let mode = ffi::ora_monitor_mode_t_ORA_MONITOR_MODE_CONTROL;
+    let mut unsized_opts = Emulator::address_monitor_options(
+        ffi::ora_address_monitor_priority_t_ORA_ADDRESS_MONITOR_PRIORITY_HIGH,
+    );
+    unsized_opts.size = 0;
+    let bad_priority = Emulator::address_monitor_options(
+        ffi::ora_address_monitor_priority_t_ORA_ADDRESS_MONITOR_PRIORITY_HIGH + 1,
+    );
+    let refused: &[(&str, &ffi::ora_address_monitor_options_t, OraResult)] = &[
+        ("size 0", &unsized_opts, OraResult::InvalidSize),
+        (
+            "priority out of range",
+            &bad_priority,
+            OraResult::InvalidArg,
+        ),
+    ];
+    for (label, opts, expected) in refused {
+        // SAFETY: as below, and `opts` outlives the call.
+        let r = unsafe {
+            emu.setup_address_monitor_with_options(
+                ring,
+                RING_ENTRIES_LOG2,
+                mode,
+                RING_DATA_SIZE,
+                *opts,
+            )
+        };
+        if r != *expected {
+            return Err(format!(
+                "setup_address_monitor with {label} returned {r:?}, expected {expected:?}"
+            ));
+        }
+    }
+
+    // The real setup, asking for high priority so the accepted path is the
+    // one a plugin that wants it takes.
+    let high = Emulator::address_monitor_options(
+        ffi::ora_address_monitor_priority_t_ORA_ADDRESS_MONITOR_PRIORITY_HIGH,
+    );
     // SAFETY: `ring` is a valid ring buffer within epio SRAM (from
-    // sram_host_ptr), live for the monitor's lifetime.
+    // sram_host_ptr), live for the monitor's lifetime, and `high` outlives
+    // the call.
     let r = unsafe {
-        emu.setup_address_monitor(
-            ring,
-            RING_ENTRIES_LOG2,
-            ffi::ora_monitor_mode_t_ORA_MONITOR_MODE_CONTROL,
-            RING_DATA_SIZE,
-        )
+        emu.setup_address_monitor_with_options(ring, RING_ENTRIES_LOG2, mode, RING_DATA_SIZE, &high)
     };
     if r != OraResult::Ok {
         return Err(format!("setup_address_monitor returned {r:?}"));

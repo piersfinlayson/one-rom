@@ -431,9 +431,9 @@ ora_result_t ora_setup_address_monitor(
     uint8_t ring_entries_log2,
     ora_monitor_mode_t mode,
     uint8_t data_size,
-    void *reserved
+    const ora_address_monitor_options_t *options
 ) {
-    return pio_setup_address_monitor(ring_buf, ring_entries_log2, mode, data_size, reserved);
+    return pio_setup_address_monitor(ring_buf, ring_entries_log2, mode, data_size, options);
 }
 
 ora_result_t ora_led_set(const ora_led_request_t *req) {
@@ -1204,11 +1204,9 @@ ora_result_t ora_gpio_query(uint8_t gpio, ora_gpio_info_t *info_out) {
 //
 // Zero means unclaimed, so .bss zeroing is the initialiser and this stays
 // correct however many channels the ring gains; a held claim stores the
-// claiming plugin's ora_plugin_type_t plus one.  Sized by the ring's channel
-// count rather than by the number of channels that currently have buffers, so
-// adding a buffer needs no change here.
-static uint8_t ora_log_writer[ONEROM_RTT_MAX_UP_BUFFERS];
-static uint8_t ora_log_reader[ONEROM_RTT_MAX_UP_BUFFERS];
+// claiming plugin's ora_plugin_type_t plus one.
+static uint8_t ora_log_writer[ONEROM_RTT_CHANNELS];
+static uint8_t ora_log_reader[ONEROM_RTT_CHANNELS];
 
 #if defined(TEST_BUILD)
 // Give the channels back, as a device does by coming up with its RAM zeroed.
@@ -1218,7 +1216,7 @@ static uint8_t ora_log_reader[ONEROM_RTT_MAX_UP_BUFFERS];
 // then find it held by itself in the next, and behave as it does on a device
 // whose channel another plugin owns.  Called from onerom_test_reset().
 void ora_log_reset_claims(void) {
-    for (unsigned ii = 0; ii < ONEROM_RTT_MAX_UP_BUFFERS; ii++) {
+    for (unsigned ii = 0; ii < ONEROM_RTT_CHANNELS; ii++) {
         ora_log_writer[ii] = 0u;
         ora_log_reader[ii] = 0u;
     }
@@ -1247,12 +1245,12 @@ static ora_plugin_type_t ora_calling_plugin(void) {
 }
 #endif // REAL_HARDWARE
 
-// A channel exists if it is in range and has a buffer.  Asking the ring rather
-// than keeping a count here means P6's extra channels appear on their own.
+// A channel exists if it is in range and has a buffer.  rtt.c decides the
+// second, so adding or removing a channel needs no change here.
 static uint8_t ora_log_channel_exists(ora_log_channel_t channel) {
     unsigned size = 0u;
 
-    if ((unsigned)channel >= ONEROM_RTT_MAX_UP_BUFFERS) {
+    if ((unsigned)channel >= ONEROM_RTT_CHANNELS) {
         return 0u;
     }
     onerom_rtt_query((unsigned)channel, &size, NULL, NULL);

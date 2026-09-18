@@ -37,6 +37,7 @@
 //! [`Bus::read_without_resuming`].
 
 use onerom_config::chip::ChipType;
+use onerom_fw_emulator::ffi as fw_ffi;
 use onerom_fw_emulator::{Emulator, OraResult, driver as gpio};
 use onerom_fw_tester::pin_cache::PinCache;
 use onerom_fw_tester::runner;
@@ -624,6 +625,62 @@ impl<'a> Bus<'a> {
             }
             out.extend_from_slice(&chunk);
         }
+    }
+
+    /// Claim a pipe for reading as the other plugin.
+    ///
+    /// The harness normally calls the firmware as the plugin under test, so a
+    /// claim it took would be that plugin's own.  Only a different plugin can
+    /// block it.
+    pub fn other_plugin_takes_reader(&self, pipe: u8) -> Result<(), String> {
+        self.emu
+            .set_calling_plugin(fw_ffi::ora_plugin_type_t_ORA_PLUGIN_TYPE_USER);
+        let claimed = self.emu.log_open_read(u32::from(pipe));
+        self.emu
+            .set_calling_plugin(fw_ffi::ora_plugin_type_t_ORA_PLUGIN_TYPE_SYSTEM);
+        if claimed != OraResult::Ok {
+            return Err(format!(
+                "the other plugin could not claim pipe {pipe} for reading: {claimed:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    /// Drain a pipe as the other plugin.  Requires
+    /// [`Bus::other_plugin_takes_reader`] first.
+    pub fn other_plugin_drains(&self, pipe: u8) -> Vec<u8> {
+        self.emu
+            .set_calling_plugin(fw_ffi::ora_plugin_type_t_ORA_PLUGIN_TYPE_USER);
+        let mut out = Vec::new();
+        loop {
+            let (_, chunk) = self.emu.log_read(u32::from(pipe), 256);
+            if chunk.is_empty() {
+                break;
+            }
+            out.extend_from_slice(&chunk);
+        }
+        self.emu
+            .set_calling_plugin(fw_ffi::ora_plugin_type_t_ORA_PLUGIN_TYPE_SYSTEM);
+        out
+    }
+
+    /// Write bytes to a pipe's channel, as the device's own writer would.
+    ///
+    /// The counterpart of [`Bus::drain_pipe`] for the IN direction.  Nothing in
+    /// the protocol puts bytes on an IN pipe, so the scenario does.  Claims the
+    /// channel for writing on first use.
+    pub fn fill_pipe(&self, pipe: u8, bytes: &[u8]) -> Result<(), String> {
+        let claimed = self.emu.log_open_write(u32::from(pipe), c"tester");
+        if claimed != OraResult::Ok && claimed != OraResult::LogChannelInUse {
+            return Err(format!(
+                "could not claim pipe {pipe}'s channel for writing: {claimed:?}"
+            ));
+        }
+        let wrote = self.emu.log_write(u32::from(pipe), bytes);
+        if wrote != OraResult::Ok {
+            return Err(format!("could not write pipe {pipe}'s channel: {wrote:?}"));
+        }
+        Ok(())
     }
 
     /// Signal one command byte on the given page.  The data read back is
@@ -1385,6 +1442,7 @@ pub mod pipes {
     pub const GET_PIPE_CAPABILITY: u8 = 0x00;
     pub const GET_PIPE_INFO: u8 = 0x01;
     pub const PIPE_WRITE: u8 = 0x02;
+    pub const PIPE_READ: u8 = 0x03;
 }
 
 #[allow(dead_code)]

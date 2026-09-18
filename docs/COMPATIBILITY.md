@@ -72,6 +72,7 @@ Some greater pin count ROMs can be emulated by a smaller One ROM, provided the R
 | 27128 | 16KB | 32KB | 32KB | 32KB | 32KB |
 | 27C128 | 16KB | 32KB | 32KB | 32KB | 32KB |
 | 27LC128 | 16KB | 32KB | 32KB | 32KB | 32KB |
+| HN613128P | 16KB | 32KB | 32KB | 32KB | 32KB |
 | 23256 | 32KB | 64KB | 64KB | 64KB | 64KB |
 | 27256 | 32KB | 64KB | 64KB | 64KB | 64KB |
 | 27C256 | 32KB | 64KB | 64KB | 64KB | 64KB |
@@ -201,9 +202,11 @@ Some greater pin count ROMs can be emulated by a smaller One ROM, provided the R
 | Chip | ROM size | 40A | 40B | 40C |
 |:---|---:|---:|---:|---:|
 | 27C200 | 256KB | 512KB | 256KB | 256KB |
+| 27C200Pin31NC | 256KB | 512KB | 256KB | 256KB |
 | HN62402 | 256KB | 512KB | 256KB | 256KB |
 | 23C4100 | 512KB | 512KB | 512KB | 512KB |
 | 27C400 | 512KB | 512KB | 512KB | 512KB |
+| 27C400Pin31A17 | 512KB | - | 512KB | 512KB |
 | 27C4100 | 512KB | 512KB | 512KB | 512KB |
 | AT27C400 | 512KB | 512KB | 512KB | 512KB |
 | HN62404 | 512KB | 512KB | 512KB | 512KB |
@@ -504,6 +507,7 @@ Every fit other than `native` is a cross-size fit, and in all of them One ROM's 
 | 27128 | 16KB | 32KB | native |
 | 27C128 | 16KB | 32KB | native |
 | 27LC128 | 16KB | 32KB | native |
+| HN613128P | 16KB | 32KB | native |
 | 23256 | 32KB | 64KB | native |
 | 27256 | 32KB | 64KB | native |
 | 27C256 | 32KB | 64KB | native |
@@ -562,6 +566,7 @@ Every fit other than `native` is a cross-size fit, and in all of them One ROM's 
 | 27128 | 16KB | 32KB | native |
 | 27C128 | 16KB | 32KB | native |
 | 27LC128 | 16KB | 32KB | native |
+| HN613128P | 16KB | 32KB | native |
 | 23256 | 32KB | 64KB | native |
 | 27256 | 32KB | 64KB | native |
 | 27C256 | 32KB | 64KB | native |
@@ -620,6 +625,7 @@ Every fit other than `native` is a cross-size fit, and in all of them One ROM's 
 | 27128 | 16KB | 32KB | native |
 | 27C128 | 16KB | 32KB | native |
 | 27LC128 | 16KB | 32KB | native |
+| HN613128P | 16KB | 32KB | native |
 | 23256 | 32KB | 64KB | native |
 | 27256 | 32KB | 64KB | native |
 | 27C256 | 32KB | 64KB | native |
@@ -686,6 +692,7 @@ Every fit other than `native` is a cross-size fit, and in all of them One ROM's 
 | 27128 | 16KB | 32KB | native |
 | 27C128 | 16KB | 32KB | native |
 | 27LC128 | 16KB | 32KB | native |
+| HN613128P | 16KB | 32KB | native |
 | 23256 | 32KB | 64KB | native |
 | 27256 | 32KB | 64KB | native |
 | 27C256 | 32KB | 64KB | native |
@@ -952,6 +959,7 @@ Every fit other than `native` is a cross-size fit, and in all of them One ROM's 
 | Chip | ROM size | Image size | Fit |
 |:---|---:|---:|:---|
 | 27C200 | 256KB | 512KB | native |
+| 27C200Pin31NC | 256KB | 512KB | native |
 | HN62402 | 256KB | 512KB | native |
 | 23C4100 | 512KB | 512KB | native |
 | 27C400 | 512KB | 512KB | native |
@@ -970,9 +978,11 @@ Every fit other than `native` is a cross-size fit, and in all of them One ROM's 
 | Chip | ROM size | Image size | Fit |
 |:---|---:|---:|:---|
 | 27C200 | 256KB | 256KB | native |
+| 27C200Pin31NC | 256KB | 256KB | native |
 | HN62402 | 256KB | 256KB | native |
 | 23C4100 | 512KB | 512KB | native |
 | 27C400 | 512KB | 512KB | native |
+| 27C400Pin31A17 | 512KB | 512KB | native |
 | 27C4100 | 512KB | 512KB | native |
 | AT27C400 | 512KB | 512KB | native |
 | HN62404 | 512KB | 512KB | native |
@@ -988,9 +998,11 @@ Every fit other than `native` is a cross-size fit, and in all of them One ROM's 
 | Chip | ROM size | Image size | Fit |
 |:---|---:|---:|:---|
 | 27C200 | 256KB | 256KB | native |
+| 27C200Pin31NC | 256KB | 256KB | native |
 | HN62402 | 256KB | 256KB | native |
 | 23C4100 | 512KB | 512KB | native |
 | 27C400 | 512KB | 512KB | native |
+| 27C400Pin31A17 | 512KB | 512KB | native |
 | 27C4100 | 512KB | 512KB | native |
 | AT27C400 | 512KB | 512KB | native |
 | HN62404 | 512KB | 512KB | native |

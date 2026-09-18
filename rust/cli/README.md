@@ -76,10 +76,12 @@ To build the Windows artifacts you need a Windows build machine — see
     git push
     ```
 
-6. Tag the current commit with the version and push:
+6. Tag the current commit in `one-rom` and push.  Tags are signed, so they
+    take a message:
 
     ```bash
-    git tag cli-vX.Y.Z
+    cd ../one-rom
+    git tag -s -a cli-vX.Y.Z -m "CLI vX.Y.Z"
     git push origin cli-vX.Y.Z
     ```
 

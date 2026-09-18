@@ -222,6 +222,9 @@
             "function": "ROM",
             "rbcp_chip_type": 3,
             "supported": "0.5.8",
+            "aliases": [
+                "HN613128P"
+            ],
             "bit_modes": [8],
             "pins": 28,
             "size": 16384,
@@ -1870,6 +1873,81 @@
                 }
             ]
         },
+        "27C200Pin31NC": {
+            "description": "0.25MB EPROM with pin 31 unused and no /BYTE, as the Amiga A500 rev 5 PCB wires it",
+            "function": "ROM",
+            "rbcp_chip_type": 38,
+            "supported": "0.7.2",
+            "aliases": [],
+            "bit_modes": [16],
+            "pins": 40,
+            "size": 262144,
+            "address": [
+                29,
+                9,
+                8,
+                7,
+                6,
+                5,
+                4,
+                3,
+                2,
+                40,
+                39,
+                38,
+                37,
+                36,
+                35,
+                34,
+                33,
+                32
+            ],
+            "data": [
+                13,
+                15,
+                17,
+                19,
+                22,
+                24,
+                26,
+                28,
+                14,
+                16,
+                18,
+                20,
+                23,
+                25,
+                27,
+                29
+            ],
+            "control": {
+                "ce": {
+                    "pin": 10,
+                    "type": "fixed_active_low"
+                },
+                "oe": {
+                    "pin": 12,
+                    "type": "fixed_active_low"
+                }
+            },
+            "power": [
+                {
+                    "name": "VCC",
+                    "pin": 21,
+                    "voltage": "+5V"
+                },
+                {
+                    "name": "GND",
+                    "pin": 11,
+                    "voltage": "0V"
+                },
+                {
+                    "name": "GND",
+                    "pin": 30,
+                    "voltage": "0V"
+                }
+            ]
+        },
         "27C400": {
             "description": "0.5MB EPROM with fixed active-low CE/OE",
             "function": "ROM",
@@ -1951,6 +2029,82 @@
                 "pgm": {
                     "pin": 10,
                     "read_state": "chip_select"
+                }
+            },
+            "power": [
+                {
+                    "name": "VCC",
+                    "pin": 21,
+                    "voltage": "+5V"
+                },
+                {
+                    "name": "GND",
+                    "pin": 11,
+                    "voltage": "0V"
+                },
+                {
+                    "name": "GND",
+                    "pin": 30,
+                    "voltage": "0V"
+                }
+            ]
+        },
+        "27C400Pin31A17": {
+            "description": "0.5MB EPROM with A17 on pin 31 and no /BYTE, as the Amiga A500 rev 5 PCB wires it",
+            "function": "ROM",
+            "rbcp_chip_type": 37,
+            "supported": "0.7.2",
+            "aliases": [],
+            "bit_modes": [16],
+            "pins": 40,
+            "size": 524288,
+            "address": [
+                29,
+                9,
+                8,
+                7,
+                6,
+                5,
+                4,
+                3,
+                2,
+                40,
+                39,
+                38,
+                37,
+                36,
+                35,
+                34,
+                33,
+                32,
+                31
+            ],
+            "data": [
+                13,
+                15,
+                17,
+                19,
+                22,
+                24,
+                26,
+                28,
+                14,
+                16,
+                18,
+                20,
+                23,
+                25,
+                27,
+                29
+            ],
+            "control": {
+                "ce": {
+                    "pin": 10,
+                    "type": "fixed_active_low"
+                },
+                "oe": {
+                    "pin": 12,
+                    "type": "fixed_active_low"
                 }
             },
             "power": [
