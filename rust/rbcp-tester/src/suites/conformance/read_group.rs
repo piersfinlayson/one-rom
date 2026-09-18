@@ -62,7 +62,7 @@ pub static WITHHELD_API: &[(&str, &[u32])] = &[(
 /// device outside those bounds is not one these scenarios can judge.
 const SPEC_MAJOR: u8 = 0;
 const SPEC_MINOR: u8 = 1;
-const SPEC_PATCH: u8 = 2;
+const SPEC_PATCH: u8 = 3;
 
 /// Size of one flash slot record: 1 byte of ROM type and a 31-byte name.
 const RECORD_SIZE: u32 = 32;

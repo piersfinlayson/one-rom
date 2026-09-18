@@ -10,6 +10,9 @@
  * It includes an enumeration of API function identifiers, a lookup function
  * to retrieve function pointers based on these identifiers, and the prototypes
  * for the API functions themselves.
+ *
+ * Everything guarded by @c ORA_HOST_TEST is outside of the versioned API. It
+ * may change shape at any time.
  */
 
 #if !defined(PLUGIN_API_H)
@@ -237,7 +240,7 @@ uint32_t ora_host_test_flash_offset(const void *addr);
 /** @brief Host-test seam.  See @ref ORA_STAGED_FN_SIZE. */
 uint32_t ora_host_test_staged_fn_size(const void *start, const void *end);
 /** @brief Host-test seam.  See @ref ORA_STAGED_FN_PTR. */
-void *ora_host_test_staged_fn_ptr(uint32_t addr);
+void *ora_host_test_staged_fn_ptr(uintptr_t addr);
 #endif
 
 /**

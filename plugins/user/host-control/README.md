@@ -122,29 +122,23 @@ RBCP and this host-control plugin rely on One ROM's address monitor, which watch
 One ROM type works that way: the **23QL384**, on every board and in every CS configuration.  It combines its top two address lines into the chip-select decision and serves nothing while both are high.  The monitor captures only where the chip is genuinely selected, so a host must keep its command signalling — the knock and the command bytes after it — inside an address range the ROM actually serves.  For the 23QL384 that means below the top quarter of its address space; reads there are invisible to the plugin, exactly as they are to the ROM.
 
 No other ROM type has a deselected range, so on all of them any address the ROM answers can carry command signalling.
+
 ## Deviations from the RBCP specification
 
-This plugin aims to implement the [RBCP specification](https://github.com/piersfinlayson/rom-bus-control-protocol) exactly, and its conformance is tested against the specification rather than against itself.  Where it knowingly differs, the difference is listed here.
+This plugin implements the [RBCP specification](https://github.com/piersfinlayson/rom-bus-control-protocol).  Any differences from the spec are listed here.
 
-### GET_FLASH_SLOT_INFO accepts a smaller back-channel than the specification requires
+### GET_FLASH_SLOT_INFO back-channel size
 
-The specification says `GET_FLASH_SLOT_INFO` "only succeeds if there is sufficient space, which means a back channel size of at least 64 bytes".  This plugin requires a 32-byte response data section — a 40-byte back-channel region.
+This plugin accepts a 40-byte back-channel region instead of the minimum 64 bytes required by the specification.  That is an 8-byte response header and a 32-byte response data section, which holds one record.
 
-Forty is what the response actually needs: an 8-byte response header plus one 32-byte record.  The specification's 64 is a round number above that.  The deviation is therefore more permissive than the specification, and no specification-conformant host can be affected by it: a host that allocates the 64 bytes the specification asks for is served exactly as it expects.  A host written against this plugin, however, may allocate as little as 40 and will not be portable to a device that enforces the 64.
+This difference is more permissive.
 
-### NV_POKE_BEGIN may not overwrite the RAM slot the host names
+### NV_POKE_BEGIN staging slot
 
-The specification says a host must lend the device a slot for staging: "A RAM slot must be provided by the host for the device to use as a staging area.  This means that any RAM slot specified will be overwritten by the device and should not be used for any other purpose while a write transaction is in progress."  It also has `NV_POKE_BEGIN` fail "if ... the RAM slot specified is invalid, active or **too small**".
+Where the plugin has RAM slots of its own — those above 170, which no host can name — a write transaction stages in them.  The host's slot is then untouched, and not checked for size.
 
-Where this plugin has RAM slots of its own — see [RAM slots above 170 are not offered to the host](#ram-slots-above-170-are-not-offered-to-the-host) — it stages the transaction in those and leaves the host's slot untouched, and it does not then require that slot to be large enough.  Two consequences, both more permissive than the specification:
+The specification has the named slot overwritten, and `NV_POKE_BEGIN` fail if it is too small.
 
-- The named slot survives the transaction, where the specification says it will be overwritten.  A conformant host cannot notice, because it has been told not to rely on that slot's contents; a host written against this plugin might come to rely on them surviving and would not be portable.
-- A transaction succeeds where the specification allows it to fail.  A slot is exactly one ROM region, and a small ROM makes every slot far smaller than the 4KB of NV storage plus the erase routine that staging needs — so on those devices a strictly conformant implementation could never perform a write at all.  Staging in the plugin's own slots is what makes NV storage writable there.
+The named slot is rejected if it is out of range or is the slot being served.
 
-The host still names a slot, and it is still rejected if it is 0xAA, out of range, or the slot being served.  Those checks are what a host can act on, and they cost nothing to keep.
-
-### RAM slots above 170 are not offered to the host
-
-Every RBCP command that names a RAM slot rejects an argument of 0xAA, so that a reset started mid-command stays detectable.  A slot whose index is 170 or above therefore cannot be named by any host, so this plugin reports at most 170 slots from `GET_RAM_SLOT_INFO_ALL` and rejects any higher index, even where the firmware has more.  The slots above that are used for the plugin's own purposes, as described above.
-
-This is not a deviation from anything the specification requires — `total_count` is "Total number of RAM slots available on the device", and these are not available to a host — but it is worth stating, because the firmware's own slot count and the number a host sees are not the same number.
+The differences are more permissive.

@@ -33,6 +33,9 @@
 // see flash_irq_disable().  Everything else — the call order, the erase
 // granularity, the command byte, the divisor handed back to the XIP restore —
 // is the logic under test, and runs on a host unchanged.
+//
+// Erase and program take separate addresses and sizes.  An erase covers whole
+// 4KB sectors, a program whole 256-byte pages.
 ORA_SECTION(".flash_erase_fn") __attribute__((noinline))
 void flash_erase_critical(
     flash_exit_xip_fn_t             exit_xip,
@@ -40,15 +43,17 @@ void flash_erase_critical(
     flash_range_program_fn_t        range_program,
     flash_flush_cache_fn_t          flush_cache,
     flash_select_xip_read_mode_fn_t select_xip,
-    uint32_t                        flash_offs,
+    uint32_t                        erase_offs,
+    uint32_t                        program_offs,
     const uint8_t                  *data,
-    uint32_t                        size,
+    uint32_t                        erase_size,
+    uint32_t                        program_size,
     uint8_t                         clkdiv
 ) {
     uint32_t primask = flash_irq_disable();
     exit_xip();
-    range_erase(flash_offs, size, FLASH_BLOCK_SIZE, FLASH_BLOCK_ERASE_CMD);
-    range_program(flash_offs, data, size);
+    range_erase(erase_offs, erase_size, FLASH_BLOCK_SIZE, FLASH_BLOCK_ERASE_CMD);
+    range_program(program_offs, data, program_size);
     select_xip(3u, clkdiv);
     flush_cache();
     flash_irq_restore(primask);
