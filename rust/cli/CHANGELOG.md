@@ -2,7 +2,8 @@
 
 ## v0.5.0 - unreleased
 
-- **`inspect info` now says what it could not show you, and why.**
+- `inspect info` indicates what it cannot decode and why.
+- `peek` no longer fails on a large read.
 
 ## v0.4.1 - 2026-09-17
 

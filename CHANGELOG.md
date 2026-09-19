@@ -7,7 +7,8 @@ All notables changes between versions are documented in this file.
 Headline changes in this release:
 
 In detail:
-- `onerom inspect info` now says what it could not show you, and why.
+- `inspect info` indicates what it cannot decode and why.
+- `onerom peek` no longer fails on a large read.
 - The plugin API's generated metadata-key and constant headers now say which firmware release each entry first shipped in.
 - Firmware change to avoid changing bootrom config for any external flash CS1 pin configured in OTP data.
 

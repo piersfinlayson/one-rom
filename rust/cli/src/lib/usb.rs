@@ -704,16 +704,40 @@ fn check_memory_range(
     Err(Error::InvalidMemoryRange(address, length))
 }
 
+/// Bytes per PICOBOOT transfer in a memory read.
+///
+/// The endpoint timeout covers a whole transfer, and a running One ROM answers
+/// at around 70KB/s, so a large read has to be split to finish one.
+const READ_CHUNK_BYTES: u32 = 32 * 1024;
+
 /// Read bytes from device memory
 pub async fn read_memory(device: &Device, address: u32, length: u32) -> Result<Vec<u8>, Error> {
     check_memory_range(device, address, length, false, false)?;
 
     let mut picoboot = get_picoboot(device, false).await?;
 
-    picoboot
-        .read(address, length)
-        .await
-        .map_err(|e| Error::Usb(e.to_string()))
+    let mut data = Vec::with_capacity(length as usize);
+    while (data.len() as u32) < length {
+        let offset = data.len() as u32;
+        let size = (length - offset).min(READ_CHUNK_BYTES);
+
+        let chunk = picoboot
+            .read(address + offset, size)
+            .await
+            .map_err(|e| Error::Usb(e.to_string()))?;
+
+        if chunk.len() != size as usize {
+            return Err(Error::Usb(format!(
+                "read {} bytes at {:#010x}, asked for {size}",
+                chunk.len(),
+                address + offset
+            )));
+        }
+
+        data.extend_from_slice(&chunk);
+    }
+
+    Ok(data)
 }
 
 /// Write bytes to device memory.
