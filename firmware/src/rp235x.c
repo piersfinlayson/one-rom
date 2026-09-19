@@ -295,8 +295,14 @@ void setup_initial_gpios(void) {
     while (!(RESET_DONE & (RESET_IOBANK0 | RESET_PADS_BANK0)));
 #endif // REAL_HARDWARE
 
-    // Initialize all pins to input only, no pulls
+    // Initialize all pins to input only, no pulls.
+    //
+    // The external flash chip select is left as-is because if programmed
+    // via OTP, the bootrom has already configured it.
     for (int ii = 0; ii < MAX_GPIOS; ii++) {
+        if (ii == HW->gpio_ext_flash_cs) {
+            continue;
+        }
         APIO_GPIO_PULL_NONE(ii);
         APIO_GPIO_INPUT_ONLY(ii);
     }
@@ -337,13 +343,26 @@ void setup_qmi(rp235x_clock_config_t *config) {
         uint32_t m0 = XIP_QMI_M0_TIMING;
         DEBUG("Current QMI M0: 0x%08lX", m0);
 
-        m0 &= ~XIP_QMI_M0_CLKDIV_MASK;
-        m0 |= (divider & XIP_QMI_M0_CLKDIV_MASK) << XIP_QMI_M0_CLKDIV_SHIFT;
+        m0 &= ~XIP_QMI_CLKDIV_MASK;
+        m0 |= (divider & XIP_QMI_CLKDIV_MASK) << XIP_QMI_CLKDIV_SHIFT;
 
         DEBUG("Update M0 clkdiv: %d", divider);
         DEBUG("Update QMI M0: 0x%08lX", m0);
 
         XIP_QMI_M0_TIMING = m0;
+
+        // Where there's an external flash chip, we need to adjust M1 timing.
+        if (HW->gpio_ext_flash_cs != GPIO_NONE) {
+            uint32_t m1 = XIP_QMI_M1_TIMING;
+            DEBUG("Current QMI M1: 0x%08lX", m1);
+
+            m1 &= ~XIP_QMI_CLKDIV_MASK;
+            m1 |= (divider & XIP_QMI_CLKDIV_MASK) << XIP_QMI_CLKDIV_SHIFT;
+
+            DEBUG("Update QMI M1: 0x%08lX", m1);
+
+            XIP_QMI_M1_TIMING = m1;
+        }
     }
 }
 

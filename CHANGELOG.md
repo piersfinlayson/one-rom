@@ -9,6 +9,7 @@ Headline changes in this release:
 In detail:
 - `onerom inspect info` now says what it could not show you, and why.
 - The plugin API's generated metadata-key and constant headers now say which firmware release each entry first shipped in.
+- Firmware change to avoid changing bootrom config for any external flash CS1 pin configured in OTP data.
 
 To publish:
 - Rust crates (in dependency order):

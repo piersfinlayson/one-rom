@@ -287,9 +287,9 @@
 
 // XIP_QMI Registers
 #define XIP_QMI_M0_TIMING   (*((volatile uint32_t *)(XIP_QMI_BASE + 0x0C)))
-
-#define XIP_QMI_M0_CLKDIV_MASK   0xFF
-#define XIP_QMI_M0_CLKDIV_SHIFT  0
+#define XIP_QMI_M1_TIMING   (*((volatile uint32_t *)(XIP_QMI_BASE + 0x20)))
+#define XIP_QMI_CLKDIV_MASK      0xFF
+#define XIP_QMI_CLKDIV_SHIFT     0
 
 // Power Manager Registers
 #define POWMAN_VREG_CTRL    (*((volatile uint32_t *)(POWMAN_BASE + 0x04)))
