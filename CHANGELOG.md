@@ -11,6 +11,8 @@ In detail:
 - `onerom peek` no longer fails on a large read.
 - The plugin API's generated metadata-key and constant headers now say which firmware release each entry first shipped in.
 - Firmware change to avoid changing bootrom config for any external flash CS1 pin configured in OTP data.
+- Add the `ext-flash` user plugin, which tests the external flash chip present on some Fire 32 and 40 pin boards.
+  - Includes `plugins/user/ext-flash/scripts/program-otp.sh` to program the OTP that makes the external flash reachable with no firmware or plugin setup required.
 
 To publish:
 - Rust crates (in dependency order):
@@ -22,6 +24,7 @@ To publish:
   - onerom-cli 0.5.0
 - CLI bin 0.5.0
 - Studio 0.2.4: rebuild against the new Rust crates to support v0.8.0
+- ext-flash plugin 0.1.0
 - one-rom-wasm: rebuild against the new Rust crates to support v0.8.0
 - one-rom-site: pick up wasm to support v0.8.0
 
