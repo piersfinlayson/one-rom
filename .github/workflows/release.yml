@@ -111,6 +111,7 @@ jobs:
         make -C plugins/system/usb
         make -C plugins/user/activity
         make -C plugins/user/blink
+        make -C plugins/user/ext-flash
         make -C plugins/user/host-control
         make -C plugins/user/rgb
         make -C firmware/ora/examples

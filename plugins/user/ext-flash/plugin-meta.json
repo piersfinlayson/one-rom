@@ -1,0 +1,9 @@
+{
+    "name": "ext-flash",
+    "display_name": "One ROM External Flash Tester",
+    "description": "Tests various operations on an attached external flash chip",
+    "author": "Piers Finlayson",
+    "source": "https://github.com/piersfinlayson/one-rom",
+    "license": "MIT",
+    "build_output": "build/plugin_user.bin"
+}

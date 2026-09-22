@@ -74,9 +74,7 @@ If on a branch, submit a pull request and merge it into main.
 ## Plugins
 
 Build and release any plugins whose version changed this cycle, following
-[plugins/RELEASE.md](/plugins/RELEASE.md).  Build them individually rather than
-with `build-release-all.sh` unless every plugin is being released, since that
-script stages every plugin carrying a `plugin-meta.json`.
+[plugins/RELEASE.md](/plugins/RELEASE.md).
 
 Tag the version in git:
 
