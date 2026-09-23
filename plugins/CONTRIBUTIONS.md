@@ -53,7 +53,8 @@ Notes:
 
 - There is no plugin version field.  The plugin's version, its type, and the
   minimum One ROM firmware version it needs are all read from the built
-  plugin binary.
+  plugin binary.  Your tag only marks the commit to build.  Its name is not
+  read.
 
 - `source` and `license` are fixed for the life of a plugin. If you want to
   change either, [raise an issue](#raising-an-issue)
@@ -62,6 +63,19 @@ Notes:
 
 To release a new version of your plugin, follow the
 [raising an issue](#raising-an-issue) process again.
+
+## Building
+
+The maintainer builds your plugin from an unmodified checkout of the latest
+One ROM release.  Build it the same way before raising an issue:
+
+1. Copy your plugin directory to `plugins/<type>/<name>`, where `<type>` is
+   `system` or `user` and `<name>` is the `name` in your `plugin-meta.json`.
+2. Run `make generated` at the root of the checkout.  This requires Rust.
+3. Run `make TOOLCHAIN=<dir>` in your plugin directory, where `<dir>` is the
+   `bin` directory of the Arm GNU toolchain version pinned in
+   [`ci/arm-toolchain-version`](../ci/arm-toolchain-version).
+   `ci/install-arm-toolchain.sh` installs it and prints `<dir>`.
 
 ## Raising an Issue
 
@@ -79,10 +93,7 @@ The plugin must include a:
 - [`plugin-meta.json`](#plugin-metajson) file.
 
 The plugin must:
-- build without warnings against the latest released One ROM source tree,
-  using the Arm GNU toolchain version pinned in
-  [`ci/arm-toolchain-version`](../ci/arm-toolchain-version).
-  `ci/install-arm-toolchain.sh` can be used to install it.
+- build without warnings, following [Building](#building).
 - run on the latest released firmware, unmodified.  A plugin that needs a
   firmware change needs that change released before contributing.
 

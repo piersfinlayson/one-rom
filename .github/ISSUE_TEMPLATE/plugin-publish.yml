@@ -44,7 +44,7 @@ body:
           required: true
         - label: A plugin-meta.json
           required: true
-        - label: Builds without warnings against the latest One ROM release, with the pinned Arm GNU toolchain
+        - label: Builds without warnings, following the Building steps in CONTRIBUTIONS
           required: true
         - label: Runs on the latest released firmware, unmodified
           required: true

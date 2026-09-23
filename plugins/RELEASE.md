@@ -10,6 +10,7 @@ scripts/build-release.sh system/usb
 
 To build a third-party plugin against this version of the firmware:
 - Copy the plugin directory into `plugins/<type>/<name>`.
+- Run `make generated` at the root.
 - Build it with the pinned toolchain (see `ci/arm-toolchain-version` and `ci/install-arm-toolchain.sh`).
 
 ```bash
@@ -33,7 +34,10 @@ git commit -m "Update plugin binaries and manifests"
 git push
 ```
 
-Tag the release in `one-rom`.  Tags are signed, so they take a message:
+For a third-party plugin, name the commit its tag pointed to when you reply on
+its issue.  A tag can be moved later.
+
+For an in-tree plugin, tag the release in `one-rom`.  Tags are signed, so they take a message:
 
 ```bash
 cd ../one-rom
