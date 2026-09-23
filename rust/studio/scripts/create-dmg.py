@@ -1,22 +1,17 @@
 #!/usr/bin/env python3
 """
-Build macOS DMG with proper layout using cargo packager + dmgbuild.
+Build macOS DMG with proper layout using dmgbuild.
 
-This script assumes cargo packager has already run and produced a DMG.
-It then:
-1. Finds and mounts the cargo packager DMG
-2. Extracts the .app bundle from that DMG
-3. Archives the cargo packager DMG
-4. Creates a multi-resolution ICNS file from PNG icons
-5. Uses dmgbuild to create final DMG with proper layout, background, and icon positions
-6. Sets custom icon on the DMG using fileicon
+Takes the .app bundle built by cargo bundle, then:
+1. Creates a multi-resolution ICNS file from PNG icons
+2. Uses dmgbuild to create the DMG with proper layout, background, and icon positions
+3. Sets custom icon on the DMG using fileicon
 
 Dependencies:
   pip install dmgbuild toml
   brew install fileicon
 
 macOS tools used (built-in):
-  - hdiutil (mounting/unmounting DMGs)
   - iconutil (creating ICNS files)
 """
 
@@ -45,7 +40,7 @@ except ImportError:
 # Configuration constants
 VOLUME_NAME = "One ROM Studio"
 
-# DMG settings (matching cargo packager config)
+# DMG settings
 DMG_BACKGROUND = "assets/onerom-dmg.png"
 DMG_WINDOW_X = 200
 DMG_WINDOW_Y = 200
@@ -82,7 +77,7 @@ def build_dmg_with_dmgbuild(app_bundle_path, output_dmg):
     
     app_name = app_bundle_path.name
     
-    # dmgbuild settings matching cargo packager config
+    # dmgbuild settings
     settings = {
         'format': DMG_FORMAT,
         'size': None,      # Auto-calculate
@@ -306,15 +301,13 @@ def main():
     try:
         print(f"Using .app bundle: {app_bundle_path}")
         
-        # Steps 2-5 removed
-
-        # Step 6: Create ICNS file from PNG icons
+        # Step 1: Create ICNS file from PNG icons
         create_icns_from_pngs(icns_path)
         
-        # Step 7: Build final DMG with dmgbuild
+        # Step 2: Build final DMG with dmgbuild
         build_dmg_with_dmgbuild(app_bundle_path, final_dmg_path)
         
-        # Step 8: Set custom icon on DMG using fileicon
+        # Step 3: Set custom icon on DMG using fileicon
         set_dmg_icon(final_dmg_path, icns_path)
         
         print(f"\n✓ Successfully created: {final_dmg_path}")

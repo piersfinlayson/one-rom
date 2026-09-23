@@ -1,0 +1,61 @@
+{
+    "$schema": "https://images.onerom.org/configs/schema.json",
+    "version": 1,
+    "name": "28 pin One ROM banked test - 231024 ROM types",
+    "description": "28 pin One ROM banked test - 231024 ROM types",
+    "categories": [],
+    "rom_sets": [
+        {
+            "type": "banked",
+            "description": "set 0",
+            "roms": [
+                {
+                    "description": "1",
+                    "file": "images/test/rand_128KB.rom",
+                    "type": "231024",
+                    "cs1": "active_low"
+                },
+                {
+                    "description": "2",
+                    "file": "images/test/rand_256KB.rom",
+                    "size_handling": "truncate",
+                    "type": "231024",
+                    "cs1": "active_low"
+                }
+            ]
+        },
+        {
+            "type": "banked",
+            "description": "set 1",
+            "roms": [
+                {
+                    "description": "1",
+                    "file": "images/test/rand_128KB.rom",
+                    "type": "231024",
+                    "cs1": "active_low"
+                },
+                {
+                    "description": "2",
+                    "file": "images/test/rand_256KB.rom",
+                    "size_handling": "truncate",
+                    "type": "231024",
+                    "cs1": "active_low"
+                },
+                {
+                    "description": "3",
+                    "file": "images/test/rand_512KB.rom",
+                    "size_handling": "truncate",
+                    "type": "231024",
+                    "cs1": "active_low"
+                },
+                {
+                    "description": "4",
+                    "file": "images/test/rand_512KB_alt.rom",
+                    "size_handling": "truncate",
+                    "type": "231024",
+                    "cs1": "active_low"
+                }
+            ]
+        }
+    ]
+}

@@ -489,10 +489,12 @@ test_family_28() {
     test_config fire-28-c onerom-config/test/28-bank-23qlxxx.json
     test_config fire-28-c onerom-config/test/28-bank-27xxx.json
     test_config fire-28-c onerom-config/test/28-bank-28xxx.json
+    test_config fire-28-c onerom-config/test/28-bank-231024.json
     test_config fire-28-d onerom-config/test/28-bank-23xxx.json
     test_config fire-28-d onerom-config/test/28-bank-23qlxxx.json
     test_config fire-28-d onerom-config/test/28-bank-27xxx.json
     test_config fire-28-d onerom-config/test/28-bank-28xxx.json
+    test_config fire-28-d onerom-config/test/28-bank-231024.json
 
     # Test multi-chip ROM configurations.
     test_28_config_c_onwards onerom-config/test/28-multi-231024.json

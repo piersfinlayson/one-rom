@@ -95,8 +95,9 @@ if [ "$DEPS" = true ]; then
     rustup target add x86_64-apple-darwin
     rustup target add aarch64-apple-darwin
 
-    # Install cargo-bundle if not already installed
-    cargo install cargo-bundle --locked
+    # Install cargo-bundle, pinned because 0.12.0 rejects the
+    # osx_minimum_system_version key in Cargo.toml
+    cargo install cargo-bundle --version 0.11.0 --locked
 
     # Install fileicon if not already installed
     brew install fileicon

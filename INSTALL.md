@@ -72,7 +72,6 @@ If you need to do Windows builds of the CLI or Studio, see [Setting up a Windows
     source $HOME/.cargo/env
     cargo install cross
     cargo install wasm-pack   # Only required to build one-rom-wasm
-    cargo install cargo-dist  # Only required to build One ROM Studio installers
     ```
 
     The One ROM hardware tester (`onerom-lab`) runs on the RP2350 and is built

@@ -1,0 +1,74 @@
+{
+    "$schema": "https://images.onerom.org/configs/schema.json",
+    "version": 1,
+    "name": "Oric-1",
+    "description": "Tangerine Oric-1 ROMs - Tangerine Extended Basic v1.0, v1.1 and v1.22 (UK) sourced from https://cdn.oric.org and Oric Diagnostic ROM v1.08 sourced from https://oric.signal11.org.uk.",
+    "detail": "Instructions:\n1. Install One ROM 28 in IC9 socket\n2. Use Jumpers A (1) + B (2) as required, 0 = Ext Basic v1.0, 1 = Atmos Ext Basic v1.1, 2 = Atmos Ext Basic v1.22 (Unofficial), 3 = Diagnostics c1.08\n3. Power on the computer and enjoy!\n \nTroubleshooting: If you experience power on reset issues it is suggested that C21 is upgraded from 1uF electrolytic capacitor to 100/150uF see https://github.com/sodiumlb/ocula-docs/wiki/OCULA-User-Manual#system-reset for more info.",
+    "categories": [
+        "computer",
+        "firmware",
+        "bios",
+        "oric-1",
+        "tangerine",
+        "atmos",
+        "basic",
+        "diagnostic",
+        "UK"
+    ],
+    "chip_sets": [
+        {
+            "type": "single",
+            "chips": [
+                {
+                    "description": "Oric Extended Basic v1.0",
+                    "file": "https://cdn.oric.org/games/software/o/oric1_roms/Basic10.rom",
+                    "type": "23128",
+                    "cs1": "active_low",
+                    "cs2": "active_low",
+                    "cs3": "active_high"
+                }
+            ]
+        },
+        {
+            "type": "single",
+            "chips": [
+                {
+                    "description": "Oric Atmos Extended Basic v1.1",
+                    "file": "https://cdn.oric.org/games/software/a/atmos_roms/ATMOS.ROM",
+                    "type": "23128",
+                    "cs1": "active_low",
+                    "cs2": "active_low",
+                    "cs3": "active_high"
+                }
+            ]
+        },
+        {
+            "type": "single",
+            "chips": [
+                {
+                    "description": "Oric Atmos Extended Basic v1.22 (Unofficial)",
+                    "file": "https://cdn.oric.org/games/software/l/leclerc_roms/allothers.zip",
+                    "extract": "Bas122uk.rom",
+                    "type": "23128",
+                    "cs1": "active_low",
+                    "cs2": "active_low",
+                    "cs3": "active_high"
+                }
+            ]
+        },
+        {
+            "type": "single",
+            "chips": [
+                {
+                    "description": "Oric Diagnostic ROM v1.08",
+                    "file": "https://oric.signal11.org.uk/files/pub/diag-rom/test108k-bin.zip",
+                    "extract": "test108k.rom",
+                    "type": "23128",
+                    "cs1": "active_low",
+                    "cs2": "active_low",
+                    "cs3": "active_high"
+                }
+            ]
+        }
+    ]
+}
