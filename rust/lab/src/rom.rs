@@ -582,3 +582,268 @@ impl RomReader {
         self.tristate_settle_cycles.is_some()
     }
 }
+
+// ---------------------------------------------------------------------------
+// Readable — common byte-read interface for the output formatters
+// ---------------------------------------------------------------------------
+
+/// A byte-addressable ROM reader, driven one byte at a time.
+///
+/// `begin_read`/`end_read` bracket a burst of `read_byte_at` calls.  The
+/// generic [`RomReader`] and the dedicated [`Lh53512Reader`] both implement
+/// this, so the output formatters work against either without knowing which.
+pub trait Readable {
+    fn begin_read(&mut self, mode: u8);
+    fn read_byte_at(&mut self, byte_addr: usize, mode: u8) -> u8;
+    fn end_read(&mut self);
+}
+
+impl Readable for RomReader {
+    fn begin_read(&mut self, mode: u8) {
+        RomReader::begin_read(self, mode);
+    }
+    fn read_byte_at(&mut self, byte_addr: usize, mode: u8) -> u8 {
+        RomReader::read_byte_at(self, byte_addr, mode)
+    }
+    fn end_read(&mut self) {
+        RomReader::end_read(self);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Lh53512Reader — dedicated reader for the Sharp LH53512
+// ---------------------------------------------------------------------------
+//
+// The LH53512 is a 65,536 x 8 CMOS mask ROM whose 8 data lines are time-
+// multiplexed onto the same physical pins as its 16 address lines: a single
+// bidirectional A/D bus on pins 3-10.  The address is latched in two phases —
+// /LAS captures the low byte, /HAS captures the high byte.  B/D selects the
+// bus direction, and the part has four mask-programmable chip selects
+// (CS0-CS3) plus /OE.  None of this fits the generic `RomReader`, hence this
+// dedicated reader.
+//
+// Read cycle (8-bit output mode), per the 1986 Sharp MOS Data Book p.642:
+//   1. assert CS0-CS3 (at their programmed levels)
+//   2. B/D high -> A/D pins are inputs to the chip (host drives address)
+//   3. drive A/D with A0-A7, pulse /LAS low, release (latch low byte)
+//   4. drive A/D with A8-A15, pulse /HAS low, release (latch high byte)
+//   5. release the bus, drop B/D, assert /OE
+//   6. after the access time, read D0-D7 from A/D
+
+/// Timing constants, in CPU cycles at the Lab's 150 MHz core clock.
+/// Derived from the AC characteristics at Vcc = 5 V (tWL/tWH = 500 ns min,
+/// tHLA/tHHA/tHB = 200 ns min, tHAS = 3.0 us max), then relaxed for the part
+/// being run below its 4.0 V spec at 3.3 V, where everything runs slower.
+const T_AD_SETUP: u32 = 100; // ~0.7 us address setup before a strobe edge
+const T_STROBE: u32 = 300; // ~2.0 us /LAS or /HAS pulse width
+const T_HOLD: u32 = 120; // ~0.8 us address/B-D hold after an edge
+const T_ACCESS: u32 = 900; // ~6.0 us HAS access time
+
+/// Chip pin numbers for the LH53512 (24-pin DIP).
+const AD_PINS: [u8; 8] = [10, 9, 8, 7, 6, 5, 4, 3]; // A/D0 .. A/D7
+const CS_PINS: [u8; 4] = [2, 23, 22, 21]; // CS0 .. CS3
+const OE_PIN: u8 = 15;
+const LAS_PIN: u8 = 16;
+const HAS_PIN: u8 = 17;
+const BD_PIN: u8 = 14;
+const VCC_PIN: u8 = 18; // supplied from a GPIO held high (3.3 V) for bench reads
+const GND_PIN: u8 = 11; // supplied from a GPIO held low for bench reads
+
+pub struct Lh53512Reader {
+    ad: Vec<Flex<'static>>,
+    cs: [ControlLine; 4],
+    oe: ControlLine,
+    las: Flex<'static>,
+    has: Flex<'static>,
+    bd: Flex<'static>,
+    /// Power for the part, supplied from GPIOs so no pin bending is needed:
+    /// `vcc` is held high (3.3 V) and `gnd` is held low.  The LH53512 draws
+    /// ~1.5 mA max, well within a GPIO's drive capability.
+    vcc: Flex<'static>,
+    gnd: Flex<'static>,
+}
+
+impl Lh53512Reader {
+    /// Build a reader for an LH53512, with `cs_high` giving each chip select's
+    /// assert level (`true` = active-high).
+    ///
+    /// # Panics
+    /// If a required pin has no GPIO on `board`.
+    pub fn new(board: Board, cs_high: [bool; 4]) -> Self {
+        let ad = AD_PINS.iter().map(|&pin| Self::gpio(board, pin)).collect();
+
+        let cs = [
+            ControlLine::configurable(Self::gpio(board, CS_PINS[0]), cs_high[0]),
+            ControlLine::configurable(Self::gpio(board, CS_PINS[1]), cs_high[1]),
+            ControlLine::configurable(Self::gpio(board, CS_PINS[2]), cs_high[2]),
+            ControlLine::configurable(Self::gpio(board, CS_PINS[3]), cs_high[3]),
+        ];
+
+        let oe = ControlLine::active_low(Self::gpio(board, OE_PIN));
+        let las = Self::gpio(board, LAS_PIN);
+        let has = Self::gpio(board, HAS_PIN);
+        let bd = Self::gpio(board, BD_PIN);
+        let vcc = Self::gpio(board, VCC_PIN);
+        let gnd = Self::gpio(board, GND_PIN);
+
+        Self {
+            ad,
+            cs,
+            oe,
+            las,
+            has,
+            bd,
+            vcc,
+            gnd,
+        }
+    }
+
+    /// Resolve the MCU GPIO for an LH53512 chip pin.  Mirrors the 24-pin-chip-
+    /// in-28-pin-socket offset used by `RomReader` (`chip pin + 2`).
+    fn gpio(board: Board, chip_pin: u8) -> Flex<'static> {
+        let socket = if board.chip_pins() == 28 {
+            chip_pin + 2
+        } else {
+            chip_pin
+        };
+        let gpio = gpio_for_socket_pin(board, socket)
+            .unwrap_or_else(|| panic!("socket pin {socket} not mapped on this board"));
+        steal_gpio(gpio)
+    }
+
+    /// Initialise all GPIO directions and drive the controls to their idle
+    /// (deasserted) states.
+    pub fn init(&mut self) {
+        // Power the part first: VCC high, GND low.
+        self.gnd.set_as_output();
+        self.gnd.set_low();
+        self.vcc.set_as_output();
+        self.vcc.set_high();
+
+        self.set_ad_input();
+        for line in self.cs.iter_mut() {
+            line.init();
+        }
+        self.oe.init();
+        self.las.set_as_output();
+        self.las.set_high(); // /LAS deasserted
+        self.has.set_as_output();
+        self.has.set_high(); // /HAS deasserted
+        self.bd.set_as_output();
+        self.bd.set_low(); // idle in data mode; each cycle raises it for address
+    }
+
+    #[inline]
+    fn set_ad_output(&mut self) {
+        for pin in self.ad.iter_mut() {
+            pin.set_as_output();
+        }
+    }
+
+    #[inline]
+    fn set_ad_input(&mut self) {
+        for pin in self.ad.iter_mut() {
+            pin.set_pull(Pull::Down);
+            pin.set_as_input();
+        }
+    }
+
+    #[inline]
+    fn drive_ad(&mut self, byte: u8) {
+        for (i, pin) in self.ad.iter_mut().enumerate() {
+            if byte & (1 << i) != 0 {
+                pin.set_high();
+            } else {
+                pin.set_low();
+            }
+        }
+    }
+
+    #[inline]
+    fn read_ad(&self) -> u8 {
+        let mut val = 0u8;
+        for (i, pin) in self.ad.iter().enumerate() {
+            if pin.is_high() {
+                val |= 1 << i;
+            }
+        }
+        val
+    }
+
+    fn assert_cs(&mut self) {
+        for line in self.cs.iter_mut() {
+            line.assert();
+        }
+    }
+
+    fn deassert_cs(&mut self) {
+        for line in self.cs.iter_mut() {
+            line.deassert();
+        }
+    }
+
+    /// Read one byte using the full multiplexed protocol.
+    ///
+    /// The part outputs 4-bit nibbles on A/D0-3, selected by B/D (0 -> D0-3,
+    /// 1 -> D4-7).  Both nibbles are read and combined.  For an 8-bit-output
+    /// mask the B/D=1 nibble reads back 0, so this is harmless; for a
+    /// 4-bit-output mask it recovers the missing high nibble.
+    pub fn read_byte(&mut self, addr: u16) -> u8 {
+        // Select the chip first: CS setup precedes everything else.
+        self.assert_cs();
+
+        // Address phase: B/D high -> the host drives the A/D bus.
+        self.bd.set_high();
+        self.set_ad_output();
+
+        // Low address byte, latched on the /LAS rising edge.  The address is
+        // held for tHLA after the rising edge before the bus changes.
+        self.drive_ad(addr as u8);
+        cortex_m::asm::delay(T_AD_SETUP);
+        self.las.set_low();
+        cortex_m::asm::delay(T_STROBE);
+        self.las.set_high();
+        cortex_m::asm::delay(T_HOLD);
+
+        // High address byte, latched on the /HAS rising edge (held tHHA).
+        self.drive_ad((addr >> 8) as u8);
+        cortex_m::asm::delay(T_AD_SETUP);
+        self.has.set_low();
+        cortex_m::asm::delay(T_STROBE);
+        self.has.set_high();
+        cortex_m::asm::delay(T_HOLD);
+
+        // Data phase: the part drives 4-bit nibbles on A/D0-3, selected by
+        // B/D (0 -> D0-3, 1 -> D4-7).  B/D goes low before /OE (tSBO).
+        self.set_ad_input();
+        self.bd.set_low();
+        cortex_m::asm::delay(T_HOLD);
+        self.oe.assert();
+        cortex_m::asm::delay(T_ACCESS);
+        let lo = self.read_ad() & 0x0F;
+
+        self.bd.set_high();
+        cortex_m::asm::delay(T_ACCESS);
+        let hi = self.read_ad() & 0x0F;
+
+        self.oe.deassert();
+        self.deassert_cs();
+        (hi << 4) | lo
+    }
+}
+
+impl Readable for Lh53512Reader {
+    fn begin_read(&mut self, _mode: u8) {
+        // Each read_byte_at is a complete, self-contained cycle.
+    }
+
+    fn read_byte_at(&mut self, byte_addr: usize, _mode: u8) -> u8 {
+        self.read_byte(byte_addr as u16)
+    }
+
+    fn end_read(&mut self) {
+        self.oe.deassert();
+        self.deassert_cs();
+        self.set_ad_input();
+    }
+}

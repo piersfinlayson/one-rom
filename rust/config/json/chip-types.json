@@ -2498,6 +2498,72 @@
                     "voltage": "0V"
                 }
             ]
+        },
+        "LH53512": {
+            "description": "64KB (65536 x 8) Sharp CMOS mask ROM with a multiplexed address/data bus and 4 configurable CS lines",
+            "function": "ROM",
+            "rbcp_chip_type": 39,
+            "aliases": [
+                "LH531212"
+            ],
+            "bit_modes": [8],
+            "pins": 24,
+            "size": 65536,
+            "address": [
+                10,
+                9,
+                8,
+                7,
+                6,
+                5,
+                4,
+                3
+            ],
+            "data": [
+                10,
+                9,
+                8,
+                7,
+                6,
+                5,
+                4,
+                3
+            ],
+            "control": {
+                "cs1": {
+                    "pin": 2,
+                    "type": "configurable"
+                },
+                "cs2": {
+                    "pin": 23,
+                    "type": "configurable"
+                },
+                "cs3": {
+                    "pin": 22,
+                    "type": "configurable"
+                },
+                "cs4": {
+                    "pin": 21,
+                    "type": "configurable"
+                },
+                "oe": {
+                    "pin": 15,
+                    "type": "fixed_active_low"
+                }
+            },
+            "allow_mixed_control": true,
+            "power": [
+                {
+                    "name": "VCC",
+                    "pin": 18,
+                    "voltage": "+5V"
+                },
+                {
+                    "name": "GND",
+                    "pin": 11,
+                    "voltage": "0V"
+                }
+            ]
         }
     }
 }

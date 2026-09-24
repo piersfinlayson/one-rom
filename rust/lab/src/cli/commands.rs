@@ -23,7 +23,7 @@ use onerom_config::mcu::Family;
 use sha1::{Digest, Sha1};
 
 use crate::error::Error;
-use crate::rom::RomReader;
+use crate::rom::{Lh53512Reader, Readable, RomReader};
 use crate::usb;
 
 use super::super::serial_id;
@@ -644,6 +644,10 @@ async fn do_read(
     cs: CsSettings,
     tristate: bool,
 ) -> Result<(), Error> {
+    if chip == ChipType::ChipLH53512 {
+        return read_lh53512(board, fmt, range).await;
+    }
+
     let needs_scan = chip.control_lines().iter().any(|c| {
         c.line_type == ControlLineType::Configurable
             && match c.name {
@@ -726,6 +730,78 @@ async fn output_checksum(
                 format!("{}-bit ", r.mode)
             };
             send_line(&format!("  {}tristate failures: {}", mode, r.failures)).await?;
+        }
+    }
+
+    send_line("").await?;
+    Ok(())
+}
+
+/// Read an LH53512.  Its four chip-select lines are mask-programmed to an
+/// undocumented polarity, so every CS0-3 combination is swept; non-trivial
+/// results are flagged and (for dump formats) emitted in the requested format.
+async fn read_lh53512(board: Board, fmt: OutputFormat, range: ReadRange) -> Result<(), Error> {
+    let (start, count) = resolve_range(range, ChipType::ChipLH53512);
+    let rom_bytes = ChipType::ChipLH53512.size_bytes();
+    let all_zeros = trivial_sha1(0x00, rom_bytes);
+    let all_ffs = trivial_sha1(0xFF, rom_bytes);
+
+    send_line("Scanning 16 CS0-3 polarity combinations...").await?;
+    send_line("").await?;
+
+    for combo in 0u8..16 {
+        let cs_high = [
+            combo & 0b0001 != 0,
+            combo & 0b0010 != 0,
+            combo & 0b0100 != 0,
+            combo & 0b1000 != 0,
+        ];
+
+        let mut reader = Lh53512Reader::new(board, cs_high);
+        reader.init();
+
+        let mut sha = Sha1::new();
+        let mut checksum = core::num::Wrapping(0u32);
+        reader.begin_read(8);
+        for addr in 0..rom_bytes {
+            let byte = reader.read_byte_at(addr, 8);
+            sha.update([byte]);
+            checksum += core::num::Wrapping(byte as u32);
+        }
+        reader.end_read();
+
+        let mut sha1 = [0u8; 20];
+        sha1.copy_from_slice(&sha.finalize());
+        let trivial = sha1 == all_zeros || sha1 == all_ffs;
+
+        let label = format!(
+            "cs0={} cs1={} cs2={} cs3={}",
+            cs_high[0] as u8, cs_high[1] as u8, cs_high[2] as u8, cs_high[3] as u8
+        );
+
+        send_line(&format!(
+            "  {}  SHA1: {}  checksum: {:#010X}  {}",
+            label,
+            hex::encode(sha1),
+            checksum.0,
+            if trivial { "" } else { "*** candidate ***" },
+        ))
+        .await?;
+
+        if !trivial && fmt != OutputFormat::Checksum {
+            send_line(&format!("--- {} ({}) ---", label, fmt)).await?;
+            match fmt {
+                OutputFormat::HexDump => {
+                    crate::output::hexdump::dump(&mut reader, start, count).await?
+                }
+                OutputFormat::IntelHex => {
+                    crate::output::ihex::dump(&mut reader, start, count).await?
+                }
+                OutputFormat::Srec => {
+                    crate::output::srec::dump(&mut reader, start, count).await?
+                }
+                OutputFormat::Checksum => {}
+            }
         }
     }
 

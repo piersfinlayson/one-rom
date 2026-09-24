@@ -21,6 +21,7 @@ There are also some other inconsistencies between types:
 - [24-pin Mask ROM Family (23xx)](#24-pin-mask-rom-family-23xx)
 - [28-pin Mask ROM Family (23xx)](#28-pin-mask-rom-family-23xx)
 - [32-pin Mask ROM Family (23xx)](#32-pin-mask-rom-family-23xx)
+- [24-pin Sharp LH53xx Family](#24-pin-sharp-lh53xx-family)
 - [24-pin EPROM Family (27xx)](#24-pin-eprom-family-27xx)
 - [28-pin EPROM Family (27xx)](#28-pin-eprom-family-27xx)
 - [32-pin EPROM Family (27xx)](#32-pin-eprom-family-27xx)
@@ -58,6 +59,12 @@ There are also some other inconsistencies between types:
 |-----------|---------|------|---------------|---------------|-------------|-----------|
 | 23C1001 | D23C1001 | 128KB | 17 (A0-A16) | /CE (pin 22), CS1 (pin 31), CS2 (pin 30), /OE (pin 24) | None | ✓ |
 | 23C1010 |  | 128KB | 17 (A0-A16) | /CE (pin 22), /OE (pin 24) | None | ✓ |
+
+## 24-pin Sharp LH53xx Family
+
+| Chip Type | Aliases | Size | Address Lines | Control Lines | Programming | Supported |
+|-----------|---------|------|---------------|---------------|-------------|-----------|
+| LH53512 | LH531212 | 64KB | 8 (A0-A7) | CS1 (pin 2), CS2 (pin 23), CS3 (pin 22), CS4 (pin 21), /OE (pin 15) | None | ✗ |
 
 ## 24-pin EPROM Family (27xx)
 
@@ -133,32 +140,32 @@ There are also some other inconsistencies between types:
 
 ### 24-pin Package
 
-| Pin | 2316 | 2332 | 2364 | 2704 | HM7641 | 2708 | 2716 | 28C16 | 6116 | 2732 |
-|-----|------|------|------|------|------|------|------|------|------|------|
-| 1 | A7 | A7 | A7 | A7 | A7 | A7 | A7 | A7 | A7 | A7 |
-| 2 | A6 | A6 | A6 | A6 | A6 | A6 | A6 | A6 | A6 | A6 |
-| 3 | A5 | A5 | A5 | A5 | A5 | A5 | A5 | A5 | A5 | A5 |
-| 4 | A4 | A4 | A4 | A4 | A4 | A4 | A4 | A4 | A4 | A4 |
-| 5 | A3 | A3 | A3 | A3 | A3 | A3 | A3 | A3 | A3 | A3 |
-| 6 | A2 | A2 | A2 | A2 | A2 | A2 | A2 | A2 | A2 | A2 |
-| 7 | A1 | A1 | A1 | A1 | A1 | A1 | A1 | A1 | A1 | A1 |
-| 8 | A0 | A0 | A0 | A0 | A0 | A0 | A0 | A0 | A0 | A0 |
-| 9 | D0 | D0 | D0 | D0 | D0 | D0 | D0 | D0 | D0 | D0 |
-| 10 | D1 | D1 | D1 | D1 | D1 | D1 | D1 | D1 | D1 | D1 |
-| 11 | D2 | D2 | D2 | D2 | D2 | D2 | D2 | D2 | D2 | D2 |
-| 12 | GND | GND | GND | GND | GND | GND | GND | GND | GND | GND |
-| 13 | D3 | D3 | D3 | D3 | D3 | D3 | D3 | D3 | D3 | D3 |
-| 14 | D4 | D4 | D4 | D4 | D4 | D4 | D4 | D4 | D4 | D4 |
-| 15 | D5 | D5 | D5 | D5 | D5 | D5 | D5 | D5 | D5 | D5 |
-| 16 | D6 | D6 | D6 | D6 | D6 | D6 | D6 | D6 | D6 | D6 |
-| 17 | D7 | D7 | D7 | D7 | D7 | D7 | D7 | D7 | D7 | D7 |
-| 18 | CS2 | A11 | A11 | /CE+VPP | CS4 | /CE+VPP | /CE | /CE | /CE | /CE+PE |
-| 19 | A10 | A10 | A10 | VDD | CS3 | VDD | A10 | A10 | A10 | A10 |
-| 20 | CS1 | CS1 | CS1 | /OE+PE | /CS2 | /OE+PE | /OE+PE | /OE | /OE | /OE+VPP |
-| 21 | CS3 | CS2 | A12 | VBB | /CS1 | VBB | VPP | /WRITE | /WRITE | A11 |
-| 22 | A9 | A9 | A9 | GND | NC | A9 | A9 | A9 | A9 | A9 |
-| 23 | A8 | A8 | A8 | A8 | A8 | A8 | A8 | A8 | A8 | A8 |
-| 24 | VCC | VCC | VCC | VCC | VCC | VCC | VCC | VCC | VCC | VCC |
+| Pin | 2316 | 2332 | 2364 | 2704 | HM7641 | 2708 | 2716 | 28C16 | 6116 | 2732 | LH53512 |
+|-----|------|------|------|------|------|------|------|------|------|------|------|
+| 1 | A7 | A7 | A7 | A7 | A7 | A7 | A7 | A7 | A7 | A7 | NC |
+| 2 | A6 | A6 | A6 | A6 | A6 | A6 | A6 | A6 | A6 | A6 | CS1 |
+| 3 | A5 | A5 | A5 | A5 | A5 | A5 | A5 | A5 | A5 | A5 | A7+D7 |
+| 4 | A4 | A4 | A4 | A4 | A4 | A4 | A4 | A4 | A4 | A4 | A6+D6 |
+| 5 | A3 | A3 | A3 | A3 | A3 | A3 | A3 | A3 | A3 | A3 | A5+D5 |
+| 6 | A2 | A2 | A2 | A2 | A2 | A2 | A2 | A2 | A2 | A2 | A4+D4 |
+| 7 | A1 | A1 | A1 | A1 | A1 | A1 | A1 | A1 | A1 | A1 | A3+D3 |
+| 8 | A0 | A0 | A0 | A0 | A0 | A0 | A0 | A0 | A0 | A0 | A2+D2 |
+| 9 | D0 | D0 | D0 | D0 | D0 | D0 | D0 | D0 | D0 | D0 | A1+D1 |
+| 10 | D1 | D1 | D1 | D1 | D1 | D1 | D1 | D1 | D1 | D1 | A0+D0 |
+| 11 | D2 | D2 | D2 | D2 | D2 | D2 | D2 | D2 | D2 | D2 | GND |
+| 12 | GND | GND | GND | GND | GND | GND | GND | GND | GND | GND | NC |
+| 13 | D3 | D3 | D3 | D3 | D3 | D3 | D3 | D3 | D3 | D3 | NC |
+| 14 | D4 | D4 | D4 | D4 | D4 | D4 | D4 | D4 | D4 | D4 | NC |
+| 15 | D5 | D5 | D5 | D5 | D5 | D5 | D5 | D5 | D5 | D5 | /OE |
+| 16 | D6 | D6 | D6 | D6 | D6 | D6 | D6 | D6 | D6 | D6 | NC |
+| 17 | D7 | D7 | D7 | D7 | D7 | D7 | D7 | D7 | D7 | D7 | NC |
+| 18 | CS2 | A11 | A11 | /CE+VPP | CS4 | /CE+VPP | /CE | /CE | /CE | /CE+PE | VCC |
+| 19 | A10 | A10 | A10 | VDD | CS3 | VDD | A10 | A10 | A10 | A10 | NC |
+| 20 | CS1 | CS1 | CS1 | /OE+PE | /CS2 | /OE+PE | /OE+PE | /OE | /OE | /OE+VPP | NC |
+| 21 | CS3 | CS2 | A12 | VBB | /CS1 | VBB | VPP | /WRITE | /WRITE | A11 | CS4 |
+| 22 | A9 | A9 | A9 | GND | NC | A9 | A9 | A9 | A9 | A9 | CS3 |
+| 23 | A8 | A8 | A8 | A8 | A8 | A8 | A8 | A8 | A8 | A8 | CS2 |
+| 24 | VCC | VCC | VCC | VCC | VCC | VCC | VCC | VCC | VCC | VCC | NC |
 
 ### 28-pin Package
 
@@ -696,6 +703,24 @@ There are also some other inconsistencies between types:
 | /WRITE | 30 | Active low |
 | VCC | 32 | +5V |
 | GND | 16 | 0V |
+
+### LH53512 - 64KB (65536 x 8) Sharp CMOS mask ROM with a multiplexed address/data bus and 4 configurable CS lines
+
+**Package:** 24-pin DIP  
+**Capacity:** 65536 bytes  
+**Control:** 4 configurable CS lines, /OE  
+
+| Function | Pins | Notes |
+|----------|------|-------|
+| Address (A0-A7) | 10,9,8,7,6,5,4,3 | 8 address lines |
+| Data (D0-D7) | 10,9,8,7,6,5,4,3 | 8 data lines |
+| CS1 | 2 | Configurable polarity |
+| CS2 | 23 | Configurable polarity |
+| CS3 | 22 | Configurable polarity |
+| CS4 | 21 | Configurable polarity |
+| /OE | 15 | Active low |
+| VCC | 18 | +5V |
+| GND | 11 | 0V |
 
 ### 27C010 - 128KB EPROM with fixed active-low CE/OE
 

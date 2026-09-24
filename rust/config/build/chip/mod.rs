@@ -51,6 +51,11 @@ pub const CHIP_FAMILIES: &[ChipFamily] = &[
         doc_heading: "40-pin Mask ROM Family (23xx)",
     },
     ChipFamily {
+        key: "lh53_24pin",
+        lib_heading: "24-pin Sharp LH53xx Mask ROMs",
+        doc_heading: "24-pin Sharp LH53xx Family",
+    },
+    ChipFamily {
         key: "eprom_24pin",
         lib_heading: "24-pin EPROMs (27xx series)",
         doc_heading: "24-pin EPROM Family (27xx)",
@@ -130,6 +135,8 @@ pub fn chip_family(type_name: &str, chip_type: &ChipType) -> Option<&'static Chi
             "eeprom"
         } else if type_name.starts_with("HM76") {
             "prom"
+        } else if type_name.starts_with("LH53") {
+            "lh53"
         } else {
             panic!("Unsupported chip type {type_name} - needs adding to chip_family()");
         };
@@ -147,6 +154,7 @@ pub fn chip_family(type_name: &str, chip_type: &ChipType) -> Option<&'static Chi
             ("eeprom", 28) => "eeprom_28pin",
             ("eeprom", 32) => "eeprom_32pin",
             ("prom", 24) => "prom_24pin",
+            ("lh53", 24) => "lh53_24pin",
             (family, pins) => {
                 panic!("Unexpected pin count {pins} for {family} chip type {type_name}")
             }

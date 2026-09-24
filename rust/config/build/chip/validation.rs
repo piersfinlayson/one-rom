@@ -32,6 +32,14 @@ const CS_CONTROL_LINES: &[&str] = &["cs1", "cs2", "cs3", "cs4"];
 /// whose enables differ in polarity, uses CS lines instead.
 const FIXED_ACTIVE_LOW_CONTROL_LINES: &[&str] = &["ce", "oe"];
 
+/// Chip types whose address and data lines share the same physical pins (a
+/// single time-multiplexed bidirectional bus), so the standard address/data
+/// geometry rules do not apply.  These are read by a dedicated One ROM Lab
+/// routine rather than the generic reader.
+fn is_muxed_bus(type_name: &str) -> bool {
+    type_name == "LH53512"
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ControlLineType {
@@ -410,10 +418,15 @@ impl ChipType {
             });
         }
 
-        let expected_size = if type_name != "23QL384" {
-            1usize << self.address.len()
-        } else {
+        let expected_size = if type_name == "23QL384" {
             49152
+        } else if is_muxed_bus(type_name) {
+            // Muxed address/data bus: the address lines are time-multiplexed
+            // onto the data pins, so size is not a power of the address-pin
+            // count.  Accept whatever size is declared.
+            self.size
+        } else {
+            1usize << self.address.len()
         };
 
         if expected_size != self.size {
@@ -446,6 +459,9 @@ impl ChipType {
                 Err(e) => {
                     if self.pins == 40 {
                         // In 40-pin packages, data pins can overlap with address pins.
+                        continue;
+                    } else if is_muxed_bus(type_name) {
+                        // Muxed A/D bus: address and data share the same pins.
                         continue;
                     } else {
                         return Err(e);

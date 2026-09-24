@@ -19,7 +19,7 @@
 use embassy_time::Timer;
 
 use crate::error::Error;
-use crate::rom::RomReader;
+use crate::rom::Readable;
 
 // ---------------------------------------------------------------------------
 // Line buffer sizing
@@ -42,7 +42,7 @@ const LINE_BUF: usize = 82;
 ///
 /// `start` and `count` must already be resolved against the chip's actual
 /// address space (use `commands::resolve_range`).
-pub async fn dump(reader: &mut RomReader, start: usize, count: usize) -> Result<(), Error> {
+pub async fn dump(reader: &mut impl Readable, start: usize, count: usize) -> Result<(), Error> {
     if count == 0 {
         return Ok(());
     }
