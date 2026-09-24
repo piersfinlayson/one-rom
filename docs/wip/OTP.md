@@ -20,8 +20,8 @@ One ROM writes these rows.
 
 | Rows | Contents |
 | --- | --- |
-| `0x048`–`0x04a` | `BOOT_FLAGS0` and its two copies on XL boards |
-| `0x054` | `FLASH_DEVINFO` on XL boards |
+| `0x048`–`0x04a` | `BOOT_FLAGS0` and its two copies on non-M boards |
+| `0x054` | `FLASH_DEVINFO` on non-M boards |
 | `0x059`–`0x05c` | `USB_BOOT_FLAGS`, its two copies and `USB_WHITE_LABEL_ADDR` |
 | `0x0c0`–`0xefd` | One ROM OTP Store |
 | `0xf00`–`0xf3f` | Bootloader USB strings |
@@ -79,8 +79,16 @@ A host verifies the signature with One ROM stopped in the One ROM Bootloader.
 It reads CHIPID and the store from the bootloader. The bootloader is stored in
 the RP2350's mask ROM so it cannot be modified to report another chip's CHIPID.
 
-A host holds public keys for one or more manufacturers and uses these to identify
-the manufacturer.
+The signature catches a simple copy of the board but not a copy that imitates
+the bootloader. A simple copy runs the real bootloader and so reports its own
+CHIPID. No manufacturer has signed that CHIPID so verification fails. An
+imitation is the copy's own software behaving like the bootloader over USB. It
+can report a CHIPID and signature copied from a genuine board. A host cannot
+tell it from the real bootloader.
+
+The CLI holds each manufacturer's name and public key in a table in the One ROM
+repository. A board's manufacturer is the one whose public key verifies its
+signature.
 
 ## Bootloader USB Strings
 
@@ -89,7 +97,7 @@ each string's default and One ROM's value. The VID and PID are unchanged.
 
 | String | Seen in | Default | One ROM | Rows |
 | --- | --- | --- | --- | --- |
-| USB manufacturer | OS device list | `Raspberry Pi` | Manufacturer's name, e.g. `piers.rocks` | 6 |
+| USB manufacturer | OS device list | `Raspberry Pi` | `piers.rocks` | 6 |
 | USB product | OS device list | `RP2350 Boot` | `One ROM Bootloader` | 9 |
 | USB serial number | OS device list | CHIPID in hex | Unchanged | 0 |
 | Volume label | USB drive name | `RP2350` | `ONEROM` | 3 |
@@ -106,30 +114,35 @@ starts at row `0xf00` and the strings follow it. `USB_WHITE_LABEL_ADDR` holds
 `0xf00`.
 
 The white label table takes 16 of page 60's 64 rows. These strings take 41–43
-of the remaining 48 depending on the board name. A manufacturer name of up to
-22 characters fits.
+of the remaining 48 depending on the board name.
 
 A string left unchanged can be replaced later because each is controlled by its
 own valid bit.
 
-## XL Boards
+## Board Sizes
 
-An XL board has a second flash chip on chip select 1.
+| Size | Built-in flash | External flash on chip select 1 |
+| --- | --- | --- |
+| M | 2MB | None |
+| L | 2MB | 2MB |
+| XL | 2MB | 16MB |
 
-`FLASH_DEVINFO` gives both chips' sizes, the GPIO used for chip select 1 and
-whether the chips support the D8h block erase command. The
-`FLASH_DEVINFO_ENABLE` bit (bit 5) of `BOOT_FLAGS0` tells the bootloader to use
-`FLASH_DEVINFO`.
+A non-M board's external flash is configured in OTP. `FLASH_DEVINFO` gives
+both chips' sizes, the GPIO used for chip select 1 and whether the chips support
+the D8h block erase command. The `FLASH_DEVINFO_ENABLE` bit (bit 5) of
+`BOOT_FLAGS0` tells the bootloader to use `FLASH_DEVINFO`.
 
-On an XL board `FLASH_DEVINFO` is set to indicate both primary and secondary
-flash sizes. A fire-40-a is XL when built with its external flash chip on chip
-select 1. Its `FLASH_DEVINFO` is `0x99af`.
+A fire-40-a with a 2MB flash chip on chip select 1 is an L board.
+Its `FLASH_DEVINFO` is `0x99af`.
 
 ## Firmware
 
 Firmware reads the store through the unguarded ECC alias. This is a memory
 window at `0x40130000` where row n appears as 16 bits at `0x40130000`+(2*n).
 A damaged row returns bad data instead of a bus fault.
+
+At boot firmware compares the store's `BOARD` with firmware metadata's `hw_rev`
+before driving GPIOs. If they differ it reboots into the bootloader.
 
 `clk_ref` must be 25MHz or less while firmware reads OTP. After firmware boot
 One ROM's `clk_ref` is currently 3MHz - the external 12MHz crystal divided by 4.
@@ -143,8 +156,9 @@ The RP2350 can lock each OTP page to make it read-only or unreadable. A page is
 64 rows.
 
 Before launching any plugin, firmware makes OTP pages 1–63 read-only for Secure
-and Non-secure code in order to prevent a plugin from writing OTP. Page 0 is
-already read-only from manufacture.
+and Non-secure code in order to prevent a plugin from writing OTP. It also
+stops OTP writes arriving through the USB plugin's PICOBOOT interface while One
+ROM runs. Page 0 is already read-only from manufacture.
 
 The firmware uses software lock registers `SW_LOCK1`–`SW_LOCK63`. A software
 lock can be tightened but not loosened until the next reset.
@@ -158,22 +172,34 @@ bootloader.
 in the One ROM Bootloader and writes through the bootloader's PICOBOOT USB
 interface.
 
-Before writing anything it checks that every ECC row it will write is
-unwritten. It reads back each row as soon as it writes it and stops at the first
-mismatch.
+The board's name and size are always given on the command line so a non-M
+board cannot be commissioned as M by omitting it size.
 
-1. It reads CHIPID from One ROM and creates a signature.
+Before writing anything it checks that every ECC row it will write is unwritten
+or already holds the value it would write. It skips a row that already holds
+its value. An interrupted commission can then be run again and a board whose
+`FLASH_DEVINFO` was written earlier can still be commissioned. It reads back
+each row as soon as it writes it and stops at the first mismatch.
+
+1. It reads CHIPID from One ROM and gets the board's signature.
 2. It displays every row it will write and asks for confirmation. It refuses a
    store that would reach row `0xefe`.
-3. On an XL board it writes `FLASH_DEVINFO`.
+3. On a non-M board it writes `FLASH_DEVINFO`.
 4. It writes the One ROM OTP Store version row, then its magic row, then each
    entry. Each entry is written length row first, then its value, then its key
    row.
 5. It writes the bootloader USB strings, then the white label table, then
    `USB_WHITE_LABEL_ADDR`.
 6. It sets the white label valid bits in `USB_BOOT_FLAGS` and its two copies.
-7. On an XL board it sets `FLASH_DEVINFO_ENABLE` in `BOOT_FLAGS0` and its two
-   copies.
+7. On a non-M board it checks that row `0x055` holds a valid ECC value and then
+   sets `FLASH_DEVINFO_ENABLE` in `BOOT_FLAGS0` and its two copies.
+
+piers.rocks signs through a signing server that holds its private key and
+requires a PIN. Other manufacturers sign with their own private key file.
+
+Row `0x055` is `FLASH_PARTITION_SLOT_SIZE`. One ROM does not write it. Once
+`FLASH_DEVINFO_ENABLE` is set the boot path reads it together with
+`FLASH_DEVINFO`. If it is not a valid ECC value the chip never boots again.
 
 On a board that already has a store it writes new entries after the last one.
 
@@ -222,5 +248,4 @@ Open items requiring testing before implementation.
 
 ## Open Issues
 
-- How firmware and hosts use `BOARD`, including what firmware does when it
-  differs from firmware metadata's `hw_rev`.
+- What the CLI, Studio and other tooling reading OTP over USB do with the OTP `BOARD` info.
