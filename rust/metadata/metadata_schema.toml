@@ -62,6 +62,9 @@
 #   deprecated_release - release from which nothing should use it. A shipped
 #                       constant is never removed, only deprecated, and that is
 #                       permanent.
+#   linker_script     - also emit into firmware/generated/onerom_metadata.ld,
+#                       for values a linker script uses. A linker script cannot
+#                       include a C header. Numbers only.
 #
 # ---------------------------------------------------------------------------
 # Field attributes
@@ -159,6 +162,13 @@ name = "ONEROM_INFO_VERSION"
 type = "u32"
 value = 3
 comment = "Version of the onerom_info_t structure (v0.8.0+)"
+
+[[constants]]
+name = "ONEROM_INFO_OFFSET"
+type = "u32"
+value = 0x200
+linker_script = true
+comment = "Offset of onerom_info_t from the start of flash."
 
 [[constants]]
 name = "ONEROM_INFO_MAGIC"

@@ -1043,6 +1043,30 @@ fn a_first_release_on_a_firmware_only_constant_is_refused() {
 }
 
 // ===========================================================================
+// Linker-script constants
+// ===========================================================================
+
+#[test]
+fn a_linker_constant_holding_a_number_is_accepted() {
+    accepted(&schema_toml(
+        "",
+        "\n[[constants]]\nname = \"SPARE\"\ntype = \"u32\"\nvalue = 1\nlinker_script = true",
+    ));
+}
+
+#[test]
+fn a_linker_constant_holding_text_is_refused() {
+    refused(
+        &schema_toml(
+            "",
+            "\n[[constants]]\nname = \"SPARE\"\ntype = \"cstr\"\nvalue = \"text\"\n\
+             linker_script = true",
+        ),
+        "is marked linker_script but holds text",
+    );
+}
+
+// ===========================================================================
 // Plugin-facing metadata keys
 // ===========================================================================
 

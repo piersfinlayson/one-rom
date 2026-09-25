@@ -22,13 +22,12 @@ use panic_rtt_target as _;
 use once_cell::sync::OnceCell;
 use static_cell::StaticCell;
 
-use onerom_config::hw::Board;
-
 mod cdc;
 mod cli;
 mod error;
 mod hw;
 mod logs;
+mod metadata;
 mod output;
 mod picoboot;
 mod rom;
@@ -59,7 +58,7 @@ pub static SERIAL_ID: OnceCell<&'static str> = OnceCell::new();
 // Build-time configuration via environment variables
 // ---------------------------------------------------------------------------
 
-const BOARD_STR: Option<&str> = option_env!("BOARD");
+// BOARD is read by build.rs, into metadata::BAKED_BOARD.
 
 const CS1_STR: Option<&str> = option_env!("CS1");
 const CS2_STR: Option<&str> = option_env!("CS2");
@@ -101,7 +100,7 @@ async fn main(spawner: Spawner) -> ! {
     usb::run(spawner, usb_device);
 
     // Build the physical-pin → MCU GPIO map for this board
-    let board = BOARD_STR.and_then(Board::try_from_str);
+    let board = metadata::BAKED_BOARD;
     if let Some(board) = board {
         debug!("Board: {}", board.name());
 

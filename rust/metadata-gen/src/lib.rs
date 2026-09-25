@@ -7,10 +7,10 @@
 //!
 //! A metadata crate owns a TOML schema describing the structures its firmware
 //! holds, and a copy of that schema as the last release shipped it.  This
-//! crate turns the pair into source: a C header for the firmware, two
-//! plugin-facing C headers, the Rust types, parser, serializer and host test
-//! support the crate itself is built from, and the device-side Rust types a
-//! Rust firmware places in memory.
+//! crate turns the pair into source: a C header and a linker-script fragment
+//! for the firmware, two plugin-facing C headers, the Rust types, parser,
+//! serializer and host test support the crate itself is built from, and the
+//! device-side Rust types a Rust firmware places in memory.
 //!
 //! # Calling it
 //!
@@ -26,6 +26,7 @@
 //!     c_header: manifest_dir.join("firmware/generated/onerom_metadata.h"),
 //!     keys_header: manifest_dir.join("firmware/ora/onerom_metadata_keys_generated.h"),
 //!     constants_header: manifest_dir.join("firmware/ora/onerom_constants_generated.h"),
+//!     linker_script: manifest_dir.join("firmware/generated/onerom_metadata.ld"),
 //!     out_dir: PathBuf::from(env::var("OUT_DIR").unwrap()),
 //! };
 //! onerom_metadata_gen::generate(
@@ -47,7 +48,7 @@
 //! a build script generating Rust for a second schema without the headers or
 //! the comparison.  [`schema`] reads and validates the working schema,
 //! [`released`] reads the copy of the last release, [`layout`] compares them,
-//! and the seven `*_gen` modules each return the text of one output.
+//! and the eight `*_gen` modules each return the text of one output.
 //!
 //! # What is One ROM's, not the generator's
 //!
@@ -74,6 +75,8 @@ pub mod keys_gen;
 #[doc(hidden)]
 pub mod layout;
 #[doc(hidden)]
+pub mod linker_gen;
+#[doc(hidden)]
 pub mod released;
 #[doc(hidden)]
 pub mod rust_gen;
@@ -92,8 +95,9 @@ const RUST_DEVICE_GENERATED: &str = "device_generated.rs";
 
 /// Where a run of the generator writes, and the schema file its output names.
 ///
-/// Missing parent directories of the three headers are created.  `out_dir`
-/// must exist, which for a build script's `OUT_DIR` it does.
+/// Missing parent directories of the three headers and the linker-script
+/// fragment are created.  `out_dir` must exist, which for a build script's
+/// `OUT_DIR` it does.
 pub struct Outputs {
     /// The schema file as every generated file's `Source:` line names it,
     /// such as `rust/metadata/metadata_schema.toml`.
@@ -104,6 +108,8 @@ pub struct Outputs {
     pub keys_header: PathBuf,
     /// The plugin-facing constants header.
     pub constants_header: PathBuf,
+    /// The linker-script fragment, holding every `linker_script` constant.
+    pub linker_script: PathBuf,
     /// Directory for `metadata_generated.rs`, `serialize_generated.rs`,
     /// `host_generated.rs` and `device_generated.rs` - a build script's
     /// `OUT_DIR`.
@@ -174,6 +180,16 @@ pub fn generate(
         "onerom build: wrote keys header -> {}",
         outputs.keys_header.display()
     );
+
+    // -------------------------------------------------------------------------
+    // Linker-script fragment generation
+    // -------------------------------------------------------------------------
+
+    write_with_parent(
+        &outputs.linker_script,
+        &linker_gen::generate(&schema),
+        "linker script",
+    )?;
 
     // -------------------------------------------------------------------------
     // Rust source generation

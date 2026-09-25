@@ -374,13 +374,14 @@ and exposes the `picobootx` interface. `host-control` implements RBCP.
 **A value more than one of firmware, plugin and host must agree on is declared
 once, in `rust/metadata/metadata_schema.toml`, and every consumer reads it from
 there.** A second hand-written copy makes drift silent, because nothing
-compares the two. One declaration reaches all three:
+compares the two. One declaration reaches all four:
 
 | Reaches | How | Name |
 | --- | --- | --- |
 | Firmware C | `firmware/generated/onerom_metadata.h` | the schema name |
 | Rust (CLI, tools, tests) | `pub const` on `onerom_metadata` | the schema name |
 | Plugins (`ora_api = true` only) | `firmware/ora/onerom_constants_generated.h`, included by `api.h` | `ORA_` + the schema name |
+| Linker scripts (`linker_script = true` only) | `firmware/generated/onerom_metadata.ld`, included by `firmware/link/common_vars.ld` | the schema name |
 
 ```toml
 [[constants]]

@@ -11,8 +11,8 @@ _Onerom_Runtime_Info_Size = 0x100; /* 256 bytes */
 /* from RAM */
 _Onerom_Info_Ram_Size = 0x100; /* 256 bytes */ 
 
-/* Offset from start of RAM for onerom_info_t */
-_Onerom_Info_Offset = 0x200;
+/* Constants declared in the metadata schema, such as ONEROM_INFO_OFFSET */
+INCLUDE "onerom_metadata.ld"
 
 /* Amount of flash reserved at start for firmware */
 _Onerom_Flash_Size = 0xC000;

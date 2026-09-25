@@ -55,7 +55,8 @@ LDSCRIPT=link/linker.ld
 # rest.  make cannot see through an INCLUDE, so the whole directory is named
 # here.  Depending on linker.ld alone meant editing an included script relinked
 # nothing - the ELF kept the old layout and that script's ASSERTs never ran.
-LDSCRIPTS := $(wildcard link/*.ld)
+# common_vars.ld also INCLUDEs the fragment generated from the metadata schema.
+LDSCRIPTS := $(wildcard link/*.ld) generated/onerom_metadata.ld
 
 # Flags
 #
@@ -78,7 +79,7 @@ CFLAGS := $(EXTRA_C_FLAGS) $(COMMON_FLAGS) -Werror \
 		  -DONEROM_VERSION_MAJOR=$(VERSION_MAJOR) -DONEROM_VERSION_MINOR=$(VERSION_MINOR) \
 		  -DONEROM_VERSION_PATCH=$(VERSION_PATCH) -DONEROM_BUILD_NUMBER=$(BUILD_NUMBER) \
 		  -DONEROM_GIT_COMMIT=\"$(GIT_COMMIT)\" 
-LDFLAGS := $(COMMON_FLAGS) -Werror -Llink -nostdlib -specs=nosys.specs -specs=nano.specs -Wl,--no-gc-sections -Wl,--fatal-warnings -Wl,-Map=$(MAP)
+LDFLAGS := $(COMMON_FLAGS) -Werror -Llink -Lgenerated -nostdlib -specs=nosys.specs -specs=nano.specs -Wl,--no-gc-sections -Wl,--fatal-warnings -Wl,-Map=$(MAP)
 
 ifeq ($(PLUGIN_LOGGING), 1)
 	CFLAGS += -DPLUGIN_LOGGING=1

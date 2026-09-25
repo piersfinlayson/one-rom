@@ -4851,10 +4851,10 @@ dependencies = [
 
 [[package]]
 name = "onerom-lab"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "airfrog-rpc",
- "built",
+ "chrono",
  "cortex-m",
  "cortex-m-rt",
  "critical-section",
@@ -4872,6 +4872,8 @@ dependencies = [
  "log",
  "once_cell",
  "onerom-config",
+ "onerom-lab-metadata",
+ "onerom-metadata",
  "panic-probe",
  "panic-rtt-target",
  "picobootx",

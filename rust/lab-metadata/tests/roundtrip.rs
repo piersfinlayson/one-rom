@@ -8,7 +8,7 @@
 //! two sides agree on it beforehand - a field written at one offset and read
 //! at another passes every other check in the tree.
 
-use onerom_lab_metadata::{DeviceMemoryView, MaybeKnown, Rp235xVariant};
+use onerom_lab_metadata::DeviceMemoryView;
 use onerom_lab_metadata::{
     Generations, LAB_METADATA_MAGIC, LAB_METADATA_VERSION, LAB_RUNTIME_INFO_MAGIC,
     LAB_RUNTIME_INFO_VERSION, OneromLabHardwareInfo, OneromLabMetadataHeader, OneromLabRuntimeInfo,
@@ -49,7 +49,6 @@ fn header() -> OneromLabMetadataHeader {
         version: LAB_METADATA_VERSION,
         hw: OneromLabHardwareInfo {
             hw_rev: Some("fire-40-a".into()),
-            rp235x: MaybeKnown::Known(Rp235xVariant::Rp235xb),
         },
     }
 }
@@ -60,7 +59,6 @@ fn a_baked_board_survives_the_round_trip() {
     let read = read_back(&buf).expect("the buffer should parse");
     assert_eq!(read.version, LAB_METADATA_VERSION);
     assert_eq!(read.hw.hw_rev.as_deref(), Some("fire-40-a"));
-    assert_eq!(read.hw.rp235x, MaybeKnown::Known(Rp235xVariant::Rp235xb));
 }
 
 #[test]

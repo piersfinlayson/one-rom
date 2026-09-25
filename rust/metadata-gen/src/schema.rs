@@ -360,6 +360,12 @@ pub struct Constant {
     #[serde(default)]
     pub ora_api: bool,
 
+    /// Whether this constant is also written into the linker-script fragment,
+    /// which a linker script can include where it cannot include a C header.
+    /// False for every constant no linker script uses.
+    #[serde(default)]
+    pub linker_script: bool,
+
     /// Firmware release in which this constant became visible to a plugin,
     /// which is what a plugin author sets `min_fw_version` from.  Required of
     /// every `ora_api` constant and allowed on no other.  It says when the
@@ -421,6 +427,11 @@ impl Schema {
     /// The constants the ORA plugin API carries, in schema order.
     pub fn ora_constants(&self) -> impl Iterator<Item = &Constant> {
         self.constants.iter().filter(|c| c.ora_api)
+    }
+
+    /// The constants the linker-script fragment carries, in schema order.
+    pub fn linker_constants(&self) -> impl Iterator<Item = &Constant> {
+        self.constants.iter().filter(|c| c.linker_script)
     }
 }
 
@@ -957,6 +968,7 @@ impl Schema {
         schema.validate_release_strings()?;
         schema.validate_constant_releases()?;
         schema.validate_constant_deprecations()?;
+        schema.validate_linker_constants()?;
         Ok(schema)
     }
 
@@ -1751,6 +1763,22 @@ impl Schema {
                     "constant {} is deprecated from {deprecated} and reached the plugin API in \
                      {first} - a constant is retired in a later release than the one it arrived \
                      in",
+                    c.name
+                )
+                .into());
+            }
+        }
+        Ok(())
+    }
+
+    /// Check that every `linker_script` constant is a number, since a linker
+    /// script has no strings.
+    fn validate_linker_constants(&self) -> Result<(), Box<dyn std::error::Error>> {
+        for c in self.linker_constants() {
+            if matches!(c.value, ConstantValue::Text(_)) {
+                return Err(format!(
+                    "constant {} is marked linker_script but holds text, and a linker script \
+                     takes only numbers",
                     c.name
                 )
                 .into());

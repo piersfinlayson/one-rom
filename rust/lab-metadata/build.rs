@@ -9,8 +9,8 @@
 // CARGO_MANIFEST_DIR and a published tarball builds without reaching outside
 // itself.
 //
-// Lab is Rust, so the three C headers the generator also writes go into
-// OUT_DIR and nothing reads them.
+// Lab is Rust, so the three C headers and the linker-script fragment the
+// generator also writes go into OUT_DIR and nothing reads them.
 
 use std::env;
 use std::path::PathBuf;
@@ -47,6 +47,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             c_header: out_dir.join("onerom_lab_metadata.h"),
             keys_header: out_dir.join("onerom_lab_metadata_keys.h"),
             constants_header: out_dir.join("onerom_lab_constants.h"),
+            linker_script: out_dir.join("onerom_lab_metadata.ld"),
             out_dir,
         },
     )?;

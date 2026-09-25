@@ -60,13 +60,12 @@ CONFIG="$EMU_CONFIG" BOARD="$EMU_BOARD" \
 # lab's build-all.sh.
 #
 # --no-deps confines this pass to lab's own code.  Without it, clippy also lints
-# the workspace crates lab depends on - onerom-config, onerom-protocol and
-# onerom-database - under nightly's lint set rather than stable's, so a lint
-# promoted to warn-by-default in nightly fails the build over a file the host
-# pass above already covers on stable.  That is not hypothetical: it happened to
-# `matches![...]` in onerom-config's build script, which is nursery (allow) on
-# stable and warn-by-default on nightly.  All three crates are linted in the host
-# pass, so nothing loses coverage here.
+# the workspace crates lab depends on under nightly's lint set rather than
+# stable's, so a lint promoted to warn-by-default in nightly fails the build
+# over a file the host pass above already covers on stable.  That is not
+# hypothetical: it happened to `matches![...]` in onerom-config's build script,
+# which is nursery (allow) on stable and warn-by-default on nightly.  All of
+# them are linted in the host pass, so nothing loses coverage here.
 echo "Running clippy (onerom-lab)..."
 ( cd lab \
     && rustup target add thumbv8m.main-none-eabihf \

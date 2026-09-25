@@ -23,9 +23,7 @@ scripts/flash.sh                # board set at runtime, with B:<board>
 scripts/flash.sh fire-40-a      # bake in a default board
 ```
 
-The argument is a **board** name, not a chip type.  A single binary reads every
-chip type the board supports, so the only reason to bake in a board is
-convenience.
+The argument is any valid board type.
 
 The `z` command reboots back into BOOTSEL, so reflashing never needs the button.
 
@@ -46,8 +44,8 @@ board you are pointed at, while Lab carries on running:
 ```text
 Program Information
  name:          One ROM Lab
- version:       0.3.0
- description:   Use the One ROM hardware to read ROMs
+ version:       0.4.0
+ description:   Use One ROM as a ROM reader
 ```
 
 **Reflash it.**  Two commands, no jumper and no button, and they work whether or
@@ -86,7 +84,7 @@ Lab greets you as your terminal opens the port:
 
 ```text
 ----- One ROM Lab -----
-One ROM Lab fire-40-a v0.3.0
+One ROM Lab fire-40-a v0.4.0
 Serial: 62CD9AE3C0771A7E
 -----------------------
 Type ? for help.

@@ -70,30 +70,6 @@ value = 1
 comment = "Version of the onerom_lab_runtime_info_t structure"
 
 # ===========================================================================
-# Enums
-# ===========================================================================
-
-[[enums]]
-name = "rp235x_variant_t"
-size = 1
-packed = true
-comment = """RP235x silicon package variant.
-Values are chosen to match the SYS_INFO: PACKAGE_SEL Register"""
-strip_prefix = "RP235X"
-
-[[enums.variants]]
-name = "RP235XB"
-value = 0
-display = "RP235xB"
-comment = "RP235xB"
-
-[[enums.variants]]
-name = "RP235XA"
-value = 1
-display = "RP235xA"
-comment = "RP235xA"
-
-# ===========================================================================
 # Structures
 # ===========================================================================
 
@@ -152,15 +128,9 @@ comment = """Board baked in at build time.
 Null where the board is set at runtime instead, with B:<board>."""
 
 [[structs.fields]]
-name = "rp235x"
-kind = "enum"
-type = "rp235x_variant_t"
-comment = "Expected RP235x silicon variant for this board"
-
-[[structs.fields]]
 name = "reserved"
 kind = "padding"
-size = 251
+size = 252
 comment = "Pad to 256 bytes. Set to 0xFF."
 
 # ---

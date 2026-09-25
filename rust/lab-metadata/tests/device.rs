@@ -12,14 +12,13 @@ use core::ffi::CStr;
 use onerom_lab_metadata::{
     LAB_METADATA_VERSION, LAB_RUNTIME_INFO_VERSION, ONEROM_LAB_RUNTIME_INFO_SIZE,
     onerom_lab_hardware_info_t, onerom_lab_info_t, onerom_lab_metadata_header_t,
-    onerom_lab_runtime_info_t, rp235x_variant_t,
+    onerom_lab_runtime_info_t,
 };
 use onerom_metadata::{FirmwareType, ONEROM_INFO_VERSION, Ptr, RuntimeCell, firmware_type_t};
 
 static HW: onerom_lab_hardware_info_t = onerom_lab_hardware_info_t {
     hw_rev: Some(Ptr::from_cstr(c"fire-40-a")),
-    rp235x: rp235x_variant_t::RP235XB,
-    reserved: [0xFF; 251],
+    reserved: [0xFF; 252],
 };
 
 static HEADER: onerom_lab_metadata_header_t = onerom_lab_metadata_header_t {

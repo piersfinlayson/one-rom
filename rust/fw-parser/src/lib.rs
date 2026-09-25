@@ -105,7 +105,7 @@ use onerom_metadata::{
 ///
 /// The first 4 "magic" bytes are b"ORRM" from firmware v0.8.0, and b"SDRR"
 /// before it.
-pub const SDRR_INFO_FW_OFFSET: u32 = 0x200;
+pub const SDRR_INFO_FW_OFFSET: u32 = onerom_metadata::ONEROM_INFO_OFFSET;
 
 /// Offset from the start of RAM where the SDRR runtime info header is located.
 ///

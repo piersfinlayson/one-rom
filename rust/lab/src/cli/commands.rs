@@ -583,6 +583,7 @@ fn join_u8(vals: &[u8]) -> String {
 async fn cmd_set_board(args: &mut Args<'_>, state: &mut SessionState) -> Result<(), Error> {
     let board = parser::require_board(args.next_token(), state.board, &mut state.editor).await?;
     state.board = Some(board);
+    crate::metadata::set_board(board);
     send_line(&format!("Board set to '{}'.", board.name())).await?;
     if state.chip.is_none()
         && let Some(chip) = default_chip_for_board(board)

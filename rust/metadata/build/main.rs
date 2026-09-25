@@ -22,6 +22,7 @@ use onerom_metadata_gen::{Outputs, device_gen, generate, rust_gen, schema, seria
 const ENV_C_HEADER_OUT: &str = "ONEROM_C_HEADER_OUT";
 const ENV_KEYS_HEADER_OUT: &str = "ONEROM_KEYS_HEADER_OUT";
 const ENV_CONSTANTS_HEADER_OUT: &str = "ONEROM_CONSTANTS_HEADER_OUT";
+const ENV_LINKER_SCRIPT_OUT: &str = "ONEROM_LINKER_SCRIPT_OUT";
 const METADATA_SCHEMA_FILE: &str = "metadata_schema.toml";
 // The schema and fixture as generated files name them, from the repo root.
 const METADATA_SCHEMA_SOURCE: &str = "rust/metadata/metadata_schema.toml";
@@ -31,6 +32,7 @@ const GATING_FIXTURE_FILE: &str = "build/gating_fixture.toml";
 const C_HEADER_FILE: &str = "firmware/generated/onerom_metadata.h";
 const KEYS_HEADER_FILE: &str = "firmware/ora/onerom_metadata_keys_generated.h";
 const CONSTANTS_HEADER_FILE: &str = "firmware/ora/onerom_constants_generated.h";
+const LINKER_SCRIPT_FILE: &str = "firmware/generated/onerom_metadata.ld";
 const FIXTURE_GENERATED: &str = "gating_fixture_generated.rs";
 const FIXTURE_SERIALIZE_GENERATED: &str = "gating_fixture_serialize_generated.rs";
 const FIXTURE_DEVICE_GENERATED: &str = "gating_fixture_device_generated.rs";
@@ -76,6 +78,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .map(PathBuf::from)
         .unwrap_or_else(|_| manifest_dir.join(CONSTANTS_HEADER_FILE));
 
+    // Linker-script fragment, redirected to firmware/generated the same way as
+    // the C header.
+    let linker_script = env::var(ENV_LINKER_SCRIPT_OUT)
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| manifest_dir.join(LINKER_SCRIPT_FILE));
+
     // -------------------------------------------------------------------------
     // Cargo rerun-if-changed directives
     // -------------------------------------------------------------------------
@@ -104,6 +112,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             c_header,
             keys_header,
             constants_header,
+            linker_script,
             out_dir: out_dir.clone(),
         },
     )?;
