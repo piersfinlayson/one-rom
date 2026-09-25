@@ -8,6 +8,9 @@
 //! at `ONEROM_INFO_OFFSET` in flash.  Its `firmware_type` says the
 //! firmware is Lab, and its `metadata` and `runtime` pointers point at Lab's
 //! own structures.  All the layouts are generated from the metadata schemas.
+//!
+//! The metadata header and everything it or the runtime structure points at
+//! sit in one block after `onerom_info_t`.  A host reads that block in one go.
 
 use core::ffi::{CStr, c_char};
 
@@ -46,6 +49,8 @@ static ONEROM_LAB_INFO: onerom_lab_info_t = onerom_lab_info_t {
     reserved: [0xFF; 22],
 };
 
+// First in Lab's metadata block, where onerom_info_t's metadata pointer points.
+#[unsafe(link_section = ".onerom_lab_metadata.header")]
 static LAB_METADATA: onerom_lab_metadata_header_t = onerom_lab_metadata_header_t {
     magic: onerom_lab_metadata_header_t::MAGIC,
     version: LAB_METADATA_VERSION,
@@ -53,6 +58,7 @@ static LAB_METADATA: onerom_lab_metadata_header_t = onerom_lab_metadata_header_t
     reserved: [0xFF; 232],
 };
 
+#[unsafe(link_section = ".onerom_lab_metadata")]
 static LAB_HW: onerom_lab_hardware_info_t = onerom_lab_hardware_info_t {
     hw_rev: BAKED_HW_REV,
     reserved: [0xFF; 252],

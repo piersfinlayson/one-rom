@@ -34,7 +34,7 @@ pub struct FieldLayout {
     pub described: String,
     /// Reserved bytes nothing reads. Where a field is added to a structure of
     /// fixed size, these are what it is taken out of, so the comparison holds
-    /// them to nothing - see [`check_fields`].
+    /// them to nothing - see `check_fields`.
     pub padding: bool,
 }
 

@@ -62,7 +62,6 @@ pub const MAX_VERSION: FirmwareVersion =
 // lib.rs - Public API and core traits
 pub mod device;
 pub mod info;
-pub mod lab;
 pub mod onerom;
 mod parsing;
 pub mod readers;
@@ -80,7 +79,6 @@ use log::{debug, error, info, trace, warn};
 
 pub use device::{ParsedDevice, RomView, SlotKind, SlotView, Slots};
 pub use info::{Sdrr, SdrrExtraInfo, SdrrInfo, SdrrPins, SdrrRomInfo, SdrrRomSet, SdrrRuntimeInfo};
-pub use lab::{LabFlash, LabParser, LabRam, OneRomLab};
 pub use onerom::{FirmwareFormat, NewerGeneration, OneRom, RuntimeAbsence};
 pub use types::{
     McuLine, McuStorage, SdrrAddress, SdrrCsSet, SdrrCsState, SdrrLogicalAddress, SdrrMcuPort,
@@ -1011,22 +1009,6 @@ async fn read_string_at_ptr<R: Reader>(reader: &mut R, ptr: u32) -> Result<Strin
     }
 
     String::from_utf8(result).map_err(|_| "Invalid UTF-8 string".into())
-}
-
-async fn read_str_at_ptr<R: Reader>(reader: &mut R, len: u32, ptr: u32) -> Result<String, String> {
-    if len > 1024 {
-        return Err("String too long (>1KB)".into());
-    } else if len == 0 {
-        return Ok(String::new());
-    }
-
-    let mut buf = vec![0u8; len as usize];
-    reader
-        .read(ptr, &mut buf)
-        .await
-        .map_err(|_| format!("Failed to read string at 0x{ptr:08X}"))?;
-
-    String::from_utf8(buf).map_err(|_| "Invalid UTF-8 string".into())
 }
 
 pub fn crate_version() -> &'static str {

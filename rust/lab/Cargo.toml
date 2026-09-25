@@ -64,6 +64,7 @@ rp-binary-info = { version = "0.1.2", features = ["binary-info"] }
 chrono = { version = "0.4", default-features = false, features = ["now"] }
 csv = "1.3"
 onerom-config = { workspace = true }
+onerom-lab-metadata = { workspace = true }
 onerom-metadata = { workspace = true }
 
 [lints]

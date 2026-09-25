@@ -731,12 +731,18 @@ fn push_metadata_generation_table(out: &mut String, schema: &Schema) {
     );
     out.push_str(
         "/// Every metadata generation, oldest first, with the firmware release that\n\
-         /// introduced it.\n\
-         ///\n\
-         /// A host writes the metadata and the firmware reads it, and the two are of\n\
-         /// different ages.  This is what says which generation a given firmware\n\
-         /// reads - see [`metadata_generation_for`], which is how a caller asks.\n",
+         /// introduced it.\n",
     );
+    // A host writes the metadata only where the schema has a metadata region.
+    // metadata_generation_for is onerom-metadata's, for that host.
+    if schema.schema.metadata_base.is_some() {
+        out.push_str(
+            "///\n\
+             /// A host writes the metadata and the firmware reads it, and the two are of\n\
+             /// different ages.  This is what says which generation a given firmware\n\
+             /// reads - see [`metadata_generation_for`], which is how a caller asks.\n",
+        );
+    }
     out.push_str("pub const METADATA_GENERATIONS: &[(FirmwareVersion, u32)] = &[\n");
     for (generation, (major, minor, patch)) in generations {
         out.push_str(&format!(
@@ -1316,7 +1322,7 @@ fn widen_to_u32(version_field: &Field) -> &'static str {
 /// The literal a gated field takes where the structure predates it.
 ///
 /// It is the C accessor's default said in Rust: `None` and an empty `Vec` and
-/// a null [`Pointer`] are each what that accessor's `NULL` means for the kind
+/// a null `Pointer` are each what that accessor's `NULL` means for the kind
 /// in front of it, and an array's elements are the same bytes.
 pub fn rust_default_expr(field: &Field, schema: &Schema) -> String {
     match field.kind.as_str() {

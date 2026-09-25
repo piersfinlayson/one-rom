@@ -160,7 +160,7 @@ pub const NULL_DEFAULT: &str = "null";
 /// The elements an array field's `default_if_absent` states, expanded and
 /// flattened into the array's own order - a whole number fills every element,
 /// a list states them one by one.  Both generators write this out rather than
-/// each re-reading the TOML.  [`check_array_default`] has already refused
+/// each re-reading the TOML.  `check_array_default` has already refused
 /// anything it cannot expand.
 pub fn array_default_elements(field: &Field) -> Vec<u8> {
     let value = field
@@ -582,9 +582,9 @@ impl ExpectedConst {
     }
 }
 
-/// A field within a [[structs]] definition or a [[tagged_fams]] common/variant
-/// section.  Uses a flat layout: all optional members are None when
-/// inapplicable to the field's `kind`.
+/// A field within a `[[structs]]` definition or a `[[tagged_fams]]`
+/// common/variant section.  Uses a flat layout: all optional members are None
+/// when inapplicable to the field's `kind`.
 ///
 /// Field kinds and their relevant members:
 ///
@@ -674,7 +674,7 @@ pub struct Field {
     /// Value a reader uses where the structure predates this field.  Pairs
     /// with the `since_*_version` marker - a field has both or neither.  What
     /// it holds depends on the kind, spelled out in
-    /// [`Schema::validate_defaults`].
+    /// `Schema::validate_defaults`.
     pub default_if_absent: Option<toml::Value>,
 
     // Deprecation markers.  A shipped field is never moved, renamed or

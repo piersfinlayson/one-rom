@@ -6,12 +6,13 @@
 //!
 //! Types and parsing support for schema-format (v0.7.0+) OneROM firmware.
 
-use core::fmt;
-
 use onerom_metadata::{
     CURRENT_METADATA_VERSION, DeviceMemoryView, Generations, ONEROM_INFO_VERSION, OneromInfo,
     RUNTIME_INFO_VERSION,
 };
+
+// onerom-metadata defines these for every parser in the family.
+pub use onerom_metadata::{NewerGeneration, RuntimeAbsence};
 
 #[cfg(not(feature = "std"))]
 use alloc::{boxed::Box, format, vec::Vec};
@@ -33,79 +34,6 @@ pub enum FirmwareFormat {
 
     /// v0.7.0+ schema-driven metadata format.  Use [`crate::Parser::parse_format_schema`].
     Schema,
-}
-
-// ---------------------------------------------------------------------------
-// RuntimeAbsence
-// ---------------------------------------------------------------------------
-
-/// Why a parse came back with no runtime info.
-///
-/// The firmware writes `onerom_runtime_info_t` in RAM once it is up, so a
-/// device that is not up has none, and a firmware file holds no RAM to hold
-/// one.  Without a reason a user cannot tell those apart from a fault.
-///
-/// The variants are the four points it can go missing, in the order the parse
-/// reaches them.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum RuntimeAbsence {
-    /// The info header's runtime pointer is null.
-    NoPointer,
-
-    /// The memory the runtime pointer names could not be read.
-    Unreadable,
-
-    /// The memory was read and does not hold the runtime magic, so nothing
-    /// has written runtime info there.
-    NotRunning,
-
-    /// The magic was there and this build could not read the structure
-    /// behind it.
-    Unparsed,
-}
-
-impl fmt::Display for RuntimeAbsence {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(match self {
-            Self::NoPointer => "The image's pointer to runtime info is not set.",
-            Self::Unreadable => "Runtime info could not be read from RAM.",
-            Self::NotRunning => "The device is stopped and has no runtime info.",
-            Self::Unparsed => "Runtime info is present but could not be parsed.",
-        })
-    }
-}
-
-// ---------------------------------------------------------------------------
-// NewerGeneration
-// ---------------------------------------------------------------------------
-
-/// A structure carrying a generation newer than this build knows.
-///
-/// Every field this build knows is parsed and present, since a newer
-/// generation keeps existing offsets where they are.  Naming the generation
-/// is all this build can say about what lies beyond them.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
-pub struct NewerGeneration {
-    /// The structure, named as the schema names it.
-    pub structure: &'static str,
-
-    /// The generation the device carries.
-    pub device_generation: u32,
-
-    /// The newest generation of that structure this build knows.
-    pub known_generation: u32,
-}
-
-impl fmt::Display for NewerGeneration {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "{} is generation {}, and this build understands generation {}, so it carries \
-             fields this build cannot parse.",
-            self.structure, self.device_generation, self.known_generation
-        )
-    }
 }
 
 // ---------------------------------------------------------------------------

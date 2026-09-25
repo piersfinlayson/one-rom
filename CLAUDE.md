@@ -429,7 +429,7 @@ the RTT control block and the ROM data are all parsed, and `onerom inspect info`
 dumps the lot as JSON (`rust/cli/src/inspect.rs`). Few users reach for it. It is
 core to One ROM's architecture, and it is not up for trade.
 
-A host starts at one fixed address, `onerom_info_t` at the metadata base in
+A host starts at one fixed address, `onerom_info_t` at `ONEROM_INFO_OFFSET` in
 flash, follows its `runtime` pointer to `onerom_runtime_info_t` in RAM and
 confirms the magic. Everything existing only while the device runs hangs off
 runtime info. It falls out of the schema: a field declared in

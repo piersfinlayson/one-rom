@@ -4899,6 +4899,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "onerom-lab-parser"
+version = "0.1.0"
+dependencies = [
+ "airfrog-rpc",
+ "log",
+ "onerom-config",
+ "onerom-lab-metadata",
+ "onerom-metadata",
+]
+
+[[package]]
 name = "onerom-lens"
 version = "0.1.0"
 dependencies = [

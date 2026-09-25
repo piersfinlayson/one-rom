@@ -9,6 +9,7 @@ use std::process::Command;
 
 use onerom_config::hw::{Board, MODELS};
 use onerom_config::mcu::Family;
+use onerom_lab_metadata::LAB_METADATA_SIZE;
 use onerom_metadata::ONEROM_INFO_OFFSET;
 
 fn main() {
@@ -55,11 +56,19 @@ fn generate_build_info() {
     // Every board by name.  Board is non_exhaustive, so the match also needs a
     // wildcard.  If the wildcard ever matches a board, the workspace's
     // wildcard_enum_match_arm lint fails Lab's clippy run.
+    //
+    // Each name is a static in Lab's metadata block because both hw_rev fields
+    // point at one and a host reads only that block.
+    let mut statics = String::new();
     let mut names = String::new();
-    for model in MODELS {
-        for board in model.boards() {
-            names += &format!("        Board::{board:?} => c{:?},\n", board.name());
-        }
+    for (index, board) in MODELS.iter().flat_map(|model| model.boards()).enumerate() {
+        let bytes = format!("{}\0", board.name());
+        statics += &format!(
+            "#[unsafe(link_section = \".onerom_lab_metadata\")]\n\
+             static BOARD_NAME_{index}: [u8; {}] = *b{bytes:?};\n",
+            bytes.len()
+        );
+        names += &format!("        Board::{board:?} => &BOARD_NAME_{index},\n");
     }
 
     let code = format!(
@@ -79,10 +88,15 @@ pub const BUILD_DATE: &CStr = c{build_date:?};
 /// The commit this image was built from.
 pub const COMMIT: [u8; 8] = {commit:?};
 
+{statics}
 /// `board`'s name as a C string.
 pub const fn board_c_name(board: Board) -> &'static CStr {{
-    match board {{
+    let name: &'static [u8] = match board {{
 {names}        _ => unreachable!(),
+    }};
+    match CStr::from_bytes_with_nul(name) {{
+        Ok(name) => name,
+        Err(_) => unreachable!(),
     }}
 }}
 "#
@@ -135,8 +149,12 @@ fn generate_rp2350_memory_x() {
     let out_dir = env::var("OUT_DIR").unwrap();
     let memory_path = Path::new(&out_dir).join("memory.x");
 
-    // onerom_info_t's offset in flash, from One ROM's metadata schema.
-    let offset = format!("ONEROM_INFO_OFFSET = {ONEROM_INFO_OFFSET:#X};\n");
+    // onerom_info_t's offset in flash and the size limit of Lab's metadata
+    // block, both from the metadata schemas.
+    let offset = format!(
+        "ONEROM_INFO_OFFSET = {ONEROM_INFO_OFFSET:#X};\n\
+         LAB_METADATA_SIZE = {LAB_METADATA_SIZE:#X};\n"
+    );
 
     let memory_x = r#"
 MEMORY {
@@ -184,14 +202,28 @@ SECTIONS {
         KEEP(*(.onerom_info));
     } > FLASH
 
+    /* ### Lab's metadata block
+     *
+     * A host reads LAB_METADATA_SIZE bytes from onerom_info_t's metadata
+     * pointer.  So the metadata header goes first, and everything it and the
+     * runtime structure point at follows.
+     */
+    .onerom_lab_metadata : ALIGN(4)
+    {
+        KEEP(*(.onerom_lab_metadata.header));
+        KEEP(*(.onerom_lab_metadata));
+    } > FLASH
+
 } INSERT AFTER .vector_table;
 
 ASSERT(ADDR(.start_block) + SIZEOF(.start_block) <= ADDR(.onerom_info),
        "The boot info overlaps onerom_info_t");
 ASSERT(SIZEOF(.onerom_info) > 0, "onerom_info_t is missing from .onerom_info");
+ASSERT(SIZEOF(.onerom_lab_metadata) <= LAB_METADATA_SIZE,
+       "Lab's metadata block is larger than LAB_METADATA_SIZE");
 
-/* move .text to start /after/ onerom_info_t */
-_stext = ADDR(.onerom_info) + SIZEOF(.onerom_info);
+/* move .text to start /after/ Lab's metadata block */
+_stext = ADDR(.onerom_lab_metadata) + SIZEOF(.onerom_lab_metadata);
 
 SECTIONS {
     /* ### Picotool 'Binary Info' Entries
