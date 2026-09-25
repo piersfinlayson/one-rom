@@ -179,6 +179,8 @@ fn field_rust_type(field: &Field) -> String {
             }
         }
 
+        "string" => "String".into(),
+
         "struct_ptr" => {
             let tn = rust_type_name(field.type_.as_deref().unwrap_or(""));
             if field.nullable.unwrap_or(false) {
@@ -639,6 +641,14 @@ fn emit_field_at_addr(
             ));
         }
 
+        // Schema::parse refuses an array in a variant of anything but u8.
+        "inline_array" => {
+            let n = field.count.unwrap_or(0);
+            out.push_str(&format!(
+                "{indent}let {name} = view.read_bytes::<{n}>(addr + {byte_offset}u32)?;\n"
+            ));
+        }
+
         "padding" => {
             // Nothing to read; the offset accounting is done by the caller.
         }
@@ -916,8 +926,8 @@ fn push_enum(out: &mut String, e: &Enum) {
     out.push_str(&format!("#[repr({repr})]\n"));
     out.push_str(&format!("pub enum {tn} {{\n"));
     for v in e.variants.iter().filter(|v| !v.is_sentinel()) {
-        if let Some(cmt) = &v.comment {
-            push_doc_comment(out, "    ", cmt);
+        if let Some(doc) = v.documentation() {
+            push_doc_comment(out, "    ", &doc);
         }
         let vn = variant_ident(&v.name, strip);
         out.push_str(&format!("    {vn} = {},\n", v.value));
@@ -927,8 +937,8 @@ fn push_enum(out: &mut String, e: &Enum) {
     // Sentinel variants become free-standing pub constants.
     let has_sentinels = e.variants.iter().any(|v| v.is_sentinel());
     for v in e.variants.iter().filter(|v| v.is_sentinel()) {
-        if let Some(cmt) = &v.comment {
-            push_doc_comment(out, "", cmt);
+        if let Some(doc) = v.documentation() {
+            push_doc_comment(out, "", &doc);
         }
         out.push_str(&format!("pub const {}: {repr} = {};\n", v.name, v.value));
     }
@@ -1523,8 +1533,12 @@ fn push_tagged_fam(out: &mut String, tf: &TaggedFam, schema: &Schema) {
     out.push_str(&format!("pub enum {tn} {{\n"));
 
     for v in &tf.variants {
-        if let Some(cmt) = &v.comment {
-            push_doc_comment(out, "    ", cmt);
+        // A deprecated key's note rides on the variant holding its value too.
+        let deprecated = disc_enum
+            .and_then(|e| e.variants.iter().find(|ev| ev.name == v.discriminant))
+            .and_then(|ev| ev.deprecated_release.as_deref());
+        if let Some(doc) = with_deprecation_note(v.comment.as_deref(), deprecated) {
+            push_doc_comment(out, "    ", &doc);
         }
         let vn = variant_ident(&v.discriminant, strip);
         out.push_str(&format!("    {vn} {{\n"));
@@ -1544,6 +1558,9 @@ fn push_tagged_fam(out: &mut String, tf: &TaggedFam, schema: &Schema) {
                 if let Some(first) = cmt.lines().next() {
                     out.push_str(&format!("        /// {}\n", first.trim()));
                 }
+            }
+            if field_needs_big_array(f) {
+                out.push_str("        #[serde(with = \"serde_big_array::BigArray\")]\n");
             }
             out.push_str(&format!("        {}: {},\n", f.name, field_rust_type(f)));
         }
@@ -1600,15 +1617,13 @@ fn push_tagged_fam_parse(
     strip: &str,
     disc_enum: Option<&Enum>,
 ) {
-    // Binary layout: [discriminant (1–2 B)] [param_len (1 B)] [common fields] [params…]
+    // Binary layout: [discriminant (1–2 B)] [param_len (1–2 B)] [common fields] [params…]
     let disc_size = disc_enum.map_or(1, |e| e.size) as usize;
-    let disc_reader = if disc_size == 1 {
-        "read_u8"
-    } else {
-        "read_u16_le"
-    };
+    let reader = |size: usize| if size == 1 { "read_u8" } else { "read_u16_le" };
+    let disc_reader = reader(disc_size);
+    let len_reader = reader(tf.param_len_size());
     let param_len_off = disc_size; // byte offset of param_len
-    let common_start = disc_size + 1; // byte offset of first common field
+    let common_start = disc_size + tf.param_len_size(); // byte offset of first common field
 
     out.push_str(&format!("impl {tn} {{\n"));
     push_parse_signature(out);
@@ -1619,7 +1634,7 @@ fn push_tagged_fam_parse(
         "        let discriminant = view.{disc_reader}(addr)?;\n"
     ));
     out.push_str(&format!(
-        "        let param_len = view.read_u8(addr + {param_len_off}u32)?;\n"
+        "        let param_len = view.{len_reader}(addr + {param_len_off}u32)?;\n"
     ));
 
     // Common fields at statically known addresses (no mutable offset variable
@@ -1640,10 +1655,16 @@ fn push_tagged_fam_parse(
         let vn = variant_ident(&v.discriminant, strip);
 
         out.push_str(&format!("            {disc_val} => {{\n"));
+        let fixed = v.fixed_size(schema);
+        push_params_len_check(out, fixed);
 
         // Variant param fields, continuing from byte_off (= base_size).
         let mut vbyte_off = byte_off;
         for f in &v.fields {
+            if f.kind == "string" {
+                emit_string_at_addr(out, f, vbyte_off, fixed, "                ");
+                continue;
+            }
             emit_field_at_addr(out, f, vbyte_off, "                ", schema);
             vbyte_off += field_size(f, schema);
         }
@@ -1679,6 +1700,47 @@ fn push_tagged_fam_parse(
     out.push_str("        }\n");
     out.push_str("    }\n");
     out.push_str("}\n\n");
+}
+
+/// Emit the refusal of an entry too short for its variant's fixed fields,
+/// which would otherwise be read from whatever follows the entry.  A variant
+/// with none fits any length.
+fn push_params_len_check(out: &mut String, needed: usize) {
+    if needed == 0 {
+        return;
+    }
+    out.push_str(&format!(
+        "                if (param_len as usize) < {needed} {{\n\
+         \x20                   return Err(ParseError::ParamsTooShort {{\n\
+         \x20                       addr,\n\
+         \x20                       len: param_len as usize,\n\
+         \x20                       needed: {needed},\n\
+         \x20                   }});\n\
+         \x20               }}\n"
+    ));
+}
+
+/// Emit the read of a variant's `string`, which runs from `byte_offset` to
+/// the end of the entry.  The length check ahead of it keeps the subtraction
+/// from going below zero.
+fn emit_string_at_addr(
+    out: &mut String,
+    field: &Field,
+    byte_offset: usize,
+    fixed: usize,
+    indent: &str,
+) {
+    let name = &field.name;
+    let len = match fixed {
+        0 => "param_len as usize".to_string(),
+        n => format!("param_len as usize - {n}"),
+    };
+    out.push_str(&format!(
+        "{indent}let {name} = String::from(\n\
+         {indent}    core::str::from_utf8(view.slice_at(addr + {byte_offset}u32, {len})?)\n\
+         {indent}        .map_err(|_| ParseError::InvalidUtf8)?,\n\
+         {indent});\n"
+    ));
 }
 
 // ---------------------------------------------------------------------------

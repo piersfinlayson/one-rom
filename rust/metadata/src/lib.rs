@@ -100,6 +100,16 @@ pub enum ParseError {
     InvalidUtf8,
     /// A C string did not contain the expected magic value
     BadMagic { field: &'static str },
+    /// A tagged FAM entry's length is shorter than its variant's fields, so
+    /// reading them would run into whatever follows the entry.
+    ParamsTooShort {
+        /// Address of the entry.
+        addr: u32,
+        /// The length the entry gives.
+        len: usize,
+        /// The length the variant's fields need.
+        needed: usize,
+    },
 }
 
 // ---------------------------------------------------------------------------

@@ -58,10 +58,10 @@ skips.
 
 | Key | Name | Value |
 | --- | --- | --- |
-| 1 | `BOARD` | Board name matching firmware metadata's `hw_rev` |
+| 1 | `COMMISSIONING_BOARD` | Board name matching firmware metadata's `hw_rev` |
 | 2 | `COMMISSIONING_SIG` | 64-byte Ed25519 signature |
-| 3 | `MANUFACTURER` | Manufacturer's name |
-| 4 | `COMMISSIONED_DATE` | UTC commissioning date as 8 ASCII digits, `YYYYMMDD` |
+| 3 | `COMMISSIONING_MANUFACTURER` | Manufacturer's name |
+| 4 | `COMMISSIONING_DATE` | UTC commissioning date as 8 ASCII digits, `YYYYMMDD` |
 
 ## General Store Keys
 
@@ -105,7 +105,7 @@ interrupted between the two reads as absent.
 
 `COMMISSIONING_SIG` shows who signed a commissioning. The signer and the
 manufacturer can differ. piers.rocks can sign boards it white-labels for another
-manufacturer. That manufacturer's name goes in `MANUFACTURER`.
+manufacturer. That manufacturer's name goes in `COMMISSIONING_MANUFACTURER`.
 
 Every RP2350 holds a unique 64-bit ID called CHIPID in rows `0x000`–`0x003`.
 Raspberry Pi writes and locks it when the chip is made.
@@ -173,7 +173,7 @@ each string's default and One ROM's value. The VID and PID are unchanged.
 | INDEX.HTM link | Web page on the USB drive | raspberrypi.com device page | `https://onerom.org` | 9 |
 | INDEX.HTM link name | Web page on the USB drive | `raspberrypi.com` | `onerom.org` | 5 |
 | INFO_UF2.TXT model | Text file on the USB drive | `Raspberry Pi RP2350` | `One ROM` | 4 |
-| INFO_UF2.TXT board ID | Text file on the USB drive | `RP2350` | `BOARD` value, e.g. `fire-24-f` | 5–7 |
+| INFO_UF2.TXT board ID | Text file on the USB drive | `RP2350` | `COMMISSIONING_BOARD` value, e.g. `fire-24-f` | 5–7 |
 | SCSI vendor, product and version | OS disk details | `RPI`, `RP2350` and a version | Unchanged | 0 |
 
 Defaults are from datasheet section 5.7. A row holds two characters.
@@ -213,9 +213,9 @@ Firmware reads the store through the unguarded ECC alias. This is a memory
 window at `0x40130000` where row n appears as 16 bits at `0x40130000`+(2*n).
 A damaged row returns bad data instead of a bus fault.
 
-At boot, firmware compares the current commissioning's `BOARD` with firmware
-metadata's `hw_rev` before driving GPIOs. If they differ it reboots into the
-bootloader.
+At boot, firmware compares `COMMISSIONING_BOARD` from the current commissioning
+with firmware metadata's `hw_rev` before driving GPIOs. If they differ it
+reboots into the bootloader.
 
 `clk_ref` must be 25MHz or less while firmware reads OTP. After firmware boot
 One ROM's `clk_ref` is currently 3MHz - the external 12MHz crystal divided by 4.
@@ -231,8 +231,8 @@ whether a second flash chip is fitted.
 - A signature is present, from a known source, and reports the signer.
 
 When the flash doesn't hold One ROM firmware, the CLI takes the board type from
-the current commissioning's `BOARD`. The CLI refuses to program an image built
-for another board unless an override option is enabled.
+`COMMISSIONING_BOARD` in the current commissioning. The CLI refuses to program
+an image built for another board unless an override option is enabled.
 
 ## Locking
 

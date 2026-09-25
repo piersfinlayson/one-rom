@@ -154,6 +154,21 @@ pub const POINTER_KINDS: [&str; 8] = [
 /// `default_if_absent` is a fill or a list.
 pub const ARRAY_KINDS: [&str; 2] = ["inline_array", "inline_array2d"];
 
+/// The kinds a tagged FAM's common field may be, which every generator reads
+/// and writes at a fixed offset.
+const COMMON_FIELD_KINDS: [&str; 4] = ["scalar", "enum", "type_alias", "padding"];
+
+/// The kinds a tagged FAM variant's field may be: the common kinds, a `u8`
+/// array, and a `string` running to the end of the entry.
+const VARIANT_FIELD_KINDS: [&str; 6] = [
+    "scalar",
+    "enum",
+    "type_alias",
+    "padding",
+    "inline_array",
+    "string",
+];
+
 /// The `default_if_absent` every pointer kind takes, and the only one.
 pub const NULL_DEFAULT: &str = "null";
 
@@ -394,14 +409,7 @@ impl Constant {
     /// rides the comment rather than being a second thing each generator
     /// emits, so all three outputs say the same thing.
     pub fn documentation(&self) -> Option<String> {
-        let note = self.deprecated_release.as_ref().map(|release| {
-            format!("Deprecated from firmware {release} - nothing should use it from there on.")
-        });
-        match (&self.comment, note) {
-            (Some(comment), Some(note)) => Some(format!("{comment}\n{note}")),
-            (Some(comment), None) => Some(comment.clone()),
-            (None, note) => note,
-        }
+        with_deprecation_note(self.comment.as_deref(), self.deprecated_release.as_deref())
     }
 
     /// What the plugin-facing header writes above this constant: everything
@@ -420,6 +428,21 @@ impl Constant {
             (Some(doc), None) => Some(doc),
             (None, since) => since,
         }
+    }
+}
+
+/// `comment`, followed by a deprecation note where `release` is given.
+pub(crate) fn with_deprecation_note(
+    comment: Option<&str>,
+    release: Option<&str>,
+) -> Option<String> {
+    let note = release.map(|release| {
+        format!("Deprecated from firmware {release} - nothing should use it from there on.")
+    });
+    match (comment, note) {
+        (Some(comment), Some(note)) => Some(format!("{comment}\n{note}")),
+        (Some(comment), None) => Some(comment.to_string()),
+        (None, note) => note,
     }
 }
 
@@ -486,11 +509,21 @@ pub struct EnumVariant {
     pub sentinel: Option<bool>,
     pub comment: Option<String>,
     pub display: Option<String>,
+    /// Firmware release from which nothing should use this value.  A released
+    /// value is never removed, because devices and hosts already hold it, so
+    /// retiring one is saying so here and leaving it where it is.
+    pub deprecated_release: Option<String>,
 }
 
 impl EnumVariant {
     pub fn is_sentinel(&self) -> bool {
         self.sentinel.unwrap_or(false)
+    }
+
+    /// What every generator writes for this value: its comment, plus the
+    /// deprecation note where it carries a `deprecated_release`.
+    pub fn documentation(&self) -> Option<String> {
+        with_deprecation_note(self.comment.as_deref(), self.deprecated_release.as_deref())
     }
 }
 
@@ -855,7 +888,7 @@ pub fn field_offsets(s: &Struct, schema: &Schema) -> Vec<usize> {
 
 /// A variable-length C struct discriminated by an enum field.
 ///
-/// Binary layout: [discriminant (1–2 B)] [param_len (1 B)] [common fields] [params…]
+/// Binary layout: [discriminant (1–2 B)] [param_len (1–2 B)] [common fields] [params…]
 ///
 /// Generates as a Rust enum where the discriminant selects the variant and
 /// the common + variant fields are members.  In C it is a struct with a
@@ -869,13 +902,37 @@ pub struct TaggedFam {
     pub discriminant_field: String,
     pub discriminant_type: String,
     pub param_len_field: String,
+    /// Type of the length field, "u8" or "u16".  Absent means "u8".
+    pub param_len_type: Option<String>,
     /// sizeof the fixed C struct portion (i.e. excluding params[]).
     /// Verified by STATIC_ASSERT in generated C.
     pub base_size: u32,
+    /// True for a family no versioned structure reaches, such as an entry in
+    /// OTP.  No generation governs it, so the release check holds it to a
+    /// rule of its own - see `layout::compare`.
+    #[serde(default)]
+    pub standalone: bool,
     #[serde(default)]
     pub common_fields: Vec<Field>,
     #[serde(default)]
     pub variants: Vec<TaggedFamVariant>,
+}
+
+impl TaggedFam {
+    /// Type of the length field.
+    pub fn param_len_type(&self) -> &str {
+        self.param_len_type.as_deref().unwrap_or("u8")
+    }
+
+    /// Byte size of the length field.
+    pub fn param_len_size(&self) -> usize {
+        prim_size(self.param_len_type())
+    }
+
+    /// Largest value the length field holds.
+    pub fn param_len_max(&self) -> usize {
+        (1usize << (8 * self.param_len_size())) - 1
+    }
 }
 
 #[derive(Deserialize, Debug)]
@@ -885,10 +942,29 @@ pub struct TaggedFamVariant {
     pub discriminant: String,
     pub comment: Option<String>,
     /// Name of the schema constant holding this variant's parameter byte length.
-    /// Used in the generated STATIC_ASSERT for the param struct.
-    pub params_len_constant: String,
+    /// Used in the generated STATIC_ASSERT for the param struct.  Absent for a
+    /// variant ending in a `string`, whose length is the entry's own.
+    pub params_len_constant: Option<String>,
     #[serde(default)]
     pub fields: Vec<Field>,
+}
+
+impl TaggedFamVariant {
+    /// The variant's `string` field, which is its last where it has one.
+    pub fn string_field(&self) -> Option<&Field> {
+        self.fields.last().filter(|f| f.kind == "string")
+    }
+
+    /// The fields ahead of any `string`, whose bytes sit at fixed offsets.
+    pub fn fixed_fields(&self) -> impl Iterator<Item = &Field> {
+        self.fields.iter().filter(|f| f.kind != "string")
+    }
+
+    /// Bytes of the fields ahead of any `string` - the shortest parameter
+    /// length an entry of this variant can have.
+    pub fn fixed_size(&self, schema: &Schema) -> usize {
+        self.fixed_fields().map(|f| field_size(f, schema)).sum()
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -969,6 +1045,7 @@ impl Schema {
         schema.validate_constant_releases()?;
         schema.validate_constant_deprecations()?;
         schema.validate_linker_constants()?;
+        schema.validate_tagged_fams()?;
         Ok(schema)
     }
 
@@ -1709,6 +1786,18 @@ impl Schema {
                 ));
             }
         }
+        for e in &self.enums {
+            for v in &e.variants {
+                if let Some(release) = &v.deprecated_release
+                    && !is_release(release)
+                {
+                    return Err(bad(
+                        format!("deprecated_release on {}::{}", e.name, v.name),
+                        release,
+                    ));
+                }
+            }
+        }
         for entry in self.plugin_keys() {
             if !is_release(&entry.key.first_release) {
                 return Err(bad(
@@ -1785,6 +1874,146 @@ impl Schema {
             }
         }
         Ok(())
+    }
+
+    /// Check each tagged FAM against what its generators rely on.
+    ///
+    /// - The length field is a `u8` or a `u16`.
+    /// - A common field is one of [`COMMON_FIELD_KINDS`].
+    /// - A variant field is one of [`VARIANT_FIELD_KINDS`], an array is of
+    ///   `u8`, and a `string` is the variant's last field.
+    /// - A variant ending in a `string` names no `params_len_constant`, since
+    ///   its length is the entry's own.  Every other variant names one, and it
+    ///   holds the size of the variant's fields.
+    /// - A `string` sits in a variant and nowhere else.
+    /// - Nothing points at a standalone family.  No generation covers one, so
+    ///   a structure reaching it would change without its generation moving.
+    fn validate_tagged_fams(&self) -> Result<(), Box<dyn std::error::Error>> {
+        for t in &self.tagged_fams {
+            if !matches!(t.param_len_type(), "u8" | "u16") {
+                return Err(format!(
+                    "{} has param_len_type {}, and a length is a u8 or a u16",
+                    t.name,
+                    t.param_len_type()
+                )
+                .into());
+            }
+            for f in &t.common_fields {
+                if !COMMON_FIELD_KINDS.contains(&f.kind.as_str()) {
+                    return Err(format!(
+                        "{}.{} is a {}, and a common field is one of {}",
+                        t.name,
+                        f.name,
+                        f.kind,
+                        COMMON_FIELD_KINDS.join(", ")
+                    )
+                    .into());
+                }
+            }
+            for v in &t.variants {
+                self.check_variant(t, v)?;
+            }
+        }
+
+        for s in &self.structs {
+            if let Some(f) = s.fields.iter().find(|f| f.kind == "string") {
+                return Err(format!(
+                    "{}.{} is a string, which only a tagged FAM variant can hold",
+                    s.name, f.name
+                )
+                .into());
+            }
+        }
+
+        for (container, f) in self.all_fields() {
+            if f.kind != "tagged_fam_ptr" {
+                continue;
+            }
+            if let Some(target) = self
+                .tagged_fams
+                .iter()
+                .find(|t| t.standalone && Some(t.name.as_str()) == f.type_.as_deref())
+            {
+                return Err(format!(
+                    "{container}.{} points at {}, which is standalone - no generation covers a \
+                     standalone family, so nothing may reach it",
+                    f.name, target.name
+                )
+                .into());
+            }
+        }
+        Ok(())
+    }
+
+    /// One variant's part of [`Schema::validate_tagged_fams`].
+    fn check_variant(
+        &self,
+        fam: &TaggedFam,
+        v: &TaggedFamVariant,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let at = format!("{}::{}", fam.name, v.discriminant);
+        for (i, f) in v.fields.iter().enumerate() {
+            let kind = f.kind.as_str();
+            if !VARIANT_FIELD_KINDS.contains(&kind) {
+                return Err(format!(
+                    "{at}.{} is a {kind}, and a variant field is one of {}",
+                    f.name,
+                    VARIANT_FIELD_KINDS.join(", ")
+                )
+                .into());
+            }
+            if kind == "string" && i + 1 != v.fields.len() {
+                return Err(format!(
+                    "{at}.{} is a string and is not the variant's last field - a string runs to \
+                     the end of the entry",
+                    f.name
+                )
+                .into());
+            }
+            if kind == "inline_array" && f.element.as_deref().unwrap_or("u8") != "u8" {
+                return Err(format!(
+                    "{at}.{} is an array of {}, and an array in a variant is of u8",
+                    f.name,
+                    f.element.as_deref().unwrap_or("")
+                )
+                .into());
+            }
+        }
+
+        match (&v.params_len_constant, v.string_field()) {
+            (Some(name), Some(_)) => Err(format!(
+                "{at} names params_len_constant {name}, but it ends in a string, so its length \
+                 is the entry's own"
+            )
+            .into()),
+            (None, None) => Err(format!("{at} names no params_len_constant").into()),
+            (None, Some(_)) => Ok(()),
+            (Some(name), None) => {
+                let value = self
+                    .constants
+                    .iter()
+                    .find(|c| &c.name == name)
+                    .and_then(|c| match c.value {
+                        ConstantValue::Integer(n) => usize::try_from(n).ok(),
+                        ConstantValue::Text(_) => None,
+                    })
+                    .ok_or_else(|| {
+                        format!(
+                            "{at} names params_len_constant {name}, which is not a whole-number \
+                             constant in the schema"
+                        )
+                    })?;
+                let size = v.fixed_size(self);
+                if value != size {
+                    return Err(format!(
+                        "{at}'s fields take {size} bytes, and its params_len_constant {name} is \
+                         {value}"
+                    )
+                    .into());
+                }
+                Ok(())
+            }
+        }
     }
 
     /// Every field in the schema, paired with the name of the struct or FAM
@@ -2195,6 +2424,8 @@ pub fn shape_size(shape: &FieldShape, named: &dyn NamedSizes) -> usize {
         | "opaque_ptr"
         | "fn_ptr" => 4,
         "padding" => shape.size.unwrap_or(0) as usize,
+        // A string's length is its entry's own, so it takes nothing fixed.
+        "string" => 0,
         _ => 0,
     }
 }

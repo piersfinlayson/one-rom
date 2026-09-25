@@ -89,7 +89,7 @@ fn validate_schema_sizes(schema: &Schema) {
         }
     }
 
-    // Every generate=both tagged FAM: 1(disc)+1(param_len)+common_fields == base_size.
+    // Every generate=both tagged FAM: disc + param_len + common_fields == base_size.
     for tf in schema
         .tagged_fams
         .iter()
@@ -101,12 +101,13 @@ fn validate_schema_sizes(schema: &Schema) {
             .find(|e| e.name == tf.discriminant_type)
             .map_or(1u32, |e| e.size) as usize;
         let common_size: usize = tf.common_fields.iter().map(|f| field_size(f, schema)).sum();
-        let computed_base = disc_size + 1 + common_size;
+        let len_size = tf.param_len_size();
+        let computed_base = disc_size + len_size + common_size;
         if computed_base != tf.base_size as usize {
             panic!(
                 "base_size mismatch for {}: declared={} but \
-                 discriminant({})+param_len(1)+common_fields({})={}",
-                tf.name, tf.base_size, disc_size, common_size, computed_base
+                 discriminant({})+param_len({})+common_fields({})={}",
+                tf.name, tf.base_size, disc_size, len_size, common_size, computed_base
             );
         }
     }
@@ -1165,10 +1166,31 @@ fn push_tagged_fam_layout(
     out.push_str("        let size = match self {\n");
     for v in &tf.variants {
         let vn = fam_variant_ident(&v.discriminant, strip);
-        let params_len = const_value(schema, &v.params_len_constant);
-        let total = tf.base_size as usize + params_len;
+        let Some(string) = v.string_field() else {
+            let params_len = variant_params_len(v, schema);
+            let total = tf.base_size as usize + params_len;
+            out.push_str(&format!(
+                "            Self::{vn} {{ .. }} => {total}usize,\n"
+            ));
+            continue;
+        };
+        // A string's length is the entry's, so it must fit the length field.
+        let name = &string.name;
+        let len = string_params_len(v, &string.name, schema);
         out.push_str(&format!(
-            "            Self::{vn} {{ .. }} => {total}usize,\n"
+            "            Self::{vn} {{ {name}, .. }} => {{\n\
+             \x20               let len = {len};\n\
+             \x20               if len > {max} {{\n\
+             \x20                   return Err(SerializeError::CountOverflow {{\n\
+             \x20                       field: \"{fam}.{len_field}\",\n\
+             \x20                   }});\n\
+             \x20               }}\n\
+             \x20               {base}usize + len\n\
+             \x20           }}\n",
+            max = tf.param_len_max(),
+            fam = tf.name,
+            len_field = tf.param_len_field,
+            base = tf.base_size,
         ));
     }
     // A discriminant this build has no name for keeps its parameter bytes
@@ -1232,15 +1254,21 @@ fn push_tagged_fam_write(
             "                ctx.{disc_method}(addr, {disc_val} as _);\n"
         ));
 
-        // param_len byte.
-        let params_len = const_value(schema, &v.params_len_constant);
+        // param_len, which for a variant ending in a string is the string's
+        // length on top of the fixed fields.  layout() has refused one too
+        // long for the field.
         let a = addr_expr(disc_size);
+        let len_method = len_write_method(tf);
+        let len_value = match v.string_field() {
+            Some(string) => format!("({}) as _", string_params_len(v, &string.name, schema)),
+            None => format!("{} as _", variant_params_len(v, schema)),
+        };
         out.push_str(&format!(
-            "                ctx.write_u8({a}, {params_len}u8);\n"
+            "                ctx.{len_method}({a}, {len_value});\n"
         ));
 
-        // Common fields at [disc_size+1 .. base_size).
-        let mut off = disc_size + 1;
+        // Common fields at [disc_size + param_len .. base_size).
+        let mut off = disc_size + tf.param_len_size();
         for f in &tf.common_fields {
             emit_fam_field_write(out, f, off, schema);
             off += field_size(f, schema);
@@ -1292,8 +1320,14 @@ fn push_tagged_fam_unknown_write(
     // Note: the {} below is a format specifier in the GENERATED code's
     // debug_assert!, not in our generator.
     out.push_str("                debug_assert!(\n");
-    out.push_str("                    params.len() <= 255,\n");
-    out.push_str("                    \"unknown variant params length {} exceeds u8 range\",\n");
+    out.push_str(&format!(
+        "                    params.len() <= {},\n",
+        tf.param_len_max()
+    ));
+    out.push_str(&format!(
+        "                    \"unknown variant params length {{}} exceeds {} range\",\n",
+        tf.param_len_type()
+    ));
     out.push_str("                    params.len(),\n");
     out.push_str("                );\n");
 
@@ -1306,11 +1340,12 @@ fn push_tagged_fam_unknown_write(
         "                ctx.{disc_method}(addr, *{disc} as _);\n"
     ));
     let a = addr_expr(disc_size);
+    let len_method = len_write_method(tf);
     out.push_str(&format!(
-        "                ctx.write_u8({a}, params.len() as u8);\n"
+        "                ctx.{len_method}({a}, params.len() as _);\n"
     ));
 
-    let mut off = disc_size + 1;
+    let mut off = disc_size + tf.param_len_size();
     for f in &tf.common_fields {
         emit_fam_field_write(out, f, off, schema);
         off += field_size(f, schema);
@@ -1353,12 +1388,52 @@ fn emit_fam_field_write(out: &mut String, f: &Field, off: usize, schema: &Schema
             let a = addr_expr(off);
             out.push_str(&format!("                ctx.{method}({a}, *{name});\n"));
         }
+        // Schema::parse refuses an array in a variant of anything but u8.
+        "inline_array" => {
+            let a = addr_expr(off);
+            out.push_str(&format!("                ctx.write_bytes({a}, {name});\n"));
+        }
+        "string" => {
+            let a = addr_expr(off);
+            out.push_str(&format!(
+                "                ctx.write_bytes({a}, {name}.as_bytes());\n"
+            ));
+        }
         "padding" => {}
         other => {
             out.push_str(&format!(
                 "                compile_error!(\"unexpected FAM field kind `{other}` for `{name}`\");\n"
             ));
         }
+    }
+}
+
+/// The parameter length of a variant without a string, which its
+/// `params_len_constant` holds.  Schema::parse refuses a variant without a
+/// string that names none.
+fn variant_params_len(v: &TaggedFamVariant, schema: &Schema) -> usize {
+    let name = v
+        .params_len_constant
+        .as_deref()
+        .expect("Schema::parse refuses a variant without a string or a length constant");
+    const_value(schema, name)
+}
+
+/// The expression for the parameter length of a variant ending in the string
+/// `name`: its fixed fields' size and the string's length.
+pub(crate) fn string_params_len(v: &TaggedFamVariant, name: &str, schema: &Schema) -> String {
+    match v.fixed_size(schema) {
+        0 => format!("{name}.len()"),
+        fixed => format!("{fixed}usize + {name}.len()"),
+    }
+}
+
+/// The context method writing a family's length field.
+fn len_write_method(tf: &TaggedFam) -> &'static str {
+    if tf.param_len_size() == 1 {
+        "write_u8"
+    } else {
+        "write_u16_le"
     }
 }
 

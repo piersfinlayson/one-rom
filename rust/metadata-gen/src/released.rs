@@ -82,6 +82,18 @@ pub struct ReleasedAlias {
 pub struct ReleasedEnum {
     pub name: String,
     pub size: u32,
+    /// Empty for an enum whose values come from elsewhere, such as
+    /// `onerom_rom_type_t` from `chip-types.json`.
+    #[serde(default)]
+    pub variants: Vec<ReleasedEnumVariant>,
+}
+
+/// An enum value, reduced to its name and number.  Devices and hosts already
+/// hold the number, so neither may change.
+#[derive(Deserialize, Debug)]
+pub struct ReleasedEnumVariant {
+    pub name: String,
+    pub value: i64,
 }
 
 #[derive(Deserialize, Debug)]
@@ -97,6 +109,12 @@ pub struct ReleasedTaggedFam {
     pub discriminant_field: String,
     pub discriminant_type: String,
     pub param_len_field: String,
+    /// Absent in every copy taken before the length could be wider than a
+    /// `u8`, and so `u8` there.
+    pub param_len_type: Option<String>,
+    /// Absent in every copy taken before a family could be standalone.
+    #[serde(default)]
+    pub standalone: bool,
     #[serde(default)]
     pub common_fields: Vec<ReleasedField>,
     #[serde(default)]

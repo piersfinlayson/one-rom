@@ -252,7 +252,8 @@ fn tagged_fam_toml(attrs: &str) -> String {
              [[tagged_fams.variants.fields]]\nname = \"pin_a\"\nkind = \"scalar\"\n\
              type = \"u8\"\n\n\
              [[enums]]\nname = \"onerom_alg_cs_t\"\nsize = 1\n\n\
-             [[enums.variants]]\nname = \"ALG_CS_0\"\nvalue = 0"
+             [[enums.variants]]\nname = \"ALG_CS_0\"\nvalue = 0\n\n\
+             [[constants]]\nname = \"ALG_CS_0_PARAMS_LEN\"\ntype = \"usize\"\nvalue = 1"
         ),
     )
 }
@@ -1243,4 +1244,184 @@ fn a_header_name_without_a_runtime_structure_is_refused() {
         "",
     );
     refused(&toml, "no structure fills the runtime slot");
+}
+
+// ===========================================================================
+// Tagged FAMs
+// ===========================================================================
+
+/// A standalone family shaped like the OTP store's: a two-byte length, a
+/// variant ending in a string and a variant of fixed size.
+const ENTRY_FAM: &str = r#"
+[[constants]]
+name = "SIG_LEN"
+type = "usize"
+value = 4
+
+[[enums]]
+name = "key_t"
+size = 2
+packed = true
+
+[[enums.variants]]
+name = "KEY_NAME"
+value = 1
+
+[[enums.variants]]
+name = "KEY_SIG"
+value = 2
+
+[[tagged_fams]]
+name = "entry_t"
+generate = "both"
+standalone = true
+discriminant_field = "key"
+discriminant_type = "key_t"
+param_len_field = "len"
+param_len_type = "u16"
+base_size = 4
+
+[[tagged_fams.variants]]
+discriminant = "KEY_NAME"
+
+[[tagged_fams.variants.fields]]
+name = "name"
+kind = "string"
+
+[[tagged_fams.variants]]
+discriminant = "KEY_SIG"
+params_len_constant = "SIG_LEN"
+
+[[tagged_fams.variants.fields]]
+name = "sig"
+kind = "inline_array"
+element = "u8"
+count = 4
+"#;
+
+/// The fixture with [`ENTRY_FAM`] added, `from` replaced by `to` in it.
+fn entry_fam(from: &str, to: &str) -> String {
+    schema_toml("", &replaced(ENTRY_FAM, from, to))
+}
+
+#[test]
+fn a_standalone_family_is_accepted() {
+    accepted(&schema_toml("", ENTRY_FAM));
+}
+
+#[test]
+fn a_length_wider_than_a_u16_is_refused() {
+    refused(
+        &entry_fam("param_len_type = \"u16\"", "param_len_type = \"u32\""),
+        "entry_t has param_len_type u32",
+    );
+}
+
+/// A string runs to the end of its entry, so nothing can follow it.
+#[test]
+fn a_string_before_another_field_is_refused() {
+    refused(
+        &entry_fam(
+            "name = \"name\"\nkind = \"string\"\n",
+            "name = \"name\"\nkind = \"string\"\n\n\
+             [[tagged_fams.variants.fields]]\nname = \"tail\"\nkind = \"scalar\"\ntype = \"u8\"\n",
+        ),
+        "entry_t::KEY_NAME.name is a string and is not the variant's last field",
+    );
+}
+
+#[test]
+fn a_string_in_the_common_fields_is_refused() {
+    refused(
+        &entry_fam(
+            "base_size = 4\n",
+            "base_size = 4\n\n[[tagged_fams.common_fields]]\nname = \"label\"\nkind = \"string\"\n",
+        ),
+        "entry_t.label is a string, and a common field is one of",
+    );
+}
+
+#[test]
+fn a_string_in_a_structure_is_refused() {
+    refused(
+        &schema_toml(
+            "",
+            "\n[[structs]]\nname = \"stray_t\"\ngenerate = \"none\"\n\n\
+             [[structs.fields]]\nname = \"text\"\nkind = \"string\"\n",
+        ),
+        "stray_t.text is a string, which only a tagged FAM variant can hold",
+    );
+}
+
+#[test]
+fn a_variant_field_of_another_kind_is_refused() {
+    refused(
+        &entry_fam(
+            "name = \"name\"\nkind = \"string\"",
+            "name = \"name\"\nkind = \"cstr_ptr\"",
+        ),
+        "entry_t::KEY_NAME.name is a cstr_ptr, and a variant field is one of",
+    );
+}
+
+#[test]
+fn an_array_of_wider_elements_in_a_variant_is_refused() {
+    refused(
+        &entry_fam("element = \"u8\"", "element = \"u16\""),
+        "entry_t::KEY_SIG.sig is an array of u16, and an array in a variant is of u8",
+    );
+}
+
+/// A variant ending in a string takes its length from the entry, so a
+/// constant would be a second statement of it that nothing reads.
+#[test]
+fn a_length_constant_on_a_string_variant_is_refused() {
+    refused(
+        &entry_fam(
+            "discriminant = \"KEY_NAME\"\n",
+            "discriminant = \"KEY_NAME\"\nparams_len_constant = \"SIG_LEN\"\n",
+        ),
+        "entry_t::KEY_NAME names params_len_constant SIG_LEN, but it ends in a string",
+    );
+}
+
+#[test]
+fn a_fixed_variant_without_a_length_constant_is_refused() {
+    refused(
+        &entry_fam("params_len_constant = \"SIG_LEN\"\n", ""),
+        "entry_t::KEY_SIG names no params_len_constant",
+    );
+}
+
+#[test]
+fn a_length_constant_disagreeing_with_the_fields_is_refused() {
+    refused(
+        &entry_fam("value = 4", "value = 5"),
+        "entry_t::KEY_SIG's fields take 4 bytes, and its params_len_constant SIG_LEN is 5",
+    );
+}
+
+/// No generation covers a standalone family, so a structure reaching one
+/// would change without its own generation moving.
+#[test]
+fn a_pointer_to_a_standalone_family_is_refused() {
+    refused(
+        &schema_toml(
+            "\n[[structs.fields]]\nname = \"entry\"\nkind = \"tagged_fam_ptr\"\n\
+             type = \"entry_t\"\nnullable = true",
+            ENTRY_FAM,
+        ),
+        "onerom_hardware_info_t.entry points at entry_t, which is standalone",
+    );
+}
+
+#[test]
+fn a_malformed_deprecated_release_on_an_enum_value_is_refused() {
+    refused(
+        &entry_fam(
+            "name = \"KEY_SIG\"\nvalue = 2",
+            "name = \"KEY_SIG\"\nvalue = 2\ndeprecated_release = \"0.8\"",
+        ),
+        "deprecated_release on key_t::KEY_SIG is '0.8'",
+    );
 }

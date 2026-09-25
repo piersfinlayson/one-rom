@@ -41,6 +41,8 @@
 #   opaque_ptr        - void*, stored as Pointer, not dereferenced
 #   fn_ptr            - function pointer, stored as Pointer, not dereferenced
 #   padding           - reserved bytes: in C and the binary, absent from Rust
+#   string            - UTF-8 text filling the rest of a tagged FAM entry. A
+#                       variant's last field only.
 #
 #   generate = "both" | "parse" | "none" on a struct selects C definition plus
 #   Rust parse and serialize, C plus parse, or C alone.
@@ -94,6 +96,24 @@
 #   deprecated_<S>_version - generation from which readers ignore this field.
 #
 # ---------------------------------------------------------------------------
+# Tagged FAM attributes
+# ---------------------------------------------------------------------------
+#   param_len_type    - the length field's type, "u8" by default or "u16"
+#   standalone        - true for a family nothing points at, such as an OTP
+#                       entry. No generation covers it, so a shipped variant
+#                       never changes and a new one is free.
+#   params_len_constant - on a variant, the constant holding its parameter
+#                       length. A variant ending in a string names none.
+#
+# ---------------------------------------------------------------------------
+# Enum variant attributes
+# ---------------------------------------------------------------------------
+#   sentinel          - in the C enum, and a constant rather than a variant in
+#                       Rust
+#   deprecated_release - release from which nothing should use the value. A
+#                       released value keeps its name and number for good.
+#
+# ---------------------------------------------------------------------------
 # Structure generations
 # ---------------------------------------------------------------------------
 # Three structures carry a generation number - onerom_info_t,
@@ -111,7 +131,8 @@
 #
 # metadata_schema_released.toml is this file as the last release shipped it.
 # The build compares the two and fails on a changed layout with an unchanged
-# number, a moved field, or a changed constant value.
+# number, a moved field, a changed constant value, or an enum value renumbered,
+# renamed or removed.
 #
 # Refresh it with ci/update-released-schema.sh once per cycle, in the same
 # commit as the firmware_release bump.
@@ -326,6 +347,74 @@ name = "ALG_DMA0_PARAMS_LEN"
 type = "usize"
 value = 0
 comment = "Parameter byte length for DMA algorithm 0 (none)"
+
+[[constants]]
+name = "OTP_PAGE_ROWS"
+type = "u16"
+value = 64
+comment = "Rows in an OTP page."
+
+[[constants]]
+name = "OTP_COMMISSIONING_AREA_FIRST_ROW"
+type = "u16"
+value = 0x0c0
+comment = "First OTP row of the commissioning area."
+
+[[constants]]
+name = "OTP_COMMISSIONING_AREA_LAST_ROW"
+type = "u16"
+value = 0x4bf
+comment = "Last OTP row of the commissioning area."
+
+[[constants]]
+name = "OTP_GENERAL_STORE_FIRST_ROW"
+type = "u16"
+value = 0x4c0
+comment = "First OTP row of the general store."
+
+[[constants]]
+name = "OTP_GENERAL_STORE_LAST_ROW"
+type = "u16"
+value = 0xebd
+comment = "Last OTP row a general store entry can use."
+
+[[constants]]
+name = "OTP_GENERAL_STORE_TERMINATOR_ROW"
+type = "u16"
+value = 0xebe
+comment = """First of the rows after the general store that stay unwritten, so a
+full general store still ends with key 0 and length 0."""
+
+[[constants]]
+name = "OTP_GENERAL_STORE_TERMINATOR_ROW_COUNT"
+type = "u16"
+value = 2
+comment = "Key and length rows in the general store's terminator."
+
+[[constants]]
+name = "OTP_STORE_MAGIC"
+type = "u16"
+value = 0x524f
+comment = """First row of each commissioning and of the general store, "OR" in ASCII."""
+
+[[constants]]
+name = "OTP_STORE_VERSION"
+type = "u16"
+value = 1
+comment = "Format version, in the row after OTP_STORE_MAGIC."
+
+[[constants]]
+name = "OTP_USB_WHITE_LABEL_ROW"
+type = "u16"
+value = 0xec0
+comment = """OTP row where the bootloader's USB white label table starts. One ROM
+writes this to USB_WHITE_LABEL_ADDR."""
+
+[[constants]]
+name = "OTP_COMMISSIONING_SIG_LEN"
+type = "usize"
+value = 64
+comment = "Length of an OTP_KEY_COMMISSIONING_SIG value, an Ed25519 signature."
 
 # ===========================================================================
 # Type aliases
@@ -808,6 +897,48 @@ name = "NUM_DMA_ALGS"
 value = 1
 sentinel = true
 comment = "Count of DMA algorithms. Not a valid algorithm."
+
+# ---
+
+[[enums]]
+name = "onerom_otp_key_t"
+size = 2
+packed = true
+comment = """Key of an entry in the One ROM OTP store. The commissioning area and the
+general store share this list, and a key keeps its number for good."""
+strip_prefix = "OTP_KEY_"
+
+[[enums.variants]]
+name = "OTP_KEY_NONE"
+value = 0
+sentinel = true
+comment = "Not a key. With length 0 it ends a list, and otherwise it marks a deleted entry."
+
+[[enums.variants]]
+name = "OTP_KEY_COMMISSIONING_BOARD"
+value = 1
+comment = "Board name"
+
+[[enums.variants]]
+name = "OTP_KEY_COMMISSIONING_SIG"
+value = 2
+comment = "Commissioning signature"
+
+[[enums.variants]]
+name = "OTP_KEY_COMMISSIONING_MANUFACTURER"
+value = 3
+comment = "Manufacturer's name"
+
+[[enums.variants]]
+name = "OTP_KEY_COMMISSIONING_DATE"
+value = 4
+comment = "Commissioning date"
+
+[[enums.variants]]
+name = "OTP_KEY_RESERVED"
+value = 0xFFFF
+sentinel = true
+comment = "Never a key. Holds the packed C enum at 2 bytes."
 
 # ===========================================================================
 # Structs
@@ -1963,6 +2094,57 @@ discriminant = "ALG_DMA_0"
 comment = "Standard DMA algorithm. No parameters."
 params_len_constant = "ALG_DMA0_PARAMS_LEN"
 # No variant fields
+
+# ---
+
+[[tagged_fams]]
+name = "onerom_otp_entry_t"
+comment = """An entry in the One ROM OTP store. OTP holds a key row, a length row and
+then the value, two bytes per row, low byte first, so the rows read as this
+structure. The length is the value's size in bytes."""
+generate = "both"
+standalone = true
+discriminant_field = "key"
+discriminant_type = "onerom_otp_key_t"
+param_len_field = "len"
+param_len_type = "u16"
+base_size = 4
+
+[[tagged_fams.variants]]
+discriminant = "OTP_KEY_COMMISSIONING_BOARD"
+comment = "Board name, matching firmware metadata's hw_rev"
+
+[[tagged_fams.variants.fields]]
+name = "name"
+kind = "string"
+
+[[tagged_fams.variants]]
+discriminant = "OTP_KEY_COMMISSIONING_SIG"
+comment = "Ed25519 signature over the commissioning, always its last entry"
+params_len_constant = "OTP_COMMISSIONING_SIG_LEN"
+
+[[tagged_fams.variants.fields]]
+name = "signature"
+kind = "inline_array"
+element = "u8"
+count = 64
+count_ref = "OTP_COMMISSIONING_SIG_LEN"
+
+[[tagged_fams.variants]]
+discriminant = "OTP_KEY_COMMISSIONING_MANUFACTURER"
+comment = "Manufacturer's name"
+
+[[tagged_fams.variants.fields]]
+name = "name"
+kind = "string"
+
+[[tagged_fams.variants]]
+discriminant = "OTP_KEY_COMMISSIONING_DATE"
+comment = "UTC commissioning date as 8 ASCII digits, YYYYMMDD"
+
+[[tagged_fams.variants.fields]]
+name = "date"
+kind = "string"
 
 # ===========================================================================
 # Simple FAM structs

@@ -310,12 +310,12 @@ impl Gen<'_> {
             },
             Member {
                 name: fam.param_len_field.clone(),
-                ty: "u8".into(),
+                ty: fam.param_len_type().into(),
                 offset: disc_size,
                 doc: None,
             },
         ];
-        let mut offset = disc_size + 1;
+        let mut offset = disc_size + fam.param_len_size();
         members.extend(self.following(&fam.common_fields, &mut offset));
         members.push(Member {
             name: "params".into(),
@@ -338,6 +338,11 @@ impl Gen<'_> {
             .unwrap_or("");
 
         for variant in &fam.variants {
+            // No C struct holds a variant whose only field is a string, so
+            // there is nothing here to mirror.
+            if variant.fixed_fields().next().is_none() && variant.string_field().is_some() {
+                continue;
+            }
             let c_name = derive_param_struct_name(
                 &fam.name,
                 &variant.discriminant,
@@ -350,7 +355,7 @@ impl Gen<'_> {
                 .schema
                 .constants
                 .iter()
-                .find(|c| c.name == variant.params_len_constant)
+                .find(|c| Some(c.name.as_str()) == variant.params_len_constant.as_deref())
                 .and_then(|c| match c.value {
                     ConstantValue::Integer(n) => Some(n as usize),
                     ConstantValue::Text(_) => None,
@@ -496,6 +501,8 @@ impl Gen<'_> {
                 false => "unsafe extern \"C\" fn()".into(),
             },
             "padding" => format!("[u8; {}]", field.size.unwrap_or(0)),
+            // A string runs to the end of its entry, like C's flexible array.
+            "string" => "[u8; 0]".into(),
             other => panic!("device_gen: no Rust type for field kind {other}"),
         }
     }

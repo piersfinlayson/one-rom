@@ -87,6 +87,7 @@ fn fam_prefix<'a>(
     discriminant_field: &'a str,
     discriminant_type: &'a str,
     param_len_field: &'a str,
+    param_len_type: &'a str,
 ) -> [FieldShape<'a>; 2] {
     [
         FieldShape {
@@ -102,7 +103,7 @@ fn fam_prefix<'a>(
         FieldShape {
             name: param_len_field,
             kind: "scalar",
-            type_: Some("u8"),
+            type_: Some(param_len_type),
             element: None,
             count: None,
             rows: None,
@@ -138,6 +139,7 @@ impl Layout {
                 &fam.discriminant_field,
                 &fam.discriminant_type,
                 &fam.param_len_field,
+                fam.param_len_type(),
             )
             .into_iter()
             .collect();
@@ -177,6 +179,7 @@ impl Layout {
                 &fam.discriminant_field,
                 &fam.discriminant_type,
                 &fam.param_len_field,
+                fam.param_len_type.as_deref().unwrap_or("u8"),
             )
             .into_iter()
             .collect();
@@ -210,12 +213,14 @@ impl Layout {
 /// Refuse a working schema that has moved away from the last released one
 /// without saying so.
 ///
-/// Five things are checked:
+/// Seven things are checked:
 ///
 /// - a plugin-facing constant or metadata key names the wrong release as the
 ///   one it arrived in
 /// - a constant's value changed, or the constant is gone
+/// - an enum value changed its number or its name, or is gone
 /// - a shipped field moved, changed size, changed type, or is gone
+/// - a shipped variant of a standalone family gained a field
 /// - a structure's tree changed shape while its generation stayed put
 /// - a generation moved by anything other than one step forward, or moved
 ///   without a `[[versions]]` entry naming the release it ships in
@@ -233,7 +238,9 @@ pub fn compare(current: &Schema, released: &Released) -> Result<(), Box<dyn std:
     let then = Layout::of_released(released);
 
     check_constants(current, &now, &then)?;
+    check_enums(current, released)?;
     let changed = check_fields(&now, &then)?;
+    check_standalone(current, released, &now, &then)?;
     check_generations(current, released, &changed)
 }
 
@@ -490,6 +497,123 @@ fn check_constants(
     Ok(())
 }
 
+/// Refuse an enum value whose number or name has changed since the last
+/// release, or which is gone.
+///
+/// Devices and hosts already hold the numbers.  An enum whose values come from
+/// elsewhere, such as `onerom_rom_type_t` from `chip-types.json`, lists none in
+/// the copy, so nothing here checks it.
+fn check_enums(current: &Schema, released: &Released) -> Result<(), Box<dyn std::error::Error>> {
+    for was in released.enums.iter().filter(|e| !e.variants.is_empty()) {
+        let Some(is) = current.enums.iter().find(|e| e.name == was.name) else {
+            return Err(format!(
+                "enum {} was in the last release and is gone - devices and hosts hold its \
+                 values still",
+                was.name
+            )
+            .into());
+        };
+        for old in &was.variants {
+            match is.variants.iter().find(|v| v.name == old.name) {
+                Some(new) if new.value == old.value => {}
+                Some(new) => {
+                    return Err(format!(
+                        "{}::{} was {} in the last release and is {} now - a released value \
+                         keeps its number, because devices and hosts hold it",
+                        was.name, old.name, old.value, new.value
+                    )
+                    .into());
+                }
+                None => {
+                    let renamed = is.variants.iter().find(|v| v.value == old.value);
+                    return Err(match renamed {
+                        Some(new) => format!(
+                            "{}::{} is called {} now - a released value keeps its name, and an \
+                             alias gives it another",
+                            was.name, old.name, new.name
+                        ),
+                        None => format!(
+                            "{}::{} was in the last release and is gone - a released value is \
+                             deprecated with deprecated_release rather than removed",
+                            was.name, old.name
+                        ),
+                    }
+                    .into());
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Hold each standalone family to the rule that replaces a generation for it.
+///
+/// Every entry carries its length, so a reader skips a variant it has no name
+/// for, and a new variant is free.  A shipped variant never changes, because a
+/// reader built against it reads its fields at fixed offsets.  The part every
+/// variant shares is held the same way.  A family also keeps whether it is
+/// standalone, since that decides which rule its changes answer to.
+///
+/// [`check_fields`] has already refused a shipped field that moved, changed or
+/// went, so what is left for this to find is a field added.
+fn check_standalone(
+    current: &Schema,
+    released: &Released,
+    now: &Layout,
+    then: &Layout,
+) -> Result<(), Box<dyn std::error::Error>> {
+    for fam in &current.tagged_fams {
+        if let Some(was) = released.tagged_fams.iter().find(|t| t.name == fam.name)
+            && was.standalone != fam.standalone
+        {
+            let word = |standalone: bool| match standalone {
+                true => "standalone",
+                false => "not standalone",
+            };
+            return Err(format!(
+                "{} was {} in the last release and is {} now - whether a family is standalone \
+                 decides which rule its changes answer to",
+                fam.name,
+                word(was.standalone),
+                word(fam.standalone)
+            )
+            .into());
+        }
+        if !fam.standalone {
+            continue;
+        }
+
+        let shipped = std::iter::once(fam.name.clone()).chain(
+            fam.variants
+                .iter()
+                .map(|v| Layout::variant_name(&fam.name, &v.discriminant)),
+        );
+        for name in shipped {
+            let (Some(was), Some(is)) = (then.types.get(&name), now.types.get(&name)) else {
+                continue;
+            };
+            if is == was {
+                continue;
+            }
+            let change = match is
+                .fields
+                .iter()
+                .find(|f| !was.fields.iter().any(|old| old.name == f.name))
+            {
+                Some(added) => format!("gained {}", added.name),
+                None => "changed".to_string(),
+            };
+            return Err(format!(
+                "{name} has {change} since the last release, and its family is standalone - a \
+                 shipped variant never changes, because a reader built against it reads its \
+                 fields at fixed offsets"
+            )
+            .into());
+        }
+    }
+    Ok(())
+}
+
 /// Refuse a shipped field that moved, and report which types changed shape.
 ///
 /// A field that has shipped is never moved, renamed or removed: its bytes are
@@ -576,6 +700,12 @@ fn check_generations(
     changed: &BTreeSet<String>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let owners = current.ownership();
+    let standalone: BTreeSet<&str> = current
+        .tagged_fams
+        .iter()
+        .filter(|t| t.standalone)
+        .map(|t| t.name.as_str())
+        .collect();
 
     // The first changed type under each root, so the message names something
     // to go and look at rather than a count.
@@ -584,6 +714,10 @@ fn check_generations(
         // A variant is laid out under its FAM's name, and belongs to whatever
         // owns the FAM.
         let owned = name.split("::").next().unwrap_or(name);
+        // A standalone family answers to check_standalone instead.
+        if standalone.contains(owned) {
+            continue;
+        }
         let Some(root) = owners.get(owned) else {
             return Err(format!(
                 "{name}'s layout has changed since the last release, and it sits under none of \

@@ -444,12 +444,17 @@ fn a_removed_structure_is_refused() {
 /// field of a fixed structure.
 #[test]
 fn a_moved_field_in_a_fam_variant_is_refused() {
-    refused(
-        &edited(
-            "[[tagged_fams.variants.fields]]\nname = \"pin_a\"",
-            "[[tagged_fams.variants.fields]]\nname = \"lead_pad\"\nkind = \"padding\"\nsize = 1\n\n\
-             [[tagged_fams.variants.fields]]\nname = \"pin_a\"",
+    let swapped = edited_in(
+        &edited_in(
+            &edited("name = \"pin_a\"", "name = \"pin_swap\""),
+            "name = \"pin_b\"",
+            "name = \"pin_a\"",
         ),
+        "name = \"pin_swap\"",
+        "name = \"pin_b\"",
+    );
+    refused(
+        &swapped,
         "onerom_alg_cs_config_t::ALG_CS_0.pin_a was at offset 0 in the last release and is at 1 now",
     );
 }
@@ -855,5 +860,204 @@ fn a_constant_newly_tagged_for_the_plugin_api_arrives_now() {
         &with_plugin_constant(&current(), Some("0.7.0")),
         &then,
         "constant SPARE is not in the copy of the last release",
+    );
+}
+
+// ===========================================================================
+// Enum values
+// ===========================================================================
+
+/// Devices and hosts hold the number, so it cannot move.
+#[test]
+fn a_renumbered_enum_value_is_refused() {
+    refused(
+        &edited(
+            "name = \"ALG_CS_0\"\nvalue = 0",
+            "name = \"ALG_CS_0\"\nvalue = 1",
+        ),
+        "onerom_alg_cs_t::ALG_CS_0 was 0 in the last release and is 1 now",
+    );
+}
+
+#[test]
+fn a_renamed_enum_value_is_refused() {
+    refused(
+        &edited(
+            "name = \"ALG_CS_0\"\nvalue = 0",
+            "name = \"ALG_CS_ZERO\"\nvalue = 0",
+        ),
+        "onerom_alg_cs_t::ALG_CS_0 is called ALG_CS_ZERO now",
+    );
+}
+
+#[test]
+fn a_removed_enum_value_is_refused() {
+    refused(
+        &edited("[[enums.variants]]\nname = \"ALG_CS_0\"\nvalue = 0\n", ""),
+        "onerom_alg_cs_t::ALG_CS_0 was in the last release and is gone",
+    );
+}
+
+#[test]
+fn a_new_enum_value_is_accepted() {
+    accepted(&edited(
+        "name = \"ALG_CS_0\"\nvalue = 0\n",
+        "name = \"ALG_CS_0\"\nvalue = 0\n\n[[enums.variants]]\nname = \"ALG_CS_1\"\nvalue = 1\n",
+    ));
+}
+
+#[test]
+fn a_deprecated_enum_value_is_accepted() {
+    accepted(&edited(
+        "name = \"ALG_CS_0\"\nvalue = 0\n",
+        "name = \"ALG_CS_0\"\nvalue = 0\ndeprecated_release = \"0.8.0\"\n",
+    ));
+}
+
+// ===========================================================================
+// Standalone families
+// ===========================================================================
+
+/// A standalone family shaped like the OTP store's, which no versioned
+/// structure reaches.
+const STANDALONE: &str = r#"
+[[constants]]
+name = "SIG_LEN"
+type = "usize"
+value = 4
+
+[[enums]]
+name = "key_t"
+size = 2
+packed = true
+
+[[enums.variants]]
+name = "KEY_NAME"
+value = 1
+
+[[enums.variants]]
+name = "KEY_SIG"
+value = 2
+
+[[tagged_fams]]
+name = "entry_t"
+generate = "both"
+standalone = true
+discriminant_field = "key"
+discriminant_type = "key_t"
+param_len_field = "len"
+param_len_type = "u16"
+base_size = 4
+
+[[tagged_fams.variants]]
+discriminant = "KEY_NAME"
+
+[[tagged_fams.variants.fields]]
+name = "name"
+kind = "string"
+
+[[tagged_fams.variants]]
+discriminant = "KEY_SIG"
+params_len_constant = "SIG_LEN"
+
+[[tagged_fams.variants.fields]]
+name = "sig"
+kind = "inline_array"
+element = "u8"
+count = 4
+"#;
+
+/// The fixture pair with [`STANDALONE`] on both sides, and each of `edits`
+/// made to the working side's copy.
+fn standalone_pair(edits: &[(&str, &str)]) -> Result<(), String> {
+    let fam = edits
+        .iter()
+        .fold(STANDALONE.to_string(), |fam, (from, to)| {
+            edited_in(&fam, from, to)
+        });
+    pair(
+        &format!("{}{fam}", current()),
+        &format!("{}{STANDALONE}", released()),
+    )
+}
+
+/// No generation covers a standalone family, so its arrival needs none.
+#[test]
+fn a_new_standalone_family_is_accepted() {
+    accepted(&format!("{}{STANDALONE}", current()));
+}
+
+/// Every entry carries its length, so a reader skips a key it doesn't know.
+#[test]
+fn a_new_variant_in_a_standalone_family_is_accepted() {
+    let added = standalone_pair(&[
+        (
+            "name = \"KEY_SIG\"\nvalue = 2\n",
+            "name = \"KEY_SIG\"\nvalue = 2\n\n[[enums.variants]]\nname = \"KEY_DATE\"\nvalue = 3\n",
+        ),
+        (
+            "count = 4\n",
+            "count = 4\n\n[[tagged_fams.variants]]\ndiscriminant = \"KEY_DATE\"\n\n\
+             [[tagged_fams.variants.fields]]\nname = \"date\"\nkind = \"string\"\n",
+        ),
+    ]);
+    if let Err(e) = added {
+        panic!("the pair should have been accepted: {e}");
+    }
+}
+
+/// A reader built against a shipped variant reads its fields at fixed
+/// offsets, so the variant gains nothing.
+#[test]
+fn a_field_added_to_a_shipped_standalone_variant_is_refused() {
+    let err = standalone_pair(&[
+        (
+            "value = 4\n",
+            "value = 4\n\n[[constants]]\nname = \"SIG_LEN_EXTENDED\"\ntype = \"usize\"\nvalue = 5\n",
+        ),
+        (
+            "params_len_constant = \"SIG_LEN\"",
+            "params_len_constant = \"SIG_LEN_EXTENDED\"",
+        ),
+        (
+            "count = 4\n",
+            "count = 4\n\n[[tagged_fams.variants.fields]]\nname = \"extra\"\nkind = \"scalar\"\n\
+             type = \"u8\"\n",
+        ),
+    ])
+    .expect_err("the pair should have been refused");
+    assert!(
+        err.contains("entry_t::KEY_SIG has gained extra since the last release"),
+        "unexpected error: {err}"
+    );
+}
+
+/// Every variant shares the fixed part, so it gains nothing either.
+#[test]
+fn a_field_added_to_a_standalone_familys_fixed_part_is_refused() {
+    let err = standalone_pair(&[(
+        "base_size = 4\n",
+        "base_size = 4\n\n[[tagged_fams.common_fields]]\nname = \"flags\"\nkind = \"scalar\"\n\
+         type = \"u8\"\n",
+    )])
+    .expect_err("the pair should have been refused");
+    assert!(
+        err.contains("entry_t has gained flags since the last release"),
+        "unexpected error: {err}"
+    );
+}
+
+/// Being standalone decides which rule a family's changes answer to, so a
+/// family can't move from one rule to the other.
+#[test]
+fn a_family_made_standalone_is_refused() {
+    pair_refused(
+        &format!("{}{STANDALONE}", current()),
+        &format!(
+            "{}{}",
+            released(),
+            edited_in(STANDALONE, "standalone = true\n", "")
+        ),
+        "entry_t was not standalone in the last release and is standalone now",
     );
 }

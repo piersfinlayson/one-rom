@@ -16,6 +16,7 @@ In detail:
 
 To publish:
 - Rust crates (in dependency order):
+  - onerom-metadata-gen 0.1.0
   - onerom-metadata 0.3.0
   - onerom-gen 0.9.0
   - onerom-fw-parser 0.10.0

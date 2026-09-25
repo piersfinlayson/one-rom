@@ -19,7 +19,7 @@ use onerom_config::chip::{CHIP_TYPES, ChipType};
 
 use crate::schema::{
     ARRAY_KINDS, ConstantValue, Field, POINTER_KINDS, Schema, SimpleFam, Struct, TaggedFam,
-    array_default_elements, field_size,
+    array_default_elements, field_size, strip_type_suffix,
 };
 
 // ---------------------------------------------------------------------------
@@ -696,12 +696,19 @@ fn emit_enum(e: &crate::schema::Enum, out: &mut String) {
 
     for v in &e.variants {
         let val_str = format_enum_value(v.value, e.size);
-        let comment_str = v
-            .comment
+        // The first line of the comment, and the deprecation note where the
+        // value carries one, which would otherwise be lost below that line.
+        let first = v.comment.as_deref().and_then(|c| c.lines().next());
+        let note = v
+            .deprecated_release
             .as_deref()
-            .and_then(|c| c.lines().next())
-            .map(|l| format!("  // {}", l))
-            .unwrap_or_default();
+            .map(|release| format!("Deprecated from firmware {release}."));
+        let comment_str = match (first, note) {
+            (Some(first), Some(note)) => format!("  // {first} {note}"),
+            (Some(first), None) => format!("  // {first}"),
+            (None, Some(note)) => format!("  // {note}"),
+            (None, None) => String::new(),
+        };
         out.push_str(&format!("    {} = {},{}\n", v.name, val_str, comment_str));
     }
 
@@ -904,7 +911,7 @@ fn emit_tagged_fam_defs(schema: &Schema, out: &mut String) {
     if schema.tagged_fams.is_empty() {
         return;
     }
-    emit_major_section_header("Algorithm configuration structs (variable-length)", out);
+    emit_major_section_header("Variable-length tagged structs", out);
     for fam in &schema.tagged_fams {
         emit_tagged_fam(fam, schema, out);
     }
@@ -929,8 +936,12 @@ fn emit_tagged_fam(fam: &TaggedFam, schema: &Schema, out: &mut String) {
 
     // param_len field
     out.push_str(&format!("    // Offset: {}\n", offset));
-    out.push_str(&format!("    uint8_t {};\n", fam.param_len_field));
-    offset += 1;
+    out.push_str(&format!(
+        "    {} {};\n",
+        c_primitive(fam.param_len_type()),
+        fam.param_len_field
+    ));
+    offset += fam.param_len_size();
 
     // Fields shared across all variants — tagged FAM struct fields are not const in C
     for field in &fam.common_fields {
@@ -951,8 +962,12 @@ fn emit_tagged_fam(fam: &TaggedFam, schema: &Schema, out: &mut String) {
     ));
     out.push('\n');
 
-    // Per-variant param structs
+    // Per-variant param structs.  A variant holding only a string has none,
+    // since C cannot declare a struct whose sole member is a flexible array.
     for variant in &fam.variants {
+        if variant.fixed_fields().next().is_none() && variant.string_field().is_some() {
+            continue;
+        }
         let param_name = derive_param_struct_name(
             &fam.name,
             &variant.discriminant,
@@ -970,11 +985,12 @@ fn emit_tagged_fam(fam: &TaggedFam, schema: &Schema, out: &mut String) {
             emit_field_with_offset(field, false, &mut v_offset, schema, out);
         }
         out.push_str(&format!("}} {};\n", param_name));
-        out.push_str(&format!(
-            "STATIC_ASSERT(sizeof({pname}) == {lconst}, \"{pname} mis-sized\");\n",
-            pname = param_name,
-            lconst = variant.params_len_constant,
-        ));
+        if let Some(lconst) = &variant.params_len_constant {
+            out.push_str(&format!(
+                "STATIC_ASSERT(sizeof({pname}) == {lconst}, \"{pname} mis-sized\");\n",
+                pname = param_name,
+            ));
+        }
         out.push('\n');
     }
 }
@@ -1057,6 +1073,8 @@ fn field_c_decl(field: &Field, const_fields: bool, schema: &Schema) -> String {
             let dim = c_array_dim(field.count_ref.as_deref(), field.count);
             format!("    {}{} {}[{}];\n", ck, etype, member, dim)
         }
+        // A string runs to the end of its entry, so it is a flexible array.
+        "string" => format!("    {}char {}[];\n", ck, member),
         "inline_array2d" => {
             let etype = c_primitive(field.element.as_deref().unwrap_or("u8"));
             let rdim = c_array_dim(field.rows_ref.as_deref(), field.rows);
@@ -1229,11 +1247,13 @@ fn enum_size_by_name(enum_name: &str, schema: &Schema) -> usize {
 /// Derive the C param struct name for a tagged FAM variant.
 ///
 /// Convention (matching the original alg.h):
-///   strip `_config_t` from the FAM name, append the discriminant value,
-///   append `_param_t`.
+///   strip `_config_t` from the FAM name, or `_t` where it has none, append
+///   the discriminant value, append `_param_t`.
 ///
 /// Example: `onerom_alg_cs_config_t` + `ALG_CS_0` (value 0)
 ///          → `onerom_alg_cs0_param_t`
+///          `onerom_otp_entry_t` + `OTP_KEY_COMMISSIONING_SIG` (value 2)
+///          → `onerom_otp_entry2_param_t`
 pub(crate) fn derive_param_struct_name(
     fam_name: &str,
     variant_discriminant: &str,
@@ -1247,6 +1267,8 @@ pub(crate) fn derive_param_struct_name(
         .and_then(|e| e.variants.iter().find(|v| v.name == variant_discriminant))
         .map(|v| v.value)
         .unwrap_or(0);
-    let base = fam_name.trim_end_matches("_config_t");
+    let base = fam_name
+        .strip_suffix("_config_t")
+        .unwrap_or_else(|| strip_type_suffix(fam_name));
     format!("{}{}_param_t", base, value)
 }

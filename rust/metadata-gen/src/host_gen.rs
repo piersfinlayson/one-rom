@@ -783,11 +783,22 @@ fn push_tagged_fam_host(out: &mut String, tf: &TaggedFam, schema: &Schema) {
             "                s.push_str(\"    .{} = {},\\n\");\n",
             tf.discriminant_field, v.discriminant
         ));
-        // param_len — statically known constant name from the schema.
-        out.push_str(&format!(
-            "                s.push_str(\"    .{} = {},\\n\");\n",
-            tf.param_len_field, v.params_len_constant
-        ));
+        // param_len — the constant naming it, or for a variant ending in a
+        // string the fixed fields' size plus the string's length.
+        match (&v.params_len_constant, v.string_field()) {
+            (Some(constant), _) => out.push_str(&format!(
+                "                s.push_str(\"    .{} = {},\\n\");\n",
+                tf.param_len_field, constant
+            )),
+            (None, Some(string)) => out.push_str(&format!(
+                "                s.push_str(&alloc::format!(\"    .{} = {{}},\\n\", {}));\n",
+                tf.param_len_field,
+                crate::serialize_gen::string_params_len(v, &string.name, schema)
+            )),
+            (None, None) => unreachable!(
+                "Schema::parse refuses a variant without a string or a length constant"
+            ),
+        }
 
         // Common fields.
         for f in &tf.common_fields {
@@ -947,6 +958,17 @@ fn emit_fam_params_expr(fields: &[Field]) -> String {
                 let sz = f.size.unwrap_or(0);
                 out.push_str(&format!(
                     "                    bytes.extend(core::iter::repeat(0u8).take({sz}));\n"
+                ));
+            }
+            // Schema::parse refuses an array in a variant of anything but u8.
+            "inline_array" => {
+                out.push_str(&format!(
+                    "                    bytes.extend_from_slice({name});\n"
+                ));
+            }
+            "string" => {
+                out.push_str(&format!(
+                    "                    bytes.extend_from_slice({name}.as_bytes());\n"
                 ));
             }
             other => {
