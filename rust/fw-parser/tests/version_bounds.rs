@@ -16,7 +16,9 @@ use core::task::{Context, Poll, Waker};
 
 use onerom_fw_parser::readers::MemoryReader;
 use onerom_fw_parser::{FirmwareFormat, Parser, SDRR_INFO_FW_OFFSET};
-use onerom_metadata::ONEROM_INFO_VERSION_OFFSET as VERSION_OFF;
+use onerom_metadata::{
+    ONEROM_FAMILY_MAGIC, ONEROM_INFO_MAGIC, ONEROM_INFO_VERSION_OFFSET as VERSION_OFF,
+};
 
 const STM32F4_FLASH_BASE: u32 = 0x0800_0000;
 const STM32F4_RAM_BASE: u32 = 0x2000_0000;
@@ -57,11 +59,19 @@ fn original_image(major: u16, minor: u16, patch: u16) -> Vec<u8> {
 ///
 /// `build_date` points at a zero byte inside the image, and the metadata and
 /// runtime pointers are null, so the whole header parses with those two
-/// absent.
+/// absent.  The magic is the one a device of that version carries - ORRM from
+/// v0.8.0 and SDRR before it.  The structure generation stays at 2, because
+/// these tests are about the version boundaries and a v0.9.0 device's
+/// generation is not knowable here.
 fn schema_image(major: u16, minor: u16, patch: u16) -> Vec<u8> {
     let mut image = vec![0u8; 0x400];
     let base = SDRR_INFO_FW_OFFSET as usize;
-    image[base..base + 4].copy_from_slice(b"SDRR");
+    let magic = if (major, minor) >= (0, 8) {
+        ONEROM_FAMILY_MAGIC
+    } else {
+        ONEROM_INFO_MAGIC
+    };
+    image[base..base + 4].copy_from_slice(magic.as_bytes());
     image[base + 4..base + 6].copy_from_slice(&major.to_le_bytes());
     image[base + 6..base + 8].copy_from_slice(&minor.to_le_bytes());
     image[base + 8..base + 10].copy_from_slice(&patch.to_le_bytes());

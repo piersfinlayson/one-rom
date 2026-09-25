@@ -3543,8 +3543,17 @@ version = "0.3.0"
 dependencies = [
  "hashbrown 0.17.1",
  "onerom-config",
+ "onerom-metadata-gen",
  "serde",
  "serde-big-array",
+]
+
+[[package]]
+name = "onerom-metadata-gen"
+version = "0.1.0"
+dependencies = [
+ "onerom-config",
+ "serde",
  "toml",
 ]
 

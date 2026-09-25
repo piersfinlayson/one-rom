@@ -52,8 +52,12 @@ use onerom_config::mcu::{RP235X_BASE_FLASH, RP235X_BASE_SRAM, RP235X_END_FLASH, 
 include!(concat!(env!("OUT_DIR"), "/metadata_generated.rs"));
 include!(concat!(env!("OUT_DIR"), "/serialize_generated.rs"));
 include!(concat!(env!("OUT_DIR"), "/host_generated.rs"));
+include!(concat!(env!("OUT_DIR"), "/device_generated.rs"));
 
+mod device;
 mod firmware_overrides_impl;
+
+pub use device::{Ptr, RuntimeCell};
 
 pub const MIN_SCHEMA_VERSION: FirmwareVersion = FirmwareVersion::new(0, 7, 0, 0);
 

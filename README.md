@@ -323,6 +323,8 @@ published are on crates.io, for host-side Rust development.
 | [`onerom-fw`](rust/fw) | ✓ | Composes a complete firmware image, resolving and fetching base firmware from the release manifest. |
 | [`onerom-fw-parser`](rust/fw-parser) | ✓ | Reads metadata back out of a firmware binary — what chips, what board, what version. |
 | [`onerom-metadata`](rust/metadata) | ✓ | The embedded metadata schema itself. |
+| [`onerom-lab-metadata`](rust/lab-metadata) | ✓ | One ROM Lab's metadata structures. |
+| [`onerom-metadata-gen`](rust/metadata-gen) | ✓ | Turns a metadata schema into C headers and Rust source. |
 | [`onerom-cli`](rust/cli) | ✓ | Everything the CLI does, minus the command line parsing.  Build on it rather than reimplementing USB device logic. The CLI binary is released at [onerom.org/cli](https://onerom.org/cli). |
 | [`onerom-app`](rust/app) | ✓ | Transport-free logic shared by the CLI, Studio and the web tools. |
 | [`onerom-studio`](rust/studio) | | The desktop GUI, released at [onerom.org/studio](https://onerom.org/studio). |

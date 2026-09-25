@@ -1,4 +1,4 @@
-// build/schema.rs
+// src/schema.rs
 //
 // Serde-deserializable types mirroring the OneROM metadata TOML schema,
 // plus shared size-computation helpers used by all code generators.
@@ -17,6 +17,10 @@ use std::path::Path;
 #[derive(Deserialize, Debug)]
 #[serde(deny_unknown_fields)]
 pub struct Schema {
+    /// The schema file, as the `Source:` line of each generated file names
+    /// it. Not read from the file. [`crate::generate`] sets it.
+    #[serde(skip)]
+    pub source: String,
     pub schema: SchemaMetadata,
     #[serde(default)]
     pub versions: Vec<StructVersion>,
@@ -54,9 +58,18 @@ pub struct SchemaMetadata {
     pub name: String,
     pub description: String,
     pub flash_base: u32,
-    pub metadata_base: u32,
-    pub metadata_size: u32,
+    /// Flash address of the metadata region, where something outside the
+    /// firmware composes it.  Absent where the structures are consts the
+    /// build places and the anchor's pointer finds.
+    pub metadata_base: Option<u32>,
+    /// Bytes reserved for that region, and absent for the same reason.
+    pub metadata_size: Option<u32>,
     pub root_struct: String,
+    /// The name of this schema's device-side type for the family's
+    /// `onerom_info_t`, with its `metadata` and `runtime` pointers at this
+    /// schema's structures. For a schema whose `info` slot another crate
+    /// fills.
+    pub header_name: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -68,33 +81,30 @@ pub struct SchemaMetadata {
 // `Field`, and these constants are the one place it is tied to the structure
 // it stands for.  `validate_versions` refuses a schema where one has no
 // matching struct, or where that struct declares no generation field.
-const INFO_STRUCT: &str = "onerom_info_t";
-pub const METADATA_STRUCT: &str = "onerom_metadata_header_t";
-const RUNTIME_STRUCT: &str = "onerom_runtime_info_t";
-pub const VERSIONED_STRUCTS: [&str; 3] = [INFO_STRUCT, METADATA_STRUCT, RUNTIME_STRUCT];
+/// The roles a versioned structure fills. A schema says which of its own
+/// structures fills each, with `generation_slot`, and the marker keys and the
+/// generated Rust name a generation by the same word.
+///
+/// A schema need not fill all three. One ROM's fills every one, and a schema
+/// whose anchor structure belongs to another crate leaves `info` empty.
+pub const SLOT_INFO: &str = "info";
+pub const SLOT_METADATA: &str = "metadata";
+pub const SLOT_RUNTIME: &str = "runtime";
 
-/// Each versioned structure with the word the marker keys use for it -
-/// `since_metadata_version` for [`METADATA_STRUCT`], and so on.  The generated
-/// Rust names a generation by the same word.
-const GENERATION_SLOTS: [(&str, &str); 3] = [
-    (INFO_STRUCT, "info"),
-    (METADATA_STRUCT, "metadata"),
-    (RUNTIME_STRUCT, "runtime"),
-];
+/// Every slot a schema may declare, in the order a generator emits them.
+pub const SLOT_ORDER: [&str; 3] = [SLOT_INFO, SLOT_METADATA, SLOT_RUNTIME];
 
-/// The word [`GENERATION_SLOTS`] gives `name`, for a name that is a versioned
-/// structure.
-pub fn generation_slot(name: &str) -> Option<&'static str> {
-    GENERATION_SLOTS
-        .iter()
-        .find(|(s, _)| *s == name)
-        .map(|(_, slot)| *slot)
-}
+/// The same three in the order ownership resolves, which is a different
+/// question and a different order.
+///
+/// A structure two trees reach belongs to the one that writes its bytes, so
+/// metadata comes first. Info comes last because it points at both of the
+/// others, and taken first it would own the lot.
+const OWNERSHIP_SLOT_ORDER: [&str; 3] = [SLOT_METADATA, SLOT_RUNTIME, SLOT_INFO];
 
-/// Every versioned structure and its slot word, for a generator emitting one
-/// item per generation.
-pub fn generation_slots() -> impl Iterator<Item = (&'static str, &'static str)> {
-    GENERATION_SLOTS.into_iter()
+/// Whether `slot` is one of the three a schema may declare.
+pub fn is_slot(slot: &str) -> bool {
+    SLOT_ORDER.contains(&slot)
 }
 
 /// The field kinds a generation marker may sit on - those with something a
@@ -281,26 +291,23 @@ pub fn strip_type_suffix(name: &str) -> &str {
 // reaches that no earlier root has taken.  Deliberately not the order above.
 //
 // A structure belongs to the tree whose root writes its bytes.
-// onerom_rom_slot_t fixes the order: the metadata header writes those bytes,
-// and runtime info only points at them (firmware/src/main.c sets
-// RUNTIME->current_rom_slot = &ROM_SLOTS[...]).  onerom_info_t goes last
-// because it points at both of the others, and first it would own the lot.
-const OWNERSHIP_ORDER: [&str; 3] = [METADATA_STRUCT, RUNTIME_STRUCT, INFO_STRUCT];
-
-/// Pair the generations a field declares with the structures they belong to,
+/// Pair the generations a field declares with the slots they belong to,
 /// dropping the ones it leaves out.
+///
+/// A field names a slot rather than a structure, so nothing below the schema
+/// has to know which structure fills it.
 fn markers(
     info: Option<u32>,
     metadata: Option<u32>,
     runtime: Option<u32>,
 ) -> Vec<(&'static str, u32)> {
     [
-        (INFO_STRUCT, info),
-        (METADATA_STRUCT, metadata),
-        (RUNTIME_STRUCT, runtime),
+        (SLOT_INFO, info),
+        (SLOT_METADATA, metadata),
+        (SLOT_RUNTIME, runtime),
     ]
     .into_iter()
-    .filter_map(|(name, generation)| generation.map(|g| (name, g)))
+    .filter_map(|(slot, generation)| generation.map(|g| (slot, g)))
     .collect()
 }
 
@@ -542,6 +549,28 @@ pub struct PluginKeyEntry<'a> {
     pub count_ref: Option<&'a str>,
 }
 
+/// The constant, or constants, an `expected_const` names.
+///
+/// One name is the ordinary case. A list is for a magic whose value changed
+/// between firmware generations, where devices carrying the older value are
+/// still read, so a parse takes any of them.
+#[derive(Deserialize, Debug, Clone)]
+#[serde(untagged)]
+pub enum ExpectedConst {
+    One(String),
+    Any(Vec<String>),
+}
+
+impl ExpectedConst {
+    /// Every constant named, in declaration order.
+    pub fn names(&self) -> Vec<&str> {
+        match self {
+            Self::One(name) => vec![name.as_str()],
+            Self::Any(names) => names.iter().map(String::as_str).collect(),
+        }
+    }
+}
+
 /// A field within a [[structs]] definition or a [[tagged_fams]] common/variant
 /// section.  Uses a flat layout: all optional members are None when
 /// inapplicable to the field's `kind`.
@@ -610,7 +639,7 @@ pub struct Field {
 
     pub comment: Option<String>,
 
-    pub expected_const: Option<String>,
+    pub expected_const: Option<ExpectedConst>,
 
     pub none_on_parse_error: Option<bool>,
 
@@ -702,7 +731,7 @@ impl Field {
     /// accessor.
     pub fn metadata_since(&self) -> Option<u32> {
         match self.since_marker() {
-            Some((METADATA_STRUCT, generation)) => Some(generation),
+            Some((SLOT_METADATA, generation)) => Some(generation),
             _ => None,
         }
     }
@@ -776,6 +805,12 @@ pub struct Struct {
     /// `[[versions]]` table, so the constant is the one place a generation can
     /// be read from both the old file and the new.
     pub version_constant: Option<String>,
+
+    /// Which of [`SLOT_ORDER`] this structure fills, where it carries a
+    /// generation. Declared rather than derived from the name, so a schema
+    /// naming its structures whatever it likes still says which is which.
+    /// A structure declares this and `version_field` together or neither.
+    pub generation_slot: Option<String>,
     #[serde(default)]
     pub fields: Vec<Field>,
 }
@@ -908,8 +943,10 @@ impl Schema {
         schema.validate_root()?;
         schema.validate_plugin_keys()?;
         schema.validate_expected_offsets()?;
+        schema.validate_expected_consts()?;
         schema.validate_version_fields()?;
         schema.validate_versions()?;
+        schema.validate_header_name()?;
         schema.validate_version_constants()?;
         schema.validate_single_governor()?;
         schema.validate_field_generations()?;
@@ -925,9 +962,9 @@ impl Schema {
 
     /// Check the three statements of which structure is the root against each
     /// other: `root_struct` in `[schema]`, the `root = true` flag on the
-    /// structure, and [`METADATA_STRUCT`].  Each is read by different code, so
-    /// two agreeing while the third does not puts a generator and a validator
-    /// on different structures.
+    /// structure, and the structure filling the metadata slot.  Each is read by
+    /// different code, so two agreeing while the third does not puts a
+    /// generator and a validator on different structures.
     fn validate_root(&self) -> Result<(), Box<dyn std::error::Error>> {
         let flagged: Vec<&str> = self
             .structs
@@ -952,12 +989,70 @@ impl Schema {
             )
             .into());
         }
-        if root != METADATA_STRUCT {
+        match self.slot_of(root) {
+            Some(SLOT_METADATA) => {}
+            Some(slot) => {
+                return Err(format!(
+                    "the root structure is {root}, which fills the {slot} slot - the root of the \
+                     metadata region is what a generated accessor reads a generation from, so it \
+                     fills {SLOT_METADATA}"
+                )
+                .into());
+            }
+            None => {
+                return Err(format!(
+                    "the root structure is {root}, which declares no generation_slot - the root \
+                     of the metadata region fills {SLOT_METADATA}"
+                )
+                .into());
+            }
+        }
+        Ok(())
+    }
+
+    /// A `header_name` names the family's `onerom_info_t` pointing at this
+    /// schema's metadata and runtime structures. So the schema must have both,
+    /// and must not have an `info` structure of its own.
+    fn validate_header_name(&self) -> Result<(), Box<dyn std::error::Error>> {
+        let Some(name) = &self.schema.header_name else {
+            return Ok(());
+        };
+        if let Some(s) = self.struct_in_slot(SLOT_INFO) {
             return Err(format!(
-                "the root structure is {root}, but the generation machinery is written in terms \
-                 of {METADATA_STRUCT} - change METADATA_STRUCT in build/schema.rs with it"
+                "[schema] header_name is {name}, and {} fills the {SLOT_INFO} slot - a schema \
+                 with a header_name uses the family's onerom_info_t",
+                s.name
             )
             .into());
+        }
+        for slot in [SLOT_METADATA, SLOT_RUNTIME] {
+            if self.struct_in_slot(slot).is_none() {
+                return Err(format!(
+                    "[schema] header_name is {name}, and no structure fills the {slot} slot for \
+                     its {slot} pointer to point at"
+                )
+                .into());
+            }
+        }
+        Ok(())
+    }
+
+    /// Refuse an `expected_const` naming nothing.
+    ///
+    /// The generator joins the names into one condition, so an empty list
+    /// emits a check with no condition in it and the failure lands in
+    /// OUT_DIR naming neither the field nor this file.
+    fn validate_expected_consts(&self) -> Result<(), Box<dyn std::error::Error>> {
+        for (struct_name, field) in self.all_fields() {
+            if let Some(expected) = &field.expected_const
+                && expected.names().is_empty()
+            {
+                return Err(format!(
+                    "{struct_name}.{} declares an expected_const naming no constant",
+                    field.name
+                )
+                .into());
+            }
         }
         Ok(())
     }
@@ -1111,20 +1206,47 @@ impl Schema {
     fn validate_versions(&self) -> Result<(), Box<dyn std::error::Error>> {
         use std::collections::HashSet;
 
-        for name in VERSIONED_STRUCTS {
-            let Some(s) = self.structs.iter().find(|s| s.name == name) else {
-                return Err(format!("versioned structure '{name}' is not defined").into());
-            };
-            if s.version_field.is_none() {
-                return Err(
-                    format!("versioned structure '{name}' declares no version_field").into(),
-                );
+        let mut filled: HashSet<&str> = HashSet::new();
+        for s in &self.structs {
+            match (&s.generation_slot, &s.version_field) {
+                (Some(slot), Some(_)) => {
+                    if !is_slot(slot) {
+                        return Err(format!(
+                            "{} declares generation_slot '{slot}', which is not one of {SLOT_ORDER:?}",
+                            s.name
+                        )
+                        .into());
+                    }
+                    if !filled.insert(slot.as_str()) {
+                        return Err(format!(
+                            "{} and another structure both fill the {slot} slot",
+                            s.name
+                        )
+                        .into());
+                    }
+                }
+                (Some(slot), None) => {
+                    return Err(format!(
+                        "{} fills the {slot} slot but declares no version_field",
+                        s.name
+                    )
+                    .into());
+                }
+                (None, Some(_)) => {
+                    return Err(format!(
+                        "{} declares a version_field but no generation_slot, so nothing says \
+                         which generation it carries",
+                        s.name
+                    )
+                    .into());
+                }
+                (None, None) => {}
             }
         }
 
         let mut seen: HashSet<(&str, u32)> = HashSet::new();
         for v in &self.versions {
-            if !VERSIONED_STRUCTS.contains(&v.struct_name.as_str()) {
+            if self.slot_of(&v.struct_name).is_none() {
                 return Err(format!(
                     "[[versions]] entry names '{}', which is not a versioned structure",
                     v.struct_name
@@ -1154,12 +1276,18 @@ impl Schema {
             let since = f.since_markers();
             let deprecated = f.deprecated_markers();
 
+            // A marker names a slot and ownership answers with a structure,
+            // so the two meet at the slot that structure fills. The message
+            // names structures, which is what a schema author writes.
             for (named, _) in since.iter().chain(deprecated.iter()) {
+                let named_struct = self
+                    .struct_in_slot(named)
+                    .map_or(*named, |s| s.name.as_str());
                 match owners.get(container) {
-                    Some(governor) if governor == named => {}
+                    Some(governor) if self.slot_of(governor) == Some(*named) => {}
                     Some(governor) => {
                         return Err(format!(
-                            "{container}.{} names {named} in a generation marker, but \
+                            "{container}.{} names {named_struct} in a generation marker, but \
                              {container} is governed by {governor}",
                             f.name
                         )
@@ -1167,7 +1295,7 @@ impl Schema {
                     }
                     None => {
                         return Err(format!(
-                            "{container}.{} names {named} in a generation marker, but \
+                            "{container}.{} names {named_struct} in a generation marker, but \
                              {container} sits under no versioned structure",
                             f.name
                         )
@@ -1200,8 +1328,11 @@ impl Schema {
                 if let Some((_, first)) = since.iter().find(|(n, _)| n == named)
                     && dep < first
                 {
+                    let shown = self
+                        .struct_in_slot(named)
+                        .map_or(*named, |s| s.name.as_str());
                     return Err(format!(
-                        "{container}.{} is deprecated from {named} generation {dep} but only \
+                        "{container}.{} is deprecated from {shown} generation {dep} but only \
                          appeared in generation {first}",
                         f.name
                     )
@@ -1220,11 +1351,20 @@ impl Schema {
     /// names too, but only as a side effect of where the field sits.  This
     /// says the thing directly.
     fn validate_single_governor(&self) -> Result<(), Box<dyn std::error::Error>> {
+        // A marker names a slot, and the message names the structure filling
+        // it, which is what a schema author writes.
+        let named = |slot: &'static str| {
+            self.struct_in_slot(slot)
+                .map_or(slot, |s| s.name.as_str())
+                .to_string()
+        };
+
         for (container, f) in self.all_fields() {
             let since = f.since_markers();
             let deprecated = f.deprecated_markers();
 
             if let [(first, _), (second, _), ..] = since[..] {
+                let (first, second) = (named(first), named(second));
                 return Err(format!(
                     "{container}.{} names both {first} and {second} in since markers, but one \
                      structure governs a field",
@@ -1233,6 +1373,7 @@ impl Schema {
                 .into());
             }
             if let [(first, _), (second, _), ..] = deprecated[..] {
+                let (first, second) = (named(first), named(second));
                 return Err(format!(
                     "{container}.{} names both {first} and {second} in deprecated markers, but \
                      one structure governs a field",
@@ -1243,6 +1384,7 @@ impl Schema {
             if let ([(introduced, _)], [(retired, _)]) = (&since[..], &deprecated[..])
                 && introduced != retired
             {
+                let (introduced, retired) = (named(introduced), named(retired));
                 return Err(format!(
                     "{container}.{} appeared in a generation of {introduced} but is deprecated \
                      from a generation of {retired}",
@@ -1637,7 +1779,47 @@ impl Schema {
     /// generation from.  [`Schema::validate_root`] has already refused a
     /// schema where it is missing.
     pub fn metadata_header(&self) -> Option<&Struct> {
-        self.structs.iter().find(|s| s.name == METADATA_STRUCT)
+        self.struct_in_slot(SLOT_METADATA)
+    }
+
+    /// The structure filling `slot`, if the schema declares one.
+    pub fn struct_in_slot(&self, slot: &str) -> Option<&Struct> {
+        self.structs
+            .iter()
+            .find(|s| s.generation_slot.as_deref() == Some(slot))
+    }
+
+    /// The slot `struct_name` fills, if it carries a generation.
+    pub fn slot_of(&self, struct_name: &str) -> Option<&str> {
+        self.structs
+            .iter()
+            .find(|s| s.name == struct_name)
+            .and_then(|s| s.generation_slot.as_deref())
+    }
+
+    /// Every structure carrying a generation, with the slot it fills, in
+    /// [`SLOT_ORDER`].
+    pub fn generation_slots(&self) -> Vec<(&str, &str)> {
+        SLOT_ORDER
+            .iter()
+            .filter_map(|slot| self.struct_in_slot(slot).map(|s| (s.name.as_str(), *slot)))
+            .collect()
+    }
+
+    /// Every structure carrying a generation, in [`OWNERSHIP_SLOT_ORDER`].
+    fn ownership_roots(&self) -> Vec<&str> {
+        OWNERSHIP_SLOT_ORDER
+            .iter()
+            .filter_map(|slot| self.struct_in_slot(slot).map(|s| s.name.as_str()))
+            .collect()
+    }
+
+    /// Every structure carrying a generation, in [`SLOT_ORDER`].
+    pub fn versioned_structs(&self) -> Vec<&str> {
+        self.generation_slots()
+            .into_iter()
+            .map(|(n, _)| n)
+            .collect()
     }
 
     /// Every field the metadata generation gates, paired with the struct it
@@ -1659,7 +1841,7 @@ impl Schema {
         let mut out: Vec<(u32, (u32, u32, u32))> = self
             .versions
             .iter()
-            .filter(|v| v.struct_name == METADATA_STRUCT)
+            .filter(|v| self.slot_of(&v.struct_name) == Some(SLOT_METADATA))
             .map(|v| {
                 let release = release_parts(&v.first_release)
                     .expect("validate_release_strings has already refused a malformed release");
@@ -1687,9 +1869,9 @@ impl Schema {
     /// [`OWNERSHIP_ORDER`], each root taking everything it reaches that no
     /// earlier root has taken.  A type nothing reaches is absent from the
     /// map.
-    pub fn ownership(&self) -> HashMap<&str, &'static str> {
+    pub fn ownership(&self) -> HashMap<&str, &str> {
         let mut owners = HashMap::new();
-        for root in OWNERSHIP_ORDER {
+        for root in self.ownership_roots() {
             self.claim(root, root, &mut owners);
         }
         owners
@@ -1701,8 +1883,8 @@ impl Schema {
     fn claim<'a>(
         &'a self,
         current: &'a str,
-        root: &'static str,
-        owners: &mut HashMap<&'a str, &'static str>,
+        root: &'a str,
+        owners: &mut HashMap<&'a str, &'a str>,
     ) {
         if owners.contains_key(current) {
             return;
@@ -1715,7 +1897,7 @@ impl Schema {
             };
             // A versioned structure is a root in its own right, so the walk
             // stops rather than claim it for whatever points at it.
-            if VERSIONED_STRUCTS.contains(&referenced) {
+            if self.slot_of(referenced).is_some() {
                 continue;
             }
             self.claim(referenced, root, owners);

@@ -12,7 +12,7 @@
 // MIT License
 //
 // GENERATED FILE - DO NOT EDIT
-// Source: firmware/metadata_schema.toml
+// Source: rust/metadata/metadata_schema.toml
 
 #ifndef ONEROM_CONSTANTS_H
 #define ONEROM_CONSTANTS_H

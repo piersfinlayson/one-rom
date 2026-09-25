@@ -1,4 +1,4 @@
-// build/layout.rs
+// src/layout.rs
 //
 // Lays out both the working schema and the copy of the last release, compares
 // them field by field, and refuses a layout that moved without its hand-raised
@@ -13,8 +13,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::released::Released;
 use crate::schema::{
-    ConstantValue, FieldShape, NamedSizes, Schema, VERSIONED_STRUCTS, release_parts, shape_size,
-    shape_type,
+    ConstantValue, FieldShape, NamedSizes, Schema, release_parts, shape_size, shape_type,
 };
 
 /// The release in which `[schema] firmware_release` arrived, so a copy without
@@ -224,6 +223,9 @@ impl Layout {
 /// A field or a structure that is simply new is the ordinary case and passes,
 /// subject to the marker rules [`Schema::parse`] enforces.
 pub fn compare(current: &Schema, released: &Released) -> Result<(), Box<dyn std::error::Error>> {
+    if released.unreleased() {
+        return check_nothing_released(released);
+    }
     check_release_order(current, released)?;
     check_first_releases(current, released)?;
 
@@ -235,14 +237,34 @@ pub fn compare(current: &Schema, released: &Released) -> Result<(), Box<dyn std:
     check_generations(current, released, &changed)
 }
 
+/// A copy declaring no release describes nothing, so anything in it beside
+/// that declaration is a contradiction and the comparison it asks to be
+/// skipped is the one that catches a layout moving.
+fn check_nothing_released(released: &Released) -> Result<(), Box<dyn std::error::Error>> {
+    let described = !released.structs.is_empty()
+        || !released.constants.is_empty()
+        || !released.enums.is_empty()
+        || !released.type_aliases.is_empty()
+        || !released.tagged_fams.is_empty();
+    if described {
+        return Err(
+            "the released schema says unreleased and describes a layout - one release \
+                    has shipped or none has"
+                .into(),
+        );
+    }
+    Ok(())
+}
+
 /// The constants holding the versioned structures' generations.
 ///
 /// They are the one set meant to change, and [`check_generations`] holds them
 /// instead - to a rise of exactly one, alongside a `[[versions]]` entry naming
 /// the release that generation ships in.
 fn generation_constants(current: &Schema) -> BTreeSet<&str> {
-    VERSIONED_STRUCTS
-        .iter()
+    current
+        .versioned_structs()
+        .into_iter()
         .filter_map(|name| current.generation_constant(name))
         .map(|(constant, _)| constant)
         .collect()
@@ -572,7 +594,7 @@ fn check_generations(
         changed_trees.entry(root).or_insert(name);
     }
 
-    for name in VERSIONED_STRUCTS {
+    for name in current.versioned_structs() {
         let Some((constant, is)) = current.generation_constant(name) else {
             return Err(format!(
                 "{name} carries a generation number and names no constant holding it"

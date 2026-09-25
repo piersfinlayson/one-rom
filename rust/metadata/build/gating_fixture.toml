@@ -153,6 +153,7 @@ size = 56
 root = true
 version_field = "version"
 version_constant = "CURRENT_METADATA_VERSION"
+generation_slot = "metadata"
 
 [[structs.fields]]
 name = "version"
@@ -412,6 +413,7 @@ comment = "Fixed-address structure the firmware places in flash"
 generate = "parse"
 version_field = "version"
 version_constant = "ONEROM_INFO_VERSION"
+generation_slot = "info"
 
 [[structs.fields]]
 name = "version"
@@ -439,6 +441,7 @@ comment = "Structure the firmware keeps in RAM while it runs"
 generate = "parse"
 version_field = "version"
 version_constant = "RUNTIME_INFO_VERSION"
+generation_slot = "runtime"
 
 [[structs.fields]]
 name = "version"

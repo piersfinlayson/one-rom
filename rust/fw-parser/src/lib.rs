@@ -94,16 +94,17 @@ use crate::parsing::{
 
 use onerom::parse_onerom_from_view;
 use onerom_metadata::{
-    BUILD_DATE_BUF_LEN, DeviceMemoryView, METADATA_SIZE, MIN_SCHEMA_VERSION,
+    BUILD_DATE_BUF_LEN, DeviceMemoryView, METADATA_SIZE, MIN_SCHEMA_VERSION, ONEROM_FAMILY_MAGIC,
     ONEROM_INFO_BUILD_DATE_OFFSET, ONEROM_INFO_MAGIC, ONEROM_INFO_MAGIC_OFFSET,
     ONEROM_INFO_MAJOR_VERSION_OFFSET, ONEROM_INFO_METADATA_OFFSET,
     ONEROM_INFO_MINOR_VERSION_OFFSET, ONEROM_INFO_PATCH_VERSION_OFFSET, ONEROM_INFO_RUNTIME_OFFSET,
     ONEROM_INFO_SIZE, ONEROM_RUNTIME_INFO_SIZE, RUNTIME_INFO_MAGIC,
 };
 
-/// Offset from start of the firmware where the SDRR info header is located.
+/// Offset from start of the firmware where the One ROM info header is located.
 ///
-/// The first 4 "magic" bytes are b"SDRR" (upper case).
+/// The first 4 "magic" bytes are b"ORRM" from firmware v0.8.0, and b"SDRR"
+/// before it.
 pub const SDRR_INFO_FW_OFFSET: u32 = 0x200;
 
 /// Offset from the start of RAM where the SDRR runtime info header is located.
@@ -304,8 +305,8 @@ impl<'a, R: Reader> Parser<'a, R> {
     /// uses the original hand-crafted format (pre-v0.7.0) or the schema-driven
     /// metadata format (v0.7.0+).
     ///
-    /// Returns `None` if the SDRR magic bytes are not found, indicating this
-    /// is not a recognisable OneROM firmware image.
+    /// Returns `None` where neither magic is found, which means this is not a
+    /// recognisable One ROM firmware image.
     pub async fn detect_format(&mut self) -> Option<FirmwareFormat> {
         let info_addr = self.base_flash_address + SDRR_INFO_FW_OFFSET;
 
@@ -313,7 +314,12 @@ impl<'a, R: Reader> Parser<'a, R> {
         let mut buf = [0u8; 8];
         self.reader.read(info_addr, &mut buf).await.ok()?;
 
-        if &buf[0..4] != b"SDRR" {
+        // ORRM arrived with firmware v0.8.0 and is only ever schema format.
+        // SDRR spans both formats, so its format comes from the version.
+        if buf.starts_with(ONEROM_FAMILY_MAGIC.as_bytes()) {
+            return Some(FirmwareFormat::Schema);
+        }
+        if !buf.starts_with(ONEROM_INFO_MAGIC.as_bytes()) {
             return None;
         }
 
@@ -328,14 +334,14 @@ impl<'a, R: Reader> Parser<'a, R> {
         }
     }
 
-    /// Function to do a brief check whether this is an SDRR device.
+    /// Function to do a brief check whether this is a One ROM device.
     ///
     /// Answers for either firmware generation, and for a version newer than
     /// this build can parse.  The question is whether the device is a One ROM,
     /// not whether this build can read it.
     ///
     /// Returns:
-    /// - `true` if the SDRR magic was found
+    /// - `true` if a One ROM magic was found
     /// - `false` if it was not (or an error occured)
     pub async fn detect(&mut self) -> bool {
         self.detect_format().await.is_some()
@@ -709,8 +715,11 @@ impl<'a, R: Reader> Parser<'a, R> {
             .await
             .map_err(|_| "Failed to read info header".to_string())?;
 
-        if !info_buf[ONEROM_INFO_MAGIC_OFFSET..].starts_with(ONEROM_INFO_MAGIC.as_bytes()) {
-            return Err("Invalid magic: not an SDRR firmware image".into());
+        let magic = &info_buf[ONEROM_INFO_MAGIC_OFFSET..];
+        if !magic.starts_with(ONEROM_FAMILY_MAGIC.as_bytes())
+            && !magic.starts_with(ONEROM_INFO_MAGIC.as_bytes())
+        {
+            return Err("Invalid magic: not a One ROM firmware image".into());
         }
 
         let major = info_u16(&info_buf, ONEROM_INFO_MAJOR_VERSION_OFFSET);

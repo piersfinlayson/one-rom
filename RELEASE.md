@@ -15,7 +15,6 @@ To update the version:
   - [fw-parser](/rust/fw-parser/Cargo.toml)
   - [fw](/rust/fw/Cargo.toml)
   - [protocol](/rust/protocol/Cargo.toml)
-  - [lab](/rust/lab/Cargo.toml)
   - [metadata](/rust/metadata/Cargo.toml)
   - [app](/rust/app/Cargo.toml)
   - [cli](/rust/cli/Cargo.toml)

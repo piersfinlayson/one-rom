@@ -1,4 +1,4 @@
-// build/constants_gen.rs
+// src/constants_gen.rs
 //
 // Generates the plugin-facing constants header
 // (firmware/ora/onerom_constants_generated.h) from the OneROM metadata schema.
@@ -28,7 +28,7 @@ const GUARD: &str = "ONEROM_CONSTANTS_H";
 pub fn generate(schema: &Schema) -> String {
     let mut out = String::new();
 
-    out.push_str(
+    out.push_str(&format!(
         "// OneROM Constants\n\
          //\n\
          // Values a plugin must agree with the firmware on, taken from the same\n\
@@ -43,8 +43,9 @@ pub fn generate(schema: &Schema) -> String {
          // MIT License\n\
          //\n\
          // GENERATED FILE - DO NOT EDIT\n\
-         // Source: firmware/metadata_schema.toml\n\n",
-    );
+         // Source: {}\n\n",
+        schema.source
+    ));
 
     out.push_str(&format!("#ifndef {GUARD}\n#define {GUARD}\n\n"));
     out.push_str("#include <stdint.h>\n\n");

@@ -1,28 +1,21 @@
 [package]
-name = "onerom-metadata"
-version = "0.3.0"
+name = "onerom-lab-metadata"
+version = "0.1.0"
 edition = "2024"
 authors = ["Piers Finlayson <piers@piers.rocks>"]
 license = "MIT"
-description = "One ROM metadata handling"
+description = "One ROM Lab metadata handling"
 repository = "https://github.com/piersfinlayson/one-rom"
 homepage = "https://onerom.org"
-documentation = "https://docs.rs/onerom-config"
 keywords = ["retro", "rom", "embedded"]
-categories = ["embedded", "hardware-support"]
-build = "build/main.rs"
-# Test-only. See build/main.rs.
-exclude = [
-    "build/gating_fixture.toml",
-    "tests/generation_roundtrip.rs",
-    "tests/fixture_device.rs",
-]
+categories = ["embedded", "hardware-support", "no-std"]
 
 [lib]
-name = "onerom_metadata"
- 
+name = "onerom_lab_metadata"
+
 [dependencies]
 onerom-config = { workspace = true }
+onerom-metadata = { workspace = true }
 hashbrown = { version = "0.17", default-features = false, features = ["default-hasher", "inline-more"] }
 serde = { version = "1", default-features = false, features = ["derive", "alloc"] }
 serde-big-array = "0.5"
@@ -30,10 +23,5 @@ serde-big-array = "0.5"
 [build-dependencies]
 onerom-metadata-gen = { workspace = true }
 
-[dev-dependencies]
-onerom-metadata-gen = { workspace = true }
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-toml  = { version = "1.1" }
 [lints]
 workspace = true

@@ -1,4 +1,4 @@
-// build/keys_gen.rs
+// src/keys_gen.rs
 //
 // Generates the plugin-facing metadata key header
 // (firmware/ora/onerom_metadata_keys_generated.h) from the OneROM metadata
@@ -59,6 +59,7 @@ pub fn generate(schema: &Schema) -> String {
 
     let width = variants.iter().map(|v| v.name.len()).max().unwrap_or(0);
 
+    let source = &schema.source;
     let mut out = String::with_capacity(2048);
     out.push_str(&format!(
         "\
@@ -82,7 +83,7 @@ pub fn generate(schema: &Schema) -> String {
 // MIT License
 //
 // GENERATED FILE - DO NOT EDIT
-// Source: firmware/metadata_schema.toml
+// Source: {source}
 
 #ifndef {GUARD}
 #define {GUARD}

@@ -17,7 +17,7 @@ use core::task::{Context, Poll, Waker};
 
 use onerom_fw_parser::readers::{MemoryReader, RegionKind};
 use onerom_fw_parser::{Parser, RuntimeAbsence, SDRR_INFO_FW_OFFSET};
-use onerom_metadata::ONEROM_INFO_VERSION_OFFSET as VERSION_OFF;
+use onerom_metadata::{ONEROM_FAMILY_MAGIC, ONEROM_INFO_VERSION_OFFSET as VERSION_OFF};
 
 const RP235X_FLASH_BASE: u32 = 0x1000_0000;
 const RP235X_RAM_BASE: u32 = 0x2008_0000;
@@ -59,7 +59,7 @@ fn block_on<F: Future>(future: F) -> F::Output {
 fn schema_image(info_generation: u32, runtime_ptr: u32) -> Vec<u8> {
     let mut image = vec![0u8; 0x400];
     let base = SDRR_INFO_FW_OFFSET as usize;
-    image[base..base + 4].copy_from_slice(b"SDRR");
+    image[base..base + 4].copy_from_slice(ONEROM_FAMILY_MAGIC.as_bytes());
     image[base + 4..base + 6].copy_from_slice(&0u16.to_le_bytes());
     image[base + 6..base + 8].copy_from_slice(&8u16.to_le_bytes());
     image[base + 8..base + 10].copy_from_slice(&0u16.to_le_bytes());

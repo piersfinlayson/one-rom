@@ -39,6 +39,8 @@ cargo clippy \
     -p onerom-fw-parser \
     -p onerom-gen \
     -p onerom-metadata \
+    -p onerom-lab-metadata \
+    -p onerom-metadata-gen \
     -p onerom-protocol \
     -p onerom-studio \
     -p schema-gen \

@@ -1,0 +1,211 @@
+# One ROM Lab's metadata schema.
+#
+# Lab fills onerom_info_t at the flash anchor, the same 64 bytes One ROM does,
+# and onerom-metadata owns that structure. This file describes only what Lab's
+# own metadata and runtime pointers reach. firmware_type in onerom_info_t is
+# FIRMWARE_TYPE_LAB, which is what says the pointers lead here.
+#
+# The key names and field kinds are onerom-metadata-gen's, documented in
+# rust/metadata/metadata_schema.toml.
+#
+# There is no metadata_base or metadata_size. Those describe a region for
+# something outside the firmware to compose. Lab's structures are consts its
+# own build places, and onerom_info_t's metadata pointer is how a host finds
+# them.
+#
+# Copyright (C) 2026 Piers Finlayson <piers@piers.rocks>
+# MIT License
+
+[schema]
+format_version = 1
+firmware_release = "0.4.0"
+name = "OneROMLab"
+description = "One ROM Lab metadata structures"
+flash_base = 0x10000000
+root_struct = "onerom_lab_metadata_header_t"
+# Lab's type for the 64-byte header at 0x10000200. Its metadata and runtime
+# pointers point at the structures in this schema.
+header_name = "onerom_lab_info_t"
+
+# ===========================================================================
+# Structure generations
+# ===========================================================================
+
+[[versions]]
+struct_name = "onerom_lab_metadata_header_t"
+version = 1
+first_release = "0.4.0"
+
+[[versions]]
+struct_name = "onerom_lab_runtime_info_t"
+version = 1
+first_release = "0.4.0"
+
+# ===========================================================================
+# Constants
+# ===========================================================================
+
+[[constants]]
+name = "LAB_METADATA_MAGIC"
+type = "cstr"
+value = "ONEROM_LAB_META"
+comment = "Magic at the start of onerom_lab_metadata_header_t, 16 bytes including its terminator"
+
+[[constants]]
+name = "LAB_METADATA_VERSION"
+type = "u32"
+value = 1
+comment = "Version of the onerom_lab_metadata_header_t structure"
+
+[[constants]]
+name = "LAB_RUNTIME_INFO_MAGIC"
+type = "cstr"
+value = "orlr"
+comment = "Magic at the start of onerom_lab_runtime_info_t"
+
+[[constants]]
+name = "LAB_RUNTIME_INFO_VERSION"
+type = "u32"
+value = 1
+comment = "Version of the onerom_lab_runtime_info_t structure"
+
+# ===========================================================================
+# Enums
+# ===========================================================================
+
+[[enums]]
+name = "rp235x_variant_t"
+size = 1
+packed = true
+comment = """RP235x silicon package variant.
+Values are chosen to match the SYS_INFO: PACKAGE_SEL Register"""
+strip_prefix = "RP235X"
+
+[[enums.variants]]
+name = "RP235XB"
+value = 0
+display = "RP235xB"
+comment = "RP235xB"
+
+[[enums.variants]]
+name = "RP235XA"
+value = 1
+display = "RP235xA"
+comment = "RP235xA"
+
+# ===========================================================================
+# Structures
+# ===========================================================================
+
+[[structs]]
+name = "onerom_lab_metadata_header_t"
+comment = """Root of Lab's metadata region, reached from onerom_info_t.metadata.
+Placed in flash by the Lab build."""
+generate = "both"
+size = 256
+root = true
+version_field = "version"
+version_constant = "LAB_METADATA_VERSION"
+generation_slot = "metadata"
+
+[[structs.fields]]
+name = "magic"
+kind = "inline_array"
+element = "u8"
+count = 16
+expected_const = "LAB_METADATA_MAGIC"
+expected_offset = 0
+comment = "Magic bytes: See LAB_METADATA_MAGIC const"
+
+[[structs.fields]]
+name = "version"
+kind = "scalar"
+type = "u32"
+comment = "Metadata generation these bytes were written at"
+
+[[structs.fields]]
+name = "hw"
+kind = "struct_ptr"
+type = "onerom_lab_hardware_info_t"
+nullable = false
+comment = "The board this image was built for"
+
+[[structs.fields]]
+name = "reserved"
+kind = "padding"
+size = 232
+comment = "Pad to 256 bytes. Set to 0xFF."
+
+# ---
+
+[[structs]]
+name = "onerom_lab_hardware_info_t"
+comment = "The board a Lab image was built for"
+generate = "both"
+size = 256
+
+[[structs.fields]]
+name = "hw_rev"
+kind = "cstr_ptr"
+nullable = true
+comment = """Board baked in at build time.
+Null where the board is set at runtime instead, with B:<board>."""
+
+[[structs.fields]]
+name = "rp235x"
+kind = "enum"
+type = "rp235x_variant_t"
+comment = "Expected RP235x silicon variant for this board"
+
+[[structs.fields]]
+name = "reserved"
+kind = "padding"
+size = 251
+comment = "Pad to 256 bytes. Set to 0xFF."
+
+# ---
+
+[[structs]]
+name = "onerom_lab_runtime_info_t"
+comment = """Lab state while it runs, reached from onerom_info_t.runtime.
+Points into RAM, so it is absent or stale on a stopped device."""
+generate = "parse"
+size = 256
+const_fields = false
+version_field = "version"
+version_constant = "LAB_RUNTIME_INFO_VERSION"
+generation_slot = "runtime"
+
+[[structs.fields]]
+name = "magic"
+kind = "inline_array"
+element = "u8"
+count = 4
+expected_const = "LAB_RUNTIME_INFO_MAGIC"
+expected_offset = 0
+comment = "Magic bytes: See LAB_RUNTIME_INFO_MAGIC const"
+
+[[structs.fields]]
+name = "version"
+kind = "scalar"
+type = "u32"
+comment = "Runtime generation these bytes were written at"
+
+[[structs.fields]]
+name = "runtime_info_size"
+kind = "scalar"
+type = "u32"
+comment = "Size of this structure in bytes"
+
+[[structs.fields]]
+name = "hw_rev"
+kind = "cstr_ptr"
+nullable = true
+comment = """Board Lab is running as.
+Null until one is set, either baked in at build time or with B:<board>."""
+
+[[structs.fields]]
+name = "reserved"
+kind = "padding"
+size = 240
+comment = "Pad to 256 bytes. Set to 0xFF."

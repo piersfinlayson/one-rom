@@ -1,9 +1,9 @@
 // tests/schema_validation.rs
 //
-// Tests for the schema validation the build script runs before any generator
-// sees the schema.  The build module is pulled in directly - its rules exist
-// to reject a bad metadata_schema.toml, and there is no other way to hand it
-// one.
+// Tests for the schema validation that runs before any generator sees the
+// schema.  Most drive a fixture built here, and one drives this crate's own
+// metadata_schema.toml, which is why the tests live with it rather than with
+// the generator that carries the rules.
 //
 // Each test breaks exactly one rule, so a rule that stops working takes its
 // own test down with it.
@@ -11,13 +11,7 @@
 // Copyright (C) 2026 Piers Finlayson <piers@piers.rocks>
 // MIT License
 
-// This test target uses a fraction of the module. The rest is there for the
-// generators, which it does not build.
-#[allow(dead_code)]
-#[path = "../build/schema.rs"]
-mod schema;
-
-use schema::Schema;
+use onerom_metadata_gen::schema::Schema;
 
 // ===========================================================================
 // Schema construction
@@ -92,6 +86,7 @@ name = "onerom_info_t"
 generate = "parse"
 version_field = "version"
 version_constant = "ONEROM_INFO_VERSION"
+generation_slot = "info"
 
 [[structs.fields]]
 name = "version"
@@ -116,6 +111,7 @@ generate = "both"
 root = true
 version_field = "version"
 version_constant = "CURRENT_METADATA_VERSION"
+generation_slot = "metadata"
 
 [[structs.fields]]
 name = "version"
@@ -165,6 +161,7 @@ name = "onerom_runtime_info_t"
 generate = "parse"
 version_field = "version"
 version_constant = "RUNTIME_INFO_VERSION"
+generation_slot = "runtime"
 
 [[structs.fields]]
 name = "version"
@@ -263,7 +260,7 @@ fn tagged_fam_toml(attrs: &str) -> String {
 /// The fixture with `attrs` on a field declared ahead of the metadata header's
 /// own generation number.
 fn ahead_of_the_metadata_version(attrs: &str) -> String {
-    let anchor = "version_constant = \"CURRENT_METADATA_VERSION\"";
+    let anchor = "version_constant = \"CURRENT_METADATA_VERSION\"\ngeneration_slot = \"metadata\"";
     let toml = schema_toml("", "");
     assert!(toml.contains(anchor), "no metadata header in the fixture");
     toml.replace(
@@ -932,9 +929,43 @@ fn a_root_struct_naming_another_structure_is_refused() {
 /// machinery written in terms of the old name, which is the copy nothing else
 /// compares.
 #[test]
-fn a_root_the_generation_machinery_does_not_know_is_refused() {
+fn a_root_named_anything_is_accepted_where_it_fills_the_metadata_slot() {
     let toml = schema_toml("", "").replace("onerom_metadata_header_t", "onerom_meta_root_t");
-    refused(&toml, "change METADATA_STRUCT in build/schema.rs");
+    Schema::parse(&toml).expect("a schema may name its own structures");
+}
+
+/// What a Lab schema looks like: its anchor structure belongs to another
+/// crate, so it declares the metadata and runtime slots and leaves info empty.
+#[test]
+fn a_schema_leaving_the_info_slot_empty_is_accepted() {
+    let toml = schema_toml("", "")
+        .replace(
+            "version_field = \"version\"\nversion_constant = \"ONEROM_INFO_VERSION\"\ngeneration_slot = \"info\"\n",
+            "",
+        )
+        .replace(
+            "[[versions]]\nstruct_name = \"onerom_info_t\"\nversion = 2\nfirst_release = \"0.7.0\"\n",
+            "",
+        );
+    let schema = Schema::parse(&toml).expect("a schema need not fill every slot");
+    assert_eq!(schema.versioned_structs().len(), 2);
+}
+
+#[test]
+fn a_root_declaring_no_slot_is_refused() {
+    let toml = schema_toml("", "").replace("generation_slot = \"metadata\"\n", "");
+    refused(&toml, "declares no generation_slot");
+}
+
+#[test]
+fn a_root_filling_another_slot_is_refused() {
+    let toml = schema_toml("", "")
+        .replace("generation_slot = \"info\"", "generation_slot = \"unused\"")
+        .replace(
+            "generation_slot = \"metadata\"",
+            "generation_slot = \"info\"",
+        );
+    refused(&toml, "which fills the info slot");
 }
 
 // ===========================================================================
@@ -1126,4 +1157,66 @@ fn a_deprecation_in_the_release_it_arrived_in_is_refused() {
         ),
         "constant SPARE is deprecated from 0.8.0 and reached the plugin API in 0.8.0",
     );
+}
+
+// ===========================================================================
+// A family member's header name
+// ===========================================================================
+
+/// `toml` with `from` replaced by `to`, where `from` is there.
+fn replaced(toml: &str, from: &str, to: &str) -> String {
+    assert!(toml.contains(from), "no '{from}' in the fixture");
+    toml.replace(from, to)
+}
+
+/// The fixture as a family member's schema: no info structure, and a
+/// header_name for the family's.
+fn member_toml() -> String {
+    let toml = schema_toml("", "");
+    let toml = replaced(
+        &toml,
+        "[[versions]]\nstruct_name = \"onerom_info_t\"\nversion = 2\nfirst_release = \"0.7.0\"\n",
+        "",
+    );
+    let info = toml.find("[[structs]]\nname = \"onerom_info_t\"").unwrap();
+    let header = toml
+        .find("[[structs]]\nname = \"onerom_metadata_header_t\"")
+        .unwrap();
+    let toml = format!("{}{}", &toml[..info], &toml[header..]);
+    replaced(
+        &toml,
+        "root_struct = \"onerom_metadata_header_t\"\n",
+        "root_struct = \"onerom_metadata_header_t\"\nheader_name = \"test_info_t\"\n",
+    )
+}
+
+#[test]
+fn a_header_name_is_accepted() {
+    accepted(&member_toml());
+}
+
+#[test]
+fn a_header_name_beside_an_info_structure_is_refused() {
+    let toml = replaced(
+        &schema_toml("", ""),
+        "root_struct = \"onerom_metadata_header_t\"\n",
+        "root_struct = \"onerom_metadata_header_t\"\nheader_name = \"test_info_t\"\n",
+    );
+    refused(&toml, "onerom_info_t fills the info slot");
+}
+
+#[test]
+fn a_header_name_without_a_runtime_structure_is_refused() {
+    let toml = replaced(
+        &member_toml(),
+        "[[versions]]\nstruct_name = \"onerom_runtime_info_t\"\nversion = 2\nfirst_release = \"0.7.0\"\n",
+        "",
+    );
+    let toml = replaced(
+        &toml,
+        "version_field = \"version\"\nversion_constant = \"RUNTIME_INFO_VERSION\"\n\
+         generation_slot = \"runtime\"\n",
+        "",
+    );
+    refused(&toml, "no structure fills the runtime slot");
 }

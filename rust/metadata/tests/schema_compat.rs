@@ -1,9 +1,9 @@
 // tests/schema_compat.rs
 //
-// Tests for the comparison between the working schema and the one the last
-// release shipped.  The build modules are pulled in directly - the rules exist
-// to reject a pair of metadata_schema.toml files, and there is no other way to
-// hand them one.
+// Tests for the comparison between this crate's schema and the one the last
+// release shipped.  Most drive a fixture pair built here, and the rest drive
+// the shipped files, which is why the tests live with them rather than with
+// the generator that carries the rules.
 //
 // Each test breaks exactly one rule, so a rule that stops working takes its
 // own test down with it.
@@ -11,20 +11,9 @@
 // Copyright (C) 2026 Piers Finlayson <piers@piers.rocks>
 // MIT License
 
-// These test targets use a fraction of the modules. The rest is there for the
-// generators, which they do not build.
-#[allow(dead_code)]
-#[path = "../build/layout.rs"]
-mod layout;
-#[allow(dead_code)]
-#[path = "../build/released.rs"]
-mod released;
-#[allow(dead_code)]
-#[path = "../build/schema.rs"]
-mod schema;
-
-use released::Released;
-use schema::Schema;
+use onerom_metadata_gen::layout;
+use onerom_metadata_gen::released::Released;
+use onerom_metadata_gen::schema::Schema;
 
 // ===========================================================================
 // The fixture pair
@@ -121,6 +110,7 @@ name = "onerom_info_t"
 generate = "parse"
 version_field = "version"
 version_constant = "ONEROM_INFO_VERSION"
+generation_slot = "info"
 
 [[structs.fields]]
 name = "version"
@@ -145,6 +135,7 @@ generate = "both"
 root = true
 version_field = "version"
 version_constant = "CURRENT_METADATA_VERSION"
+generation_slot = "metadata"
 
 [[structs.fields]]
 name = "version"
@@ -210,6 +201,7 @@ name = "onerom_runtime_info_t"
 generate = "parse"
 version_field = "version"
 version_constant = "RUNTIME_INFO_VERSION"
+generation_slot = "runtime"
 
 [[structs.fields]]
 name = "version"
@@ -262,12 +254,15 @@ fn current() -> String {
 
 /// The last released schema, written the way a pre-0.8.0 file was.
 ///
-/// `version_constant` arrived with `[[versions]]`, so neither is in it, and a
-/// structure's generation is readable only from the constant it names.
+/// `version_constant` and `generation_slot` both arrived after it, so neither
+/// is in it, and a structure's generation is readable only from the constant
+/// it names.
 fn released() -> String {
     let body: String = BODY
         .lines()
-        .filter(|line| !line.starts_with("version_constant = "))
+        .filter(|line| {
+            !line.starts_with("version_constant = ") && !line.starts_with("generation_slot = ")
+        })
         .map(|line| format!("{line}\n"))
         .collect();
     format!("{OLD_HEAD}{body}")

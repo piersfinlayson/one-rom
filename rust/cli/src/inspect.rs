@@ -938,7 +938,7 @@ mod tests {
 
         let mut image = vec![0u8; 0x400];
         let base = SDRR_INFO_FW_OFFSET as usize;
-        image[base..base + 4].copy_from_slice(b"SDRR");
+        image[base..base + 4].copy_from_slice(onerom_metadata::ONEROM_FAMILY_MAGIC.as_bytes());
         image[base + 6..base + 8].copy_from_slice(&8u16.to_le_bytes());
         // build_date, into the zeroed tail of the image
         image[base + 12..base + 16].copy_from_slice(&(FLASH_BASE + 0x300).to_le_bytes());

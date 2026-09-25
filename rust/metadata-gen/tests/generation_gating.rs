@@ -1,31 +1,17 @@
 // tests/generation_gating.rs
 //
 // Tests for what the generators emit for a field carrying a generation
-// marker.  The build modules are pulled in directly - what they emit is the
-// thing under test, and there is no other way to hand them a schema.
+// marker.  Each generator is called with a schema built here, since what it
+// emits is the thing under test.
 //
-// No field of the shipped schema carries a marker - nothing has been added
+// No field of One ROM's own schema carries a marker - nothing has been added
 // since v0.7.0 - so a fixture schema is the only way to reach any of this.
 //
 // Copyright (C) 2026 Piers Finlayson <piers@piers.rocks>
 // MIT License
 
-// These test targets use a fraction of the modules. The rest is there for the
-// generators, which they do not build.
-#[allow(dead_code)]
-#[path = "../build/c_gen.rs"]
-mod c_gen;
-#[allow(dead_code)]
-#[path = "../build/rust_gen.rs"]
-mod rust_gen;
-#[allow(dead_code)]
-#[path = "../build/schema.rs"]
-mod schema;
-#[allow(dead_code)]
-#[path = "../build/serialize_gen.rs"]
-mod serialize_gen;
-
-use schema::Schema;
+use onerom_metadata_gen::schema::Schema;
+use onerom_metadata_gen::{c_gen, rust_gen, serialize_gen};
 
 // ===========================================================================
 // The fixture
@@ -116,6 +102,7 @@ name = "onerom_info_t"
 generate = "parse"
 version_field = "version"
 version_constant = "ONEROM_INFO_VERSION"
+generation_slot = "info"
 
 [[structs.fields]]
 name = "version"
@@ -140,6 +127,7 @@ generate = "both"
 root = true
 version_field = "version"
 version_constant = "CURRENT_METADATA_VERSION"
+generation_slot = "metadata"
 
 [[structs.fields]]
 name = "version"
@@ -180,6 +168,7 @@ name = "onerom_runtime_info_t"
 generate = "parse"
 version_field = "version"
 version_constant = "RUNTIME_INFO_VERSION"
+generation_slot = "runtime"
 
 [[structs.fields]]
 name = "version"

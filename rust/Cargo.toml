@@ -17,6 +17,8 @@ members = [
     "lab",
     "lens",
     "metadata",
+    "lab-metadata",
+    "metadata-gen",
     "plugin-tester",
     "rbcp-tester",
     "usb-tester",
@@ -34,6 +36,8 @@ default-members = [
     "fw-parser",
     "gen",
     "metadata",
+    "lab-metadata",
+    "metadata-gen",
     "protocol",
     "schema-gen",
     "studio",
@@ -65,6 +69,8 @@ onerom-fw-parser = { path="fw-parser", version="0.10.0" }
 onerom-fw-tester = { path="fw-tester", version="0.1.0" }
 onerom-gen = { path="gen", version="0.9.0" }
 onerom-metadata = { path="metadata", version="0.3.0" }
+onerom-lab-metadata = { path="lab-metadata", version="0.1.0" }
+onerom-metadata-gen = { path="metadata-gen", version="0.1.0" }
 onerom-plugin-tester = { path="plugin-tester", version="0.1.0" }
 onerom-protocol = { path="protocol", version="0.1.1" }
 

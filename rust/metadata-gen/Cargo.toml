@@ -1,0 +1,20 @@
+[package]
+name = "onerom-metadata-gen"
+version = "0.1.0"
+edition = "2024"
+authors = ["Piers Finlayson <piers@piers.rocks>"]
+license = "MIT"
+description = "Code generator behind One ROM's metadata crates - C headers and Rust source from a TOML schema"
+repository = "https://github.com/piersfinlayson/one-rom"
+homepage = "https://onerom.org"
+documentation = "https://docs.rs/onerom-metadata-gen"
+keywords = ["retro", "rom", "embedded", "codegen"]
+categories = ["development-tools::build-utils", "embedded"]
+
+[dependencies]
+onerom-config = { workspace = true }
+serde = { version = "1", features = ["derive"] }
+toml  = { version = "1.1" }
+
+[lints]
+workspace = true

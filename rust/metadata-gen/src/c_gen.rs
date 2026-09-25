@@ -1,4 +1,4 @@
-// build/c_gen.rs
+// src/c_gen.rs
 //
 // Generates a single C header file from the OneROM metadata schema.
 // Replaces enums.h, config_base.h, and alg.h.
@@ -58,14 +58,12 @@ fn emit_file_header(schema: &Schema, out: &mut String) {
 //
 // {desc}
 //
-// Metadata base address: 0x{base:08X}  ({size} bytes reserved)
-//
-// Copyright (C) 2026 Piers Finlayson <piers@piers.rocks>
+{region}// Copyright (C) 2026 Piers Finlayson <piers@piers.rocks>
 //
 // MIT License
 //
 // GENERATED FILE - DO NOT EDIT
-// Source: firmware/metadata_schema.toml
+// Source: {source}
 
 #ifndef {guard}
 #define {guard}
@@ -81,9 +79,14 @@ fn emit_file_header(schema: &Schema, out: &mut String) {
 ",
         name = schema.schema.name,
         desc = schema.schema.description,
-        base = schema.schema.metadata_base,
-        size = schema.schema.metadata_size,
+        region = match (schema.schema.metadata_base, schema.schema.metadata_size) {
+            (Some(base), Some(size)) => {
+                format!("// Metadata base address: 0x{base:08X}  ({size} bytes reserved)\n//\n")
+            }
+            _ => String::new(),
+        },
         guard = guard,
+        source = schema.source,
     ));
 }
 
@@ -128,11 +131,15 @@ fn emit_deprecation_macro(schema: &Schema, out: &mut String) {
 
 /// The `ONEROM_DEPRECATED(...)` text a field carries, with a trailing space,
 /// or an empty string where the field is not deprecated.
-fn deprecation_attribute(field: &Field) -> String {
+fn deprecation_attribute(field: &Field, schema: &Schema) -> String {
     match field.deprecated_marker() {
         Some((governor, generation)) => format!(
             "ONEROM_DEPRECATED(\"{} is deprecated from {} generation {}\") ",
-            field.name, governor, generation
+            field.name,
+            schema
+                .struct_in_slot(governor)
+                .map_or(governor, |s| s.name.as_str()),
+            generation
         ),
         None => String::new(),
     }
@@ -210,7 +217,7 @@ fn emit_accessor(
 
     emit_accessor_default_object(field, &name, out);
 
-    let deprecated = deprecation_attribute(field);
+    let deprecated = deprecation_attribute(field, schema);
     let params = if on_header {
         format!("const {} *header", header.name)
     } else {
@@ -734,27 +741,8 @@ fn emit_enum(e: &crate::schema::Enum, out: &mut String) {
 fn emit_rbcp_chip_type_enum(e: &crate::schema::Enum, out: &mut String) {
     emit_item_header(e.comment.as_deref(), out);
 
-    // Canonical chips: try_from_rbcp_u8 round-trips back to self.
-    let mut canonical: Vec<ChipType> = CHIP_TYPES
-        .iter()
-        .copied()
-        .filter(|ct| ChipType::try_from_rbcp_u8(ct.rbcp_chip_type()) == Some(*ct))
-        .collect();
-    canonical.sort_by_key(|ct| ct.rbcp_chip_type());
-
-    // Alias chips: try_from_rbcp_u8 returns a different (canonical) chip.
-    let aliases: Vec<ChipType> = CHIP_TYPES
-        .iter()
-        .copied()
-        .filter(|ct| ChipType::try_from_rbcp_u8(ct.rbcp_chip_type()) != Some(*ct))
-        .collect();
-
-    let num_chip_types: u32 = canonical
-        .iter()
-        .map(|ct| ct.rbcp_chip_type() as u32)
-        .max()
-        .unwrap_or(0)
-        + 1;
+    let (canonical, aliases) = rbcp_chip_types();
+    let num_chip_types = num_chip_types(&canonical);
 
     // Enum body.
     out.push_str("typedef enum {\n");
@@ -802,6 +790,38 @@ fn emit_rbcp_chip_type_enum(e: &crate::schema::Enum, out: &mut String) {
     out.push('\n');
 
     emit_chip_type_sizes_array(&canonical, out);
+}
+
+/// The chip types an `rbcp_chip_types` enum holds, as (canonical, aliases).
+///
+/// Canonical chips are sorted by RBCP value, and `try_from_rbcp_u8` returns
+/// each of them for its own value. It returns a different, canonical chip for
+/// an alias's value.
+pub(crate) fn rbcp_chip_types() -> (Vec<ChipType>, Vec<ChipType>) {
+    let mut canonical: Vec<ChipType> = CHIP_TYPES
+        .iter()
+        .copied()
+        .filter(|ct| ChipType::try_from_rbcp_u8(ct.rbcp_chip_type()) == Some(*ct))
+        .collect();
+    canonical.sort_by_key(|ct| ct.rbcp_chip_type());
+
+    let aliases: Vec<ChipType> = CHIP_TYPES
+        .iter()
+        .copied()
+        .filter(|ct| ChipType::try_from_rbcp_u8(ct.rbcp_chip_type()) != Some(*ct))
+        .collect();
+
+    (canonical, aliases)
+}
+
+/// `NUM_CHIP_TYPES`, one past the highest canonical RBCP value.
+pub(crate) fn num_chip_types(canonical: &[ChipType]) -> u32 {
+    canonical
+        .iter()
+        .map(|ct| ct.rbcp_chip_type() as u32)
+        .max()
+        .unwrap_or(0)
+        + 1
 }
 
 /// Emit the `onerom_chip_type_sizes[]` designated-initialiser array.
@@ -998,7 +1018,7 @@ fn emit_field_with_offset(
     if let Some(c) = &field.comment {
         emit_comment(c, "    ", out);
     }
-    out.push_str(&field_c_decl(field, const_fields));
+    out.push_str(&field_c_decl(field, const_fields, schema));
     *offset += field_size(field, schema);
 }
 
@@ -1007,7 +1027,7 @@ fn emit_field_with_offset(
 ///
 /// A generation-gated field is declared under [`Field::c_member`] rather than
 /// its own name, which belongs to the accessor.
-fn field_c_decl(field: &Field, const_fields: bool) -> String {
+fn field_c_decl(field: &Field, const_fields: bool, schema: &Schema) -> String {
     let ck = if const_fields { "const " } else { "" };
     let member = field.c_member();
 
@@ -1016,7 +1036,7 @@ fn field_c_decl(field: &Field, const_fields: bool) -> String {
     let dep = if field.metadata_since().is_some() {
         String::new()
     } else {
-        let attribute = deprecation_attribute(field);
+        let attribute = deprecation_attribute(field, schema);
         match attribute.is_empty() {
             true => attribute,
             false => format!(" {}", attribute.trim_end()),
@@ -1214,7 +1234,7 @@ fn enum_size_by_name(enum_name: &str, schema: &Schema) -> usize {
 ///
 /// Example: `onerom_alg_cs_config_t` + `ALG_CS_0` (value 0)
 ///          → `onerom_alg_cs0_param_t`
-fn derive_param_struct_name(
+pub(crate) fn derive_param_struct_name(
     fam_name: &str,
     variant_discriminant: &str,
     disc_type: &str,

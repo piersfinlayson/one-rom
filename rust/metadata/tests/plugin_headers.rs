@@ -4,28 +4,14 @@
 // thing in them arrived in.  A plugin author sets min_fw_version from it, and
 // api.h carries the same line by hand for what it declares.
 //
-// The build modules are pulled in directly, because what they emit is the
-// thing under test and there is no other way to hand them a schema.
+// The generators are called directly, because what they emit from this
+// crate's own schema is the thing under test.
 //
 // Copyright (C) 2026 Piers Finlayson <piers@piers.rocks>
 // MIT License
 
-// These test targets use a fraction of the modules. The rest is there for the
-// generators, which they do not build.
-#[allow(dead_code)]
-#[path = "../build/c_gen.rs"]
-mod c_gen;
-#[allow(dead_code)]
-#[path = "../build/constants_gen.rs"]
-mod constants_gen;
-#[allow(dead_code)]
-#[path = "../build/keys_gen.rs"]
-mod keys_gen;
-#[allow(dead_code)]
-#[path = "../build/schema.rs"]
-mod schema;
-
-use schema::Schema;
+use onerom_metadata_gen::schema::Schema;
+use onerom_metadata_gen::{c_gen, constants_gen, keys_gen};
 
 const SINCE: &str = "// @since firmware ";
 

@@ -1,4 +1,4 @@
-// build/released.rs
+// src/released.rs
 //
 // The schema as the last release shipped it, read through the narrowest view
 // that can answer where a byte sits and what a plugin-facing item said of the
@@ -43,6 +43,11 @@ pub struct Released {
 struct ReleasedMetadata {
     /// Absent in every schema before 0.8.0, which is when the key arrived.
     firmware_release: Option<String>,
+    /// Set where the crate has never released, so there is no shipped layout
+    /// to compare against. Declared rather than inferred from an absent or
+    /// empty file, both of which stay errors.
+    #[serde(default)]
+    unreleased: bool,
 }
 
 #[derive(Deserialize, Debug)]
@@ -171,6 +176,12 @@ impl Released {
     ///
     /// A copy taken before the key existed says nothing, and the caller reads
     /// that as a release earlier than the one the key arrived in.
+    /// Whether the crate has yet to release, in which case the file states
+    /// that and describes nothing.
+    pub fn unreleased(&self) -> bool {
+        self.schema.unreleased
+    }
+
     pub fn firmware_release(&self) -> Option<&str> {
         self.schema.firmware_release.as_deref()
     }

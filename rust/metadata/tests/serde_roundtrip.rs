@@ -5,7 +5,7 @@
 //! serde round-trip tests for the generated metadata types.
 //!
 //! These guard the `serde::Serialize`/`Deserialize` derives emitted by
-//! `build/rust_gen.rs`. The compiler proves the derives *exist*; these prove
+//! `onerom-metadata-gen`. The compiler proves the derives *exist*; these prove
 //! they are mutually inverse in practice, across the three distinct shapes the
 //! generator emits:
 //!
