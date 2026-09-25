@@ -106,29 +106,20 @@ pub enum ParseError {
 // Missing runtime info and newer generations
 // ---------------------------------------------------------------------------
 
-/// Why a parse came back with no runtime info.
-///
-/// The firmware writes its runtime structure in RAM once it is up, so a
-/// device that is not up has none, and a firmware file holds no RAM to hold
-/// one.  Without a reason a user cannot tell those apart from a fault.
-///
-/// The variants are the four points it can go missing, in the order the parse
-/// reaches them.
+/// Why a parse doesn't have runtime info.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RuntimeAbsence {
     /// The info header's runtime pointer is null.
     NoPointer,
 
-    /// The memory the runtime pointer names could not be read.
+    /// The memory the runtime pointer points at couldn't be read.
     Unreadable,
 
-    /// The memory was read and does not hold the runtime magic, so nothing
-    /// has written runtime info there.
+    /// The memory doesn't hold the runtime magic.  The device isn't running.
     NotRunning,
 
-    /// The magic was there and this build could not read the structure
-    /// behind it.
+    /// The magic is there but this build couldn't parse the structure.
     Unparsed,
 }
 
@@ -143,14 +134,13 @@ impl core::fmt::Display for RuntimeAbsence {
     }
 }
 
-/// A structure carrying a generation newer than this build knows.
+/// A structure newer than this build knows.
 ///
-/// Every field this build knows is parsed and present, since a newer
-/// generation keeps existing offsets where they are.  Naming the generation
-/// is all this build can say about what lies beyond them.
+/// A newer generation keeps existing fields where they are.  This build reads
+/// those and not the new ones.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 pub struct NewerGeneration {
-    /// The structure, named as the schema names it.
+    /// The structure's name in the schema.
     pub structure: &'static str,
 
     /// The generation the device carries.

@@ -3,8 +3,8 @@
 // MIT License
 
 //! The Lab parser against images with Lab's layout.  The header is at
-//! `ONEROM_INFO_OFFSET`, the metadata block follows it and the runtime
-//! structure is in RAM.
+//! `ONEROM_INFO_OFFSET`.  The metadata block follows it.  The runtime structure
+//! is in RAM.
 
 use core::future::Future;
 use core::pin::pin;
@@ -32,12 +32,12 @@ const BUILD_DATE: u32 = FLASH + 0x1800;
 const RAM: u32 = 0x2000_1000;
 const IMAGE_LEN: usize = 0x2000;
 
-/// A board name in the block, past what the serializer writes, for the
-/// runtime structure to point at.
+/// A board name in the block beyond what the serializer writes.  The runtime
+/// structure points at it.
 const LIVE_BOARD: u32 = BLOCK + 0x800;
 
 /// Runs a future to completion.  The reader is backed by memory and never
-/// pends, so one poll always completes.
+/// pends so one poll always completes.
 fn block_on<F: Future>(future: F) -> F::Output {
     let mut future = pin!(future);
     match future
@@ -49,8 +49,8 @@ fn block_on<F: Future>(future: F) -> F::Output {
     }
 }
 
-/// Memory regions at fixed addresses.  A read outside them fails, as a read
-/// of RAM from an image file does.
+/// Memory regions at fixed addresses.  A read outside them fails like a read
+/// of RAM from an image file.
 struct Regions(Vec<(u32, Vec<u8>)>);
 
 impl Reader for Regions {
@@ -154,7 +154,7 @@ impl Image {
     }
 }
 
-/// Lab's metadata block, from Lab's generated serializer.
+/// Lab's metadata block from Lab's generated serializer.
 fn compose_block() -> Vec<u8> {
     let mut magic = [0u8; 16];
     magic[..LAB_METADATA_MAGIC.len()].copy_from_slice(LAB_METADATA_MAGIC.as_bytes());
@@ -174,7 +174,7 @@ fn compose_block() -> Vec<u8> {
     buf
 }
 
-/// The runtime structure as a running Lab holds it.  It has no serializer, so
+/// The runtime structure as a running Lab holds it.  It doesn't have a serializer so
 /// its fields are written by hand in the schema's order.
 fn runtime() -> Vec<u8> {
     let mut ram = vec![0xFFu8; ONEROM_LAB_RUNTIME_INFO_SIZE];
@@ -203,8 +203,8 @@ fn a_one_rom_is_not_a_lab() {
     assert!(err.contains("Not a One ROM Lab"), "unexpected error: {err}");
 }
 
-/// A generation 2 header has no firmware_type, only padding where it later
-/// went.  Padding holding Lab's value must not make it a Lab.
+/// A generation 2 header has only padding where firmware_type later went.
+/// Padding holding Lab's value must not make it a Lab.
 #[test]
 fn a_header_older_than_firmware_type_is_not_a_lab() {
     let mut image = Image::lab();
@@ -241,7 +241,7 @@ fn a_null_metadata_pointer_is_an_error() {
 #[test]
 fn metadata_reaching_outside_the_block_does_not_parse() {
     let mut image = Image::lab();
-    // `hw`, after the 16-byte magic and the 4-byte version.
+    // `hw` follows the 16-byte magic and the 4-byte version.
     let outside = BLOCK + LAB_METADATA_SIZE;
     image.write_flash(BLOCK + 20, &outside.to_le_bytes());
     let lab = image.parse().expect("a Lab should parse");
@@ -259,7 +259,7 @@ fn a_null_runtime_pointer_says_so() {
     assert_eq!(lab.runtime.unwrap_err(), RuntimeAbsence::NoPointer);
 }
 
-/// An image file holds no RAM.
+/// An image file doesn't hold RAM.
 #[test]
 fn an_image_file_has_metadata_and_no_runtime() {
     let mut image = Image::lab();
@@ -290,7 +290,7 @@ fn a_runtime_reaching_outside_the_block_is_unparsed() {
 #[test]
 fn a_newer_metadata_generation_is_reported() {
     let mut image = Image::lab();
-    // `version`, after the 16-byte magic.
+    // `version` follows the 16-byte magic.
     image.write_flash(BLOCK + 16, &(LAB_METADATA_VERSION + 1).to_le_bytes());
     let lab = image.parse().expect("a Lab should parse");
     assert_eq!(

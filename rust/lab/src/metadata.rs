@@ -49,7 +49,8 @@ static ONEROM_LAB_INFO: onerom_lab_info_t = onerom_lab_info_t {
     reserved: [0xFF; 22],
 };
 
-// First in Lab's metadata block, where onerom_info_t's metadata pointer points.
+// The start of Lab's metadata block.  onerom_info_t's metadata pointer
+// points here.
 #[unsafe(link_section = ".onerom_lab_metadata.header")]
 static LAB_METADATA: onerom_lab_metadata_header_t = onerom_lab_metadata_header_t {
     magic: onerom_lab_metadata_header_t::MAGIC,

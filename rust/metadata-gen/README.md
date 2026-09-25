@@ -24,8 +24,5 @@ Every path comes from the caller. A metadata crate keeps its schema inside
 itself, and its published tarball builds without reaching outside.
 [rust/metadata/build/main.rs](/rust/metadata/build/main.rs) is a working call.
 
-Three parts know One ROM's own schema rather than schemas in general.
-`schema.rs` names the three structures that carry a generation number.
-`c_gen.rs` and `device_gen.rs` build the `source = "rbcp_chip_types"` enum from
-`onerom_config::chip::CHIP_TYPES`. `device_gen.rs` names the family anchor,
-`onerom_metadata`'s `onerom_info_t`, which a schema's `header_name` aliases.
+Some of it is hard-coded for One ROM.
+[src/lib.rs](/rust/metadata-gen/src/lib.rs) lists it.

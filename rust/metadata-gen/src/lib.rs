@@ -50,14 +50,37 @@
 //! [`released`] reads the copy of the last release, [`layout`] compares them,
 //! and the eight `*_gen` modules each return the text of one output.
 //!
-//! # What is One ROM's, not the generator's
+//! # Hard-coded for One ROM
 //!
-//! Two things here know One ROM's own schema rather than schemas in general.
-//! [`c_gen`] and [`device_gen`] build the
-//! `source = "rbcp_chip_types"` enum from `onerom_config::chip::CHIP_TYPES`
-//! rather than from the schema. And [`device_gen`] names the family anchor,
-//! `onerom_metadata`'s `onerom_info_t`, which a schema's `header_name`
-//! aliases.
+//! - `rbcp_chip_types` values taken from `onerom_config::chip::CHIP_TYPES`:
+//!   - in the C header with `onerom_chip_type_sizes` ([`c_gen`])
+//!   - in the device types ([`device_gen`])
+//! - The family anchor `onerom_metadata::onerom_info_t` ([`device_gen`]).
+//! - One ROM's plugin API:
+//!   - the key resolver macros in the C header ([`c_gen`])
+//!   - the key header ([`keys_gen`])
+//!   - the constants header ([`constants_gen`])
+//!   - `ORA_` names for constants ([`schema`])
+//!   - the `onerom_runtime_info_t` root for plugin keys ([`schema`])
+//!   - the release check on plugin keys ([`layout`])
+//! - In the C header ([`c_gen`]):
+//!   - `#include "macros.h"`
+//!   - `ONEROM_DEPRECATED`
+//! - "OneROM" in three file banners:
+//!   - the key header ([`keys_gen`])
+//!   - the constants header ([`constants_gen`])
+//!   - the linker-script fragment ([`linker_gen`])
+//! - In the host test source (`host_gen`):
+//!   - the root named `_metadata_start`
+//!   - `#include "onerom_metadata.h"`
+//!   - `rom_slots` on the root
+//!   - ROM slot data in every opaque pointer
+//! - onerom-metadata's names in generated docs ([`rust_gen`]):
+//!   - `ALL_CONSTANTS`
+//!   - `METADATA_GENERATIONS` where the schema has a metadata region
+//! - In [`layout`]'s errors:
+//!   - plugins
+//!   - `ci/update-released-schema.sh`
 
 mod host_gen;
 

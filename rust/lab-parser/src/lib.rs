@@ -4,11 +4,11 @@
 
 //! Reads One ROM Lab's own structures from a device or an image.
 //!
-//! A host reads `onerom_info_t` and branches on `firmware_type`.  For a Lab,
+//! A host reads `onerom_info_t` and branches on `firmware_type`.  For a Lab
 //! this crate follows `metadata` and `runtime` with Lab's generated parsers.
-//! The header itself is One ROM's structure, and onerom-fw-parser reads it.
+//! The header itself is One ROM's structure and onerom-fw-parser reads it.
 //!
-//! It is `no_std` with `alloc`, and reads through the same [`Reader`] as
+//! It is `no_std` with `alloc` and reads through the same [`Reader`] as
 //! onerom-fw-parser.
 
 #![no_std]
@@ -45,7 +45,7 @@ impl<'a, R: Reader> LabParser<'a, R> {
         Self { reader }
     }
 
-    /// Parses Lab's own structures. Fails if the device is not a Lab.
+    /// Parses Lab's own structures. Fails if the device isn't a Lab.
     /// Lab's version and build details come from onerom-fw-parser.
     pub async fn parse(&mut self) -> Result<Lab, String> {
         // Lab runs on the RP2350 only.
@@ -58,15 +58,15 @@ impl<'a, R: Reader> LabParser<'a, R> {
             .await
             .map_err(|_| "Failed to read onerom_info_t".to_string())?;
 
-        // The pointers are bootstrap fields, read by hand.
+        // The pointers are bootstrap fields read by hand.
         let build_date_ptr = info_u32(&info_buf, ONEROM_INFO_BUILD_DATE_OFFSET);
         let metadata_ptr = Pointer::new(info_u32(&info_buf, ONEROM_INFO_METADATA_OFFSET));
         let runtime_ptr = Pointer::new(info_u32(&info_buf, ONEROM_INFO_RUNTIME_OFFSET));
 
-        // One ROM's parser reads the header, with Lab's two pointers cleared so
-        // it never follows them.  It reads firmware_type only from a generation
-        // that has one.  It needs the build date, which comes back empty if
-        // unreadable.
+        // One ROM's parser reads the header with Lab's two pointers cleared so it
+        // never follows them.  It reads firmware_type only from a generation
+        // that has one.  It needs the build date.  A date it can't read comes
+        // back empty.
         info_clear_u32(&mut info_buf, ONEROM_INFO_METADATA_OFFSET);
         info_clear_u32(&mut info_buf, ONEROM_INFO_RUNTIME_OFFSET);
         let mut build_date_buf = [0u8; BUILD_DATE_BUF_LEN];
@@ -89,7 +89,7 @@ impl<'a, R: Reader> LabParser<'a, R> {
             ));
         }
 
-        // Lab's metadata block, which also holds every string the runtime
+        // Lab's metadata block.  It also holds every string the runtime
         // structure points at.
         let block = match metadata_ptr.addr() {
             Some(addr) => {
@@ -149,7 +149,7 @@ impl<'a, R: Reader> LabParser<'a, R> {
     }
 }
 
-/// A Lab's structures, or why each is missing.
+/// A Lab's structures or why each is missing.
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct Lab {
@@ -188,7 +188,7 @@ impl Lab {
 /// Read a little-endian `u32` out of the header.
 ///
 /// `offset` is one of the schema's `ONEROM_INFO_*_OFFSET` constants and the
-/// buffer is a whole header, so the read is always inside it.
+/// buffer is a whole header so the read is always inside it.
 fn info_u32(buf: &[u8; ONEROM_INFO_SIZE], offset: usize) -> u32 {
     u32::from_le_bytes([
         buf[offset],

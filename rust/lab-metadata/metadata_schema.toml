@@ -8,11 +8,12 @@
 # The key names and field kinds are onerom-metadata-gen's, documented in
 # rust/metadata/metadata_schema.toml.
 #
-# There is no metadata_base or metadata_size. Those describe a region for
-# something outside the firmware to compose. Lab's structures are consts its
-# own build places, and onerom_info_t's metadata pointer is how a host finds
-# them. They sit in one block of at most LAB_METADATA_SIZE bytes, starting with
-# onerom_lab_metadata_header_t, so a host reads them in one go.
+# The schema doesn't have metadata_base or metadata_size. Those describe a
+# region for something outside the firmware to compose. Lab's structures are
+# consts its own build places and onerom_info_t's metadata pointer is how a
+# host finds them. They sit in one block of at most LAB_METADATA_SIZE bytes
+# that starts with onerom_lab_metadata_header_t. A host reads the block in one
+# go.
 #
 # Copyright (C) 2026 Piers Finlayson <piers@piers.rocks>
 # MIT License

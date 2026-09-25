@@ -150,7 +150,7 @@ fn generate_rp2350_memory_x() {
     let memory_path = Path::new(&out_dir).join("memory.x");
 
     // onerom_info_t's offset in flash and the size limit of Lab's metadata
-    // block, both from the metadata schemas.
+    // block come from the metadata schemas.
     let offset = format!(
         "ONEROM_INFO_OFFSET = {ONEROM_INFO_OFFSET:#X};\n\
          LAB_METADATA_SIZE = {LAB_METADATA_SIZE:#X};\n"
@@ -205,7 +205,7 @@ SECTIONS {
     /* ### Lab's metadata block
      *
      * A host reads LAB_METADATA_SIZE bytes from onerom_info_t's metadata
-     * pointer.  So the metadata header goes first, and everything it and the
+     * pointer.  So the metadata header goes first and everything it and the
      * runtime structure point at follows.
      */
     .onerom_lab_metadata : ALIGN(4)
