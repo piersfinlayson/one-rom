@@ -5,8 +5,7 @@ Describes One ROM's use of RP2350 OTP memory.
 OTP row numbers and field names are from the RP2350 datasheet, chapter 13.
 
 OTP is 4096 rows. A row normally holds either 16 bits of data protected by ECC,
-or 24 raw bits of unprotected data. A bit can be set (to 1) but never cleared,
-and an ECC row can be written only once.
+or 24 raw bits of unprotected data. A bit can be set (to 1) but never cleared.
 
 ## Layout
 
@@ -334,11 +333,3 @@ An incorrect bootloader string reverts to the bootloader's default when its
 white label table row is set to all ones with a raw write. It cannot be
 replaced. Setting `USB_WHITE_LABEL_ADDR` to all ones reverts every bootloader
 string.
-
-## To Test
-
-Open items requiring testing before implementation.
-
-- An all-ones raw write to a written ECC row makes it read back as a valid 0.
-- Locking a page read-only stops its lock word being changed to make the page
-  unreadable.
