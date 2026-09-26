@@ -1300,12 +1300,15 @@ typedef enum {
  * @brief Whether address capture takes precedence over ROM serving
  * @since firmware 0.7.3
  *
- * At normal priority a sustained burst of ROM reads can cause captures to be
- * lost, with no indication.  At high priority captures are never lost to
- * serving load, and serving may wait briefly for a capture.
+ * Captures and ROM serving share the DMA.  At normal priority they take turns
+ * when both are ready in the same cycle.  At high priority the capture goes
+ * first and serving waits one cycle.
+ *
+ * Neither setting loses captures to serving load.  A capture is lost when the
+ * plugin falls a full ring behind and the DMA overwrites it.
  */
 typedef enum {
-    /** @brief Serving first.  The default. */
+    /** @brief Capture and serving take turns.  The default. */
     ORA_ADDRESS_MONITOR_PRIORITY_NORMAL = 0,
 
     /** @brief Capture first */
