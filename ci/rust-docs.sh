@@ -61,6 +61,9 @@ RUSTDOCFLAGS="-D warnings" cargo doc -p onerom-protocol --no-deps
 echo "Generating documentation for schema-gen..."
 RUSTDOCFLAGS="-D warnings" cargo doc -p schema-gen --no-deps
 
+echo "Generating documentation for onerom-signing-server..."
+RUSTDOCFLAGS="-D warnings" cargo doc -p onerom-signing-server --no-deps
+
 # These embed the firmware emulator, so they need CONFIG/BOARD and build the
 # firmware C.  They are documented last: they are the slow ones, and until now
 # they were not documented at all, which is how broken doc links accumulated in

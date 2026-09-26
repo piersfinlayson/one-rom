@@ -49,8 +49,8 @@ const GENERAL_STORE_END: u16 =
 // Writing
 // ---------------------------------------------------------------------------
 
-/// The values of a commissioning instance, before it has a place or a
-/// signature. The signature's message depends on these alone, so a signing
+/// The values of a commissioning instance. They don't include its place or its
+/// signature. The signature's message depends on these alone so a signing
 /// server can build it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CommissioningValues {
@@ -94,9 +94,11 @@ pub enum BuildError {
 impl CommissioningValues {
     /// Builds `board`'s commissioning values.
     ///
-    /// `date` is the UTC commissioning date as `YYYYMMDD`, and `signer` is the
-    /// ID of the key that signs the instance. Values too long to fit the
-    /// commissioning area return [`BuildError::DoesNotFit`].
+    /// - `date` is the UTC commissioning date as `YYYYMMDD`.
+    /// - `signer` is the ID of the key that signs the instance.
+    ///
+    /// Values too long to fit the commissioning area return
+    /// [`BuildError::DoesNotFit`].
     pub fn new(
         board: Board,
         manufacturer: &str,
@@ -151,7 +153,7 @@ impl CommissioningValues {
         )
     }
 
-    /// The rows the instance takes, its signature's entry included.
+    /// The number of rows the instance takes including its signature's entry.
     fn row_count(&self) -> usize {
         instance_row_count(self.entries.iter().map(Vec::len))
     }
@@ -737,8 +739,10 @@ fn entry_row_count(len: usize) -> usize {
     2 + len.div_ceil(2)
 }
 
-/// The rows a commissioning instance takes: its magic and version rows, entries
-/// of `entry_rows` rows each, then its signature's entry.
+/// The number of rows a commissioning instance takes, counting:
+/// - the magic and version rows
+/// - `entry_rows` rows for each entry
+/// - the signature's entry
 fn instance_row_count(entry_rows: impl Iterator<Item = usize>) -> usize {
     2 + entry_rows.sum::<usize>() + entry_row_count(OTP_COMMISSIONING_SIG_LEN)
 }
@@ -793,8 +797,8 @@ fn signed_message(chip_id: [u16; 4], rows: impl Iterator<Item = u16>) -> Vec<u8>
 // Signature record
 // ---------------------------------------------------------------------------
 
-/// `chip_id` as the bootloader's USB serial number shows it: 16 uppercase hex
-/// digits, row `0x003` first.
+/// `chip_id` in the form the bootloader's USB serial number uses. It's 16
+/// uppercase hex digits with row `0x003` first.
 pub fn format_chip_id(chip_id: [u16; 4]) -> String {
     chip_id
         .iter()
@@ -803,8 +807,7 @@ pub fn format_chip_id(chip_id: [u16; 4]) -> String {
         .collect()
 }
 
-/// The CHIPID in `text`, or `None` unless `text` is exactly as
-/// [`format_chip_id`] writes it.
+/// The CHIPID in `text` if it's exactly as [`format_chip_id`] writes it.
 pub fn parse_chip_id(text: &str) -> Option<[u16; 4]> {
     if text.len() != 16 || !text.bytes().all(|b| matches!(b, b'0'..=b'9' | b'A'..=b'F')) {
         return None;
@@ -816,11 +819,12 @@ pub fn parse_chip_id(text: &str) -> Option<[u16; 4]> {
     Some(chip_id)
 }
 
-/// A line of a signing key's record file: a CHIPID and the SHA-256 hash of a
-/// signature made for that chip.
+/// A line of a signing key's record file. It records one signature.
 ///
-/// It displays as the line without its newline: the CHIPID as
-/// [`format_chip_id`] writes it, a space, then the hash in lowercase hex.
+/// It displays as the line without its newline:
+/// - the chip's CHIPID as [`format_chip_id`] writes it
+/// - a space
+/// - the signature's SHA-256 hash in lowercase hex
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RecordLine {
     chip_id: [u16; 4],
@@ -828,8 +832,7 @@ pub struct RecordLine {
 }
 
 impl RecordLine {
-    /// The line recording `signature`, made for the chip whose CHIPID is
-    /// `chip_id`.
+    /// The line recording `signature` for the chip whose CHIPID is `chip_id`.
     pub fn new(chip_id: [u16; 4], signature: &[u8; 64]) -> Self {
         Self {
             chip_id,
@@ -850,12 +853,12 @@ impl fmt::Display for RecordLine {
 /// The first line of a record file that [`parse_record`] can't read.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RecordError {
-    /// The line's number, counted from 1.
+    /// The line's number counted from 1.
     pub line: usize,
 }
 
-/// The lines of a signing key's record file. Blank lines are skipped, and
-/// every other line must be exactly as a [`RecordLine`] displays.
+/// The lines of a signing key's record file. Blank lines are skipped. Every
+/// other line must be exactly as a [`RecordLine`] displays.
 pub fn parse_record(text: &str) -> Result<Vec<RecordLine>, RecordError> {
     text.lines()
         .enumerate()
@@ -864,7 +867,7 @@ pub fn parse_record(text: &str) -> Result<Vec<RecordLine>, RecordError> {
         .collect()
 }
 
-/// `line` as a [`RecordLine`], if it's exactly as one displays.
+/// `line` as a [`RecordLine`] if it's exactly as one displays.
 fn parse_record_line(line: &str) -> Option<RecordLine> {
     let (chip_id, hash) = line.split_once(' ')?;
     if hash.len() != 64 || !hash.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')) {

@@ -36,7 +36,7 @@ fn signature() -> [u8; 64] {
     core::array::from_fn(|i| i as u8)
 }
 
-/// fire-24-f's values, from piers.rocks and signer 1.
+/// fire-24-f's values from piers.rocks and signer 1.
 fn values() -> CommissioningValues {
     CommissioningValues::new(Board::Fire24F, "piers.rocks", "20260926", 1).unwrap()
 }

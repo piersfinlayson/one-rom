@@ -95,6 +95,9 @@ cargo test -p onerom-protocol
 echo "Testing schema-gen..."
 cargo test -p schema-gen
 
+echo "Testing onerom-signing-server..."
+cargo test -p onerom-signing-server
+
 echo "Testing doc-gen..."
 cargo test -p doc-gen
 

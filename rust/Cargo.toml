@@ -25,6 +25,7 @@ members = [
     "usb-tester",
     "protocol",
     "schema-gen",
+    "signing-server",
     "studio",
 ]
 default-members = [

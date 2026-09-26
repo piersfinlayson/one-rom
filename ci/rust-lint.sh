@@ -43,6 +43,7 @@ cargo clippy \
     -p onerom-lab-parser \
     -p onerom-metadata-gen \
     -p onerom-protocol \
+    -p onerom-signing-server \
     -p onerom-studio \
     -p schema-gen \
     --all-targets -- -D warnings
