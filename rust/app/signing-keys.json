@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "signers": [
+    {
+      "id": 1,
+      "name": "piers.rocks Production",
+      "public_key": "a7697c02e53996cb838db7a69c2c3048129f97db6685a0b5b34481f518f4f355",
+      "proof": "a7dd918fde4a75985ed61c4ae2c229aaaefe5a350a175e0041de4f6efb3bf30422c41ba1c973a3663d7fa51d3878e0cb597f7b7cc48d65d2affe04c097735f0e"
+    }
+  ]
+}
