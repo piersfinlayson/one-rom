@@ -27,6 +27,7 @@ hashbrown = { version = "0.17", default-features = false, features = ["default-h
 pico-otp = { git = "https://github.com/piersfinlayson/pico-otp", rev = "358876cfe06c36278cd554b11053ec42af85851d", default-features = false }
 serde = { version = "1", default-features = false, features = ["derive", "alloc"] }
 serde-big-array = "0.5"
+sha2 = { version = "0.11", default-features = false }
 
 [build-dependencies]
 onerom-metadata-gen = { workspace = true }
