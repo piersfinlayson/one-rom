@@ -157,10 +157,12 @@ the table leaves out:
 - `onerom-fw-emulator` re-exports `driver`, and `onerom-fw-tester` re-exports
   `driver` and `pin_cache`, so `onerom_fw_emulator::driver::…` and
   `onerom_fw_tester::pin_cache::…` keep working.
-- **Shared device logic belongs in `onerom-cli`.** `onerom-studio` depends on
-  it, and chip-ID identity, GET_INFO reads and reboot/reconnect handling are
-  written there and consumed from there rather than reimplemented in Studio or
-  split into a crate of their own.
+- **Put shared logic where every tool that needs it can reach it.**
+  - Transport-free logic the web tools also need belongs in `onerom-app`,
+    which one-rom-wasm depends on.
+  - Device logic tied to the CLI's USB stack belongs in `onerom-cli`, which
+    Studio depends on. Chip-ID identity, GET_INFO reads and reboot/reconnect
+    handling live there rather than in Studio or a crate of their own.
 
 ## Building
 

@@ -181,6 +181,10 @@ provides:
 The proof is the signer's signature over the ASCII bytes of `onerom-signer-v1`
 followed by the signer's name.
 
+The table is stored in a dedicated file. Host tools embed a copy generated from
+it when they are built, and can download a newer copy. They find its current
+address in `https://images.onerom.org/signers.json`.
+
 `onerom hardware commission` refuses a signing key that isn't in the table.
 
 ID 0 is invalid. IDs 1–255 are reserved for piers.rocks. Other signers' keys
