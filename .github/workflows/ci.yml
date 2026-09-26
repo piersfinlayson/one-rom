@@ -18,6 +18,7 @@ on:
       - 'onerom-config/**'
       - '.github/**'
       - '!.github/workflows/release.yml'
+      - '!.github/workflows/lab-release.yml'
       - '!**.md'
       - '!docs/**'
       # A document under docs/ can carry a fragment region, whose text belongs
@@ -41,6 +42,7 @@ on:
       - 'onerom-config/**'
       - '.github/**'
       - '!.github/workflows/release.yml'
+      - '!.github/workflows/lab-release.yml'
       - '!**.md'
       - '!docs/**'
       # A document under docs/ can carry a fragment region, whose text belongs
@@ -455,6 +457,15 @@ jobs:
 
     - name: Install Rust
       uses: dtolnay/rust-toolchain@stable
+
+    # Lab builds with the nightly pinned in rust/lab/rust-toolchain.toml rather
+    # than the stable toolchain above.  Installing it here puts its version in
+    # the log.
+    - name: Install Lab's pinned Rust toolchain
+      working-directory: rust/lab
+      run: |
+        rustup toolchain install --no-self-update
+        rustc --version
 
     - name: Cache Arm GNU toolchain
       uses: actions/cache@v4

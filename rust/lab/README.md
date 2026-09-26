@@ -161,3 +161,40 @@ SHA1 and the 32-bit summing checksum should match.
 header, which is the fastest way to work out what is wired where when debugging
 hardware.  On Fire 32 and 40 boards, where socket pins are twinned across two
 GPIOs, `p` deliberately shows both even though the reader drives only the first.
+
+## Releasing
+
+Lab releases on its own cycle, tagged `lab-vX.Y.Z`.
+
+1. Update these, then commit:
+    - the version in [Cargo.toml](Cargo.toml)
+    - the [CHANGELOG](CHANGELOG.md)
+    - Lab's released schema, in `rust/lab-metadata/metadata_schema_released.toml`
+
+2. Tag the commit and push both.  Tags are signed, so they take a message:
+
+    ```bash
+    git tag -s -a lab-vX.Y.Z -m "One ROM Lab vX.Y.Z"
+    ```
+
+3. The tag runs [lab-release.yml](/.github/workflows/lab-release.yml).  It builds
+    and checks every image, then creates the GitHub release.  The CHANGELOG's
+    section for the version becomes the release notes.
+
+4. Add the release to the images repo:
+
+    ```bash
+    scripts/release.py --version X.Y.Z --output-dir ../../one-rom-images
+    ```
+
+    The script downloads the release's files to `dist` and checks each one.  It
+    adds the release to `lab/releases.json` and moves `latest` to it for every
+    board.
+
+5. Flash one of the downloaded images onto a board.  `onerom scan` should show
+    it running as One ROM Lab with the new version and board.
+
+6. Commit and push `one-rom-images`.
+
+`scripts/build-release.sh --version X.Y.Z` builds and checks the same images
+locally.

@@ -66,6 +66,9 @@ The CLI **binary** releases on its own cycle, following
 [rust/cli/README.md](/rust/cli/README.md).  The CLI manual PDF is published by
 that release rather than this one, since the manual moves with the CLI version.
 
+One ROM Lab releases on its own cycle, following
+[rust/lab/README.md](/rust/lab/README.md).
+
 ---
 
 If on a branch, submit a pull request and merge it into main.
@@ -125,7 +128,7 @@ git push origin v<x.y.z>
 
 ## The `latest` fields
 
-Several manifests in `one-rom-images` carry a `latest`.  Three scripts move it
+Several manifests in `one-rom-images` carry a `latest`.  Four scripts move it
 as part of staging:
 
 | Manifest | Moved by |
@@ -133,6 +136,7 @@ as part of staging:
 | `plugins/<type>/<name>/releases.json` | `plugins/scripts/release.py` |
 | `cli/releases.json` | `rust/cli/scripts/release.py` |
 | `studio/releases.json` | `rust/studio/scripts/release.py` |
+| `lab/releases.json` | `rust/lab/scripts/release.py` |
 
 These five are hand edits, made once everything is published and serving:
 

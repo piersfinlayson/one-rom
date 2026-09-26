@@ -56,6 +56,11 @@ pub enum Error {
         file: String,
         error: ZipError,
     },
+    Sha256Mismatch {
+        url: String,
+        expected: String,
+        got: String,
+    },
 }
 
 impl std::fmt::Display for Error {
@@ -101,6 +106,12 @@ impl std::fmt::Display for Error {
             Error::LicenseNotAccepted => write!(f, "License not accepted by user"),
             Error::Zip { file, error } => {
                 write!(f, "Hit an error extracting zip file {file}.\n  {error}")
+            }
+            Error::Sha256Mismatch { url, expected, got } => {
+                write!(
+                    f,
+                    "Hit a SHA-256 mismatch downloading {url}.\n  Expected {expected}\n  Got      {got}"
+                )
             }
         }
     }

@@ -1,0 +1,90 @@
+name: Lab Release
+
+on:
+  push:
+    tags: ['lab-v*']
+
+permissions:
+  contents: write
+
+# One ROM Lab's release, from a lab-vX.Y.Z tag.  release.yml runs on v*.*.* tags
+# only, so a Lab tag doesn't start One ROM's release.
+#
+# rust/lab/scripts/build-release.sh builds and checks the images, and runs
+# locally too.  The GitHub release is created with --latest=false so One ROM's
+# own release stays the Latest one.  rust/lab/scripts/release.py then adds it to
+# lab/releases.json in one-rom-images, run by hand.
+
+jobs:
+  release:
+    name: Build and release One ROM Lab
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Extract version from tag
+      id: version
+      run: echo "VERSION=${GITHUB_REF_NAME#lab-v}" >> "$GITHUB_OUTPUT"
+
+    # Before the build, so a missing CHANGELOG section fails in seconds.
+    - name: Build release notes
+      run: |
+        VERSION="${{ steps.version.outputs.VERSION }}"
+        awk -v heading="v${VERSION}" '
+          $1 == "##" && found { exit }
+          $1 == "##" && $2 == heading { found = 1; next }
+          found { print }
+        ' rust/lab/CHANGELOG.md > "$RUNNER_TEMP/release.md"
+        if ! grep -q '[^[:space:]]' "$RUNNER_TEMP/release.md"; then
+          echo "rust/lab/CHANGELOG.md has no section for v${VERSION}"
+          exit 1
+        fi
+
+    # python3 and zip are used by build-release.sh.  Both are on the GitHub
+    # image, and are named for a runner without them.
+    - name: Install build dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libclang-dev libcurl4-openssl-dev libjson-c-dev \
+                                libzip-dev make xz-utils python3 zip
+
+    # Stable builds the onerom CLI that checks each image.
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+
+    # Lab builds with the nightly pinned in rust/lab/rust-toolchain.toml.
+    - name: Install Lab's pinned Rust toolchain
+      working-directory: rust/lab
+      run: |
+        rustup toolchain install --no-self-update
+        rustc --version
+
+    - name: Cache Arm GNU toolchain
+      uses: actions/cache@v4
+      with:
+        path: ~/arm-gnu-toolchain
+        key: arm-toolchain-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('ci/arm-toolchain-version') }}
+
+    - name: Install Arm GNU toolchain
+      run: echo "TOOLCHAIN=$(ci/install-arm-toolchain.sh)" >> "$GITHUB_ENV"
+
+    - uses: Swatinem/rust-cache@v2
+      with:
+        workspaces: rust
+
+    # build-release.sh refuses a version other than Lab's, from
+    # rust/lab/Cargo.toml, so a tag that doesn't match Lab fails here.
+    - name: Build and check the images
+      run: rust/lab/scripts/build-release.sh --version "${{ steps.version.outputs.VERSION }}"
+
+    - name: Create GitHub release
+      run: |
+        VERSION="${{ steps.version.outputs.VERSION }}"
+        gh release create "$GITHUB_REF_NAME" \
+          --title "One ROM Lab v${VERSION}" \
+          --notes-file "$RUNNER_TEMP/release.md" \
+          --latest=false \
+          rust/lab/dist/onerom-lab-*-"${VERSION}".bin \
+          rust/lab/dist/onerom-lab-elf-"${VERSION}".zip
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

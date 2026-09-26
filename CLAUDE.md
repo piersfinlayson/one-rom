@@ -65,8 +65,9 @@ go-ahead before editing this file.
   Refactors, test-harness fixes, CI and this file are invisible to both.
 - A user-facing change goes under the current in-development heading in the
   repo-root [CHANGELOG.md](/CHANGELOG.md) **and** in the affected component's
-  own: `rust/cli/CHANGELOG.md`, `rust/studio/CHANGELOG.md`, or the plugin's
-  (e.g. `plugins/system/usb/CHANGELOG.md`). Vendored changelogs (tinyusb,
+  own: `rust/cli/CHANGELOG.md`, `rust/studio/CHANGELOG.md`,
+  `rust/lab/CHANGELOG.md`, or the plugin's (e.g.
+  `plugins/system/usb/CHANGELOG.md`). Vendored changelogs (tinyusb,
   `firmware/apio`, `firmware/epio`) belong to their upstreams.
 
 ## Versioning

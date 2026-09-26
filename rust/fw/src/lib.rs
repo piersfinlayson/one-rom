@@ -3,6 +3,7 @@
 // MIT License
 
 pub mod error;
+pub mod lab;
 pub mod net;
 
 pub use error::Error;

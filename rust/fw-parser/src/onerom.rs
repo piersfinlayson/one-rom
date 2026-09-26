@@ -15,7 +15,7 @@ use onerom_metadata::{
 pub use onerom_metadata::{NewerGeneration, RuntimeAbsence};
 
 #[cfg(not(feature = "std"))]
-use alloc::{boxed::Box, format, vec::Vec};
+use alloc::{format, vec::Vec};
 
 use crate::ParseError;
 

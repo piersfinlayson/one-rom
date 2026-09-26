@@ -1,3 +1,6 @@
+# Lab needs nightly for embassy's `impl_trait_in_assoc_type`.  A dated nightly
+# means CI, a release build and a developer's machine all build Lab with the
+# same compiler.  Move it by hand, and check Lab still builds and lints.
 [toolchain]
-channel = "nightly"
+channel = "nightly-2026-08-09"
 components = ["clippy", "rustfmt"]
