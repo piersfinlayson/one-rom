@@ -3565,6 +3565,7 @@ dependencies = [
  "hashbrown 0.17.1",
  "onerom-config",
  "onerom-metadata-gen",
+ "pico-otp",
  "serde",
  "serde-big-array",
 ]
@@ -3678,10 +3679,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
 
 [[package]]
+name = "pico-otp"
+version = "0.2.1"
+source = "git+https://github.com/piersfinlayson/pico-otp?rev=358876cfe06c36278cd554b11053ec42af85851d#358876cfe06c36278cd554b11053ec42af85851d"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "picoboot"
-version = "0.2.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f6b0507a4ed7dc0c38ed559b9415f81cb3eaf4f3c99eb7df20d17dd08d1689b7"
+version = "0.3.0"
+source = "git+https://github.com/piersfinlayson/picoboot?rev=7cfcd9a67ea21e6d9d4ca980c22bff8fb7ac5fb1#7cfcd9a67ea21e6d9d4ca980c22bff8fb7ac5fb1"
 dependencies = [
  "airfrog-rpc",
  "deku 0.20.3",

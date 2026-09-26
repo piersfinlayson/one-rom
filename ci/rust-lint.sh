@@ -54,6 +54,14 @@ echo "Running clippy (onerom-fw-tester, onerom-rbcp-tester, onerom-usb-tester)..
 CONFIG="$EMU_CONFIG" BOARD="$EMU_BOARD" \
     cargo clippy -p onerom-fw-tester -p onerom-rbcp-tester -p onerom-usb-tester --all-targets -- -D warnings
 
+# These crates are no_std.  The host has std, so a host build can't catch a
+# dependency that pulls it in.  Lab's bare-metal target doesn't have std, so
+# they are checked for it.
+echo "Running clippy (no_std: onerom-app, onerom-fw-parser, onerom-lab-parser)..."
+rustup target add thumbv8m.main-none-eabihf
+cargo clippy -p onerom-app -p onerom-fw-parser -p onerom-lab-parser \
+    --no-default-features --target thumbv8m.main-none-eabihf -- -D warnings
+
 # onerom-lab pins its own nightly toolchain (rust-toolchain.toml) and is a
 # binary-only crate that builds for the RP2350 (thumbv8m via its
 # .cargo/config.toml).  Lint it from its own directory so that toolchain and
