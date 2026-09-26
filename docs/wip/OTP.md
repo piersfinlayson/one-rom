@@ -62,6 +62,9 @@ skips.
 | 2 | `COMMISSIONING_SIG` | 64-byte Ed25519 signature |
 | 3 | `COMMISSIONING_MANUFACTURER` | Manufacturer's name |
 | 4 | `COMMISSIONING_DATE` | UTC commissioning date as 8 ASCII digits, `YYYYMMDD` |
+| 5 | `COMMISSIONING_SIGNER` | 16-bit ID of the signing key |
+
+All of these keys are required in every commissioning instance.
 
 ## General Store Keys
 
@@ -73,23 +76,42 @@ The commissioning area is pages 3–18, rows `0x0c0`–`0x4bf`. It holds one or 
 commissioning instances. Each starts on a page boundary and consists of 1 or
 more pages.
 
-A commissioning starts with the following rows:
+A commissioning instance starts with the following rows:
 - Magic value `0x524f` ("OR")
 - The format version, which is currently 1.
 
 Its entries follow. `COMMISSIONING_SIG` is always the last
-entry so a parser finds a commissioning's end by reading its entries. The next
-commissioning, if present, starts at the following page boundary.
+entry so a parser finds a commissioning instance's end by reading its entries.
+The next commissioning instance, if present, starts at the following page
+boundary.
 
-A commissioning without `COMMISSIONING_SIG` is ignored.
+A commissioning instance without `COMMISSIONING_SIG` is ignored. Its entries
+end at key 0 with length 0, and the next instance starts at the page boundary
+after those two rows. An instance whose version row is unwritten ends at its
+version row.
 
-Every page of a commissioning is locked once written. See
+Every page of a commissioning instance is locked once written. See
 [Locking](#locking).
 
-The last complete commissioning is the current one. Earlier commissionings stay
-in place as a record, as they are locked.
+The last complete commissioning instance is the current one. Earlier
+commissioning instances stay in place as a record, as they are locked.
 
-Firmware that doesn't find any  commissioning instances falls back to metadata.
+If a parser finds a commissioning instance with an unknown version it stops
+processing commissioning data and reports no valid commissioning data. It is
+likely the commissioning instance was written by more recent tooling and the
+current tooling cannot properly interpret any data in the commissioning
+area.
+
+A parser may fail to parse commissioning data when:
+- an entry's length runs past the end of the commissioning area
+- the page boundary after a commissioning instance holds neither the magic
+  value nor 0
+
+If this happens, it checks each following page boundary and restarts parsing
+at the first holding the magic value as the next commissioning instance.
+If it doesn't find any, it reports no valid commissioning data.
+
+Firmware without a valid commissioning instance falls back to metadata.
 
 ### General Store
 
@@ -101,9 +123,12 @@ A tool starting the general store writes the magic row, then the version row.
 An unwritten version row reads as 0. Version 0 is not valid so a general store
 interrupted between the two reads as absent.
 
+A parser doesn't read a general store with an unknown version. A host tool
+reports the version.
+
 ## Manufacturer Signature
 
-`COMMISSIONING_SIG` shows who signed a commissioning. The signer and the
+`COMMISSIONING_SIG` shows who signed a commissioning instance. The signer and the
 manufacturer can differ. piers.rocks can sign boards it white-labels for another
 manufacturer. That manufacturer's name goes in `COMMISSIONING_MANUFACTURER`.
 
@@ -114,13 +139,13 @@ Raspberry Pi writes and locks it when the chip is made.
 comprises the following in order with no separator:
 - the ASCII bytes of `onerom-commissioning-sig-v1`
 - the 8 bytes of CHIPID starting with the low byte of row `0x000`
-- the commissioning's rows from its magic row to the row before the signature's
-  key row including any null padding byte in the last row.  Each row gives two
-  bytes, low byte first.
+- the commissioning instance's rows from its magic row to the row before the
+  signature's key row including any null padding byte in the last row.  Each row
+  provides two bytes, low byte first.
 
-A valid signature shows that the commissioning's values were written together
-on that chip, by the organisation that owns the signing key. Each RP2350 has a
-unique CHIPID so each One ROM has its own unique signature.
+A valid signature shows that the commissioning instance's values were written
+together on that chip, by the organisation that owns the signing key. Each
+RP2350 has a unique CHIPID so each One ROM has its own unique signature.
 
 A host verifies the signature with One ROM stopped in the One ROM Bootloader.
 It reads CHIPID and the store from the bootloader. The bootloader is stored in
@@ -133,31 +158,54 @@ imitation is the copy's own software behaving like the bootloader over USB. It
 can report a CHIPID and signature copied from a genuine board. A host cannot
 tell it from the real bootloader.
 
-The CLI holds each signer's name and public key in a table in the One ROM
-repository. A commissioning's signer is the one whose public key verifies its
-signature.
+The CLI and other host tools share a library that holds a table of known
+signing keys. Each key in the table is assigned a unique ID.
+`COMMISSIONING_SIGNER` holds the ID of the key used to sign the commissioning
+instance.
+
+A host verifies the signature only with the key identified by
+`COMMISSIONING_SIGNER`. It reports an ID missing from the table as an unknown
+signer.
 
 ### Signing Keys
 
-A signer's key is added to the table by a pull request. It gives the signer's
-name, public key and a proof. The proof is the signer's signature over the ASCII
-bytes of `onerom-signer-v1` followed by the signer's name.
+A signer's key is added to the table by a pull request. The pull request
+provides:
+- the key's ID
+- the signer's name
+- the public key
+- a proof
 
-CI rejects the row if the proof doesn't verify, if the key is already in the
-table, or if the key is weak. A weak key is one of Ed25519's small-order points.
+The proof is the signer's signature over the ASCII bytes of `onerom-signer-v1`
+followed by the signer's name.
+
+`onerom hardware commission` refuses a signing key that isn't in the table.
+
+ID 0 is invalid. IDs 1–255 are reserved for piers.rocks. Other signers' keys
+are assigned IDs from 256 onwards.
+
+CI rejects the row if:
+- the proof fails to verify
+- the key or the ID is already in the table
+- the key is weak.
+
+A weak key is one of Ed25519's small-order points.
 
 ### Retiring a Key
 
 piers.rocks's signing server records every signature it makes before returning
 it. The record is a public git repository with one file per signing key. Each
 line holds a CHIPID and the SHA-256 hash of the signature. A hash is chosen so
-that neither the signature or the non-CHIPID values it covers are revealed.
+that neither the signature nor the non-CHIPID values it covers are revealed.
 
 A signature in OTP cannot be withdrawn. If a signing key or the server's PIN
 leaks, the key stays in the table and is marked retired. `onerom hardware
 validate` then accepts that key's signature only if its hash is in the key's
 file. Genuine boards keep validating and signatures made with the leaked key
-don't. A retired key's file no longer changes so the CLI carries a copy.
+don't. A retired key's file no longer changes.
+
+If there isn't a record file associated with a retired key, hardware
+validation rejects every signature made with it.
 
 ## Bootloader USB Strings
 
@@ -197,7 +245,7 @@ bit. There is room for all of them at their maximum lengths.
 | L | 2MB | 2MB |
 | XL | 2MB | 16MB |
 
-XL is currently reserved for future used and is not implemented as this time.
+XL is currently reserved for future use and is not implemented at this time.
 
 A non-M board's external flash is configured in OTP. `FLASH_DEVINFO` gives
 both chips' sizes, the GPIO used for chip select 1 and whether the chips support
@@ -214,8 +262,8 @@ window at `0x40130000` where row n appears as 16 bits at `0x40130000`+(2*n).
 A damaged row returns bad data instead of a bus fault.
 
 At boot, firmware compares `COMMISSIONING_BOARD` from the current commissioning
-with firmware metadata's `hw_rev` before driving GPIOs. If they differ it
-reboots into the bootloader.
+instance with firmware metadata's `hw_rev` before driving GPIOs. If they differ
+it reboots into the bootloader.
 
 `clk_ref` must be 25MHz or less while firmware reads OTP. After firmware boot
 One ROM's `clk_ref` is currently 3MHz - the external 12MHz crystal divided by 4.
@@ -225,14 +273,14 @@ whether a second flash chip is fitted.
 
 ## Host Tools
 
-`onerom scan` and `onerom inspect` report the current commissioning.
+`onerom scan` and `onerom inspect` report the current commissioning instance.
 `onerom hardware validate` checks every commissioning instance:
-- That the commissioning data is included and valud.
+- That the commissioning data is included and valid.
 - A signature is present, from a known source, and reports the signer.
 
 When the flash doesn't hold One ROM firmware, the CLI takes the board type from
-`COMMISSIONING_BOARD` in the current commissioning. The CLI refuses to program
-an image built for another board unless an override option is enabled.
+`COMMISSIONING_BOARD` in the current commissioning instance. The CLI refuses to
+program an image built for another board unless an override option is enabled.
 
 ## Locking
 
@@ -250,18 +298,18 @@ lock can be tightened but not loosened until the next reset.
 A reset clears the software locks enabling OTP to be programmed via the
 bootloader.
 
-`onerom hardware commission` locks each page of a commissioning read-only for
-Secure, Non-secure and bootloader access by writing the page's lock word. This
-is permaanent.
+`onerom hardware commission` locks each page of a commissioning instance
+read-only for Secure, Non-secure and bootloader access by writing the page's
+lock word. This is permanent.
 
 ## Commissioning
 
 `onerom hardware commission` programs a board's OTP with the commissioning
-date. It requires One ROM to be stopped in the One ROM Bootloader and writes
+data. It requires One ROM to be stopped in the One ROM Bootloader and writes
 through the bootloader's PICOBOOT USB interface.
 
 The board's name and size are always given on the command line so a non-M
-board cannot be commissioned as M by omitting it size.
+board cannot be commissioned as M by omitting its size.
 
 Before writing anything it checks that every ECC row it will write is unwritten
 or already holds the value it would write. It skips a row that already holds
@@ -269,14 +317,15 @@ its value. An interrupted commission can then be run again and a board whose
 `FLASH_DEVINFO` was written earlier can still be commissioned. It reads back
 each row as soon as it writes it and stops at the first mismatch.
 
-1. It reads CHIPID from One ROM, builds the commissioning's rows and gets their
-   signature.
+1. It reads CHIPID from One ROM and looks up the signing key's ID in the table.
+   It builds the commissioning instance's rows and gets their signature. It
+   verifies the signature.
 2. It displays every row it will write and asks for confirmation. It refuses a
-   commissioning that would overlap row `0x4c0`.
+   commissioning instance that would overlap row `0x4c0`.
 3. On a non-M board it writes `FLASH_DEVINFO`.
-4. It writes the commissioning's magic row, then its version row, then each
-   entry with `COMMISSIONING_SIG` last. Each entry is written length row first,
-   then its value, then its key row.
+4. It writes the commissioning instance's magic row, then its version row, then
+   each entry with `COMMISSIONING_SIG` last. Each entry is written length row
+   first, then its value, then its key row.
 5. It locks the commissioning instance's pages.
 6. It writes the bootloader USB strings, then the white label table, then
    `USB_WHITE_LABEL_ADDR`.
@@ -285,7 +334,8 @@ each row as soon as it writes it and stops at the first mismatch.
    sets `FLASH_DEVINFO_ENABLE` in `BOOT_FLAGS0` and its two copies.
 
 piers.rocks signs through a signing server that holds its private key and
-requires a PIN. Other manufacturers sign with their own private key file.
+requires a PIN. The CLI fetches the matching public key from the server. Other
+manufacturers sign with their own private key file or signing server.
 
 Row `0x055` is `FLASH_PARTITION_SLOT_SIZE`. One ROM does not write it. Once
 `FLASH_DEVINFO_ENABLE` is set the boot path reads it together with
@@ -293,7 +343,8 @@ Row `0x055` is `FLASH_PARTITION_SLOT_SIZE`. One ROM does not write it. Once
 
 On a board that already has a commissioning instance it checks that a new one
 should be supplied, and if so writes the new one at the next page boundary
-after the last. It leaves the rest of OTP as it is.
+after the last. If it cannot parse existing data, it writes the new instance
+at the first page boundary after the last written row.
 
 As an entry's key row is written last an entry interrupted before its key row
 reads as a deleted entry and the rest of the store stays readable.
@@ -305,8 +356,8 @@ enables.
 ## Correcting Errors
 
 An existing commissioning instance cannot be changed because its pages are locked.
-However, a board can be commissioned again. The new commissioning becomes current
-and the old one remains as a permanent record.
+However, a board can be commissioned again. The new commissioning instance
+becomes current and the old one remains as a permanent record.
 
 A wrong general store value can be corrected by appending a new entry with the
 same key.

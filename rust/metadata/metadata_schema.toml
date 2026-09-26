@@ -395,7 +395,8 @@ comment = "Key and length rows in the general store's terminator."
 name = "OTP_STORE_MAGIC"
 type = "u16"
 value = 0x524f
-comment = """First row of each commissioning and of the general store, "OR" in ASCII."""
+comment = """First row of each commissioning instance and of the general store, "OR" in
+ASCII."""
 
 [[constants]]
 name = "OTP_STORE_VERSION"
@@ -415,6 +416,12 @@ name = "OTP_COMMISSIONING_SIG_LEN"
 type = "usize"
 value = 64
 comment = "Length of an OTP_KEY_COMMISSIONING_SIG value, an Ed25519 signature."
+
+[[constants]]
+name = "OTP_COMMISSIONING_SIGNER_LEN"
+type = "usize"
+value = 2
+comment = "Length of an OTP_KEY_COMMISSIONING_SIGNER value."
 
 # ===========================================================================
 # Type aliases
@@ -933,6 +940,11 @@ comment = "Manufacturer's name"
 name = "OTP_KEY_COMMISSIONING_DATE"
 value = 4
 comment = "Commissioning date"
+
+[[enums.variants]]
+name = "OTP_KEY_COMMISSIONING_SIGNER"
+value = 5
+comment = "ID of the signing key"
 
 [[enums.variants]]
 name = "OTP_KEY_RESERVED"
@@ -2120,7 +2132,7 @@ kind = "string"
 
 [[tagged_fams.variants]]
 discriminant = "OTP_KEY_COMMISSIONING_SIG"
-comment = "Ed25519 signature over the commissioning, always its last entry"
+comment = "Ed25519 signature over the commissioning instance, always its last entry"
 params_len_constant = "OTP_COMMISSIONING_SIG_LEN"
 
 [[tagged_fams.variants.fields]]
@@ -2145,6 +2157,16 @@ comment = "UTC commissioning date as 8 ASCII digits, YYYYMMDD"
 [[tagged_fams.variants.fields]]
 name = "date"
 kind = "string"
+
+[[tagged_fams.variants]]
+discriminant = "OTP_KEY_COMMISSIONING_SIGNER"
+comment = "ID of the key used to sign the commissioning instance"
+params_len_constant = "OTP_COMMISSIONING_SIGNER_LEN"
+
+[[tagged_fams.variants.fields]]
+name = "id"
+kind = "scalar"
+type = "u16"
 
 # ===========================================================================
 # Simple FAM structs

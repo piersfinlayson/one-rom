@@ -58,6 +58,13 @@ fn a_board_entry_is_written_as_the_store_holds_it() {
     );
 }
 
+/// A signer ID takes one row.
+#[test]
+fn a_signer_entry_is_written_as_the_store_holds_it() {
+    let entry = OneromOtpEntry::OtpKeyCommissioningSigner { id: 0x0102 };
+    assert_eq!(rows(&written(&entry)), [0x0005, 0x0002, 0x0102]);
+}
+
 #[test]
 fn every_entry_reads_back_as_written() {
     let entries = [
@@ -73,6 +80,7 @@ fn every_entry_reads_back_as_written() {
         OneromOtpEntry::OtpKeyCommissioningDate {
             date: "20260925".into(),
         },
+        OneromOtpEntry::OtpKeyCommissioningSigner { id: 256 },
         OneromOtpEntry::Unknown {
             key: 0x1234,
             params: vec![1, 2, 3],
