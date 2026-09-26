@@ -201,14 +201,25 @@ A weak key is one of Ed25519's small-order points.
 
 piers.rocks's signing server records every signature it makes before returning
 it. The record is a public git repository with one file per signing key. Each
-line holds a CHIPID and the SHA-256 hash of the signature. A hash is chosen so
-that neither the signature nor the non-CHIPID values it covers are revealed.
+line holds a CHIPID, written as the bootloader's USB serial number shows it,
+then a space and the signature's SHA-256 hash in lowercase hex:
+
+```
+E126C9F97C10ADAC 9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08
+```
+
+A hash is chosen so that neither the signature nor the non-CHIPID values it
+covers are revealed.
 
 A signature in OTP cannot be withdrawn. If a signing key or the server's PIN
 leaks, the key stays in the table and is marked retired. `onerom hardware
 validate` then accepts that key's signature only if its hash is in the key's
 file. Genuine boards keep validating and signatures made with the leaked key
-don't. A retired key's file no longer changes.
+don't.
+
+A retired key's table entry holds the address of its file and the file's
+SHA-256 hash at retirement. `onerom hardware validate` uses the file only if
+its hash matches, so a line added after retirement is caught.
 
 If there isn't a record file associated with a retired key, hardware
 validation rejects every signature made with it.

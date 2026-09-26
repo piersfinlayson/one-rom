@@ -8,8 +8,8 @@
 
 use onerom_config::hw::Board;
 use onerom_metadata::otp::{
-    AreaIssue, BuildError, CommissioningArea, GeneralStore, NewCommissioningInstance, RowWrite,
-    StoreEntry,
+    AreaIssue, BuildError, CommissioningArea, CommissioningValues, GeneralStore,
+    NewCommissioningInstance, RowWrite, StoreEntry,
 };
 use onerom_metadata::{
     OTP_COMMISSIONING_AREA_FIRST_ROW, OTP_COMMISSIONING_AREA_LAST_ROW, OTP_GENERAL_STORE_FIRST_ROW,
@@ -36,9 +36,14 @@ fn signature() -> [u8; 64] {
     core::array::from_fn(|i| i as u8)
 }
 
+/// fire-24-f's values, from piers.rocks and signer 1.
+fn values() -> CommissioningValues {
+    CommissioningValues::new(Board::Fire24F, "piers.rocks", "20260926", 1).unwrap()
+}
+
 /// fire-24-f's instance at `first_row`, from piers.rocks and signer 1.
 fn fire_24_f(first_row: u16) -> NewCommissioningInstance {
-    NewCommissioningInstance::new(Board::Fire24F, "piers.rocks", "20260926", 1, first_row).unwrap()
+    NewCommissioningInstance::new(&values(), first_row).unwrap()
 }
 
 /// An empty commissioning area.
@@ -108,8 +113,11 @@ fn put(area: &mut [u16], first_row: u16, entries: &[Vec<u16>]) {
 // Building an instance
 // ---------------------------------------------------------------------------
 
+/// Why building fire-24-f's values and placing them at `first_row` fails.
 fn refusal(manufacturer: &str, date: &str, signer: u16, first_row: u16) -> Option<BuildError> {
-    NewCommissioningInstance::new(Board::Fire24F, manufacturer, date, signer, first_row).err()
+    CommissioningValues::new(Board::Fire24F, manufacturer, date, signer)
+        .and_then(|values| NewCommissioningInstance::new(&values, first_row))
+        .err()
 }
 
 #[test]
@@ -149,6 +157,15 @@ fn an_instance_must_end_before_the_general_store() {
     );
 }
 
+/// The area's 1024 rows hold fire-24-f's 54 rows and a manufacturer of up to
+/// 1940 bytes. The values are refused before they're placed.
+#[test]
+fn values_too_long_for_the_area_are_refused() {
+    let values = |len| CommissioningValues::new(Board::Fire24F, &"x".repeat(len), "20260926", 1);
+    assert!(values(1940).is_ok());
+    assert_eq!(values(1941).err(), Some(BuildError::DoesNotFit));
+}
+
 #[test]
 fn an_instance_writes_each_key_row_after_its_value() {
     let order: [u16; 26] = [
@@ -182,7 +199,7 @@ fn the_message_is_the_prefix_chipid_and_rows_before_the_signature() {
     let mut expected = b"onerom-commissioning-sig-v1".to_vec();
     expected.extend([0x6b, 0x5b, 0x65, 0x2f, 0x23, 0x9c, 0x3f, 0xde]);
     expected.extend(ROWS.iter().flat_map(|row| row.to_le_bytes()));
-    assert_eq!(fire_24_f(0x0c0).message(CHIP_ID), expected);
+    assert_eq!(values().message(CHIP_ID), expected);
 }
 
 // ---------------------------------------------------------------------------
@@ -191,9 +208,8 @@ fn the_message_is_the_prefix_chipid_and_rows_before_the_signature() {
 
 #[test]
 fn a_written_instance_parses_back() {
-    let new = fire_24_f(0x0c0);
     let mut area = blank_area();
-    commission(&mut area, &new);
+    commission(&mut area, &fire_24_f(0x0c0));
     let parsed = CommissioningArea::parse(&area);
     assert!(parsed.issues().is_empty(), "{:?}", parsed.issues());
     assert_eq!(parsed.instances().len(), 1);
@@ -207,7 +223,7 @@ fn a_written_instance_parses_back() {
     assert_eq!(current.signer(), Some(1));
     assert_eq!(current.signature(), Some(&signature()));
     assert!(current.is_valid());
-    assert_eq!(current.message(CHIP_ID), Some(new.message(CHIP_ID)));
+    assert_eq!(current.message(CHIP_ID), Some(values().message(CHIP_ID)));
 }
 
 #[test]
@@ -233,10 +249,10 @@ fn an_interrupted_instance_leaves_the_one_before_current() {
         } else {
             "piers.rocks"
         };
-        let writes =
-            NewCommissioningInstance::new(Board::Fire24F, manufacturer, "20260926", 1, first_row)
-                .unwrap()
-                .writes(&signature());
+        let values = CommissioningValues::new(Board::Fire24F, manufacturer, "20260926", 1).unwrap();
+        let writes = NewCommissioningInstance::new(&values, first_row)
+            .unwrap()
+            .writes(&signature());
         for n in 1..=writes.len() {
             apply(&mut area, &writes[n - 1..n]);
             let parsed = CommissioningArea::parse(&area);

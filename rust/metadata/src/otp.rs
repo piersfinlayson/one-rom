@@ -5,8 +5,10 @@
 //! `docs/wip/OTP.md` specifies them.
 //!
 //! - [`CommissioningArea`] and [`GeneralStore`] parse the store's two areas.
+//! - [`CommissioningValues`] builds the message a commissioning instance's
+//!   signature covers.
 //! - [`NewCommissioningInstance`] builds the rows a commissioning instance
-//!   writes and the message its signature covers.
+//!   writes.
 //! - [`white_label`] builds the bootloader's USB white label.
 
 use alloc::vec;
@@ -39,13 +41,21 @@ const GENERAL_STORE_END: u16 =
 // Writing
 // ---------------------------------------------------------------------------
 
+/// The values of a commissioning instance, before it has a place or a
+/// signature. The signature's message depends on these alone, so a signing
+/// server can build it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommissioningValues {
+    /// Each entry's rows, key row first, without the signature's entry.
+    entries: Vec<Vec<u16>>,
+}
+
 /// A commissioning instance for `commission` to write, before it has a
 /// signature.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NewCommissioningInstance {
     first_row: u16,
-    /// Each entry's rows, key row first, without the signature's entry.
-    entries: Vec<Vec<u16>>,
+    values: CommissioningValues,
 }
 
 /// An ECC write of `value` to OTP row `row`.
@@ -57,7 +67,8 @@ pub struct RowWrite {
     pub value: u16,
 }
 
-/// Why [`NewCommissioningInstance::new`] refused an instance.
+/// Why [`CommissioningValues::new`] or [`NewCommissioningInstance::new`]
+/// refused an instance.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BuildError {
     /// The manufacturer's name is empty.
@@ -72,17 +83,17 @@ pub enum BuildError {
     DoesNotFit,
 }
 
-impl NewCommissioningInstance {
-    /// Builds `board`'s commissioning instance at `first_row`.
+impl CommissioningValues {
+    /// Builds `board`'s commissioning values.
     ///
     /// `date` is the UTC commissioning date as `YYYYMMDD`, and `signer` is the
-    /// ID of the key that signs the instance.
+    /// ID of the key that signs the instance. Values too long to fit the
+    /// commissioning area return [`BuildError::DoesNotFit`].
     pub fn new(
         board: Board,
         manufacturer: &str,
         date: &str,
         signer: u16,
-        first_row: u16,
     ) -> Result<Self, BuildError> {
         if manufacturer.is_empty() {
             return Err(BuildError::EmptyManufacturer);
@@ -92,11 +103,6 @@ impl NewCommissioningInstance {
         }
         if signer == 0 {
             return Err(BuildError::BadSigner);
-        }
-        if !first_row.is_multiple_of(OTP_PAGE_ROWS)
-            || !(OTP_COMMISSIONING_AREA_FIRST_ROW..COMMISSIONING_AREA_END).contains(&first_row)
-        {
-            return Err(BuildError::BadFirstRow);
         }
 
         let entries = [
@@ -109,21 +115,18 @@ impl NewCommissioningInstance {
             OneromOtpEntry::OtpKeyCommissioningDate { date: date.into() },
             OneromOtpEntry::OtpKeyCommissioningSigner { id: signer },
         ];
-        // The magic and version rows, the entries, then the signature's entry.
-        // Any value that fits the area has a length the 16-bit length row can
-        // hold.
-        let rows = 2
-            + entries
+        // Checked before building the rows because only a value that fits the
+        // area has a length the 16-bit length row can hold.
+        let rows = instance_row_count(
+            entries
                 .iter()
-                .map(|entry| entry_row_count(value_len(entry)))
-                .sum::<usize>()
-            + entry_row_count(OTP_COMMISSIONING_SIG_LEN);
-        if usize::from(first_row) + rows > usize::from(COMMISSIONING_AREA_END) {
+                .map(|entry| entry_row_count(value_len(entry))),
+        );
+        if rows > usize::from(COMMISSIONING_AREA_END - OTP_COMMISSIONING_AREA_FIRST_ROW) {
             return Err(BuildError::DoesNotFit);
         }
 
         Ok(Self {
-            first_row,
             entries: entries.iter().map(entry_rows).collect(),
         })
     }
@@ -138,6 +141,30 @@ impl NewCommissioningInstance {
                 .into_iter()
                 .chain(entries),
         )
+    }
+
+    /// The rows the instance takes, its signature's entry included.
+    fn row_count(&self) -> usize {
+        instance_row_count(self.entries.iter().map(Vec::len))
+    }
+}
+
+impl NewCommissioningInstance {
+    /// Places the commissioning instance holding `values` at `first_row`.
+    pub fn new(values: &CommissioningValues, first_row: u16) -> Result<Self, BuildError> {
+        if !first_row.is_multiple_of(OTP_PAGE_ROWS)
+            || !(OTP_COMMISSIONING_AREA_FIRST_ROW..COMMISSIONING_AREA_END).contains(&first_row)
+        {
+            return Err(BuildError::BadFirstRow);
+        }
+        if usize::from(first_row) + values.row_count() > usize::from(COMMISSIONING_AREA_END) {
+            return Err(BuildError::DoesNotFit);
+        }
+
+        Ok(Self {
+            first_row,
+            values: values.clone(),
+        })
     }
 
     /// The rows to write with ECC, in order.
@@ -159,7 +186,7 @@ impl NewCommissioningInstance {
             },
         ];
         let mut row = self.first_row + 2;
-        for entry in self.entries.iter().chain([&signature]) {
+        for entry in self.values.entries.iter().chain([&signature]) {
             // The key row goes last, so the parser treats an entry cut short
             // as deleted.
             for i in (1..entry.len()).chain([0]) {
@@ -700,6 +727,12 @@ fn page_after(row: u16) -> u16 {
 /// row, then two bytes of value per row.
 fn entry_row_count(len: usize) -> usize {
     2 + len.div_ceil(2)
+}
+
+/// The rows a commissioning instance takes: its magic and version rows, entries
+/// of `entry_rows` rows each, then its signature's entry.
+fn instance_row_count(entry_rows: impl Iterator<Item = usize>) -> usize {
+    2 + entry_rows.sum::<usize>() + entry_row_count(OTP_COMMISSIONING_SIG_LEN)
 }
 
 /// `entry`'s rows as the store holds them, key row first.
