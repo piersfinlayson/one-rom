@@ -87,7 +87,9 @@ boundary.
 
 A commissioning instance without `COMMISSIONING_SIG` is ignored. Its entries
 end at key 0 with length 0, and the next instance starts at the page boundary
-after those two rows. An instance whose version row is unwritten ends at its
+after those two rows. Its entries also end at the end of the commissioning
+area, as an instance interrupted in the area's last page may leave no room
+for key 0 and length 0. An instance whose version row is unwritten ends at its
 version row.
 
 Every page of a commissioning instance is locked once written. See
@@ -345,6 +347,10 @@ On a board that already has a commissioning instance it checks that a new one
 should be supplied, and if so writes the new one at the next page boundary
 after the last. If it cannot parse existing data, it writes the new instance
 at the first page boundary after the last written row.
+
+It refuses to commission a board whose commissioning area holds an unknown
+version or whose current commissioning instance holds an unknown key. It is
+likely that it was written by a newer version of the tool.
 
 As an entry's key row is written last an entry interrupted before its key row
 reads as a deleted entry and the rest of the store stays readable.

@@ -28,7 +28,7 @@ onerom-fw-parser = { workspace = true }
 onerom-lab-parser = { workspace = true }
 onerom-metadata = { workspace = true }
 
-picoboot = { version = "0.2.6", features = ["reader", "tokio"] }
+picoboot = { git = "https://github.com/piersfinlayson/picoboot", rev = "7cfcd9a67ea21e6d9d4ca980c22bff8fb7ac5fb1", features = ["reader", "tokio"] }
 
 base64 = { version = "0.22" }
 bytes = "1.10"

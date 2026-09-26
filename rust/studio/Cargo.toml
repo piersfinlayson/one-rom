@@ -70,7 +70,7 @@ onerom-fw-parser = { workspace = true }
 onerom-gen = { workspace = true }
 
 dfu-rs = "0.2.1"
-picoboot = { version = "0.2.6", features = ["reader", "tokio"] }
+picoboot = { git = "https://github.com/piersfinlayson/picoboot", rev = "7cfcd9a67ea21e6d9d4ca980c22bff8fb7ac5fb1", features = ["reader", "tokio"] }
 
 arc-swap = "1.7"
 chrono = "0.4"

@@ -56,6 +56,7 @@ include!(concat!(env!("OUT_DIR"), "/device_generated.rs"));
 
 mod device;
 mod firmware_overrides_impl;
+pub mod otp;
 
 pub use device::{Ptr, RuntimeCell};
 
