@@ -7,7 +7,7 @@ license = "MIT"
 description = "Firmware generator for One ROM - the flexible retro ROM replacement"
 repository = "https://github.com/piersfinlayson/one-rom"
 homepage = "https://onerom.org"
-documentation = "https://docs.rs/onerom-gen"
+documentation = "https://docs.rs/onerom-fw"
 keywords = ["retro", "rom", "commodore", "embedded"]
 categories = ["embedded", "hardware-support"]
 
@@ -15,25 +15,17 @@ categories = ["embedded", "hardware-support"]
 name = "onerom_fw"
 path = "src/lib.rs"
 
-[[bin]]
-name = "onerom-fw"
-path = "src/main.rs"
-
 [dependencies]
 onerom-config = { workspace = true }
-onerom-fw-parser = { workspace = true }
 onerom-gen = { workspace = true }
 
 base64 = { version = "0.22" }
 bytes = "1.10"
-clap = { version = "4.5", features = ["derive"] }
-env_logger = "0.11"
 hex = { version = "0.4" }
 log = "0.4"
 reqwest = { version = "0.12", default-features = false, features = ["json", "charset", "blocking", "rustls-tls"] }
 serde = { version = "1.0", default-features = false, features = ["derive"] }
 serde_json = "1.0"
-smol = { version = "2.0" }
 zip = "6.0"
 
 [lints]

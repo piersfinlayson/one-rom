@@ -13,6 +13,7 @@ In detail:
 - Firmware change to avoid changing bootrom config for any external flash CS1 pin configured in OTP data.
 - Add the `ext-flash` user plugin, which tests the external flash chip present on some Fire 32 and 40 pin boards.
   - Includes `plugins/user/ext-flash/scripts/program-otp.sh` to program the OTP that makes the external flash reachable with no firmware or plugin setup required.
+- Retire the `onerom-fw` binary. Use the CLI's `firmware build` option instead.
 
 To publish:
 - Rust crates (in dependency order):

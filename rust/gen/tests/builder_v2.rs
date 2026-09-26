@@ -2834,7 +2834,7 @@ mod tests {
     /// on the RP2350's 2MB flash after the firmware (48KB) and the metadata
     /// region (16KB). Without the guard, `build()` would silently return an
     /// over-large image; every consumer of the single onerom-gen `build()`
-    /// (CLI, the onerom-fw tool, Studio, one-rom-wasm) relies on this check.
+    /// (CLI, Studio, one-rom-wasm) relies on this check.
     #[test]
     #[allow(clippy::wildcard_enum_match_arm)]
     fn v2_rejects_oversized_rom_data() {
