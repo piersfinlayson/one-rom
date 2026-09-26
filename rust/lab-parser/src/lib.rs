@@ -2,11 +2,11 @@
 //
 // MIT License
 
-//! Reads One ROM Lab's own structures from a device or an image.
+//! Reads a One ROM Lab from a device or an image.
 //!
 //! A host reads `onerom_info_t` and branches on `firmware_type`.  For a Lab
 //! this crate follows `metadata` and `runtime` with Lab's generated parsers.
-//! The header itself is One ROM's structure and onerom-fw-parser reads it.
+//! It also returns the Lab's `onerom_info_t`.
 //!
 //! It is `no_std` with `alloc` and reads through the same [`Reader`] as
 //! onerom-fw-parser.
@@ -31,7 +31,8 @@ use onerom_lab_metadata::{
 use onerom_metadata::{
     BUILD_DATE_BUF_LEN, DeviceMemoryView, FirmwareType, MaybeKnown, NewerGeneration,
     ONEROM_INFO_BUILD_DATE_OFFSET, ONEROM_INFO_METADATA_OFFSET, ONEROM_INFO_OFFSET,
-    ONEROM_INFO_RUNTIME_OFFSET, ONEROM_INFO_SIZE, OneromInfo, ParseError, Pointer, RuntimeAbsence,
+    ONEROM_INFO_RUNTIME_OFFSET, ONEROM_INFO_SIZE, ONEROM_INFO_VERSION, OneromInfo, ParseError,
+    Pointer, RuntimeAbsence,
 };
 
 /// Reads a One ROM Lab.
@@ -45,8 +46,7 @@ impl<'a, R: Reader> LabParser<'a, R> {
         Self { reader }
     }
 
-    /// Parses Lab's own structures. Fails if the device isn't a Lab.
-    /// Lab's version and build details come from onerom-fw-parser.
+    /// Parses a Lab. Fails if the device isn't a Lab.
     pub async fn parse(&mut self) -> Result<Lab, String> {
         // Lab runs on the RP2350 only.
         self.reader.update_base_address(RP235X_BASE_FLASH);
@@ -118,7 +118,11 @@ impl<'a, R: Reader> LabParser<'a, R> {
             None => Err(RuntimeAbsence::NoPointer),
         };
 
-        Ok(Lab { metadata, runtime })
+        Ok(Lab {
+            info,
+            metadata,
+            runtime,
+        })
     }
 
     /// Reads the runtime structure at `addr` and the strings it points at from
@@ -153,6 +157,8 @@ impl<'a, R: Reader> LabParser<'a, R> {
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct Lab {
+    /// Lab's `onerom_info_t`, with `metadata` and `runtime` left `None`.
+    pub info: OneromInfo,
     /// Includes the board the image was built for.
     pub metadata: Result<OneromLabMetadataHeader, ParseError>,
     /// Includes the board Lab is running as. Missing on a stopped Lab.
@@ -160,9 +166,16 @@ pub struct Lab {
 }
 
 impl Lab {
-    /// Structures this parser is too old to read in full.
+    /// Structures this parser is too old to read in full, `onerom_info_t` included.
     pub fn newer_generations(&self) -> Vec<NewerGeneration> {
         let mut found = Vec::new();
+        if self.info.version > ONEROM_INFO_VERSION {
+            found.push(NewerGeneration {
+                structure: "onerom_info_t",
+                device_generation: self.info.version,
+                known_generation: ONEROM_INFO_VERSION,
+            });
+        }
         if let Ok(metadata) = &self.metadata
             && metadata.version > LAB_METADATA_VERSION
         {

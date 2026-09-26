@@ -8,6 +8,7 @@ use std::io::Write;
 use onerom_config::chip::{CHIP_TYPE_NAMES_PLUGINS, ChipType, chip_type_names_for_pins};
 use onerom_config::fw::{FirmwareProperties, FirmwareVersion, ServeAlg};
 use onerom_config::hw::Board;
+use onerom_config::mcu::RP235X_BASE_FLASH;
 use onerom_config::mcu::Variant;
 use onerom_fw::net::{Release, Releases, fetch_license_async};
 use onerom_fw::{assemble_firmware, get_rom_files_async, read_rom_config, validate_sizes};
@@ -17,6 +18,7 @@ use onerom_gen::compat::{
     ChipCompat, check_chip_set_on_board, default_cs_config, format_size, supported_chips,
 };
 use onerom_gen::{Builder, Config, ConfigOverrides, Error as GenError, FIRMWARE_SIZE, License};
+use onerom_lab_parser::LabParser;
 
 use crate::args;
 use crate::utils::{check_fire_board, resolve_board, resolve_firmware_output};
@@ -595,7 +597,7 @@ pub async fn cmd_inspect(
     }
 
     let info = parse_firmware(&data).await?;
-    print_firmware_info(options, &info)
+    print_firmware_info(options, &info, &data).await
 }
 
 fn inspect_local_firmware(options: &Options, file: &str) -> Result<Vec<u8>, Error> {
@@ -628,7 +630,11 @@ async fn inspect_release_firmware(
         .map_err(Error::from)
 }
 
-fn print_firmware_info(options: &Options, info: &ParsedDevice) -> Result<(), Error> {
+async fn print_firmware_info(
+    options: &Options,
+    info: &ParsedDevice,
+    data: &[u8],
+) -> Result<(), Error> {
     if !info.parse_errors().is_empty() {
         eprintln!("Warning: firmware parsed with errors:");
         for error in info.parse_errors() {
@@ -640,7 +646,39 @@ fn print_firmware_info(options: &Options, info: &ParsedDevice) -> Result<(), Err
     match info {
         ParsedDevice::Original(sdrr) => print_original_firmware_info(options, sdrr),
         ParsedDevice::Schema(onerom) => print_schema_firmware_info(options, info, onerom),
+        ParsedDevice::Lab => print_lab_firmware_info(options, data).await,
+        _ => {
+            println!("(firmware this build can't show)");
+            Ok(())
+        }
     }
+}
+
+/// Print a One ROM Lab image's summary.
+async fn print_lab_firmware_info(options: &Options, data: &[u8]) -> Result<(), Error> {
+    let mut reader = MemoryReader::new(data.to_vec(), RP235X_BASE_FLASH);
+    let lab = LabParser::new(&mut reader)
+        .parse()
+        .await
+        .map_err(Error::Other)?;
+    let info = &lab.info;
+    // A Lab built without a board baked in is a valid image.  "(not set)" is
+    // Lab's own words for it.
+    let board = match &lab.metadata {
+        Ok(metadata) => metadata.hw.hw_rev.as_deref().unwrap_or("(not set)"),
+        Err(_) => "unknown",
+    };
+
+    println!("Firmware: One ROM Lab");
+    println!(
+        "Version:  {}.{}.{}",
+        info.major_version, info.minor_version, info.patch_version
+    );
+    if options.verbose {
+        println!("Build:    {}", info.build_number);
+    }
+    println!("Board:    {board}");
+    Ok(())
 }
 
 fn print_original_firmware_info(

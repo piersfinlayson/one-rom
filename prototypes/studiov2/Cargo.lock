@@ -3470,6 +3470,7 @@ dependencies = [
  "onerom-fw",
  "onerom-fw-parser",
  "onerom-gen",
+ "onerom-lab-parser",
  "onerom-metadata",
  "picoboot",
  "reqwest",
@@ -3535,6 +3536,29 @@ dependencies = [
  "onerom-metadata",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "onerom-lab-metadata"
+version = "0.1.0"
+dependencies = [
+ "hashbrown 0.17.1",
+ "onerom-config",
+ "onerom-metadata",
+ "onerom-metadata-gen",
+ "serde",
+ "serde-big-array",
+]
+
+[[package]]
+name = "onerom-lab-parser"
+version = "0.1.0"
+dependencies = [
+ "airfrog-rpc",
+ "log",
+ "onerom-config",
+ "onerom-lab-metadata",
+ "onerom-metadata",
 ]
 
 [[package]]

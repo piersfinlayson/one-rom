@@ -21,6 +21,7 @@ use onerom_cli::plugin::{parse_plugins, resolve_plugins};
 use onerom_cli::slot::{self, GlobalConfig, check_slot_confirmations, save_config};
 use onerom_cli::usb::{RebootArgs, flash_program, flash_program_read, reboot};
 use onerom_cli::{Error, Options};
+use onerom_fw_parser::ParsedDevice;
 use onerom_metadata::GPIO_RESET_DEFAULT_HOLD_MS;
 
 // ------------------------------- Argument validation -------------------------------
@@ -326,6 +327,13 @@ pub async fn cmd_program(
     let data =
         acquire_program_image(options, args, &board, &mcu, reset_host.map(|(pin, _)| pin)).await?;
     let image = verify_assembled_firmware(options, &data, args.force, board).await?;
+
+    // onerom program sets a board up as One ROM.
+    if let Some(file) = &args.firmware
+        && matches!(image, ParsedDevice::Lab)
+    {
+        return Err(Error::LabFirmware(file.clone()));
+    }
 
     // A pre-built image has no config to ask, so it is asked of the parse. A
     // built one has already answered, before its ROMs were fetched.

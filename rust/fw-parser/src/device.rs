@@ -9,7 +9,8 @@
 //! that only need facts common to both — firmware version, board, ROM layout,
 //! which slot is being served — never have to branch on firmware generation.
 //! Format-specific data remains reachable via [`as_original`] and [`as_schema`]
-//! for the cases that genuinely need it.
+//! for the cases that genuinely need it.  Firmware other than One ROM is named
+//! and not parsed - see [`ParsedDevice`].
 //!
 //! # Recognition vs parse errors
 //!
@@ -17,8 +18,8 @@
 //! `ParsedDevice`, even for data that is not One ROM firmware at all. Two
 //! separate questions follow from it, and callers should not conflate them:
 //!
-//! - [`is_recognised`] answers "is this a One ROM?". It is the check to make
-//!   before presenting a device or file to the user as a One ROM.
+//! - [`is_recognised`] answers "is this One ROM or One ROM Lab?". It is the
+//!   check to make before presenting a device or file to the user.
 //! - [`parse_errors`] answers "what went wrong *within* a device we did
 //!   recognise?". A recognised device may still carry non-fatal errors.
 //!
@@ -68,12 +69,37 @@ use crate::info::{Sdrr, SdrrRomInfo, SdrrRomSet};
 use crate::onerom::OneRom;
 use crate::types::SdrrRomType;
 
-/// The complete parsed state of a One ROM device, regardless of firmware
-/// generation.
+/// A One ROM's parsed state, from either firmware generation, or which other
+/// member of the One ROM family a device runs.
 ///
 /// Constructed by [`Parser::parse_device`], which detects the firmware format
 /// and delegates to the appropriate parser.  Callers that need
 /// format-specific fields can downcast via [`as_original`] or [`as_schema`].
+///
+/// # Firmware other than One ROM
+///
+/// Every member of the One ROM family puts an `onerom_info_t` at the same
+/// place in flash, and its `firmware_type` names the member. This crate
+/// parses One ROM alone. Any other member gets its own variant, which doesn't
+/// carry anything, and the caller reads the device with that member's parser:
+///
+/// | Variant | Firmware | Parser |
+/// | --- | --- | --- |
+/// | [`Lab`](Self::Lab) | One ROM Lab | [onerom-lab-parser](https://docs.rs/onerom-lab-parser) |
+///
+/// ```rust,ignore
+/// let device = Parser::new(&mut reader).parse_device().await;
+/// if matches!(device, ParsedDevice::Lab) {
+///     let lab = onerom_lab_parser::LabParser::new(&mut reader).parse().await?;
+/// }
+/// ```
+///
+/// The accessors describe One ROM. For these variants
+/// [`is_recognised`](Self::is_recognised) returns `true`, and the rest return
+/// `None`, `false` or an empty result.
+///
+/// A member this build doesn't have a variant for isn't recognised, and its
+/// parse error names the firmware type.
 ///
 /// [`as_original`]: ParsedDevice::as_original
 /// [`as_schema`]: ParsedDevice::as_schema
@@ -84,22 +110,26 @@ use crate::types::SdrrRomType;
 // carries the same allow.
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[non_exhaustive]
 pub enum ParsedDevice {
     /// Pre-v0.7.0 hand-crafted format.
     Original(Sdrr),
 
     /// v0.7.0+ schema-driven metadata format.
     Schema(OneRom),
+
+    /// One ROM Lab, which onerom-lab-parser reads.
+    Lab,
 }
 
 impl ParsedDevice {
-    /// Returns `true` if a recognisable One ROM was found.
+    /// Returns `true` if a One ROM or a One ROM Lab was found.
     ///
     /// [`Parser::parse_device`] is infallible, so this is the check that
-    /// distinguishes "this is a One ROM" from "this is some other data".
+    /// distinguishes firmware this build knows from some other data.
     /// Original-format devices are recognised if either the flash or the RAM
-    /// region parsed; schema-format devices if the firmware info structure was
-    /// located.
+    /// region parsed, schema-format devices if the firmware info structure was
+    /// located, and a Lab always is.
     ///
     /// This is deliberately distinct from [`parse_errors`](Self::parse_errors),
     /// which reports non-fatal problems *within* a device that was recognised.
@@ -110,6 +140,7 @@ impl ParsedDevice {
         match self {
             Self::Original(sdrr) => sdrr.flash.is_some() || sdrr.ram.is_some(),
             Self::Schema(onerom) => onerom.info().is_some(),
+            Self::Lab => true,
         }
     }
 
@@ -125,6 +156,7 @@ impl ParsedDevice {
         match self {
             Self::Original(sdrr) => sdrr.is_running(),
             Self::Schema(onerom) => onerom.runtime().is_some(),
+            Self::Lab => false,
         }
     }
 
@@ -141,6 +173,7 @@ impl ParsedDevice {
                     info.build_number,
                 ))
             }
+            Self::Lab => None,
         }
     }
 
@@ -153,14 +186,15 @@ impl ParsedDevice {
         match self {
             Self::Original(sdrr) => sdrr.flash.as_ref().map(|f| f.metadata_present),
             Self::Schema(_) => Some(true),
+            Self::Lab => None,
         }
     }
 
     /// Returns non-fatal parse errors encountered during parsing.
     ///
-    /// These describe problems *within* a device; see
-    /// [`is_recognised`](Self::is_recognised) for whether a One ROM was found
-    /// at all.
+    /// These describe problems *within* a device.
+    /// [`is_recognised`](Self::is_recognised) says whether a One ROM or One ROM
+    /// Lab was found at all.
     pub fn parse_errors(&self) -> &[ParseError] {
         match self {
             Self::Original(sdrr) => sdrr
@@ -169,10 +203,11 @@ impl ParsedDevice {
                 .map(|f| f.parse_errors.as_slice())
                 .unwrap_or(&[]),
             Self::Schema(onerom) => onerom.parse_errors(),
+            Self::Lab => &[],
         }
     }
 
-    /// Returns the original-format data, or `None` if this is schema-format.
+    /// Returns the original-format data, or `None` for any other variant.
     pub fn as_original(&self) -> Option<&Sdrr> {
         if let Self::Original(sdrr) = self {
             Some(sdrr)
@@ -181,7 +216,7 @@ impl ParsedDevice {
         }
     }
 
-    /// Returns the schema-format data, or `None` if this is original-format.
+    /// Returns the schema-format data, or `None` for any other variant.
     pub fn as_schema(&self) -> Option<&OneRom> {
         if let Self::Schema(onerom) = self {
             Some(onerom)
@@ -198,6 +233,7 @@ impl ParsedDevice {
                 let hw_rev = &onerom.info()?.metadata.as_ref()?.hw.hw_rev;
                 Board::try_from_str(hw_rev)
             }
+            Self::Lab => None,
         }
     }
 
@@ -227,6 +263,7 @@ impl ParsedDevice {
                 rom_info.rbcp_rom_type
                     == onerom_config::chip::ChipType::SystemPlugin.rbcp_chip_type()
             }
+            Self::Lab => false,
         }
     }
 
@@ -242,6 +279,7 @@ impl ParsedDevice {
                 .and_then(|f| f.mcu_variant)
                 .map(|v| v.to_string()),
             Self::Schema(_) => self.get_board().map(|b| b.mcu_family().to_string()),
+            Self::Lab => None,
         }
     }
 
@@ -255,6 +293,7 @@ impl ParsedDevice {
         match self {
             Self::Original(sdrr) => sdrr.ram.as_ref().map(|r| r.rom_set_index as usize),
             Self::Schema(onerom) => onerom.runtime().map(|r| r.rom_slot_index as usize),
+            Self::Lab => None,
         }
     }
 
@@ -276,6 +315,7 @@ impl ParsedDevice {
                 Some(md) => SlotsInner::Schema(md.rom_slots.iter()),
                 None => SlotsInner::Empty,
             },
+            Self::Lab => SlotsInner::Empty,
         };
         Slots {
             inner,

@@ -103,7 +103,8 @@ pub async fn handle_device_data(data: Vec<u8>) -> AppMessage {
     //
     // parse_device() detects the firmware generation and is infallible: it
     // returns a ParsedDevice for any input, so whether this is actually One
-    // ROM firmware is a separate question, answered by is_recognised().
+    // ROM firmware is a separate question, answered by is_recognised().  A
+    // Lab passes it, and file_device_loaded() turns it away.
     let device = {
         let mut reader = MemoryReader::new(data.clone(), 0x08000000);
         let mut parser = Parser::new(&mut reader);
@@ -348,6 +349,12 @@ pub fn file_device_loaded(
     is_file: bool,
 ) -> Task<AppMessage> {
     match result {
+        // A Lab is recognised, but Studio works with One ROM alone.
+        Ok((ParsedDevice::Lab, _)) => {
+            analyse.analysis_content =
+                "One ROM Lab found. Studio currently doesn't support Lab.".to_string();
+        }
+
         // The actual read and parse succeeded, and found a One ROM
         Ok((device, data)) => {
             // Turn the parsed device into JSON

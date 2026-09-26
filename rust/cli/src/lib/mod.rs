@@ -28,7 +28,7 @@ pub mod scan;
 pub mod slot;
 pub mod usb;
 
-pub use device::{Device, DeviceState};
+pub use device::{Device, DeviceState, Firmware};
 pub use error::Error;
 pub use fetch::CliFetch;
 

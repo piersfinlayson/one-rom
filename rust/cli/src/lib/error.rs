@@ -172,6 +172,11 @@ pub enum Error {
     )]
     FirmwareValidation(String),
 
+    #[error(
+        "Cannot program {0} because it is One ROM Lab firmware.\n  onerom program only programs One ROM firmware."
+    )]
+    LabFirmware(String),
+
     #[error("Failed to stop device, cannot proceed.\n  This is likely a bug.  Please report it.")]
     DeviceStillRunning,
 

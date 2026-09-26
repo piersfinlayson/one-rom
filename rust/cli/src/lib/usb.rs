@@ -10,7 +10,8 @@
 #[allow(unused_imports)]
 use log::{Level, debug, log, warn};
 use onerom_config::mcu::{Rp235xChipId, RpVariant};
-use onerom_fw_parser::Parser;
+use onerom_fw_parser::{ParsedDevice, Parser};
+use onerom_lab_parser::LabParser;
 use picoboot::cmd::PicobootStatus;
 use picoboot::{
     Picoboot, PicobootCmd, PicobootCmdId, PicobootXCmd, Reader as PicobootReader, Target,
@@ -29,7 +30,7 @@ use crate::picobootx::{
     ONEROM_FEAT_GPIO_HOLD, ONEROM_FEAT_GPIO_QUERY, ONEROM_FEAT_GPIO_SET, ONEROM_FEAT_LED_ARGS,
     ONEROM_LED_STATE_LEN, ONEROM_MAGIC, PICOBOOT_DIR_IN,
 };
-use crate::{Device, DeviceState, Options};
+use crate::{Device, DeviceState, Firmware, Options};
 
 /// Flash start address on RP2350.
 pub const FLASH_BASE: u32 = 0x1000_0000;
@@ -272,7 +273,7 @@ pub async fn enumerate_devices(options: &Options) -> Result<Vec<Device>, Error> 
             address: info.device_address(),
             serial: info.serial_number().map(str::to_owned),
             device_info: info,
-            onerom: None,
+            firmware: None,
             state: DeviceState::Unknown,
             usb_can_run: false,
             chip_id: None,
@@ -453,14 +454,27 @@ pub async fn read_device_info(device: &mut Device) -> Result<(), AccessError> {
             .map_err(AccessError::from_picoboot)?;
     }
 
-    let onerom = {
+    let firmware = {
         let mut reader = PicobootReader::new(picoboot)
             .await
             .map_err(AccessError::unreadable)?;
-        let mut parser = Parser::with_base_flash_address(&mut reader, FLASH_BASE, RAM_BASE);
-        parser.parse_device().await
+        let parsed = Parser::with_base_flash_address(&mut reader, FLASH_BASE, RAM_BASE)
+            .parse_device()
+            .await;
+        if matches!(parsed, ParsedDevice::Lab) {
+            let lab = LabParser::new(&mut reader)
+                .parse()
+                .await
+                .map_err(AccessError::unreadable)?;
+            Some(Firmware::Lab(lab))
+        } else if parsed.is_recognised() {
+            Some(Firmware::OneRom(parsed))
+        } else {
+            debug!("Firmware not recognised: {:?}", parsed.parse_errors());
+            None
+        }
     };
-    device.update_onerom(onerom);
+    device.set_firmware(firmware);
 
     // Read the chip ID - the device's invariant identity - and package variant.
     let (chip_id, rp_variant) = resolve_chip_id(device).await;

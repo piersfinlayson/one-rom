@@ -188,6 +188,9 @@ fn runtime() -> Vec<u8> {
 #[test]
 fn a_lab_parses() {
     let lab = Image::lab().parse().expect("a Lab should parse");
+    assert_eq!((lab.info.major_version, lab.info.minor_version), (0, 4));
+    assert_eq!(lab.info.build_date, "Sep 25 2026 12:00:00Z");
+    assert!(lab.info.metadata.is_none() && lab.info.runtime.is_none());
     let metadata = lab.metadata.as_ref().expect("metadata should parse");
     assert_eq!(metadata.hw.hw_rev.as_deref(), Some("fire-40-a"));
     let runtime = lab.runtime.as_ref().expect("runtime should parse");
@@ -285,6 +288,24 @@ fn a_runtime_reaching_outside_the_block_is_unparsed() {
     image.ram = Some(ram);
     let lab = image.parse().expect("a Lab should parse");
     assert_eq!(lab.runtime.unwrap_err(), RuntimeAbsence::Unparsed);
+}
+
+#[test]
+fn a_newer_header_generation_is_reported() {
+    let mut image = Image::lab();
+    image.write_header(
+        ONEROM_INFO_VERSION_OFFSET,
+        &(ONEROM_INFO_VERSION + 1).to_le_bytes(),
+    );
+    let lab = image.parse().expect("a Lab should parse");
+    assert_eq!(
+        lab.newer_generations(),
+        [NewerGeneration {
+            structure: "onerom_info_t",
+            device_generation: ONEROM_INFO_VERSION + 1,
+            known_generation: ONEROM_INFO_VERSION,
+        }]
+    );
 }
 
 #[test]

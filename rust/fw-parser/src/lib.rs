@@ -92,11 +92,12 @@ use crate::parsing::{
 
 use onerom::parse_onerom_from_view;
 use onerom_metadata::{
-    BUILD_DATE_BUF_LEN, DeviceMemoryView, METADATA_SIZE, MIN_SCHEMA_VERSION, ONEROM_FAMILY_MAGIC,
-    ONEROM_INFO_BUILD_DATE_OFFSET, ONEROM_INFO_MAGIC, ONEROM_INFO_MAGIC_OFFSET,
-    ONEROM_INFO_MAJOR_VERSION_OFFSET, ONEROM_INFO_METADATA_OFFSET,
-    ONEROM_INFO_MINOR_VERSION_OFFSET, ONEROM_INFO_PATCH_VERSION_OFFSET, ONEROM_INFO_RUNTIME_OFFSET,
-    ONEROM_INFO_SIZE, ONEROM_RUNTIME_INFO_SIZE, RUNTIME_INFO_MAGIC,
+    BUILD_DATE_BUF_LEN, DeviceMemoryView, FirmwareType, Generations, METADATA_SIZE,
+    MIN_SCHEMA_VERSION, MaybeKnown, ONEROM_FAMILY_MAGIC, ONEROM_INFO_BUILD_DATE_OFFSET,
+    ONEROM_INFO_MAGIC, ONEROM_INFO_MAGIC_OFFSET, ONEROM_INFO_MAJOR_VERSION_OFFSET,
+    ONEROM_INFO_METADATA_OFFSET, ONEROM_INFO_MINOR_VERSION_OFFSET,
+    ONEROM_INFO_PATCH_VERSION_OFFSET, ONEROM_INFO_RUNTIME_OFFSET, ONEROM_INFO_SIZE,
+    ONEROM_RUNTIME_INFO_SIZE, OneromInfo, RUNTIME_INFO_MAGIC,
 };
 
 /// Offset from start of the firmware where the One ROM info header is located.
@@ -304,7 +305,7 @@ impl<'a, R: Reader> Parser<'a, R> {
     /// metadata format (v0.7.0+).
     ///
     /// Returns `None` where neither magic is found, which means this is not a
-    /// recognisable One ROM firmware image.
+    /// One ROM family firmware image.  One ROM Lab is schema format.
     pub async fn detect_format(&mut self) -> Option<FirmwareFormat> {
         let info_addr = self.base_flash_address + SDRR_INFO_FW_OFFSET;
 
@@ -332,11 +333,11 @@ impl<'a, R: Reader> Parser<'a, R> {
         }
     }
 
-    /// Function to do a brief check whether this is a One ROM device.
+    /// Function to do a brief check whether this is a One ROM family device.
     ///
-    /// Answers for either firmware generation, and for a version newer than
-    /// this build can parse.  The question is whether the device is a One ROM,
-    /// not whether this build can read it.
+    /// Answers for either firmware generation, for One ROM Lab, and for a
+    /// version newer than this build can parse.  The question is whether the
+    /// device runs One ROM family firmware, not whether this build can read it.
     ///
     /// Returns:
     /// - `true` if a One ROM magic was found
@@ -386,14 +387,15 @@ impl<'a, R: Reader> Parser<'a, R> {
     /// for original-format firmware or
     /// [`parse_format_schema`](Self::parse_format_schema) for schema-format
     /// firmware.  The [`ParsedDevice`] return type provides a common
-    /// interface over both formats.
+    /// interface over both formats, and names firmware other than One ROM.
     ///
     /// This is the recommended entry point for callers that need to handle
     /// both firmware generations transparently.
     pub async fn parse_device(&mut self) -> ParsedDevice {
         match self.detect_format().await {
-            Some(FirmwareFormat::Schema) => match self.parse_format_schema().await {
-                Ok(onerom) => ParsedDevice::Schema(onerom),
+            Some(FirmwareFormat::Schema) => match self.parse_schema_device().await {
+                Ok(SchemaDevice::OneRom(onerom)) => ParsedDevice::Schema(onerom),
+                Ok(SchemaDevice::Lab) => ParsedDevice::Lab,
                 Err(e) => ParsedDevice::Schema(OneRom::new(
                     None,
                     vec![ParseError::new("parse_format_schema", e)],
@@ -688,12 +690,21 @@ impl<'a, R: Reader> Parser<'a, R> {
     /// # Errors
     ///
     /// Returns `Err` only for truly fatal failures: inability to read the
-    /// info header, or an invalid magic value.  Failures to read the
-    /// build_date string or metadata are recorded as non-fatal errors in
-    /// [`OneRom::parse_errors`] and result in the corresponding field being
-    /// `None`.  An absent runtime is usually no fault at all, so its reason
-    /// goes to [`OneRom::runtime_absence`] rather than among the errors.
+    /// info header, an invalid magic value, or firmware other than One ROM.
+    /// Failures to read the build_date string or metadata are recorded as
+    /// non-fatal errors in [`OneRom::parse_errors`] and result in the
+    /// corresponding field being `None`.  An absent runtime usually isn't a fault,
+    /// so its reason goes to [`OneRom::runtime_absence`] rather than among the
+    /// errors.
     pub async fn parse_format_schema(&mut self) -> Result<OneRom, String> {
+        match self.parse_schema_device().await? {
+            SchemaDevice::OneRom(onerom) => Ok(onerom),
+            SchemaDevice::Lab => Err("This is One ROM Lab firmware, not One ROM".into()),
+        }
+    }
+
+    /// Reads `onerom_info_t` and, for One ROM, everything it points at.
+    async fn parse_schema_device(&mut self) -> Result<SchemaDevice, String> {
         // Schema-format firmware is RP2350-only.
         self.base_flash_address = RP235X_BASE_FLASH;
         self.base_ram_address = RP235X_BASE_SRAM;
@@ -714,9 +725,8 @@ impl<'a, R: Reader> Parser<'a, R> {
             .map_err(|_| "Failed to read info header".to_string())?;
 
         let magic = &info_buf[ONEROM_INFO_MAGIC_OFFSET..];
-        if !magic.starts_with(ONEROM_FAMILY_MAGIC.as_bytes())
-            && !magic.starts_with(ONEROM_INFO_MAGIC.as_bytes())
-        {
+        let sdrr = magic.starts_with(ONEROM_INFO_MAGIC.as_bytes());
+        if !sdrr && !magic.starts_with(ONEROM_FAMILY_MAGIC.as_bytes()) {
             return Err("Invalid magic: not a One ROM firmware image".into());
         }
 
@@ -725,26 +735,11 @@ impl<'a, R: Reader> Parser<'a, R> {
         let patch = info_u16(&info_buf, ONEROM_INFO_PATCH_VERSION_OFFSET);
         let version = FirmwareVersion::new(major, minor, patch, 0);
 
-        if version < MIN_SCHEMA_VERSION {
-            return Err(format!(
-                "Firmware v{major}.{minor} is not schema format; use parse_format_original()"
-            ));
-        }
-
-        // The pointer offsets read below are only known to be correct up to
-        // MAX_VERSION.
-        if version > MAX_VERSION {
-            return Err(format!(
-                "One ROM firmware version v{version} unsupported - max version v{MAX_VERSION}"
-            ));
-        }
-
         // ---- Extract pointers from info header --------------------------
         let build_date_ptr = info_u32(&info_buf, ONEROM_INFO_BUILD_DATE_OFFSET);
         let metadata_ptr = info_u32(&info_buf, ONEROM_INFO_METADATA_OFFSET);
         let runtime_ptr = info_u32(&info_buf, ONEROM_INFO_RUNTIME_OFFSET);
 
-        // ---- Load memory regions ----------------------------------------
         let mut parse_errors = Vec::new();
 
         // Build_date string — typically a few dozen bytes in flash.
@@ -767,6 +762,44 @@ impl<'a, R: Reader> Parser<'a, R> {
                 format!("Invalid build_date pointer: {build_date_ptr:#010X}"),
             ));
         }
+
+        // ---- Which member of the family wrote it -------------------------
+        //
+        // Read before One ROM's version limits, which another member's
+        // version doesn't share.  Only One ROM wrote SDRR, and below v0.7.0
+        // the bytes are an sdrr_info_t, which doesn't have a firmware_type.
+        let firmware_type = if sdrr && version < MIN_SCHEMA_VERSION {
+            MaybeKnown::Known(FirmwareType::FirmwareTypeOneRom)
+        } else {
+            match parse_info_alone(&info_buf, info_addr, &build_date_buf, build_date_ptr) {
+                Ok(info) => info.firmware_type,
+                Err(e) => {
+                    parse_errors.push(ParseError::new("OneromInfo", format!("{e:?}")));
+                    return Ok(SchemaDevice::OneRom(OneRom::new(None, parse_errors, None)));
+                }
+            }
+        };
+        match firmware_type {
+            MaybeKnown::Known(FirmwareType::FirmwareTypeOneRom) => {}
+            MaybeKnown::Known(FirmwareType::FirmwareTypeLab) => return Ok(SchemaDevice::Lab),
+            MaybeKnown::Unknown(raw) => return Err(format!("Unknown firmware type {raw:#06x}")),
+        }
+
+        if version < MIN_SCHEMA_VERSION {
+            return Err(format!(
+                "Firmware v{major}.{minor} is not schema format; use parse_format_original()"
+            ));
+        }
+
+        // One ROM's metadata and runtime, read below, are only known to be laid
+        // out as this build expects up to MAX_VERSION.
+        if version > MAX_VERSION {
+            return Err(format!(
+                "One ROM firmware version v{version} unsupported - max version v{MAX_VERSION}"
+            ));
+        }
+
+        // ---- Load memory regions ----------------------------------------
 
         // Metadata blob — up to METADATA_SIZE bytes.
         let mut meta_buf = vec![0u8; METADATA_SIZE];
@@ -842,12 +875,12 @@ impl<'a, R: Reader> Parser<'a, R> {
             view.add_region(&runtime_buf, runtime_ptr);
         }
 
-        Ok(parse_onerom_from_view(
+        Ok(SchemaDevice::OneRom(parse_onerom_from_view(
             &view,
             info_addr,
             parse_errors,
             runtime_absence,
-        ))
+        )))
     }
 
     async fn parse_ram_from_runtime_info(
@@ -980,6 +1013,31 @@ fn info_u32(buf: &[u8; ONEROM_INFO_SIZE], offset: usize) -> u32 {
 /// Zero a `u32` pointer field in a working copy of the info header.
 fn info_clear_u32(buf: &mut [u8; ONEROM_INFO_SIZE], offset: usize) {
     buf[offset..offset + 4].fill(0);
+}
+
+/// What the schema-format path found.
+// Only ever a return value, unwrapped at once, so boxing the large variant
+// would only add an allocation.
+#[allow(clippy::large_enum_variant)]
+enum SchemaDevice {
+    OneRom(OneRom),
+    Lab,
+}
+
+/// Parse `onerom_info_t` without following `metadata` or `runtime`, which
+/// point at different structures for each member of the family.
+fn parse_info_alone(
+    info_buf: &[u8; ONEROM_INFO_SIZE],
+    info_addr: u32,
+    build_date_buf: &[u8],
+    build_date_ptr: u32,
+) -> Result<OneromInfo, onerom_metadata::ParseError> {
+    let mut bare = *info_buf;
+    info_clear_u32(&mut bare, ONEROM_INFO_METADATA_OFFSET);
+    info_clear_u32(&mut bare, ONEROM_INFO_RUNTIME_OFFSET);
+    let mut view = DeviceMemoryView::new(&bare, info_addr);
+    view.add_region(build_date_buf, build_date_ptr);
+    OneromInfo::parse(&view, info_addr, Generations::UNKNOWN)
 }
 
 async fn read_string_at_ptr<R: Reader>(reader: &mut R, ptr: u32) -> Result<String, String> {

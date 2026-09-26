@@ -12,6 +12,7 @@ use nusb::DeviceInfo;
 use onerom_config::hw::Board;
 use onerom_config::mcu::{Rp235xChipId, RpVariant};
 use onerom_fw_parser::ParsedDevice;
+use onerom_lab_parser::Lab;
 use wildmatch::WildMatch;
 
 use crate::Options;
@@ -39,6 +40,17 @@ impl std::fmt::Display for DeviceState {
     }
 }
 
+// Not non_exhaustive, so a new firmware type fails the build at every match
+// that must handle it.
+/// A device's firmware, as its own parser read it.
+#[derive(Debug)]
+pub enum Firmware {
+    /// One ROM, from either firmware generation.
+    OneRom(ParsedDevice),
+    /// One ROM Lab.
+    Lab(Lab),
+}
+
 /// A discovered One ROM Fire (RP2350) USB device.
 pub struct Device {
     /// USB Vendor ID.
@@ -54,12 +66,11 @@ pub struct Device {
     /// Underlying nusb device info, retained for opening connections.
     #[allow(unused)]
     pub device_info: DeviceInfo,
-    /// One ROM device information, if present on the device
-    pub onerom: Option<ParsedDevice>,
+    /// The device's firmware, `None` if this build doesn't recognise it.
+    pub firmware: Option<Firmware>,
     /// Running or stopped.
     pub state: DeviceState,
-    /// Whether this device is capable of running One ROM firmware while
-    /// plugged into USB
+    /// Whether this device runs while plugged into USB.
     pub usb_can_run: bool,
     /// The RP2350 chip ID, if it has been read. This is the device's invariant
     /// identity, used to track it across reboots where the USB serial changes
@@ -73,8 +84,8 @@ pub struct Device {
 impl std::fmt::Display for Device {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let serial = self.serial.as_deref().unwrap_or("(no serial)");
-        let info_str = match self.onerom.as_ref() {
-            Some(ParsedDevice::Original(sdrr))
+        let info_str = match self.firmware.as_ref() {
+            Some(Firmware::OneRom(ParsedDevice::Original(sdrr)))
                 if sdrr.flash.as_ref().and_then(|f| f.board.as_ref()).is_some() =>
             {
                 let info = sdrr.flash.as_ref().unwrap();
@@ -82,23 +93,27 @@ impl std::fmt::Display for Device {
                 let fw_version = &info.version;
                 format!("One ROM {} - Firmware: {fw_version}", board_label(board))
             }
-            Some(ParsedDevice::Schema(onerom)) if onerom.info().is_some() => {
+            Some(Firmware::OneRom(ParsedDevice::Schema(onerom))) if onerom.info().is_some() => {
                 let info = onerom.info().unwrap();
-                let hw_rev = onerom
-                    .metadata()
-                    .map(|m| m.hw.hw_rev.as_str())
-                    .unwrap_or("unknown");
+                let hw_rev = onerom.metadata().map(|m| m.hw.hw_rev.as_str());
                 let fw_version = format!(
                     "v{}.{}.{}",
                     info.major_version, info.minor_version, info.patch_version
                 );
-                let board_part = match Board::try_from_str(hw_rev) {
-                    Some(board) => board_label(&board),
-                    None => hw_rev.to_string(),
-                };
-                format!("One ROM {board_part} - Firmware: {fw_version}")
+                format!("One ROM {} - Firmware: {fw_version}", board_part(hw_rev))
             }
-            _ => "Unknown           - Firmware: n/a  ".to_string(),
+            Some(Firmware::Lab(lab)) => {
+                let info = &lab.info;
+                let fw_version = format!(
+                    "v{}.{}.{}",
+                    info.major_version, info.minor_version, info.patch_version
+                );
+                format!(
+                    "One ROM Lab {} - Firmware: {fw_version}",
+                    lab_board_part(lab)
+                )
+            }
+            Some(Firmware::OneRom(_)) | None => "Unknown           - Firmware: n/a  ".to_string(),
         };
         write!(f, "{info_str} State: {} Serial: {serial}", self.state)
     }
@@ -117,14 +132,9 @@ impl std::fmt::Debug for Device {
 }
 
 impl Device {
-    /// Returns whether this is a recognised One ROM device.
-    ///
-    /// A recognised device has valid One ROM flash or RAM information
-    /// available.
+    /// Returns whether this build recognises the device's firmware.
     pub fn is_recognised(&self) -> bool {
-        self.onerom
-            .as_ref()
-            .is_some_and(ParsedDevice::is_recognised)
+        self.firmware.is_some()
     }
 
     pub fn is_running(&self) -> bool {
@@ -135,20 +145,28 @@ impl Device {
         self.usb_can_run
     }
 
-    pub fn update_onerom(&mut self, onerom: ParsedDevice) {
-        self.onerom = Some(onerom);
+    pub(crate) fn set_firmware(&mut self, firmware: Option<Firmware>) {
+        self.firmware = firmware;
         self.update_state();
     }
 
-    // Figure out the device state from the presence of the One ROM device
-    // information
+    // Figure out the device state from its firmware's runtime information
     #[allow(clippy::wildcard_enum_match_arm)]
     fn update_state(&mut self) {
         self.usb_can_run = false;
         self.state = DeviceState::Unknown;
 
-        let Some(onerom) = self.onerom.as_ref() else {
-            return;
+        let onerom = match self.firmware.as_ref() {
+            Some(Firmware::OneRom(onerom)) => onerom,
+            Some(Firmware::Lab(lab)) => {
+                self.usb_can_run = true;
+                self.state = match lab.runtime {
+                    Ok(_) => DeviceState::Running,
+                    Err(_) => DeviceState::Stopped,
+                };
+                return;
+            }
+            None => return,
         };
 
         match onerom {
@@ -188,13 +206,31 @@ impl Device {
                     self.state = DeviceState::Stopped;
                 }
             }
+            ParsedDevice::Lab => return,
+            _ => return,
         }
 
         self.usb_can_run = onerom.is_usb_run_capable();
     }
 
+    /// The One ROM's parse, `None` for other firmware.
+    fn onerom(&self) -> Option<&ParsedDevice> {
+        match self.firmware.as_ref()? {
+            Firmware::OneRom(onerom) => Some(onerom),
+            Firmware::Lab(_) => None,
+        }
+    }
+
+    /// The device's board, from One ROM's metadata or a Lab's structures.
+    pub(crate) fn board(&self) -> Option<Board> {
+        match self.firmware.as_ref()? {
+            Firmware::OneRom(onerom) => onerom.get_board(),
+            Firmware::Lab(lab) => lab_hw_rev(lab).and_then(Board::try_from_str),
+        }
+    }
+
     pub fn get_active_rom_set_index(&self) -> Option<u8> {
-        self.onerom.as_ref()?.active_slot_index().map(|i| i as u8)
+        self.onerom()?.active_slot_index().map(|i| i as u8)
     }
 
     /// Returns (rom type label, rom size in bytes) for the active ROM,
@@ -203,8 +239,7 @@ impl Device {
         if !self.is_running() {
             return None;
         }
-        let onerom = self.onerom.as_ref()?;
-        let slot = onerom.slots().find(|s| s.active)?;
+        let slot = self.onerom()?.slots().find(|s| s.active)?;
         let rom = slot.roms().next()?;
         Some((rom.rom_type.into_owned(), rom.size))
     }
@@ -241,25 +276,61 @@ impl Device {
     /// unrecognised devices sorted last) and then by serial number (with devices
     /// with no serial sorted last).
     pub fn sort_key(&self) -> (String, String) {
-        let board = self
-            .onerom
-            .as_ref()
-            .and_then(|o| match o {
+        let board = match self.firmware.as_ref() {
+            Some(Firmware::OneRom(onerom)) => match onerom {
                 ParsedDevice::Original(sdrr) => sdrr
                     .flash
                     .as_ref()
                     .and_then(|f| f.board.as_ref())
                     .map(|b| b.model().to_string()),
                 ParsedDevice::Schema(onerom) => onerom.metadata().map(|m| m.hw.hw_rev.clone()),
-            })
-            .unwrap_or_else(|| "~".to_string()); // sorts after Z
+                ParsedDevice::Lab => None,
+                _ => None,
+            },
+            Some(Firmware::Lab(lab)) => lab_hw_rev(lab).map(str::to_string),
+            None => None,
+        }
+        .unwrap_or_else(|| "~".to_string()); // sorts after Z
         let serial = self.serial.clone().unwrap_or_else(|| "~".to_string());
         (board, serial)
     }
 }
 
+/// The board a Lab is running as, or the one its image was built for when it
+/// isn't running.
+fn lab_hw_rev(lab: &Lab) -> Option<&str> {
+    match &lab.runtime {
+        Ok(runtime) => runtime.hw_rev.as_deref(),
+        Err(_) => lab.metadata.as_ref().ok()?.hw.hw_rev.as_deref(),
+    }
+}
+
+/// The board part of a Lab's line.  A Lab whose board isn't set says so in
+/// Lab's own words.
+fn lab_board_part(lab: &Lab) -> String {
+    let read = lab.runtime.is_ok() || lab.metadata.is_ok();
+    match lab_hw_rev(lab) {
+        Some(hw_rev) => board_part(Some(hw_rev)),
+        None if read => "(board not set)".to_string(),
+        None => board_part(None),
+    }
+}
+
+/// The board part of a device's line: the board's label where `hw_rev` names
+/// one, the raw string where it doesn't, and "unknown" where `hw_rev` is
+/// missing.
+fn board_part(hw_rev: Option<&str>) -> String {
+    let Some(hw_rev) = hw_rev else {
+        return "unknown".to_string();
+    };
+    match Board::try_from_str(hw_rev) {
+        Some(board) => board_label(&board),
+        None => hw_rev.to_string(),
+    }
+}
+
 /// Human-readable board identity fragment, e.g. "Fire 24 F".
-/// Shared by both Display arms so SDRR and schema devices render identically.
+/// Shared by every Display arm so all devices render identically.
 fn board_label(board: &Board) -> String {
     let model = board.model();
     let pins = board.chip_pins();

@@ -19,7 +19,8 @@ use core::task::{Context, Poll, Waker};
 use onerom_fw_parser::readers::MemoryReader;
 use onerom_fw_parser::{FirmwareFormat, Parser, SDRR_INFO_FW_OFFSET};
 use onerom_metadata::{
-    ONEROM_FAMILY_MAGIC, ONEROM_INFO_MAGIC, ONEROM_INFO_VERSION_OFFSET as VERSION_OFF,
+    FirmwareType, ONEROM_FAMILY_MAGIC, ONEROM_INFO_FIRMWARE_TYPE_OFFSET as TYPE_OFF,
+    ONEROM_INFO_MAGIC, ONEROM_INFO_VERSION_OFFSET as VERSION_OFF,
 };
 
 const RP235X_FLASH_BASE: u32 = 0x1000_0000;
@@ -42,7 +43,8 @@ fn block_on<F: Future>(future: F) -> F::Output {
 /// firmware version and structure generation stated.
 ///
 /// `build_date` points at a zero byte inside the image and both pointers are
-/// null, so the header parses with the metadata and runtime absent.
+/// null, so the header parses with the metadata and runtime absent.  The
+/// firmware type is One ROM's, as One ROM writes it.
 fn image(magic: &[u8], minor: u16, generation: u32) -> Vec<u8> {
     let mut image = vec![0u8; 0x400];
     let base = SDRR_INFO_FW_OFFSET as usize;
@@ -53,6 +55,8 @@ fn image(magic: &[u8], minor: u16, generation: u32) -> Vec<u8> {
     // build_date, into the zeroed tail of the image
     image[base + 12..base + 16].copy_from_slice(&(RP235X_FLASH_BASE + 0x300).to_le_bytes());
     image[base + VERSION_OFF..base + VERSION_OFF + 4].copy_from_slice(&generation.to_le_bytes());
+    image[base + TYPE_OFF..base + TYPE_OFF + 2]
+        .copy_from_slice(&(FirmwareType::FirmwareTypeOneRom as u16).to_le_bytes());
     image
 }
 

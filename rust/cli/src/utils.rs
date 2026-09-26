@@ -8,7 +8,7 @@ use log::debug;
 use std::io::Write;
 
 use crate::args::CommandTrait;
-use onerom_cli::{Device, DeviceState, Error, LogLevel, Options};
+use onerom_cli::{Device, DeviceState, Error, Firmware, LogLevel, Options};
 use onerom_cli::{LIVE_ROM_BASE, LIVE_ROM_MAX_OFFSET};
 use onerom_config::chip::ChipType;
 use onerom_config::hw::{Board, Model};
@@ -129,7 +129,7 @@ pub fn check_device(
 /// Checks that a device is present and **currently running**.
 ///
 /// [`check_device`] with `must_be_run_capable` tests `usb_can_run`, which asks
-/// whether the flashed firmware and system plugin *could* serve. That is true of
+/// whether the flashed firmware runs while plugged into USB. That is true of
 /// a stopped device sitting in the RP2350 bootloader, and so is not enough for
 /// anything that talks to One ROM's own picoboot command handler: that handler
 /// lives in the USB system plugin, and while the device is stopped the boot ROM
@@ -408,11 +408,11 @@ pub fn resolve_board(
         ))
     } else if let Some(device) = options.device.as_ref() {
         debug!("Resolving board from connected device");
-        let board = device
-            .onerom
-            .as_ref()
-            .and_then(|o| o.get_board())
-            .ok_or(Error::NoBoardFromDevice(device.to_string()))?;
+        let board = match &device.firmware {
+            Some(Firmware::OneRom(onerom)) => onerom.get_board(),
+            Some(Firmware::Lab(_)) | None => None,
+        }
+        .ok_or(Error::NoBoardFromDevice(device.to_string()))?;
         Ok(Some(board))
     } else {
         debug!("No board argument or device available to resolve board");

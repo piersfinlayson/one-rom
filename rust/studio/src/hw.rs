@@ -53,6 +53,9 @@ impl HardwareInfo {
                 model: board.map(|b| b.model()),
                 mcu_variant: Some(McuVariant::RP2350),
             },
+            // Studio turns a Lab away before it gets here.
+            ParsedDevice::Lab => Self::default(),
+            _ => Self::default(),
         }
     }
 

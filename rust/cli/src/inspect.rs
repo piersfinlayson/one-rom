@@ -21,11 +21,12 @@ use onerom_cli::usb::{
     GpioEntry, GpioUse, LedId, LedState, get_caps, gpio_query, gpio_query_all, led_query,
     leds_share_gpio, read_memory,
 };
-use onerom_cli::{Device, Error, Options};
+use onerom_cli::{Device, Error, Firmware, Options};
 use onerom_config::chip::ChipType;
 use onerom_config::hw::Board;
 use onerom_config::mcu::PinTolerance;
-use onerom_fw_parser::{ParsedDevice, RuntimeAbsence, SdrrCsState, SlotKind};
+use onerom_fw_parser::{NewerGeneration, ParsedDevice, RuntimeAbsence, SdrrCsState, SlotKind};
+use onerom_lab_parser::Lab;
 
 pub async fn cmd_info(options: &Options, args: &InspectInfoArgs) -> Result<(), Error> {
     // Print the device summary
@@ -35,40 +36,73 @@ pub async fn cmd_info(options: &Options, args: &InspectInfoArgs) -> Result<(), E
     println!("{device}");
 
     // Print the detailed device information as JSON if available
-    if let Some(onerom) = device.onerom.as_ref() {
-        if let Some(sdrr) = onerom.as_original() {
-            if let Some(info) = sdrr.flash.as_ref() {
-                let json =
-                    serde_json::to_string_pretty(info).map_err(|e| Error::Other(e.to_string()))?;
-                println!("Flash information:");
-                println!("{json}");
-            }
-            if let Some(info) = sdrr.ram.as_ref() {
-                let json =
-                    serde_json::to_string_pretty(info).map_err(|e| Error::Other(e.to_string()))?;
-                println!("Runtime information:");
-                println!("{json}");
-            }
-        } else if let Some(schema) = onerom.as_schema() {
-            // A schema device dumps as a single tree: unlike the original
-            // format, whose flash and RAM information are siblings, the
-            // metadata and runtime information are both nested within the info
-            // header, so one dump covers the lot.
-            if let Some(info) = schema.info() {
-                let json =
-                    serde_json::to_string_pretty(info).map_err(|e| Error::Other(e.to_string()))?;
-                println!("Device information:");
-                println!("{json}");
-            }
-            print_parser_notes(schema)?;
-        }
+    match device.firmware.as_ref() {
+        Some(Firmware::OneRom(onerom)) => print_onerom_info(onerom)?,
+        Some(Firmware::Lab(lab)) => print_lab_info(lab)?,
+        None => {}
     }
 
     Ok(())
 }
 
-fn print_parser_notes(schema: &onerom_fw_parser::OneRom) -> Result<(), Error> {
-    if let Some(json) = parser_notes(schema)? {
+fn print_onerom_info(onerom: &ParsedDevice) -> Result<(), Error> {
+    if let Some(sdrr) = onerom.as_original() {
+        if let Some(info) = sdrr.flash.as_ref() {
+            let json =
+                serde_json::to_string_pretty(info).map_err(|e| Error::Other(e.to_string()))?;
+            println!("Flash information:");
+            println!("{json}");
+        }
+        if let Some(info) = sdrr.ram.as_ref() {
+            let json =
+                serde_json::to_string_pretty(info).map_err(|e| Error::Other(e.to_string()))?;
+            println!("Runtime information:");
+            println!("{json}");
+        }
+    } else if let Some(schema) = onerom.as_schema() {
+        // A schema device dumps as a single tree: unlike the original
+        // format, whose flash and RAM information are siblings, the
+        // metadata and runtime information are both nested within the info
+        // header, so one dump covers the lot.
+        if let Some(info) = schema.info() {
+            let json =
+                serde_json::to_string_pretty(info).map_err(|e| Error::Other(e.to_string()))?;
+            println!("Device information:");
+            println!("{json}");
+        }
+        print_parser_notes(schema.runtime_absence(), &schema.newer_generations())?;
+    }
+
+    Ok(())
+}
+
+fn print_lab_info(lab: &Lab) -> Result<(), Error> {
+    let json =
+        serde_json::to_string_pretty(&lab_tree(lab)?).map_err(|e| Error::Other(e.to_string()))?;
+    println!("Device information:");
+    println!("{json}");
+    print_parser_notes(
+        lab.runtime.as_ref().err().copied(),
+        &lab.newer_generations(),
+    )
+}
+
+/// A Lab as one tree, the shape a schema-format One ROM dumps in.  Lab's
+/// metadata and runtime sit where `onerom_info_t`'s pointers to them are.
+/// The keys come out sorted, because serde_json sorts a value's maps.
+fn lab_tree(lab: &Lab) -> Result<serde_json::Value, Error> {
+    let json_err = |e: serde_json::Error| Error::Other(e.to_string());
+    let mut tree = serde_json::to_value(&lab.info).map_err(json_err)?;
+    tree["metadata"] = serde_json::to_value(lab.metadata.as_ref().ok()).map_err(json_err)?;
+    tree["runtime"] = serde_json::to_value(lab.runtime.as_ref().ok()).map_err(json_err)?;
+    Ok(tree)
+}
+
+fn print_parser_notes(
+    runtime_absence: Option<RuntimeAbsence>,
+    newer_generations: &[NewerGeneration],
+) -> Result<(), Error> {
+    if let Some(json) = parser_notes(runtime_absence, newer_generations)? {
         println!("Parser notes:");
         println!("{json}");
     }
@@ -109,14 +143,16 @@ struct NewerGenerationNote {
 }
 
 /// Build the notes block, or `None` where there is nothing to say.
-fn parser_notes(schema: &onerom_fw_parser::OneRom) -> Result<Option<String>, Error> {
+fn parser_notes(
+    runtime_absence: Option<RuntimeAbsence>,
+    newer_generations: &[NewerGeneration],
+) -> Result<Option<String>, Error> {
     let notes = ParserNotes {
-        runtime_absent: schema.runtime_absence().map(|absence| RuntimeAbsentNote {
+        runtime_absent: runtime_absence.map(|absence| RuntimeAbsentNote {
             reason: absence,
             detail: absence.to_string(),
         }),
-        newer_generations: schema
-            .newer_generations()
+        newer_generations: newer_generations
             .iter()
             .map(|g| NewerGenerationNote {
                 structure: g.structure,
@@ -257,9 +293,16 @@ pub async fn output_slot_info(
         println!("  {line}");
     }
 
-    let parsed = device.onerom.as_ref().ok_or_else(|| {
-        Error::Other("No recognised information found on device flash".to_string())
-    })?;
+    let parsed = match device.firmware.as_ref() {
+        Some(Firmware::OneRom(parsed)) => parsed,
+        // A Lab doesn't have slots, so its line is all there is.
+        Some(Firmware::Lab(_)) => return Ok(()),
+        None => {
+            return Err(Error::Other(
+                "No recognised information found on device flash".to_string(),
+            ));
+        }
+    };
 
     // First pass over the neutral slot view: split plugin slots from ROM slots.
     // ROM slots are renumbered from 0 via the view's `user_index` (which counts
@@ -463,6 +506,10 @@ pub async fn output_slot_info(
             }
             Ok(())
         }
+
+        // Firmware::OneRom never holds a Lab.
+        ParsedDevice::Lab => Ok(()),
+        _ => Ok(()),
     }
 }
 
@@ -945,6 +992,11 @@ mod tests {
         const VERSION_OFF: usize = onerom_metadata::ONEROM_INFO_VERSION_OFFSET;
         image[base + VERSION_OFF..base + VERSION_OFF + 4]
             .copy_from_slice(&generation.to_le_bytes());
+        // firmware_type, as One ROM writes it
+        const TYPE_OFF: usize = onerom_metadata::ONEROM_INFO_FIRMWARE_TYPE_OFFSET;
+        image[base + TYPE_OFF..base + TYPE_OFF + 2].copy_from_slice(
+            &(onerom_metadata::FirmwareType::FirmwareTypeOneRom as u16).to_le_bytes(),
+        );
 
         let mut reader = MemoryReader::new(image, FLASH_BASE);
         let mut parser = Parser::with_base_flash_address(&mut reader, FLASH_BASE, RAM_BASE);
@@ -958,8 +1010,12 @@ mod tests {
             serde_json::to_value(onerom.info().expect("info should be present")).unwrap();
         assert_eq!(dump["runtime"], serde_json::Value::Null);
 
-        let notes: serde_json::Value =
-            serde_json::from_str(&parser_notes(&onerom).unwrap().expect("notes expected")).unwrap();
+        let notes: serde_json::Value = serde_json::from_str(
+            &parser_notes(onerom.runtime_absence(), &onerom.newer_generations())
+                .unwrap()
+                .expect("notes expected"),
+        )
+        .unwrap();
         assert_eq!(notes["runtime_absent"]["reason"], "no_pointer");
         assert!(
             notes["runtime_absent"]["detail"]
@@ -975,6 +1031,93 @@ mod tests {
             notes["newer_generations"][0]["known_generation"],
             onerom_metadata::ONEROM_INFO_VERSION
         );
+    }
+
+    /// A Lab image, parsed, with a baked board and without a runtime structure.
+    async fn lab_image() -> Lab {
+        use onerom_fw_parser::readers::MemoryReader;
+        use onerom_lab_metadata::{
+            LAB_METADATA_MAGIC, LAB_METADATA_SIZE, LAB_METADATA_VERSION, OneromLabHardwareInfo,
+            OneromLabMetadataHeader, SerializeContext,
+        };
+        use onerom_metadata::{
+            FirmwareType, ONEROM_FAMILY_MAGIC, ONEROM_INFO_BUILD_DATE_OFFSET as DATE_OFF,
+            ONEROM_INFO_FIRMWARE_TYPE_OFFSET as TYPE_OFF, ONEROM_INFO_METADATA_OFFSET as META_OFF,
+            ONEROM_INFO_MINOR_VERSION_OFFSET as MINOR_OFF, ONEROM_INFO_OFFSET, ONEROM_INFO_VERSION,
+            ONEROM_INFO_VERSION_OFFSET as VERSION_OFF,
+        };
+
+        const FLASH_BASE: u32 = 0x1000_0000;
+        const BLOCK: u32 = FLASH_BASE + ONEROM_INFO_OFFSET + 0x40;
+        const DATE: u32 = FLASH_BASE + 0x1800;
+        let mut image = vec![0u8; 0x2000];
+        let mut put = |addr: u32, bytes: &[u8]| {
+            let at = (addr - FLASH_BASE) as usize;
+            image[at..at + bytes.len()].copy_from_slice(bytes);
+        };
+        let header = FLASH_BASE + ONEROM_INFO_OFFSET;
+        put(header, ONEROM_FAMILY_MAGIC.as_bytes());
+        put(header + MINOR_OFF as u32, &4u16.to_le_bytes());
+        put(header + DATE_OFF as u32, &DATE.to_le_bytes());
+        put(
+            header + VERSION_OFF as u32,
+            &ONEROM_INFO_VERSION.to_le_bytes(),
+        );
+        put(header + META_OFF as u32, &BLOCK.to_le_bytes());
+        put(
+            header + TYPE_OFF as u32,
+            &(FirmwareType::FirmwareTypeLab as u16).to_le_bytes(),
+        );
+        put(DATE, b"Sep 25 2026 12:00:00Z\0");
+
+        let mut magic = [0u8; 16];
+        magic[..LAB_METADATA_MAGIC.len()].copy_from_slice(LAB_METADATA_MAGIC.as_bytes());
+        let metadata = OneromLabMetadataHeader {
+            magic,
+            version: LAB_METADATA_VERSION,
+            hw: OneromLabHardwareInfo {
+                hw_rev: Some("fire-24-e".into()),
+            },
+        };
+        let mut block = vec![0u8; LAB_METADATA_SIZE as usize];
+        let mut ctx = SerializeContext::new(BLOCK, metadata.version, &mut block);
+        metadata.layout(&mut ctx).unwrap();
+        metadata.write(&mut ctx, BLOCK);
+        put(BLOCK, &block);
+
+        let mut reader = MemoryReader::new(image, FLASH_BASE);
+        onerom_lab_parser::LabParser::new(&mut reader)
+            .parse()
+            .await
+            .expect("a Lab should parse")
+    }
+
+    /// Lab's own structures replace the `None`s One ROM's parser leaves at
+    /// `onerom_info_t`'s pointers, so the dump holds all of them.
+    #[tokio::test]
+    async fn a_lab_dumps_its_structures_under_its_pointers() {
+        let tree = lab_tree(&lab_image().await).unwrap();
+        assert_eq!(tree["firmware_type"], "FirmwareTypeLab");
+        assert_eq!(tree["minor_version"], 4);
+        assert_eq!(tree["metadata"]["hw"]["hw_rev"], "fire-24-e");
+        assert_eq!(tree["runtime"], serde_json::Value::Null);
+    }
+
+    /// A Lab gets the same notes block as a One ROM.  This image doesn't point
+    /// at a runtime structure, so the note says why it's missing.
+    #[tokio::test]
+    async fn a_lab_gets_parser_notes() {
+        let lab = lab_image().await;
+        let notes: serde_json::Value = serde_json::from_str(
+            &parser_notes(
+                lab.runtime.as_ref().err().copied(),
+                &lab.newer_generations(),
+            )
+            .unwrap()
+            .expect("notes expected"),
+        )
+        .unwrap();
+        assert_eq!(notes["runtime_absent"]["reason"], "no_pointer");
     }
 
     /// A device's worth of entries, using the same `use` category throughout so

@@ -4728,6 +4728,8 @@ dependencies = [
  "onerom-fw",
  "onerom-fw-parser",
  "onerom-gen",
+ "onerom-lab-metadata",
+ "onerom-lab-parser",
  "onerom-metadata",
  "picoboot",
  "reqwest",

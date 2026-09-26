@@ -73,7 +73,9 @@ breaks an existing command line lands in a minor release — v0.3.0 to v0.4.0 �
 and never in a patch. From v1.0.0 onwards such a change lands in a major
 release, and never in a minor or a patch.
 
-- No breaking changes in this release.
+- One ROM Lab is now recognised by the CLI, so with a One ROM and a Lab both
+  connected every command except `scan` now needs `--serial` to disambiguate the
+  devices.
 
 Every release's breaking changes are collected in
 [Appendix: Breaking Change History](#appendix-breaking-change-history), at the
@@ -340,9 +342,9 @@ is summarised under [Device states](#device-states).
 
 ## Identifying your device
 
-With **exactly one** One ROM connected that the CLI recognises, you don't need
-to identify it — commands find it automatically, and the board type is inferred
-from the device.
+With **exactly one** One ROM or other One ROM device connected that the CLI
+recognises, you don't need to identify it — commands find it automatically and
+One ROM's board type is inferred from the device.
 
 With **multiple** devices connected, select one with `--serial` (`-s`). It
 accepts `*` and `?` wildcards:
@@ -622,7 +624,8 @@ If your image interleaves several devices in one file — a 32-bit ROM set, say 
 Many commands reboot the device and, by default, pause briefly afterwards to let
 it re-enumerate on the USB bus.
 
-- **Running** (default reboot target) — firmware active, serving ROMs.
+- **Running** (default reboot target) — firmware active. One ROM is serving
+  ROMs.
 - **Stopped** — One ROM/RP2350 bootloader (BOOTSEL), required for some flash
   operations.
 
@@ -703,9 +706,9 @@ hardware take them; each command's own entry below states what it accepts, and
 
 ## scan
 
-Discover and list connected One ROMs — serial, USB location, name, board type,
-MCU and loaded firmware version. With `--verbose` (`-v`), each device also
-shows its MCU variant and chip ID.
+Discover and list connected One ROMs and One ROM Labs — serial, USB location,
+name, board type, MCU and loaded firmware version. With `--verbose` (`-v`),
+each device also shows its MCU variant and chip ID.
 
 ```
 onerom scan
@@ -725,6 +728,15 @@ Example output:
 Scanning ... 
 found 1 connected device:
   One ROM Fire 28 C - Firmware: v0.7.2 State: Running Serial: FC9D67248E8E8023
+```
+
+One ROM Lab shows its board type, or `(board not set)`. `--slots` doesn't show
+any additional output.
+
+```
+Scanning ... 
+found 1 connected device:
+  One ROM Lab (board not set) - Firmware: v0.4.0 State: Running Serial: 62CD9AE3C0771A7E
 ```
 
 Device required: no.
@@ -833,7 +845,8 @@ variant and chip ID.
 
 The command then dumps the device's parsed structures as JSON. A
 `Parser notes:` block follows it when a structure is missing, or when the
-CLI is parsing a firmware newer than it understands.
+CLI is parsing a firmware newer than it understands. One ROM Lab's own
+structures sit under the dump's `metadata` and `runtime` keys.
 
 ```
 onerom inspect info
@@ -1874,7 +1887,11 @@ Device required: no.
 ### firmware inspect
 
 Show a firmware binary's version, board type, MCU, and embedded ROM images and
-metadata.
+metadata. For a One ROM Lab image:
+
+- `Firmware: One ROM Lab`
+- `Version:` its version
+- `Board:` the board it was built for, or `(not set)`
 
 ```
 onerom firmware inspect --firmware firmware.bin

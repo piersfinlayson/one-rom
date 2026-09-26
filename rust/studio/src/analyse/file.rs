@@ -59,7 +59,8 @@ async fn load_file_async(path: PathBuf) -> Result<(ParsedDevice, Vec<u8>), Strin
     //
     // parse_device() detects the firmware generation and is infallible: it
     // returns a ParsedDevice for any input, so whether this is actually One
-    // ROM firmware is a separate question, answered by is_recognised().
+    // ROM firmware is a separate question, answered by is_recognised().  A
+    // Lab passes it, and file_device_loaded() turns it away.
     let device = {
         let mut reader = MemoryReader::new(data.clone(), 0x08000000);
         let mut parser = Parser::new(&mut reader);

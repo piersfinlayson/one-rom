@@ -25,6 +25,7 @@ onerom-config = { workspace = true }
 onerom-fw = { workspace = true }
 onerom-gen = { workspace = true }
 onerom-fw-parser = { workspace = true }
+onerom-lab-parser = { workspace = true }
 onerom-metadata = { workspace = true }
 
 picoboot = { version = "0.2.6", features = ["reader", "tokio"] }
@@ -67,6 +68,7 @@ git2 = { version = "0.20", default-features = false }
 static_vcruntime = "3.0"
 
 [dev-dependencies]
+onerom-lab-metadata = { workspace = true }
 tempfile = "3"
 
 # Cargo deb metadata for building Linux deb packages
