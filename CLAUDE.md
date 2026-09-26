@@ -303,12 +303,9 @@ the build on a breach of the first four, so a new option is checked
 mechanically.
 
 - **Every argument is `--name value`.** The CLI has no positionals anywhere.
-- **A short flag means one thing across the whole CLI**: `-b` board, `-o`
-  output, `-i` input, `-c` chip-type, `-l` length, `-f` force, `-n` no-reboot,
-  `-m` msd, `-p`/`-r` stopped/running. The global options claim `-s -i -u -y -v
-  -h`, and a subcommand reusing one panics at startup, which is what
-  `verify_cli` catches. `-a` is the sole grandfathered exception (`--address`
-  vs `--all`), pinned by its own test.
+- **A short flag means one thing across the whole CLI**, global options
+  included. `-a` is the sole grandfathered exception (`--address` vs `--all`),
+  pinned by its own test.
 - **Long names are kebab-case.** A snake_case alias exists where the option
   names a JSON config key, and then it matches that key verbatim (`turbo_boot`,
   `instance_name`, `boot_logging`, `serial_override`) so a config key pastes
