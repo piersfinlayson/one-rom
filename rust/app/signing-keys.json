@@ -5,7 +5,22 @@
       "id": 1,
       "name": "piers.rocks Production",
       "public_key": "a7697c02e53996cb838db7a69c2c3048129f97db6685a0b5b34481f518f4f355",
-      "proof": "a7dd918fde4a75985ed61c4ae2c229aaaefe5a350a175e0041de4f6efb3bf30422c41ba1c973a3663d7fa51d3878e0cb597f7b7cc48d65d2affe04c097735f0e"
+      "proof": "a7dd918fde4a75985ed61c4ae2c229aaaefe5a350a175e0041de4f6efb3bf30422c41ba1c973a3663d7fa51d3878e0cb597f7b7cc48d65d2affe04c097735f0e",
+      "description": "Used to commission One ROMs manufactured and sold under the piers.rocks brand"
+    },
+    {
+      "id": 2,
+      "name": "piers.rocks Community",
+      "public_key": "0db198f3d1b67a2926a83c24ef352b338dac9ddd4163957b46a7c51e03ce6541",
+      "proof": "2b2e763cd4d9dea6644fe3bac20a892e8b0be9808a42ee29bebdb5d4375778d0d5ec38dd0bb3b1b71c15817d4b31d660d09fbd1bcaf24faf73a1d997c2af820b",
+      "description": "Used to sign One ROM commissioning data submitted by community members, allowing them to commission One ROMs themselves"
+    },
+    {
+      "id": 3,
+      "name": "piers.rocks White-label",
+      "public_key": "4101ee811a5baa6526df7c0320aeaf647bace4d3c0e0a7089727f46025dcb382",
+      "proof": "94bc3ca97903c4aa094530b62835547bad0ee99abf20785b93141f108ab7fea94ddb36ea3de9449426bc9550aff3fc8297f782711271ca4e5bcc8b5d2f2ea40f",
+      "description": "Used to commission One ROMs manufactured by piers.rocks but commissioned with another manufacturer's name"
     }
   ]
 }
