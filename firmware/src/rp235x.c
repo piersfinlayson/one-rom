@@ -832,6 +832,34 @@ void enter_bootloader(void) {
     p0 |= 0x01;     // Disable mass storage mode
     reboot(flags, ms_delay, p0, p1);
 }
+
+// Reads OTP row `row` with ECC.  clk_ref must be 25MHz or less while OTP is
+// read - datasheet S13.3.
+uint16_t otp_read_ecc(uint16_t row) {
+    uint32_t word = OTP_DATA_WORD(row);
+    return (uint16_t)((row & 1) ? (word >> 16) : word);
+}
+
+// The bytes of OTP row `row` onwards, read with ECC, two to a row and low byte
+// first.  A narrow read of the alias returns the right byte - datasheet
+// S13.3.2.
+const char *otp_ecc_bytes(uint16_t row) {
+    return (const char *)(OTP_DATA_BASE + 2 * row);
+}
+
+// Reads OTP row `row` raw.
+uint32_t otp_read_raw(uint16_t row) {
+    return OTP_DATA_RAW(row);
+}
+
+// Makes OTP pages 1-63 read-only to Secure and Non-secure code until the next
+// reset, so neither a plugin nor the USB plugin's PICOBOOT interface can write
+// OTP while One ROM runs.  Page 0 is read-only from manufacture.
+void otp_lock(void) {
+    for (uint32_t page = 1; page < 64; page++) {
+        OTP_SW_LOCK(page) = OTP_SW_LOCK_READ_ONLY;
+    }
+}
 #endif // !TEST_BUILD
 
 #if !defined(TEST_BUILD)

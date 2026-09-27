@@ -13,6 +13,7 @@ void *ffi_user_plugin_context(void);
 uint8_t ffi_limp_mode(void);
 uint8_t ffi_pios_enabled(void);
 uint8_t ffi_image_sel(void);
+uint8_t ffi_board_size(void);
 
 // The generation recorded in the metadata header, and a way to change it.
 //

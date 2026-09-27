@@ -50,6 +50,11 @@ uint8_t ffi_image_sel(void) {
     return (uint8_t)RUNTIME->image_sel;
 }
 
+// The board size the firmware recorded at boot, an onerom_board_size_t.
+uint8_t ffi_board_size(void) {
+    return (uint8_t)RUNTIME->board_size;
+}
+
 // See ffi.h.  gen-config.c defines the host build's metadata root, and leaves
 // it writable so the harness can stand where the CLI does on a device.
 extern onerom_metadata_header_t _metadata_start;

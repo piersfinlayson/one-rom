@@ -598,6 +598,55 @@ impl Emulator {
         unsafe { ffi::ffi_image_sel() }
     }
 
+    // ── OTP ──────────────────────────────────────────────────────────────────
+
+    /// Set what an ECC read of OTP returns, for the rows from `row`.
+    ///
+    /// OTP outlives a boot, as a device's does, so a test clears what it sets
+    /// with [`Self::clear_otp`].
+    pub fn set_otp_ecc(row: u16, values: &[u16]) {
+        unsafe { ffi::stub_otp_set_ecc(row, values.as_ptr(), values.len() as u32) };
+    }
+
+    /// Set what a raw read of OTP returns, for the rows from `row`.
+    pub fn set_otp_raw(row: u16, values: &[u32]) {
+        unsafe { ffi::stub_otp_set_raw(row, values.as_ptr(), values.len() as u32) };
+    }
+
+    /// Put every OTP row back to unwritten.
+    pub fn clear_otp() {
+        unsafe { ffi::stub_otp_clear() };
+    }
+
+    /// The board size the firmware recorded in runtime info on this boot, as
+    /// its `onerom_board_size_t` value.
+    pub fn board_size(&self) -> u8 {
+        unsafe { ffi::ffi_board_size() }
+    }
+
+    /// The firmware's reading of the board OTP commissions the chip as: the
+    /// first row of `COMMISSIONING_BOARD`'s value and its length in bytes.
+    pub fn otp_commissioned_board() -> Option<(u16, u16)> {
+        let (mut row, mut len) = (0, 0);
+        (unsafe { ffi::otp_commissioned_board(&mut row, &mut len) } != 0).then_some((row, len))
+    }
+
+    /// Whether the firmware finds OTP commissions the chip as a board other
+    /// than `hw_rev`. `None` stands for metadata without a board name.
+    pub fn otp_board_mismatch(hw_rev: Option<&str>) -> bool {
+        let hw_rev = hw_rev.map(|name| std::ffi::CString::new(name).expect("hw_rev holds a NUL"));
+        let ptr = hw_rev
+            .as_ref()
+            .map_or(core::ptr::null(), |name| name.as_ptr());
+        unsafe { ffi::otp_board_mismatch(ptr) != 0 }
+    }
+
+    /// The firmware's reading of the board size OTP configures, as its
+    /// `onerom_board_size_t` value.
+    pub fn otp_board_size() -> u8 {
+        unsafe { ffi::otp_board_size() as u8 }
+    }
+
     // ── GPIO / cycle operations (require setup_epio()) ───────────────────────
 
     /// Drive external GPIO states into the emulator.

@@ -1943,8 +1943,10 @@ __attribute__((noinline)) ora_plugin_entry_t launch_plugins_inner(uint8_t *launc
 
 void ora_launch_plugins(void) {
     // Plugin-facing setup, in the window where core 0 is in firmware code and
-    // core 1 is not yet running.  The timer starts here so a plugin reading
-    // ora_get_plugin_uptime_ms() sees time measured from just before launch.
+    // core 1 is not yet running.  OTP becomes read-only, so no plugin can write
+    // it.  The timer starts here so a plugin reading ora_get_plugin_uptime_ms()
+    // sees time measured from just before launch.
+    otp_lock();
     onerom_rtt_plugins_init();
     DEBUG("Init timer");
     setup_timer0();

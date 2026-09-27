@@ -20,13 +20,15 @@ use onerom_metadata::otp::pico_otp::whitelabel::{
     OTP_ROW_USB_BOOT_FLAGS_R2, OTP_ROW_USB_WHITE_LABEL_DATA,
 };
 use onerom_metadata::otp::pico_otp::{OtpData, WhiteLabelStruct, ecc_encode};
-use onerom_metadata::otp::{CommissioningArea, GeneralStore, format_chip_id};
+use onerom_metadata::otp::{CommissioningArea, GeneralStore, board_size, format_chip_id};
 use onerom_metadata::{
-    OTP_BOOT_FLAGS0_FLASH_DEVINFO_ENABLE, OTP_BOOT_FLAGS0_R1_ROW, OTP_BOOT_FLAGS0_R2_ROW,
-    OTP_BOOT_FLAGS0_ROW, OTP_COMMISSIONING_AREA_FIRST_ROW, OTP_COMMISSIONING_AREA_LAST_ROW,
-    OTP_FLASH_DEVINFO_ROW, OTP_FLASH_PARTITION_SLOT_SIZE_ROW, OTP_GENERAL_STORE_FIRST_ROW,
+    OTP_BOOT_FLAGS0_R1_ROW, OTP_BOOT_FLAGS0_R2_ROW, OTP_BOOT_FLAGS0_ROW,
+    OTP_COMMISSIONING_AREA_FIRST_ROW, OTP_COMMISSIONING_AREA_LAST_ROW,
+    OTP_FLASH_DEVINFO_CS0_SIZE_SHIFT, OTP_FLASH_DEVINFO_CS1_GPIO, OTP_FLASH_DEVINFO_CS1_SIZE_SHIFT,
+    OTP_FLASH_DEVINFO_D8H_ERASE_SUPPORTED, OTP_FLASH_DEVINFO_ROW, OTP_FLASH_DEVINFO_SIZE_2MB,
+    OTP_FLASH_PARTITION_SLOT_SIZE_ROW, OTP_GENERAL_STORE_FIRST_ROW,
     OTP_GENERAL_STORE_TERMINATOR_ROW, OTP_GENERAL_STORE_TERMINATOR_ROW_COUNT, OTP_PAGE_ROWS,
-    OTP_USB_WHITE_LABEL_ROW,
+    OTP_USB_WHITE_LABEL_ROW, OneromBoardSize,
 };
 use serde::Serialize;
 
@@ -90,28 +92,9 @@ const PAGE0_LOCK1_ROW: u16 = 0xf81;
 /// access. Commissioning writes it for each page of an instance.
 pub const LOCK1_READ_ONLY: u32 = 0x15_1515;
 
-/// FLASH_DEVINFO's size field for a 2MB chip. The bootrom decodes a size n as
-/// 4kB shifted left n times.
-const FLASH_DEVINFO_SIZE_2MB: u16 = 9;
-
 /// USB_BOOT_FLAGS' WHITE_LABEL_ADDR_VALID bit. The bootloader uses the white
 /// label only where it's set.
 const USB_BOOT_FLAGS_WHITE_LABEL_ADDR_VALID: u32 = 1 << 22;
-
-/// FLASH_DEVINFO's CS1_SIZE field position.
-pub const FLASH_DEVINFO_CS1_SIZE_SHIFT: u16 = 12;
-
-/// FLASH_DEVINFO's CS0_SIZE field position.
-pub const FLASH_DEVINFO_CS0_SIZE_SHIFT: u16 = 8;
-
-/// The bits of a FLASH_DEVINFO size field once it's shifted down to bit 0.
-pub const FLASH_DEVINFO_SIZE_BITS: u16 = 0xf;
-
-/// FLASH_DEVINFO's D8H_ERASE_SUPPORTED bit. One ROM sets it on every L board.
-pub const FLASH_DEVINFO_D8H_ERASE_SUPPORTED: u16 = 1 << 7;
-
-/// FLASH_DEVINFO's CS1_GPIO field.
-pub const FLASH_DEVINFO_CS1_GPIO: u16 = 0x3f;
 
 /// The row of `page`'s LOCK1 word.
 pub(crate) const fn lock1_row(page: u16) -> u16 {
@@ -152,16 +135,11 @@ pub(crate) fn majority(copies: [u32; 3]) -> u32 {
 /// - D8h block erase supported
 /// - chip select 1 on GPIO `cs1_gpio`
 pub(crate) fn flash_devinfo(cs1_gpio: u8) -> u16 {
-    debug_assert!(u16::from(cs1_gpio) <= FLASH_DEVINFO_CS1_GPIO);
-    (FLASH_DEVINFO_SIZE_2MB << FLASH_DEVINFO_CS1_SIZE_SHIFT)
-        | (FLASH_DEVINFO_SIZE_2MB << FLASH_DEVINFO_CS0_SIZE_SHIFT)
-        | FLASH_DEVINFO_D8H_ERASE_SUPPORTED
+    debug_assert!(u16::from(cs1_gpio) <= OTP_FLASH_DEVINFO_CS1_GPIO);
+    (OTP_FLASH_DEVINFO_SIZE_2MB << OTP_FLASH_DEVINFO_CS1_SIZE_SHIFT)
+        | (OTP_FLASH_DEVINFO_SIZE_2MB << OTP_FLASH_DEVINFO_CS0_SIZE_SHIFT)
+        | OTP_FLASH_DEVINFO_D8H_ERASE_SUPPORTED
         | u16::from(cs1_gpio)
-}
-
-/// FLASH_DEVINFO's CS1_SIZE field.
-fn flash_devinfo_cs1_size(devinfo: u16) -> u16 {
-    (devinfo >> FLASH_DEVINFO_CS1_SIZE_SHIFT) & FLASH_DEVINFO_SIZE_BITS
 }
 
 // ---------------------------------------------------------------------------
@@ -428,6 +406,9 @@ pub async fn read_report<O: LocalOtpAccess>(otp: &mut O) -> Result<OtpReport, Ot
         read_raw_rows(otp, OTP_USB_WHITE_LABEL_ROW, WHITE_LABEL_PAGES_ROWS).await?;
     let commissioning = read_commissioning(otp).await?;
     let general_store = read_ecc_rows(otp, OTP_GENERAL_STORE_FIRST_ROW, GENERAL_STORE_ROWS).await?;
+    // The board size comes from FLASH_DEVINFO read with ECC, as the bootrom
+    // reads it.
+    let flash_devinfo_ecc = read_ecc_rows(otp, OTP_FLASH_DEVINFO_ROW, 1).await?[0];
     let mut locks = read_locks(otp, AREA_FIRST_PAGE..=AREA_LAST_PAGE).await?;
     locks.extend(read_locks(otp, WHITE_LABEL_FIRST_PAGE..=WHITE_LABEL_FIRST_PAGE + 1).await?);
 
@@ -443,7 +424,7 @@ pub async fn read_report<O: LocalOtpAccess>(otp: &mut O) -> Result<OtpReport, Ot
     };
     Ok(OtpReport {
         chip_id: format_chip_id(chip_id),
-        size: configured_size(boot.boot_flags0, flash_devinfo),
+        size: configured_size(boot.boot_flags0, flash_devinfo_ecc),
         boot_flags0: boot.boot_flags0,
         flash_devinfo,
         flash_partition_slot_size: EccRow::new(boot.flash_partition_slot_size),
@@ -505,21 +486,13 @@ impl DecodedWhiteLabel {
     }
 }
 
-/// The board size OTP configures:
-/// - L where most BOOT_FLAGS0 copies enable FLASH_DEVINFO and it describes a
-///   2MB chip on chip select 1
-/// - M where most copies don't enable it and FLASH_DEVINFO is unwritten
-fn configured_size(boot_flags0: [u32; 3], flash_devinfo: EccRow) -> Option<BoardSize> {
-    let enabled = majority(boot_flags0) & OTP_BOOT_FLAGS0_FLASH_DEVINFO_ENABLE != 0;
-    if enabled {
-        flash_devinfo
-            .value
-            .filter(|&devinfo| flash_devinfo_cs1_size(devinfo) == FLASH_DEVINFO_SIZE_2MB)
-            .map(|_| BoardSize::L)
-    } else if is_unwritten(flash_devinfo.raw) {
-        Some(BoardSize::M)
-    } else {
-        None
+/// The board size OTP configures, by [`board_size`]'s rule. `None` where it's
+/// neither M nor L. `flash_devinfo` is FLASH_DEVINFO read with ECC.
+fn configured_size(boot_flags0: [u32; 3], flash_devinfo: u16) -> Option<BoardSize> {
+    match board_size(boot_flags0, flash_devinfo) {
+        OneromBoardSize::BoardSizeM => Some(BoardSize::M),
+        OneromBoardSize::BoardSizeL => Some(BoardSize::L),
+        OneromBoardSize::BoardSizeUnknown | OneromBoardSize::BoardSizeOther => None,
     }
 }
 
@@ -620,7 +593,7 @@ mod tests {
                 continue;
             };
             let devinfo = flash_devinfo(pin);
-            assert_eq!(flash_devinfo_cs1_size(devinfo), 9, "{board}");
+            assert_eq!((devinfo >> 12) & 0xf, 9, "{board}");
             assert_eq!((devinfo >> 8) & 0xf, 9, "{board}");
             assert_eq!(devinfo & 0x80, 0x80, "{board}");
             assert_eq!(devinfo & 0x40, 0, "{board}");

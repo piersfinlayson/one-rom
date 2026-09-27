@@ -72,7 +72,7 @@ LIB := $(BUILD_DIR)/libonerom-test.a
 
 # Source files
 SRCS := src/constants.c src/build_date.c src/globals.c src/log.c src/rtt.c \
-		src/main.c src/plugin.c src/utils.c \
+		src/main.c src/otp.c src/plugin.c src/utils.c \
 		src/vector.c src/rp235x.c src/piodma/pio.c \
 		src/piodma/piorom2.c src/piodma/pioram.c src/piodma/dma.c \
 		src/piodma/pioplugin.c src/piodma/pioled.c \

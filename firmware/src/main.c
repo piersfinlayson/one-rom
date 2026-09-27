@@ -22,6 +22,18 @@ int firmware_main(void) {
     // Update any runtime info based on the metadata.
     update_runtime_from_metadata();
 
+    // Record the board size OTP contains.  Then, where OTP commissions this
+    // chip as different board type, stop now, before any pins are driven,
+    // as this firmware would drive the wrong ones.
+    RUNTIME->board_size = otp_board_size();
+    if (otp_board_mismatch(HW->hw_rev)) {
+        enter_bootloader();
+
+        // enter_bootloader() doesn't return on a device but it does on a test
+        // build.
+        return 0;
+    }
+
     // Next initialize the GPIOs very early on, to turn off the status LED and
     // read the ROM slot select pins.  Pins are part of the metadata, which is
     // why we had to check that first.

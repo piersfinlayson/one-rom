@@ -47,6 +47,8 @@
 #define POWMAN_BASE         0x40100000
 #define TICKS_BASE          0x40108000
 #define OTP_BASE            0x40120000
+#define OTP_DATA_BASE       0x40130000
+#define OTP_DATA_RAW_BASE   0x40134000
 #define USBCTRL_REGS_BASE   0x50110000
 #define SIO_BASE            0xD0000000
 #define PBB_BASE            0xE0000000
@@ -278,6 +280,20 @@
 // Alarm bits, the same positions in INTR, INTE and INTF
 #define TIMER0_INT_ALARM0   (1 << 0)
 #define TIMER0_INT_ALARM1   (1 << 1)
+
+// OTP registers - see datasheet S13.
+//
+// Page n's software lock.  A write is ORed with the page's lock, so it can
+// tighten the lock but not loosen it until the next reset.
+#define OTP_SW_LOCK(page)       (*((volatile uint32_t *)(OTP_BASE + 4 * (page))))
+#define OTP_SW_LOCK_READ_ONLY   0x5     // Read-only to Secure and Non-secure code
+
+// The unguarded ECC read alias holds two rows in each 32-bit word, the even row
+// in the low half.  A damaged row reads as wrong data rather than a bus fault.
+#define OTP_DATA_WORD(row)      (*((volatile uint32_t *)(OTP_DATA_BASE + 4 * ((row) >> 1))))
+
+// The raw read alias holds one row in each 32-bit word, in bits 23:0.
+#define OTP_DATA_RAW(row)       (*((volatile uint32_t *)(OTP_DATA_RAW_BASE + 4 * (row))))
 
 // XIP_CTRL Registers
 #define XIP_CTRL_CTRL       (*((volatile uint32_t *)(XIP_CTRL_BASE + 0x00)))

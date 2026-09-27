@@ -232,6 +232,49 @@ void disable_swd(void) {
     STUB_LOG("disable_swd");
 }
 
+// ---------------------------------------------------------------------------
+// OTP model
+//
+// See test/stub.h.
+// ---------------------------------------------------------------------------
+
+#define STUB_OTP_ROWS 4096u
+
+static uint16_t stub_otp_ecc[STUB_OTP_ROWS];
+static uint32_t stub_otp_raw[STUB_OTP_ROWS];
+
+void stub_otp_set_ecc(uint16_t row, const uint16_t *values, uint32_t count) {
+    assert(row + count <= STUB_OTP_ROWS);
+    memcpy(&stub_otp_ecc[row], values, count * sizeof(values[0]));
+}
+
+void stub_otp_set_raw(uint16_t row, const uint32_t *values, uint32_t count) {
+    assert(row + count <= STUB_OTP_ROWS);
+    memcpy(&stub_otp_raw[row], values, count * sizeof(values[0]));
+}
+
+void stub_otp_clear(void) {
+    memset(stub_otp_ecc, 0, sizeof(stub_otp_ecc));
+    memset(stub_otp_raw, 0, sizeof(stub_otp_raw));
+}
+
+uint16_t otp_read_ecc(uint16_t row) {
+    assert(row < STUB_OTP_ROWS);
+    return stub_otp_ecc[row];
+}
+
+// The host is little-endian, as the device is, so the rows' bytes lie in the
+// order the ECC read alias holds them.
+const char *otp_ecc_bytes(uint16_t row) {
+    assert(row < STUB_OTP_ROWS);
+    return (const char *)&stub_otp_ecc[row];
+}
+
+uint32_t otp_read_raw(uint16_t row) {
+    assert(row < STUB_OTP_ROWS);
+    return stub_otp_raw[row];
+}
+
 // Enters bootloader mode.  See stub.h for why the call is recorded.
 void enter_bootloader(void) {
     STUB_LOG("enter_bootloader");

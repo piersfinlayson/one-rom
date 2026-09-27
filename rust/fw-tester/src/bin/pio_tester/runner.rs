@@ -232,6 +232,8 @@ pub fn run_all(board: Board, config: &Config, base_dir: &std::path::Path, report
     if num_sets > 0 {
         run_generation_passes(board, config, base_dir, num_sets, report);
     }
+
+    crate::commissioning::run(board, num_sets > 0, report);
 }
 
 /// Serve set 0 again with the metadata claiming a generation the firmware was

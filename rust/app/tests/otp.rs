@@ -657,7 +657,7 @@ async fn an_m_boards_report_shows_an_m_board() {
 }
 
 /// [`read_report`] takes each BOOT_FLAGS0 bit from the majority of its three
-/// copies. L needs a 2MB second chip.
+/// copies, and reads FLASH_DEVINFO with ECC. L needs a 2MB second chip.
 #[tokio::test]
 async fn a_report_shows_the_size_otp_configures() {
     let devinfo = |raw: u32| -> MemoryOtp {
@@ -673,13 +673,21 @@ async fn a_report_shows_the_size_otp_configures() {
             Some(BoardSize::L),
         ),
         // Enabled by one copy.
-        (devinfo(ecc_encode(0x99af)), [0x20, 0, 0], None),
+        (
+            devinfo(ecc_encode(0x99af)),
+            [0x20, 0, 0],
+            Some(BoardSize::M),
+        ),
         // A 16MB second chip.
         (devinfo(ecc_encode(0xc9af)), [0x20; 3], None),
-        // FLASH_DEVINFO with a wrong bit.
-        (devinfo(ecc_encode(0x99af) ^ 1), [0x20; 3], None),
+        // FLASH_DEVINFO with a wrong bit, which ECC corrects.
+        (
+            devinfo(ecc_encode(0x99af) ^ 1),
+            [0x20; 3],
+            Some(BoardSize::L),
+        ),
         // FLASH_DEVINFO written and not enabled.
-        (devinfo(ecc_encode(0x99af)), [0; 3], None),
+        (devinfo(ecc_encode(0x99af)), [0; 3], Some(BoardSize::M)),
         // A factory bit in FLASH_DEVINFO.
         (devinfo(0x40), [0; 3], Some(BoardSize::M)),
     ];

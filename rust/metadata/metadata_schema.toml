@@ -174,6 +174,11 @@ struct_name = "onerom_runtime_info_t"
 version = 2
 first_release = "0.7.0"
 
+[[versions]]
+struct_name = "onerom_runtime_info_t"
+version = 3
+first_release = "0.8.0"
+
 # ===========================================================================
 # Constants
 # ===========================================================================
@@ -219,8 +224,8 @@ comment = "Current metadata structure version (v0.7.0+)"
 [[constants]]
 name = "RUNTIME_INFO_VERSION"
 type = "u32"
-value = 2
-comment = "Version of the onerom_runtime_info_t structure (v0.7.0+)"
+value = 3
+comment = "Version of the onerom_runtime_info_t structure (v0.8.0+)"
 
 [[constants]]
 name = "RUNTIME_INFO_MAGIC"
@@ -453,6 +458,43 @@ name = "OTP_FLASH_DEVINFO_ROW"
 type = "u16"
 value = 0x054
 comment = "OTP row of FLASH_DEVINFO. It describes the flash chips on chip selects 0 and 1."
+
+[[constants]]
+name = "OTP_FLASH_DEVINFO_CS0_SIZE_SHIFT"
+type = "u16"
+value = 8
+comment = "Position of FLASH_DEVINFO's CS0_SIZE field."
+
+[[constants]]
+name = "OTP_FLASH_DEVINFO_CS1_SIZE_SHIFT"
+type = "u16"
+value = 12
+comment = "Position of FLASH_DEVINFO's CS1_SIZE field."
+
+[[constants]]
+name = "OTP_FLASH_DEVINFO_SIZE_BITS"
+type = "u16"
+value = 0xf
+comment = "The bits of a FLASH_DEVINFO size field once it's shifted down to bit 0."
+
+[[constants]]
+name = "OTP_FLASH_DEVINFO_SIZE_2MB"
+type = "u16"
+value = 9
+comment = """A FLASH_DEVINFO size field for a 2MB chip. The bootrom reads a size n other
+than 0 as 4KB shifted left n times, and 0 as no chip."""
+
+[[constants]]
+name = "OTP_FLASH_DEVINFO_D8H_ERASE_SUPPORTED"
+type = "u16"
+value = 0x80
+comment = "FLASH_DEVINFO's D8H_ERASE_SUPPORTED bit. One ROM sets it on every L board."
+
+[[constants]]
+name = "OTP_FLASH_DEVINFO_CS1_GPIO"
+type = "u16"
+value = 0x3f
+comment = "FLASH_DEVINFO's CS1_GPIO field."
 
 [[constants]]
 name = "OTP_FLASH_PARTITION_SLOT_SIZE_ROW"
@@ -989,6 +1031,38 @@ name = "OTP_KEY_RESERVED"
 value = 0xFFFF
 sentinel = true
 comment = "Never a key. Holds the packed C enum at 2 bytes."
+
+# ---
+
+[[enums]]
+name = "onerom_board_size_t"
+size = 1
+packed = true
+comment = """A board's size, as OTP configures it. docs/wip/OTP.md's Board Sizes section
+describes each size and how the firmware and host tools decide it."""
+strip_prefix = "BOARD_SIZE_"
+
+[[enums.variants]]
+name = "BOARD_SIZE_UNKNOWN"
+value = 0
+comment = "Not recorded. Firmware before 0.8.0 doesn't record the board size."
+
+[[enums.variants]]
+name = "BOARD_SIZE_M"
+value = 1
+display = "M"
+comment = "2MB of built-in flash without a chip on chip select 1."
+
+[[enums.variants]]
+name = "BOARD_SIZE_L"
+value = 2
+display = "L"
+comment = "2MB of built-in flash and 2MB of external flash on chip select 1."
+
+[[enums.variants]]
+name = "BOARD_SIZE_OTHER"
+value = 0xFF
+comment = "An unspecified size."
 
 # ===========================================================================
 # Structs
@@ -1849,9 +1923,13 @@ type = "u8"
 comment = "Currently active RAM slot - initialized to 0xFF."
 
 [[structs.fields]]
-name = "reserved"
-kind = "padding"
-size = 1
+name = "board_size"
+kind = "enum"
+type = "onerom_board_size_t"
+since_runtime_version = 3
+default_if_absent = 0
+expected_offset = 59
+comment = "The board's size as OTP configures it, read at boot."
 
 # ===========================================================================
 # Tagged FAM structs

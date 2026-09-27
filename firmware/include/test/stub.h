@@ -110,6 +110,17 @@ void stub_gpio_set_pio_owned(uint8_t gpio, uint8_t owned);
 // what it drives.
 void stub_set_gpio_input(uint8_t gpio, uint8_t level);
 
+// Stands in for OTP, which firmware_main() reads at boot.  A test sets what an
+// ECC read and a raw read of each row return.  The two aren't kept consistent,
+// as the firmware reads any one row only one way.  Every row reads 0, as an
+// unwritten row does, until a test sets it.
+//
+// A device's reset doesn't clear OTP, so onerom_test_reset() leaves this alone
+// and a test clears what it set with stub_otp_clear().
+void stub_otp_set_ecc(uint16_t row, const uint16_t *values, uint32_t count);
+void stub_otp_set_raw(uint16_t row, const uint32_t *values, uint32_t count);
+void stub_otp_clear(void);
+
 // Put the process-global state a device's reset would clear back to cold boot.
 //
 // The firmware's statics are ordinary host objects in a test build, so nothing

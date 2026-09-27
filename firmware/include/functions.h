@@ -71,6 +71,15 @@ void setup_timer0(void);
 void setup_adc(void);
 void setup_status_led(void);
 void blink_pattern(uint32_t on_time, uint32_t off_time, uint8_t repeats);
+uint16_t otp_read_ecc(uint16_t row);
+const char *otp_ecc_bytes(uint16_t row);
+uint32_t otp_read_raw(uint16_t row);
+void otp_lock(void);
+
+// otp.c
+uint8_t otp_commissioned_board(uint16_t *row_out, uint16_t *len_out);
+uint8_t otp_board_mismatch(const char *hw_rev);
+onerom_board_size_t otp_board_size(void);
 
 // pio.c
 extern int pio(void);

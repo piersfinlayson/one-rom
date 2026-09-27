@@ -280,6 +280,15 @@ fn main() {
         .allowlist_function("ffi_limp_mode")
         .allowlist_function("ffi_pios_enabled")
         .allowlist_function("ffi_image_sel")
+        // OTP, which the firmware reads at boot, and the firmware's readers of
+        // it, so a test can check them against the host's.
+        .allowlist_function("stub_otp_set_ecc")
+        .allowlist_function("stub_otp_set_raw")
+        .allowlist_function("stub_otp_clear")
+        .allowlist_function("ffi_board_size")
+        .allowlist_function("otp_commissioned_board")
+        .allowlist_function("otp_board_mismatch")
+        .allowlist_function("otp_board_size")
         // The metadata generation, and the means to change it before a boot.
         .allowlist_function("ffi_metadata_generation")
         .allowlist_function("ffi_set_metadata_generation")

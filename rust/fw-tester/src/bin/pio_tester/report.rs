@@ -171,6 +171,13 @@ impl SetResult {
     }
 }
 
+/// A check that isn't a chip set's read passes.
+pub struct CheckResult {
+    pub name: String,
+    /// `Some(msg)` → the check failed.
+    pub error: Option<String>,
+}
+
 // ── Top-level report ──────────────────────────────────────────────────────────
 
 /// Accumulated results for a complete test run.
@@ -178,6 +185,7 @@ pub struct TestReport {
     config_path: String,
     board_str: String,
     set_results: Vec<SetResult>,
+    checks: Vec<CheckResult>,
 }
 
 impl TestReport {
@@ -186,6 +194,7 @@ impl TestReport {
             config_path: config_path.to_string(),
             board_str: board_str.to_string(),
             set_results: Vec::new(),
+            checks: Vec::new(),
         }
     }
 
@@ -193,12 +202,21 @@ impl TestReport {
         self.set_results.push(result);
     }
 
-    /// `true` iff every non-skipped set passed (boot errors count as failures).
+    pub fn add_check(&mut self, name: &str, result: Result<(), String>) {
+        self.checks.push(CheckResult {
+            name: name.to_string(),
+            error: result.err(),
+        });
+    }
+
+    /// `true` iff every non-skipped set passed (boot errors count as failures)
+    /// and every check passed.
     pub fn all_passed(&self) -> bool {
         self.set_results
             .iter()
             .filter(|s| !s.skipped)
             .all(|s| s.passed())
+            && self.checks.iter().all(|c| c.error.is_none())
     }
 
     /// Print a human-readable summary to stdout.
@@ -282,6 +300,13 @@ impl TestReport {
                         mode.timing_failures,
                     );
                 }
+            }
+        }
+
+        for check in &self.checks {
+            match &check.error {
+                None => println!("  [PASS] {}", check.name),
+                Some(msg) => println!("  [FAIL] {} — {}", check.name, msg),
             }
         }
 

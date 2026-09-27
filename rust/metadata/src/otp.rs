@@ -14,6 +14,7 @@
 //! - [`RecordLine`] and [`parse_record`] write and read a signing key's
 //!   record file.
 //! - [`white_label`] builds the bootloader's USB white label.
+//! - [`board_size`] reads the board size OTP configures.
 
 use alloc::format;
 use alloc::string::String;
@@ -26,11 +27,12 @@ use pico_otp::{WhiteLabelError, WhiteLabelStruct};
 use sha2::{Digest, Sha256};
 
 use crate::{
-    DeviceMemoryView, Generations, OTP_COMMISSIONING_AREA_FIRST_ROW,
-    OTP_COMMISSIONING_AREA_LAST_ROW, OTP_COMMISSIONING_SIG_LEN, OTP_COMMISSIONING_SIGNER_LEN,
-    OTP_GENERAL_STORE_FIRST_ROW, OTP_GENERAL_STORE_TERMINATOR_ROW,
+    DeviceMemoryView, Generations, OTP_BOOT_FLAGS0_FLASH_DEVINFO_ENABLE,
+    OTP_COMMISSIONING_AREA_FIRST_ROW, OTP_COMMISSIONING_AREA_LAST_ROW, OTP_COMMISSIONING_SIG_LEN,
+    OTP_COMMISSIONING_SIGNER_LEN, OTP_FLASH_DEVINFO_CS1_SIZE_SHIFT, OTP_FLASH_DEVINFO_SIZE_2MB,
+    OTP_FLASH_DEVINFO_SIZE_BITS, OTP_GENERAL_STORE_FIRST_ROW, OTP_GENERAL_STORE_TERMINATOR_ROW,
     OTP_GENERAL_STORE_TERMINATOR_ROW_COUNT, OTP_KEY_NONE, OTP_PAGE_ROWS, OTP_STORE_MAGIC,
-    OTP_STORE_VERSION, OneromOtpEntry, OneromOtpKey, SerializeContext,
+    OTP_STORE_VERSION, OneromBoardSize, OneromOtpEntry, OneromOtpKey, SerializeContext,
 };
 
 pub use pico_otp;
@@ -791,6 +793,32 @@ fn signed_message(chip_id: [u16; 4], rows: impl Iterator<Item = u16>) -> Vec<u8>
     let mut message = SIGNATURE_PREFIX.to_vec();
     message.extend(chip_id.into_iter().chain(rows).flat_map(u16::to_le_bytes));
     message
+}
+
+// ---------------------------------------------------------------------------
+// Board size
+// ---------------------------------------------------------------------------
+
+/// The board size OTP configures, read as the bootrom reads it:
+/// - M where most of BOOT_FLAGS0's three copies leave FLASH_DEVINFO_ENABLE
+///   clear
+/// - otherwise from chip select 1's size in FLASH_DEVINFO: M for no chip, L
+///   for 2MB and [`OneromBoardSize::BoardSizeOther`] for anything else
+///
+/// `boot_flags0` holds BOOT_FLAGS0 and its two copies read raw, and
+/// `flash_devinfo` is FLASH_DEVINFO read with ECC. The firmware decides the
+/// same way at boot.
+pub fn board_size(boot_flags0: [u32; 3], flash_devinfo: u16) -> OneromBoardSize {
+    let [a, b, c] = boot_flags0;
+    let majority = (a & b) | (a & c) | (b & c);
+    if majority & OTP_BOOT_FLAGS0_FLASH_DEVINFO_ENABLE == 0 {
+        return OneromBoardSize::BoardSizeM;
+    }
+    match (flash_devinfo >> OTP_FLASH_DEVINFO_CS1_SIZE_SHIFT) & OTP_FLASH_DEVINFO_SIZE_BITS {
+        0 => OneromBoardSize::BoardSizeM,
+        OTP_FLASH_DEVINFO_SIZE_2MB => OneromBoardSize::BoardSizeL,
+        _ => OneromBoardSize::BoardSizeOther,
+    }
 }
 
 // ---------------------------------------------------------------------------

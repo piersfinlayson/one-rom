@@ -56,8 +56,7 @@ go-ahead before editing this file.
 
 - **An entry is one or two sentences — 40 words is already long.** The
   headline list at the top of a release carries the story. A detail bullet
-  says what changed and, where it is unobvious, what it means for a user. Keep
-  the `- This required a firmware update.` sub-bullet convention.
+  says what changed and, where it is unobvious, what it means for a user.
 - **One entry per user-visible change, not per commit.** A feature built over
   several commits — device side, plugin, CLI — is one entry. A correction made
   before release folds into the entry for the thing it corrects.

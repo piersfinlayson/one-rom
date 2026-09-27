@@ -59,13 +59,20 @@ pub use error::{Error, PluginError};
 pub use fetch::{Fetch, LocalFetch};
 // OTP access (host-implemented) and the readers built on it. `trait_variant`
 // generates the `Send` variant `OtpAccess` from the base `LocalOtpAccess`.
-// `MemoryOtp` stands in for a chip in tests. The constants describe the lock
-// word commissioning writes and FLASH_DEVINFO's fields.
+// `MemoryOtp` stands in for a chip in tests. The constant describes the lock
+// word commissioning writes.
 pub use otp::{
-    EccRow, FLASH_DEVINFO_CS0_SIZE_SHIFT, FLASH_DEVINFO_CS1_GPIO, FLASH_DEVINFO_CS1_SIZE_SHIFT,
-    FLASH_DEVINFO_D8H_ERASE_SUPPORTED, FLASH_DEVINFO_SIZE_BITS, Interruption, LOCK1_READ_ONLY,
-    LocalOtpAccess, MemoryOtp, OtpAccess, OtpError, OtpReport, PageLock, read_chip_id,
-    read_commissioning, read_report,
+    EccRow, Interruption, LOCK1_READ_ONLY, LocalOtpAccess, MemoryOtp, OtpAccess, OtpError,
+    OtpReport, PageLock, read_chip_id, read_commissioning, read_report,
+};
+// FLASH_DEVINFO's fields. The schema declares them, and these are the names the
+// CLI uses.
+pub use onerom_metadata::{
+    OTP_FLASH_DEVINFO_CS0_SIZE_SHIFT as FLASH_DEVINFO_CS0_SIZE_SHIFT,
+    OTP_FLASH_DEVINFO_CS1_GPIO as FLASH_DEVINFO_CS1_GPIO,
+    OTP_FLASH_DEVINFO_CS1_SIZE_SHIFT as FLASH_DEVINFO_CS1_SIZE_SHIFT,
+    OTP_FLASH_DEVINFO_D8H_ERASE_SUPPORTED as FLASH_DEVINFO_D8H_ERASE_SUPPORTED,
+    OTP_FLASH_DEVINFO_SIZE_BITS as FLASH_DEVINFO_SIZE_BITS,
 };
 pub use plugin::{
     // Catalogue and core types.
