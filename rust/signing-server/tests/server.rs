@@ -318,6 +318,30 @@ async fn a_repeated_request_adds_nothing() {
     assert_eq!(setup.commits(), commits);
 }
 
+/// A dry run returns the same signature as a real request. The dry run comes
+/// first because the record never adds a line it already holds, so a dry run
+/// after the real request would pass even if it recorded.
+#[tokio::test]
+async fn a_dry_run_returns_the_signature_without_recording_it() {
+    let setup = Setup::new().await;
+    let commits = setup.commits();
+    let (status, dry_run) = setup
+        .sign(&REQUEST.replace('}', r#", "dry_run": true}"#))
+        .await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "{}",
+        String::from_utf8_lossy(&dry_run)
+    );
+    assert_eq!(setup.commits(), commits);
+    assert_eq!(setup.record_file(1), None);
+
+    let (status, signature) = setup.sign(REQUEST).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(dry_run, signature);
+}
+
 #[tokio::test]
 async fn a_new_date_adds_a_second_line() {
     let setup = Setup::new().await;
@@ -356,6 +380,7 @@ async fn a_bad_request_is_refused() {
         "not JSON".to_owned(),
         REQUEST.replace(r#", "date": "20260926""#, ""),
         REQUEST.replace(r#""date""#, r#""extra": "x", "date""#),
+        REQUEST.replace('}', r#", "dry_run": "yes"}"#),
         REQUEST.replace("DE3F9C232F655B6B", "de3f9c232f655b6b"),
         REQUEST.replace("fire-24-f", "fire-99-z"),
         REQUEST.replace("20260926", "2026-09-26"),

@@ -6,9 +6,10 @@
 //! A key's URL is `https://HOST:PORT/v1/ID`, where `ID` is the key's ID.
 //! - `GET <key URL>/public-key` returns the key's 32-byte public key.
 //! - `POST <key URL>/sign` returns the 64-byte signature of a commissioning
-//!   instance once it's recorded. The PIN is provided in `Authorization:
-//!   Bearer PIN`. The instance's values are provided as JSON in the request
-//!   body.
+//!   instance. The PIN is provided in `Authorization: Bearer PIN`. The
+//!   instance's values are provided as JSON in the request body. Unless the
+//!   body's `dry_run` is true, the server records the signature before
+//!   returning it.
 
 use std::convert::Infallible;
 use std::error::Error as StdError;
@@ -55,6 +56,9 @@ struct SignRequest {
     manufacturer: String,
     /// The UTC commissioning date, `YYYYMMDD`.
     date: String,
+    /// Whether the signature is returned without being recorded.
+    #[serde(default)]
+    dry_run: bool,
 }
 
 /// The signing server.
@@ -97,8 +101,8 @@ impl Server {
         }
     }
 
-    /// Key `id`'s signature of the values in `request`, returned once it's
-    /// recorded.
+    /// Key `id`'s signature of the values in `request`. Except when dry run is
+    /// specified, the signature is recorded before it's returned.
     async fn sign<B>(&self, id: u16, request: Request<B>, peer: SocketAddr) -> Response<Full<Bytes>>
     where
         B: Body<Data = Bytes>,
@@ -193,28 +197,28 @@ impl Server {
             }
         };
 
-        match self.record.add(id, chip_id, &signature).await {
-            Ok(added) => {
-                let recorded = match added {
-                    Added::New => "recorded",
-                    Added::AlreadyThere => "already recorded",
-                };
-                info!(
-                    "{peer}: key {id} signed {} for {}, {}, {}, {recorded}",
-                    request.chip_id, request.board, request.manufacturer, request.date
-                );
-                bytes(signature.to_vec())
+        let outcome = if request.dry_run {
+            "dry run"
+        } else {
+            match self.record.add(id, chip_id, &signature).await {
+                Ok(Added::New) => "recorded",
+                Ok(Added::AlreadyThere) => "already recorded",
+                Err(error) => {
+                    error!("key {id}: {error}");
+                    return text(
+                        StatusCode::SERVICE_UNAVAILABLE,
+                        format!(
+                            "the record can't be written, so the signature isn't returned: {error}"
+                        ),
+                    );
+                }
             }
-            Err(error) => {
-                error!("key {id}: {error}");
-                text(
-                    StatusCode::SERVICE_UNAVAILABLE,
-                    format!(
-                        "the record can't be written, so the signature isn't returned: {error}"
-                    ),
-                )
-            }
-        }
+        };
+        info!(
+            "{peer}: key {id} signed {} for {}, {}, {}, {outcome}",
+            request.chip_id, request.board, request.manufacturer, request.date
+        );
+        bytes(signature.to_vec())
     }
 }
 

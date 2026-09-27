@@ -20,6 +20,8 @@ A `/sign` request body:
 - `chip_id` is the CHIPID in the form the bootloader's USB serial number uses.
   It's 16 uppercase hex digits.
 - `date` is the UTC commissioning date in the form `YYYYMMDD`.
+- `dry_run` is optional and `false` when left out. A dry run returns the
+  signature without recording it.
 
 The server builds the instance's message from these values. The key's ID is
 the message's `COMMISSIONING_SIGNER`. Repeating a request returns the same
@@ -102,15 +104,17 @@ In the directory containing `keys`, for key 1 and the signer `piers.rocks`:
 `--record` is the server's clone of the record repository. Key n's lines are
 recorded in `signatures/n.txt`.
 
-The server records each signature before returning it so a retired key's
-genuine boards continue to validate. To record a signature the server:
+Except when dry run is specified, the server records the signature before
+returning it so a retired key's genuine boards continue to validate. To record
+a signature the server:
 
 1. Resets the clone to the remote.
 2. Appends the line.
 3. Commits.
 4. Pushes.
 
-Signing fails while the remote is unreachable.
+Except when dry run is specified, signing fails while the remote is
+unreachable.
 
 The clone must be owned by the user the server runs as because git refuses a
 repository owned by another user. To set up the record:
