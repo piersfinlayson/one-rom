@@ -13,6 +13,7 @@
 //!   onerom console               - Talk to the retro system
 //!   onerom control <subcommand>  - Transient One ROM actions
 //!   onerom update <subcommand>   - Persistent One ROM modifications
+//!   onerom hardware <subcommand> - One ROM hardware commissioning
 //!   onerom image <subcommand>    - ROM image file manipulation
 //!   onerom self <subcommand>     - One ROM CLI releases of this tool
 //!
@@ -56,6 +57,7 @@ macro_rules! const_str {
 pub mod console;
 pub mod control;
 pub mod firmware;
+pub mod hardware;
 pub mod image;
 pub mod inspect;
 pub mod monitor;
@@ -87,21 +89,22 @@ use firmware::{
     FirmwareArgs, FirmwareBuildArgs, FirmwareChipsArgs, FirmwareCommands, FirmwareDownloadArgs,
     FirmwareInspectArgs, FirmwareReleasesArgs,
 };
+use hardware::{HardwareArgs, HardwareCommands, HardwareCommissionArgs, HardwareValidateArgs};
 use image::{
     ImageArgs, ImageCommands, ImageConvertArgs, ImageDeinterleaveArgs, ImageSwapBytesArgs,
 };
 use inspect::{
     InspectArgs, InspectCommands, InspectGpioArgs, InspectHeaderArgs, InspectImageArgs,
-    InspectInfoArgs, InspectLedArgs, InspectPeekArgs, InspectPeekCommands, InspectPeekLiveArgs,
-    InspectPeekMemoryArgs, InspectRgbArgs, InspectSlotsArgs, InspectSocketArgs,
-    InspectTelemetryArgs,
+    InspectInfoArgs, InspectLedArgs, InspectOtpArgs, InspectPeekArgs, InspectPeekCommands,
+    InspectPeekLiveArgs, InspectPeekMemoryArgs, InspectRgbArgs, InspectSlotsArgs,
+    InspectSocketArgs, InspectTelemetryArgs,
 };
 use monitor::{MonitorArgs, MonitorCommands, MonitorLogArgs};
 use plugin::PluginArgs;
 use program::ProgramArgs;
 use scan::ScanArgs;
 use self_cmd::{SelfArgs, SelfCheckArgs, SelfCommands, SelfDownloadArgs};
-use update::{UpdateArgs, UpdateCommands, UpdateCommitArgs, UpdateOtpArgs, UpdateSlotArgs};
+use update::{UpdateArgs, UpdateCommands, UpdateCommitArgs, UpdateSlotArgs};
 
 #[enum_dispatch]
 pub trait CommandTrait {
@@ -512,6 +515,16 @@ pub enum Commands {
         subcommand_help_heading = "Commands"
     )]
     Update(UpdateArgs),
+
+    /// Commission a One ROM's hardware and check its commissioning.
+    ///
+    /// Commissioning writes the board's identity to the RP2350's OTP memory
+    /// with a signature. OTP can't be erased.
+    #[command(
+        subcommand_value_name = "COMMAND",
+        subcommand_help_heading = "Commands"
+    )]
+    Hardware(HardwareArgs),
 
     /// Manipulate ROM image files.
     ///

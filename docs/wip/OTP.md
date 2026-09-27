@@ -54,7 +54,7 @@ reading it because commissioned boards still hold it.
 A parser skips an unknown key using its length. A host tool reports each key it
 skips.
 
-## Commissioning Store Keys
+### Commissioning Store Keys
 
 | Key | Name | Value |
 | --- | --- | --- |
@@ -66,7 +66,7 @@ skips.
 
 All of these keys are required in every commissioning instance.
 
-## General Store Keys
+### General Store Keys
 
 Currently none.
 
@@ -185,7 +185,8 @@ The table is stored in a dedicated file. Host tools embed a copy generated from
 it when they are built, and can download a newer copy. They find its current
 address in `https://images.onerom.org/signers.json`.
 
-`onerom hardware commission` refuses a signing key that isn't in the table.
+`onerom hardware commission` refuses to use a signing key that isn't in the
+table or is retired.
 
 ID 0 is invalid. IDs 1–255 are reserved for piers.rocks. Other signers' keys
 are assigned IDs from 256 onwards.
@@ -295,6 +296,10 @@ whether a second flash chip is fitted.
 - That the commissioning data is included and valid.
 - A signature is present, from a known source, and reports the signer.
 
+It reports every instance. It reports a pass or failure based on the current
+instance. When it can't download the signer table, it uses the table built into
+the tool and indicates this.
+
 When the flash doesn't hold One ROM firmware, the CLI takes the board type from
 `COMMISSIONING_BOARD` in the current commissioning instance. The CLI refuses to
 program an image built for another board unless an override option is enabled.
@@ -347,8 +352,9 @@ each row as soon as it writes it and stops at the first mismatch.
 6. It writes the bootloader USB strings, then the white label table, then
    `USB_WHITE_LABEL_ADDR`.
 7. It sets the white label valid bits in `USB_BOOT_FLAGS` and its two copies.
-8. On a non-M board it checks that row `0x055` holds a valid ECC value and then
-   sets `FLASH_DEVINFO_ENABLE` in `BOOT_FLAGS0` and its two copies.
+8. On a non-M board it checks that row `0x055` holds a valid ECC value without
+   any error bits corrected. It then sets `FLASH_DEVINFO_ENABLE` in `BOOT_FLAGS0`
+   and its two copies. There is no way to override this check.
 
 piers.rocks signs through a signing server that holds its private key and
 requires a PIN. The CLI fetches the matching public key from the server. Other

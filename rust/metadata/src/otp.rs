@@ -443,7 +443,7 @@ impl CommissioningInstance {
     }
 
     /// Whether `COMMISSIONING_SIG` ends the instance.
-    fn is_complete(&self) -> bool {
+    pub fn is_complete(&self) -> bool {
         self.signed_rows.is_some()
     }
 

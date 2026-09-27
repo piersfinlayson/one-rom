@@ -6,11 +6,11 @@ own argument definitions.
 **Question.** If GUI panes are generated from the CLI rather than written, what
 comes out?
 
-**Answer. 49 panes, no line of GUI code naming a command, and 45 of them with
-nothing left to type blind.** The four that are not are `program`,
-`firmware build`, `image convert` and `self download`.
+**Answer. The GUI code doesn't mention any command by name. Most panes don't
+leave anything to type blind.** The others include `program`, `firmware build`,
+`image convert` and `self download`.
 
-**Four of the 49 run for real**, against the crates the CLI itself calls. The
+**A few panes run for real** against the crates the CLI itself calls. The
 rest are stubbed, and every pane says which it is.
 
 ## Run
@@ -21,13 +21,13 @@ cargo run -p studiov2-shell           # beside the builder and the log panes
 cargo run -p studiov2-generated -- --list
 ```
 
-`cargo test --workspace` runs 103 tests, 39 of them here.
+`cargo test --workspace` runs this crate's tests and every other crate's.
 
 ## Where the panes come from
 
 [`studiov2-commands`](../commands) reads `rust/cli/src/args/` at build time and
-emits plain data — 49 commands, 167 options, 6 globals. This crate reads that
-and nothing else. **No code here names a command.** A command added to the CLI
+emits every command and option as plain data. This crate reads that and nothing
+else. **The code here doesn't mention any command by name.** A command added to the CLI
 reaches the screen on the next build with nobody typing anything, or it does
 not reach it at all.
 
@@ -50,7 +50,7 @@ reaches every board picker with nobody typing anything.
 
 ## What runs
 
-Four commands do their real work: the three under `image` and `firmware chips`.
+`firmware chips` and the commands under `image` do their real work.
 `onerom-gen` does the conversions and the transforms, `onerom-gen` and
 `onerom-config` between them do the chip fit figures, and a failure comes back
 as `onerom-cli`'s own error in the words the CLI would have used.
@@ -60,7 +60,7 @@ every `cmd_*` lives in the CLI's binary and nothing outside it can call one.
 `rust/cli/src/lib/` holds device primitives, not commands.
 
 That is a limit of this prototype rather than of generating panes. It cannot
-edit the CLI, so it re-implemented four commands and found them by matching on
+edit the CLI so it re-implemented those commands and found them by matching on
 the options a command takes — a way to reach per-command code without writing a
 command's name. A production app would instead move the CLI's dispatch and its
 `cmd_*` functions into `onerom-cli`'s library behind one entry point, and a pane
@@ -68,29 +68,39 @@ would hand over the command it already holds.
 
 ## What came out
 
-**45 panes have no bare text box on them.** Every option is a control that
+**Most panes don't have a bare text box on them.** Every option is a control that
 knows what it is for: a checkbox, a number, a pick list of the real values, or
 a path with a Browse button.
 
-**62 of the 173 options carry a value set**, and every one of them was a bare
-box before: 28 files and directories, 14 boards, 5 firmware versions, 5
-colours, 4 pins, 3 chip types, a plugin type, a serial and a CLI release. `--colour` gets its
-ten names and a swatch of whatever is chosen. `--pin` gets the pads of the
-board in front of the user, and falls back to a box with no device connected,
-because which pads exist is a fact about the board.
+**Many options carry a value set.** Every one of them was a bare box before.
+The sets cover:
 
-**Two of them draw their options as groups, because clap carries argument
+- files and directories
+- boards
+- firmware versions
+- colours
+- pins
+- chip types
+- plugin types
+- serials
+- CLI releases
+
+`--colour` gets its ten names and a swatch of whatever is chosen. An option
+that takes a board pin gets the pads of the board in front of the user. Which
+pads exist is a fact about the board so the option falls back to a box when a
+device isn't connected.
+
+**Some panes draw their options as groups because clap carries argument
 relationships**, which was not expected. `control erase` declares that exactly one of `--all`,
 `--offset` and `--address` is required, that `--offset` needs `--length`, and
 that `--stopped` and `--running` exclude each other. The pane draws that as two
-labelled groups with the constraints enforced. `control reboot` is the other.
-16 of the 49 commands say something of the kind, and it is the only grouping
+labelled groups with the constraints enforced. `control reboot` is another.
+Other commands say something of the kind too. It is the only grouping
 written down anywhere.
 
-**15 options are still a bare box**, and six of them are genuinely free text —
-names and descriptions. The rest are `--slot`, `--plugin`, `--load-address`,
-`--serial-override`, `--vid-pid` and `self download --target`, which take
-values no list can hold.
+**Some options are still a bare box.** Names and descriptions are genuinely
+free text. Others take values a list can't hold. They include `--slot`,
+`--plugin`, `--load-address` and `--vid-pid`.
 
 **A long table keeps its sections and scrolls inside its own bounds.**
 `firmware chips --board fire-28-d` is 49 rows under three headings — native,
@@ -104,8 +114,8 @@ entries.
 
 **One command will not generate however much the description carries.**
 `program --slot` takes `file=…,type=23128,cs1=active-low,cs2=active-low` — a
-language of its own inside one option. `program` has 28 options and
-`firmware build` has 18, and they are the two worst panes here. The builder
+language of its own inside one option. `program` and `firmware build`
+have the most options. They are the worst panes here. The builder
 prototype next door is the hand-written answer to the same command, and the
 shell shows both.
 
@@ -113,9 +123,9 @@ shell shows both.
 
 Found by building the panes, not by reading the argument definitions:
 
-- **A bound on a number.** 22 of the 46 numeric options are milliseconds and 6
-  are a percentage, so `--brightness` and `--hold` draw the same box and
-  neither can be a slider. The bounds exist as named firmware constants.
+- **A bound on a number.** Many numeric options are milliseconds and some are a
+  percentage so `--brightness` and `--hold` draw the same box and neither can
+  be a slider. The bounds exist as named firmware constants.
 - **Which option belongs beside which.** Groups cover the constraint. Nothing
   says `--colour` and `--brightness` belong side by side.
 - **Whether a command needs a device.** It is a trait implementation on the
@@ -130,14 +140,14 @@ Found by building the panes, not by reading the argument definitions:
 
 ## Limits
 
-- **45 of the 49 are stubbed**, and a checkbox forces the error path so error
-  rendering can be seen. It has nothing to force on the four that run, and its
+- **Most panes are stubbed.** A checkbox forces the error path so error
+  rendering can be seen. It has nothing to force on those that run. Its
   label says so. No device, no network and no USB bus is touched by any of it.
 - **A stubbed result is invented.** `stub::run` makes up content that fits the
   shape it guessed.
-- **A pane per leaf command is not obviously right.** Six commands are a title
-  and a Run button, and `control rgb` is seven panes, four of them with the same
-  four options.
+- **A pane per leaf command is not obviously right.** Some commands are a title
+  and a Run button. `control rgb` is a pane per subcommand. Several of them
+  have the same options.
 - **Three answers are faked, and the page says so.** Browse fills in a sample
   path rather than opening a dialog, the version lists are written out rather
   than fetched from `images.onerom.org`, and the device list is invented. The

@@ -4,18 +4,21 @@
 
 use crate::args::inspect::{
     InspectGpioArgs, InspectHeaderArgs, InspectImageArgs, InspectInfoArgs, InspectLedArgs,
-    InspectPeekLiveArgs, InspectPeekMemoryArgs, InspectRgbArgs, InspectSlotsArgs,
+    InspectOtpArgs, InspectPeekLiveArgs, InspectPeekMemoryArgs, InspectRgbArgs, InspectSlotsArgs,
     InspectSocketArgs, InspectTelemetryArgs,
 };
+use crate::commissioning::{device_lines, report_lines};
 use crate::utils::{
     active_chip_type, check_device, check_device_running, check_fire_board,
     check_fire_board_optional, check_live_read_write, print_hex_dump, resolve_board,
     resolve_board_optional,
 };
+use onerom_app::{SignerTable, read_report};
 use onerom_cli::CliFetch;
 use onerom_cli::LIVE_ROM_BASE;
 use onerom_cli::colour::RgbColour;
 use onerom_cli::gpio;
+use onerom_cli::otp::{Commissioning, PicobootOtp};
 use onerom_cli::plugin::{PluginOrigin, PluginType, resolve_plugin_display};
 use onerom_cli::usb::{
     GpioEntry, GpioUse, LedId, LedState, get_caps, gpio_query, gpio_query_all, led_query,
@@ -34,6 +37,9 @@ pub async fn cmd_info(options: &Options, args: &InspectInfoArgs) -> Result<(), E
     let device = options.device.as_ref().unwrap();
 
     println!("{device}");
+    for line in commissioning_lines(device, options.verbose).await {
+        println!("  {line}");
+    }
 
     // Print the detailed device information as JSON if available
     match device.firmware.as_ref() {
@@ -42,6 +48,44 @@ pub async fn cmd_info(options: &Options, args: &InspectInfoArgs) -> Result<(), E
         None => {}
     }
 
+    Ok(())
+}
+
+/// The lines describing `device`'s commissioning that `scan` and `inspect
+/// info` show. It reads the commissioning area where enumeration didn't.
+pub async fn commissioning_lines(device: &Device, verbose: bool) -> Vec<String> {
+    let read;
+    let commissioning = match &device.commissioning {
+        Commissioning::NotRead => {
+            read = Commissioning::read(device).await;
+            &read
+        }
+        commissioning @ (Commissioning::Unreadable | Commissioning::Read(_)) => commissioning,
+    };
+    device_lines(
+        device.firmware_board(),
+        commissioning,
+        verbose,
+        &SignerTable::built_in(),
+    )
+}
+
+pub async fn cmd_otp(options: &Options, args: &InspectOtpArgs) -> Result<(), Error> {
+    check_device(options, args, false)?;
+    let device = options.device.as_ref().unwrap();
+
+    let mut otp = PicobootOtp::open(device).await?;
+    let report = read_report(&mut otp).await?;
+    if args.json {
+        let json =
+            serde_json::to_string_pretty(&report).map_err(|e| Error::Other(e.to_string()))?;
+        println!("{json}");
+    } else {
+        println!("{device}");
+        for line in report_lines(&report, options.verbose, &SignerTable::built_in()) {
+            println!("{line}");
+        }
+    }
     Ok(())
 }
 
@@ -277,10 +321,14 @@ pub async fn cmd_telemetry(options: &Options, args: &InspectTelemetryArgs) -> Re
 ///
 /// `--verbose` adds, per plugin, its image source and (for official plugins)
 /// version and description; and, per ROM slot, its flash location.
+///
+/// `commissioning` holds lines describing the device's commissioning to show
+/// beneath its identity.
 pub async fn output_slot_info(
     device: &Device,
     options: &Options,
     prefix: &str,
+    commissioning: &[String],
 ) -> Result<(), Error> {
     print!("{prefix}");
     println!("{device}");
@@ -291,6 +339,9 @@ pub async fn output_slot_info(
     if verbose && let Some(line) = device.mcu_chip_id_line() {
         print!("{prefix}");
         println!("  {line}");
+    }
+    for line in commissioning {
+        println!("{prefix}  {line}");
     }
 
     let parsed = match device.firmware.as_ref() {
@@ -559,7 +610,7 @@ pub async fn cmd_slots(options: &Options, args: &InspectSlotsArgs) -> Result<(),
     check_device(options, args, false)?;
     let device = options.device.as_ref().unwrap();
 
-    output_slot_info(device, options, "").await
+    output_slot_info(device, options, "", &[]).await
 }
 
 pub async fn cmd_image(options: &Options, args: &InspectImageArgs) -> Result<(), Error> {
@@ -969,6 +1020,25 @@ fn resolve_device_board(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `inspect otp` checks for a device before it opens anything.
+    #[tokio::test]
+    async fn inspect_otp_needs_a_device() {
+        let options = Options {
+            verbose: false,
+            log_level: onerom_cli::LogLevel::Warn,
+            yes: false,
+            unrecognised: false,
+            device: None,
+            vid_pid: Vec::new(),
+        };
+        for json in [false, true] {
+            let error = cmd_otp(&options, &InspectOtpArgs { json })
+                .await
+                .unwrap_err();
+            assert!(matches!(error, Error::NoDevice), "{error}");
+        }
+    }
 
     /// The keys `parser_notes` puts in its block, and what a consumer reading
     /// the dump beside it still sees.

@@ -4,79 +4,21 @@
 
 //! Integration tests for `onerom-app`'s asynchronous entry points.
 //!
-//! These exercise the public API through a mock [`PluginFetch`] that serves
-//! manifest JSON and plugin binaries from an in-memory map, so the tests are
+//! These exercise the public API through a mock `LocalFetch` that serves manifest
+//! JSON and plugin binaries from an in-memory map, so the tests are
 //! deterministic and offline. One `#[ignore]`d canary at the end fetches the
 //! live manifest to confirm the real schema still deserialises; run it with
 //! `cargo test -- --ignored`.
 
-use std::collections::HashMap;
-use std::sync::Mutex;
+mod common;
 
+use common::{HttpFetch, MockFetch};
 use onerom_app::{
-    Catalogue, Error, LocalPluginFetch, PluginError, PluginNote, PluginType, PluginVersion,
-    ResolvedSource, check_config_plugins, parse_plugins, resolve_plugins,
+    Catalogue, Error, PluginError, PluginNote, PluginType, PluginVersion, ResolvedSource,
+    check_config_plugins, parse_plugins, resolve_plugins,
 };
 
 const BASE: &str = "https://images.onerom.org/plugins";
-
-// ------------------------------------------------------------
-// Mock fetcher
-// ------------------------------------------------------------
-
-/// Transport error type for the mock: a plain message.
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct MockErr(String);
-
-impl std::fmt::Display for MockErr {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
-
-/// A `PluginFetch` backed by a fixed URL -> bytes map.
-///
-/// A missing URL yields a [`MockErr`], modelling a transport failure. Every
-/// requested URL is recorded so tests can assert which fetches happened (for
-/// example, that `plugins.json` is fetched only when a bare name needs it).
-struct MockFetch {
-    responses: HashMap<String, Vec<u8>>,
-    requested: Mutex<Vec<String>>,
-}
-
-impl MockFetch {
-    fn new() -> Self {
-        Self {
-            responses: HashMap::new(),
-            requested: Mutex::new(Vec::new()),
-        }
-    }
-
-    fn with(mut self, url: &str, bytes: Vec<u8>) -> Self {
-        self.responses.insert(url.to_string(), bytes);
-        self
-    }
-
-    fn requested(&self) -> Vec<String> {
-        self.requested.lock().unwrap().clone()
-    }
-
-    fn was_requested(&self, url: &str) -> bool {
-        self.requested().iter().any(|u| u == url)
-    }
-}
-
-impl LocalPluginFetch for MockFetch {
-    type Error = MockErr;
-
-    async fn fetch(&self, source: &str) -> Result<Vec<u8>, Self::Error> {
-        self.requested.lock().unwrap().push(source.to_string());
-        self.responses
-            .get(source)
-            .cloned()
-            .ok_or_else(|| MockErr(format!("no mock response for {source}")))
-    }
-}
 
 // ------------------------------------------------------------
 // Fixtures
@@ -761,24 +703,6 @@ async fn config_without_plugins_checks_nothing() {
 #[tokio::test]
 #[ignore = "hits the live images server; run explicitly with --ignored"]
 async fn live_manifest_still_parses() {
-    /// A real HTTP-backed fetcher, used only by the canary.
-    struct HttpFetch;
-    impl LocalPluginFetch for HttpFetch {
-        type Error = String;
-        async fn fetch(&self, source: &str) -> Result<Vec<u8>, Self::Error> {
-            // ureq is blocking, so run it on a worker thread rather than the
-            // async runtime.
-            let url = source.to_string();
-            tokio::task::spawn_blocking(move || {
-                let mut resp = ureq::get(&url).call().map_err(|e| e.to_string())?;
-                let bytes = resp.body_mut().read_to_vec().map_err(|e| e.to_string())?;
-                Ok::<Vec<u8>, String>(bytes)
-            })
-            .await
-            .map_err(|e| e.to_string())?
-        }
-    }
-
     let cat = Catalogue::fetch(&HttpFetch)
         .await
         .expect("live plugins.json should parse into Catalogue");

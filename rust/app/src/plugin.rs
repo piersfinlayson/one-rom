@@ -38,8 +38,8 @@
 //!
 //! This crate performs no I/O. The asynchronous entry points (in the logic
 //! portion of this module) obtain manifest and binary bytes through the
-//! host-supplied [`PluginFetch`] trait, keeping all transport - `reqwest`,
-//! browser `fetch`, SWD, and so on - out of the crate.
+//! host-supplied [`Fetch`](crate::Fetch) trait, keeping all transport -
+//! `reqwest`, browser `fetch`, SWD, and so on - out of the crate.
 
 use alloc::collections::BTreeSet;
 use alloc::string::{String, ToString};
@@ -52,6 +52,7 @@ use onerom_gen::{Builder, ChipConfig, ChipSetConfig, ChipSetType, SizeHandling};
 use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, PluginError};
+use crate::fetch::LocalFetch;
 
 /// Base URL for plugin manifests and binaries on the images server.
 ///
@@ -859,7 +860,7 @@ impl PluginDisplay {
 /// manifest data unset, so the caller always gets a usable result and
 /// [`PluginDisplay::display_label`] falls back to the slug. A local source
 /// performs no I/O.
-pub async fn resolve_plugin_display<F: LocalPluginFetch>(
+pub async fn resolve_plugin_display<F: LocalFetch>(
     slot_index: usize,
     source: &str,
     fetch: &F,
@@ -891,38 +892,6 @@ pub async fn resolve_plugin_display<F: LocalPluginFetch>(
         plugin_type,
         origin,
     })
-}
-
-// ============================================================
-// PluginFetch trait
-// ============================================================
-
-/// Host-supplied transport for fetching plugin manifests and binaries.
-///
-/// `onerom-app` performs no I/O of its own: every network or filesystem access
-/// is delegated to an implementation of this trait. The single method is given
-/// a source - a URL or path produced by the crate - and must return the bytes,
-/// or the host's own error.
-///
-/// # `Send` variants
-///
-/// This trait is declared through [`trait_variant`], which generates two forms:
-///
-/// - [`LocalPluginFetch`] - the base trait, whose `fetch` future need not be
-///   `Send`. Suitable for single-threaded executors such as the browser
-///   (WASM) and Embassy (embedded).
-/// - `PluginFetch` - a variant whose `fetch` future is `Send`, suitable for
-///   multi-threaded executors such as the CLI's Tokio runtime.
-///
-/// A type that implements `LocalPluginFetch` and whose future is `Send`
-/// automatically satisfies `PluginFetch`.
-#[trait_variant::make(PluginFetch: Send)]
-pub trait LocalPluginFetch {
-    /// The host's transport error type.
-    type Error;
-
-    /// Fetch the bytes at `source` (a URL or path).
-    async fn fetch(&self, source: &str) -> Result<Vec<u8>, Self::Error>;
 }
 
 // ============================================================
@@ -1274,7 +1243,7 @@ pub fn plugin_to_chip_set_config(
 /// error untouched; JSON failures become [`PluginError::ManifestJson`].
 async fn fetch_json<F, T>(url: &str, fetch: &F) -> Result<T, Error<F::Error>>
 where
-    F: LocalPluginFetch,
+    F: LocalFetch,
     T: serde::de::DeserializeOwned,
 {
     let bytes = fetch.fetch(url).await.map_err(|e| Error::fetch(url, e))?;
@@ -1286,7 +1255,7 @@ where
 ///
 /// The catalogue holds plugin identities only; call
 /// [`Catalogue::load_all_releases`] to populate releases.
-async fn fetch_catalogue<F: LocalPluginFetch>(fetch: &F) -> Result<Catalogue, Error<F::Error>> {
+async fn fetch_catalogue<F: LocalFetch>(fetch: &F) -> Result<Catalogue, Error<F::Error>> {
     let wire: PluginsManifestWire = fetch_json(&plugins_manifest_url(), fetch).await?;
     Ok(Catalogue::from_wire(wire))
 }
@@ -1295,7 +1264,7 @@ async fn fetch_catalogue<F: LocalPluginFetch>(fetch: &F) -> Result<Catalogue, Er
 ///
 /// Populates `plugin.releases` (newest first) and the `display_name` and
 /// `description` from the release manifest. Existing releases are replaced.
-pub async fn fetch_releases<F: LocalPluginFetch>(
+pub async fn fetch_releases<F: LocalFetch>(
     plugin: &mut Plugin,
     fetch: &F,
 ) -> Result<(), Error<F::Error>> {
@@ -1314,7 +1283,7 @@ impl Catalogue {
     ///
     /// Performs a single fetch of the top-level manifest. Releases are not
     /// loaded; call [`Catalogue::load_all_releases`] to populate them.
-    pub async fn fetch<F: LocalPluginFetch>(fetch: &F) -> Result<Self, Error<F::Error>> {
+    pub async fn fetch<F: LocalFetch>(fetch: &F) -> Result<Self, Error<F::Error>> {
         fetch_catalogue(fetch).await
     }
 
@@ -1331,7 +1300,7 @@ impl Catalogue {
     /// still show the plugins that *are* available) should use
     /// [`load_all_releases_resilient`](Self::load_all_releases_resilient)
     /// instead.
-    pub async fn load_all_releases<F: LocalPluginFetch>(
+    pub async fn load_all_releases<F: LocalFetch>(
         &mut self,
         fetch: &F,
     ) -> Result<(), Error<F::Error>> {
@@ -1352,7 +1321,7 @@ impl Catalogue {
     /// This lets a caller (a CLI listing, the web dropdown) show every plugin
     /// that *is* reachable while reporting - or ignoring - the ones that are
     /// not, rather than losing the whole list to a single unreachable manifest.
-    pub async fn load_all_releases_resilient<F: LocalPluginFetch>(
+    pub async fn load_all_releases_resilient<F: LocalFetch>(
         &mut self,
         fetch: &F,
     ) -> Vec<(String, Error<F::Error>)> {
@@ -1383,7 +1352,7 @@ impl Catalogue {
 ///
 /// `fw` is the firmware version being built for, used to select the newest
 /// compatible release for unpinned named specs and to reject incompatible ones.
-pub async fn resolve_plugins<F: LocalPluginFetch>(
+pub async fn resolve_plugins<F: LocalFetch>(
     specs: &[PluginSpec],
     fw: &FirmwareVersion,
     fetch: &F,
@@ -1420,7 +1389,7 @@ pub async fn resolve_plugins<F: LocalPluginFetch>(
 }
 
 /// Resolve a single specification.
-async fn resolve_one<F: LocalPluginFetch>(
+async fn resolve_one<F: LocalFetch>(
     spec: &PluginSpec,
     catalogue: Option<&Catalogue>,
     fw: &FirmwareVersion,
@@ -1438,7 +1407,7 @@ async fn resolve_one<F: LocalPluginFetch>(
 
 /// Resolve a named specification: select the release, fetch and verify its
 /// binary, and build the [`ResolvedPlugin`].
-async fn resolve_named<F: LocalPluginFetch>(
+async fn resolve_named<F: LocalFetch>(
     name: &str,
     known_type: Option<PluginType>,
     pinned: Option<PluginVersion>,
@@ -1544,7 +1513,7 @@ fn select_release<'a>(
 /// Resolve a `file=` specification: fetch the binary, read its header for type
 /// and version, and build the [`ResolvedPlugin`]. There is no manifest, so the
 /// SHA-256 check is skipped and verification is header-only.
-async fn resolve_file<F: LocalPluginFetch>(
+async fn resolve_file<F: LocalFetch>(
     path: &str,
     fetch: &F,
 ) -> Result<ResolvedPlugin, Error<F::Error>> {
@@ -1651,7 +1620,7 @@ pub enum PluginNote<E> {
 ///
 /// `builder`'s files must already be loaded - a plugin chip whose image is not
 /// yet present is skipped, since there is nothing to verify.
-pub async fn check_config_plugins<F: LocalPluginFetch>(
+pub async fn check_config_plugins<F: LocalFetch>(
     builder: &Builder,
     fw: &FirmwareVersion,
     fetch: &F,
@@ -1769,7 +1738,7 @@ fn plugin_type_of_chip(chip_type: OraChipType) -> Option<PluginType> {
 //
 // These cover the pure, synchronous logic and the private helpers that the
 // public API is built from. The asynchronous entry points (which require a
-// `PluginFetch` mock) are exercised by the integration tests in `tests/`.
+// `Fetch` mock) are exercised by the integration tests in `tests/`.
 
 #[cfg(test)]
 mod tests {

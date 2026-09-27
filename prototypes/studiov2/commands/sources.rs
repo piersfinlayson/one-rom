@@ -35,7 +35,6 @@ pub static DERIVED: &[(&str, Source)] = &[
     ("COLOUR", Source::Colour),
     ("DEVICE", Source::Serial),
     ("DIR", Source::Directory),
-    ("PIN", Source::Pin),
     ("TYPE", Source::PluginType),
     ("VERSION", Source::Version),
 ];
@@ -44,13 +43,15 @@ pub static DERIVED: &[(&str, Source)] = &[
 /// wrong.
 ///
 /// An entry beats a placeholder, so this does both jobs.  Almost all of it is
-/// the first: `FILE` is the one placeholder covering two different things,
-/// since a file to read has to exist and a file to write must not have to, and
-/// the CLI spells both of them `FILE`.  Which one an option means is in its
-/// help text and in nothing a machine can read.
+/// the first because two placeholders each cover two different things.  Which
+/// one an option means is in its help text and in nothing a machine can read.
+///
+/// - `FILE` is a file to read that has to exist or a file to write that need
+///   not.
+/// - `PIN` is a pin on the board or the PIN of a key on a signing server.
 ///
 /// The second job has one entry.  `self download --version` shows `VERSION`
-/// like the five firmware options do and takes a CLI release rather than a
+/// like the firmware options do and takes a CLI release rather than a
 /// firmware one, so it is the single place a placeholder means something
 /// different on one command from what it means everywhere else.
 ///
@@ -66,6 +67,7 @@ pub static ANNOTATIONS: &[(&str, &str, Source)] = &[
     ("program", "firmware", Source::OpenFile),
     ("program", "base-firmware", Source::OpenFile),
     ("program", "output", Source::SaveFile),
+    ("program", "reset-host", Source::Pin),
     ("image convert", "input", Source::OpenFile),
     ("image convert", "output", Source::SaveFile),
     ("image swap-bytes", "input", Source::OpenFile),
@@ -75,11 +77,15 @@ pub static ANNOTATIONS: &[(&str, &str, Source)] = &[
     ("inspect image", "output", Source::SaveFile),
     ("inspect peek live", "output", Source::SaveFile),
     ("inspect peek memory", "output", Source::SaveFile),
+    ("inspect gpio", "pin", Source::Pin),
     ("control poke live", "input", Source::OpenFile),
     ("control poke memory", "input", Source::OpenFile),
+    ("control reset", "pin", Source::Pin),
+    ("control pin", "pin", Source::Pin),
     ("monitor log", "output", Source::SaveFile),
     ("console", "output", Source::SaveFile),
     ("update slot", "image", Source::OpenFile),
+    ("hardware commission", "key", Source::OpenFile),
     ("firmware build", "config", Source::OpenFile),
     ("firmware build", "save-config", Source::SaveFile),
     ("firmware build", "base-firmware", Source::OpenFile),

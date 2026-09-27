@@ -158,6 +158,31 @@ pub enum InspectCommands {
     ///
     ///   onerom inspect socket --chip-type 2364 --gpio
     Socket(InspectSocketArgs),
+
+    /// Show what a One ROM's OTP holds
+    ///
+    /// Shows:
+    /// - the board size OTP configures
+    /// - the current commissioning instance
+    /// - the bootloader's USB strings
+    /// - the general store
+    ///
+    /// --verbose adds:
+    /// - every commissioning instance and entry
+    /// - the commissioning area's issues
+    /// - the general store's issues and entries
+    /// - the raw rows
+    /// - the lock words
+    ///
+    /// Signatures aren't checked. 'onerom hardware validate' checks them.
+    ///
+    /// Examples:
+    ///
+    ///   onerom inspect otp
+    ///
+    ///   onerom inspect otp --json
+    #[command(verbatim_doc_comment)]
+    Otp(InspectOtpArgs),
 }
 
 #[derive(Debug, Args)]
@@ -393,6 +418,19 @@ pub struct InspectSocketArgs {
 }
 
 impl CommandTrait for InspectSocketArgs {
+    fn requires_device(&self) -> bool {
+        true
+    }
+}
+
+#[derive(Debug, Args)]
+pub struct InspectOtpArgs {
+    /// Show the whole report as JSON instead of text.
+    #[arg(long)]
+    pub json: bool,
+}
+
+impl CommandTrait for InspectOtpArgs {
     fn requires_device(&self) -> bool {
         true
     }

@@ -8,8 +8,7 @@
 //! is not specific to any one of them: the CLI, Studio, the web tool (via
 //! WASM), and embedded programmers such as Airfrog. It is deliberately
 //! `no_std` (with `alloc`) and performs **no I/O of its own** - all network and
-//! filesystem access is delegated to the host through the [`PluginFetch`]
-//! trait.
+//! filesystem access is delegated to the host through the [`Fetch`] trait.
 //!
 //! # Design
 //!
@@ -19,8 +18,8 @@
 //!   compatible release, verifying a binary, generating a chip-set config.
 //!   These never touch the network and return [`PluginError`] directly.
 //! - **Fetching** is asynchronous and host-specific. The crate never fetches;
-//!   it asks the host to, via [`PluginFetch`], and threads the host's own error
-//!   type back out through [`Error`].
+//!   it asks the host to, via [`Fetch`], and threads the host's own error type
+//!   back out through [`Error`].
 //!
 //! This split is what lets the same logic serve a `reqwest`-based CLI, a
 //! JS-`fetch`-based WASM build, and an SWD-based embedded programmer without
@@ -41,25 +40,43 @@
 
 extern crate alloc;
 
+mod commission;
 mod error;
+mod fetch;
 pub mod identity;
+mod otp;
 mod plugin;
+mod signers;
 
+// Commissioning a board.
+pub use commission::{
+    BoardSize, BoardSizeError, CommissionError, Plan, PlannedWrite, Prepared, Request, RequestDate,
+    RowValue, Step, StepKind, prepare,
+};
 pub use error::{Error, PluginError};
+// Fetch abstraction (host-implemented). `trait_variant` generates the `Send`
+// variant `Fetch` from the base `LocalFetch`.
+pub use fetch::{Fetch, LocalFetch};
+// OTP access (host-implemented) and the readers built on it. `trait_variant`
+// generates the `Send` variant `OtpAccess` from the base `LocalOtpAccess`.
+// `MemoryOtp` stands in for a chip in tests. The constants describe the lock
+// word commissioning writes and FLASH_DEVINFO's fields.
+pub use otp::{
+    EccRow, FLASH_DEVINFO_CS0_SIZE_SHIFT, FLASH_DEVINFO_CS1_GPIO, FLASH_DEVINFO_CS1_SIZE_SHIFT,
+    FLASH_DEVINFO_D8H_ERASE_SUPPORTED, FLASH_DEVINFO_SIZE_BITS, Interruption, LOCK1_READ_ONLY,
+    LocalOtpAccess, MemoryOtp, OtpAccess, OtpError, OtpReport, PageLock, read_chip_id,
+    read_commissioning, read_report,
+};
 pub use plugin::{
     // Catalogue and core types.
     Catalogue,
     // The newest release that supports a firmware, carried by the two
     // incompatibility errors.
     CompatibleRelease,
-    // Fetch abstraction (host-implemented). `trait_variant` generates the
-    // `Send` variant `PluginFetch` from the base `LocalPluginFetch`.
-    LocalPluginFetch,
     Plugin,
     // Display of a device's plugin slot, resolved from its recorded image
     // source (manifest-backed or local).
     PluginDisplay,
-    PluginFetch,
     // Non-fatal outcome of checking the plugins a config names.
     PluginNote,
     PluginOrigin,
@@ -76,7 +93,7 @@ pub use plugin::{
     // Check the plugins a built config names (delegates fetching).
     check_config_plugins,
     compatible_releases,
-    // Async resolution (delegate fetching to `PluginFetch`).
+    // Async resolution (delegate fetching to `Fetch`).
     fetch_releases,
     newest_compatible,
     // Pure decision logic.
@@ -88,6 +105,9 @@ pub use plugin::{
     validate_resolved_plugin_types,
     verify_binary,
 };
+// The signing keys and the check of a commissioning instance's signature
+// against them.
+pub use signers::{Signer, SignerError, SignerTable, Verdict, verify_instance};
 
 /// Returns the version of this crate, as set in `Cargo.toml`.
 pub fn crate_version() -> &'static str {

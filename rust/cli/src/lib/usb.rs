@@ -20,6 +20,7 @@ use picoboot::{
 use std::time::Duration;
 
 use crate::Error;
+use crate::otp::Commissioning;
 use crate::picobootx::LedQueryArgs;
 pub use crate::picobootx::{
     Caps, GpioEntry, GpioSetArgs, GpioState, GpioUse, LedId, LedState, LedSubCmd, SetLedArgs,
@@ -278,6 +279,7 @@ pub async fn enumerate_devices(options: &Options) -> Result<Vec<Device>, Error> 
             usb_can_run: false,
             chip_id: None,
             rp_variant: None,
+            commissioning: Commissioning::NotRead,
         };
 
         let answered = match read_device_info(&mut device).await {
@@ -307,7 +309,7 @@ pub async fn enumerate_devices(options: &Options) -> Result<Vec<Device>, Error> 
     Ok(devices)
 }
 
-async fn get_picoboot(device: &Device, long: bool) -> Result<Picoboot, Error> {
+pub(crate) async fn get_picoboot(device: &Device, long: bool) -> Result<Picoboot, Error> {
     open_picoboot(device, long)
         .await
         .map_err(|e| Error::Usb(e.to_string()))
@@ -475,6 +477,12 @@ pub async fn read_device_info(device: &mut Device) -> Result<(), AccessError> {
         }
     };
     device.set_firmware(firmware);
+
+    // A device without firmware this build recognises can still be identified
+    // by its commissioning.
+    if device.firmware.is_none() {
+        device.commissioning = Commissioning::read(device).await;
+    }
 
     // Read the chip ID - the device's invariant identity - and package variant.
     let (chip_id, rp_variant) = resolve_chip_id(device).await;

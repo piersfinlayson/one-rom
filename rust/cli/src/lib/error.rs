@@ -8,6 +8,7 @@ use onerom_config::fw::FirmwareVersion;
 use onerom_gen::FileFormat;
 
 use crate::hint;
+use crate::otp::{escape_controls, format_date};
 use crate::plugin::{CompatibleRelease, PluginType, PluginVersion};
 
 /// Render the way out of a plugin incompatibility as a further indented line.
@@ -301,9 +302,9 @@ pub enum Error {
     OddLengthImage(String, usize),
 
     #[error(
-        "Firmware board type '{0}' does not match the expected board type '{1}'.\n  Use --force to override."
+        "Firmware board type '{firmware}' does not match the expected board type '{expected}'.\n  Use --force to override."
     )]
-    BoardMismatch(String, String),
+    BoardMismatch { firmware: String, expected: String },
 
     #[error(
         "{0}\n  Use --force to program it anyway - for example when the first slot holds a bootloader that selects the others itself."
@@ -435,6 +436,136 @@ pub enum Error {
 
     #[error("Output directory does not exist: {0}")]
     OutputDirMissing(String),
+
+    /// One of these was refused:
+    /// - a signer table
+    /// - the table's pointer
+    /// - a retired key's record file
+    #[error("Can't use the signing keys:\n  {0}.")]
+    Signer(onerom_app::SignerError),
+
+    #[error("Hit an error accessing OTP:\n  {0}")]
+    Otp(onerom_app::OtpError),
+
+    #[error("{}", commission_text(.0))]
+    Commission(onerom_app::CommissionError),
+
+    /// An image for a board other than the one the One ROM is commissioned
+    /// as.
+    #[error(
+        "This One ROM is commissioned as {commissioned} but the image is for {image}.\n  Use --force to program it anyway."
+    )]
+    CommissionedBoardMismatch { commissioned: String, image: String },
+
+    #[error(
+        "Key file {0} is encrypted.\n  --key needs an unencrypted PKCS#8 PEM file. 'openssl genpkey -algorithm ed25519' writes one."
+    )]
+    KeyFileEncrypted(String),
+
+    #[error(
+        "Key file {0} doesn't hold an Ed25519 key.\n  --key needs one. 'openssl genpkey -algorithm ed25519' writes one."
+    )]
+    KeyFileNotEd25519(String),
+
+    #[error(
+        "Key file {0} isn't a PKCS#8 PEM private key.\n  --key needs one. 'openssl genpkey -algorithm ed25519' writes one."
+    )]
+    KeyFileNotPkcs8(String),
+
+    #[error(
+        "The signing server needs a PIN.\n  Use --pin or run the command in a terminal to be asked for it."
+    )]
+    NoPin,
+
+    /// The signing server replied with an error status and a one-line reason.
+    #[error("{}\n  {url}: {message}", signing_server_text(.status))]
+    SigningServer {
+        url: String,
+        status: u16,
+        message: String,
+    },
+
+    #[error("The signing server replied with {len} bytes where {expected} were expected.\n  {url}")]
+    SigningServerReply {
+        url: String,
+        len: usize,
+        expected: usize,
+    },
+
+    #[error("The signing key isn't in the table of signing keys.\n  Its public key is {0}.")]
+    SigningKeyUnknown(String),
+
+    #[error("Signing key {name} ({id}) is retired.")]
+    SigningKeyRetired { id: u16, name: String },
+
+    /// A signature that doesn't verify with the signer's key in the table.
+    #[error("The signature doesn't verify with signing key {name} ({id}).\n  OTP wasn't written.")]
+    BadSignature { id: u16, name: String },
+
+    /// `hardware validate` didn't accept the board's commissioning. It
+    /// carries the reason.
+    #[error("This One ROM's commissioning doesn't validate.\n  {0}")]
+    NotValidated(String),
+}
+
+/// The first line of a [`Error::SigningServer`] for HTTP status `status`.
+fn signing_server_text(status: &u16) -> String {
+    match status {
+        400 => "The signing server refused the request.".to_string(),
+        401 => "The signing server refused the PIN.".to_string(),
+        404 => "The signing server doesn't have a key at that URL.".to_string(),
+        503 => {
+            "The signing server couldn't record the signature so it didn't return it.".to_string()
+        }
+        status => format!("The signing server replied with HTTP status {status}."),
+    }
+}
+
+/// The text of an [`Error::Commission`].
+///
+/// A value read from OTP is printed with its control characters escaped. Where
+/// an option overrides the refusal the text says which.
+fn commission_text(error: &onerom_app::CommissionError) -> String {
+    use onerom_app::CommissionError as E;
+    let refusal = match error {
+        E::AlreadyCommissioned {
+            board,
+            manufacturer,
+            date,
+            signer,
+            only_date_differs,
+            ..
+        } => {
+            let advice = if *only_date_differs {
+                "Leave out --date to finish that commissioning or use --force to commission it again."
+            } else {
+                "Use --force to commission it again."
+            };
+            format!(
+                "This One ROM is already commissioned as {} by {} on {} with signer {signer}.\n  {advice}",
+                escape_controls(board),
+                escape_controls(manufacturer),
+                format_date(date),
+            )
+        }
+        E::SecondChipConfigured => {
+            format!("{error}.\n  Use --size L, or --force to commission it as M anyway.")
+        }
+        E::Otp { .. }
+        | E::NewerData { .. }
+        | E::UnknownKey { .. }
+        | E::AreaFull
+        | E::Build(_)
+        | E::NotFire(_)
+        | E::NoExternalFlash(_)
+        | E::SlotSizeInvalid { .. }
+        | E::RowWritten { .. }
+        | E::LockWord { .. }
+        | E::PageLocked { .. }
+        | E::UsbBootFlags { .. }
+        | E::ReadBack { .. } => format!("{error}."),
+    };
+    format!("Can't commission this One ROM:\n  {refusal}")
 }
 
 impl Error {
@@ -528,7 +659,20 @@ impl From<onerom_app::Error<onerom_fw::Error>> for Error {
             // errors are mapped elsewhere in the CLI (via From<onerom_fw::Error>).
             onerom_app::Error::Fetch { error, .. } => error.into(),
             onerom_app::Error::Plugin(p) => p.into(),
+            onerom_app::Error::Signer(e) => Error::Signer(e),
         }
+    }
+}
+
+impl From<onerom_app::OtpError> for Error {
+    fn from(e: onerom_app::OtpError) -> Self {
+        Error::Otp(e)
+    }
+}
+
+impl From<onerom_app::CommissionError> for Error {
+    fn from(e: onerom_app::CommissionError) -> Self {
+        Error::Commission(e)
     }
 }
 

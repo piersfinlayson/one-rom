@@ -15,12 +15,14 @@ use crate::firmware::{
     verify_assembled_firmware,
 };
 use crate::utils::{check_device, check_fire_board_optional, resolve_board};
+use onerom_app::read_commissioning;
 use onerom_cli::device::select_device_by_chip_id;
+use onerom_cli::otp::{PicobootOtp, escape_controls};
 use onerom_cli::pin::ResolvedPin;
 use onerom_cli::plugin::{parse_plugins, resolve_plugins};
 use onerom_cli::slot::{self, GlobalConfig, check_slot_confirmations, save_config};
 use onerom_cli::usb::{RebootArgs, flash_program, flash_program_read, reboot};
-use onerom_cli::{Error, Options};
+use onerom_cli::{Device, DeviceState, Error, Options};
 use onerom_fw_parser::ParsedDevice;
 use onerom_metadata::GPIO_RESET_DEFAULT_HOLD_MS;
 
@@ -183,34 +185,114 @@ async fn verify_flash(options: &Options, data: &[u8]) -> Result<(), Error> {
     Ok(())
 }
 
-async fn flash_device(options: &mut Options, data: &[u8]) -> Result<(), Error> {
-    reboot_to_stopped_if_running(options).await?;
+/// Flashes `data`. `image_board` is the board the image is for. `force`
+/// programs a board commissioned as another board.
+async fn flash_device(
+    options: &mut Options,
+    data: &[u8],
+    image_board: Option<Board>,
+    force: bool,
+) -> Result<(), Error> {
+    reboot_to_stopped(options, &[DeviceState::Running]).await?;
 
     let device = options.device.as_ref().unwrap();
+    check_commissioned_board(device, image_board, force).await?;
     if options.verbose {
         println!("Flashing {} bytes...", data.len());
     }
     flash_program(device, data).await
 }
 
-async fn reboot_to_stopped_if_running(options: &mut Options) -> Result<(), Error> {
+/// Reboots the device into the bootloader if its state is one of `states` and
+/// selects it again by its chip ID. Returns whether it rebooted it.
+pub(crate) async fn reboot_to_stopped(
+    options: &mut Options,
+    states: &[DeviceState],
+) -> Result<bool, Error> {
     let device = options.device.as_ref().unwrap();
-    if !device.is_running() {
-        return Ok(());
+    if !states.contains(&device.state) {
+        return Ok(false);
     }
 
     if options.verbose {
-        println!("Device is running, rebooting into stopped mode...");
+        let state = if device.state == DeviceState::Limp {
+            "in limp mode"
+        } else {
+            "running"
+        };
+        println!("Device is {state}, rebooting into stopped mode...");
     }
     let chip_id = device.chip_id;
     reboot(device, &RebootArgs::stopped(false, false)).await?;
 
     let new_device = select_device_by_chip_id(chip_id, options).await?;
-    if new_device.is_running() {
+    if states.contains(&new_device.state) {
         return Err(Error::DeviceStillRunning);
     }
     options.device = Some(new_device);
-    Ok(())
+    Ok(true)
+}
+
+/// Reboots a device that [`reboot_to_stopped`] stopped back into running
+/// mode.
+pub(crate) async fn reboot_to_running(options: &Options) -> Result<(), Error> {
+    let device = options.device.as_ref().unwrap();
+    if options.verbose {
+        println!("Rebooting device into running mode...");
+    }
+    reboot(device, &RebootArgs::running(false, false)).await
+}
+
+/// Refuses to program a commissioned board with an image for another board
+/// unless `force`.
+///
+/// An image without a board isn't checked. Where OTP can't be read it warns and
+/// goes ahead.
+async fn check_commissioned_board(
+    device: &Device,
+    image_board: Option<Board>,
+    force: bool,
+) -> Result<(), Error> {
+    let Some(image_board) = image_board else {
+        return Ok(());
+    };
+    let area = match PicobootOtp::open(device).await {
+        Ok(mut otp) => read_commissioning(&mut otp).await.map_err(Error::from),
+        Err(e) => Err(e),
+    };
+    match area {
+        Ok(area) => check_board(area.current().and_then(|i| i.board()), image_board, force),
+        Err(e) => {
+            eprintln!(
+                "Warning: couldn't read this One ROM's commissioning so the image's board isn't checked against it.\n  {e}"
+            );
+            Ok(())
+        }
+    }
+}
+
+/// Refuses an image for `image` on a board commissioned as `commissioned`.
+/// With `force` it warns instead.
+fn check_board(commissioned: Option<&str>, image: Board, force: bool) -> Result<(), Error> {
+    let Some(commissioned) = commissioned else {
+        return Ok(());
+    };
+    if Board::try_from_str(commissioned) == Some(image) {
+        return Ok(());
+    }
+    let commissioned = escape_controls(commissioned);
+    if force {
+        eprintln!(
+            "Warning: this One ROM is commissioned as '{commissioned}' but the image is for '{}' (continuing due to --force)",
+            image.name()
+        );
+        Ok(())
+    } else {
+        Err(Error::CommissionedBoardMismatch {
+            commissioned,
+            image: image.name().to_string(),
+        })
+    }
 }
 
 fn write_firmware_file(path: &str, data: &[u8]) -> Result<(), Error> {
@@ -358,7 +440,7 @@ pub async fn cmd_program(
         }
 
         println!("Programming device - DO NOT DISCONNECT");
-        flash_device(options, &data).await?;
+        flash_device(options, &data, image.get_board(), args.force).await?;
 
         if args.verify {
             verify_flash(options, &data).await?;
@@ -370,7 +452,7 @@ pub async fn cmd_program(
         if args.scan_slots {
             if let Some(device) = options.device.as_ref() {
                 println!("Reading device after programming...");
-                crate::inspect::output_slot_info(device, options, "")
+                crate::inspect::output_slot_info(device, options, "", &[])
                     .await
                     .inspect_err(|_| log::error!("Failed to read slots after programming"))?;
             } else {
@@ -421,4 +503,48 @@ pub async fn cmd_program(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn board(name: &str) -> Board {
+        Board::try_from_str(name).unwrap()
+    }
+
+    #[test]
+    fn a_board_without_commissioning_takes_any_image() {
+        assert!(check_board(None, board("fire-24-f"), false).is_ok());
+    }
+
+    #[test]
+    fn a_commissioned_board_takes_an_image_for_its_board() {
+        assert!(check_board(Some("fire-24-f"), board("fire-24-f"), false).is_ok());
+    }
+
+    #[test]
+    fn an_image_for_another_board_needs_force() {
+        let error = check_board(Some("fire-24-f"), board("fire-24-e"), false).unwrap_err();
+        assert!(
+            matches!(&error, Error::CommissionedBoardMismatch { commissioned, image }
+                if commissioned == "fire-24-f" && image == "fire-24-e"),
+            "{error}"
+        );
+        assert!(error.to_string().contains("--force"), "{error}");
+        assert!(check_board(Some("fire-24-f"), board("fire-24-e"), true).is_ok());
+    }
+
+    /// A board name this build doesn't know can't be the image's board.
+    #[test]
+    fn an_unknown_commissioned_board_needs_force() {
+        assert!(check_board(Some("fire-99-z"), board("fire-24-f"), false).is_err());
+        assert!(check_board(Some("fire-99-z"), board("fire-24-f"), true).is_ok());
+    }
+
+    #[test]
+    fn a_commissioned_board_is_shown_with_its_control_characters_escaped() {
+        let error = check_board(Some("fire\u{1b}[2J"), board("fire-24-f"), false).unwrap_err();
+        assert!(error.to_string().contains("fire\\u{1b}[2J"), "{error}");
+    }
 }

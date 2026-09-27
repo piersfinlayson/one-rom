@@ -4,6 +4,8 @@
 
 - `inspect info` indicates what it cannot decode and why.
 - `peek` no longer fails on a large read.
+- `program` and `firmware build` report a board mismatch correctly.
+  - `Error::BoardMismatch` has named fields `firmware` and `expected`.
 
 ## v0.4.1 - 2026-09-17
 

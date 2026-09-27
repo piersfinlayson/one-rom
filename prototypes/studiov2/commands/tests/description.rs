@@ -16,10 +16,10 @@ use studiov2_commands::{COMMANDS, Command, GLOBALS, Group, Kind, Opt};
 
 /// Every option the CLI has, counted by hand from `rust/cli/src/args/`.
 ///
-/// 171 belong to a command and 6 are global.  A reader that quietly stops
+/// 181 belong to a command and 6 are global.  A reader that quietly stops
 /// understanding an attribute drops options rather than failing, and this is
 /// what turns that into a test failure.
-const TOTAL_OPTIONS: usize = 177;
+const TOTAL_OPTIONS: usize = 187;
 
 /// The command the CLI puts at that path.
 fn command(path: &[&str]) -> &'static Command {
@@ -124,16 +124,6 @@ fn a_command_reached_twice_is_described_once() {
 }
 
 #[test]
-fn a_hidden_command_is_not_described() {
-    assert!(
-        !COMMANDS
-            .iter()
-            .any(|command| command.path == ["update", "otp"]),
-        "onerom update otp is hidden in the CLI and should not be described"
-    );
-}
-
-#[test]
 fn image_convert_takes_its_five_options() {
     let convert = command(&["image", "convert"]);
     let longs: Vec<&str> = convert.opts.iter().map(|opt| opt.long).collect();
@@ -217,6 +207,18 @@ fn control_erase_says_you_must_pick_one_target() {
     assert_eq!(target.opts, ["all", "offset", "address"]);
     assert!(target.required, "erase_target has to be given");
     assert!(!target.multiple, "erase_target takes one of the three");
+}
+
+#[test]
+fn hardware_commission_needs_a_signing_server_or_a_key_file() {
+    // The CLI declares this group as `group(ArgGroup::new(...))` rather than
+    // `group = ArgGroup::new(...)`.
+    let commission = command(&["hardware", "commission"]);
+    let signing = group(commission, "signing");
+
+    assert_eq!(signing.opts, ["signer", "key"]);
+    assert!(signing.required, "signing has to be given");
+    assert!(!signing.multiple, "signing takes one of the two");
 }
 
 #[test]
@@ -334,6 +336,62 @@ fn a_help_quoting_the_firmware_quotes_the_number() {
         blink.help,
         "Milliseconds for one on and off. Defaults to 1000."
     );
+}
+
+#[test]
+fn a_verbatim_doc_comment_keeps_its_lines() {
+    // clap keeps every line of a `verbatim_doc_comment` as written.  That
+    // includes the summary.
+    let commission = command(&["hardware", "commission"]);
+    assert_eq!(
+        commission.about,
+        "Commission a One ROM by writing its identity to OTP"
+    );
+
+    let long_about = commission
+        .long_about
+        .expect("hardware commission has a long_about");
+    assert_eq!(
+        long_about.lines().take(5).collect::<Vec<_>>(),
+        [
+            "Writes to the RP2350's OTP:",
+            "- a signed and dated commissioning instance holding the board's type",
+            "  and its manufacturer",
+            "- the bootloader's USB strings",
+            "- the settings for an L board's second flash chip",
+        ]
+    );
+
+    assert_eq!(
+        opt(commission, "force").help.lines().collect::<Vec<_>>(),
+        [
+            "Go ahead despite:",
+            "- a current commissioning instance holding other values",
+            "- firmware for another board",
+            "- OTP configuring a second flash chip for an M board",
+        ]
+    );
+
+    // The attribute is on one command so the next one's wrapped lines are
+    // still joined.
+    let validate = command(&["hardware", "validate"])
+        .long_about
+        .expect("hardware validate has a long_about");
+    assert!(validate.starts_with(
+        "Checks the signature of each commissioning instance in the One ROM's OTP against"
+    ));
+}
+
+#[test]
+fn a_summary_drops_its_full_stop_as_clap_does() {
+    // Unless the doc comment is verbatim.  clap then keeps the summary as
+    // written.
+    let validate = command(&["hardware", "validate"]);
+    assert_eq!(
+        validate.about,
+        "Check the signatures of a One ROM's commissioning"
+    );
+    assert_eq!(opt(validate, "json").help, "Show the result as JSON");
 }
 
 #[test]

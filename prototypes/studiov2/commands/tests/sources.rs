@@ -19,11 +19,12 @@ include!("../sources.rs");
 
 /// How many options the placeholder alone settles.
 ///
-/// It is the number that says whether the approach pays for itself: 36 of the
-/// 62 come from a rule that needed nobody to type anything, and 25 of the 26
-/// entries written by hand are the `FILE` options.  The odd one is `self
-/// download --version`, where a placeholder derives and derives wrongly.
-const DERIVED_OPTIONS: usize = 36;
+/// It is the number that says whether the approach pays for itself: these
+/// options come from a rule that needed nobody to type anything.  Nearly every
+/// entry written by hand is a `FILE` or a `PIN` option.  `FILE` and `PIN` are
+/// the two placeholders that each mean two things.  The odd one is
+/// `self download --version`.  Its placeholder derives the wrong source.
+const DERIVED_OPTIONS: usize = 33;
 
 /// The command the CLI puts at that path.
 fn command(path: &[&str]) -> &'static Command {
@@ -72,7 +73,7 @@ fn a_board_is_a_board_wherever_it_appears() {
         })
         .collect();
 
-    assert_eq!(boards.len(), 14, "the CLI has 14 --board options");
+    assert_eq!(boards.len(), 15, "the CLI has 15 --board options");
 }
 
 #[test]
@@ -167,6 +168,16 @@ fn a_serial_a_user_invents_is_not_a_serial_to_pick_from() {
     let program = opt(command(&["program"]), "serial-override");
     assert_eq!(program.value_name, Some("SERIAL"));
     assert_eq!(program.source, None);
+}
+
+#[test]
+fn the_pin_of_a_signing_key_is_not_a_pin_on_the_board() {
+    // `PIN` is a pin on the board or the PIN of a key on a signing server.  A
+    // pane can list a board's pins.  A key's PIN can't be listed.  The CLI
+    // spells both `PIN` so neither comes from the placeholder.
+    let pin = opt(command(&["hardware", "commission"]), "pin");
+    assert_eq!(pin.value_name, Some("PIN"));
+    assert_eq!(pin.source, None);
 }
 
 #[test]

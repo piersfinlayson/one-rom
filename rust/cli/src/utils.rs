@@ -393,31 +393,48 @@ pub fn check_live_read_write(
 
 /// Resolves the target board type.
 ///
-/// If `board_arg` is provided, it takes precedence. Otherwise the board
-/// is inferred from the connected device. Returns `None` if neither is
-/// available, leaving it to the caller to decide whether that's an error.
+/// It takes the first of:
+/// - `board_arg`
+/// - the board the connected device's One ROM firmware is for
+/// - the board the connected device's current commissioning instance holds
+///
+/// Returns `None` if there isn't a board argument or a device. The caller
+/// decides whether that's an error.
 pub fn resolve_board(
     options: &Options,
     board_arg: &Option<String>,
 ) -> Result<Option<Board>, Error> {
-    if let Some(board) = board_arg {
-        debug!("Resolving board from argument: {board}");
-        Ok(Some(
-            onerom_config::hw::Board::try_from_str(board)
-                .ok_or_else(|| Error::InvalidBoard(board.clone(), get_supported_boards()))?,
-        ))
-    } else if let Some(device) = options.device.as_ref() {
-        debug!("Resolving board from connected device");
-        let board = match &device.firmware {
-            Some(Firmware::OneRom(onerom)) => onerom.get_board(),
-            Some(Firmware::Lab(_)) | None => None,
-        }
-        .ok_or(Error::NoBoardFromDevice(device.to_string()))?;
-        Ok(Some(board))
-    } else {
-        debug!("No board argument or device available to resolve board");
-        Ok(None)
-    }
+    let arg = board_arg
+        .as_ref()
+        .map(|board| {
+            debug!("Resolving board from argument: {board}");
+            Board::try_from_str(board)
+                .ok_or_else(|| Error::InvalidBoard(board.clone(), get_supported_boards()))
+        })
+        .transpose()?;
+    let Some(device) = options.device.as_ref() else {
+        debug!("There isn't a device to resolve the board from");
+        return Ok(arg);
+    };
+    let firmware = match &device.firmware {
+        Some(Firmware::OneRom(onerom)) => onerom.get_board(),
+        Some(Firmware::Lab(_)) | None => None,
+    };
+    choose_board(arg, firmware, device.commissioned_board())
+        .map(Some)
+        .ok_or(Error::NoBoardFromDevice(device.to_string()))
+}
+
+/// The first of these boards that is known:
+/// - `arg` from `--board`
+/// - `firmware` from a device's firmware
+/// - `commissioned` from a device's current commissioning instance
+fn choose_board(
+    arg: Option<Board>,
+    firmware: Option<Board>,
+    commissioned: Option<Board>,
+) -> Option<Board> {
+    arg.or(firmware).or(commissioned)
 }
 
 /// Resolves the target board type, where not knowing it is survivable.
@@ -554,5 +571,29 @@ mod tests {
         assert!(check_fire_board_optional(&None).is_ok());
         assert!(check_fire_board_optional(&Some(fire)).is_ok());
         assert!(check_fire_board_optional(&Some(ice)).is_err());
+    }
+
+    /// The board is the first of these that is known:
+    /// - --board
+    /// - the firmware's board
+    /// - the commissioned board
+    #[test]
+    fn a_board_comes_from_the_option_then_the_firmware_then_otp() {
+        let [arg, firmware, commissioned] =
+            ["fire-24-f", "fire-28-c", "fire-40-a"].map(|name| Board::try_from_str(name).unwrap());
+        assert_eq!(
+            choose_board(Some(arg), Some(firmware), Some(commissioned)),
+            Some(arg)
+        );
+        assert_eq!(choose_board(Some(arg), None, None), Some(arg));
+        assert_eq!(
+            choose_board(None, Some(firmware), Some(commissioned)),
+            Some(firmware)
+        );
+        assert_eq!(
+            choose_board(None, None, Some(commissioned)),
+            Some(commissioned)
+        );
+        assert_eq!(choose_board(None, None, None), None);
     }
 }

@@ -11,9 +11,11 @@ use log::{debug, error, info, trace, warn};
 mod args;
 mod board;
 mod board_view;
+mod commissioning;
 mod console;
 mod control;
 mod firmware;
+mod hardware;
 mod image;
 mod inspect;
 mod monitor;
@@ -21,6 +23,8 @@ mod plugin;
 mod program;
 mod scan;
 mod self_cmd;
+#[cfg(test)]
+mod test_board;
 mod update;
 mod utils;
 
@@ -29,6 +33,7 @@ use args::Cli;
 use args::Commands;
 use args::control::{ControlCommands, ControlLedCommands, ControlPokeCommands, ControlRgbCommands};
 use args::firmware::FirmwareCommands;
+use args::hardware::HardwareCommands;
 use args::image::ImageCommands;
 use args::inspect::{InspectCommands, InspectPeekCommands};
 use args::monitor::MonitorCommands;
@@ -78,6 +83,7 @@ async fn sub_main() -> Result<(), Error> {
             InspectCommands::Rgb(args) => inspect::cmd_rgb(&options, args).await,
             InspectCommands::Header(args) => inspect::cmd_header(&options, args).await,
             InspectCommands::Socket(args) => inspect::cmd_socket(&options, args).await,
+            InspectCommands::Otp(args) => inspect::cmd_otp(&options, args).await,
             InspectCommands::Peek(args) => match &args.command {
                 InspectPeekCommands::Live(args) => inspect::cmd_peek_live(&options, args).await,
                 InspectPeekCommands::Memory(args) => inspect::cmd_peek_memory(&options, args).await,
@@ -117,7 +123,12 @@ async fn sub_main() -> Result<(), Error> {
         Commands::Update(args) => match &args.command {
             UpdateCommands::Slot(args) => update::cmd_slot(&options, args).await,
             UpdateCommands::Commit(args) => update::cmd_commit(&options, args).await,
-            UpdateCommands::Otp(args) => update::cmd_otp(&options, args).await,
+        },
+        Commands::Hardware(args) => match &args.command {
+            HardwareCommands::Commission(args) => {
+                hardware::cmd_commission(&mut options, args).await
+            }
+            HardwareCommands::Validate(args) => hardware::cmd_validate(&mut options, args).await,
         },
         Commands::Image(args) => match &args.command {
             ImageCommands::SwapBytes(args) => image::cmd_swap_bytes(&options, args).await,
@@ -366,5 +377,95 @@ mod cli_assert {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod help_text {
+    use super::*;
+
+    /// The long help `--help` prints for the command at `path`.
+    fn long_help(path: &[&str]) -> String {
+        let mut cli = Cli::command().bin_name("onerom");
+        cli.build();
+        let mut command = &mut cli;
+        for name in path {
+            command = command
+                .find_subcommand_mut(name)
+                .unwrap_or_else(|| panic!("there isn't a '{name}' command"));
+        }
+        command.render_long_help().to_string()
+    }
+
+    /// Checks that each of `lines` is a line of the help of the command at
+    /// `path`. The indent doesn't matter.
+    fn assert_lines(path: &[&str], lines: &[&str]) {
+        let help = long_help(path);
+        println!("{help}");
+        for line in lines {
+            assert!(
+                help.lines().any(|printed| printed.trim() == *line),
+                "'{line}' isn't a line of its own:\n{help}"
+            );
+        }
+    }
+
+    /// clap joins a doc comment paragraph's lines into one unless the comment
+    /// is verbatim. A list prints a bullet per line only in a verbatim comment.
+    #[test]
+    fn hardware_commission_prints_a_bullet_per_line() {
+        assert_lines(
+            &["hardware", "commission"],
+            &[
+                "Writes to the RP2350's OTP:",
+                "- a signed and dated commissioning instance holding the board's type",
+                "and its manufacturer",
+                "- the bootloader's USB strings",
+                "- the settings for an L board's second flash chip",
+                "Go ahead despite:",
+                "- a current commissioning instance holding other values",
+                "- firmware for another board",
+                "- OTP configuring a second flash chip for an M board",
+            ],
+        );
+    }
+
+    /// clap drops the period from a summary it takes from a doc comment but
+    /// not from a verbatim one. These summaries leave it out so the command
+    /// lists stay alike.
+    #[test]
+    fn a_verbatim_commands_summary_ends_without_a_period() {
+        let cli = Cli::command();
+        for [group, name] in [["hardware", "commission"], ["inspect", "otp"]] {
+            let command = cli
+                .find_subcommand(group)
+                .and_then(|group| group.find_subcommand(name))
+                .unwrap_or_else(|| panic!("there isn't a '{group} {name}' command"));
+            let about = command.get_about().map(ToString::to_string);
+            assert!(
+                about.as_deref().is_some_and(|about| !about.ends_with('.')),
+                "{group} {name}: {about:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn inspect_otp_prints_a_bullet_per_line() {
+        assert_lines(
+            &["inspect", "otp"],
+            &[
+                "Shows:",
+                "- the board size OTP configures",
+                "- the current commissioning instance",
+                "- the bootloader's USB strings",
+                "- the general store",
+                "--verbose adds:",
+                "- every commissioning instance and entry",
+                "- the commissioning area's issues",
+                "- the general store's issues and entries",
+                "- the raw rows",
+                "- the lock words",
+            ],
+        );
     }
 }

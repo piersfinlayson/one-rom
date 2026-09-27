@@ -17,6 +17,7 @@ use wildmatch::WildMatch;
 
 use crate::Options;
 use crate::error::Error;
+use crate::otp::Commissioning;
 use crate::usb::enumerate_devices;
 
 /// One ROM device state
@@ -79,6 +80,9 @@ pub struct Device {
     /// The RP2350 package variant (RP235xA/RP235xB), if it has been read.
     /// Populated when read from a running device via GET_INFO.
     pub rp_variant: Option<RpVariant>,
+    /// The device's commissioning area. Enumeration reads it only for a
+    /// device without firmware this build recognises.
+    pub commissioning: Commissioning,
 }
 
 impl std::fmt::Display for Device {
@@ -132,9 +136,10 @@ impl std::fmt::Debug for Device {
 }
 
 impl Device {
-    /// Returns whether this build recognises the device's firmware.
+    /// Returns whether this build recognises the device's firmware or its OTP
+    /// holds a current commissioning instance.
     pub fn is_recognised(&self) -> bool {
-        self.firmware.is_some()
+        self.firmware.is_some() || self.commissioning.current().is_some()
     }
 
     pub fn is_running(&self) -> bool {
@@ -221,12 +226,27 @@ impl Device {
         }
     }
 
-    /// The device's board, from One ROM's metadata or a Lab's structures.
+    /// The board the device's firmware is for or else its commissioned board.
     pub(crate) fn board(&self) -> Option<Board> {
+        self.firmware_board().or_else(|| self.commissioned_board())
+    }
+
+    /// The board the device's firmware is for. One ROM's metadata or a Lab's
+    /// structures hold it.
+    pub fn firmware_board(&self) -> Option<Board> {
         match self.firmware.as_ref()? {
             Firmware::OneRom(onerom) => onerom.get_board(),
             Firmware::Lab(lab) => lab_hw_rev(lab).and_then(Board::try_from_str),
         }
+    }
+
+    /// The board the device's current commissioning instance holds. `None`
+    /// where this build doesn't know it.
+    pub fn commissioned_board(&self) -> Option<Board> {
+        self.commissioning
+            .current()?
+            .board()
+            .and_then(Board::try_from_str)
     }
 
     pub fn get_active_rom_set_index(&self) -> Option<u8> {

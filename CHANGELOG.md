@@ -14,6 +14,7 @@ In detail:
 - Add the `ext-flash` user plugin, which tests the external flash chip present on some Fire 32 and 40 pin boards.
   - Includes `plugins/user/ext-flash/scripts/program-otp.sh` to program the OTP that makes the external flash reachable with no firmware or plugin setup required.
 - Retire the `onerom-fw` binary. Use the CLI's `firmware build` option instead.
+- Fix: `onerom program` and `onerom firmware build` report a board mismatch correctly.
 
 To publish:
 - Rust crates (in dependency order):

@@ -24,7 +24,7 @@ name = "onerom_metadata"
 [dependencies]
 onerom-config = { workspace = true }
 hashbrown = { version = "0.17", default-features = false, features = ["default-hasher", "inline-more"] }
-pico-otp = { git = "https://github.com/piersfinlayson/pico-otp", rev = "358876cfe06c36278cd554b11053ec42af85851d", default-features = false }
+pico-otp = { git = "https://github.com/piersfinlayson/pico-otp", rev = "fdab5604f43c106f5ee7fd7910b92813a12e9d62", default-features = false }
 serde = { version = "1", default-features = false, features = ["derive", "alloc"] }
 serde-big-array = "0.5"
 sha2 = { version = "0.11", default-features = false }

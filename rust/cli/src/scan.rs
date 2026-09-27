@@ -48,11 +48,14 @@ pub async fn cmd_scan(options: &Options, args: &args::scan::ScanArgs) -> Result<
     );
 
     for d in &devices {
+        let commissioning = crate::inspect::commissioning_lines(d, options.verbose).await;
         if args.slots {
-            // output_slot_info prints the device header followed by the MCU /
-            // chip-ID line (when verbose) and the slot detail.
+            // output_slot_info prints the device header followed by:
+            // - the MCU / chip-ID line (when verbose)
+            // - the commissioning lines
+            // - the slot detail
             println!("---");
-            crate::inspect::output_slot_info(d, options, "")
+            crate::inspect::output_slot_info(d, options, "", &commissioning)
                 .await
                 .inspect_err(|_| log::error!("Failed to read slots"))
                 .ok();
@@ -61,6 +64,9 @@ pub async fn cmd_scan(options: &Options, args: &args::scan::ScanArgs) -> Result<
             if options.verbose
                 && let Some(line) = d.mcu_chip_id_line()
             {
+                println!("  {line}");
+            }
+            for line in commissioning {
                 println!("  {line}");
             }
         }

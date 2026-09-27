@@ -3263,6 +3263,7 @@ dependencies = [
  "hyper",
  "hyper-util",
  "rustls",
+ "rustls-native-certs",
  "tokio",
  "tokio-rustls",
  "tower-service",
@@ -4839,9 +4840,11 @@ checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
 name = "onerom-app"
 version = "0.4.0"
 dependencies = [
+ "ed25519-dalek",
  "hex",
  "onerom-config",
  "onerom-gen",
+ "onerom-metadata",
  "serde",
  "serde_json",
  "sha2 0.11.0",
@@ -4860,6 +4863,7 @@ dependencies = [
  "bytes",
  "clap",
  "crossterm",
+ "ed25519-dalek",
  "embed-resource",
  "enum_dispatch",
  "env_logger",
@@ -4885,6 +4889,7 @@ dependencies = [
  "static_vcruntime 3.0.0",
  "tempfile",
  "thiserror 2.0.18",
+ "time",
  "tokio",
  "wildmatch",
  "zip 8.6.0",
@@ -5200,6 +5205,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "openssl-probe"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7c87def4c32ab89d880effc9e097653c8da5d6ef28e6b539d313baaacfbafcbe"
+
+[[package]]
 name = "option-ext"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5444,7 +5455,7 @@ checksum = "5be167a7af36ee22fe3115051bc51f6e6c7054c9348e28deb4f49bd6f705a315"
 [[package]]
 name = "pico-otp"
 version = "0.2.1"
-source = "git+https://github.com/piersfinlayson/pico-otp?rev=358876cfe06c36278cd554b11053ec42af85851d#358876cfe06c36278cd554b11053ec42af85851d"
+source = "git+https://github.com/piersfinlayson/pico-otp?rev=fdab5604f43c106f5ee7fd7910b92813a12e9d62#fdab5604f43c106f5ee7fd7910b92813a12e9d62"
 dependencies = [
  "serde",
  "serde_json",
@@ -6250,6 +6261,7 @@ dependencies = [
  "pin-project-lite",
  "quinn",
  "rustls",
+ "rustls-native-certs",
  "rustls-pki-types",
  "serde",
  "serde_json",
@@ -6489,6 +6501,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "rustls-native-certs"
+version = "0.8.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dab5152771c58876a2146916e53e35057e1a4dfa2b9df0f0305b07f611fdea4d"
+dependencies = [
+ "openssl-probe",
+ "rustls-pki-types",
+ "schannel",
+ "security-framework",
+]
+
+[[package]]
 name = "rustls-pki-types"
 version = "1.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6576,6 +6600,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "schannel"
+version = "0.1.29"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "91c1b7e4904c873ef0710c1f407dde2e6287de2bebc1bbbf7d430bb7cbffd939"
+dependencies = [
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "schema-gen"
 version = "0.1.10"
 dependencies = [
@@ -6651,6 +6684,29 @@ dependencies = [
  "memmap2",
  "smithay-client-toolkit 0.19.2",
  "tiny-skia",
+]
+
+[[package]]
+name = "security-framework"
+version = "3.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b7f4bc775c73d9a02cde8bf7b2ec4c9d12743edf609006c7facc23998404cd1d"
+dependencies = [
+ "bitflags 2.13.0",
+ "core-foundation 0.10.1",
+ "core-foundation-sys",
+ "libc",
+ "security-framework-sys",
+]
+
+[[package]]
+name = "security-framework-sys"
+version = "2.17.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6ce2691df843ecc5d231c0b14ece2acc3efb62c0a398c7e1d875f3983ce020e3"
+dependencies = [
+ "core-foundation-sys",
+ "libc",
 ]
 
 [[package]]

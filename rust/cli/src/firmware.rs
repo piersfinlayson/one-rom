@@ -120,18 +120,7 @@ pub async fn verify_assembled_firmware(
 
     if let (Some(expected), Some(actual)) = (expected_board, info.get_board()) {
         if actual != expected {
-            if force {
-                eprintln!(
-                    "Warning: firmware board type '{}' does not match expected '{}' (continuing due to --force)",
-                    actual.name(),
-                    expected.name()
-                );
-            } else {
-                return Err(Error::BoardMismatch(
-                    expected.name().to_string(),
-                    actual.name().to_string(),
-                ));
-            }
+            refuse_board_mismatch(expected, actual, force)?;
         } else if options.verbose {
             println!("Board match confirmed: {}", expected.name());
         }
@@ -159,6 +148,24 @@ pub async fn verify_assembled_firmware(
         }
     }
     Ok(info)
+}
+
+/// Refuses an image for board `actual` where `expected` was asked for. With
+/// `force` it warns instead.
+fn refuse_board_mismatch(expected: Board, actual: Board, force: bool) -> Result<(), Error> {
+    if force {
+        eprintln!(
+            "Warning: firmware board type '{}' does not match expected '{}' (continuing due to --force)",
+            actual.name(),
+            expected.name()
+        );
+        Ok(())
+    } else {
+        Err(Error::BoardMismatch {
+            firmware: actual.name().to_string(),
+            expected: expected.name().to_string(),
+        })
+    }
 }
 
 pub async fn parse_firmware(data: &[u8]) -> Result<ParsedDevice, Error> {
@@ -1125,5 +1132,19 @@ mod tests {
         assert!(print_chip_on_board(&board, "2364").is_ok());
         assert!(print_chip_on_board(&board, "27C400").is_err());
         assert!(print_chip_on_board(&board, "not-a-chip").is_err());
+    }
+
+    /// The refusal reports the image's board as the firmware's and the board
+    /// asked for as the expected one.
+    #[test]
+    fn board_mismatch_says_which_board_is_which() {
+        let expected = Board::try_from_str("fire-24-f").unwrap();
+        let actual = Board::try_from_str("fire-28-a").unwrap();
+        let msg = refuse_board_mismatch(expected, actual, false)
+            .unwrap_err()
+            .to_string();
+        let text =
+            "Firmware board type 'fire-28-a' does not match the expected board type 'fire-24-f'";
+        assert!(msg.contains(text), "{msg}");
     }
 }

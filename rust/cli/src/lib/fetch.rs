@@ -2,18 +2,18 @@
 //
 // MIT License
 
-//! Host transport for `onerom-app`'s plugin fetching.
+//! Host transport for `onerom-app`'s fetching.
 //!
 //! `onerom-app` performs no I/O of its own; it delegates all network and
-//! filesystem access to a [`LocalPluginFetch`] implementation. [`CliFetch`] is
+//! filesystem access to a [`LocalFetch`] implementation. [`CliFetch`] is
 //! that implementation for native hosts (the CLI and Studio), backed by
 //! `onerom-fw`'s file/URL retrieval - the same path used to fetch ROM images,
 //! so plugin manifests and binaries are retrieved exactly as any other
 //! artifact.
 
-use onerom_app::LocalPluginFetch;
+use onerom_app::LocalFetch;
 
-/// A [`LocalPluginFetch`] backed by `onerom-fw`'s async file/URL retrieval.
+/// A [`LocalFetch`] backed by `onerom-fw`'s async file/URL retrieval.
 ///
 /// The unit struct carries no state; each `fetch` is an independent retrieval.
 /// The associated error is `onerom-fw`'s own [`Error`](onerom_fw::Error), which
@@ -21,7 +21,7 @@ use onerom_app::LocalPluginFetch;
 /// an HTTP status remain distinguishable at the call site).
 pub struct CliFetch;
 
-impl LocalPluginFetch for CliFetch {
+impl LocalFetch for CliFetch {
     type Error = onerom_fw::Error;
 
     async fn fetch(&self, source: &str) -> Result<Vec<u8>, Self::Error> {

@@ -423,6 +423,44 @@ type = "usize"
 value = 2
 comment = "Length of an OTP_KEY_COMMISSIONING_SIGNER value."
 
+[[constants]]
+name = "OTP_BOOT_FLAGS0_ROW"
+type = "u16"
+value = 0x048
+comment = "OTP row of BOOT_FLAGS0."
+
+[[constants]]
+name = "OTP_BOOT_FLAGS0_R1_ROW"
+type = "u16"
+value = 0x049
+comment = "OTP row of BOOT_FLAGS0's first copy."
+
+[[constants]]
+name = "OTP_BOOT_FLAGS0_R2_ROW"
+type = "u16"
+value = 0x04a
+comment = "OTP row of BOOT_FLAGS0's second copy."
+
+[[constants]]
+name = "OTP_BOOT_FLAGS0_FLASH_DEVINFO_ENABLE"
+type = "u32"
+value = 0x20
+comment = """Mask of the FLASH_DEVINFO_ENABLE bit in BOOT_FLAGS0 and its copies. When
+the bit is set, the bootloader uses FLASH_DEVINFO."""
+
+[[constants]]
+name = "OTP_FLASH_DEVINFO_ROW"
+type = "u16"
+value = 0x054
+comment = "OTP row of FLASH_DEVINFO. It describes the flash chips on chip selects 0 and 1."
+
+[[constants]]
+name = "OTP_FLASH_PARTITION_SLOT_SIZE_ROW"
+type = "u16"
+value = 0x055
+comment = """OTP row of FLASH_PARTITION_SLOT_SIZE. Once FLASH_DEVINFO_ENABLE is set, the
+chip never boots again unless this row holds a valid ECC value."""
+
 # ===========================================================================
 # Type aliases
 # ===========================================================================

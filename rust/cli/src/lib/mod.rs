@@ -19,12 +19,14 @@ pub mod fetch;
 pub mod gpio;
 pub mod hint;
 pub mod image;
+pub mod otp;
 pub mod picobootx;
 pub mod pin;
 pub mod plugin;
 pub mod release;
 pub mod reset;
 pub mod scan;
+pub mod signing;
 pub mod slot;
 pub mod usb;
 
