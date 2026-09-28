@@ -10,7 +10,7 @@
 use ed25519_dalek::{Signer as _, SigningKey};
 use onerom_app::{
     BoardSize, EccRow, Interruption, LocalOtpAccess, MemoryOtp, OtpError, PageLock, Request,
-    RequestDate, prepare, read_chip_id, read_commissioning, read_report,
+    RequestDate, prepare, read_board_size, read_chip_id, read_commissioning, read_report,
 };
 use onerom_config::hw::Board;
 use onerom_metadata::otp::pico_otp::ecc_encode;
@@ -20,7 +20,7 @@ use onerom_metadata::otp::{
 };
 use onerom_metadata::{
     OTP_COMMISSIONING_AREA_FIRST_ROW, OTP_GENERAL_STORE_FIRST_ROW, OTP_STORE_MAGIC,
-    OTP_STORE_VERSION,
+    OTP_STORE_VERSION, OneromBoardSize,
 };
 use serde_json::json;
 
@@ -637,6 +637,9 @@ async fn an_l_boards_report_shows_its_commissioning() {
     let current = report.commissioning.current().unwrap();
     assert_eq!(current.first_row(), 0x0c0);
     assert_eq!(current.board(), Some("fire-40-a"));
+    // --json shows the current instance as its first row.
+    let json = serde_json::to_value(&report).unwrap();
+    assert_eq!(json["commissioning"]["current"], 0x0c0);
     let locked: Vec<u16> = report
         .locks
         .iter()
@@ -656,47 +659,62 @@ async fn an_m_boards_report_shows_an_m_board() {
     assert!(report.commissioning.current().is_some());
 }
 
-/// [`read_report`] takes each BOOT_FLAGS0 bit from the majority of its three
-/// copies, and reads FLASH_DEVINFO with ECC. L needs a 2MB second chip.
-#[tokio::test]
-async fn a_report_shows_the_size_otp_configures() {
-    let devinfo = |raw: u32| -> MemoryOtp {
+/// Boards whose OTP configures each size, with the size. `None` is neither M
+/// nor L. Each BOOT_FLAGS0 bit comes from the majority of its three copies,
+/// FLASH_DEVINFO is read with ECC, and L needs a 2MB second chip.
+fn size_cases() -> Vec<(MemoryOtp, Option<BoardSize>)> {
+    let otp = |devinfo: u32, flags: [u32; 3]| -> MemoryOtp {
         let mut otp = board();
-        otp.set_raw(0x054, raw);
-        otp
-    };
-    let cases = [
-        // Enabled by two copies.
-        (
-            devinfo(ecc_encode(0x99af)),
-            [0x20, 0x20, 0],
-            Some(BoardSize::L),
-        ),
-        // Enabled by one copy.
-        (
-            devinfo(ecc_encode(0x99af)),
-            [0x20, 0, 0],
-            Some(BoardSize::M),
-        ),
-        // A 16MB second chip.
-        (devinfo(ecc_encode(0xc9af)), [0x20; 3], None),
-        // FLASH_DEVINFO with a wrong bit, which ECC corrects.
-        (
-            devinfo(ecc_encode(0x99af) ^ 1),
-            [0x20; 3],
-            Some(BoardSize::L),
-        ),
-        // FLASH_DEVINFO written and not enabled.
-        (devinfo(ecc_encode(0x99af)), [0; 3], Some(BoardSize::M)),
-        // A factory bit in FLASH_DEVINFO.
-        (devinfo(0x40), [0; 3], Some(BoardSize::M)),
-    ];
-    for (mut otp, flags, size) in cases {
+        otp.set_raw(0x054, devinfo);
         for (row, value) in (0x048..).zip(flags) {
             otp.set_raw(row, value);
         }
+        otp
+    };
+    vec![
+        // Enabled by two copies.
+        (otp(ecc_encode(0x99af), [0x20, 0x20, 0]), Some(BoardSize::L)),
+        // Enabled by one copy.
+        (otp(ecc_encode(0x99af), [0x20, 0, 0]), Some(BoardSize::M)),
+        // A 16MB second chip.
+        (otp(ecc_encode(0xc9af), [0x20; 3]), None),
+        // FLASH_DEVINFO with a wrong bit, which ECC corrects.
+        (otp(ecc_encode(0x99af) ^ 1, [0x20; 3]), Some(BoardSize::L)),
+        // FLASH_DEVINFO written and not enabled.
+        (otp(ecc_encode(0x99af), [0; 3]), Some(BoardSize::M)),
+        // A factory bit in FLASH_DEVINFO.
+        (otp(0x40, [0; 3]), Some(BoardSize::M)),
+    ]
+}
+
+/// BOOT_FLAGS0's copies and FLASH_DEVINFO, raw, for a failure's message.
+fn size_rows(otp: &MemoryOtp) -> String {
+    format!("{:x?} {:#08x}", &otp.rows()[0x048..=0x04a], raw(otp, 0x054))
+}
+
+#[tokio::test]
+async fn a_report_shows_the_size_otp_configures() {
+    for (mut otp, size) in size_cases() {
         let report = read_report(&mut otp).await.unwrap();
-        assert_eq!(report.size, size, "{:#08x} {flags:x?}", raw(&otp, 0x054));
+        assert_eq!(report.size, size, "{}", size_rows(&otp));
+        // --json shows the letter, or `other` for neither M nor L.
+        let json = serde_json::to_value(&report).unwrap();
+        let expected = size.map_or("other".to_string(), |size| size.to_string());
+        assert_eq!(json["size"], expected, "{}", size_rows(&otp));
+    }
+}
+
+/// [`read_board_size`] reads the size by the report's rule.
+#[tokio::test]
+async fn read_board_size_reads_the_size_otp_configures() {
+    for (mut otp, size) in size_cases() {
+        let expected = match size {
+            Some(BoardSize::M) => OneromBoardSize::BoardSizeM,
+            Some(BoardSize::L) => OneromBoardSize::BoardSizeL,
+            None => OneromBoardSize::BoardSizeOther,
+        };
+        let read = read_board_size(&mut otp).await.unwrap();
+        assert_eq!(read, expected, "{}", size_rows(&otp));
     }
 }
 

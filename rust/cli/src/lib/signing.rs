@@ -2,7 +2,8 @@
 //
 // MIT License
 
-//! The two ways `hardware commission` signs a commissioning instance:
+//! The two ways `hardware commission` and `hardware sign` sign a
+//! commissioning instance:
 //! - [`SigningServer`] for a key on a signing server
 //! - [`KeyFile`] for a private key in a file
 
@@ -11,8 +12,10 @@ use std::time::Duration;
 
 use ed25519_dalek::pkcs8::{ALGORITHM_OID, PrivateKeyInfoRef, SecretDocument};
 use ed25519_dalek::{Signer as _, SigningKey};
+use log::debug;
 use onerom_config::hw::Board;
 use onerom_metadata::otp::format_chip_id;
+use pkcs8::{EncryptedPrivateKeyInfoRef, pkcs5};
 use serde::Serialize;
 
 use crate::Error;
@@ -24,10 +27,14 @@ const TIMEOUT: Duration = Duration::from_secs(60);
 
 /// A key on a signing server.
 ///
-/// The key's URL is the server's address followed by the API version and the
-/// key's ID. Key 1's URL on a server at HOST is `https://HOST/v1/1`. The client
-/// appends `/public-key` or `/sign` to it.
+/// The key's URL is [`key_url`]: the server's address followed by the API
+/// version and the key's ID. The client appends `/public-key` or `/sign` to
+/// it. An error shows the key's URL because it identifies the key as well as
+/// the server.
 pub struct SigningServer {
+    /// The server's address as `--signer` gave it.
+    address: String,
+    id: u16,
     url: String,
     pin: String,
     client: reqwest::Client,
@@ -42,34 +49,51 @@ struct SignRequest<'a> {
     manufacturer: &'a str,
     /// The UTC commissioning date as `YYYYMMDD`.
     date: &'a str,
+    /// Sign without recording the signature. A request that records leaves it
+    /// out, as a server without the option refuses any field it doesn't know.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    dry_run: bool,
 }
 
 impl SigningServer {
-    /// The key at `url`. `pin` unlocks it. Refuses a URL that isn't https.
-    pub fn new(url: &str, pin: &str) -> Result<Self, Error> {
-        if !is_https(url) {
+    /// Key `id` on the signing server at `address`. `pin` unlocks it. Refuses
+    /// an address that isn't https.
+    pub fn new(address: &str, id: u16, pin: &str) -> Result<Self, Error> {
+        if !is_https(address) {
             return Err(Error::InvalidArgument(
                 "--signer".to_string(),
-                format!("'{url}' isn't an https URL"),
+                format!("'{address}' isn't an https URL"),
             ));
         }
+        let url = key_url(address, id);
         let client = reqwest::Client::builder()
             .https_only(true)
             .timeout(TIMEOUT)
             .build()
-            .map_err(|e| Error::Network(url.to_string(), e.to_string()))?;
+            .map_err(|_| Error::SigningServerUnreachable(url.clone()))?;
         Ok(Self {
-            url: url.trim_end_matches('/').to_string(),
+            address: address.to_string(),
+            id,
+            url,
             pin: pin.to_string(),
             client,
         })
     }
 
+    /// The server's address as `--signer` gave it.
+    pub fn address(&self) -> &str {
+        &self.address
+    }
+
+    /// The key's ID.
+    pub fn id(&self) -> u16 {
+        self.id
+    }
+
     /// The key's 32-byte Ed25519 public key.
     pub async fn public_key(&self) -> Result<[u8; 32], Error> {
-        let url = self.endpoint("public-key");
-        let reply = self.client.get(&url).send().await;
-        self.reply(&url, reply).await
+        let reply = self.client.get(self.endpoint("public-key")).send().await;
+        self.reply(reply).await
     }
 
     /// The key's signature over the commissioning instance on the chip whose
@@ -83,6 +107,8 @@ impl SigningServer {
     ///
     /// The server makes the message itself. The key's ID is the instance's
     /// signer. The caller checks the signature against the message it made.
+    ///
+    /// The server records the signature before it replies.
     pub async fn sign(
         &self,
         chip_id: [u16; 4],
@@ -90,21 +116,49 @@ impl SigningServer {
         manufacturer: &str,
         date: &str,
     ) -> Result<[u8; 64], Error> {
-        let url = self.endpoint("sign");
+        self.signature(chip_id, board, manufacturer, date, false)
+            .await
+    }
+
+    /// The signature [`sign`](Self::sign) returns for the same values, without
+    /// the server recording it. A server without the dry-run option refuses
+    /// the request.
+    pub async fn sign_dry_run(
+        &self,
+        chip_id: [u16; 4],
+        board: Board,
+        manufacturer: &str,
+        date: &str,
+    ) -> Result<[u8; 64], Error> {
+        self.signature(chip_id, board, manufacturer, date, true)
+            .await
+    }
+
+    /// The key's signature over the instance. `dry_run` asks the server not to
+    /// record it.
+    async fn signature(
+        &self,
+        chip_id: [u16; 4],
+        board: Board,
+        manufacturer: &str,
+        date: &str,
+        dry_run: bool,
+    ) -> Result<[u8; 64], Error> {
         let request = SignRequest {
             chip_id: format_chip_id(chip_id),
             board: board.name(),
             manufacturer,
             date,
+            dry_run,
         };
         let reply = self
             .client
-            .post(&url)
+            .post(self.endpoint("sign"))
             .bearer_auth(&self.pin)
             .json(&request)
             .send()
             .await;
-        self.reply(&url, reply).await
+        self.reply(reply).await
     }
 
     /// The URL of the key's `endpoint`.
@@ -115,24 +169,45 @@ impl SigningServer {
     /// The `N` bytes the server replied with.
     async fn reply<const N: usize>(
         &self,
-        url: &str,
         reply: Result<reqwest::Response, reqwest::Error>,
     ) -> Result<[u8; N], Error> {
-        let network = |e: reqwest::Error| Error::Network(url.to_string(), e.to_string());
-        let reply = reply.map_err(network)?;
+        let unreachable = |e: reqwest::Error| {
+            debug!(
+                "Couldn't reach the signing server at {}: {}",
+                self.url,
+                chain(&e)
+            );
+            Error::SigningServerUnreachable(self.url.clone())
+        };
+        let reply = reply.map_err(unreachable)?;
         let status = reply.status().as_u16();
-        let body = reply.bytes().await.map_err(network)?;
-        decode_reply(url, status, &body)
+        let body = reply.bytes().await.map_err(unreachable)?;
+        decode_reply(&self.url, status, &body)
     }
 }
 
+/// The URL of key `id` on the signing server at `address`, such as
+/// `https://HOST/v1/1` for key 1 at `https://HOST`. The address may end with a
+/// path, and a slash ending it is ignored.
+pub fn key_url(address: &str, id: u16) -> String {
+    format!("{}/v1/{id}", address.trim_end_matches('/'))
+}
+
+/// `error` followed by each of its sources, separated by colons.
+fn chain(error: &dyn std::error::Error) -> String {
+    std::iter::successors(Some(error), |e| e.source())
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join(": ")
+}
+
 /// Whether `url` has the https scheme. A scheme is case-insensitive.
-fn is_https(url: &str) -> bool {
+pub fn is_https(url: &str) -> bool {
     url.get(..8)
         .is_some_and(|scheme| scheme.eq_ignore_ascii_case("https://"))
 }
 
-/// The `N` bytes of a reply from `url` with HTTP status `status`.
+/// The `N` bytes of a reply from the key at `url` with HTTP status `status`.
 ///
 /// An error status has a one-line text body saying why. The error carries it.
 fn decode_reply<const N: usize>(url: &str, status: u16, body: &[u8]) -> Result<[u8; N], Error> {
@@ -156,6 +231,11 @@ pub struct KeyFile {
     key: SigningKey,
 }
 
+/// The text of the key file at `path`.
+fn read_text(path: &Path) -> Result<String, Error> {
+    std::fs::read_to_string(path).map_err(|e| Error::io(path, e))
+}
+
 /// RFC 7468's label for an unencrypted PKCS#8 private key.
 const PRIVATE_KEY_LABEL: &str = "PRIVATE KEY";
 
@@ -163,24 +243,77 @@ const PRIVATE_KEY_LABEL: &str = "PRIVATE KEY";
 const ENCRYPTED_PRIVATE_KEY_LABEL: &str = "ENCRYPTED PRIVATE KEY";
 
 impl KeyFile {
-    /// Reads an unencrypted PKCS#8 PEM Ed25519 private key from `path`.
-    /// `openssl genpkey -algorithm ed25519` writes one.
-    pub fn read(path: &Path) -> Result<Self, Error> {
-        let text = std::fs::read_to_string(path).map_err(|e| Error::io(path, e))?;
-        let name = || path.display().to_string();
+    /// Whether the PKCS#8 PEM file at `path` holds an encrypted private key.
+    pub fn is_encrypted(path: &Path) -> Result<bool, Error> {
+        let text = read_text(path)?;
+        match SecretDocument::from_pem(&text) {
+            Ok((PRIVATE_KEY_LABEL, _)) => Ok(false),
+            Ok((ENCRYPTED_PRIVATE_KEY_LABEL, _)) => Ok(true),
+            Ok(_) | Err(_) => Err(Error::KeyFileNotPkcs8(path.display().to_string())),
+        }
+    }
+
+    /// Reads a PKCS#8 PEM Ed25519 private key from `path`. `pin` decrypts an
+    /// encrypted key. An unencrypted key refuses one.
+    ///
+    /// `openssl genpkey -algorithm ed25519` writes an unencrypted key.
+    pub fn read(path: &Path, pin: Option<&str>) -> Result<Self, Error> {
+        let text = read_text(path)?;
+        let name = path.display().to_string();
         let (label, document) =
-            SecretDocument::from_pem(&text).map_err(|_| Error::KeyFileNotPkcs8(name()))?;
-        match label {
-            PRIVATE_KEY_LABEL => {}
-            ENCRYPTED_PRIVATE_KEY_LABEL => return Err(Error::KeyFileEncrypted(name())),
-            _ => return Err(Error::KeyFileNotPkcs8(name())),
+            SecretDocument::from_pem(&text).map_err(|_| Error::KeyFileNotPkcs8(name.clone()))?;
+        match (label, pin) {
+            (PRIVATE_KEY_LABEL, None) => Self::from_der(document.as_bytes(), &name),
+            (PRIVATE_KEY_LABEL, Some(_)) => Err(Error::InvalidArgument(
+                "--pin".to_string(),
+                format!("Key file {name} isn't encrypted"),
+            )),
+            (ENCRYPTED_PRIVATE_KEY_LABEL, Some(pin)) => Self::decrypt(&document, pin, &name),
+            (ENCRYPTED_PRIVATE_KEY_LABEL, None) => Err(Error::KeyFileEncrypted(name)),
+            _ => Err(Error::KeyFileNotPkcs8(name)),
         }
-        let info = PrivateKeyInfoRef::try_from(document.as_bytes())
-            .map_err(|_| Error::KeyFileNotPkcs8(name()))?;
+    }
+
+    /// The key in `document`, an encrypted PKCS#8 key, decrypted with `pin`.
+    /// `name` is its file's.
+    fn decrypt(document: &SecretDocument, pin: &str, name: &str) -> Result<Self, Error> {
+        let unsupported = || Error::KeyFileEncryptionUnsupported(name.to_string());
+        // The pkcs8 crate refuses to parse some encryption it doesn't support,
+        // such as PBES2 with triple DES.
+        let info =
+            EncryptedPrivateKeyInfoRef::try_from(document.as_bytes()).map_err(|_| unsupported())?;
+        let decrypted = info.decrypt(pin).map_err(|e| {
+            let supported = !matches!(
+                e,
+                pkcs8::Error::EncryptedPrivateKey(
+                    pkcs5::Error::UnsupportedAlgorithm { .. }
+                        | pkcs5::Error::AlgorithmParametersInvalid { .. }
+                        | pkcs5::Error::NoPbes1CryptSupport
+                )
+            );
+            if supported {
+                Error::KeyFileWrongPin(name.to_string())
+            } else {
+                unsupported()
+            }
+        })?;
+        let key = Self::from_der(decrypted.as_bytes(), name);
+        // A wrong PIN can decrypt to bytes that aren't a key.
+        if let Err(Error::KeyFileNotPkcs8(_)) = key {
+            return Err(Error::KeyFileWrongPin(name.to_string()));
+        }
+        key
+    }
+
+    /// The Ed25519 key in `der`, an unencrypted PKCS#8 key. `name` is its
+    /// file's.
+    fn from_der(der: &[u8], name: &str) -> Result<Self, Error> {
+        let not_pkcs8 = |_| Error::KeyFileNotPkcs8(name.to_string());
+        let info = PrivateKeyInfoRef::try_from(der).map_err(not_pkcs8)?;
         if info.algorithm.oid != ALGORITHM_OID {
-            return Err(Error::KeyFileNotEd25519(name()));
+            return Err(Error::KeyFileNotEd25519(name.to_string()));
         }
-        let key = SigningKey::try_from(info).map_err(|_| Error::KeyFileNotPkcs8(name()))?;
+        let key = SigningKey::try_from(info).map_err(not_pkcs8)?;
         Ok(Self { key })
     }
 
@@ -205,7 +338,9 @@ mod tests {
     /// CHIPID from rows 0x000–0x003 of an RP2350 A4.
     const CHIP_ID: [u16; 4] = [0x5b6b, 0x2f65, 0x9c23, 0xde3f];
 
-    const URL: &str = "https://example.invalid/v1/1/sign";
+    const URL: &str = "https://example.invalid/v1/1";
+
+    const ADDRESS: &str = "https://example.invalid";
 
     /// From `openssl genpkey -algorithm ed25519 | openssl pkcs8 -topk8
     /// -scrypt -passout pass:test`.
@@ -214,6 +349,34 @@ MIGbMFcGCSqGSIb3DQEFDTBKMCkGCSsGAQQB2kcECzAcBBCygZFSouxgAoz03h2W
 pWvSAgJAAAIBCAIBATAdBglghkgBZQMEASoEEI5DlJCcGZ+k1qjMlzDf9qIEQESu
 mDfuv/uA/EVN4DQZajeb6QaS3jYuKexSVklfDT0DMynvVcfZ5BTWXojk99Ph/N2o
 Mx/cjBQLObAI6LuJncI=
+-----END ENCRYPTED PRIVATE KEY-----
+";
+
+    /// From `openssl genpkey -algorithm ed25519 -aes-256-cbc -pass pass:test`,
+    /// which uses PBKDF2.
+    const AES_256_CBC: &str = "-----BEGIN ENCRYPTED PRIVATE KEY-----
+MIGjMF8GCSqGSIb3DQEFDTBSMDEGCSqGSIb3DQEFDDAkBBAYnOcgR1/91c4OSvzz
+/bdOAgIIADAMBggqhkiG9w0CCQUAMB0GCWCGSAFlAwQBKgQQtYOVsGxrdHxsT8Me
+XPRAWARA3o3b/1JPnVc11wD+BdUnwbRCNGCH7xW0cvBmbb3aZ6Uo6osUriPXuxOe
+cW6PWdA8Ys1DPfqADJZEWn5jjTMisw==
+-----END ENCRYPTED PRIVATE KEY-----
+";
+
+    /// From `openssl genpkey -algorithm ed25519 | openssl pkcs8 -topk8 -v1
+    /// PBE-MD5-DES -passout pass:test -provider legacy -provider default`.
+    const PBES1: &str = "-----BEGIN ENCRYPTED PRIVATE KEY-----
+MFcwGwYJKoZIhvcNAQUDMA4ECDOcgymcx8QvAgIIAAQ4Gf4s+PWJj+uviCpH2fEf
+elx0zT7/O11DuJzzHIqInF2PhTr4nNIWsbXT7oe3ZQj5Li678VcAnxo=
+-----END ENCRYPTED PRIVATE KEY-----
+";
+
+    /// From `openssl genpkey -algorithm ed25519 | openssl pkcs8 -topk8 -v2
+    /// des3 -passout pass:test`.
+    const TRIPLE_DES: &str = "-----BEGIN ENCRYPTED PRIVATE KEY-----
+MIGSMFYGCSqGSIb3DQEFDTBJMDEGCSqGSIb3DQEFDDAkBBB2dNHHr2Ce+tl3Hu8+
+9eJWAgIIADAMBggqhkiG9w0CCQUAMBQGCCqGSIb3DQMHBAjAIWHxO0J6eAQ4u33P
+M/wjG6bMtiF0yPF8rwQbaldBNoEeFSm5tDFALO6pcxpafKTWdXXb1Hdlfk8lV2oX
+W0G87dU=
 -----END ENCRYPTED PRIVATE KEY-----
 ";
 
@@ -252,7 +415,8 @@ OdKR4pVGo/fYus95rivSHhST/Q5sFz6k0g==
         let key = SigningKey::from_bytes(&[7; 32]);
         let pem = key.to_pkcs8_pem(LineEnding::LF).unwrap();
         let (_dir, path) = key_file(&pem);
-        let file = KeyFile::read(&path).unwrap();
+        assert!(!KeyFile::is_encrypted(&path).unwrap());
+        let file = KeyFile::read(&path, None).unwrap();
         assert_eq!(file.public_key(), key.verifying_key().to_bytes());
         let signature = ed25519_dalek::Signature::from_bytes(&file.sign(b"message"));
         assert!(
@@ -262,13 +426,64 @@ OdKR4pVGo/fYus95rivSHhST/Q5sFz6k0g==
         );
     }
 
+    /// Whether `file`'s key signs a message that its public key verifies.
+    fn signs(file: &KeyFile) -> bool {
+        let key = ed25519_dalek::VerifyingKey::from_bytes(&file.public_key()).unwrap();
+        let signature = ed25519_dalek::Signature::from_bytes(&file.sign(b"message"));
+        key.verify_strict(b"message", &signature).is_ok()
+    }
+
     #[test]
-    fn an_encrypted_key_file_is_refused() {
-        let (_dir, path) = key_file(ENCRYPTED);
+    fn an_encrypted_key_file_is_read_with_its_pin() {
+        for text in [ENCRYPTED, AES_256_CBC] {
+            let (_dir, path) = key_file(text);
+            assert!(KeyFile::is_encrypted(&path).unwrap());
+            assert!(signs(&KeyFile::read(&path, Some("test")).unwrap()));
+        }
+    }
+
+    #[test]
+    fn an_encrypted_key_file_needs_its_pin() {
+        for text in [ENCRYPTED, AES_256_CBC] {
+            let (_dir, path) = key_file(text);
+            let name = path.display().to_string();
+            assert!(matches!(
+                KeyFile::read(&path, None),
+                Err(Error::KeyFileEncrypted(file)) if file == name
+            ));
+            let error = KeyFile::read(&path, Some("wrong")).err().unwrap();
+            assert!(
+                matches!(&error, Error::KeyFileWrongPin(file) if *file == name),
+                "{error}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_unencrypted_key_file_refuses_a_pin() {
+        let pem = SigningKey::from_bytes(&[7; 32])
+            .to_pkcs8_pem(LineEnding::LF)
+            .unwrap();
+        let (_dir, path) = key_file(&pem);
         assert!(matches!(
-            KeyFile::read(&path),
-            Err(Error::KeyFileEncrypted(_))
+            KeyFile::read(&path, Some("test")),
+            Err(Error::InvalidArgument(..))
         ));
+    }
+
+    /// Encryption that the pkcs8 crate doesn't decrypt isn't reported as a
+    /// wrong PIN.
+    #[test]
+    fn unsupported_encryption_is_refused() {
+        for text in [PBES1, TRIPLE_DES] {
+            let (_dir, path) = key_file(text);
+            assert!(KeyFile::is_encrypted(&path).unwrap());
+            let error = KeyFile::read(&path, Some("test")).err().unwrap();
+            assert!(
+                matches!(error, Error::KeyFileEncryptionUnsupported(_)),
+                "{error}"
+            );
+        }
     }
 
     #[test]
@@ -276,7 +491,7 @@ OdKR4pVGo/fYus95rivSHhST/Q5sFz6k0g==
         for text in [X25519, P256] {
             let (_dir, path) = key_file(text);
             assert!(
-                matches!(KeyFile::read(&path), Err(Error::KeyFileNotEd25519(_))),
+                matches!(KeyFile::read(&path, None), Err(Error::KeyFileNotEd25519(_))),
                 "{text}"
             );
         }
@@ -287,7 +502,11 @@ OdKR4pVGo/fYus95rivSHhST/Q5sFz6k0g==
         for text in [SEC1, "not a key", ""] {
             let (_dir, path) = key_file(text);
             assert!(
-                matches!(KeyFile::read(&path), Err(Error::KeyFileNotPkcs8(_))),
+                matches!(KeyFile::read(&path, None), Err(Error::KeyFileNotPkcs8(_))),
+                "{text}"
+            );
+            assert!(
+                matches!(KeyFile::is_encrypted(&path), Err(Error::KeyFileNotPkcs8(_))),
                 "{text}"
             );
         }
@@ -297,54 +516,73 @@ OdKR4pVGo/fYus95rivSHhST/Q5sFz6k0g==
     fn a_missing_key_file_is_an_io_error() {
         let dir = tempfile::tempdir().unwrap();
         assert!(matches!(
-            KeyFile::read(&dir.path().join("missing.pem")),
+            KeyFile::read(&dir.path().join("missing.pem"), None),
             Err(Error::Io(_))
         ));
     }
 
-    /// The server refuses a body with any other field.
+    /// A request that records has the four fields every server accepts. A
+    /// server refuses a body with a field it doesn't know.
     #[test]
     fn a_sign_request_has_the_servers_four_fields() {
-        let request = SignRequest {
+        let request = |dry_run| SignRequest {
             chip_id: format_chip_id(CHIP_ID),
             board: "fire-24-f",
             manufacturer: "piers.rocks",
             date: "20260926",
+            dry_run,
         };
-        assert_eq!(
-            serde_json::to_value(&request).unwrap(),
-            serde_json::json!({
-                "chip_id": "DE3F9C232F655B6B",
-                "board": "fire-24-f",
-                "manufacturer": "piers.rocks",
-                "date": "20260926",
-            })
-        );
+        let mut expected = serde_json::json!({
+            "chip_id": "DE3F9C232F655B6B",
+            "board": "fire-24-f",
+            "manufacturer": "piers.rocks",
+            "date": "20260926",
+        });
+        assert_eq!(serde_json::to_value(request(false)).unwrap(), expected);
+
+        expected["dry_run"] = true.into();
+        assert_eq!(serde_json::to_value(request(true)).unwrap(), expected);
     }
 
     #[test]
-    fn only_an_https_url_is_accepted() {
-        assert!(SigningServer::new("https://example.invalid/v1/1", "pin").is_ok());
-        assert!(SigningServer::new("HTTPS://example.invalid/v1/1", "pin").is_ok());
-        for url in ["http://example.invalid/v1/1", "example.invalid/v1/1", ""] {
+    fn only_an_https_address_is_accepted() {
+        assert!(SigningServer::new(ADDRESS, 1, "pin").is_ok());
+        assert!(SigningServer::new("HTTPS://example.invalid", 1, "pin").is_ok());
+        for address in ["http://example.invalid", "example.invalid", ""] {
             assert!(
                 matches!(
-                    SigningServer::new(url, "pin"),
+                    SigningServer::new(address, 1, "pin"),
                     Err(Error::InvalidArgument(..))
                 ),
-                "{url}"
+                "{address}"
             );
         }
     }
 
+    /// A key's URL is the server's address, the API version and the key's ID.
+    #[test]
+    fn a_keys_url_follows_the_servers_address() {
+        assert_eq!(key_url(ADDRESS, 1), URL);
+        assert_eq!(key_url("https://example.invalid/", 1), URL);
+        assert_eq!(
+            key_url("https://example.invalid:8443/sign/", 65535),
+            "https://example.invalid:8443/sign/v1/65535"
+        );
+        // The address keeps its case.
+        assert_eq!(
+            key_url("HTTPS://Example.invalid", 2),
+            "HTTPS://Example.invalid/v1/2"
+        );
+    }
+
     #[test]
     fn an_endpoint_follows_the_keys_url() {
-        let server = SigningServer::new("https://example.invalid/v1/1", "pin").unwrap();
+        let server = SigningServer::new(ADDRESS, 1, "pin").unwrap();
         assert_eq!(server.endpoint("sign"), "https://example.invalid/v1/1/sign");
-        let server = SigningServer::new("https://example.invalid/v1/1/", "pin").unwrap();
+        let server = SigningServer::new("https://example.invalid/", 2, "pin").unwrap();
         assert_eq!(
             server.endpoint("public-key"),
-            "https://example.invalid/v1/1/public-key"
+            "https://example.invalid/v1/2/public-key"
         );
     }
 
@@ -375,34 +613,28 @@ OdKR4pVGo/fYus95rivSHhST/Q5sFz6k0g==
 
     #[test]
     fn each_error_status_is_reported_with_the_servers_message() {
-        for (status, sentence) in [
-            (400, "refused the request"),
-            (401, "refused the PIN"),
-            (404, "doesn't have a key at that URL"),
-            (503, "couldn't record the signature"),
-            (500, "HTTP status 500"),
-        ] {
+        for status in [400, 401, 404, 503, 500] {
             let error = decode_reply::<64>(URL, status, b"the server's reason\n").unwrap_err();
             let Error::SigningServer {
+                url,
                 status: s,
-                ref message,
-                ..
+                message,
             } = error
             else {
                 panic!("{status}: {error}");
             };
+            assert_eq!(url, URL);
             assert_eq!(s, status);
             assert_eq!(message, "the server's reason");
-            let text = error.to_string();
-            assert!(text.contains(sentence), "{status}: {text}");
-            assert!(text.contains(URL), "{status}: {text}");
-            assert!(text.contains("the server's reason"), "{status}: {text}");
         }
     }
 
     #[test]
     fn an_error_message_has_its_control_characters_escaped() {
         let error = decode_reply::<32>(URL, 400, b"bad\x1b[2J value").unwrap_err();
-        assert!(error.to_string().contains("bad\\u{1b}[2J value"), "{error}");
+        assert!(
+            matches!(&error, Error::SigningServer { message, .. } if message == "bad\\u{1b}[2J value"),
+            "{error}"
+        );
     }
 }

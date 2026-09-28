@@ -22,6 +22,9 @@ too. Treat it as a long-lived, production project.
 - Ask in prose — the options and your recommendation — and let me reply in my
   own words.
 - Hold the existing bar for code style, accurate comments and API docs.
+- A test checks behaviour and the values output carries. It quotes wording
+  only where a comment says why, as help, messages and output get reworded
+  and a test quoting them fails when nothing is wrong.
 
 ## Editing this guide
 
@@ -322,6 +325,12 @@ mechanically.
 - clap already requires a non-`Option` field, so leave `required = true` off.
 - **Examples in doc comments are runnable.** `firmware inspect firmware.bin`
   sat in the help for months describing an argument form the command never had.
+
+## CLI output
+
+When a change alters what the CLI prints, show me the output before and
+after from the review harness in [rust/cli/src/review/](/rust/cli/src/review/),
+adding cases there for new output. Its module docs say how to run it.
 
 ## Config (`onerom-config/`)
 

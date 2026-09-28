@@ -29,25 +29,50 @@ use onerom_metadata::{
 // Instances
 // ---------------------------------------------------------------------------
 
-/// `instance`'s values as `BOARD by MANUFACTURER on DATE`. A value the
-/// instance doesn't have is left out.
-pub fn instance_values(instance: &CommissioningInstance) -> String {
-    let values: Vec<String> = [
-        instance.board().map(escape_controls),
-        instance
-            .manufacturer()
-            .map(|name| format!("by {}", escape_controls(name))),
-        instance
-            .date()
-            .map(|date| format!("on {}", format_date(date))),
+/// A label and its value, shown as a line.
+pub type Labelled = (String, String);
+
+/// `instance`'s board type, manufacturer and date with their labels. A value
+/// the instance doesn't have is left out.
+pub fn instance_values(instance: &CommissioningInstance) -> Vec<Labelled> {
+    [
+        ("Board type:", instance.board().map(escape_controls)),
+        (
+            "Manufacturer:",
+            instance.manufacturer().map(escape_controls),
+        ),
+        ("Date:", instance.date().map(format_date)),
     ]
     .into_iter()
-    .flatten()
-    .collect();
-    if values.is_empty() {
-        "values missing".to_string()
+    .filter_map(|(label, value)| Some((label.to_string(), value?)))
+    .collect()
+}
+
+/// `values` a line each, indented two spaces, with the values lined up past
+/// the longest label.
+pub fn labelled_lines(values: &[Labelled]) -> Vec<String> {
+    let width = values
+        .iter()
+        .map(|(label, _)| label.len() + 1)
+        .max()
+        .unwrap_or_default();
+    values
+        .iter()
+        .map(|(label, value)| format!("  {label:width$}{value}"))
+        .collect()
+}
+
+/// `instance`'s state, shown beside its row. `current` is whether it's the
+/// instance in use.
+pub fn instance_state(instance: &CommissioningInstance, current: bool) -> &'static str {
+    if current {
+        "current"
+    } else if !instance.is_complete() {
+        "incomplete"
+    } else if !instance.is_valid() {
+        "missing values"
     } else {
-        values.join(" ")
+        "replaced"
     }
 }
 
@@ -107,6 +132,20 @@ pub fn issue_text(issue: &AreaIssue) -> String {
     }
 }
 
+/// The `Commissioned:` value for an area holding an unknown version. `None`
+/// for any other area.
+///
+/// The parser stops at an unknown version so the area doesn't have a current
+/// instance. Newer tooling probably wrote it. The board may be commissioned.
+pub fn unknown_version(area: &CommissioningArea) -> Option<String> {
+    area.issues().iter().find_map(|issue| match issue {
+        AreaIssue::UnknownVersion { row, version } => {
+            Some(format!("unknown (version {version} at row {row:#05x})"))
+        }
+        AreaIssue::LostPlace { .. } => None,
+    })
+}
+
 // ---------------------------------------------------------------------------
 // scan and inspect info
 // ---------------------------------------------------------------------------
@@ -114,61 +153,63 @@ pub fn issue_text(issue: &AreaIssue) -> String {
 /// The lines `scan` and `inspect info` show beneath a device's line.
 /// `firmware` is the board the device's firmware is for.
 ///
-/// - The current instance's values.
-/// - With `verbose`, its signer and row.
-/// - With `verbose`, a line saying there isn't a current instance or that OTP
-///   couldn't be read.
-/// - Each unknown version and skipped key.
-/// - A board that differs from the firmware's.
+/// With `details`:
+/// - `Commissioned: yes` and beneath it the current instance's values
+/// - with `verbose`, its signer and row
+/// - with `verbose`, a line saying there isn't a current instance or that OTP
+///   couldn't be read
 ///
-/// They don't say whether a signature is valid.
+/// Always, where they apply:
+/// - `Commissioned: unknown` for an area holding an unknown version
+/// - each skipped key
+/// - a board that differs from the firmware's
+///
+/// `scan` shows a line per board, so it asks for `details` only with
+/// `--verbose` or `--slots`. The lines don't say whether a signature is valid.
 pub fn device_lines(
     firmware: Option<Board>,
     commissioning: &Commissioning,
-    verbose: bool,
+    (details, verbose): (bool, bool),
     table: &SignerTable,
 ) -> Vec<String> {
     let area = match commissioning {
         Commissioning::Read(area) => area,
-        Commissioning::Unreadable if verbose => return vec!["OTP not readable".to_string()],
+        Commissioning::Unreadable if details && verbose => {
+            return vec!["Commissioned: unknown (OTP not readable)".to_string()];
+        }
         Commissioning::Unreadable | Commissioning::NotRead => return Vec::new(),
     };
     let mut lines = Vec::new();
-    match area.current() {
-        Some(current) => {
-            let mut line = format!("Commissioned: {}", instance_values(current));
-            if verbose && let Some(signer) = current.signer() {
-                line.push_str(&format!(
-                    ", signer {}, row {:#05x}",
-                    signer_name(signer, table),
-                    current.first_row()
-                ));
+    // An area holding an unknown version doesn't have a current instance.
+    match (unknown_version(area), area.current()) {
+        (Some(unknown), _) => lines.push(format!("Commissioned: {unknown}")),
+        (None, Some(current)) => {
+            if details {
+                let mut values = instance_values(current);
+                if verbose {
+                    if let Some(signer) = current.signer() {
+                        values.push(("Signing key:".to_string(), signer_name(signer, table)));
+                    }
+                    values.push(("Row:".to_string(), format!("{:#05x}", current.first_row())));
+                }
+                lines.push("Commissioned: yes".to_string());
+                lines.extend(labelled_lines(&values));
             }
-            lines.push(line);
             if let (Some(commissioned), Some(firmware)) = (current.board(), firmware)
                 && Board::try_from_str(commissioned) != Some(firmware)
             {
                 lines.push(format!(
-                    "Commissioned as {} but the firmware is for {}",
-                    escape_controls(commissioned),
-                    firmware.name()
+                    "Board type mismatch: firmware type {}, commissioned type {}",
+                    firmware.name(),
+                    escape_controls(commissioned)
                 ));
             }
         }
-        None if verbose => lines.push("Not commissioned".to_string()),
-        None => {}
+        (None, None) if details && verbose => lines.push("Commissioned: no".to_string()),
+        (None, None) => {}
     }
-    lines.extend(newer_data(area));
     lines.extend(skipped_keys(area));
     lines
-}
-
-/// A line for each unknown version in `area`.
-fn newer_data(area: &CommissioningArea) -> impl Iterator<Item = String> + '_ {
-    area.issues().iter().filter_map(|issue| match issue {
-        AreaIssue::UnknownVersion { .. } => Some(format!("Commissioning: {}", issue_text(issue))),
-        AreaIssue::LostPlace { .. } => None,
-    })
 }
 
 /// A line for each entry in `area` whose key this build doesn't know.
@@ -176,7 +217,7 @@ fn skipped_keys(area: &CommissioningArea) -> impl Iterator<Item = String> + '_ {
     area.instances()
         .iter()
         .flat_map(|instance| unknown_keys(instance.entries()))
-        .map(|unknown| format!("Skipped unknown {}", unknown.text()))
+        .map(|unknown| format!("Skipped: unknown {}", unknown.text()))
 }
 
 // ---------------------------------------------------------------------------
@@ -187,20 +228,20 @@ fn skipped_keys(area: &CommissioningArea) -> impl Iterator<Item = String> + '_ {
 ///
 /// These are always shown:
 /// - unknown keys
-/// - an unknown general store version
+/// - a general store, which only a newer tool starts
 /// - pico-otp's reason it can't decode the white label and its warnings
 ///
 /// `verbose` adds:
+/// - the FLASH_DEVINFO fields beneath the board size
+/// - the current instance's row and page locks
 /// - every instance and entry
 /// - the issues
 /// - the raw rows
 /// - the lock words
 pub fn report_lines(report: &OtpReport, verbose: bool, table: &SignerTable) -> Vec<String> {
     let area = &report.commissioning;
-    let mut lines = vec![
-        format!("Size:          {}", size_text(report)),
-        format!("Commissioning: {}", commissioning_text(report, table)),
-    ];
+    let mut lines = size_lines(report, verbose);
+    lines.extend(commissioning_lines(report, table, verbose));
     if !verbose {
         let instances = area.instances().iter();
         let general_store = report.general_store.iter();
@@ -208,58 +249,84 @@ pub fn report_lines(report: &OtpReport, verbose: bool, table: &SignerTable) -> V
             instances
                 .flat_map(|instance| unknown_keys(instance.entries()))
                 .chain(general_store.flat_map(|store| unknown_keys(store.entries())))
-                .map(|unknown| format!("Skipped:       unknown {}", unknown.text())),
+                .map(|unknown| labelled("Skipped:", format!("unknown {}", unknown.text()))),
         );
     }
-    lines.push(format!("White label:   {}", white_label_text(report)));
+    lines.extend(white_label_lines(report));
     lines.extend(
         report
             .white_label_warnings
             .iter()
-            .map(|warning| format!("               Warning: {}", escape_controls(warning))),
+            .map(|warning| format!("  Warning: {}", escape_controls(warning))),
     );
-    lines.push(format!("General store: {}", general_store_text(report)));
+    // Nothing uses the general store yet. A started one was written by a newer
+    // tool, so it's shown.
+    if verbose || report.general_store.is_some() {
+        lines.push(labelled("General store:", general_store_text(report)));
+    }
     if verbose {
         lines.extend(verbose_lines(report));
     }
     lines
 }
 
-/// The board size and the FLASH_DEVINFO it comes from.
-fn size_text(report: &OtpReport) -> String {
-    let enabled = majority(report.boot_flags0) & OTP_BOOT_FLAGS0_FLASH_DEVINFO_ENABLE != 0;
-    match report.size {
-        Some(BoardSize::M) => "M".to_string(),
-        Some(BoardSize::L) => format!("L ({})", devinfo_text(report.flash_devinfo, enabled)),
-        None => format!(
-            "neither M nor L ({})",
-            devinfo_text(report.flash_devinfo, enabled)
-        ),
-    }
+/// The width of the labels [`report_lines`] puts before its values.
+const LABEL_WIDTH: usize = "Bootloader USB strings: ".len();
+
+/// `value` after `label`, padded so the values line up.
+fn labelled(label: &str, value: impl std::fmt::Display) -> String {
+    format!("{label:LABEL_WIDTH$}{value}")
 }
 
-/// FLASH_DEVINFO's fields and whether BOOT_FLAGS0 enables it.
-fn devinfo_text(devinfo: EccRow, enabled: bool) -> String {
-    let state = if enabled { "enabled" } else { "not enabled" };
-    let Some(value) = devinfo.value else {
-        return if devinfo.raw.count_ones() <= 1 {
-            format!("FLASH_DEVINFO unwritten, {state}")
+/// The board size. With `verbose`, the FLASH_DEVINFO it comes from beneath
+/// it.
+fn size_lines(report: &OtpReport, verbose: bool) -> Vec<String> {
+    let size = match report.size {
+        Some(BoardSize::M) => "M",
+        Some(BoardSize::L) => "L",
+        None => "neither M nor L",
+    };
+    let mut lines = vec![labelled("Board size:", size)];
+    if verbose {
+        let enabled = majority(report.boot_flags0) & OTP_BOOT_FLAGS0_FLASH_DEVINFO_ENABLE != 0;
+        lines.extend(labelled_lines(&devinfo_values(
+            report.flash_devinfo,
+            enabled,
+        )));
+    }
+    lines
+}
+
+/// FLASH_DEVINFO's fields and whether BOOT_FLAGS0 enables it, a line each.
+fn devinfo_values(devinfo: EccRow, enabled: bool) -> Vec<Labelled> {
+    let yes_no = |yes| if yes { "yes" } else { "no" }.to_string();
+    let enable = ("FLASH_DEVINFO_ENABLE:".to_string(), yes_no(enabled));
+    // An unwritten row reads as 0 with ECC, which would decode as two chip
+    // selects without chips. A row can leave the factory with one bit set.
+    let unwritten = devinfo.raw.count_ones() <= 1;
+    let Some(value) = devinfo.value.filter(|_| !unwritten) else {
+        let raw = if unwritten {
+            "unwritten".to_string()
         } else {
-            format!(
-                "FLASH_DEVINFO raw {:#08x} isn't a valid ECC value, {state}",
-                devinfo.raw
-            )
+            format!("invalid value {:#08x}", devinfo.raw)
         };
+        return vec![("FLASH_DEVINFO:".to_string(), raw), enable];
     };
-    let cs0 = flash_size((value >> FLASH_DEVINFO_CS0_SIZE_SHIFT) & FLASH_DEVINFO_SIZE_BITS);
-    let cs1 = flash_size((value >> FLASH_DEVINFO_CS1_SIZE_SHIFT) & FLASH_DEVINFO_SIZE_BITS);
-    let gpio = value & FLASH_DEVINFO_CS1_GPIO;
-    let erase = if value & FLASH_DEVINFO_D8H_ERASE_SUPPORTED != 0 {
-        ", D8h erase"
-    } else {
-        ""
-    };
-    format!("FLASH_DEVINFO {value:#06x} {state}: CS0 {cs0}, CS1 {cs1} on GPIO{gpio}{erase}")
+    let size = |shift| flash_size((value >> shift) & FLASH_DEVINFO_SIZE_BITS);
+    vec![
+        ("FLASH_DEVINFO:".to_string(), format!("{value:#06x}")),
+        enable,
+        ("CS0 size:".to_string(), size(FLASH_DEVINFO_CS0_SIZE_SHIFT)),
+        ("CS1 size:".to_string(), size(FLASH_DEVINFO_CS1_SIZE_SHIFT)),
+        (
+            "CS1 GPIO:".to_string(),
+            (value & FLASH_DEVINFO_CS1_GPIO).to_string(),
+        ),
+        (
+            "D8h erase:".to_string(),
+            yes_no(value & FLASH_DEVINFO_D8H_ERASE_SUPPORTED != 0),
+        ),
+    ]
 }
 
 /// A FLASH_DEVINFO size field. The bootrom reads a size `n` other than 0 as
@@ -281,48 +348,45 @@ fn majority([a, b, c]: [u32; 3]) -> u32 {
     (a & b) | (a & c) | (b & c)
 }
 
-/// The current instance with its signer and locks or the reason there isn't
-/// one.
-fn commissioning_text(report: &OtpReport, table: &SignerTable) -> String {
+/// `Commissioned: yes` and beneath it the current instance with its signer.
+/// With `verbose`, its row and whether its pages are locked too. `no` or the
+/// reason there isn't one otherwise.
+fn commissioning_lines(report: &OtpReport, table: &SignerTable, verbose: bool) -> Vec<String> {
     let area = &report.commissioning;
-    if let Some(issue) = area
-        .issues()
-        .iter()
-        .find(|issue| matches!(issue, AreaIssue::UnknownVersion { .. }))
-    {
-        return issue_text(issue);
+    if let Some(unknown) = unknown_version(area) {
+        return vec![labelled("Commissioned:", unknown)];
     }
     let Some(current) = area.current() else {
-        return "not commissioned".to_string();
+        return vec![labelled("Commissioned:", "no")];
     };
-    let signer = current
-        .signer()
-        .map(|id| format!(", signer {}", signer_name(id, table)))
-        .unwrap_or_default();
-    format!(
-        "{}{signer}, row {:#05x}, {}",
-        instance_values(current),
-        current.first_row(),
-        locks_text(current, &report.locks)
-    )
+    let mut values = instance_values(current);
+    if let Some(signer) = current.signer() {
+        values.push(("Signing key:".to_string(), signer_name(signer, table)));
+    }
+    if verbose {
+        values.push(("Row:".to_string(), format!("{:#05x}", current.first_row())));
+        values.extend(page_locks(current, &report.locks));
+    }
+    let mut lines = vec![labelled("Commissioned:", "yes")];
+    lines.extend(labelled_lines(&values));
+    lines
 }
 
-/// Whether each page of `instance` is locked.
-fn locks_text(instance: &CommissioningInstance, locks: &[PageLock]) -> String {
+/// Whether each page of `instance` is locked, a line each.
+fn page_locks(instance: &CommissioningInstance, locks: &[PageLock]) -> Vec<Labelled> {
     let first = instance.first_row() / OTP_PAGE_ROWS;
     let last = last_row(instance) / OTP_PAGE_ROWS;
     (first..=last)
         .map(|page| {
             let state = match locks.iter().find(|lock| lock.page == page).map(|l| l.raw) {
                 Some(LOCK1_READ_ONLY) => "locked".to_string(),
-                Some(0) => "not locked".to_string(),
+                Some(0) => "unlocked".to_string(),
                 Some(raw) => format!("lock word {raw:#08x}"),
                 None => "lock not read".to_string(),
             };
-            format!("page {page} {state}")
+            (format!("Page {page}:"), state)
         })
-        .collect::<Vec<_>>()
-        .join(", ")
+        .collect()
 }
 
 /// A complete instance's last row. Its signature's value ends it.
@@ -346,46 +410,57 @@ fn last_row(instance: &CommissioningInstance) -> u16 {
     })
 }
 
-/// The seven bootloader USB strings One ROM sets. Each is a section and a
-/// field of picotool's JSON.
-const WHITE_LABEL_STRINGS: [(&str, &str); 7] = [
-    ("device", "manufacturer"),
-    ("device", "product"),
-    ("volume", "label"),
-    ("volume", "redirect_url"),
-    ("volume", "redirect_name"),
-    ("volume", "model"),
-    ("volume", "board_id"),
+/// The seven bootloader USB strings One ROM sets, with OTP.md's names for
+/// them. Each is a section and a field of picotool's JSON.
+const WHITE_LABEL_STRINGS: [(&str, &str, &str); 7] = [
+    ("USB manufacturer:", "device", "manufacturer"),
+    ("USB product:", "device", "product"),
+    ("Volume label:", "volume", "label"),
+    ("INDEX.HTM link:", "volume", "redirect_url"),
+    ("INDEX.HTM link name:", "volume", "redirect_name"),
+    ("INFO_UF2.TXT model:", "volume", "model"),
+    ("INFO_UF2.TXT board ID:", "volume", "board_id"),
 ];
 
-/// The bootloader USB strings One ROM sets. They're in OTP.md's order. Where
-/// pico-otp can't decode them the text carries pico-otp's reason.
-fn white_label_text(report: &OtpReport) -> String {
+/// `set` and beneath it the bootloader USB strings One ROM sets, in OTP.md's
+/// order. `not set` or pico-otp's reason it can't decode them otherwise.
+fn white_label_lines(report: &OtpReport) -> Vec<String> {
+    const HEADING: &str = "Bootloader USB strings:";
     let Some(json) = &report.white_label else {
-        return match &report.white_label_error {
+        let value = match &report.white_label_error {
             Some(error) => format!("can't be decoded: {}", escape_controls(error)),
             // The white label is unwritten so read_report didn't decode it.
             None => "not set".to_string(),
         };
+        return vec![labelled(HEADING, value)];
     };
-    let strings = WHITE_LABEL_STRINGS.map(|(section, field)| {
-        json.get(section)
+    let strings = WHITE_LABEL_STRINGS.map(|(label, section, field)| {
+        let string = json
+            .get(section)
             .and_then(|section| section.get(field))
-            .and_then(serde_json::Value::as_str)
+            .and_then(serde_json::Value::as_str);
+        (label, string)
     });
-    if strings.iter().all(Option::is_none) {
-        return "not set".to_string();
+    if strings.iter().all(|(_, string)| string.is_none()) {
+        return vec![labelled(HEADING, "not set")];
     }
-    strings
-        .map(|string| string.map_or("-".to_string(), escape_controls))
-        .join(" / ")
+    let values: Vec<Labelled> = strings
+        .iter()
+        .map(|(label, string)| {
+            let value = string.map_or("not set".to_string(), escape_controls);
+            (label.to_string(), value)
+        })
+        .collect();
+    let mut lines = vec![labelled(HEADING, "set")];
+    lines.extend(labelled_lines(&values));
+    lines
 }
 
-/// The general store's entry count and issues. `not started` where it hasn't
-/// been started.
+/// The general store's entry count and issues. `empty` where it hasn't been
+/// started.
 fn general_store_text(report: &OtpReport) -> String {
     let Some(store) = &report.general_store else {
-        return "not started".to_string();
+        return "empty".to_string();
     };
     let mut text = match store.entries().len() {
         1 => "1 entry".to_string(),
@@ -454,7 +529,7 @@ fn verbose_lines(report: &OtpReport) -> Vec<String> {
                 .map(|entry| format!("  {}", entry_text(entry))),
         );
     }
-    lines.push("Rows:".to_string());
+    lines.push("Bootloader settings:".to_string());
     let rows = [
         ("BOOT_FLAGS0", OTP_BOOT_FLAGS0_ROW, report.boot_flags0[0]),
         (
@@ -498,31 +573,26 @@ fn verbose_lines(report: &OtpReport) -> Vec<String> {
             report.usb_white_label_addr.raw,
         ),
     ];
-    lines.extend(
-        rows.iter()
-            .map(|(name, row, raw)| format!("  {row:#05x} {name}: {raw:#08x}")),
-    );
+    // The values line up after the longest name.
+    let width = rows
+        .iter()
+        .map(|(name, ..)| name.len() + 1)
+        .max()
+        .unwrap_or(0);
+    lines.extend(rows.iter().map(|(name, row, raw)| {
+        let name = format!("{name}:");
+        format!("  {row:#05x} {name:width$} {raw:#08x}")
+    }));
     lines.push("Lock words:".to_string());
-    lines.extend(
-        report
-            .locks
-            .iter()
-            .map(|lock| format!("  Page {}: {:#08x}", lock.page, lock.raw)),
-    );
+    lines.extend(report.locks.iter().map(|lock| {
+        let state = match lock.raw {
+            LOCK1_READ_ONLY => " (locked)",
+            0 => " (unlocked)",
+            _ => "",
+        };
+        format!("  Page {:>2}: {:#08x}{state}", lock.page, lock.raw)
+    }));
     lines
-}
-
-/// `instance`'s state. `current` is whether it's the current instance.
-fn instance_state(instance: &CommissioningInstance, current: bool) -> &'static str {
-    if current {
-        "current"
-    } else if !instance.is_complete() {
-        "incomplete"
-    } else if !instance.is_valid() {
-        "missing values"
-    } else {
-        "earlier"
-    }
 }
 
 /// One entry of a list as `Row ROW: ENTRY`. A known key has OTP.md's name.
@@ -570,7 +640,9 @@ mod tests {
         OTP_COMMISSIONING_AREA_FIRST_ROW, OTP_GENERAL_STORE_FIRST_ROW, OTP_STORE_MAGIC,
     };
 
-    use crate::test_board::{blank_board, commissioned_board, table};
+    use crate::test_board::{
+        SIGNER_NAME, blank_board, commissioned_board, holds, holds_in_order, in_turn, shows, table,
+    };
 
     fn board(name: &str) -> Board {
         Board::try_from_str(name).unwrap()
@@ -597,20 +669,35 @@ mod tests {
         let mut otp = commissioned_board("fire-24-f", BoardSize::M).await;
         let commissioning = area(&mut otp).await;
         let table = table(None);
-        assert_eq!(
-            device_lines(Some(board("fire-24-f")), &commissioning, false, &table),
-            ["Commissioned: fire-24-f by piers.rocks on 2026-01-01"]
+        // A heading, then the board type, manufacturer and date a line each.
+        let values: [&[&str]; 3] = [&["fire-24-f"], &["piers.rocks"], &["2026-01-01"]];
+        let lines = device_lines(
+            Some(board("fire-24-f")),
+            &commissioning,
+            (true, false),
+            &table,
         );
-        assert_eq!(
-            device_lines(Some(board("fire-24-f")), &commissioning, true, &table),
-            [
-                "Commissioned: fire-24-f by piers.rocks on 2026-01-01, signer test signer (1), row 0x0c0"
-            ]
+        assert_eq!(lines.len(), 4, "{lines:?}");
+        assert!(in_turn(&lines[1..], &values), "{lines:?}");
+        assert!(!shows(&lines, &[SIGNER_NAME]), "{lines:?}");
+        assert!(!shows(&lines, &["0x0c0"]), "{lines:?}");
+        // --verbose adds the signer and the row, a line each.
+        let verbose = device_lines(
+            Some(board("fire-24-f")),
+            &commissioning,
+            (true, true),
+            &table,
+        );
+        assert_eq!(verbose.len(), 6, "{verbose:?}");
+        assert_eq!(verbose[..4], lines[..], "{verbose:?}");
+        assert!(
+            in_turn(&verbose[4..], &[&[SIGNER_NAME, "1"], &["0x0c0"]]),
+            "{verbose:?}"
         );
         // A blank board doesn't have firmware to compare with.
         assert_eq!(
-            device_lines(None, &commissioning, false, &table),
-            ["Commissioned: fire-24-f by piers.rocks on 2026-01-01"]
+            device_lines(None, &commissioning, (true, false), &table),
+            lines
         );
     }
 
@@ -618,18 +705,44 @@ mod tests {
     async fn firmware_for_another_board_is_always_shown() {
         let mut otp = commissioned_board("fire-24-f", BoardSize::M).await;
         let commissioning = area(&mut otp).await;
-        assert_eq!(
-            device_lines(
-                Some(board("fire-24-e")),
-                &commissioning,
-                false,
-                &table(None)
-            ),
-            [
-                "Commissioned: fire-24-f by piers.rocks on 2026-01-01",
-                "Commissioned as fire-24-f but the firmware is for fire-24-e",
-            ]
+        let table = table(None);
+        let lines = device_lines(
+            Some(board("fire-24-e")),
+            &commissioning,
+            (true, false),
+            &table,
         );
+        // The commissioned board's lines and a line holding both boards.
+        let matching = device_lines(
+            Some(board("fire-24-f")),
+            &commissioning,
+            (true, false),
+            &table,
+        );
+        assert_eq!(lines.len(), matching.len() + 1, "{lines:?}");
+        assert_eq!(lines[..matching.len()], matching[..]);
+        let last = lines.last().unwrap();
+        assert!(holds(last, &["fire-24-f", "fire-24-e"]), "{lines:?}");
+    }
+
+    /// scan shows a line per board, so without --verbose it asks for the
+    /// warnings alone.
+    #[tokio::test]
+    async fn without_details_only_warnings_are_shown() {
+        let table = table(None);
+        let mut otp = commissioned_board("fire-24-f", BoardSize::M).await;
+        let commissioning = area(&mut otp).await;
+        let quiet = (false, false);
+        // A board matching its firmware doesn't have anything to show.
+        let lines = device_lines(Some(board("fire-24-f")), &commissioning, quiet, &table);
+        assert!(lines.is_empty(), "{lines:?}");
+        // Firmware for another board is shown.
+        let lines = device_lines(Some(board("fire-24-e")), &commissioning, quiet, &table);
+        assert_eq!(lines.len(), 1, "{lines:?}");
+        assert!(holds(&lines[0], &["fire-24-f", "fire-24-e"]), "{lines:?}");
+        // So is data from a newer version.
+        let newer = device_lines(None, &area_of(&[OTP_STORE_MAGIC, 2]), quiet, &table);
+        assert_eq!(newer.len(), 1, "{newer:?}");
     }
 
     #[tokio::test]
@@ -637,33 +750,36 @@ mod tests {
         let table = table(None);
         let mut otp = blank_board();
         let commissioning = area(&mut otp).await;
-        assert!(device_lines(None, &commissioning, false, &table).is_empty());
-        assert_eq!(
-            device_lines(None, &commissioning, true, &table),
-            ["Not commissioned"]
-        );
-        assert!(device_lines(None, &Commissioning::Unreadable, false, &table).is_empty());
-        assert_eq!(
-            device_lines(None, &Commissioning::Unreadable, true, &table),
-            ["OTP not readable"]
-        );
-        assert!(device_lines(None, &Commissioning::NotRead, true, &table).is_empty());
+        assert!(device_lines(None, &commissioning, (true, false), &table).is_empty());
+        let not_commissioned = device_lines(None, &commissioning, (true, true), &table);
+        assert_eq!(not_commissioned.len(), 1, "{not_commissioned:?}");
+        assert!(device_lines(None, &Commissioning::Unreadable, (true, false), &table).is_empty());
+        let unreadable = device_lines(None, &Commissioning::Unreadable, (true, true), &table);
+        assert_eq!(unreadable.len(), 1, "{unreadable:?}");
+        // The two cases are told apart.
+        assert_ne!(not_commissioned, unreadable);
+        assert!(device_lines(None, &Commissioning::NotRead, (true, true), &table).is_empty());
     }
 
     #[test]
     fn newer_data_and_skipped_keys_are_always_shown() {
         let table = table(None);
-        let newer = area_of(&[OTP_STORE_MAGIC, 2]);
-        assert_eq!(
-            device_lines(None, &newer, false, &table),
-            ["Commissioning: unknown version 2 at row 0x0c0"]
-        );
-        // An instance holding key 9. It ends before its signature.
+        // The version and the row it's at.
+        let newer = device_lines(None, &area_of(&[OTP_STORE_MAGIC, 2]), (true, false), &table);
+        assert_eq!(newer.len(), 1, "{newer:?}");
+        assert!(holds(&newer[0], &["2", "0x0c0"]), "{newer:?}");
+        // --verbose shows the same line in place of the line saying a board
+        // isn't commissioned.
+        let verbose = device_lines(None, &area_of(&[OTP_STORE_MAGIC, 2]), (true, true), &table);
+        assert_eq!(verbose, newer);
+        let blank = device_lines(None, &area_of(&[0]), (true, true), &table);
+        assert_ne!(verbose, blank);
+        // An instance holding key 9. It ends before its signature. The line
+        // holds the key, its length in bytes and its row.
         let skipped = area_of(&[OTP_STORE_MAGIC, 1, 9, 4, 0x0201, 0x0403, 0, 0]);
-        assert_eq!(
-            device_lines(None, &skipped, false, &table),
-            ["Skipped unknown key 9 (4 bytes) at row 0x0c2"]
-        );
+        let skipped = device_lines(None, &skipped, (true, false), &table);
+        assert_eq!(skipped.len(), 1, "{skipped:?}");
+        assert!(holds(&skipped[0], &["9", "4", "0x0c2"]), "{skipped:?}");
     }
 
     #[test]
@@ -680,9 +796,11 @@ mod tests {
         for write in instance.writes(&signature) {
             rows[usize::from(write.row - OTP_COMMISSIONING_AREA_FIRST_ROW)] = write.value;
         }
-        assert_eq!(
-            device_lines(None, &area_of(&rows), false, &table(None)),
-            ["Commissioned: fire-24-f by bad\\u{1b}[2Jname on 2026-01-01"]
+        let lines = device_lines(None, &area_of(&rows), (true, false), &table(None));
+        assert!(shows(&lines, &["bad\\u{1b}[2Jname"]), "{lines:?}");
+        assert!(
+            !lines.iter().any(|line| line.contains('\u{1b}')),
+            "{lines:?}"
         );
     }
 
@@ -692,30 +810,42 @@ mod tests {
         let report = read_report(&mut otp).await.unwrap();
         let lines = report_lines(&report, false, &table(None));
         println!("{}", lines.join("\n"));
-        assert_eq!(
-            lines,
-            [
-                "Size:          L (FLASH_DEVINFO 0x99af enabled: CS0 2MB, CS1 2MB on GPIO47, D8h erase)",
-                "Commissioning: fire-40-a by piers.rocks on 2026-01-01, signer test signer (1), row 0x0c0, page 3 locked",
-                "White label:   piers.rocks / One ROM Bootloader / ONEROM / https://onerom.org / onerom.org / One ROM / fire-40-a",
-                "General store: not started",
-            ]
-        );
+        // The size, then the instance's four lines and the seven strings
+        // beneath their headings. FLASH_DEVINFO's fields, the row and the
+        // page's lock are --verbose, and the general store hasn't been
+        // started.
+        assert_eq!(lines.len(), 1 + 5 + 8, "{lines:?}");
+        assert!(holds(&lines[0], &["L"]), "{lines:?}");
+        // The current instance's values and signer.
+        let instance: [&[&str]; 4] = [
+            &["fire-40-a"],
+            &["piers.rocks"],
+            &["2026-01-01"],
+            &[SIGNER_NAME, "1"],
+        ];
+        assert!(in_turn(&lines, &instance), "{lines:?}");
+        // The bootloader USB strings in OTP.md's order.
+        let strings = [
+            "piers.rocks",
+            "One ROM Bootloader",
+            "ONEROM",
+            "https://onerom.org",
+            "onerom.org",
+            "One ROM",
+            "fire-40-a",
+        ];
+        let strings: Vec<&[&str]> = strings.iter().map(std::slice::from_ref).collect();
+        assert!(in_turn(&lines, &strings), "{lines:?}");
     }
 
     #[tokio::test]
     async fn a_blank_boards_otp_is_shown() {
         let mut otp = blank_board();
         let report = read_report(&mut otp).await.unwrap();
-        assert_eq!(
-            report_lines(&report, false, &table(None)),
-            [
-                "Size:          M",
-                "Commissioning: not commissioned",
-                "White label:   not set",
-                "General store: not started",
-            ]
-        );
+        // Size, commissioning and the bootloader USB strings, a line each.
+        let lines = report_lines(&report, false, &table(None));
+        assert_eq!(lines.len(), 3, "{lines:?}");
+        assert!(holds(&lines[0], &["M"]), "{lines:?}");
 
         // --json shows that the white label isn't decoded and doesn't have an
         // error or warnings.
@@ -723,15 +853,6 @@ mod tests {
         assert_eq!(json["white_label"], serde_json::Value::Null);
         assert_eq!(json["white_label_error"], serde_json::Value::Null);
         assert_eq!(json["white_label_warnings"], serde_json::json!([]));
-    }
-
-    /// The lines showing `report`'s white label warnings.
-    fn warning_lines(report: &OtpReport) -> Vec<String> {
-        report
-            .white_label_warnings
-            .iter()
-            .map(|warning| format!("               Warning: {warning}"))
-            .collect()
     }
 
     /// Sets USB_BOOT_FLAGS and its two copies to `flags`.
@@ -748,24 +869,21 @@ mod tests {
         let mut otp = commissioned_board("fire-24-f", BoardSize::M).await;
         set_usb_boot_flags(&mut otp, 0);
         let report = read_report(&mut otp).await.unwrap();
-        assert!(!report.white_label_warnings.is_empty());
-        let lines = report_lines(&report, false, &table(None));
-        println!("{}", lines.join("\n"));
-        let white_label = lines
-            .iter()
-            .position(|line| line == "White label:   not set")
-            .unwrap_or_else(|| panic!("{lines:?}"));
-        let warnings = warning_lines(&report);
-        assert_eq!(
-            lines[white_label + 1..white_label + 1 + warnings.len()],
-            warnings
-        );
+        let warnings = &report.white_label_warnings;
         assert!(
             warnings
                 .iter()
-                .any(|line| line.contains("WHITE_LABEL_ADDR_VALID")),
+                .any(|warning| warning.contains("WHITE_LABEL_ADDR_VALID")),
             "{warnings:?}"
         );
+        let lines = report_lines(&report, false, &table(None));
+        println!("{}", lines.join("\n"));
+        // A line for each warning follows the bootloader USB strings and
+        // ends the output.
+        let last = &lines[lines.len() - warnings.len()..];
+        for (line, warning) in last.iter().zip(warnings) {
+            assert!(holds(line, &[&escape_controls(warning)]), "{lines:?}");
+        }
 
         // --json shows them too.
         let json = serde_json::to_value(&report).unwrap();
@@ -786,12 +904,13 @@ mod tests {
         report.white_label = None;
         report.white_label_error = Some("Invalid white label data: row\u{7}".to_string());
         let lines = report_lines(&report, false, &table(None));
+        // The bootloader USB strings' line, the third, holds pico-otp's reason
+        // with its control characters escaped.
         assert!(
-            lines.contains(
-                &"White label:   can't be decoded: Invalid white label data: row\\u{7}".to_string()
-            ),
+            holds(&lines[2], &["Invalid white label data: row\\u{7}"]),
             "{lines:?}"
         );
+        assert!(!lines[2].contains('\u{7}'), "{lines:?}");
         let json = serde_json::to_value(&report).unwrap();
         assert_eq!(
             json["white_label_error"],
@@ -805,29 +924,42 @@ mod tests {
         let report = read_report(&mut otp).await.unwrap();
         let lines = report_lines(&report, true, &table(None));
         println!("{}", lines.join("\n"));
-        for expected in [
-            "Commissioning instances:",
-            "  Instance at row 0x0c0 (current)",
-            "    Row 0x0c2: COMMISSIONING_BOARD fire-40-a",
-            "    Row 0x0c9: COMMISSIONING_MANUFACTURER piers.rocks",
-            "    Row 0x0d1: COMMISSIONING_DATE 20260101",
-            "    Row 0x0d7: COMMISSIONING_SIGNER 1",
-            "Rows:",
-            "  0x048 BOOT_FLAGS0: 0x000020",
-            "  0x054 FLASH_DEVINFO: 0x3a99af",
-            "  0x059 USB_BOOT_FLAGS: 0x40f130",
-            "Lock words:",
-            "  Page 3: 0x151515",
-            "  Page 4: 0x000000",
-        ] {
-            assert!(lines.iter().any(|line| line == expected), "{expected}");
-        }
+        // FLASH_DEVINFO's fields beneath the board size, which BOOT_FLAGS0
+        // enables.
+        let devinfo = labelled_lines(&devinfo_values(report.flash_devinfo, true));
+        assert_eq!(lines[1..1 + devinfo.len()], devinfo[..], "{lines:?}");
+        // The current instance's signer, row and page lock.
+        let instance: [&[&str]; 3] = [&[SIGNER_NAME, "1"], &["0x0c0"], &["3", "locked"]];
+        assert!(in_turn(&lines, &instance), "{lines:?}");
+        // The instance's line, which says it's current, and then its entries,
+        // a line each.
+        assert!(shows(&lines, &["0x0c0", "current"]), "{lines:?}");
+        let signature = report.commissioning.current().unwrap().signature().unwrap();
+        let signature = hex::encode(signature);
         assert!(
-            lines
-                .iter()
-                .any(|line| line.starts_with("    Row 0x0da: COMMISSIONING_SIG ")),
+            in_turn(
+                &lines,
+                &[
+                    &["0x0c0"],
+                    &["0x0c2", "COMMISSIONING_BOARD", "fire-40-a"],
+                    &["0x0c9", "COMMISSIONING_MANUFACTURER", "piers.rocks"],
+                    &["0x0d1", "COMMISSIONING_DATE", "20260101"],
+                    &["0x0d7", "COMMISSIONING_SIGNER", "1"],
+                    &["0x0da", "COMMISSIONING_SIG", &signature],
+                ]
+            ),
             "{lines:?}"
         );
+        // Rows and lock words.
+        for values in [
+            ["0x048", "BOOT_FLAGS0", "0x000020"].as_slice(),
+            &["0x054", "FLASH_DEVINFO", "0x3a99af"],
+            &["0x059", "USB_BOOT_FLAGS", "0x40f130"],
+            &["3", "0x151515"],
+            &["4", "0x000000"],
+        ] {
+            assert!(shows(&lines, values), "{values:?}\n{lines:?}");
+        }
     }
 
     #[tokio::test]
@@ -841,14 +973,10 @@ mod tests {
         );
         let report = read_report(&mut otp).await.unwrap();
         let lines = report_lines(&report, false, &table(None));
-        assert!(
-            lines.contains(&"Skipped:       unknown key 9 (2 bytes) at row 0x4c2".to_string()),
-            "{lines:?}"
-        );
-        assert!(
-            lines.contains(&"General store: 1 entry".to_string()),
-            "{lines:?}"
-        );
+        // The key, its length in bytes and its row.
+        assert!(shows(&lines, &["9", "2", "0x4c2"]), "{lines:?}");
+        // The general store's line, the last, holds its entry count.
+        assert!(holds(lines.last().unwrap(), &["1"]), "{lines:?}");
 
         let mut otp = blank_board();
         put(&mut otp, OTP_GENERAL_STORE_FIRST_ROW, &[OTP_STORE_MAGIC, 2]);
@@ -859,23 +987,21 @@ mod tests {
         );
         let report = read_report(&mut otp).await.unwrap();
         let lines = report_lines(&report, false, &table(None));
-        assert!(
-            lines.contains(&"Commissioning: unknown version 3 at row 0x0c0".to_string()),
-            "{lines:?}"
-        );
-        assert!(
-            lines.contains(&"General store: unknown version 2".to_string()),
-            "{lines:?}"
-        );
+        // The commissioning area's line, the second, holds its version and
+        // row. The general store's line, the last, holds its version.
+        assert!(holds(&lines[1], &["3", "0x0c0"]), "{lines:?}");
+        assert!(holds(lines.last().unwrap(), &["2"]), "{lines:?}");
     }
 
     #[test]
     fn a_flash_size_is_4kb_shifted_left() {
-        assert_eq!(flash_size(0), "none");
         assert_eq!(flash_size(1), "8KB");
         assert_eq!(flash_size(8), "1MB");
         assert_eq!(flash_size(9), "2MB");
         assert_eq!(flash_size(12), "16MB");
+        // 0 is a chip select without a chip so it doesn't have a size.
+        let none = flash_size(0);
+        assert!(!none.contains(|c: char| c.is_ascii_digit()), "{none}");
     }
 
     #[test]
@@ -884,29 +1010,43 @@ mod tests {
             raw,
             value: Some(raw as u16),
         };
-        assert_eq!(
-            devinfo_text(row(0x99af), false),
-            "FLASH_DEVINFO 0x99af not enabled: CS0 2MB, CS1 2MB on GPIO47, D8h erase"
+        let text = |devinfo, enabled| labelled_lines(&devinfo_values(devinfo, enabled)).join("\n");
+        // 2MB on each chip select, the second on GPIO47, with D8h erase, not
+        // enabled.
+        let l = text(row(0x99af), false);
+        assert!(
+            holds_in_order(&l, &["0x99af", "no", "2MB", "2MB", "47", "yes"]),
+            "{l}"
         );
-        assert_eq!(
-            devinfo_text(row(0x0900), true),
-            "FLASH_DEVINFO 0x0900 enabled: CS0 2MB, CS1 none on GPIO0"
+        // 2MB on chip select 0 alone, without D8h erase, enabled.
+        let m = text(row(0x0900), true);
+        assert!(
+            holds_in_order(&m, &["0x0900", "yes", "2MB", &flash_size(0), "0", "no"]),
+            "{m}"
         );
+        // It says whether BOOT_FLAGS0 enables it.
+        assert_ne!(m, text(row(0x0900), false));
+        // An unwritten row's raw value isn't shown.
         let unwritten = EccRow {
             raw: 0,
             value: None,
         };
-        assert_eq!(
-            devinfo_text(unwritten, true),
-            "FLASH_DEVINFO unwritten, enabled"
-        );
+        let blank = text(unwritten, true);
+        assert!(!holds(&blank, &["0x000000"]), "{blank}");
+        assert_ne!(blank, text(unwritten, false));
+        // An unwritten row reads as 0 with ECC. It's unwritten rather than
+        // chip selects without chips.
+        let read = EccRow {
+            raw: 0,
+            value: Some(0),
+        };
+        assert_eq!(text(read, true), blank);
+        // A damaged row's raw value is shown.
         let damaged = EccRow {
             raw: 0x3a99ae,
             value: None,
         };
-        assert_eq!(
-            devinfo_text(damaged, false),
-            "FLASH_DEVINFO raw 0x3a99ae isn't a valid ECC value, not enabled"
-        );
+        let damaged = text(damaged, false);
+        assert!(holds(&damaged, &["0x3a99ae"]), "{damaged}");
     }
 }

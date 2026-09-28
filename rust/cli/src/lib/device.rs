@@ -13,11 +13,12 @@ use onerom_config::hw::Board;
 use onerom_config::mcu::{Rp235xChipId, RpVariant};
 use onerom_fw_parser::ParsedDevice;
 use onerom_lab_parser::Lab;
+use onerom_metadata::{MaybeKnown, OneromBoardSize};
 use wildmatch::WildMatch;
 
 use crate::Options;
 use crate::error::Error;
-use crate::otp::Commissioning;
+use crate::otp::{Commissioning, board_size_text};
 use crate::usb::enumerate_devices;
 
 /// One ROM device state
@@ -83,6 +84,10 @@ pub struct Device {
     /// The device's commissioning area. Enumeration reads it only for a
     /// device without firmware this build recognises.
     pub commissioning: Commissioning,
+    /// The board's size, from runtime info while One ROM runs and from OTP
+    /// while it's stopped. `None` for One ROM Lab and where OTP couldn't be
+    /// read.
+    pub(crate) board_size: Option<MaybeKnown<OneromBoardSize>>,
 }
 
 impl std::fmt::Display for Device {
@@ -95,7 +100,11 @@ impl std::fmt::Display for Device {
                 let info = sdrr.flash.as_ref().unwrap();
                 let board = info.board.as_ref().unwrap();
                 let fw_version = &info.version;
-                format!("One ROM {} - Firmware: {fw_version}", board_label(board))
+                format!(
+                    "One ROM {}{} - Firmware: {fw_version}",
+                    board_label(board),
+                    size_suffix(self.board_size)
+                )
             }
             Some(Firmware::OneRom(ParsedDevice::Schema(onerom))) if onerom.info().is_some() => {
                 let info = onerom.info().unwrap();
@@ -104,7 +113,11 @@ impl std::fmt::Display for Device {
                     "v{}.{}.{}",
                     info.major_version, info.minor_version, info.patch_version
                 );
-                format!("One ROM {} - Firmware: {fw_version}", board_part(hw_rev))
+                format!(
+                    "One ROM {}{} - Firmware: {fw_version}",
+                    board_part(hw_rev),
+                    size_suffix(self.board_size)
+                )
             }
             Some(Firmware::Lab(lab)) => {
                 let info = &lab.info;
@@ -292,6 +305,27 @@ impl Device {
         })
     }
 
+    /// The line shown beneath the device's line giving its board size, e.g.
+    /// `Board size: L`. `None` where the size isn't known.
+    pub fn board_size_line(&self) -> Option<String> {
+        let size = self.board_size?;
+        Some(format!("Board size: {}", board_size_text(size)))
+    }
+
+    /// The board size runtime info records, where One ROM is running. Firmware
+    /// before 0.8.0 doesn't record one, so its size is unknown.
+    #[allow(clippy::wildcard_enum_match_arm)]
+    pub(crate) fn runtime_board_size(&self) -> Option<MaybeKnown<OneromBoardSize>> {
+        match self.onerom()? {
+            ParsedDevice::Schema(onerom) => onerom.runtime().map(|runtime| runtime.board_size),
+            ParsedDevice::Original(sdrr) => sdrr
+                .ram
+                .as_ref()
+                .map(|_| MaybeKnown::Known(OneromBoardSize::BoardSizeUnknown)),
+            _ => None,
+        }
+    }
+
     /// Returns a sort key for this device, which sorts first by board type (with
     /// unrecognised devices sorted last) and then by serial number (with devices
     /// with no serial sorted last).
@@ -333,6 +367,22 @@ fn lab_board_part(lab: &Lab) -> String {
         Some(hw_rev) => board_part(Some(hw_rev)),
         None if read => "(board not set)".to_string(),
         None => board_part(None),
+    }
+}
+
+/// What follows the board in a device's line. `(L)` on an L board, `(other)`
+/// on one that's neither M nor L, including a size this build doesn't know,
+/// and nothing on an M board or where the size isn't known.
+fn size_suffix(size: Option<MaybeKnown<OneromBoardSize>>) -> &'static str {
+    match size {
+        Some(MaybeKnown::Known(OneromBoardSize::BoardSizeL)) => " (L)",
+        Some(MaybeKnown::Known(OneromBoardSize::BoardSizeOther) | MaybeKnown::Unknown(_)) => {
+            " (other)"
+        }
+        Some(MaybeKnown::Known(
+            OneromBoardSize::BoardSizeM | OneromBoardSize::BoardSizeUnknown,
+        ))
+        | None => "",
     }
 }
 
@@ -469,5 +519,31 @@ pub async fn select_device_by_chip_id(
         // Chip IDs are unique, so more than one match indicates a bug or a
         // read error rather than genuinely duplicate hardware.
         _ => Err(Error::MultipleDevices(vec![id.to_string()])),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_device_line_marks_only_l_and_other_sizes() {
+        use OneromBoardSize::{BoardSizeL, BoardSizeM, BoardSizeOther, BoardSizeUnknown};
+        // `(L)` is the form agreed for the device line, so it's quoted.
+        assert_eq!(size_suffix(Some(MaybeKnown::Known(BoardSizeL))), " (L)");
+        // A size that's neither M nor L carries the same suffix, whether this
+        // build knows it or not.
+        let other = size_suffix(Some(MaybeKnown::Known(BoardSizeOther)));
+        assert!(!other.is_empty());
+        assert_ne!(other, " (L)");
+        assert_eq!(size_suffix(Some(MaybeKnown::Unknown(3))), other);
+        // M, and a size that isn't known, carry none.
+        for size in [
+            Some(MaybeKnown::Known(BoardSizeM)),
+            Some(MaybeKnown::Known(BoardSizeUnknown)),
+            None,
+        ] {
+            assert_eq!(size_suffix(size), "", "{size:?}");
+        }
     }
 }

@@ -113,8 +113,6 @@ If this happens, it checks each following page boundary and restarts parsing
 at the first holding the magic value as the next commissioning instance.
 If it doesn't find any, it reports no valid commissioning data.
 
-Firmware without a valid commissioning instance falls back to metadata.
-
 ### General Store
 
 The general store starts at row `0x4c0` with the magic value and format version.
@@ -201,9 +199,10 @@ A weak key is one of Ed25519's small-order points.
 ### Retiring a Key
 
 piers.rocks's signing server records every signature it makes before returning
-it. The record is a public git repository with one file per signing key. Each
-line holds a CHIPID, written as the bootloader's USB serial number shows it,
-then a space and the signature's SHA-256 hash in lowercase hex:
+it, except when dry run is specified. The record is a public git repository with
+one file per signing key. Each line holds a CHIPID, written as the bootloader's
+USB serial number shows it, then a space and the signature's SHA-256 hash in
+lowercase hex:
 
 ```
 E126C9F97C10ADAC 9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08
@@ -270,6 +269,12 @@ both chips' sizes, the GPIO used for chip select 1 and whether the chips support
 the D8h block erase command. The `FLASH_DEVINFO_ENABLE` bit (bit 5) of
 `BOOT_FLAGS0` tells the bootloader to use `FLASH_DEVINFO`.
 
+Firmware and host tools read the board size as the bootrom reads these rows:
+- M where most of `BOOT_FLAGS0`'s three copies leave `FLASH_DEVINFO_ENABLE`
+  clear.
+- Otherwise from chip select 1's size in `FLASH_DEVINFO`, read with ECC. No
+  chip is M, 2MB is L and any other size is neither M nor L.
+
 A fire-40-a with a 2MB flash chip on chip select 1 is an L board.
 Its `FLASH_DEVINFO` is `0x99af`.
 
@@ -279,15 +284,16 @@ Firmware reads the store through the unguarded ECC alias. This is a memory
 window at `0x40130000` where row n appears as 16 bits at `0x40130000`+(2*n).
 A damaged row returns bad data instead of a bus fault.
 
-At boot, firmware compares `COMMISSIONING_BOARD` from the current commissioning
-instance with firmware metadata's `hw_rev` before driving GPIOs. If they differ
-it reboots into the bootloader.
+At boot, before driving GPIOs, firmware finds `COMMISSIONING_BOARD` in the last
+complete commissioning instance and compares it with firmware metadata's
+`hw_rev`. If they differ it reboots into the bootloader. Firmware doesn't check
+any other OTP data.
 
-`clk_ref` must be 25MHz or less while firmware reads OTP. After firmware boot
-One ROM's `clk_ref` is currently 3MHz - the external 12MHz crystal divided by 4.
+At boot, the firmware records the board size in runtime info.
 
-When `FLASH_DEVINFO_ENABLE` is set, firmware reads `FLASH_DEVINFO` to learn
-whether a second flash chip is fitted.
+`clk_ref` must be 25MHz or less while firmware reads OTP. Firmware reads OTP
+before it sets up its clocks. Here `clk_ref` runs from the ROSC as the bootrom
+leaves is it, at a nominal 11MHz and at most 24MHz.
 
 ## Host Tools
 
@@ -315,9 +321,9 @@ stops OTP writes arriving through the USB plugin's PICOBOOT interface while One
 ROM runs. Page 0 is already read-only from manufacture.
 
 The firmware uses software lock registers `SW_LOCK1`–`SW_LOCK63`. A software
-lock can be tightened but not loosened until the next reset.
+lock can be tightened but not loosened until the next reboot.
 
-A reset clears the software locks enabling OTP to be programmed via the
+A reboot clears the software locks enabling OTP to be programmed via the
 bootloader.
 
 `onerom hardware commission` locks each page of a commissioning instance
@@ -330,20 +336,27 @@ lock word. This is permanent.
 data. It requires One ROM to be stopped in the One ROM Bootloader and writes
 through the bootloader's PICOBOOT USB interface.
 
-The board's name and size are always given on the command line so a non-M
-board cannot be commissioned as M by omitting its size.
+The board's name must always be given on the command line. Its size must be
+supplied for a board that supports external flash being populated, so an L
+board cannot be commissioned as M by omitting its size or vice versa. Boards
+that don't support external flash must be M.
+
+Once a board's size is set to anything other than M it cannot be changed.
 
 Before writing anything it checks that every ECC row it will write is unwritten
-or already holds the value it would write. It skips a row that already holds
-its value. An interrupted commission can then be run again and a board whose
-`FLASH_DEVINFO` was written earlier can still be commissioned. It reads back
-each row as soon as it writes it and stops at the first mismatch.
+or already contains the value it would write. It also refuses a board where an
+OTP page it would write is locked. It skips a row that already contains its
+value. Running it again then completes an interrupted run. A board whose
+`FLASH_DEVINFO` was written earlier can still be commissioned. It checks each
+row as soon as it writes it and stops at the first one that fails.
 
 1. It reads CHIPID from One ROM and looks up the signing key's ID in the table.
-   It builds the commissioning instance's rows and gets their signature. It
-   verifies the signature.
-2. It displays every row it will write and asks for confirmation. It refuses a
-   commissioning instance that would overlap row `0x4c0`.
+   It builds the commissioning instance's rows and gets their signature. A
+   signing server doesn't record this signature. It verifies the signature.
+2. It shows what it will write and asks for confirmation. It refuses a
+   commissioning instance that would overlap row `0x4c0`. `--dry-run` stops
+   here. Once confirmed, a signing server signs again and records the
+   signature, and the two signatures must match.
 3. On a non-M board it writes `FLASH_DEVINFO`.
 4. It writes the commissioning instance's magic row, then its version row, then
    each entry with `COMMISSIONING_SIG` last. Each entry is written length row
@@ -379,6 +392,10 @@ reads as a deleted entry and the rest of the store stays readable.
 Commissioning writes the bootloader's enable and valid bits last because they
 cannot be cleared. It writes each one only after reading back the rows it
 enables.
+
+## Setting a Board's Size
+
+`onerom hardware set-size` sets a board's size without commissioning it.
 
 ## Correcting Errors
 

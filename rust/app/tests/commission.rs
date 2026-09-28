@@ -2,19 +2,20 @@
 //
 // MIT License
 
-//! Tests for commissioning a board against the in-memory OTP.
+//! Tests for commissioning a board and setting its size against the in-memory
+//! OTP.
 
 use ed25519_dalek::{Signature, Signer as _, SigningKey};
 use onerom_app::{
     BoardSize, BoardSizeError, CommissionError, Interruption, LocalOtpAccess, MemoryOtp, OtpError,
-    Plan, Request, RequestDate, RowValue, StepKind, prepare, read_commissioning,
+    Plan, Request, RequestDate, RowValue, StepKind, plan_size, prepare, read_commissioning,
 };
 use onerom_config::hw::{Board, Model};
 use onerom_metadata::otp::pico_otp::ecc_encode;
 use onerom_metadata::otp::{
     AreaIssue, BuildError, CommissioningValues, NewCommissioningInstance, RowWrite, white_label,
 };
-use onerom_metadata::{OTP_STORE_MAGIC, OTP_STORE_VERSION};
+use onerom_metadata::{OTP_STORE_MAGIC, OTP_STORE_VERSION, OneromBoardSize};
 use serde_json::json;
 
 /// CHIPID from rows 0x000–0x003 of an RP2350 A4.
@@ -156,14 +157,8 @@ fn a_board_size_is_m_or_l_in_either_case() {
     ] {
         assert_eq!(text.parse(), Ok(size), "{text}");
     }
-    for text in ["xl", "XL", "Xl"] {
-        assert_eq!(
-            text.parse::<BoardSize>(),
-            Err(BoardSizeError::Reserved),
-            "{text}"
-        );
-    }
-    for text in ["Q", "", "LL", "XXL"] {
+    // XL is refused like any other text.
+    for text in ["xl", "XL", "Xl", "Q", "", "LL", "XXL"] {
         assert_eq!(
             text.parse::<BoardSize>(),
             Err(BoardSizeError::Unknown(text.into())),
@@ -531,6 +526,17 @@ async fn force_makes_a_second_instance_current() {
         force: true,
         ..acme
     };
+    // The forced run replaces the instance in use. One matching it doesn't.
+    let prepared = prepare(&mut otp, &forced).await.unwrap();
+    let replaced = prepared
+        .replaced_instance()
+        .map(|instance| instance.first_row());
+    assert_eq!(replaced, Some(0x0c0));
+    let matching = prepare(&mut otp, &request(Board::Fire24F, BoardSize::M))
+        .await
+        .unwrap();
+    assert!(matching.replaced_instance().is_none());
+
     commission(&mut otp, &forced).await.unwrap();
     let area = read_commissioning(&mut otp).await.unwrap();
     assert_eq!(area.instances().len(), 2);
@@ -815,7 +821,7 @@ async fn an_m_board_configuring_a_second_chip_needs_force() {
     for otp in [devinfo, enabled] {
         assert_eq!(
             refusal(otp.clone(), &m).await,
-            CommissionError::SecondChipConfigured
+            CommissionError::SecondChipConfigured(Board::Fire40A)
         );
         let mut otp = otp;
         let before: Vec<u32> = [0x048, 0x049, 0x04a, 0x054]
@@ -826,6 +832,52 @@ async fn an_m_board_configuring_a_second_chip_needs_force() {
             .map(|row| raw(&otp, row))
             .to_vec();
         assert_eq!(after, before);
+    }
+}
+
+/// Every BOOT_FLAGS0 copy enables FLASH_DEVINFO and it has a 2MB chip on chip
+/// select 1. Bits can't be cleared so `force` can't make the board M.
+#[tokio::test]
+async fn an_m_request_for_an_l_board_is_refused_even_with_force() {
+    let m = request(Board::Fire40A, BoardSize::M);
+    let mut otp = board();
+    otp.set_raw(0x054, ecc_encode(0x99af));
+    for row in 0x048..=0x04a {
+        otp.set_raw(row, 0x20);
+    }
+    for request in [m.clone(), forced(&m)] {
+        assert_eq!(
+            refusal(otp.clone(), &request).await,
+            CommissionError::SizeAlreadySet {
+                size: OneromBoardSize::BoardSizeL,
+                requested: BoardSize::M,
+            }
+        );
+    }
+}
+
+/// FLASH_DEVINFO has 4MB on chip select 1 and every BOOT_FLAGS0 copy enables
+/// it. The board is neither M nor L so every size is refused, whatever `force`
+/// says.
+#[tokio::test]
+async fn a_board_of_size_other_is_refused_every_size_even_with_force() {
+    let mut otp = board();
+    otp.set_raw(0x054, ecc_encode(0xa9af));
+    for row in 0x048..=0x04a {
+        otp.set_raw(row, 0x20);
+    }
+    for &size in BoardSize::supported_values() {
+        let request = request(Board::Fire40A, size);
+        for request in [request.clone(), forced(&request)] {
+            assert_eq!(
+                refusal(otp.clone(), &request).await,
+                CommissionError::SizeAlreadySet {
+                    size: OneromBoardSize::BoardSizeOther,
+                    requested: size,
+                },
+                "{size}"
+            );
+        }
     }
 }
 
@@ -854,9 +906,10 @@ async fn a_white_label_row_holding_another_value_is_refused() {
     otp.set_raw(0x05a, 0x40_0000);
     assert_eq!(
         refusal(otp, &m).await,
-        CommissionError::UsbBootFlags {
+        CommissionError::RowWritten {
             row: 0x05a,
-            raw: 0x40_0000
+            raw: 0x40_0000,
+            value: RowValue::Raw(USB_BOOT_FLAGS),
         }
     );
 }
@@ -913,7 +966,11 @@ async fn a_page_with_a_lock_word_in_the_way_is_refused() {
     otp.set_raw(lock1_row(3), 0x1);
     assert_eq!(
         refusal(otp, &m).await,
-        CommissionError::LockWord { page: 3, raw: 0x1 }
+        CommissionError::RowWritten {
+            row: lock1_row(3),
+            raw: 0x1,
+            value: RowValue::Raw(0x15_1515),
+        }
     );
 
     let mut otp = board();
@@ -924,29 +981,41 @@ async fn a_page_with_a_lock_word_in_the_way_is_refused() {
     );
 }
 
+/// Page 59 holds the first white label rows. Page 1 holds
+/// USB_WHITE_LABEL_ADDR and USB_BOOT_FLAGS.
+#[tokio::test]
+async fn a_locked_page_outside_the_area_is_refused_before_any_write() {
+    let m = request(Board::Fire24F, BoardSize::M);
+    for page in [59, 1] {
+        let mut otp = board();
+        otp.set_raw(lock1_row(page), 0x15_1515);
+        otp.reset();
+        assert_eq!(refusal(otp, &m).await, CommissionError::PageLocked { page });
+    }
+}
+
+/// LOCK1's other locks don't stop the bootloader writing.
+#[tokio::test]
+async fn a_page_locked_only_against_other_access_is_commissioned() {
+    let request = request(Board::Fire24F, BoardSize::M);
+    let mut otp = board();
+    for page in [1, 59, 60] {
+        otp.set_raw(lock1_row(page), 0x0f_0f0f);
+    }
+    otp.reset();
+    let mut expected = commissioned(&request, &FIRE_24_F_ROWS);
+    for page in [1, 59, 60] {
+        expected[usize::from(lock1_row(page))] = 0x0f_0f0f;
+    }
+
+    commission(&mut otp, &request).await.unwrap();
+
+    assert_rows(&otp, &expected, "other locks");
+}
+
 // ---------------------------------------------------------------------------
 // Runs stopped part way
 // ---------------------------------------------------------------------------
-
-/// Page 59 holds the first white label rows.
-#[tokio::test]
-async fn a_locked_white_label_page_stops_the_run_at_its_first_write() {
-    let mut otp = board();
-    otp.set_raw(lock1_row(59), 0x15_1515);
-    otp.reset();
-    assert_eq!(
-        commission(&mut otp, &request(Board::Fire24F, BoardSize::M)).await,
-        Err(CommissionError::Otp {
-            row: 0xed0,
-            error: OtpError::NotPermitted
-        })
-    );
-    assert_eq!(current_row(&mut otp).await, Some(0x0c0));
-    assert_eq!(raw(&otp, lock1_row(3)), 0x15_1515);
-    assert_eq!(raw(&otp, 0xed0), 0);
-    assert_eq!(raw(&otp, 0x05c), 0);
-    assert_eq!(raw(&otp, 0x059), 0);
-}
 
 /// An M run's third write is the board entry's length row.
 #[tokio::test]
@@ -1065,4 +1134,487 @@ fn preparing_with_a_send_access_is_send() {
     let mut otp = board();
     let request = request(Board::Fire24F, BoardSize::M);
     send(prepare(&mut otp, &request));
+}
+
+// ---------------------------------------------------------------------------
+// Setting a board's size
+// ---------------------------------------------------------------------------
+
+#[test]
+fn every_size_parses_and_its_refusal_lists_every_size() {
+    let refusal = "XL".parse::<BoardSize>().unwrap_err().to_string();
+    let words: Vec<&str> = refusal.split(|c: char| !c.is_alphanumeric()).collect();
+    for &size in BoardSize::supported_values() {
+        let text = size.to_string();
+        assert_eq!(text.parse(), Ok(size), "{text}");
+        assert_eq!(text.to_lowercase().parse(), Ok(size), "{text}");
+        assert!(words.contains(&text.as_str()), "{refusal}");
+    }
+}
+
+/// The rows setting `size` leaves on a blank fire-40-a and the steps writing
+/// them. OTP.md's "Board Sizes" section contains fire-40-a's FLASH_DEVINFO.
+fn sized(size: BoardSize) -> (Vec<u32>, Vec<StepKind>) {
+    let mut rows = board().rows().to_vec();
+    let steps = match size {
+        BoardSize::M => Vec::new(),
+        BoardSize::L => {
+            rows[0x054] = 0x3a_99af;
+            // FLASH_DEVINFO_ENABLE in BOOT_FLAGS0 and its two copies.
+            rows[0x048..=0x04a].fill(0x20);
+            vec![StepKind::FlashDevinfo, StepKind::BootFlags0]
+        }
+    };
+    (rows, steps)
+}
+
+/// Sets `otp`'s size to `size` as `board_type`.
+async fn set_size<O: LocalOtpAccess>(
+    otp: &mut O,
+    board_type: Board,
+    size: BoardSize,
+) -> Result<(), CommissionError> {
+    plan_size(otp, board_type, size)
+        .await?
+        .execute(otp, |_| {})
+        .await
+}
+
+#[tokio::test]
+async fn each_size_is_set_on_a_blank_board() {
+    for &size in BoardSize::supported_values() {
+        let (rows, steps) = sized(size);
+        let mut otp = board();
+        let plan = plan_size(&mut otp, Board::Fire40A, size).await.unwrap();
+        let kinds: Vec<StepKind> = plan.steps().iter().map(|step| step.kind).collect();
+        assert_eq!(kinds, steps, "{size}");
+        plan.execute(&mut otp, |_| {}).await.unwrap();
+        assert_rows(&otp, &rows, &size.to_string());
+    }
+}
+
+#[tokio::test]
+async fn a_board_already_its_size_writes_nothing() {
+    for &size in BoardSize::supported_values() {
+        let mut once = board();
+        set_size(&mut once, Board::Fire40A, size).await.unwrap();
+        let mut otp = copy(&once);
+        let plan = plan_size(&mut otp, Board::Fire40A, size).await.unwrap();
+        assert!(
+            plan.steps()
+                .iter()
+                .flat_map(|step| &step.writes)
+                .all(|write| write.holds),
+            "{size}"
+        );
+        plan.execute(&mut otp, |_| {}).await.unwrap();
+        assert_eq!(otp.write_count(), 0, "{size}");
+        assert_rows(&otp, once.rows(), &size.to_string());
+    }
+}
+
+/// Interrupts a run setting each size on a blank fire-40-a at each of its
+/// writes in turn. Each write is interrupted once landing and once not. After
+/// each interruption it resets the board and runs it again.
+///
+/// After each interruption a BOOT_FLAGS0 copy enables FLASH_DEVINFO only where
+/// FLASH_DEVINFO contains its value. Each run after an interruption ends with
+/// the rows of a run that wasn't interrupted.
+#[tokio::test]
+async fn a_size_run_interrupted_at_any_write_completes_the_second_time() {
+    for &size in BoardSize::supported_values() {
+        let (expected, _) = sized(size);
+        let mut reference = board();
+        set_size(&mut reference, Board::Fire40A, size)
+            .await
+            .unwrap();
+        let changed = expected
+            .iter()
+            .zip(board().rows())
+            .filter(|(expected, blank)| expected != blank)
+            .count();
+        assert_eq!(reference.write_count(), changed, "{size}");
+
+        for n in 1..=reference.write_count() {
+            for interruption in [Interruption::Landed, Interruption::NotLanded] {
+                let at = format!("{size}: write {n}, {interruption:?}");
+                let mut otp = board();
+                otp.interrupt(n, interruption);
+                let error = set_size(&mut otp, Board::Fire40A, size).await.unwrap_err();
+                assert!(
+                    matches!(
+                        error,
+                        CommissionError::Otp {
+                            error: OtpError::Transport(_),
+                            ..
+                        }
+                    ),
+                    "{at}: {error}"
+                );
+                if (0x048..=0x04a).any(|row| raw(&otp, row) & 0x20 != 0) {
+                    assert_eq!(raw(&otp, 0x054), expected[0x054], "{at}");
+                }
+
+                otp.reset();
+                set_size(&mut otp, Board::Fire40A, size)
+                    .await
+                    .unwrap_or_else(|e| panic!("{at}: {e}"));
+                assert_rows(&otp, &expected, &at);
+            }
+        }
+    }
+}
+
+/// A board sized before it's commissioned ends with the rows of a board only
+/// commissioned. `prepare` finds the size's rows already present.
+#[tokio::test]
+async fn a_sized_board_is_commissioned_as_a_blank_one_is() {
+    let is_size_step =
+        |kind: StepKind| matches!(kind, StepKind::FlashDevinfo | StepKind::BootFlags0);
+    for &size in BoardSize::supported_values() {
+        let request = request(Board::Fire40A, size);
+        let mut commissioned = board();
+        commission(&mut commissioned, &request).await.unwrap();
+
+        let mut otp = board();
+        let size_plan = plan_size(&mut otp, Board::Fire40A, size).await.unwrap();
+        size_plan.execute(&mut otp, |_| {}).await.unwrap();
+        let commission_plan = plan(&mut otp, &request).await.unwrap();
+        let size_rows: Vec<(u16, RowValue, bool)> = commission_plan
+            .steps()
+            .iter()
+            .filter(|step| is_size_step(step.kind))
+            .flat_map(|step| &step.writes)
+            .map(|write| (write.row, write.value, write.holds))
+            .collect();
+        let present: Vec<(u16, RowValue, bool)> = size_plan
+            .steps()
+            .iter()
+            .flat_map(|step| &step.writes)
+            .map(|write| (write.row, write.value, true))
+            .collect();
+        assert_eq!(size_rows, present, "{size}");
+
+        commission_plan.execute(&mut otp, |_| {}).await.unwrap();
+        assert_rows(&otp, commissioned.rows(), &size.to_string());
+    }
+}
+
+/// Why setting `otp`'s size to `size` as `board_type` is refused. Checks that
+/// the run didn't write anything.
+async fn size_refusal(mut otp: MemoryOtp, board_type: Board, size: BoardSize) -> CommissionError {
+    let before = otp.rows().to_vec();
+    let writes = otp.write_count();
+    let error = set_size(&mut otp, board_type, size).await.unwrap_err();
+    assert_eq!(otp.write_count(), writes, "{error}");
+    assert_rows(&otp, &before, &error.to_string());
+    error
+}
+
+/// A board holding a complete instance at 0x0c0 made of `entries`, each built
+/// by [`entry`]. A signature of zeros ends it.
+fn with_entries(entries: &[Vec<u16>]) -> MemoryOtp {
+    let rows: Vec<u16> = [vec![OTP_STORE_MAGIC, OTP_STORE_VERSION]]
+        .into_iter()
+        .chain(entries.iter().cloned())
+        .chain([entry(2, &[0; 64])])
+        .flatten()
+        .collect();
+    let mut otp = board();
+    for (row, value) in (0x0c0..).zip(rows) {
+        otp.set_raw(row, ecc_encode(value));
+    }
+    otp
+}
+
+/// A board holding a complete instance of `complete`'s at 0x0c0 and an
+/// incomplete instance of `incomplete`'s at 0x100. The later instance lacks
+/// its last row, the signature's key row.
+async fn with_incomplete_instance(complete: &Request, incomplete: &Request) -> MemoryOtp {
+    let mut otp = with_instance(complete);
+    let writes = instance(incomplete, DATE, 0x100);
+    put(&mut otp, &writes[..writes.len() - 1]);
+    let area = read_commissioning(&mut otp).await.unwrap();
+    let last = area.instances().last().unwrap();
+    assert_eq!(last.first_row(), 0x100);
+    assert!(!last.is_complete());
+    otp
+}
+
+/// The firmware checks its board against the last complete instance's without
+/// checking the instance's other values or its signature.
+#[tokio::test]
+async fn a_board_commissioned_as_another_is_refused() {
+    let fire_24_f = request(Board::Fire24F, BoardSize::M);
+    let fire_40_a = request(Board::Fire40A, BoardSize::L);
+    let values = [
+        entry(3, b"piers.rocks"),
+        entry(4, DATE.as_bytes()),
+        entry(5, &1_u16.to_le_bytes()),
+    ];
+    let board_entry = entry(1, b"fire-24-f");
+    // Every value, with a signature of zeros.
+    let unsigned = with_entries(&[&[board_entry.clone()][..], &values].concat());
+    // Without its signer, so it isn't the current instance.
+    let mut no_signer = with_entries(&[board_entry, values[0].clone(), values[1].clone()]);
+    let area = read_commissioning(&mut no_signer).await.unwrap();
+    assert!(area.current().is_none());
+    assert!(area.instances()[0].is_complete());
+
+    let refused = [
+        with_instance(&fire_24_f),
+        unsigned,
+        no_signer,
+        with_incomplete_instance(&fire_24_f, &fire_40_a).await,
+    ];
+    for otp in refused {
+        for &size in BoardSize::supported_values() {
+            assert_eq!(
+                size_refusal(otp.clone(), Board::Fire40A, size).await,
+                CommissionError::CommissionedAsAnotherBoard {
+                    board: "fire-24-f".into(),
+                    requested: Board::Fire40A,
+                },
+                "{size}"
+            );
+        }
+    }
+}
+
+/// Where the last complete instance doesn't contain another board, the size is
+/// set.
+#[tokio::test]
+async fn a_board_commissioned_as_itself_or_without_a_board_is_sized() {
+    let fire_24_f = request(Board::Fire24F, BoardSize::M);
+    let fire_40_a = request(Board::Fire40A, BoardSize::L);
+    let mut no_board = with_entries(&[
+        entry(3, b"piers.rocks"),
+        entry(4, DATE.as_bytes()),
+        entry(5, &1_u16.to_le_bytes()),
+    ]);
+    let area = read_commissioning(&mut no_board).await.unwrap();
+    assert!(area.instances()[0].is_complete());
+    assert_eq!(area.instances()[0].board(), None);
+
+    let accepted = [
+        ("blank", board()),
+        ("the same board", with_instance(&fire_40_a)),
+        ("without a board", no_board),
+        (
+            "a later incomplete instance for another board",
+            with_incomplete_instance(&fire_40_a, &fire_24_f).await,
+        ),
+    ];
+    for (case, mut otp) in accepted {
+        set_size(&mut otp, Board::Fire40A, BoardSize::L)
+            .await
+            .unwrap_or_else(|e| panic!("{case}: {e}"));
+        assert_eq!(raw(&otp, 0x054), 0x3a_99af, "{case}");
+        assert_eq!(raw(&otp, 0x048), 0x20, "{case}");
+    }
+}
+
+#[tokio::test]
+async fn a_size_isnt_set_over_data_from_a_newer_version() {
+    let mut newer = board();
+    newer.set_raw(0x0c0, ecc_encode(OTP_STORE_MAGIC));
+    newer.set_raw(0x0c1, ecc_encode(2));
+    for &size in BoardSize::supported_values() {
+        assert_eq!(
+            size_refusal(newer.clone(), Board::Fire40A, size).await,
+            CommissionError::NewerData {
+                row: 0x0c0,
+                version: 2
+            },
+            "{size}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn only_a_fire_boards_size_is_set() {
+    for &board_type in Model::Ice.boards() {
+        for &size in BoardSize::supported_values() {
+            assert_eq!(
+                size_refusal(board(), board_type, size).await,
+                CommissionError::NotFire(board_type),
+                "{board_type} {size}"
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn l_needs_an_external_flash_pin_and_a_valid_slot_size() {
+    assert_eq!(
+        size_refusal(board(), Board::Fire24F, BoardSize::L).await,
+        CommissionError::NoExternalFlash(Board::Fire24F)
+    );
+
+    // An ECC read corrects a single wrong bit. A row with one is refused.
+    let mut slot = board();
+    slot.set_raw(0x055, 0x100);
+    assert_eq!(
+        size_refusal(slot, Board::Fire40A, BoardSize::L).await,
+        CommissionError::SlotSizeInvalid { raw: 0x100 }
+    );
+}
+
+/// Row 0x055 is read on its own only before BOOT_FLAGS0.
+#[tokio::test]
+async fn the_slot_size_is_checked_again_before_boot_flags0() {
+    let mut otp = FlakyRead::new(0x055, 1, 0x100);
+    assert_eq!(
+        set_size(&mut otp, Board::Fire40A, BoardSize::L).await,
+        Err(CommissionError::SlotSizeInvalid { raw: 0x100 })
+    );
+    assert_eq!(raw(&otp.otp, 0x054), 0x3a_99af);
+    assert_eq!(raw(&otp.otp, 0x048), 0);
+}
+
+/// FLASH_DEVINFO with 4MB on chip select 1, enabled by every BOOT_FLAGS0
+/// copy. The board is neither M nor L.
+fn neither_m_nor_l() -> MemoryOtp {
+    let mut otp = board();
+    otp.set_raw(0x054, ecc_encode(0xa9af));
+    for row in 0x048..=0x04a {
+        otp.set_raw(row, 0x20);
+    }
+    otp
+}
+
+/// Bits can't be cleared so a size other than M can't change once it's set.
+#[tokio::test]
+async fn a_size_other_than_m_is_refused_every_other_size() {
+    let mut l = board();
+    set_size(&mut l, Board::Fire40A, BoardSize::L)
+        .await
+        .unwrap();
+    assert_eq!(
+        size_refusal(copy(&l), Board::Fire40A, BoardSize::M).await,
+        CommissionError::SizeAlreadySet {
+            size: OneromBoardSize::BoardSizeL,
+            requested: BoardSize::M,
+        }
+    );
+    for &size in BoardSize::supported_values() {
+        assert_eq!(
+            size_refusal(neither_m_nor_l(), Board::Fire40A, size).await,
+            CommissionError::SizeAlreadySet {
+                size: OneromBoardSize::BoardSizeOther,
+                requested: size,
+            },
+            "{size}"
+        );
+    }
+
+    // The size is checked after the board's external flash and before row
+    // 0x055.
+    let mut slot = neither_m_nor_l();
+    slot.set_raw(0x055, 0x100);
+    assert_eq!(
+        size_refusal(slot.clone(), Board::Fire40A, BoardSize::L).await,
+        CommissionError::SizeAlreadySet {
+            size: OneromBoardSize::BoardSizeOther,
+            requested: BoardSize::L,
+        }
+    );
+    assert_eq!(
+        size_refusal(slot, Board::Fire24F, BoardSize::L).await,
+        CommissionError::NoExternalFlash(Board::Fire24F)
+    );
+}
+
+/// OTP still configures M where FLASH_DEVINFO is written but not enabled, or
+/// only one BOOT_FLAGS0 copy enables it. M goes ahead without writing
+/// anything.
+#[tokio::test]
+async fn m_is_set_where_otp_configures_a_second_chip_but_not_its_size() {
+    let mut devinfo = board();
+    devinfo.set_raw(0x054, ecc_encode(0x99af));
+    let mut enabled = board();
+    enabled.set_raw(0x04a, 0x20);
+    for otp in [devinfo, enabled] {
+        let before = otp.rows().to_vec();
+        let mut otp = copy(&otp);
+        let plan = plan_size(&mut otp, Board::Fire40A, BoardSize::M)
+            .await
+            .unwrap();
+        assert!(plan.steps().is_empty());
+        plan.execute(&mut otp, |_| {}).await.unwrap();
+        assert_eq!(otp.write_count(), 0);
+        assert_rows(&otp, &before, "M");
+    }
+}
+
+/// FLASH_DEVINFO containing another value, whether or not OTP configures L.
+#[tokio::test]
+async fn l_is_refused_where_flash_devinfo_contains_another_value() {
+    let mut devinfo = board();
+    devinfo.set_raw(0x054, ecc_encode(0x99a0));
+    let mut enabled = devinfo.clone();
+    for row in 0x048..=0x04a {
+        enabled.set_raw(row, 0x20);
+    }
+    for otp in [devinfo, enabled] {
+        assert_eq!(
+            size_refusal(otp, Board::Fire40A, BoardSize::L).await,
+            CommissionError::RowWritten {
+                row: 0x054,
+                raw: ecc_encode(0x99a0),
+                value: RowValue::Ecc(0x99af),
+            }
+        );
+    }
+}
+
+/// Page 1 contains FLASH_DEVINFO and BOOT_FLAGS0. A locked page is refused
+/// only where a row on it is still to be written.
+#[tokio::test]
+async fn a_locked_page_1_is_refused_where_a_row_needs_writing() {
+    let mut blank = board();
+    blank.set_raw(lock1_row(1), 0x15_1515);
+    blank.reset();
+    assert_eq!(
+        size_refusal(blank, Board::Fire40A, BoardSize::L).await,
+        CommissionError::PageLocked { page: 1 }
+    );
+
+    let mut l = board();
+    set_size(&mut l, Board::Fire40A, BoardSize::L)
+        .await
+        .unwrap();
+    let mut l = copy(&l);
+    l.set_raw(lock1_row(1), 0x15_1515);
+    l.reset();
+    set_size(&mut l, Board::Fire40A, BoardSize::L)
+        .await
+        .unwrap();
+    assert_eq!(l.write_count(), 0);
+}
+
+/// An L run's first write is FLASH_DEVINFO.
+#[tokio::test]
+async fn a_size_row_reading_back_wrong_stops_the_run() {
+    let mut otp = board();
+    otp.corrupt(1, 0x1);
+    assert_eq!(
+        set_size(&mut otp, Board::Fire40A, BoardSize::L).await,
+        Err(CommissionError::ReadBack {
+            row: 0x054,
+            value: RowValue::Ecc(0x99af),
+            raw: 0x3a_99af ^ 0x1,
+        })
+    );
+    assert_eq!(otp.write_count(), 1);
+    assert_eq!(raw(&otp, 0x048), 0);
+}
+
+/// A host whose access has `Send` futures can set a board's size on a
+/// multi-threaded executor.
+#[test]
+fn planning_a_size_with_a_send_access_is_send() {
+    fn send<T: Send>(_: T) {}
+    let mut otp = board();
+    send(plan_size(&mut otp, Board::Fire40A, BoardSize::L));
 }

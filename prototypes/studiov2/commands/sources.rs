@@ -86,6 +86,7 @@ pub static ANNOTATIONS: &[(&str, &str, Source)] = &[
     ("console", "output", Source::SaveFile),
     ("update slot", "image", Source::OpenFile),
     ("hardware commission", "key", Source::OpenFile),
+    ("hardware sign", "key", Source::OpenFile),
     ("firmware build", "config", Source::OpenFile),
     ("firmware build", "save-config", Source::SaveFile),
     ("firmware build", "base-firmware", Source::OpenFile),

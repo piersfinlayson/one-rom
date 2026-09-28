@@ -6,8 +6,8 @@
 
 use log::debug;
 use onerom_app::{OtpAccess, OtpError, read_commissioning};
-use onerom_metadata::OTP_PAGE_ROWS;
 use onerom_metadata::otp::{CommissioningArea, CommissioningInstance};
+use onerom_metadata::{MaybeKnown, OTP_PAGE_ROWS, OneromBoardSize};
 use picoboot::cmd::PicobootStatus;
 use picoboot::{Connection, Picoboot};
 
@@ -188,6 +188,37 @@ impl Commissioning {
     }
 }
 
+/// Reads the board size `device`'s OTP configures. A failure is logged at debug
+/// level.
+pub(crate) async fn read_board_size(device: &Device) -> Option<OneromBoardSize> {
+    let size = match PicobootOtp::open(device).await {
+        Ok(mut otp) => onerom_app::read_board_size(&mut otp)
+            .await
+            .map_err(Error::from),
+        Err(e) => Err(e),
+    };
+    match size {
+        Ok(size) => Some(size),
+        Err(e) => {
+            debug!("Couldn't read the board size of {device}: {e}");
+            None
+        }
+    }
+}
+
+/// The value a `Board size:` line shows for `size`.
+pub fn board_size_text(size: MaybeKnown<OneromBoardSize>) -> String {
+    match size {
+        MaybeKnown::Known(OneromBoardSize::BoardSizeM) => "M".to_string(),
+        MaybeKnown::Known(OneromBoardSize::BoardSizeL) => "L".to_string(),
+        MaybeKnown::Known(OneromBoardSize::BoardSizeOther) => "neither M nor L".to_string(),
+        // Firmware before 0.8.0 doesn't record a size.
+        MaybeKnown::Known(OneromBoardSize::BoardSizeUnknown) => "unknown".to_string(),
+        // A size newer firmware recorded, with its number.
+        MaybeKnown::Unknown(_) => size.to_string(),
+    }
+}
+
 /// `text` with each control character escaped. OTP strings are printed this
 /// way because a board's OTP can hold any bytes.
 pub fn escape_controls(text: &str) -> String {
@@ -291,5 +322,22 @@ mod tests {
         assert_eq!(format_date("20260926"), "2026-09-26");
         assert_eq!(format_date("2026-9-26"), "2026-9-26");
         assert_eq!(format_date("2026092\u{7}"), "2026092\\u{7}");
+    }
+
+    #[test]
+    fn a_board_size_shows_as_its_letter_or_says_it_is_neither() {
+        use OneromBoardSize::{BoardSizeL, BoardSizeM, BoardSizeOther, BoardSizeUnknown};
+        assert_eq!(board_size_text(MaybeKnown::Known(BoardSizeM)), "M");
+        assert_eq!(board_size_text(MaybeKnown::Known(BoardSizeL)), "L");
+        // A size from newer firmware keeps its number.
+        assert!(board_size_text(MaybeKnown::Unknown(3)).contains("0x03"));
+        // Neither M nor L, and not recorded, are told apart from M, from L and
+        // from each other.
+        let other = board_size_text(MaybeKnown::Known(BoardSizeOther));
+        let unrecorded = board_size_text(MaybeKnown::Known(BoardSizeUnknown));
+        for text in [&other, &unrecorded] {
+            assert!(text != "M" && text != "L", "{text}");
+        }
+        assert_ne!(other, unrecorded);
     }
 }

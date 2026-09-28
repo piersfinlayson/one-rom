@@ -37,7 +37,10 @@ pub async fn cmd_info(options: &Options, args: &InspectInfoArgs) -> Result<(), E
     let device = options.device.as_ref().unwrap();
 
     println!("{device}");
-    for line in commissioning_lines(device, options.verbose).await {
+    if let Some(line) = device.board_size_line() {
+        println!("  {line}");
+    }
+    for line in commissioning_lines(device, true, options.verbose).await {
         println!("  {line}");
     }
 
@@ -53,7 +56,8 @@ pub async fn cmd_info(options: &Options, args: &InspectInfoArgs) -> Result<(), E
 
 /// The lines describing `device`'s commissioning that `scan` and `inspect
 /// info` show. It reads the commissioning area where enumeration didn't.
-pub async fn commissioning_lines(device: &Device, verbose: bool) -> Vec<String> {
+/// `details` adds the commissioning itself to the warnings.
+pub async fn commissioning_lines(device: &Device, details: bool, verbose: bool) -> Vec<String> {
     let read;
     let commissioning = match &device.commissioning {
         Commissioning::NotRead => {
@@ -65,7 +69,7 @@ pub async fn commissioning_lines(device: &Device, verbose: bool) -> Vec<String> 
     device_lines(
         device.firmware_board(),
         commissioning,
-        verbose,
+        (details, verbose),
         &SignerTable::built_in(),
     )
 }
@@ -83,7 +87,7 @@ pub async fn cmd_otp(options: &Options, args: &InspectOtpArgs) -> Result<(), Err
     } else {
         println!("{device}");
         for line in report_lines(&report, options.verbose, &SignerTable::built_in()) {
-            println!("{line}");
+            println!("  {line}");
         }
     }
     Ok(())
@@ -336,9 +340,9 @@ pub async fn output_slot_info(
     let verbose = options.verbose;
 
     // Device identity sits directly beneath the header, before slot detail.
+    // The header carries the board size.
     if verbose && let Some(line) = device.mcu_chip_id_line() {
-        print!("{prefix}");
-        println!("  {line}");
+        println!("{prefix}  {line}");
     }
     for line in commissioning {
         println!("{prefix}  {line}");

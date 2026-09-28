@@ -48,7 +48,10 @@ pub async fn cmd_scan(options: &Options, args: &args::scan::ScanArgs) -> Result<
     );
 
     for d in &devices {
-        let commissioning = crate::inspect::commissioning_lines(d, options.verbose).await;
+        // Without --slots a board is its line. Its commissioning needs
+        // --verbose, and a warning shows beneath it where one applies.
+        let details = options.verbose || args.slots;
+        let commissioning = crate::inspect::commissioning_lines(d, details, options.verbose).await;
         if args.slots {
             // output_slot_info prints the device header followed by:
             // - the MCU / chip-ID line (when verbose)
@@ -61,13 +64,15 @@ pub async fn cmd_scan(options: &Options, args: &args::scan::ScanArgs) -> Result<
                 .ok();
         } else {
             println!("  {d}");
+            // A device's details sit beneath its line. The line carries the
+            // board size.
             if options.verbose
                 && let Some(line) = d.mcu_chip_id_line()
             {
-                println!("  {line}");
+                println!("    {line}");
             }
             for line in commissioning {
-                println!("  {line}");
+                println!("    {line}");
             }
         }
     }

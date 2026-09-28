@@ -159,22 +159,13 @@ pub enum InspectCommands {
     ///   onerom inspect socket --chip-type 2364 --gpio
     Socket(InspectSocketArgs),
 
-    /// Show what a One ROM's OTP holds
+    /// Display the contents of One ROM's OTP
     ///
-    /// Shows:
-    /// - the board size OTP configures
-    /// - the current commissioning instance
-    /// - the bootloader's USB strings
-    /// - the general store
+    /// A commissioned One ROM stores hardware information in its OTP
+    /// (One Time Programmable memory).
     ///
-    /// --verbose adds:
-    /// - every commissioning instance and entry
-    /// - the commissioning area's issues
-    /// - the general store's issues and entries
-    /// - the raw rows
-    /// - the lock words
-    ///
-    /// Signatures aren't checked. 'onerom hardware validate' checks them.
+    /// This command doesn't validate the OTP contents. To validate the
+    /// contents use 'onerom hardware validate'.
     ///
     /// Examples:
     ///

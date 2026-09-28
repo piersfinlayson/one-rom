@@ -24,6 +24,7 @@ use core::fmt;
 
 use onerom_config::hw::Board;
 use pico_otp::{WhiteLabelError, WhiteLabelStruct};
+use serde::ser::SerializeStruct;
 use sha2::{Digest, Sha256};
 
 use crate::{
@@ -218,7 +219,16 @@ impl NewCommissioningInstance {
 // ---------------------------------------------------------------------------
 
 /// An entry in one of the store's lists.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+///
+/// It serialises as one flat object with the key row as `row`:
+/// - an entry that parsed adds `key` and `value`
+/// - a deleted entry adds `"deleted": true` and `len`
+/// - an unreadable entry adds `"unreadable": true`, `key` and `len`
+///
+/// `key` is OTP.md's name for a known key, such as `COMMISSIONING_BOARD`, and
+/// the number for an unknown one. A signature and an unknown key's bytes are
+/// lowercase hex.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StoreEntry {
     /// An entry whose value parsed. An unknown key's entry is
     /// [`OneromOtpEntry::Unknown`].
@@ -259,8 +269,91 @@ impl StoreEntry {
     }
 }
 
+impl serde::Serialize for StoreEntry {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let s = match self {
+            Self::Entry { row, entry } => {
+                let mut s = serializer.serialize_struct("StoreEntry", 3)?;
+                s.serialize_field("row", row)?;
+                s.serialize_field("key", &KeyJson(entry_key(entry)))?;
+                match entry {
+                    OneromOtpEntry::OtpKeyCommissioningBoard { name }
+                    | OneromOtpEntry::OtpKeyCommissioningManufacturer { name }
+                    | OneromOtpEntry::OtpKeyCommissioningDate { date: name } => {
+                        s.serialize_field("value", name)?
+                    }
+                    OneromOtpEntry::OtpKeyCommissioningSigner { id } => {
+                        s.serialize_field("value", id)?
+                    }
+                    OneromOtpEntry::OtpKeyCommissioningSig { signature } => {
+                        s.serialize_field("value", &Hex(signature))?
+                    }
+                    OneromOtpEntry::Unknown { params, .. } => {
+                        s.serialize_field("value", &Hex(params))?
+                    }
+                }
+                s
+            }
+            Self::Deleted { row, len } => {
+                let mut s = serializer.serialize_struct("StoreEntry", 3)?;
+                s.serialize_field("row", row)?;
+                s.serialize_field("deleted", &true)?;
+                s.serialize_field("len", len)?;
+                s
+            }
+            Self::Unreadable { row, key, len } => {
+                let mut s = serializer.serialize_struct("StoreEntry", 4)?;
+                s.serialize_field("row", row)?;
+                s.serialize_field("unreadable", &true)?;
+                s.serialize_field("key", &KeyJson(*key))?;
+                s.serialize_field("len", len)?;
+                s
+            }
+        };
+        s.end()
+    }
+}
+
+/// An entry's key as [`StoreEntry`] serialises it.
+struct KeyJson(u16);
+
+impl serde::Serialize for KeyJson {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match OneromOtpKey::try_from(self.0) {
+            Ok(key) => serializer.serialize_str(key_name(key)),
+            Err(()) => serializer.serialize_u16(self.0),
+        }
+    }
+}
+
+/// `key`'s name in OTP.md, such as `COMMISSIONING_BOARD`. It's the C name
+/// without its prefix.
+fn key_name(key: OneromOtpKey) -> &'static str {
+    let name = key.c_name();
+    name.strip_prefix("OTP_KEY_").unwrap_or(name)
+}
+
+/// Bytes that display and serialise as lowercase hex.
+struct Hex<'a>(&'a [u8]);
+
+impl fmt::Display for Hex<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.iter().try_for_each(|byte| write!(f, "{byte:02x}"))
+    }
+}
+
+impl serde::Serialize for Hex<'_> {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.collect_str(self)
+    }
+}
+
 /// A problem the parser found in an area.
+///
+/// It serialises as its fields and an `issue` of `unknown_version` or
+/// `lost_place`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(tag = "issue", rename_all = "snake_case")]
 pub enum AreaIssue {
     /// The commissioning instance or general store starting at `row` has a
     /// version other than [`OTP_STORE_VERSION`]. The parser stops there.
@@ -280,7 +373,9 @@ pub enum AreaIssue {
 }
 
 /// The commissioning area, parsed.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+///
+/// It serialises the current instance as its first row.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CommissioningArea {
     instances: Vec<CommissioningInstance>,
     issues: Vec<AreaIssue>,
@@ -340,6 +435,17 @@ impl CommissioningArea {
     /// The problems the parser found, in row order.
     pub fn issues(&self) -> &[AreaIssue] {
         &self.issues
+    }
+}
+
+impl serde::Serialize for CommissioningArea {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let mut s = serializer.serialize_struct("CommissioningArea", 4)?;
+        s.serialize_field("instances", &self.instances)?;
+        s.serialize_field("issues", &self.issues)?;
+        s.serialize_field("current", &self.current().map(|i| i.first_row))?;
+        s.serialize_field("next_instance_row", &self.next_instance_row)?;
+        s.end()
     }
 }
 
@@ -871,10 +977,7 @@ impl RecordLine {
 
 impl fmt::Display for RecordLine {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{} ", format_chip_id(self.chip_id))?;
-        self.hash
-            .iter()
-            .try_for_each(|byte| write!(f, "{byte:02x}"))
+        write!(f, "{} {}", format_chip_id(self.chip_id), Hex(&self.hash))
     }
 }
 

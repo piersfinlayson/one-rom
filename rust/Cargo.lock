@@ -4880,6 +4880,7 @@ dependencies = [
  "onerom-lab-parser",
  "onerom-metadata",
  "picoboot",
+ "pkcs8",
  "reqwest",
  "semver 1.0.28",
  "serde",

@@ -20,7 +20,7 @@ use picoboot::{
 use std::time::Duration;
 
 use crate::Error;
-use crate::otp::Commissioning;
+use crate::otp::{Commissioning, read_board_size};
 use crate::picobootx::LedQueryArgs;
 pub use crate::picobootx::{
     Caps, GpioEntry, GpioSetArgs, GpioState, GpioUse, LedId, LedState, LedSubCmd, SetLedArgs,
@@ -280,6 +280,7 @@ pub async fn enumerate_devices(options: &Options) -> Result<Vec<Device>, Error> 
             chip_id: None,
             rp_variant: None,
             commissioning: Commissioning::NotRead,
+            board_size: None,
         };
 
         let answered = match read_device_info(&mut device).await {
@@ -482,6 +483,17 @@ pub async fn read_device_info(device: &mut Device) -> Result<(), AccessError> {
     // by its commissioning.
     if device.firmware.is_none() {
         device.commissioning = Commissioning::read(device).await;
+    }
+
+    // Runtime info exists only while One ROM runs, so a stopped board's size
+    // comes from OTP. One ROM Lab has no board size.
+    if !matches!(device.firmware, Some(Firmware::Lab(_))) {
+        device.board_size = match device.runtime_board_size() {
+            Some(size) => Some(size),
+            None => read_board_size(device)
+                .await
+                .map(onerom_metadata::MaybeKnown::Known),
+        };
     }
 
     // Read the chip ID - the device's invariant identity - and package variant.

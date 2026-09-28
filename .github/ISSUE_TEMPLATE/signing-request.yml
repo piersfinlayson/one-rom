@@ -1,0 +1,31 @@
+name: Signing request
+description: "Request a signature to commission a One ROM. Create this request using the One ROM CLI command: `onerom hardware request-signature`."
+title: "[signing request] "
+labels: ["signing-request"]
+body:
+  - type: input
+    id: chip_id
+    attributes:
+      label: Chip ID
+    validations:
+      required: true
+  - type: input
+    id: board
+    attributes:
+      label: Board type
+    validations:
+      required: true
+  - type: input
+    id: size
+    attributes:
+      label: Board size
+    validations:
+      required: true
+  - type: input
+    id: manufacturer
+    attributes:
+      label: Manufacturer
+      description: Must be onerom.org. A request with another manufacturer is rejected.
+      value: onerom.org
+    validations:
+      required: true

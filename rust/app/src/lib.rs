@@ -48,10 +48,10 @@ mod otp;
 mod plugin;
 mod signers;
 
-// Commissioning a board.
+// Commissioning a board and setting its size.
 pub use commission::{
     BoardSize, BoardSizeError, CommissionError, Plan, PlannedWrite, Prepared, Request, RequestDate,
-    RowValue, Step, StepKind, prepare,
+    RowValue, Step, StepKind, plan_size, prepare,
 };
 pub use error::{Error, PluginError};
 // Fetch abstraction (host-implemented). `trait_variant` generates the `Send`
@@ -63,7 +63,7 @@ pub use fetch::{Fetch, LocalFetch};
 // word commissioning writes.
 pub use otp::{
     EccRow, Interruption, LOCK1_READ_ONLY, LocalOtpAccess, MemoryOtp, OtpAccess, OtpError,
-    OtpReport, PageLock, read_chip_id, read_commissioning, read_report,
+    OtpReport, PageLock, read_board_size, read_chip_id, read_commissioning, read_report,
 };
 // FLASH_DEVINFO's fields. The schema declares them, and these are the names the
 // CLI uses.

@@ -72,7 +72,10 @@ pub(crate) const AREA_LAST_PAGE: u16 = OTP_COMMISSIONING_AREA_LAST_ROW / OTP_PAG
 
 /// The first white label page. Pages 59 and 60 hold the white label table
 /// and its strings.
-const WHITE_LABEL_FIRST_PAGE: u16 = OTP_USB_WHITE_LABEL_ROW / OTP_PAGE_ROWS;
+pub(crate) const WHITE_LABEL_FIRST_PAGE: u16 = OTP_USB_WHITE_LABEL_ROW / OTP_PAGE_ROWS;
+
+/// The last white label page.
+pub(crate) const WHITE_LABEL_LAST_PAGE: u16 = (OTP_ROW_UNRESERVED_END - 1) / OTP_PAGE_ROWS;
 
 /// Rows in pages 59 and 60.
 pub(crate) const WHITE_LABEL_PAGES_ROWS: u16 = OTP_ROW_UNRESERVED_END - OTP_USB_WHITE_LABEL_ROW;
@@ -92,6 +95,16 @@ const PAGE0_LOCK1_ROW: u16 = 0xf81;
 /// access. Commissioning writes it for each page of an instance.
 pub const LOCK1_READ_ONLY: u32 = 0x15_1515;
 
+/// LOCK_BL's position in each copy of a LOCK1 word.
+const LOCK_BL_SHIFT: u32 = 4;
+
+/// LOCK_BL's width.
+const LOCK_BL_BITS: u32 = 0b11;
+
+/// The LOCK_BL value making a page read-only. A lock from this value up
+/// refuses writes.
+pub(crate) const LOCK_BL_READ_ONLY: u8 = 1;
+
 /// USB_BOOT_FLAGS' WHITE_LABEL_ADDR_VALID bit. The bootloader uses the white
 /// label only where it's set.
 const USB_BOOT_FLAGS_WHITE_LABEL_ADDR_VALID: u32 = 1 << 22;
@@ -99,6 +112,13 @@ const USB_BOOT_FLAGS_WHITE_LABEL_ADDR_VALID: u32 = 1 << 22;
 /// The row of `page`'s LOCK1 word.
 pub(crate) const fn lock1_row(page: u16) -> u16 {
     PAGE0_LOCK1_ROW + 2 * page
+}
+
+/// The bootloader's lock on a page whose LOCK1 word is `word`. It's LOCK_BL
+/// with each bit's majority across the word's three copies.
+pub(crate) fn bootloader_lock(word: u32) -> u8 {
+    let copies = majority([word, word >> 8, word >> 16]);
+    ((copies >> LOCK_BL_SHIFT) & LOCK_BL_BITS) as u8
 }
 
 /// Whether a row with raw value `raw` is unwritten. A row can leave the factory
@@ -130,16 +150,25 @@ pub(crate) fn majority(copies: [u32; 3]) -> u32 {
     (a & b) | (a & c) | (b & c)
 }
 
-/// FLASH_DEVINFO for an L board with:
-/// - a 2MB chip on each chip select
+/// FLASH_DEVINFO for a board of `size` with:
+/// - 2MB of built-in flash on chip select 0
+/// - the size's chip on chip select 1
 /// - D8h block erase supported
 /// - chip select 1 on GPIO `cs1_gpio`
-pub(crate) fn flash_devinfo(cs1_gpio: u8) -> u16 {
+///
+/// `None` for a size without a chip on chip select 1.
+pub(crate) fn flash_devinfo(size: BoardSize, cs1_gpio: u8) -> Option<u16> {
+    let cs1_size = match size {
+        BoardSize::M => return None,
+        BoardSize::L => OTP_FLASH_DEVINFO_SIZE_2MB,
+    };
     debug_assert!(u16::from(cs1_gpio) <= OTP_FLASH_DEVINFO_CS1_GPIO);
-    (OTP_FLASH_DEVINFO_SIZE_2MB << OTP_FLASH_DEVINFO_CS1_SIZE_SHIFT)
-        | (OTP_FLASH_DEVINFO_SIZE_2MB << OTP_FLASH_DEVINFO_CS0_SIZE_SHIFT)
-        | OTP_FLASH_DEVINFO_D8H_ERASE_SUPPORTED
-        | u16::from(cs1_gpio)
+    Some(
+        (cs1_size << OTP_FLASH_DEVINFO_CS1_SIZE_SHIFT)
+            | (OTP_FLASH_DEVINFO_SIZE_2MB << OTP_FLASH_DEVINFO_CS0_SIZE_SHIFT)
+            | OTP_FLASH_DEVINFO_D8H_ERASE_SUPPORTED
+            | u16::from(cs1_gpio),
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -241,6 +270,17 @@ pub async fn read_chip_id<O: LocalOtpAccess>(otp: &mut O) -> Result<[u16; 4], Ot
     Ok(core::array::from_fn(|i| rows[i]))
 }
 
+/// Reads the board size OTP configures, by [`board_size`]'s rule. It reads
+/// BOOT_FLAGS0's three copies raw and FLASH_DEVINFO with ECC, as the bootrom
+/// does.
+pub async fn read_board_size<O: LocalOtpAccess>(otp: &mut O) -> Result<OneromBoardSize, OtpError> {
+    let [first, .., last] = BOOT_FLAGS0_ROWS;
+    let rows = read_raw_rows(otp, first, last - first + 1).await?;
+    let boot_flags0 = BOOT_FLAGS0_ROWS.map(|row| rows[usize::from(row - first)]);
+    let flash_devinfo = read_ecc_rows(otp, OTP_FLASH_DEVINFO_ROW, 1).await?[0];
+    Ok(board_size(boot_flags0, flash_devinfo))
+}
+
 /// Reads and parses the commissioning area.
 ///
 /// It reads a page at a time and stops once the parser has found where the
@@ -308,6 +348,9 @@ impl BootRows {
     /// The first row [`read`](Self::read) reads.
     pub(crate) const FIRST_ROW: u16 = OTP_BOOT_FLAGS0_ROW;
 
+    /// The page holding the rows.
+    pub(crate) const PAGE: u16 = Self::FIRST_ROW / OTP_PAGE_ROWS;
+
     /// Reads the rows from BOOT_FLAGS0 to USB_WHITE_LABEL_ADDR raw.
     pub(crate) async fn read<O: LocalOtpAccess>(otp: &mut O) -> Result<Self, OtpError> {
         let rows = read_raw_rows(
@@ -333,7 +376,8 @@ pub struct OtpReport {
     /// CHIPID as the bootloader's USB serial number shows it.
     pub chip_id: String,
     /// The board size OTP configures. `None` where it configures neither M nor
-    /// L.
+    /// L, which serialises as `other`.
+    #[serde(serialize_with = "size_or_other")]
     pub size: Option<BoardSize>,
     /// The raw BOOT_FLAGS0 and its two copies.
     pub boot_flags0: [u32; 3],
@@ -361,6 +405,17 @@ pub struct OtpReport {
     /// The LOCK1 words of the commissioning area's pages and the white label's
     /// pages.
     pub locks: Vec<PageLock>,
+}
+
+/// Serialises `size`, or `other` where it's `None`.
+fn size_or_other<S: serde::Serializer>(
+    size: &Option<BoardSize>,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    match size {
+        Some(size) => size.serialize(serializer),
+        None => serializer.serialize_str("other"),
+    }
 }
 
 /// An ECC row's raw value and the value it holds.
@@ -410,7 +465,7 @@ pub async fn read_report<O: LocalOtpAccess>(otp: &mut O) -> Result<OtpReport, Ot
     // reads it.
     let flash_devinfo_ecc = read_ecc_rows(otp, OTP_FLASH_DEVINFO_ROW, 1).await?[0];
     let mut locks = read_locks(otp, AREA_FIRST_PAGE..=AREA_LAST_PAGE).await?;
-    locks.extend(read_locks(otp, WHITE_LABEL_FIRST_PAGE..=WHITE_LABEL_FIRST_PAGE + 1).await?);
+    locks.extend(read_locks(otp, WHITE_LABEL_FIRST_PAGE..=WHITE_LABEL_LAST_PAGE).await?);
 
     let flash_devinfo = EccRow::new(boot.flash_devinfo);
     let usb_boot_flags = majority(boot.usb_boot_flags);
@@ -578,11 +633,24 @@ mod tests {
         );
     }
 
+    #[test]
+    fn the_bootloader_lock_is_lock_bl_in_most_copies() {
+        assert_eq!(bootloader_lock(0), 0);
+        assert_eq!(bootloader_lock(LOCK1_READ_ONLY), LOCK_BL_READ_ONLY);
+        assert_eq!(bootloader_lock(0x30_3030), 3);
+        // Every lock but LOCK_BL.
+        assert_eq!(bootloader_lock(0x0f_0f0f), 0);
+        // LOCK_BL in one copy or split across two.
+        assert_eq!(bootloader_lock(0x00_0010), 0);
+        assert_eq!(bootloader_lock(0x00_2010), 0);
+        assert_eq!(bootloader_lock(0x10_0010), 1);
+    }
+
     /// `plugins/user/ext-flash/scripts/program-otp.sh` writes `0x99af` to a
     /// fire-40-a. `0x3a99af` is the raw row it expects.
     #[test]
     fn fire_40_a_flash_devinfo_matches_program_otp_sh() {
-        assert_eq!(flash_devinfo(47), 0x99af);
+        assert_eq!(flash_devinfo(BoardSize::L, 47), Some(0x99af));
         assert_eq!(ecc_encode(0x99af), 0x3a_99af);
     }
 
@@ -592,7 +660,7 @@ mod tests {
             let Some(pin) = board.external_flash_cs_pin() else {
                 continue;
             };
-            let devinfo = flash_devinfo(pin);
+            let devinfo = flash_devinfo(BoardSize::L, pin).unwrap();
             assert_eq!((devinfo >> 12) & 0xf, 9, "{board}");
             assert_eq!((devinfo >> 8) & 0xf, 9, "{board}");
             assert_eq!(devinfo & 0x80, 0x80, "{board}");

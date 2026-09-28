@@ -24,7 +24,7 @@ include!("../sources.rs");
 /// entry written by hand is a `FILE` or a `PIN` option.  `FILE` and `PIN` are
 /// the two placeholders that each mean two things.  The odd one is
 /// `self download --version`.  Its placeholder derives the wrong source.
-const DERIVED_OPTIONS: usize = 33;
+const DERIVED_OPTIONS: usize = 36;
 
 /// The command the CLI puts at that path.
 fn command(path: &[&str]) -> &'static Command {
@@ -73,7 +73,7 @@ fn a_board_is_a_board_wherever_it_appears() {
         })
         .collect();
 
-    assert_eq!(boards.len(), 15, "the CLI has 15 --board options");
+    assert_eq!(boards.len(), 18, "the CLI has 18 --board options");
 }
 
 #[test]

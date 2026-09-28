@@ -21,8 +21,11 @@ mod inspect;
 mod monitor;
 mod plugin;
 mod program;
+#[cfg(test)]
+mod review;
 mod scan;
 mod self_cmd;
+mod signing_request;
 #[cfg(test)]
 mod test_board;
 mod update;
@@ -30,6 +33,7 @@ mod utils;
 
 use args::BoardCommands;
 use args::Cli;
+use args::CommandTrait;
 use args::Commands;
 use args::control::{ControlCommands, ControlLedCommands, ControlPokeCommands, ControlRgbCommands};
 use args::firmware::FirmwareCommands;
@@ -55,6 +59,7 @@ async fn sub_main() -> Result<(), Error> {
     // onerom.
     let mut cli = Cli::from_arg_matches(&Cli::command().bin_name("onerom").get_matches())
         .unwrap_or_else(|e: clap::Error| e.exit());
+    cli.command.check_args().unwrap_or_else(|e| e.exit());
     let mut options = cli.try_into_options().await?;
 
     utils::init_logging(&options);
@@ -128,6 +133,11 @@ async fn sub_main() -> Result<(), Error> {
             HardwareCommands::Commission(args) => {
                 hardware::cmd_commission(&mut options, args).await
             }
+            HardwareCommands::RequestSignature(args) => {
+                hardware::cmd_request_signature(&mut options, args).await
+            }
+            HardwareCommands::Sign(args) => hardware::cmd_sign(&options, args).await,
+            HardwareCommands::SetSize(args) => hardware::cmd_set_size(&mut options, args).await,
             HardwareCommands::Validate(args) => hardware::cmd_validate(&mut options, args).await,
         },
         Commands::Image(args) => match &args.command {
@@ -378,94 +388,41 @@ mod cli_assert {
             }
         }
     }
-}
 
-#[cfg(test)]
-mod help_text {
-    use super::*;
-
-    /// The long help `--help` prints for the command at `path`.
-    fn long_help(path: &[&str]) -> String {
-        let mut cli = Cli::command().bin_name("onerom");
-        cli.build();
-        let mut command = &mut cli;
-        for name in path {
-            command = command
-                .find_subcommand_mut(name)
-                .unwrap_or_else(|| panic!("there isn't a '{name}' command"));
-        }
-        command.render_long_help().to_string()
+    /// Every command and `onerom` itself, with its path.
+    fn every_command() -> Vec<(String, clap::Command)> {
+        let mut commands = all_subcommands();
+        commands.push(("onerom".to_string(), Cli::command()));
+        commands
     }
 
-    /// Checks that each of `lines` is a line of the help of the command at
-    /// `path`. The indent doesn't matter.
-    fn assert_lines(path: &[&str], lines: &[&str]) {
-        let help = long_help(path);
-        println!("{help}");
-        for line in lines {
-            assert!(
-                help.lines().any(|printed| printed.trim() == *line),
-                "'{line}' isn't a line of its own:\n{help}"
-            );
+    /// A list in help prints a bullet per line.
+    ///
+    /// clap joins the lines of a doc comment's paragraph into one unless the
+    /// comment is verbatim, so a list prints as "Requirements: - one - two".
+    #[test]
+    fn no_help_runs_a_list_into_one_line() {
+        for (path, mut cmd) in every_command() {
+            let help = cmd.render_long_help().to_string();
+            for line in help.lines() {
+                assert!(
+                    !line.contains(": - "),
+                    "'{path}' prints a list as one line: {line}"
+                );
+            }
         }
     }
 
-    /// clap joins a doc comment paragraph's lines into one unless the comment
-    /// is verbatim. A list prints a bullet per line only in a verbatim comment.
+    /// clap drops the full stop from a summary it takes from a doc comment
+    /// but not from a verbatim one. Every summary leaves it out so the
+    /// command lists stay alike.
     #[test]
-    fn hardware_commission_prints_a_bullet_per_line() {
-        assert_lines(
-            &["hardware", "commission"],
-            &[
-                "Writes to the RP2350's OTP:",
-                "- a signed and dated commissioning instance holding the board's type",
-                "and its manufacturer",
-                "- the bootloader's USB strings",
-                "- the settings for an L board's second flash chip",
-                "Go ahead despite:",
-                "- a current commissioning instance holding other values",
-                "- firmware for another board",
-                "- OTP configuring a second flash chip for an M board",
-            ],
-        );
-    }
-
-    /// clap drops the period from a summary it takes from a doc comment but
-    /// not from a verbatim one. These summaries leave it out so the command
-    /// lists stay alike.
-    #[test]
-    fn a_verbatim_commands_summary_ends_without_a_period() {
-        let cli = Cli::command();
-        for [group, name] in [["hardware", "commission"], ["inspect", "otp"]] {
-            let command = cli
-                .find_subcommand(group)
-                .and_then(|group| group.find_subcommand(name))
-                .unwrap_or_else(|| panic!("there isn't a '{group} {name}' command"));
-            let about = command.get_about().map(ToString::to_string);
-            assert!(
-                about.as_deref().is_some_and(|about| !about.ends_with('.')),
-                "{group} {name}: {about:?}"
-            );
+    fn no_summary_ends_with_a_full_stop() {
+        for (path, cmd) in every_command() {
+            if let Some(about) = cmd.get_about() {
+                let about = about.to_string();
+                assert!(!about.ends_with('.'), "'{path}': {about}");
+            }
         }
-    }
-
-    #[test]
-    fn inspect_otp_prints_a_bullet_per_line() {
-        assert_lines(
-            &["inspect", "otp"],
-            &[
-                "Shows:",
-                "- the board size OTP configures",
-                "- the current commissioning instance",
-                "- the bootloader's USB strings",
-                "- the general store",
-                "--verbose adds:",
-                "- every commissioning instance and entry",
-                "- the commissioning area's issues",
-                "- the general store's issues and entries",
-                "- the raw rows",
-                "- the lock words",
-            ],
-        );
     }
 }

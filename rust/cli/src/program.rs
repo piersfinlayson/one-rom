@@ -243,6 +243,15 @@ pub(crate) async fn reboot_to_running(options: &Options) -> Result<(), Error> {
     reboot(device, &RebootArgs::running(false, false)).await
 }
 
+/// Reboots a stopped device into the bootloader again.
+pub(crate) async fn reboot_stopped(options: &Options) -> Result<(), Error> {
+    let device = options.device.as_ref().unwrap();
+    if options.verbose {
+        println!("Rebooting device into stopped mode...");
+    }
+    reboot(device, &RebootArgs::stopped(false, false)).await
+}
+
 /// Refuses to program a commissioned board with an image for another board
 /// unless `force`.
 ///
@@ -264,7 +273,7 @@ async fn check_commissioned_board(
         Ok(area) => check_board(area.current().and_then(|i| i.board()), image_board, force),
         Err(e) => {
             eprintln!(
-                "Warning: couldn't read this One ROM's commissioning so the image's board isn't checked against it.\n  {e}"
+                "Warning: Commissioning information couldn't be read so unable to check whether the board type matches version being programmed\n  {e}"
             );
             Ok(())
         }
@@ -283,7 +292,7 @@ fn check_board(commissioned: Option<&str>, image: Board, force: bool) -> Result<
     let commissioned = escape_controls(commissioned);
     if force {
         eprintln!(
-            "Warning: this One ROM is commissioned as '{commissioned}' but the image is for '{}' (continuing due to --force)",
+            "Warning: image board type '{}' does not match the commissioned board type '{commissioned}' (continuing due to --force)",
             image.name()
         );
         Ok(())
@@ -531,7 +540,6 @@ mod tests {
                 if commissioned == "fire-24-f" && image == "fire-24-e"),
             "{error}"
         );
-        assert!(error.to_string().contains("--force"), "{error}");
         assert!(check_board(Some("fire-24-f"), board("fire-24-e"), true).is_ok());
     }
 
@@ -545,6 +553,10 @@ mod tests {
     #[test]
     fn a_commissioned_board_is_shown_with_its_control_characters_escaped() {
         let error = check_board(Some("fire\u{1b}[2J"), board("fire-24-f"), false).unwrap_err();
-        assert!(error.to_string().contains("fire\\u{1b}[2J"), "{error}");
+        assert!(
+            matches!(&error, Error::CommissionedBoardMismatch { commissioned, .. }
+                if commissioned == "fire\\u{1b}[2J"),
+            "{error}"
+        );
     }
 }

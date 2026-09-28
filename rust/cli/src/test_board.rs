@@ -6,15 +6,20 @@
 //! - a board
 //! - a signing key
 //! - a signer table
+//! - a commissioning plan
 //!
 //! The board is onerom-app's in-memory OTP.
+//!
+//! [`holds`] and the checks beside it find the values in a command's output.
 
 use std::path::PathBuf;
 
 use ed25519_dalek::pkcs8::EncodePrivateKey;
 use ed25519_dalek::pkcs8::spki::der::pem::LineEnding;
 use ed25519_dalek::{Signer as _, SigningKey};
-use onerom_app::{BoardSize, LocalFetch, MemoryOtp, Request, RequestDate, SignerTable, prepare};
+use onerom_app::{
+    BoardSize, LocalFetch, MemoryOtp, Plan, Request, RequestDate, SignerTable, prepare,
+};
 use onerom_config::hw::Board;
 use onerom_metadata::otp::pico_otp::ecc_encode;
 use serde_json::json;
@@ -44,10 +49,9 @@ pub fn key() -> SigningKey {
     SigningKey::from_bytes(&[1; 32])
 }
 
-/// A board commissioned as `board` and `size` by piers.rocks on [`DATE`].
-/// [`key`] signs it as signer 1.
-pub async fn commissioned_board(board: &str, size: BoardSize) -> MemoryOtp {
-    let mut otp = blank_board();
+/// The plan to commission `otp` as `board` and `size` by piers.rocks on
+/// [`DATE`]. [`key`] signs it as signer 1.
+pub async fn plan(otp: &mut MemoryOtp, board: &str, size: BoardSize) -> Plan {
     let request = Request {
         board: Board::try_from_str(board).unwrap(),
         size,
@@ -56,9 +60,16 @@ pub async fn commissioned_board(board: &str, size: BoardSize) -> MemoryOtp {
         signer: 1,
         force: false,
     };
-    let prepared = prepare(&mut otp, &request).await.unwrap();
+    let prepared = prepare(otp, &request).await.unwrap();
     let signature = key().sign(prepared.message()).to_bytes();
-    let plan = prepared.plan(&signature).unwrap();
+    prepared.plan(&signature).unwrap()
+}
+
+/// A board commissioned as `board` and `size` by piers.rocks on [`DATE`].
+/// [`key`] signs it as signer 1.
+pub async fn commissioned_board(board: &str, size: BoardSize) -> MemoryOtp {
+    let mut otp = blank_board();
+    let plan = plan(&mut otp, board, size).await;
     plan.execute(&mut otp, |_| {}).await.unwrap();
     otp
 }
@@ -94,27 +105,86 @@ pub fn table(retired: Option<serde_json::Value>) -> SignerTable {
 pub fn args(board: &str, size: BoardSize, key: PathBuf) -> HardwareCommissionArgs {
     HardwareCommissionArgs {
         board: Board::try_from_str(board).unwrap(),
-        size,
+        size: Some(size),
         manufacturer: "piers.rocks".to_string(),
         signer: None,
+        key_id: None,
         pin: None,
         key: Some(key),
+        signature: None,
         date: Some(DATE.to_string()),
         force: false,
+        dry_run: false,
     }
 }
 
-/// Files a test fetches by URL.
+/// Files a test fetches by URL. A URL without a file fails as the CLI's fetch
+/// does when the server answers HTTP 404.
 pub struct Files(pub Vec<(String, Vec<u8>)>);
 
 impl LocalFetch for Files {
-    type Error = String;
+    type Error = onerom_fw::Error;
 
     async fn fetch(&self, source: &str) -> Result<Vec<u8>, Self::Error> {
         self.0
             .iter()
             .find(|(url, _)| url == source)
             .map(|(_, file)| file.clone())
-            .ok_or_else(|| format!("{source} isn't there"))
+            .ok_or_else(|| onerom_fw::Error::Http {
+                url: source.to_string(),
+                status: 404,
+            })
     }
+}
+
+/// Whether `line` holds each of `values`. A value counts only where neither
+/// side of it is a letter, a digit or an underscore, so `1` isn't found in
+/// `2026-01-01`. Tests look for the values output carries this way rather
+/// than for its wording.
+pub fn holds(line: &str, values: &[&str]) -> bool {
+    values
+        .iter()
+        .all(|value| value_end(line, value, 0).is_some())
+}
+
+/// Whether `line` holds `values` in order, as [`holds`] finds them.
+pub fn holds_in_order(line: &str, values: &[&str]) -> bool {
+    let mut from = 0;
+    values
+        .iter()
+        .all(|value| match value_end(line, value, from) {
+            Some(end) => {
+                from = end;
+                true
+            }
+            None => false,
+        })
+}
+
+/// Whether one of `lines` holds each of `values`, as [`holds`] finds them.
+pub fn shows<S: AsRef<str>>(lines: impl IntoIterator<Item = S>, values: &[&str]) -> bool {
+    lines.into_iter().any(|line| holds(line.as_ref(), values))
+}
+
+/// Whether consecutive lines of `lines` hold `values` in turn, as [`holds`]
+/// finds them.
+pub fn in_turn<S: AsRef<str>>(lines: &[S], values: &[&[&str]]) -> bool {
+    lines.windows(values.len()).any(|run| {
+        run.iter()
+            .zip(values)
+            .all(|(line, values)| holds(line.as_ref(), values))
+    })
+}
+
+/// The byte past the first `value` in `line` at or after byte `from`, as
+/// [`holds`] finds values.
+fn value_end(line: &str, value: &str, from: usize) -> Option<usize> {
+    let word = |c: Option<char>| c.is_some_and(|c| c.is_alphanumeric() || c == '_');
+    line[from..]
+        .match_indices(value)
+        .map(|(i, _)| from + i)
+        .find(|&i| {
+            !word(line[..i].chars().next_back()) && !word(line[i + value.len()..].chars().next())
+        })
+        .map(|i| i + value.len())
 }

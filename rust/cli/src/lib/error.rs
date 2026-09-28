@@ -8,7 +8,7 @@ use onerom_config::fw::FirmwareVersion;
 use onerom_gen::FileFormat;
 
 use crate::hint;
-use crate::otp::{escape_controls, format_date};
+use crate::otp::escape_controls;
 use crate::plugin::{CompatibleRelease, PluginType, PluginVersion};
 
 /// Render the way out of a plugin incompatibility as a further indented line.
@@ -450,40 +450,89 @@ pub enum Error {
     #[error("{}", commission_text(.0))]
     Commission(onerom_app::CommissionError),
 
+    /// `hardware commission` failed after it began writing. Where the
+    /// connection was lost the text says to run it again.
+    #[error("{}", commission_failed_text(.0))]
+    CommissionFailed(onerom_app::CommissionError),
+
+    /// `hardware commission` found the One ROM commissioned with other values.
+    /// `instance` holds the commissioning instance's values, a line each, as
+    /// the command shows them.
+    #[error(
+        "Cannot commission this One ROM:\n  It is already commissioned:\n{instance}\n  {RE_COMMISSION}"
+    )]
+    AlreadyCommissioned { instance: String },
+
     /// An image for a board other than the one the One ROM is commissioned
     /// as.
     #[error(
-        "This One ROM is commissioned as {commissioned} but the image is for {image}.\n  Use --force to program it anyway."
+        "Image board type '{image}' does not match the commissioned board type '{commissioned}'.\n  Use --force to program it anyway."
     )]
     CommissionedBoardMismatch { commissioned: String, image: String },
 
+    /// `hardware set-size` refused the One ROM.
+    #[error("{}", set_size_text(.0))]
+    SetSize(onerom_app::CommissionError),
+
+    /// `hardware request-signature` refused the One ROM because `hardware
+    /// commission` would refuse it.
+    #[error("{}", request_signature_text(.0))]
+    RequestSignature(onerom_app::CommissionError),
+
+    /// `hardware set-size` failed after it began writing. Where the connection
+    /// was lost the text says to run it again.
+    #[error("{}", set_size_failed_text(.0))]
+    SetSizeFailed(onerom_app::CommissionError),
+
+    /// `hardware commission` found firmware for a board other than `--board`.
     #[error(
-        "Key file {0} is encrypted.\n  --key needs an unencrypted PKCS#8 PEM file. 'openssl genpkey -algorithm ed25519' writes one."
+        "Firmware board type '{firmware}' does not match the commissioned board type '{board}'.\n  Use --force to override."
     )]
+    FirmwareForAnotherBoard { firmware: String, board: String },
+
+    /// `hardware set-size` found firmware for a board other than `--board`.
+    #[error(
+        "Firmware board type '{firmware}' does not match board type '{board}'.\n  Use --force to override."
+    )]
+    SetSizeFirmwareForAnotherBoard { firmware: String, board: String },
+
+    /// `hardware request-signature` found firmware for a board other than
+    /// `--board`. It doesn't have `--force` so there's no advice.
+    #[error("Firmware board type '{firmware}' does not match board type '{board}'.")]
+    RequestSignatureFirmwareForAnotherBoard { firmware: String, board: String },
+
+    /// An encrypted key file without a PIN.
+    #[error("Key file {0} is encrypted.\n  Use --pin or run the command in a terminal.")]
     KeyFileEncrypted(String),
 
-    #[error(
-        "Key file {0} doesn't hold an Ed25519 key.\n  --key needs one. 'openssl genpkey -algorithm ed25519' writes one."
-    )]
+    #[error("The PIN doesn't decrypt key file {0}.")]
+    KeyFileWrongPin(String),
+
+    #[error("Key file {0} is encrypted in a form this CLI doesn't support.")]
+    KeyFileEncryptionUnsupported(String),
+
+    #[error("Key file {0} doesn't contain an Ed25519 key.")]
     KeyFileNotEd25519(String),
 
-    #[error(
-        "Key file {0} isn't a PKCS#8 PEM private key.\n  --key needs one. 'openssl genpkey -algorithm ed25519' writes one."
-    )]
+    #[error("Key file {0} isn't a PKCS#8 PEM private key.")]
     KeyFileNotPkcs8(String),
 
-    #[error(
-        "The signing server needs a PIN.\n  Use --pin or run the command in a terminal to be asked for it."
-    )]
+    #[error("The signing server requires a PIN.\n  Use --pin or run the command in a terminal.")]
     NoPin,
 
     /// The signing server replied with an error status and a one-line reason.
-    #[error("{}\n  {url}: {message}", signing_server_text(.status))]
+    /// `url` is the key's URL as `--signer` gave it.
+    #[error("{}", signing_server_text(.url, .status, .message))]
     SigningServer {
         url: String,
         status: u16,
         message: String,
     },
+
+    /// A request to the signing server at the key's URL failed without an
+    /// HTTP status, for example because it timed out.
+    #[error("Couldn't reach the signing server at {0}.")]
+    SigningServerUnreachable(String),
 
     #[error("The signing server replied with {len} bytes where {expected} were expected.\n  {url}")]
     SigningServerReply {
@@ -492,80 +541,209 @@ pub enum Error {
         expected: usize,
     },
 
-    #[error("The signing key isn't in the table of signing keys.\n  Its public key is {0}.")]
+    #[error("This signing key is invalid.\n  Its public key is {0}.")]
     SigningKeyUnknown(String),
 
-    #[error("Signing key {name} ({id}) is retired.")]
+    /// `--key-id` identifies a key the signing key table doesn't contain.
+    #[error("Signing key {0} is invalid.")]
+    SigningKeyIdUnknown(u16),
+
+    /// The signing server's key `id` isn't the signing key table's key `id`.
+    /// `url` is the server's address as `--signer` gave it.
+    #[error(
+        "Signing key {id} on the signing server at {url} is invalid.\n  Its public key doesn't match key {id} in the signing key table."
+    )]
+    SigningServerKeyMismatch { url: String, id: u16 },
+
+    #[error("Signing key {name} ({id}) has been retired.")]
     SigningKeyRetired { id: u16, name: String },
 
     /// A signature that doesn't verify with the signer's key in the table.
-    #[error("The signature doesn't verify with signing key {name} ({id}).\n  OTP wasn't written.")]
+    #[error("The signature is invalid with key {name} ({id}).\n  No changes have been made.")]
     BadSignature { id: u16, name: String },
+
+    /// The signature the signing server recorded differs from the one it
+    /// returned before the user was asked.
+    #[error(
+        "The signing server recorded a different signature from the one it signed first.\n  This is likely a bug. Please report it."
+    )]
+    RecordedSignatureDiffers,
 
     /// `hardware validate` didn't accept the board's commissioning. It
     /// carries the reason.
-    #[error("This One ROM's commissioning doesn't validate.\n  {0}")]
+    #[error("ERROR: Commissioning information invalid\n  {0}")]
     NotValidated(String),
 }
 
-/// The first line of a [`Error::SigningServer`] for HTTP status `status`.
-fn signing_server_text(status: &u16) -> String {
-    match status {
+/// The text of an [`Error::SigningServer`] from the key at `url` for HTTP
+/// status `status` and the server's `message`. A 404's text is one line
+/// without the message.
+fn signing_server_text(url: &str, status: &u16, message: &str) -> String {
+    let first = match status {
         400 => "The signing server refused the request.".to_string(),
         401 => "The signing server refused the PIN.".to_string(),
-        404 => "The signing server doesn't have a key at that URL.".to_string(),
-        503 => {
-            "The signing server couldn't record the signature so it didn't return it.".to_string()
-        }
+        404 => return format!("Invalid signing key {url}"),
+        503 => "Signing failed - the signing record cannot be written".to_string(),
         status => format!("The signing server replied with HTTP status {status}."),
-    }
+    };
+    format!("{first}\n  {url}: {message}")
+}
+
+/// What to do about a One ROM commissioned with other values.
+const RE_COMMISSION: &str = "Use --force to re-commission it.";
+
+/// Who may have written commissioning data this CLI doesn't know.
+pub const NEWER_DATA: &str = "It may have been written by a newer version of the CLI.";
+
+/// A command refusing a One ROM with [`refusal`]'s text. Advice beneath a
+/// refusal identifies only options the command has.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Refusing {
+    Commission,
+    SetSize,
+    /// `hardware request-signature`, which doesn't have `--force`.
+    RequestSignature,
 }
 
 /// The text of an [`Error::Commission`].
+fn commission_text(error: &onerom_app::CommissionError) -> String {
+    format!(
+        "Cannot commission this One ROM:\n  {}",
+        refusal(error, Refusing::Commission)
+    )
+}
+
+/// The text of an [`Error::SetSize`].
+fn set_size_text(error: &onerom_app::CommissionError) -> String {
+    format!(
+        "Cannot set this One ROM's size:\n  {}",
+        refusal(error, Refusing::SetSize)
+    )
+}
+
+/// The text of an [`Error::RequestSignature`]. It is `hardware commission`'s
+/// refusal without advice identifying an option `hardware request-signature`
+/// doesn't have.
+fn request_signature_text(error: &onerom_app::CommissionError) -> String {
+    format!(
+        "Cannot commission this One ROM:\n  {}",
+        refusal(error, Refusing::RequestSignature)
+    )
+}
+
+/// Why `command` refused the One ROM, with advice beneath where it helps.
 ///
 /// A value read from OTP is printed with its control characters escaped. Where
-/// an option overrides the refusal the text says which.
-fn commission_text(error: &onerom_app::CommissionError) -> String {
+/// an option of `command` overrides the refusal the text says which.
+fn refusal(error: &onerom_app::CommissionError, command: Refusing) -> String {
     use onerom_app::CommissionError as E;
-    let refusal = match error {
-        E::AlreadyCommissioned {
-            board,
-            manufacturer,
-            date,
-            signer,
-            only_date_differs,
-            ..
-        } => {
-            let advice = if *only_date_differs {
-                "Leave out --date to finish that commissioning or use --force to commission it again."
-            } else {
-                "Use --force to commission it again."
-            };
+    use onerom_metadata::otp::BuildError;
+    match error {
+        // hardware commission refuses with Error::AlreadyCommissioned, which
+        // holds the instance's values. Only --force re-commissions.
+        E::AlreadyCommissioned { .. } => match command {
+            Refusing::Commission | Refusing::SetSize => {
+                format!("It is already commissioned.\n  {RE_COMMISSION}")
+            }
+            Refusing::RequestSignature => "It is already commissioned.".to_string(),
+        },
+        // Only hardware set-size refuses this.
+        E::CommissionedAsAnotherBoard { board, requested } => {
             format!(
-                "This One ROM is already commissioned as {} by {} on {} with signer {signer}.\n  {advice}",
+                "It is commissioned as {} not {}.",
                 escape_controls(board),
-                escape_controls(manufacturer),
-                format_date(date),
+                requested.name()
             )
         }
-        E::SecondChipConfigured => {
-            format!("{error}.\n  Use --size L, or --force to commission it as M anyway.")
+        // Only prepare() refuses this, and hardware commission's --force
+        // overrides it. --size L is refused for a board that doesn't support
+        // external flash. hardware request-signature doesn't have --force,
+        // and guessing at --size L there confuses more than it helps.
+        E::SecondChipConfigured(board) => {
+            let supports_l = board.external_flash_cs_pin().is_some();
+            let advice = match (command, supports_l) {
+                (Refusing::Commission | Refusing::SetSize, true) => {
+                    Some("Use --size L, or --force to commission it as M anyway.")
+                }
+                (Refusing::Commission | Refusing::SetSize, false) => {
+                    Some("Use --force to commission it as M anyway.")
+                }
+                (Refusing::RequestSignature, _) => None,
+            };
+            match advice {
+                Some(advice) => format!("{}\n  {advice}", sentence(error)),
+                None => sentence(error),
+            }
+        }
+        E::NewerData { .. } | E::UnknownKey { .. } => {
+            format!("{}\n  {NEWER_DATA}", sentence(error))
+        }
+        // The manufacturer's name is the only value whose length the user
+        // chooses.
+        E::Build(BuildError::DoesNotFit) => {
+            "The manufacturer's name is too long to fit in OTP.".to_string()
         }
         E::Otp { .. }
-        | E::NewerData { .. }
-        | E::UnknownKey { .. }
         | E::AreaFull
         | E::Build(_)
         | E::NotFire(_)
         | E::NoExternalFlash(_)
+        | E::SizeAlreadySet { .. }
         | E::SlotSizeInvalid { .. }
         | E::RowWritten { .. }
-        | E::LockWord { .. }
         | E::PageLocked { .. }
-        | E::UsbBootFlags { .. }
-        | E::ReadBack { .. } => format!("{error}."),
-    };
-    format!("Can't commission this One ROM:\n  {refusal}")
+        | E::ReadBack { .. } => sentence(error),
+    }
+}
+
+/// The text of an [`Error::CommissionFailed`].
+fn commission_failed_text(error: &onerom_app::CommissionError) -> String {
+    failed_text(
+        "Commissioning failed part way through due to an error:",
+        error,
+    )
+}
+
+/// The text of an [`Error::SetSizeFailed`].
+fn set_size_failed_text(error: &onerom_app::CommissionError) -> String {
+    failed_text(
+        "Setting the board size failed part way through due to an error:",
+        error,
+    )
+}
+
+/// `heading`, then the reason a run that began writing failed with `error`.
+/// Where running it again completes it the text says so.
+fn failed_text(heading: &str, error: &onerom_app::CommissionError) -> String {
+    let text = format!("{heading}\n  {}", sentence(error));
+    if run_again_completes(error) {
+        format!("{text}\n  Run the same command again to complete.")
+    } else {
+        text
+    }
+}
+
+/// Whether running the same command again completes a run that failed with
+/// `error`. Only a lost connection is completed this way. A second run skips
+/// the rows already written. Any other failure stops it again.
+fn run_again_completes(error: &onerom_app::CommissionError) -> bool {
+    matches!(
+        error,
+        onerom_app::CommissionError::Otp {
+            error: onerom_app::OtpError::Transport(_),
+            ..
+        }
+    )
+}
+
+/// `error`'s text as a sentence, with a capital letter and a full stop.
+fn sentence(error: &impl std::fmt::Display) -> String {
+    let text = error.to_string();
+    let mut chars = text.chars();
+    match chars.next() {
+        Some(first) => format!("{}{}.", first.to_uppercase(), chars.as_str()),
+        None => text,
+    }
 }
 
 impl Error {
@@ -718,5 +896,123 @@ mod tests {
         let msg = Error::NoBoardOrDevice.to_string();
         assert!(msg.contains("--board"), "{msg}");
         assert!(msg.contains("--serial"), "{msg}");
+    }
+
+    /// `--size L` is refused for a board that doesn't support external flash
+    /// so the refusal advises the option only for a board that does.
+    #[test]
+    fn a_second_chip_is_answered_with_size_l_only_where_it_works() {
+        use onerom_app::CommissionError;
+        use onerom_config::hw::Board;
+        let text = |name| {
+            let board = Board::try_from_str(name).unwrap();
+            Error::Commission(CommissionError::SecondChipConfigured(board)).to_string()
+        };
+        assert!(text("fire-40-a").contains("--size"));
+        assert!(!text("fire-24-f").contains("--size"));
+    }
+
+    /// `hardware request-signature`'s refusals don't have advice.
+    /// `hardware commission`'s advise `--force`.
+    #[test]
+    fn a_signature_request_is_advised_only_its_own_options() {
+        use onerom_app::CommissionError;
+        use onerom_config::hw::Board;
+        let second_chip = |name| {
+            let board = Board::try_from_str(name).unwrap();
+            let error = CommissionError::SecondChipConfigured(board);
+            let request = Error::RequestSignature(error.clone()).to_string();
+            (request, Error::Commission(error).to_string())
+        };
+        let (l, commission_l) = second_chip("fire-40-a");
+        let (m, commission_m) = second_chip("fire-24-f");
+        assert!(!l.contains("--"), "{l}");
+        assert!(!m.contains("--"), "{m}");
+        assert_eq!(l.lines().count(), 2, "{l}");
+        assert!(commission_l.contains("--force"), "{commission_l}");
+        assert!(commission_m.contains("--force"), "{commission_m}");
+
+        let already = CommissionError::AlreadyCommissioned {
+            row: 0x0c0,
+            board: "fire-24-f".to_string(),
+            manufacturer: "piers.rocks".to_string(),
+            date: "20260101".to_string(),
+            signer: 1,
+            only_date_differs: false,
+        };
+        let request = Error::RequestSignature(already.clone()).to_string();
+        assert!(!request.contains("--"), "{request}");
+        assert!(Error::Commission(already).to_string().contains("--force"));
+        // The same heading as hardware commission's.
+        assert_eq!(request.lines().next(), m.lines().next());
+        assert_eq!(request.lines().next(), commission_m.lines().next());
+    }
+
+    /// The board read from OTP is shown with its control characters escaped,
+    /// beside the board the command was given. Nothing overrides the refusal
+    /// so it doesn't have advice beneath it.
+    #[test]
+    fn another_board_is_shown_escaped_beside_the_board_given() {
+        use onerom_app::CommissionError;
+        use onerom_config::hw::Board;
+        let requested = Board::try_from_str("fire-40-a").unwrap();
+        let text = |board: &str| {
+            Error::SetSize(CommissionError::CommissionedAsAnotherBoard {
+                board: board.to_string(),
+                requested,
+            })
+            .to_string()
+        };
+        let plain = text("fire-24-f");
+        assert!(plain.contains("fire-24-f") && plain.contains("fire-40-a"));
+        assert_eq!(plain.lines().count(), 2, "{plain}");
+        let escaped = text("fire\u{1b}[2J");
+        assert!(!escaped.contains('\u{1b}'), "{escaped}");
+        assert!(escaped.contains("fire\\u{1b}[2J"), "{escaped}");
+    }
+
+    /// The refusal shows the size OTP configures and the size asked for.
+    #[test]
+    fn a_size_already_set_shows_both_sizes() {
+        use onerom_app::{BoardSize, CommissionError};
+        use onerom_metadata::OneromBoardSize;
+        for (size, shown, requested) in [
+            (OneromBoardSize::BoardSizeL, "L", BoardSize::M),
+            (OneromBoardSize::BoardSizeOther, "other", BoardSize::M),
+            (OneromBoardSize::BoardSizeOther, "other", BoardSize::L),
+        ] {
+            let text =
+                Error::SetSize(CommissionError::SizeAlreadySet { size, requested }).to_string();
+            let words: Vec<&str> = text.split(|c: char| !c.is_alphanumeric()).collect();
+            let requested = requested.to_string();
+            assert!(words.contains(&shown), "{text}");
+            assert!(words.contains(&requested.as_str()), "{text}");
+        }
+    }
+
+    #[test]
+    fn only_a_lost_connection_is_completed_by_running_again() {
+        use onerom_app::{CommissionError, OtpError, RowValue};
+        let otp = |error| CommissionError::Otp { row: 0x0c0, error };
+        let lost = otp(OtpError::Transport("timed out".to_string()));
+        assert!(run_again_completes(&lost));
+        for error in [
+            otp(OtpError::NotPermitted),
+            otp(OtpError::UnsupportedModification),
+            CommissionError::ReadBack {
+                row: 0x0c0,
+                value: RowValue::Ecc(1),
+                raw: 0,
+            },
+        ] {
+            assert!(!run_again_completes(&error), "{error}");
+        }
+    }
+
+    #[test]
+    fn a_reason_is_shown_as_a_sentence() {
+        assert_eq!(sentence(&"row 0x0c5 is locked"), "Row 0x0c5 is locked.");
+        assert_eq!(sentence(&"OTP row 0x0c5"), "OTP row 0x0c5.");
+        assert_eq!(sentence(&""), "");
     }
 }

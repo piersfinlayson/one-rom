@@ -17,6 +17,7 @@ use onerom_metadata::{
     OTP_GENERAL_STORE_TERMINATOR_ROW_COUNT, OTP_STORE_MAGIC, OTP_STORE_VERSION, OneromOtpEntry,
     SerializeContext,
 };
+use serde_json::json;
 
 /// CHIPID from rows 0x000–0x003 of an RP2350 A4.
 const CHIP_ID: [u16; 4] = [0x5b6b, 0x2f65, 0x9c23, 0xde3f];
@@ -491,4 +492,79 @@ fn a_general_store_entry_running_past_the_end_loses_the_parser_its_place() {
     let parsed = GeneralStore::parse(&store).expect("a general store");
     assert!(parsed.entries().is_empty());
     assert_eq!(parsed.issues(), [AreaIssue::LostPlace { row: 0x4c2 }]);
+}
+
+// ---------------------------------------------------------------------------
+// JSON
+// ---------------------------------------------------------------------------
+
+/// Each entry is one flat object. A known key has OTP.md's name, and an
+/// unknown key its number with its bytes in hex. The current instance is its
+/// first row.
+#[test]
+fn an_area_serialises_its_entries_flat() {
+    let unknown = OneromOtpEntry::Unknown {
+        key: 16,
+        params: vec![1, 2],
+    };
+    let mut entries = valid_entries();
+    entries.insert(1, rows_of(&unknown)); // rows 0x0c9–0x0cb
+    entries.insert(2, vec![0, 3, 0x0201, 0x0003]); // rows 0x0cc–0x0cf
+    let mut area = blank_area();
+    put(&mut area, 0x0c0, &entries);
+    let json = serde_json::to_value(CommissioningArea::parse(&area)).unwrap();
+    let signature: String = signature().iter().map(|b| format!("{b:02x}")).collect();
+    assert_eq!(
+        json,
+        json!({
+            "instances": [{
+                "first_row": 0x0c0,
+                "entries": [
+                    { "row": 0x0c2, "key": "COMMISSIONING_BOARD", "value": "fire-24-f" },
+                    { "row": 0x0c9, "key": 16, "value": "0102" },
+                    { "row": 0x0cc, "deleted": true, "len": 3 },
+                    { "row": 0x0d0, "key": "COMMISSIONING_MANUFACTURER", "value": "piers.rocks" },
+                    { "row": 0x0d8, "key": "COMMISSIONING_DATE", "value": "20260926" },
+                    { "row": 0x0de, "key": "COMMISSIONING_SIGNER", "value": 1 },
+                    { "row": 0x0e1, "key": "COMMISSIONING_SIG", "value": signature },
+                ],
+            }],
+            "issues": [],
+            "current": 0x0c0,
+            "next_instance_row": 0x140,
+        })
+    );
+}
+
+/// An unreadable entry shows its key as a parsed entry does.
+#[test]
+fn an_unreadable_entry_serialises_its_key_and_length() {
+    let json = |key| {
+        let entry = StoreEntry::Unreadable {
+            row: 0x0de,
+            key,
+            len: 4,
+        };
+        serde_json::to_value(entry).unwrap()
+    };
+    let expected = |key| json!({ "row": 0x0de, "unreadable": true, "key": key, "len": 4 });
+    assert_eq!(json(5), expected(json!("COMMISSIONING_SIGNER")));
+    assert_eq!(json(16), expected(json!(16)));
+}
+
+#[test]
+fn an_issue_serialises_as_its_kind_and_fields() {
+    let unknown = AreaIssue::UnknownVersion {
+        row: 0x100,
+        version: 2,
+    };
+    let lost = AreaIssue::LostPlace { row: 0x102 };
+    assert_eq!(
+        serde_json::to_value(unknown).unwrap(),
+        json!({ "issue": "unknown_version", "row": 0x100, "version": 2 })
+    );
+    assert_eq!(
+        serde_json::to_value(lost).unwrap(),
+        json!({ "issue": "lost_place", "row": 0x102 })
+    );
 }

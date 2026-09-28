@@ -16,10 +16,10 @@ use studiov2_commands::{COMMANDS, Command, GLOBALS, Group, Kind, Opt};
 
 /// Every option the CLI has, counted by hand from `rust/cli/src/args/`.
 ///
-/// 181 belong to a command and 6 are global.  A reader that quietly stops
+/// 201 belong to a command and 6 are global.  A reader that quietly stops
 /// understanding an attribute drops options rather than failing, and this is
 /// what turns that into a test failure.
-const TOTAL_OPTIONS: usize = 187;
+const TOTAL_OPTIONS: usize = 207;
 
 /// The command the CLI puts at that path.
 fn command(path: &[&str]) -> &'static Command {
@@ -210,15 +210,15 @@ fn control_erase_says_you_must_pick_one_target() {
 }
 
 #[test]
-fn hardware_commission_needs_a_signing_server_or_a_key_file() {
+fn hardware_commission_needs_a_signing_server_a_key_file_or_a_signature() {
     // The CLI declares this group as `group(ArgGroup::new(...))` rather than
     // `group = ArgGroup::new(...)`.
     let commission = command(&["hardware", "commission"]);
     let signing = group(commission, "signing");
 
-    assert_eq!(signing.opts, ["signer", "key"]);
+    assert_eq!(signing.opts, ["signer", "key", "signature"]);
     assert!(signing.required, "signing has to be given");
-    assert!(!signing.multiple, "signing takes one of the two");
+    assert!(!signing.multiple, "signing takes one of the three");
 }
 
 #[test]
@@ -343,10 +343,7 @@ fn a_verbatim_doc_comment_keeps_its_lines() {
     // clap keeps every line of a `verbatim_doc_comment` as written.  That
     // includes the summary.
     let commission = command(&["hardware", "commission"]);
-    assert_eq!(
-        commission.about,
-        "Commission a One ROM by writing its identity to OTP"
-    );
+    assert_eq!(commission.about, "Commission a One ROM");
 
     let long_about = commission
         .long_about
@@ -354,44 +351,45 @@ fn a_verbatim_doc_comment_keeps_its_lines() {
     assert_eq!(
         long_about.lines().take(5).collect::<Vec<_>>(),
         [
-            "Writes to the RP2350's OTP:",
-            "- a signed and dated commissioning instance holding the board's type",
+            "Writes to the RP2350's OTP (One Time Programmable memory):",
+            "- a signed and dated commissioning instance containing the board's type",
             "  and its manufacturer",
             "- the bootloader's USB strings",
-            "- the settings for an L board's second flash chip",
+            "- the settings for a second flash chip if present",
         ]
     );
 
     assert_eq!(
         opt(commission, "force").help.lines().collect::<Vec<_>>(),
         [
-            "Go ahead despite:",
-            "- a current commissioning instance holding other values",
-            "- firmware for another board",
-            "- OTP configuring a second flash chip for an M board",
+            "Proceed with commissioning despite:",
+            "- the board already being commissioned with different values. The new",
+            "  commissioning instance supersedes the old one.",
+            "- firmware being installed on One ROM for another board type",
+            "- size L partly programmed, when commissioning as M",
+            "- a date in the future",
         ]
     );
 
-    // The attribute is on one command so the next one's wrapped lines are
+    // The attribute is on one option so the next one's wrapped lines are
     // still joined.
-    let validate = command(&["hardware", "validate"])
-        .long_about
-        .expect("hardware validate has a long_about");
-    assert!(validate.starts_with(
-        "Checks the signature of each commissioning instance in the One ROM's OTP against"
-    ));
+    assert_eq!(
+        opt(commission, "dry-run").help,
+        "Show what commissioning data would be written without writing it"
+    );
 }
 
 #[test]
 fn a_summary_drops_its_full_stop_as_clap_does() {
     // Unless the doc comment is verbatim.  clap then keeps the summary as
     // written.
+    let reboot = command(&["control", "reboot"]);
+    assert_eq!(reboot.about, "Reboot the One ROM");
     let validate = command(&["hardware", "validate"]);
     assert_eq!(
-        validate.about,
-        "Check the signatures of a One ROM's commissioning"
+        opt(validate, "json").help,
+        "Show the result as JSON instead of text"
     );
-    assert_eq!(opt(validate, "json").help, "Show the result as JSON");
 }
 
 #[test]

@@ -13,7 +13,7 @@ use core::ops::Range;
 use onerom_metadata::OTP_PAGE_ROWS;
 use onerom_metadata::otp::pico_otp::ecc_encode;
 
-use super::{OtpAccess, OtpError, ROW_BITS, lock1_row, majority};
+use super::{LOCK_BL_READ_ONLY, OtpAccess, OtpError, ROW_BITS, bootloader_lock, lock1_row};
 
 /// Rows in OTP.
 const ROWS: u16 = 4096;
@@ -30,16 +30,6 @@ const INVERTED: u32 = 0xc0_0000;
 
 /// The bits holding the value and its six parity bits.
 const CODEWORD_BITS: u32 = 0x3f_ffff;
-
-/// LOCK_BL's position in each copy of a LOCK1 word.
-const LOCK_BL_SHIFT: u32 = 4;
-
-/// LOCK_BL's width.
-const LOCK_BL_BITS: u32 = 0b11;
-
-/// The LOCK_BL value making a page read-only. A lock from this value up
-/// refuses writes.
-const READ_ONLY: u8 = 1;
 
 /// The first LOCK_BL value refusing reads as well as writes. The datasheet
 /// says 2 behaves as 3.
@@ -115,9 +105,7 @@ impl MemoryOtp {
     /// n's LOCK1 word is row `0xf81 + 2n`.
     pub fn reset(&mut self) {
         for (page, lock) in (0..).zip(self.locks.iter_mut()) {
-            let word = self.rows[usize::from(lock1_row(page))];
-            let copies = majority([word, word >> 8, word >> 16]);
-            *lock = ((copies >> LOCK_BL_SHIFT) & LOCK_BL_BITS) as u8;
+            *lock = bootloader_lock(self.rows[usize::from(lock1_row(page))]);
         }
     }
 
@@ -181,7 +169,7 @@ impl MemoryOtp {
         new_value: impl FnOnce(u32) -> Result<u32, OtpError>,
     ) -> Result<(), OtpError> {
         range(row, 1)?;
-        if self.locks[lock_page(row)] >= READ_ONLY {
+        if self.locks[lock_page(row)] >= LOCK_BL_READ_ONLY {
             return Err(OtpError::NotPermitted);
         }
         let index = usize::from(row);

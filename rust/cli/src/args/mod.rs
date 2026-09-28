@@ -67,7 +67,10 @@ pub mod scan;
 pub mod self_cmd;
 pub mod update;
 
-use clap::{Parser, Subcommand};
+use std::fmt::Display;
+
+use clap::error::ErrorKind;
+use clap::{CommandFactory, Parser, Subcommand};
 use enum_dispatch::enum_dispatch;
 use log::debug;
 use onerom_cli::LogLevel;
@@ -89,7 +92,10 @@ use firmware::{
     FirmwareArgs, FirmwareBuildArgs, FirmwareChipsArgs, FirmwareCommands, FirmwareDownloadArgs,
     FirmwareInspectArgs, FirmwareReleasesArgs,
 };
-use hardware::{HardwareArgs, HardwareCommands, HardwareCommissionArgs, HardwareValidateArgs};
+use hardware::{
+    HardwareArgs, HardwareCommands, HardwareCommissionArgs, HardwareRequestSignatureArgs,
+    HardwareSetSizeArgs, HardwareSignArgs, HardwareValidateArgs,
+};
 use image::{
     ImageArgs, ImageCommands, ImageConvertArgs, ImageDeinterleaveArgs, ImageSwapBytesArgs,
 };
@@ -109,6 +115,27 @@ use update::{UpdateArgs, UpdateCommands, UpdateCommitArgs, UpdateSlotArgs};
 #[enum_dispatch]
 pub trait CommandTrait {
     fn requires_device(&self) -> bool;
+
+    /// Checks the arguments that depend on each other. It runs straight after
+    /// parsing, before the CLI looks for a device.
+    fn check_args(&self) -> Result<(), clap::Error> {
+        Ok(())
+    }
+}
+
+/// A clap error from the command at `path` below `onerom`, such as
+/// `["hardware", "commission"]`. It shows that command's usage.
+pub fn arg_error(path: &[&str], kind: ErrorKind, message: impl Display) -> clap::Error {
+    let mut onerom = Cli::command().bin_name("onerom");
+    // Sets each command's full name for its usage line.
+    onerom.build();
+    let mut command = &mut onerom;
+    for name in path {
+        command = command
+            .find_subcommand_mut(name)
+            .unwrap_or_else(|| panic!("onerom doesn't have the command {name}"));
+    }
+    command.error(kind, message)
 }
 
 /// Command line interface for One ROM - the most flexible retrom ROM replacement.
@@ -469,7 +496,7 @@ pub enum Commands {
     )]
     Monitor(MonitorArgs),
 
-    /// Talk to the retro system through One ROM's USB port.
+    /// Talk to the retro system through One ROM's USB port
     ///
     /// Displays what One ROM sends, like 'monitor log', and additionally sends
     /// what you type to the retro system.
@@ -494,6 +521,7 @@ pub enum Commands {
     ///   onerom console --line-ending crlf --output session.txt
     ///
     ///   echo 'LOAD "*",8' | onerom console
+    #[command(verbatim_doc_comment)]
     Console(ConsoleArgs),
 
     /// Perform transient actions on a connected One ROM.
@@ -516,10 +544,11 @@ pub enum Commands {
     )]
     Update(UpdateArgs),
 
-    /// Commission a One ROM's hardware and check its commissioning.
+    /// Commission and check a One ROM's hardware.
     ///
-    /// Commissioning writes the board's identity to the RP2350's OTP memory
-    /// with a signature. OTP can't be erased.
+    /// Commissioning writes the board's identity and other manufacturing
+    /// information to the RP2350's OTP memory with a signature. OTP cannot be
+    /// erased.
     #[command(
         subcommand_value_name = "COMMAND",
         subcommand_help_heading = "Commands"
