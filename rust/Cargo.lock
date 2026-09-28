@@ -5465,7 +5465,7 @@ dependencies = [
 [[package]]
 name = "picoboot"
 version = "0.3.0"
-source = "git+https://github.com/piersfinlayson/picoboot?rev=fab328c91797283518c938c4257b0c7fd8d0b9cc#fab328c91797283518c938c4257b0c7fd8d0b9cc"
+source = "git+https://github.com/piersfinlayson/picoboot?rev=92b115b63e02b5b8800185959110ca15189dc2f7#92b115b63e02b5b8800185959110ca15189dc2f7"
 dependencies = [
  "airfrog-rpc",
  "deku 0.20.3",
