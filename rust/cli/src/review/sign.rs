@@ -11,7 +11,7 @@ use onerom_cli::Options;
 use onerom_cli::signing::KeyFile;
 
 use super::{
-    Keyboard, SIGNER, Screen, Server, failed, hardware_of, key_1, refused_lines, signature_hex,
+    Keyboard, SIGNER, Screen, Server, failed, hardware_of, refused_lines, signature_hex,
     written_failure,
 };
 use crate::args::hardware::{HardwareCommands, HardwareSignArgs};
@@ -191,7 +191,7 @@ async fn with_a_signing_server() {
 
     println!("### the PIN asked for at the terminal");
     println!("$ {}", line.replace(" --pin 1234", ""));
-    println!("~ PIN for {}: ", key_1());
+    println!("~ PIN for signing key #1: ");
     println!("~ (continues as below)");
     println!();
     println!("### with --pin, answered y");

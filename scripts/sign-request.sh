@@ -63,34 +63,66 @@ done
 # An address onerom hardware sign refuses would look like a refused request,
 # so a mistake here must not reach it.
 [[ "${ONEROM_SIGNING_SERVER:-}" =~ ^https:// ]] || {
-    echo "ONEROM_SIGNING_SERVER must be set to the signing server's https address." >&2
+    echo "ONEROM_SIGNING_SERVER isn't an https address." >&2
+    exit 1
+}
+# A CLI without hardware sign exits with code 2 as well, which would look like
+# a refused request.
+"$ONEROM" hardware sign --help >/dev/null 2>&1 || {
+    echo "$(command -v "$ONEROM") doesn't support \`hardware sign\`." >&2
     exit 1
 }
 [ -n "${ONEROM_GITHUB_TOKEN:-}" ] || {
-    echo "ONEROM_GITHUB_TOKEN must be set to a GitHub token that can write issues." >&2
+    echo "ONEROM_GITHUB_TOKEN isn't set." >&2
     exit 1
 }
 
-# Calls GitHub's REST API for the issue. $1 is the method, $2 the path after
-# the issue's address and $3, where given, the JSON body. It prints the
-# response and fails on an HTTP error.
+# Calls GitHub's REST API for the issue and prints the response. $1 says
+# what the call does, such as "read issue 323", for the error where it fails.
+# $2 is the method, $3 the path after the issue's address and $4, where
+# given, the JSON body. It exits where GitHub can't be reached or refuses.
 github() {
-    local args=(-sS --fail-with-body -X "$1"
+    local args=(-sS -w '\n%{http_code}' -X "$2"
         -H "Accept: application/vnd.github+json"
         -H "Authorization: Bearer $ONEROM_GITHUB_TOKEN"
         -H "X-GitHub-Api-Version: 2022-11-28")
-    [ $# -lt 3 ] || args+=(--data "$3")
-    curl "${args[@]}" "https://api.github.com/repos/$REPO/issues/$ISSUE$2"
+    [ $# -lt 4 ] || args+=(--data "$4")
+    local response error
+    # curl's own error, such as a host it couldn't resolve, goes into the
+    # message rather than above it.
+    error=$(mktemp)
+    response=$(curl "${args[@]}" "https://api.github.com/repos/$REPO/issues/$ISSUE$3" 2>"$error") || {
+        echo "Failed to $1: $(sed 's/^curl: //' "$error")" >&2
+        rm -f "$error"
+        exit 1
+    }
+    rm -f "$error"
+    local status=${response##*$'\n'}
+    response=${response%$'\n'*}
+    if [[ "$status" != 2* ]]; then
+        echo "Failed to $1: HTTP $status $(jq -r '.message // empty' <<<"$response" 2>/dev/null)" >&2
+        exit 1
+    fi
+    printf '%s\n' "$response"
 }
+
+# Every comment the script posts ends with this line.
+AUTOMATED="This is an automated message."
 
 # Posts $1 as a comment on the issue, then closes it as $2, completed or
-# not_planned.
+# not_planned. Once it's posted it prints the comment beneath a heading,
+# indented, so the terminal shows which text went to GitHub.
 answer() {
-    github POST /comments "$(jq -n --arg body "$1" '{body: $body}')" >/dev/null
-    github PATCH "" "$(jq -n --arg reason "$2" '{state: "closed", state_reason: $reason}')" >/dev/null
+    local comment="$1"$'\n\n'"$AUTOMATED"
+    github "comment on issue $ISSUE" POST /comments \
+        "$(jq -n --arg body "$comment" '{body: $body}')" >/dev/null
+    echo "Posted to issue $ISSUE:"
+    awk 'NF { $0 = "  " $0 } 1' <<<"$comment"
+    github "close issue $ISSUE" PATCH "" \
+        "$(jq -n --arg reason "$2" '{state: "closed", state_reason: $reason}')" >/dev/null
 }
 
-issue=$(github GET "")
+issue=$(github "read issue $ISSUE" GET "")
 if jq -e .pull_request <<<"$issue" >/dev/null; then
     echo "$ISSUE is a pull request, not an issue." >&2
     exit 1
@@ -101,7 +133,12 @@ body=$(jq -r '.body // ""' <<<"$issue" | tr -d '\r')
 
 echo "Issue $ISSUE: $title"
 if [ "$state" != "open" ]; then
-    echo "Issue $ISSUE is closed." >&2
+    # GitHub records how and when an issue was closed. A rejected request is
+    # closed as not planned and a signed one as completed.
+    how=$(jq -r '.state_reason // empty | gsub("_"; " ")' <<<"$issue")
+    when=$(jq -r '.closed_at // empty | .[0:10]' <<<"$issue")
+    echo "Issue $ISSUE was closed${how:+ as $how}${when:+ on $when}." >&2
+    echo "  Reopen it on GitHub to sign it." >&2
     exit 1
 fi
 
@@ -139,15 +176,14 @@ fi
 # Closes the issue as not planned with a comment giving each of its
 # arguments as a reason.
 reject() {
-    local comment="This signing request cannot be signed:"
+    local comment="This signing request cannot be fulfilled:"
     local reason
     for reason in "$@"; do
         comment+=$'\n'"- $reason"
     done
     comment+=$'\n\n'"Raise a new request with \`onerom hardware request-signature\`."
-    printf '%s\n' "$comment"
     answer "$comment" not_planned
-    echo "Rejected issue $ISSUE."
+    echo "Rejected and closed issue $ISSUE."
     exit 0
 }
 
@@ -165,9 +201,12 @@ signed=$("$ONEROM" hardware sign --chip-id "$chip_id" --board "$board" --size "$
     status=$?
 case $status in
     0) ;;
-    2) reject "$BOARD_LABEL or $SIZE_LABEL is invalid." ;;
+    2)
+        echo "\`onerom hardware sign\` refused the board type or board size." >&2
+        reject "$BOARD_LABEL or $SIZE_LABEL is invalid."
+        ;;
     *)
-        echo "onerom hardware sign failed. Issue $ISSUE is unchanged." >&2
+        echo "\`onerom hardware sign\` failed. Issue $ISSUE is unchanged." >&2
         exit 1
         ;;
 esac
@@ -178,6 +217,5 @@ if ! command=$(jq -er .command <<<"$signed" 2>/dev/null); then
 fi
 
 comment="Signed."$'\n\n'"To commission this One ROM run:"$'\n\n```\n'"$command"$'\n```'
-printf '%s\n' "$comment"
 answer "$comment" completed
-echo "Answered and closed issue $ISSUE."
+echo "Signed and closed issue $ISSUE."

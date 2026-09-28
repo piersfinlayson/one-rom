@@ -25,7 +25,7 @@ use onerom_app::{
 };
 use onerom_cli::error::NEWER_DATA;
 use onerom_cli::otp::{PicobootOtp, board_size_text, escape_controls, format_date};
-use onerom_cli::signing::{KeyFile, SigningServer, key_url};
+use onerom_cli::signing::{KeyFile, SigningServer};
 use onerom_cli::{CliFetch, DeviceState, Error, Options};
 use onerom_config::hw::Board;
 use onerom_metadata::MaybeKnown;
@@ -198,7 +198,7 @@ pub(crate) fn key_source(
     let id = key_id.unwrap_or_default();
     let pin = match pin {
         Some(pin) => pin.to_string(),
-        None => read_pin(&key_url(address, id), Error::NoPin, prompt)?,
+        None => read_pin(&format!("signing key #{id}"), Error::NoPin, prompt)?,
     };
     Ok(Signing::Server(SigningServer::new(address, id, &pin)?))
 }
@@ -622,7 +622,7 @@ fn ask(question: &str, out: &mut impl Write, input: &mut impl BufRead) -> Result
     Ok(matches!(answer.trim().to_lowercase().as_str(), "y" | "yes"))
 }
 
-/// Asks the terminal for the PIN of `key`, a signing server's key URL or a key
+/// Asks the terminal for the PIN of `key`, such as `signing key #2` or a key
 /// file, without echoing it. `prompt` shows the question. `no_terminal` is the
 /// error where there isn't a terminal to ask. An empty PIN counts as not
 /// entered.

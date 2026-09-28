@@ -747,7 +747,7 @@ fn too_old(to_sign: &ToSign<'_>) -> Error {
 /// The PIN prompt as a terminal shows it once the user has pressed Enter,
 /// Escape or Ctrl-C. The PIN isn't echoed.
 fn pin_prompt() {
-    println!("~ PIN for {}: ", key_1());
+    println!("~ PIN for signing key #1: ");
 }
 
 /// Prints the transcript of a run with `--pin` on a blank board that fails
