@@ -30,7 +30,7 @@ use onerom_cli::{CliFetch, DeviceState, Error, Options};
 use onerom_config::hw::Board;
 use onerom_metadata::MaybeKnown;
 use onerom_metadata::otp::{
-    AreaIssue, BuildError, CommissioningInstance, CommissioningValues, format_chip_id,
+    AreaIssue, BuildError, CommissioningInstance, CommissioningValues, format_chip_id, white_label,
 };
 use serde::Serialize;
 
@@ -40,7 +40,7 @@ use crate::args::hardware::{
 };
 use crate::commissioning::{
     Labelled, instance_state, instance_values, issue_text, labelled_lines, signer_name,
-    unknown_keys, unknown_version,
+    unknown_keys, unknown_version, white_label_values,
 };
 use crate::program::{reboot_stopped, reboot_to_running, reboot_to_stopped};
 use crate::signing_request::{self, SigningRequest};
@@ -141,12 +141,14 @@ pub async fn cmd_commission(
         args.force,
     )?;
 
-    // Asked for before the One ROM is stopped so a missing PIN leaves it as it
-    // was.
+    // The PIN and the signing key are checked before the One ROM is stopped so
+    // a missing PIN or a refused key leaves it as it was.
     let signing = signing(args)?;
+    let (table, _) = signer_table().await;
+    let signer = signer_for(&table, &signing).await?;
 
     let stopped = reboot_to_stopped(options, &STOP_FROM).await?;
-    let result = commission(options, args, &signing).await;
+    let result = commission(options, args, &signing, (signer, &table)).await;
     reboot_after_writing(options, stopped, result).await
 }
 
@@ -203,23 +205,23 @@ pub(crate) fn key_source(
     Ok(Signing::Server(SigningServer::new(address, id, &pin)?))
 }
 
-/// Commissions the stopped One ROM. Returns whether it wrote to OTP.
+/// Commissions the stopped One ROM, signing with `signer`'s key in `table`.
+/// Returns whether it wrote to OTP.
 async fn commission(
     options: &Options,
     args: &HardwareCommissionArgs,
     signing: &Signing,
+    (signer, table): (&Signer, &SignerTable),
 ) -> Result<bool, Error> {
     let device = options.device.as_ref().unwrap();
     println!("{device}");
 
-    let (table, _) = signer_table().await;
-    let signer = signer_for(&table, signing).await?;
     let mut otp = PicobootOtp::open(device).await?;
     commission_otp(
         &mut otp,
         args,
         signing,
-        (signer, &table),
+        (signer, table),
         options,
         &mut std::io::stdout(),
         &mut std::io::stdin().lock(),
@@ -298,8 +300,8 @@ pub(crate) fn check_server_key(
 ///
 /// `signing` signs the instance and `signer`'s key in `table` checks the
 /// signature. With `--yes` it writes without asking. Otherwise `input` holds
-/// the user's answer. `--verbose` lists every row. Returns whether it wrote
-/// to OTP.
+/// the user's answer. `--verbose` lists every row and the bootloader USB
+/// strings it writes. Returns whether it wrote to OTP.
 pub(crate) async fn commission_otp<O: LocalOtpAccess, S: SignatureSource>(
     otp: &mut O,
     args: &HardwareCommissionArgs,
@@ -397,6 +399,14 @@ pub(crate) async fn commission_otp<O: LocalOtpAccess, S: SignatureSource>(
     check_signature(signer, &message, &signature)?;
     let plan = prepared.plan(&signature)?;
 
+    // The strings are the same on every One ROM apart from the board's name,
+    // so only --verbose shows them.
+    if options.verbose && writes_white_label_strings(&plan) {
+        line(out, "Bootloader USB strings:")?;
+        for text in labelled_lines(&white_label_strings(args.board)) {
+            line(out, text)?;
+        }
+    }
     let rows = print_plan(&plan, options.verbose, out)?;
     if rows == 0 {
         line(out, "Nothing to write")?;
@@ -421,6 +431,24 @@ pub(crate) async fn commission_otp<O: LocalOtpAccess, S: SignatureSource>(
     write_plan(&plan, otp, out, Error::CommissionFailed).await?;
     line(out, "Commissioning complete")?;
     Ok(true)
+}
+
+/// Whether `plan` writes any of the bootloader USB strings' rows.
+fn writes_white_label_strings(plan: &Plan) -> bool {
+    plan.steps().iter().any(|step| {
+        matches!(step.kind, StepKind::WhiteLabelStrings)
+            && step.writes.iter().any(|write| !write.holds)
+    })
+}
+
+/// The bootloader USB strings `hardware commission` writes for `board`, a
+/// label and value each.
+fn white_label_strings(board: Board) -> Vec<Labelled> {
+    // A test converts every board's white label.
+    let json = white_label(board)
+        .to_json()
+        .expect("pico-otp refuses a board's white label");
+    white_label_values(&json)
 }
 
 /// Refuses a signature that doesn't verify with `signer`'s key.
@@ -1923,6 +1951,46 @@ mod tests {
         let instance = step_name(StepKind::Instance);
         assert!(shows(out.lines(), &[&instance, "0x0c0", "60"]), "{out}");
         assert!(!shows(out.lines(), &["0x0c1"]), "{out}");
+    }
+
+    /// --verbose shows the bootloader USB strings a run writes, a line each in
+    /// turn. A run that doesn't write them doesn't show them.
+    #[tokio::test]
+    async fn verbose_shows_the_strings_a_run_writes() {
+        let (_dir, path) = key_file();
+        let args = test_board::args("fire-24-f", BoardSize::M, path);
+        let strings = white_label_strings(args.board);
+        let values: Vec<[&str; 1]> = strings.iter().map(|(_, value)| [value.as_str()]).collect();
+        let values: Vec<&[&str]> = values.iter().map(|value| value.as_slice()).collect();
+        let shows_strings = |out: &str| in_turn(&out.lines().collect::<Vec<_>>(), &values);
+
+        let out = commission_with(&mut blank_board(), &args, &options(true, false))
+            .await
+            .unwrap();
+        assert!(!shows_strings(&out), "{out}");
+
+        let mut otp = blank_board();
+        let out = commission_with(&mut otp, &args, &options(true, true))
+            .await
+            .unwrap();
+        assert!(shows_strings(&out), "{out}");
+
+        // A second run finds them present.
+        let out = commission_with(&mut otp, &args, &options(true, true))
+            .await
+            .unwrap();
+        assert!(!shows_strings(&out), "{out}");
+    }
+
+    /// Every board's bootloader USB strings can be shown, with its name as the
+    /// INFO_UF2.TXT board ID.
+    #[test]
+    fn every_boards_strings_can_be_shown() {
+        for board in onerom_config::hw::BOARDS {
+            let strings = white_label_strings(board);
+            let board_id = strings.last().map(|(_, value)| value.as_str());
+            assert_eq!(board_id, Some(board.name()), "{board}");
+        }
     }
 
     /// A run after one that stopped part way lists the rows already present

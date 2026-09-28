@@ -155,7 +155,7 @@ pub fn unknown_version(area: &CommissioningArea) -> Option<String> {
 ///
 /// With `details`:
 /// - `Commissioned: yes` and beneath it the current instance's values
-/// - with `verbose`, its signer and row
+/// - with `verbose`, its signer
 /// - with `verbose`, a line saying there isn't a current instance or that OTP
 ///   couldn't be read
 ///
@@ -164,8 +164,8 @@ pub fn unknown_version(area: &CommissioningArea) -> Option<String> {
 /// - each skipped key
 /// - a board that differs from the firmware's
 ///
-/// `scan` shows a line per board, so it asks for `details` only with
-/// `--verbose` or `--slots`. The lines don't say whether a signature is valid.
+/// `scan` asks for `details` only with `--verbose`. The lines don't say
+/// whether a signature is valid.
 pub fn device_lines(
     firmware: Option<Board>,
     commissioning: &Commissioning,
@@ -186,11 +186,8 @@ pub fn device_lines(
         (None, Some(current)) => {
             if details {
                 let mut values = instance_values(current);
-                if verbose {
-                    if let Some(signer) = current.signer() {
-                        values.push(("Signing key:".to_string(), signer_name(signer, table)));
-                    }
-                    values.push(("Row:".to_string(), format!("{:#05x}", current.first_row())));
+                if verbose && let Some(signer) = current.signer() {
+                    values.push(("Signing key:".to_string(), signer_name(signer, table)));
                 }
                 lines.push("Commissioned: yes".to_string());
                 lines.extend(labelled_lines(&values));
@@ -270,12 +267,10 @@ pub fn report_lines(report: &OtpReport, verbose: bool, table: &SignerTable) -> V
     lines
 }
 
-/// The width of the labels [`report_lines`] puts before its values.
-const LABEL_WIDTH: usize = "Bootloader USB strings: ".len();
-
-/// `value` after `label`, padded so the values line up.
+/// `value` after `label`. It isn't padded, as the lines beneath each heading
+/// line up among themselves.
 fn labelled(label: &str, value: impl std::fmt::Display) -> String {
-    format!("{label:LABEL_WIDTH$}{value}")
+    format!("{label} {value}")
 }
 
 /// The board size. With `verbose`, the FLASH_DEVINFO it comes from beneath
@@ -434,26 +429,40 @@ fn white_label_lines(report: &OtpReport) -> Vec<String> {
         };
         return vec![labelled(HEADING, value)];
     };
-    let strings = WHITE_LABEL_STRINGS.map(|(label, section, field)| {
+    if white_label_strings(json)
+        .iter()
+        .all(|(_, string)| string.is_none())
+    {
+        return vec![labelled(HEADING, "not set")];
+    }
+    let mut lines = vec![labelled(HEADING, "set")];
+    lines.extend(labelled_lines(&white_label_values(json)));
+    lines
+}
+
+/// The bootloader USB strings One ROM sets that picotool's JSON `json`
+/// contains, in OTP.md's order. `None` for a string it doesn't contain.
+fn white_label_strings(json: &serde_json::Value) -> [(&'static str, Option<&str>); 7] {
+    WHITE_LABEL_STRINGS.map(|(label, section, field)| {
         let string = json
             .get(section)
             .and_then(|section| section.get(field))
             .and_then(serde_json::Value::as_str);
         (label, string)
-    });
-    if strings.iter().all(|(_, string)| string.is_none()) {
-        return vec![labelled(HEADING, "not set")];
-    }
-    let values: Vec<Labelled> = strings
+    })
+}
+
+/// The bootloader USB strings One ROM sets, from picotool's JSON `json`, a
+/// label and value each in OTP.md's order. `not set` for a string it doesn't
+/// contain.
+pub(crate) fn white_label_values(json: &serde_json::Value) -> Vec<Labelled> {
+    white_label_strings(json)
         .iter()
         .map(|(label, string)| {
             let value = string.map_or("not set".to_string(), escape_controls);
             (label.to_string(), value)
         })
-        .collect();
-    let mut lines = vec![labelled(HEADING, "set")];
-    lines.extend(labelled_lines(&values));
-    lines
+        .collect()
 }
 
 /// The general store's entry count and issues. `empty` where it hasn't been
@@ -680,20 +689,18 @@ mod tests {
         assert_eq!(lines.len(), 4, "{lines:?}");
         assert!(in_turn(&lines[1..], &values), "{lines:?}");
         assert!(!shows(&lines, &[SIGNER_NAME]), "{lines:?}");
-        assert!(!shows(&lines, &["0x0c0"]), "{lines:?}");
-        // --verbose adds the signer and the row, a line each.
+        // --verbose adds the signer but not the instance's row, which is
+        // inspect otp's.
         let verbose = device_lines(
             Some(board("fire-24-f")),
             &commissioning,
             (true, true),
             &table,
         );
-        assert_eq!(verbose.len(), 6, "{verbose:?}");
+        assert_eq!(verbose.len(), 5, "{verbose:?}");
         assert_eq!(verbose[..4], lines[..], "{verbose:?}");
-        assert!(
-            in_turn(&verbose[4..], &[&[SIGNER_NAME, "1"], &["0x0c0"]]),
-            "{verbose:?}"
-        );
+        assert!(holds(&verbose[4], &[SIGNER_NAME, "1"]), "{verbose:?}");
+        assert!(!shows(&verbose, &["0x0c0"]), "{verbose:?}");
         // A blank board doesn't have firmware to compare with.
         assert_eq!(
             device_lines(None, &commissioning, (true, false), &table),
