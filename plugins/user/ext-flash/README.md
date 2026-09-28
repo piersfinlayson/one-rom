@@ -1,8 +1,19 @@
-# External flash probe
+# External Flash Tester
 
-Used to test various operations on the external flash connected to the RP2350's QSPI interface.
+Tests a Fire board's external flash chip is present and functional, making
+this One ROM suitable for commissioning as an L (large) One ROM.
 
-May be useful as a diagnostic tool or reference.
+It checks the chip is compatible with One ROM - specifically:
+- answers on the chip select GPIO in the board's metadata
+- reports 2MB in its ID
+- programs and reads back, with single-line and quad reads
+- is 2MB, as offset 2MB reads the same data as offset 0 and offset 1MB doesn't
+- erases with the D8h block erase and the 4KB sector erase
+
+On a One ROM commissioned with a size other than M it also checkes whether
+the commissioned data matches the expected value for an L board.
+
+Requires One ROM firmware v0.8.0 or later.
 
 ## Building
 
@@ -12,52 +23,64 @@ make
 
 Builds `build/plugin_user.bin`.
 
-## Programming
-
-Must be deployed alongside the USB plugin.  A ROM slot must be present to avoid the firmware entering limp mode.
-
-```bash
-onerom program \
-  --slot file=<rom>,type=27C400 \
-  --plugin usb \
-  --plugin file=build/plugin_user.bin
-```
-
 ## Running
 
+Program it with the USB plugin and a ROM image, then open the console.  For
+example, on a 40 pin One ROM:
+
 ```bash
+onerom program --plugin usb --plugin ext-flash \
+               --slot file=images/test/rand_256KB.rom,type=27C200 
 onerom console
 ```
 
-A probe runs at startup:
-- identify both flash chips
-- report the QMI's window configuration
-- say whether OTP or the plugin configured CS1
-- muxes the CS1 pin, unless the bootrom already has.
+For a local build use `--plugin file=build/plugin_user.bin`.
 
-The test sector is the 4KB at offset 0 of the external flash at 0x11000000.  The test pattern used is `i * 197 + 89`.
+An example passing run - the output may be slightly different
 
-| Key | Action |
-| --- | --- |
-| `?` | List the commands |
-| `p` | Re-run the probe |
-| `e` | Erase the test sector via `flash_op`, then check it reads erased |
-| `E` | Erase the test sector via `flash_range_erase` |
-| `g` | Write the test sector with the pattern via direct QSPI |
-| `G` | Write the test sector via `flash_op` |
-| `R` | Write the test sector via `flash_range_program` |
-| `v` | Read the test sector at each clock divisor from 6 down to 1 |
-| `X` | Write a routine to the external flash, execute it, erase it |
-| `b` | Erase and program using the bootrom's `FLASH_DEVINFO` |
-| `w` | `e`, `g`, `v`, `e` in sequence |
-| `x` | Hang to check the watchdog resets the board |
+```
+One ROM External Flash Tester vX.Y.Z
+...
+<Detected hardware info>
+...
+This test erases, writes and reads the external flash.
+Takes 20-25s with a new flash chip and One ROM clocked at 150MHz.
+Type y then Enter to proceed.
+...
+<Individual test information>
+...
+PASS
+Type y then Enter to repeat.
+```
 
-Notes:
+A failed run replaces `PASS` with `FAIL`.
 
-- An erase parks the other core during the operation.
+The test erases, reads and writes the external flash chip. It leaves the chip
+blank at the end of a test run.
 
-- The watchdog is armed around external flash operations so a hung operation resets the board.  `x` hangs the plugin on purpose to check the watchdog is operational.
+If a flash operation hangs, the watchdog resets the board after 4 seconds and
+the plugin reports the error on the next start.
 
-## Programming OTP
+## Flash clock
 
-`scripts/program-otp.sh` programs `FLASH_DEVINFO` and `FLASH_DEVINFO_ENABLE` in OTP so the bootrom configures CS1 itself. See [docs/wip/EXTERNAL-FLASH.md](/docs/wip/EXTERNAL-FLASH.md#programming-otp) for further details.
+The test runs the chip at the firmware's flash clock which is a divided value
+of One ROM's own CPU clock.  To run the flash at its maximum supported 133MHz,
+you must overclock One ROM to 266MHz.
+
+Take care when performing overclocking as it can damage your One ROM.
+
+```
+onerom program --plugin usb --plugin ext-flash \
+               --slot file=images/test/rand_256KB.rom,type=27C200,cpu=266MHz
+```
+
+If One ROM fails to boot, recover it using the instructions in
+[unbrick.md](/docs/fragments/unbrick.md). You can try again setting vreg:
+
+```
+onerom program --plugin usb --plugin ext-flash \
+               --slot file=images/test/rand_256KB.rom,type=27C200,cpu=266MHz,vreg=1.30V
+```
+
+Setting vreg above its stock 1.1V can damage your One ROM and it is not
+recommended to set vreg above 1.60V.

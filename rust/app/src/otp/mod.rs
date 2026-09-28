@@ -646,10 +646,12 @@ mod tests {
         assert_eq!(bootloader_lock(0x10_0010), 1);
     }
 
-    /// `plugins/user/ext-flash/scripts/program-otp.sh` writes `0x99af` to a
-    /// fire-40-a. `0x3a99af` is the raw row it expects.
+    /// Fire-40-a boards sized L before `set-size` existed hold `0x99af` in
+    /// `FLASH_DEVINFO`. A script wrote it as the raw row `0x3a99af`.
+    /// `hardware commission` refuses a row holding another value, so it must
+    /// write the same one for those boards to commission.
     #[test]
-    fn fire_40_a_flash_devinfo_matches_program_otp_sh() {
+    fn fire_40_a_flash_devinfo_matches_boards_sized_before_set_size() {
         assert_eq!(flash_devinfo(BoardSize::L, 47), Some(0x99af));
         assert_eq!(ecc_encode(0x99af), 0x3a_99af);
     }

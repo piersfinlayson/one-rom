@@ -6,12 +6,13 @@
 //
 // ora_log() is compiled out unless the firmware was built with PLUGIN_LOGGING,
 // so a plugin that relies on it needs a special firmware to say anything.  The
-// log channel API has no such condition, and the USB plugin drains channel 0
+// log channel API doesn't have that condition, and the USB plugin drains channel 0
 // to CDC either way, which is what `onerom monitor log` and `onerom console`
 // read.
 //
 // The channel API takes bytes rather than a format string, so the formatting
-// is here.  It writes each piece as it converts it, so it needs no line buffer.
+// is here.  It writes each piece as it converts it, so it doesn't need a line
+// buffer.
 
 #if !defined(CDC_LOG_H)
 #define CDC_LOG_H

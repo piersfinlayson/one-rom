@@ -2,7 +2,7 @@
 #
 # MIT License
 #
-# Builds the One ROM external flash probe plugin.
+# Builds the One ROM external flash tester plugin.
 #
 # The shared firmware/ora/plugin.mk compiles a single source file and this
 # plugin has four, keeping the routines that run from RAM apart so they are
@@ -36,10 +36,9 @@ BIN := $(BUILD_DIR)/$(PLUGIN_PREFIX).bin
 # script that checks the routine fits, so a routine that outgrows its buffer
 # fails the link instead of running off the end of a 1KB stack on the device.
 # Grow the number when the link says to.
-STAGE_PROBE_WORDS    := 44
-STAGE_QSPI_WORDS     := 79
-STAGE_OP_WORDS       := 26
-STAGE_BOOTPROG_WORDS := 43
+STAGE_PROBE_WORDS    := 47
+STAGE_QSPI_WORDS     := 88
+STAGE_OP_WORDS       := 21
 STAGE_M1_WORDS       := 4
 
 SRC := src/ext_flash_main.c src/qmi_probe.c src/recover.c src/cdc_log.c
@@ -61,7 +60,6 @@ CFLAGS := -mcpu=cortex-m33 -mthumb -mfloat-abi=hard -mfpu=fpv5-sp-d16 \
           -DSTAGE_PROBE_WORDS=$(STAGE_PROBE_WORDS)u \
           -DSTAGE_QSPI_WORDS=$(STAGE_QSPI_WORDS)u \
           -DSTAGE_OP_WORDS=$(STAGE_OP_WORDS)u \
-          -DSTAGE_BOOTPROG_WORDS=$(STAGE_BOOTPROG_WORDS)u \
           -DSTAGE_M1_WORDS=$(STAGE_M1_WORDS)u \
           -I $(ORA_DIR) -I $(dir $(ORA_DIR))include -I src \
           -std=c11
@@ -74,7 +72,6 @@ LDFLAGS := -nostdlib \
            -Wl,--defsym,STAGE_PROBE_WORDS=$(STAGE_PROBE_WORDS) \
            -Wl,--defsym,STAGE_QSPI_WORDS=$(STAGE_QSPI_WORDS) \
            -Wl,--defsym,STAGE_OP_WORDS=$(STAGE_OP_WORDS) \
-           -Wl,--defsym,STAGE_BOOTPROG_WORDS=$(STAGE_BOOTPROG_WORDS) \
            -Wl,--defsym,STAGE_M1_WORDS=$(STAGE_M1_WORDS) \
            -Wl,--fatal-warnings \
            -Wl,--no-warn-rwx-segments \

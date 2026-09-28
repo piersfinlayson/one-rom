@@ -11,7 +11,8 @@
 
 static ora_log_write_fn_t s_write;
 
-// No C runtime here, so the compiler must not turn a scan into a strlen call.
+// The plugin environment doesn't have a C runtime, so the compiler must not turn
+// a scan into a strlen call.
 static uint32_t str_len(const char *s) {
     const volatile char *p = s;
     uint32_t n = 0u;

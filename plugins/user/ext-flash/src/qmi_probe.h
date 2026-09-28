@@ -16,10 +16,6 @@ extern const uint8_t __stage_qspi_start[];
 extern const uint8_t __stage_qspi_end[];
 extern const uint8_t __stage_op_start[];
 extern const uint8_t __stage_op_end[];
-extern const uint8_t __stage_bootprog_start[];
-extern const uint8_t __stage_bootprog_end[];
-extern const uint8_t __stage_exec_start[];
-extern const uint8_t __stage_exec_end[];
 extern const uint8_t __stage_m1_start[];
 extern const uint8_t __stage_m1_end[];
 
@@ -36,6 +32,14 @@ extern const uint8_t __stage_m1_end[];
 #define QMI_M1_RFMT         (*(volatile uint32_t *)(QMI_BASE + 0x24u))
 #define QMI_M1_RCMD         (*(volatile uint32_t *)(QMI_BASE + 0x28u))
 
+// Address translation for the first 4MB of chip select 1's window, and its
+// reset value: 4MB of the device, starting at offset 0.  RP2350 datasheet
+// section 12.14.6.  The bootrom's flash_reset_address_trans sets all eight
+// ATRANS registers to this identity mapping, and launching an image rewrites
+// ATRANS0-3 alone, which serve chip select 0.
+#define QMI_ATRANS4         (*(volatile uint32_t *)(QMI_BASE + 0x44u))
+#define QMI_ATRANS4_RESET   0x04000000u
+
 // DIRECT_CSR bits.  RP2350 datasheet Table 1294.
 #define QMI_CSR_EN          (1u << 0)
 #define QMI_CSR_BUSY        (1u << 1)
@@ -44,6 +48,16 @@ extern const uint8_t __stage_m1_end[];
 #define QMI_CSR_TXFULL      (1u << 10)
 #define QMI_CSR_RXEMPTY     (1u << 16)
 #define QMI_CSR_CLKDIV_LSB  22
+#define QMI_CSR_CLKDIV_BITS (0xFFu << QMI_CSR_CLKDIV_LSB)
+
+// The clock divisor for this plugin's direct-mode transfers, the probe and the
+// program.  It is the bootrom's BOOTROM_SPI_CLKDIV_DEFAULT, which the bootrom's
+// own flash routines use, so these run at the speed its erases do.
+//
+// DIRECT_CSR otherwise holds whatever divisor the last change of XIP read mode
+// left there, which is the XIP divisor.  At a 266MHz system clock that runs
+// the bus at 133MHz, and direct-mode reads came back one bit late.
+#define QMI_DIRECT_CLKDIV   12u
 
 // GPIO and pad registers for the CS1 pin.  Bases from RP2350 datasheet section
 // 2.2 "Address map", layouts from section 9.11, which lists the registers of
@@ -65,7 +79,7 @@ extern const uint8_t __stage_m1_end[];
 // Base of the cached and uncached views of the chip select 1 window.  RP2350
 // datasheet section 12.14: each chip select gets a 16MB window, chip select 0
 // from 0x10000000 and chip select 1 from 0x11000000, with the QMI picking the
-// matching timing and format by address decode.  Section 4.4.1 gives the
+// matching timing and format by address decode.  Section 4.4.1 lists the
 // mirrors of that space, 0x10 cached and 0x14 uncached, so the uncached view of
 // window 1 starts at 0x15000000.  Read a block through the uncached view - a
 // bulk read through the cached one evicts the running code from the 16KB XIP
@@ -80,31 +94,31 @@ extern const uint8_t __stage_m1_end[];
 #define FLASH_CMD_READ_SR1  0x05u
 #define FLASH_CMD_READ_SR2  0x35u
 #define FLASH_CMD_WRITE_EN  0x06u
-#define FLASH_CMD_SECTOR_ER 0x20u
 #define FLASH_CMD_PAGE_PROG 0x02u
 
 // Busy bit in status register 1, set while an erase or program is running.
 #define FLASH_SR1_BUSY      (1u << 0)
 
-// Geometry of the region the write test uses.  Winbond W25Q16JV datasheet
-// section 6: 4KB is the smallest erase and 256 bytes the largest program.
+// Erase and program sizes.  Winbond W25Q16JV datasheet section 6: 4KB is the
+// smallest erase, 64KB the D8h block erase and 256 bytes the largest program.
 #define FLASH_SECTOR_SIZE   4096u
+#define FLASH_BLOCK_SIZE    65536u
 #define FLASH_PAGE_SIZE     256u
 
 // The QE bit in status register 2.  Winbond W25Q16JV datasheet section 7.1.
-// Set, IO2 and IO3 are the data lines a quad read needs.  Clear, they carry
+// Set, IO2 and IO3 are the data lines a quad read needs.  Clear, they are
 // write-protect and hold.
 #define FLASH_SR2_QE        (1u << 1)
 
-// What one device answered.
+// One device's ID and status register 2.
 typedef struct {
     uint8_t jedec[3];  // Manufacturer, memory type, capacity
     uint8_t sr2;       // Status register 2, holding the QE bit
 } qmi_device_id_t;
 
-// What the probe found.  Both devices are read in one pass.  The internal
-// device is known to be present, so it is the control: when it fails to answer
-// the probe is at fault, and its reading of the external device is worthless.
+// The probe's result for both devices, read in one pass.  The built-in flash
+// is always present, so it is the control.  If it doesn't return an ID, the
+// probe is at fault and its result for the external flash can't be trusted.
 typedef struct {
     qmi_device_id_t cs0;
     qmi_device_id_t cs1;
@@ -113,9 +127,9 @@ typedef struct {
 // Read the JEDEC ID and status register 2 from both chip selects.
 //
 // Runs from RAM.  Direct mode makes every memory-mapped access return a bus
-// error, so while it is enabled this core fetches nothing from flash and takes
-// no interrupt.  The caller provides both: exclusive mode parks the other core,
-// and it masks this core's interrupts around the call.
+// error.  While it is enabled this core can't fetch from flash or take an
+// interrupt.  The caller makes sure of both: exclusive mode parks the other
+// core, and it masks this core's interrupts around the call.
 //
 // Leaves DIRECT_CSR as it found it.  It issues read commands alone, so both
 // devices stay in the serial command state the bootrom left them in and XIP
@@ -129,20 +143,33 @@ typedef void (*qmi_probe_ids_fn_t)(qmi_probe_result_t *out);
 //
 // Field layout from RP2350 datasheet Table 1298 (M0_RFMT, M1_RFMT).  DUMMY_LEN
 // at 18:16 counts in units of 4 bits, and single width moves 4 bits per 4 SCK
-// cycles, so 2 gives those 8 cycles.  PREFIX_LEN at bit 12 set to 1 is the
-// 8-bit opcode.  The width fields and SUFFIX_LEN stay zero, which is single
-// width and no suffix.
+// cycles, so 2 is those 8 cycles.  PREFIX_LEN at bit 12 set to 1 is the
+// 8-bit opcode.  The width fields and SUFFIX_LEN stay zero, for single width
+// without a suffix.
 //
-// 0Bh works on a device nothing has configured, since it wants neither the QE
-// bit nor continuous read mode.
+// 0Bh works on an unconfigured device, as it needs neither the QE bit nor
+// continuous read mode.  It uses IO0 and IO1 alone.
 #define M1_RFMT_0BH_SERIAL  ((2u << 16) | (1u << 12))
 #define M1_RCMD_0BH_SERIAL  0x0Bu
 
+// Window 1 read format for an EBh quad I/O read, the bootrom's own quad mode
+// (BOOTROM_XIP_MODE_EBH_QUAD in its varm_generic_flash.c).
+//
+// The opcode goes out single width.  The address, the mode byte and the data
+// use all four lines.  Same table as above: ADDR_WIDTH at 3:2, SUFFIX_WIDTH at
+// 5:4, DUMMY_WIDTH at 7:6 and DATA_WIDTH at 9:8 are all 2 for quad.
+// SUFFIX_LEN at 15:14 set to 2 is the 8-bit mode byte, which RCMD's SUFFIX
+// field at 15:8 leaves 00h, so the device doesn't enter continuous read mode.
+// DUMMY_LEN 4 is 16 bits, 4 cycles at quad width.  With the mode byte's 2
+// cycles that is the 6 cycles the Winbond W25Q16JV datasheet requires between
+// EBh's address and data.
+#define M1_RFMT_EBH_QUAD    ((4u << 16) | (2u << 14) | (1u << 12) | \
+                             (2u << 8) | (2u << 6) | (2u << 4) | (2u << 2))
+#define M1_RCMD_EBH_QUAD    0xEBu
+
 // Point memory window 1 at an arbitrary read configuration.
 //
-// The write test reads the same bytes back through several configurations,
-// including the one serving the internal device, which is how it answers
-// whether the external part keeps up.
+// The test reads the same bytes back in more than one read format.
 //
 // Runs from RAM.  RP2350 datasheet Table 1297 allows the divisor to change at
 // any time, and requires the QMI be idle for every other field.
@@ -155,57 +182,44 @@ typedef void (*flash_exit_xip_fn_t)(void);
 typedef void (*flash_flush_cache_fn_t)(void);
 typedef void (*flash_select_xip_read_mode_fn_t)(uint8_t mode, uint8_t clkdiv);
 typedef int32_t (*flash_op_fn_t)(uint32_t flags, uint32_t addr, uint32_t size, uint8_t *buf);
-typedef void (*flash_range_program_fn_t)(uint32_t offs, const uint8_t *data, uint32_t count);
-typedef void (*flash_range_erase_fn_t)(uint32_t offs, uint32_t count, uint32_t block_size, uint8_t block_cmd);
 
 // flash_op flag values, RP2350 datasheet section 5.4.8.9.
-#define CFLASH_ASPACE_STORAGE 0x00000000u
-#define CFLASH_ASPACE_RUNTIME 0x00000001u
-#define CFLASH_SECLEVEL_BOOTLDR 0x00000300u
+#define CFLASH_ASPACE_STORAGE  0x00000000u
 #define CFLASH_SECLEVEL_SECURE 0x00000100u
-#define CFLASH_OP_ERASE       0x00000000u
-#define CFLASH_OP_PROGRAM     0x00010000u
+#define CFLASH_OP_ERASE        0x00000000u
 
 // Bootrom table lookup flag for a data entry rather than a function.  RP2350
-// datasheet section 5.4.1 "Locating the API functions", which gives the lookup
-// helper and the flags that select what is being asked for.
+// datasheet section 5.4.1 "Locating the API functions" describes the lookup
+// helper and its flags.
 #define ORA_BOOTROM_FLAG_DATA 0x0040u
 
-// What ext_flash_canary returns.  Arbitrary, and unlikely to turn up by
-// accident, so the value coming back is evidence the routine ran rather than
-// evidence something happened to be in a register.
-#define EXT_FLASH_CANARY_VALUE 0xC0DEF00Du
-
-uint32_t ext_flash_canary(void);
-typedef uint32_t (*ext_flash_canary_fn_t)(void);
-
-// The byte the write test expects at offset i of its page.
+// The 32-bit word the test programs at a word-aligned offset into the chip.
 //
-// 197 is coprime with 256, so the sequence visits every value once.  The
-// readback then sees transitions in every bit position, which is what shows up
-// a read at a clock the device cannot keep up with.
-static inline uint8_t ext_flash_pattern(uint32_t i) {
-    return (uint8_t)((i * 197u) + 89u);
+// Each word is its own offset scrambled by a multiply, so the bits change from
+// word to word on every data line.  The multiplier is odd, so two offsets
+// never produce the same word, and data at the wrong address reads back wrong.
+static inline uint32_t ext_flash_word(uint32_t offset) {
+    return ((offset >> 2) * 0x9E3779B1u) ^ 0x5A5A5A5Au;
 }
 
-// The block erase flash_range_erase may use where a region is big enough.
-// Winbond W25Q16JV datasheet section 8.2 gives D8h as the 64KB block erase.
-// A region smaller than a block leaves it using 4KB sector erases instead.
-#define FLASH_BLOCK_SIZE      65536u
-#define FLASH_BLOCK_ERASE_CMD 0xD8u
+// The byte the test programs at an offset into the chip.  A word's bytes run
+// from its least significant, as a 32-bit read of the chip returns them.
+static inline uint8_t ext_flash_pattern(uint32_t offset) {
+    return (uint8_t)(ext_flash_word(offset & ~3u) >> ((offset & 3u) * 8u));
+}
 
-// Run one bootrom flash erase with XIP taken down around it.
+// Run one bootrom flash_op with XIP taken down around it.
 //
-// Pass flash_op to erase through the high-level route, or leave it NULL and
-// pass range_erase to use the low-level one.  addr is an address spanning both
-// chip selects for the first, and an offset from the start of flash for the
-// second.
+// addr is in the address space that spans both chip selects, so chip select 1
+// starts at 0x11000000.  An erase of a 64KB-aligned 64KB region goes out as a
+// D8h block erase when FLASH_DEVINFO's D8H_ERASE_SUPPORTED bit is set, and as
+// 4KB sector erases otherwise (the bootrom's varm_checked_flash.c).
 //
 // Runs from RAM, under the same two conditions as qmi_probe_ids: exclusive
 // mode held, this core's interrupts masked.
 //
-// buf must be in RAM.  It is read while flash is unreadable, so a pointer into
-// the plugin's own image would fault.
+// buf must be in RAM, or NULL for an erase.  It is read while flash is
+// unreadable, so a pointer into the plugin's own image would fault.
 //
 // mode and clkdiv go to the XIP restore at the end, and should be what window 0
 // was using beforehand.  That restore reprograms both windows, so a caller
@@ -214,7 +228,6 @@ void ext_flash_op_critical(
     connect_internal_flash_fn_t     connect_internal_flash,
     flash_exit_xip_fn_t             exit_xip,
     flash_op_fn_t                   flash_op,
-    flash_range_erase_fn_t          range_erase,
     flash_flush_cache_fn_t          flush_cache,
     flash_select_xip_read_mode_fn_t select_xip,
     uint32_t                        flags,
@@ -229,7 +242,6 @@ typedef void (*ext_flash_op_critical_fn_t)(
     connect_internal_flash_fn_t     connect_internal_flash,
     flash_exit_xip_fn_t             exit_xip,
     flash_op_fn_t                   flash_op,
-    flash_range_erase_fn_t          range_erase,
     flash_flush_cache_fn_t          flush_cache,
     flash_select_xip_read_mode_fn_t select_xip,
     uint32_t                        flags,
@@ -242,11 +254,12 @@ typedef void (*ext_flash_op_critical_fn_t)(
 );
 
 
-// Program `pages` consecutive pages from `offset`, over the QSPI bus directly.
+// Program `pages` consecutive pages from `offset` with the test's data, over
+// the QSPI bus directly.
 //
-// offset is a byte offset into the device on chip select 1, page aligned.
-// Erase the sector holding it first, since programming only clears bits.  Each
-// byte is generated as it is clocked out, so this needs no page buffer.
+// offset is a page-aligned byte offset into the device connected to chip
+// select 1.  Erase the pages first, since programming only clears bits.  Each
+// byte is generated as it is clocked out, so this doesn't need a page buffer.
 //
 // Command sequence from the Winbond W25Q16JV datasheet section 8.2: write
 // enable, then page program with a 24-bit address and up to 256 data bytes,
@@ -254,50 +267,7 @@ typedef void (*ext_flash_op_critical_fn_t)(
 // own transfer because the device latches it on the rising edge of chip select.
 //
 // Same conditions as qmi_probe_ids: exclusive mode held, interrupts masked.
-void qmi_cs1_program_sector(uint32_t offset, uint32_t pages);
-typedef void (*qmi_cs1_program_sector_fn_t)(uint32_t offset, uint32_t pages);
-
-// Program `pages` consecutive pages through the bootrom.
-//
-// Pass flash_op to use the high-level route, or leave it NULL and pass
-// range_program to use the low-level one.  addr is an address spanning both
-// chip selects for the first, and an offset from the start of flash for the
-// second.
-//
-// page must be a 256 byte buffer in RAM.  It is written and read while flash is
-// unreadable, so a pointer into the plugin's own image would fault.
-//
-// Same conditions as qmi_probe_ids: exclusive mode held, interrupts masked.
-void ext_flash_program_sector_bootrom(
-    connect_internal_flash_fn_t     connect_internal_flash,
-    flash_exit_xip_fn_t             exit_xip,
-    flash_flush_cache_fn_t          flush_cache,
-    flash_select_xip_read_mode_fn_t select_xip,
-    flash_op_fn_t                   flash_op,
-    flash_range_program_fn_t        range_program,
-    uint32_t                        flags,
-    uint32_t                        addr,
-    uint8_t                        *page,
-    uint32_t                        pages,
-    uint8_t                         mode,
-    uint8_t                         clkdiv,
-    int32_t                        *result_out
-);
-typedef void (*ext_flash_program_sector_bootrom_fn_t)(
-    connect_internal_flash_fn_t     connect_internal_flash,
-    flash_exit_xip_fn_t             exit_xip,
-    flash_flush_cache_fn_t          flush_cache,
-    flash_select_xip_read_mode_fn_t select_xip,
-    flash_op_fn_t                   flash_op,
-    flash_range_program_fn_t        range_program,
-    uint32_t                        flags,
-    uint32_t                        addr,
-    uint8_t                        *page,
-    uint32_t                        pages,
-    uint8_t                         mode,
-    uint8_t                         clkdiv,
-    int32_t                        *result_out
-);
-
+void qmi_cs1_program(uint32_t offset, uint32_t pages);
+typedef void (*qmi_cs1_program_fn_t)(uint32_t offset, uint32_t pages);
 
 #endif // QMI_PROBE_H

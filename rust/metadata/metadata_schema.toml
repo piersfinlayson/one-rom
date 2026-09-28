@@ -463,24 +463,32 @@ comment = "OTP row of FLASH_DEVINFO. It describes the flash chips on chip select
 name = "OTP_FLASH_DEVINFO_CS0_SIZE_SHIFT"
 type = "u16"
 value = 8
+ora_api = true
+first_release = "0.8.0"
 comment = "Position of FLASH_DEVINFO's CS0_SIZE field."
 
 [[constants]]
 name = "OTP_FLASH_DEVINFO_CS1_SIZE_SHIFT"
 type = "u16"
 value = 12
+ora_api = true
+first_release = "0.8.0"
 comment = "Position of FLASH_DEVINFO's CS1_SIZE field."
 
 [[constants]]
 name = "OTP_FLASH_DEVINFO_SIZE_BITS"
 type = "u16"
 value = 0xf
+ora_api = true
+first_release = "0.8.0"
 comment = "The bits of a FLASH_DEVINFO size field once it's shifted down to bit 0."
 
 [[constants]]
 name = "OTP_FLASH_DEVINFO_SIZE_2MB"
 type = "u16"
 value = 9
+ora_api = true
+first_release = "0.8.0"
 comment = """A FLASH_DEVINFO size field for a 2MB chip. The bootrom reads a size n other
 than 0 as 4KB shifted left n times, and 0 as no chip."""
 
@@ -488,12 +496,16 @@ than 0 as 4KB shifted left n times, and 0 as no chip."""
 name = "OTP_FLASH_DEVINFO_D8H_ERASE_SUPPORTED"
 type = "u16"
 value = 0x80
+ora_api = true
+first_release = "0.8.0"
 comment = "FLASH_DEVINFO's D8H_ERASE_SUPPORTED bit. One ROM sets it on every L board."
 
 [[constants]]
 name = "OTP_FLASH_DEVINFO_CS1_GPIO"
 type = "u16"
 value = 0x3f
+ora_api = true
+first_release = "0.8.0"
 comment = "FLASH_DEVINFO's CS1_GPIO field."
 
 [[constants]]

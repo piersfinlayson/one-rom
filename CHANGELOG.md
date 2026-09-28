@@ -10,12 +10,12 @@ In detail:
 - `inspect info` indicates what it cannot decode and why.
 - `onerom peek` no longer fails on a large read.
 - The plugin API's generated metadata-key and constant headers now say which firmware release each entry first shipped in.
+- The plugin API gains the `ORA_OTP_FLASH_DEVINFO_*` constants, for reading and writing `FLASH_DEVINFO` as One ROM sets it for an L board.
 - Firmware change to avoid changing bootrom config for any external flash CS1 pin configured in OTP data.
 - A commissioned One ROM enters the bootloader if commissioning data is present and the commission board type differs from the metadata's board type.
 - Firmware makes OTP read-only before starting plugins, so neither a plugin nor a host using the USB plugin can write it.
 - Firmware records the board's size, M or L, in its runtime info, which `onerom inspect info` shows.
-- Add the `ext-flash` user plugin, which tests the external flash chip present on some Fire 32 and 40 pin boards.
-  - Includes `plugins/user/ext-flash/scripts/program-otp.sh` to program the OTP that makes the external flash reachable with no firmware or plugin setup required.
+- Add the `ext-flash` user plugin, which tests whether the external flash chip is present and functional on Fire 32 and 40 pin boards.
 - Retire the `onerom-fw` binary. Use the CLI's `firmware build` option instead.
 - Fix: `onerom program` and `onerom firmware build` report a board mismatch correctly.
 

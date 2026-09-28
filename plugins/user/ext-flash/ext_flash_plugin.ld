@@ -3,7 +3,7 @@
  *
  * MIT License
  *
- * Linker script for the external flash probe plugin.
+ * Linker script for the external flash tester plugin.
  *
  * The stock plugin script, with sections added to bracket the routines that
  * have to run from RAM.  They stay in flash here and the plugin copies the one
@@ -75,7 +75,7 @@ SECTIONS
         *(.rodata*)
 
         /* Routines the plugin copies onto its stack and runs from there.      */
-        /* Each is bracketed so the plugin knows how much to copy, and each    */
+        /* Each is bracketed so the plugin can find how much to copy, and each */
         /* holds its entry point first, followed by whatever that entry calls, */
         /* so the copy takes a self-contained blob.                            */
         . = ALIGN(4);
@@ -93,16 +93,6 @@ SECTIONS
         KEEP(*(.stage_op))
         . = ALIGN(4);
         __stage_op_end = .;
-
-        __stage_bootprog_start = .;
-        KEEP(*(.stage_bootprog))
-        . = ALIGN(4);
-        __stage_bootprog_end = .;
-
-        __stage_exec_start = .;
-        KEEP(*(.stage_exec))
-        . = ALIGN(4);
-        __stage_exec_end = .;
 
         __stage_m1_start = .;
         KEEP(*(.stage_m1))
@@ -144,8 +134,8 @@ SECTIONS
 }
 
 /* Each staged routine is copied onto the stack into a buffer the C sizes from
- * the matching Makefile number.  The linker is the only thing that knows how
- * big a routine actually is, so it checks the two agree here.  A routine that
+ * the matching Makefile number.  Only the linker has each routine's actual
+ * size, so it checks the two agree here.  A routine that
  * has grown past its buffer fails the link, naming itself, rather than
  * overrunning a 1KB stack on the device.
  */
@@ -155,7 +145,5 @@ ASSERT(__stage_qspi_end - __stage_qspi_start <= STAGE_QSPI_WORDS * 4,
        "ERROR: .stage_qspi is larger than STAGE_QSPI_WORDS")
 ASSERT(__stage_op_end - __stage_op_start <= STAGE_OP_WORDS * 4,
        "ERROR: .stage_op is larger than STAGE_OP_WORDS")
-ASSERT(__stage_bootprog_end - __stage_bootprog_start <= STAGE_BOOTPROG_WORDS * 4,
-       "ERROR: .stage_bootprog is larger than STAGE_BOOTPROG_WORDS")
 ASSERT(__stage_m1_end - __stage_m1_start <= STAGE_M1_WORDS * 4,
        "ERROR: .stage_m1 is larger than STAGE_M1_WORDS")

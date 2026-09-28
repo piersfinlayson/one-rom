@@ -6,13 +6,13 @@
 //
 // A flash operation runs with XIP down, this core's interrupts masked and the
 // other core parked by exclusive mode.  A fault in there takes the core while
-// it holds that parking, so the other core stays parked, USB stops answering
+// it holds that parking, so the other core stays parked, USB stops working
 // and the board needs the BOOTSEL button.  That happened twice.
 //
 // Two things fix it.  The watchdog resets the board when a section does not
 // finish, so it comes back by itself.  And a step marker written to a watchdog
-// scratch register survives that reset, so the next boot names the call that
-// never returned.
+// scratch register survives that reset, so the next boot reports the call
+// that never returned.
 
 #if !defined(RECOVER_H)
 #define RECOVER_H
@@ -48,7 +48,7 @@
 #define TICKS_CTRL_ENABLE   (1u << 0)
 
 // Which components a watchdog timeout resets.  RP2350 datasheet section 12.9.4
-// gives three levels, and section 12.9.5 says a chip-level reset clears the
+// describes three levels, and section 12.9.5 says a chip-level reset clears the
 // scratch registers, taking the marker with it.  So this uses the PSM level,
 // bit list from Table 532, set to everything bar the two oscillators.  That
 // matches the SDK's watchdog_enable.
@@ -59,7 +59,7 @@
 #define PSM_WDSEL_XOSC      (1u << 3)
 
 // Where a flash operation had got to.  Written before each step, so the value
-// left behind names the call that did not return.
+// left behind identifies the call that did not return.
 typedef enum {
     MARK_IDLE          = 0u,
     MARK_ENTERED       = 1u,  // inside the critical section, before the first call
@@ -68,7 +68,6 @@ typedef enum {
     MARK_OP_DONE       = 4u,  // the erase or program returned
     MARK_CACHE_FLUSHED = 5u,  // flash_flush_cache returned
     MARK_XIP_RESTORED  = 6u,  // flash_select_xip_read_mode returned
-    MARK_CANARY_CALL   = 7u,  // branched into the external flash
 } mark_t;
 
 // As mark(), plus the page a multi-page write had reached, which pins a hang to
@@ -78,7 +77,7 @@ static inline void mark_page(mark_t step, uint32_t page) {
 }
 
 // Record progress.  Safe with XIP down: it is a register write built from
-// macros in this header, so it fetches nothing from flash.
+// macros in this header, so it doesn't fetch from flash.
 static inline void mark(mark_t step) {
     WD_SCRATCH(WD_SCRATCH_MARK) = (uint32_t)step;
 }
@@ -91,15 +90,14 @@ void watchdog_setup(uint32_t clkref_mhz);
 
 // Arm for this many milliseconds, and note that the marker is ours.
 //
-// An erase can take the device 400ms, so the timeout has to clear that by
-// enough for a slow but healthy erase to finish.
+// The timeout must exceed the slowest operation it covers.
 void watchdog_arm(uint32_t ms);
 
 // Stop the countdown.  Called once a section finishes.
 void watchdog_disarm(void);
 
 // The marker left by a run that did not finish, or MARK_IDLE if the last run
-// completed or nothing has run yet.  Clears it, so it is only reported once.
+// completed or there hasn't been a run.  Clears it, so it is only reported once.
 mark_t watchdog_take_mark(void);
 
 #endif // RECOVER_H
