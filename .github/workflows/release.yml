@@ -21,13 +21,13 @@ permissions:
 jobs:
   emulator-tests:
     name: Emulator tests (${{ matrix.socket }} pin)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
         socket: [24, 28, 32, 40]
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
 
     - name: Install build dependencies
       run: |
@@ -38,7 +38,7 @@ jobs:
       uses: dtolnay/rust-toolchain@stable
 
     - name: Cache Arm GNU toolchain
-      uses: actions/cache@v4
+      uses: actions/cache@v6
       with:
         path: ~/arm-gnu-toolchain
         key: arm-toolchain-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('ci/arm-toolchain-version') }}
@@ -56,9 +56,9 @@ jobs:
 
   c-tests:
     name: C tests
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
 
     # These compile firmware C for the host, so they need neither Rust nor the
     # Arm toolchain.  They do need the host compiler pinned in
@@ -76,9 +76,9 @@ jobs:
 
   firmware:
     name: Firmware and plugins
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
 
     - name: Install build dependencies
       run: |
@@ -89,7 +89,7 @@ jobs:
       uses: dtolnay/rust-toolchain@stable
 
     - name: Cache Arm GNU toolchain
-      uses: actions/cache@v4
+      uses: actions/cache@v6
       with:
         path: ~/arm-gnu-toolchain
         key: arm-toolchain-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('ci/arm-toolchain-version') }}
@@ -118,10 +118,10 @@ jobs:
 
   release:
     name: Create GitHub release
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: [emulator-tests, c-tests, firmware]
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
 
     - name: Extract version from tag
       id: version

@@ -75,13 +75,18 @@ on:
 # GitHub image and may not be on a self-hosted one.  ci/install-arm-toolchain.sh
 # unpacks a .tar.xz, so every job needs xz-utils; only the two jobs that install
 # the Emscripten SDK need python3, which emsdk itself runs on.
+#
+# Every Linux job runs on ubuntu-24.04 rather than ubuntu-latest, to match the
+# build container (ci/docker/Dockerfile).  The coverage floors come from CI's
+# figures and the container reproduces them, so both must install the same
+# build of the pinned compiler.  Move the two together.
 
 jobs:
   lint:
     name: Lint (rustfmt + clippy)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
 
     - name: Install build dependencies
       run: |
@@ -95,7 +100,7 @@ jobs:
         components: rustfmt, clippy
 
     - name: Cache Arm GNU toolchain
-      uses: actions/cache@v4
+      uses: actions/cache@v6
       with:
         path: ~/arm-gnu-toolchain
         key: arm-toolchain-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('ci/arm-toolchain-version') }}
@@ -104,7 +109,7 @@ jobs:
       run: echo "TOOLCHAIN=$(ci/install-arm-toolchain.sh)" >> "$GITHUB_ENV"
 
     - name: Cache Emscripten SDK
-      uses: actions/cache@v4
+      uses: actions/cache@v6
       with:
         path: ~/emsdk
         key: emsdk-${{ runner.os }}-${{ hashFiles('ci/install-emscripten.sh', 'ci/emscripten-version') }}
@@ -133,9 +138,9 @@ jobs:
 
   rust-tests:
     name: Rust tests
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
 
     - name: Install build dependencies
       run: |
@@ -147,7 +152,7 @@ jobs:
       uses: dtolnay/rust-toolchain@stable
 
     - name: Cache Arm GNU toolchain
-      uses: actions/cache@v4
+      uses: actions/cache@v6
       with:
         path: ~/arm-gnu-toolchain
         key: arm-toolchain-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('ci/arm-toolchain-version') }}
@@ -164,14 +169,14 @@ jobs:
 
   docs-pdf:
     name: Documentation PDFs
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # The PDFs are rendered from the committed markdown, and rust-tests is what
     # proves the generated documents (COMPATIBILITY.md, CHIP-TYPES.md) match a
     # fresh regeneration.  Building before that gate could publish a PDF that
     # disagrees with the repository.
     needs: rust-tests
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
 
     - name: Install build dependencies
       run: |
@@ -179,7 +184,7 @@ jobs:
         sudo apt-get install -y libpango-1.0-0 libpangoft2-1.0-0
 
     - name: Cache documentation toolchain
-      uses: actions/cache@v4
+      uses: actions/cache@v6
       with:
         path: ~/onerom-doc-tools
         key: doc-tools-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('ci/pandoc-version', 'ci/weasyprint-version') }}
@@ -194,16 +199,16 @@ jobs:
       run: ci/build-docs.sh
 
     - name: Upload documentation PDFs
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: docs-pdf
         path: docs/pdf/build/*.pdf
 
   c-tests:
     name: C tests
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
 
     # These compile firmware C for the host, so they need neither Rust nor the
     # Arm toolchain.  They do need the host compiler pinned in
@@ -221,9 +226,9 @@ jobs:
 
   rust-docs:
     name: Rust docs
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
 
     - name: Install build dependencies
       run: |
@@ -235,7 +240,7 @@ jobs:
       uses: dtolnay/rust-toolchain@stable
 
     - name: Cache Arm GNU toolchain
-      uses: actions/cache@v4
+      uses: actions/cache@v6
       with:
         path: ~/arm-gnu-toolchain
         key: arm-toolchain-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('ci/arm-toolchain-version') }}
@@ -255,13 +260,13 @@ jobs:
     # targets boards of that one size - and the 24 pin group is much the largest,
     # so splitting this way puts the long pole on its own runner.
     name: Emulator tests (${{ matrix.socket }} pin)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
         socket: [24, 28, 32, 40]
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
 
     - name: Install build dependencies
       run: |
@@ -273,7 +278,7 @@ jobs:
       uses: dtolnay/rust-toolchain@stable
 
     - name: Cache Arm GNU toolchain
-      uses: actions/cache@v4
+      uses: actions/cache@v6
       with:
         path: ~/arm-gnu-toolchain
         key: arm-toolchain-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('ci/arm-toolchain-version') }}
@@ -302,9 +307,9 @@ jobs:
     # answer, not dropping runs from the campaign - fewer runs reach fewer
     # lines, and the floors would have to come down to match.
     name: Coverage
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
 
     - name: Install build dependencies
       run: |
@@ -395,16 +400,16 @@ jobs:
 
     - name: Upload tracefiles
       if: always()
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: coverage-tracefiles
         path: build/coverage/*.info
 
   firmware:
     name: Firmware and plugins
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
 
     - name: Install build dependencies
       run: |
@@ -416,7 +421,7 @@ jobs:
       uses: dtolnay/rust-toolchain@stable
 
     - name: Cache Arm GNU toolchain
-      uses: actions/cache@v4
+      uses: actions/cache@v6
       with:
         path: ~/arm-gnu-toolchain
         key: arm-toolchain-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('ci/arm-toolchain-version') }}
@@ -445,9 +450,9 @@ jobs:
 
   tools:
     name: Tools (One ROM Lab)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
 
     - name: Install build dependencies
       run: |
@@ -468,7 +473,7 @@ jobs:
         rustc --version
 
     - name: Cache Arm GNU toolchain
-      uses: actions/cache@v4
+      uses: actions/cache@v6
       with:
         path: ~/arm-gnu-toolchain
         key: arm-toolchain-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('ci/arm-toolchain-version') }}
@@ -487,9 +492,9 @@ jobs:
     # The CLI and Studio binaries, built for the host.  Studio's file dialogs
     # use the XDG portal, so no GTK.
     name: Binaries (CLI and Studio)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
 
     - name: Install build dependencies
       run: |
@@ -501,7 +506,7 @@ jobs:
       uses: dtolnay/rust-toolchain@stable
 
     - name: Cache Arm GNU toolchain
-      uses: actions/cache@v4
+      uses: actions/cache@v6
       with:
         path: ~/arm-gnu-toolchain
         key: arm-toolchain-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('ci/arm-toolchain-version') }}
@@ -518,9 +523,9 @@ jobs:
 
   lens:
     name: One ROM Lens (wasm)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
 
     - name: Install build dependencies
       run: |
@@ -532,7 +537,7 @@ jobs:
       uses: dtolnay/rust-toolchain@stable
 
     - name: Cache Arm GNU toolchain
-      uses: actions/cache@v4
+      uses: actions/cache@v6
       with:
         path: ~/arm-gnu-toolchain
         key: arm-toolchain-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('ci/arm-toolchain-version') }}
@@ -541,7 +546,7 @@ jobs:
       run: echo "TOOLCHAIN=$(ci/install-arm-toolchain.sh)" >> "$GITHUB_ENV"
 
     - name: Cache Emscripten SDK
-      uses: actions/cache@v4
+      uses: actions/cache@v6
       with:
         path: ~/emsdk
         key: emsdk-${{ runner.os }}-${{ hashFiles('ci/install-emscripten.sh', 'ci/emscripten-version') }}

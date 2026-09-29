@@ -18,9 +18,9 @@ permissions:
 jobs:
   release:
     name: Build and release One ROM Lab
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
 
     - name: Extract version from tag
       id: version
@@ -60,7 +60,7 @@ jobs:
         rustc --version
 
     - name: Cache Arm GNU toolchain
-      uses: actions/cache@v4
+      uses: actions/cache@v6
       with:
         path: ~/arm-gnu-toolchain
         key: arm-toolchain-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('ci/arm-toolchain-version') }}
