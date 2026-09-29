@@ -40,6 +40,7 @@ use ed25519_dalek::Signer as _;
 use onerom_app::{
     BoardSize, CommissionError, Interruption, MemoryOtp, Request, RequestDate, prepare,
 };
+use onerom_cli::signing::KeyFile;
 use onerom_cli::usb::{FLASH_BASE, FLASH_READ_SIZE_BYTES, RAM_BASE};
 use onerom_cli::{Error, Options};
 use onerom_config::hw::Board;
@@ -50,8 +51,8 @@ use onerom_metadata::otp::pico_otp::ecc_encode;
 
 use crate::args::hardware::HardwareCommands;
 use crate::args::{Cli, CommandTrait, Commands};
-use crate::hardware::{SignatureSource, ToSign};
-use crate::test_board::{CHIP_ID, blank_board, commissioned_board, key};
+use crate::hardware::{SignatureSource, Signing, ToSign};
+use crate::test_board::{ACME_PIN, CHIP_ID, acme_key_file, blank_board, commissioned_board, key};
 
 /// The line a stopped One ROM whose firmware is for `board` is shown with.
 /// It carries `(L)` or `(other)` for the size its OTP configures, `size`.
@@ -249,16 +250,32 @@ fn written_failure(error: &Error) {
     }
 }
 
-/// `words` as typed at a shell. An empty word is quoted and a control
-/// character escaped.
+/// The prompt for the PIN of `key`, such as `signing key #1` or a key file, as
+/// a terminal shows it once the user has pressed Enter, Escape or Ctrl-C. The
+/// PIN isn't echoed.
+fn pin_prompt(key: &str) {
+    println!("~ PIN for {key}: ");
+}
+
+/// Acme Retro's key from its key file, `acme.pem` on the command line, once
+/// the user has typed its PIN at the prompt this prints. The CLI asks for the
+/// PIN before it prints anything else.
+fn acme_signing() -> Signing {
+    pin_prompt("acme.pem");
+    let (_dir, path) = acme_key_file();
+    Signing::File(KeyFile::read(&path, Some(ACME_PIN)).unwrap())
+}
+
+/// `words` as typed at a shell. An empty word or one holding a space is
+/// quoted and a control character escaped.
 fn shell_line(words: &[&str]) -> String {
     words
         .iter()
         .map(|word| {
-            if word.is_empty() {
-                "\"\"".to_string()
-            } else if word.chars().any(char::is_control) {
+            if word.chars().any(char::is_control) {
                 format!("$'{}'", onerom_cli::otp::escape_controls(word))
+            } else if word.is_empty() || word.contains(' ') {
+                format!("\"{word}\"")
             } else {
                 word.to_string()
             }

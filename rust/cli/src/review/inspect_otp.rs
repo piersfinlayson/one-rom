@@ -9,7 +9,7 @@ use onerom_cli::Error;
 
 use super::{RUNNING_LAB, device, json_boards, newer_boards, written_failure};
 use crate::commissioning::report_lines;
-use crate::test_board::{blank_board, commissioned_board, table};
+use crate::test_board::{acme_board, blank_board, commissioned_board, table};
 
 /// Prints the lines `inspect otp` prints for `otp` on a One ROM whose firmware
 /// is for `board`.
@@ -48,6 +48,12 @@ async fn a_commissioned_m_board() {
 async fn a_commissioned_l_board() {
     let mut otp = commissioned_board("fire-40-a", BoardSize::L).await;
     both(&mut otp, "fire-40-a").await;
+}
+
+/// An M fire-40-b commissioned by Acme Retro with its key.
+#[tokio::test]
+async fn a_manufacturers_board() {
+    inspect_otp(&mut acme_board().await, "fire-40-b", false).await;
 }
 
 /// Each state `--verbose` shows an instance in.

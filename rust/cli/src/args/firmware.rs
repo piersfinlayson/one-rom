@@ -242,9 +242,7 @@ pub struct FirmwareBuildArgs {
     #[arg(long, value_name = "FILE", conflicts_with = "version")]
     pub base_firmware: Option<String>,
 
-    /// Continue despite non-fatal problems: assembled firmware parse errors, a
-    /// board type mismatch, and config warnings such as turbo boot with more
-    /// than one non-plugin ROM slot.
+    /// Continue despite non-fatal problems, reporting each as a warning.
     #[arg(long, short)]
     pub force: bool,
 
