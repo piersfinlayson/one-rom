@@ -3,6 +3,8 @@
 ## v0.2.4 - unreleased
 
 - Rebuilt against the Rust crates released with firmware v0.8.0.
+- Supports commissioned One ROMs in bootloader mode using One ROM's own bootloader VID and PID.
+- The .deb installs One ROM's udev rules.
 
 ## v0.2.3 - 2026-09-17
 

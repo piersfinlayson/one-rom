@@ -6,6 +6,13 @@
 - `peek` no longer fails on a large read.
 - `program` and `firmware build` report a board mismatch correctly.
   - `Error::BoardMismatch` has named fields `firmware` and `expected`.
+- Add `hardware commission`, `validate`, `set-size`, `sign` and `request-signature` for commissioning a One ROM. See [COMMISSIONING](/docs/COMMISSIONING.md).
+- Add `inspect otp`, which prints what a One ROM's OTP contains.
+- On a commissioned One ROM, `program` refuses an image built for another board type unless `--force` is given. It takes the board type from OTP when the flash doesn't contain One ROM firmware.
+- `scan --verbose` and `inspect info` report a One ROM's commissioning information, and each device's line ends `(L)` on an L board. `inspect info` prints the board's size.
+- `scan --slots` and `inspect slots` say why they don't recognise a One ROM's firmware.
+- Help lists the global options under their own heading, and `--force`'s help no longer lists its cases.
+- Remove the hidden `update otp`, which did nothing.
 
 ## v0.4.1 - 2026-09-17
 
