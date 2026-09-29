@@ -139,8 +139,7 @@ pub enum HardwareCommands {
     /// Checks the signature of each commissioning instance present on the One
     /// ROM against valid signing keys.
     ///
-    /// It fails if the signature on the board's latest commissioning instance is
-    /// invalid.
+    /// It fails unless the board's latest commissioning instance is valid.
     ///
     /// A One ROM that is running or in limp mode is stopped first and rebooted
     /// into running mode once complete.
