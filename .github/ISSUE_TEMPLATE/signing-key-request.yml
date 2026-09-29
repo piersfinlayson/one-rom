@@ -1,5 +1,5 @@
 name: Signing key request
-description: Request that your signing key be authorised
+description: Request that a commissioning signing key be authorised
 title: "[signing key request] "
 labels: ["signing-key-request"]
 body:
