@@ -2,6 +2,7 @@
 name = "onerom-studio"
 version = "0.2.4"
 edition = "2024"
+default-run = "onerom-studio"
 # Released as installers via studio-* tags, never to crates.io.
 publish = false
 authors = ["Piers Finlayson <piers@piers.rocks>"]
@@ -72,7 +73,7 @@ onerom-gen = { workspace = true }
 onerom-metadata = { workspace = true }
 
 dfu-rs = "0.2.1"
-picoboot = { git = "https://github.com/piersfinlayson/picoboot", rev = "92b115b63e02b5b8800185959110ca15189dc2f7", features = ["reader", "tokio"] }
+picoboot = { version = "0.3.0", features = ["reader", "tokio"] }
 
 arc-swap = "1.7"
 chrono = "0.4"

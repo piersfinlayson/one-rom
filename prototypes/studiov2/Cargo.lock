@@ -3840,7 +3840,8 @@ checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
 [[package]]
 name = "pico-otp"
 version = "0.2.1"
-source = "git+https://github.com/piersfinlayson/pico-otp?rev=fdab5604f43c106f5ee7fd7910b92813a12e9d62#fdab5604f43c106f5ee7fd7910b92813a12e9d62"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1126892b91b4532a56599ff69b51c0cd64bd95a034a6ec0c98073dbcc231d951"
 dependencies = [
  "serde",
  "serde_json",
@@ -3849,7 +3850,8 @@ dependencies = [
 [[package]]
 name = "picoboot"
 version = "0.3.0"
-source = "git+https://github.com/piersfinlayson/picoboot?rev=92b115b63e02b5b8800185959110ca15189dc2f7#92b115b63e02b5b8800185959110ca15189dc2f7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "240340b0caefa4d6e19fda063c5a0181223d263aac3653448513d3cf4945b21e"
 dependencies = [
  "airfrog-rpc",
  "deku 0.20.3",
