@@ -77,10 +77,11 @@ fn device(board: &str, size: Option<BoardSize>) -> String {
     )
 }
 
-/// The line a device is shown with where this build doesn't recognise its
-/// firmware. It's written from `Device`'s `Display`.
+/// The line a stopped board is shown with where this build doesn't recognise
+/// its firmware and its OTP isn't commissioned. It's written from `Device`'s
+/// `Display`.
 const UNRECOGNISED: &str =
-    "Unknown           - Firmware: n/a   State: Unknown Serial: DE3F9C232F655B6B";
+    "Unknown           - Firmware: n/a   State: Stopped Serial: DE3F9C232F655B6B";
 
 /// The line a One ROM running One ROM Lab for fire-24-e is shown with. It's
 /// written from `Device`'s `Display`.

@@ -23,13 +23,13 @@ use crate::test_board::{blank_board, commissioned_board, table};
 async fn scan(otp: &mut MemoryOtp, board: &str, verbose: bool) {
     let area = onerom_app::read_commissioning(otp).await.unwrap();
     let line = device(board, size_of(otp).await);
-    print_scan(&line, board, &Commissioning::Read(area), verbose);
+    print_scan(&line, Some(board), &Commissioning::Read(area), verbose);
 }
 
 /// Prints the lines `scan` prints for a device shown with `line` whose
-/// firmware is for `board`. Only the lines for `commissioning` come from
-/// running the code.
-fn print_scan(line: &str, board: &str, commissioning: &Commissioning, verbose: bool) {
+/// firmware is for `board`, `None` where this build doesn't recognise it. Only
+/// the lines for `commissioning` come from running the code.
+fn print_scan(line: &str, board: Option<&str>, commissioning: &Commissioning, verbose: bool) {
     println!("$ onerom scan{}", if verbose { " --verbose" } else { "" });
     println!("~ Scanning ... ");
     println!("~ found 1 connected device:");
@@ -37,7 +37,7 @@ fn print_scan(line: &str, board: &str, commissioning: &Commissioning, verbose: b
     if verbose {
         println!("~     MCU: RP235xA Chip ID: DE3F9C232F655B6B");
     }
-    let board = Board::try_from_str(board);
+    let board = board.and_then(Board::try_from_str);
     for line in device_lines(board, commissioning, (verbose, verbose), &table(None)) {
         println!("    {line}");
     }
@@ -68,6 +68,28 @@ async fn a_commissioned_l_board() {
     both(&mut otp, "fire-40-a").await;
 }
 
+/// The line a stopped board commissioned as L fire-40-a is shown with where
+/// this build doesn't recognise its firmware. It's written from `Device`'s
+/// `Display`.
+const COMMISSIONED_UNRECOGNISED: &str =
+    "One ROM Fire 40 A (L) - Firmware: n/a   State: Stopped Serial: DE3F9C232F655B6B";
+
+/// A board commissioned as L fire-40-a whose flash doesn't hold firmware.
+#[tokio::test]
+async fn a_commissioned_board_without_firmware() {
+    let mut otp = commissioned_board("fire-40-a", BoardSize::L).await;
+    for verbose in [false, true] {
+        let area = onerom_app::read_commissioning(&mut otp).await.unwrap();
+        print_scan(
+            COMMISSIONED_UNRECOGNISED,
+            None,
+            &Commissioning::Read(area),
+            verbose,
+        );
+        println!();
+    }
+}
+
 /// A board with two instances, the second written by `--force` with another
 /// date.
 #[tokio::test]
@@ -92,7 +114,7 @@ fn a_running_lab() {
     for verbose in [false, true] {
         print_scan(
             RUNNING_LAB,
-            "fire-24-e",
+            Some("fire-24-e"),
             &Commissioning::LabRunning,
             verbose,
         );

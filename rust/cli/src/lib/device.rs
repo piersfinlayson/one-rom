@@ -13,7 +13,8 @@ use onerom_config::hw::Board;
 use onerom_config::mcu::{Rp235xChipId, RpVariant};
 use onerom_fw_parser::{ParseError, ParsedDevice};
 use onerom_lab_parser::Lab;
-use onerom_metadata::{MaybeKnown, OneromBoardSize};
+use onerom_metadata::{MaybeKnown, OneromBoardSize, USB_BOOTLOADER_PID, USB_BOOTLOADER_VID};
+use picoboot::{PICOBOOT_PID_RP2350, PICOBOOT_VID};
 use wildmatch::WildMatch;
 
 use crate::Options;
@@ -133,7 +134,14 @@ impl std::fmt::Display for Device {
                     lab_board_part(lab)
                 )
             }
-            Some(Firmware::OneRom(_)) | None => "Unknown           - Firmware: n/a  ".to_string(),
+            Some(Firmware::OneRom(_)) | None => match self.commissioned_hw_rev() {
+                Some(hw_rev) => format!(
+                    "One ROM {}{} - Firmware: n/a  ",
+                    board_part(Some(hw_rev)),
+                    size_suffix(self.board_size)
+                ),
+                None => "Unknown           - Firmware: n/a  ".to_string(),
+            },
         };
         write!(f, "{info_str} State: {} Serial: {serial}", self.state)
     }
@@ -187,7 +195,13 @@ impl Device {
     #[allow(clippy::wildcard_enum_match_arm)]
     fn update_state(&mut self) {
         self.usb_can_run = false;
-        self.state = DeviceState::Unknown;
+        // A device on a bootloader's USB ID is stopped whatever its flash
+        // holds.
+        self.state = if is_bootloader(self.vid, self.pid) {
+            DeviceState::Stopped
+        } else {
+            DeviceState::Unknown
+        };
 
         let onerom = match self.firmware.as_ref() {
             Some(Firmware::OneRom(onerom)) => onerom,
@@ -271,10 +285,13 @@ impl Device {
     /// The board the device's current commissioning instance holds. `None`
     /// where this build doesn't know it.
     pub fn commissioned_board(&self) -> Option<Board> {
-        self.commissioning
-            .current()?
-            .board()
-            .and_then(Board::try_from_str)
+        self.commissioned_hw_rev().and_then(Board::try_from_str)
+    }
+
+    /// The board name the device's current commissioning instance holds,
+    /// whether or not this build knows the board.
+    fn commissioned_hw_rev(&self) -> Option<&str> {
+        self.commissioning.current()?.board()
     }
 
     pub fn get_active_rom_set_index(&self) -> Option<u8> {
@@ -359,6 +376,7 @@ impl Device {
             Some(Firmware::Lab(lab)) => lab_hw_rev(lab).map(str::to_string),
             None => None,
         }
+        .or_else(|| self.commissioned_hw_rev().map(str::to_string))
         .unwrap_or_else(|| "~".to_string()); // sorts after Z
         let serial = self.serial.clone().unwrap_or_else(|| "~".to_string());
         (board, serial)
@@ -428,6 +446,15 @@ fn board_label(board: &Board) -> String {
         .unwrap_or("")
         .to_uppercase();
     format!("{model} {pins} {rev}")
+}
+
+/// Returns whether `vid` and `pid` are a bootloader's USB ID, either the stock
+/// RP2350 bootloader's or a commissioned One ROM's.
+fn is_bootloader(vid: u16, pid: u16) -> bool {
+    matches!(
+        (vid, pid),
+        (PICOBOOT_VID, PICOBOOT_PID_RP2350) | (USB_BOOTLOADER_VID, USB_BOOTLOADER_PID)
+    )
 }
 
 /// Returns whether a serial number matches a given pattern, which may include
@@ -560,5 +587,15 @@ mod tests {
         ] {
             assert_eq!(size_suffix(size), "", "{size:?}");
         }
+    }
+
+    #[test]
+    fn only_a_bootloader_usb_id_means_stopped() {
+        use onerom_metadata::{USB_PLUGIN_PID, USB_PLUGIN_VID};
+        assert!(is_bootloader(PICOBOOT_VID, PICOBOOT_PID_RP2350));
+        assert!(is_bootloader(USB_BOOTLOADER_VID, USB_BOOTLOADER_PID));
+        // One ROM is running on the USB plugin's ID, even where this build
+        // can't read its firmware.
+        assert!(!is_bootloader(USB_PLUGIN_VID, USB_PLUGIN_PID));
     }
 }

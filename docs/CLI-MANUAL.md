@@ -2163,7 +2163,7 @@ cannot do that for a device whose firmware it cannot read, and says so:
 ```
 $ onerom board header --unrecognised
 Failed to execute command.
-Could not determine board type from the connected device Unknown           - Firmware: n/a   State: Unknown Serial: (no serial).
+Could not determine board type from the connected device Unknown           - Firmware: n/a   State: Stopped Serial: DE3F9C232F655B6B.
   It may be an unprogrammed One ROM or have corrupt firmware.
   Supply the board type with --board
 ```
@@ -2657,11 +2657,12 @@ including a Raspberry Pi Pico 2, so make sure only the One ROM is attached:
 $ onerom scan --unrecognised
 Scanning ... 
 found 1 connected device:
-  Unknown           - Firmware: n/a   State: Unknown Serial: (no serial)
+  Unknown           - Firmware: n/a   State: Stopped Serial: DE3F9C232F655B6B
 ```
 
-The CLI names a device's board, firmware and serial from the firmware it is
-holding, and there is none in this example's bricked One ROM it can read.
+The CLI takes a device's board and firmware version from its firmware. Where it
+can't read the firmware it takes the board from the device's commissioning if
+present.
 
 ### Programming it again
 
