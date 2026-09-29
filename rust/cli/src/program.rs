@@ -186,17 +186,22 @@ async fn verify_flash(options: &Options, data: &[u8]) -> Result<(), Error> {
 }
 
 /// Flashes `data`. `image_board` is the board the image is for. `force`
-/// programs a board commissioned as another board.
+/// programs a board commissioned as another board. A refused image leaves the
+/// One ROM as it was.
 async fn flash_device(
     options: &mut Options,
     data: &[u8],
     image_board: Option<Board>,
     force: bool,
 ) -> Result<(), Error> {
-    reboot_to_stopped(options, &[DeviceState::Running]).await?;
+    let stopped = reboot_to_stopped(options, &[DeviceState::Running]).await?;
 
     let device = options.device.as_ref().unwrap();
-    check_commissioned_board(device, image_board, force).await?;
+    if let Err(e) = check_commissioned_board(device, image_board, force).await {
+        return restart(options, stopped, Err(e)).await;
+    }
+    // After the board check, since a refused image isn't written.
+    println!("Programming device - DO NOT DISCONNECT");
     if options.verbose {
         println!("Flashing {} bytes...", data.len());
     }
@@ -235,12 +240,32 @@ pub(crate) async fn reboot_to_stopped(
 
 /// Reboots a device that [`reboot_to_stopped`] stopped back into running
 /// mode.
-pub(crate) async fn reboot_to_running(options: &Options) -> Result<(), Error> {
+async fn reboot_to_running(options: &Options) -> Result<(), Error> {
     let device = options.device.as_ref().unwrap();
     if options.verbose {
         println!("Rebooting device into running mode...");
     }
     reboot(device, &RebootArgs::running(false, false)).await
+}
+
+/// Reboots a One ROM this command `stopped` back into running mode and
+/// returns `result`. A failed reboot is the error where `result` is `Ok`.
+pub(crate) async fn restart(
+    options: &Options,
+    stopped: bool,
+    result: Result<(), Error>,
+) -> Result<(), Error> {
+    if !stopped {
+        return result;
+    }
+    match (result, reboot_to_running(options).await) {
+        (Ok(()), rebooted) => rebooted,
+        (Err(e), Ok(())) => Err(e),
+        (Err(e), Err(reboot)) => {
+            eprintln!("Warning: couldn't reboot the One ROM into running mode.\n  {reboot}");
+            Err(e)
+        }
+    }
 }
 
 /// Reboots a stopped device into the bootloader again.
@@ -448,7 +473,6 @@ pub async fn cmd_program(
             write_firmware_file(out, &data)?;
         }
 
-        println!("Programming device - DO NOT DISCONNECT");
         flash_device(options, &data, image.get_board(), args.force).await?;
 
         if args.verify {

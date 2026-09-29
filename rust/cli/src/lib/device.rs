@@ -11,7 +11,7 @@ use log::debug;
 use nusb::DeviceInfo;
 use onerom_config::hw::Board;
 use onerom_config::mcu::{Rp235xChipId, RpVariant};
-use onerom_fw_parser::ParsedDevice;
+use onerom_fw_parser::{ParseError, ParsedDevice};
 use onerom_lab_parser::Lab;
 use onerom_metadata::{MaybeKnown, OneromBoardSize};
 use wildmatch::WildMatch;
@@ -88,6 +88,9 @@ pub struct Device {
     /// while it's stopped. `None` for One ROM Lab and where OTP couldn't be
     /// read.
     pub(crate) board_size: Option<MaybeKnown<OneromBoardSize>>,
+    /// The firmware parser's reasons, where this build doesn't recognise the
+    /// device's firmware.
+    pub(crate) unrecognised_firmware_reasons: Vec<ParseError>,
 }
 
 impl std::fmt::Display for Device {
@@ -163,8 +166,20 @@ impl Device {
         self.usb_can_run
     }
 
-    pub(crate) fn set_firmware(&mut self, firmware: Option<Firmware>) {
-        self.firmware = firmware;
+    /// The firmware parser's reasons for not recognising the device's
+    /// firmware. Empty where this build recognises it, and where the parser
+    /// didn't provide a reason, as for erased flash.
+    pub fn unrecognised_firmware_reasons(&self) -> &[ParseError] {
+        &self.unrecognised_firmware_reasons
+    }
+
+    /// Sets the device's firmware, or the parser's reasons for not
+    /// recognising it.
+    pub(crate) fn set_firmware(&mut self, firmware: Result<Firmware, Vec<ParseError>>) {
+        (self.firmware, self.unrecognised_firmware_reasons) = match firmware {
+            Ok(firmware) => (Some(firmware), Vec::new()),
+            Err(reasons) => (None, reasons),
+        };
         self.update_state();
     }
 

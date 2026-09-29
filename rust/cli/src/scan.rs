@@ -57,11 +57,19 @@ pub async fn cmd_scan(options: &Options, args: &args::scan::ScanArgs) -> Result<
             // - the MCU / chip-ID line (when verbose)
             // - the commissioning lines
             // - the slot detail
+            // It fails where this build doesn't recognise the firmware, and the
+            // parser's reasons go where the slot detail would.
             println!("---");
-            crate::inspect::output_slot_info(d, options, "", &commissioning)
-                .await
-                .inspect_err(|_| log::error!("Failed to read slots"))
-                .ok();
+            match crate::inspect::output_slot_info(d, options, "", &commissioning).await {
+                Ok(()) => {}
+                Err(_) if d.firmware.is_none() => {
+                    let reasons = d.unrecognised_firmware_reasons();
+                    for line in crate::inspect::unrecognised_firmware_lines(reasons) {
+                        println!("  {line}");
+                    }
+                }
+                Err(_) => log::error!("Failed to read slots"),
+            }
         } else {
             println!("  {d}");
             // A device's details sit beneath its line. The line carries the

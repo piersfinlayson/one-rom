@@ -2,13 +2,18 @@
 //
 // MIT License
 
-//! `scan`'s commissioning lines.
+//! `scan`'s commissioning lines and the lines `scan --slots` shows for firmware
+//! this build doesn't recognise.
 
 use onerom_app::{BoardSize, MemoryOtp};
 use onerom_config::hw::Board;
 
-use super::{device, newer_boards, replaced_instance_board, size_of};
+use super::{
+    UNRECOGNISED, damaged_header_flash, device, flash_without_firmware, newer_boards,
+    newer_firmware_flash, replaced_instance_board, size_of, unrecognised_reasons,
+};
 use crate::commissioning::device_lines;
+use crate::inspect::unrecognised_firmware_lines;
 use crate::test_board::{blank_board, commissioned_board, table};
 
 /// Prints the lines `scan` prints for a stopped One ROM whose firmware is for
@@ -70,6 +75,45 @@ async fn newer_data() {
     for (name, mut otp) in newer_boards() {
         println!("### {name}");
         both(&mut otp, "fire-24-f").await;
+        println!();
+    }
+}
+
+/// Prints the lines `scan --slots --unrecognised` prints for a stopped board
+/// whose flash holds `image` and whose OTP isn't commissioned. Only the lines
+/// beneath the device's line come from running the code.
+async fn scan_slots(image: Vec<u8>) {
+    let reasons = unrecognised_reasons(image).await;
+    println!("$ onerom scan --slots --unrecognised");
+    println!("~ Scanning ... ");
+    println!("~ found 1 connected device:");
+    println!("~ ---");
+    println!("~ {UNRECOGNISED}");
+    for line in unrecognised_firmware_lines(&reasons) {
+        println!("  {line}");
+    }
+}
+
+/// Firmware newer than this build reads. The parser provides one reason.
+#[tokio::test]
+async fn newer_firmware() {
+    scan_slots(newer_firmware_flash()).await;
+}
+
+/// A v0.8.0 header with a null build date pointer, whose metadata is zeros.
+/// The parser provides two reasons.
+#[tokio::test]
+async fn a_damaged_header() {
+    scan_slots(damaged_header_flash()).await;
+}
+
+/// Erased flash, then flash reading all zeros. The parser doesn't provide a
+/// reason for either.
+#[tokio::test]
+async fn no_one_rom_firmware() {
+    for (name, image) in flash_without_firmware() {
+        println!("### {name}");
+        scan_slots(image).await;
         println!();
     }
 }

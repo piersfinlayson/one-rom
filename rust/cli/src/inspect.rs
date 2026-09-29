@@ -28,7 +28,9 @@ use onerom_cli::{Device, Error, Firmware, Options};
 use onerom_config::chip::ChipType;
 use onerom_config::hw::Board;
 use onerom_config::mcu::PinTolerance;
-use onerom_fw_parser::{NewerGeneration, ParsedDevice, RuntimeAbsence, SdrrCsState, SlotKind};
+use onerom_fw_parser::{
+    NewerGeneration, ParseError, ParsedDevice, RuntimeAbsence, SdrrCsState, SlotKind,
+};
 use onerom_lab_parser::Lab;
 
 pub async fn cmd_info(options: &Options, args: &InspectInfoArgs) -> Result<(), Error> {
@@ -314,6 +316,28 @@ pub async fn cmd_telemetry(options: &Options, args: &InspectTelemetryArgs) -> Re
     Err(Error::Unimplemented("inspect telemetry".into()))
 }
 
+/// The lines shown beneath a device whose firmware this build doesn't
+/// recognise, from the parser's `reasons`. A reason after the first sits
+/// beneath the one before it.
+pub fn unrecognised_firmware_lines(reasons: &[ParseError]) -> Vec<String> {
+    const LABEL: &str = "Firmware not recognised: ";
+    // The parser doesn't provide a reason where flash doesn't hold One ROM
+    // firmware, as when it's erased.
+    let mut reasons = reasons.iter().map(|error| error.reason.as_str());
+    let first = reasons.next().unwrap_or("One ROM firmware not found");
+    let indent = " ".repeat(LABEL.len());
+    std::iter::once(format!("{LABEL}{first}"))
+        .chain(reasons.map(|reason| format!("{indent}{reason}")))
+        .collect()
+}
+
+/// The error for a device whose firmware this build doesn't recognise. It
+/// carries the parser's `reasons` as [`unrecognised_firmware_lines`] lays
+/// them out.
+pub fn unrecognised_firmware_error(reasons: &[ParseError]) -> Error {
+    Error::Other(unrecognised_firmware_lines(reasons).join("\n"))
+}
+
 /// Print a device's slot configuration.
 ///
 /// Plugins are presented separately from ROM slots and by their friendly name:
@@ -328,6 +352,9 @@ pub async fn cmd_telemetry(options: &Options, args: &InspectTelemetryArgs) -> Re
 ///
 /// `commissioning` holds lines describing the device's commissioning to show
 /// beneath its identity.
+///
+/// Firmware this build doesn't recognise is an error carrying the parser's
+/// reasons, from [`unrecognised_firmware_error`].
 pub async fn output_slot_info(
     device: &Device,
     options: &Options,
@@ -353,8 +380,8 @@ pub async fn output_slot_info(
         // A Lab doesn't have slots, so its line is all there is.
         Some(Firmware::Lab(_)) => return Ok(()),
         None => {
-            return Err(Error::Other(
-                "No recognised information found on device flash".to_string(),
+            return Err(unrecognised_firmware_error(
+                device.unrecognised_firmware_reasons(),
             ));
         }
     };
@@ -1042,6 +1069,24 @@ mod tests {
                 .unwrap_err();
             assert!(matches!(error, Error::NoDevice), "{error}");
         }
+    }
+
+    /// Each of the parser's reasons takes a line, the first beside the label
+    /// and the rest lined up beneath it, without the parser's field. An empty
+    /// list still takes a line.
+    #[test]
+    fn unrecognised_firmware_lines_line_up_each_reason() {
+        let reasons = [
+            ParseError::new("field_a", "reason a"),
+            ParseError::new("field_b", "reason b"),
+        ];
+        let lines = unrecognised_firmware_lines(&reasons);
+        assert_eq!(lines.len(), 2);
+        let column = lines[0].find("reason a").unwrap();
+        assert_eq!(lines[1].find("reason b"), Some(column));
+        assert!(lines[1][..column].trim().is_empty());
+        assert!(lines.iter().all(|line| !line.contains("field_")));
+        assert_eq!(unrecognised_firmware_lines(&[]).len(), 1);
     }
 
     /// The keys `parser_notes` puts in its block, and what a consumer reading

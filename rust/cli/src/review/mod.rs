@@ -23,6 +23,7 @@
 mod commission;
 mod hardware;
 mod inspect_otp;
+mod inspect_slots;
 mod request_signature;
 mod scan;
 mod set_size;
@@ -39,8 +40,11 @@ use ed25519_dalek::Signer as _;
 use onerom_app::{
     BoardSize, CommissionError, Interruption, MemoryOtp, Request, RequestDate, prepare,
 };
+use onerom_cli::usb::{FLASH_BASE, FLASH_READ_SIZE_BYTES, RAM_BASE};
 use onerom_cli::{Error, Options};
 use onerom_config::hw::Board;
+use onerom_fw_parser::ParseError;
+use onerom_fw_parser::readers::MemoryReader;
 use onerom_metadata::otp::CommissioningValues;
 use onerom_metadata::otp::pico_otp::ecc_encode;
 
@@ -71,6 +75,70 @@ fn device(board: &str, size: Option<BoardSize>) -> String {
         "One ROM {}{size} - Firmware: v0.8.0 State: Stopped Serial: DE3F9C232F655B6B",
         name.join(" ")
     )
+}
+
+/// The line a device is shown with where this build doesn't recognise its
+/// firmware. It's written from `Device`'s `Display`.
+const UNRECOGNISED: &str =
+    "Unknown           - Firmware: n/a   State: Unknown Serial: DE3F9C232F655B6B";
+
+/// The parser's reasons for not recognising the firmware of a stopped board
+/// whose flash holds `image`. The parser reads `image` as enumeration reads a
+/// board.
+async fn unrecognised_reasons(image: Vec<u8>) -> Vec<ParseError> {
+    let mut reader = MemoryReader::new(image, FLASH_BASE);
+    let parsed =
+        onerom_fw_parser::Parser::with_base_flash_address(&mut reader, FLASH_BASE, RAM_BASE)
+            .parse_device()
+            .await;
+    parsed.parse_errors().to_vec()
+}
+
+/// Zeroed flash holding One ROM's header for v0.`minor`.0. Its build date
+/// pointer is `build_date` and its metadata pointer `metadata`.
+fn header_image(minor: u16, build_date: u32, metadata: u32) -> Vec<u8> {
+    use onerom_metadata::{
+        FirmwareType, ONEROM_FAMILY_MAGIC, ONEROM_INFO_BUILD_DATE_OFFSET,
+        ONEROM_INFO_FIRMWARE_TYPE_OFFSET, ONEROM_INFO_MAGIC_OFFSET, ONEROM_INFO_METADATA_OFFSET,
+        ONEROM_INFO_MINOR_VERSION_OFFSET, ONEROM_INFO_OFFSET, ONEROM_INFO_VERSION,
+        ONEROM_INFO_VERSION_OFFSET,
+    };
+    let mut image = vec![0; FLASH_READ_SIZE_BYTES as usize];
+    let header = &mut image[ONEROM_INFO_OFFSET as usize..];
+    let mut put = |offset: usize, bytes: &[u8]| {
+        header[offset..offset + bytes.len()].copy_from_slice(bytes);
+    };
+    put(ONEROM_INFO_MAGIC_OFFSET, ONEROM_FAMILY_MAGIC.as_bytes());
+    put(ONEROM_INFO_MINOR_VERSION_OFFSET, &minor.to_le_bytes());
+    put(ONEROM_INFO_BUILD_DATE_OFFSET, &build_date.to_le_bytes());
+    put(
+        ONEROM_INFO_VERSION_OFFSET,
+        &ONEROM_INFO_VERSION.to_le_bytes(),
+    );
+    put(ONEROM_INFO_METADATA_OFFSET, &metadata.to_le_bytes());
+    let one_rom = FirmwareType::FirmwareTypeOneRom as u16;
+    put(ONEROM_INFO_FIRMWARE_TYPE_OFFSET, &one_rom.to_le_bytes());
+    image
+}
+
+/// Flash holding v0.9.0, newer than this build reads.
+fn newer_firmware_flash() -> Vec<u8> {
+    header_image(9, FLASH_BASE + 0x300, 0)
+}
+
+/// Flash holding a v0.8.0 header with a null build date pointer, whose
+/// metadata is zeros.
+fn damaged_header_flash() -> Vec<u8> {
+    header_image(8, 0, FLASH_BASE + 0x400)
+}
+
+/// Erased flash and flash reading all zeros, each with its description.
+fn flash_without_firmware() -> [(&'static str, Vec<u8>); 2] {
+    let size = FLASH_READ_SIZE_BYTES as usize;
+    [
+        ("erased flash", vec![0xff; size]),
+        ("flash reading all zeros", vec![0; size]),
+    ]
 }
 
 /// The size `otp` configures, as a stopped board's device line has it.

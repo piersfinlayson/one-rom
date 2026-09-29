@@ -160,6 +160,9 @@ pub fn arg_error(path: &[&str], kind: ErrorKind, message: impl Display) -> clap:
 /// using the --unrecognised flag and supplying --board.
 #[derive(Debug, Parser)]
 #[command(name = "onerom", version = concat!("v", env!("CARGO_PKG_VERSION")), about, long_about)]
+// Puts the global options under their own heading after each command's own
+// options. It covers every field below so each one must be global.
+#[command(next_help_heading = "Global options")]
 pub struct Cli {
     /// Select a specific One ROM by serial number.
     ///

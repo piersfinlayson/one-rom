@@ -42,7 +42,7 @@ use crate::commissioning::{
     Labelled, instance_state, instance_values, issue_text, labelled_lines, signer_name,
     unknown_keys, unknown_version, white_label_values,
 };
-use crate::program::{reboot_stopped, reboot_to_running, reboot_to_stopped};
+use crate::program::{reboot_stopped, reboot_to_stopped, restart};
 use crate::signing_request::{self, SigningRequest};
 use crate::utils::check_device;
 
@@ -1517,22 +1517,6 @@ async fn reboot_after_writing(
     match result {
         Ok(true) if !stopped => reboot_stopped(options).await,
         result => restart(options, stopped, result.map(|_| ())).await,
-    }
-}
-
-/// Reboots a One ROM this command `stopped` back into running mode and
-/// returns `result`. A failed reboot is the error where `result` is `Ok`.
-async fn restart(options: &Options, stopped: bool, result: Result<(), Error>) -> Result<(), Error> {
-    if !stopped {
-        return result;
-    }
-    match (result, reboot_to_running(options).await) {
-        (Ok(()), rebooted) => rebooted,
-        (Err(e), Ok(())) => Err(e),
-        (Err(e), Err(reboot)) => {
-            eprintln!("Warning: couldn't reboot the One ROM into running mode.\n  {reboot}");
-            Err(e)
-        }
     }
 }
 

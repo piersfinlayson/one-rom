@@ -281,6 +281,7 @@ pub async fn enumerate_devices(options: &Options) -> Result<Vec<Device>, Error> 
             rp_variant: None,
             commissioning: Commissioning::NotRead,
             board_size: None,
+            unrecognised_firmware_reasons: Vec::new(),
         };
 
         let answered = match read_device_info(&mut device).await {
@@ -469,12 +470,12 @@ pub async fn read_device_info(device: &mut Device) -> Result<(), AccessError> {
                 .parse()
                 .await
                 .map_err(AccessError::unreadable)?;
-            Some(Firmware::Lab(lab))
+            Ok(Firmware::Lab(lab))
         } else if parsed.is_recognised() {
-            Some(Firmware::OneRom(parsed))
+            Ok(Firmware::OneRom(parsed))
         } else {
             debug!("Firmware not recognised: {:?}", parsed.parse_errors());
-            None
+            Err(parsed.parse_errors().to_vec())
         }
     };
     device.set_firmware(firmware);
