@@ -8,7 +8,7 @@ use onerom_app::{BoardSize, LocalFetch, MemoryOtp, SignerTable, read_commissioni
 
 use super::{device, failed, json_boards, newer_boards, size_of};
 use crate::hardware::{SigningKeys, built_in_warning, validate_otp};
-use crate::test_board::{CHIP_ID, Files, commissioned_board, table};
+use crate::test_board::{Files, commissioned_board, table, table_allowing};
 
 /// The lines `hardware validate` prints for `otp`, with the downloaded
 /// signer table.
@@ -29,15 +29,27 @@ async fn validate_with<F: LocalFetch<Error = onerom_fw::Error>>(
     keys: (&SignerTable, SigningKeys),
     fetch: &F,
 ) {
+    let warning = (keys.1 == SigningKeys::BuiltIn).then(download_warning);
+    validate_warned(otp, board, verbose, keys, fetch, warning.as_deref()).await;
+}
+
+/// [`validate_with`] with `warning` as the warning the CLI prints before it
+/// uses the built-in table.
+async fn validate_warned<F: LocalFetch<Error = onerom_fw::Error>>(
+    otp: &mut MemoryOtp,
+    board: &str,
+    verbose: bool,
+    keys: (&SignerTable, SigningKeys),
+    fetch: &F,
+    warning: Option<&str>,
+) {
     println!(
         "$ onerom hardware validate{}",
         if verbose { " --verbose" } else { "" }
     );
     println!("~ {}", device(board, size_of(otp).await));
-    if keys.1 == SigningKeys::BuiltIn {
-        for text in download_warning().lines() {
-            println!("~ {text}");
-        }
+    for text in warning.into_iter().flat_map(str::lines) {
+        println!("~ {text}");
     }
     let mut out = Vec::new();
     let result = validate_otp(otp, keys, fetch, (false, verbose), &mut out).await;
@@ -47,14 +59,16 @@ async fn validate_with<F: LocalFetch<Error = onerom_fw::Error>>(
     }
 }
 
+/// The pointer holding the current signer table's address.
+const POINTER_URL: &str = "https://images.onerom.org/signers.json";
+
 /// The warning `signer_table` prints when images.onerom.org can't be
 /// reached, written by `built_in_warning`.
 fn download_warning() -> String {
-    let url = "https://images.onerom.org/signers.json";
     // The warning doesn't show reqwest's error so any one stands in for it.
     let error = reqwest::Client::new().get("").build().unwrap_err();
-    let error = onerom_fw::Error::network(url.to_string(), error);
-    built_in_warning(&onerom_app::Error::fetch(url, error))
+    let error = onerom_fw::Error::network(POINTER_URL.to_string(), error);
+    built_in_warning(&onerom_app::Error::fetch(POINTER_URL, error))
 }
 
 /// `validate` without and with `--verbose` on `otp`, whose firmware is for
@@ -116,7 +130,7 @@ async fn record_line(otp: &mut MemoryOtp) -> String {
     use onerom_metadata::otp::RecordLine;
     let area = read_commissioning(otp).await.unwrap();
     let signature = area.current().unwrap().signature().unwrap();
-    let line = RecordLine::new(CHIP_ID, signature);
+    let line = RecordLine::new(signature);
     format!("{line}\n")
 }
 
@@ -156,8 +170,7 @@ async fn results() {
     let record = record_line(&mut otp).await.into_bytes();
     let file = |text: &[u8]| Files(vec![(RECORD_URL.to_string(), text.to_vec())]);
     // A record file listing another board's signature.
-    let other =
-        b"E126C9F97C10ADAC 9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08\n";
+    let other = b"9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08\n";
     let empty = SignerTable::parse(br#"{"version": 1, "signers": []}"#).unwrap();
     let none = Files(Vec::new());
 
@@ -186,6 +199,42 @@ async fn results() {
 
     let case = "7: the signer table can't be downloaded so the built-in one is used (the test table stands in for it)";
     validate_case(&mut otp, case, (&table(None), BuiltIn), &none).await;
+
+    let case =
+        "8: the key doesn't allow the manufacturer, piers.rocks (key 1 may sign only onerom.org)";
+    let keys = (&table_allowing(&["onerom.org"]), Downloaded);
+    validate_case(&mut otp, case, keys, &none).await;
+}
+
+/// The downloaded signer table is refused because key 300, outside
+/// piers.rocks's IDs, allows any manufacturer. The CLI warns and uses the
+/// built-in table, which the test table stands in for.
+#[tokio::test]
+async fn a_downloaded_table_refused_for_its_manufacturers() {
+    use ed25519_dalek::Signer as _;
+    let table_url = "https://example.invalid/signing-keys.json";
+    let key = ed25519_dalek::SigningKey::from_bytes(&[3; 32]);
+    let name = "another signer";
+    let proof = key.sign(&[b"onerom-signer-v1".as_slice(), name.as_bytes()].concat());
+    let refused = serde_json::json!({ "version": 1, "signers": [{
+        "id": 300,
+        "name": name,
+        "public_key": hex::encode(key.verifying_key().to_bytes()),
+        "proof": hex::encode(proof.to_bytes()),
+        "manufacturers": ["*"],
+    }]});
+    let pointer = serde_json::json!({ "version": 1, "signing_keys_url": table_url });
+    let files = Files(vec![
+        (POINTER_URL.to_string(), pointer.to_string().into_bytes()),
+        (table_url.to_string(), refused.to_string().into_bytes()),
+    ]);
+    let error = SignerTable::download(&files).await.unwrap_err();
+
+    let mut otp = commissioned_board("fire-24-f", BoardSize::M).await;
+    let keys = (&table(None), SigningKeys::BuiltIn);
+    let warning = built_in_warning(&error);
+    let none = Files(Vec::new());
+    validate_warned(&mut otp, "fire-24-f", false, keys, &none, Some(&warning)).await;
 }
 
 /// The lines `hardware validate --json` prints for `otp` checked against a
@@ -205,7 +254,7 @@ async fn validate_json<F: LocalFetch<Error = onerom_fw::Error>>(
     }
 }
 
-/// `--json` for each board, then for two signer tables.
+/// `--json` for each board, then for three signer tables.
 #[tokio::test]
 async fn json() {
     let none = Files(Vec::new());
@@ -224,4 +273,10 @@ async fn json() {
     println!("### the key is retired and its record file can't be fetched (HTTP 404)");
     let retired = retired_table(&record);
     validate_json(&mut otp, (&retired, SigningKeys::Downloaded), &NotFound).await;
+    println!();
+    println!(
+        "### the key doesn't allow the manufacturer, piers.rocks (key 1 may sign only onerom.org)"
+    );
+    let refusing = table_allowing(&["onerom.org"]);
+    validate_json(&mut otp, (&refusing, SigningKeys::Downloaded), &none).await;
 }

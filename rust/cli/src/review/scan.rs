@@ -6,10 +6,11 @@
 //! this build doesn't recognise.
 
 use onerom_app::{BoardSize, MemoryOtp};
+use onerom_cli::otp::Commissioning;
 use onerom_config::hw::Board;
 
 use super::{
-    UNRECOGNISED, damaged_header_flash, device, flash_without_firmware, newer_boards,
+    RUNNING_LAB, UNRECOGNISED, damaged_header_flash, device, flash_without_firmware, newer_boards,
     newer_firmware_flash, replaced_instance_board, size_of, unrecognised_reasons,
 };
 use crate::commissioning::device_lines;
@@ -21,8 +22,14 @@ use crate::test_board::{blank_board, commissioned_board, table};
 /// running the code.
 async fn scan(otp: &mut MemoryOtp, board: &str, verbose: bool) {
     let area = onerom_app::read_commissioning(otp).await.unwrap();
-    let commissioning = onerom_cli::otp::Commissioning::Read(area);
     let line = device(board, size_of(otp).await);
+    print_scan(&line, board, &Commissioning::Read(area), verbose);
+}
+
+/// Prints the lines `scan` prints for a device shown with `line` whose
+/// firmware is for `board`. Only the lines for `commissioning` come from
+/// running the code.
+fn print_scan(line: &str, board: &str, commissioning: &Commissioning, verbose: bool) {
     println!("$ onerom scan{}", if verbose { " --verbose" } else { "" });
     println!("~ Scanning ... ");
     println!("~ found 1 connected device:");
@@ -31,7 +38,7 @@ async fn scan(otp: &mut MemoryOtp, board: &str, verbose: bool) {
         println!("~     MCU: RP235xA Chip ID: DE3F9C232F655B6B");
     }
     let board = Board::try_from_str(board);
-    for line in device_lines(board, &commissioning, (verbose, verbose), &table(None)) {
+    for line in device_lines(board, commissioning, (verbose, verbose), &table(None)) {
         println!("    {line}");
     }
 }
@@ -75,6 +82,20 @@ async fn newer_data() {
     for (name, mut otp) in newer_boards() {
         println!("### {name}");
         both(&mut otp, "fire-24-f").await;
+        println!();
+    }
+}
+
+/// A One ROM running One ROM Lab, which refuses OTP access.
+#[test]
+fn a_running_lab() {
+    for verbose in [false, true] {
+        print_scan(
+            RUNNING_LAB,
+            "fire-24-e",
+            &Commissioning::LabRunning,
+            verbose,
+        );
         println!();
     }
 }

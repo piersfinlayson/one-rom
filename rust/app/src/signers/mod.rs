@@ -15,7 +15,7 @@ use alloc::borrow::Cow;
 use alloc::vec::Vec;
 
 use ed25519_dalek::{Signature, VerifyingKey};
-use onerom_metadata::otp::{CommissioningInstance, RecordLine, parse_record};
+use onerom_metadata::otp::{CommissioningInstance, RecordLine, check_manufacturer, parse_record};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 
@@ -23,7 +23,7 @@ use crate::error::Error;
 use crate::fetch::LocalFetch;
 
 pub use wire::SignerError;
-use wire::{Entry, Status};
+use wire::{Entry, Manufacturers, Status};
 
 /// The pointer holding the current signer table's address.
 const POINTER_URL: &str = "https://images.onerom.org/signers.json";
@@ -58,6 +58,10 @@ impl SignerTable {
     /// - a 64-byte proof that verifies with the public key
     /// - for a retired key with a record file, the file's https URL and its
     ///   32-byte SHA-256 hash
+    /// - a list of the manufacturers the key may sign, each a valid
+    ///   `COMMISSIONING_MANUFACTURER` value. `["*"]` in place of a list allows
+    ///   any manufacturer, and only a piers.rocks key with an ID from 1 to 255
+    ///   can have it.
     ///
     /// Unknown fields are ignored.
     pub fn parse(json: &[u8]) -> Result<Self, SignerError> {
@@ -77,6 +81,14 @@ impl SignerTable {
                 let message = [PROOF_PREFIX, entry.name.as_bytes()].concat();
                 key.verify_strict(&message, &Signature::from_bytes(&entry.proof))
                     .map_err(|_| SignerError::BadProof(id))?;
+                if let Manufacturers::Listed(names) = &entry.manufacturers
+                    && names.iter().any(|name| check_manufacturer(name).is_err())
+                {
+                    return Err(SignerError::BadField {
+                        id,
+                        field: "manufacturers",
+                    });
+                }
                 Ok(Signer::from_entry(entry))
             })
             .collect::<Result<_, _>>()?;
@@ -119,6 +131,7 @@ pub struct Signer {
     name: Cow<'static, str>,
     public_key: [u8; 32],
     status: Status,
+    manufacturers: Manufacturers,
 }
 
 impl Signer {
@@ -141,6 +154,15 @@ impl Signer {
         }
     }
 
+    /// Whether the key may sign `manufacturer`. Unless the key allows any
+    /// manufacturer, `manufacturer` must match a listed name byte for byte.
+    pub fn allows(&self, manufacturer: &str) -> bool {
+        match &self.manufacturers {
+            Manufacturers::Any => true,
+            Manufacturers::Listed(names) => names.iter().any(|name| name == manufacturer),
+        }
+    }
+
     /// Whether `signature` is this key's Ed25519 signature over `message`.
     pub fn verify(&self, message: &[u8], signature: &[u8; 64]) -> bool {
         // parse() refuses a key that isn't a curve point so this fails only
@@ -157,6 +179,7 @@ impl Signer {
             name: Cow::Owned(entry.name),
             public_key: entry.public_key,
             status: entry.status,
+            manufacturers: entry.manufacturers,
         }
     }
 }
@@ -176,6 +199,9 @@ pub enum Verdict {
     /// The signature verifies with a retired key. The key's record file has
     /// changed since the key was retired so it can't be used.
     RecordChanged,
+    /// The signature verifies with the signer's key. The key doesn't allow
+    /// the instance's manufacturer.
+    ManufacturerNotAllowed,
     /// The signature doesn't verify with the signer's key.
     BadSignature,
     /// The table doesn't have the instance's signer.
@@ -194,6 +220,7 @@ impl Verdict {
             Self::Verified | Self::Recorded => true,
             Self::NotRecorded
             | Self::RecordChanged
+            | Self::ManufacturerNotAllowed
             | Self::BadSignature
             | Self::UnknownSigner
             | Self::Incomplete
@@ -212,6 +239,7 @@ impl Verdict {
 /// - [`Verdict::Invalid`]
 /// - [`Verdict::UnknownSigner`]
 /// - [`Verdict::BadSignature`]
+/// - [`Verdict::ManufacturerNotAllowed`]
 /// - [`Verdict::Verified`] for a current key
 ///
 /// For a retired key it fetches the key's record file and takes the verdict
@@ -229,10 +257,11 @@ pub async fn verify_instance<F: LocalFetch>(
     if !instance.is_complete() {
         return Ok(Verdict::Incomplete);
     }
-    // A complete instance has a message. A valid one has a signer and a
-    // signature.
-    let (true, Some(id), Some(signature), Some(message)) = (
+    // A complete instance has a message. A valid one has a manufacturer, a
+    // signer and a signature.
+    let (true, Some(manufacturer), Some(id), Some(signature), Some(message)) = (
         instance.is_valid(),
+        instance.manufacturer(),
         instance.signer(),
         instance.signature(),
         instance.message(chip_id),
@@ -244,6 +273,9 @@ pub async fn verify_instance<F: LocalFetch>(
     };
     if !signer.verify(&message, signature) {
         return Ok(Verdict::BadSignature);
+    }
+    if !signer.allows(manufacturer) {
+        return Ok(Verdict::ManufacturerNotAllowed);
     }
     let record = match &signer.status {
         Status::Current => return Ok(Verdict::Verified),
@@ -265,7 +297,7 @@ pub async fn verify_instance<F: LocalFetch>(
         line: line_of(&file, e.valid_up_to()),
     })?;
     let lines = parse_record(text).map_err(|e| SignerError::BadRecord { id, line: e.line })?;
-    if lines.contains(&RecordLine::new(chip_id, signature)) {
+    if lines.contains(&RecordLine::new(signature)) {
         Ok(Verdict::Recorded)
     } else {
         Ok(Verdict::NotRecorded)
@@ -285,8 +317,10 @@ mod tests {
     /// `tests/fixtures/signing-keys.json` as `build.rs` writes a table.
     const FIXTURE: &[Signer] = include!(concat!(env!("OUT_DIR"), "/fixture_signers.rs"));
 
-    /// The fixture has a signer with each status and a name needing escapes
-    /// so this covers every form `build.rs` writes.
+    /// The fixture has a signer with each status, a key allowing any
+    /// manufacturer, keys listing one and two manufacturers, and a name and a
+    /// manufacturer needing escapes. So this covers every form `build.rs`
+    /// writes.
     #[test]
     fn build_rs_writes_the_table_the_parser_reads() {
         let json = include_bytes!("../../tests/fixtures/signing-keys.json");

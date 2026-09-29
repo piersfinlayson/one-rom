@@ -12,6 +12,7 @@ use clap::{ArgGroup, Args, Subcommand};
 use enum_dispatch::enum_dispatch;
 use onerom_app::BoardSize;
 use onerom_config::hw::{Board, Model};
+use onerom_metadata::otp::{BuildError, check_manufacturer};
 use time::{Date, Month, OffsetDateTime};
 
 use crate::args::{CommandTrait, arg_error};
@@ -41,7 +42,7 @@ pub enum HardwareCommands {
     /// Writes to the RP2350's OTP (One Time Programmable memory):
     /// - a signed and dated commissioning instance containing the board's type
     ///   and its manufacturer
-    /// - the bootloader's USB strings
+    /// - the bootloader's USB info
     /// - the settings for a second flash chip if present
     ///
     /// This commissioning instance's pages are then locked. OTP cannot be
@@ -437,7 +438,7 @@ pub struct HardwareSignArgs {
     pub key: Option<PathBuf>,
 
     /// Sign without asking for confirmation and without the signing server
-    /// recording the signature.
+    /// publicly recording the signature.
     #[arg(long, visible_alias = "dryrun", conflicts_with = "key")]
     pub dry_run: bool,
 
@@ -500,15 +501,16 @@ fn fire_board(text: &str, ice: &str) -> Result<Board, String> {
     }
 }
 
-/// Parse a manufacturer's name. It can't be empty or hold a control
-/// character.
+/// Parse a manufacturer's name. onerom-metadata's `check_manufacturer` says
+/// which names are valid.
 fn parse_manufacturer(text: &str) -> Result<String, String> {
-    if text.is_empty() {
-        Err("manufacturer is empty".to_string())
-    } else if text.chars().any(char::is_control) {
-        Err("the manufacturer contains a control character".to_string())
-    } else {
-        Ok(text.to_string())
+    match check_manufacturer(text) {
+        Ok(()) => Ok(text.to_string()),
+        Err(BuildError::EmptyManufacturer) => Err("manufacturer is empty".to_string()),
+        Err(_) => Err(
+            "the manufacturer must be printable ASCII without '*' or a leading or trailing space"
+                .to_string(),
+        ),
     }
 }
 
@@ -631,12 +633,26 @@ mod tests {
         assert_eq!(future_date("20260925", today), None);
     }
 
+    /// A manufacturer's name is printable ASCII without `*` or a leading or
+    /// trailing space. An empty name has its own refusal.
     #[test]
-    fn a_manufacturer_is_named_without_control_characters() {
-        assert_eq!(parse_manufacturer("piers.rocks").unwrap(), "piers.rocks");
-        assert_eq!(parse_manufacturer("Café Ltd").unwrap(), "Café Ltd");
-        for text in ["", "piers\nrocks", "\u{1b}[2J", "tab\there"] {
-            assert!(parse_manufacturer(text).is_err(), "{text:?}");
+    fn a_manufacturer_is_named_in_printable_ascii() {
+        for text in ["piers.rocks", "Piers's Boards & Co", "a b"] {
+            assert_eq!(parse_manufacturer(text).unwrap(), text);
+        }
+        let empty = parse_manufacturer("").unwrap_err();
+        for text in [
+            " piers.rocks",
+            "piers.rocks ",
+            "a*b",
+            "*",
+            "Café Ltd",
+            "piers\nrocks",
+            "\u{1b}[2J",
+            "tab\there",
+        ] {
+            let refused = parse_manufacturer(text).unwrap_err();
+            assert_ne!(refused, empty, "{text:?}");
         }
     }
 
@@ -1081,7 +1097,7 @@ mod command_lines {
             "--size",
             "M",
         ];
-        for name in ["", "piers\u{1b}rocks"] {
+        for name in ["", "piers\u{1b}rocks", " piers.rocks", "a*b"] {
             let line = ["onerom"].into_iter().chain(args).chain([
                 "--manufacturer",
                 name,

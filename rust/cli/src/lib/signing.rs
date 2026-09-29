@@ -49,8 +49,9 @@ struct SignRequest<'a> {
     manufacturer: &'a str,
     /// The UTC commissioning date as `YYYYMMDD`.
     date: &'a str,
-    /// Sign without recording the signature. A request that records leaves it
-    /// out, as a server without the option refuses any field it doesn't know.
+    /// Sign without publicly recording the signature. A request that records
+    /// it leaves this out, as a server without the option refuses any field it
+    /// doesn't know.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     dry_run: bool,
 }
@@ -121,8 +122,8 @@ impl SigningServer {
     }
 
     /// The signature [`sign`](Self::sign) returns for the same values, without
-    /// the server recording it. A server without the dry-run option refuses
-    /// the request.
+    /// the server publicly recording it. A server without the dry-run option
+    /// refuses the request.
     pub async fn sign_dry_run(
         &self,
         chip_id: [u16; 4],
@@ -135,7 +136,7 @@ impl SigningServer {
     }
 
     /// The key's signature over the instance. `dry_run` asks the server not to
-    /// record it.
+    /// publicly record it.
     async fn signature(
         &self,
         chip_id: [u16; 4],

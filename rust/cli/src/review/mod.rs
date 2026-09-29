@@ -82,6 +82,11 @@ fn device(board: &str, size: Option<BoardSize>) -> String {
 const UNRECOGNISED: &str =
     "Unknown           - Firmware: n/a   State: Unknown Serial: DE3F9C232F655B6B";
 
+/// The line a One ROM running One ROM Lab for fire-24-e is shown with. It's
+/// written from `Device`'s `Display`.
+const RUNNING_LAB: &str =
+    "One ROM Lab Fire 24 E - Firmware: v0.4.0 State: Running Serial: DE3F9C232F655B6B";
+
 /// The parser's reasons for not recognising the firmware of a stopped board
 /// whose flash holds `image`. The parser reads `image` as enumeration reads a
 /// board.

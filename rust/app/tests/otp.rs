@@ -603,7 +603,7 @@ async fn an_l_boards_report_shows_its_commissioning() {
             value: Some(0x99af)
         }
     );
-    assert_eq!(report.usb_boot_flags, [0x40_f130; 3]);
+    assert_eq!(report.usb_boot_flags, [0x40_f133; 3]);
     assert_eq!(
         report.usb_white_label_addr,
         EccRow {
@@ -616,6 +616,8 @@ async fn an_l_boards_report_shows_its_commissioning() {
         Some(json!({
             "$schema": WHITE_LABEL_SCHEMA_URL,
             "device": {
+                "vid": "0x1209",
+                "pid": "0xf540",
                 "manufacturer": "piers.rocks",
                 "product": "One ROM Bootloader",
             },
@@ -733,7 +735,7 @@ async fn a_report_shows_a_started_general_store() {
 }
 
 /// USB_BOOT_FLAGS for One ROM's white label.
-const USB_BOOT_FLAGS: u32 = 0x40_f130;
+const USB_BOOT_FLAGS: u32 = 0x40_f133;
 
 /// Sets USB_BOOT_FLAGS and its two copies to `flags`.
 fn set_usb_boot_flags(otp: &mut MemoryOtp, flags: u32) {

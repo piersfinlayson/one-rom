@@ -177,7 +177,14 @@ pub fn device_lines(
         Commissioning::Unreadable if details && verbose => {
             return vec!["Commissioned: unknown (OTP not readable)".to_string()];
         }
-        Commissioning::Unreadable | Commissioning::NotRead => return Vec::new(),
+        Commissioning::LabRunning if details && verbose => {
+            return vec![
+                "Commissioned: unknown (OTP not readable while One ROM Lab is running)".to_string(),
+            ];
+        }
+        Commissioning::Unreadable | Commissioning::LabRunning | Commissioning::NotRead => {
+            return Vec::new();
+        }
     };
     let mut lines = Vec::new();
     // An area holding an unknown version doesn't have a current instance.
@@ -405,6 +412,10 @@ fn last_row(instance: &CommissioningInstance) -> u16 {
     })
 }
 
+/// The bootloader USB IDs One ROM sets, with a label each. Each is a field of
+/// the device section of picotool's JSON.
+const WHITE_LABEL_IDS: [(&str, &str); 2] = [("USB VID:", "vid"), ("USB PID:", "pid")];
+
 /// The seven bootloader USB strings One ROM sets, with OTP.md's names for
 /// them. Each is a section and a field of picotool's JSON.
 const WHITE_LABEL_STRINGS: [(&str, &str, &str); 7] = [
@@ -417,10 +428,10 @@ const WHITE_LABEL_STRINGS: [(&str, &str, &str); 7] = [
     ("INFO_UF2.TXT board ID:", "volume", "board_id"),
 ];
 
-/// `set` and beneath it the bootloader USB strings One ROM sets, in OTP.md's
-/// order. `not set` or pico-otp's reason it can't decode them otherwise.
+/// `set` and beneath it the bootloader USB IDs and strings One ROM sets.
+/// `not set` or pico-otp's reason it can't decode them otherwise.
 fn white_label_lines(report: &OtpReport) -> Vec<String> {
-    const HEADING: &str = "Bootloader USB strings:";
+    const HEADING: &str = "Bootloader USB info:";
     let Some(json) = &report.white_label else {
         let value = match &report.white_label_error {
             Some(error) => format!("can't be decoded: {}", escape_controls(error)),
@@ -429,15 +440,26 @@ fn white_label_lines(report: &OtpReport) -> Vec<String> {
         };
         return vec![labelled(HEADING, value)];
     };
-    if white_label_strings(json)
-        .iter()
-        .all(|(_, string)| string.is_none())
-    {
+    let ids = white_label_ids(json);
+    let strings = white_label_strings(json);
+    if ids.iter().chain(&strings).all(|(_, value)| value.is_none()) {
         return vec![labelled(HEADING, "not set")];
     }
     let mut lines = vec![labelled(HEADING, "set")];
     lines.extend(labelled_lines(&white_label_values(json)));
     lines
+}
+
+/// The bootloader USB IDs One ROM sets that picotool's JSON `json` contains.
+/// `None` for an ID it doesn't contain.
+fn white_label_ids(json: &serde_json::Value) -> [(&'static str, Option<&str>); 2] {
+    WHITE_LABEL_IDS.map(|(label, field)| {
+        let id = json
+            .get("device")
+            .and_then(|device| device.get(field))
+            .and_then(serde_json::Value::as_str);
+        (label, id)
+    })
 }
 
 /// The bootloader USB strings One ROM sets that picotool's JSON `json`
@@ -452,17 +474,25 @@ fn white_label_strings(json: &serde_json::Value) -> [(&'static str, Option<&str>
     })
 }
 
-/// The bootloader USB strings One ROM sets, from picotool's JSON `json`, a
-/// label and value each in OTP.md's order. `not set` for a string it doesn't
-/// contain.
+/// The bootloader USB IDs and strings One ROM sets, from picotool's JSON
+/// `json`, a label and value each. The IDs come first, then the strings in
+/// OTP.md's order. `not set` for one it doesn't contain.
 pub(crate) fn white_label_values(json: &serde_json::Value) -> Vec<Labelled> {
-    white_label_strings(json)
-        .iter()
-        .map(|(label, string)| {
-            let value = string.map_or("not set".to_string(), escape_controls);
-            (label.to_string(), value)
-        })
+    let ids = white_label_ids(json).map(|(label, id)| (label, id.map(id_text)));
+    let strings =
+        white_label_strings(json).map(|(label, string)| (label, string.map(escape_controls)));
+    ids.into_iter()
+        .chain(strings)
+        .map(|(label, value)| (label.to_string(), value.unwrap_or("not set".to_string())))
         .collect()
+}
+
+/// A USB ID from picotool's JSON, such as `0xf540`, in hex with upper case
+/// digits. Other text is escaped.
+fn id_text(id: &str) -> String {
+    id.strip_prefix("0x")
+        .and_then(|digits| u16::from_str_radix(digits, 16).ok())
+        .map_or_else(|| escape_controls(id), |id| format!("{id:#06X}"))
 }
 
 /// The general store's entry count and issues. `empty` where it hasn't been
@@ -768,6 +798,20 @@ mod tests {
         assert!(device_lines(None, &Commissioning::NotRead, (true, true), &table).is_empty());
     }
 
+    /// A running One ROM Lab's OTP isn't read. --verbose says so, apart from
+    /// OTP that couldn't be read for another reason.
+    #[test]
+    fn verbose_says_a_running_lab_wasnt_read() {
+        let table = table(None);
+        let lab = Commissioning::LabRunning;
+        assert!(device_lines(None, &lab, (false, false), &table).is_empty());
+        assert!(device_lines(None, &lab, (true, false), &table).is_empty());
+        let lines = device_lines(None, &lab, (true, true), &table);
+        assert_eq!(lines.len(), 1, "{lines:?}");
+        let unreadable = device_lines(None, &Commissioning::Unreadable, (true, true), &table);
+        assert_ne!(lines, unreadable);
+    }
+
     #[test]
     fn newer_data_and_skipped_keys_are_always_shown() {
         let table = table(None);
@@ -791,9 +835,10 @@ mod tests {
 
     #[test]
     fn otp_strings_are_shown_with_control_characters_escaped() {
+        // CommissioningValues refuses a control character. The instance is
+        // built with ? in its place and the row holding it is then changed.
         let values =
-            CommissioningValues::new(board("fire-24-f"), "bad\u{1b}[2Jname", "20260101", 1)
-                .unwrap();
+            CommissioningValues::new(board("fire-24-f"), "bad?[2Jname", "20260101", 1).unwrap();
         let signature = crate::test_board::key()
             .sign(&values.message(crate::test_board::CHIP_ID))
             .to_bytes();
@@ -803,6 +848,9 @@ mod tests {
         for write in instance.writes(&signature) {
             rows[usize::from(write.row - OTP_COMMISSIONING_AREA_FIRST_ROW)] = write.value;
         }
+        let placeholder = u16::from_le_bytes(*b"d?");
+        let row = rows.iter().position(|&row| row == placeholder).unwrap();
+        rows[row] = u16::from_le_bytes([b'd', 0x1b]);
         let lines = device_lines(None, &area_of(&rows), (true, false), &table(None));
         assert!(shows(&lines, &["bad\\u{1b}[2Jname"]), "{lines:?}");
         assert!(
@@ -817,11 +865,11 @@ mod tests {
         let report = read_report(&mut otp).await.unwrap();
         let lines = report_lines(&report, false, &table(None));
         println!("{}", lines.join("\n"));
-        // The size, then the instance's four lines and the seven strings
-        // beneath their headings. FLASH_DEVINFO's fields, the row and the
-        // page's lock are --verbose, and the general store hasn't been
-        // started.
-        assert_eq!(lines.len(), 1 + 5 + 8, "{lines:?}");
+        // The size, then the instance's four lines and the VID, the PID and
+        // the seven strings beneath their headings. FLASH_DEVINFO's fields,
+        // the row and the page's lock are --verbose, and the general store
+        // hasn't been started.
+        assert_eq!(lines.len(), 1 + 5 + 10, "{lines:?}");
         assert!(holds(&lines[0], &["L"]), "{lines:?}");
         // The current instance's values and signer.
         let instance: [&[&str]; 4] = [
@@ -831,8 +879,10 @@ mod tests {
             &[SIGNER_NAME, "1"],
         ];
         assert!(in_turn(&lines, &instance), "{lines:?}");
-        // The bootloader USB strings in OTP.md's order.
+        // The bootloader USB IDs, then the strings in OTP.md's order.
         let strings = [
+            "0x1209",
+            "0xF540",
             "piers.rocks",
             "One ROM Bootloader",
             "ONEROM",
@@ -849,7 +899,7 @@ mod tests {
     async fn a_blank_boards_otp_is_shown() {
         let mut otp = blank_board();
         let report = read_report(&mut otp).await.unwrap();
-        // Size, commissioning and the bootloader USB strings, a line each.
+        // Size, commissioning and the bootloader USB info, a line each.
         let lines = report_lines(&report, false, &table(None));
         assert_eq!(lines.len(), 3, "{lines:?}");
         assert!(holds(&lines[0], &["M"]), "{lines:?}");
@@ -885,7 +935,7 @@ mod tests {
         );
         let lines = report_lines(&report, false, &table(None));
         println!("{}", lines.join("\n"));
-        // A line for each warning follows the bootloader USB strings and
+        // A line for each warning follows the bootloader USB info and
         // ends the output.
         let last = &lines[lines.len() - warnings.len()..];
         for (line, warning) in last.iter().zip(warnings) {
@@ -911,7 +961,7 @@ mod tests {
         report.white_label = None;
         report.white_label_error = Some("Invalid white label data: row\u{7}".to_string());
         let lines = report_lines(&report, false, &table(None));
-        // The bootloader USB strings' line, the third, holds pico-otp's reason
+        // The bootloader USB info line, the third, holds pico-otp's reason
         // with its control characters escaped.
         assert!(
             holds(&lines[2], &["Invalid white label data: row\\u{7}"]),
@@ -961,7 +1011,7 @@ mod tests {
         for values in [
             ["0x048", "BOOT_FLAGS0", "0x000020"].as_slice(),
             &["0x054", "FLASH_DEVINFO", "0x3a99af"],
-            &["0x059", "USB_BOOT_FLAGS", "0x40f130"],
+            &["0x059", "USB_BOOT_FLAGS", "0x40f133"],
             &["3", "0x151515"],
             &["4", "0x000000"],
         ] {

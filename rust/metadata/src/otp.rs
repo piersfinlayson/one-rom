@@ -7,6 +7,7 @@
 //! - [`CommissioningArea`] and [`GeneralStore`] parse the store's two areas.
 //! - [`CommissioningValues`] builds the message a commissioning instance's
 //!   signature covers.
+//! - [`check_manufacturer`] checks a manufacturer's name.
 //! - [`NewCommissioningInstance`] builds the rows a commissioning instance
 //!   writes.
 //! - [`format_chip_id`] and [`parse_chip_id`] write and read a CHIPID as the
@@ -34,6 +35,7 @@ use crate::{
     OTP_FLASH_DEVINFO_SIZE_BITS, OTP_GENERAL_STORE_FIRST_ROW, OTP_GENERAL_STORE_TERMINATOR_ROW,
     OTP_GENERAL_STORE_TERMINATOR_ROW_COUNT, OTP_KEY_NONE, OTP_PAGE_ROWS, OTP_STORE_MAGIC,
     OTP_STORE_VERSION, OneromBoardSize, OneromOtpEntry, OneromOtpKey, SerializeContext,
+    USB_BOOTLOADER_PID, USB_BOOTLOADER_VID,
 };
 
 pub use pico_otp;
@@ -79,11 +81,14 @@ pub struct RowWrite {
 }
 
 /// Why [`CommissioningValues::new`] or [`NewCommissioningInstance::new`]
-/// refused an instance.
+/// refused an instance, or [`check_manufacturer`] refused a name.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BuildError {
     /// The manufacturer's name is empty.
     EmptyManufacturer,
+    /// The manufacturer's name isn't printable ASCII, contains `*` or has a
+    /// leading or trailing space.
+    BadManufacturer,
     /// The date isn't 8 ASCII digits.
     BadDate,
     /// The signer is 0, which no signing key has.
@@ -92,6 +97,19 @@ pub enum BuildError {
     BadFirstRow,
     /// The instance runs past the end of the commissioning area.
     DoesNotFit,
+}
+
+/// Checks `name` is a valid `COMMISSIONING_MANUFACTURER` value. It must be
+/// printable ASCII without `*` or a leading or trailing space.
+pub fn check_manufacturer(name: &str) -> Result<(), BuildError> {
+    if name.is_empty() {
+        return Err(BuildError::EmptyManufacturer);
+    }
+    let printable = name.bytes().all(|b| matches!(b, b' '..=b'~') && b != b'*');
+    if !printable || name.starts_with(' ') || name.ends_with(' ') {
+        return Err(BuildError::BadManufacturer);
+    }
+    Ok(())
 }
 
 impl CommissioningValues {
@@ -108,9 +126,7 @@ impl CommissioningValues {
         date: &str,
         signer: u16,
     ) -> Result<Self, BuildError> {
-        if manufacturer.is_empty() {
-            return Err(BuildError::EmptyManufacturer);
-        }
+        check_manufacturer(manufacturer)?;
         if date.len() != 8 || !date.bytes().all(|b| b.is_ascii_digit()) {
             return Err(BuildError::BadDate);
         }
@@ -955,21 +971,18 @@ pub fn parse_chip_id(text: &str) -> Option<[u16; 4]> {
 
 /// A line of a signing key's record file. It records one signature.
 ///
-/// It displays as the line without its newline:
-/// - the chip's CHIPID as [`format_chip_id`] writes it
-/// - a space
-/// - the signature's SHA-256 hash in lowercase hex
+/// It displays as the line without its newline, which is the signature's
+/// SHA-256 hash in lowercase hex. The signature covers the chip's CHIPID so the
+/// line doesn't need it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RecordLine {
-    chip_id: [u16; 4],
     hash: [u8; 32],
 }
 
 impl RecordLine {
-    /// The line recording `signature` for the chip whose CHIPID is `chip_id`.
-    pub fn new(chip_id: [u16; 4], signature: &[u8; 64]) -> Self {
+    /// The line recording `signature`.
+    pub fn new(signature: &[u8; 64]) -> Self {
         Self {
-            chip_id,
             hash: Sha256::digest(signature).into(),
         }
     }
@@ -977,7 +990,7 @@ impl RecordLine {
 
 impl fmt::Display for RecordLine {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{} {}", format_chip_id(self.chip_id), Hex(&self.hash))
+        write!(f, "{}", Hex(&self.hash))
     }
 }
 
@@ -1000,29 +1013,28 @@ pub fn parse_record(text: &str) -> Result<Vec<RecordLine>, RecordError> {
 
 /// `line` as a [`RecordLine`] if it's exactly as one displays.
 fn parse_record_line(line: &str) -> Option<RecordLine> {
-    let (chip_id, hash) = line.split_once(' ')?;
-    if hash.len() != 64 || !hash.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')) {
+    if line.len() != 64 || !line.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')) {
         return None;
     }
-    let mut bytes = [0; 32];
-    for (i, byte) in bytes.iter_mut().enumerate() {
-        *byte = u8::from_str_radix(&hash[2 * i..2 * i + 2], 16).ok()?;
+    let mut hash = [0; 32];
+    for (i, byte) in hash.iter_mut().enumerate() {
+        *byte = u8::from_str_radix(&line[2 * i..2 * i + 2], 16).ok()?;
     }
-    Some(RecordLine {
-        chip_id: parse_chip_id(chip_id)?,
-        hash: bytes,
-    })
+    Some(RecordLine { hash })
 }
 
 // ---------------------------------------------------------------------------
 // USB white label
 // ---------------------------------------------------------------------------
 
-/// The bootloader's USB white label for `board`: One ROM's strings from
-/// OTP.md's table, with the board's name as the INFO_UF2.TXT board ID.
+/// The bootloader's USB white label for `board`. It sets the bootloader's VID
+/// and PID, and One ROM's strings from OTP.md's table with the board's name as
+/// the INFO_UF2.TXT board ID.
 pub fn white_label(board: Board) -> WhiteLabelStruct {
     let mut white_label = WhiteLabelStruct::default();
     let set = |wl: &mut WhiteLabelStruct| -> Result<(), WhiteLabelError> {
+        wl.set_vid(USB_BOOTLOADER_VID);
+        wl.set_pid(USB_BOOTLOADER_PID);
         wl.set_manufacturer("piers.rocks")?;
         wl.set_product("One ROM Bootloader")?;
         wl.set_volume_label("ONEROM")?;

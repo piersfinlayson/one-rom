@@ -293,4 +293,13 @@ mod tests {
             );
         }
     }
+
+    /// The built-in signing key table lets the Community key sign a
+    /// community signing request's manufacturer.
+    #[test]
+    fn the_community_key_may_sign_the_community_manufacturer() {
+        let table = onerom_app::SignerTable::built_in();
+        let signer = table.get(KEY_ID).expect("the table contains KEY_ID");
+        assert!(signer.allows(MANUFACTURER));
+    }
 }

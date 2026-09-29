@@ -447,6 +447,15 @@ pub enum Error {
     #[error("Hit an error accessing OTP:\n  {0}")]
     Otp(onerom_app::OtpError),
 
+    /// A command needed OTP from a running One ROM Lab, which refuses every
+    /// OTP read and write while it runs. Carries the device's line.
+    #[error(
+        "Cannot access OTP while One ROM Lab is running.\n  {detail}\n  Stop it with '{stop}'.",
+        detail = .0,
+        stop = hint::CONTROL_REBOOT_STOPPED
+    )]
+    OtpLabRunning(String),
+
     #[error("{}", commission_text(.0))]
     Commission(onerom_app::CommissionError),
 
@@ -557,6 +566,14 @@ pub enum Error {
 
     #[error("Signing key {name} ({id}) has been retired.")]
     SigningKeyRetired { id: u16, name: String },
+
+    /// The signing key table doesn't allow key `id` to sign `manufacturer`.
+    #[error("Signing key {name} ({id}) cannot sign manufacturer '{manufacturer}'.")]
+    ManufacturerNotAllowed {
+        id: u16,
+        name: String,
+        manufacturer: String,
+    },
 
     /// A signature that doesn't verify with the signer's key in the table.
     #[error("The signature is invalid with key {name} ({id}).\n  No changes have been made.")]
@@ -1007,6 +1024,16 @@ mod tests {
         ] {
             assert!(!run_again_completes(&error), "{error}");
         }
+    }
+
+    /// A running One ROM Lab is refused with its line and the command that
+    /// stops it.
+    #[test]
+    fn a_running_lab_is_told_how_to_stop_it() {
+        let device = "One ROM Lab Fire 24 E - State: Running".to_string();
+        let msg = Error::OtpLabRunning(device.clone()).to_string();
+        assert!(msg.contains(&device), "{msg}");
+        assert!(msg.contains(hint::CONTROL_REBOOT_STOPPED), "{msg}");
     }
 
     #[test]

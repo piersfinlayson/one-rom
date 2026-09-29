@@ -5165,6 +5165,7 @@ dependencies = [
  "onerom-fw",
  "onerom-fw-parser",
  "onerom-gen",
+ "onerom-metadata",
  "open",
  "picoboot",
  "probe-rs",

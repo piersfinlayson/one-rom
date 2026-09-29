@@ -26,7 +26,7 @@ use crate::hardware::{
     OtpCommand, SignatureSource, Signing, ToSign, check_firmware, check_server_key, commission_otp,
     firmware_warning, signer_for, signing, signing_key,
 };
-use crate::test_board::{blank_board, commissioned_board, key, key_file, table};
+use crate::test_board::{blank_board, commissioned_board, key, key_file, table, table_allowing};
 
 /// `line`, which starts `onerom hardware commission`, parsed and checked as the
 /// CLI does. `key.pem` stands for `key`. Returns the arguments and the options
@@ -140,18 +140,19 @@ async fn commission_with_table(
     println!("$ {line}");
     let (_dir, key) = key_file();
     let (args, options) = commission_args(line, &key);
-    // The CLI makes the signature's source before it shows the device line.
+    // The CLI makes the signature's source and checks its key before it stops
+    // the One ROM and shows the device line. A signing server's key is found
+    // by its ID and checked against the manufacturer before its public key is
+    // fetched, so a refused key doesn't reach the network.
     let signing = match signing(&args) {
         Ok(signing) => signing,
         Err(e) => return failed(e),
     };
-    println!("~ {}", device(args.board.name(), size_of(otp).await));
-    // A signing server's key is found by its ID before its public key is
-    // fetched, so a refused ID doesn't reach the network.
-    let signer = match signer_for(table, &signing).await {
+    let signer = match signer_for(table, &signing, &args.manufacturer).await {
         Ok(signer) => signer,
         Err(e) => return failed(e),
     };
+    println!("~ {}", device(args.board.name(), size_of(otp).await));
     let mut screen = Screen::default();
     let mut keyboard = Keyboard::new(typed, &screen);
     let result = match server {
@@ -418,7 +419,6 @@ fn refused_keys() {
         (&key(), table(Some(serde_json::json!({})))),
     ] {
         println!("$ {line} --key key.pem");
-        println!("~ {}", device("fire-24-f", Some(BoardSize::M)));
         match signing_key(&table, &private.verifying_key().to_bytes()) {
             Ok(_) => println!("~ accepted"),
             Err(e) => failed(e),
@@ -750,13 +750,11 @@ fn pin_prompt() {
     println!("~ PIN for signing key #1: ");
 }
 
-/// Prints the transcript of a run with `--pin` on a blank board that fails
-/// with `error` fetching the public key, after the device line. It's written
-/// from the code.
-async fn public_key_fails(error: &Error) {
+/// Prints the transcript of a run with `--pin` that fails with `error`
+/// fetching the public key. The CLI fetches it before it stops the One ROM and
+/// shows the device line. It's written from the code.
+fn public_key_fails(error: &Error) {
     println!("$ {}", server_line(true));
-    let size = size_of(&mut blank_board()).await;
-    println!("~ {}", device("fire-24-f", size));
     written_failure(error);
 }
 
@@ -802,7 +800,7 @@ async fn signing_server() {
     println!();
 
     println!("### the server doesn't have key 1 (404)");
-    public_key_fails(&replied(404, "the key doesn't exist")).await;
+    public_key_fails(&replied(404, "the key doesn't exist"));
     println!();
 
     println!("### the server refuses the request (400) because it's too old to know dry_run");
@@ -834,7 +832,7 @@ async fn signing_server() {
     println!();
 
     println!("### the server can't be reached");
-    public_key_fails(&Error::SigningServerUnreachable(key_1())).await;
+    public_key_fails(&Error::SigningServerUnreachable(key_1()));
     println!();
 
     println!("### the public key's reply has the wrong number of bytes");
@@ -842,8 +840,7 @@ async fn signing_server() {
         url: key_1(),
         len: 615,
         expected: 32,
-    })
-    .await;
+    });
     println!();
 
     println!("### the dry-run signature's reply has the wrong number of bytes");
@@ -903,7 +900,6 @@ async fn signing_server_key_ids() {
 
     println!("### the server's key 1 isn't the table's key 1 (written from the code)");
     println!("$ {}", line(1));
-    println!("~ {}", device("fire-24-f", Some(BoardSize::M)));
     let other = ed25519_dalek::SigningKey::from_bytes(&[2; 32])
         .verifying_key()
         .to_bytes();
@@ -949,4 +945,27 @@ async fn with_a_signature() {
     println!("### key 1 retired");
     let retired = crate::test_board::table(Some(serde_json::json!({})));
     commission_with_table(&mut blank_board(), &line(&good, 1), "", &retired, None).await;
+}
+
+/// A manufacturer key 1 doesn't allow, with a key file, a signing server and
+/// `--signature`. Key 1 may sign only onerom.org.
+#[tokio::test]
+async fn a_manufacturer_the_key_doesnt_allow() {
+    let table = table_allowing(&["onerom.org"]);
+    let line = "onerom hardware commission --board fire-24-f --size M --manufacturer piers.rocks --date 20260101";
+    let signature = signature_hex("fire-24-f", "piers.rocks", "20260101", 1);
+
+    println!("### a key file");
+    let key_file = format!("{line} --key key.pem");
+    commission_with_table(&mut blank_board(), &key_file, "", &table, None).await;
+    println!();
+
+    println!("### a signing server");
+    let server = format!("{line} --signer {SIGNER} --key-id 1 --pin 1234");
+    commission_with_table(&mut blank_board(), &server, "", &table, None).await;
+    println!();
+
+    println!("### --signature");
+    let given = format!("{line} --key-id 1 --signature {signature}");
+    commission_with_table(&mut blank_board(), &given, "", &table, None).await;
 }

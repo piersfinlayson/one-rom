@@ -50,12 +50,13 @@ fn pico_otp_parses_the_datasheet_example() {
     );
 }
 
-/// fire-24-f's white label, worked out by hand from OTP.md's table. Each
-/// STRDEF holds its string's row offset from the table in its high byte and
-/// its length in its low byte.
+/// fire-24-f's white label, worked out by hand from OTP.md's table. The
+/// table's first two rows are the bootloader's VID and PID. Each STRDEF holds
+/// its string's row offset from the table in its high byte and its length in
+/// its low byte.
 #[rustfmt::skip]
 const FIRE_24_F_ROWS: [u16; 57] = [
-    0x0000, 0x0000, 0x0000, 0x0000, 0x100b, 0x1612, 0x0000, 0x0000, // table
+    0x1209, 0xf540, 0x0000, 0x0000, 0x100b, 0x1612, 0x0000, 0x0000, // table
     0x1f06, 0x0000, 0x0000, 0x0000, 0x2212, 0x2b0a, 0x3007, 0x3409, // table
     0x6970, 0x7265, 0x2e73, 0x6f72, 0x6b63, 0x0073, // "piers.rocks"
     0x6e4f, 0x2065, 0x4f52, 0x204d, 0x6f42, 0x746f, 0x6f6c, 0x6461, 0x7265, // "One ROM Bootloader"
@@ -66,9 +67,9 @@ const FIRE_24_F_ROWS: [u16; 57] = [
     0x6966, 0x6572, 0x322d, 0x2d34, 0x0066, // "fire-24-f"
 ];
 
-/// The valid bits for the manufacturer, product, volume label, both
+/// The valid bits for the VID, PID, manufacturer, product, volume label, both
 /// INDEX.HTM strings, both INFO_UF2.TXT strings and the table's address.
-const FIRE_24_F_BOOT_FLAGS: u32 = 0x0040_f130;
+const FIRE_24_F_BOOT_FLAGS: u32 = 0x0040_f133;
 
 #[test]
 fn fire_24_f_has_one_roms_white_label() {

@@ -7,8 +7,9 @@
 //
 // src/signers/wire.rs decodes the file. The runtime parser uses the same
 // module so a file the parser would refuse fails the build. Checking its
-// public keys and proofs needs a signature library so the crate's tests check
-// them instead.
+// public keys and proofs needs a signature library, and checking its
+// manufacturers' names needs onerom-metadata, so the crate's tests check them
+// instead.
 
 extern crate alloc;
 
@@ -23,7 +24,7 @@ use std::path::Path;
 #[path = "src/signers/wire.rs"]
 mod wire;
 
-use wire::{Entry, Status};
+use wire::{Entry, Manufacturers, Status};
 
 fn main() {
     println!("cargo:rerun-if-changed=signing-keys.json");
@@ -74,10 +75,23 @@ fn write_signer(out: &mut String, entry: &Entry) {
         ),
     };
     // Debug formatting writes a string as an escaped Rust literal.
+    let manufacturers = match &entry.manufacturers {
+        Manufacturers::Any => "crate::signers::wire::Manufacturers::Any".to_string(),
+        Manufacturers::Listed(names) => {
+            let names: Vec<String> = names
+                .iter()
+                .map(|name| format!("alloc::borrow::Cow::Borrowed({name:?})"))
+                .collect();
+            format!(
+                "crate::signers::wire::Manufacturers::Listed(alloc::borrow::Cow::Borrowed(&[{}]))",
+                names.join(", "),
+            )
+        }
+    };
     writeln!(
         out,
         "    crate::signers::Signer {{ id: {}, name: alloc::borrow::Cow::Borrowed({:?}), \
-         public_key: {:?}, status: {status} }},",
+         public_key: {:?}, status: {status}, manufacturers: {manufacturers} }},",
         entry.id, entry.name, entry.public_key,
     )
     .unwrap();

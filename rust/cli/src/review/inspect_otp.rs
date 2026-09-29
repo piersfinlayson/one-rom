@@ -5,8 +5,9 @@
 //! `inspect otp`.
 
 use onerom_app::{BoardSize, MemoryOtp};
+use onerom_cli::Error;
 
-use super::{device, json_boards, newer_boards};
+use super::{RUNNING_LAB, device, json_boards, newer_boards, written_failure};
 use crate::commissioning::report_lines;
 use crate::test_board::{blank_board, commissioned_board, table};
 
@@ -68,6 +69,14 @@ async fn newer_data() {
         inspect_otp(&mut otp, "fire-24-f", false).await;
         println!();
     }
+}
+
+/// A One ROM running One ROM Lab, which refuses OTP access. The CLI refuses
+/// before it sends a command.
+#[test]
+fn a_running_lab() {
+    println!("$ onerom inspect otp");
+    written_failure(&Error::OtpLabRunning(RUNNING_LAB.to_string()));
 }
 
 /// `--json` for each board.

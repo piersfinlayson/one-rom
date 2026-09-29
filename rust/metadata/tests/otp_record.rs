@@ -15,10 +15,8 @@ fn signature() -> [u8; 64] {
     core::array::from_fn(|i| i as u8)
 }
 
-/// [`CHIP_ID`]'s line for [`signature`]. The hash of bytes 0x00–0x3f is from
-/// Python's hashlib.
-const LINE: &str =
-    "DE3F9C232F655B6B fdeab9acf3710362bd2658cdc9a29e8f9c757fcf9811603a8c447cd1d9151108";
+/// [`signature`]'s line. The hash of bytes 0x00–0x3f is from Python's hashlib.
+const LINE: &str = "fdeab9acf3710362bd2658cdc9a29e8f9c757fcf9811603a8c447cd1d9151108";
 
 #[test]
 fn a_chip_id_is_written_row_0x003_first() {
@@ -42,17 +40,17 @@ fn a_chip_id_in_any_other_form_is_refused() {
 }
 
 #[test]
-fn a_record_line_is_the_chip_id_and_the_signature_hash() {
-    assert_eq!(RecordLine::new(CHIP_ID, &signature()).to_string(), LINE);
+fn a_record_line_is_the_signature_hash() {
+    assert_eq!(RecordLine::new(&signature()).to_string(), LINE);
 }
 
 #[test]
 fn a_record_reads_back_as_written() {
-    let line = RecordLine::new(CHIP_ID, &signature());
-    let other = RecordLine::new([1, 2, 3, 4], &[0xff; 64]);
+    let line = RecordLine::new(&signature());
+    let other = RecordLine::new(&[0xff; 64]);
     let lines = parse_record(&format!("{line}\n{other}\n")).unwrap();
     assert_eq!(lines, [line, other]);
-    assert!(!lines.contains(&RecordLine::new(CHIP_ID, &[0; 64])));
+    assert!(!lines.contains(&RecordLine::new(&[0; 64])));
 }
 
 #[test]
@@ -66,15 +64,12 @@ fn blank_lines_crlf_and_a_missing_last_newline_are_accepted() {
 #[test]
 fn the_first_bad_line_is_reported() {
     let bad = [
-        LINE.to_lowercase(),
         LINE.to_uppercase(),
-        LINE.replace(' ', "  "),
-        LINE.replace(' ', "\t"),
         format!(" {LINE}"),
         format!("{LINE} "),
         format!("{LINE}00"),
         LINE[..LINE.len() - 2].to_string(),
-        LINE[..16].to_string(),
+        LINE.replace('f', "g"),
     ];
     for line in bad {
         let text = format!("{LINE}\n\n{line}\n{line}\n");
@@ -84,4 +79,11 @@ fn the_first_bad_line_is_reported() {
             "{line:?}"
         );
     }
+}
+
+/// A line from before the record dropped the CHIPID.
+#[test]
+fn a_chip_id_and_hash_line_is_refused() {
+    let text = format!("{} {LINE}\n", format_chip_id(CHIP_ID));
+    assert_eq!(parse_record(&text), Err(RecordError { line: 1 }));
 }

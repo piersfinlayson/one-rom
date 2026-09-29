@@ -17,6 +17,7 @@
 
 use crate::device::Device;
 use crate::{Ctx, Scenario};
+use onerom_metadata::{USB_PLUGIN_PID, USB_PLUGIN_VID};
 use onerom_plugin_tester::run::Outcome;
 
 // Control transfer stages, from tinyusb's tusb_types.h.
@@ -41,11 +42,6 @@ const MS_OS_20_DESC_LEN: usize = 0xB2;
 
 /// The wIndex Windows asks the MS OS 2.0 descriptor with, from usb_main.c.
 const MS_OS_20_WINDEX: u16 = 7;
-
-/// What Studio matches on to recognise a running One ROM — see `FIRE_VID` and
-/// `FIRE_RUN_PID` in `rust/studio/src/device/usb.rs`.
-const FIRE_VID: u16 = 0x1209;
-const FIRE_RUN_PID: u16 = 0xF542;
 
 /// The interface picoboot must be given, because picotool will not look
 /// anywhere else when a device has more than one.
@@ -185,10 +181,10 @@ fn the_device_is_the_one_studio_looks_for(dev: &mut Device, _ctx: &Ctx) -> Resul
 
     let vid = u16_at(&d, 8);
     let pid = u16_at(&d, 10);
-    if vid != FIRE_VID || pid != FIRE_RUN_PID {
+    if vid != USB_PLUGIN_VID || pid != USB_PLUGIN_PID {
         return Err(format!(
-            "the device presents {vid:04x}:{pid:04x}, not the {FIRE_VID:04x}:{FIRE_RUN_PID:04x} \
-             Studio looks for"
+            "the device presents {vid:04x}:{pid:04x}, not the \
+             {USB_PLUGIN_VID:04x}:{USB_PLUGIN_PID:04x} Studio looks for"
         ));
     }
 

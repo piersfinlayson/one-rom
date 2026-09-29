@@ -7,9 +7,9 @@
 //! - `GET <key URL>/public-key` returns the key's 32-byte public key.
 //! - `POST <key URL>/sign` returns the 64-byte signature of a commissioning
 //!   instance. The PIN is provided in `Authorization: Bearer PIN`. The
-//!   instance's values are provided as JSON in the request body. Unless the
-//!   body's `dry_run` is true, the server records the signature before
-//!   returning it.
+//!   instance's values are provided as JSON in the request body. The server
+//!   adds a line for the signature to the private record before returning it.
+//!   Unless the body's `dry_run` is true it adds one to the public record too.
 
 use std::convert::Infallible;
 use std::error::Error as StdError;
@@ -35,7 +35,7 @@ use tokio::time::{sleep, timeout};
 use tokio_rustls::TlsAcceptor;
 
 use crate::keys::{Keys, SignError, parse_id};
-use crate::record::{Added, Record};
+use crate::record::{self, Added, PrivateLine, PrivateRecord, PublicRecord, RequestType};
 
 /// The largest `/sign` request body. A valid one is under 2KB.
 const MAX_BODY: usize = 16 * 1024;
@@ -56,7 +56,8 @@ struct SignRequest {
     manufacturer: String,
     /// The UTC commissioning date, `YYYYMMDD`.
     date: String,
-    /// Whether the signature is returned without being recorded.
+    /// Whether the signature is returned without being added to the public
+    /// record. It's still added to the private record.
     #[serde(default)]
     dry_run: bool,
 }
@@ -64,17 +65,19 @@ struct SignRequest {
 /// The signing server.
 pub struct Server {
     keys: Keys,
-    record: Record,
+    public: PublicRecord,
+    private: PrivateRecord,
     /// Held while a signature is made and recorded so requests are handled one
     /// at a time.
     signing: Mutex<()>,
 }
 
 impl Server {
-    pub fn new(keys: Keys, record: Record) -> Self {
+    pub fn new(keys: Keys, public: PublicRecord, private: PrivateRecord) -> Self {
         Self {
             keys,
-            record,
+            public,
+            private,
             signing: Mutex::new(()),
         }
     }
@@ -101,8 +104,9 @@ impl Server {
         }
     }
 
-    /// Key `id`'s signature of the values in `request`. Except when dry run is
-    /// specified, the signature is recorded before it's returned.
+    /// Key `id`'s signature of the values in `request`. It's added to the
+    /// private record before it's returned. Except for a dry run it's added to
+    /// the public record too.
     async fn sign<B>(&self, id: u16, request: Request<B>, peer: SocketAddr) -> Response<Full<Bytes>>
     where
         B: Body<Data = Bytes>,
@@ -149,6 +153,12 @@ impl Server {
             Ok(values) => values,
             Err(BuildError::EmptyManufacturer) => {
                 return text(StatusCode::BAD_REQUEST, "manufacturer is empty");
+            }
+            Err(BuildError::BadManufacturer) => {
+                return text(
+                    StatusCode::BAD_REQUEST,
+                    "manufacturer must be printable ASCII without '*' or a leading or trailing space",
+                );
             }
             Err(BuildError::BadDate) => {
                 return text(StatusCode::BAD_REQUEST, "date isn't 8 digits, YYYYMMDD");
@@ -197,22 +207,28 @@ impl Server {
             }
         };
 
-        let outcome = if request.dry_run {
-            "dry run"
-        } else {
-            match self.record.add(id, chip_id, &signature).await {
-                Ok(Added::New) => "recorded",
-                Ok(Added::AlreadyThere) => "already recorded",
-                Err(error) => {
-                    error!("key {id}: {error}");
-                    return text(
-                        StatusCode::SERVICE_UNAVAILABLE,
-                        format!(
-                            "the record can't be written, so the signature isn't returned: {error}"
-                        ),
-                    );
-                }
-            }
+        let line = PrivateLine {
+            request: if request.dry_run {
+                RequestType::DryRun
+            } else {
+                RequestType::Live
+            },
+            chip_id,
+            board,
+            manufacturer: request.manufacturer.clone(),
+            date: request.date.clone(),
+            signature,
+        };
+        if let Err(error) = self.private.add(id, &line).await {
+            return unwritable(id, "private", error);
+        }
+        let outcome = match line.request {
+            RequestType::DryRun => "dry run",
+            RequestType::Live => match self.public.add(id, &signature).await {
+                Ok(Added::New) => "added to the public record",
+                Ok(Added::AlreadyThere) => "already in the public record",
+                Err(error) => return unwritable(id, "public", error),
+            },
         };
         info!(
             "{peer}: key {id} signed {} for {}, {}, {}, {outcome}",
@@ -286,6 +302,16 @@ fn text(status: StatusCode, message: impl Display) -> Response<Full<Bytes>> {
         status,
         "text/plain; charset=utf-8",
         format!("{message}\n").into_bytes(),
+    )
+}
+
+/// The response when key `id`'s line can't be added to a record. `record` is
+/// `public` or `private`.
+fn unwritable(id: u16, record: &str, error: record::Error) -> Response<Full<Bytes>> {
+    error!("key {id}: the {record} record: {error}");
+    text(
+        StatusCode::SERVICE_UNAVAILABLE,
+        format!("the {record} record can't be written, so the signature isn't returned: {error}"),
     )
 }
 

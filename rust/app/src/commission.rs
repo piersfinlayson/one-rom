@@ -348,6 +348,9 @@ fn configured_text(size: OneromBoardSize) -> &'static str {
 fn build_error_text(error: &BuildError) -> &'static str {
     match error {
         BuildError::EmptyManufacturer => "the manufacturer's name is empty",
+        BuildError::BadManufacturer => {
+            "the manufacturer's name must be printable ASCII without '*' or a leading or trailing space"
+        }
         BuildError::BadDate => "the date isn't 8 digits",
         BuildError::BadSigner => "signer ID 0 is invalid",
         BuildError::BadFirstRow => {

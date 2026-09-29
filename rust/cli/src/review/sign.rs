@@ -16,9 +16,10 @@ use super::{
 };
 use crate::args::hardware::{HardwareCommands, HardwareSignArgs};
 use crate::hardware::{
-    check_server_key, key_source, shell_word, sign_values, signer_for, signer_with_id, signing_key,
+    check_key_allows, check_server_key, key_source, shell_word, sign_values, signer_for,
+    signer_with_id, signing_key,
 };
-use crate::test_board::{key_file, table};
+use crate::test_board::{key_file, table, table_allowing};
 
 /// `line`, which starts `onerom hardware sign`, parsed and checked as the CLI
 /// does. `key.pem` stands for `key`. Returns the arguments and the options.
@@ -71,10 +72,13 @@ async fn sign_run(line: &str, typed: &str, table: &SignerTable, server: Option<&
         }
     };
     let signer = match &signing {
-        Some(signing) => signer_for(table, signing).await,
-        // A signing server's key is found by its ID before its public key is
-        // fetched.
-        None => signer_with_id(table, args.key_id.unwrap_or_default()),
+        Some(signing) => signer_for(table, signing, &args.manufacturer).await,
+        // A signing server's key is found by its ID and checked against the
+        // manufacturer before its public key is fetched.
+        None => signer_with_id(table, args.key_id.unwrap_or_default()).and_then(|signer| {
+            check_key_allows(signer, &args.manufacturer)?;
+            Ok(signer)
+        }),
     };
     let signer = match signer {
         Ok(signer) => signer,
@@ -274,4 +278,17 @@ async fn refused() {
     println!("### a manufacturer too long to fit in OTP");
     let long = KEY_FILE_LINE.replace("piers.rocks", &"x".repeat(2100));
     sign_run(&long, "y\n", &table, None).await;
+}
+
+/// A manufacturer key 1 doesn't allow, with a key file and then a signing
+/// server. Key 1 may sign only onerom.org.
+#[tokio::test]
+async fn a_manufacturer_the_key_doesnt_allow() {
+    let table = table_allowing(&["onerom.org"]);
+    println!("### a key file");
+    sign_run(KEY_FILE_LINE, "y\n", &table, None).await;
+    println!();
+    println!("### a signing server");
+    let line = server_line().replace("onerom.org", "piers.rocks");
+    sign_run(&line, "y\n", &table, Some(&Server::test_key())).await;
 }

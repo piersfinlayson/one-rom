@@ -82,9 +82,21 @@ pub fn key_file() -> (tempfile::TempDir, PathBuf) {
     (dir, path)
 }
 
-/// A signer table holding [`key`] as signer 1. `retired` is its `retired`
-/// field.
+/// A signer table holding [`key`] as signer 1, which may sign any
+/// manufacturer. `retired` is its `retired` field.
 pub fn table(retired: Option<serde_json::Value>) -> SignerTable {
+    signer_table(retired, &["*"])
+}
+
+/// A signer table holding [`key`] as current signer 1, which may sign only
+/// `manufacturers`.
+pub fn table_allowing(manufacturers: &[&str]) -> SignerTable {
+    signer_table(None, manufacturers)
+}
+
+/// A signer table holding [`key`] as signer 1. `retired` is its `retired`
+/// field and `manufacturers` its `manufacturers` field.
+fn signer_table(retired: Option<serde_json::Value>, manufacturers: &[&str]) -> SignerTable {
     let key = key();
     let proof = key.sign(&[b"onerom-signer-v1".as_slice(), SIGNER_NAME.as_bytes()].concat());
     let mut signer = json!({
@@ -92,6 +104,7 @@ pub fn table(retired: Option<serde_json::Value>) -> SignerTable {
         "name": SIGNER_NAME,
         "public_key": hex::encode(key.verifying_key().to_bytes()),
         "proof": hex::encode(proof.to_bytes()),
+        "manufacturers": manufacturers,
     });
     if let Some(retired) = retired {
         signer["retired"] = retired;

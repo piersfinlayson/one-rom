@@ -12,7 +12,7 @@ use picoboot::cmd::PicobootStatus;
 use picoboot::{Connection, Picoboot};
 
 use crate::usb::get_picoboot;
-use crate::{Device, Error};
+use crate::{Device, Error, Firmware};
 
 /// Rows in OTP.
 const OTP_ROWS: u32 = 4096;
@@ -30,8 +30,11 @@ pub struct PicobootOtp {
 }
 
 impl PicobootOtp {
-    /// Opens `device`'s PICOBOOT interface.
+    /// Opens `device`'s PICOBOOT interface. Refuses a running One ROM Lab.
     pub async fn open(device: &Device) -> Result<Self, Error> {
+        if lab_running(device) {
+            return Err(Error::OtpLabRunning(device.to_string()));
+        }
         let mut picoboot = get_picoboot(device, false).await?;
         // A previous operation can leave an endpoint halted.
         picoboot
@@ -94,6 +97,16 @@ impl OtpAccess for PicobootOtp {
             Err(e) => Err(failure(conn, e).await),
         }
     }
+}
+
+/// Whether `device` is running One ROM Lab.
+///
+/// Lab refuses every OTP read and write while it runs (`LabOps` in
+/// `rust/lab/src/picoboot.rs`). The RP2350 bootloader a stopped Lab sits in
+/// doesn't. Lab's refusal is `NotPermitted`, the status a locked row gets, so
+/// the device is checked before any command is sent.
+fn lab_running(device: &Device) -> bool {
+    matches!(device.firmware, Some(Firmware::Lab(_))) && device.is_running()
 }
 
 /// The first row and row count of each command that reads `count` rows from
@@ -159,6 +172,8 @@ pub enum Commissioning {
     NotRead,
     /// The area couldn't be read.
     Unreadable,
+    /// The area wasn't read because One ROM Lab is running.
+    LabRunning,
     /// The area as read.
     Read(CommissioningArea),
 }
@@ -166,6 +181,9 @@ pub enum Commissioning {
 impl Commissioning {
     /// Reads `device`'s commissioning area. A failure is logged at debug level.
     pub async fn read(device: &Device) -> Self {
+        if lab_running(device) {
+            return Self::LabRunning;
+        }
         let area = match PicobootOtp::open(device).await {
             Ok(mut otp) => read_commissioning(&mut otp).await.map_err(Error::from),
             Err(e) => Err(e),
@@ -183,7 +201,7 @@ impl Commissioning {
     pub(crate) fn current(&self) -> Option<&CommissioningInstance> {
         match self {
             Self::Read(area) => area.current(),
-            Self::NotRead | Self::Unreadable => None,
+            Self::NotRead | Self::Unreadable | Self::LabRunning => None,
         }
     }
 }

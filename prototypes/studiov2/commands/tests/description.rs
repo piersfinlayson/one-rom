@@ -354,7 +354,7 @@ fn a_verbatim_doc_comment_keeps_its_lines() {
             "Writes to the RP2350's OTP (One Time Programmable memory):",
             "- a signed and dated commissioning instance containing the board's type",
             "  and its manufacturer",
-            "- the bootloader's USB strings",
+            "- the bootloader's USB info",
             "- the settings for a second flash chip if present",
         ]
     );

@@ -2496,3 +2496,39 @@ comment = """How long a reset line is held low when a request names no hold.
 The device holds a pin for exactly as long as it is told, so nothing on the
 device applies this: it is the length the host sends when the user asks for a
 reset without saying how long."""
+
+# ---------------------------------------------------------------------------
+# USB IDs registered with pid.codes
+# ---------------------------------------------------------------------------
+
+[[constants]]
+name = "USB_PLUGIN_VID"
+type = "u16"
+value = 0x1209
+ora_api = true
+first_release = "0.8.0"
+comment = "The USB vendor ID a One ROM presents while the system USB plugin runs."
+
+[[constants]]
+name = "USB_PLUGIN_PID"
+type = "u16"
+value = 0xF542
+ora_api = true
+first_release = "0.8.0"
+comment = "The USB product ID a One ROM presents while the system USB plugin runs."
+
+[[constants]]
+name = "USB_BOOTLOADER_VID"
+type = "u16"
+value = 0x1209
+ora_api = true
+first_release = "0.8.0"
+comment = "The USB vendor ID a commissioned One ROM's bootloader presents."
+
+[[constants]]
+name = "USB_BOOTLOADER_PID"
+type = "u16"
+value = 0xF540
+ora_api = true
+first_release = "0.8.0"
+comment = "The USB product ID a commissioned One ROM's bootloader presents."

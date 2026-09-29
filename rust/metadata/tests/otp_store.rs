@@ -9,7 +9,7 @@
 use onerom_config::hw::Board;
 use onerom_metadata::otp::{
     AreaIssue, BuildError, CommissioningArea, CommissioningValues, GeneralStore,
-    NewCommissioningInstance, RowWrite, StoreEntry,
+    NewCommissioningInstance, RowWrite, StoreEntry, check_manufacturer,
 };
 use onerom_metadata::{
     OTP_COMMISSIONING_AREA_FIRST_ROW, OTP_COMMISSIONING_AREA_LAST_ROW, OTP_GENERAL_STORE_FIRST_ROW,
@@ -127,6 +127,10 @@ fn an_instance_is_refused_before_signing() {
         refusal("", "20260926", 1, 0x0c0),
         Some(BuildError::EmptyManufacturer)
     );
+    assert_eq!(
+        refusal(" piers.rocks", "20260926", 1, 0x0c0),
+        Some(BuildError::BadManufacturer)
+    );
     for date in ["2026092", "202609261", "2026O926"] {
         assert_eq!(
             refusal("piers.rocks", date, 1, 0x0c0),
@@ -143,6 +147,41 @@ fn an_instance_is_refused_before_signing() {
             refusal("piers.rocks", "20260926", 1, first_row),
             Some(BuildError::BadFirstRow),
             "{first_row:#05x}"
+        );
+    }
+}
+
+/// A manufacturer's name is printable ASCII without `*` or a leading or
+/// trailing space.
+#[test]
+fn a_manufacturers_name_is_checked() {
+    for name in [
+        "piers.rocks",
+        "a",
+        "~",
+        "Piers's Boards & Co",
+        "a  b",
+        "\"x\" \\",
+    ] {
+        assert_eq!(check_manufacturer(name), Ok(()), "{name:?}");
+    }
+    assert_eq!(check_manufacturer(""), Err(BuildError::EmptyManufacturer));
+    for name in [
+        " ",
+        " piers.rocks",
+        "piers.rocks ",
+        "*",
+        "a*b",
+        "Café",
+        "piers\trocks",
+        "piers\nrocks",
+        "\u{7f}",
+        "piers\u{0}rocks",
+    ] {
+        assert_eq!(
+            check_manufacturer(name),
+            Err(BuildError::BadManufacturer),
+            "{name:?}"
         );
     }
 }

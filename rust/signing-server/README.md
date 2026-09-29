@@ -21,11 +21,12 @@ A `/sign` request body:
   It's 16 uppercase hex digits.
 - `date` is the UTC commissioning date in the form `YYYYMMDD`.
 - `dry_run` is optional and `false` when left out. A dry run returns the
-  signature without recording it.
+  signature without adding it to the public record. It's still added to the
+  private record.
 
 The server builds the instance's message from these values. The key's ID is
 the message's `COMMISSIONING_SIGNER`. Repeating a request returns the same
-signature without adding another line to the record.
+signature without adding another line to either record.
 
 An error response has a one-line text body:
 
@@ -38,7 +39,7 @@ An error response has a one-line text body:
 | 413 | The request exceeds 16KB. |
 | 500 | The key's `key.pem` and `public.pem` don't match. |
 | 500 | The server failed. |
-| 503 | The record can't be written. The signature isn't returned. |
+| 503 | A record can't be written. The signature isn't returned. |
 
 ## Keys
 
@@ -83,7 +84,8 @@ In the directory containing `keys`, for key 1 and the signer `piers.rocks`:
    openssl pkey -in keys/1/key.pem -pubout -out keys/1/public.pem
    ```
 
-4. Print the public key in hex for OTP.md's signer table:
+4. Print the public key in hex for the signer table,
+   [`rust/app/signing-keys.json`](../app/signing-keys.json):
 
    ```sh
    openssl pkey -pubin -in keys/1/public.pem -outform DER | tail -c 32 | od -An -tx1 | tr -d ' \n'
@@ -99,48 +101,108 @@ In the directory containing `keys`, for key 1 and the signer `piers.rocks`:
    rm proof-message
    ```
 
-## The record
+6. In the signer table, list the manufacturer strings the key may sign.
+   `["*"]` allows any manufacturer, and only a key with an ID from 1 to 255
+   can have it:
 
-`--record` is the server's clone of the record repository. Key n's lines are
-recorded in `signatures/n.txt`.
+   ```json
+   "manufacturers": ["piers.rocks"]
+   ```
 
-Except when dry run is specified, the server records the signature before
-returning it so a retired key's genuine boards continue to validate. To record
-a signature the server:
+## The records
+
+The server records signatures in two git repositories. Each has a file for
+each key.
+
+### The public record
+
+`--public-record` is the server's clone of the public record repository. It
+lets a retired key's genuine boards continue to validate. OTP.md's "Retiring a
+Key" section describes how. Key n's file is `signatures/n.txt`. A line is the
+signature's SHA-256 hash in lowercase hex:
+
+```
+9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08
+```
+
+### The private record
+
+`--private-record` is the server's clone of the private record repository. It
+records every signature the server makes, dry runs included, with the values it
+covers. Key n's file is `signatures/n.jsonl`. A line is a JSON object:
+
+```json
+{"request":"live","chip_id":"FB8E5D8DD18D5EF7","board":"fire-40-a","manufacturer":"piers.rocks","date":"20260928","signature":"<128 lowercase hex digits>"}
+```
+
+- `request` is `live` or `dry-run`.
+- `chip_id`, `manufacturer` and `date` are as the request provided them.
+- `board` is the board's canonical name.
+- `signature` is the signature in lowercase hex.
+
+### Adding a line
+
+For a live request the server adds the private line and then the public line.
+It returns the signature once both remotes have their line. For a dry run it
+adds only the private line. To add a line the server:
 
 1. Resets the clone to the remote.
 2. Appends the line.
 3. Commits.
 4. Pushes.
 
-Except when dry run is specified, signing fails while the remote is
-unreachable.
+A `live` private line whose signature's hash isn't in the public file is a
+signature the server never returned because it couldn't write the public
+record.
 
-The clone must be owned by the user the server runs as because git refuses a
-repository owned by another user. To set up the record:
+Signing fails while the private remote is unreachable, dry runs included. A
+live request also fails while the public remote is unreachable.
+
+### Setting up a record
+
+Set up each record this way. The clone must be owned by the user the server
+runs as because git refuses a repository owned by another user.
 
 1. Create the repository with an initial commit.
-2. Protect its branch against force pushes and deletion.
-3. Add a deploy key with write access to that repository only.
-4. Clone the repository.
-5. Set the clone's commit identity and SSH command as below.
+2. Protect its branch against force pushes and deletion. GitHub doesn't allow
+   this for a private repository on GitHub Free.
+3. Add a deploy key with write access to that repository only. Each repository
+   needs its own deploy key because GitHub refuses a key that's already a
+   deploy key on another repository.
+4. Clone the repository. The server takes the clone's directory. The
+   repository's URL comes from the clone's remote.
+5. Set the clone's commit identity and SSH command as below. The SSH command
+   uses the repository's own deploy key.
 
 The SSH command's paths are the paths the server sees. In Docker these are paths
 inside the container. The `known_hosts` file must contain the remote's host
 key.
 
+For the public record:
+
 ```sh
-git clone git@github.com:OWNER/REPOSITORY.git record
-git -C record config user.name "One ROM signing server"
-git -C record config user.email "EMAIL"
-git -C record config core.sshCommand \
-    "ssh -i /srv/ssh/deploy-key -o IdentitiesOnly=yes -o UserKnownHostsFile=/srv/ssh/known_hosts"
+git clone git@github.com:OWNER/PUBLIC-REPOSITORY.git public-record
+git -C public-record config user.name "One ROM signing server"
+git -C public-record config user.email "EMAIL"
+git -C public-record config core.sshCommand \
+    "ssh -i /srv/ssh/public-deploy-key -o IdentitiesOnly=yes -o UserKnownHostsFile=/srv/ssh/known_hosts -o BatchMode=yes"
+```
+
+For the private record:
+
+```sh
+git clone git@github.com:OWNER/PRIVATE-REPOSITORY.git private-record
+git -C private-record config user.name "One ROM signing server"
+git -C private-record config user.email "EMAIL"
+git -C private-record config core.sshCommand \
+    "ssh -i /srv/ssh/private-deploy-key -o IdentitiesOnly=yes -o UserKnownHostsFile=/srv/ssh/known_hosts -o BatchMode=yes"
 ```
 
 ## Running
 
 ```sh
-onerom-signing-server --keys keys --record record --tls-cert cert.pem --tls-key key.pem
+onerom-signing-server --keys keys --public-record public-record --private-record private-record \
+    --tls-cert cert.pem --tls-key key.pem
 ```
 
 - The server terminates TLS itself with the certificate chain in `--tls-cert`
@@ -160,20 +222,22 @@ docker build -f "$context/rust/signing-server/Dockerfile" -t onerom-signing-serv
 
 The image runs the server as user 10001. That user must:
 
-- own the record
+- own both records
 - be able to read the keys
 
 Mount these into the container and pass the server their paths inside it:
 
 - the keys
-- the record
-- the deploy key and its `known_hosts` file
+- both records
+- the deploy keys and their `known_hosts` file
 - the TLS certificate chain and private key
 
 ```sh
 docker run -d --restart unless-stopped --name onerom-signing-server -p 8443:8443 \
-    -v "$PWD/keys:/srv/keys:ro" -v "$PWD/record:/srv/record" \
+    -v "$PWD/keys:/srv/keys:ro" \
+    -v "$PWD/public-record:/srv/public-record" -v "$PWD/private-record:/srv/private-record" \
     -v "$PWD/ssh:/srv/ssh:ro" -v "$PWD/tls:/srv/tls:ro" \
-    onerom-signing-server --keys /srv/keys --record /srv/record \
+    onerom-signing-server --keys /srv/keys \
+    --public-record /srv/public-record --private-record /srv/private-record \
     --tls-cert /srv/tls/cert.pem --tls-key /srv/tls/key.pem
 ```

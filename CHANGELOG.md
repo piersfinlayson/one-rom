@@ -34,6 +34,7 @@ To publish:
 - CLI bin 0.5.0
 - Studio 0.2.4: rebuild against the new Rust crates to support v0.8.0
 - ext-flash plugin 0.1.0
+- USB plugin 0.3.2
 - one-rom-wasm: rebuild against the new Rust crates to support v0.8.0
 - one-rom-site: pick up wasm to support v0.8.0
 

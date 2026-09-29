@@ -13,7 +13,7 @@ use tokio::net::TcpListener;
 
 use onerom_signing_server::http::{Server, serve};
 use onerom_signing_server::keys::Keys;
-use onerom_signing_server::record::Record;
+use onerom_signing_server::record::{PrivateRecord, PublicRecord};
 use onerom_signing_server::tls;
 
 /// Signs One ROM commissioning instances.
@@ -25,9 +25,13 @@ struct Args {
     #[arg(long, value_name = "DIR")]
     keys: PathBuf,
 
-    /// The server's clone of the record repository.
+    /// The server's clone of the public record repository.
     #[arg(long, value_name = "DIR")]
-    record: PathBuf,
+    public_record: PathBuf,
+
+    /// The server's clone of the private record repository.
+    #[arg(long, value_name = "DIR")]
+    private_record: PathBuf,
 
     /// The TLS certificate chain in PEM.
     #[arg(long, value_name = "FILE")]
@@ -58,10 +62,15 @@ async fn run(args: Args) -> Result<(), Box<dyn Error>> {
     let keys = Keys::load(&args.keys)?;
     let ids: Vec<_> = keys.ids().map(|id| id.to_string()).collect();
     info!("keys {}", ids.join(", "));
-    let record = Record::open(args.record).await?;
+    let public = PublicRecord::open(args.public_record)
+        .await
+        .map_err(|error| format!("the public record: {error}"))?;
+    let private = PrivateRecord::open(args.private_record)
+        .await
+        .map_err(|error| format!("the private record: {error}"))?;
     let tls = tls::acceptor(&args.tls_cert, &args.tls_key)?;
     let listener = TcpListener::bind(args.listen).await?;
     info!("listening on {}", args.listen);
-    serve(listener, tls, Arc::new(Server::new(keys, record))).await;
+    serve(listener, tls, Arc::new(Server::new(keys, public, private))).await;
     Ok(())
 }

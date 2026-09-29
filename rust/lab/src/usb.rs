@@ -63,6 +63,7 @@ use embassy_usb::msos::{self, windows_version};
 use embassy_usb::types::StringIndex;
 use embassy_usb::{Builder, Config as UsbConfig, Handler, UsbDevice, UsbVersion};
 use log::debug;
+use onerom_metadata::{USB_PLUGIN_PID, USB_PLUGIN_VID};
 use picobootx::{Endpoints, NoCustom};
 use picobootx_embassy::{PicobootClass, Rp2350EndpointControl};
 use static_cell::StaticCell;
@@ -140,8 +141,6 @@ static DTR: AtomicBool = AtomicBool::new(false);
 /// Fired by `cdc_control` each time DTR is raised.
 static CDC_DTR: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 
-const VID: u16 = 0x1209;
-const PID: u16 = 0xF542;
 const VENDOR_REQUEST_MICROSOFT: u8 = 1;
 const WINUSB_GUID: &str = "{53F67517-1850-422C-91F8-C56F657195AF}";
 const MAX_PACKET: usize = 64;
@@ -219,7 +218,7 @@ impl Usb {
 
         let driver = Driver::new(usb, Irqs);
 
-        let mut config = UsbConfig::new(VID, PID);
+        let mut config = UsbConfig::new(USB_PLUGIN_VID, USB_PLUGIN_PID);
         config.manufacturer = Some("piers.rocks");
         config.product = Some("One ROM");
         config.serial_number = Some(serial);

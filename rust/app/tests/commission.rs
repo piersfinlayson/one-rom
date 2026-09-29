@@ -31,7 +31,7 @@ const NEXT_DAY: &str = "20260927";
 /// It was worked out by hand from OTP.md's table.
 #[rustfmt::skip]
 const FIRE_24_F_ROWS: [u16; 57] = [
-    0x0000, 0x0000, 0x0000, 0x0000, 0x100b, 0x1612, 0x0000, 0x0000, // table
+    0x1209, 0xf540, 0x0000, 0x0000, 0x100b, 0x1612, 0x0000, 0x0000, // table
     0x1f06, 0x0000, 0x0000, 0x0000, 0x2212, 0x2b0a, 0x3007, 0x3409, // table
     0x6970, 0x7265, 0x2e73, 0x6f72, 0x6b63, 0x0073, // "piers.rocks"
     0x6e4f, 0x2065, 0x4f52, 0x204d, 0x6f42, 0x746f, 0x6f6c, 0x6461, 0x7265, // "One ROM Bootloader"
@@ -43,7 +43,7 @@ const FIRE_24_F_ROWS: [u16; 57] = [
 ];
 
 /// USB_BOOT_FLAGS for One ROM's white label. The same test holds it.
-const USB_BOOT_FLAGS: u32 = 0x0040_f130;
+const USB_BOOT_FLAGS: u32 = 0x0040_f133;
 
 /// The key the tests sign with.
 fn key() -> SigningKey {
@@ -226,7 +226,12 @@ async fn an_m_board_is_commissioned() {
         .find(|step| step.kind == StepKind::WhiteLabelTable)
         .unwrap();
     let rows: Vec<u16> = table.writes.iter().map(|write| write.row).collect();
-    assert_eq!(rows, [0xec4, 0xec5, 0xec8, 0xecc, 0xecd, 0xece, 0xecf]);
+    assert_eq!(
+        rows,
+        [
+            0xec0, 0xec1, 0xec4, 0xec5, 0xec8, 0xecc, 0xecd, 0xece, 0xecf
+        ]
+    );
     plan.execute(&mut otp, |_| {}).await.unwrap();
 
     assert_rows(&otp, &commissioned(&request, &FIRE_24_F_ROWS), "fire-24-f");
@@ -305,6 +310,37 @@ async fn a_finished_board_writes_nothing_the_second_time() {
         assert_eq!(otp.write_count(), writes, "{board_type}");
         assert_eq!(steps, plan.steps().len(), "{board_type}");
     }
+}
+
+/// A board commissioned before the white label held the bootloader's VID and
+/// PID can be given them by hand. Commissioning it again then writes nothing.
+#[tokio::test]
+async fn a_board_given_the_vid_and_pid_by_hand_writes_nothing() {
+    let request = request(Board::Fire24F, BoardSize::M);
+    let mut otp = board();
+    commission(&mut otp, &request).await.unwrap();
+    // The rows as commissioning left them before the VID and PID.
+    otp.set_raw(0xec0, 0);
+    otp.set_raw(0xec1, 0);
+    for row in 0x059..=0x05b {
+        otp.set_raw(row, 0x40_f130);
+    }
+    // The VID, the PID and their USB_BOOT_FLAGS bits, written by hand.
+    otp.write_ecc(0xec0, 0x1209).await.unwrap();
+    otp.write_ecc(0xec1, 0xf540).await.unwrap();
+    for row in 0x059..=0x05b {
+        otp.write_raw(row, 0x40_f133).await.unwrap();
+    }
+    let mut otp = copy(&otp);
+    let plan = plan(&mut otp, &request).await.unwrap();
+    assert!(
+        plan.steps()
+            .iter()
+            .flat_map(|step| &step.writes)
+            .all(|write| write.holds)
+    );
+    plan.execute(&mut otp, |_| {}).await.unwrap();
+    assert_eq!(otp.write_count(), 0);
 }
 
 // ---------------------------------------------------------------------------

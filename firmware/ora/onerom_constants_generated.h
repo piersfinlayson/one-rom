@@ -56,4 +56,20 @@
 // @since firmware 0.7.2
 #define ORA_GPIO_MAX_HOLD_MS ((uint32_t)0x0000EA60)
 
+// The USB vendor ID a One ROM presents while the system USB plugin runs.
+// @since firmware 0.8.0
+#define ORA_USB_PLUGIN_VID ((uint16_t)0x1209)
+
+// The USB product ID a One ROM presents while the system USB plugin runs.
+// @since firmware 0.8.0
+#define ORA_USB_PLUGIN_PID ((uint16_t)0xF542)
+
+// The USB vendor ID a commissioned One ROM's bootloader presents.
+// @since firmware 0.8.0
+#define ORA_USB_BOOTLOADER_VID ((uint16_t)0x1209)
+
+// The USB product ID a commissioned One ROM's bootloader presents.
+// @since firmware 0.8.0
+#define ORA_USB_BOOTLOADER_PID ((uint16_t)0xF540)
+
 #endif // ONEROM_CONSTANTS_H

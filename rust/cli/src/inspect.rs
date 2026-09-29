@@ -66,7 +66,9 @@ pub async fn commissioning_lines(device: &Device, details: bool, verbose: bool) 
             read = Commissioning::read(device).await;
             &read
         }
-        commissioning @ (Commissioning::Unreadable | Commissioning::Read(_)) => commissioning,
+        commissioning @ (Commissioning::Unreadable
+        | Commissioning::LabRunning
+        | Commissioning::Read(_)) => commissioning,
     };
     device_lines(
         device.firmware_board(),

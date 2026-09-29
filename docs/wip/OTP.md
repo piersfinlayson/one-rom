@@ -25,7 +25,7 @@ One ROM uses these rows.
 | `0x0c0`–`0x4bf` | Commissioning area |
 | `0x4c0`–`0xebd` | General store |
 | `0xebe`–`0xebf` | General store terminator |
-| `0xec0`–`0xf3f` | Bootloader USB strings |
+| `0xec0`–`0xf3f` | Bootloader USB info |
 | `0xf86`–`0xfa5` | Lock words for the commissioning area's pages |
 
 ## One ROM OTP Store
@@ -60,7 +60,7 @@ skips.
 | --- | --- | --- |
 | 1 | `COMMISSIONING_BOARD` | Board name matching firmware metadata's `hw_rev` |
 | 2 | `COMMISSIONING_SIG` | 64-byte Ed25519 signature |
-| 3 | `COMMISSIONING_MANUFACTURER` | Manufacturer's name |
+| 3 | `COMMISSIONING_MANUFACTURER` | Manufacturer's name in printable ASCII without `*` or a leading or trailing space |
 | 4 | `COMMISSIONING_DATE` | UTC commissioning date as 8 ASCII digits, `YYYYMMDD` |
 | 5 | `COMMISSIONING_SIGNER` | 16-bit ID of the signing key |
 
@@ -165,7 +165,8 @@ instance.
 
 A host verifies the signature only with the key identified by
 `COMMISSIONING_SIGNER`. It reports an ID missing from the table as an unknown
-signer.
+signer. It also rejects the signature if that key doesn't allow
+`COMMISSIONING_MANUFACTURER`.
 
 ### Signing Keys
 
@@ -175,6 +176,7 @@ provides:
 - the signer's name
 - the public key
 - a proof
+- the manufacturer strings the key may sign
 
 The proof is the signer's signature over the ASCII bytes of `onerom-signer-v1`
 followed by the signer's name.
@@ -184,32 +186,39 @@ it when they are built, and can download a newer copy. They find its current
 address in `https://images.onerom.org/signers.json`.
 
 `onerom hardware commission` refuses to use a signing key that isn't in the
-table or is retired.
+table, is retired or doesn't allow the manufacturer.
 
 ID 0 is invalid. IDs 1–255 are reserved for piers.rocks. Other signers' keys
 are assigned IDs from 256 onwards.
 
+Each key lists the manufacturers it may sign, which must be a byte exact match.
+A piers.rocks key (1-255) may allow any manufacturer in place of a list by
+specifying `*`. A manufacturer stays in a key's list permanently so that boards
+already signed continue to validate.
+
 CI rejects the row if:
 - the proof fails to verify
 - the key or the ID is already in the table
-- the key is weak.
+- the key is weak
+- the key doesn't list a manufacturer
+- a listed manufacturer isn't a valid `COMMISSIONING_MANUFACTURER` value
+- a key with ID 256 or above allows any manufacturer.
 
 A weak key is one of Ed25519's small-order points.
 
 ### Retiring a Key
 
-piers.rocks's signing server records every signature it makes before returning
-it, except when dry run is specified. The record is a public git repository with
-one file per signing key. Each line holds a CHIPID, written as the bootloader's
-USB serial number shows it, then a space and the signature's SHA-256 hash in
+piers.rocks's signing server publicly records every signature it makes before
+returning it, except when dry run is specified. The record is a git repository
+with one file per signing key. Each line holds the signature's SHA-256 hash in
 lowercase hex:
 
 ```
-E126C9F97C10ADAC 9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08
+9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08
 ```
 
-A hash is chosen so that neither the signature nor the non-CHIPID values it
-covers are revealed.
+A hash is chosen so that neither the signature nor the values it covers are
+revealed.
 
 A signature in OTP cannot be withdrawn. If a signing key or the server's PIN
 leaks, the key stays in the table and is marked retired. `onerom hardware
@@ -224,13 +233,15 @@ its hash matches, so a line added after retirement is caught.
 If there isn't a record file associated with a retired key, hardware
 validation rejects every signature made with it.
 
-## Bootloader USB Strings
+## Bootloader USB Info
 
-The RP2350 bootloader's USB strings can be replaced using OTP. The table gives
-each string's default and One ROM's value. The VID and PID are unchanged.
+The RP2350 bootloader's USB IDs and strings can be replaced using OTP. The
+table gives each one's default and One ROM's value. One ROM's VID and PID are
+registered at pid.codes.
 
-| String | Seen in | Default | One ROM | Rows |
+| Item | Seen in | Default | One ROM | Rows |
 | --- | --- | --- | --- | --- |
+| USB VID and PID | OS device list | `2E8A:000F` | `1209:F540` | 0 |
 | USB manufacturer | OS device list | `Raspberry Pi` | `piers.rocks` | 6 |
 | USB product | OS device list | `RP2350 Boot` | `One ROM Bootloader` | 9 |
 | USB serial number | OS device list | CHIPID in hex | Unchanged | 0 |
@@ -241,11 +252,11 @@ each string's default and One ROM's value. The VID and PID are unchanged.
 | INFO_UF2.TXT board ID | Text file on the USB drive | `RP2350` | `COMMISSIONING_BOARD` value, e.g. `fire-24-f` | 5–7 |
 | SCSI vendor, product and version | OS disk details | `RPI`, `RP2350` and a version | Unchanged | 0 |
 
-Defaults are from datasheet section 5.7. A row holds two characters.
+Defaults are from datasheet section 5.7. A row contains two characters.
 
-The replacement strings are listed in the USB white label table. The table
-starts at row `0xec0` and the strings follow it. `USB_WHITE_LABEL_ADDR` holds
-`0xec0`.
+The USB white label table contains the VID and PID and lists the replacement
+strings. The table starts at row `0xec0` and the strings follow it.
+`USB_WHITE_LABEL_ADDR` contains `0xec0`.
 
 This table and its strings use pages 59 and 60. They don't share a page with the
 store. The table above takes 16 of the 128 rows. These strings take 41–43 of the
@@ -301,6 +312,7 @@ leaves is it, at a nominal 11MHz and at most 24MHz.
 `onerom hardware validate` checks every commissioning instance:
 - That the commissioning data is included and valid.
 - A signature is present, from a known source, and reports the signer.
+- The signing key is allowed to sign for the manufacturer string.
 
 It reports every instance. It reports a pass or failure based on the current
 instance. When it can't download the signer table, it uses the table built into
@@ -352,11 +364,12 @@ row as soon as it writes it and stops at the first one that fails.
 
 1. It reads CHIPID from One ROM and looks up the signing key's ID in the table.
    It builds the commissioning instance's rows and gets their signature. A
-   signing server doesn't record this signature. It verifies the signature.
+   signing server doesn't publicly record this signature. It verifies the
+   signature.
 2. It shows what it will write and asks for confirmation. It refuses a
    commissioning instance that would overlap row `0x4c0`. `--dry-run` stops
-   here. Once confirmed, a signing server signs again and records the
-   signature, and the two signatures must match.
+   here. Once confirmed, a signing server signs again and publicly records
+   the signature, and the two signatures must match.
 3. On a non-M board it writes `FLASH_DEVINFO`.
 4. It writes the commissioning instance's magic row, then its version row, then
    each entry with `COMMISSIONING_SIG` last. Each entry is written length row

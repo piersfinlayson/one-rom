@@ -12,6 +12,7 @@ use log::{Level, debug, log, warn};
 use onerom_config::mcu::{Rp235xChipId, RpVariant};
 use onerom_fw_parser::{ParsedDevice, Parser};
 use onerom_lab_parser::LabParser;
+use onerom_metadata::{USB_BOOTLOADER_PID, USB_BOOTLOADER_VID, USB_PLUGIN_PID, USB_PLUGIN_VID};
 use picoboot::cmd::PicobootStatus;
 use picoboot::{
     Picoboot, PicobootCmd, PicobootCmdId, PicobootXCmd, Reader as PicobootReader, Target,
@@ -44,12 +45,12 @@ pub const FLASH_READ_SIZE_BYTES: u32 = FLASH_READ_SIZE_KB * 1024;
 pub const DEFAULT_ONEROM_PICOBOOT_TARGETS: [Target; 3] = [
     Target::Rp2350,
     Target::Custom {
-        vid: 0x1209,
-        pid: 0xF540,
+        vid: USB_BOOTLOADER_VID,
+        pid: USB_BOOTLOADER_PID,
     },
     Target::Custom {
-        vid: 0x1209,
-        pid: 0xF542,
+        vid: USB_PLUGIN_VID,
+        pid: USB_PLUGIN_PID,
     },
 ];
 
@@ -1277,16 +1278,16 @@ mod tests {
                 detail: "Failed to reset PICOBOOT interface: 1209:f542".to_string(),
             },
             serial: serial.map(str::to_owned),
-            vid: 0x1209,
-            pid: 0xf542,
+            vid: USB_PLUGIN_VID,
+            pid: USB_PLUGIN_PID,
             bus_id: "01".to_string(),
             address: 3,
         }
     }
 
     const TARGET: Target = Target::Custom {
-        vid: 0x1209,
-        pid: 0xf542,
+        vid: USB_PLUGIN_VID,
+        pid: USB_PLUGIN_PID,
     };
 
     #[test]

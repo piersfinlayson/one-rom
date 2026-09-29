@@ -10,6 +10,7 @@ use log::{debug, error, info, trace, warn};
 use onerom_cli::usb::read_chip_info;
 use onerom_config::Model;
 use onerom_config::mcu::{Rp235xChipId, RpVariant};
+use onerom_metadata::{USB_BOOTLOADER_PID, USB_BOOTLOADER_VID, USB_PLUGIN_PID, USB_PLUGIN_VID};
 use picoboot::{Picoboot, Target};
 use std::time::Duration;
 
@@ -18,23 +19,19 @@ use crate::device::{Address, Client, Message};
 use crate::hw::HardwareInfo;
 use crate::internal_error;
 
-pub const FIRE_VID: u16 = 0x1209;
-pub const FIRE_BOOT_LOADER_PID: u16 = 0xf540;
-pub const FIRE_RUN_PID: u16 = 0xf542;
-
 // Studio can manage:
 // - Stock RP2350 MCUs
-// - One ROM's custom bootloader VID/PID 1209:f540
-// - One ROM's application VID/PID 1209:f542
+// - A commissioned One ROM's bootloader
+// - One ROM running the system USB plugin
 const FIRE_TARGETS: [Target; 3] = [
     Target::Rp2350,
     Target::Custom {
-        vid: FIRE_VID,
-        pid: FIRE_BOOT_LOADER_PID,
+        vid: USB_BOOTLOADER_VID,
+        pid: USB_BOOTLOADER_PID,
     },
     Target::Custom {
-        vid: FIRE_VID,
-        pid: FIRE_RUN_PID,
+        vid: USB_PLUGIN_VID,
+        pid: USB_PLUGIN_PID,
     },
 ];
 
@@ -198,7 +195,7 @@ impl UsbDeviceType {
     pub fn is_run_capable(&self) -> bool {
         matches!(
             self,
-            UsbDeviceType::Fire(fire) if fire.vid() == FIRE_VID && fire.pid() == FIRE_RUN_PID
+            UsbDeviceType::Fire(fire) if fire.vid() == USB_PLUGIN_VID && fire.pid() == USB_PLUGIN_PID
         )
     }
 

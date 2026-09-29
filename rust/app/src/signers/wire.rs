@@ -6,11 +6,13 @@
 //!
 //! `build.rs` also includes this file to build `signing-keys.json` into the
 //! crate. So it uses only the crates the build script has and leaves the
-//! checks that need a signature library to the parent module.
+//! checks that need a signature library or onerom-metadata to the parent
+//! module.
 
 use alloc::borrow::Cow;
 use alloc::string::String;
 use alloc::vec::Vec;
+use core::ops::RangeInclusive;
 
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
@@ -20,6 +22,13 @@ const TABLE_VERSION: u32 = 1;
 
 /// The pointer format version this crate reads.
 const POINTER_VERSION: u32 = 1;
+
+/// The IDs reserved for piers.rocks's keys.
+pub(crate) const PIERS_ROCKS_IDS: RangeInclusive<u16> = 1..=255;
+
+/// The `manufacturers` entry that allows any manufacturer. Only a key in
+/// [`PIERS_ROCKS_IDS`] can have it, and only as the list's one entry.
+const ANY_MANUFACTURER: &str = "*";
 
 /// Why one of these was refused:
 /// - a signer table
@@ -41,7 +50,7 @@ pub enum SignerError {
     NotHttps(String),
 
     /// A signer's field doesn't hold a valid value.
-    #[error("signer {id} has an invalid {field}")]
+    #[error("signer {id} has an invalid {field} field")]
     BadField {
         /// The signer's ID.
         id: u16,
@@ -103,14 +112,24 @@ pub(crate) struct Record {
     pub(crate) sha256: [u8; 32],
 }
 
-/// A decoded signer entry. Everything but its public key and proof has been
-/// checked.
+/// The manufacturers a key may sign.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum Manufacturers {
+    /// Any manufacturer.
+    Any,
+    /// Only these names, each matched byte for byte.
+    Listed(Cow<'static, [Cow<'static, str>]>),
+}
+
+/// A decoded signer entry. Everything but its public key, its proof and its
+/// listed manufacturers' names has been checked.
 pub(crate) struct Entry {
     pub(crate) id: u16,
     pub(crate) name: String,
     pub(crate) public_key: [u8; 32],
     pub(crate) proof: [u8; 64],
     pub(crate) status: Status,
+    pub(crate) manufacturers: Manufacturers,
 }
 
 /// A file's `version`. It's read before the rest so a newer file's shape
@@ -133,6 +152,7 @@ struct SignerFile {
     proof: String,
     #[serde(default)]
     retired: Option<RetiredFile>,
+    manufacturers: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -148,8 +168,8 @@ struct PointerFile {
     signing_keys_url: String,
 }
 
-/// Decodes a signer table. Checks everything except each signer's public key
-/// and proof.
+/// Decodes a signer table. Checks everything except each signer's public key,
+/// proof and listed manufacturers' names.
 pub(crate) fn decode_table(json: &[u8]) -> Result<Vec<Entry>, SignerError> {
     check_version(json, TABLE_VERSION)?;
     let file: TableFile = from_json(json)?;
@@ -231,13 +251,35 @@ fn decode_signer(signer: SignerFile) -> Result<Entry, SignerError> {
             });
         }
     };
+    let manufacturers = decode_manufacturers(signer.manufacturers, id)?;
     Ok(Entry {
         id,
         name: signer.name,
         public_key,
         proof,
         status,
+        manufacturers,
     })
+}
+
+/// Decodes signer `id`'s `manufacturers`. It refuses an empty list, and
+/// [`ANY_MANUFACTURER`] beside other entries or for a key outside
+/// [`PIERS_ROCKS_IDS`].
+fn decode_manufacturers(names: Vec<String>, id: u16) -> Result<Manufacturers, SignerError> {
+    let refused = SignerError::BadField {
+        id,
+        field: "manufacturers",
+    };
+    match names.as_slice() {
+        [] => Err(refused),
+        [only] if only == ANY_MANUFACTURER && PIERS_ROCKS_IDS.contains(&id) => {
+            Ok(Manufacturers::Any)
+        }
+        names if names.iter().any(|name| name == ANY_MANUFACTURER) => Err(refused),
+        _ => Ok(Manufacturers::Listed(Cow::Owned(
+            names.into_iter().map(Cow::Owned).collect(),
+        ))),
+    }
 }
 
 /// The `N` bytes `text` holds in hex of either case.

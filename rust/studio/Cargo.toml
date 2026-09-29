@@ -54,6 +54,7 @@ assets = [
     ["target/release/onerom-studio", "usr/bin/", "755"],
     ["scripts/linux/onerom-studio.desktop", "usr/share/applications/", "644"],
     ["scripts/70-onerom-studio.rules", "lib/udev/rules.d/70-onerom-studio.rules", "644"],
+    ["../cli/scripts/69-onerom-cli.rules", "lib/udev/rules.d/69-onerom-cli.rules", "644"],
     ["assets/onerom-512x512.png", "usr/share/icons/hicolor/512x512/apps/onerom-studio.png", "644"],
     ["assets/onerom-256x256.png", "usr/share/icons/hicolor/256x256/apps/onerom-studio.png", "644"],
     ["assets/onerom-128x128.png", "usr/share/icons/hicolor/128x128/apps/onerom-studio.png", "644"],
@@ -68,6 +69,7 @@ onerom-config = { workspace = true, features = ["schemars"] }
 onerom-fw = { workspace = true }
 onerom-fw-parser = { workspace = true }
 onerom-gen = { workspace = true }
+onerom-metadata = { workspace = true }
 
 dfu-rs = "0.2.1"
 picoboot = { git = "https://github.com/piersfinlayson/picoboot", rev = "92b115b63e02b5b8800185959110ca15189dc2f7", features = ["reader", "tokio"] }

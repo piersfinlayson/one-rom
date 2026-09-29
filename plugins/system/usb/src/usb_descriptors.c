@@ -27,16 +27,6 @@
 #include "usb_descriptors.h"
 #include "usb_plugin.h"
 
-/* A combination of interfaces must have a unique product id, since PC will save device driver after the first plug.
- * Same VID/PID with different interface e.g MSC (first), then CDC (later) will possibly cause system error on PC.
- *
- * Auto ProductID layout's Bitmap:
- *   [MSB]       MIDI | HID | MSC | CDC          [LSB]
- */
-#define PID_MAP(itf, n)  ((CFG_TUD_##itf) ? (1 << (n)) : 0)
-#define USB_PID           (0x4000 | PID_MAP(CDC, 0) | PID_MAP(MSC, 1) | PID_MAP(HID, 2) | \
-                           PID_MAP(MIDI, 3) | PID_MAP(VENDOR, 4) )
-
 //--------------------------------------------------------------------+
 // Device Descriptors
 //--------------------------------------------------------------------+
@@ -53,8 +43,8 @@ static tusb_desc_device_t const desc_device =
     .bDeviceProtocol    = 0,
     .bMaxPacketSize0    = CFG_TUD_ENDPOINT0_SIZE,
 
-    .idVendor           = ONE_ROM_USB_SYSTEM_PLUGIN_VID,
-    .idProduct          = ONE_ROM_USB_SYSTEM_PLUGIN_PID,
+    .idVendor           = ORA_USB_PLUGIN_VID,
+    .idProduct          = ORA_USB_PLUGIN_PID,
     .bcdDevice          = 0x0100,
 
     .iManufacturer      = 0x01,

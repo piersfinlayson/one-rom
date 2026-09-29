@@ -20,6 +20,7 @@ use iced::{Element, Subscription, Task, event, keyboard};
 use log::{debug, error, info, trace, warn};
 use onerom_config::Model;
 use onerom_config::mcu::Rp235xChipId;
+use onerom_metadata::{USB_PLUGIN_PID, USB_PLUGIN_VID};
 
 use crate::app::AppMessage;
 use crate::hw::HardwareInfo;
@@ -209,7 +210,7 @@ impl Device {
     pub fn is_live_usb_device(&self) -> bool {
         matches!(
             &self.selected,
-            DeviceType::Usb(UsbDeviceType::Fire(p)) if p.vid() == usb::FIRE_VID && p.pid() == usb::FIRE_RUN_PID
+            DeviceType::Usb(UsbDeviceType::Fire(p)) if p.vid() == USB_PLUGIN_VID && p.pid() == USB_PLUGIN_PID
         )
     }
 

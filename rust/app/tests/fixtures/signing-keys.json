@@ -5,13 +5,15 @@
       "id": 1,
       "name": "piers.rocks",
       "public_key": "1111111111111111111111111111111111111111111111111111111111111111",
-      "proof": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
+      "proof": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+      "manufacturers": ["*"]
     },
     {
       "id": 2,
       "name": "Zoë \"Q\" Ltd\t\\",
       "public_key": "2222222222222222222222222222222222222222222222222222222222222222",
       "proof": "a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2",
+      "manufacturers": ["piers.rocks", "\"Q\" Ltd \\"],
       "retired": {}
     },
     {
@@ -19,6 +21,7 @@
       "name": "another signer",
       "public_key": "3333333333333333333333333333333333333333333333333333333333333333",
       "proof": "a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3",
+      "manufacturers": ["another manufacturer"],
       "retired": {
         "record": "https://example.com/signatures/256.txt",
         "sha256": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e"

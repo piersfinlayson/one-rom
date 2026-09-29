@@ -145,7 +145,7 @@ pub async fn cmd_commission(
     // a missing PIN or a refused key leaves it as it was.
     let signing = signing(args)?;
     let (table, _) = signer_table().await;
-    let signer = signer_for(&table, &signing).await?;
+    let signer = signer_for(&table, &signing, &args.manufacturer).await?;
 
     let stopped = reboot_to_stopped(options, &STOP_FROM).await?;
     let result = commission(options, args, &signing, (signer, &table)).await;
@@ -229,23 +229,26 @@ async fn commission(
     .await
 }
 
-/// The key in `table` that `signing` signs with. It refuses a key the table
-/// doesn't contain or has retired. For a signing server it fetches the key's
-/// public key and refuses one that isn't the table's.
+/// The key in `table` that `signing` signs `manufacturer` with. It refuses a
+/// key the table doesn't contain, has retired or doesn't allow to sign
+/// `manufacturer`. For a signing server it then fetches the key's public key
+/// and refuses one that isn't the table's.
 pub(crate) async fn signer_for<'a>(
     table: &'a SignerTable,
     signing: &Signing,
+    manufacturer: &str,
 ) -> Result<&'a Signer, Error> {
-    match signing {
-        Signing::File(key) => signing_key(table, &key.public_key()),
-        Signing::Server(server) => {
-            let signer = signer_with_id(table, server.id())?;
-            let public_key = server.public_key().await?;
-            check_server_key(table, server.id(), &public_key, server.address())?;
-            Ok(signer)
-        }
-        Signing::Given { key_id, .. } => signer_with_id(table, *key_id),
+    let signer = match signing {
+        Signing::File(key) => signing_key(table, &key.public_key())?,
+        Signing::Server(server) => signer_with_id(table, server.id())?,
+        Signing::Given { key_id, .. } => signer_with_id(table, *key_id)?,
+    };
+    check_key_allows(signer, manufacturer)?;
+    if let Signing::Server(server) = signing {
+        let public_key = server.public_key().await?;
+        check_server_key(table, server.id(), &public_key, server.address())?;
     }
+    Ok(signer)
 }
 
 /// The key in `table` whose public key is `public_key`. Refuses a key that
@@ -278,6 +281,19 @@ fn current(signer: &Signer) -> Result<&Signer, Error> {
     Ok(signer)
 }
 
+/// Refuses `manufacturer` where `signer`'s key doesn't allow it.
+pub(crate) fn check_key_allows(signer: &Signer, manufacturer: &str) -> Result<(), Error> {
+    if signer.allows(manufacturer) {
+        Ok(())
+    } else {
+        Err(Error::ManufacturerNotAllowed {
+            id: signer.id(),
+            name: escape_controls(signer.name()),
+            manufacturer: manufacturer.to_string(),
+        })
+    }
+}
+
 /// Refuses `public_key`, the public key of key `id` on the signing server at
 /// `address`, where it isn't key `id` in `table`.
 pub(crate) fn check_server_key(
@@ -301,7 +317,7 @@ pub(crate) fn check_server_key(
 /// `signing` signs the instance and `signer`'s key in `table` checks the
 /// signature. With `--yes` it writes without asking. Otherwise `input` holds
 /// the user's answer. `--verbose` lists every row and the bootloader USB
-/// strings it writes. Returns whether it wrote to OTP.
+/// info it writes. Returns whether it wrote to OTP.
 pub(crate) async fn commission_otp<O: LocalOtpAccess, S: SignatureSource>(
     otp: &mut O,
     args: &HardwareCommissionArgs,
@@ -402,7 +418,7 @@ pub(crate) async fn commission_otp<O: LocalOtpAccess, S: SignatureSource>(
     // The strings are the same on every One ROM apart from the board's name,
     // so only --verbose shows them.
     if options.verbose && writes_white_label_strings(&plan) {
-        line(out, "Bootloader USB strings:")?;
+        line(out, "Bootloader USB info:")?;
         for text in labelled_lines(&white_label_strings(args.board)) {
             line(out, text)?;
         }
@@ -441,8 +457,8 @@ fn writes_white_label_strings(plan: &Plan) -> bool {
     })
 }
 
-/// The bootloader USB strings `hardware commission` writes for `board`, a
-/// label and value each.
+/// The bootloader USB IDs and strings `hardware commission` writes for
+/// `board`, a label and value each.
 fn white_label_strings(board: Board) -> Vec<Labelled> {
     // A test converts every board's white label.
     let json = white_label(board)
@@ -801,7 +817,7 @@ pub async fn cmd_sign(options: &Options, args: &HardwareSignArgs) -> Result<(), 
         &mut ui,
     )?;
     let (table, _) = signer_table().await;
-    let signer = signer_for(&table, &signing).await?;
+    let signer = signer_for(&table, &signing, &args.manufacturer).await?;
     sign_values(
         args,
         &signing,
@@ -945,9 +961,11 @@ fn values_error(error: BuildError) -> Error {
             "--manufacturer".to_string(),
             "The manufacturer's name is too long to fit in OTP.".to_string(),
         ),
-        // clap refuses an empty manufacturer and a bad date, and every key's ID
-        // is 1 or more. Only an instance has a first row.
+        // clap refuses a manufacturer check_manufacturer() refuses and a bad
+        // date, and every key's ID is 1 or more. Only an instance has a first
+        // row.
         BuildError::EmptyManufacturer
+        | BuildError::BadManufacturer
         | BuildError::BadDate
         | BuildError::BadSigner
         | BuildError::BadFirstRow => Error::Commission(CommissionError::Build(error)),
@@ -1359,6 +1377,9 @@ fn verdict_text(verdict: Verdict) -> &'static str {
         Verdict::Verified => "verified",
         Verdict::Recorded => "verified and recorded before the key was retired",
         Verdict::NotRecorded | Verdict::RecordChanged => "invalid due to retired key",
+        Verdict::ManufacturerNotAllowed => {
+            "invalid because the signing key cannot sign this manufacturer"
+        }
         Verdict::BadSignature => "invalid",
         Verdict::UnknownSigner => "invalid due to unknown signing key",
         Verdict::Incomplete => "incomplete",
@@ -1430,25 +1451,30 @@ async fn signer_table() -> (SignerTable, SigningKeys) {
     }
 }
 
-/// The warning that the built-in table of signing keys is used because the
-/// download failed with `e`.
+/// The warning that the built-in table of signing keys is used because
+/// downloading the latest failed with `e`. A `Signer` error means the latest
+/// was downloaded and refused.
 pub(crate) fn built_in_warning(e: &AppError) -> String {
-    let reason = match e {
+    let not_downloaded =
+        "Warning: using the built-in signing keys because the latest couldn't be downloaded.";
+    let (first, reason) = match e {
         onerom_app::Error::Fetch {
             source,
             error: onerom_fw::Error::Network { .. },
-        } => format!("Couldn't reach {source}."),
+        } => (not_downloaded, format!("Couldn't reach {source}.")),
         onerom_app::Error::Fetch {
             source,
             error: onerom_fw::Error::Http { status, .. },
-        } => format!("{source} returned HTTP {status}."),
-        onerom_app::Error::Fetch { .. }
-        | onerom_app::Error::Plugin(_)
-        | onerom_app::Error::Signer(_) => one_line(&e.to_string()),
+        } => (not_downloaded, format!("{source} returned HTTP {status}.")),
+        onerom_app::Error::Fetch { .. } | onerom_app::Error::Plugin(_) => {
+            (not_downloaded, one_line(&e.to_string()))
+        }
+        onerom_app::Error::Signer(_) => (
+            "Warning: using the built-in signing keys because the latest is invalid.",
+            sentence(&one_line(&e.to_string())),
+        ),
     };
-    format!(
-        "Warning: using the built-in signing keys because the latest couldn't be downloaded.\n  {reason}"
-    )
+    format!("{first}\n  {reason}")
 }
 
 /// A command writing or checking OTP. Each has its own text for firmware for
@@ -1551,7 +1577,7 @@ mod tests {
         (StepKind::Instance, 60),
         (StepKind::Lock { page: 3 }, 1),
         (StepKind::WhiteLabelStrings, 41),
-        (StepKind::WhiteLabelTable, 7),
+        (StepKind::WhiteLabelTable, 9),
         (StepKind::WhiteLabelAddr, 1),
         (StepKind::UsbBootFlags, 3),
     ];
@@ -1865,7 +1891,7 @@ mod tests {
         // Every row is written, the lock word and USB_BOOT_FLAGS among them.
         assert_eq!(otp.write_count(), first_run_rows());
         assert_eq!(otp.rows()[0xf87], 0x151515);
-        assert_eq!(otp.rows()[0x059..=0x05b], [0x40f130; 3]);
+        assert_eq!(otp.rows()[0x059..=0x05b], [0x40f133; 3]);
         // A run on an M board doesn't write FLASH_DEVINFO.
         assert!(!out.contains(&step_name(StepKind::FlashDevinfo)), "{out}");
 
@@ -1937,7 +1963,7 @@ mod tests {
         assert!(!shows(out.lines(), &["0x0c1"]), "{out}");
     }
 
-    /// --verbose shows the bootloader USB strings a run writes, a line each in
+    /// --verbose shows the bootloader USB info a run writes, a line each in
     /// turn. A run that doesn't write them doesn't show them.
     #[tokio::test]
     async fn verbose_shows_the_strings_a_run_writes() {
@@ -2015,7 +2041,7 @@ mod tests {
                 ],
                 vec![
                     (StepKind::WhiteLabelStrings, 33),
-                    (StepKind::WhiteLabelTable, 7),
+                    (StepKind::WhiteLabelTable, 9),
                     (StepKind::WhiteLabelAddr, 1),
                     (StepKind::UsbBootFlags, 3),
                 ],
@@ -2024,7 +2050,7 @@ mod tests {
         );
         // Each list's total.
         assert!(shows(out.lines(), &["69"]), "{out}");
-        assert!(shows(out.lines(), &["44"]), "{out}");
+        assert!(shows(out.lines(), &["46"]), "{out}");
     }
 
     /// A row that doesn't contain its value once written fails the run.
@@ -2290,6 +2316,29 @@ mod tests {
         assert_eq!(value(SigningKeys::Downloaded), json!("downloaded"));
     }
 
+    /// A refused table's warning has another first line from a failed
+    /// download's. Its reason identifies the signer and the field.
+    #[test]
+    fn a_refused_table_is_told_apart_from_a_failed_download() {
+        let url = "https://images.onerom.org/signers.json";
+        let failed = AppError::fetch(
+            url,
+            onerom_fw::Error::Http {
+                url: url.to_string(),
+                status: 404,
+            },
+        );
+        let refused = AppError::Signer(onerom_app::SignerError::BadField {
+            id: 300,
+            field: "manufacturers",
+        });
+        let failed = built_in_warning(&failed);
+        let refused = built_in_warning(&refused);
+        assert_ne!(failed.lines().next(), refused.lines().next());
+        let reason = refused.lines().nth(1).unwrap();
+        assert!(holds(reason, &["300", "manufacturers"]), "{refused}");
+    }
+
     /// The verdict `--json` shows on `otp`'s first instance checked against
     /// `table`.
     async fn verdict(otp: &mut MemoryOtp, table: &SignerTable, files: &Files) -> serde_json::Value {
@@ -2330,6 +2379,33 @@ mod tests {
         assert_eq!(verdict, "unknown_signer");
     }
 
+    /// The board is commissioned by piers.rocks and signed by key 1.
+    #[tokio::test]
+    async fn a_manufacturer_the_key_doesnt_allow_doesnt_validate() {
+        let mut otp = commissioned_board().await;
+        let files = Files(Vec::new());
+        let refusing = test_board::table_allowing(&["onerom.org"]);
+        let (result, out) = validate(&mut otp, &refusing, &files, false).await;
+        // The reason is the verdict's text.
+        let error = result.unwrap_err();
+        let expected = sentence(verdict_text(Verdict::ManufacturerNotAllowed));
+        assert!(
+            matches!(&error, Error::NotValidated(reason) if *reason == expected),
+            "{error}\n{out}"
+        );
+
+        let (result, out) = validate(&mut otp, &refusing, &files, true).await;
+        assert!(matches!(result, Err(Error::NotValidated(_))));
+        let json: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(json["instances"][0]["verdict"], "manufacturer_not_allowed");
+        assert_eq!(json["instances"][0]["error"], serde_json::Value::Null);
+        assert_eq!(json["valid"], false);
+
+        let allowing = test_board::table_allowing(&["piers.rocks"]);
+        let (result, out) = validate(&mut otp, &allowing, &files, false).await;
+        result.unwrap_or_else(|e| panic!("{e}\n{out}"));
+    }
+
     /// A table in which the test key is retired with a record at
     /// [`RECORD_URL`] whose SHA-256 is `record`'s.
     fn retired_table(record: &[u8]) -> SignerTable {
@@ -2343,7 +2419,7 @@ mod tests {
     async fn record_line(otp: &mut MemoryOtp) -> String {
         let area = read_commissioning(otp).await.unwrap();
         let signature = area.current().unwrap().signature().unwrap();
-        format!("{}\n", RecordLine::new(CHIP_ID, signature))
+        format!("{}\n", RecordLine::new(signature))
     }
 
     #[tokio::test]
@@ -2399,8 +2475,7 @@ mod tests {
         assert_eq!(verdict(&mut otp, &retired, &files).await, "not_recorded");
 
         // A record that doesn't list it.
-        let record =
-            b"E126C9F97C10ADAC 9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08\n";
+        let record = b"9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08\n";
         let retired = retired_table(record);
         let files = Files(vec![(RECORD_URL.to_string(), record.to_vec())]);
         let (result, _) = validate(&mut otp, &retired, &files, false).await;
@@ -2653,7 +2728,7 @@ mod tests {
         table: &SignerTable,
     ) -> (Result<bool, Error>, String) {
         let signing = signing(args).unwrap();
-        let signer = match signer_for(table, &signing).await {
+        let signer = match signer_for(table, &signing, &args.manufacturer).await {
             Ok(signer) => signer,
             Err(e) => return (Err(e), String::new()),
         };
@@ -2741,6 +2816,49 @@ mod tests {
             "{result:?}"
         );
         assert_eq!(otp.write_count(), 0);
+    }
+
+    /// Whether `result` is the refusal of key 1 signing piers.rocks.
+    fn piers_rocks_not_allowed<T>(result: &Result<T, Error>) -> bool {
+        matches!(
+            result,
+            Err(Error::ManufacturerNotAllowed { id: 1, manufacturer, .. })
+                if manufacturer == "piers.rocks"
+        )
+    }
+
+    /// Each signature source is refused a manufacturer its key doesn't allow
+    /// before the board is written. A signing server's key is refused before
+    /// its public key is fetched.
+    #[tokio::test]
+    async fn commission_refuses_a_manufacturer_the_key_doesnt_allow() {
+        let (_dir, path) = key_file();
+        let key_file = test_board::args("fire-24-f", BoardSize::M, path);
+        let mut server = test_board::args("fire-24-f", BoardSize::M, std::path::PathBuf::new());
+        server.key = None;
+        server.signer = Some("https://example.invalid".to_string());
+        server.key_id = Some(1);
+        server.pin = Some("1234".to_string());
+        let mut signature = signature_args("fire-24-f", BoardSize::M, [0; 64]);
+        signature.signature = Some(signature_for(&signature, 1));
+
+        let refusing = test_board::table_allowing(&["onerom.org"]);
+        for args in [&key_file, &server, &signature] {
+            let signing = signing(args).unwrap();
+            let result = signer_for(&refusing, &signing, &args.manufacturer).await;
+            assert!(piers_rocks_not_allowed(&result), "{:?}", result.err());
+        }
+        let mut otp = blank_board();
+        let (result, _) = commission_signed(&mut otp, &signature, &refusing).await;
+        assert!(piers_rocks_not_allowed(&result), "{result:?}");
+        assert_eq!(otp.write_count(), 0);
+
+        let allowing = test_board::table_allowing(&["onerom.org", "piers.rocks"]);
+        for args in [&key_file, &signature] {
+            let signing = signing(args).unwrap();
+            let signer = signer_for(&allowing, &signing, &args.manufacturer).await;
+            assert_eq!(signer.unwrap().id(), 1);
+        }
     }
 
     /// A signing server's key is refused where its public key isn't the
@@ -3071,6 +3189,36 @@ mod tests {
         assert!(matches!(result, Err(Error::RecordedSignatureDiffers)));
         assert_eq!(out, "");
         assert_eq!(*signing.requests.borrow(), ["dry run", "record"]);
+    }
+
+    /// `hardware sign` refuses a manufacturer the key doesn't allow, for a
+    /// key file and a signing server. The server's key is refused before its
+    /// public key is fetched and before it's asked to sign.
+    #[tokio::test]
+    async fn sign_refuses_a_manufacturer_the_key_doesnt_allow() {
+        let (_dir, path) = key_file();
+        let words = to_sign("fire-24-f", "piers.rocks");
+        let words: Vec<&str> = words.iter().map(String::as_str).collect();
+        let key_file = [&words[..], &["--key", path.to_str().unwrap()]].concat();
+        let server = [
+            &words[..],
+            &["--signer", "https://example.invalid", "--key-id", "1"],
+            &["--pin", "1234"],
+        ]
+        .concat();
+        let table = test_board::table_allowing(&["onerom.org"]);
+        for words in [key_file, server] {
+            let args = sign_args(&words);
+            let signing = key_source(
+                (args.signer.as_deref(), args.key_id),
+                args.key.as_deref(),
+                args.pin.as_deref(),
+                &mut std::io::sink(),
+            )
+            .unwrap();
+            let result = signer_for(&table, &signing, &args.manufacturer).await;
+            assert!(piers_rocks_not_allowed(&result), "{:?}", result.err());
+        }
     }
 
     #[test]

@@ -43,7 +43,8 @@ fn key(seed: u8) -> SigningKey {
     SigningKey::from_bytes(&[seed; 32])
 }
 
-/// A current signer's entry with its proof made by `key`.
+/// A current signer's entry with its proof made by `key`. It allows only
+/// piers.rocks.
 fn signer(id: u16, name: &str, key: &SigningKey) -> Value {
     let proof = key.sign(&[b"onerom-signer-v1".as_slice(), name.as_bytes()].concat());
     json!({
@@ -51,12 +52,19 @@ fn signer(id: u16, name: &str, key: &SigningKey) -> Value {
         "name": name,
         "public_key": hex::encode(key.verifying_key().as_bytes()),
         "proof": hex::encode(proof.to_bytes()),
+        "manufacturers": ["piers.rocks"],
     })
 }
 
 /// `entry` with `retired` as its `retired` object.
 fn retired(mut entry: Value, retired: Value) -> Value {
     entry["retired"] = retired;
+    entry
+}
+
+/// `entry` with `manufacturers` as its `manufacturers` list.
+fn allowing(mut entry: Value, manufacturers: &[&str]) -> Value {
+    entry["manufacturers"] = json!(manufacturers);
     entry
 }
 
@@ -317,6 +325,94 @@ fn a_record_address_that_isnt_https_is_refused() {
     assert_eq!(refusal(vec![entry]), SignerError::NotHttps(url.to_string()));
 }
 
+#[test]
+fn a_signer_without_manufacturers_is_refused() {
+    let mut entry = signer(1, "piers.rocks", &key(1));
+    entry.as_object_mut().unwrap().remove("manufacturers");
+    assert!(matches!(refusal(vec![entry]), SignerError::Json(_)));
+}
+
+/// Each list is refused:
+/// - an empty list
+/// - a name that isn't a valid `COMMISSIONING_MANUFACTURER` value
+/// - `*` beside another entry
+#[test]
+fn a_bad_manufacturers_list_is_refused() {
+    for manufacturers in [
+        &[][..],
+        &[""],
+        &[" piers.rocks"],
+        &["piers.rocks "],
+        &["piers*rocks"],
+        &["**"],
+        &["Café"],
+        &["piers\trocks"],
+        &["piers.rocks", "a*b"],
+        &["*", "piers.rocks"],
+        &["piers.rocks", "*"],
+        &["*", "*"],
+    ] {
+        let entry = allowing(signer(1, "piers.rocks", &key(1)), manufacturers);
+        assert_eq!(
+            refusal(vec![entry]),
+            SignerError::BadField {
+                id: 1,
+                field: "manufacturers"
+            },
+            "{manufacturers:?}"
+        );
+    }
+}
+
+/// Only a piers.rocks key, with an ID from 1 to 255, can allow any
+/// manufacturer.
+#[test]
+fn only_a_piers_rocks_key_allows_any_manufacturer() {
+    for id in [1, 255] {
+        let entry = allowing(signer(id, "piers.rocks", &key(1)), &["*"]);
+        let table = SignerTable::parse(&table(vec![entry])).unwrap();
+        assert!(table.get(id).is_some(), "{id}");
+    }
+    for id in [256, 300, u16::MAX] {
+        let entry = allowing(signer(id, "another signer", &key(1)), &["*"]);
+        assert_eq!(
+            refusal(vec![entry]),
+            SignerError::BadField {
+                id,
+                field: "manufacturers"
+            },
+            "{id}"
+        );
+    }
+}
+
+/// A listed manufacturer matches byte for byte, without case folding or
+/// trimming.
+#[test]
+fn a_key_allows_only_the_manufacturers_it_lists() {
+    let entry = allowing(signer(256, "another signer", &key(1)), &["Acme", "a b"]);
+    let table = SignerTable::parse(&table(vec![entry])).unwrap();
+    let signer = table.get(256).unwrap();
+    for allowed in ["Acme", "a b"] {
+        assert!(signer.allows(allowed), "{allowed:?}");
+    }
+    for refused in [
+        "acme", "ACME", " Acme", "Acme ", "Acm", "Acme Ltd", "a  b", "a\tb", "ab", "", "*",
+    ] {
+        assert!(!signer.allows(refused), "{refused:?}");
+    }
+}
+
+#[test]
+fn a_key_allowing_any_manufacturer_allows_every_name() {
+    let entry = allowing(signer(1, "piers.rocks", &key(1)), &["*"]);
+    let table = SignerTable::parse(&table(vec![entry])).unwrap();
+    let signer = table.get(1).unwrap();
+    for name in ["piers.rocks", "onerom.org", "Acme", "*"] {
+        assert!(signer.allows(name), "{name:?}");
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Downloading
 // ---------------------------------------------------------------------------
@@ -417,7 +513,7 @@ fn area(writes: &[RowWrite]) -> CommissioningArea {
 
 /// The record line for `area`'s first instance.
 fn record_line(area: &CommissioningArea) -> RecordLine {
-    RecordLine::new(CHIP_ID, area.instances()[0].signature().unwrap())
+    RecordLine::new(area.instances()[0].signature().unwrap())
 }
 
 /// The verdict on `area`'s first instance against the table `table`.
@@ -447,7 +543,7 @@ async fn a_current_keys_signature_is_verified() {
 #[tokio::test]
 async fn a_retired_keys_signature_in_its_record_is_recorded() {
     let area = area(&writes(2, &key(2)));
-    let other = RecordLine::new([1, 2, 3, 4], &[0; 64]);
+    let other = RecordLine::new(&[0; 64]);
     let record = format!("{other}\n\n{}\n", record_line(&area));
     let fetch = MockFetch::new().with(RECORD_URL, record.clone().into_bytes());
 
@@ -462,7 +558,7 @@ async fn a_retired_keys_signature_in_its_record_is_recorded() {
 #[tokio::test]
 async fn a_retired_keys_signature_missing_from_its_record_is_not_recorded() {
     let area = area(&writes(2, &key(2)));
-    let record = format!("{}\n", RecordLine::new([1, 2, 3, 4], &[0; 64]));
+    let record = format!("{}\n", RecordLine::new(&[0; 64]));
     let fetch = MockFetch::new().with(RECORD_URL, record.clone().into_bytes());
 
     let verdict = verdict(&area, &table_with_record(record.as_bytes()), &fetch)
@@ -510,6 +606,55 @@ async fn a_signature_by_another_key_is_bad() {
         .unwrap();
 
     assert_eq!(verdict, Verdict::BadSignature);
+}
+
+/// The instance is by piers.rocks and the key allows only onerom.org.
+#[tokio::test]
+async fn a_manufacturer_the_key_doesnt_allow_isnt_accepted() {
+    let fetch = MockFetch::new();
+    let entry = allowing(signer(1, "piers.rocks", &key(1)), &["onerom.org"]);
+
+    let verdict = verdict(&area(&writes(1, &key(1))), &table(vec![entry]), &fetch)
+        .await
+        .unwrap();
+
+    assert_eq!(verdict, Verdict::ManufacturerNotAllowed);
+    assert!(!verdict.is_accepted());
+    assert!(fetch.requested().is_empty());
+}
+
+/// A forged signature is bad whether or not the key allows its manufacturer.
+#[tokio::test]
+async fn a_signature_by_another_key_is_bad_before_its_manufacturer_is_checked() {
+    let entry = allowing(signer(1, "piers.rocks", &key(1)), &["onerom.org"]);
+
+    let verdict = verdict(
+        &area(&writes(1, &key(2))),
+        &table(vec![entry]),
+        &MockFetch::new(),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(verdict, Verdict::BadSignature);
+}
+
+/// A retired key's record file isn't fetched for a manufacturer the key
+/// doesn't allow, even where the file lists the signature.
+#[tokio::test]
+async fn a_retired_key_isnt_looked_up_for_a_manufacturer_it_doesnt_allow() {
+    let area = area(&writes(2, &key(2)));
+    let record = format!("{}\n", record_line(&area));
+    let fetch = MockFetch::new().with(RECORD_URL, record.clone().into_bytes());
+    let entry = retired(
+        allowing(signer(2, "piers.rocks", &key(2)), &["onerom.org"]),
+        json!({ "record": RECORD_URL, "sha256": hex::encode(Sha256::digest(&record)) }),
+    );
+
+    let verdict = verdict(&area, &table(vec![entry]), &fetch).await.unwrap();
+
+    assert_eq!(verdict, Verdict::ManufacturerNotAllowed);
+    assert!(fetch.requested().is_empty());
 }
 
 #[tokio::test]
@@ -594,6 +739,7 @@ fn verdicts_serialize_in_snake_case() {
         (Verdict::Recorded, "recorded"),
         (Verdict::NotRecorded, "not_recorded"),
         (Verdict::RecordChanged, "record_changed"),
+        (Verdict::ManufacturerNotAllowed, "manufacturer_not_allowed"),
         (Verdict::BadSignature, "bad_signature"),
         (Verdict::UnknownSigner, "unknown_signer"),
         (Verdict::Incomplete, "incomplete"),
