@@ -1,11 +1,13 @@
 # OTP
 
-Describes One ROM's use of RP2350 OTP memory.
+Describes One ROM's use of RP2350 OTP memory which is primarily for hardware
+commissioning purposes.  See [COMMISSIONING](/docs/COMMISSIONING.md).
 
 OTP row numbers and field names are from the RP2350 datasheet, chapter 13.
 
-OTP is 4096 rows. A row normally holds either 16 bits of data protected by ECC,
-or 24 raw bits of unprotected data. A bit can be set (to 1) but never cleared.
+OTP is 4096 rows. A row normally contains either 16 bits of data protected by
+ECC, or 24 raw bits of unprotected data. A bit can be set (to 1) but never
+cleared.
 
 ## Layout
 
@@ -30,11 +32,12 @@ One ROM uses these rows.
 
 ## One ROM OTP Store
 
-The One ROM OTP Store holds One ROM's own data in two areas:
-- The commissioning area holds the values written when a board is commissioned.
-- The general store holds values added later.
+The One ROM OTP Store contains One ROM's own data in two areas:
+- The commissioning area contains the values written when a board is
+  commissioned.
+- The general store contains values added later.
 
-Both areas hold lists of entries, each a key and a value. Each entry is a key
+Both areas contain lists of entries, each a key and a value. Each entry is a key
 row, then a length row, then the value. The length is the value's size in bytes
 and is at least 1. The value takes two bytes per row, low byte first. A value
 of odd length is padded with a zero byte. A string value has no terminator
@@ -49,7 +52,7 @@ Each key is declared in `rust/metadata/metadata_schema.toml`, which generates
 its C and Rust definitions. A key keeps its number permanently.
 
 A key can be deprecated in the schema. Its number stays reserved. Parsers keep
-reading it because commissioned boards still hold it.
+reading it because commissioned boards still contain it.
 
 A parser skips an unknown key using its length. A host tool reports each key it
 skips.
@@ -72,9 +75,9 @@ Currently none.
 
 ### Commissioning Area
 
-The commissioning area is pages 3–18, rows `0x0c0`–`0x4bf`. It holds one or more
-commissioning instances. Each starts on a page boundary and consists of 1 or
-more pages.
+The commissioning area is pages 3–18, rows `0x0c0`–`0x4bf`. It contains one or
+more commissioning instances. Each starts on a page boundary and consists of 1
+or more pages.
 
 A commissioning instance starts with the following rows:
 - Magic value `0x524f` ("OR")
@@ -106,11 +109,11 @@ area.
 
 A parser may fail to parse commissioning data when:
 - an entry's length runs past the end of the commissioning area
-- the page boundary after a commissioning instance holds neither the magic
+- the page boundary after a commissioning instance contains neither the magic
   value nor 0
 
 If this happens, it checks each following page boundary and restarts parsing
-at the first holding the magic value as the next commissioning instance.
+at the first containing the magic value as the next commissioning instance.
 If it doesn't find any, it reports no valid commissioning data.
 
 ### General Store
@@ -132,10 +135,10 @@ reports the version.
 manufacturer can differ. piers.rocks can sign boards it white-labels for another
 manufacturer. That manufacturer's name goes in `COMMISSIONING_MANUFACTURER`.
 
-Every RP2350 holds a unique 64-bit ID called CHIPID in rows `0x000`–`0x003`.
+Every RP2350 has a unique 64-bit ID called CHIPID in rows `0x000`–`0x003`.
 Raspberry Pi writes and locks it when the chip is made.
 
-`COMMISSIONING_SIG` holds an Ed25519 signature over one message. The message
+`COMMISSIONING_SIG` contains an Ed25519 signature over one message. The message
 comprises the following in order with no separator:
 - the ASCII bytes of `onerom-commissioning-sig-v1`
 - the 8 bytes of CHIPID starting with the low byte of row `0x000`
@@ -158,9 +161,9 @@ imitation is the copy's own software behaving like the bootloader over USB. It
 can report a CHIPID and signature copied from a genuine board. A host cannot
 tell it from the real bootloader.
 
-The CLI and other host tools share a library that holds a table of known
+The CLI and other host tools share a library that contains a table of known
 signing keys. Each key in the table is assigned a unique ID.
-`COMMISSIONING_SIGNER` holds the ID of the key used to sign the commissioning
+`COMMISSIONING_SIGNER` contains the ID of the key used to sign the commissioning
 instance.
 
 A host verifies the signature only with the key identified by
@@ -170,13 +173,16 @@ signer. It also rejects the signature if that key doesn't allow
 
 ### Signing Keys
 
-A signer's key is added to the table by a pull request. The pull request
-provides:
-- the key's ID
+A signer requests its key be added to the table with a signing key request, as
+[COMMISSIONING](/docs/COMMISSIONING.md#requesting-an-authorised-signing-key)
+describes. The request provides:
 - the signer's name
 - the public key
 - a proof
 - the manufacturer strings the key may sign
+- a description of what the key is used for
+
+The maintainers assign the key's ID.
 
 The proof is the signer's signature over the ASCII bytes of `onerom-signer-v1`
 followed by the signer's name.
@@ -210,8 +216,8 @@ A weak key is one of Ed25519's small-order points.
 
 piers.rocks's signing server publicly records every signature it makes before
 returning it, except when dry run is specified. The record is a git repository
-with one file per signing key. Each line holds the signature's SHA-256 hash in
-lowercase hex:
+with one file per signing key. Each line contains the signature's SHA-256 hash
+in lowercase hex:
 
 ```
 9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08
@@ -226,7 +232,7 @@ validate` then accepts that key's signature only if its hash is in the key's
 file. Genuine boards keep validating and signatures made with the leaked key
 don't.
 
-A retired key's table entry holds the address of its file and the file's
+A retired key's table entry contains the address of its file and the file's
 SHA-256 hash at retirement. `onerom hardware validate` uses the file only if
 its hash matches, so a line added after retirement is caught.
 
@@ -304,7 +310,7 @@ At boot, the firmware records the board size in runtime info.
 
 `clk_ref` must be 25MHz or less while firmware reads OTP. Firmware reads OTP
 before it sets up its clocks. Here `clk_ref` runs from the ROSC as the bootrom
-leaves is it, at a nominal 11MHz and at most 24MHz.
+leaves it at a nominal 11MHz and at most 24MHz.
 
 ## Host Tools
 
@@ -318,9 +324,10 @@ It reports every instance. It reports a pass or failure based on the current
 instance. When it can't download the signer table, it uses the table built into
 the tool and indicates this.
 
-When the flash doesn't hold One ROM firmware, the CLI takes the board type from
-`COMMISSIONING_BOARD` in the current commissioning instance. The CLI refuses to
-program an image built for another board unless an override option is enabled.
+When the flash doesn't contain One ROM firmware, the CLI takes the board type
+from `COMMISSIONING_BOARD` in the current commissioning instance. The CLI
+refuses to program an image built for another board unless an override option
+is enabled.
 
 ## Locking
 
@@ -351,7 +358,7 @@ through the bootloader's PICOBOOT USB interface.
 The board's name must always be given on the command line. Its size must be
 supplied for a board that supports external flash being populated, so an L
 board cannot be commissioned as M by omitting its size or vice versa. Boards
-that don't support external flash must be M.
+that don't support external flash are always M.
 
 Once a board's size is set to anything other than M it cannot be changed.
 
@@ -378,11 +385,11 @@ row as soon as it writes it and stops at the first one that fails.
 6. It writes the bootloader USB strings, then the white label table, then
    `USB_WHITE_LABEL_ADDR`.
 7. It sets the white label valid bits in `USB_BOOT_FLAGS` and its two copies.
-8. On a non-M board it checks that row `0x055` holds a valid ECC value without
-   any error bits corrected. It then sets `FLASH_DEVINFO_ENABLE` in `BOOT_FLAGS0`
-   and its two copies. There is no way to override this check.
+8. On a non-M board it checks that row `0x055` contains a valid ECC value
+   without any error bits corrected. It then sets `FLASH_DEVINFO_ENABLE` in
+   `BOOT_FLAGS0` and its two copies. There is no way to override this check.
 
-piers.rocks signs through a signing server that holds its private key and
+piers.rocks signs through a signing server that keeps its private key and
 requires a PIN. The CLI fetches the matching public key from the server. Other
 manufacturers sign with their own private key file or signing server.
 
@@ -395,8 +402,8 @@ should be supplied, and if so writes the new one at the next page boundary
 after the last. If it cannot parse existing data, it writes the new instance
 at the first page boundary after the last written row.
 
-It refuses to commission a board whose commissioning area holds an unknown
-version or whose current commissioning instance holds an unknown key. It is
+It refuses to commission a board whose commissioning area contains an unknown
+version or whose current commissioning instance contains an unknown key. It is
 likely that it was written by a newer version of the tool.
 
 As an entry's key row is written last an entry interrupted before its key row
@@ -408,12 +415,20 @@ enables.
 
 ## Setting a Board's Size
 
-`onerom hardware set-size` sets a board's size without commissioning it.
+`onerom hardware set-size` sets a board's size and does it independently of
+commissioning it. For a size other than M it writes `FLASH_DEVINFO`, then sets
+`FLASH_DEVINFO_ENABLE` in `BOOT_FLAGS0` and its two copies, with the same
+checks `onerom hardware commission` makes. Size M doesn't write OTP, as the
+absence of this data in OTP is how the firmware detects size M.
+
+It writes nothing where:
+- `--board` differs from the board the One ROM is commissioned as
+- the commissioning area contains an unknown version
 
 ## Correcting Errors
 
 An existing commissioning instance cannot be changed because its pages are locked.
-However, a board can be commissioned again. The new commissioning instance
+However, a board can be re-commissioned. The new commissioning instance
 becomes current and the old one remains as a permanent record.
 
 A wrong general store value can be corrected by appending a new entry with the

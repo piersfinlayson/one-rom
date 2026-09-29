@@ -2,7 +2,7 @@
 //
 // MIT License
 
-//! Commissioning a board and setting its size. `docs/wip/OTP.md`'s
+//! Commissioning a board and setting its size. `docs/OTP.md`'s
 //! "Commissioning" and "Setting a Board's Size" sections specify them.
 //!
 //! - [`prepare`] reads the board and checks the request before a signature is
@@ -44,7 +44,7 @@ use crate::otp::{
 // Request
 // ---------------------------------------------------------------------------
 
-/// A board's size. `docs/wip/OTP.md`'s "Board Sizes" section describes each.
+/// A board's size. `docs/OTP.md`'s "Board Sizes" section describes each.
 ///
 /// It parses from its name in either case.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]

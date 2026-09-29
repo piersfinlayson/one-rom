@@ -5,7 +5,7 @@
 //! The table of signing keys and the check of a commissioning instance's
 //! signature against it.
 //!
-//! `docs/wip/OTP.md`'s "Manufacturer Signature" section specifies both. The
+//! `docs/OTP.md`'s "Manufacturer Signature" section specifies both. The
 //! table in `signing-keys.json` is built into the crate. A host can download
 //! the current one to use in its place.
 

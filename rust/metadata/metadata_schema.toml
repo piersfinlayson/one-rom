@@ -1050,8 +1050,7 @@ comment = "Never a key. Holds the packed C enum at 2 bytes."
 name = "onerom_board_size_t"
 size = 1
 packed = true
-comment = """A board's size, as OTP configures it. docs/wip/OTP.md's Board Sizes section
-describes each size and how the firmware and host tools decide it."""
+comment = """A board's size as configured in OTP."""
 strip_prefix = "BOARD_SIZE_"
 
 [[enums.variants]]

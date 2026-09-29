@@ -4,7 +4,7 @@
 
 //! Access to an RP2350's OTP and the readers built on it.
 //!
-//! `docs/wip/OTP.md` specifies the rows One ROM uses. A host reads and writes
+//! `docs/OTP.md` specifies the rows One ROM uses. A host reads and writes
 //! them through [`LocalOtpAccess`]. [`MemoryOtp`] stands in for a chip in
 //! tests.
 

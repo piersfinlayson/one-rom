@@ -1,7 +1,7 @@
 # Commissioning a One ROM
 
 Commissioning a One ROM involves setting hardware properties in the RP2350's
-OTP (One Time Programmable) memory.  It includes:
+[OTP](/docs/OTP.md) (One Time Programmable) memory.  It includes:
 1. White labelling the RP2350's bootloader as One ROM
 2. Setting the manufacturer and One ROM board type
 3. Optionally setting the One ROM (flash) size

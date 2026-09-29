@@ -2,7 +2,7 @@
 // MIT License
 
 //! The One ROM OTP store and the bootloader's USB white label, as
-//! `docs/wip/OTP.md` specifies them.
+//! `docs/OTP.md` specifies them.
 //!
 //! - [`CommissioningArea`] and [`GeneralStore`] parse the store's two areas.
 //! - [`CommissioningValues`] builds the message a commissioning instance's

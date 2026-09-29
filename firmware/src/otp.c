@@ -1,5 +1,5 @@
 // One ROM OTP reads at boot - the board OTP commissions the chip as, and the
-// board size.  docs/wip/OTP.md describes the rows.
+// board size.  docs/OTP.md describes the rows.
 
 // Copyright (C) 2026 Piers Finlayson <piers@piers.rocks>
 //
@@ -19,7 +19,7 @@ static uint16_t page_after(uint16_t row) {
 // Returns 1, with the value's first row and its length in bytes, where there
 // is one.
 //
-// Walks the commissioning area as docs/wip/OTP.md lays it out, and checks
+// Walks the commissioning area as docs/OTP.md lays it out, and checks
 // nothing beyond what finding the board needs - the host tools check
 // commissioning data.  Anything the layout doesn't expect returns 0, so the
 // firmware boots.

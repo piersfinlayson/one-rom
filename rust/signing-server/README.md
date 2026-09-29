@@ -1,6 +1,6 @@
 # One ROM Signing Server
 
-[OTP.md](../../docs/wip/OTP.md) describes commissioning.
+[OTP.md](../../docs/OTP.md) describes commissioning.
 
 ## Interface
 
