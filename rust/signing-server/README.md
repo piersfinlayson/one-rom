@@ -64,7 +64,8 @@ written to disk unencrypted.
   try PINs offline.
 - Don't store the PIN on the server's machine.
 
-In the directory containing `keys`, for key 1 and the signer `piers.rocks`:
+In the directory containing `keys`, for key 1 and the signer
+`piers.rocks Production`:
 
 1. Create the key's directory:
 
@@ -96,7 +97,7 @@ In the directory containing `keys`, for key 1 and the signer `piers.rocks`:
    PIN:
 
    ```sh
-   printf 'onerom-signer-v1%s' 'piers.rocks' > proof-message
+   printf 'onerom-signer-v1%s' 'piers.rocks Production' > proof-message
    openssl pkeyutl -sign -rawin -inkey keys/1/key.pem -in proof-message | od -An -tx1 | tr -d ' \n'
    rm proof-message
    ```
