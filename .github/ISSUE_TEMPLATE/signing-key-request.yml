@@ -1,0 +1,65 @@
+name: Signing key request
+description: Request that a commissioning signing key be authorised
+title: "[signing key request] "
+labels: ["signing-key-request"]
+body:
+  - type: markdown
+    attributes:
+      value: Read [Requesting an Authorised Signing Key](https://github.com/piersfinlayson/one-rom/blob/main/docs/COMMISSIONING.md#requesting-an-authorised-signing-key) before raising this.
+  - type: input
+    id: name
+    attributes:
+      label: Key name
+      description: The name the proof signs, usually your organisation name. Example Acme Retro
+    validations:
+      required: true
+  - type: textarea
+    id: manufacturers
+    attributes:
+      label: Manufacturer strings
+      description: Each --manufacturer string the key may sign, one per line. Normally a single manufacturer string will be approved. Example Acme Retro
+    validations:
+      required: true
+  - type: input
+    id: public_key
+    attributes:
+      label: Public key
+      description: 64 hex digits
+    validations:
+      required: true
+  - type: input
+    id: proof
+    attributes:
+      label: Proof
+      description: 128 hex digits
+    validations:
+      required: true
+  - type: input
+    id: description
+    attributes:
+      label: Description
+      description: 'What the key is used for, for example "Used to commission One ROMs manufactured and sold by Acme Retro"'
+    validations:
+      required: true
+  - type: checkboxes
+    id: conditions
+    attributes:
+      label: With this key I agree to
+      options:
+        - label: Exercise reasonable care in protecting my signing key from disclosure
+          required: true
+        - label: Only sign One ROMs I have manufactured
+          required: true
+        - label: Only sign One ROMs in my physical possession
+          required: true
+        - label: Not sign One ROMs for other people or organisations
+          required: true
+        - label: Inform the maintainers promptly if the key leaks so it can be revoked
+          required: true
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional information
+      description: For example, why you require more than one manufacturer string, or why you are asking for a second authorised key if you already have one
+    validations:
+      required: false
