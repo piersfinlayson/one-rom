@@ -41,6 +41,7 @@ One ROM is designed to be extended in many different ways.
 |------------|------------|------------|
 | Drive a device from scripts or my own tooling | [Programming a One ROM](#programming-a-one-rom), [CLI manual](docs/CLI-MANUAL.md) | Install and run the CLI |
 | Fab and assemble existing boards | [hardware/pcb](hardware/pcb/README.md) | Upload gerbers and BOM/POS files to a fab |
+| Commission boards I've made | [Commissioning](docs/COMMISSIONING.md) | Request an authorised signing key or submit a signing request for a board |
 | Build the firmware myself | [Building from source](#building-from-source) | Use `make` or the build container |
 | Use the header pins as GPIOs — reset the host, drive a line | [Driving the host](#driving-the-host--gpio-and-reset) | One command, plus a wire for host reset |
 | Add support for a chip type One ROM doesn't know | [Adding a chip type](docs/ADDING-CHIP-TYPES.md) | A JSON entry plus one line of Rust or a firmware and tooling update if no existing serving algorithm fits |
@@ -368,6 +369,7 @@ wraps `onerom-gen` as WASM, and is what the
 | [Chip Types](docs/CHIP-TYPES.md) | Every chip type One ROM knows about, with pinouts and control lines. |
 | [Compatibility](docs/COMPATIBILITY.md) | Which chips each hardware variant can emulate, and at what flash cost. |
 | [Adding a Chip Type](docs/ADDING-CHIP-TYPES.md) | Teaching One ROM to emulate a chip it does not yet know. |
+| [Commissioning](docs/COMMISSIONING.md) | Setting a One ROM's hardware settings. |
 | [Image Selection](docs/IMAGE-SELECTION.md) | Telling One ROM which installed image to serve. |
 | [Logging](docs/LOGGING.md) | Reading One ROM's log, over USB or with a debug probe. |
 | [Image Sets](docs/MULTI-ROM-SETS.md) | Serving several ROMs at once, and dynamic bank switching. |
