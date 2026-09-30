@@ -68,7 +68,7 @@ impl FlashChips {
     }
 }
 
-/// The address of each slot, in order, given each slot's size in `sizes`.
+/// The address of each slot, in order, from each slot's size in `sizes`.
 /// Slots on the first chip start at `first_start`.
 ///
 /// A slot goes on the first chip after the slots already there if it fits.

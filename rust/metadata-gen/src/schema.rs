@@ -423,8 +423,8 @@ impl Constant {
     }
 }
 
-/// `doc`, followed by the `@since` line identifying `release` where one is
-/// given.
+/// `doc`, followed by the `@since` line identifying `release` where it is
+/// `Some`.
 fn with_since_line(doc: Option<String>, release: Option<&str>) -> Option<String> {
     let since = release.map(|release| format!("@since firmware {release}"));
     match (doc, since) {

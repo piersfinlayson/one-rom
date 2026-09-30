@@ -843,8 +843,9 @@ These are rejected with `--no-config`.
 | `--follow` | After programming, monitor the One ROM's log, as [`monitor log`](#monitor-log) does. Runs after `--scan-slots`, and only once the One ROM is back on the USB bus, so it shows the boot log of the firmware just flashed. Refused before anything is flashed if the image has no USB system plugin, since such a One ROM leaves the bus as soon as it serves. Conflicts with `--fast`, `--stopped`, `--no-reboot` and `--batch`. |
 | `--reset-host <PIN>` (alias `--host-reset`) | After programming, pulse this pin low to reset the host system, as [`control reset`](#control-reset) does. Named as `gpio<N>` or as a header pad (see [Pin values](#pin-values)). Runs after `--scan-slots` and before `--follow`, once the One ROM is back on the USB bus, and for each device in a `--batch`. The pulse is <!--[const:GPIO_RESET_DEFAULT_HOLD_MS:ms]-->100ms<!--[/]-->; use `control reset` for a different hold. Conflicts with `--fast`, `--stopped` and `--no-reboot`. |
 
-An image for a [commissioned](#hardware) One ROM must be built for the board
-type it is commissioned as, unless `--force` is given.
+An image is built for the One ROM's [size](#board-sizes). For a
+[commissioned](#hardware) One ROM it must also be built for the board type it
+is commissioned as, unless `--force` is used.
 
 Device required: yes.
 
@@ -1838,8 +1839,9 @@ for confirmation, which `--yes` answers.
 A board that doesn't
 [support external flash](/docs/COMMISSIONING.md#cli-options) is always M.
 
-Setting a size other than M is **permanent** so it is recommended to
-[test the external flash](/docs/COMMISSIONING.md#external-flash-plugin) first.
+Setting a One ROM to a size other than M is **permanent** so it is recommended
+to [test the external flash](/docs/COMMISSIONING.md#external-flash-plugin)
+first.
 A One ROM's size can be changed from M with
 [`hardware set-size`](#hardware-set-size). [OTP](/docs/OTP.md#board-sizes)
 describes how each size is recorded.
@@ -2249,6 +2251,7 @@ onerom firmware build --config c64.json --board fire-24-e --out firmware.bin
 onerom firmware build --board fire-24-e \
     --slot file=kernal.bin,type=2364,cs1=active-low \
     --out firmware.bin
+onerom firmware build --config amiga.json --board fire-40-b --size L --out firmware.bin
 ```
 
 The configuration options mirror [`program`](#program): `--config` (`-j`),
@@ -2260,6 +2263,7 @@ with `--no-config`). Build-specific options:
 | Option | Description |
 |---|---|
 | `--board, -b <BOARD>` | Target board type. Required when not inferrable from a connected device. |
+| `--size <SIZE>` | The board's [size](#board-sizes), for example `L`. Defaults to `M`. A size other than M requires firmware v0.8.0 or later. |
 | `--version <VERSION>` | Firmware version to build against. Defaults to latest. |
 | `--base-firmware <FILE>` | Use a local minimal firmware instead of downloading. Must be built with `EXCLUDE_METADATA=1` and `ROM_CONFIGS=`. Conflicts with `--version`. |
 | `--output, -o <FILE>` (alias `--out`) | Output file path. Defaults to `onerom-<board>-<version>.bin`. Conflicts with `--path`. |

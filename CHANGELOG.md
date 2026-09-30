@@ -6,6 +6,7 @@ All notables changes between versions are documented in this file.
 
 Headline changes in this release:
 - One ROMs can now be hardware commissioned making them easier for users to manage.
+- One ROM now supports a second 2MB flash chip on 32 and 40 pin boards allowing more ROM images to be stored.  These are called size L, with a single flash boards called size M.
 
 In detail:
 - `inspect info` indicates what it cannot decode and why.
@@ -26,6 +27,7 @@ In detail:
 
 To publish:
 - Rust crates (in dependency order):
+  - onerom-config 0.7.2
   - onerom-metadata-gen 0.1.0
   - onerom-metadata 0.3.0
   - onerom-lab-metadata 0.1.0

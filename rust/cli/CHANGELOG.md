@@ -10,6 +10,8 @@
 - Add `inspect otp`, which prints what a One ROM's OTP contains.
 - On a commissioned One ROM, `program` refuses an image built for another board type unless `--force` is given. It takes the board type from OTP when the flash doesn't contain One ROM firmware.
 - `scan --verbose` and `inspect info` report a One ROM's commissioning information, and each device's line ends `(L)` on an L board. `inspect info` prints the board's size.
+- Support L boards. `program` builds an image for the One ROM's size and `firmware build` takes `--size`.
+- A damaged `--firmware` file fails to program unless `--force` is used.
 - `scan --slots` and `inspect slots` say why they don't recognise a One ROM's firmware.
 - Help lists the global options under their own heading, and `--force`'s help no longer lists its cases.
 - Remove the hidden `update otp`, which did nothing.
