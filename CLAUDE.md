@@ -111,6 +111,10 @@ update it in the same commit as the behaviour.
   generator commands and `ci/test-emu.sh`. It also states that
   `rbcp_chip_type` requires a matching PR against the `rom-bus-control-protocol`
   repo, which stays true.
+- **`docs/SECOND-FLASH.md`** — how the firmware and tools use a second
+  flash chip. Change where slots go, the image file layout, the programming
+  order, which firmware supports which board size or how the tools find a
+  board's size, and update it.
 - **[README.md](/README.md)** — its "Ways in" table, crate table and
   regression-testing section describe the tree's shape, so adding, retiring or
   renaming a crate reaches it, as does changing what CI covers. Keep **counts**

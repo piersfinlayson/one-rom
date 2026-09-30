@@ -376,6 +376,7 @@ wraps `onerom-gen` as WASM, and is what the
 | [Plugins](plugins/README.md) | Building, configuring and writing plugins. |
 | [Build Container](ci/docker/README.md) | Building the firmware reproducibly in Docker. |
 | [ROMs Glorious ROMs](docs/ROMS-GLORIOUS-ROMS.md) | Everything you wanted to know about 23/27 series ROMs but were afraid to ask. |
+| [Second Flash](docs/SECOND-FLASH.md) | How One ROM handles a second flash chip connected to the RP2350 |
 | [Changelog](CHANGELOG.md) | What changed, and when. |
 
 The CLI manual, chip type and compatibility references are also published as
