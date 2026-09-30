@@ -18,7 +18,7 @@ use onerom_cli::CliFetch;
 use onerom_cli::LIVE_ROM_BASE;
 use onerom_cli::colour::RgbColour;
 use onerom_cli::gpio;
-use onerom_cli::otp::{Commissioning, PicobootOtp};
+use onerom_cli::otp::PicobootOtp;
 use onerom_cli::plugin::{PluginOrigin, PluginType, resolve_plugin_display};
 use onerom_cli::usb::{
     GpioEntry, GpioUse, LedId, LedState, get_caps, gpio_query, gpio_query_all, led_query,
@@ -42,7 +42,7 @@ pub async fn cmd_info(options: &Options, args: &InspectInfoArgs) -> Result<(), E
     if let Some(line) = device.board_size_line() {
         println!("  {line}");
     }
-    for line in commissioning_lines(device, true, options.verbose).await {
+    for line in commissioning_lines(device, true, options.verbose) {
         println!("  {line}");
     }
 
@@ -56,23 +56,13 @@ pub async fn cmd_info(options: &Options, args: &InspectInfoArgs) -> Result<(), E
     Ok(())
 }
 
-/// The lines describing `device`'s commissioning that `scan` and `inspect
-/// info` show. It reads the commissioning area where enumeration didn't.
-/// `details` adds the commissioning itself to the warnings.
-pub async fn commissioning_lines(device: &Device, details: bool, verbose: bool) -> Vec<String> {
-    let read;
-    let commissioning = match &device.commissioning {
-        Commissioning::NotRead => {
-            read = Commissioning::read(device).await;
-            &read
-        }
-        commissioning @ (Commissioning::Unreadable
-        | Commissioning::LabRunning
-        | Commissioning::Read(_)) => commissioning,
-    };
+/// The lines describing `device`'s commissioning data that `scan` and
+/// `inspect info` print, from the commissioning area enumeration read.
+/// `details` adds the commissioning data itself to the warnings.
+pub fn commissioning_lines(device: &Device, details: bool, verbose: bool) -> Vec<String> {
     device_lines(
         device.firmware_board(),
-        commissioning,
+        &device.commissioning,
         (details, verbose),
         &SignerTable::built_in(),
     )

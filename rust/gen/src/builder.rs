@@ -14,7 +14,7 @@ use onerom_metadata::{
     RomSlotType, metadata_generation_for, serialize,
 };
 
-use crate::flash::{FlashChips, place_slots};
+use crate::flash::{FlashChips, slot_addresses};
 use crate::image::requires_half_select_cs1;
 use crate::v2::firmware_config::{build_firmware_config, build_firmware_overrides};
 use crate::v2::hardware_info::build_hardware_info;
@@ -481,15 +481,15 @@ impl Builder {
         // Place each slot on a flash chip after the firmware and the metadata
         // region. Placement refuses a slot that doesn't fit, so every caller of
         // `build()` gets the check.
-        const ROM_DATA_BASE: u32 = METADATA_BASE + METADATA_SIZE as u32;
         let chips = FlashChips::new(props.mcu_variant(), props.board_size());
+        let rom_data_start = chips.rom_data_start();
         let sizes: alloc::vec::Vec<u32> = rom_slots.iter().map(|slot| slot.size).collect();
-        let addrs = place_slots(&chips, ROM_DATA_BASE, &sizes)?;
+        let addrs = slot_addresses(&chips, &sizes)?;
 
         // Plugins run from the addresses they're linked at, which is where
-        // contiguous placement from ROM_DATA_BASE puts them. Plugins come first
-        // in config order so first fit places them there too.
-        let mut contiguous = ROM_DATA_BASE;
+        // contiguous placement from rom_data_start puts them. Plugins come
+        // first in config order so first fit places them there too.
+        let mut contiguous = rom_data_start;
         for ((slot, chip_set), &addr) in rom_slots.iter_mut().zip(&chip_sets).zip(&addrs) {
             if matches!(
                 chip_set.chips[0].chip_type(),
@@ -504,13 +504,13 @@ impl Builder {
         let second = chips.second();
         let second_chip = |addr: u32| second.as_ref().filter(|chip| chip.contains(&addr));
 
-        // The ROM data is the first chip from ROM_DATA_BASE. Where a slot is on
-        // the second chip, 0xFF pads the first chip to its end and the second
-        // chip follows.
+        // The ROM data is the first chip from rom_data_start. Where a slot is
+        // on the second chip, 0xFF pads the first chip to its end and the
+        // second chip follows.
         let first_end = chips.first().end;
         let offset = |addr: u32| match second_chip(addr) {
-            Some(chip) => first_end - ROM_DATA_BASE + (addr - chip.start),
-            None => addr - ROM_DATA_BASE,
+            Some(chip) => first_end - rom_data_start + (addr - chip.start),
+            None => addr - rom_data_start,
         };
         let rom_data_size = addrs
             .iter()

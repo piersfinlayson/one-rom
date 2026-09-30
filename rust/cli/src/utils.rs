@@ -395,8 +395,12 @@ pub fn check_live_read_write(
 ///
 /// It takes the first of:
 /// - `board_arg`
+/// - the board the connected device's current commissioning instance contains
 /// - the board the connected device's One ROM firmware is for
-/// - the board the connected device's current commissioning instance holds
+///
+/// The commissioning data comes before the firmware because firmware from
+/// v0.8.0 stays in the bootloader where its board differs from the commissioned
+/// board.
 ///
 /// Returns `None` if there isn't a board argument or a device. The caller
 /// decides whether that's an error.
@@ -420,21 +424,21 @@ pub fn resolve_board(
         Some(Firmware::OneRom(onerom)) => onerom.get_board(),
         Some(Firmware::Lab(_)) | None => None,
     };
-    choose_board(arg, firmware, device.commissioned_board())
+    choose_board(arg, device.commissioned_board(), firmware)
         .map(Some)
         .ok_or(Error::NoBoardFromDevice(device.to_string()))
 }
 
 /// The first of these boards that is known:
 /// - `arg` from `--board`
-/// - `firmware` from a device's firmware
 /// - `commissioned` from a device's current commissioning instance
+/// - `firmware` from a device's firmware
 fn choose_board(
     arg: Option<Board>,
-    firmware: Option<Board>,
     commissioned: Option<Board>,
+    firmware: Option<Board>,
 ) -> Option<Board> {
-    arg.or(firmware).or(commissioned)
+    arg.or(commissioned).or(firmware)
 }
 
 /// Resolves the target board type, where not knowing it is survivable.
@@ -575,25 +579,22 @@ mod tests {
 
     /// The board is the first of these that is known:
     /// - --board
-    /// - the firmware's board
     /// - the commissioned board
+    /// - the firmware's board
     #[test]
-    fn a_board_comes_from_the_option_then_the_firmware_then_otp() {
-        let [arg, firmware, commissioned] =
-            ["fire-24-f", "fire-28-c", "fire-40-a"].map(|name| Board::try_from_str(name).unwrap());
+    fn a_board_comes_from_the_option_then_otp_then_the_firmware() {
+        let [arg, commissioned, firmware] =
+            ["fire-24-f", "fire-40-a", "fire-28-c"].map(|name| Board::try_from_str(name).unwrap());
         assert_eq!(
-            choose_board(Some(arg), Some(firmware), Some(commissioned)),
+            choose_board(Some(arg), Some(commissioned), Some(firmware)),
             Some(arg)
         );
         assert_eq!(choose_board(Some(arg), None, None), Some(arg));
         assert_eq!(
-            choose_board(None, Some(firmware), Some(commissioned)),
-            Some(firmware)
-        );
-        assert_eq!(
-            choose_board(None, None, Some(commissioned)),
+            choose_board(None, Some(commissioned), Some(firmware)),
             Some(commissioned)
         );
+        assert_eq!(choose_board(None, None, Some(firmware)), Some(firmware));
         assert_eq!(choose_board(None, None, None), None);
     }
 }

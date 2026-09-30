@@ -9,7 +9,8 @@
 
 use log::debug;
 use nusb::DeviceInfo;
-use onerom_config::hw::{Board, BoardSize};
+use onerom_app::board_size_or_m;
+use onerom_config::hw::Board;
 use onerom_config::mcu::{Rp235xChipId, RpVariant, Variant};
 use onerom_fw_parser::{ParseError, ParsedDevice};
 use onerom_gen::FlashChips;
@@ -83,8 +84,7 @@ pub struct Device {
     /// The RP2350 package variant (RP235xA/RP235xB), if it has been read.
     /// Populated when read from a running device via GET_INFO.
     pub rp_variant: Option<RpVariant>,
-    /// The device's commissioning area. Enumeration reads it only for a
-    /// device without firmware this build recognises.
+    /// The device's commissioning area. Enumeration reads it.
     pub commissioning: Commissioning,
     /// The board's size, as [`Device::board_size()`] describes it.
     pub(crate) board_size: Option<MaybeKnown<OneromBoardSize>>,
@@ -267,9 +267,11 @@ impl Device {
         }
     }
 
-    /// The board the device's firmware is for or else its commissioned board.
+    /// The device's commissioned board or else the board its firmware is for.
+    /// The commissioned board comes first because firmware from v0.8.0 stays in
+    /// the bootloader where its board differs from the commissioned board.
     pub(crate) fn board(&self) -> Option<Board> {
-        self.firmware_board().or_else(|| self.commissioned_board())
+        self.commissioned_board().or_else(|| self.firmware_board())
     }
 
     /// The board the device's firmware is for. One ROM's metadata or a Lab's
@@ -358,23 +360,16 @@ impl Device {
 
     /// The board size runtime info records, where One ROM is running. Firmware
     /// before 0.8.0 doesn't record one, so its size is unknown.
-    #[allow(clippy::wildcard_enum_match_arm)]
     pub(crate) fn runtime_board_size(&self) -> Option<MaybeKnown<OneromBoardSize>> {
-        match self.onerom()? {
-            ParsedDevice::Schema(onerom) => onerom.runtime().map(|runtime| runtime.board_size),
-            ParsedDevice::Original(sdrr) => sdrr
-                .ram
-                .as_ref()
-                .map(|_| MaybeKnown::Known(OneromBoardSize::BoardSizeUnknown)),
-            _ => None,
-        }
+        self.onerom()?.runtime_board_size()
     }
 
     /// Returns a sort key for this device, which sorts first by board type (with
     /// unrecognised devices sorted last) and then by serial number (with devices
-    /// with no serial sorted last).
+    /// with no serial sorted last). The board type is the commissioned board's,
+    /// or else the firmware's.
     pub fn sort_key(&self) -> (String, String) {
-        let board = match self.firmware.as_ref() {
+        let firmware = match self.firmware.as_ref() {
             Some(Firmware::OneRom(onerom)) => match onerom {
                 ParsedDevice::Original(sdrr) => sdrr
                     .flash
@@ -387,9 +382,12 @@ impl Device {
             },
             Some(Firmware::Lab(lab)) => lab_hw_rev(lab).map(str::to_string),
             None => None,
-        }
-        .or_else(|| self.commissioned_hw_rev().map(str::to_string))
-        .unwrap_or_else(|| "~".to_string()); // sorts after Z
+        };
+        let board = self
+            .commissioned_hw_rev()
+            .map(str::to_string)
+            .or(firmware)
+            .unwrap_or_else(|| "~".to_string()); // sorts after Z
         let serial = self.serial.clone().unwrap_or_else(|| "~".to_string());
         (board, serial)
     }
@@ -417,17 +415,7 @@ fn lab_board_part(lab: &Lab) -> String {
 
 /// The flash chips of a board whose recorded size is `size`.
 fn size_chips(size: Option<MaybeKnown<OneromBoardSize>>) -> FlashChips {
-    let size = match size {
-        Some(MaybeKnown::Known(OneromBoardSize::BoardSizeM)) => BoardSize::M,
-        Some(MaybeKnown::Known(OneromBoardSize::BoardSizeL)) => BoardSize::L,
-        // The first chip is the only one every board has.
-        Some(
-            MaybeKnown::Known(OneromBoardSize::BoardSizeUnknown | OneromBoardSize::BoardSizeOther)
-            | MaybeKnown::Unknown(_),
-        )
-        | None => BoardSize::M,
-    };
-    FlashChips::new(Variant::RP2350, size)
+    FlashChips::new(Variant::RP2350, board_size_or_m(size))
 }
 
 /// What follows the board in a device's line. `(L)` on an L board, `(other)`

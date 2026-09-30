@@ -8,7 +8,7 @@
   - `Error::BoardMismatch` has named fields `firmware` and `expected`.
 - Add `hardware commission`, `validate`, `set-size`, `sign` and `request-signature` for commissioning a One ROM. See [COMMISSIONING](/docs/COMMISSIONING.md).
 - Add `inspect otp`, which prints what a One ROM's OTP contains.
-- On a commissioned One ROM, `program` refuses an image built for another board type unless `--force` is given. It takes the board type from OTP when the flash doesn't contain One ROM firmware.
+- On a commissioned One ROM `program` by default uses the commissioned board type. An image built for another board type fails to program unless `--force` is provided.
 - `scan --verbose` and `inspect info` report a One ROM's commissioning information, and each device's line ends `(L)` on an L board. `inspect info` prints the board's size.
 - Support L boards. `program` builds an image for the One ROM's size and `firmware build` takes `--size`.
 - A damaged `--firmware` file fails to program unless `--force` is used.

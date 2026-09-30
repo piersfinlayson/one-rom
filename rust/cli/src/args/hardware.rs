@@ -12,8 +12,6 @@ use clap::{ArgGroup, Args, Subcommand};
 use enum_dispatch::enum_dispatch;
 use onerom_app::BoardSize;
 use onerom_config::hw::{Board, Model};
-use onerom_config::mcu::Variant;
-use onerom_gen::FlashChips;
 use onerom_metadata::otp::{BuildError, check_manufacturer};
 use time::{Date, Month, OffsetDateTime};
 
@@ -313,12 +311,10 @@ pub enum SizeError {
 /// `size` where `board` supports it. A size with a second flash chip needs a
 /// board that supports external flash.
 pub(crate) fn supported_size(board: Board, size: BoardSize) -> Result<BoardSize, SizeError> {
-    // Board sizes are for Fire boards.
-    let second_chip = FlashChips::new(Variant::RP2350, size).second().is_some();
-    if second_chip && board.external_flash_cs_pin().is_none() {
-        Err(SizeError::ExternalFlashUnsupported(board))
-    } else {
+    if board.supports_size(size) {
         Ok(size)
+    } else {
+        Err(SizeError::ExternalFlashUnsupported(board))
     }
 }
 

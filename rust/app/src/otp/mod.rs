@@ -33,6 +33,8 @@ use onerom_metadata::{
 };
 use serde::Serialize;
 
+use crate::size::known_size;
+
 pub use memory::{Interruption, MemoryOtp};
 
 // ---------------------------------------------------------------------------
@@ -543,11 +545,7 @@ impl DecodedWhiteLabel {
 /// The board size OTP configures, by [`board_size`]'s rule. `None` where it's
 /// neither M nor L. `flash_devinfo` is FLASH_DEVINFO read with ECC.
 fn configured_size(boot_flags0: [u32; 3], flash_devinfo: u16) -> Option<BoardSize> {
-    match board_size(boot_flags0, flash_devinfo) {
-        OneromBoardSize::BoardSizeM => Some(BoardSize::M),
-        OneromBoardSize::BoardSizeL => Some(BoardSize::L),
-        OneromBoardSize::BoardSizeUnknown | OneromBoardSize::BoardSizeOther => None,
-    }
+    known_size(board_size(boot_flags0, flash_devinfo))
 }
 
 #[cfg(test)]

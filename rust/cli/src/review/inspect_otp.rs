@@ -7,7 +7,9 @@
 use onerom_app::{BoardSize, MemoryOtp};
 use onerom_cli::Error;
 
-use super::{RUNNING_LAB, device, json_boards, newer_boards, written_failure};
+use super::{
+    RUNNING_LAB, device, json_boards, neither_m_nor_l_board, newer_boards, written_failure,
+};
 use crate::commissioning::report_lines;
 use crate::test_board::{acme_board, blank_board, commissioned_board, table};
 
@@ -48,6 +50,11 @@ async fn a_commissioned_m_board() {
 async fn a_commissioned_l_board() {
     let mut otp = commissioned_board("fire-40-a", BoardSize::L).await;
     both(&mut otp, "fire-40-a").await;
+}
+
+#[tokio::test]
+async fn a_board_neither_m_nor_l() {
+    both(&mut neither_m_nor_l_board(), "fire-40-a").await;
 }
 
 /// An M fire-40-b commissioned by Acme Retro with its key.

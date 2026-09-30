@@ -286,7 +286,7 @@ fn size_lines(report: &OtpReport, verbose: bool) -> Vec<String> {
     let size = match report.size {
         Some(BoardSize::M) => "M",
         Some(BoardSize::L) => "L",
-        None => "neither M nor L",
+        None => "other",
     };
     let mut lines = vec![labelled("Board size:", size)];
     if verbose {

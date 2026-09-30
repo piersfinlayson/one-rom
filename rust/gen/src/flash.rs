@@ -9,9 +9,9 @@ use core::ops::Range;
 
 use onerom_config::hw::BoardSize;
 use onerom_config::mcu::{Family, Variant};
-use onerom_metadata::{FLASH_CS1_BASE_ADDR, OTP_FLASH_DEVINFO_SIZE_2MB};
+use onerom_metadata::{FLASH_CS1_BASE_ADDR, METADATA_SIZE, OTP_FLASH_DEVINFO_SIZE_2MB};
 
-use crate::{Error, Result};
+use crate::{Error, FIRMWARE_SIZE, Result};
 
 /// The addresses of a board's flash chips.
 ///
@@ -66,17 +66,25 @@ impl FlashChips {
         self.second_len
             .map(|len| FLASH_CS1_BASE_ADDR..FLASH_CS1_BASE_ADDR + len)
     }
+
+    /// Where ROM data starts on the first chip, after the firmware and the
+    /// metadata region.
+    pub fn rom_data_start(&self) -> u32 {
+        self.first_base + (FIRMWARE_SIZE + METADATA_SIZE) as u32
+    }
 }
 
 /// The address of each slot, in order, from each slot's size in `sizes`.
-/// Slots on the first chip start at `first_start`.
+/// Slots on the first chip start at [`FlashChips::rom_data_start`].
 ///
 /// A slot goes on the first chip after the slots already there if it fits.
 /// Otherwise it goes on the second chip after the slots already there. A slot
 /// never spans the two because the firmware copies a slot in one transfer.
-pub(crate) fn place_slots(chips: &FlashChips, first_start: u32, sizes: &[u32]) -> Result<Vec<u32>> {
+///
+/// [`Error::SlotDoesNotFit`] identifies the first slot that fits neither chip.
+pub fn slot_addresses(chips: &FlashChips, sizes: &[u32]) -> Result<Vec<u32>> {
     let mut first = Space {
-        next: first_start,
+        next: chips.rom_data_start(),
         end: chips.first().end,
     };
     let mut second = chips.second().map(|chip| Space {
@@ -157,11 +165,46 @@ mod tests {
         }
     }
 
+    /// The v2 schema places the metadata region, and ROM data follows it.
+    #[test]
+    fn rom_data_starts_after_the_metadata_region() {
+        for mcu in [Variant::RP2350, Variant::RP2350B] {
+            for &size in BoardSize::supported_values() {
+                let chips = FlashChips::new(mcu, size);
+                assert_eq!(chips.rom_data_start(), 0x1001_0000, "{mcu} {size}");
+                assert_eq!(
+                    chips.rom_data_start(),
+                    onerom_metadata::METADATA_BASE + METADATA_SIZE as u32,
+                    "{mcu} {size}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn rom_data_fills_the_rest_of_the_first_chip() {
+        for mcu in [Variant::RP2350, Variant::RP2350B, Variant::F411RE] {
+            let chips = FlashChips::new(mcu, BoardSize::M);
+            assert_eq!(
+                (chips.first().end - chips.rom_data_start()) as usize,
+                crate::rom_data_space(mcu),
+                "{mcu}"
+            );
+        }
+    }
+
     #[test]
     fn slots_fill_the_first_chip_in_order() {
         let chips = FlashChips::new(Variant::RP2350, BoardSize::L);
-        let addrs = place_slots(&chips, 0x1001_0000, &[64 * KB, 64 * KB, 16 * KB]).unwrap();
+        let addrs = slot_addresses(&chips, &[64 * KB, 64 * KB, 16 * KB]).unwrap();
         assert_eq!(addrs, [0x1001_0000, 0x1002_0000, 0x1003_0000]);
+    }
+
+    #[test]
+    fn slots_on_an_stm32_board_start_after_its_own_metadata_region() {
+        let chips = FlashChips::new(Variant::F411RE, BoardSize::M);
+        let addrs = slot_addresses(&chips, &[16 * KB, 16 * KB]).unwrap();
+        assert_eq!(addrs, [0x0801_0000, 0x0801_4000]);
     }
 
     #[test]
@@ -169,32 +212,32 @@ mod tests {
         let chips = FlashChips::new(Variant::RP2350, BoardSize::L);
         // 1MB, 512KB, 512KB and then 256KB, which fits the 448KB left on the
         // first chip after the first two.
-        let addrs = place_slots(&chips, 0x1001_0000, &[MB, 512 * KB, 512 * KB, 256 * KB]).unwrap();
+        let addrs = slot_addresses(&chips, &[MB, 512 * KB, 512 * KB, 256 * KB]).unwrap();
         assert_eq!(addrs, [0x1001_0000, 0x1011_0000, 0x1100_0000, 0x1019_0000]);
     }
 
     #[test]
     fn a_slot_can_end_exactly_at_a_chip_end() {
         let chips = FlashChips::new(Variant::RP2350, BoardSize::L);
-        let addrs = place_slots(&chips, 0x1001_0000, &[1984 * KB, 2 * MB]).unwrap();
+        let addrs = slot_addresses(&chips, &[1984 * KB, 2 * MB]).unwrap();
         assert_eq!(addrs, [0x1001_0000, 0x1100_0000]);
     }
 
     #[test]
     fn a_slot_that_fits_neither_chip_is_refused_by_index() {
         let chips = FlashChips::new(Variant::RP2350, BoardSize::L);
-        let err = place_slots(&chips, 0x1001_0000, &[MB, 2 * MB, MB]).unwrap_err();
+        let err = slot_addresses(&chips, &[MB, 2 * MB, MB]).unwrap_err();
         assert!(matches!(err, Error::SlotDoesNotFit { slot: 2 }), "{err:?}");
 
         let chips = FlashChips::new(Variant::RP2350, BoardSize::M);
-        let err = place_slots(&chips, 0x1001_0000, &[MB, MB]).unwrap_err();
+        let err = slot_addresses(&chips, &[MB, MB]).unwrap_err();
         assert!(matches!(err, Error::SlotDoesNotFit { slot: 1 }), "{err:?}");
     }
 
     #[test]
     fn a_slot_past_the_end_of_the_address_space_is_refused() {
         let chips = FlashChips::new(Variant::RP2350, BoardSize::L);
-        let err = place_slots(&chips, 0x1001_0000, &[u32::MAX]).unwrap_err();
+        let err = slot_addresses(&chips, &[u32::MAX]).unwrap_err();
         assert!(matches!(err, Error::SlotDoesNotFit { slot: 0 }), "{err:?}");
     }
 }

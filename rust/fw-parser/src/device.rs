@@ -67,13 +67,15 @@ use std::borrow::Cow;
 use onerom_config::fw::FirmwareVersion;
 use onerom_config::hw::Board;
 use onerom_metadata::{
-    FLASH_CS1_BASE_ADDR, MaybeKnown, OneromRomInfo, OneromRomSlot, Pointer, RomSlotType,
+    FLASH_CS1_BASE_ADDR, MaybeKnown, OneromBoardSize, OneromRomInfo, OneromRomSlot, Pointer,
+    RomSlotType,
 };
 
-use crate::ParseError;
 use crate::info::{Sdrr, SdrrRomInfo, SdrrRomSet};
 use crate::onerom::OneRom;
+use crate::readers::{MemoryReader, RegionKind};
 use crate::types::SdrrRomType;
+use crate::{ParseError, Parser};
 
 /// A One ROM's parsed state, from either firmware generation, or which other
 /// member of the One ROM family a device runs.
@@ -303,6 +305,20 @@ impl ParsedDevice {
         }
     }
 
+    /// The board size runtime info records, where One ROM is running.
+    /// Firmware before 0.8.0 doesn't record one, so its size is
+    /// `BoardSizeUnknown`. `None` where runtime info wasn't read.
+    pub fn runtime_board_size(&self) -> Option<MaybeKnown<OneromBoardSize>> {
+        match self {
+            Self::Schema(onerom) => onerom.runtime().map(|runtime| runtime.board_size),
+            Self::Original(sdrr) => sdrr
+                .ram
+                .as_ref()
+                .map(|_| MaybeKnown::Known(OneromBoardSize::BoardSizeUnknown)),
+            Self::Lab => None,
+        }
+    }
+
     /// Iterates the device's ROM slots in flash order, classified and numbered.
     ///
     /// The slot list always comes from flash (the configured set), never from
@@ -397,6 +413,24 @@ impl ParsedDevice {
         }
         Ok(())
     }
+}
+
+/// Parses an image file.
+///
+/// The file's first `first.len()` bytes are the contents of the first flash
+/// chip, whose addresses are `first`. Anything after them is the second chip's
+/// contents from [`FLASH_CS1_BASE_ADDR`]. [`ParsedDevice::check_image_file`]
+/// checks the file against the same layout.
+pub async fn parse_image_file(data: &[u8], first: Range<u32>) -> ParsedDevice {
+    let (first_data, second_data) = data.split_at(data.len().min(first.len()));
+    // The hardcoded base address looks odd here, as the STM32's base flash
+    // address, but when using a memory reader, the parser will just figure it
+    // out for itself based on what it finds in the image.
+    let mut reader = MemoryReader::new(first_data.to_vec(), 0x0800_0000);
+    if !second_data.is_empty() {
+        reader.add_region(RegionKind::Flash, second_data.to_vec(), FLASH_CS1_BASE_ADDR);
+    }
+    Parser::new(&mut reader).parse_device().await
 }
 
 /// Why an image file isn't laid out as One ROM's tools write one.

@@ -28,7 +28,7 @@ pub use firmware::{
     DebugConfig, FireConfig, FireCpuFreq, FireServeMode, FireVreg, FirmwareConfig, IceConfig,
     IceCpuFreq, LedConfig, ServeAlgParams,
 };
-pub use flash::FlashChips;
+pub use flash::{FlashChips, slot_addresses};
 #[expect(deprecated, reason = "re-exported for callers of the pre-0.8.0 name")]
 pub use hexfile::IHEX_BLANK_BYTE;
 pub use hexfile::{AddressParseError, LoadAddress, UNWRITTEN_BYTE};

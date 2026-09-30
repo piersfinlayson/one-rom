@@ -9,14 +9,11 @@
 
 #[allow(unused_imports)]
 use log::{Level, debug, log, warn};
-use onerom_app::{FlashPlan, FlashStep};
+use onerom_app::{FlashPlan, FlashStep, device_board_size};
 use onerom_config::mcu::{Rp235xChipId, RpVariant};
 use onerom_fw_parser::{ParsedDevice, Parser};
 use onerom_lab_parser::LabParser;
-use onerom_metadata::{
-    MaybeKnown, OneromBoardSize, USB_BOOTLOADER_PID, USB_BOOTLOADER_VID, USB_PLUGIN_PID,
-    USB_PLUGIN_VID,
-};
+use onerom_metadata::{USB_BOOTLOADER_PID, USB_BOOTLOADER_VID, USB_PLUGIN_PID, USB_PLUGIN_VID};
 use picoboot::cmd::PicobootStatus;
 use picoboot::{
     PAGE_SIZE, Picoboot, PicobootCmd, PicobootCmdId, PicobootXCmd, Reader as PicobootReader,
@@ -485,28 +482,18 @@ pub async fn read_device_info(device: &mut Device) -> Result<(), AccessError> {
     };
     device.set_firmware(firmware);
 
-    // A device without firmware this build recognises can still be identified
-    // by its commissioning.
-    if device.firmware.is_none() {
-        device.commissioning = Commissioning::read(device).await;
-    }
+    // The commissioning data identifies a device's board even where its firmware
+    // is for another board or this build doesn't recognise the firmware.
+    device.commissioning = Commissioning::read(device).await;
 
     // Runtime info exists only while One ROM runs, so a stopped board's size
     // comes from OTP. Firmware before 0.8.0 doesn't record the size in runtime
     // info, so on that firmware the size comes from OTP through the USB plugin.
-    // Where that read fails the size stays as runtime info has it. One ROM Lab
-    // doesn't have a board size.
+    // One ROM Lab doesn't have a board size.
     if !matches!(device.firmware, Some(Firmware::Lab(_))) {
         let runtime = device.runtime_board_size();
-        device.board_size = match runtime {
-            Some(size) if size != MaybeKnown::Known(OneromBoardSize::BoardSizeUnknown) => {
-                Some(size)
-            }
-            Some(_) | None => read_board_size(device)
-                .await
-                .map(MaybeKnown::Known)
-                .or(runtime),
-        };
+        let size = device_board_size(runtime, || read_board_size(device)).await;
+        device.board_size = size;
     }
 
     // Read the chip ID - the device's invariant identity - and package variant.

@@ -14,7 +14,7 @@ use onerom_config::mcu::{Family, Variant};
 use onerom_fw_parser::readers::MemoryReader;
 use onerom_fw_parser::{
     ImageFileError, McuLine, McuStorage, ParsedDevice, Parser, SDRR_INFO_FW_OFFSET, Sdrr,
-    SdrrCsState, SdrrInfo, SdrrRomSet, SdrrServe,
+    SdrrCsState, SdrrInfo, SdrrRomSet, SdrrServe, parse_image_file,
 };
 use onerom_gen::{Builder, FileData, FlashChips};
 use onerom_metadata::{
@@ -58,6 +58,33 @@ fn first() -> core::ops::Range<u32> {
 /// A v0.8.0 image file for a `size` Fire32B with a single-chip set of each
 /// `chip_types` entry, parsed. Returns the device and the file's length.
 fn schema_file(size: BoardSize, chip_types: &[&str]) -> (ParsedDevice, usize) {
+    let (image, rom_data) = schema_regions(size, chip_types);
+    let len = image.len() + rom_data.len();
+    let mut reader = MemoryReader::new(image, RP235X_FLASH_BASE);
+    let device = block_on(
+        Parser::with_base_flash_address(&mut reader, RP235X_FLASH_BASE, RP235X_RAM_BASE)
+            .parse_device(),
+    );
+    assert!(
+        device
+            .as_schema()
+            .and_then(|onerom| onerom.metadata())
+            .is_some(),
+        "the image's metadata should parse"
+    );
+    (device, len)
+}
+
+/// The image file [`schema_file`] parses, as its bytes.
+fn schema_file_bytes(size: BoardSize, chip_types: &[&str]) -> Vec<u8> {
+    let (mut image, rom_data) = schema_regions(size, chip_types);
+    image.extend(rom_data);
+    image
+}
+
+/// The firmware and metadata regions of [`schema_file`]'s image, then its ROM
+/// data.
+fn schema_regions(size: BoardSize, chip_types: &[&str]) -> (Vec<u8>, Vec<u8>) {
     let version = FirmwareVersion::new(0, 8, 0, 0);
     let sets: Vec<String> = chip_types
         .iter()
@@ -110,21 +137,7 @@ fn schema_file(size: BoardSize, chip_types: &[&str]) -> (ParsedDevice, usize) {
     );
     let metadata_offset = (METADATA_BASE - RP235X_FLASH_BASE) as usize;
     image[metadata_offset..metadata_offset + metadata.len()].copy_from_slice(&metadata);
-
-    let len = image.len() + rom_data.len();
-    let mut reader = MemoryReader::new(image, RP235X_FLASH_BASE);
-    let device = block_on(
-        Parser::with_base_flash_address(&mut reader, RP235X_FLASH_BASE, RP235X_RAM_BASE)
-            .parse_device(),
-    );
-    assert!(
-        device
-            .as_schema()
-            .and_then(|onerom| onerom.metadata())
-            .is_some(),
-        "the image's metadata should parse"
-    );
-    (device, len)
+    (image, rom_data)
 }
 
 /// A plugin image the builder accepts.
@@ -194,6 +207,47 @@ fn a_file_longer_than_the_first_chip_needs_a_slot_on_the_second() {
         })
     );
     assert_eq!(device.check_image_file(2 * MB, first()), Ok(()));
+}
+
+/// Each slot's data address in `device`'s metadata.
+fn slot_addresses(device: &ParsedDevice) -> Vec<Option<u32>> {
+    let metadata = device.as_schema().and_then(|onerom| onerom.metadata());
+    metadata
+        .expect("the image's metadata should parse")
+        .rom_slots
+        .iter()
+        .map(|slot| slot.data.addr())
+        .collect()
+}
+
+#[test]
+fn an_image_file_on_the_first_chip_parses() {
+    let file = schema_file_bytes(BoardSize::M, &["27C040"; 3]);
+    let device = block_on(parse_image_file(&file, first()));
+    assert_eq!(
+        slot_addresses(&device),
+        [0x1001_0000, 0x1009_0000, 0x1011_0000].map(Some)
+    );
+    assert_eq!(device.check_image_file(file.len(), first()), Ok(()));
+}
+
+/// The part of the file past the first chip is the second chip.
+#[test]
+fn an_image_file_using_the_second_chip_parses() {
+    let file = schema_file_bytes(BoardSize::L, &["27C040"; 4]);
+    assert_eq!(file.len(), 2 * MB + 512 * KB);
+    let device = block_on(parse_image_file(&file, first()));
+    assert_eq!(
+        slot_addresses(&device),
+        [0x1001_0000, 0x1009_0000, 0x1011_0000, 0x1100_0000].map(Some)
+    );
+    assert_eq!(device.check_image_file(file.len(), first()), Ok(()));
+}
+
+#[test]
+fn a_file_that_isnt_an_image_isnt_recognised() {
+    let device = block_on(parse_image_file(&[0xFF; 64 * KB], first()));
+    assert!(!device.is_recognised());
 }
 
 #[test]

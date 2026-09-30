@@ -127,6 +127,17 @@ fn flash_without_firmware() -> [(&'static str, Vec<u8>); 2] {
     ]
 }
 
+/// A blank board whose OTP configures a size that's neither M nor L.
+/// FLASH_DEVINFO sets chip select 1 to 4MB.
+fn neither_m_nor_l_board() -> MemoryOtp {
+    let mut otp = blank_board();
+    otp.set_raw(0x054, ecc_encode(0xa9af));
+    for row in 0x048..=0x04a {
+        otp.set_raw(row, 0x000020);
+    }
+    otp
+}
+
 /// The size `otp` configures, as a stopped board's device line has it.
 async fn size_of(otp: &mut MemoryOtp) -> Option<BoardSize> {
     use onerom_metadata::OneromBoardSize;

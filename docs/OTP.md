@@ -324,10 +324,9 @@ It reports every instance. It reports a pass or failure based on the current
 instance. When it can't download the signer table, it uses the table built into
 the tool and indicates this.
 
-When the flash doesn't contain One ROM firmware, the CLI takes the board type
-from `COMMISSIONING_BOARD` in the current commissioning instance. The CLI
-refuses to program an image built for another board unless an override option
-is enabled.
+On a commissioned One ROM the board type is read from `COMMISSIONING_BOARD` in
+the current commissioning instance unless `--board` is supplied. An image built
+for another board fails to program unless an override option is enabled.
 
 ## Locking
 

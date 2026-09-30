@@ -6,7 +6,7 @@
 
 use onerom_app::{BoardSize, LocalFetch, MemoryOtp, SignerTable, read_commissioning};
 
-use super::{device, failed, json_boards, newer_boards, size_of};
+use super::{device, failed, json_boards, neither_m_nor_l_board, newer_boards, size_of};
 use crate::hardware::{SigningKeys, built_in_warning, validate_otp};
 use crate::test_board::{Files, acme_board, commissioned_board, table, table_allowing};
 
@@ -89,6 +89,11 @@ async fn a_commissioned_m_board() {
 async fn a_commissioned_l_board() {
     let mut otp = commissioned_board("fire-40-a", BoardSize::L).await;
     both(&mut otp, "fire-40-a").await;
+}
+
+#[tokio::test]
+async fn a_board_neither_m_nor_l() {
+    validate(&mut neither_m_nor_l_board(), "fire-40-a", false).await;
 }
 
 /// An M fire-40-b commissioned by Acme Retro with its key.

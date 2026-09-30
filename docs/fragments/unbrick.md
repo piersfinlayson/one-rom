@@ -68,15 +68,16 @@ found 1 connected device:
   Unknown           - Firmware: n/a   State: Stopped Serial: DE3F9C232F655B6B
 ```
 
-The CLI takes a device's board and firmware version from its firmware. Where it
-can't read the firmware it takes the board from the device's commissioning if
-present.
+`scan` reads a device's board and firmware version from its firmware. Where it
+can't read the firmware it reads the board from the device's commissioning data
+if present.
 
 ## Programming it again
 
-**You have to supply the One ROM board information.** A One ROM board type is
-only identifiable from the firmware already programmed to it, and that
-is the thing that is missing or wrong. The board name is the pin count and the
+**You have to supply the One ROM board information** unless the board has been
+commissioned. An uncommissioned One ROM's board type is only identifiable from
+the firmware already programmed to it, and that either missing or wrong.
+The board name is the pin count and the
 revision letter silkscreened on the board — `fire-24-f` is a 24-pin board,
 revision F. The marking is small.
 [`onerom board list`](/docs/CLI-MANUAL.md#board-list) prints every name.
@@ -90,11 +91,10 @@ onerom program --unrecognised --board fire-24-f --config c64.json
 With the [browser programmer](https://onerom.org/web), pick the board yourself
 in the same way. It will ask you to confirm the board type before it writes.
 
-If the board was mis-flashed rather than left blank, both tools notice — the
-wrong firmware is still in flash and they read the board from it.  The CLI
-refuses, and needs `--force` alongside `--board`.  The browser programmer warns
-and lets you continue.  Check the silkscreen once more before you do either,
-because the same objection appears when the board is right and the name you
+If an uncommissioned board was mis-flashed rather than left blank, the browser
+programmer reads the board from the wrong firmware still in flash.  A warning
+appears and you can continue.  Check the silkscreen once more before you do,
+because the same warning appears when the board is right and the name you
 picked is wrong.
 
 Then confirm the device came back up.  With the CLI:

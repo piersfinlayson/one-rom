@@ -51,7 +51,7 @@ pub async fn cmd_scan(options: &Options, args: &args::scan::ScanArgs) -> Result<
         // A board's commissioning information needs --verbose, with or without
         // --slots. A warning shows beneath the board where one applies.
         let commissioning =
-            crate::inspect::commissioning_lines(d, options.verbose, options.verbose).await;
+            crate::inspect::commissioning_lines(d, options.verbose, options.verbose);
         if args.slots {
             // output_slot_info prints the device header followed by:
             // - the MCU / chip-ID line (when verbose)

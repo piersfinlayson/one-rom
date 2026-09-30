@@ -12,8 +12,8 @@ use onerom_config::mcu::RP235X_BASE_FLASH;
 use onerom_config::mcu::Variant;
 use onerom_fw::net::{Release, Releases, fetch_license_async};
 use onerom_fw::{assemble_firmware, get_rom_files_async, read_rom_config, validate_sizes};
-use onerom_fw_parser::readers::{MemoryReader, RegionKind};
-use onerom_fw_parser::{ParsedDevice, Parser, SlotKind};
+use onerom_fw_parser::readers::MemoryReader;
+use onerom_fw_parser::{ParsedDevice, SlotKind, parse_image_file};
 use onerom_gen::ChipSetType;
 use onerom_gen::compat::{
     ChipCompat, check_chip_set_on_board, default_cs_config, format_size, supported_chips,
@@ -23,7 +23,6 @@ use onerom_gen::{
     supports_board_size,
 };
 use onerom_lab_parser::LabParser;
-use onerom_metadata::FLASH_CS1_BASE_ADDR;
 
 use crate::args;
 use crate::args::hardware::supported_size;
@@ -195,17 +194,7 @@ fn refuse_image_file(info: &ParsedDevice, len: usize, force: bool) -> Result<(),
 /// A file longer than the first flash chip holds the second chip's contents
 /// after the first chip's, and they're read at the second chip's address.
 pub async fn parse_firmware(data: &[u8]) -> Result<ParsedDevice, Error> {
-    let first_len = FlashChips::first_for(Variant::RP2350).len();
-    let (first, second) = data.split_at(data.len().min(first_len));
-    // The hardcoded base address looks odd here, as the STM32's base flash
-    // address, but when using a memory reader, onerom-fw-parser will just figure
-    // it out for itself based on what it finds in the image.
-    let mut reader = MemoryReader::new(first.to_vec(), 0x0800_0000);
-    if !second.is_empty() {
-        reader.add_region(RegionKind::Flash, second.to_vec(), FLASH_CS1_BASE_ADDR);
-    }
-    let mut parser = Parser::new(&mut reader);
-    Ok(parser.parse_device().await)
+    Ok(parse_image_file(data, FlashChips::first_for(Variant::RP2350)).await)
 }
 
 fn check_firmware_size(options: &Options, data: &[u8]) -> Result<(), Error> {
@@ -1189,6 +1178,8 @@ fn parse_plugin_specs(raw: &[String]) -> Result<Vec<PluginSpec>, Error> {
 
 #[cfg(test)]
 mod tests {
+    use onerom_metadata::FLASH_CS1_BASE_ADDR;
+
     use super::*;
     use crate::test_board::{IMAGE_27C400, image_file, move_slot};
 

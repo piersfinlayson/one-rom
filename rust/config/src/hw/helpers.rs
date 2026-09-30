@@ -5,6 +5,7 @@
 //! Hand-written helper methods for `Board`, supplementing the generated
 //! data accessors in `generated.rs`.
 
+use super::board_size::BoardSize;
 use super::generated::Board;
 use crate::chip::ChipType;
 use crate::mcu::PinTolerance;
@@ -73,12 +74,45 @@ impl Board {
     pub fn gpio_tolerance(&self, gpio: u8) -> Option<PinTolerance> {
         self.rp_variant().map(|v| v.gpio_tolerance(gpio))
     }
+
+    /// Whether this board can be `size`. Every board can be M. L requires a
+    /// board that supports external flash.
+    pub fn supports_size(&self, size: BoardSize) -> bool {
+        match size {
+            BoardSize::M => true,
+            BoardSize::L => self.external_flash_cs_pin().is_some(),
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::hw::BOARDS;
+
+    #[test]
+    fn every_board_supports_m() {
+        for board in BOARDS {
+            assert!(board.supports_size(BoardSize::M), "{board:?}");
+        }
+    }
+
+    #[test]
+    fn only_a_board_that_supports_external_flash_supports_l() {
+        for board in [Board::Fire32A, Board::Fire40A, Board::Fire40C] {
+            assert!(board.supports_size(BoardSize::L), "{board:?}");
+        }
+        for board in [Board::Fire24A, Board::Fire28D, Board::Ice24J, Board::Ice28A] {
+            assert!(!board.supports_size(BoardSize::L), "{board:?}");
+        }
+        for board in BOARDS {
+            assert_eq!(
+                board.supports_size(BoardSize::L),
+                board.external_flash_cs_pin().is_some(),
+                "{board:?}"
+            );
+        }
+    }
 
     /// Every board reports GPIO tolerance consistently: RP2350 (Fire) boards
     /// flag their ADC pins 3.3V-only and everything else 5V-tolerant; STM32

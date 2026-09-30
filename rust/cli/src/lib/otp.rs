@@ -229,7 +229,7 @@ pub fn board_size_text(size: MaybeKnown<OneromBoardSize>) -> String {
     match size {
         MaybeKnown::Known(OneromBoardSize::BoardSizeM) => "M".to_string(),
         MaybeKnown::Known(OneromBoardSize::BoardSizeL) => "L".to_string(),
-        MaybeKnown::Known(OneromBoardSize::BoardSizeOther) => "neither M nor L".to_string(),
+        MaybeKnown::Known(OneromBoardSize::BoardSizeOther) => "other".to_string(),
         // Firmware before 0.8.0 doesn't record a size.
         MaybeKnown::Known(OneromBoardSize::BoardSizeUnknown) => "unknown".to_string(),
         // A size newer firmware recorded, with its number.
