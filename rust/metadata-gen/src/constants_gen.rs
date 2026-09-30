@@ -16,11 +16,15 @@
 // metadata getters is a separate concern and lives in
 // onerom_metadata_keys_generated.h.
 //
+// An `ora_api` enum emits each of its values here the same way, as `ORA_` and
+// the value's name, so a plugin can compare what an enum-typed metadata key
+// returns.
+//
 // Each constant carries an `@since firmware X.Y.Z` line naming the release it
 // reached the plugin API in, as api.h does for every identifier.
 
 use crate::c_gen::format_const_value;
-use crate::schema::Schema;
+use crate::schema::{ConstantValue, Schema};
 
 const GUARD: &str = "ONEROM_CONSTANTS_H";
 
@@ -61,6 +65,25 @@ pub fn generate(schema: &Schema) -> String {
             constant.ora_name(),
             format_const_value(&constant.value, &constant.type_)
         ));
+    }
+
+    // Every value, sentinels and deprecated values among them.  The firmware
+    // header's enum contains each, and the Rust crate has each as a variant or
+    // a constant.  A deprecated value keeps its name for good, and its note
+    // says not to use it.
+    for e in schema.ora_enums() {
+        for v in &e.variants {
+            if let Some(comment) = v.plugin_documentation(e.value_release(v)) {
+                for line in comment.lines() {
+                    out.push_str(&format!("// {line}\n"));
+                }
+            }
+            out.push_str(&format!(
+                "#define {} {}\n\n",
+                v.ora_name(),
+                format_const_value(&ConstantValue::Integer(v.value), e.value_type())
+            ));
+        }
     }
 
     out.push_str(&format!("#endif // {GUARD}\n"));

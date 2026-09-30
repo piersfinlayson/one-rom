@@ -9,9 +9,10 @@
 
 use log::debug;
 use nusb::DeviceInfo;
-use onerom_config::hw::Board;
-use onerom_config::mcu::{Rp235xChipId, RpVariant};
+use onerom_config::hw::{Board, BoardSize};
+use onerom_config::mcu::{Rp235xChipId, RpVariant, Variant};
 use onerom_fw_parser::{ParseError, ParsedDevice};
+use onerom_gen::FlashChips;
 use onerom_lab_parser::Lab;
 use onerom_metadata::{MaybeKnown, OneromBoardSize, USB_BOOTLOADER_PID, USB_BOOTLOADER_VID};
 use picoboot::{PICOBOOT_PID_RP2350, PICOBOOT_VID};
@@ -85,9 +86,7 @@ pub struct Device {
     /// The device's commissioning area. Enumeration reads it only for a
     /// device without firmware this build recognises.
     pub commissioning: Commissioning,
-    /// The board's size, from runtime info while One ROM runs and from OTP
-    /// while it's stopped. `None` for One ROM Lab and where OTP couldn't be
-    /// read.
+    /// The board's size, as [`Device::board_size()`] describes it.
     pub(crate) board_size: Option<MaybeKnown<OneromBoardSize>>,
     /// The firmware parser's reasons, where this build doesn't recognise the
     /// device's firmware.
@@ -344,6 +343,19 @@ impl Device {
         Some(format!("Board size: {}", board_size_text(size)))
     }
 
+    /// The board's size, from runtime info while One ROM runs and from OTP
+    /// while it's stopped or where runtime info doesn't record it. `None` for
+    /// One ROM Lab and where neither could be read.
+    pub fn board_size(&self) -> Option<MaybeKnown<OneromBoardSize>> {
+        self.board_size
+    }
+
+    /// The device's flash chips, from its board size. A board whose size
+    /// isn't known has the first chip alone.
+    pub fn flash_chips(&self) -> FlashChips {
+        size_chips(self.board_size)
+    }
+
     /// The board size runtime info records, where One ROM is running. Firmware
     /// before 0.8.0 doesn't record one, so its size is unknown.
     #[allow(clippy::wildcard_enum_match_arm)]
@@ -401,6 +413,21 @@ fn lab_board_part(lab: &Lab) -> String {
         None if read => "(board not set)".to_string(),
         None => board_part(None),
     }
+}
+
+/// The flash chips of a board whose recorded size is `size`.
+fn size_chips(size: Option<MaybeKnown<OneromBoardSize>>) -> FlashChips {
+    let size = match size {
+        Some(MaybeKnown::Known(OneromBoardSize::BoardSizeM)) => BoardSize::M,
+        Some(MaybeKnown::Known(OneromBoardSize::BoardSizeL)) => BoardSize::L,
+        // The first chip is the only one every board has.
+        Some(
+            MaybeKnown::Known(OneromBoardSize::BoardSizeUnknown | OneromBoardSize::BoardSizeOther)
+            | MaybeKnown::Unknown(_),
+        )
+        | None => BoardSize::M,
+    };
+    FlashChips::new(Variant::RP2350, size)
 }
 
 /// What follows the board in a device's line. `(L)` on an L board, `(other)`
@@ -567,6 +594,24 @@ pub async fn select_device_by_chip_id(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_board_whose_size_isnt_known_has_the_first_chip_alone() {
+        use OneromBoardSize::{BoardSizeL, BoardSizeM, BoardSizeOther, BoardSizeUnknown};
+        let l = size_chips(Some(MaybeKnown::Known(BoardSizeL)));
+        assert_eq!(l.second(), Some(0x1100_0000..0x1120_0000));
+        for size in [
+            Some(MaybeKnown::Known(BoardSizeM)),
+            Some(MaybeKnown::Known(BoardSizeUnknown)),
+            Some(MaybeKnown::Known(BoardSizeOther)),
+            Some(MaybeKnown::Unknown(3)),
+            None,
+        ] {
+            let chips = size_chips(size);
+            assert_eq!(chips.first(), l.first(), "{size:?}");
+            assert_eq!(chips.second(), None, "{size:?}");
+        }
+    }
 
     #[test]
     fn the_device_line_marks_only_l_and_other_sizes() {

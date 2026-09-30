@@ -4,9 +4,41 @@
 
 //! Argument definitions for `onerom firmware`.
 
+use std::str::FromStr;
+
 use crate::args::{CommandTrait, program::ProgramArgs};
+use clap::builder::{PossibleValue, TypedValueParser};
 use clap::{Args, Subcommand};
 use enum_dispatch::enum_dispatch;
+use onerom_app::BoardSize;
+
+/// Value parser for `--size`, driven by [`BoardSize::supported_values`].
+///
+/// A size added to [`BoardSize`] is accepted here and appears in `--help`
+/// with its description, without a CLI change.
+#[derive(Clone)]
+struct BoardSizeParser;
+
+impl TypedValueParser for BoardSizeParser {
+    type Value = BoardSize;
+
+    fn parse_ref(
+        &self,
+        cmd: &clap::Command,
+        arg: Option<&clap::Arg>,
+        value: &std::ffi::OsStr,
+    ) -> Result<Self::Value, clap::Error> {
+        // The refusal's source is BoardSizeError, as it is with
+        // `value_parser = BoardSize::from_str`.
+        BoardSize::from_str.parse_ref(cmd, arg, value)
+    }
+
+    fn possible_values(&self) -> Option<Box<dyn Iterator<Item = PossibleValue> + '_>> {
+        Some(Box::new(BoardSize::supported_values().iter().map(|size| {
+            PossibleValue::new(size.name()).help(size.description())
+        })))
+    }
+}
 
 #[derive(Debug, Args)]
 pub struct FirmwareArgs {
@@ -215,6 +247,10 @@ pub struct FirmwareBuildArgs {
     #[arg(long, short, value_name = "BOARD")]
     pub board: Option<String>,
 
+    /// Target board size
+    #[arg(long, value_name = "SIZE", value_parser = BoardSizeParser, default_value = "M")]
+    pub size: BoardSize,
+
     /// Firmware version to build against. Defaults to the latest release.
     #[arg(long, value_name = "VERSION")]
     pub version: Option<String>,
@@ -383,5 +419,71 @@ pub struct FirmwareChipsArgs {
 impl CommandTrait for FirmwareChipsArgs {
     fn requires_device(&self) -> bool {
         false
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::error::Error as _;
+
+    use clap::Parser;
+    use clap::error::ErrorKind;
+    use onerom_app::BoardSizeError;
+
+    use super::*;
+    use crate::args::{Cli, Commands};
+
+    /// `onerom firmware build --board fire-40-a` and `options`, parsed.
+    fn build(options: &[&str]) -> Result<FirmwareBuildArgs, clap::Error> {
+        let words = ["onerom", "firmware", "build", "--board", "fire-40-a"];
+        let cli = Cli::try_parse_from(words.iter().chain(options))?;
+        let Commands::Firmware(firmware) = cli.command else {
+            panic!("not firmware");
+        };
+        let FirmwareCommands::Build(args) = firmware.command else {
+            panic!("not firmware build");
+        };
+        Ok(args)
+    }
+
+    #[test]
+    fn size_parses_every_size_in_either_case() {
+        for &size in BoardSize::supported_values() {
+            for text in [size.name().to_lowercase(), size.name().to_uppercase()] {
+                assert_eq!(build(&["--size", &text]).unwrap().size, size, "{text}");
+            }
+        }
+    }
+
+    #[test]
+    fn size_defaults_to_m() {
+        assert_eq!(build(&[]).unwrap().size, BoardSize::M);
+    }
+
+    #[test]
+    fn size_refuses_a_size_it_doesnt_know() {
+        for text in ["XL", "Q", ""] {
+            let error = build(&["--size", text]).unwrap_err();
+            assert_eq!(error.kind(), ErrorKind::ValueValidation, "{text:?}");
+            let reason = error
+                .source()
+                .and_then(|e| e.downcast_ref::<BoardSizeError>());
+            assert_eq!(reason, Some(&BoardSizeError::Unknown), "{text:?}");
+        }
+    }
+
+    /// `--help` lists each size with its description.
+    #[test]
+    fn size_help_lists_every_size() {
+        let values: Vec<PossibleValue> = BoardSizeParser.possible_values().unwrap().collect();
+        let sizes = BoardSize::supported_values();
+        assert_eq!(values.len(), sizes.len());
+        for (value, size) in values.iter().zip(sizes) {
+            assert_eq!(value.get_name(), size.name());
+            assert_eq!(
+                value.get_help().map(ToString::to_string).as_deref(),
+                Some(size.description())
+            );
+        }
     }
 }

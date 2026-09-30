@@ -48,6 +48,14 @@
 // @since firmware 0.8.0
 #define ORA_OTP_FLASH_DEVINFO_CS1_GPIO ((uint16_t)0x003F)
 
+// Address of the flash chip on QSPI chip select 0 (built-in on an RP2354).
+// @since firmware 0.8.0
+#define ORA_FLASH_CS0_BASE_ADDR ((uint32_t)0x10000000)
+
+// Address of the flash chip on QSPI chip select 1.
+// @since firmware 0.8.0
+#define ORA_FLASH_CS1_BASE_ADDR ((uint32_t)0x11000000)
+
 // The longest hold either LED accepts, in milliseconds.
 // @since firmware 0.7.2
 #define ORA_LED_MAX_HOLD_MS ((uint32_t)0x0000EA60)
@@ -71,5 +79,29 @@
 // The USB product ID a commissioned One ROM's bootloader presents.
 // @since firmware 0.8.0
 #define ORA_USB_BOOTLOADER_PID ((uint16_t)0xF540)
+
+// RP235xB
+// @since firmware 0.8.0
+#define ORA_RP235XB ((uint8_t)0)
+
+// RP235xA
+// @since firmware 0.8.0
+#define ORA_RP235XA ((uint8_t)1)
+
+// Not recorded. Firmware before 0.8.0 doesn't record the board size.
+// @since firmware 0.8.0
+#define ORA_BOARD_SIZE_UNKNOWN ((uint8_t)0)
+
+// 2MB of built-in flash without a chip on chip select 1.
+// @since firmware 0.8.0
+#define ORA_BOARD_SIZE_M ((uint8_t)1)
+
+// 2MB of built-in flash and 2MB of external flash on chip select 1.
+// @since firmware 0.8.0
+#define ORA_BOARD_SIZE_L ((uint8_t)2)
+
+// An unspecified size.
+// @since firmware 0.8.0
+#define ORA_BOARD_SIZE_OTHER ((uint8_t)0xFF)
 
 #endif // ONEROM_CONSTANTS_H

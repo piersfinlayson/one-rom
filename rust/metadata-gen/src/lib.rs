@@ -60,7 +60,7 @@
 //!   - the key resolver macros in the C header ([`c_gen`])
 //!   - the key header ([`keys_gen`])
 //!   - the constants header ([`constants_gen`])
-//!   - `ORA_` names for constants ([`schema`])
+//!   - `ORA_` names for constants and enum values ([`schema`])
 //!   - the `onerom_runtime_info_t` root for plugin keys ([`schema`])
 //!   - the release check on plugin keys ([`layout`])
 //! - In the C header ([`c_gen`]):

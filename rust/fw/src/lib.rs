@@ -13,7 +13,7 @@ use log::{debug, error, info, trace, warn};
 use std::collections::HashMap;
 
 use onerom_config::fw::FirmwareProperties;
-use onerom_gen::{Builder, FileData};
+use onerom_gen::{Builder, FileData, FlashChips};
 use onerom_gen::{FIRMWARE_SIZE, MAX_METADATA_LEN};
 
 use net::{fetch_rom_file, fetch_rom_file_async};
@@ -62,12 +62,15 @@ pub fn validate_sizes(
         total_size += image_size;
     }
 
-    let max_size = fw_props.mcu_variant().flash_storage_bytes();
+    // An image for a board with a second flash chip holds the first chip's
+    // contents and then the second chip's.
+    let chips = FlashChips::new(fw_props.mcu_variant(), fw_props.board_size());
+    let max_size = chips.first().len() + chips.second().map_or(0, |chip| chip.len());
     debug!(
         "Total firmware size: {} bytes (max {})",
         total_size, max_size
     );
-    debug!("MCU flash size: {} bytes", max_size);
+    debug!("Flash size: {} bytes", max_size);
     if total_size > max_size {
         return Err(Error::too_large(
             "Total firmware".to_string(),
@@ -193,4 +196,59 @@ pub fn read_rom_config(rom_config_filename: &str) -> Result<String, Error> {
     // Load the config file
     std::fs::read_to_string(rom_config_filename)
         .map_err(|e| Error::read(rom_config_filename.to_string(), e))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use onerom_config::fw::{FirmwareVersion, ServeAlg};
+    use onerom_config::hw::{Board, BoardSize};
+    use onerom_config::mcu::Variant;
+
+    const MB: usize = 1024 * 1024;
+
+    fn props(size: BoardSize) -> FirmwareProperties {
+        FirmwareProperties::new(
+            FirmwareVersion::new(0, 8, 0, 0),
+            Board::Fire32B,
+            Variant::RP2350,
+            ServeAlg::Default,
+            false,
+        )
+        .unwrap()
+        .with_board_size(size)
+    }
+
+    /// Whether firmware, metadata and `image_len` bytes of ROM data fit a
+    /// `size` board.
+    fn fits(size: BoardSize, image_len: usize) -> bool {
+        let result = validate_sizes(
+            &props(size),
+            &[0; 1024],
+            &Some(vec![0; MAX_METADATA_LEN]),
+            &Some(vec![0; image_len]),
+        );
+        match result {
+            Ok(()) => true,
+            Err(Error::TooLarge { .. }) => false,
+            Err(e) => panic!("unexpected error: {e}"),
+        }
+    }
+
+    /// ROM data follows the firmware and metadata regions and can fill the
+    /// rest of the flash.
+    #[test]
+    fn an_m_board_takes_rom_data_to_the_end_of_its_one_chip() {
+        let space = 2 * MB - FIRMWARE_SIZE - MAX_METADATA_LEN;
+        assert!(fits(BoardSize::M, space));
+        assert!(!fits(BoardSize::M, space + 1));
+    }
+
+    #[test]
+    fn an_l_board_takes_rom_data_to_the_end_of_its_second_chip() {
+        let space = 4 * MB - FIRMWARE_SIZE - MAX_METADATA_LEN;
+        assert!(fits(BoardSize::L, space));
+        assert!(!fits(BoardSize::L, space + 1));
+        assert!(!fits(BoardSize::M, space));
+    }
 }

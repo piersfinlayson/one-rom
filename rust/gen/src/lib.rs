@@ -12,6 +12,7 @@ pub mod builder;
 pub mod chip_type_spec;
 pub mod compat;
 pub mod firmware;
+mod flash;
 pub mod hexfile;
 pub mod ihex;
 pub mod image;
@@ -27,6 +28,7 @@ pub use firmware::{
     DebugConfig, FireConfig, FireCpuFreq, FireServeMode, FireVreg, FirmwareConfig, IceConfig,
     IceCpuFreq, LedConfig, ServeAlgParams,
 };
+pub use flash::FlashChips;
 #[expect(deprecated, reason = "re-exported for callers of the pre-0.8.0 name")]
 pub use hexfile::IHEX_BLANK_BYTE;
 pub use hexfile::{AddressParseError, LoadAddress, UNWRITTEN_BYTE};
@@ -48,7 +50,7 @@ use alloc::vec::Vec;
 use onerom_config::chip::ChipType;
 use onerom_config::fw::{FirmwareVersion, ServeAlg};
 
-use onerom_config::hw::Board;
+use onerom_config::hw::{Board, BoardSize};
 pub use v1::MAX_SUPPORTED_FIRMWARE_VERSION as MAX_SUPPORTED_FIRMWARE_VERSION_V1;
 pub use v1::MIN_SUPPORTED_FIRMWARE_VERSION as MIN_SUPPORTED_FIRMWARE_VERSION_V1;
 pub use v1::SUPPORTED_CHIP_TYPES as SUPPORTED_CHIP_TYPES_V1;
@@ -74,22 +76,32 @@ pub const FIRMWARE_SIZE: usize = 48 * 1024; // 48KB
 // the schema) as an argument rather than assuming one value.
 const _: () = assert!(MAX_METADATA_LEN == onerom_metadata::METADATA_SIZE);
 
-/// Flash available for ROM image data on `mcu_variant`, in bytes.
+/// Flash available for ROM image data on the first flash chip with
+/// `mcu_variant`, in bytes.
 ///
-/// This is the whole flash less the two fixed regions that precede the ROM
-/// images: the firmware ([`FIRMWARE_SIZE`], 48KB) and the metadata region
+/// This is the whole first chip less the two fixed regions that precede the
+/// ROM images: the firmware ([`FIRMWARE_SIZE`], 48KB) and the metadata region
 /// (16KB). On the RP2350's 2MB flash that leaves 1984KB.
 ///
-/// Both builder paths bound their composed ROM data with this, and it is the
-/// budget a caller should size a set of images against. Note the separate,
-/// smaller [`MAX_IMAGE_SIZE`] cap that applies to any *single* slot - that is a
-/// RAM limit, not a flash one, so a set of images can be within this budget yet
-/// still contain a slot that is too large to serve.
+/// The V1 builder bounds its composed ROM data with this. The V2 builder
+/// places slots here and on a second chip where the board has one (see
+/// [`FlashChips`]).
+/// Note the separate, smaller [`MAX_IMAGE_SIZE`] cap that applies to any
+/// *single* slot - that is a RAM limit, not a flash one, so a set of images can
+/// be within this space yet still contain a slot that is too large to serve.
 pub fn rom_data_space(mcu_variant: onerom_config::mcu::Variant) -> usize {
     mcu_variant.flash_storage_bytes() - FIRMWARE_SIZE - MAX_METADATA_LEN
 }
 
 pub const MIN_FIRMWARE_OVERRIDES_VERSION: FirmwareVersion = FirmwareVersion::new(0, 6, 0, 0);
+
+/// Whether firmware `version` supports a `size` board.
+///
+/// Firmware before 0.8.0 supports only M. It resets chip select 1's pin at
+/// boot and doesn't set the second chip's clock divisor.
+pub fn supports_board_size(version: FirmwareVersion, size: BoardSize) -> bool {
+    size == BoardSize::M || version >= FirmwareVersion::new(0, 8, 0, 0)
+}
 
 /// Error type
 ///
@@ -289,6 +301,16 @@ pub enum Error {
         field: &'static str,
         /// Oldest firmware whose metadata carries it.
         minimum: FirmwareVersion,
+    },
+    /// A chip set doesn't fit on either flash chip after the sets before it.
+    SlotDoesNotFit {
+        /// The chip set's index in the config.
+        slot: usize,
+    },
+    /// A build for a size other than M, for firmware that supports only M.
+    FirmwareTooOldForBoardSize {
+        /// The firmware version.
+        version: FirmwareVersion,
     },
 }
 type Result<T> = core::result::Result<T, Error>;
@@ -571,6 +593,15 @@ impl core::fmt::Display for Error {
             }
             Error::MetadataFieldTooNew { field: _, minimum } => {
                 write!(f, "This config needs firmware {minimum} or newer")
+            }
+            Error::SlotDoesNotFit { slot } => {
+                write!(f, "Set {slot} does not fit in the remaining flash")
+            }
+            Error::FirmwareTooOldForBoardSize { version } => {
+                write!(
+                    f,
+                    "Firmware {version} doesn't support board sizes other than M"
+                )
             }
         }
     }

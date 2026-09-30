@@ -194,7 +194,7 @@ void ora_host_test_sram_write8(uint32_t addr, uint8_t val);
 
 /** @brief Base of the XIP-mapped flash window.  Only meaningful on the
  * device. */
-#define ORA_FLASH_BASE_ADDR 0x10000000u
+#define ORA_FLASH_BASE_ADDR ORA_FLASH_CS0_BASE_ADDR
 
 /**
  * @brief Most RAM slots the firmware will report

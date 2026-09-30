@@ -86,14 +86,24 @@ pub struct ReleasedEnum {
     /// `onerom_rom_type_t` from `chip-types.json`.
     #[serde(default)]
     pub variants: Vec<ReleasedEnumVariant>,
+    /// Whether the copy had this enum's values in the plugin API.
+    #[serde(default)]
+    pub ora_api: bool,
+    /// Absent in every copy taken before an enum could reach the plugin API,
+    /// and in every enum a plugin can't see.
+    pub first_release: Option<String>,
 }
 
-/// An enum value, reduced to its name and number.  Devices and hosts already
-/// hold the number, so neither may change.
+/// An enum value, reduced to its name and number, and the release it reached
+/// the plugin API in where it states one.  Devices and hosts already hold the
+/// number, so neither the name nor the number may change.
 #[derive(Deserialize, Debug)]
 pub struct ReleasedEnumVariant {
     pub name: String,
     pub value: i64,
+    /// Absent where the value took its enum's, and in every copy taken before
+    /// a value could state its own.
+    pub first_release: Option<String>,
 }
 
 #[derive(Deserialize, Debug)]
@@ -218,6 +228,11 @@ impl Released {
     /// plugin could not see it then, so this release is where it arrives.
     pub fn ora_constants(&self) -> impl Iterator<Item = &ReleasedConstant> {
         self.constants.iter().filter(|c| c.ora_api)
+    }
+
+    /// The enums whose values the copy put in the plugin API.
+    pub fn ora_enums(&self) -> impl Iterator<Item = &ReleasedEnum> {
+        self.enums.iter().filter(|e| e.ora_api)
     }
 
     /// Every plugin key the copy carried.

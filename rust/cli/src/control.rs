@@ -24,6 +24,7 @@ use onerom_cli::{Error, Options};
 use onerom_config::chip::ChipType;
 use onerom_config::hw::Board;
 use onerom_config::mcu::PinTolerance;
+use onerom_gen::FlashChips;
 use std::io::Write;
 
 /// Send one status LED request, reporting it when the CLI is verbose.
@@ -760,12 +761,25 @@ pub async fn cmd_poke_live(
     Ok(())
 }
 
-const FLASH_SIZE: u32 = 2 * 1024 * 1024;
 const SECTOR_SIZE: u32 = 4096;
 
-fn build_erase_ranges(args: &args::control::ControlEraseArgs) -> Result<Vec<(u32, u32)>, Error> {
+/// Each of `chips` as a range from `FLASH_BASE`, its offset and length.
+fn chip_ranges(chips: &FlashChips) -> Vec<(u32, u32)> {
+    [Some(chips.first()), chips.second()]
+        .into_iter()
+        .flatten()
+        .map(|chip| (chip.start - FLASH_BASE, chip.end - chip.start))
+        .collect()
+}
+
+/// The ranges `args` asks to erase, each as its offset from `FLASH_BASE` and
+/// its length. `--all` is each of `chips`.
+pub(crate) fn build_erase_ranges(
+    args: &args::control::ControlEraseArgs,
+    chips: &FlashChips,
+) -> Result<Vec<(u32, u32)>, Error> {
     if args.all {
-        return Ok(vec![(0, FLASH_SIZE)]);
+        return Ok(chip_ranges(chips));
     }
 
     let offsets: Vec<u32> = if !args.address.is_empty() {
@@ -803,7 +817,12 @@ fn build_erase_ranges(args: &args::control::ControlEraseArgs) -> Result<Vec<(u32
         .collect())
 }
 
-fn validate_erase_ranges(ranges: &[(u32, u32)]) -> Result<(), Error> {
+/// Refuses a range that isn't whole sectors within one of `chips`.
+pub(crate) fn validate_erase_ranges(
+    ranges: &[(u32, u32)],
+    chips: &FlashChips,
+) -> Result<(), Error> {
+    let flash = chip_ranges(chips);
     for (offset, size) in ranges {
         if offset % SECTOR_SIZE != 0 {
             return Err(Error::InvalidArgument(
@@ -817,29 +836,71 @@ fn validate_erase_ranges(ranges: &[(u32, u32)]) -> Result<(), Error> {
                 format!("Size {size:#x} must be a non-zero multiple of {SECTOR_SIZE:#x}"),
             ));
         }
-        if offset + size > FLASH_SIZE {
+        let within = |&(start, len): &(u32, u32)| {
+            *offset >= start && u64::from(*offset) + u64::from(*size) <= u64::from(start + len)
+        };
+        if !flash.iter().any(within) {
+            let chips = flash
+                .iter()
+                .map(|(start, len)| format!("{:#x}+{len:#x}", FLASH_BASE + start))
+                .collect::<Vec<_>>()
+                .join(" and ");
             return Err(Error::InvalidArgument(
                 "erase".to_string(),
-                format!("Range {offset:#x}+{size:#x} exceeds flash size {FLASH_SIZE:#x}"),
+                format!(
+                    "Range {:#x}+{size:#x} is outside this One ROM's flash\n  Flash: {chips}",
+                    // An --offset can be any u32.
+                    u64::from(FLASH_BASE) + u64::from(*offset)
+                ),
             ));
         }
     }
     Ok(())
 }
 
-fn confirm_erase(options: &Options, device: &Device, ranges: &[(u32, u32)]) -> Result<bool, Error> {
-    let total_kb = ranges.iter().map(|(_, s)| s).sum::<u32>() / 1024;
-    println!(
-        "This will erase {total_kb}KB across {} range(s) on device:\n  {device}",
-        ranges.len()
-    );
-    if options.verbose {
-        for (offset, size) in ranges {
-            println!(
+/// The kilobytes `ranges` cover together.
+fn erase_kb(ranges: &[(u32, u32)]) -> u32 {
+    ranges.iter().map(|(_, size)| size).sum::<u32>() / 1024
+}
+
+/// The line asking to erase `ranges`, which the device's line follows.
+/// `--verbose` adds the number of ranges.
+pub(crate) fn erase_question(ranges: &[(u32, u32)], verbose: bool) -> String {
+    if verbose {
+        format!(
+            "This will erase {}KB across {} range(s) on device:",
+            erase_kb(ranges),
+            ranges.len()
+        )
+    } else {
+        format!("This will erase {}KB on device:", erase_kb(ranges))
+    }
+}
+
+/// The lines `--verbose` shows for `ranges` beneath the device's line.
+pub(crate) fn erase_range_lines(ranges: &[(u32, u32)]) -> Vec<String> {
+    ranges
+        .iter()
+        .map(|(offset, size)| {
+            format!(
                 "  {size:#x} bytes ({}KB) at {:#010x}",
                 size / 1024,
                 FLASH_BASE + offset
-            );
+            )
+        })
+        .collect()
+}
+
+/// The line reporting `ranges` erased.
+pub(crate) fn erased_line(ranges: &[(u32, u32)]) -> String {
+    format!("Erased {}KB of flash", erase_kb(ranges))
+}
+
+fn confirm_erase(options: &Options, device: &Device, ranges: &[(u32, u32)]) -> Result<bool, Error> {
+    println!("{}\n  {device}", erase_question(ranges, options.verbose));
+    if options.verbose {
+        for line in erase_range_lines(ranges) {
+            println!("{line}");
         }
     }
 
@@ -896,8 +957,7 @@ async fn erase_ranges(options: &Options, ranges: &[(u32, u32)]) -> Result<(), Er
         flash_erase(device, *offset, *size).await?;
     }
 
-    let total_kb = ranges.iter().map(|(_, s)| s).sum::<u32>() / 1024;
-    println!("Erased {total_kb}KB of flash");
+    println!("{}", erased_line(ranges));
     Ok(())
 }
 
@@ -922,8 +982,9 @@ pub async fn cmd_erase(
 ) -> Result<(), Error> {
     check_device(options, args, false)?;
 
-    let ranges = build_erase_ranges(args)?;
-    validate_erase_ranges(&ranges)?;
+    let chips = options.device.as_ref().unwrap().flash_chips();
+    let ranges = build_erase_ranges(args, &chips)?;
+    validate_erase_ranges(&ranges, &chips)?;
 
     if !confirm_erase(options, options.device.as_ref().unwrap(), &ranges)? {
         println!("Aborted");
@@ -1049,6 +1110,77 @@ mod tests {
         let (pin, confirmed) = check("gpio16", None, &[ChipType::Chip2364]).unwrap();
         assert_eq!(pin.gpio(), 16);
         assert!(!confirmed);
+    }
+
+    /// `words`, which start `onerom control erase`, parsed.
+    fn erase_args(words: &str) -> args::control::ControlEraseArgs {
+        use clap::Parser;
+        let cli = crate::args::Cli::try_parse_from(words.split_whitespace()).unwrap();
+        let crate::args::Commands::Control(control) = cli.command else {
+            panic!("not control");
+        };
+        let args::control::ControlCommands::Erase(args) = control.command else {
+            panic!("not control erase");
+        };
+        args
+    }
+
+    fn chips(size: onerom_config::hw::BoardSize) -> FlashChips {
+        FlashChips::new(onerom_config::mcu::Variant::RP2350, size)
+    }
+
+    #[test]
+    fn all_erases_every_chip() {
+        use onerom_config::hw::BoardSize;
+        let args = erase_args("onerom control erase --all");
+        let m = build_erase_ranges(&args, &chips(BoardSize::M)).unwrap();
+        assert_eq!(m, [(0, 0x20_0000)]);
+        let l = build_erase_ranges(&args, &chips(BoardSize::L)).unwrap();
+        assert_eq!(l, [(0, 0x20_0000), (0x100_0000, 0x20_0000)]);
+    }
+
+    /// An address on the second chip is an offset of 0x1000000 and more.
+    #[test]
+    fn a_range_on_the_second_chip_needs_a_board_with_one() {
+        use onerom_config::hw::BoardSize;
+        let args = erase_args("onerom control erase --address 0x11000000 --length 0x1000");
+        let ranges = build_erase_ranges(&args, &chips(BoardSize::L)).unwrap();
+        assert_eq!(ranges, [(0x100_0000, 0x1000)]);
+        assert!(validate_erase_ranges(&ranges, &chips(BoardSize::L)).is_ok());
+        assert!(validate_erase_ranges(&ranges, &chips(BoardSize::M)).is_err());
+    }
+
+    #[test]
+    fn a_range_outside_a_chip_is_refused() {
+        use onerom_config::hw::BoardSize;
+        let l = chips(BoardSize::L);
+        // The last sector of each chip.
+        assert!(validate_erase_ranges(&[(0x1f_f000, 0x1000)], &l).is_ok());
+        assert!(validate_erase_ranges(&[(0x11f_f000, 0x1000)], &l).is_ok());
+        // Past the end of each chip, between them, and across the end of the
+        // first.
+        for range in [
+            (0x20_0000, 0x1000),
+            (0x120_0000, 0x1000),
+            (0x80_0000, 0x1000),
+            (0x1f_f000, 0x2000),
+        ] {
+            assert!(validate_erase_ranges(&[range], &l).is_err(), "{range:x?}");
+        }
+    }
+
+    #[test]
+    fn the_erase_lines_contain_the_total() {
+        use crate::test_board::holds;
+        use onerom_config::hw::BoardSize;
+        let args = erase_args("onerom control erase --all");
+        let ranges = build_erase_ranges(&args, &chips(BoardSize::L)).unwrap();
+        assert!(holds(&erase_question(&ranges, true), &["4096KB", "2"]));
+        assert!(holds(&erase_question(&ranges, false), &["4096KB"]));
+        assert!(holds(&erased_line(&ranges), &["4096KB"]));
+        let lines = erase_range_lines(&ranges);
+        assert!(holds(&lines[0], &["0x10000000"]));
+        assert!(holds(&lines[1], &["0x11000000"]));
     }
 
     #[test]

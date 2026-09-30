@@ -7,12 +7,13 @@
 //! - a signing key
 //! - a signer table
 //! - a commissioning plan
+//! - firmware images
 //!
 //! The board is onerom-app's in-memory OTP.
 //!
 //! [`holds`] and the checks beside it find the values in a command's output.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use ed25519_dalek::pkcs8::EncodePrivateKey;
 use ed25519_dalek::pkcs8::spki::der::pem::LineEnding;
@@ -20,7 +21,10 @@ use ed25519_dalek::{Signer as _, SigningKey};
 use onerom_app::{
     BoardSize, LocalFetch, MemoryOtp, Plan, Request, RequestDate, SignerTable, prepare,
 };
+use onerom_cli::usb::{FLASH_BASE, FLASH_READ_SIZE_BYTES};
 use onerom_config::hw::Board;
+use onerom_gen::FIRMWARE_SIZE;
+use onerom_metadata::METADATA_BASE;
 use onerom_metadata::otp::pico_otp::ecc_encode;
 use serde_json::json;
 
@@ -72,6 +76,113 @@ pub async fn commissioned_board(board: &str, size: BoardSize) -> MemoryOtp {
     let plan = plan(&mut otp, board, size).await;
     plan.execute(&mut otp, |_| {}).await.unwrap();
     otp
+}
+
+/// Zeroed flash holding One ROM's header for v0.`minor`.0. Its build date
+/// pointer is `build_date` and its metadata pointer `metadata`.
+pub fn header_image(minor: u16, build_date: u32, metadata: u32) -> Vec<u8> {
+    use onerom_metadata::{
+        FirmwareType, ONEROM_FAMILY_MAGIC, ONEROM_INFO_BUILD_DATE_OFFSET,
+        ONEROM_INFO_FIRMWARE_TYPE_OFFSET, ONEROM_INFO_MAGIC_OFFSET, ONEROM_INFO_METADATA_OFFSET,
+        ONEROM_INFO_MINOR_VERSION_OFFSET, ONEROM_INFO_OFFSET, ONEROM_INFO_VERSION,
+        ONEROM_INFO_VERSION_OFFSET,
+    };
+    let mut image = vec![0; FLASH_READ_SIZE_BYTES as usize];
+    let header = &mut image[ONEROM_INFO_OFFSET as usize..];
+    let mut put = |offset: usize, bytes: &[u8]| {
+        header[offset..offset + bytes.len()].copy_from_slice(bytes);
+    };
+    put(ONEROM_INFO_MAGIC_OFFSET, ONEROM_FAMILY_MAGIC.as_bytes());
+    put(ONEROM_INFO_MINOR_VERSION_OFFSET, &minor.to_le_bytes());
+    put(ONEROM_INFO_BUILD_DATE_OFFSET, &build_date.to_le_bytes());
+    put(
+        ONEROM_INFO_VERSION_OFFSET,
+        &ONEROM_INFO_VERSION.to_le_bytes(),
+    );
+    put(ONEROM_INFO_METADATA_OFFSET, &metadata.to_le_bytes());
+    let one_rom = FirmwareType::FirmwareTypeOneRom as u16;
+    put(ONEROM_INFO_FIRMWARE_TYPE_OFFSET, &one_rom.to_le_bytes());
+    image
+}
+
+/// Base firmware for v0.`minor`.0: One ROM's header alone, pointing at the
+/// metadata region.
+pub fn base_firmware(minor: u16) -> Vec<u8> {
+    let mut image = header_image(minor, FLASH_BASE + 0x300, METADATA_BASE);
+    image.truncate(FIRMWARE_SIZE);
+    image
+}
+
+/// The size of each 27C400's image in [`image_file`].
+pub const IMAGE_27C400: usize = 512 * 1024;
+
+/// The config for `sets` single 27C400 chip sets. Set n's image is `n.bin` in
+/// `dir`.
+pub fn config_27c400(sets: usize, dir: &Path) -> String {
+    let sets: Vec<String> = (0..sets)
+        .map(|n| {
+            let file = dir.join(format!("{n}.bin"));
+            format!(
+                r#"{{ "type": "single", "chips": [{{ "file": {}, "type": "27C400" }}] }}"#,
+                json!(file)
+            )
+        })
+        .collect();
+    format!(
+        r#"{{ "version": 1, "description": "Test", "chip_sets": [{}] }}"#,
+        sets.join(", ")
+    )
+}
+
+/// An image file built for a `size` fire-40-a with v0.8.0 firmware from
+/// [`base_firmware`]. It holds `sets` single 27C400 chip sets.
+pub fn image_file(size: BoardSize, sets: usize) -> Vec<u8> {
+    use onerom_config::fw::{FirmwareProperties, FirmwareVersion, ServeAlg};
+    use onerom_config::mcu::{Family, Variant};
+    use onerom_gen::{Builder, FileData};
+
+    let version = FirmwareVersion::new(0, 8, 0, 0);
+    let dir = Path::new("rom");
+    let mut builder =
+        Builder::from_json(version, Family::Rp2350, &config_27c400(sets, dir)).unwrap();
+    for n in 0..sets {
+        builder
+            .add_file(FileData::new(n, vec![n as u8; IMAGE_27C400]))
+            .unwrap();
+    }
+    let props = FirmwareProperties::new(
+        version,
+        Board::Fire40A,
+        Variant::RP2350,
+        ServeAlg::Default,
+        false,
+    )
+    .unwrap()
+    .with_board_size(size);
+    let (metadata, rom_data) = builder.build(props).unwrap();
+    onerom_fw::assemble_firmware(base_firmware(8), Some(metadata), Some(rom_data)).unwrap()
+}
+
+/// `image`, an [`image_file`], with slot `slot`'s data pointer changed to
+/// `addr`. The ROM data stays where it was.
+pub async fn move_slot(mut image: Vec<u8>, slot: usize, addr: u32) -> Vec<u8> {
+    let parsed = crate::firmware::parse_firmware(&image).await.unwrap();
+    let from = parsed
+        .as_schema()
+        .and_then(|onerom| onerom.metadata())
+        .and_then(|metadata| metadata.rom_slots.get(slot))
+        .and_then(|slot| slot.data.addr())
+        .expect("the slot's data address");
+    // The pointer is the only aligned word holding the slot's address.
+    let words: Vec<usize> = (0..image.len())
+        .step_by(4)
+        .filter(|&at| image[at..].starts_with(&from.to_le_bytes()))
+        .collect();
+    let [at] = words[..] else {
+        panic!("{from:#010x} is in the image {} times", words.len());
+    };
+    image[at..at + 4].copy_from_slice(&addr.to_le_bytes());
+    image
 }
 
 /// [`key`] in a PKCS#8 PEM file.

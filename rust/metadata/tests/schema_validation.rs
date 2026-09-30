@@ -1044,6 +1044,129 @@ fn a_first_release_on_a_firmware_only_constant_is_refused() {
 }
 
 // ===========================================================================
+// Plugin-facing enums
+// ===========================================================================
+
+/// The fixture with an enum that has `attrs`.
+fn enum_toml(attrs: &str) -> String {
+    schema_toml(
+        "",
+        &format!(
+            "\n[[enums]]\nname = \"onerom_mode_t\"\nsize = 1\n{attrs}\n\n\
+             [[enums.variants]]\nname = \"MODE_SLOW\"\nvalue = 0\n\n\
+             [[enums.variants]]\nname = \"MODE_FAST\"\nvalue = 7"
+        ),
+    )
+}
+
+#[test]
+fn a_plugin_enum_with_a_first_release_is_accepted() {
+    accepted(&enum_toml("ora_api = true\nfirst_release = \"0.8.0\""));
+}
+
+#[test]
+fn a_plugin_enum_without_a_first_release_is_refused() {
+    refused(
+        &enum_toml("ora_api = true"),
+        "enum onerom_mode_t is in the plugin API but declares no first_release",
+    );
+}
+
+#[test]
+fn a_first_release_on_a_firmware_only_enum_is_refused() {
+    refused(
+        &enum_toml("first_release = \"0.8.0\""),
+        "enum onerom_mode_t declares first_release but is not in the plugin API",
+    );
+}
+
+#[test]
+fn an_enum_release_that_is_not_a_version_is_refused() {
+    refused(
+        &enum_toml("ora_api = true\nfirst_release = \"v0.8.0\""),
+        "first_release on enum onerom_mode_t is 'v0.8.0'",
+    );
+}
+
+/// The fixture with `attrs` on a value of an enum that has `enum_attrs`.
+fn enum_value_toml(enum_attrs: &str, attrs: &str) -> String {
+    let value = "name = \"MODE_FAST\"\nvalue = 7";
+    let toml = enum_toml(enum_attrs);
+    assert!(toml.contains(value), "no MODE_FAST in the fixture");
+    toml.replace(value, &format!("{value}\n{attrs}"))
+}
+
+#[test]
+fn a_plugin_enum_value_with_a_first_release_is_accepted() {
+    accepted(&enum_value_toml(
+        "ora_api = true\nfirst_release = \"0.7.2\"",
+        "first_release = \"0.8.0\"",
+    ));
+}
+
+#[test]
+fn a_first_release_on_a_value_of_a_firmware_only_enum_is_refused() {
+    refused(
+        &enum_value_toml("", "first_release = \"0.8.0\""),
+        "onerom_mode_t::MODE_FAST declares first_release but onerom_mode_t is not in the plugin \
+         API",
+    );
+}
+
+#[test]
+fn an_enum_value_release_that_is_not_a_version_is_refused() {
+    refused(
+        &enum_value_toml(
+            "ora_api = true\nfirst_release = \"0.8.0\"",
+            "first_release = \"0.8\"",
+        ),
+        "first_release on onerom_mode_t::MODE_FAST is '0.8'",
+    );
+}
+
+/// An enum whose values come from elsewhere would reach the plugin API with
+/// none of them.
+#[test]
+fn a_plugin_enum_listing_no_values_is_refused() {
+    refused(
+        &schema_toml(
+            "",
+            "\n[[enums]]\nname = \"empty_t\"\nsize = 1\nora_api = true\n\
+             first_release = \"0.8.0\"",
+        ),
+        "enum empty_t is in the plugin API but doesn't list any values",
+    );
+}
+
+// ===========================================================================
+// Plugin API names
+// ===========================================================================
+
+#[test]
+fn a_constant_and_an_enum_value_sharing_a_plugin_api_name_are_refused() {
+    let toml = format!(
+        "{}\n\n[[constants]]\nname = \"MODE_FAST\"\ntype = \"u8\"\nvalue = 7\n\
+         ora_api = true\nfirst_release = \"0.8.0\"",
+        enum_toml("ora_api = true\nfirst_release = \"0.8.0\"")
+    );
+    refused(
+        &toml,
+        "ORA_MODE_FAST is the plugin API name of both constant MODE_FAST and \
+         onerom_mode_t::MODE_FAST",
+    );
+}
+
+/// The key header opens and closes with two sentinels of its own.
+#[test]
+fn a_plugin_key_named_like_a_key_sentinel_is_refused() {
+    refused(
+        &keyed("name = \"NONE\", id = 1, first_release = \"0.8.0\""),
+        "ORA_METADATA_KEY_NONE is the plugin API name of both the metadata key header's NONE \
+         sentinel and plugin key NONE",
+    );
+}
+
+// ===========================================================================
 // Linker-script constants
 // ===========================================================================
 

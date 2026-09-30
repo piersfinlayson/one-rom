@@ -419,15 +419,18 @@ impl Constant {
     /// carrying everything the plugin uses - `api.h` answers the same question
     /// for every identifier, in the same words.
     pub fn plugin_documentation(&self) -> Option<String> {
-        let since = self
-            .first_release
-            .as_ref()
-            .map(|release| format!("@since firmware {release}"));
-        match (self.documentation(), since) {
-            (Some(doc), Some(since)) => Some(format!("{doc}\n{since}")),
-            (Some(doc), None) => Some(doc),
-            (None, since) => since,
-        }
+        with_since_line(self.documentation(), self.first_release.as_deref())
+    }
+}
+
+/// `doc`, followed by the `@since` line identifying `release` where one is
+/// given.
+fn with_since_line(doc: Option<String>, release: Option<&str>) -> Option<String> {
+    let since = release.map(|release| format!("@since firmware {release}"));
+    match (doc, since) {
+        (Some(doc), Some(since)) => Some(format!("{doc}\n{since}")),
+        (Some(doc), None) => Some(doc),
+        (None, since) => since,
     }
 }
 
@@ -450,6 +453,39 @@ impl Schema {
     /// The constants the ORA plugin API carries, in schema order.
     pub fn ora_constants(&self) -> impl Iterator<Item = &Constant> {
         self.constants.iter().filter(|c| c.ora_api)
+    }
+
+    /// The enums whose values are in the ORA plugin API, in schema order.
+    pub fn ora_enums(&self) -> impl Iterator<Item = &Enum> {
+        self.enums.iter().filter(|e| e.ora_api)
+    }
+
+    /// Every name the generated plugin headers define, each with what it is
+    /// the name of: the `ora_api` constants and enum values, then the
+    /// metadata keys.
+    fn ora_names(&self) -> Vec<(String, String)> {
+        let mut names: Vec<(String, String)> = self
+            .ora_constants()
+            .map(|c| (c.ora_name(), format!("constant {}", c.name)))
+            .collect();
+        for e in self.ora_enums() {
+            for v in &e.variants {
+                names.push((v.ora_name(), format!("{}::{}", e.name, v.name)));
+            }
+        }
+        for sentinel in [crate::keys_gen::NONE, crate::keys_gen::INVALID] {
+            names.push((
+                crate::keys_gen::ora_name(sentinel),
+                format!("the metadata key header's {sentinel} sentinel"),
+            ));
+        }
+        for entry in self.plugin_keys() {
+            names.push((
+                crate::keys_gen::ora_name(&entry.key.name),
+                format!("plugin key {}", entry.key.name),
+            ));
+        }
+        names
     }
 
     /// The constants the linker-script fragment carries, in schema order.
@@ -497,6 +533,41 @@ pub struct Enum {
     /// Same-value name aliases (C: #define; Rust: const).
     #[serde(default)]
     pub aliases: Vec<EnumAlias>,
+
+    /// Whether this enum's values are part of the ORA plugin API.
+    ///
+    /// A plugin reading an enum-typed metadata key compares what it gets with
+    /// these values, and cannot include the firmware's own metadata header.
+    /// Each value is emitted into firmware/ora/onerom_constants_generated.h
+    /// as `ORA_` and the value's name.
+    #[serde(default)]
+    pub ora_api: bool,
+
+    /// Firmware release in which this enum's values became visible to a
+    /// plugin.  Required of every `ora_api` enum and not allowed on any other,
+    /// as for a constant.
+    pub first_release: Option<String>,
+}
+
+impl Enum {
+    /// The type a value of this enum is cast to in the plugin API, from the
+    /// enum's size.
+    pub fn value_type(&self) -> &'static str {
+        match self.size {
+            1 => "u8",
+            2 => "u16",
+            _ => "u32",
+        }
+    }
+
+    /// The release `value` reached the plugin API in: its own, or else this
+    /// enum's.
+    pub fn value_release<'a>(&'a self, value: &'a EnumVariant) -> Option<&'a str> {
+        value
+            .first_release
+            .as_deref()
+            .or(self.first_release.as_deref())
+    }
 }
 
 #[derive(Deserialize, Debug)]
@@ -513,6 +584,11 @@ pub struct EnumVariant {
     /// value is never removed, because devices and hosts already hold it, so
     /// retiring one is saying so here and leaving it where it is.
     pub deprecated_release: Option<String>,
+
+    /// Firmware release in which this value became visible to a plugin, where
+    /// that is later than its enum's.  Allowed only on a value of an
+    /// `ora_api` enum.  A value without one takes the enum's.
+    pub first_release: Option<String>,
 }
 
 impl EnumVariant {
@@ -524,6 +600,19 @@ impl EnumVariant {
     /// deprecation note where it carries a `deprecated_release`.
     pub fn documentation(&self) -> Option<String> {
         with_deprecation_note(self.comment.as_deref(), self.deprecated_release.as_deref())
+    }
+
+    /// The name this value takes in the ORA plugin API, derived as a
+    /// constant's is.
+    pub fn ora_name(&self) -> String {
+        format!("ORA_{}", self.name)
+    }
+
+    /// What the plugin-facing header writes above this value: everything
+    /// [`EnumVariant::documentation`] provides, plus the `@since` line for
+    /// `release`, which [`Enum::value_release`] provides.
+    pub fn plugin_documentation(&self, release: Option<&str>) -> Option<String> {
+        with_since_line(self.documentation(), release)
     }
 }
 
@@ -1044,6 +1133,8 @@ impl Schema {
         schema.validate_release_strings()?;
         schema.validate_constant_releases()?;
         schema.validate_constant_deprecations()?;
+        schema.validate_enum_releases()?;
+        schema.validate_ora_names()?;
         schema.validate_linker_constants()?;
         schema.validate_tagged_fams()?;
         Ok(schema)
@@ -1787,7 +1878,20 @@ impl Schema {
             }
         }
         for e in &self.enums {
+            if let Some(release) = &e.first_release
+                && !is_release(release)
+            {
+                return Err(bad(format!("first_release on enum {}", e.name), release));
+            }
             for v in &e.variants {
+                if let Some(release) = &v.first_release
+                    && !is_release(release)
+                {
+                    return Err(bad(
+                        format!("first_release on {}::{}", e.name, v.name),
+                        release,
+                    ));
+                }
                 if let Some(release) = &v.deprecated_release
                     && !is_release(release)
                 {
@@ -1856,6 +1960,65 @@ impl Schema {
                 )
                 .into());
             }
+        }
+        Ok(())
+    }
+
+    /// Check that an enum's `first_release` and its `ora_api` tag agree, and
+    /// that a value's does with its enum's tag, for the reasons
+    /// [`Schema::validate_constant_releases`] states for a constant.  An
+    /// `ora_api` enum lists its values too, since one taking them from
+    /// elsewhere would reach the plugin API with none.
+    fn validate_enum_releases(&self) -> Result<(), Box<dyn std::error::Error>> {
+        for e in &self.enums {
+            if e.ora_api && e.first_release.is_none() {
+                return Err(format!(
+                    "enum {} is in the plugin API but declares no first_release",
+                    e.name
+                )
+                .into());
+            }
+            if !e.ora_api && e.first_release.is_some() {
+                return Err(format!(
+                    "enum {} declares first_release but is not in the plugin API, so there is \
+                     no release for it to name",
+                    e.name
+                )
+                .into());
+            }
+            if e.ora_api && e.variants.is_empty() {
+                return Err(format!(
+                    "enum {} is in the plugin API but doesn't list any values",
+                    e.name
+                )
+                .into());
+            }
+            if let Some(v) = e.variants.iter().find(|v| v.first_release.is_some())
+                && !e.ora_api
+            {
+                return Err(format!(
+                    "{}::{} declares first_release but {} is not in the plugin API, so there is \
+                     no release for it to name",
+                    e.name, v.name, e.name
+                )
+                .into());
+            }
+        }
+        Ok(())
+    }
+
+    /// Check that no two things take the same name in the generated plugin
+    /// headers.  A plugin includes both through `api.h`, where two definitions
+    /// of one name fail its build, or pass unnoticed where the values match.
+    fn validate_ora_names(&self) -> Result<(), Box<dyn std::error::Error>> {
+        let mut seen: HashMap<String, String> = HashMap::new();
+        for (name, what) in self.ora_names() {
+            if let Some(first) = seen.get(&name) {
+                return Err(
+                    format!("{name} is the plugin API name of both {first} and {what}").into(),
+                );
+            }
+            seen.insert(name, what);
         }
         Ok(())
     }

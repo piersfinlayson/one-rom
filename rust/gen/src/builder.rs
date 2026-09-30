@@ -14,6 +14,7 @@ use onerom_metadata::{
     RomSlotType, metadata_generation_for, serialize,
 };
 
+use crate::flash::{FlashChips, place_slots};
 use crate::image::requires_half_select_cs1;
 use crate::v2::firmware_config::{build_firmware_config, build_firmware_overrides};
 use crate::v2::hardware_info::build_hardware_info;
@@ -29,7 +30,7 @@ use crate::{
     MAX_SUPPORTED_FIRMWARE_VERSION_V1, MAX_SUPPORTED_FIRMWARE_VERSION_V2,
     MIN_SUPPORTED_FIRMWARE_VERSION_V1, MIN_SUPPORTED_FIRMWARE_VERSION_V2, Metadata,
     SUPPORTED_CHIP_TYPES_V1, SUPPORTED_CHIP_TYPES_V2, UNSUPPORTED_FIRMWARE_VERSIONS_V1,
-    UNSUPPORTED_FIRMWARE_VERSIONS_V2,
+    UNSUPPORTED_FIRMWARE_VERSIONS_V2, supports_board_size,
 };
 
 /// Main Builder object
@@ -282,6 +283,10 @@ impl Builder {
     /// Generate metadata and ROM images once all files loaded
     ///
     /// Returns (metadata, Chip images)
+    ///
+    /// The chip images are the flash from the end of the metadata region.
+    /// Where a slot is on the second chip, 0xFF pads them to the end of the
+    /// first chip and the second chip's contents follow.
     pub fn build(
         &self,
         props: FirmwareProperties,
@@ -294,6 +299,12 @@ impl Builder {
         }
 
         self.build_validation(&props)?;
+
+        if !supports_board_size(self.version, props.board_size()) {
+            return Err(Error::FirmwareTooOldForBoardSize {
+                version: self.version,
+            });
+        }
 
         if self.version > MAX_SUPPORTED_FIRMWARE_VERSION_V1 {
             self.build_v2(props)
@@ -467,31 +478,49 @@ impl Builder {
             }
         }
 
+        // Place each slot on a flash chip after the firmware and the metadata
+        // region. Placement refuses a slot that doesn't fit, so every caller of
+        // `build()` gets the check.
         const ROM_DATA_BASE: u32 = METADATA_BASE + METADATA_SIZE as u32;
-        let mut rom_data_offset: u32 = 0;
-        for slot in &mut rom_slots {
-            slot.data = Pointer::Addr32(ROM_DATA_BASE + rom_data_offset);
-            rom_data_offset += slot.size;
+        let chips = FlashChips::new(props.mcu_variant(), props.board_size());
+        let sizes: alloc::vec::Vec<u32> = rom_slots.iter().map(|slot| slot.size).collect();
+        let addrs = place_slots(&chips, ROM_DATA_BASE, &sizes)?;
+
+        // Plugins run from the addresses they're linked at, which is where
+        // contiguous placement from ROM_DATA_BASE puts them. Plugins come first
+        // in config order so first fit places them there too.
+        let mut contiguous = ROM_DATA_BASE;
+        for ((slot, chip_set), &addr) in rom_slots.iter_mut().zip(&chip_sets).zip(&addrs) {
+            if matches!(
+                chip_set.chips[0].chip_type(),
+                ChipType::SystemPlugin | ChipType::UserPlugin
+            ) {
+                assert_eq!(addr, contiguous, "a plugin isn't where it's linked to run");
+            }
+            contiguous += slot.size;
+            slot.data = Pointer::Addr32(addr);
         }
 
-        // Check the ROM data fits in the flash left after the firmware and the
-        // fixed-size metadata region. This mirrors the V1 guard so that every
-        // caller of `build()` - CLI, the onerom-fw tool, Studio, and the
-        // web programmer via one-rom-wasm - gets the check from the single
-        // onerom-gen implementation, rather than each having to re-run the
-        // downstream `onerom-fw::validate_sizes` themselves.
-        let rom_data_size = rom_data_offset as usize;
-        let rom_space = crate::rom_data_space(props.mcu_variant());
-        if rom_data_size > rom_space {
-            return Err(Error::BufferTooSmall {
-                location: "Flash",
-                expected: rom_data_size,
-                actual: rom_space,
-            });
-        }
+        let second = chips.second();
+        let second_chip = |addr: u32| second.as_ref().filter(|chip| chip.contains(&addr));
 
-        let mut rom_data_buf = alloc::vec::Vec::with_capacity(rom_data_size);
-        for ((chip_set, slot), layout) in chip_sets.iter().zip(rom_slots.iter()).zip(layouts.iter())
+        // The ROM data is the first chip from ROM_DATA_BASE. Where a slot is on
+        // the second chip, 0xFF pads the first chip to its end and the second
+        // chip follows.
+        let first_end = chips.first().end;
+        let offset = |addr: u32| match second_chip(addr) {
+            Some(chip) => first_end - ROM_DATA_BASE + (addr - chip.start),
+            None => addr - ROM_DATA_BASE,
+        };
+        let rom_data_size = addrs
+            .iter()
+            .zip(&rom_slots)
+            .map(|(&addr, slot)| offset(addr) + slot.size)
+            .max()
+            .unwrap_or(0);
+        let mut rom_data_buf = alloc::vec![0xFF; rom_data_size as usize];
+        for (((chip_set, slot), layout), &addr) in
+            chip_sets.iter().zip(&rom_slots).zip(&layouts).zip(&addrs)
         {
             let image = match layout {
                 Some((addr_layout, cs_data_layout)) => build_rom_image(
@@ -508,7 +537,8 @@ impl Builder {
                 None => chip_set.chips[0].data().unwrap_or(&[]).to_vec(),
             };
             debug_assert_eq!(image.len() as u32, slot.size);
-            rom_data_buf.extend_from_slice(&image);
+            let start = offset(addr) as usize;
+            rom_data_buf[start..start + image.len()].copy_from_slice(&image);
         }
 
         let hw = build_hardware_info(board);

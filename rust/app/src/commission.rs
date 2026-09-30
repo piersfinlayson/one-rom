@@ -13,13 +13,12 @@
 //! - [`Plan::execute`] writes the rows and reads each one back.
 
 use alloc::format;
-use alloc::string::{String, ToString};
+use alloc::string::String;
 use alloc::vec;
 use alloc::vec::Vec;
 use core::fmt;
-use core::str::FromStr;
 
-use onerom_config::hw::{Board, Model};
+use onerom_config::hw::{Board, BoardSize, Model};
 use onerom_metadata::otp::pico_otp::whitelabel::OTP_ROW_USB_WHITE_LABEL_DATA;
 use onerom_metadata::otp::{
     AreaIssue, BuildError, CommissioningArea, CommissioningInstance, CommissioningValues,
@@ -30,7 +29,6 @@ use onerom_metadata::{
     OTP_FLASH_PARTITION_SLOT_SIZE_ROW, OTP_PAGE_ROWS, OTP_USB_WHITE_LABEL_ROW, OneromBoardSize,
     OneromOtpEntry,
 };
-use serde::Serialize;
 
 use crate::otp::{
     AREA_FIRST_PAGE, AREA_LAST_PAGE, AREA_ROWS, BOOT_FLAGS0_ROWS, BootRows, CHIP_ID_ROW,
@@ -43,72 +41,6 @@ use crate::otp::{
 // ---------------------------------------------------------------------------
 // Request
 // ---------------------------------------------------------------------------
-
-/// A board's size. `docs/OTP.md`'s "Board Sizes" section describes each.
-///
-/// It parses from its name in either case.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-pub enum BoardSize {
-    /// 2MB of built-in flash without a chip on chip select 1.
-    M,
-    /// 2MB of built-in flash and 2MB of external flash on chip select 1.
-    L,
-}
-
-impl BoardSize {
-    /// Every size, smallest first.
-    ///
-    /// [`FromStr`] and [`BoardSizeError`]'s text are built from this list. The
-    /// match makes a new size a compile error here until it's listed.
-    pub fn supported_values() -> &'static [Self] {
-        match Self::M {
-            Self::M | Self::L => {}
-        }
-        &[Self::M, Self::L]
-    }
-}
-
-impl FromStr for BoardSize {
-    type Err = BoardSizeError;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        Self::supported_values()
-            .iter()
-            .copied()
-            .find(|size| size.to_string().eq_ignore_ascii_case(s))
-            .ok_or_else(|| BoardSizeError::Unknown(s.into()))
-    }
-}
-
-impl fmt::Display for BoardSize {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::M => f.write_str("M"),
-            Self::L => f.write_str("L"),
-        }
-    }
-}
-
-/// Why a board size didn't parse.
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum BoardSizeError {
-    /// Text that isn't a board size. Carries the text.
-    #[error("the size must be {}", size_list())]
-    Unknown(String),
-}
-
-/// Every size as a list, such as `M or L`.
-fn size_list() -> String {
-    let sizes: Vec<String> = BoardSize::supported_values()
-        .iter()
-        .map(ToString::to_string)
-        .collect();
-    match sizes.split_last() {
-        Some((last, [])) => last.clone(),
-        Some((last, others)) => format!("{} or {last}", others.join(", ")),
-        None => String::new(),
-    }
-}
 
 /// A request to commission a board.
 #[derive(Debug, Clone, PartialEq, Eq)]

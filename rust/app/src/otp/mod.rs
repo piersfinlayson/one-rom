@@ -15,6 +15,7 @@ use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use core::ops::RangeInclusive;
 
+use onerom_config::hw::BoardSize;
 use onerom_metadata::otp::pico_otp::whitelabel::{
     OTP_ROW_UNRESERVED_END, OTP_ROW_USB_BOOT_FLAGS, OTP_ROW_USB_BOOT_FLAGS_R1,
     OTP_ROW_USB_BOOT_FLAGS_R2, OTP_ROW_USB_WHITE_LABEL_DATA,
@@ -31,8 +32,6 @@ use onerom_metadata::{
     OTP_USB_WHITE_LABEL_ROW, OneromBoardSize,
 };
 use serde::Serialize;
-
-use crate::commission::BoardSize;
 
 pub use memory::{Interruption, MemoryOtp};
 

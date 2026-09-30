@@ -43,6 +43,7 @@ extern crate alloc;
 mod commission;
 mod error;
 mod fetch;
+mod flash;
 pub mod identity;
 mod otp;
 mod plugin;
@@ -50,13 +51,18 @@ mod signers;
 
 // Commissioning a board and setting its size.
 pub use commission::{
-    BoardSize, BoardSizeError, CommissionError, Plan, PlannedWrite, Prepared, Request, RequestDate,
-    RowValue, Step, StepKind, plan_size, prepare,
+    CommissionError, Plan, PlannedWrite, Prepared, Request, RequestDate, RowValue, Step, StepKind,
+    plan_size, prepare,
 };
 pub use error::{Error, PluginError};
 // Fetch abstraction (host-implemented). `trait_variant` generates the `Send`
 // variant `Fetch` from the base `LocalFetch`.
 pub use fetch::{Fetch, LocalFetch};
+// The flash operations that program an image file.
+pub use flash::{FlashPlan, FlashPlanError, FlashStep};
+// A board's size. onerom-config declares it because firmware properties
+// contain one.
+pub use onerom_config::hw::{BoardSize, BoardSizeError};
 // OTP access (host-implemented) and the readers built on it. `trait_variant`
 // generates the `Send` variant `OtpAccess` from the base `LocalOtpAccess`.
 // `MemoryOtp` stands in for a chip in tests. The constant describes the lock

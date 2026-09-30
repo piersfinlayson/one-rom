@@ -4,14 +4,14 @@
 // them field by field, and refuses a layout that moved without its hand-raised
 // generation number moving with it.
 //
-// The copy also answers which release a plugin-facing constant or metadata key
-// arrived in.  `[schema] firmware_release` names the release under
-// development, so everything already in a plugin author's hands names an older
-// one, and only the copy separates the two.
+// The copy also answers which release a plugin-facing constant, enum or
+// metadata key arrived in.  `[schema] firmware_release` identifies the release
+// under development, so everything already in a plugin author's hands names an
+// older one, and only the copy separates the two.
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::released::Released;
+use crate::released::{Released, ReleasedEnum};
 use crate::schema::{
     ConstantValue, FieldShape, NamedSizes, Schema, release_parts, shape_size, shape_type,
 };
@@ -215,8 +215,8 @@ impl Layout {
 ///
 /// Seven things are checked:
 ///
-/// - a plugin-facing constant or metadata key names the wrong release as the
-///   one it arrived in
+/// - a plugin-facing constant, enum, enum value or metadata key claims the
+///   wrong release as the one it arrived in
 /// - a constant's value changed, or the constant is gone
 /// - an enum value changed its number or its name, or is gone
 /// - a shipped field moved, changed size, changed type, or is gone
@@ -392,6 +392,48 @@ fn check_first_releases(
             now,
             &copy,
         )?;
+    }
+
+    let enums: BTreeMap<&str, &ReleasedEnum> =
+        released.ora_enums().map(|e| (e.name.as_str(), e)).collect();
+    for e in current.ora_enums() {
+        // Schema::parse refuses an ora_api enum without one.
+        let Some(names) = e.first_release.as_deref() else {
+            continue;
+        };
+        let was = enums.get(e.name.as_str());
+        check_arrival(
+            &format!("enum {}", e.name),
+            names,
+            shipped(was.map(|e| e.first_release.as_deref()).as_ref()),
+            now,
+            &copy,
+        )?;
+        // Each value against the copy, as a constant is.  A value the copy
+        // doesn't have arrives now, whether or not its enum does.
+        for v in &e.variants {
+            let Some(release) = e.value_release(v) else {
+                continue;
+            };
+            let then = was.and_then(|then| {
+                let old = then.variants.iter().find(|old| old.name == v.name)?;
+                Some(
+                    old.first_release
+                        .as_deref()
+                        .or(then.first_release.as_deref()),
+                )
+            });
+            let what = format!("{}::{}", e.name, v.name);
+            if then.is_none() && v.first_release.is_none() && release != now {
+                return Err(format!(
+                    "{what} is not in the copy of the last release, so it reaches the plugin \
+                     API in {now} - it declares no first_release, and {}'s is {release}",
+                    e.name
+                )
+                .into());
+            }
+            check_arrival(&what, release, shipped(then.as_ref()), now, &copy)?;
+        }
     }
 
     let keys: BTreeMap<&str, Option<&str>> = released

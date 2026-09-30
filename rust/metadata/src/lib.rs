@@ -60,6 +60,10 @@ pub mod otp;
 
 pub use device::{Ptr, RuntimeCell};
 
+// onerom-config declares the RP2350's flash base because it can't depend on
+// this crate. The two have to agree.
+const _: () = assert!(RP235X_BASE_FLASH == FLASH_CS0_BASE_ADDR);
+
 pub const MIN_SCHEMA_VERSION: FirmwareVersion = FirmwareVersion::new(0, 7, 0, 0);
 
 // ---------------------------------------------------------------------------

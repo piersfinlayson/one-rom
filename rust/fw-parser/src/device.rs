@@ -57,12 +57,18 @@
 use alloc::borrow::Cow;
 #[cfg(not(feature = "std"))]
 use alloc::string::{String, ToString};
+#[cfg(not(feature = "std"))]
+use alloc::vec::Vec;
+use core::fmt;
+use core::ops::Range;
 #[cfg(feature = "std")]
 use std::borrow::Cow;
 
 use onerom_config::fw::FirmwareVersion;
 use onerom_config::hw::Board;
-use onerom_metadata::{MaybeKnown, OneromRomInfo, OneromRomSlot, RomSlotType};
+use onerom_metadata::{
+    FLASH_CS1_BASE_ADDR, MaybeKnown, OneromRomInfo, OneromRomSlot, Pointer, RomSlotType,
+};
 
 use crate::ParseError;
 use crate::info::{Sdrr, SdrrRomInfo, SdrrRomSet};
@@ -322,6 +328,113 @@ impl ParsedDevice {
             active,
             idx: 0,
             user_idx: 0,
+        }
+    }
+
+    /// Checks this device's slots against the flash chips and the length of
+    /// the image file it was parsed from.
+    ///
+    /// The file holds the contents of the first flash chip, whose addresses
+    /// are `first`, from its start. Anything past the first chip's length is
+    /// the second chip's contents from [`FLASH_CS1_BASE_ADDR`].
+    ///
+    /// A Lab doesn't have ROM slots and passes.
+    pub fn check_image_file(&self, len: usize, first: Range<u32>) -> Result<(), ImageFileError> {
+        // Each slot's data pointer and size, in slot order.
+        let slots: Vec<(Pointer, u32)> = match self {
+            Self::Original(sdrr) => sdrr
+                .flash
+                .iter()
+                .flat_map(|info| &info.rom_sets)
+                .map(|set| (Pointer::new(set.data_ptr), set.size))
+                .collect(),
+            Self::Schema(onerom) => onerom
+                .metadata()
+                .into_iter()
+                .flat_map(|md| &md.rom_slots)
+                .map(|slot| (slot.data, slot.size))
+                .collect(),
+            Self::Lab => return Ok(()),
+        };
+
+        let first_len = first.len();
+        // Where a slot's data ends in the file. `None` where it's outside both
+        // chips so a file can't hold it.
+        let file_end = |addr: u32, size: u32| {
+            let end = u64::from(addr) + u64::from(size);
+            let offset = if first.start <= addr && end <= u64::from(first.end) {
+                end - u64::from(first.start)
+            } else if addr >= FLASH_CS1_BASE_ADDR {
+                first_len as u64 + end - u64::from(FLASH_CS1_BASE_ADDR)
+            } else {
+                return None;
+            };
+            usize::try_from(offset).ok()
+        };
+
+        let mut required = 0;
+        let mut second_used = false;
+        for (slot, (data, size)) in slots.into_iter().enumerate() {
+            let Some(addr) = data.addr() else {
+                continue;
+            };
+            second_used |= addr >= FLASH_CS1_BASE_ADDR;
+            let Some(end) = file_end(addr, size) else {
+                return Err(ImageFileError::BadAddress { slot, addr });
+            };
+            required = required.max(end);
+        }
+
+        if required > len {
+            return Err(ImageFileError::TooShort {
+                short_by: required - len,
+            });
+        }
+        if len > first_len && !second_used {
+            return Err(ImageFileError::TooLong {
+                too_long_by: len - first_len,
+            });
+        }
+        Ok(())
+    }
+}
+
+/// Why an image file isn't laid out as One ROM's tools write one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ImageFileError {
+    /// The file is shorter than its slots' data needs.
+    TooShort {
+        /// The bytes the file lacks before the end of the last slot's data.
+        short_by: usize,
+    },
+
+    /// A slot's data is outside both flash chips so a file can't hold it.
+    BadAddress {
+        /// The first such slot's absolute index, counting plugins.
+        slot: usize,
+        /// The slot's data address.
+        addr: u32,
+    },
+
+    /// The file is longer than the first flash chip without a slot on the
+    /// second chip.
+    TooLong {
+        /// The file's length minus the first chip's.
+        too_long_by: usize,
+    },
+}
+
+impl fmt::Display for ImageFileError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::TooShort { short_by } => write!(f, "The image file ends {short_by} bytes short"),
+            Self::BadAddress { slot, addr } => write!(
+                f,
+                "Slot {slot} is at {addr:#010x}, which isn't a valid address"
+            ),
+            Self::TooLong { too_long_by } => {
+                write!(f, "The image file is {too_long_by} bytes too long")
+            }
         }
     }
 }

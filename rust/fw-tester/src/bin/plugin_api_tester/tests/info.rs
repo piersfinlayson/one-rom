@@ -12,6 +12,12 @@ use onerom_config::hw::Board;
 use onerom_fw_emulator::{Emulator, OraResult, build_options, ffi};
 use onerom_fw_tester::geometry;
 use onerom_gen::Config;
+use onerom_metadata::{
+    OTP_BOOT_FLAGS0_FLASH_DEVINFO_ENABLE, OTP_BOOT_FLAGS0_ROW, OTP_FLASH_DEVINFO_CS1_SIZE_SHIFT,
+    OTP_FLASH_DEVINFO_ROW, OTP_FLASH_DEVINFO_SIZE_2MB, OneromBoardSize,
+};
+
+use crate::setup::setup;
 
 /// Verify that get_device_version returns a string that matches the parsed
 /// firmware version, and that it writes only into a buffer big enough for it.
@@ -222,6 +228,54 @@ pub fn test_metadata_uint(emu: &Emulator, config: &Config) -> Result<(), String>
     }
 
     Ok(())
+}
+
+/// Verify that the BOARD_SIZE key reports the size OTP configures, from a boot
+/// with OTP configuring an L board and one with OTP unwritten, as an M board's
+/// is.  The key must agree with the runtime value the firmware recorded too.
+///
+/// Each boot replaces the firmware's state, so this runs ahead of the boot the
+/// rest of a slot's suite uses.  OTP outlives a boot so it is cleared once the
+/// boots are done.
+pub fn test_metadata_board_size(
+    board: Board,
+    log_enabled: bool,
+    sel_image: u8,
+) -> Result<(), String> {
+    let l_devinfo = OTP_FLASH_DEVINFO_SIZE_2MB << OTP_FLASH_DEVINFO_CS1_SIZE_SHIFT;
+    let cases = [
+        ("L", Some(l_devinfo), OneromBoardSize::BoardSizeL),
+        ("M", None, OneromBoardSize::BoardSizeM),
+    ];
+
+    let mut result = Ok(());
+    for (label, devinfo, expected) in cases {
+        Emulator::clear_otp();
+        if let Some(devinfo) = devinfo {
+            Emulator::set_otp_raw(
+                OTP_BOOT_FLAGS0_ROW,
+                &[OTP_BOOT_FLAGS0_FLASH_DEVINFO_ENABLE; 3],
+            );
+            Emulator::set_otp_ecc(OTP_FLASH_DEVINFO_ROW, &[devinfo]);
+        }
+        let (emu, _) = setup(board, log_enabled, sel_image);
+
+        let expected = expected as u32;
+        let (status, value) =
+            emu.get_metadata_uint(ffi::ora_metadata_key_t_ORA_METADATA_KEY_BOARD_SIZE);
+        let recorded = u32::from(emu.board_size());
+        if !status.is_ok() || value != Some(expected) || recorded != expected {
+            result = Err(format!(
+                "BOARD_SIZE on an {label} board: got {status:?}/{value:?}, the firmware \
+                 recorded {recorded}, expected {expected}"
+            ));
+            break;
+        }
+        println!("  BOARD_SIZE on an {label} board: {expected}");
+    }
+
+    Emulator::clear_otp();
+    result
 }
 
 /// Verify indexed retrieval of the array-valued metadata keys.

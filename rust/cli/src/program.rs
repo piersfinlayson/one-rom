@@ -5,7 +5,8 @@
 //! Implementation of `onerom program`.
 
 use onerom_config::chip::ChipType;
-use onerom_config::hw::Board;
+use onerom_config::fw::FirmwareVersion;
+use onerom_config::hw::{Board, BoardSize};
 use onerom_config::mcu::Variant;
 use onerom_fw::{assemble_firmware, validate_sizes};
 
@@ -15,16 +16,17 @@ use crate::firmware::{
     verify_assembled_firmware,
 };
 use crate::utils::{check_device, check_fire_board_optional, resolve_board};
-use onerom_app::read_commissioning;
+use onerom_app::{FlashPlan, FlashPlanError, FlashStep, read_commissioning};
 use onerom_cli::device::select_device_by_chip_id;
-use onerom_cli::otp::{PicobootOtp, escape_controls};
+use onerom_cli::otp::{PicobootOtp, board_size_text, escape_controls};
 use onerom_cli::pin::ResolvedPin;
 use onerom_cli::plugin::{parse_plugins, resolve_plugins};
 use onerom_cli::slot::{self, GlobalConfig, check_slot_confirmations, save_config};
-use onerom_cli::usb::{RebootArgs, flash_program, flash_program_read, reboot};
+use onerom_cli::usb::{FLASH_BASE, RebootArgs, flash_program, flash_read, reboot};
 use onerom_cli::{Device, DeviceState, Error, Options};
 use onerom_fw_parser::ParsedDevice;
-use onerom_metadata::GPIO_RESET_DEFAULT_HOLD_MS;
+use onerom_gen::{FlashChips, supports_board_size};
+use onerom_metadata::{GPIO_RESET_DEFAULT_HOLD_MS, MaybeKnown, OneromBoardSize};
 
 // ------------------------------- Argument validation -------------------------------
 
@@ -138,12 +140,15 @@ async fn build_and_assemble(
         }
     }
 
+    let device = options.device.as_ref().ok_or(Error::NoDevice)?;
+    let size = image_size(version, device.flash_chips().size());
     let (fw_props, metadata, image_data, desc) = build_rom_image(
         options,
         &config_json,
         version,
         *board,
         *mcu,
+        size,
         args.force,
         // Runs with the config resolved and not one ROM image fetched, so a
         // request this build cannot honour costs the user nothing to discover.
@@ -168,31 +173,54 @@ async fn build_and_assemble(
     assemble_firmware(firmware_data, metadata, image_data).map_err(Into::into)
 }
 
+/// The size to build an image for a `size` One ROM with firmware `version`.
+/// It's M where the firmware doesn't support `size`.
+fn image_size(version: FirmwareVersion, size: BoardSize) -> BoardSize {
+    if supports_board_size(version, size) {
+        size
+    } else {
+        BoardSize::M
+    }
+}
+
 // ------------------------------- Flash operations -------------------------------
 
-async fn verify_flash(options: &Options, data: &[u8]) -> Result<(), Error> {
+/// Reads back each chip `plan` writes and compares it with what was written.
+async fn verify_flash(options: &Options, plan: &FlashPlan<'_>) -> Result<(), Error> {
     let device = options.device.as_ref().unwrap();
-    if options.verbose {
-        println!("Verifying {} bytes...", data.len());
-    }
-    let readback = flash_program_read(device, data.len() as u32).await?;
-    for (i, (expected, actual)) in data.iter().zip(readback.iter()).enumerate() {
-        if expected != actual {
-            return Err(Error::VerifyFailed(i, *expected, *actual));
+    for step in plan.steps() {
+        let FlashStep::Write { addr, data } = *step else {
+            continue;
+        };
+        if options.verbose {
+            println!("{}", verify_line(addr, data));
+        }
+        let readback = flash_read(device, addr, data.len() as u32).await?;
+        let offset = (addr - FLASH_BASE) as usize;
+        for (i, (expected, actual)) in data.iter().zip(readback.iter()).enumerate() {
+            if expected != actual {
+                return Err(Error::VerifyFailed(offset + i, *expected, *actual));
+            }
         }
     }
     println!("Verification passed");
     Ok(())
 }
 
-/// Flashes `data`. `image_board` is the board the image is for. `force`
-/// programs a board commissioned as another board. A refused image leaves the
-/// One ROM as it was.
+/// The line `--verbose` shows before reading back `data` from `addr`.
+pub(crate) fn verify_line(addr: u32, data: &[u8]) -> String {
+    format!("Verifying {} bytes at {addr:#010x}...", data.len())
+}
+
+/// Flashes `data` and reads it back where `verify`. `image_board` is the
+/// board the image is for. `force` programs a board commissioned as another
+/// board. A refused image leaves the One ROM as it was.
 async fn flash_device(
     options: &mut Options,
     data: &[u8],
     image_board: Option<Board>,
     force: bool,
+    verify: bool,
 ) -> Result<(), Error> {
     let stopped = reboot_to_stopped(options, &[DeviceState::Running]).await?;
 
@@ -200,12 +228,66 @@ async fn flash_device(
     if let Err(e) = check_commissioned_board(device, image_board, force).await {
         return restart(options, stopped, Err(e)).await;
     }
-    // After the board check, since a refused image isn't written.
+    // The stopped One ROM's size comes from OTP through the bootloader.
+    let chips = device.flash_chips();
+    let plan = match FlashPlan::new(data, &chips) {
+        Ok(plan) => plan,
+        Err(e) => {
+            let error = plan_error(e, data.len(), &chips, device.board_size());
+            return restart(options, stopped, Err(error)).await;
+        }
+    };
+    // After the board and size checks, since a refused image isn't written.
     println!("Programming device - DO NOT DISCONNECT");
     if options.verbose {
-        println!("Flashing {} bytes...", data.len());
+        for line in plan_lines(&plan) {
+            println!("{line}");
+        }
     }
-    flash_program(device, data).await
+    flash_program(device, &plan).await?;
+
+    if verify {
+        verify_flash(options, &plan).await?;
+    }
+    Ok(())
+}
+
+/// The error for a plan [`FlashPlan::new`] refused for an image of
+/// `image_len` bytes on a board with `chips` whose size is `size`.
+pub(crate) fn plan_error(
+    error: FlashPlanError,
+    image_len: usize,
+    chips: &FlashChips,
+    size: Option<MaybeKnown<OneromBoardSize>>,
+) -> Error {
+    match error {
+        FlashPlanError::SecondChipRequired => {
+            // A size that couldn't be read shows as not known.
+            let size = size.unwrap_or(MaybeKnown::Known(OneromBoardSize::BoardSizeUnknown));
+            Error::SecondChipRequired(board_size_text(size))
+        }
+        FlashPlanError::TooLarge => Error::ImageTooLarge {
+            image: image_len,
+            flash: chips.first().len() + chips.second().map_or(0, |chip| chip.len()),
+        },
+    }
+}
+
+/// The lines `--verbose` shows for `plan`'s steps, one each.
+pub(crate) fn plan_lines(plan: &FlashPlan<'_>) -> Vec<String> {
+    plan.steps()
+        .iter()
+        .filter_map(|step| match *step {
+            FlashStep::Erase { addr, len } => {
+                Some(format!("Erasing {len} bytes at {addr:#010x}..."))
+            }
+            FlashStep::Write { addr, data } => {
+                Some(format!("Flashing {} bytes to {addr:#010x}...", data.len()))
+            }
+            // flash_program refuses a step it doesn't know.
+            _ => None,
+        })
+        .collect()
 }
 
 /// Reboots the device into the bootloader if its state is one of `states` and
@@ -473,11 +555,7 @@ pub async fn cmd_program(
             write_firmware_file(out, &data)?;
         }
 
-        flash_device(options, &data, image.get_board(), args.force).await?;
-
-        if args.verify {
-            verify_flash(options, &data).await?;
-        }
+        flash_device(options, &data, image.get_board(), args.force, args.verify).await?;
 
         reboot_and_rescan(options, &args.into()).await?;
         println!("Programming complete");
@@ -544,6 +622,60 @@ mod tests {
 
     fn board(name: &str) -> Board {
         Board::try_from_str(name).unwrap()
+    }
+
+    fn chips(size: BoardSize) -> FlashChips {
+        FlashChips::new(Variant::RP2350, size)
+    }
+
+    #[test]
+    fn a_refused_plan_is_reported_with_the_sizes() {
+        let image = vec![0; 5 * 1024 * 1024];
+        let error = FlashPlan::new(&image, &chips(BoardSize::M)).unwrap_err();
+        let m = Some(MaybeKnown::Known(OneromBoardSize::BoardSizeM));
+        let error = plan_error(error, image.len(), &chips(BoardSize::M), m);
+        assert!(
+            matches!(&error, Error::SecondChipRequired(size) if size == "M"),
+            "{error:?}"
+        );
+
+        let error = FlashPlan::new(&image, &chips(BoardSize::L)).unwrap_err();
+        let l = Some(MaybeKnown::Known(OneromBoardSize::BoardSizeL));
+        let error = plan_error(error, image.len(), &chips(BoardSize::L), l);
+        assert!(
+            matches!(error, Error::ImageTooLarge { image, flash }
+                if image == 5 * 1024 * 1024 && flash == 4 * 1024 * 1024),
+            "{error:?}"
+        );
+    }
+
+    /// Firmware before 0.8.0 gets an M image whatever the One ROM's size.
+    #[test]
+    fn an_image_is_for_m_where_the_firmware_supports_only_m() {
+        let old = FirmwareVersion::new(0, 7, 3, 0);
+        let new = FirmwareVersion::new(0, 8, 0, 0);
+        for &size in BoardSize::supported_values() {
+            assert_eq!(image_size(old, size), BoardSize::M, "{size}");
+            assert_eq!(image_size(new, size), size, "{size}");
+        }
+    }
+
+    /// A line for each step, in the order the steps run.
+    #[test]
+    fn verbose_shows_each_step_where_it_runs() {
+        use crate::test_board::holds;
+        let image = vec![0; 2 * 1024 * 1024 + 4096];
+        let plan = FlashPlan::new(&image, &chips(BoardSize::L)).unwrap();
+        let lines = plan_lines(&plan);
+        assert_eq!(lines.len(), 4);
+        for (line, values) in lines.iter().zip([
+            ["2097152", "0x10000000"],
+            ["4096", "0x11000000"],
+            ["4096", "0x11000000"],
+            ["2097152", "0x10000000"],
+        ]) {
+            assert!(holds(line, &values), "{line}");
+        }
     }
 
     #[test]

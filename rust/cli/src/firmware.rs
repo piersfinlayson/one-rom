@@ -7,21 +7,28 @@ use std::io::Write;
 
 use onerom_config::chip::{CHIP_TYPE_NAMES_PLUGINS, ChipType, chip_type_names_for_pins};
 use onerom_config::fw::{FirmwareProperties, FirmwareVersion, ServeAlg};
-use onerom_config::hw::Board;
+use onerom_config::hw::{Board, BoardSize};
 use onerom_config::mcu::RP235X_BASE_FLASH;
 use onerom_config::mcu::Variant;
 use onerom_fw::net::{Release, Releases, fetch_license_async};
 use onerom_fw::{assemble_firmware, get_rom_files_async, read_rom_config, validate_sizes};
-use onerom_fw_parser::{ParsedDevice, Parser, SlotKind, readers::MemoryReader};
+use onerom_fw_parser::readers::{MemoryReader, RegionKind};
+use onerom_fw_parser::{ParsedDevice, Parser, SlotKind};
 use onerom_gen::ChipSetType;
 use onerom_gen::compat::{
     ChipCompat, check_chip_set_on_board, default_cs_config, format_size, supported_chips,
 };
-use onerom_gen::{Builder, Config, ConfigOverrides, Error as GenError, FIRMWARE_SIZE, License};
+use onerom_gen::{
+    Builder, Config, ConfigOverrides, Error as GenError, FIRMWARE_SIZE, FlashChips, License,
+    supports_board_size,
+};
 use onerom_lab_parser::LabParser;
+use onerom_metadata::FLASH_CS1_BASE_ADDR;
 
 use crate::args;
+use crate::args::hardware::supported_size;
 use crate::utils::{check_fire_board, resolve_board, resolve_firmware_output};
+use onerom_cli::error::image_file_warning;
 use onerom_cli::plugin::{
     PluginNote, PluginSpec, ResolvedPlugin, check_config_plugins, resolve_plugins,
 };
@@ -147,6 +154,8 @@ pub async fn verify_assembled_firmware(
             );
         }
     }
+
+    refuse_image_file(&info, data.len(), force)?;
     Ok(info)
 }
 
@@ -168,11 +177,33 @@ fn refuse_board_mismatch(expected: Board, actual: Board, force: bool) -> Result<
     }
 }
 
+/// Refuses an image file whose slots don't match its length or the flash
+/// chips. With `force` it warns instead.
+fn refuse_image_file(info: &ParsedDevice, len: usize, force: bool) -> Result<(), Error> {
+    match info.check_image_file(len, FlashChips::first_for(Variant::RP2350)) {
+        Ok(()) => Ok(()),
+        Err(e) if force => {
+            eprintln!("{}", image_file_warning(&e));
+            Ok(())
+        }
+        Err(e) => Err(Error::ImageFile(e)),
+    }
+}
+
+/// Parses an image file.
+///
+/// A file longer than the first flash chip holds the second chip's contents
+/// after the first chip's, and they're read at the second chip's address.
 pub async fn parse_firmware(data: &[u8]) -> Result<ParsedDevice, Error> {
+    let first_len = FlashChips::first_for(Variant::RP2350).len();
+    let (first, second) = data.split_at(data.len().min(first_len));
     // The hardcoded base address looks odd here, as the STM32's base flash
     // address, but when using a memory reader, onerom-fw-parser will just figure
     // it out for itself based on what it finds in the image.
-    let mut reader = MemoryReader::new(data.to_vec(), 0x0800_0000);
+    let mut reader = MemoryReader::new(first.to_vec(), 0x0800_0000);
+    if !second.is_empty() {
+        reader.add_region(RegionKind::Flash, second.to_vec(), FLASH_CS1_BASE_ADDR);
+    }
     let mut parser = Parser::new(&mut reader);
     Ok(parser.parse_device().await)
 }
@@ -273,14 +304,18 @@ async fn acquire_release_firmware(
 /// Takes the config as an already-resolved JSON string (not a file path).
 /// Use [`resolve_config_json`] to obtain the JSON from any config source.
 ///
+/// `size` is the size of board the image is for.
+///
 /// `force` accepts the config checks that are refused by default, reporting
 /// each one that fires as a warning instead.
+#[allow(clippy::too_many_arguments)]
 pub async fn build_rom_image(
     options: &Options,
     config_json: &str,
     version: FirmwareVersion,
     board: Board,
     mcu: Variant,
+    size: BoardSize,
     force: bool,
     before_fetch: impl FnOnce(&Config) -> Result<(), Error>,
 ) -> Result<(FirmwareProperties, Option<Vec<u8>>, Option<Vec<u8>>, String), Error> {
@@ -331,8 +366,19 @@ pub async fn build_rom_image(
         check_config_plugins(&builder, &version, &onerom_cli::CliFetch).await?,
     );
 
-    let fw_props = FirmwareProperties::new(version, board, mcu, ServeAlg::default(), true)?;
-    let (metadata, image_data) = builder.build(fw_props).map_err(onerom_fw::Error::build)?;
+    let fw_props = FirmwareProperties::new(version, board, mcu, ServeAlg::default(), true)?
+        .with_board_size(size);
+    let (metadata, image_data) = builder.build(fw_props).map_err(|e| {
+        // `firmware build` adds advice to this one.
+        if matches!(e, GenError::SlotDoesNotFit { .. }) {
+            Error::SlotDoesNotFit {
+                error: onerom_fw::Error::build(e),
+                advise_second_chip: false,
+            }
+        } else {
+            onerom_fw::Error::build(e).into()
+        }
+    })?;
 
     let metadata = if metadata.is_empty() {
         None
@@ -402,6 +448,38 @@ fn check_build_args(
     Ok(())
 }
 
+/// `--size` as `size` for `board`. A size with a second flash chip needs a
+/// board that supports external flash.
+pub(crate) fn build_size(board: Board, size: BoardSize) -> Result<BoardSize, Error> {
+    supported_size(board, size)
+        .map_err(|e| Error::InvalidArgument("--size".to_string(), e.to_string()))
+}
+
+/// `error` with advice to use `--size`, where a chip set didn't fit a `size`
+/// build without a second flash chip, and `board` and firmware `version` both
+/// support a size with one.
+fn advise_second_chip(
+    error: Error,
+    board: Board,
+    mcu: Variant,
+    size: BoardSize,
+    version: FirmwareVersion,
+) -> Error {
+    let Error::SlotDoesNotFit { error, .. } = error else {
+        return error;
+    };
+    let second_chip = |size| FlashChips::new(mcu, size).second().is_some();
+    let supported = BoardSize::supported_values().iter().any(|&other| {
+        second_chip(other)
+            && supported_size(board, other).is_ok()
+            && supports_board_size(version, other)
+    });
+    Error::SlotDoesNotFit {
+        error,
+        advise_second_chip: !second_chip(size) && supported,
+    }
+}
+
 pub async fn cmd_build(
     options: &Options,
     args: &args::firmware::FirmwareBuildArgs,
@@ -410,6 +488,7 @@ pub async fn cmd_build(
 
     let board = resolve_board(options, &args.board)?.ok_or(Error::NoBoardOrDevice)?;
     check_fire_board(&board)?;
+    let size = build_size(board, args.size)?;
     let mcu = Variant::RP2350;
 
     if !args.slot.is_empty() {
@@ -419,6 +498,12 @@ pub async fn cmd_build(
 
     let (firmware_data, version, version_str) =
         acquire_firmware(options, &args.base_firmware, &args.version, &board, &mcu).await?;
+    if !supports_board_size(version, size) {
+        return Err(Error::InvalidArgument(
+            "--size".to_string(),
+            format!("Firmware {version} doesn't support --size other than M"),
+        ));
+    }
 
     let plugins = resolve_plugins(
         &parse_plugin_specs(&args.plugin)?,
@@ -474,10 +559,12 @@ pub async fn cmd_build(
         version,
         board,
         mcu,
+        size,
         args.force,
         |_| Ok(()),
     )
-    .await?;
+    .await
+    .map_err(|e| advise_second_chip(e, board, mcu, size, version))?;
 
     validate_sizes(&fw_props, &firmware_data, &metadata, &image_data)?;
 
@@ -1103,6 +1190,7 @@ fn parse_plugin_specs(raw: &[String]) -> Result<Vec<PluginSpec>, Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_board::{IMAGE_27C400, image_file, move_slot};
 
     /// `chips --board` lists every chip type the board can emulate, which is
     /// wider than `Board::supported_chip_type_names()` - that covers only the
@@ -1132,6 +1220,146 @@ mod tests {
         assert!(print_chip_on_board(&board, "2364").is_ok());
         assert!(print_chip_on_board(&board, "27C400").is_err());
         assert!(print_chip_on_board(&board, "not-a-chip").is_err());
+    }
+
+    fn options() -> Options {
+        Options {
+            verbose: false,
+            log_level: onerom_cli::LogLevel::Warn,
+            yes: false,
+            unrecognised: false,
+            device: None,
+            vid_pid: Vec::new(),
+        }
+    }
+
+    /// The data address of each of `image`'s slots.
+    fn slot_addresses(image: &ParsedDevice) -> Vec<Option<u32>> {
+        let ParsedDevice::Schema(onerom) = image else {
+            panic!("not a schema image");
+        };
+        let metadata = onerom.metadata().expect("metadata");
+        metadata
+            .rom_slots
+            .iter()
+            .map(|slot| slot.data.addr())
+            .collect()
+    }
+
+    const FIRST_CHIP: usize = 2 * 1024 * 1024;
+
+    #[tokio::test]
+    async fn an_image_on_the_first_chip_is_read_from_the_first_chip() {
+        let file = image_file(BoardSize::M, 3);
+        assert!(file.len() <= FIRST_CHIP);
+        let image = parse_firmware(&file).await.unwrap();
+        assert!(
+            image.parse_errors().is_empty(),
+            "{:?}",
+            image.parse_errors()
+        );
+        assert_eq!(image.get_board(), Some(Board::Fire40A));
+        let addrs = slot_addresses(&image);
+        assert_eq!(addrs.len(), 3);
+        assert!(
+            addrs.iter().all(|addr| addr.unwrap() < 0x1020_0000),
+            "{addrs:x?}"
+        );
+    }
+
+    /// A slot on the second chip is read from the file past the first chip's
+    /// length.
+    #[tokio::test]
+    async fn an_image_using_the_second_chip_is_read_from_both_chips() {
+        let file = image_file(BoardSize::L, 4);
+        assert_eq!(file.len(), FIRST_CHIP + IMAGE_27C400);
+        let image = verify_assembled_firmware(&options(), &file, false, Some(Board::Fire40A))
+            .await
+            .unwrap();
+        assert!(
+            image.parse_errors().is_empty(),
+            "{:?}",
+            image.parse_errors()
+        );
+        assert_eq!(slot_addresses(&image)[3], Some(FLASH_CS1_BASE_ADDR));
+    }
+
+    /// A file shorter than its slots, one with a slot on neither chip, and one
+    /// longer than the first chip without a slot on the second, are refused
+    /// unless forced.
+    #[tokio::test]
+    async fn an_image_file_that_doesnt_match_its_slots_needs_force() {
+        use onerom_fw_parser::ImageFileError;
+        let mut short = image_file(BoardSize::M, 3);
+        short.truncate(short.len() - 4096);
+        let damaged = move_slot(image_file(BoardSize::M, 3), 2, 0x1030_0000).await;
+        let mut long = image_file(BoardSize::M, 3);
+        long.resize(FIRST_CHIP + 4096, 0xFF);
+        for (file, expected) in [
+            (short, ImageFileError::TooShort { short_by: 4096 }),
+            (
+                damaged,
+                ImageFileError::BadAddress {
+                    slot: 2,
+                    addr: 0x1030_0000,
+                },
+            ),
+            (long, ImageFileError::TooLong { too_long_by: 4096 }),
+        ] {
+            let error = verify_assembled_firmware(&options(), &file, false, None)
+                .await
+                .unwrap_err();
+            assert!(
+                matches!(&error, Error::ImageFile(e) if *e == expected),
+                "{error:?}"
+            );
+            assert!(
+                verify_assembled_firmware(&options(), &file, true, None)
+                    .await
+                    .is_ok()
+            );
+        }
+    }
+
+    /// `--size L` is refused for a board that doesn't support external flash.
+    #[test]
+    fn a_second_chip_needs_a_board_that_supports_external_flash() {
+        let board = |name| Board::try_from_str(name).unwrap();
+        assert_eq!(
+            build_size(board("fire-40-a"), BoardSize::L).unwrap(),
+            BoardSize::L
+        );
+        assert!(build_size(board("fire-24-f"), BoardSize::L).is_err());
+        assert_eq!(
+            build_size(board("fire-24-f"), BoardSize::M).unwrap(),
+            BoardSize::M
+        );
+    }
+
+    /// `firmware build` advises `--size` only for a build without a second
+    /// flash chip, where the board and the firmware both support one.
+    #[test]
+    fn size_is_advised_only_where_it_helps() {
+        let board = |name| Board::try_from_str(name).unwrap();
+        let new = FirmwareVersion::new(0, 8, 0, 0);
+        let old = FirmwareVersion::new(0, 7, 3, 0);
+        let advised = |board, size, version| {
+            let error = Error::SlotDoesNotFit {
+                error: onerom_fw::Error::build(GenError::SlotDoesNotFit { slot: 3 }),
+                advise_second_chip: false,
+            };
+            matches!(
+                advise_second_chip(error, board, Variant::RP2350, size, version),
+                Error::SlotDoesNotFit {
+                    advise_second_chip: true,
+                    ..
+                }
+            )
+        };
+        assert!(advised(board("fire-40-a"), BoardSize::M, new));
+        assert!(!advised(board("fire-40-a"), BoardSize::L, new));
+        assert!(!advised(board("fire-24-f"), BoardSize::M, new));
+        assert!(!advised(board("fire-40-a"), BoardSize::M, old));
     }
 
     /// The refusal reports the image's board as the firmware's and the board

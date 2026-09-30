@@ -161,7 +161,7 @@ fn a_board_size_is_m_or_l_in_either_case() {
     for text in ["xl", "XL", "Xl", "Q", "", "LL", "XXL"] {
         assert_eq!(
             text.parse::<BoardSize>(),
-            Err(BoardSizeError::Unknown(text.into())),
+            Err(BoardSizeError::Unknown),
             "{text}"
         );
     }

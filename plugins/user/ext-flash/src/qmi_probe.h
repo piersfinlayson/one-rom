@@ -76,15 +76,14 @@ extern const uint8_t __stage_m1_end[];
 // table 3 "GPIO Bank 0 Functions": QMI CS1n is F9, on GPIOs 0, 8, 19 and 47.
 #define GPIO_FUNC_QMI_CS1N  9u
 
-// Base of the cached and uncached views of the chip select 1 window.  RP2350
-// datasheet section 12.14: each chip select gets a 16MB window, chip select 0
-// from 0x10000000 and chip select 1 from 0x11000000, with the QMI picking the
-// matching timing and format by address decode.  Section 4.4.1 lists the
-// mirrors of that space, 0x10 cached and 0x14 uncached, so the uncached view of
-// window 1 starts at 0x15000000.  Read a block through the uncached view - a
-// bulk read through the cached one evicts the running code from the 16KB XIP
-// cache the two chip selects share.
-#define XIP_CS1_BASE        0x11000000u
+// Base of the uncached view of the chip select 1 window.  RP2350 datasheet
+// section 12.14: each chip select gets a 16MB window, chip select 0 from
+// 0x10000000 and chip select 1 from 0x11000000 (ORA_FLASH_CS1_BASE_ADDR), with
+// the QMI picking the matching timing and format by address decode.  Section
+// 4.4.1 lists the mirrors of that space, 0x10 cached and 0x14 uncached, so the
+// uncached view of window 1 starts at 0x15000000.  Read a block through the
+// uncached view - a bulk read through the cached one evicts the running code
+// from the 16KB XIP cache the two chip selects share.
 #define XIP_CS1_NOCACHE     0x15000000u
 
 // Serial flash commands.  Winbond W25Q16JV datasheet section 8.1 "Instruction

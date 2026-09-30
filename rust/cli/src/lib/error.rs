@@ -5,6 +5,7 @@
 //! Shared error type for the One ROM CLI library.
 
 use onerom_config::fw::FirmwareVersion;
+use onerom_fw_parser::ImageFileError;
 use onerom_gen::FileFormat;
 
 use crate::hint;
@@ -183,6 +184,41 @@ pub enum Error {
 
     #[error("Flash verification failed at offset {0:#010x}:\n  Expected {1:#04x}, got {2:#04x}")]
     VerifyFailed(usize, u8, u8),
+
+    /// An image that uses the second flash chip, for a One ROM without one.
+    /// The `String` is the One ROM's size, as text for the `Board size:` line.
+    #[error(
+        "Cannot program this image because it requires a board size larger than M.\n  Board size: {0}"
+    )]
+    SecondChipRequired(String),
+
+    /// An image longer than the One ROM's flash chips together.
+    #[error(
+        "Cannot program this image because it is larger than this One ROM's flash.\n  {image} bytes supplied vs {flash} bytes maximum"
+    )]
+    ImageTooLarge { image: usize, flash: usize },
+
+    /// A flash operation this build doesn't know, from a newer onerom-app.
+    #[error(
+        "Cannot program this image.\n  It requires a flash operation this CLI doesn't support.\n  This is likely a bug.  Please report it."
+    )]
+    UnknownFlashStep,
+
+    /// An image file whose slots don't match its length or the flash chips.
+    #[error("{}", image_file_text(.0))]
+    ImageFile(ImageFileError),
+
+    /// A chip set that doesn't fit on the flash. `advise_second_chip` where
+    /// `firmware build` built for a board without a second flash chip, and
+    /// the board and the firmware both support one.
+    #[error(
+        "{error}{}",
+        if *.advise_second_chip { "\n  If the board size is larger than M, use --size." } else { "" }
+    )]
+    SlotDoesNotFit {
+        error: onerom_fw::Error,
+        advise_second_chip: bool,
+    },
 
     #[error("Invalid '{0}' argument found:\n  {1}")]
     InvalidArgument(String, String),
@@ -753,6 +789,35 @@ fn run_again_completes(error: &onerom_app::CommissionError) -> bool {
     )
 }
 
+/// The text of an [`Error::ImageFile`].
+fn image_file_text(error: &ImageFileError) -> String {
+    let (fault, detail) = match *error {
+        ImageFileError::TooShort { short_by } => {
+            ("too short", format!("It ends {short_by} bytes short"))
+        }
+        ImageFileError::BadAddress { slot, addr } => (
+            "damaged",
+            format!("Slot {slot} is at {addr:#010x}, which isn't a valid address"),
+        ),
+        ImageFileError::TooLong { too_long_by } => {
+            ("too long", format!("It is {too_long_by} bytes too long"))
+        }
+    };
+    format!(
+        "Cannot use this image file because it is {fault}.\n  {detail}.\n  Download or build the image file again, or use --force to override."
+    )
+}
+
+/// The warning `--force` shows in place of `Error::ImageFile(error)`.
+pub fn image_file_warning(error: &ImageFileError) -> String {
+    let reason = match *error {
+        ImageFileError::TooShort { short_by } => format!("ends {short_by} bytes short"),
+        ImageFileError::BadAddress { .. } => "is damaged".to_string(),
+        ImageFileError::TooLong { too_long_by } => format!("is {too_long_by} bytes too long"),
+    };
+    format!("Warning: This image file {reason} (continuing due to --force)")
+}
+
 /// `error`'s text as a sentence, with a capital letter and a full stop.
 fn sentence(error: &impl std::fmt::Display) -> String {
     let text = error.to_string();
@@ -874,6 +939,32 @@ impl From<onerom_app::CommissionError> for Error {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// An image file refusal and its warning contain the byte counts.
+    #[test]
+    fn an_image_file_refusal_contains_the_byte_counts() {
+        for error in [
+            ImageFileError::TooShort { short_by: 1111 },
+            ImageFileError::TooLong { too_long_by: 1111 },
+        ] {
+            assert!(image_file_warning(&error).contains("1111"), "{error:?}");
+            let text = Error::ImageFile(error.clone()).to_string();
+            assert!(text.contains("1111"), "{error:?}");
+        }
+    }
+
+    /// A refusal for a slot outside both flash chips contains the slot and its
+    /// address.
+    #[test]
+    fn an_image_file_refusal_contains_the_bad_slot() {
+        let error = ImageFileError::BadAddress {
+            slot: 13,
+            addr: 0x1030_0000,
+        };
+        let text = Error::ImageFile(error).to_string();
+        assert!(text.contains("13"), "{text}");
+        assert!(text.contains("0x10300000"), "{text}");
+    }
 
     /// The board-view error offers only advice that would actually work.
     ///

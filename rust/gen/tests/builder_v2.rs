@@ -13,7 +13,7 @@
 #[cfg(test)]
 mod tests {
     use onerom_config::fw::{FirmwareProperties, FirmwareVersion, ServeAlg};
-    use onerom_config::hw::Board;
+    use onerom_config::hw::{Board, BoardSize};
     use onerom_config::mcu::{Family as McuFamily, Variant as McuVariant};
     use onerom_gen::{Builder, ConfigOverrides, ConfigWarning, Error as GenError, FileData};
     use onerom_metadata::{
@@ -2831,12 +2831,12 @@ mod tests {
     /// the target board's flash — matching the guard the v1 builder has always
     /// had. Sixteen 27C010 slots (each served 1:1 at 128KB, see
     /// `v2_single_fire32b_27c010`) total 2MB, which exceeds the ROM space left
-    /// on the RP2350's 2MB flash after the firmware (48KB) and the metadata
-    /// region (16KB). Without the guard, `build()` would silently return an
-    /// over-large image; every consumer of the single onerom-gen `build()`
-    /// (CLI, Studio, one-rom-wasm) relies on this check.
+    /// on an M board's 2MB flash after the firmware (48KB) and the metadata
+    /// region (16KB). Fifteen fit, so the sixteenth, set 15, is refused.
+    /// Without the guard, `build()` would silently return an over-large image.
+    /// Every consumer of the single onerom-gen `build()` (CLI, Studio,
+    /// one-rom-wasm) relies on this check.
     #[test]
-    #[allow(clippy::wildcard_enum_match_arm)]
     fn v2_rejects_oversized_rom_data() {
         const CHIP_BYTES: usize = 131_072; // 27C010 = 128KB, served 1:1
         const SLOTS: usize = 16; // 16 * 128KB = 2MB > flash minus fw+metadata
@@ -2863,21 +2863,10 @@ mod tests {
             .build(v2_props(Board::Fire32B))
             .expect_err("build must reject ROM data that overflows flash");
 
-        match err {
-            onerom_gen::Error::BufferTooSmall {
-                location,
-                expected,
-                actual,
-            } => {
-                assert_eq!(location, "Flash");
-                assert_eq!(expected, SLOTS * CHIP_BYTES);
-                assert!(
-                    expected > actual,
-                    "expected ROM data ({expected}) should exceed available flash ({actual})"
-                );
-            }
-            other => panic!("expected Error::BufferTooSmall, got {other:?}"),
-        }
+        assert!(
+            matches!(err, GenError::SlotDoesNotFit { slot: 15 }),
+            "expected set 15 not to fit, got {err:?}"
+        );
     }
 
     // ========================================================================
@@ -2920,5 +2909,270 @@ mod tests {
             view(&meta).read_u32_le(HDR_VERSION).unwrap(),
             CURRENT_METADATA_VERSION
         );
+    }
+
+    // ========================================================================
+    // v2 second flash chip: first fit placement on an L board
+    // ========================================================================
+
+    const KB: u32 = 1024;
+
+    /// The end of the first chip. The first chip's ROM data runs from
+    /// ROM_DATA_BASE to here.
+    const FIRST_CHIP_END: u32 = 0x1020_0000;
+
+    /// The start of the second chip.
+    const SECOND_CHIP_BASE: u32 = 0x1100_0000;
+
+    /// The first firmware that serves a slot on the second chip.
+    const V0_8_0: FirmwareVersion = FirmwareVersion::new(0, 8, 0, 0);
+
+    /// The image size of `chip_type`, which a Fire32B serves whole.
+    fn chip_bytes(chip_type: &str) -> usize {
+        match chip_type {
+            "27C040" => 512 * 1024,
+            "27C010" => 128 * 1024,
+            other => panic!("no image size for {other}"),
+        }
+    }
+
+    /// A config with a single-chip set of each `chip_types` entry. Set n's file
+    /// is `f{n}.bin`.
+    fn sets_json(chip_types: &[&str]) -> String {
+        let sets: Vec<String> = chip_types
+            .iter()
+            .enumerate()
+            .map(|(n, chip_type)| {
+                format!(
+                    r#"{{ "type": "single", "chips": [{{ "file": "f{n}.bin", "type": "{chip_type}" }}] }}"#
+                )
+            })
+            .collect();
+        format!(
+            r#"{{ "version": 1, "description": "second flash chip", "chip_sets": [{}] }}"#,
+            sets.join(",")
+        )
+    }
+
+    fn fire32b_props(version: FirmwareVersion, size: BoardSize) -> FirmwareProperties {
+        FirmwareProperties::new(
+            version,
+            Board::Fire32B,
+            McuVariant::RP2350,
+            ServeAlg::Default,
+            false,
+        )
+        .unwrap()
+        .with_board_size(size)
+    }
+
+    /// Builds a set of each `chip_types` entry for a `size` Fire32B running
+    /// `version`. Set n's image is filled with n + 1.
+    fn build_fire32b(
+        version: FirmwareVersion,
+        size: BoardSize,
+        chip_types: &[&str],
+    ) -> Result<(Vec<u8>, Vec<u8>), GenError> {
+        let mut b = Builder::from_json(version, McuFamily::Rp2350, &sets_json(chip_types))
+            .expect("from_json should succeed");
+        for (n, chip_type) in chip_types.iter().enumerate() {
+            b.add_file(FileData::new(n, vec![n as u8 + 1; chip_bytes(chip_type)]))
+                .unwrap();
+        }
+        b.build(fire32b_props(version, size))
+    }
+
+    /// What set n of `chip_type` from `build_fire32b` builds to on its own.
+    fn slot_image(chip_type: &str, n: usize) -> Vec<u8> {
+        let mut b = v2_builder(&sets_json(&[chip_type]));
+        b.add_file(FileData::new(0, vec![n as u8 + 1; chip_bytes(chip_type)]))
+            .unwrap();
+        b.build(v2_props(Board::Fire32B)).expect("build").1
+    }
+
+    /// Every slot's data pointer, in slot order.
+    fn slot_pointers(meta: &[u8]) -> Vec<u32> {
+        let v = view(meta);
+        let count = u32::from(v.read_u8(HDR_SLOT_COUNT).unwrap());
+        (0..count)
+            .map(|n| v.read_u32_le(slot_base(&v, n) + SLOT_DATA).unwrap())
+            .collect()
+    }
+
+    /// The offset in the ROM data of flash address `addr`. The ROM data is the
+    /// first chip from ROM_DATA_BASE and then the second chip.
+    fn rom_offset(addr: u32) -> usize {
+        if addr >= SECOND_CHIP_BASE {
+            (FIRST_CHIP_END - ROM_DATA_BASE + addr - SECOND_CHIP_BASE) as usize
+        } else {
+            (addr - ROM_DATA_BASE) as usize
+        }
+    }
+
+    /// Asserts that each set's image is in the ROM data where its slot's data
+    /// pointer says.
+    fn assert_images_at_pointers(meta: &[u8], rom: &[u8], chip_types: &[&str]) {
+        let pointers = slot_pointers(meta);
+        assert_eq!(pointers.len(), chip_types.len());
+        for (n, (addr, chip_type)) in pointers.into_iter().zip(chip_types).enumerate() {
+            let image = slot_image(chip_type, n);
+            let start = rom_offset(addr);
+            assert!(
+                rom[start..start + image.len()] == image[..],
+                "set {n}'s image isn't at {addr:#010x}"
+            );
+        }
+    }
+
+    /// Sets that fit the first chip build byte for byte the same for an M and
+    /// an L board. The images are one after another from ROM_DATA_BASE, as
+    /// they were before the second chip.
+    #[test]
+    fn v2_sets_that_fit_the_first_chip_build_the_same_for_m_and_l() {
+        let types = ["27C040", "27C010", "27C040"];
+        let (m_meta, m_rom) = build_fire32b(V0_8_0, BoardSize::M, &types).expect("M build");
+        let (l_meta, l_rom) = build_fire32b(V0_8_0, BoardSize::L, &types).expect("L build");
+        assert!(m_meta == l_meta, "the metadata differs");
+        assert!(m_rom == l_rom, "the ROM data differs");
+
+        assert_eq!(
+            slot_pointers(&m_meta),
+            [
+                ROM_DATA_BASE,
+                ROM_DATA_BASE + 512 * KB,
+                ROM_DATA_BASE + 640 * KB
+            ]
+        );
+        let images: Vec<u8> = types
+            .iter()
+            .enumerate()
+            .flat_map(|(n, chip_type)| slot_image(chip_type, n))
+            .collect();
+        assert!(m_rom == images, "the ROM data isn't the images in order");
+    }
+
+    /// Three 512KB sets leave 448KB of the first chip's 1984KB, so a fourth
+    /// goes on the second chip. The ROM data pads the first chip with 0xFF to
+    /// its end and the second chip follows.
+    #[test]
+    fn v2_a_set_that_doesnt_fit_the_first_chip_goes_on_the_second() {
+        let types = ["27C040"; 4];
+        let (meta, rom) = build_fire32b(V0_8_0, BoardSize::L, &types).expect("build");
+        assert_eq!(
+            slot_pointers(&meta),
+            [
+                ROM_DATA_BASE,
+                ROM_DATA_BASE + 512 * KB,
+                ROM_DATA_BASE + 1024 * KB,
+                SECOND_CHIP_BASE
+            ]
+        );
+        assert_eq!(rom.len(), (1984 + 512) * 1024);
+        assert!(
+            rom[1536 * 1024..1984 * 1024].iter().all(|&b| b == 0xFF),
+            "the rest of the first chip isn't 0xFF"
+        );
+        assert_images_at_pointers(&meta, &rom, &types);
+    }
+
+    /// First fit: a set after one on the second chip still goes on the first
+    /// chip where it fits there.
+    #[test]
+    fn v2_a_later_smaller_set_fills_the_first_chip() {
+        let types = ["27C040", "27C040", "27C040", "27C040", "27C010"];
+        let (meta, rom) = build_fire32b(V0_8_0, BoardSize::L, &types).expect("build");
+        assert_eq!(
+            slot_pointers(&meta),
+            [
+                ROM_DATA_BASE,
+                ROM_DATA_BASE + 512 * KB,
+                ROM_DATA_BASE + 1024 * KB,
+                SECOND_CHIP_BASE,
+                ROM_DATA_BASE + 1536 * KB
+            ]
+        );
+        assert_eq!(rom.len(), (1984 + 512) * 1024);
+        assert!(
+            rom[1664 * 1024..1984 * 1024].iter().all(|&b| b == 0xFF),
+            "the rest of the first chip isn't 0xFF"
+        );
+        assert_images_at_pointers(&meta, &rom, &types);
+    }
+
+    /// A plugin image the builder accepts: the "ORA " magic, API version 1 and
+    /// a minimum firmware of 0.0.0.
+    fn plugin_image() -> Vec<u8> {
+        let mut image = vec![0u8; 256];
+        image[0..4].copy_from_slice(b"ORA ");
+        image[4..8].copy_from_slice(&1u32.to_le_bytes());
+        image
+    }
+
+    /// Plugins run from the addresses firmware/ora/plugin.ld links them at, so
+    /// they stay there when later sets go on the second chip.
+    #[test]
+    fn v2_plugins_stay_at_their_linked_addresses_when_sets_spill() {
+        let types = [
+            "system_plugin",
+            "user_plugin",
+            "27C040",
+            "27C040",
+            "27C040",
+            "27C040",
+        ];
+        let mut b = Builder::from_json(V0_8_0, McuFamily::Rp2350, &sets_json(&types))
+            .expect("from_json should succeed");
+        b.add_file(FileData::new(0, plugin_image())).unwrap();
+        b.add_file(FileData::new(1, plugin_image())).unwrap();
+        for n in 2..types.len() {
+            b.add_file(FileData::new(n, vec![n as u8 + 1; 512 * 1024]))
+                .unwrap();
+        }
+
+        let (meta, rom) = b.build(fire32b_props(V0_8_0, BoardSize::L)).expect("build");
+        assert_eq!(
+            slot_pointers(&meta),
+            [
+                0x1001_0000,
+                0x1002_0000,
+                ROM_DATA_BASE + 128 * KB,
+                ROM_DATA_BASE + 640 * KB,
+                ROM_DATA_BASE + 1152 * KB,
+                SECOND_CHIP_BASE
+            ]
+        );
+        assert!(rom[..256] == plugin_image()[..]);
+        assert!(rom[64 * 1024..64 * 1024 + 256] == plugin_image()[..]);
+    }
+
+    /// The second chip holds four 512KB sets after the first chip's three, so
+    /// an eighth is refused by its index in the config.
+    #[test]
+    fn v2_a_set_that_fits_neither_chip_is_refused() {
+        let err = build_fire32b(V0_8_0, BoardSize::L, &["27C040"; 8])
+            .expect_err("the eighth set must not fit");
+        assert!(
+            matches!(err, GenError::SlotDoesNotFit { slot: 7 }),
+            "expected set 7 not to fit, got {err:?}"
+        );
+    }
+
+    /// Firmware before 0.8.0 supports only M, so a build for another size is
+    /// refused even where every set fits the first chip.
+    #[test]
+    fn v2_firmware_before_0_8_0_refuses_sizes_other_than_m() {
+        let old = FirmwareVersion::new(0, 7, 2, 0);
+        let others = BoardSize::supported_values()
+            .iter()
+            .filter(|&&size| size != BoardSize::M);
+        for &size in others {
+            let err = build_fire32b(old, size, &["27C040"; 3]).unwrap_err();
+            assert!(
+                matches!(err, GenError::FirmwareTooOldForBoardSize { version } if version == old),
+                "{size}: {err:?}"
+            );
+            build_fire32b(V0_8_0, size, &["27C040"; 3]).expect("0.8.0 builds it");
+        }
+        build_fire32b(old, BoardSize::M, &["27C040"; 3]).expect("M builds");
     }
 }

@@ -9,14 +9,18 @@
 
 #[allow(unused_imports)]
 use log::{Level, debug, log, warn};
+use onerom_app::{FlashPlan, FlashStep};
 use onerom_config::mcu::{Rp235xChipId, RpVariant};
 use onerom_fw_parser::{ParsedDevice, Parser};
 use onerom_lab_parser::LabParser;
-use onerom_metadata::{USB_BOOTLOADER_PID, USB_BOOTLOADER_VID, USB_PLUGIN_PID, USB_PLUGIN_VID};
+use onerom_metadata::{
+    MaybeKnown, OneromBoardSize, USB_BOOTLOADER_PID, USB_BOOTLOADER_VID, USB_PLUGIN_PID,
+    USB_PLUGIN_VID,
+};
 use picoboot::cmd::PicobootStatus;
 use picoboot::{
-    Picoboot, PicobootCmd, PicobootCmdId, PicobootXCmd, Reader as PicobootReader, Target,
-    usb::Timeouts,
+    PAGE_SIZE, Picoboot, PicobootCmd, PicobootCmdId, PicobootXCmd, Reader as PicobootReader,
+    SECTOR_SIZE, Target, usb::Timeouts,
 };
 use std::time::Duration;
 
@@ -488,13 +492,20 @@ pub async fn read_device_info(device: &mut Device) -> Result<(), AccessError> {
     }
 
     // Runtime info exists only while One ROM runs, so a stopped board's size
-    // comes from OTP. One ROM Lab has no board size.
+    // comes from OTP. Firmware before 0.8.0 doesn't record the size in runtime
+    // info, so on that firmware the size comes from OTP through the USB plugin.
+    // Where that read fails the size stays as runtime info has it. One ROM Lab
+    // doesn't have a board size.
     if !matches!(device.firmware, Some(Firmware::Lab(_))) {
-        device.board_size = match device.runtime_board_size() {
-            Some(size) => Some(size),
-            None => read_board_size(device)
+        let runtime = device.runtime_board_size();
+        device.board_size = match runtime {
+            Some(size) if size != MaybeKnown::Known(OneromBoardSize::BoardSizeUnknown) => {
+                Some(size)
+            }
+            Some(_) | None => read_board_size(device)
                 .await
-                .map(onerom_metadata::MaybeKnown::Known),
+                .map(MaybeKnown::Known)
+                .or(runtime),
         };
     }
 
@@ -686,9 +697,9 @@ impl MemoryRegion {
     }
 }
 
-const VALID_REGIONS: &[MemoryRegion] = &[
-    // 2MB of flash
-    MemoryRegion::new("Flash", 0x1000_0000, 0x0020_0000, MemoryType::Flash),
+/// The valid regions other than flash. A device's flash is each of its flash
+/// chips.
+const OTHER_REGIONS: &[MemoryRegion] = &[
     // 520KB of SRAM
     MemoryRegion::new("SRAM", 0x2000_0000, 0x0008_2000, MemoryType::Ram),
     // 32KB of Boot ROM
@@ -709,7 +720,20 @@ fn check_memory_range(
     write: bool,
     flash_writes_allowed: bool,
 ) -> Result<(), Error> {
-    for region in VALID_REGIONS {
+    let chips = device.flash_chips();
+    let flash: Vec<MemoryRegion> = [Some(chips.first()), chips.second()]
+        .into_iter()
+        .flatten()
+        .map(|chip| {
+            MemoryRegion::new(
+                "Flash",
+                chip.start,
+                chip.end - chip.start,
+                MemoryType::Flash,
+            )
+        })
+        .collect();
+    for region in flash.iter().chain(OTHER_REGIONS) {
         if region.contains(address, length) {
             return match region.mem_type {
                 MemoryType::BootRom => {
@@ -792,33 +816,73 @@ pub async fn write_memory(device: &Device, address: u32, data: &[u8]) -> Result<
         .map_err(|e| Error::Usb(e.to_string()))
 }
 
-/// Erase and write firmware to device flash.
-pub async fn flash_program(device: &Device, data: &[u8]) -> Result<(), Error> {
-    let mut picoboot = get_picoboot(device, true).await?;
+/// Runs `plan`'s steps on `device` in order.
+///
+/// A plan for flash the device doesn't have is refused before anything is
+/// erased.
+pub async fn flash_program(device: &Device, plan: &FlashPlan<'_>) -> Result<(), Error> {
+    for step in plan.steps() {
+        let (addr, len) = match *step {
+            FlashStep::Erase { addr, len } => (addr, len),
+            FlashStep::Write { addr, data } => (addr, data.len() as u32),
+            // FlashStep is non_exhaustive.
+            _ => return Err(Error::UnknownFlashStep),
+        };
+        check_memory_range(device, addr, len, true, true)?;
+    }
 
-    picoboot
-        .flash_erase_and_write(FLASH_BASE, data)
-        .await
-        .map_err(|e| Error::Usb(e.to_string()))
+    let mut picoboot = get_picoboot(device, true).await?;
+    // One connection for every step.
+    picoboot.connect().await.map_err(usb_error)?;
+    for step in plan.steps() {
+        match *step {
+            FlashStep::Erase { addr, len } => erase(&mut picoboot, addr, len).await?,
+            FlashStep::Write { addr, data } => {
+                picoboot.flash_write(addr, data).await.map_err(usb_error)?
+            }
+            _ => return Err(Error::UnknownFlashStep),
+        }
+    }
+    Ok(())
 }
 
-/// Read firmware from device flash for verification.
-pub async fn flash_program_read(device: &Device, size: u32) -> Result<Vec<u8>, Error> {
-    let mut picoboot = get_picoboot(device, false).await?;
+/// Reads `len` bytes of `device`'s flash from `addr`.
+///
+/// The bootloader reads flash a whole 256-byte page at a time, so the read
+/// covers the pages holding the bytes and returns just the bytes.
+pub async fn flash_read(device: &Device, addr: u32, len: u32) -> Result<Vec<u8>, Error> {
+    check_memory_range(device, addr, len, false, false)?;
 
-    picoboot
-        .flash_read(FLASH_BASE, size)
-        .await
-        .map_err(|e| Error::Usb(e.to_string()))
+    let start = addr - addr % PAGE_SIZE;
+    // The range is within a region so this doesn't overflow.
+    let end = (addr + len).next_multiple_of(PAGE_SIZE);
+
+    let mut picoboot = get_picoboot(device, false).await?;
+    // One connection for every chunk.
+    picoboot.connect().await.map_err(usb_error)?;
+    let mut data = Vec::with_capacity((end - start) as usize);
+    for chunk in (start..end).step_by(READ_CHUNK_BYTES as usize) {
+        let size = (end - chunk).min(READ_CHUNK_BYTES);
+        let read = picoboot.flash_read(chunk, size).await.map_err(usb_error)?;
+        if read.len() != size as usize {
+            return Err(Error::Usb(format!(
+                "read {} bytes at {chunk:#010x}, asked for {size}",
+                read.len()
+            )));
+        }
+        data.extend_from_slice(&read);
+    }
+
+    let skip = (addr - start) as usize;
+    Ok(data[skip..skip + len as usize].to_vec())
 }
 
 /// Erase a region of device flash.
 ///
 /// Both `offset` and `size` are relative to `FLASH_BASE` and must be
-/// multiples of 4096 (one flash sector).
+/// multiples of 4096 (one flash sector). A second flash chip starts at offset
+/// `0x1000000`.
 pub async fn flash_erase(device: &Device, offset: u32, size: u32) -> Result<(), Error> {
-    const SECTOR_SIZE: u32 = 4096;
-
     if !offset.is_multiple_of(SECTOR_SIZE) {
         return Err(Error::Other(format!(
             "offset {offset:#x} is not sector-aligned (must be a multiple of {SECTOR_SIZE:#x})"
@@ -834,11 +898,30 @@ pub async fn flash_erase(device: &Device, offset: u32, size: u32) -> Result<(), 
     check_memory_range(device, address, size, true, true)?;
 
     let mut picoboot = get_picoboot(device, true).await?;
+    picoboot.connect().await.map_err(usb_error)?;
+    erase(&mut picoboot, address, size).await
+}
 
-    picoboot
-        .flash_erase(address, size)
-        .await
-        .map_err(|e| Error::Usb(e.to_string()))
+/// Bytes each FLASH_ERASE command erases.
+///
+/// The endpoint timeout covers a whole command, and erasing a whole 2MB chip
+/// can take longer than that. A 64KB chunk still lets the bootloader erase a
+/// 64KB block at a time where the chip supports it.
+const ERASE_CHUNK_BYTES: u32 = 64 * 1024;
+
+/// Erases `len` bytes of flash from `addr`. Both are whole sectors.
+async fn erase(picoboot: &mut Picoboot, addr: u32, len: u32) -> Result<(), Error> {
+    let end = addr + len;
+    for chunk in (addr..end).step_by(ERASE_CHUNK_BYTES as usize) {
+        let size = (end - chunk).min(ERASE_CHUNK_BYTES);
+        picoboot.flash_erase(chunk, size).await.map_err(usb_error)?;
+    }
+    Ok(())
+}
+
+/// The error for a failed picoboot operation.
+fn usb_error(e: picoboot::Error) -> Error {
+    Error::Usb(e.to_string())
 }
 
 /// Sleep for a short time to allow the device to disconnect and reappear

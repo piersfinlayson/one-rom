@@ -21,6 +21,15 @@ const GUARD: &str = "ONEROM_METADATA_KEYS_H";
 const ENUM_NAME: &str = "ora_metadata_key_t";
 const PREFIX: &str = "ORA_METADATA_KEY_";
 
+/// The sentinels opening and closing the enum, less the prefix.
+pub(crate) const NONE: &str = "NONE";
+pub(crate) const INVALID: &str = "INVALID";
+
+/// The name `key` takes in this header.
+pub(crate) fn ora_name(key: &str) -> String {
+    format!("{PREFIX}{key}")
+}
+
 struct Variant {
     name: String,
     value: u32,
@@ -34,14 +43,14 @@ struct Variant {
 pub fn generate(schema: &Schema) -> String {
     // NONE first, the schema keys (already sorted by id), INVALID last.
     let mut variants = vec![Variant {
-        name: format!("{PREFIX}NONE"),
+        name: ora_name(NONE),
         value: 0x0000_0000,
         comment: "Reserved. Never a live key; a zero-initialised value is invalid.".to_string(),
         since: None,
     }];
     for entry in schema.plugin_keys() {
         variants.push(Variant {
-            name: format!("{PREFIX}{}", entry.key.name),
+            name: ora_name(&entry.key.name),
             value: entry.key.id,
             // The whole comment, not just its first line: an array key needs
             // its sentinel convention stated here, where a plugin author reads
@@ -51,7 +60,7 @@ pub fn generate(schema: &Schema) -> String {
         });
     }
     variants.push(Variant {
-        name: format!("{PREFIX}INVALID"),
+        name: ora_name(INVALID),
         value: 0xFFFF_FFFF,
         comment: "Invalid metadata key".to_string(),
         since: None,

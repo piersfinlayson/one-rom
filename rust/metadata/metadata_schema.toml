@@ -106,12 +106,20 @@
 #                       length. A variant ending in a string names none.
 #
 # ---------------------------------------------------------------------------
+# Enum attributes
+# ---------------------------------------------------------------------------
+#   ora_api           - also emit each value as ORA_<value name>, as for a
+#                       constant
+#   first_release     - as for a constant
+#
+# ---------------------------------------------------------------------------
 # Enum variant attributes
 # ---------------------------------------------------------------------------
 #   sentinel          - in the C enum, and a constant rather than a variant in
 #                       Rust
 #   deprecated_release - release from which nothing should use the value. A
 #                       released value keeps its name and number for good.
+#   first_release     - as for a constant, where it differs from the enum's
 #
 # ---------------------------------------------------------------------------
 # Structure generations
@@ -515,6 +523,22 @@ value = 0x055
 comment = """OTP row of FLASH_PARTITION_SLOT_SIZE. Once FLASH_DEVINFO_ENABLE is set, the
 chip never boots again unless this row holds a valid ECC value."""
 
+[[constants]]
+name = "FLASH_CS0_BASE_ADDR"
+type = "u32"
+value = 0x10000000
+ora_api = true
+first_release = "0.8.0"
+comment = "Address of the flash chip on QSPI chip select 0 (built-in on an RP2354)."
+
+[[constants]]
+name = "FLASH_CS1_BASE_ADDR"
+type = "u32"
+value = 0x11000000
+ora_api = true
+first_release = "0.8.0"
+comment = "Address of the flash chip on QSPI chip select 1."
+
 # ===========================================================================
 # Type aliases
 # ===========================================================================
@@ -811,6 +835,8 @@ packed = true
 comment = """RP235x silicon package variant.
 Values are chosen to match the SYS_INFO: PACKAGE_SEL Register"""
 strip_prefix = "RP235X"
+ora_api = true
+first_release = "0.8.0"
 
 [[enums.variants]]
 name = "RP235XB"
@@ -1052,6 +1078,8 @@ size = 1
 packed = true
 comment = """A board's size as configured in OTP."""
 strip_prefix = "BOARD_SIZE_"
+ora_api = true
+first_release = "0.8.0"
 
 [[enums.variants]]
 name = "BOARD_SIZE_UNKNOWN"
@@ -1940,6 +1968,7 @@ type = "onerom_board_size_t"
 since_runtime_version = 3
 default_if_absent = 0
 expected_offset = 59
+plugin_key = { name = "BOARD_SIZE", id = 20, first_release = "0.8.0" }
 comment = "The board's size as OTP configures it, read at boot."
 
 # ===========================================================================

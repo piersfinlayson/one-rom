@@ -7,7 +7,7 @@
 use core::fmt::Display;
 
 use crate::Error;
-use crate::hw::Board;
+use crate::hw::{Board, BoardSize};
 use crate::mcu::Variant as McuVariant;
 
 /// Represents a One ROM Firmware Version
@@ -189,10 +189,17 @@ pub struct FirmwareProperties {
     mcu_variant: McuVariant,
     serve_alg: ServeAlg,
     boot_logging: bool,
+    #[serde(default = "default_board_size")]
+    board_size: BoardSize,
+}
+
+// Properties serialised before board sizes existed are for an M board.
+fn default_board_size() -> BoardSize {
+    BoardSize::M
 }
 
 impl FirmwareProperties {
-    /// Create a new firmware properties object
+    /// Create a new firmware properties object for an M board
     pub fn new(
         version: FirmwareVersion,
         board: Board,
@@ -213,7 +220,16 @@ impl FirmwareProperties {
             mcu_variant,
             serve_alg,
             boot_logging,
+            board_size: BoardSize::M,
         })
+    }
+
+    /// Returns these properties for a board of `size`
+    pub fn with_board_size(self, size: BoardSize) -> Self {
+        Self {
+            board_size: size,
+            ..self
+        }
     }
 
     /// Get the firmware version
@@ -239,6 +255,12 @@ impl FirmwareProperties {
     /// Get the MCU variant
     pub const fn mcu_variant(&self) -> McuVariant {
         self.mcu_variant
+    }
+
+    /// Get the board size. M unless set with
+    /// [`with_board_size`](Self::with_board_size).
+    pub fn board_size(&self) -> BoardSize {
+        self.board_size
     }
 }
 
@@ -325,5 +347,50 @@ mod tests {
         assert_eq!(versions[2], FirmwareVersion::new(1, 2, 4, 0));
         assert_eq!(versions[3], FirmwareVersion::new(1, 3, 0, 0));
         assert_eq!(versions[4], FirmwareVersion::new(2, 0, 0, 0));
+    }
+
+    fn fire_props() -> FirmwareProperties {
+        FirmwareProperties::new(
+            FirmwareVersion::new(0, 8, 0, 0),
+            Board::Fire40A,
+            McuVariant::RP2350B,
+            ServeAlg::Default,
+            false,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn properties_are_for_an_m_board_unless_set() {
+        assert_eq!(fire_props().board_size(), BoardSize::M);
+        let props = fire_props().with_board_size(BoardSize::L);
+        assert_eq!(props.board_size(), BoardSize::L);
+        assert_eq!(
+            props.with_board_size(BoardSize::M).board_size(),
+            BoardSize::M
+        );
+    }
+
+    #[test]
+    fn properties_keep_their_board_size_through_serde() {
+        for size in [BoardSize::M, BoardSize::L] {
+            let json = serde_json::to_string(&fire_props().with_board_size(size)).unwrap();
+            let props: FirmwareProperties = serde_json::from_str(&json).unwrap();
+            assert_eq!(props.board_size(), size);
+        }
+    }
+
+    /// Properties serialised before board sizes existed don't have one, and
+    /// are for an M board.
+    #[test]
+    fn properties_without_a_board_size_are_for_an_m_board() {
+        let props = fire_props().with_board_size(BoardSize::L);
+        let mut json = serde_json::to_value(props).unwrap();
+        json.as_object_mut().unwrap().remove("board_size").unwrap();
+
+        let props: FirmwareProperties = serde_json::from_value(json).unwrap();
+        assert_eq!(props.board_size(), BoardSize::M);
+        assert_eq!(props.board(), Board::Fire40A);
+        assert_eq!(props.mcu_variant(), McuVariant::RP2350B);
     }
 }

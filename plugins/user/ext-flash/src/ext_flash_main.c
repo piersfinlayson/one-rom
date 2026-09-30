@@ -247,7 +247,7 @@ static __attribute__((noinline)) int32_t erase(uint32_t offset, uint32_t size) {
     uint32_t primask = irq_disable();
     op(s_ctx.connect, s_ctx.exit_xip, s_ctx.op, s_ctx.flush, s_ctx.select_xip,
        CFLASH_ASPACE_STORAGE | CFLASH_SECLEVEL_SECURE | CFLASH_OP_ERASE,
-       XIP_CS1_BASE + offset, size, NULL,
+       ORA_FLASH_CS1_BASE_ADDR + offset, size, NULL,
        s_ctx.mode, s_ctx.clkdiv, &result);
     irq_restore(primask);
     watchdog_disarm();

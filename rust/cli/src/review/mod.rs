@@ -21,9 +21,13 @@
 //!   cargo test -p onerom-cli --bin onerom review::set_size -- --nocapture --test-threads=1
 
 mod commission;
+mod control_erase;
+mod firmware_build;
 mod hardware;
 mod inspect_otp;
+mod inspect_peek;
 mod inspect_slots;
+mod program;
 mod request_signature;
 mod scan;
 mod set_size;
@@ -51,7 +55,7 @@ use onerom_metadata::otp::pico_otp::ecc_encode;
 use crate::args::hardware::HardwareCommands;
 use crate::args::{Cli, CommandTrait, Commands};
 use crate::hardware::{SignatureSource, ToSign};
-use crate::test_board::{CHIP_ID, blank_board, commissioned_board, key};
+use crate::test_board::{CHIP_ID, blank_board, commissioned_board, header_image, key};
 
 /// The line a stopped One ROM whose firmware is for `board` is shown with.
 /// It carries `(L)` or `(other)` for the size its OTP configures, `size`.
@@ -98,33 +102,6 @@ async fn unrecognised_reasons(image: Vec<u8>) -> Vec<ParseError> {
             .parse_device()
             .await;
     parsed.parse_errors().to_vec()
-}
-
-/// Zeroed flash holding One ROM's header for v0.`minor`.0. Its build date
-/// pointer is `build_date` and its metadata pointer `metadata`.
-fn header_image(minor: u16, build_date: u32, metadata: u32) -> Vec<u8> {
-    use onerom_metadata::{
-        FirmwareType, ONEROM_FAMILY_MAGIC, ONEROM_INFO_BUILD_DATE_OFFSET,
-        ONEROM_INFO_FIRMWARE_TYPE_OFFSET, ONEROM_INFO_MAGIC_OFFSET, ONEROM_INFO_METADATA_OFFSET,
-        ONEROM_INFO_MINOR_VERSION_OFFSET, ONEROM_INFO_OFFSET, ONEROM_INFO_VERSION,
-        ONEROM_INFO_VERSION_OFFSET,
-    };
-    let mut image = vec![0; FLASH_READ_SIZE_BYTES as usize];
-    let header = &mut image[ONEROM_INFO_OFFSET as usize..];
-    let mut put = |offset: usize, bytes: &[u8]| {
-        header[offset..offset + bytes.len()].copy_from_slice(bytes);
-    };
-    put(ONEROM_INFO_MAGIC_OFFSET, ONEROM_FAMILY_MAGIC.as_bytes());
-    put(ONEROM_INFO_MINOR_VERSION_OFFSET, &minor.to_le_bytes());
-    put(ONEROM_INFO_BUILD_DATE_OFFSET, &build_date.to_le_bytes());
-    put(
-        ONEROM_INFO_VERSION_OFFSET,
-        &ONEROM_INFO_VERSION.to_le_bytes(),
-    );
-    put(ONEROM_INFO_METADATA_OFFSET, &metadata.to_le_bytes());
-    let one_rom = FirmwareType::FirmwareTypeOneRom as u16;
-    put(ONEROM_INFO_FIRMWARE_TYPE_OFFSET, &one_rom.to_le_bytes());
-    image
 }
 
 /// Flash holding v0.9.0, newer than this build reads.
@@ -218,9 +195,9 @@ impl BufRead for Keyboard {
     }
 }
 
-/// `words`, which start `onerom hardware`, parsed and checked as the CLI
-/// does. Returns the command and the options `--yes` and `--verbose` set.
-fn hardware_of(words: &[&str]) -> (HardwareCommands, Options) {
+/// `words` parsed and checked as the CLI does. Returns the command and the
+/// options `--yes` and `--verbose` set. There isn't a device.
+fn command_of(words: &[&str]) -> (Commands, Options) {
     let cli = Cli::try_parse_from(words).unwrap();
     cli.command.check_args().unwrap();
     let options = Options {
@@ -231,7 +208,14 @@ fn hardware_of(words: &[&str]) -> (HardwareCommands, Options) {
         device: None,
         vid_pid: Vec::new(),
     };
-    let Commands::Hardware(hardware) = cli.command else {
+    (cli.command, options)
+}
+
+/// `words`, which start `onerom hardware`, parsed and checked as the CLI
+/// does. Returns the command and the options `--yes` and `--verbose` set.
+fn hardware_of(words: &[&str]) -> (HardwareCommands, Options) {
+    let (command, options) = command_of(words);
+    let Commands::Hardware(hardware) = command else {
         panic!("not a hardware command");
     };
     (hardware.command, options)

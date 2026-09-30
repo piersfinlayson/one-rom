@@ -12,6 +12,8 @@ use clap::{ArgGroup, Args, Subcommand};
 use enum_dispatch::enum_dispatch;
 use onerom_app::BoardSize;
 use onerom_config::hw::{Board, Model};
+use onerom_config::mcu::Variant;
+use onerom_gen::FlashChips;
 use onerom_metadata::otp::{BuildError, check_manufacturer};
 use time::{Date, Month, OffsetDateTime};
 
@@ -307,18 +309,21 @@ pub enum SizeError {
     )]
     Missing(Board),
 
-    /// The board doesn't support external flash and `--size` isn't M.
-    #[error("{} doesn't support external flash. Size is always M", .0.name())]
+    /// The board doesn't support external flash and `--size` has a second
+    /// flash chip.
+    #[error("{} doesn't support --size other than M", .0.name())]
     ExternalFlashUnsupported(Board),
 }
 
-/// `size` where `board` supports it. A board that doesn't support external
-/// flash is always M.
-fn supported_size(board: Board, size: BoardSize) -> Result<BoardSize, SizeError> {
-    match size {
-        BoardSize::M => Ok(size),
-        BoardSize::L if board.external_flash_cs_pin().is_some() => Ok(size),
-        BoardSize::L => Err(SizeError::ExternalFlashUnsupported(board)),
+/// `size` where `board` supports it. A size with a second flash chip needs a
+/// board that supports external flash.
+pub(crate) fn supported_size(board: Board, size: BoardSize) -> Result<BoardSize, SizeError> {
+    // Board sizes are for Fire boards.
+    let second_chip = FlashChips::new(Variant::RP2350, size).second().is_some();
+    if second_chip && board.external_flash_cs_pin().is_none() {
+        Err(SizeError::ExternalFlashUnsupported(board))
+    } else {
+        Ok(size)
     }
 }
 
@@ -886,8 +891,7 @@ mod command_lines {
             let reason = error
                 .source()
                 .and_then(|e| e.downcast_ref::<BoardSizeError>());
-            let expected = BoardSizeError::Unknown(text.to_string());
-            assert_eq!(reason, Some(&expected), "{text}");
+            assert_eq!(reason, Some(&BoardSizeError::Unknown), "{text}");
         }
     }
 
@@ -1194,8 +1198,7 @@ mod command_lines {
             let reason = error
                 .source()
                 .and_then(|e| e.downcast_ref::<BoardSizeError>());
-            let expected = BoardSizeError::Unknown(text.to_string());
-            assert_eq!(reason, Some(&expected), "{text:?}");
+            assert_eq!(reason, Some(&BoardSizeError::Unknown), "{text:?}");
         }
     }
 

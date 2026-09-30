@@ -169,6 +169,12 @@ fn run_slot(
     log_enabled: bool,
     set_idx: usize,
 ) {
+    // Boots of its own, so ahead of the boot the rest of the suite uses.
+    report.add(
+        "metadata_board_size",
+        tests::info::test_metadata_board_size(board, log_enabled, set_idx as u8),
+    );
+
     let (mut emulator, fw_version) = setup(board, log_enabled, set_idx as u8);
 
     // Info

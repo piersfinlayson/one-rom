@@ -863,6 +863,93 @@ fn a_constant_newly_tagged_for_the_plugin_api_arrives_now() {
     );
 }
 
+/// The fixture with `onerom_alg_cs_t` in the plugin API since `release`.
+fn with_plugin_enum(toml: &str, release: &str) -> String {
+    edited_in(
+        toml,
+        "name = \"onerom_alg_cs_t\"\nsize = 1",
+        &format!(
+            "name = \"onerom_alg_cs_t\"\nsize = 1\nora_api = true\nfirst_release = \"{release}\""
+        ),
+    )
+}
+
+/// The copy declares the enum without `ora_api`, so tagging it now is the
+/// release its values arrive in.
+#[test]
+fn an_enum_newly_tagged_for_the_plugin_api_arrives_now() {
+    accepted(&with_plugin_enum(&current(), "0.8.0"));
+    refused(
+        &with_plugin_enum(&current(), "0.7.0"),
+        "enum onerom_alg_cs_t is not in the copy of the last release, so it reaches the plugin \
+         API in 0.8.0 - its first_release says 0.7.0",
+    );
+}
+
+#[test]
+fn an_enum_keeping_the_release_the_copy_names_is_accepted() {
+    let now = with_plugin_enum(&current(), "0.7.0");
+    let then = with_plugin_enum(&released(), "0.7.0");
+    if let Err(e) = pair(&now, &then) {
+        panic!("the pair should have been accepted: {e}");
+    }
+}
+
+#[test]
+fn an_enum_whose_first_release_has_moved_is_refused() {
+    pair_refused(
+        &with_plugin_enum(&current(), "0.7.1"),
+        &with_plugin_enum(&released(), "0.7.0"),
+        "enum onerom_alg_cs_t named 0.7.0 in the last release and names 0.7.1 now",
+    );
+}
+
+/// The fixture's plugin enum as the copy has it, since 0.7.0, with a new value
+/// that has `attrs`.
+fn with_new_value(attrs: &str) -> (String, String) {
+    let now = edited_in(
+        &with_plugin_enum(&current(), "0.7.0"),
+        "name = \"ALG_CS_0\"\nvalue = 0\n",
+        &format!(
+            "name = \"ALG_CS_0\"\nvalue = 0\n\n[[enums.variants]]\nname = \"ALG_CS_1\"\n\
+             value = 1\n{attrs}\n"
+        ),
+    );
+    (now, with_plugin_enum(&released(), "0.7.0"))
+}
+
+/// A value the copy doesn't have arrives now, as a constant does.
+#[test]
+fn a_new_value_with_the_current_release_is_accepted() {
+    let (now, then) = with_new_value("first_release = \"0.8.0\"");
+    if let Err(e) = pair(&now, &then) {
+        panic!("the pair should have been accepted: {e}");
+    }
+}
+
+/// Without a release of its own it would take its enum's, which is older.
+#[test]
+fn a_new_value_without_a_first_release_is_refused() {
+    let (now, then) = with_new_value("");
+    pair_refused(
+        &now,
+        &then,
+        "onerom_alg_cs_t::ALG_CS_1 is not in the copy of the last release, so it reaches the \
+         plugin API in 0.8.0 - it declares no first_release, and onerom_alg_cs_t's is 0.7.0",
+    );
+}
+
+#[test]
+fn a_new_value_naming_another_release_is_refused() {
+    let (now, then) = with_new_value("first_release = \"0.7.1\"");
+    pair_refused(
+        &now,
+        &then,
+        "onerom_alg_cs_t::ALG_CS_1 is not in the copy of the last release, so it reaches the \
+         plugin API in 0.8.0 - its first_release says 0.7.1",
+    );
+}
+
 // ===========================================================================
 // Enum values
 // ===========================================================================
