@@ -5,6 +5,9 @@ reader: HTML comments survive pandoc into the PDF unrendered.
 * Example output is a verbatim run, pasted from the command.  Hand-written
   examples drift and quietly become wrong.
 
+* Example output may also be pasted from the review harness in
+  `rust/cli/src/review/`, dropping the `~` that marks each hand-written line.
+
 * A value this manual states that something else owns sits inside a marker
   naming that source, rather than bare:
 
@@ -692,6 +695,7 @@ hardware take them; each command's own entry below states what it accepts, and
 | [`console`](#console) | Send data to and receive data from the machine One ROM is fitted in | Yes |
 | [`control`](#control) | Transient (non-persistent) device actions | Yes |
 | [`update`](#update) | Persistent device modifications | Yes |
+| [`hardware`](#hardware) | Commission and check a One ROM's hardware | Varies |
 | [`image`](#image) | ROM image file manipulation | No |
 | [`firmware`](#firmware) | Build, inspect and manage firmware binaries | Varies |
 | [`plugin`](#plugin) | List available plugins | No |
@@ -706,9 +710,19 @@ hardware take them; each command's own entry below states what it accepts, and
 
 ## scan
 
-Discover and list connected One ROMs and One ROM Labs — serial, USB location,
-name, board type, MCU and loaded firmware version. With `--verbose` (`-v`),
-each device also shows its MCU variant and chip ID.
+Discover and list connected One ROMs and One ROM Labs. Each device's line
+contains its:
+
+- board type, followed by its [size](#board-sizes) unless the size is M
+- firmware version
+- state
+- serial
+
+`--verbose` (`-v`) adds each device's:
+
+- MCU variant
+- chip ID
+- commissioning information
 
 ```
 onerom scan
@@ -728,6 +742,21 @@ Example output:
 Scanning ... 
 found 1 connected device:
   One ROM Fire 28 C - Firmware: v0.7.2 State: Running Serial: FC9D67248E8E8023
+```
+
+With `--verbose` on a `fire-40-b` commissioned by Acme Retro:
+
+```
+$ onerom scan --verbose
+Scanning ... 
+found 1 connected device:
+  One ROM Fire 40 B - Firmware: v0.8.0 State: Stopped Serial: DE3F9C232F655B6B
+    MCU: RP235xB Chip ID: DE3F9C232F655B6B
+    Commissioned: yes
+      Board type:   fire-40-b
+      Manufacturer: Acme Retro
+      Date:         2026-09-29
+      Signing key:  Acme Retro (256)
 ```
 
 One ROM Lab shows its board type, or `(board not set)`. `--slots` doesn't show
@@ -808,11 +837,14 @@ These are rejected with `--no-config`.
 | `--fast` | Skip the re-enumeration pause after the final reboot. Conflicts with `--no-reboot`. |
 | `--msd, -m` | Mount mass storage when rebooting into stopped mode. |
 | `--verify` | Verify flash by reading back after programming. |
-| `--force, -f` | Continue despite non-fatal problems: assembled firmware parse errors, a board type mismatch, and config warnings such as turbo boot with more than one non-plugin ROM slot. Each is reported as a warning instead. |
+| `--force, -f` | Continue despite non-fatal problems, reporting each as a warning. |
 | `--batch` (aliases `--multiple`, `--multi`) | Program multiple devices, pausing for confirmation between each. Every board is programmed with the same configuration as the first. |
 | `--scan-slots` | After programming, run `onerom scan --slots` to show the result. Conflicts with `--fast`. |
 | `--follow` | After programming, monitor the One ROM's log, as [`monitor log`](#monitor-log) does. Runs after `--scan-slots`, and only once the One ROM is back on the USB bus, so it shows the boot log of the firmware just flashed. Refused before anything is flashed if the image has no USB system plugin, since such a One ROM leaves the bus as soon as it serves. Conflicts with `--fast`, `--stopped`, `--no-reboot` and `--batch`. |
 | `--reset-host <PIN>` (alias `--host-reset`) | After programming, pulse this pin low to reset the host system, as [`control reset`](#control-reset) does. Named as `gpio<N>` or as a header pad (see [Pin values](#pin-values)). Runs after `--scan-slots` and before `--follow`, once the One ROM is back on the USB bus, and for each device in a `--batch`. The pulse is <!--[const:GPIO_RESET_DEFAULT_HOLD_MS:ms]-->100ms<!--[/]-->; use `control reset` for a different hold. Conflicts with `--fast`, `--stopped` and `--no-reboot`. |
+
+An image for a [commissioned](#hardware) One ROM must be built for the board
+type it is commissioned as, unless `--force` is given.
 
 Device required: yes.
 
@@ -836,12 +868,11 @@ onerom inspect <COMMAND>
 | [`gpio`](#inspect-gpio) | Show what each GPIO is and what it is doing | Yes (running) |
 | [`header`](#inspect-header) | Draw the device board's pin header | Yes |
 | [`socket`](#inspect-socket) | Draw the device board's ROM socket pinout | Yes |
+| [`otp`](#inspect-otp) | Print the contents of One ROM's OTP | Yes |
 
 ### inspect info
 
-Show the device's serial number, user-assigned name, board type, MCU, firmware
-version and hardware revision. With `--verbose` (`-v`), also shows the MCU
-variant and chip ID.
+Print the device's identity and configuration information.
 
 The command then dumps the device's parsed structures as JSON. A
 `Parser notes:` block follows it when a structure is missing, or when the
@@ -1177,6 +1208,55 @@ onerom inspect socket [--board <board>] [--chip-type <chip>] [--gpio]
 
 As with [`inspect header`](#inspect-header), `--board` overrides the connected
 One ROM's reported board type rather than standing in for the device.
+
+### inspect otp
+
+Print what One ROM's [OTP](/docs/OTP.md) contains:
+
+- the [board size](#board-sizes)
+- the commissioning information
+- the bootloader USB info
+
+It doesn't check that the commissioning information is correctly signed.
+[`hardware validate`](#hardware-validate) does.
+
+```
+onerom inspect otp
+onerom inspect otp --json
+```
+
+| Option | Description |
+|---|---|
+| `--json` | Print the whole report as JSON instead of text. |
+
+`--verbose` adds:
+
+- the external flash settings in `FLASH_DEVINFO`
+- every commissioning instance and its entries, with their rows
+- the bootloader settings rows and the page lock words
+
+On a `fire-40-b` commissioned by Acme Retro:
+
+```
+$ onerom inspect otp
+One ROM Fire 40 B - Firmware: v0.8.0 State: Stopped Serial: DE3F9C232F655B6B
+  Board size: M
+  Commissioned: yes
+    Board type:   fire-40-b
+    Manufacturer: Acme Retro
+    Date:         2026-09-29
+    Signing key:  Acme Retro (256)
+  Bootloader USB info: set
+    USB VID:               0x1209
+    USB PID:               0xF540
+    USB manufacturer:      piers.rocks
+    USB product:           One ROM Bootloader
+    Volume label:          ONEROM
+    INDEX.HTM link:        https://onerom.org
+    INDEX.HTM link name:   onerom.org
+    INFO_UF2.TXT model:    One ROM
+    INFO_UF2.TXT board ID: fire-40-b
+```
 
 ---
 
@@ -1682,7 +1762,6 @@ onerom update <COMMAND>
 |---|---|---|
 | [`slot`](#update-slot) | Write a ROM image to a flash slot **(not yet supported)** | Yes |
 | [`commit`](#update-commit) | Commit the live image to flash **(not yet supported)** | Yes |
-| [`otp`](#update-otp) | Read/write OTP memory **(not yet supported, hidden)** | Yes |
 
 ### update slot
 
@@ -1713,16 +1792,321 @@ onerom update commit --slot 2
 |---|---|
 | `--slot <INDEX>` | Slot to commit. Commits the active slot if omitted. |
 
-### update otp
+---
 
-Read or write RP2350 OTP memory, including One ROM-specific USB configuration and
-identity data. Hidden, advanced. **OTP writes are irreversible.** **(not yet
-supported)**
+## hardware
+
+Commissioning sets hardware properties in the RP2350's [OTP](/docs/OTP.md) (One
+Time Programmable) memory, which cannot be erased.
+[COMMISSIONING](/docs/COMMISSIONING.md) describes the process.
+
+```
+onerom hardware <COMMAND>
+```
+
+| Subcommand | Purpose | Device required |
+|---|---|---|
+| [`commission`](#hardware-commission) | Commission a One ROM | Yes |
+| [`request-signature`](#hardware-request-signature) | Request a signature to commission a One ROM | Yes |
+| [`sign`](#hardware-sign) | Sign a One ROM's commissioning instance | No |
+| [`set-size`](#hardware-set-size) | Set a One ROM's size | Yes |
+| [`validate`](#hardware-validate) | Check a One ROM's commissioning information | Yes |
+
+Each command other than `sign`:
+
+- stops a One ROM that is running or in limp mode first, and reboots it into
+  running mode once complete
+- requires [`--unrecognised`](#global-options) for an uncommissioned One ROM
+  without One ROM firmware
+
+`commission`, `sign` and `set-size` list what they will write or sign and ask
+for confirmation, which `--yes` answers.
+
+`commission` and `set-size`:
+
+- reboot a One ROM that was already stopped back into stopped mode after
+  writing OTP
+- complete an interrupted run when run again
+
+### Board sizes
+
+`--size` takes:
+
+- `M`, with 2MB of flash
+- `L`, with an additional 2MB flash chip on chip select 1
+
+A board that doesn't
+[support external flash](/docs/COMMISSIONING.md#cli-options) is always M.
+
+Setting a size other than M is **permanent** so it is recommended to
+[test the external flash](/docs/COMMISSIONING.md#external-flash-plugin) first.
+A One ROM's size can be changed from M with
+[`hardware set-size`](#hardware-set-size). [OTP](/docs/OTP.md#board-sizes)
+describes how each size is recorded.
+
+### hardware commission
+
+Write to the RP2350's OTP:
+
+- the signed board type, manufacturer and date
+- the USB info that white labels the RP2350's bootloader as One ROM
+- the external flash settings for a [size](#board-sizes) other than M
+
+```
+onerom hardware commission --board fire-40-b --size M --manufacturer "Acme Retro" --key acme.pem
+onerom hardware commission --board fire-24-f --manufacturer "Acme Retro" --key acme.pem --dry-run
+onerom hardware commission --board fire-40-b --size L --manufacturer "Acme Retro" \
+    --signer https://sign.internal.example.com --key-id 256
+onerom hardware commission --board fire-40-b --size M --manufacturer onerom.org \
+    --date 20260929 --key-id 2 --signature 3f0c...
+```
 
 | Option | Description |
 |---|---|
-| `--read` | Read and display OTP contents. Conflicts with `--write`. |
-| `--write <ROW=VALUE>` | Write a value to an OTP row. Conflicts with `--read`. |
+| `--board, -b <BOARD>` | Board type, for example `fire-40-b`. Must be a Fire board. Required. |
+| `--size <SIZE>` | The board's [size](#board-sizes), for example `M`. Required for a board that supports external flash. |
+| `--manufacturer <NAME>` | Manufacturer's name, for example `"Acme Retro"`. Printable ASCII without `*` or a leading or trailing space. Required. |
+| `--signer <URL>` | Signing server's address, for example `https://sign.internal.example.com`. Must use https. Requires `--key-id`. |
+| `--key-id <ID>` | Signing key's ID from 1 to 65535, for example `256`. Conflicts with `--key`. |
+| `--pin <PIN>` | PIN of the signing server's key or of an encrypted key file. Asked for in a terminal if omitted. Conflicts with `--signature`. |
+| `--key <FILE>` | Signing key file containing an Ed25519 private key in PKCS#8 PEM form, for example `acme.pem`. |
+| `--signature <SIGNATURE>` | Commissioning signature as 128 hex digits, generated by [`hardware sign`](#hardware-sign). Requires `--key-id` and `--date`. |
+| `--date <DATE>` | Commissioning date as `YYYYMMDD`, for example `20260929`. Defaults to today's UTC date. |
+| `--force, -f` | Allow the cases listed below. |
+| `--dry-run` (alias `--dryrun`) | List what would be written without writing it. |
+
+The signature comes from one of:
+
+- a key file, with `--key` — see
+  [Using a Signing Key](/docs/COMMISSIONING.md#using-a-signing-key)
+- a signing server, with `--signer` and `--key-id` — see
+  [Signing Server](/docs/COMMISSIONING.md#signing-server)
+- a [signing request](/docs/COMMISSIONING.md#submitting-a-signing-request) or
+  [`hardware sign`](#hardware-sign), with `--signature`, `--key-id` and `--date`
+
+The signing key must be
+[authorised](/docs/COMMISSIONING.md#requesting-an-authorised-signing-key) for
+the manufacturer being signed.
+
+`--force` is required to:
+
+- re-commission a One ROM with a different board type, manufacturer, date or
+  signing key — see
+  [Correcting Commissioning Errors](/docs/COMMISSIONING.md#correcting-commissioning-errors)
+- commission a One ROM whose firmware is for another board type
+- commission a One ROM as M when another size is partly programmed
+- use a `--date` in the future
+
+`--verbose` adds the bootloader USB info and each row with its value.
+
+Check the result with [`hardware validate`](#hardware-validate).
+
+Commissioning a `fire-40-b` as M with an encrypted key file:
+
+```
+$ onerom hardware commission --board fire-40-b --size M --manufacturer "Acme Retro" --key acme.pem
+PIN for acme.pem: 
+One ROM Fire 40 B - Firmware: v0.8.0 State: Stopped Serial: DE3F9C232F655B6B
+Commissioning:
+  Board type:   fire-40-b
+  Board size:   M
+  Manufacturer: Acme Retro
+  Date:         2026-09-29
+  Signing key:  Acme Retro (256)
+To write:
+  Commissioning instance at row 0x0c0   59 rows
+  Lock for page 3                        1 row
+  Bootloader USB strings                41 rows
+  White label table                      9 rows
+  USB_WHITE_LABEL_ADDR                   1 row
+  USB_BOOT_FLAGS and its copies          3 rows
+  Total                                114 rows
+WARNING: OTP writes cannot be undone.
+Write 114 rows? (y/N): y
+Writing OTP - DO NOT DISCONNECT
+Commissioning instance: written
+Lock for page 3: written
+Bootloader USB strings: written
+White label table: written
+USB_WHITE_LABEL_ADDR: written
+USB_BOOT_FLAGS and its copies: written
+Commissioning complete
+```
+
+### hardware request-signature
+
+Generate a signing request for the One ROM. The maintainers answer it with the
+[`hardware commission`](#hardware-commission) command to run. See
+[Submitting a Signing Request](/docs/COMMISSIONING.md#submitting-a-signing-request).
+
+A One ROM commissioned this way is signed with the piers.rocks Community
+signing key and its manufacturer is always `onerom.org`.
+
+```
+onerom hardware request-signature --board fire-40-b --size M
+onerom hardware request-signature --board fire-24-f
+```
+
+| Option | Description |
+|---|---|
+| `--board, -b <BOARD>` | Board type, for example `fire-40-b`. Must be a Fire board. Required. |
+| `--size <SIZE>` | The board's [size](#board-sizes), for example `M`. Required for a board that supports external flash. |
+
+Requesting a signature for a `fire-40-b` as M:
+
+```
+$ onerom hardware request-signature --board fire-40-b --size M
+One ROM Fire 40 B - Firmware: v0.8.0 State: Stopped Serial: DE3F9C232F655B6B
+Signing request:
+  Chip ID:      DE3F9C232F655B6B
+  Board type:   fire-40-b
+  Board size:   M
+  Manufacturer: onerom.org
+Open this link to raise a signing request for this One ROM on GitHub:
+  https://github.com/piersfinlayson/one-rom/issues/new?template=signing-request.yml&title=%5Bsigning%20request%5D%20DE3F9C232F655B6B&chip_id=DE3F9C232F655B6B&board=fire-40-b&size=M&manufacturer=onerom.org
+```
+
+### hardware sign
+
+Sign a One ROM's commissioning information by its Chip ID. It prints the
+[`hardware commission`](#hardware-commission) command to run on that One ROM.
+
+A signing server publicly records the signature once confirmed.
+
+```
+onerom hardware sign --chip-id DE3F9C232F655B6B --board fire-40-b --size M \
+    --manufacturer "Acme Retro" --key acme.pem
+onerom hardware sign --chip-id DE3F9C232F655B6B --board fire-24-f \
+    --manufacturer "Acme Retro" --key acme.pem --json
+onerom hardware sign --chip-id DE3F9C232F655B6B --board fire-40-b --size L \
+    --manufacturer "Acme Retro" --signer https://sign.internal.example.com --key-id 256 --dry-run
+```
+
+| Option | Description |
+|---|---|
+| `--chip-id <CHIPID>` | One ROM's Chip ID as 16 hex digits, for example `DE3F9C232F655B6B`. [`scan --verbose`](#scan) prints it. Required. |
+| `--board, -b <BOARD>` | Board type, for example `fire-40-b`. Must be a Fire board. Required. |
+| `--size <SIZE>` | The board's [size](#board-sizes), for example `M`. Required for a board that supports external flash. |
+| `--manufacturer <NAME>` | Manufacturer's name, for example `"Acme Retro"`. Printable ASCII without `*` or a leading or trailing space. Required. |
+| `--date <DATE>` | Commissioning date as `YYYYMMDD`, for example `20260929`. Defaults to today's UTC date. Cannot be in the future. |
+| `--signer <URL>` | Signing server's address, for example `https://sign.internal.example.com`. Must use https. Requires `--key-id`. |
+| `--key-id <ID>` | Signing key's ID from 1 to 65535, for example `256`. Conflicts with `--key`. |
+| `--pin <PIN>` | PIN of the signing server's key or of an encrypted key file. Asked for in a terminal if omitted. |
+| `--key <FILE>` | Signing key file containing an Ed25519 private key in PKCS#8 PEM form, for example `acme.pem`. |
+| `--dry-run` (alias `--dryrun`) | Sign without asking for confirmation and without the signing server publicly recording the signature. Doesn't print the `hardware commission` command. Conflicts with `--key`. |
+| `--json` | Print the result as JSON instead of text. |
+
+The signature comes from one of:
+
+- a key file, with `--key` — see
+  [Using a Signing Key](/docs/COMMISSIONING.md#using-a-signing-key)
+- a signing server, with `--signer` and `--key-id` — see
+  [Signing Server](/docs/COMMISSIONING.md#signing-server)
+
+The signing key must be
+[authorised](/docs/COMMISSIONING.md#requesting-an-authorised-signing-key) for
+the manufacturer being signed.
+
+Signing for a `fire-40-b` as M with an encrypted key file:
+
+```
+$ onerom hardware sign --chip-id DE3F9C232F655B6B --board fire-40-b --size M --manufacturer "Acme Retro" --key acme.pem
+PIN for acme.pem: 
+Signing:
+  Chip ID:      DE3F9C232F655B6B
+  Board type:   fire-40-b
+  Board size:   M
+  Manufacturer: Acme Retro
+  Date:         2026-09-29
+  Signing key:  Acme Retro (256)
+Sign? (y/N): y
+Signature: 069aa818bc4a1baa7d23ae160117d17b03e2f3e672fdf1bc8e7bd93d6a6d4456b5d960aa2f249f6065d973eb5f6ae51fa025a931ff32bf26ab514a2d3d0d3803
+Command to commission the One ROM:
+  onerom hardware commission --board fire-40-b --size M --manufacturer 'Acme Retro' --date 20260929 --key-id 256 --signature 069aa818bc4a1baa7d23ae160117d17b03e2f3e672fdf1bc8e7bd93d6a6d4456b5d960aa2f249f6065d973eb5f6ae51fa025a931ff32bf26ab514a2d3d0d3803
+```
+
+### hardware set-size
+
+Write a One ROM's [size](#board-sizes) settings to OTP without commissioning
+it. [`hardware commission`](#hardware-commission) writes the same settings, so
+this is only required when changing a One ROM's size after or without
+commissioning. Size M writes nothing.
+
+```
+onerom hardware set-size --board fire-40-b --size L
+onerom hardware set-size --board fire-40-b --size L --dry-run
+```
+
+| Option | Description |
+|---|---|
+| `--board, -b <BOARD>` | Board type, for example `fire-40-b`. Must be a Fire board. Required. |
+| `--size <SIZE>` | The board's [size](#board-sizes), for example `L`. Required. |
+| `--force, -f` | Set the size of a One ROM whose firmware is for another board type. |
+| `--dry-run` (alias `--dryrun`) | List what would be written without writing it. |
+
+On a commissioned One ROM `--board` must be the board type it is
+commissioned as.
+
+`--verbose` adds each row with its value.
+
+Changing a `fire-40-b` commissioned as M to L:
+
+```
+$ onerom hardware set-size --board fire-40-b --size L
+One ROM Fire 40 B - Firmware: v0.8.0 State: Stopped Serial: DE3F9C232F655B6B
+Setting board size:
+  Board type: fire-40-b
+  Board size: L
+To write:
+  FLASH_DEVINFO                                       1 row
+  FLASH_DEVINFO_ENABLE in BOOT_FLAGS0 and its copies  3 rows
+  Total                                               4 rows
+WARNING: OTP writes cannot be undone.
+Write 4 rows? (y/N): y
+Writing OTP - DO NOT DISCONNECT
+FLASH_DEVINFO: written
+FLASH_DEVINFO_ENABLE in BOOT_FLAGS0 and its copies: written
+Board size set
+```
+
+### hardware validate
+
+Check the signature of each commissioning instance on the One ROM against the
+authorised signing keys. The command fails unless the One ROM's latest
+commissioning instance is valid.
+
+```
+onerom hardware validate
+onerom hardware validate --json
+```
+
+| Option | Description |
+|---|---|
+| `--json` | Print the result as JSON instead of text. |
+
+The command downloads the most recent signing key table. Where it cannot, it
+uses the table built into the CLI and prints a warning.
+
+`--verbose` adds:
+
+- the signing key table's source
+- the row of the commissioning instance in use
+- every other commissioning instance
+
+Validating a `fire-40-b` commissioned by Acme Retro:
+
+```
+$ onerom hardware validate
+One ROM Fire 40 B - Firmware: v0.8.0 State: Stopped Serial: DE3F9C232F655B6B
+Board size: M
+Commissioned: yes
+  Board type:   fire-40-b
+  Manufacturer: Acme Retro
+  Date:         2026-09-29
+  Signing key:  Acme Retro (256)
+  Signature:    verified
+Commissioning information valid
+```
 
 ---
 
@@ -1880,7 +2264,7 @@ with `--no-config`). Build-specific options:
 | `--base-firmware <FILE>` | Use a local minimal firmware instead of downloading. Must be built with `EXCLUDE_METADATA=1` and `ROM_CONFIGS=`. Conflicts with `--version`. |
 | `--output, -o <FILE>` (alias `--out`) | Output file path. Defaults to `onerom-<board>-<version>.bin`. Conflicts with `--path`. |
 | `--path <DIR>` | Output directory, using the default filename. Conflicts with `--output`. |
-| `--force, -f` | Continue despite non-fatal problems: assembled firmware parse errors, a board type mismatch, and config warnings such as turbo boot with more than one non-plugin ROM slot. Each is reported as a warning instead. |
+| `--force, -f` | Continue despite non-fatal problems, reporting each as a warning. |
 
 Device required: no.
 

@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.3.2] - unreleased
+
+Cosmetic change only: Uses One ROM's USB VID and PID from the plugin API.
+- Requires firmware 0.8.0.
+
 ## [0.3.1] - 2026-09-17
 
 Data received on the CDC OUT endpoint is placed in log channel 1 (if available) for a plugin to read.  If the channel is full, back pressure reaches the host which cannot send more data until space is available.

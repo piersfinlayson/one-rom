@@ -340,55 +340,39 @@ fn a_help_quoting_the_firmware_quotes_the_number() {
 
 #[test]
 fn a_verbatim_doc_comment_keeps_its_lines() {
-    // clap keeps every line of a `verbatim_doc_comment` as written.  That
-    // includes the summary.
-    let commission = command(&["hardware", "commission"]);
-    assert_eq!(commission.about, "Commission a One ROM");
-
-    let long_about = commission
+    // An ordinary doc comment joins each wrapped line onto the one before
+    // unless it is indented.  Under `verbatim_doc_comment` an unindented line
+    // keeps its break too.
+    let long_about = command(&["hardware", "commission"])
         .long_about
         .expect("hardware commission has a long_about");
-    assert_eq!(
-        long_about.lines().take(5).collect::<Vec<_>>(),
-        [
-            "Writes to the RP2350's OTP (One Time Programmable memory):",
-            "- a signed and dated commissioning instance containing the board's type",
-            "  and its manufacturer",
-            "- the bootloader's USB info",
-            "- the settings for a second flash chip if present",
-        ]
-    );
-
-    assert_eq!(
-        opt(commission, "force").help.lines().collect::<Vec<_>>(),
-        [
-            "Proceed with commissioning despite:",
-            "- the board already being commissioned with different values. The new",
-            "  commissioning instance supersedes the old one.",
-            "- firmware being installed on One ROM for another board type",
-            "- size L partly programmed, when commissioning as M",
-            "- a date in the future",
-        ]
-    );
-
-    // The attribute is on one option so the next one's wrapped lines are
-    // still joined.
-    assert_eq!(
-        opt(commission, "dry-run").help,
-        "Show what commissioning data would be written without writing it"
+    let lines: Vec<&str> = long_about.lines().collect();
+    assert!(
+        lines.windows(2).any(|pair| {
+            !pair[0].is_empty() && !pair[1].is_empty() && !pair[1].starts_with(' ')
+        }),
+        "hardware commission's long_about has had its lines joined"
     );
 }
 
 #[test]
 fn a_summary_drops_its_full_stop_as_clap_does() {
     // Unless the doc comment is verbatim.  clap then keeps the summary as
-    // written.
-    let reboot = command(&["control", "reboot"]);
-    assert_eq!(reboot.about, "Reboot the One ROM");
-    let validate = command(&["hardware", "validate"]);
-    assert_eq!(
-        opt(validate, "json").help,
-        "Show the result as JSON instead of text"
+    // written, and the CLI writes those without one.
+    for command in COMMANDS {
+        assert!(
+            !command.about.ends_with('.'),
+            "onerom {} ends its summary in a full stop",
+            command.path.join(" ")
+        );
+    }
+
+    // A `help = ...` string keeps its full stop, so options can't be swept
+    // the same way.
+    let json = opt(command(&["hardware", "validate"]), "json");
+    assert!(
+        !json.help.ends_with('.'),
+        "--json ends its help in a full stop"
     );
 }
 

@@ -21,7 +21,7 @@ jobs:
   build-windows:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       
       - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
@@ -33,7 +33,7 @@ jobs:
         run: .\scripts\build-win.ps1 nosign
       
       - name: Upload Windows artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: windows-x64-installer
           path: rust/studio/dist/*.exe
@@ -44,7 +44,7 @@ jobs:
   build-linux:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       
       - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
@@ -56,7 +56,7 @@ jobs:
         run: scripts/build-linux.sh
 
       - name: Upload Linux artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: linux-debs
           path: rust/studio/dist/*.deb
@@ -68,7 +68,7 @@ jobs:
   build-mac:
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       
       - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
@@ -80,7 +80,7 @@ jobs:
         run: scripts/build-mac.sh nosign
 
       - name: Upload Mac Apple Silicon artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: mac-dmgs
           path: rust/studio/dist/*.dmg

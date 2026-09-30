@@ -141,8 +141,7 @@ pub enum HardwareCommands {
     /// Checks the signature of each commissioning instance present on the One
     /// ROM against valid signing keys.
     ///
-    /// It fails if the signature on the board's latest commissioning instance is
-    /// invalid.
+    /// It fails unless the board's latest commissioning instance is valid.
     ///
     /// A One ROM that is running or in limp mode is stopped first and rebooted
     /// into running mode once complete.
@@ -213,13 +212,8 @@ pub struct HardwareCommissionArgs {
     #[arg(long, value_name = "DATE", value_parser = parse_date)]
     pub date: Option<String>,
 
-    /// Proceed with commissioning despite:
-    /// - the board already being commissioned with different values. The new
-    ///   commissioning instance supersedes the old one.
-    /// - firmware being installed on One ROM for another board type
-    /// - size L partly programmed, when commissioning as M
-    /// - a date in the future
-    #[arg(long, short, verbatim_doc_comment)]
+    /// Continue despite non-fatal problems.
+    #[arg(long, short)]
     pub force: bool,
 
     /// Show what commissioning data would be written without writing
@@ -231,9 +225,9 @@ pub struct HardwareCommissionArgs {
 impl HardwareCommissionArgs {
     /// The board's size. It's `--size` where given and M otherwise.
     ///
-    /// A board that supports external flash being populated needs `--size` so
-    /// an L board isn't commissioned as M by leaving it out. Any other board
-    /// is M.
+    /// A board that supports external flash being populated requires `--size`
+    /// so a board with external flash fitted isn't commissioned as M by
+    /// leaving it out. Any other board is M.
     pub fn board_size(&self) -> Result<BoardSize, SizeError> {
         board_size(self.board, self.size)
     }
@@ -258,8 +252,9 @@ impl CommandTrait for HardwareCommissionArgs {
 /// `size` for `board`, or M where `size` is `None` and `board` doesn't
 /// support external flash being populated.
 ///
-/// A board that supports external flash being populated needs `--size` so
-/// an L board isn't commissioned as M by leaving it out.
+/// A board that supports external flash being populated requires `--size`
+/// so a board with external flash fitted isn't commissioned as M by leaving
+/// it out.
 fn board_size(board: Board, size: Option<BoardSize>) -> Result<BoardSize, SizeError> {
     match size {
         Some(size) => supported_size(board, size),
@@ -353,8 +348,7 @@ pub struct HardwareSetSizeArgs {
     #[arg(long, value_name = "SIZE", value_parser = BoardSize::from_str)]
     pub size: BoardSize,
 
-    /// Proceed despite firmware for another board type being installed on the
-    /// One ROM.
+    /// Continue despite non-fatal problems.
     #[arg(long, short)]
     pub force: bool,
 

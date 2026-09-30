@@ -8,7 +8,7 @@ use onerom_app::{BoardSize, LocalFetch, MemoryOtp, SignerTable, read_commissioni
 
 use super::{device, failed, json_boards, newer_boards, size_of};
 use crate::hardware::{SigningKeys, built_in_warning, validate_otp};
-use crate::test_board::{Files, commissioned_board, table, table_allowing};
+use crate::test_board::{Files, acme_board, commissioned_board, table, table_allowing};
 
 /// The lines `hardware validate` prints for `otp`, with the downloaded
 /// signer table.
@@ -89,6 +89,12 @@ async fn a_commissioned_m_board() {
 async fn a_commissioned_l_board() {
     let mut otp = commissioned_board("fire-40-a", BoardSize::L).await;
     both(&mut otp, "fire-40-a").await;
+}
+
+/// An M fire-40-b commissioned by Acme Retro with its key.
+#[tokio::test]
+async fn a_manufacturers_board() {
+    validate(&mut acme_board().await, "fire-40-b", false).await;
 }
 
 /// Each state `--verbose` shows an instance in.

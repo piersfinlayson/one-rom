@@ -11,8 +11,8 @@ use onerom_cli::Options;
 use onerom_cli::signing::KeyFile;
 
 use super::{
-    Keyboard, SIGNER, Screen, Server, failed, hardware_of, refused_lines, signature_hex,
-    written_failure,
+    Keyboard, SIGNER, Screen, Server, acme_signing, failed, hardware_of, pin_prompt, refused_lines,
+    shell_line, signature_hex, written_failure,
 };
 use crate::args::hardware::{HardwareCommands, HardwareSignArgs};
 use crate::hardware::{
@@ -29,7 +29,13 @@ fn sign_args_of(line: &str, key: &Path) -> (HardwareSignArgs, Options) {
         .split_whitespace()
         .map(|word| if word == "key.pem" { key } else { word })
         .collect();
-    let (command, options) = hardware_of(&words);
+    args_of(&words)
+}
+
+/// `words`, which start `onerom hardware sign`, parsed and checked as the CLI
+/// does. Returns the arguments and the options.
+fn args_of(words: &[&str]) -> (HardwareSignArgs, Options) {
+    let (command, options) = hardware_of(words);
     let HardwareCommands::Sign(args) = command else {
         panic!("not hardware sign");
     };
@@ -184,6 +190,51 @@ async fn with_a_key_file() {
     sign_run(&line, "y\n", &table, None).await;
 }
 
+/// Acme Retro's key file, which is encrypted with a PIN, signing an M
+/// fire-40-b by Acme Retro. Answered y.
+#[tokio::test]
+async fn with_a_manufacturers_encrypted_key_file() {
+    let words = [
+        "onerom",
+        "hardware",
+        "sign",
+        "--chip-id",
+        "DE3F9C232F655B6B",
+        "--board",
+        "fire-40-b",
+        "--size",
+        "M",
+        "--manufacturer",
+        "Acme Retro",
+        "--key",
+        "acme.pem",
+    ];
+    println!("$ {}", shell_line(&words));
+    let signing = acme_signing();
+    let (args, options) = args_of(&words);
+    let table = table(None);
+    let signer = signer_for(&table, &signing, &args.manufacturer)
+        .await
+        .unwrap();
+    let mut screen = Screen::default();
+    let mut keyboard = Keyboard::new("y\n", &screen);
+    let mut out = screen.clone();
+    let result = sign_values(
+        &args,
+        &signing,
+        (signer, &table),
+        &options,
+        &mut screen,
+        &mut keyboard,
+        &mut out,
+    )
+    .await;
+    print!("{}", screen.take());
+    if let Err(e) = result {
+        failed(e);
+    }
+}
+
 /// A signing server holding the test key. The PIN asked for at the terminal,
 /// then with `--pin` answered y and n. Then with `--dry-run`, without and with
 /// `--json`, with `-b` and `--yes`, and with `--json`.
@@ -195,7 +246,7 @@ async fn with_a_signing_server() {
 
     println!("### the PIN asked for at the terminal");
     println!("$ {}", line.replace(" --pin 1234", ""));
-    println!("~ PIN for signing key #1: ");
+    pin_prompt("signing key #1");
     println!("~ (continues as below)");
     println!();
     println!("### with --pin, answered y");

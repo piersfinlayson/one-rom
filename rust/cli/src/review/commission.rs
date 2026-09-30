@@ -17,9 +17,9 @@ use onerom_metadata::otp::pico_otp::ecc_encode;
 use serde::Serialize;
 
 use super::{
-    Keyboard, SIGNER, Screen, Server, commission_quietly, device, failed, hardware_of, key_1,
-    newer_boards, refused_line, refused_lines, signature_hex, signature_with, size_of,
-    written_failure,
+    Keyboard, SIGNER, Screen, Server, acme_signing, commission_quietly, device, failed,
+    hardware_of, key_1, newer_boards, pin_prompt, refused_line, refused_lines, shell_line,
+    signature_hex, signature_with, size_of, written_failure,
 };
 use crate::args::hardware::{HardwareCommands, HardwareCommissionArgs};
 use crate::hardware::{
@@ -278,6 +278,51 @@ async fn after_one_that_stopped() {
     commission(&mut otp, line, "y\n").await;
     println!();
     commission(&mut otp, line, "y\n").await;
+}
+
+/// An M fire-40-b commissioned by Acme Retro with its key file, which is
+/// encrypted with a PIN. A real run answered yes.
+#[tokio::test]
+async fn a_manufacturers_encrypted_key_file() {
+    let words = [
+        "onerom",
+        "hardware",
+        "commission",
+        "--board",
+        "fire-40-b",
+        "--size",
+        "M",
+        "--manufacturer",
+        "Acme Retro",
+        "--key",
+        "acme.pem",
+    ];
+    println!("$ {}", shell_line(&words));
+    let signing = acme_signing();
+    let (args, options) = args_of(&words);
+    let table = table(None);
+    let signer = signer_for(&table, &signing, &args.manufacturer)
+        .await
+        .unwrap();
+
+    let mut otp = blank_board();
+    println!("~ {}", device(args.board.name(), size_of(&mut otp).await));
+    let mut screen = Screen::default();
+    let mut keyboard = Keyboard::new("y\n", &screen);
+    let result = commission_otp(
+        &mut otp,
+        &args,
+        &signing,
+        (signer, &table),
+        &options,
+        &mut screen,
+        &mut keyboard,
+    )
+    .await;
+    print!("{}", screen.take());
+    if let Err(e) = result {
+        failed(e);
+    }
 }
 
 /// Command lines refused before the CLI looks for a device.
@@ -744,12 +789,6 @@ fn too_old(to_sign: &ToSign<'_>) -> Error {
     replied(400, &format!("the request isn't valid: {error}"))
 }
 
-/// The PIN prompt as a terminal shows it once the user has pressed Enter,
-/// Escape or Ctrl-C. The PIN isn't echoed.
-fn pin_prompt() {
-    println!("~ PIN for signing key #1: ");
-}
-
 /// Prints the transcript of a run with `--pin` that fails with `error`
 /// fetching the public key. The CLI fetches it before it stops the One ROM and
 /// shows the device line. It's written from the code.
@@ -775,20 +814,20 @@ async fn signing_server() {
 
     println!("### the PIN asked for at the terminal");
     println!("$ {without_pin}");
-    pin_prompt();
+    pin_prompt("signing key #1");
     run_signed(&mut blank_board(), &without_pin, "", &server, Some(6)).await;
     println!("~ (continues as in the full run)");
     println!();
 
     println!("### Escape or Ctrl-C at the PIN prompt");
     println!("$ {without_pin}");
-    pin_prompt();
+    pin_prompt("signing key #1");
     written_failure(&Error::Aborted("The PIN wasn't entered".to_string()));
     println!();
 
     println!("### an empty PIN entered at the prompt");
     println!("$ {without_pin}");
-    pin_prompt();
+    pin_prompt("signing key #1");
     written_failure(&Error::Aborted("The PIN wasn't entered".to_string()));
     println!();
 
@@ -872,7 +911,7 @@ async fn signing_server_key_ids() {
 
     println!("### the PIN asked for at the terminal");
     println!("$ {}", line(1).replace(" --pin 1234", ""));
-    pin_prompt();
+    pin_prompt("signing key #1");
     println!("~ (continues as below)");
     println!();
 

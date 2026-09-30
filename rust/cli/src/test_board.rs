@@ -4,7 +4,7 @@
 
 //! Fixtures for tests:
 //! - a board
-//! - a signing key
+//! - two signing keys
 //! - a signer table
 //! - a commissioning plan
 //! - firmware images
@@ -28,7 +28,7 @@ use onerom_metadata::METADATA_BASE;
 use onerom_metadata::otp::pico_otp::ecc_encode;
 use serde_json::json;
 
-use crate::args::hardware::HardwareCommissionArgs;
+use crate::args::hardware::{HardwareCommissionArgs, today};
 
 /// CHIPID from rows 0x000–0x003 of an RP2350 A4.
 pub const CHIP_ID: [u16; 4] = [0x5b6b, 0x2f65, 0x9c23, 0xde3f];
@@ -51,6 +51,40 @@ pub fn blank_board() -> MemoryOtp {
 /// The key the tests sign with.
 pub fn key() -> SigningKey {
     SigningKey::from_bytes(&[1; 32])
+}
+
+/// A manufacturer. It's also the name of its key, [`acme_key`], and the one
+/// manufacturer that key may sign.
+const ACME: &str = "Acme Retro";
+
+/// [`ACME`]'s signing key.
+fn acme_key() -> SigningKey {
+    SigningKey::from_bytes(&[4; 32])
+}
+
+/// [`acme_key`]'s ID in a signer table.
+const ACME_ID: u16 = 256;
+
+/// The PIN [`acme_key_file`] is encrypted with.
+pub const ACME_PIN: &str = "1234";
+
+/// [`acme_key`] in a PKCS#8 PEM file encrypted as docs/COMMISSIONING.md makes
+/// one. From `openssl pkcs8 -topk8 -scrypt -passout pass:1234` given the key
+/// unencrypted.
+const ACME_PEM: &str = "-----BEGIN ENCRYPTED PRIVATE KEY-----
+MIGbMFcGCSqGSIb3DQEFDTBKMCkGCSsGAQQB2kcECzAcBBBe88c+n4GnMVi0qGYs
+l3MbAgJAAAIBCAIBATAdBglghkgBZQMEASoEEHU9MAx6R73um/Jzd18ugsAEQJ1L
+Nt5hgzjFa46Bpq4GGvBCWEmg10zfTCHoVRuwMQRMtC28Qiu8lKNVX6mOlppKAY5W
+qx9HGrusGew4/buAwfA=
+-----END ENCRYPTED PRIVATE KEY-----
+";
+
+/// [`acme_key`] in the file `acme.pem`, encrypted with [`ACME_PIN`].
+pub fn acme_key_file() -> (tempfile::TempDir, PathBuf) {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("acme.pem");
+    std::fs::write(&path, ACME_PEM).unwrap();
+    (dir, path)
 }
 
 /// The plan to commission `otp` as `board` and `size` by piers.rocks on
@@ -185,6 +219,26 @@ pub async fn move_slot(mut image: Vec<u8>, slot: usize, addr: u32) -> Vec<u8> {
     image
 }
 
+/// A fire-40-b commissioned as M by [`ACME`] on today's date, the date
+/// `hardware commission` takes without `--date`. [`acme_key`] signs it as
+/// signer 256.
+pub async fn acme_board() -> MemoryOtp {
+    let mut otp = blank_board();
+    let request = Request {
+        board: Board::try_from_str("fire-40-b").unwrap(),
+        size: BoardSize::M,
+        manufacturer: ACME.to_string(),
+        date: RequestDate::Today(today()),
+        signer: ACME_ID,
+        force: false,
+    };
+    let prepared = prepare(&mut otp, &request).await.unwrap();
+    let signature = acme_key().sign(prepared.message()).to_bytes();
+    let plan = prepared.plan(&signature).unwrap();
+    plan.execute(&mut otp, |_| {}).await.unwrap();
+    otp
+}
+
 /// [`key`] in a PKCS#8 PEM file.
 pub fn key_file() -> (tempfile::TempDir, PathBuf) {
     let dir = tempfile::tempdir().unwrap();
@@ -194,34 +248,47 @@ pub fn key_file() -> (tempfile::TempDir, PathBuf) {
 }
 
 /// A signer table holding [`key`] as signer 1, which may sign any
-/// manufacturer. `retired` is its `retired` field.
+/// manufacturer, and [`acme_key`] as signer 256. `retired` is key 1's
+/// `retired` field.
 pub fn table(retired: Option<serde_json::Value>) -> SignerTable {
     signer_table(retired, &["*"])
 }
 
 /// A signer table holding [`key`] as current signer 1, which may sign only
-/// `manufacturers`.
+/// `manufacturers`, and [`acme_key`] as signer 256.
 pub fn table_allowing(manufacturers: &[&str]) -> SignerTable {
     signer_table(None, manufacturers)
 }
 
-/// A signer table holding [`key`] as signer 1. `retired` is its `retired`
-/// field and `manufacturers` its `manufacturers` field.
+/// A signer table holding [`key`] as signer 1 and [`acme_key`] as signer 256.
+/// `retired` is key 1's `retired` field and `manufacturers` its
+/// `manufacturers` field.
 fn signer_table(retired: Option<serde_json::Value>, manufacturers: &[&str]) -> SignerTable {
-    let key = key();
-    let proof = key.sign(&[b"onerom-signer-v1".as_slice(), SIGNER_NAME.as_bytes()].concat());
-    let mut signer = json!({
-        "id": 1,
-        "name": SIGNER_NAME,
-        "public_key": hex::encode(key.verifying_key().to_bytes()),
-        "proof": hex::encode(proof.to_bytes()),
-        "manufacturers": manufacturers,
-    });
+    let mut signer = signer_entry(&key(), 1, SIGNER_NAME, manufacturers);
     if let Some(retired) = retired {
         signer["retired"] = retired;
     }
-    let table = json!({ "version": 1, "signers": [signer] });
+    let acme = signer_entry(&acme_key(), ACME_ID, ACME, &[ACME]);
+    let table = json!({ "version": 1, "signers": [signer, acme] });
     SignerTable::parse(table.to_string().as_bytes()).unwrap()
+}
+
+/// A signer table's entry for `key` as signer `id` named `name`.
+/// `manufacturers` is its `manufacturers` field.
+fn signer_entry(
+    key: &SigningKey,
+    id: u16,
+    name: &str,
+    manufacturers: &[&str],
+) -> serde_json::Value {
+    let proof = key.sign(&[b"onerom-signer-v1".as_slice(), name.as_bytes()].concat());
+    json!({
+        "id": id,
+        "name": name,
+        "public_key": hex::encode(key.verifying_key().to_bytes()),
+        "proof": hex::encode(proof.to_bytes()),
+        "manufacturers": manufacturers,
+    })
 }
 
 /// A request to commission `board` as `size` by piers.rocks on [`DATE`]. It

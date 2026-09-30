@@ -202,7 +202,7 @@ pub enum CommissionError {
     /// OTP configures a second flash chip for an M board. FLASH_DEVINFO is
     /// written or a BOOT_FLAGS0 copy enables it. Carries the board. Only
     /// [`prepare`] returns it.
-    #[error("FLASH_DEVINFO is already programmed for size L")]
+    #[error("this board is partly programmed as size L")]
     SecondChipConfigured(Board),
 
     /// FLASH_PARTITION_SLOT_SIZE isn't an exact codeword. The chip wouldn't

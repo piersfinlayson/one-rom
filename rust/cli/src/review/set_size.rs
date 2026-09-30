@@ -12,7 +12,7 @@ use onerom_metadata::otp::pico_otp::ecc_encode;
 use super::{Keyboard, Screen, device, failed, hardware_of, put, refused_lines, size_of};
 use crate::args::hardware::{HardwareCommands, HardwareSetSizeArgs};
 use crate::hardware::{OtpCommand, check_firmware, firmware_warning, set_size_otp};
-use crate::test_board::{blank_board, commissioned_board};
+use crate::test_board::{acme_board, blank_board, commissioned_board};
 
 /// Prints the transcript of `line`, which starts `onerom hardware set-size`,
 /// on `otp`. `typed` is what the user types. The device line is for firmware
@@ -101,6 +101,13 @@ async fn l_on_an_l_board() {
     set_size(&mut otp, l, "").await;
     println!();
     set_size(&mut otp, &format!("{l} --verbose"), "").await;
+}
+
+/// L on an M fire-40-b commissioned by Acme Retro with its key, answered y.
+#[tokio::test]
+async fn l_on_a_manufacturers_m_board() {
+    let line = "onerom hardware set-size --board fire-40-b --size L";
+    set_size(&mut acme_board().await, line, "y\n").await;
 }
 
 /// L with `--yes` on a blank board.

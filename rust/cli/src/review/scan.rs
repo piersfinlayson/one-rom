@@ -8,6 +8,7 @@
 use onerom_app::{BoardSize, MemoryOtp};
 use onerom_cli::otp::Commissioning;
 use onerom_config::hw::Board;
+use onerom_config::mcu::RpVariant;
 
 use super::{
     RUNNING_LAB, UNRECOGNISED, damaged_header_flash, device, flash_without_firmware, newer_boards,
@@ -15,7 +16,7 @@ use super::{
 };
 use crate::commissioning::device_lines;
 use crate::inspect::unrecognised_firmware_lines;
-use crate::test_board::{blank_board, commissioned_board, table};
+use crate::test_board::{acme_board, blank_board, commissioned_board, table};
 
 /// Prints the lines `scan` prints for a stopped One ROM whose firmware is for
 /// `board` and whose OTP is `otp`. Only its commissioning lines come from
@@ -30,17 +31,34 @@ async fn scan(otp: &mut MemoryOtp, board: &str, verbose: bool) {
 /// firmware is for `board`, `None` where this build doesn't recognise it. Only
 /// the lines for `commissioning` come from running the code.
 fn print_scan(line: &str, board: Option<&str>, commissioning: &Commissioning, verbose: bool) {
+    let board = board.and_then(Board::try_from_str);
     println!("$ onerom scan{}", if verbose { " --verbose" } else { "" });
     println!("~ Scanning ... ");
     println!("~ found 1 connected device:");
     println!("~   {line}");
     if verbose {
-        println!("~     MCU: RP235xA Chip ID: DE3F9C232F655B6B");
+        let variant = rp_variant(board, commissioning);
+        println!("~     MCU: {variant} Chip ID: DE3F9C232F655B6B");
     }
-    let board = board.and_then(Board::try_from_str);
     for line in device_lines(board, commissioning, (verbose, verbose), &table(None)) {
         println!("    {line}");
     }
+}
+
+/// The RP2350 variant of `board`, or else of the board `commissioning`
+/// identifies. RP235xA where there isn't either.
+fn rp_variant(board: Option<Board>, commissioning: &Commissioning) -> RpVariant {
+    let commissioned = if let Commissioning::Read(area) = commissioning {
+        area.current()
+            .and_then(|instance| instance.board())
+            .and_then(Board::try_from_str)
+    } else {
+        None
+    };
+    board
+        .or(commissioned)
+        .and_then(|board| board.rp_variant())
+        .unwrap_or(RpVariant::Rp235xA)
 }
 
 /// `scan` without and with `--verbose` on `otp`, whose firmware is for
@@ -66,6 +84,12 @@ async fn a_commissioned_m_board() {
 async fn a_commissioned_l_board() {
     let mut otp = commissioned_board("fire-40-a", BoardSize::L).await;
     both(&mut otp, "fire-40-a").await;
+}
+
+/// An M fire-40-b commissioned by Acme Retro with its key, with `--verbose`.
+#[tokio::test]
+async fn a_manufacturers_board() {
+    scan(&mut acme_board().await, "fire-40-b", true).await;
 }
 
 /// The line a stopped board commissioned as L fire-40-a is shown with where

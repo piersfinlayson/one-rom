@@ -233,9 +233,7 @@ pub struct ProgramArgs {
     #[arg(long)]
     pub verify: bool,
 
-    /// Continue despite non-fatal problems: assembled firmware parse errors, a
-    /// board type mismatch, and config warnings such as turbo boot with more
-    /// than one non-plugin ROM slot.
+    /// Continue despite non-fatal problems, reporting each as a warning.
     #[arg(long, short)]
     pub force: bool,
 

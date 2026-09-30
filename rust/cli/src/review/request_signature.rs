@@ -59,6 +59,12 @@ async fn a_blank_board() {
     request_run(&mut blank_board(), "-b fire-40-a --size L").await;
 }
 
+/// A blank fire-40-b as M.
+#[tokio::test]
+async fn a_blank_board_as_m() {
+    request_run(&mut blank_board(), "--board fire-40-b --size M").await;
+}
+
 /// Firmware for another board. It's written from the code.
 #[test]
 fn firmware_for_another_board() {

@@ -5,6 +5,7 @@ All notables changes between versions are documented in this file.
 ## v0.8.0 - unreleased
 
 Headline changes in this release:
+- One ROMs can now be hardware commissioned making them easier for users to manage.
 
 In detail:
 - `inspect info` indicates what it cannot decode and why.
@@ -17,6 +18,10 @@ In detail:
 - Firmware records the board's size, M or L, in its runtime info, which `onerom inspect info` shows.
 - Add the `ext-flash` user plugin, which tests whether the external flash chip is present and functional on Fire 32 and 40 pin boards.
 - Retire the `onerom-fw` binary. Use the CLI's `firmware build` option instead.
+- Add `onerom hardware commission`, `validate`, `set-size`, `sign`, `request-signature` and `onerom inspect otp` for commissioning a One ROM. See [COMMISSIONING](/docs/COMMISSIONING.md).
+- A commissioned One ROM's bootloader appears as `One ROM Bootloader` from piers.rocks with USB VID and PID `1209:F540`.
+- On a commissioned One ROM, `onerom program` refuses an image built for another board type unless `--force` is given.
+- `onerom scan --verbose` and `onerom inspect info` report a One ROM's commissioning information and each device's line ends `(L)` on an L (Large) board.
 - Fix: `onerom program` and `onerom firmware build` report a board mismatch correctly.
 
 To publish:
