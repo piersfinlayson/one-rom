@@ -9,11 +9,15 @@
 
 #[allow(unused_imports)]
 use log::{Level, debug, log, warn};
-use onerom_app::{FlashPlan, FlashStep, device_board_size};
+use onerom_app::{FlashPlan, FlashStep};
 use onerom_config::mcu::{Rp235xChipId, RpVariant};
 use onerom_fw_parser::{ParsedDevice, Parser};
 use onerom_lab_parser::LabParser;
-use onerom_metadata::{USB_BOOTLOADER_PID, USB_BOOTLOADER_VID, USB_PLUGIN_PID, USB_PLUGIN_VID};
+use onerom_metadata::otp::CommissioningArea;
+use onerom_metadata::{
+    MaybeKnown, OneromBoardSize, USB_BOOTLOADER_PID, USB_BOOTLOADER_VID, USB_PLUGIN_PID,
+    USB_PLUGIN_VID,
+};
 use picoboot::cmd::PicobootStatus;
 use picoboot::{
     PAGE_SIZE, Picoboot, PicobootCmd, PicobootCmdId, PicobootXCmd, Reader as PicobootReader,
@@ -22,7 +26,8 @@ use picoboot::{
 use std::time::Duration;
 
 use crate::Error;
-use crate::otp::{Commissioning, read_board_size};
+use crate::device::board_size;
+use crate::otp::{Commissioning, PicobootOtp, read_otp_board_size};
 use crate::picobootx::LedQueryArgs;
 pub use crate::picobootx::{
     Caps, GpioEntry, GpioSetArgs, GpioState, GpioUse, LedId, LedState, LedSubCmd, SetLedArgs,
@@ -491,9 +496,8 @@ pub async fn read_device_info(device: &mut Device) -> Result<(), AccessError> {
     // info, so on that firmware the size comes from OTP through the USB plugin.
     // One ROM Lab doesn't have a board size.
     if !matches!(device.firmware, Some(Firmware::Lab(_))) {
-        let runtime = device.runtime_board_size();
-        let size = device_board_size(runtime, || read_board_size(device)).await;
-        device.board_size = size;
+        device.board_size =
+            board_size(device.onerom(), async || read_otp_board_size(device).await).await;
     }
 
     // Read the chip ID - the device's invariant identity - and package variant.
@@ -502,6 +506,42 @@ pub async fn read_device_info(device: &mut Device) -> Result<(), AccessError> {
     device.rp_variant = rp_variant;
 
     Ok(())
+}
+
+/// Reads the board size of the One ROM on `picoboot` by [`board_size`]'s rule.
+/// `None` for One ROM Lab and where neither runtime info nor OTP can be read.
+pub async fn read_board_size(picoboot: &Picoboot) -> Option<MaybeKnown<OneromBoardSize>> {
+    let parsed = match PicobootReader::new(picoboot.clone()).await {
+        Ok(mut reader) => Some(
+            Parser::with_base_flash_address(&mut reader, FLASH_BASE, RAM_BASE)
+                .parse_device()
+                .await,
+        ),
+        Err(e) => {
+            debug!("Couldn't read the firmware of {}: {e}", picoboot.info());
+            None
+        }
+    };
+    let onerom = parsed.as_ref().filter(|parsed| parsed.is_recognised());
+    board_size(onerom, async || {
+        let size = match PicobootOtp::connect(picoboot.clone()).await {
+            Ok(mut otp) => onerom_app::read_board_size(&mut otp)
+                .await
+                .map_err(Error::from),
+            Err(e) => Err(e),
+        };
+        size.inspect_err(|e| debug!("Couldn't read the board size of {}: {e}", picoboot.info()))
+            .ok()
+    })
+    .await
+}
+
+/// Reads the commissioning area of the One ROM on `picoboot`.
+pub async fn read_commissioning(picoboot: &Picoboot) -> Result<CommissioningArea, Error> {
+    let mut otp = PicobootOtp::connect(picoboot.clone()).await?;
+    onerom_app::read_commissioning(&mut otp)
+        .await
+        .map_err(Error::from)
 }
 
 /// Determine a device's RP2350 chip ID and, where available, its package
@@ -809,21 +849,30 @@ pub async fn write_memory(device: &Device, address: u32, data: &[u8]) -> Result<
 /// erased.
 pub async fn flash_program(device: &Device, plan: &FlashPlan<'_>) -> Result<(), Error> {
     for step in plan.steps() {
-        let (addr, len) = match *step {
-            FlashStep::Erase { addr, len } => (addr, len),
-            FlashStep::Write { addr, data } => (addr, data.len() as u32),
-            // FlashStep is non_exhaustive.
-            _ => return Err(Error::UnknownFlashStep),
-        };
+        let (addr, len) = step_range(step)?;
         check_memory_range(device, addr, len, true, true)?;
     }
 
     let mut picoboot = get_picoboot(device, true).await?;
+    run_flash_plan(&mut picoboot, plan).await
+}
+
+/// Runs `plan`'s steps through `picoboot` in order.
+///
+/// A plan with a step this build doesn't know fails before anything is
+/// erased. The steps' addresses aren't checked against the board's flash.
+/// Erasing flash can take longer than picoboot's default timeouts allow so set
+/// longer ones first.
+pub async fn run_flash_plan(picoboot: &mut Picoboot, plan: &FlashPlan<'_>) -> Result<(), Error> {
+    for step in plan.steps() {
+        step_range(step)?;
+    }
+
     // One connection for every step.
     picoboot.connect().await.map_err(usb_error)?;
     for step in plan.steps() {
         match *step {
-            FlashStep::Erase { addr, len } => erase(&mut picoboot, addr, len).await?,
+            FlashStep::Erase { addr, len } => erase(picoboot, addr, len).await?,
             FlashStep::Write { addr, data } => {
                 picoboot.flash_write(addr, data).await.map_err(usb_error)?
             }
@@ -831,6 +880,16 @@ pub async fn flash_program(device: &Device, plan: &FlashPlan<'_>) -> Result<(), 
         }
     }
     Ok(())
+}
+
+/// The address and length of the flash `step` changes.
+fn step_range(step: &FlashStep<'_>) -> Result<(u32, u32), Error> {
+    match *step {
+        FlashStep::Erase { addr, len } => Ok((addr, len)),
+        FlashStep::Write { addr, data } => Ok((addr, data.len() as u32)),
+        // FlashStep is non_exhaustive.
+        _ => Err(Error::UnknownFlashStep),
+    }
 }
 
 /// Reads `len` bytes of `device`'s flash from `addr`.

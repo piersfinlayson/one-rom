@@ -47,8 +47,6 @@
 #define POWMAN_BASE         0x40100000
 #define TICKS_BASE          0x40108000
 #define OTP_BASE            0x40120000
-#define OTP_DATA_BASE       0x40130000
-#define OTP_DATA_RAW_BASE   0x40134000
 #define USBCTRL_REGS_BASE   0x50110000
 #define SIO_BASE            0xD0000000
 #define PBB_BASE            0xE0000000
@@ -288,6 +286,9 @@
 #define OTP_SW_LOCK(page)       (*((volatile uint32_t *)(OTP_BASE + 4 * (page))))
 #define OTP_SW_LOCK_READ_ONLY   0x5     // Read-only to Secure and Non-secure code
 
+// OTP_DATA_BASE and OTP_DATA_RAW_BASE are in onerom_metadata.h because the
+// host tools read OTP through the same aliases.
+//
 // The unguarded ECC read alias holds two rows in each 32-bit word, the even row
 // in the low half.  A damaged row reads as wrong data rather than a bus fault.
 #define OTP_DATA_WORD(row)      (*((volatile uint32_t *)(OTP_DATA_BASE + 4 * ((row) >> 1))))

@@ -7,16 +7,25 @@
 use iced::Task;
 #[allow(unused_imports)]
 use log::{debug, error, info, trace, warn};
+use onerom_cli::Error as CliError;
+use onerom_cli::device::known_board_size;
+use onerom_cli::error::image_file_text;
+use onerom_cli::otp::{check_board, escape_controls};
 #[allow(unused_imports)]
 use onerom_config::fw::FirmwareVersion;
+use onerom_config::hw::Board;
 use onerom_config::mcu::Variant as McuVariant;
 use onerom_fw_parser::{ParsedDevice, Parser, readers::MemoryReader};
+use onerom_gen::FlashChips;
 
 use crate::analyse::{Analyse, AnalyseState, FW_VERSION_METADATA, Message};
 use crate::app::AppMessage;
-use crate::device::{Address, Client, Message as DeviceMessage};
+use crate::device::{Address, BoardDetails, Client, Message as DeviceMessage};
 use crate::hw::HardwareInfo;
 use crate::studio::Message as StudioMessage;
+
+// The question after a device whose firmware wasn't recognised
+const DEVICE_QUESTION: &str = "Are you sure this device is a previously programmed One ROM?";
 
 /// Detect device state machine statuses
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -196,6 +205,23 @@ pub fn flash_firmware(analyse: &mut Analyse) -> Task<AppMessage> {
             .map(HardwareInfo::from_parsed)
             .unwrap_or_default();
 
+        // A Fire image file's slots must match its length.
+        if hw_info.is_fire()
+            && let Some(info) = analyse.fw_info.as_ref()
+            && let Err(e) = info.check_image_file(
+                device_fw_data.len(),
+                FlashChips::first_for(McuVariant::RP2350),
+            )
+        {
+            let text = format!(
+                "{}\n  Download or build the image file again.",
+                image_file_text(&e)
+            );
+            warn!("{text}");
+            analyse.analysis_content = format!("Firmware flash failed:\n- {text}\n");
+            return Task::none();
+        }
+
         // Update state
         analyse.state = AnalyseState::Flashing;
         analyse.analysis_content = format!("Flashing {filename:?} to device...");
@@ -283,6 +309,7 @@ pub fn detect_device(analyse: &mut Analyse, err: Option<String>) -> Task<AppMess
         board: None,
         model: None,
         mcu_variant: detect_state.sample_mcu(),
+        board_size: None,
     };
 
     // Produce the Task to read device flash
@@ -329,6 +356,7 @@ pub fn reread_device(
         board: None,
         model: None,
         mcu_variant: Some(mcu),
+        board_size: None,
     };
 
     // Send read message to device module to read the flash
@@ -348,6 +376,9 @@ pub fn file_device_loaded(
     result: Result<(ParsedDevice, Vec<u8>), String>,
     is_file: bool,
 ) -> Task<AppMessage> {
+    // The MCU of a failed device read.  Its board may be commissioned.
+    let mut failed_mcu = None;
+
     match result {
         // A Lab is recognised, but Studio works with One ROM alone.
         Ok((ParsedDevice::Lab, _)) => {
@@ -383,10 +414,10 @@ pub fn file_device_loaded(
                     err,
                 )
             } else {
-                format!(
-                    "Error loading/parsing device firmware:\n- {}\n---\nAre you sure this device is a previously programmed One ROM?",
-                    err,
-                )
+                if let AnalyseState::Detecting(state) = &analyse.state {
+                    failed_mcu = state.sample_mcu();
+                }
+                format!("Error loading/parsing device firmware:\n- {err}\n---\n{DEVICE_QUESTION}")
             }
         }
     }
@@ -407,20 +438,80 @@ pub fn file_device_loaded(
 
     // Decide whether to send decoded hardware information to the rest of the
     // app.  Create uses this to pre-populate its own hardware info display.
-    match share_hw_info(analyse) {
-        Some(msg) => Task::chain(usb_run_capable_task, Task::done(msg)),
-        None => usb_run_capable_task,
-    }
+    // A Fire device's board size and commissioned board are read from it
+    // first, including where its firmware wasn't recognised.
+    let read_details = |hw_info| {
+        Task::done(AppMessage::Device(DeviceMessage::ReadBoardDetails {
+            client: Client::Analyse,
+            hw_info,
+        }))
+    };
+    let hw_task = match analyse.fw_info.as_ref().map(HardwareInfo::from_parsed) {
+        Some(hw_info) if !is_file && hw_info.is_fire() => read_details(hw_info),
+        Some(hw_info) => Task::done(StudioMessage::HardwareInfo(Some(hw_info)).into()),
+        None if failed_mcu.is_some() => read_details(HardwareInfo {
+            mcu_variant: failed_mcu,
+            ..HardwareInfo::default()
+        }),
+        None => Task::none(),
+    };
+    Task::chain(usb_run_capable_task, hw_task)
 }
 
-// Decide whether to share decoded hardware info with rest of app
-fn share_hw_info(analyse: &mut Analyse) -> Option<AppMessage> {
-    // We have some information so share it
-    analyse.fw_info.as_ref().map(|device| {
-        AppMessage::Studio(StudioMessage::HardwareInfo(Some(
-            HardwareInfo::from_parsed(device),
-        )))
-    })
+/// Shares a detected device's hardware information, with the board size and
+/// commissioned board read from it.  The commissioned board replaces the
+/// firmware's.
+pub fn board_details_read(analyse: &mut Analyse, details: BoardDetails) -> Task<AppMessage> {
+    let commissioned = details.commissioned.as_deref();
+    let board_size = known_board_size(details.size);
+
+    let hw_info = if let Some(device) = analyse.fw_info.as_ref() {
+        let hw_info = HardwareInfo::from_parsed(device);
+        if let Some(board) = hw_info.board
+            && let Err(CliError::CommissionedBoardMismatch {
+                commissioned,
+                image,
+            }) = check_board(commissioned, board, false)
+        {
+            analyse.analysis_content = format!(
+                "This One ROM is commissioned as {commissioned}, but its firmware is for {image}.\n{}",
+                analyse.analysis_content
+            );
+        }
+        HardwareInfo {
+            board_size,
+            ..hw_info
+        }
+    } else {
+        // The device's firmware wasn't recognised, so only a commissioned
+        // board identifies it
+        let Some(commissioned) = commissioned else {
+            return Task::none();
+        };
+        analyse.analysis_content = analyse.analysis_content.replace(
+            DEVICE_QUESTION,
+            &format!(
+                "This One ROM is commissioned as {}.",
+                escape_controls(commissioned)
+            ),
+        );
+        HardwareInfo {
+            board_size,
+            ..HardwareInfo::default()
+        }
+    };
+
+    let hw_info = match commissioned.and_then(Board::try_from_str) {
+        Some(board) => HardwareInfo {
+            board: Some(board),
+            model: Some(board.model()),
+            mcu_variant: hw_info.mcu_variant.or(Some(McuVariant::RP2350)),
+            ..hw_info
+        },
+        None if hw_info.board.is_none() => return Task::none(),
+        None => hw_info,
+    };
+    Task::done(StudioMessage::HardwareInfo(Some(hw_info)).into())
 }
 
 pub fn stop_device(analyse: &mut Analyse) -> Task<AppMessage> {
@@ -457,5 +548,30 @@ pub fn device_reboot_complete(
             analyse.state = AnalyseState::Idle;
             Task::none()
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A commissioned board whose firmware wasn't recognised displays its
+    /// commissioned board in place of the question.
+    #[test]
+    fn a_commissioned_board_without_firmware_says_what_it_is() {
+        let mut analyse = Analyse::new();
+        let failed = |analyse: &Analyse| analyse.analysis_content.contains(DEVICE_QUESTION);
+        analyse.analysis_content = format!("Blank device detected\n---\n{DEVICE_QUESTION}");
+
+        let _ = board_details_read(&mut analyse, BoardDetails::default());
+        assert!(failed(&analyse));
+
+        let details = BoardDetails {
+            size: None,
+            commissioned: Some("fire-24-f".to_string()),
+        };
+        let _ = board_details_read(&mut analyse, details);
+        assert!(!failed(&analyse));
+        assert!(analyse.analysis_content.contains("fire-24-f"));
     }
 }

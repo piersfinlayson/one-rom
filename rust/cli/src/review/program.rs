@@ -15,8 +15,9 @@ use onerom_metadata::{MaybeKnown, OneromBoardSize};
 use super::firmware_build::Files;
 use super::{command_of, failed};
 use crate::firmware::{build_rom_image, verify_assembled_firmware};
-use crate::program::{plan_error, plan_lines, verify_line};
+use crate::program::{plan_lines, verify_line};
 use crate::test_board::{image_file, move_slot};
+use onerom_cli::error::plan_error;
 
 /// The first flash chip's length.
 const FIRST_CHIP: usize = 2 * 1024 * 1024;
@@ -71,7 +72,7 @@ async fn an_image_file_that_doesnt_match_its_slots() {
 fn refuse_plan(image: &[u8], chips: &FlashChips, size: Option<MaybeKnown<OneromBoardSize>>) {
     println!("$ onerom program --firmware image.bin");
     let error = FlashPlan::new(image, chips).unwrap_err();
-    failed(plan_error(error, image.len(), chips, size));
+    failed(plan_error(error, image.len(), size));
 }
 
 /// An image that uses the second chip, for a board without one of each

@@ -16,17 +16,18 @@ use crate::firmware::{
     verify_assembled_firmware,
 };
 use crate::utils::{check_device, check_fire_board_optional, resolve_board};
-use onerom_app::{FlashPlan, FlashPlanError, FlashStep, read_commissioning};
+use onerom_app::{FlashPlan, FlashStep, read_commissioning};
 use onerom_cli::device::select_device_by_chip_id;
-use onerom_cli::otp::{PicobootOtp, board_size_text, escape_controls};
+use onerom_cli::error::plan_error;
+use onerom_cli::otp::{PicobootOtp, check_board};
 use onerom_cli::pin::ResolvedPin;
 use onerom_cli::plugin::{parse_plugins, resolve_plugins};
 use onerom_cli::slot::{self, GlobalConfig, check_slot_confirmations, save_config};
 use onerom_cli::usb::{FLASH_BASE, RebootArgs, flash_program, flash_read, reboot};
 use onerom_cli::{Device, DeviceState, Error, Options};
 use onerom_fw_parser::ParsedDevice;
-use onerom_gen::{FlashChips, supports_board_size};
-use onerom_metadata::{GPIO_RESET_DEFAULT_HOLD_MS, MaybeKnown, OneromBoardSize};
+use onerom_gen::supports_board_size;
+use onerom_metadata::GPIO_RESET_DEFAULT_HOLD_MS;
 
 // ------------------------------- Argument validation -------------------------------
 
@@ -233,7 +234,7 @@ async fn flash_device(
     let plan = match FlashPlan::new(data, &chips) {
         Ok(plan) => plan,
         Err(e) => {
-            let error = plan_error(e, data.len(), &chips, device.board_size());
+            let error = plan_error(e, data.len(), device.board_size());
             return restart(options, stopped, Err(error)).await;
         }
     };
@@ -250,27 +251,6 @@ async fn flash_device(
         verify_flash(options, &plan).await?;
     }
     Ok(())
-}
-
-/// The error for a plan [`FlashPlan::new`] refused for an image of
-/// `image_len` bytes on a board with `chips` whose size is `size`.
-pub(crate) fn plan_error(
-    error: FlashPlanError,
-    image_len: usize,
-    chips: &FlashChips,
-    size: Option<MaybeKnown<OneromBoardSize>>,
-) -> Error {
-    match error {
-        FlashPlanError::SecondChipRequired => {
-            // A size that couldn't be read shows as not known.
-            let size = size.unwrap_or(MaybeKnown::Known(OneromBoardSize::BoardSizeUnknown));
-            Error::SecondChipRequired(board_size_text(size))
-        }
-        FlashPlanError::TooLarge => Error::ImageTooLarge {
-            image: image_len,
-            flash: chips.first().len() + chips.second().map_or(0, |chip| chip.len()),
-        },
-    }
 }
 
 /// The lines `--verbose` shows for `plan`'s steps, one each.
@@ -384,30 +364,6 @@ async fn check_commissioned_board(
             );
             Ok(())
         }
-    }
-}
-
-/// Refuses an image for `image` on a board commissioned as `commissioned`.
-/// With `force` it warns instead.
-fn check_board(commissioned: Option<&str>, image: Board, force: bool) -> Result<(), Error> {
-    let Some(commissioned) = commissioned else {
-        return Ok(());
-    };
-    if Board::try_from_str(commissioned) == Some(image) {
-        return Ok(());
-    }
-    let commissioned = escape_controls(commissioned);
-    if force {
-        eprintln!(
-            "Warning: image board type '{}' does not match the commissioned board type '{commissioned}' (continuing due to --force)",
-            image.name()
-        );
-        Ok(())
-    } else {
-        Err(Error::CommissionedBoardMismatch {
-            commissioned,
-            image: image.name().to_string(),
-        })
     }
 }
 
@@ -619,10 +575,8 @@ pub async fn cmd_program(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn board(name: &str) -> Board {
-        Board::try_from_str(name).unwrap()
-    }
+    use onerom_gen::FlashChips;
+    use onerom_metadata::{MaybeKnown, OneromBoardSize};
 
     fn chips(size: BoardSize) -> FlashChips {
         FlashChips::new(Variant::RP2350, size)
@@ -633,7 +587,7 @@ mod tests {
         let image = vec![0; 5 * 1024 * 1024];
         let error = FlashPlan::new(&image, &chips(BoardSize::M)).unwrap_err();
         let m = Some(MaybeKnown::Known(OneromBoardSize::BoardSizeM));
-        let error = plan_error(error, image.len(), &chips(BoardSize::M), m);
+        let error = plan_error(error, image.len(), m);
         assert!(
             matches!(&error, Error::SecondChipRequired(size) if size == "M"),
             "{error:?}"
@@ -641,7 +595,7 @@ mod tests {
 
         let error = FlashPlan::new(&image, &chips(BoardSize::L)).unwrap_err();
         let l = Some(MaybeKnown::Known(OneromBoardSize::BoardSizeL));
-        let error = plan_error(error, image.len(), &chips(BoardSize::L), l);
+        let error = plan_error(error, image.len(), l);
         assert!(
             matches!(error, Error::ImageTooLarge { image, flash }
                 if image == 5 * 1024 * 1024 && flash == 4 * 1024 * 1024),
@@ -676,43 +630,5 @@ mod tests {
         ]) {
             assert!(holds(line, &values), "{line}");
         }
-    }
-
-    #[test]
-    fn a_board_without_commissioning_takes_any_image() {
-        assert!(check_board(None, board("fire-24-f"), false).is_ok());
-    }
-
-    #[test]
-    fn a_commissioned_board_takes_an_image_for_its_board() {
-        assert!(check_board(Some("fire-24-f"), board("fire-24-f"), false).is_ok());
-    }
-
-    #[test]
-    fn an_image_for_another_board_needs_force() {
-        let error = check_board(Some("fire-24-f"), board("fire-24-e"), false).unwrap_err();
-        assert!(
-            matches!(&error, Error::CommissionedBoardMismatch { commissioned, image }
-                if commissioned == "fire-24-f" && image == "fire-24-e"),
-            "{error}"
-        );
-        assert!(check_board(Some("fire-24-f"), board("fire-24-e"), true).is_ok());
-    }
-
-    /// A board name this build doesn't know can't be the image's board.
-    #[test]
-    fn an_unknown_commissioned_board_needs_force() {
-        assert!(check_board(Some("fire-99-z"), board("fire-24-f"), false).is_err());
-        assert!(check_board(Some("fire-99-z"), board("fire-24-f"), true).is_ok());
-    }
-
-    #[test]
-    fn a_commissioned_board_is_shown_with_its_control_characters_escaped() {
-        let error = check_board(Some("fire\u{1b}[2J"), board("fire-24-f"), false).unwrap_err();
-        assert!(
-            matches!(&error, Error::CommissionedBoardMismatch { commissioned, .. }
-                if commissioned == "fire\\u{1b}[2J"),
-            "{error}"
-        );
     }
 }

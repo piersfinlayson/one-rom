@@ -12,6 +12,7 @@ use clap::{ArgGroup, Args, Subcommand};
 use enum_dispatch::enum_dispatch;
 use onerom_app::BoardSize;
 use onerom_config::hw::{Board, Model};
+use onerom_gen::board_supports_size;
 use onerom_metadata::otp::{BuildError, check_manufacturer};
 use time::{Date, Month, OffsetDateTime};
 
@@ -311,7 +312,7 @@ pub enum SizeError {
 /// `size` where `board` supports it. A size with a second flash chip needs a
 /// board that supports external flash.
 pub(crate) fn supported_size(board: Board, size: BoardSize) -> Result<BoardSize, SizeError> {
-    if board.supports_size(size) {
+    if board_supports_size(board, size) {
         Ok(size)
     } else {
         Err(SizeError::ExternalFlashUnsupported(board))

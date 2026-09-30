@@ -5,6 +5,12 @@
 - Rebuilt against the Rust crates released with firmware v0.8.0.
 - Supports commissioned One ROMs in bootloader mode using One ROM's own bootloader VID and PID.
 - The .deb installs One ROM's udev rules.
+- Supports L boards, over USB or a debug probe. Create has a Board Size picker, which Detect sets.
+- A damaged .bin file fails to flash from Analyse.
+- Detect sets Create's Board to a commissioned One ROM's board type.
+- Analyse displays a note when a commissioned One ROM's firmware is for another board.
+- An image for another board type fails to flash to a commissioned One ROM.
+- Fix Detect failing after the CLI or another program used the One ROM.
 
 ## v0.2.3 - 2026-09-17
 

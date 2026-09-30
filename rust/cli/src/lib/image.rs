@@ -10,7 +10,18 @@
 //! a device is going to do before it does it.
 
 use onerom_config::chip::ChipType;
+use onerom_config::mcu::Variant;
 use onerom_fw_parser::device::{ParsedDevice, SlotKind};
+use onerom_fw_parser::parse_image_file;
+use onerom_gen::FlashChips;
+
+/// Parses an image file.
+///
+/// A file longer than the first flash chip holds the second chip's contents
+/// after the first chip's, and they're read at the second chip's address.
+pub async fn parse_firmware(data: &[u8]) -> ParsedDevice {
+    parse_image_file(data, FlashChips::first_for(Variant::RP2350)).await
+}
 
 /// Every chip type the image can serve, plugins excluded.
 ///

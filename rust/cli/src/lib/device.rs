@@ -9,8 +9,8 @@
 
 use log::debug;
 use nusb::DeviceInfo;
-use onerom_app::board_size_or_m;
-use onerom_config::hw::Board;
+use onerom_app::device_board_size;
+use onerom_config::hw::{Board, BoardSize};
 use onerom_config::mcu::{Rp235xChipId, RpVariant, Variant};
 use onerom_fw_parser::{ParseError, ParsedDevice};
 use onerom_gen::FlashChips;
@@ -23,6 +23,8 @@ use crate::Options;
 use crate::error::Error;
 use crate::otp::{Commissioning, board_size_text};
 use crate::usb::enumerate_devices;
+
+pub use onerom_app::known_board_size;
 
 /// One ROM device state
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
@@ -260,7 +262,7 @@ impl Device {
     }
 
     /// The One ROM's parse, `None` for other firmware.
-    fn onerom(&self) -> Option<&ParsedDevice> {
+    pub(crate) fn onerom(&self) -> Option<&ParsedDevice> {
         match self.firmware.as_ref()? {
             Firmware::OneRom(onerom) => Some(onerom),
             Firmware::Lab(_) => None,
@@ -355,13 +357,7 @@ impl Device {
     /// The device's flash chips, from its board size. A board whose size
     /// isn't known has the first chip alone.
     pub fn flash_chips(&self) -> FlashChips {
-        size_chips(self.board_size)
-    }
-
-    /// The board size runtime info records, where One ROM is running. Firmware
-    /// before 0.8.0 doesn't record one, so its size is unknown.
-    pub(crate) fn runtime_board_size(&self) -> Option<MaybeKnown<OneromBoardSize>> {
-        self.onerom()?.runtime_board_size()
+        flash_chips(self.board_size)
     }
 
     /// Returns a sort key for this device, which sorts first by board type (with
@@ -413,9 +409,29 @@ fn lab_board_part(lab: &Lab) -> String {
     }
 }
 
-/// The flash chips of a board whose recorded size is `size`.
-fn size_chips(size: Option<MaybeKnown<OneromBoardSize>>) -> FlashChips {
-    FlashChips::new(Variant::RP2350, board_size_or_m(size))
+/// The board size of a One ROM. `onerom` is its firmware's parse, `None` where
+/// this build doesn't recognise its firmware.
+///
+/// It's the size runtime info records where One ROM is running and records
+/// one. Otherwise it's the size `read_otp` reads from OTP. Where that read fails
+/// it's what runtime info records. It's `None` for One ROM Lab and where neither
+/// can be read.
+pub async fn board_size(
+    onerom: Option<&ParsedDevice>,
+    read_otp: impl AsyncFnOnce() -> Option<OneromBoardSize>,
+) -> Option<MaybeKnown<OneromBoardSize>> {
+    if matches!(onerom, Some(ParsedDevice::Lab)) {
+        return None;
+    }
+    let runtime = onerom.and_then(ParsedDevice::runtime_board_size);
+    device_board_size(runtime, || read_otp()).await
+}
+
+/// The flash chips of a board whose recorded size is `size`. A board whose
+/// size isn't known has the first chip alone because every board has it.
+pub fn flash_chips(size: Option<MaybeKnown<OneromBoardSize>>) -> FlashChips {
+    let size = known_board_size(size).unwrap_or(BoardSize::M);
+    FlashChips::new(Variant::RP2350, size)
 }
 
 /// What follows the board in a device's line. `(L)` on an L board, `(other)`
@@ -586,7 +602,7 @@ mod tests {
     #[test]
     fn a_board_whose_size_isnt_known_has_the_first_chip_alone() {
         use OneromBoardSize::{BoardSizeL, BoardSizeM, BoardSizeOther, BoardSizeUnknown};
-        let l = size_chips(Some(MaybeKnown::Known(BoardSizeL)));
+        let l = flash_chips(Some(MaybeKnown::Known(BoardSizeL)));
         assert_eq!(l.second(), Some(0x1100_0000..0x1120_0000));
         for size in [
             Some(MaybeKnown::Known(BoardSizeM)),
@@ -595,10 +611,29 @@ mod tests {
             Some(MaybeKnown::Unknown(3)),
             None,
         ] {
-            let chips = size_chips(size);
+            let chips = flash_chips(size);
             assert_eq!(chips.first(), l.first(), "{size:?}");
             assert_eq!(chips.second(), None, "{size:?}");
         }
+    }
+
+    /// A One ROM that isn't running has the size OTP configures, and none
+    /// where OTP can't be read.
+    #[tokio::test]
+    async fn a_one_rom_that_isnt_running_has_its_otp_size() {
+        let l = board_size(None, async || Some(OneromBoardSize::BoardSizeL)).await;
+        assert_eq!(l, Some(MaybeKnown::Known(OneromBoardSize::BoardSizeL)));
+        assert_eq!(board_size(None, async || None).await, None);
+    }
+
+    /// One ROM Lab doesn't have a board size, so OTP isn't read.
+    #[tokio::test]
+    async fn one_rom_lab_doesnt_have_a_size() {
+        let size = board_size(Some(&ParsedDevice::Lab), async || {
+            panic!("OTP read for One ROM Lab")
+        })
+        .await;
+        assert_eq!(size, None);
     }
 
     #[test]

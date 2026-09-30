@@ -15,7 +15,9 @@ use onerom_config::hw::Board;
 use onerom_config::mcu::Variant as McuVariant;
 use onerom_fw::get_rom_files_async;
 use onerom_fw::net::{Release, Releases};
-use onerom_gen::{Builder, FIRMWARE_SIZE, MAX_METADATA_LEN};
+use onerom_gen::{
+    Builder, Error as GenError, FIRMWARE_SIZE, FlashChips, MAX_METADATA_LEN, second_chip_supported,
+};
 
 use crate::analyse::Analyse;
 use crate::app::AppMessage;
@@ -66,7 +68,10 @@ pub enum Message {
     LoadConfig(Config),
     ConfigLoaded(Result<SelectedConfig, String>),
     ClearDownloadedConfig,
-    BuildImage(HardwareInfo),
+    BuildImage {
+        hw_info: HardwareInfo,
+        size_detected: bool,
+    },
     BuildImageResult(Result<(Image, String), String>),
     HelpPressed,
 
@@ -104,7 +109,10 @@ impl std::fmt::Display for Message {
                 Err(_) => write!(f, "ConfigLoaded(Err)"),
             },
             Message::ClearDownloadedConfig => write!(f, "ClearDownloadedConfig"),
-            Message::BuildImage(hw) => write!(f, "BuildImage({hw})"),
+            Message::BuildImage {
+                hw_info,
+                size_detected,
+            } => write!(f, "BuildImage({hw_info}, size_detected={size_detected})"),
             Message::BuildImageResult(_) => write!(f, "BuildImageResult"),
             Message::HelpPressed => write!(f, "HelpPressed"),
             Message::DownloadFailed => write!(f, "DownloadFailed"),
@@ -551,9 +559,14 @@ impl Studio {
                 self.runtime_info.clear_config();
                 Task::none()
             }
-            Message::BuildImage(hw_info) => {
-                Task::future(Self::build_image_async(hw_info, self.runtime_info.clone()))
-            }
+            Message::BuildImage {
+                hw_info,
+                size_detected,
+            } => Task::future(Self::build_image_async(
+                hw_info,
+                size_detected,
+                self.runtime_info.clone(),
+            )),
             Message::BuildImageResult(result) => {
                 let msg = match result {
                     Ok((image, desc)) => {
@@ -587,7 +600,13 @@ impl Studio {
         Task::none()
     }
 
-    async fn build_image_async(hw_info: HardwareInfo, runtime_info: RuntimeInfo) -> AppMessage {
+    /// Builds an image.  `size_detected` is whether the board size was read
+    /// from a device.
+    async fn build_image_async(
+        hw_info: HardwareInfo,
+        size_detected: bool,
+        runtime_info: RuntimeInfo,
+    ) -> AppMessage {
         // Check we have firmware and config
         let firmware = if let Some(fw) = runtime_info.firmware() {
             fw.clone()
@@ -651,8 +670,8 @@ impl Studio {
             }
         }
 
-        let mcu_fam = if let Some(mcu) = hw_info.mcu_variant {
-            mcu.family()
+        let (mcu_variant, mcu_fam) = if let Some(mcu) = hw_info.mcu_variant {
+            (mcu, mcu.family())
         } else {
             warn!("Cannot get MCU family from hardware info, cannot build image");
             return CreateMessage::BuildImageResult(Err(
@@ -730,12 +749,26 @@ impl Studio {
             }
         };
 
+        // Where a set doesn't fit and the size wasn't read from a device, a
+        // size with a second flash chip might hold it.
+        let advise_size = !size_detected
+            && hw_info.board.is_some_and(|board| {
+                FlashChips::new(mcu_variant, props.board_size())
+                    .second()
+                    .is_none()
+                    && second_chip_supported(board, fw_ver)
+            });
+
         // Build the image
         let (metadata, roms) = match builder.build(props) {
             Ok((md, roms)) => (md, roms),
             Err(e) => {
                 warn!("Failed to build image: {e:?}");
-                return CreateMessage::BuildImageResult(Err(e.to_string())).into();
+                let mut text = e.to_string();
+                if advise_size && matches!(e, GenError::SlotDoesNotFit { .. }) {
+                    text += "\n  If the board size is larger than M, change Board Size.";
+                }
+                return CreateMessage::BuildImageResult(Err(text)).into();
             }
         };
 

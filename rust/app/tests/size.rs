@@ -2,11 +2,11 @@
 //
 // MIT License
 
-//! Tests for where a device's board size comes from and the size a tool uses.
+//! Tests for where a device's board size comes from and which sizes are known.
 
 use core::cell::Cell;
 
-use onerom_app::{BoardSize, board_size_or_m, device_board_size};
+use onerom_app::{BoardSize, device_board_size, known_board_size};
 use onerom_metadata::{MaybeKnown, OneromBoardSize};
 
 use OneromBoardSize::{BoardSizeL, BoardSizeM, BoardSizeOther, BoardSizeUnknown};
@@ -69,26 +69,17 @@ async fn a_failed_otp_read_leaves_the_size_runtime_info_has() {
 }
 
 #[test]
-fn m_and_l_are_their_own_sizes() {
-    assert_eq!(
-        board_size_or_m(Some(MaybeKnown::Known(BoardSizeM))),
-        BoardSize::M
-    );
-    assert_eq!(
-        board_size_or_m(Some(MaybeKnown::Known(BoardSizeL))),
-        BoardSize::L
-    );
-}
-
-/// Every board has the first flash chip.
-#[test]
-fn any_other_size_is_m() {
+fn only_m_and_l_are_known_sizes() {
+    let m = known_board_size(Some(MaybeKnown::Known(BoardSizeM)));
+    assert_eq!(m, Some(BoardSize::M));
+    let l = known_board_size(Some(MaybeKnown::Known(BoardSizeL)));
+    assert_eq!(l, Some(BoardSize::L));
     for size in [
         Some(MaybeKnown::Known(BoardSizeUnknown)),
         Some(MaybeKnown::Known(BoardSizeOther)),
         Some(MaybeKnown::Unknown(0x37)),
         None,
     ] {
-        assert_eq!(board_size_or_m(size), BoardSize::M, "{size:?}");
+        assert_eq!(known_board_size(size), None, "{size:?}");
     }
 }

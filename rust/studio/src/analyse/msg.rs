@@ -15,12 +15,14 @@ use onerom_config::mcu::Variant as McuVariant;
 use onerom_fw_parser::ParsedDevice;
 
 use crate::analyse::device::{
-    detect_device, device_reboot_complete, file_device_loaded, firmware_flash_complete,
-    flash_firmware, handle_device_data, reread_device, run_device, stop_device,
+    board_details_read, detect_device, device_reboot_complete, file_device_loaded,
+    firmware_flash_complete, flash_firmware, handle_device_data, reread_device, run_device,
+    stop_device,
 };
 use crate::analyse::file::{fw_file_chooser, load_file};
 use crate::analyse::{Analyse, Source};
 use crate::app::AppMessage;
+use crate::device::BoardDetails;
 use crate::studio::RuntimeInfo;
 
 /// Analyse tab messages
@@ -41,6 +43,7 @@ pub enum Message {
     DeviceData(Vec<u8>),
     ReadFailed(String),
     RereadDevice(McuVariant, FirmwareVersion),
+    BoardDetailsRead(BoardDetails),
 
     // Handle flashing
     FlashFirmware,
@@ -66,6 +69,7 @@ impl std::fmt::Display for Message {
             Message::DeviceData(_) => write!(f, "DeviceData(...)"),
             Message::ReadFailed(err) => write!(f, "ReadFailed({err})"),
             Message::RereadDevice(_, _) => write!(f, "RereadDevice"),
+            Message::BoardDetailsRead(details) => write!(f, "BoardDetailsRead({details:?})"),
             Message::FlashFirmware => write!(f, "FlashFirmware"),
             Message::FlashComplete(_) => write!(f, "FlashComplete(...)"),
             Message::ProgressTick => write!(f, "ProgressTick"),
@@ -138,6 +142,10 @@ pub fn message(
                 fw_version.patch()
             );
             Task::done(reread_device(analyse, mcu, fw_version))
+        }
+        Message::BoardDetailsRead(details) => {
+            debug!("Device board details read: {details:?}");
+            board_details_read(analyse, details)
         }
 
         // Handle flashing

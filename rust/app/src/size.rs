@@ -32,15 +32,13 @@ where
     }
 }
 
-/// The board size a tool uses for a device recording `size`. It's M where
-/// `size` is neither M nor L or isn't known, because every board has the first
-/// flash chip.
-pub fn board_size_or_m(size: Option<MaybeKnown<OneromBoardSize>>) -> BoardSize {
-    match size {
-        Some(MaybeKnown::Known(size)) => known_size(size),
-        Some(MaybeKnown::Unknown(_)) | None => None,
+/// The size of a board whose recorded size is `size`. `None` where `size` is
+/// neither M nor L or isn't known.
+pub fn known_board_size(size: Option<MaybeKnown<OneromBoardSize>>) -> Option<BoardSize> {
+    match size? {
+        MaybeKnown::Known(size) => known_size(size),
+        MaybeKnown::Unknown(_) => None,
     }
-    .unwrap_or(BoardSize::M)
 }
 
 /// `size` as a [`BoardSize`]. `None` where it's neither M nor L.

@@ -65,7 +65,7 @@ pub use flash::{FlashPlan, FlashPlanError, FlashStep};
 // contain one.
 pub use onerom_config::hw::{BoardSize, BoardSizeError};
 // A device's board size, from runtime info or OTP.
-pub use size::{board_size_or_m, device_board_size};
+pub use size::{device_board_size, known_board_size};
 // OTP access (host-implemented) and the readers built on it. `trait_variant`
 // generates the `Send` variant `OtpAccess` from the base `LocalOtpAccess`.
 // `MemoryOtp` stands in for a chip in tests. The constant describes the lock

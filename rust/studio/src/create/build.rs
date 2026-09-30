@@ -55,7 +55,13 @@ pub fn build_image(create: &mut Create, runtime_info: &RuntimeInfo) -> Task<AppM
     create.set_display_content(format!("Building image: {} ...", selected.name()));
 
     // Send build image message to Studio
-    Task::done(StudioMessage::BuildImage(create.selected_hw_info).into())
+    Task::done(
+        StudioMessage::BuildImage {
+            hw_info: create.selected_hw_info,
+            size_detected: create.size_detected,
+        }
+        .into(),
+    )
 }
 
 /// Handle the result of a build image operation
