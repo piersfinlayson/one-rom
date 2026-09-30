@@ -24,6 +24,7 @@ In detail:
 - On a commissioned One ROM, `onerom program` refuses an image built for another board type unless `--force` is given.
 - `onerom scan --verbose` and `onerom inspect info` report a One ROM's commissioning information and each device's line ends `(L)` on an L (Large) board.
 - Fix: `onerom program` and `onerom firmware build` report a board mismatch correctly.
+- Studio supports commissioning information and L sized boards.
 
 To publish:
 - Rust crates (in dependency order):
@@ -39,7 +40,7 @@ To publish:
   - onerom-cli 0.5.0
 - One ROM Lab 0.4.0
 - CLI bin 0.5.0
-- Studio 0.2.4: rebuild against the new Rust crates to support v0.8.0
+- Studio 0.2.4
 - ext-flash plugin 0.1.0
 - USB plugin 0.3.2
 - one-rom-wasm: rebuild against the new Rust crates to support v0.8.0

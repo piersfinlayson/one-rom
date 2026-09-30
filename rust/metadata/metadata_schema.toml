@@ -539,6 +539,18 @@ ora_api = true
 first_release = "0.8.0"
 comment = "Address of the flash chip on QSPI chip select 1."
 
+[[constants]]
+name = "OTP_DATA_BASE"
+type = "u32"
+value = 0x40130000
+comment = "Address of the RP2350's OTP with ECC applied, two 16-bit rows to each 32-bit word."
+
+[[constants]]
+name = "OTP_DATA_RAW_BASE"
+type = "u32"
+value = 0x40134000
+comment = "Address of the RP2350's OTP without ECC, one 24-bit row to each 32-bit word."
+
 # ===========================================================================
 # Type aliases
 # ===========================================================================

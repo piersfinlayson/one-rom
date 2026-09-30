@@ -53,6 +53,9 @@ from OTP through the running USB plugin.
 
 `onerom firmware build` takes the board size with `--size`. It defaults to M.
 
+Studio builds for the Board Size selected in Create, which Detect sets from the
+One ROM, or for M when the firmware is before 0.8.0.
+
 ## Image Files
 
 An image file is a `.bin`. For an image on the first chip alone it holds that
@@ -103,7 +106,8 @@ a second chip it serves invalid data for a slot on the second chip.
 The shared Rust crates build an image in this layout and split it into the
 programming steps above. The CLI, Studio and one-rom-wasm use them.
 
-Studio reads the board size as the CLI does.
+Studio reads the board size as the CLI does, over USB or through a debug probe.
+It programs through a debug probe using the same steps as over USB.
 
 The web programmer reads the board size from OTP when the One ROM is stopped
 and from runtime info when it runs. It follows the CLI for firmware before

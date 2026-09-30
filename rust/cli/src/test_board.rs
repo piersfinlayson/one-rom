@@ -200,7 +200,7 @@ pub fn image_file(size: BoardSize, sets: usize) -> Vec<u8> {
 /// `image`, an [`image_file`], with slot `slot`'s data pointer changed to
 /// `addr`. The ROM data stays where it was.
 pub async fn move_slot(mut image: Vec<u8>, slot: usize, addr: u32) -> Vec<u8> {
-    let parsed = crate::firmware::parse_firmware(&image).await.unwrap();
+    let parsed = onerom_cli::image::parse_firmware(&image).await;
     let from = parsed
         .as_schema()
         .and_then(|onerom| onerom.metadata())

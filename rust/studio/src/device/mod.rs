@@ -18,9 +18,12 @@ use iced::widget::Column;
 use iced::{Element, Subscription, Task, event, keyboard};
 #[allow(unused_imports)]
 use log::{debug, error, info, trace, warn};
+use onerom_cli::Error as CliError;
+use onerom_cli::otp::check_board;
 use onerom_config::Model;
+use onerom_config::hw::Board;
 use onerom_config::mcu::Rp235xChipId;
-use onerom_metadata::{USB_PLUGIN_PID, USB_PLUGIN_VID};
+use onerom_metadata::{MaybeKnown, OneromBoardSize, USB_PLUGIN_PID, USB_PLUGIN_VID};
 
 use crate::app::AppMessage;
 use crate::hw::HardwareInfo;
@@ -30,6 +33,42 @@ use crate::style::Style;
 pub use msg::Message;
 use probe::ProbeType;
 use usb::UsbDeviceType;
+
+/// The text displayed where a flash plan has a step this build doesn't know.
+const UNKNOWN_FLASH_STEP: &str = "Cannot program this image.\n  It requires a flash operation Studio doesn't support.\n  This is likely a bug.  Please report it.";
+
+/// The board size and commissioned board Detect reads from a Fire board
+#[derive(Debug, Clone, Default)]
+pub struct BoardDetails {
+    /// The board size, `None` where it couldn't be read
+    pub size: Option<MaybeKnown<OneromBoardSize>>,
+
+    /// The board the current commissioning instance identifies, `None`
+    /// where the board isn't commissioned or OTP couldn't be read
+    pub commissioned: Option<String>,
+}
+
+/// Fails with the text to display where an image for `image` is for a board
+/// other than the `commissioned` one.  An image without a board isn't
+/// checked.
+fn check_commissioned_board(
+    commissioned: Option<&str>,
+    image: Option<Board>,
+) -> Result<(), String> {
+    let Some(image) = image else {
+        return Ok(());
+    };
+    #[allow(clippy::wildcard_enum_match_arm)]
+    check_board(commissioned, image, false).map_err(|e| match e {
+        CliError::CommissionedBoardMismatch {
+            commissioned,
+            image,
+        } => format!(
+            "Cannot program this image because it is for {image} and this One ROM is commissioned as {commissioned}."
+        ),
+        e => e.to_string(),
+    })
+}
 
 /// At startup we want to check USB devices, then probe devices, so any
 /// present USB device gets selected in preference to probe ones.
@@ -533,6 +572,10 @@ impl DeviceType {
         Task::future(flash_async(self.clone(), hw_info, client, data))
     }
 
+    pub fn read_board_details(&self, client: Client, hw_info: HardwareInfo) -> Task<AppMessage> {
+        Task::future(read_board_details_async(self.clone(), client, hw_info))
+    }
+
     pub fn reboot(&self, client: Client, stopped: bool) -> Task<AppMessage> {
         Task::future(reboot_async(self.clone(), client, stopped))
     }
@@ -573,6 +616,22 @@ async fn flash_async(
             let log = "Attempted to flash None device";
             internal_error!("{log}");
             Message::ReadFailed(client, log.into()).into()
+        }
+    }
+}
+
+// Generic read board details method
+async fn read_board_details_async(
+    device: DeviceType,
+    client: Client,
+    hw_info: HardwareInfo,
+) -> AppMessage {
+    match device {
+        DeviceType::DebugProbe(p) => probe::read_board_details_async(p, client, hw_info).await,
+        DeviceType::Usb(u) => usb::read_board_details_async(u, client).await,
+        DeviceType::None => {
+            internal_error!("Attempted to read the board details of None device");
+            Message::BoardDetailsRead(client, BoardDetails::default()).into()
         }
     }
 }

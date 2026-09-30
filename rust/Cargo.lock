@@ -5149,6 +5149,7 @@ dependencies = [
 name = "onerom-studio"
 version = "0.2.4"
 dependencies = [
+ "airfrog-rpc",
  "arc-swap",
  "built",
  "chrono",
@@ -5160,6 +5161,7 @@ dependencies = [
  "hex",
  "iced",
  "log",
+ "onerom-app",
  "onerom-cli",
  "onerom-config",
  "onerom-fw",

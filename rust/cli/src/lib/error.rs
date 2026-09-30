@@ -4,12 +4,15 @@
 
 //! Shared error type for the One ROM CLI library.
 
+use onerom_app::FlashPlanError;
 use onerom_config::fw::FirmwareVersion;
 use onerom_fw_parser::ImageFileError;
 use onerom_gen::FileFormat;
+use onerom_metadata::{MaybeKnown, OneromBoardSize};
 
+use crate::device::flash_chips;
 use crate::hint;
-use crate::otp::escape_controls;
+use crate::otp::{board_size_text, escape_controls};
 use crate::plugin::{CompatibleRelease, PluginType, PluginVersion};
 
 /// Render the way out of a plugin incompatibility as a further indented line.
@@ -205,7 +208,7 @@ pub enum Error {
     UnknownFlashStep,
 
     /// An image file whose slots don't match its length or the flash chips.
-    #[error("{}", image_file_text(.0))]
+    #[error("{}", image_file_error_text(.0))]
     ImageFile(ImageFileError),
 
     /// A chip set that doesn't fit on the flash. `advise_second_chip` where
@@ -790,7 +793,16 @@ fn run_again_completes(error: &onerom_app::CommissionError) -> bool {
 }
 
 /// The text of an [`Error::ImageFile`].
-fn image_file_text(error: &ImageFileError) -> String {
+fn image_file_error_text(error: &ImageFileError) -> String {
+    format!(
+        "{}\n  Download or build the image file again, or use --force to override.",
+        image_file_text(error)
+    )
+}
+
+/// The text for an image file whose slots don't match its length or the flash
+/// chips. The advice isn't included.
+pub fn image_file_text(error: &ImageFileError) -> String {
     let (fault, detail) = match *error {
         ImageFileError::TooShort { short_by } => {
             ("too short", format!("It ends {short_by} bytes short"))
@@ -803,9 +815,32 @@ fn image_file_text(error: &ImageFileError) -> String {
             ("too long", format!("It is {too_long_by} bytes too long"))
         }
     };
-    format!(
-        "Cannot use this image file because it is {fault}.\n  {detail}.\n  Download or build the image file again, or use --force to override."
-    )
+    format!("Cannot use this image file because it is {fault}.\n  {detail}.")
+}
+
+/// The error for an image of `image_len` bytes that [`FlashPlan::new`] fails
+/// to plan on a board whose size is `size`.
+///
+/// [`FlashPlan::new`]: onerom_app::FlashPlan::new
+pub fn plan_error(
+    error: FlashPlanError,
+    image_len: usize,
+    size: Option<MaybeKnown<OneromBoardSize>>,
+) -> Error {
+    match error {
+        FlashPlanError::SecondChipRequired => {
+            // A size that couldn't be read shows as not known.
+            let size = size.unwrap_or(MaybeKnown::Known(OneromBoardSize::BoardSizeUnknown));
+            Error::SecondChipRequired(board_size_text(size))
+        }
+        FlashPlanError::TooLarge => {
+            let chips = flash_chips(size);
+            Error::ImageTooLarge {
+                image: image_len,
+                flash: chips.first().len() + chips.second().map_or(0, |chip| chip.len()),
+            }
+        }
+    }
 }
 
 /// The warning `--force` shows in place of `Error::ImageFile(error)`.

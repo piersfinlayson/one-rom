@@ -25,6 +25,7 @@ pub fn detected_hardware_info(create: &mut Create, runtime_info: &RuntimeInfo) -
     // Check we have some hardware info
     if runtime_info.hw_info().is_none() {
         trace!("No hardware info available");
+        create.size_detected = false;
         return Task::none();
     }
 
@@ -46,6 +47,18 @@ pub fn detected_hardware_info(create: &mut Create, runtime_info: &RuntimeInfo) -
     } else {
         None
     };
+
+    // A size read from a device replaces the selected size where the board
+    // supports it
+    create.size_detected = false;
+    if create.selected_hw_info.board_size.is_some()
+        && let Some(size) = hw_info.board_size
+        && let Some(board) = create.selected_hw_info.board
+        && Create::board_sizes(board).contains(&size)
+    {
+        create.board_size_selected(size);
+        create.size_detected = true;
+    }
 
     let msg2 = if create.has_board()
         && let Some(mcu) = hw_info.mcu_variant
@@ -112,6 +125,8 @@ pub fn flash_firmware_result(create: &mut Create, result: Result<(), String>) ->
             create.display_content = "Firmware flashed successfully.".to_string();
         }
         Err(e) => {
+            // Each further line sits beneath the first line's text
+            let e = e.replace('\n', "\n  ");
             create.display_content = format!("Error flashing firmware:\n  - {e}");
         }
     }

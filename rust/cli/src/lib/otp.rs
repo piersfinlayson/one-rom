@@ -6,6 +6,7 @@
 
 use log::debug;
 use onerom_app::{OtpAccess, OtpError, read_commissioning};
+use onerom_config::hw::Board;
 use onerom_metadata::otp::{CommissioningArea, CommissioningInstance};
 use onerom_metadata::{MaybeKnown, OTP_PAGE_ROWS, OneromBoardSize};
 use picoboot::cmd::PicobootStatus;
@@ -35,7 +36,11 @@ impl PicobootOtp {
         if lab_running(device) {
             return Err(Error::OtpLabRunning(device.to_string()));
         }
-        let mut picoboot = get_picoboot(device, false).await?;
+        Self::connect(get_picoboot(device, false).await?).await
+    }
+
+    /// Reaches OTP through `picoboot`.
+    pub(crate) async fn connect(mut picoboot: Picoboot) -> Result<Self, Error> {
         // A previous operation can leave an endpoint halted.
         picoboot
             .connect()
@@ -208,7 +213,7 @@ impl Commissioning {
 
 /// Reads the board size `device`'s OTP configures. A failure is logged at debug
 /// level.
-pub(crate) async fn read_board_size(device: &Device) -> Option<OneromBoardSize> {
+pub(crate) async fn read_otp_board_size(device: &Device) -> Option<OneromBoardSize> {
     let size = match PicobootOtp::open(device).await {
         Ok(mut otp) => onerom_app::read_board_size(&mut otp)
             .await
@@ -260,9 +265,75 @@ pub fn format_date(date: &str) -> String {
     }
 }
 
+/// Refuses an image for `image` on a board commissioned as `commissioned`.
+/// With `force` it warns instead.
+pub fn check_board(commissioned: Option<&str>, image: Board, force: bool) -> Result<(), Error> {
+    let Some(commissioned) = commissioned else {
+        return Ok(());
+    };
+    if Board::try_from_str(commissioned) == Some(image) {
+        return Ok(());
+    }
+    let commissioned = escape_controls(commissioned);
+    if force {
+        eprintln!(
+            "Warning: image board type '{}' does not match the commissioned board type '{commissioned}' (continuing due to --force)",
+            image.name()
+        );
+        Ok(())
+    } else {
+        Err(Error::CommissionedBoardMismatch {
+            commissioned,
+            image: image.name().to_string(),
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn board(name: &str) -> Board {
+        Board::try_from_str(name).unwrap()
+    }
+
+    #[test]
+    fn a_board_without_commissioning_takes_any_image() {
+        assert!(check_board(None, board("fire-24-f"), false).is_ok());
+    }
+
+    #[test]
+    fn a_commissioned_board_takes_an_image_for_its_board() {
+        assert!(check_board(Some("fire-24-f"), board("fire-24-f"), false).is_ok());
+    }
+
+    #[test]
+    fn an_image_for_another_board_needs_force() {
+        let error = check_board(Some("fire-24-f"), board("fire-24-e"), false).unwrap_err();
+        assert!(
+            matches!(&error, Error::CommissionedBoardMismatch { commissioned, image }
+                if commissioned == "fire-24-f" && image == "fire-24-e"),
+            "{error}"
+        );
+        assert!(check_board(Some("fire-24-f"), board("fire-24-e"), true).is_ok());
+    }
+
+    /// A board name this build doesn't know can't be the image's board.
+    #[test]
+    fn an_unknown_commissioned_board_needs_force() {
+        assert!(check_board(Some("fire-99-z"), board("fire-24-f"), false).is_err());
+        assert!(check_board(Some("fire-99-z"), board("fire-24-f"), true).is_ok());
+    }
+
+    #[test]
+    fn a_commissioned_board_is_shown_with_its_control_characters_escaped() {
+        let error = check_board(Some("fire\u{1b}[2J"), board("fire-24-f"), false).unwrap_err();
+        assert!(
+            matches!(&error, Error::CommissionedBoardMismatch { commissioned, .. }
+                if commissioned == "fire\\u{1b}[2J"),
+            "{error}"
+        );
+    }
 
     #[test]
     fn a_read_stays_within_a_page() {

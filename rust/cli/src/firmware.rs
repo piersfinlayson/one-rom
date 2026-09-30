@@ -12,23 +12,23 @@ use onerom_config::mcu::RP235X_BASE_FLASH;
 use onerom_config::mcu::Variant;
 use onerom_fw::net::{Release, Releases, fetch_license_async};
 use onerom_fw::{assemble_firmware, get_rom_files_async, read_rom_config, validate_sizes};
-use onerom_fw_parser::readers::{MemoryReader, RegionKind};
-use onerom_fw_parser::{ParsedDevice, Parser, SlotKind};
+use onerom_fw_parser::readers::MemoryReader;
+use onerom_fw_parser::{ParsedDevice, SlotKind};
 use onerom_gen::ChipSetType;
 use onerom_gen::compat::{
     ChipCompat, check_chip_set_on_board, default_cs_config, format_size, supported_chips,
 };
 use onerom_gen::{
     Builder, Config, ConfigOverrides, Error as GenError, FIRMWARE_SIZE, FlashChips, License,
-    supports_board_size,
+    second_chip_supported, supports_board_size,
 };
 use onerom_lab_parser::LabParser;
-use onerom_metadata::FLASH_CS1_BASE_ADDR;
 
 use crate::args;
 use crate::args::hardware::supported_size;
 use crate::utils::{check_fire_board, resolve_board, resolve_firmware_output};
 use onerom_cli::error::image_file_warning;
+use onerom_cli::image::parse_firmware;
 use onerom_cli::plugin::{
     PluginNote, PluginSpec, ResolvedPlugin, check_config_plugins, resolve_plugins,
 };
@@ -123,7 +123,7 @@ pub async fn verify_assembled_firmware(
     force: bool,
     expected_board: Option<Board>,
 ) -> Result<ParsedDevice, Error> {
-    let info = parse_firmware(data).await?;
+    let info = parse_firmware(data).await;
 
     if let (Some(expected), Some(actual)) = (expected_board, info.get_board()) {
         if actual != expected {
@@ -190,24 +190,6 @@ fn refuse_image_file(info: &ParsedDevice, len: usize, force: bool) -> Result<(),
     }
 }
 
-/// Parses an image file.
-///
-/// A file longer than the first flash chip holds the second chip's contents
-/// after the first chip's, and they're read at the second chip's address.
-pub async fn parse_firmware(data: &[u8]) -> Result<ParsedDevice, Error> {
-    let first_len = FlashChips::first_for(Variant::RP2350).len();
-    let (first, second) = data.split_at(data.len().min(first_len));
-    // The hardcoded base address looks odd here, as the STM32's base flash
-    // address, but when using a memory reader, onerom-fw-parser will just figure
-    // it out for itself based on what it finds in the image.
-    let mut reader = MemoryReader::new(first.to_vec(), 0x0800_0000);
-    if !second.is_empty() {
-        reader.add_region(RegionKind::Flash, second.to_vec(), FLASH_CS1_BASE_ADDR);
-    }
-    let mut parser = Parser::new(&mut reader);
-    Ok(parser.parse_device().await)
-}
-
 fn check_firmware_size(options: &Options, data: &[u8]) -> Result<(), Error> {
     if options.verbose {
         println!("Firmware size {} bytes", data.len());
@@ -260,7 +242,7 @@ async fn acquire_local_firmware(
     }
     let data = std::fs::read(firmware).map_err(|e| Error::io(firmware, e))?;
     check_firmware_size(options, &data)?;
-    let info = parse_firmware(&data).await?;
+    let info = parse_firmware(&data).await;
     let version = info
         .version()
         .ok_or_else(|| Error::Other("Could not determine firmware version".to_string()))?;
@@ -468,15 +450,10 @@ fn advise_second_chip(
     let Error::SlotDoesNotFit { error, .. } = error else {
         return error;
     };
-    let second_chip = |size| FlashChips::new(mcu, size).second().is_some();
-    let supported = BoardSize::supported_values().iter().any(|&other| {
-        second_chip(other)
-            && supported_size(board, other).is_ok()
-            && supports_board_size(version, other)
-    });
+    let second_chip = FlashChips::new(mcu, size).second().is_some();
     Error::SlotDoesNotFit {
         error,
-        advise_second_chip: !second_chip(size) && supported,
+        advise_second_chip: !second_chip && second_chip_supported(board, version),
     }
 }
 
@@ -690,7 +667,7 @@ pub async fn cmd_inspect(
         println!("Firmware size: {} bytes", data.len());
     }
 
-    let info = parse_firmware(&data).await?;
+    let info = parse_firmware(&data).await;
     print_firmware_info(options, &info, &data).await
 }
 
@@ -1191,6 +1168,7 @@ fn parse_plugin_specs(raw: &[String]) -> Result<Vec<PluginSpec>, Error> {
 mod tests {
     use super::*;
     use crate::test_board::{IMAGE_27C400, image_file, move_slot};
+    use onerom_metadata::FLASH_CS1_BASE_ADDR;
 
     /// `chips --board` lists every chip type the board can emulate, which is
     /// wider than `Board::supported_chip_type_names()` - that covers only the
@@ -1252,7 +1230,7 @@ mod tests {
     async fn an_image_on_the_first_chip_is_read_from_the_first_chip() {
         let file = image_file(BoardSize::M, 3);
         assert!(file.len() <= FIRST_CHIP);
-        let image = parse_firmware(&file).await.unwrap();
+        let image = parse_firmware(&file).await;
         assert!(
             image.parse_errors().is_empty(),
             "{:?}",

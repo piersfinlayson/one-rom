@@ -65,6 +65,7 @@ assets = [
 ]
 
 [dependencies]
+onerom-app = { workspace = true }
 onerom-cli = { workspace = true }
 onerom-config = { workspace = true, features = ["schemars"] }
 onerom-fw = { workspace = true }
@@ -75,6 +76,7 @@ onerom-metadata = { workspace = true }
 dfu-rs = "0.2.1"
 picoboot = { version = "0.3.0", features = ["reader", "tokio"] }
 
+airfrog-rpc = "0.1.2"
 arc-swap = "1.7"
 chrono = "0.4"
 directories = "6.0"

@@ -37,7 +37,7 @@ pub use image::{Chip, ChipSet, ChipSetType, CsConfig, CsLogic, FileFormat, SizeH
 pub use image::{MAX_IMAGE_SIZE, PAD_BLANK_BYTE, PAD_NO_CHIP_BYTE};
 pub use image::{num_excess_addr_lines, requires_half_select_cs1};
 pub use meta::{MAX_METADATA_LEN, Metadata, PAD_METADATA_BYTE};
-use onerom_config::mcu::Family;
+use onerom_config::mcu::{Family, Variant};
 pub use srec::{SrecError, decode_srec, encode_srec};
 pub use transform::{
     TRANSFORM_LIST_SEPARATOR, Transform, TransformError, apply_transforms, format_transform_list,
@@ -101,6 +101,24 @@ pub const MIN_FIRMWARE_OVERRIDES_VERSION: FirmwareVersion = FirmwareVersion::new
 /// boot and doesn't set the second chip's clock divisor.
 pub fn supports_board_size(version: FirmwareVersion, size: BoardSize) -> bool {
     size == BoardSize::M || version >= FirmwareVersion::new(0, 8, 0, 0)
+}
+
+/// Whether `board` supports a `size` board. A size with a second flash chip
+/// requires a board that supports external flash.
+pub fn board_supports_size(board: Board, size: BoardSize) -> bool {
+    // Board sizes are for Fire boards.
+    let second_chip = FlashChips::new(Variant::RP2350, size).second().is_some();
+    !second_chip || board.external_flash_cs_pin().is_some()
+}
+
+/// Whether `board` and firmware `version` both support a size with a second
+/// flash chip.
+pub fn second_chip_supported(board: Board, version: FirmwareVersion) -> bool {
+    BoardSize::supported_values().iter().any(|&size| {
+        FlashChips::new(Variant::RP2350, size).second().is_some()
+            && board_supports_size(board, size)
+            && supports_board_size(version, size)
+    })
 }
 
 /// Error type
@@ -1142,7 +1160,32 @@ impl Location {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use onerom_config::mcu::Variant;
+
+    /// Only a board that supports external flash supports a size with a
+    /// second flash chip.
+    #[test]
+    fn a_second_chip_needs_external_flash() {
+        let fire_40_a = Board::try_from_str("fire-40-a").unwrap();
+        let fire_24_f = Board::try_from_str("fire-24-f").unwrap();
+        for &size in BoardSize::supported_values() {
+            assert!(board_supports_size(fire_40_a, size), "{size}");
+            let second = FlashChips::new(Variant::RP2350, size).second().is_some();
+            assert_eq!(board_supports_size(fire_24_f, size), !second, "{size}");
+        }
+    }
+
+    /// A second chip is supported where the board and the firmware both
+    /// support a size with one.
+    #[test]
+    fn a_second_chip_needs_the_board_and_the_firmware() {
+        let fire_40_a = Board::try_from_str("fire-40-a").unwrap();
+        let fire_24_f = Board::try_from_str("fire-24-f").unwrap();
+        let old = FirmwareVersion::new(0, 7, 3, 0);
+        let new = FirmwareVersion::new(0, 8, 0, 0);
+        assert!(second_chip_supported(fire_40_a, new));
+        assert!(!second_chip_supported(fire_40_a, old));
+        assert!(!second_chip_supported(fire_24_f, new));
+    }
 
     /// The ROM budget is the flash less the firmware and metadata regions -
     /// 1984KB of the RP2350's 2MB. Both builder paths bound their composed ROM

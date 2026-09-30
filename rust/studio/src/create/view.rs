@@ -9,7 +9,8 @@ use iced::{Element, Length};
 #[allow(unused_imports)]
 use log::{debug, error, info, trace, warn};
 
-use onerom_config::hw::MODELS;
+use onerom_config::hw::{BoardSize, MODELS};
+use onerom_gen::supports_board_size;
 
 use crate::config::Config;
 use crate::create::{Create, Message};
@@ -34,9 +35,11 @@ pub fn view<'a>(
 
         // Add firmware row if hardware selected
         if create.hardware_selected() {
-            columns = columns
-                .push(firmware_row(create, runtime_info))
-                .push(Style::horiz_line());
+            columns = columns.push(firmware_row(create, runtime_info));
+            if let Some(note) = board_size_note(create, runtime_info) {
+                columns = columns.push(note);
+            }
+            columns = columns.push(Style::horiz_line());
         }
 
         // Add config row if hardware selected and release selected and configs exist
@@ -255,6 +258,31 @@ fn firmware_row<'a>(
     .into()
 }
 
+// The note displayed where the selected firmware doesn't support the
+// selected board size so the image is built for M
+fn board_size_note<'a>(
+    create: &'a Create,
+    runtime_info: &'a RuntimeInfo,
+) -> Option<iced::Element<'a, AppMessage>> {
+    let size = create.selected_hw_info.board_size?;
+    let version = runtime_info.selected_firmware()?.firmware_version().ok()?;
+    if supports_board_size(version, size) {
+        return None;
+    }
+    let note = format!(
+        "Firmware v{}.{}.{} doesn't support board sizes other than M.",
+        version.major(),
+        version.minor(),
+        version.patch()
+    );
+    Some(
+        row![Style::text_body(note).color(Style::COLOUR_DARK_GOLD)]
+            .spacing(20)
+            .align_y(iced::alignment::Vertical::Center)
+            .into(),
+    )
+}
+
 fn select_hw_heading_row() -> Element<'static, AppMessage> {
     row![Style::text_h3("Select Hardware")].into()
 }
@@ -299,6 +327,24 @@ fn select_hw_row(create: &Create) -> iced::Element<'_, AppMessage> {
         .spacing(10)
         .align_y(iced::alignment::Vertical::Center);
 
+    // Set up board size picker for a board supporting more than M
+    let size_values = create
+        .selected_hw_info
+        .board
+        .map(Create::board_sizes)
+        .unwrap_or_default();
+    let size_picker = (size_values.len() > 1).then(|| {
+        let msg = if create.is_busy() {
+            |_| AppMessage::Nop // Ignore picklist selection while busy
+        } else {
+            |size: BoardSize| Message::BoardSizeSelected(size).into()
+        };
+        let picker = Style::pick_list_small(size_values, create.selected_hw_info.board_size, msg);
+        row![Style::text_body("Board Size:"), picker,]
+            .spacing(10)
+            .align_y(iced::alignment::Vertical::Center)
+    });
+
     // Set up MCU picker
     let mcu_values = if let Some(vars) = &create.mcu_variants {
         vars.as_slice()
@@ -315,9 +361,11 @@ fn select_hw_row(create: &Create) -> iced::Element<'_, AppMessage> {
         .spacing(10)
         .align_y(iced::alignment::Vertical::Center);
 
-    row![model_picker, board_picker, mcu_picker]
-        .spacing(20)
-        .into()
+    let mut hw_row = row![model_picker, board_picker].spacing(20);
+    if let Some(size_picker) = size_picker {
+        hw_row = hw_row.push(size_picker);
+    }
+    hw_row.push(mcu_picker).into()
 }
 
 // Create the "Select Hardware" section.  Return as a column for the rest of the

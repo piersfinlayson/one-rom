@@ -10,7 +10,7 @@ use log::{debug, error, info, trace, warn};
 use std::path::PathBuf;
 
 use onerom_config::chip::ChipType;
-use onerom_config::hw::{Board, Model};
+use onerom_config::hw::{Board, BoardSize, Model};
 use onerom_config::mcu::Variant as McuVariant;
 use onerom_fw::net::Release;
 
@@ -36,6 +36,7 @@ use super::build::{Active, select_cs_active, select_data_vec, select_rom_type};
 pub enum Message {
     // Hardware and firmware release picklist values changed
     BoardSelected(Board),
+    BoardSizeSelected(BoardSize),
     ModelSelected(Model),
     McuSelected(McuVariant),
     ReleaseSelected(Release),
@@ -105,6 +106,12 @@ pub fn message(
         Message::BoardSelected(board) => {
             debug!("Board selected: {}", board.name());
             task_from_msg!(create.board_selected(runtime_info, board))
+        }
+        Message::BoardSizeSelected(size) => {
+            debug!("Board size selected: {size}");
+            create.board_size_selected(size);
+            create.size_detected = false;
+            Task::none()
         }
         Message::McuSelected(mcu) => {
             debug!("MCU selected: {}", mcu);
@@ -216,6 +223,7 @@ impl std::fmt::Display for Message {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Message::BoardSelected(board) => write!(f, "BoardSelected({})", board.name()),
+            Message::BoardSizeSelected(size) => write!(f, "BoardSizeSelected({size})"),
             Message::ModelSelected(model) => write!(f, "ModelSelected({})", model.name()),
             Message::McuSelected(mcu) => write!(f, "McuSelected({mcu})"),
             Message::ReleaseSelected(release) => {
