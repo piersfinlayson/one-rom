@@ -1801,6 +1801,9 @@ Commissioning sets hardware properties in the RP2350's [OTP](/docs/OTP.md) (One
 Time Programmable) memory, which cannot be erased.
 [COMMISSIONING](/docs/COMMISSIONING.md) describes the process.
 
+`commission`, `request-signature` and `set-size` require an RP2350 of stepping
+A3 or A4, as One ROM requires one of these steppings.
+
 ```
 onerom hardware <COMMAND>
 ```
@@ -1867,7 +1870,7 @@ onerom hardware commission --board fire-40-b --size M --manufacturer "Acme Retro
 
 | Option | Description |
 |---|---|
-| `--board, -b <BOARD>` | Board type, for example `fire-40-b`. Must be a Fire board. Required. |
+| `--board, -b <BOARD>` | Board type, for example `fire-40-b`. Must be a Fire board with the matching RP2350 package (A or B). Required. |
 | `--size <SIZE>` | The board's [size](#board-sizes), for example `M`. Required for a board that supports external flash. |
 | `--manufacturer <NAME>` | Manufacturer's name, for example `"Acme Retro"`. Printable ASCII without `*` or a leading or trailing space. Required. |
 | `--signer <URL>` | Signing server's address, for example `https://sign.internal.example.com`. Must use https. Requires `--key-id`. |
@@ -1958,7 +1961,7 @@ onerom hardware request-signature --board fire-24-f
 
 | Option | Description |
 |---|---|
-| `--board, -b <BOARD>` | Board type, for example `fire-40-b`. Must be a Fire board. Required. |
+| `--board, -b <BOARD>` | Board type, for example `fire-40-b`. Must be a Fire board with the matching RP2350 package (A or B). Required. |
 | `--size <SIZE>` | The board's [size](#board-sizes), for example `M`. Required for a board that supports external flash. |
 
 Requesting a signature for a `fire-40-b` as M:
@@ -2048,7 +2051,7 @@ onerom hardware set-size --board fire-40-b --size L --dry-run
 
 | Option | Description |
 |---|---|
-| `--board, -b <BOARD>` | Board type, for example `fire-40-b`. Must be a Fire board. Required. |
+| `--board, -b <BOARD>` | Board type, for example `fire-40-b`. Must be a Fire board with the matching RP2350 package (A or B), even with `--force`. Required. |
 | `--size <SIZE>` | The board's [size](#board-sizes), for example `L`. Required. |
 | `--force, -f` | Set the size of a One ROM whose firmware is for another board type. |
 | `--dry-run` (alias `--dryrun`) | List what would be written without writing it. |

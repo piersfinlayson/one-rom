@@ -368,6 +368,13 @@ value = 64
 comment = "Rows in an OTP page."
 
 [[constants]]
+name = "OTP_NUM_GPIOS_ROW"
+type = "u16"
+value = 0x018
+comment = """OTP row of NUM_GPIOS, which the factory writes. It holds 30 on an RP2350A
+(QFN60) and 48 on an RP2350B (QFN80)."""
+
+[[constants]]
 name = "OTP_COMMISSIONING_AREA_FIRST_ROW"
 type = "u16"
 value = 0x0c0

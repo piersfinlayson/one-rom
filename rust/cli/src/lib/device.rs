@@ -83,8 +83,8 @@ pub struct Device {
     /// identity, used to track it across reboots where the USB serial changes
     /// (bootloader mode, or a programmed serial override).
     pub chip_id: Option<Rp235xChipId>,
-    /// The RP2350 package variant (RP235xA/RP235xB), if it has been read.
-    /// Populated when read from a running device via GET_INFO.
+    /// The RP2350 package variant (RP235xA/RP235xB), if it has been read, as
+    /// [`ChipInfo::package`](crate::usb::ChipInfo::package) describes it.
     pub rp_variant: Option<RpVariant>,
     /// The device's commissioning area. Enumeration reads it.
     pub commissioning: Commissioning,
@@ -196,8 +196,9 @@ impl Device {
     #[allow(clippy::wildcard_enum_match_arm)]
     fn update_state(&mut self) {
         self.usb_can_run = false;
-        // A device on a bootloader's USB ID is stopped whatever its flash
-        // holds.
+        // A device on a bootloader's USB ID is stopped even where its flash
+        // doesn't hold firmware this build recognises. Runtime info found in
+        // RAM below overrides that.
         self.state = if is_bootloader(self.vid, self.pid) {
             DeviceState::Stopped
         } else {

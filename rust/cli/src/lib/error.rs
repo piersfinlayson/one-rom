@@ -549,6 +549,35 @@ pub enum Error {
     #[error("Firmware board type '{firmware}' does not match board type '{board}'.")]
     RequestSignatureFirmwareForAnotherBoard { firmware: String, board: String },
 
+    /// A `hardware` command found an RP2350 stepping One ROM doesn't support.
+    /// `stepping` is `A2` or the bootrom version of one this CLI doesn't know.
+    /// `--force` doesn't override it so there's no advice.
+    #[error(
+        "This One ROM's RP2350 is stepping {stepping}, which One ROM doesn't support. It supports A3 and A4."
+    )]
+    UnsupportedStepping { stepping: String },
+
+    /// A `hardware` command found the bootrom's package and OTP's NUM_GPIOS
+    /// disagree.
+    #[error("This One ROM's bootloader reports an {package} but it reports {num_gpios} GPIOs.")]
+    PackageConflict { package: String, num_gpios: u16 },
+
+    /// A `hardware` command found an RP2350 package other than the one
+    /// `--board` is for. `--force` doesn't override it so there's no advice.
+    #[error("Board type '{board}' is for an {board_package} but this One ROM has an {package}.")]
+    PackageForAnotherBoard {
+        board: String,
+        board_package: String,
+        package: String,
+    },
+
+    /// A `hardware` command couldn't read the RP2350 package to check it
+    /// against `--board`, or OTP's NUM_GPIOS holds neither package's count.
+    #[error(
+        "Couldn't read this One ROM's RP2350 package to check it against board type '{board}'."
+    )]
+    PackageUnknown { board: String },
+
     /// An encrypted key file without a PIN.
     #[error("Key file {0} is encrypted.\n  Use --pin or run the command in a terminal.")]
     KeyFileEncrypted(String),

@@ -97,6 +97,17 @@ impl RpVariant {
             _ => None,
         }
     }
+
+    /// Construct from OTP's `NUM_GPIOS` row, which the factory writes: `30` is
+    /// the QFN-60 (RP235xA), `48` is the QFN-80 (RP235xB). Returns `None` for
+    /// any other value.
+    pub fn from_num_gpios(num_gpios: u16) -> Option<Self> {
+        match num_gpios {
+            30 => Some(RpVariant::Rp235xA),
+            48 => Some(RpVariant::Rp235xB),
+            _ => None,
+        }
+    }
 }
 
 impl core::fmt::Display for RpVariant {
@@ -540,6 +551,17 @@ impl core::fmt::Display for Rp235xChipId {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// NUM_GPIOS is 30 on the QFN-60 and 48 on the QFN-80. Any other value,
+    /// including an unwritten 0, isn't a package.
+    #[test]
+    fn num_gpios_gives_the_package() {
+        assert_eq!(RpVariant::from_num_gpios(30), Some(RpVariant::Rp235xA));
+        assert_eq!(RpVariant::from_num_gpios(48), Some(RpVariant::Rp235xB));
+        for other in [0, 29, 31, 47, 49, 0x130, u16::MAX] {
+            assert_eq!(RpVariant::from_num_gpios(other), None, "{other}");
+        }
+    }
 
     #[test]
     fn rp235xa_adc_pins_are_3v3_only() {

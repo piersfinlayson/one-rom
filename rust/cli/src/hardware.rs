@@ -19,19 +19,21 @@ use std::path::Path;
 use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
 use crossterm::terminal;
 use onerom_app::{
-    BoardSize, CommissionError, LocalFetch, LocalOtpAccess, Plan, Request, RequestDate, RowValue,
-    Signer, SignerTable, Step, StepKind, Verdict, plan_size, prepare, read_board_size,
+    BoardSize, CommissionError, LocalFetch, LocalOtpAccess, OtpError, Plan, Request, RequestDate,
+    RowValue, Signer, SignerTable, Step, StepKind, Verdict, plan_size, prepare, read_board_size,
     read_chip_id, read_commissioning, verify_instance,
 };
 use onerom_cli::error::NEWER_DATA;
 use onerom_cli::otp::{PicobootOtp, board_size_text, escape_controls, format_date};
 use onerom_cli::signing::{KeyFile, SigningServer};
-use onerom_cli::{CliFetch, DeviceState, Error, Options};
+use onerom_cli::usb::{read_device_chip_info, read_memory};
+use onerom_cli::{CliFetch, Device, DeviceState, Error, Options};
 use onerom_config::hw::Board;
-use onerom_metadata::MaybeKnown;
+use onerom_config::mcu::RpVariant;
 use onerom_metadata::otp::{
     AreaIssue, BuildError, CommissioningInstance, CommissioningValues, format_chip_id, white_label,
 };
+use onerom_metadata::{MaybeKnown, OTP_NUM_GPIOS_ROW};
 use serde::Serialize;
 
 use crate::args::hardware::{
@@ -278,7 +280,7 @@ async fn commission(
     let device = options.device.as_ref().unwrap();
     println!("{device}");
 
-    let mut otp = PicobootOtp::open(device).await?;
+    let mut otp = open_checked(device, args.board).await?;
     commission_otp(
         &mut otp,
         args,
@@ -801,7 +803,7 @@ pub async fn cmd_set_size(options: &mut Options, args: &HardwareSetSizeArgs) -> 
 async fn set_size(options: &Options, args: &HardwareSetSizeArgs) -> Result<bool, Error> {
     let device = options.device.as_ref().unwrap();
     println!("{device}");
-    let mut otp = PicobootOtp::open(device).await?;
+    let mut otp = open_checked(device, args.board).await?;
     set_size_otp(
         &mut otp,
         args,
@@ -1112,7 +1114,7 @@ async fn request_signature(
 ) -> Result<(), Error> {
     let device = options.device.as_ref().unwrap();
     println!("{device}");
-    let mut otp = PicobootOtp::open(device).await?;
+    let mut otp = open_checked(device, args.board).await?;
     request_signature_otp(&mut otp, args, &mut std::io::stdout()).await
 }
 
@@ -1587,6 +1589,92 @@ pub(crate) fn firmware_warning(command: OtpCommand, firmware: Board, board: Boar
         firmware.name(),
         board.name()
     )
+}
+
+/// The word whose last byte is the RP2350 bootrom's version. The version
+/// identifies the stepping, as picotool reads it: 2 is A2, 3 is A3 and 4 is
+/// A4.
+const BOOTROM_VERSION_WORD: u32 = 0x10;
+
+/// What the stopped One ROM's RP2350 reports about itself.
+pub(crate) struct Silicon {
+    /// The bootrom's version.
+    pub(crate) bootrom_version: u8,
+    /// The package the bootrom's GET_INFO reports.
+    pub(crate) bootrom_package: Option<RpVariant>,
+    /// OTP's NUM_GPIOS row.
+    pub(crate) num_gpios: u16,
+}
+
+/// Reads the stopped One ROM's RP2350 and checks it against `board` as
+/// [`check_silicon`] does. Then opens its OTP.
+async fn open_checked(device: &Device, board: Board) -> Result<PicobootOtp, Error> {
+    // These two each open and close their own handle, so they run before
+    // OTP's opens and only one is open at a time.
+    let word = read_memory(device, BOOTROM_VERSION_WORD, 4).await?;
+    let info = read_device_chip_info(device).await?;
+    let mut otp = PicobootOtp::open(device).await?;
+    let rows = otp.read_ecc(OTP_NUM_GPIOS_ROW, 1).await?;
+    let [num_gpios] = rows[..] else {
+        return Err(OtpError::Transport(format!("a read of 1 row returned {}", rows.len())).into());
+    };
+    let silicon = Silicon {
+        bootrom_version: word[3],
+        bootrom_package: info.bootrom_package,
+        num_gpios,
+    };
+    check_silicon(board, &silicon)?;
+    Ok(otp)
+}
+
+/// Refuses `board` unless the stopped One ROM's RP2350, as `silicon`
+/// describes it, is:
+/// - stepping A3 or A4, the steppings One ROM supports
+/// - the package `board` is for, by both the bootrom and OTP's NUM_GPIOS
+///
+/// The stepping comes first because an A2's bootrom reports the wrong
+/// package. `--force` doesn't override any of these. A board's PCB fixes its
+/// package so a board type for the other package is always wrong.
+pub(crate) fn check_silicon(board: Board, silicon: &Silicon) -> Result<(), Error> {
+    let stepping = match silicon.bootrom_version {
+        3 | 4 => None,
+        2 => Some("A2".to_string()),
+        other => Some(format!("unknown (bootrom version {other})")),
+    };
+    if let Some(stepping) = stepping {
+        return Err(Error::UnsupportedStepping { stepping });
+    }
+    let (Some(package), Some(otp_package)) = (
+        silicon.bootrom_package,
+        RpVariant::from_num_gpios(silicon.num_gpios),
+    ) else {
+        return Err(Error::PackageUnknown {
+            board: board.name().to_string(),
+        });
+    };
+    if package != otp_package {
+        return Err(Error::PackageConflict {
+            package: package_name(package).to_string(),
+            num_gpios: silicon.num_gpios,
+        });
+    }
+    // Every Fire board has a package, and --board accepts only Fire boards.
+    match board.rp_variant() {
+        Some(board_package) if board_package != package => Err(Error::PackageForAnotherBoard {
+            board: board.name().to_string(),
+            board_package: package_name(board_package).to_string(),
+            package: package_name(package).to_string(),
+        }),
+        _ => Ok(()),
+    }
+}
+
+/// `package` as the RP2350's name and its package, e.g. `RP2350A (QFN60)`.
+fn package_name(package: RpVariant) -> &'static str {
+    match package {
+        RpVariant::Rp235xA => "RP2350A (QFN60)",
+        RpVariant::Rp235xB => "RP2350B (QFN80)",
+    }
 }
 
 /// Reboots the One ROM after a command that can write OTP and returns the
@@ -3614,5 +3702,112 @@ mod tests {
         let text = error.to_string();
         assert!(!text.contains("--"), "{text}");
         assert!(holds(&text, &["fire-24-e", "fire-24-f"]), "{text}");
+    }
+
+    /// An RP2350 of stepping A3 or A4 whose bootrom and NUM_GPIOS both report
+    /// the board's package passes.
+    #[test]
+    fn a3_and_a4_of_the_boards_package_pass() {
+        let board = |name| Board::try_from_str(name).unwrap();
+        for bootrom_version in [3, 4] {
+            let qfn60 = silicon(bootrom_version, Some(RpVariant::Rp235xA), 30);
+            let qfn80 = silicon(bootrom_version, Some(RpVariant::Rp235xB), 48);
+            assert!(check_silicon(board("fire-24-f"), &qfn60).is_ok());
+            assert!(check_silicon(board("fire-40-a"), &qfn80).is_ok());
+        }
+    }
+
+    /// An A2, or a bootrom version this CLI doesn't know, is refused before
+    /// the package is looked at. The unknown version is in the text.
+    #[test]
+    fn a2_and_unknown_steppings_are_refused() {
+        let f = Board::try_from_str("fire-24-f").unwrap();
+        let cases = [(2, "A2"), (1, "1"), (5, "5")];
+        for (bootrom_version, shown) in cases {
+            let error = check_silicon(f, &silicon(bootrom_version, None, 0)).unwrap_err();
+            assert!(
+                matches!(&error, Error::UnsupportedStepping { .. }),
+                "{error}"
+            );
+            let text = error.to_string();
+            assert!(!text.contains("--"), "{text}");
+            assert!(holds(&text, &[shown, "A3", "A4"]), "{text}");
+        }
+    }
+
+    /// A package the bootrom doesn't report, or a NUM_GPIOS that's neither 30
+    /// nor 48, can't be checked and is refused.
+    #[test]
+    fn a_package_that_isnt_known_is_refused() {
+        let f = Board::try_from_str("fire-24-f").unwrap();
+        let cases = [
+            silicon(3, None, 30),
+            silicon(3, Some(RpVariant::Rp235xA), 0),
+            silicon(4, Some(RpVariant::Rp235xA), 29),
+        ];
+        for case in cases {
+            let error = check_silicon(f, &case).unwrap_err();
+            assert!(
+                matches!(&error, Error::PackageUnknown { board } if board == "fire-24-f"),
+                "{error}"
+            );
+            assert!(!error.to_string().contains("--"), "{error}");
+        }
+    }
+
+    /// A bootrom package that NUM_GPIOS contradicts is refused, whatever the
+    /// board.
+    #[test]
+    fn a_conflicting_package_is_refused() {
+        let f = Board::try_from_str("fire-24-f").unwrap();
+        let conflict = silicon(3, Some(RpVariant::Rp235xA), 48);
+        let error = check_silicon(f, &conflict).unwrap_err();
+        assert!(
+            matches!(
+                &error,
+                Error::PackageConflict { package, num_gpios: 48 } if package == "RP2350A (QFN60)"
+            ),
+            "{error}"
+        );
+        let text = error.to_string();
+        assert!(!text.contains("--"), "{text}");
+        assert!(holds(&text, &["RP2350A (QFN60)", "48"]), "{text}");
+    }
+
+    /// A package other than the board's is refused. --force doesn't override
+    /// it so the refusal doesn't advise an option.
+    #[test]
+    fn a_package_must_be_the_boards() {
+        let board = |name| Board::try_from_str(name).unwrap();
+        let qfn60 = silicon(4, Some(RpVariant::Rp235xA), 30);
+        let qfn80 = silicon(4, Some(RpVariant::Rp235xB), 48);
+        let cases = [
+            ("fire-24-f", &qfn80, "RP2350A (QFN60)", "RP2350B (QFN80)"),
+            ("fire-40-a", &qfn60, "RP2350B (QFN80)", "RP2350A (QFN60)"),
+        ];
+        for (name, silicon, board_package, found) in cases {
+            let error = check_silicon(board(name), silicon).unwrap_err();
+            assert!(
+                matches!(
+                    &error,
+                    Error::PackageForAnotherBoard { board, board_package: b, package: p }
+                        if board == name && b == board_package && p == found
+                ),
+                "{error}"
+            );
+            let text = error.to_string();
+            assert!(!text.contains("--"), "{text}");
+            assert!(holds(&text, &[name, board_package, found]), "{text}");
+        }
+    }
+
+    /// A [`Silicon`] of `bootrom_version` whose bootrom reports
+    /// `bootrom_package` and whose NUM_GPIOS holds `num_gpios`.
+    fn silicon(bootrom_version: u8, bootrom_package: Option<RpVariant>, num_gpios: u16) -> Silicon {
+        Silicon {
+            bootrom_version,
+            bootrom_package,
+            num_gpios,
+        }
     }
 }

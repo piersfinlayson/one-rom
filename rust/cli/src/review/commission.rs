@@ -12,6 +12,7 @@ use onerom_cli::otp::escape_controls;
 use onerom_cli::signing::KeyFile;
 use onerom_cli::{Error, Options};
 use onerom_config::hw::Board;
+use onerom_config::mcu::RpVariant;
 use onerom_metadata::otp::format_chip_id;
 use onerom_metadata::otp::pico_otp::ecc_encode;
 use serde::Serialize;
@@ -23,9 +24,9 @@ use super::{
 };
 use crate::args::hardware::{HardwareCommands, HardwareCommissionArgs};
 use crate::hardware::{
-    OtpCommand, SignatureSource, Signing, SigningKeys, ToSign, check_commissioned_otp,
-    check_firmware, check_server_key, commission_otp, firmware_warning, signer_for, signing,
-    signing_key,
+    OtpCommand, SignatureSource, Signing, SigningKeys, Silicon, ToSign, check_commissioned_otp,
+    check_firmware, check_server_key, check_silicon, commission_otp, firmware_warning, signer_for,
+    signing, signing_key,
 };
 use crate::test_board::{
     Files, blank_board, commissioned_board, key, key_file, table, table_allowing,
@@ -640,6 +641,59 @@ async fn firmware_for_another_board() {
     if let Err(e) = result {
         failed(e);
     }
+}
+
+/// RP2350s the CLI refuses to commission. Each is refused after the device
+/// line:
+/// - an A2
+/// - a bootrom version the CLI doesn't know
+/// - a bootrom package that NUM_GPIOS contradicts
+/// - an RP2350A board given as fire-40-a, which is for an RP2350B, with
+///   `--force`
+/// - a package that couldn't be read
+#[tokio::test]
+async fn refused_silicon() {
+    use RpVariant::{Rp235xA, Rp235xB};
+    let board = |name| Board::try_from_str(name).unwrap();
+    let silicon = |bootrom_version, bootrom_package, num_gpios| Silicon {
+        bootrom_version,
+        bootrom_package,
+        num_gpios,
+    };
+    let mut otp = blank_board();
+    let size = size_of(&mut otp).await;
+    let line =
+        "onerom hardware commission --board fire-24-f --manufacturer piers.rocks --key key.pem";
+    let cases = [
+        silicon(2, Some(Rp235xB), 30),
+        silicon(5, Some(Rp235xA), 30),
+        silicon(3, Some(Rp235xA), 48),
+    ];
+    for case in cases {
+        println!("$ {line}");
+        println!("~ {}", device("fire-24-f", size));
+        failed(check_silicon(board("fire-24-f"), &case).unwrap_err());
+        println!();
+    }
+
+    let forced = "onerom hardware commission --board fire-40-a --size M --manufacturer piers.rocks --key key.pem --force";
+    println!("$ {forced}");
+    println!(
+        "~ {}",
+        firmware_warning(
+            OtpCommand::Commission,
+            board("fire-24-f"),
+            board("fire-40-a")
+        )
+    );
+    println!("~ {}", device("fire-24-f", size));
+    let qfn60 = silicon(4, Some(Rp235xA), 30);
+    failed(check_silicon(board("fire-40-a"), &qfn60).unwrap_err());
+    println!();
+
+    println!("$ {line}");
+    println!("~ {}", device("fire-24-f", size));
+    failed(check_silicon(board("fire-24-f"), &silicon(4, None, 30)).unwrap_err());
 }
 
 /// Data from a newer version. First an area holding version 2, then an

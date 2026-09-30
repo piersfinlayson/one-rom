@@ -9,14 +9,14 @@
 
 #[allow(unused_imports)]
 use log::{Level, debug, log, warn};
-use onerom_app::{FlashPlan, FlashStep};
+use onerom_app::{FlashPlan, FlashStep, LocalOtpAccess};
 use onerom_config::mcu::{Rp235xChipId, RpVariant};
 use onerom_fw_parser::{ParsedDevice, Parser};
 use onerom_lab_parser::LabParser;
 use onerom_metadata::otp::CommissioningArea;
 use onerom_metadata::{
-    MaybeKnown, OneromBoardSize, USB_BOOTLOADER_PID, USB_BOOTLOADER_VID, USB_PLUGIN_PID,
-    USB_PLUGIN_VID,
+    MaybeKnown, OTP_NUM_GPIOS_ROW, OneromBoardSize, USB_BOOTLOADER_PID, USB_BOOTLOADER_VID,
+    USB_PLUGIN_PID, USB_PLUGIN_VID,
 };
 use picoboot::cmd::PicobootStatus;
 use picoboot::{
@@ -349,14 +349,19 @@ async fn open_picoboot(device: &Device, long: bool) -> Result<Picoboot, picoboot
     Ok(picoboot)
 }
 
-/// RP2350 chip identity and package variant, read from a device via GET_INFO.
+/// RP2350 chip identity and package variant, read from a device via GET_INFO
+/// and OTP.
 #[derive(Debug, Clone, Copy)]
 pub struct ChipInfo {
     /// The device's invariant chip ID.
     pub chip_id: Rp235xChipId,
-    /// The package variant, present when the response carried a recognised
-    /// `package_sel`.
+    /// The package variant: OTP's `NUM_GPIOS` where it holds one, otherwise
+    /// [`bootrom_package`](Self::bootrom_package).
     pub package: Option<RpVariant>,
+    /// The package variant GET_INFO's `package_sel` reports, present when it's
+    /// a recognised value. An A2 stepping RP2350 reports the wrong package
+    /// here.
+    pub bootrom_package: Option<RpVariant>,
 }
 
 /// Read the RP2350 chip ID and package variant via the picoboot `GET_INFO`
@@ -386,8 +391,11 @@ pub struct ChipInfo {
 /// - a One ROM running an earlier USB plugin returns
 ///   `[count=3, package_sel, lo, hi]`, omitting the returned-flags word
 ///
-/// `package_sel` yields the package variant; an unrecognised value is warned
-/// and returned as `None`, without failing the chip-ID read.
+/// `package_sel` yields the bootrom's package variant; an unrecognised value is
+/// warned and returned as `None`, without failing the chip-ID read. OTP's
+/// `NUM_GPIOS` row is then read for the package, which picotool reads in place
+/// of `package_sel` on an A2 stepping RP2350. A failure to read it isn't
+/// reported, and the package falls back to `package_sel`'s.
 pub async fn read_chip_info(pb: &mut Picoboot) -> Result<ChipInfo, Error> {
     const PB_INFO_SYS: u8 = 0x01;
     const CHIP_INFO_FLAG: u32 = 0x0000_0001;
@@ -422,14 +430,38 @@ pub async fn read_chip_info(pb: &mut Picoboot) -> Result<ChipInfo, Error> {
     }
     let data = (count - 2) * 4;
     let package_sel = word(data);
-    let package = RpVariant::from_package_sel(package_sel);
-    if package.is_none() {
+    let bootrom_package = RpVariant::from_package_sel(package_sel);
+    if bootrom_package.is_none() {
         warn!("Unrecognised RP2350 package_sel {package_sel:#x} in CHIP_INFO");
     }
+    let chip_id = Rp235xChipId::from_chip_info([package_sel, word(data + 4), word(data + 8)]);
     Ok(ChipInfo {
-        chip_id: Rp235xChipId::from_chip_info([package_sel, word(data + 4), word(data + 8)]),
-        package,
+        chip_id,
+        package: package(read_num_gpios(pb).await, bootrom_package),
+        bootrom_package,
     })
+}
+
+/// OTP's `NUM_GPIOS` row on `pb`'s device. `None` where it can't be read.
+async fn read_num_gpios(pb: &Picoboot) -> Option<u16> {
+    let rows = match PicobootOtp::connect(pb.clone()).await {
+        Ok(mut otp) => otp
+            .read_ecc(OTP_NUM_GPIOS_ROW, 1)
+            .await
+            .map_err(Error::from),
+        Err(e) => Err(e),
+    };
+    rows.inspect_err(|e| debug!("Couldn't read NUM_GPIOS from {}: {e}", pb.info()))
+        .ok()
+        .and_then(|rows| rows.first().copied())
+}
+
+/// The package [`ChipInfo::package`] reports: `num_gpios`'s where it holds
+/// one, otherwise `bootrom_package`.
+fn package(num_gpios: Option<u16>, bootrom_package: Option<RpVariant>) -> Option<RpVariant> {
+    num_gpios
+        .and_then(RpVariant::from_num_gpios)
+        .or(bootrom_package)
 }
 
 /// Read the first 64KB from flash on a One ROM Fire device.
@@ -570,7 +602,7 @@ async fn resolve_chip_id(device: &Device) -> (Option<Rp235xChipId>, Option<RpVar
 }
 
 /// Open a fresh picoboot handle to a discovered device and read its chip info.
-async fn read_device_chip_info(device: &Device) -> Result<ChipInfo, Error> {
+pub async fn read_device_chip_info(device: &Device) -> Result<ChipInfo, Error> {
     let mut picoboot = get_picoboot(device, false).await?;
     read_chip_info(&mut picoboot).await
 }
@@ -1397,6 +1429,19 @@ pub async fn gpio_query_all(device: &Device, caps: &Caps) -> Result<Vec<GpioEntr
 mod tests {
     use super::*;
     use nusb::transfer::TransferError;
+
+    /// The package comes from NUM_GPIOS where it holds one, so an A2 QFN60
+    /// whose bootrom reports the QFN80 is an RP235xA. Otherwise it's the
+    /// bootrom's.
+    #[test]
+    fn num_gpios_wins_over_the_bootrom() {
+        use RpVariant::{Rp235xA, Rp235xB};
+        assert_eq!(package(Some(30), Some(Rp235xB)), Some(Rp235xA));
+        assert_eq!(package(Some(48), Some(Rp235xA)), Some(Rp235xB));
+        assert_eq!(package(Some(0), Some(Rp235xB)), Some(Rp235xB));
+        assert_eq!(package(None, Some(Rp235xA)), Some(Rp235xA));
+        assert_eq!(package(None, None), None);
+    }
 
     /// A device that could not be read, with everything but the class fixed,
     /// so a test says only what it is about.
