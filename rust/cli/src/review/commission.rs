@@ -23,10 +23,13 @@ use super::{
 };
 use crate::args::hardware::{HardwareCommands, HardwareCommissionArgs};
 use crate::hardware::{
-    OtpCommand, SignatureSource, Signing, ToSign, check_firmware, check_server_key, commission_otp,
-    firmware_warning, signer_for, signing, signing_key,
+    OtpCommand, SignatureSource, Signing, SigningKeys, ToSign, check_commissioned_otp,
+    check_firmware, check_server_key, commission_otp, firmware_warning, signer_for, signing,
+    signing_key,
 };
-use crate::test_board::{blank_board, commissioned_board, key, key_file, table, table_allowing};
+use crate::test_board::{
+    Files, blank_board, commissioned_board, key, key_file, table, table_allowing,
+};
 
 /// `line`, which starts `onerom hardware commission`, parsed and checked as the
 /// CLI does. `key.pem` stands for `key`. Returns the arguments and the options
@@ -52,35 +55,36 @@ fn args_of(words: &[&str]) -> (HardwareCommissionArgs, Options) {
 }
 
 /// Prints the transcript of `line` commissioning `otp` with the test key file.
-/// `typed` is what the user types.
-async fn commission(otp: &mut MemoryOtp, line: &str, typed: &str) {
+/// `typed` is what the user types. Returns whether it wrote to OTP.
+async fn commission(otp: &mut MemoryOtp, line: &str, typed: &str) -> bool {
     let (_dir, key) = key_file();
     let signing = Signing::File(KeyFile::read(&key, None).unwrap());
-    commission_signed(otp, line, typed, &signing).await;
+    commission_signed(otp, line, typed, &signing).await
 }
 
 /// Prints the transcript of `line` commissioning `otp` with `signing`
-/// signing. `typed` is what the user types.
+/// signing. `typed` is what the user types. Returns whether it wrote to OTP.
 async fn commission_signed<S: SignatureSource>(
     otp: &mut MemoryOtp,
     line: &str,
     typed: &str,
     signing: &S,
-) {
+) -> bool {
     println!("$ {}", short_line(line));
-    run_signed(otp, line, typed, signing, None).await;
+    run_signed(otp, line, typed, signing, None).await
 }
 
 /// Prints what `line` prints commissioning `otp` with `signing` signing, from
 /// the device line on. `typed` is what the user types. `lines` is how many
 /// lines after the device line are printed. All of them where `None`.
+/// Returns whether it wrote to OTP.
 async fn run_signed<S: SignatureSource>(
     otp: &mut MemoryOtp,
     line: &str,
     typed: &str,
     signing: &S,
     lines: Option<usize>,
-) {
+) -> bool {
     let (_dir, key) = key_file();
     let (args, options) = commission_args(line, &key);
     let table = table(None);
@@ -104,9 +108,46 @@ async fn run_signed<S: SignatureSource>(
         for text in shown.lines().take(lines) {
             println!("{text}");
         }
-        return;
+        return matches!(result, Ok(true));
     }
     print!("{shown}");
+    match result {
+        Ok(wrote) => wrote,
+        Err(e) => {
+            failed(e);
+            false
+        }
+    }
+}
+
+/// Prints the transcript of `line` commissioning the stopped board `otp` with
+/// the test key file, then what `--validate` and `--inspect-otp` print where
+/// `line` sets them. `typed` is what the user types.
+async fn commission_then_check(otp: &mut MemoryOtp, line: &str, typed: &str) {
+    let wrote = commission(otp, line, typed).await;
+    let (_dir, key) = key_file();
+    let (args, options) = commission_args(line, &key);
+    if !(wrote && (args.validate || args.inspect_otp)) {
+        return;
+    }
+    if options.verbose {
+        println!("~ Rebooting device into stopped mode...");
+    }
+    let table = table(None);
+    let files = Files(Vec::new());
+    let device = format!("~ {}", device(args.board.name(), size_of(otp).await));
+    let mut out = Vec::new();
+    let result = check_commissioned_otp(
+        otp,
+        &device,
+        args.validate
+            .then_some(((&table, SigningKeys::Downloaded), &files)),
+        args.inspect_otp.then_some(&table),
+        options.verbose,
+        &mut out,
+    )
+    .await;
+    print!("{}", String::from_utf8(out).unwrap());
     if let Err(e) = result {
         failed(e);
     }
@@ -280,6 +321,39 @@ async fn after_one_that_stopped() {
     commission(&mut otp, line, "y\n").await;
 }
 
+/// `--validate` and `--inspect-otp` on an M board, after a run answered yes.
+#[tokio::test]
+async fn then_validate_and_inspect_otp() {
+    let line = "onerom hardware commission --board fire-24-f --manufacturer piers.rocks --key key.pem --validate --inspect-otp";
+    commission_then_check(&mut blank_board(), line, "y\n").await;
+}
+
+/// `--validate` and `--inspect-otp` with `--verbose` on an L board, after a
+/// run answered yes.
+#[tokio::test]
+async fn then_validate_and_inspect_otp_verbose() {
+    let line = "onerom hardware commission --board fire-40-a --size L --manufacturer piers.rocks --key key.pem --validate --inspect-otp --verbose";
+    commission_then_check(&mut blank_board(), line, "y\n").await;
+}
+
+/// `--inspect-otp` without `--validate`, after a run answered yes.
+#[tokio::test]
+async fn then_inspect_otp() {
+    let line = "onerom hardware commission --board fire-24-f --manufacturer piers.rocks --key key.pem --inspect-otp";
+    commission_then_check(&mut blank_board(), line, "y\n").await;
+}
+
+/// Neither `--validate` nor `--inspect-otp` runs after a run answered no, or
+/// on a board that already holds everything.
+#[tokio::test]
+async fn no_checks_without_writing() {
+    let line = "onerom hardware commission --board fire-24-f --manufacturer piers.rocks --key key.pem --validate --inspect-otp";
+    commission_then_check(&mut blank_board(), line, "n\n").await;
+    println!();
+    let mut otp = commissioned_board("fire-24-f", BoardSize::M).await;
+    commission_then_check(&mut otp, line, "").await;
+}
+
 /// An M fire-40-b commissioned by Acme Retro with its key file, which is
 /// encrypted with a PIN. A real run answered yes.
 #[tokio::test]
@@ -367,6 +441,8 @@ fn refused_command_lines() {
             "{commission} --key-id 1 --signature {}xy --date 20260101",
             &signature[..126]
         ),
+        format!("{commission} --key key.pem --dry-run --validate"),
+        format!("{commission} --key key.pem --dry-run --inspect-otp"),
     ]);
     let words: Vec<&str> = commission.split_whitespace().collect();
     for manufacturer in ["", "piers\u{1b}rocks"] {

@@ -339,6 +339,15 @@ pub(crate) async fn reboot_stopped(options: &Options) -> Result<(), Error> {
     reboot(device, &RebootArgs::stopped(false, false)).await
 }
 
+/// Reboots a stopped device into the bootloader again and selects it by its
+/// chip ID.
+pub(crate) async fn reboot_stopped_and_select(options: &mut Options) -> Result<(), Error> {
+    reboot_stopped(options).await?;
+    let chip_id = options.device.as_ref().unwrap().chip_id;
+    options.device = Some(select_device_by_chip_id(chip_id, options).await?);
+    Ok(())
+}
+
 /// Refuses to program a commissioned board with an image for another board
 /// unless `force`.
 ///

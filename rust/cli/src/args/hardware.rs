@@ -57,8 +57,11 @@ pub enum HardwareCommands {
     /// - a signature made with hardware sign (--signature)
     ///
     /// A One ROM that is running or in limp mode is stopped first and rebooted
-    /// into running mode once complete. A stopped One ROM is rebooted into
-    /// stopped mode once OTP has been written.
+    /// into running mode at the end. A stopped One ROM is rebooted into stopped
+    /// mode once OTP has been written.
+    ///
+    /// --validate and --inspect-otp run after OTP has been written and the
+    /// One ROM rebooted into stopped mode, so the settings take effect.
     ///
     /// Examples:
     ///
@@ -67,6 +70,8 @@ pub enum HardwareCommands {
     ///   onerom hardware commission --board fire-40-a --size L --manufacturer piers.rocks --key key.pem
     ///
     ///   onerom hardware commission --board fire-24-f --size M --manufacturer onerom.org --date 20261001 --key-id 2 --signature SIGNATURE
+    ///
+    ///   onerom hardware commission --board fire-24-f --manufacturer piers.rocks --key key.pem --validate --inspect-otp
     #[command(verbatim_doc_comment)]
     Commission(HardwareCommissionArgs),
 
@@ -219,6 +224,16 @@ pub struct HardwareCommissionArgs {
     /// it.
     #[arg(long, visible_alias = "dryrun")]
     pub dry_run: bool,
+
+    /// After commissioning, check the commissioning information as hardware
+    /// validate does.
+    #[arg(long, conflicts_with = "dry_run")]
+    pub validate: bool,
+
+    /// After commissioning, show the contents of the OTP as inspect otp does.
+    /// Runs after --validate.
+    #[arg(long, conflicts_with = "dry_run")]
+    pub inspect_otp: bool,
 }
 
 impl HardwareCommissionArgs {
@@ -672,6 +687,8 @@ mod tests {
                 date: None,
                 force: false,
                 dry_run: false,
+                validate: false,
+                inspect_otp: false,
             };
             let name = board.name();
             let (left_out, l) = if board.external_flash_cs_pin().is_some() {
@@ -810,6 +827,38 @@ mod command_lines {
         for flag in ["--dry-run", "--dryrun"] {
             let args = commission(&format!("{REQUIRED} {SIGNER} {flag}")).unwrap();
             assert!(args.dry_run, "{flag}");
+        }
+    }
+
+    #[test]
+    fn validate_and_inspect_otp_after_commissioning_parse() {
+        for (options, validate, inspect_otp) in [
+            ("", false, false),
+            ("--validate", true, false),
+            ("--inspect-otp", false, true),
+            ("--validate --inspect-otp", true, true),
+            ("--inspect-otp --validate", true, true),
+        ] {
+            let args = commission(&format!("{REQUIRED} {SIGNER} {options}")).unwrap();
+            assert_eq!(
+                (args.validate, args.inspect_otp),
+                (validate, inspect_otp),
+                "{options}"
+            );
+        }
+    }
+
+    /// A dry run writes nothing so there's nothing to check after it.
+    #[test]
+    fn a_dry_run_refuses_validate_and_inspect_otp() {
+        for option in ["--validate", "--inspect-otp"] {
+            for flag in ["--dry-run", "--dryrun"] {
+                assert_eq!(
+                    refused(&format!("{REQUIRED} {SIGNER} {flag} {option}")),
+                    ErrorKind::ArgumentConflict,
+                    "{flag} {option}"
+                );
+            }
         }
     }
 

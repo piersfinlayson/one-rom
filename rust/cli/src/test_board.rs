@@ -306,6 +306,8 @@ pub fn args(board: &str, size: BoardSize, key: PathBuf) -> HardwareCommissionArg
         date: Some(DATE.to_string()),
         force: false,
         dry_run: false,
+        validate: false,
+        inspect_otp: false,
     }
 }
 

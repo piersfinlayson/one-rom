@@ -1861,6 +1861,8 @@ onerom hardware commission --board fire-40-b --size L --manufacturer "Acme Retro
     --signer https://sign.internal.example.com --key-id 256
 onerom hardware commission --board fire-40-b --size M --manufacturer onerom.org \
     --date 20260929 --key-id 2 --signature 3f0c...
+onerom hardware commission --board fire-40-b --size M --manufacturer "Acme Retro" --key acme.pem \
+    --validate --inspect-otp
 ```
 
 | Option | Description |
@@ -1876,6 +1878,8 @@ onerom hardware commission --board fire-40-b --size M --manufacturer onerom.org 
 | `--date <DATE>` | Commissioning date as `YYYYMMDD`, for example `20260929`. Defaults to today's UTC date. |
 | `--force, -f` | Allow the cases listed below. |
 | `--dry-run` (alias `--dryrun`) | List what would be written without writing it. |
+| `--validate` | After commissioning, check the commissioning information as [`hardware validate`](#hardware-validate) does. Conflicts with `--dry-run`. |
+| `--inspect-otp` | After commissioning, show the contents of the OTP as [`inspect otp`](#inspect-otp) does. Runs after `--validate`. Conflicts with `--dry-run`. |
 
 The signature comes from one of:
 
@@ -1901,7 +1905,10 @@ the manufacturer being signed.
 
 `--verbose` adds the bootloader USB info and each row with its value.
 
-Check the result with [`hardware validate`](#hardware-validate).
+Check the result with `--validate`, or afterwards with
+[`hardware validate`](#hardware-validate). `--validate` and `--inspect-otp` run
+after OTP has been written and the One ROM rebooted into stopped mode, so the
+settings take effect.
 
 Commissioning a `fire-40-b` as M with an encrypted key file:
 

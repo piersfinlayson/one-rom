@@ -42,7 +42,8 @@ use crate::commissioning::{
     Labelled, instance_state, instance_values, issue_text, labelled_lines, signer_name,
     unknown_keys, unknown_version, white_label_values,
 };
-use crate::program::{reboot_stopped, reboot_to_stopped, restart};
+use crate::inspect::write_otp;
+use crate::program::{reboot_stopped, reboot_stopped_and_select, reboot_to_stopped, restart};
 use crate::signing_request::{self, SigningRequest};
 use crate::utils::check_device;
 
@@ -144,12 +145,73 @@ pub async fn cmd_commission(
     // The PIN and the signing key are checked before the One ROM is stopped so
     // a missing PIN or a refused key leaves it as it was.
     let signing = signing(args)?;
-    let (table, _) = signer_table().await;
+    let (table, keys) = signer_table().await;
     let signer = signer_for(&table, &signing, &args.manufacturer).await?;
 
     let stopped = reboot_to_stopped(options, &STOP_FROM).await?;
     let result = commission(options, args, &signing, (signer, &table)).await;
+    if matches!(result, Ok(true)) && (args.validate || args.inspect_otp) {
+        let result = check_commissioned(options, args, (&table, keys)).await;
+        return restart(options, stopped, result).await;
+    }
     reboot_after_writing(options, stopped, result).await
+}
+
+/// Reboots the One ROM into stopped mode so the settings commissioning wrote
+/// take effect. Then runs `--validate` and `--inspect-otp` where `args` sets
+/// them. `table` is the signing key table commissioning used, from the source
+/// `keys`.
+async fn check_commissioned(
+    options: &mut Options,
+    args: &HardwareCommissionArgs,
+    (table, keys): (&SignerTable, SigningKeys),
+) -> Result<(), Error> {
+    reboot_stopped_and_select(options).await?;
+    let device = options.device.as_ref().unwrap();
+    let mut otp = PicobootOtp::open(device).await?;
+    let built_in = SignerTable::built_in();
+    check_commissioned_otp(
+        &mut otp,
+        device,
+        args.validate.then_some(((table, keys), &CliFetch)),
+        args.inspect_otp.then_some(&built_in),
+        options.verbose,
+        &mut std::io::stdout(),
+    )
+    .await
+}
+
+/// Runs `--validate` and then `--inspect-otp` on the board `otp` reaches. Each
+/// prints a blank line, then what `hardware validate` or `inspect otp` prints
+/// with `device` as the board's device line.
+///
+/// `validate` contains:
+/// - the signing key table and its source `keys`
+/// - `fetch`, which fetches a retired key's record file
+///
+/// `inspect` is the table `inspect otp` takes key names from. A step that is
+/// `None` is skipped. A failed validation ends the run before `--inspect-otp`.
+pub(crate) async fn check_commissioned_otp<
+    O: LocalOtpAccess,
+    F: LocalFetch<Error = onerom_fw::Error>,
+>(
+    otp: &mut O,
+    device: &impl Display,
+    validate: Option<((&SignerTable, SigningKeys), &F)>,
+    inspect: Option<&SignerTable>,
+    verbose: bool,
+    out: &mut impl Write,
+) -> Result<(), Error> {
+    if let Some((keys, fetch)) = validate {
+        line(out, "")?;
+        line(out, device)?;
+        validate_otp(otp, keys, fetch, (false, verbose), out).await?;
+    }
+    if let Some(table) = inspect {
+        line(out, "")?;
+        write_otp(otp, device, table, verbose, out).await?;
+    }
+    Ok(())
 }
 
 /// The signature's source that `args` asks for. It asks the user for the PIN
@@ -1942,6 +2004,77 @@ mod tests {
             .unwrap_or_else(|| panic!("{out}"));
         assert!(shows(&lines[earlier..], &["2026-01-01"]), "{out}");
         assert!(!shows(&lines[..earlier], &["2026-01-01"]), "{out}");
+    }
+
+    /// The device line each check after commissioning shows.
+    const DEVICE: &str = "One ROM Fire 24 F";
+
+    /// Runs `--validate` and `--inspect-otp` on `otp` where `steps` sets each,
+    /// with the test table. Returns the result and the output.
+    async fn after_commissioning(
+        otp: &mut MemoryOtp,
+        (validate, inspect): (bool, bool),
+    ) -> (Result<(), Error>, String) {
+        let table = table(None);
+        let files = Files(Vec::new());
+        let mut out = Vec::new();
+        let result = check_commissioned_otp(
+            otp,
+            &DEVICE,
+            validate.then_some(((&table, SigningKeys::Downloaded), &files)),
+            inspect.then_some(&table),
+            false,
+            &mut out,
+        )
+        .await;
+        (result, String::from_utf8(out).unwrap())
+    }
+
+    /// What `inspect otp` prints for `otp` beneath [`DEVICE`], with the test
+    /// table.
+    async fn inspected(otp: &mut MemoryOtp) -> String {
+        let mut out = Vec::new();
+        write_otp(otp, &DEVICE, &table(None), false, &mut out)
+            .await
+            .unwrap();
+        String::from_utf8(out).unwrap()
+    }
+
+    /// Each check after commissioning prints a blank line, then what its
+    /// command prints. Validation comes first.
+    #[tokio::test]
+    async fn the_checks_after_commissioning_validate_then_inspect_otp() {
+        let mut otp = commissioned_board().await;
+        let (result, validated) = validate(&mut otp, &table(None), &Files(Vec::new()), false).await;
+        result.unwrap();
+        let inspected = inspected(&mut otp).await;
+        for (steps, expected) in [
+            ((true, false), format!("\n{DEVICE}\n{validated}")),
+            ((false, true), format!("\n{inspected}")),
+            (
+                (true, true),
+                format!("\n{DEVICE}\n{validated}\n{inspected}"),
+            ),
+        ] {
+            let (result, out) = after_commissioning(&mut otp, steps).await;
+            result.unwrap();
+            assert_eq!(out, expected, "{steps:?}");
+        }
+    }
+
+    /// A failed validation ends the checks before `--inspect-otp`, with
+    /// validation's error.
+    #[tokio::test]
+    async fn a_failed_validation_ends_the_checks_after_commissioning() {
+        let mut otp = blank_board();
+        let (refused, validated) =
+            validate(&mut otp, &table(None), &Files(Vec::new()), false).await;
+        let (result, out) = after_commissioning(&mut otp, (true, true)).await;
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            refused.unwrap_err().to_string()
+        );
+        assert_eq!(out, format!("\n{DEVICE}\n{validated}"));
     }
 
     /// Without --verbose a run shows a line for each part of OTP rather than

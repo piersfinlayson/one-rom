@@ -2,6 +2,9 @@
 //
 // MIT License
 
+use std::fmt::Display;
+use std::io::Write;
+
 use crate::args::inspect::{
     InspectGpioArgs, InspectHeaderArgs, InspectImageArgs, InspectInfoArgs, InspectLedArgs,
     InspectOtpArgs, InspectPeekLiveArgs, InspectPeekMemoryArgs, InspectRgbArgs, InspectSlotsArgs,
@@ -13,7 +16,7 @@ use crate::utils::{
     check_fire_board_optional, check_live_read_write, print_hex_dump, resolve_board,
     resolve_board_optional,
 };
-use onerom_app::{SignerTable, read_report};
+use onerom_app::{LocalOtpAccess, SignerTable, read_report};
 use onerom_cli::CliFetch;
 use onerom_cli::LIVE_ROM_BASE;
 use onerom_cli::colour::RgbColour;
@@ -73,16 +76,39 @@ pub async fn cmd_otp(options: &Options, args: &InspectOtpArgs) -> Result<(), Err
     let device = options.device.as_ref().unwrap();
 
     let mut otp = PicobootOtp::open(device).await?;
-    let report = read_report(&mut otp).await?;
     if args.json {
+        let report = read_report(&mut otp).await?;
         let json =
             serde_json::to_string_pretty(&report).map_err(|e| Error::Other(e.to_string()))?;
         println!("{json}");
+        Ok(())
     } else {
-        println!("{device}");
-        for line in report_lines(&report, options.verbose, &SignerTable::built_in()) {
-            println!("  {line}");
-        }
+        let table = SignerTable::built_in();
+        write_otp(
+            &mut otp,
+            device,
+            &table,
+            options.verbose,
+            &mut std::io::stdout(),
+        )
+        .await
+    }
+}
+
+/// Writes what `inspect otp` prints for the board `otp` reaches to `out`,
+/// beneath the board's device line `device`. Key names come from `table`.
+pub(crate) async fn write_otp<O: LocalOtpAccess>(
+    otp: &mut O,
+    device: &impl Display,
+    table: &SignerTable,
+    verbose: bool,
+    out: &mut impl Write,
+) -> Result<(), Error> {
+    let report = read_report(otp).await?;
+    let failed = |e| Error::io("stdout", e);
+    writeln!(out, "{device}").map_err(failed)?;
+    for line in report_lines(&report, verbose, table) {
+        writeln!(out, "  {line}").map_err(failed)?;
     }
     Ok(())
 }
