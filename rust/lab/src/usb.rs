@@ -22,7 +22,7 @@
 //! by hand below.  Interfaces 0 and 1 have none, and the device class is
 //! 0x00/0x00/0x00.
 //!
-//! The MS OS 2.0 descriptor scopes WinUSB to interface 1 only.
+//! The MS OS 2.0 descriptor binds WinUSB to interfaces 0 and 1.
 //!
 //! # PICOBOOT
 //!
@@ -261,8 +261,11 @@ impl Usb {
 
         // Interface 0: dummy (0xFF/0x00/0x00, no endpoints).
         // Occupies slot 0 so picoboot (added later) lands at interface 1.
+        // WinUSB is bound to it, as One ROM does, so that Windows doesn't list
+        // it as a device whose drivers are not installed.
         {
             let mut func = builder.function(0xFF, 0, 0);
+            func.msos_feature(msos::CompatibleIdFeatureDescriptor::new("WINUSB", ""));
             let mut iface = func.interface();
             let _alt = iface.alt_setting(0xFF, 0, 0, Some(iface0_name));
         }

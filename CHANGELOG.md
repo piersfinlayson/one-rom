@@ -22,9 +22,14 @@ In detail:
 - Add `onerom hardware commission`, `validate`, `set-size`, `sign`, `request-signature` and `onerom inspect otp` for commissioning a One ROM. See [COMMISSIONING](/docs/COMMISSIONING.md).
 - A commissioned One ROM's bootloader appears as `One ROM Bootloader` from piers.rocks with USB VID and PID `1209:F540`.
 - `onerom scan --verbose` and `onerom inspect info` report a One ROM's commissioning information and each device's line ends `(L)` on an L (Large) board.
-- Fix: `onerom program` and `onerom firmware build` report a board mismatch correctly.
 - Web supports commissioning information and L sized boards.
 - Studio supports commissioning information and L sized boards.
+- Fixes:
+  - `onerom program` and `onerom firmware build` now report a board mismatch correctly.
+  - Windows Device Manager no longer shows an exclamation mark against a One ROM running the USB plugin or against Lab.
+
+To test:
+- One ROM and Lab on Windows no longer have an exclamation mark against them in Device Manager.
 
 To publish:
 - Rust crates (in dependency order):

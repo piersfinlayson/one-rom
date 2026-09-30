@@ -32,7 +32,7 @@ enum
 
 extern uint8_t const desc_ms_os_20[];
 
-#define MS_OS_20_DESC_LEN  0xB2
+#define MS_OS_20_DESC_LEN  0xCE
 
 #define EPNUM_CDC_NOTIF   0x81
 #define EPNUM_CDC_OUT     0x02

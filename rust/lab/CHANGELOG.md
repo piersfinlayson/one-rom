@@ -6,3 +6,4 @@
   - One for each Fire hardware revisions/
   - One without a hardware revision baked in.
 - CLI 0.5.0 and later can manage Lab.
+- Windows Device Manager no longer shows an exclamation mark against Lab.

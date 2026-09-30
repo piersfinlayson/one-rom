@@ -2,7 +2,9 @@
 
 ## [0.3.2] - unreleased
 
-Cosmetic change only: Uses One ROM's USB VID and PID from the plugin API.
+Windows Device Manager no longer shows an exclamation mark against One ROM.  The first USB interface, which exists for picotool, now has WinUSB bound to it.
+
+Uses One ROM's USB VID and PID from the plugin API.
 - Requires firmware 0.8.0.
 
 ## [0.3.1] - 2026-09-17
