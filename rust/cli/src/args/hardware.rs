@@ -30,6 +30,10 @@ impl CommandTrait for HardwareArgs {
         self.command.requires_device()
     }
 
+    fn uses_device(&self) -> bool {
+        self.command.uses_device()
+    }
+
     fn check_args(&self) -> Result<(), clap::Error> {
         self.command.check_args()
     }
@@ -467,6 +471,10 @@ impl HardwareSignArgs {
 
 impl CommandTrait for HardwareSignArgs {
     fn requires_device(&self) -> bool {
+        false
+    }
+
+    fn uses_device(&self) -> bool {
         false
     }
 

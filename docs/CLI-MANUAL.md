@@ -896,8 +896,8 @@ supported)**
 
 ### inspect slots
 
-List the ROM image slots stored on the device — index, ROM type, size and
-description — marking the active slot. No options.
+List the plugins and ROM slots stored on the device marking the active slot. No
+options.
 
 ### inspect image
 
@@ -2285,15 +2285,36 @@ Device required: no.
 ### firmware inspect
 
 Show a firmware binary's version, board type, MCU, and embedded ROM images and
-metadata. For a One ROM Lab image:
-
-- `Firmware: One ROM Lab`
-- `Version:` its version
-- `Board:` the board it was built for, or `(not set)`
+metadata.
 
 ```
 onerom firmware inspect --firmware firmware.bin
 ```
+
+For a fire-24-e image with the USB plugin and two 2364s:
+
+```
+Version:  0.8.0
+Board:    fire-24-e
+MCU:      RP235xA
+Plugins:
+  https://images.onerom.org/plugins/system/usb/v0.3.1/plugin.bin
+Slots: 2
+  Slot 0: 1 ROM(s), 8192 bytes
+    ROM 0: 2364 kernal.bin
+  Slot 1: 1 ROM(s), 8192 bytes
+    ROM 0: 2364 basic.bin
+```
+
+From v0.7.0, release firmware is board agnostics firmware. It runs on any board
+and doesn't contain ROM images. Inspecting it prints
+`Board:    any (base firmware)`.
+
+For a One ROM Lab image:
+
+- `Firmware: One ROM Lab`
+- `Version:` its version
+- `Board:` the board it was built for, or `(not set)`
 
 | Option | Description |
 |---|---|

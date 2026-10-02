@@ -147,6 +147,43 @@ pub fn base_firmware(minor: u16) -> Vec<u8> {
     image
 }
 
+/// Flash holding a fire-24-e's v0.6.0 firmware header, the layout from before
+/// v0.7.0, without ROM sets. Its pin and extra info structures are zeros.
+pub fn original_image() -> Vec<u8> {
+    use onerom_metadata::{ONEROM_INFO_MAGIC, ONEROM_INFO_OFFSET};
+    // Offsets in sdrr_info_t.
+    const MINOR_VERSION: usize = 6;
+    const BUILD_DATE: usize = 12;
+    const HW_REV: usize = 24;
+    const MCU_LINE: usize = 28;
+    const MCU_STORAGE: usize = 30;
+    const PINS: usize = 48;
+    const EXTRA: usize = 56;
+    // stm_line_t's value for an RP2350, and stm_storage_t's for its 2MB.
+    const RP2350: u16 = 5;
+    const STORAGE_2MB: u16 = 7;
+    let mut image = vec![0; 0x1000];
+    let mut put = |at: u32, bytes: &[u8]| {
+        let at = at as usize;
+        image[at..at + bytes.len()].copy_from_slice(bytes);
+    };
+    put(0x300, b"Jan  1 2026 00:00:00\0");
+    put(0x340, b"fire-24-e\0");
+    let header = ONEROM_INFO_OFFSET;
+    put(header, ONEROM_INFO_MAGIC.as_bytes());
+    put(header + MINOR_VERSION as u32, &6u16.to_le_bytes());
+    put(
+        header + BUILD_DATE as u32,
+        &(FLASH_BASE + 0x300).to_le_bytes(),
+    );
+    put(header + HW_REV as u32, &(FLASH_BASE + 0x340).to_le_bytes());
+    put(header + MCU_LINE as u32, &RP2350.to_le_bytes());
+    put(header + MCU_STORAGE as u32, &STORAGE_2MB.to_le_bytes());
+    put(header + PINS as u32, &(FLASH_BASE + 0x400).to_le_bytes());
+    put(header + EXTRA as u32, &(FLASH_BASE + 0x800).to_le_bytes());
+    image
+}
+
 /// The size of each 27C400's image in [`image_file`].
 pub const IMAGE_27C400: usize = 512 * 1024;
 

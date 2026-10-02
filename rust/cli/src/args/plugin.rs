@@ -56,4 +56,8 @@ impl CommandTrait for PluginArgs {
     fn requires_device(&self) -> bool {
         false
     }
+
+    fn uses_device(&self) -> bool {
+        self.fw_version.is_none()
+    }
 }

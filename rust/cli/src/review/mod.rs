@@ -23,6 +23,7 @@
 mod commission;
 mod control_erase;
 mod firmware_build;
+mod firmware_inspect;
 mod hardware;
 mod inspect_otp;
 mod inspect_peek;

@@ -27,6 +27,8 @@ In detail:
 - Fixes:
   - `onerom program` and `onerom firmware build` now report a board mismatch correctly.
   - Windows Device Manager no longer shows an exclamation mark against a One ROM running the USB plugin or against Lab.
+  - `onerom firmware inspect` lists a v0.7.0+ image's MCU, plugins and ROMs, and prints base firmware's board as `any (base firmware)` rather than warning about missing metadata.
+  - Commands that don't need a One ROM, such as `onerom image convert` or `onerom firmware inspect --firmware`, no longer fail when two One ROMs are connected.
 
 To test:
 - One ROM and Lab on Windows no longer have an exclamation mark against them in Device Manager.

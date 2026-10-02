@@ -18,6 +18,10 @@ impl CommandTrait for SelfArgs {
     fn requires_device(&self) -> bool {
         self.command.requires_device()
     }
+
+    fn uses_device(&self) -> bool {
+        self.command.uses_device()
+    }
 }
 
 #[enum_dispatch(CommandTrait)]
@@ -60,6 +64,10 @@ impl CommandTrait for SelfCheckArgs {
     fn requires_device(&self) -> bool {
         false
     }
+
+    fn uses_device(&self) -> bool {
+        false
+    }
 }
 
 #[derive(Debug, Args)]
@@ -99,6 +107,10 @@ pub struct SelfDownloadArgs {
 
 impl CommandTrait for SelfDownloadArgs {
     fn requires_device(&self) -> bool {
+        false
+    }
+
+    fn uses_device(&self) -> bool {
         false
     }
 }
