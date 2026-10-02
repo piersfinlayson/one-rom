@@ -671,7 +671,7 @@ impl Chip {
         };
 
         for transform in transforms {
-            transform.validate().map_err(&transform_err)?;
+            transform.validate().map_err(transform_err)?;
         }
 
         if source.is_none() {
@@ -735,7 +735,7 @@ impl Chip {
             source
         } else {
             transformed = apply_transforms(source, transforms, size_handling, blank_byte)
-                .map_err(&transform_err)?;
+                .map_err(transform_err)?;
             transform_used_size_handling = transformed.used_size_handling;
             &transformed.data
         };
