@@ -50,6 +50,7 @@ To publish:
 - Studio 0.2.4
 - ext-flash plugin 0.1.0
 - USB plugin 0.3.2
+- RBCP Amiga bootloader 0.1.2
 - one-rom-wasm: rebuild against the new Rust crates to support v0.8.0
 - one-rom-site: pick up wasm to support v0.8.0
 

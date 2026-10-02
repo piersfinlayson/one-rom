@@ -7,7 +7,9 @@ VERSION_MAJOR := 0
 VERSION_MINOR := 8
 VERSION_PATCH := 0
 BUILD_NUMBER := 1
-GIT_COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+# Cut to 7 characters so the NUL fits onerom_info_t's 8-byte commit field.
+# --short is not used because git lengthens it as the repo grows.
+GIT_COMMIT := $(or $(shell git rev-parse HEAD 2>/dev/null | cut -c1-7),unknown)
 export VERSION_MAJOR VERSION_MINOR VERSION_PATCH BUILD_NUMBER GIT_COMMIT
 
 FIRMWARE_DIR := firmware
