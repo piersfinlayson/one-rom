@@ -636,6 +636,13 @@ fn resolve_range(range: ReadRange, chip: ChipType) -> (usize, usize) {
     (start, count)
 }
 
+/// Allow the USB task to send queued output before a whole-ROM read, which
+/// blocks the executor until it finishes.  send_line's yield isn't enough as
+/// the executor polls the calling task again before the USB task.
+async fn yield_to_usb() {
+    Timer::after_millis(1).await;
+}
+
 /// Route a read to the correct format handler.
 async fn do_read(
     board: Board,
@@ -693,6 +700,7 @@ async fn output_checksum(
         .await?;
     }
 
+    yield_to_usb().await;
     let results = reader.read();
 
     send_line("").await?;
@@ -815,6 +823,7 @@ async fn scan_cs(
             let mut sha = Sha1::new();
             let mut checksum = core::num::Wrapping(0u32);
 
+            yield_to_usb().await;
             reader.begin_read(mode);
             for addr in 0..rom_bytes {
                 let byte = reader.read_byte_at(addr, mode);
