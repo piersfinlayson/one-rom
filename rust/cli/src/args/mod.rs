@@ -373,9 +373,8 @@ pub enum BoardCommands {
 
     /// Draw a board's pin (jumper / programming) header as ASCII.
     ///
-    /// Shows the 2xN header along the board's top edge, pad by pad, with the
-    /// MCU GPIO behind each image-select and X pad and — on RP2350 (Fire)
-    /// boards — whether that GPIO is 5V-tolerant or 3.3V-only (an ADC pin).
+    /// The picture includes each image select and X pin's MCU GPIO and, on
+    /// RP2350 (Fire) boards, whether that GPIO is 5V-tolerant or 3.3V-only.
     ///
     /// The board is taken from --board, or inferred from a connected One ROM
     /// when omitted.

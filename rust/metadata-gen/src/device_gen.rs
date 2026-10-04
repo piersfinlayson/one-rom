@@ -11,6 +11,7 @@
 //   1. File header
 //   2. Type aliases
 //   3. Enums                (newtype over the storage integer)
+//      Bit fields           (newtype, masks, shifts)
 //   4. Structs              (pub struct, MAGIC, layout asserts)
 //   4. Tagged FAMs          (base struct, one param struct per variant)
 //   5. Simple FAMs          (pub struct + layout asserts)
@@ -48,6 +49,7 @@ pub fn generate(schema: &Schema) -> String {
     push_file_header(&mut out, schema);
     g.push_type_aliases(&mut out);
     g.push_enums(&mut out);
+    g.push_bitfields(&mut out);
     g.push_structs(&mut out);
     g.push_tagged_fams(&mut out);
     g.push_simple_fams(&mut out);
@@ -147,6 +149,54 @@ impl Gen<'_> {
         out.push_str("}\n\n");
 
         push_asserts(out, &e.name, &e.name, e.size as usize, &[]);
+    }
+
+    // -----------------------------------------------------------------------
+    // Bit fields
+    // -----------------------------------------------------------------------
+
+    fn push_bitfields(&self, out: &mut String) {
+        if self.schema.bitfields.is_empty() {
+            return;
+        }
+        push_section(out, "Bit fields");
+        for b in &self.schema.bitfields {
+            self.push_bitfield(out, b);
+        }
+    }
+
+    fn push_bitfield(&self, out: &mut String, b: &Bitfield) {
+        let storage = storage_for(b.size as usize);
+        let host = rust_type_name(&b.name);
+        push_type_doc(out, b.comment.as_deref(), &b.name, Some(&host));
+        out.push_str("#[allow(non_camel_case_types)]\n");
+        out.push_str("#[derive(Clone, Copy, Debug, PartialEq, Eq)]\n");
+        out.push_str("#[repr(transparent)]\n");
+        out.push_str(&format!("pub struct {}(pub {storage});\n\n", b.name));
+
+        out.push_str(&format!("impl {} {{\n", b.name));
+        for m in &b.members {
+            // The whole comment, not just the first line as in push_field_doc.
+            // A member's comment is about bits the device side also has.
+            for line in m.documentation().iter().flat_map(|doc| doc.lines()) {
+                out.push_str(&format!("    /// {}\n", line.trim()));
+            }
+            out.push_str(&format!(
+                "    pub const {}: {storage} = {};\n",
+                m.name,
+                format_value(m.mask() as i64, b.size)
+            ));
+            if m.width() > 1 {
+                out.push_str(&format!(
+                    "    pub const {}: u32 = {};\n",
+                    m.shift_name(),
+                    m.bit
+                ));
+            }
+        }
+        out.push_str("}\n\n");
+
+        push_asserts(out, &b.name, &b.name, b.size as usize, &[]);
     }
 
     // -----------------------------------------------------------------------
@@ -461,8 +511,7 @@ impl Gen<'_> {
 
         match field.kind.as_str() {
             "scalar" => prim(field.type_.as_deref()).into(),
-            "enum" => named(field.type_.as_deref()),
-            "type_alias" => named(field.type_.as_deref()),
+            "enum" | "type_alias" | "bitfield" => named(field.type_.as_deref()),
             "inline_array" => format!(
                 "[{}; {}]",
                 prim(field.element.as_deref()),

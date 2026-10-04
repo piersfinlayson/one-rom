@@ -90,10 +90,7 @@ pub enum InspectCommands {
 
     /// Show what every One ROM GPIO is, and what it is doing.
     ///
-    /// One row per MCU GPIO: everything the GPIO is - its signal under the ROM
-    /// currently being served, the board peripheral it drives, the header pad
-    /// it surfaces on - plus its direction and level, whether it is
-    /// 5V-tolerant, and what One ROM itself is using it for.
+    /// One row per MCU GPIO.
     ///
     /// Only GPIOs connected to something are listed; --all adds the rest.
     /// --verbose adds a legend explaining where each column comes from.
@@ -137,9 +134,8 @@ pub enum InspectCommands {
 
     /// Draw the connected One ROM's pin (jumper / programming) header as ASCII.
     ///
-    /// Shows the 2xN header along the board's top edge, pad by pad, with the
-    /// MCU GPIO behind each image-select and X pad and — on RP2350 (Fire)
-    /// boards — whether that GPIO is 5V-tolerant or 3.3V-only (an ADC pin). The
+    /// The picture includes each image select and X pin's MCU GPIO and, on
+    /// RP2350 (Fire) boards, whether that GPIO is 5V-tolerant or 3.3V-only. The
     /// board is inferred from the connected device, or taken from --board.
     ///
     /// Examples:
@@ -349,25 +345,23 @@ impl CommandTrait for InspectPeekMemoryArgs {
 
 #[derive(Debug, Args)]
 pub struct InspectGpioArgs {
-    /// Show only this pin: an MCU GPIO written gpio<N>, or a header pad name
-    /// (sel_a..sel_e, x1, x2).
+    /// Show only this pin: a header pin (sel_<letter>, x1, x2) or an MCU GPIO
+    /// written gpio<N>.
     ///
-    /// A bare number is rejected - see 'onerom inspect header' for the GPIO
-    /// behind each header pad.
+    /// Use 'onerom inspect header' to see each header pin's GPIO.
     #[arg(long, value_name = "PIN", value_parser = parse_pin)]
     pub pin: Option<Pin>,
 
     /// Board type, overriding what the connected One ROM reports.
     ///
-    /// Only needed to resolve a header pad name on a One ROM whose board type
-    /// this build does not recognise. A GPIO named as gpio<N> needs no board.
+    /// Use it if the One ROM's board isn't recognised.
     #[arg(long, short, value_name = "BOARD")]
     pub board: Option<String>,
 
     /// Also show GPIOs with no function at all.
     ///
     /// By default only GPIOs connected to something - a ROM socket signal, a
-    /// board peripheral or a header pad - are listed. On a 48-GPIO board a
+    /// board peripheral or a header pin - are listed. On a 48-GPIO board a
     /// quarter of them are connected to nothing, and listing them buries the
     /// rest.
     #[arg(long, short, conflicts_with = "pin")]

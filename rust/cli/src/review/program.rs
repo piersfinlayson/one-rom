@@ -163,3 +163,34 @@ async fn a_set_that_doesnt_fit_an_m_one_rom() {
         Err(e) => failed(e),
     }
 }
+
+#[tokio::test]
+async fn a_reset_host_pad_that_isnt_reserved() {
+    use crate::program::unreserved_reset_pin;
+    use crate::test_board::image_2364;
+    use onerom_cli::image::parse_firmware;
+    use onerom_cli::pin::parse_pin;
+
+    let pin = parse_pin("x1")
+        .unwrap()
+        .resolve(Some(&Board::Fire24F))
+        .unwrap();
+    for (name, reserved) in [
+        ("an image that doesn't reserve X1", &[][..]),
+        ("an image that reserves X1", &["x1"][..]),
+    ] {
+        println!("### {name}");
+        println!("$ onerom program --firmware image.bin --reset-host x1");
+        let image = parse_firmware(&image_2364(1, reserved)).await;
+        if let Some(warning) = unreserved_reset_pin(&image, pin) {
+            println!("Warning: {warning}");
+        }
+        println!("~ (continues)");
+        println!();
+    }
+}
+
+#[test]
+fn help() {
+    super::help(&["onerom", "program", "--help"]);
+}

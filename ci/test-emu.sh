@@ -438,6 +438,12 @@ test_family_24() {
     test_24_config_api onerom-config/test/24-random-27xx.json
     test_24_config_api onerom-config/test/24-random-28xx.json
 
+    # Reserved pins.  The firmware does not read a reserved image select pin,
+    # which the tester drives as closed, and the plugin API reports both
+    # reservations.
+    test_24_config onerom-config/test/24-reserved-23xx.json
+    test_config_api fire-24-f onerom-config/test/24-reserved-23xx.json
+
     # Device metadata test: this config sets an instance name and serial
     # override, so the plugin API metadata getter is exercised on the present
     # (non-NULL) path.  Other configs leave these unset and cover the absent

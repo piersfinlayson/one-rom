@@ -1070,9 +1070,10 @@ ora_result_t ora_read_ram_rom_slot(
 // The serving set of the active slot comes from pio_get_gpio_use(), which
 // derives it from the configuration the serving path itself acts on.  Board
 // system pins are checked afterwards, so a pin doing both is reported as what
-// serving is using it for.  Deliberately excluded: the image select pads, whose
-// primary use for GPIO control is a wire soldered to a pad whose jumper has been
-// removed, and SWCLK/SWDIO, which are not GPIOs on the boards that expose them.
+// serving is using it for.  A pin with its input forced is reported as a
+// system pin if it is one, as serving doesn't read it.  Image select pins
+// aren't system pins.  Nor are SWCLK and SWDIO, which aren't
+// GPIOs on the boards that have them.
 static uint8_t ora_gpio_get_use(uint8_t gpio) {
     uint8_t use = ORA_GPIO_USE_FREE;
 
@@ -1081,7 +1082,7 @@ static uint8_t ora_gpio_get_use(uint8_t gpio) {
         if (pio_get_gpio_use(slot, gpio, &use) != ORA_RESULT_OK) {
             use = ORA_GPIO_USE_FREE;
         }
-        if (use != ORA_GPIO_USE_FREE) {
+        if (use != ORA_GPIO_USE_FREE && use != ORA_GPIO_USE_INPUT_FORCED) {
             return use;
         }
     }
@@ -1096,7 +1097,7 @@ static uint8_t ora_gpio_get_use(uint8_t gpio) {
         return ORA_GPIO_USE_SYSTEM;
     }
 
-    return ORA_GPIO_USE_FREE;
+    return use;
 }
 
 ora_result_t ora_gpio_set(uint8_t gpio, uint8_t state, uint32_t flags) {
@@ -1109,9 +1110,11 @@ ora_result_t ora_gpio_set(uint8_t gpio, uint8_t state, uint32_t flags) {
         return ORA_RESULT_INVALID_ARG;
     }
 
-    if (!(flags & ORA_GPIO_FLAG_FORCE) &&
-        (ora_gpio_get_use(gpio) != ORA_GPIO_USE_FREE)) {
-        return ORA_RESULT_GPIO_IN_USE;
+    if (!(flags & ORA_GPIO_FLAG_FORCE)) {
+        uint8_t use = ora_gpio_get_use(gpio);
+        if (use != ORA_GPIO_USE_FREE && use != ORA_GPIO_USE_INPUT_FORCED) {
+            return ORA_RESULT_GPIO_IN_USE;
+        }
     }
 
 #if !defined(TEST_BUILD)
@@ -1592,6 +1595,66 @@ ora_result_t ora_log_category_enabled(ora_log_category_t category,
     return ORA_RESULT_OK;
 }
 
+// ---------------------------------------------------------------------------
+// Firmware states
+// ---------------------------------------------------------------------------
+
+// A state added to onerom_firmware_state_t in the schema is added here with the
+// code that sets it.
+#define FIRMWARE_STATES_SUPPORTED   (FIRMWARE_STATE_ROM_LOADED | \
+                                     FIRMWARE_STATE_PLUGINS_STARTED | \
+                                     FIRMWARE_STATE_STARTUP_DONE)
+
+// Runtime info lags the copy channel while core 0 has interrupts masked, so the
+// channel is also checked.  Otherwise a wait on core 0 with interrupts masked
+// would never return.
+static uint32_t firmware_states_reached(void) {
+    uint32_t reached = *(volatile onerom_firmware_state_t *)&RUNTIME->firmware_states;
+#if REAL_HARDWARE
+    if (dma_copy_status() == 0) {
+        reached |= FIRMWARE_STATE_ROM_LOADED;
+        if (reached & FIRMWARE_STATE_PLUGINS_STARTED) {
+            reached |= FIRMWARE_STATE_STARTUP_DONE;
+        }
+    }
+#endif // REAL_HARDWARE
+    return reached;
+}
+
+ora_result_t ora_firmware_state_query(
+    uint32_t states,
+    uint32_t flags,
+    uint32_t *states_out
+) {
+    uint32_t reached = firmware_states_reached();
+
+    // An unsupported state is never reached, so isn't waited for.
+    if (states & ~FIRMWARE_STATES_SUPPORTED) {
+        if (states_out != NULL) {
+            *states_out = reached;
+        }
+        return ORA_RESULT_NOT_SUPPORTED;
+    }
+
+    if (flags & ORA_FIRMWARE_STATE_QUERY_FLAG_WAIT) {
+        // Every supported state is reached on every boot.
+        while ((reached & states) != states) {
+#if !REAL_HARDWARE
+            // Under emulation nothing else runs to set a state.
+            if (onerom_test_yield_hook != NULL) {
+                onerom_test_yield_hook();
+            }
+#endif // !REAL_HARDWARE
+            reached = firmware_states_reached();
+        }
+    }
+
+    if (states_out != NULL) {
+        *states_out = reached;
+    }
+    return ((reached & states) == states) ? ORA_RESULT_OK : ORA_RESULT_NOT_READY;
+}
+
 void *ora_fn_lookup(api_id_t id) {
     switch (id) {
         case ORA_ID_REBOOT_BOOTSEL:
@@ -1720,6 +1783,9 @@ void *ora_fn_lookup(api_id_t id) {
             return ora_get_compile_option_str;
         case ORA_ID_LOG_CATEGORY_ENABLED:
             return ora_log_category_enabled;
+
+        case ORA_ID_FIRMWARE_STATE_QUERY:
+            return ora_firmware_state_query;
 
         // Deprecated functions
         case ORA_ID_GET_FIRMWARE_INFO:
@@ -1953,6 +2019,9 @@ void ora_launch_plugins(void) {
 
     uint8_t launched_plugins = 0;
     ora_plugin_entry_t core0_entry = launch_plugins_inner(&launched_plugins);
+
+    // Set before the user plugin's entry, which doesn't return.
+    set_firmware_states(FIRMWARE_STATE_PLUGINS_STARTED);
 
     // We launch the user plugin from this outer function in order to save as
     // much stack space as possible.

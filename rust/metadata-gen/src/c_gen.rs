@@ -9,6 +9,7 @@
 //   type aliases          (typedef uint16_t …)
 //   constants             (#define …)
 //   enums                 (typedef enum … + STATIC_ASSERT)
+//   bit fields            (typedef of the storage integer + masks + shifts)
 //   structs               (typedef struct … + STATIC_ASSERT)
 //   tagged FAM structs    (main struct + per-variant param structs + STATIC_ASSERTs)
 //   simple FAM structs    (length-prefixed byte-array structs)
@@ -18,8 +19,8 @@
 use onerom_config::chip::{CHIP_TYPES, ChipType};
 
 use crate::schema::{
-    ARRAY_KINDS, ConstantValue, Field, POINTER_KINDS, Schema, SimpleFam, Struct, TaggedFam,
-    array_default_elements, field_size, strip_type_suffix,
+    ARRAY_KINDS, Bitfield, BitfieldMember, ConstantValue, Field, POINTER_KINDS, Schema, SimpleFam,
+    Struct, TaggedFam, array_default_elements, field_size, strip_type_suffix,
 };
 
 // ---------------------------------------------------------------------------
@@ -35,6 +36,7 @@ pub fn generate(schema: &Schema) -> String {
     emit_type_aliases(schema, &mut out);
     emit_constants(schema, &mut out);
     emit_enums(schema, &mut out);
+    emit_bitfields(schema, &mut out);
     emit_struct_defs(schema, &mut out);
     emit_tagged_fam_defs(schema, &mut out);
     emit_simple_fam_defs(schema, &mut out);
@@ -853,6 +855,53 @@ fn emit_chip_type_sizes_array(canonical: &[ChipType], out: &mut String) {
 }
 
 // ---------------------------------------------------------------------------
+// Bit fields
+// ---------------------------------------------------------------------------
+
+/// A C bit field isn't used because its layout is chosen by the compiler, not
+/// the schema.
+fn emit_bitfields(schema: &Schema, out: &mut String) {
+    if schema.bitfields.is_empty() {
+        return;
+    }
+    emit_major_section_header("Bit fields", out);
+    for b in &schema.bitfields {
+        emit_item_header(b.comment.as_deref(), out);
+        out.push_str(&format!(
+            "typedef {} {};\n",
+            c_primitive(b.storage_type()),
+            b.name
+        ));
+        for m in &b.members {
+            if let Some(doc) = m.documentation() {
+                emit_comment(&doc, "", out);
+            }
+            out.push_str(&format!(
+                "#define {} {}\n",
+                m.name,
+                bitfield_mask_value(b, m)
+            ));
+            if m.width() > 1 {
+                out.push_str(&format!(
+                    "#define {} {}\n",
+                    m.shift_name(),
+                    bitfield_shift_value(b, m)
+                ));
+            }
+        }
+        out.push('\n');
+    }
+}
+
+pub(crate) fn bitfield_mask_value(b: &Bitfield, m: &BitfieldMember) -> String {
+    format_const_value(&ConstantValue::Integer(m.mask() as i64), b.storage_type())
+}
+
+pub(crate) fn bitfield_shift_value(b: &Bitfield, m: &BitfieldMember) -> String {
+    format_const_value(&ConstantValue::Integer(i64::from(m.bit)), b.storage_type())
+}
+
+// ---------------------------------------------------------------------------
 // Structs
 // ---------------------------------------------------------------------------
 
@@ -1064,7 +1113,7 @@ fn field_c_decl(field: &Field, const_fields: bool, schema: &Schema) -> String {
             let prim = c_primitive(field.type_.as_deref().unwrap_or("u8"));
             format!("    {}{} {}{};\n", ck, prim, member, dep)
         }
-        "enum" | "type_alias" => {
+        "enum" | "type_alias" | "bitfield" => {
             let tname = field.type_.as_deref().unwrap_or("uint8_t");
             format!("    {}{} {}{};\n", ck, tname, member, dep)
         }

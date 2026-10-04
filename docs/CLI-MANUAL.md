@@ -539,17 +539,17 @@ onerom control led beacon
 
 ### Reset the host system after programming
 
-If you have run a wire from a One ROM header pad to the reset line of the
-machine One ROM is installed in, One ROM can pulse that pad low and then release
-it — resetting the host so it picks up the image you just flashed. Name the pad,
-or the MCU GPIO behind it — `onerom inspect header` shows which that is:
+If a header pin is wired to the reset line of the machine One ROM is installed
+in, One ROM can pulse that pin low after programming. The host then boots the
+image just flashed:
 
 ```
-onerom program --config c64.json --reset-host sel_c
+onerom program --config c64.json --reserve-pin sel_c --reset-host sel_c
 ```
 
-`--reset-host` waits for the One ROM to come back on the USB bus and then sends
-the pulse, so programming and resetting are one command. To reset a host without
+`--reset-host` waits for the One ROM to return to the USB bus, then sends the
+pulse. `--reserve-pin` stops One ROM using the pin — see [Reserve a pin for
+another use](#reserve-a-pin-for-another-use). To reset a host without
 programming it, or to choose the length of the pulse, use `control reset`:
 
 ```
@@ -557,10 +557,52 @@ onerom control reset --pin sel_c
 onerom control reset --pin sel_c --hold 500
 ```
 
-The pad is typically an image-select pad whose jumper you have removed, usually
-`sel_c`, or an `X1`/`X2` pad. The device times the pulse, so an interrupted CLI
-cannot leave the host held in reset. See [`control reset`](#control-reset), and
-[`control pin`](#control-pin) for driving a GPIO to an arbitrary state.
+The pin is typically `X1`, `X2` or an image select pin. The device times the
+pulse so an interrupted CLI cannot leave the host held in reset. See
+[`control reset`](#control-reset), and [`control pin`](#control-pin) for driving
+a pin to any state.
+
+### Reserve a pin for another use
+
+Reserve a pin for another use, for example a pin connected to the host's reset
+line, when the image is built:
+
+```
+onerom program --config c64.json --reserve-pin sel_c
+```
+
+Repeat `--reserve-pin` for each pin. Only image select pins and X pins can be
+reserved. Reserving a pin requires firmware v0.8.0 or later.
+
+One ROM does not pull or read a reserved image select pin at boot. It reads the
+image number from the remaining image select pins in order, so with `SEL_C`
+reserved `SEL_D` selects image 4. `--verbose` lists the jumpers that select each
+image, with a mark for each column of the board's jumper header:
+
+```
+Reserved pins: SEL_C
+
+Images:
+      D C B A
+0: [· · · · ·]  2364  no image select jumpers
+1: [· · · · ▪]  2364  SEL_A jumpered
+2: [· · · ▪ ·]  2364  SEL_B jumpered
+3: [· · · ▪ ▪]  2364  SEL_A and SEL_B jumpered
+4: [· ▪ · · ·]  2364  SEL_D jumpered
+```
+
+A slot that uses a reserved pin fails to build, for example where an X pin is
+reserved, but it is required to a banked or multi slot config.
+
+It is possible to build configs where a slot cannot be selected by the
+remaining image select jumpers.  That is reported:
+
+```
+Warning: slot 4 cannot be selected. SEL_A and SEL_B provide 4 combinations for 5 slots.
+```
+
+[`inspect slots`](#inspect-slots) and `scan --slots` list the reserved pins, and
+[`inspect gpio`](#inspect-gpio) marks them `reserved`.
 
 ### See what One ROM is doing with its GPIOs
 
@@ -818,6 +860,7 @@ These are rejected with `--no-config`.
 | `--logging [BOOL]` (aliases `--boot-logging`) | Enable boot logging. Takes an optional boolean; bare flag means `true`. |
 | `--disable-swd [BOOL]` (aliases `--swd-disable`) | Shut SWD down before ROM serving starts, so debug port accesses to SRAM don't steal cycles from the serving DMAs. SWD is available for the whole of boot — including boot logging — and goes off until the next reset. Nothing is logged past that point, and plugins get no logging. This is not a debug lockout: the boot ROM runs before the One ROM firmware does, and BOOTSEL/PICOBOOT are unaffected. Optional boolean; bare flag means `true`. |
 | `--turbo-boot [BOOL]` | Enable turbo boot — starts serving faster by not reading the image select jumpers, so the first non-plugin slot is always the one served. More than one non-plugin slot is refused unless `--force` is given. Optional boolean; bare flag means `true`. |
+| `--reserve-pin <PIN>` (alias `--reserved_pins`) | Reserve a pin for another use, for example a pin connected to a host's reset line. Repeat for each reserved pin. Requires firmware v0.8.0 or later. See [Reserve a pin for another use](#reserve-a-pin-for-another-use). |
 
 ### Board, version and output
 
@@ -841,7 +884,7 @@ These are rejected with `--no-config`.
 | `--batch` (aliases `--multiple`, `--multi`) | Program multiple devices, pausing for confirmation between each. Every board is programmed with the same configuration as the first. |
 | `--scan-slots` | After programming, run `onerom scan --slots` to show the result. Conflicts with `--fast`. |
 | `--follow` | After programming, monitor the One ROM's log, as [`monitor log`](#monitor-log) does. Runs after `--scan-slots`, and only once the One ROM is back on the USB bus, so it shows the boot log of the firmware just flashed. Refused before anything is flashed if the image has no USB system plugin, since such a One ROM leaves the bus as soon as it serves. Conflicts with `--fast`, `--stopped`, `--no-reboot` and `--batch`. |
-| `--reset-host <PIN>` (alias `--host-reset`) | After programming, pulse this pin low to reset the host system, as [`control reset`](#control-reset) does. Named as `gpio<N>` or as a header pad (see [Pin values](#pin-values)). Runs after `--scan-slots` and before `--follow`, once the One ROM is back on the USB bus, and for each device in a `--batch`. The pulse is <!--[const:GPIO_RESET_DEFAULT_HOLD_MS:ms]-->100ms<!--[/]-->; use `control reset` for a different hold. Conflicts with `--fast`, `--stopped` and `--no-reboot`. |
+| `--reset-host <PIN>` (alias `--host-reset`) | After programming, pulse this pin low to reset the host system, as [`control reset`](#control-reset) does. Written as `gpio<N>` or as a header pin (see [Pin values](#pin-values)). Runs after `--scan-slots` and before `--follow`, once the One ROM is back on the USB bus, and for each device in a `--batch`. The pulse is <!--[const:GPIO_RESET_DEFAULT_HOLD_MS:ms]-->100ms<!--[/]-->. Use `control reset` for a different hold time. A warning is displayed if the pin isn't reserved. Conflicts with `--fast`, `--stopped` and `--no-reboot`. |
 
 An image is built for the One ROM's [size](#board-sizes). For a
 [commissioned](#hardware) One ROM it must also be built for the board type it
@@ -897,7 +940,15 @@ supported)**
 ### inspect slots
 
 List the plugins and ROM slots stored on the device marking the active slot. No
-options.
+options. Where the image has reserved pins, a line lists them beneath the slot
+count:
+
+```
+  Configured with 3 slots - Slot 0 is active
+  Reserved pins: SEL_C, X1
+```
+
+`scan --slots` prints the same line.
 
 ### inspect image
 
@@ -968,8 +1019,8 @@ onerom inspect gpio --pin x1
 
 | Option | Description |
 |---|---|
-| `--pin <PIN>` | Show only this pin, named as `gpio<N>` or as a header pad (see [Pin values](#pin-values)). Conflicts with `--all`. |
-| `--board <BOARD>` | Board type, overriding what the device reports. Only needed to resolve a `--pin` pad name on a board this build does not recognise. |
+| `--pin <PIN>` | Show only this pin, a header pin or an MCU GPIO written `gpio<N>` (see [Pin values](#pin-values)). Conflicts with `--all`. |
+| `--board <BOARD>` | Board type, overriding what the device reports. Only needed to resolve a `--pin` header pin on a board this build does not recognise. |
 | `--all` | Also list GPIOs with no function at all. By default only GPIOs connected to something are shown. |
 
 By default the table lists only the GPIOs connected to **something** — a ROM
@@ -992,7 +1043,7 @@ Columns:
 | `Dir` | `out` if the pin's output driver is enabled, `in` if not. |
 | `Level` | The GPIO's level, `0` or `1`: what an `out` pin is driving, what an `in` pin reads. |
 | `Max V` | `5V` if the GPIO is 5V-tolerant, `3V3` if it is an RP2350 ADC pin and therefore 3.3V-only, `?` if the board is not characterised. |
-| `One ROM use` | What One ROM itself is using the GPIO for: `free`, `serving (read)`, `serving (driven)` or `system`. |
+| `Current use` | What One ROM itself is using the GPIO for: `free`, `serving (read)`, `serving (driven)`, `input forced`, `system` or `reserved`. |
 
 `Function` lists everything that applies rather than stopping at the first
 match, so a GPIO that is genuinely two things says so: on a `fire-24-f` the
@@ -1008,12 +1059,14 @@ GPIO of their own, so they do not appear here. Run
 [`inspect header`](#inspect-header) for the pad-by-pad view, which shows every
 role each pad carries.
 
-Only `Dir`, `Level` and `One ROM use` come from the device. `Function` is
-derived by the CLI from the board's pin map and the chip type being served: the
-device deliberately reports what taking a pin over would *cost*, never what the
-pin *is*. `serving (read)` pins (address, chip-select, `/BYTE`) can be driven and
-released; `serving (driven)` pins (the data pins) cannot be given back without a
-reboot — see [`control pin`](#control-pin).
+`Dir`, `Level` and `Current use` are reported by the device. A
+[reserved](#reserve-a-pin-for-another-use) pin is marked `reserved`. `Function` comes from the board's pin map and the chip type
+being served: the device deliberately reports what taking a pin over would
+*cost*, never what the pin *is*. `serving (read)` pins (address, chip-select,
+`/BYTE`) can be driven and released. `serving (driven)` pins (the data pins)
+cannot be released without a reboot — see [`control pin`](#control-pin). An
+`input forced` pin is one serving uses by ignores, and it can be driven
+without `--force`.
 
 With `--verbose` (`-v`) the table is followed by a legend restating where each
 column comes from, what `Dir` and `Level` mean and what the `3V3`/`5V` tags
@@ -1598,12 +1651,12 @@ in — useful in scripted workflows after programming a new image.
 [`program --reset-host`](#program) does the same thing as the last step of
 programming, and is the shorter way to say it.
 
-`--pin` is the pin your reset wire is soldered to, typically an image-select pad
-whose jumper has been removed — `sel_c` is the usual choice, as more boards have
-it than have X pads and it is 5V tolerant where it exists — or an `X1`/`X2` pad.
-Name it by pad (`sel_c`, `x1`) or by MCU GPIO (`gpio9`) — see
-[Pin values](#pin-values). [`inspect header`](#inspect-header) shows which GPIO
-is behind each pad.
+`--pin` is the pin connected to the host's reset line, typically `X1`, `X2` or
+an image select pin, for example `sel_c`. Write it
+as a header pin (`sel_c`, `x1`) or as an MCU GPIO (`gpio9`) — see [Pin
+values](#pin-values). [`inspect header`](#inspect-header) lists each header
+pin's GPIO. Reserve the pin when the image is built — see [Reserve a pin for another
+use](#reserve-a-pin-for-another-use).
 
 The line is only ever **driven low and then released to high impedance**. A reset
 net has its own pull-up and may have other drivers on it, so there is
@@ -1625,8 +1678,8 @@ onerom control reset --pin gpio9 --hold 500
 
 | Option | Description |
 |---|---|
-| `--pin <PIN>` | Pin the reset wire is connected to, named as `gpio<N>` or as a header pad (see [Pin values](#pin-values)). Required. |
-| `--board <BOARD>` | Board type, overriding what the device reports. Only needed to resolve a `--pin` pad name on a board this build does not recognise. |
+| `--pin <PIN>` | Pin the reset wire is connected to, written as `gpio<N>` or as a header pin (see [Pin values](#pin-values)). Required. |
+| `--board <BOARD>` | Board type, overriding what the device reports. Only needed to resolve a `--pin` header pin on a board this build does not recognise. |
 | `--hold <MS>` | Milliseconds to hold reset asserted. Decimal or `0x` hex. Default <!--[const:GPIO_RESET_DEFAULT_HOLD_MS:code]-->`100`<!--[/]-->; `0` is rejected, because a reset pulse with no end is not a reset. |
 
 If One ROM is itself using the GPIO the command is refused, naming what it is
@@ -1657,8 +1710,7 @@ Switch the device to serving the specified slot immediately (not persistent).
 Drive a One ROM pin high, low or high-impedance, optionally for a bounded
 period.
 
-`--pin` names an MCU GPIO or a header pad (see [Pin values](#pin-values)); the
-command is named for what is being addressed rather than for any one spelling.
+`--pin` is an MCU GPIO or a header pin (see [Pin values](#pin-values)).
 
 Without `--hold` the state is latched until something else changes it. With
 `--hold` the **device** holds the state for that many milliseconds and then
@@ -1684,8 +1736,8 @@ onerom control pin --pin sel_a --state z
 
 | Option | Description |
 |---|---|
-| `--pin <PIN>` | Pin to drive, named as `gpio<N>` or as a header pad (see [Pin values](#pin-values)). Required. |
-| `--board <BOARD>` | Board type, overriding what the device reports. Only needed to resolve a `--pin` pad name on a board this build does not recognise. |
+| `--pin <PIN>` | Pin to drive, written as `gpio<N>` or as a header pin (see [Pin values](#pin-values)). Required. |
+| `--board <BOARD>` | Board type, overriding what the device reports. Only needed to resolve a `--pin` header pin on a board this build does not recognise. |
 | `--state <STATE>` | `high`, `low`, or `z` (high-impedance). `1` and `0` are accepted for `high` and `low`. Required. |
 | `--hold <MS>` | Hold `--state` for this many milliseconds, then apply `--then`. Decimal or `0x` hex. Omit to latch indefinitely. The device's own limit is <!--[const:GPIO_MAX_HOLD_MS:seconds]-->60 seconds<!--[/]-->. |
 | `--then <STATE>` | State to apply when `--hold` expires: `high`, `low` or `z` (or `1`/`0`). Default `z`. Requires `--hold`. |
@@ -1703,7 +1755,7 @@ costs:
 
 If the GPIO is not 5V-tolerant — an RP2350 ADC pin, per the board metadata, not
 a measurement — the command warns and asks for confirmation, which `--yes` or
-`--force` answers. Nothing else about the pad is checked: what is wired to it,
+`--force` answers. Nothing else about the pin is checked: what is wired to it,
 whether a jumper is fitted and what voltage the far end sits at are yours to
 know.
 
@@ -2267,8 +2319,8 @@ onerom firmware build --config amiga.json --board fire-40-b --size L --out firmw
 The configuration options mirror [`program`](#program): `--config` (`-j`),
 `--slot`, `--plugin`, `--config-name`, `--config-description`, `--save-config`,
 `--no-config`, and the per-device overrides `--instance-name`,
-`--serial-override`, `--logging`, `--disable-swd`, `--turbo-boot` (all rejected
-with `--no-config`). Build-specific options:
+`--serial-override`, `--logging`, `--disable-swd`, `--turbo-boot`,
+`--reserve-pin` (all rejected with `--no-config`). Build-specific options:
 
 | Option | Description |
 |---|---|
@@ -2959,49 +3011,26 @@ checked separately — see [Plugin compatibility](#plugin-compatibility).
 
 ## Pin values
 
-Used by `--pin` in [`control pin`](#control-pin), [`control
-reset`](#control-reset) and [`inspect gpio`](#inspect-gpio), and by
-`--reset-host` in [`program`](#program).
+A pin is written in one of these forms. Case is ignored.
 
-`--pin` names one **MCU GPIO**, either directly or through a header pad that is
-wired to one. All spellings are case-insensitive (`GPIO23`, `SEL_A`).
-
-| Form | Meaning |
+| Form | Pin |
 |---|---|
-| `gpio<N>` | An MCU GPIO — for example `gpio23`. |
-| `sel_a` … `sel_e` | An image-select pad. `sel-a` and `sela` are also accepted. |
-| `x1`, `x2` | An X pad. |
+| `sel_<letter>` | An image select pin, for example `sel_a`. `sel-a` and `sela` also work. |
+| `x1`, `x2` | An X pin. |
+| `gpio<N>` | An MCU GPIO, for example `gpio23`. |
 
-A pad name resolves against the **board**, since which GPIO sits behind `sel_a`
-is a fact about the board and not about the name. The board is normally read
-from the connected device; `--board` overrides it, and is what you need if this
-build does not recognise the device's board revision. `gpio<N>` needs no board.
-A board that has no such pad — `sel_e` on a four-select board, `x1` on a board
-with no X pads — is an error naming the pads that board does have.
+Used by:
+- `--pin` in [`control pin`](#control-pin), [`control reset`](#control-reset)
+  and [`inspect gpio`](#inspect-gpio)
+- `--reset-host` in [`program`](#program)
+- `--reserve-pin` in `program` and [`firmware build`](#firmware-build)
 
-Resolution uses the board's electrical pin assignments, not its header layout,
-so pad names work on every board, including those whose physical header is not
-yet characterised.
+Only image select pins and X pins can be reserved.
 
-A bare number is **rejected**. `23` could be an MCU GPIO, an image-select pad, an
-X pad or a ROM socket pin, and driving the wrong one is not a recoverable
-mistake, so the CLI names the namespaces rather than guessing. Accepting pad
-names does not remove that ambiguity — it sharpens it.
+A header pin's GPIO depends on the board. The board is read from the connected
+One ROM. Use `--board` if its board isn't recognised.
 
-The broken-out address pads (`a<N>`) are recognised and **deliberately refused**,
-now and in future. `--pin` addresses MCU GPIOs and the pads a wire can reach; an
-address line is a ROM signal rather than one of those, and accepting `a17` would
-invite `a11` or `d3`, which have no pad at all. Use the MCU GPIO behind the pad.
-`run`, `bootsel`, `swclk` and `swdio` are reported as not being GPIOs that can be
-driven. There is no syntax for a ROM socket leg.
-
-Run [`onerom inspect header`](#inspect-header) to see which GPIO is behind each
-header pad, or [`onerom inspect gpio`](#inspect-gpio) for the full per-GPIO
-listing.
-
-The upper bound is the device's own GPIO count — 30 on an RP2350A, 48 on an
-RP2350B — read from the device rather than assumed, so a GPIO the device does not
-have is reported against what it does have.
+Use [`onerom inspect header`](#inspect-header) to see each header pin's GPIO.
 
 ---
 

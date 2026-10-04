@@ -33,6 +33,7 @@
 use std::process;
 
 use onerom_config::hw::Board;
+use onerom_fw_tester::jumpers::Jumpers;
 use onerom_fw_tester::timing;
 use onerom_gen::{ChipSetType, Config};
 
@@ -81,7 +82,8 @@ fn main() {
 
     // Sel values beyond this wrap to a lower image, so the slot under test
     // would not be the slot exercised.
-    let max_images = 1usize << board.sel_pins().len();
+    let jumpers = Jumpers::new(board, &config);
+    let max_images = jumpers.images();
 
     for (idx, chip_set) in config.chip_sets.iter().enumerate() {
         let sel = idx as u8;
@@ -97,7 +99,15 @@ fn main() {
         match chip_set.set_type {
             ChipSetType::Single => {
                 report.begin_slot(idx, sel, &label);
-                run_slot(&mut report, board, &config, &base_dir, log_enabled, idx);
+                run_slot(
+                    &mut report,
+                    board,
+                    &jumpers,
+                    &config,
+                    &base_dir,
+                    log_enabled,
+                    idx,
+                );
             }
             // Multi and Banked slots are not exercised for serving here — the
             // pio-tester covers that — but their GPIO layout is what makes
@@ -112,7 +122,15 @@ fn main() {
                 };
                 let label = format!("{label} ({kind}, GPIO classification only)");
                 report.begin_slot(idx, sel, &label);
-                run_slot_gpio_only(&mut report, board, &config, &base_dir, log_enabled, idx);
+                run_slot_gpio_only(
+                    &mut report,
+                    board,
+                    &jumpers,
+                    &config,
+                    &base_dir,
+                    log_enabled,
+                    idx,
+                );
             }
             // `ChipSetType` is `#[non_exhaustive]`; a new kind of set needs a
             // decision on how it is exercised rather than being skipped.
@@ -135,12 +153,13 @@ fn main() {
 fn run_slot_gpio_only(
     report: &mut ApiReport,
     board: Board,
+    jumpers: &Jumpers,
     config: &Config,
     base_dir: &std::path::Path,
     log_enabled: bool,
     set_idx: usize,
 ) {
-    let (emulator, fw_version) = setup(board, log_enabled, set_idx as u8);
+    let (emulator, fw_version) = setup(board, jumpers, log_enabled, set_idx as u8);
 
     report.add(
         "gpio_use",
@@ -164,6 +183,7 @@ fn run_slot_gpio_only(
 fn run_slot(
     report: &mut ApiReport,
     board: Board,
+    jumpers: &Jumpers,
     config: &Config,
     base_dir: &std::path::Path,
     log_enabled: bool,
@@ -172,10 +192,10 @@ fn run_slot(
     // Boots of its own, so ahead of the boot the rest of the suite uses.
     report.add(
         "metadata_board_size",
-        tests::info::test_metadata_board_size(board, log_enabled, set_idx as u8),
+        tests::info::test_metadata_board_size(board, jumpers, log_enabled, set_idx as u8),
     );
 
-    let (mut emulator, fw_version) = setup(board, log_enabled, set_idx as u8);
+    let (mut emulator, fw_version) = setup(board, jumpers, log_enabled, set_idx as u8);
 
     // Info
     report.add(
@@ -188,7 +208,7 @@ fn run_slot(
     );
     report.add(
         "metadata_uint",
-        tests::info::test_metadata_uint(&emulator, config),
+        tests::info::test_metadata_uint(&emulator, config, board),
     );
     report.add(
         "metadata_uint_at",
@@ -217,6 +237,26 @@ fn run_slot(
         tests::platform::test_peripheral_and_irq_calls(&emulator, tests::gpio::max_gpios(board)),
     );
     report.add("yield", tests::platform::test_yield(&emulator));
+
+    // Firmware states. The wait test runs last because it sets
+    // PLUGINS_STARTED.
+    report.add(
+        "firmware_states_after_boot",
+        tests::state::test_states_after_boot(&emulator),
+    );
+    report.add(
+        "firmware_state_unknown",
+        tests::state::test_unknown_state(&emulator),
+    );
+    report.add(
+        "firmware_state_null_out",
+        tests::state::test_null_states_out(&emulator),
+    );
+    report.add(
+        "firmware_state_reserved_flags",
+        tests::state::test_reserved_flags(&emulator),
+    );
+    report.add("firmware_state_wait", tests::state::test_wait(&emulator));
 
     // Lookup
     report.add(
@@ -286,6 +326,13 @@ fn run_slot(
         tests::gpio::test_gpio_use(&emulator, config, board, fw_version, base_dir, set_idx),
     );
     report.add("gpio_set", tests::gpio::test_gpio_set(&emulator, board));
+    match tests::gpio::first_input_forced(&emulator, board) {
+        Some(gpio) => report.add(
+            "gpio_set_input_forced",
+            tests::gpio::test_gpio_set_input_forced(&emulator, gpio),
+        ),
+        None => report.skip("gpio_set_input_forced", "the slot forces no GPIO's input"),
+    }
     report.add(
         "is_pin_output",
         tests::gpio::test_is_pin_output(&emulator, board),

@@ -10,7 +10,7 @@ use super::{command_of, failed};
 use crate::args::Commands;
 use crate::args::firmware::FirmwareCommands;
 use crate::firmware::cmd_build;
-use crate::test_board::{IMAGE_27C400, base_firmware, config_27c400};
+use crate::test_board::{IMAGE_27C400, IMAGE_2364, base_firmware, config_27c400, config_2364};
 
 /// The files a `firmware build` line refers to, in a temporary directory:
 /// - `base.bin`, base firmware
@@ -36,11 +36,33 @@ impl Files {
         Self { dir }
     }
 
+    /// Base firmware for v0.`minor`.0 and a config of 2364 chip sets.
+    pub(super) fn with_2364(minor: u16, sets: &[&str], reserved: &[&str]) -> Self {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("base.bin"), base_firmware(minor)).unwrap();
+        std::fs::write(
+            dir.path().join("sets.json"),
+            config_2364(sets, dir.path(), reserved),
+        )
+        .unwrap();
+        let chips: usize = sets
+            .iter()
+            .map(|set_type| if *set_type == "single" { 1 } else { 2 })
+            .sum();
+        for n in 0..chips {
+            let image = vec![n as u8; IMAGE_2364];
+            std::fs::write(dir.path().join(format!("{n}.bin")), image).unwrap();
+        }
+        Self { dir }
+    }
+
     /// `line`'s words, with each file it refers to in the directory.
     pub(super) fn words(&self, line: &str) -> Vec<String> {
         line.split_whitespace()
             .map(|word| match word {
-                "base.bin" | "sets.json" => self.dir.path().join(word).display().to_string(),
+                "base.bin" | "sets.json" | "out.bin" => {
+                    self.dir.path().join(word).display().to_string()
+                }
                 word => word.to_string(),
             })
             .collect()
@@ -106,5 +128,103 @@ async fn a_set_that_doesnt_fit_with_firmware_before_0_8_0() {
 async fn a_size_other_than_m_with_firmware_before_0_8_0() {
     let files = Files::new(7, 3);
     let line = "onerom firmware build --board fire-40-a --size L --config sets.json --base-firmware base.bin";
+    build(line, &files).await;
+}
+
+#[tokio::test]
+async fn verbose_images_and_their_jumpers() {
+    let files = Files::with_2364(8, &["single"; 5], &[]);
+    let line = "onerom --verbose firmware build --board fire-24-f --config sets.json --base-firmware base.bin --output out.bin";
+    build(line, &files).await;
+}
+
+/// SEL_D becomes image select bit 2.
+#[tokio::test]
+async fn verbose_images_with_a_reserved_pin() {
+    let files = Files::with_2364(8, &["single"; 5], &[]);
+    let line = "onerom --verbose firmware build --board fire-24-f --config sets.json --base-firmware base.bin --output out.bin --reserve-pin sel_c";
+    build(line, &files).await;
+}
+
+/// Every jumper setting selects the one image.
+#[tokio::test]
+async fn verbose_one_image() {
+    let files = Files::with_2364(8, &["single"], &[]);
+    let line = "onerom --verbose firmware build --board fire-24-f --config sets.json --base-firmware base.bin --output out.bin";
+    build(line, &files).await;
+}
+
+#[tokio::test]
+async fn verbose_turbo_boot() {
+    let files = Files::with_2364(8, &["single"], &[]);
+    let line = "onerom --verbose firmware build --board fire-24-f --config sets.json --base-firmware base.bin --output out.bin --turbo-boot";
+    build(line, &files).await;
+}
+
+#[tokio::test]
+async fn slots_the_jumpers_cannot_select() {
+    let files = Files::with_2364(8, &["single"; 5], &[]);
+    let line = "onerom firmware build --board fire-24-f --config sets.json --base-firmware base.bin --output out.bin --reserve-pin sel_c --reserve-pin sel_d";
+    build(line, &files).await;
+    println!();
+    let line = "onerom firmware build --board fire-24-c --config sets.json --base-firmware base.bin --output out.bin";
+    build(line, &files).await;
+    println!();
+    let files = Files::with_2364(8, &["single"; 3], &[]);
+    let line = "onerom firmware build --board fire-24-f --config sets.json --base-firmware base.bin --output out.bin --reserve-pin sel_b --reserve-pin sel_c --reserve-pin sel_d";
+    build(line, &files).await;
+    println!();
+    let files = Files::with_2364(8, &["single"; 2], &[]);
+    let line = "onerom firmware build --board fire-24-f --config sets.json --base-firmware base.bin --output out.bin --reserve-pin sel_a --reserve-pin sel_b --reserve-pin sel_c --reserve-pin sel_d";
+    build(line, &files).await;
+}
+
+/// - GPIO 23 isn't wired to an image select pin, X1 or X2.
+/// - A fire-24-f doesn't have SEL_E.
+#[tokio::test]
+async fn a_pin_that_cannot_be_reserved() {
+    let files = Files::with_2364(8, &["single"], &[]);
+    let line = "onerom firmware build --board fire-24-f --config sets.json --base-firmware base.bin --output out.bin --reserve-pin gpio23";
+    build(line, &files).await;
+    for entry in ["sel_e", "banana"] {
+        println!();
+        let files = Files::with_2364(8, &["single"], &[entry]);
+        let line = "onerom firmware build --board fire-24-f --config sets.json --base-firmware base.bin --output out.bin";
+        println!("~ sets.json has \"reserved_pins\": [\"{entry}\"]");
+        build(line, &files).await;
+    }
+}
+
+#[test]
+fn a_reserve_pin_that_isnt_a_pin_name() {
+    super::help(&[
+        "onerom",
+        "firmware",
+        "build",
+        "--board",
+        "fire-24-f",
+        "--reserve-pin",
+        "banana",
+    ]);
+}
+
+#[tokio::test]
+async fn reserved_pins_with_firmware_before_0_8_0() {
+    let files = Files::with_2364(7, &["single"], &[]);
+    let line = "onerom firmware build --board fire-24-f --config sets.json --base-firmware base.bin --output out.bin --reserve-pin sel_c";
+    build(line, &files).await;
+}
+
+/// - A banked set fails with X1 reserved.
+/// - A single set on a fire-24-a builds with X1 and X2 reserved, although its
+///   address read window spans them.
+#[tokio::test]
+async fn a_banked_set_with_x1_reserved() {
+    let files = Files::with_2364(8, &["single", "banked"], &[]);
+    let line = "onerom firmware build --board fire-24-f --config sets.json --base-firmware base.bin --output out.bin --reserve-pin x1";
+    build(line, &files).await;
+    println!();
+    let files = Files::with_2364(8, &["single"], &[]);
+    let line = "onerom firmware build --board fire-24-a --config sets.json --base-firmware base.bin --output out.bin --reserve-pin x1 --reserve-pin x2";
     build(line, &files).await;
 }

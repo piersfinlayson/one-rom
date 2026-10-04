@@ -36,6 +36,15 @@ typedef struct {
     const uint8_t *overrides;
 } gpio_init_t;
 
+// An entry in gpio_init_t's overrides contains a GPIO and a gpio_override_t.
+static inline uint8_t override_gpio(uint8_t entry) {
+    return entry & 0x3F;
+}
+
+static inline uint8_t override_mode(uint8_t entry) {
+    return (entry & 0xC0) >> 6;
+}
+
 // Forward declarations
 static int validate_serving_algs(const onerom_rom_slot_t *slot);
 static int setup_serving_gpios(const onerom_rom_slot_t *slot);
@@ -188,7 +197,9 @@ static uint8_t retrieve_gpio_init(const onerom_rom_slot_t *slot, gpio_init_t *gp
 // plays: the data pins are driven by PIO, so taking one over breaks serving
 // until reboot, while everything else serving uses is an SIO input that PIO
 // keeps reading regardless of its function select, so taking one over is
-// reversible.  Naming the role is the host's job.
+// reversible.  A pin with its input forced to 0 or 1 is
+// ORA_GPIO_USE_INPUT_FORCED, as serving reads the forced level, not the pin.
+// Naming the role is the host's job.
 ora_result_t pio_get_gpio_use(
     const onerom_rom_slot_t *slot,
     uint8_t gpio,
@@ -230,6 +241,19 @@ ora_result_t pio_get_gpio_use(
     if (gpio_init.byte_pin < MAX_GPIOS && gpio == gpio_init.byte_pin) {
         *use_out = ORA_GPIO_USE_SERVING_READ;
         return ORA_RESULT_OK;
+    }
+
+    // A forced pin can be in the address span so is checked before it.  An
+    // inverted pin is still read and falls through.
+    if (gpio_init.overrides != NULL) {
+        for (int ii = 0; ii < gpio_init.num_overrides; ii++) {
+            uint8_t mode = override_mode(gpio_init.overrides[ii]);
+            if (override_gpio(gpio_init.overrides[ii]) == gpio &&
+                (mode == GPIO_OVER_LOW || mode == GPIO_OVER_HIGH)) {
+                *use_out = ORA_GPIO_USE_INPUT_FORCED;
+                return ORA_RESULT_OK;
+            }
+        }
     }
 
     // Address span.  Everything in it is read by the address state machine,
@@ -320,8 +344,8 @@ int setup_serving_gpios(const onerom_rom_slot_t *slot) {
     // Invert or override to always read 0 or 1
     if (gpio_init.num_overrides > 0 && gpio_init.overrides != NULL) {
         for (int ii = 0; ii < gpio_init.num_overrides; ii++) {
-            uint8_t pin  = gpio_init.overrides[ii] & 0x3F;
-            uint8_t mode = (gpio_init.overrides[ii] & 0xC0) >> 6;
+            uint8_t pin  = override_gpio(gpio_init.overrides[ii]);
+            uint8_t mode = override_mode(gpio_init.overrides[ii]);
             DEBUG("Override[%d]: pin=%u mode=%u", ii, pin, mode);
             switch (mode) {
                 case GPIO_OVER_NORMAL:

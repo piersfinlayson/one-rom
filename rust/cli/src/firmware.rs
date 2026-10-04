@@ -10,6 +10,7 @@ use onerom_config::fw::{FirmwareProperties, FirmwareVersion, ServeAlg};
 use onerom_config::hw::{Board, BoardSize};
 use onerom_config::mcu::RP235X_BASE_FLASH;
 use onerom_config::mcu::Variant;
+use onerom_config::pin::ReservedPads;
 use onerom_fw::net::{Release, Releases, fetch_license_async};
 use onerom_fw::{assemble_firmware, get_rom_files_async, read_rom_config, validate_sizes};
 use onerom_fw_parser::readers::MemoryReader;
@@ -105,6 +106,11 @@ fn apply_global_overrides(json: String, global_config: &GlobalConfig) -> Result<
     }
     if let Some(v) = global_config.turbo_boot {
         obj.insert("turbo_boot".to_string(), v.into());
+    }
+    if !global_config.reserved_pins.is_empty() {
+        let pins = serde_json::to_value(&global_config.reserved_pins)
+            .map_err(|e| Error::Other(format!("Failed to serialize reserved pins: {e}")))?;
+        obj.insert("reserved_pins".to_string(), pins);
     }
 
     serde_json::to_string(&value)
@@ -321,6 +327,15 @@ pub async fn build_rom_image(
         eprintln!("Warning: {warning}\n  Continuing due to --force.");
     }
 
+    // Checked before anything is fetched.
+    let reserved = builder
+        .config()
+        .reserved_pads(board)
+        .map_err(onerom_fw::Error::parse)?;
+    if let Some(warning) = unselectable_slots(builder.config(), board, reserved) {
+        eprintln!("Warning: {warning}");
+    }
+
     for license in builder.licenses() {
         accept_license(options, &license).await?;
         builder
@@ -373,9 +388,57 @@ pub async fn build_rom_image(
     } else {
         Some(image_data)
     };
-    let desc = builder.description();
+    let desc = builder
+        .description_for_board(board)
+        .map_err(onerom_fw::Error::build)?;
 
     Ok((fw_props, metadata, image_data, desc))
+}
+
+/// The warning for ROM slots that can't be selected with the image select
+/// jumpers.
+///
+/// Slots are numbered from 0 excluding plugins, as in `inspect slots`. Turbo
+/// boot doesn't read the jumpers.
+pub(crate) fn unselectable_slots(
+    config: &Config,
+    board: Board,
+    reserved: ReservedPads,
+) -> Option<String> {
+    if config.turbo_boot {
+        return None;
+    }
+    let slots = config
+        .chip_sets
+        .iter()
+        .filter(|set| !set.chips.iter().any(|c| c.chip_type.resolved().is_plugin()))
+        .count();
+    let pads: Vec<String> = reserved
+        .select_pads_read(&board)
+        .map(|pad| pad.silkscreen().to_string())
+        .collect();
+    let combinations = 1usize << pads.len();
+    if slots <= combinations {
+        return None;
+    }
+
+    let (first, last) = (combinations, slots - 1);
+    let which = match last - first {
+        0 => format!("slot {first} cannot"),
+        1 => format!("slots {first} and {last} cannot"),
+        _ => format!("slots {first} to {last} cannot"),
+    };
+    // Every Fire board has image select pins so an empty list means all are
+    // reserved.
+    let why = match pads.as_slice() {
+        [] => "Every image select pin is reserved.".to_string(),
+        [only] => format!("{only} provides 2 combinations for {slots} slots."),
+        [rest @ .., last] => format!(
+            "{} and {last} provide {combinations} combinations for {slots} slots.",
+            rest.join(", ")
+        ),
+    };
+    Some(format!("{which} be selected. {why}"))
 }
 
 /// Report the non-fatal outcomes of checking the plugins a config named.
@@ -512,6 +575,7 @@ pub async fn cmd_build(
             boot_logging: args.logging,
             disable_swd: args.disable_swd,
             turbo_boot: args.turbo_boot,
+            reserved_pins: args.reserve_pin.clone(),
         })
     };
     let config_json = resolve_config_json(
@@ -1462,5 +1526,173 @@ mod tests {
         let lines = firmware_summary(false, &image, &file).await.unwrap();
         assert!(shows(&lines, &["fire-24-e"]), "{lines:#?}");
         assert!(shows(&lines, &["RP2350"]), "{lines:#?}");
+    }
+
+    // -- reserved_pins -----------------------------------------------------
+
+    fn build_args(words: &[&str]) -> args::firmware::FirmwareBuildArgs {
+        use clap::Parser;
+        let cli = crate::args::Cli::try_parse_from(words).unwrap();
+        let crate::args::Commands::Firmware(firmware) = cli.command else {
+            panic!("not firmware");
+        };
+        let args::firmware::FirmwareCommands::Build(args) = firmware.command else {
+            panic!("not firmware build");
+        };
+        args
+    }
+
+    #[test]
+    fn reserve_pin_repeats_under_either_name() {
+        use onerom_config::pin::{Pad, Pin};
+        let args = build_args(&[
+            "onerom",
+            "firmware",
+            "build",
+            "--board",
+            "fire-24-f",
+            "--slot",
+            "file=a.bin,type=2364,cs1=active-low",
+            "--reserve-pin",
+            "SEL-C",
+            "--reserved_pins",
+            "gpio9",
+        ]);
+        assert_eq!(args.reserve_pin, [Pin::Pad(Pad::Select(2)), Pin::Gpio(9)]);
+    }
+
+    /// An address line can't be reserved, and `--reserve-pin` conflicts with
+    /// `--no-config`.
+    #[test]
+    fn reserve_pin_fails_where_it_cant_apply() {
+        use clap::Parser;
+        for words in [
+            &[
+                "onerom",
+                "firmware",
+                "build",
+                "--board",
+                "fire-24-f",
+                "--slot",
+                "file=a.bin,type=2364,cs1=active-low",
+                "--reserve-pin",
+                "a17",
+            ][..],
+            &[
+                "onerom",
+                "firmware",
+                "build",
+                "--board",
+                "fire-24-f",
+                "--no-config",
+                "--reserve-pin",
+                "sel_c",
+            ][..],
+        ] {
+            assert!(
+                crate::args::Cli::try_parse_from(words).is_err(),
+                "{words:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn reserve_pin_replaces_the_configs_reserved_pins() {
+        use onerom_config::pin::{Pad, Pin};
+        let json =
+            r#"{ "version": 1, "description": "d", "reserved_pins": ["sel_a"], "chip_sets": [] }"#;
+        let global = |reserved_pins: Vec<Pin>| GlobalConfig {
+            config_name: None,
+            config_description: None,
+            instance_name: None,
+            serial_override: None,
+            boot_logging: None,
+            disable_swd: None,
+            turbo_boot: None,
+            reserved_pins,
+        };
+        let reserved = |json: String| -> serde_json::Value {
+            serde_json::from_str::<serde_json::Value>(&json).unwrap()["reserved_pins"].clone()
+        };
+
+        let replaced =
+            apply_global_overrides(json.to_string(), &global(vec![Pin::Pad(Pad::X1)])).unwrap();
+        assert_eq!(reserved(replaced), serde_json::json!(["x1"]));
+        let kept = apply_global_overrides(json.to_string(), &global(Vec::new())).unwrap();
+        assert_eq!(reserved(kept), serde_json::json!(["sel_a"]));
+    }
+
+    #[test]
+    fn slots_past_the_jumpers_are_named() {
+        use crate::test_board::{config_2364, holds};
+        use onerom_config::pin::{Pad, ReservedPads};
+        let config = |sets: usize| -> Config {
+            let sets = vec!["single"; sets];
+            serde_json::from_str(&config_2364(&sets, std::path::Path::new("."), &[])).unwrap()
+        };
+        let mut sel_c = ReservedPads::new();
+        sel_c.insert(Pad::Select(2));
+        let mut sel_c_d = sel_c;
+        sel_c_d.insert(Pad::Select(3));
+
+        // Four image select pins provide 16 combinations and three provide 8.
+        assert_eq!(
+            unselectable_slots(&config(16), Board::Fire24F, ReservedPads::new()),
+            None
+        );
+        assert_eq!(unselectable_slots(&config(8), Board::Fire24F, sel_c), None);
+
+        let one = unselectable_slots(&config(5), Board::Fire24F, sel_c_d).unwrap();
+        assert!(holds(&one, &["4", "SEL_A", "SEL_B", "5"]), "{one}");
+        assert!(!one.contains("SEL_C"), "{one}");
+
+        let two = unselectable_slots(&config(6), Board::Fire24F, sel_c_d).unwrap();
+        assert!(holds(&two, &["4", "5", "6"]), "{two}");
+
+        let many = unselectable_slots(&config(10), Board::Fire24F, sel_c).unwrap();
+        assert!(holds(&many, &["8", "9", "SEL_D", "10"]), "{many}");
+
+        let mut turbo = config(10);
+        turbo.turbo_boot = true;
+        assert_eq!(unselectable_slots(&turbo, Board::Fire24F, sel_c), None);
+    }
+
+    #[tokio::test]
+    async fn reserve_pin_reaches_the_image() {
+        use crate::test_board::{IMAGE_2364, config_2364};
+        use onerom_config::pin::ReservedPads;
+
+        let dir = tempfile::tempdir().unwrap();
+        let base = dir.path().join("base.bin");
+        let config = dir.path().join("sets.json");
+        let out = dir.path().join("out.bin");
+        std::fs::write(&base, base_firmware(8)).unwrap();
+        std::fs::write(&config, config_2364(&["single"], dir.path(), &[])).unwrap();
+        std::fs::write(dir.path().join("0.bin"), vec![0; IMAGE_2364]).unwrap();
+
+        let args = build_args(&[
+            "onerom",
+            "firmware",
+            "build",
+            "--board",
+            "fire-24-f",
+            "--config",
+            config.to_str().unwrap(),
+            "--base-firmware",
+            base.to_str().unwrap(),
+            "--output",
+            out.to_str().unwrap(),
+            "--reserve-pin",
+            "sel_d",
+            "--reserve-pin",
+            "gpio8",
+        ]);
+        cmd_build(&options(), &args).await.unwrap();
+
+        let image = onerom_cli::image::parse_firmware(&std::fs::read(&out).unwrap()).await;
+        assert_eq!(
+            onerom_cli::pin::reserved_pads(&image),
+            Some(ReservedPads::from_bits(0b1000, 0b10))
+        );
     }
 }

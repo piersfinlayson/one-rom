@@ -234,6 +234,61 @@ pub fn image_file(size: BoardSize, sets: usize) -> Vec<u8> {
     onerom_fw::assemble_firmware(base_firmware(8), Some(metadata), Some(rom_data)).unwrap()
 }
 
+pub const IMAGE_2364: usize = 8 * 1024;
+
+pub fn config_2364(sets: &[&str], dir: &Path, reserved: &[&str]) -> String {
+    let mut n = 0;
+    let sets: Vec<String> = sets
+        .iter()
+        .map(|set_type| {
+            let chips = if *set_type == "single" { 1 } else { 2 };
+            let chips: Vec<String> = (0..chips)
+                .map(|_| {
+                    let file = dir.join(format!("{n}.bin"));
+                    n += 1;
+                    format!(
+                        r#"{{ "file": {}, "description": "2364", "type": "2364", "cs1": "active_low" }}"#,
+                        json!(file)
+                    )
+                })
+                .collect();
+            format!(
+                r#"{{ "type": "{set_type}", "chips": [{}] }}"#,
+                chips.join(", ")
+            )
+        })
+        .collect();
+    format!(
+        r#"{{ "version": 1, "description": "Test", "reserved_pins": {}, "chip_sets": [{}] }}"#,
+        json!(reserved),
+        sets.join(", ")
+    )
+}
+
+pub fn image_2364(sets: usize, reserved: &[&str]) -> Vec<u8> {
+    image_2364_for(Board::Fire24F, sets, reserved)
+}
+
+pub fn image_2364_for(board: Board, sets: usize, reserved: &[&str]) -> Vec<u8> {
+    use onerom_config::fw::{FirmwareProperties, FirmwareVersion, ServeAlg};
+    use onerom_config::mcu::{Family, Variant};
+    use onerom_gen::{Builder, FileData};
+
+    let version = FirmwareVersion::new(0, 8, 0, 0);
+    let singles = vec!["single"; sets];
+    let config = config_2364(&singles, Path::new("rom"), reserved);
+    let mut builder = Builder::from_json(version, Family::Rp2350, &config).unwrap();
+    for n in 0..sets {
+        builder
+            .add_file(FileData::new(n, vec![n as u8; IMAGE_2364]))
+            .unwrap();
+    }
+    let props =
+        FirmwareProperties::new(version, board, Variant::RP2350, ServeAlg::Default, false).unwrap();
+    let (metadata, rom_data) = builder.build(props).unwrap();
+    onerom_fw::assemble_firmware(base_firmware(8), Some(metadata), Some(rom_data)).unwrap()
+}
+
 /// `image`, an [`image_file`], with slot `slot`'s data pointer changed to
 /// `addr`. The ROM data stays where it was.
 pub async fn move_slot(mut image: Vec<u8>, slot: usize, addr: u32) -> Vec<u8> {

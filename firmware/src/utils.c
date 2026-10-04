@@ -13,13 +13,14 @@
 uint32_t check_sel_pins(uint32_t *sel_mask) {
     uint32_t num_sel_pins, sel_value;
     uint64_t orig_sel_mask, gpio_value, sel_flip_bits;
+    uint8_t reserved = onerom_metadata_header_reserved_sel_pins(METADATA);
 
     // Setup the pins first.  Do this first to allow any pull-ups to settle
     // before reading.
-    num_sel_pins = setup_sel_pins(&orig_sel_mask, &sel_flip_bits);
+    num_sel_pins = setup_sel_pins(reserved, &orig_sel_mask, &sel_flip_bits);
     if (num_sel_pins == 0) {
         DEBUG("No image select pins");
-        disable_sel_pins();
+        disable_sel_pins(reserved);
         *sel_mask = 0;
         return 0;
     }
@@ -34,7 +35,7 @@ uint32_t check_sel_pins(uint32_t *sel_mask) {
         (unsigned long)num_sel_pins,
         (uint32_t)(orig_sel_mask >> 32), (uint32_t)orig_sel_mask);
 
-    disable_sel_pins();
+    disable_sel_pins(reserved);
 
     // Now turn the GPIO value into a SEL value, with the bits consecutive
     // starting from bit 0, based on which pin the SEL value is.  At the same
@@ -44,7 +45,7 @@ uint32_t check_sel_pins(uint32_t *sel_mask) {
     sel_value = 0;
     for (int ii = 0; ii < MAX_IMG_SEL_PINS; ii++) {
         uint8_t pin = HW->gpio_sel[ii];
-        if (pin < MAX_GPIOS) {
+        if ((pin < MAX_GPIOS) && !(reserved & (1 << ii))) {
             if (gpio_value & (1ULL << pin)) {
                 sel_value |= (1 << ii);
             }
@@ -249,6 +250,28 @@ uint8_t get_rom_slot_index(uint32_t sel_pins, uint32_t sel_mask, uint8_t plugins
     return rom_index;
 }
 
+// Only called on core 0 from thread code and the DMA copy channel's interrupt.
+void set_firmware_states(uint32_t states) {
+#if REAL_HARDWARE
+    uint32_t primask;
+    __asm volatile ("mrs %0, primask \n\t"
+                    "cpsid i"
+                    : "=r" (primask) :: "memory");
+#endif // REAL_HARDWARE
+
+    uint32_t reached = RUNTIME->firmware_states | states;
+    const uint32_t startup =
+        FIRMWARE_STATE_ROM_LOADED | FIRMWARE_STATE_PLUGINS_STARTED;
+    if ((reached & startup) == startup) {
+        reached |= FIRMWARE_STATE_STARTUP_DONE;
+    }
+    RUNTIME->firmware_states = reached;
+
+#if REAL_HARDWARE
+    __asm volatile ("msr primask, %0" :: "r" (primask) : "memory");
+#endif // REAL_HARDWARE
+}
+
 #if REAL_HARDWARE
 
 void preload_rom_image(void) {
@@ -265,6 +288,7 @@ void preload_rom_image(void) {
 
     if (img_src == (uint32_t *)0xFFFFFFFF) {
         LOG("No RAM image");
+        set_firmware_states(FIRMWARE_STATE_ROM_LOADED);
         return;
     }
 
@@ -304,6 +328,7 @@ void preload_rom_image(void) {
 
     if (img_src == (uint64_t *)0xFFFFFFFF) {
         LOG("No RAM image");
+        set_firmware_states(FIRMWARE_STATE_ROM_LOADED);
         return;
     }
 
@@ -319,6 +344,7 @@ void preload_rom_image(void) {
     // Set image (either single ROM or multiple ROMs) has been fully
     // pre-processed before embedding in the flash.
     memcpy(img_dst, img_src, img_size);
+    set_firmware_states(FIRMWARE_STATE_ROM_LOADED);
     LOG("CPU preload complete from 0x%08X to 0x%08X size 0x%08X %s",
         (uint32_t)(uintptr_t)img_src, (uint32_t)(uintptr_t)img_dst, img_size, filename);
 

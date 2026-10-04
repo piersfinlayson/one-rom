@@ -265,8 +265,7 @@ typedef struct __attribute__((packed)) {
 _Static_assert(sizeof(onerom_gpio_query_args_t) == 16, "onerom_gpio_query_args_t size mismatch");
 
 typedef struct __attribute__((packed)) {
-    uint8_t use;        // ora_gpio_use_t: 0 free, 1 serving reads, 2 serving
-                        // drives, 3 system pin
+    uint8_t use;        // ora_gpio_use_t
     uint8_t level;      // Level currently on the pad, 0 or 1
     uint8_t is_output;  // 1 if the output driver is enabled, 0 if not
     uint8_t reserved;

@@ -57,6 +57,7 @@ use onerom_fw_tester::cs_timing;
 use onerom_fw_tester::driver;
 use onerom_fw_tester::geometry;
 use onerom_fw_tester::geometry::chip_substitution;
+use onerom_fw_tester::jumpers::Jumpers;
 use onerom_fw_tester::oracle;
 use onerom_fw_tester::pin_cache::{ControlLine, PinCache};
 use onerom_fw_tester::runner::{addr_before_cs_cycles, cs_to_data_cycles, run_mode};
@@ -161,10 +162,10 @@ fn board_supports_banked(board: Board) -> bool {
 
 pub fn run_all(board: Board, config: &Config, base_dir: &std::path::Path, report: &mut TestReport) {
     let num_sets = config.chip_sets.len();
-    let num_sel_pins = board.sel_pins().len();
+    let num_sel_pins = Jumpers::new(board, config).read.len();
     let max_images = 1usize << num_sel_pins;
     info!(
-        "Running {} chip set(s); board has {} sel pin(s) (max {} images)",
+        "Running {} chip set(s); firmware reads {} sel pin(s) (max {} images)",
         num_sets, num_sel_pins, max_images
     );
 
@@ -173,14 +174,14 @@ pub fn run_all(board: Board, config: &Config, base_dir: &std::path::Path, report
 
         let (oracle_set, note) = if effective_idx != set_idx {
             warn!(
-                "Set {}: board has {} sel pin(s) (max {} images); \
+                "Set {}: firmware reads {} sel pin(s) (max {} images); \
                  sel wraps to set {} — oracle taken from set {}",
                 set_idx, num_sel_pins, max_images, effective_idx, effective_idx,
             );
             (
                 &config.chip_sets[effective_idx],
                 Some(format!(
-                    "sel wraps to set {} (board has {} sel pin(s), max {} images)",
+                    "sel wraps to set {} (firmware reads {} sel pin(s), max {} images)",
                     effective_idx, num_sel_pins, max_images,
                 )),
             )
@@ -328,7 +329,7 @@ fn run_single_set(
     sel_image: u8,
     base_dir: &std::path::Path,
 ) -> SetResult {
-    let (emulator, fw_version) = match boot_set(board, chip_set, set_idx, sel_image) {
+    let (emulator, fw_version) = match boot_set(board, config, chip_set, set_idx, sel_image) {
         Ok(e) => e,
         Err(r) => return r,
     };
@@ -438,7 +439,7 @@ fn run_multi_set(
         );
     }
 
-    let (emulator, fw_version) = match boot_set(board, chip_set, set_idx, sel_image) {
+    let (emulator, fw_version) = match boot_set(board, config, chip_set, set_idx, sel_image) {
         Ok(e) => e,
         Err(r) => return r,
     };
@@ -968,7 +969,7 @@ fn run_banked_set(
         chip_type_0
     };
 
-    let (emulator, fw_version) = match boot_set(board, chip_set, set_idx, sel_image) {
+    let (emulator, fw_version) = match boot_set(board, config, chip_set, set_idx, sel_image) {
         Ok(e) => e,
         Err(r) => return r,
     };
@@ -1131,6 +1132,7 @@ fn run_banked_set(
 /// Shared by all three set types.
 fn boot_set(
     board: Board,
+    config: &Config,
     chip_set: &ChipSetConfig,
     set_idx: usize,
     sel_image: u8,
@@ -1138,8 +1140,12 @@ fn boot_set(
     // Both the RP variant and image selection must be set before boot so the
     // firmware sees the correct state during initialisation.
     Emulator::set_rp_variant(board.rp_variant());
-    debug!("Set {}: selecting image {}", set_idx, sel_image);
-    Emulator::set_sel_image(sel_image);
+    let (closed, expected_image) = Jumpers::new(board, config).for_image(sel_image);
+    debug!(
+        "Set {}: selecting image {} with jumpers {:#04x}",
+        set_idx, sel_image, closed
+    );
+    Emulator::set_sel_image(closed);
 
     debug!("Set {}: booting firmware", set_idx);
     let mut emulator = Emulator::boot();
@@ -1149,11 +1155,9 @@ fn boot_set(
     // accounts for that (oracle substitution, one-beyond test), so compare
     // against the wrapped value rather than the raw request.  Any other
     // discrepancy means the set would silently have tested a different ROM.
-    let max_images = 1usize << board.sel_pins().len();
-    let expected_image = (sel_image as usize % max_images) as u8;
     if emulator.sel_image() != expected_image {
         error!(
-            "Set {}: firmware selected image {}, not {}",
+            "Set {}: firmware read image select jumpers {:#04x}, not {:#04x}",
             set_idx,
             emulator.sel_image(),
             expected_image

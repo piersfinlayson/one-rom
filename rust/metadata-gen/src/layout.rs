@@ -213,12 +213,14 @@ impl Layout {
 /// Refuse a working schema that has moved away from the last released one
 /// without saying so.
 ///
-/// Seven things are checked:
+/// It fails where:
 ///
 /// - a plugin-facing constant, enum, enum value or metadata key claims the
 ///   wrong release as the one it arrived in
+/// - a bit field or member claims the wrong release as the one it arrived in
 /// - a constant's value changed, or the constant is gone
 /// - an enum value changed its number or its name, or is gone
+/// - a bit field member moved, changed width, or is gone
 /// - a shipped field moved, changed size, changed type, or is gone
 /// - a shipped variant of a standalone family gained a field
 /// - a structure's tree changed shape while its generation stayed put
@@ -239,6 +241,10 @@ pub fn compare(current: &Schema, released: &Released) -> Result<(), Box<dyn std:
 
     check_constants(current, &now, &then)?;
     check_enums(current, released)?;
+    // Before check_bitfield_releases so a renamed member is reported as
+    // renamed, not as a new member with an old release.
+    check_bitfields(current, released)?;
+    check_bitfield_releases(current, released)?;
     let changed = check_fields(&now, &then)?;
     check_standalone(current, released, &now, &then)?;
     check_generations(current, released, &changed)
@@ -251,6 +257,7 @@ fn check_nothing_released(released: &Released) -> Result<(), Box<dyn std::error:
     let described = !released.structs.is_empty()
         || !released.constants.is_empty()
         || !released.enums.is_empty()
+        || !released.bitfields.is_empty()
         || !released.type_aliases.is_empty()
         || !released.tagged_fams.is_empty();
     if described {
@@ -584,6 +591,120 @@ fn check_enums(current: &Schema, released: &Released) -> Result<(), Box<dyn std:
                 }
             }
         }
+    }
+    Ok(())
+}
+
+fn check_bitfields(
+    current: &Schema,
+    released: &Released,
+) -> Result<(), Box<dyn std::error::Error>> {
+    for was in &released.bitfields {
+        let Some(is) = current.bitfield(&was.name) else {
+            return Err(format!(
+                "bit field {} was in the last release and is gone - hosts read its bits still",
+                was.name
+            )
+            .into());
+        };
+        for old in &was.members {
+            let at = format!("{}::{}", was.name, old.name);
+            let Some(new) = is.members.iter().find(|m| m.name == old.name) else {
+                let renamed = is
+                    .members
+                    .iter()
+                    .find(|m| m.bit == old.bit && m.width() == old.width());
+                return Err(match renamed {
+                    Some(new) => format!(
+                        "{at} is called {} now - a released member keeps its name",
+                        new.name
+                    ),
+                    None => format!(
+                        "{at} was in the last release and is gone - a released member is \
+                         deprecated with deprecated_release rather than removed"
+                    ),
+                }
+                .into());
+            };
+            if new.bit != old.bit {
+                return Err(format!(
+                    "{at} was at bit {} in the last release and is at bit {} now - a released \
+                     member keeps its bits, because hosts read them there",
+                    old.bit, new.bit
+                )
+                .into());
+            }
+            if new.width() != old.width() {
+                return Err(format!(
+                    "{at} was {} bit(s) wide in the last release and is {} now - a released \
+                     member keeps its bits, because hosts read them there",
+                    old.width(),
+                    new.width()
+                )
+                .into());
+            }
+        }
+    }
+    Ok(())
+}
+
+fn check_bitfield_releases(
+    current: &Schema,
+    released: &Released,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let now = current.schema.firmware_release.as_str();
+    for b in &current.bitfields {
+        let was = released.bitfields.iter().find(|r| r.name == b.name);
+        check_arrived(
+            &format!("bit field {}", b.name),
+            &b.first_release,
+            was.map(|w| w.first_release.as_deref()),
+            now,
+        )?;
+        for m in &b.members {
+            let then = was.and_then(|w| {
+                let old = w.members.iter().find(|o| o.name == m.name)?;
+                Some(w.member_release(old))
+            });
+            check_arrived(
+                &format!("{}::{}", b.name, m.name),
+                b.member_release(m),
+                then,
+                now,
+            )?;
+        }
+    }
+    Ok(())
+}
+
+/// `was` is `None` where the copy doesn't have the item, and `Some(None)` where
+/// the copy has it without a release.
+fn check_arrived(
+    what: &str,
+    release: &str,
+    was: Option<Option<&str>>,
+    now: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    match was {
+        None => {
+            if release != now {
+                return Err(format!(
+                    "{what} is not in the copy of the last release, so it arrives in {now}, and \
+                     its release is {release}"
+                )
+                .into());
+            }
+        }
+        Some(Some(was)) => {
+            if release != was {
+                return Err(format!(
+                    "{what} arrived in {was} according to the last release, not {release} - the \
+                     release something arrived in is a fact about firmware already shipped"
+                )
+                .into());
+            }
+        }
+        Some(None) => {}
     }
     Ok(())
 }

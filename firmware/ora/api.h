@@ -783,6 +783,13 @@ typedef enum {
      */
     ORA_ID_LED_GET                   = 0x0000003E,
 
+    /**
+     * @brief Get or wait for firmware states
+     * @sa ora_firmware_state_query_fn_t
+     * @since firmware 0.8.0
+     */
+    ORA_ID_FIRMWARE_STATE_QUERY      = 0x0000003F,
+
     /** Invalid API identifier */
     ORA_ID_INVALID = 0xFFFFFFFF,
 } api_id_t;
@@ -1364,6 +1371,12 @@ typedef enum {
      * @since firmware 0.7.2
      */
     ORA_RESULT_LOG_FULL = 14,
+    /**
+     * @brief A requested firmware state has not been reached
+     * @sa ora_firmware_state_query_fn_t
+     * @since firmware 0.8.0
+     */
+    ORA_RESULT_NOT_READY = 15,
 } ora_result_t;
 
 /**
@@ -2622,10 +2635,14 @@ typedef enum {
     /**
      * @brief Serving reads this GPIO; driving it is reversible
      *
-     * Covers the whole address span of the active ROM slot - including any X
-     * expansion pins folded into it on Multi and Banked slots - the whole chip
-     * select span, including any position the select field masks out and any
-     * excess address line acting as a half-select, and the /BYTE pin.
+     * Covers these GPIOs of the active ROM slot:
+     *   - the address span including any X pins on Multi and Banked slots
+     *   - the chip select span including any masked position and any excess
+     *     address line used as a half-select
+     *   - the /BYTE pin
+     *
+     * A GPIO in the address span with its input forced is
+     * ORA_GPIO_USE_INPUT_FORCED instead.
      *
      * These are all SIO inputs, and PIO keeps reading the pin whatever its
      * function select says, so driving one and then releasing it with
@@ -2645,6 +2662,20 @@ typedef enum {
 
     /** @brief A board system pin - status LED, neopixel, VBUS or ext flash CS */
     ORA_GPIO_USE_SYSTEM         = 3,
+
+    /**
+     * @brief The GPIO's input is forced by One ROM
+     *
+     * The GPIO is in the active ROM slot's address span but unused so its
+     * input is forced. Driving it has no effect on serving.
+     *
+     * @ref ora_gpio_query_fn_t returns the pin's real level. PIO and SIO reads
+     * get the forced level.
+     *
+     * @sa ora_gpio_set_fn_t
+     * @since firmware 0.8.0
+     */
+    ORA_GPIO_USE_INPUT_FORCED   = 4,
 } ora_gpio_use_t;
 
 /**
@@ -2697,10 +2728,9 @@ STATIC_ASSERT(sizeof(ora_gpio_info_t) == 4, "ora_gpio_info_t must be 4 bytes");
  * is instantaneous: it starts no timer and schedules nothing. A caller wanting
  * a bounded assertion must time the release itself.
  *
- * By default the call refuses, with ORA_RESULT_GPIO_IN_USE, any GPIO whose
- * @ref ora_gpio_use_t is not ORA_GPIO_USE_FREE. This is the firmware's whole
- * safety model - it knows what One ROM itself has claimed, and nothing about
- * what is wired to the pin. @ref ORA_GPIO_FLAG_FORCE overrides the refusal.
+ * For a GPIO in use by One ROM - ORA_GPIO_USE_SERVING_READ,
+ * ORA_GPIO_USE_SERVING_DRIVEN or ORA_GPIO_USE_SYSTEM - the call returns
+ * ORA_RESULT_GPIO_IN_USE unless @ref ORA_GPIO_FLAG_FORCE is set.
  *
  * How recoverable a forced pin is is exactly what @ref ora_gpio_use_t reports:
  *
@@ -3275,6 +3305,46 @@ typedef ora_result_t (*ora_get_compile_option_str_fn_t)(
 typedef ora_result_t (*ora_log_category_enabled_fn_t)(
     ora_log_category_t category,
     uint32_t *enabled_out
+);
+
+/**
+ * @brief Wait for the requested states
+ * @sa ora_firmware_state_query_fn_t
+ * @since firmware 0.8.0
+ */
+#define ORA_FIRMWARE_STATE_QUERY_FLAG_WAIT  (1u << 0)
+
+/**
+ * @brief Get or wait for firmware states
+ * @sa ORA_ID_FIRMWARE_STATE_QUERY
+ * @since firmware 0.8.0
+ *
+ * The states are the @c ORA_FIRMWARE_STATE_ values in
+ * onerom_constants_generated.h.
+ *
+ * With @ref ORA_FIRMWARE_STATE_QUERY_FLAG_WAIT the call returns when every
+ * requested state is reached. It blocks the calling core without calling
+ * @ref ora_yield_fn_t so the other core cannot enter exclusive mode until it
+ * returns.
+ *
+ * Request a state on its own to find out whether this firmware supports it.
+ *
+ * @param states     Requested states as a bitwise OR of
+ *                   @c ORA_FIRMWARE_STATE_ values. May be 0.
+ * @param flags      Pass 0 or @ref ORA_FIRMWARE_STATE_QUERY_FLAG_WAIT. Other
+ *                   bits are reserved and must be 0.
+ * @param states_out Always set to the states reached. May be NULL.
+ * @return ORA_RESULT_OK if every requested state is reached.
+ *         ORA_RESULT_NOT_READY if a requested state is not reached. With the
+ *         wait flag this is only returned when the state cannot be reached
+ *         before the next reboot.
+ *         ORA_RESULT_NOT_SUPPORTED if a requested state is unknown to this
+ *         firmware. This is returned immediately even with the wait flag.
+ */
+typedef ora_result_t (*ora_firmware_state_query_fn_t)(
+    uint32_t states,
+    uint32_t flags,
+    uint32_t *states_out
 );
 
 /** @} */ // plugin_api_functions

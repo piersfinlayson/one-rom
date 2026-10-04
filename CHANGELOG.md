@@ -6,29 +6,40 @@ All notables changes between versions are documented in this file.
 
 Headline changes in this release:
 - One ROMs can now be hardware commissioned making them easier for users to manage.
-- One ROM now supports a second 2MB flash chip on 32 and 40 pin boards allowing more ROM images to be stored.  These are called size L, with a single flash boards called size M.
+- One ROM now supports a second 2MB flash chip on 32 and 40 pin boards allowing more ROM images to be stored.  These 4MB One ROMs are called size L, with 2MB boards size M.
+- Pins can be reserved for another use, for example a host reset line, so they aren't used by the core firmware.
 
 In detail:
-- `inspect info` indicates what it cannot decode and why.
-- `onerom peek` no longer fails on a large read.
-- The plugin API's generated metadata-key and constant headers now say which firmware release each entry first shipped in.
-- The plugin API gains the `ORA_OTP_FLASH_DEVINFO_*` constants, for reading and writing `FLASH_DEVINFO` as One ROM sets it for an L board.
-- Firmware change to avoid changing bootrom config for any external flash CS1 pin configured in OTP data.
-- A commissioned One ROM enters the bootloader if commissioning data is present and the commission board type differs from the metadata's board type.
-- Firmware makes OTP read-only before starting plugins, so neither a plugin nor a host using the USB plugin can write it.
-- Firmware records the board's size, M or L, in its runtime info, which `onerom inspect info` shows.
-- Add the `ext-flash` user plugin, which tests whether the external flash chip is present and functional on Fire 32 and 40 pin boards.
-- Retire the `onerom-fw` binary. Use the CLI's `firmware build` option instead.
-- Add `onerom hardware commission`, `validate`, `set-size`, `sign`, `request-signature` and `onerom inspect otp` for commissioning a One ROM. See [COMMISSIONING](/docs/COMMISSIONING.md).
-- A commissioned One ROM's bootloader appears as `One ROM Bootloader` from piers.rocks with USB VID and PID `1209:F540`.
-- `onerom scan --verbose` and `onerom inspect info` report a One ROM's commissioning information and each device's line ends `(L)` on an L (Large) board.
-- Web supports commissioning information and L sized boards.
-- Studio supports commissioning information and L sized boards.
+- A commissioned One ROM's bootloader appears as `One ROM Bootloader` from manufacturer piers.rocks with USB VID and PID `1209:F540`.  This is a permanent dedicated assignment from pid.codes.
+- Firmware:
+  - A commissioned One ROM enters the bootloader if commissioning data is present and the commissioned board type differs from the metadata's board type.
+  - OTP is made read-only before starting plugins, so nothing can write OTP from this point on.  OTP can only be modified in the bootloader.
+- CLI:
+  - Reserve a header pin for another use, for example a host reset line, with `reserved_pins` or `--reserve-pin`.
+  - `onerom program` and `onerom firmware build` print a warning for ROM slots the image select jumpers can't select.
+  - `onerom inspect info` displays One ROM's size.
+  - `onerom hardware commission`, `validate`, `set-size`, `sign`, `request-signature` and `onerom inspect otp` commission a One ROM. See [COMMISSIONING](/docs/COMMISSIONING.md).
+  - `onerom scan --verbose` and `onerom inspect info` report a One ROM's commissioning information.
+  - `onerom inspect info` reports what it cannot decode and why.
+- Web Programmer:
+  - Supports programming L sized boards and shows commissioning information.
+- Studio:
+  - Supports programming L sized boards and shows commissioning information.
+- Plugins:
+  - Add the `ext-flash` user plugin, which tests whether the external flash chip is present and functional on Fire 32 and 40 pin boards.
+- Plugin APIs:
+  - New: `ora_firmware_state_query()` to query and wait for core firmware states.
+  - New: `ORA_GPIO_USE_INPUT_FORCED` for a GPIO used as a forced input by the core firmware.  Plugins may drive it without the force flag.
+  - New: API metadata-key and constant headers now include the firmware release each entry first shipped in.
+  - New: `ORA_OTP_FLASH_DEVINFO_*` constants, for reading and writing `FLASH_DEVINFO` which contains flash chip sizes.
 - Fixes:
+  - `onerom peek` no longer fails on a large read.
   - `onerom program` and `onerom firmware build` now report a board mismatch correctly.
   - Windows Device Manager no longer shows an exclamation mark against a One ROM running the USB plugin or against Lab.
   - `onerom firmware inspect` lists a v0.7.0+ image's MCU, plugins and ROMs, and prints base firmware's board as `any (base firmware)` rather than warning about missing metadata.
   - Commands that don't need a One ROM, such as `onerom image convert` or `onerom firmware inspect --firmware`, no longer fail when two One ROMs are connected.
+- Other:
+  - Retire the `onerom-fw` binary. Use the CLI's `firmware build` option instead.
 
 To test:
 - One ROM and Lab on Windows no longer have an exclamation mark against them in Device Manager.
@@ -50,6 +61,7 @@ To publish:
 - Studio 0.2.4
 - ext-flash plugin 0.1.0
 - USB plugin 0.3.2
+- host-control plugin 0.1.6
 - RBCP Amiga bootloader 0.1.2
 - one-rom-wasm: rebuild against the new Rust crates to support v0.8.0
 - one-rom-site: pick up wasm to support v0.8.0

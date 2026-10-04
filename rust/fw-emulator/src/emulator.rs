@@ -80,6 +80,7 @@ pub enum OraResult {
     GpioInUse,
     LogChannelInUse,
     LogFull,
+    NotReady,
     /// A code this binding does not know. Carries the C type's own width,
     /// which `-fshort-enums` makes one byte.
     Unknown(ffi::ora_result_t),
@@ -103,6 +104,7 @@ impl From<ffi::ora_result_t> for OraResult {
             ffi::ora_result_t_ORA_RESULT_GPIO_IN_USE => Self::GpioInUse,
             ffi::ora_result_t_ORA_RESULT_LOG_CHANNEL_IN_USE => Self::LogChannelInUse,
             ffi::ora_result_t_ORA_RESULT_LOG_FULL => Self::LogFull,
+            ffi::ora_result_t_ORA_RESULT_NOT_READY => Self::NotReady,
             other => Self::Unknown(other),
         }
     }
@@ -622,6 +624,19 @@ impl Emulator {
     /// its `onerom_board_size_t` value.
     pub fn board_size(&self) -> u8 {
         unsafe { ffi::ffi_board_size() }
+    }
+
+    /// The firmware states in runtime info, as `onerom_firmware_state_t` bits.
+    pub fn firmware_states(&self) -> u32 {
+        unsafe { ffi::ffi_firmware_states() }
+    }
+
+    /// Record `FIRMWARE_STATE_PLUGINS_STARTED`, which plugin launch sets on a
+    /// device. Plugin launch is compiled out of a test build.
+    ///
+    /// Doesn't take `&self` so a yield hook can call it.
+    pub fn set_plugins_started() {
+        unsafe { ffi::ffi_set_plugins_started() };
     }
 
     /// The firmware's reading of the board OTP commissions the chip as: the
@@ -1678,6 +1693,38 @@ impl Emulator {
             gpio,
             state,
             if force { ORA_GPIO_FLAG_FORCE } else { 0 }
+        ))
+    }
+
+    // ── Firmware states ──────────────────────────────────────────────────────
+
+    /// `ORA_ID_FIRMWARE_STATE_QUERY`, returning the result and the states
+    /// reached.
+    ///
+    /// The states are `u32::MAX` where the call didn't write them.
+    ///
+    /// With `ORA_FIRMWARE_STATE_QUERY_FLAG_WAIT` the call blocks until the
+    /// states are set by a yield hook. See [`Self::set_yield_hook`].
+    pub fn firmware_state_query(&self, states: u32, flags: u32) -> (OraResult, u32) {
+        let mut reached = u32::MAX;
+        let r = plugin_call!(
+            ffi::api_id_t_ORA_ID_FIRMWARE_STATE_QUERY,
+            ffi::ora_firmware_state_query_fn_t,
+            states,
+            flags,
+            &mut reached as *mut u32
+        );
+        (OraResult::from(r), reached)
+    }
+
+    /// `ORA_ID_FIRMWARE_STATE_QUERY` with a NULL out pointer, which is valid.
+    pub fn firmware_state_query_null_out(&self, states: u32, flags: u32) -> OraResult {
+        OraResult::from(plugin_call!(
+            ffi::api_id_t_ORA_ID_FIRMWARE_STATE_QUERY,
+            ffi::ora_firmware_state_query_fn_t,
+            states,
+            flags,
+            std::ptr::null_mut::<u32>()
         ))
     }
 

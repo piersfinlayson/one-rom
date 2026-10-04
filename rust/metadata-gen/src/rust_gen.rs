@@ -10,6 +10,7 @@
 //   2. Constants            (pub const)
 //   3. Type aliases         (pub type)
 //   4. Enums                (pub enum + TryFrom impls)
+//      Bit fields           (pub struct + from_raw)
 //   5. Structs              (pub struct + parse impls)       generate != Skip
 //   6. Tagged FAMs          (pub enum  + parse impls)       generate != Skip
 //   7. Simple FAMs          (pub struct + parse impls)      generate != Skip
@@ -30,6 +31,7 @@ pub fn generate(schema: &Schema) -> String {
     push_metadata_generation_table(&mut out, schema);
     push_type_aliases(&mut out, schema);
     push_enums(&mut out, schema);
+    push_bitfields(&mut out, schema);
     push_structs(&mut out, schema);
     push_tagged_fams(&mut out, schema);
     push_simple_fams(&mut out, schema);
@@ -114,6 +116,15 @@ fn push_generations(out: &mut String, schema: &Schema) {
         out.push_str(&format!("    /// Generation `{name}` carries.\n"));
         out.push_str(&format!("    pub {slot}: u32,\n"));
     }
+    if let Some(info) = release_struct(schema) {
+        out.push_str(&format!(
+            "    /// Firmware release `{info}` records.  A bit field's members are read\n\
+             \x20   /// against it.  `None` until that structure has been read.\n"
+        ));
+        out.push_str(&format!(
+            "    pub {RELEASE_SLOT}: Option<FirmwareVersion>,\n"
+        ));
+    }
     out.push_str("}\n\n");
 
     out.push_str("impl Generations {\n");
@@ -122,6 +133,9 @@ fn push_generations(out: &mut String, schema: &Schema) {
     out.push_str("    pub const UNKNOWN: Self = Self {\n");
     for (_, slot) in schema.generation_slots() {
         out.push_str(&format!("        {slot}: 0,\n"));
+    }
+    if release_struct(schema).is_some() {
+        out.push_str(&format!("        {RELEASE_SLOT}: None,\n"));
     }
     out.push_str("    };\n");
 
@@ -137,7 +151,29 @@ fn push_generations(out: &mut String, schema: &Schema) {
         out.push_str("        self\n");
         out.push_str("    }\n");
     }
+    if let Some(info) = release_struct(schema) {
+        out.push('\n');
+        out.push_str(&format!(
+            "    /// This, with the firmware release `{info}` was found to record.\n"
+        ));
+        out.push_str(&format!(
+            "    pub const fn with_{RELEASE_SLOT}(mut self, release: FirmwareVersion) -> Self {{\n"
+        ));
+        out.push_str(&format!("        self.{RELEASE_SLOT} = Some(release);\n"));
+        out.push_str("        self\n");
+        out.push_str("    }\n");
+    }
     out.push_str("}\n\n");
+}
+
+/// The `Generations` field for the firmware release.
+const RELEASE_SLOT: &str = "firmware_release";
+
+fn release_struct(schema: &Schema) -> Option<&str> {
+    if !schema.records_release() {
+        return None;
+    }
+    schema.struct_in_slot(SLOT_INFO).map(|s| s.name.as_str())
 }
 
 // ---------------------------------------------------------------------------
@@ -156,7 +192,7 @@ fn field_rust_type(field: &Field) -> String {
             rust_type_name(field.type_.as_deref().unwrap_or(""))
         ),
 
-        "type_alias" => rust_type_name(field.type_.as_deref().unwrap_or("")),
+        "type_alias" | "bitfield" => rust_type_name(field.type_.as_deref().unwrap_or("")),
 
         "inline_array" => {
             let elem = field.element.as_deref().unwrap_or("u8");
@@ -340,6 +376,17 @@ fn emit_field_parse_offset(out: &mut String, field: &Field, indent: &str, schema
             let (method, sz) = alias_rw(field, schema);
             out.push_str(&format!(
                 "{indent}let {name} = view.{method}(offset)?; offset += {sz};\n"
+            ));
+        }
+
+        "bitfield" => {
+            let named = field.type_.as_deref().unwrap_or("");
+            let storage = schema.bitfield(named).map_or("u32", Bitfield::storage_type);
+            let (method, sz) = scalar_rw(storage);
+            let tn = rust_type_name(named);
+            out.push_str(&format!(
+                "{indent}let {name}_raw = view.{method}(offset)?; offset += {sz};\n\
+                 {indent}let {name} = {tn}::from_raw({name}_raw, generations.{RELEASE_SLOT});\n"
             ));
         }
 
@@ -999,6 +1046,151 @@ fn push_enum(out: &mut String, e: &Enum) {
 }
 
 // ---------------------------------------------------------------------------
+// Section: bit fields
+// ---------------------------------------------------------------------------
+
+fn push_bitfields(out: &mut String, schema: &Schema) {
+    if schema.bitfields.is_empty() {
+        return;
+    }
+    out.push_str(
+        "// ---------------------------------------------------------------------------\n\
+         // Bit fields\n\
+         // ---------------------------------------------------------------------------\n\n",
+    );
+    for b in &schema.bitfields {
+        push_bitfield(out, b, schema);
+    }
+}
+
+/// The member's type without its `Option`.
+fn member_rust_type(m: &BitfieldMember) -> String {
+    match (&m.type_, m.width()) {
+        (Some(named), _) => format!("MaybeKnown<{}>", rust_type_name(named)),
+        (None, 1) => "bool".into(),
+        (None, 2..=8) => "u8".into(),
+        (None, 9..=16) => "u16".into(),
+        (None, _) => "u32".into(),
+    }
+}
+
+/// The integer type a member's bits are shifted into.  For a member without an
+/// enum type it matches [`member_rust_type`].
+fn member_value_type(m: &BitfieldMember, schema: &Schema) -> &'static str {
+    match &m.type_ {
+        Some(named) => match schema.enums.iter().find(|e| &e.name == named) {
+            Some(e) if e.size > 1 => "u16",
+            _ => "u8",
+        },
+        None => match m.width() {
+            1..=8 => "u8",
+            9..=16 => "u16",
+            _ => "u32",
+        },
+    }
+}
+
+fn push_bitfield(out: &mut String, b: &Bitfield, schema: &Schema) {
+    let tn = rust_type_name(&b.name);
+    let storage = b.storage_type();
+
+    if let Some(cmt) = &b.comment {
+        push_doc_comment(out, "", cmt);
+        out.push_str("///\n");
+    }
+    out.push_str("/// A member is `None` where the device's firmware release predates it.\n");
+    out.push_str(
+        "#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]\n",
+    );
+    out.push_str(&format!("pub struct {tn} {{\n"));
+    for m in &b.members {
+        if let Some(doc) = m.documentation() {
+            push_doc_comment(out, "    ", &doc);
+        }
+        out.push_str(&format!(
+            "    pub {}: Option<{}>,\n",
+            b.rust_field_name(m),
+            member_rust_type(m)
+        ));
+    }
+    out.push_str(
+        "    /// Set bits no member covers at the device's firmware release.  A member\n\
+         \x20   /// added after this build is read here.\n",
+    );
+    out.push_str(&format!("    pub {BITFIELD_UNKNOWN_BITS}: {storage},\n"));
+    out.push_str("}\n\n");
+
+    out.push_str(&format!("impl {tn} {{\n"));
+    out.push_str(
+        "    /// The members `raw` holds on firmware `release`.\n\
+         \x20   ///\n\
+         \x20   /// A member `release` predates is `None`, and its bits are unknown.  An\n\
+         \x20   /// unknown release predates every member.\n",
+    );
+    out.push_str(&format!(
+        "    pub fn from_raw(raw: {storage}, release: Option<FirmwareVersion>) -> Self {{\n"
+    ));
+    out.push_str(
+        "        let has = |first: FirmwareVersion| release.is_some_and(|r| r >= first);\n",
+    );
+    out.push_str(&format!("        let mut known: {storage} = 0;\n"));
+    for m in &b.members {
+        let (major, minor, patch) = release_parts(b.member_release(m))
+            .expect("validate_release_strings has already refused a malformed release");
+        let field = b.rust_field_name(m);
+        let mask = format!("{:#x}", m.mask());
+        out.push_str(&format!(
+            "        let {field} = if has(FirmwareVersion::new({major}, {minor}, {patch}, 0)) {{\n"
+        ));
+        out.push_str(&format!("            known |= {mask};\n"));
+        out.push_str(&format!(
+            "            Some({})\n",
+            member_value_expr(m, &mask, storage, schema)
+        ));
+        out.push_str("        } else {\n");
+        out.push_str("            None\n");
+        out.push_str("        };\n");
+    }
+    out.push_str("        Self {\n");
+    for m in &b.members {
+        out.push_str(&format!("            {},\n", b.rust_field_name(m)));
+    }
+    out.push_str(&format!(
+        "            {BITFIELD_UNKNOWN_BITS}: raw & !known,\n"
+    ));
+    out.push_str("        }\n");
+    out.push_str("    }\n");
+    out.push_str("}\n\n");
+}
+
+/// The expression for a member's value, with `raw` in scope.
+fn member_value_expr(m: &BitfieldMember, mask: &str, storage: &str, schema: &Schema) -> String {
+    if m.type_.is_none() && m.width() == 1 {
+        return format!("(raw & {mask}) != 0");
+    }
+    let shifted = match m.bit {
+        0 => format!("(raw & {mask})"),
+        bit => format!("((raw & {mask}) >> {bit})"),
+    };
+    let value_type = member_value_type(m, schema);
+    let value = match value_type == storage {
+        true => shifted,
+        false => format!("{shifted} as {value_type}"),
+    };
+    match &m.type_ {
+        None => value,
+        Some(named) => {
+            let tn = rust_type_name(named);
+            format!(
+                "{{ let value = {value}; match {tn}::try_from(value) {{ \
+                 Ok(v) => MaybeKnown::Known(v), \
+                 Err(()) => MaybeKnown::Unknown(u32::from(value)) }} }}"
+            )
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Section: structs
 // ---------------------------------------------------------------------------
 
@@ -1276,6 +1468,19 @@ fn emit_generation_update(
 ) {
     let name = &field.name;
 
+    // The release is complete once the last of its fields has been read.
+    if release_struct(schema) == Some(s.name.as_str())
+        && last_release_field(s) == Some(name.as_str())
+    {
+        let [major, minor, patch] = RELEASE_FIELDS;
+        out.push_str(&format!(
+            "{indent}let generations = generations.with_{RELEASE_SLOT}(FirmwareVersion::new(\n\
+             {indent}    {major}, {minor}, {patch}, 0,\n\
+             {indent}));\n"
+        ));
+        return;
+    }
+
     if s.version_field.as_deref() == Some(name.as_str())
         && let Some(slot) = schema.slot_of(&s.name)
     {
@@ -1318,6 +1523,14 @@ fn emit_generation_update(
             "{indent}let generations = generations.with_{slot}({name}.{version_field}{widen});\n"
         ));
     }
+}
+
+fn last_release_field(s: &Struct) -> Option<&str> {
+    s.fields
+        .iter()
+        .rev()
+        .find(|f| RELEASE_FIELDS.contains(&f.name.as_str()))
+        .map(|f| f.name.as_str())
 }
 
 /// The cast a generation-number field needs to become the `u32` a
@@ -1405,6 +1618,20 @@ pub fn rust_default_expr(field: &Field, schema: &Schema) -> String {
                 .map(|a| a.underlying.as_str())
                 .expect("a gated type_alias field names a declared alias");
             format!("{value}{underlying}")
+        }
+        // Only a parse has `generations` in scope.  serialize_gen doesn't
+        // reach this arm as a bit field is only in runtime info, which isn't
+        // serialized.
+        "bitfield" => {
+            let named = field.type_.as_deref().unwrap_or("");
+            let b = schema
+                .bitfield(named)
+                .expect("a gated bitfield field refers to a declared bit field");
+            format!(
+                "{}::from_raw({value}{}, generations.{RELEASE_SLOT})",
+                rust_type_name(named),
+                b.storage_type()
+            )
         }
         _ => format!("{value}{}", field.type_.as_deref().unwrap_or("u8")),
     }

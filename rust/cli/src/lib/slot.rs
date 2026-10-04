@@ -8,6 +8,7 @@
 //! converting them into a One ROM JSON configuration suitable for the builder.
 
 use crate::Error;
+use crate::pin::Pin;
 use crate::plugin::{ResolvedPlugin, plugin_to_chip_set_config};
 use onerom_config::chip::{CHIP_TYPE_NAMES_PLUGINS, ChipFunction, ChipType, ControlLineType};
 use onerom_config::fw::FirmwareVersion;
@@ -30,6 +31,8 @@ pub struct GlobalConfig {
     pub boot_logging: Option<bool>,
     pub disable_swd: Option<bool>,
     pub turbo_boot: Option<bool>,
+    /// Replaces the config's `reserved_pins` where not empty.
+    pub reserved_pins: Vec<Pin>,
 }
 
 /// The result of checking whether any slot specifications require user
@@ -725,6 +728,7 @@ pub fn slots_to_config_json(
     config.boot_logging = global_config.is_some_and(|c| c.boot_logging.unwrap_or(false));
     config.swd_enabled = !global_config.is_some_and(|c| c.disable_swd.unwrap_or(false));
     config.turbo_boot = global_config.is_some_and(|c| c.turbo_boot.unwrap_or(false));
+    config.reserved_pins = global_config.map_or(Vec::new(), |c| c.reserved_pins.clone());
 
     serde_json::to_string_pretty(&config).map_err(|e| Error::Other(e.to_string()))
 }

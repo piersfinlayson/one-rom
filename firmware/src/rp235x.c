@@ -602,7 +602,9 @@ void setup_mco(void) {
 // jumper pulls up (1) or down (0) each sel pin individually.
 //
 // As of 0.6.2 moved to uint64_t to cope with RP2350B.
-uint32_t setup_sel_pins(uint64_t *sel_mask, uint64_t *flip_bits) {
+//
+// A pin with its bit set in reserved is left as it is.
+uint32_t setup_sel_pins(uint8_t reserved, uint64_t *sel_mask, uint64_t *flip_bits) {
     uint32_t num;
     uint32_t pad;
 
@@ -614,8 +616,7 @@ uint32_t setup_sel_pins(uint64_t *sel_mask, uint64_t *flip_bits) {
     for (int ii = 0; (ii < MAX_IMG_SEL_PINS); ii++) {
         uint8_t pin = HW->gpio_sel[ii];
         
-        if (pin >= MAX_GPIOS) {
-            // Ignore invalid pins
+        if ((pin >= MAX_GPIOS) || (reserved & (1 << ii))) {
             continue;
         }
         
@@ -713,10 +714,11 @@ uint64_t get_sel_value(uint64_t sel_mask, uint64_t flip_bits) {
     return gpio_value;
 }
 
-void disable_sel_pins(void) {
+// Undo setup_sel_pins().  reserved is the value passed to it.
+void disable_sel_pins(uint8_t reserved) {
     for (int ii = 0; (ii < MAX_IMG_SEL_PINS); ii++) {
         uint8_t pin = HW->gpio_sel[ii];
-        if (pin < MAX_GPIOS) {
+        if ((pin < MAX_GPIOS) && !(reserved & (1 << ii))) {
             // Disable pulls
             GPIO_PAD(pin) &= ~(PAD_PU | PAD_PD);
 

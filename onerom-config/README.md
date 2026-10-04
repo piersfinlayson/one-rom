@@ -71,6 +71,7 @@ The format is defined by [schema.json](schema.json), also published at https://i
 | `turbo_boot` | Skip reading the jumpers and serve the first image. |
 | `boot_logging` | Log boot over USB (with the USB plugin) or RTT. |
 | `swd_enabled` | `false` shuts SWD off as ROM serving starts, so debug-port reads cannot steal cycles from the serving DMAs.  BOOTSEL and PICOBOOT are unaffected. |
+| `reserved_pins` | Pins reserved for another use, for example `["sel_c", "x1"]`.  Only image select pins and X pins can be reserved.  Added in v0.8.0 and requires firmware v0.8.0 or later.  See [Reserve a pin for another use](/docs/CLI-MANUAL.md#reserve-a-pin-for-another-use). |
 
 ### Per-set keys
 

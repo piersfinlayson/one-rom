@@ -11,6 +11,7 @@ use clap::builder::{PossibleValue, TypedValueParser};
 use clap::{Args, Subcommand};
 use enum_dispatch::enum_dispatch;
 use onerom_app::BoardSize;
+use onerom_cli::pin::{Pin, parse_reserve_pin};
 
 /// Value parser for `--size`, driven by [`BoardSize::supported_values`].
 ///
@@ -292,7 +293,7 @@ pub struct FirmwareBuildArgs {
     /// Mutually exclusive with --config and --slot.
     #[arg(
         long,
-        conflicts_with_all = ["config_file", "slot", "instance_name", "serial_override", "logging", "disable_swd", "turbo_boot"]
+        conflicts_with_all = ["config_file", "slot", "instance_name", "serial_override", "logging", "disable_swd", "turbo_boot", "reserve_pin"]
     )]
     pub no_config: bool,
 
@@ -324,6 +325,15 @@ pub struct FirmwareBuildArgs {
     /// More than one non-plugin slot is refused unless --force is given.
     #[arg(long, visible_aliases = ["turbo_boot"], default_missing_value = "true", num_args = 0..=1, conflicts_with_all = ["no_config"])]
     pub turbo_boot: Option<bool>,
+
+    /// Reserve a pin for another use, for example a pin connected to a host's
+    /// reset line. Repeat for each reserved pin.
+    ///
+    /// Requires firmware v0.8.0 or later.
+    ///
+    /// Example: --reserve-pin sel_c --reserve-pin x1
+    #[arg(long, visible_aliases = ["reserved_pins"], value_name = "PIN", value_parser = parse_reserve_pin, conflicts_with_all = ["no_config"])]
+    pub reserve_pin: Vec<Pin>,
 }
 
 impl CommandTrait for FirmwareBuildArgs {

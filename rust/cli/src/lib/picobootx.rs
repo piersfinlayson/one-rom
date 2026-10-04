@@ -382,6 +382,10 @@ pub enum GpioUse {
 
     /// A board system pin - status LED, neopixel, VBUS or external flash CS.
     SystemPin = 3,
+
+    /// The GPIO's input is forced by One ROM. Driving it doesn't affect
+    /// serving.
+    InputForced = 4,
 }
 
 impl GpioUse {
@@ -393,6 +397,7 @@ impl GpioUse {
             1 => Some(Self::ServingRead),
             2 => Some(Self::ServingDriven),
             3 => Some(Self::SystemPin),
+            4 => Some(Self::InputForced),
             _ => None,
         }
     }
@@ -615,7 +620,8 @@ mod tests {
         assert_eq!(GpioUse::from_u8(1), Some(GpioUse::ServingRead));
         assert_eq!(GpioUse::from_u8(2), Some(GpioUse::ServingDriven));
         assert_eq!(GpioUse::from_u8(3), Some(GpioUse::SystemPin));
-        assert_eq!(GpioUse::from_u8(4), None);
+        assert_eq!(GpioUse::from_u8(4), Some(GpioUse::InputForced));
+        assert_eq!(GpioUse::from_u8(5), None);
         assert_eq!(GpioUse::from_u8(0xFF), None);
 
         assert_eq!(ONEROM_GPIO_FLAG_FORCE, 0x01);

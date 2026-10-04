@@ -18,12 +18,14 @@
 //
 // An `ora_api` enum emits each of its values here the same way, as `ORA_` and
 // the value's name, so a plugin can compare what an enum-typed metadata key
-// returns.
+// returns.  An `ora_api` bit field's member masks are emitted as `ORA_` and
+// the member's name, with `_SHIFT` added for the shift of a member wider than
+// one bit.
 //
 // Each constant carries an `@since firmware X.Y.Z` line naming the release it
 // reached the plugin API in, as api.h does for every identifier.
 
-use crate::c_gen::format_const_value;
+use crate::c_gen::{bitfield_mask_value, bitfield_shift_value, format_const_value};
 use crate::schema::{ConstantValue, Schema};
 
 const GUARD: &str = "ONEROM_CONSTANTS_H";
@@ -83,6 +85,30 @@ pub fn generate(schema: &Schema) -> String {
                 v.ora_name(),
                 format_const_value(&ConstantValue::Integer(v.value), e.value_type())
             ));
+        }
+    }
+
+    // Includes deprecated members, as for an enum.
+    for b in schema.ora_bitfields() {
+        for m in &b.members {
+            if let Some(comment) = m.plugin_documentation(b.member_release(m)) {
+                for line in comment.lines() {
+                    out.push_str(&format!("// {line}\n"));
+                }
+            }
+            out.push_str(&format!(
+                "#define {} {}\n",
+                m.ora_name(),
+                bitfield_mask_value(b, m)
+            ));
+            if m.width() > 1 {
+                out.push_str(&format!(
+                    "#define {} {}\n",
+                    m.ora_shift_name(),
+                    bitfield_shift_value(b, m)
+                ));
+            }
+            out.push('\n');
         }
     }
 

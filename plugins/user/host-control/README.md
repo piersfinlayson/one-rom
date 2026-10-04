@@ -64,9 +64,9 @@ Three pin groups are exposed, each with a type byte a host reads from `GET_AUX_G
 
 **Groups are numbered densely, so read the type rather than assuming an index.**  A board with no X pads — every 32- and 40-pin board, and the earlier 28-pin revisions — exposes two groups, not three, and the group a host would find at index 2 elsewhere is simply not there.
 
-A pin is reported drivable only where One ROM is using none of it.  That means the whole address, chip select and data set of the *active* slot is off limits, and so are the board's status LED, Neopixel, VBUS and external flash chip select pins.  Switching slots can change the answer, since a GPIO that is an address line for one ROM type is free for another.
+A pin is reported drivable only where One ROM is using none of it.  That means the whole address, chip select and data set of the *active* slot is off limits, and so are the board's status LED, Neopixel, VBUS and external flash chip select pins.  Switching slots can change the answer, since a GPIO that is an address line for one ROM type is free for another.  A GPIO used as a forced input by the core firmware is drivable.
 
-An X pad can reach two GPIOs on some boards.  Both are the same electrical net, so the pin is drivable only if both are free, and setting it drives both.
+An X pin is muxes to GPIOs on some boards.  Both are the same electrical net, so the pin is drivable only if both GPIOs are, and setting it drives both.
 
 `SET_AUX` with a non-zero hold does not complete until the hold has elapsed and the `after` state has been applied, so a host seeing the command complete knows the pin reached its final state.  This plugin accepts holds up to the protocol's maximum of 255 units, 2.55 seconds.  **RBCP is unresponsive for the whole of a hold** — the plugin has no task loop, so it waits in the command handler.
 

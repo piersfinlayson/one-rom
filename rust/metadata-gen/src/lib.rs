@@ -60,9 +60,12 @@
 //!   - the key resolver macros in the C header ([`c_gen`])
 //!   - the key header ([`keys_gen`])
 //!   - the constants header ([`constants_gen`])
-//!   - `ORA_` names for constants and enum values ([`schema`])
+//!   - `ORA_` names for constants, enum values and bit field members
+//!     ([`schema`])
 //!   - the `onerom_runtime_info_t` root for plugin keys ([`schema`])
 //!   - the release check on plugin keys ([`layout`])
+//! - The info structure's firmware release fields, read with a bit field
+//!   ([`schema::RELEASE_FIELDS`], [`rust_gen`])
 //! - In the C header ([`c_gen`]):
 //!   - `#include "macros.h"`
 //!   - `ONEROM_DEPRECATED`

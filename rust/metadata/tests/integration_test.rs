@@ -213,6 +213,8 @@ fn minimal_header() -> OneromMetadataHeader {
         swd_enabled: 0,
         turbo_boot: 0,
         rom_slots: vec![slot],
+        reserved_sel_pins: 0,
+        reserved_x_pins: 0,
     }
 }
 
@@ -481,7 +483,9 @@ fn round_trip_string_reuse() {
 //  30      swd_enabled u8
 //  31      turbo_boot u8
 //  32..36  rom_slots ptr
-//  36..256 reserved (220 bytes, must be 0xFF)
+//  36      reserved_sel_pins u8
+//  37      reserved_x_pins u8
+//  38..256 reserved (218 bytes, must be 0xFF)
 //
 // OneromRomSlot layout (32 bytes, offsets relative to slot start):
 //   0..4   data (opaque_ptr, u32)
@@ -595,13 +599,13 @@ fn byte_check_object_dedup() {
     );
 }
 
-/// 12. The 220-byte reserved region in OneromMetadataHeader (offsets 36–255)
+/// 12. The 218-byte reserved region in OneromMetadataHeader (offsets 38–255)
 ///     is all 0xFF after serialization.
 #[test]
 fn byte_check_header_padding_is_ff() {
     let buf = do_serialize(&minimal_header());
     #[allow(clippy::needless_range_loop)]
-    for offset in 36..256 {
+    for offset in 38..256 {
         assert_eq!(
             buf[offset], 0xFF,
             "header reserved byte at offset {offset} should be 0xFF, got 0x{:02X}",

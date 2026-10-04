@@ -64,6 +64,8 @@ pub use device::{Ptr, RuntimeCell};
 // this crate. The two have to agree.
 const _: () = assert!(RP235X_BASE_FLASH == FLASH_CS0_BASE_ADDR);
 
+const _: () = assert!(onerom_config::pin::MAX_SELECT_PADS as usize == MAX_IMG_SEL_PINS);
+
 pub const MIN_SCHEMA_VERSION: FirmwareVersion = FirmwareVersion::new(0, 7, 0, 0);
 
 // ---------------------------------------------------------------------------

@@ -11,6 +11,7 @@
 pub use onerom_fw_geometry::{driver, pin_cache};
 pub mod cs_timing;
 pub mod geometry;
+pub mod jumpers;
 pub mod oracle;
 pub mod runner;
 pub mod timing;

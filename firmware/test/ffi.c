@@ -55,6 +55,15 @@ uint8_t ffi_board_size(void) {
     return (uint8_t)RUNTIME->board_size;
 }
 
+// See ffi.h.
+uint32_t ffi_firmware_states(void) {
+    return RUNTIME->firmware_states;
+}
+
+void ffi_set_plugins_started(void) {
+    set_firmware_states(FIRMWARE_STATE_PLUGINS_STARTED);
+}
+
 // See ffi.h.  gen-config.c defines the host build's metadata root, and leaves
 // it writable so the harness can stand where the CLI does on a device.
 extern onerom_metadata_header_t _metadata_start;

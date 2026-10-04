@@ -421,6 +421,7 @@
 #define NVIC_ISER1          (*((volatile uint32_t *)(PBB_BASE + 0x0E104)))
 #define NVIC_ICER0          (*((volatile uint32_t *)(PBB_BASE + 0x0E180)))
 #define NVIC_ICER1          (*((volatile uint32_t *)(PBB_BASE + 0x0E184)))
+#define DMA_IRQ_0           10
 #define IRQ_USBCTRL      14
 #define IO_IRQ_BANK0        21
 

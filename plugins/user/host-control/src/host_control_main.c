@@ -2183,9 +2183,8 @@ static bool aux_group_kind(uint8_t group, uint8_t *kind_out, uint8_t *pins_out) 
 // in that order into `out` — which is the response's own first three bytes.
 // SET_AUX tests the drivable flag before driving anything.
 //
-// Every GPIO the pin reaches must be free: an X pad reaching two of them is one
-// net, so a use One ROM has for either is a use of the pad.  The level is that
-// of the first, which on such a pad is the level of both.
+// An X pin wired to two GPIOs is one net, so a use of either GPIO is a use of
+// the pin, and the level of the first GPIO is the level of both.
 #define AUX_PIN_INFO_BYTES  3u
 static void aux_pin_info(const aux_pin_t *pin, uint8_t *out) {
     zero_bytes(out, AUX_PIN_INFO_BYTES);
@@ -2202,7 +2201,8 @@ static void aux_pin_info(const aux_pin_t *pin, uint8_t *out) {
             level  = info.level;
             driven = info.is_output;
         }
-        if (info.use != ORA_GPIO_USE_FREE) {
+        if ((info.use != ORA_GPIO_USE_FREE) &&
+            (info.use != ORA_GPIO_USE_INPUT_FORCED)) {
             drivable = false;
         }
     }

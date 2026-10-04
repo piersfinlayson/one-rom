@@ -123,6 +123,7 @@ mod tests {
             boot_logging: false,
             swd_enabled: true,
             turbo_boot: false,
+            reserved_pins: vec![],
         };
 
         let fw = build_firmware_config(&config);

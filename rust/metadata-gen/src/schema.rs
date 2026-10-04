@@ -31,6 +31,8 @@ pub struct Schema {
     #[serde(default)]
     pub enums: Vec<Enum>,
     #[serde(default)]
+    pub bitfields: Vec<Bitfield>,
+    #[serde(default)]
     pub structs: Vec<Struct>,
     #[serde(default)]
     pub tagged_fams: Vec<TaggedFam>,
@@ -110,10 +112,11 @@ pub fn is_slot(slot: &str) -> bool {
 /// The field kinds a generation marker may sit on - those with something a
 /// reader of an older structure can be handed in place of bytes nobody wrote.
 /// What that is per kind is [`Schema::validate_defaults`].
-const MARKABLE_KINDS: [&str; 13] = [
+const MARKABLE_KINDS: [&str; 14] = [
     "scalar",
     "enum",
     "type_alias",
+    "bitfield",
     "inline_array",
     "inline_array2d",
     "cstr_ptr",
@@ -460,9 +463,13 @@ impl Schema {
         self.enums.iter().filter(|e| e.ora_api)
     }
 
+    pub fn ora_bitfields(&self) -> impl Iterator<Item = &Bitfield> {
+        self.bitfields.iter().filter(|b| b.ora_api)
+    }
+
     /// Every name the generated plugin headers define, each with what it is
-    /// the name of: the `ora_api` constants and enum values, then the
-    /// metadata keys.
+    /// the name of: the `ora_api` constants, enum values, bit field masks and
+    /// shifts, then the metadata keys.
     fn ora_names(&self) -> Vec<(String, String)> {
         let mut names: Vec<(String, String)> = self
             .ora_constants()
@@ -471,6 +478,17 @@ impl Schema {
         for e in self.ora_enums() {
             for v in &e.variants {
                 names.push((v.ora_name(), format!("{}::{}", e.name, v.name)));
+            }
+        }
+        for b in self.ora_bitfields() {
+            for m in &b.members {
+                names.push((m.ora_name(), format!("{}::{}", b.name, m.name)));
+                if m.width() > 1 {
+                    names.push((
+                        m.ora_shift_name(),
+                        format!("the shift of {}::{}", b.name, m.name),
+                    ));
+                }
             }
         }
         for sentinel in [crate::keys_gen::NONE, crate::keys_gen::INVALID] {
@@ -625,6 +643,108 @@ pub struct EnumAlias {
 }
 
 // ---------------------------------------------------------------------------
+// [[bitfields]]
+// ---------------------------------------------------------------------------
+
+/// Flags and small fields packed into one unsigned integer.
+///
+/// The keys are documented in metadata_schema.toml.
+#[derive(Deserialize, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct Bitfield {
+    pub name: String,
+    pub size: u32,
+    pub comment: Option<String>,
+    pub strip_prefix: Option<String>,
+
+    #[serde(default)]
+    pub ora_api: bool,
+
+    pub first_release: String,
+
+    #[serde(default)]
+    pub members: Vec<BitfieldMember>,
+}
+
+impl Bitfield {
+    pub fn storage_type(&self) -> &'static str {
+        match self.size {
+            1 => "u8",
+            2 => "u16",
+            _ => "u32",
+        }
+    }
+
+    pub fn member_release<'a>(&'a self, member: &'a BitfieldMember) -> &'a str {
+        member
+            .first_release
+            .as_deref()
+            .unwrap_or(&self.first_release)
+    }
+
+    pub fn rust_field_name(&self, member: &BitfieldMember) -> String {
+        let stripped = self
+            .strip_prefix
+            .as_deref()
+            .and_then(|prefix| member.name.strip_prefix(prefix))
+            .unwrap_or(&member.name);
+        stripped.to_lowercase()
+    }
+}
+
+#[derive(Deserialize, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct BitfieldMember {
+    pub name: String,
+    pub bit: u32,
+    pub width: Option<u32>,
+    #[serde(rename = "type")]
+    pub type_: Option<String>,
+    pub first_release: Option<String>,
+    pub deprecated_release: Option<String>,
+    pub comment: Option<String>,
+}
+
+/// The generated Rust struct's field for set bits no member covers.
+pub const BITFIELD_UNKNOWN_BITS: &str = "unknown_bits";
+
+impl BitfieldMember {
+    pub fn width(&self) -> u32 {
+        self.width.unwrap_or(1)
+    }
+
+    pub fn mask(&self) -> u64 {
+        ((1u64 << self.width()) - 1) << self.bit
+    }
+
+    pub fn shift_name(&self) -> String {
+        format!("{}_SHIFT", self.name)
+    }
+
+    pub fn ora_name(&self) -> String {
+        format!("ORA_{}", self.name)
+    }
+
+    pub fn ora_shift_name(&self) -> String {
+        format!("ORA_{}", self.shift_name())
+    }
+
+    pub fn documentation(&self) -> Option<String> {
+        with_deprecation_note(self.comment.as_deref(), self.deprecated_release.as_deref())
+    }
+
+    /// The plugin header's comment for this member, with `release` from
+    /// [`Bitfield::member_release`].
+    pub fn plugin_documentation(&self, release: &str) -> Option<String> {
+        with_since_line(self.documentation(), Some(release))
+    }
+}
+
+/// The info structure's firmware release fields.  A bit field's members are
+/// read against that release.
+pub const RELEASE_FIELDS: [&str; 3] = ["major_version", "minor_version", "patch_version"];
+
+// ---------------------------------------------------------------------------
 // Shared: generate flag
 // ---------------------------------------------------------------------------
 
@@ -715,6 +835,7 @@ impl ExpectedConst {
 /// | scalar                | type_                                           |
 /// | enum                  | type_                                           |
 /// | type_alias            | type_                                           |
+/// | bitfield              | type_                                           |
 /// | inline_array          | element, count, count_ref?                      |
 /// | inline_array2d        | element, rows, cols, rows_ref?, cols_ref?       |
 /// | cstr_ptr              | nullable                                        |
@@ -1117,6 +1238,9 @@ impl Schema {
         // terms of the root's name - a schema that moved it should say so
         // rather than fail as three missing structures.
         schema.validate_root()?;
+        // Before validate_expected_offsets so a bit field with a missing table
+        // isn't reported as a moved field.
+        schema.validate_bitfields()?;
         schema.validate_plugin_keys()?;
         schema.validate_expected_offsets()?;
         schema.validate_expected_consts()?;
@@ -1134,6 +1258,7 @@ impl Schema {
         schema.validate_constant_releases()?;
         schema.validate_constant_deprecations()?;
         schema.validate_enum_releases()?;
+        schema.validate_bitfield_releases()?;
         schema.validate_ora_names()?;
         schema.validate_linker_constants()?;
         schema.validate_tagged_fams()?;
@@ -1753,6 +1878,11 @@ impl Schema {
                 };
                 alias.underlying.as_str()
             }
+            // A field whose table isn't declared has already failed
+            // validate_bitfields.
+            "bitfield" => self
+                .bitfield(f.type_.as_deref().unwrap_or(""))
+                .map_or("u32", Bitfield::storage_type),
             "enum" => {
                 let named = f.type_.as_deref().unwrap_or("");
                 let Some(e) = self.enums.iter().find(|e| e.name == named) else {
@@ -1908,6 +2038,32 @@ impl Schema {
                     format!("first_release on plugin key {}", entry.key.name),
                     &entry.key.first_release,
                 ));
+            }
+        }
+        for b in &self.bitfields {
+            if !is_release(&b.first_release) {
+                return Err(bad(
+                    format!("first_release on bit field {}", b.name),
+                    &b.first_release,
+                ));
+            }
+            for m in &b.members {
+                if let Some(release) = &m.first_release
+                    && !is_release(release)
+                {
+                    return Err(bad(
+                        format!("first_release on {}::{}", b.name, m.name),
+                        release,
+                    ));
+                }
+                if let Some(release) = &m.deprecated_release
+                    && !is_release(release)
+                {
+                    return Err(bad(
+                        format!("deprecated_release on {}::{}", b.name, m.name),
+                        release,
+                    ));
+                }
             }
         }
         Ok(())
@@ -2177,6 +2333,241 @@ impl Schema {
                 Ok(())
             }
         }
+    }
+
+    /// A `bitfield` field is allowed only in the runtime structure, which only
+    /// One ROM firmware writes.  Every One ROM family firmware writes its own
+    /// release to `onerom_info_t`.
+    fn validate_bitfields(&self) -> Result<(), Box<dyn std::error::Error>> {
+        for b in &self.bitfields {
+            self.check_bitfield(b)?;
+        }
+
+        for (container, f) in self.all_fields() {
+            if f.kind != "bitfield" {
+                continue;
+            }
+            let named = f.type_.as_deref().unwrap_or("");
+            if self.bitfield(named).is_none() {
+                return Err(format!(
+                    "{container}.{} is a {named}, and no bit field of that name is declared",
+                    f.name
+                )
+                .into());
+            }
+            let Some(runtime) = self.struct_in_slot(SLOT_RUNTIME) else {
+                return Err(format!(
+                    "{container}.{} is a bit field, and one sits only in the structure filling \
+                     the {SLOT_RUNTIME} slot, which this schema doesn't have",
+                    f.name
+                )
+                .into());
+            };
+            if runtime.name != container {
+                return Err(format!(
+                    "{container}.{} is a bit field, and one sits only in {} - a host reads a \
+                     member only from firmware that has it, and that is the structure One ROM's \
+                     firmware alone writes",
+                    f.name, runtime.name
+                )
+                .into());
+            }
+            self.check_release_fields(container, f)?;
+        }
+        Ok(())
+    }
+
+    fn check_bitfield(&self, b: &Bitfield) -> Result<(), Box<dyn std::error::Error>> {
+        if !matches!(b.size, 1 | 2 | 4) {
+            return Err(format!(
+                "bit field {} is {} bytes, and a bit field is 1, 2 or 4",
+                b.name, b.size
+            )
+            .into());
+        }
+        if b.members.is_empty() {
+            return Err(format!("bit field {} doesn't list any members", b.name).into());
+        }
+
+        let bits = u64::from(b.size) * 8;
+        let mut taken: u64 = 0;
+        let mut names: Vec<&str> = Vec::new();
+        let mut fields: Vec<String> = vec![BITFIELD_UNKNOWN_BITS.to_string()];
+        for m in &b.members {
+            let at = format!("{}::{}", b.name, m.name);
+            if names.contains(&m.name.as_str()) {
+                return Err(format!("{at} is declared twice").into());
+            }
+            names.push(&m.name);
+
+            let field = b.rust_field_name(m);
+            let mut chars = field.chars();
+            let ident = chars
+                .next()
+                .is_some_and(|c| c.is_ascii_lowercase() || c == '_')
+                && chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_');
+            if !ident {
+                return Err(format!(
+                    "{at} becomes the Rust field '{field}', which is not an identifier"
+                )
+                .into());
+            }
+            if fields.contains(&field) {
+                return Err(format!(
+                    "{at} becomes the Rust field {field}, which another member or the unknown \
+                     bits already are"
+                )
+                .into());
+            }
+            fields.push(field);
+
+            if m.width() == 0 {
+                return Err(format!("{at} is 0 bits wide").into());
+            }
+            let end = u64::from(m.bit) + u64::from(m.width());
+            if end > bits {
+                return Err(format!(
+                    "{at} holds bits {} to {}, and {} has {bits}",
+                    m.bit,
+                    end - 1,
+                    b.name
+                )
+                .into());
+            }
+            if taken & m.mask() != 0 {
+                return Err(format!("{at} overlaps another member of {}", b.name).into());
+            }
+            taken |= m.mask();
+
+            if let Some(named) = &m.type_ {
+                self.check_member_type(&at, m, named)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn check_member_type(
+        &self,
+        at: &str,
+        m: &BitfieldMember,
+        named: &str,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let Some(e) = self.enums.iter().find(|e| e.name == named) else {
+            return Err(
+                format!("{at} holds a {named}, and no enum of that name is declared").into(),
+            );
+        };
+        if e.source.is_some() || e.variants.is_empty() {
+            return Err(format!("{at} holds a {named}, which doesn't list its values").into());
+        }
+        // The Rust enum converts from a u8, or from a u16 where it is wider.
+        let repr_bits = if e.size <= 1 { 8 } else { 16 };
+        if m.width() > repr_bits {
+            return Err(format!(
+                "{at} is {} bits wide, and a {named} converts from {repr_bits} bits",
+                m.width()
+            )
+            .into());
+        }
+        let limit = 1i64 << m.width();
+        if let Some(v) = e
+            .variants
+            .iter()
+            .filter(|v| !v.is_sentinel())
+            .find(|v| !(0..limit).contains(&v.value))
+        {
+            return Err(format!(
+                "{at} is {} bits wide, and {named}::{} is {}, which doesn't fit",
+                m.width(),
+                v.name,
+                v.value
+            )
+            .into());
+        }
+        Ok(())
+    }
+
+    fn check_release_fields(
+        &self,
+        container: &str,
+        f: &Field,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let Some(info) = self.struct_in_slot(SLOT_INFO) else {
+            return Err(format!(
+                "{container}.{} is a bit field, and no structure fills the {SLOT_INFO} slot to \
+                 record the firmware release",
+                f.name
+            )
+            .into());
+        };
+        let Some(pointer) = info
+            .fields
+            .iter()
+            .position(|p| p.kind == "struct_ptr" && p.type_.as_deref() == Some(container))
+        else {
+            return Err(format!(
+                "{container}.{} is a bit field, and {} doesn't point at {container}, so the \
+                 parser has no firmware release when it reads it",
+                f.name, info.name
+            )
+            .into());
+        };
+        for name in RELEASE_FIELDS {
+            let found = info.fields.iter().position(|r| {
+                r.name == name && r.kind == "scalar" && r.type_.as_deref() == Some("u16")
+            });
+            if !found.is_some_and(|at| at < pointer) {
+                return Err(format!(
+                    "{container}.{} is a bit field, and {}.{name} isn't a u16 scalar ahead of the \
+                     pointer to {container}, which is where the firmware release is read from",
+                    f.name, info.name
+                )
+                .into());
+            }
+        }
+        Ok(())
+    }
+
+    fn validate_bitfield_releases(&self) -> Result<(), Box<dyn std::error::Error>> {
+        for b in &self.bitfields {
+            // A malformed release has already failed validate_release_strings.
+            let table = release_parts(&b.first_release);
+            for m in &b.members {
+                let release = b.member_release(m);
+                if release_parts(release) < table {
+                    return Err(format!(
+                        "{}::{} arrived in {release}, before {} did in {}",
+                        b.name, m.name, b.name, b.first_release
+                    )
+                    .into());
+                }
+                if let Some(deprecated) = &m.deprecated_release
+                    && release_parts(deprecated) <= release_parts(release)
+                {
+                    return Err(format!(
+                        "{}::{} is deprecated from {deprecated} and arrived in {release} - a \
+                         member is retired in a later release than the one it arrived in",
+                        b.name, m.name
+                    )
+                    .into());
+                }
+            }
+        }
+        Ok(())
+    }
+
+    pub fn bitfield(&self, name: &str) -> Option<&Bitfield> {
+        self.bitfields.iter().find(|b| b.name == name)
+    }
+
+    pub fn records_release(&self) -> bool {
+        self.struct_in_slot(SLOT_INFO).is_some_and(|info| {
+            RELEASE_FIELDS.iter().all(|name| {
+                info.fields.iter().any(|f| {
+                    f.name == *name && f.kind == "scalar" && f.type_.as_deref() == Some("u16")
+                })
+            })
+        })
     }
 
     /// Every field in the schema, paired with the name of the struct or FAM
@@ -2545,6 +2936,8 @@ pub trait NamedSizes {
     fn enum_size(&self, name: &str) -> Option<usize>;
     /// Byte size of the named `[[type_aliases]]` entry.
     fn alias_size(&self, name: &str) -> Option<usize>;
+    /// Byte size of the named `[[bitfields]]` entry.
+    fn bitfield_size(&self, name: &str) -> Option<usize>;
 }
 
 impl NamedSizes for Schema {
@@ -2561,6 +2954,10 @@ impl NamedSizes for Schema {
             .find(|a| a.name == name)
             .map(|a| prim_size(&a.underlying))
     }
+
+    fn bitfield_size(&self, name: &str) -> Option<usize> {
+        self.bitfield(name).map(|b| b.size as usize)
+    }
 }
 
 /// Byte size of a field.  Used for layout offset tracking in generated C
@@ -2570,6 +2967,13 @@ pub fn shape_size(shape: &FieldShape, named: &dyn NamedSizes) -> usize {
         "scalar" => prim_size(shape.type_.unwrap_or("u8")),
         "enum" => shape.type_.and_then(|n| named.enum_size(n)).unwrap_or(1),
         "type_alias" => shape.type_.and_then(|n| named.alias_size(n)).unwrap_or(2),
+        // Only a released copy that has lost the table reaches 0, and the
+        // comparison fails on it.  Schema::parse fails on a field whose table
+        // isn't declared.
+        "bitfield" => shape
+            .type_
+            .and_then(|n| named.bitfield_size(n))
+            .unwrap_or(0),
         "inline_array" => {
             prim_size(shape.element.unwrap_or("u8")) * shape.count.unwrap_or(0) as usize
         }

@@ -15,6 +15,11 @@ uint8_t ffi_pios_enabled(void);
 uint8_t ffi_image_sel(void);
 uint8_t ffi_board_size(void);
 
+// Plugin launch is compiled out of a test build, so a test sets
+// FIRMWARE_STATE_PLUGINS_STARTED itself.
+uint32_t ffi_firmware_states(void);
+void ffi_set_plugins_started(void);
+
 // The generation recorded in the metadata header, and a way to change it.
 //
 // On a device the two differ routinely - see firmware/src/utils.c.  A host

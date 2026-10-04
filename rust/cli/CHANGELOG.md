@@ -10,6 +10,10 @@
 - Add `inspect otp`, which prints what a One ROM's OTP contains.
 - On a commissioned One ROM `program` by default uses the commissioned board type. An image built for another board type fails to program unless `--force` is provided.
 - `scan --verbose` and `inspect info` report a One ROM's commissioning information, and each device's line ends `(L)` on an L board. `inspect info` prints the board's size.
+- `inspect info` prints the firmware's states.
+- Add `--reserve-pin` to `program` and `firmware build`, to reserve a pin for another use.
+- `control pin`, `control reset` and `--reset-host` can drive a GPIO used as a forced input by the core firmware.
+- `program` and `firmware build` print a warning for ROM slots the image select jumpers can't select.
 - Support L boards. `program` builds an image for the One ROM's size and `firmware build` takes `--size`.
 - A damaged `--firmware` file fails to program unless `--force` is used.
 - `scan --slots` and `inspect slots` say why they don't recognise a One ROM's firmware.

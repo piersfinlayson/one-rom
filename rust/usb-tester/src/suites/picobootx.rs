@@ -438,12 +438,20 @@ fn a_gpio_set_is_applied_and_answered(dev: &mut Device, ctx: &Ctx) -> Result<Out
 /// refused" — which a host must not confuse with UNKNOWN_CMD, the answer that
 /// means the device is too old.
 fn a_gpio_in_use_is_refused(dev: &mut Device, ctx: &Ctx) -> Result<Outcome, String> {
-    // A pin serving is using.  Found by asking the firmware rather than assumed,
-    // since which pins those are is the board's business.
+    // A pin in use by One ROM. The pins differ between boards so the firmware
+    // is queried.
+    use onerom_fw_emulator::ffi;
     let mut in_use = None;
     for gpio in 0..ctx.num_gpios {
         let (result, info) = dev.emulator().gpio_query(gpio);
-        if result == onerom_fw_emulator::OraResult::Ok && info.gpio_use != 0 {
+        if result == onerom_fw_emulator::OraResult::Ok
+            && matches!(
+                info.gpio_use,
+                ffi::ora_gpio_use_t_ORA_GPIO_USE_SERVING_READ
+                    | ffi::ora_gpio_use_t_ORA_GPIO_USE_SERVING_DRIVEN
+                    | ffi::ora_gpio_use_t_ORA_GPIO_USE_SYSTEM
+            )
+        {
             in_use = Some(gpio);
             break;
         }

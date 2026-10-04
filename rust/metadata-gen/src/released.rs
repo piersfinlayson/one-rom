@@ -34,6 +34,8 @@ pub struct Released {
     #[serde(default)]
     pub enums: Vec<ReleasedEnum>,
     #[serde(default)]
+    pub bitfields: Vec<ReleasedBitfield>,
+    #[serde(default)]
     pub structs: Vec<ReleasedStruct>,
     #[serde(default)]
     pub tagged_fams: Vec<ReleasedTaggedFam>,
@@ -104,6 +106,40 @@ pub struct ReleasedEnumVariant {
     /// Absent where the value took its enum's, and in every copy taken before
     /// a value could state its own.
     pub first_release: Option<String>,
+}
+
+/// A bit field reduced to its size, its members' bits and their releases.  A
+/// released member's bits can't move because hosts read them in place.
+#[derive(Deserialize, Debug)]
+pub struct ReleasedBitfield {
+    pub name: String,
+    pub size: u32,
+    pub first_release: Option<String>,
+    #[serde(default)]
+    pub members: Vec<ReleasedBitfieldMember>,
+}
+
+impl ReleasedBitfield {
+    pub fn member_release<'a>(&'a self, member: &'a ReleasedBitfieldMember) -> Option<&'a str> {
+        member
+            .first_release
+            .as_deref()
+            .or(self.first_release.as_deref())
+    }
+}
+
+#[derive(Deserialize, Debug)]
+pub struct ReleasedBitfieldMember {
+    pub name: String,
+    pub bit: u32,
+    pub width: Option<u32>,
+    pub first_release: Option<String>,
+}
+
+impl ReleasedBitfieldMember {
+    pub fn width(&self) -> u32 {
+        self.width.unwrap_or(1)
+    }
 }
 
 #[derive(Deserialize, Debug)]
@@ -184,6 +220,13 @@ impl NamedSizes for Released {
             .iter()
             .find(|a| a.name == name)
             .map(|a| prim_size(&a.underlying))
+    }
+
+    fn bitfield_size(&self, name: &str) -> Option<usize> {
+        self.bitfields
+            .iter()
+            .find(|b| b.name == name)
+            .map(|b| b.size as usize)
     }
 }
 

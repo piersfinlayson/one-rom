@@ -16,6 +16,7 @@
 
 use onerom_config::chip::ChipType;
 use onerom_config::hw::{Board, HeaderRole, HeaderSlot};
+use onerom_config::pin::Pad;
 use onerom_gen::socket_pin_offset;
 
 /// The short label shown on a header pad for a single role.
@@ -25,11 +26,11 @@ pub fn header_role_label(role: &HeaderRole) -> String {
         HeaderRole::Gnd => "GND".to_string(),
         HeaderRole::Run => "RUN".to_string(),
         HeaderRole::Bootsel => "BOOTSEL".to_string(),
-        HeaderRole::Select(b) => format!("SEL_{}", (b'A' + *b) as char),
+        HeaderRole::Select(b) => Pad::Select(*b).silkscreen().to_string(),
         HeaderRole::Swclk => "SWCLK".to_string(),
         HeaderRole::Swdio => "SWDIO".to_string(),
-        HeaderRole::X1 => "X1".to_string(),
-        HeaderRole::X2 => "X2".to_string(),
+        HeaderRole::X1 => Pad::X1.silkscreen().to_string(),
+        HeaderRole::X2 => Pad::X2.silkscreen().to_string(),
         HeaderRole::Addr(n) => format!("A{n}"),
     }
 }

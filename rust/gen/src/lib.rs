@@ -51,6 +51,7 @@ use onerom_config::chip::ChipType;
 use onerom_config::fw::{FirmwareVersion, ServeAlg};
 
 use onerom_config::hw::{Board, BoardSize};
+use onerom_config::pin::{Pin, ReservedPads};
 pub use v1::MAX_SUPPORTED_FIRMWARE_VERSION as MAX_SUPPORTED_FIRMWARE_VERSION_V1;
 pub use v1::MIN_SUPPORTED_FIRMWARE_VERSION as MIN_SUPPORTED_FIRMWARE_VERSION_V1;
 pub use v1::SUPPORTED_CHIP_TYPES as SUPPORTED_CHIP_TYPES_V1;
@@ -94,6 +95,13 @@ pub fn rom_data_space(mcu_variant: onerom_config::mcu::Variant) -> usize {
 }
 
 pub const MIN_FIRMWARE_OVERRIDES_VERSION: FirmwareVersion = FirmwareVersion::new(0, 6, 0, 0);
+
+/// The oldest firmware that supports [`Config::reserved_pins`].
+///
+/// A config that reserves pins fails to build for older firmware.
+pub const MIN_RESERVED_PINS_VERSION: FirmwareVersion = FirmwareVersion::new(0, 8, 0, 0);
+
+const RESERVED_PINS_RULE: &str = "Only image select pins and X pins can be reserved.";
 
 /// Whether firmware `version` supports a `size` board.
 ///
@@ -329,6 +337,33 @@ pub enum Error {
     FirmwareTooOldForBoardSize {
         /// The firmware version.
         version: FirmwareVersion,
+    },
+    /// A `reserved_pins` entry is a GPIO that isn't wired to an image select
+    /// pin, X1 or X2 on the board.
+    ReservedPinNotAPad {
+        /// The entry.
+        pin: Pin,
+        /// The board.
+        board: Board,
+    },
+    /// A `reserved_pins` entry is a pin the board doesn't have.
+    ReservedPinNotOnBoard {
+        /// The entry.
+        pin: Pin,
+        /// The board.
+        board: Board,
+    },
+    /// A `reserved_pins` entry isn't a pin.
+    ReservedPinNotAPin {
+        /// The entry, less surrounding whitespace.
+        entry: String,
+    },
+    /// A ROM slot's layout uses a reserved pin.
+    ReservedPinInUse {
+        /// The slot's index among ROM slots, as numbered by `inspect slots`.
+        slot: usize,
+        /// The pin, as on the silkscreen.
+        pad: String,
     },
 }
 type Result<T> = core::result::Result<T, Error>;
@@ -621,6 +656,26 @@ impl core::fmt::Display for Error {
                     "Firmware {version} doesn't support board sizes other than M"
                 )
             }
+            Error::ReservedPinNotAPad { pin, board } => {
+                write!(
+                    f,
+                    "Cannot reserve '{pin}' on {board}.\n  {RESERVED_PINS_RULE}"
+                )
+            }
+            Error::ReservedPinNotOnBoard { pin, board } => {
+                write!(f, "Cannot reserve '{pin}' on {board}.\n  {board} has no ")?;
+                match pin {
+                    Pin::Pad(pad) => write!(f, "{} pin.", pad.silkscreen()),
+                    other @ Pin::Gpio(_) | other => write!(f, "{other} pin."),
+                }
+            }
+            Error::ReservedPinNotAPin { entry } => {
+                write!(f, "Cannot reserve '{entry}'.\n  {RESERVED_PINS_RULE}")
+            }
+            Error::ReservedPinInUse { slot, pad } => write!(
+                f,
+                "Slot {slot} uses reserved pin {pad}.\n  Do not reserve {pad} or remove slot {slot}."
+            ),
         }
     }
 }
@@ -777,6 +832,15 @@ pub struct Config {
     /// The first non-plugin image is served.
     #[serde(default = "default_turbo_boot")]
     pub turbo_boot: bool,
+
+    /// Pins reserved for another use, for example a pin connected to a host's
+    /// reset line.  Requires firmware v0.8.0 or later.
+    #[serde(
+        default,
+        skip_serializing_if = "Vec::is_empty",
+        deserialize_with = "deserialize_reserved_pins"
+    )]
+    pub reserved_pins: Vec<Pin>,
 }
 
 impl Config {
@@ -801,8 +865,65 @@ impl Config {
             boot_logging: default_boot_logging(),
             swd_enabled: default_swd_enabled(),
             turbo_boot: default_turbo_boot(),
+            reserved_pins: Vec::new(),
         }
     }
+
+    /// The pins reserved on `board` by [`Config::reserved_pins`].
+    ///
+    /// Fails with [`Error::ReservedPinNotOnBoard`] or
+    /// [`Error::ReservedPinNotAPad`]. Two entries may be the same pin.
+    pub fn reserved_pads(&self, board: Board) -> Result<ReservedPads> {
+        let mut reserved = ReservedPads::new();
+        for pin in &self.reserved_pins {
+            let not_on_board = Error::ReservedPinNotOnBoard { pin: *pin, board };
+            let Some(pad) = pin.pad_on(&board) else {
+                return Err(match pin {
+                    Pin::Pad(_) => not_on_board,
+                    Pin::Gpio(_) | _ => Error::ReservedPinNotAPad { pin: *pin, board },
+                });
+            };
+            if !reserved.insert(pad) {
+                return Err(not_on_board);
+            }
+        }
+        Ok(reserved)
+    }
+}
+
+/// For a direct deserialisation. [`Builder::from_json`] checks the entries
+/// with `check_reserved_pin_names` first.
+fn deserialize_reserved_pins<'de, D>(deserializer: D) -> core::result::Result<Vec<Pin>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::Deserialize;
+    use serde::de::Error as _;
+
+    Vec::<String>::deserialize(deserializer)?
+        .iter()
+        .map(|name| {
+            onerom_config::pin::parse_pin(name).map_err(|_| {
+                D::Error::custom(Error::ReservedPinNotAPin {
+                    entry: name.trim().to_string(),
+                })
+            })
+        })
+        .collect()
+}
+
+pub(crate) fn check_reserved_pin_names(config: &serde_json::Value) -> Result<()> {
+    let Some(serde_json::Value::Array(entries)) = config.get("reserved_pins") else {
+        return Ok(());
+    };
+    for name in entries.iter().filter_map(serde_json::Value::as_str) {
+        if onerom_config::pin::parse_pin(name).is_err() {
+            return Err(Error::ReservedPinNotAPin {
+                entry: name.trim().to_string(),
+            });
+        }
+    }
+    Ok(())
 }
 
 pub(crate) fn default_boot_logging() -> bool {

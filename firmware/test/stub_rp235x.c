@@ -204,14 +204,14 @@ uint8_t stub_get_sel_image(void) {
     return stub_sel_image;
 }
 
-uint32_t setup_sel_pins(uint64_t *sel_mask, uint64_t *flip_bits) {
+uint32_t setup_sel_pins(uint8_t reserved, uint64_t *sel_mask, uint64_t *flip_bits) {
     *sel_mask = 0;
     *flip_bits = 0;
     uint32_t count = 0;
     uint8_t gpio_limit = stub_max_gpios();
     for (int ii = 0; ii < MAX_IMG_SEL_PINS; ii++) {
         uint8_t pin = HW->gpio_sel[ii];
-        if (pin < gpio_limit) {
+        if ((pin < gpio_limit) && !(reserved & (1 << ii))) {
             *sel_mask |= (1ULL << pin);
             count++;
         }
@@ -224,7 +224,8 @@ uint64_t get_sel_value(uint64_t sel_mask, uint64_t flip_bits) {
     return stub_gpio_sel_value & sel_mask;
 }
 
-void disable_sel_pins(void) {
+void disable_sel_pins(uint8_t reserved) {
+    (void)reserved;
     STUB_LOG("disable_sel_pins");
 }
 

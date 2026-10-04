@@ -22,9 +22,12 @@
 
 mod commission;
 mod control_erase;
+mod control_pin;
+mod control_reset;
 mod firmware_build;
 mod firmware_inspect;
 mod hardware;
+mod inspect_gpio;
 mod inspect_otp;
 mod inspect_peek;
 mod inspect_slots;

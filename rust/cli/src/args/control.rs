@@ -64,7 +64,7 @@ pub enum ControlCommands {
 
     /// Control the RGB LED on a One ROM.
     ///
-    /// Only some One ROM models have an RGB LED. Run 'onerom inspect gpio' to
+    /// Only some One ROM models have an RGB LED. Use 'onerom inspect gpio' to
     /// see what a board has.
     ///
     /// Examples:
@@ -108,10 +108,8 @@ pub enum ControlCommands {
     /// reset the host system the One ROM is installed in. Useful in scripted
     /// workflows to reset the host after programming a new ROM image.
     ///
-    /// --pin is the pin your reset wire is soldered to - typically an X pad, or
-    /// an image-select pad whose jumper you have removed. Name it by pad
-    /// ('x1', 'sel_a') or by MCU GPIO ('gpio9'). Run 'onerom inspect header' to
-    /// see which GPIO is behind each pad.
+    /// --pin is the pin connected to the host's reset line, typically X1, X2 or
+    /// an image select pin.
     ///
     /// The reset line is only ever driven low and then released: a reset net
     /// has its own pull-up and may have other drivers on it, so there is
@@ -140,10 +138,7 @@ pub enum ControlCommands {
 
     /// Drive a One ROM pin high, low or high-impedance.
     ///
-    /// --pin names an MCU GPIO, written 'gpio<N>', or a header pad: 'sel_a'
-    /// to 'sel_e', 'x1' or 'x2'. Run 'onerom inspect header' to see which GPIO
-    /// is behind each header pad, and 'onerom inspect gpio' to see what One ROM
-    /// is currently using each GPIO for.
+    /// Use 'onerom inspect gpio' to see what One ROM is using each pin for.
     ///
     /// Without --hold the state is latched until something changes it. With
     /// --hold the device holds the state for that many milliseconds and then
@@ -614,18 +609,16 @@ impl From<&ControlRebootArgs> for RebootArgs {
 
 #[derive(Debug, Args)]
 pub struct ControlResetArgs {
-    /// Pin the reset wire is connected to: an MCU GPIO written gpio<N>, or a
-    /// header pad name (sel_a..sel_e, x1, x2).
+    /// Pin the reset wire is connected to: a header pin (sel_<letter>, x1, x2)
+    /// or an MCU GPIO written gpio<N>.
     ///
-    /// A bare number is rejected - see 'onerom inspect header' for the GPIO
-    /// behind each header pad.
+    /// Use 'onerom inspect header' to see each header pin's GPIO.
     #[arg(long, value_name = "PIN", value_parser = parse_pin)]
     pub pin: Pin,
 
     /// Board type, overriding what the connected One ROM reports.
     ///
-    /// Only needed to resolve a header pad name on a One ROM whose board type
-    /// this build does not recognise. A GPIO named as gpio<N> needs no board.
+    /// Use it if the One ROM's board isn't recognised.
     #[arg(long, short, value_name = "BOARD")]
     pub board: Option<String>,
 
@@ -690,18 +683,16 @@ impl std::fmt::Display for GpioState {
 
 #[derive(Debug, Args)]
 pub struct ControlPinArgs {
-    /// Pin to drive: an MCU GPIO written gpio<N>, or a header pad name
-    /// (sel_a..sel_e, x1, x2).
+    /// Pin to drive: a header pin (sel_<letter>, x1, x2) or an MCU GPIO written
+    /// gpio<N>.
     ///
-    /// A bare number is rejected - see 'onerom inspect header' for the GPIO
-    /// behind each header pad.
+    /// Use 'onerom inspect header' to see each header pin's GPIO.
     #[arg(long, value_name = "PIN", value_parser = parse_pin)]
     pub pin: Pin,
 
     /// Board type, overriding what the connected One ROM reports.
     ///
-    /// Only needed to resolve a header pad name on a One ROM whose board type
-    /// this build does not recognise. A GPIO named as gpio<N> needs no board.
+    /// Use it if the One ROM's board isn't recognised.
     #[arg(long, short, value_name = "BOARD")]
     pub board: Option<String>,
 

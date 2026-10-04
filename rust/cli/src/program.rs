@@ -122,6 +122,7 @@ async fn build_and_assemble(
         boot_logging: args.logging,
         disable_swd: args.disable_swd,
         turbo_boot: args.turbo_boot,
+        reserved_pins: args.reserve_pin.clone(),
     };
 
     let config_json = resolve_config_json(
@@ -451,6 +452,18 @@ fn refuse_unservable_request(
     Ok(())
 }
 
+pub(crate) fn unreserved_reset_pin(image: &ParsedDevice, pin: ResolvedPin) -> Option<String> {
+    let reserved = onerom_cli::pin::reserved_pads(image)?;
+    let pad = onerom_cli::pin::metadata_pad(image, pin.gpio())?;
+    (!reserved.contains(pad)).then(|| {
+        format!(
+            "--reset-host pin {} is not reserved so One ROM may use it.\n  \
+             Reserve it with --reserve-pin {pad}",
+            pad.silkscreen()
+        )
+    })
+}
+
 // ------------------------------- program command -------------------------------
 
 pub async fn cmd_program(
@@ -490,6 +503,12 @@ pub async fn cmd_program(
     let data =
         acquire_program_image(options, args, &board, &mcu, reset_host.map(|(pin, _)| pin)).await?;
     let image = verify_assembled_firmware(options, &data, args.force, board).await?;
+
+    if let Some((pin, _)) = reset_host
+        && let Some(warning) = unreserved_reset_pin(&image, pin)
+    {
+        eprintln!("Warning: {warning}");
+    }
 
     // onerom program sets a board up as One ROM.
     if let Some(file) = &args.firmware
@@ -639,5 +658,30 @@ mod tests {
         ]) {
             assert!(holds(line, &values), "{line}");
         }
+    }
+
+    #[tokio::test]
+    async fn an_unreserved_reset_pad_is_reported() {
+        use crate::test_board::{holds, image_2364};
+        use onerom_cli::image::parse_firmware;
+        use onerom_cli::pin::parse_pin;
+
+        let pin = |name: &str| {
+            parse_pin(name)
+                .unwrap()
+                .resolve(Some(&Board::Fire24F))
+                .unwrap()
+        };
+        let unreserved = parse_firmware(&image_2364(1, &[])).await;
+        let reserved = parse_firmware(&image_2364(1, &["x1", "sel_c"])).await;
+
+        let warning = unreserved_reset_pin(&unreserved, pin("x1")).unwrap();
+        assert!(holds(&warning, &["X1", "x1"]), "{warning}");
+        let warning = unreserved_reset_pin(&unreserved, pin("gpio25")).unwrap();
+        assert!(holds(&warning, &["SEL_C", "sel_c"]), "{warning}");
+        assert_eq!(unreserved_reset_pin(&reserved, pin("x1")), None);
+        assert_eq!(unreserved_reset_pin(&reserved, pin("gpio25")), None);
+        // GPIO23 is an address line.
+        assert_eq!(unreserved_reset_pin(&unreserved, pin("gpio23")), None);
     }
 }

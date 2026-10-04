@@ -453,6 +453,9 @@ pub async fn output_slot_info(
         if rom_count == 1 { "" } else { "s" },
         active_str
     );
+    if let Some(line) = reserved_pins_line(parsed) {
+        println!("{prefix}  {line}");
+    }
 
     // Second pass: print each ROM slot's detail, reaching into the
     // format-specific data by absolute `slot_index`.
@@ -613,6 +616,11 @@ pub async fn output_slot_info(
     }
 }
 
+pub(crate) fn reserved_pins_line(parsed: &ParsedDevice) -> Option<String> {
+    let reserved = onerom_cli::pin::reserved_pads(parsed)?;
+    (!reserved.is_empty()).then(|| format!("Reserved pins: {reserved}"))
+}
+
 /// Print one plugin line (and, when verbose, its detail).
 ///
 /// Resolves the plugin's image `source` to a friendly name via `onerom-app`.
@@ -711,12 +719,16 @@ pub async fn cmd_peek_memory(options: &Options, args: &InspectPeekMemoryArgs) ->
 /// over would cost, not what the pin is - so this is the one column of the table
 /// that does not come from local metadata. A category this build does not
 /// recognise is shown raw rather than guessed at.
-fn gpio_use_label(entry: &GpioEntry) -> String {
+///
+/// A reserved pin is reported as `free` or `input forced`.
+fn gpio_use_label(entry: &GpioEntry, reserved: bool) -> String {
     match entry.gpio_use() {
+        Some(GpioUse::Free | GpioUse::InputForced) if reserved => "reserved".to_string(),
         Some(GpioUse::Free) => "free".to_string(),
         Some(GpioUse::ServingRead) => "serving (read)".to_string(),
         Some(GpioUse::ServingDriven) => "serving (driven)".to_string(),
         Some(GpioUse::SystemPin) => "system".to_string(),
+        Some(GpioUse::InputForced) => "input forced".to_string(),
         None => format!("unknown ({})", entry.gpio_use_raw),
     }
 }
@@ -813,13 +825,14 @@ const GPIO_FUNCTION_COLUMN: usize = 1;
 /// `show_unconnected` includes the GPIOs with no function at all - thirteen of a
 /// fire-28-c's forty-eight, which bury the rows a reader came for. `verbose`
 /// adds the legend explaining where each column comes from.
-fn render_gpio_table(
+pub(crate) fn render_gpio_table(
     board: Option<&Board>,
     chip: Option<ChipType>,
     first_gpio: u8,
     entries: &[GpioEntry],
     show_unconnected: bool,
     verbose: bool,
+    reserved: u64,
 ) -> String {
     // Rows are built first so every column can be sized to its own content.
     // Filtering happens here rather than at the caller so the columns are sized
@@ -835,7 +848,7 @@ fn render_gpio_table(
                 if entry.is_output != 0 { "out" } else { "in" }.to_string(),
                 entry.level.to_string(),
                 gpio_tolerance_label(board, gpio),
-                gpio_use_label(entry),
+                gpio_use_label(entry, gpio < 64 && reserved & (1 << gpio) != 0),
             ]
         })
         .collect();
@@ -902,34 +915,35 @@ fn render_gpio_table(
     if verbose {
         out.push('\n');
         out.push_str(
-            "  Function is derived by this CLI from the board and the ROM being served,\n",
+            "  Function is the socket signal, board peripheral and header pin connected\n",
         );
         out.push_str(
-            "  and lists the socket signal, the board peripheral and the header pad, in\n",
+            "  to each GPIO. Dir, Level and Current use are reported by the device. A pin\n",
         );
-        out.push_str("  that order; Current use, Dir and Level are what the device reports.\n");
+        out.push_str("  you reserved when building the image is marked reserved.\n");
         out.push('\n');
         out.push_str("  Dir is the pin's output driver - 'out' if enabled, 'in' if not.\n");
         out.push('\n');
-        out.push_str("  Level is what an 'out' pin is driving, and what an 'in' pin reads.\n");
+        out.push_str(
+            "  Level is the output level of an 'out' pin and the input level of an 'in'\n",
+        );
+        out.push_str("  pin.\n");
         out.push('\n');
         out.push_str(
-            "  Current use is what One ROM is doing with the pin now, which can change:\n",
+            "  Current use is the pin's role in One ROM when queried. Image select pins\n",
         );
-        out.push_str(
-            "  the image select pins are read at start of day and released, so they show\n",
-        );
-        out.push_str("  free while serving.\n");
+        out.push_str("  are only read at boot, so they are free while serving.\n");
         out.push('\n');
         out.push_str(
-            "  serving (read) pins can be driven and released; serving (driven) pins cannot\n",
+            "  serving (read) pins can be driven and released. serving (driven) pins cannot\n",
         );
-        out.push_str("  be given back without a reboot.  See 'onerom control pin'.\n");
+        out.push_str("  be released without a reboot. input forced pins can be driven without\n");
+        out.push_str("  affecting serving. See 'onerom control pin'.\n");
         out.push('\n');
         out.push_str(
-            "  Function names only what a GPIO is; a pad may also carry SWCLK or SWDIO,\n",
+            "  A header pin may also be SWCLK or SWDIO. Use 'onerom inspect header' to see\n",
         );
-        out.push_str("  which are dedicated pins - run 'onerom inspect header' for the pads.\n");
+        out.push_str("  the header pins.\n");
         out.push('\n');
         if board.is_some_and(|b| b.rp_variant().is_some()) {
             out.push_str("  3V3 = 3.3V-only (ADC pin, keep ≤3.3V)    5V = 5V-tolerant\n");
@@ -941,7 +955,7 @@ fn render_gpio_table(
                 "  This board's header layout is not characterised, so pad names come from its\n",
             );
             out.push_str(
-                "  pin assignments alone - run 'onerom inspect header' for what is known.\n",
+                "  pin assignments alone - use 'onerom inspect header' for what is known.\n",
             );
         }
     }
@@ -975,6 +989,10 @@ pub async fn cmd_gpio(options: &Options, args: &InspectGpioArgs) -> Result<(), E
     // would relabel them against hardware that is not there.
     check_fire_board_optional(&board)?;
     let chip = active_chip_type(device);
+    let reserved = match device.firmware.as_ref() {
+        Some(Firmware::OneRom(parsed)) => onerom_cli::pin::reserved_gpios(parsed),
+        _ => 0,
+    };
     let pin = args
         .pin
         .map(|pin| pin.resolve(board.as_ref()))
@@ -1019,6 +1037,7 @@ pub async fn cmd_gpio(options: &Options, args: &InspectGpioArgs) -> Result<(), E
             // answer a direct question with an empty table.
             args.all || args.pin.is_some(),
             options.verbose,
+            reserved,
         )
     );
 
@@ -1316,6 +1335,7 @@ mod tests {
             &entries(30, GpioUse::ServingRead as u8),
             true,
             true,
+            0,
         );
 
         // One column, holding socket signals, board peripherals and header pads
@@ -1350,6 +1370,7 @@ mod tests {
             &entries(30, GpioUse::Free as u8),
             true,
             false,
+            0,
         );
         assert!(!table.contains("SWDIO"), "{table}");
         assert!(!table.contains("SWCLK"), "{table}");
@@ -1370,6 +1391,7 @@ mod tests {
             &entries(30, GpioUse::SystemPin as u8),
             true,
             false,
+            0,
         );
         assert_eq!(function_cell(&table, 29), "Status LED, RGB LED");
 
@@ -1384,6 +1406,7 @@ mod tests {
             &entries(48, GpioUse::SystemPin as u8),
             true,
             false,
+            0,
         );
         assert_eq!(function_cell(&table, 45), "Status LED");
         assert_eq!(function_cell(&table, 44), "RGB LED");
@@ -1401,6 +1424,7 @@ mod tests {
             &entries(48, GpioUse::ServingRead as u8),
             true,
             false,
+            0,
         );
         for line in table.lines().skip(2).take_while(|l| !l.is_empty()) {
             let cell = line
@@ -1435,6 +1459,7 @@ mod tests {
             &entries(48, GpioUse::Free as u8),
             true,
             false,
+            0,
         );
         let default = render_gpio_table(
             Some(&board),
@@ -1443,6 +1468,7 @@ mod tests {
             &entries(48, GpioUse::Free as u8),
             false,
             false,
+            0,
         );
 
         assert_eq!(row_count(&all), 48, "{all}");
@@ -1474,6 +1500,7 @@ mod tests {
             &entries(30, GpioUse::Free as u8),
             true,
             false,
+            0,
         );
         let loud = render_gpio_table(
             Some(&board),
@@ -1482,10 +1509,17 @@ mod tests {
             &entries(30, GpioUse::Free as u8),
             true,
             true,
+            0,
         );
-        assert!(!quiet.contains("derived by this CLI"), "{quiet}");
+        assert!(
+            !quiet.contains("board peripheral and header pin connected"),
+            "{quiet}"
+        );
         assert!(!quiet.contains("5V-tolerant"), "{quiet}");
-        assert!(loud.contains("derived by this CLI"), "{loud}");
+        assert!(
+            loud.contains("board peripheral and header pin connected"),
+            "{loud}"
+        );
         assert!(loud.contains("onerom control pin"), "{loud}");
         // The table itself is identical either way.
         assert_eq!(row_count(&quiet), row_count(&loud));
@@ -1501,6 +1535,7 @@ mod tests {
             &entries(48, GpioUse::Free as u8),
             true,
             true,
+            0,
         );
 
         // Every table line - headings, rule and rows - starts each column at the
@@ -1537,6 +1572,7 @@ mod tests {
             &entries(30, GpioUse::Free as u8),
             false,
             true,
+            0,
         );
         assert!(table.contains("Current use"), "{table}");
         assert!(table.contains("free"), "{table}");
@@ -1559,6 +1595,7 @@ mod tests {
             &entries(30, GpioUse::Free as u8),
             true,
             true,
+            0,
         );
         assert!(table.contains("socket pin "), "{table}");
         assert!(table.contains("SEL_A"), "{table}");
@@ -1575,6 +1612,7 @@ mod tests {
             &entries(16, GpioUse::Free as u8),
             true,
             true,
+            0,
         );
         assert!(
             table.contains("header layout is not characterised"),
@@ -1594,6 +1632,7 @@ mod tests {
             &entries(1, GpioUse::Free as u8),
             true,
             false,
+            0,
         );
         // --pin gpio9 shows GPIO 9, not GPIO 0.
         assert!(table.contains("\n  9 "), "{table}");
@@ -1604,8 +1643,30 @@ mod tests {
     fn table_shows_an_unrecognised_use_raw() {
         // A category from a device newer than this build must not be guessed at.
         let board = Board::try_from_str("fire-24-f").unwrap();
-        let table = render_gpio_table(Some(&board), None, 0, &entries(4, 9), true, false);
+        let table = render_gpio_table(Some(&board), None, 0, &entries(4, 9), true, false, 0);
         assert!(table.contains("unknown (9)"), "{table}");
+    }
+
+    #[test]
+    fn table_marks_a_free_reserved_gpio_reserved() {
+        let board = Board::try_from_str("fire-24-f").unwrap();
+        let use_of = |gpio_use: GpioUse, reserved: bool| {
+            let table = render_gpio_table(
+                Some(&board),
+                None,
+                25,
+                &entries(1, gpio_use as u8),
+                true,
+                false,
+                if reserved { 1 << 25 } else { 0 },
+            );
+            let row = table.lines().nth(2).expect("one row").to_string();
+            row.split("  ").last().unwrap().trim().to_string()
+        };
+        assert_eq!(use_of(GpioUse::Free, true), "reserved");
+        assert_eq!(use_of(GpioUse::InputForced, true), "reserved");
+        assert_eq!(use_of(GpioUse::ServingRead, true), "serving (read)");
+        assert_eq!(use_of(GpioUse::InputForced, false), "input forced");
     }
 
     /// Print every shape the table takes, for eyeballing:
@@ -1676,7 +1737,15 @@ mod tests {
                 println!("\n=== {label} ({view}) ===");
                 println!(
                     "{}",
-                    render_gpio_table(board.as_ref(), chip, 0, &entries, show_unconnected, verbose)
+                    render_gpio_table(
+                        board.as_ref(),
+                        chip,
+                        0,
+                        &entries,
+                        show_unconnected,
+                        verbose,
+                        0
+                    )
                 );
             }
         }

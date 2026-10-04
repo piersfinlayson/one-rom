@@ -58,6 +58,13 @@
                 "null"
             ]
         },
+        "reserved_pins": {
+            "description": "Pins reserved for another use, for example a pin connected to a host's\nreset line.  Requires firmware v0.8.0 or later.",
+            "type": "array",
+            "items": {
+                "$ref": "#/$defs/Pin"
+            }
+        },
         "serial_override": {
             "description": "Optional serial number override for this One ROM, overriding the stock\nUSB serial number (which is the MCU's unique chip ID).",
             "type": [
@@ -800,6 +807,11 @@
                 "start",
                 "length"
             ]
+        },
+        "Pin": {
+            "description": "A header pin ('sel_<letter>', 'x1' or 'x2') or an MCU GPIO ('gpio<N>'). Case is ignored. 'sel-a' and 'sela' are also accepted.",
+            "type": "string",
+            "pattern": "^\\s*([Gg][Pp][Ii][Oo][0-9]+|[Ss][Ee][Ll][_-]?[A-Ga-g]|[Xx][12])\\s*$"
         },
         "ServeAlg": {
             "description": "Chip serving algorithm.  Only valid for firmwares serving via CPU.  By\ndefault this is Ice boards and Fire 24 A/B boards.",

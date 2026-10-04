@@ -376,6 +376,11 @@ pub enum Error {
     InvalidPin(String, String),
 
     #[error(
+        "Invalid --reserve-pin value '{0}':\n  Only image select pins and X pins can be reserved - for example 'sel_c' or 'x1'."
+    )]
+    InvalidReservePin(String),
+
+    #[error(
         "This One ROM's USB system plugin predates GPIO control.\n  {detail}\n  Reprogram it with the v0.7.1 or later USB system plugin, for example:\n    {usb}",
         detail = .0,
         usb = hint::PROGRAM_WITH_USB

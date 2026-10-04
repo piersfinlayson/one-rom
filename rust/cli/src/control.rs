@@ -298,7 +298,12 @@ fn describe_use(gpio_use: GpioUse) -> (&'static str, &'static str) {
             "it is a One ROM system pin",
             "Driving it will disturb whatever the board uses it for.",
         ),
+        GpioUse::InputForced => ("ROM serving ignores it", ""),
     }
+}
+
+pub(crate) fn needs_force(gpio_use: GpioUse) -> bool {
+    !matches!(gpio_use, GpioUse::Free | GpioUse::InputForced)
 }
 
 /// Say what a 3.3V-only pad risks, ahead of asking whether to go on.
@@ -409,7 +414,7 @@ async fn vet_gpio(options: &Options, req: &DriveRequest<'_>) -> Result<Option<Ca
     };
 
     if let Some(gpio_use) = gpio_use
-        && gpio_use != GpioUse::Free
+        && needs_force(gpio_use)
     {
         let (doing, consequence) = describe_use(gpio_use);
         if !req.force {
@@ -499,11 +504,15 @@ pub async fn pulse_reset(
     let device = options.device.as_ref().unwrap();
     reset::pulse(device, &caps, pin.gpio(), hold_ms).await?;
 
-    println!(
-        "Asserted reset on {pin} for {hold_ms}ms - the device times the pulse and releases the pin"
-    );
+    println!("{}", reset_asserted_line(pin, hold_ms));
 
     Ok(())
+}
+
+pub(crate) fn reset_asserted_line(pin: ResolvedPin, hold_ms: u32) -> String {
+    format!(
+        "Asserted reset on {pin} for {hold_ms}ms - the device times the pulse and releases the pin"
+    )
 }
 
 /// Refuse a reset pin One ROM will be using itself.
@@ -1187,5 +1196,14 @@ mod tests {
     fn a_pad_named_without_a_board_is_refused() {
         let err = check("sel_a", None, &[]).unwrap_err();
         assert!(err.to_string().contains("--board"), "{err}");
+    }
+
+    #[test]
+    fn only_free_and_input_forced_pins_drive_unforced() {
+        assert!(!needs_force(GpioUse::Free));
+        assert!(!needs_force(GpioUse::InputForced));
+        assert!(needs_force(GpioUse::ServingRead));
+        assert!(needs_force(GpioUse::ServingDriven));
+        assert!(needs_force(GpioUse::SystemPin));
     }
 }

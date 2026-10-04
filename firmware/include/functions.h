@@ -27,6 +27,7 @@ void execute_ram_func(uint32_t ram_addr);
 void delay(volatile uint32_t count);
 uint8_t get_rom_slot_index(uint32_t sel_pins, uint32_t sel_mask, uint8_t plugins);
 void preload_rom_image();
+void set_firmware_states(uint32_t states);
 
 // log.c
 #if defined(BOOT_LOGGING)
@@ -57,9 +58,9 @@ void vbus_connect_handler(void);
 void setup_clock(void);
 void setup_initial_gpios(void);
 void setup_mco(void);
-uint32_t setup_sel_pins(uint64_t *sel_mask, uint64_t *flip_bits);
+uint32_t setup_sel_pins(uint8_t reserved, uint64_t *sel_mask, uint64_t *flip_bits);
 uint64_t get_sel_value(uint64_t sel_mask, uint64_t flip_bits);
-void disable_sel_pins(void);
+void disable_sel_pins(uint8_t reserved);
 void disable_swd(void);
 void setup_status_led(void);
 void blink_pattern(uint32_t on_time, uint32_t off_time, uint8_t repeats);
@@ -281,5 +282,8 @@ void dma_copy(
     size_t size_words
 );
 uint32_t dma_copy_status(void);
+#if REAL_HARDWARE
+void irq_handler_dma_irq_0(void);
+#endif // REAL_HARDWARE
 
 #endif // FUNCTIONS_H

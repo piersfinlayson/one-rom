@@ -18,6 +18,7 @@ use onerom_metadata::{
 };
 
 use crate::setup::setup;
+use onerom_fw_tester::jumpers::Jumpers;
 
 /// Verify that get_device_version returns a string that matches the parsed
 /// firmware version, and that it writes only into a buffer big enough for it.
@@ -132,23 +133,43 @@ pub fn test_metadata_str(emu: &Emulator, config: &Config) -> Result<(), String> 
 /// Verify device-level unsigned metadata retrieval via the keyed getter, and
 /// that the string and unsigned getters discriminate on datum type across the
 /// shared key space.
-pub fn test_metadata_uint(emu: &Emulator, config: &Config) -> Result<(), String> {
-    // turbo_boot comes from the config, so unlike the board-specific keys
-    // below it has an expected value rather than only a contract.
-    let (result, value) =
-        emu.get_metadata_uint(ffi::ora_metadata_key_t_ORA_METADATA_KEY_TURBO_BOOT);
-    if !result.is_ok() {
-        return Err(format!("TURBO_BOOT: expected OK, got {:?}", result));
+pub fn test_metadata_uint(emu: &Emulator, config: &Config, board: Board) -> Result<(), String> {
+    // turbo_boot and reserved_pins come from the config, so unlike the
+    // board-specific keys below they have expected values rather than only a
+    // contract.
+    let reserved = config
+        .reserved_pads(board)
+        .map_err(|e| format!("reserved_pins: {e}"))?;
+    let from_config: &[(ffi::ora_metadata_key_t, &str, u32)] = &[
+        (
+            ffi::ora_metadata_key_t_ORA_METADATA_KEY_TURBO_BOOT,
+            "TURBO_BOOT",
+            u32::from(config.turbo_boot),
+        ),
+        (
+            ffi::ora_metadata_key_t_ORA_METADATA_KEY_RESERVED_SEL_PINS,
+            "RESERVED_SEL_PINS",
+            u32::from(reserved.select_bits()),
+        ),
+        (
+            ffi::ora_metadata_key_t_ORA_METADATA_KEY_RESERVED_X_PINS,
+            "RESERVED_X_PINS",
+            u32::from(reserved.x_bits()),
+        ),
+    ];
+    for (key, label, expected) in from_config {
+        let (result, value) = emu.get_metadata_uint(*key);
+        if !result.is_ok() {
+            return Err(format!("{label}: expected OK, got {result:?}"));
+        }
+        let value = value.ok_or_else(|| format!("{label}: OK but no value"))?;
+        if value != *expected {
+            return Err(format!(
+                "{label}: got {value}, expected {expected} from the config"
+            ));
+        }
+        println!("  {label}: {value}");
     }
-    let value = value.ok_or_else(|| "TURBO_BOOT: OK but no value".to_string())?;
-    let expected = u32::from(config.turbo_boot);
-    if value != expected {
-        return Err(format!(
-            "TURBO_BOOT: got {}, expected {} from the config",
-            value, expected
-        ));
-    }
-    println!("  TURBO_BOOT: {}", value);
 
     // Numeric keys resolve OK. Values are board-specific, so confirm the
     // contract and print them rather than asserting exact numbers.
@@ -239,6 +260,7 @@ pub fn test_metadata_uint(emu: &Emulator, config: &Config) -> Result<(), String>
 /// boots are done.
 pub fn test_metadata_board_size(
     board: Board,
+    jumpers: &Jumpers,
     log_enabled: bool,
     sel_image: u8,
 ) -> Result<(), String> {
@@ -258,7 +280,7 @@ pub fn test_metadata_board_size(
             );
             Emulator::set_otp_ecc(OTP_FLASH_DEVINFO_ROW, &[devinfo]);
         }
-        let (emu, _) = setup(board, log_enabled, sel_image);
+        let (emu, _) = setup(board, jumpers, log_enabled, sel_image);
 
         let expected = expected as u32;
         let (status, value) =

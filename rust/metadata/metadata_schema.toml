@@ -20,6 +20,7 @@
 #   [[constants]]     - #define (C) / pub const (Rust)
 #   [[type_aliases]]  - typedef uint16_t aliases
 #   [[enums]]         - typedef enum types
+#   [[bitfields]]     - flags and small fields packed into one integer
 #   [[structs]]       - fixed-layout structs
 #   [[tagged_fams]]   - variable-length structs with discriminant (Rust enums)
 #   [[simple_fams]]   - variable-length structs: length prefix + byte array
@@ -30,6 +31,8 @@
 #   scalar            - u8, u16, u32
 #   enum              - reference to an [[enums]] entry
 #   type_alias        - reference to a [[type_aliases]] entry
+#   bitfield          - reference to a [[bitfields]] entry. Allowed only in
+#                       onerom_runtime_info_t.
 #   inline_array      - fixed-size array, element + count
 #   inline_array2d    - fixed 2D array, element + rows + cols
 #   cstr_ptr          - const char* null-terminated string pointer
@@ -122,6 +125,23 @@
 #   first_release     - as for a constant, where it differs from the enum's
 #
 # ---------------------------------------------------------------------------
+# Bit field attributes
+# ---------------------------------------------------------------------------
+#   size              - 1, 2 or 4 bytes
+#   ora_api           - as for an enum
+#   first_release     - release that added the bit field. Required.
+#
+# ---------------------------------------------------------------------------
+# Bit field member attributes
+# ---------------------------------------------------------------------------
+#   bit               - lowest bit of the member
+#   width             - number of bits, 1 by default
+#   type              - an [[enums]] entry for the member's value
+#   first_release     - release that added the member, where later than the
+#                       bit field's
+#   deprecated_release - as for an enum value
+#
+# ---------------------------------------------------------------------------
 # Structure generations
 # ---------------------------------------------------------------------------
 # Three structures carry a generation number - onerom_info_t,
@@ -136,11 +156,14 @@
 #     so a ROM slot field takes since_metadata_version.
 #   - A new field's bytes come from the trailing reserved padding. The padding
 #     shrinks, the structure keeps its declared size, nothing moves.
+#   - onerom_runtime_info_t has no trailing padding left so a new field there
+#     grows the structure's declared size within its 256-byte RAM
+#     reservation. Nothing moves.
 #
 # metadata_schema_released.toml is this file as the last release shipped it.
 # The build compares the two and fails on a changed layout with an unchanged
-# number, a moved field, a changed constant value, or an enum value renumbered,
-# renamed or removed.
+# number, a moved field, a changed constant value, an enum value renumbered,
+# renamed or removed, or a bit field member moved, resized or removed.
 #
 # Refresh it with ci/update-released-schema.sh once per cycle, in the same
 # commit as the firmware_release bump.
@@ -176,6 +199,11 @@ first_release = "0.8.0"
 struct_name = "onerom_metadata_header_t"
 version = 2
 first_release = "0.7.0"
+
+[[versions]]
+struct_name = "onerom_metadata_header_t"
+version = 3
+first_release = "0.8.0"
 
 [[versions]]
 struct_name = "onerom_runtime_info_t"
@@ -226,8 +254,8 @@ comment = "Magic string identifying the metadata header (16 bytes including null
 [[constants]]
 name = "CURRENT_METADATA_VERSION"
 type = "u32"
-value = 2
-comment = "Current metadata structure version (v0.7.0+)"
+value = 3
+comment = "Current metadata structure version (v0.8.0+)"
 
 [[constants]]
 name = "RUNTIME_INFO_VERSION"
@@ -1123,6 +1151,35 @@ value = 0xFF
 comment = "An unspecified size."
 
 # ===========================================================================
+# Bit fields
+# ===========================================================================
+
+[[bitfields]]
+name = "onerom_firmware_state_t"
+size = 4
+comment = """The firmware's states. A set bit indicates a state has been reached.
+A unused bit is set to be 0."""
+strip_prefix = "FIRMWARE_STATE_"
+ora_api = true
+first_release = "0.8.0"
+
+[[bitfields.members]]
+name = "FIRMWARE_STATE_ROM_LOADED"
+bit = 0
+comment = """The boot copy of the ROM image from flash into RAM has finished, or the
+slot has no image to copy."""
+
+[[bitfields.members]]
+name = "FIRMWARE_STATE_PLUGINS_STARTED"
+bit = 1
+comment = "Plugin launch has finished, reached even if there are no plugins."
+
+[[bitfields.members]]
+name = "FIRMWARE_STATE_STARTUP_DONE"
+bit = 2
+comment = "The ROM image is loaded and plugins have started."
+
+# ===========================================================================
 # Structs
 # ===========================================================================
 # 'size'            - byte size where a STATIC_ASSERT exists in the C source
@@ -1334,9 +1391,29 @@ nullable = false
 comment = "Pointer to array of ROM slots (rom_slot_count entries)"
 
 [[structs.fields]]
+name = "reserved_sel_pins"
+kind = "scalar"
+type = "u8"
+since_metadata_version = 3
+default_if_absent = 0
+expected_offset = 36
+plugin_key = { name = "RESERVED_SEL_PINS", id = 21, first_release = "0.8.0" }
+comment = "Reserved image select pins. Bit 0 is SEL_A, bit 1 is SEL_B, etc."
+
+[[structs.fields]]
+name = "reserved_x_pins"
+kind = "scalar"
+type = "u8"
+since_metadata_version = 3
+default_if_absent = 0
+expected_offset = 37
+plugin_key = { name = "RESERVED_X_PINS", id = 22, first_release = "0.8.0" }
+comment = "Reserved X pins. Bit 0 is X1 and bit 1 is X2."
+
+[[structs.fields]]
 name = "reserved"
 kind = "padding"
-size = 220
+size = 218
 comment = "Reserved for future expansion. Set to 0xFF."
 
 # ---
@@ -1791,7 +1868,7 @@ comment = """OneROM runtime environment information.
 Written and maintained by the firmware at runtime; not generated by the pre-processor.
 Parsed only."""
 generate = "parse"
-size = 60
+size = 64
 const_fields = false
 version_field = "version"
 version_constant = "RUNTIME_INFO_VERSION"
@@ -1989,6 +2066,15 @@ default_if_absent = 0
 expected_offset = 59
 plugin_key = { name = "BOARD_SIZE", id = 20, first_release = "0.8.0" }
 comment = "The board's size as OTP configures it, read at boot."
+
+[[structs.fields]]
+name = "firmware_states"
+kind = "bitfield"
+type = "onerom_firmware_state_t"
+since_runtime_version = 3
+default_if_absent = 0
+expected_offset = 60
+comment = "Firmware states reached so far."
 
 # ===========================================================================
 # Tagged FAM structs

@@ -104,4 +104,17 @@
 // @since firmware 0.8.0
 #define ORA_BOARD_SIZE_OTHER ((uint8_t)0xFF)
 
+// The boot copy of the ROM image from flash into RAM has finished, or the
+// slot has no image to copy.
+// @since firmware 0.8.0
+#define ORA_FIRMWARE_STATE_ROM_LOADED ((uint32_t)1)
+
+// Plugin launch has finished, reached even if there are no plugins.
+// @since firmware 0.8.0
+#define ORA_FIRMWARE_STATE_PLUGINS_STARTED ((uint32_t)2)
+
+// The ROM image is loaded and plugins have started.
+// @since firmware 0.8.0
+#define ORA_FIRMWARE_STATE_STARTUP_DONE ((uint32_t)4)
+
 #endif // ONEROM_CONSTANTS_H

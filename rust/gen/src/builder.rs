@@ -7,30 +7,33 @@ use alloc::format;
 use alloc::string::{String, ToString};
 use onerom_config::chip::ChipType;
 use onerom_config::fw::{FirmwareProperties, FirmwareVersion};
+use onerom_config::hw::{Board, HeaderColumn, HeaderRole, HeaderSlot};
 use onerom_config::mcu::Family;
+use onerom_config::pin::{Pad, ReservedPads};
 use onerom_metadata::{
     MAX_SERIAL_NUMBER_LEN, MAX_UNIT_NAME_LEN, METADATA_BASE, METADATA_SIZE, MIN_SCHEMA_VERSION,
-    MaybeKnown, ONEROM_METADATA_MAGIC, OneromMetadataHeader, OneromRomInfo, OneromRomSlot, Pointer,
-    RomSlotType, metadata_generation_for, serialize,
+    MaybeKnown, ONEROM_METADATA_MAGIC, OneromAlgConfig, OneromAlgCsConfig, OneromMetadataHeader,
+    OneromRomInfo, OneromRomSlot, Pointer, RomSlotType, metadata_generation_for, serialize,
 };
 
 use crate::flash::{FlashChips, slot_addresses};
 use crate::image::requires_half_select_cs1;
+use crate::v2::addr_layout::AddrLayout;
 use crate::v2::firmware_config::{build_firmware_config, build_firmware_overrides};
 use crate::v2::hardware_info::build_hardware_info;
 use crate::v2::rom_image::build_rom_image;
 use crate::v2::rom_info::truncate_filename;
 use crate::v2::rom_slot::build_rom_slot;
 use crate::{
-    Chip, ChipConfig, ChipSet, ChipSetType, Config, ConfigOverrides, ConfigWarning, CsConfig,
-    CsLogic, Error, FileData, FileSpec, FireServeMode, License, MetadataWriter, PAD_BLANK_BYTE,
-    Result, SizeHandling, UNWRITTEN_BYTE,
+    Chip, ChipConfig, ChipSet, ChipSetConfig, ChipSetType, Config, ConfigOverrides, ConfigWarning,
+    CsConfig, CsLogic, Error, FileData, FileSpec, FireServeMode, License, MetadataWriter,
+    PAD_BLANK_BYTE, Result, SizeHandling, UNWRITTEN_BYTE,
 };
 use crate::{
     MAX_SUPPORTED_FIRMWARE_VERSION_V1, MAX_SUPPORTED_FIRMWARE_VERSION_V2,
-    MIN_SUPPORTED_FIRMWARE_VERSION_V1, MIN_SUPPORTED_FIRMWARE_VERSION_V2, Metadata,
-    SUPPORTED_CHIP_TYPES_V1, SUPPORTED_CHIP_TYPES_V2, UNSUPPORTED_FIRMWARE_VERSIONS_V1,
-    UNSUPPORTED_FIRMWARE_VERSIONS_V2, supports_board_size,
+    MIN_RESERVED_PINS_VERSION, MIN_SUPPORTED_FIRMWARE_VERSION_V1,
+    MIN_SUPPORTED_FIRMWARE_VERSION_V2, Metadata, SUPPORTED_CHIP_TYPES_V1, SUPPORTED_CHIP_TYPES_V2,
+    UNSUPPORTED_FIRMWARE_VERSIONS_V1, UNSUPPORTED_FIRMWARE_VERSIONS_V2, supports_board_size,
 };
 
 /// Main Builder object
@@ -169,7 +172,19 @@ impl Builder {
             });
         }
 
-        let config: Config = serde_json::from_str(json)?;
+        // Checked before parsing so a bad reserved_pins entry is reported
+        // without a parse error's position.
+        let value: serde_json::Value = serde_json::from_str(json)?;
+        crate::check_reserved_pin_names(&value)?;
+        let config: Config = serde_json::from_value(value)?;
+
+        if !config.reserved_pins.is_empty() && version < MIN_RESERVED_PINS_VERSION {
+            return Err(Error::FirmwareTooOld {
+                feat: "reserved_pins",
+                version,
+                minimum: MIN_RESERVED_PINS_VERSION,
+            });
+        }
 
         // Only the v2 path has checks that can be accepted; the v1 path
         // produces no warnings.
@@ -205,7 +220,22 @@ impl Builder {
 
     /// Get description of config for display in UI
     pub fn description(&self) -> String {
-        description(self.config(), self.num_chip_sets(), self.num_roms())
+        description(self.config(), self.num_chip_sets(), self.num_roms(), None)
+    }
+
+    /// [`Builder::description`] plus the reserved pins and the image select
+    /// jumpers for each image on `board`.
+    ///
+    /// Fails as [`Config::reserved_pads`] does.
+    pub fn description_for_board(&self, board: Board) -> Result<String> {
+        let reserved = self.config.reserved_pads(board)?;
+        let select = ImageSelect::new(&self.config, board, reserved);
+        Ok(description(
+            self.config(),
+            self.num_chip_sets(),
+            self.num_roms(),
+            Some(&select),
+        ))
     }
 
     /// Get number of chip sets
@@ -423,10 +453,13 @@ impl Builder {
             minimum: MIN_SCHEMA_VERSION,
         })?;
 
+        let reserved = self.config.reserved_pads(board)?;
+
         let chip_sets = build_chip_sets(&self.config, &self.files, &self.file_id_map, &props)?;
 
         let mut rom_slots = alloc::vec::Vec::with_capacity(chip_sets.len());
         let mut layouts = alloc::vec::Vec::with_capacity(chip_sets.len());
+        let mut rom_slot = 0;
         for chip_set in &chip_sets {
             let firmware_overrides = chip_set
                 .firmware_overrides
@@ -473,6 +506,10 @@ impl Builder {
                     force_16_bit,
                 )
                 .map_err(Error::from)?;
+                if let Some(alg) = &slot.alg {
+                    check_reserved_pads(board, reserved, rom_slot, &addr_layout, alg)?;
+                }
+                rom_slot += 1;
                 rom_slots.push(slot);
                 layouts.push(Some((addr_layout, cs_data_layout)));
             }
@@ -557,6 +594,8 @@ impl Builder {
             swd_enabled: self.config.swd_enabled as u8,
             turbo_boot: self.config.turbo_boot as u8,
             rom_slots,
+            reserved_sel_pins: reserved.select_bits(),
+            reserved_x_pins: reserved.x_bits(),
         };
 
         let mut metadata_buf = alloc::vec![0u8; METADATA_SIZE];
@@ -564,6 +603,117 @@ impl Builder {
 
         Ok((metadata_buf, rom_data_buf))
     }
+}
+
+/// The GPIOs a slot uses, as a mask with bit N for GPIO N.
+///
+/// A GPIO inside the address-read window that the slot doesn't use is left
+/// out. Its input is forced to 0 while serving.
+fn used_gpios(addr_layout: &AddrLayout, alg: &OneromAlgConfig) -> u64 {
+    let span = |first: u8, count: u8| {
+        (0..count)
+            .filter_map(|n| first.checked_add(n))
+            .filter(|&gpio| gpio < 64)
+            .fold(0u64, |mask, gpio| mask | (1 << gpio))
+    };
+    let pin = |gpio: u8| if gpio < 64 { 1u64 << gpio } else { 0 };
+
+    let (gpio_base, base_cs_pin, num_cs_pins, base_data_pin, num_data_pins, byte_pin) =
+        match &alg.alg_cs {
+            OneromAlgCsConfig::AlgCs0 {
+                gpio_base,
+                base_cs_pin,
+                num_cs_pins,
+                base_data_pin,
+                num_data_pins,
+                byte_pin,
+                ..
+            } => (
+                *gpio_base,
+                *base_cs_pin,
+                *num_cs_pins,
+                *base_data_pin,
+                *num_data_pins,
+                Some(*byte_pin),
+            ),
+            OneromAlgCsConfig::AlgCs1 {
+                gpio_base,
+                base_cs_pin,
+                num_cs_pins,
+                base_data_pin,
+                num_data_pins,
+                ..
+            }
+            | OneromAlgCsConfig::AlgCs2 {
+                gpio_base,
+                base_cs_pin,
+                num_cs_pins,
+                base_data_pin,
+                num_data_pins,
+                ..
+            }
+            | OneromAlgCsConfig::Unknown {
+                gpio_base,
+                base_cs_pin,
+                num_cs_pins,
+                base_data_pin,
+                num_data_pins,
+                ..
+            } => (
+                *gpio_base,
+                *base_cs_pin,
+                *num_cs_pins,
+                *base_data_pin,
+                *num_data_pins,
+                None,
+            ),
+        };
+    let mut used = span(gpio_base.saturating_add(base_cs_pin), num_cs_pins)
+        | span(gpio_base.saturating_add(base_data_pin), num_data_pins);
+    if let Some(byte_pin) = byte_pin
+        && byte_pin != onerom_metadata::GPIO_NONE
+    {
+        used |= pin(gpio_base.saturating_add(byte_pin));
+    }
+
+    for &gpio in addr_layout
+        .addr_pin_gpios
+        .iter()
+        .chain(&addr_layout.excess_addr_pin_gpios)
+        .chain(&addr_layout.x1_gpio)
+        .chain(&addr_layout.x2_gpio)
+    {
+        used |= pin(gpio);
+    }
+
+    // Bit 7 of a pull is its direction.
+    for pull in alg.gpio_pull_config.iter().flat_map(|c| &c.params) {
+        used |= pin(pull & 0x7F);
+    }
+
+    used
+}
+
+/// Fails where slot `slot` uses a GPIO wired to a reserved pin.
+///
+/// A reserved X pin isn't replaced by the other X pin.
+fn check_reserved_pads(
+    board: Board,
+    reserved: ReservedPads,
+    slot: usize,
+    addr_layout: &AddrLayout,
+    alg: &OneromAlgConfig,
+) -> Result<()> {
+    let used = used_gpios(addr_layout, alg);
+    for pad in reserved.pads() {
+        if (0..64u8).any(|gpio| used & (1 << gpio) != 0 && pad.has_gpio_on(&board, gpio)) {
+            return Err(Error::ReservedPinInUse {
+                slot,
+                pad: pad.silkscreen().to_string(),
+            });
+        }
+    }
+    Ok(())
 }
 
 pub(crate) fn validate_config_version(config: &Config, _version: &FirmwareVersion) -> Result<()> {
@@ -1649,7 +1799,12 @@ pub(crate) fn total_file_count(file_id_map: &BTreeMap<usize, usize>) -> usize {
 /// 1: Image 1
 ///
 /// Notes```
-pub(crate) fn description(config: &Config, num_chip_sets: usize, num_roms: usize) -> String {
+pub(crate) fn description(
+    config: &Config,
+    num_chip_sets: usize,
+    num_roms: usize,
+    select: Option<&ImageSelect>,
+) -> String {
     let mut desc = String::new();
 
     if let Some(name) = config.name.as_ref() {
@@ -1667,6 +1822,12 @@ pub(crate) fn description(config: &Config, num_chip_sets: usize, num_roms: usize
         desc.push_str("\n\n");
     }
 
+    if let Some(select) = select
+        && !select.reserved.is_empty()
+    {
+        desc.push_str(&format!("Reserved pins: {}\n\n", select.reserved));
+    }
+
     let multi_chip_sets = if num_chip_sets == num_roms {
         desc.push_str("Images:");
         false
@@ -1676,14 +1837,32 @@ pub(crate) fn description(config: &Config, num_chip_sets: usize, num_roms: usize
     };
     desc.push('\n');
 
+    // Index width, so the jumper marks line up from row to row.
+    let width = select
+        .filter(|select| select.annotated())
+        .map_or(0, |_| num_chip_sets.saturating_sub(1).to_string().len());
+    if let Some(letters) = select.and_then(|select| select.letters(width)) {
+        desc.push_str(&letters);
+        desc.push('\n');
+    }
+
     let mut none = true;
     for (ii, set) in config.chip_sets.iter().enumerate() {
         none = false;
-        desc.push_str(&format!("{ii}:"));
+        desc.push_str(&format!("{ii:>width$}:"));
+        let row = select.and_then(|select| select.row(ii, set));
+        if let Some((marks, _)) = &row
+            && !marks.is_empty()
+        {
+            desc.push_str(&format!(" {marks} "));
+        }
         if multi_chip_sets {
             desc.push_str(&format!(" {:?}", set.set_type));
             if let Some(ref set_desc) = set.description {
                 desc.push_str(&format!(", {set_desc}"));
+            }
+            if let Some((_, words)) = &row {
+                desc.push_str(&format!("  {words}"));
             }
             desc.push('\n');
         } else {
@@ -1699,12 +1878,20 @@ pub(crate) fn description(config: &Config, num_chip_sets: usize, num_roms: usize
             } else {
                 desc.push_str(&rom.file);
             }
+            if !multi_chip_sets && let Some((_, words)) = &row {
+                desc.push_str(&format!("  {words}"));
+            }
             desc.push('\n');
         }
     }
 
     if none {
         desc.push_str("  None\n");
+    }
+
+    if let Some(line) = select.and_then(ImageSelect::footer) {
+        desc.push_str(&line);
+        desc.push('\n');
     }
 
     if let Some(notes) = &config.notes {
@@ -1715,6 +1902,151 @@ pub(crate) fn description(config: &Config, num_chip_sets: usize, num_roms: usize
     }
 
     desc
+}
+
+/// The image select jumpers for each image of a config on a board.
+pub(crate) struct ImageSelect {
+    reserved: ReservedPads,
+    /// The image select pins read by the firmware, lowest bit first.
+    read: alloc::vec::Vec<Pad>,
+    header: Option<&'static [HeaderColumn]>,
+    /// How many plugin sets come before the images.
+    plugins: usize,
+    images: usize,
+    turbo_boot: bool,
+}
+
+impl ImageSelect {
+    fn new(config: &Config, board: Board, reserved: ReservedPads) -> Self {
+        let is_plugin =
+            |set: &ChipSetConfig| set.chips.iter().any(|c| c.chip_type.resolved().is_plugin());
+        let plugins = config.chip_sets.iter().filter(|set| is_plugin(set)).count();
+        Self {
+            reserved,
+            read: reserved.select_pads_read(&board).collect(),
+            header: board.jumper_header().map(|header| header.columns),
+            plugins,
+            images: config.chip_sets.len() - plugins,
+            turbo_boot: config.turbo_boot,
+        }
+    }
+
+    /// Whether each image row shows its jumpers. The jumpers aren't read with
+    /// turbo boot, and a single image is served whatever they are.
+    fn annotated(&self) -> bool {
+        !self.turbo_boot && self.images > 1
+    }
+
+    /// The header's columns by position, `None` where a column isn't
+    /// populated. `None` where the header isn't drawn.
+    fn columns(&self) -> Option<impl Iterator<Item = Option<&'static HeaderColumn>> + '_> {
+        let header = self.header.filter(|_| self.annotated())?;
+        let last = header.iter().map(|c| c.col).max().unwrap_or(0);
+        Some((1..=last).map(move |col| {
+            header.iter().find(|c| {
+                c.col == col
+                    && [Some(&c.row1), Some(&c.row2), c.row3.as_ref()]
+                        .into_iter()
+                        .flatten()
+                        .any(|slot| !matches!(slot, HeaderSlot::NotPopulated))
+            })
+        }))
+    }
+
+    fn select_pads(column: &HeaderColumn) -> impl Iterator<Item = Pad> + '_ {
+        [Some(&column.row1), Some(&column.row2), column.row3.as_ref()]
+            .into_iter()
+            .flatten()
+            .flat_map(|slot| {
+                if let HeaderSlot::Roles(roles) = slot {
+                    *roles
+                } else {
+                    &[]
+                }
+            })
+            .filter_map(|role| {
+                if let HeaderRole::Select(index) = role {
+                    Some(Pad::Select(*index))
+                } else {
+                    None
+                }
+            })
+    }
+
+    /// The line of image select pin letters, above the marks of rows with
+    /// `width`-wide indexes.
+    fn letters(&self, width: usize) -> Option<String> {
+        let letters: alloc::vec::Vec<String> = self
+            .columns()?
+            .map(|column| {
+                column
+                    .and_then(|column| Self::select_pads(column).next())
+                    .map_or(" ".to_string(), |pad| {
+                        // SEL_A prints as A.
+                        pad.silkscreen().to_string().split_off(4)
+                    })
+            })
+            .collect();
+        let line = format!("{:width$}   {}", "", letters.join(" "));
+        Some(line.trim_end().to_string())
+    }
+
+    /// The marks and words for set `index`, or `None` where its row has
+    /// neither.
+    fn row(&self, index: usize, set: &ChipSetConfig) -> Option<(String, String)> {
+        if !self.annotated() || set.chips.iter().any(|c| c.chip_type.resolved().is_plugin()) {
+            return None;
+        }
+        let image = index.checked_sub(self.plugins)?;
+        if image >= 1 << self.read.len() {
+            return Some((String::new(), "cannot be selected".to_string()));
+        }
+        let closed: alloc::vec::Vec<Pad> = self
+            .read
+            .iter()
+            .enumerate()
+            .filter(|(bit, _)| image & (1 << bit) != 0)
+            .map(|(_, pad)| *pad)
+            .collect();
+
+        let marks = self.columns().map(|columns| {
+            let marks: alloc::vec::Vec<&str> = columns
+                .map(|column| match column {
+                    None => " ",
+                    Some(column) if Self::select_pads(column).any(|pad| closed.contains(&pad)) => {
+                        "\u{25AA}"
+                    }
+                    Some(_) => "\u{00B7}",
+                })
+                .collect();
+            format!("[{}]", marks.join(" "))
+        });
+
+        let names: alloc::vec::Vec<String> = closed
+            .iter()
+            .map(|pad| pad.silkscreen().to_string())
+            .collect();
+        let words = match names.as_slice() {
+            [] => "no image select jumpers".to_string(),
+            [only] => format!("{only} jumpered"),
+            [rest @ .., last] => format!("{} and {last} jumpered", rest.join(", ")),
+        };
+        Some((marks.unwrap_or_default(), words))
+    }
+
+    /// The line after the images with turbo boot or a single image.
+    fn footer(&self) -> Option<String> {
+        if self.turbo_boot && self.images > 0 {
+            Some(format!(
+                "Image select jumpers not read - turbo boot enabled. Image {} served.",
+                self.plugins
+            ))
+        } else if self.images == 1 {
+            Some("Single image so any image select jumper may be in any position.".to_string())
+        } else {
+            None
+        }
+    }
 }
 
 pub(crate) fn categories(config: &Config) -> alloc::vec::Vec<String> {
