@@ -10,7 +10,7 @@ use onerom_config::fw::{FirmwareProperties, FirmwareVersion, ServeAlg};
 use onerom_config::hw::{Board, BoardSize};
 use onerom_config::mcu::RP235X_BASE_FLASH;
 use onerom_config::mcu::Variant;
-use onerom_config::pin::ReservedPads;
+use onerom_config::pin::ReservedPins;
 use onerom_fw::net::{Release, Releases, fetch_license_async};
 use onerom_fw::{assemble_firmware, get_rom_files_async, read_rom_config, validate_sizes};
 use onerom_fw_parser::readers::MemoryReader;
@@ -330,7 +330,7 @@ pub async fn build_rom_image(
     // Checked before anything is fetched.
     let reserved = builder
         .config()
-        .reserved_pads(board)
+        .reserved_pins_on(board)
         .map_err(onerom_fw::Error::parse)?;
     if let Some(warning) = unselectable_slots(builder.config(), board, reserved) {
         eprintln!("Warning: {warning}");
@@ -403,7 +403,7 @@ pub async fn build_rom_image(
 pub(crate) fn unselectable_slots(
     config: &Config,
     board: Board,
-    reserved: ReservedPads,
+    reserved: ReservedPins,
 ) -> Option<String> {
     if config.turbo_boot {
         return None;
@@ -413,11 +413,11 @@ pub(crate) fn unselectable_slots(
         .iter()
         .filter(|set| !set.chips.iter().any(|c| c.chip_type.resolved().is_plugin()))
         .count();
-    let pads: Vec<String> = reserved
-        .select_pads_read(&board)
-        .map(|pad| pad.silkscreen().to_string())
+    let pins: Vec<String> = reserved
+        .select_pins_read(&board)
+        .map(|pin| pin.silkscreen().to_string())
         .collect();
-    let combinations = 1usize << pads.len();
+    let combinations = 1usize << pins.len();
     if slots <= combinations {
         return None;
     }
@@ -430,7 +430,7 @@ pub(crate) fn unselectable_slots(
     };
     // Every Fire board has image select pins so an empty list means all are
     // reserved.
-    let why = match pads.as_slice() {
+    let why = match pins.as_slice() {
         [] => "Every image select pin is reserved.".to_string(),
         [only] => format!("{only} provides 2 combinations for {slots} slots."),
         [rest @ .., last] => format!(
@@ -438,7 +438,7 @@ pub(crate) fn unselectable_slots(
             rest.join(", ")
         ),
     };
-    Some(format!("{which} be selected. {why}"))
+    Some(format!("{which} be selected by jumpers. {why}"))
 }
 
 /// Report the non-fatal outcomes of checking the plugins a config named.
@@ -954,6 +954,9 @@ fn schema_summary(
         lines.extend(plugins.iter().map(|plugin| format!("  {plugin}")));
     }
     lines.push(format!("Slots: {}", rom_slots.len()));
+    if let Some(line) = crate::inspect::reserved_pins_line(parsed) {
+        lines.push(format!("  {line}"));
+    }
     for slot in &rom_slots {
         // A ROM slot always has a user_index.
         let user_index = slot.user_index.unwrap_or(0);
@@ -1544,7 +1547,7 @@ mod tests {
 
     #[test]
     fn reserve_pin_repeats_under_either_name() {
-        use onerom_config::pin::{Pad, Pin};
+        use onerom_config::pin::{HeaderPin, Pin};
         let args = build_args(&[
             "onerom",
             "firmware",
@@ -1558,7 +1561,10 @@ mod tests {
             "--reserved_pins",
             "gpio9",
         ]);
-        assert_eq!(args.reserve_pin, [Pin::Pad(Pad::Select(2)), Pin::Gpio(9)]);
+        assert_eq!(
+            args.reserve_pin,
+            [Pin::Header(HeaderPin::Select(2)), Pin::Gpio(9)]
+        );
     }
 
     /// An address line can't be reserved, and `--reserve-pin` conflicts with
@@ -1598,7 +1604,7 @@ mod tests {
 
     #[test]
     fn reserve_pin_replaces_the_configs_reserved_pins() {
-        use onerom_config::pin::{Pad, Pin};
+        use onerom_config::pin::{HeaderPin, Pin};
         let json =
             r#"{ "version": 1, "description": "d", "reserved_pins": ["sel_a"], "chip_sets": [] }"#;
         let global = |reserved_pins: Vec<Pin>| GlobalConfig {
@@ -1616,7 +1622,8 @@ mod tests {
         };
 
         let replaced =
-            apply_global_overrides(json.to_string(), &global(vec![Pin::Pad(Pad::X1)])).unwrap();
+            apply_global_overrides(json.to_string(), &global(vec![Pin::Header(HeaderPin::X1)]))
+                .unwrap();
         assert_eq!(reserved(replaced), serde_json::json!(["x1"]));
         let kept = apply_global_overrides(json.to_string(), &global(Vec::new())).unwrap();
         assert_eq!(reserved(kept), serde_json::json!(["sel_a"]));
@@ -1625,19 +1632,19 @@ mod tests {
     #[test]
     fn slots_past_the_jumpers_are_named() {
         use crate::test_board::{config_2364, holds};
-        use onerom_config::pin::{Pad, ReservedPads};
+        use onerom_config::pin::{HeaderPin, ReservedPins};
         let config = |sets: usize| -> Config {
             let sets = vec!["single"; sets];
             serde_json::from_str(&config_2364(&sets, std::path::Path::new("."), &[])).unwrap()
         };
-        let mut sel_c = ReservedPads::new();
-        sel_c.insert(Pad::Select(2));
+        let mut sel_c = ReservedPins::new();
+        sel_c.insert(HeaderPin::Select(2));
         let mut sel_c_d = sel_c;
-        sel_c_d.insert(Pad::Select(3));
+        sel_c_d.insert(HeaderPin::Select(3));
 
         // Four image select pins provide 16 combinations and three provide 8.
         assert_eq!(
-            unselectable_slots(&config(16), Board::Fire24F, ReservedPads::new()),
+            unselectable_slots(&config(16), Board::Fire24F, ReservedPins::new()),
             None
         );
         assert_eq!(unselectable_slots(&config(8), Board::Fire24F, sel_c), None);
@@ -1660,7 +1667,7 @@ mod tests {
     #[tokio::test]
     async fn reserve_pin_reaches_the_image() {
         use crate::test_board::{IMAGE_2364, config_2364};
-        use onerom_config::pin::ReservedPads;
+        use onerom_config::pin::ReservedPins;
 
         let dir = tempfile::tempdir().unwrap();
         let base = dir.path().join("base.bin");
@@ -1691,8 +1698,8 @@ mod tests {
 
         let image = onerom_cli::image::parse_firmware(&std::fs::read(&out).unwrap()).await;
         assert_eq!(
-            onerom_cli::pin::reserved_pads(&image),
-            Some(ReservedPads::from_bits(0b1000, 0b10))
+            image.reserved_pins(),
+            Some(ReservedPins::from_bits(0b1000, 0b10))
         );
     }
 }

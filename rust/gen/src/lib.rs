@@ -51,7 +51,7 @@ use onerom_config::chip::ChipType;
 use onerom_config::fw::{FirmwareVersion, ServeAlg};
 
 use onerom_config::hw::{Board, BoardSize};
-use onerom_config::pin::{Pin, ReservedPads};
+use onerom_config::pin::{Pin, ReservedPins};
 pub use v1::MAX_SUPPORTED_FIRMWARE_VERSION as MAX_SUPPORTED_FIRMWARE_VERSION_V1;
 pub use v1::MIN_SUPPORTED_FIRMWARE_VERSION as MIN_SUPPORTED_FIRMWARE_VERSION_V1;
 pub use v1::SUPPORTED_CHIP_TYPES as SUPPORTED_CHIP_TYPES_V1;
@@ -292,12 +292,12 @@ pub enum Error {
     },
     /// An Intel HEX image failed to decode.
     IntelHex {
-        index: usize,
+        filename: String,
         source: ihex::IhexError,
     },
     /// A Motorola S-record image failed to decode.
     Srec {
-        index: usize,
+        filename: String,
         source: srec::SrecError,
     },
     /// `size_handling: duplicate` was requested for a record-oriented image
@@ -342,7 +342,7 @@ pub enum Error {
     },
     /// A `reserved_pins` entry is a GPIO that isn't wired to an image select
     /// pin, X1 or X2 on the board.
-    ReservedPinNotAPad {
+    ReservedPinNotReservable {
         /// The entry.
         pin: Pin,
         /// The board.
@@ -365,7 +365,7 @@ pub enum Error {
         /// The slot's index among ROM slots, as numbered by `inspect slots`.
         slot: usize,
         /// The pin, as on the silkscreen.
-        pad: String,
+        pin: String,
     },
 }
 type Result<T> = core::result::Result<T, Error>;
@@ -463,7 +463,7 @@ impl core::fmt::Display for Error {
                 expected_size,
             } => write!(
                 f,
-                "{filename} is larger than a {chip_type} holds.\n  Expected at most {expected_size} bytes, got {image_size} bytes."
+                "{filename} is larger than a {chip_type}.\n  Expected at most {expected_size} bytes, got {image_size} bytes."
             ),
             Error::ImageExceedsServedSize {
                 chip_type,
@@ -623,13 +623,13 @@ impl core::fmt::Display for Error {
                 f,
                 "ROM table is {size} bytes, exceeds maximum of {max} bytes for a single slot"
             ),
-            Error::IntelHex { index, source } => write!(
+            Error::IntelHex { filename, source } => write!(
                 f,
-                "The Intel HEX image for chip {index} could not be decoded:\n  {source}"
+                "The Intel HEX image {filename} could not be decoded:\n  {source}"
             ),
-            Error::Srec { index, source } => write!(
+            Error::Srec { filename, source } => write!(
                 f,
-                "The S-record image for chip {index} could not be decoded:\n  {source}"
+                "The S-record image {filename} could not be decoded:\n  {source}"
             ),
             Error::DuplicateUnsupportedForFormat { filename, format } => write!(
                 f,
@@ -658,7 +658,7 @@ impl core::fmt::Display for Error {
                     "Firmware {version} doesn't support board sizes other than M"
                 )
             }
-            Error::ReservedPinNotAPad { pin, board } => {
+            Error::ReservedPinNotReservable { pin, board } => {
                 write!(
                     f,
                     "Cannot reserve '{pin}' on {board}.\n  {RESERVED_PINS_RULE}"
@@ -667,16 +667,16 @@ impl core::fmt::Display for Error {
             Error::ReservedPinNotOnBoard { pin, board } => {
                 write!(f, "Cannot reserve '{pin}' on {board}.\n  {board} has no ")?;
                 match pin {
-                    Pin::Pad(pad) => write!(f, "{} pin.", pad.silkscreen()),
+                    Pin::Header(header_pin) => write!(f, "{} pin.", header_pin.silkscreen()),
                     other @ Pin::Gpio(_) | other => write!(f, "{other} pin."),
                 }
             }
             Error::ReservedPinNotAPin { entry } => {
                 write!(f, "Cannot reserve '{entry}'.\n  {RESERVED_PINS_RULE}")
             }
-            Error::ReservedPinInUse { slot, pad } => write!(
+            Error::ReservedPinInUse { slot, pin } => write!(
                 f,
-                "Slot {slot} uses reserved pin {pad}.\n  Do not reserve {pad} or remove slot {slot}."
+                "Slot {slot} uses reserved pin {pin}.\n  Do not reserve {pin} or remove slot {slot}."
             ),
         }
     }
@@ -874,18 +874,18 @@ impl Config {
     /// The pins reserved on `board` by [`Config::reserved_pins`].
     ///
     /// Fails with [`Error::ReservedPinNotOnBoard`] or
-    /// [`Error::ReservedPinNotAPad`]. Two entries may be the same pin.
-    pub fn reserved_pads(&self, board: Board) -> Result<ReservedPads> {
-        let mut reserved = ReservedPads::new();
+    /// [`Error::ReservedPinNotReservable`]. Two entries may be the same pin.
+    pub fn reserved_pins_on(&self, board: Board) -> Result<ReservedPins> {
+        let mut reserved = ReservedPins::new();
         for pin in &self.reserved_pins {
             let not_on_board = Error::ReservedPinNotOnBoard { pin: *pin, board };
-            let Some(pad) = pin.pad_on(&board) else {
+            let Some(header_pin) = pin.header_pin_on(&board) else {
                 return Err(match pin {
-                    Pin::Pad(_) => not_on_board,
-                    Pin::Gpio(_) | _ => Error::ReservedPinNotAPad { pin: *pin, board },
+                    Pin::Header(_) => not_on_board,
+                    Pin::Gpio(_) | _ => Error::ReservedPinNotReservable { pin: *pin, board },
                 });
             };
-            if !reserved.insert(pad) {
+            if !reserved.insert(header_pin) {
                 return Err(not_on_board);
             }
         }

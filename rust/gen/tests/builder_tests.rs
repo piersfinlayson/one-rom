@@ -2196,7 +2196,7 @@ mod tests {
     }
 
     #[test]
-    fn srec_decode_failure_is_reported_against_the_chip() {
+    fn srec_decode_failure_is_reported_against_the_file() {
         let json = r#"{
             "version": 1,
             "description": "Corrupt S-record",
@@ -2224,7 +2224,7 @@ mod tests {
             .build(default_fw_props())
             .expect_err("a bad checksum should fail the build");
         assert!(
-            matches!(err, onerom_gen::Error::Srec { index: 0, .. }),
+            matches!(&err, onerom_gen::Error::Srec { filename, .. } if filename == "rom.s19"),
             "unexpected error: {err}"
         );
     }

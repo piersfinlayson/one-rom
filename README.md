@@ -133,22 +133,22 @@ onerom poke live --address 0x100 --byte 0xEA
 
 ## Driving the host — GPIO and reset
 
-The image select and X pads are not just jumpers.  They are GPIOs, and
+The image select and X pins are not just jumpers.  They are GPIOs, and
 One ROM will drive them for you — which means the ROM socket becomes a way to
 manipulate the machine it is plugged into.
 
-Run a wire from a pad to the host's reset line and you can reset the machine
+Run a wire from a pin to the host's reset line and you can reset the machine
 after flashing a new image:
 
 ```bash
 onerom control reset --pin sel_c
 ```
 
-`sel_c` is the usual choice — more boards have it than have X pads, and it is 5V
-tolerant where it exists.  Any pad works, named with `--pin`.
+`sel_c` is a common choice — more boards have it than have X pins, and it is 5V
+tolerant where it exists.  Any pin works with `--pin`.
 
 <div align="center">
-    <img src="docs/images/a500-fire-40-reset.jpg" alt="One ROM Fire 40 in an Amiga A500 ROM socket, with a wire from its Sel_C pad to the 68000's reset line" width="700">
+    <img src="docs/images/a500-fire-40-reset.jpg" alt="One ROM Fire 40 in an Amiga A500 ROM socket, with a wire from its SEL_C pin to the 68000's reset line" width="700">
 </div>
 
 <p align="center"><em>A One ROM Fire 40 in an Amiga A500, with <code>Sel_C</code>

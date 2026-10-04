@@ -444,10 +444,10 @@ fn choose_board(
 /// Resolves the target board type, where not knowing it is survivable.
 ///
 /// The GPIO commands use the board to *name* things - a pin's ROM function, the
-/// pad it surfaces on, whether it is 5V-tolerant - and to resolve a `--pin` pad
-/// name. None of that is worth failing a command over when the user named a
+/// pin it surfaces on, whether it is 5V-tolerant - and to resolve a `--pin`
+/// header pin. None of that is worth failing a command over when the user named a
 /// GPIO directly, so a board this build cannot infer costs a name rather than
-/// the operation, and a `--pin` pad name reports the missing board itself (see
+/// the operation, and a `--pin` header pin fails with its own missing-board error (see
 /// [`Pin::resolve`](onerom_cli::pin::Pin::resolve)).
 ///
 /// An *explicit* `--board` is different: the user asked for a specific board, so

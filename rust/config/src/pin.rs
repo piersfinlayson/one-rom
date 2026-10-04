@@ -10,7 +10,7 @@
 //! ## Parsing and resolution are separate steps
 //!
 //! The GPIO wired to a header pin depends on the board. [`parse_pin`] doesn't
-//! take a board and returns a [`Pin`], either an MCU GPIO or a [`Pad`].
+//! take a board and returns a [`Pin`], either an MCU GPIO or a [`HeaderPin`].
 //! [`Pin::resolve`] turns it into a [`ResolvedPin`] once the board is known.
 //! That is the only type with a GPIO number.
 //!
@@ -27,7 +27,7 @@
 //!
 //! Only image select pins and X pins are header pins here. Accepting `a17`
 //! would invite `a11` or `d3`, which aren't header pins. `a<N>` still fails
-//! with its own error, [`PinError::AddressPad`].
+//! with its own error, [`PinError::AddressLine`].
 //!
 //! ROM socket pins don't have a syntax.
 
@@ -42,14 +42,14 @@ const NO_PIN: u8 = 255;
 ///
 /// An assertion in onerom-metadata checks it equals the firmware's
 /// `MAX_IMG_SEL_PINS`.
-pub const MAX_SELECT_PADS: u8 = 7;
+pub const MAX_SELECT_PINS: u8 = 7;
 
 /// A header pin with an MCU GPIO of its own.
 ///
 /// Address lines are left out. See the [module documentation](self).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
-pub enum Pad {
+pub enum HeaderPin {
     /// An image select pin, indexed from 0 for `sel_a`.
     Select(u8),
     /// The X1 pin.
@@ -58,14 +58,14 @@ pub enum Pad {
     X2,
 }
 
-impl Pad {
+impl HeaderPin {
     /// The MCU GPIO wired to this pin on `board`, `None` where the board
     /// doesn't have the pin.
     pub fn gpio_on(&self, board: &Board) -> Option<u8> {
         let gpio = match self {
-            Pad::Select(index) => board.sel_pins().get(*index as usize).copied()?,
-            Pad::X1 => board.pin_x1(),
-            Pad::X2 => board.pin_x2(),
+            HeaderPin::Select(index) => board.sel_pins().get(*index as usize).copied()?,
+            HeaderPin::X1 => board.pin_x1(),
+            HeaderPin::X2 => board.pin_x2(),
         };
         (gpio != NO_PIN).then_some(gpio)
     }
@@ -78,20 +78,20 @@ impl Pad {
             return false;
         }
         let x_pin = match self {
-            Pad::Select(_) => return self.gpio_on(board) == Some(gpio),
-            Pad::X1 => 1,
-            Pad::X2 => 2,
+            HeaderPin::Select(_) => return self.gpio_on(board) == Some(gpio),
+            HeaderPin::X1 => 1,
+            HeaderPin::X2 => 2,
         };
         self.gpio_on(board) == Some(gpio) || board.gpios_for_x_pin(x_pin).contains(&gpio)
     }
 
     /// Each pin `board` has. Image select pins come first in order, then X1
     /// and X2.
-    pub fn all_on(board: &Board) -> impl Iterator<Item = Pad> + '_ {
+    pub fn all_on(board: &Board) -> impl Iterator<Item = HeaderPin> + '_ {
         (0..board.sel_pins().len() as u8)
-            .map(Pad::Select)
-            .chain([Pad::X1, Pad::X2])
-            .filter(|pad| pad.gpio_on(board).is_some())
+            .map(HeaderPin::Select)
+            .chain([HeaderPin::X1, HeaderPin::X2])
+            .filter(|pin| pin.gpio_on(board).is_some())
     }
 
     /// The pin's silkscreen label, for example `SEL_A`.
@@ -103,26 +103,26 @@ impl Pad {
     }
 }
 
-impl fmt::Display for Pad {
+impl fmt::Display for HeaderPin {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Pad::Select(index) => write!(f, "sel_{}", select_letter(*index, b'a')),
-            Pad::X1 => f.write_str("x1"),
-            Pad::X2 => f.write_str("x2"),
+            HeaderPin::Select(index) => write!(f, "sel_{}", select_letter(*index, b'a')),
+            HeaderPin::X1 => f.write_str("x1"),
+            HeaderPin::X2 => f.write_str("x2"),
         }
     }
 }
 
-/// A pin's silkscreen label, from [`Pad::silkscreen`].
+/// A pin's silkscreen label, from [`HeaderPin::silkscreen`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Silkscreen(Pad);
+pub struct Silkscreen(HeaderPin);
 
 impl fmt::Display for Silkscreen {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self.0 {
-            Pad::Select(index) => write!(f, "SEL_{}", select_letter(index, b'A')),
-            Pad::X1 => f.write_str("X1"),
-            Pad::X2 => f.write_str("X2"),
+            HeaderPin::Select(index) => write!(f, "SEL_{}", select_letter(index, b'A')),
+            HeaderPin::X1 => f.write_str("X1"),
+            HeaderPin::X2 => f.write_str("X2"),
         }
     }
 }
@@ -147,7 +147,7 @@ pub enum Pin {
     Gpio(u8),
 
     /// A header pin.
-    Pad(Pad),
+    Header(HeaderPin),
 }
 
 impl Pin {
@@ -157,12 +157,12 @@ impl Pin {
     pub fn resolve(&self, board: Option<&Board>) -> Result<ResolvedPin, ResolveError> {
         let gpio = match self {
             Pin::Gpio(gpio) => *gpio,
-            Pin::Pad(pad) => {
+            Pin::Header(header_pin) => {
                 let Some(board) = board else {
-                    return Err(ResolveError::NoBoard { pad: *pad });
+                    return Err(ResolveError::NoBoard { pin: *header_pin });
                 };
-                pad.gpio_on(board).ok_or(ResolveError::NoSuchPad {
-                    pad: *pad,
+                header_pin.gpio_on(board).ok_or(ResolveError::NoSuchPin {
+                    pin: *header_pin,
                     board: *board,
                 })?
             }
@@ -175,10 +175,10 @@ impl Pin {
     ///
     /// A `gpioN` pin identifies the header pin wired to that GPIO. `None` where
     /// the board doesn't have the header pin or the GPIO isn't wired to one.
-    pub fn pad_on(&self, board: &Board) -> Option<Pad> {
+    pub fn header_pin_on(&self, board: &Board) -> Option<HeaderPin> {
         match self {
-            Pin::Pad(pad) => pad.gpio_on(board).map(|_| *pad),
-            Pin::Gpio(gpio) => Pad::all_on(board).find(|pad| pad.has_gpio_on(board, *gpio)),
+            Pin::Header(pin) => pin.gpio_on(board).map(|_| *pin),
+            Pin::Gpio(gpio) => HeaderPin::all_on(board).find(|pin| pin.has_gpio_on(board, *gpio)),
         }
     }
 }
@@ -187,7 +187,7 @@ impl fmt::Display for Pin {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Pin::Gpio(gpio) => write!(f, "gpio{gpio}"),
-            Pin::Pad(pad) => write!(f, "{pad}"),
+            Pin::Header(pin) => write!(f, "{pin}"),
         }
     }
 }
@@ -266,7 +266,7 @@ impl fmt::Display for ResolvedPin {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self.pin {
             Pin::Gpio(gpio) => write!(f, "gpio{gpio}"),
-            Pin::Pad(pad) => write!(f, "{pad} (gpio{})", self.gpio),
+            Pin::Header(header_pin) => write!(f, "{header_pin} (gpio{})", self.gpio),
         }
     }
 }
@@ -286,7 +286,7 @@ pub enum PinError {
     /// A bare number.
     BareNumber,
     /// An address line, for example `a17`.
-    AddressPad,
+    AddressLine,
     /// A dedicated MCU pin that isn't a GPIO, for example `run`.
     NotAGpio,
     /// Anything else.
@@ -304,7 +304,7 @@ impl fmt::Display for PinError {
             PinError::BareNumber => {
                 "a bare number is ambiguous. Write an MCU GPIO as 'gpio<N>'"
             }
-            PinError::AddressPad => "an address line is not a header pin",
+            PinError::AddressLine => "an address line is not a header pin",
             PinError::NotAGpio => "a dedicated MCU pin, not a GPIO",
             PinError::Unrecognised => {
                 "not a pin. Write a header pin ('sel_<letter>', 'x1' or 'x2') or an MCU GPIO ('gpio<N>')"
@@ -320,12 +320,12 @@ pub enum ResolveError {
     /// A header pin, and the board isn't known.
     NoBoard {
         /// The header pin.
-        pad: Pad,
+        pin: HeaderPin,
     },
     /// The board doesn't have the header pin.
-    NoSuchPad {
+    NoSuchPin {
         /// The header pin.
-        pad: Pad,
+        pin: HeaderPin,
         /// The board.
         board: Board,
     },
@@ -334,11 +334,11 @@ pub enum ResolveError {
 impl fmt::Display for ResolveError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            ResolveError::NoBoard { pad } => {
-                write!(f, "'{pad}' is a header pin. Its GPIO depends on the board")
+            ResolveError::NoBoard { pin } => {
+                write!(f, "'{pin}' is a header pin. Its GPIO depends on the board")
             }
-            ResolveError::NoSuchPad { pad, board } => {
-                write!(f, "board {} has no '{pad}' pin", board.name())
+            ResolveError::NoSuchPin { pin, board } => {
+                write!(f, "board {} has no '{pin}' pin", board.name())
             }
         }
     }
@@ -368,16 +368,16 @@ pub fn parse_pin(spec: &str) -> Result<Pin, PinError> {
             .map_err(|_| PinError::GpioOutOfRange);
     }
 
-    if let Some(pad) = parse_pad(name) {
-        return Ok(Pin::Pad(pad));
+    if let Some(pin) = parse_header_pin(name) {
+        return Ok(Pin::Header(pin));
     }
 
     if name.bytes().all(|b| b.is_ascii_digit()) {
         return Err(PinError::BareNumber);
     }
 
-    if is_address_pad_name(name) {
-        return Err(PinError::AddressPad);
+    if is_address_line(name) {
+        return Err(PinError::AddressLine);
     }
 
     if ["run", "bootsel", "swclk", "swdio"]
@@ -397,7 +397,7 @@ fn strip_prefix_ignore_case<'a>(name: &'a str, prefix: &str) -> Option<&'a str> 
 }
 
 /// Bare `a` isn't accepted. It is too easily confused with an address line.
-fn parse_select_pad(name: &str) -> Option<Pad> {
+fn parse_select_pin(name: &str) -> Option<HeaderPin> {
     let rest = strip_prefix_ignore_case(name, "sel")?;
     let letter = rest
         .strip_prefix('_')
@@ -407,20 +407,20 @@ fn parse_select_pad(name: &str) -> Option<Pad> {
         return None;
     };
     let index = letter.to_ascii_lowercase().checked_sub(b'a')?;
-    (index < MAX_SELECT_PADS).then_some(Pad::Select(index))
+    (index < MAX_SELECT_PINS).then_some(HeaderPin::Select(index))
 }
 
-fn parse_pad(name: &str) -> Option<Pad> {
+fn parse_header_pin(name: &str) -> Option<HeaderPin> {
     if name.eq_ignore_ascii_case("x1") {
-        Some(Pad::X1)
+        Some(HeaderPin::X1)
     } else if name.eq_ignore_ascii_case("x2") {
-        Some(Pad::X2)
+        Some(HeaderPin::X2)
     } else {
-        parse_select_pad(name)
+        parse_select_pin(name)
     }
 }
 
-fn is_address_pad_name(name: &str) -> bool {
+fn is_address_line(name: &str) -> bool {
     strip_prefix_ignore_case(name, "a")
         .is_some_and(|digits| !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit()))
 }
@@ -430,12 +430,12 @@ fn is_address_pad_name(name: &str) -> bool {
 /// [`Display`](fmt::Display) lists them by silkscreen label, for example
 /// `SEL_C, X1`.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct ReservedPads {
+pub struct ReservedPins {
     select: u8,
     x: u8,
 }
 
-impl ReservedPads {
+impl ReservedPins {
     /// Nothing reserved.
     pub const fn new() -> Self {
         Self { select: 0, x: 0 }
@@ -460,33 +460,33 @@ impl ReservedPads {
         self.select == 0 && self.x == 0
     }
 
-    /// Reserve `pad`. Returns false for an image select pin past
-    /// [`MAX_SELECT_PADS`].
-    pub fn insert(&mut self, pad: Pad) -> bool {
-        match pad {
-            Pad::Select(index) if index < MAX_SELECT_PADS => self.select |= 1 << index,
-            Pad::Select(_) => return false,
-            Pad::X1 => self.x |= 1,
-            Pad::X2 => self.x |= 2,
+    /// Reserve `pin`. Returns false for an image select pin past
+    /// [`MAX_SELECT_PINS`].
+    pub fn insert(&mut self, pin: HeaderPin) -> bool {
+        match pin {
+            HeaderPin::Select(index) if index < MAX_SELECT_PINS => self.select |= 1 << index,
+            HeaderPin::Select(_) => return false,
+            HeaderPin::X1 => self.x |= 1,
+            HeaderPin::X2 => self.x |= 2,
         }
         true
     }
 
-    pub const fn contains(&self, pad: Pad) -> bool {
-        match pad {
-            Pad::Select(index) => index < MAX_SELECT_PADS && self.select & (1 << index) != 0,
-            Pad::X1 => self.x & 1 != 0,
-            Pad::X2 => self.x & 2 != 0,
+    pub const fn contains(&self, pin: HeaderPin) -> bool {
+        match pin {
+            HeaderPin::Select(index) => index < MAX_SELECT_PINS && self.select & (1 << index) != 0,
+            HeaderPin::X1 => self.x & 1 != 0,
+            HeaderPin::X2 => self.x & 2 != 0,
         }
     }
 
     /// The reserved pins. Image select pins come first in order, then X1 and
     /// X2.
-    pub fn pads(&self) -> impl Iterator<Item = Pad> + '_ {
-        (0..MAX_SELECT_PADS)
-            .map(Pad::Select)
-            .chain([Pad::X1, Pad::X2])
-            .filter(|pad| self.contains(*pad))
+    pub fn pins(&self) -> impl Iterator<Item = HeaderPin> + '_ {
+        (0..MAX_SELECT_PINS)
+            .map(HeaderPin::Select)
+            .chain([HeaderPin::X1, HeaderPin::X2])
+            .filter(|header_pin| self.contains(*header_pin))
     }
 
     /// The image select pins read by the firmware on `board`, lowest bit
@@ -494,20 +494,23 @@ impl ReservedPads {
     ///
     /// The image select bits are assigned to the unreserved pins in order, so
     /// reserving SEL_C makes SEL_D bit 2.
-    pub fn select_pads_read<'a>(&'a self, board: &'a Board) -> impl Iterator<Item = Pad> + 'a {
+    pub fn select_pins_read<'a>(
+        &'a self,
+        board: &'a Board,
+    ) -> impl Iterator<Item = HeaderPin> + 'a {
         (0..board.sel_pins().len() as u8)
-            .map(Pad::Select)
-            .filter(|pad| !self.contains(*pad))
+            .map(HeaderPin::Select)
+            .filter(|pin| !self.contains(*pin))
     }
 }
 
-impl fmt::Display for ReservedPads {
+impl fmt::Display for ReservedPins {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        for (i, pad) in self.pads().enumerate() {
+        for (i, header_pin) in self.pins().enumerate() {
             if i > 0 {
                 f.write_str(", ")?;
             }
-            write!(f, "{}", pad.silkscreen())?;
+            write!(f, "{}", header_pin.silkscreen())?;
         }
         Ok(())
     }
@@ -545,21 +548,25 @@ mod tests {
     }
 
     #[test]
-    fn pad_names_parse_in_every_spelling() {
+    fn pins_parse_in_every_spelling() {
         for spec in ["sel_a", "sel-a", "sela", "SEL_A", "Sel-A", "  sela  "] {
-            assert_eq!(parse_pin(spec), Ok(Pin::Pad(Pad::Select(0))), "{spec}");
+            assert_eq!(
+                parse_pin(spec),
+                Ok(Pin::Header(HeaderPin::Select(0))),
+                "{spec}"
+            );
         }
-        assert_eq!(parse_pin("sel_e"), Ok(Pin::Pad(Pad::Select(4))));
-        assert_eq!(parse_pin("x1"), Ok(Pin::Pad(Pad::X1)));
-        assert_eq!(parse_pin("X2"), Ok(Pin::Pad(Pad::X2)));
+        assert_eq!(parse_pin("sel_e"), Ok(Pin::Header(HeaderPin::Select(4))));
+        assert_eq!(parse_pin("x1"), Ok(Pin::Header(HeaderPin::X1)));
+        assert_eq!(parse_pin("X2"), Ok(Pin::Header(HeaderPin::X2)));
     }
 
     #[test]
-    fn select_pads_stop_at_the_firmware_limit() {
-        assert_eq!(parse_pin("sel_f"), Ok(Pin::Pad(Pad::Select(5))));
-        assert_eq!(parse_pin("SEL-G"), Ok(Pin::Pad(Pad::Select(6))));
+    fn select_pins_stop_at_the_firmware_limit() {
+        assert_eq!(parse_pin("sel_f"), Ok(Pin::Header(HeaderPin::Select(5))));
+        assert_eq!(parse_pin("SEL-G"), Ok(Pin::Header(HeaderPin::Select(6))));
         assert_eq!(parse_pin("sel_h"), Err(PinError::Unrecognised));
-        assert_eq!(MAX_SELECT_PADS, 7);
+        assert_eq!(MAX_SELECT_PINS, 7);
     }
 
     #[test]
@@ -574,8 +581,8 @@ mod tests {
             ("gpio 1", PinError::MissingGpioNumber),
             ("gpio256", PinError::GpioOutOfRange),
             ("23", PinError::BareNumber),
-            ("a0", PinError::AddressPad),
-            ("A17", PinError::AddressPad),
+            ("a0", PinError::AddressLine),
+            ("A17", PinError::AddressLine),
             ("run", PinError::NotAGpio),
             ("BootSel", PinError::NotAGpio),
             ("swdio", PinError::NotAGpio),
@@ -591,48 +598,48 @@ mod tests {
     #[test]
     fn a_pin_displays_as_it_is_typed() {
         assert_eq!(Pin::Gpio(23).to_string(), "gpio23");
-        assert_eq!(Pin::Pad(Pad::Select(0)).to_string(), "sel_a");
-        assert_eq!(Pin::Pad(Pad::Select(6)).to_string(), "sel_g");
-        assert_eq!(Pin::Pad(Pad::X1).to_string(), "x1");
-        assert_eq!(Pad::X2.to_string(), "x2");
+        assert_eq!(Pin::Header(HeaderPin::Select(0)).to_string(), "sel_a");
+        assert_eq!(Pin::Header(HeaderPin::Select(6)).to_string(), "sel_g");
+        assert_eq!(Pin::Header(HeaderPin::X1).to_string(), "x1");
+        assert_eq!(HeaderPin::X2.to_string(), "x2");
     }
 
     #[test]
-    fn a_pad_has_a_silkscreen_name() {
-        assert_eq!(Pad::Select(2).silkscreen().to_string(), "SEL_C");
-        assert_eq!(Pad::X1.silkscreen().to_string(), "X1");
-        assert_eq!(Pad::X2.silkscreen().to_string(), "X2");
+    fn a_pin_has_a_silkscreen_name() {
+        assert_eq!(HeaderPin::Select(2).silkscreen().to_string(), "SEL_C");
+        assert_eq!(HeaderPin::X1.silkscreen().to_string(), "X1");
+        assert_eq!(HeaderPin::X2.silkscreen().to_string(), "X2");
     }
 
     #[test]
-    fn every_pad_of_a_board_resolves() {
+    fn every_pin_of_a_board_resolves() {
         let b = board("fire-24-f");
         assert_eq!(resolved("sel_a", &b), 26);
         assert_eq!(resolved("sel_d", &b), 24);
         assert_eq!(resolved("x1", &b), 9);
         assert_eq!(resolved("x2", &b), 8);
-        let pads: Vec<Pad> = Pad::all_on(&b).collect();
+        let pins: Vec<HeaderPin> = HeaderPin::all_on(&b).collect();
         assert_eq!(
-            pads,
+            pins,
             [
-                Pad::Select(0),
-                Pad::Select(1),
-                Pad::Select(2),
-                Pad::Select(3),
-                Pad::X1,
-                Pad::X2
+                HeaderPin::Select(0),
+                HeaderPin::Select(1),
+                HeaderPin::Select(2),
+                HeaderPin::Select(3),
+                HeaderPin::X1,
+                HeaderPin::X2
             ]
         );
     }
 
     #[test]
-    fn a_pad_the_board_lacks_does_not_resolve() {
+    fn a_pin_the_board_lacks_does_not_resolve() {
         let b = board("fire-32-a");
         let x1 = parse_pin("x1").unwrap();
         assert_eq!(
             x1.resolve(Some(&b)),
-            Err(ResolveError::NoSuchPad {
-                pad: Pad::X1,
+            Err(ResolveError::NoSuchPin {
+                pin: HeaderPin::X1,
                 board: b
             })
         );
@@ -640,14 +647,14 @@ mod tests {
             parse_pin("sel_c")
                 .unwrap()
                 .resolve(Some(&board("fire-28-a"))),
-            Err(ResolveError::NoSuchPad {
-                pad: Pad::Select(2),
+            Err(ResolveError::NoSuchPin {
+                pin: HeaderPin::Select(2),
                 board: board("fire-28-a")
             })
         );
         assert_eq!(
             x1.resolve(None),
-            Err(ResolveError::NoBoard { pad: Pad::X1 })
+            Err(ResolveError::NoBoard { pin: HeaderPin::X1 })
         );
         // A GPIO resolves without a board.
         let gpio = parse_pin("gpio23").unwrap().resolve(None).unwrap();
@@ -655,46 +662,59 @@ mod tests {
     }
 
     #[test]
-    fn a_resolved_pad_shows_both_names() {
+    fn a_resolved_pin_shows_both_names() {
         let b = board("fire-24-f");
         let pin = parse_pin("x1").unwrap().resolve(Some(&b)).unwrap();
         assert_eq!(pin.to_string(), "x1 (gpio9)");
-        assert_eq!(pin.pin(), Pin::Pad(Pad::X1));
+        assert_eq!(pin.pin(), Pin::Header(HeaderPin::X1));
     }
 
     #[test]
-    fn a_gpio_identifies_the_pad_behind_it() {
+    fn a_gpio_identifies_the_pin_wired_to_it() {
         let b = board("fire-24-f");
-        assert_eq!(Pin::Gpio(25).pad_on(&b), Some(Pad::Select(2)));
-        assert_eq!(Pin::Gpio(9).pad_on(&b), Some(Pad::X1));
-        assert_eq!(Pin::Gpio(23).pad_on(&b), None);
-        assert_eq!(Pin::Pad(Pad::X2).pad_on(&b), Some(Pad::X2));
-        assert_eq!(Pin::Pad(Pad::Select(4)).pad_on(&b), None);
-        assert_eq!(Pin::Pad(Pad::X1).pad_on(&board("fire-40-a")), None);
+        assert_eq!(Pin::Gpio(25).header_pin_on(&b), Some(HeaderPin::Select(2)));
+        assert_eq!(Pin::Gpio(9).header_pin_on(&b), Some(HeaderPin::X1));
+        assert_eq!(Pin::Gpio(23).header_pin_on(&b), None);
+        assert_eq!(
+            Pin::Header(HeaderPin::X2).header_pin_on(&b),
+            Some(HeaderPin::X2)
+        );
+        assert_eq!(Pin::Header(HeaderPin::Select(4)).header_pin_on(&b), None);
+        assert_eq!(
+            Pin::Header(HeaderPin::X1).header_pin_on(&board("fire-40-a")),
+            None
+        );
     }
 
     #[test]
-    fn reserved_pads_hold_the_metadata_bits() {
-        let mut reserved = ReservedPads::new();
+    fn reserved_pins_hold_the_metadata_bits() {
+        let mut reserved = ReservedPins::new();
         assert!(reserved.is_empty());
-        assert!(reserved.insert(Pad::Select(2)));
-        assert!(reserved.insert(Pad::X2));
-        assert!(!reserved.insert(Pad::Select(7)));
+        assert!(reserved.insert(HeaderPin::Select(2)));
+        assert!(reserved.insert(HeaderPin::X2));
+        assert!(!reserved.insert(HeaderPin::Select(7)));
         assert_eq!((reserved.select_bits(), reserved.x_bits()), (0b100, 0b10));
-        assert_eq!(reserved, ReservedPads::from_bits(0b100, 0b10));
-        assert!(reserved.contains(Pad::Select(2)));
-        assert!(!reserved.contains(Pad::X1));
+        assert_eq!(reserved, ReservedPins::from_bits(0b100, 0b10));
+        assert!(reserved.contains(HeaderPin::Select(2)));
+        assert!(!reserved.contains(HeaderPin::X1));
         assert_eq!(reserved.to_string(), "SEL_C, X2");
-        assert_eq!(ReservedPads::new().to_string(), "");
+        assert_eq!(ReservedPins::new().to_string(), "");
     }
 
     #[test]
-    fn the_remaining_select_pads_take_the_bits_in_order() {
+    fn the_remaining_select_pins_take_the_bits_in_order() {
         let b = board("fire-24-f");
-        let mut reserved = ReservedPads::new();
-        reserved.insert(Pad::Select(2));
-        let read: Vec<Pad> = reserved.select_pads_read(&b).collect();
-        assert_eq!(read, [Pad::Select(0), Pad::Select(1), Pad::Select(3)]);
+        let mut reserved = ReservedPins::new();
+        reserved.insert(HeaderPin::Select(2));
+        let read: Vec<HeaderPin> = reserved.select_pins_read(&b).collect();
+        assert_eq!(
+            read,
+            [
+                HeaderPin::Select(0),
+                HeaderPin::Select(1),
+                HeaderPin::Select(3)
+            ]
+        );
     }
 
     #[test]
@@ -702,7 +722,11 @@ mod tests {
         let pins: Vec<Pin> = serde_json::from_str(r#"["SEL-C", " x1 ", "GPIO25"]"#).unwrap();
         assert_eq!(
             pins,
-            [Pin::Pad(Pad::Select(2)), Pin::Pad(Pad::X1), Pin::Gpio(25)]
+            [
+                Pin::Header(HeaderPin::Select(2)),
+                Pin::Header(HeaderPin::X1),
+                Pin::Gpio(25)
+            ]
         );
         assert_eq!(
             serde_json::to_string(&pins).unwrap(),
@@ -722,7 +746,7 @@ mod tests {
             match parse_pin(spec) {
                 Ok(pin) => {
                     let _ = pin.resolve(Some(&b));
-                    let _ = pin.pad_on(&b);
+                    let _ = pin.header_pin_on(&b);
                 }
                 Err(error) => {
                     let mut buf = counting::FixedBuf::new();
@@ -730,8 +754,8 @@ mod tests {
                 }
             }
         }
-        let mut reserved = ReservedPads::new();
-        reserved.insert(Pad::Select(2));
+        let mut reserved = ReservedPins::new();
+        reserved.insert(HeaderPin::Select(2));
         let mut buf = counting::FixedBuf::new();
         fmt::write(&mut buf, format_args!("{reserved}")).unwrap();
         assert_eq!(counting::allocations(), before);

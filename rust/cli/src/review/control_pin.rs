@@ -7,7 +7,7 @@
 use super::help;
 
 #[test]
-fn image_select_pads_past_sel_e() {
+fn image_select_pins_past_sel_e() {
     help(&["onerom", "inspect", "gpio", "--pin", "sel_f"]);
     println!();
     help(&["onerom", "inspect", "gpio", "--pin", "sel_g"]);

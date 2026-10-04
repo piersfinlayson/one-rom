@@ -35,7 +35,7 @@ pub const PLUGIN_ALL_VERSIONS: &str = "onerom plugin --all-versions";
 /// Show what One ROM is using each of its GPIOs for.
 pub const INSPECT_GPIO: &str = "onerom inspect gpio";
 
-/// Show which GPIO sits behind each header pad.
+/// Show the GPIO wired to each header pin.
 pub const INSPECT_HEADER: &str = "onerom inspect header";
 
 /// Start a stopped One ROM.

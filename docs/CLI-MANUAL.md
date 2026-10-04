@@ -598,10 +598,11 @@ It is possible to build configs where a slot cannot be selected by the
 remaining image select jumpers.  That is reported:
 
 ```
-Warning: slot 4 cannot be selected. SEL_A and SEL_B provide 4 combinations for 5 slots.
+Warning: slot 4 cannot be selected by jumpers. SEL_A and SEL_B provide 4 combinations for 5 slots.
 ```
 
-[`inspect slots`](#inspect-slots) and `scan --slots` list the reserved pins, and
+[`inspect slots`](#inspect-slots), `scan --slots` and
+[`firmware inspect`](#firmware-inspect) list the reserved pins, and
 [`inspect gpio`](#inspect-gpio) marks them `reserved`.
 
 ### See what One ROM is doing with its GPIOs
@@ -611,7 +612,7 @@ onerom inspect gpio
 ```
 
 One row per MCU GPIO: everything that GPIO is — its ROM socket signal under the
-image being served, the board peripheral it drives, the header pad it surfaces
+image being served, the board peripheral it drives, the header pin it surfaces
 on — plus direction, level, 5V tolerance, and what One ROM itself is using it
 for. GPIOs connected to nothing are omitted unless you pass `--all`. Useful
 before driving a pin — see [`inspect gpio`](#inspect-gpio).
@@ -1024,11 +1025,11 @@ onerom inspect gpio --pin x1
 | `--all` | Also list GPIOs with no function at all. By default only GPIOs connected to something are shown. |
 
 By default the table lists only the GPIOs connected to **something** — a ROM
-socket signal, a board peripheral or a header pad. On a 48-GPIO board a quarter
-of the GPIOs are connected to nothing, and listing them buries the rows worth
-reading; a line beneath the table says how many were omitted. `--all` lists
+socket signal, a board peripheral or a header pin. On a 48-GPIO board some
+of the GPIOs are connected to nothing, and listing them may bury the rows worth
+reading. A line beneath the table says how many were omitted. `--all` lists
 every GPIO. Note the filter is on what the GPIO *is*, not on what the device
-reports using it for: the `X1`/`X2` and image-select pads report `free` and are
+reports using it for: the `X1`/`X2` and image-select pins report `free` and are
 exactly what you read this table to find, so they always appear.
 
 The number of GPIOs the device has is its own — 30 on an RP2350A, 48 on an
@@ -1039,7 +1040,7 @@ Columns:
 | Column | Meaning |
 |---|---|
 | `GPIO` | MCU GPIO number. |
-| `Function` | Everything this GPIO is, comma-separated in a fixed order: its ROM socket signal under the image being served (`A5`, `D3`, `CS1`, `BYTE/VPP`), then the board peripheral (`Status LED`, `RGB LED`, `USB VBUS`, `ext flash CS`), then the header pad (`X1`, `X2`, `SEL_A`). `-` if the GPIO is connected to nothing. |
+| `Function` | Everything this GPIO is, comma-separated in a fixed order: its ROM socket signal under the image being served (`A5`, `D3`, `CS1`, `BYTE/VPP`), then the board peripheral (`Status LED`, `RGB LED`, `USB VBUS`, `ext flash CS`), then the header pin (`X1`, `X2`, `SEL_A`). `-` if the GPIO is connected to nothing. |
 | `Dir` | `out` if the pin's output driver is enabled, `in` if not. |
 | `Level` | The GPIO's level, `0` or `1`: what an `out` pin is driving, what an `in` pin reads. |
 | `Max V` | `5V` if the GPIO is 5V-tolerant, `3V3` if it is an RP2350 ADC pin and therefore 3.3V-only, `?` if the board is not characterised. |
@@ -1049,15 +1050,15 @@ Columns:
 match, so a GPIO that is genuinely two things says so: on a `fire-24-f` the
 Status LED and the RGB LED are the same GPIO, and it reads `Status LED,
 RGB LED`. Names that would repeat are shown once — on a 32-pin board a high
-address line is both the socket's `A17` and the `A17` header pad, which is one
+address line is both the socket's `A17` and the `A17` header pin, which is one
 net.
 
-`Function` names only what a **GPIO** is. A header pad may carry more than the
-GPIO behind it — on a Fire 24/28 board the `SEL_C` and `SEL_D` pads sit on the
+`Function` names only what a **GPIO** is. A header pin may carry more than the
+GPIO wired to it — on a Fire 24/28 board the `SEL_C` and `SEL_D` pins sit on the
 SWCLK and SWDIO nets — but SWCLK and SWDIO are dedicated RP2350 pins with no
 GPIO of their own, so they do not appear here. Run
-[`inspect header`](#inspect-header) for the pad-by-pad view, which shows every
-role each pad carries.
+[`inspect header`](#inspect-header) for the pin-by-pin view, which shows every
+role each pin carries.
 
 `Current use` is One ROM's use of the GPIO:
 
@@ -1079,7 +1080,7 @@ A board revision or ROM type this build does not recognise costs the derived
 names, not the listing: `Function` falls back to `-` (or, for a socket pin whose
 chip type is unknown, `socket pin <N>`), and with no recognised board at all
 nothing is filtered out, since nothing can be ruled out. On a board with no
-pin-header descriptor, pad names come from the board's pin assignments alone and
+pin-header descriptor, header pins come from the board's pin assignments alone and
 `--verbose` says so beneath the table.
 
 On a Fire 28 (rev C) serving a 27512:
@@ -2609,8 +2610,8 @@ Device required: no.
 ### board header
 
 Draw a board's pin (jumper / programming) header — the 2xN header along the
-board's top edge — as ASCII, pad by pad. Each image-select and X pad is
-annotated with the MCU GPIO behind it, and on RP2350 (Fire) boards with whether
+board's top edge — as ASCII, pin by pin. Each image-select and X pin is
+annotated with the MCU GPIO wired to it, and on RP2350 (Fire) boards with whether
 that GPIO is 5V-tolerant (`5V`) or 3.3V-only (`!!3V3!!` — an ADC pin that must
 not be driven above 3.3V). See [Voltage Levels](VOLTAGE-LEVELS.md) for the ADC
 caveat.
@@ -2640,7 +2641,7 @@ Could not determine board type from the connected device Unknown           - Fir
   Supply the board type with --board
 ```
 
-The header carries the `BOOTSEL` pad used to boot a One ROM into its own
+The header carries the `BOOTSEL` pin used to boot a One ROM into its own
 bootloader — see [Recovering a bricked One ROM](#recovering-a-bricked-one-rom).
 
 Device required: no (a device is used only to infer `--board` when it is

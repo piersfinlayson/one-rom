@@ -337,7 +337,7 @@ mod cli_assert {
     /// here.
     #[test]
     fn every_hint_parses_as_a_command_line() {
-        let pin = onerom_cli::pin::parse_pin("sel_c").expect("sel_c is a pad");
+        let pin = onerom_cli::pin::parse_pin("sel_c").expect("sel_c is a pin");
         let built = [
             onerom_cli::hint::board_view("header"),
             onerom_cli::hint::board_view("socket"),

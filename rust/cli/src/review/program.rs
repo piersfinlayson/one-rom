@@ -165,7 +165,7 @@ async fn a_set_that_doesnt_fit_an_m_one_rom() {
 }
 
 #[tokio::test]
-async fn a_reset_host_pad_that_isnt_reserved() {
+async fn a_reset_host_pin_that_isnt_reserved() {
     use crate::program::unreserved_reset_pin;
     use crate::test_board::image_2364;
     use onerom_cli::image::parse_firmware;

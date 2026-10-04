@@ -139,7 +139,7 @@ pub fn test_metadata_uint(emu: &Emulator, config: &Config, board: Board) -> Resu
     // board-specific keys below they have expected values rather than only a
     // contract.
     let reserved = config
-        .reserved_pads(board)
+        .reserved_pins_on(board)
         .map_err(|e| format!("reserved_pins: {e}"))?;
     let from_config: &[(ffi::ora_metadata_key_t, &str, u32)] = &[
         (

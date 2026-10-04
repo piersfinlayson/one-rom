@@ -431,13 +431,13 @@ fn refuse_unservable_request(
 }
 
 pub(crate) fn unreserved_reset_pin(image: &ParsedDevice, pin: ResolvedPin) -> Option<String> {
-    let reserved = onerom_cli::pin::reserved_pads(image)?;
-    let pad = onerom_cli::pin::metadata_pad(image, pin.gpio())?;
-    (!reserved.contains(pad)).then(|| {
+    let reserved = image.reserved_pins()?;
+    let header_pin = onerom_cli::pin::metadata_header_pin(image, pin.gpio())?;
+    (!reserved.contains(header_pin)).then(|| {
         format!(
             "--reset-host pin {} is not reserved so One ROM may use it.\n  \
-             Reserve it with --reserve-pin {pad}",
-            pad.silkscreen()
+             Reserve it with --reserve-pin {header_pin}",
+            header_pin.silkscreen()
         )
     })
 }
@@ -465,7 +465,7 @@ pub async fn cmd_program(
     }
 
     // Everything about the reset pin that board metadata alone can settle - the
-    // pad exists, One ROM does not use it for the board's own peripherals, it can
+    // pin exists, One ROM does not use it for the board's own peripherals, it can
     // take 5V - is settled here, before a byte is read or fetched. What the image
     // decides is asked of the image, below.
     let reset_host = match &args.reset_host {
@@ -634,7 +634,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn an_unreserved_reset_pad_is_reported() {
+    async fn an_unreserved_reset_pin_is_reported() {
         use crate::test_board::{holds, image_2364};
         use onerom_cli::image::parse_firmware;
         use onerom_cli::pin::parse_pin;

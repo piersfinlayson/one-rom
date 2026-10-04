@@ -21,6 +21,8 @@
 - `firmware inspect` lists a v0.7.0+ image's MCU, plugins and ROMs, and prints base firmware's board as `any (base firmware)` rather than warning about missing metadata.
 - Commands that don't need a One ROM, such as `image convert` or `firmware inspect --firmware`, no longer fail when two One ROMs are connected.
 - `program --reset-host` fails before programming where a ROM slot uses the pin, for example X1 for bank select.
+- Intel HEX and S-record decode errors now identify the file by name, not by a chip number that include plugins.
+- `firmware inspect` displays an image's reserved pins.
 
 ## v0.4.1 - 2026-09-17
 

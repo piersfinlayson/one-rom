@@ -132,6 +132,44 @@ async fn a_size_other_than_m_with_firmware_before_0_8_0() {
 }
 
 #[tokio::test]
+async fn an_image_larger_than_its_chip_type() {
+    let files = Files::with_2364(8, &["single"], &[]);
+    std::fs::write(files.dir.path().join("0.bin"), vec![0; 2 * IMAGE_2364]).unwrap();
+    let line = "onerom firmware build --board fire-24-f --config sets.json --base-firmware base.bin --output out.bin";
+    build(line, &files).await;
+}
+
+/// An Intel HEX image that doesn't decode, in the first ROM slot behind a
+/// system plugin.
+#[tokio::test]
+async fn an_intel_hex_image_that_does_not_decode() {
+    let files = Files::with_2364(8, &["single"], &[]);
+    let dir = files.dir.path();
+    std::fs::write(dir.join("basic.hex"), ":10000000ZZ\n").unwrap();
+    let plugin = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../images/test/stub-system-plugin.bin"
+    );
+    let config = serde_json::json!({
+        "version": 1,
+        "description": "Plugin and a damaged Intel HEX image",
+        "rom_sets": [
+            { "type": "single", "roms": [{ "file": plugin, "type": "system_plugin" }] },
+            { "type": "single", "roms": [{
+                "file": dir.join("basic.hex"),
+                "label": "basic.hex",
+                "type": "2364",
+                "cs1": "active_low",
+                "format": "ihex"
+            }] }
+        ]
+    });
+    std::fs::write(dir.join("sets.json"), config.to_string()).unwrap();
+    let line = "onerom firmware build --board fire-24-f --config sets.json --base-firmware base.bin --output out.bin";
+    build(line, &files).await;
+}
+
+#[tokio::test]
 async fn verbose_images_and_their_jumpers() {
     let files = Files::with_2364(8, &["single"; 5], &[]);
     let line = "onerom --verbose firmware build --board fire-24-f --config sets.json --base-firmware base.bin --output out.bin";
@@ -143,6 +181,14 @@ async fn verbose_images_and_their_jumpers() {
 async fn verbose_images_with_a_reserved_pin() {
     let files = Files::with_2364(8, &["single"; 5], &[]);
     let line = "onerom --verbose firmware build --board fire-24-f --config sets.json --base-firmware base.bin --output out.bin --reserve-pin sel_c";
+    build(line, &files).await;
+}
+
+/// Four image select pins less two reserved provide 4 combinations for 5 images.
+#[tokio::test]
+async fn verbose_an_image_the_jumpers_cannot_select() {
+    let files = Files::with_2364(8, &["single"; 5], &[]);
+    let line = "onerom --verbose firmware build --board fire-24-f --config sets.json --base-firmware base.bin --output out.bin --reserve-pin sel_c --reserve-pin sel_d";
     build(line, &files).await;
 }
 

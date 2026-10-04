@@ -23,6 +23,7 @@ In detail:
   - `onerom inspect info` reports what it cannot decode and why.
 - Web Programmer:
   - Supports programming L sized boards and shows commissioning information.
+  - One ROM Builder allows pins to be reserved.
 - Studio:
   - Supports programming L sized boards and shows commissioning information.
 - Plugins:
