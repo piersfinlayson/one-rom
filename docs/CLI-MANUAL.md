@@ -1059,14 +1059,16 @@ GPIO of their own, so they do not appear here. Run
 [`inspect header`](#inspect-header) for the pad-by-pad view, which shows every
 role each pad carries.
 
-`Dir`, `Level` and `Current use` are reported by the device. A
-[reserved](#reserve-a-pin-for-another-use) pin is marked `reserved`. `Function` comes from the board's pin map and the chip type
-being served: the device deliberately reports what taking a pin over would
-*cost*, never what the pin *is*. `serving (read)` pins (address, chip-select,
-`/BYTE`) can be driven and released. `serving (driven)` pins (the data pins)
-cannot be released without a reboot — see [`control pin`](#control-pin). An
-`input forced` pin is one serving uses by ignores, and it can be driven
-without `--force`.
+`Current use` is One ROM's use of the GPIO:
+
+- `free`: not used.
+- `reserved`: [reserved](#reserve-a-pin-for-another-use) for another use, and not used.
+- `input forced`: not read, so driving it has no effect on serving.
+- `serving (read)`: an address, chip select or `/BYTE` pin. Driving it changes what One ROM serves until the pin is released.
+- `serving (driven)`: a data pin. Driving it stops serving until One ROM reboots.
+- `system`: a board peripheral, for example the status LED.
+
+A `serving` or `system` pin can only be driven with `--force`. See [`control pin`](#control-pin).
 
 With `--verbose` (`-v`) the table is followed by a legend restating where each
 column comes from, what `Dir` and `Level` mean and what the `3V3`/`5V` tags

@@ -190,6 +190,60 @@ async fn a_reset_host_pad_that_isnt_reserved() {
     }
 }
 
+#[tokio::test]
+async fn a_reset_host_pin_a_slot_uses() {
+    use crate::test_board::image_2364_sets;
+    use onerom_cli::image::parse_firmware;
+    use onerom_cli::pin::parse_pin;
+
+    for (name, board, sets, pin) in [
+        ("an address line", Board::Fire24F, &["single"][..], "gpio16"),
+        (
+            "bank select on X1",
+            Board::Fire24F,
+            &["single", "banked"][..],
+            "x1",
+        ),
+        (
+            "bank select on X1, the GPIO a banked set doesn't read",
+            Board::Fire28C,
+            &["banked"][..],
+            "gpio9",
+        ),
+        (
+            "bank select on X1 in two slots",
+            Board::Fire24F,
+            &["banked", "single", "banked"][..],
+            "x1",
+        ),
+    ] {
+        println!("### {name}, {board}");
+        println!("$ onerom program --firmware image.bin --reset-host {pin}");
+        let pin = parse_pin(pin).unwrap().resolve(Some(&board)).unwrap();
+        let image = parse_firmware(&image_2364_sets(board, sets, &[])).await;
+        match crate::control::refuse_reset_pin_in_use(&image, pin) {
+            Ok(()) => println!("~ (continues)"),
+            Err(e) => failed(e),
+        }
+        println!();
+    }
+}
+
+#[test]
+fn a_reset_host_pin_the_board_uses() {
+    use onerom_cli::pin::parse_pin;
+
+    // GPIO29 is fire-24-f's status LED and RGB LED.
+    let line = "onerom program --firmware image.bin --reset-host gpio29";
+    println!("### fire-24-f");
+    println!("$ {line}");
+    let pin = parse_pin("gpio29").unwrap();
+    match crate::control::check_reset_pin(&options(line), &pin, Some(&Board::Fire24F)) {
+        Ok(_) => println!("~ (continues)"),
+        Err(e) => failed(e),
+    }
+}
+
 #[test]
 fn help() {
     super::help(&["onerom", "program", "--help"]);

@@ -12,14 +12,14 @@ use onerom_config::mcu::Family;
 use onerom_config::pin::{Pad, ReservedPads};
 use onerom_metadata::{
     MAX_SERIAL_NUMBER_LEN, MAX_UNIT_NAME_LEN, METADATA_BASE, METADATA_SIZE, MIN_SCHEMA_VERSION,
-    MaybeKnown, ONEROM_METADATA_MAGIC, OneromAlgConfig, OneromAlgCsConfig, OneromMetadataHeader,
-    OneromRomInfo, OneromRomSlot, Pointer, RomSlotType, metadata_generation_for, serialize,
+    MaybeKnown, ONEROM_METADATA_MAGIC, OneromAlgConfig, OneromMetadataHeader, OneromRomInfo,
+    OneromRomSlot, Pointer, RomSlotType, metadata_generation_for, serialize,
 };
 
 use crate::flash::{FlashChips, slot_addresses};
 use crate::image::requires_half_select_cs1;
-use crate::v2::addr_layout::AddrLayout;
 use crate::v2::firmware_config::{build_firmware_config, build_firmware_overrides};
+use crate::v2::gpio_use::used_gpios;
 use crate::v2::hardware_info::build_hardware_info;
 use crate::v2::rom_image::build_rom_image;
 use crate::v2::rom_info::truncate_filename;
@@ -507,7 +507,7 @@ impl Builder {
                 )
                 .map_err(Error::from)?;
                 if let Some(alg) = &slot.alg {
-                    check_reserved_pads(board, reserved, rom_slot, &addr_layout, alg)?;
+                    check_reserved_pads(board, reserved, rom_slot, alg)?;
                 }
                 rom_slot += 1;
                 rom_slots.push(slot);
@@ -605,95 +605,6 @@ impl Builder {
     }
 }
 
-/// The GPIOs a slot uses, as a mask with bit N for GPIO N.
-///
-/// A GPIO inside the address-read window that the slot doesn't use is left
-/// out. Its input is forced to 0 while serving.
-fn used_gpios(addr_layout: &AddrLayout, alg: &OneromAlgConfig) -> u64 {
-    let span = |first: u8, count: u8| {
-        (0..count)
-            .filter_map(|n| first.checked_add(n))
-            .filter(|&gpio| gpio < 64)
-            .fold(0u64, |mask, gpio| mask | (1 << gpio))
-    };
-    let pin = |gpio: u8| if gpio < 64 { 1u64 << gpio } else { 0 };
-
-    let (gpio_base, base_cs_pin, num_cs_pins, base_data_pin, num_data_pins, byte_pin) =
-        match &alg.alg_cs {
-            OneromAlgCsConfig::AlgCs0 {
-                gpio_base,
-                base_cs_pin,
-                num_cs_pins,
-                base_data_pin,
-                num_data_pins,
-                byte_pin,
-                ..
-            } => (
-                *gpio_base,
-                *base_cs_pin,
-                *num_cs_pins,
-                *base_data_pin,
-                *num_data_pins,
-                Some(*byte_pin),
-            ),
-            OneromAlgCsConfig::AlgCs1 {
-                gpio_base,
-                base_cs_pin,
-                num_cs_pins,
-                base_data_pin,
-                num_data_pins,
-                ..
-            }
-            | OneromAlgCsConfig::AlgCs2 {
-                gpio_base,
-                base_cs_pin,
-                num_cs_pins,
-                base_data_pin,
-                num_data_pins,
-                ..
-            }
-            | OneromAlgCsConfig::Unknown {
-                gpio_base,
-                base_cs_pin,
-                num_cs_pins,
-                base_data_pin,
-                num_data_pins,
-                ..
-            } => (
-                *gpio_base,
-                *base_cs_pin,
-                *num_cs_pins,
-                *base_data_pin,
-                *num_data_pins,
-                None,
-            ),
-        };
-    let mut used = span(gpio_base.saturating_add(base_cs_pin), num_cs_pins)
-        | span(gpio_base.saturating_add(base_data_pin), num_data_pins);
-    if let Some(byte_pin) = byte_pin
-        && byte_pin != onerom_metadata::GPIO_NONE
-    {
-        used |= pin(gpio_base.saturating_add(byte_pin));
-    }
-
-    for &gpio in addr_layout
-        .addr_pin_gpios
-        .iter()
-        .chain(&addr_layout.excess_addr_pin_gpios)
-        .chain(&addr_layout.x1_gpio)
-        .chain(&addr_layout.x2_gpio)
-    {
-        used |= pin(gpio);
-    }
-
-    // Bit 7 of a pull is its direction.
-    for pull in alg.gpio_pull_config.iter().flat_map(|c| &c.params) {
-        used |= pin(pull & 0x7F);
-    }
-
-    used
-}
-
 /// Fails where slot `slot` uses a GPIO wired to a reserved pin.
 ///
 /// A reserved X pin isn't replaced by the other X pin.
@@ -701,10 +612,9 @@ fn check_reserved_pads(
     board: Board,
     reserved: ReservedPads,
     slot: usize,
-    addr_layout: &AddrLayout,
     alg: &OneromAlgConfig,
 ) -> Result<()> {
-    let used = used_gpios(addr_layout, alg);
+    let used = used_gpios(alg);
     for pad in reserved.pads() {
         if (0..64u8).any(|gpio| used & (1 << gpio) != 0 && pad.has_gpio_on(&board, gpio)) {
             return Err(Error::ReservedPinInUse {

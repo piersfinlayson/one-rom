@@ -5,7 +5,6 @@
 - `inspect info` indicates what it cannot decode and why.
 - `peek` no longer fails on a large read.
 - `program` and `firmware build` report a board mismatch correctly.
-  - `Error::BoardMismatch` has named fields `firmware` and `expected`.
 - Add `hardware commission`, `validate`, `set-size`, `sign` and `request-signature` for commissioning a One ROM. See [COMMISSIONING](/docs/COMMISSIONING.md).
 - Add `inspect otp`, which prints what a One ROM's OTP contains.
 - On a commissioned One ROM `program` by default uses the commissioned board type. An image built for another board type fails to program unless `--force` is provided.
@@ -21,6 +20,7 @@
 - Remove the hidden `update otp`, which did nothing.
 - `firmware inspect` lists a v0.7.0+ image's MCU, plugins and ROMs, and prints base firmware's board as `any (base firmware)` rather than warning about missing metadata.
 - Commands that don't need a One ROM, such as `image convert` or `firmware inspect --firmware`, no longer fail when two One ROMs are connected.
+- `program --reset-host` fails before programming where a ROM slot uses the pin, for example X1 for bank select.
 
 ## v0.4.1 - 2026-09-17
 

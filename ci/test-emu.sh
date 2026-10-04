@@ -516,6 +516,11 @@ test_family_28() {
     test_28_config_api onerom-config/test/28-random-27xxx.json
     test_28_config_api onerom-config/test/28-random-28xxx.json
 
+    # X1 and X2 are each wired to two GPIOs on these boards, and a banked set
+    # reads them through one.  The plugin API reports the other as in use too.
+    test_config_api fire-28-c onerom-config/test/28-bank-27xxx.json
+    test_config_api fire-28-d onerom-config/test/28-bank-27xxx.json
+
     # Address-monitor tests — see the note in test_family_40 for what these
     # cover.
     test_28_config_monitor onerom-config/test/28-random-23xxx.json

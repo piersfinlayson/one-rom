@@ -1064,6 +1064,57 @@ ora_result_t ora_read_ram_rom_slot(
     return pio_read_ram_rom_slot(CURRENT_SLOT, slot, offset, buf, len);
 }
 
+static uint8_t ora_gpio_use_is_busy(uint8_t use) {
+    return (use != ORA_GPIO_USE_FREE) && (use != ORA_GPIO_USE_INPUT_FORCED);
+}
+
+// Returns what serving the active slot uses gpio for, as an ora_gpio_use_t.
+// gpio must already have been range checked.
+static uint8_t ora_gpio_serving_use(uint8_t gpio) {
+    uint8_t use = ORA_GPIO_USE_FREE;
+
+    const onerom_rom_slot_t *slot = CURRENT_SLOT;
+    if ((slot != NULL) && (pio_get_gpio_use(slot, gpio, &use) != ORA_RESULT_OK)) {
+        use = ORA_GPIO_USE_FREE;
+    }
+
+    return use;
+}
+
+// Returns what serving uses another GPIO wired to gpio's X pin for, as an
+// ora_gpio_use_t.  ORA_GPIO_USE_FREE where gpio isn't wired to an X pin, or
+// serving doesn't use the other GPIO.
+static uint8_t ora_gpio_x_pin_use(uint8_t gpio) {
+    const uint8_t *x_pins[] = { HW->gpio_x1, HW->gpio_x2 };
+
+    for (unsigned ii = 0; ii < (sizeof(x_pins) / sizeof(x_pins[0])); ii++) {
+        const uint8_t *x_pin = x_pins[ii];
+
+        uint8_t wired = 0;
+        for (unsigned jj = 0; jj < MAX_X_PIN_GPIOS; jj++) {
+            if (x_pin[jj] == gpio) {
+                wired = 1;
+            }
+        }
+        if (!wired) {
+            continue;
+        }
+
+        // An unused entry is GPIO_NONE, which isn't less than MAX_GPIOS.
+        for (unsigned jj = 0; jj < MAX_X_PIN_GPIOS; jj++) {
+            uint8_t other = x_pin[jj];
+            if ((other != gpio) && (other < MAX_GPIOS)) {
+                uint8_t use = ora_gpio_serving_use(other);
+                if (ora_gpio_use_is_busy(use)) {
+                    return use;
+                }
+            }
+        }
+    }
+
+    return ORA_GPIO_USE_FREE;
+}
+
 // Returns what One ROM is using gpio for, as an ora_gpio_use_t.  gpio must
 // already have been range checked.
 //
@@ -1074,17 +1125,14 @@ ora_result_t ora_read_ram_rom_slot(
 // system pin if it is one, as serving doesn't read it.  Image select pins
 // aren't system pins.  Nor are SWCLK and SWDIO, which aren't
 // GPIOs on the boards that have them.
+//
+// An X pin can be wired to two GPIOs, and serving reads it through one of
+// them.  Driving the other GPIO drives the same pin, so a GPIO One ROM doesn't
+// use is reported as what serving uses the other GPIO for.
 static uint8_t ora_gpio_get_use(uint8_t gpio) {
-    uint8_t use = ORA_GPIO_USE_FREE;
-
-    const onerom_rom_slot_t *slot = CURRENT_SLOT;
-    if (slot != NULL) {
-        if (pio_get_gpio_use(slot, gpio, &use) != ORA_RESULT_OK) {
-            use = ORA_GPIO_USE_FREE;
-        }
-        if (use != ORA_GPIO_USE_FREE && use != ORA_GPIO_USE_INPUT_FORCED) {
-            return use;
-        }
+    uint8_t use = ora_gpio_serving_use(gpio);
+    if (ora_gpio_use_is_busy(use)) {
+        return use;
     }
 
     // System pins.  Each is GPIO_NONE when the board does not have it, and gpio
@@ -1095,6 +1143,11 @@ static uint8_t ora_gpio_get_use(uint8_t gpio) {
         gpio == HW->gpio_vbus ||
         gpio == HW->gpio_ext_flash_cs) {
         return ORA_GPIO_USE_SYSTEM;
+    }
+
+    uint8_t x_pin_use = ora_gpio_x_pin_use(gpio);
+    if (ora_gpio_use_is_busy(x_pin_use)) {
+        return x_pin_use;
     }
 
     return use;
@@ -1111,8 +1164,7 @@ ora_result_t ora_gpio_set(uint8_t gpio, uint8_t state, uint32_t flags) {
     }
 
     if (!(flags & ORA_GPIO_FLAG_FORCE)) {
-        uint8_t use = ora_gpio_get_use(gpio);
-        if (use != ORA_GPIO_USE_FREE && use != ORA_GPIO_USE_INPUT_FORCED) {
+        if (ora_gpio_use_is_busy(ora_gpio_get_use(gpio))) {
             return ORA_RESULT_GPIO_IN_USE;
         }
     }

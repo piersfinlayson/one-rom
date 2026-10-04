@@ -270,15 +270,24 @@ pub fn image_2364(sets: usize, reserved: &[&str]) -> Vec<u8> {
 }
 
 pub fn image_2364_for(board: Board, sets: usize, reserved: &[&str]) -> Vec<u8> {
+    image_2364_sets(board, &vec!["single"; sets], reserved)
+}
+
+/// An image for `board` with a set of 2364s for each of `sets`, as
+/// [`config_2364`] takes them.
+pub fn image_2364_sets(board: Board, sets: &[&str], reserved: &[&str]) -> Vec<u8> {
     use onerom_config::fw::{FirmwareProperties, FirmwareVersion, ServeAlg};
     use onerom_config::mcu::{Family, Variant};
     use onerom_gen::{Builder, FileData};
 
     let version = FirmwareVersion::new(0, 8, 0, 0);
-    let singles = vec!["single"; sets];
-    let config = config_2364(&singles, Path::new("rom"), reserved);
+    let config = config_2364(sets, Path::new("rom"), reserved);
     let mut builder = Builder::from_json(version, Family::Rp2350, &config).unwrap();
-    for n in 0..sets {
+    let files = sets
+        .iter()
+        .map(|&set| if set == "single" { 1 } else { 2 })
+        .sum();
+    for n in 0..files {
         builder
             .add_file(FileData::new(n, vec![n as u8; IMAGE_2364]))
             .unwrap();

@@ -2617,9 +2617,13 @@ typedef enum {
  * fitted, what the far end of a wire is connected to, or whether something else
  * is driving the net. That remains the user's responsibility.
  *
+ * An X pin can be wired to two GPIOs, and driving either drives the pin. From
+ * firmware 0.8.0 a GPIO One ROM doesn't use reports what serving uses the
+ * other GPIO on its X pin for. Earlier firmware reports each GPIO's own use.
+ *
  * Serving reads its address, chip select and /BYTE pins as SIO inputs with the
  * output driver disabled, so they are indistinguishable from unused pins by
- * register inspection alone; this enumeration is the only way to tell them
+ * register inspection alone. This enumeration is the only way to tell them
  * apart.
  *
  * What is reported is the *consequence* of driving the GPIO, not the role it
@@ -2633,7 +2637,7 @@ typedef enum {
     ORA_GPIO_USE_FREE           = 0,
 
     /**
-     * @brief Serving reads this GPIO; driving it is reversible
+     * @brief Serving reads this GPIO - driving it is reversible
      *
      * Covers these GPIOs of the active ROM slot:
      *   - the address span including any X pins on Multi and Banked slots
@@ -2652,7 +2656,7 @@ typedef enum {
     ORA_GPIO_USE_SERVING_READ   = 1,
 
     /**
-     * @brief Serving drives this GPIO; driving it breaks serving until reboot
+     * @brief Serving drives this GPIO - driving it breaks serving until reboot
      *
      * The data pins of the active ROM slot, which PIO owns and drives. Taking
      * one away from PIO is not undone by releasing it.

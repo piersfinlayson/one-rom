@@ -9,7 +9,6 @@
 //! for an image that is about to be flashed, which is the only way to know what
 //! a device is going to do before it does it.
 
-use onerom_config::chip::ChipType;
 use onerom_config::mcu::Variant;
 use onerom_fw_parser::device::{ParsedDevice, SlotKind};
 use onerom_fw_parser::parse_image_file;
@@ -23,22 +22,34 @@ pub async fn parse_firmware(data: &[u8]) -> ParsedDevice {
     parse_image_file(data, FlashChips::first_for(Variant::RP2350)).await
 }
 
-/// Every chip type the image can serve, plugins excluded.
+/// The ROM slots of `image` that use `gpio`, or another GPIO wired to the same
+/// X pin, numbered as `inspect slots` numbers them.
 ///
-/// An image records a human-readable type per ROM, so this resolves those labels
-/// back to [`ChipType`] the way a running device's active type is resolved. A
-/// label this build does not know is dropped: it costs one chip type's worth of
-/// knowledge about the image, not the answer.
-pub fn chip_types(image: &ParsedDevice) -> Vec<ChipType> {
-    let mut chips = Vec::new();
-    for slot in image.slots().filter(|s| s.kind == SlotKind::Rom) {
-        for rom in slot.roms() {
-            if let Some(chip) = ChipType::try_from_str(&rom.rom_type)
-                && !chips.contains(&chip)
-            {
-                chips.push(chip);
-            }
-        }
-    }
-    chips
+/// The X pin wiring and each slot's GPIOs are read from the image's metadata,
+/// which is what the firmware acts on. Empty for an image without that
+/// metadata.
+pub fn slots_using(image: &ParsedDevice, gpio: u8) -> Vec<usize> {
+    let Some(metadata) = image.as_schema().and_then(|onerom| onerom.metadata()) else {
+        return Vec::new();
+    };
+    let x_pin = [&metadata.hw.gpio_x1, &metadata.hw.gpio_x2]
+        .into_iter()
+        .find(|x| x.contains(&gpio));
+    let wired = x_pin
+        .map_or(&[gpio][..], |x| &x[..])
+        .iter()
+        .filter_map(|&gpio| 1u64.checked_shl(u32::from(gpio)))
+        .fold(0, |mask, bit| mask | bit);
+    image
+        .slots()
+        .zip(&metadata.rom_slots)
+        .filter(|(view, slot)| {
+            view.kind == SlotKind::Rom
+                && slot
+                    .alg
+                    .as_ref()
+                    .is_some_and(|alg| onerom_gen::used_gpios(alg) & wired != 0)
+        })
+        .filter_map(|(view, _)| view.user_index)
+        .collect()
 }

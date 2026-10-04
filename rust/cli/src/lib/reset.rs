@@ -7,15 +7,15 @@
 //! A wire from a One ROM pad to the host's reset line lets the device restart
 //! the machine it lives in - after programming a new image, or on demand. Two
 //! halves live here: deciding whether a pin can carry that wire, which is a
-//! question about board and chip metadata and needs no device, and sending the
-//! pulse, which needs nothing but a device.
+//! question about board metadata and needs no device, and sending the pulse,
+//! which needs nothing but a device. Whether an image's slots use the pin is
+//! [`crate::image::slots_using`].
 //!
 //! What the user is told about either is the caller's business.
 
 use crate::gpio;
 use crate::usb::{Caps, GpioSetArgs, GpioState, gpio_set};
 use crate::{Device, Error};
-use onerom_config::chip::ChipType;
 use onerom_config::hw::Board;
 use onerom_config::mcu::PinTolerance;
 
@@ -23,9 +23,9 @@ use onerom_config::mcu::PinTolerance;
 /// the user.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PinObjection {
-    /// One ROM itself uses the pin, for the functions named. The device refuses
-    /// to give up such a pin, so this is fatal unless the user overrides it with
-    /// `control pin --force`, which breaks serving.
+    /// The board uses the pin, for the functions named. The device refuses to
+    /// give up such a pin, so this is fatal unless the user overrides it with
+    /// `control pin --force`.
     InUse(Vec<String>),
 
     /// The pad is not 5V-tolerant. Whether that matters depends on what the wire
@@ -33,30 +33,16 @@ pub enum PinObjection {
     NotFiveVoltTolerant,
 }
 
-/// Everything standing between `gpio_num` and a reset wire, on this board, for
-/// an image that can serve `chips`.
+/// Everything standing between `gpio_num` and a reset wire on this board.
 ///
-/// Answered from static metadata alone, so it holds before the image is flashed.
-/// That is the point of it: a device can only be asked about the image it is
-/// already running.
-///
-/// `chips` is every chip type the image can serve, because which pins One ROM
-/// uses depends on the chip it is emulating, and an image may hold several. An
-/// empty list is an image that serves nothing.
-pub fn vet_pin(board: &Board, chips: &[ChipType], gpio_num: u8) -> Vec<PinObjection> {
+/// Answered from static metadata alone, so it holds before an image is flashed.
+pub fn vet_pin(board: &Board, gpio_num: u8) -> Vec<PinObjection> {
     let mut objections = Vec::new();
 
-    let mut uses: Vec<String> = Vec::new();
-    for chip in chips {
-        if let Some(function) = gpio::rom_function(board, *chip, gpio_num)
-            && !uses.contains(&function)
-        {
-            uses.push(function);
-        }
-    }
-    for function in gpio::system_functions(board, gpio_num) {
-        uses.push(function.to_string());
-    }
+    let uses: Vec<String> = gpio::system_functions(board, gpio_num)
+        .into_iter()
+        .map(str::to_string)
+        .collect();
     if !uses.is_empty() {
         objections.push(PinObjection::InUse(uses));
     }

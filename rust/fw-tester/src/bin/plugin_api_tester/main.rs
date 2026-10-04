@@ -33,6 +33,7 @@
 use std::process;
 
 use onerom_config::hw::Board;
+use onerom_fw_emulator::Emulator;
 use onerom_fw_tester::jumpers::Jumpers;
 use onerom_fw_tester::timing;
 use onerom_gen::{ChipSetType, Config};
@@ -142,6 +143,22 @@ fn main() {
     process::exit(if report.all_passed() { 0 } else { 1 });
 }
 
+/// Run `test_gpio_set_x_pin` where the slot serves through a dual-wired X pin.
+fn add_gpio_set_x_pin(report: &mut ApiReport, emulator: &Emulator, board: Board) {
+    let gpios = tests::gpio::serving_x_pin_gpios(emulator, board);
+    if gpios.is_empty() {
+        report.skip(
+            "gpio_set_x_pin",
+            "the slot doesn't serve through a dual-wired X pin",
+        );
+    } else {
+        report.add(
+            "gpio_set_x_pin",
+            tests::gpio::test_gpio_set_x_pin(emulator, &gpios),
+        );
+    }
+}
+
 /// Boot the firmware with `set_idx` as the selected image and run only the
 /// GPIO classification test against it.
 ///
@@ -165,6 +182,7 @@ fn run_slot_gpio_only(
         "gpio_use",
         tests::gpio::test_gpio_use(&emulator, config, board, fw_version, base_dir, set_idx),
     );
+    add_gpio_set_x_pin(report, &emulator, board);
     report.skip(
         "serving and slot tests",
         "serving of a Multi/Banked slot is covered by the pio-tester",
@@ -326,6 +344,7 @@ fn run_slot(
         tests::gpio::test_gpio_use(&emulator, config, board, fw_version, base_dir, set_idx),
     );
     report.add("gpio_set", tests::gpio::test_gpio_set(&emulator, board));
+    add_gpio_set_x_pin(report, &emulator, board);
     match tests::gpio::first_input_forced(&emulator, board) {
         Some(gpio) => report.add(
             "gpio_set_input_forced",

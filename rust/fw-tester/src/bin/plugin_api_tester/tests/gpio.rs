@@ -52,7 +52,7 @@ use onerom_fw_emulator::{Emulator, OraResult, ffi};
 use onerom_fw_tester::geometry;
 use onerom_gen::Config;
 use onerom_metadata::{
-    GPIO_NONE, GpioOverride, MaybeKnown, OneromAlgAddrConfig, OneromAlgCsConfig,
+    GPIO_NONE, GpioOverride, MaybeKnown, OneromAlgAddrConfig, OneromAlgConfig, OneromAlgCsConfig,
     OneromAlgDataConfig, OneromMetadataHeader, RomSlotType,
 };
 
@@ -111,14 +111,16 @@ struct ServingSet {
     inverted: u64,
 }
 
-/// Assemble the serving set for the `set_idx`-th non-plugin ROM slot from the
-/// generated metadata.
-///
-/// Every GPIO field in the algorithm configuration is relative to that
-/// algorithm's `gpio_base` (the PIO block's `GPIOBASE`), so each is offset by
-/// its own base — which is exactly the arithmetic `retrieve_gpio_init()` does,
-/// including only offsetting the /BYTE pin when one is present.
-fn serving_set(header: &OneromMetadataHeader, set_idx: usize) -> Result<ServingSet, String> {
+impl ServingSet {
+    /// Pins `ora_gpio_query` reports as serving.
+    fn in_use(&self) -> u64 {
+        self.driven | self.selects | (self.read & !self.forced)
+    }
+}
+
+/// The serving algorithm configuration of the `set_idx`-th non-plugin ROM slot
+/// in the generated metadata.
+fn rom_slot_alg(header: &OneromMetadataHeader, set_idx: usize) -> Result<&OneromAlgConfig, String> {
     let is_plugin = |t: MaybeKnown<RomSlotType>| {
         matches!(
             t,
@@ -136,11 +138,18 @@ fn serving_set(header: &OneromMetadataHeader, set_idx: usize) -> Result<ServingS
         .filter(|s| !is_plugin(s.slot_type))
         .nth(set_idx)
         .ok_or_else(|| format!("no non-plugin ROM slot {set_idx} in metadata"))?;
-    let alg = slot
-        .alg
+    slot.alg
         .as_ref()
-        .ok_or_else(|| format!("ROM slot {set_idx} has no alg config"))?;
+        .ok_or_else(|| format!("ROM slot {set_idx} has no alg config"))
+}
 
+/// Assemble the serving set for a ROM slot with `alg`.
+///
+/// Every GPIO field in the algorithm configuration is relative to that
+/// algorithm's `gpio_base` (the PIO block's `GPIOBASE`), so each is offset by
+/// its own base — which is exactly the arithmetic `retrieve_gpio_init()` does,
+/// including only offsetting the /BYTE pin when one is present.
+fn serving_set(alg: &OneromAlgConfig) -> Result<ServingSet, String> {
     // Chip select and data.  The common fields are repeated per variant
     // because each variant is a distinct enum shape; the extras differ.
     let (cs_base, cs_pins, data_base, data_pins, cs_byte, cs_extra) = match alg.alg_cs {
@@ -321,6 +330,17 @@ fn system_pins(emu: &Emulator) -> Result<u64, String> {
     Ok(mask)
 }
 
+/// The other GPIOs wired to the same X pin of `board` as `gpio`, as a mask.
+fn x_pin_others(board: Board, gpio: u8) -> u64 {
+    [1, 2]
+        .into_iter()
+        .map(|x_pin| board.gpios_for_x_pin(x_pin))
+        .filter(|gpios| gpios.contains(&gpio))
+        .flatten()
+        .filter(|&&other| other != gpio)
+        .fold(0, |mask, &other| mask | pin(other))
+}
+
 fn use_name(value: u8) -> String {
     match value as ffi::ora_gpio_use_t {
         ffi::ora_gpio_use_t_ORA_GPIO_USE_FREE => "FREE".to_string(),
@@ -346,8 +366,19 @@ pub fn test_gpio_use(
     let max_gpios = max_gpios(board);
 
     let header = geometry::build_header(config, board, fw_version, base_dir)?;
-    let serving = serving_set(&header, set_idx)?;
+    let alg = rom_slot_alg(&header, set_idx)?;
+    let serving = serving_set(alg)?;
     let system = system_pins(emu)?;
+
+    // The host's copy of the firmware's rule, which `program --reset-host`
+    // checks an image with.
+    let used = onerom_gen::used_gpios(alg);
+    if used != serving.in_use() {
+        return Err(format!(
+            "onerom_gen::used_gpios says 0x{used:012X}, the serving set says 0x{:012X}",
+            serving.in_use()
+        ));
+    }
 
     // Cross-check the metadata-derived data pins against what serving actually
     // handed to the PIO.  If these disagree the metadata-derived expectation
@@ -385,6 +416,22 @@ pub fn test_gpio_use(
             ffi::ora_gpio_use_t_ORA_GPIO_USE_SYSTEM
         } else {
             ffi::ora_gpio_use_t_ORA_GPIO_USE_FREE
+        };
+        // Driving a GPIO drives every GPIO wired to the same X pin, so a GPIO
+        // serving doesn't use reports what serving uses the other for.
+        let x_pin_use = x_pin_others(board, gpio) & serving.in_use();
+        let expected = if x_pin_use == 0
+            || matches!(
+                expected,
+                ffi::ora_gpio_use_t_ORA_GPIO_USE_SERVING_DRIVEN
+                    | ffi::ora_gpio_use_t_ORA_GPIO_USE_SERVING_READ
+                    | ffi::ora_gpio_use_t_ORA_GPIO_USE_SYSTEM
+            ) {
+            expected
+        } else if x_pin_use & serving.driven != 0 {
+            ffi::ora_gpio_use_t_ORA_GPIO_USE_SERVING_DRIVEN
+        } else {
+            ffi::ora_gpio_use_t_ORA_GPIO_USE_SERVING_READ
         };
 
         let (result, info) = emu.gpio_query(gpio);
@@ -712,6 +759,84 @@ pub fn test_gpio_set_input_forced(emu: &Emulator, gpio: u8) -> Result<(), String
     } else {
         Err(errors.join("; "))
     }
+}
+
+/// `ora_gpio_set` refuses each of `gpios`, so an X pin serving reads through
+/// one GPIO can't be driven through the other.
+///
+/// Arm with [`serving_x_pin_gpios`].  Stimulate each with an unforced set,
+/// which must be refused and leave the pin alone.  Discriminate with the same
+/// set forced, which must go through, then release the pin and check it is as
+/// it was.
+pub fn test_gpio_set_x_pin(emu: &Emulator, gpios: &[u8]) -> Result<(), String> {
+    const HIGH: ffi::ora_gpio_state_t = ffi::ora_gpio_state_t_ORA_GPIO_STATE_HIGH;
+    const INPUT: ffi::ora_gpio_state_t = ffi::ora_gpio_state_t_ORA_GPIO_STATE_INPUT;
+
+    let mut errors = Vec::new();
+    for &gpio in gpios {
+        let (_, before) = emu.gpio_query(gpio);
+        note(
+            &mut errors,
+            &format!("set X pin GPIO {gpio} unforced"),
+            emu.gpio_set(gpio, HIGH, false),
+            OraResult::GpioInUse,
+        );
+        let (_, after) = emu.gpio_query(gpio);
+        if after != before {
+            errors.push(format!(
+                "refused set moved X pin GPIO {gpio}: {before:?} -> {after:?}"
+            ));
+        }
+        note(
+            &mut errors,
+            &format!("force X pin GPIO {gpio} high"),
+            emu.gpio_set(gpio, HIGH, true),
+            OraResult::Ok,
+        );
+        note(
+            &mut errors,
+            &format!("release X pin GPIO {gpio}"),
+            emu.gpio_set(gpio, INPUT, true),
+            OraResult::Ok,
+        );
+        let (_, released) = emu.gpio_query(gpio);
+        if released != before {
+            errors.push(format!(
+                "released X pin GPIO {gpio}: {released:?}, want {before:?}"
+            ));
+        }
+    }
+
+    if errors.is_empty() {
+        println!("  X pin GPIOs {gpios:?}");
+        Ok(())
+    } else {
+        Err(errors.join("; "))
+    }
+}
+
+/// Both GPIOs of each of `board`'s dual-wired X pins where `ora_gpio_query`
+/// reports one of them as serving.
+///
+/// Chosen from the board's wiring rather than from each GPIO's own answer, so
+/// a GPIO the query wrongly reports free is still tested.
+pub fn serving_x_pin_gpios(emu: &Emulator, board: Board) -> Vec<u8> {
+    let serving = |gpio: u8| {
+        let (result, info) = emu.gpio_query(gpio);
+        result.is_ok()
+            && matches!(
+                info.gpio_use,
+                ffi::ora_gpio_use_t_ORA_GPIO_USE_SERVING_READ
+                    | ffi::ora_gpio_use_t_ORA_GPIO_USE_SERVING_DRIVEN
+            )
+    };
+    [1, 2]
+        .into_iter()
+        .map(|x_pin| board.gpios_for_x_pin(x_pin))
+        .filter(|gpios| gpios.len() > 1 && gpios.iter().any(|&gpio| serving(gpio)))
+        .flatten()
+        .copied()
+        .collect()
 }
 
 /// `ora_is_pin_output` answers 0xFF for a pin this device does not have, and

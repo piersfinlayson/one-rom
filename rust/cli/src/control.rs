@@ -24,6 +24,7 @@ use onerom_cli::{Error, Options};
 use onerom_config::chip::ChipType;
 use onerom_config::hw::Board;
 use onerom_config::mcu::PinTolerance;
+use onerom_fw_parser::ParsedDevice;
 use onerom_gen::FlashChips;
 use std::io::Write;
 
@@ -515,41 +516,51 @@ pub(crate) fn reset_asserted_line(pin: ResolvedPin, hold_ms: u32) -> String {
     )
 }
 
-/// Refuse a reset pin One ROM will be using itself.
+/// Refuse a reset pin a ROM slot of `image` uses.
 ///
-/// `chips` is every chip type the image can serve. The device refuses to give up
-/// a pin it is serving with, so this is the same refusal, made early enough to
-/// be worth something - and made against the image about to be flashed rather
-/// than the one already running.
-pub fn refuse_reset_pin_in_use(
-    board: &Board,
-    chips: &[ChipType],
-    pin: ResolvedPin,
-) -> Result<(), Error> {
-    for objection in reset::vet_pin(board, chips, pin.gpio()) {
-        if let PinObjection::InUse(uses) = objection {
-            return Err(Error::InvalidArgument(
-                "--reset-host".to_string(),
-                format!(
-                    "{pin} is in use by the One ROM image being programmed: {}.\n  \
-                     One ROM will refuse to drive it.\n  \
-                     Use '{}' to drive it anyway.",
-                    uses.join(", "),
-                    hint::force_pin_low(pin.pin())
-                ),
-            ));
+/// The device refuses to give up a pin it is serving with, so this is the same
+/// refusal, made against the image about to be flashed rather than the one
+/// already running.
+pub fn refuse_reset_pin_in_use(image: &ParsedDevice, pin: ResolvedPin) -> Result<(), Error> {
+    let slots = onerom_cli::image::slots_using(image, pin.gpio());
+    let Some((last, rest)) = slots.split_last() else {
+        return Ok(());
+    };
+    let slots = match rest {
+        [] => format!("slot {last}"),
+        _ => {
+            let rest: Vec<String> = rest.iter().map(ToString::to_string).collect();
+            format!("slots {} and {last}", rest.join(", "))
         }
-    }
-    Ok(())
+    };
+    Err(reset_pin_in_use(
+        pin,
+        &format!(
+            "{pin} is used by {slots} of the image being programmed, so it can't reset the host."
+        ),
+    ))
+}
+
+/// The `--reset-host` error for `pin`, which `reason` says can't be used.
+fn reset_pin_in_use(pin: ResolvedPin, reason: &str) -> Error {
+    Error::InvalidArgument(
+        "--reset-host".to_string(),
+        format!(
+            "{reason}\n  \
+             Use '{}' to drive it anyway.",
+            hint::force_pin_low(pin.pin())
+        ),
+    )
 }
 
 /// Vet a reset pin before anything is programmed, and resolve it.
 ///
-/// Everything asked here comes from board metadata and `chips`, so it is asked
-/// before the device is touched and before a single ROM image is fetched: a pad
-/// this board does not have, a pin the new image will serve with, or a pad that
-/// cannot take 5V is the user's mistake, and finding it later means finding it
-/// with the host system already waiting to be reset.
+/// Everything asked here comes from board metadata, so it is asked before the
+/// device is touched and before a single ROM image is fetched: a pad this board
+/// does not have, a pin the board uses itself, or a pad that cannot take 5V is
+/// the user's mistake, and finding it later means finding it with the host
+/// system already waiting to be reset. Whether the image's slots use the pin is
+/// [`refuse_reset_pin_in_use`].
 ///
 /// Returns the resolved pin, and whether the user was asked about a 3.3V-only
 /// pad - which [`pulse_reset`] needs, so that accepting once is accepting.
@@ -557,7 +568,6 @@ pub fn check_reset_pin(
     options: &Options,
     pin: &Pin,
     board: Option<&Board>,
-    chips: &[ChipType],
 ) -> Result<(ResolvedPin, bool), Error> {
     let resolved = pin.resolve(board)?;
 
@@ -568,10 +578,27 @@ pub fn check_reset_pin(
         return Ok((resolved, false));
     };
 
-    refuse_reset_pin_in_use(board, chips, resolved)?;
+    let objections = reset::vet_pin(board, resolved.gpio());
+    for objection in &objections {
+        if let PinObjection::InUse(uses) = objection {
+            return Err(reset_pin_in_use(
+                resolved,
+                &match uses.split_last() {
+                    Some((last, rest)) if !rest.is_empty() => format!(
+                        "{resolved} is wired to the board's {} and {last}, so it can't reset the host.",
+                        rest.join(", ")
+                    ),
+                    _ => format!(
+                        "{resolved} is wired to the board's {}, so it can't reset the host.",
+                        uses.join(", ")
+                    ),
+                },
+            ));
+        }
+    }
 
     let mut tolerance_confirmed = false;
-    if reset::vet_pin(board, chips, resolved.gpio()).contains(&PinObjection::NotFiveVoltTolerant) {
+    if objections.contains(&PinObjection::NotFiveVoltTolerant) {
         warn_three_volt_three(&describe_gpio(Some(board), None, resolved.gpio()));
         if !confirm_gpio(options, false)? {
             return Err(Error::Aborted(
@@ -1019,6 +1046,7 @@ pub async fn cmd_erase(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_board::{holds, image_2364_sets};
     use onerom_cli::LogLevel;
     use onerom_cli::pin::parse_pin;
 
@@ -1039,60 +1067,22 @@ mod tests {
         }
     }
 
-    fn check(
-        pin: &str,
-        board: Option<&Board>,
-        chips: &[ChipType],
-    ) -> Result<(ResolvedPin, bool), Error> {
-        check_reset_pin(&options(true), &parse_pin(pin).unwrap(), board, chips)
+    fn check(pin: &str, board: Option<&Board>) -> Result<(ResolvedPin, bool), Error> {
+        check_reset_pin(&options(true), &parse_pin(pin).unwrap(), board)
     }
 
     #[test]
     fn a_free_pad_is_accepted_and_resolved() {
-        // X1 is an expansion pad: no ROM function under any chip, no system
-        // function, and 5V-tolerant.
-        let (pin, confirmed) = check("x1", Some(&board()), &[ChipType::Chip2364]).unwrap();
+        // X1 is an expansion pad: no system function, and 5V-tolerant.
+        let (pin, confirmed) = check("x1", Some(&board())).unwrap();
         assert_eq!(pin.gpio(), 9);
         assert!(!confirmed);
     }
 
     #[test]
-    fn a_pin_the_new_image_serves_with_is_refused() {
-        // GPIO16 is A7 of a 2364 on this board.
-        let err = check("gpio16", Some(&board()), &[ChipType::Chip2364]).unwrap_err();
-        let msg = err.to_string();
-        assert!(msg.contains("--reset-host"), "{msg}");
-        assert!(msg.contains("A7"), "{msg}");
-
-        // The refusal comes from the chip list and nothing else: the same pin is
-        // accepted for an image that serves nothing.
-        assert!(check("gpio16", Some(&board()), &[]).is_ok());
-    }
-
-    /// A pin one slot's chip type leaves alone is still refused when another
-    /// slot's reaches it.
-    ///
-    /// A 28-pin socket serving a 24-pin 2364 leaves GPIO10 outside the chip
-    /// body, where a 27256 drives it as A14 - so an image holding both must be
-    /// judged on every slot, not on the first.
-    #[test]
-    fn every_chip_type_in_the_image_is_checked() {
-        let board = Board::try_from_str("fire-28-a").unwrap();
-        assert!(check("gpio10", Some(&board), &[ChipType::Chip2364]).is_ok());
-        let err = check(
-            "gpio10",
-            Some(&board),
-            &[ChipType::Chip2364, ChipType::Chip27256],
-        )
-        .unwrap_err();
-        assert!(err.to_string().contains("A14"), "{err}");
-    }
-
-    #[test]
     fn a_pin_the_board_uses_itself_is_refused() {
-        // GPIO29 drives fire-24-f's status LED and its RGB LED, and no ROM
-        // function reaches it - so only the system-function check can refuse it.
-        let err = check("gpio29", Some(&board()), &[]).unwrap_err();
+        // GPIO29 drives fire-24-f's status LED and its RGB LED.
+        let err = check("gpio29", Some(&board())).unwrap_err();
         let msg = err.to_string();
         assert!(msg.contains("Status LED"), "{msg}");
         assert!(msg.contains("RGB LED"), "{msg}");
@@ -1103,7 +1093,7 @@ mod tests {
         // SEL_A is GPIO26, an ADC pin, so it is not 5V-tolerant. --yes answers
         // the warning, and the answer is carried out so the pulse does not ask
         // again.
-        let (pin, confirmed) = check("sel_a", Some(&board()), &[ChipType::Chip2364]).unwrap();
+        let (pin, confirmed) = check("sel_a", Some(&board())).unwrap();
         assert_eq!(pin.gpio(), 26);
         assert!(confirmed);
 
@@ -1116,9 +1106,62 @@ mod tests {
     fn a_gpio_named_without_a_board_is_taken_as_given() {
         // Nothing below the resolve can be asked without board metadata, and the
         // device still gates the write.
-        let (pin, confirmed) = check("gpio16", None, &[ChipType::Chip2364]).unwrap();
+        let (pin, confirmed) = check("gpio16", None).unwrap();
         assert_eq!(pin.gpio(), 16);
         assert!(!confirmed);
+    }
+
+    /// The ROM slots an image of 2364 `sets` for `board` has using `pin`.
+    async fn slots_using(board: Board, sets: &[&str], pin: &str) -> Vec<usize> {
+        let image = image_2364_sets(board, sets, &[]);
+        let image = onerom_cli::image::parse_firmware(&image).await;
+        let pin = parse_pin(pin).unwrap().resolve(Some(&board)).unwrap();
+        onerom_cli::image::slots_using(&image, pin.gpio())
+    }
+
+    #[tokio::test]
+    async fn a_pin_a_slot_serves_with_is_found() {
+        // GPIO16 is A7 of a 2364 on fire-24-f.
+        assert_eq!(slots_using(board(), &["single"], "gpio16").await, [0]);
+        assert!(slots_using(board(), &["single"], "x1").await.is_empty());
+    }
+
+    /// A banked set reads X1 to select its bank, and the slot that uses it
+    /// needn't be the first.
+    #[tokio::test]
+    async fn x1_is_found_where_a_banked_set_uses_it() {
+        let sets = ["single", "banked", "single", "banked"];
+        assert_eq!(slots_using(board(), &sets, "x1").await, [1, 3]);
+    }
+
+    /// fire-28-c's X1 is wired to GPIOs 9 and 28, and a banked set reads it on
+    /// 28.
+    #[tokio::test]
+    async fn either_gpio_of_a_dual_wired_x_pin_is_found() {
+        for pin in ["x1", "gpio9", "gpio28"] {
+            assert_eq!(
+                slots_using(Board::Fire28C, &["banked"], pin).await,
+                [0],
+                "{pin}"
+            );
+        }
+        assert!(
+            slots_using(Board::Fire28C, &["single"], "gpio9")
+                .await
+                .is_empty()
+        );
+    }
+
+    #[tokio::test]
+    async fn a_reset_pin_a_slot_uses_is_refused() {
+        let image = image_2364_sets(board(), &["single", "banked", "banked"], &[]);
+        let image = onerom_cli::image::parse_firmware(&image).await;
+        let pin = |name: &str| parse_pin(name).unwrap().resolve(Some(&board())).unwrap();
+
+        let err = refuse_reset_pin_in_use(&image, pin("x1")).unwrap_err();
+        let msg = err.to_string();
+        assert!(holds(&msg, &["--reset-host", "x1", "1", "2"]), "{msg}");
+        assert!(refuse_reset_pin_in_use(&image, pin("x2")).is_ok());
     }
 
     /// `words`, which start `onerom control erase`, parsed.
@@ -1180,7 +1223,6 @@ mod tests {
 
     #[test]
     fn the_erase_lines_contain_the_total() {
-        use crate::test_board::holds;
         use onerom_config::hw::BoardSize;
         let args = erase_args("onerom control erase --all");
         let ranges = build_erase_ranges(&args, &chips(BoardSize::L)).unwrap();
@@ -1194,7 +1236,7 @@ mod tests {
 
     #[test]
     fn a_pad_named_without_a_board_is_refused() {
-        let err = check("sel_a", None, &[]).unwrap_err();
+        let err = check("sel_a", None).unwrap_err();
         assert!(err.to_string().contains("--board"), "{err}");
     }
 
