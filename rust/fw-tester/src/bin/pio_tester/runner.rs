@@ -237,6 +237,9 @@ pub fn run_all(board: Board, config: &Config, base_dir: &std::path::Path, report
     if num_sets > 0 {
         crate::flash_range::run(board, report);
     }
+    if num_sets > 1 {
+        crate::flash_range::run_plugins(report);
+    }
 }
 
 /// Serve set 0 again with the metadata claiming a generation the firmware was

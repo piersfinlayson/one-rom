@@ -985,13 +985,13 @@ ora_result_t ora_yield(uint8_t *was_paused_out) {
 #endif // !TEST_BUILD
 }
 
-#if !defined(TEST_BUILD)
 // Returns  0: no plugin on other core, safe to proceed without FIFO
 //          1: plugin present and supports yield
 //         -1: plugin present but does not support yield
-static int other_core_yield_capability(void) {
-    uint32_t this_core = SIO_CPUID;
-
+#if !defined(TEST_BUILD)
+static
+#endif // !TEST_BUILD
+int other_core_yield_capability_from(uint32_t this_core) {
     const onerom_rom_slot_t *set;
     rom_slot_type_t expected_type;
 
@@ -1022,6 +1022,11 @@ static int other_core_yield_capability(void) {
 
     const ora_plugin_header_t *header = (const ora_plugin_header_t *)set->data;
     return (header->properties1 & ORA_PROPERTY1_SUPPORTS_YIELD) ? 1 : -1;
+}
+
+#if !defined(TEST_BUILD)
+static int other_core_yield_capability(void) {
+    return other_core_yield_capability_from(SIO_CPUID);
 }
 #endif // !TEST_BUILD
 

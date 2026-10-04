@@ -694,6 +694,42 @@ impl Emulator {
         unsafe { ffi::ffi_check_plugin_valid(index, expected_type, plugin_index) != 0 }
     }
 
+    /// Make ROM slots 0 and 1 a system plugin and a user plugin with their
+    /// headers in host memory until [`Self::restore_rom_slots`].
+    ///
+    /// The plugin slots read their flash addresses from the metadata's table so
+    /// the metadata must have at least two slots. A test puts back the
+    /// addresses it moves.
+    pub fn install_plugin_slots() {
+        unsafe { ffi::ffi_install_plugin_slots() };
+    }
+
+    /// Put back the metadata's own ROM slots.
+    pub fn restore_rom_slots() {
+        unsafe { ffi::ffi_restore_rom_slots() };
+    }
+
+    /// Write a valid header to plugin slot `index` with its entry point at
+    /// device address `entry`.
+    pub fn set_plugin_header(index: u8, entry: u32, overrides1: u8, properties1: u8) {
+        unsafe { ffi::ffi_set_plugin_header(index, entry, overrides1, properties1) };
+    }
+
+    /// The firmware's boot parse of the plugin slots. Returns the plugins found
+    /// as a bitmask, their count and whether VBUS detection is disabled.
+    pub fn initial_plugin_parse() -> (u8, u8, bool) {
+        let (mut disable_vbus_det, mut num_plugins) = (0, 0);
+        let plugins = unsafe { ffi::initial_plugin_parse(&mut disable_vbus_det, &mut num_plugins) };
+        (plugins, num_plugins, disable_vbus_det != 0)
+    }
+
+    /// The yield capability of the plugin on the core other than `this_core`,
+    /// as `other_core_yield_capability_from` in `firmware/src/plugin.c`
+    /// returns it.
+    pub fn other_core_yield_capability(this_core: u32) -> i32 {
+        unsafe { ffi::other_core_yield_capability_from(this_core) }
+    }
+
     // ── GPIO / cycle operations (require setup_epio()) ───────────────────────
 
     /// Drive external GPIO states into the emulator.

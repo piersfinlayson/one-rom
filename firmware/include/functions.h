@@ -209,6 +209,9 @@ uint8_t check_plugin_valid(
     uint8_t index
 );
 uint8_t initial_plugin_parse(uint8_t *disable_vbus_det, uint8_t *num_plugins);
+#if defined(TEST_BUILD)
+int other_core_yield_capability_from(uint32_t this_core);
+#endif // TEST_BUILD
 void ora_launch_plugins(void);
 void irq_handler_timer0_irq_0(void);
 

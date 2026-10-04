@@ -46,6 +46,23 @@ uint8_t ffi_check_plugin_valid(
     uint8_t plugin_index
 );
 
+// ROM slots 0 and 1 as a system plugin and a user plugin with their headers in
+// host memory, and the metadata's own slots put back.
+//
+// The plugin slots read their flash addresses from the metadata's table so the
+// metadata must have at least two slots.
+void ffi_install_plugin_slots(void);
+void ffi_restore_rom_slots(void);
+
+// Write a valid header to plugin slot `index` with its entry point at device
+// address `entry`.
+void ffi_set_plugin_header(
+    uint8_t index,
+    uint32_t entry,
+    uint8_t overrides1,
+    uint8_t properties1
+);
+
 // The serving algorithms and address window the current ROM slot is running.
 //
 // A test needs the address state machine's sampled pin window to know whether a
