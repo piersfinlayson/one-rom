@@ -20,9 +20,9 @@ use onerom_metadata::otp::pico_otp::whitelabel::{
 };
 use onerom_metadata::otp::{AreaIssue, CommissioningArea, CommissioningInstance, StoreEntry};
 use onerom_metadata::{
-    OTP_BOOT_FLAGS0_FLASH_DEVINFO_ENABLE, OTP_BOOT_FLAGS0_R1_ROW, OTP_BOOT_FLAGS0_R2_ROW,
-    OTP_BOOT_FLAGS0_ROW, OTP_COMMISSIONING_SIG_LEN, OTP_FLASH_DEVINFO_ROW,
-    OTP_FLASH_PARTITION_SLOT_SIZE_ROW, OTP_PAGE_ROWS, OneromOtpEntry,
+    MaybeKnown, OTP_BOOT_FLAGS0_FLASH_DEVINFO_ENABLE, OTP_BOOT_FLAGS0_R1_ROW,
+    OTP_BOOT_FLAGS0_R2_ROW, OTP_BOOT_FLAGS0_ROW, OTP_COMMISSIONING_SIG_LEN, OTP_FLASH_DEVINFO_ROW,
+    OTP_FLASH_PARTITION_SLOT_SIZE_ROW, OTP_PAGE_ROWS, OneromFlashSize, OneromOtpEntry,
 };
 
 // ---------------------------------------------------------------------------
@@ -331,18 +331,14 @@ fn devinfo_values(devinfo: EccRow, enabled: bool) -> Vec<Labelled> {
     ]
 }
 
-/// A FLASH_DEVINFO size field. The bootrom reads a size `n` other than 0 as
-/// 4KB shifted left `n` times.
-fn flash_size(size: u16) -> String {
-    if size == 0 {
-        return "none".to_string();
+/// A FLASH_DEVINFO size field. A code that isn't in [`OneromFlashSize`] is
+/// displayed as unknown.
+fn flash_size(code: u16) -> String {
+    match OneromFlashSize::try_from(code as u8) {
+        Ok(size) => MaybeKnown::Known(size),
+        Err(()) => MaybeKnown::Unknown(u32::from(code)),
     }
-    let bytes = 4096_u64 << size;
-    if bytes >= 1024 * 1024 {
-        format!("{}MB", bytes / (1024 * 1024))
-    } else {
-        format!("{}KB", bytes / 1024)
-    }
+    .to_string()
 }
 
 /// Each bit's majority across three copies of a row.
@@ -1059,6 +1055,16 @@ mod tests {
         // 0 is a chip select without a chip so it doesn't have a size.
         let none = flash_size(0);
         assert!(!none.contains(|c: char| c.is_ascii_digit()), "{none}");
+    }
+
+    /// A code above 12 doesn't have a size, so it shows as the code.
+    #[test]
+    fn a_flash_size_code_above_12_shows_as_the_code() {
+        for code in 13..=15 {
+            let text = flash_size(code);
+            assert!(text.contains(&format!("{code:#04x}")), "{text}");
+            assert!(!text.contains("MB"), "{text}");
+        }
     }
 
     #[test]

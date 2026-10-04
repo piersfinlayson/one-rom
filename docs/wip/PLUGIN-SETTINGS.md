@@ -38,7 +38,7 @@ typedef struct {
     uint32_t live;
     uint32_t staging;      /* 0 = writes refused */
 } ora_settings_info_t;
-STATIC_ASSERT(sizeof(ora_settings_info_t) == 20, "ora_settings_info_t must be 20 bytes");
+_Static_assert(sizeof(ora_settings_info_t) == 20, "ora_settings_info_t must be 20 bytes");
 ```
 
 `size` caps what a reader takes, as `ora_gpio_info_t`
@@ -52,7 +52,7 @@ typedef struct {
     uint8_t  size;
     uint8_t  type;      /* ora_setting_type_t */
 } ora_setting_entry_t;
-STATIC_ASSERT(sizeof(ora_setting_entry_t) == 8, "ora_setting_entry_t must be 8 bytes");
+_Static_assert(sizeof(ora_setting_entry_t) == 8, "ora_setting_entry_t must be 8 bytes");
 
 typedef enum {
     ORA_SETTING_TYPE_BOOL = 0,  /* 1 byte, 0 or 1, 0xFF unset */
@@ -88,7 +88,7 @@ typedef struct {
     uint8_t  header_size;
     uint8_t  reserved;
 } ora_settings_region_t;
-STATIC_ASSERT(sizeof(ora_settings_region_t) == 16, "ora_settings_region_t must be 16 bytes");
+_Static_assert(sizeof(ora_settings_region_t) == 16, "ora_settings_region_t must be 16 bytes");
 ```
 
 `layout_crc` covers, per entry in order, name with NUL, `offset` little-endian,

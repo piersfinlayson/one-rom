@@ -292,6 +292,13 @@ fn main() {
         // The metadata generation, and the means to change it before a boot.
         .allowlist_function("ffi_metadata_generation")
         .allowlist_function("ffi_set_metadata_generation")
+        // A ROM slot's flash address, a way to move it, and the firmware's
+        // checks of a slot.
+        .allowlist_function("ffi_rom_slot_flash_addr")
+        .allowlist_function("ffi_set_rom_slot_flash_addr")
+        .allowlist_function("ffi_rom_slot_size")
+        .allowlist_function("ffi_rom_slot_in_flash")
+        .allowlist_function("ffi_check_plugin_valid")
         .allowlist_function("ffi_epio_setup_sram")
         .allowlist_function("ffi_epio_setup_dma_chain")
         .allowlist_function("ffi_epio_arm_monitor")

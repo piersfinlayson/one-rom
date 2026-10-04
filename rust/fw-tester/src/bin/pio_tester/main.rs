@@ -29,6 +29,7 @@ use onerom_fw_emulator::Emulator;
 use onerom_gen::Config;
 
 mod commissioning;
+mod flash_range;
 mod report;
 mod runner;
 

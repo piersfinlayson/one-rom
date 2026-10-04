@@ -48,4 +48,16 @@ static inline void status_led_disable(uint8_t pin) {
     stub_gpio_set(pin, ORA_GPIO_STATE_INPUT);
 }
 
+// Each ROM slot's address in flash on a device, in ROM slot order.
+//
+// A host build's slot data is a host pointer, not the slot's address in a
+// device's flash.  gen-config.c defines this table from the addresses in the
+// generated metadata.  It isn't const, so a test can move a slot as the CLI
+// would.
+extern uint32_t host_rom_slot_flash_addrs[];
+
+static inline uint32_t rom_slot_flash_addr(const onerom_rom_slot_t *slot) {
+    return host_rom_slot_flash_addrs[slot - ROM_SLOTS];
+}
+
 #endif // RP235X_INLINES_H

@@ -24,6 +24,28 @@ uint8_t ffi_board_size(void);
 uint32_t ffi_metadata_generation(void);
 void ffi_set_metadata_generation(uint32_t generation);
 
+// A ROM slot's address in a device's flash, a way to move it, its size, and
+// whether it lies within the flash at the chip sizes OTP configures.
+//
+// A host build's slot data is a host pointer, so the firmware reads a slot's
+// flash address from a table in gen-config.c - see test/stub_rp235x_inlines.h.
+// A test that moves a slot plays the CLI's part, which writes a device's
+// metadata.  The address outlives a boot, so the test puts it back.  `index`
+// is the firmware's ROM slot index, plugin slots included.
+uint32_t ffi_rom_slot_flash_addr(uint8_t index);
+void ffi_set_rom_slot_flash_addr(uint8_t index, uint32_t addr);
+uint32_t ffi_rom_slot_size(uint8_t index);
+uint8_t ffi_rom_slot_in_flash(uint8_t index);
+
+// The firmware's check of the plugin in ROM slot `index`, as boot and launch
+// run it.  The test configs don't have plugin slots, so a test runs the check
+// on a ROM slot it has moved.
+uint8_t ffi_check_plugin_valid(
+    uint8_t index,
+    ora_plugin_type_t expected_type,
+    uint8_t plugin_index
+);
+
 // The serving algorithms and address window the current ROM slot is running.
 //
 // A test needs the address state machine's sampled pin window to know whether a

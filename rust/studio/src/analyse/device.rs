@@ -350,8 +350,9 @@ pub fn reread_device(
     // Build the message re-read the flash (and re-parse).  We now have the
     // MCU variant, so can get the full flash size - this is what we need to
     // read.
-    let address = Address::Absolute(mcu.family().get_flash_base());
-    let words = mcu.flash_storage_bytes() / 4;
+    let flash = FlashChips::first_for(mcu);
+    let address = Address::Absolute(flash.start);
+    let words = (flash.end - flash.start) as usize / 4;
     let hw_info = HardwareInfo {
         board: None,
         model: None,

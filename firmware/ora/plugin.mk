@@ -46,13 +46,11 @@ SRC       := plugin_main.c
 
 ifeq ($(PLUGIN_TYPE),SYSTEM)
 $(info Building system plugin)
-PLUGIN_BASE := 0x10010000
 PLUGIN_TYPE_NUM := 0
 PLUGIN_IS_SYSTEM := 1
 PLUGIN_PREFIX := plugin_system
 else ifeq ($(PLUGIN_TYPE),USER)
 $(info Building user plugin)
-PLUGIN_BASE := 0x10020000
 PLUGIN_TYPE_NUM := 1
 PLUGIN_IS_SYSTEM := 0
 PLUGIN_PREFIX := plugin_user
@@ -68,11 +66,11 @@ CFLAGS  := -mcpu=cortex-m33 -mthumb -mfloat-abi=hard -mfpu=fpv5-sp-d16 \
            -ffunction-sections -fdata-sections \
            -DPLUGIN_IS_SYSTEM=$(PLUGIN_IS_SYSTEM) \
            -DPLUGIN_TYPE_NUM=$(PLUGIN_TYPE_NUM) \
-           -I $(ORA_INCLUDE) -I $(dir $(ORA_INCLUDE))include $(EXTRA_C_FLAGS) \
+           -I $(ORA_INCLUDE) $(EXTRA_C_FLAGS) \
            -std=c11
 
 LDFLAGS := -nostdlib \
-           -T $(ORA_INCLUDE)/plugin.ld \
+           -L $(ORA_INCLUDE) -T $(ORA_INCLUDE)/plugin.ld \
            -Wl,--defsym,PLUGIN_TYPE=$(PLUGIN_TYPE_NUM) \
            -Wl,--fatal-warnings
 
@@ -84,7 +82,7 @@ $(BUILD_DIR):
 	@echo "Creating build directory..."
 	@mkdir -p $@
 
-$(ELF): $(SRC) $(ORA_INCLUDE)/plugin.h $(ORA_INCLUDE)/api.h $(ORA_INCLUDE)/system.h $(ORA_INCLUDE)/plugin.ld | $(BUILD_DIR)
+$(ELF): $(SRC) $(ORA_INCLUDE)/plugin.h $(ORA_INCLUDE)/api.h $(ORA_INCLUDE)/system.h $(ORA_INCLUDE)/plugin.ld $(ORA_INCLUDE)/onerom_linker_constants_generated.ld | $(BUILD_DIR)
 	@echo "Building plugin..."
 	@$(CC) $(CFLAGS) $(LDFLAGS) $< -o $@
 

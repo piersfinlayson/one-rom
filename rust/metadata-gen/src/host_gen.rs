@@ -56,6 +56,13 @@
 // `rom_data_slot_N[]` byte array (brace-initializer — see the FAM test
 // confirming this is fine for arrays of this size on your toolchains).
 //
+// A host slot's data is then a host pointer, not the slot's address in a
+// device's flash.  The firmware checks that address before it reads a slot, so
+// each slot's address from the metadata also goes into
+// `host_rom_slot_flash_addrs[]`, in the same order.  The firmware reads it
+// through `rom_slot_flash_addr()` (firmware/include/test/stub_rp235x_inlines.h).
+// It isn't const, so a test can move a slot.
+//
 // Tagged FAM structs (`onerom_alg_*_config_t`)
 // ----------------------------------------------
 // These have a trailing flexible array member `params[]`.  Designated-
@@ -150,6 +157,8 @@ fn push_host_gen_context(out: &mut String, schema: &Schema) {
     out.push_str("    /// Per-slot ROM image bytes, consumed in `rom_slots` order.\n");
     out.push_str("    rom_data: alloc::vec::Vec<alloc::vec::Vec<u8>>,\n");
     out.push_str("    rom_data_idx: usize,\n");
+    out.push_str("    /// Each ROM slot's address in a device's flash, in `rom_slots` order.\n");
+    out.push_str("    rom_slot_flash_addrs: alloc::vec::Vec<u32>,\n");
 
     out.push_str("    // Per-type intern tables: value -> generated C identifier.\n");
     for s in schema
@@ -197,6 +206,7 @@ fn push_host_gen_context(out: &mut String, schema: &Schema) {
     out.push_str("            counters: hashbrown::HashMap::new(),\n");
     out.push_str("            rom_data,\n");
     out.push_str("            rom_data_idx: 0,\n");
+    out.push_str("            rom_slot_flash_addrs: alloc::vec::Vec::new(),\n");
     for s in schema
         .structs
         .iter()
@@ -608,6 +618,9 @@ fn emit_host_define_field(
             // bytes, supplied via HostGenContext::next_rom_data().
             out.push_str(&format!("        {{\n"));
             out.push_str("            let bytes = ctx.next_rom_data();\n");
+            out.push_str(&format!(
+                "            ctx.rom_slot_flash_addrs.push(self.{name}.raw());\n"
+            ));
             out.push_str("            let arr_name = ctx.fresh_name(\"rom_data_slot\");\n");
             out.push_str(
                 "            ctx.decls.push((\"const uint8_t \".into(), alloc::format!(\"{}[]\", arr_name)));\n",
@@ -1177,6 +1190,31 @@ fn push_top_level_entry_point(out: &mut String, schema: &Schema) {
     out.push_str("        out.push_str(def);\n");
     out.push_str("        out.push('\\n');\n");
     out.push_str("    }\n\n");
+    // See the "ROM image data" note at the top of this file.
+    out.push_str("    out.push_str(\"// ---------------------------------------------------------------------------\\n\");\n");
+    out.push_str("    out.push_str(\"// ROM slot flash addresses\\n\");\n");
+    out.push_str("    out.push_str(\"// ---------------------------------------------------------------------------\\n\\n\");\n");
+    out.push_str("    out.push_str(\n");
+    out.push_str("        \"// Each ROM slot's address in a device's flash, in rom_slots order.  A host\\n\\\n");
+    out.push_str(
+        "         // slot's data is a host pointer, so the firmware reads the address from\\n\\\n",
+    );
+    out.push_str(
+        "         // here.  It isn't const, so a test can move a slot.  Where there are no\\n\\\n",
+    );
+    out.push_str(
+        "         // ROM slots it holds a single 0, as C doesn't allow an empty array.\\n\"\n",
+    );
+    out.push_str("    );\n");
+    out.push_str("    let addrs: alloc::vec::Vec<alloc::string::String> = if ctx.rom_slot_flash_addrs.is_empty() {\n");
+    out.push_str("        alloc::vec![\"0\".into()]\n");
+    out.push_str("    } else {\n");
+    out.push_str("        ctx.rom_slot_flash_addrs.iter().map(|a| alloc::format!(\"0x{a:08X}\")).collect()\n");
+    out.push_str("    };\n");
+    out.push_str("    out.push_str(&alloc::format!(\n");
+    out.push_str("        \"uint32_t host_rom_slot_flash_addrs[] = {{ {} }};\\n\",\n");
+    out.push_str("        addrs.join(\", \")\n");
+    out.push_str("    ));\n\n");
 
     if deprecates {
         out.push_str("    out.push_str(\"#pragma GCC diagnostic pop\\n\");\n\n");

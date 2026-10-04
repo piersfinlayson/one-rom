@@ -1287,19 +1287,19 @@ opens with a `-----` divider of its own:
 ```
 Monitoring log - press Ctrl-C to stop
 ----- One ROM USB log -----
-One ROM fire-28-c v0.7.2
-Serial: 2E4A671D1C92AE5C
-Logging: boot, plugin-internal, error, plugin-application
+One ROM fire-32-b v0.8.0
+Serial: 66CDC06786DCE3B4
+Logging: boot, error, plugin-application
 ---------------------------
 -----
-One ROM v0.7.2.1 https://onerom.org
+One ROM v0.8.0.1 https://onerom.org
 Copyright (c) 2026 Piers Finlayson <piers@piers.rocks>
-Built: Aug 15 2026 14:09:53
-Commit: 5db495a
+Built: Oct  3 2026 18:48:06Z
+Commit: 257953f
 -----
 RP235XB
 RAM: 520KB
-Flash: 2048KB
+Flash: CS0 2048KB, CS1 0KB
 Freq: 150MHz
 ```
 

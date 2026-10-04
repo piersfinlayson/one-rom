@@ -42,7 +42,6 @@ plugins/system/usb/pico-sdkless
 firmware/generated
 !firmware/generated/README.md
 !rust/metadata/build
-firmware/ora/onerom_metadata_keys_generated.h
 
 # Coverage builds and their gcov counter files - see ci/coverage-run.sh
 plugins/*/*/build-host-cov/

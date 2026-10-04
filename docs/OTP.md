@@ -286,11 +286,17 @@ both chips' sizes, the GPIO used for chip select 1 and whether the chips support
 the D8h block erase command. The `FLASH_DEVINFO_ENABLE` bit (bit 5) of
 `BOOT_FLAGS0` tells the bootloader to use `FLASH_DEVINFO`.
 
-Firmware and host tools read the board size as the bootrom reads these rows:
-- M where most of `BOOT_FLAGS0`'s three copies leave `FLASH_DEVINFO_ENABLE`
-  clear.
-- Otherwise from chip select 1's size in `FLASH_DEVINFO`, read with ECC. No
-  chip is M, 2MB is L and any other size is neither M nor L.
+Firmware and host tools work out the board size from the total flash these rows
+configure:
+- Where most of `BOOT_FLAGS0`'s three copies leave `FLASH_DEVINFO_ENABLE`
+  clear, chip select 0 has 2MB and chip select 1 has no chip. The bootrom
+  assumes 16MB on chip select 0 instead.
+- Otherwise `FLASH_DEVINFO`, read with ECC, holds each chip's size. A size code
+  above 16MB counts as no chip.
+- 2MB in total is M, 4MB is L and any other total is neither M nor L.
+
+The firmware counts chip select 1 only on a board with a secondary flash chip
+select. Host tools reading a stopped One ROM's OTP count it on every board.
 
 A fire-40-a with a 2MB flash chip on chip select 1 is an L board.
 Its `FLASH_DEVINFO` is `0x99af`.

@@ -21,15 +21,17 @@ use onerom_metadata::otp::pico_otp::whitelabel::{
     OTP_ROW_USB_BOOT_FLAGS_R2, OTP_ROW_USB_WHITE_LABEL_DATA,
 };
 use onerom_metadata::otp::pico_otp::{OtpData, WhiteLabelStruct, ecc_encode};
-use onerom_metadata::otp::{CommissioningArea, GeneralStore, board_size, format_chip_id};
+use onerom_metadata::otp::{
+    CommissioningArea, FlashLayout, GeneralStore, board_size, format_chip_id,
+};
 use onerom_metadata::{
     OTP_BOOT_FLAGS0_R1_ROW, OTP_BOOT_FLAGS0_R2_ROW, OTP_BOOT_FLAGS0_ROW,
     OTP_COMMISSIONING_AREA_FIRST_ROW, OTP_COMMISSIONING_AREA_LAST_ROW,
     OTP_FLASH_DEVINFO_CS0_SIZE_SHIFT, OTP_FLASH_DEVINFO_CS1_GPIO, OTP_FLASH_DEVINFO_CS1_SIZE_SHIFT,
-    OTP_FLASH_DEVINFO_D8H_ERASE_SUPPORTED, OTP_FLASH_DEVINFO_ROW, OTP_FLASH_DEVINFO_SIZE_2MB,
+    OTP_FLASH_DEVINFO_D8H_ERASE_SUPPORTED, OTP_FLASH_DEVINFO_ROW,
     OTP_FLASH_PARTITION_SLOT_SIZE_ROW, OTP_GENERAL_STORE_FIRST_ROW,
     OTP_GENERAL_STORE_TERMINATOR_ROW, OTP_GENERAL_STORE_TERMINATOR_ROW_COUNT, OTP_PAGE_ROWS,
-    OTP_USB_WHITE_LABEL_ROW, OneromBoardSize,
+    OTP_USB_WHITE_LABEL_ROW, OneromBoardSize, OneromFlashSize,
 };
 use serde::Serialize;
 
@@ -152,21 +154,20 @@ pub(crate) fn majority(copies: [u32; 3]) -> u32 {
 }
 
 /// FLASH_DEVINFO for a board of `size` with:
-/// - 2MB of built-in flash on chip select 0
-/// - the size's chip on chip select 1
+/// - the chips of the size's [`FlashLayout`]
 /// - D8h block erase supported
 /// - chip select 1 on GPIO `cs1_gpio`
 ///
 /// `None` for a size without a chip on chip select 1.
 pub(crate) fn flash_devinfo(size: BoardSize, cs1_gpio: u8) -> Option<u16> {
-    let cs1_size = match size {
-        BoardSize::M => return None,
-        BoardSize::L => OTP_FLASH_DEVINFO_SIZE_2MB,
-    };
+    let layout = FlashLayout::of(size);
+    if layout.cs1 == OneromFlashSize::FlashSizeNone {
+        return None;
+    }
     debug_assert!(u16::from(cs1_gpio) <= OTP_FLASH_DEVINFO_CS1_GPIO);
     Some(
-        (cs1_size << OTP_FLASH_DEVINFO_CS1_SIZE_SHIFT)
-            | (OTP_FLASH_DEVINFO_SIZE_2MB << OTP_FLASH_DEVINFO_CS0_SIZE_SHIFT)
+        ((layout.cs1 as u16) << OTP_FLASH_DEVINFO_CS1_SIZE_SHIFT)
+            | ((layout.cs0 as u16) << OTP_FLASH_DEVINFO_CS0_SIZE_SHIFT)
             | OTP_FLASH_DEVINFO_D8H_ERASE_SUPPORTED
             | u16::from(cs1_gpio),
     )

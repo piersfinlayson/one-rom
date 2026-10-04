@@ -13,9 +13,11 @@ set -e
 # which a snapshot answers directly, on a dirty working tree or a clean one, and
 # without needing a git work tree at all.
 #
-# docs/CHIP-TYPES.md is why the snapshot is taken this early: the onerom-config
-# build script rewrites it on any build, so by the first cargo command below it
-# has already been regenerated and a later snapshot would compare it to itself.
+# Build scripts are why the snapshot is taken this early.  The onerom-config
+# build script rewrites docs/CHIP-TYPES.md and the onerom-metadata one rewrites
+# the plugin API files in firmware/ora, so by the first cargo command below
+# they have already been regenerated and a later snapshot would compare them to
+# themselves.
 SNAPSHOT_DIR=$(mktemp -d)
 trap 'rm -rf "${SNAPSHOT_DIR}"' EXIT
 
@@ -28,6 +30,9 @@ SNAPSHOT_CANDIDATES=(
     "docs/CHIP-TYPES.md"
     "onerom-config/schema.json"
     "ci/layout-baseline.txt"
+    "firmware/ora/onerom_constants_generated.h"
+    "firmware/ora/onerom_metadata_keys_generated.h"
+    "firmware/ora/onerom_linker_constants_generated.ld"
     "INSTALL.md"
     "README.md"
 )
@@ -125,11 +130,19 @@ cargo run -q -p onerom-gen --bin layout -- --write-baseline
 # script rewrites it, and the runs above build that crate.  It is checked here
 # because otherwise a chip-types.json change can be committed without the
 # regenerated doc, and nothing notices.
+#
+# The plugin API files in firmware/ora are the same, rewritten by the
+# onerom-metadata build script.  They are committed so a plugin builds from a
+# fresh clone without Rust, and checked so a metadata_schema.toml change cannot
+# be committed without them.
 GENERATED_FILES=(
     "docs/COMPATIBILITY.md"
     "docs/CHIP-TYPES.md"
     "onerom-config/schema.json"
     "ci/layout-baseline.txt"
+    "firmware/ora/onerom_constants_generated.h"
+    "firmware/ora/onerom_metadata_keys_generated.h"
+    "firmware/ora/onerom_linker_constants_generated.ld"
 )
 
 # A markdown file in docs/ may carry a fragment region, whose text belongs to

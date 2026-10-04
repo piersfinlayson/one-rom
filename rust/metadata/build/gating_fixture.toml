@@ -19,13 +19,10 @@
 # MIT License
 
 [schema]
-format_version = 1
+format_version = 2
 firmware_release = "0.8.0"
 name = "OneROMGatingFixture"
 description = "Generation-gating round trip fixture"
-flash_base = 0x10000000
-metadata_base = 0x1000C000
-metadata_size = 4096
 root_struct = "onerom_metadata_header_t"
 
 [[versions]]
@@ -71,6 +68,24 @@ name = "ALG_ONE_PARAMS_LEN"
 type = "u32"
 value = 1
 comment = "Parameter bytes the one algorithm variant carries"
+
+[[constants]]
+name = "FLASH_CS0_BASE_ADDR"
+type = "u32"
+value = 0x10000000
+comment = "Address of the flash this fixture's metadata region sits in"
+
+[[constants]]
+name = "METADATA_OFFSET"
+type = "u32"
+value = 0xC000
+comment = "Offset of the fixture's metadata region from the start of flash"
+
+[[constants]]
+name = "METADATA_SIZE"
+type = "usize"
+value = 4096
+comment = "Size of the fixture's metadata region in bytes"
 
 [[type_aliases]]
 name = "onerom_revision_t"

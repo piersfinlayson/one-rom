@@ -1,5 +1,5 @@
-// One ROM OTP reads at boot - the board OTP commissions the chip as, and the
-// board size.  docs/OTP.md describes the rows.
+// One ROM OTP reads at boot - the board OTP commissions the chip as, the flash
+// chip sizes and the board size.  docs/OTP.md describes the rows.
 
 // Copyright (C) 2026 Piers Finlayson <piers@piers.rocks>
 //
@@ -127,23 +127,64 @@ uint8_t otp_board_mismatch(const char *hw_rev) {
     return mismatch;
 }
 
-// The board size OTP configures, read as the bootrom reads it.
-// onerom_metadata::otp::board_size() applies the same rule for the host tools.
-onerom_board_size_t otp_board_size(void) {
+// The chip in FLASH_DEVINFO's size field at `shift`.  A code above
+// FLASH_SIZE_16MB counts as no chip.
+static onerom_flash_size_t devinfo_flash_size(uint16_t devinfo, uint16_t shift) {
+    uint16_t code = (devinfo >> shift) & OTP_FLASH_DEVINFO_SIZE_BITS;
+    if (code > FLASH_SIZE_16MB) {
+        return FLASH_SIZE_NONE;
+    }
+    return (onerom_flash_size_t)code;
+}
+
+// The size of the flash chip on each QSPI chip select, from FLASH_DEVINFO:
+// - Where most of BOOT_FLAGS0's three copies leave FLASH_DEVINFO_ENABLE clear,
+//   chip select 0 has 2MB and chip select 1 has no chip.  The bootrom assumes
+//   16MB on chip select 0 instead.
+// - Chip select 1 counts as flash only where the board's gpio_ext_flash_cs is
+//   set.
+// - A size code above FLASH_SIZE_16MB counts as no chip.
+//
+// The metadata must be valid, as gpio_ext_flash_cs comes from it.
+void otp_flash_sizes(onerom_flash_size_t *cs0, onerom_flash_size_t *cs1) {
     uint32_t a = otp_read_raw(OTP_BOOT_FLAGS0_ROW);
     uint32_t b = otp_read_raw(OTP_BOOT_FLAGS0_R1_ROW);
     uint32_t c = otp_read_raw(OTP_BOOT_FLAGS0_R2_ROW);
     uint32_t majority = (a & b) | (a & c) | (b & c);
     if (!(majority & OTP_BOOT_FLAGS0_FLASH_DEVINFO_ENABLE)) {
-        return BOARD_SIZE_M;
+        *cs0 = FLASH_SIZE_2MB;
+        *cs1 = FLASH_SIZE_NONE;
+        return;
     }
 
     uint16_t devinfo = otp_read_ecc(OTP_FLASH_DEVINFO_ROW);
-    uint16_t cs1_size = (devinfo >> OTP_FLASH_DEVINFO_CS1_SIZE_SHIFT)
-                        & OTP_FLASH_DEVINFO_SIZE_BITS;
-    if (cs1_size == 0) {
+    *cs0 = devinfo_flash_size(devinfo, OTP_FLASH_DEVINFO_CS0_SIZE_SHIFT);
+    *cs1 = FLASH_SIZE_NONE;
+    if (HW->gpio_ext_flash_cs != GPIO_NONE) {
+        *cs1 = devinfo_flash_size(devinfo, OTP_FLASH_DEVINFO_CS1_SIZE_SHIFT);
+    }
+}
+
+// The bytes of flash in a chip of `size`.
+uint32_t flash_size_bytes(onerom_flash_size_t size) {
+    if (size == FLASH_SIZE_NONE) {
+        return 0;
+    }
+    return OTP_FLASH_DEVINFO_SIZE_UNIT << size;
+}
+
+// The board size from the total size of the flash chips.
+// onerom_metadata::otp::board_size() uses the same rule for the host tools,
+// except that it includes chip select 1 whatever gpio_ext_flash_cs is set to.
+onerom_board_size_t otp_board_size(void) {
+    onerom_flash_size_t cs0;
+    onerom_flash_size_t cs1;
+    otp_flash_sizes(&cs0, &cs1);
+
+    uint32_t total = flash_size_bytes(cs0) + flash_size_bytes(cs1);
+    if (total == TOTAL_FLASH_SIZE_M) {
         return BOARD_SIZE_M;
-    } else if (cs1_size == OTP_FLASH_DEVINFO_SIZE_2MB) {
+    } else if (total == TOTAL_FLASH_SIZE_L) {
         return BOARD_SIZE_L;
     } else {
         return BOARD_SIZE_OTHER;

@@ -538,6 +538,11 @@ impl Emulator {
         unsafe { ffi::ffi_limp_mode() as i32 != 0 }
     }
 
+    /// The firmware's limp mode, as its `limp_mode_pattern_t` value.
+    pub fn limp_mode_pattern(&self) -> u8 {
+        unsafe { ffi::ffi_limp_mode() }
+    }
+
     /// Returns `true` if the PIO state machines are enabled.
     pub fn pios_enabled(&self) -> bool {
         unsafe { ffi::ffi_pios_enabled() as i32 != 0 }
@@ -645,6 +650,48 @@ impl Emulator {
     /// `onerom_board_size_t` value.
     pub fn otp_board_size() -> u8 {
         unsafe { ffi::otp_board_size() as u8 }
+    }
+
+    // ── ROM slot flash addresses ─────────────────────────────────────────────
+
+    /// ROM slot `index`'s address in a device's flash, from the generated
+    /// metadata unless a test has moved it.
+    ///
+    /// A host build's slot data is a host pointer, so the firmware reads a
+    /// slot's flash address from a table instead. `index` is the firmware's
+    /// ROM slot index, plugin slots included.
+    pub fn rom_slot_flash_addr(index: u8) -> u32 {
+        unsafe { ffi::ffi_rom_slot_flash_addr(index) }
+    }
+
+    /// Move ROM slot `index` to `addr` in flash, as the CLI would by writing
+    /// a device's metadata.
+    ///
+    /// The address outlives a boot, so a test puts back what
+    /// [`Self::rom_slot_flash_addr`] read.
+    pub fn set_rom_slot_flash_addr(index: u8, addr: u32) {
+        unsafe { ffi::ffi_set_rom_slot_flash_addr(index, addr) };
+    }
+
+    /// ROM slot `index`'s size in bytes.
+    pub fn rom_slot_size(index: u8) -> u32 {
+        unsafe { ffi::ffi_rom_slot_size(index) }
+    }
+
+    /// Whether the firmware finds ROM slot `index` lies within the flash, at
+    /// the chip sizes OTP configures.
+    pub fn rom_slot_in_flash(index: u8) -> bool {
+        unsafe { ffi::ffi_rom_slot_in_flash(index) != 0 }
+    }
+
+    /// Whether ROM slot `index` passes the firmware's check of a plugin of
+    /// `expected_type`, the plugin at `plugin_index`.
+    pub fn check_plugin_valid(
+        index: u8,
+        expected_type: ffi::ora_plugin_type_t,
+        plugin_index: u8,
+    ) -> bool {
+        unsafe { ffi::ffi_check_plugin_valid(index, expected_type, plugin_index) != 0 }
     }
 
     // ── GPIO / cycle operations (require setup_epio()) ───────────────────────

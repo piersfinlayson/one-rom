@@ -10,7 +10,7 @@ use std::process::Command;
 use onerom_config::hw::{Board, MODELS};
 use onerom_config::mcu::Family;
 use onerom_lab_metadata::LAB_METADATA_SIZE;
-use onerom_metadata::ONEROM_INFO_OFFSET;
+use onerom_metadata::{FLASH_CS0_BASE_ADDR, ONEROM_INFO_OFFSET};
 
 fn main() {
     // Run on every build, so the build date and commit are always current.
@@ -149,10 +149,11 @@ fn generate_rp2350_memory_x() {
     let out_dir = env::var("OUT_DIR").unwrap();
     let memory_path = Path::new(&out_dir).join("memory.x");
 
-    // onerom_info_t's offset in flash and the size limit of Lab's metadata
-    // block come from the metadata schemas.
+    // The flash address, onerom_info_t's offset in flash and the size limit of
+    // Lab's metadata block come from the metadata schemas.
     let offset = format!(
-        "ONEROM_INFO_OFFSET = {ONEROM_INFO_OFFSET:#X};\n\
+        "FLASH_CS0_BASE_ADDR = {FLASH_CS0_BASE_ADDR:#X};\n\
+         ONEROM_INFO_OFFSET = {ONEROM_INFO_OFFSET:#X};\n\
          LAB_METADATA_SIZE = {LAB_METADATA_SIZE:#X};\n"
     );
 
@@ -163,7 +164,7 @@ MEMORY {
      *
      * 2 MiB is a safe default here, although a Pico 2 has 4 MiB.
      */
-    FLASH : ORIGIN = 0x10000000, LENGTH = 2048K
+    FLASH : ORIGIN = FLASH_CS0_BASE_ADDR, LENGTH = 2048K
     /*
      * RAM consists of 8 banks, SRAM0-SRAM7, with a striped mapping.
      * This is usually good for performance, as it distributes load on

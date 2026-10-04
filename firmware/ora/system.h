@@ -38,6 +38,8 @@
 #ifndef ORA_SYSTEM_H
 #define ORA_SYSTEM_H
 
+#include <onerom_constants_generated.h>
+
 /**
  * @brief Base load address for system plugins
  *
@@ -48,7 +50,7 @@
  * Data conforming to the layout defined by @ref ora_plugin_header_t must be
  * placed at the start of the plugin binary.
  */
-#define ORA_SYSTEM_PLUGIN_BASE  0x10010000U
+#define ORA_SYSTEM_PLUGIN_BASE  (ORA_FLASH_CS0_BASE_ADDR + ORA_SYSTEM_PLUGIN_OFFSET)
 
 /**
  * @brief Base load address for user plugins
@@ -60,6 +62,6 @@
  * Data conforming to the layout defined by @ref ora_plugin_header_t must be
  * placed at the start of the plugin binary.
  */
-#define ORA_USER_PLUGIN_BASE    0x10020000U
+#define ORA_USER_PLUGIN_BASE    (ORA_FLASH_CS0_BASE_ADDR + ORA_USER_PLUGIN_OFFSET)
 
 #endif /* ORA_SYSTEM_H */

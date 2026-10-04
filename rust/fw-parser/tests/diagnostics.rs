@@ -18,11 +18,11 @@ use core::task::{Context, Poll, Waker};
 use onerom_fw_parser::readers::{MemoryReader, RegionKind};
 use onerom_fw_parser::{Parser, RuntimeAbsence, SDRR_INFO_FW_OFFSET};
 use onerom_metadata::{
-    FirmwareType, ONEROM_FAMILY_MAGIC, ONEROM_INFO_FIRMWARE_TYPE_OFFSET as TYPE_OFF,
-    ONEROM_INFO_VERSION_OFFSET as VERSION_OFF,
+    FLASH_CS0_BASE_ADDR, FirmwareType, ONEROM_FAMILY_MAGIC,
+    ONEROM_INFO_FIRMWARE_TYPE_OFFSET as TYPE_OFF, ONEROM_INFO_VERSION_OFFSET as VERSION_OFF,
 };
 
-const RP235X_FLASH_BASE: u32 = 0x1000_0000;
+const RP235X_FLASH_BASE: u32 = FLASH_CS0_BASE_ADDR;
 const RP235X_RAM_BASE: u32 = 0x2008_0000;
 
 /// Where the tests that give a device a runtime structure put it.

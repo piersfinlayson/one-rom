@@ -8,9 +8,10 @@
 //! A metadata crate owns a TOML schema describing the structures its firmware
 //! holds, and a copy of that schema as the last release shipped it.  This
 //! crate turns the pair into source: a C header and a linker-script fragment
-//! for the firmware, two plugin-facing C headers, the Rust types, parser,
-//! serializer and host test support the crate itself is built from, and the
-//! device-side Rust types a Rust firmware places in memory.
+//! for the firmware, two plugin-facing C headers and a plugin-facing
+//! linker-script fragment, the Rust types, parser, serializer and host test
+//! support the crate itself is built from, and the device-side Rust types a
+//! Rust firmware places in memory.
 //!
 //! # Calling it
 //!
@@ -27,6 +28,7 @@
 //!     keys_header: manifest_dir.join("firmware/ora/onerom_metadata_keys_generated.h"),
 //!     constants_header: manifest_dir.join("firmware/ora/onerom_constants_generated.h"),
 //!     linker_script: manifest_dir.join("firmware/generated/onerom_metadata.ld"),
+//!     linker_constants: manifest_dir.join("firmware/ora/onerom_linker_constants_generated.ld"),
 //!     out_dir: PathBuf::from(env::var("OUT_DIR").unwrap()),
 //! };
 //! onerom_metadata_gen::generate(
@@ -48,7 +50,7 @@
 //! a build script generating Rust for a second schema without the headers or
 //! the comparison.  [`schema`] reads and validates the working schema,
 //! [`released`] reads the copy of the last release, [`layout`] compares them,
-//! and the eight `*_gen` modules each return the text of one output.
+//! and the nine `*_gen` modules each return the text of one output.
 //!
 //! # Hard-coded for One ROM
 //!
@@ -60,16 +62,20 @@
 //!   - the key resolver macros in the C header ([`c_gen`])
 //!   - the key header ([`keys_gen`])
 //!   - the constants header ([`constants_gen`])
+//!   - the plugin-facing linker-script fragment ([`linker_constants_gen`])
 //!   - `ORA_` names for constants and enum values ([`schema`])
 //!   - the `onerom_runtime_info_t` root for plugin keys ([`schema`])
 //!   - the release check on plugin keys ([`layout`])
 //! - In the C header ([`c_gen`]):
 //!   - `#include "macros.h"`
 //!   - `ONEROM_DEPRECATED`
-//! - "OneROM" in three file banners:
+//! - "OneROM" in four file banners:
 //!   - the key header ([`keys_gen`])
 //!   - the constants header ([`constants_gen`])
 //!   - the linker-script fragment ([`linker_gen`])
+//!   - the plugin-facing linker-script fragment ([`linker_constants_gen`])
+//! - The names of the constants describing a schema's metadata region
+//!   ([`schema`]).
 //! - In the host test source (`host_gen`):
 //!   - the root named `_metadata_start`
 //!   - `#include "onerom_metadata.h"`
@@ -98,6 +104,8 @@ pub mod keys_gen;
 #[doc(hidden)]
 pub mod layout;
 #[doc(hidden)]
+pub mod linker_constants_gen;
+#[doc(hidden)]
 pub mod linker_gen;
 #[doc(hidden)]
 pub mod released;
@@ -118,8 +126,8 @@ const RUST_DEVICE_GENERATED: &str = "device_generated.rs";
 
 /// Where a run of the generator writes, and the schema file its output names.
 ///
-/// Missing parent directories of the three headers and the linker-script
-/// fragment are created.  `out_dir` must exist, which for a build script's
+/// Missing parent directories of the three headers and the two linker-script
+/// fragments are created.  `out_dir` must exist, which for a build script's
 /// `OUT_DIR` it does.
 pub struct Outputs {
     /// The schema file as every generated file's `Source:` line names it,
@@ -133,6 +141,9 @@ pub struct Outputs {
     pub constants_header: PathBuf,
     /// The linker-script fragment, holding every `linker_script` constant.
     pub linker_script: PathBuf,
+    /// The plugin-facing linker-script fragment, holding every constant that
+    /// is both `ora_api` and `linker_script`.
+    pub linker_constants: PathBuf,
     /// Directory for `metadata_generated.rs`, `serialize_generated.rs`,
     /// `host_generated.rs` and `device_generated.rs` - a build script's
     /// `OUT_DIR`.
@@ -212,6 +223,16 @@ pub fn generate(
         &outputs.linker_script,
         &linker_gen::generate(&schema),
         "linker script",
+    )?;
+
+    // -------------------------------------------------------------------------
+    // Plugin-facing linker-script fragment generation
+    // -------------------------------------------------------------------------
+
+    write_with_parent(
+        &outputs.linker_constants,
+        &linker_constants_gen::generate(&schema),
+        "plugin linker script",
     )?;
 
     // -------------------------------------------------------------------------

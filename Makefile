@@ -18,9 +18,6 @@ BUILD_DIR := $(FIRMWARE_DIR)/build
 # probe-rs Chip ID
 PROBE_RS_CHIP_ID=RP235X
 
-# Device flash base
-FLASH_BASE=0x10000000
-
 #
 # Settings
 #
@@ -249,7 +246,7 @@ flash: firmware info
 	@echo "=========================================="
 	@echo "Flash One ROM firmware to device:"
 	@echo "-----"
-	@probe-rs download --chip $(PROBE_RS_CHIP_ID) --binary-format bin --base-address $(FLASH_BASE) $(BUILD_DIR)/$(BIN_PREFIX).bin
+	@probe-rs download --chip $(PROBE_RS_CHIP_ID) $(BUILD_DIR)/$(BIN_PREFIX).elf
 
 test: firmware
 	@echo "=========================================="

@@ -7,21 +7,22 @@
 /*
  * One ROM plugin linker script
  *
- * Links a plugin binary as a flat, position-dependent image at a base address
- * supplied by the build system via --defsym PLUGIN_BASE=<address>.
- *
- * Use 0x10010000 for system plugins and 0x10020000 for user plugins.
+ * Links a plugin binary as a flat, position-dependent image at the start of
+ * its plugin region.  The build system selects the region via
+ * --defsym PLUGIN_TYPE=<type>.
  *
  * The plugin header must be defined in the plugin source using
  * ORA_DEFINE_SYSTEM_PLUGIN() or ORA_DEFINE_USER_PLUGIN() from ora/plugin.h.
  */
 
+INCLUDE onerom_linker_constants_generated.ld
+
 SYSTEM_PLUGIN_TYPE = 0;
 USER_PLUGIN_TYPE = 1;
 PIO_PLUGIN_TYPE = 2;
 
-SYSTEM_PLUGIN_BASE = 0x10010000;
-USER_PLUGIN_BASE = 0x10020000;
+SYSTEM_PLUGIN_BASE = ORA_FLASH_CS0_BASE_ADDR + ORA_SYSTEM_PLUGIN_OFFSET;
+USER_PLUGIN_BASE = ORA_FLASH_CS0_BASE_ADDR + ORA_USER_PLUGIN_OFFSET;
 PIO_PLUGIN_BASE = 0x10030000;
 
 TOP_OF_SRAM = 0x20082000;

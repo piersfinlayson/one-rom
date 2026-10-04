@@ -5,7 +5,6 @@
 // One ROM user plugin: NeoPixel smooth colour cycle
 
 #include "plugin.h"
-#include "onerom_metadata.h"
 
 ORA_DEFINE_USER_PLUGIN(
     neopixel_main,
@@ -130,20 +129,20 @@ void neopixel_main(
     // GPIO; when they do, this plugin owns the pin and must also honour the
     // status LED (see the frame loop below).
     ora_get_metadata_uint_fn_t get_meta = ora_lookup_fn(ORA_ID_GET_METADATA_UINT);
-    uint32_t neo = GPIO_NONE, status = GPIO_NONE;
+    uint32_t neo = ORA_GPIO_NONE, status = ORA_GPIO_NONE;
     if (get_meta != NULL) {
         get_meta(ORA_METADATA_KEY_GPIO_NEOPIXEL, &neo);
         get_meta(ORA_METADATA_KEY_GPIO_STATUS, &status);
     }
 
     // No neopixel on this board - nothing to drive; idle.
-    if (neo == GPIO_NONE) {
+    if (neo == ORA_GPIO_NONE) {
         while (1) { }
     }
 
     uint8_t neopixel_pin = (uint8_t)neo;
     // Does the status LED share this GPIO?
-    uint8_t shared_status = (status != GPIO_NONE) && (neo == status);
+    uint8_t shared_status = (status != ORA_GPIO_NONE) && (neo == status);
 
     // Configure pin: set function to SIO, drive low, enable output
     s_pin_mask = 1u << (neopixel_pin & 31u);

@@ -31,7 +31,6 @@ TINYUSB_COMMIT ?= 05fb334d0
 
 ORA_DIR := ../../../firmware/ora
 ORA_INCLUDE := -I$(ORA_DIR)
-SDRR_INCLUDE := -I../../../firmware/include -I../../../firmware/generated
 PLUGIN_INCLUDE := -I.
 
 BUILD_DIR := build
@@ -85,7 +84,6 @@ endif
 PICOBOOTX_SRC_C := $(addprefix picobootx/,$(PICOBOOTX_SRC_C))
 PICOBOOTX_INCLUDE_DIRS := $(addprefix picobootx/,$(PICOBOOTX_INCLUDE_DIRS))
 
-PLUGIN_BASE   := 0x10010000
 PLUGIN_PREFIX := usb_system_plugin
 
 ELF := $(BUILD_DIR)/$(PLUGIN_PREFIX).elf
@@ -99,14 +97,14 @@ CFLAGS := -mcpu=cortex-m33 -mthumb -mfloat-abi=hard -mfpu=fpv5-sp-d16 \
           -MMD -MP -g \
 		  -DMAJOR_VERSION=$(MAJOR_VERSION) -DMINOR_VERSION=$(MINOR_VERSION) \
 		  -DPATCH_VERSION=$(PATCH_VERSION) -DBUILD_VERSION=$(BUILD_VERSION) \
-          $(SDRR_INCLUDE) $(ORA_INCLUDE) $(PLUGIN_INCLUDE) \
+          $(ORA_INCLUDE) $(PLUGIN_INCLUDE) \
 		  -Iinclude -I$(PICO_SDKLESS_DIR)/include \
           $(addprefix -I,$(TINYUSB_INCLUDE_DIRS)) \
 		  $(addprefix -I,$(PICOBOOTX_INCLUDE_DIRS)) \
 		  -std=c11
 
 LDFLAGS := -nostdlib \
-           -T ../../../firmware/ora/plugin.ld \
+           -L $(ORA_DIR) -T ../../../firmware/ora/plugin.ld \
            -Wl,--defsym,PLUGIN_TYPE=0 \
            -Wl,--fatal-warnings \
 		   -Wl,--no-warn-rwx-segments \
@@ -126,7 +124,7 @@ $(BUILD_DIR)/%.o: %.c | $(BUILD_DIR)
 	@echo "Compiling $<..."
 	@$(CC) $(CFLAGS) -c $< -o $@
 
-$(ELF): $(ALL_OBJ) $(ORA_DIR)/plugin.h $(ORA_DIR)/api.h $(ORA_DIR)/system.h $(ORA_DIR)/plugin.ld
+$(ELF): $(ALL_OBJ) $(ORA_DIR)/plugin.h $(ORA_DIR)/api.h $(ORA_DIR)/system.h $(ORA_DIR)/plugin.ld $(ORA_DIR)/onerom_linker_constants_generated.ld
 	@echo "Linking..."
 	@$(CC) $(CFLAGS) $(LDFLAGS) $(ALL_OBJ) -lc -lgcc -o $@
 
@@ -148,11 +146,9 @@ $(BUILD_DIR):
 # the harness supplies the linker symbols and the emulation seams (ORA_SECTION
 # and friends are no-ops under ORA_HOST_TEST).
 #
-# The flags here must match the firmware's own native test build
-# (firmware/test.mk), because the two link together:
-# - -fshort-enums, or ora_result_t is a different width on each side.
-# - -DTEST_BUILD=1, which selects REAL_HARDWARE 0 and drops the metadata layout
-#   STATIC_ASSERTs, which assert device offsets a 64-bit host cannot satisfy.
+# -fshort-enums must match the firmware's own native test build
+# (firmware/test.mk) because the two link together, or ora_result_t is a
+# different width on each side.
 #
 # tinyusb and picobootx are on the include path but neither is compiled: the
 # plugin only needs their headers to declare what it calls, and the harness
@@ -170,11 +166,11 @@ HOST_OBJ       := $(patsubst src/%.c,$(HOST_BUILD_DIR)/%.o,$(SRC))
 # uninstrumented objects would report no coverage rather than fail.
 HOST_EXTRA_CFLAGS ?=
 
-HOST_CFLAGS := -DORA_HOST_TEST=1 -DTEST_BUILD=1 -fshort-enums \
+HOST_CFLAGS := -DORA_HOST_TEST=1 -fshort-enums \
                -O1 -g -Wall -Wextra -Werror \
                -DMAJOR_VERSION=$(MAJOR_VERSION) -DMINOR_VERSION=$(MINOR_VERSION) \
                -DPATCH_VERSION=$(PATCH_VERSION) -DBUILD_VERSION=$(BUILD_VERSION) \
-               $(SDRR_INCLUDE) $(ORA_INCLUDE) $(PLUGIN_INCLUDE) \
+               $(ORA_INCLUDE) $(PLUGIN_INCLUDE) \
                -Iinclude -I$(PICO_SDKLESS_DIR)/include \
                $(addprefix -I,$(TINYUSB_INCLUDE_DIRS)) \
                $(addprefix -I,$(PICOBOOTX_INCLUDE_DIRS)) \

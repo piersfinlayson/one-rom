@@ -117,6 +117,7 @@ void onerom_test_reset(void) {
     stub_timer_reset();
     pio_led_reset();
     stub_entered_bootloader = 0;
+    limp_mode_value = LIMP_MODE_NONE;
 }
 
 void setup_qmi(rp235x_clock_config_t *config) {

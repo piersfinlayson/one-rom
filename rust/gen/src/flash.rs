@@ -9,9 +9,10 @@ use core::ops::Range;
 
 use onerom_config::hw::BoardSize;
 use onerom_config::mcu::{Family, Variant};
-use onerom_metadata::{FLASH_CS1_BASE_ADDR, METADATA_SIZE, OTP_FLASH_DEVINFO_SIZE_2MB};
+use onerom_metadata::otp::{FlashLayout, flash_size_bytes};
+use onerom_metadata::{FLASH_CS1_BASE_ADDR, METADATA_OFFSET, METADATA_SIZE, OneromFlashSize};
 
-use crate::{Error, FIRMWARE_SIZE, Result};
+use crate::{Error, Result};
 
 /// The addresses of a board's flash chips.
 ///
@@ -28,17 +29,19 @@ pub struct FlashChips {
 impl FlashChips {
     /// The flash chips of a `size` board with `mcu`.
     pub fn new(mcu: Variant, size: BoardSize) -> Self {
-        let second_len = match (mcu.family(), size) {
-            // The bootrom reads a FLASH_DEVINFO size code n as 4KB shifted left
-            // n times.
-            (Family::Rp2350, BoardSize::L) => Some(4096 << OTP_FLASH_DEVINFO_SIZE_2MB),
-            (Family::Rp2350, BoardSize::M) | (Family::Stm32f4, BoardSize::M | BoardSize::L) => None,
+        let (first_len, second_len) = match mcu.family() {
+            Family::Rp2350 => {
+                let layout = FlashLayout::of(size);
+                let second = (layout.cs1 != OneromFlashSize::FlashSizeNone)
+                    .then(|| flash_size_bytes(layout.cs1) as u32);
+                (flash_size_bytes(layout.cs0) as u32, second)
+            }
+            Family::Stm32f4 => (mcu.flash_storage_bytes() as u32, None),
         };
-        let first = Self::first_for(mcu);
         Self {
             size,
-            first_base: first.start,
-            first_len: first.end - first.start,
+            first_base: mcu.family().get_flash_base(),
+            first_len,
             second_len,
         }
     }
@@ -46,8 +49,7 @@ impl FlashChips {
     /// The first chip's addresses on a board with `mcu`. They're the same
     /// whatever the board's size.
     pub fn first_for(mcu: Variant) -> Range<u32> {
-        let base = mcu.family().get_flash_base();
-        base..base + mcu.flash_storage_bytes() as u32
+        Self::new(mcu, BoardSize::M).first()
     }
 
     /// The size of board these are the chips of.
@@ -70,7 +72,7 @@ impl FlashChips {
     /// Where ROM data starts on the first chip, after the firmware and the
     /// metadata region.
     pub fn rom_data_start(&self) -> u32 {
-        self.first_base + (FIRMWARE_SIZE + METADATA_SIZE) as u32
+        self.first_base + METADATA_OFFSET + METADATA_SIZE as u32
     }
 }
 

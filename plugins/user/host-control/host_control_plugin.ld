@@ -4,8 +4,9 @@
  * MIT License
  */
 
-USER_PLUGIN_BASE = 0x10020000;
-USER_PLUGIN_SIZE = 64K;
+INCLUDE onerom_linker_constants_generated.ld
+
+USER_PLUGIN_BASE = ORA_FLASH_CS0_BASE_ADDR + ORA_USER_PLUGIN_OFFSET;
 TOP_OF_SRAM = 0x20082000;
 
 USER_PLUGIN_DATA_BASE = 0x20081C00;
@@ -37,6 +38,16 @@ SECTIONS
         . = ALIGN(4);
         __flash_erase_fn_end = .;
         __text_end = .;
+    }
+
+    /* 0xFF from the end of the plugin to the end of the user plugin region,
+     * so programming the plugin leaves its NV storage erased.  The linker
+     * doesn't output a section that only holds fill so the last byte is
+     * written explicitly. */
+    .padding (__text_end + SIZEOF(.ramfunc) + SIZEOF(.data)) : {
+        FILL(0xFF);
+        . = ABSOLUTE(USER_PLUGIN_BASE + ORA_USER_PLUGIN_SIZE - 1);
+        BYTE(0xFF)
     }
 
     .ring_buf DATA_BASE (NOLOAD) : {
@@ -74,7 +85,7 @@ SECTIONS
     }
 }
 
-__nv_storage_start = USER_PLUGIN_BASE + USER_PLUGIN_SIZE - 4K;
+__nv_storage_start = USER_PLUGIN_BASE + ORA_USER_PLUGIN_SIZE - 4K;
 ASSERT(__text_end + SIZEOF(.ramfunc) + SIZEOF(.data) <= __nv_storage_start,
        "ERROR: plugin code/data overlaps NV storage region")
 ASSERT(__flash_erase_fn_end - __flash_erase_fn_start > 0, "ERROR: flash erase code is empty")

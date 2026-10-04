@@ -115,13 +115,13 @@ ORA_DEFINE_USER_PLUGIN(log_test_main, 0, 1, 0, 0, 0, 7, 2);
 #define LT_ROUNDS_SETTLE    1000u
 #define LT_SEND_ATTEMPTS    6u
 #define LT_ROUNDS_COLLECT   45000u
-STATIC_ASSERT(LT_ROUNDS_SEND < LT_ROUNDS_COLLECT,
-              "a sender must give up before the collector waiting for it does");
+_Static_assert(LT_ROUNDS_SEND < LT_ROUNDS_COLLECT,
+               "a sender must give up before the collector waiting for it does");
 // One attempt after the write claim is free costs at most LT_ROUNDS_SETTLE to
 // take the claim, LT_ROUNDS_SETTLE waiting for the frame to be taken, and
 // three times that waiting for the answer.
-STATIC_ASSERT(LT_ROUNDS_COLLECT > (LT_SEND_ATTEMPTS * 5u * LT_ROUNDS_SETTLE),
-              "a collector must outlast every send attempt after the claim frees");
+_Static_assert(LT_ROUNDS_COLLECT > (LT_SEND_ATTEMPTS * 5u * LT_ROUNDS_SETTLE),
+               "a collector must outlast every send attempt after the claim frees");
 
 // Status LED timings, in delay loops - roughly 200ms and 1.5s at 200MHz.
 #define LT_FLASH_LOOPS      13000000u
@@ -158,8 +158,8 @@ static const uint8_t lt_payload[] = {
 #define LT_TAG_READER       'R'
 #define LT_TAG_UNRESOLVED   'U'
 #define LT_VERDICT_LEN      4u
-STATIC_ASSERT(LT_CHUNK >= LT_VERDICT_LEN,
-              "a read buffer must hold a whole verdict frame");
+_Static_assert(LT_CHUNK >= LT_VERDICT_LEN,
+               "a read buffer must hold a whole verdict frame");
 
 // ---------------------------------------------------------------------------
 // The API functions this plugin uses

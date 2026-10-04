@@ -17,9 +17,6 @@ FIRMWARE_DIR := firmware
 # this, so it is re-cloned.
 APIO_VERSION ?= v0.3.0
 
-OBJCOPY_EXTRA = --set-section-flags .metadata=contents,readonly -R .metadata -R .rom_data -R .padding_to_rom_data
-$(info - $(COLOUR_YELLOW)Excluding metadata and ROM images from binary$(COLOUR_RESET))
-
 # Toolchain
 #
 # The version is pinned in ci/arm-toolchain-version, and ci/install-arm-toolchain.sh
@@ -152,7 +149,7 @@ $(ELF): $(OBJS) $(LDSCRIPTS) | $(BUILD_DIR)
 # Generate binary
 $(BIN): $(ELF)
 	@echo "- Generating binary from $(FIRMWARE_DIR)/$< -> $(FIRMWARE_DIR)/$@"
-	@$(OBJCOPY) -O binary $(OBJCOPY_EXTRA) --gap-fill=0xff $< $@
+	@$(OBJCOPY) -O binary --gap-fill=0xff $< $@
 	@$(OBJDUMP) -D -m arm -S -t -h $< > $(DISASM)
 	@echo "----"
 	@echo "Build complete:"

@@ -49,6 +49,7 @@ use core::fmt;
 use onerom_config::chip::ChipType as OraChipType;
 use onerom_config::fw::FirmwareVersion;
 use onerom_gen::{Builder, ChipConfig, ChipSetConfig, ChipSetType, SizeHandling};
+use onerom_metadata::{SYSTEM_PLUGIN_SIZE, USER_PLUGIN_SIZE};
 use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, PluginError};
@@ -938,10 +939,13 @@ const ORA_PLUGIN_HEADER_SIZE: usize = 256;
 
 /// Maximum plugin binary size, in bytes.
 ///
-/// A plugin occupies exactly one 64 KB slot in the firmware image. Smaller
+/// A plugin occupies exactly one plugin region in the firmware image. Smaller
 /// binaries are padded during the build; larger binaries cannot fit and are
 /// rejected.
-const PLUGIN_MAX_SIZE: usize = 64 * 1024;
+const PLUGIN_MAX_SIZE: usize = SYSTEM_PLUGIN_SIZE;
+
+// Both plugin regions are the same size, so one bound serves either type.
+const _: () = assert!(USER_PLUGIN_SIZE == SYSTEM_PLUGIN_SIZE);
 
 /// The parts of a plugin binary header that `onerom-app` reads.
 ///

@@ -17,7 +17,6 @@ PLUGIN_SRC_DIR := src
 
 BUILD_DIR := build
 ORA_DIR := ../../../firmware/ora
-EXTRA_C_FLAGS := -I../../../firmware/generated
 
 PLUGIN_MK := $(ORA_DIR)/plugin.mk
 
@@ -31,7 +30,6 @@ plugin: build_dir
 		SRC=$(CURDIR)/$(PLUGIN_SRC) \
 		BUILD_DIR=$(CURDIR)/$(BUILD_DIR) \
 		ORA_INCLUDE=$(CURDIR)/$(ORA_DIR) \
-		EXTRA_C_FLAGS="$(EXTRA_C_FLAGS)" \
 		PLUGIN_TYPE=$(PLUGIN_TYPE)
 
 build_dir: 

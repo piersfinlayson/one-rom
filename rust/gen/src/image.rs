@@ -26,6 +26,7 @@ use onerom_config::chip::{ChipFunction, ChipType};
 use onerom_config::fw::{FirmwareVersion, ServeAlg};
 use onerom_config::hw::Board;
 use onerom_config::mcu::Family as McuFamily;
+use onerom_metadata::{SYSTEM_PLUGIN_SIZE, USER_PLUGIN_SIZE};
 
 use crate::meta::{
     CHIP_SET_FIRMWARE_OVERRIDES_METADATA_LEN, CHIP_SET_METADATA_LEN,
@@ -1287,8 +1288,10 @@ impl ChipSet {
         assert!(self.chips.len() == 1);
         let chip = &self.chips[0];
         if chip.chip_type().is_plugin() {
-            // For plugins, the image size is always 64KB.
-            return 65536;
+            // A plugin's image fills its region, and both plugin regions are
+            // the same size.
+            const _: () = assert!(USER_PLUGIN_SIZE == SYSTEM_PLUGIN_SIZE);
+            return SYSTEM_PLUGIN_SIZE;
         }
         match (board_pins, family) {
             (24, McuFamily::Stm32f4) => {

@@ -61,13 +61,13 @@ CFLAGS := -mcpu=cortex-m33 -mthumb -mfloat-abi=hard -mfpu=fpv5-sp-d16 \
           -DSTAGE_QSPI_WORDS=$(STAGE_QSPI_WORDS)u \
           -DSTAGE_OP_WORDS=$(STAGE_OP_WORDS)u \
           -DSTAGE_M1_WORDS=$(STAGE_M1_WORDS)u \
-          -I $(ORA_DIR) -I $(dir $(ORA_DIR))include -I src \
+          -I $(ORA_DIR) -I src \
           -std=c11
 
 # --gc-sections is deliberately absent.  The staged routines are reached through
 # a copy the plugin makes at run time, which the linker cannot see.
 LDFLAGS := -nostdlib \
-           -T ext_flash_plugin.ld \
+           -L $(ORA_DIR) -T ext_flash_plugin.ld \
            -Wl,--defsym,PLUGIN_TYPE=$(PLUGIN_TYPE_NUM) \
            -Wl,--defsym,STAGE_PROBE_WORDS=$(STAGE_PROBE_WORDS) \
            -Wl,--defsym,STAGE_QSPI_WORDS=$(STAGE_QSPI_WORDS) \
@@ -96,7 +96,7 @@ $(BUILD_DIR)/%.o: %.c $(CFLAGS_STAMP) | $(BUILD_DIR)/src
 	@echo "Compiling $<..."
 	@$(CC) $(CFLAGS) $(EXTRA_CFLAGS) -c $< -o $@
 
-$(ELF): $(OBJ) ext_flash_plugin.ld
+$(ELF): $(OBJ) ext_flash_plugin.ld $(ORA_DIR)/onerom_linker_constants_generated.ld
 	@echo "Linking $@..."
 	@$(CC) $(CFLAGS) $(LDFLAGS) $(OBJ) -o $@
 

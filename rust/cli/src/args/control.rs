@@ -131,7 +131,7 @@ pub enum ControlCommands {
     /// Select the active ROM slot (not yet supported).
     ///
     /// Switches the device to serving the specified image slot. This takes
-    /// effect immediately but does not persist across power cycles unless.
+    /// effect immediately but does not persist across power cycles.
     ///
     /// Example:
     ///

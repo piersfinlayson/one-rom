@@ -2,7 +2,6 @@
 //
 // MIT License
 
-#include "include.h"
 #include "usb_plugin.h"
 
 // Which ORA LED a wire channel names, or 0 if this plugin does not know the
@@ -24,7 +23,7 @@ static uint8_t led_ora_id(uint8_t led_id, uint8_t *ora_led_out) {
 }
 
 void led_init_caps(void) {
-    uint32_t neopixel = GPIO_NONE;
+    uint32_t neopixel = ORA_GPIO_NONE;
     ora_get_metadata_uint_fn_t get_metadata_uint =
         context.ora_lookup_fn(ORA_ID_GET_METADATA_UINT);
 
@@ -43,7 +42,7 @@ void led_init_caps(void) {
 
     if ((get_metadata_uint != NULL) &&
         (get_metadata_uint(ORA_METADATA_KEY_GPIO_NEOPIXEL, &neopixel) ==
-         ORA_RESULT_OK) && (neopixel != GPIO_NONE)) {
+         ORA_RESULT_OK) && (neopixel != ORA_GPIO_NONE)) {
         DEBUG("RGB LED on GPIO %u", (unsigned)neopixel);
     } else {
         DEBUG("Board has no RGB LED");

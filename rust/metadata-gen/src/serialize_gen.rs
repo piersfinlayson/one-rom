@@ -4,7 +4,7 @@
 //
 // Output file layout:
 //   1. File header
-//   2. Schema constants   (METADATA_BASE, METADATA_SIZE)
+//   2. Schema constants   (METADATA_BASE)
 //   3. SerializeContext   (struct + impl)
 //   4. Struct impls       (layout, layout_sub_objects,
 //                          check_generation, write)             generate == Both
@@ -191,17 +191,12 @@ fn push_schema_constants(out: &mut String, schema: &Schema) {
          // ---------------------------------------------------------------------------\n\n",
     );
     // A schema whose structures are consts its own build places has no region
-    // for anything to compose, so it declares neither and gets neither.
-    if let Some(base) = schema.schema.metadata_base {
+    // for anything to compose, so it declares no region constants and gets no
+    // address.  The region's size is a schema constant of its own.
+    if schema.metadata_region().is_some() {
         out.push_str(&format!(
             "/// Flash base address of the metadata region.\n\
-             pub const METADATA_BASE: u32 = {base:#010x};\n\n"
-        ));
-    }
-    if let Some(size) = schema.schema.metadata_size {
-        out.push_str(&format!(
-            "/// Byte size of the metadata region.\n\
-             pub const METADATA_SIZE: usize = {size};\n\n"
+             pub const METADATA_BASE: u32 = {FLASH_CS0_BASE_ADDR} + {METADATA_OFFSET};\n\n"
         ));
     }
 }
