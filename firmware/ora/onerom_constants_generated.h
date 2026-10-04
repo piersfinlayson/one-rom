@@ -19,6 +19,12 @@
 
 #include <stdint.h>
 
+// Maximum byte length, excluding the NUL terminator, of the
+// onerom_firmware_config_t.serial_number string. Kept to 31 so the stored string
+// plus its terminator occupies 32 bytes.
+// @since firmware 0.8.0
+#define ORA_MAX_SERIAL_NUMBER_LEN 0x1F
+
 // Sentinel: no GPIO is connected to this pin position
 // @since firmware 0.7.2
 #define ORA_GPIO_NONE ((uint8_t)0xFF)
@@ -34,11 +40,6 @@
 // The bits of a FLASH_DEVINFO size field once it's shifted down to bit 0.
 // @since firmware 0.8.0
 #define ORA_OTP_FLASH_DEVINFO_SIZE_BITS ((uint16_t)0x000F)
-
-// A FLASH_DEVINFO size field for a 2MB chip. The bootrom reads a size n other
-// than 0 as 4KB shifted left n times, and 0 as no chip.
-// @since firmware 0.8.0
-#define ORA_OTP_FLASH_DEVINFO_SIZE_2MB ((uint16_t)9)
 
 // FLASH_DEVINFO's D8H_ERASE_SUPPORTED bit. One ROM sets it on every L board.
 // @since firmware 0.8.0
@@ -56,6 +57,22 @@
 // @since firmware 0.8.0
 #define ORA_FLASH_CS1_BASE_ADDR ((uint32_t)0x11000000)
 
+// Offset of the system plugin region from the start of flash.
+// @since firmware 0.8.0
+#define ORA_SYSTEM_PLUGIN_OFFSET ((uint32_t)0x00010000)
+
+// Size of the system plugin region in bytes.
+// @since firmware 0.8.0
+#define ORA_SYSTEM_PLUGIN_SIZE 0x10000
+
+// Offset of the user plugin region from the start of flash.
+// @since firmware 0.8.0
+#define ORA_USER_PLUGIN_OFFSET ((uint32_t)0x00020000)
+
+// Size of the user plugin region in bytes.
+// @since firmware 0.8.0
+#define ORA_USER_PLUGIN_SIZE 0x10000
+
 // The longest hold either LED accepts, in milliseconds.
 // @since firmware 0.7.2
 #define ORA_LED_MAX_HOLD_MS ((uint32_t)0x0000EA60)
@@ -63,6 +80,26 @@
 // The longest bounded GPIO hold a plugin accepts, in milliseconds.
 // @since firmware 0.7.2
 #define ORA_GPIO_MAX_HOLD_MS ((uint32_t)0x0000EA60)
+
+// Shortest period the cycle mode accepts, in milliseconds.
+// @since firmware 0.8.0
+#define ORA_LED_CYCLE_MIN_PERIOD_MS ((uint16_t)0x03E8)
+
+// Shortest period the breathe mode accepts, in milliseconds.
+// @since firmware 0.8.0
+#define ORA_LED_BREATHE_MIN_PERIOD_MS ((uint16_t)0x03E8)
+
+// Shortest period the blink mode accepts, in milliseconds.
+// @since firmware 0.8.0
+#define ORA_LED_BLINK_MIN_PERIOD_MS ((uint16_t)0x0032)
+
+// Shortest period the beacon mode accepts, in milliseconds.
+// @since firmware 0.8.0
+#define ORA_LED_BEACON_MIN_PERIOD_MS ((uint16_t)0x0032)
+
+// Shortest period the flame mode accepts, in milliseconds.
+// @since firmware 0.8.0
+#define ORA_LED_FLAME_MIN_PERIOD_MS ((uint16_t)0x01F4)
 
 // The USB vendor ID a One ROM presents while the system USB plugin runs.
 // @since firmware 0.8.0
@@ -88,15 +125,55 @@
 // @since firmware 0.8.0
 #define ORA_RP235XA ((uint8_t)1)
 
+// No flash chip.
+// @since firmware 0.8.0
+#define ORA_FLASH_SIZE_NONE ((uint8_t)0)
+
+// @since firmware 0.8.0
+#define ORA_FLASH_SIZE_8KB ((uint8_t)1)
+
+// @since firmware 0.8.0
+#define ORA_FLASH_SIZE_16KB ((uint8_t)2)
+
+// @since firmware 0.8.0
+#define ORA_FLASH_SIZE_32KB ((uint8_t)3)
+
+// @since firmware 0.8.0
+#define ORA_FLASH_SIZE_64KB ((uint8_t)4)
+
+// @since firmware 0.8.0
+#define ORA_FLASH_SIZE_128KB ((uint8_t)5)
+
+// @since firmware 0.8.0
+#define ORA_FLASH_SIZE_256KB ((uint8_t)6)
+
+// @since firmware 0.8.0
+#define ORA_FLASH_SIZE_512KB ((uint8_t)7)
+
+// @since firmware 0.8.0
+#define ORA_FLASH_SIZE_1MB ((uint8_t)8)
+
+// @since firmware 0.8.0
+#define ORA_FLASH_SIZE_2MB ((uint8_t)9)
+
+// @since firmware 0.8.0
+#define ORA_FLASH_SIZE_4MB ((uint8_t)0x0A)
+
+// @since firmware 0.8.0
+#define ORA_FLASH_SIZE_8MB ((uint8_t)0x0B)
+
+// @since firmware 0.8.0
+#define ORA_FLASH_SIZE_16MB ((uint8_t)0x0C)
+
 // Not recorded. Firmware before 0.8.0 doesn't record the board size.
 // @since firmware 0.8.0
 #define ORA_BOARD_SIZE_UNKNOWN ((uint8_t)0)
 
-// 2MB of built-in flash without a chip on chip select 1.
+// 2MB of flash in total.
 // @since firmware 0.8.0
 #define ORA_BOARD_SIZE_M ((uint8_t)1)
 
-// 2MB of built-in flash and 2MB of external flash on chip select 1.
+// 4MB of flash in total.
 // @since firmware 0.8.0
 #define ORA_BOARD_SIZE_L ((uint8_t)2)
 

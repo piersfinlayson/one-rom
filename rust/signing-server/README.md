@@ -179,6 +179,10 @@ The SSH command's paths are the paths the server sees. In Docker these are paths
 inside the container. The `known_hosts` file must contain the remote's host
 key.
 
+The SSH command keeps its connection to GitHub open for 5 minutes after each
+git command so the next command doesn't connect again. Each record has its own
+`ControlPath` because a connection is logged in with one deploy key.
+
 For the public record:
 
 ```sh
@@ -186,7 +190,7 @@ git clone git@github.com:OWNER/PUBLIC-REPOSITORY.git public-record
 git -C public-record config user.name "One ROM signing server"
 git -C public-record config user.email "EMAIL"
 git -C public-record config core.sshCommand \
-    "ssh -i /srv/ssh/public-deploy-key -o IdentitiesOnly=yes -o UserKnownHostsFile=/srv/ssh/known_hosts -o BatchMode=yes"
+    "ssh -i /srv/ssh/public-deploy-key -o IdentitiesOnly=yes -o UserKnownHostsFile=/srv/ssh/known_hosts -o BatchMode=yes -o ControlMaster=auto -o ControlPath=/tmp/onerom-public-record -o ControlPersist=5m"
 ```
 
 For the private record:
@@ -196,7 +200,7 @@ git clone git@github.com:OWNER/PRIVATE-REPOSITORY.git private-record
 git -C private-record config user.name "One ROM signing server"
 git -C private-record config user.email "EMAIL"
 git -C private-record config core.sshCommand \
-    "ssh -i /srv/ssh/private-deploy-key -o IdentitiesOnly=yes -o UserKnownHostsFile=/srv/ssh/known_hosts -o BatchMode=yes"
+    "ssh -i /srv/ssh/private-deploy-key -o IdentitiesOnly=yes -o UserKnownHostsFile=/srv/ssh/known_hosts -o BatchMode=yes -o ControlMaster=auto -o ControlPath=/tmp/onerom-private-record -o ControlPersist=5m"
 ```
 
 ## Running

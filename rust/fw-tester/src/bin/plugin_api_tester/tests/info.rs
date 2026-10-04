@@ -13,8 +13,9 @@ use onerom_fw_emulator::{Emulator, OraResult, build_options, ffi};
 use onerom_fw_tester::geometry;
 use onerom_gen::Config;
 use onerom_metadata::{
-    OTP_BOOT_FLAGS0_FLASH_DEVINFO_ENABLE, OTP_BOOT_FLAGS0_ROW, OTP_FLASH_DEVINFO_CS1_SIZE_SHIFT,
-    OTP_FLASH_DEVINFO_ROW, OTP_FLASH_DEVINFO_SIZE_2MB, OneromBoardSize,
+    OTP_BOOT_FLAGS0_FLASH_DEVINFO_ENABLE, OTP_BOOT_FLAGS0_ROW, OTP_FLASH_DEVINFO_CS0_SIZE_SHIFT,
+    OTP_FLASH_DEVINFO_CS1_SIZE_SHIFT, OTP_FLASH_DEVINFO_ROW, OTP_FLASH_DEVINFO_SIZE_BITS,
+    OneromBoardSize, OneromFlashSize,
 };
 
 use crate::setup::setup;
@@ -230,9 +231,17 @@ pub fn test_metadata_uint(emu: &Emulator, config: &Config) -> Result<(), String>
     Ok(())
 }
 
-/// Verify that the BOARD_SIZE key reports the size OTP configures, from a boot
-/// with OTP configuring an L board and one with OTP unwritten, as an M board's
-/// is.  The key must agree with the runtime value the firmware recorded too.
+/// Verify that the BOARD_SIZE key reports the board size from the total flash
+/// OTP configures, and that it agrees with the runtime value the firmware
+/// recorded.  The cases are OTP unwritten, as an M board's is, and
+/// FLASH_DEVINFO with:
+/// - 2MB and no chip, which is M
+/// - 2MB on each chip select, which is L
+/// - 2MB and 4MB, which is neither
+/// - 4MB and no chip, which is L
+/// - 2MB and a code above 16MB, which counts as no chip
+///
+/// Chip select 1 counts only on a board with a secondary flash chip select.
 ///
 /// Each boot replaces the firmware's state, so this runs ahead of the boot the
 /// rest of a slot's suite uses.  OTP outlives a boot so it is cleared once the
@@ -242,20 +251,49 @@ pub fn test_metadata_board_size(
     log_enabled: bool,
     sel_image: u8,
 ) -> Result<(), String> {
-    let l_devinfo = OTP_FLASH_DEVINFO_SIZE_2MB << OTP_FLASH_DEVINFO_CS1_SIZE_SHIFT;
+    use OneromBoardSize::{BoardSizeL, BoardSizeM, BoardSizeOther};
+
+    let none = OneromFlashSize::FlashSizeNone as u16;
+    let mb2 = OneromFlashSize::FlashSize2mb as u16;
+    let mb4 = OneromFlashSize::FlashSize4mb as u16;
+    // `size` where chip select 1 counts.  Each case using this has 2MB on
+    // chip select 0, which is M on its own.
+    let if_cs1_counts = |size| {
+        if board.external_flash_cs_pin().is_some() {
+            size
+        } else {
+            BoardSizeM
+        }
+    };
+
+    // Each case's chip select 0 and 1 size codes, or `None` for OTP unwritten.
     let cases = [
-        ("L", Some(l_devinfo), OneromBoardSize::BoardSizeL),
-        ("M", None, OneromBoardSize::BoardSizeM),
+        ("OTP unwritten", None, BoardSizeM),
+        ("2MB and no chip", Some((mb2, none)), BoardSizeM),
+        ("2MB and 2MB", Some((mb2, mb2)), if_cs1_counts(BoardSizeL)),
+        (
+            "2MB and 4MB",
+            Some((mb2, mb4)),
+            if_cs1_counts(BoardSizeOther),
+        ),
+        ("4MB and no chip", Some((mb4, none)), BoardSizeL),
+        (
+            "2MB and a code above 16MB",
+            Some((mb2, OTP_FLASH_DEVINFO_SIZE_BITS)),
+            BoardSizeM,
+        ),
     ];
 
     let mut result = Ok(());
-    for (label, devinfo, expected) in cases {
+    for (label, sizes, expected) in cases {
         Emulator::clear_otp();
-        if let Some(devinfo) = devinfo {
+        if let Some((cs0, cs1)) = sizes {
             Emulator::set_otp_raw(
                 OTP_BOOT_FLAGS0_ROW,
                 &[OTP_BOOT_FLAGS0_FLASH_DEVINFO_ENABLE; 3],
             );
+            let devinfo = (cs0 << OTP_FLASH_DEVINFO_CS0_SIZE_SHIFT)
+                | (cs1 << OTP_FLASH_DEVINFO_CS1_SIZE_SHIFT);
             Emulator::set_otp_ecc(OTP_FLASH_DEVINFO_ROW, &[devinfo]);
         }
         let (emu, _) = setup(board, log_enabled, sel_image);
@@ -266,16 +304,122 @@ pub fn test_metadata_board_size(
         let recorded = u32::from(emu.board_size());
         if !status.is_ok() || value != Some(expected) || recorded != expected {
             result = Err(format!(
-                "BOARD_SIZE on an {label} board: got {status:?}/{value:?}, the firmware \
-                 recorded {recorded}, expected {expected}"
+                "BOARD_SIZE with {label}: got {status:?}/{value:?}, the firmware recorded \
+                 {recorded}, expected {expected}"
             ));
             break;
         }
-        println!("  BOARD_SIZE on an {label} board: {expected}");
+        println!("  BOARD_SIZE with {label}: {expected}");
     }
 
     Emulator::clear_otp();
     result
+}
+
+/// Verify that the FLASH_CS0_SIZE and FLASH_CS1_SIZE keys report the flash on
+/// each chip select from OTP.  The cases are OTP unwritten and FLASH_DEVINFO
+/// with:
+/// - 2MB and no chip, an M board
+/// - 2MB on each chip select, an L board
+/// - 2MB and a code above 16MB, which counts as no chip
+///
+/// Chip select 1 counts only on a board with a secondary flash chip select.  On
+/// a board whose gpio_ext_flash_cs is GPIO_NONE, 2MB on each chip select
+/// reports no chip on chip select 1.
+///
+/// The keys read OTP on each call, so the cases change OTP under one boot.
+/// OTP is cleared afterwards, as it was at boot.  Also checks the keys are
+/// TypeMismatch through the string and indexed getters, and that a NULL out
+/// pointer is InvalidArg.
+pub fn test_metadata_flash_sizes(emu: &Emulator, board: Board) -> Result<(), String> {
+    let result = check_flash_sizes(emu, board);
+    Emulator::clear_otp();
+    result
+}
+
+/// [`test_metadata_flash_sizes`], less clearing OTP.
+fn check_flash_sizes(emu: &Emulator, board: Board) -> Result<(), String> {
+    use OneromFlashSize::{FlashSize2mb, FlashSizeNone};
+
+    let mb2 = FlashSize2mb as u16;
+    let none = FlashSizeNone as u16;
+    let cs1_2mb = if board.external_flash_cs_pin().is_some() {
+        FlashSize2mb
+    } else {
+        FlashSizeNone
+    };
+
+    // Each case's chip select 0 and 1 size codes, or `None` for OTP
+    // unwritten, then the sizes the keys report.
+    let cases = [
+        ("OTP unwritten", None, (FlashSize2mb, FlashSizeNone)),
+        (
+            "2MB and no chip",
+            Some((mb2, none)),
+            (FlashSize2mb, FlashSizeNone),
+        ),
+        ("2MB and 2MB", Some((mb2, mb2)), (FlashSize2mb, cs1_2mb)),
+        (
+            "2MB and a code above 16MB",
+            Some((mb2, OTP_FLASH_DEVINFO_SIZE_BITS)),
+            (FlashSize2mb, FlashSizeNone),
+        ),
+    ];
+    let keys = [
+        (
+            ffi::ora_metadata_key_t_ORA_METADATA_KEY_FLASH_CS0_SIZE,
+            "FLASH_CS0_SIZE",
+        ),
+        (
+            ffi::ora_metadata_key_t_ORA_METADATA_KEY_FLASH_CS1_SIZE,
+            "FLASH_CS1_SIZE",
+        ),
+    ];
+
+    for (label, sizes, (cs0, cs1)) in cases {
+        Emulator::clear_otp();
+        if let Some((cs0, cs1)) = sizes {
+            Emulator::set_otp_raw(
+                OTP_BOOT_FLAGS0_ROW,
+                &[OTP_BOOT_FLAGS0_FLASH_DEVINFO_ENABLE; 3],
+            );
+            let devinfo = (cs0 << OTP_FLASH_DEVINFO_CS0_SIZE_SHIFT)
+                | (cs1 << OTP_FLASH_DEVINFO_CS1_SIZE_SHIFT);
+            Emulator::set_otp_ecc(OTP_FLASH_DEVINFO_ROW, &[devinfo]);
+        }
+        for ((key, name), expected) in keys.iter().zip([cs0, cs1]) {
+            let expected = expected as u32;
+            let (status, value) = emu.get_metadata_uint(*key);
+            if !status.is_ok() || value != Some(expected) {
+                return Err(format!(
+                    "{name} with {label}: got {status:?}/{value:?}, expected {expected}"
+                ));
+            }
+        }
+        println!("  FLASH_CS0_SIZE/FLASH_CS1_SIZE with {label}: {cs0}/{cs1}");
+    }
+
+    for (key, name) in keys {
+        let (status, _) = emu.get_metadata_str(key);
+        if status != OraResult::TypeMismatch {
+            return Err(format!(
+                "{name} via str: expected TypeMismatch, got {status:?}"
+            ));
+        }
+        let (status, _) = emu.get_metadata_uint_at(key, 0);
+        if status != OraResult::TypeMismatch {
+            return Err(format!(
+                "{name} via uint_at: expected TypeMismatch, got {status:?}"
+            ));
+        }
+        let status = emu.get_metadata_uint_null_out(key);
+        if status != OraResult::InvalidArg {
+            return Err(format!(
+                "{name} with NULL out: expected InvalidArg, got {status:?}"
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// Verify indexed retrieval of the array-valued metadata keys.

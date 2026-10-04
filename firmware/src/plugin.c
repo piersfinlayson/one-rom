@@ -10,10 +10,18 @@
 #include <stdio.h>
 
 uint8_t check_plugin_valid(
-    const ora_plugin_header_t *header,
+    const onerom_rom_slot_t *slot,
     const ora_plugin_type_t expected_type,
     uint8_t index
 ) {
+    // The header is read from the slot, so the slot must lie within the flash
+    // first.
+    if (!rom_slot_in_flash(slot)) {
+        ERR("ORA slot outside flash");
+        return 0;
+    }
+
+    const ora_plugin_header_t *header = (const ora_plugin_header_t *)(uintptr_t)(slot->data);
     if (header->magic != ORA_PLUGIN_MAGIC) {
         ERR("ORA badmagic 0x%08lx", (unsigned long)header->magic);
         return 0;
@@ -27,11 +35,14 @@ uint8_t check_plugin_valid(
         return 0;
     }
 
-    // A plugin is expected to be located at 0x10010000, 0x10020000, etc based
-    // on the specific ROM set it is.
-    uint32_t expected_launch_region = (0x1001 + index) << 16;
+    STATIC_ASSERT(USER_PLUGIN_OFFSET == SYSTEM_PLUGIN_OFFSET + SYSTEM_PLUGIN_SIZE,
+        "The user plugin region must follow the system plugin region");
+    STATIC_ASSERT(USER_PLUGIN_SIZE == SYSTEM_PLUGIN_SIZE,
+        "The plugin regions must be the same size");
+    uint32_t expected_launch_region = FLASH_CS0_BASE_ADDR + SYSTEM_PLUGIN_OFFSET
+        + (index * SYSTEM_PLUGIN_SIZE);
     uint32_t entry_addr = (uint32_t)(uintptr_t)header->entry;
-    if ((entry_addr & ~expected_launch_region) >= 0x10000) {
+    if ((entry_addr & ~expected_launch_region) >= SYSTEM_PLUGIN_SIZE) {
         ERR("ORA 0x%08lx vs ep 0x%08lx", (unsigned long)entry_addr,
         (unsigned long)expected_launch_region);
         return 0;
@@ -63,8 +74,8 @@ uint8_t initial_plugin_parse(uint8_t *disable_vbus_det, uint8_t *num_plugins) {
     } else {
         const onerom_rom_slot_t *set = &METADATA->rom_slots[0];
         if (set->slot_type == ROM_SLOT_TYPE_PLUGIN_SYSTEM) {
-            const ora_plugin_header_t *header = (ora_plugin_header_t *)(uintptr_t)(set->data);
-            if (check_plugin_valid(header, ORA_PLUGIN_TYPE_SYSTEM, 0)) {
+            if (check_plugin_valid(set, ORA_PLUGIN_TYPE_SYSTEM, 0)) {
+                const ora_plugin_header_t *header = (ora_plugin_header_t *)(uintptr_t)(set->data);
                 *disable_vbus_det = header->overrides1 & ORA_OVERRIDE1_DISABLE_VBUS_DETECT ? 1 : 0;
                 LOG("Valid system plugin, disable_vbus_det=%d", *disable_vbus_det);
             }
@@ -81,8 +92,8 @@ uint8_t initial_plugin_parse(uint8_t *disable_vbus_det, uint8_t *num_plugins) {
         if (other_set->slot_type == ROM_SLOT_TYPE_PLUGIN_USER) {
             if (plugins & 0x01) {
                 // Have user plugin (2) so check it
-                const ora_plugin_header_t *header = (ora_plugin_header_t *)(uintptr_t)(other_set->data);
-                if (check_plugin_valid(header, ORA_PLUGIN_TYPE_USER, 1)) {
+                if (check_plugin_valid(other_set, ORA_PLUGIN_TYPE_USER, 1)) {
+                    const ora_plugin_header_t *header = (ora_plugin_header_t *)(uintptr_t)(other_set->data);
                     if (header->overrides1 & ORA_OVERRIDE1_DISABLE_VBUS_DETECT) {
                         *disable_vbus_det = 1;
                     }
@@ -747,7 +758,7 @@ ora_result_t ora_copy_flash_slot_to_ram_slot(
 
     // Find the flash slot, respecting the filter flags
     const onerom_rom_slot_t *set = get_flash_slot_slot(flash_slot, flags);
-    if (set == NULL) {
+    if ((set == NULL) || !rom_slot_in_flash(set)) {
         return ORA_RESULT_INVALID_SLOT;
     }
 
@@ -818,8 +829,20 @@ ora_result_t ora_get_metadata_uint(ora_metadata_key_t key, uint32_t *out) {
     // scalar/enum key resolves its stored value zero-extended to uint32_t; any
     // non-numeric key returns ORA_RESULT_TYPE_MISMATCH. Keys unknown to this
     // firmware fall through to the default below.
+    //
+    // The keys of the schema's [[plugin_keys]] table have no stored field and
+    // are resolved here by hand.  The flash sizes are read from OTP on each
+    // call, as they are not stored in runtime info.
     switch (key) {
         ONEROM_METADATA_UINT_CASES(out)
+        case ORA_METADATA_KEY_FLASH_CS0_SIZE:
+        case ORA_METADATA_KEY_FLASH_CS1_SIZE: {
+            onerom_flash_size_t cs0;
+            onerom_flash_size_t cs1;
+            otp_flash_sizes(&cs0, &cs1);
+            *out = (key == ORA_METADATA_KEY_FLASH_CS0_SIZE) ? cs0 : cs1;
+            return ORA_RESULT_OK;
+        }
         default:
             return ORA_RESULT_NOT_SUPPORTED;
     }
@@ -990,6 +1013,11 @@ static int other_core_yield_capability(void) {
 
     if (set->slot_type != expected_type) {
         return 0;
+    }
+
+    // A plugin outside the flash isn't launched so is ignored.
+    if (!rom_slot_in_flash(set)) {
+        return (this_core == 0) ? 0 : 1;
     }
 
     const ora_plugin_header_t *header = (const ora_plugin_header_t *)set->data;
@@ -1895,7 +1923,7 @@ __attribute__((noinline)) ora_plugin_entry_t launch_plugins_inner(uint8_t *launc
         const onerom_rom_slot_t *set0 = &METADATA->rom_slots[0];
         if (set0->slot_type == ROM_SLOT_TYPE_PLUGIN_SYSTEM) {
             ora_plugin_header_t *header = (ora_plugin_header_t *)set0->data;
-            if (!check_plugin_valid(header, ORA_PLUGIN_TYPE_SYSTEM, 0)) {
+            if (!check_plugin_valid(set0, ORA_PLUGIN_TYPE_SYSTEM, 0)) {
                 ERR("Invalid system plugin");
             } else {
                 const char *filename = set0->roms[0]->filename;
@@ -1916,7 +1944,7 @@ __attribute__((noinline)) ora_plugin_entry_t launch_plugins_inner(uint8_t *launc
         const onerom_rom_slot_t *set1 = &METADATA->rom_slots[1];
         if (set1->slot_type == ROM_SLOT_TYPE_PLUGIN_USER) {
             ora_plugin_header_t *header = (ora_plugin_header_t *)set1->data;
-            if (!check_plugin_valid(header, ORA_PLUGIN_TYPE_USER, 1)) {
+            if (!check_plugin_valid(set1, ORA_PLUGIN_TYPE_USER, 1)) {
                 ERR("Invalid user plugin");
             } else if (!system_plugin) {
                 ERR("User plugin present but no valid system plugin - not launching");

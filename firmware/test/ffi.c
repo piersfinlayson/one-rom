@@ -70,6 +70,36 @@ void ffi_set_metadata_generation(uint32_t generation) {
     *(uint32_t *)(uintptr_t)&_metadata_start.version = generation;
 }
 
+// See ffi.h.
+uint32_t ffi_rom_slot_flash_addr(uint8_t index) {
+    assert(index < METADATA->rom_slot_count);
+    return host_rom_slot_flash_addrs[index];
+}
+
+void ffi_set_rom_slot_flash_addr(uint8_t index, uint32_t addr) {
+    assert(index < METADATA->rom_slot_count);
+    host_rom_slot_flash_addrs[index] = addr;
+}
+
+uint32_t ffi_rom_slot_size(uint8_t index) {
+    assert(index < METADATA->rom_slot_count);
+    return ROM_SLOTS[index].size;
+}
+
+uint8_t ffi_rom_slot_in_flash(uint8_t index) {
+    assert(index < METADATA->rom_slot_count);
+    return rom_slot_in_flash(&ROM_SLOTS[index]);
+}
+
+uint8_t ffi_check_plugin_valid(
+    uint8_t index,
+    ora_plugin_type_t expected_type,
+    uint8_t plugin_index
+) {
+    assert(index < METADATA->rom_slot_count);
+    return check_plugin_valid(&ROM_SLOTS[index], expected_type, plugin_index);
+}
+
 // See ffi.h.  base_addr_pin is an offset within the PIO's GPIOBASE window, so
 // the absolute first GPIO sampled is gpio_base + base_addr_pin.
 uint8_t ffi_serving_alg(ffi_serving_alg_t *out) {

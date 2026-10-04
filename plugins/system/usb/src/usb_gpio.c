@@ -10,7 +10,6 @@
 // timing of a bounded hold, which is the one thing the ORA call deliberately
 // does not do.
 
-#include "include.h"
 #include "usb_plugin.h"
 
 // Whether a wire state byte is one this plugin knows.  ora_gpio_set validates
@@ -72,11 +71,11 @@ static uint8_t gpio_num_gpios(void) {
     }
 
     // Mirrors max_gpios[] in firmware/src/constants.c.
-    switch ((rp235x_variant_t)variant) {
-        case RP235XA:
+    switch ((uint8_t)variant) {
+        case ORA_RP235XA:
             return 30u;
 
-        case RP235XB:
+        case ORA_RP235XB:
             return 48u;
 
         default:

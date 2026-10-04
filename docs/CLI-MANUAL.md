@@ -896,8 +896,8 @@ supported)**
 
 ### inspect slots
 
-List the ROM image slots stored on the device — index, ROM type, size and
-description — marking the active slot. No options.
+List the plugins and ROM slots stored on the device marking the active slot. No
+options.
 
 ### inspect image
 
@@ -1287,19 +1287,19 @@ opens with a `-----` divider of its own:
 ```
 Monitoring log - press Ctrl-C to stop
 ----- One ROM USB log -----
-One ROM fire-28-c v0.7.2
-Serial: 2E4A671D1C92AE5C
-Logging: boot, plugin-internal, error, plugin-application
+One ROM fire-32-b v0.8.0
+Serial: 66CDC06786DCE3B4
+Logging: boot, error, plugin-application
 ---------------------------
 -----
-One ROM v0.7.2.1 https://onerom.org
+One ROM v0.8.0.1 https://onerom.org
 Copyright (c) 2026 Piers Finlayson <piers@piers.rocks>
-Built: Aug 15 2026 14:09:53
-Commit: 5db495a
+Built: Oct  3 2026 18:48:06Z
+Commit: 257953f
 -----
 RP235XB
 RAM: 520KB
-Flash: 2048KB
+Flash: CS0 2048KB, CS1 0KB
 Freq: 150MHz
 ```
 
@@ -2285,15 +2285,36 @@ Device required: no.
 ### firmware inspect
 
 Show a firmware binary's version, board type, MCU, and embedded ROM images and
-metadata. For a One ROM Lab image:
-
-- `Firmware: One ROM Lab`
-- `Version:` its version
-- `Board:` the board it was built for, or `(not set)`
+metadata.
 
 ```
 onerom firmware inspect --firmware firmware.bin
 ```
+
+For a fire-24-e image with the USB plugin and two 2364s:
+
+```
+Version:  0.8.0
+Board:    fire-24-e
+MCU:      RP235xA
+Plugins:
+  https://images.onerom.org/plugins/system/usb/v0.3.1/plugin.bin
+Slots: 2
+  Slot 0: 1 ROM(s), 8192 bytes
+    ROM 0: 2364 kernal.bin
+  Slot 1: 1 ROM(s), 8192 bytes
+    ROM 0: 2364 basic.bin
+```
+
+From v0.7.0, release firmware is board agnostics firmware. It runs on any board
+and doesn't contain ROM images. Inspecting it prints
+`Board:    any (base firmware)`.
+
+For a One ROM Lab image:
+
+- `Firmware: One ROM Lab`
+- `Version:` its version
+- `Board:` the board it was built for, or `(not set)`
 
 | Option | Description |
 |---|---|

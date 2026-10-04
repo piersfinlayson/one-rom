@@ -8,7 +8,7 @@
 # The key names and field kinds are onerom-metadata-gen's, documented in
 # rust/metadata/metadata_schema.toml.
 #
-# The schema doesn't have metadata_base or metadata_size. Those describe a
+# The schema doesn't have METADATA_OFFSET or METADATA_SIZE. Those describe a
 # region for something outside the firmware to compose. Lab's structures are
 # consts its own build places and onerom_info_t's metadata pointer is how a
 # host finds them. They sit in one block of at most LAB_METADATA_SIZE bytes
@@ -19,11 +19,10 @@
 # MIT License
 
 [schema]
-format_version = 1
+format_version = 2
 firmware_release = "0.4.0"
 name = "OneROMLab"
 description = "One ROM Lab metadata structures"
-flash_base = 0x10000000
 root_struct = "onerom_lab_metadata_header_t"
 # Lab's type for the 64-byte header at 0x10000200. Its metadata and runtime
 # pointers point at the structures in this schema.

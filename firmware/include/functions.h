@@ -26,6 +26,7 @@ void copy_func_to_ram(void (*fn)(void), uint32_t ram_addr, size_t size);
 void execute_ram_func(uint32_t ram_addr);
 void delay(volatile uint32_t count);
 uint8_t get_rom_slot_index(uint32_t sel_pins, uint32_t sel_mask, uint8_t plugins);
+uint8_t rom_slot_in_flash(const onerom_rom_slot_t *slot);
 void preload_rom_image();
 
 // log.c
@@ -79,6 +80,8 @@ void otp_lock(void);
 // otp.c
 uint8_t otp_commissioned_board(uint16_t *row_out, uint16_t *len_out);
 uint8_t otp_board_mismatch(const char *hw_rev);
+void otp_flash_sizes(onerom_flash_size_t *cs0, onerom_flash_size_t *cs1);
+uint32_t flash_size_bytes(onerom_flash_size_t size);
 onerom_board_size_t otp_board_size(void);
 
 // pio.c
@@ -201,7 +204,7 @@ ora_result_t pio_get_gpio_use(
 
 // plugin.c
 uint8_t check_plugin_valid(
-    const ora_plugin_header_t *header,
+    const onerom_rom_slot_t *slot,
     const ora_plugin_type_t expected_type,
     uint8_t index
 );

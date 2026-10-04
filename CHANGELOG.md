@@ -12,7 +12,10 @@ In detail:
 - `inspect info` indicates what it cannot decode and why.
 - `onerom peek` no longer fails on a large read.
 - The plugin API's generated metadata-key and constant headers now say which firmware release each entry first shipped in.
-- The plugin API gains the `ORA_OTP_FLASH_DEVINFO_*` constants, for reading and writing `FLASH_DEVINFO` as One ROM sets it for an L board.
+- The plugin API gains the `ORA_OTP_FLASH_DEVINFO_*` and `ORA_FLASH_SIZE_*` constants, for reading and writing `FLASH_DEVINFO` as One ROM sets it for an L board.
+- Plugins build from `firmware/ora` alone without the firmware's headers or Rust. A plugin using a firmware macro through `plugin.h` no longer compiles, and one linked with `plugin.ld` outside `plugin.mk` requires `-L firmware/ora`.
+- The plugin API gains `ORA_` constants for the plugin regions, the longest serial number and each LED mode's shortest period, and `onerom_linker_constants_generated.ld` for plugin linker scripts.
+- Plugins can read the size of each flash chip with the metadata keys `ORA_METADATA_KEY_FLASH_CS0_SIZE` and `ORA_METADATA_KEY_FLASH_CS1_SIZE`.
 - Firmware change to avoid changing bootrom config for any external flash CS1 pin configured in OTP data.
 - A commissioned One ROM enters the bootloader if commissioning data is present and the commission board type differs from the metadata's board type.
 - Firmware makes OTP read-only before starting plugins, so neither a plugin nor a host using the USB plugin can write it.
@@ -27,6 +30,8 @@ In detail:
 - Fixes:
   - `onerom program` and `onerom firmware build` now report a board mismatch correctly.
   - Windows Device Manager no longer shows an exclamation mark against a One ROM running the USB plugin or against Lab.
+  - `onerom firmware inspect` lists a v0.7.0+ image's MCU, plugins and ROMs, and prints base firmware's board as `any (base firmware)` rather than warning about missing metadata.
+  - Commands that don't need a One ROM, such as `onerom image convert` or `onerom firmware inspect --firmware`, no longer fail when two One ROMs are connected.
 
 To test:
 - One ROM and Lab on Windows no longer have an exclamation mark against them in Device Manager.
@@ -48,6 +53,7 @@ To publish:
 - Studio 0.2.4
 - ext-flash plugin 0.1.0
 - USB plugin 0.3.2
+- RBCP Amiga bootloader 0.1.2
 - one-rom-wasm: rebuild against the new Rust crates to support v0.8.0
 - one-rom-site: pick up wasm to support v0.8.0
 

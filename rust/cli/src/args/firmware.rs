@@ -50,6 +50,10 @@ impl CommandTrait for FirmwareArgs {
     fn requires_device(&self) -> bool {
         self.command.requires_device()
     }
+
+    fn uses_device(&self) -> bool {
+        self.command.uses_device()
+    }
 }
 
 #[enum_dispatch(CommandTrait)]
@@ -326,6 +330,10 @@ impl CommandTrait for FirmwareBuildArgs {
     fn requires_device(&self) -> bool {
         false
     }
+
+    fn uses_device(&self) -> bool {
+        self.board.is_none()
+    }
 }
 
 #[derive(Debug, Args)]
@@ -347,6 +355,10 @@ impl CommandTrait for FirmwareInspectArgs {
     fn requires_device(&self) -> bool {
         false
     }
+
+    fn uses_device(&self) -> bool {
+        self.firmware.is_none() && self.board.is_none()
+    }
 }
 
 #[derive(Debug, Args)]
@@ -363,6 +375,10 @@ pub struct FirmwareReleasesArgs {
 impl CommandTrait for FirmwareReleasesArgs {
     fn requires_device(&self) -> bool {
         false
+    }
+
+    fn uses_device(&self) -> bool {
+        !self.all && self.board.is_none()
     }
 }
 
@@ -397,6 +413,10 @@ impl CommandTrait for FirmwareDownloadArgs {
     fn requires_device(&self) -> bool {
         false
     }
+
+    fn uses_device(&self) -> bool {
+        self.board.is_none()
+    }
 }
 
 #[derive(Debug, Args)]
@@ -417,6 +437,10 @@ pub struct FirmwareChipsArgs {
 impl CommandTrait for FirmwareChipsArgs {
     fn requires_device(&self) -> bool {
         false
+    }
+
+    fn uses_device(&self) -> bool {
+        !self.all && self.board.is_none()
     }
 }
 

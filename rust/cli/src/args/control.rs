@@ -27,6 +27,10 @@ impl CommandTrait for ControlArgs {
     fn requires_device(&self) -> bool {
         self.command.requires_device()
     }
+
+    fn uses_device(&self) -> bool {
+        self.command.uses_device()
+    }
 }
 
 #[enum_dispatch(CommandTrait)]
@@ -127,7 +131,7 @@ pub enum ControlCommands {
     /// Select the active ROM slot (not yet supported).
     ///
     /// Switches the device to serving the specified image slot. This takes
-    /// effect immediately but does not persist across power cycles unless.
+    /// effect immediately but does not persist across power cycles.
     ///
     /// Example:
     ///
@@ -207,6 +211,10 @@ pub struct ControlLedArgs {
 impl CommandTrait for ControlLedArgs {
     fn requires_device(&self) -> bool {
         self.command.requires_device()
+    }
+
+    fn uses_device(&self) -> bool {
+        self.command.uses_device()
     }
 }
 
@@ -349,6 +357,10 @@ pub struct ControlRgbArgs {
 impl CommandTrait for ControlRgbArgs {
     fn requires_device(&self) -> bool {
         self.command.requires_device()
+    }
+
+    fn uses_device(&self) -> bool {
+        self.command.uses_device()
     }
 }
 
@@ -732,6 +744,10 @@ pub struct ControlPokeArgs {
 impl CommandTrait for ControlPokeArgs {
     fn requires_device(&self) -> bool {
         self.command.requires_device()
+    }
+
+    fn uses_device(&self) -> bool {
+        self.command.uses_device()
     }
 }
 

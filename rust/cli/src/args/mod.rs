@@ -116,6 +116,14 @@ use update::{UpdateArgs, UpdateCommands, UpdateCommitArgs, UpdateSlotArgs};
 pub trait CommandTrait {
     fn requires_device(&self) -> bool;
 
+    /// Whether the command reads a connected One ROM with these arguments.
+    /// Where it doesn't, the CLI doesn't scan USB for one, so a second
+    /// connected One ROM can't make it fail. A One ROM selected with
+    /// `--serial` is still looked up.
+    fn uses_device(&self) -> bool {
+        true
+    }
+
     /// Checks the arguments that depend on each other. It runs straight after
     /// parsing, before the CLI looks for a device.
     fn check_args(&self) -> Result<(), clap::Error> {
@@ -304,7 +312,7 @@ impl Cli {
         }
 
         // If no device was specified, attempt to detect one
-        if options.device.is_none() {
+        if options.device.is_none() && self.command.uses_device() {
             if options.verbose {
                 println!("No device specified, scanning for connected devices ...");
             }
@@ -343,6 +351,14 @@ impl CommandTrait for BoardArgs {
         // views only *infer* the board from a connected device when no name is
         // supplied - they never require one. So a device is never mandatory.
         false
+    }
+
+    fn uses_device(&self) -> bool {
+        match &self.command {
+            BoardCommands::List(args) => args.uses_device(),
+            BoardCommands::Header(args) => args.uses_device(),
+            BoardCommands::Socket(args) => args.uses_device(),
+        }
     }
 }
 
@@ -397,6 +413,10 @@ impl CommandTrait for BoardListArgs {
     fn requires_device(&self) -> bool {
         false
     }
+
+    fn uses_device(&self) -> bool {
+        false
+    }
 }
 
 #[derive(Debug, clap::Args)]
@@ -410,6 +430,10 @@ pub struct BoardHeaderArgs {
 impl CommandTrait for BoardHeaderArgs {
     fn requires_device(&self) -> bool {
         false
+    }
+
+    fn uses_device(&self) -> bool {
+        self.board.is_none()
     }
 }
 
@@ -432,6 +456,10 @@ pub struct BoardSocketArgs {
 impl CommandTrait for BoardSocketArgs {
     fn requires_device(&self) -> bool {
         false
+    }
+
+    fn uses_device(&self) -> bool {
+        self.board.is_none()
     }
 }
 
@@ -674,4 +702,64 @@ pub enum Commands {
         subcommand_help_heading = "Commands"
     )]
     SelfCmd(SelfArgs),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A command that can run without a One ROM uses one only where its
+    /// arguments don't provide what it would read from the One ROM.
+    #[test]
+    fn a_command_uses_a_device_only_where_it_reads_one() {
+        let cases = [
+            ("firmware build", true),
+            ("firmware build --board fire-24-e", false),
+            ("firmware inspect", true),
+            ("firmware inspect --firmware f.bin", false),
+            ("firmware inspect --board fire-24-e", false),
+            ("firmware releases", true),
+            ("firmware releases --all", false),
+            ("firmware releases --board fire-24-e", false),
+            ("firmware download", true),
+            ("firmware download --board fire-24-e", false),
+            ("firmware chips", true),
+            ("firmware chips --all", false),
+            ("firmware chips --board fire-24-e", false),
+            ("chips", true),
+            ("chips --all", false),
+            ("chips --board fire-24-e", false),
+            ("board header", true),
+            ("board header --board fire-24-e", false),
+            ("board socket", true),
+            ("board socket --board fire-24-e", false),
+            ("plugin", true),
+            ("plugin --fw-version 0.8.0", false),
+            ("board list", false),
+            ("image swap-bytes --input a --output b", false),
+            (
+                "image deinterleave --input a --output b --offset 0 --stride 2",
+                false,
+            ),
+            (
+                "image convert --from binary --to ihex --input a --output b",
+                false,
+            ),
+            (
+                "hardware sign --chip-id E126C9F97C10ADAC --board fire-24-f \
+                 --manufacturer m --key k.pem",
+                false,
+            ),
+            ("self check", false),
+            ("self download", false),
+            ("inspect slots", true),
+        ];
+        for (line, uses) in cases {
+            let words: Vec<&str> = std::iter::once("onerom")
+                .chain(line.split_whitespace())
+                .collect();
+            let cli = Cli::try_parse_from(&words).unwrap_or_else(|e| panic!("{line}: {e}"));
+            assert_eq!(cli.command.uses_device(), uses, "{line}");
+        }
+    }
 }

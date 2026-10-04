@@ -845,6 +845,20 @@ fn a_shipped_key_claiming_the_release_in_development_is_refused() {
     );
 }
 
+/// A key with no stored field is read from the copy's `[[plugin_keys]]`, so
+/// one that shipped keeps the release it shipped in.
+#[test]
+fn a_shipped_key_without_a_field_keeping_its_release_is_accepted() {
+    let key = "\n[[plugin_keys]]\nname = \"FLASH_SIZE\"\nid = 1\nfirst_release = \"0.7.0\"\n\
+               type = \"u8\"\ncomment = \"Flash size.\"\n";
+    if let Err(e) = pair(
+        &format!("{}{key}", current()),
+        &format!("{}{key}", released()),
+    ) {
+        panic!("the pair should have been accepted: {e}");
+    }
+}
+
 /// A constant the copy declares without `ora_api` was invisible to a plugin
 /// then, so tagging it now is the release it arrives in.
 #[test]

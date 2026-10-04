@@ -234,6 +234,9 @@ pub fn run_all(board: Board, config: &Config, base_dir: &std::path::Path, report
     }
 
     crate::commissioning::run(board, num_sets > 0, report);
+    if num_sets > 0 {
+        crate::flash_range::run(board, report);
+    }
 }
 
 /// Serve set 0 again with the metadata claiming a generation the firmware was

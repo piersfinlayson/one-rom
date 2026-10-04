@@ -13,7 +13,7 @@ use onerom_config::mcu::Variant;
 use onerom_fw::net::{Release, Releases, fetch_license_async};
 use onerom_fw::{assemble_firmware, get_rom_files_async, read_rom_config, validate_sizes};
 use onerom_fw_parser::readers::MemoryReader;
-use onerom_fw_parser::{ParsedDevice, SlotKind};
+use onerom_fw_parser::{ParseError, ParsedDevice, SlotKind};
 use onerom_gen::ChipSetType;
 use onerom_gen::compat::{
     ChipCompat, check_chip_set_on_board, default_cs_config, format_size, supported_chips,
@@ -23,6 +23,7 @@ use onerom_gen::{
     second_chip_supported, supports_board_size,
 };
 use onerom_lab_parser::LabParser;
+use onerom_metadata::{ONEROM_INFO_METADATA_OFFSET, ONEROM_INFO_OFFSET};
 
 use crate::args;
 use crate::args::hardware::supported_size;
@@ -706,27 +707,69 @@ async fn print_firmware_info(
     info: &ParsedDevice,
     data: &[u8],
 ) -> Result<(), Error> {
-    if !info.parse_errors().is_empty() {
+    let errors = reported_parse_errors(info, data);
+    if !errors.is_empty() {
         eprintln!("Warning: firmware parsed with errors:");
-        for error in info.parse_errors() {
+        for error in errors {
             eprintln!("  {error}");
         }
         eprintln!();
     }
 
+    for line in firmware_summary(options.verbose, info, data).await? {
+        println!("{line}");
+    }
+    Ok(())
+}
+
+/// The parse errors `firmware inspect` prints a warning for. A base firmware
+/// doesn't contain metadata, so failing to read it isn't one of them.
+fn reported_parse_errors<'a>(info: &'a ParsedDevice, data: &[u8]) -> Vec<&'a ParseError> {
+    let base = is_base_firmware(info, data);
+    info.parse_errors()
+        .iter()
+        .filter(|error| !(base && error.field == "metadata"))
+        .collect()
+}
+
+/// Whether `data`, parsed as `info`, is v0.7.0+ base firmware: a file ending
+/// before the metadata address in its header. `firmware build` puts the
+/// metadata at that address, so a built image always extends past it.
+fn is_base_firmware(info: &ParsedDevice, data: &[u8]) -> bool {
+    if !matches!(info, ParsedDevice::Schema(_)) {
+        return false;
+    }
+    let at = ONEROM_INFO_OFFSET as usize + ONEROM_INFO_METADATA_OFFSET;
+    let Some(pointer) = data.get(at..at + 4) else {
+        return false;
+    };
+    let metadata = u32::from_le_bytes(pointer.try_into().unwrap());
+    metadata
+        .checked_sub(RP235X_BASE_FLASH)
+        .is_some_and(|offset| offset as usize >= data.len())
+}
+
+/// The lines `firmware inspect` prints for `data`, parsed as `info`.
+async fn firmware_summary(
+    verbose: bool,
+    info: &ParsedDevice,
+    data: &[u8],
+) -> Result<Vec<String>, Error> {
     match info {
-        ParsedDevice::Original(sdrr) => print_original_firmware_info(options, sdrr),
-        ParsedDevice::Schema(onerom) => print_schema_firmware_info(options, info, onerom),
-        ParsedDevice::Lab => print_lab_firmware_info(options, data).await,
-        _ => {
-            println!("(firmware this build can't show)");
-            Ok(())
-        }
+        ParsedDevice::Original(sdrr) => original_summary(verbose, sdrr),
+        ParsedDevice::Schema(onerom) => Ok(schema_summary(
+            verbose,
+            info,
+            onerom,
+            is_base_firmware(info, data),
+        )),
+        ParsedDevice::Lab => lab_summary(verbose, data).await,
+        _ => Ok(vec!["(firmware this build can't show)".to_string()]),
     }
 }
 
-/// Print a One ROM Lab image's summary.
-async fn print_lab_firmware_info(options: &Options, data: &[u8]) -> Result<(), Error> {
+/// A One ROM Lab image's summary.
+async fn lab_summary(verbose: bool, data: &[u8]) -> Result<Vec<String>, Error> {
     let mut reader = MemoryReader::new(data.to_vec(), RP235X_BASE_FLASH);
     let lab = LabParser::new(&mut reader)
         .parse()
@@ -740,113 +783,127 @@ async fn print_lab_firmware_info(options: &Options, data: &[u8]) -> Result<(), E
         Err(_) => "unknown",
     };
 
-    println!("Firmware: One ROM Lab");
-    println!(
-        "Version:  {}.{}.{}",
-        info.major_version, info.minor_version, info.patch_version
-    );
-    if options.verbose {
-        println!("Build:    {}", info.build_number);
+    let mut lines = vec![
+        "Firmware: One ROM Lab".to_string(),
+        format!(
+            "Version:  {}.{}.{}",
+            info.major_version, info.minor_version, info.patch_version
+        ),
+    ];
+    if verbose {
+        lines.push(format!("Build:    {}", info.build_number));
     }
-    println!("Board:    {board}");
-    Ok(())
+    lines.push(format!("Board:    {board}"));
+    Ok(lines)
 }
 
-fn print_original_firmware_info(
-    options: &Options,
-    sdrr: &onerom_fw_parser::Sdrr,
-) -> Result<(), Error> {
+/// A pre-0.7.0 image's summary, or with `verbose` its parsed header as JSON.
+fn original_summary(verbose: bool, sdrr: &onerom_fw_parser::Sdrr) -> Result<Vec<String>, Error> {
     let Some(info) = sdrr.flash.as_ref() else {
-        println!("(no flash information available)");
-        return Ok(());
+        return Ok(vec!["(no flash information available)".to_string()]);
     };
 
-    if options.verbose {
+    if verbose {
         let json = serde_json::to_string_pretty(info).map_err(|e| Error::Other(e.to_string()))?;
-        println!("---");
-        println!("{json}");
-    } else {
-        println!("Version:  {}", info.version);
-        if let Some(hw_rev) = &info.hw_rev {
-            println!("Hardware: {hw_rev}");
-        }
-        println!("MCU:      {:?}", info.stm_line);
-        println!("Slots: {}", info.rom_set_count);
-        for (i, set) in info.rom_sets.iter().enumerate() {
-            println!("  Slot {i}: {} ROM(s), {} bytes", set.rom_count, set.size);
-            for (j, rom) in set.roms.iter().enumerate() {
-                let name = rom.filename.as_deref().unwrap_or("<unnamed>");
-                println!("    ROM {j}: {} {name}", rom.rom_type);
-            }
+        let mut lines = vec!["---".to_string()];
+        lines.extend(json.lines().map(str::to_string));
+        return Ok(lines);
+    }
+
+    let mut lines = vec![format!("Version:  {}", info.version)];
+    if let Some(hw_rev) = &info.hw_rev {
+        lines.push(format!("Board:    {hw_rev}"));
+    }
+    lines.push(format!("MCU:      {}", info.stm_line));
+    lines.push(format!("Slots: {}", info.rom_set_count));
+    for (i, set) in info.rom_sets.iter().enumerate() {
+        lines.push(format!(
+            "  Slot {i}: {} ROM(s), {} bytes",
+            set.rom_count, set.size
+        ));
+        for (j, rom) in set.roms.iter().enumerate() {
+            let name = rom.filename.as_deref().unwrap_or("<unnamed>");
+            lines.push(format!("    ROM {j}: {} {name}", rom.rom_type));
         }
     }
-    Ok(())
+    Ok(lines)
 }
 
-/// Print a firmware binary's schema-format summary.
+/// A v0.7.0+ image's summary. `base` is whether it's a base firmware.
 ///
 /// Plugins are listed separately from ROM slots, and ROM slots are numbered
 /// from 0 with plugins excluded, the same way [`crate::inspect`] numbers a
 /// connected device's slots.  A plugin is named by the image source recorded
 /// in the firmware, with no manifest lookup - there is no device here, and the
 /// binary already carries the name.
-fn print_schema_firmware_info(
-    options: &Options,
+fn schema_summary(
+    verbose: bool,
     parsed: &ParsedDevice,
     onerom: &onerom_fw_parser::OneRom,
-) -> Result<(), Error> {
+    base: bool,
+) -> Vec<String> {
     let Some(info) = onerom.info() else {
-        println!("(no firmware information available)");
-        return Ok(());
+        return vec!["(no firmware information available)".to_string()];
     };
 
-    let board = onerom
-        .metadata()
-        .and_then(|m| Board::try_from_str(m.hw.hw_rev.as_str()));
-    let board_name = board.map_or("unknown".to_string(), |b| b.name().to_string());
-    if options.verbose {
-        println!(
-            "Version:  {}.{}.{}",
-            info.major_version, info.minor_version, info.patch_version
-        );
-        println!("Build:    {}", info.build_number);
-        println!("Format:   Schema (v0.7.0+)");
-        println!("Board:    {board_name}");
-        if onerom.metadata().is_some() {
-            let mut plugins: Vec<String> = Vec::new();
-            let mut rom_slots: Vec<(usize, usize)> = Vec::new();
-            for slot in parsed.slots() {
-                match slot.kind {
-                    SlotKind::Plugin => plugins.push(
-                        slot.roms()
-                            .next()
-                            .and_then(|r| r.filename.map(|s| s.to_string()))
-                            .unwrap_or_else(|| "unknown".to_string()),
-                    ),
-                    SlotKind::Rom => {
-                        rom_slots.push((slot.user_index.unwrap_or(0), slot.roms().count()))
-                    }
-                }
-            }
-            if !plugins.is_empty() {
-                println!("Plugins:");
-                for plugin in &plugins {
-                    println!("  {plugin}");
-                }
-            }
-            println!("Slots: {}", rom_slots.len());
-            for (user_index, rom_count) in &rom_slots {
-                println!("  Slot {user_index}: {rom_count} ROM(s)");
-            }
-        }
-    } else {
-        println!(
-            "Version:  {}.{}.{}",
-            info.major_version, info.minor_version, info.patch_version
-        );
-        println!("Board:    {board_name}");
+    let mut lines = vec![format!(
+        "Version:  {}.{}.{}",
+        info.major_version, info.minor_version, info.patch_version
+    )];
+    if verbose {
+        lines.push(format!("Build:    {}", info.build_number));
+        lines.push("Format:   Schema (v0.7.0+)".to_string());
     }
-    Ok(())
+
+    let Some(metadata) = onerom.metadata() else {
+        // A base firmware runs on any board. Otherwise the metadata failed to
+        // read, and a warning has been printed.
+        let board = if base {
+            "any (base firmware)"
+        } else {
+            "unknown"
+        };
+        lines.push(format!("Board:    {board}"));
+        return lines;
+    };
+
+    let board = Board::try_from_str(metadata.hw.hw_rev.as_str())
+        .map_or("unknown".to_string(), |b| b.name().to_string());
+    lines.push(format!("Board:    {board}"));
+    lines.push(format!("MCU:      {}", metadata.hw.rp235x));
+
+    let mut plugins = Vec::new();
+    let mut rom_slots = Vec::new();
+    for slot in parsed.slots() {
+        match slot.kind {
+            SlotKind::Plugin => plugins.push(
+                slot.roms()
+                    .next()
+                    .and_then(|r| r.filename)
+                    .unwrap_or("unknown"),
+            ),
+            SlotKind::Rom => rom_slots.push(slot),
+        }
+    }
+    if !plugins.is_empty() {
+        lines.push("Plugins:".to_string());
+        lines.extend(plugins.iter().map(|plugin| format!("  {plugin}")));
+    }
+    lines.push(format!("Slots: {}", rom_slots.len()));
+    for slot in &rom_slots {
+        // A ROM slot always has a user_index.
+        let user_index = slot.user_index.unwrap_or(0);
+        let size = metadata.rom_slots[slot.slot_index].size;
+        lines.push(format!(
+            "  Slot {user_index}: {} ROM(s), {size} bytes",
+            slot.roms().count()
+        ));
+        for (j, rom) in slot.roms().enumerate() {
+            let name = rom.filename.unwrap_or("<unnamed>");
+            lines.push(format!("    ROM {j}: {} {name}", rom.rom_type));
+        }
+    }
+    lines
 }
 
 // ------------------------------- firmware releases command -------------------------------
@@ -1167,7 +1224,9 @@ fn parse_plugin_specs(raw: &[String]) -> Result<Vec<PluginSpec>, Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_board::{IMAGE_27C400, image_file, move_slot};
+    use crate::test_board::{
+        IMAGE_27C400, base_firmware, image_file, in_turn, move_slot, original_image, shows,
+    };
     use onerom_metadata::FLASH_CS1_BASE_ADDR;
 
     /// `chips --board` lists every chip type the board can emulate, which is
@@ -1352,5 +1411,56 @@ mod tests {
         let text =
             "Firmware board type 'fire-28-a' does not match the expected board type 'fire-24-f'";
         assert!(msg.contains(text), "{msg}");
+    }
+
+    /// A built image's summary contains its board and MCU, then each slot's
+    /// size followed by its chip type and image source.
+    #[tokio::test]
+    async fn a_built_images_summary_lists_its_mcu_and_roms() {
+        let file = image_file(BoardSize::M, 2);
+        let image = parse_firmware(&file).await;
+        let lines = firmware_summary(false, &image, &file).await.unwrap();
+        assert!(shows(&lines, &["fire-40-a"]), "{lines:#?}");
+        assert!(shows(&lines, &["RP235xB"]), "{lines:#?}");
+        let size = IMAGE_27C400.to_string();
+        for n in 0..2 {
+            let source = format!("{n}.bin");
+            assert!(
+                in_turn(&lines, &[&[&size], &["27C400", &source]]),
+                "{lines:#?}"
+            );
+        }
+    }
+
+    /// Base firmware is told apart from a built image, from one cut off in its
+    /// metadata and from firmware before v0.7.0. Only the cut-off image's
+    /// parse errors are printed.
+    #[tokio::test]
+    async fn base_firmware_is_told_apart_from_a_damaged_image() {
+        let built = image_file(BoardSize::M, 1);
+        let mut cut_off = built.clone();
+        cut_off.truncate(FIRMWARE_SIZE + 0x100);
+        for (name, file, base, warned) in [
+            ("base", base_firmware(8), true, false),
+            ("built", built, false, false),
+            ("cut off", cut_off, false, true),
+            ("before v0.7.0", original_image(), false, false),
+        ] {
+            let image = parse_firmware(&file).await;
+            assert_eq!(is_base_firmware(&image, &file), base, "{name}");
+            let errors = reported_parse_errors(&image, &file);
+            assert_eq!(!errors.is_empty(), warned, "{name}: {errors:?}");
+        }
+    }
+
+    /// A summary of firmware from before v0.7.0 contains its board and its
+    /// MCU's display text.
+    #[tokio::test]
+    async fn a_summary_from_before_0_7_0_contains_the_mcu() {
+        let file = original_image();
+        let image = parse_firmware(&file).await;
+        let lines = firmware_summary(false, &image, &file).await.unwrap();
+        assert!(shows(&lines, &["fire-24-e"]), "{lines:#?}");
+        assert!(shows(&lines, &["RP2350"]), "{lines:#?}");
     }
 }

@@ -18,6 +18,10 @@ impl CommandTrait for MonitorArgs {
     fn requires_device(&self) -> bool {
         self.command.requires_device()
     }
+
+    fn uses_device(&self) -> bool {
+        self.command.uses_device()
+    }
 }
 
 #[enum_dispatch(CommandTrait)]

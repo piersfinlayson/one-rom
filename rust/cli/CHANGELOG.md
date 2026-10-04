@@ -15,6 +15,8 @@
 - `scan --slots` and `inspect slots` say why they don't recognise a One ROM's firmware.
 - Help lists the global options under their own heading, and `--force`'s help no longer lists its cases.
 - Remove the hidden `update otp`, which did nothing.
+- `firmware inspect` lists a v0.7.0+ image's MCU, plugins and ROMs, and prints base firmware's board as `any (base firmware)` rather than warning about missing metadata.
+- Commands that don't need a One ROM, such as `image convert` or `firmware inspect --firmware`, no longer fail when two One ROMs are connected.
 
 ## v0.4.1 - 2026-09-17
 

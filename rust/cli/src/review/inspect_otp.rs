@@ -6,6 +6,7 @@
 
 use onerom_app::{BoardSize, MemoryOtp};
 use onerom_cli::Error;
+use onerom_metadata::otp::pico_otp::ecc_encode;
 
 use super::{
     RUNNING_LAB, device, json_boards, neither_m_nor_l_board, newer_boards, written_failure,
@@ -55,6 +56,18 @@ async fn a_commissioned_l_board() {
 #[tokio::test]
 async fn a_board_neither_m_nor_l() {
     both(&mut neither_m_nor_l_board(), "fire-40-a").await;
+}
+
+/// A blank board whose FLASH_DEVINFO holds size code 13 for chip select 1, a
+/// code [`OneromFlashSize`](onerom_metadata::OneromFlashSize) has no name for.
+#[tokio::test]
+async fn an_unknown_flash_size_code() {
+    let mut otp = blank_board();
+    otp.set_raw(0x054, ecc_encode(0xd9af));
+    for row in 0x048..=0x04a {
+        otp.set_raw(row, 0x000020);
+    }
+    inspect_otp(&mut otp, "fire-40-a", true).await;
 }
 
 /// An M fire-40-b commissioned by Acme Retro with its key.

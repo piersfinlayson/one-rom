@@ -41,7 +41,7 @@ use crate::picobootx::{
 use crate::{Device, DeviceState, Firmware, Options};
 
 /// Flash start address on RP2350.
-pub const FLASH_BASE: u32 = 0x1000_0000;
+pub const FLASH_BASE: u32 = onerom_metadata::FLASH_CS0_BASE_ADDR;
 pub const RAM_BASE: u32 = 0x2000_0000;
 
 /// Size of the One ROM metadata region to read from flash.

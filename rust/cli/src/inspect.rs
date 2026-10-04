@@ -1116,7 +1116,7 @@ mod tests {
     async fn parser_notes_sit_beside_an_untouched_dump() {
         use onerom_fw_parser::{Parser, SDRR_INFO_FW_OFFSET, readers::MemoryReader};
 
-        const FLASH_BASE: u32 = 0x1000_0000;
+        use onerom_cli::usb::FLASH_BASE;
         const RAM_BASE: u32 = 0x2008_0000;
         let generation = onerom_metadata::ONEROM_INFO_VERSION + 1;
 
@@ -1184,7 +1184,7 @@ mod tests {
             ONEROM_INFO_VERSION_OFFSET as VERSION_OFF,
         };
 
-        const FLASH_BASE: u32 = 0x1000_0000;
+        use onerom_cli::usb::FLASH_BASE;
         const BLOCK: u32 = FLASH_BASE + ONEROM_INFO_OFFSET + 0x40;
         const DATE: u32 = FLASH_BASE + 0x1800;
         let mut image = vec![0u8; 0x2000];

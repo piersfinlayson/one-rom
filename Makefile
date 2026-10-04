@@ -7,7 +7,9 @@ VERSION_MAJOR := 0
 VERSION_MINOR := 8
 VERSION_PATCH := 0
 BUILD_NUMBER := 1
-GIT_COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+# Cut to 7 characters so the NUL fits onerom_info_t's 8-byte commit field.
+# --short is not used because git lengthens it as the repo grows.
+GIT_COMMIT := $(or $(shell git rev-parse HEAD 2>/dev/null | cut -c1-7),unknown)
 export VERSION_MAJOR VERSION_MINOR VERSION_PATCH BUILD_NUMBER GIT_COMMIT
 
 FIRMWARE_DIR := firmware
@@ -15,9 +17,6 @@ BUILD_DIR := $(FIRMWARE_DIR)/build
 
 # probe-rs Chip ID
 PROBE_RS_CHIP_ID=RP235X
-
-# Device flash base
-FLASH_BASE=0x10000000
 
 #
 # Settings
@@ -247,7 +246,7 @@ flash: firmware info
 	@echo "=========================================="
 	@echo "Flash One ROM firmware to device:"
 	@echo "-----"
-	@probe-rs download --chip $(PROBE_RS_CHIP_ID) --binary-format bin --base-address $(FLASH_BASE) $(BUILD_DIR)/$(BIN_PREFIX).bin
+	@probe-rs download --chip $(PROBE_RS_CHIP_ID) $(BUILD_DIR)/$(BIN_PREFIX).elf
 
 test: firmware
 	@echo "=========================================="

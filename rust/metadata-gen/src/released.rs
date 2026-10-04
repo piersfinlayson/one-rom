@@ -37,6 +37,10 @@ pub struct Released {
     pub structs: Vec<ReleasedStruct>,
     #[serde(default)]
     pub tagged_fams: Vec<ReleasedTaggedFam>,
+    /// The `[[plugin_keys]]` table.  Absent in every copy taken before 0.8.0,
+    /// which is when the table arrived.
+    #[serde(default, rename = "plugin_keys")]
+    unstored_keys: Vec<ReleasedPluginKey>,
 }
 
 #[derive(Deserialize, Debug, Default)]
@@ -237,13 +241,14 @@ impl Released {
 
     /// Every plugin key the copy carried.
     ///
-    /// Only `[[structs]]` fields are walked, because that is where the working
-    /// schema's own `plugin_keys` looks and a key found anywhere else would
-    /// never be generated.
+    /// Only `[[structs]]` fields and `[[plugin_keys]]` are read, because those
+    /// are where the working schema's own `plugin_keys` looks and a key found
+    /// anywhere else would never be generated.
     pub fn plugin_keys(&self) -> impl Iterator<Item = &ReleasedPluginKey> {
         self.structs
             .iter()
             .flat_map(|s| s.fields.iter())
             .filter_map(|f| f.plugin_key.as_ref())
+            .chain(&self.unstored_keys)
     }
 }

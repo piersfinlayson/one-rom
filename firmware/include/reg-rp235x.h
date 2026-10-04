@@ -7,17 +7,11 @@
 #ifndef REG_RP235X_H
 #define REG_RP235X_H
 
-#define MCU_FLASH_SIZE     2097152
-#define MCU_FLASH_SIZE_KB  2048
-#define MCU_RAM_SIZE       532480
 #define MCU_RAM_SIZE_KB    520
+#define MCU_RAM_SIZE       (MCU_RAM_SIZE_KB * 1024)
 
 // Using Winbond W25Q16JV 2MB (16MBit)
 #define MAX_FLASH_CLOCK_FREQ_MHZ 133
-#define FLASH_SIZE_KB 2048
-#if FLASH_SIZE_KB != MCU_FLASH_SIZE_KB
-#error "Flash size mismatch"
-#endif
 
 #define RP2350_RAM_SIZE_KB 520
 #if MCU_RAM_SIZE_KB != RP2350_RAM_SIZE_KB
@@ -27,7 +21,6 @@
 #define SRAM_BASE 0x20000000u
 
 // Register base addresses
-#define FLASH_BASE          0x10000000
 #define XIP_CACHE_BASE      0x18000000
 #define SYSINFO_BASE        0x40000000
 #define SYSCFG_BASE         0x40008000

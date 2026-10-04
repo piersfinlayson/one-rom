@@ -20,6 +20,10 @@ impl CommandTrait for InspectArgs {
     fn requires_device(&self) -> bool {
         self.command.requires_device()
     }
+
+    fn uses_device(&self) -> bool {
+        self.command.uses_device()
+    }
 }
 
 #[enum_dispatch(CommandTrait)]
@@ -251,6 +255,10 @@ pub struct InspectPeekArgs {
 impl CommandTrait for InspectPeekArgs {
     fn requires_device(&self) -> bool {
         self.command.requires_device()
+    }
+
+    fn uses_device(&self) -> bool {
+        self.command.uses_device()
     }
 }
 

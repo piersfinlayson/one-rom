@@ -38,4 +38,14 @@ static inline void __attribute__((always_inline)) status_led_disable(uint8_t pin
     GPIO_PAD(pin) |= PAD_OUTPUT_DISABLE;
 }
 
+// The address of a ROM slot's data in flash.
+//
+// A host build's slot data is a host pointer, so its counterpart reads the
+// address from a table instead - see test/stub_rp235x_inlines.h.
+static inline uint32_t __attribute__((always_inline)) rom_slot_flash_addr(
+    const onerom_rom_slot_t *slot
+) {
+    return (uint32_t)(uintptr_t)slot->data;
+}
+
 #endif // RP235X_INLINES_H

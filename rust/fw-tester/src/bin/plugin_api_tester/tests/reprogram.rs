@@ -23,6 +23,7 @@ use onerom_fw_tester::{
     runner::{addr_before_cs_cycles, cs_to_data_cycles, run_mode},
 };
 use onerom_gen::{ChipConfig, Config};
+use onerom_metadata::FLASH_CS1_BASE_ADDR;
 
 const REPROGRAM_SEED: u64 = 0x1234_5678_90AB_CDEF;
 
@@ -461,6 +462,10 @@ pub fn test_copy_flash_pio_verify(
 /// is what `test_copy_flash_to_ram` runs, and it succeeds. Slots that all serve
 /// the same size leave nothing to compare, so the size case is skipped rather
 /// than faked.
+///
+/// A flash slot outside the flash is `INVALID_SLOT` too.
+/// The slot under test moves to chip select 1 of an M board for that case, and
+/// back afterwards.
 pub fn test_copy_flash_refusals(
     emu: &Emulator,
     config: &Config,
@@ -503,6 +508,27 @@ pub fn test_copy_flash_refusals(
         OraResult::InvalidSlot,
     );
 
+    // A host build's slot data is a host pointer, so the slot moves by its
+    // flash address, as the CLI would by writing a device's metadata.  These
+    // configs don't have plugin slots, so the flash slot is the ROM slot of the
+    // same index.  OTP unwritten is an M board's.
+    let rom_slot = set_idx as u8;
+    let addr = Emulator::rom_slot_flash_addr(rom_slot);
+    Emulator::clear_otp();
+    Emulator::set_rom_slot_flash_addr(rom_slot, FLASH_CS1_BASE_ADDR);
+    note(
+        &mut errors,
+        format!("flash slot {set_idx} on chip select 1 of an M board"),
+        emu.copy_flash_slot_to_ram_slot(
+            set_idx as u8,
+            ORA_FLASH_SLOT_FLAG_EXCLUDE_PLUGINS,
+            dst_ram,
+            0,
+        ),
+        OraResult::InvalidSlot,
+    );
+    Emulator::set_rom_slot_flash_addr(rom_slot, addr);
+
     // A RAM slot is exactly one served region, so the region size is the size
     // every flash image must match to be copied into one.
     let region_size = onerom_fw_tester::geometry::expected_rom_slot_size(
@@ -531,9 +557,15 @@ pub fn test_copy_flash_refusals(
                 ),
                 OraResult::InvalidSize,
             );
-            println!("  bad indices and a {size} byte image into a {region_size} byte slot");
+            println!(
+                "  bad indices, a slot outside the flash and a {size} byte image into a \
+                 {region_size} byte slot"
+            );
         }
-        None => println!("  bad indices (every flash slot serves {region_size} bytes)"),
+        None => println!(
+            "  bad indices and a slot outside the flash (every flash slot serves \
+             {region_size} bytes)"
+        ),
     }
 
     if errors.is_empty() {

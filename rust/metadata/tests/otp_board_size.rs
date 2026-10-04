@@ -29,14 +29,25 @@ fn most_copies_decide_whether_flash_devinfo_is_used() {
     }
 }
 
-/// With FLASH_DEVINFO in use, chip select 1's size decides the board size.
+/// With FLASH_DEVINFO in use, the total size of the two chips decides the
+/// board size.
 #[test]
-fn chip_select_1_decides_the_size() {
+fn the_total_flash_decides_the_size() {
     let cases = [
+        // 2MB on each chip select.
         (L_DEVINFO, OneromBoardSize::BoardSizeL),
+        // 2MB and no chip.
         (0x09af, OneromBoardSize::BoardSizeM),
+        // 4MB and no chip.
+        (0x0aaf, OneromBoardSize::BoardSizeL),
+        // 2MB and 4MB.
+        (0xa9af, OneromBoardSize::BoardSizeOther),
+        // 2MB and 16MB.
         (0xc9af, OneromBoardSize::BoardSizeOther),
+        // 2MB and 8KB.
         (0x19af, OneromBoardSize::BoardSizeOther),
+        // 2MB and a code above 16MB, which counts as no chip.
+        (0xd9af, OneromBoardSize::BoardSizeM),
     ];
     for (devinfo, size) in cases {
         assert_eq!(board_size([ENABLE; 3], devinfo), size, "{devinfo:#06x}");

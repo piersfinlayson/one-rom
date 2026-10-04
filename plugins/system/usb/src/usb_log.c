@@ -24,7 +24,6 @@
 //   It also goes false on a bus suspend, where the terminal is still open, so a
 //   host sleeping pauses the forwarding and resumes where it left off.
 
-#include "include.h"
 #include "usb_plugin.h"
 #include "tusb.h"
 

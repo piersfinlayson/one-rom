@@ -94,12 +94,12 @@ use crate::parsing::{
 
 use onerom::parse_onerom_from_view;
 use onerom_metadata::{
-    BUILD_DATE_BUF_LEN, DeviceMemoryView, FirmwareType, Generations, METADATA_SIZE,
-    MIN_SCHEMA_VERSION, MaybeKnown, ONEROM_FAMILY_MAGIC, ONEROM_INFO_BUILD_DATE_OFFSET,
-    ONEROM_INFO_MAGIC, ONEROM_INFO_MAGIC_OFFSET, ONEROM_INFO_MAJOR_VERSION_OFFSET,
-    ONEROM_INFO_METADATA_OFFSET, ONEROM_INFO_MINOR_VERSION_OFFSET,
-    ONEROM_INFO_PATCH_VERSION_OFFSET, ONEROM_INFO_RUNTIME_OFFSET, ONEROM_INFO_SIZE,
-    ONEROM_RUNTIME_INFO_SIZE, OneromInfo, RUNTIME_INFO_MAGIC,
+    BUILD_DATE_BUF_LEN, DeviceMemoryView, FLASH_CS0_BASE_ADDR, FirmwareType, Generations,
+    METADATA_SIZE, MIN_SCHEMA_VERSION, MaybeKnown, ONEROM_FAMILY_MAGIC,
+    ONEROM_INFO_BUILD_DATE_OFFSET, ONEROM_INFO_MAGIC, ONEROM_INFO_MAGIC_OFFSET,
+    ONEROM_INFO_MAJOR_VERSION_OFFSET, ONEROM_INFO_METADATA_OFFSET,
+    ONEROM_INFO_MINOR_VERSION_OFFSET, ONEROM_INFO_PATCH_VERSION_OFFSET, ONEROM_INFO_RUNTIME_OFFSET,
+    ONEROM_INFO_SIZE, ONEROM_RUNTIME_INFO_SIZE, OneromInfo, RUNTIME_INFO_MAGIC,
 };
 
 /// Offset from start of the firmware where the One ROM info header is located.
@@ -485,7 +485,7 @@ impl<'a, R: Reader> Parser<'a, R> {
         // need to have the correct base_flash_address set.  Base RAM is the
         // same.
         if header.stm_line == McuLine::Rp2350 {
-            self.base_flash_address = 0x10000000; // RP2350 flash base address
+            self.base_flash_address = FLASH_CS0_BASE_ADDR;
             self.reader.update_base_address(self.base_flash_address);
         }
 

@@ -19,11 +19,10 @@ const PLUGIN_OBJS: &[&str] = &["host_control_main.o", "flash_erase.o"];
 
 /// Flags the shim is compiled with.  These must stay in step with the plugin's
 /// `host` target and with `firmware/test.mk`: all three objects link together,
-/// so `-fshort-enums` and `-DTEST_BUILD=1` have to agree across every one of
-/// them or the C types they exchange differ in width or layout.
+/// so `-fshort-enums` has to agree across every one of them or the enums they
+/// exchange differ in width.
 const SHIM_FLAGS: &[&str] = &[
     "-DORA_HOST_TEST=1",
-    "-DTEST_BUILD=1",
     "-fshort-enums",
     "-O1",
     "-g",
@@ -134,8 +133,6 @@ fn main() {
             "-DNV_ERASE_FN_MAX={}",
             nv_erase_fn_max(&plugin_dir)
         ))
-        .arg(format!("-I{}", firmware.join("include").display()))
-        .arg(format!("-I{}", firmware.join("generated").display()))
         .arg(format!("-I{}", firmware.join("ora").display()))
         // The shim calls the plugin's own erase routine and shares its
         // bootrom function-pointer types.

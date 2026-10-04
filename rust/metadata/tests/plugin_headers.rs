@@ -3,7 +3,8 @@
 // Tests for what the two plugin-facing headers say about the release each
 // thing in them arrived in.  A plugin author sets min_fw_version from it, and
 // api.h has the same line, written by hand, for what it declares.  It also
-// tests the enum values in the constants header.
+// tests the enum values in the constants header, and which keys the firmware
+// header's getter arms resolve.
 //
 // The generators are called directly, because what they emit from this
 // crate's own schema is the thing under test.  A fixture holds the kinds of
@@ -255,6 +256,43 @@ fn every_plugin_key_names_the_release_it_arrived_in() {
             format!("{SINCE}{}", entry.key.first_release),
             "ORA_METADATA_KEY_{} does not name the release it arrived in:\n{header}",
             entry.key.name
+        );
+    }
+}
+
+/// The firmware resolves a key with no stored field by hand in the unsigned
+/// getter, so that getter's generated arms leave it out.  Every key has an arm
+/// in each of the other two, and a key with a stored field has one in all
+/// three.
+#[test]
+fn only_a_key_with_a_stored_field_has_a_generated_unsigned_arm() {
+    let schema = shipped();
+    let header = c_gen::generate(&schema);
+    let start = header
+        .find("#define ONEROM_METADATA_UINT_CASES(out)")
+        .expect("the header defines ONEROM_METADATA_UINT_CASES");
+    let end = header[start..]
+        .find("\n\n")
+        .map_or(header.len(), |at| start + at);
+    let uint_arms = &header[start..end];
+
+    let keys = schema.plugin_keys();
+    assert!(
+        keys.iter().any(|k| k.field.is_none()),
+        "the schema has no key without a stored field"
+    );
+    for entry in keys {
+        let arm = format!("case ORA_METADATA_KEY_{}:", entry.key.name);
+        let stored = entry.field.is_some();
+        assert_eq!(
+            header.matches(&arm).count(),
+            if stored { 3 } else { 2 },
+            "'{arm}' is in the wrong number of getters:\n{header}"
+        );
+        assert_eq!(
+            uint_arms.contains(&arm),
+            stored,
+            "'{arm}' is wrongly in or out of the unsigned getter:\n{header}"
         );
     }
 }

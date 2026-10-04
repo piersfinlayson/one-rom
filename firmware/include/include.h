@@ -43,7 +43,6 @@ extern uint8_t logging_enabled;
 // If you are not using sdrr-gen, you must define configuration options
 // manually.  Exmaples are given here:
 //
-// #define MCU_FLASH_SIZE 65536
 #define BOOT_LOGGING 1  // Enable boot logging.  Enabled/disabled via metadata
 // #define DEBUG_LOGGING 1  // Enable more verbose logging
 // #define OVERCLOCK 1  // Enable overclocking (may damage the part)
@@ -88,7 +87,6 @@ extern onerom_runtime_info_t onerom_runtime_info;
 
 // Linker variables, used by log_init()
 extern uint32_t _flash_start;
-extern uint32_t _flash_end;
 extern uint32_t _ram_size;
 
 #if !defined(TEST_BUILD)

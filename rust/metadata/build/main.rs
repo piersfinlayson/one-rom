@@ -11,8 +11,9 @@
 // version are a single, self-contained unit; published tarballs therefore
 // build without reaching outside CARGO_MANIFEST_DIR.
 //
-// The three C header output paths can each be overridden by setting the
-// matching environment variable to an absolute path before building.
+// The paths of the C headers and linker-script fragments can each be
+// overridden by setting the matching environment variable to an absolute path
+// before building.
 
 use std::env;
 use std::path::PathBuf;
@@ -23,6 +24,7 @@ const ENV_C_HEADER_OUT: &str = "ONEROM_C_HEADER_OUT";
 const ENV_KEYS_HEADER_OUT: &str = "ONEROM_KEYS_HEADER_OUT";
 const ENV_CONSTANTS_HEADER_OUT: &str = "ONEROM_CONSTANTS_HEADER_OUT";
 const ENV_LINKER_SCRIPT_OUT: &str = "ONEROM_LINKER_SCRIPT_OUT";
+const ENV_LINKER_CONSTANTS_OUT: &str = "ONEROM_LINKER_CONSTANTS_OUT";
 const METADATA_SCHEMA_FILE: &str = "metadata_schema.toml";
 // The schema and fixture as generated files name them, from the repo root.
 const METADATA_SCHEMA_SOURCE: &str = "rust/metadata/metadata_schema.toml";
@@ -33,6 +35,7 @@ const C_HEADER_FILE: &str = "firmware/generated/onerom_metadata.h";
 const KEYS_HEADER_FILE: &str = "firmware/ora/onerom_metadata_keys_generated.h";
 const CONSTANTS_HEADER_FILE: &str = "firmware/ora/onerom_constants_generated.h";
 const LINKER_SCRIPT_FILE: &str = "firmware/generated/onerom_metadata.ld";
+const LINKER_CONSTANTS_FILE: &str = "firmware/ora/onerom_linker_constants_generated.ld";
 const FIXTURE_GENERATED: &str = "gating_fixture_generated.rs";
 const FIXTURE_SERIALIZE_GENERATED: &str = "gating_fixture_serialize_generated.rs";
 const FIXTURE_DEVICE_GENERATED: &str = "gating_fixture_device_generated.rs";
@@ -84,6 +87,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .map(PathBuf::from)
         .unwrap_or_else(|_| manifest_dir.join(LINKER_SCRIPT_FILE));
 
+    // Plugin-facing linker-script fragment, redirected to firmware/ora the same
+    // way as the plugin-facing headers.
+    let linker_constants = env::var(ENV_LINKER_CONSTANTS_OUT)
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| manifest_dir.join(LINKER_CONSTANTS_FILE));
+
     // -------------------------------------------------------------------------
     // Cargo rerun-if-changed directives
     // -------------------------------------------------------------------------
@@ -113,6 +122,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             keys_header,
             constants_header,
             linker_script,
+            linker_constants,
             out_dir: out_dir.clone(),
         },
     )?;
