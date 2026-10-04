@@ -1,6 +1,7 @@
 # Per-file coverage floors.  A file may not drop below its floor.
 # Raised by ci/coverage-report.sh --raise.  Never lowered by hand
 # without saying why in the commit.
+firmware/generated/onerom_metadata.h                 100.0
 firmware/include/include.h                           100.0
 firmware/src/log.c                                   100.0
 firmware/src/main.c                                  85.1
@@ -8,11 +9,11 @@ firmware/src/otp.c                                   100.0
 firmware/src/piodma/pio.c                            100.0
 firmware/src/piodma/pioled.c                         100.0
 firmware/src/piodma/pioplugin.c                      68.9
-firmware/src/piodma/piorom2.c                        80.8
-firmware/src/plugin.c                                96.1
+firmware/src/piodma/piorom2.c                        81.3
+firmware/src/plugin.c                                96.3
 firmware/src/rp235x.c                                63.6
 firmware/src/rtt.c                                   96.2
-firmware/src/utils.c                                 72.7
+firmware/src/utils.c                                 74.0
 plugins/user/host-control/src/flash_erase.c          100.0
 plugins/user/host-control/src/flash_erase.h          100.0
 plugins/user/host-control/src/host_control_main.c    93.8
