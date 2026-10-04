@@ -7,7 +7,7 @@ All notables changes between versions are documented in this file.
 Headline changes in this release:
 - One ROMs can now be hardware commissioned making them easier for users to manage.
 - One ROM now supports a second 2MB flash chip on 32 and 40 pin boards allowing more ROM images to be stored.  These 4MB One ROMs are called size L, with 2MB boards size M.
-- Pins can be reserved for another use, for example a host reset line, so they aren't used by the core firmware.
+- Header pins can be reserved for another use, for example a host reset line, so they aren't used by the core firmware.
 
 In detail:
 - A commissioned One ROM's bootloader appears as `One ROM Bootloader` from manufacturer piers.rocks with USB VID and PID `1209:F540`.  This is a permanent dedicated assignment from pid.codes.
@@ -31,7 +31,10 @@ In detail:
   - New: `ora_firmware_state_query()` to query and wait for core firmware states.
   - New: `ORA_GPIO_USE_INPUT_FORCED` for a GPIO used as a forced input by the core firmware.  Plugins may drive it without the force flag.
   - New: API metadata-key and constant headers now include the firmware release each entry first shipped in.
-  - New: `ORA_OTP_FLASH_DEVINFO_*` constants, for reading and writing `FLASH_DEVINFO` which contains flash chip sizes.
+  - New: `ORA_OTP_FLASH_DEVINFO_*` and `ORA_FLASH_SIZE_*` constants, for reading and writing `FLASH_DEVINFO` which contains flash chip sizes.
+  - New: `ORA_METADATA_KEY_FLASH_CS0_SIZE` and `ORA_METADATA_KEY_FLASH_CS1_SIZE` metadata keys for each flash chip's size.
+  - New: `ORA_` constants for the plugin regions, the longest serial number and each LED mode's shortest period, and `onerom_linker_constants_generated.ld` for plugin linker scripts.
+  - Changed: Plugins build from only `firmware/ora` without the firmware's headers or Rust. A plugin using a firmware macro through `plugin.h` no longer compiles, and one linked with `plugin.ld` outside `plugin.mk` requires `-L firmware/ora`.
 - Fixes:
   - `onerom peek` no longer fails on a large read.
   - `onerom program` and `onerom firmware build` now report a board mismatch correctly.

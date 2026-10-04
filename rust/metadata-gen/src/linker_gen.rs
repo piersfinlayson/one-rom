@@ -27,16 +27,32 @@ pub fn generate(schema: &Schema) -> String {
     );
 
     for constant in schema.linker_constants() {
-        if let Some(doc) = constant.documentation() {
-            for line in doc.lines() {
-                out.push_str(&format!("/* {line} */\n"));
-            }
-        }
-        // Schema validation refuses a linker_script constant holding text.
-        if let ConstantValue::Integer(value) = constant.value {
-            out.push_str(&format!("{} = {value:#X};\n\n", constant.name));
-        }
+        push_constant(
+            &mut out,
+            &constant.name,
+            constant.documentation(),
+            &constant.value,
+        );
     }
 
     out
+}
+
+/// Append one constant to a linker-script fragment, under `name` and with
+/// `doc` as its comment.
+pub(crate) fn push_constant(
+    out: &mut String,
+    name: &str,
+    doc: Option<String>,
+    value: &ConstantValue,
+) {
+    if let Some(doc) = doc {
+        for line in doc.lines() {
+            out.push_str(&format!("/* {line} */\n"));
+        }
+    }
+    // Schema validation refuses a linker_script constant holding text.
+    if let ConstantValue::Integer(value) = value {
+        out.push_str(&format!("{name} = {value:#X};\n\n"));
+    }
 }

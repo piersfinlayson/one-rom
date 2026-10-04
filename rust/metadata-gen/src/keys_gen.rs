@@ -5,12 +5,12 @@
 // schema.
 //
 // Emits the `ora_metadata_key_t` enum: the fixed NONE sentinel, one value per
-// schema field tagged with a `plugin_key` (ordered by id), and the INVALID
-// sentinel.  This header is included by the plugin API (firmware/ora/api.h) and
-// therefore reaches user plugins; it deliberately contains only the identifier
-// space, never any access into the internal metadata structures.  Values a
-// plugin needs, ORA_GPIO_NONE among them, come from the sibling constants
-// header - see constants_gen.rs.
+// schema field tagged with a `plugin_key` and per `[[plugin_keys]]` entry
+// (ordered by id), and the INVALID sentinel.  This header is included by the
+// plugin API (firmware/ora/api.h) and therefore reaches user plugins.  It
+// deliberately contains only the identifier space, never any access into the
+// internal metadata structures.  Values a plugin needs, ORA_GPIO_NONE among
+// them, come from the sibling constants header - see constants_gen.rs.
 //
 // Each key carries an `@since firmware X.Y.Z` line naming the release it
 // arrived in, as api.h does for every identifier.
@@ -147,7 +147,7 @@ pub fn generate(schema: &Schema) -> String {
 
     out.push_str(&format!("}} {ENUM_NAME};\n"));
     out.push_str(&format!(
-        "STATIC_ASSERT(sizeof({ENUM_NAME}) == 4, \"{ENUM_NAME} must be 4 bytes\");\n\n"
+        "_Static_assert(sizeof({ENUM_NAME}) == 4, \"{ENUM_NAME} must be 4 bytes\");\n\n"
     ));
     out.push_str(&format!("#endif // {GUARD}\n"));
     out

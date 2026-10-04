@@ -792,7 +792,7 @@ fn push_metadata_generation_table(out: &mut String, schema: &Schema) {
     );
     // A host writes the metadata only where the schema has a metadata region.
     // That host calls onerom-metadata's metadata_generation_for.
-    if schema.schema.metadata_base.is_some() {
+    if schema.metadata_region().is_some() {
         out.push_str(
             "///\n\
              /// A host writes the metadata and the firmware reads it, and the two are of\n\

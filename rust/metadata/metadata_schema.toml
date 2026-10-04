@@ -15,7 +15,7 @@
 # ---------------------------------------------------------------------------
 # Sections
 # ---------------------------------------------------------------------------
-#   [schema]          - addresses, codegen options, the release this describes
+#   [schema]          - codegen options, the release this describes
 #   [[versions]]      - firmware release each structure generation arrived in
 #   [[constants]]     - #define (C) / pub const (Rust)
 #   [[type_aliases]]  - typedef uint16_t aliases
@@ -24,6 +24,7 @@
 #   [[structs]]       - fixed-layout structs
 #   [[tagged_fams]]   - variable-length structs with discriminant (Rust enums)
 #   [[simple_fams]]   - variable-length structs: length prefix + byte array
+#   [[plugin_keys]]   - plugin keys without a stored field
 #
 # ---------------------------------------------------------------------------
 # Field kinds
@@ -69,7 +70,16 @@
 #                       permanent.
 #   linker_script     - also emit into firmware/generated/onerom_metadata.ld,
 #                       for values a linker script uses. A linker script cannot
-#                       include a C header. Numbers only.
+#                       include a C header. Numbers only. With ora_api, also
+#                       emit into firmware/ora/onerom_linker_constants_generated.ld
+#                       as ORA_<name>, for a plugin's linker script.
+#
+# ---------------------------------------------------------------------------
+# Metadata region
+# ---------------------------------------------------------------------------
+#   A schema declaring the METADATA_OFFSET and METADATA_SIZE constants has a
+#   metadata region, which a host builds. The generated Rust then defines
+#   METADATA_BASE as FLASH_CS0_BASE_ADDR plus METADATA_OFFSET.
 #
 # ---------------------------------------------------------------------------
 # Field attributes
@@ -97,6 +107,15 @@
 #                         array, a number filling every element or a list
 #                         stating them, u8 only. For any pointer, "null".
 #   deprecated_<S>_version - generation from which readers ignore this field.
+#
+# ---------------------------------------------------------------------------
+# Plugin key attributes
+# ---------------------------------------------------------------------------
+#   A [[plugin_keys]] entry is a plugin key with no stored field. The firmware
+#   resolves it by hand in ora_get_metadata_uint (firmware/src/plugin.c). Its
+#   name, id and first_release follow the rules of a field's plugin_key.
+#   type              - the value's type: u8, u16, u32 or an [[enums]] entry
+#   comment           - reaches the generated key header whole
 #
 # ---------------------------------------------------------------------------
 # Tagged FAM attributes
@@ -169,13 +188,10 @@
 # commit as the firmware_release bump.
 
 [schema]
-format_version = 1           # version of this file's own set of tables and keys
+format_version = 2           # version of this file's own set of tables and keys
 firmware_release = "0.8.0"   # firmware release this schema describes
 name = "OneROM"
 description = "OneROM firmware metadata structures"
-flash_base   = 0x10000000    # RP2350 flash base address
-metadata_base = 0x1000C000   # flash_base + 48KB: root of metadata region
-metadata_size = 16384        # 16KB reserved for metadata
 root_struct = "onerom_metadata_header_t"
 
 # ===========================================================================
@@ -287,6 +303,8 @@ terminator occupies 32 bytes."""
 name = "MAX_SERIAL_NUMBER_LEN"
 type = "usize"
 value = 31
+ora_api = true
+first_release = "0.8.0"
 comment = """Maximum byte length, excluding the NUL terminator, of the
 onerom_firmware_config_t.serial_number string. Kept to 31 so the stored string
 plus its terminator occupies 32 bytes."""
@@ -527,13 +545,10 @@ first_release = "0.8.0"
 comment = "The bits of a FLASH_DEVINFO size field once it's shifted down to bit 0."
 
 [[constants]]
-name = "OTP_FLASH_DEVINFO_SIZE_2MB"
-type = "u16"
-value = 9
-ora_api = true
-first_release = "0.8.0"
-comment = """A FLASH_DEVINFO size field for a 2MB chip. The bootrom reads a size n other
-than 0 as 4KB shifted left n times, and 0 as no chip."""
+name = "OTP_FLASH_DEVINFO_SIZE_UNIT"
+type = "u32"
+value = 4096
+comment = "Unit of FLASH_DEVINFO's flash size codes. A non-zero code n means a chip of 4096 << n bytes."
 
 [[constants]]
 name = "OTP_FLASH_DEVINFO_D8H_ERASE_SUPPORTED"
@@ -564,6 +579,7 @@ type = "u32"
 value = 0x10000000
 ora_api = true
 first_release = "0.8.0"
+linker_script = true
 comment = "Address of the flash chip on QSPI chip select 0 (built-in on an RP2354)."
 
 [[constants]]
@@ -572,7 +588,95 @@ type = "u32"
 value = 0x11000000
 ora_api = true
 first_release = "0.8.0"
+linker_script = true
 comment = "Address of the flash chip on QSPI chip select 1."
+
+# The regions of the flash chip on chip select 0, in address order.
+
+[[constants]]
+name = "FIRMWARE_OFFSET"
+type = "u32"
+value = 0
+linker_script = true
+comment = "Offset of the firmware region from the start of flash."
+
+[[constants]]
+name = "FIRMWARE_SIZE"
+type = "usize"
+value = 0xC000
+linker_script = true
+comment = "Size of the firmware region in bytes."
+
+[[constants]]
+name = "METADATA_OFFSET"
+type = "u32"
+value = 0xC000
+linker_script = true
+comment = "Offset of the metadata region from the start of flash."
+
+[[constants]]
+name = "METADATA_SIZE"
+type = "usize"
+value = 0x4000
+linker_script = true
+comment = "Size of the metadata region in bytes."
+
+[[constants]]
+name = "SYSTEM_PLUGIN_OFFSET"
+type = "u32"
+value = 0x10000
+ora_api = true
+first_release = "0.8.0"
+linker_script = true
+comment = "Offset of the system plugin region from the start of flash."
+
+[[constants]]
+name = "SYSTEM_PLUGIN_SIZE"
+type = "usize"
+value = 0x10000
+ora_api = true
+first_release = "0.8.0"
+linker_script = true
+comment = "Size of the system plugin region in bytes."
+
+[[constants]]
+name = "USER_PLUGIN_OFFSET"
+type = "u32"
+value = 0x20000
+ora_api = true
+first_release = "0.8.0"
+linker_script = true
+comment = "Offset of the user plugin region from the start of flash."
+
+[[constants]]
+name = "USER_PLUGIN_SIZE"
+type = "usize"
+value = 0x10000
+ora_api = true
+first_release = "0.8.0"
+linker_script = true
+comment = "Size of the user plugin region in bytes."
+
+[[constants]]
+name = "MIN_FLASH_CS0_SIZE"
+type = "usize"
+value = 0x40000
+comment = """Smallest flash chip on chip select 0 that One ROM supports. The firmware,
+metadata and plugin must all reside on the first flash chip.  These currently
+occupy 192KB. Chip sizes are powers of two so the minimum first flash chip size
+is 256KB."""
+
+[[constants]]
+name = "TOTAL_FLASH_SIZE_M"
+type = "usize"
+value = 0x200000
+comment = "Size in bytes of all the flash on an M board."
+
+[[constants]]
+name = "TOTAL_FLASH_SIZE_L"
+type = "usize"
+value = 0x400000
+comment = "Size in bytes of all the flash on an L board."
 
 [[constants]]
 name = "OTP_DATA_BASE"
@@ -1120,6 +1224,72 @@ comment = "Never a key. Holds the packed C enum at 2 bytes."
 # ---
 
 [[enums]]
+name = "onerom_flash_size_t"
+size = 1
+packed = true
+comment = """Size of a flash chip on QSPI chip select 0 or 1.
+The values are FLASH_DEVINFO's CS0_SIZE and CS1_SIZE codes. The bootrom reads a
+code n other than 0 as 4KB shifted left n times."""
+strip_prefix = "FLASH_SIZE_"
+ora_api = true
+first_release = "0.8.0"
+
+[[enums.variants]]
+name = "FLASH_SIZE_NONE"
+value = 0
+comment = "No flash chip."
+
+[[enums.variants]]
+name = "FLASH_SIZE_8KB"
+value = 1
+
+[[enums.variants]]
+name = "FLASH_SIZE_16KB"
+value = 2
+
+[[enums.variants]]
+name = "FLASH_SIZE_32KB"
+value = 3
+
+[[enums.variants]]
+name = "FLASH_SIZE_64KB"
+value = 4
+
+[[enums.variants]]
+name = "FLASH_SIZE_128KB"
+value = 5
+
+[[enums.variants]]
+name = "FLASH_SIZE_256KB"
+value = 6
+
+[[enums.variants]]
+name = "FLASH_SIZE_512KB"
+value = 7
+
+[[enums.variants]]
+name = "FLASH_SIZE_1MB"
+value = 8
+
+[[enums.variants]]
+name = "FLASH_SIZE_2MB"
+value = 9
+
+[[enums.variants]]
+name = "FLASH_SIZE_4MB"
+value = 10
+
+[[enums.variants]]
+name = "FLASH_SIZE_8MB"
+value = 11
+
+[[enums.variants]]
+name = "FLASH_SIZE_16MB"
+value = 12
+
+# ---
+
+[[enums]]
 name = "onerom_board_size_t"
 size = 1
 packed = true
@@ -1137,13 +1307,13 @@ comment = "Not recorded. Firmware before 0.8.0 doesn't record the board size."
 name = "BOARD_SIZE_M"
 value = 1
 display = "M"
-comment = "2MB of built-in flash without a chip on chip select 1."
+comment = "2MB of flash in total."
 
 [[enums.variants]]
 name = "BOARD_SIZE_L"
 value = 2
 display = "L"
-comment = "2MB of built-in flash and 2MB of external flash on chip select 1."
+comment = "4MB of flash in total."
 
 [[enums.variants]]
 name = "BOARD_SIZE_OTHER"
@@ -1183,7 +1353,7 @@ comment = "The ROM image is loaded and plugins have started."
 # Structs
 # ===========================================================================
 # 'size'            - byte size where a STATIC_ASSERT exists in the C source
-# 'root'            - true for the struct placed at metadata_base
+# 'root'            - true for the struct at the start of the metadata
 # 'generate'        - "both" | "parse" | "none"
 # 'version_field'   - name of the field holding this structure's generation
 #                     number. Only the three structures listed under
@@ -1280,7 +1450,7 @@ kind = "struct_ptr"
 type = "onerom_metadata_header_t"
 nullable = true
 expected_offset = 28
-comment = "Pointer to the metadata header (at metadata_base)"
+comment = "Pointer to the metadata header, at the start of the metadata region"
 
 [[structs.fields]]
 name = "rtt"
@@ -1321,7 +1491,7 @@ comment = "Pad to 64 bytes. Set to 0xFF."
 [[structs]]
 name = "onerom_metadata_header_t"
 comment = """OneROM metadata header.
-Root of the 16KB metadata region, placed at metadata_base.
+Root of the metadata region, placed at its start.
 All sub-structures must be 4-byte aligned."""
 generate = "both"
 size = 256
@@ -1397,7 +1567,7 @@ type = "u8"
 since_metadata_version = 3
 default_if_absent = 0
 expected_offset = 36
-plugin_key = { name = "RESERVED_SEL_PINS", id = 21, first_release = "0.8.0" }
+plugin_key = { name = "RESERVED_SEL_PINS", id = 23, first_release = "0.8.0" }
 comment = "Reserved image select pins. Bit 0 is SEL_A, bit 1 is SEL_B, etc."
 
 [[structs.fields]]
@@ -1407,7 +1577,7 @@ type = "u8"
 since_metadata_version = 3
 default_if_absent = 0
 expected_offset = 37
-plugin_key = { name = "RESERVED_X_PINS", id = 22, first_release = "0.8.0" }
+plugin_key = { name = "RESERVED_X_PINS", id = 24, first_release = "0.8.0" }
 comment = "Reserved X pins. Bit 0 is X1 and bit 1 is X2."
 
 [[structs.fields]]
@@ -2065,7 +2235,28 @@ since_runtime_version = 3
 default_if_absent = 0
 expected_offset = 59
 plugin_key = { name = "BOARD_SIZE", id = 20, first_release = "0.8.0" }
-comment = "The board's size as OTP configures it, read at boot."
+comment = """The board's size from the total flash OTP configures, worked out at boot.
+Chip select 1 counts only on a board with a secondary flash chip select."""
+
+# ===========================================================================
+# Plugin keys with no stored field
+# ===========================================================================
+
+[[plugin_keys]]
+name = "FLASH_CS0_SIZE"
+id = 21
+first_release = "0.8.0"
+type = "onerom_flash_size_t"
+comment = """Size of the flash chip on QSPI chip select 0, as an ORA_FLASH_SIZE_* value.
+See ora_get_metadata_uint_fn_t in api.h."""
+
+[[plugin_keys]]
+name = "FLASH_CS1_SIZE"
+id = 22
+first_release = "0.8.0"
+type = "onerom_flash_size_t"
+comment = """Size of the flash chip on QSPI chip select 1, as an ORA_FLASH_SIZE_* value.
+See ora_get_metadata_uint_fn_t in api.h."""
 
 [[structs.fields]]
 name = "firmware_states"
@@ -2482,30 +2673,40 @@ comment = "The longest bounded GPIO hold a plugin accepts, in milliseconds."
 name = "LED_CYCLE_MIN_PERIOD_MS"
 type = "u16"
 value = 1000
+ora_api = true
+first_release = "0.8.0"
 comment = "Shortest period the cycle mode accepts, in milliseconds."
 
 [[constants]]
 name = "LED_BREATHE_MIN_PERIOD_MS"
 type = "u16"
 value = 1000
+ora_api = true
+first_release = "0.8.0"
 comment = "Shortest period the breathe mode accepts, in milliseconds."
 
 [[constants]]
 name = "LED_BLINK_MIN_PERIOD_MS"
 type = "u16"
 value = 50
+ora_api = true
+first_release = "0.8.0"
 comment = "Shortest period the blink mode accepts, in milliseconds."
 
 [[constants]]
 name = "LED_BEACON_MIN_PERIOD_MS"
 type = "u16"
 value = 50
+ora_api = true
+first_release = "0.8.0"
 comment = "Shortest period the beacon mode accepts, in milliseconds."
 
 [[constants]]
 name = "LED_FLAME_MIN_PERIOD_MS"
 type = "u16"
 value = 500
+ora_api = true
+first_release = "0.8.0"
 comment = "Shortest period the flame mode accepts, in milliseconds."
 
 [[constants]]

@@ -761,6 +761,30 @@ fn host_c_gen_structural() {
     );
 }
 
+/// A host build's slot data is a host pointer, so the generated C also holds
+/// each slot's flash address from the metadata, in `rom_slots` order.  C
+/// doesn't allow an empty array, so a header without slots gets a single 0.
+#[test]
+fn host_c_gen_rom_slot_flash_addrs() {
+    let mut header = minimal_header();
+    header.rom_slots[0].data = Pointer::Addr32(0x1001_0000);
+    let mut second = header.rom_slots[0].clone();
+    second.data = Pointer::Addr32(0x1100_0000);
+    header.rom_slots.push(second);
+    let c_src = generate_host_metadata_c(&header, dummy_rom_data(2));
+    assert!(
+        c_src.contains("uint32_t host_rom_slot_flash_addrs[] = { 0x10010000, 0x11000000 };"),
+        "expected both slots' flash addresses in order, got: {c_src}"
+    );
+
+    header.rom_slots.clear();
+    let c_src = generate_host_metadata_c(&header, dummy_rom_data(0));
+    assert!(
+        c_src.contains("uint32_t host_rom_slot_flash_addrs[] = { 0 };"),
+        "expected a single 0 without slots, got: {c_src}"
+    );
+}
+
 /// 18. Compile: the generated C compiles cleanly under
 ///     `gcc -std=c99 -Wall -Wextra -Wpedantic` (Linux/macOS only).
 ///

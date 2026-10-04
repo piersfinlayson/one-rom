@@ -38,6 +38,9 @@ pub struct Schema {
     pub tagged_fams: Vec<TaggedFam>,
     #[serde(default)]
     pub simple_fams: Vec<SimpleFam>,
+    /// The `[[plugin_keys]]` table.
+    #[serde(default, rename = "plugin_keys")]
+    pub unstored_keys: Vec<UnstoredPluginKey>,
 }
 
 // ---------------------------------------------------------------------------
@@ -59,13 +62,14 @@ pub struct SchemaMetadata {
     pub firmware_release: String,
     pub name: String,
     pub description: String,
-    pub flash_base: u32,
-    /// Flash address of the metadata region, where something outside the
-    /// firmware composes it.  Absent where the structures are consts the
-    /// build places and the anchor's pointer finds.
-    pub metadata_base: Option<u32>,
-    /// Bytes reserved for that region, and absent for the same reason.
-    pub metadata_size: Option<u32>,
+    /// Format 1 keys, accepted so a format 1 file still parses.  Nothing reads
+    /// them, and a format 2 file holding one fails to parse.  Format 2
+    /// describes the flash with constants, and a schema has a metadata region
+    /// where it declares the [`METADATA_OFFSET`] and [`METADATA_SIZE`]
+    /// constants.
+    flash_base: Option<u32>,
+    metadata_base: Option<u32>,
+    metadata_size: Option<u32>,
     pub root_struct: String,
     /// The name of this schema's device-side type for the family's
     /// `onerom_info_t`, with its `metadata` and `runtime` pointers at this
@@ -352,6 +356,14 @@ pub struct StructVersion {
 // [[constants]]
 // ---------------------------------------------------------------------------
 
+/// The names of the constants describing a schema's metadata region, the
+/// flash a host composes the metadata into.  A schema declaring the offset and
+/// size has one, and its address is the first flash chip's base plus the
+/// offset.
+pub const FLASH_CS0_BASE_ADDR: &str = "FLASH_CS0_BASE_ADDR";
+pub const METADATA_OFFSET: &str = "METADATA_OFFSET";
+pub const METADATA_SIZE: &str = "METADATA_SIZE";
+
 /// TOML constant values are either integers or strings (e.g. magic byte strings).
 #[derive(Deserialize, Debug, Clone)]
 #[serde(untagged)]
@@ -509,6 +521,28 @@ impl Schema {
     /// The constants the linker-script fragment carries, in schema order.
     pub fn linker_constants(&self) -> impl Iterator<Item = &Constant> {
         self.constants.iter().filter(|c| c.linker_script)
+    }
+
+    /// The constants the plugin-facing linker-script fragment holds, in schema
+    /// order: those in both the plugin API and the firmware's fragment.
+    pub fn ora_linker_constants(&self) -> impl Iterator<Item = &Constant> {
+        self.linker_constants().filter(|c| c.ora_api)
+    }
+
+    /// The metadata region's address and size, where the schema has one.
+    ///
+    /// [`Schema::parse`] fails on a schema declaring one of [`METADATA_OFFSET`]
+    /// and [`METADATA_SIZE`] without the other, or either without
+    /// [`FLASH_CS0_BASE_ADDR`].
+    pub fn metadata_region(&self) -> Option<(i64, i64)> {
+        let value = |name: &str| match self.constants.iter().find(|c| c.name == name)?.value {
+            ConstantValue::Integer(v) => Some(v),
+            ConstantValue::Text(_) => None,
+        };
+        Some((
+            value(FLASH_CS0_BASE_ADDR)? + value(METADATA_OFFSET)?,
+            value(METADATA_SIZE)?,
+        ))
     }
 }
 
@@ -784,10 +818,32 @@ pub struct PluginKey {
     pub first_release: String,
 }
 
-/// A plugin key paired with the field it is attached to.
+/// A plugin key with no stored field, from the `[[plugin_keys]]` table.  The
+/// firmware resolves it by hand in ora_get_metadata_uint
+/// (firmware/src/plugin.c), so the generated arms for that getter leave it out.
+/// The other getters' generated arms return ORA_RESULT_TYPE_MISMATCH for it.
+#[derive(Deserialize, Debug, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct UnstoredPluginKey {
+    pub name: String,
+    pub id: u32,
+    pub first_release: String,
+    /// The type of the value: u8, u16, u32 or an enum.
+    #[serde(rename = "type")]
+    pub type_: String,
+    pub comment: String,
+}
+
+/// A plugin key, with the field holding its value where it has one.
 pub struct PluginKeyEntry<'a> {
-    pub key: &'a PluginKey,
+    pub key: PluginKey,
     pub comment: Option<&'a str>,
+    /// None for a `[[plugin_keys]]` key.
+    pub field: Option<KeyField<'a>>,
+}
+
+/// The struct field holding a plugin key's value.
+pub struct KeyField<'a> {
     /// Name of the struct that contains the field (for access-path derivation).
     pub struct_name: &'a str,
     /// Name of the field itself (the last hop of the access path).
@@ -1041,7 +1097,7 @@ pub struct Struct {
     pub generate: Generate,
     /// Expected total byte size for STATIC_ASSERT (absent if no assertion in original C).
     pub size: Option<u32>,
-    /// true = this struct is placed at metadata_base (the root of the generated region).
+    /// true = this struct is placed at the start of the metadata (the root of the generated region).
     pub root: Option<bool>,
     /// false = fields are non-const (runtime-written structs such as onerom_runtime_info_t).
     /// Defaults to true.
@@ -1241,6 +1297,7 @@ impl Schema {
         // Before validate_expected_offsets so a bit field with a missing table
         // isn't reported as a moved field.
         schema.validate_bitfields()?;
+        schema.validate_format_keys()?;
         schema.validate_plugin_keys()?;
         schema.validate_expected_offsets()?;
         schema.validate_expected_consts()?;
@@ -1261,6 +1318,7 @@ impl Schema {
         schema.validate_bitfield_releases()?;
         schema.validate_ora_names()?;
         schema.validate_linker_constants()?;
+        schema.validate_metadata_region()?;
         schema.validate_tagged_fams()?;
         Ok(schema)
     }
@@ -2195,6 +2253,62 @@ impl Schema {
         Ok(())
     }
 
+    /// Check that a format 2 file holds none of the format 1 keys.  Nothing
+    /// reads them, so one left in a file would look meaningful and do nothing.
+    fn validate_format_keys(&self) -> Result<(), Box<dyn std::error::Error>> {
+        if self.schema.format_version < 2 {
+            return Ok(());
+        }
+        for (key, value) in [
+            ("flash_base", self.schema.flash_base),
+            ("metadata_base", self.schema.metadata_base),
+            ("metadata_size", self.schema.metadata_size),
+        ] {
+            if value.is_some() {
+                return Err(format!(
+                    "[schema] holds {key}, a format 1 key, and format {} describes the flash with \
+                     the {FLASH_CS0_BASE_ADDR}, {METADATA_OFFSET} and {METADATA_SIZE} constants \
+                     instead",
+                    self.schema.format_version
+                )
+                .into());
+            }
+        }
+        Ok(())
+    }
+
+    /// Check the constants describing the metadata region, where the schema
+    /// declares either of the two that make one.
+    ///
+    /// The generated Rust defines `METADATA_BASE: u32` as the sum of two of
+    /// them, so both are `u32`.  Hosts size their buffers from
+    /// `METADATA_SIZE`, so it is a `usize`.
+    fn validate_metadata_region(&self) -> Result<(), Box<dyn std::error::Error>> {
+        let declared = |name: &str| self.constants.iter().find(|c| c.name == name);
+        if declared(METADATA_OFFSET).is_none() && declared(METADATA_SIZE).is_none() {
+            return Ok(());
+        }
+        for (name, type_) in [
+            (FLASH_CS0_BASE_ADDR, "u32"),
+            (METADATA_OFFSET, "u32"),
+            (METADATA_SIZE, "usize"),
+        ] {
+            let Some(c) = declared(name) else {
+                return Err(format!(
+                    "the schema declares a metadata region, and {name} is not declared"
+                )
+                .into());
+            };
+            if c.type_ != type_ || !matches!(c.value, ConstantValue::Integer(_)) {
+                return Err(format!(
+                    "{name} describes the metadata region, so it is a {type_} holding a number"
+                )
+                .into());
+            }
+        }
+        Ok(())
+    }
+
     /// Check each tagged FAM against what its generators rely on.
     ///
     /// - The length field is a `u8` or a `u16`.
@@ -2731,24 +2845,38 @@ impl Schema {
         Vec::new()
     }
 
-    /// Every plugin-exposed metadata key, paired with its field comment,
-    /// sorted by id.  Drives generation of the plugin-facing key header.
+    /// Every plugin-exposed metadata key, from struct fields and from
+    /// `[[plugin_keys]]`, with its comment, sorted by id.  Drives generation of
+    /// the plugin-facing key header.
     pub fn plugin_keys(&self) -> Vec<PluginKeyEntry<'_>> {
         let mut keys = Vec::new();
         for s in &self.structs {
             for f in &s.fields {
                 if let Some(pk) = &f.plugin_key {
                     keys.push(PluginKeyEntry {
-                        key: pk,
+                        key: pk.clone(),
                         comment: f.comment.as_deref(),
-                        struct_name: &s.name,
-                        field_name: &f.name,
-                        kind: &f.kind,
-                        count: f.count,
-                        count_ref: f.count_ref.as_deref(),
+                        field: Some(KeyField {
+                            struct_name: &s.name,
+                            field_name: &f.name,
+                            kind: &f.kind,
+                            count: f.count,
+                            count_ref: f.count_ref.as_deref(),
+                        }),
                     });
                 }
             }
+        }
+        for k in &self.unstored_keys {
+            keys.push(PluginKeyEntry {
+                key: PluginKey {
+                    name: k.name.clone(),
+                    id: k.id,
+                    first_release: k.first_release.clone(),
+                },
+                comment: Some(&k.comment),
+                field: None,
+            });
         }
         keys.sort_by_key(|e| e.key.id);
         keys
@@ -2761,45 +2889,53 @@ impl Schema {
         use std::collections::HashMap;
         let mut ids: HashMap<u32, String> = HashMap::new();
         let mut names: HashMap<String, u32> = HashMap::new();
-        for s in &self.structs {
-            for f in &s.fields {
-                if let Some(pk) = &f.plugin_key {
-                    if pk.id == 0x0000_0000 || pk.id == 0xFFFF_FFFF {
-                        return Err(format!(
-                            "plugin_key '{}' uses reserved id 0x{:08X}",
-                            pk.name, pk.id
-                        )
-                        .into());
-                    }
-                    if let Some(prev) = ids.insert(pk.id, pk.name.clone()) {
-                        return Err(format!(
-                            "plugin_key id 0x{:08X} used by both '{}' and '{}'",
-                            pk.id, prev, pk.name
-                        )
-                        .into());
-                    }
-                    if names.insert(pk.name.clone(), pk.id).is_some() {
-                        return Err(
-                            format!("plugin_key name '{}' used more than once", pk.name).into()
-                        );
-                    }
-                    // String and array keys resolve a stored value, so their
-                    // access path from the metadata root must exist.  Fail the
-                    // build now (with a clear message) rather than emit a
-                    // broken path.
-                    if f.kind == "cstr_ptr" || f.kind == "inline_array" {
-                        self.plugin_key_access(&s.name, &f.name)?;
-                    }
-                    // The indexed getter bounds-checks against the array's
-                    // length, so an array key without one cannot be generated.
-                    if f.kind == "inline_array" && f.count.is_none() {
-                        return Err(format!(
-                            "plugin_key '{}' is on inline_array {}.{}, which has no count",
-                            pk.name, s.name, f.name
-                        )
-                        .into());
-                    }
-                }
+        for entry in self.plugin_keys() {
+            let pk = &entry.key;
+            if pk.id == 0x0000_0000 || pk.id == 0xFFFF_FFFF {
+                return Err(
+                    format!("plugin_key '{}' uses reserved id 0x{:08X}", pk.name, pk.id).into(),
+                );
+            }
+            if let Some(prev) = ids.insert(pk.id, pk.name.clone()) {
+                return Err(format!(
+                    "plugin_key id 0x{:08X} used by both '{}' and '{}'",
+                    pk.id, prev, pk.name
+                )
+                .into());
+            }
+            if names.insert(pk.name.clone(), pk.id).is_some() {
+                return Err(format!("plugin_key name '{}' used more than once", pk.name).into());
+            }
+            let Some(f) = &entry.field else {
+                continue;
+            };
+            // String and array keys resolve a stored value, so their access
+            // path from the metadata root must exist.  Fail the build now
+            // (with a clear message) rather than emit a broken path.
+            if f.kind == "cstr_ptr" || f.kind == "inline_array" {
+                self.plugin_key_access(f.struct_name, f.field_name)?;
+            }
+            // The indexed getter bounds-checks against the array's length, so
+            // an array key without one cannot be generated.
+            if f.kind == "inline_array" && f.count.is_none() {
+                return Err(format!(
+                    "plugin_key '{}' is on inline_array {}.{}, which has no count",
+                    pk.name, f.struct_name, f.field_name
+                )
+                .into());
+            }
+        }
+        // The firmware resolves a `[[plugin_keys]]` key through
+        // ora_get_metadata_uint, which returns an unsigned value.
+        for k in &self.unstored_keys {
+            let unsigned = matches!(k.type_.as_str(), "u8" | "u16" | "u32")
+                || self.enums.iter().any(|e| e.name == k.type_);
+            if !unsigned {
+                return Err(format!(
+                    "plugin key '{}' has type '{}', which is not u8, u16, u32 or an enum",
+                    k.name, k.type_
+                )
+                .into());
             }
         }
         Ok(())

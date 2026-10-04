@@ -881,7 +881,12 @@ void platform_logging(void) {
     } else {
         LOG("RAM: %dKB", MCU_RAM_SIZE_KB);
     }
-    LOG("Flash: %dKB", MCU_FLASH_SIZE_KB);
+    onerom_flash_size_t cs0;
+    onerom_flash_size_t cs1;
+    otp_flash_sizes(&cs0, &cs1);
+    LOG("Flash: CS0 %luKB, CS1 %luKB",
+        (unsigned long)(flash_size_bytes(cs0) / 1024),
+        (unsigned long)(flash_size_bytes(cs1) / 1024));
     LOG("Freq: %dMHz", TARGET_FREQ_MHZ);
     LOG("PLL: %d/%d/%d/%d", PLL_SYS_REFDIV, PLL_SYS_FBDIV, PLL_SYS_POSTDIV1, PLL_SYS_POSTDIV2);
 }

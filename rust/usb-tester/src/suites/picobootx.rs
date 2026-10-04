@@ -23,6 +23,7 @@
 
 use crate::device::Device;
 use crate::{Ctx, Scenario};
+use onerom_metadata::{FLASH_CS0_BASE_ADDR, USER_PLUGIN_OFFSET};
 use onerom_plugin_tester::run::Outcome;
 
 // Status codes, from picobootx.h.
@@ -684,11 +685,10 @@ fn active_slot_size(dev: &Device) -> Result<u32, String> {
 const BASE: u32 = 0x9000_0000;
 
 /// The device's flash, and how much of it the plugin will not let a host
-/// touch: `RP2350_FLASH_BASE` from `picobootx_impl.h` and
-/// `FLASH_PROTECTED_END` from `usb_picobootx.h`, which is the firmware, its
-/// metadata and the system plugin slot.
-const FLASH_BASE: u32 = 0x1000_0000;
-const FLASH_PROTECTED_END: u32 = FLASH_BASE + 128 * 1024;
+/// touch: `FLASH_PROTECTED_END` from `usb_picobootx.h`, which is the firmware,
+/// its metadata and the system plugin slot.
+const FLASH_BASE: u32 = FLASH_CS0_BASE_ADDR;
+const FLASH_PROTECTED_END: u32 = FLASH_BASE + USER_PLUGIN_OFFSET;
 
 /// The logical ROM range reads the image the device is serving.
 fn the_logical_rom_range_is_readable(dev: &mut Device, _ctx: &Ctx) -> Result<Outcome, String> {

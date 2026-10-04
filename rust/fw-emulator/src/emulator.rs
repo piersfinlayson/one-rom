@@ -540,6 +540,11 @@ impl Emulator {
         unsafe { ffi::ffi_limp_mode() as i32 != 0 }
     }
 
+    /// The firmware's limp mode, as its `limp_mode_pattern_t` value.
+    pub fn limp_mode_pattern(&self) -> u8 {
+        unsafe { ffi::ffi_limp_mode() }
+    }
+
     /// Returns `true` if the PIO state machines are enabled.
     pub fn pios_enabled(&self) -> bool {
         unsafe { ffi::ffi_pios_enabled() as i32 != 0 }
@@ -660,6 +665,84 @@ impl Emulator {
     /// `onerom_board_size_t` value.
     pub fn otp_board_size() -> u8 {
         unsafe { ffi::otp_board_size() as u8 }
+    }
+
+    // ── ROM slot flash addresses ─────────────────────────────────────────────
+
+    /// ROM slot `index`'s address in a device's flash, from the generated
+    /// metadata unless a test has moved it.
+    ///
+    /// A host build's slot data is a host pointer, so the firmware reads a
+    /// slot's flash address from a table instead. `index` is the firmware's
+    /// ROM slot index, plugin slots included.
+    pub fn rom_slot_flash_addr(index: u8) -> u32 {
+        unsafe { ffi::ffi_rom_slot_flash_addr(index) }
+    }
+
+    /// Move ROM slot `index` to `addr` in flash, as the CLI would by writing
+    /// a device's metadata.
+    ///
+    /// The address outlives a boot, so a test puts back what
+    /// [`Self::rom_slot_flash_addr`] read.
+    pub fn set_rom_slot_flash_addr(index: u8, addr: u32) {
+        unsafe { ffi::ffi_set_rom_slot_flash_addr(index, addr) };
+    }
+
+    /// ROM slot `index`'s size in bytes.
+    pub fn rom_slot_size(index: u8) -> u32 {
+        unsafe { ffi::ffi_rom_slot_size(index) }
+    }
+
+    /// Whether the firmware finds ROM slot `index` lies within the flash, at
+    /// the chip sizes OTP configures.
+    pub fn rom_slot_in_flash(index: u8) -> bool {
+        unsafe { ffi::ffi_rom_slot_in_flash(index) != 0 }
+    }
+
+    /// Whether ROM slot `index` passes the firmware's check of a plugin of
+    /// `expected_type`, the plugin at `plugin_index`.
+    pub fn check_plugin_valid(
+        index: u8,
+        expected_type: ffi::ora_plugin_type_t,
+        plugin_index: u8,
+    ) -> bool {
+        unsafe { ffi::ffi_check_plugin_valid(index, expected_type, plugin_index) != 0 }
+    }
+
+    /// Make ROM slots 0 and 1 a system plugin and a user plugin with their
+    /// headers in host memory until [`Self::restore_rom_slots`].
+    ///
+    /// The plugin slots read their flash addresses from the metadata's table so
+    /// the metadata must have at least two slots. A test puts back the
+    /// addresses it moves.
+    pub fn install_plugin_slots() {
+        unsafe { ffi::ffi_install_plugin_slots() };
+    }
+
+    /// Put back the metadata's own ROM slots.
+    pub fn restore_rom_slots() {
+        unsafe { ffi::ffi_restore_rom_slots() };
+    }
+
+    /// Write a valid header to plugin slot `index` with its entry point at
+    /// device address `entry`.
+    pub fn set_plugin_header(index: u8, entry: u32, overrides1: u8, properties1: u8) {
+        unsafe { ffi::ffi_set_plugin_header(index, entry, overrides1, properties1) };
+    }
+
+    /// The firmware's boot parse of the plugin slots. Returns the plugins found
+    /// as a bitmask, their count and whether VBUS detection is disabled.
+    pub fn initial_plugin_parse() -> (u8, u8, bool) {
+        let (mut disable_vbus_det, mut num_plugins) = (0, 0);
+        let plugins = unsafe { ffi::initial_plugin_parse(&mut disable_vbus_det, &mut num_plugins) };
+        (plugins, num_plugins, disable_vbus_det != 0)
+    }
+
+    /// The yield capability of the plugin on the core other than `this_core`,
+    /// as `other_core_yield_capability_from` in `firmware/src/plugin.c`
+    /// returns it.
+    pub fn other_core_yield_capability(this_core: u32) -> i32 {
+        unsafe { ffi::other_core_yield_capability_from(this_core) }
     }
 
     // ── GPIO / cycle operations (require setup_epio()) ───────────────────────

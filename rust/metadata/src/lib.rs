@@ -375,11 +375,11 @@ impl Pointer {
 /// each additional region:
 ///
 /// ```rust
-/// # use onerom_metadata::DeviceMemoryView;
+/// # use onerom_metadata::{DeviceMemoryView, FLASH_CS0_BASE_ADDR};
 /// let flash: &[u8] = &[0u8; 256];
 /// let ram:   &[u8] = &[0u8; 64];
 ///
-/// let mut view = DeviceMemoryView::new(flash, 0x1000_0000);
+/// let mut view = DeviceMemoryView::new(flash, FLASH_CS0_BASE_ADDR);
 /// view.add_region(ram, 0x2000_0000);
 /// ```
 ///

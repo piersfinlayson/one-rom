@@ -9,12 +9,13 @@ use onerom_app::{FlashPlan, FlashPlanError, FlashStep};
 use onerom_config::hw::BoardSize;
 use onerom_config::mcu::Variant;
 use onerom_gen::FlashChips;
+use onerom_metadata::{FLASH_CS0_BASE_ADDR, FLASH_CS1_BASE_ADDR};
 
 const KB: usize = 1024;
 const MB: usize = 1024 * KB;
 
-const FIRST_CHIP: u32 = 0x1000_0000;
-const SECOND_CHIP: u32 = 0x1100_0000;
+const FIRST_CHIP: u32 = FLASH_CS0_BASE_ADDR;
+const SECOND_CHIP: u32 = FLASH_CS1_BASE_ADDR;
 
 fn chips(size: BoardSize) -> FlashChips {
     FlashChips::new(Variant::RP2350, size)

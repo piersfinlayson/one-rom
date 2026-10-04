@@ -793,7 +793,7 @@ typedef enum {
     /** Invalid API identifier */
     ORA_ID_INVALID = 0xFFFFFFFF,
 } api_id_t;
-STATIC_ASSERT(sizeof(api_id_t) == 4, "api_id_t must be 4 bytes");
+_Static_assert(sizeof(api_id_t) == 4, "api_id_t must be 4 bytes");
 
 /** @} */ // plugin_api_ids
 
@@ -811,7 +811,7 @@ typedef enum {
     ORA_PLUGIN_TYPE_USER   = 1,
     ORA_PLUGIN_TYPE_PIO    = 2,
 } ora_plugin_type_t;
-STATIC_ASSERT(sizeof(ora_plugin_type_t) == 1, "ora_plugin_type_t must be 1 byte");
+_Static_assert(sizeof(ora_plugin_type_t) == 1, "ora_plugin_type_t must be 1 byte");
 
 /**
  * @brief MCU Cores
@@ -820,7 +820,7 @@ typedef enum {
     ORA_CORE_0 = 0,
     ORA_CORE_1 = 1,
 } ora_core_t;
-STATIC_ASSERT(sizeof(ora_core_t) == 1, "ora_core_t must be 1 byte");
+_Static_assert(sizeof(ora_core_t) == 1, "ora_core_t must be 1 byte");
 
 /**
  * @brief IRQ numbers
@@ -830,7 +830,7 @@ typedef enum {
     ORA_IRQ_USBCTRL_IRQ = 14,
     ORA_IRQ_INVALID = 0xFF,
 } ora_irq_t;
-STATIC_ASSERT(sizeof(ora_irq_t) == 1, "ora_irq_t must be 1 byte");
+_Static_assert(sizeof(ora_irq_t) == 1, "ora_irq_t must be 1 byte");
 
 /**
  * @brief A channel used for logging and other purposes
@@ -876,7 +876,7 @@ typedef enum {
 
     ORA_LOG_CHANNEL_INVALID = 0xFFFFFFFF,
 } ora_log_channel_t;
-STATIC_ASSERT(sizeof(ora_log_channel_t) == 4, "ora_log_channel_t must be 4 bytes");
+_Static_assert(sizeof(ora_log_channel_t) == 4, "ora_log_channel_t must be 4 bytes");
 
 /**
  * @brief An option this firmware was compiled with
@@ -938,7 +938,7 @@ typedef enum {
 
     ORA_COMPILE_OPTION_INVALID        = 0xFFFFFFFF,
 } ora_compile_option_t;
-STATIC_ASSERT(sizeof(ora_compile_option_t) == 4, "ora_compile_option_t must be 4 bytes");
+_Static_assert(sizeof(ora_compile_option_t) == 4, "ora_compile_option_t must be 4 bytes");
 
 /**
  * @brief A category of log output
@@ -1007,7 +1007,7 @@ typedef enum {
 
     ORA_LOG_CATEGORY_INVALID            = 0xFFFFFFFF,
 } ora_log_category_t;
-STATIC_ASSERT(sizeof(ora_log_category_t) == 4, "ora_log_category_t must be 4 bytes");
+_Static_assert(sizeof(ora_log_category_t) == 4, "ora_log_category_t must be 4 bytes");
 
 /**
  * @brief Knock sequence state structure
@@ -1341,7 +1341,7 @@ typedef struct {
     /** @brief Capture priority. @sa ora_address_monitor_priority_t */
     uint8_t priority;
 } ora_address_monitor_options_t;
-STATIC_ASSERT(sizeof(ora_address_monitor_options_t) == 2, "ora_address_monitor_options_t must be 2 bytes");
+_Static_assert(sizeof(ora_address_monitor_options_t) == 2, "ora_address_monitor_options_t must be 2 bytes");
 
 /**
  * @brief Return code for One ROM API functions
@@ -2354,9 +2354,10 @@ typedef ora_result_t (*ora_get_flash_slot_ext_info_fn_t)(
  * @param copy_flags  Copy behaviour flags. Pass 0 for synchronous copy.
  *                    @sa ORA_COPY_FLAG_ASYNC.  Currently unsupported.
  * @return ORA_RESULT_OK on success, ORA_RESULT_INVALID_SLOT if either index
- *         is out of range for the given flags, ORA_RESULT_INVALID_SIZE if
- *         the flash slot's ROM image size does not match the currently active
- *         ROM type
+ *         is out of range for @p flags or, from firmware 0.8.0, the flash
+ *         slot lies outside the board's flash, ORA_RESULT_INVALID_SIZE if the
+ *         flash slot's ROM image size does not match the currently active ROM
+ *         type
  */
 typedef ora_result_t (*ora_copy_flash_slot_to_ram_slot_fn_t)(
     uint8_t flash_slot,
@@ -2415,6 +2416,11 @@ typedef ora_result_t (*ora_get_metadata_str_fn_t)(ora_metadata_key_t key, const 
  * STATUS, ORA_METADATA_KEY_GPIO_NEOPIXEL) resolve from device metadata; live
  * keys (e.g. ORA_METADATA_KEY_STATUS_LED_STATE) resolve from runtime state and
  * therefore reflect the current value on each call.
+ *
+ * ORA_METADATA_KEY_FLASH_CS0_SIZE and ORA_METADATA_KEY_FLASH_CS1_SIZE return
+ * the size of the flash chip on QSPI chip select 0 or 1 as an ORA_FLASH_SIZE_*
+ * value. For a chip select that doesn't have a flash chip, the key returns
+ * ORA_FLASH_SIZE_NONE.
  *
  * @param key  The metadata datum to retrieve. @sa ora_metadata_key_t
  * @param out  Output pointer to receive the value. Must not be NULL.
@@ -2721,7 +2727,7 @@ typedef struct {
     /** @brief 1 if the pin's output driver is currently enabled, 0 if not */
     uint8_t is_output;
 } ora_gpio_info_t;
-STATIC_ASSERT(sizeof(ora_gpio_info_t) == 4, "ora_gpio_info_t must be 4 bytes");
+_Static_assert(sizeof(ora_gpio_info_t) == 4, "ora_gpio_info_t must be 4 bytes");
 
 /**
  * @brief Drive a GPIO high or low, or release it to high impedance
@@ -2918,7 +2924,7 @@ typedef struct {
      */
     uint32_t hold_ms;
 } ora_led_request_t;
-STATIC_ASSERT(sizeof(ora_led_request_t) == 16, "ora_led_request_t must be 16 bytes");
+_Static_assert(sizeof(ora_led_request_t) == 16, "ora_led_request_t must be 16 bytes");
 
 /**
  * @brief An LED's presence, wiring and live state, from @ref ora_led_get_fn_t
@@ -2986,7 +2992,7 @@ typedef struct {
     /** @brief The period in force, in milliseconds */
     uint16_t period_ms;
 } ora_led_state_t;
-STATIC_ASSERT(sizeof(ora_led_state_t) == 12, "ora_led_state_t must be 12 bytes");
+_Static_assert(sizeof(ora_led_state_t) == 12, "ora_led_state_t must be 12 bytes");
 
 /**
  * @brief Set an LED's mode, colour, brightness and period
@@ -3527,7 +3533,9 @@ typedef struct {
     uint8_t reserved[226];
 } ora_plugin_header_t;
 #define ORA_PLUGIN_HEADER_SIZE 256  // Must not change without version bump
-STATIC_ASSERT(sizeof(ora_plugin_header_t) == ORA_PLUGIN_HEADER_SIZE, "ora_plugin_header_t must be 256 bytes");
+#if UINTPTR_MAX == 0xFFFFFFFFu
+_Static_assert(sizeof(ora_plugin_header_t) == ORA_PLUGIN_HEADER_SIZE, "ora_plugin_header_t must be 256 bytes");
+#endif
 
 /**
  * @brief Firmware override flag for VBUS detect

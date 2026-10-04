@@ -4,7 +4,7 @@ Describes how One ROM's firmware and tools use a second flash chip.
 
 A board's first flash chip is on QSPI chip select 0 at `0x10000000`. An L board
 has a second 2MB flash chip on chip select 1 at `0x11000000`. See
-[Board Sizes](../OTP.md#board-sizes). The second chip is at `0x11000000`
+[Board Sizes](OTP.md#board-sizes). The second chip is at `0x11000000`
 whatever the first chip's size.
 
 The bootloader reaches the second chip over USB once programmed in OTP. Firmware
@@ -42,8 +42,8 @@ any other size with that firmware, even when every slot fits on the first chip.
 That firmware resets chip select 1's pin at boot and doesn't set the second
 chip's clock divisor.
 
-The second chip's address and each board size's second chip size are declared in
-`rust/metadata/metadata_schema.toml`.
+The second chip's address is declared in `rust/metadata/metadata_schema.toml`
+and each board size's chips in `FLASH_LAYOUTS` in `rust/metadata/src/otp.rs`.
 
 `onerom program` builds for the connected One ROM's board size, or for M when
 the firmware it programs is before 0.8.0. The CLI reads the size from runtime
@@ -98,8 +98,11 @@ On a board with a second chip:
 
 ## Firmware
 
-Firmware doesn't check slot addresses against the board size. On a board without
-a second chip it serves invalid data for a slot on the second chip.
+Firmware checks a slot lies within the flash OTP configures before reading it.
+On a board without a second chip, a slot on the second chip:
+- puts One ROM into limp mode when it is the ROM image to serve
+- isn't started when it is a plugin
+- makes `ora_copy_flash_slot_to_ram_slot` return `ORA_RESULT_INVALID_SLOT`
 
 ## Host Tools
 

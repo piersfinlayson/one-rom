@@ -71,11 +71,10 @@ One ROM release.  Build it the same way before raising an issue:
 
 1. Copy your plugin directory to `plugins/<type>/<name>`, where `<type>` is
    `system` or `user` and `<name>` is the `name` in your `plugin-meta.json`.
-2. Run `make generated` at the root of the checkout.  This requires Rust.
-3. Run `make TOOLCHAIN=<dir>` in your plugin directory, where `<dir>` is the
+2. Run `make TOOLCHAIN=<dir>` in your plugin directory, where `<dir>` is the
    `bin` directory of the Arm GNU toolchain version pinned in
    [`ci/arm-toolchain-version`](../ci/arm-toolchain-version).
-   `ci/install-arm-toolchain.sh` installs it and prints `<dir>`.
+   `ci/install-arm-toolchain.sh` installs it.
 
 ## Raising an Issue
 

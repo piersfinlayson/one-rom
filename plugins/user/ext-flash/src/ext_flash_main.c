@@ -40,7 +40,7 @@ ORA_DEFINE_USER_PLUGIN(
 
 // The size of an L board's external flash, from the FLASH_DEVINFO size field
 // One ROM writes for it.  The bootrom reads a size field n as 4KB << n.
-#define CHIP_SIZE (FLASH_SECTOR_SIZE << ORA_OTP_FLASH_DEVINFO_SIZE_2MB)
+#define CHIP_SIZE (FLASH_SECTOR_SIZE << ORA_FLASH_SIZE_2MB)
 
 // The watchdog timeout for one flash operation, twice the longest.  From the
 // Winbond W25Q16JV datasheet, a 64KB block erase takes up to 2s and programming
@@ -197,8 +197,8 @@ static volatile uint16_t *devinfo_ptr(void) {
 // FLASH_DEVINFO as `onerom hardware set-size` writes it for an L board with
 // chip select 1 on GPIO gpio.
 static uint16_t l_board_devinfo(uint8_t gpio) {
-    return (uint16_t)((ORA_OTP_FLASH_DEVINFO_SIZE_2MB << ORA_OTP_FLASH_DEVINFO_CS1_SIZE_SHIFT)
-                    | (ORA_OTP_FLASH_DEVINFO_SIZE_2MB << ORA_OTP_FLASH_DEVINFO_CS0_SIZE_SHIFT)
+    return (uint16_t)((ORA_FLASH_SIZE_2MB << ORA_OTP_FLASH_DEVINFO_CS1_SIZE_SHIFT)
+                    | (ORA_FLASH_SIZE_2MB << ORA_OTP_FLASH_DEVINFO_CS0_SIZE_SHIFT)
                     | ORA_OTP_FLASH_DEVINFO_D8H_ERASE_SUPPORTED
                     | (gpio & ORA_OTP_FLASH_DEVINFO_CS1_GPIO));
 }
@@ -641,7 +641,7 @@ static uint8_t setup(ora_lookup_fn_t lookup) {
         cdc_log("Board size: M");
     } else {
         cdc_log("Board size: %s",
-                (cs1_size == ORA_OTP_FLASH_DEVINFO_SIZE_2MB) ? "L" : "other");
+                (cs1_size == ORA_FLASH_SIZE_2MB) ? "L" : "other");
         if (value != want) {
             cdc_log("OTP sets FLASH_DEVINFO to 0x%04X, not 0x%04X.",
                     (unsigned)value, (unsigned)want);

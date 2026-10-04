@@ -17,12 +17,13 @@ use core::task::{Context, Poll, Waker};
 use onerom_fw_parser::readers::MemoryReader;
 use onerom_fw_parser::{FirmwareFormat, Parser, SDRR_INFO_FW_OFFSET};
 use onerom_metadata::{
-    ONEROM_FAMILY_MAGIC, ONEROM_INFO_MAGIC, ONEROM_INFO_VERSION_OFFSET as VERSION_OFF,
+    FLASH_CS0_BASE_ADDR, ONEROM_FAMILY_MAGIC, ONEROM_INFO_MAGIC,
+    ONEROM_INFO_VERSION_OFFSET as VERSION_OFF,
 };
 
 const STM32F4_FLASH_BASE: u32 = 0x0800_0000;
 const STM32F4_RAM_BASE: u32 = 0x2000_0000;
-const RP235X_FLASH_BASE: u32 = 0x1000_0000;
+const RP235X_FLASH_BASE: u32 = FLASH_CS0_BASE_ADDR;
 const RP235X_RAM_BASE: u32 = 0x2008_0000;
 
 /// Runs a future to completion.

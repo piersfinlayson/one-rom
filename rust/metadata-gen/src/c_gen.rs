@@ -81,11 +81,11 @@ fn emit_file_header(schema: &Schema, out: &mut String) {
 ",
         name = schema.schema.name,
         desc = schema.schema.description,
-        region = match (schema.schema.metadata_base, schema.schema.metadata_size) {
-            (Some(base), Some(size)) => {
+        region = match schema.metadata_region() {
+            Some((base, size)) => {
                 format!("// Metadata base address: 0x{base:08X}  ({size} bytes reserved)\n//\n")
             }
-            _ => String::new(),
+            None => String::new(),
         },
         guard = guard,
         source = schema.source,
@@ -398,9 +398,9 @@ fn c_default_expr(field: &Field, schema: &Schema, accessor: &str) -> String {
 /// Emit ONEROM_METADATA_STR_CASES: the generated switch arms for the string
 /// metadata getter (ora_get_metadata_str in firmware/src/plugin.c).
 ///
-/// One arm per schema field tagged `plugin_key`: string-typed fields resolve
-/// their stored value; any other type returns ORA_RESULT_TYPE_MISMATCH.  The
-/// expanding function owns the switch, the argument guard, and the default arm.
+/// One arm per plugin key.  String-typed fields resolve their stored value and
+/// any other key returns ORA_RESULT_TYPE_MISMATCH.  The expanding function owns
+/// the switch, the argument guard, and the default arm.
 fn emit_metadata_str_cases(schema: &Schema, out: &mut String) {
     let keys = schema.plugin_keys();
     if keys.is_empty() {
@@ -412,9 +412,9 @@ fn emit_metadata_str_cases(schema: &Schema, out: &mut String) {
     let comment = wrap_comment_text(
         "ONEROM_METADATA_STR_CASES(out) expands to the case arms of the switch in \
          ora_get_metadata_str() (firmware/src/plugin.c).\n\n\
-         The arms are generated from the schema fields tagged `plugin_key`: each \
-         string-typed field resolves its stored value here; any non-string key \
-         returns ORA_RESULT_TYPE_MISMATCH. The expanding function supplies the \
+         The arms are generated from the schema's plugin keys. Each string-typed \
+         field resolves its stored value here, and any other key returns \
+         ORA_RESULT_TYPE_MISMATCH. The expanding function supplies the \
          surrounding switch, the `out == NULL` guard, and the `default:` arm that \
          returns ORA_RESULT_NOT_SUPPORTED for keys unknown to this firmware.\n\n\
          The macro references ora_metadata_key_t / ora_result_t from the plugin \
@@ -432,9 +432,11 @@ fn emit_metadata_str_cases(schema: &Schema, out: &mut String) {
     for entry in &keys {
         let key_name = format!("ORA_METADATA_KEY_{}", entry.key.name);
         lines.push(format!("    case {}:", key_name));
-        if entry.kind == "cstr_ptr" {
+        if let Some(field) = &entry.field
+            && field.kind == "cstr_ptr"
+        {
             let access = schema
-                .plugin_key_access(entry.struct_name, entry.field_name)
+                .plugin_key_access(field.struct_name, field.field_name)
                 .expect("plugin_key access paths are validated at schema load");
             lines.push(format!("        *(out) = {};", access));
             lines.push("        return ORA_RESULT_OK;".to_string());
@@ -482,11 +484,14 @@ fn emit_metadata_uint_cases(schema: &Schema, out: &mut String) {
 
     let mut lines: Vec<String> = vec!["#define ONEROM_METADATA_UINT_CASES(out)".to_string()];
     for entry in &keys {
+        let Some(field) = &entry.field else {
+            continue;
+        };
         let key_name = format!("ORA_METADATA_KEY_{}", entry.key.name);
         lines.push(format!("    case {}:", key_name));
-        if entry.kind == "scalar" || entry.kind == "enum" {
+        if field.kind == "scalar" || field.kind == "enum" {
             let access = schema
-                .plugin_key_access(entry.struct_name, entry.field_name)
+                .plugin_key_access(field.struct_name, field.field_name)
                 .expect("plugin_key access paths are validated at schema load");
             lines.push(format!("        *(out) = (uint32_t)({});", access));
             lines.push("        return ORA_RESULT_OK;".to_string());
@@ -509,9 +514,8 @@ fn emit_metadata_uint_cases(schema: &Schema, out: &mut String) {
 /// Emit ONEROM_METADATA_UINT_AT_CASES: the generated switch arms for the
 /// indexed metadata getter (ora_get_metadata_uint_at in firmware/src/plugin.c).
 ///
-/// One arm per schema field tagged `plugin_key`: array-of-unsigned fields
-/// bounds-check the index and resolve the element.  Any other type returns
-/// ORA_RESULT_TYPE_MISMATCH.  The expanding function owns the switch, the
+/// One arm per plugin key.  Array-of-unsigned fields bounds-check the index
+/// and resolve the element.  Any other key returns ORA_RESULT_TYPE_MISMATCH.  The expanding function owns the switch, the
 /// argument guard, and the default arm.
 fn emit_metadata_uint_at_cases(schema: &Schema, out: &mut String) {
     let keys = schema.plugin_keys();
@@ -522,8 +526,8 @@ fn emit_metadata_uint_at_cases(schema: &Schema, out: &mut String) {
     let comment = wrap_comment_text(
         "ONEROM_METADATA_UINT_AT_CASES(index, out) expands to the case arms of the \
          switch in ora_get_metadata_uint_at() (firmware/src/plugin.c).\n\n\
-         The arms are generated from the schema fields tagged `plugin_key`: each \
-         field that is an array of unsigned elements resolves element `index` \
+         The arms are generated from the schema's plugin keys. Each field that \
+         is an array of unsigned elements resolves element `index` \
          here, zero-extended to uint32_t. Any key that is not such an array \
          returns ORA_RESULT_TYPE_MISMATCH. An `index` past the last element is \
          rejected with ORA_RESULT_INVALID_ARG - the arrays these keys name are \
@@ -541,16 +545,18 @@ fn emit_metadata_uint_at_cases(schema: &Schema, out: &mut String) {
     for entry in &keys {
         let key_name = format!("ORA_METADATA_KEY_{}", entry.key.name);
         lines.push(format!("    case {}:", key_name));
-        if entry.kind == "inline_array" {
+        if let Some(field) = &entry.field
+            && field.kind == "inline_array"
+        {
             // Prefer the named bound, so the generated arm says what the limit
             // means rather than repeating a number the schema owns.
-            let bound = entry
+            let bound = field
                 .count_ref
                 .map(str::to_string)
-                .or_else(|| entry.count.map(|c| c.to_string()))
+                .or_else(|| field.count.map(|c| c.to_string()))
                 .expect("array plugin_key counts are validated at schema load");
             let access = schema
-                .plugin_key_access(entry.struct_name, entry.field_name)
+                .plugin_key_access(field.struct_name, field.field_name)
                 .expect("plugin_key access paths are validated at schema load");
             lines.push(format!("        if ((index) >= {}) {{", bound));
             lines.push("            return ORA_RESULT_INVALID_ARG;".to_string());

@@ -69,7 +69,7 @@ pub const METADATA_VERSION: u32 = 1;
 const METADATA_VERSION_STR: &str = "1";
 
 /// Firmware size reserved at the start of flash, before metadata
-pub const FIRMWARE_SIZE: usize = 48 * 1024; // 48KB
+pub const FIRMWARE_SIZE: usize = onerom_metadata::FIRMWARE_SIZE;
 
 // The V1 and V2 metadata regions are the same size, which is what lets
 // [`rom_data_space`] serve both build paths. `MAX_METADATA_LEN` bounds what the
@@ -92,7 +92,8 @@ const _: () = assert!(MAX_METADATA_LEN == onerom_metadata::METADATA_SIZE);
 /// *single* slot - that is a RAM limit, not a flash one, so a set of images can
 /// be within this space yet still contain a slot that is too large to serve.
 pub fn rom_data_space(mcu_variant: onerom_config::mcu::Variant) -> usize {
-    mcu_variant.flash_storage_bytes() - FIRMWARE_SIZE - MAX_METADATA_LEN
+    let first = FlashChips::first_for(mcu_variant);
+    (first.end - first.start) as usize - FIRMWARE_SIZE - MAX_METADATA_LEN
 }
 
 pub const MIN_FIRMWARE_OVERRIDES_VERSION: FirmwareVersion = FirmwareVersion::new(0, 6, 0, 0);
@@ -1341,9 +1342,10 @@ mod tests {
     fn rom_data_space_excludes_the_firmware_and_metadata_regions() {
         let space = rom_data_space(Variant::RP2350);
         assert_eq!(space, 1984 * 1024);
+        let first = onerom_metadata::otp::FlashLayout::of(BoardSize::M).cs0;
         assert_eq!(
             space,
-            Variant::RP2350.flash_storage_bytes() - FIRMWARE_SIZE - MAX_METADATA_LEN
+            onerom_metadata::otp::flash_size_bytes(first) - FIRMWARE_SIZE - MAX_METADATA_LEN
         );
         assert_eq!(rom_data_space(Variant::RP2350B), space);
     }

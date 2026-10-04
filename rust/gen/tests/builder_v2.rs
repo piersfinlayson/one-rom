@@ -17,8 +17,8 @@ mod tests {
     use onerom_config::mcu::{Family as McuFamily, Variant as McuVariant};
     use onerom_gen::{Builder, ConfigOverrides, ConfigWarning, Error as GenError, FileData};
     use onerom_metadata::{
-        CURRENT_METADATA_VERSION, DeviceMemoryView, METADATA_BASE, METADATA_SIZE,
-        ONEROM_METADATA_MAGIC, metadata_generation_for,
+        CURRENT_METADATA_VERSION, DeviceMemoryView, FLASH_CS1_BASE_ADDR, METADATA_BASE,
+        METADATA_SIZE, ONEROM_METADATA_MAGIC, metadata_generation_for,
     };
 
     // ROM images are placed immediately after the 16KB metadata region.
@@ -2922,7 +2922,7 @@ mod tests {
     const FIRST_CHIP_END: u32 = 0x1020_0000;
 
     /// The start of the second chip.
-    const SECOND_CHIP_BASE: u32 = 0x1100_0000;
+    const SECOND_CHIP_BASE: u32 = FLASH_CS1_BASE_ADDR;
 
     /// The first firmware that serves a slot on the second chip.
     const V0_8_0: FirmwareVersion = FirmwareVersion::new(0, 8, 0, 0);

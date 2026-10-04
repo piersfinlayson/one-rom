@@ -4,7 +4,6 @@
 
 // One ROM system plugin implementing USB
 
-#include "include.h"
 #include "usb_plugin.h"
 #include "tusb.h"
 #include "usb_descriptors.h"

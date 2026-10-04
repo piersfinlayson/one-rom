@@ -9,7 +9,10 @@
 //!   of its rule, on any OTP. Where the host's reader, `onerom_metadata::otp`,
 //!   finds nothing unexpected, the two must find the same board.
 //! - The firmware's board size must agree with
-//!   `onerom_metadata::otp::board_size`.
+//!   `onerom_metadata::otp::board_size` on a board with a secondary flash chip
+//!   select. The firmware counts chip select 1 only on such a board, so on
+//!   one without it must agree with the host's size for the same OTP with
+//!   chip select 1's size cleared.
 //! - The firmware serves on a board OTP commissions as its own, and asks for
 //!   the bootloader on one OTP commissions as another.
 //!
@@ -23,8 +26,9 @@ use onerom_metadata::otp::{
 };
 use onerom_metadata::{
     OTP_BOOT_FLAGS0_FLASH_DEVINFO_ENABLE, OTP_BOOT_FLAGS0_ROW, OTP_COMMISSIONING_AREA_FIRST_ROW,
-    OTP_COMMISSIONING_AREA_LAST_ROW, OTP_FLASH_DEVINFO_ROW, OTP_KEY_NONE, OTP_PAGE_ROWS,
-    OTP_STORE_MAGIC, OTP_STORE_VERSION, OneromBoardSize, OneromOtpKey,
+    OTP_COMMISSIONING_AREA_LAST_ROW, OTP_FLASH_DEVINFO_CS1_SIZE_SHIFT, OTP_FLASH_DEVINFO_ROW,
+    OTP_FLASH_DEVINFO_SIZE_BITS, OTP_KEY_NONE, OTP_PAGE_ROWS, OTP_STORE_MAGIC, OTP_STORE_VERSION,
+    OneromBoardSize, OneromOtpKey,
 };
 use rand::{RngExt, SeedableRng, rngs::StdRng};
 
@@ -61,7 +65,7 @@ const MANUFACTURERS: [&str; 3] = [
 /// `serves` is set.
 pub fn run(board: Board, serves: bool, report: &mut TestReport) {
     report.add_check("commissioning: firmware reader", check_reader());
-    report.add_check("commissioning: board size", check_board_size());
+    report.add_check("commissioning: board size", check_board_size(board));
     if serves {
         report.add_check(
             "commissioning: serves on its own board",
@@ -305,7 +309,13 @@ fn random_row(rng: &mut StdRng) -> u16 {
 
 // ── The board size ────────────────────────────────────────────────────────────
 
-fn check_board_size() -> Result<(), String> {
+fn check_board_size(board: Board) -> Result<(), String> {
+    // The FLASH_DEVINFO bits the firmware ignores on this board.
+    let ignored = if board.external_flash_cs_pin().is_some() {
+        0
+    } else {
+        OTP_FLASH_DEVINFO_SIZE_BITS << OTP_FLASH_DEVINFO_CS1_SIZE_SHIFT
+    };
     let mut rng = StdRng::seed_from_u64(SEED);
     for case in 0..SIZE_CASES {
         let boot_flags0: [u32; 3] = core::array::from_fn(|_| match rng.random_range(0..3) {
@@ -322,7 +332,7 @@ fn check_board_size() -> Result<(), String> {
         Emulator::set_otp_raw(OTP_BOOT_FLAGS0_ROW, &boot_flags0);
         Emulator::set_otp_ecc(OTP_FLASH_DEVINFO_ROW, &[devinfo]);
         let firmware = Emulator::otp_board_size();
-        let host = board_size(boot_flags0, devinfo) as u8;
+        let host = board_size(boot_flags0, devinfo & !ignored) as u8;
         if firmware != host {
             return Err(format!(
                 "case {case}: BOOT_FLAGS0 {boot_flags0:x?} and FLASH_DEVINFO {devinfo:#06x}: \
@@ -343,10 +353,17 @@ fn check_own_board(board: Board) -> Result<(), String> {
     if !emulator.pios_enabled() {
         return Err("PIO state machines not enabled after boot".into());
     }
+    // The OTP is an L board's, and chip select 1 counts only on a board with a
+    // secondary flash chip select.
+    let expected = if board.external_flash_cs_pin().is_some() {
+        OneromBoardSize::BoardSizeL
+    } else {
+        OneromBoardSize::BoardSizeM
+    };
     let size = emulator.board_size();
-    if size != OneromBoardSize::BoardSizeL as u8 {
+    if size != expected as u8 {
         return Err(format!(
-            "the firmware recorded board size {size:#04x}, not L"
+            "the firmware recorded board size {size:#04x}, not {expected}"
         ));
     }
     Ok(())

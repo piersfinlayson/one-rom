@@ -272,6 +272,29 @@ void set_firmware_states(uint32_t states) {
 #endif // REAL_HARDWARE
 }
 
+// Returns 1 if `size` bytes from `addr` fit on a `chip_size` byte chip at
+// `base`.  An address below `base` wraps to a large offset and fails.
+static uint8_t on_flash_chip(
+    uint32_t addr,
+    uint32_t size,
+    uint32_t base,
+    uint32_t chip_size
+) {
+    uint32_t offset = addr - base;
+    return (offset < chip_size) && (size <= chip_size - offset);
+}
+
+// Returns 1 if the whole of a ROM slot lies on one flash chip.
+uint8_t rom_slot_in_flash(const onerom_rom_slot_t *slot) {
+    onerom_flash_size_t cs0;
+    onerom_flash_size_t cs1;
+    otp_flash_sizes(&cs0, &cs1);
+
+    uint32_t addr = rom_slot_flash_addr(slot);
+    return on_flash_chip(addr, slot->size, FLASH_CS0_BASE_ADDR, flash_size_bytes(cs0))
+        || on_flash_chip(addr, slot->size, FLASH_CS1_BASE_ADDR, flash_size_bytes(cs1));
+}
+
 #if REAL_HARDWARE
 
 void preload_rom_image(void) {
@@ -289,6 +312,13 @@ void preload_rom_image(void) {
     if (img_src == (uint32_t *)0xFFFFFFFF) {
         LOG("No RAM image");
         set_firmware_states(FIRMWARE_STATE_ROM_LOADED);
+        return;
+    }
+
+    if (!rom_slot_in_flash(slot)) {
+        ERR("ROM slot %d at 0x%08lX outside flash", RUNTIME->rom_slot_index,
+            (unsigned long)rom_slot_flash_addr(slot));
+        limp_mode(LIMP_MODE_INVALID_CONFIG);
         return;
     }
 
@@ -329,6 +359,13 @@ void preload_rom_image(void) {
     if (img_src == (uint64_t *)0xFFFFFFFF) {
         LOG("No RAM image");
         set_firmware_states(FIRMWARE_STATE_ROM_LOADED);
+        return;
+    }
+
+    if (!rom_slot_in_flash(slot)) {
+        ERR("ROM slot %d at 0x%08lX outside flash", RUNTIME->rom_slot_index,
+            (unsigned long)rom_slot_flash_addr(slot));
+        limp_mode(LIMP_MODE_INVALID_CONFIG);
         return;
     }
 

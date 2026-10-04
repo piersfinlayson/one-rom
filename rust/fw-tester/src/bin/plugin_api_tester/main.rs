@@ -229,6 +229,10 @@ fn run_slot(
         tests::info::test_metadata_uint(&emulator, config, board),
     );
     report.add(
+        "metadata_flash_sizes",
+        tests::info::test_metadata_flash_sizes(&emulator, board),
+    );
+    report.add(
         "metadata_uint_at",
         tests::info::test_metadata_uint_at(&emulator, config, board, fw_version, base_dir),
     );

@@ -333,7 +333,7 @@ pb_status_t app_picoboot_write_prepare(
     }
 
     if (addr < FLASH_PROTECTED_END &&
-        (addr + size) > RP2350_FLASH_BASE) {
+        (addr + size) > ORA_FLASH_CS0_BASE_ADDR) {
         LOG("write_prepare: address in protected flash region: addr=0x%08lx size=%lu",
             (unsigned long)addr, (unsigned long)size);
         return PB_STATUS_NOT_PERMITTED;
@@ -374,7 +374,7 @@ pb_status_t app_picoboot_flash_erase_prepare(
 
 #if 0
     if (args->addr < FLASH_PROTECTED_END &&
-        (args->addr + args->size) > RP2350_FLASH_BASE) {
+        (args->addr + args->size) > ORA_FLASH_CS0_BASE_ADDR) {
         ERR("flash_erase_prepare: address in protected flash region: addr=0x%08x size=%u", args->addr, args->size);
         return PB_STATUS_NOT_PERMITTED;
     }

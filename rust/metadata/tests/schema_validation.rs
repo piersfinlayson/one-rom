@@ -1191,6 +1191,93 @@ fn a_linker_constant_holding_text_is_refused() {
 }
 
 // ===========================================================================
+// The metadata region
+// ===========================================================================
+
+/// The constants describing a metadata region, as name, type and value.
+const REGION: [(&str, &str, u32); 3] = [
+    ("FLASH_CS0_BASE_ADDR", "u32", 0x1000_0000),
+    ("METADATA_OFFSET", "u32", 0xC000),
+    ("METADATA_SIZE", "usize", 0x4000),
+];
+
+/// The fixture with `constants` declared.
+fn with_region(constants: &[(&str, &str, u32)]) -> String {
+    let extra: String = constants
+        .iter()
+        .map(|(name, type_, value)| {
+            format!("\n[[constants]]\nname = \"{name}\"\ntype = \"{type_}\"\nvalue = {value}\n")
+        })
+        .collect();
+    schema_toml("", &extra)
+}
+
+#[test]
+fn a_metadata_region_is_accepted() {
+    accepted(&with_region(&REGION));
+}
+
+/// The generated Rust adds the offset to the base address.
+#[test]
+fn a_metadata_region_without_the_base_address_is_refused() {
+    refused(&with_region(&REGION[1..]), "FLASH_CS0_BASE_ADDR");
+}
+
+/// Without the size a schema would lose its metadata region and nothing would
+/// report it.
+#[test]
+fn a_metadata_offset_without_a_size_is_refused() {
+    refused(&with_region(&REGION[..2]), "METADATA_SIZE");
+}
+
+/// Hosts size their buffers from the region's size, so it is a `usize`.
+#[test]
+fn a_metadata_size_of_another_type_is_refused() {
+    refused(
+        &with_region(&[REGION[0], REGION[1], ("METADATA_SIZE", "u32", 0x4000)]),
+        "METADATA_SIZE",
+    );
+}
+
+/// The format 1 keys, as the fixture's `[schema]` table writes them.
+const FORMAT_1_KEYS: [&str; 3] = [
+    "flash_base = 0x10000000\n",
+    "metadata_base = 0x1000C000\n",
+    "metadata_size = 16384\n",
+];
+
+/// The fixture with a metadata region, made format 2, holding only the format
+/// 1 key `kept`, if any.
+fn format_2(kept: Option<&str>) -> String {
+    let toml = with_region(&REGION);
+    assert!(
+        toml.contains("format_version = 1\n"),
+        "the fixture is no longer format 1"
+    );
+    let mut toml = toml.replace("format_version = 1\n", "format_version = 2\n");
+    for key in FORMAT_1_KEYS.iter().filter(|&&key| Some(key) != kept) {
+        assert!(toml.contains(key), "the fixture no longer contains {key}");
+        toml = toml.replace(key, "");
+    }
+    toml
+}
+
+#[test]
+fn a_format_2_file_without_format_1_keys_is_accepted() {
+    accepted(&format_2(None));
+}
+
+/// Nothing reads a format 1 key, so one left in a format 2 file would look
+/// meaningful and do nothing.
+#[test]
+fn a_format_1_key_in_a_format_2_file_is_refused() {
+    for key in FORMAT_1_KEYS {
+        let name = key.split(' ').next().expect("a key has a name");
+        refused(&format_2(Some(key)), name);
+    }
+}
+
+// ===========================================================================
 // Plugin-facing metadata keys
 // ===========================================================================
 
@@ -1218,6 +1305,41 @@ fn a_plugin_key_release_that_is_not_a_version_is_refused() {
     refused(
         &keyed("name = \"BOARD_ID\", id = 1, first_release = \"v0.8.0\""),
         "first_release on plugin key BOARD_ID is 'v0.8.0'",
+    );
+}
+
+/// A `[[plugin_keys]]` entry for FLASH_SIZE, a key with no stored field, with
+/// `id` and `type_`.
+fn unstored_key(id: u32, type_: &str) -> String {
+    format!(
+        "\n[[plugin_keys]]\nname = \"FLASH_SIZE\"\nid = {id}\nfirst_release = \"0.8.0\"\n\
+         type = \"{type_}\"\ncomment = \"Flash size.\""
+    )
+}
+
+#[test]
+fn a_plugin_key_without_a_field_is_accepted() {
+    accepted(&schema_toml("", &unstored_key(1, "u8")));
+}
+
+/// A key with no field shares the one id space with every other key.
+#[test]
+fn a_plugin_key_without_a_field_sharing_an_id_is_refused() {
+    refused(
+        &schema_toml(
+            "plugin_key = { name = \"BOARD_ID\", id = 1, first_release = \"0.8.0\" }",
+            &unstored_key(1, "u8"),
+        ),
+        "used by both 'BOARD_ID' and 'FLASH_SIZE'",
+    );
+}
+
+/// The firmware resolves such a key through the unsigned getter.
+#[test]
+fn a_plugin_key_without_a_field_of_another_type_is_refused() {
+    refused(
+        &schema_toml("", &unstored_key(1, "cstr")),
+        "plugin key 'FLASH_SIZE' has type 'cstr', which is not u8, u16, u32 or an enum",
     );
 }
 

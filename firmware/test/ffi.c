@@ -79,6 +79,87 @@ void ffi_set_metadata_generation(uint32_t generation) {
     *(uint32_t *)(uintptr_t)&_metadata_start.version = generation;
 }
 
+// See ffi.h.
+uint32_t ffi_rom_slot_flash_addr(uint8_t index) {
+    assert(index < METADATA->rom_slot_count);
+    return host_rom_slot_flash_addrs[index];
+}
+
+void ffi_set_rom_slot_flash_addr(uint8_t index, uint32_t addr) {
+    assert(index < METADATA->rom_slot_count);
+    host_rom_slot_flash_addrs[index] = addr;
+}
+
+uint32_t ffi_rom_slot_size(uint8_t index) {
+    assert(index < METADATA->rom_slot_count);
+    return ROM_SLOTS[index].size;
+}
+
+uint8_t ffi_rom_slot_in_flash(uint8_t index) {
+    assert(index < METADATA->rom_slot_count);
+    return rom_slot_in_flash(&ROM_SLOTS[index]);
+}
+
+uint8_t ffi_check_plugin_valid(
+    uint8_t index,
+    ora_plugin_type_t expected_type,
+    uint8_t plugin_index
+) {
+    assert(index < METADATA->rom_slot_count);
+    return check_plugin_valid(&ROM_SLOTS[index], expected_type, plugin_index);
+}
+
+// See ffi.h.
+static ora_plugin_header_t plugin_headers[2];
+
+static const onerom_rom_slot_t plugin_slots[2] = {
+    {
+        .data = (const uint8_t *)&plugin_headers[0],
+        .size = SYSTEM_PLUGIN_SIZE,
+        .slot_type = ROM_SLOT_TYPE_PLUGIN_SYSTEM,
+    },
+    {
+        .data = (const uint8_t *)&plugin_headers[1],
+        .size = USER_PLUGIN_SIZE,
+        .slot_type = ROM_SLOT_TYPE_PLUGIN_USER,
+    },
+};
+
+static const onerom_rom_slot_t *metadata_rom_slots;
+static uint8_t metadata_rom_slot_count;
+
+void ffi_install_plugin_slots(void) {
+    assert(METADATA->rom_slot_count >= 2);
+    metadata_rom_slots = _metadata_start.rom_slots;
+    metadata_rom_slot_count = _metadata_start.rom_slot_count;
+    _metadata_start.rom_slots = plugin_slots;
+    *(uint8_t *)(uintptr_t)&_metadata_start.rom_slot_count = 2;
+}
+
+void ffi_restore_rom_slots(void) {
+    _metadata_start.rom_slots = metadata_rom_slots;
+    *(uint8_t *)(uintptr_t)&_metadata_start.rom_slot_count =
+        metadata_rom_slot_count;
+}
+
+void ffi_set_plugin_header(
+    uint8_t index,
+    uint32_t entry,
+    uint8_t overrides1,
+    uint8_t properties1
+) {
+    assert(index < 2);
+    ora_plugin_header_t *header = &plugin_headers[index];
+    memset(header, 0, sizeof(*header));
+    header->magic = ORA_PLUGIN_MAGIC;
+    header->api_version = ORA_PLUGIN_VERSION_1;
+    header->entry = (ora_plugin_entry_t)(uintptr_t)entry;
+    header->plugin_type =
+        (index == 0) ? ORA_PLUGIN_TYPE_SYSTEM : ORA_PLUGIN_TYPE_USER;
+    header->overrides1 = overrides1;
+    header->properties1 = properties1;
+}
+
 // See ffi.h.  base_addr_pin is an offset within the PIO's GPIOBASE window, so
 // the absolute first GPIO sampled is gpio_base + base_addr_pin.
 uint8_t ffi_serving_alg(ffi_serving_alg_t *out) {

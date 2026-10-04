@@ -16,6 +16,8 @@
 //!   record file.
 //! - [`white_label`] builds the bootloader's USB white label.
 //! - [`board_size`] reads the board size OTP configures.
+//! - [`FLASH_LAYOUTS`] lists the flash layout the tools make for each board
+//!   size.
 
 use alloc::format;
 use alloc::string::String;
@@ -23,7 +25,7 @@ use alloc::vec;
 use alloc::vec::Vec;
 use core::fmt;
 
-use onerom_config::hw::Board;
+use onerom_config::hw::{Board, BoardSize};
 use pico_otp::{WhiteLabelError, WhiteLabelStruct};
 use serde::ser::SerializeStruct;
 use sha2::{Digest, Sha256};
@@ -31,11 +33,13 @@ use sha2::{Digest, Sha256};
 use crate::{
     DeviceMemoryView, Generations, OTP_BOOT_FLAGS0_FLASH_DEVINFO_ENABLE,
     OTP_COMMISSIONING_AREA_FIRST_ROW, OTP_COMMISSIONING_AREA_LAST_ROW, OTP_COMMISSIONING_SIG_LEN,
-    OTP_COMMISSIONING_SIGNER_LEN, OTP_FLASH_DEVINFO_CS1_SIZE_SHIFT, OTP_FLASH_DEVINFO_SIZE_2MB,
-    OTP_FLASH_DEVINFO_SIZE_BITS, OTP_GENERAL_STORE_FIRST_ROW, OTP_GENERAL_STORE_TERMINATOR_ROW,
+    OTP_COMMISSIONING_SIGNER_LEN, OTP_FLASH_DEVINFO_CS0_SIZE_SHIFT,
+    OTP_FLASH_DEVINFO_CS1_SIZE_SHIFT, OTP_FLASH_DEVINFO_SIZE_BITS, OTP_FLASH_DEVINFO_SIZE_UNIT,
+    OTP_GENERAL_STORE_FIRST_ROW, OTP_GENERAL_STORE_TERMINATOR_ROW,
     OTP_GENERAL_STORE_TERMINATOR_ROW_COUNT, OTP_KEY_NONE, OTP_PAGE_ROWS, OTP_STORE_MAGIC,
-    OTP_STORE_VERSION, OneromBoardSize, OneromOtpEntry, OneromOtpKey, SerializeContext,
-    USB_BOOTLOADER_PID, USB_BOOTLOADER_VID,
+    OTP_STORE_VERSION, OneromBoardSize, OneromFlashSize, OneromOtpEntry, OneromOtpKey,
+    SerializeContext, TOTAL_FLASH_SIZE_L, TOTAL_FLASH_SIZE_M, USB_BOOTLOADER_PID,
+    USB_BOOTLOADER_VID,
 };
 
 pub use pico_otp;
@@ -921,25 +925,105 @@ fn signed_message(chip_id: [u16; 4], rows: impl Iterator<Item = u16>) -> Vec<u8>
 // Board size
 // ---------------------------------------------------------------------------
 
-/// The board size OTP configures, read as the bootrom reads it:
-/// - M where most of BOOT_FLAGS0's three copies leave FLASH_DEVINFO_ENABLE
-///   clear
-/// - otherwise from chip select 1's size in FLASH_DEVINFO: M for no chip, L
-///   for 2MB and [`OneromBoardSize::BoardSizeOther`] for anything else
+/// The board size OTP configures, from the total size of its flash chips:
+/// - Where most of BOOT_FLAGS0's three copies leave FLASH_DEVINFO_ENABLE
+///   clear, chip select 0 has 2MB and chip select 1 has no chip. The bootrom
+///   assumes 16MB on chip select 0 instead.
+/// - Otherwise FLASH_DEVINFO holds each chip's size, and a size code above
+///   [`OneromFlashSize::FlashSize16mb`] counts as no chip.
+/// - [`TOTAL_FLASH_SIZE_M`] in total is M, [`TOTAL_FLASH_SIZE_L`] is L and
+///   anything else is [`OneromBoardSize::BoardSizeOther`].
 ///
 /// `boot_flags0` holds BOOT_FLAGS0 and its two copies read raw, and
-/// `flash_devinfo` is FLASH_DEVINFO read with ECC. The firmware decides the
-/// same way at boot.
+/// `flash_devinfo` is FLASH_DEVINFO read with ECC.
+///
+/// The firmware applies the same rule at boot, except that it counts chip
+/// select 1 only where the board's `gpio_ext_flash_cs` is set. OTP doesn't
+/// record that, so this counts chip select 1 on every board. The two differ
+/// only on a board whose `gpio_ext_flash_cs` is [`GPIO_NONE`](crate::GPIO_NONE),
+/// with FLASH_DEVINFO enabled and a chip on chip select 1.
 pub fn board_size(boot_flags0: [u32; 3], flash_devinfo: u16) -> OneromBoardSize {
     let [a, b, c] = boot_flags0;
     let majority = (a & b) | (a & c) | (b & c);
     if majority & OTP_BOOT_FLAGS0_FLASH_DEVINFO_ENABLE == 0 {
         return OneromBoardSize::BoardSizeM;
     }
-    match (flash_devinfo >> OTP_FLASH_DEVINFO_CS1_SIZE_SHIFT) & OTP_FLASH_DEVINFO_SIZE_BITS {
-        0 => OneromBoardSize::BoardSizeM,
-        OTP_FLASH_DEVINFO_SIZE_2MB => OneromBoardSize::BoardSizeL,
-        _ => OneromBoardSize::BoardSizeOther,
+    let layout = FlashLayout {
+        cs0: devinfo_flash_size(flash_devinfo, OTP_FLASH_DEVINFO_CS0_SIZE_SHIFT),
+        cs1: devinfo_flash_size(flash_devinfo, OTP_FLASH_DEVINFO_CS1_SIZE_SHIFT),
+    };
+    match layout.board_size() {
+        Some(BoardSize::M) => OneromBoardSize::BoardSizeM,
+        Some(BoardSize::L) => OneromBoardSize::BoardSizeL,
+        None => OneromBoardSize::BoardSizeOther,
+    }
+}
+
+/// The chip in FLASH_DEVINFO's size field at `shift`. A code above
+/// [`OneromFlashSize::FlashSize16mb`] counts as no chip.
+fn devinfo_flash_size(flash_devinfo: u16, shift: u16) -> OneromFlashSize {
+    let code = (flash_devinfo >> shift) & OTP_FLASH_DEVINFO_SIZE_BITS;
+    OneromFlashSize::try_from(code as u8).unwrap_or(OneromFlashSize::FlashSizeNone)
+}
+
+/// The flash chip on each chip select.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FlashLayout {
+    /// The chip on chip select 0.
+    pub cs0: OneromFlashSize,
+    /// The chip on chip select 1.
+    pub cs1: OneromFlashSize,
+}
+
+/// The flash layout the tools make for each board size. The chip on chip
+/// select 0 is at least
+/// [`MIN_FLASH_CS0_SIZE`](crate::MIN_FLASH_CS0_SIZE).
+pub const FLASH_LAYOUTS: &[(BoardSize, FlashLayout)] = &[
+    (
+        BoardSize::M,
+        FlashLayout {
+            cs0: OneromFlashSize::FlashSize2mb,
+            cs1: OneromFlashSize::FlashSizeNone,
+        },
+    ),
+    (
+        BoardSize::L,
+        FlashLayout {
+            cs0: OneromFlashSize::FlashSize2mb,
+            cs1: OneromFlashSize::FlashSize2mb,
+        },
+    ),
+];
+
+impl FlashLayout {
+    /// The layout the tools make for a `size` board, from [`FLASH_LAYOUTS`].
+    pub fn of(size: BoardSize) -> Self {
+        FLASH_LAYOUTS
+            .iter()
+            .find(|&&(row_size, _)| row_size == size)
+            .map(|&(_, layout)| layout)
+            .expect("FLASH_LAYOUTS has a row for every board size")
+    }
+
+    /// The size of a board with this layout, from its total flash.
+    /// [`TOTAL_FLASH_SIZE_M`] is M, [`TOTAL_FLASH_SIZE_L`] is L and `None` is
+    /// any other total.
+    pub fn board_size(&self) -> Option<BoardSize> {
+        match flash_size_bytes(self.cs0) + flash_size_bytes(self.cs1) {
+            TOTAL_FLASH_SIZE_M => Some(BoardSize::M),
+            TOTAL_FLASH_SIZE_L => Some(BoardSize::L),
+            _ => None,
+        }
+    }
+}
+
+/// The bytes of flash in a chip of `size`. It's 0 for
+/// [`OneromFlashSize::FlashSizeNone`].
+pub fn flash_size_bytes(size: OneromFlashSize) -> usize {
+    if size == OneromFlashSize::FlashSizeNone {
+        0
+    } else {
+        (OTP_FLASH_DEVINFO_SIZE_UNIT as usize) << size as u8
     }
 }
 
