@@ -9,7 +9,7 @@ use log::{debug, error, info, trace, warn};
 use std::time::Duration;
 
 use onerom_cli::CliFetch;
-use onerom_cli::plugin::{PluginNote, check_config_plugins};
+use onerom_cli::plugin::{PluginNote, check_config_plugins, resolve_config_plugins};
 use onerom_config::fw::FirmwareVersion;
 use onerom_config::hw::Board;
 use onerom_config::mcu::Variant as McuVariant;
@@ -688,6 +688,24 @@ impl Studio {
             }
         };
 
+        match resolve_config_plugins(&mut builder, &fw_ver, &CliFetch).await {
+            Ok(plugins) => {
+                for plugin in plugins {
+                    debug!(
+                        "Resolved plugin: {}/{} v{} ({})",
+                        plugin.plugin_type.short(),
+                        plugin.name,
+                        plugin.version,
+                        plugin.file()
+                    );
+                }
+            }
+            Err(e) => {
+                warn!("Failed to resolve plugin: {e}");
+                return CreateMessage::BuildImageResult(Err(e.to_string())).into();
+            }
+        }
+
         // Get ROM files we need to download.  Cache them so that if we're asked to download the
         // same file again (for example zip with multiple extracts) we don't redownload it.
         //
@@ -700,11 +718,10 @@ impl Studio {
             }
         }
 
-        // A config may name a plugin, which reaches the image without ever
-        // having been selected against the images server's manifest.  The
-        // binary header declares only a minimum firmware version, so a plugin
-        // withdrawn for a *newer* firmware - which hard faults the device on
-        // boot - is caught only here.
+        // A plugin referred to by URL hasn't been checked against the images
+        // server's manifest. Its binary header contains only a minimum firmware
+        // version, so a plugin withdrawn for a newer firmware, which hard faults
+        // the device, is caught only here.
         match check_config_plugins(&builder, &fw_ver, &CliFetch).await {
             Ok(notes) => {
                 for note in notes {

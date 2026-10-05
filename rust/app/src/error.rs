@@ -144,6 +144,17 @@ pub enum PluginError {
     #[error("plugin '{0}' type mismatch: manifest says {1}, binary header says {2}")]
     TypeMismatch(String, PluginType, PluginType),
 
+    /// A config's chip for one type of plugin has a plugin of the other type.
+    #[error("'{name}' is a {plugin_type} plugin but is configured as the {configured} plugin")]
+    WrongChipType {
+        /// Plugin name.
+        name: String,
+        /// The plugin's published type.
+        plugin_type: PluginType,
+        /// The plugin type of the config's chip.
+        configured: PluginType,
+    },
+
     /// A plugin's version in the manifest did not match the version declared in
     /// its binary header. The fields are the plugin name, the manifest version,
     /// and the header version.

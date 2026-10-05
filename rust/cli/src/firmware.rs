@@ -32,11 +32,12 @@ use crate::utils::{check_fire_board, resolve_board, resolve_firmware_output};
 use onerom_cli::error::image_file_warning;
 use onerom_cli::image::parse_firmware;
 use onerom_cli::plugin::{
-    PluginNote, PluginSpec, ResolvedPlugin, check_config_plugins, resolve_plugins,
+    PluginNote, PluginSpec, ResolvedPlugin, check_config_plugins, resolve_config_plugins,
+    resolve_plugins,
 };
 use onerom_cli::slot::{
     ConfirmationsRequired, GlobalConfig, check_slot_chip_types, check_slot_confirmations,
-    inject_plugins_into_config, parse_slots, save_config, slots_to_config_json,
+    inject_plugins_into_config, parse_slots, save_config, saved_config_json, slots_to_config_json,
 };
 use onerom_cli::{Error, Options};
 
@@ -343,11 +344,13 @@ pub async fn build_rom_image(
             .map_err(onerom_fw::Error::license)?;
     }
 
-    // The last point at which nothing has been fetched: the config is fully
-    // resolved, and the ROM images it names have not been downloaded. A caller
-    // with a reason to refuse this build gets to do it here, rather than after
-    // the user has waited for every ROM.
+    // Before any ROM image or plugin referred to by name is downloaded.
     before_fetch(builder.config())?;
+
+    let plugins = resolve_config_plugins(&mut builder, &version, &onerom_cli::CliFetch).await?;
+    if options.verbose {
+        print_resolved_plugins(&plugins);
+    }
 
     get_rom_files_async(&mut builder).await?;
 
@@ -355,10 +358,8 @@ pub async fn build_rom_image(
     // round is reported before the user waits for a build.
     onerom_cli::byte_order::report_slots(&builder, options.verbose);
 
-    // A plugin named by the config has not been through the manifest, so its
-    // compatibility window is checked here.  Plugins named with --plugin were
-    // selected against the manifest already; re-checking them is harmless and
-    // keeps this independent of how the plugin arrived.
+    // A plugin referred to by URL hasn't been checked against the manifest.
+    // The others have, and checking them again is harmless.
     report_plugin_checks(
         options,
         check_config_plugins(&builder, &version, &onerom_cli::CliFetch).await?,
@@ -439,6 +440,18 @@ pub(crate) fn unselectable_slots(
         ),
     };
     Some(format!("{which} be selected by jumpers. {why}"))
+}
+
+fn print_resolved_plugins(plugins: &[ResolvedPlugin]) {
+    for plugin in plugins {
+        println!(
+            "Resolved plugin: {}/{} v{} ({})",
+            plugin.plugin_type.short(),
+            plugin.name,
+            plugin.version,
+            plugin.file(),
+        );
+    }
 }
 
 /// Report the non-fatal outcomes of checking the plugins a config named.
@@ -546,22 +559,10 @@ pub async fn cmd_build(
         ));
     }
 
-    let plugins = resolve_plugins(
-        &parse_plugin_specs(&args.plugin)?,
-        &version,
-        &onerom_cli::CliFetch,
-    )
-    .await?;
+    let specs = parse_plugin_specs(&args.plugin)?;
+    let plugins = resolve_plugins(&specs, &version, &onerom_cli::CliFetch).await?;
     if options.verbose {
-        for plugin in &plugins {
-            println!(
-                "Resolved plugin: {}/{} v{} ({})",
-                plugin.plugin_type.short(),
-                plugin.name,
-                plugin.version,
-                plugin.file(),
-            );
-        }
+        print_resolved_plugins(&plugins);
     }
 
     let global_config = if args.no_config {
@@ -589,7 +590,7 @@ pub async fn cmd_build(
     )?;
 
     if let Some(path) = &args.save_config {
-        save_config(path, &config_json)?;
+        save_config(path, &saved_config_json(&config_json, &specs, &plugins)?)?;
         if options.verbose {
             println!("Saved ROM configuration to {path}");
         }

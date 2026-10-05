@@ -448,9 +448,10 @@ specification](#plugin-specification).
 ### Plugin compatibility
 
 Every plugin going into an image is checked against the compatibility window
-published on the images server, whether it arrived via `--plugin` or was named
-by the config's own slots. A plugin the target firmware falls outside the
-window of is refused, and no image is written or flashed:
+published on the images server, whether it arrived via `--plugin` or the
+a config file.
+
+An incompatible plugin version is refused:
 
 ```
 $ onerom firmware build --config usb-0.1.2.json --board fire-24-a --output fw.bin
@@ -459,16 +460,6 @@ Plugin 'usb' version '0.1.2' is not compatible with firmware 0.7.0 or later.
   The selected firmware version is 0.7.1.
   Plugin version 0.2.1 supports it: https://images.onerom.org/plugins/system/usb/v0.2.1/plugin.bin
 ```
-
-The last line names the newest release that does support the firmware being
-built for, and the URL to point the config's plugin slot at. If no release of
-that plugin supports it, the message says so instead. A pinned `--plugin
-usb,version=0.1.2` is refused the same way, with the same suggestion.
-
-The check is worth having because a plugin binary declares only the *minimum*
-firmware it needs. A release withdrawn for some *newer* firmware — One ROM USB
-v0.1.2, which hard faults on firmware v0.7.0 — is recorded only in the manifest,
-so this is the one place it can be caught before the device stops booting.
 
 `--verbose` reports a plugin that passed:
 
@@ -848,7 +839,7 @@ onerom program --config c64.json --out firmware.bin
 | `--plugin <SPEC>` | Plugin specification; repeatable. See [Plugin specification](#plugin-specification). May be combined with `--config`: the plugins are inserted ahead of the config's ROM slots (which shift up), and it is an error if the config already defines a plugin of its own. Conflicts with `--firmware`. |
 | `--config-name <NAME>` | Name for the generated ROM configuration. Conflicts with `--config`. |
 | `--config-description <DESC>` (aliases `--desc`, `--description`) | Description for the generated configuration. Defaults to *"Created by the One ROM CLI"*. Conflicts with `--config`. |
-| `--save-config <FILE>` | Save the generated configuration to JSON. Only valid with `--slot` or `--no-config`. Conflicts with `--config`. |
+| `--save-config <FILE>` | Save the generated configuration to JSON. Only valid with `--slot` or `--no-config`. Conflicts with `--config`. `--plugin usb` is saved as `"plugin": "usb"`. |
 
 ### Per-device overrides
 

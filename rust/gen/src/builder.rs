@@ -316,6 +316,44 @@ impl Builder {
         accept_license(self.licenses_mut(), license)
     }
 
+    /// Set the file of the chip at `chip_index` to `file` and clear its
+    /// [`plugin`](ChipConfig::plugin).
+    ///
+    /// `chip_index` is as in [`Builder::chip_data`]. Fails if that chip doesn't
+    /// have a plugin.
+    pub fn set_plugin_file(&mut self, chip_index: usize, file: String) -> Result<()> {
+        // Files already added keep their ids. The plugin's file id is that of
+        // a chip with the same file, or the next unused id.
+        let file_id = self
+            .config
+            .chip_sets
+            .iter()
+            .flat_map(|set| set.chips.iter())
+            .enumerate()
+            .find(|(_, chip)| chip.file == file && chip.extract.is_none())
+            .and_then(|(index, _)| self.file_id_map.get(&index).copied())
+            .unwrap_or_else(|| self.total_file_count());
+
+        let chip = self
+            .config
+            .chip_sets
+            .iter_mut()
+            .flat_map(|set| set.chips.iter_mut())
+            .nth(chip_index)
+            .filter(|chip| chip.plugin.is_some())
+            .ok_or_else(|| Error::InvalidConfig {
+                error: format!(
+                    "Can't set the plugin file for chip {chip_index} because the config \
+                     doesn't refer to a plugin by name for it."
+                ),
+            })?;
+        chip.file = file;
+        chip.plugin = None;
+        self.file_id_map.insert(chip_index, file_id);
+
+        Ok(())
+    }
+
     /// Add a file to be included in the build
     pub fn add_file(&mut self, file: FileData) -> Result<()> {
         add_file(&mut self.files, file, &self.file_id_map)
@@ -352,6 +390,7 @@ impl Builder {
 
     /// Check that the config can be built
     pub fn build_validation(&self, props: &FirmwareProperties) -> Result<()> {
+        check_plugins_set(&self.config)?;
         check_all_files_loaded(&self.files, self.total_file_count())?;
         check_all_licenses_validated(&self.licenses)?;
         validate_plugins(&self.config, &self.files, &self.file_id_map, props)?;
@@ -868,8 +907,13 @@ pub(crate) fn check_chip_sets(
                 });
             }
 
+            if chip.plugin.is_some() {
+                check_named_plugin(chip, chip_num)?;
+            }
+
             // Check filename specified for ROMs
             if chip.file.is_empty()
+                && chip.plugin.is_none()
                 && chip.chip_type.resolved().chip_function()
                     != onerom_config::chip::ChipFunction::Ram
             {
@@ -944,6 +988,43 @@ pub(crate) fn check_chip_sets(
     }
 
     Ok(num_non_plugin_slots)
+}
+
+// A published release is the whole image, so nothing that locates or
+// reshapes a file applies.
+fn check_named_plugin(chip: &ChipConfig, chip_num: usize) -> Result<()> {
+    if !matches!(
+        chip.chip_type.resolved(),
+        ChipType::SystemPlugin | ChipType::UserPlugin
+    ) {
+        return Err(Error::InvalidConfig {
+            error: format!(
+                "Chip {chip_num} can't be both a {} and a plugin",
+                chip.chip_type.raw()
+            ),
+        });
+    }
+
+    let conflict = if !chip.file.is_empty() {
+        Some("file")
+    } else if chip.extract.is_some() {
+        Some("extract")
+    } else if chip.location.is_some() {
+        Some("location")
+    } else if !chip.format.is_binary() {
+        Some("format")
+    } else if !chip.transform.is_empty() {
+        Some("transform")
+    } else {
+        None
+    };
+    if let Some(field) = conflict {
+        return Err(Error::InvalidConfig {
+            error: format!("Chip {chip_num} has both plugin and {field}"),
+        });
+    }
+
+    Ok(())
 }
 
 /// V1 CS validation — validates cs1/cs2/cs3 for all chip sets.
@@ -2053,6 +2134,24 @@ pub(crate) fn check_all_licenses_validated(licenses: &BTreeMap<usize, License>) 
         }
     }
     Ok(())
+}
+
+// Before validate_plugins, which panics on a plugin chip without a file.
+fn check_plugins_set(config: &Config) -> Result<()> {
+    let unset = config
+        .chip_sets
+        .iter()
+        .flat_map(|set| set.chips.iter())
+        .find_map(|chip| chip.plugin.as_ref());
+    match unset {
+        Some(name) => Err(Error::InvalidConfig {
+            error: format!(
+                "Plugin '{name}' is referred to by name, which this tool doesn't support. \
+                 Use the plugin's URL."
+            ),
+        }),
+        None => Ok(()),
+    }
 }
 
 pub(crate) fn validate_plugins(

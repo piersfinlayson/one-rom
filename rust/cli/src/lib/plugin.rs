@@ -49,6 +49,8 @@ pub use onerom_app::{
     newest_compatible,
     parse_plugins,
     plugin_to_chip_set_config,
+    // Resolve the plugins a config refers to by name (delegates fetching).
+    resolve_config_plugins,
     // Resolve a device plugin slot to a PluginDisplay (delegates fetching).
     resolve_plugin_display,
     resolve_plugins,

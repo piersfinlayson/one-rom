@@ -48,7 +48,7 @@ use core::fmt;
 
 use onerom_config::chip::ChipType as OraChipType;
 use onerom_config::fw::FirmwareVersion;
-use onerom_gen::{Builder, ChipConfig, ChipSetConfig, ChipSetType, SizeHandling};
+use onerom_gen::{Builder, ChipConfig, ChipSetConfig, ChipSetType, ChipTypeSpec, SizeHandling};
 use onerom_metadata::{SYSTEM_PLUGIN_SIZE, USER_PLUGIN_SIZE};
 use serde::{Deserialize, Serialize};
 
@@ -1231,7 +1231,8 @@ pub fn plugin_to_chip_set_config(
 
     // A plugin is always a raw binary image with no chip selects, so
     // everything beyond the file, type and size handling stays at its default.
-    let mut chip = ChipConfig::new(file.into(), chip_type.into());
+    let chip_type = ChipTypeSpec::new(plugin_type.canonical().into(), chip_type);
+    let mut chip = ChipConfig::new(file.into(), chip_type);
     chip.size_handling = size_handling;
 
     Ok(ChipSetConfig::new(ChipSetType::Single, alloc::vec![chip]))
@@ -1558,6 +1559,53 @@ fn file_stem(path: &str) -> String {
 // Checking the plugins named by a config
 // ------------------------------------------------------------
 
+/// Set the file of each chip with a [`plugin`](ChipConfig::plugin) to the
+/// latest release of that plugin compatible with `fw`, as [`resolve_plugins`]
+/// does for a bare name.
+///
+/// Call before [`Builder::file_specs`]. Fetches nothing where no chip has a
+/// plugin. A plugin in the chip for the other type of plugin fails with
+/// [`PluginError::WrongChipType`].
+pub async fn resolve_config_plugins<F: LocalFetch>(
+    builder: &mut Builder,
+    fw: &FirmwareVersion,
+    fetch: &F,
+) -> Result<Vec<ResolvedPlugin>, Error<F::Error>> {
+    // onerom-gen fails a config with a plugin on any other chip type.
+    let named: Vec<(usize, String, PluginType)> = builder
+        .config()
+        .chip_sets
+        .iter()
+        .flat_map(|set| set.chips.iter())
+        .enumerate()
+        .filter_map(|(index, chip)| {
+            let configured = plugin_type_of_chip(chip.chip_type.resolved())?;
+            Some((index, chip.plugin.clone()?, configured))
+        })
+        .collect();
+    if named.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let catalogue = fetch_catalogue(fetch).await?;
+    let mut resolved = Vec::with_capacity(named.len());
+    for (chip_index, name, configured) in named {
+        let plugin_type = catalogue
+            .plugin_by_name(&name)
+            .ok_or_else(|| PluginError::NotFound(name.clone()))?
+            .plugin_type;
+        check_chip_type(&name, plugin_type, configured)?;
+
+        let plugin = resolve_named(&name, Some(plugin_type), None, None, fw, fetch).await?;
+        builder
+            .set_plugin_file(chip_index, plugin.file())
+            .expect("chip_index is a chip with a plugin");
+        resolved.push(plugin);
+    }
+
+    Ok(resolved)
+}
+
 /// A non-fatal observation from [`check_config_plugins`].
 ///
 /// Anything that makes a plugin unusable comes back as a [`PluginError`], which
@@ -1616,7 +1664,8 @@ pub enum PluginNote<E> {
 /// [`PluginNote::Unofficial`]. For an official one the plugin's release
 /// manifest is fetched and the binary verified against the named release
 /// exactly as the `--plugin` path verifies it: SHA-256 digest, plugin type, and
-/// header-versus-manifest version.
+/// header-versus-manifest version. A plugin in the chip for the other type of
+/// plugin fails with [`PluginError::WrongChipType`].
 ///
 /// Errors are fatal and mean the image must not be built. A failure to *reach*
 /// the manifest is not one: it becomes [`PluginNote::Unchecked`] and the build
@@ -1651,12 +1700,11 @@ pub async fn check_config_plugins<F: LocalFetch>(
             continue;
         };
 
-        // The chip type is what the image will actually do with the binary, so
-        // it - not the URL - is what the header is verified against.
         let chip_type = match plugin_type_of_chip(chip.chip_type.resolved()) {
             Some(t) => t,
             None => return Err(PluginError::PioNotSupported(source.clone())),
         };
+        check_chip_type(&name, url_type, chip_type)?;
 
         // The URL's own type locates the manifest, since it is where the binary
         // demonstrably came from.
@@ -1698,7 +1746,7 @@ pub async fn check_config_plugins<F: LocalFetch>(
                 data,
                 VerifyTarget::Release {
                     release,
-                    expected_type: chip_type,
+                    expected_type: url_type,
                 },
                 source,
             )?;
@@ -1719,6 +1767,22 @@ pub async fn check_config_plugins<F: LocalFetch>(
     }
 
     Ok(notes)
+}
+
+fn check_chip_type(
+    name: &str,
+    plugin_type: PluginType,
+    configured: PluginType,
+) -> Result<(), PluginError> {
+    if plugin_type == configured {
+        Ok(())
+    } else {
+        Err(PluginError::WrongChipType {
+            name: name.into(),
+            plugin_type,
+            configured,
+        })
+    }
 }
 
 /// The [`PluginType`] a plugin chip type denotes, or `None` for a PIO plugin,
@@ -2180,6 +2244,7 @@ mod tests {
         assert_eq!(cfg.chips.len(), 1);
         let chip = &cfg.chips[0];
         assert_eq!(chip.chip_type.resolved(), OraChipType::SystemPlugin);
+        assert_eq!(chip.chip_type.raw(), "system_plugin");
         assert_eq!(chip.file, "http://x/p.bin");
         assert!(matches!(chip.size_handling, SizeHandling::Pad));
         assert!(chip.cs1.is_none() && chip.ce.is_none() && chip.oe.is_none());
@@ -2187,6 +2252,7 @@ mod tests {
 
         let user = plugin_to_chip_set_config("f", PluginType::User, PLUGIN_MAX_SIZE).unwrap();
         assert_eq!(user.chips[0].chip_type.resolved(), OraChipType::UserPlugin);
+        assert_eq!(user.chips[0].chip_type.raw(), "user_plugin");
         assert!(matches!(user.chips[0].size_handling, SizeHandling::None));
     }
 
