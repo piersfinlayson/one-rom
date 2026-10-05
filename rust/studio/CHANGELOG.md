@@ -13,6 +13,7 @@
 - Fix Detect failing after the CLI or another program used the One ROM.
 - A config can refer to a plugin by name, `"plugin": "usb"`, instead of a URL. The latest plugin release compatible with the selected firmware is used.
 - A config with a plugin in the slot for the other type of plugin fails with `'host-control' is a user plugin but is configured as the system plugin`, rather than a manifest type mismatch.
+- The .deb supports glibc 2.35 and later.
 
 ## v0.2.3 - 2026-09-17
 

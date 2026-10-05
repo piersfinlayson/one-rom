@@ -27,6 +27,7 @@
 - `--save-config` saves `--plugin usb` as `"plugin": "usb"`.
 - A config with a plugin in the slot for the other type of plugin fails with `'host-control' is a user plugin but is configured as the system plugin`, rather than a manifest type mismatch.
 - `--save-config` writes a `--plugin` plugin's type as `system_plugin` or `user_plugin`, which the config schema accepts, rather than `SystemPlugin` or `UserPlugin`. It leaves out `allow_cs_ignore`, `boot_logging`, `swd_enabled` and `turbo_boot` at their defaults.
+- The .deb supports glibc 2.35 and later.
 
 ## v0.4.1 - 2026-09-17
 
