@@ -209,7 +209,7 @@ pub struct FireConfig {
 fn is_true(v: &bool) -> bool {
     *v
 }
-fn is_false(v: &bool) -> bool {
+pub(crate) fn is_false(v: &bool) -> bool {
     !*v
 }
 

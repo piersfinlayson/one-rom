@@ -814,7 +814,11 @@ pub struct Config {
 
     /// Whether to enable One ROM firmware logging. The log can be read over
     /// USB (if the USB plugin is installed) or RTT using a debug probe.
-    #[serde(default = "default_boot_logging")]
+    #[serde(
+        default = "default_boot_logging",
+        skip_serializing_if = "is_default_boot_logging"
+    )]
+    #[cfg_attr(feature = "schemars", schemars(extend("default" = default_boot_logging())))]
     pub boot_logging: bool,
 
     /// Whether to leave SWD enabled once the One ROM starts serving.
@@ -827,12 +831,20 @@ pub struct Config {
     ///
     /// This is not a debug lockout - the boot ROM runs before the One ROM
     /// firmware does, and BOOTSEL/PICOBOOT are unaffected.
-    #[serde(default = "default_swd_enabled")]
+    #[serde(
+        default = "default_swd_enabled",
+        skip_serializing_if = "is_default_swd_enabled"
+    )]
+    #[cfg_attr(feature = "schemars", schemars(extend("default" = default_swd_enabled())))]
     pub swd_enabled: bool,
 
     /// Whether to boot fast.  Disables reading the image select jumpers.
     /// The first non-plugin image is served.
-    #[serde(default = "default_turbo_boot")]
+    #[serde(
+        default = "default_turbo_boot",
+        skip_serializing_if = "is_default_turbo_boot"
+    )]
+    #[cfg_attr(feature = "schemars", schemars(extend("default" = default_turbo_boot())))]
     pub turbo_boot: bool,
 
     /// Pins reserved for another use, for example a pin connected to a host's
@@ -938,6 +950,16 @@ pub(crate) fn default_turbo_boot() -> bool {
     false
 }
 
+fn is_default_boot_logging(v: &bool) -> bool {
+    *v == default_boot_logging()
+}
+fn is_default_swd_enabled(v: &bool) -> bool {
+    *v == default_swd_enabled()
+}
+fn is_default_turbo_boot(v: &bool) -> bool {
+    *v == default_turbo_boot()
+}
+
 #[cfg(feature = "schemars")]
 fn version_schema(_gen: &mut schemars::SchemaGenerator) -> schemars::Schema {
     schemars::json_schema!({
@@ -990,8 +1012,15 @@ pub struct ChipConfig {
     /// Filename or URL of any ROM image - filename is only valid if using a
     /// generator tool with local file access.  This is passed to the generator
     /// tool to retrieve the ROM image.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    #[cfg_attr(feature = "schemars", schemars(extend("default" = "")))]
     pub file: String,
+
+    /// Name of a published plugin to use instead of `file` on a
+    /// `system_plugin` or `user_plugin` chip.  The latest release compatible
+    /// with the firmware is used.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub plugin: Option<String>,
 
     /// Optional license URL/identifier for the ROM.  This is passed to the
     /// generator tool to retrieve and ask the user to accept before building.
@@ -1043,7 +1072,8 @@ pub struct ChipConfig {
     /// Required for chip0 in multi-ROM sets and for single-chip sets
     /// where a line needs ignoring for custom circuit reasons.
     /// Misuse can cause bus contention — only set when intentional.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "crate::firmware::is_false")]
+    #[cfg_attr(feature = "schemars", schemars(extend("default" = false)))]
     pub allow_cs_ignore: bool,
 
     /// Optional size handling configuration for this Chip.  Used to specify
@@ -1102,10 +1132,12 @@ impl ChipConfig {
     /// literal) is how callers outside this crate build one; assign the
     /// optional fields afterwards.  `file` and `chip_type` are the two
     /// settings with no meaningful default: a chip has to have a type, and
-    /// only a RAM chip may lack an image.
+    /// only a RAM chip or a chip with a [`plugin`](Self::plugin) may lack an
+    /// image.
     pub fn new(file: String, chip_type: ChipTypeSpec) -> Self {
         Self {
             file,
+            plugin: None,
             license: None,
             description: None,
             chip_type,

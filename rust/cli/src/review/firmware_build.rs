@@ -60,10 +60,13 @@ impl Files {
     pub(super) fn words(&self, line: &str) -> Vec<String> {
         line.split_whitespace()
             .map(|word| match word {
-                "base.bin" | "sets.json" | "out.bin" => {
+                "base.bin" | "sets.json" | "out.bin" | "saved.json" => {
                     self.dir.path().join(word).display().to_string()
                 }
-                word => word.to_string(),
+                word => match word.strip_prefix("file=") {
+                    Some(slot) => format!("file={}", self.dir.path().join(slot).display()),
+                    None => word.to_string(),
+                },
             })
             .collect()
     }
@@ -272,5 +275,113 @@ async fn a_banked_set_with_x1_reserved() {
     println!();
     let files = Files::with_2364(8, &["single"], &[]);
     let line = "onerom firmware build --board fire-24-a --config sets.json --base-firmware base.bin --output out.bin --reserve-pin x1 --reserve-pin x2";
+    build(line, &files).await;
+}
+
+/// Adds a set holding `chip` as the first set in sets.json.
+fn add_plugin(files: &Files, chip: serde_json::Value) {
+    let path = files.dir.path().join("sets.json");
+    let mut config: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    config["chip_sets"]
+        .as_array_mut()
+        .unwrap()
+        .insert(0, serde_json::json!({ "type": "single", "chips": [chip] }));
+    std::fs::write(&path, config.to_string()).unwrap();
+}
+
+/// The usb plugin referred to by name, for v0.8.0 firmware.
+#[tokio::test]
+#[ignore = "hits the live images server; run explicitly with --ignored"]
+async fn verbose_a_plugin_by_name() {
+    let files = Files::with_2364(8, &["single"], &[]);
+    add_plugin(
+        &files,
+        serde_json::json!({ "type": "system_plugin", "plugin": "usb" }),
+    );
+    println!(r#"~ sets.json has {{ "type": "system_plugin", "plugin": "usb" }}"#);
+    let line = "onerom --verbose firmware build --board fire-24-f --config sets.json --base-firmware base.bin --output out.bin";
+    build(line, &files).await;
+}
+
+/// The user plugin host-control in the system plugin's slot, by name and by
+/// URL.
+#[tokio::test]
+#[ignore = "hits the live images server; run explicitly with --ignored"]
+async fn a_user_plugin_as_the_system_plugin() {
+    let line = "onerom firmware build --board fire-24-f --config sets.json --base-firmware base.bin --output out.bin";
+    let url = "https://images.onerom.org/plugins/user/host-control/v0.1.5/plugin.bin";
+    for (key, value) in [("plugin", "host-control"), ("file", url)] {
+        let files = Files::with_2364(8, &["single"], &[]);
+        add_plugin(
+            &files,
+            serde_json::json!({ "type": "system_plugin", key: value }),
+        );
+        println!(r#"~ sets.json has {{ "type": "system_plugin", "{key}": "{value}" }}"#);
+        build(line, &files).await;
+        println!();
+    }
+}
+
+/// `--plugin usb` is saved by name.
+#[tokio::test]
+#[ignore = "hits the live images server; run explicitly with --ignored"]
+async fn save_config_with_a_plugin_by_name() {
+    let files = Files::with_2364(8, &["single"], &[]);
+    let line = "onerom firmware build --board fire-24-f --slot file=0.bin,type=2364,cs1=active-low --base-firmware base.bin --output out.bin --plugin usb --save-config saved.json";
+    build(line, &files).await;
+    println!("$ cat saved.json");
+    match std::fs::read_to_string(files.dir.path().join("saved.json")) {
+        Ok(saved) => println!("{saved}"),
+        Err(e) => println!("{e}"),
+    }
+}
+
+/// A 2364 chip with a file and a plugin.
+#[tokio::test]
+async fn a_plugin_by_name_on_a_rom_chip() {
+    let files = Files::with_2364(8, &["single"], &[]);
+    let path = files.dir.path().join("sets.json");
+    let mut config: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    config["chip_sets"][0]["chips"][0]["plugin"] = serde_json::json!("usb");
+    std::fs::write(&path, config.to_string()).unwrap();
+    println!(
+        r#"~ sets.json has {{ "file": "0.bin", "type": "2364", "cs1": "active_low", "plugin": "usb" }}"#
+    );
+    let line = "onerom firmware build --board fire-24-f --config sets.json --base-firmware base.bin --output out.bin";
+    build(line, &files).await;
+}
+
+/// A plugin chip with a plugin and a file.
+#[tokio::test]
+async fn a_plugin_by_name_and_by_file() {
+    let files = Files::with_2364(8, &["single"], &[]);
+    let plugin = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../images/test/stub-system-plugin.bin"
+    );
+    add_plugin(
+        &files,
+        serde_json::json!({ "type": "system_plugin", "plugin": "usb", "file": plugin }),
+    );
+    println!(
+        r#"~ sets.json has {{ "type": "system_plugin", "plugin": "usb", "file": "stub-system-plugin.bin" }}"#
+    );
+    let line = "onerom firmware build --board fire-24-f --config sets.json --base-firmware base.bin --output out.bin";
+    build(line, &files).await;
+}
+
+/// A plugin name that isn't published.
+#[tokio::test]
+#[ignore = "hits the live images server; run explicitly with --ignored"]
+async fn a_plugin_by_name_that_isnt_published() {
+    let files = Files::with_2364(8, &["single"], &[]);
+    add_plugin(
+        &files,
+        serde_json::json!({ "type": "system_plugin", "plugin": "usbb" }),
+    );
+    println!(r#"~ sets.json has {{ "type": "system_plugin", "plugin": "usbb" }}"#);
+    let line = "onerom firmware build --board fire-24-f --config sets.json --base-firmware base.bin --output out.bin";
     build(line, &files).await;
 }

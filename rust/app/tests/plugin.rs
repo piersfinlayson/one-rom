@@ -15,7 +15,7 @@ mod common;
 use common::{HttpFetch, MockFetch};
 use onerom_app::{
     Catalogue, Error, PluginError, PluginNote, PluginType, PluginVersion, ResolvedSource,
-    check_config_plugins, parse_plugins, resolve_plugins,
+    check_config_plugins, parse_plugins, resolve_config_plugins, resolve_plugins,
 };
 
 const BASE: &str = "https://images.onerom.org/plugins";
@@ -695,6 +695,172 @@ async fn config_without_plugins_checks_nothing() {
 
     assert!(notes.is_empty());
     assert!(fetch.requested().is_empty());
+}
+
+#[tokio::test]
+async fn config_plugin_url_in_the_wrong_chip_is_rejected() {
+    let bin = header(1, (0, 1, 0, 0));
+    let url = format!("{BASE}/user/rgb/v0.1.0/plugin.bin");
+    let fetch = MockFetch::new();
+
+    let builder = loaded_builder(&url, &bin);
+
+    let err = check_config_plugins(&builder, &fw("0.7.0"), &fetch)
+        .await
+        .expect_err("a user plugin can't be the system plugin");
+
+    assert_eq!(
+        err,
+        PluginError::WrongChipType {
+            name: "rgb".to_string(),
+            plugin_type: PluginType::User,
+            configured: PluginType::System,
+        }
+    );
+    assert!(fetch.requested().is_empty());
+}
+
+// ------------------------------------------------------------
+// resolve_config_plugins
+// ------------------------------------------------------------
+
+/// A `releases.json` body for `usb` with 0.3.0 for firmware 0.7.2 on and
+/// 0.2.1 for 0.7.0 up to 0.7.2.
+fn releases_json_usb_current_and_older(current_sha: &str, older_sha: &str) -> Vec<u8> {
+    format!(
+        r#"{{
+            "version": 1,
+            "display_name": "One ROM USB",
+            "description": "A test plugin",
+            "latest": "0.3.0",
+            "releases": [
+                {{
+                    "version": "0.3.0",
+                    "path": "v0.3.0",
+                    "filename": "plugin.bin",
+                    "sha256": "{current_sha}",
+                    "api_version": 1,
+                    "plugin_type": "system_plugin",
+                    "min_fw_version": "0.7.2"
+                }},
+                {{
+                    "version": "0.2.1",
+                    "path": "v0.2.1",
+                    "filename": "plugin.bin",
+                    "sha256": "{older_sha}",
+                    "api_version": 1,
+                    "plugin_type": "system_plugin",
+                    "min_fw_version": "0.7.0",
+                    "incompatible_from": "0.7.2"
+                }}
+            ]
+        }}"#
+    )
+    .into_bytes()
+}
+
+/// A builder for a config with system plugin `name` and one ROM.
+fn named_plugin_builder(name: &str) -> onerom_gen::Builder {
+    let json = format!(
+        r#"{{
+            "version": 1,
+            "description": "A config with a plugin by name",
+            "chip_sets": [
+                {{ "type": "single", "chips": [{{ "type": "system_plugin", "plugin": "{name}" }}] }},
+                {{ "type": "single", "chips": [
+                    {{ "file": "/tmp/rom.bin", "type": "2364", "cs1": "active_low" }} ] }}
+            ]
+        }}"#
+    );
+    onerom_gen::Builder::from_json(fw("0.7.0"), onerom_config::mcu::Family::Rp2350, &json)
+        .expect("config should build")
+}
+
+#[tokio::test]
+async fn config_plugin_by_name_takes_the_latest_compatible_release() {
+    // 0.3.0 is the latest release, but 0.2.1 is the latest for 0.7.0.
+    let current = header(0, (0, 3, 0, 0));
+    let older = header(0, (0, 2, 1, 0));
+    let fetch = MockFetch::new()
+        .with(&format!("{BASE}/plugins.json"), plugins_json())
+        .with(
+            &format!("{BASE}/system/usb/releases.json"),
+            releases_json_usb_current_and_older(&sha_hex(&current), &sha_hex(&older)),
+        )
+        .with(&usb_binary_url("0.2.1"), older);
+
+    let mut builder = named_plugin_builder("usb");
+    let resolved = resolve_config_plugins(&mut builder, &fw("0.7.0"), &fetch)
+        .await
+        .expect("usb 0.2.1 supports 0.7.0");
+
+    assert_eq!(resolved.len(), 1);
+    assert_eq!(resolved[0].version, PluginVersion::new(0, 2, 1, 0));
+    let chip = &builder.config().chip_sets[0].chips[0];
+    assert_eq!(chip.file, usb_binary_url("0.2.1"));
+    assert!(chip.plugin.is_none());
+    assert!(
+        builder
+            .file_specs()
+            .iter()
+            .any(|spec| spec.source == usb_binary_url("0.2.1"))
+    );
+}
+
+#[tokio::test]
+async fn config_plugin_by_name_in_the_wrong_chip_is_rejected() {
+    let fetch = MockFetch::new().with(&format!("{BASE}/plugins.json"), plugins_json());
+
+    let mut builder = named_plugin_builder("rgb");
+    let err = resolve_config_plugins(&mut builder, &fw("0.7.0"), &fetch)
+        .await
+        .expect_err("a user plugin can't be the system plugin");
+
+    assert!(matches!(
+        err,
+        Error::Plugin(PluginError::WrongChipType {
+            ref name,
+            plugin_type: PluginType::User,
+            configured: PluginType::System,
+        }) if name == "rgb"
+    ));
+    // Checked before the plugin's releases are fetched.
+    assert_eq!(fetch.requested(), vec![format!("{BASE}/plugins.json")]);
+}
+
+#[tokio::test]
+async fn config_plugin_by_name_not_published_is_rejected() {
+    let fetch = MockFetch::new().with(&format!("{BASE}/plugins.json"), plugins_json());
+
+    let mut builder = named_plugin_builder("usbb");
+    let err = resolve_config_plugins(&mut builder, &fw("0.7.0"), &fetch)
+        .await
+        .expect_err("usbb isn't published");
+
+    assert!(matches!(
+        err,
+        Error::Plugin(PluginError::NotFound(ref name)) if name == "usbb"
+    ));
+}
+
+#[tokio::test]
+async fn config_plugin_by_url_isnt_resolved() {
+    let url = usb_binary_url("0.2.1");
+    let mut builder = onerom_gen::Builder::from_json(
+        fw("0.7.0"),
+        onerom_config::mcu::Family::Rp2350,
+        &plugin_config_json(&url),
+    )
+    .expect("config should build");
+
+    let fetch = MockFetch::new();
+    let resolved = resolve_config_plugins(&mut builder, &fw("0.7.0"), &fetch)
+        .await
+        .unwrap();
+
+    assert!(resolved.is_empty());
+    assert!(fetch.requested().is_empty());
+    assert_eq!(builder.config().chip_sets[0].chips[0].file, url);
 }
 
 /// Fetches the real plugins manifest and confirms it still deserialises into

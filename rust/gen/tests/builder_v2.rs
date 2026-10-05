@@ -3145,6 +3145,95 @@ mod tests {
         assert!(rom[64 * 1024..64 * 1024 + 256] == plugin_image()[..]);
     }
 
+    /// A config with a system plugin chip for `usb` with `plugin_keys` added,
+    /// then a 27C040 in `rom.bin`.
+    fn named_plugin_json(plugin_keys: &str) -> String {
+        format!(
+            r#"{{ "version": 1, "description": "plugin by name", "chip_sets": [
+                {{ "type": "single", "chips": [
+                    {{ "type": "system_plugin", "plugin": "usb"{plugin_keys} }}] }},
+                {{ "type": "single", "chips": [{{ "file": "rom.bin", "type": "27C040" }}] }}
+            ] }}"#
+        )
+    }
+
+    /// A plugin by name has no file until one is set, and setting it after
+    /// the ROM's file was added leaves the ROM's file where it was.
+    #[test]
+    fn v2_a_plugin_by_name_builds_once_its_file_is_set() {
+        let mut b = Builder::from_json(V0_8_0, McuFamily::Rp2350, &named_plugin_json(""))
+            .expect("from_json should succeed");
+        let specs = b.file_specs();
+        assert_eq!(specs.len(), 1);
+        assert_eq!(specs[0].source, "rom.bin");
+        b.add_file(FileData::new(specs[0].id, vec![0x5A; 512 * 1024]))
+            .unwrap();
+
+        let props = fire32b_props(V0_8_0, BoardSize::M);
+        assert!(matches!(
+            b.build(props),
+            Err(GenError::InvalidConfig { .. })
+        ));
+
+        b.set_plugin_file(0, "usb.bin".to_string()).unwrap();
+        assert_eq!(b.config().chip_sets[0].chips[0].file, "usb.bin");
+        assert!(b.config().chip_sets[0].chips[0].plugin.is_none());
+        let plugin_spec = b
+            .file_specs()
+            .into_iter()
+            .find(|spec| spec.source == "usb.bin")
+            .expect("the plugin's file should be listed");
+        b.add_file(FileData::new(plugin_spec.id, plugin_image()))
+            .unwrap();
+
+        let (meta, rom) = b.build(props).expect("build");
+        assert!(rom[..256] == plugin_image()[..]);
+        let rom_at = (slot_pointers(&meta)[1] - ROM_DATA_BASE) as usize;
+        assert!(rom[rom_at..][..512 * 1024].iter().all(|&byte| byte == 0x5A));
+    }
+
+    #[test]
+    fn v2_a_plugin_by_name_must_be_on_a_plugin_chip() {
+        let json = r#"{ "version": 1, "description": "plugin on a ROM", "chip_sets": [
+            { "type": "single", "chips": [{ "type": "27C040", "plugin": "usb" }] }
+        ] }"#;
+        assert!(matches!(
+            Builder::from_json(V0_8_0, McuFamily::Rp2350, json),
+            Err(GenError::InvalidConfig { .. })
+        ));
+    }
+
+    /// Each key that locates or reshapes a file fails alongside a plugin.
+    #[test]
+    fn v2_a_plugin_by_name_cant_have_file_keys() {
+        for keys in [
+            r#", "file": "usb.bin""#,
+            r#", "extract": "usb.bin""#,
+            r#", "location": { "start": 0, "length": 256 }"#,
+            r#", "format": "ihex""#,
+            r#", "transform": ["swap_bytes"]"#,
+        ] {
+            assert!(
+                matches!(
+                    Builder::from_json(V0_8_0, McuFamily::Rp2350, &named_plugin_json(keys)),
+                    Err(GenError::InvalidConfig { .. })
+                ),
+                "{keys} should fail"
+            );
+        }
+    }
+
+    #[test]
+    fn v2_only_a_chip_with_a_plugin_by_name_has_its_file_set() {
+        let mut b = Builder::from_json(V0_8_0, McuFamily::Rp2350, &named_plugin_json(""))
+            .expect("from_json should succeed");
+        assert!(matches!(
+            b.set_plugin_file(1, "usb.bin".to_string()),
+            Err(GenError::InvalidConfig { .. })
+        ));
+        assert_eq!(b.config().chip_sets[1].chips[0].file, "rom.bin");
+    }
+
     /// The second chip holds four 512KB sets after the first chip's three, so
     /// an eighth is refused by its index in the config.
     #[test]

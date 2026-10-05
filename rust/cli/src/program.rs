@@ -21,7 +21,9 @@ use onerom_cli::error::plan_error;
 use onerom_cli::otp::{PicobootOtp, check_board};
 use onerom_cli::pin::ResolvedPin;
 use onerom_cli::plugin::{parse_plugins, resolve_plugins};
-use onerom_cli::slot::{self, GlobalConfig, check_slot_confirmations, save_config};
+use onerom_cli::slot::{
+    self, GlobalConfig, check_slot_confirmations, save_config, saved_config_json,
+};
 use onerom_cli::usb::{FLASH_BASE, RebootArgs, flash_program, flash_read, reboot};
 use onerom_cli::{Device, DeviceState, Error, Options};
 use onerom_fw_parser::ParsedDevice;
@@ -104,12 +106,8 @@ async fn build_and_assemble(
     let (firmware_data, version, _version_str) =
         acquire_firmware(options, &args.base_firmware, &args.version, board, mcu).await?;
 
-    let plugins = resolve_plugins(
-        &parse_plugins(&args.plugin)?,
-        &version,
-        &onerom_cli::CliFetch,
-    )
-    .await?;
+    let specs = parse_plugins(&args.plugin)?;
+    let plugins = resolve_plugins(&specs, &version, &onerom_cli::CliFetch).await?;
 
     let global_config = GlobalConfig {
         config_name: args.config_name.clone(),
@@ -133,7 +131,7 @@ async fn build_and_assemble(
     )?;
 
     if let Some(path) = &args.save_config {
-        save_config(path, &config_json)?;
+        save_config(path, &saved_config_json(&config_json, &specs, &plugins)?)?;
         if options.verbose {
             println!("Saved ROM configuration to {path}");
         }
@@ -149,8 +147,7 @@ async fn build_and_assemble(
         *mcu,
         size,
         args.force,
-        // Runs with the config resolved and not one ROM image fetched, so a
-        // request this build cannot honour costs the user nothing to discover.
+        // Runs before any ROM image is downloaded.
         |config| refuse_unservable_request(args, slot::has_system_plugin(config)),
     )
     .await?;

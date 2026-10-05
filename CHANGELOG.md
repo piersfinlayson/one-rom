@@ -11,6 +11,7 @@ Headline changes in this release:
 
 In detail:
 - A commissioned One ROM's bootloader appears as `One ROM Bootloader` from manufacturer piers.rocks with USB VID and PID `1209:F540`.  This is a permanent dedicated assignment from pid.codes.
+- A config can refer to a plugin name using `"plugin": "usb"`instead of a URL.  CLI and Studio use the latest release of the plugincompatible with the firmware.
 - Firmware:
   - A commissioned One ROM enters the bootloader if commissioning data is present and the commissioned board type differs from the metadata's board type.
   - OTP is made read-only before starting plugins, so nothing can write OTP from this point on.  OTP can only be modified in the bootloader.
@@ -61,6 +62,7 @@ To publish:
   - onerom-fw 0.4.0
   - onerom-app 0.4.0
   - onerom-cli 0.5.0
+- Config schema
 - One ROM Lab 0.4.0
 - CLI bin 0.5.0
 - Studio 0.2.4
