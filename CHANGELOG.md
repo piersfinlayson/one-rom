@@ -5,9 +5,10 @@ All notables changes between versions are documented in this file.
 ## v0.8.0 - unreleased
 
 Headline changes in this release:
-- One ROMs can now be hardware commissioned making them easier for users to manage.
+- One ROMs now support hardware commissioning, making them easier for users to manage.
 - One ROM now supports a second 2MB flash chip on 32 and 40 pin boards allowing more ROM images to be stored.  These 4MB One ROMs are called size L, with 2MB boards size M.
 - Header pins can be reserved for another use, for example a host reset line, so they aren't used by the core firmware.
+- One ROMs can be started (or set later) into standby mode, preventing them from serving bytes but continuing to listen on the bus.
 
 In detail:
 - A commissioned One ROM's bootloader appears as `One ROM Bootloader` from manufacturer piers.rocks with USB VID and PID `1209:F540`.  This is a permanent dedicated assignment from pid.codes.
@@ -46,9 +47,6 @@ In detail:
   - `onerom program --reset-host` fails before programming where a ROM slot uses the pin, for example X1 for bank select.
 - Other:
   - Retire the `onerom-fw` binary. Use the CLI's `firmware build` option instead.
-
-To test:
-- One ROM and Lab on Windows no longer have an exclamation mark against them in Device Manager.
 
 To publish:
 - Rust crates (in dependency order):
