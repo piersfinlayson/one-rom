@@ -16,7 +16,9 @@ Fire only.  Lab refuses any board whose MCU is not an RP2350.
 
 ## Build and flash
 
-The board is put into BOOTSEL, then `picotool` loads over USB:
+The script builds Lab and loads it with `picotool` over USB.  A board running
+Lab, or One ROM with the USB plugin, is rebooted into its bootloader first.  Any
+other board needs BOOTSEL held while it is connected.
 
 ```bash
 scripts/flash.sh                # board set at runtime, with B:<board>
@@ -56,9 +58,11 @@ picotool reboot -u --vid 0x1209 --pid 0xf542
 picotool load -t elf ../target/thumbv8m.main-none-eabihf/release/onerom-lab-fire
 ```
 
-The first drops the board into its bootloader, where the second finds it as a
-stock RP2350 and needs no arguments.  This is the way back from a Lab whose
-shell has stopped answering, where `z` cannot help.
+The first drops the board into its bootloader.  A board that hasn't been
+commissioned appears there as a stock RP2350, which the second finds with no
+arguments.  A commissioned board's bootloader has One ROM's own vendor and
+product id, so add `--vid 0x1209 --pid 0xf540` to the end of the second.  This is the way
+back from a Lab whose shell has stopped answering, where `z` cannot help.
 
 A reboot asked for this way says so on the terminal before the board goes, so a
 session that ends mid-sentence is explained rather than looking like a fault.
