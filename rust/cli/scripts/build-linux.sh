@@ -1,13 +1,12 @@
 #!/bin/sh
 set -e
 
-# Builds One ROM CLI deb packages for Linux (x86_64 and arm64).
+# Builds the One ROM CLI deb packages for Linux (x86_64 and arm64), on either
+# architecture.
 #
-# Note: The deps section currently only installs cross-compilation toolchains,
-# as nusb is a pure Rust USB implementation with no system library dependencies.
-# If probe-rs support is added in future, libudev-dev and libusb-1.0-0-dev will
-# be required for both architectures, following the same pattern as the Studio
-# build script.
+# zig links both against the glibc version in ci/linux-min-glibc-version, so
+# the packages install on that version or later whatever the build machine
+# runs.
 #
 # Pre-requisites:
 # - Rust:
@@ -62,7 +61,7 @@ if [ "$DEPS" = true ]; then
     sudo rm -f /etc/apt/sources.list.d/ubuntu-amd64.sources
     sudo rm -f /etc/apt/sources.list.d/ubuntu-archive.list
 
-    sudo apt update && sudo apt install -y gcc-aarch64-linux-gnu
+    sudo apt update && sudo apt install -y curl dpkg-dev python3 xz-utils
 
     # Detect OS and host architecture
     if [ -f /etc/os-release ]; then
@@ -75,10 +74,12 @@ if [ "$DEPS" = true ]; then
     HOST_ARCH=$(dpkg --print-architecture)
     echo "Detected OS: $OS_ID, host architecture: $HOST_ARCH"
 
+    # cargo-deb works out each package's libc6 dependency with dpkg-shlibdeps,
+    # which reads the libc6 installed for that package's architecture.
     if [ "$OS_ID" = "debian" ]; then
         sudo dpkg --add-architecture arm64
         sudo dpkg --add-architecture amd64
-        sudo apt update
+        sudo apt update && sudo apt install -y libc6:arm64 libc6:amd64
 
     elif [ "$OS_ID" = "ubuntu" ]; then
         CODENAME=$(lsb_release -sc)
@@ -95,7 +96,7 @@ if [ "$DEPS" = true ]; then
             echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports ${CODENAME} main universe" | sudo tee /etc/apt/sources.list.d/ubuntu-ports.list
             echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports ${CODENAME}-updates main universe" | sudo tee -a /etc/apt/sources.list.d/ubuntu-ports.list
             echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports ${CODENAME}-security main universe" | sudo tee -a /etc/apt/sources.list.d/ubuntu-ports.list
-            sudo apt update
+            sudo apt update && sudo apt install -y libc6:arm64
 
         elif [ "$HOST_ARCH" = "arm64" ]; then
             sudo dpkg --add-architecture amd64
@@ -103,6 +104,7 @@ if [ "$DEPS" = true ]; then
             echo "deb [arch=amd64] http://archive.ubuntu.com/ubuntu ${CODENAME} main universe" | sudo tee /etc/apt/sources.list.d/ubuntu-archive.list
             echo "deb [arch=amd64] http://archive.ubuntu.com/ubuntu ${CODENAME}-updates main universe" | sudo tee -a /etc/apt/sources.list.d/ubuntu-archive.list
             echo "deb [arch=amd64] http://security.ubuntu.com/ubuntu ${CODENAME}-security main universe" | sudo tee -a /etc/apt/sources.list.d/ubuntu-archive.list
+            sudo apt update && sudo apt install -y libc6:amd64
         fi
 
     else
@@ -121,6 +123,15 @@ else
     echo "Skipping dependencies installation step."
 fi
 
+# Runs with nodeps too, since the build requires zig on PATH.  It installs
+# nothing when the pinned versions are already present.
+ZIG_BIN="$(../../ci/install-zig.sh)"
+export PATH="${ZIG_BIN}:${PATH}"
+# cargo-zigbuild uses a Python ziglang package ahead of zig on PATH
+export CARGO_ZIGBUILD_ZIG_PATH="${ZIG_BIN}/zig"
+
+MIN_GLIBC="$(tr -d '[:space:]' < ../../ci/linux-min-glibc-version)"
+
 #
 # Clean previous builds
 #
@@ -137,34 +148,16 @@ fi
 mkdir -p dist
 
 #
-# Intel (x86_64)
+# Build and package
 #
 
-TARGET="x86_64-unknown-linux-gnu"
-export CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=x86_64-linux-gnu-gcc
-echo "Building One ROM CLI version: $VERSION for $TARGET"
-cargo build --bin onerom --release --target $TARGET
+for TARGET in x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu; do
+    echo "Building One ROM CLI version: $VERSION for $TARGET, glibc $MIN_GLIBC"
+    cargo zigbuild --bin onerom --release --target "$TARGET.$MIN_GLIBC"
 
-echo "Packaging deb for $TARGET"
-cargo deb -v --target $TARGET
-echo "Linux x86_64 build complete."
-
-#
-# ARM (aarch64)
-#
-
-TARGET="aarch64-unknown-linux-gnu"
-export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc
-echo "Building One ROM CLI version: $VERSION for $TARGET"
-cargo build --bin onerom --release --target $TARGET
-
-echo "Packaging deb for $TARGET"
-cargo deb -v --target $TARGET
-echo "Linux arm64 build complete."
-
-# Copy debs to dist/
-cp ../target/x86_64-unknown-linux-gnu/debian/*.deb dist/
-cp ../target/aarch64-unknown-linux-gnu/debian/*.deb dist/
+    echo "Packaging deb for $TARGET"
+    cargo deb -v --no-build --target "$TARGET" --output dist/
+done
 
 echo "Build complete. Artifacts in dist/:"
 ls -lh dist/*.deb

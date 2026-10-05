@@ -1,0 +1,109 @@
+name: Build One ROM Studio and CLI
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'rust/**'
+      - '!**.md'
+      - '.github/workflows/build-apps.yml'
+
+# Studio and the CLI are fmt- and clippy-checked by ci/rust-lint.sh, with the
+# rest of the workspace, and ci.yml builds and tests their Linux packages.
+# What is left here is the Windows and macOS packaging.  It runs on any Rust
+# change because a change outside rust/studio and rust/cli, a Cargo.lock bump
+# for example, can break it.
+
+jobs:
+  # Builds Studio Windows (x86_64 and arm64) installers
+  # DO NOT RELEASE THESE VERSIONS
+  # They are not code signed
+  studio-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable
+          target: x86_64-pc-windows-msvc
+
+      - name: Build Windows installers
+        working-directory: rust/studio
+        run: .\scripts\build-win.ps1 nosign
+
+      - name: Upload Windows artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: studio-windows-installers
+          path: rust/studio/dist/*.exe
+
+  # Builds both Intel and Apple silicon dmgs
+  # DO NOT RELEASE THESE VERSIONS
+  # The dmg file icon cannot be properly set using headless CI and the image is
+  # not signed or notarized
+  studio-mac:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable
+          target: aarch64-apple-darwin
+
+      - name: Build Intel and Apple silicon dmgs
+        working-directory: rust/studio
+        run: scripts/build-mac.sh nosign
+
+      - name: Upload Mac artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: studio-mac-dmgs
+          path: rust/studio/dist/*.dmg
+
+  # Builds CLI Windows (x86_64 and arm64) zips
+  # DO NOT RELEASE THESE VERSIONS
+  # They are not code signed
+  cli-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable
+          target: x86_64-pc-windows-msvc
+
+      - name: Build Windows zips
+        working-directory: rust/cli
+        run: .\scripts\build-win.ps1 nosign
+
+      - name: Upload Windows artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: cli-windows-zips
+          path: rust/cli/dist/*.zip
+
+  # Builds the CLI universal (Intel and Apple silicon) binary
+  # DO NOT RELEASE THIS VERSION
+  # It is not signed or notarized
+  cli-mac:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable
+          target: aarch64-apple-darwin
+
+      - name: Build universal binary
+        working-directory: rust/cli
+        run: scripts/build-mac.sh nosign
+
+      - name: Upload Mac artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: cli-mac-binary
+          path: rust/cli/dist/onerom
