@@ -199,13 +199,12 @@ header comment. The ones with rules attached:
     - A marker added to make a number work turns the figure into a lie. Where a
       branch is hard to reach, write the test.
 
-**Toolchain versions are pinned, one file each:** `ci/arm-toolchain-version`,
-`ci/emscripten-version`, `ci/lcov-version` and `ci/c-compiler-version`. The
-matching `ci/install-*.sh` scripts install the pinned version, and CI, the
-container and a developer's machine all use them, so one compiler builds a
-given binary wherever it is built. `ci/docker/` takes all four as build args
-from `ci/docker/build.sh`, and the Dockerfile deliberately carries no default,
-since a stale default there is how the container once ended up on a different
+**Versions are pinned in `ci/*-version`, one file each.** The matching
+`ci/install-*.sh` scripts install the pinned version, and CI, the container and
+a developer's machine all use them, so one compiler builds a given binary
+wherever it is built. `ci/docker/` takes the ones it uses as build args from
+`ci/docker/build.sh`, and the Dockerfile deliberately carries no default, since
+a stale default there is how the container once ended up on a different
 compiler.
 
 - The pinned compilers may be installed but not on PATH. `ci/c-tests.sh`

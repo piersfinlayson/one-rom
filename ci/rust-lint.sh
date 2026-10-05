@@ -21,10 +21,7 @@ echo "Checking formatting (cargo fmt)..."
 cargo fmt --all -- --check
 
 # Host crates: everything that builds for the host toolchain without the
-# firmware emulator.  These are linted together in one pass.  onerom-studio is
-# among them, and its own workflow (.github/workflows/build-studio.yml) only
-# fires on rust/studio/** changes, so linting it here is what catches a
-# workspace-wide change that breaks it.
+# firmware emulator.  These are linted together in one pass.
 echo "Running clippy (host crates)..."
 cargo clippy \
     -p onerom-app \
