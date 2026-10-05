@@ -41,6 +41,7 @@ osx_minimum_system_version = "10.13"
 # Cargo deb metadata for building Linux deb packages
 [package.metadata.deb]
 name = "onerom-studio"
+revision = "2"
 maintainer = "Piers Finlayson <piers@piers.rocks>"
 copyright = "Piers Finlayson"
 license-file = ["LICENSE.txt", "0"]

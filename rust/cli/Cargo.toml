@@ -72,6 +72,7 @@ tempfile = "3"
 # Cargo deb metadata for building Linux deb packages
 [package.metadata.deb]
 name = "onerom-cli"
+revision = "2"
 maintainer = "Piers Finlayson <piers@piers.rocks>"
 copyright = "Piers Finlayson"
 license-file = ["LICENSE.txt", "0"]
