@@ -1,4 +1,4 @@
-# One ROM Chip Compatibility — firmware v0.8.0
+# One ROM Chip Compatibility — firmware v0.8.1
 
 This document shows which chips each One ROM Fire hardware variant emulates.
 

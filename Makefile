@@ -5,7 +5,7 @@
 
 VERSION_MAJOR := 0
 VERSION_MINOR := 8
-VERSION_PATCH := 0
+VERSION_PATCH := 1
 BUILD_NUMBER := 1
 # Cut to 7 characters so the NUL fits onerom_info_t's 8-byte commit field.
 # --short is not used because git lengthens it as the repo grows.

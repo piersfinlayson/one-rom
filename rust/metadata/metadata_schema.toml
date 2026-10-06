@@ -191,7 +191,7 @@
 
 [schema]
 format_version = 2           # version of this file's own set of tables and keys
-firmware_release = "0.8.0"   # firmware release this schema describes
+firmware_release = "0.8.1"   # firmware release this schema describes
 name = "OneROM"
 description = "OneROM firmware metadata structures"
 root_struct = "onerom_metadata_header_t"

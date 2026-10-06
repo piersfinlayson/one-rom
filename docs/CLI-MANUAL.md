@@ -75,9 +75,7 @@ breaks an existing command line lands in a minor release â€” v0.3.0 to v0.4.0 â€
 and never in a patch. From v1.0.0 onwards such a change lands in a major
 release, and never in a minor or a patch.
 
-- One ROM Lab is now recognised by the CLI, so with a One ROM and a Lab both
-  connected every command that uses a device, except `scan`, now needs
-  `--serial` to disambiguate the devices.
+None in this release.
 
 Every release's breaking changes are collected in
 [Appendix: Breaking Change History](#appendix-breaking-change-history), at the

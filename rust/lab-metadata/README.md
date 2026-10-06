@@ -20,6 +20,5 @@ names, for Lab's firmware to place in memory. `onerom_lab_info_t` is
 its two type parameters.
 
 [metadata_schema_released.toml](metadata_schema_released.toml) is the schema as
-the last release shipped it. Lab has not released with one, so today the file
-says so. The file is still required, because a missing one cannot be told from
-one that was lost.
+the last release shipped it. It is refreshed after each release, in step 7 of
+[Lab's release steps](/rust/lab/README.md#releasing).

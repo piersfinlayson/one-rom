@@ -2,6 +2,14 @@
 
 All notable changes between versions are documented in this file.
 
+## v0.8.1 - unreleased
+
+Headline changes in this release:
+
+In detail:
+
+To publish:
+
 ## v0.8.0 - 2026-10-06
 
 Headline changes in this release:
