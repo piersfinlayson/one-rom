@@ -19,16 +19,17 @@
 //! `ice_freq` is always `0` for the same reason as the Ice bits above.
 
 use onerom_metadata::{
-    FireFreq, FireVreg as OneromFireVreg, MaybeKnown, OneromFirmwareConfig, OneromFirmwareOverrides,
+    FireFreq, FireVreg as OneromFireVreg, MaybeKnown, OneromFirmwareConfig,
+    OneromFirmwareOverrides, OneromOverrideStates, OverrideState,
 };
 
 use crate::{Config, FirmwareConfig};
 
 pub fn build_firmware_config(config: &Config) -> OneromFirmwareConfig {
-    OneromFirmwareConfig {
-        name: config.instance_name.clone(),
-        serial_number: config.serial_override.clone(),
-    }
+    let mut fw = OneromFirmwareConfig::default();
+    fw.name = config.instance_name.clone();
+    fw.serial_number = config.serial_override.clone();
+    fw
 }
 
 // Bit positions within override_present[0]/override_value[0].
@@ -87,13 +88,30 @@ pub fn build_firmware_overrides(overrides: &FirmwareConfig) -> OneromFirmwareOve
         }
     }
 
-    OneromFirmwareOverrides {
-        override_present,
-        ice_freq: 0, // Ice rejected by validate_config_for_v2 - always 0.
-        fire_freq,
-        fire_vreg: MaybeKnown::Known(fire_vreg),
-        override_value,
-    }
+    let mut result = OneromFirmwareOverrides::default();
+    result.override_present = override_present;
+    // ice_freq stays 0 - Ice rejected by validate_config_for_v2.
+    result.fire_freq = fire_freq;
+    result.fire_vreg = MaybeKnown::Known(fire_vreg);
+    result.override_value = override_value;
+    result.override_states = build_override_states(overrides);
+    result
+}
+
+pub(crate) fn build_override_states(overrides: &FirmwareConfig) -> OneromOverrideStates {
+    let mut states = OneromOverrideStates::default();
+    states.standby = Some(override_state(
+        overrides.fire.as_ref().and_then(|fire| fire.standby),
+    ));
+    states
+}
+
+fn override_state(value: Option<bool>) -> MaybeKnown<OverrideState> {
+    MaybeKnown::Known(match value {
+        None => OverrideState::OverrideStateNotSet,
+        Some(false) => OverrideState::OverrideStateOff,
+        Some(true) => OverrideState::OverrideStateOn,
+    })
 }
 
 // ===========================================================================
@@ -151,6 +169,7 @@ mod tests {
             MaybeKnown::Known(OneromFireVreg::FireVregNone)
         );
         assert_eq!(result.override_value, [0u8; 8]);
+        assert_eq!(result.override_states.to_raw(), 0);
     }
 
     #[test]
@@ -164,6 +183,7 @@ mod tests {
                 serve_mode: None,
                 rom_dma_preload: true,
                 force_16_bit: false,
+                standby: None,
             }),
             led: Some(LedConfig { enabled: true }),
             swd: Some(DebugConfig { swd_enabled: true }),
@@ -192,5 +212,34 @@ mod tests {
             VALUE_FIRE_OVERCLOCK | VALUE_LED_ENABLED | VALUE_SWD_ENABLED
         );
         assert_eq!(result.override_value[1..], [0u8; 7]);
+        assert_eq!(result.override_states.to_raw(), 0);
+    }
+
+    #[test]
+    fn standby_is_encoded_as_an_override_state() {
+        for (standby, state) in [
+            (None, OverrideState::OverrideStateNotSet),
+            (Some(false), OverrideState::OverrideStateOff),
+            (Some(true), OverrideState::OverrideStateOn),
+        ] {
+            let overrides = FirmwareConfig {
+                fire: Some(FireConfig {
+                    standby,
+                    ..Default::default()
+                }),
+                ..Default::default()
+            };
+
+            let result = build_firmware_overrides(&overrides);
+
+            assert_eq!(
+                result.override_states.standby,
+                Some(MaybeKnown::Known(state)),
+                "{standby:?}"
+            );
+            assert_eq!(result.override_states.to_raw(), state as u8, "{standby:?}");
+            assert_eq!(result.override_present, [0u8; 8], "{standby:?}");
+            assert_eq!(result.override_value, [0u8; 8], "{standby:?}");
+        }
     }
 }

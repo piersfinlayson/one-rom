@@ -1740,6 +1740,21 @@ ora_result_t ora_firmware_state_query(
     return ((reached & states) == states) ? ORA_RESULT_OK : ORA_RESULT_NOT_READY;
 }
 
+// ---------------------------------------------------------------------------
+// Standby
+// ---------------------------------------------------------------------------
+
+ora_result_t ora_set_standby(uint8_t standby, uint32_t flags) {
+    (void)flags;
+
+    if (standby > 1) {
+        return ORA_RESULT_INVALID_ARG;
+    }
+
+    pio_set_standby(standby);
+    return ORA_RESULT_OK;
+}
+
 void *ora_fn_lookup(api_id_t id) {
     switch (id) {
         case ORA_ID_REBOOT_BOOTSEL:
@@ -1871,6 +1886,8 @@ void *ora_fn_lookup(api_id_t id) {
 
         case ORA_ID_FIRMWARE_STATE_QUERY:
             return ora_firmware_state_query;
+        case ORA_ID_SET_STANDBY:
+            return ora_set_standby;
 
         // Deprecated functions
         case ORA_ID_GET_FIRMWARE_INFO:

@@ -66,7 +66,8 @@ typedef struct dma_ch_reg {
 #define DMA_ENABLE()    RESET_RESET &= ~RESET_DMA;        \
                         while (!(RESET_DONE & RESET_DMA));
 #else // TEST_BUILD
-#define DMA_ENABLE()
+extern uint8_t stub_dma_out_of_reset;
+#define DMA_ENABLE()    stub_dma_out_of_reset = 1
 #endif // !TEST_BUILD
 
 #endif // DMAREG_H

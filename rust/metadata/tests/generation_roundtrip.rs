@@ -33,8 +33,9 @@ mod fixture {
 }
 
 use fixture::{
-    Generations, METADATA_BASE, METADATA_SIZE, OneromAlgConfig, OneromExtra, OneromHardwareInfo,
-    OneromMetadataHeader, OneromMode, OneromPullConfig, OneromRomSlot, OneromTag, SerializeContext,
+    Generations, METADATA_BASE, METADATA_SIZE, OneromAlgConfig, OneromExtra, OneromFlags,
+    OneromHardwareInfo, OneromMetadataHeader, OneromMode, OneromPullConfig, OneromRomSlot,
+    OneromTag, SerializeContext,
 };
 
 // ===========================================================================
@@ -69,10 +70,12 @@ fn compose(header: &OneromMetadataHeader) -> Result<alloc::vec::Vec<u8>, Seriali
 }
 
 /// Read a composed buffer back, learning the generation from the bytes the
-/// way a host does rather than being told it.
+/// way a host does rather than being told it.  The firmware release a host
+/// reads from `onerom_info_t` is the one the gated fields arrived in.
 fn read_back(buf: &[u8]) -> Result<OneromMetadataHeader, ParseError> {
     let view = DeviceMemoryView::new(buf, METADATA_BASE);
-    OneromMetadataHeader::parse(&view, METADATA_BASE, Generations::UNKNOWN)
+    let generations = Generations::UNKNOWN.with_firmware_release(GATED_RELEASE);
+    OneromMetadataHeader::parse(&view, METADATA_BASE, generations)
 }
 
 /// A header carrying the values below, at `generation`.
@@ -97,6 +100,7 @@ fn header(generation: u32) -> OneromMetadataHeader {
             size: 8192,
             bank: 7,
             serve_mode: MaybeKnown::Known(OneromMode::ModeFast),
+            flags: OneromFlags::from_raw(2, Some(GATED_RELEASE)),
         }],
         build_name: None,
         extra: None,
@@ -140,6 +144,7 @@ fn header_with_values() -> OneromMetadataHeader {
             size: 8192,
             bank: 2,
             serve_mode: MaybeKnown::Known(OneromMode::ModeSlow),
+            flags: OneromFlags::from_raw(1, Some(GATED_RELEASE)),
         }],
         extra_count: 1,
         extras: alloc::vec![OneromExtra { value: 0x1234 }],
@@ -176,6 +181,9 @@ fn older_metadata_reads_back_as_the_declared_defaults() {
         read.slots[0].serve_mode,
         MaybeKnown::Known(OneromMode::ModeFast)
     );
+    // A bit field comes back as the bits it declares.
+    assert_eq!(read.slots[0].flags.early, Some(false));
+    assert_eq!(read.slots[0].flags.late, Some(true));
     // An array comes back as the elements it declares, whether those were
     // stated one by one or as a fill.
     assert_eq!(read.hw.pins, [1, 2, 3, 4]);
@@ -219,6 +227,8 @@ fn metadata_at_the_fields_own_generation_carries_their_values() {
         read.slots[0].serve_mode,
         MaybeKnown::Known(OneromMode::ModeSlow)
     );
+    assert_eq!(read.slots[0].flags.early, Some(true));
+    assert_eq!(read.slots[0].flags.late, Some(false));
     assert_eq!(read.build_name.as_deref(), Some("fixture"));
     assert_eq!(read.extra, Some(OneromExtra { value: 0xABCD }));
     assert_eq!(
@@ -417,6 +427,17 @@ fn a_field_of_an_array_element_is_refused() {
         compose(&value),
         Err(SerializeError::FieldTooNew {
             field: "onerom_rom_slot_t.serve_mode",
+            minimum: GATED_RELEASE,
+        })
+    );
+
+    let mut value = header(OLDER_GENERATION);
+    value.slots[0].flags = OneromFlags::from_raw(1, Some(GATED_RELEASE));
+
+    assert_eq!(
+        compose(&value),
+        Err(SerializeError::FieldTooNew {
+            field: "onerom_rom_slot_t.flags",
             minimum: GATED_RELEASE,
         })
     );

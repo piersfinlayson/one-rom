@@ -35,7 +35,10 @@ use args::BoardCommands;
 use args::Cli;
 use args::CommandTrait;
 use args::Commands;
-use args::control::{ControlCommands, ControlLedCommands, ControlPokeCommands, ControlRgbCommands};
+use args::control::{
+    ControlCommands, ControlLedCommands, ControlPokeCommands, ControlRgbCommands,
+    ControlStandbyCommands,
+};
 use args::firmware::FirmwareCommands;
 use args::hardware::HardwareCommands;
 use args::image::ImageCommands;
@@ -114,6 +117,10 @@ async fn sub_main() -> Result<(), Error> {
                 ControlRgbCommands::Cycle(args) => control::cmd_rgb_cycle(&options, args).await,
                 ControlRgbCommands::Breathe(args) => control::cmd_rgb_breathe(&options, args).await,
                 ControlRgbCommands::Blink(args) => control::cmd_rgb_blink(&options, args).await,
+            },
+            ControlCommands::Standby(args) => match &args.command {
+                ControlStandbyCommands::On(args) => control::cmd_standby_on(&options, args).await,
+                ControlStandbyCommands::Off(args) => control::cmd_standby_off(&options, args).await,
             },
             ControlCommands::Reboot(args) => control::cmd_reboot(&options, args).await,
             ControlCommands::Reset(args) => control::cmd_reset(&options, args).await,

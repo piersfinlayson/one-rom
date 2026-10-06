@@ -52,7 +52,7 @@ pub enum InspectCommands {
     /// List the ROM image slots (formerly sets) stored on a One ROM.
     ///
     /// Displays the index, ROM type, size, and description of each
-    /// configured image slot, and indicates which slot is currently active.
+    /// configured image slot.
     ///
     /// Example:
     ///

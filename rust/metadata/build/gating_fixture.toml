@@ -120,6 +120,23 @@ value = 0
 name = "ALG_ONE"
 value = 1
 
+[[bitfields]]
+name = "onerom_flags_t"
+size = 1
+comment = "Flags, for the one gated bitfield"
+strip_prefix = "FLAG_"
+first_release = "0.8.0"
+
+[[bitfields.members]]
+name = "FLAG_EARLY"
+bit = 0
+comment = "A flag"
+
+[[bitfields.members]]
+name = "FLAG_LATE"
+bit = 1
+comment = "Another flag"
+
 # ===========================================================================
 # Variable-length structures the header points at
 # ===========================================================================
@@ -390,9 +407,17 @@ default_if_absent = 7
 comment = "How this slot serves"
 
 [[structs.fields]]
+name = "flags"
+kind = "bitfield"
+type = "onerom_flags_t"
+since_metadata_version = 3
+default_if_absent = 2
+comment = "Flags this slot sets"
+
+[[structs.fields]]
 name = "reserved"
 kind = "padding"
-size = 2
+size = 1
 comment = "Reserved"
 
 [[structs]]
@@ -429,6 +454,24 @@ generate = "parse"
 version_field = "version"
 version_constant = "ONEROM_INFO_VERSION"
 generation_slot = "info"
+
+[[structs.fields]]
+name = "major_version"
+kind = "scalar"
+type = "u16"
+comment = "Firmware major version, which a bitfield's members are read against"
+
+[[structs.fields]]
+name = "minor_version"
+kind = "scalar"
+type = "u16"
+comment = "Firmware minor version"
+
+[[structs.fields]]
+name = "patch_version"
+kind = "scalar"
+type = "u16"
+comment = "Firmware patch version"
 
 [[structs.fields]]
 name = "version"

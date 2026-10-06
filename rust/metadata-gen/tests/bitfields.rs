@@ -11,7 +11,7 @@
 use onerom_metadata_gen::layout;
 use onerom_metadata_gen::released::Released;
 use onerom_metadata_gen::schema::Schema;
-use onerom_metadata_gen::{c_gen, constants_gen, device_gen, rust_gen};
+use onerom_metadata_gen::{c_gen, constants_gen, device_gen, rust_gen, serialize_gen};
 
 // ===========================================================================
 // The fixture
@@ -339,14 +339,48 @@ fn a_member_retired_as_it_arrives_is_refused() {
     );
 }
 
+/// `onerom_metadata_header_t.spare` as a bit field.
+fn in_the_metadata() -> String {
+    edited(
+        "name = \"spare\"\nkind = \"scalar\"\ntype = \"u16\"",
+        "name = \"spare\"\nkind = \"bitfield\"\ntype = \"onerom_state_t\"",
+    )
+}
+
 #[test]
-fn a_bit_field_outside_runtime_info_is_refused() {
+fn a_bit_field_in_the_metadata_is_accepted() {
+    parsed(&in_the_metadata());
+}
+
+#[test]
+fn a_bit_field_onerom_info_t_doesnt_reach_is_refused() {
+    let toml = format!(
+        "{FIXTURE}\n[[structs]]\nname = \"onerom_loose_t\"\ngenerate = \"parse\"\n\n\
+         [[structs.fields]]\nname = \"states\"\nkind = \"bitfield\"\ntype = \"onerom_state_t\"\n"
+    );
     refused(
-        &edited(
-            "name = \"spare\"\nkind = \"scalar\"\ntype = \"u16\"",
-            "name = \"spare\"\nkind = \"bitfield\"\ntype = \"onerom_state_t\"",
-        ),
-        "onerom_metadata_header_t.spare is a bit field, and one sits only in onerom_runtime_info_t",
+        &toml,
+        "onerom_loose_t.states is a bit field, and onerom_info_t doesn't reach onerom_loose_t",
+    );
+}
+
+#[test]
+fn a_release_recorded_after_the_metadata_pointer_is_refused() {
+    let moved = edited_in(
+        &in_the_metadata(),
+        "[[structs.fields]]\nname = \"major_version\"\nkind = \"scalar\"\ntype = \"u16\"\n\n",
+        "",
+    );
+    let moved = edited_in(
+        &moved,
+        "nullable = true\n\n[[structs.fields]]\nname = \"runtime\"",
+        "nullable = true\n\n[[structs.fields]]\nname = \"major_version\"\nkind = \"scalar\"\ntype = \"u16\"\n\n[[structs.fields]]\nname = \"runtime\"",
+    );
+    refused(
+        &moved,
+        "onerom_metadata_header_t.spare is a bit field, and onerom_info_t.major_version isn't a \
+         u16 scalar ahead of the pointer onerom_info_t.metadata, which reaches \
+         onerom_metadata_header_t",
     );
 }
 
@@ -465,6 +499,15 @@ fn a_bit_field_outside_the_plugin_api_stays_out_of_its_header() {
 }
 
 #[test]
+fn the_rust_struct_has_a_default_and_is_non_exhaustive() {
+    contains(
+        &rust_gen::generate(&parsed(FIXTURE)),
+        "#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, serde::Serialize, \
+         serde::Deserialize)]\n#[non_exhaustive]\npub struct OneromState {\n",
+    );
+}
+
+#[test]
 fn the_rust_struct_has_an_optional_field_per_member_and_the_unknown_bits() {
     let rust = rust_gen::generate(&parsed(FIXTURE));
     contains(&rust, "pub struct OneromState {\n");
@@ -494,6 +537,71 @@ fn a_member_is_read_only_from_firmware_that_has_it() {
         "let mode = if has(FirmwareVersion::new(0, 9, 0, 0)) {\n            known |= 0x300;",
     );
     contains(&rust, "unknown_bits: raw & !known,");
+}
+
+#[test]
+fn to_raw_puts_back_each_member_and_the_unknown_bits() {
+    let rust = rust_gen::generate(&parsed(FIXTURE));
+    contains(
+        &rust,
+        "pub fn to_raw(self) -> u16 {\n        let mut raw = self.unknown_bits;\n        \
+         if self.ready == Some(true) {\n            raw |= 0x1;\n        }\n        \
+         if let Some(value) = self.level {\n            let value = u16::from(value);\n            \
+         raw |= (value << 4) & 0x70;\n        }\n",
+    );
+    contains(
+        &rust,
+        "if let Some(value) = self.mode {\n            let value = match value { \
+         MaybeKnown::Known(value) => value as u16, MaybeKnown::Unknown(value) => value as u16 };\n            \
+         raw |= (value << 8) & 0x300;\n        }\n        raw\n    }",
+    );
+}
+
+#[test]
+fn each_member_is_checked_against_the_release_it_arrived_in() {
+    let rust = rust_gen::generate(&parsed(FIXTURE));
+    contains(
+        &rust,
+        "pub fn first_member_newer_than(self, release: FirmwareVersion) -> \
+         Option<(&'static str, FirmwareVersion)> {\n        let raw = self.to_raw();\n",
+    );
+    contains(
+        &rust,
+        "let first = FirmwareVersion::new(0, 8, 0, 0);\n        \
+         if (raw & 0x70) != 0 && release < first {\n            \
+         return Some((\"level\", first));\n        }\n",
+    );
+    contains(
+        &rust,
+        "let first = FirmwareVersion::new(0, 9, 0, 0);\n        \
+         if (raw & 0x300) != 0 && release < first {\n            \
+         return Some((\"mode\", first));\n        }\n        None\n    }",
+    );
+}
+
+#[test]
+fn a_plugin_key_on_a_bit_field_returns_the_raw_value() {
+    let toml = edited(
+        "type = \"onerom_state_t\"\n",
+        "type = \"onerom_state_t\"\nplugin_key = { name = \"STATES\", id = 1, first_release = \"0.9.0\" }\n",
+    );
+    contains(
+        &c_gen::generate(&parsed(&toml)),
+        "*(out) = (uint32_t)(RUNTIME->states);",
+    );
+}
+
+#[test]
+fn the_writer_writes_a_bit_field_as_its_raw_value() {
+    let toml = edited_in(
+        &in_the_metadata(),
+        "generate = \"parse\"\nroot = true",
+        "generate = \"both\"\nroot = true",
+    );
+    contains(
+        &serialize_gen::generate(&parsed(&toml)),
+        "ctx.write_u16_le(addr + 4u32, self.spare.to_raw());",
+    );
 }
 
 #[test]

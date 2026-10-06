@@ -84,6 +84,7 @@ The USB system plugin uses tinyusb to implement a USB device containing:
 The majority of the picoboot protocol is supported, and there are also extensions to provide additional functionality:
 - Live ROM image reading/writing (using a virtual address located at 0x9000_0000)
 - Control of the status LED
+- Control of standby mode
 
 Additional function is expected be added in the future.
 

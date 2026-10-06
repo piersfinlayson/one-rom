@@ -104,6 +104,7 @@ pub struct SlotSpec {
     pub vreg: Option<FireVreg>,
     pub led: Option<bool>,
     pub force_16bit: Option<bool>,
+    pub standby: Option<bool>,
     pub format: Option<FileFormat>,
     pub load_address: Option<LoadAddress>,
     pub transform: Vec<Transform>,
@@ -294,6 +295,7 @@ const SLOT_KEYS: &[&str] = &[
     "cpu-vreg",
     "led",
     "force-16-bit",
+    "standby",
     "format",
     "load-address",
     "transform",
@@ -313,6 +315,7 @@ fn parse_slot(slot: &str, board: &Board) -> Result<SlotSpec, Error> {
     let mut vreg = None;
     let mut led = None;
     let mut force_16bit = None;
+    let mut standby = None;
     let mut format = None;
     let mut load_address = None;
     let mut transform = Vec::new();
@@ -352,6 +355,7 @@ fn parse_slot(slot: &str, board: &Board) -> Result<SlotSpec, Error> {
             "16bit" | "force_16bit" | "force_16_bit" | "force-16bit" | "force-16-bit" => {
                 force_16bit = Some(parse_bool(slot, key, value)?)
             }
+            "standby" => standby = Some(parse_bool(slot, key, value)?),
             "format" => format = Some(parse_format(slot, value)?),
             "load_address" | "load-address" | "load_addr" => {
                 load_address = Some(parse_load_address(slot, value)?)
@@ -387,7 +391,12 @@ fn parse_slot(slot: &str, board: &Board) -> Result<SlotSpec, Error> {
     // is being built for, which is not known at parse time. See
     // [`check_slot_chip_types`], applied once the version is resolved.
 
-    if chip_type.chip_function() != ChipFunction::Ram && file.is_none() {
+    let file_optional = match chip_type.chip_function() {
+        ChipFunction::Ram => true,
+        ChipFunction::Rom => standby == Some(true),
+        ChipFunction::Plugin => false,
+    };
+    if file.is_none() && !file_optional {
         return Err(Error::InvalidArgument(
             "--slot".to_string(),
             format!("Missing 'file' key for ROM chip.\n    --slot '{slot}'"),
@@ -429,6 +438,7 @@ fn parse_slot(slot: &str, board: &Board) -> Result<SlotSpec, Error> {
         vreg,
         led,
         force_16bit,
+        standby,
         format,
         load_address,
         transform,
@@ -667,28 +677,34 @@ fn slot_to_chip_config(slot: &SlotSpec) -> ChipConfig {
 }
 
 fn slot_to_firmware_overrides(slot: &SlotSpec) -> Option<FirmwareConfig> {
-    let has_fire = slot.cpu_freq.is_some() || slot.vreg.is_some() || slot.force_16bit.is_some();
+    let has_fire = slot.cpu_freq.is_some()
+        || slot.vreg.is_some()
+        || slot.force_16bit.is_some()
+        || slot.standby.is_some();
     let has_led = slot.led.is_some();
 
     if !has_fire && !has_led {
         return None;
     }
 
-    let fire = has_fire.then(|| FireConfig {
-        cpu_freq: slot.cpu_freq,
-        overclock: slot.cpu_freq.map(|f| f > FireCpuFreq::stock_value()),
-        vreg: slot.vreg.clone(),
-        force_16_bit: slot.force_16bit.unwrap_or(false),
-        ..Default::default()
+    let fire = has_fire.then(|| {
+        let mut fire = FireConfig::default();
+        fire.cpu_freq = slot.cpu_freq;
+        fire.overclock = slot.cpu_freq.map(|f| f > FireCpuFreq::stock_value());
+        fire.vreg = slot.vreg.clone();
+        fire.force_16_bit = slot.force_16bit.unwrap_or(false);
+        fire.standby = slot.standby;
+        fire
     });
 
-    Some(FirmwareConfig {
-        ice: None,
-        fire,
-        led: slot.led.map(|enabled| LedConfig { enabled }),
-        swd: None,
-        serve_alg_params: None,
-    })
+    let mut overrides = FirmwareConfig::default();
+    overrides.fire = fire;
+    overrides.led = slot.led.map(|enabled| {
+        let mut led = LedConfig::default();
+        led.enabled = enabled;
+        led
+    });
+    Some(overrides)
 }
 
 /// Generate a One ROM JSON configuration string from resolved plugins and
@@ -1145,6 +1161,89 @@ mod tests {
         )
         .unwrap_err();
         assert!(format!("{err}").contains("Duplicate slot key 'transform'"));
+    }
+
+    #[test]
+    fn slot_parses_standby_as_a_boolean() {
+        let board = Board::try_from_str("fire-24-e").unwrap();
+        for (value, expected) in [
+            ("on", true),
+            ("true", true),
+            ("1", true),
+            ("off", false),
+            ("false", false),
+            ("0", false),
+        ] {
+            let slot = parse_slot(
+                &format!("file=rom.bin,type=2364,cs1=active_low,standby={value}"),
+                &board,
+            )
+            .unwrap();
+            assert_eq!(slot.standby, Some(expected), "{value}");
+            let fire = slot_to_firmware_overrides(&slot)
+                .and_then(|overrides| overrides.fire)
+                .expect("standby is a Fire override");
+            assert_eq!(fire.standby, Some(expected), "{value}");
+        }
+
+        let slot = parse_slot("file=rom.bin,type=2364,cs1=active_low", &board).unwrap();
+        assert_eq!(slot.standby, None);
+        assert_eq!(slot_to_firmware_overrides(&slot), None);
+
+        assert!(
+            parse_slot(
+                "file=rom.bin,type=2364,cs1=active_low,standby=maybe",
+                &board
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn slot_file_is_optional_only_with_standby_on() {
+        let board = Board::try_from_str("fire-24-e").unwrap();
+        let slot = parse_slot("type=2364,cs1=active_low,standby=on", &board).unwrap();
+        assert_eq!(slot.file, None);
+
+        for spec in [
+            "type=2364,cs1=active_low,standby=off",
+            "type=2364,cs1=active_low",
+        ] {
+            let err = parse_slot(spec, &board).unwrap_err();
+            assert!(
+                format!("{err}").contains("Missing 'file' key"),
+                "{spec}: {err}"
+            );
+        }
+    }
+
+    /// A standby slot without a file builds for firmware v0.8.0 and fails for
+    /// older firmware.
+    #[test]
+    fn a_standby_slot_without_a_file_builds_from_v0_8_0() {
+        let board = Board::try_from_str("fire-24-e").unwrap();
+        let slots =
+            parse_slots(&["type=2364,cs1=active_low,standby=on".to_string()], &board).unwrap();
+        let json = slots_to_config_json(&[], &slots, None).unwrap();
+        let family = onerom_config::mcu::Family::Rp2350;
+
+        let builder =
+            onerom_gen::Builder::from_json(FirmwareVersion::new(0, 8, 0, 0), family, &json)
+                .unwrap();
+        assert_eq!(builder.total_file_count(), 0);
+
+        let err = onerom_gen::Builder::from_json(FirmwareVersion::new(0, 7, 3, 0), family, &json)
+            .unwrap_err();
+        assert!(
+            matches!(
+                err,
+                onerom_gen::Error::FirmwareTooOld {
+                    feat: "standby",
+                    ..
+                }
+            ),
+            "{err:?}"
+        );
     }
 
     #[test]

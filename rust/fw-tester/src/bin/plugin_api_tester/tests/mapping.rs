@@ -5,7 +5,7 @@
 //! Tests for address and data mapping round-trips.
 //!
 //! Each test operates on the chip set selected for the current boot
-//! (`set_idx` == `sel_image`), chip 0.
+//! (`set_idx`), chip 0.
 
 use std::path::Path;
 
@@ -34,15 +34,17 @@ fn chip_type_from_config(config: &Config, set_idx: usize) -> Result<ChipType, St
 /// the booted image.
 ///
 /// Steps:
-/// 1. get_flash_slot_info(set_idx, EXCLUDE_PLUGINS) → rom_type
+/// 1. get_flash_slot_info(flash_slot, EXCLUDE_PLUGINS) → rom_type
 /// 2. ChipType::try_from_rbcp_u8(rom_type) → assert matches config chip type
 /// 3. get_chip_size_from_type(rom_type) → assert matches config chip size
 pub fn test_chip_size(emu: &Emulator, config: &Config, set_idx: usize) -> Result<(), String> {
     let expected_chip_type = chip_type_from_config(config, set_idx)?;
     let expected_size = expected_chip_type.size_bytes();
 
-    let (result, info) =
-        emu.get_flash_slot_info(set_idx as u8, ORA_FLASH_SLOT_FLAG_EXCLUDE_PLUGINS);
+    let (result, info) = emu.get_flash_slot_info(
+        crate::flash_slot(config, set_idx) as u8,
+        ORA_FLASH_SLOT_FLAG_EXCLUDE_PLUGINS,
+    );
     if !result.is_ok() {
         return Err(format!("get_flash_slot_info failed: {:?}", result));
     }
@@ -173,7 +175,7 @@ pub fn test_data_mapping(emu: &Emulator, _config: &Config) -> Result<(), String>
 /// from, via the same `onerom_gen` build.
 fn data_pin_expectation(
     header: &OneromMetadataHeader,
-    set_idx: usize,
+    flash_slot: usize,
 ) -> Result<(Vec<u8>, u8), String> {
     let is_plugin = |t: MaybeKnown<RomSlotType>| {
         matches!(
@@ -190,12 +192,12 @@ fn data_pin_expectation(
         .rom_slots
         .iter()
         .filter(|s| !is_plugin(s.slot_type))
-        .nth(set_idx)
-        .ok_or_else(|| format!("no non-plugin ROM slot {set_idx} in metadata"))?;
+        .nth(flash_slot)
+        .ok_or_else(|| format!("metadata doesn't have flash slot {flash_slot}"))?;
     let alg = slot
         .alg
         .as_ref()
-        .ok_or_else(|| format!("ROM slot {set_idx} has no alg config"))?;
+        .ok_or_else(|| format!("flash slot {flash_slot} doesn't have an alg config"))?;
 
     let word_size = match alg.alg_data {
         OneromAlgDataConfig::AlgData0 { word_size, .. }
@@ -212,7 +214,7 @@ fn data_pin_expectation(
         .roms
         .first()
         .and_then(|r| r.pin_map.as_ref())
-        .ok_or_else(|| format!("ROM slot {set_idx} primary ROM has no pin_map"))?;
+        .ok_or_else(|| format!("flash slot {flash_slot}'s primary ROM doesn't have a pin_map"))?;
 
     let pins: Vec<u8> = pin_map.data[..word_size as usize].to_vec();
     if let Some(i) = pins.iter().position(|&g| g == GPIO_NONE) {
@@ -251,7 +253,7 @@ pub fn test_data_pin_nums(
     const CANARY: u8 = 0xA5;
 
     let header = geometry::build_header(config, board, fw_version, base_dir)?;
-    let (expected, word_size) = data_pin_expectation(&header, set_idx)?;
+    let (expected, word_size) = data_pin_expectation(&header, crate::flash_slot(config, set_idx))?;
 
     // Cross-check the metadata-derived pins against what serving handed the
     // PIO.  If these disagree the expectation is untrustworthy, so say so

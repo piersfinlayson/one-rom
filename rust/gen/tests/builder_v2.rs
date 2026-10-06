@@ -87,7 +87,8 @@ mod tests {
     // +12: fire_vreg u8
     // +13: pad1 [u8; 3]
     // +16: override_value [u8; 8]
-    // +24: pad3 [u8; 8]
+    // +24: override_states u8
+    // +25: pad3 [u8; 7]
     const FW_OVRD_PRESENT: u32 = 0; // first byte of override_present
     const FW_OVRD_FIRE_FREQ: u32 = 10; // u16
     const FW_OVRD_FIRE_VREG: u32 = 12; // u8

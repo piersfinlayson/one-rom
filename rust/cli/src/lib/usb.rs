@@ -35,8 +35,9 @@ pub use crate::picobootx::{
 use crate::picobootx::{
     GpioQueryArgs, ONEROM_CAPS_LEN, ONEROM_CMD_ARGS_LEN, ONEROM_CMD_GET_CAPS,
     ONEROM_CMD_GPIO_QUERY, ONEROM_CMD_GPIO_SET, ONEROM_CMD_LED_QUERY, ONEROM_CMD_SET_LED,
-    ONEROM_FEAT_GPIO_HOLD, ONEROM_FEAT_GPIO_QUERY, ONEROM_FEAT_GPIO_SET, ONEROM_FEAT_LED_ARGS,
-    ONEROM_LED_STATE_LEN, ONEROM_MAGIC, PICOBOOT_DIR_IN,
+    ONEROM_CMD_SET_STANDBY, ONEROM_FEAT_GPIO_HOLD, ONEROM_FEAT_GPIO_QUERY, ONEROM_FEAT_GPIO_SET,
+    ONEROM_FEAT_LED_ARGS, ONEROM_FEAT_STANDBY, ONEROM_LED_STATE_LEN, ONEROM_MAGIC, PICOBOOT_DIR_IN,
+    SetStandbyArgs,
 };
 use crate::{Device, DeviceState, Firmware, Options};
 
@@ -1285,6 +1286,12 @@ async fn send_onerom_cmd(
 /// stopped device is in the bootloader, where there is no One ROM command
 /// handler at all.
 pub async fn get_caps(device: &Device) -> Result<Caps, Error> {
+    read_caps(device, Error::PluginTooOldForGpio).await
+}
+
+/// [`get_caps`], with `too_old` making the error for a USB system plugin that
+/// predates the command.
+async fn read_caps(device: &Device, too_old: fn(String) -> Error) -> Result<Caps, Error> {
     let data = send_onerom_cmd(
         device,
         "GET_CAPS",
@@ -1295,13 +1302,54 @@ pub async fn get_caps(device: &Device) -> Result<Caps, Error> {
     .await
     .map_err(|failure| {
         if failure.means_too_old() {
-            Error::PluginTooOldForGpio(device.to_string())
+            too_old(device.to_string())
         } else {
             cmd_error("GET_CAPS", failure)
         }
     })?;
 
     Ok(Caps::decode(&data)?)
+}
+
+/// The picobootx extension minor version [`ONEROM_CMD_SET_STANDBY`] arrived
+/// in.
+const STANDBY_EXT_MINOR: u8 = 1;
+
+/// Check `caps` for [`ONEROM_CMD_SET_STANDBY`].
+///
+/// A plugin from before the command has an older extension version. A plugin
+/// with the command clears [`ONEROM_FEAT_STANDBY`] where the firmware doesn't
+/// support standby.
+fn check_standby(caps: &Caps, device: &str) -> Result<(), Error> {
+    if caps.ext_minor < STANDBY_EXT_MINOR {
+        Err(Error::PluginTooOldForStandby(device.to_string()))
+    } else if !caps.has_feature(ONEROM_FEAT_STANDBY) {
+        Err(Error::FirmwareTooOldForStandby(device.to_string()))
+    } else {
+        Ok(())
+    }
+}
+
+/// Turn standby on or off on a One ROM device.
+#[allow(clippy::wildcard_enum_match_arm)]
+pub async fn set_standby(device: &Device, standby: bool) -> Result<(), Error> {
+    let caps = read_caps(device, Error::PluginTooOldForStandby).await?;
+    check_standby(&caps, &device.to_string())?;
+
+    let args = SetStandbyArgs { standby };
+    send_onerom_cmd(
+        device,
+        "SET_STANDBY",
+        ONEROM_CMD_SET_STANDBY,
+        0,
+        args.encode(),
+    )
+    .await
+    .map(|_| ())
+    .map_err(|failure| match failure {
+        failure if failure.means_too_old() => Error::PluginTooOldForStandby(device.to_string()),
+        failure => cmd_error("SET_STANDBY", failure),
+    })
 }
 
 /// Check a capability bit before sending the command that needs it.
@@ -1693,5 +1741,28 @@ mod tests {
         assert!(check_feature(&caps, ONEROM_FEAT_GPIO_SET, "d").is_ok());
         assert!(check_feature(&caps, ONEROM_FEAT_GPIO_QUERY, "d").is_ok());
         assert!(check_feature(&caps, ONEROM_FEAT_GPIO_HOLD, "d").is_err());
+    }
+
+    /// Extension 1.0 predates standby whatever its feature bits. From 1.1 the
+    /// feature bit is clear where the firmware predates standby.
+    #[test]
+    fn standby_requires_extension_1_1_and_its_feature_bit() {
+        let caps = |ext_minor, features| Caps {
+            ext_major: 1,
+            ext_minor,
+            features,
+            ..Caps::default()
+        };
+        let all = u32::MAX;
+        assert!(matches!(
+            check_standby(&caps(0, all), "d"),
+            Err(Error::PluginTooOldForStandby(_))
+        ));
+        assert!(matches!(
+            check_standby(&caps(1, all & !ONEROM_FEAT_STANDBY), "d"),
+            Err(Error::FirmwareTooOldForStandby(_))
+        ));
+        assert!(check_standby(&caps(1, ONEROM_FEAT_STANDBY), "d").is_ok());
+        assert!(check_standby(&caps(2, ONEROM_FEAT_STANDBY), "d").is_ok());
     }
 }

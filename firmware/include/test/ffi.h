@@ -20,6 +20,9 @@ uint8_t ffi_board_size(void);
 uint32_t ffi_firmware_states(void);
 void ffi_set_plugins_started(void);
 
+// The firmware flags in runtime info, as onerom_firmware_flag_t bits.
+uint8_t ffi_firmware_flags(void);
+
 // The generation recorded in the metadata header, and a way to change it.
 //
 // On a device the two differ routinely - see firmware/src/utils.c.  A host
@@ -59,6 +62,11 @@ uint8_t ffi_check_plugin_valid(
 void ffi_install_plugin_slots(void);
 void ffi_restore_rom_slots(void);
 
+// ROM slot `index` with `states` as its firmware overrides' override_states,
+// until ffi_restore_rom_slots().  The slot's other overrides are kept.  A slot
+// without overrides gains overrides with only override_states set.
+void ffi_set_rom_slot_override_states(uint8_t index, uint8_t states);
+
 // Write a valid header to plugin slot `index` with its entry point at device
 // address `entry`.
 void ffi_set_plugin_header(
@@ -87,6 +95,10 @@ typedef struct ffi_serving_alg_t {
 uint8_t ffi_serving_alg(ffi_serving_alg_t *out);
 void ffi_epio_setup_sram(epio_t *epio);
 void ffi_epio_setup_dma_chain(epio_t *epio, uint8_t word_size);
+
+// epio_update_from_apio(), first stopping in epio each state machine the
+// firmware has stopped.  epio_update_from_apio() only starts state machines.
+void ffi_epio_update_from_apio(epio_t *epio);
 void ffi_epio_arm_monitor(epio_t *epio);
 void ffi_led_frame(void);
 uint32_t ffi_led_last_pixel(uint32_t *count_out);

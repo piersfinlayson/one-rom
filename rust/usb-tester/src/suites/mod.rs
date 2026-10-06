@@ -12,6 +12,7 @@ pub mod input;
 pub mod led;
 pub mod log;
 pub mod picobootx;
+pub mod standby;
 
 /// Every suite, in the order they run.
 pub static SUITES: &[Suite] = &[
@@ -29,6 +30,11 @@ pub static SUITES: &[Suite] = &[
         name: "led",
         blurb: "do the device's LEDs do as they are told?",
         scenarios: led::SCENARIOS,
+    },
+    Suite {
+        name: "standby",
+        blurb: "does standby turn on and off as asked?",
+        scenarios: standby::SCENARIOS,
     },
     Suite {
         name: "log",

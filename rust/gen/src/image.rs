@@ -625,6 +625,37 @@ impl Chip {
         self.data.as_deref()
     }
 
+    /// Returns a ROM [`Chip`] without an image, for a chip in a standby set
+    /// whose file is left out.
+    ///
+    /// `transforms` are validated as [`Chip::from_raw_rom_image`] validates
+    /// them for a RAM chip without an image.
+    pub(crate) fn without_image(
+        index: usize,
+        filename: String,
+        label: Option<String>,
+        chip_type_spec: &ChipTypeSpec,
+        cs_config: CsConfig,
+        location: Option<Location>,
+        transforms: &[Transform],
+    ) -> Result<Self> {
+        for transform in transforms {
+            transform.validate().map_err(|source| Error::Transform {
+                filename: filename.clone(),
+                source,
+            })?;
+        }
+        Ok(Self::new(
+            index,
+            filename,
+            label,
+            chip_type_spec.clone(),
+            cs_config,
+            None,
+            location,
+        ))
+    }
+
     /// Returns a [`Chip`] instance.
     ///
     /// Takes a raw Chip image (binary data, loaded from file) and processes it

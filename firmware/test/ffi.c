@@ -64,6 +64,11 @@ void ffi_set_plugins_started(void) {
     set_firmware_states(FIRMWARE_STATE_PLUGINS_STARTED);
 }
 
+// See ffi.h.
+uint8_t ffi_firmware_flags(void) {
+    return RUNTIME->firmware_flags;
+}
+
 // See ffi.h.  gen-config.c defines the host build's metadata root, and leaves
 // it writable so the harness can stand where the CLI does on a device.
 extern onerom_metadata_header_t _metadata_start;
@@ -128,12 +133,43 @@ static const onerom_rom_slot_t plugin_slots[2] = {
 static const onerom_rom_slot_t *metadata_rom_slots;
 static uint8_t metadata_rom_slot_count;
 
-void ffi_install_plugin_slots(void) {
-    assert(METADATA->rom_slot_count >= 2);
+static void save_rom_slots(void) {
     metadata_rom_slots = _metadata_start.rom_slots;
     metadata_rom_slot_count = _metadata_start.rom_slot_count;
+}
+
+void ffi_install_plugin_slots(void) {
+    assert(METADATA->rom_slot_count >= 2);
+    save_rom_slots();
     _metadata_start.rom_slots = plugin_slots;
     *(uint8_t *)(uintptr_t)&_metadata_start.rom_slot_count = 2;
+}
+
+// See ffi.h.  The metadata's slots and overrides are const, so the slot table
+// and the one slot's overrides are copied to host memory and changed there.
+static onerom_rom_slot_t override_slots[UINT8_MAX];
+static union {
+    onerom_firmware_overrides_t overrides;
+    uint8_t bytes[sizeof(onerom_firmware_overrides_t)];
+} override_storage;
+
+void ffi_set_rom_slot_override_states(uint8_t index, uint8_t states) {
+    uint8_t count = METADATA->rom_slot_count;
+    assert(index < count);
+    save_rom_slots();
+    memcpy(override_slots, metadata_rom_slots, count * sizeof(onerom_rom_slot_t));
+
+    const onerom_firmware_overrides_t *overrides =
+        metadata_rom_slots[index].firmware_overrides;
+    memset(override_storage.bytes, 0, sizeof(override_storage.bytes));
+    if ((overrides != NULL) && (overrides != (void *)0xFFFFFFFF)) {
+        memcpy(override_storage.bytes, overrides, sizeof(override_storage.bytes));
+    }
+    override_storage.bytes[offsetof(onerom_firmware_overrides_t, override_states_stored)] =
+        states;
+
+    override_slots[index].firmware_overrides = &override_storage.overrides;
+    _metadata_start.rom_slots = override_slots;
 }
 
 void ffi_restore_rom_slots(void) {
@@ -184,6 +220,19 @@ uint8_t ffi_serving_alg(ffi_serving_alg_t *out) {
 void ffi_epio_setup_sram(epio_t *epio) {
     uint64_t *source = get_ram_rom_image_table_aligned();
     epio_sram_set(epio, SRAM_BASE, (uint8_t *)source, RAM_ROM_TABLE_SIZE);
+}
+
+// See ffi.h.
+void ffi_epio_update_from_apio(epio_t *epio) {
+    for (uint8_t block = 0; block < APIO_MAX_PIO_BLOCKS; block++) {
+        uint8_t enabled = _apio_emulated_pio.enabled_sms[block];
+        for (uint8_t sm = 0; sm < APIO_MAX_SMS_PER_BLOCK; sm++) {
+            if (!(enabled & (1u << sm)) && epio_is_sm_enabled(epio, block, sm)) {
+                epio_disable_sm(epio, block, sm);
+            }
+        }
+    }
+    epio_update_from_apio(epio);
 }
 
 void ffi_epio_setup_dma_chain(epio_t *epio, uint8_t word_size) {

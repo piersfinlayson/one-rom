@@ -113,22 +113,26 @@
 // Define which DMA channel to use for the ROM copy
 #define DMA_COPY_CHANNEL  15
 
-void dma_copy(
-    uint32_t src_addr,
-    uint32_t dst_addr,
-    size_t size_words
-) {
-    volatile dma_ch_reg_t *dma_reg;
-
+void dma_init(void) {
     // Bring the DMA controller out of reset
     DMA_ENABLE();
 
+#if REAL_HARDWARE
     // Set DMA Read as high priority on the AHB5 bus for both:
     // - Reads (from RAM and PIO RX FIFO)
     // - Writes (to PIO TX FIFO and DMA READ_ADDR)
     BUSCTRL_BUS_PRIORITY |=
         BUSCTRL_BUS_PRIORITY_DMA_R_BIT |
         BUSCTRL_BUS_PRIORITY_DMA_W_BIT;
+#endif // REAL_HARDWARE
+}
+
+void dma_copy(
+    uint32_t src_addr,
+    uint32_t dst_addr,
+    size_t size_words
+) {
+    volatile dma_ch_reg_t *dma_reg;
 
     // Configure the DMA channel for the copy
     dma_reg = DMA_CH_REG(DMA_COPY_CHANNEL);

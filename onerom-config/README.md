@@ -109,6 +109,7 @@ Fire (RP2350) boards only.  Each set carries its own, and a set without one uses
 | `fire.overclock` | Permits a frequency above the rated maximum. |
 | `fire.vreg` | Core voltage, e.g. `1.20V`.  Left out, the firmware picks a conservative value for the frequency. |
 | `fire.force_16_bit` | Combined 8/16 bit ROM types.  Ignores `/BYTE` and serves 16 bits always, which reads the address lines a third more often. |
+| `fire.standby` | Controls whether One ROM boots into standby mode when this slot is selected.  In standby mode One ROM doesn't serve the ROM.  When `true`, `file` is optional.  Requires firmware v0.8.0 or later. |
 | `led.enabled` | `false` turns the status LED off while serving.  Limp mode still blinks it. |
 | `swd.swd_enabled` | As the top-level key, for this set. |
 

@@ -391,6 +391,12 @@ pub fn check_live_read_write(
     Ok((LIVE_ROM_BASE + offset, length))
 }
 
+/// The suffix marking a line as describing One ROM in standby, empty where
+/// `standby` is false.
+pub fn standby_suffix(standby: bool) -> &'static str {
+    if standby { " (standby)" } else { "" }
+}
+
 /// Resolves the target board type.
 ///
 /// It takes the first of:

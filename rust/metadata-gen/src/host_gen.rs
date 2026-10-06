@@ -56,6 +56,10 @@
 // `rom_data_slot_N[]` byte array (brace-initializer — see the FAM test
 // confirming this is fine for arrays of this size on your toolchains).
 //
+// An empty entry is a slot without an image.  Its `data` is the metadata's own
+// pointer value rather than an array, as the firmware compares that pointer
+// with the no-image value and doesn't read through it.
+//
 // A host slot's data is then a host pointer, not the slot's address in a
 // device's flash.  The firmware checks that address before it reads a slot, so
 // each slot's address from the metadata also goes into
@@ -482,6 +486,10 @@ fn emit_host_define_field(
             emit_field_line(out, &member, &format!("self.{name}"));
         }
 
+        "bitfield" => {
+            emit_field_line(out, &member, &format!("self.{name}.to_raw()"));
+        }
+
         "inline_array" => {
             let elem = f.element.as_deref().unwrap_or("u8");
             if elem == "u8" || elem == "char" {
@@ -615,12 +623,18 @@ fn emit_host_define_field(
 
         "opaque_ptr" => {
             // Only onerom_rom_slot_t::data in practice: per-slot ROM image
-            // bytes, supplied via HostGenContext::next_rom_data().
+            // bytes, supplied via HostGenContext::next_rom_data().  Empty bytes
+            // are a slot without an image - see the file comment.
             out.push_str(&format!("        {{\n"));
             out.push_str("            let bytes = ctx.next_rom_data();\n");
             out.push_str(&format!(
                 "            ctx.rom_slot_flash_addrs.push(self.{name}.raw());\n"
             ));
+            out.push_str("            if bytes.is_empty() {\n");
+            out.push_str(&format!(
+                "                s.push_str(&alloc::format!(\"    .{member} = (const uint8_t *)(uintptr_t)0x{{:08X}}u,\\n\", self.{name}.raw()));\n"
+            ));
+            out.push_str("            } else {\n");
             out.push_str("            let arr_name = ctx.fresh_name(\"rom_data_slot\");\n");
             out.push_str(
                 "            ctx.decls.push((\"const uint8_t \".into(), alloc::format!(\"{}[]\", arr_name)));\n",
@@ -638,6 +652,7 @@ fn emit_host_define_field(
             out.push_str(" = \");\n");
             out.push_str("            s.push_str(&arr_name);\n");
             out.push_str("            s.push_str(\",\\n\");\n");
+            out.push_str("            }\n");
             out.push_str("        }\n");
         }
 

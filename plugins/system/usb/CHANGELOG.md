@@ -4,6 +4,8 @@
 
 Windows Device Manager no longer shows an exclamation mark against One ROM.  The first USB interface, which exists for picotool, now has WinUSB bound to it.
 
+Turn standby on and off with a new picobootx command.  It has its own capability bit, and the extension version is now 1.1.
+
 Uses One ROM's USB VID and PID from the plugin API.
 - Requires firmware 0.8.0.
 

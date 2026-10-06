@@ -91,10 +91,10 @@ uint32_t tusb_time_millis_api(void) {
 }
 
 void usb_plugin_task(void) {
-    // ONEROM_CMD_SET_LED and ONEROM_CMD_GPIO_SET are both applied in the
-    // dispatch handler.  Only the timed release of a bounded GPIO hold is
-    // deferred to here - an LED mode that runs on is the firmware engine's to
-    // keep going, not this plugin's.
+    // ONEROM_CMD_SET_LED, ONEROM_CMD_GPIO_SET and ONEROM_CMD_SET_STANDBY are
+    // applied in the dispatch handler.  Only the timed release of a bounded
+    // GPIO hold is deferred to here - an LED mode that runs on is the firmware
+    // engine's to keep going, not this plugin's.
     gpio_release_expired_holds();
 }
 
@@ -181,6 +181,9 @@ void usb_init(ora_lookup_fn_t ora_lookup_fn) {
 
     // After gpio_init_caps(), which clears the capability word.
     led_init_caps();
+    if (ora_lookup_fn(ORA_ID_SET_STANDBY) != NULL) {
+        context.features |= ONEROM_FEAT_STANDBY;
+    }
 
     // Resolved once here, with the rest of the one-time API resolution, since
     // none of it changes while the plugin runs.

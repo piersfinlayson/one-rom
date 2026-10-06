@@ -790,6 +790,13 @@ typedef enum {
      */
     ORA_ID_FIRMWARE_STATE_QUERY      = 0x0000003F,
 
+    /**
+     * @brief Turn standby mode on or off
+     * @sa ora_set_standby_fn_t
+     * @since firmware 0.8.0
+     */
+    ORA_ID_SET_STANDBY               = 0x00000040,
+
     /** Invalid API identifier */
     ORA_ID_INVALID = 0xFFFFFFFF,
 } api_id_t;
@@ -2186,8 +2193,9 @@ typedef ora_result_t (*ora_get_ram_slot_info_fn_t)(
  * @brief Get the index of the currently active RAM slot
  * @sa ORA_ID_GET_ACTIVE_RAM_SLOT
  *
- * Returns the index of the RAM slot currently being served to the host. In
- * normal operation this is slot 0, pre-populated by the firmware on boot.
+ * Returns the index of the active RAM slot - the slot serving reads from. A
+ * slot is active from boot whether or not One ROM is in standby. In normal
+ * operation this is slot 0, pre-populated by the firmware on boot.
  *
  * If no slot is currently active (for example if a plugin has suppressed
  * firmware ROM loading), returns ORA_RESULT_NO_SLOT_ACTIVE and
@@ -2206,6 +2214,9 @@ typedef ora_result_t (*ora_get_active_ram_slot_fn_t)(uint8_t *ram_slot_out);
  * Atomically switches the ROM image being served to the host to the specified
  * RAM slot. If no slot is currently active, this activates the specified slot
  * without requiring an atomic transition.
+ *
+ * In standby mode this switches the slot served once standby is turned off.
+ * It doesn't change standby mode itself.
  *
  * The target slot must have been populated with a valid ROM image before
  * calling this function, either via @ref ora_reprogram_ram_slot_fn_t or
@@ -2411,8 +2422,9 @@ typedef ora_result_t (*ora_get_metadata_str_fn_t)(ora_metadata_key_t key, const 
  * @sa ORA_ID_GET_METADATA_UINT
  *
  * Numeric sibling of ora_get_metadata_str_fn_t over the same unified key space.
- * Resolves keys whose datum is an unsigned scalar or enum, zero-extending the
- * stored value into @p out. Hardware-topology keys (e.g. ORA_METADATA_KEY_GPIO_
+ * Resolves keys whose datum is an unsigned scalar, enum or bit field,
+ * zero-extending the stored value into @p out. A bit field is returned whole as
+ * its raw value. Hardware-topology keys (e.g. ORA_METADATA_KEY_GPIO_
  * STATUS, ORA_METADATA_KEY_GPIO_NEOPIXEL) resolve from device metadata; live
  * keys (e.g. ORA_METADATA_KEY_STATUS_LED_STATE) resolve from runtime state and
  * therefore reflect the current value on each call.
@@ -2662,10 +2674,10 @@ typedef enum {
     ORA_GPIO_USE_SERVING_READ   = 1,
 
     /**
-     * @brief Serving drives this GPIO - driving it breaks serving until reboot
+     * @brief Owned by the PIOs - driving it breaks serving until reboot
      *
-     * The data pins of the active ROM slot, which PIO owns and drives. Taking
-     * one away from PIO is not undone by releasing it.
+     * The data pins of the active ROM slot. They are driven by the PIOs while
+     * serving and left undriven in standby mode.
      * @sa ora_gpio_set_fn_t
      */
     ORA_GPIO_USE_SERVING_DRIVEN = 2,
@@ -2744,10 +2756,10 @@ _Static_assert(sizeof(ora_gpio_info_t) == 4, "ora_gpio_info_t must be 4 bytes");
  *
  * How recoverable a forced pin is is exactly what @ref ora_gpio_use_t reports:
  *
- *   - ORA_GPIO_USE_SERVING_DRIVEN - the pin is driven by PIO. Forcing it takes
- *     the pin's function select away from PIO, and the serving path does not
- *     restore it, so serving is broken until the device reboots. Setting the
- *     pin back to ORA_GPIO_STATE_INPUT does not undo this.
+ *   - ORA_GPIO_USE_SERVING_DRIVEN - the pin is owned by the PIOs. Forcing it
+ *     takes the pin's function select away from PIO, and the serving path does
+ *     not restore it, so serving is broken until the device reboots. Setting
+ *     the pin back to ORA_GPIO_STATE_INPUT does not undo this.
  *   - ORA_GPIO_USE_SERVING_READ - the pin is an SIO input with its output
  *     driver disabled, and PIO keeps reading it whatever its function select
  *     says. Forcing one is therefore reversible: set it back to
@@ -3356,6 +3368,31 @@ typedef ora_result_t (*ora_firmware_state_query_fn_t)(
     uint32_t flags,
     uint32_t *states_out
 );
+
+/**
+ * @brief Turn standby on or off
+ * @sa ORA_ID_SET_STANDBY
+ * @since firmware 0.8.0
+ *
+ * In standby mode One ROM doesn't serve the ROM and its data pins aren't
+ * driven.
+ *
+ * Everything else runs as it does while serving, including the plugins and
+ * the address monitor. A slot can be configured to boot into standby.
+ *
+ * @c ORA_FIRMWARE_FLAG_STANDBY is set in @c ORA_METADATA_KEY_FIRMWARE_FLAGS
+ * while One ROM is in standby.
+ *
+ * Turning standby off serves the active RAM slot, whatever it holds. The PIO
+ * programs are built from the selected slot at boot as usual.
+ *
+ * @param standby  1 to turn standby on, 0 to turn it off
+ * @param flags    Pass 0. All bits are reserved and must be 0.
+ * @return ORA_RESULT_OK on success, including when One ROM is already in the
+ *         requested state.
+ *         ORA_RESULT_INVALID_ARG if @p standby is neither 0 nor 1.
+ */
+typedef ora_result_t (*ora_set_standby_fn_t)(uint8_t standby, uint32_t flags);
 
 /** @} */ // plugin_api_functions
 

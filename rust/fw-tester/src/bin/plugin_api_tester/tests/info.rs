@@ -195,6 +195,10 @@ pub fn test_metadata_uint(emu: &Emulator, config: &Config, board: Board) -> Resu
             ffi::ora_metadata_key_t_ORA_METADATA_KEY_BOOT_LOGGING,
             "BOOT_LOGGING",
         ),
+        (
+            ffi::ora_metadata_key_t_ORA_METADATA_KEY_FIRMWARE_FLAGS,
+            "FIRMWARE_FLAGS",
+        ),
     ];
     for (key, label) in numeric {
         let (result, value) = emu.get_metadata_uint(*key);

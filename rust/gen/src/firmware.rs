@@ -15,8 +15,9 @@ use alloc::borrow::Cow;
 use schemars::{JsonSchema, Schema, SchemaGenerator, json_schema};
 
 /// Top level configuration structure
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+#[non_exhaustive]
 pub struct FirmwareConfig {
     /// Optional Ice specific configuration
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -40,6 +41,11 @@ pub struct FirmwareConfig {
 }
 
 impl FirmwareConfig {
+    /// Whether these overrides boot One ROM into standby mode.
+    pub(crate) fn standby(&self) -> bool {
+        self.fire.as_ref().and_then(|fire| fire.standby) == Some(true)
+    }
+
     /// Deserialize 64-byte onerom_firmware_overrides_t structure into FirmwareConfig
     pub fn from_bytes(buf: &[u8]) -> Result<Self, String> {
         if buf.len() < 64 {
@@ -158,6 +164,7 @@ impl FirmwareConfig {
 /// Ice configuration structure
 #[derive(Debug, Default, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+#[non_exhaustive]
 pub struct IceConfig {
     /// CPU frequency.  Only specific frequencies are supported
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -176,6 +183,7 @@ fn is_none_or_is_false(v: &Option<bool>) -> bool {
 /// Fire configuration structure
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+#[non_exhaustive]
 pub struct FireConfig {
     /// CPU frequency.  Only specific frequencies are supported
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -204,6 +212,12 @@ pub struct FireConfig {
     /// but obviously disables the used of 8-bit mode.
     #[serde(default, skip_serializing_if = "is_false")]
     pub force_16_bit: bool,
+
+    /// Controls whether One ROM boots into standby mode when this slot is
+    /// selected.  In standby mode One ROM doesn't serve the ROM.  With standby
+    /// on, a ROM image is optional.  Requires firmware v0.8.0 or later.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub standby: Option<bool>,
 }
 
 fn is_true(v: &bool) -> bool {
@@ -222,6 +236,7 @@ impl Default for FireConfig {
             serve_mode: None,
             rom_dma_preload: true,
             force_16_bit: false,
+            standby: None,
         }
     }
 }
@@ -249,10 +264,19 @@ impl core::fmt::Display for FireServeMode {
 /// LED configuration structure
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+#[non_exhaustive]
 pub struct LedConfig {
     /// Whether the status LED is enabled
     #[serde(default = "default_true")]
     pub enabled: bool,
+}
+
+impl Default for LedConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_true(),
+        }
+    }
 }
 
 fn default_true() -> bool {
@@ -262,18 +286,28 @@ fn default_true() -> bool {
 /// Debug configuration structure
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+#[non_exhaustive]
 pub struct DebugConfig {
     /// Whether SWD debug interface is enabled
     #[serde(default = "default_true")]
     pub swd_enabled: bool,
 }
 
+impl Default for DebugConfig {
+    fn default() -> Self {
+        Self {
+            swd_enabled: default_true(),
+        }
+    }
+}
+
 /// Custom serving algorithm parameters
 ///
 /// This is stored as unstructured parameters to allow for easy future
 /// extension without breaking compatibility.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+#[non_exhaustive]
 pub struct ServeAlgParams {
     pub params: Vec<u8>,
 }

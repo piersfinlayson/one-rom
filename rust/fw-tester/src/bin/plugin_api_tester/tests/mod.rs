@@ -12,5 +12,6 @@ pub mod mapping;
 pub mod platform;
 pub mod reprogram;
 pub mod slots;
+pub mod standby;
 pub mod state;
 pub mod time;

@@ -67,7 +67,7 @@ typedef struct {
 // usb_init(), after the ORA lookups.
 void gpio_init_caps(void);
 
-// Apply an ONEROM_CMD_GPIO_SET, synchronously.  Returns the picoboot status to
+// Apply a ONEROM_CMD_GPIO_SET, synchronously.  Returns the picoboot status to
 // answer the command with.
 pb_status_t gpio_handle_set(const onerom_gpio_set_args_t *args);
 

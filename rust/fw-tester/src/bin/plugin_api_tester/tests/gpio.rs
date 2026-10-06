@@ -118,9 +118,12 @@ impl ServingSet {
     }
 }
 
-/// The serving algorithm configuration of the `set_idx`-th non-plugin ROM slot
-/// in the generated metadata.
-fn rom_slot_alg(header: &OneromMetadataHeader, set_idx: usize) -> Result<&OneromAlgConfig, String> {
+/// The serving algorithm configuration of the `flash_slot`-th non-plugin ROM
+/// slot in the generated metadata.
+fn rom_slot_alg(
+    header: &OneromMetadataHeader,
+    flash_slot: usize,
+) -> Result<&OneromAlgConfig, String> {
     let is_plugin = |t: MaybeKnown<RomSlotType>| {
         matches!(
             t,
@@ -136,11 +139,11 @@ fn rom_slot_alg(header: &OneromMetadataHeader, set_idx: usize) -> Result<&Onerom
         .rom_slots
         .iter()
         .filter(|s| !is_plugin(s.slot_type))
-        .nth(set_idx)
-        .ok_or_else(|| format!("no non-plugin ROM slot {set_idx} in metadata"))?;
+        .nth(flash_slot)
+        .ok_or_else(|| format!("metadata doesn't have flash slot {flash_slot}"))?;
     slot.alg
         .as_ref()
-        .ok_or_else(|| format!("ROM slot {set_idx} has no alg config"))
+        .ok_or_else(|| format!("flash slot {flash_slot} doesn't have an alg config"))
 }
 
 /// Assemble the serving set for a ROM slot with `alg`.
@@ -366,7 +369,7 @@ pub fn test_gpio_use(
     let max_gpios = max_gpios(board);
 
     let header = geometry::build_header(config, board, fw_version, base_dir)?;
-    let alg = rom_slot_alg(&header, set_idx)?;
+    let alg = rom_slot_alg(&header, crate::flash_slot(config, set_idx))?;
     let serving = serving_set(alg)?;
     let system = system_pins(emu)?;
 

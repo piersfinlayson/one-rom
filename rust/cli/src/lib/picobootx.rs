@@ -53,6 +53,9 @@ pub const ONEROM_CMD_GPIO_QUERY: u8 = 0x04;
 /// plugin accepts and ignores.
 pub const ONEROM_CMD_LED_QUERY: u8 = 0x05;
 
+/// Turn standby mode on or off. No data phase.
+pub const ONEROM_CMD_SET_STANDBY: u8 = 0x06;
+
 /// Bytes of argument every picoboot command carries inline.
 pub const ONEROM_CMD_ARGS_LEN: usize = 16;
 
@@ -91,6 +94,9 @@ pub const ONEROM_FEAT_GPIO_HOLD: u32 = 1 << 2;
 /// this board has an RGB LED - one without refuses [`LedId::Rgb`], which is a
 /// different answer from a device that cannot be asked at all.
 pub const ONEROM_FEAT_LED_ARGS: u32 = 1 << 3;
+
+/// [`ONEROM_CMD_SET_STANDBY`] is available.
+pub const ONEROM_FEAT_STANDBY: u32 = 1 << 4;
 
 /// Drive the GPIO even though One ROM is using it.
 ///
@@ -376,8 +382,7 @@ pub enum GpioUse {
     /// [`GpioState::Input`] and serving reads the pin as before.
     ServingRead = 1,
 
-    /// Serving drives this GPIO. Driving it breaks serving until the device
-    /// reboots.
+    /// Owned by the PIOs. Driving it breaks serving until the device reboots.
     ServingDriven = 2,
 
     /// A board system pin - status LED, neopixel, VBUS or external flash CS.
@@ -435,6 +440,24 @@ impl GpioSetArgs {
         args[3] = self.flags;
         args[4..8].copy_from_slice(&self.duration_ms.to_le_bytes());
         // args[8..16] are reserved0/reserved1 and stay zero.
+        args
+    }
+}
+
+/// Arguments to [`ONEROM_CMD_SET_STANDBY`], laid out as
+/// `onerom_set_standby_args_t` in the plugin's `usb_custom_pbx.h`.
+#[derive(Debug, Clone, Copy)]
+pub struct SetStandbyArgs {
+    /// `true` turns standby on and `false` turns it off.
+    pub standby: bool,
+}
+
+impl SetStandbyArgs {
+    /// Pack into the 16 inline argument bytes of a picoboot command.
+    pub fn encode(&self) -> [u8; ONEROM_CMD_ARGS_LEN] {
+        let mut args = [0u8; ONEROM_CMD_ARGS_LEN];
+        args[0] = u8::from(self.standby);
+        // args[1..16] are reserved and stay zero.
         args
     }
 }
@@ -604,6 +627,8 @@ mod tests {
         assert_eq!(ONEROM_CMD_GET_CAPS, 0x02);
         assert_eq!(ONEROM_CMD_GPIO_SET, 0x03);
         assert_eq!(ONEROM_CMD_GPIO_QUERY, 0x04);
+        assert_eq!(ONEROM_CMD_LED_QUERY, 0x05);
+        assert_eq!(ONEROM_CMD_SET_STANDBY, 0x06);
 
         // The two IN commands travel with the direction bit set.
         assert_eq!(ONEROM_CMD_GET_CAPS | PICOBOOT_DIR_IN, 0x82);
@@ -629,6 +654,7 @@ mod tests {
         assert_eq!(ONEROM_FEAT_GPIO_QUERY, 0x0000_0002);
         assert_eq!(ONEROM_FEAT_GPIO_HOLD, 0x0000_0004);
         assert_eq!(ONEROM_FEAT_LED_ARGS, 0x0000_0008);
+        assert_eq!(ONEROM_FEAT_STANDBY, 0x0000_0010);
 
         assert_eq!(LedId::Status as u8, 0);
         assert_eq!(LedId::Rgb as u8, 1);
@@ -825,6 +851,18 @@ mod tests {
         assert_eq!(
             args.encode(),
             [0, 1, 0, 0, 0x04, 0x03, 0x02, 0x01, 0, 0, 0, 0, 0, 0, 0, 0]
+        );
+    }
+
+    #[test]
+    fn set_standby_args_encode_to_the_header_layout() {
+        assert_eq!(
+            SetStandbyArgs { standby: true }.encode(),
+            [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        );
+        assert_eq!(
+            SetStandbyArgs { standby: false }.encode(),
+            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
         );
     }
 

@@ -498,7 +498,7 @@ onerom firmware build --config c64.json --board fire-24-e --out firmware.bin
 
 ```
 onerom inspect info      # serial, name, board, MCU, firmware version, hw revision
-onerom inspect slots     # ROM slots, with the active one marked
+onerom inspect slots     # ROM slots, with the selected one marked
 ```
 
 ### Read the live ROM image
@@ -939,16 +939,23 @@ supported)**
 
 ### inspect slots
 
-List the plugins and ROM slots stored on the device marking the active slot. No
-options. Where the image has reserved pins, a line lists them beneath the slot
-count:
+List the plugins and ROM slots stored on the device. No options. On a running
+One ROM the slot selected at boot is marked `active`, or `standby` while One ROM
+is in [standby](#control-standby):
 
 ```
-  Configured with 3 slots - Slot 0 is active
+  Configured with 3 slots - Slot 0 is selected (standby)
+  Slot 0 (selected, standby):
+```
+
+Any reserved pins are displayed:
+
+```
+  Configured with 3 slots - Slot 0 is selected (active)
   Reserved pins: SEL_C, X1
 ```
 
-`scan --slots` prints the same line.
+`scan --slots` displays the same information.
 
 ### inspect image
 
@@ -983,6 +990,16 @@ onerom inspect peek live --address 0 --length 8192 --output rom-image.bin
 | `--address, -a <ADDRESS>` (alias `--addr`) | Logical ROM address to read from, starting at 0. Decimal or `0x` hex. Default `0`. |
 | `--length, -l <LENGTH>` (aliases `--len`, `--size`) | Number of bytes to read. Decimal or hex. If omitted, reads to the end of the live image. |
 | `--output, -o <FILE>` (alias `--out`) | Save the data to this file. |
+
+A line is output preceding the data, saying what was read.
+
+```
+$ onerom inspect peek live --address 0x100 --length 16
+Read 16 byte(s) from live ROM offset 0x00000100
+0x0100  00 01 02 03  04 05 06 07  08 09 0a 0b  0c 0d 0e 0f  |................|
+```
+
+In [standby](#control-standby) the line ends `(standby)`.
 
 #### inspect peek memory
 
@@ -1043,7 +1060,7 @@ Columns:
 | `Dir` | `out` if the pin's output driver is enabled, `in` if not. |
 | `Level` | The GPIO's level, `0` or `1`: what an `out` pin is driving, what an `in` pin reads. |
 | `Max V` | `5V` if the GPIO is 5V-tolerant, `3V3` if it is an RP2350 ADC pin and therefore 3.3V-only, `?` if the board is not characterised. |
-| `Current use` | What One ROM itself is using the GPIO for: `free`, `serving (read)`, `serving (driven)`, `input forced`, `system` or `reserved`. |
+| `Current use` | What One ROM itself is using the GPIO for: `free`, `serving (read)`, `serving (driven)`, `standby`, `input forced`, `system` or `reserved`. |
 
 `Function` lists everything that applies rather than stopping at the first
 match, so a GPIO that is genuinely two things says so: on a `fire-24-f` the
@@ -1066,9 +1083,12 @@ role each pad carries.
 - `input forced`: not read, so driving it has no effect on serving.
 - `serving (read)`: an address, chip select or `/BYTE` pin. Driving it changes what One ROM serves until the pin is released.
 - `serving (driven)`: a data pin. Driving it stops serving until One ROM reboots.
+- `standby`: a data pin while One ROM is in [standby](#control-standby). Driving it breaks serving until One ROM reboots.
 - `system`: a board peripheral, for example the status LED.
 
-A `serving` or `system` pin can only be driven with `--force`. See [`control pin`](#control-pin).
+A `serving`, `standby` or `system` pin can only be driven with `--force`. See [`control pin`](#control-pin).
+
+In standby the title ends `(standby)`, for example `serving 2364 (standby)`.
 
 With `--verbose` (`-v`) the table is followed by a legend restating where each
 column comes from, what `Dir` and `Level` mean and what the `3V3`/`5V` tags
@@ -1464,6 +1484,7 @@ onerom control <COMMAND>
 |---|---|---|
 | [`reboot`](#control-reboot) | Reboot the device | Yes |
 | [`led`](#control-led) | Control the status LED | Yes |
+| [`standby`](#control-standby) | Turn standby mode on or off | Yes (running) |
 | [`poke`](#control-poke) | Write to SRAM or the live ROM image | Yes |
 | [`reset`](#control-reset) | Pulse a GPIO low to reset the host system | Yes (running) |
 | [`select`](#control-select) | Select the active ROM slot **(not yet supported)** | Yes |
@@ -1596,6 +1617,45 @@ with the v0.2.2 or later USB system plugin.
 
 Device required: yes, and it must be running with the USB system plugin.
 
+### control standby
+
+Turn standby mode on or off. In standby mode One ROM doesn't serve the ROM but
+is listening on the bus.
+
+The data pins remain undriven, and plugins run as normal. Turning standby off
+starts serving the selected ROM. A slot boots in standby when `standby=on` is
+provided in its [`--slot` specification](#rom-slot-specification), or with
+`fire.standby` set in its chip set's `firmware_overrides`.
+
+```
+onerom control standby on
+onerom control standby off
+```
+
+| Subcommand | Description |
+|---|---|
+| `on` | Turn standby mode on. |
+| `off` | Turn standby mode off. |
+
+Success prints nothing. With `--verbose` it prints `Standby on` or
+`Standby off`.
+
+The device must be running with the USB system plugin and
+firmware v0.8.0 or later. With an older plugin or firmware the command fails:
+
+```
+$ onerom control standby on
+Failed to execute command.
+This One ROM's USB system plugin predates standby.
+  One ROM Fire 24 F - Firmware: v0.8.0 State: Running Serial: DE3F9C232F655B6B
+  Reprogram it with the v0.8.0 or later USB system plugin, for example:
+    onerom program --config <CONFIG> --plugin usb
+```
+
+[`inspect gpio`](#inspect-gpio), [`inspect slots`](#inspect-slots),
+[`peek live`](#inspect-peek-live) and [`poke live`](#control-poke-live) mark
+their output `standby` while One ROM is in standby.
+
 ### control poke
 
 Transient writes to device memory — changes are lost on reboot. Use
@@ -1645,6 +1705,13 @@ onerom control poke live --address 0 --input patch.bin
 | `--dry-run` (alias `--dryrun`) | Show what would be written without writing. Requires `--delta`. |
 
 Exactly one of `--byte` / `--input` is required.
+
+In [standby](#control-standby) the line ends `(standby)`:
+
+```
+$ onerom control poke live --address 0x100 --byte 0xea
+Wrote 1 byte(s) to live ROM offset 0x00000100 (standby)
+```
 
 ### control reset
 
@@ -1750,10 +1817,12 @@ refused and names what it is doing. `--force` overrides, and prints what that
 costs:
 
 - a pin serving **reads** (address, chip-select, `/BYTE`) is reversible — serving
-  keeps reading it, and `--state z` puts it back;
+  keeps reading it, and `--state z` puts it back.
 - a pin serving **drives** (a data pin) is not — forcing it takes the pin away
   from the PIO that drives it, and serving stays broken until the device is
   rebooted.
+- a data pin in [standby](#control-standby) is the same, and is reported as a
+  standby pin.
 
 If the GPIO is not 5V-tolerant — an RP2350 ADC pin, per the board metadata, not
 a measurement — the command warns and asks for confirmation, which `--yes` or
@@ -2831,6 +2900,7 @@ file=<path_or_url>,type=<romtype>[,label=<text>]
     [,size-handling=<handling>][,format=<binary|ihex|srec>][,load-address=<addr>]
     [,transform=<list>]
     [,cpu-freq=<freq>][,cpu-vreg=<voltage>][,led=<bool>][,force-16-bit=<bool>]
+    [,standby=<bool>]
 ```
 
 | Key | Values / notes |
@@ -2847,6 +2917,7 @@ file=<path_or_url>,type=<romtype>[,label=<text>]
 | `cpu-vreg` | e.g. `1.1`, `1.10`, `1.10v`, `1.10V`. Values above 1.10 V require confirmation (suppressed by `--yes`). Must be a supported level. |
 | `led` | Boolean: `on`/`off`, `true`/`false`, `1`/`0`. |
 | `force-16-bit` (alias `force_16bit`) | Boolean (as above). Valid only on 40-pin boards. |
+| `standby` | Boolean (as above). Controls whether One ROM boots into standby mode when this slot is selected. In standby mode One ROM doesn't serve the ROM. With `standby=on`, `file` is optional. Requires firmware v0.8.0 or later. See [`control standby`](#control-standby). |
 
 Examples:
 
@@ -2862,6 +2933,7 @@ Examples:
 --slot file=kernal.bin,type=2364,cs1=active-low,cpu-freq=200MHz,cpu-vreg=1.2V
 --slot file=char.bin,type=2332,cs1=active-low,cs2=active-high,led=off
 --slot file=amiga.bin,type=27C400,force-16-bit=true
+--slot type=2364,cs1=active-low,standby=on
 --slot file=undersized.bin,type=2732,size=pad
 --slot file=oversized.bin,type=2732,size=trunc
 --slot file=halfsized.bin,type=2732,size=dup
