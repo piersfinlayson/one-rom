@@ -26,7 +26,9 @@ void copy_func_to_ram(void (*fn)(void), uint32_t ram_addr, size_t size);
 void execute_ram_func(uint32_t ram_addr);
 void delay(volatile uint32_t count);
 uint8_t get_rom_slot_index(uint32_t sel_pins, uint32_t sel_mask, uint8_t plugins);
+uint8_t rom_slot_in_flash(const onerom_rom_slot_t *slot);
 void preload_rom_image();
+void set_firmware_states(uint32_t states);
 
 // log.c
 #if defined(BOOT_LOGGING)
@@ -57,9 +59,9 @@ void vbus_connect_handler(void);
 void setup_clock(void);
 void setup_initial_gpios(void);
 void setup_mco(void);
-uint32_t setup_sel_pins(uint64_t *sel_mask, uint64_t *flip_bits);
+uint32_t setup_sel_pins(uint8_t reserved, uint64_t *sel_mask, uint64_t *flip_bits);
 uint64_t get_sel_value(uint64_t sel_mask, uint64_t flip_bits);
-void disable_sel_pins(void);
+void disable_sel_pins(uint8_t reserved);
 void disable_swd(void);
 void setup_status_led(void);
 void blink_pattern(uint32_t on_time, uint32_t off_time, uint8_t repeats);
@@ -71,11 +73,34 @@ void setup_timer0(void);
 void setup_adc(void);
 void setup_status_led(void);
 void blink_pattern(uint32_t on_time, uint32_t off_time, uint8_t repeats);
+uint16_t otp_read_ecc(uint16_t row);
+const char *otp_ecc_bytes(uint16_t row);
+uint32_t otp_read_raw(uint16_t row);
+void otp_lock(void);
+
+// otp.c
+uint8_t otp_commissioned_board(uint16_t *row_out, uint16_t *len_out);
+uint8_t otp_board_mismatch(const char *hw_rev);
+void otp_flash_sizes(onerom_flash_size_t *cs0, onerom_flash_size_t *cs1);
+uint32_t flash_size_bytes(onerom_flash_size_t size);
+onerom_board_size_t otp_board_size(void);
 
 // pio.c
 extern int pio(void);
+
+// Start or stop the state machines set in sms. The others are unchanged.
+void pio_enable_sms(uint8_t block, uint8_t sms);
+void pio_disable_sms(uint8_t block, uint8_t sms);
+
+// Run instr on a state machine at once, whether or not it is enabled.
+void pio_sm_exec(uint8_t block, uint8_t sm, uint16_t instr);
+
 // piorom.c
 extern int piorom2(void);
+
+// Turn standby on (1) or off (0), setting or clearing FIRMWARE_FLAG_STANDBY.
+// Requesting the current state does nothing.
+void pio_set_standby(uint8_t standby);
 extern int pioram(
     const onerom_info_t *info,
     onerom_runtime_info_t *runtime,
@@ -192,11 +217,14 @@ ora_result_t pio_get_gpio_use(
 
 // plugin.c
 uint8_t check_plugin_valid(
-    const ora_plugin_header_t *header,
+    const onerom_rom_slot_t *slot,
     const ora_plugin_type_t expected_type,
     uint8_t index
 );
 uint8_t initial_plugin_parse(uint8_t *disable_vbus_det, uint8_t *num_plugins);
+#if defined(TEST_BUILD)
+int other_core_yield_capability_from(uint32_t this_core);
+#endif // TEST_BUILD
 void ora_launch_plugins(void);
 void irq_handler_timer0_irq_0(void);
 
@@ -266,11 +294,15 @@ void set_host_calling_plugin(ora_plugin_type_t plugin);
 #endif // !REAL_HARDWARE
 
 // pio/dma.c
+void dma_init(void);
 void dma_copy(
     uint32_t src_addr,
     uint32_t dst_addr,
     size_t size_words
 );
 uint32_t dma_copy_status(void);
+#if REAL_HARDWARE
+void irq_handler_dma_irq_0(void);
+#endif // REAL_HARDWARE
 
 #endif // FUNCTIONS_H

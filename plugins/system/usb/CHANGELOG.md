@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.3.2] - unreleased
+
+Windows Device Manager no longer shows an exclamation mark against One ROM.  The first USB interface, which exists for picotool, now has WinUSB bound to it.
+
+Turn standby on and off with a new picobootx command.  It has its own capability bit, and the extension version is now 1.1.
+
+A read or write that runs past the end of the live ROM image fails before anything is transferred.  Previously a very long write could change part of the image first.
+
+Uses One ROM's USB VID and PID from the plugin API.
+- Requires firmware 0.8.0.
+
 ## [0.3.1] - 2026-09-17
 
 Data received on the CDC OUT endpoint is placed in log channel 1 (if available) for a plugin to read.  If the channel is full, back pressure reaches the host which cannot send more data until space is available.

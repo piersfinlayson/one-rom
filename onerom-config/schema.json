@@ -58,6 +58,13 @@
                 "null"
             ]
         },
+        "reserved_pins": {
+            "description": "Pins reserved for another use, for example a pin connected to a host's\nreset line.  Requires firmware v0.8.0 or later.",
+            "type": "array",
+            "items": {
+                "$ref": "#/$defs/Pin"
+            }
+        },
         "serial_override": {
             "description": "Optional serial number override for this One ROM, overriding the stock\nUSB serial number (which is the MCU's unique chip ID).",
             "type": [
@@ -211,6 +218,13 @@
                         {
                             "type": "null"
                         }
+                    ]
+                },
+                "plugin": {
+                    "description": "Name of a published plugin to use instead of `file` on a\n`system_plugin` or `user_plugin` chip.  The latest release compatible\nwith the firmware is used.",
+                    "type": [
+                        "string",
+                        "null"
                     ]
                 },
                 "size_handling": {
@@ -595,6 +609,13 @@
                         }
                     ]
                 },
+                "standby": {
+                    "description": "Controls whether One ROM boots into standby mode when this slot is\nselected.  In standby mode One ROM doesn't serve the ROM.  With standby\non, a ROM image is optional.  Requires firmware v0.8.0 or later.",
+                    "type": [
+                        "boolean",
+                        "null"
+                    ]
+                },
                 "vreg": {
                     "description": "Optional Vreg output voltage setting for RP2350 MCUs.",
                     "anyOf": [
@@ -800,6 +821,11 @@
                 "start",
                 "length"
             ]
+        },
+        "Pin": {
+            "description": "A header pin ('sel_<letter>', 'x1' or 'x2') or an MCU GPIO ('gpio<N>'). Case is ignored. 'sel-a' and 'sela' are also accepted.",
+            "type": "string",
+            "pattern": "^\\s*([Gg][Pp][Ii][Oo][0-9]+|[Ss][Ee][Ll][_-]?[A-Ga-g]|[Xx][12])\\s*$"
         },
         "ServeAlg": {
             "description": "Chip serving algorithm.  Only valid for firmwares serving via CPU.  By\ndefault this is Ice boards and Fire 24 A/B boards.",

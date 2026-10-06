@@ -8,7 +8,7 @@ use log::debug;
 use std::io::Write;
 
 use crate::args::CommandTrait;
-use onerom_cli::{Device, DeviceState, Error, LogLevel, Options};
+use onerom_cli::{Device, DeviceState, Error, Firmware, LogLevel, Options};
 use onerom_cli::{LIVE_ROM_BASE, LIVE_ROM_MAX_OFFSET};
 use onerom_config::chip::ChipType;
 use onerom_config::hw::{Board, Model};
@@ -129,7 +129,7 @@ pub fn check_device(
 /// Checks that a device is present and **currently running**.
 ///
 /// [`check_device`] with `must_be_run_capable` tests `usb_can_run`, which asks
-/// whether the flashed firmware and system plugin *could* serve. That is true of
+/// whether the flashed firmware runs while plugged into USB. That is true of
 /// a stopped device sitting in the RP2350 bootloader, and so is not enough for
 /// anything that talks to One ROM's own picoboot command handler: that handler
 /// lives in the USB system plugin, and while the device is stopped the boot ROM
@@ -352,7 +352,7 @@ pub fn print_hex_dump(address: u32, data: &[u8]) {
 ///
 /// Checks the device is running and can accept live reads/writes.
 /// Checks that the offset is valid for the ROM currently being served by
-/// the devce.
+/// the device.
 ///
 /// Returns the actual device start address to read/write and length.
 pub fn check_live_read_write(
@@ -369,64 +369,98 @@ pub fn check_live_read_write(
     }
 
     let rom_type = device.get_active_rom_type().ok_or(Error::UnknownRomType)?;
-    let rom_size = device.get_active_rom_size().ok_or(Error::UnknownRomType)?;
+    let chip_size = device.get_active_rom_size().ok_or(Error::UnknownRomType)?;
+    live_range(&rom_type, chip_size, offset, length)
+}
 
-    let length = if let Some(len) = length {
-        len
-    } else {
-        // If length is not specified (read only) read to the end of the ROM
-        // image
-        if offset as usize >= rom_size {
-            return Err(Error::LiveOutOfBounds(rom_type, rom_size));
-        }
-        (rom_size as u32) - offset
+/// The device address and length of a live ROM access of `length` bytes from
+/// `offset`, or to the end of the live image without a length.
+///
+/// The live image is as big as the chip, up to the largest image One ROM
+/// serves.
+pub fn live_range(
+    rom_type: &str,
+    chip_size: usize,
+    offset: u32,
+    length: Option<u32>,
+) -> Result<(u32, u32), Error> {
+    let size = chip_size.min(LIVE_ROM_MAX_OFFSET as usize);
+    let out_of_bounds = || Error::LiveOutOfBounds(rom_type.to_string(), size);
+
+    let length = match length {
+        Some(length) => length,
+        None if (offset as usize) < size => size as u32 - offset,
+        None => return Err(out_of_bounds()),
     };
-
-    let end_offset = offset + length;
-    assert!(rom_size <= LIVE_ROM_MAX_OFFSET as usize);
-    if end_offset as usize > rom_size {
-        return Err(Error::LiveOutOfBounds(rom_type, rom_size));
+    match offset.checked_add(length) {
+        Some(end) if end as usize <= size => Ok((LIVE_ROM_BASE + offset, length)),
+        _ => Err(out_of_bounds()),
     }
+}
 
-    Ok((LIVE_ROM_BASE + offset, length))
+/// The suffix marking a line as describing One ROM in standby, empty where
+/// `standby` is false.
+pub fn standby_suffix(standby: bool) -> &'static str {
+    if standby { " (standby)" } else { "" }
 }
 
 /// Resolves the target board type.
 ///
-/// If `board_arg` is provided, it takes precedence. Otherwise the board
-/// is inferred from the connected device. Returns `None` if neither is
-/// available, leaving it to the caller to decide whether that's an error.
+/// It takes the first of:
+/// - `board_arg`
+/// - the board the connected device's current commissioning instance contains
+/// - the board the connected device's One ROM firmware is for
+///
+/// The commissioning data comes before the firmware because firmware from
+/// v0.8.0 stays in the bootloader where its board differs from the commissioned
+/// board.
+///
+/// Returns `None` if there isn't a board argument or a device. The caller
+/// decides whether that's an error.
 pub fn resolve_board(
     options: &Options,
     board_arg: &Option<String>,
 ) -> Result<Option<Board>, Error> {
-    if let Some(board) = board_arg {
-        debug!("Resolving board from argument: {board}");
-        Ok(Some(
-            onerom_config::hw::Board::try_from_str(board)
-                .ok_or_else(|| Error::InvalidBoard(board.clone(), get_supported_boards()))?,
-        ))
-    } else if let Some(device) = options.device.as_ref() {
-        debug!("Resolving board from connected device");
-        let board = device
-            .onerom
-            .as_ref()
-            .and_then(|o| o.get_board())
-            .ok_or(Error::NoBoardFromDevice(device.to_string()))?;
-        Ok(Some(board))
-    } else {
-        debug!("No board argument or device available to resolve board");
-        Ok(None)
-    }
+    let arg = board_arg
+        .as_ref()
+        .map(|board| {
+            debug!("Resolving board from argument: {board}");
+            Board::try_from_str(board)
+                .ok_or_else(|| Error::InvalidBoard(board.clone(), get_supported_boards()))
+        })
+        .transpose()?;
+    let Some(device) = options.device.as_ref() else {
+        debug!("There isn't a device to resolve the board from");
+        return Ok(arg);
+    };
+    let firmware = match &device.firmware {
+        Some(Firmware::OneRom(onerom)) => onerom.get_board(),
+        Some(Firmware::Lab(_)) | None => None,
+    };
+    choose_board(arg, device.commissioned_board(), firmware)
+        .map(Some)
+        .ok_or(Error::NoBoardFromDevice(device.to_string()))
+}
+
+/// The first of these boards that is known:
+/// - `arg` from `--board`
+/// - `commissioned` from a device's current commissioning instance
+/// - `firmware` from a device's firmware
+fn choose_board(
+    arg: Option<Board>,
+    commissioned: Option<Board>,
+    firmware: Option<Board>,
+) -> Option<Board> {
+    arg.or(commissioned).or(firmware)
 }
 
 /// Resolves the target board type, where not knowing it is survivable.
 ///
 /// The GPIO commands use the board to *name* things - a pin's ROM function, the
-/// pad it surfaces on, whether it is 5V-tolerant - and to resolve a `--pin` pad
-/// name. None of that is worth failing a command over when the user named a
+/// pin it surfaces on, whether it is 5V-tolerant - and to resolve a `--pin`
+/// header pin. None of that is worth failing a command over when the user named a
 /// GPIO directly, so a board this build cannot infer costs a name rather than
-/// the operation, and a `--pin` pad name reports the missing board itself (see
+/// the operation, and a `--pin` header pin fails with its own missing-board error (see
 /// [`Pin::resolve`](onerom_cli::pin::Pin::resolve)).
 ///
 /// An *explicit* `--board` is different: the user asked for a specific board, so
@@ -554,5 +588,91 @@ mod tests {
         assert!(check_fire_board_optional(&None).is_ok());
         assert!(check_fire_board_optional(&Some(fire)).is_ok());
         assert!(check_fire_board_optional(&Some(ice)).is_err());
+    }
+
+    /// The board is the first of these that is known:
+    /// - --board
+    /// - the commissioned board
+    /// - the firmware's board
+    #[test]
+    fn a_board_comes_from_the_option_then_otp_then_the_firmware() {
+        let [arg, commissioned, firmware] =
+            ["fire-24-f", "fire-40-a", "fire-28-c"].map(|name| Board::try_from_str(name).unwrap());
+        assert_eq!(
+            choose_board(Some(arg), Some(commissioned), Some(firmware)),
+            Some(arg)
+        );
+        assert_eq!(choose_board(Some(arg), None, None), Some(arg));
+        assert_eq!(
+            choose_board(None, Some(commissioned), Some(firmware)),
+            Some(commissioned)
+        );
+        assert_eq!(choose_board(None, None, Some(firmware)), Some(firmware));
+        assert_eq!(choose_board(None, None, None), None);
+    }
+
+    /// `live_range` for a chip of type `name` and the access at `offset` of
+    /// `length` bytes.
+    fn live_range_of(name: &str, offset: u32, length: Option<u32>) -> Result<(u32, u32), Error> {
+        let chip = ChipType::try_from_str(name).unwrap();
+        live_range(chip.name(), chip.size_bytes(), offset, length)
+    }
+
+    /// Whether `result` is out of bounds of a live image of `size` bytes.
+    fn out_of_bounds(result: Result<(u32, u32), Error>, size: usize) -> bool {
+        matches!(result, Err(Error::LiveOutOfBounds(_, s)) if s == size)
+    }
+
+    /// A One ROM serves half a 27C080, so its live image is 512KB.
+    #[test]
+    fn a_27c080_live_image_is_512kb() {
+        assert_eq!(
+            live_range_of("27C080", 0x100, None).unwrap(),
+            (LIVE_ROM_BASE + 0x100, 0x7ff00)
+        );
+        assert_eq!(
+            live_range_of("27C080", 0x7ffff, Some(1)).unwrap(),
+            (LIVE_ROM_BASE + 0x7ffff, 1)
+        );
+        assert_eq!(
+            live_range_of("27C080", 0, Some(0x80000)).unwrap(),
+            (LIVE_ROM_BASE, 0x80000)
+        );
+        for (offset, length) in [
+            (0x80000, None),
+            (0x80000, Some(1)),
+            (0x7ffff, Some(2)),
+            (0xfffff, None),
+        ] {
+            assert!(
+                out_of_bounds(live_range_of("27C080", offset, length), 0x80000),
+                "0x{offset:x} {length:?}"
+            );
+        }
+    }
+
+    /// A chip smaller than 512KB has a live image of its own size.
+    #[test]
+    fn a_2364_live_image_is_8kb() {
+        assert_eq!(
+            live_range_of("2364", 0x100, None).unwrap(),
+            (LIVE_ROM_BASE + 0x100, 0x1f00)
+        );
+        assert!(out_of_bounds(live_range_of("2364", 0x2000, None), 0x2000));
+        assert!(out_of_bounds(
+            live_range_of("2364", 0x1fff, Some(2)),
+            0x2000
+        ));
+    }
+
+    /// An address and length whose sum is past `u32::MAX` are out of bounds.
+    #[test]
+    fn an_overflowing_access_is_out_of_bounds() {
+        for (offset, length) in [(0x100, u32::MAX), (u32::MAX, 1)] {
+            assert!(
+                out_of_bounds(live_range_of("27C080", offset, Some(length)), 0x80000),
+                "0x{offset:x} 0x{length:x}"
+            );
+        }
     }
 }

@@ -14,7 +14,7 @@ use crate::app::AppMessage;
 use crate::create::Message as CreateMessage;
 use crate::device::probe::ProbeType;
 use crate::device::usb::{UsbDeviceType, get_usb_device_list_delay};
-use crate::device::{Address, Client, Device, DeviceType};
+use crate::device::{Address, BoardDetails, Client, Device, DeviceType};
 use crate::hw::HardwareInfo;
 use crate::internal_error;
 use crate::studio::RuntimeInfo;
@@ -58,14 +58,22 @@ pub enum Message {
     },
     DeviceData(Client, Vec<u8>),
     ReadFailed(Client, String),
+
+    // Read a Fire device's board size and commissioned board
+    ReadBoardDetails {
+        client: Client,
+        hw_info: HardwareInfo,
+    },
+    BoardDetailsRead(Client, BoardDetails),
+
     RebootDevice {
         client: Client,
         stopped: bool,
     },
     RebootDeviceResult(Client, Result<(), String>),
 
-    // Analyser figures out if the device is capable of running firmware
-    // based on its firmware parsing.
+    // Whether the selected device's firmware includes the USB plugin, from
+    // Analyse reading it or a flash
     SetUsbRunCapable(bool),
 }
 
@@ -124,6 +132,12 @@ impl std::fmt::Display for Message {
             }
             Message::ReadFailed(client, error) => {
                 write!(f, "ReadFailed(client={client}, {})", error)
+            }
+            Message::ReadBoardDetails { client, hw_info } => {
+                write!(f, "ReadBoardDetails(client={client}, hw_info={hw_info})")
+            }
+            Message::BoardDetailsRead(client, details) => {
+                write!(f, "BoardDetailsRead(client={client}, {details:?})")
             }
             Message::KeyRescan => write!(f, "KeyRescan"),
             Message::Rescan => write!(f, "Rescan"),
@@ -280,6 +294,21 @@ pub fn handle_message(
             device.operating = None;
             Task::done(AnalyseMessage::ReadFailed(error).into())
         }
+        Message::ReadBoardDetails { client, hw_info } => {
+            debug!("{client} Reading board details");
+            if client != Client::Analyse {
+                internal_error!("Board details read requested by unsupported client: {client}");
+                return Task::none();
+            }
+            device.operating = Some(client.clone());
+            device.selected.read_board_details(client, hw_info)
+        }
+        Message::BoardDetailsRead(client, details) => {
+            debug!("{client} Board details read: {details:?}");
+            assert_eq!(client, Client::Analyse);
+            device.operating = None;
+            Task::done(AnalyseMessage::BoardDetailsRead(details).into())
+        }
         Message::RebootDevice { client, stopped } => {
             debug!("{client} Rebooting device (stopped={stopped})");
             device.pending_id = device.selected.reconnect_id();
@@ -298,7 +327,7 @@ pub fn handle_message(
         }
         Message::SetUsbRunCapable(capable) => {
             debug!("Setting device run capable: {capable}");
-            device.usb_run_capable = capable;
+            device.usb_run_capable = capable.then(|| device.selected.clone());
             Task::none()
         }
     }

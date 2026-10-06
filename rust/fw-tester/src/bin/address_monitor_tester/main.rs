@@ -16,6 +16,8 @@
 //! to the driven address.  Layer 2 drives a full `"!RBCP!"` knock through the
 //! real (blocking) `wait_for_knock`, fed by the yield hook, with a watchdog
 //! timeout so a broken capture path fails the case rather than hanging.
+//! Layer 3 starts the monitor in standby.  Accesses must be captured with the
+//! data pins undriven, and once standby is off, with them driven.
 //!
 //! Addresses are driven on, and checked in, the *observed* (bus) address space
 //! — the lines the device actually monitors, which on the 40-pin variant
@@ -317,7 +319,17 @@ fn run_case_inner(
         layer2_knock(&emu, &cache, unobserved, byte_bg, stop, mode)?;
     }
 
-    Ok(())
+    // Layer 3 boots again, as it starts the monitor in standby.
+    drop(emu);
+    layer3_standby(
+        board,
+        chip_type,
+        chip,
+        sel,
+        word_size,
+        modes[0],
+        log_enabled,
+    )
 }
 
 fn boot(board: Board, sel: u8, word_size: u8, log_enabled: bool) -> Result<Emulator, String> {
@@ -412,13 +424,15 @@ fn setup_monitor(emu: &Emulator) -> Result<(), String> {
 /// `addr` is placed on the *observed* address lines (bit 0 on the
 /// least-significant observed line).  `background` is held across every phase
 /// and carries the /BYTE level plus, in byte mode, any A-1 level being driven.
+///
+/// Returns the GPIOs driven at the end of the CS-active phase.
 fn drive_access(
     emu: &Emulator,
     cache: &PinCache,
     observed_gpios: &[Vec<u8>],
     background: (u64, u64),
     addr: usize,
-) {
+) -> u64 {
     let a = driver::addr_mask(addr, observed_gpios);
     let cs_on = driver::ctrl_mask(&cache.control_lines, true);
     let cs_off = driver::ctrl_mask(&cache.control_lines, false);
@@ -430,9 +444,12 @@ fn drive_access(
     let active = driver::merge(driver::merge(a, cs_on), background);
     emu.drive_gpios(active.0, active.1);
     emu.step_cycles(16);
+    let driven = emu.read_driven_pins();
 
     emu.drive_gpios(settle.0, settle.1);
     emu.step_cycles(8);
+
+    driven
 }
 
 /// Drive one access and return the observed address the monitor captured for
@@ -596,6 +613,73 @@ fn layer1_a_minus_1_invariance(
             "byte mode: A-1 leaked into the observed address — captures differed across \
              A-1 levels ({seen:#X?}); the monitor must not observe the byte-within-word select"
         ));
+    }
+    Ok(())
+}
+
+/// The monitor started in standby.
+///
+/// Starting the monitor leaves the CS state machine stopped, so accesses are
+/// captured with the data pins undriven.  Once standby is off the monitor keeps
+/// capturing and the data pins are driven during an access.
+fn layer3_standby(
+    board: Board,
+    chip_type: ChipType,
+    chip: &ChipConfig,
+    sel: u8,
+    word_size: u8,
+    mode: u8,
+    log_enabled: bool,
+) -> Result<(), String> {
+    let emu = boot(board, sel, word_size, log_enabled)?;
+    let cache = PinCache::build(chip_type, chip, board);
+    let r = emu.set_standby(1, 0);
+    if r != OraResult::Ok {
+        return Err(format!("set_standby(1, 0) returned {r:?}"));
+    }
+    setup_monitor(&emu)?;
+
+    let (r, unobserved) = emu.get_unobserved_addr_bits();
+    if r != OraResult::Ok {
+        return Err(format!("get_unobserved_addr_bits returned {r:?}"));
+    }
+    let observed_gpios = &cache.addr_gpios[unobserved as usize..];
+    let background = match cache.byte_n_gpio {
+        Some(g) if mode != 0 => driver::byte_n_mask(g, mode),
+        _ => (0, 0),
+    };
+    let lanes = if mode == 16 { 16 } else { 8 };
+    let data_mask = cache.data_gpios[..lanes.min(cache.data_gpios.len())]
+        .iter()
+        .fold(0u64, |m, &g| m | (1u64 << g));
+
+    for standby in [true, false] {
+        let when = if standby {
+            "monitor started in standby"
+        } else {
+            "standby turned off"
+        };
+        if !standby {
+            let r = emu.set_standby(0, 0);
+            if r != OraResult::Ok {
+                return Err(format!("set_standby(0, 0) returned {r:?}"));
+            }
+        }
+        layer1_capture(&emu, &cache, observed_gpios, background, mode)
+            .map_err(|e| format!("{when}: {e}"))?;
+        let driven =
+            drive_access(&emu, &cache, observed_gpios, background, KNOCK[1] as usize) & data_mask;
+        if standby && driven != 0 {
+            return Err(format!(
+                "{when}: data pins {driven:#018x} driven with chip select asserted"
+            ));
+        }
+        if !standby && driven != data_mask {
+            return Err(format!(
+                "{when}: data pins {:#018x} not driven with chip select asserted",
+                data_mask & !driven
+            ));
+        }
     }
     Ok(())
 }

@@ -13,7 +13,7 @@ use std::collections::HashSet;
 
 use syn::{Attribute, Expr, Field, Fields, ItemStruct, Lit, Type};
 
-use crate::attrs::{self, ArgSpec, CommandSpec, DefaultValue, Help};
+use crate::attrs::{self, ArgSpec, CommandSpec, DefaultValue, Doc, Help};
 use crate::constants;
 use crate::index::Index;
 use crate::source::Source;
@@ -148,7 +148,7 @@ impl Walker<'_> {
 
             match branch(self.index.struct_def(&args)) {
                 Some(next) => self.enum_variants(&next, &path),
-                None => self.leaf(&args, path, &variant.attrs),
+                None => self.leaf(&args, path, &variant.attrs, spec.verbatim),
             }
         }
     }
@@ -161,24 +161,21 @@ impl Walker<'_> {
     /// the same command, so the first one the walk reaches - the one the CLI
     /// declares first - is the one described, and the other is an alias with
     /// nothing of its own to say.
-    fn leaf(&mut self, args: &str, path: Vec<String>, attrs: &[Attribute]) {
+    fn leaf(&mut self, args: &str, path: Vec<String>, attrs: &[Attribute], verbatim: bool) {
         if self.seen.contains(args) {
             return;
         }
         self.seen.insert(args.to_string());
 
-        let mut paragraphs = attrs::paragraphs(attrs).into_iter();
-        let about = paragraphs
-            .next()
+        let doc = Doc::read(attrs, verbatim)
             .unwrap_or_else(|| panic!("onerom {} has no doc comment", path.join(" ")));
-        let rest: Vec<String> = paragraphs.collect();
 
         let (opts, groups) = options(self.index.struct_def(args), self.index, self.values);
 
         self.commands.push(Command {
             path,
-            about,
-            long_about: (!rest.is_empty()).then(|| rest.join("\n\n")),
+            about: doc.summary,
+            long_about: doc.rest,
             opts,
             groups,
         });
@@ -413,9 +410,8 @@ fn help(long: &str, spec: &ArgSpec, attrs: &[Attribute], index: &Index) -> Strin
     match &spec.help {
         Some(Help::Text(text)) => text.clone(),
         Some(Help::Named(name)) => resolve(index.const_value(name)),
-        None => attrs::paragraphs(attrs)
-            .into_iter()
-            .next()
+        None => Doc::read(attrs, spec.verbatim)
+            .map(|doc| doc.summary)
             .unwrap_or_else(|| panic!("--{long} has no help text")),
     }
 }

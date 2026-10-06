@@ -22,6 +22,18 @@ int firmware_main(void) {
     // Update any runtime info based on the metadata.
     update_runtime_from_metadata();
 
+    // Record the board size OTP contains.  Then, where OTP commissions this
+    // chip as different board type, stop now, before any pins are driven,
+    // as this firmware would drive the wrong ones.
+    RUNTIME->board_size = otp_board_size();
+    if (otp_board_mismatch(HW->hw_rev)) {
+        enter_bootloader();
+
+        // enter_bootloader() doesn't return on a device but it does on a test
+        // build.
+        return 0;
+    }
+
     // Next initialize the GPIOs very early on, to turn off the status LED and
     // read the ROM slot select pins.  Pins are part of the metadata, which is
     // why we had to check that first.
@@ -30,6 +42,12 @@ int firmware_main(void) {
     // Enable logging.  Done after GPIO setup, so SWD pins are configured.
     if (BOOT_LOGGING_EN && !TURBO) {
         LOG_INIT();
+    }
+
+    if (METADATA->version != CURRENT_METADATA_VERSION) {
+        LOG("Metadata gen: %lu (firmware %lu)",
+            (unsigned long)METADATA->version,
+            (unsigned long)CURRENT_METADATA_VERSION);
     }
 
     // Do initial plugin parsing.  The system plugin can potentially override
@@ -86,6 +104,8 @@ int firmware_main(void) {
         // We always preload to RAM slot 0
         RUNTIME->current_ram_slot = 0;
 
+        // Serving uses DMA even where there is no image to copy.
+        dma_init();
         preload_rom_image();
     }
 

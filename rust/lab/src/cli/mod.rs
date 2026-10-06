@@ -151,7 +151,7 @@ pub struct SessionState {
     pub range: ReadRange,
     /// Most recently used output format; defaults to `Checksum`.
     pub format: OutputFormat,
-    /// Batch read interval in seconds; defaults to 5.
+    /// Batch read interval in seconds. Defaults to 1.
     pub interval_secs: u32,
     /// Control line polarities for the current chip.
     pub cs: CsSettings,
@@ -168,7 +168,7 @@ impl SessionState {
             chip,
             range: ReadRange::default(),
             format: OutputFormat::default(),
-            interval_secs: 5,
+            interval_secs: 1,
             cs: CsSettings::unset(),
             tri_state: true,
         }

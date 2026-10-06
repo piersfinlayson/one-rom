@@ -65,9 +65,10 @@
 // "Note this field resets to 0, so channels 1 and above will chain to
 // channel 0 bydefault. Set this field to avoid this behaviour."
 //
-// IRQ_QUIET is set to avoid IRQs being raised each time transfer_count
-// reaches zero.  This is not strictly required, as this firmware doesn't
-// service those interrupts, but is cleaner.
+// IRQ_QUIET is set on the serving channels to avoid IRQs being raised each
+// time transfer_count reaches zero.  This is not strictly required, as this
+// firmware doesn't service those interrupts, but is cleaner.  Only the copy
+// channel's interrupt is serviced.
 //
 // There is also the concept of DMA priorities - each channel can be normal
 // or high priority.  All high priority channels and a maximum of one low
@@ -112,22 +113,29 @@
 // Define which DMA channel to use for the ROM copy
 #define DMA_COPY_CHANNEL  15
 
-void dma_copy(
-    uint32_t src_addr,
-    uint32_t dst_addr,
-    size_t size_words
-) {
-    volatile dma_ch_reg_t *dma_reg;
-
+void dma_init(void) {
     // Bring the DMA controller out of reset
     DMA_ENABLE();
 
+#if REAL_HARDWARE
     // Set DMA Read as high priority on the AHB5 bus for both:
     // - Reads (from RAM and PIO RX FIFO)
     // - Writes (to PIO TX FIFO and DMA READ_ADDR)
     BUSCTRL_BUS_PRIORITY |=
         BUSCTRL_BUS_PRIORITY_DMA_R_BIT |
         BUSCTRL_BUS_PRIORITY_DMA_W_BIT;
+#endif // REAL_HARDWARE
+}
+
+#if REAL_HARDWARE
+// Only the hardware build copies a ROM image by DMA. The host build's
+// preload_rom_image() uses memcpy.
+void dma_copy(
+    uint32_t src_addr,
+    uint32_t dst_addr,
+    size_t size_words
+) {
+    volatile dma_ch_reg_t *dma_reg;
 
     // Configure the DMA channel for the copy
     dma_reg = DMA_CH_REG(DMA_COPY_CHANNEL);
@@ -141,6 +149,11 @@ void dma_copy(
         DMA_CTRL_INCR_READ |                        // Increment read address
         DMA_CTRL_INCR_WRITE |                       // Increment write address
         DMA_CTRL_TRIG_CHAIN_TO(DMA_COPY_CHANNEL);   // Disable chaining
+
+    // Interrupt core 0 when the copy finishes.
+    DMA_INTS0 = (1u << DMA_COPY_CHANNEL);
+    DMA_INTE0 |= (1u << DMA_COPY_CHANNEL);
+    NVIC_ISER0 = (1u << DMA_IRQ_0);
 
     // Enable the DMA channel to start the copy
     dma_reg->ctrl_trig |= DMA_CTRL_TRIG_EN;
@@ -157,3 +170,10 @@ uint32_t dma_copy_status() {
     dma_reg = DMA_CH_REG(DMA_COPY_CHANNEL);
     return dma_reg->transfer_count;
 }
+
+// Only the copy channel raises DMA_IRQ_0.
+void irq_handler_dma_irq_0(void) {
+    DMA_INTS0 = (1u << DMA_COPY_CHANNEL);
+    set_firmware_states(FIRMWARE_STATE_ROM_LOADED);
+}
+#endif // REAL_HARDWARE

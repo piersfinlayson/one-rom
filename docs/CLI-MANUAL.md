@@ -5,6 +5,9 @@ reader: HTML comments survive pandoc into the PDF unrendered.
 * Example output is a verbatim run, pasted from the command.  Hand-written
   examples drift and quietly become wrong.
 
+* Example output may also be pasted from the review harness in
+  `rust/cli/src/review/`, dropping the `~` that marks each hand-written line.
+
 * A value this manual states that something else owns sits inside a marker
   naming that source, rather than bare:
 
@@ -54,7 +57,7 @@ This One ROM CLI manual covers:
 - **Problems** — symptoms and their fixes, including [recovering a bricked One
   ROM](#recovering-a-bricked-one-rom).
 
-> This manual documents the `onerom` CLI as of release v<!--[version:cli]-->0.4.1<!--[/]-->. Board,
+> This manual documents the `onerom` CLI as of release v<!--[version:cli]-->0.5.0<!--[/]-->. Board,
 > chip and plugin lists shown in examples are illustrative — the set your build
 > supports may differ. Run `onerom --version` to check your version, and
 > `onerom board list` / `onerom chips` for the definitive lists your build knows
@@ -73,7 +76,9 @@ breaks an existing command line lands in a minor release — v0.3.0 to v0.4.0 �
 and never in a patch. From v1.0.0 onwards such a change lands in a major
 release, and never in a minor or a patch.
 
-None in this release.
+- One ROM Lab is now recognised by the CLI, so with a One ROM and a Lab both
+  connected every command except `scan` now needs `--serial` to disambiguate the
+  devices.
 
 Every release's breaking changes are collected in
 [Appendix: Breaking Change History](#appendix-breaking-change-history), at the
@@ -340,9 +345,9 @@ is summarised under [Device states](#device-states).
 
 ## Identifying your device
 
-With **exactly one** One ROM connected that the CLI recognises, you don't need
-to identify it — commands find it automatically, and the board type is inferred
-from the device.
+With **exactly one** One ROM or other One ROM device connected that the CLI
+recognises, you don't need to identify it — commands find it automatically and
+One ROM's board type is inferred from the device.
 
 With **multiple** devices connected, select one with `--serial` (`-s`). It
 accepts `*` and `?` wildcards:
@@ -443,9 +448,10 @@ specification](#plugin-specification).
 ### Plugin compatibility
 
 Every plugin going into an image is checked against the compatibility window
-published on the images server, whether it arrived via `--plugin` or was named
-by the config's own slots. A plugin the target firmware falls outside the
-window of is refused, and no image is written or flashed:
+published on the images server, whether it arrived via `--plugin` or the
+a config file.
+
+An incompatible plugin version is refused:
 
 ```
 $ onerom firmware build --config usb-0.1.2.json --board fire-24-a --output fw.bin
@@ -454,16 +460,6 @@ Plugin 'usb' version '0.1.2' is not compatible with firmware 0.7.0 or later.
   The selected firmware version is 0.7.1.
   Plugin version 0.2.1 supports it: https://images.onerom.org/plugins/system/usb/v0.2.1/plugin.bin
 ```
-
-The last line names the newest release that does support the firmware being
-built for, and the URL to point the config's plugin slot at. If no release of
-that plugin supports it, the message says so instead. A pinned `--plugin
-usb,version=0.1.2` is refused the same way, with the same suggestion.
-
-The check is worth having because a plugin binary declares only the *minimum*
-firmware it needs. A release withdrawn for some *newer* firmware — One ROM USB
-v0.1.2, which hard faults on firmware v0.7.0 — is recorded only in the manifest,
-so this is the one place it can be caught before the device stops booting.
 
 `--verbose` reports a plugin that passed:
 
@@ -493,7 +489,7 @@ onerom firmware build --config c64.json --board fire-24-e --out firmware.bin
 
 ```
 onerom inspect info      # serial, name, board, MCU, firmware version, hw revision
-onerom inspect slots     # ROM slots, with the active one marked
+onerom inspect slots     # ROM slots, with the selected one marked
 ```
 
 ### Read the live ROM image
@@ -534,17 +530,17 @@ onerom control led beacon
 
 ### Reset the host system after programming
 
-If you have run a wire from a One ROM header pad to the reset line of the
-machine One ROM is installed in, One ROM can pulse that pad low and then release
-it — resetting the host so it picks up the image you just flashed. Name the pad,
-or the MCU GPIO behind it — `onerom inspect header` shows which that is:
+If a header pin is wired to the reset line of the machine One ROM is installed
+in, One ROM can pulse that pin low after programming. The host then boots the
+image just flashed:
 
 ```
-onerom program --config c64.json --reset-host sel_c
+onerom program --config c64.json --reserve-pin sel_c --reset-host sel_c
 ```
 
-`--reset-host` waits for the One ROM to come back on the USB bus and then sends
-the pulse, so programming and resetting are one command. To reset a host without
+`--reset-host` waits for the One ROM to return to the USB bus, then sends the
+pulse. `--reserve-pin` stops One ROM using the pin — see [Reserve a pin for
+another use](#reserve-a-pin-for-another-use). To reset a host without
 programming it, or to choose the length of the pulse, use `control reset`:
 
 ```
@@ -552,10 +548,53 @@ onerom control reset --pin sel_c
 onerom control reset --pin sel_c --hold 500
 ```
 
-The pad is typically an image-select pad whose jumper you have removed, usually
-`sel_c`, or an `X1`/`X2` pad. The device times the pulse, so an interrupted CLI
-cannot leave the host held in reset. See [`control reset`](#control-reset), and
-[`control pin`](#control-pin) for driving a GPIO to an arbitrary state.
+The pin is typically `X1`, `X2` or an image select pin. The device times the
+pulse so an interrupted CLI cannot leave the host held in reset. See
+[`control reset`](#control-reset), and [`control pin`](#control-pin) for driving
+a pin to any state.
+
+### Reserve a pin for another use
+
+Reserve a pin for another use, for example a pin connected to the host's reset
+line, when the image is built:
+
+```
+onerom program --config c64.json --reserve-pin sel_c
+```
+
+Repeat `--reserve-pin` for each pin. Only image select pins and X pins can be
+reserved. Reserving a pin requires firmware v0.8.0 or later.
+
+One ROM does not pull or read a reserved image select pin at boot. It reads the
+image number from the remaining image select pins in order, so with `SEL_C`
+reserved `SEL_D` selects image 4. `--verbose` lists the jumpers that select each
+image, with a mark for each column of the board's jumper header:
+
+```
+Reserved pins: SEL_C
+
+Images:
+      D C B A
+0: [· · · · ·]  2364  no image select jumpers
+1: [· · · · ▪]  2364  SEL_A jumpered
+2: [· · · ▪ ·]  2364  SEL_B jumpered
+3: [· · · ▪ ▪]  2364  SEL_A and SEL_B jumpered
+4: [· ▪ · · ·]  2364  SEL_D jumpered
+```
+
+A slot that uses a reserved pin fails to build, for example where an X pin is
+reserved, but it is required to a banked or multi slot config.
+
+It is possible to build configs where a slot cannot be selected by the
+remaining image select jumpers.  That is reported:
+
+```
+Warning: slot 4 cannot be selected by jumpers. SEL_A and SEL_B provide 4 combinations for 5 slots.
+```
+
+[`inspect slots`](#inspect-slots), `scan --slots` and
+[`firmware inspect`](#firmware-inspect) list the reserved pins, and
+[`inspect gpio`](#inspect-gpio) marks them `reserved`.
 
 ### See what One ROM is doing with its GPIOs
 
@@ -564,7 +603,7 @@ onerom inspect gpio
 ```
 
 One row per MCU GPIO: everything that GPIO is — its ROM socket signal under the
-image being served, the board peripheral it drives, the header pad it surfaces
+image being served, the board peripheral it drives, the header pin it surfaces
 on — plus direction, level, 5V tolerance, and what One ROM itself is using it
 for. GPIOs connected to nothing are omitted unless you pass `--all`. Useful
 before driving a pin — see [`inspect gpio`](#inspect-gpio).
@@ -622,7 +661,8 @@ If your image interleaves several devices in one file — a 32-bit ROM set, say 
 Many commands reboot the device and, by default, pause briefly afterwards to let
 it re-enumerate on the USB bus.
 
-- **Running** (default reboot target) — firmware active, serving ROMs.
+- **Running** (default reboot target) — firmware active. One ROM is serving
+  ROMs.
 - **Stopped** — One ROM/RP2350 bootloader (BOOTSEL), required for some flash
   operations.
 
@@ -689,6 +729,7 @@ hardware take them; each command's own entry below states what it accepts, and
 | [`console`](#console) | Send data to and receive data from the machine One ROM is fitted in | Yes |
 | [`control`](#control) | Transient (non-persistent) device actions | Yes |
 | [`update`](#update) | Persistent device modifications | Yes |
+| [`hardware`](#hardware) | Commission and check a One ROM's hardware | Varies |
 | [`image`](#image) | ROM image file manipulation | No |
 | [`firmware`](#firmware) | Build, inspect and manage firmware binaries | Varies |
 | [`plugin`](#plugin) | List available plugins | No |
@@ -703,9 +744,19 @@ hardware take them; each command's own entry below states what it accepts, and
 
 ## scan
 
-Discover and list connected One ROMs — serial, USB location, name, board type,
-MCU and loaded firmware version. With `--verbose` (`-v`), each device also
-shows its MCU variant and chip ID.
+Discover and list connected One ROMs and One ROM Labs. Each device's line
+contains its:
+
+- board type, followed by its [size](#board-sizes) unless the size is M
+- firmware version
+- state
+- serial
+
+`--verbose` (`-v`) adds each device's:
+
+- MCU variant
+- chip ID
+- commissioning information
 
 ```
 onerom scan
@@ -725,6 +776,30 @@ Example output:
 Scanning ... 
 found 1 connected device:
   One ROM Fire 28 C - Firmware: v0.7.2 State: Running Serial: FC9D67248E8E8023
+```
+
+With `--verbose` on a `fire-40-b` commissioned by Acme Retro:
+
+```
+$ onerom scan --verbose
+Scanning ... 
+found 1 connected device:
+  One ROM Fire 40 B - Firmware: v0.8.0 State: Stopped Serial: DE3F9C232F655B6B
+    MCU: RP235xB Chip ID: DE3F9C232F655B6B
+    Commissioned: yes
+      Board type:   fire-40-b
+      Manufacturer: Acme Retro
+      Date:         2026-09-29
+      Signing key:  Acme Retro (256)
+```
+
+One ROM Lab shows its board type, or `(board not set)`. `--slots` doesn't show
+any additional output.
+
+```
+Scanning ... 
+found 1 connected device:
+  One ROM Lab (board not set) - Firmware: v0.4.0 State: Running Serial: 62CD9AE3C0771A7E
 ```
 
 Device required: no.
@@ -764,7 +839,7 @@ onerom program --config c64.json --out firmware.bin
 | `--plugin <SPEC>` | Plugin specification; repeatable. See [Plugin specification](#plugin-specification). May be combined with `--config`: the plugins are inserted ahead of the config's ROM slots (which shift up), and it is an error if the config already defines a plugin of its own. Conflicts with `--firmware`. |
 | `--config-name <NAME>` | Name for the generated ROM configuration. Conflicts with `--config`. |
 | `--config-description <DESC>` (aliases `--desc`, `--description`) | Description for the generated configuration. Defaults to *"Created by the One ROM CLI"*. Conflicts with `--config`. |
-| `--save-config <FILE>` | Save the generated configuration to JSON. Only valid with `--slot` or `--no-config`. Conflicts with `--config`. |
+| `--save-config <FILE>` | Save the generated configuration to JSON. Only valid with `--slot` or `--no-config`. Conflicts with `--config`. `--plugin usb` is saved as `"plugin": "usb"`. |
 
 ### Per-device overrides
 
@@ -777,6 +852,7 @@ These are rejected with `--no-config`.
 | `--logging [BOOL]` (aliases `--boot-logging`) | Enable boot logging. Takes an optional boolean; bare flag means `true`. |
 | `--disable-swd [BOOL]` (aliases `--swd-disable`) | Shut SWD down before ROM serving starts, so debug port accesses to SRAM don't steal cycles from the serving DMAs. SWD is available for the whole of boot — including boot logging — and goes off until the next reset. Nothing is logged past that point, and plugins get no logging. This is not a debug lockout: the boot ROM runs before the One ROM firmware does, and BOOTSEL/PICOBOOT are unaffected. Optional boolean; bare flag means `true`. |
 | `--turbo-boot [BOOL]` | Enable turbo boot — starts serving faster by not reading the image select jumpers, so the first non-plugin slot is always the one served. More than one non-plugin slot is refused unless `--force` is given. Optional boolean; bare flag means `true`. |
+| `--reserve-pin <PIN>` (aliases `--reserved-pin`, `--reserved_pins`) | Reserve a pin for another use, for example a pin connected to a host's reset line. Repeat for each reserved pin. Requires firmware v0.8.0 or later. See [Reserve a pin for another use](#reserve-a-pin-for-another-use). |
 
 ### Board, version and output
 
@@ -796,11 +872,15 @@ These are rejected with `--no-config`.
 | `--fast` | Skip the re-enumeration pause after the final reboot. Conflicts with `--no-reboot`. |
 | `--msd, -m` | Mount mass storage when rebooting into stopped mode. |
 | `--verify` | Verify flash by reading back after programming. |
-| `--force, -f` | Continue despite non-fatal problems: assembled firmware parse errors, a board type mismatch, and config warnings such as turbo boot with more than one non-plugin ROM slot. Each is reported as a warning instead. |
+| `--force, -f` | Continue despite non-fatal problems, reporting each as a warning. |
 | `--batch` (aliases `--multiple`, `--multi`) | Program multiple devices, pausing for confirmation between each. Every board is programmed with the same configuration as the first. |
 | `--scan-slots` | After programming, run `onerom scan --slots` to show the result. Conflicts with `--fast`. |
 | `--follow` | After programming, monitor the One ROM's log, as [`monitor log`](#monitor-log) does. Runs after `--scan-slots`, and only once the One ROM is back on the USB bus, so it shows the boot log of the firmware just flashed. Refused before anything is flashed if the image has no USB system plugin, since such a One ROM leaves the bus as soon as it serves. Conflicts with `--fast`, `--stopped`, `--no-reboot` and `--batch`. |
-| `--reset-host <PIN>` (alias `--host-reset`) | After programming, pulse this pin low to reset the host system, as [`control reset`](#control-reset) does. Named as `gpio<N>` or as a header pad (see [Pin values](#pin-values)). Runs after `--scan-slots` and before `--follow`, once the One ROM is back on the USB bus, and for each device in a `--batch`. The pulse is <!--[const:GPIO_RESET_DEFAULT_HOLD_MS:ms]-->100ms<!--[/]-->; use `control reset` for a different hold. Conflicts with `--fast`, `--stopped` and `--no-reboot`. |
+| `--reset-host <PIN>` (alias `--host-reset`) | After programming, pulse this pin low to reset the host system, as [`control reset`](#control-reset) does. Written as `gpio<N>` or as a header pin (see [Pin values](#pin-values)). Runs after `--scan-slots` and before `--follow`, once the One ROM is back on the USB bus, and for each device in a `--batch`. The pulse is <!--[const:GPIO_RESET_DEFAULT_HOLD_MS:ms]-->100ms<!--[/]-->. Use `control reset` for a different hold time. A warning is displayed if the pin isn't reserved. Conflicts with `--fast`, `--stopped` and `--no-reboot`. |
+
+An image is built for the One ROM's [size](#board-sizes). For a
+[commissioned](#hardware) One ROM it must also be built for the board type it
+is commissioned as, unless `--force` is used.
 
 Device required: yes.
 
@@ -824,12 +904,16 @@ onerom inspect <COMMAND>
 | [`gpio`](#inspect-gpio) | Show what each GPIO is and what it is doing | Yes (running) |
 | [`header`](#inspect-header) | Draw the device board's pin header | Yes |
 | [`socket`](#inspect-socket) | Draw the device board's ROM socket pinout | Yes |
+| [`otp`](#inspect-otp) | Print the contents of One ROM's OTP | Yes |
 
 ### inspect info
 
-Show the device's serial number, user-assigned name, board type, MCU, firmware
-version and hardware revision. With `--verbose` (`-v`), also shows the MCU
-variant and chip ID.
+Print the device's identity and configuration information.
+
+The command then dumps the device's parsed structures as JSON. A
+`Parser notes:` block follows it when a structure is missing, or when the
+CLI is parsing a firmware newer than it understands. One ROM Lab's own
+structures sit under the dump's `metadata` and `runtime` keys.
 
 ```
 onerom inspect info
@@ -847,8 +931,23 @@ supported)**
 
 ### inspect slots
 
-List the ROM image slots stored on the device — index, ROM type, size and
-description — marking the active slot. No options.
+List the plugins and ROM slots stored on the device. No options. On a running
+One ROM the slot selected at boot is marked `active`, or `standby` while One ROM
+is in [standby](#control-standby):
+
+```
+  Configured with 3 slots - Slot 0 is selected (standby)
+  Slot 0 (selected, standby):
+```
+
+Any reserved pins are displayed:
+
+```
+  Configured with 3 slots - Slot 0 is selected (active)
+  Reserved pins: SEL_C, X1
+```
+
+`scan --slots` displays the same information.
 
 ### inspect image
 
@@ -880,9 +979,19 @@ onerom inspect peek live --address 0 --length 8192 --output rom-image.bin
 
 | Option | Description |
 |---|---|
-| `--address, -a <ADDRESS>` (alias `--addr`) | Logical ROM address to read from, starting at 0. Decimal or `0x` hex. Default `0`. |
+| `--address, -a <ADDRESS>` (alias `--addr`) | Logical ROM address to read from, starting at 0. Decimal or `0x` hex. Default `0`. On a One ROM serving half a 27C080, address 0 is the start of that half. |
 | `--length, -l <LENGTH>` (aliases `--len`, `--size`) | Number of bytes to read. Decimal or hex. If omitted, reads to the end of the live image. |
 | `--output, -o <FILE>` (alias `--out`) | Save the data to this file. |
+
+A line is output preceding the data, saying what was read.
+
+```
+$ onerom inspect peek live --address 0x100 --length 16
+Read 16 byte(s) from live ROM offset 0x00000100
+0x0100  00 01 02 03  04 05 06 07  08 09 0a 0b  0c 0d 0e 0f  |................|
+```
+
+In [standby](#control-standby) the line ends `(standby)`.
 
 #### inspect peek memory
 
@@ -919,16 +1028,16 @@ onerom inspect gpio --pin x1
 
 | Option | Description |
 |---|---|
-| `--pin <PIN>` | Show only this pin, named as `gpio<N>` or as a header pad (see [Pin values](#pin-values)). Conflicts with `--all`. |
-| `--board <BOARD>` | Board type, overriding what the device reports. Only needed to resolve a `--pin` pad name on a board this build does not recognise. |
+| `--pin <PIN>` | Show only this pin, a header pin or an MCU GPIO written `gpio<N>` (see [Pin values](#pin-values)). Conflicts with `--all`. |
+| `--board <BOARD>` | Board type, overriding what the device reports. Only needed to resolve a `--pin` header pin on a board this build does not recognise. |
 | `--all` | Also list GPIOs with no function at all. By default only GPIOs connected to something are shown. |
 
 By default the table lists only the GPIOs connected to **something** — a ROM
-socket signal, a board peripheral or a header pad. On a 48-GPIO board a quarter
-of the GPIOs are connected to nothing, and listing them buries the rows worth
-reading; a line beneath the table says how many were omitted. `--all` lists
+socket signal, a board peripheral or a header pin. On a 48-GPIO board some
+of the GPIOs are connected to nothing, and listing them may bury the rows worth
+reading. A line beneath the table says how many were omitted. `--all` lists
 every GPIO. Note the filter is on what the GPIO *is*, not on what the device
-reports using it for: the `X1`/`X2` and image-select pads report `free` and are
+reports using it for: the `X1`/`X2` and image-select pins report `free` and are
 exactly what you read this table to find, so they always appear.
 
 The number of GPIOs the device has is its own — 30 on an RP2350A, 48 on an
@@ -939,32 +1048,39 @@ Columns:
 | Column | Meaning |
 |---|---|
 | `GPIO` | MCU GPIO number. |
-| `Function` | Everything this GPIO is, comma-separated in a fixed order: its ROM socket signal under the image being served (`A5`, `D3`, `CS1`, `BYTE/VPP`), then the board peripheral (`Status LED`, `RGB LED`, `USB VBUS`, `ext flash CS`), then the header pad (`X1`, `X2`, `SEL_A`). `-` if the GPIO is connected to nothing. |
+| `Function` | Everything this GPIO is, comma-separated in a fixed order: its ROM socket signal under the image being served (`A5`, `D3`, `CS1`, `BYTE/VPP`), then the board peripheral (`Status LED`, `RGB LED`, `USB VBUS`, `ext flash CS`), then the header pin (`X1`, `X2`, `SEL_A`). `-` if the GPIO is connected to nothing. |
 | `Dir` | `out` if the pin's output driver is enabled, `in` if not. |
 | `Level` | The GPIO's level, `0` or `1`: what an `out` pin is driving, what an `in` pin reads. |
 | `Max V` | `5V` if the GPIO is 5V-tolerant, `3V3` if it is an RP2350 ADC pin and therefore 3.3V-only, `?` if the board is not characterised. |
-| `One ROM use` | What One ROM itself is using the GPIO for: `free`, `serving (read)`, `serving (driven)` or `system`. |
+| `Current use` | What One ROM itself is using the GPIO for: `free`, `serving (read)`, `serving (driven)`, `standby`, `input forced`, `system` or `reserved`. |
 
 `Function` lists everything that applies rather than stopping at the first
 match, so a GPIO that is genuinely two things says so: on a `fire-24-f` the
 Status LED and the RGB LED are the same GPIO, and it reads `Status LED,
 RGB LED`. Names that would repeat are shown once — on a 32-pin board a high
-address line is both the socket's `A17` and the `A17` header pad, which is one
+address line is both the socket's `A17` and the `A17` header pin, which is one
 net.
 
-`Function` names only what a **GPIO** is. A header pad may carry more than the
-GPIO behind it — on a Fire 24/28 board the `SEL_C` and `SEL_D` pads sit on the
+`Function` names only what a **GPIO** is. A header pin may carry more than the
+GPIO wired to it — on a Fire 24/28 board the `SEL_C` and `SEL_D` pins sit on the
 SWCLK and SWDIO nets — but SWCLK and SWDIO are dedicated RP2350 pins with no
 GPIO of their own, so they do not appear here. Run
-[`inspect header`](#inspect-header) for the pad-by-pad view, which shows every
-role each pad carries.
+[`inspect header`](#inspect-header) for the pin-by-pin view, which shows every
+role each pin carries.
 
-Only `Dir`, `Level` and `One ROM use` come from the device. `Function` is
-derived by the CLI from the board's pin map and the chip type being served: the
-device deliberately reports what taking a pin over would *cost*, never what the
-pin *is*. `serving (read)` pins (address, chip-select, `/BYTE`) can be driven and
-released; `serving (driven)` pins (the data pins) cannot be given back without a
-reboot — see [`control pin`](#control-pin).
+`Current use` is One ROM's use of the GPIO:
+
+- `free`: not used.
+- `reserved`: [reserved](#reserve-a-pin-for-another-use) for another use, and not used.
+- `input forced`: not read, so driving it has no effect on serving.
+- `serving (read)`: an address, chip select or `/BYTE` pin. Driving it changes what One ROM serves until the pin is released.
+- `serving (driven)`: a data pin. Driving it stops serving until One ROM reboots.
+- `standby`: a data pin while One ROM is in [standby](#control-standby). Driving it breaks serving until One ROM reboots.
+- `system`: a board peripheral, for example the status LED.
+
+A `serving`, `standby` or `system` pin can only be driven with `--force`. See [`control pin`](#control-pin).
+
+In standby the title ends `(standby)`, for example `serving 2364 (standby)`.
 
 With `--verbose` (`-v`) the table is followed by a legend restating where each
 column comes from, what `Dir` and `Level` mean and what the `3V3`/`5V` tags
@@ -975,7 +1091,7 @@ A board revision or ROM type this build does not recognise costs the derived
 names, not the listing: `Function` falls back to `-` (or, for a socket pin whose
 chip type is unknown, `socket pin <N>`), and with no recognised board at all
 nothing is filtered out, since nothing can be ruled out. On a board with no
-pin-header descriptor, pad names come from the board's pin assignments alone and
+pin-header descriptor, header pins come from the board's pin assignments alone and
 `--verbose` says so beneath the table.
 
 On a Fire 28 (rev C) serving a 27512:
@@ -1161,6 +1277,55 @@ onerom inspect socket [--board <board>] [--chip-type <chip>] [--gpio]
 As with [`inspect header`](#inspect-header), `--board` overrides the connected
 One ROM's reported board type rather than standing in for the device.
 
+### inspect otp
+
+Print what One ROM's [OTP](/docs/OTP.md) contains:
+
+- the [board size](#board-sizes)
+- the commissioning information
+- the bootloader USB info
+
+It doesn't check that the commissioning information is correctly signed.
+[`hardware validate`](#hardware-validate) does.
+
+```
+onerom inspect otp
+onerom inspect otp --json
+```
+
+| Option | Description |
+|---|---|
+| `--json` | Print the whole report as JSON instead of text. |
+
+`--verbose` adds:
+
+- the external flash settings in `FLASH_DEVINFO`
+- every commissioning instance and its entries, with their rows
+- the bootloader settings rows and the page lock words
+
+On a `fire-40-b` commissioned by Acme Retro:
+
+```
+$ onerom inspect otp
+One ROM Fire 40 B - Firmware: v0.8.0 State: Stopped Serial: DE3F9C232F655B6B
+  Board size: M
+  Commissioned: yes
+    Board type:   fire-40-b
+    Manufacturer: Acme Retro
+    Date:         2026-09-29
+    Signing key:  Acme Retro (256)
+  Bootloader USB info: set
+    USB VID:               0x1209
+    USB PID:               0xF540
+    USB manufacturer:      piers.rocks
+    USB product:           One ROM Bootloader
+    Volume label:          ONEROM
+    INDEX.HTM link:        https://onerom.org
+    INDEX.HTM link name:   onerom.org
+    INFO_UF2.TXT model:    One ROM
+    INFO_UF2.TXT board ID: fire-40-b
+```
+
 ---
 
 ## monitor
@@ -1189,19 +1354,19 @@ opens with a `-----` divider of its own:
 ```
 Monitoring log - press Ctrl-C to stop
 ----- One ROM USB log -----
-One ROM fire-28-c v0.7.2
-Serial: 2E4A671D1C92AE5C
-Logging: boot, plugin-internal, error, plugin-application
+One ROM fire-32-b v0.8.0
+Serial: 66CDC06786DCE3B4
+Logging: boot, error, plugin-application
 ---------------------------
 -----
-One ROM v0.7.2.1 https://onerom.org
+One ROM v0.8.0.1 https://onerom.org
 Copyright (c) 2026 Piers Finlayson <piers@piers.rocks>
-Built: Aug 15 2026 14:09:53
-Commit: 5db495a
+Built: Oct  3 2026 18:48:06Z
+Commit: 257953f
 -----
 RP235XB
 RAM: 520KB
-Flash: 2048KB
+Flash: CS0 2048KB, CS1 0KB
 Freq: 150MHz
 ```
 
@@ -1311,6 +1476,7 @@ onerom control <COMMAND>
 |---|---|---|
 | [`reboot`](#control-reboot) | Reboot the device | Yes |
 | [`led`](#control-led) | Control the status LED | Yes |
+| [`standby`](#control-standby) | Turn standby mode on or off | Yes (running) |
 | [`poke`](#control-poke) | Write to SRAM or the live ROM image | Yes |
 | [`reset`](#control-reset) | Pulse a GPIO low to reset the host system | Yes (running) |
 | [`select`](#control-select) | Select the active ROM slot **(not yet supported)** | Yes |
@@ -1443,6 +1609,45 @@ with the v0.2.2 or later USB system plugin.
 
 Device required: yes, and it must be running with the USB system plugin.
 
+### control standby
+
+Turn standby mode on or off. In standby mode One ROM doesn't serve the ROM but
+is listening on the bus.
+
+The data pins remain undriven, and plugins run as normal. Turning standby off
+starts serving the selected ROM. A slot boots in standby when `standby=on` is
+provided in its [`--slot` specification](#rom-slot-specification), or with
+`fire.standby` set in its chip set's `firmware_overrides`.
+
+```
+onerom control standby on
+onerom control standby off
+```
+
+| Subcommand | Description |
+|---|---|
+| `on` | Turn standby mode on. |
+| `off` | Turn standby mode off. |
+
+Success prints nothing. With `--verbose` it prints `Standby on` or
+`Standby off`.
+
+The device must be running with the USB system plugin and
+firmware v0.8.0 or later. With an older plugin or firmware the command fails:
+
+```
+$ onerom control standby on
+Failed to execute command.
+This One ROM's USB system plugin predates standby.
+  One ROM Fire 24 F - Firmware: v0.8.0 State: Running Serial: DE3F9C232F655B6B
+  Reprogram it with the v0.8.0 or later USB system plugin, for example:
+    onerom program --config <CONFIG> --plugin usb
+```
+
+[`inspect gpio`](#inspect-gpio), [`inspect slots`](#inspect-slots),
+[`peek live`](#inspect-peek-live) and [`poke live`](#control-poke-live) mark
+their output `standby` while One ROM is in standby.
+
 ### control poke
 
 Transient writes to device memory — changes are lost on reboot. Use
@@ -1485,13 +1690,20 @@ onerom control poke live --address 0 --input patch.bin
 
 | Option | Description |
 |---|---|
-| `--address, -a <ADDRESS>` (alias `--addr`) | Logical ROM address, starting at 0. Decimal or `0x` hex. Default `0`. |
+| `--address, -a <ADDRESS>` (alias `--addr`) | Logical ROM address, starting at 0. Decimal or `0x` hex. Default `0`. On a One ROM serving half a 27C080, address 0 is the start of that half. |
 | `--byte <BYTE>` (alias `--value`) | Single byte value to write. Decimal or hex. |
 | `--input, -i <FILE>` (alias `--in`) | Write the contents of this binary file. |
 | `--delta` (alias `--deltas`) | Only write bytes that differ from current device content. Requires `--input`. |
 | `--dry-run` (alias `--dryrun`) | Show what would be written without writing. Requires `--delta`. |
 
 Exactly one of `--byte` / `--input` is required.
+
+In [standby](#control-standby) the line ends `(standby)`:
+
+```
+$ onerom control poke live --address 0x100 --byte 0xea
+Wrote 1 byte(s) to live ROM offset 0x00000100 (standby)
+```
 
 ### control reset
 
@@ -1500,12 +1712,12 @@ in — useful in scripted workflows after programming a new image.
 [`program --reset-host`](#program) does the same thing as the last step of
 programming, and is the shorter way to say it.
 
-`--pin` is the pin your reset wire is soldered to, typically an image-select pad
-whose jumper has been removed — `sel_c` is the usual choice, as more boards have
-it than have X pads and it is 5V tolerant where it exists — or an `X1`/`X2` pad.
-Name it by pad (`sel_c`, `x1`) or by MCU GPIO (`gpio9`) — see
-[Pin values](#pin-values). [`inspect header`](#inspect-header) shows which GPIO
-is behind each pad.
+`--pin` is the pin connected to the host's reset line, typically `X1`, `X2` or
+an image select pin, for example `sel_c`. Write it
+as a header pin (`sel_c`, `x1`) or as an MCU GPIO (`gpio9`) — see [Pin
+values](#pin-values). [`inspect header`](#inspect-header) lists each header
+pin's GPIO. Reserve the pin when the image is built — see [Reserve a pin for another
+use](#reserve-a-pin-for-another-use).
 
 The line is only ever **driven low and then released to high impedance**. A reset
 net has its own pull-up and may have other drivers on it, so there is
@@ -1527,8 +1739,8 @@ onerom control reset --pin gpio9 --hold 500
 
 | Option | Description |
 |---|---|
-| `--pin <PIN>` | Pin the reset wire is connected to, named as `gpio<N>` or as a header pad (see [Pin values](#pin-values)). Required. |
-| `--board <BOARD>` | Board type, overriding what the device reports. Only needed to resolve a `--pin` pad name on a board this build does not recognise. |
+| `--pin <PIN>` | Pin the reset wire is connected to, written as `gpio<N>` or as a header pin (see [Pin values](#pin-values)). Required. |
+| `--board <BOARD>` | Board type, overriding what the device reports. Only needed to resolve a `--pin` header pin on a board this build does not recognise. |
 | `--hold <MS>` | Milliseconds to hold reset asserted. Decimal or `0x` hex. Default <!--[const:GPIO_RESET_DEFAULT_HOLD_MS:code]-->`100`<!--[/]-->; `0` is rejected, because a reset pulse with no end is not a reset. |
 
 If One ROM is itself using the GPIO the command is refused, naming what it is
@@ -1559,8 +1771,7 @@ Switch the device to serving the specified slot immediately (not persistent).
 Drive a One ROM pin high, low or high-impedance, optionally for a bounded
 period.
 
-`--pin` names an MCU GPIO or a header pad (see [Pin values](#pin-values)); the
-command is named for what is being addressed rather than for any one spelling.
+`--pin` is an MCU GPIO or a header pin (see [Pin values](#pin-values)).
 
 Without `--hold` the state is latched until something else changes it. With
 `--hold` the **device** holds the state for that many milliseconds and then
@@ -1586,8 +1797,8 @@ onerom control pin --pin sel_a --state z
 
 | Option | Description |
 |---|---|
-| `--pin <PIN>` | Pin to drive, named as `gpio<N>` or as a header pad (see [Pin values](#pin-values)). Required. |
-| `--board <BOARD>` | Board type, overriding what the device reports. Only needed to resolve a `--pin` pad name on a board this build does not recognise. |
+| `--pin <PIN>` | Pin to drive, written as `gpio<N>` or as a header pin (see [Pin values](#pin-values)). Required. |
+| `--board <BOARD>` | Board type, overriding what the device reports. Only needed to resolve a `--pin` header pin on a board this build does not recognise. |
 | `--state <STATE>` | `high`, `low`, or `z` (high-impedance). `1` and `0` are accepted for `high` and `low`. Required. |
 | `--hold <MS>` | Hold `--state` for this many milliseconds, then apply `--then`. Decimal or `0x` hex. Omit to latch indefinitely. The device's own limit is <!--[const:GPIO_MAX_HOLD_MS:seconds]-->60 seconds<!--[/]-->. |
 | `--then <STATE>` | State to apply when `--hold` expires: `high`, `low` or `z` (or `1`/`0`). Default `z`. Requires `--hold`. |
@@ -1598,14 +1809,16 @@ refused and names what it is doing. `--force` overrides, and prints what that
 costs:
 
 - a pin serving **reads** (address, chip-select, `/BYTE`) is reversible — serving
-  keeps reading it, and `--state z` puts it back;
+  keeps reading it, and `--state z` puts it back.
 - a pin serving **drives** (a data pin) is not — forcing it takes the pin away
   from the PIO that drives it, and serving stays broken until the device is
   rebooted.
+- a data pin in [standby](#control-standby) is the same, and is reported as a
+  standby pin.
 
 If the GPIO is not 5V-tolerant — an RP2350 ADC pin, per the board metadata, not
 a measurement — the command warns and asks for confirmation, which `--yes` or
-`--force` answers. Nothing else about the pad is checked: what is wired to it,
+`--force` answers. Nothing else about the pin is checked: what is wired to it,
 whether a jumper is fitted and what voltage the far end sits at are yours to
 know.
 
@@ -1665,7 +1878,6 @@ onerom update <COMMAND>
 |---|---|---|
 | [`slot`](#update-slot) | Write a ROM image to a flash slot **(not yet supported)** | Yes |
 | [`commit`](#update-commit) | Commit the live image to flash **(not yet supported)** | Yes |
-| [`otp`](#update-otp) | Read/write OTP memory **(not yet supported, hidden)** | Yes |
 
 ### update slot
 
@@ -1696,16 +1908,332 @@ onerom update commit --slot 2
 |---|---|
 | `--slot <INDEX>` | Slot to commit. Commits the active slot if omitted. |
 
-### update otp
+---
 
-Read or write RP2350 OTP memory, including One ROM-specific USB configuration and
-identity data. Hidden, advanced. **OTP writes are irreversible.** **(not yet
-supported)**
+## hardware
+
+Commissioning sets hardware properties in the RP2350's [OTP](/docs/OTP.md) (One
+Time Programmable) memory, which cannot be erased.
+[COMMISSIONING](/docs/COMMISSIONING.md) describes the process.
+
+`commission`, `request-signature` and `set-size` require an RP2350 of stepping
+A3 or A4, as One ROM requires one of these steppings.
+
+```
+onerom hardware <COMMAND>
+```
+
+| Subcommand | Purpose | Device required |
+|---|---|---|
+| [`commission`](#hardware-commission) | Commission a One ROM | Yes |
+| [`request-signature`](#hardware-request-signature) | Request a signature to commission a One ROM | Yes |
+| [`sign`](#hardware-sign) | Sign a One ROM's commissioning instance | No |
+| [`set-size`](#hardware-set-size) | Set a One ROM's size | Yes |
+| [`validate`](#hardware-validate) | Check a One ROM's commissioning information | Yes |
+
+Each command other than `sign`:
+
+- stops a One ROM that is running or in limp mode first, and reboots it into
+  running mode once complete
+- requires [`--unrecognised`](#global-options) for an uncommissioned One ROM
+  without One ROM firmware
+
+`commission`, `sign` and `set-size` list what they will write or sign and ask
+for confirmation, which `--yes` answers.
+
+`commission` and `set-size`:
+
+- reboot a One ROM that was already stopped back into stopped mode after
+  writing OTP
+- complete an interrupted run when run again
+
+### Board sizes
+
+`--size` takes:
+
+- `M`, with 2MB of flash
+- `L`, with 4MB of flash
+
+A board that doesn't
+[support external flash](/docs/COMMISSIONING.md#cli-options) is always M.
+
+Setting a One ROM to a size other than M is **permanent** so it is recommended
+to [test the external flash](/docs/COMMISSIONING.md#external-flash-plugin)
+first.
+A One ROM's size can be changed from M with
+[`hardware set-size`](#hardware-set-size). [OTP](/docs/OTP.md#board-sizes)
+describes how each size is recorded.
+
+### hardware commission
+
+Write to the RP2350's OTP:
+
+- the signed board type, manufacturer and date
+- the USB info that white labels the RP2350's bootloader as One ROM
+- the external flash settings for a [size](#board-sizes) other than M
+
+```
+onerom hardware commission --board fire-40-b --size M --manufacturer "Acme Retro" --key acme.pem
+onerom hardware commission --board fire-24-f --manufacturer "Acme Retro" --key acme.pem --dry-run
+onerom hardware commission --board fire-40-b --size L --manufacturer "Acme Retro" \
+    --signer https://sign.internal.example.com --key-id 256
+onerom hardware commission --board fire-40-b --size M --manufacturer onerom.org \
+    --date 20260929 --key-id 2 --signature 3f0c...
+onerom hardware commission --board fire-40-b --size M --manufacturer "Acme Retro" --key acme.pem \
+    --validate --inspect-otp
+```
 
 | Option | Description |
 |---|---|
-| `--read` | Read and display OTP contents. Conflicts with `--write`. |
-| `--write <ROW=VALUE>` | Write a value to an OTP row. Conflicts with `--read`. |
+| `--board, -b <BOARD>` | Board type, for example `fire-40-b`. Must be a Fire board with the matching RP2350 package (A or B). Required. |
+| `--size <SIZE>` | The board's [size](#board-sizes), for example `M`. Required for a board that supports external flash. |
+| `--manufacturer <NAME>` | Manufacturer's name, for example `"Acme Retro"`. Printable ASCII without `*` or a leading or trailing space. Required. |
+| `--signer <URL>` | Signing server's address, for example `https://sign.internal.example.com`. Must use https. Requires `--key-id`. |
+| `--key-id <ID>` | Signing key's ID from 1 to 65535, for example `256`. Conflicts with `--key`. |
+| `--pin <PIN>` | PIN of the signing server's key or of an encrypted key file. Asked for in a terminal if omitted. Conflicts with `--signature`. |
+| `--key <FILE>` | Signing key file containing an Ed25519 private key in PKCS#8 PEM form, for example `acme.pem`. |
+| `--signature <SIGNATURE>` | Commissioning signature as 128 hex digits, generated by [`hardware sign`](#hardware-sign). Requires `--key-id` and `--date`. |
+| `--date <DATE>` | Commissioning date as `YYYYMMDD`, for example `20260929`. Defaults to today's UTC date. |
+| `--force, -f` | Allow the cases listed below. |
+| `--dry-run` (alias `--dryrun`) | List what would be written without writing it. |
+| `--validate` | After commissioning, check the commissioning information as [`hardware validate`](#hardware-validate) does. Conflicts with `--dry-run`. |
+| `--inspect-otp` | After commissioning, show the contents of the OTP as [`inspect otp`](#inspect-otp) does. Runs after `--validate`. Conflicts with `--dry-run`. |
+
+The signature comes from one of:
+
+- a key file, with `--key` — see
+  [Using a Signing Key](/docs/COMMISSIONING.md#using-a-signing-key)
+- a signing server, with `--signer` and `--key-id` — see
+  [Signing Server](/docs/COMMISSIONING.md#signing-server)
+- a [signing request](/docs/COMMISSIONING.md#submitting-a-signing-request) or
+  [`hardware sign`](#hardware-sign), with `--signature`, `--key-id` and `--date`
+
+The signing key must be
+[authorised](/docs/COMMISSIONING.md#requesting-an-authorised-signing-key) for
+the manufacturer being signed.
+
+`--force` is required to:
+
+- re-commission a One ROM with a different board type, manufacturer, date or
+  signing key — see
+  [Correcting Commissioning Errors](/docs/COMMISSIONING.md#correcting-commissioning-errors)
+- commission a One ROM whose firmware is for another board type
+- commission a One ROM as M when another size is partly programmed
+- use a `--date` in the future
+
+`--verbose` adds the bootloader USB info and each row with its value.
+
+Check the result with `--validate`, or afterwards with
+[`hardware validate`](#hardware-validate). `--validate` and `--inspect-otp` run
+after OTP has been written and the One ROM rebooted into stopped mode, so the
+settings take effect.
+
+Commissioning a `fire-40-b` as M with an encrypted key file:
+
+```
+$ onerom hardware commission --board fire-40-b --size M --manufacturer "Acme Retro" --key acme.pem
+PIN for acme.pem: 
+One ROM Fire 40 B - Firmware: v0.8.0 State: Stopped Serial: DE3F9C232F655B6B
+Commissioning:
+  Board type:   fire-40-b
+  Board size:   M
+  Manufacturer: Acme Retro
+  Date:         2026-09-29
+  Signing key:  Acme Retro (256)
+To write:
+  Commissioning instance at row 0x0c0   59 rows
+  Lock for page 3                        1 row
+  Bootloader USB strings                41 rows
+  White label table                      9 rows
+  USB_WHITE_LABEL_ADDR                   1 row
+  USB_BOOT_FLAGS and its copies          3 rows
+  Total                                114 rows
+WARNING: OTP writes cannot be undone.
+Write 114 rows? (y/N): y
+Writing OTP - DO NOT DISCONNECT
+Commissioning instance: written
+Lock for page 3: written
+Bootloader USB strings: written
+White label table: written
+USB_WHITE_LABEL_ADDR: written
+USB_BOOT_FLAGS and its copies: written
+Commissioning complete
+```
+
+### hardware request-signature
+
+Generate a signing request for the One ROM. The maintainers answer it with the
+[`hardware commission`](#hardware-commission) command to run. See
+[Submitting a Signing Request](/docs/COMMISSIONING.md#submitting-a-signing-request).
+
+A One ROM commissioned this way is signed with the piers.rocks Community
+signing key and its manufacturer is always `onerom.org`.
+
+```
+onerom hardware request-signature --board fire-40-b --size M
+onerom hardware request-signature --board fire-24-f
+```
+
+| Option | Description |
+|---|---|
+| `--board, -b <BOARD>` | Board type, for example `fire-40-b`. Must be a Fire board with the matching RP2350 package (A or B). Required. |
+| `--size <SIZE>` | The board's [size](#board-sizes), for example `M`. Required for a board that supports external flash. |
+
+Requesting a signature for a `fire-40-b` as M:
+
+```
+$ onerom hardware request-signature --board fire-40-b --size M
+One ROM Fire 40 B - Firmware: v0.8.0 State: Stopped Serial: DE3F9C232F655B6B
+Signing request:
+  Chip ID:      DE3F9C232F655B6B
+  Board type:   fire-40-b
+  Board size:   M
+  Manufacturer: onerom.org
+Open this link to raise a signing request for this One ROM on GitHub:
+  https://github.com/piersfinlayson/one-rom/issues/new?template=signing-request.yml&title=%5Bsigning%20request%5D%20DE3F9C232F655B6B&chip_id=DE3F9C232F655B6B&board=fire-40-b&size=M&manufacturer=onerom.org
+```
+
+### hardware sign
+
+Sign a One ROM's commissioning information by its Chip ID. It prints the
+[`hardware commission`](#hardware-commission) command to run on that One ROM.
+
+A signing server publicly records the signature once confirmed.
+
+```
+onerom hardware sign --chip-id DE3F9C232F655B6B --board fire-40-b --size M \
+    --manufacturer "Acme Retro" --key acme.pem
+onerom hardware sign --chip-id DE3F9C232F655B6B --board fire-24-f \
+    --manufacturer "Acme Retro" --key acme.pem --json
+onerom hardware sign --chip-id DE3F9C232F655B6B --board fire-40-b --size L \
+    --manufacturer "Acme Retro" --signer https://sign.internal.example.com --key-id 256 --dry-run
+```
+
+| Option | Description |
+|---|---|
+| `--chip-id <CHIPID>` | One ROM's Chip ID as 16 hex digits, for example `DE3F9C232F655B6B`. [`scan --verbose`](#scan) prints it. Required. |
+| `--board, -b <BOARD>` | Board type, for example `fire-40-b`. Must be a Fire board. Required. |
+| `--size <SIZE>` | The board's [size](#board-sizes), for example `M`. Required for a board that supports external flash. |
+| `--manufacturer <NAME>` | Manufacturer's name, for example `"Acme Retro"`. Printable ASCII without `*` or a leading or trailing space. Required. |
+| `--date <DATE>` | Commissioning date as `YYYYMMDD`, for example `20260929`. Defaults to today's UTC date. Cannot be in the future. |
+| `--signer <URL>` | Signing server's address, for example `https://sign.internal.example.com`. Must use https. Requires `--key-id`. |
+| `--key-id <ID>` | Signing key's ID from 1 to 65535, for example `256`. Conflicts with `--key`. |
+| `--pin <PIN>` | PIN of the signing server's key or of an encrypted key file. Asked for in a terminal if omitted. |
+| `--key <FILE>` | Signing key file containing an Ed25519 private key in PKCS#8 PEM form, for example `acme.pem`. |
+| `--dry-run` (alias `--dryrun`) | Sign without asking for confirmation and without the signing server publicly recording the signature. Doesn't print the `hardware commission` command. Conflicts with `--key`. |
+| `--json` | Print the result as JSON instead of text. |
+
+The signature comes from one of:
+
+- a key file, with `--key` — see
+  [Using a Signing Key](/docs/COMMISSIONING.md#using-a-signing-key)
+- a signing server, with `--signer` and `--key-id` — see
+  [Signing Server](/docs/COMMISSIONING.md#signing-server)
+
+The signing key must be
+[authorised](/docs/COMMISSIONING.md#requesting-an-authorised-signing-key) for
+the manufacturer being signed.
+
+Signing for a `fire-40-b` as M with an encrypted key file:
+
+```
+$ onerom hardware sign --chip-id DE3F9C232F655B6B --board fire-40-b --size M --manufacturer "Acme Retro" --key acme.pem
+PIN for acme.pem: 
+Signing:
+  Chip ID:      DE3F9C232F655B6B
+  Board type:   fire-40-b
+  Board size:   M
+  Manufacturer: Acme Retro
+  Date:         2026-09-29
+  Signing key:  Acme Retro (256)
+Sign? (y/N): y
+Signature: 069aa818bc4a1baa7d23ae160117d17b03e2f3e672fdf1bc8e7bd93d6a6d4456b5d960aa2f249f6065d973eb5f6ae51fa025a931ff32bf26ab514a2d3d0d3803
+Command to commission the One ROM:
+  onerom hardware commission --board fire-40-b --size M --manufacturer 'Acme Retro' --date 20260929 --key-id 256 --signature 069aa818bc4a1baa7d23ae160117d17b03e2f3e672fdf1bc8e7bd93d6a6d4456b5d960aa2f249f6065d973eb5f6ae51fa025a931ff32bf26ab514a2d3d0d3803
+```
+
+### hardware set-size
+
+Write a One ROM's [size](#board-sizes) settings to OTP without commissioning
+it. [`hardware commission`](#hardware-commission) writes the same settings, so
+this is only required when changing a One ROM's size after or without
+commissioning. Size M writes nothing.
+
+```
+onerom hardware set-size --board fire-40-b --size L
+onerom hardware set-size --board fire-40-b --size L --dry-run
+```
+
+| Option | Description |
+|---|---|
+| `--board, -b <BOARD>` | Board type, for example `fire-40-b`. Must be a Fire board with the matching RP2350 package (A or B), even with `--force`. Required. |
+| `--size <SIZE>` | The board's [size](#board-sizes), for example `L`. Required. |
+| `--force, -f` | Set the size of a One ROM whose firmware is for another board type. |
+| `--dry-run` (alias `--dryrun`) | List what would be written without writing it. |
+
+On a commissioned One ROM `--board` must be the board type it is
+commissioned as.
+
+`--verbose` adds each row with its value.
+
+Changing a `fire-40-b` commissioned as M to L:
+
+```
+$ onerom hardware set-size --board fire-40-b --size L
+One ROM Fire 40 B - Firmware: v0.8.0 State: Stopped Serial: DE3F9C232F655B6B
+Setting board size:
+  Board type: fire-40-b
+  Board size: L
+To write:
+  FLASH_DEVINFO                                       1 row
+  FLASH_DEVINFO_ENABLE in BOOT_FLAGS0 and its copies  3 rows
+  Total                                               4 rows
+WARNING: OTP writes cannot be undone.
+Write 4 rows? (y/N): y
+Writing OTP - DO NOT DISCONNECT
+FLASH_DEVINFO: written
+FLASH_DEVINFO_ENABLE in BOOT_FLAGS0 and its copies: written
+Board size set
+```
+
+### hardware validate
+
+Check the signature of each commissioning instance on the One ROM against the
+authorised signing keys. The command fails unless the One ROM's latest
+commissioning instance is valid.
+
+```
+onerom hardware validate
+onerom hardware validate --json
+```
+
+| Option | Description |
+|---|---|
+| `--json` | Print the result as JSON instead of text. |
+
+The command downloads the most recent signing key table. Where it cannot, it
+uses the table built into the CLI and prints a warning.
+
+`--verbose` adds:
+
+- the signing key table's source
+- the row of the commissioning instance in use
+- every other commissioning instance
+
+Validating a `fire-40-b` commissioned by Acme Retro:
+
+```
+$ onerom hardware validate
+One ROM Fire 40 B - Firmware: v0.8.0 State: Stopped Serial: DE3F9C232F655B6B
+Board size: M
+Commissioned: yes
+  Board type:   fire-40-b
+  Manufacturer: Acme Retro
+  Date:         2026-09-29
+  Signing key:  Acme Retro (256)
+  Signature:    verified
+Commissioning information valid
+```
 
 ---
 
@@ -1848,22 +2376,24 @@ onerom firmware build --config c64.json --board fire-24-e --out firmware.bin
 onerom firmware build --board fire-24-e \
     --slot file=kernal.bin,type=2364,cs1=active-low \
     --out firmware.bin
+onerom firmware build --config amiga.json --board fire-40-b --size L --out firmware.bin
 ```
 
 The configuration options mirror [`program`](#program): `--config` (`-j`),
 `--slot`, `--plugin`, `--config-name`, `--config-description`, `--save-config`,
 `--no-config`, and the per-device overrides `--instance-name`,
-`--serial-override`, `--logging`, `--disable-swd`, `--turbo-boot` (all rejected
-with `--no-config`). Build-specific options:
+`--serial-override`, `--logging`, `--disable-swd`, `--turbo-boot`,
+`--reserve-pin` (all rejected with `--no-config`). Build-specific options:
 
 | Option | Description |
 |---|---|
 | `--board, -b <BOARD>` | Target board type. Required when not inferrable from a connected device. |
+| `--size <SIZE>` | The board's [size](#board-sizes), for example `L`. Defaults to `M`. A size other than M requires firmware v0.8.0 or later. |
 | `--version <VERSION>` | Firmware version to build against. Defaults to latest. |
 | `--base-firmware <FILE>` | Use a local minimal firmware instead of downloading. Must be built with `EXCLUDE_METADATA=1` and `ROM_CONFIGS=`. Conflicts with `--version`. |
 | `--output, -o <FILE>` (alias `--out`) | Output file path. Defaults to `onerom-<board>-<version>.bin`. Conflicts with `--path`. |
 | `--path <DIR>` | Output directory, using the default filename. Conflicts with `--output`. |
-| `--force, -f` | Continue despite non-fatal problems: assembled firmware parse errors, a board type mismatch, and config warnings such as turbo boot with more than one non-plugin ROM slot. Each is reported as a warning instead. |
+| `--force, -f` | Continue despite non-fatal problems, reporting each as a warning. |
 
 Device required: no.
 
@@ -1875,6 +2405,31 @@ metadata.
 ```
 onerom firmware inspect --firmware firmware.bin
 ```
+
+For a fire-24-e image with the USB plugin and two 2364s:
+
+```
+Version:  0.8.0
+Board:    fire-24-e
+MCU:      RP235xA
+Plugins:
+  https://images.onerom.org/plugins/system/usb/v0.3.1/plugin.bin
+Slots: 2
+  Slot 0: 1 ROM(s), 8192 bytes
+    ROM 0: 2364 kernal.bin
+  Slot 1: 1 ROM(s), 8192 bytes
+    ROM 0: 2364 basic.bin
+```
+
+From v0.7.0, release firmware is board agnostics firmware. It runs on any board
+and doesn't contain ROM images. Inspecting it prints
+`Board:    any (base firmware)`.
+
+For a One ROM Lab image:
+
+- `Firmware: One ROM Lab`
+- `Version:` its version
+- `Board:` the board it was built for, or `(not set)`
 
 | Option | Description |
 |---|---|
@@ -2115,8 +2670,8 @@ Device required: no.
 ### board header
 
 Draw a board's pin (jumper / programming) header — the 2xN header along the
-board's top edge — as ASCII, pad by pad. Each image-select and X pad is
-annotated with the MCU GPIO behind it, and on RP2350 (Fire) boards with whether
+board's top edge — as ASCII, pin by pin. Each image-select and X pin is
+annotated with the MCU GPIO wired to it, and on RP2350 (Fire) boards with whether
 that GPIO is 5V-tolerant (`5V`) or 3.3V-only (`!!3V3!!` — an ADC pin that must
 not be driven above 3.3V). See [Voltage Levels](VOLTAGE-LEVELS.md) for the ADC
 caveat.
@@ -2136,18 +2691,17 @@ diagram.
 onerom board header --board fire-24-f
 ```
 
-With no `--board`, the CLI takes the board type from the connected One ROM. It
-cannot do that for a device whose firmware it cannot read, and says so:
+Without `--board` the board type is read from the connected One ROM.
 
 ```
 $ onerom board header --unrecognised
 Failed to execute command.
-Could not determine board type from the connected device Unknown           - Firmware: n/a   State: Unknown Serial: (no serial).
+Could not determine board type from the connected device Unknown           - Firmware: n/a   State: Stopped Serial: DE3F9C232F655B6B.
   It may be an unprogrammed One ROM or have corrupt firmware.
   Supply the board type with --board
 ```
 
-The header carries the `BOOTSEL` pad used to boot a One ROM into its own
+The header carries the `BOOTSEL` pin used to boot a One ROM into its own
 bootloader — see [Recovering a bricked One ROM](#recovering-a-bricked-one-rom).
 
 Device required: no (a device is used only to infer `--board` when it is
@@ -2338,6 +2892,7 @@ file=<path_or_url>,type=<romtype>[,label=<text>]
     [,size-handling=<handling>][,format=<binary|ihex|srec>][,load-address=<addr>]
     [,transform=<list>]
     [,cpu-freq=<freq>][,cpu-vreg=<voltage>][,led=<bool>][,force-16-bit=<bool>]
+    [,standby=<bool>]
 ```
 
 | Key | Values / notes |
@@ -2354,6 +2909,7 @@ file=<path_or_url>,type=<romtype>[,label=<text>]
 | `cpu-vreg` | e.g. `1.1`, `1.10`, `1.10v`, `1.10V`. Values above 1.10 V require confirmation (suppressed by `--yes`). Must be a supported level. |
 | `led` | Boolean: `on`/`off`, `true`/`false`, `1`/`0`. |
 | `force-16-bit` (alias `force_16bit`) | Boolean (as above). Valid only on 40-pin boards. |
+| `standby` | Boolean (as above). Controls whether One ROM boots into standby mode when this slot is selected. In standby mode One ROM doesn't serve the ROM. With `standby=on`, `file` is optional. Requires firmware v0.8.0 or later. See [`control standby`](#control-standby). |
 
 Examples:
 
@@ -2369,6 +2925,7 @@ Examples:
 --slot file=kernal.bin,type=2364,cs1=active-low,cpu-freq=200MHz,cpu-vreg=1.2V
 --slot file=char.bin,type=2332,cs1=active-low,cs2=active-high,led=off
 --slot file=amiga.bin,type=27C400,force-16-bit=true
+--slot type=2364,cs1=active-low,standby=on
 --slot file=undersized.bin,type=2732,size=pad
 --slot file=oversized.bin,type=2732,size=trunc
 --slot file=halfsized.bin,type=2732,size=dup
@@ -2520,49 +3077,26 @@ checked separately — see [Plugin compatibility](#plugin-compatibility).
 
 ## Pin values
 
-Used by `--pin` in [`control pin`](#control-pin), [`control
-reset`](#control-reset) and [`inspect gpio`](#inspect-gpio), and by
-`--reset-host` in [`program`](#program).
+A pin is written in one of these forms. Case is ignored.
 
-`--pin` names one **MCU GPIO**, either directly or through a header pad that is
-wired to one. All spellings are case-insensitive (`GPIO23`, `SEL_A`).
-
-| Form | Meaning |
+| Form | Pin |
 |---|---|
-| `gpio<N>` | An MCU GPIO — for example `gpio23`. |
-| `sel_a` … `sel_e` | An image-select pad. `sel-a` and `sela` are also accepted. |
-| `x1`, `x2` | An X pad. |
+| `sel_<letter>` | An image select pin, for example `sel_a`. `sel-a` and `sela` also work. |
+| `x1`, `x2` | An X pin. |
+| `gpio<N>` | An MCU GPIO, for example `gpio23`. |
 
-A pad name resolves against the **board**, since which GPIO sits behind `sel_a`
-is a fact about the board and not about the name. The board is normally read
-from the connected device; `--board` overrides it, and is what you need if this
-build does not recognise the device's board revision. `gpio<N>` needs no board.
-A board that has no such pad — `sel_e` on a four-select board, `x1` on a board
-with no X pads — is an error naming the pads that board does have.
+Used by:
+- `--pin` in [`control pin`](#control-pin), [`control reset`](#control-reset)
+  and [`inspect gpio`](#inspect-gpio)
+- `--reset-host` in [`program`](#program)
+- `--reserve-pin` in `program` and [`firmware build`](#firmware-build)
 
-Resolution uses the board's electrical pin assignments, not its header layout,
-so pad names work on every board, including those whose physical header is not
-yet characterised.
+Only image select pins and X pins can be reserved.
 
-A bare number is **rejected**. `23` could be an MCU GPIO, an image-select pad, an
-X pad or a ROM socket pin, and driving the wrong one is not a recoverable
-mistake, so the CLI names the namespaces rather than guessing. Accepting pad
-names does not remove that ambiguity — it sharpens it.
+A header pin's GPIO depends on the board. The board is read from the connected
+One ROM. Use `--board` if its board isn't recognised.
 
-The broken-out address pads (`a<N>`) are recognised and **deliberately refused**,
-now and in future. `--pin` addresses MCU GPIOs and the pads a wire can reach; an
-address line is a ROM signal rather than one of those, and accepting `a17` would
-invite `a11` or `d3`, which have no pad at all. Use the MCU GPIO behind the pad.
-`run`, `bootsel`, `swclk` and `swdio` are reported as not being GPIOs that can be
-driven. There is no syntax for a ROM socket leg.
-
-Run [`onerom inspect header`](#inspect-header) to see which GPIO is behind each
-header pad, or [`onerom inspect gpio`](#inspect-gpio) for the full per-GPIO
-listing.
-
-The upper bound is the device's own GPIO count — 30 on an RP2350A, 48 on an
-RP2350B — read from the device rather than assumed, so a GPIO the device does not
-have is reported against what it does have.
+Use [`onerom inspect header`](#inspect-header) to see each header pin's GPIO.
 
 ---
 
@@ -2636,17 +3170,19 @@ including a Raspberry Pi Pico 2, so make sure only the One ROM is attached:
 $ onerom scan --unrecognised
 Scanning ... 
 found 1 connected device:
-  Unknown           - Firmware: n/a   State: Unknown Serial: (no serial)
+  Unknown           - Firmware: n/a   State: Stopped Serial: DE3F9C232F655B6B
 ```
 
-The CLI names a device's board, firmware and serial from the firmware it is
-holding, and there is none in this example's bricked One ROM it can read.
+`scan` reads a device's board and firmware version from its firmware. Where it
+can't read the firmware it reads the board from the device's commissioning data
+if present.
 
 ### Programming it again
 
-**You have to supply the One ROM board information.** A One ROM board type is
-only identifiable from the firmware already programmed to it, and that
-is the thing that is missing or wrong. The board name is the pin count and the
+**You have to supply the One ROM board information** unless the board has been
+commissioned. An uncommissioned One ROM's board type is only identifiable from
+the firmware already programmed to it, and that either missing or wrong.
+The board name is the pin count and the
 revision letter silkscreened on the board — `fire-24-f` is a 24-pin board,
 revision F. The marking is small.
 [`onerom board list`](#board-list) prints every name.
@@ -2660,11 +3196,10 @@ onerom program --unrecognised --board fire-24-f --config c64.json
 With the [browser programmer](https://onerom.org/web), pick the board yourself
 in the same way. It will ask you to confirm the board type before it writes.
 
-If the board was mis-flashed rather than left blank, both tools notice — the
-wrong firmware is still in flash and they read the board from it.  The CLI
-refuses, and needs `--force` alongside `--board`.  The browser programmer warns
-and lets you continue.  Check the silkscreen once more before you do either,
-because the same objection appears when the board is right and the name you
+If an uncommissioned board was mis-flashed rather than left blank, the browser
+programmer reads the board from the wrong firmware still in flash.  A warning
+appears and you can continue.  Check the silkscreen once more before you do,
+because the same warning appears when the board is right and the name you
 picked is wrong.
 
 Then confirm the device came back up.  With the CLI:

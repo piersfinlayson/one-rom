@@ -16,10 +16,10 @@ use studiov2_commands::{COMMANDS, Command, GLOBALS, Group, Kind, Opt};
 
 /// Every option the CLI has, counted by hand from `rust/cli/src/args/`.
 ///
-/// 171 belong to a command and 6 are global.  A reader that quietly stops
+/// 206 belong to a command and 6 are global.  A reader that quietly stops
 /// understanding an attribute drops options rather than failing, and this is
 /// what turns that into a test failure.
-const TOTAL_OPTIONS: usize = 177;
+const TOTAL_OPTIONS: usize = 212;
 
 /// The command the CLI puts at that path.
 fn command(path: &[&str]) -> &'static Command {
@@ -124,16 +124,6 @@ fn a_command_reached_twice_is_described_once() {
 }
 
 #[test]
-fn a_hidden_command_is_not_described() {
-    assert!(
-        !COMMANDS
-            .iter()
-            .any(|command| command.path == ["update", "otp"]),
-        "onerom update otp is hidden in the CLI and should not be described"
-    );
-}
-
-#[test]
 fn image_convert_takes_its_five_options() {
     let convert = command(&["image", "convert"]);
     let longs: Vec<&str> = convert.opts.iter().map(|opt| opt.long).collect();
@@ -217,6 +207,18 @@ fn control_erase_says_you_must_pick_one_target() {
     assert_eq!(target.opts, ["all", "offset", "address"]);
     assert!(target.required, "erase_target has to be given");
     assert!(!target.multiple, "erase_target takes one of the three");
+}
+
+#[test]
+fn hardware_commission_needs_a_signing_server_a_key_file_or_a_signature() {
+    // The CLI declares this group as `group(ArgGroup::new(...))` rather than
+    // `group = ArgGroup::new(...)`.
+    let commission = command(&["hardware", "commission"]);
+    let signing = group(commission, "signing");
+
+    assert_eq!(signing.opts, ["signer", "key", "signature"]);
+    assert!(signing.required, "signing has to be given");
+    assert!(!signing.multiple, "signing takes one of the three");
 }
 
 #[test]
@@ -333,6 +335,44 @@ fn a_help_quoting_the_firmware_quotes_the_number() {
     assert_eq!(
         blink.help,
         "Milliseconds for one on and off. Defaults to 1000."
+    );
+}
+
+#[test]
+fn a_verbatim_doc_comment_keeps_its_lines() {
+    // An ordinary doc comment joins each wrapped line onto the one before
+    // unless it is indented.  Under `verbatim_doc_comment` an unindented line
+    // keeps its break too.
+    let long_about = command(&["hardware", "commission"])
+        .long_about
+        .expect("hardware commission has a long_about");
+    let lines: Vec<&str> = long_about.lines().collect();
+    assert!(
+        lines.windows(2).any(|pair| {
+            !pair[0].is_empty() && !pair[1].is_empty() && !pair[1].starts_with(' ')
+        }),
+        "hardware commission's long_about has had its lines joined"
+    );
+}
+
+#[test]
+fn a_summary_drops_its_full_stop_as_clap_does() {
+    // Unless the doc comment is verbatim.  clap then keeps the summary as
+    // written, and the CLI writes those without one.
+    for command in COMMANDS {
+        assert!(
+            !command.about.ends_with('.'),
+            "onerom {} ends its summary in a full stop",
+            command.path.join(" ")
+        );
+    }
+
+    // A `help = ...` string keeps its full stop, so options can't be swept
+    // the same way.
+    let json = opt(command(&["hardware", "validate"]), "json");
+    assert!(
+        !json.help.ends_with('.'),
+        "--json ends its help in a full stop"
     );
 }
 

@@ -21,7 +21,7 @@ jobs:
   studio-windows:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
@@ -33,7 +33,7 @@ jobs:
         run: .\scripts\build-win.ps1 nosign
 
       - name: Upload Windows artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: studio-windows-installers
           path: rust/studio/dist/*.exe
@@ -45,7 +45,7 @@ jobs:
   studio-mac:
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
@@ -57,7 +57,7 @@ jobs:
         run: scripts/build-mac.sh nosign
 
       - name: Upload Mac artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: studio-mac-dmgs
           path: rust/studio/dist/*.dmg
@@ -68,7 +68,7 @@ jobs:
   cli-windows:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
@@ -80,7 +80,7 @@ jobs:
         run: .\scripts\build-win.ps1 nosign
 
       - name: Upload Windows artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: cli-windows-zips
           path: rust/cli/dist/*.zip
@@ -91,7 +91,7 @@ jobs:
   cli-mac:
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
@@ -103,7 +103,7 @@ jobs:
         run: scripts/build-mac.sh nosign
 
       - name: Upload Mac artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: cli-mac-binary
           path: rust/cli/dist/onerom

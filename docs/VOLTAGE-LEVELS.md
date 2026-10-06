@@ -15,8 +15,8 @@ Therefore the STM32F4 series was initially chosen, followed by the RP2350, both 
 > used by the 32/40-pin Fire boards). One ROM never routes a 5V ROM-bus signal to
 > one of these pins; where they are used it is for image-select, status-LED or USB
 > signals on the top-edge header, which stay within 3.3V. The CLI's
-> `onerom board header --board <board>` view flags each such pad as `!!3V3!!` so it is
-> obvious which header pads must be kept at or below 3.3V.
+> `onerom board header --board <board>` view flags each such pin as `!!3V3!!` so it is
+> obvious which header pins must be kept at or below 3.3V.
 
 There are two areas which are important to understand when considering voltage levels:
 1. The logic level compatibility between One ROM and the retro system - that is, ensuring that One ROM's outputs are within the acceptable input levels of the retro system, and vice versa.  See [5V and 3.3V Logic Levels](#5v-and-33v-logic-levels).

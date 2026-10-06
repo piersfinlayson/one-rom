@@ -6,7 +6,7 @@
 //!
 //! Describes the jumper / programming header at the top edge of a One ROM
 //! board, column by column, so host tools (e.g. the web ROM Slot Builder) can
-//! draw an accurate wireframe of which pads to jumper for image selection,
+//! draw an accurate wireframe of which pins to jumper for image selection,
 //! rather than assuming a single fixed layout that is wrong for older or
 //! differently-shaped board revisions.
 //!
@@ -19,16 +19,16 @@
 //!
 //! # Model
 //!
-//! The header is a 2×N pin block: a top row and a bottom row of pads, grouped
+//! The header is a 2×N pin block: a top row and a bottom row of pins, grouped
 //! into [`HeaderColumn`]s numbered from 1 at the board's left edge. Some boards
-//! add an extra third-row pad below specific columns (the X pins), captured by
+//! add an extra third-row pin below specific columns (the X pins), captured by
 //! [`HeaderColumn::row3`]. Absent columns (e.g. a revision missing its
 //! left-most 5V/GND pair) are simply omitted, so the columns that *are* present
 //! keep their absolute positions and stay aligned across revisions when drawn.
 
-/// A function carried by a single physical header pad.
+/// A function carried by a single physical header pin.
 ///
-/// A pad may carry up to two roles at once where a signal is multiplexed onto
+/// A pin may carry up to two roles at once where a signal is multiplexed onto
 /// it — for example an image-select line that doubles as an SWD debug pin.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HeaderRole {
@@ -52,38 +52,38 @@ pub enum HeaderRole {
     /// X2 socket pin.
     X2,
     /// A high address line broken out on the header (the given line number, e.g.
-    /// `Addr(17)` = A17). Occupies the extra pad row on boards that expose it
+    /// `Addr(17)` = A17). Occupies the extra pin row on boards that expose it
     /// (32-pin boards) where smaller boards put an X pin instead.
     Addr(u8),
 }
 
-/// The state of one pad position (row) within a [`HeaderColumn`].
+/// The state of one pin position (row) within a [`HeaderColumn`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HeaderSlot {
-    /// No pad is fitted at this position.
+    /// No pin is fitted at this position.
     NotPopulated,
-    /// A pad is fitted but is not connected to anything.
+    /// A pin is fitted but is not connected to anything.
     NotConnected,
-    /// A pad is fitted and carries one or two [`HeaderRole`]s.
+    /// A pin is fitted and carries one or two [`HeaderRole`]s.
     Roles(&'static [HeaderRole]),
 }
 
-/// One column of the header: a top/bottom pad pair, plus an optional third-row
-/// pad on boards that have one.
+/// One column of the header: a top/bottom pin pair, plus an optional third-row
+/// pin on boards that have one.
 ///
 /// Columns are numbered from 1 at the left edge of the board. [`Self::row1`] is
-/// the top pad and [`Self::row2`] the bottom pad of the standard 2×N header;
-/// [`Self::row3`] is an extra pad sitting below the column on boards with X
-/// pins, and is `None` where no such pad physically exists.
+/// the top pin and [`Self::row2`] the bottom pin of the standard 2×N header;
+/// [`Self::row3`] is an extra pin sitting below the column on boards with X
+/// pins, and is `None` where no such pin physically exists.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct HeaderColumn {
     /// Absolute column position, 1-based from the board's left edge.
     pub col: u8,
-    /// Top-row pad.
+    /// Top-row pin.
     pub row1: HeaderSlot,
-    /// Bottom-row pad.
+    /// Bottom-row pin.
     pub row2: HeaderSlot,
-    /// Optional third-row pad, present only where one physically exists.
+    /// Optional third-row pin, present only where one physically exists.
     pub row3: Option<HeaderSlot>,
 }
 

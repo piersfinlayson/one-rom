@@ -15,7 +15,6 @@ To update the version:
   - [fw-parser](/rust/fw-parser/Cargo.toml)
   - [fw](/rust/fw/Cargo.toml)
   - [protocol](/rust/protocol/Cargo.toml)
-  - [lab](/rust/lab/Cargo.toml)
   - [metadata](/rust/metadata/Cargo.toml)
   - [app](/rust/app/Cargo.toml)
   - [cli](/rust/cli/Cargo.toml)
@@ -67,6 +66,9 @@ The CLI **binary** releases on its own cycle, following
 [rust/cli/README.md](/rust/cli/README.md).  The CLI manual PDF is published by
 that release rather than this one, since the manual moves with the CLI version.
 
+One ROM Lab releases on its own cycle, following
+[rust/lab/README.md](/rust/lab/README.md).
+
 ---
 
 If on a branch, submit a pull request and merge it into main.
@@ -74,9 +76,7 @@ If on a branch, submit a pull request and merge it into main.
 ## Plugins
 
 Build and release any plugins whose version changed this cycle, following
-[plugins/RELEASE.md](/plugins/RELEASE.md).  Build them individually rather than
-with `build-release-all.sh` unless every plugin is being released, since that
-script stages every plugin carrying a `plugin-meta.json`.
+[plugins/RELEASE.md](/plugins/RELEASE.md).
 
 Tag the version in git:
 
@@ -128,7 +128,7 @@ git push origin v<x.y.z>
 
 ## The `latest` fields
 
-Several manifests in `one-rom-images` carry a `latest`.  Three scripts move it
+Several manifests in `one-rom-images` carry a `latest`.  Four scripts move it
 as part of staging:
 
 | Manifest | Moved by |
@@ -136,6 +136,7 @@ as part of staging:
 | `plugins/<type>/<name>/releases.json` | `plugins/scripts/release.py` |
 | `cli/releases.json` | `rust/cli/scripts/release.py` |
 | `studio/releases.json` | `rust/studio/scripts/release.py` |
+| `lab/releases.json` | `rust/lab/scripts/release.py` |
 
 These five are hand edits, made once everything is published and serving:
 

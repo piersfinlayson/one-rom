@@ -9,13 +9,16 @@ use log::{debug, error, info, trace, warn};
 use std::time::Duration;
 
 use onerom_cli::CliFetch;
-use onerom_cli::plugin::{PluginNote, check_config_plugins};
+use onerom_cli::plugin::{PluginNote, check_config_plugins, resolve_config_plugins};
+use onerom_cli::slot::has_system_plugin;
 use onerom_config::fw::FirmwareVersion;
 use onerom_config::hw::Board;
 use onerom_config::mcu::Variant as McuVariant;
 use onerom_fw::get_rom_files_async;
 use onerom_fw::net::{Release, Releases};
-use onerom_gen::{Builder, FIRMWARE_SIZE, MAX_METADATA_LEN};
+use onerom_gen::{
+    Builder, Error as GenError, FIRMWARE_SIZE, FlashChips, MAX_METADATA_LEN, second_chip_supported,
+};
 
 use crate::analyse::Analyse;
 use crate::app::AppMessage;
@@ -66,7 +69,10 @@ pub enum Message {
     LoadConfig(Config),
     ConfigLoaded(Result<SelectedConfig, String>),
     ClearDownloadedConfig,
-    BuildImage(HardwareInfo),
+    BuildImage {
+        hw_info: HardwareInfo,
+        size_detected: bool,
+    },
     BuildImageResult(Result<(Image, String), String>),
     HelpPressed,
 
@@ -104,7 +110,10 @@ impl std::fmt::Display for Message {
                 Err(_) => write!(f, "ConfigLoaded(Err)"),
             },
             Message::ClearDownloadedConfig => write!(f, "ClearDownloadedConfig"),
-            Message::BuildImage(hw) => write!(f, "BuildImage({hw})"),
+            Message::BuildImage {
+                hw_info,
+                size_detected,
+            } => write!(f, "BuildImage({hw_info}, size_detected={size_detected})"),
             Message::BuildImageResult(_) => write!(f, "BuildImageResult"),
             Message::HelpPressed => write!(f, "HelpPressed"),
             Message::DownloadFailed => write!(f, "DownloadFailed"),
@@ -174,6 +183,8 @@ pub struct Image {
     metadata: Vec<u8>,
 
     roms: Vec<u8>,
+
+    usb_run_capable: bool,
 }
 
 impl std::fmt::Display for Image {
@@ -198,6 +209,12 @@ impl Image {
     /// Returns the length of the firmware portion
     pub fn firmware_len(&self) -> usize {
         self.firmware.len()
+    }
+
+    /// Whether the image includes a system plugin, which keeps a running
+    /// device on USB
+    pub fn is_usb_run_capable(&self) -> bool {
+        self.usb_run_capable
     }
 
     /// Returns the maximum firmware length (48KB)
@@ -354,7 +371,7 @@ impl RuntimeInfo {
         self.hw_info.as_ref()
     }
 
-    fn set_hw_info(&mut self, hw_info: Option<HardwareInfo>) {
+    pub(crate) fn set_hw_info(&mut self, hw_info: Option<HardwareInfo>) {
         self.hw_info = hw_info;
     }
 
@@ -551,9 +568,14 @@ impl Studio {
                 self.runtime_info.clear_config();
                 Task::none()
             }
-            Message::BuildImage(hw_info) => {
-                Task::future(Self::build_image_async(hw_info, self.runtime_info.clone()))
-            }
+            Message::BuildImage {
+                hw_info,
+                size_detected,
+            } => Task::future(Self::build_image_async(
+                hw_info,
+                size_detected,
+                self.runtime_info.clone(),
+            )),
             Message::BuildImageResult(result) => {
                 let msg = match result {
                     Ok((image, desc)) => {
@@ -587,7 +609,13 @@ impl Studio {
         Task::none()
     }
 
-    async fn build_image_async(hw_info: HardwareInfo, runtime_info: RuntimeInfo) -> AppMessage {
+    /// Builds an image.  `size_detected` is whether the board size was read
+    /// from a device.
+    async fn build_image_async(
+        hw_info: HardwareInfo,
+        size_detected: bool,
+        runtime_info: RuntimeInfo,
+    ) -> AppMessage {
         // Check we have firmware and config
         let firmware = if let Some(fw) = runtime_info.firmware() {
             fw.clone()
@@ -651,8 +679,8 @@ impl Studio {
             }
         }
 
-        let mcu_fam = if let Some(mcu) = hw_info.mcu_variant {
-            mcu.family()
+        let (mcu_variant, mcu_fam) = if let Some(mcu) = hw_info.mcu_variant {
+            (mcu, mcu.family())
         } else {
             warn!("Cannot get MCU family from hardware info, cannot build image");
             return CreateMessage::BuildImageResult(Err(
@@ -669,6 +697,24 @@ impl Studio {
             }
         };
 
+        match resolve_config_plugins(&mut builder, &fw_ver, &CliFetch).await {
+            Ok(plugins) => {
+                for plugin in plugins {
+                    debug!(
+                        "Resolved plugin: {}/{} v{} ({})",
+                        plugin.plugin_type.short(),
+                        plugin.name,
+                        plugin.version,
+                        plugin.file()
+                    );
+                }
+            }
+            Err(e) => {
+                warn!("Failed to resolve plugin: {e}");
+                return CreateMessage::BuildImageResult(Err(e.to_string())).into();
+            }
+        }
+
         // Get ROM files we need to download.  Cache them so that if we're asked to download the
         // same file again (for example zip with multiple extracts) we don't redownload it.
         //
@@ -681,11 +727,10 @@ impl Studio {
             }
         }
 
-        // A config may name a plugin, which reaches the image without ever
-        // having been selected against the images server's manifest.  The
-        // binary header declares only a minimum firmware version, so a plugin
-        // withdrawn for a *newer* firmware - which hard faults the device on
-        // boot - is caught only here.
+        // A plugin referred to by URL hasn't been checked against the images
+        // server's manifest. Its binary header contains only a minimum firmware
+        // version, so a plugin withdrawn for a newer firmware, which hard faults
+        // the device, is caught only here.
         match check_config_plugins(&builder, &fw_ver, &CliFetch).await {
             Ok(notes) => {
                 for note in notes {
@@ -730,12 +775,26 @@ impl Studio {
             }
         };
 
+        // Where a set doesn't fit and the size wasn't read from a device, a
+        // size with a second flash chip might hold it.
+        let advise_size = !size_detected
+            && hw_info.board.is_some_and(|board| {
+                FlashChips::new(mcu_variant, props.board_size())
+                    .second()
+                    .is_none()
+                    && second_chip_supported(board, fw_ver)
+            });
+
         // Build the image
         let (metadata, roms) = match builder.build(props) {
             Ok((md, roms)) => (md, roms),
             Err(e) => {
                 warn!("Failed to build image: {e:?}");
-                return CreateMessage::BuildImageResult(Err(e.to_string())).into();
+                let mut text = e.to_string();
+                if advise_size && matches!(e, GenError::SlotDoesNotFit { .. }) {
+                    text += "\n  If the board size is larger than M, change Board Size.";
+                }
+                return CreateMessage::BuildImageResult(Err(text)).into();
             }
         };
 
@@ -744,6 +803,7 @@ impl Studio {
             firmware,
             metadata,
             roms,
+            usb_run_capable: has_system_plugin(builder.config()),
         };
         let total_len = image.full_image_len();
         let fw_len = image.firmware_len();

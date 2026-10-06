@@ -214,6 +214,11 @@ pub fn test_lookup_coverage(emu: &Emulator, base_dir: &Path) -> Result<(), Strin
         ),
         (ffi::api_id_t_ORA_ID_LED_SET, "ORA_ID_LED_SET"),
         (ffi::api_id_t_ORA_ID_LED_GET, "ORA_ID_LED_GET"),
+        (
+            ffi::api_id_t_ORA_ID_FIRMWARE_STATE_QUERY,
+            "ORA_ID_FIRMWARE_STATE_QUERY",
+        ),
+        (ffi::api_id_t_ORA_ID_SET_STANDBY, "ORA_ID_SET_STANDBY"),
     ];
 
     // Deprecated/invalid IDs — must resolve to null.

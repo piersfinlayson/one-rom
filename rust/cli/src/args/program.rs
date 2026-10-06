@@ -6,7 +6,7 @@
 
 use crate::args::CommandTrait;
 use clap::Args;
-use onerom_cli::pin::{Pin, parse_pin};
+use onerom_cli::pin::{Pin, parse_pin, parse_reserve_pin};
 use onerom_cli::usb::RebootArgs;
 
 const HELP_RESET_HOST: &str = "After programming, pulse this pin low to reset \
@@ -16,10 +16,8 @@ const HELP_RESET_HOST: &str = "After programming, pulse this pin low to reset \
 const LONG_HELP_RESET_HOST: &str = concat!(
     "After programming, pulse this pin low to reset the host system the One ROM \
      is installed in, so it boots the ROM image just flashed.\n\n\
-     Name the pin the reset wire is soldered to - typically an X pad, or an \
-     image-select pad whose jumper you have removed. Use a pad name ('x1', \
-     'sel_a') or an MCU GPIO ('gpio9'). Run 'onerom inspect header' to see which \
-     GPIO is behind each pad.\n\n\
+     This is the pin connected to the host's reset line, typically X1, X2 or \
+     an image select pin. Reserve it with --reserve-pin.\n\n\
      The pin is checked against the image being flashed before anything is \
      written, and the pulse is sent once the programmed One ROM is back on the \
      USB bus, after --scan-slots and before --follow. It runs for each device in \
@@ -52,7 +50,7 @@ pub struct ProgramArgs {
 
     /// ROM slot specification. May be repeated for multiple slots.
     ///
-    /// Format: file=<path_or_url>,type=<romtype>[,cs1=<logic>][,cs2=<logic>][,cs3=<logic>][,size-handling=<handling>][,format=<binary|ihex>][,load-address=<addr>][,cpu-freq=<freq>][,cpu-vreg=<voltage>][,led=<bool>][,force-16-bit=<bool>]
+    /// Format: file=<path_or_url>,type=<romtype>[,cs1=<logic>][,cs2=<logic>][,cs3=<logic>][,size-handling=<handling>][,format=<binary|ihex>][,load-address=<addr>][,cpu-freq=<freq>][,cpu-vreg=<voltage>][,led=<bool>][,force-16-bit=<bool>][,standby=<bool>]
     ///
     /// CS logic values: active-low (or 0), active-high (or 1), ignore.  The
     /// snake_case config spellings are also accepted.
@@ -71,8 +69,12 @@ pub struct ProgramArgs {
     /// Vreg voltage: e.g. 1.1, 1.10, 1.10v, 1.10V. Values above 1.10V require
     /// confirmation (suppressed with --yes). Must be a supported voltage level.
     ///
-    /// Boolean values (led, force-16-bit): on/off, true/false, 1/0.
+    /// Boolean values (led, force-16-bit, standby): on/off, true/false, 1/0.
     /// force-16-bit is only valid on 40-pin boards.
+    ///
+    /// standby=on boots One ROM into standby mode when this slot is selected.
+    /// In standby mode One ROM doesn't serve the ROM. With standby=on, file is
+    /// optional. Requires firmware v0.8.0 or later.
     ///
     /// Examples:
     ///
@@ -196,7 +198,7 @@ pub struct ProgramArgs {
     /// Mutually exclusive with --config, --slot, and --firmware.
     #[arg(
         long,
-        conflicts_with_all = ["config_file", "slot", "firmware", "instance_name", "serial_override", "logging", "disable_swd", "turbo_boot"]
+        conflicts_with_all = ["config_file", "slot", "firmware", "instance_name", "serial_override", "logging", "disable_swd", "turbo_boot", "reserve_pin"]
     )]
     pub no_config: bool,
 
@@ -233,9 +235,7 @@ pub struct ProgramArgs {
     #[arg(long)]
     pub verify: bool,
 
-    /// Continue despite non-fatal problems: assembled firmware parse errors, a
-    /// board type mismatch, and config warnings such as turbo boot with more
-    /// than one non-plugin ROM slot.
+    /// Continue despite non-fatal problems, reporting each as a warning.
     #[arg(long, short)]
     pub force: bool,
 
@@ -316,6 +316,15 @@ pub struct ProgramArgs {
     /// More than one non-plugin slot is refused unless --force is given.
     #[arg(long, visible_aliases = ["turbo_boot"], default_missing_value = "true", num_args = 0..=1, conflicts_with_all = ["no_config"])]
     pub turbo_boot: Option<bool>,
+
+    /// Reserve a pin for another use, for example a pin connected to a host's
+    /// reset line. Repeat for each reserved pin.
+    ///
+    /// Requires firmware v0.8.0 or later.
+    ///
+    /// Example: --reserve-pin sel_c --reserve-pin x1
+    #[arg(long, visible_aliases = ["reserved-pin", "reserved_pins"], value_name = "PIN", value_parser = parse_reserve_pin, conflicts_with_all = ["no_config"])]
+    pub reserve_pin: Vec<Pin>,
 }
 
 impl CommandTrait for ProgramArgs {

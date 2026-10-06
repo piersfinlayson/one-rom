@@ -16,10 +16,14 @@ use core::task::{Context, Poll, Waker};
 
 use onerom_fw_parser::readers::MemoryReader;
 use onerom_fw_parser::{FirmwareFormat, Parser, SDRR_INFO_FW_OFFSET};
+use onerom_metadata::{
+    FLASH_CS0_BASE_ADDR, ONEROM_FAMILY_MAGIC, ONEROM_INFO_MAGIC,
+    ONEROM_INFO_VERSION_OFFSET as VERSION_OFF,
+};
 
 const STM32F4_FLASH_BASE: u32 = 0x0800_0000;
 const STM32F4_RAM_BASE: u32 = 0x2000_0000;
-const RP235X_FLASH_BASE: u32 = 0x1000_0000;
+const RP235X_FLASH_BASE: u32 = FLASH_CS0_BASE_ADDR;
 const RP235X_RAM_BASE: u32 = 0x2008_0000;
 
 /// Runs a future to completion.
@@ -56,18 +60,26 @@ fn original_image(major: u16, minor: u16, patch: u16) -> Vec<u8> {
 ///
 /// `build_date` points at a zero byte inside the image, and the metadata and
 /// runtime pointers are null, so the whole header parses with those two
-/// absent.
+/// absent.  The magic is the one a device of that version carries - ORRM from
+/// v0.8.0 and SDRR before it.  The structure generation stays at 2, because
+/// these tests are about the version boundaries and a v0.9.0 device's
+/// generation is not knowable here.
 fn schema_image(major: u16, minor: u16, patch: u16) -> Vec<u8> {
     let mut image = vec![0u8; 0x400];
     let base = SDRR_INFO_FW_OFFSET as usize;
-    image[base..base + 4].copy_from_slice(b"SDRR");
+    let magic = if (major, minor) >= (0, 8) {
+        ONEROM_FAMILY_MAGIC
+    } else {
+        ONEROM_INFO_MAGIC
+    };
+    image[base..base + 4].copy_from_slice(magic.as_bytes());
     image[base + 4..base + 6].copy_from_slice(&major.to_le_bytes());
     image[base + 6..base + 8].copy_from_slice(&minor.to_le_bytes());
     image[base + 8..base + 10].copy_from_slice(&patch.to_le_bytes());
     // build_date, into the zeroed tail of the image
     image[base + 12..base + 16].copy_from_slice(&(RP235X_FLASH_BASE + 0x300).to_le_bytes());
     // onerom_info_t structure version
-    image[base + 24..base + 28].copy_from_slice(&2u32.to_le_bytes());
+    image[base + VERSION_OFF..base + VERSION_OFF + 4].copy_from_slice(&2u32.to_le_bytes());
     image
 }
 
@@ -157,8 +169,17 @@ fn schema_path_takes_v0_7_999() {
 }
 
 #[test]
-fn schema_path_refuses_v0_8_0() {
-    let mut reader = MemoryReader::new(schema_image(0, 8, 0), RP235X_FLASH_BASE);
+fn schema_path_takes_v0_8_999() {
+    let mut reader = MemoryReader::new(schema_image(0, 8, 999), RP235X_FLASH_BASE);
+    let mut parser = schema_parser(&mut reader);
+    let onerom = block_on(parser.parse_format_schema()).expect("v0.8.999 should parse");
+    let info = onerom.info().expect("info should be present");
+    assert_eq!((info.minor_version, info.patch_version), (8, 999));
+}
+
+#[test]
+fn schema_path_refuses_v0_9_0() {
+    let mut reader = MemoryReader::new(schema_image(0, 9, 0), RP235X_FLASH_BASE);
     let mut parser = schema_parser(&mut reader);
     let err = block_on(parser.parse_format_schema()).unwrap_err();
     assert!(err.contains("unsupported"), "unexpected error: {err}");
@@ -173,8 +194,8 @@ fn schema_path_refuses_v1_0_0() {
 }
 
 #[test]
-fn a_v0_8_0_device_is_not_recognised() {
-    let mut reader = MemoryReader::new(schema_image(0, 8, 0), RP235X_FLASH_BASE);
+fn a_v0_9_0_device_is_not_recognised() {
+    let mut reader = MemoryReader::new(schema_image(0, 9, 0), RP235X_FLASH_BASE);
     let mut parser = schema_parser(&mut reader);
     let device = block_on(parser.parse_device());
     assert!(!device.is_recognised());
@@ -185,8 +206,8 @@ fn a_v0_8_0_device_is_not_recognised() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn detect_finds_a_v0_8_0_device() {
-    let mut reader = MemoryReader::new(schema_image(0, 8, 0), RP235X_FLASH_BASE);
+fn detect_finds_a_v0_9_0_device() {
+    let mut reader = MemoryReader::new(schema_image(0, 9, 0), RP235X_FLASH_BASE);
     let mut parser = schema_parser(&mut reader);
     assert!(block_on(parser.detect()));
 }

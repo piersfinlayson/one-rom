@@ -7,17 +7,11 @@
 #ifndef REG_RP235X_H
 #define REG_RP235X_H
 
-#define MCU_FLASH_SIZE     2097152
-#define MCU_FLASH_SIZE_KB  2048
-#define MCU_RAM_SIZE       532480
 #define MCU_RAM_SIZE_KB    520
+#define MCU_RAM_SIZE       (MCU_RAM_SIZE_KB * 1024)
 
 // Using Winbond W25Q16JV 2MB (16MBit)
 #define MAX_FLASH_CLOCK_FREQ_MHZ 133
-#define FLASH_SIZE_KB 2048
-#if FLASH_SIZE_KB != MCU_FLASH_SIZE_KB
-#error "Flash size mismatch"
-#endif
 
 #define RP2350_RAM_SIZE_KB 520
 #if MCU_RAM_SIZE_KB != RP2350_RAM_SIZE_KB
@@ -27,7 +21,6 @@
 #define SRAM_BASE 0x20000000u
 
 // Register base addresses
-#define FLASH_BASE          0x10000000
 #define XIP_CACHE_BASE      0x18000000
 #define SYSINFO_BASE        0x40000000
 #define SYSCFG_BASE         0x40008000
@@ -279,6 +272,23 @@
 #define TIMER0_INT_ALARM0   (1 << 0)
 #define TIMER0_INT_ALARM1   (1 << 1)
 
+// OTP registers - see datasheet S13.
+//
+// Page n's software lock.  A write is ORed with the page's lock, so it can
+// tighten the lock but not loosen it until the next reset.
+#define OTP_SW_LOCK(page)       (*((volatile uint32_t *)(OTP_BASE + 4 * (page))))
+#define OTP_SW_LOCK_READ_ONLY   0x5     // Read-only to Secure and Non-secure code
+
+// OTP_DATA_BASE and OTP_DATA_RAW_BASE are in onerom_metadata.h because the
+// host tools read OTP through the same aliases.
+//
+// The unguarded ECC read alias holds two rows in each 32-bit word, the even row
+// in the low half.  A damaged row reads as wrong data rather than a bus fault.
+#define OTP_DATA_WORD(row)      (*((volatile uint32_t *)(OTP_DATA_BASE + 4 * ((row) >> 1))))
+
+// The raw read alias holds one row in each 32-bit word, in bits 23:0.
+#define OTP_DATA_RAW(row)       (*((volatile uint32_t *)(OTP_DATA_RAW_BASE + 4 * (row))))
+
 // XIP_CTRL Registers
 #define XIP_CTRL_CTRL       (*((volatile uint32_t *)(XIP_CTRL_BASE + 0x00)))
 #define XIP_CTRL_STATUS     (*((volatile uint32_t *)(XIP_CTRL_BASE + 0x08)))
@@ -287,9 +297,9 @@
 
 // XIP_QMI Registers
 #define XIP_QMI_M0_TIMING   (*((volatile uint32_t *)(XIP_QMI_BASE + 0x0C)))
-
-#define XIP_QMI_M0_CLKDIV_MASK   0xFF
-#define XIP_QMI_M0_CLKDIV_SHIFT  0
+#define XIP_QMI_M1_TIMING   (*((volatile uint32_t *)(XIP_QMI_BASE + 0x20)))
+#define XIP_QMI_CLKDIV_MASK      0xFF
+#define XIP_QMI_CLKDIV_SHIFT     0
 
 // Power Manager Registers
 #define POWMAN_VREG_CTRL    (*((volatile uint32_t *)(POWMAN_BASE + 0x04)))
@@ -404,6 +414,7 @@
 #define NVIC_ISER1          (*((volatile uint32_t *)(PBB_BASE + 0x0E104)))
 #define NVIC_ICER0          (*((volatile uint32_t *)(PBB_BASE + 0x0E180)))
 #define NVIC_ICER1          (*((volatile uint32_t *)(PBB_BASE + 0x0E184)))
+#define DMA_IRQ_0           10
 #define IRQ_USBCTRL      14
 #define IO_IRQ_BANK0        21
 

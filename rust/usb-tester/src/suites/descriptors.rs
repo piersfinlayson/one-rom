@@ -17,6 +17,7 @@
 
 use crate::device::Device;
 use crate::{Ctx, Scenario};
+use onerom_metadata::{USB_PLUGIN_PID, USB_PLUGIN_VID};
 use onerom_plugin_tester::run::Outcome;
 
 // Control transfer stages, from tinyusb's tusb_types.h.
@@ -37,15 +38,14 @@ const DESC_ENDPOINT: u8 = 0x05;
 
 // From usb_descriptors.h.
 const VENDOR_REQUEST_MICROSOFT: u8 = 1;
-const MS_OS_20_DESC_LEN: usize = 0xB2;
+const MS_OS_20_DESC_LEN: usize = 0xCE;
+
+// MS OS 2.0 descriptor types, from tusb_types.h.
+const MS_OS_20_SUBSET_HEADER_FUNCTION: u16 = 0x02;
+const MS_OS_20_FEATURE_COMPATIBLE_ID: u16 = 0x03;
 
 /// The wIndex Windows asks the MS OS 2.0 descriptor with, from usb_main.c.
 const MS_OS_20_WINDEX: u16 = 7;
-
-/// What Studio matches on to recognise a running One ROM — see `FIRE_VID` and
-/// `FIRE_RUN_PID` in `rust/studio/src/device/usb.rs`.
-const FIRE_VID: u16 = 0x1209;
-const FIRE_RUN_PID: u16 = 0xF542;
 
 /// The interface picoboot must be given, because picotool will not look
 /// anywhere else when a device has more than one.
@@ -164,6 +164,144 @@ fn ms_os_descriptor(dev: &mut Device) -> Result<Vec<u8>, String> {
     dev.take_control_xfer()
 }
 
+/// One function subset of the MS OS 2.0 descriptor.
+struct FunctionSubset<'a> {
+    /// The interface the subset applies to.
+    first_interface: u8,
+    /// The feature descriptors inside it, each with its type.
+    features: Vec<(u16, &'a [u8])>,
+}
+
+impl FunctionSubset<'_> {
+    /// The compatible ID the subset binds its interface to, without its zero
+    /// padding.
+    fn compatible_id(&self) -> Option<&[u8]> {
+        self.features
+            .iter()
+            .find(|(kind, _)| *kind == MS_OS_20_FEATURE_COMPATIBLE_ID)
+            .map(|(_, bytes)| {
+                let id = &bytes[4..12];
+                &id[..id.iter().position(|&b| b == 0).unwrap_or(id.len())]
+            })
+    }
+}
+
+/// Split the MS OS 2.0 descriptor into its function subsets.
+///
+/// Every header in it states a length by hand, so this also checks that:
+/// - the set header's total is the whole descriptor
+/// - the configuration subset is everything after the set header
+/// - the function subsets tile the configuration subset
+/// - each subset's features tile the subset
+fn function_subsets(ms_os: &[u8]) -> Result<Vec<FunctionSubset<'_>>, String> {
+    if ms_os.len() < 10 + 8 {
+        return Err(format!(
+            "the Microsoft descriptor is {} bytes, too few for its two headers",
+            ms_os.len()
+        ));
+    }
+
+    let set_total = usize::from(u16_at(ms_os, 8));
+    if set_total != ms_os.len() {
+        return Err(format!(
+            "the set header says the whole thing is {set_total} bytes, and it is {}",
+            ms_os.len()
+        ));
+    }
+
+    let config_subset = usize::from(u16_at(ms_os, 10 + 6));
+    if config_subset != ms_os.len() - 10 {
+        return Err(format!(
+            "the configuration subset claims {config_subset} bytes of the {} that follow the \
+             set header",
+            ms_os.len() - 10
+        ));
+    }
+
+    let mut subsets = Vec::new();
+    let mut at = 10 + 8;
+    while at < ms_os.len() {
+        if ms_os.len() - at < 8 {
+            return Err(format!(
+                "{} bytes left over at offset {at}, too few for a function subset header",
+                ms_os.len() - at
+            ));
+        }
+        let kind = u16_at(ms_os, at + 2);
+        if kind != MS_OS_20_SUBSET_HEADER_FUNCTION {
+            return Err(format!(
+                "offset {at} holds descriptor type {kind}, not a function subset header"
+            ));
+        }
+        // A subset's length includes its own 8 byte header.
+        let len = usize::from(u16_at(ms_os, at + 6));
+        if len < 8 || at + len > ms_os.len() {
+            return Err(format!(
+                "the function subset at offset {at} claims {len} bytes, and {} remain",
+                ms_os.len() - at
+            ));
+        }
+
+        let body = &ms_os[at + 8..at + len];
+        let mut features = Vec::new();
+        let mut f = 0usize;
+        while f < body.len() {
+            if body.len() - f < 4 {
+                return Err(format!(
+                    "{} bytes left over in the function subset at offset {at}, too few for \
+                     a feature header",
+                    body.len() - f
+                ));
+            }
+            let flen = usize::from(u16_at(body, f));
+            let fkind = u16_at(body, f + 2);
+            if flen < 4 || f + flen > body.len() {
+                return Err(format!(
+                    "a feature in the function subset at offset {at} claims {flen} bytes, and \
+                     {} remain",
+                    body.len() - f
+                ));
+            }
+            if fkind == MS_OS_20_FEATURE_COMPATIBLE_ID && flen != 20 {
+                return Err(format!(
+                    "the compatible ID in the function subset at offset {at} is {flen} bytes, \
+                     not 20"
+                ));
+            }
+            features.push((fkind, &body[f..f + flen]));
+            f += flen;
+        }
+
+        subsets.push(FunctionSubset {
+            first_interface: ms_os[at + 4],
+            features,
+        });
+        at += len;
+    }
+
+    Ok(subsets)
+}
+
+/// Check the Microsoft descriptor binds WinUSB to `interface`.
+fn check_winusb_bound(subsets: &[FunctionSubset<'_>], interface: u8) -> Result<(), String> {
+    let subset = subsets
+        .iter()
+        .find(|s| s.first_interface == interface)
+        .ok_or(format!(
+            "the Microsoft descriptor has no subset for interface {interface}"
+        ))?;
+    match subset.compatible_id() {
+        Some(b"WINUSB") => Ok(()),
+        Some(id) => Err(format!(
+            "the Microsoft descriptor binds interface {interface} to {:?}, not WINUSB",
+            String::from_utf8_lossy(id)
+        )),
+        None => Err(format!(
+            "the Microsoft descriptor's subset for interface {interface} has no compatible ID"
+        )),
+    }
+}
+
 // ---------------------------------------------------------------------------
 
 /// The device identifies itself as the One ROM its own tools look for.
@@ -185,10 +323,10 @@ fn the_device_is_the_one_studio_looks_for(dev: &mut Device, _ctx: &Ctx) -> Resul
 
     let vid = u16_at(&d, 8);
     let pid = u16_at(&d, 10);
-    if vid != FIRE_VID || pid != FIRE_RUN_PID {
+    if vid != USB_PLUGIN_VID || pid != USB_PLUGIN_PID {
         return Err(format!(
-            "the device presents {vid:04x}:{pid:04x}, not the {FIRE_VID:04x}:{FIRE_RUN_PID:04x} \
-             Studio looks for"
+            "the device presents {vid:04x}:{pid:04x}, not the \
+             {USB_PLUGIN_VID:04x}:{USB_PLUGIN_PID:04x} Studio looks for"
         ));
     }
 
@@ -446,16 +584,22 @@ fn the_windows_descriptor_names_the_vendor_interface(
         .bytes[2];
 
     let ms_os = ms_os_descriptor(dev)?;
+    check_winusb_bound(&function_subsets(&ms_os)?, vendor)?;
 
-    // Set header (10 bytes), configuration subset header (8), then the function
-    // subset header, whose third byte is the first interface it covers.
-    let first_interface = ms_os[10 + 8 + 4];
-    if first_interface != vendor {
-        return Err(format!(
-            "the Microsoft descriptor binds WinUSB to interface {first_interface}, and picoboot \
-             is on {vendor}"
-        ));
-    }
+    Ok(Outcome::Pass)
+}
+
+/// The Microsoft descriptor binds WinUSB to the dummy interface too.
+///
+/// No Windows driver matches a vendor-specific interface, so without WinUSB
+/// bound to interface 0, Device Manager lists it as a device whose drivers are
+/// not installed.
+fn the_windows_descriptor_binds_the_dummy_interface(
+    dev: &mut Device,
+    _ctx: &Ctx,
+) -> Result<Outcome, String> {
+    let ms_os = ms_os_descriptor(dev)?;
+    check_winusb_bound(&function_subsets(&ms_os)?, 0)?;
 
     Ok(Outcome::Pass)
 }
@@ -474,41 +618,7 @@ fn the_windows_descriptor_subsets_span_it(dev: &mut Device, _ctx: &Ctx) -> Resul
         ));
     }
 
-    let set_total = usize::from(u16_at(&ms_os, 8));
-    if set_total != ms_os.len() {
-        return Err(format!(
-            "the set header says the whole thing is {set_total} bytes, and it is {}",
-            ms_os.len()
-        ));
-    }
-
-    // The configuration subset covers everything after the 10 byte set header,
-    // and the function subset everything after its own 8 byte header.
-    let config_subset = usize::from(u16_at(&ms_os, 10 + 6));
-    if config_subset != ms_os.len() - 10 {
-        return Err(format!(
-            "the configuration subset claims {config_subset} bytes of the {} that follow the \
-             set header",
-            ms_os.len() - 10
-        ));
-    }
-
-    let function_subset = usize::from(u16_at(&ms_os, 10 + 8 + 6));
-    if function_subset != ms_os.len() - 10 - 8 {
-        return Err(format!(
-            "the function subset claims {function_subset} bytes of the {} that follow it",
-            ms_os.len() - 10 - 8
-        ));
-    }
-
-    // The compatible ID that makes Windows load WinUSB at all.
-    let compat = &ms_os[10 + 8 + 8 + 4..10 + 8 + 8 + 4 + 6];
-    if compat != b"WINUSB" {
-        return Err(format!(
-            "the compatible ID is {:?}, not WINUSB",
-            String::from_utf8_lossy(compat)
-        ));
-    }
+    function_subsets(&ms_os)?;
 
     Ok(Outcome::Pass)
 }
@@ -778,6 +888,12 @@ pub static SCENARIOS: &[Scenario] = &[
         name: "descriptors.the_windows_descriptor_names_the_vendor_interface",
         about: "WinUSB is bound to the interface picoboot is on",
         run: the_windows_descriptor_names_the_vendor_interface,
+        before_start: None,
+    },
+    Scenario {
+        name: "descriptors.the_windows_descriptor_binds_the_dummy_interface",
+        about: "WinUSB is bound to interface 0, which no Windows driver matches",
+        run: the_windows_descriptor_binds_the_dummy_interface,
         before_start: None,
     },
     Scenario {

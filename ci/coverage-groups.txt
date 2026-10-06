@@ -14,3 +14,4 @@ plugins/user/host-control/src/    plugin-host-control    Host-control plugin
 plugins/system/usb/src/           plugin-usb             USB plugin
 firmware/src/                     firmware               Firmware
 firmware/include/                 firmware               Firmware
+firmware/generated/               firmware               Firmware

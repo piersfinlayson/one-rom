@@ -10,10 +10,18 @@
 #include <stdio.h>
 
 uint8_t check_plugin_valid(
-    const ora_plugin_header_t *header,
+    const onerom_rom_slot_t *slot,
     const ora_plugin_type_t expected_type,
     uint8_t index
 ) {
+    // The header is read from the slot, so the slot must lie within the flash
+    // first.
+    if (!rom_slot_in_flash(slot)) {
+        ERR("ORA slot outside flash");
+        return 0;
+    }
+
+    const ora_plugin_header_t *header = (const ora_plugin_header_t *)(uintptr_t)(slot->data);
     if (header->magic != ORA_PLUGIN_MAGIC) {
         ERR("ORA badmagic 0x%08lx", (unsigned long)header->magic);
         return 0;
@@ -27,11 +35,14 @@ uint8_t check_plugin_valid(
         return 0;
     }
 
-    // A plugin is expected to be located at 0x10010000, 0x10020000, etc based
-    // on the specific ROM set it is.
-    uint32_t expected_launch_region = (0x1001 + index) << 16;
+    STATIC_ASSERT(USER_PLUGIN_OFFSET == SYSTEM_PLUGIN_OFFSET + SYSTEM_PLUGIN_SIZE,
+        "The user plugin region must follow the system plugin region");
+    STATIC_ASSERT(USER_PLUGIN_SIZE == SYSTEM_PLUGIN_SIZE,
+        "The plugin regions must be the same size");
+    uint32_t expected_launch_region = FLASH_CS0_BASE_ADDR + SYSTEM_PLUGIN_OFFSET
+        + (index * SYSTEM_PLUGIN_SIZE);
     uint32_t entry_addr = (uint32_t)(uintptr_t)header->entry;
-    if ((entry_addr & ~expected_launch_region) >= 0x10000) {
+    if ((entry_addr & ~expected_launch_region) >= SYSTEM_PLUGIN_SIZE) {
         ERR("ORA 0x%08lx vs ep 0x%08lx", (unsigned long)entry_addr,
         (unsigned long)expected_launch_region);
         return 0;
@@ -63,8 +74,8 @@ uint8_t initial_plugin_parse(uint8_t *disable_vbus_det, uint8_t *num_plugins) {
     } else {
         const onerom_rom_slot_t *set = &METADATA->rom_slots[0];
         if (set->slot_type == ROM_SLOT_TYPE_PLUGIN_SYSTEM) {
-            const ora_plugin_header_t *header = (ora_plugin_header_t *)(uintptr_t)(set->data);
-            if (check_plugin_valid(header, ORA_PLUGIN_TYPE_SYSTEM, 0)) {
+            if (check_plugin_valid(set, ORA_PLUGIN_TYPE_SYSTEM, 0)) {
+                const ora_plugin_header_t *header = (ora_plugin_header_t *)(uintptr_t)(set->data);
                 *disable_vbus_det = header->overrides1 & ORA_OVERRIDE1_DISABLE_VBUS_DETECT ? 1 : 0;
                 LOG("Valid system plugin, disable_vbus_det=%d", *disable_vbus_det);
             }
@@ -81,8 +92,8 @@ uint8_t initial_plugin_parse(uint8_t *disable_vbus_det, uint8_t *num_plugins) {
         if (other_set->slot_type == ROM_SLOT_TYPE_PLUGIN_USER) {
             if (plugins & 0x01) {
                 // Have user plugin (2) so check it
-                const ora_plugin_header_t *header = (ora_plugin_header_t *)(uintptr_t)(other_set->data);
-                if (check_plugin_valid(header, ORA_PLUGIN_TYPE_USER, 1)) {
+                if (check_plugin_valid(other_set, ORA_PLUGIN_TYPE_USER, 1)) {
+                    const ora_plugin_header_t *header = (ora_plugin_header_t *)(uintptr_t)(other_set->data);
                     if (header->overrides1 & ORA_OVERRIDE1_DISABLE_VBUS_DETECT) {
                         *disable_vbus_det = 1;
                     }
@@ -747,7 +758,7 @@ ora_result_t ora_copy_flash_slot_to_ram_slot(
 
     // Find the flash slot, respecting the filter flags
     const onerom_rom_slot_t *set = get_flash_slot_slot(flash_slot, flags);
-    if (set == NULL) {
+    if ((set == NULL) || !rom_slot_in_flash(set)) {
         return ORA_RESULT_INVALID_SLOT;
     }
 
@@ -818,8 +829,20 @@ ora_result_t ora_get_metadata_uint(ora_metadata_key_t key, uint32_t *out) {
     // scalar/enum key resolves its stored value zero-extended to uint32_t; any
     // non-numeric key returns ORA_RESULT_TYPE_MISMATCH. Keys unknown to this
     // firmware fall through to the default below.
+    //
+    // The keys of the schema's [[plugin_keys]] table have no stored field and
+    // are resolved here by hand.  The flash sizes are read from OTP on each
+    // call, as they are not stored in runtime info.
     switch (key) {
         ONEROM_METADATA_UINT_CASES(out)
+        case ORA_METADATA_KEY_FLASH_CS0_SIZE:
+        case ORA_METADATA_KEY_FLASH_CS1_SIZE: {
+            onerom_flash_size_t cs0;
+            onerom_flash_size_t cs1;
+            otp_flash_sizes(&cs0, &cs1);
+            *out = (key == ORA_METADATA_KEY_FLASH_CS0_SIZE) ? cs0 : cs1;
+            return ORA_RESULT_OK;
+        }
         default:
             return ORA_RESULT_NOT_SUPPORTED;
     }
@@ -962,13 +985,13 @@ ora_result_t ora_yield(uint8_t *was_paused_out) {
 #endif // !TEST_BUILD
 }
 
-#if !defined(TEST_BUILD)
 // Returns  0: no plugin on other core, safe to proceed without FIFO
 //          1: plugin present and supports yield
 //         -1: plugin present but does not support yield
-static int other_core_yield_capability(void) {
-    uint32_t this_core = SIO_CPUID;
-
+#if !defined(TEST_BUILD)
+static
+#endif // !TEST_BUILD
+int other_core_yield_capability_from(uint32_t this_core) {
     const onerom_rom_slot_t *set;
     rom_slot_type_t expected_type;
 
@@ -992,8 +1015,18 @@ static int other_core_yield_capability(void) {
         return 0;
     }
 
+    // A plugin outside the flash isn't launched so is ignored.
+    if (!rom_slot_in_flash(set)) {
+        return (this_core == 0) ? 0 : 1;
+    }
+
     const ora_plugin_header_t *header = (const ora_plugin_header_t *)set->data;
     return (header->properties1 & ORA_PROPERTY1_SUPPORTS_YIELD) ? 1 : -1;
+}
+
+#if !defined(TEST_BUILD)
+static int other_core_yield_capability(void) {
+    return other_core_yield_capability_from(SIO_CPUID);
 }
 #endif // !TEST_BUILD
 
@@ -1064,26 +1097,75 @@ ora_result_t ora_read_ram_rom_slot(
     return pio_read_ram_rom_slot(CURRENT_SLOT, slot, offset, buf, len);
 }
 
+static uint8_t ora_gpio_use_is_busy(uint8_t use) {
+    return (use != ORA_GPIO_USE_FREE) && (use != ORA_GPIO_USE_INPUT_FORCED);
+}
+
+// Returns what serving the active slot uses gpio for, as an ora_gpio_use_t.
+// gpio must already have been range checked.
+static uint8_t ora_gpio_serving_use(uint8_t gpio) {
+    uint8_t use = ORA_GPIO_USE_FREE;
+
+    const onerom_rom_slot_t *slot = CURRENT_SLOT;
+    if ((slot != NULL) && (pio_get_gpio_use(slot, gpio, &use) != ORA_RESULT_OK)) {
+        use = ORA_GPIO_USE_FREE;
+    }
+
+    return use;
+}
+
+// Returns what serving uses another GPIO wired to gpio's X pin for, as an
+// ora_gpio_use_t.  ORA_GPIO_USE_FREE where gpio isn't wired to an X pin, or
+// serving doesn't use the other GPIO.
+static uint8_t ora_gpio_x_pin_use(uint8_t gpio) {
+    const uint8_t *x_pins[] = { HW->gpio_x1, HW->gpio_x2 };
+
+    for (unsigned ii = 0; ii < (sizeof(x_pins) / sizeof(x_pins[0])); ii++) {
+        const uint8_t *x_pin = x_pins[ii];
+
+        uint8_t wired = 0;
+        for (unsigned jj = 0; jj < MAX_X_PIN_GPIOS; jj++) {
+            if (x_pin[jj] == gpio) {
+                wired = 1;
+            }
+        }
+        if (!wired) {
+            continue;
+        }
+
+        // An unused entry is GPIO_NONE, which isn't less than MAX_GPIOS.
+        for (unsigned jj = 0; jj < MAX_X_PIN_GPIOS; jj++) {
+            uint8_t other = x_pin[jj];
+            if ((other != gpio) && (other < MAX_GPIOS)) {
+                uint8_t use = ora_gpio_serving_use(other);
+                if (ora_gpio_use_is_busy(use)) {
+                    return use;
+                }
+            }
+        }
+    }
+
+    return ORA_GPIO_USE_FREE;
+}
+
 // Returns what One ROM is using gpio for, as an ora_gpio_use_t.  gpio must
 // already have been range checked.
 //
 // The serving set of the active slot comes from pio_get_gpio_use(), which
 // derives it from the configuration the serving path itself acts on.  Board
 // system pins are checked afterwards, so a pin doing both is reported as what
-// serving is using it for.  Deliberately excluded: the image select pads, whose
-// primary use for GPIO control is a wire soldered to a pad whose jumper has been
-// removed, and SWCLK/SWDIO, which are not GPIOs on the boards that expose them.
+// serving is using it for.  A pin with its input forced is reported as a
+// system pin if it is one, as serving doesn't read it.  Image select pins
+// aren't system pins.  Nor are SWCLK and SWDIO, which aren't
+// GPIOs on the boards that have them.
+//
+// An X pin can be wired to two GPIOs, and serving reads it through one of
+// them.  Driving the other GPIO drives the same pin, so a GPIO One ROM doesn't
+// use is reported as what serving uses the other GPIO for.
 static uint8_t ora_gpio_get_use(uint8_t gpio) {
-    uint8_t use = ORA_GPIO_USE_FREE;
-
-    const onerom_rom_slot_t *slot = CURRENT_SLOT;
-    if (slot != NULL) {
-        if (pio_get_gpio_use(slot, gpio, &use) != ORA_RESULT_OK) {
-            use = ORA_GPIO_USE_FREE;
-        }
-        if (use != ORA_GPIO_USE_FREE) {
-            return use;
-        }
+    uint8_t use = ora_gpio_serving_use(gpio);
+    if (ora_gpio_use_is_busy(use)) {
+        return use;
     }
 
     // System pins.  Each is GPIO_NONE when the board does not have it, and gpio
@@ -1096,7 +1178,12 @@ static uint8_t ora_gpio_get_use(uint8_t gpio) {
         return ORA_GPIO_USE_SYSTEM;
     }
 
-    return ORA_GPIO_USE_FREE;
+    uint8_t x_pin_use = ora_gpio_x_pin_use(gpio);
+    if (ora_gpio_use_is_busy(x_pin_use)) {
+        return x_pin_use;
+    }
+
+    return use;
 }
 
 ora_result_t ora_gpio_set(uint8_t gpio, uint8_t state, uint32_t flags) {
@@ -1109,9 +1196,10 @@ ora_result_t ora_gpio_set(uint8_t gpio, uint8_t state, uint32_t flags) {
         return ORA_RESULT_INVALID_ARG;
     }
 
-    if (!(flags & ORA_GPIO_FLAG_FORCE) &&
-        (ora_gpio_get_use(gpio) != ORA_GPIO_USE_FREE)) {
-        return ORA_RESULT_GPIO_IN_USE;
+    if (!(flags & ORA_GPIO_FLAG_FORCE)) {
+        if (ora_gpio_use_is_busy(ora_gpio_get_use(gpio))) {
+            return ORA_RESULT_GPIO_IN_USE;
+        }
     }
 
 #if !defined(TEST_BUILD)
@@ -1592,6 +1680,81 @@ ora_result_t ora_log_category_enabled(ora_log_category_t category,
     return ORA_RESULT_OK;
 }
 
+// ---------------------------------------------------------------------------
+// Firmware states
+// ---------------------------------------------------------------------------
+
+// A state added to onerom_firmware_state_t in the schema is added here with the
+// code that sets it.
+#define FIRMWARE_STATES_SUPPORTED   (FIRMWARE_STATE_ROM_LOADED | \
+                                     FIRMWARE_STATE_PLUGINS_STARTED | \
+                                     FIRMWARE_STATE_STARTUP_DONE)
+
+// Runtime info lags the copy channel while core 0 has interrupts masked, so the
+// channel is also checked.  Otherwise a wait on core 0 with interrupts masked
+// would never return.
+static uint32_t firmware_states_reached(void) {
+    uint32_t reached = *(volatile onerom_firmware_state_t *)&RUNTIME->firmware_states;
+#if REAL_HARDWARE
+    if (dma_copy_status() == 0) {
+        reached |= FIRMWARE_STATE_ROM_LOADED;
+        if (reached & FIRMWARE_STATE_PLUGINS_STARTED) {
+            reached |= FIRMWARE_STATE_STARTUP_DONE;
+        }
+    }
+#endif // REAL_HARDWARE
+    return reached;
+}
+
+ora_result_t ora_firmware_state_query(
+    uint32_t states,
+    uint32_t flags,
+    uint32_t *states_out
+) {
+    uint32_t reached = firmware_states_reached();
+
+    // An unsupported state is never reached, so isn't waited for.
+    if (states & ~FIRMWARE_STATES_SUPPORTED) {
+        if (states_out != NULL) {
+            *states_out = reached;
+        }
+        return ORA_RESULT_NOT_SUPPORTED;
+    }
+
+    if (flags & ORA_FIRMWARE_STATE_QUERY_FLAG_WAIT) {
+        // Every supported state is reached on every boot.
+        while ((reached & states) != states) {
+#if !REAL_HARDWARE
+            // Under emulation nothing else runs to set a state.
+            if (onerom_test_yield_hook != NULL) {
+                onerom_test_yield_hook();
+            }
+#endif // !REAL_HARDWARE
+            reached = firmware_states_reached();
+        }
+    }
+
+    if (states_out != NULL) {
+        *states_out = reached;
+    }
+    return ((reached & states) == states) ? ORA_RESULT_OK : ORA_RESULT_NOT_READY;
+}
+
+// ---------------------------------------------------------------------------
+// Standby
+// ---------------------------------------------------------------------------
+
+ora_result_t ora_set_standby(uint8_t standby, uint32_t flags) {
+    (void)flags;
+
+    if (standby > 1) {
+        return ORA_RESULT_INVALID_ARG;
+    }
+
+    pio_set_standby(standby);
+    return ORA_RESULT_OK;
+}
+
 void *ora_fn_lookup(api_id_t id) {
     switch (id) {
         case ORA_ID_REBOOT_BOOTSEL:
@@ -1720,6 +1883,11 @@ void *ora_fn_lookup(api_id_t id) {
             return ora_get_compile_option_str;
         case ORA_ID_LOG_CATEGORY_ENABLED:
             return ora_log_category_enabled;
+
+        case ORA_ID_FIRMWARE_STATE_QUERY:
+            return ora_firmware_state_query;
+        case ORA_ID_SET_STANDBY:
+            return ora_set_standby;
 
         // Deprecated functions
         case ORA_ID_GET_FIRMWARE_INFO:
@@ -1895,7 +2063,7 @@ __attribute__((noinline)) ora_plugin_entry_t launch_plugins_inner(uint8_t *launc
         const onerom_rom_slot_t *set0 = &METADATA->rom_slots[0];
         if (set0->slot_type == ROM_SLOT_TYPE_PLUGIN_SYSTEM) {
             ora_plugin_header_t *header = (ora_plugin_header_t *)set0->data;
-            if (!check_plugin_valid(header, ORA_PLUGIN_TYPE_SYSTEM, 0)) {
+            if (!check_plugin_valid(set0, ORA_PLUGIN_TYPE_SYSTEM, 0)) {
                 ERR("Invalid system plugin");
             } else {
                 const char *filename = set0->roms[0]->filename;
@@ -1916,7 +2084,7 @@ __attribute__((noinline)) ora_plugin_entry_t launch_plugins_inner(uint8_t *launc
         const onerom_rom_slot_t *set1 = &METADATA->rom_slots[1];
         if (set1->slot_type == ROM_SLOT_TYPE_PLUGIN_USER) {
             ora_plugin_header_t *header = (ora_plugin_header_t *)set1->data;
-            if (!check_plugin_valid(header, ORA_PLUGIN_TYPE_USER, 1)) {
+            if (!check_plugin_valid(set1, ORA_PLUGIN_TYPE_USER, 1)) {
                 ERR("Invalid user plugin");
             } else if (!system_plugin) {
                 ERR("User plugin present but no valid system plugin - not launching");
@@ -1943,14 +2111,19 @@ __attribute__((noinline)) ora_plugin_entry_t launch_plugins_inner(uint8_t *launc
 
 void ora_launch_plugins(void) {
     // Plugin-facing setup, in the window where core 0 is in firmware code and
-    // core 1 is not yet running.  The timer starts here so a plugin reading
-    // ora_get_plugin_uptime_ms() sees time measured from just before launch.
+    // core 1 is not yet running.  OTP becomes read-only, so no plugin can write
+    // it.  The timer starts here so a plugin reading ora_get_plugin_uptime_ms()
+    // sees time measured from just before launch.
+    otp_lock();
     onerom_rtt_plugins_init();
     DEBUG("Init timer");
     setup_timer0();
 
     uint8_t launched_plugins = 0;
     ora_plugin_entry_t core0_entry = launch_plugins_inner(&launched_plugins);
+
+    // Set before the user plugin's entry, which doesn't return.
+    set_firmware_states(FIRMWARE_STATE_PLUGINS_STARTED);
 
     // We launch the user plugin from this outer function in order to save as
     // much stack space as possible.

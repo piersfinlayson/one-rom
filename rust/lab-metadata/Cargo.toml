@@ -1,0 +1,27 @@
+[package]
+name = "onerom-lab-metadata"
+version = "0.1.0"
+edition = "2024"
+authors = ["Piers Finlayson <piers@piers.rocks>"]
+license = "MIT"
+description = "One ROM Lab metadata handling"
+repository = "https://github.com/piersfinlayson/one-rom"
+homepage = "https://onerom.org"
+keywords = ["retro", "rom", "embedded"]
+categories = ["embedded", "hardware-support", "no-std"]
+
+[lib]
+name = "onerom_lab_metadata"
+
+[dependencies]
+onerom-config = { workspace = true }
+onerom-metadata = { workspace = true }
+hashbrown = { version = "0.17", default-features = false, features = ["default-hasher", "inline-more"] }
+serde = { version = "1", default-features = false, features = ["derive", "alloc"] }
+serde-big-array = "0.5"
+
+[build-dependencies]
+onerom-metadata-gen = { workspace = true }
+
+[lints]
+workspace = true

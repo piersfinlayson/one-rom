@@ -127,8 +127,8 @@ fn check(description: &Description) {
 ///
 /// A missing entry is not an error - most options really do take free text,
 /// and inventing a source for one would be worse than showing a box.  It is
-/// still worth saying out loud, because the alternative is reading all 173 to
-/// find the ones nothing has been decided about.
+/// still worth saying out loud because the alternative is reading every
+/// option to find the ones nothing has been decided about.
 ///
 /// A number and a fixed set of values are left out: neither is a text box, and
 /// nothing in `Source` would improve either.

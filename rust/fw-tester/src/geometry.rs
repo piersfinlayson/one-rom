@@ -27,14 +27,15 @@
 //! resolves.
 
 use std::path::Path;
+use std::sync::{Mutex, PoisonError};
 
 use onerom_config::fw::{FirmwareProperties, FirmwareVersion, ServeAlg};
 use onerom_config::hw::Board;
 use onerom_config::mcu::{Family, Variant as McuVariant};
 use onerom_gen::{Builder, Config};
 use onerom_metadata::{
-    DeviceMemoryView, GpioOverride, METADATA_BASE, OneromAlgAddrConfig, OneromMetadataHeader,
-    RomSlotType,
+    DeviceMemoryView, Generations, GpioOverride, METADATA_BASE, MaybeKnown, OneromAlgAddrConfig,
+    OneromMetadataHeader, RomSlotType,
 };
 
 pub use onerom_fw_geometry::substitution::chip_substitution;
@@ -46,6 +47,12 @@ const OVERRIDE_LOW: u8 = GpioOverride::GpioOverLow as u8;
 /// place X-pin identity survives into the metadata blob (there is no flat
 /// hardware/X section).
 const OVERRIDE_INVERT: u8 = GpioOverride::GpioOverInvert as u8;
+
+/// The firmware version, board and config JSON a header is built from.
+type HeaderInputs = (FirmwareVersion, Board, String);
+
+/// Headers [`build_header`] has built.
+static HEADERS: Mutex<Vec<(HeaderInputs, OneromMetadataHeader)>> = Mutex::new(Vec::new());
 
 /// Flat per-slot geometry read back from the firmware metadata.
 ///
@@ -90,12 +97,14 @@ pub struct SlotGeometry {
 
 /// `true` if a slot is a plugin slot (excluded from the flash-slot enumeration
 /// the firmware exposes under EXCLUDE_PLUGINS).
-fn is_plugin(slot_type: RomSlotType) -> bool {
+fn is_plugin(slot_type: MaybeKnown<RomSlotType>) -> bool {
     matches!(
         slot_type,
-        RomSlotType::RomSlotTypePluginSystem
-            | RomSlotType::RomSlotTypePluginUser
-            | RomSlotType::RomSlotTypePluginPio
+        MaybeKnown::Known(
+            RomSlotType::RomSlotTypePluginSystem
+                | RomSlotType::RomSlotTypePluginUser
+                | RomSlotType::RomSlotTypePluginPio
+        )
     )
 }
 
@@ -112,6 +121,9 @@ fn is_plugin(slot_type: RomSlotType) -> bool {
 /// `base_dir` before building (the same base the oracle resolves against), so
 /// loading is independent of cwd.  Absolute and http(s) sources are left
 /// untouched.
+///
+/// Each header is built once per firmware version, board and config. Later
+/// calls return a copy and don't reread the ROM files.
 pub fn build_header(
     config: &Config,
     board: Board,
@@ -137,6 +149,14 @@ pub fn build_header(
     let config_json =
         serde_json::to_string(&abs_config).map_err(|e| format!("reserialize config: {e}"))?;
 
+    let mut headers = HEADERS.lock().unwrap_or_else(PoisonError::into_inner);
+    if let Some((_, header)) = headers
+        .iter()
+        .find(|((v, b, json), _)| *v == fw_version && *b == board && *json == config_json)
+    {
+        return Ok(header.clone());
+    }
+
     let mut builder = Builder::from_json(fw_version, Family::Rp2350, &config_json)
         .map_err(|e| format!("Builder::from_json: {e}"))?;
 
@@ -156,7 +176,10 @@ pub fn build_header(
         .map_err(|e| format!("builder.build: {e}"))?;
 
     let view = DeviceMemoryView::new(&metadata_buf, METADATA_BASE);
-    OneromMetadataHeader::parse(&view, METADATA_BASE).map_err(|e| format!("metadata parse: {e:?}"))
+    let header = OneromMetadataHeader::parse(&view, METADATA_BASE, Generations::UNKNOWN)
+        .map_err(|e| format!("metadata parse: {e:?}"))?;
+    headers.push(((fw_version, board, config_json), header.clone()));
+    Ok(header)
 }
 
 /// Parse the metadata and return the [`SlotGeometry`] for the `set_idx`-th
@@ -183,8 +206,16 @@ pub fn slot_geometry(
         .as_ref()
         .ok_or_else(|| format!("ROM slot {set_idx} has no alg config (plugin?)"))?;
 
+    // All three fields are common to the family, so an unnamed address
+    // algorithm still says which pins it reads.
     let (addr_window_base, addr_window_len) = match alg.alg_addr {
         OneromAlgAddrConfig::AlgAddr0 {
+            gpio_base,
+            base_addr_pin,
+            num_addr_pins,
+            ..
+        }
+        | OneromAlgAddrConfig::Unknown {
             gpio_base,
             base_addr_pin,
             num_addr_pins,

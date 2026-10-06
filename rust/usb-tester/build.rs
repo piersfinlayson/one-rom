@@ -27,11 +27,10 @@ const PLUGIN_OBJS: &[&str] = &[
 
 /// Flags the shim is compiled with.  These must stay in step with the plugin's
 /// `host` target and with `firmware/test.mk`: all the objects link together, so
-/// `-fshort-enums` and `-DTEST_BUILD=1` have to agree across every one of them
-/// or the C types they exchange differ in width or layout.
+/// `-fshort-enums` has to agree across every one of them or the enums they
+/// exchange differ in width.
 const SHIM_FLAGS: &[&str] = &[
     "-DORA_HOST_TEST=1",
-    "-DTEST_BUILD=1",
     "-fshort-enums",
     "-O1",
     "-g",
@@ -127,8 +126,6 @@ fn main() {
     let cc = env::var("HOST_CC").unwrap_or_else(|_| "cc".to_string());
     let status = Command::new(&cc)
         .args(SHIM_FLAGS)
-        .arg(format!("-I{}", firmware.join("include").display()))
-        .arg(format!("-I{}", firmware.join("generated").display()))
         .arg(format!("-I{}", firmware.join("ora").display()))
         .arg(format!("-I{}", plugin_dir.display()))
         .arg(format!("-I{}", plugin_dir.join("include").display()))

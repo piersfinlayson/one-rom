@@ -22,20 +22,27 @@
 //!
 //! # Per-slot operation
 //!
-//! Every `Single` flash slot in the config is exercised in turn.  A flash slot
-//! is indexed directly by the image-select value, so for each Single slot the
-//! firmware is rebooted with `sel_image` set to that slot's index, making it
-//! the active boot image, and the full test suite is run against it.
+//! Every `Single` flash slot in the config is exercised in turn.  The firmware
+//! is rebooted with `sel_image` set to the slot's [`flash_slot`] number,
+//! making it the active boot image, and the full test suite is run against it.
 //! Multi/Banked slots boot the same way but run only the GPIO classification
 //! test — their serving is covered by the separate pio-tester, while their
-//! GPIO layout is not reachable from a Single slot.
+//! GPIO layout is not reachable from a Single slot.  Plugin slots are skipped.
+//!
+//! A slot that boots into standby is checked for undriven data pins, then
+//! standby is turned off ahead of the serving tests.  A slot without an image
+//! serves RAM slot 0's contents at boot and is checked against them.
 
 use std::process;
 
 use onerom_config::hw::Board;
+use onerom_fw_emulator::Emulator;
+use onerom_fw_tester::jumpers::Jumpers;
 use onerom_fw_tester::timing;
 use onerom_gen::{ChipSetType, Config};
 
+#[cfg(test)]
+mod ci_configs;
 mod report;
 mod setup;
 mod tests;
@@ -81,12 +88,22 @@ fn main() {
 
     // Sel values beyond this wrap to a lower image, so the slot under test
     // would not be the slot exercised.
-    let max_images = 1usize << board.sel_pins().len();
+    let jumpers = Jumpers::new(board, &config);
+    let max_images = jumpers.images();
 
     for (idx, chip_set) in config.chip_sets.iter().enumerate() {
-        let sel = idx as u8;
-        if idx >= max_images {
-            report.skip_slot(idx, sel, "not selectable — board has too few sel pins");
+        if idx < plugin_sets(&config) {
+            report.skip_slot(idx, None, "a plugin");
+            continue;
+        }
+        let image = flash_slot(&config, idx);
+        let sel = image as u8;
+        if image >= max_images {
+            report.skip_slot(
+                idx,
+                Some(sel),
+                "not selectable — board has too few sel pins",
+            );
             continue;
         }
         let label = chip_set
@@ -97,7 +114,15 @@ fn main() {
         match chip_set.set_type {
             ChipSetType::Single => {
                 report.begin_slot(idx, sel, &label);
-                run_slot(&mut report, board, &config, &base_dir, log_enabled, idx);
+                run_slot(
+                    &mut report,
+                    board,
+                    &jumpers,
+                    &config,
+                    &base_dir,
+                    log_enabled,
+                    idx,
+                );
             }
             // Multi and Banked slots are not exercised for serving here — the
             // pio-tester covers that — but their GPIO layout is what makes
@@ -112,7 +137,15 @@ fn main() {
                 };
                 let label = format!("{label} ({kind}, GPIO classification only)");
                 report.begin_slot(idx, sel, &label);
-                run_slot_gpio_only(&mut report, board, &config, &base_dir, log_enabled, idx);
+                run_slot_gpio_only(
+                    &mut report,
+                    board,
+                    &jumpers,
+                    &config,
+                    &base_dir,
+                    log_enabled,
+                    idx,
+                );
             }
             // `ChipSetType` is `#[non_exhaustive]`; a new kind of set needs a
             // decision on how it is exercised rather than being skipped.
@@ -124,8 +157,46 @@ fn main() {
     process::exit(if report.all_passed() { 0 } else { 1 });
 }
 
-/// Boot the firmware with `set_idx` as the selected image and run only the
-/// GPIO classification test against it.
+/// How many of `config`'s chip sets hold a plugin.  The plugin sets come first.
+pub(crate) fn plugin_sets(config: &Config) -> usize {
+    config
+        .chip_sets
+        .iter()
+        .take_while(|set| {
+            set.chips
+                .first()
+                .is_some_and(|chip| chip.chip_type.resolved().is_plugin())
+        })
+        .count()
+}
+
+/// Chip set `set_idx`'s flash slot number with plugins excluded, which is also
+/// the image select value that boots it.
+///
+/// `set_idx` indexes the config's chip sets and the firmware's ROM slots, both
+/// of which count the plugin sets.
+pub(crate) fn flash_slot(config: &Config, set_idx: usize) -> usize {
+    set_idx - plugin_sets(config)
+}
+
+/// Run `test_gpio_set_x_pin` where the slot serves through a dual-wired X pin.
+fn add_gpio_set_x_pin(report: &mut ApiReport, emulator: &Emulator, board: Board) {
+    let gpios = tests::gpio::serving_x_pin_gpios(emulator, board);
+    if gpios.is_empty() {
+        report.skip(
+            "gpio_set_x_pin",
+            "the slot doesn't serve through a dual-wired X pin",
+        );
+    } else {
+        report.add(
+            "gpio_set_x_pin",
+            tests::gpio::test_gpio_set_x_pin(emulator, &gpios),
+        );
+    }
+}
+
+/// Boot the firmware with chip set `set_idx` selected and run only the GPIO
+/// classification test against it.
 ///
 /// Used for Multi and Banked slots, whose serving is covered by the pio-tester
 /// but whose GPIO layout — X pins folded into the address span, the
@@ -135,25 +206,28 @@ fn main() {
 fn run_slot_gpio_only(
     report: &mut ApiReport,
     board: Board,
+    jumpers: &Jumpers,
     config: &Config,
     base_dir: &std::path::Path,
     log_enabled: bool,
     set_idx: usize,
 ) {
-    let (emulator, fw_version) = setup(board, log_enabled, set_idx as u8);
+    let sel = flash_slot(config, set_idx) as u8;
+    let (emulator, fw_version) = setup(board, jumpers, log_enabled, sel);
 
     report.add(
         "gpio_use",
         tests::gpio::test_gpio_use(&emulator, config, board, fw_version, base_dir, set_idx),
     );
+    add_gpio_set_x_pin(report, &emulator, board);
     report.skip(
         "serving and slot tests",
         "serving of a Multi/Banked slot is covered by the pio-tester",
     );
 }
 
-/// Boot the firmware with `set_idx` as the selected image, then run the full
-/// test suite against that flash slot.
+/// Boot the firmware with chip set `set_idx` selected, then run the full test
+/// suite against that flash slot.
 ///
 /// The `Emulator` (and its epio handle) is created here and dropped when this
 /// function returns, before the next slot boots.  `set_host_sram_ptr` is left
@@ -164,12 +238,35 @@ fn run_slot_gpio_only(
 fn run_slot(
     report: &mut ApiReport,
     board: Board,
+    jumpers: &Jumpers,
     config: &Config,
     base_dir: &std::path::Path,
     log_enabled: bool,
     set_idx: usize,
 ) {
-    let (mut emulator, fw_version) = setup(board, log_enabled, set_idx as u8);
+    let sel = flash_slot(config, set_idx) as u8;
+
+    // These tests boot on their own, so they run before the suite's shared
+    // boot.
+    report.add(
+        "metadata_board_size",
+        tests::info::test_metadata_board_size(board, jumpers, log_enabled, sel),
+    );
+    report.add(
+        "standby_boot",
+        tests::standby::test_standby_boot(board, jumpers, log_enabled, set_idx, sel),
+    );
+
+    let (mut emulator, fw_version) = setup(board, jumpers, log_enabled, sel);
+
+    let boot_image = match tests::reprogram::boot_image(&emulator, config, base_dir, set_idx) {
+        Ok(image) => image,
+        Err(e) => {
+            report.add("boot_image", Err(e));
+            return;
+        }
+    };
+    let has_image = tests::reprogram::has_image(config, set_idx);
 
     // Info
     report.add(
@@ -182,7 +279,11 @@ fn run_slot(
     );
     report.add(
         "metadata_uint",
-        tests::info::test_metadata_uint(&emulator, config),
+        tests::info::test_metadata_uint(&emulator, config, board),
+    );
+    report.add(
+        "metadata_flash_sizes",
+        tests::info::test_metadata_flash_sizes(&emulator, board),
     );
     report.add(
         "metadata_uint_at",
@@ -211,6 +312,26 @@ fn run_slot(
         tests::platform::test_peripheral_and_irq_calls(&emulator, tests::gpio::max_gpios(board)),
     );
     report.add("yield", tests::platform::test_yield(&emulator));
+
+    // Firmware states. The wait test runs last because it sets
+    // PLUGINS_STARTED.
+    report.add(
+        "firmware_states_after_boot",
+        tests::state::test_states_after_boot(&emulator),
+    );
+    report.add(
+        "firmware_state_unknown",
+        tests::state::test_unknown_state(&emulator),
+    );
+    report.add(
+        "firmware_state_null_out",
+        tests::state::test_null_states_out(&emulator),
+    );
+    report.add(
+        "firmware_state_reserved_flags",
+        tests::state::test_reserved_flags(&emulator),
+    );
+    report.add("firmware_state_wait", tests::state::test_wait(&emulator));
 
     // Lookup
     report.add(
@@ -280,6 +401,14 @@ fn run_slot(
         tests::gpio::test_gpio_use(&emulator, config, board, fw_version, base_dir, set_idx),
     );
     report.add("gpio_set", tests::gpio::test_gpio_set(&emulator, board));
+    add_gpio_set_x_pin(report, &emulator, board);
+    match tests::gpio::first_input_forced(&emulator, board) {
+        Some(gpio) => report.add(
+            "gpio_set_input_forced",
+            tests::gpio::test_gpio_set_input_forced(&emulator, gpio),
+        ),
+        None => report.skip("gpio_set_input_forced", "the slot forces no GPIO's input"),
+    }
     report.add(
         "is_pin_output",
         tests::gpio::test_is_pin_output(&emulator, board),
@@ -332,10 +461,14 @@ fn run_slot(
         "active_ram_slot_refusals",
         tests::slots::test_active_ram_slot_refusals(&emulator, BOOT_SLOT),
     );
-    report.add(
-        "read_initial_slot",
-        tests::slots::test_read_initial_slot(&emulator, config, base_dir, BOOT_SLOT, set_idx),
-    );
+    if has_image {
+        report.add(
+            "read_initial_slot",
+            tests::slots::test_read_initial_slot(&emulator, &boot_image, BOOT_SLOT),
+        );
+    } else {
+        report.skip("read_initial_slot", "the set doesn't have an image to load");
+    }
 
     // Set up epio before any reprogram so that the PIO path can be verified
     // against the unmodified oracle image in the boot slot.  epio_from_apio()
@@ -356,18 +489,54 @@ fn run_slot(
     emulator.setup_epio(word_size);
     emulator.step_cycles(timing::CYCLES_BEFORE_START);
 
+    // This test turns standby off for a slot that boots in standby, so it runs
+    // before the serving tests.
+    report.add(
+        "standby_from_config",
+        tests::standby::test_standby_from_config(&emulator, config, board, set_idx),
+    );
+
     // PIO baseline: verify the PIO serves the oracle image correctly before
     // any reprogram or slot switch.  If this fails the PIO path itself is
     // broken; subsequent PIO verify failures are not caused by our changes.
     report.add(
         "initial_pio_verify",
-        tests::reprogram::test_initial_pio_verify(&emulator, config, board, base_dir, set_idx),
+        tests::reprogram::test_initial_pio_verify(&emulator, config, board, set_idx, &boot_image),
     );
     report.add(
         "noop_switch_pio_verify",
         tests::reprogram::test_noop_switch_pio_verify(
-            &emulator, config, board, base_dir, BOOT_SLOT, set_idx,
+            &emulator,
+            config,
+            board,
+            BOOT_SLOT,
+            set_idx,
+            &boot_image,
         ),
+    );
+
+    // Standby
+    report.add(
+        "standby_invalid_arg",
+        tests::standby::test_standby_invalid_arg(&emulator),
+    );
+    report.add(
+        "standby_same_state",
+        tests::standby::test_standby_same_state(&emulator),
+    );
+    report.add(
+        "standby_undriven_then_serves",
+        tests::standby::test_standby_undriven_then_serves(
+            &emulator,
+            config,
+            board,
+            set_idx,
+            &boot_image,
+        ),
+    );
+    report.add(
+        "standby_with_cs_held",
+        tests::standby::test_standby_with_cs_held(&emulator, config, board, set_idx, &boot_image),
     );
 
     // Reprogram / copy (no epio sync needed — sram_to_host writes directly into
@@ -433,13 +602,36 @@ fn run_slot(
     report.add(
         "reprogram_pio_verify",
         tests::reprogram::test_reprogram_pio_verify(
-            &emulator, config, board, base_dir, BOOT_SLOT, set_idx,
+            &emulator,
+            config,
+            board,
+            BOOT_SLOT,
+            set_idx,
+            &boot_image,
         ),
     );
+    if has_image {
+        report.add(
+            "copy_flash_pio_verify",
+            tests::reprogram::test_copy_flash_pio_verify(
+                &emulator, config, board, base_dir, set_idx, BOOT_SLOT,
+            ),
+        );
+    } else {
+        report.skip(
+            "copy_flash_pio_verify",
+            "the set doesn't have an image in flash",
+        );
+    }
     report.add(
-        "copy_flash_pio_verify",
-        tests::reprogram::test_copy_flash_pio_verify(
-            &emulator, config, board, base_dir, set_idx, BOOT_SLOT,
+        "standby_ram_slots",
+        tests::standby::test_standby_ram_slots(
+            &emulator,
+            config,
+            board,
+            set_idx,
+            BOOT_SLOT,
+            SCRATCH_SLOT,
         ),
     );
 

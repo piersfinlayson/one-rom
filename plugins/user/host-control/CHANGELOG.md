@@ -1,5 +1,9 @@
 # Changelog
 
+## [0.1.6] - unreleased
+
+SET_AUX can drive a GPIO used as a forced input by the core firmware.
+
 ## [0.1.5] - 2026-09-18
 
 Implements RBCP draft 0.1.3.

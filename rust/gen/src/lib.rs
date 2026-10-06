@@ -12,6 +12,7 @@ pub mod builder;
 pub mod chip_type_spec;
 pub mod compat;
 pub mod firmware;
+mod flash;
 pub mod hexfile;
 pub mod ihex;
 pub mod image;
@@ -27,6 +28,7 @@ pub use firmware::{
     DebugConfig, FireConfig, FireCpuFreq, FireServeMode, FireVreg, FirmwareConfig, IceConfig,
     IceCpuFreq, LedConfig, ServeAlgParams,
 };
+pub use flash::{FlashChips, slot_addresses};
 #[expect(deprecated, reason = "re-exported for callers of the pre-0.8.0 name")]
 pub use hexfile::IHEX_BLANK_BYTE;
 pub use hexfile::{AddressParseError, LoadAddress, UNWRITTEN_BYTE};
@@ -35,7 +37,7 @@ pub use image::{Chip, ChipSet, ChipSetType, CsConfig, CsLogic, FileFormat, SizeH
 pub use image::{MAX_IMAGE_SIZE, PAD_BLANK_BYTE, PAD_NO_CHIP_BYTE};
 pub use image::{num_excess_addr_lines, requires_half_select_cs1};
 pub use meta::{MAX_METADATA_LEN, Metadata, PAD_METADATA_BYTE};
-use onerom_config::mcu::Family;
+use onerom_config::mcu::{Family, Variant};
 pub use srec::{SrecError, decode_srec, encode_srec};
 pub use transform::{
     TRANSFORM_LIST_SEPARATOR, Transform, TransformError, apply_transforms, format_transform_list,
@@ -48,7 +50,8 @@ use alloc::vec::Vec;
 use onerom_config::chip::ChipType;
 use onerom_config::fw::{FirmwareVersion, ServeAlg};
 
-use onerom_config::hw::Board;
+use onerom_config::hw::{Board, BoardSize};
+use onerom_config::pin::{Pin, ReservedPins};
 pub use v1::MAX_SUPPORTED_FIRMWARE_VERSION as MAX_SUPPORTED_FIRMWARE_VERSION_V1;
 pub use v1::MIN_SUPPORTED_FIRMWARE_VERSION as MIN_SUPPORTED_FIRMWARE_VERSION_V1;
 pub use v1::SUPPORTED_CHIP_TYPES as SUPPORTED_CHIP_TYPES_V1;
@@ -58,6 +61,7 @@ pub use v2::MIN_FW_VERSION as MIN_SUPPORTED_FIRMWARE_VERSION_V2;
 pub use v2::SUPPORTED_CHIP_TYPES as SUPPORTED_CHIP_TYPES_V2;
 pub use v2::UNSUPPORTED_FIRMWARE_VERSIONS as UNSUPPORTED_FIRMWARE_VERSIONS_V2;
 pub use v2::alg_preference::{AddrAlgPreference, CsAlgPreference, DataAlgPreference};
+pub use v2::gpio_use::used_gpios;
 pub use v2::slot_context::socket_pin_offset;
 
 /// Version of metadata produced by this version of the crate
@@ -65,7 +69,7 @@ pub const METADATA_VERSION: u32 = 1;
 const METADATA_VERSION_STR: &str = "1";
 
 /// Firmware size reserved at the start of flash, before metadata
-pub const FIRMWARE_SIZE: usize = 48 * 1024; // 48KB
+pub const FIRMWARE_SIZE: usize = onerom_metadata::FIRMWARE_SIZE;
 
 // The V1 and V2 metadata regions are the same size, which is what lets
 // [`rom_data_space`] serve both build paths. `MAX_METADATA_LEN` bounds what the
@@ -74,22 +78,58 @@ pub const FIRMWARE_SIZE: usize = 48 * 1024; // 48KB
 // the schema) as an argument rather than assuming one value.
 const _: () = assert!(MAX_METADATA_LEN == onerom_metadata::METADATA_SIZE);
 
-/// Flash available for ROM image data on `mcu_variant`, in bytes.
+/// Flash available for ROM image data on the first flash chip with
+/// `mcu_variant`, in bytes.
 ///
-/// This is the whole flash less the two fixed regions that precede the ROM
-/// images: the firmware ([`FIRMWARE_SIZE`], 48KB) and the metadata region
+/// This is the whole first chip less the two fixed regions that precede the
+/// ROM images: the firmware ([`FIRMWARE_SIZE`], 48KB) and the metadata region
 /// (16KB). On the RP2350's 2MB flash that leaves 1984KB.
 ///
-/// Both builder paths bound their composed ROM data with this, and it is the
-/// budget a caller should size a set of images against. Note the separate,
-/// smaller [`MAX_IMAGE_SIZE`] cap that applies to any *single* slot - that is a
-/// RAM limit, not a flash one, so a set of images can be within this budget yet
-/// still contain a slot that is too large to serve.
+/// The V1 builder bounds its composed ROM data with this. The V2 builder
+/// places slots here and on a second chip where the board has one (see
+/// [`FlashChips`]).
+/// Note the separate, smaller [`MAX_IMAGE_SIZE`] cap that applies to any
+/// *single* slot - that is a RAM limit, not a flash one, so a set of images can
+/// be within this space yet still contain a slot that is too large to serve.
 pub fn rom_data_space(mcu_variant: onerom_config::mcu::Variant) -> usize {
-    mcu_variant.flash_storage_bytes() - FIRMWARE_SIZE - MAX_METADATA_LEN
+    let first = FlashChips::first_for(mcu_variant);
+    (first.end - first.start) as usize - FIRMWARE_SIZE - MAX_METADATA_LEN
 }
 
 pub const MIN_FIRMWARE_OVERRIDES_VERSION: FirmwareVersion = FirmwareVersion::new(0, 6, 0, 0);
+
+/// The oldest firmware that supports [`Config::reserved_pins`].
+///
+/// A config that reserves pins fails to build for older firmware.
+pub const MIN_RESERVED_PINS_VERSION: FirmwareVersion = FirmwareVersion::new(0, 8, 0, 0);
+
+const RESERVED_PINS_RULE: &str = "Only image select pins and X pins can be reserved.";
+
+/// Whether firmware `version` supports a `size` board.
+///
+/// Firmware before 0.8.0 supports only M. It resets chip select 1's pin at
+/// boot and doesn't set the second chip's clock divisor.
+pub fn supports_board_size(version: FirmwareVersion, size: BoardSize) -> bool {
+    size == BoardSize::M || version >= FirmwareVersion::new(0, 8, 0, 0)
+}
+
+/// Whether `board` supports a `size` board. A size with a second flash chip
+/// requires a board that supports external flash.
+pub fn board_supports_size(board: Board, size: BoardSize) -> bool {
+    // Board sizes are for Fire boards.
+    let second_chip = FlashChips::new(Variant::RP2350, size).second().is_some();
+    !second_chip || board.external_flash_cs_pin().is_some()
+}
+
+/// Whether `board` and firmware `version` both support a size with a second
+/// flash chip.
+pub fn second_chip_supported(board: Board, version: FirmwareVersion) -> bool {
+    BoardSize::supported_values().iter().any(|&size| {
+        FlashChips::new(Variant::RP2350, size).second().is_some()
+            && board_supports_size(board, size)
+            && supports_board_size(version, size)
+    })
+}
 
 /// Error type
 ///
@@ -252,12 +292,12 @@ pub enum Error {
     },
     /// An Intel HEX image failed to decode.
     IntelHex {
-        index: usize,
+        filename: String,
         source: ihex::IhexError,
     },
     /// A Motorola S-record image failed to decode.
     Srec {
-        index: usize,
+        filename: String,
         source: srec::SrecError,
     },
     /// `size_handling: duplicate` was requested for a record-oriented image
@@ -282,6 +322,50 @@ pub enum Error {
     /// which turns this into [`ConfigWarning::TurboBootMultiSlot`].
     TurboBootMultiSlot {
         slots: usize,
+    },
+    /// A field this build sets did not exist in the target firmware.
+    MetadataFieldTooNew {
+        /// The metadata field, as `<struct>.<field>`.
+        field: &'static str,
+        /// Oldest firmware whose metadata carries it.
+        minimum: FirmwareVersion,
+    },
+    /// A chip set doesn't fit on either flash chip after the sets before it.
+    SlotDoesNotFit {
+        /// The chip set's index in the config.
+        slot: usize,
+    },
+    /// A build for a size other than M, for firmware that supports only M.
+    FirmwareTooOldForBoardSize {
+        /// The firmware version.
+        version: FirmwareVersion,
+    },
+    /// A `reserved_pins` entry is a GPIO that isn't wired to an image select
+    /// pin, X1 or X2 on the board.
+    ReservedPinNotReservable {
+        /// The entry.
+        pin: Pin,
+        /// The board.
+        board: Board,
+    },
+    /// A `reserved_pins` entry is a pin the board doesn't have.
+    ReservedPinNotOnBoard {
+        /// The entry.
+        pin: Pin,
+        /// The board.
+        board: Board,
+    },
+    /// A `reserved_pins` entry isn't a pin.
+    ReservedPinNotAPin {
+        /// The entry, less surrounding whitespace.
+        entry: String,
+    },
+    /// A ROM slot's layout uses a reserved pin.
+    ReservedPinInUse {
+        /// The slot's index among ROM slots, as numbered by `inspect slots`.
+        slot: usize,
+        /// The pin, as on the silkscreen.
+        pin: String,
     },
 }
 type Result<T> = core::result::Result<T, Error>;
@@ -379,7 +463,7 @@ impl core::fmt::Display for Error {
                 expected_size,
             } => write!(
                 f,
-                "{filename} is larger than a {chip_type} holds.\n  Expected at most {expected_size} bytes, got {image_size} bytes."
+                "{filename} is larger than a {chip_type}.\n  Expected at most {expected_size} bytes, got {image_size} bytes."
             ),
             Error::ImageExceedsServedSize {
                 chip_type,
@@ -539,13 +623,13 @@ impl core::fmt::Display for Error {
                 f,
                 "ROM table is {size} bytes, exceeds maximum of {max} bytes for a single slot"
             ),
-            Error::IntelHex { index, source } => write!(
+            Error::IntelHex { filename, source } => write!(
                 f,
-                "The Intel HEX image for chip {index} could not be decoded:\n  {source}"
+                "The Intel HEX image {filename} could not be decoded:\n  {source}"
             ),
-            Error::Srec { index, source } => write!(
+            Error::Srec { filename, source } => write!(
                 f,
-                "The S-record image for chip {index} could not be decoded:\n  {source}"
+                "The S-record image {filename} could not be decoded:\n  {source}"
             ),
             Error::DuplicateUnsupportedForFormat { filename, format } => write!(
                 f,
@@ -562,6 +646,38 @@ impl core::fmt::Display for Error {
             Error::TurboBootMultiSlot { slots } => {
                 write!(f, "{}", turbo_boot_multi_slot_msg(*slots))
             }
+            Error::MetadataFieldTooNew { field: _, minimum } => {
+                write!(f, "This config needs firmware {minimum} or newer")
+            }
+            Error::SlotDoesNotFit { slot } => {
+                write!(f, "Set {slot} does not fit in the remaining flash")
+            }
+            Error::FirmwareTooOldForBoardSize { version } => {
+                write!(
+                    f,
+                    "Firmware {version} doesn't support board sizes other than M"
+                )
+            }
+            Error::ReservedPinNotReservable { pin, board } => {
+                write!(
+                    f,
+                    "Cannot reserve '{pin}' on {board}.\n  {RESERVED_PINS_RULE}"
+                )
+            }
+            Error::ReservedPinNotOnBoard { pin, board } => {
+                write!(f, "Cannot reserve '{pin}' on {board}.\n  {board} has no ")?;
+                match pin {
+                    Pin::Header(header_pin) => write!(f, "{} pin.", header_pin.silkscreen()),
+                    other @ Pin::Gpio(_) | other => write!(f, "{other} pin."),
+                }
+            }
+            Error::ReservedPinNotAPin { entry } => {
+                write!(f, "Cannot reserve '{entry}'.\n  {RESERVED_PINS_RULE}")
+            }
+            Error::ReservedPinInUse { slot, pin } => write!(
+                f,
+                "Slot {slot} uses reserved pin {pin}.\n  Do not reserve {pin} or remove slot {slot}."
+            ),
         }
     }
 }
@@ -698,7 +814,11 @@ pub struct Config {
 
     /// Whether to enable One ROM firmware logging. The log can be read over
     /// USB (if the USB plugin is installed) or RTT using a debug probe.
-    #[serde(default = "default_boot_logging")]
+    #[serde(
+        default = "default_boot_logging",
+        skip_serializing_if = "is_default_boot_logging"
+    )]
+    #[cfg_attr(feature = "schemars", schemars(extend("default" = default_boot_logging())))]
     pub boot_logging: bool,
 
     /// Whether to leave SWD enabled once the One ROM starts serving.
@@ -711,13 +831,30 @@ pub struct Config {
     ///
     /// This is not a debug lockout - the boot ROM runs before the One ROM
     /// firmware does, and BOOTSEL/PICOBOOT are unaffected.
-    #[serde(default = "default_swd_enabled")]
+    #[serde(
+        default = "default_swd_enabled",
+        skip_serializing_if = "is_default_swd_enabled"
+    )]
+    #[cfg_attr(feature = "schemars", schemars(extend("default" = default_swd_enabled())))]
     pub swd_enabled: bool,
 
     /// Whether to boot fast.  Disables reading the image select jumpers.
     /// The first non-plugin image is served.
-    #[serde(default = "default_turbo_boot")]
+    #[serde(
+        default = "default_turbo_boot",
+        skip_serializing_if = "is_default_turbo_boot"
+    )]
+    #[cfg_attr(feature = "schemars", schemars(extend("default" = default_turbo_boot())))]
     pub turbo_boot: bool,
+
+    /// Pins reserved for another use, for example a pin connected to a host's
+    /// reset line.  Requires firmware v0.8.0 or later.
+    #[serde(
+        default,
+        skip_serializing_if = "Vec::is_empty",
+        deserialize_with = "deserialize_reserved_pins"
+    )]
+    pub reserved_pins: Vec<Pin>,
 }
 
 impl Config {
@@ -742,8 +879,65 @@ impl Config {
             boot_logging: default_boot_logging(),
             swd_enabled: default_swd_enabled(),
             turbo_boot: default_turbo_boot(),
+            reserved_pins: Vec::new(),
         }
     }
+
+    /// The pins reserved on `board` by [`Config::reserved_pins`].
+    ///
+    /// Fails with [`Error::ReservedPinNotOnBoard`] or
+    /// [`Error::ReservedPinNotReservable`]. Two entries may be the same pin.
+    pub fn reserved_pins_on(&self, board: Board) -> Result<ReservedPins> {
+        let mut reserved = ReservedPins::new();
+        for pin in &self.reserved_pins {
+            let not_on_board = Error::ReservedPinNotOnBoard { pin: *pin, board };
+            let Some(header_pin) = pin.header_pin_on(&board) else {
+                return Err(match pin {
+                    Pin::Header(_) => not_on_board,
+                    Pin::Gpio(_) | _ => Error::ReservedPinNotReservable { pin: *pin, board },
+                });
+            };
+            if !reserved.insert(header_pin) {
+                return Err(not_on_board);
+            }
+        }
+        Ok(reserved)
+    }
+}
+
+/// For a direct deserialisation. [`Builder::from_json`] checks the entries
+/// with `check_reserved_pin_names` first.
+fn deserialize_reserved_pins<'de, D>(deserializer: D) -> core::result::Result<Vec<Pin>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::Deserialize;
+    use serde::de::Error as _;
+
+    Vec::<String>::deserialize(deserializer)?
+        .iter()
+        .map(|name| {
+            onerom_config::pin::parse_pin(name).map_err(|_| {
+                D::Error::custom(Error::ReservedPinNotAPin {
+                    entry: name.trim().to_string(),
+                })
+            })
+        })
+        .collect()
+}
+
+pub(crate) fn check_reserved_pin_names(config: &serde_json::Value) -> Result<()> {
+    let Some(serde_json::Value::Array(entries)) = config.get("reserved_pins") else {
+        return Ok(());
+    };
+    for name in entries.iter().filter_map(serde_json::Value::as_str) {
+        if onerom_config::pin::parse_pin(name).is_err() {
+            return Err(Error::ReservedPinNotAPin {
+                entry: name.trim().to_string(),
+            });
+        }
+    }
+    Ok(())
 }
 
 pub(crate) fn default_boot_logging() -> bool {
@@ -754,6 +948,16 @@ pub(crate) fn default_swd_enabled() -> bool {
 }
 pub(crate) fn default_turbo_boot() -> bool {
     false
+}
+
+fn is_default_boot_logging(v: &bool) -> bool {
+    *v == default_boot_logging()
+}
+fn is_default_swd_enabled(v: &bool) -> bool {
+    *v == default_swd_enabled()
+}
+fn is_default_turbo_boot(v: &bool) -> bool {
+    *v == default_turbo_boot()
 }
 
 #[cfg(feature = "schemars")]
@@ -808,8 +1012,15 @@ pub struct ChipConfig {
     /// Filename or URL of any ROM image - filename is only valid if using a
     /// generator tool with local file access.  This is passed to the generator
     /// tool to retrieve the ROM image.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    #[cfg_attr(feature = "schemars", schemars(extend("default" = "")))]
     pub file: String,
+
+    /// Name of a published plugin to use instead of `file` on a
+    /// `system_plugin` or `user_plugin` chip.  The latest release compatible
+    /// with the firmware is used.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub plugin: Option<String>,
 
     /// Optional license URL/identifier for the ROM.  This is passed to the
     /// generator tool to retrieve and ask the user to accept before building.
@@ -861,7 +1072,8 @@ pub struct ChipConfig {
     /// Required for chip0 in multi-ROM sets and for single-chip sets
     /// where a line needs ignoring for custom circuit reasons.
     /// Misuse can cause bus contention — only set when intentional.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "crate::firmware::is_false")]
+    #[cfg_attr(feature = "schemars", schemars(extend("default" = false)))]
     pub allow_cs_ignore: bool,
 
     /// Optional size handling configuration for this Chip.  Used to specify
@@ -920,10 +1132,12 @@ impl ChipConfig {
     /// literal) is how callers outside this crate build one; assign the
     /// optional fields afterwards.  `file` and `chip_type` are the two
     /// settings with no meaningful default: a chip has to have a type, and
-    /// only a RAM chip may lack an image.
+    /// only a RAM chip or a chip with a [`plugin`](Self::plugin) may lack an
+    /// image.
     pub fn new(file: String, chip_type: ChipTypeSpec) -> Self {
         Self {
             file,
+            plugin: None,
             license: None,
             description: None,
             chip_type,
@@ -1101,7 +1315,57 @@ impl Location {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use onerom_config::mcu::Variant;
+    use onerom_config::hw::BOARDS;
+
+    /// Only a board that supports external flash supports a size with a
+    /// second flash chip.
+    #[test]
+    fn a_second_chip_needs_external_flash() {
+        let fire_40_a = Board::try_from_str("fire-40-a").unwrap();
+        let fire_24_f = Board::try_from_str("fire-24-f").unwrap();
+        for &size in BoardSize::supported_values() {
+            assert!(board_supports_size(fire_40_a, size), "{size}");
+            let second = FlashChips::new(Variant::RP2350, size).second().is_some();
+            assert_eq!(board_supports_size(fire_24_f, size), !second, "{size}");
+        }
+    }
+
+    #[test]
+    fn every_board_supports_m() {
+        for board in BOARDS {
+            assert!(board_supports_size(board, BoardSize::M), "{board:?}");
+        }
+    }
+
+    #[test]
+    fn only_a_board_that_supports_external_flash_supports_l() {
+        for board in [Board::Fire32A, Board::Fire40A, Board::Fire40C] {
+            assert!(board_supports_size(board, BoardSize::L), "{board:?}");
+        }
+        for board in [Board::Fire24A, Board::Fire28D, Board::Ice24J, Board::Ice28A] {
+            assert!(!board_supports_size(board, BoardSize::L), "{board:?}");
+        }
+        for board in BOARDS {
+            assert_eq!(
+                board_supports_size(board, BoardSize::L),
+                board.external_flash_cs_pin().is_some(),
+                "{board:?}"
+            );
+        }
+    }
+
+    /// A second chip is supported where the board and the firmware both
+    /// support a size with one.
+    #[test]
+    fn a_second_chip_needs_the_board_and_the_firmware() {
+        let fire_40_a = Board::try_from_str("fire-40-a").unwrap();
+        let fire_24_f = Board::try_from_str("fire-24-f").unwrap();
+        let old = FirmwareVersion::new(0, 7, 3, 0);
+        let new = FirmwareVersion::new(0, 8, 0, 0);
+        assert!(second_chip_supported(fire_40_a, new));
+        assert!(!second_chip_supported(fire_40_a, old));
+        assert!(!second_chip_supported(fire_24_f, new));
+    }
 
     /// The ROM budget is the flash less the firmware and metadata regions -
     /// 1984KB of the RP2350's 2MB. Both builder paths bound their composed ROM
@@ -1110,9 +1374,10 @@ mod tests {
     fn rom_data_space_excludes_the_firmware_and_metadata_regions() {
         let space = rom_data_space(Variant::RP2350);
         assert_eq!(space, 1984 * 1024);
+        let first = onerom_metadata::otp::FlashLayout::of(BoardSize::M).cs0;
         assert_eq!(
             space,
-            Variant::RP2350.flash_storage_bytes() - FIRMWARE_SIZE - MAX_METADATA_LEN
+            onerom_metadata::otp::flash_size_bytes(first) - FIRMWARE_SIZE - MAX_METADATA_LEN
         );
         assert_eq!(rom_data_space(Variant::RP2350B), space);
     }

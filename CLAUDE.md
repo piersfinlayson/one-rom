@@ -22,6 +22,9 @@ too. Treat it as a long-lived, production project.
 - Ask in prose — the options and your recommendation — and let me reply in my
   own words.
 - Hold the existing bar for code style, accurate comments and API docs.
+- A test checks behaviour and the values output carries. It quotes wording
+  only where a comment says why, as help, messages and output get reworded
+  and a test quoting them fails when nothing is wrong.
 
 ## Editing this guide
 
@@ -56,8 +59,7 @@ go-ahead before editing this file.
 
 - **An entry is one or two sentences — 40 words is already long.** The
   headline list at the top of a release carries the story. A detail bullet
-  says what changed and, where it is unobvious, what it means for a user. Keep
-  the `- This required a firmware update.` sub-bullet convention.
+  says what changed and, where it is unobvious, what it means for a user.
 - **One entry per user-visible change, not per commit.** A feature built over
   several commits — device side, plugin, CLI — is one entry. A correction made
   before release folds into the entry for the thing it corrects.
@@ -65,8 +67,9 @@ go-ahead before editing this file.
   Refactors, test-harness fixes, CI and this file are invisible to both.
 - A user-facing change goes under the current in-development heading in the
   repo-root [CHANGELOG.md](/CHANGELOG.md) **and** in the affected component's
-  own: `rust/cli/CHANGELOG.md`, `rust/studio/CHANGELOG.md`, or the plugin's
-  (e.g. `plugins/system/usb/CHANGELOG.md`). Vendored changelogs (tinyusb,
+  own: `rust/cli/CHANGELOG.md`, `rust/studio/CHANGELOG.md`,
+  `rust/lab/CHANGELOG.md`, or the plugin's (e.g.
+  `plugins/system/usb/CHANGELOG.md`). Vendored changelogs (tinyusb,
   `firmware/apio`, `firmware/epio`) belong to their upstreams.
 
 ## Versioning
@@ -108,6 +111,10 @@ update it in the same commit as the behaviour.
   generator commands and `ci/test-emu.sh`. It also states that
   `rbcp_chip_type` requires a matching PR against the `rom-bus-control-protocol`
   repo, which stays true.
+- **`docs/SECOND-FLASH.md`** — how the firmware and tools use a second
+  flash chip. Change where slots go, the image file layout, the programming
+  order, which firmware supports which board size or how the tools find a
+  board's size, and update it.
 - **[README.md](/README.md)** — its "Ways in" table, crate table and
   regression-testing section describe the tree's shape, so adding, retiring or
   renaming a crate reaches it, as does changing what CI covers. Keep **counts**
@@ -156,10 +163,12 @@ the table leaves out:
 - `onerom-fw-emulator` re-exports `driver`, and `onerom-fw-tester` re-exports
   `driver` and `pin_cache`, so `onerom_fw_emulator::driver::…` and
   `onerom_fw_tester::pin_cache::…` keep working.
-- **Shared device logic belongs in `onerom-cli`.** `onerom-studio` depends on
-  it, and chip-ID identity, GET_INFO reads and reboot/reconnect handling are
-  written there and consumed from there rather than reimplemented in Studio or
-  split into a crate of their own.
+- **Put shared logic where every tool that needs it can reach it.**
+  - Transport-free logic the web tools also need belongs in `onerom-app`,
+    which one-rom-wasm depends on.
+  - Device logic tied to the CLI's USB stack belongs in `onerom-cli`, which
+    Studio depends on. Chip-ID identity, GET_INFO reads and reboot/reconnect
+    handling live there rather than in Studio or a crate of their own.
 
 ## Building
 
@@ -171,10 +180,10 @@ Flashable images come from the CLI — see [Testing firmware on a device](#testi
 and README.md's build section. Every script under `ci/` documents itself in its
 header comment. The ones with rules attached:
 
-- **`ci/test-emu.sh <24|28|32|40>`**, or no argument for all four. CI runs them
-  as parallel jobs. Run one at a time in a given working tree, since each
-  regenerates the same `firmware/generated/gen-config.c` and rebuilds the same
-  `firmware/build-test/`.
+- **`ci/test-emu.sh <24|24-1|24-2|28|28-1|28-2|32|40>`**, or no argument for all
+  four. CI runs 24-1, 24-2, 28-1, 28-2, 32 and 40 as parallel jobs. Run one at a
+  time in a given working tree, since each regenerates the same
+  `firmware/generated/gen-config.c` and rebuilds the same `firmware/build-test/`.
 - **`ci/coverage-*.sh`** measure line coverage of the C the testers drive, and
   CI gates every push against the per-file floors in
   `ci/coverage-baseline.txt`. `--raise` moves a floor up. Lowering one is a
@@ -302,12 +311,9 @@ the build on a breach of the first four, so a new option is checked
 mechanically.
 
 - **Every argument is `--name value`.** The CLI has no positionals anywhere.
-- **A short flag means one thing across the whole CLI**: `-b` board, `-o`
-  output, `-i` input, `-c` chip-type, `-l` length, `-f` force, `-n` no-reboot,
-  `-m` msd, `-p`/`-r` stopped/running. The global options claim `-s -i -u -y -v
-  -h`, and a subcommand reusing one panics at startup, which is what
-  `verify_cli` catches. `-a` is the sole grandfathered exception (`--address`
-  vs `--all`), pinned by its own test.
+- **A short flag means one thing across the whole CLI**, global options
+  included. `-a` is the sole grandfathered exception (`--address` vs `--all`),
+  pinned by its own test.
 - **Long names are kebab-case.** A snake_case alias exists where the option
   names a JSON config key, and then it matches that key verbatim (`turbo_boot`,
   `instance_name`, `boot_logging`, `serial_override`) so a config key pastes
@@ -322,6 +328,12 @@ mechanically.
 - clap already requires a non-`Option` field, so leave `required = true` off.
 - **Examples in doc comments are runnable.** `firmware inspect firmware.bin`
   sat in the help for months describing an argument form the command never had.
+
+## CLI output
+
+When a change alters what the CLI prints, show me the output before and
+after from the review harness in [rust/cli/src/review/](/rust/cli/src/review/),
+adding cases there for new output. Its module docs say how to run it.
 
 ## Config (`onerom-config/`)
 
@@ -339,7 +351,7 @@ and exposes the `picobootx` interface. `host-control` implements RBCP.
 
 - **Extending the API:** add `ORA_ID_*` values additively, each taking the next
   unused number, with existing ones keeping their meaning for good. Give every
-  new ID an `@since firmware vX.Y.Z` line in its `firmware/ora/api.h` doc block,
+  new ID an `@since firmware X.Y.Z` line in its `firmware/ora/api.h` doc block,
   naming the firmware version it first shipped in — that is what a plugin
   targets via `min_fw_version`.
 - **A new plugin API call is done when the plugin API tester exercises it, in
@@ -358,10 +370,12 @@ and exposes the `picobootx` interface. `host-control` implements RBCP.
     its sizes and its refusals belong to the plugin API tester.
 - **Exposing device metadata to plugins:** tag the field in
   `rust/metadata/metadata_schema.toml` with
-  `plugin_key = { name = "…", id = N }`. String fields then resolve via
-  `ORA_ID_GET_METADATA_STR` and unsigned scalar or enum fields via
-  `ORA_ID_GET_METADATA_UINT`, with no hand-written firmware. Key ids are one
-  permanent namespace, each number keeping its meaning for good.
+  `plugin_key = { name = "…", id = N, first_release = "X.Y.Z" }`. String fields
+  then resolve via `ORA_ID_GET_METADATA_STR` and unsigned scalar, enum or
+  bitfield fields via `ORA_ID_GET_METADATA_UINT`, with no hand-written firmware.
+  Key ids are one permanent namespace, each number keeping its meaning for good,
+  and `first_release` names the release the key arrived in, which the released
+  schema copy holds it to.
   `status_led_enabled` is the live status-LED state and the cross-plugin
   coordination channel, written by `ora_set_status_led` and read via its
   `STATUS_LED_STATE` key.
@@ -371,13 +385,14 @@ and exposes the `picobootx` interface. `host-control` implements RBCP.
 **A value more than one of firmware, plugin and host must agree on is declared
 once, in `rust/metadata/metadata_schema.toml`, and every consumer reads it from
 there.** A second hand-written copy makes drift silent, because nothing
-compares the two. One declaration reaches all three:
+compares the two. One declaration reaches all four:
 
 | Reaches | How | Name |
 | --- | --- | --- |
 | Firmware C | `firmware/generated/onerom_metadata.h` | the schema name |
 | Rust (CLI, tools, tests) | `pub const` on `onerom_metadata` | the schema name |
 | Plugins (`ora_api = true` only) | `firmware/ora/onerom_constants_generated.h`, included by `api.h` | `ORA_` + the schema name |
+| Linker scripts (`linker_script = true` only) | `firmware/generated/onerom_metadata.ld`, included by `firmware/link/common_vars.ld` | the schema name |
 
 ```toml
 [[constants]]
@@ -398,6 +413,7 @@ comment = """The longest hold either LED accepts, in milliseconds."""
   reasons.
 - **The `comment` becomes the doc comment in all three outputs**, so write it
   for whoever reads it last.
+- **A shipped constant is deprecated with `deprecated_release`, never removed.**
 
 Two places need a value where the language wants a literal, and each has a
 mechanism with the full recipe at its home:
@@ -424,7 +440,7 @@ the RTT control block and the ROM data are all parsed, and `onerom inspect info`
 dumps the lot as JSON (`rust/cli/src/inspect.rs`). Few users reach for it. It is
 core to One ROM's architecture, and it is not up for trade.
 
-A host starts at one fixed address, `onerom_info_t` at the metadata base in
+A host starts at one fixed address, `onerom_info_t` at `ONEROM_INFO_OFFSET` in
 flash, follows its `runtime` pointer to `onerom_runtime_info_t` in RAM and
 confirms the magic. Everything existing only while the device runs hangs off
 runtime info. It falls out of the schema: a field declared in

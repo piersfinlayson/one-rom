@@ -1,6 +1,80 @@
 # Changelog
 
-All notables changes between versions are documented in this file.
+All notable changes between versions are documented in this file.
+
+## v0.8.0 - unreleased
+
+Headline changes in this release:
+- One ROMs now support hardware commissioning, making them easier for users to manage.
+- One ROM now supports a second 2MB flash chip on 32 and 40 pin boards allowing more ROM images to be stored.  These 4MB One ROMs are called size L, with 2MB boards size M.
+- Header pins can be reserved for another use, for example a host reset line, so they aren't used by the core firmware.
+- One ROMs can be started (or set later) into standby mode, preventing them from serving bytes but continuing to listen on the bus.
+
+In detail:
+- A commissioned One ROM's bootloader appears as `One ROM Bootloader` from manufacturer piers.rocks with USB VID and PID `1209:F540`.  This is a permanent dedicated assignment from pid.codes.
+- Add standby mode, where One ROM doesn't serve the ROM but the plugins run as normal.  Configure a slot using the `standby` option.  `onerom control standby` turns standby both on and off while One ROM is running.
+- A config can refer to a plugin name using `"plugin": "usb"` instead of a URL.  CLI and Studio use the latest release of the plugin compatible with the firmware.
+- Firmware:
+  - A commissioned One ROM enters the bootloader if commissioning data is present and the commissioned board type differs from the metadata's board type.
+  - OTP is made read-only before starting plugins, so nothing can write OTP from this point on.  OTP can only be modified in the bootloader.
+- CLI:
+  - Reserve a header pin for another use, for example a host reset line, with `reserved_pins` or `--reserve-pin`.
+  - `onerom program` and `onerom firmware build` print a warning for ROM slots the image select jumpers can't select.
+  - `onerom inspect info` displays One ROM's size.
+  - `onerom hardware commission`, `validate`, `set-size`, `sign`, `request-signature` and `onerom inspect otp` commission a One ROM. See [COMMISSIONING](/docs/COMMISSIONING.md).
+  - `onerom scan --verbose` and `onerom inspect info` report a One ROM's commissioning information.
+  - `onerom inspect info` reports what it cannot decode and why.
+- Web Programmer:
+  - Supports programming L sized boards and shows commissioning information.
+  - One ROM Builder allows pins to be reserved.
+- Studio:
+  - Supports programming L sized boards and shows commissioning information.
+- Plugins:
+  - Add the `ext-flash` user plugin, which tests whether the external flash chip is present and functional on Fire 32 and 40 pin boards.
+- Plugin APIs:
+  - New: `ora_firmware_state_query()` to query and wait for core firmware states.
+  - New: `ORA_GPIO_USE_INPUT_FORCED` for a GPIO used as a forced input by the core firmware.  Plugins may drive it without the force flag.
+  - New: API metadata-key and constant headers now include the firmware release each entry first shipped in.
+  - New: `ORA_OTP_FLASH_DEVINFO_*` and `ORA_FLASH_SIZE_*` constants, for reading and writing `FLASH_DEVINFO` which contains flash chip sizes.
+  - New: `ORA_METADATA_KEY_FLASH_CS0_SIZE` and `ORA_METADATA_KEY_FLASH_CS1_SIZE` metadata keys for each flash chip's size.
+  - New: `ORA_` constants for the plugin regions, the live ROM image's PICOBOOT address, the longest serial number and each LED mode's shortest period, and `onerom_linker_constants_generated.ld` for plugin linker scripts.
+  - New: `ora_set_standby()`, `ORA_METADATA_KEY_FIRMWARE_FLAGS` and `ORA_FIRMWARE_FLAG_STANDBY` for One ROM's new standby mode.
+  - Changed: Plugins build from only `firmware/ora` without the firmware's headers or Rust. A plugin using a firmware macro through `plugin.h` no longer compiles, and one linked with `plugin.ld` outside `plugin.mk` requires `-L firmware/ora`.
+- Fixes:
+  - `onerom peek` no longer fails on a large read.
+  - `onerom peek` and `onerom poke` no longer crash on a One ROM serving a 27C080.
+  - `onerom program` and `onerom firmware build` now report a board mismatch correctly.
+  - Windows Device Manager no longer shows an exclamation mark against a One ROM running the USB plugin or against Lab.
+  - `onerom firmware inspect` lists a v0.7.0+ image's MCU, plugins and ROMs, and prints base firmware's board as `any (base firmware)` rather than warning about missing metadata.
+  - Commands that don't need a One ROM, such as `onerom image convert` or `onerom firmware inspect --firmware`, no longer fail when two One ROMs are connected.
+  - `onerom program --reset-host` fails before programming where a ROM slot uses the pin, for example X1 for bank select.
+  - Studio's Stop and Run in Analyse no longer discard a loaded .bin file.
+  - Studio's Run button no longer disappears a second after a flash, changes when a .bin file is loaded in Analyse, or shows for a One ROM connected through a debug probe.
+- Other:
+  - Retire the `onerom-fw` binary. Use the CLI's `firmware build` option instead.
+
+To publish:
+- Rust crates (in dependency order):
+  - onerom-config 0.7.2
+  - onerom-metadata-gen 0.1.0
+  - onerom-metadata 0.3.0
+  - onerom-lab-metadata 0.1.0
+  - onerom-gen 0.9.0
+  - onerom-fw-parser 0.10.0
+  - onerom-lab-parser 0.1.0
+  - onerom-fw 0.4.0
+  - onerom-app 0.4.0
+  - onerom-cli 0.5.0
+- Config schema
+- One ROM Lab 0.4.0
+- CLI bin 0.5.0
+- Studio 0.2.4
+- ext-flash plugin 0.1.0
+- USB plugin 0.3.2
+- host-control plugin 0.1.6
+- RBCP Amiga bootloader 0.1.2
+- one-rom-wasm: rebuild against the new Rust crates to support v0.8.0
+- one-rom-site: pick up wasm to support v0.8.0
 
 ## v0.7.3 - 2026-09-17
 

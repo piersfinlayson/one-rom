@@ -1,5 +1,37 @@
 # CLI Changelog
 
+## v0.5.0 - unreleased
+
+- `inspect info` indicates what it cannot decode and why.
+- `peek` no longer fails on a large read.
+- `peek` and `poke` no longer crash on a One ROM serving a 27C080. Their `--address` help says where address 0 is on a One ROM serving half a 27C080.
+- `program` and `firmware build` report a board mismatch correctly.
+- Add `hardware commission`, `validate`, `set-size`, `sign` and `request-signature` for commissioning a One ROM. See [COMMISSIONING](/docs/COMMISSIONING.md).
+- Add `inspect otp`, which prints what a One ROM's OTP contains.
+- On a commissioned One ROM `program` by default uses the commissioned board type. An image built for another board type fails to program unless `--force` is provided.
+- `scan --verbose` and `inspect info` report a One ROM's commissioning information, and each device's line ends `(L)` on an L board. `inspect info` prints the board's size.
+- `inspect info` prints the firmware's states.
+- Add `--reserve-pin` to `program` and `firmware build`, to reserve a pin for another use.
+- `control pin`, `control reset` and `--reset-host` can drive a GPIO used as a forced input by the core firmware.
+- `program` and `firmware build` print a warning for ROM slots the image select jumpers can't select.
+- Support L boards. `program` builds an image for the One ROM's size and `firmware build` takes `--size`.
+- A damaged `--firmware` file fails to program unless `--force` is used.
+- `scan --slots` and `inspect slots` say why they don't recognise a One ROM's firmware.
+- Help lists the global options under their own heading, and `--force`'s help no longer lists its cases.
+- Remove the hidden `update otp`, which did nothing.
+- `firmware inspect` lists a v0.7.0+ image's MCU, plugins and ROMs, and prints base firmware's board as `any (base firmware)` rather than warning about missing metadata.
+- Commands that don't need a One ROM, such as `image convert` or `firmware inspect --firmware`, no longer fail when two One ROMs are connected.
+- `program --reset-host` fails before programming where a ROM slot uses the pin, for example X1 for bank select.
+- Add `control standby on` and `off`, and the `--slot` key `standby` to boot a slot in standby mode.  `inspect gpio`, `inspect slots`, `peek live` and `poke live` display when standby mode is active.
+- `inspect peek live` displays a line saying what it read.
+- Intel HEX and S-record decode errors now identify the file by name, not by a chip number that include plugins.
+- `firmware inspect` displays an image's reserved pins.
+- A config can now refer to a plugin by name, `"plugin": "usb"`, instead of a URL. The latest plugin release compatible with the firmware version is used.
+- `--save-config` saves `--plugin usb` as `"plugin": "usb"`.
+- A config with a plugin in the slot for the other type of plugin fails with `'host-control' is a user plugin but is configured as the system plugin`, rather than a manifest type mismatch.
+- `--save-config` writes a `--plugin` plugin's type as `system_plugin` or `user_plugin`, which the config schema accepts, rather than `SystemPlugin` or `UserPlugin`. It leaves out `allow_cs_ignore`, `boot_logging`, `swd_enabled` and `turbo_boot` at their defaults.
+- The .deb supports glibc 2.35 and later.
+
 ## v0.4.1 - 2026-09-17
 
 - **Add `onerom console`.**  Displays what One ROM sends, like `monitor log`,

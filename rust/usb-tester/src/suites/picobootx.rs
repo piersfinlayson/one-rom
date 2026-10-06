@@ -23,6 +23,7 @@
 
 use crate::device::Device;
 use crate::{Ctx, Scenario};
+use onerom_metadata::{FLASH_CS0_BASE_ADDR, LIVE_ROM_BASE_ADDR, USER_PLUGIN_OFFSET};
 use onerom_plugin_tester::run::Outcome;
 
 // Status codes, from picobootx.h.
@@ -42,15 +43,17 @@ pub const CMD_SET_LED: u8 = 0x01;
 const CMD_GET_CAPS: u8 = 0x02 | DIR_IN;
 pub const CMD_GPIO_SET: u8 = 0x03;
 const CMD_GPIO_QUERY: u8 = 0x04 | DIR_IN;
+pub const CMD_SET_STANDBY: u8 = 0x06;
 
 // The capabilities response.
 const CAPS_LEN: u32 = 32;
 const EXT_MAJOR: u8 = 1;
-const EXT_MINOR: u8 = 0;
+const EXT_MINOR: u8 = 1;
 const FEAT_GPIO_SET: u32 = 1 << 0;
 const FEAT_GPIO_QUERY: u32 = 1 << 1;
 const FEAT_GPIO_HOLD: u32 = 1 << 2;
 const FEAT_LED_ARGS: u32 = 1 << 3;
+pub const FEAT_STANDBY: u32 = 1 << 4;
 const MAX_HOLD_MS: u32 = 60000;
 
 // A GPIO query entry, and the longest transfer a One ROM command may ask for.
@@ -96,7 +99,7 @@ fn gpio_query_args(first_gpio: u8, count: u8) -> [u8; 16] {
 }
 
 /// The whole capabilities response, as the host would read it.
-fn caps(dev: &mut Device) -> Result<Vec<u8>, String> {
+pub fn caps(dev: &mut Device) -> Result<Vec<u8>, String> {
     let st = dev.dispatch(CMD_GET_CAPS, CAPS_LEN, &NO_ARGS);
     if st != OK {
         return Err(format!("GET_CAPS was refused with status {st}"));
@@ -108,7 +111,7 @@ fn u16_at(buf: &[u8], at: usize) -> u16 {
     u16::from_le_bytes([buf[at], buf[at + 1]])
 }
 
-fn u32_at(buf: &[u8], at: usize) -> u32 {
+pub fn u32_at(buf: &[u8], at: usize) -> u32 {
     u32::from_le_bytes([buf[at], buf[at + 1], buf[at + 2], buf[at + 3]])
 }
 
@@ -293,6 +296,30 @@ fn the_capabilities_offer_the_led_args(dev: &mut Device, _ctx: &Ctx) -> Result<O
     }
 }
 
+/// Standby is offered exactly when the firmware resolves `ORA_ID_SET_STANDBY`.
+///
+/// Checked both ways round, as for SET_LED's arguments above.
+fn the_capabilities_offer_standby(dev: &mut Device, _ctx: &Ctx) -> Result<Outcome, String> {
+    let has_standby = dev
+        .emulator()
+        .plugin_lookup_valid(onerom_fw_emulator::ffi::api_id_t_ORA_ID_SET_STANDBY);
+
+    let caps = caps(dev)?;
+    let offered = u32_at(&caps, 4) & FEAT_STANDBY != 0;
+
+    match (has_standby, offered) {
+        (true, false) => Err(
+            "this firmware resolves ORA_ID_SET_STANDBY, but ONEROM_FEAT_STANDBY is clear"
+                .to_string(),
+        ),
+        (false, true) => Err(
+            "ONEROM_FEAT_STANDBY is set, but this firmware doesn't resolve ORA_ID_SET_STANDBY"
+                .to_string(),
+        ),
+        _ => Ok(Outcome::Pass),
+    }
+}
+
 /// The capabilities are meant to grow, so a host asking for a different length
 /// gets something it can make sense of.
 ///
@@ -384,6 +411,13 @@ fn a_command_without_data_refuses_a_transfer(
         ));
     }
 
+    let standby = dev.dispatch(CMD_SET_STANDBY, 4, &NO_ARGS);
+    if standby != INVALID_CMD_LENGTH {
+        return Err(format!(
+            "SET_STANDBY with a data phase answered {standby}, not INVALID_CMD_LENGTH"
+        ));
+    }
+
     Ok(Outcome::Pass)
 }
 
@@ -438,12 +472,20 @@ fn a_gpio_set_is_applied_and_answered(dev: &mut Device, ctx: &Ctx) -> Result<Out
 /// refused" — which a host must not confuse with UNKNOWN_CMD, the answer that
 /// means the device is too old.
 fn a_gpio_in_use_is_refused(dev: &mut Device, ctx: &Ctx) -> Result<Outcome, String> {
-    // A pin serving is using.  Found by asking the firmware rather than assumed,
-    // since which pins those are is the board's business.
+    // A pin in use by One ROM. The pins differ between boards so the firmware
+    // is queried.
+    use onerom_fw_emulator::ffi;
     let mut in_use = None;
     for gpio in 0..ctx.num_gpios {
         let (result, info) = dev.emulator().gpio_query(gpio);
-        if result == onerom_fw_emulator::OraResult::Ok && info.gpio_use != 0 {
+        if result == onerom_fw_emulator::OraResult::Ok
+            && matches!(
+                info.gpio_use,
+                ffi::ora_gpio_use_t_ORA_GPIO_USE_SERVING_READ
+                    | ffi::ora_gpio_use_t_ORA_GPIO_USE_SERVING_DRIVEN
+                    | ffi::ora_gpio_use_t_ORA_GPIO_USE_SYSTEM
+            )
+        {
             in_use = Some(gpio);
             break;
         }
@@ -671,20 +713,15 @@ fn active_slot_size(dev: &Device) -> Result<u32, String> {
     }
 }
 
-/// Where the logical ROM range starts, from `APP_RANGE_LOGICAL_ROM_BASE` in
-/// `usb_picobootx.h`.  A protocol constant a host also holds.
-const BASE: u32 = 0x9000_0000;
-
 /// The device's flash, and how much of it the plugin will not let a host
-/// touch: `RP2350_FLASH_BASE` from `picobootx_impl.h` and
-/// `FLASH_PROTECTED_END` from `usb_picobootx.h`, which is the firmware, its
-/// metadata and the system plugin slot.
-const FLASH_BASE: u32 = 0x1000_0000;
-const FLASH_PROTECTED_END: u32 = FLASH_BASE + 128 * 1024;
+/// touch: `FLASH_PROTECTED_END` from `usb_picobootx.h`, which is the firmware,
+/// its metadata and the system plugin slot.
+const FLASH_BASE: u32 = FLASH_CS0_BASE_ADDR;
+const FLASH_PROTECTED_END: u32 = FLASH_BASE + USER_PLUGIN_OFFSET;
 
 /// The logical ROM range reads the image the device is serving.
 fn the_logical_rom_range_is_readable(dev: &mut Device, _ctx: &Ctx) -> Result<Outcome, String> {
-    let (st, bytes) = dev.pb_read(BASE, 16);
+    let (st, bytes) = dev.pb_read(LIVE_ROM_BASE_ADDR, 16);
     if st != OK {
         return Err(format!("reading the start of the ROM answered {st}"));
     }
@@ -710,14 +747,14 @@ fn the_logical_rom_range_is_readable(dev: &mut Device, _ctx: &Ctx) -> Result<Out
 fn the_logical_rom_range_is_bounded(dev: &mut Device, _ctx: &Ctx) -> Result<Outcome, String> {
     let size = active_slot_size(dev)?;
 
-    let (last, _) = dev.pb_read(BASE + size - 1, 1);
+    let (last, _) = dev.pb_read(LIVE_ROM_BASE_ADDR + size - 1, 1);
     if last != OK {
         return Err(format!(
             "the last byte of the image answered {last}, not OK"
         ));
     }
 
-    let (past, _) = dev.pb_read(BASE + size, 1);
+    let (past, _) = dev.pb_read(LIVE_ROM_BASE_ADDR + size, 1);
     if past == OK {
         return Err("a read one byte past the end of the image was allowed".to_string());
     }
@@ -741,7 +778,7 @@ fn the_logical_rom_range_is_writable(dev: &mut Device, _ctx: &Ctx) -> Result<Out
     let window = offset - 1;
 
     // The neighbours and the four bytes between them, as they stand.
-    let (st, before) = dev.pb_read(BASE + window, 6);
+    let (st, before) = dev.pb_read(LIVE_ROM_BASE_ADDR + window, 6);
     if st != OK {
         return Err(format!("reading the image before the write answered {st}"));
     }
@@ -750,14 +787,14 @@ fn the_logical_rom_range_is_writable(dev: &mut Device, _ctx: &Ctx) -> Result<Out
     // "written".
     let want: Vec<u8> = before[1..5].iter().map(|b| b ^ 0xa5).collect();
 
-    let st = dev.pb_write(BASE + offset, &want);
+    let st = dev.pb_write(LIVE_ROM_BASE_ADDR + offset, &want);
     if st != OK {
         return Err(format!(
             "writing four bytes at offset {offset} of the image answered {st}, not OK"
         ));
     }
 
-    let (st, after) = dev.pb_read(BASE + window, 6);
+    let (st, after) = dev.pb_read(LIVE_ROM_BASE_ADDR + window, 6);
     if st != OK {
         return Err(format!("reading the image back answered {st}"));
     }
@@ -805,14 +842,14 @@ fn a_write_past_the_logical_rom_range_is_refused(
     let size = active_slot_size(dev)?;
 
     // The last byte of the image, which is exactly in range.
-    let last = dev.pb_write(BASE + size - 1, &[0x5a]);
+    let last = dev.pb_write(LIVE_ROM_BASE_ADDR + size - 1, &[0x5a]);
     if last != OK {
         return Err(format!(
             "writing the last byte of the image answered {last}, not OK"
         ));
     }
 
-    let past = dev.pb_write(BASE + size, &[0x5a]);
+    let past = dev.pb_write(LIVE_ROM_BASE_ADDR + size, &[0x5a]);
     if past != NOT_FOUND {
         return Err(format!(
             "writing one byte past the end of the image answered {past}, not NOT_FOUND"
@@ -821,7 +858,7 @@ fn a_write_past_the_logical_rom_range_is_refused(
 
     // A write that starts inside the image and runs off the end of it takes the
     // whole range with it, rather than being trimmed to what fits.
-    let straddling = dev.pb_write(BASE + size - 2, &[0x5a; 4]);
+    let straddling = dev.pb_write(LIVE_ROM_BASE_ADDR + size - 2, &[0x5a; 4]);
     if straddling != NOT_FOUND {
         return Err(format!(
             "a write straddling the end of the image answered {straddling}, not NOT_FOUND"
@@ -949,6 +986,12 @@ pub static SCENARIOS: &[Scenario] = &[
         name: "picobootx.the_capabilities_offer_the_led_args",
         about: "SET_LED's arguments are offered exactly when the firmware has an engine to honour them",
         run: the_capabilities_offer_the_led_args,
+        before_start: None,
+    },
+    Scenario {
+        name: "picobootx.the_capabilities_offer_standby",
+        about: "standby is offered exactly when the firmware resolves ORA_ID_SET_STANDBY",
+        run: the_capabilities_offer_standby,
         before_start: None,
     },
     Scenario {

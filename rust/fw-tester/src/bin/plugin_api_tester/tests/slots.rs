@@ -5,8 +5,8 @@
 //! Tests for RAM and flash slot introspection.
 //!
 //! Per-image tests (RAM slot count/info, read-initial) operate on the chip set
-//! selected for the current boot (`set_idx` == `sel_image`), chip 0.  The flash
-//! slot count/info tests enumerate every slot and so are image-independent.
+//! selected for the current boot (`set_idx`), chip 0.  The flash slot
+//! count/info tests enumerate every slot and so are image-independent.
 
 use onerom_config::chip::ChipType;
 use onerom_config::fw::FirmwareVersion;
@@ -15,6 +15,7 @@ use onerom_fw_emulator::{
     Emulator, ORA_FLASH_SLOT_FLAG_EXCLUDE_NON_PLUGINS, ORA_FLASH_SLOT_FLAG_EXCLUDE_PLUGINS,
 };
 use onerom_gen::Config;
+use onerom_metadata::MAX_ROM_IMAGE_SIZE;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -27,9 +28,8 @@ fn chip_type_from_config(config: &Config, set_idx: usize) -> Result<ChipType, St
         .ok_or_else(|| format!("config has no chip set {} (or it has no chips)", set_idx))
 }
 
-/// Expected SRAM region size for the booted image (`set_idx`): the size of the
-/// `set_idx`-th non-plugin slot in the gen-built metadata, matching the
-/// firmware's flash slot enumeration under EXCLUDE_PLUGINS.
+/// Expected SRAM region size for the booted image (`set_idx`), from the
+/// gen-built metadata.
 ///
 /// Thin caller over the shared `geometry` build→parse; chips with address-pin
 /// gaps (e.g. 231024) therefore get the gen-computed region size rather than a
@@ -41,7 +41,19 @@ fn expected_rom_slot_size(
     base_dir: &std::path::Path,
     set_idx: usize,
 ) -> Result<u32, String> {
-    onerom_fw_tester::geometry::expected_rom_slot_size(config, board, fw_version, base_dir, set_idx)
+    onerom_fw_tester::geometry::expected_rom_slot_size(
+        config,
+        board,
+        fw_version,
+        base_dir,
+        crate::flash_slot(config, set_idx),
+    )
+}
+
+/// The config's chip sets after the plugin sets, indexed by flash slot number
+/// with plugins excluded.
+fn rom_sets(config: &Config) -> &[onerom_gen::ChipSetConfig] {
+    &config.chip_sets[crate::plugin_sets(config)..]
 }
 
 // ── Flash slot tests ──────────────────────────────────────────────────────────
@@ -49,10 +61,12 @@ fn expected_rom_slot_size(
 /// Verify flash slot counts against config.
 ///
 /// - flags=0:                     should equal chip_sets.len()
-/// - EXCLUDE_PLUGINS:             should equal chip_sets.len() (no plugins in config)
-/// - EXCLUDE_NON_PLUGINS:         should be 0 (no plugins in config)
+/// - EXCLUDE_PLUGINS:             should equal the number of non-plugin sets
+/// - EXCLUDE_NON_PLUGINS:         should equal the number of plugin sets
 pub fn test_flash_slot_count(emu: &Emulator, config: &Config) -> Result<(), String> {
     let expected = config.chip_sets.len() as u8;
+    let expected_plugins = crate::plugin_sets(config) as u8;
+    let expected_roms = rom_sets(config).len() as u8;
 
     let all = emu.get_flash_slot_count(0);
     if all != expected {
@@ -63,18 +77,18 @@ pub fn test_flash_slot_count(emu: &Emulator, config: &Config) -> Result<(), Stri
     }
 
     let non_plugin = emu.get_flash_slot_count(ORA_FLASH_SLOT_FLAG_EXCLUDE_PLUGINS);
-    if non_plugin != expected {
+    if non_plugin != expected_roms {
         return Err(format!(
             "get_flash_slot_count(EXCLUDE_PLUGINS): expected {} got {}",
-            expected, non_plugin
+            expected_roms, non_plugin
         ));
     }
 
     let plugin_only = emu.get_flash_slot_count(ORA_FLASH_SLOT_FLAG_EXCLUDE_NON_PLUGINS);
-    if plugin_only != 0 {
+    if plugin_only != expected_plugins {
         return Err(format!(
-            "get_flash_slot_count(EXCLUDE_NON_PLUGINS): expected 0 got {}",
-            plugin_only
+            "get_flash_slot_count(EXCLUDE_NON_PLUGINS): expected {} got {}",
+            expected_plugins, plugin_only
         ));
     }
 
@@ -82,14 +96,15 @@ pub fn test_flash_slot_count(emu: &Emulator, config: &Config) -> Result<(), Stri
     Ok(())
 }
 
-/// Verify flash slot info for every slot against config ground truth.
+/// Verify flash slot info for every non-plugin slot against config ground
+/// truth.
 ///
 /// For each slot i: rom_type must match config chip type, rom_count must
 /// match config chip count for that set.
 pub fn test_flash_slot_info(emu: &Emulator, config: &Config) -> Result<(), String> {
     let mut errors = Vec::new();
 
-    for (i, chip_set) in config.chip_sets.iter().enumerate() {
+    for (i, chip_set) in rom_sets(config).iter().enumerate() {
         let expected_chip_type = match chip_set.chips.first() {
             Some(c) => c.chip_type.resolved(),
             None => {
@@ -143,7 +158,7 @@ pub fn test_flash_slot_info(emu: &Emulator, config: &Config) -> Result<(), Strin
     }
 
     if errors.is_empty() {
-        println!("  {} flash slot(s) verified", config.chip_sets.len());
+        println!("  {} flash slot(s) verified", rom_sets(config).len());
         Ok(())
     } else {
         Err(errors.join("; "))
@@ -160,7 +175,7 @@ pub fn test_flash_slot_info(emu: &Emulator, config: &Config) -> Result<(), Strin
 pub fn test_flash_slot_ext_info(emu: &Emulator, config: &Config) -> Result<(), String> {
     let mut errors = Vec::new();
 
-    for (i, chip_set) in config.chip_sets.iter().enumerate() {
+    for (i, chip_set) in rom_sets(config).iter().enumerate() {
         for (rom_index, chip) in chip_set.chips.iter().enumerate() {
             let (result, info) = emu.get_flash_slot_ext_info(
                 i as u8,
@@ -246,7 +261,7 @@ pub fn test_flash_slot_ext_info(emu: &Emulator, config: &Config) -> Result<(), S
     }
 
     if errors.is_empty() {
-        println!("  {} flash slot(s) ext-verified", config.chip_sets.len());
+        println!("  {} flash slot(s) ext-verified", rom_sets(config).len());
         Ok(())
     } else {
         Err(errors.join("; "))
@@ -283,15 +298,12 @@ pub fn test_ram_slot_count(
     let chip_type = chip_type_from_config(config, set_idx)?;
     let actual = emu.get_ram_slot_count();
 
-    /// Bytes the linker reserves for RAM slots — `_Ram_Rom_Image_Size` in
-    /// `firmware/link/linker.ld`, and `RAM_ROM_TABLE_SIZE` in the test stub.
-    const RAM_ROM_IMAGE_SIZE: u32 = 512 * 1024;
     /// A slot index travels in one byte, and RBCP reserves 0xFF for "no slot is
     /// active" — `ORA_MAX_RAM_SLOTS` in `firmware/ora/api.h`.
     const MAX_SLOTS: u32 = 255;
 
     let region_size = expected_rom_slot_size(config, board, fw_version, base_dir, set_idx)?;
-    let expected = (RAM_ROM_IMAGE_SIZE / region_size).clamp(1, MAX_SLOTS) as u8;
+    let expected = (MAX_ROM_IMAGE_SIZE as u32 / region_size).clamp(1, MAX_SLOTS) as u8;
 
     if actual != expected {
         return Err(format!(
@@ -427,29 +439,16 @@ pub fn test_active_ram_slot(emu: &Emulator, expected_slot: u8) -> Result<(), Str
     }
 }
 
-/// Verify that the ROM image pre-populated into the boot slot matches the
-/// oracle for the booted image (`set_idx`).
+/// Verify that the ROM image pre-populated into the boot slot matches
+/// `expected`.
 ///
 /// `boot_slot` must be the slot the firmware populates at boot (the active
 /// slot on entry); only that slot holds valid content here.
 pub fn test_read_initial_slot(
     emu: &Emulator,
-    config: &Config,
-    base_dir: &std::path::Path,
+    expected: &[u8],
     boot_slot: u8,
-    set_idx: usize,
 ) -> Result<(), String> {
-    let chip_set = config
-        .chip_sets
-        .get(set_idx)
-        .ok_or_else(|| format!("config has no chip set {}", set_idx))?;
-    let chip_config = chip_set
-        .chips
-        .first()
-        .ok_or_else(|| format!("chip set {} has no chips", set_idx))?;
-    let chip_type = chip_config.chip_type.resolved();
-
-    let expected = onerom_fw_tester::oracle::load(chip_config, chip_type, base_dir);
     let chip_size = expected.len();
 
     let mut buf = vec![0u8; chip_size];

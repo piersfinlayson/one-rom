@@ -18,8 +18,12 @@ use iced::widget::Column;
 use iced::{Element, Subscription, Task, event, keyboard};
 #[allow(unused_imports)]
 use log::{debug, error, info, trace, warn};
+use onerom_cli::Error as CliError;
+use onerom_cli::otp::check_board;
 use onerom_config::Model;
+use onerom_config::hw::Board;
 use onerom_config::mcu::Rp235xChipId;
+use onerom_metadata::{MaybeKnown, OneromBoardSize, USB_PLUGIN_PID, USB_PLUGIN_VID};
 
 use crate::app::AppMessage;
 use crate::hw::HardwareInfo;
@@ -29,6 +33,42 @@ use crate::style::Style;
 pub use msg::Message;
 use probe::ProbeType;
 use usb::UsbDeviceType;
+
+/// The text displayed where a flash plan has a step this build doesn't know.
+const UNKNOWN_FLASH_STEP: &str = "Cannot program this image.\n  It requires a flash operation Studio doesn't support.\n  This is likely a bug.  Please report it.";
+
+/// The board size and commissioned board Detect reads from a Fire board
+#[derive(Debug, Clone, Default)]
+pub struct BoardDetails {
+    /// The board size, `None` where it couldn't be read
+    pub size: Option<MaybeKnown<OneromBoardSize>>,
+
+    /// The board the current commissioning instance identifies, `None`
+    /// where the board isn't commissioned or OTP couldn't be read
+    pub commissioned: Option<String>,
+}
+
+/// Fails with the text to display where an image for `image` is for a board
+/// other than the `commissioned` one.  An image without a board isn't
+/// checked.
+fn check_commissioned_board(
+    commissioned: Option<&str>,
+    image: Option<Board>,
+) -> Result<(), String> {
+    let Some(image) = image else {
+        return Ok(());
+    };
+    #[allow(clippy::wildcard_enum_match_arm)]
+    check_board(commissioned, image, false).map_err(|e| match e {
+        CliError::CommissionedBoardMismatch {
+            commissioned,
+            image,
+        } => format!(
+            "Cannot program this image because it is for {image} and this One ROM is commissioned as {commissioned}."
+        ),
+        e => e.to_string(),
+    })
+}
 
 /// At startup we want to check USB devices, then probe devices, so any
 /// present USB device gets selected in preference to probe ones.
@@ -170,7 +210,8 @@ pub struct Device {
     // re-enumerates - even if a serial override changed its USB serial.
     pending_id: Option<PendingId>,
     reboot_result: Option<(Client, Result<(), String>)>,
-    usb_run_capable: bool,
+    // The device whose firmware is known to include the USB plugin
+    usb_run_capable: Option<DeviceType>,
 }
 
 impl Default for Device {
@@ -185,7 +226,7 @@ impl Default for Device {
             running: false,
             pending_id: None,
             reboot_result: None,
-            usb_run_capable: false,
+            usb_run_capable: None,
         }
     }
 }
@@ -196,10 +237,13 @@ impl Device {
         Self::default()
     }
 
-    /// Can the device be running while connected?  Currently is only true for
-    /// Fire 1209/f542 devices
+    /// Whether the selected device stays on USB while running.  True for a
+    /// Fire USB device running the USB plugin, or one whose firmware is known
+    /// to include it.
     pub fn is_usb_run_capable(&self) -> bool {
-        self.usb_run_capable
+        self.is_live_usb_device()
+            || (matches!(self.selected, DeviceType::Usb(UsbDeviceType::Fire(_)))
+                && self.usb_run_capable.as_ref() == Some(&self.selected))
     }
 
     pub fn is_running(&self) -> bool {
@@ -209,7 +253,7 @@ impl Device {
     pub fn is_live_usb_device(&self) -> bool {
         matches!(
             &self.selected,
-            DeviceType::Usb(UsbDeviceType::Fire(p)) if p.vid() == usb::FIRE_VID && p.pid() == usb::FIRE_RUN_PID
+            DeviceType::Usb(UsbDeviceType::Fire(p)) if p.vid() == USB_PLUGIN_VID && p.pid() == USB_PLUGIN_PID
         )
     }
 
@@ -356,17 +400,11 @@ impl Device {
             }
         }
 
-        // Set other device properties.
-        // We can't use our usb_run_capable flag accurately, until analyse
-        // gives us the accurate information based on the firmware parsing
-        // later.
         self.running = self.is_live_usb_device();
         if matched_pending {
             // We KNOW it's a run-capable device if we rebooted it and it came
             // back as the same device.  This saves a re-analyse.
-            self.usb_run_capable = true;
-        } else {
-            self.usb_run_capable = self.is_live_usb_device();
+            self.usb_run_capable = Some(self.selected.clone());
         }
         self.pending_id = None;
     }
@@ -532,6 +570,10 @@ impl DeviceType {
         Task::future(flash_async(self.clone(), hw_info, client, data))
     }
 
+    pub fn read_board_details(&self, client: Client, hw_info: HardwareInfo) -> Task<AppMessage> {
+        Task::future(read_board_details_async(self.clone(), client, hw_info))
+    }
+
     pub fn reboot(&self, client: Client, stopped: bool) -> Task<AppMessage> {
         Task::future(reboot_async(self.clone(), client, stopped))
     }
@@ -576,6 +618,22 @@ async fn flash_async(
     }
 }
 
+// Generic read board details method
+async fn read_board_details_async(
+    device: DeviceType,
+    client: Client,
+    hw_info: HardwareInfo,
+) -> AppMessage {
+    match device {
+        DeviceType::DebugProbe(p) => probe::read_board_details_async(p, client, hw_info).await,
+        DeviceType::Usb(u) => usb::read_board_details_async(u, client).await,
+        DeviceType::None => {
+            internal_error!("Attempted to read the board details of None device");
+            Message::BoardDetailsRead(client, BoardDetails::default()).into()
+        }
+    }
+}
+
 #[allow(clippy::wildcard_enum_match_arm)]
 async fn reboot_async(device: DeviceType, client: Client, stopped: bool) -> AppMessage {
     match device {
@@ -585,5 +643,49 @@ async fn reboot_async(device: DeviceType, client: Client, stopped: bool) -> AppM
             internal_error!("{log}");
             Message::RebootDeviceResult(client, Err(log.into())).into()
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use probe_rs::probe::DebugProbeInfo;
+    use probe_rs::probe::cmsisdap::CmsisDapFactory;
+
+    fn probe(serial: &str) -> ProbeType {
+        let serial = Some(serial.to_string());
+        DebugProbeInfo::new("probe", 1, 1, serial, &CmsisDapFactory, None, false).into()
+    }
+
+    /// Whether a device's firmware includes the USB plugin survives a rescan
+    /// that keeps the device and doesn't apply to another device.
+    #[test]
+    fn run_capability_follows_the_device() {
+        let runtime_info = RuntimeInfo::default();
+        let mut device = Device::new();
+        let known = |device: &Device| device.usb_run_capable.as_ref() == Some(&device.selected);
+        let probes = vec![probe("a"), probe("b")];
+
+        let _ = device.update(&runtime_info, Message::ProbesDetected(probes.clone()));
+        let _ = device.update(&runtime_info, Message::SetUsbRunCapable(true));
+        assert!(known(&device));
+
+        let _ = device.update(&runtime_info, Message::ProbesDetected(probes.clone()));
+        assert!(known(&device));
+
+        let _ = device.update(&runtime_info, Message::SelectProbe(probes[1].clone()));
+        assert!(!known(&device));
+    }
+
+    /// Run and Stop are offered for a USB device alone, since Studio can't
+    /// reboot a device through a debug probe.
+    #[test]
+    fn a_debug_probe_device_isnt_run_capable() {
+        let runtime_info = RuntimeInfo::default();
+        let mut device = Device::new();
+
+        let _ = device.update(&runtime_info, Message::ProbesDetected(vec![probe("a")]));
+        let _ = device.update(&runtime_info, Message::SetUsbRunCapable(true));
+        assert!(!device.is_usb_run_capable());
     }
 }

@@ -14,8 +14,8 @@
 //! be useful in other embedded or WASM projects related to One ROM - for
 //! example, Airfrog and the One ROM website.
 //!
-//! This crate is designed to be `no_std` compatible, but alloc is used by
-//! the runtime image configuration code.
+//! This crate is `no_std` and doesn't allocate. Only its tests and the
+//! `schemars` feature use `alloc`.
 //!
 //! The code supporting ROM types and One ROM hardware revisions is generated
 //! automatically by `build.rs` from JSON configuration files. This ensures
@@ -24,11 +24,16 @@
 
 #![no_std]
 
+// A JSON schema is built on a host, so the schemars feature may allocate.
+#[cfg(feature = "schemars")]
+extern crate alloc;
+
 pub mod fw;
 pub mod hw;
 //pub mod image;
 pub mod chip;
 pub mod mcu;
+pub mod pin;
 pub mod pin_map;
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]

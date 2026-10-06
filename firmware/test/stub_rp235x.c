@@ -12,6 +12,9 @@
 #define APIO_LOG_IMPL
 #define APIO_LOG_ENABLE(fmt, ...) printf(fmt "\n", ##__VA_ARGS__)
 
+// Set by DMA_ENABLE() - see piodma/dmareg.h.
+uint8_t stub_dma_out_of_reset = 0;
+
 void setup_vbus_interrupt(void) {
     STUB_LOG("setup_vbus_interrupt");
 }
@@ -95,6 +98,9 @@ void setup_gpio(void) {
     STUB_LOG("setup_gpio");
 }
 
+// Set by enter_bootloader() below, read by stub_bootloader_entered().
+static uint8_t stub_entered_bootloader;
+
 // Put back what a reset puts back.
 //
 // A test build runs many boots in one process, and the firmware's own statics
@@ -113,6 +119,9 @@ void onerom_test_reset(void) {
     stub_gpio_reset();
     stub_timer_reset();
     pio_led_reset();
+    stub_entered_bootloader = 0;
+    stub_dma_out_of_reset = 0;
+    limp_mode_value = LIMP_MODE_NONE;
 }
 
 void setup_qmi(rp235x_clock_config_t *config) {
@@ -200,14 +209,14 @@ uint8_t stub_get_sel_image(void) {
     return stub_sel_image;
 }
 
-uint32_t setup_sel_pins(uint64_t *sel_mask, uint64_t *flip_bits) {
+uint32_t setup_sel_pins(uint8_t reserved, uint64_t *sel_mask, uint64_t *flip_bits) {
     *sel_mask = 0;
     *flip_bits = 0;
     uint32_t count = 0;
     uint8_t gpio_limit = stub_max_gpios();
     for (int ii = 0; ii < MAX_IMG_SEL_PINS; ii++) {
         uint8_t pin = HW->gpio_sel[ii];
-        if (pin < gpio_limit) {
+        if ((pin < gpio_limit) && !(reserved & (1 << ii))) {
             *sel_mask |= (1ULL << pin);
             count++;
         }
@@ -220,7 +229,8 @@ uint64_t get_sel_value(uint64_t sel_mask, uint64_t flip_bits) {
     return stub_gpio_sel_value & sel_mask;
 }
 
-void disable_sel_pins(void) {
+void disable_sel_pins(uint8_t reserved) {
+    (void)reserved;
     STUB_LOG("disable_sel_pins");
 }
 
@@ -228,9 +238,57 @@ void disable_swd(void) {
     STUB_LOG("disable_swd");
 }
 
-// Enters bootloader mode.
+// ---------------------------------------------------------------------------
+// OTP model
+//
+// See test/stub.h.
+// ---------------------------------------------------------------------------
+
+#define STUB_OTP_ROWS 4096u
+
+static uint16_t stub_otp_ecc[STUB_OTP_ROWS];
+static uint32_t stub_otp_raw[STUB_OTP_ROWS];
+
+void stub_otp_set_ecc(uint16_t row, const uint16_t *values, uint32_t count) {
+    assert(row + count <= STUB_OTP_ROWS);
+    memcpy(&stub_otp_ecc[row], values, count * sizeof(values[0]));
+}
+
+void stub_otp_set_raw(uint16_t row, const uint32_t *values, uint32_t count) {
+    assert(row + count <= STUB_OTP_ROWS);
+    memcpy(&stub_otp_raw[row], values, count * sizeof(values[0]));
+}
+
+void stub_otp_clear(void) {
+    memset(stub_otp_ecc, 0, sizeof(stub_otp_ecc));
+    memset(stub_otp_raw, 0, sizeof(stub_otp_raw));
+}
+
+uint16_t otp_read_ecc(uint16_t row) {
+    assert(row < STUB_OTP_ROWS);
+    return stub_otp_ecc[row];
+}
+
+// The host is little-endian, as the device is, so the rows' bytes lie in the
+// order the ECC read alias holds them.
+const char *otp_ecc_bytes(uint16_t row) {
+    assert(row < STUB_OTP_ROWS);
+    return (const char *)&stub_otp_ecc[row];
+}
+
+uint32_t otp_read_raw(uint16_t row) {
+    assert(row < STUB_OTP_ROWS);
+    return stub_otp_raw[row];
+}
+
+// Enters bootloader mode.  See stub.h for why the call is recorded.
 void enter_bootloader(void) {
     STUB_LOG("enter_bootloader");
+    stub_entered_bootloader = 1;
+}
+
+uint8_t stub_bootloader_entered(void) {
+    return stub_entered_bootloader;
 }
 
 void platform_logging(void) {
@@ -275,7 +333,7 @@ void err_log(const char* msg, ...) {
 }
 
 // Allocate twice the required RAM ROM table size, so it can be aligned to
-// 512KB (done in preload_rom_image).
+// its size (done in preload_rom_image).
 uint32_t test_ram_rom_image_table[RAM_ROM_TABLE_SIZE*2/4] = {0};
 uint64_t *get_ram_rom_image_table_aligned(void) {
     uint64_t address = (uint64_t)(uintptr_t)test_ram_rom_image_table;

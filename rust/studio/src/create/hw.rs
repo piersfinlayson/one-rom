@@ -25,6 +25,7 @@ pub fn detected_hardware_info(create: &mut Create, runtime_info: &RuntimeInfo) -
     // Check we have some hardware info
     if runtime_info.hw_info().is_none() {
         trace!("No hardware info available");
+        create.size_detected = false;
         return Task::none();
     }
 
@@ -46,6 +47,25 @@ pub fn detected_hardware_info(create: &mut Create, runtime_info: &RuntimeInfo) -
     } else {
         None
     };
+
+    // A size read from a device replaces the selected size where the board
+    // supports it.  Otherwise the image's minimum size does.
+    create.size_detected = false;
+    if create.selected_hw_info.board_size.is_some()
+        && let Some(board) = create.selected_hw_info.board
+    {
+        let sizes = Create::board_sizes(board);
+        if let Some(size) = hw_info.board_size
+            && sizes.contains(&size)
+        {
+            create.board_size_selected(size);
+            create.size_detected = true;
+        } else if let Some(min) = hw_info.min_board_size
+            && sizes.contains(&min)
+        {
+            create.board_size_selected(min);
+        }
+    }
 
     let msg2 = if create.has_board()
         && let Some(mcu) = hw_info.mcu_variant
@@ -88,8 +108,14 @@ pub fn flash_firmware(create: &mut Create, runtime_info: &RuntimeInfo) -> Task<A
     }
 }
 
-/// Handle the result of a flash firmware operation
-pub fn flash_firmware_result(create: &mut Create, result: Result<(), String>) -> Task<AppMessage> {
+/// Handle the result of a flash firmware operation.  A successful flash sets
+/// whether the device stays on USB while running from the image written.  A
+/// failed one leaves it unchanged, as a refused flash writes nothing.
+pub fn flash_firmware_result(
+    create: &mut Create,
+    runtime_info: &RuntimeInfo,
+    result: Result<(), String>,
+) -> Task<AppMessage> {
     debug!(
         "Flash firmware result received: {}",
         if result.is_ok() { "OK" } else { "Error" }
@@ -110,10 +136,16 @@ pub fn flash_firmware_result(create: &mut Create, result: Result<(), String>) ->
     match result {
         Ok(_) => {
             create.display_content = "Firmware flashed successfully.".to_string();
+            let usb_run_capable = runtime_info
+                .image()
+                .is_some_and(|image| image.is_usb_run_capable());
+            Task::done(DeviceMessage::SetUsbRunCapable(usb_run_capable).into())
         }
         Err(e) => {
+            // Each further line sits beneath the first line's text
+            let e = e.replace('\n', "\n  ");
             create.display_content = format!("Error flashing firmware:\n  - {e}");
+            Task::none()
         }
     }
-    Task::none()
 }

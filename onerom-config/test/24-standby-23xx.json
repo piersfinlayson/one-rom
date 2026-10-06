@@ -1,0 +1,71 @@
+{
+    "$schema": "https://images.onerom.org/configs/schema.json",
+    "version": 1,
+    "name": "24-standby-23xx",
+    "description": "23x series ROM test with sets that boot into standby, one without an image",
+    "categories": [
+    ],
+    "chip_sets": [
+        {
+            "type": "single",
+            "chips": [
+                {
+                    "description": "2364",
+                    "file": "images/test/rand_8KB.rom",
+                    "type": "2364",
+                    "cs1": "active_low"
+                }
+            ]
+        },
+        {
+            "type": "single",
+            "chips": [
+                {
+                    "description": "2332 in standby",
+                    "file": "images/test/rand_4KB.rom",
+                    "type": "2332",
+                    "cs1": "active_low",
+                    "cs2": "active_high"
+                }
+            ],
+            "firmware_overrides": {
+                "fire": {
+                    "standby": true
+                }
+            }
+        },
+        {
+            "type": "single",
+            "chips": [
+                {
+                    "description": "2316 in standby",
+                    "file": "images/test/rand_2KB.rom",
+                    "type": "2316",
+                    "cs1": "active_low",
+                    "cs2": "active_low",
+                    "cs3": "active_high"
+                }
+            ],
+            "firmware_overrides": {
+                "fire": {
+                    "standby": true
+                }
+            }
+        },
+        {
+            "type": "single",
+            "chips": [
+                {
+                    "description": "2364 in standby without an image",
+                    "type": "2364",
+                    "cs1": "active_low"
+                }
+            ],
+            "firmware_overrides": {
+                "fire": {
+                    "standby": true
+                }
+            }
+        }
+    ]
+}

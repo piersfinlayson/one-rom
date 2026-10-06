@@ -58,12 +58,12 @@ onerom_runtime_info_t onerom_runtime_info SECTION_ONEROM_RUNTIME_INFO = {
 };
 
 // Main One ROM build info structure, located at known point in flash
-_Static_assert(sizeof(ONEROM_INFO_MAGIC) == 5, "ONEROM_INFO_MAGIC must be 4 bytes + NULL TERMINATOR");
+_Static_assert(sizeof(ONEROM_FAMILY_MAGIC) == 5, "ONEROM_FAMILY_MAGIC must be 4 bytes + NULL TERMINATOR");
 #if REAL_HARDWARE
 __attribute__((section(".onerom_info")))
 #endif // !REAL_HARDWARE
 const onerom_info_t onerom_info = {
-    .magic = { ONEROM_INFO_MAGIC[0], ONEROM_INFO_MAGIC[1], ONEROM_INFO_MAGIC[2], ONEROM_INFO_MAGIC[3] },
+    .magic = { ONEROM_FAMILY_MAGIC[0], ONEROM_FAMILY_MAGIC[1], ONEROM_FAMILY_MAGIC[2], ONEROM_FAMILY_MAGIC[3] },
     .major_version = ONEROM_VERSION_MAJOR,
     .minor_version = ONEROM_VERSION_MINOR,
     .patch_version = ONEROM_VERSION_PATCH,
@@ -74,13 +74,14 @@ const onerom_info_t onerom_info = {
     .metadata = (const struct onerom_metadata_header_t *)&_metadata_start,
     .rtt = &_SEGGER_RTT,
     .runtime = &onerom_runtime_info,
+    .firmware_type = FIRMWARE_TYPE_ONE_ROM,
     .reserved = {
         0xff, 0xff, 0xff, 0xff,
         0xff, 0xff, 0xff, 0xff,
         0xff, 0xff, 0xff, 0xff,
         0xff, 0xff, 0xff, 0xff,
         0xff, 0xff, 0xff, 0xff,
-        0xff, 0xff, 0xff, 0xff
+        0xff, 0xff
     },
 };
 

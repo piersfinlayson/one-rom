@@ -83,6 +83,10 @@ impl CommandTrait for ImageArgs {
     fn requires_device(&self) -> bool {
         self.command.requires_device()
     }
+
+    fn uses_device(&self) -> bool {
+        self.command.uses_device()
+    }
 }
 
 #[enum_dispatch(CommandTrait)]
@@ -157,6 +161,10 @@ impl CommandTrait for ImageSwapBytesArgs {
     fn requires_device(&self) -> bool {
         false
     }
+
+    fn uses_device(&self) -> bool {
+        false
+    }
 }
 
 #[derive(Debug, Args)]
@@ -184,6 +192,10 @@ pub struct ImageDeinterleaveArgs {
 
 impl CommandTrait for ImageDeinterleaveArgs {
     fn requires_device(&self) -> bool {
+        false
+    }
+
+    fn uses_device(&self) -> bool {
         false
     }
 }
@@ -218,6 +230,10 @@ pub struct ImageConvertArgs {
 
 impl CommandTrait for ImageConvertArgs {
     fn requires_device(&self) -> bool {
+        false
+    }
+
+    fn uses_device(&self) -> bool {
         false
     }
 }

@@ -20,6 +20,10 @@ impl CommandTrait for InspectArgs {
     fn requires_device(&self) -> bool {
         self.command.requires_device()
     }
+
+    fn uses_device(&self) -> bool {
+        self.command.uses_device()
+    }
 }
 
 #[enum_dispatch(CommandTrait)]
@@ -48,7 +52,7 @@ pub enum InspectCommands {
     /// List the ROM image slots (formerly sets) stored on a One ROM.
     ///
     /// Displays the index, ROM type, size, and description of each
-    /// configured image slot, and indicates which slot is currently active.
+    /// configured image slot.
     ///
     /// Example:
     ///
@@ -86,10 +90,7 @@ pub enum InspectCommands {
 
     /// Show what every One ROM GPIO is, and what it is doing.
     ///
-    /// One row per MCU GPIO: everything the GPIO is - its signal under the ROM
-    /// currently being served, the board peripheral it drives, the header pad
-    /// it surfaces on - plus its direction and level, whether it is
-    /// 5V-tolerant, and what One ROM itself is using it for.
+    /// One row per MCU GPIO.
     ///
     /// Only GPIOs connected to something are listed; --all adds the rest.
     /// --verbose adds a legend explaining where each column comes from.
@@ -133,9 +134,8 @@ pub enum InspectCommands {
 
     /// Draw the connected One ROM's pin (jumper / programming) header as ASCII.
     ///
-    /// Shows the 2xN header along the board's top edge, pad by pad, with the
-    /// MCU GPIO behind each image-select and X pad and — on RP2350 (Fire)
-    /// boards — whether that GPIO is 5V-tolerant or 3.3V-only (an ADC pin). The
+    /// The picture includes each image select and X pin's MCU GPIO and, on
+    /// RP2350 (Fire) boards, whether that GPIO is 5V-tolerant or 3.3V-only. The
     /// board is inferred from the connected device, or taken from --board.
     ///
     /// Examples:
@@ -158,6 +158,22 @@ pub enum InspectCommands {
     ///
     ///   onerom inspect socket --chip-type 2364 --gpio
     Socket(InspectSocketArgs),
+
+    /// Display the contents of One ROM's OTP
+    ///
+    /// A commissioned One ROM stores hardware information in its OTP
+    /// (One Time Programmable memory).
+    ///
+    /// This command doesn't validate the OTP contents. To validate the
+    /// contents use 'onerom hardware validate'.
+    ///
+    /// Examples:
+    ///
+    ///   onerom inspect otp
+    ///
+    ///   onerom inspect otp --json
+    #[command(verbatim_doc_comment)]
+    Otp(InspectOtpArgs),
 }
 
 #[derive(Debug, Args)]
@@ -236,6 +252,10 @@ impl CommandTrait for InspectPeekArgs {
     fn requires_device(&self) -> bool {
         self.command.requires_device()
     }
+
+    fn uses_device(&self) -> bool {
+        self.command.uses_device()
+    }
 }
 
 #[enum_dispatch(CommandTrait)]
@@ -275,6 +295,8 @@ pub struct InspectPeekLiveArgs {
     /// Read from the ROM image at this logical address, starting from 0.
     ///
     /// Accepts decimal and hexadecimal (0x prefix) formats.
+    ///
+    /// On a One ROM serving half a 27C080, address 0 is the start of that half.
     #[arg(long, short, value_name = "ADDRESS", visible_alias = "addr", value_parser = parse_u32, default_value = "0")]
     pub address: u32,
 
@@ -325,25 +347,23 @@ impl CommandTrait for InspectPeekMemoryArgs {
 
 #[derive(Debug, Args)]
 pub struct InspectGpioArgs {
-    /// Show only this pin: an MCU GPIO written gpio<N>, or a header pad name
-    /// (sel_a..sel_e, x1, x2).
+    /// Show only this pin: a header pin (sel_<letter>, x1, x2) or an MCU GPIO
+    /// written gpio<N>.
     ///
-    /// A bare number is rejected - see 'onerom inspect header' for the GPIO
-    /// behind each header pad.
+    /// Use 'onerom inspect header' to see each header pin's GPIO.
     #[arg(long, value_name = "PIN", value_parser = parse_pin)]
     pub pin: Option<Pin>,
 
     /// Board type, overriding what the connected One ROM reports.
     ///
-    /// Only needed to resolve a header pad name on a One ROM whose board type
-    /// this build does not recognise. A GPIO named as gpio<N> needs no board.
+    /// Use it if the One ROM's board isn't recognised.
     #[arg(long, short, value_name = "BOARD")]
     pub board: Option<String>,
 
     /// Also show GPIOs with no function at all.
     ///
     /// By default only GPIOs connected to something - a ROM socket signal, a
-    /// board peripheral or a header pad - are listed. On a 48-GPIO board a
+    /// board peripheral or a header pin - are listed. On a 48-GPIO board a
     /// quarter of them are connected to nothing, and listing them buries the
     /// rest.
     #[arg(long, short, conflicts_with = "pin")]
@@ -393,6 +413,19 @@ pub struct InspectSocketArgs {
 }
 
 impl CommandTrait for InspectSocketArgs {
+    fn requires_device(&self) -> bool {
+        true
+    }
+}
+
+#[derive(Debug, Args)]
+pub struct InspectOtpArgs {
+    /// Show the whole report as JSON instead of text.
+    #[arg(long)]
+    pub json: bool,
+}
+
+impl CommandTrait for InspectOtpArgs {
     fn requires_device(&self) -> bool {
         true
     }

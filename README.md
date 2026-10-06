@@ -41,6 +41,7 @@ One ROM is designed to be extended in many different ways.
 |------------|------------|------------|
 | Drive a device from scripts or my own tooling | [Programming a One ROM](#programming-a-one-rom), [CLI manual](docs/CLI-MANUAL.md) | Install and run the CLI |
 | Fab and assemble existing boards | [hardware/pcb](hardware/pcb/README.md) | Upload gerbers and BOM/POS files to a fab |
+| Commission boards I've made | [Commissioning](docs/COMMISSIONING.md) | Request an authorised signing key or submit a signing request for a board |
 | Build the firmware myself | [Building from source](#building-from-source) | Use `make` or the build container |
 | Use the header pins as GPIOs — reset the host, drive a line | [Driving the host](#driving-the-host--gpio-and-reset) | One command, plus a wire for host reset |
 | Add support for a chip type One ROM doesn't know | [Adding a chip type](docs/ADDING-CHIP-TYPES.md) | A JSON entry plus one line of Rust or a firmware and tooling update if no existing serving algorithm fits |
@@ -132,22 +133,22 @@ onerom poke live --address 0x100 --byte 0xEA
 
 ## Driving the host — GPIO and reset
 
-The image select and X pads are not just jumpers.  They are GPIOs, and
+The image select and X pins are not just jumpers.  They are GPIOs, and
 One ROM will drive them for you — which means the ROM socket becomes a way to
 manipulate the machine it is plugged into.
 
-Run a wire from a pad to the host's reset line and you can reset the machine
+Run a wire from a pin to the host's reset line and you can reset the machine
 after flashing a new image:
 
 ```bash
 onerom control reset --pin sel_c
 ```
 
-`sel_c` is the usual choice — more boards have it than have X pads, and it is 5V
-tolerant where it exists.  Any pad works, named with `--pin`.
+`sel_c` is a common choice — more boards have it than have X pins, and it is 5V
+tolerant where it exists.  Any pin works with `--pin`.
 
 <div align="center">
-    <img src="docs/images/a500-fire-40-reset.jpg" alt="One ROM Fire 40 in an Amiga A500 ROM socket, with a wire from its Sel_C pad to the 68000's reset line" width="700">
+    <img src="docs/images/a500-fire-40-reset.jpg" alt="One ROM Fire 40 in an Amiga A500 ROM socket, with a wire from its SEL_C pin to the 68000's reset line" width="700">
 </div>
 
 <p align="center"><em>A One ROM Fire 40 in an Amiga A500, with <code>Sel_C</code>
@@ -323,10 +324,14 @@ published are on crates.io, for host-side Rust development.
 | [`onerom-fw`](rust/fw) | ✓ | Composes a complete firmware image, resolving and fetching base firmware from the release manifest. |
 | [`onerom-fw-parser`](rust/fw-parser) | ✓ | Reads metadata back out of a firmware binary — what chips, what board, what version. |
 | [`onerom-metadata`](rust/metadata) | ✓ | The embedded metadata schema itself. |
+| [`onerom-lab-metadata`](rust/lab-metadata) | ✓ | One ROM Lab's metadata structures. |
+| [`onerom-lab-parser`](rust/lab-parser) | ✓ | Reads One ROM Lab's metadata structures from a device or an image. |
+| [`onerom-metadata-gen`](rust/metadata-gen) | ✓ | Turns a metadata schema into C headers and Rust source. |
 | [`onerom-cli`](rust/cli) | ✓ | Everything the CLI does, minus the command line parsing.  Build on it rather than reimplementing USB device logic. The CLI binary is released at [onerom.org/cli](https://onerom.org/cli). |
 | [`onerom-app`](rust/app) | ✓ | Transport-free logic shared by the CLI, Studio and the web tools. |
 | [`onerom-studio`](rust/studio) | | The desktop GUI, released at [onerom.org/studio](https://onerom.org/studio). |
 | [`onerom-lab`](rust/lab) | | One ROM Lab, above. |
+| [`onerom-signing-server`](rust/signing-server) | | Signs commissioning instances. |
 | [`onerom-lens`](rust/lens) | | One ROM Lens — compiles the firmware emulator to WebAssembly and draws PIO and DMA activity as waveforms in a browser, cycle by cycle. |
 | [`onerom-fw-emulator`](rust/fw-emulator) | | Compiles and runs the real firmware C on a host, PIOs and all. |
 | [`onerom-fw-tester`](rust/fw-tester) | | Drives the emulator with generated configurations and checks the results. |
@@ -364,12 +369,14 @@ wraps `onerom-gen` as WASM, and is what the
 | [Chip Types](docs/CHIP-TYPES.md) | Every chip type One ROM knows about, with pinouts and control lines. |
 | [Compatibility](docs/COMPATIBILITY.md) | Which chips each hardware variant can emulate, and at what flash cost. |
 | [Adding a Chip Type](docs/ADDING-CHIP-TYPES.md) | Teaching One ROM to emulate a chip it does not yet know. |
+| [Commissioning](docs/COMMISSIONING.md) | Setting a One ROM's hardware settings. |
 | [Image Selection](docs/IMAGE-SELECTION.md) | Telling One ROM which installed image to serve. |
 | [Logging](docs/LOGGING.md) | Reading One ROM's log, over USB or with a debug probe. |
 | [Image Sets](docs/MULTI-ROM-SETS.md) | Serving several ROMs at once, and dynamic bank switching. |
 | [Plugins](plugins/README.md) | Building, configuring and writing plugins. |
 | [Build Container](ci/docker/README.md) | Building the firmware reproducibly in Docker. |
 | [ROMs Glorious ROMs](docs/ROMS-GLORIOUS-ROMS.md) | Everything you wanted to know about 23/27 series ROMs but were afraid to ask. |
+| [Second Flash](docs/SECOND-FLASH.md) | How One ROM handles a second flash chip connected to the RP2350 |
 | [Changelog](CHANGELOG.md) | What changed, and when. |
 
 The CLI manual, chip type and compatibility references are also published as

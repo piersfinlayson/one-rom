@@ -11,7 +11,8 @@ use onerom_config::hw::Board;
 use onerom_config::mcu::RpVariant;
 
 use onerom_metadata::{
-    GPIO_NONE, MAX_IMG_SEL_PINS, MAX_PHYS_PINS, MAX_X_PIN_GPIOS, OneromHardwareInfo, Rp235xVariant,
+    GPIO_NONE, MAX_IMG_SEL_PINS, MAX_PHYS_PINS, MAX_X_PIN_GPIOS, MaybeKnown, OneromHardwareInfo,
+    Rp235xVariant,
 };
 
 /// Build `OneromHardwareInfo` for `board`.
@@ -79,23 +80,23 @@ pub fn build_hardware_info(board: Board) -> OneromHardwareInfo {
         }
     }
 
-    OneromHardwareInfo {
-        hw_rev,
-        rp235x,
-        num_phys_pins,
-        usb_capable,
-        gpio_vbus,
-        gpio_ext_flash_cs,
-        gpio_status,
-        gpio_neopixel,
-        gpio_swdio,
-        gpio_swclk,
-        gpio_sel,
-        sel_jumper_pull,
-        gpio_from_phys_pin,
-        gpio_x1,
-        gpio_x2,
-    }
+    let mut hw = OneromHardwareInfo::default();
+    hw.hw_rev = hw_rev;
+    hw.rp235x = MaybeKnown::Known(rp235x);
+    hw.num_phys_pins = num_phys_pins;
+    hw.usb_capable = usb_capable;
+    hw.gpio_vbus = gpio_vbus;
+    hw.gpio_ext_flash_cs = gpio_ext_flash_cs;
+    hw.gpio_status = gpio_status;
+    hw.gpio_neopixel = gpio_neopixel;
+    hw.gpio_swdio = gpio_swdio;
+    hw.gpio_swclk = gpio_swclk;
+    hw.gpio_sel = gpio_sel;
+    hw.sel_jumper_pull = sel_jumper_pull;
+    hw.gpio_from_phys_pin = gpio_from_phys_pin;
+    hw.gpio_x1 = gpio_x1;
+    hw.gpio_x2 = gpio_x2;
+    hw
 }
 
 // ===========================================================================
@@ -118,7 +119,7 @@ mod tests {
         assert_eq!(hw.num_phys_pins, 24);
         assert!(matches!(
             hw.rp235x,
-            Rp235xVariant::Rp235xa | Rp235xVariant::Rp235xb
+            MaybeKnown::Known(Rp235xVariant::Rp235xa | Rp235xVariant::Rp235xb)
         ));
 
         assert_eq!(hw.usb_capable, 0);

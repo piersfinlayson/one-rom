@@ -1,0 +1,12 @@
+# The schema as the last release shipped it.
+#
+# One ROM Lab has not released with a metadata schema, so there is nothing to
+# compare against and this file says so. It is still required - a missing or
+# empty file is an error, because that is indistinguishable from one that was
+# lost.
+#
+# Copyright (C) 2026 Piers Finlayson <piers@piers.rocks>
+# MIT License
+
+[schema]
+unreleased = true

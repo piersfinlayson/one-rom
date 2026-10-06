@@ -65,6 +65,10 @@ pub struct ArgSpec {
     /// comment.
     pub help: Option<Help>,
 
+    /// `#[arg(verbatim_doc_comment)]`, which has clap keep the doc comment's
+    /// lines as written.
+    pub verbatim: bool,
+
     /// The `value_parser`, named by its last path segment.
     pub value_parser: Option<String>,
 
@@ -92,6 +96,7 @@ impl ArgSpec {
             match &meta {
                 Meta::Path(path) if is(path, "skip") => spec.skip = true,
                 Meta::Path(path) if is(path, "value_enum") => spec.value_enum = true,
+                Meta::Path(path) if is(path, "verbatim_doc_comment") => spec.verbatim = true,
                 Meta::Path(path) if is(path, "long") => spec.has_long = true,
                 Meta::NameValue(nv) if is(&nv.path, "global") => {
                     spec.global = render(&nv.value) == "true";
@@ -160,7 +165,12 @@ pub struct CommandSpec {
     /// `#[command(subcommand)]`, which makes the field a branch of the tree.
     pub subcommand: bool,
 
-    /// Every `group = ArgGroup::new(...)` the struct declares.
+    /// `#[command(verbatim_doc_comment)]`, which has clap keep the doc
+    /// comment's lines as written.
+    pub verbatim: bool,
+
+    /// Every `group = ArgGroup::new(...)` or `group(ArgGroup::new(...))` the
+    /// struct declares.
     pub groups: Vec<GroupSpec>,
 }
 
@@ -187,12 +197,19 @@ impl CommandSpec {
         for meta in metas(attrs, "command") {
             match &meta {
                 Meta::Path(path) if is(path, "subcommand") => spec.subcommand = true,
+                Meta::Path(path) if is(path, "verbatim_doc_comment") => spec.verbatim = true,
                 Meta::NameValue(nv) if is(&nv.path, "name") => spec.name = Some(text(&nv.value)),
                 Meta::NameValue(nv) if is(&nv.path, "hide") => {
                     spec.hide = render(&nv.value) == "true";
                 }
                 Meta::NameValue(nv) if is(&nv.path, "group") => {
                     spec.groups.push(arg_group(&nv.value));
+                }
+                Meta::List(list) if is(&list.path, "group") => {
+                    let group: Expr = list
+                        .parse_args()
+                        .unwrap_or_else(|e| panic!("could not read #[command(group(...))]: {e}"));
+                    spec.groups.push(arg_group(&group));
                 }
                 _ => {}
             }
@@ -251,19 +268,84 @@ pub fn derives(attrs: &[Attribute], trait_name: &str) -> bool {
         .any(|meta| matches!(meta, Meta::Path(path) if is(path, trait_name)))
 }
 
+/// A doc comment split the way clap splits it.
+pub struct Doc {
+    /// The first paragraph.  clap shows it as the one-line summary and drops
+    /// the full stop that ends it unless the doc comment is verbatim.
+    pub summary: String,
+
+    /// Everything after the first paragraph, where there is anything.
+    pub rest: Option<String>,
+}
+
+impl Doc {
+    /// Read the doc comment on a variant or a field, where it has one.
+    ///
+    /// `verbatim` is that item's own `verbatim_doc_comment`.  clap doesn't
+    /// carry it from a command to its options.
+    pub fn read(attrs: &[Attribute], verbatim: bool) -> Option<Self> {
+        if verbatim {
+            return verbatim_doc(attrs);
+        }
+
+        let mut paragraphs = paragraphs(attrs).into_iter();
+        let summary = paragraphs.next()?;
+        let rest: Vec<String> = paragraphs.collect();
+        Some(Self {
+            summary: without_full_stop(summary),
+            rest: (!rest.is_empty()).then(|| rest.join("\n\n")),
+        })
+    }
+}
+
+/// A summary without the full stop clap drops from its end.  An ellipsis
+/// keeps its dots as it does in clap.
+fn without_full_stop(mut summary: String) -> String {
+    if summary.ends_with('.') && !summary.ends_with("..") {
+        summary.pop();
+    }
+    summary
+}
+
+/// A doc comment the way clap keeps it under `verbatim_doc_comment`.
+///
+/// Every line stays as written with its breaks and its indentation.  The
+/// summary is every line up to the first blank one.  The rest is every line
+/// after it.
+fn verbatim_doc(attrs: &[Attribute]) -> Option<Doc> {
+    let lines = doc_lines(attrs);
+    let first = lines.iter().position(|line| !blank(line))?;
+    let last = lines.iter().rposition(|line| !blank(line))?;
+    let lines = &lines[first..=last];
+
+    let split = lines
+        .iter()
+        .position(|line| blank(line))
+        .unwrap_or(lines.len());
+    let rest = lines[split..]
+        .iter()
+        .position(|line| !blank(line))
+        .map(|start| lines[split + start..].join("\n"));
+
+    Some(Doc {
+        summary: lines[..split].join("\n"),
+        rest,
+    })
+}
+
 /// The doc comment, split into paragraphs the way clap splits it.
 ///
 /// Wrapped prose is joined back into one line, since where the source wrapped
 /// says nothing about where a pane should.  An indented line keeps its own
 /// break: those are the worked examples, and running them together destroys
 /// them.
-pub fn paragraphs(attrs: &[Attribute]) -> Vec<String> {
+fn paragraphs(attrs: &[Attribute]) -> Vec<String> {
     let mut paragraphs: Vec<String> = Vec::new();
     let mut current = String::new();
 
     for line in doc_lines(attrs) {
         let line = line.trim_end();
-        if line.trim().is_empty() {
+        if blank(line) {
             if !current.is_empty() {
                 paragraphs.push(std::mem::take(&mut current));
             }
@@ -283,6 +365,11 @@ pub fn paragraphs(attrs: &[Attribute]) -> Vec<String> {
     }
 
     paragraphs
+}
+
+/// Whether a doc comment line is blank.  clap ends a paragraph at a blank line.
+fn blank(line: &str) -> bool {
+    line.trim().is_empty()
 }
 
 /// One `/// ...` line per entry, with the space clap strips already stripped.

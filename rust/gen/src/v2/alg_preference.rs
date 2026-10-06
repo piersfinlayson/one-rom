@@ -107,12 +107,22 @@ pub fn cs_alg_preference(
     }
 }
 
+/// Refuse to score an algorithm this build has no name for.
+///
+/// These impls only see configs the generator has just built, from builders
+/// that name algorithms this build knows.  An unnamed one has no honest place
+/// in the ordering - it is neither simpler nor more complex than the rest.
+fn unnamed(family: &str, alg: u32) -> ! {
+    panic!("{family} algorithm {alg} is not one this build can score")
+}
+
 impl From<&OneromAlgCsConfig> for CsAlgPreference {
     fn from(alg: &OneromAlgCsConfig) -> Self {
         match alg {
             OneromAlgCsConfig::AlgCs0 { .. } => Self::AlgCs0,
             OneromAlgCsConfig::AlgCs1 { .. } => Self::AlgCs1,
             OneromAlgCsConfig::AlgCs2 { .. } => Self::AlgCs2,
+            OneromAlgCsConfig::Unknown { alg, .. } => unnamed("CS", *alg),
         }
     }
 }
@@ -121,6 +131,7 @@ impl From<&OneromAlgAddrConfig> for AddrAlgPreference {
     fn from(alg: &OneromAlgAddrConfig) -> Self {
         match alg {
             OneromAlgAddrConfig::AlgAddr0 { .. } => Self::AlgAddr0,
+            OneromAlgAddrConfig::Unknown { alg, .. } => unnamed("address", *alg),
         }
     }
 }
@@ -130,6 +141,7 @@ impl From<&OneromAlgDataConfig> for DataAlgPreference {
         match alg {
             OneromAlgDataConfig::AlgData0 { .. } => Self::AlgData0,
             OneromAlgDataConfig::AlgData1 { .. } => Self::AlgData1,
+            OneromAlgDataConfig::Unknown { alg, .. } => unnamed("data", *alg),
         }
     }
 }
@@ -138,6 +150,7 @@ impl From<&OneromAlgDmaConfig> for DmaAlgPreference {
     fn from(alg: &OneromAlgDmaConfig) -> Self {
         match alg {
             OneromAlgDmaConfig::AlgDma0 { .. } => Self::AlgDma0,
+            OneromAlgDmaConfig::Unknown { alg, .. } => unnamed("DMA", *alg),
         }
     }
 }

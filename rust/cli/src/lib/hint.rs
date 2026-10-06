@@ -35,11 +35,14 @@ pub const PLUGIN_ALL_VERSIONS: &str = "onerom plugin --all-versions";
 /// Show what One ROM is using each of its GPIOs for.
 pub const INSPECT_GPIO: &str = "onerom inspect gpio";
 
-/// Show which GPIO sits behind each header pad.
+/// Show the GPIO wired to each header pin.
 pub const INSPECT_HEADER: &str = "onerom inspect header";
 
 /// Start a stopped One ROM.
 pub const CONTROL_REBOOT_RUNNING: &str = "onerom control reboot --running";
+
+/// Stop a running One ROM.
+pub const CONTROL_REBOOT_STOPPED: &str = "onerom control reboot --stopped";
 
 /// Program a One ROM with a USB system plugin, so it has its own USB stack.
 pub const PROGRAM_WITH_USB: &str = "onerom program --config <CONFIG> --plugin usb";
@@ -52,6 +55,7 @@ pub const ALL_HINTS: &[&str] = &[
     INSPECT_GPIO,
     INSPECT_HEADER,
     CONTROL_REBOOT_RUNNING,
+    CONTROL_REBOOT_STOPPED,
     PROGRAM_WITH_USB,
 ];
 

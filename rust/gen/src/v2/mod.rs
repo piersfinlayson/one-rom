@@ -28,6 +28,7 @@ pub(crate) mod cs_data_layout;
 mod cs_overrides;
 pub(crate) mod firmware_config;
 mod gpio_pull_config;
+pub(crate) mod gpio_use;
 mod gpio_window;
 pub(crate) mod hardware_info;
 pub(crate) mod multi_cs_config;
@@ -54,6 +55,9 @@ impl From<SerializeError> for Error {
                     "Too many entries for metadata field '{field}' (maximum 255)"
                 ),
             },
+            SerializeError::FieldTooNew { field, minimum } => {
+                Error::MetadataFieldTooNew { field, minimum }
+            }
         }
     }
 }

@@ -18,6 +18,10 @@ impl CommandTrait for UpdateArgs {
     fn requires_device(&self) -> bool {
         self.command.requires_device()
     }
+
+    fn uses_device(&self) -> bool {
+        self.command.uses_device()
+    }
 }
 
 #[enum_dispatch(CommandTrait)]
@@ -46,16 +50,6 @@ pub enum UpdateCommands {
     ///
     ///   onerom update commit --slot 2
     Commit(UpdateCommitArgs),
-
-    /// Read or write One-Time Programmable (OTP) memory (not yet supported).
-    ///
-    /// Manages RP2350 OTP memory, including One ROM-specific USB
-    /// configuration and other device identity data.
-    ///
-    /// This is an advanced operation. Incorrect OTP writes are
-    /// irreversible.
-    #[command(hide = true)]
-    Otp(UpdateOtpArgs),
 }
 
 #[derive(Debug, Args)]
@@ -83,24 +77,6 @@ pub struct UpdateCommitArgs {
 }
 
 impl CommandTrait for UpdateCommitArgs {
-    fn requires_device(&self) -> bool {
-        true
-    }
-}
-
-#[derive(Debug, Args)]
-pub struct UpdateOtpArgs {
-    /// Read OTP memory and display its contents.
-    #[arg(long, conflicts_with = "write")]
-    pub read: bool,
-
-    /// Write a value to an OTP row. Format: <row>=<value>
-    /// WARNING: OTP writes are irreversible.
-    #[arg(long, value_name = "ROW=VALUE", conflicts_with = "read")]
-    pub write: Option<String>,
-}
-
-impl CommandTrait for UpdateOtpArgs {
     fn requires_device(&self) -> bool {
         true
     }

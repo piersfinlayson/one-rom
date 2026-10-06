@@ -157,6 +157,11 @@ fn run_scenario(
     // bus that can carry data, and a full packet of room.
     device::reset_endpoint();
 
+    // The shim's withheld calls are process-global too, so each scenario starts
+    // with the full API and withholds in `before_start`.
+    // SAFETY: a count of zero, so the pointer isn't read.
+    unsafe { onerom_plugin_tester::ffi::ora_host_test_withhold_api(core::ptr::null(), 0) };
+
     if let Some(before_start) = sc.before_start {
         before_start(&emu);
     }

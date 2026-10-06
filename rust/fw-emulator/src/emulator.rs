@@ -80,6 +80,7 @@ pub enum OraResult {
     GpioInUse,
     LogChannelInUse,
     LogFull,
+    NotReady,
     /// A code this binding does not know. Carries the C type's own width,
     /// which `-fshort-enums` makes one byte.
     Unknown(ffi::ora_result_t),
@@ -103,6 +104,7 @@ impl From<ffi::ora_result_t> for OraResult {
             ffi::ora_result_t_ORA_RESULT_GPIO_IN_USE => Self::GpioInUse,
             ffi::ora_result_t_ORA_RESULT_LOG_CHANNEL_IN_USE => Self::LogChannelInUse,
             ffi::ora_result_t_ORA_RESULT_LOG_FULL => Self::LogFull,
+            ffi::ora_result_t_ORA_RESULT_NOT_READY => Self::NotReady,
             other => Self::Unknown(other),
         }
     }
@@ -292,6 +294,24 @@ impl Emulator {
     pub fn set_rp_variant(variant: Option<RpVariant>) {
         let is_b = matches!(variant, Some(RpVariant::Rp235xB));
         unsafe { ffi::stub_set_rp_variant(is_b as u8) };
+    }
+
+    /// The generation recorded in the metadata header the firmware reads.
+    pub fn metadata_generation() -> u32 {
+        unsafe { ffi::ffi_metadata_generation() }
+    }
+
+    /// Put a different generation in the metadata header before booting.
+    ///
+    /// On a device the metadata's generation and the firmware's differ
+    /// routinely.  A host build compiles both from one tree and only ever
+    /// meets them in step, so a test wanting the mismatch sets it here.
+    ///
+    /// The value persists across boots, like every other firmware global in
+    /// this process, so put it back to [`Self::metadata_generation`]'s
+    /// original reading afterwards.
+    pub fn set_metadata_generation(generation: u32) {
+        unsafe { ffi::ffi_set_metadata_generation(generation) };
     }
 
     /// Create and configure the emulated PIO handle.
@@ -520,9 +540,23 @@ impl Emulator {
         unsafe { ffi::ffi_limp_mode() as i32 != 0 }
     }
 
+    /// The firmware's limp mode, as its `limp_mode_pattern_t` value.
+    pub fn limp_mode_pattern(&self) -> u8 {
+        unsafe { ffi::ffi_limp_mode() }
+    }
+
     /// Returns `true` if the PIO state machines are enabled.
     pub fn pios_enabled(&self) -> bool {
         unsafe { ffi::ffi_pios_enabled() as i32 != 0 }
+    }
+
+    /// Returns `true` if the firmware asked for the bootloader on this boot.
+    ///
+    /// On a device that call never returns and the One ROM stops serving.  The
+    /// stub returns, and the firmware carries on as if it had not asked, so
+    /// this is the only trace a refusal to boot leaves.
+    pub fn bootloader_entered(&self) -> bool {
+        unsafe { ffi::stub_bootloader_entered() != 0 }
     }
 
     /// The serving algorithms and address window the current ROM slot runs.
@@ -569,6 +603,158 @@ impl Emulator {
     /// whatever that image does under the intended case's label.
     pub fn sel_image(&self) -> u8 {
         unsafe { ffi::ffi_image_sel() }
+    }
+
+    // ── OTP ──────────────────────────────────────────────────────────────────
+
+    /// Set what an ECC read of OTP returns, for the rows from `row`.
+    ///
+    /// OTP outlives a boot, as a device's does, so a test clears what it sets
+    /// with [`Self::clear_otp`].
+    pub fn set_otp_ecc(row: u16, values: &[u16]) {
+        unsafe { ffi::stub_otp_set_ecc(row, values.as_ptr(), values.len() as u32) };
+    }
+
+    /// Set what a raw read of OTP returns, for the rows from `row`.
+    pub fn set_otp_raw(row: u16, values: &[u32]) {
+        unsafe { ffi::stub_otp_set_raw(row, values.as_ptr(), values.len() as u32) };
+    }
+
+    /// Put every OTP row back to unwritten.
+    pub fn clear_otp() {
+        unsafe { ffi::stub_otp_clear() };
+    }
+
+    /// The board size the firmware recorded in runtime info on this boot, as
+    /// its `onerom_board_size_t` value.
+    pub fn board_size(&self) -> u8 {
+        unsafe { ffi::ffi_board_size() }
+    }
+
+    /// The firmware states in runtime info, as `onerom_firmware_state_t` bits.
+    pub fn firmware_states(&self) -> u32 {
+        unsafe { ffi::ffi_firmware_states() }
+    }
+
+    /// The firmware flags in runtime info, as `onerom_firmware_flag_t` bits.
+    pub fn firmware_flags(&self) -> u8 {
+        unsafe { ffi::ffi_firmware_flags() }
+    }
+
+    /// Record `FIRMWARE_STATE_PLUGINS_STARTED`, which plugin launch sets on a
+    /// device. Plugin launch is compiled out of a test build.
+    ///
+    /// Doesn't take `&self` so a yield hook can call it.
+    pub fn set_plugins_started() {
+        unsafe { ffi::ffi_set_plugins_started() };
+    }
+
+    /// The firmware's reading of the board OTP commissions the chip as: the
+    /// first row of `COMMISSIONING_BOARD`'s value and its length in bytes.
+    pub fn otp_commissioned_board() -> Option<(u16, u16)> {
+        let (mut row, mut len) = (0, 0);
+        (unsafe { ffi::otp_commissioned_board(&mut row, &mut len) } != 0).then_some((row, len))
+    }
+
+    /// Whether the firmware finds OTP commissions the chip as a board other
+    /// than `hw_rev`. `None` stands for metadata without a board name.
+    pub fn otp_board_mismatch(hw_rev: Option<&str>) -> bool {
+        let hw_rev = hw_rev.map(|name| std::ffi::CString::new(name).expect("hw_rev holds a NUL"));
+        let ptr = hw_rev
+            .as_ref()
+            .map_or(core::ptr::null(), |name| name.as_ptr());
+        unsafe { ffi::otp_board_mismatch(ptr) != 0 }
+    }
+
+    /// The firmware's reading of the board size OTP configures, as its
+    /// `onerom_board_size_t` value.
+    pub fn otp_board_size() -> u8 {
+        unsafe { ffi::otp_board_size() as u8 }
+    }
+
+    // ── ROM slot flash addresses ─────────────────────────────────────────────
+
+    /// ROM slot `index`'s address in a device's flash, from the generated
+    /// metadata unless a test has moved it.
+    ///
+    /// A host build's slot data is a host pointer, so the firmware reads a
+    /// slot's flash address from a table instead. `index` is the firmware's
+    /// ROM slot index, plugin slots included.
+    pub fn rom_slot_flash_addr(index: u8) -> u32 {
+        unsafe { ffi::ffi_rom_slot_flash_addr(index) }
+    }
+
+    /// Move ROM slot `index` to `addr` in flash, as the CLI would by writing
+    /// a device's metadata.
+    ///
+    /// The address outlives a boot, so a test puts back what
+    /// [`Self::rom_slot_flash_addr`] read.
+    pub fn set_rom_slot_flash_addr(index: u8, addr: u32) {
+        unsafe { ffi::ffi_set_rom_slot_flash_addr(index, addr) };
+    }
+
+    /// ROM slot `index`'s size in bytes.
+    pub fn rom_slot_size(index: u8) -> u32 {
+        unsafe { ffi::ffi_rom_slot_size(index) }
+    }
+
+    /// Whether the firmware finds ROM slot `index` lies within the flash, at
+    /// the chip sizes OTP configures.
+    pub fn rom_slot_in_flash(index: u8) -> bool {
+        unsafe { ffi::ffi_rom_slot_in_flash(index) != 0 }
+    }
+
+    /// Whether ROM slot `index` passes the firmware's check of a plugin of
+    /// `expected_type`, the plugin at `plugin_index`.
+    pub fn check_plugin_valid(
+        index: u8,
+        expected_type: ffi::ora_plugin_type_t,
+        plugin_index: u8,
+    ) -> bool {
+        unsafe { ffi::ffi_check_plugin_valid(index, expected_type, plugin_index) != 0 }
+    }
+
+    /// Make ROM slots 0 and 1 a system plugin and a user plugin with their
+    /// headers in host memory until [`Self::restore_rom_slots`].
+    ///
+    /// The plugin slots read their flash addresses from the metadata's table so
+    /// the metadata must have at least two slots. A test puts back the
+    /// addresses it moves.
+    pub fn install_plugin_slots() {
+        unsafe { ffi::ffi_install_plugin_slots() };
+    }
+
+    /// Put back the metadata's own ROM slots.
+    pub fn restore_rom_slots() {
+        unsafe { ffi::ffi_restore_rom_slots() };
+    }
+
+    /// Set ROM slot `index`'s override states to `states` until
+    /// [`Self::restore_rom_slots`], so a test can boot a slot into standby
+    /// without a config of its own.  Call before [`Self::boot`].
+    pub fn set_rom_slot_override_states(index: u8, states: u8) {
+        unsafe { ffi::ffi_set_rom_slot_override_states(index, states) };
+    }
+
+    /// Write a valid header to plugin slot `index` with its entry point at
+    /// device address `entry`.
+    pub fn set_plugin_header(index: u8, entry: u32, overrides1: u8, properties1: u8) {
+        unsafe { ffi::ffi_set_plugin_header(index, entry, overrides1, properties1) };
+    }
+
+    /// The firmware's boot parse of the plugin slots. Returns the plugins found
+    /// as a bitmask, their count and whether VBUS detection is disabled.
+    pub fn initial_plugin_parse() -> (u8, u8, bool) {
+        let (mut disable_vbus_det, mut num_plugins) = (0, 0);
+        let plugins = unsafe { ffi::initial_plugin_parse(&mut disable_vbus_det, &mut num_plugins) };
+        (plugins, num_plugins, disable_vbus_det != 0)
+    }
+
+    /// The yield capability of the plugin on the core other than `this_core`,
+    /// as `other_core_yield_capability_from` in `firmware/src/plugin.c`
+    /// returns it.
+    pub fn other_core_yield_capability(this_core: u32) -> i32 {
+        unsafe { ffi::other_core_yield_capability_from(this_core) }
     }
 
     // ── GPIO / cycle operations (require setup_epio()) ───────────────────────
@@ -1603,6 +1789,58 @@ impl Emulator {
             state,
             if force { ORA_GPIO_FLAG_FORCE } else { 0 }
         ))
+    }
+
+    // ── Firmware states ──────────────────────────────────────────────────────
+
+    /// `ORA_ID_FIRMWARE_STATE_QUERY`, returning the result and the states
+    /// reached.
+    ///
+    /// The states are `u32::MAX` where the call didn't write them.
+    ///
+    /// With `ORA_FIRMWARE_STATE_QUERY_FLAG_WAIT` the call blocks until the
+    /// states are set by a yield hook. See [`Self::set_yield_hook`].
+    pub fn firmware_state_query(&self, states: u32, flags: u32) -> (OraResult, u32) {
+        let mut reached = u32::MAX;
+        let r = plugin_call!(
+            ffi::api_id_t_ORA_ID_FIRMWARE_STATE_QUERY,
+            ffi::ora_firmware_state_query_fn_t,
+            states,
+            flags,
+            &mut reached as *mut u32
+        );
+        (OraResult::from(r), reached)
+    }
+
+    /// `ORA_ID_FIRMWARE_STATE_QUERY` with a NULL out pointer, which is valid.
+    pub fn firmware_state_query_null_out(&self, states: u32, flags: u32) -> OraResult {
+        OraResult::from(plugin_call!(
+            ffi::api_id_t_ORA_ID_FIRMWARE_STATE_QUERY,
+            ffi::ora_firmware_state_query_fn_t,
+            states,
+            flags,
+            std::ptr::null_mut::<u32>()
+        ))
+    }
+
+    // ── Standby ──────────────────────────────────────────────────────────────
+
+    /// `ORA_ID_SET_STANDBY`.
+    ///
+    /// `standby` is passed unchecked so a test can pass an invalid value.  On
+    /// success epio's state machines are updated to match, so call
+    /// [`Self::setup_epio`] first.
+    pub fn set_standby(&self, standby: u8, flags: u32) -> OraResult {
+        let result = OraResult::from(plugin_call!(
+            ffi::api_id_t_ORA_ID_SET_STANDBY,
+            ffi::ora_set_standby_fn_t,
+            standby,
+            flags
+        ));
+        if result.is_ok() {
+            unsafe { ffi::ffi_epio_update_from_apio(self.epio_or_panic()) };
+        }
+        result
     }
 
     // ── Yield ────────────────────────────────────────────────────────────────

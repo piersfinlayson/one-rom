@@ -1,5 +1,11 @@
 #####################################################################
 # One ROM Emulator (including PIO and plugin API) tests
+#
+# Usage: ci/test-emu.sh [24|24-1|24-2|28|28-1|28-2|32|40|all]
+#
+# Runs the tests for one socket size, or all of them by default.  24-1 and 24-2
+# are the two halves of the 24 pin group.  28-1 and 28-2 are those of the 28 pin
+# group.
 #####################################################################
 set -e
 
@@ -399,7 +405,9 @@ test_40_usb_all()          { run_boards run_usb_once       "$1" $FIRE_40_BOARDS;
 # its earliest board revision, and the groups run at the same time, so a broken
 # ROM type surfaces just as quickly.
 
-test_family_24() {
+# The 24 pin group in two halves, each a separate CI job.  The split is by time,
+# and a test added to the group goes in the shorter half.
+test_family_24_part_1() {
     # Every standard ROM type on every 24 pin hardware revision.
     test_24_all_rom_types fire-24-a
     test_24_all_rom_types fire-24-b
@@ -419,7 +427,9 @@ test_family_24() {
     test_24_config onerom-config/test/24-bank-23xx.json
     test_24_config onerom-config/test/24-bank-27xx.json
     test_24_config onerom-config/test/24-bank-28xx.json
+}
 
+test_family_24_part_2() {
     # Test multi-chip ROM configurations.  C onwards only - see the note on the
     # LATE board lists above for why fire-24-a and b cannot serve these.
     test_24_config_c_onwards onerom-config/test/24-multi-2364.json
@@ -431,12 +441,29 @@ test_family_24() {
     # 4 sets within the PET config, but does check that the firmware
     # correctly wraps at that point.
     test_24_config onerom-config/pet-4-40-50.json
-    test_24_config onerom-config/test/24-random-27xx.json
 
     # Plugin API tests
     test_24_config_api onerom-config/test/24-random-23xx.json
     test_24_config_api onerom-config/test/24-random-27xx.json
     test_24_config_api onerom-config/test/24-random-28xx.json
+    test_24_config_api onerom-config/test/24-bank-23xx.json
+    test_24_config_api onerom-config/test/24-bank-27xx.json
+    test_24_config_api onerom-config/test/24-bank-28xx.json
+    run_boards run_config_api onerom-config/test/24-multi-2364.json $FIRE_24_LATE_BOARDS
+    run_boards run_config_api onerom-config/test/24-multi-2316.json $FIRE_24_LATE_BOARDS
+    run_boards run_config_api onerom-config/test/24-multi-27xx.json $FIRE_24_LATE_BOARDS
+    test_24_config_api onerom-config/pet-4-40-50.json
+
+    # Reserved pins.  The firmware does not read a reserved image select pin,
+    # which the tester drives as closed, and the plugin API reports both
+    # reservations.
+    test_24_config onerom-config/test/24-reserved-23xx.json
+    test_config_api fire-24-f onerom-config/test/24-reserved-23xx.json
+
+    # Sets that boot into standby.  The data pins stay undriven until standby
+    # is turned off.  The set is then served as any other.
+    test_24_config onerom-config/test/24-standby-23xx.json
+    test_24_config_api onerom-config/test/24-standby-23xx.json
 
     # Device metadata test: this config sets an instance name and serial
     # override, so the plugin API metadata getter is exercised on the present
@@ -464,19 +491,27 @@ test_family_24() {
     test_24_config_rbcp onerom-config/test/24-random-23xx.json
 
     # The only config with plugin slots, so the only one where the firmware's
-    # slot index and the flash slot number RBCP reports differ.  One board is
-    # enough: what this exercises is slot numbering, which does not vary with
-    # the pin map.
+    # slot index differs from the flash slot number RBCP and the plugin API use.
+    # One board is enough because slot numbering doesn't vary with the pin map.
     test_config_rbcp fire-24-a onerom-config/test/24-plugins-23xx.json
+    test_config_api fire-24-a onerom-config/test/24-plugins-23xx.json
 }
 
-test_family_28() {
+test_family_24() {
+    test_family_24_part_1
+    test_family_24_part_2
+}
+
+# The 28 pin group, as two halves split the same way.
+test_family_28_part_1() {
     # Every standard ROM type on every 28 pin hardware revision.
     test_28_all_rom_types fire-28-a
     test_28_all_rom_types fire-28-c # Before B, as B is the same as A
     test_28_all_rom_types fire-28-b
     test_28_all_rom_types fire-28-d
+}
 
+test_family_28_part_2() {
     # Extended set of 28 pin ROM tests
     test_28_config onerom-config/test/28-random-23xxx.json
     test_28_config onerom-config/test/28-random-23qlxxx.json
@@ -509,6 +544,23 @@ test_family_28() {
     test_28_config_api onerom-config/test/28-random-23qlxxx.json
     test_28_config_api onerom-config/test/28-random-27xxx.json
     test_28_config_api onerom-config/test/28-random-28xxx.json
+    run_boards run_config_api onerom-config/test/28-multi-231024.json $FIRE_28_LATE_BOARDS
+    run_boards run_config_api onerom-config/test/28-multi-27xxx.json $FIRE_28_LATE_BOARDS
+    test_28_config_api onerom-config/28-c64c.json
+    test_28_config_api onerom-config/28-1541ii.json
+
+    # X1 and X2 are each wired to two GPIOs on these boards, and a banked set
+    # reads them through one.  The plugin API reports the other as in use too.
+    test_config_api fire-28-c onerom-config/test/28-bank-23xxx.json
+    test_config_api fire-28-c onerom-config/test/28-bank-23qlxxx.json
+    test_config_api fire-28-c onerom-config/test/28-bank-27xxx.json
+    test_config_api fire-28-c onerom-config/test/28-bank-28xxx.json
+    test_config_api fire-28-c onerom-config/test/28-bank-231024.json
+    test_config_api fire-28-d onerom-config/test/28-bank-23xxx.json
+    test_config_api fire-28-d onerom-config/test/28-bank-23qlxxx.json
+    test_config_api fire-28-d onerom-config/test/28-bank-27xxx.json
+    test_config_api fire-28-d onerom-config/test/28-bank-28xxx.json
+    test_config_api fire-28-d onerom-config/test/28-bank-231024.json
 
     # Address-monitor tests — see the note in test_family_40 for what these
     # cover.
@@ -535,6 +587,11 @@ test_family_28() {
     test_config_rbcp fire-28-c onerom-config/test/28-bank-27xxx.json
 }
 
+test_family_28() {
+    test_family_28_part_1
+    test_family_28_part_2
+}
+
 test_family_32() {
     # Every standard ROM type on every 32 pin hardware revision.
     test_32pin fire-32-a
@@ -554,7 +611,9 @@ test_family_32() {
     test_32_config_api onerom-config/test/32-random-27c080.json
     test_32_config_api onerom-config/test/32-random-27c301.json
     test_32_config_api onerom-config/test/32-random-27c0x0.json
+    test_config_api fire-32-b onerom-config/test/32-random-23c1001.json
     test_config_api fire-32-b onerom-config/test/32-random-extra.json
+    test_config_api fire-32-c onerom-config/test/32-random-23c1001.json
     test_config_api fire-32-c onerom-config/test/32-random-extra.json
 
     # Address-monitor tests — see the note in test_family_40 for what these
@@ -594,6 +653,7 @@ test_family_40() {
     # Plugin API tests
     test_40_config_api onerom-config/test/40-random.json
     test_40_config_api onerom-config/test/40-random-force-16bit.json
+    test_40_config_api onerom-config/test/40-random-27c200.json
 
     # Address-monitor tests: drive the address-monitor plugin API (capture
     # pipeline and knock detection, the foundation an RBCP plugin builds on)
@@ -634,24 +694,29 @@ test_family_40() {
 }
 
 usage() {
-    echo "Usage: $0 [24|28|32|40|all]" >&2
+    echo "Usage: $0 [24|24-1|24-2|28|28-1|28-2|32|40|all]" >&2
     echo "  Runs the emulator tests for one socket size, or all of them" >&2
-    echo "  (the default, and what a local full run wants)." >&2
+    echo "  (the default).  24-1, 24-2, 28-1 and 28-2 run one half of the" >&2
+    echo "  24 or 28 pin group." >&2
 }
 
 # Run one of these at a time per working tree.  Every test regenerates the same
 # firmware/generated/gen-config.c and rebuilds the same firmware/build-test/, and
 # gen-config.c is written before cargo takes its build lock, so two runs with
 # different BOARDs can interleave there and build one board's firmware against
-# another's generated config.  CI is unaffected: each socket size gets its own
-# runner, and so its own tree.
+# another's generated config.  CI is unaffected: each job gets its own runner,
+# and so its own tree.
 
 case "${1:-all}" in
-    24)  test_family_24 ;;
-    28)  test_family_28 ;;
-    32)  test_family_32 ;;
-    40)  test_family_40 ;;
-    all) test_family_40; test_family_28; test_family_24; test_family_32 ;;
+    24)   test_family_24 ;;
+    24-1) test_family_24_part_1 ;;
+    24-2) test_family_24_part_2 ;;
+    28)   test_family_28 ;;
+    28-1) test_family_28_part_1 ;;
+    28-2) test_family_28_part_2 ;;
+    32)   test_family_32 ;;
+    40)   test_family_40 ;;
+    all)  test_family_40; test_family_28; test_family_24; test_family_32 ;;
     -h|--help) usage; exit 0 ;;
-    *)   echo "Unknown socket size '$1'" >&2; usage; exit 1 ;;
+    *)    echo "Unknown socket size '$1'" >&2; usage; exit 1 ;;
 esac

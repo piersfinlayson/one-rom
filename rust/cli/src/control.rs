@@ -7,7 +7,7 @@ use crate::{
     args,
     utils::{
         active_chip_type, check_device, check_device_running, check_fire_board_optional,
-        check_live_read_write, resolve_board_optional,
+        check_live_read_write, resolve_board_optional, standby_suffix,
     },
 };
 use onerom_cli::device::{Device, select_device};
@@ -18,12 +18,15 @@ use onerom_cli::pin::{Pin, ResolvedPin};
 use onerom_cli::reset::{self, PinObjection};
 use onerom_cli::usb::{
     Caps, FLASH_BASE, GpioSetArgs, GpioUse, LedSubCmd, RebootArgs, SetLedArgs, flash_erase,
-    get_caps, gpio_query, gpio_set, read_memory, reboot, set_led, set_rgb, write_memory,
+    get_caps, gpio_query, gpio_set, read_memory, reboot, set_led, set_rgb, set_standby,
+    write_memory,
 };
 use onerom_cli::{Error, Options};
 use onerom_config::chip::ChipType;
 use onerom_config::hw::Board;
 use onerom_config::mcu::PinTolerance;
+use onerom_fw_parser::ParsedDevice;
+use onerom_gen::FlashChips;
 use std::io::Write;
 
 /// Send one status LED request, reporting it when the CLI is verbose.
@@ -211,6 +214,42 @@ pub async fn cmd_rgb_blink(
     rgb_request(options, args, led_args, "RGB LED blinking").await
 }
 
+/// The line `control standby --verbose` prints for `standby`.
+pub(crate) fn standby_line(standby: bool) -> &'static str {
+    if standby { "Standby on" } else { "Standby off" }
+}
+
+async fn standby_request(
+    options: &Options,
+    args: &impl crate::args::CommandTrait,
+    standby: bool,
+) -> Result<(), Error> {
+    check_device(options, args, true)?;
+    let device = options.device.as_ref().unwrap();
+    if !device.is_running() {
+        return Err(Error::NotRunning);
+    }
+    set_standby(device, standby).await?;
+    if options.verbose {
+        println!("{}", standby_line(standby));
+    }
+    Ok(())
+}
+
+pub async fn cmd_standby_on(
+    options: &Options,
+    args: &args::control::ControlStandbyOnArgs,
+) -> Result<(), Error> {
+    standby_request(options, args, true).await
+}
+
+pub async fn cmd_standby_off(
+    options: &Options,
+    args: &args::control::ControlStandbyOffArgs,
+) -> Result<(), Error> {
+    standby_request(options, args, false).await
+}
+
 pub async fn cmd_reboot(
     options: &Options,
     args: &args::control::ControlRebootArgs,
@@ -242,12 +281,12 @@ pub async fn cmd_reboot(
 }
 
 /// Name a GPIO as richly as the local metadata allows, e.g.
-/// `GPIO16 (A7)`, `GPIO9 (X1 pad)`, `GPIO29 (status LED, NeoPixel)`.
+/// `GPIO16 (A7)`, `GPIO9 (X1 pin)`, `GPIO29 (status LED, NeoPixel)`.
 ///
 /// Every name here comes from the board and the chip being served. The device
 /// reports only a coarse use category and deliberately never a role name, so if
 /// the board could not be resolved this degrades to the bare `GPIO<N>`.
-fn describe_gpio(board: Option<&Board>, chip: Option<ChipType>, gpio: u8) -> String {
+pub(crate) fn describe_gpio(board: Option<&Board>, chip: Option<ChipType>, gpio: u8) -> String {
     let mut notes: Vec<String> = Vec::new();
     if let Some(board) = board {
         if let Some(chip) = chip
@@ -264,7 +303,7 @@ fn describe_gpio(board: Option<&Board>, chip: Option<ChipType>, gpio: u8) -> Str
                 .map(String::from),
         );
         if let Some(role) = gpio::header_role(board, gpio) {
-            notes.push(format!("{role} pad"));
+            notes.push(format!("{role} pin"));
         }
     }
 
@@ -279,14 +318,20 @@ fn describe_gpio(board: Option<&Board>, chip: Option<ChipType>, gpio: u8) -> Str
 ///
 /// The two halves come from the device's `use` category, which reports the
 /// *consequence* of forcing a pin rather than the pin's role - the role is named
-/// separately by [`describe_gpio`] from board metadata.
-fn describe_use(gpio_use: GpioUse) -> (&'static str, &'static str) {
+/// separately by [`describe_gpio`] from board metadata. `standby` is whether One
+/// ROM is in standby.
+fn describe_use(gpio_use: GpioUse, standby: bool) -> (&'static str, &'static str) {
     match gpio_use {
         GpioUse::Free => ("not in use by One ROM", ""),
         GpioUse::ServingRead => (
             "ROM serving reads it",
             "Forcing it is reversible: serving keeps reading the pin, and setting it \
              back to z restores it.",
+        ),
+        GpioUse::ServingDriven if standby => (
+            "it is a standby pin",
+            "Forcing it takes the pin away from the PIOs, and serving stays broken \
+             until the device is rebooted.",
         ),
         GpioUse::ServingDriven => (
             "ROM serving drives it",
@@ -297,16 +342,34 @@ fn describe_use(gpio_use: GpioUse) -> (&'static str, &'static str) {
             "it is a One ROM system pin",
             "Driving it will disturb whatever the board uses it for.",
         ),
+        GpioUse::InputForced => ("ROM serving ignores it", ""),
     }
 }
 
-/// Say what a 3.3V-only pad risks, ahead of asking whether to go on.
+pub(crate) fn needs_force(gpio_use: GpioUse) -> bool {
+    !matches!(gpio_use, GpioUse::Free | GpioUse::InputForced)
+}
+
+/// The refusal to drive the GPIO `name`, which One ROM uses as `gpio_use`.
+/// `standby` is whether One ROM is in standby, and `force_hint` how the
+/// command overrides the refusal.
+pub(crate) fn gpio_in_use(name: &str, gpio_use: GpioUse, standby: bool, force_hint: &str) -> Error {
+    let (doing, consequence) = describe_use(gpio_use, standby);
+    Error::GpioInUseNamed(
+        name.to_string(),
+        doing.to_string(),
+        consequence.to_string(),
+        force_hint.to_string(),
+    )
+}
+
+/// Say what a 3.3V-only pin risks, ahead of asking whether to go on.
 ///
 /// Shared so that a pin vetted before programming and a pin driven directly are
 /// warned about in the same words.
 fn warn_three_volt_three(name: &str) {
     println!("Warning: {name} is 3.3V-only (an RP2350 ADC pin), not 5V-tolerant.");
-    println!("  More than 3.3V on this pad can damage the MCU - including whatever the");
+    println!("  More than 3.3V on this pin can damage the MCU - including whatever the");
     println!("  net sits at once One ROM releases the pin.");
 }
 
@@ -337,7 +400,7 @@ fn confirm_gpio(options: &Options, force: bool) -> Result<bool, Error> {
 /// One `control` command's request to drive a pin.
 ///
 /// The pin arrives already resolved, and the board it was resolved against comes
-/// with it: both callers need the board anyway - to resolve a `--pin` pad name
+/// with it: both callers need the board anyway - to resolve a `--pin` header pin
 /// before there is anything to drive - so passing it on costs nothing and keeps
 /// the "which GPIO is this?" question settled in one place.
 struct DriveRequest<'a> {
@@ -360,7 +423,7 @@ struct DriveRequest<'a> {
     /// Whether to override the device's in-use refusal.
     force: bool,
 
-    /// Whether the caller has already warned about a 3.3V-only pad and had the
+    /// Whether the caller has already warned about a 3.3V-only pin and had the
     /// user accept it. `program --reset-host` vets its pin before it flashes
     /// anything, and asking a second time once the device is back on the bus
     /// would be asking about a decision already taken.
@@ -408,24 +471,20 @@ async fn vet_gpio(options: &Options, req: &DriveRequest<'_>) -> Result<Option<Ca
     };
 
     if let Some(gpio_use) = gpio_use
-        && gpio_use != GpioUse::Free
+        && needs_force(gpio_use)
     {
-        let (doing, consequence) = describe_use(gpio_use);
+        let standby = device.in_standby();
         if !req.force {
-            return Err(Error::GpioInUseNamed(
-                name.to_string(),
-                doing.to_string(),
-                consequence.to_string(),
-                req.force_hint.to_string(),
-            ));
+            return Err(gpio_in_use(&name, gpio_use, standby, req.force_hint));
         }
+        let (doing, consequence) = describe_use(gpio_use, standby);
         println!("Warning: {name} is in use by One ROM: {doing}.");
         println!("  {consequence}");
     }
 
     // Static board metadata, not a measurement: the RP2350's ADC pins are the
-    // only pads that are not 5V-tolerant. Nothing here knows or asks what is
-    // wired to the pad.
+    // only pins that are not 5V-tolerant. Nothing here knows or asks what is
+    // wired to the pin.
     if let Some(board) = board
         && !req.tolerance_confirmed
         && board.gpio_tolerance(gpio) == Some(PinTolerance::ThreeVolt3)
@@ -498,70 +557,100 @@ pub async fn pulse_reset(
     let device = options.device.as_ref().unwrap();
     reset::pulse(device, &caps, pin.gpio(), hold_ms).await?;
 
-    println!(
-        "Asserted reset on {pin} for {hold_ms}ms - the device times the pulse and releases the pin"
-    );
+    println!("{}", reset_asserted_line(pin, hold_ms));
 
     Ok(())
 }
 
-/// Refuse a reset pin One ROM will be using itself.
+pub(crate) fn reset_asserted_line(pin: ResolvedPin, hold_ms: u32) -> String {
+    format!(
+        "Asserted reset on {pin} for {hold_ms}ms - the device times the pulse and releases the pin"
+    )
+}
+
+/// Refuse a reset pin a ROM slot of `image` uses.
 ///
-/// `chips` is every chip type the image can serve. The device refuses to give up
-/// a pin it is serving with, so this is the same refusal, made early enough to
-/// be worth something - and made against the image about to be flashed rather
-/// than the one already running.
-pub fn refuse_reset_pin_in_use(
-    board: &Board,
-    chips: &[ChipType],
-    pin: ResolvedPin,
-) -> Result<(), Error> {
-    for objection in reset::vet_pin(board, chips, pin.gpio()) {
-        if let PinObjection::InUse(uses) = objection {
-            return Err(Error::InvalidArgument(
-                "--reset-host".to_string(),
-                format!(
-                    "{pin} is in use by the One ROM image being programmed: {}.\n  \
-                     One ROM will refuse to drive it.\n  \
-                     Use '{}' to drive it anyway.",
-                    uses.join(", "),
-                    hint::force_pin_low(pin.pin())
-                ),
-            ));
+/// The device refuses to give up a pin it is serving with, so this is the same
+/// refusal, made against the image about to be flashed rather than the one
+/// already running.
+pub fn refuse_reset_pin_in_use(image: &ParsedDevice, pin: ResolvedPin) -> Result<(), Error> {
+    let slots = onerom_cli::image::slots_using(image, pin.gpio());
+    let Some((last, rest)) = slots.split_last() else {
+        return Ok(());
+    };
+    let slots = match rest {
+        [] => format!("slot {last}"),
+        _ => {
+            let rest: Vec<String> = rest.iter().map(ToString::to_string).collect();
+            format!("slots {} and {last}", rest.join(", "))
         }
-    }
-    Ok(())
+    };
+    Err(reset_pin_in_use(
+        pin,
+        &format!(
+            "{pin} is used by {slots} of the image being programmed, so it can't reset the host."
+        ),
+    ))
+}
+
+/// The `--reset-host` error for `pin`, which `reason` says can't be used.
+fn reset_pin_in_use(pin: ResolvedPin, reason: &str) -> Error {
+    Error::InvalidArgument(
+        "--reset-host".to_string(),
+        format!(
+            "{reason}\n  \
+             Use '{}' to drive it anyway.",
+            hint::force_pin_low(pin.pin())
+        ),
+    )
 }
 
 /// Vet a reset pin before anything is programmed, and resolve it.
 ///
-/// Everything asked here comes from board metadata and `chips`, so it is asked
-/// before the device is touched and before a single ROM image is fetched: a pad
-/// this board does not have, a pin the new image will serve with, or a pad that
-/// cannot take 5V is the user's mistake, and finding it later means finding it
-/// with the host system already waiting to be reset.
+/// Everything asked here comes from board metadata, so it is asked before the
+/// device is touched and before a single ROM image is fetched: a pin this board
+/// does not have, a pin the board uses itself, or a pin that cannot take 5V is
+/// the user's mistake, and finding it later means finding it with the host
+/// system already waiting to be reset. Whether the image's slots use the pin is
+/// [`refuse_reset_pin_in_use`].
 ///
 /// Returns the resolved pin, and whether the user was asked about a 3.3V-only
-/// pad - which [`pulse_reset`] needs, so that accepting once is accepting.
+/// pin - which [`pulse_reset`] needs, so that accepting once is accepting.
 pub fn check_reset_pin(
     options: &Options,
     pin: &Pin,
     board: Option<&Board>,
-    chips: &[ChipType],
 ) -> Result<(ResolvedPin, bool), Error> {
     let resolved = pin.resolve(board)?;
 
     let Some(board) = board else {
         // Without a board there is nothing to ask: the pin was named as a GPIO
-        // (a pad would have failed to resolve), and every objection is raised
+        // (a pin would have failed to resolve), and every objection is raised
         // from board metadata. The device still gates the write.
         return Ok((resolved, false));
     };
 
-    refuse_reset_pin_in_use(board, chips, resolved)?;
+    let objections = reset::vet_pin(board, resolved.gpio());
+    for objection in &objections {
+        if let PinObjection::InUse(uses) = objection {
+            return Err(reset_pin_in_use(
+                resolved,
+                &match uses.split_last() {
+                    Some((last, rest)) if !rest.is_empty() => format!(
+                        "{resolved} is wired to the board's {} and {last}, so it can't reset the host.",
+                        rest.join(", ")
+                    ),
+                    _ => format!(
+                        "{resolved} is wired to the board's {}, so it can't reset the host.",
+                        uses.join(", ")
+                    ),
+                },
+            ));
+        }
+    }
 
     let mut tolerance_confirmed = false;
-    if reset::vet_pin(board, chips, resolved.gpio()).contains(&PinObjection::NotFiveVoltTolerant) {
+    if objections.contains(&PinObjection::NotFiveVoltTolerant) {
         warn_three_volt_three(&describe_gpio(Some(board), None, resolved.gpio()));
         if !confirm_gpio(options, false)? {
             return Err(Error::Aborted(
@@ -594,11 +683,11 @@ pub async fn cmd_reset(
         ));
     }
 
-    // A pad name is meaningless without a board, so the pin is resolved here,
-    // before the device is touched: a --pin this board has no pad for is the
+    // A header pin has no GPIO without a board, so the pin is resolved here,
+    // before the device is touched: a --pin this board has no pin for is the
     // user's mistake, not something to discover half way through driving it.
     let board = resolve_board_optional(options, &args.board)?;
-    // The device being driven is a Fire, so an Ice --board would name its pads
+    // The device being driven is a Fire, so an Ice --board would resolve its pins
     // against the wrong hardware - silently, which is the worst of the options.
     check_fire_board_optional(&board)?;
     let pin = args.pin.resolve(board.as_ref())?;
@@ -615,6 +704,9 @@ pub async fn cmd_select(
     Err(Error::Unimplemented("control select".to_string()))
 }
 
+/// How `control pin` overrides One ROM's refusal to drive a pin it uses.
+pub(crate) const PIN_FORCE_HINT: &str = "Use --force to drive it anyway.";
+
 pub async fn cmd_pin(options: &Options, args: &args::control::ControlPinArgs) -> Result<(), Error> {
     check_device_running(options, args)?;
 
@@ -625,7 +717,7 @@ pub async fn cmd_pin(options: &Options, args: &args::control::ControlPinArgs) ->
     let after = args.then.unwrap_or(GpioState::Z);
 
     // See cmd_reset: the pin is resolved against the board before anything is
-    // driven, because a pad name has no GPIO until a board says so, and an Ice
+    // driven, because a header pin has no GPIO until the board is known, and an Ice
     // board is not the hardware being driven.
     let board = resolve_board_optional(options, &args.board)?;
     check_fire_board_optional(&board)?;
@@ -640,7 +732,7 @@ pub async fn cmd_pin(options: &Options, args: &args::control::ControlPinArgs) ->
             after,
             hold_ms,
             force: args.force,
-            force_hint: "Use --force to drive it anyway.",
+            force_hint: PIN_FORCE_HINT,
             tolerance_confirmed: false,
         },
     )
@@ -663,7 +755,7 @@ pub async fn cmd_pin(options: &Options, args: &args::control::ControlPinArgs) ->
 // Resolve poke input — either a single byte value or the contents of a file.
 //
 // The ArgGroup on the args structs guarantees exactly one of these is Some.
-fn poke_data(value: Option<u8>, input: Option<&String>) -> Result<Vec<u8>, Error> {
+pub fn poke_data(value: Option<u8>, input: Option<&String>) -> Result<Vec<u8>, Error> {
     if let Some(byte) = value {
         Ok(vec![byte])
     } else if let Some(path) = input {
@@ -720,7 +812,7 @@ pub async fn cmd_poke_live(
             }
         }
 
-        let dry_run_str = if args.dry_run { "[dry-run] " } else { "" };
+        let dry_run_str = dry_run_prefix(args.dry_run);
 
         // Write the deltas
         let delta_count: usize = runs.iter().map(|(_, b)| b.len()).sum();
@@ -743,29 +835,76 @@ pub async fn cmd_poke_live(
                 println!("{dry_run_str}{} contiguous blocks written", runs.len())
             }
             println!(
-                "{dry_run_str}Applied {delta_count} delta byte(s) of {} to live ROM offset 0x{:08x}",
-                data.len(),
-                args.address
+                "{}",
+                applied_live_line(
+                    args.dry_run,
+                    delta_count,
+                    data.len(),
+                    args.address,
+                    device.in_standby()
+                )
             );
         }
     } else {
         write_memory(device, address, &data).await?;
         println!(
-            "Wrote {} byte(s) to live ROM offset 0x{:08x}",
-            data.len(),
-            args.address
+            "{}",
+            wrote_live_line(data.len(), args.address, device.in_standby())
         );
     }
 
     Ok(())
 }
 
-const FLASH_SIZE: u32 = 2 * 1024 * 1024;
+fn dry_run_prefix(dry_run: bool) -> &'static str {
+    if dry_run { "[dry-run] " } else { "" }
+}
+
+/// The line `poke live` prints once it writes `len` bytes at live ROM
+/// `offset`. `standby` is whether One ROM is in standby.
+pub(crate) fn wrote_live_line(len: usize, offset: u32, standby: bool) -> String {
+    format!(
+        "Wrote {len} byte(s) to live ROM offset 0x{offset:08x}{}",
+        standby_suffix(standby)
+    )
+}
+
+/// The line `poke live --delta` prints once it writes the `delta_count` bytes
+/// of `len` that differ at live ROM `offset`. `standby` is whether One ROM is
+/// in standby.
+pub(crate) fn applied_live_line(
+    dry_run: bool,
+    delta_count: usize,
+    len: usize,
+    offset: u32,
+    standby: bool,
+) -> String {
+    format!(
+        "{}Applied {delta_count} delta byte(s) of {len} to live ROM offset 0x{offset:08x}{}",
+        dry_run_prefix(dry_run),
+        standby_suffix(standby)
+    )
+}
+
 const SECTOR_SIZE: u32 = 4096;
 
-fn build_erase_ranges(args: &args::control::ControlEraseArgs) -> Result<Vec<(u32, u32)>, Error> {
+/// Each of `chips` as a range from `FLASH_BASE`, its offset and length.
+fn chip_ranges(chips: &FlashChips) -> Vec<(u32, u32)> {
+    [Some(chips.first()), chips.second()]
+        .into_iter()
+        .flatten()
+        .map(|chip| (chip.start - FLASH_BASE, chip.end - chip.start))
+        .collect()
+}
+
+/// The ranges `args` asks to erase, each as its offset from `FLASH_BASE` and
+/// its length. `--all` is each of `chips`.
+pub(crate) fn build_erase_ranges(
+    args: &args::control::ControlEraseArgs,
+    chips: &FlashChips,
+) -> Result<Vec<(u32, u32)>, Error> {
     if args.all {
-        return Ok(vec![(0, FLASH_SIZE)]);
+        return Ok(chip_ranges(chips));
     }
 
     let offsets: Vec<u32> = if !args.address.is_empty() {
@@ -803,7 +942,12 @@ fn build_erase_ranges(args: &args::control::ControlEraseArgs) -> Result<Vec<(u32
         .collect())
 }
 
-fn validate_erase_ranges(ranges: &[(u32, u32)]) -> Result<(), Error> {
+/// Refuses a range that isn't whole sectors within one of `chips`.
+pub(crate) fn validate_erase_ranges(
+    ranges: &[(u32, u32)],
+    chips: &FlashChips,
+) -> Result<(), Error> {
+    let flash = chip_ranges(chips);
     for (offset, size) in ranges {
         if offset % SECTOR_SIZE != 0 {
             return Err(Error::InvalidArgument(
@@ -817,29 +961,71 @@ fn validate_erase_ranges(ranges: &[(u32, u32)]) -> Result<(), Error> {
                 format!("Size {size:#x} must be a non-zero multiple of {SECTOR_SIZE:#x}"),
             ));
         }
-        if offset + size > FLASH_SIZE {
+        let within = |&(start, len): &(u32, u32)| {
+            *offset >= start && u64::from(*offset) + u64::from(*size) <= u64::from(start + len)
+        };
+        if !flash.iter().any(within) {
+            let chips = flash
+                .iter()
+                .map(|(start, len)| format!("{:#x}+{len:#x}", FLASH_BASE + start))
+                .collect::<Vec<_>>()
+                .join(" and ");
             return Err(Error::InvalidArgument(
                 "erase".to_string(),
-                format!("Range {offset:#x}+{size:#x} exceeds flash size {FLASH_SIZE:#x}"),
+                format!(
+                    "Range {:#x}+{size:#x} is outside this One ROM's flash\n  Flash: {chips}",
+                    // An --offset can be any u32.
+                    u64::from(FLASH_BASE) + u64::from(*offset)
+                ),
             ));
         }
     }
     Ok(())
 }
 
-fn confirm_erase(options: &Options, device: &Device, ranges: &[(u32, u32)]) -> Result<bool, Error> {
-    let total_kb = ranges.iter().map(|(_, s)| s).sum::<u32>() / 1024;
-    println!(
-        "This will erase {total_kb}KB across {} range(s) on device:\n  {device}",
-        ranges.len()
-    );
-    if options.verbose {
-        for (offset, size) in ranges {
-            println!(
+/// The kilobytes `ranges` cover together.
+fn erase_kb(ranges: &[(u32, u32)]) -> u32 {
+    ranges.iter().map(|(_, size)| size).sum::<u32>() / 1024
+}
+
+/// The line asking to erase `ranges`, which the device's line follows.
+/// `--verbose` adds the number of ranges.
+pub(crate) fn erase_question(ranges: &[(u32, u32)], verbose: bool) -> String {
+    if verbose {
+        format!(
+            "This will erase {}KB across {} range(s) on device:",
+            erase_kb(ranges),
+            ranges.len()
+        )
+    } else {
+        format!("This will erase {}KB on device:", erase_kb(ranges))
+    }
+}
+
+/// The lines `--verbose` shows for `ranges` beneath the device's line.
+pub(crate) fn erase_range_lines(ranges: &[(u32, u32)]) -> Vec<String> {
+    ranges
+        .iter()
+        .map(|(offset, size)| {
+            format!(
                 "  {size:#x} bytes ({}KB) at {:#010x}",
                 size / 1024,
                 FLASH_BASE + offset
-            );
+            )
+        })
+        .collect()
+}
+
+/// The line reporting `ranges` erased.
+pub(crate) fn erased_line(ranges: &[(u32, u32)]) -> String {
+    format!("Erased {}KB of flash", erase_kb(ranges))
+}
+
+fn confirm_erase(options: &Options, device: &Device, ranges: &[(u32, u32)]) -> Result<bool, Error> {
+    println!("{}\n  {device}", erase_question(ranges, options.verbose));
+    if options.verbose {
+        for line in erase_range_lines(ranges) {
+            println!("{line}");
         }
     }
 
@@ -896,8 +1082,7 @@ async fn erase_ranges(options: &Options, ranges: &[(u32, u32)]) -> Result<(), Er
         flash_erase(device, *offset, *size).await?;
     }
 
-    let total_kb = ranges.iter().map(|(_, s)| s).sum::<u32>() / 1024;
-    println!("Erased {total_kb}KB of flash");
+    println!("{}", erased_line(ranges));
     Ok(())
 }
 
@@ -922,8 +1107,9 @@ pub async fn cmd_erase(
 ) -> Result<(), Error> {
     check_device(options, args, false)?;
 
-    let ranges = build_erase_ranges(args)?;
-    validate_erase_ranges(&ranges)?;
+    let chips = options.device.as_ref().unwrap().flash_chips();
+    let ranges = build_erase_ranges(args, &chips)?;
+    validate_erase_ranges(&ranges, &chips)?;
 
     if !confirm_erase(options, options.device.as_ref().unwrap(), &ranges)? {
         println!("Aborted");
@@ -949,10 +1135,11 @@ pub async fn cmd_erase(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_board::{holds, image_2364_sets};
     use onerom_cli::LogLevel;
     use onerom_cli::pin::parse_pin;
 
-    /// fire-24-f, whose header is characterised and whose select pads sit behind
+    /// fire-24-f, whose header is characterised and whose select pins are wired to
     /// the RP2350A's ADC pins, so every case below is reachable on one board.
     fn board() -> Board {
         Board::try_from_str("fire-24-f").unwrap()
@@ -969,71 +1156,33 @@ mod tests {
         }
     }
 
-    fn check(
-        pin: &str,
-        board: Option<&Board>,
-        chips: &[ChipType],
-    ) -> Result<(ResolvedPin, bool), Error> {
-        check_reset_pin(&options(true), &parse_pin(pin).unwrap(), board, chips)
+    fn check(pin: &str, board: Option<&Board>) -> Result<(ResolvedPin, bool), Error> {
+        check_reset_pin(&options(true), &parse_pin(pin).unwrap(), board)
     }
 
     #[test]
-    fn a_free_pad_is_accepted_and_resolved() {
-        // X1 is an expansion pad: no ROM function under any chip, no system
-        // function, and 5V-tolerant.
-        let (pin, confirmed) = check("x1", Some(&board()), &[ChipType::Chip2364]).unwrap();
+    fn a_free_pin_is_accepted_and_resolved() {
+        // X1 is an expansion pin: no system function, and 5V-tolerant.
+        let (pin, confirmed) = check("x1", Some(&board())).unwrap();
         assert_eq!(pin.gpio(), 9);
         assert!(!confirmed);
     }
 
     #[test]
-    fn a_pin_the_new_image_serves_with_is_refused() {
-        // GPIO16 is A7 of a 2364 on this board.
-        let err = check("gpio16", Some(&board()), &[ChipType::Chip2364]).unwrap_err();
-        let msg = err.to_string();
-        assert!(msg.contains("--reset-host"), "{msg}");
-        assert!(msg.contains("A7"), "{msg}");
-
-        // The refusal comes from the chip list and nothing else: the same pin is
-        // accepted for an image that serves nothing.
-        assert!(check("gpio16", Some(&board()), &[]).is_ok());
-    }
-
-    /// A pin one slot's chip type leaves alone is still refused when another
-    /// slot's reaches it.
-    ///
-    /// A 28-pin socket serving a 24-pin 2364 leaves GPIO10 outside the chip
-    /// body, where a 27256 drives it as A14 - so an image holding both must be
-    /// judged on every slot, not on the first.
-    #[test]
-    fn every_chip_type_in_the_image_is_checked() {
-        let board = Board::try_from_str("fire-28-a").unwrap();
-        assert!(check("gpio10", Some(&board), &[ChipType::Chip2364]).is_ok());
-        let err = check(
-            "gpio10",
-            Some(&board),
-            &[ChipType::Chip2364, ChipType::Chip27256],
-        )
-        .unwrap_err();
-        assert!(err.to_string().contains("A14"), "{err}");
-    }
-
-    #[test]
     fn a_pin_the_board_uses_itself_is_refused() {
-        // GPIO29 drives fire-24-f's status LED and its RGB LED, and no ROM
-        // function reaches it - so only the system-function check can refuse it.
-        let err = check("gpio29", Some(&board()), &[]).unwrap_err();
+        // GPIO29 drives fire-24-f's status LED and its RGB LED.
+        let err = check("gpio29", Some(&board())).unwrap_err();
         let msg = err.to_string();
         assert!(msg.contains("Status LED"), "{msg}");
         assert!(msg.contains("RGB LED"), "{msg}");
     }
 
     #[test]
-    fn a_three_volt_three_pad_has_to_be_accepted() {
+    fn a_three_volt_three_pin_has_to_be_accepted() {
         // SEL_A is GPIO26, an ADC pin, so it is not 5V-tolerant. --yes answers
         // the warning, and the answer is carried out so the pulse does not ask
         // again.
-        let (pin, confirmed) = check("sel_a", Some(&board()), &[ChipType::Chip2364]).unwrap();
+        let (pin, confirmed) = check("sel_a", Some(&board())).unwrap();
         assert_eq!(pin.gpio(), 26);
         assert!(confirmed);
 
@@ -1046,14 +1195,146 @@ mod tests {
     fn a_gpio_named_without_a_board_is_taken_as_given() {
         // Nothing below the resolve can be asked without board metadata, and the
         // device still gates the write.
-        let (pin, confirmed) = check("gpio16", None, &[ChipType::Chip2364]).unwrap();
+        let (pin, confirmed) = check("gpio16", None).unwrap();
         assert_eq!(pin.gpio(), 16);
         assert!(!confirmed);
     }
 
+    /// The ROM slots an image of 2364 `sets` for `board` has using `pin`.
+    async fn slots_using(board: Board, sets: &[&str], pin: &str) -> Vec<usize> {
+        let image = image_2364_sets(board, sets, &[]);
+        let image = onerom_cli::image::parse_firmware(&image).await;
+        let pin = parse_pin(pin).unwrap().resolve(Some(&board)).unwrap();
+        onerom_cli::image::slots_using(&image, pin.gpio())
+    }
+
+    #[tokio::test]
+    async fn a_pin_a_slot_serves_with_is_found() {
+        // GPIO16 is A7 of a 2364 on fire-24-f.
+        assert_eq!(slots_using(board(), &["single"], "gpio16").await, [0]);
+        assert!(slots_using(board(), &["single"], "x1").await.is_empty());
+    }
+
+    /// A banked set reads X1 to select its bank, and the slot that uses it
+    /// needn't be the first.
+    #[tokio::test]
+    async fn x1_is_found_where_a_banked_set_uses_it() {
+        let sets = ["single", "banked", "single", "banked"];
+        assert_eq!(slots_using(board(), &sets, "x1").await, [1, 3]);
+    }
+
+    /// fire-28-c's X1 is wired to GPIOs 9 and 28, and a banked set reads it on
+    /// 28.
+    #[tokio::test]
+    async fn either_gpio_of_a_dual_wired_x_pin_is_found() {
+        for pin in ["x1", "gpio9", "gpio28"] {
+            assert_eq!(
+                slots_using(Board::Fire28C, &["banked"], pin).await,
+                [0],
+                "{pin}"
+            );
+        }
+        assert!(
+            slots_using(Board::Fire28C, &["single"], "gpio9")
+                .await
+                .is_empty()
+        );
+    }
+
+    #[tokio::test]
+    async fn a_reset_pin_a_slot_uses_is_refused() {
+        let image = image_2364_sets(board(), &["single", "banked", "banked"], &[]);
+        let image = onerom_cli::image::parse_firmware(&image).await;
+        let pin = |name: &str| parse_pin(name).unwrap().resolve(Some(&board())).unwrap();
+
+        let err = refuse_reset_pin_in_use(&image, pin("x1")).unwrap_err();
+        let msg = err.to_string();
+        assert!(holds(&msg, &["--reset-host", "x1", "1", "2"]), "{msg}");
+        assert!(refuse_reset_pin_in_use(&image, pin("x2")).is_ok());
+    }
+
+    /// `words`, which start `onerom control erase`, parsed.
+    fn erase_args(words: &str) -> args::control::ControlEraseArgs {
+        use clap::Parser;
+        let cli = crate::args::Cli::try_parse_from(words.split_whitespace()).unwrap();
+        let crate::args::Commands::Control(control) = cli.command else {
+            panic!("not control");
+        };
+        let args::control::ControlCommands::Erase(args) = control.command else {
+            panic!("not control erase");
+        };
+        args
+    }
+
+    fn chips(size: onerom_config::hw::BoardSize) -> FlashChips {
+        FlashChips::new(onerom_config::mcu::Variant::RP2350, size)
+    }
+
     #[test]
-    fn a_pad_named_without_a_board_is_refused() {
-        let err = check("sel_a", None, &[]).unwrap_err();
+    fn all_erases_every_chip() {
+        use onerom_config::hw::BoardSize;
+        let args = erase_args("onerom control erase --all");
+        let m = build_erase_ranges(&args, &chips(BoardSize::M)).unwrap();
+        assert_eq!(m, [(0, 0x20_0000)]);
+        let l = build_erase_ranges(&args, &chips(BoardSize::L)).unwrap();
+        assert_eq!(l, [(0, 0x20_0000), (0x100_0000, 0x20_0000)]);
+    }
+
+    /// An address on the second chip is an offset of 0x1000000 and more.
+    #[test]
+    fn a_range_on_the_second_chip_needs_a_board_with_one() {
+        use onerom_config::hw::BoardSize;
+        let args = erase_args("onerom control erase --address 0x11000000 --length 0x1000");
+        let ranges = build_erase_ranges(&args, &chips(BoardSize::L)).unwrap();
+        assert_eq!(ranges, [(0x100_0000, 0x1000)]);
+        assert!(validate_erase_ranges(&ranges, &chips(BoardSize::L)).is_ok());
+        assert!(validate_erase_ranges(&ranges, &chips(BoardSize::M)).is_err());
+    }
+
+    #[test]
+    fn a_range_outside_a_chip_is_refused() {
+        use onerom_config::hw::BoardSize;
+        let l = chips(BoardSize::L);
+        // The last sector of each chip.
+        assert!(validate_erase_ranges(&[(0x1f_f000, 0x1000)], &l).is_ok());
+        assert!(validate_erase_ranges(&[(0x11f_f000, 0x1000)], &l).is_ok());
+        // Past the end of each chip, between them, and across the end of the
+        // first.
+        for range in [
+            (0x20_0000, 0x1000),
+            (0x120_0000, 0x1000),
+            (0x80_0000, 0x1000),
+            (0x1f_f000, 0x2000),
+        ] {
+            assert!(validate_erase_ranges(&[range], &l).is_err(), "{range:x?}");
+        }
+    }
+
+    #[test]
+    fn the_erase_lines_contain_the_total() {
+        use onerom_config::hw::BoardSize;
+        let args = erase_args("onerom control erase --all");
+        let ranges = build_erase_ranges(&args, &chips(BoardSize::L)).unwrap();
+        assert!(holds(&erase_question(&ranges, true), &["4096KB", "2"]));
+        assert!(holds(&erase_question(&ranges, false), &["4096KB"]));
+        assert!(holds(&erased_line(&ranges), &["4096KB"]));
+        let lines = erase_range_lines(&ranges);
+        assert!(holds(&lines[0], &["0x10000000"]));
+        assert!(holds(&lines[1], &["0x11000000"]));
+    }
+
+    #[test]
+    fn a_pin_named_without_a_board_is_refused() {
+        let err = check("sel_a", None).unwrap_err();
         assert!(err.to_string().contains("--board"), "{err}");
+    }
+
+    #[test]
+    fn only_free_and_input_forced_pins_drive_unforced() {
+        assert!(!needs_force(GpioUse::Free));
+        assert!(!needs_force(GpioUse::InputForced));
+        assert!(needs_force(GpioUse::ServingRead));
+        assert!(needs_force(GpioUse::ServingDriven));
+        assert!(needs_force(GpioUse::SystemPin));
     }
 }

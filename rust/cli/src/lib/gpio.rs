@@ -16,26 +16,27 @@
 
 use onerom_config::chip::ChipType;
 use onerom_config::hw::{Board, HeaderRole, HeaderSlot};
+use onerom_config::pin::HeaderPin;
 use onerom_gen::socket_pin_offset;
 
-/// The short label shown on a header pad for a single role.
+/// The short label shown on a header pin for a single role.
 pub fn header_role_label(role: &HeaderRole) -> String {
     match role {
         HeaderRole::Power5V => "5V".to_string(),
         HeaderRole::Gnd => "GND".to_string(),
         HeaderRole::Run => "RUN".to_string(),
         HeaderRole::Bootsel => "BOOTSEL".to_string(),
-        HeaderRole::Select(b) => format!("SEL_{}", (b'A' + *b) as char),
+        HeaderRole::Select(b) => HeaderPin::Select(*b).silkscreen().to_string(),
         HeaderRole::Swclk => "SWCLK".to_string(),
         HeaderRole::Swdio => "SWDIO".to_string(),
-        HeaderRole::X1 => "X1".to_string(),
-        HeaderRole::X2 => "X2".to_string(),
+        HeaderRole::X1 => HeaderPin::X1.silkscreen().to_string(),
+        HeaderRole::X2 => HeaderPin::X2.silkscreen().to_string(),
         HeaderRole::Addr(n) => format!("A{n}"),
     }
 }
 
 /// The MCU GPIO behind a role, where one exists (image-select, X and broken-out
-/// address pads carry a GPIO; power/ground/SWD/control pads do not).
+/// address pins carry a GPIO; power/ground/SWD/control pins do not).
 #[allow(clippy::wildcard_enum_match_arm)]
 pub fn header_role_gpio(board: &Board, role: &HeaderRole) -> Option<u8> {
     match role {
@@ -85,29 +86,29 @@ pub fn socket_function(chip: ChipType, pin: u8) -> Option<String> {
 // `inspect gpio` asks the board metadata the same questions the CLI's renderers
 // ask, but one GPIO at a time. These are the per-GPIO form, built on the very
 // same lookups (`header_role_gpio`, `socket_function`, `socket_pin_offset`) so a
-// change to how a pad or a socket pin is named shows up in the diagram and the
+// change to how a pin or a socket pin is named shows up in the diagram and the
 // table together.
 
-/// The header pad role(s) an MCU GPIO *is*, e.g. `SEL_A`, `X1`, `A12`.
+/// The header pin role(s) an MCU GPIO *is*, e.g. `SEL_A`, `X1`, `A12`.
 ///
-/// Only roles that have a GPIO behind them are named. A pad may carry more than
-/// one role — on a Fire 24/28 board the SEL_C and SEL_D pads sit on the SWCLK
+/// Only roles that have a GPIO behind them are named. A pin may carry more than
+/// one role — on a Fire 24/28 board the SEL_C and SEL_D pins sit on the SWCLK
 /// and SWDIO nets — but SWCLK and SWDIO are dedicated RP2350 pins, not GPIOs, so
 /// naming GPIO 25 `SEL_C/SWCLK` would assert something untrue of the GPIO. That
-/// a pad shares a net with a debug probe is a fact about the pad; this answer is
-/// indexed by GPIO. (The header diagram is indexed by pad and does show every
+/// a pin shares a net with a debug probe is a fact about the pin; this answer is
+/// indexed by GPIO. (The header diagram is indexed by pin and does show every
 /// role — see the CLI's header view.) Where a GPIO genuinely is more than one
 /// role, the roles are joined with `/`.
 ///
 /// `jumper_header` is populated for the Fire 24/28/32 boards but not yet for
 /// Fire 40 or any Ice board, so an uncharacterised board falls back to the
-/// electrical pin arrays, which name the image-select and X pads without
+/// electrical pin arrays, which name the image-select and X pins without
 /// claiming to know where on the header they sit. Callers that show the physical
 /// header layout must still check
 /// [`Board::jumper_header`](onerom_config::hw::Board::jumper_header) themselves;
 /// this function degrades to naming rather than to nothing.
 ///
-/// `None` means no pad carries this GPIO.
+/// `None` means no pin carries this GPIO.
 #[allow(clippy::wildcard_enum_match_arm)]
 pub fn header_role(board: &Board, gpio: u8) -> Option<String> {
     // The board pin arrays use 255 for "no such pin", and no real GPIO number
@@ -117,7 +118,7 @@ pub fn header_role(board: &Board, gpio: u8) -> Option<String> {
     }
 
     if let Some(header) = board.jumper_header() {
-        let pad = header
+        let pin = header
             .columns
             .iter()
             .flat_map(|c| [Some(&c.row1), Some(&c.row2), c.row3.as_ref()])
@@ -126,7 +127,7 @@ pub fn header_role(board: &Board, gpio: u8) -> Option<String> {
                 HeaderSlot::Roles(roles) => {
                     // Roles with no GPIO of their own (SWCLK, SWDIO, RUN,
                     // BOOTSEL, power, ground) are dropped: they belong to the
-                    // pad, not to this GPIO.
+                    // pin, not to this GPIO.
                     let named: Vec<String> = roles
                         .iter()
                         .filter(|r| header_role_gpio(board, r) == Some(gpio))
@@ -136,12 +137,12 @@ pub fn header_role(board: &Board, gpio: u8) -> Option<String> {
                 }
                 _ => None,
             });
-        if pad.is_some() {
-            return pad;
+        if pin.is_some() {
+            return pin;
         }
     }
 
-    // Uncharacterised header, or a GPIO on no pad of a characterised one. The
+    // Uncharacterised header, or a GPIO on no pin of a characterised one. The
     // pin arrays are electrical facts and hold either way.
     if let Some(bit) = board.sel_pins().iter().position(|&p| p == gpio) {
         return Some(header_role_label(&HeaderRole::Select(bit as u8)));
@@ -210,7 +211,7 @@ mod tests {
     use super::*;
     use onerom_config::chip::CHIP_TYPES;
 
-    /// fire-24-f: a characterised jumper header, and select pads behind the
+    /// fire-24-f: a characterised jumper header, and select pins wired to the
     /// RP2350A's ADC pins.
     fn board() -> Board {
         Board::try_from_str("fire-24-f").unwrap()
@@ -222,19 +223,19 @@ mod tests {
         assert_eq!(header_role(&b, 26).as_deref(), Some("SEL_A"));
         assert_eq!(header_role(&b, 9).as_deref(), Some("X1"));
         assert_eq!(header_role(&b, 8).as_deref(), Some("X2"));
-        // GPIO25/24 sit on the pads that also carry the SWCLK/SWDIO nets, but
+        // GPIO25/24 sit on the pins that also carry the SWCLK/SWDIO nets, but
         // those are dedicated RP2350 pins rather than GPIOs, so the GPIO is
-        // named SEL_C/SEL_D alone. The pad-indexed header diagram still shows
+        // named SEL_C/SEL_D alone. The pin-indexed header diagram still shows
         // both roles - which the CLI's header view asserts for itself.
         assert_eq!(header_role(&b, 25).as_deref(), Some("SEL_C"));
         assert_eq!(header_role(&b, 24).as_deref(), Some("SEL_D"));
-        // A data pin is on no header pad.
+        // A data pin is on no header pin.
         assert_eq!(header_role(&b, 0), None);
     }
 
     #[test]
     fn header_role_degrades_without_a_jumper_header() {
-        // Some Ice boards still have no jumper_header descriptor, so the pad
+        // Some Ice boards still have no jumper_header descriptor, so the pin
         // names come from the electrical pin arrays instead of nothing.
         let b = Board::try_from_str("ice-24-d").unwrap();
         assert!(b.jumper_header().is_none());

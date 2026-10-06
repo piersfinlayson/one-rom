@@ -4,8 +4,8 @@
 
 //! Implementation of `onerom program`.
 
-use onerom_config::chip::ChipType;
-use onerom_config::hw::Board;
+use onerom_config::fw::FirmwareVersion;
+use onerom_config::hw::{Board, BoardSize};
 use onerom_config::mcu::Variant;
 use onerom_fw::{assemble_firmware, validate_sizes};
 
@@ -15,12 +15,19 @@ use crate::firmware::{
     verify_assembled_firmware,
 };
 use crate::utils::{check_device, check_fire_board_optional, resolve_board};
+use onerom_app::{FlashPlan, FlashStep, read_commissioning};
 use onerom_cli::device::select_device_by_chip_id;
+use onerom_cli::error::plan_error;
+use onerom_cli::otp::{PicobootOtp, check_board};
 use onerom_cli::pin::ResolvedPin;
 use onerom_cli::plugin::{parse_plugins, resolve_plugins};
-use onerom_cli::slot::{self, GlobalConfig, check_slot_confirmations, save_config};
-use onerom_cli::usb::{RebootArgs, flash_program, flash_program_read, reboot};
-use onerom_cli::{Error, Options};
+use onerom_cli::slot::{
+    self, GlobalConfig, check_slot_confirmations, save_config, saved_config_json,
+};
+use onerom_cli::usb::{FLASH_BASE, RebootArgs, flash_program, flash_read, reboot};
+use onerom_cli::{Device, DeviceState, Error, Options};
+use onerom_fw_parser::ParsedDevice;
+use onerom_gen::supports_board_size;
 use onerom_metadata::GPIO_RESET_DEFAULT_HOLD_MS;
 
 // ------------------------------- Argument validation -------------------------------
@@ -55,7 +62,6 @@ async fn acquire_program_image(
     args: &args::program::ProgramArgs,
     board: &Option<Board>,
     mcu: &Variant,
-    reset_host: Option<ResolvedPin>,
 ) -> Result<Vec<u8>, Error> {
     if let Some(firmware) = &args.firmware {
         return load_prebuilt_firmware(options, firmware);
@@ -65,7 +71,7 @@ async fn acquire_program_image(
         return load_bare_base_firmware(options, args.base_firmware.as_deref().unwrap());
     }
 
-    build_and_assemble(options, args, board, mcu, reset_host).await
+    build_and_assemble(options, args, board, mcu).await
 }
 
 fn load_prebuilt_firmware(options: &Options, firmware: &str) -> Result<Vec<u8>, Error> {
@@ -93,7 +99,6 @@ async fn build_and_assemble(
     args: &args::program::ProgramArgs,
     board: &Option<Board>,
     mcu: &Variant,
-    reset_host: Option<ResolvedPin>,
 ) -> Result<Vec<u8>, Error> {
     let board = board.as_ref().ok_or(Error::NoBoardOrDevice)?;
 
@@ -101,12 +106,8 @@ async fn build_and_assemble(
     let (firmware_data, version, _version_str) =
         acquire_firmware(options, &args.base_firmware, &args.version, board, mcu).await?;
 
-    let plugins = resolve_plugins(
-        &parse_plugins(&args.plugin)?,
-        &version,
-        &onerom_cli::CliFetch,
-    )
-    .await?;
+    let specs = parse_plugins(&args.plugin)?;
+    let plugins = resolve_plugins(&specs, &version, &onerom_cli::CliFetch).await?;
 
     let global_config = GlobalConfig {
         config_name: args.config_name.clone(),
@@ -116,6 +117,7 @@ async fn build_and_assemble(
         boot_logging: args.logging,
         disable_swd: args.disable_swd,
         turbo_boot: args.turbo_boot,
+        reserved_pins: args.reserve_pin.clone(),
     };
 
     let config_json = resolve_config_json(
@@ -129,30 +131,24 @@ async fn build_and_assemble(
     )?;
 
     if let Some(path) = &args.save_config {
-        save_config(path, &config_json)?;
+        save_config(path, &saved_config_json(&config_json, &specs, &plugins)?)?;
         if options.verbose {
             println!("Saved ROM configuration to {path}");
         }
     }
 
+    let device = options.device.as_ref().ok_or(Error::NoDevice)?;
+    let size = image_size(version, device.flash_chips().size());
     let (fw_props, metadata, image_data, desc) = build_rom_image(
         options,
         &config_json,
         version,
         *board,
         *mcu,
+        size,
         args.force,
-        // Runs with the config resolved and not one ROM image fetched, so a
-        // request this build cannot honour costs the user nothing to discover.
-        |config| {
-            refuse_unservable_request(
-                args,
-                Some(board),
-                reset_host,
-                &slot::chip_types(config),
-                slot::has_system_plugin(config),
-            )
-        },
+        // Runs before any ROM image is downloaded.
+        |config| refuse_unservable_request(args, slot::has_system_plugin(config)),
     )
     .await?;
 
@@ -165,51 +161,206 @@ async fn build_and_assemble(
     assemble_firmware(firmware_data, metadata, image_data).map_err(Into::into)
 }
 
+/// The size to build an image for a `size` One ROM with firmware `version`.
+/// It's M where the firmware doesn't support `size`.
+fn image_size(version: FirmwareVersion, size: BoardSize) -> BoardSize {
+    if supports_board_size(version, size) {
+        size
+    } else {
+        BoardSize::M
+    }
+}
+
 // ------------------------------- Flash operations -------------------------------
 
-async fn verify_flash(options: &Options, data: &[u8]) -> Result<(), Error> {
+/// Reads back each chip `plan` writes and compares it with what was written.
+async fn verify_flash(options: &Options, plan: &FlashPlan<'_>) -> Result<(), Error> {
     let device = options.device.as_ref().unwrap();
-    if options.verbose {
-        println!("Verifying {} bytes...", data.len());
-    }
-    let readback = flash_program_read(device, data.len() as u32).await?;
-    for (i, (expected, actual)) in data.iter().zip(readback.iter()).enumerate() {
-        if expected != actual {
-            return Err(Error::VerifyFailed(i, *expected, *actual));
+    for step in plan.steps() {
+        let FlashStep::Write { addr, data } = *step else {
+            continue;
+        };
+        if options.verbose {
+            println!("{}", verify_line(addr, data));
+        }
+        let readback = flash_read(device, addr, data.len() as u32).await?;
+        let offset = (addr - FLASH_BASE) as usize;
+        for (i, (expected, actual)) in data.iter().zip(readback.iter()).enumerate() {
+            if expected != actual {
+                return Err(Error::VerifyFailed(offset + i, *expected, *actual));
+            }
         }
     }
     println!("Verification passed");
     Ok(())
 }
 
-async fn flash_device(options: &mut Options, data: &[u8]) -> Result<(), Error> {
-    reboot_to_stopped_if_running(options).await?;
-
-    let device = options.device.as_ref().unwrap();
-    if options.verbose {
-        println!("Flashing {} bytes...", data.len());
-    }
-    flash_program(device, data).await
+/// The line `--verbose` shows before reading back `data` from `addr`.
+pub(crate) fn verify_line(addr: u32, data: &[u8]) -> String {
+    format!("Verifying {} bytes at {addr:#010x}...", data.len())
 }
 
-async fn reboot_to_stopped_if_running(options: &mut Options) -> Result<(), Error> {
+/// Flashes `data` and reads it back where `verify`. `image_board` is the
+/// board the image is for. `force` programs a board commissioned as another
+/// board. A refused image leaves the One ROM as it was.
+async fn flash_device(
+    options: &mut Options,
+    data: &[u8],
+    image_board: Option<Board>,
+    force: bool,
+    verify: bool,
+) -> Result<(), Error> {
+    let stopped = reboot_to_stopped(options, &[DeviceState::Running]).await?;
+
     let device = options.device.as_ref().unwrap();
-    if !device.is_running() {
-        return Ok(());
+    if let Err(e) = check_commissioned_board(device, image_board, force).await {
+        return restart(options, stopped, Err(e)).await;
+    }
+    // The stopped One ROM's size comes from OTP through the bootloader.
+    let chips = device.flash_chips();
+    let plan = match FlashPlan::new(data, &chips) {
+        Ok(plan) => plan,
+        Err(e) => {
+            let error = plan_error(e, data.len(), device.board_size());
+            return restart(options, stopped, Err(error)).await;
+        }
+    };
+    // After the board and size checks, since a refused image isn't written.
+    println!("Programming device - DO NOT DISCONNECT");
+    if options.verbose {
+        for line in plan_lines(&plan) {
+            println!("{line}");
+        }
+    }
+    flash_program(device, &plan).await?;
+
+    if verify {
+        verify_flash(options, &plan).await?;
+    }
+    Ok(())
+}
+
+/// The lines `--verbose` shows for `plan`'s steps, one each.
+pub(crate) fn plan_lines(plan: &FlashPlan<'_>) -> Vec<String> {
+    plan.steps()
+        .iter()
+        .filter_map(|step| match *step {
+            FlashStep::Erase { addr, len } => {
+                Some(format!("Erasing {len} bytes at {addr:#010x}..."))
+            }
+            FlashStep::Write { addr, data } => {
+                Some(format!("Flashing {} bytes to {addr:#010x}...", data.len()))
+            }
+            // flash_program refuses a step it doesn't know.
+            _ => None,
+        })
+        .collect()
+}
+
+/// Reboots the device into the bootloader if its state is one of `states` and
+/// selects it again by its chip ID. Returns whether it rebooted it.
+pub(crate) async fn reboot_to_stopped(
+    options: &mut Options,
+    states: &[DeviceState],
+) -> Result<bool, Error> {
+    let device = options.device.as_ref().unwrap();
+    if !states.contains(&device.state) {
+        return Ok(false);
     }
 
     if options.verbose {
-        println!("Device is running, rebooting into stopped mode...");
+        let state = if device.state == DeviceState::Limp {
+            "in limp mode"
+        } else {
+            "running"
+        };
+        println!("Device is {state}, rebooting into stopped mode...");
     }
     let chip_id = device.chip_id;
     reboot(device, &RebootArgs::stopped(false, false)).await?;
 
     let new_device = select_device_by_chip_id(chip_id, options).await?;
-    if new_device.is_running() {
+    if states.contains(&new_device.state) {
         return Err(Error::DeviceStillRunning);
     }
     options.device = Some(new_device);
+    Ok(true)
+}
+
+/// Reboots a device that [`reboot_to_stopped`] stopped back into running
+/// mode.
+async fn reboot_to_running(options: &Options) -> Result<(), Error> {
+    let device = options.device.as_ref().unwrap();
+    if options.verbose {
+        println!("Rebooting device into running mode...");
+    }
+    reboot(device, &RebootArgs::running(false, false)).await
+}
+
+/// Reboots a One ROM this command `stopped` back into running mode and
+/// returns `result`. A failed reboot is the error where `result` is `Ok`.
+pub(crate) async fn restart(
+    options: &Options,
+    stopped: bool,
+    result: Result<(), Error>,
+) -> Result<(), Error> {
+    if !stopped {
+        return result;
+    }
+    match (result, reboot_to_running(options).await) {
+        (Ok(()), rebooted) => rebooted,
+        (Err(e), Ok(())) => Err(e),
+        (Err(e), Err(reboot)) => {
+            eprintln!("Warning: couldn't reboot the One ROM into running mode.\n  {reboot}");
+            Err(e)
+        }
+    }
+}
+
+/// Reboots a stopped device into the bootloader again.
+pub(crate) async fn reboot_stopped(options: &Options) -> Result<(), Error> {
+    let device = options.device.as_ref().unwrap();
+    if options.verbose {
+        println!("Rebooting device into stopped mode...");
+    }
+    reboot(device, &RebootArgs::stopped(false, false)).await
+}
+
+/// Reboots a stopped device into the bootloader again and selects it by its
+/// chip ID.
+pub(crate) async fn reboot_stopped_and_select(options: &mut Options) -> Result<(), Error> {
+    reboot_stopped(options).await?;
+    let chip_id = options.device.as_ref().unwrap().chip_id;
+    options.device = Some(select_device_by_chip_id(chip_id, options).await?);
     Ok(())
+}
+
+/// Refuses to program a commissioned board with an image for another board
+/// unless `force`.
+///
+/// An image without a board isn't checked. Where OTP can't be read it warns and
+/// goes ahead.
+async fn check_commissioned_board(
+    device: &Device,
+    image_board: Option<Board>,
+    force: bool,
+) -> Result<(), Error> {
+    let Some(image_board) = image_board else {
+        return Ok(());
+    };
+    let area = match PicobootOtp::open(device).await {
+        Ok(mut otp) => read_commissioning(&mut otp).await.map_err(Error::from),
+        Err(e) => Err(e),
+    };
+    match area {
+        Ok(area) => check_board(area.current().and_then(|i| i.board()), image_board, force),
+        Err(e) => {
+            eprintln!(
+                "Warning: Commissioning information couldn't be read so unable to check whether the board type matches version being programmed\n  {e}"
+            );
+            Ok(())
+        }
+    }
 }
 
 fn write_firmware_file(path: &str, data: &[u8]) -> Result<(), Error> {
@@ -257,34 +408,35 @@ fn without_usb(option: &str, consequence: &str) -> Error {
 /// Refuse a request the image being programmed cannot honour.
 ///
 /// `--follow` and `--reset-host` both need the device back on the USB bus after
-/// the flash, and `--reset-host` needs a pin One ROM is not serving with. All of
-/// that is settled by what is being flashed, so it is asked of the build - once
-/// from the config, which is known before any ROM image is fetched, and once
-/// from a pre-built image, which is all there is to go on when the user supplied
-/// one.
+/// the flash. That is settled by what is being flashed, so it is asked of the
+/// build - once from the config, which is known before any ROM image is
+/// fetched, and once from a pre-built image, which is all there is to go on
+/// when the user supplied one.
 fn refuse_unservable_request(
     args: &args::program::ProgramArgs,
-    board: Option<&Board>,
-    reset_pin: Option<ResolvedPin>,
-    chips: &[ChipType],
     usb_capable: bool,
 ) -> Result<(), Error> {
     if !usb_capable {
-        if reset_pin.is_some() {
+        if args.reset_host.is_some() {
             return Err(without_usb("--reset-host", ", to take the reset."));
         }
         if args.follow {
             return Err(without_usb("--follow", ", and there is no log to follow."));
         }
     }
-
-    // Without a board no pin can be named, let alone judged; `check_reset_pin`
-    // has already said so where it matters.
-    if let (Some(board), Some(pin)) = (board, reset_pin) {
-        crate::control::refuse_reset_pin_in_use(board, chips, pin)?;
-    }
-
     Ok(())
+}
+
+pub(crate) fn unreserved_reset_pin(image: &ParsedDevice, pin: ResolvedPin) -> Option<String> {
+    let reserved = image.reserved_pins()?;
+    let header_pin = onerom_cli::pin::metadata_header_pin(image, pin.gpio())?;
+    (!reserved.contains(header_pin)).then(|| {
+        format!(
+            "--reset-host pin {} is not reserved so One ROM may use it.\n  \
+             Reserve it with --reserve-pin {header_pin}",
+            header_pin.silkscreen()
+        )
+    })
 }
 
 // ------------------------------- program command -------------------------------
@@ -310,7 +462,7 @@ pub async fn cmd_program(
     }
 
     // Everything about the reset pin that board metadata alone can settle - the
-    // pad exists, One ROM does not use it for the board's own peripherals, it can
+    // pin exists, One ROM does not use it for the board's own peripherals, it can
     // take 5V - is settled here, before a byte is read or fetched. What the image
     // decides is asked of the image, below.
     let reset_host = match &args.reset_host {
@@ -318,14 +470,19 @@ pub async fn cmd_program(
             options,
             pin,
             board.as_ref(),
-            &[],
         )?),
         None => None,
     };
 
-    let data =
-        acquire_program_image(options, args, &board, &mcu, reset_host.map(|(pin, _)| pin)).await?;
+    let data = acquire_program_image(options, args, &board, &mcu).await?;
     let image = verify_assembled_firmware(options, &data, args.force, board).await?;
+
+    // onerom program sets a board up as One ROM.
+    if let Some(file) = &args.firmware
+        && matches!(image, ParsedDevice::Lab)
+    {
+        return Err(Error::LabFirmware(file.clone()));
+    }
 
     // A pre-built image has no config to ask, so it is asked of the parse. A
     // built one has already answered, before its ROMs were fetched.
@@ -335,13 +492,16 @@ pub async fn cmd_program(
         // so it is left alone rather than refused on a reading nothing stands
         // behind.
         let usb_capable = !image.parse_errors().is_empty() || image.is_usb_run_capable();
-        refuse_unservable_request(
-            args,
-            board.as_ref(),
-            reset_host.map(|(pin, _)| pin),
-            &onerom_cli::image::chip_types(&image),
-            usb_capable,
-        )?;
+        refuse_unservable_request(args, usb_capable)?;
+    }
+
+    // The image's metadata holds which pins each slot uses, so this is checked
+    // here for a built image and a pre-built one alike.
+    if let Some((pin, _)) = reset_host {
+        crate::control::refuse_reset_pin_in_use(&image, pin)?;
+        if let Some(warning) = unreserved_reset_pin(&image, pin) {
+            eprintln!("Warning: {warning}");
+        }
     }
 
     loop {
@@ -349,12 +509,7 @@ pub async fn cmd_program(
             write_firmware_file(out, &data)?;
         }
 
-        println!("Programming device - DO NOT DISCONNECT");
-        flash_device(options, &data).await?;
-
-        if args.verify {
-            verify_flash(options, &data).await?;
-        }
+        flash_device(options, &data, image.get_board(), args.force, args.verify).await?;
 
         reboot_and_rescan(options, &args.into()).await?;
         println!("Programming complete");
@@ -362,7 +517,7 @@ pub async fn cmd_program(
         if args.scan_slots {
             if let Some(device) = options.device.as_ref() {
                 println!("Reading device after programming...");
-                crate::inspect::output_slot_info(device, options, "")
+                crate::inspect::output_slot_info(device, options, "", &[])
                     .await
                     .inspect_err(|_| log::error!("Failed to read slots after programming"))?;
             } else {
@@ -413,4 +568,116 @@ pub async fn cmd_program(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use onerom_gen::FlashChips;
+    use onerom_metadata::{MaybeKnown, OneromBoardSize};
+
+    fn chips(size: BoardSize) -> FlashChips {
+        FlashChips::new(Variant::RP2350, size)
+    }
+
+    #[test]
+    fn a_refused_plan_is_reported_with_the_sizes() {
+        let image = vec![0; 5 * 1024 * 1024];
+        let error = FlashPlan::new(&image, &chips(BoardSize::M)).unwrap_err();
+        let m = Some(MaybeKnown::Known(OneromBoardSize::BoardSizeM));
+        let error = plan_error(error, image.len(), m);
+        assert!(
+            matches!(&error, Error::SecondChipRequired(size) if size == "M"),
+            "{error:?}"
+        );
+
+        let error = FlashPlan::new(&image, &chips(BoardSize::L)).unwrap_err();
+        let l = Some(MaybeKnown::Known(OneromBoardSize::BoardSizeL));
+        let error = plan_error(error, image.len(), l);
+        assert!(
+            matches!(error, Error::ImageTooLarge { image, flash }
+                if image == 5 * 1024 * 1024 && flash == 4 * 1024 * 1024),
+            "{error:?}"
+        );
+    }
+
+    #[test]
+    fn reserve_pin_repeats_under_any_name() {
+        use clap::Parser;
+        use onerom_config::pin::Pin;
+        let cli = crate::args::Cli::try_parse_from([
+            "onerom",
+            "program",
+            "--slot",
+            "file=a.bin,type=2364,cs1=active-low",
+            "--reserve-pin",
+            "gpio8",
+            "--reserved_pins",
+            "gpio9",
+            "--reserved-pin",
+            "gpio10",
+        ])
+        .unwrap();
+        let crate::args::Commands::Program(args) = cli.command else {
+            panic!("not program");
+        };
+        assert_eq!(
+            args.reserve_pin,
+            [Pin::Gpio(8), Pin::Gpio(9), Pin::Gpio(10)]
+        );
+    }
+
+    /// Firmware before 0.8.0 gets an M image whatever the One ROM's size.
+    #[test]
+    fn an_image_is_for_m_where_the_firmware_supports_only_m() {
+        let old = FirmwareVersion::new(0, 7, 3, 0);
+        let new = FirmwareVersion::new(0, 8, 0, 0);
+        for &size in BoardSize::supported_values() {
+            assert_eq!(image_size(old, size), BoardSize::M, "{size}");
+            assert_eq!(image_size(new, size), size, "{size}");
+        }
+    }
+
+    /// A line for each step, in the order the steps run.
+    #[test]
+    fn verbose_shows_each_step_where_it_runs() {
+        use crate::test_board::holds;
+        let image = vec![0; 2 * 1024 * 1024 + 4096];
+        let plan = FlashPlan::new(&image, &chips(BoardSize::L)).unwrap();
+        let lines = plan_lines(&plan);
+        assert_eq!(lines.len(), 4);
+        for (line, values) in lines.iter().zip([
+            ["2097152", "0x10000000"],
+            ["4096", "0x11000000"],
+            ["4096", "0x11000000"],
+            ["2097152", "0x10000000"],
+        ]) {
+            assert!(holds(line, &values), "{line}");
+        }
+    }
+
+    #[tokio::test]
+    async fn an_unreserved_reset_pin_is_reported() {
+        use crate::test_board::{holds, image_2364};
+        use onerom_cli::image::parse_firmware;
+        use onerom_cli::pin::parse_pin;
+
+        let pin = |name: &str| {
+            parse_pin(name)
+                .unwrap()
+                .resolve(Some(&Board::Fire24F))
+                .unwrap()
+        };
+        let unreserved = parse_firmware(&image_2364(1, &[])).await;
+        let reserved = parse_firmware(&image_2364(1, &["x1", "sel_c"])).await;
+
+        let warning = unreserved_reset_pin(&unreserved, pin("x1")).unwrap();
+        assert!(holds(&warning, &["X1", "x1"]), "{warning}");
+        let warning = unreserved_reset_pin(&unreserved, pin("gpio25")).unwrap();
+        assert!(holds(&warning, &["SEL_C", "sel_c"]), "{warning}");
+        assert_eq!(unreserved_reset_pin(&reserved, pin("x1")), None);
+        assert_eq!(unreserved_reset_pin(&reserved, pin("gpio25")), None);
+        // GPIO23 is an address line.
+        assert_eq!(unreserved_reset_pin(&unreserved, pin("gpio23")), None);
+    }
 }

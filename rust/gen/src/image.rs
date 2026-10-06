@@ -26,6 +26,7 @@ use onerom_config::chip::{ChipFunction, ChipType};
 use onerom_config::fw::{FirmwareVersion, ServeAlg};
 use onerom_config::hw::Board;
 use onerom_config::mcu::Family as McuFamily;
+use onerom_metadata::{SYSTEM_PLUGIN_SIZE, USER_PLUGIN_SIZE};
 
 use crate::meta::{
     CHIP_SET_FIRMWARE_OVERRIDES_METADATA_LEN, CHIP_SET_METADATA_LEN,
@@ -53,7 +54,7 @@ const MIN_FW_VER_FIRE_28_18_ADDR_PINS: FirmwareVersion = FirmwareVersion::new(0,
 /// Per-slot RAM budget: only one slot is served at a time, so this is
 /// the maximum size of any single slot's ROM table (`build_rom_image`'s
 /// return value).
-pub const MAX_IMAGE_SIZE: usize = 512 * 1024;
+pub const MAX_IMAGE_SIZE: usize = onerom_metadata::MAX_ROM_IMAGE_SIZE;
 
 /// How to handle Chip images that are too small for the Chip type
 #[derive(Debug, Default, Clone, serde::Serialize, serde::Deserialize)]
@@ -566,7 +567,7 @@ pub struct Chip {
 }
 
 impl Chip {
-    fn new(
+    pub(crate) fn new(
         index: usize,
         filename: String,
         label: Option<String>,
@@ -622,6 +623,37 @@ impl Chip {
 
     pub fn data(&self) -> Option<&[u8]> {
         self.data.as_deref()
+    }
+
+    /// Returns a ROM [`Chip`] without an image, for a chip in a standby set
+    /// whose file is left out.
+    ///
+    /// `transforms` are validated as [`Chip::from_raw_rom_image`] validates
+    /// them for a RAM chip without an image.
+    pub(crate) fn without_image(
+        index: usize,
+        filename: String,
+        label: Option<String>,
+        chip_type_spec: &ChipTypeSpec,
+        cs_config: CsConfig,
+        location: Option<Location>,
+        transforms: &[Transform],
+    ) -> Result<Self> {
+        for transform in transforms {
+            transform.validate().map_err(|source| Error::Transform {
+                filename: filename.clone(),
+                source,
+            })?;
+        }
+        Ok(Self::new(
+            index,
+            filename,
+            label,
+            chip_type_spec.clone(),
+            cs_config,
+            None,
+            location,
+        ))
     }
 
     /// Returns a [`Chip`] instance.
@@ -1287,8 +1319,10 @@ impl ChipSet {
         assert!(self.chips.len() == 1);
         let chip = &self.chips[0];
         if chip.chip_type().is_plugin() {
-            // For plugins, the image size is always 64KB.
-            return 65536;
+            // A plugin's image fills its region, and both plugin regions are
+            // the same size.
+            const _: () = assert!(USER_PLUGIN_SIZE == SYSTEM_PLUGIN_SIZE);
+            return SYSTEM_PLUGIN_SIZE;
         }
         match (board_pins, family) {
             (24, McuFamily::Stm32f4) => {

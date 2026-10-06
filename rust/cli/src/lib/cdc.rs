@@ -293,10 +293,8 @@ pub fn stream_port(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use onerom_metadata::{USB_PLUGIN_PID as PID, USB_PLUGIN_VID as VID};
     use serialport::UsbPortInfo;
-
-    const VID: u16 = 0x1209;
-    const PID: u16 = 0xF542;
 
     fn usb_port(name: &str, vid: u16, pid: u16, serial: Option<&str>) -> SerialPortInfo {
         SerialPortInfo {

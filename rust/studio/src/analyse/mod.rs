@@ -114,11 +114,16 @@ pub struct Analyse {
     // unrecognised parse is reported as an error and leaves this None.
     fw_info: Option<ParsedDevice>,
 
-    // Loaded firmware file path
-    fw_file: Option<PathBuf>,
+    // Loaded firmware file.  Starting another analysis discards it.
+    file: Option<LoadedFile>,
+}
 
-    // Loaded firmware file contents
-    file_contents: Option<Vec<u8>>,
+/// A firmware file loaded for analysis, which Flash writes
+#[derive(Debug, Clone)]
+struct LoadedFile {
+    path: PathBuf,
+    data: Vec<u8>,
+    fw_info: ParsedDevice,
 }
 
 impl Default for Analyse {
@@ -128,8 +133,7 @@ impl Default for Analyse {
             analysis_content: view::ANALYSIS_TEXT_DEFAULT.to_string(),
             selected_source_tab: Default::default(),
             fw_info: Default::default(),
-            fw_file: Default::default(),
-            file_contents: Default::default(),
+            file: Default::default(),
         }
     }
 }
@@ -173,7 +177,7 @@ impl Analyse {
         self.state = state;
         self.analysis_content += &self.state.content().to_string();
         self.fw_info = None;
-        self.file_contents = None;
+        self.file = None;
         self.clear_hw_info()
     }
 

@@ -121,7 +121,7 @@ fn fw_source_control<'a>(analyse: &'a Analyse, device: &'a Device) -> Element<'a
 
     // Show flash file if on file source tab, and always the buttons for this
     // source
-    if analyse.selected_source_tab == Source::File && analyse.file_contents.is_some() {
+    if analyse.selected_source_tab == Source::File && analyse.file.is_some() {
         row.push(flash_file_button(analyse, device))
     } else {
         row
@@ -214,10 +214,10 @@ fn flash_file_button<'a>(analyse: &'a Analyse, device: &'a Device) -> Button<'a,
     };
 
     // Button content changes based on state
-    let content = if analyse.state.is_idle() {
-        FLASH_BUTTON_NAME
-    } else {
+    let content = if analyse.state == AnalyseState::Flashing {
         "Flashing..."
+    } else {
+        FLASH_BUTTON_NAME
     };
 
     // Create the button

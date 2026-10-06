@@ -51,10 +51,10 @@ pub struct Command {
 
     /// Sets of options the CLI treats as one choice.
     ///
-    /// Four commands declare one of these, and 16 say the same thing one way
-    /// or another once [`Opt::conflicts`] is counted.  It is the only grouping
-    /// written down anywhere, and it is a stronger statement than a heading —
-    /// it says a user may pick one of these and not two.
+    /// Few commands declare one of these.  More say the same thing through
+    /// [`Opt::conflicts`].  It is the only grouping written down anywhere.  It
+    /// is a stronger statement than a heading — it says a user may pick one of
+    /// these and not two.
     pub groups: &'static [Group],
 }
 
@@ -209,10 +209,10 @@ pub enum Kind {
 
     /// One of a fixed set the CLI itself advertises.
     ///
-    /// Five options out of 173 reach here — two formats, two GPIO states and
-    /// the log level.  Every other value set in this tree sits behind a
-    /// hand-written parser that says nothing about what it accepts, and lands
-    /// in [`Kind::Domain`] instead.
+    /// Few options reach here.  The image formats and the log level are among
+    /// them.  Every other value set in this tree sits behind a hand-written
+    /// parser that says nothing about what it accepts, and lands in
+    /// [`Kind::Domain`] instead.
     Choice(&'static [&'static str]),
 
     /// A value of a type this crate does not model, named by that type —

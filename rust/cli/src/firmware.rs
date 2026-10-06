@@ -7,25 +7,37 @@ use std::io::Write;
 
 use onerom_config::chip::{CHIP_TYPE_NAMES_PLUGINS, ChipType, chip_type_names_for_pins};
 use onerom_config::fw::{FirmwareProperties, FirmwareVersion, ServeAlg};
-use onerom_config::hw::Board;
+use onerom_config::hw::{Board, BoardSize};
+use onerom_config::mcu::RP235X_BASE_FLASH;
 use onerom_config::mcu::Variant;
+use onerom_config::pin::ReservedPins;
 use onerom_fw::net::{Release, Releases, fetch_license_async};
 use onerom_fw::{assemble_firmware, get_rom_files_async, read_rom_config, validate_sizes};
-use onerom_fw_parser::{ParsedDevice, Parser, SlotKind, readers::MemoryReader};
+use onerom_fw_parser::readers::MemoryReader;
+use onerom_fw_parser::{ParseError, ParsedDevice, SlotKind};
 use onerom_gen::ChipSetType;
 use onerom_gen::compat::{
     ChipCompat, check_chip_set_on_board, default_cs_config, format_size, supported_chips,
 };
-use onerom_gen::{Builder, Config, ConfigOverrides, Error as GenError, FIRMWARE_SIZE, License};
+use onerom_gen::{
+    Builder, Config, ConfigOverrides, Error as GenError, FIRMWARE_SIZE, FlashChips, License,
+    second_chip_supported, supports_board_size,
+};
+use onerom_lab_parser::LabParser;
+use onerom_metadata::{ONEROM_INFO_METADATA_OFFSET, ONEROM_INFO_OFFSET};
 
 use crate::args;
+use crate::args::hardware::supported_size;
 use crate::utils::{check_fire_board, resolve_board, resolve_firmware_output};
+use onerom_cli::error::image_file_warning;
+use onerom_cli::image::parse_firmware;
 use onerom_cli::plugin::{
-    PluginNote, PluginSpec, ResolvedPlugin, check_config_plugins, resolve_plugins,
+    PluginNote, PluginSpec, ResolvedPlugin, check_config_plugins, resolve_config_plugins,
+    resolve_plugins,
 };
 use onerom_cli::slot::{
     ConfirmationsRequired, GlobalConfig, check_slot_chip_types, check_slot_confirmations,
-    inject_plugins_into_config, parse_slots, save_config, slots_to_config_json,
+    inject_plugins_into_config, parse_slots, save_config, saved_config_json, slots_to_config_json,
 };
 use onerom_cli::{Error, Options};
 
@@ -96,6 +108,11 @@ fn apply_global_overrides(json: String, global_config: &GlobalConfig) -> Result<
     if let Some(v) = global_config.turbo_boot {
         obj.insert("turbo_boot".to_string(), v.into());
     }
+    if !global_config.reserved_pins.is_empty() {
+        let pins = serde_json::to_value(&global_config.reserved_pins)
+            .map_err(|e| Error::Other(format!("Failed to serialize reserved pins: {e}")))?;
+        obj.insert("reserved_pins".to_string(), pins);
+    }
 
     serde_json::to_string(&value)
         .map_err(|e| Error::Other(format!("Failed to re-serialize config JSON: {e}")))
@@ -114,22 +131,11 @@ pub async fn verify_assembled_firmware(
     force: bool,
     expected_board: Option<Board>,
 ) -> Result<ParsedDevice, Error> {
-    let info = parse_firmware(data).await?;
+    let info = parse_firmware(data).await;
 
     if let (Some(expected), Some(actual)) = (expected_board, info.get_board()) {
         if actual != expected {
-            if force {
-                eprintln!(
-                    "Warning: firmware board type '{}' does not match expected '{}' (continuing due to --force)",
-                    actual.name(),
-                    expected.name()
-                );
-            } else {
-                return Err(Error::BoardMismatch(
-                    expected.name().to_string(),
-                    actual.name().to_string(),
-                ));
-            }
+            refuse_board_mismatch(expected, actual, force)?;
         } else if options.verbose {
             println!("Board match confirmed: {}", expected.name());
         }
@@ -156,16 +162,40 @@ pub async fn verify_assembled_firmware(
             );
         }
     }
+
+    refuse_image_file(&info, data.len(), force)?;
     Ok(info)
 }
 
-pub async fn parse_firmware(data: &[u8]) -> Result<ParsedDevice, Error> {
-    // The hardcoded base address looks odd here, as the STM32's base flash
-    // address, but when using a memory reader, onerom-fw-parser will just figure
-    // it out for itself based on what it finds in the image.
-    let mut reader = MemoryReader::new(data.to_vec(), 0x0800_0000);
-    let mut parser = Parser::new(&mut reader);
-    Ok(parser.parse_device().await)
+/// Refuses an image for board `actual` where `expected` was asked for. With
+/// `force` it warns instead.
+fn refuse_board_mismatch(expected: Board, actual: Board, force: bool) -> Result<(), Error> {
+    if force {
+        eprintln!(
+            "Warning: firmware board type '{}' does not match expected '{}' (continuing due to --force)",
+            actual.name(),
+            expected.name()
+        );
+        Ok(())
+    } else {
+        Err(Error::BoardMismatch {
+            firmware: actual.name().to_string(),
+            expected: expected.name().to_string(),
+        })
+    }
+}
+
+/// Refuses an image file whose slots don't match its length or the flash
+/// chips. With `force` it warns instead.
+fn refuse_image_file(info: &ParsedDevice, len: usize, force: bool) -> Result<(), Error> {
+    match info.check_image_file(len, FlashChips::first_for(Variant::RP2350)) {
+        Ok(()) => Ok(()),
+        Err(e) if force => {
+            eprintln!("{}", image_file_warning(&e));
+            Ok(())
+        }
+        Err(e) => Err(Error::ImageFile(e)),
+    }
 }
 
 fn check_firmware_size(options: &Options, data: &[u8]) -> Result<(), Error> {
@@ -220,7 +250,7 @@ async fn acquire_local_firmware(
     }
     let data = std::fs::read(firmware).map_err(|e| Error::io(firmware, e))?;
     check_firmware_size(options, &data)?;
-    let info = parse_firmware(&data).await?;
+    let info = parse_firmware(&data).await;
     let version = info
         .version()
         .ok_or_else(|| Error::Other("Could not determine firmware version".to_string()))?;
@@ -264,14 +294,18 @@ async fn acquire_release_firmware(
 /// Takes the config as an already-resolved JSON string (not a file path).
 /// Use [`resolve_config_json`] to obtain the JSON from any config source.
 ///
+/// `size` is the size of board the image is for.
+///
 /// `force` accepts the config checks that are refused by default, reporting
 /// each one that fires as a warning instead.
+#[allow(clippy::too_many_arguments)]
 pub async fn build_rom_image(
     options: &Options,
     config_json: &str,
     version: FirmwareVersion,
     board: Board,
     mcu: Variant,
+    size: BoardSize,
     force: bool,
     before_fetch: impl FnOnce(&Config) -> Result<(), Error>,
 ) -> Result<(FirmwareProperties, Option<Vec<u8>>, Option<Vec<u8>>, String), Error> {
@@ -294,6 +328,15 @@ pub async fn build_rom_image(
         eprintln!("Warning: {warning}\n  Continuing due to --force.");
     }
 
+    // Checked before anything is fetched.
+    let reserved = builder
+        .config()
+        .reserved_pins_on(board)
+        .map_err(onerom_fw::Error::parse)?;
+    if let Some(warning) = unselectable_slots(builder.config(), board, reserved) {
+        eprintln!("Warning: {warning}");
+    }
+
     for license in builder.licenses() {
         accept_license(options, &license).await?;
         builder
@@ -301,11 +344,13 @@ pub async fn build_rom_image(
             .map_err(onerom_fw::Error::license)?;
     }
 
-    // The last point at which nothing has been fetched: the config is fully
-    // resolved, and the ROM images it names have not been downloaded. A caller
-    // with a reason to refuse this build gets to do it here, rather than after
-    // the user has waited for every ROM.
+    // Before any ROM image or plugin referred to by name is downloaded.
     before_fetch(builder.config())?;
+
+    let plugins = resolve_config_plugins(&mut builder, &version, &onerom_cli::CliFetch).await?;
+    if options.verbose {
+        print_resolved_plugins(&plugins);
+    }
 
     get_rom_files_async(&mut builder).await?;
 
@@ -313,17 +358,26 @@ pub async fn build_rom_image(
     // round is reported before the user waits for a build.
     onerom_cli::byte_order::report_slots(&builder, options.verbose);
 
-    // A plugin named by the config has not been through the manifest, so its
-    // compatibility window is checked here.  Plugins named with --plugin were
-    // selected against the manifest already; re-checking them is harmless and
-    // keeps this independent of how the plugin arrived.
+    // A plugin referred to by URL hasn't been checked against the manifest.
+    // The others have, and checking them again is harmless.
     report_plugin_checks(
         options,
         check_config_plugins(&builder, &version, &onerom_cli::CliFetch).await?,
     );
 
-    let fw_props = FirmwareProperties::new(version, board, mcu, ServeAlg::default(), true)?;
-    let (metadata, image_data) = builder.build(fw_props).map_err(onerom_fw::Error::build)?;
+    let fw_props = FirmwareProperties::new(version, board, mcu, ServeAlg::default(), true)?
+        .with_board_size(size);
+    let (metadata, image_data) = builder.build(fw_props).map_err(|e| {
+        // `firmware build` adds advice to this one.
+        if matches!(e, GenError::SlotDoesNotFit { .. }) {
+            Error::SlotDoesNotFit {
+                error: onerom_fw::Error::build(e),
+                advise_second_chip: false,
+            }
+        } else {
+            onerom_fw::Error::build(e).into()
+        }
+    })?;
 
     let metadata = if metadata.is_empty() {
         None
@@ -335,9 +389,69 @@ pub async fn build_rom_image(
     } else {
         Some(image_data)
     };
-    let desc = builder.description();
+    let desc = builder
+        .description_for_board(board)
+        .map_err(onerom_fw::Error::build)?;
 
     Ok((fw_props, metadata, image_data, desc))
+}
+
+/// The warning for ROM slots that can't be selected with the image select
+/// jumpers.
+///
+/// Slots are numbered from 0 excluding plugins, as in `inspect slots`. Turbo
+/// boot doesn't read the jumpers.
+pub(crate) fn unselectable_slots(
+    config: &Config,
+    board: Board,
+    reserved: ReservedPins,
+) -> Option<String> {
+    if config.turbo_boot {
+        return None;
+    }
+    let slots = config
+        .chip_sets
+        .iter()
+        .filter(|set| !set.chips.iter().any(|c| c.chip_type.resolved().is_plugin()))
+        .count();
+    let pins: Vec<String> = reserved
+        .select_pins_read(&board)
+        .map(|pin| pin.silkscreen().to_string())
+        .collect();
+    let combinations = 1usize << pins.len();
+    if slots <= combinations {
+        return None;
+    }
+
+    let (first, last) = (combinations, slots - 1);
+    let which = match last - first {
+        0 => format!("slot {first} cannot"),
+        1 => format!("slots {first} and {last} cannot"),
+        _ => format!("slots {first} to {last} cannot"),
+    };
+    // Every Fire board has image select pins so an empty list means all are
+    // reserved.
+    let why = match pins.as_slice() {
+        [] => "Every image select pin is reserved.".to_string(),
+        [only] => format!("{only} provides 2 combinations for {slots} slots."),
+        [rest @ .., last] => format!(
+            "{} and {last} provide {combinations} combinations for {slots} slots.",
+            rest.join(", ")
+        ),
+    };
+    Some(format!("{which} be selected by jumpers. {why}"))
+}
+
+fn print_resolved_plugins(plugins: &[ResolvedPlugin]) {
+    for plugin in plugins {
+        println!(
+            "Resolved plugin: {}/{} v{} ({})",
+            plugin.plugin_type.short(),
+            plugin.name,
+            plugin.version,
+            plugin.file(),
+        );
+    }
 }
 
 /// Report the non-fatal outcomes of checking the plugins a config named.
@@ -393,6 +507,33 @@ fn check_build_args(
     Ok(())
 }
 
+/// `--size` as `size` for `board`. A size with a second flash chip needs a
+/// board that supports external flash.
+pub(crate) fn build_size(board: Board, size: BoardSize) -> Result<BoardSize, Error> {
+    supported_size(board, size)
+        .map_err(|e| Error::InvalidArgument("--size".to_string(), e.to_string()))
+}
+
+/// `error` with advice to use `--size`, where a chip set didn't fit a `size`
+/// build without a second flash chip, and `board` and firmware `version` both
+/// support a size with one.
+fn advise_second_chip(
+    error: Error,
+    board: Board,
+    mcu: Variant,
+    size: BoardSize,
+    version: FirmwareVersion,
+) -> Error {
+    let Error::SlotDoesNotFit { error, .. } = error else {
+        return error;
+    };
+    let second_chip = FlashChips::new(mcu, size).second().is_some();
+    Error::SlotDoesNotFit {
+        error,
+        advise_second_chip: !second_chip && second_chip_supported(board, version),
+    }
+}
+
 pub async fn cmd_build(
     options: &Options,
     args: &args::firmware::FirmwareBuildArgs,
@@ -401,6 +542,7 @@ pub async fn cmd_build(
 
     let board = resolve_board(options, &args.board)?.ok_or(Error::NoBoardOrDevice)?;
     check_fire_board(&board)?;
+    let size = build_size(board, args.size)?;
     let mcu = Variant::RP2350;
 
     if !args.slot.is_empty() {
@@ -410,23 +552,17 @@ pub async fn cmd_build(
 
     let (firmware_data, version, version_str) =
         acquire_firmware(options, &args.base_firmware, &args.version, &board, &mcu).await?;
+    if !supports_board_size(version, size) {
+        return Err(Error::InvalidArgument(
+            "--size".to_string(),
+            format!("Firmware {version} doesn't support --size other than M"),
+        ));
+    }
 
-    let plugins = resolve_plugins(
-        &parse_plugin_specs(&args.plugin)?,
-        &version,
-        &onerom_cli::CliFetch,
-    )
-    .await?;
+    let specs = parse_plugin_specs(&args.plugin)?;
+    let plugins = resolve_plugins(&specs, &version, &onerom_cli::CliFetch).await?;
     if options.verbose {
-        for plugin in &plugins {
-            println!(
-                "Resolved plugin: {}/{} v{} ({})",
-                plugin.plugin_type.short(),
-                plugin.name,
-                plugin.version,
-                plugin.file(),
-            );
-        }
+        print_resolved_plugins(&plugins);
     }
 
     let global_config = if args.no_config {
@@ -440,6 +576,7 @@ pub async fn cmd_build(
             boot_logging: args.logging,
             disable_swd: args.disable_swd,
             turbo_boot: args.turbo_boot,
+            reserved_pins: args.reserve_pin.clone(),
         })
     };
     let config_json = resolve_config_json(
@@ -453,7 +590,7 @@ pub async fn cmd_build(
     )?;
 
     if let Some(path) = &args.save_config {
-        save_config(path, &config_json)?;
+        save_config(path, &saved_config_json(&config_json, &specs, &plugins)?)?;
         if options.verbose {
             println!("Saved ROM configuration to {path}");
         }
@@ -465,10 +602,12 @@ pub async fn cmd_build(
         version,
         board,
         mcu,
+        size,
         args.force,
         |_| Ok(()),
     )
-    .await?;
+    .await
+    .map_err(|e| advise_second_chip(e, board, mcu, size, version))?;
 
     validate_sizes(&fw_props, &firmware_data, &metadata, &image_data)?;
 
@@ -594,8 +733,8 @@ pub async fn cmd_inspect(
         println!("Firmware size: {} bytes", data.len());
     }
 
-    let info = parse_firmware(&data).await?;
-    print_firmware_info(options, &info)
+    let info = parse_firmware(&data).await;
+    print_firmware_info(options, &info, &data).await
 }
 
 fn inspect_local_firmware(options: &Options, file: &str) -> Result<Vec<u8>, Error> {
@@ -628,116 +767,211 @@ async fn inspect_release_firmware(
         .map_err(Error::from)
 }
 
-fn print_firmware_info(options: &Options, info: &ParsedDevice) -> Result<(), Error> {
-    if !info.parse_errors().is_empty() {
+async fn print_firmware_info(
+    options: &Options,
+    info: &ParsedDevice,
+    data: &[u8],
+) -> Result<(), Error> {
+    let errors = reported_parse_errors(info, data);
+    if !errors.is_empty() {
         eprintln!("Warning: firmware parsed with errors:");
-        for error in info.parse_errors() {
+        for error in errors {
             eprintln!("  {error}");
         }
         eprintln!();
     }
 
-    match info {
-        ParsedDevice::Original(sdrr) => print_original_firmware_info(options, sdrr),
-        ParsedDevice::Schema(onerom) => print_schema_firmware_info(options, info, onerom),
-    }
-}
-
-fn print_original_firmware_info(
-    options: &Options,
-    sdrr: &onerom_fw_parser::Sdrr,
-) -> Result<(), Error> {
-    let Some(info) = sdrr.flash.as_ref() else {
-        println!("(no flash information available)");
-        return Ok(());
-    };
-
-    if options.verbose {
-        let json = serde_json::to_string_pretty(info).map_err(|e| Error::Other(e.to_string()))?;
-        println!("---");
-        println!("{json}");
-    } else {
-        println!("Version:  {}", info.version);
-        if let Some(hw_rev) = &info.hw_rev {
-            println!("Hardware: {hw_rev}");
-        }
-        println!("MCU:      {:?}", info.stm_line);
-        println!("Slots: {}", info.rom_set_count);
-        for (i, set) in info.rom_sets.iter().enumerate() {
-            println!("  Slot {i}: {} ROM(s), {} bytes", set.rom_count, set.size);
-            for (j, rom) in set.roms.iter().enumerate() {
-                let name = rom.filename.as_deref().unwrap_or("<unnamed>");
-                println!("    ROM {j}: {} {name}", rom.rom_type);
-            }
-        }
+    for line in firmware_summary(options.verbose, info, data).await? {
+        println!("{line}");
     }
     Ok(())
 }
 
-/// Print a firmware binary's schema-format summary.
+/// The parse errors `firmware inspect` prints a warning for. A base firmware
+/// doesn't contain metadata, so failing to read it isn't one of them.
+fn reported_parse_errors<'a>(info: &'a ParsedDevice, data: &[u8]) -> Vec<&'a ParseError> {
+    let base = is_base_firmware(info, data);
+    info.parse_errors()
+        .iter()
+        .filter(|error| !(base && error.field == "metadata"))
+        .collect()
+}
+
+/// Whether `data`, parsed as `info`, is v0.7.0+ base firmware: a file ending
+/// before the metadata address in its header. `firmware build` puts the
+/// metadata at that address, so a built image always extends past it.
+fn is_base_firmware(info: &ParsedDevice, data: &[u8]) -> bool {
+    if !matches!(info, ParsedDevice::Schema(_)) {
+        return false;
+    }
+    let at = ONEROM_INFO_OFFSET as usize + ONEROM_INFO_METADATA_OFFSET;
+    let Some(pointer) = data.get(at..at + 4) else {
+        return false;
+    };
+    let metadata = u32::from_le_bytes(pointer.try_into().unwrap());
+    metadata
+        .checked_sub(RP235X_BASE_FLASH)
+        .is_some_and(|offset| offset as usize >= data.len())
+}
+
+/// The lines `firmware inspect` prints for `data`, parsed as `info`.
+async fn firmware_summary(
+    verbose: bool,
+    info: &ParsedDevice,
+    data: &[u8],
+) -> Result<Vec<String>, Error> {
+    match info {
+        ParsedDevice::Original(sdrr) => original_summary(verbose, sdrr),
+        ParsedDevice::Schema(onerom) => Ok(schema_summary(
+            verbose,
+            info,
+            onerom,
+            is_base_firmware(info, data),
+        )),
+        ParsedDevice::Lab => lab_summary(verbose, data).await,
+        _ => Ok(vec!["(firmware this build can't show)".to_string()]),
+    }
+}
+
+/// A One ROM Lab image's summary.
+async fn lab_summary(verbose: bool, data: &[u8]) -> Result<Vec<String>, Error> {
+    let mut reader = MemoryReader::new(data.to_vec(), RP235X_BASE_FLASH);
+    let lab = LabParser::new(&mut reader)
+        .parse()
+        .await
+        .map_err(Error::Other)?;
+    let info = &lab.info;
+    // A Lab built without a board baked in is a valid image.  "(not set)" is
+    // Lab's own words for it.
+    let board = match &lab.metadata {
+        Ok(metadata) => metadata.hw.hw_rev.as_deref().unwrap_or("(not set)"),
+        Err(_) => "unknown",
+    };
+
+    let mut lines = vec![
+        "Firmware: One ROM Lab".to_string(),
+        format!(
+            "Version:  {}.{}.{}",
+            info.major_version, info.minor_version, info.patch_version
+        ),
+    ];
+    if verbose {
+        lines.push(format!("Build:    {}", info.build_number));
+    }
+    lines.push(format!("Board:    {board}"));
+    Ok(lines)
+}
+
+/// A pre-0.7.0 image's summary, or with `verbose` its parsed header as JSON.
+fn original_summary(verbose: bool, sdrr: &onerom_fw_parser::Sdrr) -> Result<Vec<String>, Error> {
+    let Some(info) = sdrr.flash.as_ref() else {
+        return Ok(vec!["(no flash information available)".to_string()]);
+    };
+
+    if verbose {
+        let json = serde_json::to_string_pretty(info).map_err(|e| Error::Other(e.to_string()))?;
+        let mut lines = vec!["---".to_string()];
+        lines.extend(json.lines().map(str::to_string));
+        return Ok(lines);
+    }
+
+    let mut lines = vec![format!("Version:  {}", info.version)];
+    if let Some(hw_rev) = &info.hw_rev {
+        lines.push(format!("Board:    {hw_rev}"));
+    }
+    lines.push(format!("MCU:      {}", info.stm_line));
+    lines.push(format!("Slots: {}", info.rom_set_count));
+    for (i, set) in info.rom_sets.iter().enumerate() {
+        lines.push(format!(
+            "  Slot {i}: {} ROM(s), {} bytes",
+            set.rom_count, set.size
+        ));
+        for (j, rom) in set.roms.iter().enumerate() {
+            let name = rom.filename.as_deref().unwrap_or("<unnamed>");
+            lines.push(format!("    ROM {j}: {} {name}", rom.rom_type));
+        }
+    }
+    Ok(lines)
+}
+
+/// A v0.7.0+ image's summary. `base` is whether it's a base firmware.
 ///
 /// Plugins are listed separately from ROM slots, and ROM slots are numbered
 /// from 0 with plugins excluded, the same way [`crate::inspect`] numbers a
 /// connected device's slots.  A plugin is named by the image source recorded
 /// in the firmware, with no manifest lookup - there is no device here, and the
 /// binary already carries the name.
-fn print_schema_firmware_info(
-    options: &Options,
+fn schema_summary(
+    verbose: bool,
     parsed: &ParsedDevice,
     onerom: &onerom_fw_parser::OneRom,
-) -> Result<(), Error> {
+    base: bool,
+) -> Vec<String> {
     let Some(info) = onerom.info() else {
-        println!("(no firmware information available)");
-        return Ok(());
+        return vec!["(no firmware information available)".to_string()];
     };
 
-    let board = onerom
-        .metadata()
-        .and_then(|m| Board::try_from_str(m.hw.hw_rev.as_str()));
-    let board_name = board.map_or("unknown".to_string(), |b| b.name().to_string());
-    if options.verbose {
-        println!(
-            "Version:  {}.{}.{}",
-            info.major_version, info.minor_version, info.patch_version
-        );
-        println!("Build:    {}", info.build_number);
-        println!("Format:   Schema (v0.7.0+)");
-        println!("Board:    {board_name}");
-        if onerom.metadata().is_some() {
-            let mut plugins: Vec<String> = Vec::new();
-            let mut rom_slots: Vec<(usize, usize)> = Vec::new();
-            for slot in parsed.slots() {
-                match slot.kind {
-                    SlotKind::Plugin => plugins.push(
-                        slot.roms()
-                            .next()
-                            .and_then(|r| r.filename.map(|s| s.to_string()))
-                            .unwrap_or_else(|| "unknown".to_string()),
-                    ),
-                    SlotKind::Rom => {
-                        rom_slots.push((slot.user_index.unwrap_or(0), slot.roms().count()))
-                    }
-                }
-            }
-            if !plugins.is_empty() {
-                println!("Plugins:");
-                for plugin in &plugins {
-                    println!("  {plugin}");
-                }
-            }
-            println!("Slots: {}", rom_slots.len());
-            for (user_index, rom_count) in &rom_slots {
-                println!("  Slot {user_index}: {rom_count} ROM(s)");
-            }
-        }
-    } else {
-        println!(
-            "Version:  {}.{}.{}",
-            info.major_version, info.minor_version, info.patch_version
-        );
-        println!("Board:    {board_name}");
+    let mut lines = vec![format!(
+        "Version:  {}.{}.{}",
+        info.major_version, info.minor_version, info.patch_version
+    )];
+    if verbose {
+        lines.push(format!("Build:    {}", info.build_number));
+        lines.push("Format:   Schema (v0.7.0+)".to_string());
     }
-    Ok(())
+
+    let Some(metadata) = onerom.metadata() else {
+        // A base firmware runs on any board. Otherwise the metadata failed to
+        // read, and a warning has been printed.
+        let board = if base {
+            "any (base firmware)"
+        } else {
+            "unknown"
+        };
+        lines.push(format!("Board:    {board}"));
+        return lines;
+    };
+
+    let board = Board::try_from_str(metadata.hw.hw_rev.as_str())
+        .map_or("unknown".to_string(), |b| b.name().to_string());
+    lines.push(format!("Board:    {board}"));
+    lines.push(format!("MCU:      {}", metadata.hw.rp235x));
+
+    let mut plugins = Vec::new();
+    let mut rom_slots = Vec::new();
+    for slot in parsed.slots() {
+        match slot.kind {
+            SlotKind::Plugin => plugins.push(
+                slot.roms()
+                    .next()
+                    .and_then(|r| r.filename)
+                    .unwrap_or("unknown"),
+            ),
+            SlotKind::Rom => rom_slots.push(slot),
+        }
+    }
+    if !plugins.is_empty() {
+        lines.push("Plugins:".to_string());
+        lines.extend(plugins.iter().map(|plugin| format!("  {plugin}")));
+    }
+    lines.push(format!("Slots: {}", rom_slots.len()));
+    if let Some(line) = crate::inspect::reserved_pins_line(parsed) {
+        lines.push(format!("  {line}"));
+    }
+    for slot in &rom_slots {
+        // A ROM slot always has a user_index.
+        let user_index = slot.user_index.unwrap_or(0);
+        let size = metadata.rom_slots[slot.slot_index].size;
+        lines.push(format!(
+            "  Slot {user_index}: {} ROM(s), {size} bytes",
+            slot.roms().count()
+        ));
+        for (j, rom) in slot.roms().enumerate() {
+            let name = rom.filename.unwrap_or("<unnamed>");
+            lines.push(format!("    ROM {j}: {} {name}", rom.rom_type));
+        }
+    }
+    lines
 }
 
 // ------------------------------- firmware releases command -------------------------------
@@ -1058,6 +1292,10 @@ fn parse_plugin_specs(raw: &[String]) -> Result<Vec<PluginSpec>, Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_board::{
+        IMAGE_27C400, base_firmware, image_file, in_turn, move_slot, original_image, shows,
+    };
+    use onerom_metadata::FLASH_CS1_BASE_ADDR;
 
     /// `chips --board` lists every chip type the board can emulate, which is
     /// wider than `Board::supported_chip_type_names()` - that covers only the
@@ -1087,5 +1325,388 @@ mod tests {
         assert!(print_chip_on_board(&board, "2364").is_ok());
         assert!(print_chip_on_board(&board, "27C400").is_err());
         assert!(print_chip_on_board(&board, "not-a-chip").is_err());
+    }
+
+    fn options() -> Options {
+        Options {
+            verbose: false,
+            log_level: onerom_cli::LogLevel::Warn,
+            yes: false,
+            unrecognised: false,
+            device: None,
+            vid_pid: Vec::new(),
+        }
+    }
+
+    /// The data address of each of `image`'s slots.
+    fn slot_addresses(image: &ParsedDevice) -> Vec<Option<u32>> {
+        let ParsedDevice::Schema(onerom) = image else {
+            panic!("not a schema image");
+        };
+        let metadata = onerom.metadata().expect("metadata");
+        metadata
+            .rom_slots
+            .iter()
+            .map(|slot| slot.data.addr())
+            .collect()
+    }
+
+    const FIRST_CHIP: usize = 2 * 1024 * 1024;
+
+    #[tokio::test]
+    async fn an_image_on_the_first_chip_is_read_from_the_first_chip() {
+        let file = image_file(BoardSize::M, 3);
+        assert!(file.len() <= FIRST_CHIP);
+        let image = parse_firmware(&file).await;
+        assert!(
+            image.parse_errors().is_empty(),
+            "{:?}",
+            image.parse_errors()
+        );
+        assert_eq!(image.get_board(), Some(Board::Fire40A));
+        let addrs = slot_addresses(&image);
+        assert_eq!(addrs.len(), 3);
+        assert!(
+            addrs.iter().all(|addr| addr.unwrap() < 0x1020_0000),
+            "{addrs:x?}"
+        );
+    }
+
+    /// A slot on the second chip is read from the file past the first chip's
+    /// length.
+    #[tokio::test]
+    async fn an_image_using_the_second_chip_is_read_from_both_chips() {
+        let file = image_file(BoardSize::L, 4);
+        assert_eq!(file.len(), FIRST_CHIP + IMAGE_27C400);
+        let image = verify_assembled_firmware(&options(), &file, false, Some(Board::Fire40A))
+            .await
+            .unwrap();
+        assert!(
+            image.parse_errors().is_empty(),
+            "{:?}",
+            image.parse_errors()
+        );
+        assert_eq!(slot_addresses(&image)[3], Some(FLASH_CS1_BASE_ADDR));
+    }
+
+    /// A file shorter than its slots, one with a slot on neither chip, and one
+    /// longer than the first chip without a slot on the second, are refused
+    /// unless forced.
+    #[tokio::test]
+    async fn an_image_file_that_doesnt_match_its_slots_needs_force() {
+        use onerom_fw_parser::ImageFileError;
+        let mut short = image_file(BoardSize::M, 3);
+        short.truncate(short.len() - 4096);
+        let damaged = move_slot(image_file(BoardSize::M, 3), 2, 0x1030_0000).await;
+        let mut long = image_file(BoardSize::M, 3);
+        long.resize(FIRST_CHIP + 4096, 0xFF);
+        for (file, expected) in [
+            (short, ImageFileError::TooShort { short_by: 4096 }),
+            (
+                damaged,
+                ImageFileError::BadAddress {
+                    slot: 2,
+                    addr: 0x1030_0000,
+                },
+            ),
+            (long, ImageFileError::TooLong { too_long_by: 4096 }),
+        ] {
+            let error = verify_assembled_firmware(&options(), &file, false, None)
+                .await
+                .unwrap_err();
+            assert!(
+                matches!(&error, Error::ImageFile(e) if *e == expected),
+                "{error:?}"
+            );
+            assert!(
+                verify_assembled_firmware(&options(), &file, true, None)
+                    .await
+                    .is_ok()
+            );
+        }
+    }
+
+    /// `--size L` is refused for a board that doesn't support external flash.
+    #[test]
+    fn a_second_chip_needs_a_board_that_supports_external_flash() {
+        let board = |name| Board::try_from_str(name).unwrap();
+        assert_eq!(
+            build_size(board("fire-40-a"), BoardSize::L).unwrap(),
+            BoardSize::L
+        );
+        assert!(build_size(board("fire-24-f"), BoardSize::L).is_err());
+        assert_eq!(
+            build_size(board("fire-24-f"), BoardSize::M).unwrap(),
+            BoardSize::M
+        );
+    }
+
+    /// `firmware build` advises `--size` only for a build without a second
+    /// flash chip, where the board and the firmware both support one.
+    #[test]
+    fn size_is_advised_only_where_it_helps() {
+        let board = |name| Board::try_from_str(name).unwrap();
+        let new = FirmwareVersion::new(0, 8, 0, 0);
+        let old = FirmwareVersion::new(0, 7, 3, 0);
+        let advised = |board, size, version| {
+            let error = Error::SlotDoesNotFit {
+                error: onerom_fw::Error::build(GenError::SlotDoesNotFit { slot: 3 }),
+                advise_second_chip: false,
+            };
+            matches!(
+                advise_second_chip(error, board, Variant::RP2350, size, version),
+                Error::SlotDoesNotFit {
+                    advise_second_chip: true,
+                    ..
+                }
+            )
+        };
+        assert!(advised(board("fire-40-a"), BoardSize::M, new));
+        assert!(!advised(board("fire-40-a"), BoardSize::L, new));
+        assert!(!advised(board("fire-24-f"), BoardSize::M, new));
+        assert!(!advised(board("fire-40-a"), BoardSize::M, old));
+    }
+
+    /// The refusal reports the image's board as the firmware's and the board
+    /// asked for as the expected one.
+    #[test]
+    fn board_mismatch_says_which_board_is_which() {
+        let expected = Board::try_from_str("fire-24-f").unwrap();
+        let actual = Board::try_from_str("fire-28-a").unwrap();
+        let msg = refuse_board_mismatch(expected, actual, false)
+            .unwrap_err()
+            .to_string();
+        let text =
+            "Firmware board type 'fire-28-a' does not match the expected board type 'fire-24-f'";
+        assert!(msg.contains(text), "{msg}");
+    }
+
+    /// A built image's summary contains its board and MCU, then each slot's
+    /// size followed by its chip type and image source.
+    #[tokio::test]
+    async fn a_built_images_summary_lists_its_mcu_and_roms() {
+        let file = image_file(BoardSize::M, 2);
+        let image = parse_firmware(&file).await;
+        let lines = firmware_summary(false, &image, &file).await.unwrap();
+        assert!(shows(&lines, &["fire-40-a"]), "{lines:#?}");
+        assert!(shows(&lines, &["RP235xB"]), "{lines:#?}");
+        let size = IMAGE_27C400.to_string();
+        for n in 0..2 {
+            let source = format!("{n}.bin");
+            assert!(
+                in_turn(&lines, &[&[&size], &["27C400", &source]]),
+                "{lines:#?}"
+            );
+        }
+    }
+
+    /// Base firmware is told apart from a built image, from one cut off in its
+    /// metadata and from firmware before v0.7.0. Only the cut-off image's
+    /// parse errors are printed.
+    #[tokio::test]
+    async fn base_firmware_is_told_apart_from_a_damaged_image() {
+        let built = image_file(BoardSize::M, 1);
+        let mut cut_off = built.clone();
+        cut_off.truncate(FIRMWARE_SIZE + 0x100);
+        for (name, file, base, warned) in [
+            ("base", base_firmware(8), true, false),
+            ("built", built, false, false),
+            ("cut off", cut_off, false, true),
+            ("before v0.7.0", original_image(), false, false),
+        ] {
+            let image = parse_firmware(&file).await;
+            assert_eq!(is_base_firmware(&image, &file), base, "{name}");
+            let errors = reported_parse_errors(&image, &file);
+            assert_eq!(!errors.is_empty(), warned, "{name}: {errors:?}");
+        }
+    }
+
+    /// A summary of firmware from before v0.7.0 contains its board and its
+    /// MCU's display text.
+    #[tokio::test]
+    async fn a_summary_from_before_0_7_0_contains_the_mcu() {
+        let file = original_image();
+        let image = parse_firmware(&file).await;
+        let lines = firmware_summary(false, &image, &file).await.unwrap();
+        assert!(shows(&lines, &["fire-24-e"]), "{lines:#?}");
+        assert!(shows(&lines, &["RP2350"]), "{lines:#?}");
+    }
+
+    // -- reserved_pins -----------------------------------------------------
+
+    fn build_args(words: &[&str]) -> args::firmware::FirmwareBuildArgs {
+        use clap::Parser;
+        let cli = crate::args::Cli::try_parse_from(words).unwrap();
+        let crate::args::Commands::Firmware(firmware) = cli.command else {
+            panic!("not firmware");
+        };
+        let args::firmware::FirmwareCommands::Build(args) = firmware.command else {
+            panic!("not firmware build");
+        };
+        args
+    }
+
+    #[test]
+    fn reserve_pin_repeats_under_any_name() {
+        use onerom_config::pin::{HeaderPin, Pin};
+        let args = build_args(&[
+            "onerom",
+            "firmware",
+            "build",
+            "--board",
+            "fire-24-f",
+            "--slot",
+            "file=a.bin,type=2364,cs1=active-low",
+            "--reserve-pin",
+            "SEL-C",
+            "--reserved_pins",
+            "gpio9",
+            "--reserved-pin",
+            "gpio10",
+        ]);
+        assert_eq!(
+            args.reserve_pin,
+            [
+                Pin::Header(HeaderPin::Select(2)),
+                Pin::Gpio(9),
+                Pin::Gpio(10)
+            ]
+        );
+    }
+
+    /// An address line can't be reserved, and `--reserve-pin` conflicts with
+    /// `--no-config`.
+    #[test]
+    fn reserve_pin_fails_where_it_cant_apply() {
+        use clap::Parser;
+        for words in [
+            &[
+                "onerom",
+                "firmware",
+                "build",
+                "--board",
+                "fire-24-f",
+                "--slot",
+                "file=a.bin,type=2364,cs1=active-low",
+                "--reserve-pin",
+                "a17",
+            ][..],
+            &[
+                "onerom",
+                "firmware",
+                "build",
+                "--board",
+                "fire-24-f",
+                "--no-config",
+                "--reserve-pin",
+                "sel_c",
+            ][..],
+        ] {
+            assert!(
+                crate::args::Cli::try_parse_from(words).is_err(),
+                "{words:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn reserve_pin_replaces_the_configs_reserved_pins() {
+        use onerom_config::pin::{HeaderPin, Pin};
+        let json =
+            r#"{ "version": 1, "description": "d", "reserved_pins": ["sel_a"], "chip_sets": [] }"#;
+        let global = |reserved_pins: Vec<Pin>| GlobalConfig {
+            config_name: None,
+            config_description: None,
+            instance_name: None,
+            serial_override: None,
+            boot_logging: None,
+            disable_swd: None,
+            turbo_boot: None,
+            reserved_pins,
+        };
+        let reserved = |json: String| -> serde_json::Value {
+            serde_json::from_str::<serde_json::Value>(&json).unwrap()["reserved_pins"].clone()
+        };
+
+        let replaced =
+            apply_global_overrides(json.to_string(), &global(vec![Pin::Header(HeaderPin::X1)]))
+                .unwrap();
+        assert_eq!(reserved(replaced), serde_json::json!(["x1"]));
+        let kept = apply_global_overrides(json.to_string(), &global(Vec::new())).unwrap();
+        assert_eq!(reserved(kept), serde_json::json!(["sel_a"]));
+    }
+
+    #[test]
+    fn slots_past_the_jumpers_are_named() {
+        use crate::test_board::{config_2364, holds};
+        use onerom_config::pin::{HeaderPin, ReservedPins};
+        let config = |sets: usize| -> Config {
+            let sets = vec!["single"; sets];
+            serde_json::from_str(&config_2364(&sets, std::path::Path::new("."), &[])).unwrap()
+        };
+        let mut sel_c = ReservedPins::new();
+        sel_c.insert(HeaderPin::Select(2));
+        let mut sel_c_d = sel_c;
+        sel_c_d.insert(HeaderPin::Select(3));
+
+        // Four image select pins provide 16 combinations and three provide 8.
+        assert_eq!(
+            unselectable_slots(&config(16), Board::Fire24F, ReservedPins::new()),
+            None
+        );
+        assert_eq!(unselectable_slots(&config(8), Board::Fire24F, sel_c), None);
+
+        let one = unselectable_slots(&config(5), Board::Fire24F, sel_c_d).unwrap();
+        assert!(holds(&one, &["4", "SEL_A", "SEL_B", "5"]), "{one}");
+        assert!(!one.contains("SEL_C"), "{one}");
+
+        let two = unselectable_slots(&config(6), Board::Fire24F, sel_c_d).unwrap();
+        assert!(holds(&two, &["4", "5", "6"]), "{two}");
+
+        let many = unselectable_slots(&config(10), Board::Fire24F, sel_c).unwrap();
+        assert!(holds(&many, &["8", "9", "SEL_D", "10"]), "{many}");
+
+        let mut turbo = config(10);
+        turbo.turbo_boot = true;
+        assert_eq!(unselectable_slots(&turbo, Board::Fire24F, sel_c), None);
+    }
+
+    #[tokio::test]
+    async fn reserve_pin_reaches_the_image() {
+        use crate::test_board::{IMAGE_2364, config_2364};
+        use onerom_config::pin::ReservedPins;
+
+        let dir = tempfile::tempdir().unwrap();
+        let base = dir.path().join("base.bin");
+        let config = dir.path().join("sets.json");
+        let out = dir.path().join("out.bin");
+        std::fs::write(&base, base_firmware(8)).unwrap();
+        std::fs::write(&config, config_2364(&["single"], dir.path(), &[])).unwrap();
+        std::fs::write(dir.path().join("0.bin"), vec![0; IMAGE_2364]).unwrap();
+
+        let args = build_args(&[
+            "onerom",
+            "firmware",
+            "build",
+            "--board",
+            "fire-24-f",
+            "--config",
+            config.to_str().unwrap(),
+            "--base-firmware",
+            base.to_str().unwrap(),
+            "--output",
+            out.to_str().unwrap(),
+            "--reserve-pin",
+            "sel_d",
+            "--reserve-pin",
+            "gpio8",
+        ]);
+        cmd_build(&options(), &args).await.unwrap();
+
+        let image = onerom_cli::image::parse_firmware(&std::fs::read(&out).unwrap()).await;
+        assert_eq!(
+            image.reserved_pins(),
+            Some(ReservedPins::from_bits(0b1000, 0b10))
+        );
     }
 }

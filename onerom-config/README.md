@@ -71,6 +71,7 @@ The format is defined by [schema.json](schema.json), also published at https://i
 | `turbo_boot` | Skip reading the jumpers and serve the first image. |
 | `boot_logging` | Log boot over USB (with the USB plugin) or RTT. |
 | `swd_enabled` | `false` shuts SWD off as ROM serving starts, so debug-port reads cannot steal cycles from the serving DMAs.  BOOTSEL and PICOBOOT are unaffected. |
+| `reserved_pins` | Pins reserved for another use, for example `["sel_c", "x1"]`.  Only image select pins and X pins can be reserved.  Added in v0.8.0 and requires firmware v0.8.0 or later.  See [Reserve a pin for another use](/docs/CLI-MANUAL.md#reserve-a-pin-for-another-use). |
 
 ### Per-set keys
 
@@ -86,6 +87,7 @@ The format is defined by [schema.json](schema.json), also published at https://i
 | Key | Meaning |
 | --- | --- |
 | `file` | Path or URL. |
+| `plugin` | Name of a published plugin, e.g. `usb`, in place of `file` on a `system_plugin` or `user_plugin` chip.  The latest release compatible with the firmware is used. |
 | `type` | Chip type, e.g. `2364`, `27256`, `6116`. |
 | `cs1`..`cs4`, `ce`, `oe` | `active_low`, `active_high` or `ignore`, for the lines the chip type has.  `allow_cs_ignore: true` permits `ignore` where the chip type does not explicitly allow it. |
 | `description`, `label` | `label` replaces the filename in the device metadata. |
@@ -108,6 +110,7 @@ Fire (RP2350) boards only.  Each set carries its own, and a set without one uses
 | `fire.overclock` | Permits a frequency above the rated maximum. |
 | `fire.vreg` | Core voltage, e.g. `1.20V`.  Left out, the firmware picks a conservative value for the frequency. |
 | `fire.force_16_bit` | Combined 8/16 bit ROM types.  Ignores `/BYTE` and serves 16 bits always, which reads the address lines a third more often. |
+| `fire.standby` | Controls whether One ROM boots into standby mode when this slot is selected.  In standby mode One ROM doesn't serve the ROM.  When `true`, `file` is optional.  Requires firmware v0.8.0 or later. |
 | `led.enabled` | `false` turns the status LED off while serving.  Limp mode still blinks it. |
 | `swd.swd_enabled` | As the top-level key, for this set. |
 

@@ -9,7 +9,6 @@
 #include <stdbool.h>
 #include "plugin.h"
 #include "tusb.h"
-#include "include.h"
 #include "usb_custom_pbx.h"
 #include "usb_led.h"
 #include "usb_gpio.h"
@@ -102,7 +101,7 @@ void usb_picoboot_task(void);
 
 // Longest effective serial, in characters.  A configured override is bounded by
 // the metadata schema, and the chip-ID fallback is 16 hex digits.
-#define USB_SERIAL_MAX_CHARS MAX_SERIAL_NUMBER_LEN
+#define USB_SERIAL_MAX_CHARS ORA_MAX_SERIAL_NUMBER_LEN
 
 // Yield the device's effective USB serial as ASCII, defined in usb_main.c.
 //
@@ -119,27 +118,18 @@ void usb_picoboot_task(void);
 size_t usb_get_serial(char *out, size_t out_size);
 
 // Logging macros
-#if defined(DEBUG)
-#undef DEBUG
-#endif
 #define DEBUG(...) do { \
     if (context.debug) { \
         context.debug(__VA_ARGS__); \
     } \
 } while (0)
 
-#if defined(LOG)
-#undef LOG
-#endif
 #define LOG(...) do { \
     if (context.log) { \
         context.log(__VA_ARGS__); \
     } \
 } while (0)
 
-#if defined(ERR)
-#undef ERR
-#endif
 #define ERR(...) do { \
     if (context.err_log) { \
         context.err_log(__VA_ARGS__); \

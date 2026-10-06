@@ -97,6 +97,17 @@ impl RpVariant {
             _ => None,
         }
     }
+
+    /// Construct from OTP's `NUM_GPIOS` row, which the factory writes: `30` is
+    /// the QFN-60 (RP235xA), `48` is the QFN-80 (RP235xB). Returns `None` for
+    /// any other value.
+    pub fn from_num_gpios(num_gpios: u16) -> Option<Self> {
+        match num_gpios {
+            30 => Some(RpVariant::Rp235xA),
+            48 => Some(RpVariant::Rp235xB),
+            _ => None,
+        }
+    }
 }
 
 impl core::fmt::Display for RpVariant {
@@ -108,25 +119,25 @@ impl core::fmt::Display for RpVariant {
     }
 }
 
-/// The over-voltage tolerance of an MCU GPIO pad.
+/// The over-voltage tolerance of an MCU GPIO pin.
 ///
 /// One ROM drives 5V retro buses directly, without level shifters, relying on
-/// the MCU's 5V-tolerant GPIOs. A handful of RP2350 pads are the exception: the
+/// the MCU's 5V-tolerant GPIOs. A handful of RP2350 pins are the exception: the
 /// ADC-capable GPIOs are **not** 5V tolerant and must be kept at or below the
 /// 3.3V IO supply. This distinction matters on the image-select header, where
 /// some select lines can sit behind those ADC pins.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 pub enum PinTolerance {
-    /// 5V-tolerant pad — safe to drive from, or expose to, a 5V retro bus.
+    /// 5V-tolerant pin — safe to drive from, or expose to, a 5V retro bus.
     FiveVolt,
-    /// 3.3V-only pad (an RP2350 ADC input); must not exceed the 3.3V IO supply.
+    /// 3.3V-only pin (an RP2350 ADC input); must not exceed the 3.3V IO supply.
     ThreeVolt3,
 }
 
 impl RpVariant {
     /// The ADC-capable GPIOs for this RP2350 package.
     ///
-    /// These are the only RP2350 pads that are **not** 5V tolerant (see
+    /// These are the only RP2350 pins that are **not** 5V tolerant (see
     /// [`PinTolerance`]); every other GPIO is 5V-tolerant:
     ///
     /// - [`RpVariant::Rp235xA`] (QFN-60): GPIO 26–29.
@@ -540,6 +551,17 @@ impl core::fmt::Display for Rp235xChipId {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// NUM_GPIOS is 30 on the QFN-60 and 48 on the QFN-80. Any other value,
+    /// including an unwritten 0, isn't a package.
+    #[test]
+    fn num_gpios_gives_the_package() {
+        assert_eq!(RpVariant::from_num_gpios(30), Some(RpVariant::Rp235xA));
+        assert_eq!(RpVariant::from_num_gpios(48), Some(RpVariant::Rp235xB));
+        for other in [0, 29, 31, 47, 49, 0x130, u16::MAX] {
+            assert_eq!(RpVariant::from_num_gpios(other), None, "{other}");
+        }
+    }
 
     #[test]
     fn rp235xa_adc_pins_are_3v3_only() {

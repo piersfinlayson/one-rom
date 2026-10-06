@@ -27,6 +27,10 @@ impl CommandTrait for ControlArgs {
     fn requires_device(&self) -> bool {
         self.command.requires_device()
     }
+
+    fn uses_device(&self) -> bool {
+        self.command.uses_device()
+    }
 }
 
 #[enum_dispatch(CommandTrait)]
@@ -60,7 +64,7 @@ pub enum ControlCommands {
 
     /// Control the RGB LED on a One ROM.
     ///
-    /// Only some One ROM models have an RGB LED. Run 'onerom inspect gpio' to
+    /// Only some One ROM models have an RGB LED. Use 'onerom inspect gpio' to
     /// see what a board has.
     ///
     /// Examples:
@@ -75,6 +79,22 @@ pub enum ControlCommands {
         subcommand_help_heading = "Commands"
     )]
     Rgb(ControlRgbArgs),
+
+    /// Control standby mode on a One ROM.
+    ///
+    /// In standby mode One ROM stops serving a ROM image.  When taken out of
+    /// standby it continues to serve the ROM.
+    ///
+    /// Examples:
+    ///
+    ///   onerom control standby on
+    ///
+    ///   onerom control standby off
+    #[command(
+        subcommand_value_name = "COMMAND",
+        subcommand_help_heading = "Commands"
+    )]
+    Standby(ControlStandbyArgs),
 
     /// Write data to One ROM's SRAM or the live ROM image.
     ///
@@ -104,10 +124,8 @@ pub enum ControlCommands {
     /// reset the host system the One ROM is installed in. Useful in scripted
     /// workflows to reset the host after programming a new ROM image.
     ///
-    /// --pin is the pin your reset wire is soldered to - typically an X pad, or
-    /// an image-select pad whose jumper you have removed. Name it by pad
-    /// ('x1', 'sel_a') or by MCU GPIO ('gpio9'). Run 'onerom inspect header' to
-    /// see which GPIO is behind each pad.
+    /// --pin is the pin connected to the host's reset line, typically X1, X2 or
+    /// an image select pin.
     ///
     /// The reset line is only ever driven low and then released: a reset net
     /// has its own pull-up and may have other drivers on it, so there is
@@ -127,7 +145,7 @@ pub enum ControlCommands {
     /// Select the active ROM slot (not yet supported).
     ///
     /// Switches the device to serving the specified image slot. This takes
-    /// effect immediately but does not persist across power cycles unless.
+    /// effect immediately but does not persist across power cycles.
     ///
     /// Example:
     ///
@@ -136,10 +154,7 @@ pub enum ControlCommands {
 
     /// Drive a One ROM pin high, low or high-impedance.
     ///
-    /// --pin names an MCU GPIO, written 'gpio<N>', or a header pad: 'sel_a'
-    /// to 'sel_e', 'x1' or 'x2'. Run 'onerom inspect header' to see which GPIO
-    /// is behind each header pad, and 'onerom inspect gpio' to see what One ROM
-    /// is currently using each GPIO for.
+    /// Use 'onerom inspect gpio' to see what One ROM is using each pin for.
     ///
     /// Without --hold the state is latched until something changes it. With
     /// --hold the device holds the state for that many milliseconds and then
@@ -207,6 +222,10 @@ pub struct ControlLedArgs {
 impl CommandTrait for ControlLedArgs {
     fn requires_device(&self) -> bool {
         self.command.requires_device()
+    }
+
+    fn uses_device(&self) -> bool {
+        self.command.uses_device()
     }
 }
 
@@ -349,6 +368,10 @@ pub struct ControlRgbArgs {
 impl CommandTrait for ControlRgbArgs {
     fn requires_device(&self) -> bool {
         self.command.requires_device()
+    }
+
+    fn uses_device(&self) -> bool {
+        self.command.uses_device()
     }
 }
 
@@ -544,6 +567,49 @@ impl CommandTrait for ControlRgbBlinkArgs {
 }
 
 #[derive(Debug, Args)]
+pub struct ControlStandbyArgs {
+    #[command(subcommand)]
+    pub command: ControlStandbyCommands,
+}
+
+impl CommandTrait for ControlStandbyArgs {
+    fn requires_device(&self) -> bool {
+        self.command.requires_device()
+    }
+
+    fn uses_device(&self) -> bool {
+        self.command.uses_device()
+    }
+}
+
+#[enum_dispatch(CommandTrait)]
+#[derive(Debug, Subcommand)]
+pub enum ControlStandbyCommands {
+    /// Turn standby mode on.
+    On(ControlStandbyOnArgs),
+    /// Turn standby mode off.
+    Off(ControlStandbyOffArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct ControlStandbyOnArgs {}
+
+impl CommandTrait for ControlStandbyOnArgs {
+    fn requires_device(&self) -> bool {
+        true
+    }
+}
+
+#[derive(Debug, Args)]
+pub struct ControlStandbyOffArgs {}
+
+impl CommandTrait for ControlStandbyOffArgs {
+    fn requires_device(&self) -> bool {
+        true
+    }
+}
+
+#[derive(Debug, Args)]
 pub struct ControlLedBlinkArgs {
     #[arg(long, value_name = "MS", value_parser = parse_blink_period, help = HELP_BLINK_PERIOD)]
     pub period: Option<u16>,
@@ -602,18 +668,16 @@ impl From<&ControlRebootArgs> for RebootArgs {
 
 #[derive(Debug, Args)]
 pub struct ControlResetArgs {
-    /// Pin the reset wire is connected to: an MCU GPIO written gpio<N>, or a
-    /// header pad name (sel_a..sel_e, x1, x2).
+    /// Pin the reset wire is connected to: a header pin (sel_<letter>, x1, x2)
+    /// or an MCU GPIO written gpio<N>.
     ///
-    /// A bare number is rejected - see 'onerom inspect header' for the GPIO
-    /// behind each header pad.
+    /// Use 'onerom inspect header' to see each header pin's GPIO.
     #[arg(long, value_name = "PIN", value_parser = parse_pin)]
     pub pin: Pin,
 
     /// Board type, overriding what the connected One ROM reports.
     ///
-    /// Only needed to resolve a header pad name on a One ROM whose board type
-    /// this build does not recognise. A GPIO named as gpio<N> needs no board.
+    /// Use it if the One ROM's board isn't recognised.
     #[arg(long, short, value_name = "BOARD")]
     pub board: Option<String>,
 
@@ -678,18 +742,16 @@ impl std::fmt::Display for GpioState {
 
 #[derive(Debug, Args)]
 pub struct ControlPinArgs {
-    /// Pin to drive: an MCU GPIO written gpio<N>, or a header pad name
-    /// (sel_a..sel_e, x1, x2).
+    /// Pin to drive: a header pin (sel_<letter>, x1, x2) or an MCU GPIO written
+    /// gpio<N>.
     ///
-    /// A bare number is rejected - see 'onerom inspect header' for the GPIO
-    /// behind each header pad.
+    /// Use 'onerom inspect header' to see each header pin's GPIO.
     #[arg(long, value_name = "PIN", value_parser = parse_pin)]
     pub pin: Pin,
 
     /// Board type, overriding what the connected One ROM reports.
     ///
-    /// Only needed to resolve a header pad name on a One ROM whose board type
-    /// this build does not recognise. A GPIO named as gpio<N> needs no board.
+    /// Use it if the One ROM's board isn't recognised.
     #[arg(long, short, value_name = "BOARD")]
     pub board: Option<String>,
 
@@ -732,6 +794,10 @@ pub struct ControlPokeArgs {
 impl CommandTrait for ControlPokeArgs {
     fn requires_device(&self) -> bool {
         self.command.requires_device()
+    }
+
+    fn uses_device(&self) -> bool {
+        self.command.uses_device()
     }
 }
 
@@ -888,6 +954,8 @@ pub struct ControlPokeLiveArgs {
     /// Write to this logical ROM address, starting from 0.
     ///
     /// Accepts decimal and hexadecimal (0x prefix) formats.
+    ///
+    /// On a One ROM serving half a 27C080, address 0 is the start of that half.
     #[arg(long, short, visible_alias = "addr", value_name = "ADDRESS", value_parser = parse_u32, default_value = "0")]
     pub address: u32,
 

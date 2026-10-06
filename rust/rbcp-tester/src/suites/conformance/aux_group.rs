@@ -1937,29 +1937,17 @@ pub fn one_rom_withholds_pins_it_is_serving_with(
     bus.enter_cmd_resp(&s)
         .map_err(|e| format!("ENTER_CMD_RESP: {e}"))?;
 
-    let cap = capability(bus, &s)?;
-    let mut gpio_group = None;
-    for grp in 0..cap.groups {
-        let (kind, pins) = group_info(bus, &s, grp)?;
-        if kind == GROUP_TYPE_GPIO {
-            gpio_group = Some((grp, pins));
-            break;
-        }
-    }
-    let Some((grp, pins)) = gpio_group else {
-        return Ok(Outcome::Skip(
-            "the device exposes no group of type GPIO, so no pin number here names a GPIO the \
-             firmware can be asked about"
-                .into(),
-        ));
+    let Some((grp, pins)) = gpio_group(bus, &s)? else {
+        return Ok(no_gpio_group());
     };
 
     let (mut in_use, mut offered) = (0u32, 0u32);
     for pin in 0..pins.min(256) {
         let pin = pin as u8;
-        let Some(busy) = bus.gpio_in_use(pin) else {
+        let Some(gpio_use) = bus.gpio_use(pin) else {
             continue;
         };
+        let busy = in_use_by_one_rom(gpio_use);
         let drivable = pin_info(bus, &s, grp, pin)?[0] & PIN_DRIVABLE != 0;
         if busy {
             in_use += 1;
@@ -1991,6 +1979,94 @@ pub fn one_rom_withholds_pins_it_is_serving_with(
     }
 
     Ok(Outcome::Pass)
+}
+
+/// A pin with its input forced by One ROM is offered to the host and can be
+/// driven with SET_AUX.
+///
+/// **This is One ROM's policy, not a protocol requirement**, as for
+/// [`one_rom_withholds_pins_it_is_serving_with`].
+pub fn one_rom_offers_pins_whose_input_it_forces(
+    bus: &mut Bus,
+    ctx: &Ctx,
+) -> Result<Outcome, String> {
+    let s = ctx.session();
+    bus.enter_cmd_resp(&s)
+        .map_err(|e| format!("ENTER_CMD_RESP: {e}"))?;
+
+    let Some((grp, pins)) = gpio_group(bus, &s)? else {
+        return Ok(no_gpio_group());
+    };
+    let Some(pin) = (0..pins.min(256))
+        .map(|pin| pin as u8)
+        .find(|&pin| bus.gpio_use(pin) == Some(ffi::ora_gpio_use_t_ORA_GPIO_USE_INPUT_FORCED))
+    else {
+        return Ok(Outcome::Skip(
+            "the firmware reports no GPIO in the group as one whose input One ROM forces".into(),
+        ));
+    };
+    let pin = Pin { group: grp, pin };
+
+    if pin_info(bus, &s, grp, pin.pin)?[0] & PIN_DRIVABLE == 0 {
+        return Err(format!(
+            "GET_AUX_PIN_INFO withholds pin {} of group {grp}, and the firmware reports GPIO {} \
+             as one whose input One ROM forces, which the host may drive",
+            pin.pin, pin.pin
+        ));
+    }
+
+    let observable = pin_state_is_observable(bus, &s, &pin)?;
+    for (state, want_driven) in [(DRIVE_LOW, 1), (RELEASE, 0)] {
+        bus.issue_cmd(
+            &s,
+            group::AUX,
+            aux::SET_AUX,
+            &set_args(state, RELEASE, 0, &pin),
+        )
+        .map_err(|e| {
+            format!(
+                "SET_AUX with state 0x{state:02X} on pin {} of group {grp}, whose input One ROM \
+                 forces: {e}",
+                pin.pin
+            )
+        })?;
+        let info = pin_info(bus, &s, grp, pin.pin)?;
+        if observable && (info[2] != want_driven || (want_driven == 1 && info[1] != 0)) {
+            return Err(format!(
+                "after SET_AUX with state 0x{state:02X} on pin {} of group {grp}, \
+                 GET_AUX_PIN_INFO reports level {} and driven {}",
+                pin.pin, info[1], info[2]
+            ));
+        }
+    }
+
+    Ok(Outcome::Pass)
+}
+
+fn gpio_group(bus: &mut Bus, s: &Session) -> Result<Option<(u8, u32)>, String> {
+    let cap = capability(bus, s)?;
+    for grp in 0..cap.groups {
+        let (kind, pins) = group_info(bus, s, grp)?;
+        if kind == GROUP_TYPE_GPIO {
+            return Ok(Some((grp, pins)));
+        }
+    }
+    Ok(None)
+}
+
+fn no_gpio_group() -> Outcome {
+    Outcome::Skip(
+        "the device exposes no group of type GPIO, so no pin number here names a GPIO the \
+         firmware can be asked about"
+            .into(),
+    )
+}
+
+fn in_use_by_one_rom(gpio_use: ffi::ora_gpio_use_t) -> bool {
+    !matches!(
+        gpio_use,
+        ffi::ora_gpio_use_t_ORA_GPIO_USE_FREE | ffi::ora_gpio_use_t_ORA_GPIO_USE_INPUT_FORCED
+    )
 }
 
 /// The RAM slot the device is serving, as it reports it.

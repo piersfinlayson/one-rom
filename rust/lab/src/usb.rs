@@ -22,7 +22,7 @@
 //! by hand below.  Interfaces 0 and 1 have none, and the device class is
 //! 0x00/0x00/0x00.
 //!
-//! The MS OS 2.0 descriptor scopes WinUSB to interface 1 only.
+//! The MS OS 2.0 descriptor binds WinUSB to interfaces 0 and 1.
 //!
 //! # PICOBOOT
 //!
@@ -63,6 +63,7 @@ use embassy_usb::msos::{self, windows_version};
 use embassy_usb::types::StringIndex;
 use embassy_usb::{Builder, Config as UsbConfig, Handler, UsbDevice, UsbVersion};
 use log::debug;
+use onerom_metadata::{USB_PLUGIN_PID, USB_PLUGIN_VID};
 use picobootx::{Endpoints, NoCustom};
 use picobootx_embassy::{PicobootClass, Rp2350EndpointControl};
 use static_cell::StaticCell;
@@ -140,8 +141,6 @@ static DTR: AtomicBool = AtomicBool::new(false);
 /// Fired by `cdc_control` each time DTR is raised.
 static CDC_DTR: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 
-const VID: u16 = 0x1209;
-const PID: u16 = 0xF542;
 const VENDOR_REQUEST_MICROSOFT: u8 = 1;
 const WINUSB_GUID: &str = "{53F67517-1850-422C-91F8-C56F657195AF}";
 const MAX_PACKET: usize = 64;
@@ -219,7 +218,7 @@ impl Usb {
 
         let driver = Driver::new(usb, Irqs);
 
-        let mut config = UsbConfig::new(VID, PID);
+        let mut config = UsbConfig::new(USB_PLUGIN_VID, USB_PLUGIN_PID);
         config.manufacturer = Some("piers.rocks");
         config.product = Some("One ROM");
         config.serial_number = Some(serial);
@@ -262,8 +261,11 @@ impl Usb {
 
         // Interface 0: dummy (0xFF/0x00/0x00, no endpoints).
         // Occupies slot 0 so picoboot (added later) lands at interface 1.
+        // WinUSB is bound to it, as One ROM does, so that Windows doesn't list
+        // it as a device whose drivers are not installed.
         {
             let mut func = builder.function(0xFF, 0, 0);
+            func.msos_feature(msos::CompatibleIdFeatureDescriptor::new("WINUSB", ""));
             let mut iface = func.interface();
             let _alt = iface.alt_setting(0xFF, 0, 0, Some(iface0_name));
         }

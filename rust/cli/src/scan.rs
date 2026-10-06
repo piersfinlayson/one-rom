@@ -48,20 +48,39 @@ pub async fn cmd_scan(options: &Options, args: &args::scan::ScanArgs) -> Result<
     );
 
     for d in &devices {
+        // A board's commissioning information needs --verbose, with or without
+        // --slots. A warning shows beneath the board where one applies.
+        let commissioning =
+            crate::inspect::commissioning_lines(d, options.verbose, options.verbose);
         if args.slots {
-            // output_slot_info prints the device header followed by the MCU /
-            // chip-ID line (when verbose) and the slot detail.
+            // output_slot_info prints the device header followed by:
+            // - the MCU / chip-ID line (when verbose)
+            // - the commissioning lines
+            // - the slot detail
+            // It fails where this build doesn't recognise the firmware, and the
+            // parser's reasons go where the slot detail would.
             println!("---");
-            crate::inspect::output_slot_info(d, options, "")
-                .await
-                .inspect_err(|_| log::error!("Failed to read slots"))
-                .ok();
+            match crate::inspect::output_slot_info(d, options, "", &commissioning).await {
+                Ok(()) => {}
+                Err(_) if d.firmware.is_none() => {
+                    let reasons = d.unrecognised_firmware_reasons();
+                    for line in crate::inspect::unrecognised_firmware_lines(reasons) {
+                        println!("  {line}");
+                    }
+                }
+                Err(_) => log::error!("Failed to read slots"),
+            }
         } else {
             println!("  {d}");
+            // A device's details sit beneath its line. The line carries the
+            // board size.
             if options.verbose
                 && let Some(line) = d.mcu_chip_id_line()
             {
-                println!("  {line}");
+                println!("    {line}");
+            }
+            for line in commissioning {
+                println!("    {line}");
             }
         }
     }

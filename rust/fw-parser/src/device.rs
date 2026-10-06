@@ -9,7 +9,8 @@
 //! that only need facts common to both — firmware version, board, ROM layout,
 //! which slot is being served — never have to branch on firmware generation.
 //! Format-specific data remains reachable via [`as_original`] and [`as_schema`]
-//! for the cases that genuinely need it.
+//! for the cases that genuinely need it.  Firmware other than One ROM is named
+//! and not parsed - see [`ParsedDevice`].
 //!
 //! # Recognition vs parse errors
 //!
@@ -17,8 +18,8 @@
 //! `ParsedDevice`, even for data that is not One ROM firmware at all. Two
 //! separate questions follow from it, and callers should not conflate them:
 //!
-//! - [`is_recognised`] answers "is this a One ROM?". It is the check to make
-//!   before presenting a device or file to the user as a One ROM.
+//! - [`is_recognised`] answers "is this One ROM or One ROM Lab?". It is the
+//!   check to make before presenting a device or file to the user.
 //! - [`parse_errors`] answers "what went wrong *within* a device we did
 //!   recognise?". A recognised device may still carry non-fatal errors.
 //!
@@ -56,45 +57,90 @@
 use alloc::borrow::Cow;
 #[cfg(not(feature = "std"))]
 use alloc::string::{String, ToString};
+#[cfg(not(feature = "std"))]
+use alloc::vec::Vec;
+use core::fmt;
+use core::ops::Range;
 #[cfg(feature = "std")]
 use std::borrow::Cow;
 
 use onerom_config::fw::FirmwareVersion;
-use onerom_config::hw::Board;
-use onerom_metadata::{OneromRomInfo, OneromRomSlot, RomSlotType};
+use onerom_config::hw::{Board, BoardSize};
+use onerom_config::mcu::Variant;
+use onerom_config::pin::ReservedPins;
+use onerom_gen::{FlashChips, MIN_RESERVED_PINS_VERSION};
+use onerom_metadata::{
+    FLASH_CS1_BASE_ADDR, MaybeKnown, OneromBoardSize, OneromRomInfo, OneromRomSlot, Pointer,
+    RomSlotType, TOTAL_FLASH_SIZE_L, TOTAL_FLASH_SIZE_M, metadata_generation_for,
+};
 
-use crate::ParseError;
 use crate::info::{Sdrr, SdrrRomInfo, SdrrRomSet};
 use crate::onerom::OneRom;
+use crate::readers::{MemoryReader, RegionKind};
 use crate::types::SdrrRomType;
+use crate::{ParseError, Parser};
 
-/// The complete parsed state of a One ROM device, regardless of firmware
-/// generation.
+/// A One ROM's parsed state, from either firmware generation, or which other
+/// member of the One ROM family a device runs.
 ///
 /// Constructed by [`Parser::parse_device`], which detects the firmware format
 /// and delegates to the appropriate parser.  Callers that need
 /// format-specific fields can downcast via [`as_original`] or [`as_schema`].
 ///
+/// # Firmware other than One ROM
+///
+/// Every member of the One ROM family puts an `onerom_info_t` at the same
+/// place in flash, and its `firmware_type` names the member. This crate
+/// parses One ROM alone. Any other member gets its own variant, which doesn't
+/// carry anything, and the caller reads the device with that member's parser:
+///
+/// | Variant | Firmware | Parser |
+/// | --- | --- | --- |
+/// | [`Lab`](Self::Lab) | One ROM Lab | [onerom-lab-parser](https://docs.rs/onerom-lab-parser) |
+///
+/// ```rust,ignore
+/// let device = Parser::new(&mut reader).parse_device().await;
+/// if matches!(device, ParsedDevice::Lab) {
+///     let lab = onerom_lab_parser::LabParser::new(&mut reader).parse().await?;
+/// }
+/// ```
+///
+/// The accessors describe One ROM. For these variants
+/// [`is_recognised`](Self::is_recognised) returns `true`, and the rest return
+/// `None`, `false` or an empty result.
+///
+/// A member this build doesn't have a variant for isn't recognised, and its
+/// parse error names the firmware type.
+///
 /// [`as_original`]: ParsedDevice::as_original
 /// [`as_schema`]: ParsedDevice::as_schema
 /// [`Parser::parse_device`]: crate::Parser::parse_device
+// The schema variant carries the whole parsed tree and always will, so the
+// two will keep differing by more than clippy's threshold.  Boxing one would
+// put an allocation on every caller to quiet a lint.  Studio's device enum
+// carries the same allow.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[non_exhaustive]
 pub enum ParsedDevice {
     /// Pre-v0.7.0 hand-crafted format.
     Original(Sdrr),
 
     /// v0.7.0+ schema-driven metadata format.
     Schema(OneRom),
+
+    /// One ROM Lab, which onerom-lab-parser reads.
+    Lab,
 }
 
 impl ParsedDevice {
-    /// Returns `true` if a recognisable One ROM was found.
+    /// Returns `true` if a One ROM or a One ROM Lab was found.
     ///
     /// [`Parser::parse_device`] is infallible, so this is the check that
-    /// distinguishes "this is a One ROM" from "this is some other data".
+    /// distinguishes firmware this build knows from some other data.
     /// Original-format devices are recognised if either the flash or the RAM
-    /// region parsed; schema-format devices if the firmware info structure was
-    /// located.
+    /// region parsed, schema-format devices if the firmware info structure was
+    /// located, and a Lab always is.
     ///
     /// This is deliberately distinct from [`parse_errors`](Self::parse_errors),
     /// which reports non-fatal problems *within* a device that was recognised.
@@ -105,6 +151,7 @@ impl ParsedDevice {
         match self {
             Self::Original(sdrr) => sdrr.flash.is_some() || sdrr.ram.is_some(),
             Self::Schema(onerom) => onerom.info().is_some(),
+            Self::Lab => true,
         }
     }
 
@@ -120,6 +167,7 @@ impl ParsedDevice {
         match self {
             Self::Original(sdrr) => sdrr.is_running(),
             Self::Schema(onerom) => onerom.runtime().is_some(),
+            Self::Lab => false,
         }
     }
 
@@ -136,6 +184,7 @@ impl ParsedDevice {
                     info.build_number,
                 ))
             }
+            Self::Lab => None,
         }
     }
 
@@ -148,14 +197,15 @@ impl ParsedDevice {
         match self {
             Self::Original(sdrr) => sdrr.flash.as_ref().map(|f| f.metadata_present),
             Self::Schema(_) => Some(true),
+            Self::Lab => None,
         }
     }
 
     /// Returns non-fatal parse errors encountered during parsing.
     ///
-    /// These describe problems *within* a device; see
-    /// [`is_recognised`](Self::is_recognised) for whether a One ROM was found
-    /// at all.
+    /// These describe problems *within* a device.
+    /// [`is_recognised`](Self::is_recognised) says whether a One ROM or One ROM
+    /// Lab was found at all.
     pub fn parse_errors(&self) -> &[ParseError] {
         match self {
             Self::Original(sdrr) => sdrr
@@ -164,10 +214,11 @@ impl ParsedDevice {
                 .map(|f| f.parse_errors.as_slice())
                 .unwrap_or(&[]),
             Self::Schema(onerom) => onerom.parse_errors(),
+            Self::Lab => &[],
         }
     }
 
-    /// Returns the original-format data, or `None` if this is schema-format.
+    /// Returns the original-format data, or `None` for any other variant.
     pub fn as_original(&self) -> Option<&Sdrr> {
         if let Self::Original(sdrr) = self {
             Some(sdrr)
@@ -176,7 +227,7 @@ impl ParsedDevice {
         }
     }
 
-    /// Returns the schema-format data, or `None` if this is original-format.
+    /// Returns the schema-format data, or `None` for any other variant.
     pub fn as_schema(&self) -> Option<&OneRom> {
         if let Self::Schema(onerom) = self {
             Some(onerom)
@@ -193,6 +244,7 @@ impl ParsedDevice {
                 let hw_rev = &onerom.info()?.metadata.as_ref()?.hw.hw_rev;
                 Board::try_from_str(hw_rev)
             }
+            Self::Lab => None,
         }
     }
 
@@ -222,6 +274,7 @@ impl ParsedDevice {
                 rom_info.rbcp_rom_type
                     == onerom_config::chip::ChipType::SystemPlugin.rbcp_chip_type()
             }
+            Self::Lab => false,
         }
     }
 
@@ -237,6 +290,7 @@ impl ParsedDevice {
                 .and_then(|f| f.mcu_variant)
                 .map(|v| v.to_string()),
             Self::Schema(_) => self.get_board().map(|b| b.mcu_family().to_string()),
+            Self::Lab => None,
         }
     }
 
@@ -250,7 +304,31 @@ impl ParsedDevice {
         match self {
             Self::Original(sdrr) => sdrr.ram.as_ref().map(|r| r.rom_set_index as usize),
             Self::Schema(onerom) => onerom.runtime().map(|r| r.rom_slot_index as usize),
+            Self::Lab => None,
         }
+    }
+
+    /// The board size runtime info records, where One ROM is running.
+    /// Firmware before 0.8.0 doesn't record one, so its size is
+    /// `BoardSizeUnknown`. `None` where runtime info wasn't read.
+    pub fn runtime_board_size(&self) -> Option<MaybeKnown<OneromBoardSize>> {
+        match self {
+            Self::Schema(onerom) => onerom.runtime().map(|runtime| runtime.board_size),
+            Self::Original(sdrr) => sdrr
+                .ram
+                .as_ref()
+                .map(|_| MaybeKnown::Known(OneromBoardSize::BoardSizeUnknown)),
+            Self::Lab => None,
+        }
+    }
+
+    /// The pins reserved in the metadata. `None` where the metadata predates
+    /// reserved pins or wasn't read.
+    pub fn reserved_pins(&self) -> Option<ReservedPins> {
+        let header = self.as_schema()?.metadata()?;
+        let first = metadata_generation_for(MIN_RESERVED_PINS_VERSION)?;
+        (header.version >= first)
+            .then(|| ReservedPins::from_bits(header.reserved_sel_pins, header.reserved_x_pins))
     }
 
     /// Iterates the device's ROM slots in flash order, classified and numbered.
@@ -271,12 +349,180 @@ impl ParsedDevice {
                 Some(md) => SlotsInner::Schema(md.rom_slots.iter()),
                 None => SlotsInner::Empty,
             },
+            Self::Lab => SlotsInner::Empty,
         };
         Slots {
             inner,
             active,
             idx: 0,
             user_idx: 0,
+        }
+    }
+
+    /// Checks this device's slots against the flash chips and the length of
+    /// the image file it was parsed from.
+    ///
+    /// The file holds the contents of the first flash chip, whose addresses
+    /// are `first`, from its start. Anything past the first chip's length is
+    /// the second chip's contents from [`FLASH_CS1_BASE_ADDR`].
+    ///
+    /// A Lab doesn't have ROM slots and passes.
+    pub fn check_image_file(&self, len: usize, first: Range<u32>) -> Result<(), ImageFileError> {
+        let first_len = first.len();
+        let Some(used) = self.flash_used(first)? else {
+            return Ok(());
+        };
+        if used.len > len {
+            return Err(ImageFileError::TooShort {
+                short_by: used.len - len,
+            });
+        }
+        if len > first_len && !used.second_chip {
+            return Err(ImageFileError::TooLong {
+                too_long_by: len - first_len,
+            });
+        }
+        Ok(())
+    }
+
+    /// The smallest board size this image requires.
+    ///
+    /// `None` for a Lab, an image whose MCU isn't known or one too big for
+    /// any board size.
+    pub fn min_board_size(&self) -> Option<BoardSize> {
+        let mcu = match self {
+            Self::Original(sdrr) => sdrr.flash.as_ref()?.mcu_variant?,
+            // Schema-format firmware is RP2350-only.
+            Self::Schema(_) => Variant::RP2350,
+            Self::Lab => return None,
+        };
+        // The firmware and metadata come before the slots on the first chip.
+        let used = self.flash_used(FlashChips::first_for(mcu)).ok()??;
+        BoardSize::supported_values().iter().copied().find(|size| {
+            let total = match size {
+                BoardSize::M => TOTAL_FLASH_SIZE_M,
+                BoardSize::L => TOTAL_FLASH_SIZE_L,
+            };
+            used.len <= total
+        })
+    }
+
+    /// The flash this device's slots use, laid out as an image file whose
+    /// first chip has the addresses `first`. `None` for a Lab.
+    fn flash_used(&self, first: Range<u32>) -> Result<Option<FlashUsed>, ImageFileError> {
+        // Each slot's data pointer and size, in slot order.
+        let slots: Vec<(Pointer, u32)> = match self {
+            Self::Original(sdrr) => sdrr
+                .flash
+                .iter()
+                .flat_map(|info| &info.rom_sets)
+                .map(|set| (Pointer::new(set.data_ptr), set.size))
+                .collect(),
+            Self::Schema(onerom) => onerom
+                .metadata()
+                .into_iter()
+                .flat_map(|md| &md.rom_slots)
+                .map(|slot| (slot.data, slot.size))
+                .collect(),
+            Self::Lab => return Ok(None),
+        };
+
+        let first_len = first.len();
+        // Where a slot's data ends in the file. `None` where it's outside both
+        // chips so a file can't hold it.
+        let file_end = |addr: u32, size: u32| {
+            let end = u64::from(addr) + u64::from(size);
+            let offset = if first.start <= addr && end <= u64::from(first.end) {
+                end - u64::from(first.start)
+            } else if addr >= FLASH_CS1_BASE_ADDR {
+                first_len as u64 + end - u64::from(FLASH_CS1_BASE_ADDR)
+            } else {
+                return None;
+            };
+            usize::try_from(offset).ok()
+        };
+
+        let mut required = 0;
+        let mut second_used = false;
+        for (slot, (data, size)) in slots.into_iter().enumerate() {
+            let Some(addr) = data.addr() else {
+                continue;
+            };
+            second_used |= addr >= FLASH_CS1_BASE_ADDR;
+            let Some(end) = file_end(addr, size) else {
+                return Err(ImageFileError::BadAddress { slot, addr });
+            };
+            required = required.max(end);
+        }
+        Ok(Some(FlashUsed {
+            len: required,
+            second_chip: second_used,
+        }))
+    }
+}
+
+/// The flash an image's slots use.
+struct FlashUsed {
+    /// The length of an image file holding every slot's data.
+    len: usize,
+    /// Whether a slot is on the second chip.
+    second_chip: bool,
+}
+
+/// Parses an image file.
+///
+/// The file's first `first.len()` bytes are the contents of the first flash
+/// chip, whose addresses are `first`. Anything after them is the second chip's
+/// contents from [`FLASH_CS1_BASE_ADDR`]. [`ParsedDevice::check_image_file`]
+/// checks the file against the same layout.
+pub async fn parse_image_file(data: &[u8], first: Range<u32>) -> ParsedDevice {
+    let (first_data, second_data) = data.split_at(data.len().min(first.len()));
+    // The hardcoded base address looks odd here, as the STM32's base flash
+    // address, but when using a memory reader, the parser will just figure it
+    // out for itself based on what it finds in the image.
+    let mut reader = MemoryReader::new(first_data.to_vec(), 0x0800_0000);
+    if !second_data.is_empty() {
+        reader.add_region(RegionKind::Flash, second_data.to_vec(), FLASH_CS1_BASE_ADDR);
+    }
+    Parser::new(&mut reader).parse_device().await
+}
+
+/// Why an image file isn't laid out as One ROM's tools write one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ImageFileError {
+    /// The file is shorter than its slots' data needs.
+    TooShort {
+        /// The bytes the file lacks before the end of the last slot's data.
+        short_by: usize,
+    },
+
+    /// A slot's data is outside both flash chips so a file can't hold it.
+    BadAddress {
+        /// The first such slot's absolute index, counting plugins.
+        slot: usize,
+        /// The slot's data address.
+        addr: u32,
+    },
+
+    /// The file is longer than the first flash chip without a slot on the
+    /// second chip.
+    TooLong {
+        /// The file's length minus the first chip's.
+        too_long_by: usize,
+    },
+}
+
+impl fmt::Display for ImageFileError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::TooShort { short_by } => write!(f, "The image file ends {short_by} bytes short"),
+            Self::BadAddress { slot, addr } => write!(
+                f,
+                "Slot {slot} is at {addr:#010x}, which isn't a valid address"
+            ),
+            Self::TooLong { too_long_by } => {
+                write!(f, "The image file is {too_long_by} bytes too long")
+            }
         }
     }
 }
@@ -443,16 +689,25 @@ fn sdrr_set_kind(set: &SdrrRomSet) -> SlotKind {
 }
 
 /// Classify a schema-format slot by its declared slot type.
+///
+/// A slot type this build has no name for counts as a ROM, as it does in
+/// `sdrr_set_kind` - calling it a plugin would hide it from the user-facing
+/// numbering.
 fn schema_slot_kind(slot: &OneromRomSlot) -> SlotKind {
     match slot.slot_type {
-        RomSlotType::RomSlotTypePluginSystem
-        | RomSlotType::RomSlotTypePluginUser
-        | RomSlotType::RomSlotTypePluginPio => SlotKind::Plugin,
+        MaybeKnown::Known(
+            RomSlotType::RomSlotTypePluginSystem
+            | RomSlotType::RomSlotTypePluginUser
+            | RomSlotType::RomSlotTypePluginPio,
+        ) => SlotKind::Plugin,
         // A RAM slot is user-placed and counted in the user-facing numbering,
         // so it belongs here rather than with the plugins.
-        RomSlotType::RomSlotTypeSingleRom
-        | RomSlotType::RomSlotTypeBankedRom
-        | RomSlotType::RomSlotTypeMultiRom
-        | RomSlotType::RomSlotTypeSingleRam => SlotKind::Rom,
+        MaybeKnown::Known(
+            RomSlotType::RomSlotTypeSingleRom
+            | RomSlotType::RomSlotTypeBankedRom
+            | RomSlotType::RomSlotTypeMultiRom
+            | RomSlotType::RomSlotTypeSingleRam,
+        ) => SlotKind::Rom,
+        MaybeKnown::Unknown(_) => SlotKind::Rom,
     }
 }

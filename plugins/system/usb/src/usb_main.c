@@ -4,7 +4,6 @@
 
 // One ROM system plugin implementing USB
 
-#include "include.h"
 #include "usb_plugin.h"
 #include "tusb.h"
 #include "usb_descriptors.h"
@@ -34,8 +33,8 @@ const ora_plugin_header_t ora_plugin_header = {
     .overrides1 = ORA_OVERRIDE1_DISABLE_VBUS_DETECT,
     .properties1 = ORA_PROPERTY1_SUPPORTS_USB_RUNNING | ORA_PROPERTY1_SUPPORTS_YIELD,
     .min_fw_major_version = 0,
-    .min_fw_minor_version = 7,
-    .min_fw_patch_version = 2,
+    .min_fw_minor_version = 8,
+    .min_fw_patch_version = 0,
     .reserved = {0},
 };
 
@@ -92,10 +91,10 @@ uint32_t tusb_time_millis_api(void) {
 }
 
 void usb_plugin_task(void) {
-    // ONEROM_CMD_SET_LED and ONEROM_CMD_GPIO_SET are both applied in the
-    // dispatch handler.  Only the timed release of a bounded GPIO hold is
-    // deferred to here - an LED mode that runs on is the firmware engine's to
-    // keep going, not this plugin's.
+    // ONEROM_CMD_SET_LED, ONEROM_CMD_GPIO_SET and ONEROM_CMD_SET_STANDBY are
+    // applied in the dispatch handler.  Only the timed release of a bounded
+    // GPIO hold is deferred to here - an LED mode that runs on is the firmware
+    // engine's to keep going, not this plugin's.
     gpio_release_expired_holds();
 }
 
@@ -182,6 +181,9 @@ void usb_init(ora_lookup_fn_t ora_lookup_fn) {
 
     // After gpio_init_caps(), which clears the capability word.
     led_init_caps();
+    if (ora_lookup_fn(ORA_ID_SET_STANDBY) != NULL) {
+        context.features |= ONEROM_FEAT_STANDBY;
+    }
 
     // Resolved once here, with the rest of the one-time API resolution, since
     // none of it changes while the plugin runs.

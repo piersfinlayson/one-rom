@@ -31,6 +31,11 @@ typedef struct dma_ch_reg {
 // Macro to access a DMA channel's registers
 #define DMA_CH_REG(X)    ((volatile dma_ch_reg_t *)(DMA_BASE + ((X) * 0x40)))
 
+// DMA_IRQ_0 enable and status.  Bit N is channel N.  Writing 1 to a status bit
+// clears it.
+#define DMA_INTE0   (*(volatile uint32_t *)(DMA_BASE + 0x404))
+#define DMA_INTS0   (*(volatile uint32_t *)(DMA_BASE + 0x40C))
+
 #define DMA_CTRL_TRIG_EN                (1 << 0)
 #define DMA_CTRL_TRIG_PRIORITY_HIGH     (1 << 1)
 #define DMA_CTRL_TRIG_DATA_SIZE_8BIT    (0 << 2)
@@ -61,7 +66,8 @@ typedef struct dma_ch_reg {
 #define DMA_ENABLE()    RESET_RESET &= ~RESET_DMA;        \
                         while (!(RESET_DONE & RESET_DMA));
 #else // TEST_BUILD
-#define DMA_ENABLE()
+extern uint8_t stub_dma_out_of_reset;
+#define DMA_ENABLE()    stub_dma_out_of_reset = 1
 #endif // !TEST_BUILD
 
 #endif // DMAREG_H

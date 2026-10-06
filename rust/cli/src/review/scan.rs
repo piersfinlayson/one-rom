@@ -1,0 +1,214 @@
+// Copyright (C) 2026 Piers Finlayson <piers@piers.rocks>
+//
+// MIT License
+
+//! `scan`'s commissioning lines and the lines `scan --slots` shows for firmware
+//! this build doesn't recognise.
+
+use onerom_app::{BoardSize, MemoryOtp};
+use onerom_cli::otp::Commissioning;
+use onerom_config::hw::Board;
+use onerom_config::mcu::RpVariant;
+
+use super::{
+    RUNNING_LAB, UNRECOGNISED, damaged_header_flash, device, flash_without_firmware, newer_boards,
+    newer_firmware_flash, replaced_instance_board, size_of, unrecognised_reasons,
+};
+use crate::commissioning::device_lines;
+use crate::inspect::unrecognised_firmware_lines;
+use crate::test_board::{acme_board, blank_board, commissioned_board, table};
+
+/// Prints the lines `scan` prints for a stopped One ROM whose firmware is for
+/// `board` and whose OTP is `otp`. Only its commissioning lines come from
+/// running the code.
+async fn scan(otp: &mut MemoryOtp, board: &str, verbose: bool) {
+    let area = onerom_app::read_commissioning(otp).await.unwrap();
+    let line = device(board, size_of(otp).await);
+    print_scan(&line, Some(board), &Commissioning::Read(area), verbose);
+}
+
+/// Prints the lines `scan` prints for a device shown with `line` whose
+/// firmware is for `board`, `None` where this build doesn't recognise it. Only
+/// the lines for `commissioning` come from running the code.
+fn print_scan(line: &str, board: Option<&str>, commissioning: &Commissioning, verbose: bool) {
+    let board = board.and_then(Board::try_from_str);
+    println!("$ onerom scan{}", if verbose { " --verbose" } else { "" });
+    println!("~ Scanning ... ");
+    println!("~ found 1 connected device:");
+    println!("~   {line}");
+    if verbose {
+        let variant = rp_variant(board, commissioning);
+        println!("~     MCU: {variant} Chip ID: DE3F9C232F655B6B");
+    }
+    for line in device_lines(board, commissioning, (verbose, verbose), &table(None)) {
+        println!("    {line}");
+    }
+}
+
+/// The RP2350 variant of `board`, or else of the board `commissioning`
+/// identifies. RP235xA where there isn't either.
+fn rp_variant(board: Option<Board>, commissioning: &Commissioning) -> RpVariant {
+    let commissioned = if let Commissioning::Read(area) = commissioning {
+        area.current()
+            .and_then(|instance| instance.board())
+            .and_then(Board::try_from_str)
+    } else {
+        None
+    };
+    board
+        .or(commissioned)
+        .and_then(|board| board.rp_variant())
+        .unwrap_or(RpVariant::Rp235xA)
+}
+
+/// `scan` without and with `--verbose` on `otp`, whose firmware is for
+/// `board`.
+async fn both(otp: &mut MemoryOtp, board: &str) {
+    scan(otp, board, false).await;
+    println!();
+    scan(otp, board, true).await;
+}
+
+#[tokio::test]
+async fn a_blank_board() {
+    both(&mut blank_board(), "fire-24-f").await;
+}
+
+#[tokio::test]
+async fn a_commissioned_m_board() {
+    let mut otp = commissioned_board("fire-24-f", BoardSize::M).await;
+    both(&mut otp, "fire-24-f").await;
+}
+
+#[tokio::test]
+async fn a_commissioned_l_board() {
+    let mut otp = commissioned_board("fire-40-a", BoardSize::L).await;
+    both(&mut otp, "fire-40-a").await;
+}
+
+/// An M fire-40-b commissioned by Acme Retro with its key, with `--verbose`.
+#[tokio::test]
+async fn a_manufacturers_board() {
+    scan(&mut acme_board().await, "fire-40-b", true).await;
+}
+
+/// The line a stopped board commissioned as L fire-40-a is shown with where
+/// this build doesn't recognise its firmware. It's written from `Device`'s
+/// `Display`.
+const COMMISSIONED_UNRECOGNISED: &str =
+    "One ROM Fire 40 A (L) - Firmware: n/a   State: Stopped Serial: DE3F9C232F655B6B";
+
+/// A board commissioned as L fire-40-a whose flash doesn't hold firmware.
+#[tokio::test]
+async fn a_commissioned_board_without_firmware() {
+    let mut otp = commissioned_board("fire-40-a", BoardSize::L).await;
+    for verbose in [false, true] {
+        let area = onerom_app::read_commissioning(&mut otp).await.unwrap();
+        print_scan(
+            COMMISSIONED_UNRECOGNISED,
+            None,
+            &Commissioning::Read(area),
+            verbose,
+        );
+        println!();
+    }
+}
+
+/// A board with two instances, the second written by `--force` with another
+/// date.
+#[tokio::test]
+async fn two_instances() {
+    scan(&mut replaced_instance_board().await, "fire-24-f", true).await;
+}
+
+/// Data from a newer version. First an area holding version 2, then an
+/// instance holding an unknown key.
+#[tokio::test]
+async fn newer_data() {
+    for (name, mut otp) in newer_boards() {
+        println!("### {name}");
+        both(&mut otp, "fire-24-f").await;
+        println!();
+    }
+}
+
+/// A One ROM running One ROM Lab, which refuses OTP access.
+#[test]
+fn a_running_lab() {
+    for verbose in [false, true] {
+        print_scan(
+            RUNNING_LAB,
+            Some("fire-24-e"),
+            &Commissioning::LabRunning,
+            verbose,
+        );
+        println!();
+    }
+}
+
+/// Prints the lines `scan --slots --unrecognised` prints for a stopped board
+/// whose flash holds `image` and whose OTP isn't commissioned. Only the lines
+/// beneath the device's line come from running the code.
+async fn scan_slots(image: Vec<u8>) {
+    let reasons = unrecognised_reasons(image).await;
+    println!("$ onerom scan --slots --unrecognised");
+    println!("~ Scanning ... ");
+    println!("~ found 1 connected device:");
+    println!("~ ---");
+    println!("~ {UNRECOGNISED}");
+    for line in unrecognised_firmware_lines(&reasons) {
+        println!("  {line}");
+    }
+}
+
+/// Firmware newer than this build reads. The parser provides one reason.
+#[tokio::test]
+async fn newer_firmware() {
+    scan_slots(newer_firmware_flash()).await;
+}
+
+/// A v0.8.0 header with a null build date pointer, whose metadata is zeros.
+/// The parser provides two reasons.
+#[tokio::test]
+async fn a_damaged_header() {
+    scan_slots(damaged_header_flash()).await;
+}
+
+/// Erased flash, then flash reading all zeros. The parser doesn't provide a
+/// reason for either.
+#[tokio::test]
+async fn no_one_rom_firmware() {
+    for (name, image) in flash_without_firmware() {
+        println!("### {name}");
+        scan_slots(image).await;
+        println!();
+    }
+}
+
+#[tokio::test]
+async fn reserved_pins() {
+    use crate::inspect::reserved_pins_line;
+    use crate::test_board::image_2364;
+    use onerom_cli::image::parse_firmware;
+
+    let image = parse_firmware(&image_2364(3, &["sel_c", "x1"])).await;
+    for verbose in [false, true] {
+        println!(
+            "$ onerom scan --slots{}",
+            if verbose { " --verbose" } else { "" }
+        );
+        println!("~ Scanning ... ");
+        println!("~ found 1 connected device:");
+        println!("~ ---");
+        println!("~ One ROM Fire 24 F - Firmware: v0.8.0 State: Running Serial: DE3F9C232F655B6B");
+        if verbose {
+            println!("~   MCU: RP235xA Chip ID: DE3F9C232F655B6B");
+        }
+        println!("~   Configured with 3 slots - Slot 0 is active");
+        if let Some(line) = reserved_pins_line(&image) {
+            println!("  {line}");
+        }
+        println!("~   Slot 0 (active):");
+        println!();
+    }
+}

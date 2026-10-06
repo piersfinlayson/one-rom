@@ -310,7 +310,7 @@ pub enum HeaderRoleP {
     Addr(u8),
 }
 
-/// A parsed pad state (build-time owned mirror of `HeaderSlot`).
+/// A parsed pin state (build-time owned mirror of `HeaderSlot`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HeaderSlotP {
     NotPopulated,
@@ -1077,7 +1077,7 @@ pub fn validate_jumper_header(name: &str, cols: &[HeaderColumnP], pins: &McuPins
 
     for (col, row, slot) in &slots {
         for role in slot_roles(slot) {
-            // The extra (row 3) pad carries only "extra config" roles - an X pin
+            // The extra (row 3) pin carries only "extra config" roles - an X pin
             // or a high address line broken out on the header.
             if *row == 3
                 && !matches!(
@@ -1159,12 +1159,12 @@ fn check_swd(
     slots: &[(u8, u8, &HeaderSlotP)],
     pins: &McuPins,
 ) {
-    // At most one pad may carry a given SWD signal.
+    // At most one pin may carry a given SWD signal.
     if locs.len() > 1 {
         panic!("{name}: jumper_header tags {which} more than once");
     }
 
-    // The select bit (if any) sharing the SWD pad.
+    // The select bit (if any) sharing the SWD pin.
     let muxed_bit = |col: u8, row: u8| -> Option<u8> {
         let slot = slots
             .iter()
@@ -1178,26 +1178,26 @@ fn check_swd(
 
     if sel_gpio == 255 {
         // This board does not route SWD onto an image-select pin. A standalone
-        // SWD pad is fine (e.g. a 2-select board whose SWD pins share the header
-        // but are not image selects); it just must not sit on a select pad,
+        // SWD pin is fine (e.g. a 2-select board whose SWD pins share the header
+        // but are not image selects); it just must not sit on a select pin,
         // which would imply a multiplexing the board does not declare.
         if let Some(&(col, row)) = locs.first() {
             assert!(
                 muxed_bit(col, row).is_none(),
-                "{name}: jumper_header {which} shares an image-select pad (col {col}) but no {which}_sel pin is set"
+                "{name}: jumper_header {which} shares an image-select pin (col {col}) but no {which}_sel pin is set"
             );
         }
         return;
     }
 
     // SWD is multiplexed onto an image-select pin: the header must tag it, on the
-    // select pad whose GPIO is {which}_sel.
+    // select pin whose GPIO is {which}_sel.
     if locs.len() != 1 {
         panic!("{name}: jumper_header must tag {which} exactly once ({which}_sel is set)");
     }
     let (col, row) = locs[0];
     let bit = muxed_bit(col, row).unwrap_or_else(|| {
-        panic!("{name}: jumper_header {which} pad (col {col}) is not also an image-select pad")
+        panic!("{name}: jumper_header {which} pin (col {col}) is not also an image-select pin")
     });
     let gpio = pins.sel.get(bit as usize).copied().unwrap_or_else(|| {
         panic!("{name}: jumper_header {which} select bit {bit} is out of range")

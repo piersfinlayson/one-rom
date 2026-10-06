@@ -53,7 +53,11 @@ void (* const g_pfnVectors[])(void) = {
     // 20-23
     Default_Handler, Default_Handler, Default_Handler, Default_Handler,
     // 24-27
+#if defined(STM32F4)
     Default_Handler, Default_Handler, Default_Handler, Default_Handler,
+#else // RP235X
+    Default_Handler, Default_Handler, irq_handler_dma_irq_0, Default_Handler,
+#endif 
     // 28-31
 #if defined(STM32F4)
     Default_Handler, Default_Handler, Default_Handler, Default_Handler,

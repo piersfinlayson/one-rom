@@ -9,7 +9,6 @@
 
 #include "usb_plugin.h"
 #include "usb_picobootx.h"
-#include "include.h"
 
 uint32_t app_get_active_rom_size(const usb_plugin_context_t *ctx);
 pb_status_t app_get_logical_byte_from_logical_addr(

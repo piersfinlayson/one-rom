@@ -1,6 +1,6 @@
 [package]
 name = "onerom-cli"
-version = "0.4.1"
+version = "0.5.0"
 edition = "2024"
 authors = ["Piers Finlayson <piers@piers.rocks>"]
 license = "MIT"
@@ -25,20 +25,28 @@ onerom-config = { workspace = true }
 onerom-fw = { workspace = true }
 onerom-gen = { workspace = true }
 onerom-fw-parser = { workspace = true }
+onerom-lab-parser = { workspace = true }
 onerom-metadata = { workspace = true }
 
-picoboot = { version = "0.2.6", features = ["reader", "tokio"] }
+picoboot = { version = "0.3.0", features = ["reader", "tokio"] }
 
 base64 = { version = "0.22" }
 bytes = "1.10"
 clap = { version = "4.5", features = ["derive"] }
 crossterm = "0.29"
+ed25519-dalek = { version = "3", features = ["pem"] }
 enum_dispatch = "0.3"
 env_logger = "0.11"
 hex = { version = "0.4" }
 log = "0.4"
 nusb = { version = "0.2.5", features = ["tokio"] }
-reqwest = { version = "0.12", default-features = false, features = ["json", "charset", "blocking", "rustls-tls"] }
+# encryption decrypts an encrypted --key file, as the signing server decrypts
+# its own keys.
+pkcs8 = { version = "0.11", features = ["encryption", "pem"] }
+# rustls-tls-native-roots adds the operating system's root certificates to the
+# bundled ones. A signing server can then use a certificate from a private CA
+# that the machine trusts.
+reqwest = { version = "0.12", default-features = false, features = ["json", "charset", "blocking", "rustls-tls", "rustls-tls-native-roots"] }
 semver = "1.0"
 serde = { version = "1.0", default-features = false, features = ["derive"] }
 serde_json = "1.0"
@@ -54,6 +62,7 @@ serde_json = "1.0"
 # every build.
 serialport = { version = "4.9", default-features = false, features = ["usbportinfo-interface"] }
 sha2 = "0.11"
+time = "0.3"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "time"] }
 thiserror = "2.0"
 wildmatch = "2.6"
@@ -67,6 +76,7 @@ git2 = { version = "0.20", default-features = false }
 static_vcruntime = "3.0"
 
 [dev-dependencies]
+onerom-lab-metadata = { workspace = true }
 tempfile = "3"
 
 # Cargo deb metadata for building Linux deb packages

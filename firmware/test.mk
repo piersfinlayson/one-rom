@@ -72,7 +72,7 @@ LIB := $(BUILD_DIR)/libonerom-test.a
 
 # Source files
 SRCS := src/constants.c src/build_date.c src/globals.c src/log.c src/rtt.c \
-		src/main.c src/plugin.c src/utils.c \
+		src/main.c src/otp.c src/plugin.c src/utils.c \
 		src/vector.c src/rp235x.c src/piodma/pio.c \
 		src/piodma/piorom2.c src/piodma/pioram.c src/piodma/dma.c \
 		src/piodma/pioplugin.c src/piodma/pioled.c \
@@ -82,7 +82,9 @@ OBJS := $(patsubst src/%.c,$(BUILD_DIR)/%.o,$(filter src/%,$(SRCS)))
 OBJS += $(patsubst test/%.c,$(BUILD_DIR)/%.o,$(filter test/%,$(SRCS)))
 OBJS += $(patsubst generated/%.c,$(BUILD_DIR)/%.o,$(filter generated/%,$(SRCS)))
 
-GIT_COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+# Cut to 7 characters so the NUL fits onerom_info_t's 8-byte commit field.
+# --short is not used because git lengthens it as the repo grows.
+GIT_COMMIT := $(or $(shell git rev-parse HEAD 2>/dev/null | cut -c1-7),unknown)
 
 # Compile flags:
 # - fsanitize=address -fno-omit-frame-pointer for debug builds

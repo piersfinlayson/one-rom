@@ -38,8 +38,8 @@
 //!
 //! This crate performs no I/O. The asynchronous entry points (in the logic
 //! portion of this module) obtain manifest and binary bytes through the
-//! host-supplied [`PluginFetch`] trait, keeping all transport - `reqwest`,
-//! browser `fetch`, SWD, and so on - out of the crate.
+//! host-supplied [`Fetch`](crate::Fetch) trait, keeping all transport -
+//! `reqwest`, browser `fetch`, SWD, and so on - out of the crate.
 
 use alloc::collections::BTreeSet;
 use alloc::string::{String, ToString};
@@ -48,10 +48,12 @@ use core::fmt;
 
 use onerom_config::chip::ChipType as OraChipType;
 use onerom_config::fw::FirmwareVersion;
-use onerom_gen::{Builder, ChipConfig, ChipSetConfig, ChipSetType, SizeHandling};
+use onerom_gen::{Builder, ChipConfig, ChipSetConfig, ChipSetType, ChipTypeSpec, SizeHandling};
+use onerom_metadata::{SYSTEM_PLUGIN_SIZE, USER_PLUGIN_SIZE};
 use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, PluginError};
+use crate::fetch::LocalFetch;
 
 /// Base URL for plugin manifests and binaries on the images server.
 ///
@@ -859,7 +861,7 @@ impl PluginDisplay {
 /// manifest data unset, so the caller always gets a usable result and
 /// [`PluginDisplay::display_label`] falls back to the slug. A local source
 /// performs no I/O.
-pub async fn resolve_plugin_display<F: LocalPluginFetch>(
+pub async fn resolve_plugin_display<F: LocalFetch>(
     slot_index: usize,
     source: &str,
     fetch: &F,
@@ -891,38 +893,6 @@ pub async fn resolve_plugin_display<F: LocalPluginFetch>(
         plugin_type,
         origin,
     })
-}
-
-// ============================================================
-// PluginFetch trait
-// ============================================================
-
-/// Host-supplied transport for fetching plugin manifests and binaries.
-///
-/// `onerom-app` performs no I/O of its own: every network or filesystem access
-/// is delegated to an implementation of this trait. The single method is given
-/// a source - a URL or path produced by the crate - and must return the bytes,
-/// or the host's own error.
-///
-/// # `Send` variants
-///
-/// This trait is declared through [`trait_variant`], which generates two forms:
-///
-/// - [`LocalPluginFetch`] - the base trait, whose `fetch` future need not be
-///   `Send`. Suitable for single-threaded executors such as the browser
-///   (WASM) and Embassy (embedded).
-/// - `PluginFetch` - a variant whose `fetch` future is `Send`, suitable for
-///   multi-threaded executors such as the CLI's Tokio runtime.
-///
-/// A type that implements `LocalPluginFetch` and whose future is `Send`
-/// automatically satisfies `PluginFetch`.
-#[trait_variant::make(PluginFetch: Send)]
-pub trait LocalPluginFetch {
-    /// The host's transport error type.
-    type Error;
-
-    /// Fetch the bytes at `source` (a URL or path).
-    async fn fetch(&self, source: &str) -> Result<Vec<u8>, Self::Error>;
 }
 
 // ============================================================
@@ -969,10 +939,13 @@ const ORA_PLUGIN_HEADER_SIZE: usize = 256;
 
 /// Maximum plugin binary size, in bytes.
 ///
-/// A plugin occupies exactly one 64 KB slot in the firmware image. Smaller
+/// A plugin occupies exactly one plugin region in the firmware image. Smaller
 /// binaries are padded during the build; larger binaries cannot fit and are
 /// rejected.
-const PLUGIN_MAX_SIZE: usize = 64 * 1024;
+const PLUGIN_MAX_SIZE: usize = SYSTEM_PLUGIN_SIZE;
+
+// Both plugin regions are the same size, so one bound serves either type.
+const _: () = assert!(USER_PLUGIN_SIZE == SYSTEM_PLUGIN_SIZE);
 
 /// The parts of a plugin binary header that `onerom-app` reads.
 ///
@@ -1258,7 +1231,8 @@ pub fn plugin_to_chip_set_config(
 
     // A plugin is always a raw binary image with no chip selects, so
     // everything beyond the file, type and size handling stays at its default.
-    let mut chip = ChipConfig::new(file.into(), chip_type.into());
+    let chip_type = ChipTypeSpec::new(plugin_type.canonical().into(), chip_type);
+    let mut chip = ChipConfig::new(file.into(), chip_type);
     chip.size_handling = size_handling;
 
     Ok(ChipSetConfig::new(ChipSetType::Single, alloc::vec![chip]))
@@ -1274,7 +1248,7 @@ pub fn plugin_to_chip_set_config(
 /// error untouched; JSON failures become [`PluginError::ManifestJson`].
 async fn fetch_json<F, T>(url: &str, fetch: &F) -> Result<T, Error<F::Error>>
 where
-    F: LocalPluginFetch,
+    F: LocalFetch,
     T: serde::de::DeserializeOwned,
 {
     let bytes = fetch.fetch(url).await.map_err(|e| Error::fetch(url, e))?;
@@ -1286,7 +1260,7 @@ where
 ///
 /// The catalogue holds plugin identities only; call
 /// [`Catalogue::load_all_releases`] to populate releases.
-async fn fetch_catalogue<F: LocalPluginFetch>(fetch: &F) -> Result<Catalogue, Error<F::Error>> {
+async fn fetch_catalogue<F: LocalFetch>(fetch: &F) -> Result<Catalogue, Error<F::Error>> {
     let wire: PluginsManifestWire = fetch_json(&plugins_manifest_url(), fetch).await?;
     Ok(Catalogue::from_wire(wire))
 }
@@ -1295,7 +1269,7 @@ async fn fetch_catalogue<F: LocalPluginFetch>(fetch: &F) -> Result<Catalogue, Er
 ///
 /// Populates `plugin.releases` (newest first) and the `display_name` and
 /// `description` from the release manifest. Existing releases are replaced.
-pub async fn fetch_releases<F: LocalPluginFetch>(
+pub async fn fetch_releases<F: LocalFetch>(
     plugin: &mut Plugin,
     fetch: &F,
 ) -> Result<(), Error<F::Error>> {
@@ -1314,7 +1288,7 @@ impl Catalogue {
     ///
     /// Performs a single fetch of the top-level manifest. Releases are not
     /// loaded; call [`Catalogue::load_all_releases`] to populate them.
-    pub async fn fetch<F: LocalPluginFetch>(fetch: &F) -> Result<Self, Error<F::Error>> {
+    pub async fn fetch<F: LocalFetch>(fetch: &F) -> Result<Self, Error<F::Error>> {
         fetch_catalogue(fetch).await
     }
 
@@ -1331,7 +1305,7 @@ impl Catalogue {
     /// still show the plugins that *are* available) should use
     /// [`load_all_releases_resilient`](Self::load_all_releases_resilient)
     /// instead.
-    pub async fn load_all_releases<F: LocalPluginFetch>(
+    pub async fn load_all_releases<F: LocalFetch>(
         &mut self,
         fetch: &F,
     ) -> Result<(), Error<F::Error>> {
@@ -1352,7 +1326,7 @@ impl Catalogue {
     /// This lets a caller (a CLI listing, the web dropdown) show every plugin
     /// that *is* reachable while reporting - or ignoring - the ones that are
     /// not, rather than losing the whole list to a single unreachable manifest.
-    pub async fn load_all_releases_resilient<F: LocalPluginFetch>(
+    pub async fn load_all_releases_resilient<F: LocalFetch>(
         &mut self,
         fetch: &F,
     ) -> Vec<(String, Error<F::Error>)> {
@@ -1383,7 +1357,7 @@ impl Catalogue {
 ///
 /// `fw` is the firmware version being built for, used to select the newest
 /// compatible release for unpinned named specs and to reject incompatible ones.
-pub async fn resolve_plugins<F: LocalPluginFetch>(
+pub async fn resolve_plugins<F: LocalFetch>(
     specs: &[PluginSpec],
     fw: &FirmwareVersion,
     fetch: &F,
@@ -1420,7 +1394,7 @@ pub async fn resolve_plugins<F: LocalPluginFetch>(
 }
 
 /// Resolve a single specification.
-async fn resolve_one<F: LocalPluginFetch>(
+async fn resolve_one<F: LocalFetch>(
     spec: &PluginSpec,
     catalogue: Option<&Catalogue>,
     fw: &FirmwareVersion,
@@ -1438,7 +1412,7 @@ async fn resolve_one<F: LocalPluginFetch>(
 
 /// Resolve a named specification: select the release, fetch and verify its
 /// binary, and build the [`ResolvedPlugin`].
-async fn resolve_named<F: LocalPluginFetch>(
+async fn resolve_named<F: LocalFetch>(
     name: &str,
     known_type: Option<PluginType>,
     pinned: Option<PluginVersion>,
@@ -1544,7 +1518,7 @@ fn select_release<'a>(
 /// Resolve a `file=` specification: fetch the binary, read its header for type
 /// and version, and build the [`ResolvedPlugin`]. There is no manifest, so the
 /// SHA-256 check is skipped and verification is header-only.
-async fn resolve_file<F: LocalPluginFetch>(
+async fn resolve_file<F: LocalFetch>(
     path: &str,
     fetch: &F,
 ) -> Result<ResolvedPlugin, Error<F::Error>> {
@@ -1584,6 +1558,53 @@ fn file_stem(path: &str) -> String {
 // ------------------------------------------------------------
 // Checking the plugins named by a config
 // ------------------------------------------------------------
+
+/// Set the file of each chip with a [`plugin`](ChipConfig::plugin) to the
+/// latest release of that plugin compatible with `fw`, as [`resolve_plugins`]
+/// does for a bare name.
+///
+/// Call before [`Builder::file_specs`]. Fetches nothing where no chip has a
+/// plugin. A plugin in the chip for the other type of plugin fails with
+/// [`PluginError::WrongChipType`].
+pub async fn resolve_config_plugins<F: LocalFetch>(
+    builder: &mut Builder,
+    fw: &FirmwareVersion,
+    fetch: &F,
+) -> Result<Vec<ResolvedPlugin>, Error<F::Error>> {
+    // onerom-gen fails a config with a plugin on any other chip type.
+    let named: Vec<(usize, String, PluginType)> = builder
+        .config()
+        .chip_sets
+        .iter()
+        .flat_map(|set| set.chips.iter())
+        .enumerate()
+        .filter_map(|(index, chip)| {
+            let configured = plugin_type_of_chip(chip.chip_type.resolved())?;
+            Some((index, chip.plugin.clone()?, configured))
+        })
+        .collect();
+    if named.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let catalogue = fetch_catalogue(fetch).await?;
+    let mut resolved = Vec::with_capacity(named.len());
+    for (chip_index, name, configured) in named {
+        let plugin_type = catalogue
+            .plugin_by_name(&name)
+            .ok_or_else(|| PluginError::NotFound(name.clone()))?
+            .plugin_type;
+        check_chip_type(&name, plugin_type, configured)?;
+
+        let plugin = resolve_named(&name, Some(plugin_type), None, None, fw, fetch).await?;
+        builder
+            .set_plugin_file(chip_index, plugin.file())
+            .expect("chip_index is a chip with a plugin");
+        resolved.push(plugin);
+    }
+
+    Ok(resolved)
+}
 
 /// A non-fatal observation from [`check_config_plugins`].
 ///
@@ -1643,7 +1664,8 @@ pub enum PluginNote<E> {
 /// [`PluginNote::Unofficial`]. For an official one the plugin's release
 /// manifest is fetched and the binary verified against the named release
 /// exactly as the `--plugin` path verifies it: SHA-256 digest, plugin type, and
-/// header-versus-manifest version.
+/// header-versus-manifest version. A plugin in the chip for the other type of
+/// plugin fails with [`PluginError::WrongChipType`].
 ///
 /// Errors are fatal and mean the image must not be built. A failure to *reach*
 /// the manifest is not one: it becomes [`PluginNote::Unchecked`] and the build
@@ -1651,7 +1673,7 @@ pub enum PluginNote<E> {
 ///
 /// `builder`'s files must already be loaded - a plugin chip whose image is not
 /// yet present is skipped, since there is nothing to verify.
-pub async fn check_config_plugins<F: LocalPluginFetch>(
+pub async fn check_config_plugins<F: LocalFetch>(
     builder: &Builder,
     fw: &FirmwareVersion,
     fetch: &F,
@@ -1678,12 +1700,11 @@ pub async fn check_config_plugins<F: LocalPluginFetch>(
             continue;
         };
 
-        // The chip type is what the image will actually do with the binary, so
-        // it - not the URL - is what the header is verified against.
         let chip_type = match plugin_type_of_chip(chip.chip_type.resolved()) {
             Some(t) => t,
             None => return Err(PluginError::PioNotSupported(source.clone())),
         };
+        check_chip_type(&name, url_type, chip_type)?;
 
         // The URL's own type locates the manifest, since it is where the binary
         // demonstrably came from.
@@ -1725,7 +1746,7 @@ pub async fn check_config_plugins<F: LocalPluginFetch>(
                 data,
                 VerifyTarget::Release {
                     release,
-                    expected_type: chip_type,
+                    expected_type: url_type,
                 },
                 source,
             )?;
@@ -1746,6 +1767,22 @@ pub async fn check_config_plugins<F: LocalPluginFetch>(
     }
 
     Ok(notes)
+}
+
+fn check_chip_type(
+    name: &str,
+    plugin_type: PluginType,
+    configured: PluginType,
+) -> Result<(), PluginError> {
+    if plugin_type == configured {
+        Ok(())
+    } else {
+        Err(PluginError::WrongChipType {
+            name: name.into(),
+            plugin_type,
+            configured,
+        })
+    }
 }
 
 /// The [`PluginType`] a plugin chip type denotes, or `None` for a PIO plugin,
@@ -1769,7 +1806,7 @@ fn plugin_type_of_chip(chip_type: OraChipType) -> Option<PluginType> {
 //
 // These cover the pure, synchronous logic and the private helpers that the
 // public API is built from. The asynchronous entry points (which require a
-// `PluginFetch` mock) are exercised by the integration tests in `tests/`.
+// `Fetch` mock) are exercised by the integration tests in `tests/`.
 
 #[cfg(test)]
 mod tests {
@@ -2207,6 +2244,7 @@ mod tests {
         assert_eq!(cfg.chips.len(), 1);
         let chip = &cfg.chips[0];
         assert_eq!(chip.chip_type.resolved(), OraChipType::SystemPlugin);
+        assert_eq!(chip.chip_type.raw(), "system_plugin");
         assert_eq!(chip.file, "http://x/p.bin");
         assert!(matches!(chip.size_handling, SizeHandling::Pad));
         assert!(chip.cs1.is_none() && chip.ce.is_none() && chip.oe.is_none());
@@ -2214,6 +2252,7 @@ mod tests {
 
         let user = plugin_to_chip_set_config("f", PluginType::User, PLUGIN_MAX_SIZE).unwrap();
         assert_eq!(user.chips[0].chip_type.resolved(), OraChipType::UserPlugin);
+        assert_eq!(user.chips[0].chip_type.raw(), "user_plugin");
         assert!(matches!(user.chips[0].size_handling, SizeHandling::None));
     }
 

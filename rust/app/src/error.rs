@@ -4,7 +4,7 @@
 
 //! Error types for `onerom-app`.
 //!
-//! There are two, reflecting the crate's pure/transport split:
+//! The two kinds reflect the crate's pure/transport split:
 //!
 //! - [`PluginError`] is the pure, structured error returned by every
 //!   synchronous decision function (manifest parsing, release selection,
@@ -13,10 +13,11 @@
 //!   output states *facts only*. It deliberately contains no application
 //!   specific guidance (for example "run `onerom plugin` to list plugins"):
 //!   that phrasing belongs to whichever application is reporting the error, and
-//!   is added there.
+//!   is added there. [`SignerError`] is the same kind of error for the signer
+//!   table.
 //!
 //! - [`Error`] is returned by the asynchronous entry points that delegate
-//!   fetching to a [`PluginFetch`](crate::PluginFetch) implementation. It is
+//!   fetching to a [`Fetch`](crate::Fetch) implementation. It is
 //!   generic over the host's transport error type `E` and carries it back out
 //!   untouched, so the host retains full typed access to its own fetch failures
 //!   (for example distinguishing a connection failure from an HTTP status
@@ -28,6 +29,7 @@ use core::fmt;
 use onerom_config::fw::FirmwareVersion;
 
 use crate::plugin::{CompatibleRelease, PluginType, PluginVersion};
+use crate::signers::SignerError;
 
 /// Render the way out of an incompatibility: the newest release that does work,
 /// or a statement that there is none.
@@ -142,6 +144,17 @@ pub enum PluginError {
     #[error("plugin '{0}' type mismatch: manifest says {1}, binary header says {2}")]
     TypeMismatch(String, PluginType, PluginType),
 
+    /// A config's chip for one type of plugin has a plugin of the other type.
+    #[error("'{name}' is a {plugin_type} plugin but is configured as the {configured} plugin")]
+    WrongChipType {
+        /// Plugin name.
+        name: String,
+        /// The plugin's published type.
+        plugin_type: PluginType,
+        /// The plugin type of the config's chip.
+        configured: PluginType,
+    },
+
     /// A plugin's version in the manifest did not match the version declared in
     /// its binary header. The fields are the plugin name, the manifest version,
     /// and the header version.
@@ -188,7 +201,7 @@ pub enum PluginError {
 /// The error type returned by `onerom-app`'s asynchronous entry points.
 ///
 /// Generic over the host transport error `E` supplied by the
-/// [`PluginFetch`](crate::PluginFetch) implementation. The crate never bounds,
+/// [`Fetch`](crate::Fetch) implementation. The crate never bounds,
 /// inspects, or stringifies `E`; it simply carries it back out so the host can
 /// match on its own error type. A [`Display`](core::fmt::Display) rendering is
 /// available only when `E` itself is `Display`, purely as a convenience for
@@ -206,11 +219,23 @@ pub enum Error<E> {
         /// The host's transport error.
         error: E,
     },
+
+    /// One of these was refused:
+    /// - a downloaded signer table
+    /// - its pointer
+    /// - a retired signer's record file
+    Signer(SignerError),
 }
 
 impl<E> From<PluginError> for Error<E> {
     fn from(e: PluginError) -> Self {
         Error::Plugin(e)
+    }
+}
+
+impl<E> From<SignerError> for Error<E> {
+    fn from(e: SignerError) -> Self {
+        Error::Signer(e)
     }
 }
 
@@ -235,6 +260,7 @@ impl<E: fmt::Display> fmt::Display for Error<E> {
             Error::Fetch { source, error } => {
                 write!(f, "failed to fetch '{source}': {error}")
             }
+            Error::Signer(e) => write!(f, "{e}"),
         }
     }
 }

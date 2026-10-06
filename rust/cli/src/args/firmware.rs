@@ -4,9 +4,42 @@
 
 //! Argument definitions for `onerom firmware`.
 
+use std::str::FromStr;
+
 use crate::args::{CommandTrait, program::ProgramArgs};
+use clap::builder::{PossibleValue, TypedValueParser};
 use clap::{Args, Subcommand};
 use enum_dispatch::enum_dispatch;
+use onerom_app::BoardSize;
+use onerom_cli::pin::{Pin, parse_reserve_pin};
+
+/// Value parser for `--size`, driven by [`BoardSize::supported_values`].
+///
+/// A size added to [`BoardSize`] is accepted here and appears in `--help`
+/// with its description, without a CLI change.
+#[derive(Clone)]
+struct BoardSizeParser;
+
+impl TypedValueParser for BoardSizeParser {
+    type Value = BoardSize;
+
+    fn parse_ref(
+        &self,
+        cmd: &clap::Command,
+        arg: Option<&clap::Arg>,
+        value: &std::ffi::OsStr,
+    ) -> Result<Self::Value, clap::Error> {
+        // The refusal's source is BoardSizeError, as it is with
+        // `value_parser = BoardSize::from_str`.
+        BoardSize::from_str.parse_ref(cmd, arg, value)
+    }
+
+    fn possible_values(&self) -> Option<Box<dyn Iterator<Item = PossibleValue> + '_>> {
+        Some(Box::new(BoardSize::supported_values().iter().map(|size| {
+            PossibleValue::new(size.name()).help(size.description())
+        })))
+    }
+}
 
 #[derive(Debug, Args)]
 pub struct FirmwareArgs {
@@ -17,6 +50,10 @@ pub struct FirmwareArgs {
 impl CommandTrait for FirmwareArgs {
     fn requires_device(&self) -> bool {
         self.command.requires_device()
+    }
+
+    fn uses_device(&self) -> bool {
+        self.command.uses_device()
     }
 }
 
@@ -109,7 +146,7 @@ pub struct FirmwareBuildArgs {
 
     /// ROM slot specification. May be repeated for multiple slots.
     ///
-    /// Format: file=<path_or_url>,type=<romtype>[,cs1=<logic>][,cs2=<logic>][,cs3=<logic>][,size-handling=<handling>][,format=<binary|ihex>][,load-address=<addr>][,cpu-freq=<freq>][,cpu-vreg=<voltage>][,led=<bool>][,force-16-bit=<bool>]
+    /// Format: file=<path_or_url>,type=<romtype>[,cs1=<logic>][,cs2=<logic>][,cs3=<logic>][,size-handling=<handling>][,format=<binary|ihex>][,load-address=<addr>][,cpu-freq=<freq>][,cpu-vreg=<voltage>][,led=<bool>][,force-16-bit=<bool>][,standby=<bool>]
     ///
     /// CS logic values: active-low (or 0), active-high (or 1), ignore.  The
     /// snake_case config spellings are also accepted.
@@ -128,8 +165,12 @@ pub struct FirmwareBuildArgs {
     /// Vreg voltage: e.g. 1.1, 1.10, 1.10v, 1.10V. Values above 1.10V require
     /// confirmation (suppressed with --yes). Must be a supported voltage level.
     ///
-    /// Boolean values (led, force-16-bit): on/off, true/false, 1/0.
+    /// Boolean values (led, force-16-bit, standby): on/off, true/false, 1/0.
     /// force-16-bit is only valid on 40-pin boards.
+    ///
+    /// standby=on boots One ROM into standby mode when this slot is selected.
+    /// In standby mode One ROM doesn't serve the ROM. With standby=on, file is
+    /// optional. Requires firmware v0.8.0 or later.
     ///
     /// Examples:
     ///
@@ -215,6 +256,10 @@ pub struct FirmwareBuildArgs {
     #[arg(long, short, value_name = "BOARD")]
     pub board: Option<String>,
 
+    /// Target board size
+    #[arg(long, value_name = "SIZE", value_parser = BoardSizeParser, default_value = "M")]
+    pub size: BoardSize,
+
     /// Firmware version to build against. Defaults to the latest release.
     #[arg(long, value_name = "VERSION")]
     pub version: Option<String>,
@@ -242,9 +287,7 @@ pub struct FirmwareBuildArgs {
     #[arg(long, value_name = "FILE", conflicts_with = "version")]
     pub base_firmware: Option<String>,
 
-    /// Continue despite non-fatal problems: assembled firmware parse errors, a
-    /// board type mismatch, and config warnings such as turbo boot with more
-    /// than one non-plugin ROM slot.
+    /// Continue despite non-fatal problems, reporting each as a warning.
     #[arg(long, short)]
     pub force: bool,
 
@@ -254,7 +297,7 @@ pub struct FirmwareBuildArgs {
     /// Mutually exclusive with --config and --slot.
     #[arg(
         long,
-        conflicts_with_all = ["config_file", "slot", "instance_name", "serial_override", "logging", "disable_swd", "turbo_boot"]
+        conflicts_with_all = ["config_file", "slot", "instance_name", "serial_override", "logging", "disable_swd", "turbo_boot", "reserve_pin"]
     )]
     pub no_config: bool,
 
@@ -286,11 +329,24 @@ pub struct FirmwareBuildArgs {
     /// More than one non-plugin slot is refused unless --force is given.
     #[arg(long, visible_aliases = ["turbo_boot"], default_missing_value = "true", num_args = 0..=1, conflicts_with_all = ["no_config"])]
     pub turbo_boot: Option<bool>,
+
+    /// Reserve a pin for another use, for example a pin connected to a host's
+    /// reset line. Repeat for each reserved pin.
+    ///
+    /// Requires firmware v0.8.0 or later.
+    ///
+    /// Example: --reserve-pin sel_c --reserve-pin x1
+    #[arg(long, visible_aliases = ["reserved-pin", "reserved_pins"], value_name = "PIN", value_parser = parse_reserve_pin, conflicts_with_all = ["no_config"])]
+    pub reserve_pin: Vec<Pin>,
 }
 
 impl CommandTrait for FirmwareBuildArgs {
     fn requires_device(&self) -> bool {
         false
+    }
+
+    fn uses_device(&self) -> bool {
+        self.board.is_none()
     }
 }
 
@@ -313,6 +369,10 @@ impl CommandTrait for FirmwareInspectArgs {
     fn requires_device(&self) -> bool {
         false
     }
+
+    fn uses_device(&self) -> bool {
+        self.firmware.is_none() && self.board.is_none()
+    }
 }
 
 #[derive(Debug, Args)]
@@ -329,6 +389,10 @@ pub struct FirmwareReleasesArgs {
 impl CommandTrait for FirmwareReleasesArgs {
     fn requires_device(&self) -> bool {
         false
+    }
+
+    fn uses_device(&self) -> bool {
+        !self.all && self.board.is_none()
     }
 }
 
@@ -363,6 +427,10 @@ impl CommandTrait for FirmwareDownloadArgs {
     fn requires_device(&self) -> bool {
         false
     }
+
+    fn uses_device(&self) -> bool {
+        self.board.is_none()
+    }
 }
 
 #[derive(Debug, Args)]
@@ -383,5 +451,75 @@ pub struct FirmwareChipsArgs {
 impl CommandTrait for FirmwareChipsArgs {
     fn requires_device(&self) -> bool {
         false
+    }
+
+    fn uses_device(&self) -> bool {
+        !self.all && self.board.is_none()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::error::Error as _;
+
+    use clap::Parser;
+    use clap::error::ErrorKind;
+    use onerom_app::BoardSizeError;
+
+    use super::*;
+    use crate::args::{Cli, Commands};
+
+    /// `onerom firmware build --board fire-40-a` and `options`, parsed.
+    fn build(options: &[&str]) -> Result<FirmwareBuildArgs, clap::Error> {
+        let words = ["onerom", "firmware", "build", "--board", "fire-40-a"];
+        let cli = Cli::try_parse_from(words.iter().chain(options))?;
+        let Commands::Firmware(firmware) = cli.command else {
+            panic!("not firmware");
+        };
+        let FirmwareCommands::Build(args) = firmware.command else {
+            panic!("not firmware build");
+        };
+        Ok(args)
+    }
+
+    #[test]
+    fn size_parses_every_size_in_either_case() {
+        for &size in BoardSize::supported_values() {
+            for text in [size.name().to_lowercase(), size.name().to_uppercase()] {
+                assert_eq!(build(&["--size", &text]).unwrap().size, size, "{text}");
+            }
+        }
+    }
+
+    #[test]
+    fn size_defaults_to_m() {
+        assert_eq!(build(&[]).unwrap().size, BoardSize::M);
+    }
+
+    #[test]
+    fn size_refuses_a_size_it_doesnt_know() {
+        for text in ["XL", "Q", ""] {
+            let error = build(&["--size", text]).unwrap_err();
+            assert_eq!(error.kind(), ErrorKind::ValueValidation, "{text:?}");
+            let reason = error
+                .source()
+                .and_then(|e| e.downcast_ref::<BoardSizeError>());
+            assert_eq!(reason, Some(&BoardSizeError::Unknown), "{text:?}");
+        }
+    }
+
+    /// `--help` lists each size with its description.
+    #[test]
+    fn size_help_lists_every_size() {
+        let values: Vec<PossibleValue> = BoardSizeParser.possible_values().unwrap().collect();
+        let sizes = BoardSize::supported_values();
+        assert_eq!(values.len(), sizes.len());
+        for (value, size) in values.iter().zip(sizes) {
+            assert_eq!(value.get_name(), size.name());
+            assert_eq!(
+                value.get_help().map(ToString::to_string).as_deref(),
+                Some(size.description())
+            );
+        }
     }
 }

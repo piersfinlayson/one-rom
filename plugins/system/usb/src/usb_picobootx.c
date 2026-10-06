@@ -122,8 +122,10 @@ void usb_picoboot_task(void) {
 // ---------------------------------------------------------------------------
 // Custom range handlers: logical ROM
 //
-// Base address APP_RANGE_LOGICAL_ROM_BASE.  Size is the logical ROM size of
-// the ROM currently being served, retrieved from ctx.
+// Base address ORA_LIVE_ROM_BASE_ADDR.  Size is the logical ROM size of
+// the ROM currently being served, retrieved from ctx.  A read returns the
+// original (un-mangled) byte at the given logical ROM address, regardless of
+// how the image is stored in RAM.
 // ---------------------------------------------------------------------------
 
 static pb_status_t app_range_logical_rom_read_prepare(
@@ -134,8 +136,9 @@ static pb_status_t app_range_logical_rom_read_prepare(
     const usb_plugin_context_t *uctx = (const usb_plugin_context_t *)ctx;
     uint32_t rom_size = app_get_active_rom_size(uctx);
 
-    if (addr < APP_RANGE_LOGICAL_ROM_BASE ||
-        (addr + len) > (APP_RANGE_LOGICAL_ROM_BASE + rom_size)) {
+    if (addr < ORA_LIVE_ROM_BASE_ADDR ||
+        len > rom_size ||
+        (addr - ORA_LIVE_ROM_BASE_ADDR) > (rom_size - len)) {
         return PB_STATUS_NOT_FOUND;
     }
 
@@ -175,8 +178,9 @@ static pb_status_t app_range_logical_rom_write_prepare(
     const usb_plugin_context_t *uctx = (const usb_plugin_context_t *)ctx;
     uint32_t rom_size = app_get_active_rom_size(uctx);
 
-    if (addr < APP_RANGE_LOGICAL_ROM_BASE ||
-        (addr + len) > (APP_RANGE_LOGICAL_ROM_BASE + rom_size)) {
+    if (addr < ORA_LIVE_ROM_BASE_ADDR ||
+        len > rom_size ||
+        (addr - ORA_LIVE_ROM_BASE_ADDR) > (rom_size - len)) {
         return PB_STATUS_NOT_FOUND;
     }
 
@@ -333,7 +337,7 @@ pb_status_t app_picoboot_write_prepare(
     }
 
     if (addr < FLASH_PROTECTED_END &&
-        (addr + size) > RP2350_FLASH_BASE) {
+        (addr + size) > ORA_FLASH_CS0_BASE_ADDR) {
         LOG("write_prepare: address in protected flash region: addr=0x%08lx size=%lu",
             (unsigned long)addr, (unsigned long)size);
         return PB_STATUS_NOT_PERMITTED;
@@ -374,7 +378,7 @@ pb_status_t app_picoboot_flash_erase_prepare(
 
 #if 0
     if (args->addr < FLASH_PROTECTED_END &&
-        (args->addr + args->size) > RP2350_FLASH_BASE) {
+        (args->addr + args->size) > ORA_FLASH_CS0_BASE_ADDR) {
         ERR("flash_erase_prepare: address in protected flash region: addr=0x%08x size=%u", args->addr, args->size);
         return PB_STATUS_NOT_PERMITTED;
     }
@@ -472,6 +476,30 @@ static pb_status_t onerom_gpio_query_prepare(const picoboot_cmd_t *cmd) {
     return onerom_in_xfer_begin(cmd, args->first_gpio, 0u);
 }
 
+// Apply a ONEROM_CMD_SET_STANDBY.  The standby value is left to
+// ora_set_standby to check.
+static pb_status_t onerom_set_standby(const onerom_set_standby_args_t *args) {
+    ora_set_standby_fn_t set_standby = context.ora_lookup_fn(ORA_ID_SET_STANDBY);
+    if (set_standby == NULL) {
+        return PB_STATUS_NOT_PERMITTED;
+    }
+
+    switch (set_standby(args->standby, 0u)) {
+        case ORA_RESULT_OK:
+            return PB_STATUS_OK;
+
+        case ORA_RESULT_INVALID_ARG:
+            return PB_STATUS_INVALID_ARG;
+
+        default:
+            // LCOV_UNREACHABLE_START - ora_set_standby returns only
+            // ORA_RESULT_OK and ORA_RESULT_INVALID_ARG.  The arm stays because
+            // the results are defined in api.h, not here.
+            return PB_STATUS_UNKNOWN_ERROR;
+            // LCOV_UNREACHABLE_STOP
+    }
+}
+
 static pb_status_t onerom_picobootx_dispatch(
     const picoboot_cmd_t *cmd,
     uint8_t *buf,
@@ -531,12 +559,18 @@ static pb_status_t onerom_picobootx_dispatch(
         case ONEROM_CMD_LED_QUERY:
             return onerom_led_query_prepare(cmd);
 
+        case ONEROM_CMD_SET_STANDBY:
+            if (cmd->transfer_len != 0u) {
+                return PB_STATUS_INVALID_CMD_LENGTH;
+            }
+            return onerom_set_standby((const onerom_set_standby_args_t *)cmd->args);
+
         default:
             return PB_STATUS_UNKNOWN_CMD;
     }
 }
 
-// Produce the bytes of an ONEROM_CMD_GET_CAPS response lying in
+// Produce the bytes of a ONEROM_CMD_GET_CAPS response lying in
 // [offset, offset + len), zero-padding past the end of onerom_caps_t.
 static void onerom_caps_bytes(uint8_t *buf, uint32_t offset, uint32_t len) {
     onerom_caps_t caps = {0};

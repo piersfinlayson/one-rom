@@ -20,7 +20,7 @@ extern limp_mode_pattern_t limp_mode_value;
 
 #define _ram_rom_image_start test_ram_rom_image_table
 
-#define RAM_ROM_TABLE_SIZE (512 * 1024)
+#define RAM_ROM_TABLE_SIZE MAX_ROM_IMAGE_SIZE
 
 void stub_log(const char* msg, ...);
 
@@ -33,6 +33,14 @@ void stub_log_prefix_v(const char* prefix, const char* msg, va_list args);
 uint64_t *get_ram_rom_image_table_aligned(void);
 uint8_t stub_set_sel_image(uint8_t image_index);
 void stub_set_rp_variant(uint8_t is_b);
+
+// Whether the firmware asked for the bootloader on this boot.
+//
+// On a device enter_bootloader() never returns and the One ROM stops serving.
+// The stub returns and firmware_main() carries on, so a refusal to boot leaves
+// no other trace for a test to find.  Cleared by onerom_test_reset(), so it
+// reads per boot.
+uint8_t stub_bootloader_entered(void);
 
 // Stands in for TIMER0's free-running microsecond counter, which
 // ora_get_plugin_uptime_ms() reads on a device.  There is no TIMER0 in this process
@@ -101,6 +109,17 @@ void stub_gpio_set_pio_owned(uint8_t gpio, uint8_t owned);
 // cares can say so.  Has no effect while the pin is an output, which reports
 // what it drives.
 void stub_set_gpio_input(uint8_t gpio, uint8_t level);
+
+// Stands in for OTP, which firmware_main() reads at boot.  A test sets what an
+// ECC read and a raw read of each row return.  The two aren't kept consistent,
+// as the firmware reads any one row only one way.  Every row reads 0, as an
+// unwritten row does, until a test sets it.
+//
+// A device's reset doesn't clear OTP, so onerom_test_reset() leaves this alone
+// and a test clears what it set with stub_otp_clear().
+void stub_otp_set_ecc(uint16_t row, const uint16_t *values, uint32_t count);
+void stub_otp_set_raw(uint16_t row, const uint32_t *values, uint32_t count);
+void stub_otp_clear(void);
 
 // Put the process-global state a device's reset would clear back to cold boot.
 //

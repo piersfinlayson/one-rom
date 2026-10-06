@@ -27,16 +27,6 @@
 #include "usb_descriptors.h"
 #include "usb_plugin.h"
 
-/* A combination of interfaces must have a unique product id, since PC will save device driver after the first plug.
- * Same VID/PID with different interface e.g MSC (first), then CDC (later) will possibly cause system error on PC.
- *
- * Auto ProductID layout's Bitmap:
- *   [MSB]       MIDI | HID | MSC | CDC          [LSB]
- */
-#define PID_MAP(itf, n)  ((CFG_TUD_##itf) ? (1 << (n)) : 0)
-#define USB_PID           (0x4000 | PID_MAP(CDC, 0) | PID_MAP(MSC, 1) | PID_MAP(HID, 2) | \
-                           PID_MAP(MIDI, 3) | PID_MAP(VENDOR, 4) )
-
 //--------------------------------------------------------------------+
 // Device Descriptors
 //--------------------------------------------------------------------+
@@ -53,8 +43,8 @@ static tusb_desc_device_t const desc_device =
     .bDeviceProtocol    = 0,
     .bMaxPacketSize0    = CFG_TUD_ENDPOINT0_SIZE,
 
-    .idVendor           = ONE_ROM_USB_SYSTEM_PLUGIN_VID,
-    .idProduct          = ONE_ROM_USB_SYSTEM_PLUGIN_PID,
+    .idVendor           = ORA_USB_PLUGIN_VID,
+    .idProduct          = ORA_USB_PLUGIN_PID,
     .bcdDevice          = 0x0100,
 
     .iManufacturer      = 0x01,
@@ -175,15 +165,29 @@ uint8_t const desc_ms_os_20[] =
   // Configuration subset header: length, type, configuration index, reserved, configuration total length
   U16_TO_U8S_LE(0x0008), U16_TO_U8S_LE(MS_OS_20_SUBSET_HEADER_CONFIGURATION), 0, 0, U16_TO_U8S_LE(MS_OS_20_DESC_LEN-0x0A),
 
-  // Function Subset header: length, type, first interface, reserved, subset length
-  U16_TO_U8S_LE(0x0008), U16_TO_U8S_LE(MS_OS_20_SUBSET_HEADER_FUNCTION), ITF_NUM_VENDOR, 0, U16_TO_U8S_LE(MS_OS_20_DESC_LEN-0x0A-0x08),
+  // Function subsets are in interface order because One ROM Lab matches these
+  // bytes exactly and embassy-usb writes its subsets in that order.
+
+  // Function Subset header for the dummy interface: length, type, first interface, reserved, subset length
+  //
+  // Without a driver bound, Windows lists the dummy interface in Device Manager
+  // as a device whose drivers are not installed.  Nothing opens it, so it has
+  // no DeviceInterfaceGUIDs property.
+  U16_TO_U8S_LE(0x0008), U16_TO_U8S_LE(MS_OS_20_SUBSET_HEADER_FUNCTION), ITF_NUM_DUMMY, 0, U16_TO_U8S_LE(0x0008+0x0014),
+
+  // MS OS 2.0 Compatible ID descriptor: length, type, compatible ID, sub compatible ID
+  U16_TO_U8S_LE(0x0014), U16_TO_U8S_LE(MS_OS_20_FEATURE_COMPATBLE_ID), 'W', 'I', 'N', 'U', 'S', 'B', 0x00, 0x00,
+  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // sub-compatible
+
+  // Function Subset header for the vendor interface: length, type, first interface, reserved, subset length
+  U16_TO_U8S_LE(0x0008), U16_TO_U8S_LE(MS_OS_20_SUBSET_HEADER_FUNCTION), ITF_NUM_VENDOR, 0, U16_TO_U8S_LE(MS_OS_20_DESC_LEN-0x0A-0x08-0x1C),
 
   // MS OS 2.0 Compatible ID descriptor: length, type, compatible ID, sub compatible ID
   U16_TO_U8S_LE(0x0014), U16_TO_U8S_LE(MS_OS_20_FEATURE_COMPATBLE_ID), 'W', 'I', 'N', 'U', 'S', 'B', 0x00, 0x00,
   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // sub-compatible
 
   // MS OS 2.0 Registry property descriptor: length, type
-  U16_TO_U8S_LE(MS_OS_20_DESC_LEN-0x0A-0x08-0x08-0x14), U16_TO_U8S_LE(MS_OS_20_FEATURE_REG_PROPERTY),
+  U16_TO_U8S_LE(MS_OS_20_DESC_LEN-0x0A-0x08-0x1C-0x08-0x14), U16_TO_U8S_LE(MS_OS_20_FEATURE_REG_PROPERTY),
   U16_TO_U8S_LE(0x0007), U16_TO_U8S_LE(0x002A), // wPropertyDataType, wPropertyNameLength and PropertyName "DeviceInterfaceGUIDs\0" in UTF-16
   'D', 0x00, 'e', 0x00, 'v', 0x00, 'i', 0x00, 'c', 0x00, 'e', 0x00, 'I', 0x00, 'n', 0x00, 't', 0x00, 'e', 0x00,
   'r', 0x00, 'f', 0x00, 'a', 0x00, 'c', 0x00, 'e', 0x00, 'G', 0x00, 'U', 0x00, 'I', 0x00, 'D', 0x00, 's', 0x00, 0x00, 0x00,

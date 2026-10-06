@@ -666,6 +666,11 @@ pub static SCENARIOS: &[Scenario] = &[
         run: aux::one_rom_withholds_pins_it_is_serving_with,
     },
     Scenario {
+        name: "conformance.aux.one_rom_offers_pins_whose_input_it_forces",
+        spec_ref: "One ROM policy, not RBCP — GET_AUX_PIN_INFO flags bit 0; SET_AUX",
+        run: aux::one_rom_offers_pins_whose_input_it_forces,
+    },
+    Scenario {
         name: "conformance.aux.queries_reject_an_absent_group_or_pin",
         spec_ref: "Group 0x05 — Auxiliary I/O (group or pin not one the device exposes)",
         run: aux::queries_reject_an_absent_group_or_pin,

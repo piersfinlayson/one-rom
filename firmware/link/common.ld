@@ -1,18 +1,17 @@
 /* This is the main One ROM linker script. */
 /* */
-/* It is included via a build specific linker script that is auto-generated and */
-/* looks like this: */
+/* It is included by linker.ld: */
 /* */
 /* INCLUDE "common_vars.ld" */
 /* */
 /* MEMORY */
 /* { */
-/*     FLASH (rx) : ORIGIN = 0x10000000, LENGTH = 2048K */
+/*     FLASH (rx) : ORIGIN = FLASH_CS0_BASE_ADDR, LENGTH = FIRMWARE_SIZE */
 /*     RAM (xrw)  : ORIGIN = 0x20000000, LENGTH = 520K */
 /* } */
 /*  */
-/* _Ram_Rom_Image_Start = ORIGIN(RAM) + 0x10000; */
-/* _Ram_Rom_Image_Size = 0x10000; */
+/* _Ram_Rom_Image_Start = ORIGIN(RAM); */
+/* _Ram_Rom_Image_Size = MAX_ROM_IMAGE_SIZE; */
 /*  */
 /* INCLUDE "common.ld" */
 /* */
@@ -53,30 +52,6 @@ SECTIONS
     /* These are stored in the firmware (flash) and copied to RAM at startup */
     /* in vector.c.*/
     _flash_main_firmware_end = .;
-
-    /* After the firmware, still in flash, comes the ROM image metadata. */
-    /* This is put at a specific offset (currently 48KB). */
-    INCLUDE "flash_metadata.ld"
-    /* Mark the end of metadata */
-    _flash_metadata_end = .;
-
-    /* Ensure firmware binary is at least 64KB even if no ROM images, by */
-    /* placing a single 0xFF byte at the 64KB - 1 byte mark */
-    .padding_to_rom_data (ORIGIN(FLASH) + 0x10000 - 1) :
-    {
-        BYTE(0xFF)
-    } >FLASH
-
-    /* And then the ROM data itself.  This is also put at a specific offset, */
-    /* currently 64KB. */
-    INCLUDE "flash_rom_data.ld"
-
-    /* This is the end of flash - nothing follows ROM data.  This means that */
-    /* firmware is always 48KB + size of ROM images.  As ROM images are */
-    /* either 16KB or 64KB, the firmware.bin is always a multiple of 16KB. */
-
-    /* Mark end of flash */
-    _flash_end = .;
 
     /* ------------ */
     /* RAM sections */
@@ -157,9 +132,8 @@ ASSERT(SIZEOF(.data) == 0,
 ASSERT(SIZEOF(.onerom_runtime_info) <= _Onerom_Runtime_Info_Size, 
     "Error: onerom_runtime_info structure too large for allocated space")
 
-ASSERT(_flash_firmware_end <= (ORIGIN(FLASH) + _Onerom_Flash_Size), 
-    "Error: Firmware exceeds 48KB reserved space")
-
-/* Check metadata fits in reserved space */
-ASSERT(_flash_metadata_end <= (ORIGIN(FLASH) + _Onerom_Flash_Size + _Onerom_Metadata_Size),
-    "Error: Metadata exceeds 16KB reserved space")
+/* The FLASH region doesn't cover the runtime info's load copy, which AT() */
+/* places after the flash sections.  This checks the whole image, that copy */
+/* included, fits the firmware region. */
+ASSERT(_flash_firmware_end <= ORIGIN(FLASH) + FIRMWARE_SIZE,
+    "Error: Firmware exceeds its flash region")

@@ -7,34 +7,38 @@
 use dfu_rs::{DEFAULT_USB_TIMEOUT, Device as DfuDevice, DfuType, search_for_dfu};
 #[allow(unused_imports)]
 use log::{debug, error, info, trace, warn};
-use onerom_cli::usb::read_chip_info;
+use onerom_app::FlashPlan;
+use onerom_cli::Error as CliError;
+use onerom_cli::device::flash_chips;
+use onerom_cli::error::plan_error;
+use onerom_cli::usb::{read_board_size, read_chip_info, read_commissioning, run_flash_plan};
 use onerom_config::Model;
+use onerom_config::hw::Board;
 use onerom_config::mcu::{Rp235xChipId, RpVariant};
+use onerom_metadata::{USB_BOOTLOADER_PID, USB_BOOTLOADER_VID, USB_PLUGIN_PID, USB_PLUGIN_VID};
 use picoboot::{Picoboot, Target};
 use std::time::Duration;
 
 use crate::app::AppMessage;
-use crate::device::{Address, Client, Message};
+use crate::device::{
+    Address, BoardDetails, Client, Message, UNKNOWN_FLASH_STEP, check_commissioned_board,
+};
 use crate::hw::HardwareInfo;
 use crate::internal_error;
 
-pub const FIRE_VID: u16 = 0x1209;
-pub const FIRE_BOOT_LOADER_PID: u16 = 0xf540;
-pub const FIRE_RUN_PID: u16 = 0xf542;
-
 // Studio can manage:
 // - Stock RP2350 MCUs
-// - One ROM's custom bootloader VID/PID 1209:f540
-// - One ROM's application VID/PID 1209:f542
+// - A commissioned One ROM's bootloader
+// - One ROM running the system USB plugin
 const FIRE_TARGETS: [Target; 3] = [
     Target::Rp2350,
     Target::Custom {
-        vid: FIRE_VID,
-        pid: FIRE_BOOT_LOADER_PID,
+        vid: USB_BOOTLOADER_VID,
+        pid: USB_BOOTLOADER_PID,
     },
     Target::Custom {
-        vid: FIRE_VID,
-        pid: FIRE_RUN_PID,
+        vid: USB_PLUGIN_VID,
+        pid: USB_PLUGIN_PID,
     },
 ];
 
@@ -100,6 +104,10 @@ async fn get_fire_list_async() -> Option<Vec<UsbDeviceType>> {
                             (None, None)
                         }
                     };
+                    // Each operation opens its own connection from a copy of
+                    // this handle and closes it when done.  A kept connection
+                    // fails once the CLI or another program uses the device.
+                    p.disconnect();
                     usb_devices.push(UsbDeviceType::from_picoboot(p, chip_id, package));
                 }
             }
@@ -123,6 +131,7 @@ pub async fn get_usb_device_list_delay(duration: Duration) -> AppMessage {
 /// identity read from it at enumeration.
 #[derive(Debug, Clone)]
 pub struct FireDevice {
+    // Not connected - see get_fire_list_async()
     picoboot: Picoboot,
     chip_id: Option<Rp235xChipId>,
     package: Option<RpVariant>,
@@ -198,7 +207,7 @@ impl UsbDeviceType {
     pub fn is_run_capable(&self) -> bool {
         matches!(
             self,
-            UsbDeviceType::Fire(fire) if fire.vid() == FIRE_VID && fire.pid() == FIRE_RUN_PID
+            UsbDeviceType::Fire(fire) if fire.vid() == USB_PLUGIN_VID && fire.pid() == USB_PLUGIN_PID
         )
     }
 
@@ -277,16 +286,47 @@ pub async fn read_async(
     }
 }
 
+/// Read the board size and commissioned board of a Fire device.  Sends
+/// Message::BoardDetailsRead when done.  The details are empty for an Ice
+/// device.
+pub async fn read_board_details_async(usb_device: UsbDeviceType, client: Client) -> AppMessage {
+    let details = match usb_device {
+        UsbDeviceType::Ice(_) => BoardDetails::default(),
+        UsbDeviceType::Fire(fire) => BoardDetails {
+            size: read_board_size(&fire.picoboot).await,
+            commissioned: read_commissioned_board(&fire.picoboot).await,
+        },
+    };
+    Message::BoardDetailsRead(client, details).into()
+}
+
+// The board the current commissioning instance identifies.  A failed read is
+// logged.
+async fn read_commissioned_board(picoboot: &Picoboot) -> Option<String> {
+    match read_commissioning(picoboot).await {
+        Ok(area) => area.current()?.board().map(str::to_string),
+        Err(e) => {
+            warn!(
+                "Failed to read the commissioning area of Fire USB ({}): {e}",
+                picoboot.info()
+            );
+            None
+        }
+    }
+}
+
 /// Flash firmware to a device using USB DFU
 pub async fn flash_async(
     usb_device: UsbDeviceType,
-    _hw_info: HardwareInfo,
+    hw_info: HardwareInfo,
     client: Client,
     data: Vec<u8>,
 ) -> AppMessage {
     match usb_device {
         UsbDeviceType::Ice(d) => flash_ice_async(d, client, data).await,
-        UsbDeviceType::Fire(fire) => flash_fire_async(fire.picoboot, client, data).await,
+        UsbDeviceType::Fire(fire) => {
+            flash_fire_async(fire.picoboot, hw_info.board, client, data).await
+        }
     }
 }
 
@@ -320,23 +360,49 @@ async fn flash_ice_async(dfu_device: DfuDevice, client: Client, data: Vec<u8>) -
     }
 }
 
-async fn flash_fire_async(mut picoboot: Picoboot, client: Client, data: Vec<u8>) -> AppMessage {
+/// `image_board` is the board the image is for.
+async fn flash_fire_async(
+    mut picoboot: Picoboot,
+    image_board: Option<Board>,
+    client: Client,
+    data: Vec<u8>,
+) -> AppMessage {
     debug!("Flash firmware to Fire USB");
-    // Set a timeout to 10s in case a very large flash erase takes a very long time
+    // An image for another board fails to flash to a commissioned board.
+    // Where the commissioning can't be read the flash goes ahead.
+    let commissioned = read_commissioned_board(&picoboot).await;
+    if let Err(log) = check_commissioned_board(commissioned.as_deref(), image_board) {
+        warn!("{log}");
+        return Message::FlashFirmwareResult(client, Err(log)).into();
+    }
+
+    // The plan is for the flash chips of the board being written.
+    let size = read_board_size(&picoboot).await;
+    let plan = match FlashPlan::new(&data, &flash_chips(size)) {
+        Ok(plan) => plan,
+        Err(e) => {
+            let log = plan_error(e, data.len(), size).to_string();
+            warn!("{log}");
+            return Message::FlashFirmwareResult(client, Err(log)).into();
+        }
+    };
+
+    // Set a timeout to 20s in case a very large flash erase takes a very long time
     picoboot.set_timeouts(picoboot::usb::Timeouts {
         endpoint: Duration::from_secs(20),
         ..picoboot::usb::Timeouts::default()
     });
-    match picoboot
-        .flash_erase_and_write(picoboot.target().flash_start(), &data)
-        .await
-    {
+    match run_flash_plan(&mut picoboot, &plan).await {
         Ok(()) => {
             debug!(
                 "Successfully flashed firmware onto Fire USB ({})",
                 picoboot.info()
             );
             Message::FlashFirmwareResult(client, Ok(())).into()
+        }
+        Err(CliError::UnknownFlashStep) => {
+            warn!("Flash plan has a step Studio doesn't know");
+            Message::FlashFirmwareResult(client, Err(UNKNOWN_FLASH_STEP.to_string())).into()
         }
         Err(e) => {
             let log = format!(

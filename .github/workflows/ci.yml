@@ -18,6 +18,7 @@ on:
       - 'onerom-config/**'
       - '.github/**'
       - '!.github/workflows/release.yml'
+      - '!.github/workflows/lab-release.yml'
       - '!**.md'
       - '!docs/**'
       # A document under docs/ can carry a fragment region, whose text belongs
@@ -41,6 +42,7 @@ on:
       - 'onerom-config/**'
       - '.github/**'
       - '!.github/workflows/release.yml'
+      - '!.github/workflows/lab-release.yml'
       - '!**.md'
       - '!docs/**'
       # A document under docs/ can carry a fragment region, whose text belongs
@@ -74,6 +76,11 @@ on:
 # unpacks a .tar.xz, so every job needs xz-utils; only the two jobs that install
 # the Emscripten SDK need python3, which emsdk itself runs on.
 #
+# Every Linux job runs on ubuntu-24.04 rather than ubuntu-latest, to match the
+# build container (ci/docker/Dockerfile).  The coverage floors come from CI's
+# figures and the container reproduces them, so both must install the same
+# build of the pinned compiler.  Move the two together.
+#
 # The Linux packages jobs are the exception to all of this.  The build job
 # installs only what rust/cli/scripts/build-linux.sh and
 # rust/studio/scripts/build-linux.sh install, as the release build machine
@@ -82,9 +89,9 @@ on:
 jobs:
   lint:
     name: Lint (rustfmt + clippy)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
 
     - name: Install build dependencies
       run: |
@@ -98,7 +105,7 @@ jobs:
         components: rustfmt, clippy
 
     - name: Cache Arm GNU toolchain
-      uses: actions/cache@v4
+      uses: actions/cache@v6
       with:
         path: ~/arm-gnu-toolchain
         key: arm-toolchain-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('ci/arm-toolchain-version') }}
@@ -107,7 +114,7 @@ jobs:
       run: echo "TOOLCHAIN=$(ci/install-arm-toolchain.sh)" >> "$GITHUB_ENV"
 
     - name: Cache Emscripten SDK
-      uses: actions/cache@v4
+      uses: actions/cache@v6
       with:
         path: ~/emsdk
         key: emsdk-${{ runner.os }}-${{ hashFiles('ci/install-emscripten.sh', 'ci/emscripten-version') }}
@@ -136,9 +143,9 @@ jobs:
 
   rust-tests:
     name: Rust tests
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
 
     - name: Install build dependencies
       run: |
@@ -150,7 +157,7 @@ jobs:
       uses: dtolnay/rust-toolchain@stable
 
     - name: Cache Arm GNU toolchain
-      uses: actions/cache@v4
+      uses: actions/cache@v6
       with:
         path: ~/arm-gnu-toolchain
         key: arm-toolchain-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('ci/arm-toolchain-version') }}
@@ -167,14 +174,14 @@ jobs:
 
   docs-pdf:
     name: Documentation PDFs
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # The PDFs are rendered from the committed markdown, and rust-tests is what
     # proves the generated documents (COMPATIBILITY.md, CHIP-TYPES.md) match a
     # fresh regeneration.  Building before that gate could publish a PDF that
     # disagrees with the repository.
     needs: rust-tests
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
 
     - name: Install build dependencies
       run: |
@@ -182,7 +189,7 @@ jobs:
         sudo apt-get install -y libpango-1.0-0 libpangoft2-1.0-0
 
     - name: Cache documentation toolchain
-      uses: actions/cache@v4
+      uses: actions/cache@v6
       with:
         path: ~/onerom-doc-tools
         key: doc-tools-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('ci/pandoc-version', 'ci/weasyprint-version') }}
@@ -197,16 +204,16 @@ jobs:
       run: ci/build-docs.sh
 
     - name: Upload documentation PDFs
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: docs-pdf
         path: docs/pdf/build/*.pdf
 
   c-tests:
     name: C tests
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
 
     # These compile firmware C for the host, so they need neither Rust nor the
     # Arm toolchain.  They do need the host compiler pinned in
@@ -224,9 +231,9 @@ jobs:
 
   rust-docs:
     name: Rust docs
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
 
     - name: Install build dependencies
       run: |
@@ -238,7 +245,7 @@ jobs:
       uses: dtolnay/rust-toolchain@stable
 
     - name: Cache Arm GNU toolchain
-      uses: actions/cache@v4
+      uses: actions/cache@v6
       with:
         path: ~/arm-gnu-toolchain
         key: arm-toolchain-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('ci/arm-toolchain-version') }}
@@ -254,17 +261,30 @@ jobs:
       run: ci/rust-docs.sh
 
   emulator-tests:
-    # One job per socket size.  The four are independent - every test in a group
-    # targets boards of that one size - and the 24 pin group is much the largest,
-    # so splitting this way puts the long pole on its own runner.
-    name: Emulator tests (${{ matrix.socket }} pin)
-    runs-on: ubuntu-latest
+    # One job per socket size, and two each for the 24 and 28 pin groups.  Every
+    # test in a group targets boards of that one size, so the groups are
+    # independent.  The 24 and 28 pin groups are the largest, so each runs as
+    # two halves of about equal time.
+    name: Emulator tests (${{ matrix.name }})
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
-        socket: [24, 28, 32, 40]
+        include:
+          - group: 24-1
+            name: 24 pin, part 1
+          - group: 24-2
+            name: 24 pin, part 2
+          - group: 28-1
+            name: 28 pin, part 1
+          - group: 28-2
+            name: 28 pin, part 2
+          - group: 32
+            name: 32 pin
+          - group: 40
+            name: 40 pin
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
 
     - name: Install build dependencies
       run: |
@@ -276,7 +296,7 @@ jobs:
       uses: dtolnay/rust-toolchain@stable
 
     - name: Cache Arm GNU toolchain
-      uses: actions/cache@v4
+      uses: actions/cache@v6
       with:
         path: ~/arm-gnu-toolchain
         key: arm-toolchain-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('ci/arm-toolchain-version') }}
@@ -287,12 +307,12 @@ jobs:
     - uses: Swatinem/rust-cache@v2
       with:
         workspaces: rust
-        # All four sockets build the same dependency graph, so they share one
-        # cache entry rather than populating four near-identical ones.
+        # Every job builds the same dependency graph, so they share one cache
+        # entry rather than populating near-identical ones.
         shared-key: emulator-tests
 
     - name: Run One ROM emulator tests
-      run: ci/test-emu.sh ${{ matrix.socket }}
+      run: ci/test-emu.sh ${{ matrix.group }}
 
   coverage:
     # The coverage campaign - ci/coverage-campaign.txt - and the per-file floor
@@ -305,9 +325,9 @@ jobs:
     # answer, not dropping runs from the campaign - fewer runs reach fewer
     # lines, and the floors would have to come down to match.
     name: Coverage
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
 
     - name: Install build dependencies
       run: |
@@ -398,16 +418,16 @@ jobs:
 
     - name: Upload tracefiles
       if: always()
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: coverage-tracefiles
         path: build/coverage/*.info
 
   firmware:
     name: Firmware and plugins
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
 
     - name: Install build dependencies
       run: |
@@ -419,7 +439,7 @@ jobs:
       uses: dtolnay/rust-toolchain@stable
 
     - name: Cache Arm GNU toolchain
-      uses: actions/cache@v4
+      uses: actions/cache@v6
       with:
         path: ~/arm-gnu-toolchain
         key: arm-toolchain-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('ci/arm-toolchain-version') }}
@@ -441,15 +461,16 @@ jobs:
         make -C plugins/system/usb
         make -C plugins/user/activity
         make -C plugins/user/blink
+        make -C plugins/user/ext-flash
         make -C plugins/user/host-control
         make -C plugins/user/rgb
         make -C firmware/ora/examples
 
   tools:
     name: Tools (One ROM Lab)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
 
     - name: Install build dependencies
       run: |
@@ -460,8 +481,17 @@ jobs:
     - name: Install Rust
       uses: dtolnay/rust-toolchain@stable
 
+    # Lab builds with the nightly pinned in rust/lab/rust-toolchain.toml rather
+    # than the stable toolchain above.  Installing it here puts its version in
+    # the log.
+    - name: Install Lab's pinned Rust toolchain
+      working-directory: rust/lab
+      run: |
+        rustup toolchain install --no-self-update
+        rustc --version
+
     - name: Cache Arm GNU toolchain
-      uses: actions/cache@v4
+      uses: actions/cache@v6
       with:
         path: ~/arm-gnu-toolchain
         key: arm-toolchain-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('ci/arm-toolchain-version') }}
@@ -483,13 +513,13 @@ jobs:
     name: Linux packages (CLI and Studio)
     runs-on: ubuntu-26.04-arm
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
 
     - name: Install Rust
       uses: dtolnay/rust-toolchain@stable
 
     - name: Cache zig and cargo-zigbuild
-      uses: actions/cache@v4
+      uses: actions/cache@v6
       with:
         path: ~/zig-toolchain
         key: zig-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('ci/zig-version', 'ci/cargo-zigbuild-version') }}
@@ -510,7 +540,7 @@ jobs:
       run: scripts/build-linux.sh noclean
 
     - name: Upload packages
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: linux-packages
         path: |
@@ -529,9 +559,9 @@ jobs:
             runner: ubuntu-26.04-arm
     runs-on: ${{ matrix.runner }}
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
 
-    - uses: actions/download-artifact@v4
+    - uses: actions/download-artifact@v8
       with:
         name: linux-packages
         path: linux-packages
@@ -541,9 +571,9 @@ jobs:
 
   lens:
     name: One ROM Lens (wasm)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
 
     - name: Install build dependencies
       run: |
@@ -555,7 +585,7 @@ jobs:
       uses: dtolnay/rust-toolchain@stable
 
     - name: Cache Arm GNU toolchain
-      uses: actions/cache@v4
+      uses: actions/cache@v6
       with:
         path: ~/arm-gnu-toolchain
         key: arm-toolchain-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('ci/arm-toolchain-version') }}
@@ -564,7 +594,7 @@ jobs:
       run: echo "TOOLCHAIN=$(ci/install-arm-toolchain.sh)" >> "$GITHUB_ENV"
 
     - name: Cache Emscripten SDK
-      uses: actions/cache@v4
+      uses: actions/cache@v6
       with:
         path: ~/emsdk
         key: emsdk-${{ runner.os }}-${{ hashFiles('ci/install-emscripten.sh', 'ci/emscripten-version') }}

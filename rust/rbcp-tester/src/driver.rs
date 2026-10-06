@@ -150,9 +150,6 @@ impl std::fmt::Display for Hdr {
 /// The response header is 8 bytes; the data section follows it.
 pub const HDR_SIZE: u32 = 8;
 
-/// `ORA_GPIO_USE_FREE`: One ROM is doing nothing with the pin.
-const GPIO_USE_FREE: u8 = 0;
-
 /// The knock this device implementation uses.  Not defined by the protocol —
 /// the specification requires only that device and host agree in advance.
 pub const KNOCK: [u8; 6] = *b"!RBCP!";
@@ -570,9 +567,9 @@ impl<'a> Bus<'a> {
     /// The level and driven bytes are deliberately not exposed: under a
     /// host-test build the firmware answers 0 for both whatever the pin is
     /// doing, so a scenario reading them here would be reading a constant.
-    pub fn gpio_in_use(&self, gpio: u8) -> Option<bool> {
+    pub fn gpio_use(&self, gpio: u8) -> Option<fw_ffi::ora_gpio_use_t> {
         let (r, info) = self.emu.gpio_query(gpio);
-        r.is_ok().then_some(info.gpio_use != GPIO_USE_FREE)
+        r.is_ok().then_some(info.gpio_use)
     }
 
     /// Put the millisecond counter the device times with at `us`

@@ -1,0 +1,25 @@
+[package]
+name = "onerom-lab-parser"
+version = "0.1.0"
+edition = "2024"
+authors = ["Piers Finlayson <piers@piers.rocks>"]
+license = "MIT"
+description = "One ROM Lab parser"
+repository = "https://github.com/piersfinlayson/one-rom"
+homepage = "https://onerom.org"
+readme = "README.md"
+keywords = ["retro", "rom", "embedded"]
+categories = ["embedded", "hardware-support", "no-std", "parsing"]
+
+[lib]
+name = "onerom_lab_parser"
+
+[dependencies]
+onerom-config = { workspace = true }
+onerom-lab-metadata = { workspace = true }
+onerom-metadata = { workspace = true }
+airfrog-rpc = { version = "^0.1.2" }
+log = "0.4"
+
+[lints]
+workspace = true

@@ -4,79 +4,21 @@
 
 //! Integration tests for `onerom-app`'s asynchronous entry points.
 //!
-//! These exercise the public API through a mock [`PluginFetch`] that serves
-//! manifest JSON and plugin binaries from an in-memory map, so the tests are
+//! These exercise the public API through a mock `LocalFetch` that serves manifest
+//! JSON and plugin binaries from an in-memory map, so the tests are
 //! deterministic and offline. One `#[ignore]`d canary at the end fetches the
 //! live manifest to confirm the real schema still deserialises; run it with
 //! `cargo test -- --ignored`.
 
-use std::collections::HashMap;
-use std::sync::Mutex;
+mod common;
 
+use common::{HttpFetch, MockFetch};
 use onerom_app::{
-    Catalogue, Error, LocalPluginFetch, PluginError, PluginNote, PluginType, PluginVersion,
-    ResolvedSource, check_config_plugins, parse_plugins, resolve_plugins,
+    Catalogue, Error, PluginError, PluginNote, PluginType, PluginVersion, ResolvedSource,
+    check_config_plugins, parse_plugins, resolve_config_plugins, resolve_plugins,
 };
 
 const BASE: &str = "https://images.onerom.org/plugins";
-
-// ------------------------------------------------------------
-// Mock fetcher
-// ------------------------------------------------------------
-
-/// Transport error type for the mock: a plain message.
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct MockErr(String);
-
-impl std::fmt::Display for MockErr {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
-
-/// A `PluginFetch` backed by a fixed URL -> bytes map.
-///
-/// A missing URL yields a [`MockErr`], modelling a transport failure. Every
-/// requested URL is recorded so tests can assert which fetches happened (for
-/// example, that `plugins.json` is fetched only when a bare name needs it).
-struct MockFetch {
-    responses: HashMap<String, Vec<u8>>,
-    requested: Mutex<Vec<String>>,
-}
-
-impl MockFetch {
-    fn new() -> Self {
-        Self {
-            responses: HashMap::new(),
-            requested: Mutex::new(Vec::new()),
-        }
-    }
-
-    fn with(mut self, url: &str, bytes: Vec<u8>) -> Self {
-        self.responses.insert(url.to_string(), bytes);
-        self
-    }
-
-    fn requested(&self) -> Vec<String> {
-        self.requested.lock().unwrap().clone()
-    }
-
-    fn was_requested(&self, url: &str) -> bool {
-        self.requested().iter().any(|u| u == url)
-    }
-}
-
-impl LocalPluginFetch for MockFetch {
-    type Error = MockErr;
-
-    async fn fetch(&self, source: &str) -> Result<Vec<u8>, Self::Error> {
-        self.requested.lock().unwrap().push(source.to_string());
-        self.responses
-            .get(source)
-            .cloned()
-            .ok_or_else(|| MockErr(format!("no mock response for {source}")))
-    }
-}
 
 // ------------------------------------------------------------
 // Fixtures
@@ -755,30 +697,178 @@ async fn config_without_plugins_checks_nothing() {
     assert!(fetch.requested().is_empty());
 }
 
+#[tokio::test]
+async fn config_plugin_url_in_the_wrong_chip_is_rejected() {
+    let bin = header(1, (0, 1, 0, 0));
+    let url = format!("{BASE}/user/rgb/v0.1.0/plugin.bin");
+    let fetch = MockFetch::new();
+
+    let builder = loaded_builder(&url, &bin);
+
+    let err = check_config_plugins(&builder, &fw("0.7.0"), &fetch)
+        .await
+        .expect_err("a user plugin can't be the system plugin");
+
+    assert_eq!(
+        err,
+        PluginError::WrongChipType {
+            name: "rgb".to_string(),
+            plugin_type: PluginType::User,
+            configured: PluginType::System,
+        }
+    );
+    assert!(fetch.requested().is_empty());
+}
+
+// ------------------------------------------------------------
+// resolve_config_plugins
+// ------------------------------------------------------------
+
+/// A `releases.json` body for `usb` with 0.3.0 for firmware 0.7.2 on and
+/// 0.2.1 for 0.7.0 up to 0.7.2.
+fn releases_json_usb_current_and_older(current_sha: &str, older_sha: &str) -> Vec<u8> {
+    format!(
+        r#"{{
+            "version": 1,
+            "display_name": "One ROM USB",
+            "description": "A test plugin",
+            "latest": "0.3.0",
+            "releases": [
+                {{
+                    "version": "0.3.0",
+                    "path": "v0.3.0",
+                    "filename": "plugin.bin",
+                    "sha256": "{current_sha}",
+                    "api_version": 1,
+                    "plugin_type": "system_plugin",
+                    "min_fw_version": "0.7.2"
+                }},
+                {{
+                    "version": "0.2.1",
+                    "path": "v0.2.1",
+                    "filename": "plugin.bin",
+                    "sha256": "{older_sha}",
+                    "api_version": 1,
+                    "plugin_type": "system_plugin",
+                    "min_fw_version": "0.7.0",
+                    "incompatible_from": "0.7.2"
+                }}
+            ]
+        }}"#
+    )
+    .into_bytes()
+}
+
+/// A builder for a config with system plugin `name` and one ROM.
+fn named_plugin_builder(name: &str) -> onerom_gen::Builder {
+    let json = format!(
+        r#"{{
+            "version": 1,
+            "description": "A config with a plugin by name",
+            "chip_sets": [
+                {{ "type": "single", "chips": [{{ "type": "system_plugin", "plugin": "{name}" }}] }},
+                {{ "type": "single", "chips": [
+                    {{ "file": "/tmp/rom.bin", "type": "2364", "cs1": "active_low" }} ] }}
+            ]
+        }}"#
+    );
+    onerom_gen::Builder::from_json(fw("0.7.0"), onerom_config::mcu::Family::Rp2350, &json)
+        .expect("config should build")
+}
+
+#[tokio::test]
+async fn config_plugin_by_name_takes_the_latest_compatible_release() {
+    // 0.3.0 is the latest release, but 0.2.1 is the latest for 0.7.0.
+    let current = header(0, (0, 3, 0, 0));
+    let older = header(0, (0, 2, 1, 0));
+    let fetch = MockFetch::new()
+        .with(&format!("{BASE}/plugins.json"), plugins_json())
+        .with(
+            &format!("{BASE}/system/usb/releases.json"),
+            releases_json_usb_current_and_older(&sha_hex(&current), &sha_hex(&older)),
+        )
+        .with(&usb_binary_url("0.2.1"), older);
+
+    let mut builder = named_plugin_builder("usb");
+    let resolved = resolve_config_plugins(&mut builder, &fw("0.7.0"), &fetch)
+        .await
+        .expect("usb 0.2.1 supports 0.7.0");
+
+    assert_eq!(resolved.len(), 1);
+    assert_eq!(resolved[0].version, PluginVersion::new(0, 2, 1, 0));
+    let chip = &builder.config().chip_sets[0].chips[0];
+    assert_eq!(chip.file, usb_binary_url("0.2.1"));
+    assert!(chip.plugin.is_none());
+    assert!(
+        builder
+            .file_specs()
+            .iter()
+            .any(|spec| spec.source == usb_binary_url("0.2.1"))
+    );
+}
+
+#[tokio::test]
+async fn config_plugin_by_name_in_the_wrong_chip_is_rejected() {
+    let fetch = MockFetch::new().with(&format!("{BASE}/plugins.json"), plugins_json());
+
+    let mut builder = named_plugin_builder("rgb");
+    let err = resolve_config_plugins(&mut builder, &fw("0.7.0"), &fetch)
+        .await
+        .expect_err("a user plugin can't be the system plugin");
+
+    assert!(matches!(
+        err,
+        Error::Plugin(PluginError::WrongChipType {
+            ref name,
+            plugin_type: PluginType::User,
+            configured: PluginType::System,
+        }) if name == "rgb"
+    ));
+    // Checked before the plugin's releases are fetched.
+    assert_eq!(fetch.requested(), vec![format!("{BASE}/plugins.json")]);
+}
+
+#[tokio::test]
+async fn config_plugin_by_name_not_published_is_rejected() {
+    let fetch = MockFetch::new().with(&format!("{BASE}/plugins.json"), plugins_json());
+
+    let mut builder = named_plugin_builder("usbb");
+    let err = resolve_config_plugins(&mut builder, &fw("0.7.0"), &fetch)
+        .await
+        .expect_err("usbb isn't published");
+
+    assert!(matches!(
+        err,
+        Error::Plugin(PluginError::NotFound(ref name)) if name == "usbb"
+    ));
+}
+
+#[tokio::test]
+async fn config_plugin_by_url_isnt_resolved() {
+    let url = usb_binary_url("0.2.1");
+    let mut builder = onerom_gen::Builder::from_json(
+        fw("0.7.0"),
+        onerom_config::mcu::Family::Rp2350,
+        &plugin_config_json(&url),
+    )
+    .expect("config should build");
+
+    let fetch = MockFetch::new();
+    let resolved = resolve_config_plugins(&mut builder, &fw("0.7.0"), &fetch)
+        .await
+        .unwrap();
+
+    assert!(resolved.is_empty());
+    assert!(fetch.requested().is_empty());
+    assert_eq!(builder.config().chip_sets[0].chips[0].file, url);
+}
+
 /// Fetches the real plugins manifest and confirms it still deserialises into
 /// the crate's types. Ignored by default (needs network and tracks a live
 /// server); run with `cargo test -- --ignored`.
 #[tokio::test]
 #[ignore = "hits the live images server; run explicitly with --ignored"]
 async fn live_manifest_still_parses() {
-    /// A real HTTP-backed fetcher, used only by the canary.
-    struct HttpFetch;
-    impl LocalPluginFetch for HttpFetch {
-        type Error = String;
-        async fn fetch(&self, source: &str) -> Result<Vec<u8>, Self::Error> {
-            // ureq is blocking, so run it on a worker thread rather than the
-            // async runtime.
-            let url = source.to_string();
-            tokio::task::spawn_blocking(move || {
-                let mut resp = ureq::get(&url).call().map_err(|e| e.to_string())?;
-                let bytes = resp.body_mut().read_to_vec().map_err(|e| e.to_string())?;
-                Ok::<Vec<u8>, String>(bytes)
-            })
-            .await
-            .map_err(|e| e.to_string())?
-        }
-    }
-
     let cat = Catalogue::fetch(&HttpFetch)
         .await
         .expect("live plugins.json should parse into Catalogue");

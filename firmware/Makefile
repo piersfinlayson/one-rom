@@ -17,9 +17,6 @@ FIRMWARE_DIR := firmware
 # this, so it is re-cloned.
 APIO_VERSION ?= v0.3.0
 
-OBJCOPY_EXTRA = --set-section-flags .metadata=contents,readonly -R .metadata -R .rom_data -R .padding_to_rom_data
-$(info - $(COLOUR_YELLOW)Excluding metadata and ROM images from binary$(COLOUR_RESET))
-
 # Toolchain
 #
 # The version is pinned in ci/arm-toolchain-version, and ci/install-arm-toolchain.sh
@@ -35,7 +32,7 @@ SIZE := $(TOOLCHAIN)/arm-none-eabi-size
 # Source files
 SRCS := src/constants.c src/binary_info.c src/build_date.c \
 		src/globals.c src/log.c src/rtt.c \
-		src/main.c src/plugin.c src/utils.c \
+		src/main.c src/otp.c src/plugin.c src/utils.c \
 		src/vector.c src/rp235x.c src/piodma/pio.c \
 		src/piodma/piorom2.c src/piodma/pioram.c src/piodma/dma.c \
 		src/piodma/pioplugin.c src/piodma/pioled.c
@@ -55,7 +52,8 @@ LDSCRIPT=link/linker.ld
 # rest.  make cannot see through an INCLUDE, so the whole directory is named
 # here.  Depending on linker.ld alone meant editing an included script relinked
 # nothing - the ELF kept the old layout and that script's ASSERTs never ran.
-LDSCRIPTS := $(wildcard link/*.ld)
+# common_vars.ld also INCLUDEs the fragment generated from the metadata schema.
+LDSCRIPTS := $(wildcard link/*.ld) generated/onerom_metadata.ld
 
 # Flags
 #
@@ -78,7 +76,7 @@ CFLAGS := $(EXTRA_C_FLAGS) $(COMMON_FLAGS) -Werror \
 		  -DONEROM_VERSION_MAJOR=$(VERSION_MAJOR) -DONEROM_VERSION_MINOR=$(VERSION_MINOR) \
 		  -DONEROM_VERSION_PATCH=$(VERSION_PATCH) -DONEROM_BUILD_NUMBER=$(BUILD_NUMBER) \
 		  -DONEROM_GIT_COMMIT=\"$(GIT_COMMIT)\" 
-LDFLAGS := $(COMMON_FLAGS) -Werror -Llink -nostdlib -specs=nosys.specs -specs=nano.specs -Wl,--no-gc-sections -Wl,--fatal-warnings -Wl,-Map=$(MAP)
+LDFLAGS := $(COMMON_FLAGS) -Werror -Llink -Lgenerated -nostdlib -specs=nosys.specs -specs=nano.specs -Wl,--no-gc-sections -Wl,--fatal-warnings -Wl,-Map=$(MAP)
 
 ifeq ($(PLUGIN_LOGGING), 1)
 	CFLAGS += -DPLUGIN_LOGGING=1
@@ -151,7 +149,7 @@ $(ELF): $(OBJS) $(LDSCRIPTS) | $(BUILD_DIR)
 # Generate binary
 $(BIN): $(ELF)
 	@echo "- Generating binary from $(FIRMWARE_DIR)/$< -> $(FIRMWARE_DIR)/$@"
-	@$(OBJCOPY) -O binary $(OBJCOPY_EXTRA) --gap-fill=0xff $< $@
+	@$(OBJCOPY) -O binary --gap-fill=0xff $< $@
 	@$(OBJDUMP) -D -m arm -S -t -h $< > $(DISASM)
 	@echo "----"
 	@echo "Build complete:"

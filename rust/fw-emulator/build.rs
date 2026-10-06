@@ -268,6 +268,7 @@ fn main() {
         .allowlist_function("set_host_sram_ptr")
         .allowlist_function("stub_set_sel_image")
         .allowlist_function("stub_set_rp_variant")
+        .allowlist_function("stub_bootloader_entered")
         // The microsecond counter behind ora_get_plugin_uptime_ms().  There is no
         // TIMER0 in this process, so the harness owns the count - which also
         // lets a test place the clock exactly where it wants it.
@@ -279,8 +280,44 @@ fn main() {
         .allowlist_function("ffi_limp_mode")
         .allowlist_function("ffi_pios_enabled")
         .allowlist_function("ffi_image_sel")
+        // OTP, which the firmware reads at boot, and the firmware's readers of
+        // it, so a test can check them against the host's.
+        .allowlist_function("stub_otp_set_ecc")
+        .allowlist_function("stub_otp_set_raw")
+        .allowlist_function("stub_otp_clear")
+        .allowlist_function("ffi_board_size")
+        .allowlist_function("ffi_firmware_states")
+        .allowlist_function("ffi_set_plugins_started")
+        .allowlist_function("ffi_firmware_flags")
+        .allowlist_var("ORA_FIRMWARE_STATE_QUERY_FLAG_WAIT")
+        .allowlist_function("otp_commissioned_board")
+        .allowlist_function("otp_board_mismatch")
+        .allowlist_function("otp_board_size")
+        // The metadata generation, and the means to change it before a boot.
+        .allowlist_function("ffi_metadata_generation")
+        .allowlist_function("ffi_set_metadata_generation")
+        // A ROM slot's flash address, a way to move it, and the firmware's
+        // checks of a slot.
+        .allowlist_function("ffi_rom_slot_flash_addr")
+        .allowlist_function("ffi_set_rom_slot_flash_addr")
+        .allowlist_function("ffi_rom_slot_size")
+        .allowlist_function("ffi_rom_slot_in_flash")
+        .allowlist_function("ffi_check_plugin_valid")
+        // Plugin slots with headers in host memory and the firmware's readers of
+        // them.
+        .allowlist_function("ffi_install_plugin_slots")
+        .allowlist_function("ffi_restore_rom_slots")
+        // A slot's override states, so a test can boot a slot into standby
+        // without a config of its own.
+        .allowlist_function("ffi_set_rom_slot_override_states")
+        .allowlist_function("ffi_set_plugin_header")
+        .allowlist_function("initial_plugin_parse")
+        .allowlist_function("other_core_yield_capability_from")
+        .allowlist_var("ORA_OVERRIDE1_DISABLE_VBUS_DETECT")
+        .allowlist_var("ORA_PROPERTY1_SUPPORTS_YIELD")
         .allowlist_function("ffi_epio_setup_sram")
         .allowlist_function("ffi_epio_setup_dma_chain")
+        .allowlist_function("ffi_epio_update_from_apio")
         .allowlist_function("ffi_epio_arm_monitor")
         .allowlist_function("set_onerom_test_yield_hook")
         .allowlist_function("onerom_test_reset")

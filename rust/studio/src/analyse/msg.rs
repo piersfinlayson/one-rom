@@ -15,12 +15,14 @@ use onerom_config::mcu::Variant as McuVariant;
 use onerom_fw_parser::ParsedDevice;
 
 use crate::analyse::device::{
-    detect_device, device_reboot_complete, file_device_loaded, firmware_flash_complete,
-    flash_firmware, handle_device_data, reread_device, run_device, stop_device,
+    board_details_read, detect_device, device_reboot_complete, file_device_loaded,
+    firmware_flash_complete, flash_firmware, handle_device_data, reread_device, run_device,
+    stop_device,
 };
 use crate::analyse::file::{fw_file_chooser, load_file};
 use crate::analyse::{Analyse, Source};
 use crate::app::AppMessage;
+use crate::device::BoardDetails;
 use crate::studio::RuntimeInfo;
 
 /// Analyse tab messages
@@ -33,7 +35,7 @@ pub enum Message {
     // Handle file
     SelectFile,
     FileSelected(Option<PathBuf>),
-    FileLoaded(Result<(ParsedDevice, Vec<u8>), String>),
+    FileLoaded(PathBuf, Result<(ParsedDevice, Vec<u8>), String>),
 
     // Handle device
     DetectDevice,
@@ -41,6 +43,7 @@ pub enum Message {
     DeviceData(Vec<u8>),
     ReadFailed(String),
     RereadDevice(McuVariant, FirmwareVersion),
+    BoardDetailsRead(BoardDetails),
 
     // Handle flashing
     FlashFirmware,
@@ -60,12 +63,13 @@ impl std::fmt::Display for Message {
             Message::SourceSelected(tab) => write!(f, "SourceSelected({:?})", tab),
             Message::SelectFile => write!(f, "SelectFile"),
             Message::FileSelected(_) => write!(f, "FileSelected(...)"),
-            Message::FileLoaded(_) => write!(f, "FileLoaded(...)"),
+            Message::FileLoaded(_, _) => write!(f, "FileLoaded(...)"),
             Message::DetectDevice => write!(f, "DetectDevice"),
             Message::DeviceLoaded(_) => write!(f, "DeviceLoaded(...)"),
             Message::DeviceData(_) => write!(f, "DeviceData(...)"),
             Message::ReadFailed(err) => write!(f, "ReadFailed({err})"),
             Message::RereadDevice(_, _) => write!(f, "RereadDevice"),
+            Message::BoardDetailsRead(details) => write!(f, "BoardDetailsRead({details:?})"),
             Message::FlashFirmware => write!(f, "FlashFirmware"),
             Message::FlashComplete(_) => write!(f, "FlashComplete(...)"),
             Message::ProgressTick => write!(f, "ProgressTick"),
@@ -98,12 +102,12 @@ pub fn message(
             debug!("Firmware file selected: {:?}", path);
             load_file(analyse, path)
         }
-        Message::FileLoaded(result) => {
+        Message::FileLoaded(path, result) => {
             debug!(
                 "Firmware file loaded: {}",
                 if result.is_ok() { "OK" } else { "Error" }
             );
-            file_device_loaded(analyse, result, true)
+            file_device_loaded(analyse, result, Some(path))
         }
 
         // Handle device operations
@@ -118,7 +122,7 @@ pub fn message(
                 "Device firmware loaded: {}",
                 if result.is_ok() { "OK" } else { "Error" }
             );
-            file_device_loaded(analyse, result, false)
+            file_device_loaded(analyse, result, None)
         }
         Message::DeviceData(data) => {
             debug!("Device data received: {} bytes", data.len());
@@ -139,6 +143,10 @@ pub fn message(
             );
             Task::done(reread_device(analyse, mcu, fw_version))
         }
+        Message::BoardDetailsRead(details) => {
+            debug!("Device board details read: {details:?}");
+            board_details_read(analyse, details)
+        }
 
         // Handle flashing
         Message::FlashFirmware => {
@@ -150,8 +158,7 @@ pub fn message(
                 "Firmware flash complete: {}",
                 if result.is_ok() { "OK" } else { "Error" }
             );
-            firmware_flash_complete(analyse, result);
-            Task::none()
+            firmware_flash_complete(analyse, result)
         }
 
         // Handle progress tick

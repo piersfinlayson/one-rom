@@ -16,16 +16,16 @@ Fire only.  Lab refuses any board whose MCU is not an RP2350.
 
 ## Build and flash
 
-The board is put into BOOTSEL, then `picotool` loads over USB:
+The script builds Lab and loads it with `picotool` over USB.  A board running
+Lab, or One ROM with the USB plugin, is rebooted into its bootloader first.  Any
+other board needs BOOTSEL held while it is connected.
 
 ```bash
 scripts/flash.sh                # board set at runtime, with B:<board>
 scripts/flash.sh fire-40-a      # bake in a default board
 ```
 
-The argument is a **board** name, not a chip type.  A single binary reads every
-chip type the board supports, so the only reason to bake in a board is
-convenience.
+The argument is any valid board type.
 
 The `z` command reboots back into BOOTSEL, so reflashing never needs the button.
 
@@ -46,8 +46,8 @@ board you are pointed at, while Lab carries on running:
 ```text
 Program Information
  name:          One ROM Lab
- version:       0.3.0
- description:   Use the One ROM hardware to read ROMs
+ version:       0.4.0
+ description:   Use One ROM as a ROM reader
 ```
 
 **Reflash it.**  Two commands, no jumper and no button, and they work whether or
@@ -58,9 +58,11 @@ picotool reboot -u --vid 0x1209 --pid 0xf542
 picotool load -t elf ../target/thumbv8m.main-none-eabihf/release/onerom-lab-fire
 ```
 
-The first drops the board into its bootloader, where the second finds it as a
-stock RP2350 and needs no arguments.  This is the way back from a Lab whose
-shell has stopped answering, where `z` cannot help.
+The first drops the board into its bootloader.  A board that hasn't been
+commissioned appears there as a stock RP2350, which the second finds with no
+arguments.  A commissioned board's bootloader has One ROM's own vendor and
+product id, so add `--vid 0x1209 --pid 0xf540` to the end of the second.  This is the way
+back from a Lab whose shell has stopped answering, where `z` cannot help.
 
 A reboot asked for this way says so on the terminal before the board goes, so a
 session that ends mid-sentence is explained rather than looking like a fault.
@@ -86,7 +88,7 @@ Lab greets you as your terminal opens the port:
 
 ```text
 ----- One ROM Lab -----
-One ROM Lab fire-40-a v0.3.0
+One ROM Lab fire-40-a v0.4.0
 Serial: 62CD9AE3C0771A7E
 -----------------------
 Type ? for help.
@@ -163,3 +165,40 @@ SHA1 and the 32-bit summing checksum should match.
 header, which is the fastest way to work out what is wired where when debugging
 hardware.  On Fire 32 and 40 boards, where socket pins are twinned across two
 GPIOs, `p` deliberately shows both even though the reader drives only the first.
+
+## Releasing
+
+Lab releases on its own cycle, tagged `lab-vX.Y.Z`.
+
+1. Update these, then commit:
+    - the version in [Cargo.toml](Cargo.toml)
+    - the [CHANGELOG](CHANGELOG.md)
+    - Lab's released schema, in `rust/lab-metadata/metadata_schema_released.toml`
+
+2. Tag the commit and push both.  Tags are signed, so they take a message:
+
+    ```bash
+    git tag -s -a lab-vX.Y.Z -m "One ROM Lab vX.Y.Z"
+    ```
+
+3. The tag runs [lab-release.yml](/.github/workflows/lab-release.yml).  It builds
+    and checks every image, then creates the GitHub release.  The CHANGELOG's
+    section for the version becomes the release notes.
+
+4. Add the release to the images repo:
+
+    ```bash
+    scripts/release.py --version X.Y.Z --output-dir ../../one-rom-images
+    ```
+
+    The script downloads the release's files to `dist` and checks each one.  It
+    adds the release to `lab/releases.json` and moves `latest` to it for every
+    board.
+
+5. Flash one of the downloaded images onto a board.  `onerom scan` should show
+    it running as One ROM Lab with the new version and board.
+
+6. Commit and push `one-rom-images`.
+
+`scripts/build-release.sh --version X.Y.Z` builds and checks the same images
+locally.

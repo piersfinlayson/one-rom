@@ -5,7 +5,7 @@
 //! serde round-trip tests for the generated metadata types.
 //!
 //! These guard the `serde::Serialize`/`Deserialize` derives emitted by
-//! `build/rust_gen.rs`. The compiler proves the derives *exist*; these prove
+//! `onerom-metadata-gen`. The compiler proves the derives *exist*; these prove
 //! they are mutually inverse in practice, across the three distinct shapes the
 //! generator emits:
 //!
@@ -20,7 +20,7 @@
 //! the web details pane and any stored dumps depend on the current shape.
 
 use onerom_metadata::{
-    OneromAlgCsConfig, OneromHardwareInfo, OneromRomInfo, OneromRomPinMap, RomSlotType,
+    MaybeKnown, OneromAlgCsConfig, OneromHardwareInfo, OneromRomInfo, OneromRomPinMap, RomSlotType,
     Rp235xVariant,
 };
 
@@ -39,29 +39,34 @@ where
     json
 }
 
+/// A fire-28-c's hardware information, with distinct values throughout.
+fn fire_28_c() -> OneromHardwareInfo {
+    let mut hw = OneromHardwareInfo::default();
+    hw.hw_rev = "fire-28-c".into();
+    hw.rp235x = MaybeKnown::Known(Rp235xVariant::Rp235xa);
+    hw.num_phys_pins = 28;
+    hw.usb_capable = 1;
+    hw.gpio_vbus = 24;
+    hw.gpio_ext_flash_cs = 255;
+    hw.gpio_status = 25;
+    hw.gpio_neopixel = 255;
+    hw.gpio_swdio = 26;
+    hw.gpio_swclk = 27;
+    hw.gpio_sel = [0, 1, 2, 3, 4, 5, 6];
+    hw.sel_jumper_pull = 0b0000_0011;
+    hw.gpio_from_phys_pin = core::array::from_fn(|r| [r as u8, (r as u8).wrapping_add(0x40)]);
+    hw.gpio_x1 = [10, 11];
+    hw.gpio_x2 = [12, 13];
+    hw
+}
+
 /// Exercises the `serde_big_array::BigArray` path via `gpio_from_phys_pin`
 /// (`[[u8; 2]; 40]`), alongside an enum field and the <= 32 arrays. Distinct
 /// per-element values are used so a mis-ordered or truncated array is caught,
 /// not just a length mismatch.
 #[test]
 fn hardware_info_round_trips_including_big_array() {
-    let hw = OneromHardwareInfo {
-        hw_rev: "fire-28-c".into(),
-        rp235x: Rp235xVariant::Rp235xa,
-        num_phys_pins: 28,
-        usb_capable: 1,
-        gpio_vbus: 24,
-        gpio_ext_flash_cs: 255,
-        gpio_status: 25,
-        gpio_neopixel: 255,
-        gpio_swdio: 26,
-        gpio_swclk: 27,
-        gpio_sel: [0, 1, 2, 3, 4, 5, 6],
-        sel_jumper_pull: 0b0000_0011,
-        gpio_from_phys_pin: core::array::from_fn(|r| [r as u8, (r as u8).wrapping_add(0x40)]),
-        gpio_x1: [10, 11],
-        gpio_x2: [12, 13],
-    };
+    let hw = fire_28_c();
 
     let json = round_trip(&hw);
 
@@ -76,27 +81,21 @@ fn hardware_info_round_trips_including_big_array() {
 /// (`[u8; 24]` / `[u8; 16]`) inside the nested pin map.
 #[test]
 fn rom_info_with_pin_map_round_trips() {
-    let rom = OneromRomInfo {
-        rom_type: "27C512".into(),
-        filename: Some("kernal.rom".into()),
-        pin_map: Some(OneromRomPinMap {
-            addr: core::array::from_fn(|i| i as u8),
-            data: core::array::from_fn(|i| (i as u8).wrapping_add(0x80)),
-        }),
-        chip_size: 64 * 1024,
-        rbcp_rom_type: 3,
-    };
+    let mut pin_map = OneromRomPinMap::default();
+    pin_map.addr = core::array::from_fn(|i| i as u8);
+    pin_map.data = core::array::from_fn(|i| (i as u8).wrapping_add(0x80));
+    let mut rom = OneromRomInfo::default();
+    rom.rom_type = "27C512".into();
+    rom.filename = Some("kernal.rom".into());
+    rom.pin_map = Some(pin_map);
+    rom.chip_size = 64 * 1024;
+    rom.rbcp_rom_type = 3;
 
     round_trip(&rom);
 
     // The None arm must survive too.
-    let plugin = OneromRomInfo {
-        rom_type: "System Plugin".into(),
-        filename: None,
-        pin_map: None,
-        chip_size: 0,
-        rbcp_rom_type: 0,
-    };
+    let mut plugin = OneromRomInfo::default();
+    plugin.rom_type = "System Plugin".into();
     round_trip(&plugin);
 }
 
@@ -137,4 +136,51 @@ fn rom_slot_type_variant_names_are_stable() {
     assert_eq!(json, "\"RomSlotTypeSingleRom\"");
     let decoded: RomSlotType = serde_json::from_str(&json).expect("deserialize");
     assert_eq!(decoded, RomSlotType::RomSlotTypeSingleRom);
+}
+
+/// A field whose value the list has grown past reads as `{"unknown": N}`,
+/// which a reader can tell from a variant name by shape alone, and it carries
+/// the byte the device stored.  A value the list does have a name for still
+/// writes as the bare variant name, so a stored dump reads as it did before.
+#[test]
+fn an_unknown_value_says_so_in_json_and_carries_its_byte() {
+    let known: MaybeKnown<RomSlotType> = MaybeKnown::Known(RomSlotType::RomSlotTypeSingleRom);
+    assert_eq!(
+        serde_json::to_string(&known).expect("serialize"),
+        "\"RomSlotTypeSingleRom\"",
+    );
+
+    let unknown: MaybeKnown<RomSlotType> = MaybeKnown::Unknown(0x5A);
+    assert_eq!(
+        serde_json::to_string(&unknown).expect("serialize"),
+        "{\"unknown\":90}",
+    );
+
+    // Both shapes come back as what went in.
+    for value in [known, unknown] {
+        let json = serde_json::to_string(&value).expect("serialize");
+        let decoded: MaybeKnown<RomSlotType> = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(decoded, value, "round-trip changed the value");
+    }
+}
+
+/// The wrapper does not change the shape of the structure around it: a
+/// recognised value sits in the dump exactly where the bare variant did.
+#[test]
+fn a_known_value_sits_in_the_dump_where_it_always_did() {
+    let hw = fire_28_c();
+
+    let json = serde_json::to_string(&hw).expect("serialize");
+    assert!(
+        json.contains("\"rp235x\":\"Rp235xa\""),
+        "expected the bare variant name, got: {json}"
+    );
+
+    let mut with_unknown = hw;
+    with_unknown.rp235x = MaybeKnown::Unknown(0x42);
+    let json = serde_json::to_string(&with_unknown).expect("serialize");
+    assert!(
+        json.contains("\"rp235x\":{\"unknown\":66}"),
+        "expected the unknown shape, got: {json}"
+    );
 }

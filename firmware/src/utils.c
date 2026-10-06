@@ -13,13 +13,14 @@
 uint32_t check_sel_pins(uint32_t *sel_mask) {
     uint32_t num_sel_pins, sel_value;
     uint64_t orig_sel_mask, gpio_value, sel_flip_bits;
+    uint8_t reserved = onerom_metadata_header_reserved_sel_pins(METADATA);
 
     // Setup the pins first.  Do this first to allow any pull-ups to settle
     // before reading.
-    num_sel_pins = setup_sel_pins(&orig_sel_mask, &sel_flip_bits);
+    num_sel_pins = setup_sel_pins(reserved, &orig_sel_mask, &sel_flip_bits);
     if (num_sel_pins == 0) {
         DEBUG("No image select pins");
-        disable_sel_pins();
+        disable_sel_pins(reserved);
         *sel_mask = 0;
         return 0;
     }
@@ -34,7 +35,7 @@ uint32_t check_sel_pins(uint32_t *sel_mask) {
         (unsigned long)num_sel_pins,
         (uint32_t)(orig_sel_mask >> 32), (uint32_t)orig_sel_mask);
 
-    disable_sel_pins();
+    disable_sel_pins(reserved);
 
     // Now turn the GPIO value into a SEL value, with the bits consecutive
     // starting from bit 0, based on which pin the SEL value is.  At the same
@@ -44,7 +45,7 @@ uint32_t check_sel_pins(uint32_t *sel_mask) {
     sel_value = 0;
     for (int ii = 0; ii < MAX_IMG_SEL_PINS; ii++) {
         uint8_t pin = HW->gpio_sel[ii];
-        if (pin < MAX_GPIOS) {
+        if ((pin < MAX_GPIOS) && !(reserved & (1 << ii))) {
             if (gpio_value & (1ULL << pin)) {
                 sel_value |= (1 << ii);
             }
@@ -84,6 +85,13 @@ void process_firmware_overrides(const onerom_rom_slot_t *slot) {
             RUNTIME->swd_enabled = overrides->override_value[0] & (1 << 3) ? 1 : 0;
             LOG("SWD enabled override: %d", RUNTIME->swd_enabled);
         }
+
+        onerom_override_states_t states =
+            onerom_firmware_overrides_override_states(METADATA, overrides);
+        if (((states & OVERRIDE_STANDBY) >> OVERRIDE_STANDBY_SHIFT) == OVERRIDE_STATE_ON) {
+            RUNTIME->firmware_flags |= FIRMWARE_FLAG_STANDBY;
+            LOG("Standby override");
+        }
     }
 }
 
@@ -102,15 +110,17 @@ uint8_t metadata_valid(void) {
         return 1;
     }
 
-    // Make sure the header and version are as expected.
+    // Make sure the header is as expected.  Pre-v0.7.0 metadata carries
+    // different magic, so this is what separates the two.
     for (int ii = 0; ii < 16; ii++) {
         if (METADATA->magic[ii] != ONEROM_METADATA_MAGIC[ii]) {
             return 0;
         }
     }
-    if (METADATA->version != CURRENT_METADATA_VERSION) {
-        return 0;
-    }
+
+    // The generation is deliberately not a gate.  Whichever way the metadata
+    // and the firmware differ in age, every field this firmware knows is
+    // readable, so refusing would mean not serving at all.
 
     // Make sure the hardware info pointer is valid
     if (HW == NULL || HW == (void*)0xFFFFFFFF) {
@@ -247,6 +257,51 @@ uint8_t get_rom_slot_index(uint32_t sel_pins, uint32_t sel_mask, uint8_t plugins
     return rom_index;
 }
 
+// Only called on core 0 from thread code and the DMA copy channel's interrupt.
+void set_firmware_states(uint32_t states) {
+#if REAL_HARDWARE
+    uint32_t primask;
+    __asm volatile ("mrs %0, primask \n\t"
+                    "cpsid i"
+                    : "=r" (primask) :: "memory");
+#endif // REAL_HARDWARE
+
+    uint32_t reached = RUNTIME->firmware_states | states;
+    const uint32_t startup =
+        FIRMWARE_STATE_ROM_LOADED | FIRMWARE_STATE_PLUGINS_STARTED;
+    if ((reached & startup) == startup) {
+        reached |= FIRMWARE_STATE_STARTUP_DONE;
+    }
+    RUNTIME->firmware_states = reached;
+
+#if REAL_HARDWARE
+    __asm volatile ("msr primask, %0" :: "r" (primask) : "memory");
+#endif // REAL_HARDWARE
+}
+
+// Returns 1 if `size` bytes from `addr` fit on a `chip_size` byte chip at
+// `base`.  An address below `base` wraps to a large offset and fails.
+static uint8_t on_flash_chip(
+    uint32_t addr,
+    uint32_t size,
+    uint32_t base,
+    uint32_t chip_size
+) {
+    uint32_t offset = addr - base;
+    return (offset < chip_size) && (size <= chip_size - offset);
+}
+
+// Returns 1 if the whole of a ROM slot lies on one flash chip.
+uint8_t rom_slot_in_flash(const onerom_rom_slot_t *slot) {
+    onerom_flash_size_t cs0;
+    onerom_flash_size_t cs1;
+    otp_flash_sizes(&cs0, &cs1);
+
+    uint32_t addr = rom_slot_flash_addr(slot);
+    return on_flash_chip(addr, slot->size, FLASH_CS0_BASE_ADDR, flash_size_bytes(cs0))
+        || on_flash_chip(addr, slot->size, FLASH_CS1_BASE_ADDR, flash_size_bytes(cs1));
+}
+
 #if REAL_HARDWARE
 
 void preload_rom_image(void) {
@@ -261,8 +316,16 @@ void preload_rom_image(void) {
     RUNTIME->rom_table = (void *)img_dst;
     RUNTIME->rom_table_size = img_size;
 
-    if (img_src == (uint32_t *)0xFFFFFFFF) {
+    if ((uintptr_t)img_src == ROM_SLOT_NO_IMAGE) {
         LOG("No RAM image");
+        set_firmware_states(FIRMWARE_STATE_ROM_LOADED);
+        return;
+    }
+
+    if (!rom_slot_in_flash(slot)) {
+        ERR("ROM slot %d at 0x%08lX outside flash", RUNTIME->rom_slot_index,
+            (unsigned long)rom_slot_flash_addr(slot));
+        limp_mode(LIMP_MODE_INVALID_CONFIG);
         return;
     }
 
@@ -300,8 +363,16 @@ void preload_rom_image(void) {
     RUNTIME->rom_table_size = img_size;
     RUNTIME->rom_table = (void *)(uintptr_t)0x20000000;
 
-    if (img_src == (uint64_t *)0xFFFFFFFF) {
+    if ((uintptr_t)img_src == ROM_SLOT_NO_IMAGE) {
         LOG("No RAM image");
+        set_firmware_states(FIRMWARE_STATE_ROM_LOADED);
+        return;
+    }
+
+    if (!rom_slot_in_flash(slot)) {
+        ERR("ROM slot %d at 0x%08lX outside flash", RUNTIME->rom_slot_index,
+            (unsigned long)rom_slot_flash_addr(slot));
+        limp_mode(LIMP_MODE_INVALID_CONFIG);
         return;
     }
 
@@ -317,6 +388,7 @@ void preload_rom_image(void) {
     // Set image (either single ROM or multiple ROMs) has been fully
     // pre-processed before embedding in the flash.
     memcpy(img_dst, img_src, img_size);
+    set_firmware_states(FIRMWARE_STATE_ROM_LOADED);
     LOG("CPU preload complete from 0x%08X to 0x%08X size 0x%08X %s",
         (uint32_t)(uintptr_t)img_src, (uint32_t)(uintptr_t)img_dst, img_size, filename);
 

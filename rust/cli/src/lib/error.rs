@@ -4,10 +4,15 @@
 
 //! Shared error type for the One ROM CLI library.
 
+use onerom_app::FlashPlanError;
 use onerom_config::fw::FirmwareVersion;
+use onerom_fw_parser::ImageFileError;
 use onerom_gen::FileFormat;
+use onerom_metadata::{MaybeKnown, OneromBoardSize};
 
+use crate::device::flash_chips;
 use crate::hint;
+use crate::otp::{board_size_text, escape_controls};
 use crate::plugin::{CompatibleRelease, PluginType, PluginVersion};
 
 /// Render the way out of a plugin incompatibility as a further indented line.
@@ -127,7 +132,7 @@ pub enum Error {
     UnknownRomType,
 
     #[error(
-        "The operation attempted to access past the end of a live ROM image.\n  The {0} size is {1} bytes"
+        "The operation attempted to access past the end of a live ROM image.\n  The live {0} image is {1} bytes"
     )]
     LiveOutOfBounds(String, usize),
 
@@ -172,11 +177,51 @@ pub enum Error {
     )]
     FirmwareValidation(String),
 
+    #[error(
+        "Cannot program {0} because it is One ROM Lab firmware.\n  onerom program only programs One ROM firmware."
+    )]
+    LabFirmware(String),
+
     #[error("Failed to stop device, cannot proceed.\n  This is likely a bug.  Please report it.")]
     DeviceStillRunning,
 
     #[error("Flash verification failed at offset {0:#010x}:\n  Expected {1:#04x}, got {2:#04x}")]
     VerifyFailed(usize, u8, u8),
+
+    /// An image that uses the second flash chip, for a One ROM without one.
+    /// The `String` is the One ROM's size, as text for the `Board size:` line.
+    #[error(
+        "Cannot program this image because it requires a board size larger than M.\n  Board size: {0}"
+    )]
+    SecondChipRequired(String),
+
+    /// An image longer than the One ROM's flash chips together.
+    #[error(
+        "Cannot program this image because it is larger than this One ROM's flash.\n  {image} bytes supplied vs {flash} bytes maximum"
+    )]
+    ImageTooLarge { image: usize, flash: usize },
+
+    /// A flash operation this build doesn't know, from a newer onerom-app.
+    #[error(
+        "Cannot program this image.\n  It requires a flash operation this CLI doesn't support.\n  This is likely a bug.  Please report it."
+    )]
+    UnknownFlashStep,
+
+    /// An image file whose slots don't match its length or the flash chips.
+    #[error("{}", image_file_error_text(.0))]
+    ImageFile(ImageFileError),
+
+    /// A chip set that doesn't fit on the flash. `advise_second_chip` where
+    /// `firmware build` built for a board without a second flash chip, and
+    /// the board and the firmware both support one.
+    #[error(
+        "{error}{}",
+        if *.advise_second_chip { "\n  If the board size is larger than M, use --size." } else { "" }
+    )]
+    SlotDoesNotFit {
+        error: onerom_fw::Error,
+        advise_second_chip: bool,
+    },
 
     #[error("Invalid '{0}' argument found:\n  {1}")]
     InvalidArgument(String, String),
@@ -275,6 +320,13 @@ pub enum Error {
     #[error("Plugin type mismatch for '{0}': manifest says {1}, binary header says {2}")]
     PluginTypeMismatch(String, String, String),
 
+    #[error("'{name}' is a {plugin_type} plugin but is configured as the {configured} plugin")]
+    PluginWrongChipType {
+        name: String,
+        plugin_type: PluginType,
+        configured: PluginType,
+    },
+
     #[error("Plugin version mismatch for '{0}': manifest says {1}, binary header says {2}")]
     PluginVersionMismatch(String, PluginVersion, PluginVersion),
 
@@ -296,9 +348,9 @@ pub enum Error {
     OddLengthImage(String, usize),
 
     #[error(
-        "Firmware board type '{0}' does not match the expected board type '{1}'.\n  Use --force to override."
+        "Firmware board type '{firmware}' does not match the expected board type '{expected}'.\n  Use --force to override."
     )]
-    BoardMismatch(String, String),
+    BoardMismatch { firmware: String, expected: String },
 
     #[error(
         "{0}\n  Use --force to program it anyway - for example when the first slot holds a bootloader that selects the others itself."
@@ -331,6 +383,11 @@ pub enum Error {
     InvalidPin(String, String),
 
     #[error(
+        "Invalid --reserve-pin value '{0}':\n  Only image select pins and X pins can be reserved - for example 'sel_c' or 'x1'."
+    )]
+    InvalidReservePin(String),
+
+    #[error(
         "This One ROM's USB system plugin predates GPIO control.\n  {detail}\n  Reprogram it with the v0.7.1 or later USB system plugin, for example:\n    {usb}",
         detail = .0,
         usb = hint::PROGRAM_WITH_USB
@@ -338,9 +395,21 @@ pub enum Error {
     PluginTooOldForGpio(String),
 
     #[error(
-        "This One ROM's firmware predates GPIO control.\n  {0}\n  Its USB system plugin supports GPIO control but the firmware beneath it does not.\n  Update the device to One ROM firmware v0.7.1 or later."
+        "This One ROM's firmware predates GPIO control.\n  {0}\n  Its USB system plugin supports GPIO control but its firmware does not.\n  Update the device to One ROM firmware v0.7.1 or later."
     )]
     FirmwareTooOldForGpio(String),
+
+    #[error(
+        "This One ROM's USB system plugin predates standby.\n  {detail}\n  Reprogram it with the v0.8.0 or later USB system plugin, for example:\n    {usb}",
+        detail = .0,
+        usb = hint::PROGRAM_WITH_USB
+    )]
+    PluginTooOldForStandby(String),
+
+    #[error(
+        "This One ROM's firmware predates standby.\n  {0}\n  Its USB system plugin supports standby but its firmware does not.\n  Update the device to One ROM firmware v0.8.0 or later."
+    )]
+    FirmwareTooOldForStandby(String),
 
     #[error(
         "This One ROM cannot hold a GPIO for a bounded period.\n  {0}\n  Update the device to One ROM firmware v0.7.1 or later, or omit --hold."
@@ -430,6 +499,421 @@ pub enum Error {
 
     #[error("Output directory does not exist: {0}")]
     OutputDirMissing(String),
+
+    /// One of these was refused:
+    /// - a signer table
+    /// - the table's pointer
+    /// - a retired key's record file
+    #[error("Can't use the signing keys:\n  {0}.")]
+    Signer(onerom_app::SignerError),
+
+    #[error("Hit an error accessing OTP:\n  {0}")]
+    Otp(onerom_app::OtpError),
+
+    /// A command needed OTP from a running One ROM Lab, which refuses every
+    /// OTP read and write while it runs. Carries the device's line.
+    #[error(
+        "Cannot access OTP while One ROM Lab is running.\n  {detail}\n  Stop it with '{stop}'.",
+        detail = .0,
+        stop = hint::CONTROL_REBOOT_STOPPED
+    )]
+    OtpLabRunning(String),
+
+    #[error("{}", commission_text(.0))]
+    Commission(onerom_app::CommissionError),
+
+    /// `hardware commission` failed after it began writing. Where the
+    /// connection was lost the text says to run it again.
+    #[error("{}", commission_failed_text(.0))]
+    CommissionFailed(onerom_app::CommissionError),
+
+    /// `hardware commission` found the One ROM commissioned with other values.
+    /// `instance` holds the commissioning instance's values, a line each, as
+    /// the command shows them.
+    #[error(
+        "Cannot commission this One ROM:\n  It is already commissioned:\n{instance}\n  {RE_COMMISSION}"
+    )]
+    AlreadyCommissioned { instance: String },
+
+    /// An image for a board other than the one the One ROM is commissioned
+    /// as.
+    #[error(
+        "Image board type '{image}' does not match the commissioned board type '{commissioned}'.\n  Use --force to program it anyway."
+    )]
+    CommissionedBoardMismatch { commissioned: String, image: String },
+
+    /// `hardware set-size` refused the One ROM.
+    #[error("{}", set_size_text(.0))]
+    SetSize(onerom_app::CommissionError),
+
+    /// `hardware request-signature` refused the One ROM because `hardware
+    /// commission` would refuse it.
+    #[error("{}", request_signature_text(.0))]
+    RequestSignature(onerom_app::CommissionError),
+
+    /// `hardware set-size` failed after it began writing. Where the connection
+    /// was lost the text says to run it again.
+    #[error("{}", set_size_failed_text(.0))]
+    SetSizeFailed(onerom_app::CommissionError),
+
+    /// `hardware commission` found firmware for a board other than `--board`.
+    #[error(
+        "Firmware board type '{firmware}' does not match the commissioned board type '{board}'.\n  Use --force to override."
+    )]
+    FirmwareForAnotherBoard { firmware: String, board: String },
+
+    /// `hardware set-size` found firmware for a board other than `--board`.
+    #[error(
+        "Firmware board type '{firmware}' does not match board type '{board}'.\n  Use --force to override."
+    )]
+    SetSizeFirmwareForAnotherBoard { firmware: String, board: String },
+
+    /// `hardware request-signature` found firmware for a board other than
+    /// `--board`. It doesn't have `--force` so there's no advice.
+    #[error("Firmware board type '{firmware}' does not match board type '{board}'.")]
+    RequestSignatureFirmwareForAnotherBoard { firmware: String, board: String },
+
+    /// A `hardware` command found an RP2350 stepping One ROM doesn't support.
+    /// `stepping` is `A2` or the bootrom version of one this CLI doesn't know.
+    /// `--force` doesn't override it so there's no advice.
+    #[error(
+        "This One ROM's RP2350 is stepping {stepping}, which One ROM doesn't support. It supports A3 and A4."
+    )]
+    UnsupportedStepping { stepping: String },
+
+    /// A `hardware` command found the bootrom's package and OTP's NUM_GPIOS
+    /// disagree.
+    #[error("This One ROM's bootloader reports an {package} but it reports {num_gpios} GPIOs.")]
+    PackageConflict { package: String, num_gpios: u16 },
+
+    /// A `hardware` command found an RP2350 package other than the one
+    /// `--board` is for. `--force` doesn't override it so there's no advice.
+    #[error("Board type '{board}' is for an {board_package} but this One ROM has an {package}.")]
+    PackageForAnotherBoard {
+        board: String,
+        board_package: String,
+        package: String,
+    },
+
+    /// A `hardware` command couldn't read the RP2350 package to check it
+    /// against `--board`, or OTP's NUM_GPIOS holds neither package's count.
+    #[error(
+        "Couldn't read this One ROM's RP2350 package to check it against board type '{board}'."
+    )]
+    PackageUnknown { board: String },
+
+    /// An encrypted key file without a PIN.
+    #[error("Key file {0} is encrypted.\n  Use --pin or run the command in a terminal.")]
+    KeyFileEncrypted(String),
+
+    #[error("The PIN doesn't decrypt key file {0}.")]
+    KeyFileWrongPin(String),
+
+    #[error("Key file {0} is encrypted in a form this CLI doesn't support.")]
+    KeyFileEncryptionUnsupported(String),
+
+    #[error("Key file {0} doesn't contain an Ed25519 key.")]
+    KeyFileNotEd25519(String),
+
+    #[error("Key file {0} isn't a PKCS#8 PEM private key.")]
+    KeyFileNotPkcs8(String),
+
+    #[error("The signing server requires a PIN.\n  Use --pin or run the command in a terminal.")]
+    NoPin,
+
+    /// The signing server replied with an error status and a one-line reason.
+    /// `url` is the key's URL as `--signer` gave it.
+    #[error("{}", signing_server_text(.url, .status, .message))]
+    SigningServer {
+        url: String,
+        status: u16,
+        message: String,
+    },
+
+    /// A request to the signing server at the key's URL failed without an
+    /// HTTP status, for example because it timed out.
+    #[error("Couldn't reach the signing server at {0}.")]
+    SigningServerUnreachable(String),
+
+    #[error("The signing server replied with {len} bytes where {expected} were expected.\n  {url}")]
+    SigningServerReply {
+        url: String,
+        len: usize,
+        expected: usize,
+    },
+
+    #[error("This signing key is invalid.\n  Its public key is {0}.")]
+    SigningKeyUnknown(String),
+
+    /// `--key-id` identifies a key the signing key table doesn't contain.
+    #[error("Signing key {0} is invalid.")]
+    SigningKeyIdUnknown(u16),
+
+    /// The signing server's key `id` isn't the signing key table's key `id`.
+    /// `url` is the server's address as `--signer` gave it.
+    #[error(
+        "Signing key {id} on the signing server at {url} is invalid.\n  Its public key doesn't match key {id} in the signing key table."
+    )]
+    SigningServerKeyMismatch { url: String, id: u16 },
+
+    #[error("Signing key {name} ({id}) has been retired.")]
+    SigningKeyRetired { id: u16, name: String },
+
+    /// The signing key table doesn't allow key `id` to sign `manufacturer`.
+    #[error("Signing key {name} ({id}) cannot sign manufacturer '{manufacturer}'.")]
+    ManufacturerNotAllowed {
+        id: u16,
+        name: String,
+        manufacturer: String,
+    },
+
+    /// A signature that doesn't verify with the signer's key in the table.
+    #[error("The signature is invalid with key {name} ({id}).\n  No changes have been made.")]
+    BadSignature { id: u16, name: String },
+
+    /// The signature the signing server recorded differs from the one it
+    /// returned before the user was asked.
+    #[error(
+        "The signing server recorded a different signature from the one it signed first.\n  This is likely a bug. Please report it."
+    )]
+    RecordedSignatureDiffers,
+
+    /// `hardware validate` didn't accept the board's commissioning. It
+    /// carries the reason.
+    #[error("ERROR: Commissioning information invalid\n  {0}")]
+    NotValidated(String),
+}
+
+/// The text of an [`Error::SigningServer`] from the key at `url` for HTTP
+/// status `status` and the server's `message`. A 404's text is one line
+/// without the message.
+fn signing_server_text(url: &str, status: &u16, message: &str) -> String {
+    let first = match status {
+        400 => "The signing server refused the request.".to_string(),
+        401 => "The signing server refused the PIN.".to_string(),
+        404 => return format!("Invalid signing key {url}"),
+        503 => "Signing failed - the signing record cannot be written".to_string(),
+        status => format!("The signing server replied with HTTP status {status}."),
+    };
+    format!("{first}\n  {url}: {message}")
+}
+
+/// What to do about a One ROM commissioned with other values.
+const RE_COMMISSION: &str = "Use --force to re-commission it.";
+
+/// Who may have written commissioning data this CLI doesn't know.
+pub const NEWER_DATA: &str = "It may have been written by a newer version of the CLI.";
+
+/// A command refusing a One ROM with [`refusal`]'s text. Advice beneath a
+/// refusal identifies only options the command has.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Refusing {
+    Commission,
+    SetSize,
+    /// `hardware request-signature`, which doesn't have `--force`.
+    RequestSignature,
+}
+
+/// The text of an [`Error::Commission`].
+fn commission_text(error: &onerom_app::CommissionError) -> String {
+    format!(
+        "Cannot commission this One ROM:\n  {}",
+        refusal(error, Refusing::Commission)
+    )
+}
+
+/// The text of an [`Error::SetSize`].
+fn set_size_text(error: &onerom_app::CommissionError) -> String {
+    format!(
+        "Cannot set this One ROM's size:\n  {}",
+        refusal(error, Refusing::SetSize)
+    )
+}
+
+/// The text of an [`Error::RequestSignature`]. It is `hardware commission`'s
+/// refusal without advice identifying an option `hardware request-signature`
+/// doesn't have.
+fn request_signature_text(error: &onerom_app::CommissionError) -> String {
+    format!(
+        "Cannot commission this One ROM:\n  {}",
+        refusal(error, Refusing::RequestSignature)
+    )
+}
+
+/// Why `command` refused the One ROM, with advice beneath where it helps.
+///
+/// A value read from OTP is printed with its control characters escaped. Where
+/// an option of `command` overrides the refusal the text says which.
+fn refusal(error: &onerom_app::CommissionError, command: Refusing) -> String {
+    use onerom_app::CommissionError as E;
+    use onerom_metadata::otp::BuildError;
+    match error {
+        // hardware commission refuses with Error::AlreadyCommissioned, which
+        // holds the instance's values. Only --force re-commissions.
+        E::AlreadyCommissioned { .. } => match command {
+            Refusing::Commission | Refusing::SetSize => {
+                format!("It is already commissioned.\n  {RE_COMMISSION}")
+            }
+            Refusing::RequestSignature => "It is already commissioned.".to_string(),
+        },
+        // Only hardware set-size refuses this.
+        E::CommissionedAsAnotherBoard { board, requested } => {
+            format!(
+                "It is commissioned as {} not {}.",
+                escape_controls(board),
+                requested.name()
+            )
+        }
+        // Only prepare() refuses this, and hardware commission's --force
+        // overrides it. --size L is refused for a board that doesn't support
+        // external flash. hardware request-signature doesn't have --force,
+        // and guessing at --size L there confuses more than it helps.
+        E::SecondChipConfigured(board) => {
+            let supports_l = board.external_flash_cs_pin().is_some();
+            let advice = match (command, supports_l) {
+                (Refusing::Commission | Refusing::SetSize, true) => {
+                    Some("Use --size L, or --force to commission it as M anyway.")
+                }
+                (Refusing::Commission | Refusing::SetSize, false) => {
+                    Some("Use --force to commission it as M anyway.")
+                }
+                (Refusing::RequestSignature, _) => None,
+            };
+            match advice {
+                Some(advice) => format!("{}\n  {advice}", sentence(error)),
+                None => sentence(error),
+            }
+        }
+        E::NewerData { .. } | E::UnknownKey { .. } => {
+            format!("{}\n  {NEWER_DATA}", sentence(error))
+        }
+        // The manufacturer's name is the only value whose length the user
+        // chooses.
+        E::Build(BuildError::DoesNotFit) => {
+            "The manufacturer's name is too long to fit in OTP.".to_string()
+        }
+        E::Otp { .. }
+        | E::AreaFull
+        | E::Build(_)
+        | E::NotFire(_)
+        | E::NoExternalFlash(_)
+        | E::SizeAlreadySet { .. }
+        | E::SlotSizeInvalid { .. }
+        | E::RowWritten { .. }
+        | E::PageLocked { .. }
+        | E::ReadBack { .. } => sentence(error),
+    }
+}
+
+/// The text of an [`Error::CommissionFailed`].
+fn commission_failed_text(error: &onerom_app::CommissionError) -> String {
+    failed_text(
+        "Commissioning failed part way through due to an error:",
+        error,
+    )
+}
+
+/// The text of an [`Error::SetSizeFailed`].
+fn set_size_failed_text(error: &onerom_app::CommissionError) -> String {
+    failed_text(
+        "Setting the board size failed part way through due to an error:",
+        error,
+    )
+}
+
+/// `heading`, then the reason a run that began writing failed with `error`.
+/// Where running it again completes it the text says so.
+fn failed_text(heading: &str, error: &onerom_app::CommissionError) -> String {
+    let text = format!("{heading}\n  {}", sentence(error));
+    if run_again_completes(error) {
+        format!("{text}\n  Run the same command again to complete.")
+    } else {
+        text
+    }
+}
+
+/// Whether running the same command again completes a run that failed with
+/// `error`. Only a lost connection is completed this way. A second run skips
+/// the rows already written. Any other failure stops it again.
+fn run_again_completes(error: &onerom_app::CommissionError) -> bool {
+    matches!(
+        error,
+        onerom_app::CommissionError::Otp {
+            error: onerom_app::OtpError::Transport(_),
+            ..
+        }
+    )
+}
+
+/// The text of an [`Error::ImageFile`].
+fn image_file_error_text(error: &ImageFileError) -> String {
+    format!(
+        "{}\n  Download or build the image file again, or use --force to override.",
+        image_file_text(error)
+    )
+}
+
+/// The text for an image file whose slots don't match its length or the flash
+/// chips. The advice isn't included.
+pub fn image_file_text(error: &ImageFileError) -> String {
+    let (fault, detail) = match *error {
+        ImageFileError::TooShort { short_by } => {
+            ("too short", format!("It ends {short_by} bytes short"))
+        }
+        ImageFileError::BadAddress { slot, addr } => (
+            "damaged",
+            format!("Slot {slot} is at {addr:#010x}, which isn't a valid address"),
+        ),
+        ImageFileError::TooLong { too_long_by } => {
+            ("too long", format!("It is {too_long_by} bytes too long"))
+        }
+    };
+    format!("Cannot use this image file because it is {fault}.\n  {detail}.")
+}
+
+/// The error for an image of `image_len` bytes that [`FlashPlan::new`] fails
+/// to plan on a board whose size is `size`.
+///
+/// [`FlashPlan::new`]: onerom_app::FlashPlan::new
+pub fn plan_error(
+    error: FlashPlanError,
+    image_len: usize,
+    size: Option<MaybeKnown<OneromBoardSize>>,
+) -> Error {
+    match error {
+        FlashPlanError::SecondChipRequired => {
+            // A size that couldn't be read shows as not known.
+            let size = size.unwrap_or(MaybeKnown::Known(OneromBoardSize::BoardSizeUnknown));
+            Error::SecondChipRequired(board_size_text(size))
+        }
+        FlashPlanError::TooLarge => {
+            let chips = flash_chips(size);
+            Error::ImageTooLarge {
+                image: image_len,
+                flash: chips.first().len() + chips.second().map_or(0, |chip| chip.len()),
+            }
+        }
+    }
+}
+
+/// The warning `--force` shows in place of `Error::ImageFile(error)`.
+pub fn image_file_warning(error: &ImageFileError) -> String {
+    let reason = match *error {
+        ImageFileError::TooShort { short_by } => format!("ends {short_by} bytes short"),
+        ImageFileError::BadAddress { .. } => "is damaged".to_string(),
+        ImageFileError::TooLong { too_long_by } => format!("is {too_long_by} bytes too long"),
+    };
+    format!("Warning: This image file {reason} (continuing due to --force)")
+}
+
+/// `error`'s text as a sentence, with a capital letter and a full stop.
+fn sentence(error: &impl std::fmt::Display) -> String {
+    let text = error.to_string();
+    let mut chars = text.chars();
+    match chars.next() {
+        Some(first) => format!("{}{}.", first.to_uppercase(), chars.as_str()),
+        None => text,
+    }
 }
 
 impl Error {
@@ -499,6 +983,15 @@ impl From<onerom_app::PluginError> for Error {
             P::TypeMismatch(src, expected, got) => {
                 Error::PluginTypeMismatch(src, expected.to_string(), got.to_string())
             }
+            P::WrongChipType {
+                name,
+                plugin_type,
+                configured,
+            } => Error::PluginWrongChipType {
+                name,
+                plugin_type,
+                configured,
+            },
             P::VersionMismatch(name, manifest, header) => {
                 Error::PluginVersionMismatch(name, manifest, header)
             }
@@ -523,13 +1016,52 @@ impl From<onerom_app::Error<onerom_fw::Error>> for Error {
             // errors are mapped elsewhere in the CLI (via From<onerom_fw::Error>).
             onerom_app::Error::Fetch { error, .. } => error.into(),
             onerom_app::Error::Plugin(p) => p.into(),
+            onerom_app::Error::Signer(e) => Error::Signer(e),
         }
+    }
+}
+
+impl From<onerom_app::OtpError> for Error {
+    fn from(e: onerom_app::OtpError) -> Self {
+        Error::Otp(e)
+    }
+}
+
+impl From<onerom_app::CommissionError> for Error {
+    fn from(e: onerom_app::CommissionError) -> Self {
+        Error::Commission(e)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// An image file refusal and its warning contain the byte counts.
+    #[test]
+    fn an_image_file_refusal_contains_the_byte_counts() {
+        for error in [
+            ImageFileError::TooShort { short_by: 1111 },
+            ImageFileError::TooLong { too_long_by: 1111 },
+        ] {
+            assert!(image_file_warning(&error).contains("1111"), "{error:?}");
+            let text = Error::ImageFile(error.clone()).to_string();
+            assert!(text.contains("1111"), "{error:?}");
+        }
+    }
+
+    /// A refusal for a slot outside both flash chips contains the slot and its
+    /// address.
+    #[test]
+    fn an_image_file_refusal_contains_the_bad_slot() {
+        let error = ImageFileError::BadAddress {
+            slot: 13,
+            addr: 0x1030_0000,
+        };
+        let text = Error::ImageFile(error).to_string();
+        assert!(text.contains("13"), "{text}");
+        assert!(text.contains("0x10300000"), "{text}");
+    }
 
     /// The board-view error offers only advice that would actually work.
     ///
@@ -569,5 +1101,133 @@ mod tests {
         let msg = Error::NoBoardOrDevice.to_string();
         assert!(msg.contains("--board"), "{msg}");
         assert!(msg.contains("--serial"), "{msg}");
+    }
+
+    /// `--size L` is refused for a board that doesn't support external flash
+    /// so the refusal advises the option only for a board that does.
+    #[test]
+    fn a_second_chip_is_answered_with_size_l_only_where_it_works() {
+        use onerom_app::CommissionError;
+        use onerom_config::hw::Board;
+        let text = |name| {
+            let board = Board::try_from_str(name).unwrap();
+            Error::Commission(CommissionError::SecondChipConfigured(board)).to_string()
+        };
+        assert!(text("fire-40-a").contains("--size"));
+        assert!(!text("fire-24-f").contains("--size"));
+    }
+
+    /// `hardware request-signature`'s refusals don't have advice.
+    /// `hardware commission`'s advise `--force`.
+    #[test]
+    fn a_signature_request_is_advised_only_its_own_options() {
+        use onerom_app::CommissionError;
+        use onerom_config::hw::Board;
+        let second_chip = |name| {
+            let board = Board::try_from_str(name).unwrap();
+            let error = CommissionError::SecondChipConfigured(board);
+            let request = Error::RequestSignature(error.clone()).to_string();
+            (request, Error::Commission(error).to_string())
+        };
+        let (l, commission_l) = second_chip("fire-40-a");
+        let (m, commission_m) = second_chip("fire-24-f");
+        assert!(!l.contains("--"), "{l}");
+        assert!(!m.contains("--"), "{m}");
+        assert_eq!(l.lines().count(), 2, "{l}");
+        assert!(commission_l.contains("--force"), "{commission_l}");
+        assert!(commission_m.contains("--force"), "{commission_m}");
+
+        let already = CommissionError::AlreadyCommissioned {
+            row: 0x0c0,
+            board: "fire-24-f".to_string(),
+            manufacturer: "piers.rocks".to_string(),
+            date: "20260101".to_string(),
+            signer: 1,
+            only_date_differs: false,
+        };
+        let request = Error::RequestSignature(already.clone()).to_string();
+        assert!(!request.contains("--"), "{request}");
+        assert!(Error::Commission(already).to_string().contains("--force"));
+        // The same heading as hardware commission's.
+        assert_eq!(request.lines().next(), m.lines().next());
+        assert_eq!(request.lines().next(), commission_m.lines().next());
+    }
+
+    /// The board read from OTP is shown with its control characters escaped,
+    /// beside the board the command was given. Nothing overrides the refusal
+    /// so it doesn't have advice beneath it.
+    #[test]
+    fn another_board_is_shown_escaped_beside_the_board_given() {
+        use onerom_app::CommissionError;
+        use onerom_config::hw::Board;
+        let requested = Board::try_from_str("fire-40-a").unwrap();
+        let text = |board: &str| {
+            Error::SetSize(CommissionError::CommissionedAsAnotherBoard {
+                board: board.to_string(),
+                requested,
+            })
+            .to_string()
+        };
+        let plain = text("fire-24-f");
+        assert!(plain.contains("fire-24-f") && plain.contains("fire-40-a"));
+        assert_eq!(plain.lines().count(), 2, "{plain}");
+        let escaped = text("fire\u{1b}[2J");
+        assert!(!escaped.contains('\u{1b}'), "{escaped}");
+        assert!(escaped.contains("fire\\u{1b}[2J"), "{escaped}");
+    }
+
+    /// The refusal shows the size OTP configures and the size asked for.
+    #[test]
+    fn a_size_already_set_shows_both_sizes() {
+        use onerom_app::{BoardSize, CommissionError};
+        use onerom_metadata::OneromBoardSize;
+        for (size, shown, requested) in [
+            (OneromBoardSize::BoardSizeL, "L", BoardSize::M),
+            (OneromBoardSize::BoardSizeOther, "other", BoardSize::M),
+            (OneromBoardSize::BoardSizeOther, "other", BoardSize::L),
+        ] {
+            let text =
+                Error::SetSize(CommissionError::SizeAlreadySet { size, requested }).to_string();
+            let words: Vec<&str> = text.split(|c: char| !c.is_alphanumeric()).collect();
+            let requested = requested.to_string();
+            assert!(words.contains(&shown), "{text}");
+            assert!(words.contains(&requested.as_str()), "{text}");
+        }
+    }
+
+    #[test]
+    fn only_a_lost_connection_is_completed_by_running_again() {
+        use onerom_app::{CommissionError, OtpError, RowValue};
+        let otp = |error| CommissionError::Otp { row: 0x0c0, error };
+        let lost = otp(OtpError::Transport("timed out".to_string()));
+        assert!(run_again_completes(&lost));
+        for error in [
+            otp(OtpError::NotPermitted),
+            otp(OtpError::UnsupportedModification),
+            CommissionError::ReadBack {
+                row: 0x0c0,
+                value: RowValue::Ecc(1),
+                raw: 0,
+            },
+        ] {
+            assert!(!run_again_completes(&error), "{error}");
+        }
+    }
+
+    /// A running One ROM Lab is refused with its line and the command that
+    /// stops it.
+    #[test]
+    fn a_running_lab_is_told_how_to_stop_it() {
+        let device = "One ROM Lab Fire 24 E - State: Running".to_string();
+        let msg = Error::OtpLabRunning(device.clone()).to_string();
+        assert!(msg.contains(&device), "{msg}");
+        assert!(msg.contains(hint::CONTROL_REBOOT_STOPPED), "{msg}");
+    }
+
+    #[test]
+    fn a_reason_is_shown_as_a_sentence() {
+        assert_eq!(sentence(&"row 0x0c5 is locked"), "Row 0x0c5 is locked.");
+        assert_eq!(sentence(&"OTP row 0x0c5"), "OTP row 0x0c5.");
+        assert_eq!(sentence(&""), "");
     }
 }

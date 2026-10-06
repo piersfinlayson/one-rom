@@ -11,15 +11,24 @@
 // MIT License
 
 use onerom_config::chip::ChipType;
+use onerom_config::fw::FirmwareVersion;
 use onerom_config::mcu::{RP235X_BASE_FLASH, RP235X_BASE_SRAM, RP235X_END_SRAM};
 use onerom_metadata::{
-    BitModes, CURRENT_METADATA_VERSION, DeviceMemoryView, FireVreg, GPIO_NONE, OneromAlgAddrConfig,
-    OneromAlgConfig, OneromAlgCsConfig, OneromAlgDataConfig, OneromAlgDmaConfig,
-    OneromAlgOverrideConfig, OneromAlgPullConfig, OneromFirmwareConfig, OneromFirmwareOverrides,
-    OneromHardwareInfo, OneromMetadataHeader, OneromRomInfo, OneromRomPinMap, OneromRomSlot,
+    BitModes, CURRENT_METADATA_VERSION, DeviceMemoryView, FireVreg, GPIO_NONE, Generations,
+    MaybeKnown, ONEROM_INFO_BUILD_DATE_OFFSET, ONEROM_INFO_MAGIC, ONEROM_INFO_MAGIC_OFFSET,
+    ONEROM_INFO_MAJOR_VERSION_OFFSET, ONEROM_INFO_METADATA_OFFSET,
+    ONEROM_INFO_MINOR_VERSION_OFFSET, ONEROM_INFO_PATCH_VERSION_OFFSET, ONEROM_INFO_RUNTIME_OFFSET,
+    ONEROM_INFO_SIZE, ONEROM_RUNTIME_INFO_SYSTEM_PLUGIN_CONTEXT_OFFSET,
+    ONEROM_RUNTIME_INFO_USER_PLUGIN_CONTEXT_OFFSET, OneromAlgAddrConfig, OneromAlgConfig,
+    OneromAlgCsConfig, OneromAlgDataConfig, OneromAlgDmaConfig, OneromAlgOverrideConfig,
+    OneromAlgPullConfig, OneromFirmwareConfig, OneromFirmwareOverrides, OneromHardwareInfo,
+    OneromInfo, OneromMetadataHeader, OneromRomInfo, OneromRomPinMap, OneromRomSlot, OverrideState,
     Pointer, RomSlotType, Rp235xVariant, generate_host_metadata_c,
 };
-use onerom_metadata::{METADATA_BASE, METADATA_SIZE, SerializeError, serialize};
+use onerom_metadata::{
+    METADATA_BASE, METADATA_GENERATIONS, METADATA_SIZE, MIN_SCHEMA_VERSION, SerializeError,
+    metadata_generation_for, serialize,
+};
 
 // ===========================================================================
 // Buffer helpers
@@ -39,172 +48,110 @@ fn ptr_to_off(ptr: u32, base: u32) -> usize {
 // ===========================================================================
 
 fn default_pin_map() -> Option<OneromRomPinMap> {
-    Some(OneromRomPinMap {
-        addr: [GPIO_NONE; 24],
-        data: [GPIO_NONE; 16],
-    })
+    let mut pin_map = OneromRomPinMap::default();
+    pin_map.addr = [GPIO_NONE; 24];
+    pin_map.data = [GPIO_NONE; 16];
+    Some(pin_map)
 }
 
 fn make_rom_info(rom_type: &str) -> OneromRomInfo {
     let chip =
         ChipType::try_from_str(rom_type).unwrap_or_else(|| panic!("unknown chip type: {rom_type}"));
-    OneromRomInfo {
-        rom_type: rom_type.into(),
-        filename: None,
-        pin_map: default_pin_map(),
-        chip_size: chip.size_bytes() as u32,
-        rbcp_rom_type: chip.rbcp_chip_type(),
-    }
+    let mut rom = OneromRomInfo::default();
+    rom.rom_type = rom_type.into();
+    rom.pin_map = default_pin_map();
+    rom.chip_size = chip.size_bytes() as u32;
+    rom.rbcp_rom_type = chip.rbcp_chip_type();
+    rom
 }
 
 fn default_alg() -> Option<OneromAlgConfig> {
-    Some(OneromAlgConfig {
-        alg_cs: OneromAlgCsConfig::AlgCs0 {
-            clkdiv_int: 1,
-            clkdiv_frac: 0,
-            gpio_base: 0,
-            base_cs_pin: 0,
-            num_cs_pins: 1,
-            base_data_pin: 8,
-            num_data_pins: 8,
-            cs_active_delay: 0,
-            cs_inactive_delay: 0,
-            serve_cs_low_0: 1,
-            byte_pin: GPIO_NONE,
-            first_rom_cs_base: 0,
-            first_rom_num_cs_pins: 1,
-        },
-        alg_addr: OneromAlgAddrConfig::AlgAddr0 {
-            clkdiv_int: 1,
-            clkdiv_frac: 0,
-            gpio_base: 0,
-            num_delay_cycles: 2,
-            base_addr_pin: 0,
-            num_addr_pins: 13,
-            num_rom_table_bits: 13,
-        },
-        alg_data: OneromAlgDataConfig::AlgData0 {
-            clkdiv_int: 1,
-            clkdiv_frac: 0,
-            gpio_base: 0,
-            base_data_pin: 8,
-            word_size: 8,
-        },
-        alg_dma: OneromAlgDmaConfig::AlgDma0 {
-            bit_mode: BitModes::BitMode8,
-            continuous: 1,
-        },
-        gpio_pull_config: None,
-        gpio_override_config: None,
-    })
+    let mut alg = OneromAlgConfig::default();
+    alg.alg_cs = OneromAlgCsConfig::AlgCs0 {
+        clkdiv_int: 1,
+        clkdiv_frac: 0,
+        gpio_base: 0,
+        base_cs_pin: 0,
+        num_cs_pins: 1,
+        base_data_pin: 8,
+        num_data_pins: 8,
+        cs_active_delay: 0,
+        cs_inactive_delay: 0,
+        serve_cs_low_0: 1,
+        byte_pin: GPIO_NONE,
+        first_rom_cs_base: 0,
+        first_rom_num_cs_pins: 1,
+    };
+    alg.alg_addr = OneromAlgAddrConfig::AlgAddr0 {
+        clkdiv_int: 1,
+        clkdiv_frac: 0,
+        gpio_base: 0,
+        num_delay_cycles: 2,
+        base_addr_pin: 0,
+        num_addr_pins: 13,
+        num_rom_table_bits: 13,
+    };
+    alg.alg_data = OneromAlgDataConfig::AlgData0 {
+        clkdiv_int: 1,
+        clkdiv_frac: 0,
+        gpio_base: 0,
+        base_data_pin: 8,
+        word_size: 8,
+    };
+    alg.alg_dma = OneromAlgDmaConfig::AlgDma0 {
+        bit_mode: MaybeKnown::Known(BitModes::BitMode8),
+        continuous: 1,
+    };
+    Some(alg)
 }
 
 fn make_slot(roms: Vec<OneromRomInfo>) -> OneromRomSlot {
-    OneromRomSlot {
-        data: Pointer::Null,
-        size: 8192,
-        roms,
-        rom_count: 0,
-        slot_type: RomSlotType::RomSlotTypeSingleRom,
-        alg: default_alg(),
-        firmware_overrides: None,
-    }
+    let mut slot = OneromRomSlot::default();
+    slot.size = 8192;
+    slot.roms = roms;
+    slot.slot_type = MaybeKnown::Known(RomSlotType::RomSlotTypeSingleRom);
+    slot.alg = default_alg();
+    slot
+}
+
+/// A 2364 slot running `alg`.
+fn slot_with_alg(alg: OneromAlgConfig) -> OneromRomSlot {
+    let mut slot = make_slot(vec![make_rom_info("2364")]);
+    slot.alg = Some(alg);
+    slot
 }
 
 /// Construct the minimal valid header exactly as specified in the test brief.
 fn minimal_header() -> OneromMetadataHeader {
-    let pin_map = OneromRomPinMap {
-        addr: [GPIO_NONE; 24],
-        data: [GPIO_NONE; 16],
-    };
-    let chip_2364 = ChipType::Chip2364;
-    let rom_info = OneromRomInfo {
-        rom_type: "2364".into(),
-        filename: None,
-        pin_map: Some(pin_map),
-        chip_size: chip_2364.size_bytes() as u32,
-        rbcp_rom_type: chip_2364.rbcp_chip_type(),
-    };
-    let alg = OneromAlgConfig {
-        alg_cs: OneromAlgCsConfig::AlgCs0 {
-            clkdiv_int: 1,
-            clkdiv_frac: 0,
-            gpio_base: 0,
-            base_cs_pin: 0,
-            num_cs_pins: 1,
-            base_data_pin: 8,
-            num_data_pins: 8,
-            cs_active_delay: 0,
-            cs_inactive_delay: 0,
-            serve_cs_low_0: 1,
-            byte_pin: GPIO_NONE,
-            first_rom_cs_base: 0,
-            first_rom_num_cs_pins: 1,
-        },
-        alg_addr: OneromAlgAddrConfig::AlgAddr0 {
-            clkdiv_int: 1,
-            clkdiv_frac: 0,
-            gpio_base: 0,
-            num_delay_cycles: 2,
-            base_addr_pin: 0,
-            num_addr_pins: 13,
-            num_rom_table_bits: 13,
-        },
-        alg_data: OneromAlgDataConfig::AlgData0 {
-            clkdiv_int: 1,
-            clkdiv_frac: 0,
-            gpio_base: 0,
-            base_data_pin: 8,
-            word_size: 8,
-        },
-        alg_dma: OneromAlgDmaConfig::AlgDma0 {
-            bit_mode: BitModes::BitMode8,
-            continuous: 1,
-        },
-        gpio_pull_config: None,
-        gpio_override_config: None,
-    };
-    let slot = OneromRomSlot {
-        data: Pointer::Null,
-        size: 8192,
-        roms: vec![rom_info],
-        rom_count: 0,
-        slot_type: RomSlotType::RomSlotTypeSingleRom,
-        alg: Some(alg),
-        firmware_overrides: None,
-    };
-    let hw = OneromHardwareInfo {
-        hw_rev: "1.0".into(),
-        rp235x: Rp235xVariant::Rp235xb,
-        num_phys_pins: 28,
-        usb_capable: 1,
-        gpio_vbus: GPIO_NONE,
-        gpio_ext_flash_cs: GPIO_NONE,
-        gpio_status: 25,
-        gpio_neopixel: GPIO_NONE,
-        gpio_swdio: GPIO_NONE,
-        gpio_swclk: GPIO_NONE,
-        gpio_sel: [GPIO_NONE; 7],
-        sel_jumper_pull: 0,
-        gpio_from_phys_pin: [[GPIO_NONE; 2]; 40],
-        gpio_x1: [GPIO_NONE; 2],
-        gpio_x2: [GPIO_NONE; 2],
-    };
-    let fw = OneromFirmwareConfig {
-        name: None,
-        serial_number: None,
-    };
-    OneromMetadataHeader {
-        magic: *b"ONEROM_METADATA\0",
-        version: CURRENT_METADATA_VERSION,
-        hw,
-        fw,
-        rom_slot_count: 0,
-        boot_logging: 0,
-        swd_enabled: 0,
-        turbo_boot: 0,
-        rom_slots: vec![slot],
-    }
+    let mut hw = OneromHardwareInfo::default();
+    hw.hw_rev = "1.0".into();
+    hw.rp235x = MaybeKnown::Known(Rp235xVariant::Rp235xb);
+    hw.num_phys_pins = 28;
+    hw.usb_capable = 1;
+    hw.gpio_vbus = GPIO_NONE;
+    hw.gpio_ext_flash_cs = GPIO_NONE;
+    hw.gpio_status = 25;
+    hw.gpio_neopixel = GPIO_NONE;
+    hw.gpio_swdio = GPIO_NONE;
+    hw.gpio_swclk = GPIO_NONE;
+    hw.gpio_sel = [GPIO_NONE; 7];
+    hw.gpio_from_phys_pin = [[GPIO_NONE; 2]; 40];
+    hw.gpio_x1 = [GPIO_NONE; 2];
+    hw.gpio_x2 = [GPIO_NONE; 2];
+
+    let mut header = OneromMetadataHeader::default();
+    header.magic = *b"ONEROM_METADATA\0";
+    header.version = CURRENT_METADATA_VERSION;
+    header.hw = hw;
+    header.rom_slots = vec![make_slot(vec![make_rom_info("2364")])];
+    header
+}
+
+/// [`minimal_header`] with `rom_slots` in place of its own.
+fn header_with_slots(rom_slots: Vec<OneromRomSlot>) -> OneromMetadataHeader {
+    let mut header = minimal_header();
+    header.rom_slots = rom_slots;
+    header
 }
 
 /// One `Vec<u8>` of small dummy ROM image bytes per slot.
@@ -231,7 +178,7 @@ fn do_serialize(header: &OneromMetadataHeader) -> Vec<u8> {
 fn round_trip(header: &OneromMetadataHeader) -> OneromMetadataHeader {
     let buf = do_serialize(header);
     let view = DeviceMemoryView::new(&buf, METADATA_BASE);
-    OneromMetadataHeader::parse(&view, METADATA_BASE).expect("parse failed")
+    OneromMetadataHeader::parse(&view, METADATA_BASE, Generations::UNKNOWN).expect("parse failed")
 }
 
 /// Set the derived count fields to their correct values (Vec lengths).
@@ -272,35 +219,19 @@ fn round_trip_minimal() {
 ///    OneromFirmwareOverrides all present.
 #[test]
 fn round_trip_optional_fields() {
-    let fw = OneromFirmwareConfig {
-        name: Some("MyUnit".into()),
-        serial_number: Some("SN-0042".into()),
-    };
-    let chip_2364 = ChipType::Chip2364;
-    let rom = OneromRomInfo {
-        rom_type: "2364".into(),
-        filename: Some("basic.rom".into()),
-        pin_map: default_pin_map(),
-        chip_size: chip_2364.size_bytes() as u32,
-        rbcp_rom_type: chip_2364.rbcp_chip_type(),
-    };
-    let fw_overrides = OneromFirmwareOverrides {
-        // Byte 0 bit 2 = fire-freq override present.
-        override_present: [0x04, 0, 0, 0, 0, 0, 0, 0],
-        ice_freq: 0,
-        fire_freq: 0,
-        fire_vreg: FireVreg::FireVregNone,
-        override_value: [0; 8],
-    };
-    let slot = OneromRomSlot {
-        firmware_overrides: Some(fw_overrides),
-        ..make_slot(vec![rom])
-    };
-    let original = OneromMetadataHeader {
-        fw,
-        rom_slots: vec![slot],
-        ..minimal_header()
-    };
+    let mut fw = OneromFirmwareConfig::default();
+    fw.name = Some("MyUnit".into());
+    fw.serial_number = Some("SN-0042".into());
+    let mut rom = make_rom_info("2364");
+    rom.filename = Some("basic.rom".into());
+    let mut fw_overrides = OneromFirmwareOverrides::default();
+    // Byte 0 bit 2 = fire-freq override present.
+    fw_overrides.override_present = [0x04, 0, 0, 0, 0, 0, 0, 0];
+    fw_overrides.fire_vreg = MaybeKnown::Known(FireVreg::FireVregNone);
+    let mut slot = make_slot(vec![rom]);
+    slot.firmware_overrides = Some(fw_overrides);
+    let mut original = header_with_slots(vec![slot]);
+    original.fw = fw;
     assert_round_trips(&original);
 }
 
@@ -308,154 +239,178 @@ fn round_trip_optional_fields() {
 #[test]
 fn round_trip_multiple_slots() {
     let slot_a = make_slot(vec![make_rom_info("2364")]);
-    let slot_b = OneromRomSlot {
-        size: 16384,
-        slot_type: RomSlotType::RomSlotTypeMultiRom,
-        ..make_slot(vec![make_rom_info("27128")])
-    };
-    let slot_c = OneromRomSlot {
-        size: 32768,
-        slot_type: RomSlotType::RomSlotTypeBankedRom,
-        ..make_slot(vec![make_rom_info("27256")])
-    };
-    let original = OneromMetadataHeader {
-        rom_slots: vec![slot_a, slot_b, slot_c],
-        ..minimal_header()
-    };
-    assert_round_trips(&original);
+    let mut slot_b = make_slot(vec![make_rom_info("27128")]);
+    slot_b.size = 16384;
+    slot_b.slot_type = MaybeKnown::Known(RomSlotType::RomSlotTypeMultiRom);
+    let mut slot_c = make_slot(vec![make_rom_info("27256")]);
+    slot_c.size = 32768;
+    slot_c.slot_type = MaybeKnown::Known(RomSlotType::RomSlotTypeBankedRom);
+    assert_round_trips(&header_with_slots(vec![slot_a, slot_b, slot_c]));
 }
 
 /// 4. A single slot carrying two ROM images.
 #[test]
 fn round_trip_multiple_roms_per_slot() {
     let roms = vec![make_rom_info("2364"), make_rom_info("27128")];
-    let original = OneromMetadataHeader {
-        rom_slots: vec![make_slot(roms)],
-        ..minimal_header()
-    };
-    assert_round_trips(&original);
+    assert_round_trips(&header_with_slots(vec![make_slot(roms)]));
 }
 
 /// 5a. CS algorithm variant 1 (non-contiguous single-gap).
 #[test]
 fn round_trip_alg_cs1() {
-    let alg = OneromAlgConfig {
-        alg_cs: OneromAlgCsConfig::AlgCs1 {
-            clkdiv_int: 2,
-            clkdiv_frac: 0,
-            gpio_base: 0,
-            base_cs_pin: 0,
-            num_cs_pins: 2,
-            base_data_pin: 8,
-            num_data_pins: 8,
-            cs_active_delay: 1,
-            cs_inactive_delay: 1,
-            cs_ignore_index: 1,
-        },
-        ..default_alg().unwrap()
+    let mut alg = default_alg().unwrap();
+    alg.alg_cs = OneromAlgCsConfig::AlgCs1 {
+        clkdiv_int: 2,
+        clkdiv_frac: 0,
+        gpio_base: 0,
+        base_cs_pin: 0,
+        num_cs_pins: 2,
+        base_data_pin: 8,
+        num_data_pins: 8,
+        cs_active_delay: 1,
+        cs_inactive_delay: 1,
+        cs_ignore_index: 1,
     };
-    let original = OneromMetadataHeader {
-        rom_slots: vec![OneromRomSlot {
-            alg: Some(alg),
-            ..make_slot(vec![make_rom_info("2364")])
-        }],
-        ..minimal_header()
-    };
-    assert_round_trips(&original);
+    assert_round_trips(&header_with_slots(vec![slot_with_alg(alg)]));
 }
 
 /// 5b. CS algorithm variant 2 (enable/address-qualified).
 #[test]
 fn round_trip_alg_cs2() {
-    let alg = OneromAlgConfig {
-        alg_cs: OneromAlgCsConfig::AlgCs2 {
-            clkdiv_int: 1,
-            clkdiv_frac: 0,
-            gpio_base: 0,
-            base_cs_pin: 0,
-            num_cs_pins: 1,
-            base_data_pin: 8,
-            num_data_pins: 8,
-            cs_active_delay: 0,
-            cs_inactive_delay: 0,
-            base_qualifier_pin: 2,
-            num_qualifier_pins: 2,
-            qualifier_inactive_pattern: 0b11,
-        },
-        ..default_alg().unwrap()
+    let mut alg = default_alg().unwrap();
+    alg.alg_cs = OneromAlgCsConfig::AlgCs2 {
+        clkdiv_int: 1,
+        clkdiv_frac: 0,
+        gpio_base: 0,
+        base_cs_pin: 0,
+        num_cs_pins: 1,
+        base_data_pin: 8,
+        num_data_pins: 8,
+        cs_active_delay: 0,
+        cs_inactive_delay: 0,
+        base_qualifier_pin: 2,
+        num_qualifier_pins: 2,
+        qualifier_inactive_pattern: 0b11,
     };
-    let original = OneromMetadataHeader {
-        rom_slots: vec![OneromRomSlot {
-            alg: Some(alg),
-            ..make_slot(vec![make_rom_info("2364")])
-        }],
-        ..minimal_header()
-    };
-    assert_round_trips(&original);
+    assert_round_trips(&header_with_slots(vec![slot_with_alg(alg)]));
 }
 
 /// 6. Data algorithm variant 1 (byte-mode, with byte_pin and a_minus_1_pin).
 #[test]
 fn round_trip_alg_data1() {
-    let alg = OneromAlgConfig {
-        alg_data: OneromAlgDataConfig::AlgData1 {
-            clkdiv_int: 1,
-            clkdiv_frac: 0,
-            gpio_base: 0,
-            base_data_pin: 0,
-            word_size: 16,
-            byte_pin: 5,
-            a_minus_1_pin: 6,
-        },
-        ..default_alg().unwrap()
+    let mut alg = default_alg().unwrap();
+    alg.alg_data = OneromAlgDataConfig::AlgData1 {
+        clkdiv_int: 1,
+        clkdiv_frac: 0,
+        gpio_base: 0,
+        base_data_pin: 0,
+        word_size: 16,
+        byte_pin: 5,
+        a_minus_1_pin: 6,
     };
-    let original = OneromMetadataHeader {
-        rom_slots: vec![OneromRomSlot {
-            alg: Some(alg),
-            ..make_slot(vec![make_rom_info("2364")])
-        }],
-        ..minimal_header()
-    };
-    assert_round_trips(&original);
+    assert_round_trips(&header_with_slots(vec![slot_with_alg(alg)]));
 }
 
 /// 7. Both simple FAMs (gpio_pull_config and gpio_override_config) present
 ///    with non-empty params.
 #[test]
 fn round_trip_simple_fams() {
-    let alg = OneromAlgConfig {
-        // MSB=1 → pull-up; lower 7 bits = GPIO number.
-        gpio_pull_config: Some(OneromAlgPullConfig {
-            params: vec![0x85, 0x86], // pull-up GPIO 5, pull-up GPIO 6
-        }),
-        // Top 2 bits = override mode (gpio_override_t); lower 6 = GPIO number.
-        gpio_override_config: Some(OneromAlgOverrideConfig {
-            params: vec![0x47], // mode 1 (invert), GPIO 7
-        }),
-        ..default_alg().unwrap()
-    };
-    let original = OneromMetadataHeader {
-        rom_slots: vec![OneromRomSlot {
-            alg: Some(alg),
-            ..make_slot(vec![make_rom_info("2364")])
-        }],
-        ..minimal_header()
-    };
-    assert_round_trips(&original);
+    // MSB=1 → pull-up. Lower 7 bits = GPIO number.
+    let mut pulls = OneromAlgPullConfig::default();
+    pulls.params = vec![0x85, 0x86]; // pull-up GPIO 5, pull-up GPIO 6
+    // Top 2 bits = override mode (gpio_override_t). Lower 6 = GPIO number.
+    let mut overrides = OneromAlgOverrideConfig::default();
+    overrides.params = vec![0x47]; // mode 1 (invert), GPIO 7
+    let mut alg = default_alg().unwrap();
+    alg.gpio_pull_config = Some(pulls);
+    alg.gpio_override_config = Some(overrides);
+    assert_round_trips(&header_with_slots(vec![slot_with_alg(alg)]));
 }
 
 /// 8. Two slots whose rom_type strings are identical; the round-trip must
 ///    reconstruct equal values regardless of whether the serializer deduplicates.
 #[test]
 fn round_trip_string_reuse() {
-    let original = OneromMetadataHeader {
-        rom_slots: vec![
-            make_slot(vec![make_rom_info("2364")]),
-            make_slot(vec![make_rom_info("2364")]),
-        ],
-        ..minimal_header()
-    };
+    let original = header_with_slots(vec![
+        make_slot(vec![make_rom_info("2364")]),
+        make_slot(vec![make_rom_info("2364")]),
+    ]);
     assert_round_trips(&original);
+}
+
+// ===========================================================================
+// Per-slot override states
+// ===========================================================================
+
+/// The release the override states arrived in.
+const OVERRIDE_STATES_RELEASE: FirmwareVersion = FirmwareVersion::new(0, 8, 0, 0);
+
+/// A header whose one slot has standby on.
+fn header_with_standby() -> OneromMetadataHeader {
+    let mut overrides = OneromFirmwareOverrides::default();
+    overrides.override_states.standby = Some(MaybeKnown::Known(OverrideState::OverrideStateOn));
+    let mut slot = make_slot(vec![make_rom_info("2364")]);
+    slot.firmware_overrides = Some(overrides);
+    header_with_slots(vec![slot])
+}
+
+/// The states go out as their bits, at offset 24 of the overrides.
+#[test]
+fn override_states_are_written_as_their_bits() {
+    let buf = do_serialize(&header_with_standby());
+    let slots_off = ptr_to_off(read_u32_le(&buf, 32), METADATA_BASE);
+    let overrides_off = ptr_to_off(read_u32_le(&buf, slots_off + 20), METADATA_BASE);
+    assert_eq!(
+        buf[overrides_off + 24],
+        OverrideState::OverrideStateOn as u8
+    );
+}
+
+/// A host reads the states against the firmware release, so a host that
+/// hasn't read one keeps the bits as unknown.
+#[test]
+fn override_states_are_read_against_the_release() {
+    let buf = do_serialize(&header_with_standby());
+    let view = DeviceMemoryView::new(&buf, METADATA_BASE);
+    let overrides = |generations| {
+        OneromMetadataHeader::parse(&view, METADATA_BASE, generations)
+            .expect("parse failed")
+            .rom_slots[0]
+            .firmware_overrides
+            .clone()
+            .expect("the slot has overrides")
+            .override_states
+    };
+
+    let states = overrides(Generations::UNKNOWN.with_firmware_release(OVERRIDE_STATES_RELEASE));
+    assert_eq!(
+        states.standby,
+        Some(MaybeKnown::Known(OverrideState::OverrideStateOn))
+    );
+    assert_eq!(states.unknown_bits, 0);
+
+    let states = overrides(Generations::UNKNOWN);
+    assert_eq!(states.standby, None);
+    assert_eq!(states.unknown_bits, OverrideState::OverrideStateOn as u8);
+}
+
+/// Metadata older than the states has nowhere to put one that is set.
+#[test]
+fn an_override_state_older_metadata_cannot_carry_is_refused() {
+    let mut header = header_with_standby();
+    header.version = 2;
+    let mut buf = vec![0u8; METADATA_SIZE];
+    assert_eq!(
+        serialize(&header, METADATA_BASE, &mut buf),
+        Err(SerializeError::FieldTooNew {
+            field: "onerom_firmware_overrides_t.override_states",
+            minimum: OVERRIDE_STATES_RELEASE,
+        }),
+    );
+
+    // With nothing set, the same metadata composes.
+    header.rom_slots[0].firmware_overrides = Some(OneromFirmwareOverrides::default());
+    assert!(serialize(&header, METADATA_BASE, &mut buf).is_ok());
 }
 
 // ===========================================================================
@@ -472,7 +427,9 @@ fn round_trip_string_reuse() {
 //  30      swd_enabled u8
 //  31      turbo_boot u8
 //  32..36  rom_slots ptr
-//  36..256 reserved (220 bytes, must be 0xFF)
+//  36      reserved_sel_pins u8
+//  37      reserved_x_pins u8
+//  38..256 reserved (218 bytes, must be 0xFF)
 //
 // OneromRomSlot layout (32 bytes, offsets relative to slot start):
 //   0..4   data (opaque_ptr, u32)
@@ -499,15 +456,10 @@ fn round_trip_string_reuse() {
 ///    field values set on the Rust structs.
 #[test]
 fn byte_check_count_fields_derived_from_vec() {
-    let slot = OneromRomSlot {
-        rom_count: 99, // wrong; should be overridden to roms.len() = 1
-        ..make_slot(vec![make_rom_info("2364")])
-    };
-    let header = OneromMetadataHeader {
-        rom_slot_count: 42, // wrong; should be overridden to rom_slots.len() = 1
-        rom_slots: vec![slot],
-        ..minimal_header()
-    };
+    let mut slot = make_slot(vec![make_rom_info("2364")]);
+    slot.rom_count = 99; // Wrong. Should be overridden to roms.len() = 1
+    let mut header = header_with_slots(vec![slot]);
+    header.rom_slot_count = 42; // Wrong. Should be overridden to rom_slots.len() = 1
     let buf = do_serialize(&header);
 
     // rom_slot_count at header offset 28.
@@ -530,14 +482,9 @@ fn byte_check_count_fields_derived_from_vec() {
 ///     must not interpret or redirect them.
 #[test]
 fn byte_check_opaque_ptr_verbatim() {
-    let slot = OneromRomSlot {
-        data: Pointer::Addr32(0xDEAD_BEEF),
-        ..make_slot(vec![make_rom_info("2364")])
-    };
-    let header = OneromMetadataHeader {
-        rom_slots: vec![slot],
-        ..minimal_header()
-    };
+    let mut slot = make_slot(vec![make_rom_info("2364")]);
+    slot.data = Pointer::Addr32(0xDEAD_BEEF);
+    let header = header_with_slots(vec![slot]);
     let buf = do_serialize(&header);
 
     // Follow the rom_slots pointer from the header.
@@ -557,18 +504,11 @@ fn byte_check_opaque_ptr_verbatim() {
 #[test]
 fn byte_check_object_dedup() {
     let alg = default_alg();
-    let slot_a = OneromRomSlot {
-        alg: alg.clone(),
-        ..make_slot(vec![make_rom_info("2364")])
-    };
-    let slot_b = OneromRomSlot {
-        alg,
-        ..make_slot(vec![make_rom_info("27128")])
-    };
-    let header = OneromMetadataHeader {
-        rom_slots: vec![slot_a, slot_b],
-        ..minimal_header()
-    };
+    let mut slot_a = make_slot(vec![make_rom_info("2364")]);
+    slot_a.alg = alg.clone();
+    let mut slot_b = make_slot(vec![make_rom_info("27128")]);
+    slot_b.alg = alg;
+    let header = header_with_slots(vec![slot_a, slot_b]);
     let buf = do_serialize(&header);
 
     // Locate the contiguous slots array.
@@ -586,13 +526,13 @@ fn byte_check_object_dedup() {
     );
 }
 
-/// 12. The 220-byte reserved region in OneromMetadataHeader (offsets 36–255)
+/// 12. The 218-byte reserved region in OneromMetadataHeader (offsets 38–255)
 ///     is all 0xFF after serialization.
 #[test]
 fn byte_check_header_padding_is_ff() {
     let buf = do_serialize(&minimal_header());
     #[allow(clippy::needless_range_loop)]
-    for offset in 36..256 {
+    for offset in 38..256 {
         assert_eq!(
             buf[offset], 0xFF,
             "header reserved byte at offset {offset} should be 0xFF, got 0x{:02X}",
@@ -748,6 +688,52 @@ fn host_c_gen_structural() {
     );
 }
 
+/// A host build's slot data is a host pointer, so the generated C also holds
+/// each slot's flash address from the metadata, in `rom_slots` order.  C
+/// doesn't allow an empty array, so a header without slots gets a single 0.
+#[test]
+fn host_c_gen_rom_slot_flash_addrs() {
+    let mut header = minimal_header();
+    header.rom_slots[0].data = Pointer::Addr32(0x1001_0000);
+    let mut second = header.rom_slots[0].clone();
+    second.data = Pointer::Addr32(0x1100_0000);
+    header.rom_slots.push(second);
+    let c_src = generate_host_metadata_c(&header, dummy_rom_data(2));
+    assert!(
+        c_src.contains("uint32_t host_rom_slot_flash_addrs[] = { 0x10010000, 0x11000000 };"),
+        "expected both slots' flash addresses in order, got: {c_src}"
+    );
+
+    header.rom_slots.clear();
+    let c_src = generate_host_metadata_c(&header, dummy_rom_data(0));
+    assert!(
+        c_src.contains("uint32_t host_rom_slot_flash_addrs[] = { 0 };"),
+        "expected a single 0 without slots, got: {c_src}"
+    );
+}
+
+/// An empty data entry is a slot without an image.  Its data is the metadata's
+/// own pointer rather than an array, so the host firmware sees the value it
+/// tests for.
+#[test]
+fn host_c_gen_slot_without_image() {
+    let mut header = minimal_header();
+    header.rom_slots[0].data = Pointer::Addr32(0xFFFF_FFFF);
+    let c_src = generate_host_metadata_c(&header, vec![Vec::new()]);
+    assert!(
+        c_src.contains(".data = (const uint8_t *)(uintptr_t)0xFFFFFFFFu,"),
+        "expected the slot's data pointer, got: {c_src}"
+    );
+    assert!(
+        !c_src.contains("rom_data_slot"),
+        "expected no image array, got: {c_src}"
+    );
+    assert!(
+        c_src.contains("uint32_t host_rom_slot_flash_addrs[] = { 0xFFFFFFFF };"),
+        "expected the slot's data pointer as its flash address, got: {c_src}"
+    );
+}
+
 /// 18. Compile: the generated C compiles cleanly under
 ///     `gcc -std=c99 -Wall -Wextra -Wpedantic` (Linux/macOS only).
 ///
@@ -756,6 +742,22 @@ fn host_c_gen_structural() {
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 #[test]
 fn host_c_gen_compiles() {
+    compile_generated_c(&minimal_header());
+}
+
+/// The same, for a header whose DMA algorithm this build has no name for.
+/// The emitter writes the discriminant as a plain number and the parameter
+/// bytes as it read them, which still has to compile.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[test]
+fn host_c_gen_compiles_with_an_unrecognised_alg() {
+    compile_generated_c(&header_with_unknown_alg());
+}
+
+/// Generate the C for `header` and compile it, skipping gracefully where the
+/// toolchain or the header is not there.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn compile_generated_c(header: &OneromMetadataHeader) {
     use std::process::Command;
 
     // Locate onerom_metadata.h.  The build script writes it to
@@ -771,20 +773,22 @@ fn host_c_gen_compiles() {
 
     if !include_dir.join("onerom_metadata.h").exists() {
         eprintln!(
-            "host_c_gen_compiles: skipping — onerom_metadata.h not found at {}",
+            "compile_generated_c: skipping — onerom_metadata.h not found at {}",
             include_dir.display()
         );
         return;
     }
 
-    let header = minimal_header();
-    let c_src = generate_host_metadata_c(&header, dummy_rom_data(1));
+    let c_src = generate_host_metadata_c(header, dummy_rom_data(1));
 
     // Write generated C to a uniquely-named temp file.
+    // The two callers run concurrently, so the name carries the thread as
+    // well as the process.
     let pid = std::process::id();
+    let stem = format!("onerom_host_gen_{pid}_{:?}", std::thread::current().id());
     let tmp = std::env::temp_dir();
-    let c_path = tmp.join(format!("onerom_host_gen_{pid}.c"));
-    let o_path = tmp.join(format!("onerom_host_gen_{pid}.o"));
+    let c_path = tmp.join(format!("{stem}.c"));
+    let o_path = tmp.join(format!("{stem}.o"));
 
     std::fs::write(&c_path, &c_src).expect("failed to write temp C source file");
 
@@ -814,7 +818,7 @@ fn host_c_gen_compiles() {
     match result {
         Err(e) => {
             // gcc not in PATH — skip rather than fail.
-            eprintln!("host_c_gen_compiles: skipping — gcc not available: {e}");
+            eprintln!("compile_generated_c: skipping — gcc not available: {e}");
         }
         Ok(output) => {
             assert!(
@@ -908,13 +912,440 @@ fn pointer_is_sram() {
 #[test]
 fn round_trip_opaque_ptr_addr32() {
     // Use a realistic flash address for the ROM data pointer.
-    let slot = OneromRomSlot {
-        data: Pointer::Addr32(0x1001_0000),
-        ..make_slot(vec![make_rom_info("2364")])
+    let mut slot = make_slot(vec![make_rom_info("2364")]);
+    slot.data = Pointer::Addr32(0x1001_0000);
+    assert_round_trips(&header_with_slots(vec![slot]));
+}
+
+// ===========================================================================
+// Frozen field offsets (26–27)
+// ===========================================================================
+//
+// A field carrying `expected_offset` in the schema is one something outside
+// the schema reads by hand, so its position is frozen and the generator emits
+// a `<STRUCT>_<FIELD>_OFFSET` constant for that reader.  The build refuses a
+// layout disagreeing with the declared offset and the generated C carries
+// matching `offsetof` assertions - these two tests pin the numbers themselves.
+
+/// 26. The frozen offsets are the values the ABI froze them at.
+#[test]
+fn frozen_offsets_have_not_moved() {
+    // onerom_info_t: what a host reads before it can parse anything.
+    assert_eq!(ONEROM_INFO_MAGIC_OFFSET, 0);
+    assert_eq!(ONEROM_INFO_MAJOR_VERSION_OFFSET, 4);
+    assert_eq!(ONEROM_INFO_MINOR_VERSION_OFFSET, 6);
+    assert_eq!(ONEROM_INFO_PATCH_VERSION_OFFSET, 8);
+    assert_eq!(ONEROM_INFO_BUILD_DATE_OFFSET, 12);
+    assert_eq!(ONEROM_INFO_METADATA_OFFSET, 28);
+    assert_eq!(ONEROM_INFO_RUNTIME_OFFSET, 36);
+    assert_eq!(ONEROM_INFO_SIZE, 64);
+
+    // onerom_runtime_info_t: plugin ABI, reached through the plugin API.
+    assert_eq!(ONEROM_RUNTIME_INFO_SYSTEM_PLUGIN_CONTEXT_OFFSET, 40);
+    assert_eq!(ONEROM_RUNTIME_INFO_USER_PLUGIN_CONTEXT_OFFSET, 44);
+}
+
+/// 27. Bytes written at the onerom_info_t offset constants are the bytes the
+///     generated parser reads back, so a hand-written bootstrap using those
+///     constants and the generated parser walk the same layout.
+#[test]
+fn info_offsets_agree_with_generated_parser() {
+    const FLASH_BASE: u32 = RP235X_BASE_FLASH;
+    // The build date string sits past the 64-byte header, inside the region.
+    const BUILD_DATE_OFF: usize = ONEROM_INFO_SIZE;
+    const BUILD_DATE: &[u8] = b"2026-01-02 03:04:05\0";
+
+    let mut buf = vec![0u8; ONEROM_INFO_SIZE + BUILD_DATE.len()];
+    let put_u16 = |b: &mut [u8], off: usize, v: u16| {
+        b[off..off + 2].copy_from_slice(&v.to_le_bytes());
     };
-    let original = OneromMetadataHeader {
-        rom_slots: vec![slot],
-        ..minimal_header()
+    let put_u32 = |b: &mut [u8], off: usize, v: u32| {
+        b[off..off + 4].copy_from_slice(&v.to_le_bytes());
     };
-    assert_round_trips(&original);
+
+    buf[ONEROM_INFO_MAGIC_OFFSET..ONEROM_INFO_MAGIC_OFFSET + ONEROM_INFO_MAGIC.len()]
+        .copy_from_slice(ONEROM_INFO_MAGIC.as_bytes());
+    put_u16(&mut buf, ONEROM_INFO_MAJOR_VERSION_OFFSET, 7);
+    put_u16(&mut buf, ONEROM_INFO_MINOR_VERSION_OFFSET, 8);
+    put_u16(&mut buf, ONEROM_INFO_PATCH_VERSION_OFFSET, 9);
+    put_u32(
+        &mut buf,
+        ONEROM_INFO_BUILD_DATE_OFFSET,
+        FLASH_BASE + BUILD_DATE_OFF as u32,
+    );
+    // Both sub-structures absent: null pointers parse as None.
+    put_u32(&mut buf, ONEROM_INFO_METADATA_OFFSET, 0);
+    put_u32(&mut buf, ONEROM_INFO_RUNTIME_OFFSET, 0);
+    buf[BUILD_DATE_OFF..].copy_from_slice(BUILD_DATE);
+
+    let view = DeviceMemoryView::new(&buf, FLASH_BASE);
+    let info = OneromInfo::parse(&view, FLASH_BASE, Generations::UNKNOWN)
+        .expect("info header parse failed");
+
+    assert_eq!(info.magic, ONEROM_INFO_MAGIC.as_bytes());
+    assert_eq!(info.major_version, 7);
+    assert_eq!(info.minor_version, 8);
+    assert_eq!(info.patch_version, 9);
+    assert_eq!(info.build_date, "2026-01-02 03:04:05");
+    assert!(info.metadata.is_none());
+    assert!(info.runtime.is_none());
+}
+
+// ===========================================================================
+// Metadata generations
+// ===========================================================================
+
+/// Firmware of the release that introduced a generation reads that
+/// generation.
+#[test]
+fn a_releases_own_generation_is_what_it_reads() {
+    for (release, generation) in METADATA_GENERATIONS {
+        assert_eq!(metadata_generation_for(*release), Some(*generation));
+    }
+}
+
+/// The firmware this build of the crate describes reads the generation the
+/// schema calls current, so for a matched pair composing at the target's
+/// generation is composing at the current one.
+#[test]
+fn the_current_generation_is_the_newest_one_a_release_names() {
+    let (newest_release, newest_generation) = METADATA_GENERATIONS
+        .last()
+        .expect("the schema names at least one generation");
+    assert_eq!(*newest_generation, CURRENT_METADATA_VERSION);
+    assert_eq!(
+        metadata_generation_for(*newest_release),
+        Some(CURRENT_METADATA_VERSION)
+    );
+}
+
+/// Firmware newer than anything this build knows gets the newest generation
+/// this build has.
+#[test]
+fn firmware_newer_than_this_build_gets_the_newest_known_generation() {
+    assert_eq!(
+        metadata_generation_for(FirmwareVersion::new(99, 0, 0, 0)),
+        Some(CURRENT_METADATA_VERSION)
+    );
+}
+
+/// Firmware older than the first generation reads no metadata of this schema
+/// at all, so there is no generation to give it.
+#[test]
+fn firmware_older_than_the_first_generation_has_no_generation() {
+    let (oldest, _) = METADATA_GENERATIONS
+        .first()
+        .expect("the schema names at least one generation");
+    assert_eq!(*oldest, MIN_SCHEMA_VERSION);
+    assert_eq!(
+        metadata_generation_for(FirmwareVersion::new(0, 6, 9, 0)),
+        None
+    );
+}
+
+// ===========================================================================
+// Values a fixed list has grown past
+// ===========================================================================
+
+/// A slot type no release has ever used, so no build can have a name for it.
+const UNRECOGNISED_SLOT_TYPE: u32 = 0x5A;
+
+/// A bus width no release has ever used, for the same reason.
+const UNRECOGNISED_BIT_MODE: u32 = 0x37;
+
+/// A value the list has grown past costs its own field and nothing else: the
+/// structure around it parses, and every other field in it holds what the
+/// device holds.
+#[test]
+fn an_unrecognised_slot_type_costs_only_its_own_field() {
+    let recognised = round_trip(&minimal_header());
+
+    let mut source = minimal_header();
+    source.rom_slots[0].slot_type = MaybeKnown::Unknown(UNRECOGNISED_SLOT_TYPE);
+    let parsed = round_trip(&source);
+
+    assert_eq!(
+        parsed.rom_slots[0].slot_type,
+        MaybeKnown::Unknown(UNRECOGNISED_SLOT_TYPE),
+        "the field should carry the byte the device stored",
+    );
+
+    // Put the recognised value back and the two headers are identical, so
+    // nothing else moved - not the rest of the slot, not the ROM it holds,
+    // not the algorithm config hanging off it, not the header above it.
+    let mut without_the_one_field = parsed;
+    without_the_one_field.rom_slots[0].slot_type = recognised.rom_slots[0].slot_type;
+    assert_eq!(without_the_one_field, recognised);
+}
+
+/// The same, for an enum in a tagged FAM's common fields, which the generator
+/// reads through a different path from a plain struct field.
+#[test]
+fn an_unrecognised_bit_mode_costs_only_its_own_field() {
+    let mut source = minimal_header();
+    let alg = source.rom_slots[0]
+        .alg
+        .as_mut()
+        .expect("the minimal header's slot carries an algorithm config");
+    alg.alg_dma = OneromAlgDmaConfig::AlgDma0 {
+        bit_mode: MaybeKnown::Unknown(UNRECOGNISED_BIT_MODE),
+        continuous: 1,
+    };
+
+    let parsed = round_trip(&source);
+    let parsed_alg = parsed.rom_slots[0]
+        .alg
+        .as_ref()
+        .expect("the algorithm config should still be there");
+
+    let OneromAlgDmaConfig::AlgDma0 {
+        bit_mode,
+        continuous,
+    } = parsed_alg.alg_dma
+    else {
+        panic!("a recognised DMA algorithm should parse to its own variant");
+    };
+    assert_eq!(bit_mode, MaybeKnown::Unknown(UNRECOGNISED_BIT_MODE));
+    assert_eq!(continuous, 1, "the field beside it should be untouched");
+}
+
+#[test]
+fn a_recognised_slot_type_parses_to_its_variant() {
+    let parsed = round_trip(&minimal_header());
+    assert_eq!(
+        parsed.rom_slots[0].slot_type,
+        MaybeKnown::Known(RomSlotType::RomSlotTypeSingleRom),
+    );
+}
+
+/// A value the list has grown past goes back out as it came in, so a host that
+/// reads a device and composes from what it read does not rewrite the byte.
+#[test]
+fn an_unrecognised_slot_type_is_written_back_unchanged() {
+    let mut source = minimal_header();
+    source.rom_slots[0].slot_type = MaybeKnown::Unknown(UNRECOGNISED_SLOT_TYPE);
+
+    let buf = do_serialize(&source);
+    let slots_off = ptr_to_off(read_u32_le(&buf, 32), METADATA_BASE);
+    let recognised = do_serialize(&minimal_header());
+
+    // The one byte the two buffers differ in is the one holding the value.
+    let differing: Vec<usize> = (0..buf.len())
+        .filter(|&i| buf[i] != recognised[i])
+        .collect();
+    assert_eq!(differing.len(), 1, "only slot_type should differ");
+    assert_eq!(buf[differing[0]] as u32, UNRECOGNISED_SLOT_TYPE);
+    assert!(differing[0] >= slots_off, "the byte should sit in the slot");
+}
+
+/// A value the list has a name for prints as the list's own type prints it,
+/// so nothing already on screen changes shape.
+#[test]
+fn a_recognised_value_prints_as_itself() {
+    assert_eq!(
+        format!("{}", MaybeKnown::Known(RomSlotType::RomSlotTypeSingleRom)),
+        format!("{}", RomSlotType::RomSlotTypeSingleRom),
+    );
+}
+
+/// One the list has grown past says so, and shows the byte behind it.
+#[test]
+fn an_unrecognised_value_prints_as_unknown_with_its_byte() {
+    let unknown: MaybeKnown<RomSlotType> = MaybeKnown::Unknown(0x07);
+    assert_eq!(format!("{unknown}"), "unknown (0x07)");
+}
+
+#[test]
+fn the_accessors_answer_for_both_shapes() {
+    let known = MaybeKnown::Known(RomSlotType::RomSlotTypeSingleRom);
+    assert!(known.is_known());
+    assert_eq!(known.known(), Some(&RomSlotType::RomSlotTypeSingleRom));
+    assert_eq!(known.unknown(), None);
+
+    let unknown: MaybeKnown<RomSlotType> = MaybeKnown::Unknown(UNRECOGNISED_SLOT_TYPE);
+    assert!(!unknown.is_known());
+    assert_eq!(unknown.known(), None);
+    assert_eq!(unknown.unknown(), Some(UNRECOGNISED_SLOT_TYPE));
+}
+
+// ===========================================================================
+// A variable-length structure's own discriminant
+// ===========================================================================
+
+/// A DMA algorithm no release has ever used, so no build can have a name for
+/// it - which is what a new serving algorithm looks like to an older host.
+const UNRECOGNISED_ALG: u32 = 0x7F;
+
+/// Parameter bytes such an algorithm might carry.  Their layout is what this
+/// build does not know - the structure states their length and they sit at a
+/// known place, so both survive.
+const UNRECOGNISED_ALG_PARAMS: [u8; 3] = [0xDE, 0xAD, 0xBE];
+
+/// A header whose DMA algorithm is one this build has no name for, carrying
+/// the common fields the recognised one had.
+fn header_with_unknown_alg() -> OneromMetadataHeader {
+    let mut header = minimal_header();
+    let alg = header.rom_slots[0]
+        .alg
+        .as_mut()
+        .expect("the minimal header's slot carries an algorithm config");
+    let OneromAlgDmaConfig::AlgDma0 {
+        bit_mode,
+        continuous,
+    } = alg.alg_dma
+    else {
+        panic!("the minimal header names a DMA algorithm this build knows");
+    };
+    alg.alg_dma = OneromAlgDmaConfig::Unknown {
+        alg: UNRECOGNISED_ALG,
+        bit_mode,
+        continuous,
+        params: UNRECOGNISED_ALG_PARAMS.to_vec(),
+    };
+    header
+}
+
+/// A discriminant this build has no name for costs the algorithm's parameter
+/// layout and nothing else.  Everything above it - the slot, the ROM it holds,
+/// the hardware and firmware config, the header - still holds what the device
+/// holds.
+#[test]
+fn an_unrecognised_alg_discriminant_leaves_the_tree_intact() {
+    let recognised = round_trip(&minimal_header());
+    let parsed = round_trip(&header_with_unknown_alg());
+
+    // Put the recognised algorithm back and the two headers are identical, so
+    // nothing else moved.
+    let mut without_the_one_structure = parsed;
+    without_the_one_structure.rom_slots[0]
+        .alg
+        .as_mut()
+        .expect("the algorithm config should still be there")
+        .alg_dma = recognised.rom_slots[0]
+        .alg
+        .as_ref()
+        .expect("the recognised header's slot carries an algorithm config")
+        .alg_dma
+        .clone();
+    assert_eq!(without_the_one_structure, recognised);
+}
+
+/// The common fields sit at offsets every variant shares, so they read as
+/// they stand - along with the discriminant and the parameter bytes.
+#[test]
+fn the_common_fields_of_an_unrecognised_alg_are_readable() {
+    let parsed = round_trip(&header_with_unknown_alg());
+    let alg_dma = &parsed.rom_slots[0]
+        .alg
+        .as_ref()
+        .expect("the algorithm config should still be there")
+        .alg_dma;
+
+    let OneromAlgDmaConfig::Unknown {
+        alg,
+        bit_mode,
+        continuous,
+        params,
+    } = alg_dma
+    else {
+        panic!("a discriminant with no name should parse to the unknown variant");
+    };
+    assert_eq!(*alg, UNRECOGNISED_ALG);
+    assert_eq!(*bit_mode, MaybeKnown::Known(BitModes::BitMode8));
+    assert_eq!(*continuous, 1);
+    assert_eq!(params.as_slice(), &UNRECOGNISED_ALG_PARAMS);
+}
+
+/// Everything read goes back out as it came in, so a host that reads a device
+/// and composes from what it read does not rewrite an algorithm it has never
+/// heard of.
+#[test]
+fn an_unrecognised_alg_is_written_back_byte_for_byte() {
+    let buf = do_serialize(&header_with_unknown_alg());
+
+    // The wire layout, spelled out: discriminant, parameter length, the two
+    // common fields, then the parameter bytes.
+    let expected = [
+        UNRECOGNISED_ALG as u8,
+        UNRECOGNISED_ALG_PARAMS.len() as u8,
+        BitModes::BitMode8 as u8,
+        1, // continuous
+        UNRECOGNISED_ALG_PARAMS[0],
+        UNRECOGNISED_ALG_PARAMS[1],
+        UNRECOGNISED_ALG_PARAMS[2],
+    ];
+    assert_eq!(
+        buf.windows(expected.len())
+            .filter(|w| *w == expected)
+            .count(),
+        1,
+        "the algorithm should sit in the image exactly as the device holds it",
+    );
+
+    // And the whole image survives a parse and a re-serialise unchanged, so
+    // nothing around it shifted either.
+    let view = DeviceMemoryView::new(&buf, METADATA_BASE);
+    let parsed = OneromMetadataHeader::parse(&view, METADATA_BASE, Generations::UNKNOWN)
+        .expect("parse failed");
+    assert_eq!(do_serialize(&parsed), buf);
+}
+
+/// A discriminant the list does have a name for parses to its own variant,
+/// unchanged by any of the above.
+#[test]
+fn a_recognised_alg_discriminant_parses_to_its_variant() {
+    let parsed = round_trip(&minimal_header());
+    assert_eq!(
+        parsed.rom_slots[0]
+            .alg
+            .as_ref()
+            .expect("the algorithm config should still be there")
+            .alg_dma,
+        OneromAlgDmaConfig::AlgDma0 {
+            bit_mode: MaybeKnown::Known(BitModes::BitMode8),
+            continuous: 1,
+        },
+    );
+}
+
+/// The C a host emits for an algorithm it has no name for gives the plain
+/// number, the way it does for an unknown enum value, and the parameter bytes
+/// as it read them.
+#[test]
+fn host_c_gen_names_an_unrecognised_alg_by_its_number() {
+    let c_src = generate_host_metadata_c(&header_with_unknown_alg(), dummy_rom_data(1));
+    assert!(
+        c_src.contains(&format!(".alg = {UNRECOGNISED_ALG},")),
+        "expected the discriminant as a plain number, got: {c_src}"
+    );
+    assert!(
+        c_src.contains(".params = { 0xDE, 0xAD, 0xBE }"),
+        "expected the parameter bytes as they were read, got: {c_src}"
+    );
+}
+
+/// What `onerom inspect info` shows: a recognised variant keeps the shape it
+/// has today, and an unknown one is told apart by its variant name while
+/// carrying the discriminant, the common fields and the bytes.
+#[test]
+fn an_unrecognised_alg_serialises_as_the_unknown_variant() {
+    let recognised = OneromAlgDmaConfig::AlgDma0 {
+        bit_mode: MaybeKnown::Known(BitModes::BitMode8),
+        continuous: 1,
+    };
+    assert_eq!(
+        serde_json::to_string(&recognised).expect("serialize"),
+        r#"{"AlgDma0":{"bit_mode":"BitMode8","continuous":1}}"#,
+    );
+
+    let unknown = OneromAlgDmaConfig::Unknown {
+        alg: UNRECOGNISED_ALG,
+        bit_mode: MaybeKnown::Known(BitModes::BitMode8),
+        continuous: 1,
+        params: UNRECOGNISED_ALG_PARAMS.to_vec(),
+    };
+    assert_eq!(
+        serde_json::to_string(&unknown).expect("serialize"),
+        r#"{"Unknown":{"alg":127,"bit_mode":"BitMode8","continuous":1,"params":[222,173,190]}}"#,
+    );
 }

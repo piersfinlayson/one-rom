@@ -10,13 +10,11 @@ use log::error;
 use onerom_config::fw::FirmwareVersion;
 use onerom_config::hw::Board;
 use onerom_fw_emulator::Emulator;
+use onerom_fw_tester::jumpers::Jumpers;
 
 /// Boot the firmware for the given `sel_image`, retrieve and parse the
 /// firmware version, and return a ready [`Emulator`] alongside the parsed
 /// [`FirmwareVersion`].
-///
-/// `sel_image` drives the image-select pins, so the firmware boots, loads, and
-/// serves the corresponding flash slot.  Called once per slot under test.
 ///
 /// Exits the process immediately on limp mode or version parse failure.  A
 /// boot failure on any slot is therefore fatal to the whole run; if per-slot
@@ -25,20 +23,27 @@ use onerom_fw_emulator::Emulator;
 ///
 /// No epio setup is performed here — callers that need GPIO/cycle operations
 /// must call [`Emulator::setup_epio`] themselves after boot.
-pub fn setup(board: Board, log_enabled: bool, sel_image: u8) -> (Emulator, FirmwareVersion) {
+pub fn setup(
+    board: Board,
+    jumpers: &Jumpers,
+    log_enabled: bool,
+    sel_image: u8,
+) -> (Emulator, FirmwareVersion) {
     Emulator::set_logging(log_enabled);
     Emulator::set_rp_variant(board.rp_variant());
-    Emulator::set_sel_image(sel_image);
+    let (closed, expected) = jumpers.for_image(sel_image);
+    Emulator::set_sel_image(closed);
 
     let emulator = Emulator::boot();
 
     // Confirm the firmware selected the requested image — otherwise the slot
     // under test is not the slot being exercised, and every result below is
     // about the wrong ROM.
-    if emulator.sel_image() != sel_image {
+    if emulator.sel_image() != expected {
         error!(
-            "Firmware selected image {}, not the requested {}",
+            "Firmware read image select jumpers {:#04x}, not {:#04x} for image {}",
             emulator.sel_image(),
+            expected,
             sel_image
         );
         process::exit(1);

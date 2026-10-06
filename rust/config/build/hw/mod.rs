@@ -336,9 +336,11 @@ fn generate_lib_rs(configs: &[HwConfigData]) -> String {
     code.push_str("\n#![deny(missing_docs)]\n");
     code.push_str("#![deny(unsafe_code)]\n\n");
 
+    code.push_str("mod board_size;\n");
     code.push_str("mod generated;\n");
     code.push_str("mod header;\n");
     code.push_str("mod helpers;\n\n");
+    code.push_str("pub use board_size::*;\n");
     code.push_str("pub use generated::*;\n");
     code.push_str("pub use header::*;\n");
 

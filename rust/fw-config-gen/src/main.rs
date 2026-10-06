@@ -17,11 +17,13 @@ use onerom_config::mcu::{Family, Variant as McuVariant};
 use onerom_fw::{get_rom_files, read_rom_config};
 use onerom_gen::Builder;
 use onerom_metadata::{
-    DeviceMemoryView, METADATA_BASE, METADATA_SIZE, OneromMetadataHeader, generate_host_metadata_c,
-    serialize,
+    DeviceMemoryView, Generations, METADATA_BASE, METADATA_SIZE, OneromMetadataHeader, Pointer,
+    ROM_SLOT_NO_IMAGE, generate_host_metadata_c, serialize,
 };
 
 use args::Args;
+
+const NO_IMAGE: Pointer = Pointer::Addr32(ROM_SLOT_NO_IMAGE);
 
 fn main() {
     if let Err(e) = run() {
@@ -71,8 +73,18 @@ fn run() -> Result<()> {
 
     // Parse metadata back
     let view = DeviceMemoryView::new(&metadata_buf, METADATA_BASE);
-    let header = OneromMetadataHeader::parse(&view, METADATA_BASE)
+    let mut header = OneromMetadataHeader::parse(&view, METADATA_BASE, Generations::UNKNOWN)
         .map_err(|e| anyhow!("Failed to parse generated metadata: {e:?}"))?;
+
+    // The parse reads a slot's data pointer of ROM_SLOT_NO_IMAGE as null, and
+    // onerom-gen never writes 0 there, so a null one is a slot without an
+    // image.  It goes back to ROM_SLOT_NO_IMAGE for the round trip and for the
+    // host build, whose firmware tests for that value.
+    for slot in &mut header.rom_slots {
+        if slot.data.is_null() {
+            slot.data = NO_IMAGE;
+        }
+    }
 
     // Round-trip check: re-serialize and compare bytes
     let mut re_serialized = vec![0u8; METADATA_SIZE];
@@ -85,12 +97,16 @@ fn run() -> Result<()> {
 
     debug!("Round-trip check passed");
 
-    // Split flat ROM data into per-slot chunks using sizes from parsed header
+    // Split flat ROM data into per-slot chunks using sizes from parsed header.
+    // A slot without an image doesn't occupy any of it.
     let mut offset = 0usize;
     let slot_data: Vec<Vec<u8>> = header
         .rom_slots
         .iter()
         .map(|slot| {
+            if slot.data == NO_IMAGE {
+                return Vec::new();
+            }
             let sz = slot.size as usize;
             let chunk = rom_data_buf[offset..offset + sz].to_vec();
             offset += sz;

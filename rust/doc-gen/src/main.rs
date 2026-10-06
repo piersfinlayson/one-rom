@@ -40,7 +40,7 @@
 use std::path::Path;
 use std::process::ExitCode;
 
-use doc_gen::{documents, format, marker, repo_root, source};
+use doc_gen::{claims, documents, format, marker, repo_root, source};
 
 const USAGE: &str = "\
 One ROM documentation checker.
@@ -49,6 +49,9 @@ One ROM documentation checker.
   doc-gen --check <path>         check one document, or a directory of them
 
 Paths are relative to the repository root.  Nothing is ever written.
+
+Cross-file claims - two files in the tree that have to say the same thing -
+are checked on every run, whatever path is named.
 ";
 
 /// Checked when no path is named.
@@ -86,7 +89,14 @@ fn main() -> ExitCode {
         }
     };
 
-    let mut failures = 0;
+    // Checked whatever path was named: a claim is two files in the tree
+    // disagreeing, and it disagrees whoever asked.
+    let broken = claims::check();
+    let mut failures = broken.len();
+    for problem in &broken {
+        println!("{}: {}", problem.file, problem.detail);
+    }
+
     let mut checked = 0;
     let mut spans = 0;
 
@@ -116,11 +126,17 @@ fn main() -> ExitCode {
     if failures > 0 {
         // Every failure is reported before this: a constant that moved and
         // reaches six documents is one edit round, not six.
-        println!("\n{failures} problem(s) in {checked} document(s).");
+        println!(
+            "\n{failures} problem(s): {} in {checked} document(s), {} between files.",
+            failures - broken.len(),
+            broken.len()
+        );
         return ExitCode::FAILURE;
     }
 
-    println!("Checked {spans} marked value(s) in {checked} document(s).");
+    println!(
+        "Checked {spans} marked value(s) in {checked} document(s), and every cross-file claim."
+    );
     ExitCode::SUCCESS
 }
 

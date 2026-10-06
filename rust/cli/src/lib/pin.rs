@@ -4,328 +4,133 @@
 
 //! `--pin` decoding.
 //!
-//! A pin selector names one MCU GPIO, either directly (`gpio23`) or through a
-//! header pad that is wired to one (`sel_a`, `x1`). This module lives in the
-//! library rather than the binary because more than one command takes a `--pin`,
-//! and Studio is being moved onto the CLI library.
-//!
-//! ## Parsing and resolution are separate steps
-//!
-//! Clap's `value_parser` runs before any device is opened, so it cannot see the
-//! board - and a pad name is meaningless without one, because which GPIO sits
-//! behind `sel_a` is a fact about the board, not about the name. So
-//! [`parse_pin`] is board-free and yields a [`Pin`], which is either an MCU GPIO
-//! or a named [`Pad`]; the command handler then calls [`Pin::resolve`] once the
-//! board is known and gets a [`ResolvedPin`], which is the only type that can
-//! answer with a GPIO number.
-//!
-//! Resolution reads the board's *electrical* pin arrays
-//! ([`Board::sel_pins`](onerom_config::hw::Board::sel_pins),
-//! [`Board::pin_x1`](onerom_config::hw::Board::pin_x1),
-//! [`Board::pin_x2`](onerom_config::hw::Board::pin_x2)), not its
-//! [`jumper_header`](onerom_config::hw::Board::jumper_header). Those arrays
-//! exist for every board, including the non-USB Ice boards whose header layout
-//! is deliberately uncharacterised, and they are the real electrical facts: a
-//! pad name must resolve on any board that has the pad.
-//!
-//! ## Why a bare number is rejected
-//!
-//! `--pin 23` cannot be resolved without guessing which namespace the user
-//! meant. `23` is a plausible MCU GPIO, a plausible ROM socket leg, and - on a
-//! board whose pads are silkscreened by role rather than by GPIO - a plausible
-//! reading of neither. Guessing one and driving a pin is not a recoverable
-//! mistake, so a bare number is an error whose message names the namespaces
-//! instead. Accepting pad names does not remove that ambiguity; it sharpens it.
-//!
-//! ## Why the broken-out address pads are not accepted
-//!
-//! `--pin` addresses MCU GPIOs and the pads a wire can physically reach: the
-//! image-select pads and X1/X2. A broken-out address line is a ROM signal rather
-//! than one of those, and accepting `a17` would invite `a11` or `d3`, which have
-//! no pad at all. The names are still recognised, so that a user who types one
-//! is told why rather than told it is meaningless. The error deliberately makes
-//! no claim either way about whether a later release might accept them - that
-//! is not an error message's business.
-//!
-//! No syntax is reserved for the ROM socket legs. That namespace has not been
-//! designed and this module must not pre-empt it.
+//! [`Pin`], [`HeaderPin`] and [`ResolvedPin`] are defined in [`onerom_config::pin`].
+//! This module converts that module's errors into CLI error messages.
 
 use crate::Error;
 use onerom_config::hw::Board;
+use onerom_config::pin::{PinError, ResolveError};
+use onerom_fw_parser::ParsedDevice;
+use onerom_metadata::GPIO_NONE;
 
-/// Where to send a user who needs to know which GPIO is behind a header pad.
-const HEADER_HINT: &str =
-    "Run 'onerom inspect header' to see which GPIO is behind each header pad.";
+pub use onerom_config::pin::{HeaderPin, Pin, ResolvedPin};
+
+const HEADER_HINT: &str = "Use 'onerom inspect header' to see each header pin's GPIO.";
 
 /// What `--pin` accepts, as one sentence for an error message.
-const NAMESPACE_HINT: &str = "--pin takes an MCU GPIO, written 'gpio<N>' - for example 'gpio23' - or a header pad name: 'sel_a'..'sel_e', 'x1' or 'x2'.";
-
-/// The board pin arrays' "no such pin" sentinel. No real GPIO number reaches it.
-const NO_PIN: u8 = 255;
-
-/// The highest image-select pad this module knows how to spell, as an index from
-/// `sel_a`. No board has more than five; a board with fewer is rejected at
-/// resolution, naming the pads it does have.
-const MAX_SELECT_PAD: u8 = 4;
-
-/// A header pad a user can put a wire on.
 ///
-/// Only pads that carry an MCU GPIO of their own appear here. Power, ground,
-/// SWCLK, SWDIO, RUN and BOOTSEL do not, and the broken-out address pads are
-/// deliberately excluded - see the [module documentation](self).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum Pad {
-    /// An image-select pad, indexed from 0 for `sel_a`.
-    Select(u8),
-    /// The X1 pad.
-    X1,
-    /// The X2 pad.
-    X2,
+/// The number of image select pins differs between boards, so they are written
+/// `sel_<letter>` rather than as a range.
+const NAMESPACE_HINT: &str = "--pin is a header pin: 'sel_<letter>', 'x1' or 'x2'.";
+
+fn header_pins_on(board: &Board) -> String {
+    HeaderPin::all_on(board)
+        .map(|pin| pin.to_string())
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
-impl Pad {
-    /// The MCU GPIO behind this pad on `board`, or `None` if the board has no
-    /// such pad.
-    fn gpio_on(&self, board: &Board) -> Option<u8> {
-        let gpio = match self {
-            Pad::Select(index) => board.sel_pins().get(*index as usize).copied()?,
-            Pad::X1 => board.pin_x1(),
-            Pad::X2 => board.pin_x2(),
-        };
-        (gpio != NO_PIN).then_some(gpio)
-    }
-
-    /// Every pad `board` has, in the spelling `--pin` accepts.
-    fn all_on(board: &Board) -> Vec<String> {
-        let mut pads: Vec<String> = (0..board.sel_pins().len())
-            .map(|index| Pad::Select(index as u8).to_string())
-            .collect();
-        for pad in [Pad::X1, Pad::X2] {
-            if pad.gpio_on(board).is_some() {
-                pads.push(pad.to_string());
-            }
-        }
-        pads
-    }
-}
-
-impl std::fmt::Display for Pad {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Pad::Select(index) => write!(f, "sel_{}", (b'a' + index) as char),
-            Pad::X1 => write!(f, "x1"),
-            Pad::X2 => write!(f, "x2"),
+impl From<ResolveError> for Error {
+    fn from(error: ResolveError) -> Self {
+        match error {
+            ResolveError::NoBoard { pin } => Error::InvalidPin(
+                pin.to_string(),
+                format!(
+                    "'{pin}' is a header pin. Its GPIO depends on the board.\n  \
+                     This One ROM's board type could not be determined.\n  \
+                     Pass --board <BOARD> or write the MCU GPIO as 'gpio<N>'."
+                ),
+            ),
+            ResolveError::NoSuchPin { pin, board } => Error::InvalidPin(
+                pin.to_string(),
+                format!(
+                    "Board {} has no '{pin}' pin.\n  Its header pins are: {}.\n  {HEADER_HINT}",
+                    board.name(),
+                    header_pins_on(&board),
+                ),
+            ),
+            // ResolveError is non_exhaustive.
+            other => Error::InvalidPin(String::new(), other.to_string()),
         }
     }
-}
-
-/// A pin named on the command line, before any board is known.
-///
-/// [`Pin::resolve`] turns one of these into a [`ResolvedPin`], which is the only
-/// type that carries a GPIO number. There is deliberately no way to get a GPIO
-/// out of a `Pin`: a [`Pad`] does not have one until a board says so.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum Pin {
-    /// An MCU GPIO, written `gpioN`.
-    ///
-    /// The number is not range-checked here - how many GPIOs a device has is
-    /// read from it (`num_gpios` in its capabilities), never assumed.
-    Gpio(u8),
-
-    /// A header pad, written by name.
-    Pad(Pad),
-}
-
-impl Pin {
-    /// Resolve this pin to the MCU GPIO it names.
-    ///
-    /// `board` is what the caller could work out - from the connected device, or
-    /// from a `--board` override - and may be `None`. A `gpioN` pin resolves
-    /// without one; a pad does not, and says so.
-    ///
-    /// Fails when a pad was named and no board is known, or when the board has
-    /// no such pad.
-    pub fn resolve(&self, board: Option<&Board>) -> Result<ResolvedPin, Error> {
-        let gpio = match self {
-            Pin::Gpio(gpio) => *gpio,
-            Pin::Pad(pad) => {
-                let Some(board) = board else {
-                    return Err(Error::InvalidPin(
-                        pad.to_string(),
-                        format!(
-                            "'{pad}' is a header pad, and which GPIO sits behind a pad depends on the board.\n  \
-                             This One ROM's board type could not be determined.\n  \
-                             Pass --board <BOARD>, or name the MCU GPIO directly as 'gpio<N>'."
-                        ),
-                    ));
-                };
-                pad.gpio_on(board).ok_or_else(|| {
-                    Error::InvalidPin(
-                        pad.to_string(),
-                        format!(
-                            "Board {} has no '{pad}' pad.\n  Its header pads are: {}.\n  {HEADER_HINT}",
-                            board.name(),
-                            Pad::all_on(board).join(", "),
-                        ),
-                    )
-                })?
-            }
-        };
-
-        Ok(ResolvedPin { pin: *self, gpio })
-    }
-}
-
-impl std::fmt::Display for Pin {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Pin::Gpio(gpio) => write!(f, "gpio{gpio}"),
-            Pin::Pad(pad) => write!(f, "{pad}"),
-        }
-    }
-}
-
-/// A [`Pin`] that has been resolved against a board.
-///
-/// This is what the commands that actually drive or query a pin take, so that
-/// "which GPIO is this?" is answerable without a board, an `Option` or a panic:
-/// the question was settled once, where the board was known.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ResolvedPin {
-    pin: Pin,
-    gpio: u8,
-}
-
-impl ResolvedPin {
-    /// The MCU GPIO this pin names.
-    pub fn gpio(&self) -> u8 {
-        self.gpio
-    }
-
-    /// The pin as the user named it.
-    pub fn pin(&self) -> Pin {
-        self.pin
-    }
-}
-
-impl std::fmt::Display for ResolvedPin {
-    /// `gpio9` for a GPIO named directly, `sel_a (gpio9)` for a pad - a user who
-    /// named a pad still wants to see which GPIO it turned out to be.
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self.pin {
-            Pin::Gpio(gpio) => write!(f, "gpio{gpio}"),
-            Pin::Pad(pad) => write!(f, "{pad} (gpio{})", self.gpio),
-        }
-    }
-}
-
-/// An image-select pad name: `sel_a`, `sel-a` or `sela`, for `a`..`e`.
-///
-/// Bare `a`..`e` is deliberately not accepted: it is too terse for a canonical
-/// name that is already five characters, and it reads badly next to the
-/// broken-out address-line names.
-fn parse_select_pad(name: &str) -> Option<Pad> {
-    let rest = name.strip_prefix("sel")?;
-    let letter = rest
-        .strip_prefix('_')
-        .or_else(|| rest.strip_prefix('-'))
-        .unwrap_or(rest);
-    let [letter] = letter.as_bytes() else {
-        return None;
-    };
-    let index = letter.checked_sub(b'a')?;
-    (index <= MAX_SELECT_PAD).then_some(Pad::Select(index))
-}
-
-/// A pad name that resolves to a GPIO.
-fn parse_pad(name: &str) -> Option<Pad> {
-    match name {
-        "x1" => Some(Pad::X1),
-        "x2" => Some(Pad::X2),
-        _ => parse_select_pad(name),
-    }
-}
-
-/// `a<N>` - a broken-out address pad. Recognised so it can be refused with a
-/// reason; see the [module documentation](self).
-fn is_address_pad_name(name: &str) -> bool {
-    name.strip_prefix('a')
-        .is_some_and(|digits| !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit()))
-}
-
-/// Names of pins that are not GPIOs at all and never will be.
-fn is_not_a_gpio_name(name: &str) -> bool {
-    matches!(name, "run" | "bootsel" | "swclk" | "swdio")
 }
 
 /// Decode a `--pin` value.
 ///
-/// Accepts `gpioN` and the header pad names `sel_a`..`sel_e`, `x1` and `x2`, all
-/// case-insensitively; the image-select pads also accept `sel-a` and `sela`.
-/// Everything else is an error whose message teaches the namespace rather than
-/// guessing at what was meant.
-///
-/// Whether the board actually has a named pad is **not** decided here - see the
-/// [module documentation](self) for why that is [`Pin::resolve`]'s job.
+/// The accepted values are listed at [`onerom_config::pin::parse_pin`]. The
+/// pin is checked against the board by [`Pin::resolve`].
 pub fn parse_pin(spec: &str) -> Result<Pin, Error> {
     let trimmed = spec.trim();
+    onerom_config::pin::parse_pin(trimmed)
+        .map_err(|error| Error::InvalidPin(trimmed.to_string(), pin_error_detail(error, trimmed)))
+}
+
+/// Decode a `--reserve-pin` value.
+///
+/// The pin is checked against the board when the image is built.
+pub fn parse_reserve_pin(spec: &str) -> Result<Pin, Error> {
+    let trimmed = spec.trim();
+    onerom_config::pin::parse_pin(trimmed)
+        .map_err(|_| Error::InvalidReservePin(trimmed.to_string()))
+}
+
+/// The image select, X1 or X2 pin wired to `gpio`, from `image`'s metadata.
+///
+/// Read from the metadata so it is correct for a board this build doesn't
+/// recognise.
+pub fn metadata_header_pin(image: &ParsedDevice, gpio: u8) -> Option<HeaderPin> {
+    // Metadata older than reserved pins isn't read.
+    image.reserved_pins()?;
+    let hw = &image.as_schema()?.metadata()?.hw;
+    if gpio == GPIO_NONE {
+        return None;
+    }
+    if let Some(index) = hw.gpio_sel.iter().position(|&g| g == gpio) {
+        return Some(HeaderPin::Select(index as u8));
+    }
+    if hw.gpio_x1.contains(&gpio) {
+        return Some(HeaderPin::X1);
+    }
+    hw.gpio_x2.contains(&gpio).then_some(HeaderPin::X2)
+}
+
+/// A mask of the GPIOs wired to pins reserved in `image`'s metadata, bit N
+/// for GPIO N.
+pub fn reserved_gpios(image: &ParsedDevice) -> u64 {
+    let Some(reserved) = image.reserved_pins() else {
+        return 0;
+    };
+    (0..64u8)
+        .filter(|&gpio| metadata_header_pin(image, gpio).is_some_and(|pin| reserved.contains(pin)))
+        .fold(0, |mask, gpio| mask | (1 << gpio))
+}
+
+fn pin_error_detail(error: PinError, trimmed: &str) -> String {
     let name = trimmed.to_ascii_lowercase();
-
-    let invalid = |detail: String| Err(Error::InvalidPin(trimmed.to_string(), detail));
-
-    if name.is_empty() {
-        return invalid(format!(
-            "No pin given.\n  {NAMESPACE_HINT}\n  {HEADER_HINT}"
-        ));
-    }
-
-    if let Some(digits) = name.strip_prefix("gpio") {
-        if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
-            return invalid(
-                "'gpio' must be followed by a GPIO number - for example 'gpio23'.".to_string(),
-            );
+    match error {
+        PinError::Empty => format!("No pin was provided.\n  {NAMESPACE_HINT}\n  {HEADER_HINT}"),
+        PinError::MissingGpioNumber => {
+            "'gpio' must be followed by a GPIO number - for example 'gpio23'.".to_string()
         }
-        // Parsed as a u8 only. The real upper bound is the device's num_gpios
-        // (30 on an RP2350A, 48 on an RP2350B), which is read from the device,
-        // so this must not second-guess it with a constant of its own.
-        return match digits.parse::<u8>() {
-            Ok(gpio) => Ok(Pin::Gpio(gpio)),
-            Err(_) => invalid(format!(
-                "GPIO number '{digits}' is out of range - GPIO numbers are 0 to 255."
-            )),
-        };
-    }
-
-    if let Some(pad) = parse_pad(&name) {
-        return Ok(Pin::Pad(pad));
-    }
-
-    if name.bytes().all(|b| b.is_ascii_digit()) {
-        return invalid(format!(
-            "A bare number is ambiguous: it could be an MCU GPIO, an image-select pad, an X pad or a ROM socket pin.\n  Write an MCU GPIO as 'gpio{name}'.\n  {HEADER_HINT}"
-        ));
-    }
-
-    if is_address_pad_name(&name) {
-        return invalid(format!(
-            "'{name}' is a broken-out address line, which --pin does not accept.\n  \
-             --pin takes an MCU GPIO ('gpio<N>') or a header pad ('sel_a'..'sel_e', 'x1', 'x2').\n  \
-             Use the MCU GPIO behind the pad, written 'gpio<N>'.\n  \
-             {HEADER_HINT}"
-        ));
-    }
-
-    if is_not_a_gpio_name(&name) {
-        return invalid(format!(
+        PinError::GpioOutOfRange => {
+            let digits = name.strip_prefix("gpio").unwrap_or(&name);
+            format!("GPIO number '{digits}' is out of range - GPIO numbers are 0 to 255.")
+        }
+        PinError::BareNumber => format!(
+            "A bare number is ambiguous: it could be an MCU GPIO, an image select pin, an X pin or a ROM socket pin.\n  Write an MCU GPIO as 'gpio{name}'.\n  {HEADER_HINT}"
+        ),
+        PinError::AddressLine => format!(
+            "'{name}' is an address line, not a header pin.\n  \
+             To use an address line, use its MCU GPIO, written 'gpio<N>'.\n  {HEADER_HINT}"
+        ),
+        PinError::NotAGpio => format!(
             "'{name}' is not a GPIO - it is a dedicated MCU pin and cannot be driven.\n  {NAMESPACE_HINT}"
-        ));
+        ),
+        // PinError is non_exhaustive.
+        PinError::Unrecognised | _ => {
+            format!("Unrecognised pin.\n  {NAMESPACE_HINT}")
+        }
     }
-
-    invalid(format!(
-        "Unrecognised pin.\n  {NAMESPACE_HINT}\n  {HEADER_HINT}"
-    ))
 }
 
 #[cfg(test)]
@@ -345,7 +150,7 @@ mod tests {
         let pin = parse_pin(spec).expect("parses");
         match pin.resolve(board) {
             Ok(resolved) => panic!("'{spec}' should not resolve, but gave {resolved}"),
-            Err(e) => e.to_string(),
+            Err(e) => Error::from(e).to_string(),
         }
     }
 
@@ -391,24 +196,37 @@ mod tests {
     }
 
     #[test]
-    fn pad_names_parse_in_every_accepted_spelling() {
+    fn pins_parse_in_every_accepted_spelling() {
         for spec in ["sel_a", "sel-a", "sela", "SEL_A", "Sel-A", "  sela  "] {
             assert_eq!(
                 parse_pin(spec).expect("parses"),
-                Pin::Pad(Pad::Select(0)),
+                Pin::Header(HeaderPin::Select(0)),
                 "{spec}"
             );
         }
         assert_eq!(
             parse_pin("sel_e").expect("parses"),
-            Pin::Pad(Pad::Select(4))
+            Pin::Header(HeaderPin::Select(4))
         );
-        assert_eq!(parse_pin("x1").expect("parses"), Pin::Pad(Pad::X1));
-        assert_eq!(parse_pin("X2").expect("parses"), Pin::Pad(Pad::X2));
+        assert_eq!(parse_pin("x1").expect("parses"), Pin::Header(HeaderPin::X1));
+        assert_eq!(parse_pin("X2").expect("parses"), Pin::Header(HeaderPin::X2));
     }
 
     #[test]
-    fn a_bare_select_letter_is_not_a_pad_name() {
+    fn select_pins_go_up_to_sel_g() {
+        assert_eq!(
+            parse_pin("sel_f").expect("parses"),
+            Pin::Header(HeaderPin::Select(5))
+        );
+        assert_eq!(
+            parse_pin("SEL-G").expect("parses"),
+            Pin::Header(HeaderPin::Select(6))
+        );
+        assert!(parse_pin("sel_h").is_err());
+    }
+
+    #[test]
+    fn a_bare_select_letter_is_not_a_pin() {
         // Too terse to be canonical, and it reads badly next to 'a17'.
         for spec in ["a", "b", "c", "d", "e"] {
             let msg = rejection(spec);
@@ -419,16 +237,16 @@ mod tests {
     #[test]
     fn a_pin_displays_as_it_is_written() {
         assert_eq!(Pin::Gpio(23).to_string(), "gpio23");
-        assert_eq!(Pin::Pad(Pad::Select(0)).to_string(), "sel_a");
-        assert_eq!(Pin::Pad(Pad::Select(4)).to_string(), "sel_e");
-        assert_eq!(Pin::Pad(Pad::X1).to_string(), "x1");
-        assert_eq!(Pin::Pad(Pad::X2).to_string(), "x2");
+        assert_eq!(Pin::Header(HeaderPin::Select(0)).to_string(), "sel_a");
+        assert_eq!(Pin::Header(HeaderPin::Select(4)).to_string(), "sel_e");
+        assert_eq!(Pin::Header(HeaderPin::X1).to_string(), "x1");
+        assert_eq!(Pin::Header(HeaderPin::X2).to_string(), "x2");
     }
 
     // -- Resolution against real board metadata -----------------------------
 
     #[test]
-    fn a_four_select_board_with_x_pads_resolves_every_pad() {
+    fn a_four_select_board_with_x_pins_resolves_every_pin() {
         // fire-24-f: sel = [26, 27, 25, 24], x1 = 9, x2 = 8.
         let b = board("fire-24-f");
         assert_eq!(resolved("sel_a", &b), b.sel_pins()[0]);
@@ -453,37 +271,37 @@ mod tests {
     }
 
     #[test]
-    fn a_board_without_x_pads_says_so_and_names_what_it_has() {
-        // fire-32-a: sel = [38, 39, 36, 37], no X pads.
+    fn a_board_without_x_pins_says_so_and_names_what_it_has() {
+        // fire-32-a: sel = [38, 39, 36, 37], no X pins.
         let b = board("fire-32-a");
-        assert_eq!(b.pin_x1(), NO_PIN);
+        assert_eq!(b.pin_x1(), 255);
         let msg = resolve_rejection("x1", Some(&b));
-        assert!(msg.contains("has no 'x1' pad"), "{msg}");
+        assert!(msg.contains("has no 'x1' pin"), "{msg}");
         assert!(msg.contains("fire-32-a"), "{msg}");
         assert!(msg.contains("sel_a, sel_b, sel_c, sel_d"), "{msg}");
         assert!(!msg.contains("x1,"), "{msg}");
         assert!(msg.contains("onerom inspect header"), "{msg}");
-        // The select pads it does have still resolve.
+        // The select pins it does have still resolve.
         assert_eq!(resolved("sel_d", &b), b.sel_pins()[3]);
     }
 
     #[test]
-    fn a_board_with_fewer_select_pads_says_so() {
-        // fire-28-a has two image-select pins and no X pads.
+    fn a_board_with_fewer_select_pins_says_so() {
+        // fire-28-a has two image-select pins and no X pins.
         let b = board("fire-28-a");
         assert_eq!(b.sel_pins().len(), 2);
         let msg = resolve_rejection("sel_c", Some(&b));
-        assert!(msg.contains("has no 'sel_c' pad"), "{msg}");
-        assert!(msg.contains("Its header pads are: sel_a, sel_b."), "{msg}");
+        assert!(msg.contains("has no 'sel_c' pin"), "{msg}");
+        assert!(msg.contains("Its header pins are: sel_a, sel_b."), "{msg}");
         // sel_e on a four-select board is the same shape of answer.
         let four = board("fire-24-f");
         let msg = resolve_rejection("sel_e", Some(&four));
-        assert!(msg.contains("has no 'sel_e' pad"), "{msg}");
+        assert!(msg.contains("has no 'sel_e' pin"), "{msg}");
         assert!(msg.contains("sel_a, sel_b, sel_c, sel_d, x1, x2"), "{msg}");
     }
 
     #[test]
-    fn a_pad_without_a_board_points_at_the_board_option() {
+    fn a_pin_without_a_board_points_at_the_board_option() {
         for spec in ["sel_a", "x1"] {
             let msg = resolve_rejection(spec, None);
             assert!(msg.contains("depends on"), "{spec}: {msg}");
@@ -497,14 +315,14 @@ mod tests {
     }
 
     #[test]
-    fn a_resolved_pad_shows_both_names() {
+    fn a_resolved_pin_shows_both_names() {
         let b = board("fire-24-f");
         let resolved = parse_pin("x1")
             .expect("parses")
             .resolve(Some(&b))
             .expect("resolves");
         assert_eq!(resolved.to_string(), format!("x1 (gpio{})", b.pin_x1()));
-        assert_eq!(resolved.pin(), Pin::Pad(Pad::X1));
+        assert_eq!(resolved.pin(), Pin::Header(HeaderPin::X1));
     }
 
     // -- Rejections ---------------------------------------------------------
@@ -513,8 +331,8 @@ mod tests {
     fn a_bare_number_names_the_namespaces_it_is_ambiguous_between() {
         let msg = rejection("23");
         assert!(msg.contains("ambiguous"), "{msg}");
-        assert!(msg.contains("image-select pad"), "{msg}");
-        assert!(msg.contains("X pad"), "{msg}");
+        assert!(msg.contains("image select pin"), "{msg}");
+        assert!(msg.contains("X pin"), "{msg}");
         assert!(msg.contains("ROM socket pin"), "{msg}");
         // It must say what to type instead, using the number given.
         assert!(msg.contains("'gpio23'"), "{msg}");
@@ -524,11 +342,11 @@ mod tests {
     }
 
     #[test]
-    fn address_pad_names_are_refused_with_a_reason_and_no_forecast() {
+    fn address_lines_are_refused_with_a_reason_and_no_forecast() {
         for spec in ["a0", "a13", "A17"] {
             let msg = rejection(spec);
-            assert!(msg.contains("broken-out address line"), "{spec}: {msg}");
-            assert!(msg.contains("does not accept"), "{spec}: {msg}");
+            assert!(msg.contains("address line"), "{spec}: {msg}");
+            assert!(msg.contains("onerom inspect header"), "{spec}: {msg}");
             assert!(msg.contains("'gpio<N>'"), "{spec}: {msg}");
             // The message says what --pin takes and what to type instead. It
             // deliberately promises nothing about later releases in either
@@ -552,19 +370,13 @@ mod tests {
     }
 
     #[test]
-    fn unrecognised_names_teach_the_namespace() {
-        for spec in [
-            "banana", "pin23", "sel_f", "sel_", "gpio-1", "gpio 23", "d3", "cs1",
-        ] {
+    fn unrecognised_pins_list_the_header_pins() {
+        for spec in ["banana", "pin23", "sel_h", "sel_", "d3", "cs1"] {
             let msg = rejection(spec);
-            assert!(
-                msg.contains("gpio<N>") || msg.contains("gpio23"),
-                "{spec}: {msg}"
-            );
+            assert!(msg.contains("'x1'"), "{spec}: {msg}");
         }
-        // The generic message names the pad namespace too, so 'sel_f' is told
-        // how far the select pads go.
-        assert!(rejection("sel_f").contains("'sel_a'..'sel_e'"));
+        assert!(rejection("sel_h").contains("'sel_<letter>'"));
+        assert!(!rejection("sel_h").contains("sel_e"));
     }
 
     #[test]
@@ -589,8 +401,8 @@ mod tests {
 
     #[test]
     fn an_empty_pin_is_rejected() {
-        assert!(rejection("").contains("No pin given"));
-        assert!(rejection("   ").contains("No pin given"));
+        assert!(rejection("").contains("No pin was provided"));
+        assert!(rejection("   ").contains("No pin was provided"));
     }
 
     #[test]
@@ -602,15 +414,16 @@ mod tests {
     }
 
     #[test]
-    fn every_board_resolves_every_pad_it_reports() {
-        // The pad list an error message offers must itself be resolvable, on
+    fn every_board_resolves_every_pin_it_reports() {
+        // The pin list an error message offers must itself be resolvable, on
         // every board this build knows - otherwise the advice is wrong
         // somewhere.
         for b in onerom_config::hw::BOARDS {
-            for pad in Pad::all_on(&b) {
-                let pin = parse_pin(&pad).unwrap_or_else(|e| panic!("{}: {pad}: {e}", b.name()));
+            for header_pin in HeaderPin::all_on(&b) {
+                let pin = parse_pin(&header_pin.to_string())
+                    .unwrap_or_else(|e| panic!("{}: {header_pin}: {e}", b.name()));
                 pin.resolve(Some(&b))
-                    .unwrap_or_else(|e| panic!("{}: {pad}: {e}", b.name()));
+                    .unwrap_or_else(|e| panic!("{}: {header_pin}: {e}", b.name()));
             }
         }
     }

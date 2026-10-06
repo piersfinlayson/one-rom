@@ -18,9 +18,10 @@ use iced::{Element, Subscription, Task, event, keyboard};
 use log::{debug, error, info, trace, warn};
 
 use onerom_config::chip::ChipType;
-use onerom_config::hw::{Board, Model};
+use onerom_config::hw::{Board, BoardSize, Model};
 use onerom_config::mcu::{Family, MCU_VARIANTS, Variant as McuVariant};
 use onerom_fw::net::{Release, Releases};
+use onerom_gen::board_supports_size;
 
 use crate::app::{AppMessage, progress_tick_subscription};
 use crate::device::{Client, Device, Message as DeviceMessage};
@@ -68,6 +69,8 @@ impl State {
 pub struct Create {
     selected_hw_info: HardwareInfo,
     mcu_variants: Option<Vec<McuVariant>>,
+    // Whether the selected board size was read from a device
+    size_detected: bool,
     display_content: String,
     state: State,
 }
@@ -77,6 +80,7 @@ impl Default for Create {
         Self {
             selected_hw_info: HardwareInfo::default(),
             mcu_variants: None,
+            size_detected: false,
             display_content: Self::default_display_content(),
             state: State::Idle,
         }
@@ -199,11 +203,34 @@ impl Create {
         self.selected_hw_info.model = Some(model);
         self.selected_hw_info.board = None;
         self.selected_hw_info.mcu_variant = None;
+        // The board size stays for board_selected to keep or replace
         self.mcu_variants = None;
+    }
+
+    // The board sizes `board` supports, smallest first
+    fn board_sizes(board: Board) -> Vec<BoardSize> {
+        BoardSize::supported_values()
+            .iter()
+            .copied()
+            .filter(|&size| board_supports_size(board, size))
+            .collect()
     }
 
     fn board_selected(&mut self, runtime_info: &RuntimeInfo, board: Board) -> Option<AppMessage> {
         self.selected_hw_info.board = Some(board);
+
+        // Board Size is offered only for a board supporting more than M.  The
+        // selected size is kept where the new board supports it.
+        let sizes = Self::board_sizes(board);
+        self.selected_hw_info.board_size = if sizes.len() > 1 {
+            self.selected_hw_info
+                .board_size
+                .filter(|size| sizes.contains(size))
+                .or(Some(BoardSize::M))
+        } else {
+            None
+        };
+
         let mut vars = Vec::new();
         for var in MCU_VARIANTS {
             if board.mcu_family() == var.family() {
@@ -219,6 +246,10 @@ impl Create {
         } else {
             Some(self.clear_mcu())
         }
+    }
+
+    fn board_size_selected(&mut self, size: BoardSize) {
+        self.selected_hw_info.board_size = Some(size);
     }
 
     fn mcu_selected(&mut self, mcu: McuVariant) {
@@ -301,5 +332,87 @@ impl Create {
             Err(e) => self.set_display_content(format!("Device reboot failed: {e}")),
         }
         Task::none()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn board(name: &str) -> Board {
+        Board::try_from_str(name).unwrap()
+    }
+
+    /// Board Size is offered for a board supporting a second flash chip and
+    /// keeps its value across boards where it's still offered.
+    #[test]
+    fn board_size_is_kept_where_still_offered() {
+        let runtime_info = RuntimeInfo::default();
+        let mut create = Create::new();
+        create.model_selected(Model::Fire);
+
+        create.board_selected(&runtime_info, board("fire-40-a"));
+        assert_eq!(create.selected_hw_info.board_size, Some(BoardSize::M));
+        create.board_size_selected(BoardSize::L);
+
+        create.board_selected(&runtime_info, board("fire-40-b"));
+        assert_eq!(create.selected_hw_info.board_size, Some(BoardSize::L));
+
+        create.board_selected(&runtime_info, board("fire-24-f"));
+        assert_eq!(create.selected_hw_info.board_size, None);
+
+        create.board_selected(&runtime_info, board("fire-40-a"));
+        assert_eq!(create.selected_hw_info.board_size, Some(BoardSize::M));
+    }
+
+    #[test]
+    fn selecting_the_model_keeps_board_size() {
+        let runtime_info = RuntimeInfo::default();
+        let mut create = Create::new();
+        create.model_selected(Model::Fire);
+        create.board_selected(&runtime_info, board("fire-40-a"));
+        create.board_size_selected(BoardSize::L);
+
+        create.model_selected(Model::Fire);
+        create.board_selected(&runtime_info, board("fire-40-a"));
+        assert_eq!(create.selected_hw_info.board_size, Some(BoardSize::L));
+    }
+
+    fn fire_40_a(board_size: Option<BoardSize>, min_board_size: Option<BoardSize>) -> HardwareInfo {
+        HardwareInfo {
+            board: Some(board("fire-40-a")),
+            model: Some(Model::Fire),
+            mcu_variant: Some(McuVariant::RP2350),
+            board_size,
+            min_board_size,
+        }
+    }
+
+    /// Passes `hw_info` to `create` as Studio does.
+    fn detected(create: &mut Create, hw_info: HardwareInfo) {
+        let mut runtime_info = RuntimeInfo::default();
+        runtime_info.set_hw_info(Some(hw_info));
+        let _ = hw::detected_hardware_info(create, &runtime_info);
+    }
+
+    #[test]
+    fn a_board_sets_board_size() {
+        let mut create = Create::new();
+        for size in [BoardSize::L, BoardSize::M] {
+            detected(&mut create, fire_40_a(Some(size), Some(BoardSize::M)));
+            assert_eq!(create.selected_hw_info.board_size, Some(size));
+            assert!(create.size_detected);
+        }
+    }
+
+    #[test]
+    fn an_image_sets_board_size_to_its_minimum() {
+        let mut create = Create::new();
+        detected(&mut create, fire_40_a(Some(BoardSize::L), None));
+        for size in [BoardSize::M, BoardSize::L] {
+            detected(&mut create, fire_40_a(None, Some(size)));
+            assert_eq!(create.selected_hw_info.board_size, Some(size));
+            assert!(!create.size_detected);
+        }
     }
 }

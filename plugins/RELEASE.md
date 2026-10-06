@@ -1,12 +1,6 @@
 # Releasing plugins
 
-The following script discovers all plugins with a `plugin-meta.json` file, and builds them.  It then copies the built plugin binaries to the `dist` directory.
-
-```bash
-scripts/build-release-all.sh
-```
-
-Alternatively, to just release a single plugin:
+The following script builds a plugin and copies the binary to the `dist` directory.
 
 ```bash
 scripts/build-release.sh system/usb
@@ -16,7 +10,6 @@ scripts/build-release.sh system/usb
 
 To build a third-party plugin against this version of the firmware:
 - Copy the plugin directory into `plugins/<type>/<name>`.
-- Run `make generated` at the root.
 - Build it with the pinned toolchain (see `ci/arm-toolchain-version` and `ci/install-arm-toolchain.sh`).
 
 ```bash

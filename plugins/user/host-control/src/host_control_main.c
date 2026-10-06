@@ -23,13 +23,6 @@
 #include "plugin.h"
 #include "flash_erase.h"
 
-#define RP235X
-#define MCU_FLASH_SIZE_KB 2048
-#define MCU_RAM_SIZE_KB 520
-#define RP2350A
-#include "onerom_metadata.h"
-#include "reg-rp235x.h"
-
 // ---------------------------------------------------------------------------
 // Plugin header
 // ---------------------------------------------------------------------------
@@ -293,10 +286,10 @@ const uint8_t protocol_version[4] = {
 
 // Largest period and hold this device accepts, in the protocol's 100ms units.
 // The byte's whole range, 25.5s, which is inside the firmware's own ceiling of
-// LED_MAX_HOLD_MS - so no byte a host can send exceeds either limit.
+// ORA_LED_MAX_HOLD_MS - so no byte a host can send exceeds either limit.
 #define LED_MAX_PERIOD                  0xFFu
 #define LED_MAX_HOLD                    0xFFu
-_Static_assert((uint32_t)LED_MAX_HOLD * 100u <= LED_MAX_HOLD_MS,
+_Static_assert((uint32_t)LED_MAX_HOLD * 100u <= ORA_LED_MAX_HOLD_MS,
                "LED hold range must fit the firmware's ceiling");
 
 // The colour the status LED shows when lit, red on every One ROM board.  The
@@ -2029,9 +2022,9 @@ static uint8_t aux_gpio_count(void) {
     if (s_get_metadata_uint(ORA_METADATA_KEY_RP_VARIANT, &variant) != ORA_RESULT_OK) {
         return 0u;
     }
-    switch ((rp235x_variant_t)variant) {
-        case RP235XA: return 30u;
-        case RP235XB: return 48u;
+    switch ((uint8_t)variant) {
+        case ORA_RP235XA: return 30u;
+        case ORA_RP235XB: return 48u;
         default:      return 0u;
     }
 }
@@ -2183,9 +2176,8 @@ static bool aux_group_kind(uint8_t group, uint8_t *kind_out, uint8_t *pins_out) 
 // in that order into `out` — which is the response's own first three bytes.
 // SET_AUX tests the drivable flag before driving anything.
 //
-// Every GPIO the pin reaches must be free: an X pad reaching two of them is one
-// net, so a use One ROM has for either is a use of the pad.  The level is that
-// of the first, which on such a pad is the level of both.
+// An X pin wired to two GPIOs is one net, so a use of either GPIO is a use of
+// the pin, and the level of the first GPIO is the level of both.
 #define AUX_PIN_INFO_BYTES  3u
 static void aux_pin_info(const aux_pin_t *pin, uint8_t *out) {
     zero_bytes(out, AUX_PIN_INFO_BYTES);
@@ -2202,7 +2194,8 @@ static void aux_pin_info(const aux_pin_t *pin, uint8_t *out) {
             level  = info.level;
             driven = info.is_output;
         }
-        if (info.use != ORA_GPIO_USE_FREE) {
+        if ((info.use != ORA_GPIO_USE_FREE) &&
+            (info.use != ORA_GPIO_USE_INPUT_FORCED)) {
             drivable = false;
         }
     }
@@ -2582,16 +2575,15 @@ static uint8_t led_period_units(uint16_t period_ms) {
 }
 
 // The shortest period a mode accepts, in milliseconds, or zero for a mode that
-// takes no period.  The firmware bounds each repeating mode separately and the
-// bound is not reachable through ORA, so the values come from the same metadata
-// constants ora_led_set validates against.
+// doesn't take a period.  The firmware bounds each repeating mode separately,
+// and ora_led_set validates against the schema constants these come from.
 static uint16_t led_min_period_ms(uint8_t ora_mode) {
     switch (ora_mode) {
-        case ORA_LED_MODE_CYCLE:   return LED_CYCLE_MIN_PERIOD_MS;
-        case ORA_LED_MODE_BREATHE: return LED_BREATHE_MIN_PERIOD_MS;
-        case ORA_LED_MODE_BLINK:   return LED_BLINK_MIN_PERIOD_MS;
-        case ORA_LED_MODE_BEACON:  return LED_BEACON_MIN_PERIOD_MS;
-        case ORA_LED_MODE_FLAME:   return LED_FLAME_MIN_PERIOD_MS;
+        case ORA_LED_MODE_CYCLE:   return ORA_LED_CYCLE_MIN_PERIOD_MS;
+        case ORA_LED_MODE_BREATHE: return ORA_LED_BREATHE_MIN_PERIOD_MS;
+        case ORA_LED_MODE_BLINK:   return ORA_LED_BLINK_MIN_PERIOD_MS;
+        case ORA_LED_MODE_BEACON:  return ORA_LED_BEACON_MIN_PERIOD_MS;
+        case ORA_LED_MODE_FLAME:   return ORA_LED_FLAME_MIN_PERIOD_MS;
         default:                   return 0u;
     }
 }

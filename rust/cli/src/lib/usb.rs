@@ -9,16 +9,25 @@
 
 #[allow(unused_imports)]
 use log::{Level, debug, log, warn};
+use onerom_app::{FlashPlan, FlashStep, LocalOtpAccess};
 use onerom_config::mcu::{Rp235xChipId, RpVariant};
-use onerom_fw_parser::Parser;
+use onerom_fw_parser::{ParsedDevice, Parser};
+use onerom_lab_parser::LabParser;
+use onerom_metadata::otp::CommissioningArea;
+use onerom_metadata::{
+    MaybeKnown, OTP_NUM_GPIOS_ROW, OneromBoardSize, USB_BOOTLOADER_PID, USB_BOOTLOADER_VID,
+    USB_PLUGIN_PID, USB_PLUGIN_VID,
+};
 use picoboot::cmd::PicobootStatus;
 use picoboot::{
-    Picoboot, PicobootCmd, PicobootCmdId, PicobootXCmd, Reader as PicobootReader, Target,
-    usb::Timeouts,
+    PAGE_SIZE, Picoboot, PicobootCmd, PicobootCmdId, PicobootXCmd, Reader as PicobootReader,
+    SECTOR_SIZE, Target, usb::Timeouts,
 };
 use std::time::Duration;
 
 use crate::Error;
+use crate::device::board_size;
+use crate::otp::{Commissioning, PicobootOtp, read_otp_board_size};
 use crate::picobootx::LedQueryArgs;
 pub use crate::picobootx::{
     Caps, GpioEntry, GpioSetArgs, GpioState, GpioUse, LedId, LedState, LedSubCmd, SetLedArgs,
@@ -26,13 +35,14 @@ pub use crate::picobootx::{
 use crate::picobootx::{
     GpioQueryArgs, ONEROM_CAPS_LEN, ONEROM_CMD_ARGS_LEN, ONEROM_CMD_GET_CAPS,
     ONEROM_CMD_GPIO_QUERY, ONEROM_CMD_GPIO_SET, ONEROM_CMD_LED_QUERY, ONEROM_CMD_SET_LED,
-    ONEROM_FEAT_GPIO_HOLD, ONEROM_FEAT_GPIO_QUERY, ONEROM_FEAT_GPIO_SET, ONEROM_FEAT_LED_ARGS,
-    ONEROM_LED_STATE_LEN, ONEROM_MAGIC, PICOBOOT_DIR_IN,
+    ONEROM_CMD_SET_STANDBY, ONEROM_FEAT_GPIO_HOLD, ONEROM_FEAT_GPIO_QUERY, ONEROM_FEAT_GPIO_SET,
+    ONEROM_FEAT_LED_ARGS, ONEROM_FEAT_STANDBY, ONEROM_LED_STATE_LEN, ONEROM_MAGIC, PICOBOOT_DIR_IN,
+    SetStandbyArgs,
 };
-use crate::{Device, DeviceState, Options};
+use crate::{Device, DeviceState, Firmware, LIVE_ROM_BASE, LIVE_ROM_MAX_OFFSET, Options};
 
 /// Flash start address on RP2350.
-pub const FLASH_BASE: u32 = 0x1000_0000;
+pub const FLASH_BASE: u32 = onerom_metadata::FLASH_CS0_BASE_ADDR;
 pub const RAM_BASE: u32 = 0x2000_0000;
 
 /// Size of the One ROM metadata region to read from flash.
@@ -42,12 +52,12 @@ pub const FLASH_READ_SIZE_BYTES: u32 = FLASH_READ_SIZE_KB * 1024;
 pub const DEFAULT_ONEROM_PICOBOOT_TARGETS: [Target; 3] = [
     Target::Rp2350,
     Target::Custom {
-        vid: 0x1209,
-        pid: 0xF540,
+        vid: USB_BOOTLOADER_VID,
+        pid: USB_BOOTLOADER_PID,
     },
     Target::Custom {
-        vid: 0x1209,
-        pid: 0xF542,
+        vid: USB_PLUGIN_VID,
+        pid: USB_PLUGIN_PID,
     },
 ];
 
@@ -272,11 +282,14 @@ pub async fn enumerate_devices(options: &Options) -> Result<Vec<Device>, Error> 
             address: info.device_address(),
             serial: info.serial_number().map(str::to_owned),
             device_info: info,
-            onerom: None,
+            firmware: None,
             state: DeviceState::Unknown,
             usb_can_run: false,
             chip_id: None,
             rp_variant: None,
+            commissioning: Commissioning::NotRead,
+            board_size: None,
+            unrecognised_firmware_reasons: Vec::new(),
         };
 
         let answered = match read_device_info(&mut device).await {
@@ -306,7 +319,7 @@ pub async fn enumerate_devices(options: &Options) -> Result<Vec<Device>, Error> 
     Ok(devices)
 }
 
-async fn get_picoboot(device: &Device, long: bool) -> Result<Picoboot, Error> {
+pub(crate) async fn get_picoboot(device: &Device, long: bool) -> Result<Picoboot, Error> {
     open_picoboot(device, long)
         .await
         .map_err(|e| Error::Usb(e.to_string()))
@@ -337,14 +350,19 @@ async fn open_picoboot(device: &Device, long: bool) -> Result<Picoboot, picoboot
     Ok(picoboot)
 }
 
-/// RP2350 chip identity and package variant, read from a device via GET_INFO.
+/// RP2350 chip identity and package variant, read from a device via GET_INFO
+/// and OTP.
 #[derive(Debug, Clone, Copy)]
 pub struct ChipInfo {
     /// The device's invariant chip ID.
     pub chip_id: Rp235xChipId,
-    /// The package variant, present when the response carried a recognised
-    /// `package_sel`.
+    /// The package variant: OTP's `NUM_GPIOS` where it holds one, otherwise
+    /// [`bootrom_package`](Self::bootrom_package).
     pub package: Option<RpVariant>,
+    /// The package variant GET_INFO's `package_sel` reports, present when it's
+    /// a recognised value. An A2 stepping RP2350 reports the wrong package
+    /// here.
+    pub bootrom_package: Option<RpVariant>,
 }
 
 /// Read the RP2350 chip ID and package variant via the picoboot `GET_INFO`
@@ -374,8 +392,11 @@ pub struct ChipInfo {
 /// - a One ROM running an earlier USB plugin returns
 ///   `[count=3, package_sel, lo, hi]`, omitting the returned-flags word
 ///
-/// `package_sel` yields the package variant; an unrecognised value is warned
-/// and returned as `None`, without failing the chip-ID read.
+/// `package_sel` yields the bootrom's package variant; an unrecognised value is
+/// warned and returned as `None`, without failing the chip-ID read. OTP's
+/// `NUM_GPIOS` row is then read for the package, which picotool reads in place
+/// of `package_sel` on an A2 stepping RP2350. A failure to read it isn't
+/// reported, and the package falls back to `package_sel`'s.
 pub async fn read_chip_info(pb: &mut Picoboot) -> Result<ChipInfo, Error> {
     const PB_INFO_SYS: u8 = 0x01;
     const CHIP_INFO_FLAG: u32 = 0x0000_0001;
@@ -410,14 +431,38 @@ pub async fn read_chip_info(pb: &mut Picoboot) -> Result<ChipInfo, Error> {
     }
     let data = (count - 2) * 4;
     let package_sel = word(data);
-    let package = RpVariant::from_package_sel(package_sel);
-    if package.is_none() {
+    let bootrom_package = RpVariant::from_package_sel(package_sel);
+    if bootrom_package.is_none() {
         warn!("Unrecognised RP2350 package_sel {package_sel:#x} in CHIP_INFO");
     }
+    let chip_id = Rp235xChipId::from_chip_info([package_sel, word(data + 4), word(data + 8)]);
     Ok(ChipInfo {
-        chip_id: Rp235xChipId::from_chip_info([package_sel, word(data + 4), word(data + 8)]),
-        package,
+        chip_id,
+        package: package(read_num_gpios(pb).await, bootrom_package),
+        bootrom_package,
     })
+}
+
+/// OTP's `NUM_GPIOS` row on `pb`'s device. `None` where it can't be read.
+async fn read_num_gpios(pb: &Picoboot) -> Option<u16> {
+    let rows = match PicobootOtp::connect(pb.clone()).await {
+        Ok(mut otp) => otp
+            .read_ecc(OTP_NUM_GPIOS_ROW, 1)
+            .await
+            .map_err(Error::from),
+        Err(e) => Err(e),
+    };
+    rows.inspect_err(|e| debug!("Couldn't read NUM_GPIOS from {}: {e}", pb.info()))
+        .ok()
+        .and_then(|rows| rows.first().copied())
+}
+
+/// The package [`ChipInfo::package`] reports: `num_gpios`'s where it holds
+/// one, otherwise `bootrom_package`.
+fn package(num_gpios: Option<u16>, bootrom_package: Option<RpVariant>) -> Option<RpVariant> {
+    num_gpios
+        .and_then(RpVariant::from_num_gpios)
+        .or(bootrom_package)
 }
 
 /// Read the first 64KB from flash on a One ROM Fire device.
@@ -453,14 +498,40 @@ pub async fn read_device_info(device: &mut Device) -> Result<(), AccessError> {
             .map_err(AccessError::from_picoboot)?;
     }
 
-    let onerom = {
+    let firmware = {
         let mut reader = PicobootReader::new(picoboot)
             .await
             .map_err(AccessError::unreadable)?;
-        let mut parser = Parser::with_base_flash_address(&mut reader, FLASH_BASE, RAM_BASE);
-        parser.parse_device().await
+        let parsed = Parser::with_base_flash_address(&mut reader, FLASH_BASE, RAM_BASE)
+            .parse_device()
+            .await;
+        if matches!(parsed, ParsedDevice::Lab) {
+            let lab = LabParser::new(&mut reader)
+                .parse()
+                .await
+                .map_err(AccessError::unreadable)?;
+            Ok(Firmware::Lab(lab))
+        } else if parsed.is_recognised() {
+            Ok(Firmware::OneRom(parsed))
+        } else {
+            debug!("Firmware not recognised: {:?}", parsed.parse_errors());
+            Err(parsed.parse_errors().to_vec())
+        }
     };
-    device.update_onerom(onerom);
+    device.set_firmware(firmware);
+
+    // The commissioning data identifies a device's board even where its firmware
+    // is for another board or this build doesn't recognise the firmware.
+    device.commissioning = Commissioning::read(device).await;
+
+    // Runtime info exists only while One ROM runs, so a stopped board's size
+    // comes from OTP. Firmware before 0.8.0 doesn't record the size in runtime
+    // info, so on that firmware the size comes from OTP through the USB plugin.
+    // One ROM Lab doesn't have a board size.
+    if !matches!(device.firmware, Some(Firmware::Lab(_))) {
+        device.board_size =
+            board_size(device.onerom(), async || read_otp_board_size(device).await).await;
+    }
 
     // Read the chip ID - the device's invariant identity - and package variant.
     let (chip_id, rp_variant) = resolve_chip_id(device).await;
@@ -468,6 +539,42 @@ pub async fn read_device_info(device: &mut Device) -> Result<(), AccessError> {
     device.rp_variant = rp_variant;
 
     Ok(())
+}
+
+/// Reads the board size of the One ROM on `picoboot` by [`board_size`]'s rule.
+/// `None` for One ROM Lab and where neither runtime info nor OTP can be read.
+pub async fn read_board_size(picoboot: &Picoboot) -> Option<MaybeKnown<OneromBoardSize>> {
+    let parsed = match PicobootReader::new(picoboot.clone()).await {
+        Ok(mut reader) => Some(
+            Parser::with_base_flash_address(&mut reader, FLASH_BASE, RAM_BASE)
+                .parse_device()
+                .await,
+        ),
+        Err(e) => {
+            debug!("Couldn't read the firmware of {}: {e}", picoboot.info());
+            None
+        }
+    };
+    let onerom = parsed.as_ref().filter(|parsed| parsed.is_recognised());
+    board_size(onerom, async || {
+        let size = match PicobootOtp::connect(picoboot.clone()).await {
+            Ok(mut otp) => onerom_app::read_board_size(&mut otp)
+                .await
+                .map_err(Error::from),
+            Err(e) => Err(e),
+        };
+        size.inspect_err(|e| debug!("Couldn't read the board size of {}: {e}", picoboot.info()))
+            .ok()
+    })
+    .await
+}
+
+/// Reads the commissioning area of the One ROM on `picoboot`.
+pub async fn read_commissioning(picoboot: &Picoboot) -> Result<CommissioningArea, Error> {
+    let mut otp = PicobootOtp::connect(picoboot.clone()).await?;
+    onerom_app::read_commissioning(&mut otp)
+        .await
+        .map_err(Error::from)
 }
 
 /// Determine a device's RP2350 chip ID and, where available, its package
@@ -496,7 +603,7 @@ async fn resolve_chip_id(device: &Device) -> (Option<Rp235xChipId>, Option<RpVar
 }
 
 /// Open a fresh picoboot handle to a discovered device and read its chip info.
-async fn read_device_chip_info(device: &Device) -> Result<ChipInfo, Error> {
+pub async fn read_device_chip_info(device: &Device) -> Result<ChipInfo, Error> {
     let mut picoboot = get_picoboot(device, false).await?;
     read_chip_info(&mut picoboot).await
 }
@@ -650,18 +757,17 @@ impl MemoryRegion {
     }
 }
 
-const VALID_REGIONS: &[MemoryRegion] = &[
-    // 2MB of flash
-    MemoryRegion::new("Flash", 0x1000_0000, 0x0020_0000, MemoryType::Flash),
+/// The valid regions other than flash. A device's flash is each of its flash
+/// chips.
+const OTHER_REGIONS: &[MemoryRegion] = &[
     // 520KB of SRAM
     MemoryRegion::new("SRAM", 0x2000_0000, 0x0008_2000, MemoryType::Ram),
     // 32KB of Boot ROM
     MemoryRegion::new("ROM", 0x0000_0000, 0x0000_8000, MemoryType::BootRom),
-    // 512KB of live ROM data
     MemoryRegion::new(
         "Live ROM Image",
-        0x9000_0000,
-        0x0008_0000,
+        LIVE_ROM_BASE,
+        LIVE_ROM_MAX_OFFSET,
         MemoryType::VirtualRw,
     ),
 ];
@@ -673,7 +779,20 @@ fn check_memory_range(
     write: bool,
     flash_writes_allowed: bool,
 ) -> Result<(), Error> {
-    for region in VALID_REGIONS {
+    let chips = device.flash_chips();
+    let flash: Vec<MemoryRegion> = [Some(chips.first()), chips.second()]
+        .into_iter()
+        .flatten()
+        .map(|chip| {
+            MemoryRegion::new(
+                "Flash",
+                chip.start,
+                chip.end - chip.start,
+                MemoryType::Flash,
+            )
+        })
+        .collect();
+    for region in flash.iter().chain(OTHER_REGIONS) {
         if region.contains(address, length) {
             return match region.mem_type {
                 MemoryType::BootRom => {
@@ -704,16 +823,40 @@ fn check_memory_range(
     Err(Error::InvalidMemoryRange(address, length))
 }
 
+/// Bytes per PICOBOOT transfer in a memory read.
+///
+/// The endpoint timeout covers a whole transfer, and a running One ROM answers
+/// at around 70KB/s, so a large read has to be split to finish one.
+const READ_CHUNK_BYTES: u32 = 32 * 1024;
+
 /// Read bytes from device memory
 pub async fn read_memory(device: &Device, address: u32, length: u32) -> Result<Vec<u8>, Error> {
     check_memory_range(device, address, length, false, false)?;
 
     let mut picoboot = get_picoboot(device, false).await?;
 
-    picoboot
-        .read(address, length)
-        .await
-        .map_err(|e| Error::Usb(e.to_string()))
+    let mut data = Vec::with_capacity(length as usize);
+    while (data.len() as u32) < length {
+        let offset = data.len() as u32;
+        let size = (length - offset).min(READ_CHUNK_BYTES);
+
+        let chunk = picoboot
+            .read(address + offset, size)
+            .await
+            .map_err(|e| Error::Usb(e.to_string()))?;
+
+        if chunk.len() != size as usize {
+            return Err(Error::Usb(format!(
+                "read {} bytes at {:#010x}, asked for {size}",
+                chunk.len(),
+                address + offset
+            )));
+        }
+
+        data.extend_from_slice(&chunk);
+    }
+
+    Ok(data)
 }
 
 /// Write bytes to device memory.
@@ -732,33 +875,92 @@ pub async fn write_memory(device: &Device, address: u32, data: &[u8]) -> Result<
         .map_err(|e| Error::Usb(e.to_string()))
 }
 
-/// Erase and write firmware to device flash.
-pub async fn flash_program(device: &Device, data: &[u8]) -> Result<(), Error> {
-    let mut picoboot = get_picoboot(device, true).await?;
+/// Runs `plan`'s steps on `device` in order.
+///
+/// A plan for flash the device doesn't have is refused before anything is
+/// erased.
+pub async fn flash_program(device: &Device, plan: &FlashPlan<'_>) -> Result<(), Error> {
+    for step in plan.steps() {
+        let (addr, len) = step_range(step)?;
+        check_memory_range(device, addr, len, true, true)?;
+    }
 
-    picoboot
-        .flash_erase_and_write(FLASH_BASE, data)
-        .await
-        .map_err(|e| Error::Usb(e.to_string()))
+    let mut picoboot = get_picoboot(device, true).await?;
+    run_flash_plan(&mut picoboot, plan).await
 }
 
-/// Read firmware from device flash for verification.
-pub async fn flash_program_read(device: &Device, size: u32) -> Result<Vec<u8>, Error> {
-    let mut picoboot = get_picoboot(device, false).await?;
+/// Runs `plan`'s steps through `picoboot` in order.
+///
+/// A plan with a step this build doesn't know fails before anything is
+/// erased. The steps' addresses aren't checked against the board's flash.
+/// Erasing flash can take longer than picoboot's default timeouts allow so set
+/// longer ones first.
+pub async fn run_flash_plan(picoboot: &mut Picoboot, plan: &FlashPlan<'_>) -> Result<(), Error> {
+    for step in plan.steps() {
+        step_range(step)?;
+    }
 
-    picoboot
-        .flash_read(FLASH_BASE, size)
-        .await
-        .map_err(|e| Error::Usb(e.to_string()))
+    // One connection for every step.
+    picoboot.connect().await.map_err(usb_error)?;
+    for step in plan.steps() {
+        match *step {
+            FlashStep::Erase { addr, len } => erase(picoboot, addr, len).await?,
+            FlashStep::Write { addr, data } => {
+                picoboot.flash_write(addr, data).await.map_err(usb_error)?
+            }
+            _ => return Err(Error::UnknownFlashStep),
+        }
+    }
+    Ok(())
+}
+
+/// The address and length of the flash `step` changes.
+fn step_range(step: &FlashStep<'_>) -> Result<(u32, u32), Error> {
+    match *step {
+        FlashStep::Erase { addr, len } => Ok((addr, len)),
+        FlashStep::Write { addr, data } => Ok((addr, data.len() as u32)),
+        // FlashStep is non_exhaustive.
+        _ => Err(Error::UnknownFlashStep),
+    }
+}
+
+/// Reads `len` bytes of `device`'s flash from `addr`.
+///
+/// The bootloader reads flash a whole 256-byte page at a time, so the read
+/// covers the pages holding the bytes and returns just the bytes.
+pub async fn flash_read(device: &Device, addr: u32, len: u32) -> Result<Vec<u8>, Error> {
+    check_memory_range(device, addr, len, false, false)?;
+
+    let start = addr - addr % PAGE_SIZE;
+    // The range is within a region so this doesn't overflow.
+    let end = (addr + len).next_multiple_of(PAGE_SIZE);
+
+    let mut picoboot = get_picoboot(device, false).await?;
+    // One connection for every chunk.
+    picoboot.connect().await.map_err(usb_error)?;
+    let mut data = Vec::with_capacity((end - start) as usize);
+    for chunk in (start..end).step_by(READ_CHUNK_BYTES as usize) {
+        let size = (end - chunk).min(READ_CHUNK_BYTES);
+        let read = picoboot.flash_read(chunk, size).await.map_err(usb_error)?;
+        if read.len() != size as usize {
+            return Err(Error::Usb(format!(
+                "read {} bytes at {chunk:#010x}, asked for {size}",
+                read.len()
+            )));
+        }
+        data.extend_from_slice(&read);
+    }
+
+    let skip = (addr - start) as usize;
+    Ok(data[skip..skip + len as usize].to_vec())
 }
 
 /// Erase a region of device flash.
 ///
 /// Both `offset` and `size` are relative to `FLASH_BASE` and must be
-/// multiples of 4096 (one flash sector).
+/// multiples of 4096 (one flash sector). A second flash chip starts at offset
+/// `0x1000000`.
 pub async fn flash_erase(device: &Device, offset: u32, size: u32) -> Result<(), Error> {
-    const SECTOR_SIZE: u32 = 4096;
-
     if !offset.is_multiple_of(SECTOR_SIZE) {
         return Err(Error::Other(format!(
             "offset {offset:#x} is not sector-aligned (must be a multiple of {SECTOR_SIZE:#x})"
@@ -774,11 +976,30 @@ pub async fn flash_erase(device: &Device, offset: u32, size: u32) -> Result<(), 
     check_memory_range(device, address, size, true, true)?;
 
     let mut picoboot = get_picoboot(device, true).await?;
+    picoboot.connect().await.map_err(usb_error)?;
+    erase(&mut picoboot, address, size).await
+}
 
-    picoboot
-        .flash_erase(address, size)
-        .await
-        .map_err(|e| Error::Usb(e.to_string()))
+/// Bytes each FLASH_ERASE command erases.
+///
+/// The endpoint timeout covers a whole command, and erasing a whole 2MB chip
+/// can take longer than that. A 64KB chunk still lets the bootloader erase a
+/// 64KB block at a time where the chip supports it.
+const ERASE_CHUNK_BYTES: u32 = 64 * 1024;
+
+/// Erases `len` bytes of flash from `addr`. Both are whole sectors.
+async fn erase(picoboot: &mut Picoboot, addr: u32, len: u32) -> Result<(), Error> {
+    let end = addr + len;
+    for chunk in (addr..end).step_by(ERASE_CHUNK_BYTES as usize) {
+        let size = (end - chunk).min(ERASE_CHUNK_BYTES);
+        picoboot.flash_erase(chunk, size).await.map_err(usb_error)?;
+    }
+    Ok(())
+}
+
+/// The error for a failed picoboot operation.
+fn usb_error(e: picoboot::Error) -> Error {
+    Error::Usb(e.to_string())
 }
 
 /// Sleep for a short time to allow the device to disconnect and reappear
@@ -1064,6 +1285,12 @@ async fn send_onerom_cmd(
 /// stopped device is in the bootloader, where there is no One ROM command
 /// handler at all.
 pub async fn get_caps(device: &Device) -> Result<Caps, Error> {
+    read_caps(device, Error::PluginTooOldForGpio).await
+}
+
+/// [`get_caps`], with `too_old` making the error for a USB system plugin that
+/// predates the command.
+async fn read_caps(device: &Device, too_old: fn(String) -> Error) -> Result<Caps, Error> {
     let data = send_onerom_cmd(
         device,
         "GET_CAPS",
@@ -1074,13 +1301,54 @@ pub async fn get_caps(device: &Device) -> Result<Caps, Error> {
     .await
     .map_err(|failure| {
         if failure.means_too_old() {
-            Error::PluginTooOldForGpio(device.to_string())
+            too_old(device.to_string())
         } else {
             cmd_error("GET_CAPS", failure)
         }
     })?;
 
     Ok(Caps::decode(&data)?)
+}
+
+/// The picobootx extension minor version [`ONEROM_CMD_SET_STANDBY`] arrived
+/// in.
+const STANDBY_EXT_MINOR: u8 = 1;
+
+/// Check `caps` for [`ONEROM_CMD_SET_STANDBY`].
+///
+/// A plugin from before the command has an older extension version. A plugin
+/// with the command clears [`ONEROM_FEAT_STANDBY`] where the firmware doesn't
+/// support standby.
+fn check_standby(caps: &Caps, device: &str) -> Result<(), Error> {
+    if caps.ext_minor < STANDBY_EXT_MINOR {
+        Err(Error::PluginTooOldForStandby(device.to_string()))
+    } else if !caps.has_feature(ONEROM_FEAT_STANDBY) {
+        Err(Error::FirmwareTooOldForStandby(device.to_string()))
+    } else {
+        Ok(())
+    }
+}
+
+/// Turn standby on or off on a One ROM device.
+#[allow(clippy::wildcard_enum_match_arm)]
+pub async fn set_standby(device: &Device, standby: bool) -> Result<(), Error> {
+    let caps = read_caps(device, Error::PluginTooOldForStandby).await?;
+    check_standby(&caps, &device.to_string())?;
+
+    let args = SetStandbyArgs { standby };
+    send_onerom_cmd(
+        device,
+        "SET_STANDBY",
+        ONEROM_CMD_SET_STANDBY,
+        0,
+        args.encode(),
+    )
+    .await
+    .map(|_| ())
+    .map_err(|failure| match failure {
+        failure if failure.means_too_old() => Error::PluginTooOldForStandby(device.to_string()),
+        failure => cmd_error("SET_STANDBY", failure),
+    })
 }
 
 /// Check a capability bit before sending the command that needs it.
@@ -1209,6 +1477,19 @@ mod tests {
     use super::*;
     use nusb::transfer::TransferError;
 
+    /// The package comes from NUM_GPIOS where it holds one, so an A2 QFN60
+    /// whose bootrom reports the QFN80 is an RP235xA. Otherwise it's the
+    /// bootrom's.
+    #[test]
+    fn num_gpios_wins_over_the_bootrom() {
+        use RpVariant::{Rp235xA, Rp235xB};
+        assert_eq!(package(Some(30), Some(Rp235xB)), Some(Rp235xA));
+        assert_eq!(package(Some(48), Some(Rp235xA)), Some(Rp235xB));
+        assert_eq!(package(Some(0), Some(Rp235xB)), Some(Rp235xB));
+        assert_eq!(package(None, Some(Rp235xA)), Some(Rp235xA));
+        assert_eq!(package(None, None), None);
+    }
+
     /// A device that could not be read, with everything but the class fixed,
     /// so a test says only what it is about.
     fn skipped(failure: AccessFailure, serial: Option<&str>) -> SkippedDevice {
@@ -1218,16 +1499,16 @@ mod tests {
                 detail: "Failed to reset PICOBOOT interface: 1209:f542".to_string(),
             },
             serial: serial.map(str::to_owned),
-            vid: 0x1209,
-            pid: 0xf542,
+            vid: USB_PLUGIN_VID,
+            pid: USB_PLUGIN_PID,
             bus_id: "01".to_string(),
             address: 3,
         }
     }
 
     const TARGET: Target = Target::Custom {
-        vid: 0x1209,
-        pid: 0xf542,
+        vid: USB_PLUGIN_VID,
+        pid: USB_PLUGIN_PID,
     };
 
     #[test]
@@ -1459,5 +1740,28 @@ mod tests {
         assert!(check_feature(&caps, ONEROM_FEAT_GPIO_SET, "d").is_ok());
         assert!(check_feature(&caps, ONEROM_FEAT_GPIO_QUERY, "d").is_ok());
         assert!(check_feature(&caps, ONEROM_FEAT_GPIO_HOLD, "d").is_err());
+    }
+
+    /// Extension 1.0 predates standby whatever its feature bits. From 1.1 the
+    /// feature bit is clear where the firmware predates standby.
+    #[test]
+    fn standby_requires_extension_1_1_and_its_feature_bit() {
+        let caps = |ext_minor, features| Caps {
+            ext_major: 1,
+            ext_minor,
+            features,
+            ..Caps::default()
+        };
+        let all = u32::MAX;
+        assert!(matches!(
+            check_standby(&caps(0, all), "d"),
+            Err(Error::PluginTooOldForStandby(_))
+        ));
+        assert!(matches!(
+            check_standby(&caps(1, all & !ONEROM_FEAT_STANDBY), "d"),
+            Err(Error::FirmwareTooOldForStandby(_))
+        ));
+        assert!(check_standby(&caps(1, ONEROM_FEAT_STANDBY), "d").is_ok());
+        assert!(check_standby(&caps(2, ONEROM_FEAT_STANDBY), "d").is_ok());
     }
 }

@@ -12,7 +12,7 @@
 //! is implemented here.
 //!
 //! Fetching is host-specific and is provided by [`CliFetch`](crate::CliFetch),
-//! which implements `onerom-app`'s [`LocalPluginFetch`] over `onerom-fw`.
+//! which implements `onerom-app`'s [`LocalFetch`] over `onerom-fw`.
 
 pub use onerom_app::{
     // Catalogue and core types.
@@ -21,13 +21,13 @@ pub use onerom_app::{
     // incompatibility errors.
     CompatibleRelease,
     // Fetch abstraction (implemented by `CliFetch`).
-    LocalPluginFetch,
+    Fetch,
+    LocalFetch,
     Plugin,
     // Display of a device's plugin slot, resolved from its recorded image
     // source (manifest-backed or local).
     PluginDisplay,
     PluginError,
-    PluginFetch,
     // Non-fatal outcome of checking the plugins a config names.
     PluginNote,
     PluginOrigin,
@@ -49,6 +49,8 @@ pub use onerom_app::{
     newest_compatible,
     parse_plugins,
     plugin_to_chip_set_config,
+    // Resolve the plugins a config refers to by name (delegates fetching).
+    resolve_config_plugins,
     // Resolve a device plugin slot to a PluginDisplay (delegates fetching).
     resolve_plugin_display,
     resolve_plugins,

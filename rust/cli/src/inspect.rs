@@ -2,30 +2,39 @@
 //
 // MIT License
 
+use std::fmt::Display;
+use std::io::Write;
+
 use crate::args::inspect::{
     InspectGpioArgs, InspectHeaderArgs, InspectImageArgs, InspectInfoArgs, InspectLedArgs,
-    InspectPeekLiveArgs, InspectPeekMemoryArgs, InspectRgbArgs, InspectSlotsArgs,
+    InspectOtpArgs, InspectPeekLiveArgs, InspectPeekMemoryArgs, InspectRgbArgs, InspectSlotsArgs,
     InspectSocketArgs, InspectTelemetryArgs,
 };
+use crate::commissioning::{device_lines, report_lines};
 use crate::utils::{
     active_chip_type, check_device, check_device_running, check_fire_board,
     check_fire_board_optional, check_live_read_write, print_hex_dump, resolve_board,
-    resolve_board_optional,
+    resolve_board_optional, standby_suffix,
 };
+use onerom_app::{LocalOtpAccess, SignerTable, read_report};
 use onerom_cli::CliFetch;
 use onerom_cli::LIVE_ROM_BASE;
 use onerom_cli::colour::RgbColour;
 use onerom_cli::gpio;
+use onerom_cli::otp::PicobootOtp;
 use onerom_cli::plugin::{PluginOrigin, PluginType, resolve_plugin_display};
 use onerom_cli::usb::{
     GpioEntry, GpioUse, LedId, LedState, get_caps, gpio_query, gpio_query_all, led_query,
     leds_share_gpio, read_memory,
 };
-use onerom_cli::{Device, Error, Options};
+use onerom_cli::{Device, Error, Firmware, Options};
 use onerom_config::chip::ChipType;
 use onerom_config::hw::Board;
 use onerom_config::mcu::PinTolerance;
-use onerom_fw_parser::{ParsedDevice, SdrrCsState, SlotKind};
+use onerom_fw_parser::{
+    NewerGeneration, ParseError, ParsedDevice, RuntimeAbsence, SdrrCsState, SlotKind,
+};
+use onerom_lab_parser::Lab;
 
 pub async fn cmd_info(options: &Options, args: &InspectInfoArgs) -> Result<(), Error> {
     // Print the device summary
@@ -33,37 +42,202 @@ pub async fn cmd_info(options: &Options, args: &InspectInfoArgs) -> Result<(), E
     let device = options.device.as_ref().unwrap();
 
     println!("{device}");
+    if let Some(line) = device.board_size_line() {
+        println!("  {line}");
+    }
+    for line in commissioning_lines(device, true, options.verbose) {
+        println!("  {line}");
+    }
 
     // Print the detailed device information as JSON if available
-    if let Some(onerom) = device.onerom.as_ref() {
-        if let Some(sdrr) = onerom.as_original() {
-            if let Some(info) = sdrr.flash.as_ref() {
-                let json =
-                    serde_json::to_string_pretty(info).map_err(|e| Error::Other(e.to_string()))?;
-                println!("Flash information:");
-                println!("{json}");
-            }
-            if let Some(info) = sdrr.ram.as_ref() {
-                let json =
-                    serde_json::to_string_pretty(info).map_err(|e| Error::Other(e.to_string()))?;
-                println!("Runtime information:");
-                println!("{json}");
-            }
-        } else if let Some(schema) = onerom.as_schema() {
-            // A schema device dumps as a single tree: unlike the original
-            // format, whose flash and RAM information are siblings, the
-            // metadata and runtime information are both nested within the info
-            // header, so one dump covers the lot.
-            if let Some(info) = schema.info() {
-                let json =
-                    serde_json::to_string_pretty(info).map_err(|e| Error::Other(e.to_string()))?;
-                println!("Device information:");
-                println!("{json}");
-            }
-        }
+    match device.firmware.as_ref() {
+        Some(Firmware::OneRom(onerom)) => print_onerom_info(onerom)?,
+        Some(Firmware::Lab(lab)) => print_lab_info(lab)?,
+        None => {}
     }
 
     Ok(())
+}
+
+/// The lines describing `device`'s commissioning data that `scan` and
+/// `inspect info` print, from the commissioning area enumeration read.
+/// `details` adds the commissioning data itself to the warnings.
+pub fn commissioning_lines(device: &Device, details: bool, verbose: bool) -> Vec<String> {
+    device_lines(
+        device.firmware_board(),
+        &device.commissioning,
+        (details, verbose),
+        &SignerTable::built_in(),
+    )
+}
+
+pub async fn cmd_otp(options: &Options, args: &InspectOtpArgs) -> Result<(), Error> {
+    check_device(options, args, false)?;
+    let device = options.device.as_ref().unwrap();
+
+    let mut otp = PicobootOtp::open(device).await?;
+    if args.json {
+        let report = read_report(&mut otp).await?;
+        let json =
+            serde_json::to_string_pretty(&report).map_err(|e| Error::Other(e.to_string()))?;
+        println!("{json}");
+        Ok(())
+    } else {
+        let table = SignerTable::built_in();
+        write_otp(
+            &mut otp,
+            device,
+            &table,
+            options.verbose,
+            &mut std::io::stdout(),
+        )
+        .await
+    }
+}
+
+/// Writes what `inspect otp` prints for the board `otp` reaches to `out`,
+/// beneath the board's device line `device`. Key names come from `table`.
+pub(crate) async fn write_otp<O: LocalOtpAccess>(
+    otp: &mut O,
+    device: &impl Display,
+    table: &SignerTable,
+    verbose: bool,
+    out: &mut impl Write,
+) -> Result<(), Error> {
+    let report = read_report(otp).await?;
+    let failed = |e| Error::io("stdout", e);
+    writeln!(out, "{device}").map_err(failed)?;
+    for line in report_lines(&report, verbose, table) {
+        writeln!(out, "  {line}").map_err(failed)?;
+    }
+    Ok(())
+}
+
+fn print_onerom_info(onerom: &ParsedDevice) -> Result<(), Error> {
+    if let Some(sdrr) = onerom.as_original() {
+        if let Some(info) = sdrr.flash.as_ref() {
+            let json =
+                serde_json::to_string_pretty(info).map_err(|e| Error::Other(e.to_string()))?;
+            println!("Flash information:");
+            println!("{json}");
+        }
+        if let Some(info) = sdrr.ram.as_ref() {
+            let json =
+                serde_json::to_string_pretty(info).map_err(|e| Error::Other(e.to_string()))?;
+            println!("Runtime information:");
+            println!("{json}");
+        }
+    } else if let Some(schema) = onerom.as_schema() {
+        // A schema device dumps as a single tree: unlike the original
+        // format, whose flash and RAM information are siblings, the
+        // metadata and runtime information are both nested within the info
+        // header, so one dump covers the lot.
+        if let Some(info) = schema.info() {
+            let json =
+                serde_json::to_string_pretty(info).map_err(|e| Error::Other(e.to_string()))?;
+            println!("Device information:");
+            println!("{json}");
+        }
+        print_parser_notes(schema.runtime_absence(), &schema.newer_generations())?;
+    }
+
+    Ok(())
+}
+
+fn print_lab_info(lab: &Lab) -> Result<(), Error> {
+    let json =
+        serde_json::to_string_pretty(&lab_tree(lab)?).map_err(|e| Error::Other(e.to_string()))?;
+    println!("Device information:");
+    println!("{json}");
+    print_parser_notes(
+        lab.runtime.as_ref().err().copied(),
+        &lab.newer_generations(),
+    )
+}
+
+/// A Lab as one tree, the shape a schema-format One ROM dumps in.  Lab's
+/// metadata and runtime sit where `onerom_info_t`'s pointers to them are.
+/// The keys come out sorted, because serde_json sorts a value's maps.
+fn lab_tree(lab: &Lab) -> Result<serde_json::Value, Error> {
+    let json_err = |e: serde_json::Error| Error::Other(e.to_string());
+    let mut tree = serde_json::to_value(&lab.info).map_err(json_err)?;
+    tree["metadata"] = serde_json::to_value(lab.metadata.as_ref().ok()).map_err(json_err)?;
+    tree["runtime"] = serde_json::to_value(lab.runtime.as_ref().ok()).map_err(json_err)?;
+    Ok(tree)
+}
+
+fn print_parser_notes(
+    runtime_absence: Option<RuntimeAbsence>,
+    newer_generations: &[NewerGeneration],
+) -> Result<(), Error> {
+    if let Some(json) = parser_notes(runtime_absence, newer_generations)? {
+        println!("Parser notes:");
+        println!("{json}");
+    }
+
+    Ok(())
+}
+
+/// What the parser could not show, printed as its own JSON block.
+///
+/// A block of its own rather than keys added to the dump, so anything already
+/// reading that dump - `"runtime": null` included - sees exactly what it saw
+/// before.  Each note carries a word a caller can match on and a sentence for
+/// whoever is reading it.
+#[derive(serde::Serialize)]
+struct ParserNotes {
+    /// Why there is no runtime structure, absent where there is one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    runtime_absent: Option<RuntimeAbsentNote>,
+
+    /// The structures newer than this build knows, absent where there are
+    /// none.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    newer_generations: Vec<NewerGenerationNote>,
+}
+
+#[derive(serde::Serialize)]
+struct RuntimeAbsentNote {
+    reason: RuntimeAbsence,
+    detail: String,
+}
+
+#[derive(serde::Serialize)]
+struct NewerGenerationNote {
+    structure: &'static str,
+    device_generation: u32,
+    known_generation: u32,
+    detail: String,
+}
+
+/// Build the notes block, or `None` where there is nothing to say.
+fn parser_notes(
+    runtime_absence: Option<RuntimeAbsence>,
+    newer_generations: &[NewerGeneration],
+) -> Result<Option<String>, Error> {
+    let notes = ParserNotes {
+        runtime_absent: runtime_absence.map(|absence| RuntimeAbsentNote {
+            reason: absence,
+            detail: absence.to_string(),
+        }),
+        newer_generations: newer_generations
+            .iter()
+            .map(|g| NewerGenerationNote {
+                structure: g.structure,
+                device_generation: g.device_generation,
+                known_generation: g.known_generation,
+                detail: g.to_string(),
+            })
+            .collect(),
+    };
+
+    if notes.runtime_absent.is_none() && notes.newer_generations.is_empty() {
+        return Ok(None);
+    }
+
+    serde_json::to_string_pretty(&notes)
+        .map(Some)
+        .map_err(|e| Error::Other(e.to_string()))
 }
 
 /// The one mode that picks its own colour rather than showing the stored one.
@@ -160,6 +334,63 @@ pub async fn cmd_telemetry(options: &Options, args: &InspectTelemetryArgs) -> Re
     Err(Error::Unimplemented("inspect telemetry".into()))
 }
 
+/// The lines shown beneath a device whose firmware this build doesn't
+/// recognise, from the parser's `reasons`. A reason after the first sits
+/// beneath the one before it.
+pub fn unrecognised_firmware_lines(reasons: &[ParseError]) -> Vec<String> {
+    const LABEL: &str = "Firmware not recognised: ";
+    // The parser doesn't provide a reason where flash doesn't hold One ROM
+    // firmware, as when it's erased.
+    let mut reasons = reasons.iter().map(|error| error.reason.as_str());
+    let first = reasons.next().unwrap_or("One ROM firmware not found");
+    let indent = " ".repeat(LABEL.len());
+    std::iter::once(format!("{LABEL}{first}"))
+        .chain(reasons.map(|reason| format!("{indent}{reason}")))
+        .collect()
+}
+
+/// The error for a device whose firmware this build doesn't recognise. It
+/// carries the parser's `reasons` as [`unrecognised_firmware_lines`] lays
+/// them out.
+pub fn unrecognised_firmware_error(reasons: &[ParseError]) -> Error {
+    Error::Other(unrecognised_firmware_lines(reasons).join("\n"))
+}
+
+/// The lines `inspect slots` prints for a slot's firmware overrides, empty
+/// where none is set.
+pub(crate) fn override_lines(overrides: &onerom_metadata::OneromFirmwareOverrides) -> Vec<String> {
+    let mut lines = Vec::new();
+    if !overrides.any_present() {
+        return lines;
+    }
+    lines.push("    Firmware overrides:".to_string());
+    if let Some(enabled) = overrides.led_enabled() {
+        lines.push(format!(
+            "      Status LED: {}",
+            if enabled { "on" } else { "off" }
+        ));
+    }
+    if let Some(freq) = overrides.cpu_freq() {
+        lines.push(format!("      CPU frequency: {freq}MHz"));
+    }
+    if let Some(vreg) = overrides.vreg() {
+        lines.push(format!("      CPU voltage: {vreg}"));
+    }
+    if let Some(overclock) = overrides.overclock_enabled() {
+        lines.push(format!(
+            "      Overclock: {}",
+            if overclock { "enabled" } else { "disabled" }
+        ));
+    }
+    if let Some(swd) = overrides.swd_enabled() {
+        lines.push(format!("      SWD: {}", if swd { "on" } else { "off" }));
+    }
+    if let Some(standby) = overrides.standby() {
+        lines.push(format!("      Standby at boot: {standby}"));
+    }
+    lines
+}
+
 /// Print a device's slot configuration.
 ///
 /// Plugins are presented separately from ROM slots and by their friendly name:
@@ -171,10 +402,17 @@ pub async fn cmd_telemetry(options: &Options, args: &InspectTelemetryArgs) -> Re
 ///
 /// `--verbose` adds, per plugin, its image source and (for official plugins)
 /// version and description; and, per ROM slot, its flash location.
+///
+/// `commissioning` holds lines describing the device's commissioning to show
+/// beneath its identity.
+///
+/// Firmware this build doesn't recognise is an error carrying the parser's
+/// reasons, from [`unrecognised_firmware_error`].
 pub async fn output_slot_info(
     device: &Device,
     options: &Options,
     prefix: &str,
+    commissioning: &[String],
 ) -> Result<(), Error> {
     print!("{prefix}");
     println!("{device}");
@@ -182,14 +420,24 @@ pub async fn output_slot_info(
     let verbose = options.verbose;
 
     // Device identity sits directly beneath the header, before slot detail.
+    // The header carries the board size.
     if verbose && let Some(line) = device.mcu_chip_id_line() {
-        print!("{prefix}");
-        println!("  {line}");
+        println!("{prefix}  {line}");
+    }
+    for line in commissioning {
+        println!("{prefix}  {line}");
     }
 
-    let parsed = device.onerom.as_ref().ok_or_else(|| {
-        Error::Other("No recognised information found on device flash".to_string())
-    })?;
+    let parsed = match device.firmware.as_ref() {
+        Some(Firmware::OneRom(parsed)) => parsed,
+        // A Lab doesn't have slots, so its line is all there is.
+        Some(Firmware::Lab(_)) => return Ok(()),
+        None => {
+            return Err(unrecognised_firmware_error(
+                device.unrecognised_firmware_reasons(),
+            ));
+        }
+    };
 
     // First pass over the neutral slot view: split plugin slots from ROM slots.
     // ROM slots are renumbered from 0 via the view's `user_index` (which counts
@@ -224,22 +472,19 @@ pub async fn output_slot_info(
         }
     }
 
-    // ROM slot count and the active marker both use the plugin-excluding
+    // ROM slot count and the selected marker both use the plugin-excluding
     // numbering.
     let rom_count = rom_slots.len();
-    let active_user_index = rom_slots
+    let selected = rom_slots
         .iter()
         .find(|(_, _, active)| *active)
         .map(|(_, user_index, _)| *user_index);
-    let active_str = active_user_index
-        .map(|i| format!(" - Slot {i} is active"))
-        .unwrap_or_default();
+    let standby = device.in_standby();
     print!("{prefix}");
-    println!(
-        "  Configured with {rom_count} slot{}{}",
-        if rom_count == 1 { "" } else { "s" },
-        active_str
-    );
+    println!("  {}", slot_count_line(rom_count, selected, standby));
+    if let Some(line) = reserved_pins_line(parsed) {
+        println!("{prefix}  {line}");
+    }
 
     // Second pass: print each ROM slot's detail, reaching into the
     // format-specific data by absolute `slot_index`.
@@ -251,9 +496,8 @@ pub async fn output_slot_info(
 
             for (slot_index, user_index, active) in &rom_slots {
                 let set = &info.rom_sets[*slot_index];
-                let active_marker = if *active { " (active)" } else { "" };
                 print!("{prefix}");
-                println!("  Slot {user_index}{active_marker}:");
+                println!("  {}", slot_heading(*user_index, *active, standby));
 
                 if verbose {
                     print!("{prefix}");
@@ -334,9 +578,8 @@ pub async fn output_slot_info(
 
             for (slot_index, user_index, active) in &rom_slots {
                 let slot = &metadata.rom_slots[*slot_index];
-                let active_marker = if *active { " (active)" } else { "" };
                 print!("{prefix}");
-                println!("  Slot {user_index}{active_marker}:");
+                println!("  {}", slot_heading(*user_index, *active, standby));
 
                 if verbose {
                     print!("{prefix}");
@@ -351,34 +594,10 @@ pub async fn output_slot_info(
                     );
                 }
 
-                #[allow(clippy::collapsible_if)]
                 if let Some(overrides) = &slot.firmware_overrides {
-                    if overrides.any_present() {
+                    for line in override_lines(overrides) {
                         print!("{prefix}");
-                        println!("    Firmware overrides:");
-                        if let Some(enabled) = overrides.led_enabled() {
-                            print!("{prefix}");
-                            println!("      Status LED: {}", if enabled { "on" } else { "off" });
-                        }
-                        if let Some(freq) = overrides.cpu_freq() {
-                            print!("{prefix}");
-                            println!("      CPU frequency: {freq}MHz");
-                        }
-                        if let Some(vreg) = overrides.vreg() {
-                            print!("{prefix}");
-                            println!("      CPU voltage: {vreg}");
-                        }
-                        if let Some(overclock) = overrides.overclock_enabled() {
-                            print!("{prefix}");
-                            println!(
-                                "      Overclock: {}",
-                                if overclock { "enabled" } else { "disabled" }
-                            );
-                        }
-                        if let Some(swd) = overrides.swd_enabled() {
-                            print!("{prefix}");
-                            println!("      SWD: {}", if swd { "on" } else { "off" });
-                        }
+                        println!("{line}");
                     }
                 }
 
@@ -393,7 +612,45 @@ pub async fn output_slot_info(
             }
             Ok(())
         }
+
+        // Firmware::OneRom never holds a Lab.
+        ParsedDevice::Lab => Ok(()),
+        _ => Ok(()),
     }
+}
+
+/// The state of the slot selected at boot.
+fn selected_state(standby: bool) -> &'static str {
+    if standby { "standby" } else { "active" }
+}
+
+/// The line counting `rom_count` ROM slots, with `selected` the slot selected
+/// at boot where One ROM is running. `standby` is whether One ROM is in
+/// standby.
+pub(crate) fn slot_count_line(rom_count: usize, selected: Option<usize>, standby: bool) -> String {
+    let plural = if rom_count == 1 { "" } else { "s" };
+    match selected {
+        Some(slot) => format!(
+            "Configured with {rom_count} slot{plural} - Slot {slot} is selected ({})",
+            selected_state(standby)
+        ),
+        None => format!("Configured with {rom_count} slot{plural}"),
+    }
+}
+
+/// The heading of ROM slot `user_index`, which is `selected` at boot. `standby`
+/// is whether One ROM is in standby.
+pub(crate) fn slot_heading(user_index: usize, selected: bool, standby: bool) -> String {
+    if selected {
+        format!("Slot {user_index} (selected, {}):", selected_state(standby))
+    } else {
+        format!("Slot {user_index}:")
+    }
+}
+
+pub(crate) fn reserved_pins_line(parsed: &ParsedDevice) -> Option<String> {
+    let reserved = parsed.reserved_pins()?;
+    (!reserved.is_empty()).then(|| format!("Reserved pins: {reserved}"))
 }
 
 /// Print one plugin line (and, when verbose, its detail).
@@ -442,7 +699,7 @@ pub async fn cmd_slots(options: &Options, args: &InspectSlotsArgs) -> Result<(),
     check_device(options, args, false)?;
     let device = options.device.as_ref().unwrap();
 
-    output_slot_info(device, options, "").await
+    output_slot_info(device, options, "", &[]).await
 }
 
 pub async fn cmd_image(options: &Options, args: &InspectImageArgs) -> Result<(), Error> {
@@ -479,7 +736,20 @@ pub async fn cmd_peek_live(options: &Options, args: &InspectPeekLiveArgs) -> Res
     let (address, length) = check_live_read_write(options, args.address, args.length, args)?;
 
     let device = options.device.as_ref().unwrap();
+    println!(
+        "{}",
+        read_live_line(length, args.address, device.in_standby())
+    );
     read_and_output(device, address, length, LIVE_ROM_BASE, args.output.as_ref()).await
+}
+
+/// The line `peek live` prints ahead of reading `length` bytes at live ROM
+/// `offset`. `standby` is whether One ROM is in standby.
+pub(crate) fn read_live_line(length: u32, offset: u32, standby: bool) -> String {
+    format!(
+        "Read {length} byte(s) from live ROM offset 0x{offset:08x}{}",
+        standby_suffix(standby)
+    )
 }
 
 pub async fn cmd_peek_memory(options: &Options, args: &InspectPeekMemoryArgs) -> Result<(), Error> {
@@ -494,12 +764,18 @@ pub async fn cmd_peek_memory(options: &Options, args: &InspectPeekMemoryArgs) ->
 /// over would cost, not what the pin is - so this is the one column of the table
 /// that does not come from local metadata. A category this build does not
 /// recognise is shown raw rather than guessed at.
-fn gpio_use_label(entry: &GpioEntry) -> String {
+///
+/// The device reports a reserved pin as `free` or `input forced`, and a data
+/// pin in standby as serving driven.
+fn gpio_use_label(entry: &GpioEntry, reserved: bool, standby: bool) -> String {
     match entry.gpio_use() {
+        Some(GpioUse::Free | GpioUse::InputForced) if reserved => "reserved".to_string(),
         Some(GpioUse::Free) => "free".to_string(),
         Some(GpioUse::ServingRead) => "serving (read)".to_string(),
+        Some(GpioUse::ServingDriven) if standby => "standby".to_string(),
         Some(GpioUse::ServingDriven) => "serving (driven)".to_string(),
         Some(GpioUse::SystemPin) => "system".to_string(),
+        Some(GpioUse::InputForced) => "input forced".to_string(),
         None => format!("unknown ({})", entry.gpio_use_raw),
     }
 }
@@ -510,13 +786,13 @@ const GPIO_NONE: &str = "-";
 /// The `Function` column: everything this GPIO is, in ROM or board terms.
 ///
 /// One column rather than two, because splitting the ROM socket signal from the
-/// header pad splits on *provenance* rather than on anything a reader needs: on
-/// a 32-pin board the `A17` header pad and the socket's `A17` line are the same
-/// net, and everywhere else exactly one of the two is populated. An X pad or an
-/// image-select pad is as much a function of the pin as `A11` is.
+/// header pin splits on *provenance* rather than on anything a reader needs: on
+/// a 32-pin board the `A17` header pin and the socket's `A17` line are the same
+/// net, and everywhere else exactly one of the two is populated. An X pin or an
+/// image-select pin is as much a function of the pin as `A11` is.
 ///
 /// Every name that applies is listed, in a fixed order - the ROM socket signal
-/// for the chip being served, then the board peripheral, then the header pad -
+/// for the chip being served, then the board peripheral, then the header pin -
 /// rather than first-match-wins, deduplicated so the shared `A17` net is not
 /// named twice. A GPIO can genuinely be two things: `fire-24-f` drives its
 /// status LED and its NeoPixel from GPIO 29, and both belong here.
@@ -529,7 +805,7 @@ fn gpio_function_label(board: Option<&Board>, chip: Option<ChipType>, gpio: u8) 
     };
 
     // Deduplication is by name, not by source: a 32-pin board's high address
-    // lines are broken out on header pads, so the socket signal and the pad are
+    // lines are broken out on header pins, so the socket signal and the pin are
     // one net and must not be listed twice.
     let mut names: Vec<String> = Vec::new();
     let mut add = |name: String| {
@@ -554,7 +830,7 @@ fn gpio_function_label(board: Option<&Board>, chip: Option<ChipType>, gpio: u8) 
         add(system.to_string());
     }
 
-    // 3. The header pad. Named last because it is where the signal surfaces
+    // 3. The header pin. Named last because it is where the signal surfaces
     //    rather than what it carries - but named, because "which GPIO is X1" is
     //    the main thing this table is read to answer before wiring a reset line.
     if let Some(role) = gpio::header_role(board, gpio) {
@@ -595,14 +871,18 @@ const GPIO_FUNCTION_COLUMN: usize = 1;
 ///
 /// `show_unconnected` includes the GPIOs with no function at all - thirteen of a
 /// fire-28-c's forty-eight, which bury the rows a reader came for. `verbose`
-/// adds the legend explaining where each column comes from.
-fn render_gpio_table(
+/// adds the legend explaining where each column comes from. `standby` is
+/// whether One ROM is in standby.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn render_gpio_table(
     board: Option<&Board>,
     chip: Option<ChipType>,
     first_gpio: u8,
     entries: &[GpioEntry],
     show_unconnected: bool,
     verbose: bool,
+    reserved: u64,
+    standby: bool,
 ) -> String {
     // Rows are built first so every column can be sized to its own content.
     // Filtering happens here rather than at the caller so the columns are sized
@@ -618,13 +898,13 @@ fn render_gpio_table(
                 if entry.is_output != 0 { "out" } else { "in" }.to_string(),
                 entry.level.to_string(),
                 gpio_tolerance_label(board, gpio),
-                gpio_use_label(entry),
+                gpio_use_label(entry, gpio < 64 && reserved & (1 << gpio) != 0, standby),
             ]
         })
         .collect();
 
     // "Connected to something" is a question about the board, not about what
-    // the device reports: X1, X2 and the image-select pads are `free`, and they
+    // the device reports: X1, X2 and the image-select pins are `free`, and they
     // are precisely the pins someone reads this table to find. Without a board
     // nothing can be ruled out, so nothing is.
     let connected = |row: &[String; GPIO_HEADINGS.len()]| {
@@ -685,34 +965,37 @@ fn render_gpio_table(
     if verbose {
         out.push('\n');
         out.push_str(
-            "  Function is derived by this CLI from the board and the ROM being served,\n",
+            "  Function is the socket signal, board peripheral and header pin connected\n",
         );
         out.push_str(
-            "  and lists the socket signal, the board peripheral and the header pad, in\n",
+            "  to each GPIO. Dir, Level and Current use are reported by the device. A pin\n",
         );
-        out.push_str("  that order; Current use, Dir and Level are what the device reports.\n");
+        out.push_str("  you reserved when building the image is marked reserved.\n");
         out.push('\n');
         out.push_str("  Dir is the pin's output driver - 'out' if enabled, 'in' if not.\n");
         out.push('\n');
-        out.push_str("  Level is what an 'out' pin is driving, and what an 'in' pin reads.\n");
+        out.push_str(
+            "  Level is the output level of an 'out' pin and the input level of an 'in'\n",
+        );
+        out.push_str("  pin.\n");
         out.push('\n');
         out.push_str(
-            "  Current use is what One ROM is doing with the pin now, which can change:\n",
+            "  Current use is the pin's role in One ROM when queried. Image select pins\n",
         );
-        out.push_str(
-            "  the image select pins are read at start of day and released, so they show\n",
-        );
-        out.push_str("  free while serving.\n");
+        out.push_str("  are only read at boot, so they are free while serving.\n");
         out.push('\n');
         out.push_str(
-            "  serving (read) pins can be driven and released; serving (driven) pins cannot\n",
+            "  serving (read) pins can be driven and released. serving (driven) and standby\n",
         );
-        out.push_str("  be given back without a reboot.  See 'onerom control pin'.\n");
+        out.push_str(
+            "  pins cannot be released without a reboot. input forced pins can be driven\n",
+        );
+        out.push_str("  without affecting serving. See 'onerom control pin'.\n");
         out.push('\n');
         out.push_str(
-            "  Function names only what a GPIO is; a pad may also carry SWCLK or SWDIO,\n",
+            "  A header pin may also be SWCLK or SWDIO. Use 'onerom inspect header' to see\n",
         );
-        out.push_str("  which are dedicated pins - run 'onerom inspect header' for the pads.\n");
+        out.push_str("  the header pins.\n");
         out.push('\n');
         if board.is_some_and(|b| b.rp_variant().is_some()) {
             out.push_str("  3V3 = 3.3V-only (ADC pin, keep ≤3.3V)    5V = 5V-tolerant\n");
@@ -721,10 +1004,10 @@ fn render_gpio_table(
         }
         if board.is_some_and(|b| b.jumper_header().is_none()) {
             out.push_str(
-                "  This board's header layout is not characterised, so pad names come from its\n",
+                "  This board's header layout is not characterised, so its header pins come from\n",
             );
             out.push_str(
-                "  pin assignments alone - run 'onerom inspect header' for what is known.\n",
+                "  its pin assignments alone - use 'onerom inspect header' for what is known.\n",
             );
         }
     }
@@ -751,13 +1034,17 @@ pub async fn cmd_gpio(options: &Options, args: &InspectGpioArgs) -> Result<(), E
     let device = options.device.as_ref().unwrap();
 
     // Naming is entirely local: the board pin map plus the chip type of the ROM
-    // being served. The board is also what turns a --pin pad name into a GPIO,
+    // being served. The board also resolves a --pin header pin to its GPIO,
     // so it has to be settled before the device is queried.
     let board = resolve_board_optional(options, &args.board)?;
     // The GPIOs being named belong to the connected Fire, so an Ice --board
     // would relabel them against hardware that is not there.
     check_fire_board_optional(&board)?;
     let chip = active_chip_type(device);
+    let reserved = match device.firmware.as_ref() {
+        Some(Firmware::OneRom(parsed)) => onerom_cli::pin::reserved_gpios(parsed),
+        _ => 0,
+    };
     let pin = args
         .pin
         .map(|pin| pin.resolve(board.as_ref()))
@@ -774,21 +1061,16 @@ pub async fn cmd_gpio(options: &Options, args: &InspectGpioArgs) -> Result<(), E
     println!("{device}");
     println!();
 
-    let mut title = "GPIO state".to_string();
-    if let Some(board) = board.as_ref() {
-        title.push_str(&format!("  ·  {}", board.description()));
-    }
-    // The silicon variant the device itself reports, not what the board
-    // revision implies: it decides how many GPIOs there are (30 or 48) and
-    // which of them are 3.3V-only, so the table's length and its Max V column
-    // both only make sense once it is stated.
-    if let Some(variant) = rp_variant_from_gpio_count(caps.num_gpios) {
-        title.push_str(&format!("  ·  {variant}"));
-    }
-    if let Some(rom_type) = device.get_active_rom_type() {
-        title.push_str(&format!("  ·  serving {rom_type}"));
-    }
-    println!("{title}");
+    let standby = device.in_standby();
+    println!(
+        "{}",
+        gpio_title(
+            board.as_ref(),
+            caps.num_gpios,
+            device.get_active_rom_type().as_deref(),
+            standby,
+        )
+    );
     println!();
 
     print!(
@@ -802,10 +1084,41 @@ pub async fn cmd_gpio(options: &Options, args: &InspectGpioArgs) -> Result<(), E
             // answer a direct question with an empty table.
             args.all || args.pin.is_some(),
             options.verbose,
+            reserved,
+            standby,
         )
     );
 
     Ok(())
+}
+
+/// The title line above the `inspect gpio` table. `num_gpios` is the count
+/// the device reports, `rom_type` the type of the ROM selected at boot and
+/// `standby` whether One ROM is in standby.
+pub(crate) fn gpio_title(
+    board: Option<&Board>,
+    num_gpios: u8,
+    rom_type: Option<&str>,
+    standby: bool,
+) -> String {
+    let mut title = "GPIO state".to_string();
+    if let Some(board) = board {
+        title.push_str(&format!("  ·  {}", board.description()));
+    }
+    // The silicon variant the device itself reports, not what the board
+    // revision implies: it sets how many GPIOs there are (30 or 48) and
+    // which of them are 3.3V-only, so the table's length and its Max V column
+    // both only make sense once it is stated.
+    if let Some(variant) = rp_variant_from_gpio_count(num_gpios) {
+        title.push_str(&format!("  ·  {variant}"));
+    }
+    if let Some(rom_type) = rom_type {
+        title.push_str(&format!(
+            "  ·  serving {rom_type}{}",
+            standby_suffix(standby)
+        ));
+    }
+    title
 }
 
 pub async fn cmd_header(options: &Options, args: &InspectHeaderArgs) -> Result<(), Error> {
@@ -852,6 +1165,192 @@ fn resolve_device_board(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `inspect otp` checks for a device before it opens anything.
+    #[tokio::test]
+    async fn inspect_otp_needs_a_device() {
+        let options = Options {
+            verbose: false,
+            log_level: onerom_cli::LogLevel::Warn,
+            yes: false,
+            unrecognised: false,
+            device: None,
+            vid_pid: Vec::new(),
+        };
+        for json in [false, true] {
+            let error = cmd_otp(&options, &InspectOtpArgs { json })
+                .await
+                .unwrap_err();
+            assert!(matches!(error, Error::NoDevice), "{error}");
+        }
+    }
+
+    /// Each of the parser's reasons takes a line, the first beside the label
+    /// and the rest lined up beneath it, without the parser's field. An empty
+    /// list still takes a line.
+    #[test]
+    fn unrecognised_firmware_lines_line_up_each_reason() {
+        let reasons = [
+            ParseError::new("field_a", "reason a"),
+            ParseError::new("field_b", "reason b"),
+        ];
+        let lines = unrecognised_firmware_lines(&reasons);
+        assert_eq!(lines.len(), 2);
+        let column = lines[0].find("reason a").unwrap();
+        assert_eq!(lines[1].find("reason b"), Some(column));
+        assert!(lines[1][..column].trim().is_empty());
+        assert!(lines.iter().all(|line| !line.contains("field_")));
+        assert_eq!(unrecognised_firmware_lines(&[]).len(), 1);
+    }
+
+    /// The keys `parser_notes` puts in its block, and what a consumer reading
+    /// the dump beside it still sees.
+    ///
+    /// The image is a v0.8.0 info header claiming a generation past this
+    /// build's and naming no runtime info, so both notes appear at once.
+    #[tokio::test]
+    async fn parser_notes_sit_beside_an_untouched_dump() {
+        use onerom_fw_parser::{Parser, SDRR_INFO_FW_OFFSET, readers::MemoryReader};
+
+        use onerom_cli::usb::FLASH_BASE;
+        const RAM_BASE: u32 = 0x2008_0000;
+        let generation = onerom_metadata::ONEROM_INFO_VERSION + 1;
+
+        let mut image = vec![0u8; 0x400];
+        let base = SDRR_INFO_FW_OFFSET as usize;
+        image[base..base + 4].copy_from_slice(onerom_metadata::ONEROM_FAMILY_MAGIC.as_bytes());
+        image[base + 6..base + 8].copy_from_slice(&8u16.to_le_bytes());
+        // build_date, into the zeroed tail of the image
+        image[base + 12..base + 16].copy_from_slice(&(FLASH_BASE + 0x300).to_le_bytes());
+        const VERSION_OFF: usize = onerom_metadata::ONEROM_INFO_VERSION_OFFSET;
+        image[base + VERSION_OFF..base + VERSION_OFF + 4]
+            .copy_from_slice(&generation.to_le_bytes());
+        // firmware_type, as One ROM writes it
+        const TYPE_OFF: usize = onerom_metadata::ONEROM_INFO_FIRMWARE_TYPE_OFFSET;
+        image[base + TYPE_OFF..base + TYPE_OFF + 2].copy_from_slice(
+            &(onerom_metadata::FirmwareType::FirmwareTypeOneRom as u16).to_le_bytes(),
+        );
+
+        let mut reader = MemoryReader::new(image, FLASH_BASE);
+        let mut parser = Parser::with_base_flash_address(&mut reader, FLASH_BASE, RAM_BASE);
+        let onerom = parser
+            .parse_format_schema()
+            .await
+            .expect("image should parse");
+
+        // The dump itself is the info structure, and still says what it said.
+        let dump: serde_json::Value =
+            serde_json::to_value(onerom.info().expect("info should be present")).unwrap();
+        assert_eq!(dump["runtime"], serde_json::Value::Null);
+
+        let notes: serde_json::Value = serde_json::from_str(
+            &parser_notes(onerom.runtime_absence(), &onerom.newer_generations())
+                .unwrap()
+                .expect("notes expected"),
+        )
+        .unwrap();
+        assert_eq!(notes["runtime_absent"]["reason"], "no_pointer");
+        assert!(
+            notes["runtime_absent"]["detail"]
+                .as_str()
+                .is_some_and(|d| !d.is_empty())
+        );
+        assert_eq!(notes["newer_generations"][0]["structure"], "onerom_info_t");
+        assert_eq!(
+            notes["newer_generations"][0]["device_generation"],
+            generation
+        );
+        assert_eq!(
+            notes["newer_generations"][0]["known_generation"],
+            onerom_metadata::ONEROM_INFO_VERSION
+        );
+    }
+
+    /// A Lab image, parsed, with a baked board and without a runtime structure.
+    async fn lab_image() -> Lab {
+        use onerom_fw_parser::readers::MemoryReader;
+        use onerom_lab_metadata::{
+            LAB_METADATA_MAGIC, LAB_METADATA_SIZE, LAB_METADATA_VERSION, OneromLabHardwareInfo,
+            OneromLabMetadataHeader, SerializeContext,
+        };
+        use onerom_metadata::{
+            FirmwareType, ONEROM_FAMILY_MAGIC, ONEROM_INFO_BUILD_DATE_OFFSET as DATE_OFF,
+            ONEROM_INFO_FIRMWARE_TYPE_OFFSET as TYPE_OFF, ONEROM_INFO_METADATA_OFFSET as META_OFF,
+            ONEROM_INFO_MINOR_VERSION_OFFSET as MINOR_OFF, ONEROM_INFO_OFFSET, ONEROM_INFO_VERSION,
+            ONEROM_INFO_VERSION_OFFSET as VERSION_OFF,
+        };
+
+        use onerom_cli::usb::FLASH_BASE;
+        const BLOCK: u32 = FLASH_BASE + ONEROM_INFO_OFFSET + 0x40;
+        const DATE: u32 = FLASH_BASE + 0x1800;
+        let mut image = vec![0u8; 0x2000];
+        let mut put = |addr: u32, bytes: &[u8]| {
+            let at = (addr - FLASH_BASE) as usize;
+            image[at..at + bytes.len()].copy_from_slice(bytes);
+        };
+        let header = FLASH_BASE + ONEROM_INFO_OFFSET;
+        put(header, ONEROM_FAMILY_MAGIC.as_bytes());
+        put(header + MINOR_OFF as u32, &4u16.to_le_bytes());
+        put(header + DATE_OFF as u32, &DATE.to_le_bytes());
+        put(
+            header + VERSION_OFF as u32,
+            &ONEROM_INFO_VERSION.to_le_bytes(),
+        );
+        put(header + META_OFF as u32, &BLOCK.to_le_bytes());
+        put(
+            header + TYPE_OFF as u32,
+            &(FirmwareType::FirmwareTypeLab as u16).to_le_bytes(),
+        );
+        put(DATE, b"Sep 25 2026 12:00:00Z\0");
+
+        let mut magic = [0u8; 16];
+        magic[..LAB_METADATA_MAGIC.len()].copy_from_slice(LAB_METADATA_MAGIC.as_bytes());
+        let mut hw = OneromLabHardwareInfo::default();
+        hw.hw_rev = Some("fire-24-e".into());
+        let mut metadata = OneromLabMetadataHeader::default();
+        metadata.magic = magic;
+        metadata.version = LAB_METADATA_VERSION;
+        metadata.hw = hw;
+        let mut block = vec![0u8; LAB_METADATA_SIZE as usize];
+        let mut ctx = SerializeContext::new(BLOCK, metadata.version, &mut block);
+        metadata.layout(&mut ctx).unwrap();
+        metadata.write(&mut ctx, BLOCK);
+        put(BLOCK, &block);
+
+        let mut reader = MemoryReader::new(image, FLASH_BASE);
+        onerom_lab_parser::LabParser::new(&mut reader)
+            .parse()
+            .await
+            .expect("a Lab should parse")
+    }
+
+    /// Lab's own structures replace the `None`s One ROM's parser leaves at
+    /// `onerom_info_t`'s pointers, so the dump holds all of them.
+    #[tokio::test]
+    async fn a_lab_dumps_its_structures_under_its_pointers() {
+        let tree = lab_tree(&lab_image().await).unwrap();
+        assert_eq!(tree["firmware_type"], "FirmwareTypeLab");
+        assert_eq!(tree["minor_version"], 4);
+        assert_eq!(tree["metadata"]["hw"]["hw_rev"], "fire-24-e");
+        assert_eq!(tree["runtime"], serde_json::Value::Null);
+    }
+
+    /// A Lab gets the same notes block as a One ROM.  This image doesn't point
+    /// at a runtime structure, so the note says why it's missing.
+    #[tokio::test]
+    async fn a_lab_gets_parser_notes() {
+        let lab = lab_image().await;
+        let notes: serde_json::Value = serde_json::from_str(
+            &parser_notes(
+                lab.runtime.as_ref().err().copied(),
+                &lab.newer_generations(),
+            )
+            .unwrap()
+            .expect("notes expected"),
+        )
+        .unwrap();
+        assert_eq!(notes["runtime_absent"]["reason"], "no_pointer");
+    }
 
     /// A device's worth of entries, using the same `use` category throughout so
     /// a test can pick out the column it cares about. The wire's fourth byte is
@@ -912,9 +1411,11 @@ mod tests {
             &entries(30, GpioUse::ServingRead as u8),
             true,
             true,
+            0,
+            false,
         );
 
-        // One column, holding socket signals, board peripherals and header pads
+        // One column, holding socket signals, board peripherals and header pins
         // alike - all of them things the GPIO is.
         assert!(!table.contains("Pad"), "{table}");
         assert_eq!(function_cell(&table, 16), "A7");
@@ -934,7 +1435,7 @@ mod tests {
 
     #[test]
     fn table_function_column_names_only_gpios() {
-        // GPIO24/25 are the SEL_D/SEL_C pads, which share their nets with the
+        // GPIO24/25 are the SEL_D/SEL_C pins, which share their nets with the
         // SWDIO/SWCLK debug pins. Those are dedicated RP2350 pins, not GPIOs, so
         // a GPIO-indexed table must not claim GPIO24 is SWDIO. (Not verbose:
         // the legend mentions both names, to explain their absence.)
@@ -945,6 +1446,8 @@ mod tests {
             0,
             &entries(30, GpioUse::Free as u8),
             true,
+            false,
+            0,
             false,
         );
         assert!(!table.contains("SWDIO"), "{table}");
@@ -966,6 +1469,8 @@ mod tests {
             &entries(30, GpioUse::SystemPin as u8),
             true,
             false,
+            0,
+            false,
         );
         assert_eq!(function_cell(&table, 29), "Status LED, RGB LED");
 
@@ -980,6 +1485,8 @@ mod tests {
             &entries(48, GpioUse::SystemPin as u8),
             true,
             false,
+            0,
+            false,
         );
         assert_eq!(function_cell(&table, 45), "Status LED");
         assert_eq!(function_cell(&table, 44), "RGB LED");
@@ -987,8 +1494,8 @@ mod tests {
 
     #[test]
     fn table_does_not_name_one_net_twice() {
-        // A 32-pin board breaks its high address lines out onto header pads, so
-        // the socket signal and the pad are the same net under the same name.
+        // A 32-pin board breaks its high address lines out onto header pins, so
+        // the socket signal and the pin are the same net under the same name.
         let board = Board::try_from_str("fire-32-b").unwrap();
         let table = render_gpio_table(
             Some(&board),
@@ -996,6 +1503,8 @@ mod tests {
             0,
             &entries(48, GpioUse::ServingRead as u8),
             true,
+            false,
+            0,
             false,
         );
         for line in table.lines().skip(2).take_while(|l| !l.is_empty()) {
@@ -1006,18 +1515,18 @@ mod tests {
                 .to_string();
             assert!(!line.contains(&format!("{cell}, {cell}")), "{line}");
         }
-        // The shared pad/socket case is present in this board at all, so the
+        // The shared pin/socket case is present in this board at all, so the
         // assertion above is not vacuous.
-        let a_pad_gpio = board
+        let a_header_pin_gpio = board
             .addr_pins()
             .iter()
             .copied()
             .find(|&g| gpio::header_role(&board, g).is_some_and(|r| r.starts_with('A')))
             .expect("fire-32-b breaks out address lines");
         assert!(
-            !function_cell(&table, a_pad_gpio).contains(','),
+            !function_cell(&table, a_header_pin_gpio).contains(','),
             "{}",
-            function_cell(&table, a_pad_gpio)
+            function_cell(&table, a_header_pin_gpio)
         );
     }
 
@@ -1031,6 +1540,8 @@ mod tests {
             &entries(48, GpioUse::Free as u8),
             true,
             false,
+            0,
+            false,
         );
         let default = render_gpio_table(
             Some(&board),
@@ -1038,6 +1549,8 @@ mod tests {
             0,
             &entries(48, GpioUse::Free as u8),
             false,
+            false,
+            0,
             false,
         );
 
@@ -1052,11 +1565,11 @@ mod tests {
         );
         assert!(!all.contains("hidden"), "{all}");
 
-        // The drivable pads report `free`, so a filter on the device's `use`
+        // The drivable pins report `free`, so a filter on the device's `use`
         // would drop exactly the rows this table exists to show. They must
         // survive the default view.
-        for pad in ["X1", "X2", "SEL_A", "SEL_B", "SEL_C", "SEL_D"] {
-            assert!(default.contains(pad), "{pad} missing\n{default}");
+        for pin in ["X1", "X2", "SEL_A", "SEL_B", "SEL_C", "SEL_D"] {
+            assert!(default.contains(pin), "{pin} missing\n{default}");
         }
     }
 
@@ -1070,6 +1583,8 @@ mod tests {
             &entries(30, GpioUse::Free as u8),
             true,
             false,
+            0,
+            false,
         );
         let loud = render_gpio_table(
             Some(&board),
@@ -1078,10 +1593,18 @@ mod tests {
             &entries(30, GpioUse::Free as u8),
             true,
             true,
+            0,
+            false,
         );
-        assert!(!quiet.contains("derived by this CLI"), "{quiet}");
+        assert!(
+            !quiet.contains("board peripheral and header pin connected"),
+            "{quiet}"
+        );
         assert!(!quiet.contains("5V-tolerant"), "{quiet}");
-        assert!(loud.contains("derived by this CLI"), "{loud}");
+        assert!(
+            loud.contains("board peripheral and header pin connected"),
+            "{loud}"
+        );
         assert!(loud.contains("onerom control pin"), "{loud}");
         // The table itself is identical either way.
         assert_eq!(row_count(&quiet), row_count(&loud));
@@ -1097,6 +1620,8 @@ mod tests {
             &entries(48, GpioUse::Free as u8),
             true,
             true,
+            0,
+            false,
         );
 
         // Every table line - headings, rule and rows - starts each column at the
@@ -1133,6 +1658,8 @@ mod tests {
             &entries(30, GpioUse::Free as u8),
             false,
             true,
+            0,
+            false,
         );
         assert!(table.contains("Current use"), "{table}");
         assert!(table.contains("free"), "{table}");
@@ -1155,6 +1682,8 @@ mod tests {
             &entries(30, GpioUse::Free as u8),
             true,
             true,
+            0,
+            false,
         );
         assert!(table.contains("socket pin "), "{table}");
         assert!(table.contains("SEL_A"), "{table}");
@@ -1171,12 +1700,14 @@ mod tests {
             &entries(16, GpioUse::Free as u8),
             true,
             true,
+            0,
+            false,
         );
         assert!(
             table.contains("header layout is not characterised"),
             "{table}"
         );
-        // The pads it can still name are named.
+        // The pins it can still name are named.
         assert!(table.contains("SEL_A"), "{table}");
     }
 
@@ -1190,6 +1721,8 @@ mod tests {
             &entries(1, GpioUse::Free as u8),
             true,
             false,
+            0,
+            false,
         );
         // --pin gpio9 shows GPIO 9, not GPIO 0.
         assert!(table.contains("\n  9 "), "{table}");
@@ -1200,8 +1733,63 @@ mod tests {
     fn table_shows_an_unrecognised_use_raw() {
         // A category from a device newer than this build must not be guessed at.
         let board = Board::try_from_str("fire-24-f").unwrap();
-        let table = render_gpio_table(Some(&board), None, 0, &entries(4, 9), true, false);
+        let table = render_gpio_table(Some(&board), None, 0, &entries(4, 9), true, false, 0, false);
         assert!(table.contains("unknown (9)"), "{table}");
+    }
+
+    #[test]
+    fn table_marks_a_free_reserved_gpio_reserved() {
+        let board = Board::try_from_str("fire-24-f").unwrap();
+        let use_of = |gpio_use: GpioUse, reserved: bool| {
+            let table = render_gpio_table(
+                Some(&board),
+                None,
+                25,
+                &entries(1, gpio_use as u8),
+                true,
+                false,
+                if reserved { 1 << 25 } else { 0 },
+                false,
+            );
+            let row = table.lines().nth(2).expect("one row").to_string();
+            row.split("  ").last().unwrap().trim().to_string()
+        };
+        assert_eq!(use_of(GpioUse::Free, true), "reserved");
+        assert_eq!(use_of(GpioUse::InputForced, true), "reserved");
+        assert_eq!(use_of(GpioUse::ServingRead, true), "serving (read)");
+        assert_eq!(use_of(GpioUse::InputForced, false), "input forced");
+    }
+
+    #[test]
+    fn a_data_pin_in_standby_is_labelled_standby() {
+        let board = Board::try_from_str("fire-24-f").unwrap();
+        let use_of = |gpio_use: GpioUse, standby: bool| {
+            let table = render_gpio_table(
+                Some(&board),
+                None,
+                0,
+                &entries(1, gpio_use as u8),
+                true,
+                false,
+                0,
+                standby,
+            );
+            let row = table.lines().nth(2).expect("one row").to_string();
+            row.split("  ").last().unwrap().trim().to_string()
+        };
+        assert_eq!(use_of(GpioUse::ServingDriven, true), "standby");
+        assert_eq!(use_of(GpioUse::ServingDriven, false), "serving (driven)");
+        assert_eq!(use_of(GpioUse::ServingRead, true), "serving (read)");
+    }
+
+    #[test]
+    fn the_selected_slot_is_active_or_in_standby() {
+        assert!(slot_count_line(3, Some(1), false).ends_with("Slot 1 is selected (active)"));
+        assert!(slot_count_line(3, Some(1), true).ends_with("Slot 1 is selected (standby)"));
+        assert!(!slot_count_line(3, None, true).contains("selected"));
+        assert_eq!(slot_heading(1, true, false), "Slot 1 (selected, active):");
+        assert_eq!(slot_heading(1, true, true), "Slot 1 (selected, standby):");
+        assert_eq!(slot_heading(2, false, true), "Slot 2:");
     }
 
     /// Print every shape the table takes, for eyeballing:
@@ -1242,7 +1830,7 @@ mod tests {
                 48,
             ),
             (
-                "RP2350B, address lines broken out onto header pads",
+                "RP2350B, address lines broken out onto header pins",
                 Some("fire-32-b"),
                 Some(ChipType::Chip27C040),
                 48,
@@ -1272,7 +1860,16 @@ mod tests {
                 println!("\n=== {label} ({view}) ===");
                 println!(
                     "{}",
-                    render_gpio_table(board.as_ref(), chip, 0, &entries, show_unconnected, verbose)
+                    render_gpio_table(
+                        board.as_ref(),
+                        chip,
+                        0,
+                        &entries,
+                        show_unconnected,
+                        verbose,
+                        0,
+                        false
+                    )
                 );
             }
         }

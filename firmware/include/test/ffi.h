@@ -13,6 +13,68 @@ void *ffi_user_plugin_context(void);
 uint8_t ffi_limp_mode(void);
 uint8_t ffi_pios_enabled(void);
 uint8_t ffi_image_sel(void);
+uint8_t ffi_board_size(void);
+
+// Plugin launch is compiled out of a test build, so a test sets
+// FIRMWARE_STATE_PLUGINS_STARTED itself.
+uint32_t ffi_firmware_states(void);
+void ffi_set_plugins_started(void);
+
+// The firmware flags in runtime info, as onerom_firmware_flag_t bits.
+uint8_t ffi_firmware_flags(void);
+
+// The generation recorded in the metadata header, and a way to change it.
+//
+// On a device the two differ routinely - see firmware/src/utils.c.  A host
+// build compiles both from one tree and only ever sees them agree, so these
+// let a test put a different generation in front of the firmware before it
+// boots.
+uint32_t ffi_metadata_generation(void);
+void ffi_set_metadata_generation(uint32_t generation);
+
+// A ROM slot's address in a device's flash, a way to move it, its size, and
+// whether it lies within the flash at the chip sizes OTP configures.
+//
+// A host build's slot data is a host pointer, so the firmware reads a slot's
+// flash address from a table in gen-config.c - see test/stub_rp235x_inlines.h.
+// A test that moves a slot plays the CLI's part, which writes a device's
+// metadata.  The address outlives a boot, so the test puts it back.  `index`
+// is the firmware's ROM slot index, plugin slots included.
+uint32_t ffi_rom_slot_flash_addr(uint8_t index);
+void ffi_set_rom_slot_flash_addr(uint8_t index, uint32_t addr);
+uint32_t ffi_rom_slot_size(uint8_t index);
+uint8_t ffi_rom_slot_in_flash(uint8_t index);
+
+// The firmware's check of the plugin in ROM slot `index`, as boot and launch
+// run it.  The test configs don't have plugin slots, so a test runs the check
+// on a ROM slot it has moved.
+uint8_t ffi_check_plugin_valid(
+    uint8_t index,
+    ora_plugin_type_t expected_type,
+    uint8_t plugin_index
+);
+
+// ROM slots 0 and 1 as a system plugin and a user plugin with their headers in
+// host memory, and the metadata's own slots put back.
+//
+// The plugin slots read their flash addresses from the metadata's table so the
+// metadata must have at least two slots.
+void ffi_install_plugin_slots(void);
+void ffi_restore_rom_slots(void);
+
+// ROM slot `index` with `states` as its firmware overrides' override_states,
+// until ffi_restore_rom_slots().  The slot's other overrides are kept.  A slot
+// without overrides gains overrides with only override_states set.
+void ffi_set_rom_slot_override_states(uint8_t index, uint8_t states);
+
+// Write a valid header to plugin slot `index` with its entry point at device
+// address `entry`.
+void ffi_set_plugin_header(
+    uint8_t index,
+    uint32_t entry,
+    uint8_t overrides1,
+    uint8_t properties1
+);
 
 // The serving algorithms and address window the current ROM slot is running.
 //
@@ -33,6 +95,10 @@ typedef struct ffi_serving_alg_t {
 uint8_t ffi_serving_alg(ffi_serving_alg_t *out);
 void ffi_epio_setup_sram(epio_t *epio);
 void ffi_epio_setup_dma_chain(epio_t *epio, uint8_t word_size);
+
+// epio_update_from_apio(), first stopping in epio each state machine the
+// firmware has stopped.  epio_update_from_apio() only starts state machines.
+void ffi_epio_update_from_apio(epio_t *epio);
 void ffi_epio_arm_monitor(epio_t *epio);
 void ffi_led_frame(void);
 uint32_t ffi_led_last_pixel(uint32_t *count_out);

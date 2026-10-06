@@ -20,14 +20,26 @@ permissions:
 
 jobs:
   emulator-tests:
-    name: Emulator tests (${{ matrix.socket }} pin)
-    runs-on: ubuntu-latest
+    name: Emulator tests (${{ matrix.name }})
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
-        socket: [24, 28, 32, 40]
+        include:
+          - group: 24-1
+            name: 24 pin, part 1
+          - group: 24-2
+            name: 24 pin, part 2
+          - group: 28-1
+            name: 28 pin, part 1
+          - group: 28-2
+            name: 28 pin, part 2
+          - group: 32
+            name: 32 pin
+          - group: 40
+            name: 40 pin
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
 
     - name: Install build dependencies
       run: |
@@ -38,7 +50,7 @@ jobs:
       uses: dtolnay/rust-toolchain@stable
 
     - name: Cache Arm GNU toolchain
-      uses: actions/cache@v4
+      uses: actions/cache@v6
       with:
         path: ~/arm-gnu-toolchain
         key: arm-toolchain-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('ci/arm-toolchain-version') }}
@@ -52,13 +64,13 @@ jobs:
         shared-key: emulator-tests
 
     - name: Run One ROM emulator tests
-      run: ci/test-emu.sh ${{ matrix.socket }}
+      run: ci/test-emu.sh ${{ matrix.group }}
 
   c-tests:
     name: C tests
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
 
     # These compile firmware C for the host, so they need neither Rust nor the
     # Arm toolchain.  They do need the host compiler pinned in
@@ -76,9 +88,9 @@ jobs:
 
   firmware:
     name: Firmware and plugins
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
 
     - name: Install build dependencies
       run: |
@@ -89,7 +101,7 @@ jobs:
       uses: dtolnay/rust-toolchain@stable
 
     - name: Cache Arm GNU toolchain
-      uses: actions/cache@v4
+      uses: actions/cache@v6
       with:
         path: ~/arm-gnu-toolchain
         key: arm-toolchain-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('ci/arm-toolchain-version') }}
@@ -111,16 +123,17 @@ jobs:
         make -C plugins/system/usb
         make -C plugins/user/activity
         make -C plugins/user/blink
+        make -C plugins/user/ext-flash
         make -C plugins/user/host-control
         make -C plugins/user/rgb
         make -C firmware/ora/examples
 
   release:
     name: Create GitHub release
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: [emulator-tests, c-tests, firmware]
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
 
     - name: Extract version from tag
       id: version

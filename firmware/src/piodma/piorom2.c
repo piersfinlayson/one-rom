@@ -36,12 +36,24 @@ typedef struct {
     const uint8_t *overrides;
 } gpio_init_t;
 
+// An entry in gpio_init_t's overrides contains a GPIO and a gpio_override_t.
+static inline uint8_t override_gpio(uint8_t entry) {
+    return entry & 0x3F;
+}
+
+static inline uint8_t override_mode(uint8_t entry) {
+    return (entry & 0xC0) >> 6;
+}
+
 // Forward declarations
 static int validate_serving_algs(const onerom_rom_slot_t *slot);
 static int setup_serving_gpios(const onerom_rom_slot_t *slot);
 static int setup_serving_pios(const onerom_rom_slot_t *slot, uint32_t rom_table_addr);
 static int setup_serving_dma(const onerom_rom_slot_t *slot, uint32_t rom_table_addr);
 static void start_serving_pios(void);
+
+// The CS program is loaded first in its block.
+#define CS_PROGRAM_START    0
 
 #if BLOCK_CS_DATA == 0
 #define DATA_GPIO_CTRL_FUNC   GPIO_CTRL_FUNC_PIO0
@@ -176,19 +188,8 @@ static uint8_t retrieve_gpio_init(const onerom_rom_slot_t *slot, gpio_init_t *gp
     return 0;
 }
 
-// Reports what the ROM serving path uses gpio for on this slot, writing an
-// ora_gpio_use_t to *use_out.  ORA_GPIO_USE_FREE means serving does not use the
-// GPIO - board-level system pins (status LED, neopixel, VBUS, ext flash CS) are
-// not considered here, as they are independent of the active slot.
-//
-// The classification is derived from retrieve_gpio_init(), the same
-// configuration setup_serving_gpios() acts on, so the two cannot drift.
-//
-// What is reported is the consequence of driving the pin, not the role it
-// plays: the data pins are driven by PIO, so taking one over breaks serving
-// until reboot, while everything else serving uses is an SIO input that PIO
-// keeps reading regardless of its function select, so taking one over is
-// reversible.  Naming the role is the host's job.
+// What serving the slot uses gpio for, as an ora_gpio_use_t. Board system pins
+// are classified by the caller.
 ora_result_t pio_get_gpio_use(
     const onerom_rom_slot_t *slot,
     uint8_t gpio,
@@ -230,6 +231,19 @@ ora_result_t pio_get_gpio_use(
     if (gpio_init.byte_pin < MAX_GPIOS && gpio == gpio_init.byte_pin) {
         *use_out = ORA_GPIO_USE_SERVING_READ;
         return ORA_RESULT_OK;
+    }
+
+    // A forced pin can be in the address span so is checked before it.  An
+    // inverted pin is still read and falls through.
+    if (gpio_init.overrides != NULL) {
+        for (int ii = 0; ii < gpio_init.num_overrides; ii++) {
+            uint8_t mode = override_mode(gpio_init.overrides[ii]);
+            if (override_gpio(gpio_init.overrides[ii]) == gpio &&
+                (mode == GPIO_OVER_LOW || mode == GPIO_OVER_HIGH)) {
+                *use_out = ORA_GPIO_USE_INPUT_FORCED;
+                return ORA_RESULT_OK;
+            }
+        }
     }
 
     // Address span.  Everything in it is read by the address state machine,
@@ -320,8 +334,8 @@ int setup_serving_gpios(const onerom_rom_slot_t *slot) {
     // Invert or override to always read 0 or 1
     if (gpio_init.num_overrides > 0 && gpio_init.overrides != NULL) {
         for (int ii = 0; ii < gpio_init.num_overrides; ii++) {
-            uint8_t pin  = gpio_init.overrides[ii] & 0x3F;
-            uint8_t mode = (gpio_init.overrides[ii] & 0xC0) >> 6;
+            uint8_t pin  = override_gpio(gpio_init.overrides[ii]);
+            uint8_t mode = override_mode(gpio_init.overrides[ii]);
             DEBUG("Override[%d]: pin=%u mode=%u", ii, pin, mode);
             switch (mode) {
                 case GPIO_OVER_NORMAL:
@@ -538,7 +552,7 @@ int setup_serving_pios(const onerom_rom_slot_t *slot, uint32_t rom_table_addr) {
     APIO_END_BLOCK();
 
     // How the chip select and data PIOs
-    APIO_SET_BLOCK(BLOCK_CS_DATA);
+    APIO_SET_BLOCK_FROM(BLOCK_CS_DATA, CS_PROGRAM_START);
     RUNTIME->cs_data_pio_block_info = STORE_PIO_BLOCK_INFO(BLOCK_CS_DATA);
 
     // Set up the CS PIO algorithm
@@ -896,16 +910,54 @@ int setup_serving_pios(const onerom_rom_slot_t *slot, uint32_t rom_table_addr) {
     return 0;
 }
 
-// Enable the SMs
+// SM_DATA_OUTPUT on its own sets the data pins' direction, so leaving it
+// stopped leaves them undriven.
 void start_serving_pios(void) {
     APIO_ENABLE_SMS(BLOCK_ADDR, 1 << SM_ADDR_READ);
-    APIO_ENABLE_SMS(BLOCK_CS_DATA, ((1 << SM_DATA_OUTPUT) | (1 << SM_DATA_WRITE)));
+    if (RUNTIME->firmware_flags & FIRMWARE_FLAG_STANDBY) {
+        APIO_ENABLE_SMS(BLOCK_CS_DATA, 1 << SM_DATA_WRITE);
+    } else {
+        APIO_ENABLE_SMS(BLOCK_CS_DATA, ((1 << SM_DATA_OUTPUT) | (1 << SM_DATA_WRITE)));
+    }
+}
+
+void pio_set_standby(uint8_t standby) {
+    uint8_t in_standby = (RUNTIME->firmware_flags & FIRMWARE_FLAG_STANDBY) ? 1 : 0;
+    if (standby == in_standby) {
+        return;
+    }
+
+    if (standby) {
+        // A stopped SM leaves the pins' directions as they were, so the data
+        // pins are set to inputs after it stops.
+        pio_disable_sms(BLOCK_CS_DATA, 1 << SM_DATA_OUTPUT);
+        pio_sm_exec(BLOCK_CS_DATA, SM_DATA_OUTPUT, APIO_MOV_PINDIRS_NULL);
+        RUNTIME->firmware_flags |= FIRMWARE_FLAG_STANDBY;
+    } else {
+        // From the start of its program, as at boot.  Resumed where it stopped
+        // with chip select held active, it would wait for chip select to go
+        // inactive before driving the data pins.
+        pio_sm_exec(BLOCK_CS_DATA, SM_DATA_OUTPUT, APIO_JMP(CS_PROGRAM_START));
+        pio_enable_sms(BLOCK_CS_DATA, 1 << SM_DATA_OUTPUT);
+        RUNTIME->firmware_flags &= (uint8_t)~FIRMWARE_FLAG_STANDBY;
+    }
 }
 
 static int setup_serving_dma(const onerom_rom_slot_t *slot, uint32_t rom_table_addr) {
 #if !REAL_HARDWARE
     (void)slot;
     (void)rom_table_addr;
+
+    // A device stalls on a DMA register access while the DMA controller is in
+    // reset. The test build doesn't have DMA registers, so it fails the boot
+    // here.
+    if (!stub_dma_out_of_reset) {
+        // LCOV_UNREACHABLE_START - reached only if serving is set up before
+        // dma_init().
+        limp_mode(LIMP_MODE_INVALID_CONFIG);
+        return -1;
+        // LCOV_UNREACHABLE_STOP
+    }
 #endif // !REAL_HARDWARE
     RUNTIME->dma_pio_ch = STORE_DMA_CH_INFO(DMA_CH_ADDR_READ);
     RUNTIME->dma_pio_ch |= STORE_DMA_CH_INFO(DMA_CH_DATA_WRITE);

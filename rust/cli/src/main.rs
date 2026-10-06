@@ -11,24 +11,36 @@ use log::{debug, error, info, trace, warn};
 mod args;
 mod board;
 mod board_view;
+mod commissioning;
 mod console;
 mod control;
 mod firmware;
+mod hardware;
 mod image;
 mod inspect;
 mod monitor;
 mod plugin;
 mod program;
+#[cfg(test)]
+mod review;
 mod scan;
 mod self_cmd;
+mod signing_request;
+#[cfg(test)]
+mod test_board;
 mod update;
 mod utils;
 
 use args::BoardCommands;
 use args::Cli;
+use args::CommandTrait;
 use args::Commands;
-use args::control::{ControlCommands, ControlLedCommands, ControlPokeCommands, ControlRgbCommands};
+use args::control::{
+    ControlCommands, ControlLedCommands, ControlPokeCommands, ControlRgbCommands,
+    ControlStandbyCommands,
+};
 use args::firmware::FirmwareCommands;
+use args::hardware::HardwareCommands;
 use args::image::ImageCommands;
 use args::inspect::{InspectCommands, InspectPeekCommands};
 use args::monitor::MonitorCommands;
@@ -50,6 +62,7 @@ async fn sub_main() -> Result<(), Error> {
     // onerom.
     let mut cli = Cli::from_arg_matches(&Cli::command().bin_name("onerom").get_matches())
         .unwrap_or_else(|e: clap::Error| e.exit());
+    cli.command.check_args().unwrap_or_else(|e| e.exit());
     let mut options = cli.try_into_options().await?;
 
     utils::init_logging(&options);
@@ -78,6 +91,7 @@ async fn sub_main() -> Result<(), Error> {
             InspectCommands::Rgb(args) => inspect::cmd_rgb(&options, args).await,
             InspectCommands::Header(args) => inspect::cmd_header(&options, args).await,
             InspectCommands::Socket(args) => inspect::cmd_socket(&options, args).await,
+            InspectCommands::Otp(args) => inspect::cmd_otp(&options, args).await,
             InspectCommands::Peek(args) => match &args.command {
                 InspectPeekCommands::Live(args) => inspect::cmd_peek_live(&options, args).await,
                 InspectPeekCommands::Memory(args) => inspect::cmd_peek_memory(&options, args).await,
@@ -104,6 +118,10 @@ async fn sub_main() -> Result<(), Error> {
                 ControlRgbCommands::Breathe(args) => control::cmd_rgb_breathe(&options, args).await,
                 ControlRgbCommands::Blink(args) => control::cmd_rgb_blink(&options, args).await,
             },
+            ControlCommands::Standby(args) => match &args.command {
+                ControlStandbyCommands::On(args) => control::cmd_standby_on(&options, args).await,
+                ControlStandbyCommands::Off(args) => control::cmd_standby_off(&options, args).await,
+            },
             ControlCommands::Reboot(args) => control::cmd_reboot(&options, args).await,
             ControlCommands::Reset(args) => control::cmd_reset(&options, args).await,
             ControlCommands::Select(args) => control::cmd_select(&options, args).await,
@@ -117,7 +135,17 @@ async fn sub_main() -> Result<(), Error> {
         Commands::Update(args) => match &args.command {
             UpdateCommands::Slot(args) => update::cmd_slot(&options, args).await,
             UpdateCommands::Commit(args) => update::cmd_commit(&options, args).await,
-            UpdateCommands::Otp(args) => update::cmd_otp(&options, args).await,
+        },
+        Commands::Hardware(args) => match &args.command {
+            HardwareCommands::Commission(args) => {
+                hardware::cmd_commission(&mut options, args).await
+            }
+            HardwareCommands::RequestSignature(args) => {
+                hardware::cmd_request_signature(&mut options, args).await
+            }
+            HardwareCommands::Sign(args) => hardware::cmd_sign(&options, args).await,
+            HardwareCommands::SetSize(args) => hardware::cmd_set_size(&mut options, args).await,
+            HardwareCommands::Validate(args) => hardware::cmd_validate(&mut options, args).await,
         },
         Commands::Image(args) => match &args.command {
             ImageCommands::SwapBytes(args) => image::cmd_swap_bytes(&options, args).await,
@@ -316,7 +344,7 @@ mod cli_assert {
     /// here.
     #[test]
     fn every_hint_parses_as_a_command_line() {
-        let pin = onerom_cli::pin::parse_pin("sel_c").expect("sel_c is a pad");
+        let pin = onerom_cli::pin::parse_pin("sel_c").expect("sel_c is a pin");
         let built = [
             onerom_cli::hint::board_view("header"),
             onerom_cli::hint::board_view("socket"),
@@ -364,6 +392,43 @@ mod cli_assert {
                         "'{path}' --{long} value name '{value_name}' contains a space"
                     );
                 }
+            }
+        }
+    }
+
+    /// Every command and `onerom` itself, with its path.
+    fn every_command() -> Vec<(String, clap::Command)> {
+        let mut commands = all_subcommands();
+        commands.push(("onerom".to_string(), Cli::command()));
+        commands
+    }
+
+    /// A list in help prints a bullet per line.
+    ///
+    /// clap joins the lines of a doc comment's paragraph into one unless the
+    /// comment is verbatim, so a list prints as "Requirements: - one - two".
+    #[test]
+    fn no_help_runs_a_list_into_one_line() {
+        for (path, mut cmd) in every_command() {
+            let help = cmd.render_long_help().to_string();
+            for line in help.lines() {
+                assert!(
+                    !line.contains(": - "),
+                    "'{path}' prints a list as one line: {line}"
+                );
+            }
+        }
+    }
+
+    /// clap drops the full stop from a summary it takes from a doc comment
+    /// but not from a verbatim one. Every summary leaves it out so the
+    /// command lists stay alike.
+    #[test]
+    fn no_summary_ends_with_a_full_stop() {
+        for (path, cmd) in every_command() {
+            if let Some(about) = cmd.get_about() {
+                let about = about.to_string();
+                assert!(!about.ends_with('.'), "'{path}': {about}");
             }
         }
     }

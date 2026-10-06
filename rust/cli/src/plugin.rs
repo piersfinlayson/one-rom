@@ -5,7 +5,7 @@
 //! Plugin management commands.
 
 use onerom_cli::plugin::{Catalogue, Plugin, Release};
-use onerom_cli::{CliFetch, Error, Options};
+use onerom_cli::{CliFetch, Error, Firmware, Options};
 use onerom_config::fw::FirmwareVersion;
 
 use crate::args::plugin::PluginArgs;
@@ -132,7 +132,7 @@ fn resolve_fw_version(
     }
 
     if let Some(device) = &options.device
-        && let Some(onerom) = &device.onerom
+        && let Some(Firmware::OneRom(onerom)) = &device.firmware
     {
         return Ok(onerom.version());
     }

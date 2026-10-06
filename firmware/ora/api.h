@@ -97,7 +97,7 @@ void ora_host_test_sram_write8(uint32_t addr, uint8_t val);
  *
  * @param addr Device SRAM address, as returned by the plugin API
  *
- * @since firmware v0.7.1
+ * @since firmware 0.7.1
  */
 #if defined(ORA_HOST_TEST)
 #define ORA_SRAM_PTR(addr) ora_host_test_sram_ptr(addr)
@@ -151,7 +151,7 @@ void ora_host_test_sram_write8(uint32_t addr, uint8_t val);
  * }
  * @endcode
  *
- * @since firmware v0.7.1
+ * @since firmware 0.7.1
  */
 #if defined(ORA_HOST_TEST)
 #define ORA_TEST_YIELD() ora_host_test_yield()
@@ -194,7 +194,7 @@ void ora_host_test_sram_write8(uint32_t addr, uint8_t val);
 
 /** @brief Base of the XIP-mapped flash window.  Only meaningful on the
  * device. */
-#define ORA_FLASH_BASE_ADDR 0x10000000u
+#define ORA_FLASH_BASE_ADDR ORA_FLASH_CS0_BASE_ADDR
 
 /**
  * @brief Most RAM slots the firmware will report
@@ -371,7 +371,7 @@ void *ora_host_test_staged_fn_ptr(uintptr_t addr);
  * This enumeration defines the identifiers for the API functions available
  * to plugins. Each identifier corresponds to a specific API function.
  *
- * Every new identifier MUST carry an `@since firmware vX.Y.Z` line in its doc
+ * Every new identifier MUST carry an `@since firmware X.Y.Z` line in its doc
  * block, naming the firmware version in which it first became available (which
  * a plugin targets via its min_fw_version). Identifiers predating this
  * convention are left unannotated rather than labelled with a guessed version.
@@ -783,10 +783,24 @@ typedef enum {
      */
     ORA_ID_LED_GET                   = 0x0000003E,
 
+    /**
+     * @brief Get or wait for firmware states
+     * @sa ora_firmware_state_query_fn_t
+     * @since firmware 0.8.0
+     */
+    ORA_ID_FIRMWARE_STATE_QUERY      = 0x0000003F,
+
+    /**
+     * @brief Turn standby mode on or off
+     * @sa ora_set_standby_fn_t
+     * @since firmware 0.8.0
+     */
+    ORA_ID_SET_STANDBY               = 0x00000040,
+
     /** Invalid API identifier */
     ORA_ID_INVALID = 0xFFFFFFFF,
 } api_id_t;
-STATIC_ASSERT(sizeof(api_id_t) == 4, "api_id_t must be 4 bytes");
+_Static_assert(sizeof(api_id_t) == 4, "api_id_t must be 4 bytes");
 
 /** @} */ // plugin_api_ids
 
@@ -804,7 +818,7 @@ typedef enum {
     ORA_PLUGIN_TYPE_USER   = 1,
     ORA_PLUGIN_TYPE_PIO    = 2,
 } ora_plugin_type_t;
-STATIC_ASSERT(sizeof(ora_plugin_type_t) == 1, "ora_plugin_type_t must be 1 byte");
+_Static_assert(sizeof(ora_plugin_type_t) == 1, "ora_plugin_type_t must be 1 byte");
 
 /**
  * @brief MCU Cores
@@ -813,7 +827,7 @@ typedef enum {
     ORA_CORE_0 = 0,
     ORA_CORE_1 = 1,
 } ora_core_t;
-STATIC_ASSERT(sizeof(ora_core_t) == 1, "ora_core_t must be 1 byte");
+_Static_assert(sizeof(ora_core_t) == 1, "ora_core_t must be 1 byte");
 
 /**
  * @brief IRQ numbers
@@ -823,7 +837,7 @@ typedef enum {
     ORA_IRQ_USBCTRL_IRQ = 14,
     ORA_IRQ_INVALID = 0xFF,
 } ora_irq_t;
-STATIC_ASSERT(sizeof(ora_irq_t) == 1, "ora_irq_t must be 1 byte");
+_Static_assert(sizeof(ora_irq_t) == 1, "ora_irq_t must be 1 byte");
 
 /**
  * @brief A channel used for logging and other purposes
@@ -869,7 +883,7 @@ typedef enum {
 
     ORA_LOG_CHANNEL_INVALID = 0xFFFFFFFF,
 } ora_log_channel_t;
-STATIC_ASSERT(sizeof(ora_log_channel_t) == 4, "ora_log_channel_t must be 4 bytes");
+_Static_assert(sizeof(ora_log_channel_t) == 4, "ora_log_channel_t must be 4 bytes");
 
 /**
  * @brief An option this firmware was compiled with
@@ -931,7 +945,7 @@ typedef enum {
 
     ORA_COMPILE_OPTION_INVALID        = 0xFFFFFFFF,
 } ora_compile_option_t;
-STATIC_ASSERT(sizeof(ora_compile_option_t) == 4, "ora_compile_option_t must be 4 bytes");
+_Static_assert(sizeof(ora_compile_option_t) == 4, "ora_compile_option_t must be 4 bytes");
 
 /**
  * @brief A category of log output
@@ -1000,7 +1014,7 @@ typedef enum {
 
     ORA_LOG_CATEGORY_INVALID            = 0xFFFFFFFF,
 } ora_log_category_t;
-STATIC_ASSERT(sizeof(ora_log_category_t) == 4, "ora_log_category_t must be 4 bytes");
+_Static_assert(sizeof(ora_log_category_t) == 4, "ora_log_category_t must be 4 bytes");
 
 /**
  * @brief Knock sequence state structure
@@ -1300,12 +1314,15 @@ typedef enum {
  * @brief Whether address capture takes precedence over ROM serving
  * @since firmware 0.7.3
  *
- * At normal priority a sustained burst of ROM reads can cause captures to be
- * lost, with no indication.  At high priority captures are never lost to
- * serving load, and serving may wait briefly for a capture.
+ * Captures and ROM serving share the DMA.  At normal priority they take turns
+ * when both are ready in the same cycle.  At high priority the capture goes
+ * first and serving waits one cycle.
+ *
+ * Neither setting loses captures to serving load.  A capture is lost when the
+ * plugin falls a full ring behind and the DMA overwrites it.
  */
 typedef enum {
-    /** @brief Serving first.  The default. */
+    /** @brief Capture and serving take turns.  The default. */
     ORA_ADDRESS_MONITOR_PRIORITY_NORMAL = 0,
 
     /** @brief Capture first */
@@ -1331,7 +1348,7 @@ typedef struct {
     /** @brief Capture priority. @sa ora_address_monitor_priority_t */
     uint8_t priority;
 } ora_address_monitor_options_t;
-STATIC_ASSERT(sizeof(ora_address_monitor_options_t) == 2, "ora_address_monitor_options_t must be 2 bytes");
+_Static_assert(sizeof(ora_address_monitor_options_t) == 2, "ora_address_monitor_options_t must be 2 bytes");
 
 /**
  * @brief Return code for One ROM API functions
@@ -1361,6 +1378,12 @@ typedef enum {
      * @since firmware 0.7.2
      */
     ORA_RESULT_LOG_FULL = 14,
+    /**
+     * @brief A requested firmware state has not been reached
+     * @sa ora_firmware_state_query_fn_t
+     * @since firmware 0.8.0
+     */
+    ORA_RESULT_NOT_READY = 15,
 } ora_result_t;
 
 /**
@@ -2061,8 +2084,8 @@ typedef ora_result_t (*ora_wait_for_knock_fn_t)(
  * This function guarantees to write bytes in an ascending logical address
  * order.
  * 
- * This is not atomic.  For an atomic update, you must switch in a new region
- * of SRAM using the appropriate function (not yet supported). 
+ * This is not atomic.  For an atomic update, write to an inactive slot and
+ * switch to it with @ref ora_set_active_ram_slot_fn_t.
  *
  * @param slot    RAM ROM slot to update
  * @param offset  Logical start address within the ROM image to update
@@ -2170,8 +2193,9 @@ typedef ora_result_t (*ora_get_ram_slot_info_fn_t)(
  * @brief Get the index of the currently active RAM slot
  * @sa ORA_ID_GET_ACTIVE_RAM_SLOT
  *
- * Returns the index of the RAM slot currently being served to the host. In
- * normal operation this is slot 0, pre-populated by the firmware on boot.
+ * Returns the index of the active RAM slot - the slot serving reads from. A
+ * slot is active from boot whether or not One ROM is in standby. In normal
+ * operation this is slot 0, pre-populated by the firmware on boot.
  *
  * If no slot is currently active (for example if a plugin has suppressed
  * firmware ROM loading), returns ORA_RESULT_NO_SLOT_ACTIVE and
@@ -2190,6 +2214,9 @@ typedef ora_result_t (*ora_get_active_ram_slot_fn_t)(uint8_t *ram_slot_out);
  * Atomically switches the ROM image being served to the host to the specified
  * RAM slot. If no slot is currently active, this activates the specified slot
  * without requiring an atomic transition.
+ *
+ * In standby mode this switches the slot served once standby is turned off.
+ * It doesn't change standby mode itself.
  *
  * The target slot must have been populated with a valid ROM image before
  * calling this function, either via @ref ora_reprogram_ram_slot_fn_t or
@@ -2338,9 +2365,10 @@ typedef ora_result_t (*ora_get_flash_slot_ext_info_fn_t)(
  * @param copy_flags  Copy behaviour flags. Pass 0 for synchronous copy.
  *                    @sa ORA_COPY_FLAG_ASYNC.  Currently unsupported.
  * @return ORA_RESULT_OK on success, ORA_RESULT_INVALID_SLOT if either index
- *         is out of range for the given flags, ORA_RESULT_INVALID_SIZE if
- *         the flash slot's ROM image size does not match the currently active
- *         ROM type
+ *         is out of range for @p flags or, from firmware 0.8.0, the flash
+ *         slot lies outside the board's flash, ORA_RESULT_INVALID_SIZE if the
+ *         flash slot's ROM image size does not match the currently active ROM
+ *         type
  */
 typedef ora_result_t (*ora_copy_flash_slot_to_ram_slot_fn_t)(
     uint8_t flash_slot,
@@ -2394,11 +2422,17 @@ typedef ora_result_t (*ora_get_metadata_str_fn_t)(ora_metadata_key_t key, const 
  * @sa ORA_ID_GET_METADATA_UINT
  *
  * Numeric sibling of ora_get_metadata_str_fn_t over the same unified key space.
- * Resolves keys whose datum is an unsigned scalar or enum, zero-extending the
- * stored value into @p out. Hardware-topology keys (e.g. ORA_METADATA_KEY_GPIO_
+ * Resolves keys whose datum is an unsigned scalar, enum or bit field,
+ * zero-extending the stored value into @p out. A bit field is returned whole as
+ * its raw value. Hardware-topology keys (e.g. ORA_METADATA_KEY_GPIO_
  * STATUS, ORA_METADATA_KEY_GPIO_NEOPIXEL) resolve from device metadata; live
  * keys (e.g. ORA_METADATA_KEY_STATUS_LED_STATE) resolve from runtime state and
  * therefore reflect the current value on each call.
+ *
+ * ORA_METADATA_KEY_FLASH_CS0_SIZE and ORA_METADATA_KEY_FLASH_CS1_SIZE return
+ * the size of the flash chip on QSPI chip select 0 or 1 as an ORA_FLASH_SIZE_*
+ * value. For a chip select that doesn't have a flash chip, the key returns
+ * ORA_FLASH_SIZE_NONE.
  *
  * @param key  The metadata datum to retrieve. @sa ora_metadata_key_t
  * @param out  Output pointer to receive the value. Must not be NULL.
@@ -2601,9 +2635,13 @@ typedef enum {
  * fitted, what the far end of a wire is connected to, or whether something else
  * is driving the net. That remains the user's responsibility.
  *
+ * An X pin can be wired to two GPIOs, and driving either drives the pin. From
+ * firmware 0.8.0 a GPIO One ROM doesn't use reports what serving uses the
+ * other GPIO on its X pin for. Earlier firmware reports each GPIO's own use.
+ *
  * Serving reads its address, chip select and /BYTE pins as SIO inputs with the
  * output driver disabled, so they are indistinguishable from unused pins by
- * register inspection alone; this enumeration is the only way to tell them
+ * register inspection alone. This enumeration is the only way to tell them
  * apart.
  *
  * What is reported is the *consequence* of driving the GPIO, not the role it
@@ -2617,12 +2655,16 @@ typedef enum {
     ORA_GPIO_USE_FREE           = 0,
 
     /**
-     * @brief Serving reads this GPIO; driving it is reversible
+     * @brief Serving reads this GPIO - driving it is reversible
      *
-     * Covers the whole address span of the active ROM slot - including any X
-     * expansion pins folded into it on Multi and Banked slots - the whole chip
-     * select span, including any position the select field masks out and any
-     * excess address line acting as a half-select, and the /BYTE pin.
+     * Covers these GPIOs of the active ROM slot:
+     *   - the address span including any X pins on Multi and Banked slots
+     *   - the chip select span including any masked position and any excess
+     *     address line used as a half-select
+     *   - the /BYTE pin
+     *
+     * A GPIO in the address span with its input forced is
+     * ORA_GPIO_USE_INPUT_FORCED instead.
      *
      * These are all SIO inputs, and PIO keeps reading the pin whatever its
      * function select says, so driving one and then releasing it with
@@ -2632,16 +2674,30 @@ typedef enum {
     ORA_GPIO_USE_SERVING_READ   = 1,
 
     /**
-     * @brief Serving drives this GPIO; driving it breaks serving until reboot
+     * @brief Owned by the PIOs - driving it breaks serving until reboot
      *
-     * The data pins of the active ROM slot, which PIO owns and drives. Taking
-     * one away from PIO is not undone by releasing it.
+     * The data pins of the active ROM slot. They are driven by the PIOs while
+     * serving and left undriven in standby mode.
      * @sa ora_gpio_set_fn_t
      */
     ORA_GPIO_USE_SERVING_DRIVEN = 2,
 
     /** @brief A board system pin - status LED, neopixel, VBUS or ext flash CS */
     ORA_GPIO_USE_SYSTEM         = 3,
+
+    /**
+     * @brief The GPIO's input is forced by One ROM
+     *
+     * The GPIO is in the active ROM slot's address span but unused so its
+     * input is forced. Driving it has no effect on serving.
+     *
+     * @ref ora_gpio_query_fn_t returns the pin's real level. PIO and SIO reads
+     * get the forced level.
+     *
+     * @sa ora_gpio_set_fn_t
+     * @since firmware 0.8.0
+     */
+    ORA_GPIO_USE_INPUT_FORCED   = 4,
 } ora_gpio_use_t;
 
 /**
@@ -2683,7 +2739,7 @@ typedef struct {
     /** @brief 1 if the pin's output driver is currently enabled, 0 if not */
     uint8_t is_output;
 } ora_gpio_info_t;
-STATIC_ASSERT(sizeof(ora_gpio_info_t) == 4, "ora_gpio_info_t must be 4 bytes");
+_Static_assert(sizeof(ora_gpio_info_t) == 4, "ora_gpio_info_t must be 4 bytes");
 
 /**
  * @brief Drive a GPIO high or low, or release it to high impedance
@@ -2694,17 +2750,16 @@ STATIC_ASSERT(sizeof(ora_gpio_info_t) == 4, "ora_gpio_info_t must be 4 bytes");
  * is instantaneous: it starts no timer and schedules nothing. A caller wanting
  * a bounded assertion must time the release itself.
  *
- * By default the call refuses, with ORA_RESULT_GPIO_IN_USE, any GPIO whose
- * @ref ora_gpio_use_t is not ORA_GPIO_USE_FREE. This is the firmware's whole
- * safety model - it knows what One ROM itself has claimed, and nothing about
- * what is wired to the pin. @ref ORA_GPIO_FLAG_FORCE overrides the refusal.
+ * For a GPIO in use by One ROM - ORA_GPIO_USE_SERVING_READ,
+ * ORA_GPIO_USE_SERVING_DRIVEN or ORA_GPIO_USE_SYSTEM - the call returns
+ * ORA_RESULT_GPIO_IN_USE unless @ref ORA_GPIO_FLAG_FORCE is set.
  *
  * How recoverable a forced pin is is exactly what @ref ora_gpio_use_t reports:
  *
- *   - ORA_GPIO_USE_SERVING_DRIVEN - the pin is driven by PIO. Forcing it takes
- *     the pin's function select away from PIO, and the serving path does not
- *     restore it, so serving is broken until the device reboots. Setting the
- *     pin back to ORA_GPIO_STATE_INPUT does not undo this.
+ *   - ORA_GPIO_USE_SERVING_DRIVEN - the pin is owned by the PIOs. Forcing it
+ *     takes the pin's function select away from PIO, and the serving path does
+ *     not restore it, so serving is broken until the device reboots. Setting
+ *     the pin back to ORA_GPIO_STATE_INPUT does not undo this.
  *   - ORA_GPIO_USE_SERVING_READ - the pin is an SIO input with its output
  *     driver disabled, and PIO keeps reading it whatever its function select
  *     says. Forcing one is therefore reversible: set it back to
@@ -2881,7 +2936,7 @@ typedef struct {
      */
     uint32_t hold_ms;
 } ora_led_request_t;
-STATIC_ASSERT(sizeof(ora_led_request_t) == 16, "ora_led_request_t must be 16 bytes");
+_Static_assert(sizeof(ora_led_request_t) == 16, "ora_led_request_t must be 16 bytes");
 
 /**
  * @brief An LED's presence, wiring and live state, from @ref ora_led_get_fn_t
@@ -2949,7 +3004,7 @@ typedef struct {
     /** @brief The period in force, in milliseconds */
     uint16_t period_ms;
 } ora_led_state_t;
-STATIC_ASSERT(sizeof(ora_led_state_t) == 12, "ora_led_state_t must be 12 bytes");
+_Static_assert(sizeof(ora_led_state_t) == 12, "ora_led_state_t must be 12 bytes");
 
 /**
  * @brief Set an LED's mode, colour, brightness and period
@@ -3274,6 +3329,71 @@ typedef ora_result_t (*ora_log_category_enabled_fn_t)(
     uint32_t *enabled_out
 );
 
+/**
+ * @brief Wait for the requested states
+ * @sa ora_firmware_state_query_fn_t
+ * @since firmware 0.8.0
+ */
+#define ORA_FIRMWARE_STATE_QUERY_FLAG_WAIT  (1u << 0)
+
+/**
+ * @brief Get or wait for firmware states
+ * @sa ORA_ID_FIRMWARE_STATE_QUERY
+ * @since firmware 0.8.0
+ *
+ * The states are the @c ORA_FIRMWARE_STATE_ values in
+ * onerom_constants_generated.h.
+ *
+ * With @ref ORA_FIRMWARE_STATE_QUERY_FLAG_WAIT the call returns when every
+ * requested state is reached. It blocks the calling core without calling
+ * @ref ora_yield_fn_t so the other core cannot enter exclusive mode until it
+ * returns.
+ *
+ * Request a state on its own to find out whether this firmware supports it.
+ *
+ * @param states     Requested states as a bitwise OR of
+ *                   @c ORA_FIRMWARE_STATE_ values. May be 0.
+ * @param flags      Pass 0 or @ref ORA_FIRMWARE_STATE_QUERY_FLAG_WAIT. Other
+ *                   bits are reserved and must be 0.
+ * @param states_out Always set to the states reached. May be NULL.
+ * @return ORA_RESULT_OK if every requested state is reached.
+ *         ORA_RESULT_NOT_READY if a requested state is not reached. With the
+ *         wait flag this is only returned when the state cannot be reached
+ *         before the next reboot.
+ *         ORA_RESULT_NOT_SUPPORTED if a requested state is unknown to this
+ *         firmware. This is returned immediately even with the wait flag.
+ */
+typedef ora_result_t (*ora_firmware_state_query_fn_t)(
+    uint32_t states,
+    uint32_t flags,
+    uint32_t *states_out
+);
+
+/**
+ * @brief Turn standby on or off
+ * @sa ORA_ID_SET_STANDBY
+ * @since firmware 0.8.0
+ *
+ * In standby mode One ROM doesn't serve the ROM and its data pins aren't
+ * driven.
+ *
+ * Everything else runs as it does while serving, including the plugins and
+ * the address monitor. A slot can be configured to boot into standby.
+ *
+ * @c ORA_FIRMWARE_FLAG_STANDBY is set in @c ORA_METADATA_KEY_FIRMWARE_FLAGS
+ * while One ROM is in standby.
+ *
+ * Turning standby off serves the active RAM slot, whatever it holds. The PIO
+ * programs are built from the selected slot at boot as usual.
+ *
+ * @param standby  1 to turn standby on, 0 to turn it off
+ * @param flags    Pass 0. All bits are reserved and must be 0.
+ * @return ORA_RESULT_OK on success, including when One ROM is already in the
+ *         requested state.
+ *         ORA_RESULT_INVALID_ARG if @p standby is neither 0 nor 1.
+ */
+typedef ora_result_t (*ora_set_standby_fn_t)(uint8_t standby, uint32_t flags);
+
 /** @} */ // plugin_api_functions
 
 /**
@@ -3450,7 +3570,9 @@ typedef struct {
     uint8_t reserved[226];
 } ora_plugin_header_t;
 #define ORA_PLUGIN_HEADER_SIZE 256  // Must not change without version bump
-STATIC_ASSERT(sizeof(ora_plugin_header_t) == ORA_PLUGIN_HEADER_SIZE, "ora_plugin_header_t must be 256 bytes");
+#if UINTPTR_MAX == 0xFFFFFFFFu
+_Static_assert(sizeof(ora_plugin_header_t) == ORA_PLUGIN_HEADER_SIZE, "ora_plugin_header_t must be 256 bytes");
+#endif
 
 /**
  * @brief Firmware override flag for VBUS detect

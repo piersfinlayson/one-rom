@@ -1,5 +1,24 @@
 # Changelog
 
+## v0.2.4 - unreleased
+
+- Rebuilt against the Rust crates released with firmware v0.8.0.
+- Supports commissioned One ROMs in bootloader mode using One ROM's own bootloader VID and PID.
+- The .deb installs One ROM's udev rules.
+- Supports L boards, over USB or a debug probe. Create has a Board Size picker. Detect sets it, and an image file loaded in Analyse sets it to the size the image requires.
+- A damaged .bin file fails to flash from Analyse.
+- Detect sets Create's Board to a commissioned One ROM's board type.
+- Analyse displays a note when a commissioned One ROM's firmware is for another board.
+- An image for another board type fails to flash to a commissioned One ROM.
+- Fix Detect failing after the CLI or another program used the One ROM.
+- Fix Stop and Run in Analyse discarding a loaded .bin file.
+- Fix Run disappearing a second after a flash or on a rescan. Run shows after flashing an image that includes the USB plugin.
+- Fix loading a .bin file in Analyse showing or hiding Run and Stop.
+- Fix Run showing for a One ROM connected through a debug probe, where it fails.
+- A config can refer to a plugin by name, `"plugin": "usb"`, instead of a URL. The latest plugin release compatible with the selected firmware is used.
+- A config with a plugin in the slot for the other type of plugin fails with `'host-control' is a user plugin but is configured as the system plugin`, rather than a manifest type mismatch.
+- The .deb supports glibc 2.35 and later.
+
 ## v0.2.3 - 2026-09-17
 
 - Add the `27C400Pin31A17` and `27C200Pin31NC` chip types, for the Amiga A500 rev 5 Kickstart socket.

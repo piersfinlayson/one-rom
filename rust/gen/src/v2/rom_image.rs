@@ -416,7 +416,7 @@ mod tests {
     use alloc::vec;
 
     use onerom_config::chip::ChipType;
-    use onerom_metadata::BitModes;
+    use onerom_metadata::{BitModes, MaybeKnown};
 
     use crate::image::{CsConfig, CsLogic, SizeHandling};
 
@@ -457,14 +457,14 @@ mod tests {
 
     fn alg_dma_8bit() -> OneromAlgDmaConfig {
         OneromAlgDmaConfig::AlgDma0 {
-            bit_mode: BitModes::BitMode8,
+            bit_mode: MaybeKnown::Known(BitModes::BitMode8),
             continuous: 1,
         }
     }
 
     fn alg_dma_16bit() -> OneromAlgDmaConfig {
         OneromAlgDmaConfig::AlgDma0 {
-            bit_mode: BitModes::BitMode16,
+            bit_mode: MaybeKnown::Known(BitModes::BitMode16),
             continuous: 1,
         }
     }

@@ -8,6 +8,8 @@ Do not confuse the image select jumpers with the BOOTSEL/BOOT0 jumper, labelled 
 
 The images with the One ROM firmware are numbered from 0 onwards, so, to select image 5 (the 6th image), you would close jumpers `1` and `4`, or `A` and `C`.
 
+A reserved image select pin is not read.  The image number is read from the remaining jumpers in order.  With `C` reserved, `D` selects image 4.  See [Reserve a pin for another use](/docs/CLI-MANUAL.md#reserve-a-pin-for-another-use).
+
 If you select a higher image number than there are images installed, One ROM will wrap back to the first image and keep counting.  So, if you only have 4 images installed (as numbers 0-3), a jumper setting of 4 will select image 0, a jumper setting of 5 will select image 1, etc.
 
 You must reboot the One ROM device after changing the jumper settings, to cause One ROM to load the new image and settings, and start serving it.  You may need to physically power your retro system off and on again to do this - a reset may not be enough if power is not removed.

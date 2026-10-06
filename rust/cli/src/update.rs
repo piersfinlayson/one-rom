@@ -19,9 +19,3 @@ pub async fn cmd_commit(
     let _device = options.device.as_ref().unwrap();
     Err(Error::Unimplemented("update commit".to_string()))
 }
-
-pub async fn cmd_otp(options: &Options, args: &args::update::UpdateOtpArgs) -> Result<(), Error> {
-    check_device(options, args, false)?;
-    let _device = options.device.as_ref().unwrap();
-    Err(Error::Unimplemented("update otp".to_string()))
-}

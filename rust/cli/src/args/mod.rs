@@ -13,6 +13,7 @@
 //!   onerom console               - Talk to the retro system
 //!   onerom control <subcommand>  - Transient One ROM actions
 //!   onerom update <subcommand>   - Persistent One ROM modifications
+//!   onerom hardware <subcommand> - One ROM hardware commissioning
 //!   onerom image <subcommand>    - ROM image file manipulation
 //!   onerom self <subcommand>     - One ROM CLI releases of this tool
 //!
@@ -56,6 +57,7 @@ macro_rules! const_str {
 pub mod console;
 pub mod control;
 pub mod firmware;
+pub mod hardware;
 pub mod image;
 pub mod inspect;
 pub mod monitor;
@@ -65,7 +67,10 @@ pub mod scan;
 pub mod self_cmd;
 pub mod update;
 
-use clap::{Parser, Subcommand};
+use std::fmt::Display;
+
+use clap::error::ErrorKind;
+use clap::{CommandFactory, Parser, Subcommand};
 use enum_dispatch::enum_dispatch;
 use log::debug;
 use onerom_cli::LogLevel;
@@ -81,31 +86,65 @@ use control::{
     ControlPokeMemoryArgs, ControlRebootArgs, ControlResetArgs, ControlRgbArgs,
     ControlRgbBeaconArgs, ControlRgbBlinkArgs, ControlRgbBreatheArgs, ControlRgbCommands,
     ControlRgbCycleArgs, ControlRgbFlameArgs, ControlRgbOffArgs, ControlRgbOnArgs,
-    ControlSelectArgs,
+    ControlSelectArgs, ControlStandbyArgs, ControlStandbyCommands, ControlStandbyOffArgs,
+    ControlStandbyOnArgs,
 };
 use firmware::{
     FirmwareArgs, FirmwareBuildArgs, FirmwareChipsArgs, FirmwareCommands, FirmwareDownloadArgs,
     FirmwareInspectArgs, FirmwareReleasesArgs,
+};
+use hardware::{
+    HardwareArgs, HardwareCommands, HardwareCommissionArgs, HardwareRequestSignatureArgs,
+    HardwareSetSizeArgs, HardwareSignArgs, HardwareValidateArgs,
 };
 use image::{
     ImageArgs, ImageCommands, ImageConvertArgs, ImageDeinterleaveArgs, ImageSwapBytesArgs,
 };
 use inspect::{
     InspectArgs, InspectCommands, InspectGpioArgs, InspectHeaderArgs, InspectImageArgs,
-    InspectInfoArgs, InspectLedArgs, InspectPeekArgs, InspectPeekCommands, InspectPeekLiveArgs,
-    InspectPeekMemoryArgs, InspectRgbArgs, InspectSlotsArgs, InspectSocketArgs,
-    InspectTelemetryArgs,
+    InspectInfoArgs, InspectLedArgs, InspectOtpArgs, InspectPeekArgs, InspectPeekCommands,
+    InspectPeekLiveArgs, InspectPeekMemoryArgs, InspectRgbArgs, InspectSlotsArgs,
+    InspectSocketArgs, InspectTelemetryArgs,
 };
 use monitor::{MonitorArgs, MonitorCommands, MonitorLogArgs};
 use plugin::PluginArgs;
 use program::ProgramArgs;
 use scan::ScanArgs;
 use self_cmd::{SelfArgs, SelfCheckArgs, SelfCommands, SelfDownloadArgs};
-use update::{UpdateArgs, UpdateCommands, UpdateCommitArgs, UpdateOtpArgs, UpdateSlotArgs};
+use update::{UpdateArgs, UpdateCommands, UpdateCommitArgs, UpdateSlotArgs};
 
 #[enum_dispatch]
 pub trait CommandTrait {
     fn requires_device(&self) -> bool;
+
+    /// Whether the command reads a connected One ROM with these arguments.
+    /// Where it doesn't, the CLI doesn't scan USB for one, so a second
+    /// connected One ROM can't make it fail. A One ROM selected with
+    /// `--serial` is still looked up.
+    fn uses_device(&self) -> bool {
+        true
+    }
+
+    /// Checks the arguments that depend on each other. It runs straight after
+    /// parsing, before the CLI looks for a device.
+    fn check_args(&self) -> Result<(), clap::Error> {
+        Ok(())
+    }
+}
+
+/// A clap error from the command at `path` below `onerom`, such as
+/// `["hardware", "commission"]`. It shows that command's usage.
+pub fn arg_error(path: &[&str], kind: ErrorKind, message: impl Display) -> clap::Error {
+    let mut onerom = Cli::command().bin_name("onerom");
+    // Sets each command's full name for its usage line.
+    onerom.build();
+    let mut command = &mut onerom;
+    for name in path {
+        command = command
+            .find_subcommand_mut(name)
+            .unwrap_or_else(|| panic!("onerom doesn't have the command {name}"));
+    }
+    command.error(kind, message)
 }
 
 /// Command line interface for One ROM - the most flexible retrom ROM replacement.
@@ -130,6 +169,9 @@ pub trait CommandTrait {
 /// using the --unrecognised flag and supplying --board.
 #[derive(Debug, Parser)]
 #[command(name = "onerom", version = concat!("v", env!("CARGO_PKG_VERSION")), about, long_about)]
+// Puts the global options under their own heading after each command's own
+// options. It covers every field below so each one must be global.
+#[command(next_help_heading = "Global options")]
 pub struct Cli {
     /// Select a specific One ROM by serial number.
     ///
@@ -271,7 +313,7 @@ impl Cli {
         }
 
         // If no device was specified, attempt to detect one
-        if options.device.is_none() {
+        if options.device.is_none() && self.command.uses_device() {
             if options.verbose {
                 println!("No device specified, scanning for connected devices ...");
             }
@@ -311,6 +353,14 @@ impl CommandTrait for BoardArgs {
         // supplied - they never require one. So a device is never mandatory.
         false
     }
+
+    fn uses_device(&self) -> bool {
+        match &self.command {
+            BoardCommands::List(args) => args.uses_device(),
+            BoardCommands::Header(args) => args.uses_device(),
+            BoardCommands::Socket(args) => args.uses_device(),
+        }
+    }
 }
 
 #[derive(Debug, Subcommand)]
@@ -324,9 +374,8 @@ pub enum BoardCommands {
 
     /// Draw a board's pin (jumper / programming) header as ASCII.
     ///
-    /// Shows the 2xN header along the board's top edge, pad by pad, with the
-    /// MCU GPIO behind each image-select and X pad and — on RP2350 (Fire)
-    /// boards — whether that GPIO is 5V-tolerant or 3.3V-only (an ADC pin).
+    /// The picture includes each image select and X pin's MCU GPIO and, on
+    /// RP2350 (Fire) boards, whether that GPIO is 5V-tolerant or 3.3V-only.
     ///
     /// The board is taken from --board, or inferred from a connected One ROM
     /// when omitted.
@@ -364,6 +413,10 @@ impl CommandTrait for BoardListArgs {
     fn requires_device(&self) -> bool {
         false
     }
+
+    fn uses_device(&self) -> bool {
+        false
+    }
 }
 
 #[derive(Debug, clap::Args)]
@@ -377,6 +430,10 @@ pub struct BoardHeaderArgs {
 impl CommandTrait for BoardHeaderArgs {
     fn requires_device(&self) -> bool {
         false
+    }
+
+    fn uses_device(&self) -> bool {
+        self.board.is_none()
     }
 }
 
@@ -399,6 +456,10 @@ pub struct BoardSocketArgs {
 impl CommandTrait for BoardSocketArgs {
     fn requires_device(&self) -> bool {
         false
+    }
+
+    fn uses_device(&self) -> bool {
+        self.board.is_none()
     }
 }
 
@@ -466,7 +527,7 @@ pub enum Commands {
     )]
     Monitor(MonitorArgs),
 
-    /// Talk to the retro system through One ROM's USB port.
+    /// Talk to the retro system through One ROM's USB port
     ///
     /// Displays what One ROM sends, like 'monitor log', and additionally sends
     /// what you type to the retro system.
@@ -491,6 +552,7 @@ pub enum Commands {
     ///   onerom console --line-ending crlf --output session.txt
     ///
     ///   echo 'LOAD "*",8' | onerom console
+    #[command(verbatim_doc_comment)]
     Console(ConsoleArgs),
 
     /// Perform transient actions on a connected One ROM.
@@ -512,6 +574,17 @@ pub enum Commands {
         subcommand_help_heading = "Commands"
     )]
     Update(UpdateArgs),
+
+    /// Commission and check a One ROM's hardware.
+    ///
+    /// Commissioning writes the board's identity and other manufacturing
+    /// information to the RP2350's OTP memory with a signature. OTP cannot be
+    /// erased.
+    #[command(
+        subcommand_value_name = "COMMAND",
+        subcommand_help_heading = "Commands"
+    )]
+    Hardware(HardwareArgs),
 
     /// Manipulate ROM image files.
     ///
@@ -629,4 +702,64 @@ pub enum Commands {
         subcommand_help_heading = "Commands"
     )]
     SelfCmd(SelfArgs),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A command that can run without a One ROM uses one only where its
+    /// arguments don't provide what it would read from the One ROM.
+    #[test]
+    fn a_command_uses_a_device_only_where_it_reads_one() {
+        let cases = [
+            ("firmware build", true),
+            ("firmware build --board fire-24-e", false),
+            ("firmware inspect", true),
+            ("firmware inspect --firmware f.bin", false),
+            ("firmware inspect --board fire-24-e", false),
+            ("firmware releases", true),
+            ("firmware releases --all", false),
+            ("firmware releases --board fire-24-e", false),
+            ("firmware download", true),
+            ("firmware download --board fire-24-e", false),
+            ("firmware chips", true),
+            ("firmware chips --all", false),
+            ("firmware chips --board fire-24-e", false),
+            ("chips", true),
+            ("chips --all", false),
+            ("chips --board fire-24-e", false),
+            ("board header", true),
+            ("board header --board fire-24-e", false),
+            ("board socket", true),
+            ("board socket --board fire-24-e", false),
+            ("plugin", true),
+            ("plugin --fw-version 0.8.0", false),
+            ("board list", false),
+            ("image swap-bytes --input a --output b", false),
+            (
+                "image deinterleave --input a --output b --offset 0 --stride 2",
+                false,
+            ),
+            (
+                "image convert --from binary --to ihex --input a --output b",
+                false,
+            ),
+            (
+                "hardware sign --chip-id E126C9F97C10ADAC --board fire-24-f \
+                 --manufacturer m --key k.pem",
+                false,
+            ),
+            ("self check", false),
+            ("self download", false),
+            ("inspect slots", true),
+        ];
+        for (line, uses) in cases {
+            let words: Vec<&str> = std::iter::once("onerom")
+                .chain(line.split_whitespace())
+                .collect();
+            let cli = Cli::try_parse_from(&words).unwrap_or_else(|e| panic!("{line}: {e}"));
+            assert_eq!(cli.command.uses_device(), uses, "{line}");
+        }
+    }
 }

@@ -20,7 +20,7 @@
 //!   - bit 2: Status LED enabled
 //!   - bit 3: SWD enabled
 
-use crate::{FireFreq, FireVreg, OneromFirmwareOverrides};
+use crate::{FireFreq, FireVreg, MaybeKnown, OneromFirmwareOverrides, OverrideState};
 
 impl OneromFirmwareOverrides {
     // override_present[0] bit positions
@@ -35,10 +35,17 @@ impl OneromFirmwareOverrides {
     const VALUE_LED_ENABLED: u8 = 1 << 2;
     const VALUE_SWD_ENABLED: u8 = 1 << 3;
 
-    /// Returns `true` if any override bit is set across the entire
-    /// `override_present` array.
+    /// Returns `true` if any override is set, in `override_present` or
+    /// `override_states`.
     pub fn any_present(&self) -> bool {
-        self.override_present.iter().any(|&b| b != 0)
+        self.override_present.iter().any(|&b| b != 0) || self.override_states.to_raw() != 0
+    }
+
+    /// Standby at boot override, or `None` if not overridden.
+    pub fn standby(&self) -> Option<MaybeKnown<OverrideState>> {
+        self.override_states
+            .standby
+            .filter(|state| *state != MaybeKnown::Known(OverrideState::OverrideStateNotSet))
     }
 
     /// CPU frequency override in MHz, or `None` if not overridden.
@@ -47,7 +54,10 @@ impl OneromFirmwareOverrides {
     }
 
     /// VREG voltage override, or `None` if not overridden.
-    pub fn vreg(&self) -> Option<FireVreg> {
+    ///
+    /// The level is a fixed list the firmware can add to, so it arrives
+    /// wrapped - see [`MaybeKnown`].
+    pub fn vreg(&self) -> Option<MaybeKnown<FireVreg>> {
         (self.override_present[0] & Self::PRESENT_FIRE_VREG != 0).then_some(self.fire_vreg)
     }
 
@@ -78,9 +88,8 @@ mod tests {
         OneromFirmwareOverrides {
             override_present: [present, 0, 0, 0, 0, 0, 0, 0],
             override_value: [value, 0, 0, 0, 0, 0, 0, 0],
-            ice_freq: 0,
-            fire_freq: 0,
-            fire_vreg: FireVreg::FireVregStock,
+            fire_vreg: MaybeKnown::Known(FireVreg::FireVregStock),
+            ..Default::default()
         }
     }
 
@@ -114,8 +123,8 @@ mod tests {
     #[test]
     fn vreg_present() {
         let mut o = overrides_with(1 << 4, 0);
-        o.fire_vreg = FireVreg::FireVreg110v;
-        assert_eq!(o.vreg(), Some(FireVreg::FireVreg110v));
+        o.fire_vreg = MaybeKnown::Known(FireVreg::FireVreg110v);
+        assert_eq!(o.vreg(), Some(MaybeKnown::Known(FireVreg::FireVreg110v)));
     }
 
     #[test]
@@ -164,5 +173,37 @@ mod tests {
     #[test]
     fn overclock_present_off() {
         assert_eq!(overrides_with(1 << 3, 0).overclock_enabled(), Some(false));
+    }
+
+    fn overrides_with_standby(state: OverrideState) -> OneromFirmwareOverrides {
+        let mut o = overrides_with(0, 0);
+        o.override_states.standby = Some(MaybeKnown::Known(state));
+        o
+    }
+
+    #[test]
+    fn standby_absent() {
+        assert_eq!(overrides_with(0, 0).standby(), None);
+        assert_eq!(
+            overrides_with_standby(OverrideState::OverrideStateNotSet).standby(),
+            None
+        );
+    }
+
+    #[test]
+    fn standby_present() {
+        assert_eq!(
+            overrides_with_standby(OverrideState::OverrideStateOn).standby(),
+            Some(MaybeKnown::Known(OverrideState::OverrideStateOn))
+        );
+        assert_eq!(
+            overrides_with_standby(OverrideState::OverrideStateOff).standby(),
+            Some(MaybeKnown::Known(OverrideState::OverrideStateOff))
+        );
+    }
+
+    #[test]
+    fn any_present_standby_only() {
+        assert!(overrides_with_standby(OverrideState::OverrideStateOn).any_present());
     }
 }

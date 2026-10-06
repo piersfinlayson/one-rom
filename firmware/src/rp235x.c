@@ -295,8 +295,14 @@ void setup_initial_gpios(void) {
     while (!(RESET_DONE & (RESET_IOBANK0 | RESET_PADS_BANK0)));
 #endif // REAL_HARDWARE
 
-    // Initialize all pins to input only, no pulls
+    // Initialize all pins to input only, no pulls.
+    //
+    // The external flash chip select is left as-is because if programmed
+    // via OTP, the bootrom has already configured it.
     for (int ii = 0; ii < MAX_GPIOS; ii++) {
+        if (ii == HW->gpio_ext_flash_cs) {
+            continue;
+        }
         APIO_GPIO_PULL_NONE(ii);
         APIO_GPIO_INPUT_ONLY(ii);
     }
@@ -337,13 +343,26 @@ void setup_qmi(rp235x_clock_config_t *config) {
         uint32_t m0 = XIP_QMI_M0_TIMING;
         DEBUG("Current QMI M0: 0x%08lX", m0);
 
-        m0 &= ~XIP_QMI_M0_CLKDIV_MASK;
-        m0 |= (divider & XIP_QMI_M0_CLKDIV_MASK) << XIP_QMI_M0_CLKDIV_SHIFT;
+        m0 &= ~XIP_QMI_CLKDIV_MASK;
+        m0 |= (divider & XIP_QMI_CLKDIV_MASK) << XIP_QMI_CLKDIV_SHIFT;
 
         DEBUG("Update M0 clkdiv: %d", divider);
         DEBUG("Update QMI M0: 0x%08lX", m0);
 
         XIP_QMI_M0_TIMING = m0;
+
+        // Where there's an external flash chip, we need to adjust M1 timing.
+        if (HW->gpio_ext_flash_cs != GPIO_NONE) {
+            uint32_t m1 = XIP_QMI_M1_TIMING;
+            DEBUG("Current QMI M1: 0x%08lX", m1);
+
+            m1 &= ~XIP_QMI_CLKDIV_MASK;
+            m1 |= (divider & XIP_QMI_CLKDIV_MASK) << XIP_QMI_CLKDIV_SHIFT;
+
+            DEBUG("Update QMI M1: 0x%08lX", m1);
+
+            XIP_QMI_M1_TIMING = m1;
+        }
     }
 }
 
@@ -583,7 +602,9 @@ void setup_mco(void) {
 // jumper pulls up (1) or down (0) each sel pin individually.
 //
 // As of 0.6.2 moved to uint64_t to cope with RP2350B.
-uint32_t setup_sel_pins(uint64_t *sel_mask, uint64_t *flip_bits) {
+//
+// A pin with its bit set in reserved is left as it is.
+uint32_t setup_sel_pins(uint8_t reserved, uint64_t *sel_mask, uint64_t *flip_bits) {
     uint32_t num;
     uint32_t pad;
 
@@ -595,8 +616,7 @@ uint32_t setup_sel_pins(uint64_t *sel_mask, uint64_t *flip_bits) {
     for (int ii = 0; (ii < MAX_IMG_SEL_PINS); ii++) {
         uint8_t pin = HW->gpio_sel[ii];
         
-        if (pin >= MAX_GPIOS) {
-            // Ignore invalid pins
+        if ((pin >= MAX_GPIOS) || (reserved & (1 << ii))) {
             continue;
         }
         
@@ -694,10 +714,11 @@ uint64_t get_sel_value(uint64_t sel_mask, uint64_t flip_bits) {
     return gpio_value;
 }
 
-void disable_sel_pins(void) {
+// Undo setup_sel_pins().  reserved is the value passed to it.
+void disable_sel_pins(uint8_t reserved) {
     for (int ii = 0; (ii < MAX_IMG_SEL_PINS); ii++) {
         uint8_t pin = HW->gpio_sel[ii];
-        if (pin < MAX_GPIOS) {
+        if ((pin < MAX_GPIOS) && !(reserved & (1 << ii))) {
             // Disable pulls
             GPIO_PAD(pin) &= ~(PAD_PU | PAD_PD);
 
@@ -813,6 +834,34 @@ void enter_bootloader(void) {
     p0 |= 0x01;     // Disable mass storage mode
     reboot(flags, ms_delay, p0, p1);
 }
+
+// Reads OTP row `row` with ECC.  clk_ref must be 25MHz or less while OTP is
+// read - datasheet S13.3.
+uint16_t otp_read_ecc(uint16_t row) {
+    uint32_t word = OTP_DATA_WORD(row);
+    return (uint16_t)((row & 1) ? (word >> 16) : word);
+}
+
+// The bytes of OTP row `row` onwards, read with ECC, two to a row and low byte
+// first.  A narrow read of the alias returns the right byte - datasheet
+// S13.3.2.
+const char *otp_ecc_bytes(uint16_t row) {
+    return (const char *)(OTP_DATA_BASE + 2 * row);
+}
+
+// Reads OTP row `row` raw.
+uint32_t otp_read_raw(uint16_t row) {
+    return OTP_DATA_RAW(row);
+}
+
+// Makes OTP pages 1-63 read-only to Secure and Non-secure code until the next
+// reset, so neither a plugin nor the USB plugin's PICOBOOT interface can write
+// OTP while One ROM runs.  Page 0 is read-only from manufacture.
+void otp_lock(void) {
+    for (uint32_t page = 1; page < 64; page++) {
+        OTP_SW_LOCK(page) = OTP_SW_LOCK_READ_ONLY;
+    }
+}
 #endif // !TEST_BUILD
 
 #if !defined(TEST_BUILD)
@@ -832,7 +881,12 @@ void platform_logging(void) {
     } else {
         LOG("RAM: %dKB", MCU_RAM_SIZE_KB);
     }
-    LOG("Flash: %dKB", MCU_FLASH_SIZE_KB);
+    onerom_flash_size_t cs0;
+    onerom_flash_size_t cs1;
+    otp_flash_sizes(&cs0, &cs1);
+    LOG("Flash: CS0 %luKB, CS1 %luKB",
+        (unsigned long)(flash_size_bytes(cs0) / 1024),
+        (unsigned long)(flash_size_bytes(cs1) / 1024));
     LOG("Freq: %dMHz", TARGET_FREQ_MHZ);
     LOG("PLL: %d/%d/%d/%d", PLL_SYS_REFDIV, PLL_SYS_FBDIV, PLL_SYS_POSTDIV1, PLL_SYS_POSTDIV2);
 }
