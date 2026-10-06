@@ -8,9 +8,9 @@
 //! do not exist in a host process: tinyusb, picoboot, and an entry point.
 //! These are the controls it offers a scenario on top of that.
 //!
-//! The three entry points the harness itself needs —
-//! `ora_host_test_run_plugin`, `ora_host_test_set_yield_hook` and
-//! `ora_host_test_plugin_version` — are declared by `onerom-plugin-tester` and
+//! The harness's own entry points — `ora_host_test_run_plugin`,
+//! `ora_host_test_set_yield_hook`, `ora_host_test_plugin_version` and
+//! `ora_host_test_withhold_api` — are declared by `onerom-plugin-tester` and
 //! resolved against this crate's shim at the final link.
 
 unsafe extern "C" {

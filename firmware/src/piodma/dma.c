@@ -127,6 +127,9 @@ void dma_init(void) {
 #endif // REAL_HARDWARE
 }
 
+#if REAL_HARDWARE
+// Only the hardware build copies a ROM image by DMA. The host build's
+// preload_rom_image() uses memcpy.
 void dma_copy(
     uint32_t src_addr,
     uint32_t dst_addr,
@@ -168,7 +171,6 @@ uint32_t dma_copy_status() {
     return dma_reg->transfer_count;
 }
 
-#if REAL_HARDWARE
 // Only the copy channel raises DMA_IRQ_0.
 void irq_handler_dma_irq_0(void) {
     DMA_INTS0 = (1u << DMA_COPY_CHANNEL);

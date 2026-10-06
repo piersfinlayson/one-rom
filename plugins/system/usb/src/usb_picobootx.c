@@ -492,7 +492,11 @@ static pb_status_t onerom_set_standby(const onerom_set_standby_args_t *args) {
             return PB_STATUS_INVALID_ARG;
 
         default:
+            // LCOV_UNREACHABLE_START - ora_set_standby returns only
+            // ORA_RESULT_OK and ORA_RESULT_INVALID_ARG.  The arm stays because
+            // the results are defined in api.h, not here.
             return PB_STATUS_UNKNOWN_ERROR;
+            // LCOV_UNREACHABLE_STOP
     }
 }
 
