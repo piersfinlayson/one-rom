@@ -547,6 +547,35 @@ int32_t usb_host_test_write(uint32_t addr, const uint8_t *buf, uint32_t len) {
 // Plugin entry
 // ---------------------------------------------------------------------------
 
+// The most API identifiers withheld from the plugin at once.
+#define USB_SHIM_WITHHOLD_MAX 8u
+
+static uint32_t s_withheld[USB_SHIM_WITHHOLD_MAX];
+static uint32_t s_withheld_count;
+
+// Make the plugin's lookup return NULL for each of `count` identifiers.  A
+// `count` of zero restores the full API.
+void ora_host_test_withhold_api(const uint32_t *ids, uint32_t count) {
+    if (count > USB_SHIM_WITHHOLD_MAX) {
+        count = USB_SHIM_WITHHOLD_MAX;
+    }
+    for (uint32_t i = 0; i < count; i++) {
+        s_withheld[i] = ids[i];
+    }
+    s_withheld_count = count;
+}
+
+// The lookup provided to the plugin.  A withheld identifier returns NULL, as on
+// firmware older than the call.
+static void *shim_fn_lookup(api_id_t id) {
+    for (uint32_t i = 0; i < s_withheld_count; i++) {
+        if (s_withheld[i] == (uint32_t)id) {
+            return NULL;
+        }
+    }
+    return ora_fn_lookup(id);
+}
+
 // Start the plugin.  Does not return: the plugin's main loop is infinite by
 // design, so the harness runs this on a thread it is willing to abandon.
 //
@@ -556,7 +585,7 @@ int32_t usb_host_test_write(uint32_t addr, const uint8_t *buf, uint32_t len) {
 // invented layout that nothing would honour.
 void ora_host_test_run_plugin(void) {
     static const ora_entry_args_t args = {0};
-    usb_main(ora_fn_lookup, ORA_PLUGIN_TYPE_SYSTEM, &args);
+    usb_main(shim_fn_lookup, ORA_PLUGIN_TYPE_SYSTEM, &args);
 }
 
 // Put the plugin back to how a device hands it to itself.

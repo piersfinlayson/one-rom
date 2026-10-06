@@ -8,12 +8,16 @@
 //! This harness doesn't drive the bus, so the data pins in standby are left to
 //! the plugin API tester and the PIO tester.
 
+use onerom_fw_emulator::Emulator;
+use onerom_fw_emulator::ffi::api_id_t_ORA_ID_SET_STANDBY;
 use onerom_plugin_tester::run::Outcome;
 
 use crate::device::Device;
 use crate::{Ctx, Scenario};
 
-use super::picobootx::{CMD_SET_STANDBY, INVALID_ARG, OK};
+use super::picobootx::{
+    CMD_SET_STANDBY, FEAT_STANDBY, INVALID_ARG, NOT_PERMITTED, OK, caps, u32_at,
+};
 
 /// A SET_STANDBY argument block.
 fn standby_args(standby: u8) -> [u8; 16] {
@@ -86,6 +90,33 @@ fn the_reserved_bytes_are_ignored(dev: &mut Device, _ctx: &Ctx) -> Result<Outcom
     Ok(Outcome::Pass)
 }
 
+/// Withhold `ORA_ID_SET_STANDBY`, as on firmware older than the call.
+fn withhold_set_standby(_emu: &Emulator) {
+    let ids = [api_id_t_ORA_ID_SET_STANDBY];
+    // SAFETY: the shim copies the identifiers before returning.
+    unsafe {
+        onerom_plugin_tester::ffi::ora_host_test_withhold_api(ids.as_ptr(), ids.len() as u32)
+    };
+}
+
+/// On firmware without `ORA_ID_SET_STANDBY` standby isn't offered and
+/// SET_STANDBY returns NOT_PERMITTED, leaving One ROM as it was.
+fn the_command_is_not_permitted_without_the_api_call(
+    dev: &mut Device,
+    _ctx: &Ctx,
+) -> Result<Outcome, String> {
+    let caps = caps(dev)?;
+    if u32_at(&caps, 4) & FEAT_STANDBY != 0 {
+        return Err("ONEROM_FEAT_STANDBY is set, but ORA_ID_SET_STANDBY is withheld".to_string());
+    }
+
+    let booted = dev.in_standby();
+    for standby in [0u8, 1] {
+        set_standby(dev, &standby_args(standby), NOT_PERMITTED, booted)?;
+    }
+    Ok(Outcome::Pass)
+}
+
 pub static SCENARIOS: &[Scenario] = &[
     Scenario {
         name: "standby.the_command_turns_standby_on_and_off",
@@ -104,5 +135,11 @@ pub static SCENARIOS: &[Scenario] = &[
         about: "SET_STANDBY's reserved bytes are ignored",
         run: the_reserved_bytes_are_ignored,
         before_start: None,
+    },
+    Scenario {
+        name: "standby.the_command_is_not_permitted_without_the_api_call",
+        about: "without ORA_ID_SET_STANDBY, standby isn't offered and SET_STANDBY answers NOT_PERMITTED",
+        run: the_command_is_not_permitted_without_the_api_call,
+        before_start: Some(withhold_set_standby),
     },
 ];

@@ -53,7 +53,7 @@ const FEAT_GPIO_SET: u32 = 1 << 0;
 const FEAT_GPIO_QUERY: u32 = 1 << 1;
 const FEAT_GPIO_HOLD: u32 = 1 << 2;
 const FEAT_LED_ARGS: u32 = 1 << 3;
-const FEAT_STANDBY: u32 = 1 << 4;
+pub const FEAT_STANDBY: u32 = 1 << 4;
 const MAX_HOLD_MS: u32 = 60000;
 
 // A GPIO query entry, and the longest transfer a One ROM command may ask for.
@@ -99,7 +99,7 @@ fn gpio_query_args(first_gpio: u8, count: u8) -> [u8; 16] {
 }
 
 /// The whole capabilities response, as the host would read it.
-fn caps(dev: &mut Device) -> Result<Vec<u8>, String> {
+pub fn caps(dev: &mut Device) -> Result<Vec<u8>, String> {
     let st = dev.dispatch(CMD_GET_CAPS, CAPS_LEN, &NO_ARGS);
     if st != OK {
         return Err(format!("GET_CAPS was refused with status {st}"));
@@ -111,7 +111,7 @@ fn u16_at(buf: &[u8], at: usize) -> u16 {
     u16::from_le_bytes([buf[at], buf[at + 1]])
 }
 
-fn u32_at(buf: &[u8], at: usize) -> u32 {
+pub fn u32_at(buf: &[u8], at: usize) -> u32 {
     u32::from_le_bytes([buf[at], buf[at + 1], buf[at + 2], buf[at + 3]])
 }
 
