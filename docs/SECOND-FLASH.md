@@ -2,10 +2,8 @@
 
 Describes how One ROM's firmware and tools use a second flash chip.
 
-A board's first flash chip is on QSPI chip select 0 at `0x10000000`. An L board
-has a second 2MB flash chip on chip select 1 at `0x11000000`. See
-[Board Sizes](OTP.md#board-sizes). The second chip is at `0x11000000`
-whatever the first chip's size.
+A board's first flash chip is on QSPI chip select 0 at `0x10000000`. A second
+chip is on chip select 1 at `0x11000000` irrespective of the first chip's size.
 
 The bootloader reaches the second chip over USB once programmed in OTP. Firmware
 0.8.0 and later leaves chip select 1's pin as the bootloader set it (from OTP)
@@ -34,8 +32,11 @@ an image uses.
 ## Board Size
 
 An image build is for a specific board size:
-- M (medium) means just the first 2MB flash chip
-- L (large) means 2MB first flash chip and 2MB second flash chip
+- M (medium) means 2MB of flash in total
+- L (large) means 4MB of flash in total
+
+The tools currently only support L implemented using 2MB flash chips.
+See [Board Sizes](OTP.md#board-sizes).
 
 Firmware before 0.8.0 supports only M, so the generator refuses a build for
 any other size with that firmware, even when every slot fits on the first chip.
@@ -43,7 +44,8 @@ That firmware resets chip select 1's pin at boot and doesn't set the second
 chip's clock divisor.
 
 The second chip's address is declared in `rust/metadata/metadata_schema.toml`
-and each board size's chips in `FLASH_LAYOUTS` in `rust/metadata/src/otp.rs`.
+and the tools' layout for each board size in `FLASH_LAYOUTS` in
+`rust/metadata/src/otp.rs`.
 
 `onerom program` builds for the connected One ROM's board size, or for M when
 the firmware it programs is before 0.8.0. The CLI reads the size from runtime
@@ -53,8 +55,9 @@ from OTP through the running USB plugin.
 
 `onerom firmware build` takes the board size with `--size`. It defaults to M.
 
-Studio builds for the Board Size selected in Create, which Detect sets from the
-One ROM, or for M when the firmware is before 0.8.0.
+Studio builds for the Board Size selected in Create, or for M when the firmware
+is pre-v0.8.0. Detect sets Board Size from the One ROM. Loading an image file
+in Analyse sets Board Size to the smallest size the image requires.
 
 ## Image Files
 

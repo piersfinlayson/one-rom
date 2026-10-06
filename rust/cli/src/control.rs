@@ -700,7 +700,7 @@ pub async fn cmd_pin(options: &Options, args: &args::control::ControlPinArgs) ->
 // Resolve poke input — either a single byte value or the contents of a file.
 //
 // The ArgGroup on the args structs guarantees exactly one of these is Some.
-fn poke_data(value: Option<u8>, input: Option<&String>) -> Result<Vec<u8>, Error> {
+pub fn poke_data(value: Option<u8>, input: Option<&String>) -> Result<Vec<u8>, Error> {
     if let Some(byte) = value {
         Ok(vec![byte])
     } else if let Some(path) = input {

@@ -180,8 +180,8 @@ pub enum CommissionError {
     #[error("{0} isn't a Fire board")]
     NotFire(Board),
 
-    /// An L board needs an external flash chip select pin. This board doesn't
-    /// have one.
+    /// The tools currently configure L with a second chip on chip select 1, which
+    /// requires an external flash chip select pin. This board doesn't have one.
     #[error("{0} doesn't have an external flash chip select pin")]
     NoExternalFlash(Board),
 

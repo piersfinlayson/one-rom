@@ -5160,6 +5160,7 @@ dependencies = [
  "git2 0.20.4",
  "hex",
  "iced",
+ "iced_runtime",
  "log",
  "onerom-app",
  "onerom-cli",

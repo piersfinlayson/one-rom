@@ -187,7 +187,7 @@ pub fn message(
             }
         }
         Message::FlashFirmware => flash_firmware(create, runtime_info),
-        Message::FlashFirmwareResult(result) => flash_firmware_result(create, result),
+        Message::FlashFirmwareResult(result) => flash_firmware_result(create, runtime_info, result),
 
         // Progress tick from subscription during operation
         Message::ProgressTick => {

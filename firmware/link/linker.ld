@@ -13,6 +13,6 @@ MEMORY
 }
 
 _Ram_Rom_Image_Start = ORIGIN(RAM);
-_Ram_Rom_Image_Size = 0x80000;  /* 512 KB */
+_Ram_Rom_Image_Size = MAX_ROM_IMAGE_SIZE;
 
 INCLUDE "common.ld"

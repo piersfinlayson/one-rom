@@ -23,6 +23,7 @@
 mod commission;
 mod control_erase;
 mod control_pin;
+mod control_poke;
 mod control_reset;
 mod firmware_build;
 mod firmware_inspect;

@@ -972,7 +972,7 @@ onerom inspect peek live --address 0 --length 8192 --output rom-image.bin
 
 | Option | Description |
 |---|---|
-| `--address, -a <ADDRESS>` (alias `--addr`) | Logical ROM address to read from, starting at 0. Decimal or `0x` hex. Default `0`. |
+| `--address, -a <ADDRESS>` (alias `--addr`) | Logical ROM address to read from, starting at 0. Decimal or `0x` hex. Default `0`. On a One ROM serving half a 27C080, address 0 is the start of that half. |
 | `--length, -l <LENGTH>` (aliases `--len`, `--size`) | Number of bytes to read. Decimal or hex. If omitted, reads to the end of the live image. |
 | `--output, -o <FILE>` (alias `--out`) | Save the data to this file. |
 
@@ -1630,7 +1630,7 @@ onerom control poke live --address 0 --input patch.bin
 
 | Option | Description |
 |---|---|
-| `--address, -a <ADDRESS>` (alias `--addr`) | Logical ROM address, starting at 0. Decimal or `0x` hex. Default `0`. |
+| `--address, -a <ADDRESS>` (alias `--addr`) | Logical ROM address, starting at 0. Decimal or `0x` hex. Default `0`. On a One ROM serving half a 27C080, address 0 is the start of that half. |
 | `--byte <BYTE>` (alias `--value`) | Single byte value to write. Decimal or hex. |
 | `--input, -i <FILE>` (alias `--in`) | Write the contents of this binary file. |
 | `--delta` (alias `--deltas`) | Only write bytes that differ from current device content. Requires `--input`. |
@@ -1883,7 +1883,7 @@ for confirmation, which `--yes` answers.
 `--size` takes:
 
 - `M`, with 2MB of flash
-- `L`, with an additional 2MB flash chip on chip select 1
+- `L`, with 4MB of flash
 
 A board that doesn't
 [support external flash](/docs/COMMISSIONING.md#cli-options) is always M.

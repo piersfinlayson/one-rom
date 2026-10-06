@@ -295,6 +295,8 @@ pub struct InspectPeekLiveArgs {
     /// Read from the ROM image at this logical address, starting from 0.
     ///
     /// Accepts decimal and hexadecimal (0x prefix) formats.
+    ///
+    /// On a One ROM serving half a 27C080, address 0 is the start of that half.
     #[arg(long, short, value_name = "ADDRESS", visible_alias = "addr", value_parser = parse_u32, default_value = "0")]
     pub address: u32,
 

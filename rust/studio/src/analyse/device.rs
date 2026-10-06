@@ -17,8 +17,9 @@ use onerom_config::hw::Board;
 use onerom_config::mcu::Variant as McuVariant;
 use onerom_fw_parser::{ParsedDevice, Parser, readers::MemoryReader};
 use onerom_gen::FlashChips;
+use std::path::PathBuf;
 
-use crate::analyse::{Analyse, AnalyseState, FW_VERSION_METADATA, Message};
+use crate::analyse::{Analyse, AnalyseState, FW_VERSION_METADATA, LoadedFile, Message, Source};
 use crate::app::AppMessage;
 use crate::device::{Address, BoardDetails, Client, Message as DeviceMessage};
 use crate::hw::HardwareInfo;
@@ -195,23 +196,15 @@ pub fn flash_firmware(analyse: &mut Analyse) -> Task<AppMessage> {
     }
 
     // Check if we have firmware data to flash
-    if let Some(device_fw_data) = analyse.file_contents.as_ref()
-        && let Some(filename) = analyse.fw_file.as_ref()
-    {
+    if let Some(file) = analyse.file.as_ref() {
         // Get hardware info from firmware file.
-        let hw_info = analyse
-            .fw_info
-            .as_ref()
-            .map(HardwareInfo::from_parsed)
-            .unwrap_or_default();
+        let hw_info = HardwareInfo::from_parsed(&file.fw_info);
 
         // A Fire image file's slots must match its length.
         if hw_info.is_fire()
-            && let Some(info) = analyse.fw_info.as_ref()
-            && let Err(e) = info.check_image_file(
-                device_fw_data.len(),
-                FlashChips::first_for(McuVariant::RP2350),
-            )
+            && let Err(e) = file
+                .fw_info
+                .check_image_file(file.data.len(), FlashChips::first_for(McuVariant::RP2350))
         {
             let text = format!(
                 "{}\n  Download or build the image file again.",
@@ -224,14 +217,14 @@ pub fn flash_firmware(analyse: &mut Analyse) -> Task<AppMessage> {
 
         // Update state
         analyse.state = AnalyseState::Flashing;
-        analyse.analysis_content = format!("Flashing {filename:?} to device...");
+        analyse.analysis_content = format!("Flashing {:?} to device...", file.path);
 
         // Send flash message to device module
         Task::done(
             DeviceMessage::FlashFirmware {
                 client: Client::Analyse,
                 hw_info,
-                data: device_fw_data.clone(),
+                data: file.data.clone(),
             }
             .into(),
         )
@@ -241,8 +234,13 @@ pub fn flash_firmware(analyse: &mut Analyse) -> Task<AppMessage> {
     }
 }
 
-/// Handle firmware flash complete message
-pub fn firmware_flash_complete(analyse: &mut Analyse, result: Result<(), String>) {
+/// Handle firmware flash complete message.  A successful flash sets whether
+/// the device stays on USB while running from the file written.  A failed one
+/// leaves it unchanged, as a refused flash writes nothing.
+pub fn firmware_flash_complete(
+    analyse: &mut Analyse,
+    result: Result<(), String>,
+) -> Task<AppMessage> {
     // Check state
     if analyse.state != AnalyseState::Flashing {
         warn!(
@@ -250,7 +248,7 @@ pub fn firmware_flash_complete(analyse: &mut Analyse, result: Result<(), String>
             analyse.state
         );
         analyse.analysis_content += "\nReceived unexpected flash complete message.\n";
-        return;
+        return Task::none();
     }
 
     // Update state
@@ -260,9 +258,15 @@ pub fn firmware_flash_complete(analyse: &mut Analyse, result: Result<(), String>
     match result {
         Ok(()) => {
             analyse.analysis_content += "\nFirmware flash completed successfully.\n";
+            let usb_run_capable = analyse
+                .file
+                .as_ref()
+                .is_some_and(|file| file.fw_info.is_usb_run_capable());
+            Task::done(DeviceMessage::SetUsbRunCapable(usb_run_capable).into())
         }
         Err(err) => {
             analyse.analysis_content += &format!("\nFirmware flash failed:\n- {err}\n");
+            Task::none()
         }
     }
 }
@@ -273,9 +277,6 @@ pub fn firmware_flash_complete(analyse: &mut Analyse, result: Result<(), String>
 /// which is logged and displayed.
 #[allow(clippy::wildcard_enum_match_arm)]
 pub fn detect_device(analyse: &mut Analyse, err: Option<String>) -> Task<AppMessage> {
-    // Clear out previous firmware info and file contents
-    analyse.file_contents = None;
-
     // If there was an error from the previous read attempt, log it
     if let Some(err) = err {
         analyse.fw_info = None;
@@ -310,6 +311,7 @@ pub fn detect_device(analyse: &mut Analyse, err: Option<String>) -> Task<AppMess
         model: None,
         mcu_variant: detect_state.sample_mcu(),
         board_size: None,
+        min_board_size: None,
     };
 
     // Produce the Task to read device flash
@@ -358,6 +360,7 @@ pub fn reread_device(
         model: None,
         mcu_variant: Some(mcu),
         board_size: None,
+        min_board_size: None,
     };
 
     // Send read message to device module to read the flash
@@ -371,12 +374,15 @@ pub fn reread_device(
 }
 
 /// Common function to handle firmware being loaded from either a file or
-/// device flash, as parsing is the same process
+/// device flash, as parsing is the same process.  `path` is the file's, `None`
+/// for device flash.
 pub fn file_device_loaded(
     analyse: &mut Analyse,
     result: Result<(ParsedDevice, Vec<u8>), String>,
-    is_file: bool,
+    path: Option<PathBuf>,
 ) -> Task<AppMessage> {
+    let is_file = path.is_some();
+
     // The MCU of a failed device read.  Its board may be commissioned.
     let mut failed_mcu = None;
 
@@ -399,9 +405,14 @@ pub fn file_device_loaded(
                 Err(e) => format!("Error serializing info to JSON: {}", e),
             };
 
-            // Store firmware info and file contents
+            if let Some(path) = path {
+                analyse.file = Some(LoadedFile {
+                    path,
+                    data,
+                    fw_info: device.clone(),
+                });
+            }
             analyse.fw_info = Some(device);
-            analyse.file_contents = if is_file { Some(data) } else { None };
         }
 
         // The read failed, or what we read wasn't a One ROM
@@ -426,16 +437,17 @@ pub fn file_device_loaded(
     // Clear state back to idle as we're done reading
     analyse.state = AnalyseState::Idle;
 
-    // Figure out whether this device is capable of running firmware while
-    // connected via USB.  We'll likely extend this to other properties in
-    // future
-    let usb_run_capable = analyse
-        .fw_info
-        .as_ref()
-        .is_some_and(|device| device.is_usb_run_capable());
-    let usb_run_capable_task = Task::done(AppMessage::Device(DeviceMessage::SetUsbRunCapable(
-        usb_run_capable,
-    )));
+    // Whether the device stays on USB while running comes from reading it,
+    // never from a loaded file
+    let usb_run_capable_task = if is_file {
+        Task::none()
+    } else {
+        let usb_run_capable = analyse
+            .fw_info
+            .as_ref()
+            .is_some_and(|device| device.is_usb_run_capable());
+        Task::done(DeviceMessage::SetUsbRunCapable(usb_run_capable).into())
+    };
 
     // Decide whether to send decoded hardware information to the rest of the
     // app.  Create uses this to pre-populate its own hardware info display.
@@ -517,22 +529,29 @@ pub fn board_details_read(analyse: &mut Analyse, details: BoardDetails) -> Task<
 
 pub fn stop_device(analyse: &mut Analyse) -> Task<AppMessage> {
     debug!("Stopping device");
-    let start_task = analyse.start_analysis(AnalyseState::Rebooting);
-    let reboot_task = Task::done(AppMessage::Device(DeviceMessage::RebootDevice {
-        client: Client::Analyse,
-        stopped: true,
-    }));
-    Task::chain(start_task, reboot_task)
+    reboot_device(analyse, true)
 }
 
 pub fn run_device(analyse: &mut Analyse) -> Task<AppMessage> {
     debug!("Running device");
-    let start_task = analyse.start_analysis(AnalyseState::Rebooting);
+    reboot_device(analyse, false)
+}
+
+// A reboot from the File view leaves the analysis and loaded file in place,
+// so the file can still be flashed.  From the Device view the device is
+// analysed again once it has rebooted.
+fn reboot_device(analyse: &mut Analyse, stopped: bool) -> Task<AppMessage> {
     let reboot_task = Task::done(AppMessage::Device(DeviceMessage::RebootDevice {
         client: Client::Analyse,
-        stopped: false,
+        stopped,
     }));
-    Task::chain(start_task, reboot_task)
+    if analyse.selected_source_tab == Source::File {
+        analyse.state = AnalyseState::Rebooting;
+        analyse.analysis_content += &format!("\n{}", analyse.state.content());
+        reboot_task
+    } else {
+        Task::chain(analyse.start_analysis(AnalyseState::Rebooting), reboot_task)
+    }
 }
 
 pub fn device_reboot_complete(
@@ -540,6 +559,11 @@ pub fn device_reboot_complete(
     result: Result<(), String>,
 ) -> Task<AppMessage> {
     match result {
+        Ok(()) if analyse.selected_source_tab == Source::File => {
+            analyse.analysis_content += "\nDevice rebooted successfully.";
+            analyse.state = AnalyseState::Idle;
+            Task::none()
+        }
         Ok(()) => {
             analyse.analysis_content += "\nDevice rebooted successfully, re-analysing...";
             detect_device(analyse, None)
@@ -555,6 +579,129 @@ pub fn device_reboot_complete(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::studio::RuntimeInfo;
+    use futures::StreamExt;
+    use iced_runtime::Action;
+    use onerom_fw_parser::Sdrr;
+
+    // Handles `msg` and returns the messages its Task sends
+    fn update(analyse: &mut Analyse, msg: Message) -> Vec<AppMessage> {
+        let task = analyse.update(&RuntimeInfo::default(), msg);
+        let Some(stream) = iced_runtime::task::into_stream(task) else {
+            return Vec::new();
+        };
+        let outputs = stream.filter_map(|action| async move {
+            if let Action::Output(msg) = action {
+                Some(msg)
+            } else {
+                None
+            }
+        });
+        futures::executor::block_on(outputs.collect())
+    }
+
+    // Firmware without the USB plugin
+    fn firmware() -> ParsedDevice {
+        ParsedDevice::Original(Sdrr {
+            flash: None,
+            ram: None,
+        })
+    }
+
+    fn load_file(analyse: &mut Analyse) -> Vec<AppMessage> {
+        let result = Ok((firmware(), vec![0; 16]));
+        update(analyse, Message::FileLoaded(PathBuf::from("a.bin"), result))
+    }
+
+    fn sets_usb_run_capable(msgs: &[AppMessage]) -> Option<bool> {
+        msgs.iter().find_map(|msg| {
+            if let AppMessage::Device(DeviceMessage::SetUsbRunCapable(capable)) = msg {
+                Some(*capable)
+            } else {
+                None
+            }
+        })
+    }
+
+    /// Stop and Run on the File view reboot the device and leave the
+    /// analysis and loaded file in place, whether or not the reboot works.
+    #[test]
+    fn a_reboot_on_the_file_view_keeps_the_loaded_file() {
+        let failed = Err("reboot failed".to_string());
+        for (msg, result) in [
+            (Message::StopDevice, Ok(())),
+            (Message::RunDevice, Ok(())),
+            (Message::StopDevice, failed),
+        ] {
+            let stopped = matches!(msg, Message::StopDevice);
+            let mut analyse = Analyse::new();
+            load_file(&mut analyse);
+
+            let sent = update(&mut analyse, msg);
+            assert!(sent.iter().any(|msg| matches!(
+                msg,
+                AppMessage::Device(DeviceMessage::RebootDevice { stopped: s, .. }) if *s == stopped
+            )));
+            assert!(
+                !sent
+                    .iter()
+                    .any(|msg| matches!(msg, AppMessage::Studio(StudioMessage::HardwareInfo(_))))
+            );
+            assert!(analyse.file.is_some());
+
+            update(&mut analyse, Message::DeviceRebootComplete(result));
+            assert!(analyse.state.is_idle());
+            assert!(analyse.file.is_some());
+            assert!(analyse.fw_info.is_some());
+        }
+    }
+
+    /// Stop on the Device view analyses the device again once it has
+    /// rebooted, and the loaded file is discarded.
+    #[test]
+    fn a_reboot_on_the_device_view_analyses_the_device_again() {
+        let mut analyse = Analyse::new();
+        load_file(&mut analyse);
+        update(&mut analyse, Message::SourceSelected(Source::Device));
+
+        update(&mut analyse, Message::StopDevice);
+        assert!(analyse.file.is_none());
+
+        let sent = update(&mut analyse, Message::DeviceRebootComplete(Ok(())));
+        assert!(matches!(analyse.state, AnalyseState::Detecting(_)));
+        assert!(
+            sent.iter()
+                .any(|msg| matches!(msg, AppMessage::Device(DeviceMessage::ReadDevice { .. })))
+        );
+    }
+
+    /// Reading a device sets whether it stays on USB while running.  Loading
+    /// a file doesn't.
+    #[test]
+    fn loading_a_file_leaves_run_capability_alone() {
+        let mut analyse = Analyse::new();
+        assert_eq!(sets_usb_run_capable(&load_file(&mut analyse)), None);
+
+        let result = Ok((firmware(), vec![0; 16]));
+        let sent = update(&mut analyse, Message::DeviceLoaded(result));
+        assert_eq!(sets_usb_run_capable(&sent), Some(false));
+    }
+
+    /// A successful flash sets whether the device stays on USB while running
+    /// from the file written.  A failed flash leaves it unchanged.
+    #[test]
+    fn a_flash_sets_run_capability_from_the_file() {
+        for (result, expected) in [(Ok(()), Some(false)), (Err("failed".to_string()), None)] {
+            let mut analyse = Analyse::new();
+            load_file(&mut analyse);
+            update(&mut analyse, Message::FlashFirmware);
+            assert_eq!(analyse.state, AnalyseState::Flashing);
+
+            let sent = update(&mut analyse, Message::FlashComplete(result));
+            assert_eq!(sets_usb_run_capable(&sent), expected);
+            assert!(analyse.file.is_some());
+        }
+    }
 
     /// A commissioned board whose firmware wasn't recognised displays its
     /// commissioned board in place of the question.

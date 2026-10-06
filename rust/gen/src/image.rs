@@ -54,7 +54,7 @@ const MIN_FW_VER_FIRE_28_18_ADDR_PINS: FirmwareVersion = FirmwareVersion::new(0,
 /// Per-slot RAM budget: only one slot is served at a time, so this is
 /// the maximum size of any single slot's ROM table (`build_rom_image`'s
 /// return value).
-pub const MAX_IMAGE_SIZE: usize = 512 * 1024;
+pub const MAX_IMAGE_SIZE: usize = onerom_metadata::MAX_ROM_IMAGE_SIZE;
 
 /// How to handle Chip images that are too small for the Chip type
 #[derive(Debug, Default, Clone, serde::Serialize, serde::Deserialize)]

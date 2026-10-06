@@ -35,7 +35,7 @@ pub enum Message {
     // Handle file
     SelectFile,
     FileSelected(Option<PathBuf>),
-    FileLoaded(Result<(ParsedDevice, Vec<u8>), String>),
+    FileLoaded(PathBuf, Result<(ParsedDevice, Vec<u8>), String>),
 
     // Handle device
     DetectDevice,
@@ -63,7 +63,7 @@ impl std::fmt::Display for Message {
             Message::SourceSelected(tab) => write!(f, "SourceSelected({:?})", tab),
             Message::SelectFile => write!(f, "SelectFile"),
             Message::FileSelected(_) => write!(f, "FileSelected(...)"),
-            Message::FileLoaded(_) => write!(f, "FileLoaded(...)"),
+            Message::FileLoaded(_, _) => write!(f, "FileLoaded(...)"),
             Message::DetectDevice => write!(f, "DetectDevice"),
             Message::DeviceLoaded(_) => write!(f, "DeviceLoaded(...)"),
             Message::DeviceData(_) => write!(f, "DeviceData(...)"),
@@ -102,12 +102,12 @@ pub fn message(
             debug!("Firmware file selected: {:?}", path);
             load_file(analyse, path)
         }
-        Message::FileLoaded(result) => {
+        Message::FileLoaded(path, result) => {
             debug!(
                 "Firmware file loaded: {}",
                 if result.is_ok() { "OK" } else { "Error" }
             );
-            file_device_loaded(analyse, result, true)
+            file_device_loaded(analyse, result, Some(path))
         }
 
         // Handle device operations
@@ -122,7 +122,7 @@ pub fn message(
                 "Device firmware loaded: {}",
                 if result.is_ok() { "OK" } else { "Error" }
             );
-            file_device_loaded(analyse, result, false)
+            file_device_loaded(analyse, result, None)
         }
         Message::DeviceData(data) => {
             debug!("Device data received: {} bytes", data.len());
@@ -158,8 +158,7 @@ pub fn message(
                 "Firmware flash complete: {}",
                 if result.is_ok() { "OK" } else { "Error" }
             );
-            firmware_flash_complete(analyse, result);
-            Task::none()
+            firmware_flash_complete(analyse, result)
         }
 
         // Handle progress tick

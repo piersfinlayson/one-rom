@@ -20,7 +20,7 @@ extern limp_mode_pattern_t limp_mode_value;
 
 #define _ram_rom_image_start test_ram_rom_image_table
 
-#define RAM_ROM_TABLE_SIZE (512 * 1024)
+#define RAM_ROM_TABLE_SIZE MAX_ROM_IMAGE_SIZE
 
 void stub_log(const char* msg, ...);
 

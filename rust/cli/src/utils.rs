@@ -352,7 +352,7 @@ pub fn print_hex_dump(address: u32, data: &[u8]) {
 ///
 /// Checks the device is running and can accept live reads/writes.
 /// Checks that the offset is valid for the ROM currently being served by
-/// the devce.
+/// the device.
 ///
 /// Returns the actual device start address to read/write and length.
 pub fn check_live_read_write(
@@ -369,26 +369,33 @@ pub fn check_live_read_write(
     }
 
     let rom_type = device.get_active_rom_type().ok_or(Error::UnknownRomType)?;
-    let rom_size = device.get_active_rom_size().ok_or(Error::UnknownRomType)?;
+    let chip_size = device.get_active_rom_size().ok_or(Error::UnknownRomType)?;
+    live_range(&rom_type, chip_size, offset, length)
+}
 
-    let length = if let Some(len) = length {
-        len
-    } else {
-        // If length is not specified (read only) read to the end of the ROM
-        // image
-        if offset as usize >= rom_size {
-            return Err(Error::LiveOutOfBounds(rom_type, rom_size));
-        }
-        (rom_size as u32) - offset
+/// The device address and length of a live ROM access of `length` bytes from
+/// `offset`, or to the end of the live image without a length.
+///
+/// The live image is as big as the chip, up to the largest image One ROM
+/// serves.
+pub fn live_range(
+    rom_type: &str,
+    chip_size: usize,
+    offset: u32,
+    length: Option<u32>,
+) -> Result<(u32, u32), Error> {
+    let size = chip_size.min(LIVE_ROM_MAX_OFFSET as usize);
+    let out_of_bounds = || Error::LiveOutOfBounds(rom_type.to_string(), size);
+
+    let length = match length {
+        Some(length) => length,
+        None if (offset as usize) < size => size as u32 - offset,
+        None => return Err(out_of_bounds()),
     };
-
-    let end_offset = offset + length;
-    assert!(rom_size <= LIVE_ROM_MAX_OFFSET as usize);
-    if end_offset as usize > rom_size {
-        return Err(Error::LiveOutOfBounds(rom_type, rom_size));
+    match offset.checked_add(length) {
+        Some(end) if end as usize <= size => Ok((LIVE_ROM_BASE + offset, length)),
+        _ => Err(out_of_bounds()),
     }
-
-    Ok((LIVE_ROM_BASE + offset, length))
 }
 
 /// Resolves the target board type.
@@ -596,5 +603,70 @@ mod tests {
         );
         assert_eq!(choose_board(None, None, Some(firmware)), Some(firmware));
         assert_eq!(choose_board(None, None, None), None);
+    }
+
+    /// `live_range` for a chip of type `name` and the access at `offset` of
+    /// `length` bytes.
+    fn live_range_of(name: &str, offset: u32, length: Option<u32>) -> Result<(u32, u32), Error> {
+        let chip = ChipType::try_from_str(name).unwrap();
+        live_range(chip.name(), chip.size_bytes(), offset, length)
+    }
+
+    /// Whether `result` is out of bounds of a live image of `size` bytes.
+    fn out_of_bounds(result: Result<(u32, u32), Error>, size: usize) -> bool {
+        matches!(result, Err(Error::LiveOutOfBounds(_, s)) if s == size)
+    }
+
+    /// A One ROM serves half a 27C080, so its live image is 512KB.
+    #[test]
+    fn a_27c080_live_image_is_512kb() {
+        assert_eq!(
+            live_range_of("27C080", 0x100, None).unwrap(),
+            (LIVE_ROM_BASE + 0x100, 0x7ff00)
+        );
+        assert_eq!(
+            live_range_of("27C080", 0x7ffff, Some(1)).unwrap(),
+            (LIVE_ROM_BASE + 0x7ffff, 1)
+        );
+        assert_eq!(
+            live_range_of("27C080", 0, Some(0x80000)).unwrap(),
+            (LIVE_ROM_BASE, 0x80000)
+        );
+        for (offset, length) in [
+            (0x80000, None),
+            (0x80000, Some(1)),
+            (0x7ffff, Some(2)),
+            (0xfffff, None),
+        ] {
+            assert!(
+                out_of_bounds(live_range_of("27C080", offset, length), 0x80000),
+                "0x{offset:x} {length:?}"
+            );
+        }
+    }
+
+    /// A chip smaller than 512KB has a live image of its own size.
+    #[test]
+    fn a_2364_live_image_is_8kb() {
+        assert_eq!(
+            live_range_of("2364", 0x100, None).unwrap(),
+            (LIVE_ROM_BASE + 0x100, 0x1f00)
+        );
+        assert!(out_of_bounds(live_range_of("2364", 0x2000, None), 0x2000));
+        assert!(out_of_bounds(
+            live_range_of("2364", 0x1fff, Some(2)),
+            0x2000
+        ));
+    }
+
+    /// An address and length whose sum is past `u32::MAX` are out of bounds.
+    #[test]
+    fn an_overflowing_access_is_out_of_bounds() {
+        for (offset, length) in [(0x100, u32::MAX), (u32::MAX, 1)] {
+            assert!(
+                out_of_bounds(live_range_of("27C080", offset, Some(length)), 0x80000),
+                "0x{offset:x} 0x{length:x}"
+            );
+        }
     }
 }

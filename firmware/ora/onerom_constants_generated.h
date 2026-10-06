@@ -73,6 +73,11 @@
 // @since firmware 0.8.0
 #define ORA_USER_PLUGIN_SIZE 0x10000
 
+// Address of the live ROM image over the system USB plugin's PICOBOOT
+// interface. Outside of the RP2350's standard memory map.
+// @since firmware 0.8.0
+#define ORA_LIVE_ROM_BASE_ADDR ((uint32_t)0x90000000)
+
 // The longest hold either LED accepts, in milliseconds.
 // @since firmware 0.7.2
 #define ORA_LED_MAX_HOLD_MS ((uint32_t)0x0000EA60)

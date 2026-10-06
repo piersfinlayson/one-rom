@@ -30,7 +30,7 @@ A full One ROM build environment is required to build the plugins.  It can be co
 
 The sample config file below is for a One ROM 24, and configures both system and user plugins.
 
-- The system plugin provides a USB stack with picobootx (extended picoboot) protocol support.  In particular the logical ROM being served by One ROM is exposed over picoboot for live reads and writes from logical address 0x90000000.  This can be accessed by [pico⚡flash](https://picoflash.org), and by the future One ROM CLI tool.
+- The system plugin provides a USB stack with picobootx (extended picoboot) protocol support.  In particular the logical ROM being served by One ROM is exposed over picoboot for live reads and writes from logical address 0x90000000.  This can be accessed by [pico⚡flash](https://picoflash.org), and by the One ROM CLI's `peek` and `poke`.
 
 - The user plugin is a simple blinky example that links the status LED at around 1Hz.  It is completely independent from the system plugin, and does not interact with the logical ROM being served by One ROM.
 

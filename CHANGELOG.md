@@ -1,6 +1,6 @@
 # Changelog
 
-All notables changes between versions are documented in this file.
+All notable changes between versions are documented in this file.
 
 ## v0.8.0 - unreleased
 
@@ -12,7 +12,7 @@ Headline changes in this release:
 
 In detail:
 - A commissioned One ROM's bootloader appears as `One ROM Bootloader` from manufacturer piers.rocks with USB VID and PID `1209:F540`.  This is a permanent dedicated assignment from pid.codes.
-- A config can refer to a plugin name using `"plugin": "usb"`instead of a URL.  CLI and Studio use the latest release of the plugincompatible with the firmware.
+- A config can refer to a plugin name using `"plugin": "usb"` instead of a URL.  CLI and Studio use the latest release of the plugin compatible with the firmware.
 - Firmware:
   - A commissioned One ROM enters the bootloader if commissioning data is present and the commissioned board type differs from the metadata's board type.
   - OTP is made read-only before starting plugins, so nothing can write OTP from this point on.  OTP can only be modified in the bootloader.
@@ -36,15 +36,18 @@ In detail:
   - New: API metadata-key and constant headers now include the firmware release each entry first shipped in.
   - New: `ORA_OTP_FLASH_DEVINFO_*` and `ORA_FLASH_SIZE_*` constants, for reading and writing `FLASH_DEVINFO` which contains flash chip sizes.
   - New: `ORA_METADATA_KEY_FLASH_CS0_SIZE` and `ORA_METADATA_KEY_FLASH_CS1_SIZE` metadata keys for each flash chip's size.
-  - New: `ORA_` constants for the plugin regions, the longest serial number and each LED mode's shortest period, and `onerom_linker_constants_generated.ld` for plugin linker scripts.
+  - New: `ORA_` constants for the plugin regions, the live ROM image's PICOBOOT address, the longest serial number and each LED mode's shortest period, and `onerom_linker_constants_generated.ld` for plugin linker scripts.
   - Changed: Plugins build from only `firmware/ora` without the firmware's headers or Rust. A plugin using a firmware macro through `plugin.h` no longer compiles, and one linked with `plugin.ld` outside `plugin.mk` requires `-L firmware/ora`.
 - Fixes:
   - `onerom peek` no longer fails on a large read.
+  - `onerom peek` and `onerom poke` no longer crash on a One ROM serving a 27C080.
   - `onerom program` and `onerom firmware build` now report a board mismatch correctly.
   - Windows Device Manager no longer shows an exclamation mark against a One ROM running the USB plugin or against Lab.
   - `onerom firmware inspect` lists a v0.7.0+ image's MCU, plugins and ROMs, and prints base firmware's board as `any (base firmware)` rather than warning about missing metadata.
   - Commands that don't need a One ROM, such as `onerom image convert` or `onerom firmware inspect --firmware`, no longer fail when two One ROMs are connected.
   - `onerom program --reset-host` fails before programming where a ROM slot uses the pin, for example X1 for bank select.
+  - Studio's Stop and Run in Analyse no longer discard a loaded .bin file.
+  - Studio's Run button no longer disappears a second after a flash, changes when a .bin file is loaded in Analyse, or shows for a One ROM connected through a debug probe.
 - Other:
   - Retire the `onerom-fw` binary. Use the CLI's `firmware build` option instead.
 

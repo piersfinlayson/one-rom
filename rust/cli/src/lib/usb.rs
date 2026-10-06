@@ -38,7 +38,7 @@ use crate::picobootx::{
     ONEROM_FEAT_GPIO_HOLD, ONEROM_FEAT_GPIO_QUERY, ONEROM_FEAT_GPIO_SET, ONEROM_FEAT_LED_ARGS,
     ONEROM_LED_STATE_LEN, ONEROM_MAGIC, PICOBOOT_DIR_IN,
 };
-use crate::{Device, DeviceState, Firmware, Options};
+use crate::{Device, DeviceState, Firmware, LIVE_ROM_BASE, LIVE_ROM_MAX_OFFSET, Options};
 
 /// Flash start address on RP2350.
 pub const FLASH_BASE: u32 = onerom_metadata::FLASH_CS0_BASE_ADDR;
@@ -763,11 +763,10 @@ const OTHER_REGIONS: &[MemoryRegion] = &[
     MemoryRegion::new("SRAM", 0x2000_0000, 0x0008_2000, MemoryType::Ram),
     // 32KB of Boot ROM
     MemoryRegion::new("ROM", 0x0000_0000, 0x0000_8000, MemoryType::BootRom),
-    // 512KB of live ROM data
     MemoryRegion::new(
         "Live ROM Image",
-        0x9000_0000,
-        0x0008_0000,
+        LIVE_ROM_BASE,
+        LIVE_ROM_MAX_OFFSET,
         MemoryType::VirtualRw,
     ),
 ];

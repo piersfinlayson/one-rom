@@ -4,6 +4,7 @@
 
 - `inspect info` indicates what it cannot decode and why.
 - `peek` no longer fails on a large read.
+- `peek` and `poke` no longer crash on a One ROM serving a 27C080. Their `--address` help says where address 0 is on a One ROM serving half a 27C080.
 - `program` and `firmware build` report a board mismatch correctly.
 - Add `hardware commission`, `validate`, `set-size`, `sign` and `request-signature` for commissioning a One ROM. See [COMMISSIONING](/docs/COMMISSIONING.md).
 - Add `inspect otp`, which prints what a One ROM's OTP contains.

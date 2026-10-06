@@ -10,6 +10,7 @@ use std::time::Duration;
 
 use onerom_cli::CliFetch;
 use onerom_cli::plugin::{PluginNote, check_config_plugins, resolve_config_plugins};
+use onerom_cli::slot::has_system_plugin;
 use onerom_config::fw::FirmwareVersion;
 use onerom_config::hw::Board;
 use onerom_config::mcu::Variant as McuVariant;
@@ -182,6 +183,8 @@ pub struct Image {
     metadata: Vec<u8>,
 
     roms: Vec<u8>,
+
+    usb_run_capable: bool,
 }
 
 impl std::fmt::Display for Image {
@@ -206,6 +209,12 @@ impl Image {
     /// Returns the length of the firmware portion
     pub fn firmware_len(&self) -> usize {
         self.firmware.len()
+    }
+
+    /// Whether the image includes a system plugin, which keeps a running
+    /// device on USB
+    pub fn is_usb_run_capable(&self) -> bool {
+        self.usb_run_capable
     }
 
     /// Returns the maximum firmware length (48KB)
@@ -362,7 +371,7 @@ impl RuntimeInfo {
         self.hw_info.as_ref()
     }
 
-    fn set_hw_info(&mut self, hw_info: Option<HardwareInfo>) {
+    pub(crate) fn set_hw_info(&mut self, hw_info: Option<HardwareInfo>) {
         self.hw_info = hw_info;
     }
 
@@ -794,6 +803,7 @@ impl Studio {
             firmware,
             metadata,
             roms,
+            usb_run_capable: has_system_plugin(builder.config()),
         };
         let total_len = image.full_image_len();
         let fw_len = image.firmware_len();

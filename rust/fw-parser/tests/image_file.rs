@@ -2,7 +2,8 @@
 //
 // MIT License
 
-//! Tests for checking an image file's slots against the file's length.
+//! Tests for checking an image file's slots against the file's length, and
+//! for the smallest board size an image requires.
 
 use core::future::Future;
 use core::pin::pin;
@@ -363,4 +364,34 @@ fn a_slot_outside_both_chips_is_reported_by_its_absolute_index() {
             addr: 0x1080_0000
         })
     );
+}
+
+// ---------------------------------------------------------------------------
+// Minimum board size
+// ---------------------------------------------------------------------------
+
+/// Three 512KB sets fit the first chip whichever size they're built for, and a
+/// fourth goes on the second chip.
+#[test]
+fn an_image_requires_the_smallest_board_size_holding_it() {
+    for (size, sets, min) in [
+        (BoardSize::M, 3, BoardSize::M),
+        (BoardSize::L, 3, BoardSize::M),
+        (BoardSize::L, 4, BoardSize::L),
+    ] {
+        let (device, _) = schema_file(size, &vec!["27C040"; sets]);
+        assert_eq!(device.min_board_size(), Some(min), "{size} {sets}");
+    }
+}
+
+#[test]
+fn a_lab_doesnt_have_a_board_size() {
+    assert_eq!(ParsedDevice::Lab.min_board_size(), None);
+}
+
+/// A slot ending past 2MB into the second chip requires more than 4MB.
+#[test]
+fn an_image_too_big_for_any_board_size_doesnt_have_one() {
+    let device = original_device(&[(0x1001_0000, 0x4000), (0x111f_c000, 0x8000)]);
+    assert_eq!(device.min_board_size(), None);
 }

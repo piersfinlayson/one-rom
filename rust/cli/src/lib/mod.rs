@@ -34,8 +34,8 @@ pub use device::{Device, DeviceState, Firmware};
 pub use error::Error;
 pub use fetch::CliFetch;
 
-pub const LIVE_ROM_BASE: u32 = 0x9000_0000;
-pub const LIVE_ROM_MAX_OFFSET: u32 = 0x0008_0000;
+pub const LIVE_ROM_BASE: u32 = onerom_metadata::LIVE_ROM_BASE_ADDR;
+pub const LIVE_ROM_MAX_OFFSET: u32 = onerom_metadata::MAX_ROM_IMAGE_SIZE as u32;
 
 #[derive(ValueEnum, Clone, Default, Debug)]
 pub enum LogLevel {

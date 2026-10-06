@@ -97,6 +97,10 @@ tiny-skia = "0.11"
 tokio = { version = "1", features = ["rt"] }
 usvg = "0.45"
 
+[dev-dependencies]
+# Collects the messages a handler's Task sends.  Its version must match iced's.
+iced_runtime = "0.13"
+
 [build-dependencies]
 built = { version = "0.8", features = ["git2"] }
 embed-resource = "3"

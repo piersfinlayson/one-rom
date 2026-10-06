@@ -690,6 +690,23 @@ type = "u32"
 value = 0x40134000
 comment = "Address of the RP2350's OTP without ECC, one 24-bit row to each 32-bit word."
 
+[[constants]]
+name = "MAX_ROM_IMAGE_SIZE"
+type = "usize"
+value = 0x80000
+linker_script = true
+comment = """Size in bytes of the largest ROM image One ROM serves. The firmware reserves
+this much RAM for the image it serves."""
+
+[[constants]]
+name = "LIVE_ROM_BASE_ADDR"
+type = "u32"
+value = 0x90000000
+ora_api = true
+first_release = "0.8.0"
+comment = """Address of the live ROM image over the system USB plugin's PICOBOOT
+interface. Outside of the RP2350's standard memory map."""
+
 # ===========================================================================
 # Type aliases
 # ===========================================================================

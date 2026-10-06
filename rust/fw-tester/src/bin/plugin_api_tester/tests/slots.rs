@@ -15,6 +15,7 @@ use onerom_fw_emulator::{
     Emulator, ORA_FLASH_SLOT_FLAG_EXCLUDE_NON_PLUGINS, ORA_FLASH_SLOT_FLAG_EXCLUDE_PLUGINS,
 };
 use onerom_gen::Config;
+use onerom_metadata::MAX_ROM_IMAGE_SIZE;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -283,15 +284,12 @@ pub fn test_ram_slot_count(
     let chip_type = chip_type_from_config(config, set_idx)?;
     let actual = emu.get_ram_slot_count();
 
-    /// Bytes the linker reserves for RAM slots — `_Ram_Rom_Image_Size` in
-    /// `firmware/link/linker.ld`, and `RAM_ROM_TABLE_SIZE` in the test stub.
-    const RAM_ROM_IMAGE_SIZE: u32 = 512 * 1024;
     /// A slot index travels in one byte, and RBCP reserves 0xFF for "no slot is
     /// active" — `ORA_MAX_RAM_SLOTS` in `firmware/ora/api.h`.
     const MAX_SLOTS: u32 = 255;
 
     let region_size = expected_rom_slot_size(config, board, fw_version, base_dir, set_idx)?;
-    let expected = (RAM_ROM_IMAGE_SIZE / region_size).clamp(1, MAX_SLOTS) as u8;
+    let expected = (MAX_ROM_IMAGE_SIZE as u32 / region_size).clamp(1, MAX_SLOTS) as u8;
 
     if actual != expected {
         return Err(format!(

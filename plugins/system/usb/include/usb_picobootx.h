@@ -20,19 +20,6 @@
 #define FLASH_PROTECTED_END     ORA_USER_PLUGIN_BASE
 
 // ---------------------------------------------------------------------------
-// Synthetic address range bases
-//
-// These are protocol-level constants and must not change without corresponding
-// changes to host tooling.
-// ---------------------------------------------------------------------------
-
-// 0x90000000: logical ROM read range.  Returns the original (un-mangled)
-// byte at the given logical ROM address, regardless of how the image is
-// stored in RAM.  Size is dynamic: determined by the ROM type currently
-// being served, retrieved via ctx at call time.
-#define APP_RANGE_LOGICAL_ROM_BASE  0x90000000u
-
-// ---------------------------------------------------------------------------
 // Range handler function types
 //
 // prepare: range ownership check only.  Returns PB_STATUS_OK if the range

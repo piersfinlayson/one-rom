@@ -122,8 +122,10 @@ void usb_picoboot_task(void) {
 // ---------------------------------------------------------------------------
 // Custom range handlers: logical ROM
 //
-// Base address APP_RANGE_LOGICAL_ROM_BASE.  Size is the logical ROM size of
-// the ROM currently being served, retrieved from ctx.
+// Base address ORA_LIVE_ROM_BASE_ADDR.  Size is the logical ROM size of
+// the ROM currently being served, retrieved from ctx.  A read returns the
+// original (un-mangled) byte at the given logical ROM address, regardless of
+// how the image is stored in RAM.
 // ---------------------------------------------------------------------------
 
 static pb_status_t app_range_logical_rom_read_prepare(
@@ -134,8 +136,9 @@ static pb_status_t app_range_logical_rom_read_prepare(
     const usb_plugin_context_t *uctx = (const usb_plugin_context_t *)ctx;
     uint32_t rom_size = app_get_active_rom_size(uctx);
 
-    if (addr < APP_RANGE_LOGICAL_ROM_BASE ||
-        (addr + len) > (APP_RANGE_LOGICAL_ROM_BASE + rom_size)) {
+    if (addr < ORA_LIVE_ROM_BASE_ADDR ||
+        len > rom_size ||
+        (addr - ORA_LIVE_ROM_BASE_ADDR) > (rom_size - len)) {
         return PB_STATUS_NOT_FOUND;
     }
 
@@ -175,8 +178,9 @@ static pb_status_t app_range_logical_rom_write_prepare(
     const usb_plugin_context_t *uctx = (const usb_plugin_context_t *)ctx;
     uint32_t rom_size = app_get_active_rom_size(uctx);
 
-    if (addr < APP_RANGE_LOGICAL_ROM_BASE ||
-        (addr + len) > (APP_RANGE_LOGICAL_ROM_BASE + rom_size)) {
+    if (addr < ORA_LIVE_ROM_BASE_ADDR ||
+        len > rom_size ||
+        (addr - ORA_LIVE_ROM_BASE_ADDR) > (rom_size - len)) {
         return PB_STATUS_NOT_FOUND;
     }
 

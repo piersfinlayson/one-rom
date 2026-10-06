@@ -210,7 +210,8 @@ pub struct Device {
     // re-enumerates - even if a serial override changed its USB serial.
     pending_id: Option<PendingId>,
     reboot_result: Option<(Client, Result<(), String>)>,
-    usb_run_capable: bool,
+    // The device whose firmware is known to include the USB plugin
+    usb_run_capable: Option<DeviceType>,
 }
 
 impl Default for Device {
@@ -225,7 +226,7 @@ impl Default for Device {
             running: false,
             pending_id: None,
             reboot_result: None,
-            usb_run_capable: false,
+            usb_run_capable: None,
         }
     }
 }
@@ -236,10 +237,13 @@ impl Device {
         Self::default()
     }
 
-    /// Can the device be running while connected?  Currently is only true for
-    /// Fire 1209/f542 devices
+    /// Whether the selected device stays on USB while running.  True for a
+    /// Fire USB device running the USB plugin, or one whose firmware is known
+    /// to include it.
     pub fn is_usb_run_capable(&self) -> bool {
-        self.usb_run_capable
+        self.is_live_usb_device()
+            || (matches!(self.selected, DeviceType::Usb(UsbDeviceType::Fire(_)))
+                && self.usb_run_capable.as_ref() == Some(&self.selected))
     }
 
     pub fn is_running(&self) -> bool {
@@ -396,17 +400,11 @@ impl Device {
             }
         }
 
-        // Set other device properties.
-        // We can't use our usb_run_capable flag accurately, until analyse
-        // gives us the accurate information based on the firmware parsing
-        // later.
         self.running = self.is_live_usb_device();
         if matched_pending {
             // We KNOW it's a run-capable device if we rebooted it and it came
             // back as the same device.  This saves a re-analyse.
-            self.usb_run_capable = true;
-        } else {
-            self.usb_run_capable = self.is_live_usb_device();
+            self.usb_run_capable = Some(self.selected.clone());
         }
         self.pending_id = None;
     }
@@ -645,5 +643,49 @@ async fn reboot_async(device: DeviceType, client: Client, stopped: bool) -> AppM
             internal_error!("{log}");
             Message::RebootDeviceResult(client, Err(log.into())).into()
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use probe_rs::probe::DebugProbeInfo;
+    use probe_rs::probe::cmsisdap::CmsisDapFactory;
+
+    fn probe(serial: &str) -> ProbeType {
+        let serial = Some(serial.to_string());
+        DebugProbeInfo::new("probe", 1, 1, serial, &CmsisDapFactory, None, false).into()
+    }
+
+    /// Whether a device's firmware includes the USB plugin survives a rescan
+    /// that keeps the device and doesn't apply to another device.
+    #[test]
+    fn run_capability_follows_the_device() {
+        let runtime_info = RuntimeInfo::default();
+        let mut device = Device::new();
+        let known = |device: &Device| device.usb_run_capable.as_ref() == Some(&device.selected);
+        let probes = vec![probe("a"), probe("b")];
+
+        let _ = device.update(&runtime_info, Message::ProbesDetected(probes.clone()));
+        let _ = device.update(&runtime_info, Message::SetUsbRunCapable(true));
+        assert!(known(&device));
+
+        let _ = device.update(&runtime_info, Message::ProbesDetected(probes.clone()));
+        assert!(known(&device));
+
+        let _ = device.update(&runtime_info, Message::SelectProbe(probes[1].clone()));
+        assert!(!known(&device));
+    }
+
+    /// Run and Stop are offered for a USB device alone, since Studio can't
+    /// reboot a device through a debug probe.
+    #[test]
+    fn a_debug_probe_device_isnt_run_capable() {
+        let runtime_info = RuntimeInfo::default();
+        let mut device = Device::new();
+
+        let _ = device.update(&runtime_info, Message::ProbesDetected(vec![probe("a")]));
+        let _ = device.update(&runtime_info, Message::SetUsbRunCapable(true));
+        assert!(!device.is_usb_run_capable());
     }
 }

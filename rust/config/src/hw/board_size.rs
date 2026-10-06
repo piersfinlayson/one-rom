@@ -2,7 +2,7 @@
 //
 // MIT License
 
-//! Board sizes, which differ in the flash chips a board has.
+//! Board sizes, which differ in how much flash a board has.
 
 use core::fmt;
 use core::str::FromStr;
@@ -12,9 +12,9 @@ use core::str::FromStr;
 /// It parses from its name in either case.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum BoardSize {
-    /// 2MB of built-in flash without a chip on chip select 1.
+    /// 2MB of flash in total.
     M,
-    /// 2MB of built-in flash and 2MB of external flash on chip select 1.
+    /// 4MB of flash in total.
     L,
 }
 
@@ -42,7 +42,7 @@ impl BoardSize {
     pub fn description(&self) -> &'static str {
         match self {
             Self::M => "2MB of flash",
-            Self::L => "2MB of flash and an additional 2MB flash chip",
+            Self::L => "4MB of flash",
         }
     }
 }

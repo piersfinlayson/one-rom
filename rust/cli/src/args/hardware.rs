@@ -166,9 +166,9 @@ pub enum HardwareCommands {
 /// `--size`'s help for commission, request-signature and sign. It leaves out
 /// the final full stop, which clap drops from help it reads from a doc
 /// comment, so it prints as the options beside it do.
-const HELP_SIZE: &str = "The board's size. M has 2MB of flash. L has an additional 2MB \
-     flash chip on chip select 1. Must be supplied for a board that supports external flash \
-     being populated. Boards that don't support external flash are always M";
+const HELP_SIZE: &str = "The board's size. M has 2MB of flash and L has 4MB. Must be supplied \
+     for a board that supports external flash being populated. Boards that don't support \
+     external flash are always M";
 
 #[derive(Debug, Args)]
 #[command(group(ArgGroup::new("signing").required(true).args(["signer", "key", "signature"])))]
@@ -358,9 +358,8 @@ pub struct HardwareSetSizeArgs {
     #[arg(long, short, value_name = "BOARD", value_parser = parse_board_to_size)]
     pub board: Board,
 
-    /// The board's size. M has 2MB of flash. L has an additional 2MB flash
-    /// chip on chip select 1. Boards that don't support external flash are
-    /// always M.
+    /// The board's size. M has 2MB of flash and L has 4MB. Boards that don't
+    /// support external flash are always M.
     #[arg(long, value_name = "SIZE", value_parser = BoardSize::from_str)]
     pub size: BoardSize,
 

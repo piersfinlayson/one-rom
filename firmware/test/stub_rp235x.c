@@ -329,7 +329,7 @@ void err_log(const char* msg, ...) {
 }
 
 // Allocate twice the required RAM ROM table size, so it can be aligned to
-// 512KB (done in preload_rom_image).
+// its size (done in preload_rom_image).
 uint32_t test_ram_rom_image_table[RAM_ROM_TABLE_SIZE*2/4] = {0};
 uint64_t *get_ram_rom_image_table_aligned(void) {
     uint64_t address = (uint64_t)(uintptr_t)test_ram_rom_image_table;

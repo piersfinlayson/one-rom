@@ -4,6 +4,8 @@
 
 Windows Device Manager no longer shows an exclamation mark against One ROM.  The first USB interface, which exists for picotool, now has WinUSB bound to it.
 
+A read or write that runs past the end of the live ROM image fails before anything is transferred.  Previously a very long write could change part of the image first.
+
 Uses One ROM's USB VID and PID from the plugin API.
 - Requires firmware 0.8.0.
 

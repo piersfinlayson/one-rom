@@ -663,7 +663,7 @@ async fn an_m_boards_report_shows_an_m_board() {
 
 /// Boards whose OTP configures each size, with the size. `None` is neither M
 /// nor L. Each BOOT_FLAGS0 bit comes from the majority of its three copies,
-/// FLASH_DEVINFO is read with ECC, and L needs a 2MB second chip.
+/// FLASH_DEVINFO is read with ECC, and L is 4MB in total.
 fn size_cases() -> Vec<(MemoryOtp, Option<BoardSize>)> {
     let otp = |devinfo: u32, flags: [u32; 3]| -> MemoryOtp {
         let mut otp = board();

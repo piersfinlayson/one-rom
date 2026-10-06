@@ -72,8 +72,8 @@ pub enum Message {
     },
     RebootDeviceResult(Client, Result<(), String>),
 
-    // Analyser figures out if the device is capable of running firmware
-    // based on its firmware parsing.
+    // Whether the selected device's firmware includes the USB plugin, from
+    // Analyse reading it or a flash
     SetUsbRunCapable(bool),
 }
 
@@ -327,7 +327,7 @@ pub fn handle_message(
         }
         Message::SetUsbRunCapable(capable) => {
             debug!("Setting device run capable: {capable}");
-            device.usb_run_capable = capable;
+            device.usb_run_capable = capable.then(|| device.selected.clone());
             Task::none()
         }
     }

@@ -31,9 +31,8 @@ pub fn load_file(analyse: &mut Analyse, path: Option<PathBuf>) -> Task<AppMessag
         let start_analysis_task = analyse.start_analysis(AnalyseState::Loading);
 
         // Create task to load the file asynchronously
-        analyse.fw_file = Some(path.clone());
-        let load_file_task = Task::perform(async move { load_file_async(path).await }, |result| {
-            AppMessage::Analyse(Message::FileLoaded(result))
+        let load_file_task = Task::perform(load_file_async(path.clone()), move |result| {
+            AppMessage::Analyse(Message::FileLoaded(path.clone(), result))
         });
 
         // Return a batch of tasks - i.e. run both in parallel

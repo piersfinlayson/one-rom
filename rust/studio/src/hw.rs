@@ -30,6 +30,9 @@ pub struct HardwareInfo {
     /// Board size detected from a device or selected in Create.  `None` where
     /// it wasn't detected or the board supports only M.
     pub board_size: Option<BoardSize>,
+
+    /// The smallest board size the parsed image requires, where known.
+    pub min_board_size: Option<BoardSize>,
 }
 
 impl HardwareInfo {
@@ -53,12 +56,14 @@ impl HardwareInfo {
                 model: sdrr.flash.as_ref().and_then(|f| f.model),
                 mcu_variant: sdrr.flash.as_ref().and_then(|f| f.mcu_variant),
                 board_size: None,
+                min_board_size: device.min_board_size(),
             },
             ParsedDevice::Schema(_) => Self {
                 board,
                 model: board.map(|b| b.model()),
                 mcu_variant: Some(McuVariant::RP2350),
                 board_size: None,
+                min_board_size: device.min_board_size(),
             },
             // Studio turns a Lab away before it gets here.
             ParsedDevice::Lab => Self::default(),
@@ -145,11 +150,12 @@ impl std::fmt::Display for HardwareInfo {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "HardwareInfo: board={:?}, model={:?}, mcu_variant={:?}, board_size={:?}",
+            "HardwareInfo: board={:?}, model={:?}, mcu_variant={:?}, board_size={:?}, min_board_size={:?}",
             self.board.as_ref().map(|b| b.name()),
             self.model.as_ref().map(|m| m.name()),
             self.mcu_variant,
-            self.board_size
+            self.board_size,
+            self.min_board_size
         )
     }
 }

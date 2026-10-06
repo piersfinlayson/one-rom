@@ -16,8 +16,9 @@ use crate::{Error, Result};
 
 /// The addresses of a board's flash chips.
 ///
-/// Every board has a first chip. An L board with an RP2350 also has a second
-/// chip on chip select 1.
+/// Every board has a first chip. An RP2350 board's chips are the layout
+/// [`FLASH_LAYOUTS`](onerom_metadata::otp::FLASH_LAYOUTS) lists for its size,
+/// so the tools build every L image for a second chip on chip select 1.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FlashChips {
     size: BoardSize,

@@ -132,7 +132,7 @@ pub enum Error {
     UnknownRomType,
 
     #[error(
-        "The operation attempted to access past the end of a live ROM image.\n  The {0} size is {1} bytes"
+        "The operation attempted to access past the end of a live ROM image.\n  The live {0} image is {1} bytes"
     )]
     LiveOutOfBounds(String, usize),
 

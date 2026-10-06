@@ -23,7 +23,7 @@
 
 use crate::device::Device;
 use crate::{Ctx, Scenario};
-use onerom_metadata::{FLASH_CS0_BASE_ADDR, USER_PLUGIN_OFFSET};
+use onerom_metadata::{FLASH_CS0_BASE_ADDR, LIVE_ROM_BASE_ADDR, USER_PLUGIN_OFFSET};
 use onerom_plugin_tester::run::Outcome;
 
 // Status codes, from picobootx.h.
@@ -680,10 +680,6 @@ fn active_slot_size(dev: &Device) -> Result<u32, String> {
     }
 }
 
-/// Where the logical ROM range starts, from `APP_RANGE_LOGICAL_ROM_BASE` in
-/// `usb_picobootx.h`.  A protocol constant a host also holds.
-const BASE: u32 = 0x9000_0000;
-
 /// The device's flash, and how much of it the plugin will not let a host
 /// touch: `FLASH_PROTECTED_END` from `usb_picobootx.h`, which is the firmware,
 /// its metadata and the system plugin slot.
@@ -692,7 +688,7 @@ const FLASH_PROTECTED_END: u32 = FLASH_BASE + USER_PLUGIN_OFFSET;
 
 /// The logical ROM range reads the image the device is serving.
 fn the_logical_rom_range_is_readable(dev: &mut Device, _ctx: &Ctx) -> Result<Outcome, String> {
-    let (st, bytes) = dev.pb_read(BASE, 16);
+    let (st, bytes) = dev.pb_read(LIVE_ROM_BASE_ADDR, 16);
     if st != OK {
         return Err(format!("reading the start of the ROM answered {st}"));
     }
@@ -718,14 +714,14 @@ fn the_logical_rom_range_is_readable(dev: &mut Device, _ctx: &Ctx) -> Result<Out
 fn the_logical_rom_range_is_bounded(dev: &mut Device, _ctx: &Ctx) -> Result<Outcome, String> {
     let size = active_slot_size(dev)?;
 
-    let (last, _) = dev.pb_read(BASE + size - 1, 1);
+    let (last, _) = dev.pb_read(LIVE_ROM_BASE_ADDR + size - 1, 1);
     if last != OK {
         return Err(format!(
             "the last byte of the image answered {last}, not OK"
         ));
     }
 
-    let (past, _) = dev.pb_read(BASE + size, 1);
+    let (past, _) = dev.pb_read(LIVE_ROM_BASE_ADDR + size, 1);
     if past == OK {
         return Err("a read one byte past the end of the image was allowed".to_string());
     }
@@ -749,7 +745,7 @@ fn the_logical_rom_range_is_writable(dev: &mut Device, _ctx: &Ctx) -> Result<Out
     let window = offset - 1;
 
     // The neighbours and the four bytes between them, as they stand.
-    let (st, before) = dev.pb_read(BASE + window, 6);
+    let (st, before) = dev.pb_read(LIVE_ROM_BASE_ADDR + window, 6);
     if st != OK {
         return Err(format!("reading the image before the write answered {st}"));
     }
@@ -758,14 +754,14 @@ fn the_logical_rom_range_is_writable(dev: &mut Device, _ctx: &Ctx) -> Result<Out
     // "written".
     let want: Vec<u8> = before[1..5].iter().map(|b| b ^ 0xa5).collect();
 
-    let st = dev.pb_write(BASE + offset, &want);
+    let st = dev.pb_write(LIVE_ROM_BASE_ADDR + offset, &want);
     if st != OK {
         return Err(format!(
             "writing four bytes at offset {offset} of the image answered {st}, not OK"
         ));
     }
 
-    let (st, after) = dev.pb_read(BASE + window, 6);
+    let (st, after) = dev.pb_read(LIVE_ROM_BASE_ADDR + window, 6);
     if st != OK {
         return Err(format!("reading the image back answered {st}"));
     }
@@ -813,14 +809,14 @@ fn a_write_past_the_logical_rom_range_is_refused(
     let size = active_slot_size(dev)?;
 
     // The last byte of the image, which is exactly in range.
-    let last = dev.pb_write(BASE + size - 1, &[0x5a]);
+    let last = dev.pb_write(LIVE_ROM_BASE_ADDR + size - 1, &[0x5a]);
     if last != OK {
         return Err(format!(
             "writing the last byte of the image answered {last}, not OK"
         ));
     }
 
-    let past = dev.pb_write(BASE + size, &[0x5a]);
+    let past = dev.pb_write(LIVE_ROM_BASE_ADDR + size, &[0x5a]);
     if past != NOT_FOUND {
         return Err(format!(
             "writing one byte past the end of the image answered {past}, not NOT_FOUND"
@@ -829,7 +825,7 @@ fn a_write_past_the_logical_rom_range_is_refused(
 
     // A write that starts inside the image and runs off the end of it takes the
     // whole range with it, rather than being trimmed to what fits.
-    let straddling = dev.pb_write(BASE + size - 2, &[0x5a; 4]);
+    let straddling = dev.pb_write(LIVE_ROM_BASE_ADDR + size - 2, &[0x5a; 4]);
     if straddling != NOT_FOUND {
         return Err(format!(
             "a write straddling the end of the image answered {straddling}, not NOT_FOUND"

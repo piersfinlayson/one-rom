@@ -273,15 +273,19 @@ bit. There is room for all of them at their maximum lengths.
 
 ## Board Sizes
 
-| Size | Built-in flash | External flash on chip select 1 |
-| --- | --- | --- |
-| M | 2MB | None |
-| L | 2MB | 2MB |
-| XL | 2MB | 16MB |
+| Size | Total flash |
+| --- | --- |
+| M | 2MB |
+| L | 4MB |
+| XL | 18MB |
 
-XL is currently reserved for future use and is not implemented at this time.
+XL is currently reserved for future use and is not implemented at this time.  It
+may change.
 
-A non-M board's external flash is configured in OTP. `FLASH_DEVINFO` gives
+The tools currently require that an L board is implemented via two 2MB flash
+chips.
+
+A non-M board's flash is configured in OTP. `FLASH_DEVINFO` gives
 both chips' sizes, the GPIO used for chip select 1 and whether the chips support
 the D8h block erase command. The `FLASH_DEVINFO_ENABLE` bit (bit 5) of
 `BOOT_FLAGS0` tells the bootloader to use `FLASH_DEVINFO`.

@@ -203,7 +203,7 @@ impl Create {
         self.selected_hw_info.model = Some(model);
         self.selected_hw_info.board = None;
         self.selected_hw_info.mcu_variant = None;
-        self.selected_hw_info.board_size = None;
+        // The board size stays for board_selected to keep or replace
         self.mcu_variants = None;
     }
 
@@ -363,5 +363,56 @@ mod tests {
 
         create.board_selected(&runtime_info, board("fire-40-a"));
         assert_eq!(create.selected_hw_info.board_size, Some(BoardSize::M));
+    }
+
+    #[test]
+    fn selecting_the_model_keeps_board_size() {
+        let runtime_info = RuntimeInfo::default();
+        let mut create = Create::new();
+        create.model_selected(Model::Fire);
+        create.board_selected(&runtime_info, board("fire-40-a"));
+        create.board_size_selected(BoardSize::L);
+
+        create.model_selected(Model::Fire);
+        create.board_selected(&runtime_info, board("fire-40-a"));
+        assert_eq!(create.selected_hw_info.board_size, Some(BoardSize::L));
+    }
+
+    fn fire_40_a(board_size: Option<BoardSize>, min_board_size: Option<BoardSize>) -> HardwareInfo {
+        HardwareInfo {
+            board: Some(board("fire-40-a")),
+            model: Some(Model::Fire),
+            mcu_variant: Some(McuVariant::RP2350),
+            board_size,
+            min_board_size,
+        }
+    }
+
+    /// Passes `hw_info` to `create` as Studio does.
+    fn detected(create: &mut Create, hw_info: HardwareInfo) {
+        let mut runtime_info = RuntimeInfo::default();
+        runtime_info.set_hw_info(Some(hw_info));
+        let _ = hw::detected_hardware_info(create, &runtime_info);
+    }
+
+    #[test]
+    fn a_board_sets_board_size() {
+        let mut create = Create::new();
+        for size in [BoardSize::L, BoardSize::M] {
+            detected(&mut create, fire_40_a(Some(size), Some(BoardSize::M)));
+            assert_eq!(create.selected_hw_info.board_size, Some(size));
+            assert!(create.size_detected);
+        }
+    }
+
+    #[test]
+    fn an_image_sets_board_size_to_its_minimum() {
+        let mut create = Create::new();
+        detected(&mut create, fire_40_a(Some(BoardSize::L), None));
+        for size in [BoardSize::M, BoardSize::L] {
+            detected(&mut create, fire_40_a(None, Some(size)));
+            assert_eq!(create.selected_hw_info.board_size, Some(size));
+            assert!(!create.size_detected);
+        }
     }
 }

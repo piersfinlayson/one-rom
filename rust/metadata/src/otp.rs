@@ -975,8 +975,9 @@ pub struct FlashLayout {
     pub cs1: OneromFlashSize,
 }
 
-/// The flash layout the tools make for each board size. The chip on chip
-/// select 0 is at least
+/// The flash layout the tools make for each board size. A board's size
+/// depends on its total flash alone, so another layout can be the same size.
+/// The chip on chip select 0 is at least
 /// [`MIN_FLASH_CS0_SIZE`](crate::MIN_FLASH_CS0_SIZE).
 pub const FLASH_LAYOUTS: &[(BoardSize, FlashLayout)] = &[
     (

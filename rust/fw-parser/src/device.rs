@@ -65,12 +65,13 @@ use core::ops::Range;
 use std::borrow::Cow;
 
 use onerom_config::fw::FirmwareVersion;
-use onerom_config::hw::Board;
+use onerom_config::hw::{Board, BoardSize};
+use onerom_config::mcu::Variant;
 use onerom_config::pin::ReservedPins;
-use onerom_gen::MIN_RESERVED_PINS_VERSION;
+use onerom_gen::{FlashChips, MIN_RESERVED_PINS_VERSION};
 use onerom_metadata::{
     FLASH_CS1_BASE_ADDR, MaybeKnown, OneromBoardSize, OneromRomInfo, OneromRomSlot, Pointer,
-    RomSlotType, metadata_generation_for,
+    RomSlotType, TOTAL_FLASH_SIZE_L, TOTAL_FLASH_SIZE_M, metadata_generation_for,
 };
 
 use crate::info::{Sdrr, SdrrRomInfo, SdrrRomSet};
@@ -367,6 +368,48 @@ impl ParsedDevice {
     ///
     /// A Lab doesn't have ROM slots and passes.
     pub fn check_image_file(&self, len: usize, first: Range<u32>) -> Result<(), ImageFileError> {
+        let first_len = first.len();
+        let Some(used) = self.flash_used(first)? else {
+            return Ok(());
+        };
+        if used.len > len {
+            return Err(ImageFileError::TooShort {
+                short_by: used.len - len,
+            });
+        }
+        if len > first_len && !used.second_chip {
+            return Err(ImageFileError::TooLong {
+                too_long_by: len - first_len,
+            });
+        }
+        Ok(())
+    }
+
+    /// The smallest board size this image requires.
+    ///
+    /// `None` for a Lab, an image whose MCU isn't known or one too big for
+    /// any board size.
+    pub fn min_board_size(&self) -> Option<BoardSize> {
+        let mcu = match self {
+            Self::Original(sdrr) => sdrr.flash.as_ref()?.mcu_variant?,
+            // Schema-format firmware is RP2350-only.
+            Self::Schema(_) => Variant::RP2350,
+            Self::Lab => return None,
+        };
+        // The firmware and metadata come before the slots on the first chip.
+        let used = self.flash_used(FlashChips::first_for(mcu)).ok()??;
+        BoardSize::supported_values().iter().copied().find(|size| {
+            let total = match size {
+                BoardSize::M => TOTAL_FLASH_SIZE_M,
+                BoardSize::L => TOTAL_FLASH_SIZE_L,
+            };
+            used.len <= total
+        })
+    }
+
+    /// The flash this device's slots use, laid out as an image file whose
+    /// first chip has the addresses `first`. `None` for a Lab.
+    fn flash_used(&self, first: Range<u32>) -> Result<Option<FlashUsed>, ImageFileError> {
         // Each slot's data pointer and size, in slot order.
         let slots: Vec<(Pointer, u32)> = match self {
             Self::Original(sdrr) => sdrr
@@ -381,7 +424,7 @@ impl ParsedDevice {
                 .flat_map(|md| &md.rom_slots)
                 .map(|slot| (slot.data, slot.size))
                 .collect(),
-            Self::Lab => return Ok(()),
+            Self::Lab => return Ok(None),
         };
 
         let first_len = first.len();
@@ -411,19 +454,19 @@ impl ParsedDevice {
             };
             required = required.max(end);
         }
-
-        if required > len {
-            return Err(ImageFileError::TooShort {
-                short_by: required - len,
-            });
-        }
-        if len > first_len && !second_used {
-            return Err(ImageFileError::TooLong {
-                too_long_by: len - first_len,
-            });
-        }
-        Ok(())
+        Ok(Some(FlashUsed {
+            len: required,
+            second_chip: second_used,
+        }))
     }
+}
+
+/// The flash an image's slots use.
+struct FlashUsed {
+    /// The length of an image file holding every slot's data.
+    len: usize,
+    /// Whether a slot is on the second chip.
+    second_chip: bool,
 }
 
 /// Parses an image file.
