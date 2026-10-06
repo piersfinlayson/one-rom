@@ -5,6 +5,8 @@
 To update the version:
 
 - Add the new version to [CHANGELOG.md](CHANGELOG.md), and note key changes.
+- Date this version's heading in [CHANGELOG.md](CHANGELOG.md) and in each
+  component CHANGELOG with an entry for it.
 - Update the firmware version in [Makefile](/Makefile).
 - Bump the version (as needed) of any crate that changed and will be
   re-published, in its `Cargo.toml`. The crates are independently versioned; the
@@ -16,10 +18,18 @@ To update the version:
   - [fw](/rust/fw/Cargo.toml)
   - [protocol](/rust/protocol/Cargo.toml)
   - [metadata](/rust/metadata/Cargo.toml)
+  - [metadata-gen](/rust/metadata-gen/Cargo.toml)
+  - [lab-metadata](/rust/lab-metadata/Cargo.toml)
+  - [lab-parser](/rust/lab-parser/Cargo.toml)
   - [app](/rust/app/Cargo.toml)
   - [cli](/rust/cli/Cargo.toml)
 - If the firmware metadata/image format version has changed, update the
   `MAX_VERSION_*` consts in [rust/fw-parser/src/lib.rs](/rust/fw-parser/src/lib.rs).
+- Regenerate Studio's manifest files by running `cargo run --release --bin
+  gen-schema` and `cargo run --release --bin gen-manifest` in `rust/studio`.
+- If the `onerom-cli` version has changed, update the breaking changes in
+  [docs/CLI-MANUAL.md](/docs/CLI-MANUAL.md) following the conventions at the top
+  of that file. List each one in the CLI and root CHANGELOGs too.
 
 ## Release Process
 
@@ -44,22 +54,26 @@ ci/build.sh release v<x.y.z>
 Publish the crates whose version moved this cycle.  The CHANGELOG's "To
 publish" list says which.
 
+Run these from `rust/`.  Cargo reads `rust/.cargo/config.toml` only when run
+inside `rust/`.  Without it `onerom-metadata`'s build script writes its generated
+headers into the crate and verification fails.
+
 `onerom-config` publishes first, on its own, with `--no-verify`.  Its build
 script writes into `src/` and `docs/CHIP-TYPES.md`, which the verification build
 rejects.  Add `--dry-run` to rehearse:
 
 ```bash
-cargo publish --manifest-path rust/Cargo.toml --no-verify -p onerom-config
+cargo publish --no-verify -p onerom-config
 ```
 
 The rest publish together, verified.  Name each crate that moved:
 
 ```bash
-cargo publish --manifest-path rust/Cargo.toml --dry-run -p <crate> -p <crate>
+cargo publish --dry-run -p <crate> -p <crate>
 ```
 
 ```bash
-cargo publish --manifest-path rust/Cargo.toml -p <crate> -p <crate>
+cargo publish -p <crate> -p <crate>
 ```
 
 The CLI **binary** releases on its own cycle, following
@@ -84,6 +98,10 @@ Tag the version in git:
 git tag -s -a v<x.y.z> -m "Release v<x.y.z>"
 git push origin v<x.y.z>
 ```
+
+Pushing the tag runs [release.yml](/.github/workflows/release.yml), which
+creates the GitHub release from this version's CHANGELOG.md section and marks it
+Latest.
 
 ## WASM/Site/Images updates
 

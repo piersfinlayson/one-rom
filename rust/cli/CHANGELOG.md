@@ -2,6 +2,7 @@
 
 ## v0.5.0 - 2026-10-06
 
+- **Breaking** With a One ROM and a Lab both connected, a command that uses a device requires `--serial`. `scan`, `inspect info` and `firmware inspect` display Lab.
 - `inspect info` indicates what it cannot decode and why.
 - `peek` no longer fails on a large read.
 - `peek` and `poke` no longer crash on a One ROM serving a 27C080. Their `--address` help says where address 0 is on a One ROM serving half a 27C080.

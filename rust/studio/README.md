@@ -7,11 +7,9 @@ A GUI front-end for interacting with One ROM and managing firmware images.
 All instructions assume you are in the `rust/studio` directory.  Steps 1-3 can be run in parallel.
 
 Steps:
-1. Build the schema(s):
+1. Copy the schema to the images repo if it differs.  The schema is regenerated when [the version is updated](/RELEASE.md#update-version-number).
 
     ```bash
-    cargo run --release --bin gen-schema
-    cargo run --release --bin gen-manifest
     git diff manifest/app-schema.json ../../../one-rom-images/studio/app-schema.json
     # If differences
     cp manifest/app-schema.json ../../../one-rom-images/studio/app-schema.json

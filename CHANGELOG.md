@@ -24,6 +24,7 @@ In detail:
   - `onerom hardware commission`, `validate`, `set-size`, `sign`, `request-signature` and `onerom inspect otp` commission a One ROM. See [COMMISSIONING](/docs/COMMISSIONING.md).
   - `onerom scan --verbose` and `onerom inspect info` report a One ROM's commissioning information.
   - `onerom inspect info` reports what it cannot decode and why.
+  - Breaking: the CLI recognises One ROM Lab, so with a One ROM and a Lab both connected, a command that uses a device requires `--serial`.
 - Web Programmer:
   - Supports programming L sized boards and shows commissioning information.
   - One ROM Builder allows pins to be reserved.

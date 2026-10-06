@@ -26,9 +26,8 @@ reader: HTML comments survive pandoc into the PDF unrendered.
 * Breaking changes are carried in two sections, and a change that breaks an
   existing command line updates both.  `# New Breaking Changes`, near the top,
   lists the release in development alone.  `# Appendix: Breaking Change
-  History`, at the end, keeps every release, newest first.  At release time the
-  top section's entries move down under a new version heading in the appendix,
-  and the top section empties for the next cycle.
+  History`, at the end, keeps every release, newest first.  After a release the
+  top section is emptied for the next one.
 
 * Both sections are present in every release.  Where a release has no breaking
   changes, `# New Breaking Changes` says so, so a reader who has learned to
@@ -77,8 +76,8 @@ and never in a patch. From v1.0.0 onwards such a change lands in a major
 release, and never in a minor or a patch.
 
 - One ROM Lab is now recognised by the CLI, so with a One ROM and a Lab both
-  connected every command except `scan` now needs `--serial` to disambiguate the
-  devices.
+  connected every command that uses a device, except `scan`, now needs
+  `--serial` to disambiguate the devices.
 
 Every release's breaking changes are collected in
 [Appendix: Breaking Change History](#appendix-breaking-change-history), at the
@@ -3226,6 +3225,12 @@ to 3.3V, rather than to ground. It is the jumper labelled `B0` or `B`. The
 
 Changes that can alter or break a command line that worked on an earlier
 release. Newest release first.
+
+### v0.5.0
+
+- One ROM Lab is now recognised by the CLI, so with a One ROM and a Lab both
+  connected every command that uses a device, except `scan`, now needs
+  `--serial` to disambiguate the devices.
 
 ### v0.4.0
 
