@@ -852,7 +852,7 @@ These are rejected with `--no-config`.
 | `--logging [BOOL]` (aliases `--boot-logging`) | Enable boot logging. Takes an optional boolean; bare flag means `true`. |
 | `--disable-swd [BOOL]` (aliases `--swd-disable`) | Shut SWD down before ROM serving starts, so debug port accesses to SRAM don't steal cycles from the serving DMAs. SWD is available for the whole of boot — including boot logging — and goes off until the next reset. Nothing is logged past that point, and plugins get no logging. This is not a debug lockout: the boot ROM runs before the One ROM firmware does, and BOOTSEL/PICOBOOT are unaffected. Optional boolean; bare flag means `true`. |
 | `--turbo-boot [BOOL]` | Enable turbo boot — starts serving faster by not reading the image select jumpers, so the first non-plugin slot is always the one served. More than one non-plugin slot is refused unless `--force` is given. Optional boolean; bare flag means `true`. |
-| `--reserve-pin <PIN>` (alias `--reserved_pins`) | Reserve a pin for another use, for example a pin connected to a host's reset line. Repeat for each reserved pin. Requires firmware v0.8.0 or later. See [Reserve a pin for another use](#reserve-a-pin-for-another-use). |
+| `--reserve-pin <PIN>` (aliases `--reserved-pin`, `--reserved_pins`) | Reserve a pin for another use, for example a pin connected to a host's reset line. Repeat for each reserved pin. Requires firmware v0.8.0 or later. See [Reserve a pin for another use](#reserve-a-pin-for-another-use). |
 
 ### Board, version and output
 

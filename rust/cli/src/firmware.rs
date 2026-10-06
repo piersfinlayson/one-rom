@@ -1547,7 +1547,7 @@ mod tests {
     }
 
     #[test]
-    fn reserve_pin_repeats_under_either_name() {
+    fn reserve_pin_repeats_under_any_name() {
         use onerom_config::pin::{HeaderPin, Pin};
         let args = build_args(&[
             "onerom",
@@ -1561,10 +1561,16 @@ mod tests {
             "SEL-C",
             "--reserved_pins",
             "gpio9",
+            "--reserved-pin",
+            "gpio10",
         ]);
         assert_eq!(
             args.reserve_pin,
-            [Pin::Header(HeaderPin::Select(2)), Pin::Gpio(9)]
+            [
+                Pin::Header(HeaderPin::Select(2)),
+                Pin::Gpio(9),
+                Pin::Gpio(10)
+            ]
         );
     }
 

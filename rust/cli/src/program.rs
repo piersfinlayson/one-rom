@@ -601,6 +601,32 @@ mod tests {
         );
     }
 
+    #[test]
+    fn reserve_pin_repeats_under_any_name() {
+        use clap::Parser;
+        use onerom_config::pin::Pin;
+        let cli = crate::args::Cli::try_parse_from([
+            "onerom",
+            "program",
+            "--slot",
+            "file=a.bin,type=2364,cs1=active-low",
+            "--reserve-pin",
+            "gpio8",
+            "--reserved_pins",
+            "gpio9",
+            "--reserved-pin",
+            "gpio10",
+        ])
+        .unwrap();
+        let crate::args::Commands::Program(args) = cli.command else {
+            panic!("not program");
+        };
+        assert_eq!(
+            args.reserve_pin,
+            [Pin::Gpio(8), Pin::Gpio(9), Pin::Gpio(10)]
+        );
+    }
+
     /// Firmware before 0.8.0 gets an M image whatever the One ROM's size.
     #[test]
     fn an_image_is_for_m_where_the_firmware_supports_only_m() {

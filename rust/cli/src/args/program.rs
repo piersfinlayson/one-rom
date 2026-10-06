@@ -323,7 +323,7 @@ pub struct ProgramArgs {
     /// Requires firmware v0.8.0 or later.
     ///
     /// Example: --reserve-pin sel_c --reserve-pin x1
-    #[arg(long, visible_aliases = ["reserved_pins"], value_name = "PIN", value_parser = parse_reserve_pin, conflicts_with_all = ["no_config"])]
+    #[arg(long, visible_aliases = ["reserved-pin", "reserved_pins"], value_name = "PIN", value_parser = parse_reserve_pin, conflicts_with_all = ["no_config"])]
     pub reserve_pin: Vec<Pin>,
 }
 
