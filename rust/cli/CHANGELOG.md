@@ -1,6 +1,6 @@
 # CLI Changelog
 
-## v0.5.0 - unreleased
+## v0.5.0 - 2026-10-06
 
 - `inspect info` indicates what it cannot decode and why.
 - `peek` no longer fails on a large read.

@@ -173,7 +173,6 @@ Lab releases on its own cycle, tagged `lab-vX.Y.Z`.
 1. Update these, then commit:
     - the version in [Cargo.toml](Cargo.toml)
     - the [CHANGELOG](CHANGELOG.md)
-    - Lab's released schema, in `rust/lab-metadata/metadata_schema_released.toml`
 
 2. Tag the commit and push both.  Tags are signed, so they take a message:
 
@@ -199,6 +198,11 @@ Lab releases on its own cycle, tagged `lab-vX.Y.Z`.
     it running as One ROM Lab with the new version and board.
 
 6. Commit and push `one-rom-images`.
+
+7. In one commit, copy `rust/lab-metadata/metadata_schema.toml` over
+    `rust/lab-metadata/metadata_schema_released.toml` and raise `[schema]
+    firmware_release` in `metadata_schema.toml` to the next version.  The build
+    fails unless the copy's `firmware_release` is older than the schema's.
 
 `scripts/build-release.sh --version X.Y.Z` builds and checks the same images
 locally.

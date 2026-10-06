@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.1.6] - unreleased
+## [0.1.6] - 2026-10-06
 
 SET_AUX can drive a GPIO used as a forced input by the core firmware.
 

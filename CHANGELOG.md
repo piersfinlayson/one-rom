@@ -2,7 +2,7 @@
 
 All notable changes between versions are documented in this file.
 
-## v0.8.0 - unreleased
+## v0.8.0 - 2026-10-06
 
 Headline changes in this release:
 - One ROMs now support hardware commissioning, making them easier for users to manage.

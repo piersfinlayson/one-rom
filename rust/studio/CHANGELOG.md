@@ -1,6 +1,6 @@
 # Changelog
 
-## v0.2.4 - unreleased
+## v0.2.4 - 2026-10-06
 
 - Rebuilt against the Rust crates released with firmware v0.8.0.
 - Supports commissioned One ROMs in bootloader mode using One ROM's own bootloader VID and PID.

@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.3.2] - unreleased
+## [0.3.2] - 2026-10-06
 
 Windows Device Manager no longer shows an exclamation mark against One ROM.  The first USB interface, which exists for picotool, now has WinUSB bound to it.
 
