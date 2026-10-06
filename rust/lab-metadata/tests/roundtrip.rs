@@ -44,13 +44,13 @@ fn magic() -> [u8; 16] {
 }
 
 fn header() -> OneromLabMetadataHeader {
-    OneromLabMetadataHeader {
-        magic: magic(),
-        version: LAB_METADATA_VERSION,
-        hw: OneromLabHardwareInfo {
-            hw_rev: Some("fire-40-a".into()),
-        },
-    }
+    let mut hw = OneromLabHardwareInfo::default();
+    hw.hw_rev = Some("fire-40-a".into());
+    let mut header = OneromLabMetadataHeader::default();
+    header.magic = magic();
+    header.version = LAB_METADATA_VERSION;
+    header.hw = hw;
+    header
 }
 
 #[test]

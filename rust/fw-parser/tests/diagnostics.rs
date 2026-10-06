@@ -20,6 +20,7 @@ use onerom_fw_parser::{Parser, RuntimeAbsence, SDRR_INFO_FW_OFFSET};
 use onerom_metadata::{
     FLASH_CS0_BASE_ADDR, FirmwareType, ONEROM_FAMILY_MAGIC,
     ONEROM_INFO_FIRMWARE_TYPE_OFFSET as TYPE_OFF, ONEROM_INFO_VERSION_OFFSET as VERSION_OFF,
+    ONEROM_RUNTIME_INFO_SIZE,
 };
 
 const RP235X_FLASH_BASE: u32 = FLASH_CS0_BASE_ADDR;
@@ -83,7 +84,7 @@ fn schema_image(info_generation: u32, runtime_ptr: u32) -> Vec<u8> {
 /// is set to a width the list does name so the structure reads as a device
 /// would have written it.
 fn runtime_region(generation: u32) -> Vec<u8> {
-    let mut ram = vec![0u8; 64];
+    let mut ram = vec![0u8; ONEROM_RUNTIME_INFO_SIZE];
     ram[0..4].copy_from_slice(b"sdrr");
     ram[4..8].copy_from_slice(&generation.to_le_bytes());
     ram[BIT_MODE_OFFSET] = 1; // bit_mode: 8-bit
@@ -138,7 +139,11 @@ fn runtime_memory_without_the_magic_says_the_device_is_not_running() {
         RP235X_FLASH_BASE,
     );
     // A stopped device's RAM holds whatever it holds, and not the magic.
-    reader.add_region(RegionKind::Ram, vec![0u8; 64], RUNTIME_ADDR);
+    reader.add_region(
+        RegionKind::Ram,
+        vec![0u8; ONEROM_RUNTIME_INFO_SIZE],
+        RUNTIME_ADDR,
+    );
     let mut parser = flash_only(&mut reader);
     let onerom = block_on(parser.parse_format_schema()).expect("image should parse");
 

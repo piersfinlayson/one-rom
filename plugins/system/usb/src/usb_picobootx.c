@@ -476,6 +476,26 @@ static pb_status_t onerom_gpio_query_prepare(const picoboot_cmd_t *cmd) {
     return onerom_in_xfer_begin(cmd, args->first_gpio, 0u);
 }
 
+// Apply a ONEROM_CMD_SET_STANDBY.  The standby value is left to
+// ora_set_standby to check.
+static pb_status_t onerom_set_standby(const onerom_set_standby_args_t *args) {
+    ora_set_standby_fn_t set_standby = context.ora_lookup_fn(ORA_ID_SET_STANDBY);
+    if (set_standby == NULL) {
+        return PB_STATUS_NOT_PERMITTED;
+    }
+
+    switch (set_standby(args->standby, 0u)) {
+        case ORA_RESULT_OK:
+            return PB_STATUS_OK;
+
+        case ORA_RESULT_INVALID_ARG:
+            return PB_STATUS_INVALID_ARG;
+
+        default:
+            return PB_STATUS_UNKNOWN_ERROR;
+    }
+}
+
 static pb_status_t onerom_picobootx_dispatch(
     const picoboot_cmd_t *cmd,
     uint8_t *buf,
@@ -535,12 +555,18 @@ static pb_status_t onerom_picobootx_dispatch(
         case ONEROM_CMD_LED_QUERY:
             return onerom_led_query_prepare(cmd);
 
+        case ONEROM_CMD_SET_STANDBY:
+            if (cmd->transfer_len != 0u) {
+                return PB_STATUS_INVALID_CMD_LENGTH;
+            }
+            return onerom_set_standby((const onerom_set_standby_args_t *)cmd->args);
+
         default:
             return PB_STATUS_UNKNOWN_CMD;
     }
 }
 
-// Produce the bytes of an ONEROM_CMD_GET_CAPS response lying in
+// Produce the bytes of a ONEROM_CMD_GET_CAPS response lying in
 // [offset, offset + len), zero-padding past the end of onerom_caps_t.
 static void onerom_caps_bytes(uint8_t *buf, uint32_t offset, uint32_t len) {
     onerom_caps_t caps = {0};

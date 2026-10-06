@@ -49,8 +49,11 @@ use log::{debug, error, info, trace, warn};
 use onerom_config::chip::ChipType;
 use onerom_config::fw::FirmwareVersion;
 use onerom_config::hw::Board;
-use onerom_fw_emulator::Emulator;
+use onerom_fw_emulator::{Emulator, OraResult};
 use onerom_gen::{ChipConfig, ChipSetConfig, ChipSetType, Config, CsConfig, CsLogic};
+use onerom_metadata::{
+    OverrideState, onerom_firmware_flag_t, onerom_firmware_state_t, onerom_override_states_t,
+};
 
 use crate::report::{ChipResult, ModeResult, SetResult, TestReport};
 use onerom_fw_tester::cs_timing;
@@ -60,7 +63,7 @@ use onerom_fw_tester::geometry::chip_substitution;
 use onerom_fw_tester::jumpers::Jumpers;
 use onerom_fw_tester::oracle;
 use onerom_fw_tester::pin_cache::{ControlLine, PinCache};
-use onerom_fw_tester::runner::{addr_before_cs_cycles, cs_to_data_cycles, run_mode};
+use onerom_fw_tester::runner::{addr_before_cs_cycles, cs_to_data_cycles, run_mode, run_undriven};
 use onerom_fw_tester::timing;
 
 /// Config-derived serving-algorithm info for one chip of a set, for the CS
@@ -189,7 +192,7 @@ pub fn run_all(board: Board, config: &Config, base_dir: &std::path::Path, report
             (chip_set, None)
         };
 
-        let mut result = run_chip_set(
+        let mut result = run_set(
             board,
             config,
             oracle_set,
@@ -197,6 +200,7 @@ pub fn run_all(board: Board, config: &Config, base_dir: &std::path::Path, report
             effective_idx,
             set_idx as u8,
             base_dir,
+            report,
         );
         if let Some(n) = note {
             result.set_note(n);
@@ -217,7 +221,7 @@ pub fn run_all(board: Board, config: &Config, base_dir: &std::path::Path, report
              firmware should wrap to set 0",
             num_sets, num_sets,
         );
-        let mut result = run_chip_set(
+        let mut result = run_set(
             board,
             config,
             &config.chip_sets[0],
@@ -225,13 +229,15 @@ pub fn run_all(board: Board, config: &Config, base_dir: &std::path::Path, report
             0,
             num_sets as u8,
             base_dir,
+            report,
         );
         result.set_note(note);
         report.add_set_result(result);
     }
 
     if num_sets > 0 {
-        run_generation_passes(board, config, base_dir, num_sets, report);
+        let next_label = run_generation_passes(board, config, base_dir, num_sets, report);
+        run_standby_pass(board, config, base_dir, next_label, report);
     }
 
     crate::commissioning::run(board, num_sets > 0, report);
@@ -251,13 +257,25 @@ pub fn run_all(board: Board, config: &Config, base_dir: &std::path::Path, report
 ///
 /// The generation is put back afterwards - it outlives a boot, like every
 /// other global in this process.
+///
+/// Returns the label for the next set result.  A set 0 that boots into
+/// standby is skipped, as metadata from before standby doesn't have an
+/// override for it.
 fn run_generation_passes(
     board: Board,
     config: &Config,
     base_dir: &std::path::Path,
     num_sets: usize,
     report: &mut TestReport,
-) {
+) -> usize {
+    if standby_on(&config.chip_sets[0]) {
+        report.add_set_result(SetResult::skipped(
+            num_sets + 1,
+            "metadata generation test: set 0 boots into standby",
+        ));
+        return num_sets + 2;
+    }
+
     let built_at = Emulator::metadata_generation();
 
     // Zero is not a generation, so a firmware built at the first has nothing
@@ -268,8 +286,10 @@ fn run_generation_passes(
     // Label these past the configured sets, as the one-beyond test does - they
     // all serve set 0, and a repeated label would read as a repeated set.
     let labelled = (num_sets + 1..).zip(generations.into_iter().flatten());
+    let mut next_label = num_sets + 1;
 
     for (label_idx, generation) in labelled {
+        next_label = label_idx + 1;
         info!(
             "Running metadata generation test: metadata claims generation {}, \
              firmware built at {}",
@@ -295,9 +315,43 @@ fn run_generation_passes(
     }
 
     Emulator::set_metadata_generation(built_at);
+    next_label
 }
 
 // ── Per chip set (dispatch) ───────────────────────────────────────────────────
+
+/// Whether `chip_set`'s config boots it into standby.
+fn standby_on(chip_set: &ChipSetConfig) -> bool {
+    chip_set
+        .firmware_overrides
+        .as_ref()
+        .and_then(|fw| fw.fire.as_ref())
+        .and_then(|f| f.standby)
+        == Some(true)
+}
+
+// Every argument is an independent input. See timing_pass.
+#[allow(clippy::too_many_arguments)]
+fn run_set(
+    board: Board,
+    config: &Config,
+    chip_set: &ChipSetConfig,
+    set_idx: usize,
+    served_idx: usize,
+    sel_image: u8,
+    base_dir: &std::path::Path,
+    report: &mut TestReport,
+) -> SetResult {
+    if standby_on(chip_set) {
+        run_standby_set(
+            board, config, chip_set, set_idx, served_idx, sel_image, base_dir, report,
+        )
+    } else {
+        run_chip_set(
+            board, config, chip_set, set_idx, served_idx, sel_image, base_dir,
+        )
+    }
+}
 
 fn run_chip_set(
     board: Board,
@@ -385,12 +439,245 @@ fn run_single_set(
                 force_16_bit,
                 (0u64, 0u64),
                 &gap_gpios,
+                None,
             )
         })
         .collect();
 
     SetResult::done(set_idx, chip_results)
     // `emulator` dropped here; Drop impl frees the epio handle.
+}
+
+// ── Standby ───────────────────────────────────────────────────────────────────
+
+/// Addresses each check of the data pins reads.  A stopped state machine
+/// leaves them undriven whatever the address.
+const STANDBY_UNDRIVEN_ADDRS: usize = 512;
+
+/// Boot the first selectable single set with its standby override on, and run
+/// [`run_standby_set`] on it.
+///
+/// Every config gets this, so a standby boot is tested on every board and
+/// chip type the tester runs.  A config's own standby sets are tested from the
+/// config, which also covers the generator setting the override.
+fn run_standby_pass(
+    board: Board,
+    config: &Config,
+    base_dir: &std::path::Path,
+    label_idx: usize,
+    report: &mut TestReport,
+) {
+    let max_images = Jumpers::new(board, config).images();
+    let candidate = config.chip_sets.iter().enumerate().find(|(idx, set)| {
+        *idx < max_images
+            && set.set_type == ChipSetType::Single
+            && !standby_on(set)
+            && set.chips.iter().all(|chip| !chip.file.is_empty())
+    });
+    let Some((set_idx, chip_set)) = candidate else {
+        report.add_set_result(SetResult::skipped(
+            label_idx,
+            "standby test: no selectable single set with a file",
+        ));
+        return;
+    };
+
+    info!("Running standby test: set {set_idx} booted into standby by its override states");
+    let states =
+        (OverrideState::OverrideStateOn as u8) << onerom_override_states_t::OVERRIDE_STANDBY_SHIFT;
+    Emulator::set_rom_slot_override_states(set_idx as u8, states);
+    let mut result = run_standby_set(
+        board,
+        config,
+        chip_set,
+        label_idx,
+        set_idx,
+        set_idx as u8,
+        base_dir,
+        report,
+    );
+    Emulator::restore_rom_slots();
+    result.set_note(format!(
+        "standby test: set {set_idx} booted into standby by its override states, served once \
+         standby was turned off"
+    ));
+    report.add_set_result(result);
+}
+
+/// Check runtime info's standby flag matches `standby`.
+fn expect_standby(emulator: &Emulator, standby: bool) -> Result<(), String> {
+    let flags = emulator.firmware_flags();
+    if (flags & onerom_firmware_flag_t::FIRMWARE_FLAG_STANDBY != 0) == standby {
+        Ok(())
+    } else {
+        Err(format!(
+            "firmware flags {flags:#x}, want FIRMWARE_FLAG_STANDBY {}",
+            if standby { "set" } else { "clear" }
+        ))
+    }
+}
+
+fn set_standby(emulator: &Emulator, standby: bool) -> Result<(), String> {
+    let result = emulator.set_standby(u8::from(standby), 0);
+    if result != OraResult::Ok {
+        return Err(format!("set_standby({}) got {result:?}", u8::from(standby)));
+    }
+    expect_standby(emulator, standby)
+}
+
+/// Read the chip in each mode it serves and fail on a driven data pin.
+fn expect_undriven(
+    emulator: &Emulator,
+    cache: &PinCache,
+    chip_type: ChipType,
+    force_16_bit: bool,
+) -> Result<(), String> {
+    for &mode in chip_type.bit_modes() {
+        if force_16_bit && mode != 16 {
+            continue;
+        }
+        let (checks, violations) = run_undriven(
+            emulator,
+            cache,
+            oracle::served_size(chip_type),
+            mode,
+            addr_before_cs_cycles(chip_type),
+            cs_to_data_cycles(chip_type, mode),
+            (0, 0),
+            STANDBY_UNDRIVEN_ADDRS,
+        );
+        if violations != 0 {
+            return Err(format!(
+                "data pins driven at {violations} of {checks} checks in {mode}-bit mode"
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// `FIRMWARE_STATE_ROM_LOADED`, which plugins wait for, is reached at boot.
+fn expect_rom_loaded(emulator: &Emulator) -> Result<(), String> {
+    let states = emulator.firmware_states();
+    if states & onerom_firmware_state_t::FIRMWARE_STATE_ROM_LOADED != 0 {
+        Ok(())
+    } else {
+        Err(format!(
+            "firmware states {states:#x}, want FIRMWARE_STATE_ROM_LOADED"
+        ))
+    }
+}
+
+/// RAM slot 0's contents, read through the plugin API.
+fn read_ram_slot_0(emulator: &Emulator, chip_type: ChipType) -> Result<Vec<u8>, String> {
+    let mut image = vec![0u8; oracle::served_size(chip_type)];
+    let result = emulator.read_ram_rom_slot(0, 0, &mut image);
+    if result == OraResult::Ok {
+        Ok(image)
+    } else {
+        Err(format!("read of RAM slot 0 got {result:?}"))
+    }
+}
+
+/// A single set that boots into standby.
+///
+/// The data pins stay undriven through bus cycles after boot.  Standby is then
+/// turned off and the set is served and checked like any other.  A set without
+/// an image is checked against RAM slot 0.  Last, standby is turned on again
+/// and the data pins must be released.
+///
+/// The standby checks are recorded as checks and the serving as the set's
+/// result.
+// Every argument is an independent input. See timing_pass.
+#[allow(clippy::too_many_arguments)]
+fn run_standby_set(
+    board: Board,
+    config: &Config,
+    chip_set: &ChipSetConfig,
+    set_idx: usize,
+    served_idx: usize,
+    sel_image: u8,
+    base_dir: &std::path::Path,
+    report: &mut TestReport,
+) -> SetResult {
+    if chip_set.set_type != ChipSetType::Single {
+        return SetResult::skipped(set_idx, "standby is tested on single sets");
+    }
+    let (emulator, fw_version) = match boot_set(board, config, chip_set, set_idx, sel_image) {
+        Ok(e) => e,
+        Err(r) => return r,
+    };
+
+    let chip_config = &chip_set.chips[0];
+    let requested = chip_config.chip_type.resolved();
+    let chip_type = chip_substitution(board, requested).unwrap_or(requested);
+    let cache = PinCache::build(chip_type, chip_config, board);
+    if let Err(r) = check_rom_pin_pulls(&emulator, &cache, set_idx) {
+        return r;
+    }
+    let gap_gpios = match gap_set_for_slot(
+        board, config, base_dir, served_idx, fw_version, requested, &cache, 0, set_idx,
+    ) {
+        Ok(g) => g,
+        Err(r) => return r,
+    };
+    let force_16_bit = get_force_16_bit(chip_set);
+
+    let booted =
+        expect_standby(&emulator, true).and_then(|()| match emulator.get_active_ram_slot() {
+            (OraResult::Ok, Some(0)) => Ok(()),
+            other => Err(format!("get_active_ram_slot got {other:?}, want slot 0")),
+        });
+    report.add_check(
+        &format!("set {set_idx} boots into standby with RAM slot 0 active"),
+        booted,
+    );
+    report.add_check(
+        &format!("set {set_idx} data pins undriven in standby after boot"),
+        expect_undriven(&emulator, &cache, chip_type, force_16_bit),
+    );
+
+    let ram_image = if chip_config.file.is_empty() {
+        report.add_check(
+            &format!("set {set_idx} without an image has loaded its ROM"),
+            expect_rom_loaded(&emulator),
+        );
+        match read_ram_slot_0(&emulator, chip_type) {
+            Ok(image) => Some(image),
+            Err(e) => return SetResult::boot_error(set_idx, &e),
+        }
+    } else {
+        None
+    };
+    let label = ram_image.as_ref().map(|_| "RAM slot 0".to_string());
+
+    if let Err(e) = set_standby(&emulator, false) {
+        return SetResult::boot_error(set_idx, &format!("turning standby off: {e}"));
+    }
+    let mut chip_result = run_chip(
+        &emulator,
+        board,
+        chip_config,
+        set_idx,
+        0,
+        base_dir,
+        force_16_bit,
+        (0u64, 0u64),
+        &gap_gpios,
+        ram_image,
+    );
+    if let Some(label) = label {
+        chip_result.filename = label;
+    }
+
+    report.add_check(
+        &format!("set {set_idx} data pins released once standby is turned on again"),
+        set_standby(&emulator, true)
+            .and_then(|()| expect_undriven(&emulator, &cache, chip_type, force_16_bit)),
+    );
+
+    let mut result = SetResult::done(set_idx, vec![chip_result]);
+    result.set_note("boots into standby, served once standby was turned off".to_string());
+    result
 }
 
 // ── Multi-ROM chip set ────────────────────────────────────────────────────────
@@ -1251,6 +1538,8 @@ fn boot_set(
 
 // ── Per chip ──────────────────────────────────────────────────────────────────
 
+/// Serve one chip and check every byte against `expected`, or against the
+/// chip's file where `expected` is `None`.
 #[allow(clippy::too_many_arguments)]
 fn run_chip(
     emulator: &Emulator,
@@ -1262,6 +1551,7 @@ fn run_chip(
     force_16_bit: bool,
     background_mask: (u64, u64),
     gap_gpios: &[u8],
+    expected: Option<Vec<u8>>,
 ) -> ChipResult {
     let requested_chip_type = chip_config.chip_type.resolved();
 
@@ -1314,7 +1604,7 @@ fn run_chip(
         );
     }
 
-    let oracle = oracle::load(chip_config, chip_type, base_dir);
+    let oracle = expected.unwrap_or_else(|| oracle::load(chip_config, chip_type, base_dir));
     debug!(
         "Set {} chip {}: oracle loaded, {} bytes",
         set_idx,

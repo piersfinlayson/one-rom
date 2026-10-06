@@ -309,19 +309,19 @@ pub fn build_alg_config(
     let gpio_override_config = if overrides.is_empty() {
         None
     } else {
-        Some(OneromAlgOverrideConfig { params: overrides })
+        let mut config = OneromAlgOverrideConfig::default();
+        config.params = overrides;
+        Some(config)
     };
 
-    let gpio_pull_config = build_gpio_pull_config(addr_layout, set_type, num_chips, board);
-
-    OneromAlgConfig {
-        alg_cs,
-        alg_addr,
-        alg_data,
-        alg_dma,
-        gpio_pull_config,
-        gpio_override_config,
-    }
+    let mut config = OneromAlgConfig::default();
+    config.alg_cs = alg_cs;
+    config.alg_addr = alg_addr;
+    config.alg_data = alg_data;
+    config.alg_dma = alg_dma;
+    config.gpio_pull_config = build_gpio_pull_config(addr_layout, set_type, num_chips, board);
+    config.gpio_override_config = gpio_override_config;
+    config
 }
 
 // ===========================================================================
@@ -436,53 +436,49 @@ mod tests {
 
         let config = build_alg_config(&ctx, &addr_layout, &cs_data_layout, &[]);
 
-        assert_eq!(
-            config,
-            OneromAlgConfig {
-                alg_cs: OneromAlgCsConfig::AlgCs0 {
-                    clkdiv_int: 1,
-                    clkdiv_frac: 0,
-                    gpio_base: 0,
-                    base_cs_pin: 13,
-                    num_cs_pins: 1,
-                    base_data_pin: 16,
-                    num_data_pins: 8,
-                    cs_active_delay: 0,
-                    cs_inactive_delay: 0,
-                    serve_cs_low_0: 0,
-                    byte_pin: GPIO_NONE,
-                    first_rom_cs_base: 13,
-                    first_rom_num_cs_pins: 1,
-                },
-                alg_addr: OneromAlgAddrConfig::AlgAddr0 {
-                    clkdiv_int: 1,
-                    clkdiv_frac: 0,
-                    gpio_base: 0,
-                    num_delay_cycles: 2,
-                    base_addr_pin: 0,
-                    num_addr_pins: 16,
-                    num_rom_table_bits: 16,
-                },
-                alg_data: OneromAlgDataConfig::AlgData0 {
-                    clkdiv_int: 1,
-                    clkdiv_frac: 0,
-                    gpio_base: 0,
-                    base_data_pin: 16,
-                    word_size: 8,
-                },
-                alg_dma: OneromAlgDmaConfig::AlgDma0 {
-                    bit_mode: MaybeKnown::Known(BitModes::BitMode8),
-                    continuous: 1,
-                },
-                gpio_pull_config: None,
-                gpio_override_config: Some(OneromAlgOverrideConfig {
-                    params: alloc::vec![
-                        encode_override(8, GpioOverride::GpioOverLow),
-                        encode_override(9, GpioOverride::GpioOverLow),
-                    ],
-                }),
-            }
-        );
+        let mut overrides = OneromAlgOverrideConfig::default();
+        overrides.params = alloc::vec![
+            encode_override(8, GpioOverride::GpioOverLow),
+            encode_override(9, GpioOverride::GpioOverLow),
+        ];
+        let mut expected = OneromAlgConfig::default();
+        expected.alg_cs = OneromAlgCsConfig::AlgCs0 {
+            clkdiv_int: 1,
+            clkdiv_frac: 0,
+            gpio_base: 0,
+            base_cs_pin: 13,
+            num_cs_pins: 1,
+            base_data_pin: 16,
+            num_data_pins: 8,
+            cs_active_delay: 0,
+            cs_inactive_delay: 0,
+            serve_cs_low_0: 0,
+            byte_pin: GPIO_NONE,
+            first_rom_cs_base: 13,
+            first_rom_num_cs_pins: 1,
+        };
+        expected.alg_addr = OneromAlgAddrConfig::AlgAddr0 {
+            clkdiv_int: 1,
+            clkdiv_frac: 0,
+            gpio_base: 0,
+            num_delay_cycles: 2,
+            base_addr_pin: 0,
+            num_addr_pins: 16,
+            num_rom_table_bits: 16,
+        };
+        expected.alg_data = OneromAlgDataConfig::AlgData0 {
+            clkdiv_int: 1,
+            clkdiv_frac: 0,
+            gpio_base: 0,
+            base_data_pin: 16,
+            word_size: 8,
+        };
+        expected.alg_dma = OneromAlgDmaConfig::AlgDma0 {
+            bit_mode: MaybeKnown::Known(BitModes::BitMode8),
+            continuous: 1,
+        };
+        expected.gpio_override_config = Some(overrides);
+        assert_eq!(config, expected);
     }
 
     /// Fire24A, 2-chip Banked 2364, CS1 ActiveLow: verifies that

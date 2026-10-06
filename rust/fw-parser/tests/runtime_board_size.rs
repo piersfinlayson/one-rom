@@ -16,7 +16,8 @@ use onerom_metadata::{
     FLASH_CS0_BASE_ADDR, FirmwareType, MaybeKnown, ONEROM_FAMILY_MAGIC,
     ONEROM_INFO_FIRMWARE_TYPE_OFFSET as TYPE_OFF, ONEROM_INFO_RUNTIME_OFFSET as RUNTIME_OFF,
     ONEROM_INFO_VERSION, ONEROM_INFO_VERSION_OFFSET as VERSION_OFF,
-    ONEROM_RUNTIME_INFO_BOARD_SIZE_OFFSET, OneromBoardSize, RUNTIME_INFO_VERSION,
+    ONEROM_RUNTIME_INFO_BOARD_SIZE_OFFSET, ONEROM_RUNTIME_INFO_SIZE, OneromBoardSize,
+    RUNTIME_INFO_VERSION,
 };
 
 const RP235X_FLASH_BASE: u32 = FLASH_CS0_BASE_ADDR;
@@ -66,7 +67,7 @@ fn schema_device(runtime: Option<Vec<u8>>) -> ParsedDevice {
 
 /// `onerom_runtime_info_t` recording board size `size`.
 fn runtime_info(size: u8) -> Vec<u8> {
-    let mut ram = vec![0u8; 64];
+    let mut ram = vec![0u8; ONEROM_RUNTIME_INFO_SIZE];
     ram[0..4].copy_from_slice(b"sdrr");
     ram[4..8].copy_from_slice(&RUNTIME_INFO_VERSION.to_le_bytes());
     ram[38] = 1; // bit_mode: 8-bit

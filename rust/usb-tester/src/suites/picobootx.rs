@@ -43,15 +43,17 @@ pub const CMD_SET_LED: u8 = 0x01;
 const CMD_GET_CAPS: u8 = 0x02 | DIR_IN;
 pub const CMD_GPIO_SET: u8 = 0x03;
 const CMD_GPIO_QUERY: u8 = 0x04 | DIR_IN;
+pub const CMD_SET_STANDBY: u8 = 0x06;
 
 // The capabilities response.
 const CAPS_LEN: u32 = 32;
 const EXT_MAJOR: u8 = 1;
-const EXT_MINOR: u8 = 0;
+const EXT_MINOR: u8 = 1;
 const FEAT_GPIO_SET: u32 = 1 << 0;
 const FEAT_GPIO_QUERY: u32 = 1 << 1;
 const FEAT_GPIO_HOLD: u32 = 1 << 2;
 const FEAT_LED_ARGS: u32 = 1 << 3;
+const FEAT_STANDBY: u32 = 1 << 4;
 const MAX_HOLD_MS: u32 = 60000;
 
 // A GPIO query entry, and the longest transfer a One ROM command may ask for.
@@ -294,6 +296,30 @@ fn the_capabilities_offer_the_led_args(dev: &mut Device, _ctx: &Ctx) -> Result<O
     }
 }
 
+/// Standby is offered exactly when the firmware resolves `ORA_ID_SET_STANDBY`.
+///
+/// Checked both ways round, as for SET_LED's arguments above.
+fn the_capabilities_offer_standby(dev: &mut Device, _ctx: &Ctx) -> Result<Outcome, String> {
+    let has_standby = dev
+        .emulator()
+        .plugin_lookup_valid(onerom_fw_emulator::ffi::api_id_t_ORA_ID_SET_STANDBY);
+
+    let caps = caps(dev)?;
+    let offered = u32_at(&caps, 4) & FEAT_STANDBY != 0;
+
+    match (has_standby, offered) {
+        (true, false) => Err(
+            "this firmware resolves ORA_ID_SET_STANDBY, but ONEROM_FEAT_STANDBY is clear"
+                .to_string(),
+        ),
+        (false, true) => Err(
+            "ONEROM_FEAT_STANDBY is set, but this firmware doesn't resolve ORA_ID_SET_STANDBY"
+                .to_string(),
+        ),
+        _ => Ok(Outcome::Pass),
+    }
+}
+
 /// The capabilities are meant to grow, so a host asking for a different length
 /// gets something it can make sense of.
 ///
@@ -382,6 +408,13 @@ fn a_command_without_data_refuses_a_transfer(
     if gpio != INVALID_CMD_LENGTH {
         return Err(format!(
             "GPIO_SET with a data phase answered {gpio}, not INVALID_CMD_LENGTH"
+        ));
+    }
+
+    let standby = dev.dispatch(CMD_SET_STANDBY, 4, &NO_ARGS);
+    if standby != INVALID_CMD_LENGTH {
+        return Err(format!(
+            "SET_STANDBY with a data phase answered {standby}, not INVALID_CMD_LENGTH"
         ));
     }
 
@@ -953,6 +986,12 @@ pub static SCENARIOS: &[Scenario] = &[
         name: "picobootx.the_capabilities_offer_the_led_args",
         about: "SET_LED's arguments are offered exactly when the firmware has an engine to honour them",
         run: the_capabilities_offer_the_led_args,
+        before_start: None,
+    },
+    Scenario {
+        name: "picobootx.the_capabilities_offer_standby",
+        about: "standby is offered exactly when the firmware resolves ORA_ID_SET_STANDBY",
+        run: the_capabilities_offer_standby,
         before_start: None,
     },
     Scenario {

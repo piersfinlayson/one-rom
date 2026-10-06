@@ -5,7 +5,7 @@
 use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::format;
 use alloc::string::{String, ToString};
-use onerom_config::chip::ChipType;
+use onerom_config::chip::{ChipFunction, ChipType};
 use onerom_config::fw::{FirmwareProperties, FirmwareVersion};
 use onerom_config::hw::{Board, HeaderColumn, HeaderRole, HeaderSlot};
 use onerom_config::mcu::Family;
@@ -13,14 +13,16 @@ use onerom_config::pin::{HeaderPin, ReservedPins};
 use onerom_metadata::{
     MAX_SERIAL_NUMBER_LEN, MAX_UNIT_NAME_LEN, METADATA_BASE, METADATA_SIZE, MIN_SCHEMA_VERSION,
     MaybeKnown, ONEROM_METADATA_MAGIC, OneromAlgConfig, OneromMetadataHeader, OneromRomInfo,
-    OneromRomSlot, Pointer, RomSlotType, metadata_generation_for, serialize,
+    OneromRomSlot, Pointer, ROM_SLOT_NO_IMAGE, RomSlotType, metadata_generation_for, serialize,
 };
 
 use crate::flash::{FlashChips, slot_addresses};
 use crate::image::requires_half_select_cs1;
 use crate::v2::addr_layout::AddrLayout;
 use crate::v2::cs_data_layout::CsDataLayout;
-use crate::v2::firmware_config::{build_firmware_config, build_firmware_overrides};
+use crate::v2::firmware_config::{
+    build_firmware_config, build_firmware_overrides, build_override_states,
+};
 use crate::v2::gpio_use::used_gpios;
 use crate::v2::hardware_info::build_hardware_info;
 use crate::v2::rom_image::build_rom_image;
@@ -28,8 +30,8 @@ use crate::v2::rom_info::truncate_filename;
 use crate::v2::rom_slot::build_rom_slot;
 use crate::{
     Chip, ChipConfig, ChipSet, ChipSetConfig, ChipSetType, Config, ConfigOverrides, ConfigWarning,
-    CsConfig, CsLogic, Error, FileData, FileSpec, FireServeMode, License, MetadataWriter,
-    PAD_BLANK_BYTE, Result, SizeHandling, UNWRITTEN_BYTE,
+    CsConfig, CsLogic, Error, FileData, FileSpec, FireServeMode, FirmwareConfig, License,
+    MetadataWriter, PAD_BLANK_BYTE, Result, SizeHandling, UNWRITTEN_BYTE,
 };
 use crate::{
     MAX_SUPPORTED_FIRMWARE_VERSION_V1, MAX_SUPPORTED_FIRMWARE_VERSION_V2,
@@ -37,6 +39,10 @@ use crate::{
     MIN_SUPPORTED_FIRMWARE_VERSION_V2, Metadata, SUPPORTED_CHIP_TYPES_V1, SUPPORTED_CHIP_TYPES_V2,
     UNSUPPORTED_FIRMWARE_VERSIONS_V1, UNSUPPORTED_FIRMWARE_VERSIONS_V2, supports_board_size,
 };
+
+/// The data pointer of a ROM slot without an image. The firmware skips the
+/// boot copy for it.
+const NO_IMAGE: Pointer = Pointer::Addr32(ROM_SLOT_NO_IMAGE);
 
 /// Main Builder object
 ///
@@ -188,6 +194,22 @@ impl Builder {
             });
         }
 
+        for overrides in config
+            .chip_sets
+            .iter()
+            .filter_map(|set| set.firmware_overrides.as_ref())
+        {
+            if let Some((feat, minimum)) =
+                build_override_states(overrides).first_member_newer_than(version)
+            {
+                return Err(Error::FirmwareTooOld {
+                    feat,
+                    version,
+                    minimum,
+                });
+            }
+        }
+
         // Only the v2 path has checks that can be accepted; the v1 path
         // produces no warnings.
         let warnings = if version >= MIN_SUPPORTED_FIRMWARE_VERSION_V2 {
@@ -258,17 +280,18 @@ impl Builder {
             return Ok(alloc::vec::Vec::new());
         }
 
-        let chip_sets = chip_sets_with(&self.config, props, |chip_id, chip_config, cs_config| {
-            Ok(Chip::new(
-                chip_id,
-                chip_config.filename(),
-                chip_config.label.clone(),
-                chip_config.chip_type.clone(),
-                cs_config,
-                None,
-                chip_config.location,
-            ))
-        })?;
+        let chip_sets =
+            chip_sets_with(&self.config, props, |chip_id, _, chip_config, cs_config| {
+                Ok(Chip::new(
+                    chip_id,
+                    chip_config.filename(),
+                    chip_config.label.clone(),
+                    chip_config.chip_type.clone(),
+                    cs_config,
+                    None,
+                    chip_config.location,
+                ))
+            })?;
 
         let mut used = alloc::vec::Vec::new();
         let rom_sets = chip_sets
@@ -557,24 +580,20 @@ impl Builder {
                     ChipType::PioPlugin => RomSlotType::RomSlotTypePluginPio,
                     _ => unreachable!(),
                 };
-                let slot = OneromRomSlot {
-                    data: Pointer::Null,
-                    size: chip.data().map(|d| d.len() as u32).unwrap_or(0),
-                    roms: alloc::vec![OneromRomInfo {
-                        rom_type: chip.chip_type_raw().to_string(),
-                        filename: truncate_filename(chip.filename()),
-                        pin_map: None,
-                        chip_size: chip.chip_type().size_bytes() as u32,
-                        rbcp_rom_type: chip.chip_type().rbcp_chip_type(),
-                    }],
-                    rom_count: 1,
-                    slot_type: MaybeKnown::Known(slot_type),
-                    alg: None,
-                    firmware_overrides: chip_set
-                        .firmware_overrides
-                        .as_ref()
-                        .map(build_firmware_overrides),
-                };
+                let mut rom = OneromRomInfo::default();
+                rom.rom_type = chip.chip_type_raw().to_string();
+                rom.filename = truncate_filename(chip.filename());
+                rom.chip_size = chip.chip_type().size_bytes() as u32;
+                rom.rbcp_rom_type = chip.chip_type().rbcp_chip_type();
+                let mut slot = OneromRomSlot::default();
+                slot.size = chip.data().map(|d| d.len() as u32).unwrap_or(0);
+                slot.roms = alloc::vec![rom];
+                slot.rom_count = 1;
+                slot.slot_type = MaybeKnown::Known(slot_type);
+                slot.firmware_overrides = chip_set
+                    .firmware_overrides
+                    .as_ref()
+                    .map(build_firmware_overrides);
                 rom_slots.push(slot);
                 layouts.push(None);
             } else {
@@ -600,22 +619,34 @@ impl Builder {
         // `build()` gets the check.
         let chips = FlashChips::new(props.mcu_variant(), props.board_size());
         let rom_data_start = chips.rom_data_start();
-        let sizes: alloc::vec::Vec<u32> = rom_slots.iter().map(|slot| slot.size).collect();
+        // A slot without an image doesn't occupy flash. Its size stays the ROM
+        // table's, which the firmware still serves from RAM.
+        let sizes: alloc::vec::Vec<u32> = rom_slots
+            .iter()
+            .zip(&chip_sets)
+            .map(|(slot, chip_set)| if chip_set.has_data() { slot.size } else { 0 })
+            .collect();
         let addrs = slot_addresses(&chips, &sizes)?;
 
         // Plugins run from the addresses they're linked at, which is where
         // contiguous placement from rom_data_start puts them. Plugins come
         // first in config order so first fit places them there too.
         let mut contiguous = rom_data_start;
-        for ((slot, chip_set), &addr) in rom_slots.iter_mut().zip(&chip_sets).zip(&addrs) {
+        for (((slot, chip_set), &addr), &size) in
+            rom_slots.iter_mut().zip(&chip_sets).zip(&addrs).zip(&sizes)
+        {
             if matches!(
                 chip_set.chips[0].chip_type(),
                 ChipType::SystemPlugin | ChipType::UserPlugin
             ) {
                 assert_eq!(addr, contiguous, "a plugin isn't where it's linked to run");
             }
-            contiguous += slot.size;
-            slot.data = Pointer::Addr32(addr);
+            contiguous += size;
+            slot.data = if chip_set.has_data() {
+                Pointer::Addr32(addr)
+            } else {
+                NO_IMAGE
+            };
         }
 
         let second = chips.second();
@@ -631,14 +662,17 @@ impl Builder {
         };
         let rom_data_size = addrs
             .iter()
-            .zip(&rom_slots)
-            .map(|(&addr, slot)| offset(addr) + slot.size)
+            .zip(&sizes)
+            .map(|(&addr, &size)| offset(addr) + size)
             .max()
             .unwrap_or(0);
         let mut rom_data_buf = alloc::vec![0xFF; rom_data_size as usize];
         for (((chip_set, slot), layout), &addr) in
             chip_sets.iter().zip(&rom_slots).zip(&layouts).zip(&addrs)
         {
+            if !chip_set.has_data() {
+                continue;
+            }
             let image = match layout {
                 Some((addr_layout, cs_data_layout)) => build_rom_image(
                     addr_layout,
@@ -664,19 +698,18 @@ impl Builder {
         let mut magic = [0u8; 16];
         magic[..ONEROM_METADATA_MAGIC.len()].copy_from_slice(ONEROM_METADATA_MAGIC.as_bytes());
 
-        let header = OneromMetadataHeader {
-            magic,
-            version: generation,
-            hw,
-            fw,
-            rom_slot_count: rom_slots.len() as u8,
-            boot_logging: self.config.boot_logging as u8,
-            swd_enabled: self.config.swd_enabled as u8,
-            turbo_boot: self.config.turbo_boot as u8,
-            rom_slots,
-            reserved_sel_pins: reserved.select_bits(),
-            reserved_x_pins: reserved.x_bits(),
-        };
+        let mut header = OneromMetadataHeader::default();
+        header.magic = magic;
+        header.version = generation;
+        header.hw = hw;
+        header.fw = fw;
+        header.rom_slot_count = rom_slots.len() as u8;
+        header.boot_logging = self.config.boot_logging as u8;
+        header.swd_enabled = self.config.swd_enabled as u8;
+        header.turbo_boot = self.config.turbo_boot as u8;
+        header.rom_slots = rom_slots;
+        header.reserved_sel_pins = reserved.select_bits();
+        header.reserved_x_pins = reserved.x_bits();
 
         let mut metadata_buf = alloc::vec![0u8; METADATA_SIZE];
         serialize(&header, METADATA_BASE, &mut metadata_buf)?;
@@ -861,6 +894,22 @@ pub(crate) fn check_chip_sets(
             }
         }
 
+        let standby = set
+            .firmware_overrides
+            .as_ref()
+            .is_some_and(FirmwareConfig::standby);
+        // A slot has an image from every chip's file or no image at all.
+        if standby
+            && set.chips.iter().any(|chip| chip.file.is_empty())
+            && set.chips.iter().any(|chip| !chip.file.is_empty())
+        {
+            return Err(Error::InvalidConfig {
+                error: format!(
+                    "Standby chip set {set_id} must have a file for every chip or for none"
+                ),
+            });
+        }
+
         let mut is_plugin = false;
         for chip in set.chips.iter() {
             let chip0 = &set.chips[0];
@@ -911,12 +960,12 @@ pub(crate) fn check_chip_sets(
                 check_named_plugin(chip, chip_num)?;
             }
 
-            // Check filename specified for ROMs
-            if chip.file.is_empty()
-                && chip.plugin.is_none()
-                && chip.chip_type.resolved().chip_function()
-                    != onerom_config::chip::ChipFunction::Ram
-            {
+            let file_optional = match chip.chip_type.resolved().chip_function() {
+                ChipFunction::Ram => true,
+                ChipFunction::Rom => standby,
+                ChipFunction::Plugin => chip.plugin.is_some(),
+            };
+            if chip.file.is_empty() && !file_optional {
                 return Err(Error::InvalidConfig {
                     error: format!("Chip {} file name is empty", chip_num),
                 });
@@ -2235,7 +2284,7 @@ pub(crate) fn build_chip_sets(
     file_id_map: &BTreeMap<usize, usize>,
     props: &FirmwareProperties,
 ) -> Result<alloc::vec::Vec<ChipSet>> {
-    chip_sets_with(config, props, |chip_id, chip_config, cs_config| {
+    chip_sets_with(config, props, |chip_id, set, chip_config, cs_config| {
         let data = if let Some(&file_id) = file_id_map.get(&chip_id) {
             Some(files.get(&file_id).unwrap())
         } else {
@@ -2293,29 +2342,48 @@ pub(crate) fn build_chip_sets(
         };
 
         let filename = chip_config.filename();
+        let standby = set
+            .firmware_overrides
+            .as_ref()
+            .is_some_and(FirmwareConfig::standby);
 
-        Chip::from_raw_rom_image(
-            chip_id,
-            filename,
-            chip_config.label.clone(),
-            source,
-            alloc::vec![0u8; chip_config.chip_type.resolved().size_bytes()],
-            &chip_config.chip_type,
-            cs_config,
-            &chip_config.size_handling,
-            blank_byte,
-            chip_config.location,
-            &chip_config.transform,
-        )
+        match source {
+            None if standby
+                && chip_config.chip_type.resolved().chip_function() == ChipFunction::Rom =>
+            {
+                Chip::without_image(
+                    chip_id,
+                    filename,
+                    chip_config.label.clone(),
+                    &chip_config.chip_type,
+                    cs_config,
+                    chip_config.location,
+                    &chip_config.transform,
+                )
+            }
+            _ => Chip::from_raw_rom_image(
+                chip_id,
+                filename,
+                chip_config.label.clone(),
+                source,
+                alloc::vec![0u8; chip_config.chip_type.resolved().size_bytes()],
+                &chip_config.chip_type,
+                cs_config,
+                &chip_config.size_handling,
+                blank_byte,
+                chip_config.location,
+                &chip_config.transform,
+            ),
+        }
     })
 }
 
 /// Build `ChipSet`s from `config`, each chip made by `chip` from its index,
-/// its config and its resolved control lines.
+/// its set's config, its config and its resolved control lines.
 fn chip_sets_with(
     config: &Config,
     props: &FirmwareProperties,
-    mut chip: impl FnMut(usize, &ChipConfig, CsConfig) -> Result<Chip>,
+    mut chip: impl FnMut(usize, &ChipSetConfig, &ChipConfig, CsConfig) -> Result<Chip>,
 ) -> Result<alloc::vec::Vec<ChipSet>> {
     let mut chip_sets = alloc::vec::Vec::new();
     let mut chip_id = 0;
@@ -2338,7 +2406,7 @@ fn chip_sets_with(
                 chip_config.oe,
             );
 
-            set_roms.push(chip(chip_id, chip_config, cs_config)?);
+            set_roms.push(chip(chip_id, chip_set_config, chip_config, cs_config)?);
             chip_id += 1;
         }
 

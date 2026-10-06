@@ -199,4 +199,8 @@
 // @since firmware 0.8.0
 #define ORA_FIRMWARE_STATE_STARTUP_DONE ((uint32_t)4)
 
+// One ROM is in standby and doesn't serve the ROM.
+// @since firmware 0.8.0
+#define ORA_FIRMWARE_FLAG_STANDBY ((uint8_t)1)
+
 #endif // ONEROM_CONSTANTS_H

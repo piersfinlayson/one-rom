@@ -730,6 +730,53 @@ fn an_enum_default_parses_as_the_variant_it_names() {
 }
 
 // ===========================================================================
+// Rust: the default
+// ===========================================================================
+
+/// A structure gains fields from its padding, so code outside the crate builds
+/// one from its default.
+#[test]
+fn a_structure_is_non_exhaustive() {
+    contains(
+        &rust_of("", ""),
+        "#[non_exhaustive]\npub struct OneromHardwareInfo {\n",
+    );
+}
+
+/// A gated field defaults to its `default_if_absent` value and an ungated
+/// number to 0.
+#[test]
+fn the_default_holds_a_gated_fields_declared_default() {
+    contains(
+        &rust_of(ARRIVED_IN_3, ""),
+        "impl Default for OneromHardwareInfo {\n    fn default() -> Self {\n        \
+         Self {\n            board_id: 4660u16,\n",
+    );
+    contains(
+        &rust_of("", ""),
+        "impl Default for OneromHardwareInfo {\n    fn default() -> Self {\n        \
+         Self {\n            board_id: 0,\n",
+    );
+}
+
+/// An ungated enum holds the value 0 parses as, so a default written and read
+/// back compares equal.
+#[test]
+fn the_default_enum_is_what_0_reads_as() {
+    contains(
+        &rust_of("", ""),
+        "mode: match OneromMode::try_from(0u8) { Ok(value) => MaybeKnown::Known(value), \
+         Err(_) => MaybeKnown::Unknown(0) },",
+    );
+}
+
+/// A pointer that can't be null holds its target's default.
+#[test]
+fn the_default_points_at_its_targets_default() {
+    contains(&rust_of("", ""), "hw: OneromHardwareInfo::default(),");
+}
+
+// ===========================================================================
 // The plugin getter
 // ===========================================================================
 

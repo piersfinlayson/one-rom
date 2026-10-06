@@ -87,8 +87,20 @@ onerom_board_size_t otp_board_size(void);
 
 // pio.c
 extern int pio(void);
+
+// Start or stop the state machines set in sms. The others are unchanged.
+void pio_enable_sms(uint8_t block, uint8_t sms);
+void pio_disable_sms(uint8_t block, uint8_t sms);
+
+// Run instr on a state machine at once, whether or not it is enabled.
+void pio_sm_exec(uint8_t block, uint8_t sm, uint16_t instr);
+
 // piorom.c
 extern int piorom2(void);
+
+// Turn standby on (1) or off (0), setting or clearing FIRMWARE_FLAG_STANDBY.
+// Requesting the current state does nothing.
+void pio_set_standby(uint8_t standby);
 extern int pioram(
     const onerom_info_t *info,
     onerom_runtime_info_t *runtime,
@@ -282,6 +294,7 @@ void set_host_calling_plugin(ora_plugin_type_t plugin);
 #endif // !REAL_HARDWARE
 
 // pio/dma.c
+void dma_init(void);
 void dma_copy(
     uint32_t src_addr,
     uint32_t dst_addr,

@@ -80,6 +80,22 @@ pub enum ControlCommands {
     )]
     Rgb(ControlRgbArgs),
 
+    /// Control standby mode on a One ROM.
+    ///
+    /// In standby mode One ROM stops serving a ROM image.  When taken out of
+    /// standby it continues to serve the ROM.
+    ///
+    /// Examples:
+    ///
+    ///   onerom control standby on
+    ///
+    ///   onerom control standby off
+    #[command(
+        subcommand_value_name = "COMMAND",
+        subcommand_help_heading = "Commands"
+    )]
+    Standby(ControlStandbyArgs),
+
     /// Write data to One ROM's SRAM or the live ROM image.
     ///
     /// Poke provides transient (non-persistent) writes to device memory. Changes
@@ -545,6 +561,49 @@ pub struct ControlRgbBlinkArgs {
 }
 
 impl CommandTrait for ControlRgbBlinkArgs {
+    fn requires_device(&self) -> bool {
+        true
+    }
+}
+
+#[derive(Debug, Args)]
+pub struct ControlStandbyArgs {
+    #[command(subcommand)]
+    pub command: ControlStandbyCommands,
+}
+
+impl CommandTrait for ControlStandbyArgs {
+    fn requires_device(&self) -> bool {
+        self.command.requires_device()
+    }
+
+    fn uses_device(&self) -> bool {
+        self.command.uses_device()
+    }
+}
+
+#[enum_dispatch(CommandTrait)]
+#[derive(Debug, Subcommand)]
+pub enum ControlStandbyCommands {
+    /// Turn standby mode on.
+    On(ControlStandbyOnArgs),
+    /// Turn standby mode off.
+    Off(ControlStandbyOffArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct ControlStandbyOnArgs {}
+
+impl CommandTrait for ControlStandbyOnArgs {
+    fn requires_device(&self) -> bool {
+        true
+    }
+}
+
+#[derive(Debug, Args)]
+pub struct ControlStandbyOffArgs {}
+
+impl CommandTrait for ControlStandbyOffArgs {
     fn requires_device(&self) -> bool {
         true
     }

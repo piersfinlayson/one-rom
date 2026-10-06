@@ -50,7 +50,7 @@ pub struct ProgramArgs {
 
     /// ROM slot specification. May be repeated for multiple slots.
     ///
-    /// Format: file=<path_or_url>,type=<romtype>[,cs1=<logic>][,cs2=<logic>][,cs3=<logic>][,size-handling=<handling>][,format=<binary|ihex>][,load-address=<addr>][,cpu-freq=<freq>][,cpu-vreg=<voltage>][,led=<bool>][,force-16-bit=<bool>]
+    /// Format: file=<path_or_url>,type=<romtype>[,cs1=<logic>][,cs2=<logic>][,cs3=<logic>][,size-handling=<handling>][,format=<binary|ihex>][,load-address=<addr>][,cpu-freq=<freq>][,cpu-vreg=<voltage>][,led=<bool>][,force-16-bit=<bool>][,standby=<bool>]
     ///
     /// CS logic values: active-low (or 0), active-high (or 1), ignore.  The
     /// snake_case config spellings are also accepted.
@@ -69,8 +69,12 @@ pub struct ProgramArgs {
     /// Vreg voltage: e.g. 1.1, 1.10, 1.10v, 1.10V. Values above 1.10V require
     /// confirmation (suppressed with --yes). Must be a supported voltage level.
     ///
-    /// Boolean values (led, force-16-bit): on/off, true/false, 1/0.
+    /// Boolean values (led, force-16-bit, standby): on/off, true/false, 1/0.
     /// force-16-bit is only valid on 40-pin boards.
+    ///
+    /// standby=on boots One ROM into standby mode when this slot is selected.
+    /// In standby mode One ROM doesn't serve the ROM. With standby=on, file is
+    /// optional. Requires firmware v0.8.0 or later.
     ///
     /// Examples:
     ///

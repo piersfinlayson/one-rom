@@ -22,6 +22,8 @@
 - `firmware inspect` lists a v0.7.0+ image's MCU, plugins and ROMs, and prints base firmware's board as `any (base firmware)` rather than warning about missing metadata.
 - Commands that don't need a One ROM, such as `image convert` or `firmware inspect --firmware`, no longer fail when two One ROMs are connected.
 - `program --reset-host` fails before programming where a ROM slot uses the pin, for example X1 for bank select.
+- Add `control standby on` and `off`, and the `--slot` key `standby` to boot a slot in standby mode.  `inspect gpio`, `inspect slots`, `peek live` and `poke live` display when standby mode is active.
+- `inspect peek live` displays a line saying what it read.
 - Intel HEX and S-record decode errors now identify the file by name, not by a chip number that include plugins.
 - `firmware inspect` displays an image's reserved pins.
 - A config can now refer to a plugin by name, `"plugin": "usb"`, instead of a URL. The latest plugin release compatible with the firmware version is used.

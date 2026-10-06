@@ -323,6 +323,15 @@ impl Device {
         self.active_rom_facts().map(|(_, size)| size)
     }
 
+    /// Whether runtime info records One ROM in standby mode. `false` where One ROM
+    /// isn't running or its firmware predates standby.
+    pub fn in_standby(&self) -> bool {
+        self.onerom()
+            .and_then(ParsedDevice::as_schema)
+            .and_then(|onerom| onerom.runtime())
+            .is_some_and(|runtime| runtime.firmware_flags.standby == Some(true))
+    }
+
     /// Returns whether this device matches the provided serial pattern, which
     /// supports * and ? wildcards
     pub fn matches_serial(&self, pattern: &str) -> bool {

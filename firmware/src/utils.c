@@ -85,6 +85,13 @@ void process_firmware_overrides(const onerom_rom_slot_t *slot) {
             RUNTIME->swd_enabled = overrides->override_value[0] & (1 << 3) ? 1 : 0;
             LOG("SWD enabled override: %d", RUNTIME->swd_enabled);
         }
+
+        onerom_override_states_t states =
+            onerom_firmware_overrides_override_states(METADATA, overrides);
+        if (((states & OVERRIDE_STANDBY) >> OVERRIDE_STANDBY_SHIFT) == OVERRIDE_STATE_ON) {
+            RUNTIME->firmware_flags |= FIRMWARE_FLAG_STANDBY;
+            LOG("Standby override");
+        }
     }
 }
 
@@ -309,7 +316,7 @@ void preload_rom_image(void) {
     RUNTIME->rom_table = (void *)img_dst;
     RUNTIME->rom_table_size = img_size;
 
-    if (img_src == (uint32_t *)0xFFFFFFFF) {
+    if ((uintptr_t)img_src == ROM_SLOT_NO_IMAGE) {
         LOG("No RAM image");
         set_firmware_states(FIRMWARE_STATE_ROM_LOADED);
         return;
@@ -356,7 +363,7 @@ void preload_rom_image(void) {
     RUNTIME->rom_table_size = img_size;
     RUNTIME->rom_table = (void *)(uintptr_t)0x20000000;
 
-    if (img_src == (uint64_t *)0xFFFFFFFF) {
+    if ((uintptr_t)img_src == ROM_SLOT_NO_IMAGE) {
         LOG("No RAM image");
         set_firmware_states(FIRMWARE_STATE_ROM_LOADED);
         return;

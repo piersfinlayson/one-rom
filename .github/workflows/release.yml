@@ -20,12 +20,24 @@ permissions:
 
 jobs:
   emulator-tests:
-    name: Emulator tests (${{ matrix.socket }} pin)
+    name: Emulator tests (${{ matrix.name }})
     runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
-        socket: [24, 28, 32, 40]
+        include:
+          - group: 24-1
+            name: 24 pin, part 1
+          - group: 24-2
+            name: 24 pin, part 2
+          - group: 28-1
+            name: 28 pin, part 1
+          - group: 28-2
+            name: 28 pin, part 2
+          - group: 32
+            name: 32 pin
+          - group: 40
+            name: 40 pin
     steps:
     - uses: actions/checkout@v7
 
@@ -52,7 +64,7 @@ jobs:
         shared-key: emulator-tests
 
     - name: Run One ROM emulator tests
-      run: ci/test-emu.sh ${{ matrix.socket }}
+      run: ci/test-emu.sh ${{ matrix.group }}
 
   c-tests:
     name: C tests

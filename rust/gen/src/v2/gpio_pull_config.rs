@@ -72,7 +72,9 @@ pub fn build_gpio_pull_config(
     if params.is_empty() {
         None
     } else {
-        Some(OneromAlgPullConfig { params })
+        let mut config = OneromAlgPullConfig::default();
+        config.params = params;
+        Some(config)
     }
 }
 

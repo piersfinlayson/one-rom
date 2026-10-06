@@ -86,7 +86,8 @@ use control::{
     ControlPokeMemoryArgs, ControlRebootArgs, ControlResetArgs, ControlRgbArgs,
     ControlRgbBeaconArgs, ControlRgbBlinkArgs, ControlRgbBreatheArgs, ControlRgbCommands,
     ControlRgbCycleArgs, ControlRgbFlameArgs, ControlRgbOffArgs, ControlRgbOnArgs,
-    ControlSelectArgs,
+    ControlSelectArgs, ControlStandbyArgs, ControlStandbyCommands, ControlStandbyOffArgs,
+    ControlStandbyOnArgs,
 };
 use firmware::{
     FirmwareArgs, FirmwareBuildArgs, FirmwareChipsArgs, FirmwareCommands, FirmwareDownloadArgs,

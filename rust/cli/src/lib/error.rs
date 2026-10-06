@@ -395,9 +395,21 @@ pub enum Error {
     PluginTooOldForGpio(String),
 
     #[error(
-        "This One ROM's firmware predates GPIO control.\n  {0}\n  Its USB system plugin supports GPIO control but the firmware beneath it does not.\n  Update the device to One ROM firmware v0.7.1 or later."
+        "This One ROM's firmware predates GPIO control.\n  {0}\n  Its USB system plugin supports GPIO control but its firmware does not.\n  Update the device to One ROM firmware v0.7.1 or later."
     )]
     FirmwareTooOldForGpio(String),
+
+    #[error(
+        "This One ROM's USB system plugin predates standby.\n  {detail}\n  Reprogram it with the v0.8.0 or later USB system plugin, for example:\n    {usb}",
+        detail = .0,
+        usb = hint::PROGRAM_WITH_USB
+    )]
+    PluginTooOldForStandby(String),
+
+    #[error(
+        "This One ROM's firmware predates standby.\n  {0}\n  Its USB system plugin supports standby but its firmware does not.\n  Update the device to One ROM firmware v0.8.0 or later."
+    )]
+    FirmwareTooOldForStandby(String),
 
     #[error(
         "This One ROM cannot hold a GPIO for a bounded period.\n  {0}\n  Update the device to One ROM firmware v0.7.1 or later, or omit --hold."

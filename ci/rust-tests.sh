@@ -79,6 +79,11 @@ echo "Testing onerom-fw-parser..."
 cargo test -p onerom-fw-parser
 cargo test -p onerom-fw-parser --no-default-features
 
+# onerom-fw-tester embeds the firmware emulator, whose build requires CONFIG and
+# BOARD.  Any pair builds it.
+echo "Testing onerom-fw-tester..."
+CONFIG=onerom-config/test-0.json BOARD=fire-24-a cargo test -p onerom-fw-tester
+
 echo "Testing onerom-gen..."
 cargo test -p onerom-gen
 

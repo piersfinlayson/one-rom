@@ -5,10 +5,10 @@
 //! Tests for RAM slot reprogram and copy operations.
 //!
 //! RAM serving slots are passed in explicitly; the flash slot operated on is
-//! the booted image (`set_idx` == `sel_image`), which also selects the oracle
-//! and chip type for that image, chip 0.  The PIO verification tests set their
-//! target slot active before serving, so they are independent of whichever slot
-//! a previous test left active.
+//! the booted image (`set_idx`), which also selects the expected image and chip
+//! type for that image, chip 0.  The PIO verification tests set their target
+//! slot active before serving, so they are independent of whichever slot a
+//! previous test left active.
 
 use std::path::Path;
 
@@ -39,7 +39,7 @@ fn chip_type_from_config(config: &Config, set_idx: usize) -> Result<ChipType, St
 }
 
 /// Resolve chip 0 of the booted image's chip set.
-fn chip_config_at(config: &Config, set_idx: usize) -> Result<&ChipConfig, String> {
+pub(crate) fn chip_config_at(config: &Config, set_idx: usize) -> Result<&ChipConfig, String> {
     config
         .chip_sets
         .get(set_idx)
@@ -53,7 +53,7 @@ fn chip_config_at(config: &Config, set_idx: usize) -> Result<&ChipConfig, String
 /// ignored, the ROM always served as 16-bit).  When set, the PIO serves
 /// only the 16-bit mode, so the PIO verification must not run an 8-bit
 /// pass — mirrors the core tester's `get_force_16_bit` gate.
-fn force_16_bit_for(config: &Config, set_idx: usize) -> bool {
+pub(crate) fn force_16_bit_for(config: &Config, set_idx: usize) -> bool {
     config
         .chip_sets
         .get(set_idx)
@@ -63,7 +63,51 @@ fn force_16_bit_for(config: &Config, set_idx: usize) -> bool {
         .unwrap_or(false)
 }
 
-fn random_pattern(size: usize) -> Vec<u8> {
+/// Whether chip set `set_idx` boots into standby.
+pub(crate) fn boots_in_standby(config: &Config, set_idx: usize) -> bool {
+    config
+        .chip_sets
+        .get(set_idx)
+        .and_then(|s| s.firmware_overrides.as_ref())
+        .and_then(|fw| fw.fire.as_ref())
+        .and_then(|f| f.standby)
+        == Some(true)
+}
+
+/// Whether chip set `set_idx` has an image in flash.
+pub(crate) fn has_image(config: &Config, set_idx: usize) -> bool {
+    config
+        .chip_sets
+        .get(set_idx)
+        .is_some_and(|s| s.chips.iter().all(|c| !c.file.is_empty()))
+}
+
+/// The bytes RAM slot 0 holds at boot.
+///
+/// A set with an image is loaded from its ROM file.  For a set without one, RAM
+/// slot 0 is read through the plugin API.  Call it before anything writes RAM
+/// slot 0.
+pub(crate) fn boot_image(
+    emu: &Emulator,
+    config: &Config,
+    base_dir: &Path,
+    set_idx: usize,
+) -> Result<Vec<u8>, String> {
+    let chip_config = chip_config_at(config, set_idx)?;
+    let chip_type = chip_config.chip_type.resolved();
+    if has_image(config, set_idx) {
+        return Ok(oracle::load(chip_config, chip_type, base_dir));
+    }
+    let mut image = vec![0u8; oracle::served_size(chip_type)];
+    let result = emu.read_ram_rom_slot(0, 0, &mut image);
+    if result.is_ok() {
+        Ok(image)
+    } else {
+        Err(format!("read of RAM slot 0 got {result:?}"))
+    }
+}
+
+pub(crate) fn random_pattern(size: usize) -> Vec<u8> {
     let mut rng = StdRng::seed_from_u64(REPROGRAM_SEED);
     let mut buf = vec![0u8; size];
     rng.fill(&mut buf[..]);
@@ -104,7 +148,7 @@ fn read_and_verify(emu: &Emulator, slot: u8, expected: &[u8]) -> Result<usize, S
 
 /// Drive the PIO bus for every address and verify the served bytes match the
 /// expected content.
-fn pio_verify(
+pub(crate) fn pio_verify(
     emu: &Emulator,
     cache: &PinCache,
     oracle_bytes: &[u8],
@@ -175,7 +219,7 @@ fn pio_verify(
 /// Set `slot` active so the PIO serves it, returning a descriptive error on
 /// failure.  Used by the PIO verification tests to make themselves independent
 /// of whichever slot a previous test left active.
-fn make_active(emu: &Emulator, slot: u8) -> Result<(), String> {
+pub(crate) fn make_active(emu: &Emulator, slot: u8) -> Result<(), String> {
     let result = emu.set_active_ram_slot(slot);
     if !result.is_ok() {
         return Err(format!(
@@ -191,26 +235,24 @@ fn make_active(emu: &Emulator, slot: u8) -> Result<(), String> {
 /// Verify the PIO serves the correct bytes for every address before any
 /// reprogram or slot switch has occurred.
 ///
-/// The boot slot is the active slot and contains the booted image's oracle.
-/// If this test fails the PIO path itself is broken, independently of any
-/// reprogram logic.
+/// The boot slot is the active slot and contains `boot_image`.  If this test
+/// fails the PIO path itself is broken, independently of any reprogram logic.
 pub fn test_initial_pio_verify(
     emu: &Emulator,
     config: &Config,
     board: Board,
-    base_dir: &Path,
     set_idx: usize,
+    boot_image: &[u8],
 ) -> Result<(), String> {
     let chip_config = chip_config_at(config, set_idx)?;
     let chip_type = chip_config.chip_type.resolved();
-    let oracle_bytes = oracle::load(chip_config, chip_type, base_dir);
 
     let cache = PinCache::build(chip_type, chip_config, board);
 
     pio_verify(
         emu,
         &cache,
-        &oracle_bytes,
+        boot_image,
         chip_type,
         force_16_bit_for(config, set_idx),
     )
@@ -218,7 +260,7 @@ pub fn test_initial_pio_verify(
 }
 
 /// Switch to the slot that is *already* active and verify the PIO still serves
-/// the booted image correctly.
+/// `boot_image` correctly.
 ///
 /// This isolates the apio→epio pre-instruction apply path: the served region,
 /// the X value pushed, and the buffer contents are all unchanged, so the only
@@ -228,13 +270,12 @@ pub fn test_noop_switch_pio_verify(
     emu: &Emulator,
     config: &Config,
     board: Board,
-    base_dir: &Path,
     active_slot: u8,
     set_idx: usize,
+    boot_image: &[u8],
 ) -> Result<(), String> {
     let chip_config = chip_config_at(config, set_idx)?;
     let chip_type = chip_config.chip_type.resolved();
-    let oracle_bytes = oracle::load(chip_config, chip_type, base_dir);
 
     // No reprogram, no content change — switch to the already-active slot.
     make_active(emu, active_slot)?;
@@ -243,7 +284,7 @@ pub fn test_noop_switch_pio_verify(
     pio_verify(
         emu,
         &cache,
-        &oracle_bytes,
+        boot_image,
         chip_type,
         force_16_bit_for(config, set_idx),
     )
@@ -314,6 +355,9 @@ pub fn test_reprogram_active_round_trip(
 
 /// Copy the booted image's flash slot (`set_idx`) to `dst_ram`, read it back,
 /// verify against oracle.
+///
+/// A flash slot without an image lies outside the flash, so its copy fails
+/// with `InvalidSlot`.
 pub fn test_copy_flash_to_ram(
     emu: &Emulator,
     config: &Config,
@@ -321,16 +365,27 @@ pub fn test_copy_flash_to_ram(
     set_idx: usize,
     dst_ram: u8,
 ) -> Result<(), String> {
-    let chip_config = chip_config_at(config, set_idx)?;
-    let chip_type = chip_config.chip_type.resolved();
-    let expected = oracle::load(chip_config, chip_type, base_dir);
-
+    let flash_slot = crate::flash_slot(config, set_idx);
     let result = emu.copy_flash_slot_to_ram_slot(
-        set_idx as u8,
+        flash_slot as u8,
         ORA_FLASH_SLOT_FLAG_EXCLUDE_PLUGINS,
         dst_ram,
         0,
     );
+    if !has_image(config, set_idx) {
+        return if result == OraResult::InvalidSlot {
+            println!("  flash slot {flash_slot} without an image: InvalidSlot");
+            Ok(())
+        } else {
+            Err(format!(
+                "copy of flash slot {flash_slot} without an image got {result:?}, want InvalidSlot"
+            ))
+        };
+    }
+
+    let chip_config = chip_config_at(config, set_idx)?;
+    let chip_type = chip_config.chip_type.resolved();
+    let expected = oracle::load(chip_config, chip_type, base_dir);
     if !result.is_ok() {
         return Err(format!("copy_flash_slot_to_ram_slot failed: {:?}", result));
     }
@@ -338,7 +393,7 @@ pub fn test_copy_flash_to_ram(
     read_and_verify(emu, dst_ram, &expected).map(|n| {
         println!(
             "  {} bytes verified (flash slot {} → ram slot {})",
-            n, set_idx, dst_ram
+            n, flash_slot, dst_ram
         )
     })
 }
@@ -365,8 +420,8 @@ pub fn test_switch_active_slot(emu: &Emulator, slot: u8) -> Result<(), String> {
     }
 }
 
-/// Reprogram `slot` with the booted image's oracle, make it the active slot,
-/// and verify the PIO serves the correct bytes for every address.
+/// Reprogram `slot` with `boot_image`, make it the active slot, and verify the
+/// PIO serves the correct bytes for every address.
 ///
 /// Setting the slot active makes this test order-independent: it serves what it
 /// just reprogrammed regardless of which slot was active on entry.
@@ -374,15 +429,14 @@ pub fn test_reprogram_pio_verify(
     emu: &Emulator,
     config: &Config,
     board: Board,
-    base_dir: &Path,
     slot: u8,
     set_idx: usize,
+    boot_image: &[u8],
 ) -> Result<(), String> {
     let chip_config = chip_config_at(config, set_idx)?;
     let chip_type = chip_config.chip_type.resolved();
-    let oracle_bytes = oracle::load(chip_config, chip_type, base_dir);
 
-    let result = emu.reprogram_ram_rom_slot(slot, 0, &oracle_bytes, true);
+    let result = emu.reprogram_ram_rom_slot(slot, 0, boot_image, true);
     if !result.is_ok() {
         return Err(format!("reprogram_ram_rom_slot failed: {:?}", result));
     }
@@ -394,7 +448,7 @@ pub fn test_reprogram_pio_verify(
     pio_verify(
         emu,
         &cache,
-        &oracle_bytes,
+        boot_image,
         chip_type,
         force_16_bit_for(config, set_idx),
     )
@@ -417,9 +471,10 @@ pub fn test_copy_flash_pio_verify(
     let chip_config = chip_config_at(config, set_idx)?;
     let chip_type = chip_config.chip_type.resolved();
     let oracle_bytes = oracle::load(chip_config, chip_type, base_dir);
+    let flash_slot = crate::flash_slot(config, set_idx);
 
     let result = emu.copy_flash_slot_to_ram_slot(
-        set_idx as u8,
+        flash_slot as u8,
         ORA_FLASH_SLOT_FLAG_EXCLUDE_PLUGINS,
         ram_slot,
         0,
@@ -442,7 +497,7 @@ pub fn test_copy_flash_pio_verify(
     .map(|n| {
         println!(
             "  {} bytes verified via PIO (flash {} → ram slot {})",
-            n, set_idx, ram_slot
+            n, flash_slot, ram_slot
         )
     })
 }
@@ -466,6 +521,9 @@ pub fn test_copy_flash_pio_verify(
 /// A flash slot outside the flash is `INVALID_SLOT` too.
 /// The slot under test moves to chip select 1 of an M board for that case, and
 /// back afterwards.
+///
+/// The RAM slot and flash location cases copy the slot under test, or where
+/// that doesn't have an image, the first flash slot that does.
 pub fn test_copy_flash_refusals(
     emu: &Emulator,
     config: &Config,
@@ -485,6 +543,17 @@ pub fn test_copy_flash_refusals(
         }
     }
 
+    let rom_sets = crate::plugin_sets(config)..config.chip_sets.len();
+    let source = if has_image(config, set_idx) {
+        Some(set_idx)
+    } else {
+        rom_sets.clone().find(|&i| has_image(config, i))
+    };
+    let Some(source) = source else {
+        return Err("the config doesn't have a flash slot with an image to copy".to_string());
+    };
+    let source_slot = crate::flash_slot(config, source) as u8;
+
     note(
         &mut errors,
         format!("flash slot {flash_count}, past the last one"),
@@ -500,7 +569,7 @@ pub fn test_copy_flash_refusals(
         &mut errors,
         format!("RAM slot {ram_count}, past the last one"),
         emu.copy_flash_slot_to_ram_slot(
-            set_idx as u8,
+            source_slot,
             ORA_FLASH_SLOT_FLAG_EXCLUDE_PLUGINS,
             ram_count,
             0,
@@ -509,18 +578,18 @@ pub fn test_copy_flash_refusals(
     );
 
     // A host build's slot data is a host pointer, so the slot moves by its
-    // flash address, as the CLI would by writing a device's metadata.  These
-    // configs don't have plugin slots, so the flash slot is the ROM slot of the
-    // same index.  OTP unwritten is an M board's.
-    let rom_slot = set_idx as u8;
+    // flash address, as the CLI would by writing a device's metadata.  The ROM
+    // slot index counts the plugin slots, as `source` does.  OTP unwritten is
+    // an M board's.
+    let rom_slot = source as u8;
     let addr = Emulator::rom_slot_flash_addr(rom_slot);
     Emulator::clear_otp();
     Emulator::set_rom_slot_flash_addr(rom_slot, FLASH_CS1_BASE_ADDR);
     note(
         &mut errors,
-        format!("flash slot {set_idx} on chip select 1 of an M board"),
+        format!("flash slot {source_slot} on chip select 1 of an M board"),
         emu.copy_flash_slot_to_ram_slot(
-            set_idx as u8,
+            source_slot,
             ORA_FLASH_SLOT_FLAG_EXCLUDE_PLUGINS,
             dst_ram,
             0,
@@ -532,16 +601,21 @@ pub fn test_copy_flash_refusals(
     // A RAM slot is exactly one served region, so the region size is the size
     // every flash image must match to be copied into one.
     let region_size = onerom_fw_tester::geometry::expected_rom_slot_size(
-        config, board, fw_version, base_dir, set_idx,
+        config,
+        board,
+        fw_version,
+        base_dir,
+        crate::flash_slot(config, set_idx),
     )?;
-    let mismatched = (0..flash_count as usize)
-        .filter(|&i| i != set_idx)
+    let mismatched = rom_sets
+        .filter(|&i| i != set_idx && has_image(config, i))
         .find_map(|i| {
+            let flash_slot = crate::flash_slot(config, i);
             let size = onerom_fw_tester::geometry::expected_rom_slot_size(
-                config, board, fw_version, base_dir, i,
+                config, board, fw_version, base_dir, flash_slot,
             )
             .ok()?;
-            (size != region_size).then_some((i, size))
+            (size != region_size).then_some((flash_slot, size))
         });
 
     match mismatched {

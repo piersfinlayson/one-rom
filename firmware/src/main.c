@@ -104,6 +104,8 @@ int firmware_main(void) {
         // We always preload to RAM slot 0
         RUNTIME->current_ram_slot = 0;
 
+        // Serving uses DMA even where there is no image to copy.
+        dma_init();
         preload_rom_image();
     }
 

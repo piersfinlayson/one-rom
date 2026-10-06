@@ -2,7 +2,7 @@
 //
 // MIT License
 
-//! `inspect slots`'s failure for firmware this build doesn't recognise.
+//! `inspect slots`.
 
 use super::{
     UNRECOGNISED, damaged_header_flash, failed, flash_without_firmware, newer_firmware_flash,
@@ -46,17 +46,55 @@ async fn no_one_rom_firmware() {
 
 #[tokio::test]
 async fn reserved_pins() {
-    use crate::inspect::reserved_pins_line;
+    use crate::inspect::{reserved_pins_line, slot_count_line, slot_heading};
     use crate::test_board::image_2364;
     use onerom_cli::image::parse_firmware;
 
     let image = parse_firmware(&image_2364(3, &["sel_c", "x1"])).await;
     println!("$ onerom inspect slots");
     println!("~ One ROM Fire 24 F - Firmware: v0.8.0 State: Running Serial: DE3F9C232F655B6B");
-    println!("~   Configured with 3 slots - Slot 0 is active");
+    println!("  {}", slot_count_line(3, Some(0), false));
     if let Some(line) = reserved_pins_line(&image) {
         println!("  {line}");
     }
-    println!("~   Slot 0 (active):");
+    println!("  {}", slot_heading(0, true, false));
+    println!("~     Chip 0: 2364");
+}
+
+/// Slot 0 is selected, serving and then in standby. Only the slot count and
+/// slot headings come from running the code.
+#[test]
+fn serving_and_standby() {
+    use crate::inspect::{slot_count_line, slot_heading};
+
+    for (state, standby) in [("serving", false), ("in standby", true)] {
+        println!("### {state}");
+        println!("$ onerom inspect slots");
+        println!("~ One ROM Fire 24 F - Firmware: v0.8.0 State: Running Serial: DE3F9C232F655B6B");
+        println!("  {}", slot_count_line(3, Some(0), standby));
+        for slot in 0..3 {
+            println!("  {}", slot_heading(slot, slot == 0, standby));
+            println!("~     Chip 0: 2364");
+        }
+        println!();
+    }
+}
+
+/// A selected slot in standby, whose only firmware override boots it into
+/// standby. The override lines come from running the code.
+#[test]
+fn a_standby_override() {
+    use crate::inspect::{override_lines, slot_count_line, slot_heading};
+    use onerom_metadata::{MaybeKnown, OneromFirmwareOverrides, OverrideState};
+
+    let mut overrides = OneromFirmwareOverrides::default();
+    overrides.override_states.standby = Some(MaybeKnown::Known(OverrideState::OverrideStateOn));
+    println!("$ onerom inspect slots");
+    println!("~ One ROM Fire 24 F - Firmware: v0.8.0 State: Running Serial: DE3F9C232F655B6B");
+    println!("  {}", slot_count_line(1, Some(0), true));
+    println!("  {}", slot_heading(0, true, true));
+    for line in override_lines(&overrides) {
+        println!("  {line}");
+    }
     println!("~     Chip 0: 2364");
 }

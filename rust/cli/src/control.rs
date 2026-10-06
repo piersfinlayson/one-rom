@@ -7,7 +7,7 @@ use crate::{
     args,
     utils::{
         active_chip_type, check_device, check_device_running, check_fire_board_optional,
-        check_live_read_write, resolve_board_optional,
+        check_live_read_write, resolve_board_optional, standby_suffix,
     },
 };
 use onerom_cli::device::{Device, select_device};
@@ -18,7 +18,8 @@ use onerom_cli::pin::{Pin, ResolvedPin};
 use onerom_cli::reset::{self, PinObjection};
 use onerom_cli::usb::{
     Caps, FLASH_BASE, GpioSetArgs, GpioUse, LedSubCmd, RebootArgs, SetLedArgs, flash_erase,
-    get_caps, gpio_query, gpio_set, read_memory, reboot, set_led, set_rgb, write_memory,
+    get_caps, gpio_query, gpio_set, read_memory, reboot, set_led, set_rgb, set_standby,
+    write_memory,
 };
 use onerom_cli::{Error, Options};
 use onerom_config::chip::ChipType;
@@ -213,6 +214,42 @@ pub async fn cmd_rgb_blink(
     rgb_request(options, args, led_args, "RGB LED blinking").await
 }
 
+/// The line `control standby --verbose` prints for `standby`.
+pub(crate) fn standby_line(standby: bool) -> &'static str {
+    if standby { "Standby on" } else { "Standby off" }
+}
+
+async fn standby_request(
+    options: &Options,
+    args: &impl crate::args::CommandTrait,
+    standby: bool,
+) -> Result<(), Error> {
+    check_device(options, args, true)?;
+    let device = options.device.as_ref().unwrap();
+    if !device.is_running() {
+        return Err(Error::NotRunning);
+    }
+    set_standby(device, standby).await?;
+    if options.verbose {
+        println!("{}", standby_line(standby));
+    }
+    Ok(())
+}
+
+pub async fn cmd_standby_on(
+    options: &Options,
+    args: &args::control::ControlStandbyOnArgs,
+) -> Result<(), Error> {
+    standby_request(options, args, true).await
+}
+
+pub async fn cmd_standby_off(
+    options: &Options,
+    args: &args::control::ControlStandbyOffArgs,
+) -> Result<(), Error> {
+    standby_request(options, args, false).await
+}
+
 pub async fn cmd_reboot(
     options: &Options,
     args: &args::control::ControlRebootArgs,
@@ -249,7 +286,7 @@ pub async fn cmd_reboot(
 /// Every name here comes from the board and the chip being served. The device
 /// reports only a coarse use category and deliberately never a role name, so if
 /// the board could not be resolved this degrades to the bare `GPIO<N>`.
-fn describe_gpio(board: Option<&Board>, chip: Option<ChipType>, gpio: u8) -> String {
+pub(crate) fn describe_gpio(board: Option<&Board>, chip: Option<ChipType>, gpio: u8) -> String {
     let mut notes: Vec<String> = Vec::new();
     if let Some(board) = board {
         if let Some(chip) = chip
@@ -281,14 +318,20 @@ fn describe_gpio(board: Option<&Board>, chip: Option<ChipType>, gpio: u8) -> Str
 ///
 /// The two halves come from the device's `use` category, which reports the
 /// *consequence* of forcing a pin rather than the pin's role - the role is named
-/// separately by [`describe_gpio`] from board metadata.
-fn describe_use(gpio_use: GpioUse) -> (&'static str, &'static str) {
+/// separately by [`describe_gpio`] from board metadata. `standby` is whether One
+/// ROM is in standby.
+fn describe_use(gpio_use: GpioUse, standby: bool) -> (&'static str, &'static str) {
     match gpio_use {
         GpioUse::Free => ("not in use by One ROM", ""),
         GpioUse::ServingRead => (
             "ROM serving reads it",
             "Forcing it is reversible: serving keeps reading the pin, and setting it \
              back to z restores it.",
+        ),
+        GpioUse::ServingDriven if standby => (
+            "it is a standby pin",
+            "Forcing it takes the pin away from the PIOs, and serving stays broken \
+             until the device is rebooted.",
         ),
         GpioUse::ServingDriven => (
             "ROM serving drives it",
@@ -305,6 +348,19 @@ fn describe_use(gpio_use: GpioUse) -> (&'static str, &'static str) {
 
 pub(crate) fn needs_force(gpio_use: GpioUse) -> bool {
     !matches!(gpio_use, GpioUse::Free | GpioUse::InputForced)
+}
+
+/// The refusal to drive the GPIO `name`, which One ROM uses as `gpio_use`.
+/// `standby` is whether One ROM is in standby, and `force_hint` how the
+/// command overrides the refusal.
+pub(crate) fn gpio_in_use(name: &str, gpio_use: GpioUse, standby: bool, force_hint: &str) -> Error {
+    let (doing, consequence) = describe_use(gpio_use, standby);
+    Error::GpioInUseNamed(
+        name.to_string(),
+        doing.to_string(),
+        consequence.to_string(),
+        force_hint.to_string(),
+    )
 }
 
 /// Say what a 3.3V-only pin risks, ahead of asking whether to go on.
@@ -417,15 +473,11 @@ async fn vet_gpio(options: &Options, req: &DriveRequest<'_>) -> Result<Option<Ca
     if let Some(gpio_use) = gpio_use
         && needs_force(gpio_use)
     {
-        let (doing, consequence) = describe_use(gpio_use);
+        let standby = device.in_standby();
         if !req.force {
-            return Err(Error::GpioInUseNamed(
-                name.to_string(),
-                doing.to_string(),
-                consequence.to_string(),
-                req.force_hint.to_string(),
-            ));
+            return Err(gpio_in_use(&name, gpio_use, standby, req.force_hint));
         }
+        let (doing, consequence) = describe_use(gpio_use, standby);
         println!("Warning: {name} is in use by One ROM: {doing}.");
         println!("  {consequence}");
     }
@@ -652,6 +704,9 @@ pub async fn cmd_select(
     Err(Error::Unimplemented("control select".to_string()))
 }
 
+/// How `control pin` overrides One ROM's refusal to drive a pin it uses.
+pub(crate) const PIN_FORCE_HINT: &str = "Use --force to drive it anyway.";
+
 pub async fn cmd_pin(options: &Options, args: &args::control::ControlPinArgs) -> Result<(), Error> {
     check_device_running(options, args)?;
 
@@ -677,7 +732,7 @@ pub async fn cmd_pin(options: &Options, args: &args::control::ControlPinArgs) ->
             after,
             hold_ms,
             force: args.force,
-            force_hint: "Use --force to drive it anyway.",
+            force_hint: PIN_FORCE_HINT,
             tolerance_confirmed: false,
         },
     )
@@ -757,7 +812,7 @@ pub async fn cmd_poke_live(
             }
         }
 
-        let dry_run_str = if args.dry_run { "[dry-run] " } else { "" };
+        let dry_run_str = dry_run_prefix(args.dry_run);
 
         // Write the deltas
         let delta_count: usize = runs.iter().map(|(_, b)| b.len()).sum();
@@ -780,21 +835,55 @@ pub async fn cmd_poke_live(
                 println!("{dry_run_str}{} contiguous blocks written", runs.len())
             }
             println!(
-                "{dry_run_str}Applied {delta_count} delta byte(s) of {} to live ROM offset 0x{:08x}",
-                data.len(),
-                args.address
+                "{}",
+                applied_live_line(
+                    args.dry_run,
+                    delta_count,
+                    data.len(),
+                    args.address,
+                    device.in_standby()
+                )
             );
         }
     } else {
         write_memory(device, address, &data).await?;
         println!(
-            "Wrote {} byte(s) to live ROM offset 0x{:08x}",
-            data.len(),
-            args.address
+            "{}",
+            wrote_live_line(data.len(), args.address, device.in_standby())
         );
     }
 
     Ok(())
+}
+
+fn dry_run_prefix(dry_run: bool) -> &'static str {
+    if dry_run { "[dry-run] " } else { "" }
+}
+
+/// The line `poke live` prints once it writes `len` bytes at live ROM
+/// `offset`. `standby` is whether One ROM is in standby.
+pub(crate) fn wrote_live_line(len: usize, offset: u32, standby: bool) -> String {
+    format!(
+        "Wrote {len} byte(s) to live ROM offset 0x{offset:08x}{}",
+        standby_suffix(standby)
+    )
+}
+
+/// The line `poke live --delta` prints once it writes the `delta_count` bytes
+/// of `len` that differ at live ROM `offset`. `standby` is whether One ROM is
+/// in standby.
+pub(crate) fn applied_live_line(
+    dry_run: bool,
+    delta_count: usize,
+    len: usize,
+    offset: u32,
+    standby: bool,
+) -> String {
+    format!(
+        "{}Applied {delta_count} delta byte(s) of {len} to live ROM offset 0x{offset:08x}{}",
+        dry_run_prefix(dry_run),
+        standby_suffix(standby)
+    )
 }
 
 const SECTOR_SIZE: u32 = 4096;

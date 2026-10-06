@@ -261,15 +261,28 @@ jobs:
       run: ci/rust-docs.sh
 
   emulator-tests:
-    # One job per socket size.  The four are independent - every test in a group
-    # targets boards of that one size - and the 24 pin group is much the largest,
-    # so splitting this way puts the long pole on its own runner.
-    name: Emulator tests (${{ matrix.socket }} pin)
+    # One job per socket size, and two each for the 24 and 28 pin groups.  Every
+    # test in a group targets boards of that one size, so the groups are
+    # independent.  The 24 and 28 pin groups are the largest, so each runs as
+    # two halves of about equal time.
+    name: Emulator tests (${{ matrix.name }})
     runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
-        socket: [24, 28, 32, 40]
+        include:
+          - group: 24-1
+            name: 24 pin, part 1
+          - group: 24-2
+            name: 24 pin, part 2
+          - group: 28-1
+            name: 28 pin, part 1
+          - group: 28-2
+            name: 28 pin, part 2
+          - group: 32
+            name: 32 pin
+          - group: 40
+            name: 40 pin
     steps:
     - uses: actions/checkout@v7
 
@@ -294,12 +307,12 @@ jobs:
     - uses: Swatinem/rust-cache@v2
       with:
         workspaces: rust
-        # All four sockets build the same dependency graph, so they share one
-        # cache entry rather than populating four near-identical ones.
+        # Every job builds the same dependency graph, so they share one cache
+        # entry rather than populating near-identical ones.
         shared-key: emulator-tests
 
     - name: Run One ROM emulator tests
-      run: ci/test-emu.sh ${{ matrix.socket }}
+      run: ci/test-emu.sh ${{ matrix.group }}
 
   coverage:
     # The coverage campaign - ci/coverage-campaign.txt - and the per-file floor

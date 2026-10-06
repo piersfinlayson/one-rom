@@ -473,8 +473,8 @@ fn emit_metadata_uint_cases(schema: &Schema, out: &mut String) {
         "ONEROM_METADATA_UINT_CASES(out) expands to the case arms of the switch in \
          ora_get_metadata_uint() (firmware/src/plugin.c).\n\n\
          The arms are generated from the schema fields tagged `plugin_key`: each \
-         unsigned scalar or enum field resolves its value here, zero-extended to \
-         uint32_t; any non-numeric key returns ORA_RESULT_TYPE_MISMATCH. The \
+         unsigned scalar, enum or bit field resolves its value here, zero-extended \
+         to uint32_t. Any non-numeric key returns ORA_RESULT_TYPE_MISMATCH. The \
          expanding function supplies the surrounding switch, the `out == NULL` \
          guard, and the `default:` arm that returns ORA_RESULT_NOT_SUPPORTED for \
          keys unknown to this firmware.",
@@ -489,7 +489,7 @@ fn emit_metadata_uint_cases(schema: &Schema, out: &mut String) {
         };
         let key_name = format!("ORA_METADATA_KEY_{}", entry.key.name);
         lines.push(format!("    case {}:", key_name));
-        if field.kind == "scalar" || field.kind == "enum" {
+        if matches!(field.kind, "scalar" | "enum" | "bitfield") {
             let access = schema
                 .plugin_key_access(field.struct_name, field.field_name)
                 .expect("plugin_key access paths are validated at schema load");

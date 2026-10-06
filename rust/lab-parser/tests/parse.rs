@@ -158,13 +158,12 @@ impl Image {
 fn compose_block() -> Vec<u8> {
     let mut magic = [0u8; 16];
     magic[..LAB_METADATA_MAGIC.len()].copy_from_slice(LAB_METADATA_MAGIC.as_bytes());
-    let header = OneromLabMetadataHeader {
-        magic,
-        version: LAB_METADATA_VERSION,
-        hw: OneromLabHardwareInfo {
-            hw_rev: Some("fire-40-a".into()),
-        },
-    };
+    let mut hw = OneromLabHardwareInfo::default();
+    hw.hw_rev = Some("fire-40-a".into());
+    let mut header = OneromLabMetadataHeader::default();
+    header.magic = magic;
+    header.version = LAB_METADATA_VERSION;
+    header.hw = hw;
 
     let mut buf = vec![0xFFu8; LAB_METADATA_SIZE as usize];
     header.check_generation(header.version).unwrap();

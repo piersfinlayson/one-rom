@@ -32,8 +32,10 @@
 #   scalar            - u8, u16, u32
 #   enum              - reference to an [[enums]] entry
 #   type_alias        - reference to a [[type_aliases]] entry
-#   bitfield          - reference to a [[bitfields]] entry. Allowed only in
-#                       onerom_runtime_info_t.
+#   bitfield          - reference to a [[bitfields]] entry. A host reads its
+#                       members against the firmware release in onerom_info_t,
+#                       so every pointer in onerom_info_t reaching the
+#                       structure follows the release fields.
 #   inline_array      - fixed-size array, element + count
 #   inline_array2d    - fixed 2D array, element + rows + cols
 #   cstr_ptr          - const char* null-terminated string pointer
@@ -94,18 +96,18 @@
 #   plugin_key          - { name, id, first_release }: expose to plugins through
 #                         the metadata getters, with no hand-written firmware.
 #                         A cstr_ptr resolves via ORA_ID_GET_METADATA_STR, an
-#                         unsigned scalar or enum via ..._UINT. Ids are one
-#                         permanent namespace, never renumbered or reused. The
-#                         whole comment reaches the generated key header, so
-#                         write it for a plugin author. Do not tag plumbing,
-#                         per-slot or reserved fields.
+#                         unsigned scalar, enum or bitfield via ..._UINT. Ids
+#                         are one permanent namespace, never renumbered or
+#                         reused. The whole comment reaches the generated key
+#                         header, so write it for a plugin author. Do not tag
+#                         plumbing, per-slot or reserved fields.
 #   since_<S>_version   - generation of structure <S> this field arrived in,
 #                         where <S> is info, metadata or runtime. Pairs with
 #                         default_if_absent - neither stands alone.
 #   default_if_absent   - what a reader of an older structure gets instead.
-#                         A number for scalar, enum and type_alias. For an
-#                         array, a number filling every element or a list
-#                         stating them, u8 only. For any pointer, "null".
+#                         A number for scalar, enum, type_alias and bitfield.
+#                         For an array, a number filling every element or a
+#                         list stating them, u8 only. For any pointer, "null".
 #   deprecated_<S>_version - generation from which readers ignore this field.
 #
 # ---------------------------------------------------------------------------
@@ -316,6 +318,12 @@ value = 0xFF
 ora_api = true
 first_release = "0.7.2"
 comment = "Sentinel: no GPIO is connected to this pin position"
+
+[[constants]]
+name = "ROM_SLOT_NO_IMAGE"
+type = "u32"
+value = 0xFFFFFFFF
+comment = "A ROM slot's data pointer when the slot doesn't have an image to copy to RAM at boot."
 
 [[constants]]
 name = "MAX_ADDR_PINS"
@@ -1337,6 +1345,30 @@ name = "BOARD_SIZE_OTHER"
 value = 0xFF
 comment = "An unspecified size."
 
+# ---
+
+[[enums]]
+name = "override_state_t"
+size = 1
+packed = true
+comment = "The state of one override in onerom_override_states_t."
+strip_prefix = "OVERRIDE_STATE_"
+
+[[enums.variants]]
+name = "OVERRIDE_STATE_NOT_SET"
+value = 0
+comment = "Not set. The override changes nothing."
+
+[[enums.variants]]
+name = "OVERRIDE_STATE_OFF"
+value = 1
+comment = "Off"
+
+[[enums.variants]]
+name = "OVERRIDE_STATE_ON"
+value = 2
+comment = "On"
+
 # ===========================================================================
 # Bit fields
 # ===========================================================================
@@ -1365,6 +1397,33 @@ comment = "Plugin launch has finished, reached even if there are no plugins."
 name = "FIRMWARE_STATE_STARTUP_DONE"
 bit = 2
 comment = "The ROM image is loaded and plugins have started."
+
+[[bitfields]]
+name = "onerom_firmware_flag_t"
+size = 1
+comment = "Flags the firmware sets and clears while it runs. An unused bit is 0."
+strip_prefix = "FIRMWARE_FLAG_"
+ora_api = true
+first_release = "0.8.0"
+
+[[bitfields.members]]
+name = "FIRMWARE_FLAG_STANDBY"
+bit = 0
+comment = "One ROM is in standby and doesn't serve the ROM."
+
+[[bitfields]]
+name = "onerom_override_states_t"
+size = 1
+comment = "Per-slot overrides, each an override_state_t. A value of 0 sets none of them."
+strip_prefix = "OVERRIDE_"
+first_release = "0.8.0"
+
+[[bitfields.members]]
+name = "OVERRIDE_STANDBY"
+bit = 0
+width = 2
+type = "override_state_t"
+comment = "Whether One ROM boots into standby when this slot is selected."
 
 # ===========================================================================
 # Structs
@@ -1929,16 +1988,17 @@ kind = "inline_array"
 element = "u8"
 count = 8
 comment = """Bitfield indicating which overrides are active. Unused bits MUST be 0.
-Byte 0, bit 0: Reserved
-Byte 0, bit 1: Reserved
+New bits aren't added here. A new override is a member of override_states.
+Byte 0, bit 0: Ice MCU frequency override, before firmware v0.7.0
+Byte 0, bit 1: Ice overclock override, before firmware v0.7.0
 Byte 0, bit 2: Fire MCU frequency override
 Byte 0, bit 3: Fire overclock override
 Byte 0, bit 4: Fire VREG override
 Byte 0, bit 5: Status LED override
 Byte 0, bit 6: SWD override
-Byte 0, bit 7: Reserved
-Byte 1, bit 0: Reserved
-Byte 1, bit 1: Reserved
+Byte 0, bit 7: Fire serve mode override, before firmware v0.7.0
+Byte 1, bit 0: Fire ROM DMA preload override, before firmware v0.7.0
+Byte 1, bit 1: Fire force 16-bit mode override, before firmware v0.7.0
 """
 
 [[structs.fields]]
@@ -1970,19 +2030,28 @@ kind = "inline_array"
 element = "u8"
 count = 8
 comment = """Bitfield of boolean override values.
-Byte 0, bit 0: Reserved
+New bits aren't added here. A new override is a member of override_states.
+Byte 0, bit 0: Ice overclock enabled, before firmware v0.7.0
 Byte 0, bit 1: Fire overclock enabled
 Byte 0, bit 2: Status LED enabled
 Byte 0, bit 3: SWD enabled
-Byte 0, bit 4: Reserved
-Byte 0, bit 5: Reserved
-Byte 0, bit 6: Reserved
+Byte 0, bit 4: Fire serve mode, 1 for PIO and 0 for CPU, before firmware v0.7.0
+Byte 0, bit 5: Fire ROM DMA preload enabled, before firmware v0.7.0
+Byte 0, bit 6: Fire force 16-bit mode enabled, before firmware v0.7.0
 """
+
+[[structs.fields]]
+name = "override_states"
+kind = "bitfield"
+type = "onerom_override_states_t"
+since_metadata_version = 3
+default_if_absent = 0
+comment = "Overrides with a not set, an off and an on state."
 
 [[structs.fields]]
 name = "pad3"
 kind = "padding"
-size = 8
+size = 7
 comment = "Padding to 32 bytes"
 
 # ---
@@ -2055,7 +2124,7 @@ comment = """OneROM runtime environment information.
 Written and maintained by the firmware at runtime; not generated by the pre-processor.
 Parsed only."""
 generate = "parse"
-size = 64
+size = 68
 const_fields = false
 version_field = "version"
 version_constant = "RUNTIME_INFO_VERSION"
@@ -2283,6 +2352,16 @@ since_runtime_version = 3
 default_if_absent = 0
 expected_offset = 60
 comment = "Firmware states reached so far."
+
+[[structs.fields]]
+name = "firmware_flags"
+kind = "bitfield"
+type = "onerom_firmware_flag_t"
+since_runtime_version = 3
+default_if_absent = 0
+expected_offset = 64
+plugin_key = { name = "FIRMWARE_FLAGS", id = 25, first_release = "0.8.0" }
+comment = "The firmware's flags, as ORA_FIRMWARE_FLAG_* bits."
 
 # ===========================================================================
 # Tagged FAM structs

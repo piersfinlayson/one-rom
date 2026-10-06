@@ -636,6 +636,11 @@ impl Emulator {
         unsafe { ffi::ffi_firmware_states() }
     }
 
+    /// The firmware flags in runtime info, as `onerom_firmware_flag_t` bits.
+    pub fn firmware_flags(&self) -> u8 {
+        unsafe { ffi::ffi_firmware_flags() }
+    }
+
     /// Record `FIRMWARE_STATE_PLUGINS_STARTED`, which plugin launch sets on a
     /// device. Plugin launch is compiled out of a test build.
     ///
@@ -722,6 +727,13 @@ impl Emulator {
     /// Put back the metadata's own ROM slots.
     pub fn restore_rom_slots() {
         unsafe { ffi::ffi_restore_rom_slots() };
+    }
+
+    /// Set ROM slot `index`'s override states to `states` until
+    /// [`Self::restore_rom_slots`], so a test can boot a slot into standby
+    /// without a config of its own.  Call before [`Self::boot`].
+    pub fn set_rom_slot_override_states(index: u8, states: u8) {
+        unsafe { ffi::ffi_set_rom_slot_override_states(index, states) };
     }
 
     /// Write a valid header to plugin slot `index` with its entry point at
@@ -1809,6 +1821,26 @@ impl Emulator {
             flags,
             std::ptr::null_mut::<u32>()
         ))
+    }
+
+    // ── Standby ──────────────────────────────────────────────────────────────
+
+    /// `ORA_ID_SET_STANDBY`.
+    ///
+    /// `standby` is passed unchecked so a test can pass an invalid value.  On
+    /// success epio's state machines are updated to match, so call
+    /// [`Self::setup_epio`] first.
+    pub fn set_standby(&self, standby: u8, flags: u32) -> OraResult {
+        let result = OraResult::from(plugin_call!(
+            ffi::api_id_t_ORA_ID_SET_STANDBY,
+            ffi::ora_set_standby_fn_t,
+            standby,
+            flags
+        ));
+        if result.is_ok() {
+            unsafe { ffi::ffi_epio_update_from_apio(self.epio_or_panic()) };
+        }
+        result
     }
 
     // ── Yield ────────────────────────────────────────────────────────────────

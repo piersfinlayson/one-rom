@@ -1,6 +1,6 @@
 // tests/firmware_states.rs
 //
-// Tests for how a host reads runtime info's firmware states.
+// Tests for how a host reads runtime info's firmware states and flags.
 //
 // Copyright (C) 2026 Piers Finlayson <piers@piers.rocks>
 // MIT License
@@ -11,8 +11,9 @@ use onerom_metadata::{
     DeviceMemoryView, Generations, ONEROM_FAMILY_MAGIC, ONEROM_INFO_BUILD_DATE_OFFSET,
     ONEROM_INFO_MAGIC_OFFSET, ONEROM_INFO_MAJOR_VERSION_OFFSET, ONEROM_INFO_MINOR_VERSION_OFFSET,
     ONEROM_INFO_PATCH_VERSION_OFFSET, ONEROM_INFO_RUNTIME_OFFSET, ONEROM_INFO_SIZE,
-    ONEROM_INFO_VERSION, ONEROM_INFO_VERSION_OFFSET, ONEROM_RUNTIME_INFO_FIRMWARE_STATES_OFFSET,
-    ONEROM_RUNTIME_INFO_SIZE, OneromFirmwareState, OneromInfo, RUNTIME_INFO_MAGIC,
+    ONEROM_INFO_VERSION, ONEROM_INFO_VERSION_OFFSET, ONEROM_RUNTIME_INFO_FIRMWARE_FLAGS_OFFSET,
+    ONEROM_RUNTIME_INFO_FIRMWARE_STATES_OFFSET, ONEROM_RUNTIME_INFO_SIZE, OneromFirmwareState,
+    OneromInfo, OneromRuntimeInfo, RUNTIME_INFO_MAGIC, onerom_firmware_flag_t as Flag,
     onerom_firmware_state_t as State,
 };
 
@@ -91,6 +92,15 @@ const RUNTIME_ADDR: u32 = RP235X_BASE_SRAM;
 const RUNTIME_VERSION_OFFSET: usize = 4;
 
 fn parsed_states(release: (u16, u16, u16), generation: u32, states: u32) -> OneromFirmwareState {
+    parsed_runtime(release, generation, states, 0).firmware_states
+}
+
+fn parsed_runtime(
+    release: (u16, u16, u16),
+    generation: u32,
+    states: u32,
+    flags: u8,
+) -> OneromRuntimeInfo {
     const BUILD_DATE: &[u8] = b"2026-10-03\0";
     let put_u16 = |b: &mut [u8], off: usize, v: u16| {
         b[off..off + 2].copy_from_slice(&v.to_le_bytes());
@@ -122,14 +132,13 @@ fn parsed_states(release: (u16, u16, u16), generation: u32, states: u32) -> Oner
         ONEROM_RUNTIME_INFO_FIRMWARE_STATES_OFFSET,
         states,
     );
+    runtime[ONEROM_RUNTIME_INFO_FIRMWARE_FLAGS_OFFSET] = flags;
 
     let mut view = DeviceMemoryView::new(&info, RP235X_BASE_FLASH);
     view.add_region(&runtime, RUNTIME_ADDR);
     let info = OneromInfo::parse(&view, RP235X_BASE_FLASH, Generations::UNKNOWN)
         .expect("the info header should parse");
-    info.runtime
-        .expect("the runtime structure should parse")
-        .firmware_states
+    info.runtime.expect("the runtime structure should parse")
 }
 
 #[test]
@@ -151,4 +160,33 @@ fn an_older_runtime_structure_reads_no_states() {
     let states = parsed_states((0, 7, 3), 2, ALL);
     assert_eq!(states.rom_loaded, None);
     assert_eq!(states.unknown_bits, 0);
+}
+
+// ===========================================================================
+// Firmware flags
+// ===========================================================================
+
+const STANDBY: u8 = Flag::FIRMWARE_FLAG_STANDBY;
+
+#[test]
+fn the_parser_reads_the_flags_against_the_release_info_records() {
+    let flags = parsed_runtime((0, 8, 0), 3, 0, STANDBY).firmware_flags;
+    assert_eq!(flags.standby, Some(true));
+    assert_eq!(flags.unknown_bits, 0);
+
+    let flags = parsed_runtime((0, 8, 0), 3, 0, 0).firmware_flags;
+    assert_eq!(flags.standby, Some(false));
+
+    let flags = parsed_runtime((0, 7, 3), 3, 0, STANDBY).firmware_flags;
+    assert_eq!(flags.standby, None);
+    assert_eq!(flags.unknown_bits, STANDBY);
+}
+
+/// The field's bytes aren't read from a runtime structure older than the
+/// field.
+#[test]
+fn an_older_runtime_structure_reads_no_flags() {
+    let flags = parsed_runtime((0, 7, 3), 2, 0, STANDBY).firmware_flags;
+    assert_eq!(flags.standby, None);
+    assert_eq!(flags.unknown_bits, 0);
 }

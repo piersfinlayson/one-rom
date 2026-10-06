@@ -609,6 +609,13 @@
                         }
                     ]
                 },
+                "standby": {
+                    "description": "Controls whether One ROM boots into standby mode when this slot is\nselected.  In standby mode One ROM doesn't serve the ROM.  With standby\non, a ROM image is optional.  Requires firmware v0.8.0 or later.",
+                    "type": [
+                        "boolean",
+                        "null"
+                    ]
+                },
                 "vreg": {
                     "description": "Optional Vreg output voltage setting for RP2350 MCUs.",
                     "anyOf": [

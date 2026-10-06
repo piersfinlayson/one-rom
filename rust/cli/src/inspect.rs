@@ -14,7 +14,7 @@ use crate::commissioning::{device_lines, report_lines};
 use crate::utils::{
     active_chip_type, check_device, check_device_running, check_fire_board,
     check_fire_board_optional, check_live_read_write, print_hex_dump, resolve_board,
-    resolve_board_optional,
+    resolve_board_optional, standby_suffix,
 };
 use onerom_app::{LocalOtpAccess, SignerTable, read_report};
 use onerom_cli::CliFetch;
@@ -356,6 +356,41 @@ pub fn unrecognised_firmware_error(reasons: &[ParseError]) -> Error {
     Error::Other(unrecognised_firmware_lines(reasons).join("\n"))
 }
 
+/// The lines `inspect slots` prints for a slot's firmware overrides, empty
+/// where none is set.
+pub(crate) fn override_lines(overrides: &onerom_metadata::OneromFirmwareOverrides) -> Vec<String> {
+    let mut lines = Vec::new();
+    if !overrides.any_present() {
+        return lines;
+    }
+    lines.push("    Firmware overrides:".to_string());
+    if let Some(enabled) = overrides.led_enabled() {
+        lines.push(format!(
+            "      Status LED: {}",
+            if enabled { "on" } else { "off" }
+        ));
+    }
+    if let Some(freq) = overrides.cpu_freq() {
+        lines.push(format!("      CPU frequency: {freq}MHz"));
+    }
+    if let Some(vreg) = overrides.vreg() {
+        lines.push(format!("      CPU voltage: {vreg}"));
+    }
+    if let Some(overclock) = overrides.overclock_enabled() {
+        lines.push(format!(
+            "      Overclock: {}",
+            if overclock { "enabled" } else { "disabled" }
+        ));
+    }
+    if let Some(swd) = overrides.swd_enabled() {
+        lines.push(format!("      SWD: {}", if swd { "on" } else { "off" }));
+    }
+    if let Some(standby) = overrides.standby() {
+        lines.push(format!("      Standby at boot: {standby}"));
+    }
+    lines
+}
+
 /// Print a device's slot configuration.
 ///
 /// Plugins are presented separately from ROM slots and by their friendly name:
@@ -437,22 +472,16 @@ pub async fn output_slot_info(
         }
     }
 
-    // ROM slot count and the active marker both use the plugin-excluding
+    // ROM slot count and the selected marker both use the plugin-excluding
     // numbering.
     let rom_count = rom_slots.len();
-    let active_user_index = rom_slots
+    let selected = rom_slots
         .iter()
         .find(|(_, _, active)| *active)
         .map(|(_, user_index, _)| *user_index);
-    let active_str = active_user_index
-        .map(|i| format!(" - Slot {i} is active"))
-        .unwrap_or_default();
+    let standby = device.in_standby();
     print!("{prefix}");
-    println!(
-        "  Configured with {rom_count} slot{}{}",
-        if rom_count == 1 { "" } else { "s" },
-        active_str
-    );
+    println!("  {}", slot_count_line(rom_count, selected, standby));
     if let Some(line) = reserved_pins_line(parsed) {
         println!("{prefix}  {line}");
     }
@@ -467,9 +496,8 @@ pub async fn output_slot_info(
 
             for (slot_index, user_index, active) in &rom_slots {
                 let set = &info.rom_sets[*slot_index];
-                let active_marker = if *active { " (active)" } else { "" };
                 print!("{prefix}");
-                println!("  Slot {user_index}{active_marker}:");
+                println!("  {}", slot_heading(*user_index, *active, standby));
 
                 if verbose {
                     print!("{prefix}");
@@ -550,9 +578,8 @@ pub async fn output_slot_info(
 
             for (slot_index, user_index, active) in &rom_slots {
                 let slot = &metadata.rom_slots[*slot_index];
-                let active_marker = if *active { " (active)" } else { "" };
                 print!("{prefix}");
-                println!("  Slot {user_index}{active_marker}:");
+                println!("  {}", slot_heading(*user_index, *active, standby));
 
                 if verbose {
                     print!("{prefix}");
@@ -567,34 +594,10 @@ pub async fn output_slot_info(
                     );
                 }
 
-                #[allow(clippy::collapsible_if)]
                 if let Some(overrides) = &slot.firmware_overrides {
-                    if overrides.any_present() {
+                    for line in override_lines(overrides) {
                         print!("{prefix}");
-                        println!("    Firmware overrides:");
-                        if let Some(enabled) = overrides.led_enabled() {
-                            print!("{prefix}");
-                            println!("      Status LED: {}", if enabled { "on" } else { "off" });
-                        }
-                        if let Some(freq) = overrides.cpu_freq() {
-                            print!("{prefix}");
-                            println!("      CPU frequency: {freq}MHz");
-                        }
-                        if let Some(vreg) = overrides.vreg() {
-                            print!("{prefix}");
-                            println!("      CPU voltage: {vreg}");
-                        }
-                        if let Some(overclock) = overrides.overclock_enabled() {
-                            print!("{prefix}");
-                            println!(
-                                "      Overclock: {}",
-                                if overclock { "enabled" } else { "disabled" }
-                            );
-                        }
-                        if let Some(swd) = overrides.swd_enabled() {
-                            print!("{prefix}");
-                            println!("      SWD: {}", if swd { "on" } else { "off" });
-                        }
+                        println!("{line}");
                     }
                 }
 
@@ -613,6 +616,35 @@ pub async fn output_slot_info(
         // Firmware::OneRom never holds a Lab.
         ParsedDevice::Lab => Ok(()),
         _ => Ok(()),
+    }
+}
+
+/// The state of the slot selected at boot.
+fn selected_state(standby: bool) -> &'static str {
+    if standby { "standby" } else { "active" }
+}
+
+/// The line counting `rom_count` ROM slots, with `selected` the slot selected
+/// at boot where One ROM is running. `standby` is whether One ROM is in
+/// standby.
+pub(crate) fn slot_count_line(rom_count: usize, selected: Option<usize>, standby: bool) -> String {
+    let plural = if rom_count == 1 { "" } else { "s" };
+    match selected {
+        Some(slot) => format!(
+            "Configured with {rom_count} slot{plural} - Slot {slot} is selected ({})",
+            selected_state(standby)
+        ),
+        None => format!("Configured with {rom_count} slot{plural}"),
+    }
+}
+
+/// The heading of ROM slot `user_index`, which is `selected` at boot. `standby`
+/// is whether One ROM is in standby.
+pub(crate) fn slot_heading(user_index: usize, selected: bool, standby: bool) -> String {
+    if selected {
+        format!("Slot {user_index} (selected, {}):", selected_state(standby))
+    } else {
+        format!("Slot {user_index}:")
     }
 }
 
@@ -704,7 +736,20 @@ pub async fn cmd_peek_live(options: &Options, args: &InspectPeekLiveArgs) -> Res
     let (address, length) = check_live_read_write(options, args.address, args.length, args)?;
 
     let device = options.device.as_ref().unwrap();
+    println!(
+        "{}",
+        read_live_line(length, args.address, device.in_standby())
+    );
     read_and_output(device, address, length, LIVE_ROM_BASE, args.output.as_ref()).await
+}
+
+/// The line `peek live` prints ahead of reading `length` bytes at live ROM
+/// `offset`. `standby` is whether One ROM is in standby.
+pub(crate) fn read_live_line(length: u32, offset: u32, standby: bool) -> String {
+    format!(
+        "Read {length} byte(s) from live ROM offset 0x{offset:08x}{}",
+        standby_suffix(standby)
+    )
 }
 
 pub async fn cmd_peek_memory(options: &Options, args: &InspectPeekMemoryArgs) -> Result<(), Error> {
@@ -720,12 +765,14 @@ pub async fn cmd_peek_memory(options: &Options, args: &InspectPeekMemoryArgs) ->
 /// that does not come from local metadata. A category this build does not
 /// recognise is shown raw rather than guessed at.
 ///
-/// A reserved pin is reported as `free` or `input forced`.
-fn gpio_use_label(entry: &GpioEntry, reserved: bool) -> String {
+/// The device reports a reserved pin as `free` or `input forced`, and a data
+/// pin in standby as serving driven.
+fn gpio_use_label(entry: &GpioEntry, reserved: bool, standby: bool) -> String {
     match entry.gpio_use() {
         Some(GpioUse::Free | GpioUse::InputForced) if reserved => "reserved".to_string(),
         Some(GpioUse::Free) => "free".to_string(),
         Some(GpioUse::ServingRead) => "serving (read)".to_string(),
+        Some(GpioUse::ServingDriven) if standby => "standby".to_string(),
         Some(GpioUse::ServingDriven) => "serving (driven)".to_string(),
         Some(GpioUse::SystemPin) => "system".to_string(),
         Some(GpioUse::InputForced) => "input forced".to_string(),
@@ -824,7 +871,9 @@ const GPIO_FUNCTION_COLUMN: usize = 1;
 ///
 /// `show_unconnected` includes the GPIOs with no function at all - thirteen of a
 /// fire-28-c's forty-eight, which bury the rows a reader came for. `verbose`
-/// adds the legend explaining where each column comes from.
+/// adds the legend explaining where each column comes from. `standby` is
+/// whether One ROM is in standby.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn render_gpio_table(
     board: Option<&Board>,
     chip: Option<ChipType>,
@@ -833,6 +882,7 @@ pub(crate) fn render_gpio_table(
     show_unconnected: bool,
     verbose: bool,
     reserved: u64,
+    standby: bool,
 ) -> String {
     // Rows are built first so every column can be sized to its own content.
     // Filtering happens here rather than at the caller so the columns are sized
@@ -848,7 +898,7 @@ pub(crate) fn render_gpio_table(
                 if entry.is_output != 0 { "out" } else { "in" }.to_string(),
                 entry.level.to_string(),
                 gpio_tolerance_label(board, gpio),
-                gpio_use_label(entry, gpio < 64 && reserved & (1 << gpio) != 0),
+                gpio_use_label(entry, gpio < 64 && reserved & (1 << gpio) != 0, standby),
             ]
         })
         .collect();
@@ -935,10 +985,12 @@ pub(crate) fn render_gpio_table(
         out.push_str("  are only read at boot, so they are free while serving.\n");
         out.push('\n');
         out.push_str(
-            "  serving (read) pins can be driven and released. serving (driven) pins cannot\n",
+            "  serving (read) pins can be driven and released. serving (driven) and standby\n",
         );
-        out.push_str("  be released without a reboot. input forced pins can be driven without\n");
-        out.push_str("  affecting serving. See 'onerom control pin'.\n");
+        out.push_str(
+            "  pins cannot be released without a reboot. input forced pins can be driven\n",
+        );
+        out.push_str("  without affecting serving. See 'onerom control pin'.\n");
         out.push('\n');
         out.push_str(
             "  A header pin may also be SWCLK or SWDIO. Use 'onerom inspect header' to see\n",
@@ -1009,21 +1061,16 @@ pub async fn cmd_gpio(options: &Options, args: &InspectGpioArgs) -> Result<(), E
     println!("{device}");
     println!();
 
-    let mut title = "GPIO state".to_string();
-    if let Some(board) = board.as_ref() {
-        title.push_str(&format!("  ·  {}", board.description()));
-    }
-    // The silicon variant the device itself reports, not what the board
-    // revision implies: it decides how many GPIOs there are (30 or 48) and
-    // which of them are 3.3V-only, so the table's length and its Max V column
-    // both only make sense once it is stated.
-    if let Some(variant) = rp_variant_from_gpio_count(caps.num_gpios) {
-        title.push_str(&format!("  ·  {variant}"));
-    }
-    if let Some(rom_type) = device.get_active_rom_type() {
-        title.push_str(&format!("  ·  serving {rom_type}"));
-    }
-    println!("{title}");
+    let standby = device.in_standby();
+    println!(
+        "{}",
+        gpio_title(
+            board.as_ref(),
+            caps.num_gpios,
+            device.get_active_rom_type().as_deref(),
+            standby,
+        )
+    );
     println!();
 
     print!(
@@ -1038,10 +1085,40 @@ pub async fn cmd_gpio(options: &Options, args: &InspectGpioArgs) -> Result<(), E
             args.all || args.pin.is_some(),
             options.verbose,
             reserved,
+            standby,
         )
     );
 
     Ok(())
+}
+
+/// The title line above the `inspect gpio` table. `num_gpios` is the count
+/// the device reports, `rom_type` the type of the ROM selected at boot and
+/// `standby` whether One ROM is in standby.
+pub(crate) fn gpio_title(
+    board: Option<&Board>,
+    num_gpios: u8,
+    rom_type: Option<&str>,
+    standby: bool,
+) -> String {
+    let mut title = "GPIO state".to_string();
+    if let Some(board) = board {
+        title.push_str(&format!("  ·  {}", board.description()));
+    }
+    // The silicon variant the device itself reports, not what the board
+    // revision implies: it sets how many GPIOs there are (30 or 48) and
+    // which of them are 3.3V-only, so the table's length and its Max V column
+    // both only make sense once it is stated.
+    if let Some(variant) = rp_variant_from_gpio_count(num_gpios) {
+        title.push_str(&format!("  ·  {variant}"));
+    }
+    if let Some(rom_type) = rom_type {
+        title.push_str(&format!(
+            "  ·  serving {rom_type}{}",
+            standby_suffix(standby)
+        ));
+    }
+    title
 }
 
 pub async fn cmd_header(options: &Options, args: &InspectHeaderArgs) -> Result<(), Error> {
@@ -1228,13 +1305,12 @@ mod tests {
 
         let mut magic = [0u8; 16];
         magic[..LAB_METADATA_MAGIC.len()].copy_from_slice(LAB_METADATA_MAGIC.as_bytes());
-        let metadata = OneromLabMetadataHeader {
-            magic,
-            version: LAB_METADATA_VERSION,
-            hw: OneromLabHardwareInfo {
-                hw_rev: Some("fire-24-e".into()),
-            },
-        };
+        let mut hw = OneromLabHardwareInfo::default();
+        hw.hw_rev = Some("fire-24-e".into());
+        let mut metadata = OneromLabMetadataHeader::default();
+        metadata.magic = magic;
+        metadata.version = LAB_METADATA_VERSION;
+        metadata.hw = hw;
         let mut block = vec![0u8; LAB_METADATA_SIZE as usize];
         let mut ctx = SerializeContext::new(BLOCK, metadata.version, &mut block);
         metadata.layout(&mut ctx).unwrap();
@@ -1336,6 +1412,7 @@ mod tests {
             true,
             true,
             0,
+            false,
         );
 
         // One column, holding socket signals, board peripherals and header pins
@@ -1371,6 +1448,7 @@ mod tests {
             true,
             false,
             0,
+            false,
         );
         assert!(!table.contains("SWDIO"), "{table}");
         assert!(!table.contains("SWCLK"), "{table}");
@@ -1392,6 +1470,7 @@ mod tests {
             true,
             false,
             0,
+            false,
         );
         assert_eq!(function_cell(&table, 29), "Status LED, RGB LED");
 
@@ -1407,6 +1486,7 @@ mod tests {
             true,
             false,
             0,
+            false,
         );
         assert_eq!(function_cell(&table, 45), "Status LED");
         assert_eq!(function_cell(&table, 44), "RGB LED");
@@ -1425,6 +1505,7 @@ mod tests {
             true,
             false,
             0,
+            false,
         );
         for line in table.lines().skip(2).take_while(|l| !l.is_empty()) {
             let cell = line
@@ -1460,6 +1541,7 @@ mod tests {
             true,
             false,
             0,
+            false,
         );
         let default = render_gpio_table(
             Some(&board),
@@ -1469,6 +1551,7 @@ mod tests {
             false,
             false,
             0,
+            false,
         );
 
         assert_eq!(row_count(&all), 48, "{all}");
@@ -1501,6 +1584,7 @@ mod tests {
             true,
             false,
             0,
+            false,
         );
         let loud = render_gpio_table(
             Some(&board),
@@ -1510,6 +1594,7 @@ mod tests {
             true,
             true,
             0,
+            false,
         );
         assert!(
             !quiet.contains("board peripheral and header pin connected"),
@@ -1536,6 +1621,7 @@ mod tests {
             true,
             true,
             0,
+            false,
         );
 
         // Every table line - headings, rule and rows - starts each column at the
@@ -1573,6 +1659,7 @@ mod tests {
             false,
             true,
             0,
+            false,
         );
         assert!(table.contains("Current use"), "{table}");
         assert!(table.contains("free"), "{table}");
@@ -1596,6 +1683,7 @@ mod tests {
             true,
             true,
             0,
+            false,
         );
         assert!(table.contains("socket pin "), "{table}");
         assert!(table.contains("SEL_A"), "{table}");
@@ -1613,6 +1701,7 @@ mod tests {
             true,
             true,
             0,
+            false,
         );
         assert!(
             table.contains("header layout is not characterised"),
@@ -1633,6 +1722,7 @@ mod tests {
             true,
             false,
             0,
+            false,
         );
         // --pin gpio9 shows GPIO 9, not GPIO 0.
         assert!(table.contains("\n  9 "), "{table}");
@@ -1643,7 +1733,7 @@ mod tests {
     fn table_shows_an_unrecognised_use_raw() {
         // A category from a device newer than this build must not be guessed at.
         let board = Board::try_from_str("fire-24-f").unwrap();
-        let table = render_gpio_table(Some(&board), None, 0, &entries(4, 9), true, false, 0);
+        let table = render_gpio_table(Some(&board), None, 0, &entries(4, 9), true, false, 0, false);
         assert!(table.contains("unknown (9)"), "{table}");
     }
 
@@ -1659,6 +1749,7 @@ mod tests {
                 true,
                 false,
                 if reserved { 1 << 25 } else { 0 },
+                false,
             );
             let row = table.lines().nth(2).expect("one row").to_string();
             row.split("  ").last().unwrap().trim().to_string()
@@ -1667,6 +1758,38 @@ mod tests {
         assert_eq!(use_of(GpioUse::InputForced, true), "reserved");
         assert_eq!(use_of(GpioUse::ServingRead, true), "serving (read)");
         assert_eq!(use_of(GpioUse::InputForced, false), "input forced");
+    }
+
+    #[test]
+    fn a_data_pin_in_standby_is_labelled_standby() {
+        let board = Board::try_from_str("fire-24-f").unwrap();
+        let use_of = |gpio_use: GpioUse, standby: bool| {
+            let table = render_gpio_table(
+                Some(&board),
+                None,
+                0,
+                &entries(1, gpio_use as u8),
+                true,
+                false,
+                0,
+                standby,
+            );
+            let row = table.lines().nth(2).expect("one row").to_string();
+            row.split("  ").last().unwrap().trim().to_string()
+        };
+        assert_eq!(use_of(GpioUse::ServingDriven, true), "standby");
+        assert_eq!(use_of(GpioUse::ServingDriven, false), "serving (driven)");
+        assert_eq!(use_of(GpioUse::ServingRead, true), "serving (read)");
+    }
+
+    #[test]
+    fn the_selected_slot_is_active_or_in_standby() {
+        assert!(slot_count_line(3, Some(1), false).ends_with("Slot 1 is selected (active)"));
+        assert!(slot_count_line(3, Some(1), true).ends_with("Slot 1 is selected (standby)"));
+        assert!(!slot_count_line(3, None, true).contains("selected"));
+        assert_eq!(slot_heading(1, true, false), "Slot 1 (selected, active):");
+        assert_eq!(slot_heading(1, true, true), "Slot 1 (selected, standby):");
+        assert_eq!(slot_heading(2, false, true), "Slot 2:");
     }
 
     /// Print every shape the table takes, for eyeballing:
@@ -1744,7 +1867,8 @@ mod tests {
                         &entries,
                         show_unconnected,
                         verbose,
-                        0
+                        0,
+                        false
                     )
                 );
             }

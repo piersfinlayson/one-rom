@@ -12,6 +12,7 @@ Headline changes in this release:
 
 In detail:
 - A commissioned One ROM's bootloader appears as `One ROM Bootloader` from manufacturer piers.rocks with USB VID and PID `1209:F540`.  This is a permanent dedicated assignment from pid.codes.
+- Add standby mode, where One ROM doesn't serve the ROM but the plugins run as normal.  Configure a slot using the `standby` option.  `onerom control standby` turns standby both on and off while One ROM is running.
 - A config can refer to a plugin name using `"plugin": "usb"` instead of a URL.  CLI and Studio use the latest release of the plugin compatible with the firmware.
 - Firmware:
   - A commissioned One ROM enters the bootloader if commissioning data is present and the commissioned board type differs from the metadata's board type.
@@ -37,6 +38,7 @@ In detail:
   - New: `ORA_OTP_FLASH_DEVINFO_*` and `ORA_FLASH_SIZE_*` constants, for reading and writing `FLASH_DEVINFO` which contains flash chip sizes.
   - New: `ORA_METADATA_KEY_FLASH_CS0_SIZE` and `ORA_METADATA_KEY_FLASH_CS1_SIZE` metadata keys for each flash chip's size.
   - New: `ORA_` constants for the plugin regions, the live ROM image's PICOBOOT address, the longest serial number and each LED mode's shortest period, and `onerom_linker_constants_generated.ld` for plugin linker scripts.
+  - New: `ora_set_standby()`, `ORA_METADATA_KEY_FIRMWARE_FLAGS` and `ORA_FIRMWARE_FLAG_STANDBY` for One ROM's new standby mode.
   - Changed: Plugins build from only `firmware/ora` without the firmware's headers or Rust. A plugin using a firmware macro through `plugin.h` no longer compiles, and one linked with `plugin.ld` outside `plugin.mk` requires `-L firmware/ora`.
 - Fixes:
   - `onerom peek` no longer fails on a large read.

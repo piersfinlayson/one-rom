@@ -288,6 +288,7 @@ fn main() {
         .allowlist_function("ffi_board_size")
         .allowlist_function("ffi_firmware_states")
         .allowlist_function("ffi_set_plugins_started")
+        .allowlist_function("ffi_firmware_flags")
         .allowlist_var("ORA_FIRMWARE_STATE_QUERY_FLAG_WAIT")
         .allowlist_function("otp_commissioned_board")
         .allowlist_function("otp_board_mismatch")
@@ -306,6 +307,9 @@ fn main() {
         // them.
         .allowlist_function("ffi_install_plugin_slots")
         .allowlist_function("ffi_restore_rom_slots")
+        // A slot's override states, so a test can boot a slot into standby
+        // without a config of its own.
+        .allowlist_function("ffi_set_rom_slot_override_states")
         .allowlist_function("ffi_set_plugin_header")
         .allowlist_function("initial_plugin_parse")
         .allowlist_function("other_core_yield_capability_from")
@@ -313,6 +317,7 @@ fn main() {
         .allowlist_var("ORA_PROPERTY1_SUPPORTS_YIELD")
         .allowlist_function("ffi_epio_setup_sram")
         .allowlist_function("ffi_epio_setup_dma_chain")
+        .allowlist_function("ffi_epio_update_from_apio")
         .allowlist_function("ffi_epio_arm_monitor")
         .allowlist_function("set_onerom_test_yield_hook")
         .allowlist_function("onerom_test_reset")

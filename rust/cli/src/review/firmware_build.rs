@@ -278,6 +278,16 @@ async fn a_banked_set_with_x1_reserved() {
     build(line, &files).await;
 }
 
+/// A standby slot without a file fails with v0.7.0 firmware and builds with
+/// v0.8.0 firmware.
+#[tokio::test]
+async fn a_standby_slot_without_a_file() {
+    let line = "onerom firmware build --board fire-24-f --base-firmware base.bin --output out.bin --slot type=2364,cs1=active-low,standby=on";
+    build(line, &Files::with_2364(7, &[], &[])).await;
+    println!();
+    build(line, &Files::with_2364(8, &[], &[])).await;
+}
+
 /// Adds a set holding `chip` as the first set in sets.json.
 fn add_plugin(files: &Files, chip: serde_json::Value) {
     let path = files.dir.path().join("sets.json");

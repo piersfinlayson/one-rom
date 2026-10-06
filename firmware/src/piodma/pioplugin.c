@@ -1554,33 +1554,15 @@ ora_result_t pio_reprogram_ram_rom_slot(
     return ORA_RESULT_OK;
 }
 
-// SM-enable masks for the two serving blocks the monitor SMs share.  Because
-// APIO_ENABLE_SMS writes the whole SM-enable field, each mask must include the
-// serving SMs already running in that block plus the monitor SM enabled here;
-// re-enabling an already-running SM leaves it undisturbed.
-#define MON_ADDR_BLOCK_SMS \
-    ((1u << SM_ADDR_READ) | (1u << SM_ADDR_MONITOR_ADDR_READ))
-#define MON_CS_BLOCK_SMS \
-    ((1u << SM_DATA_OUTPUT) | (1u << SM_DATA_WRITE) | (1u << SM_ADDR_MONITOR_CS_MONITOR))
-
-// APIO_ENABLE_SMS requires a compile-time block; dispatch on the runtime block
-// so the monitor follows the serving blocks wherever they are assigned.
-#define ENABLE_SMS_IN_BLOCK(block, mask) do {           \
-    switch (block) {                                    \
-        case 0:  { APIO_ENABLE_SMS(0, (mask)); } break; \
-        case 1:  { APIO_ENABLE_SMS(1, (mask)); } break; \
-        default: { APIO_ENABLE_SMS(2, (mask)); } break; \
-    }                                                   \
-} while (0)
-
 ora_result_t pio_start_address_monitor(void) {
     // The monitor SMs live in the serving blocks (see
     // pio_setup_address_monitor_pios), so enable each in its own block rather
-    // than in the unused monitor block.
+    // than in the unused monitor block.  The serving SMs are left as they are,
+    // so the CS SM stays stopped in standby mode.
     uint8_t addr_block = GET_PIO_BLOCK_INFO(RUNTIME->addr_pio_block_info);
     uint8_t cs_block   = GET_PIO_BLOCK_INFO(RUNTIME->cs_data_pio_block_info);
-    ENABLE_SMS_IN_BLOCK(addr_block, MON_ADDR_BLOCK_SMS);
-    ENABLE_SMS_IN_BLOCK(cs_block, MON_CS_BLOCK_SMS);
+    pio_enable_sms(addr_block, 1u << SM_ADDR_MONITOR_ADDR_READ);
+    pio_enable_sms(cs_block, 1u << SM_ADDR_MONITOR_CS_MONITOR);
 
     return ORA_RESULT_OK;
 }

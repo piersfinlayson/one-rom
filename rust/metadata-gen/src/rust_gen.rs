@@ -1100,8 +1100,9 @@ fn push_bitfield(out: &mut String, b: &Bitfield, schema: &Schema) {
     }
     out.push_str("/// A member is `None` where the device's firmware release predates it.\n");
     out.push_str(
-        "#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]\n",
+        "#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]\n",
     );
+    out.push_str("#[non_exhaustive]\n");
     out.push_str(&format!("pub struct {tn} {{\n"));
     for m in &b.members {
         if let Some(doc) = m.documentation() {
@@ -1160,7 +1161,99 @@ fn push_bitfield(out: &mut String, b: &Bitfield, schema: &Schema) {
     ));
     out.push_str("        }\n");
     out.push_str("    }\n");
+    push_bitfield_to_raw(out, b, schema);
+    push_bitfield_first_member_newer_than(out, b);
     out.push_str("}\n\n");
+}
+
+/// Emit `first_member_newer_than`, which a writer calls to fail a member the
+/// target firmware predates.
+fn push_bitfield_first_member_newer_than(out: &mut String, b: &Bitfield) {
+    out.push('\n');
+    out.push_str(
+        "    /// The first member set in `self` that firmware `release` predates, as the\n\
+         \x20   /// member's name and the release it arrived in.  A member with any bit set\n\
+         \x20   /// is set.\n",
+    );
+    out.push_str(
+        "    pub fn first_member_newer_than(self, release: FirmwareVersion) -> \
+         Option<(&'static str, FirmwareVersion)> {\n",
+    );
+    out.push_str("        let raw = self.to_raw();\n");
+    for m in &b.members {
+        let (major, minor, patch) = release_parts(b.member_release(m))
+            .expect("validate_release_strings has already refused a malformed release");
+        out.push_str(&format!(
+            "        let first = FirmwareVersion::new({major}, {minor}, {patch}, 0);\n"
+        ));
+        out.push_str(&format!(
+            "        if (raw & {:#x}) != 0 && release < first {{\n",
+            m.mask()
+        ));
+        out.push_str(&format!(
+            "            return Some((\"{}\", first));\n",
+            b.rust_field_name(m)
+        ));
+        out.push_str("        }\n");
+    }
+    out.push_str("        None\n");
+    out.push_str("    }\n");
+}
+
+/// Emit `to_raw`, the inverse of `from_raw`, which a writer of the bit field's
+/// bytes calls.
+fn push_bitfield_to_raw(out: &mut String, b: &Bitfield, schema: &Schema) {
+    let storage = b.storage_type();
+    let all_ones = (1u64 << (u64::from(b.size) * 8)) - 1;
+
+    out.push('\n');
+    out.push_str("    /// The members' bits and the unknown bits, as the raw value.\n");
+    out.push_str(&format!("    pub fn to_raw(self) -> {storage} {{\n"));
+    out.push_str(&format!(
+        "        let mut raw = self.{BITFIELD_UNKNOWN_BITS};\n"
+    ));
+    for m in &b.members {
+        let field = b.rust_field_name(m);
+        let mask = format!("{:#x}", m.mask());
+        if m.type_.is_none() && m.width() == 1 {
+            out.push_str(&format!("        if self.{field} == Some(true) {{\n"));
+            out.push_str(&format!("            raw |= {mask};\n"));
+            out.push_str("        }\n");
+            continue;
+        }
+        let value = match &m.type_ {
+            Some(_) => {
+                let unknown = match storage {
+                    "u32" => "value".to_string(),
+                    _ => format!("value as {storage}"),
+                };
+                format!(
+                    "match value {{ MaybeKnown::Known(value) => value as {storage}, \
+                     MaybeKnown::Unknown(value) => {unknown} }}"
+                )
+            }
+            None => match member_value_type(m, schema) == storage {
+                true => "value".to_string(),
+                false => format!("{storage}::from(value)"),
+            },
+        };
+        let shifted = match m.bit {
+            0 => "value".to_string(),
+            bit => format!("(value << {bit})"),
+        };
+        let masked = match m.mask() == all_ones {
+            true => shifted,
+            false => format!("{shifted} & {mask}"),
+        };
+        out.push_str(&format!("        if let Some(value) = self.{field} {{\n"));
+        if value != "value" {
+            out.push_str(&format!("            let value = {value};\n"));
+        }
+        out.push_str(&format!("            raw |= {masked};\n"));
+        out.push_str("        }\n");
+    }
+    out.push_str("        raw\n");
+    out.push_str("    }\n");
 }
 
 /// The expression for a member's value, with `raw` in scope.
@@ -1169,13 +1262,13 @@ fn member_value_expr(m: &BitfieldMember, mask: &str, storage: &str, schema: &Sch
         return format!("(raw & {mask}) != 0");
     }
     let shifted = match m.bit {
-        0 => format!("(raw & {mask})"),
-        bit => format!("((raw & {mask}) >> {bit})"),
+        0 => format!("raw & {mask}"),
+        bit => format!("(raw & {mask}) >> {bit}"),
     };
     let value_type = member_value_type(m, schema);
     let value = match value_type == storage {
         true => shifted,
-        false => format!("{shifted} as {value_type}"),
+        false => format!("({shifted}) as {value_type}"),
     };
     match &m.type_ {
         None => value,
@@ -1209,6 +1302,7 @@ fn push_structs(out: &mut String, schema: &Schema) {
             continue;
         }
         push_struct_def(out, s, schema);
+        push_struct_default(out, s, schema);
         push_struct_parse(out, s, schema);
     }
 }
@@ -1238,6 +1332,9 @@ fn push_struct_def(out: &mut String, s: &Struct, schema: &Schema) {
     };
     out.push_str(derives);
     out.push('\n');
+    // Code outside builds one from `Default`, so a field added later from
+    // padding doesn't break it.
+    out.push_str("#[non_exhaustive]\n");
     // The allow covers this item alone, so code outside still hears the note.
     push_deprecated_allow(out, s.fields.iter(), "");
     out.push_str(&format!("pub struct {tn} {{\n"));
@@ -1379,7 +1476,7 @@ fn emit_gated_field_parse(out: &mut String, field: &Field, indent: &str, schema:
     let slot = governor;
     let name = &field.name;
     let size = field_size(field, schema);
-    let default = rust_default_expr(field, schema);
+    let default = rust_default_expr(field, schema, &format!("generations.{RELEASE_SLOT}"));
 
     out.push_str(&format!(
         "{indent}// {name} arrived in {} generation {generation}.\n",
@@ -1547,7 +1644,10 @@ fn widen_to_u32(version_field: &Field) -> &'static str {
 /// It is the C accessor's default said in Rust: `None` and an empty `Vec` and
 /// a null `Pointer` are each what that accessor's `NULL` means for the kind
 /// in front of it, and an array's elements are the same bytes.
-pub fn rust_default_expr(field: &Field, schema: &Schema) -> String {
+///
+/// `release` is the expression for the firmware release a bit field's members
+/// are read against.
+pub fn rust_default_expr(field: &Field, schema: &Schema, release: &str) -> String {
     match field.kind.as_str() {
         "cstr_ptr" | "struct_ptr" | "tagged_fam_ptr" | "simple_fam_ptr" => {
             return "None".to_string();
@@ -1619,22 +1719,118 @@ pub fn rust_default_expr(field: &Field, schema: &Schema) -> String {
                 .expect("a gated type_alias field names a declared alias");
             format!("{value}{underlying}")
         }
-        // Only a parse has `generations` in scope.  serialize_gen doesn't
-        // reach this arm as a bit field is only in runtime info, which isn't
-        // serialized.
         "bitfield" => {
             let named = field.type_.as_deref().unwrap_or("");
             let b = schema
                 .bitfield(named)
                 .expect("a gated bitfield field refers to a declared bit field");
             format!(
-                "{}::from_raw({value}{}, generations.{RELEASE_SLOT})",
+                "{}::from_raw({value}{}, {release})",
                 rust_type_name(named),
                 b.storage_type()
             )
         }
         _ => format!("{value}{}", field.type_.as_deref().unwrap_or("u8")),
     }
+}
+
+fn push_struct_default(out: &mut String, s: &Struct, schema: &Schema) {
+    let tn = rust_type_name(&s.name);
+
+    out.push_str(
+        "/// Numbers are 0 and an enum is the value 0 parses as.  A nullable pointer is\n\
+         /// `None` and any other holds its target's default.  A field newer than its\n\
+         /// structure's first generation holds its `default_if_absent` value.\n",
+    );
+    push_deprecated_allow(out, s.fields.iter(), "");
+    out.push_str(&format!("impl Default for {tn} {{\n"));
+    out.push_str("    fn default() -> Self {\n");
+    out.push_str("        Self {\n");
+    for f in s.fields.iter().filter(|f| f.kind != "padding") {
+        let value = match f.since_marker() {
+            Some(_) => rust_default_expr(f, schema, "None"),
+            None => zero_expr(f, schema),
+        };
+        out.push_str(&format!("            {}: {value},\n", f.name));
+    }
+    out.push_str("        }\n");
+    out.push_str("    }\n");
+    out.push_str("}\n\n");
+}
+
+/// The value a field holds in its structure's `Default`, where no generation
+/// gates it.
+fn zero_expr(field: &Field, schema: &Schema) -> String {
+    let nullable = field.nullable.unwrap_or(false);
+    let named = field.type_.as_deref().unwrap_or("");
+    match field.kind.as_str() {
+        "scalar" | "type_alias" => "0".into(),
+        "enum" => enum_zero_expr(named, schema),
+        "bitfield" => format!("{}::default()", rust_type_name(named)),
+        "inline_array" => format!("[0; {}]", field.count.unwrap_or(0)),
+        "inline_array2d" => format!(
+            "[[0; {}]; {}]",
+            field.cols.unwrap_or(0),
+            field.rows.unwrap_or(0)
+        ),
+        "cstr_ptr" | "struct_ptr" | "tagged_fam_ptr" | "simple_fam_ptr" if nullable => {
+            "None".into()
+        }
+        "cstr_ptr" | "string" => "String::new()".into(),
+        "struct_ptr" | "simple_fam_ptr" => format!("{}::default()", rust_type_name(named)),
+        "tagged_fam_ptr" => tagged_fam_zero_expr(named, schema),
+        "struct_array_ptr" | "struct_ptr_array_ptr" => "Vec::new()".into(),
+        "opaque_ptr" | "fn_ptr" => "Pointer::Null".into(),
+        other => panic!("{}: no default for a {other}", field.name),
+    }
+}
+
+/// The enum `named`'s value for 0, as the parser reads it.
+fn enum_zero_expr(named: &str, schema: &Schema) -> String {
+    let repr = match schema.enums.iter().find(|e| e.name == named) {
+        Some(e) if e.size > 1 => "u16",
+        _ => "u8",
+    };
+    format!(
+        "match {}::try_from(0{repr}) {{ Ok(value) => MaybeKnown::Known(value), \
+         Err(_) => MaybeKnown::Unknown(0) }}",
+        rust_type_name(named)
+    )
+}
+
+/// The tagged FAM `named`'s first variant with every field 0, or its unknown
+/// variant at discriminant 0 where it declares none.
+fn tagged_fam_zero_expr(named: &str, schema: &Schema) -> String {
+    let tf = schema
+        .tagged_fams
+        .iter()
+        .find(|t| t.name == named)
+        .expect("a tagged_fam_ptr refers to a declared tagged FAM");
+    let tn = rust_type_name(named);
+    let common = tf.common_fields.iter().filter(|f| f.kind != "padding");
+    let (variant, fields) = match tf.variants.first() {
+        Some(v) => {
+            let strip = schema
+                .enums
+                .iter()
+                .find(|e| e.name == tf.discriminant_type)
+                .and_then(|e| e.strip_prefix.as_deref())
+                .unwrap_or("");
+            let own = v.fields.iter().filter(|f| f.kind != "padding");
+            let fields: Vec<String> = common
+                .chain(own)
+                .map(|f| format!("{}: {}", f.name, zero_expr(f, schema)))
+                .collect();
+            (variant_ident(&v.discriminant, strip), fields)
+        }
+        None => {
+            let mut fields = vec![format!("{}: 0", tf.discriminant_field)];
+            fields.extend(common.map(|f| format!("{}: {}", f.name, zero_expr(f, schema))));
+            fields.push("params: Vec::new()".into());
+            ("Unknown".into(), fields)
+        }
+    };
+    format!("{tn}::{variant} {{ {} }}", fields.join(", "))
 }
 
 fn push_struct_parse(out: &mut String, s: &Struct, schema: &Schema) {
@@ -2002,12 +2198,13 @@ fn push_simple_fam(out: &mut String, sf: &SimpleFam) {
         push_doc_comment(out, "", cmt);
     }
     let derives = if sf.generate == Generate::Both {
-        "#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]"
+        "#[derive(Debug, Clone, Default, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]"
     } else {
-        "#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]"
+        "#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]"
     };
     out.push_str(derives);
     out.push('\n');
+    out.push_str("#[non_exhaustive]\n");
     out.push_str(&format!("pub struct {tn} {{\n"));
     out.push_str("    pub params: Vec<u8>,\n");
     out.push_str("}\n\n");

@@ -6,14 +6,14 @@
 //!
 //! Results are grouped by flash slot.  Open a slot with [`ApiReport::begin_slot`]
 //! (a Single slot under test) or record one skipped with
-//! [`ApiReport::skip_slot`] (a Multi/Banked slot), then feed per-test results
+//! [`ApiReport::skip_slot`] (a slot not under test), then feed per-test results
 //! with [`ApiReport::add`] — each lands in the most recently opened slot.
 
 struct SlotReport {
     #[allow(dead_code)]
     idx: usize,
     #[allow(dead_code)]
-    sel: u8,
+    sel: Option<u8>,
     skipped: bool,
     // (name, passed, message, skipped)
     results: Vec<(String, bool, Option<String>, bool)>,
@@ -46,19 +46,20 @@ impl ApiReport {
         println!("=== Flash slot {} (sel={}): {} ===", idx, sel, label);
         self.slots.push(SlotReport {
             idx,
-            sel,
+            sel: Some(sel),
             skipped: false,
             results: Vec::new(),
         });
     }
 
-    /// Record a flash slot that was skipped (e.g. Multi/Banked), printing a
-    /// skip header.  No per-test results are expected for it.
-    pub fn skip_slot(&mut self, idx: usize, sel: u8, reason: &str) {
-        println!(
-            "=== Flash slot {} (sel={}): SKIPPED ({}) ===",
-            idx, sel, reason
-        );
+    /// Record a flash slot that was skipped, printing a skip header.  `sel` is
+    /// `None` for a slot that image select can't boot.  Don't call
+    /// [`Self::add`] for it.
+    pub fn skip_slot(&mut self, idx: usize, sel: Option<u8>, reason: &str) {
+        match sel {
+            Some(sel) => println!("=== Flash slot {idx} (sel={sel}): SKIPPED ({reason}) ==="),
+            None => println!("=== Flash slot {idx}: SKIPPED ({reason}) ==="),
+        }
         self.slots.push(SlotReport {
             idx,
             sel,

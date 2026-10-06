@@ -700,9 +700,9 @@ pub(crate) async fn read_rom_sets<R: Reader>(
                     i, e
                 )
             })?;
-            fw_config.serve_alg_params = Some(ServeAlgParams {
-                params: serve_config.clone().unwrap_or_default(),
-            });
+            let mut serve_alg_params = ServeAlgParams::default();
+            serve_alg_params.params = serve_config.clone().unwrap_or_default();
+            fw_config.serve_alg_params = Some(serve_alg_params);
             Some(fw_config)
         } else {
             None

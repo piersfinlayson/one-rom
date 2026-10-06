@@ -16,6 +16,67 @@ use crate::timing;
 
 // ── Per bit mode ──────────────────────────────────────────────────────────────
 
+/// The GPIOs a pass in one bit mode drives and checks.
+pub struct ModePins<'a> {
+    /// `/BYTE` held at the level selecting the mode, or nothing for a chip
+    /// without `/BYTE`.
+    pub byte_mask: (u64, u64),
+    /// The address GPIOs driven, A0 first.
+    pub addr_gpios: &'a [Vec<u8>],
+    /// The data GPIOs the chip drives, D0 first.
+    pub data_gpios: &'a [u8],
+}
+
+/// The GPIOs [`run_mode`] drives and checks in `mode`.
+pub fn mode_pins(cache: &PinCache, mode: u8) -> ModePins<'_> {
+    // The caller merges the BYTE# mask into every drive_gpios call.
+    // epio_drive_gpios_ext resets every GPIO that is *not* in the supplied mask
+    // to its configured pull state on each call (pull-none pins go to the float
+    // mode value, which defaults to 1/high).  A one-shot drive before the loop
+    // would be immediately overwritten by the first phase1/phase2 call.
+    // Merging into every call holds the level correctly throughout the pass.
+    let byte_mask: (u64, u64) = if let Some(gpio) = cache.byte_n_gpio {
+        let bm = driver::byte_n_mask(gpio, mode);
+        debug!(
+            "BYTE# gpio={} mode={} mask={:#018x} levels={:#018x}",
+            gpio, mode, bm.0, bm.1
+        );
+        bm
+    } else {
+        (0u64, 0u64)
+    };
+
+    // In 16-bit mode, addr_gpios[0] is A-1, which is also D15 — a data
+    // output pin in word mode.  Driving it as an address pin would interfere
+    // with the data bus and cause false bus violations.  Skip it and use only
+    // A0-A17 (indices [1..]) with the word index (addr_idx) as the drive
+    // address, so bit 0 of addr_idx maps to A0, bit 1 to A1, etc.
+    //
+    // In 8-bit mode, use all address GPIOs including A-1 at index 0 (bit 0
+    // of the byte address becomes the low/high byte select).
+    let addr_gpios: &[Vec<u8>] = if mode == 16 {
+        &cache.addr_gpios[1..]
+    } else {
+        &cache.addr_gpios
+    };
+
+    // For 16-bit mode all 16 pins are live.  For 8-bit mode only the low byte
+    // lane is driven by the chip (BYTE# keeps D8-D15 tristated on
+    // 27C400-family devices), so the check is limited to the first 8 GPIOs in
+    // the cache.
+    let data_gpios: &[u8] = if mode == 16 {
+        &cache.data_gpios[..16]
+    } else {
+        &cache.data_gpios[..8.min(cache.data_gpios.len())]
+    };
+
+    ModePins {
+        byte_mask,
+        addr_gpios,
+        data_gpios,
+    }
+}
+
 /// Drive the emulated ROM bus for every address in the oracle, comparing
 /// the PIO output against the expected bytes.
 ///
@@ -42,23 +103,11 @@ pub fn run_mode(
     background_mask: (u64, u64),
     gap_gpios: &[u8],
 ) -> (u64, u64, u64, u64) {
-    // Pre-compute the BYTE# mask so it can be merged into every drive_gpios
-    // call.  epio_drive_gpios_ext resets every GPIO that is *not* in the
-    // supplied mask to its configured pull state on each call (pull-none pins
-    // go to the float mode value, which defaults to 1/high).  A one-shot
-    // drive before the loop would be immediately overwritten by the first
-    // phase1/phase2 call.  Merging into every call holds the level correctly
-    // throughout the pass.
-    let byte_mask: (u64, u64) = if let Some(gpio) = cache.byte_n_gpio {
-        let bm = driver::byte_n_mask(gpio, mode);
-        debug!(
-            "BYTE# gpio={} mode={} mask={:#018x} levels={:#018x}",
-            gpio, mode, bm.0, bm.1
-        );
-        bm
-    } else {
-        (0u64, 0u64)
-    };
+    let ModePins {
+        byte_mask,
+        addr_gpios,
+        data_gpios: driven_check_gpios,
+    } = mode_pins(cache, mode);
 
     // Merge BYTE# with the caller-supplied background mask to produce the
     // single constant mask applied on every GPIO drive call.
@@ -71,27 +120,12 @@ pub fn run_mode(
     //   - Banked sets:       all X pins driven to the level selecting the bank.
     let const_mask = driver::merge(byte_mask, background_mask);
 
+    // addr_shift is retained solely for computing phys_addr for log messages,
+    // which uses byte addresses in both modes.
     let (iter_count, addr_shift) = if mode == 16 {
         (oracle.len() / 2, 1usize)
     } else {
         (oracle.len(), 0usize)
-    };
-
-    // In 16-bit mode, addr_gpios[0] is A-1, which is also D15 — a data
-    // output pin in word mode.  Driving it as an address pin would interfere
-    // with the data bus and cause false bus violations.  Skip it and use only
-    // A0-A17 (indices [1..]) with the word index (addr_idx) as the drive
-    // address, so bit 0 of addr_idx maps to A0, bit 1 to A1, etc.
-    //
-    // In 8-bit mode, use all address GPIOs including A-1 at index 0 (bit 0
-    // of the byte address becomes the low/high byte select).
-    //
-    // addr_shift is retained solely for computing phys_addr for log messages,
-    // which uses byte addresses in both modes.
-    let addr_gpios: &[Vec<u8>] = if mode == 16 {
-        &cache.addr_gpios[1..]
-    } else {
-        &cache.addr_gpios
     };
 
     debug!(
@@ -112,16 +146,6 @@ pub fn run_mode(
         "ctrl_active:     mask={:#018x} levels={:#018x}",
         ctrl_active.0, ctrl_active.1
     );
-
-    // The data GPIO slice used for bus-state checks.  For 16-bit mode all 16
-    // pins are live.  For 8-bit mode only the low byte lane is driven by the
-    // chip (BYTE# keeps D8-D15 tristated on 27C400-family devices), so we
-    // limit the check to the first 8 GPIOs in the cache.
-    let driven_check_gpios: &[u8] = if mode == 16 {
-        &cache.data_gpios[..16]
-    } else {
-        &cache.data_gpios[..8.min(cache.data_gpios.len())]
-    };
 
     // The data GPIO slice for byte extraction and mismatch logging in 8-bit
     // mode.  Even on 16-bit-capable chips the cache has 16 data GPIOs, but
@@ -431,6 +455,73 @@ pub fn run_mode(
     }
 
     (reads, failures, bus_failures, forced_low_failures)
+}
+
+/// Drive [`run_mode`]'s read cycles at up to `max_addrs` addresses spread
+/// across the chip's `num_bytes`, without comparing data, and count the times
+/// a data GPIO was driven.
+///
+/// The data GPIOs are checked with chip select asserted and again once it is
+/// released.  In standby every check must find them undriven.
+///
+/// Returns `(checks, violations)`.
+#[allow(clippy::too_many_arguments)]
+pub fn run_undriven(
+    emulator: &Emulator,
+    cache: &PinCache,
+    num_bytes: usize,
+    mode: u8,
+    cycles_addr_before_cs: u32,
+    cycles_cs_to_data: u32,
+    background_mask: (u64, u64),
+    max_addrs: usize,
+) -> (u64, u64) {
+    let ModePins {
+        byte_mask,
+        addr_gpios,
+        data_gpios,
+    } = mode_pins(cache, mode);
+    let const_mask = driver::merge(byte_mask, background_mask);
+    let ctrl_deasserted = driver::ctrl_mask(&cache.control_lines, false);
+    let ctrl_active = driver::ctrl_mask(&cache.control_lines, true);
+    let data_mask = data_gpios.iter().fold(0u64, |m, &g| m | (1u64 << g));
+
+    let num_addrs = if mode == 16 { num_bytes / 2 } else { num_bytes };
+    let stride = num_addrs.div_ceil(max_addrs.max(1)).max(1);
+
+    let mut checks = 0u64;
+    let mut violations = 0u64;
+    for addr in (0..num_addrs).step_by(stride) {
+        let addr_mask = driver::addr_mask(addr, addr_gpios);
+
+        let inactive = driver::merge(driver::merge(addr_mask, ctrl_deasserted), const_mask);
+        emulator.drive_gpios(inactive.0, inactive.1);
+        emulator.step_cycles(cycles_addr_before_cs);
+
+        let active = driver::merge(driver::merge(addr_mask, ctrl_active), const_mask);
+        emulator.drive_gpios(active.0, active.1);
+        emulator.step_cycles(cycles_cs_to_data);
+        for released in [false, true] {
+            if released {
+                emulator.drive_gpios(inactive.0, inactive.1);
+                emulator.step_cycles(timing::CYCLES_AFTER_READ);
+            }
+            checks += 1;
+            let driven = emulator.read_driven_pins() & data_mask;
+            if driven != 0 {
+                violations += 1;
+                if violations <= 5 {
+                    error!(
+                        "BUS addr=0x{addr:04X}: data GPIOs {driven:#018x} driven with chip \
+                         select {}",
+                        if released { "released" } else { "asserted" }
+                    );
+                }
+            }
+        }
+    }
+
+    (checks, violations)
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

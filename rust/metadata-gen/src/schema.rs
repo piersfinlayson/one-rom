@@ -2449,9 +2449,9 @@ impl Schema {
         }
     }
 
-    /// A `bitfield` field is allowed only in the runtime structure, which only
-    /// One ROM firmware writes.  Every One ROM family firmware writes its own
-    /// release to `onerom_info_t`.
+    /// A host reads a `bitfield` field's members against the firmware release
+    /// in `onerom_info_t`, so the parser reads that release before it reaches
+    /// the field.
     fn validate_bitfields(&self) -> Result<(), Box<dyn std::error::Error>> {
         for b in &self.bitfields {
             self.check_bitfield(b)?;
@@ -2466,23 +2466,6 @@ impl Schema {
                 return Err(format!(
                     "{container}.{} is a {named}, and no bit field of that name is declared",
                     f.name
-                )
-                .into());
-            }
-            let Some(runtime) = self.struct_in_slot(SLOT_RUNTIME) else {
-                return Err(format!(
-                    "{container}.{} is a bit field, and one sits only in the structure filling \
-                     the {SLOT_RUNTIME} slot, which this schema doesn't have",
-                    f.name
-                )
-                .into());
-            };
-            if runtime.name != container {
-                return Err(format!(
-                    "{container}.{} is a bit field, and one sits only in {} - a host reads a \
-                     member only from firmware that has it, and that is the structure One ROM's \
-                     firmware alone writes",
-                    f.name, runtime.name
                 )
                 .into());
             }
@@ -2614,32 +2597,59 @@ impl Schema {
             )
             .into());
         };
-        let Some(pointer) = info
+        let pointers: Vec<(usize, &Field)> = info
             .fields
             .iter()
-            .position(|p| p.kind == "struct_ptr" && p.type_.as_deref() == Some(container))
-        else {
+            .enumerate()
+            .filter(|(_, p)| {
+                p.referenced_type()
+                    .is_some_and(|t| self.reaches(t, container, &mut Vec::new()))
+            })
+            .collect();
+        if pointers.is_empty() {
             return Err(format!(
-                "{container}.{} is a bit field, and {} doesn't point at {container}, so the \
+                "{container}.{} is a bit field, and {} doesn't reach {container}, so the \
                  parser has no firmware release when it reads it",
                 f.name, info.name
             )
             .into());
-        };
-        for name in RELEASE_FIELDS {
-            let found = info.fields.iter().position(|r| {
-                r.name == name && r.kind == "scalar" && r.type_.as_deref() == Some("u16")
-            });
-            if !found.is_some_and(|at| at < pointer) {
-                return Err(format!(
-                    "{container}.{} is a bit field, and {}.{name} isn't a u16 scalar ahead of the \
-                     pointer to {container}, which is where the firmware release is read from",
-                    f.name, info.name
-                )
-                .into());
+        }
+        for (pointer, p) in pointers {
+            for name in RELEASE_FIELDS {
+                let found = info.fields.iter().position(|r| {
+                    r.name == name && r.kind == "scalar" && r.type_.as_deref() == Some("u16")
+                });
+                if !found.is_some_and(|at| at < pointer) {
+                    return Err(format!(
+                        "{container}.{} is a bit field, and {}.{name} isn't a u16 scalar ahead \
+                         of the pointer {}.{}, which reaches {container}, so the parser has no \
+                         firmware release when it reads it",
+                        f.name, info.name, info.name, p.name
+                    )
+                    .into());
+                }
             }
         }
         Ok(())
+    }
+
+    /// Whether `from` is `target`, or reaches it through the pointers its
+    /// fields hold.
+    fn reaches<'a>(&'a self, from: &'a str, target: &str, seen: &mut Vec<&'a str>) -> bool {
+        if from == target {
+            return true;
+        }
+        if seen.contains(&from) {
+            return false;
+        }
+        seen.push(from);
+        let Some(s) = self.structs.iter().find(|s| s.name == from) else {
+            return false;
+        };
+        s.fields
+            .iter()
+            .filter_map(Field::referenced_type)
+            .any(|t| self.reaches(t, target, seen))
     }
 
     fn validate_bitfield_releases(&self) -> Result<(), Box<dyn std::error::Error>> {

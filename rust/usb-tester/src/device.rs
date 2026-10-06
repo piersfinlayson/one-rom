@@ -11,6 +11,7 @@
 //! model and which the firmware does.
 
 use onerom_fw_emulator::Emulator;
+use onerom_metadata::onerom_firmware_flag_t;
 use onerom_plugin_tester::harness::Plugin;
 
 use crate::ffi;
@@ -371,6 +372,12 @@ impl<'a> Device<'a> {
     /// the LED's output rather than what a request asked for.
     pub fn led_pixel(&self) -> (u32, u32) {
         self.emu.led_last_pixel()
+    }
+
+    /// Whether One ROM is in standby, from `FIRMWARE_FLAG_STANDBY` in runtime
+    /// info, where a host reads it.
+    pub fn in_standby(&self) -> bool {
+        self.emu.firmware_flags() & onerom_firmware_flag_t::FIRMWARE_FLAG_STANDBY != 0
     }
 
     /// What a pin is actually at, from the pad model the firmware drives.

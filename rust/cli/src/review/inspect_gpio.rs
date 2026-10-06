@@ -12,7 +12,7 @@ use onerom_config::hw::Board;
 use onerom_fw_parser::ParsedDevice;
 use onerom_metadata::{GPIO_NONE, GpioOverride, OneromAlgAddrConfig, OneromAlgCsConfig};
 
-use crate::inspect::render_gpio_table;
+use crate::inspect::{gpio_title, render_gpio_table};
 use crate::test_board::{image_2364, image_2364_for};
 
 fn entries(board: &Board) -> Vec<GpioEntry> {
@@ -134,17 +134,24 @@ pub(super) fn served_entries(image: &ParsedDevice, board: &Board) -> Vec<GpioEnt
         .collect()
 }
 
-/// A fire-24-a's X1 and X2 are among its address pins.
-async fn fire_24_a(reserved: &[&str], verbose: bool) {
+/// A fire-24-a's X1 and X2 are among its address pins. `standby` is whether
+/// One ROM is in standby, where its data pins are inputs.
+async fn fire_24_a(reserved: &[&str], verbose: bool, standby: bool) {
     let board = Board::Fire24A;
     let image = parse_firmware(&image_2364_for(board, 1, reserved)).await;
+    let mut entries = served_entries(&image, &board);
+    if standby {
+        for entry in &mut entries {
+            entry.is_output = 0;
+        }
+    }
     println!(
         "$ onerom inspect gpio{}",
         if verbose { " --verbose" } else { "" }
     );
     println!("~ One ROM Fire 24 A - Firmware: v0.8.0 State: Running Serial: DE3F9C232F655B6B");
     println!("~");
-    println!("~ GPIO state  ·  One ROM Fire 24 (rev A)  ·  RP235xA  ·  serving 2364");
+    println!("{}", gpio_title(Some(&board), 30, Some("2364"), standby));
     println!("~");
     print!(
         "{}",
@@ -152,22 +159,28 @@ async fn fire_24_a(reserved: &[&str], verbose: bool) {
             Some(&board),
             Some(ChipType::Chip2364),
             0,
-            &served_entries(&image, &board),
+            &entries,
             false,
             verbose,
             onerom_cli::pin::reserved_gpios(&image),
+            standby,
         )
     );
 }
 
 #[tokio::test]
 async fn input_forced_pins() {
-    fire_24_a(&[], true).await;
+    fire_24_a(&[], true, false).await;
 }
 
 #[tokio::test]
 async fn an_input_forced_pin_reserved() {
-    fire_24_a(&["x1"], false).await;
+    fire_24_a(&["x1"], false, false).await;
+}
+
+#[tokio::test]
+async fn standby() {
+    fire_24_a(&[], true, true).await;
 }
 
 #[tokio::test]
@@ -178,7 +191,7 @@ async fn reserved_pins() {
     println!("$ onerom inspect gpio --verbose");
     println!("~ One ROM Fire 24 F - Firmware: v0.8.0 State: Running Serial: DE3F9C232F655B6B");
     println!("~");
-    println!("~ GPIO state  ·  One ROM Fire 24 (rev F)  ·  RP235xA  ·  serving 2364");
+    println!("{}", gpio_title(Some(&board), 30, Some("2364"), false));
     println!("~");
     print!(
         "{}",
@@ -190,6 +203,7 @@ async fn reserved_pins() {
             false,
             true,
             reserved,
+            false,
         )
     );
 }

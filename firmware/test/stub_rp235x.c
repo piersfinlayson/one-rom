@@ -12,6 +12,9 @@
 #define APIO_LOG_IMPL
 #define APIO_LOG_ENABLE(fmt, ...) printf(fmt "\n", ##__VA_ARGS__)
 
+// Set by DMA_ENABLE() - see piodma/dmareg.h.
+uint8_t stub_dma_out_of_reset = 0;
+
 void setup_vbus_interrupt(void) {
     STUB_LOG("setup_vbus_interrupt");
 }
@@ -117,6 +120,7 @@ void onerom_test_reset(void) {
     stub_timer_reset();
     pio_led_reset();
     stub_entered_bootloader = 0;
+    stub_dma_out_of_reset = 0;
     limp_mode_value = LIMP_MODE_NONE;
 }
 

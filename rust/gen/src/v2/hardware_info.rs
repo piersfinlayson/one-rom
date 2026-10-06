@@ -80,23 +80,23 @@ pub fn build_hardware_info(board: Board) -> OneromHardwareInfo {
         }
     }
 
-    OneromHardwareInfo {
-        hw_rev,
-        rp235x: MaybeKnown::Known(rp235x),
-        num_phys_pins,
-        usb_capable,
-        gpio_vbus,
-        gpio_ext_flash_cs,
-        gpio_status,
-        gpio_neopixel,
-        gpio_swdio,
-        gpio_swclk,
-        gpio_sel,
-        sel_jumper_pull,
-        gpio_from_phys_pin,
-        gpio_x1,
-        gpio_x2,
-    }
+    let mut hw = OneromHardwareInfo::default();
+    hw.hw_rev = hw_rev;
+    hw.rp235x = MaybeKnown::Known(rp235x);
+    hw.num_phys_pins = num_phys_pins;
+    hw.usb_capable = usb_capable;
+    hw.gpio_vbus = gpio_vbus;
+    hw.gpio_ext_flash_cs = gpio_ext_flash_cs;
+    hw.gpio_status = gpio_status;
+    hw.gpio_neopixel = gpio_neopixel;
+    hw.gpio_swdio = gpio_swdio;
+    hw.gpio_swclk = gpio_swclk;
+    hw.gpio_sel = gpio_sel;
+    hw.sel_jumper_pull = sel_jumper_pull;
+    hw.gpio_from_phys_pin = gpio_from_phys_pin;
+    hw.gpio_x1 = gpio_x1;
+    hw.gpio_x2 = gpio_x2;
+    hw
 }
 
 // ===========================================================================

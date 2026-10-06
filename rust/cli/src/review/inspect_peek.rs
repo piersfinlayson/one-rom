@@ -8,7 +8,8 @@ use onerom_config::chip::ChipType;
 
 use super::{command_of, written_failure};
 use crate::args::Commands;
-use crate::utils::live_range;
+use crate::inspect::read_live_line;
+use crate::utils::{live_range, print_hex_dump};
 
 /// Prints the transcript of `line`, a `peek` on a One ROM serving half a
 /// 27C080.
@@ -52,4 +53,21 @@ fn past_the_end_of_a_27c080_half() {
 #[test]
 fn across_the_end_of_a_27c080_half() {
     peek_27c080("onerom peek --address 0x7ff00 --length 0x200");
+}
+
+/// 16 bytes from live ROM offset 0x100, serving and in standby. The bytes
+/// are made up.
+#[test]
+fn live_serving_and_standby() {
+    let data: Vec<u8> = (0..16).collect();
+    for (state, standby) in [("serving", false), ("in standby", true)] {
+        println!("### {state}");
+        println!("$ onerom inspect peek live --address 0x100 --length 16");
+        println!("{}", read_live_line(16, 0x100, standby));
+        print_hex_dump(0x100, &data);
+        println!();
+        println!("$ onerom inspect peek live --address 0x100 --length 16 --output rom.bin");
+        println!("{}", read_live_line(16, 0x100, standby));
+        println!();
+    }
 }

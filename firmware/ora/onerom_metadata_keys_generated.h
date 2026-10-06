@@ -113,6 +113,9 @@ typedef enum {
     // Reserved X pins. Bit 0 is X1 and bit 1 is X2.
     // @since firmware 0.8.0
     ORA_METADATA_KEY_RESERVED_X_PINS   = 0x00000018,
+    // The firmware's flags, as ORA_FIRMWARE_FLAG_* bits.
+    // @since firmware 0.8.0
+    ORA_METADATA_KEY_FIRMWARE_FLAGS    = 0x00000019,
     ORA_METADATA_KEY_INVALID           = 0xFFFFFFFF,  // Invalid metadata key
 } ora_metadata_key_t;
 _Static_assert(sizeof(ora_metadata_key_t) == 4, "ora_metadata_key_t must be 4 bytes");

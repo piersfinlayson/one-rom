@@ -180,10 +180,10 @@ Flashable images come from the CLI — see [Testing firmware on a device](#testi
 and README.md's build section. Every script under `ci/` documents itself in its
 header comment. The ones with rules attached:
 
-- **`ci/test-emu.sh <24|28|32|40>`**, or no argument for all four. CI runs them
-  as parallel jobs. Run one at a time in a given working tree, since each
-  regenerates the same `firmware/generated/gen-config.c` and rebuilds the same
-  `firmware/build-test/`.
+- **`ci/test-emu.sh <24|24-1|24-2|28|28-1|28-2|32|40>`**, or no argument for all
+  four. CI runs 24-1, 24-2, 28-1, 28-2, 32 and 40 as parallel jobs. Run one at a
+  time in a given working tree, since each regenerates the same
+  `firmware/generated/gen-config.c` and rebuilds the same `firmware/build-test/`.
 - **`ci/coverage-*.sh`** measure line coverage of the C the testers drive, and
   CI gates every push against the per-file floors in
   `ci/coverage-baseline.txt`. `--raise` moves a floor up. Lowering one is a
@@ -371,10 +371,10 @@ and exposes the `picobootx` interface. `host-control` implements RBCP.
 - **Exposing device metadata to plugins:** tag the field in
   `rust/metadata/metadata_schema.toml` with
   `plugin_key = { name = "…", id = N, first_release = "X.Y.Z" }`. String fields
-  then resolve via `ORA_ID_GET_METADATA_STR` and unsigned scalar or enum fields
-  via `ORA_ID_GET_METADATA_UINT`, with no hand-written firmware. Key ids are one
-  permanent namespace, each number keeping its meaning for good, and
-  `first_release` names the release the key arrived in, which the released
+  then resolve via `ORA_ID_GET_METADATA_STR` and unsigned scalar, enum or
+  bitfield fields via `ORA_ID_GET_METADATA_UINT`, with no hand-written firmware.
+  Key ids are one permanent namespace, each number keeping its meaning for good,
+  and `first_release` names the release the key arrived in, which the released
   schema copy holds it to.
   `status_led_enabled` is the live status-LED state and the cross-plugin
   coordination channel, written by `ora_set_status_led` and read via its

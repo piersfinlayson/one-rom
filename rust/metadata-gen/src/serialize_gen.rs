@@ -584,9 +584,19 @@ fn away_from_default(f: &Field, schema: &Schema) -> String {
         }
         "struct_array_ptr" | "struct_ptr_array_ptr" => format!("!self.{name}.is_empty()"),
         "opaque_ptr" | "fn_ptr" => format!("!self.{name}.is_null()"),
+        // A writer doesn't have a release to read the members against, so it
+        // compares the bits.
+        "bitfield" => {
+            let value = f
+                .default_if_absent
+                .as_ref()
+                .and_then(|v| v.as_integer())
+                .expect("a gated bitfield field has a whole-number default");
+            format!("self.{name}.to_raw() != {value}")
+        }
         _ => format!(
             "self.{name} != {}",
-            crate::rust_gen::rust_default_expr(f, schema)
+            crate::rust_gen::rust_default_expr(f, schema, "None")
         ),
     }
 }
@@ -934,6 +944,17 @@ fn emit_struct_write_field_body(
             let (method, _) = scalar_write(underlying);
             let a = addr_expr(byte_off);
             out.push_str(&format!("{ind}ctx.{method}({a}, self.{name});\n"));
+        }
+
+        "bitfield" => {
+            let storage = f
+                .type_
+                .as_deref()
+                .and_then(|named| schema.bitfield(named))
+                .map_or("u32", Bitfield::storage_type);
+            let (method, _) = scalar_write(storage);
+            let a = addr_expr(byte_off);
+            out.push_str(&format!("{ind}ctx.{method}({a}, self.{name}.to_raw());\n"));
         }
 
         "inline_array" => {
