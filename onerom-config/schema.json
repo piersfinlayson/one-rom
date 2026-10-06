@@ -220,6 +220,13 @@
                         }
                     ]
                 },
+                "plugin": {
+                    "description": "Name of a published plugin to use instead of `file` on a\n`system_plugin` or `user_plugin` chip.  The latest release compatible\nwith the firmware is used.",
+                    "type": [
+                        "string",
+                        "null"
+                    ]
+                },
                 "size_handling": {
                     "description": "Optional size handling configuration for this Chip.  Used to specify\nhandling when the image supplied isn't the correct size for this Chip\ntype.",
                     "$ref": "#/$defs/SizeHandling"

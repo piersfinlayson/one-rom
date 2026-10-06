@@ -4,7 +4,7 @@
 
 //! Resetting the host system a One ROM is installed in.
 //!
-//! A wire from a One ROM pad to the host's reset line lets the device restart
+//! A wire from a One ROM pin to the host's reset line lets the device restart
 //! the machine it lives in - after programming a new image, or on demand. Two
 //! halves live here: deciding whether a pin can carry that wire, which is a
 //! question about board metadata and needs no device, and sending the pulse,
@@ -28,7 +28,7 @@ pub enum PinObjection {
     /// `control pin --force`.
     InUse(Vec<String>),
 
-    /// The pad is not 5V-tolerant. Whether that matters depends on what the wire
+    /// The pin is not 5V-tolerant. Whether that matters depends on what the wire
     /// reaches, which nothing here knows, so this one is for the user to weigh.
     NotFiveVoltTolerant,
 }
@@ -48,8 +48,8 @@ pub fn vet_pin(board: &Board, gpio_num: u8) -> Vec<PinObjection> {
     }
 
     // Static board metadata, not a measurement: the RP2350's ADC pins are the
-    // only pads that are not 5V-tolerant. Nothing here knows or asks what the
-    // pad is wired to.
+    // only pins that are not 5V-tolerant. Nothing here knows or asks what the
+    // pin is wired to.
     if board.gpio_tolerance(gpio_num) == Some(PinTolerance::ThreeVolt3) {
         objections.push(PinObjection::NotFiveVoltTolerant);
     }

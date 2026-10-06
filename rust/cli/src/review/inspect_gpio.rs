@@ -169,12 +169,12 @@ async fn fire_24_a(reserved: &[&str], verbose: bool, standby: bool) {
 }
 
 #[tokio::test]
-async fn input_forced_pads() {
+async fn input_forced_pins() {
     fire_24_a(&[], true, false).await;
 }
 
 #[tokio::test]
-async fn an_input_forced_pad_reserved() {
+async fn an_input_forced_pin_reserved() {
     fire_24_a(&["x1"], false, false).await;
 }
 
@@ -184,7 +184,7 @@ async fn standby() {
 }
 
 #[tokio::test]
-async fn reserved_pads() {
+async fn reserved_pins() {
     let board = Board::Fire24F;
     let image = parse_firmware(&image_2364(1, &["sel_c", "x1"])).await;
     let reserved = onerom_cli::pin::reserved_gpios(&image);

@@ -9,7 +9,7 @@ use onerom_config::chip::{ChipFunction, ChipType};
 use onerom_config::fw::{FirmwareProperties, FirmwareVersion};
 use onerom_config::hw::{Board, HeaderColumn, HeaderRole, HeaderSlot};
 use onerom_config::mcu::Family;
-use onerom_config::pin::{Pad, ReservedPads};
+use onerom_config::pin::{HeaderPin, ReservedPins};
 use onerom_metadata::{
     MAX_SERIAL_NUMBER_LEN, MAX_UNIT_NAME_LEN, METADATA_BASE, METADATA_SIZE, MIN_SCHEMA_VERSION,
     MaybeKnown, ONEROM_METADATA_MAGIC, OneromAlgConfig, OneromMetadataHeader, OneromRomInfo,
@@ -18,6 +18,8 @@ use onerom_metadata::{
 
 use crate::flash::{FlashChips, slot_addresses};
 use crate::image::requires_half_select_cs1;
+use crate::v2::addr_layout::AddrLayout;
+use crate::v2::cs_data_layout::CsDataLayout;
 use crate::v2::firmware_config::{
     build_firmware_config, build_firmware_overrides, build_override_states,
 };
@@ -248,9 +250,9 @@ impl Builder {
     /// [`Builder::description`] plus the reserved pins and the image select
     /// jumpers for each image on `board`.
     ///
-    /// Fails as [`Config::reserved_pads`] does.
+    /// Fails as [`Config::reserved_pins_on`] does.
     pub fn description_for_board(&self, board: Board) -> Result<String> {
-        let reserved = self.config.reserved_pads(board)?;
+        let reserved = self.config.reserved_pins_on(board)?;
         let select = ImageSelect::new(&self.config, board, reserved);
         Ok(description(
             self.config(),
@@ -258,6 +260,54 @@ impl Builder {
             self.num_roms(),
             Some(&select),
         ))
+    }
+
+    /// Each ROM slot that uses a reserved pin on `props`' board, with the
+    /// first reserved pin it uses. ROM slots are numbered from 0 without
+    /// plugins, as in [`Error::ReservedPinInUse`].
+    ///
+    /// Works before any file is added.
+    ///
+    /// Fails as [`Config::reserved_pins_on`] does, and where
+    /// [`Builder::build`] fails to lay out a slot.
+    pub fn slots_using_reserved_pins(
+        &self,
+        props: &FirmwareProperties,
+    ) -> Result<alloc::vec::Vec<(usize, HeaderPin)>> {
+        let board = props.board();
+        let reserved = self.config.reserved_pins_on(board)?;
+        if reserved.is_empty() {
+            return Ok(alloc::vec::Vec::new());
+        }
+
+        let chip_sets =
+            chip_sets_with(&self.config, props, |chip_id, _, chip_config, cs_config| {
+                Ok(Chip::new(
+                    chip_id,
+                    chip_config.filename(),
+                    chip_config.label.clone(),
+                    chip_config.chip_type.clone(),
+                    cs_config,
+                    None,
+                    chip_config.location,
+                ))
+            })?;
+
+        let mut used = alloc::vec::Vec::new();
+        let rom_sets = chip_sets
+            .iter()
+            .filter(|set| !set.chips[0].chip_type().is_plugin());
+        for (slot, chip_set) in rom_sets.enumerate() {
+            let (rom_slot, _, _) = lay_out_rom_slot(board, chip_set)?;
+            if let Some(pin) = rom_slot
+                .alg
+                .as_ref()
+                .and_then(|alg| check_reserved_pins(board, reserved, alg))
+            {
+                used.push((slot, pin));
+            }
+        }
+        Ok(used)
     }
 
     /// Get number of chip sets
@@ -287,6 +337,44 @@ impl Builder {
     /// Mark a license as validated
     pub fn accept_license(&mut self, license: &License) -> Result<()> {
         accept_license(self.licenses_mut(), license)
+    }
+
+    /// Set the file of the chip at `chip_index` to `file` and clear its
+    /// [`plugin`](ChipConfig::plugin).
+    ///
+    /// `chip_index` is as in [`Builder::chip_data`]. Fails if that chip doesn't
+    /// have a plugin.
+    pub fn set_plugin_file(&mut self, chip_index: usize, file: String) -> Result<()> {
+        // Files already added keep their ids. The plugin's file id is that of
+        // a chip with the same file, or the next unused id.
+        let file_id = self
+            .config
+            .chip_sets
+            .iter()
+            .flat_map(|set| set.chips.iter())
+            .enumerate()
+            .find(|(_, chip)| chip.file == file && chip.extract.is_none())
+            .and_then(|(index, _)| self.file_id_map.get(&index).copied())
+            .unwrap_or_else(|| self.total_file_count());
+
+        let chip = self
+            .config
+            .chip_sets
+            .iter_mut()
+            .flat_map(|set| set.chips.iter_mut())
+            .nth(chip_index)
+            .filter(|chip| chip.plugin.is_some())
+            .ok_or_else(|| Error::InvalidConfig {
+                error: format!(
+                    "Can't set the plugin file for chip {chip_index} because the config \
+                     doesn't refer to a plugin by name for it."
+                ),
+            })?;
+        chip.file = file;
+        chip.plugin = None;
+        self.file_id_map.insert(chip_index, file_id);
+
+        Ok(())
     }
 
     /// Add a file to be included in the build
@@ -325,6 +413,7 @@ impl Builder {
 
     /// Check that the config can be built
     pub fn build_validation(&self, props: &FirmwareProperties) -> Result<()> {
+        check_plugins_set(&self.config)?;
         check_all_files_loaded(&self.files, self.total_file_count())?;
         check_all_licenses_validated(&self.licenses)?;
         validate_plugins(&self.config, &self.files, &self.file_id_map, props)?;
@@ -475,7 +564,7 @@ impl Builder {
             minimum: MIN_SCHEMA_VERSION,
         })?;
 
-        let reserved = self.config.reserved_pads(board)?;
+        let reserved = self.config.reserved_pins_on(board)?;
 
         let chip_sets = build_chip_sets(&self.config, &self.files, &self.file_id_map, &props)?;
 
@@ -483,11 +572,6 @@ impl Builder {
         let mut layouts = alloc::vec::Vec::with_capacity(chip_sets.len());
         let mut rom_slot = 0;
         for chip_set in &chip_sets {
-            let firmware_overrides = chip_set
-                .firmware_overrides
-                .as_ref()
-                .map(build_firmware_overrides);
-
             if chip_set.chips[0].chip_type().is_plugin() {
                 let chip = &chip_set.chips[0];
                 let slot_type = match chip.chip_type() {
@@ -506,26 +590,23 @@ impl Builder {
                 slot.roms = alloc::vec![rom];
                 slot.rom_count = 1;
                 slot.slot_type = MaybeKnown::Known(slot_type);
-                slot.firmware_overrides = firmware_overrides;
+                slot.firmware_overrides = chip_set
+                    .firmware_overrides
+                    .as_ref()
+                    .map(build_firmware_overrides);
                 rom_slots.push(slot);
                 layouts.push(None);
             } else {
-                let force_16_bit = chip_set
-                    .firmware_overrides
+                let (slot, addr_layout, cs_data_layout) = lay_out_rom_slot(board, chip_set)?;
+                if let Some(pin) = slot
+                    .alg
                     .as_ref()
-                    .and_then(|o| o.fire.as_ref())
-                    .is_some_and(|fire| fire.force_16_bit);
-                let (slot, addr_layout, cs_data_layout, _pref) = build_rom_slot(
-                    board,
-                    chip_set.set_type,
-                    &chip_set.chips,
-                    0,
-                    firmware_overrides,
-                    force_16_bit,
-                )
-                .map_err(Error::from)?;
-                if let Some(alg) = &slot.alg {
-                    check_reserved_pads(board, reserved, rom_slot, alg)?;
+                    .and_then(|alg| check_reserved_pins(board, reserved, alg))
+                {
+                    return Err(Error::ReservedPinInUse {
+                        slot: rom_slot,
+                        pin: pin.silkscreen().to_string(),
+                    });
                 }
                 rom_slot += 1;
                 rom_slots.push(slot);
@@ -637,25 +718,44 @@ impl Builder {
     }
 }
 
-/// Fails where slot `slot` uses a GPIO wired to a reserved pin.
+/// [`build_rom_slot`] for ROM chip set `chip_set`, with its firmware
+/// overrides.
+fn lay_out_rom_slot(
+    board: Board,
+    chip_set: &ChipSet,
+) -> Result<(OneromRomSlot, AddrLayout, CsDataLayout)> {
+    let firmware_overrides = chip_set
+        .firmware_overrides
+        .as_ref()
+        .map(build_firmware_overrides);
+    let force_16_bit = chip_set
+        .firmware_overrides
+        .as_ref()
+        .and_then(|o| o.fire.as_ref())
+        .is_some_and(|fire| fire.force_16_bit);
+    let (slot, addr_layout, cs_data_layout, _pref) = build_rom_slot(
+        board,
+        chip_set.set_type,
+        &chip_set.chips,
+        0,
+        firmware_overrides,
+        force_16_bit,
+    )?;
+    Ok((slot, addr_layout, cs_data_layout))
+}
+
+/// The first reserved pin wired to a GPIO that `alg` uses.
 ///
 /// A reserved X pin isn't replaced by the other X pin.
-fn check_reserved_pads(
+fn check_reserved_pins(
     board: Board,
-    reserved: ReservedPads,
-    slot: usize,
+    reserved: ReservedPins,
     alg: &OneromAlgConfig,
-) -> Result<()> {
+) -> Option<HeaderPin> {
     let used = used_gpios(alg);
-    for pad in reserved.pads() {
-        if (0..64u8).any(|gpio| used & (1 << gpio) != 0 && pad.has_gpio_on(&board, gpio)) {
-            return Err(Error::ReservedPinInUse {
-                slot,
-                pad: pad.silkscreen().to_string(),
-            });
-        }
-    }
-    Ok(())
+    reserved
+        .pins()
+        .find(|pin| (0..64u8).any(|gpio| used & (1 << gpio) != 0 && pin.has_gpio_on(&board, gpio)))
 }
 
 pub(crate) fn validate_config_version(config: &Config, _version: &FirmwareVersion) -> Result<()> {
@@ -856,10 +956,14 @@ pub(crate) fn check_chip_sets(
                 });
             }
 
+            if chip.plugin.is_some() {
+                check_named_plugin(chip, chip_num)?;
+            }
+
             let file_optional = match chip.chip_type.resolved().chip_function() {
                 ChipFunction::Ram => true,
                 ChipFunction::Rom => standby,
-                ChipFunction::Plugin => false,
+                ChipFunction::Plugin => chip.plugin.is_some(),
             };
             if chip.file.is_empty() && !file_optional {
                 return Err(Error::InvalidConfig {
@@ -933,6 +1037,43 @@ pub(crate) fn check_chip_sets(
     }
 
     Ok(num_non_plugin_slots)
+}
+
+// A published release is the whole image, so nothing that locates or
+// reshapes a file applies.
+fn check_named_plugin(chip: &ChipConfig, chip_num: usize) -> Result<()> {
+    if !matches!(
+        chip.chip_type.resolved(),
+        ChipType::SystemPlugin | ChipType::UserPlugin
+    ) {
+        return Err(Error::InvalidConfig {
+            error: format!(
+                "Chip {chip_num} can't be both a {} and a plugin",
+                chip.chip_type.raw()
+            ),
+        });
+    }
+
+    let conflict = if !chip.file.is_empty() {
+        Some("file")
+    } else if chip.extract.is_some() {
+        Some("extract")
+    } else if chip.location.is_some() {
+        Some("location")
+    } else if !chip.format.is_binary() {
+        Some("format")
+    } else if !chip.transform.is_empty() {
+        Some("transform")
+    } else {
+        None
+    };
+    if let Some(field) = conflict {
+        return Err(Error::InvalidConfig {
+            error: format!("Chip {chip_num} has both plugin and {field}"),
+        });
+    }
+
+    Ok(())
 }
 
 /// V1 CS validation — validates cs1/cs2/cs3 for all chip sets.
@@ -1865,9 +2006,9 @@ pub(crate) fn description(
 
 /// The image select jumpers for each image of a config on a board.
 pub(crate) struct ImageSelect {
-    reserved: ReservedPads,
+    reserved: ReservedPins,
     /// The image select pins read by the firmware, lowest bit first.
-    read: alloc::vec::Vec<Pad>,
+    read: alloc::vec::Vec<HeaderPin>,
     header: Option<&'static [HeaderColumn]>,
     /// How many plugin sets come before the images.
     plugins: usize,
@@ -1876,13 +2017,13 @@ pub(crate) struct ImageSelect {
 }
 
 impl ImageSelect {
-    fn new(config: &Config, board: Board, reserved: ReservedPads) -> Self {
+    fn new(config: &Config, board: Board, reserved: ReservedPins) -> Self {
         let is_plugin =
             |set: &ChipSetConfig| set.chips.iter().any(|c| c.chip_type.resolved().is_plugin());
         let plugins = config.chip_sets.iter().filter(|set| is_plugin(set)).count();
         Self {
             reserved,
-            read: reserved.select_pads_read(&board).collect(),
+            read: reserved.select_pins_read(&board).collect(),
             header: board.jumper_header().map(|header| header.columns),
             plugins,
             images: config.chip_sets.len() - plugins,
@@ -1912,7 +2053,7 @@ impl ImageSelect {
         }))
     }
 
-    fn select_pads(column: &HeaderColumn) -> impl Iterator<Item = Pad> + '_ {
+    fn select_pins(column: &HeaderColumn) -> impl Iterator<Item = HeaderPin> + '_ {
         [Some(&column.row1), Some(&column.row2), column.row3.as_ref()]
             .into_iter()
             .flatten()
@@ -1925,7 +2066,7 @@ impl ImageSelect {
             })
             .filter_map(|role| {
                 if let HeaderRole::Select(index) = role {
-                    Some(Pad::Select(*index))
+                    Some(HeaderPin::Select(*index))
                 } else {
                     None
                 }
@@ -1939,10 +2080,10 @@ impl ImageSelect {
             .columns()?
             .map(|column| {
                 column
-                    .and_then(|column| Self::select_pads(column).next())
-                    .map_or(" ".to_string(), |pad| {
+                    .and_then(|column| Self::select_pins(column).next())
+                    .map_or(" ".to_string(), |pin| {
                         // SEL_A prints as A.
-                        pad.silkscreen().to_string().split_off(4)
+                        pin.silkscreen().to_string().split_off(4)
                     })
             })
             .collect();
@@ -1958,21 +2099,26 @@ impl ImageSelect {
         }
         let image = index.checked_sub(self.plugins)?;
         if image >= 1 << self.read.len() {
-            return Some((String::new(), "cannot be selected".to_string()));
+            // Spaces the width of the marks keep the chip type in line.
+            let blank = self
+                .columns()
+                .map(|columns| " ".repeat(2 * columns.count() + 1))
+                .unwrap_or_default();
+            return Some((blank, "cannot be selected by jumpers".to_string()));
         }
-        let closed: alloc::vec::Vec<Pad> = self
+        let closed: alloc::vec::Vec<HeaderPin> = self
             .read
             .iter()
             .enumerate()
             .filter(|(bit, _)| image & (1 << bit) != 0)
-            .map(|(_, pad)| *pad)
+            .map(|(_, pin)| *pin)
             .collect();
 
         let marks = self.columns().map(|columns| {
             let marks: alloc::vec::Vec<&str> = columns
                 .map(|column| match column {
                     None => " ",
-                    Some(column) if Self::select_pads(column).any(|pad| closed.contains(&pad)) => {
+                    Some(column) if Self::select_pins(column).any(|pin| closed.contains(&pin)) => {
                         "\u{25AA}"
                     }
                     Some(_) => "\u{00B7}",
@@ -1983,7 +2129,7 @@ impl ImageSelect {
 
         let names: alloc::vec::Vec<String> = closed
             .iter()
-            .map(|pad| pad.silkscreen().to_string())
+            .map(|pin| pin.silkscreen().to_string())
             .collect();
         let words = match names.as_slice() {
             [] => "no image select jumpers".to_string(),
@@ -2037,6 +2183,24 @@ pub(crate) fn check_all_licenses_validated(licenses: &BTreeMap<usize, License>) 
         }
     }
     Ok(())
+}
+
+// Before validate_plugins, which panics on a plugin chip without a file.
+fn check_plugins_set(config: &Config) -> Result<()> {
+    let unset = config
+        .chip_sets
+        .iter()
+        .flat_map(|set| set.chips.iter())
+        .find_map(|chip| chip.plugin.as_ref());
+    match unset {
+        Some(name) => Err(Error::InvalidConfig {
+            error: format!(
+                "Plugin '{name}' is referred to by name, which this tool doesn't support. \
+                 Use the plugin's URL."
+            ),
+        }),
+        None => Ok(()),
+    }
 }
 
 pub(crate) fn validate_plugins(
@@ -2120,78 +2284,114 @@ pub(crate) fn build_chip_sets(
     file_id_map: &BTreeMap<usize, usize>,
     props: &FirmwareProperties,
 ) -> Result<alloc::vec::Vec<ChipSet>> {
+    chip_sets_with(config, props, |chip_id, set, chip_config, cs_config| {
+        let data = if let Some(&file_id) = file_id_map.get(&chip_id) {
+            Some(files.get(&file_id).unwrap())
+        } else {
+            None
+        };
+
+        // A load address is only meaningful where records carry addresses.
+        if chip_config.format.is_binary() && !chip_config.load_address.is_zero() {
+            return Err(Error::LoadAddressWithBinary {
+                filename: chip_config.filename(),
+            });
+        }
+
+        // Decode a record-oriented image up front so `from_raw_rom_image`
+        // still receives a flat binary image; its own SizeHandling then
+        // reconciles the decoded image against the chip size (padding with
+        // 0xFF rather than the raw-binary 0xAA).  Duplicate has no meaning
+        // for an address-placed image.
+        let no_duplicate = |format| {
+            if matches!(chip_config.size_handling, SizeHandling::Duplicate) {
+                return Err(Error::DuplicateUnsupportedForFormat {
+                    filename: chip_config.filename(),
+                    format,
+                });
+            }
+            Ok(())
+        };
+        let load_address = chip_config.load_address.0;
+        let (source, blank_byte) = match (chip_config.format, data) {
+            (crate::FileFormat::IntelHex, Some(raw)) => {
+                no_duplicate(crate::FileFormat::IntelHex)?;
+                let decoded = crate::ihex::decode_ihex(raw, load_address).map_err(|source| {
+                    Error::IntelHex {
+                        filename: chip_config.filename(),
+                        source,
+                    }
+                })?;
+                (Some(decoded), UNWRITTEN_BYTE)
+            }
+            (crate::FileFormat::Srec, Some(raw)) => {
+                no_duplicate(crate::FileFormat::Srec)?;
+                let decoded =
+                    crate::srec::decode_srec(raw, load_address).map_err(|source| Error::Srec {
+                        filename: chip_config.filename(),
+                        source,
+                    })?;
+                (Some(decoded), UNWRITTEN_BYTE)
+            }
+            _ => (None, PAD_BLANK_BYTE),
+        };
+        // Borrow the decoded image if present, otherwise the raw file bytes.
+        let source: Option<&[u8]> = match &source {
+            Some(decoded) => Some(decoded.as_slice()),
+            None => data.map(|v| &**v),
+        };
+
+        let filename = chip_config.filename();
+        let standby = set
+            .firmware_overrides
+            .as_ref()
+            .is_some_and(FirmwareConfig::standby);
+
+        match source {
+            None if standby
+                && chip_config.chip_type.resolved().chip_function() == ChipFunction::Rom =>
+            {
+                Chip::without_image(
+                    chip_id,
+                    filename,
+                    chip_config.label.clone(),
+                    &chip_config.chip_type,
+                    cs_config,
+                    chip_config.location,
+                    &chip_config.transform,
+                )
+            }
+            _ => Chip::from_raw_rom_image(
+                chip_id,
+                filename,
+                chip_config.label.clone(),
+                source,
+                alloc::vec![0u8; chip_config.chip_type.resolved().size_bytes()],
+                &chip_config.chip_type,
+                cs_config,
+                &chip_config.size_handling,
+                blank_byte,
+                chip_config.location,
+                &chip_config.transform,
+            ),
+        }
+    })
+}
+
+/// Build `ChipSet`s from `config`, each chip made by `chip` from its index,
+/// its set's config, its config and its resolved control lines.
+fn chip_sets_with(
+    config: &Config,
+    props: &FirmwareProperties,
+    mut chip: impl FnMut(usize, &ChipSetConfig, &ChipConfig, CsConfig) -> Result<Chip>,
+) -> Result<alloc::vec::Vec<ChipSet>> {
     let mut chip_sets = alloc::vec::Vec::new();
     let mut chip_id = 0;
 
     for (set_id, chip_set_config) in config.chip_sets.iter().enumerate() {
         let mut set_roms = alloc::vec::Vec::new();
-        let standby = chip_set_config
-            .firmware_overrides
-            .as_ref()
-            .is_some_and(FirmwareConfig::standby);
 
         for chip_config in &chip_set_config.chips {
-            let data = if let Some(&file_id) = file_id_map.get(&chip_id) {
-                Some(files.get(&file_id).unwrap())
-            } else {
-                None
-            };
-
-            // A load address is only meaningful where records carry addresses.
-            if chip_config.format.is_binary() && !chip_config.load_address.is_zero() {
-                return Err(Error::LoadAddressWithBinary {
-                    filename: chip_config.filename(),
-                });
-            }
-
-            // Decode a record-oriented image up front so `from_raw_rom_image`
-            // still receives a flat binary image; its own SizeHandling then
-            // reconciles the decoded image against the chip size (padding with
-            // 0xFF rather than the raw-binary 0xAA).  Duplicate has no meaning
-            // for an address-placed image.
-            let no_duplicate = |format| {
-                if matches!(chip_config.size_handling, SizeHandling::Duplicate) {
-                    return Err(Error::DuplicateUnsupportedForFormat {
-                        filename: chip_config.filename(),
-                        format,
-                    });
-                }
-                Ok(())
-            };
-            let load_address = chip_config.load_address.0;
-            let (source, blank_byte) = match (chip_config.format, data) {
-                (crate::FileFormat::IntelHex, Some(raw)) => {
-                    no_duplicate(crate::FileFormat::IntelHex)?;
-                    let decoded =
-                        crate::ihex::decode_ihex(raw, load_address).map_err(|source| {
-                            Error::IntelHex {
-                                index: chip_id,
-                                source,
-                            }
-                        })?;
-                    (Some(decoded), UNWRITTEN_BYTE)
-                }
-                (crate::FileFormat::Srec, Some(raw)) => {
-                    no_duplicate(crate::FileFormat::Srec)?;
-                    let decoded =
-                        crate::srec::decode_srec(raw, load_address).map_err(|source| {
-                            Error::Srec {
-                                index: chip_id,
-                                source,
-                            }
-                        })?;
-                    (Some(decoded), UNWRITTEN_BYTE)
-                }
-                _ => (None, PAD_BLANK_BYTE),
-            };
-            // Borrow the decoded image if present, otherwise the raw file bytes.
-            let source: Option<&[u8]> = match &source {
-                Some(decoded) => Some(decoded.as_slice()),
-                None => data.map(|v| &**v),
-            };
-
-            let filename = chip_config.filename();
-
             // Resolve the chip's control line configuration against its chip
             // type: fixed-polarity CS lines take their polarity from the
             // silicon, configurable ones from the user, and chip types with no
@@ -2206,35 +2406,7 @@ pub(crate) fn build_chip_sets(
                 chip_config.oe,
             );
 
-            let rom = match source {
-                None if standby
-                    && chip_config.chip_type.resolved().chip_function() == ChipFunction::Rom =>
-                {
-                    Chip::without_image(
-                        chip_id,
-                        filename,
-                        chip_config.label.clone(),
-                        &chip_config.chip_type,
-                        cs_config,
-                        chip_config.location,
-                        &chip_config.transform,
-                    )?
-                }
-                _ => Chip::from_raw_rom_image(
-                    chip_id,
-                    filename,
-                    chip_config.label.clone(),
-                    source,
-                    alloc::vec![0u8; chip_config.chip_type.resolved().size_bytes()],
-                    &chip_config.chip_type,
-                    cs_config,
-                    &chip_config.size_handling,
-                    blank_byte,
-                    chip_config.location,
-                    &chip_config.transform,
-                )?,
-            };
-            set_roms.push(rom);
+            set_roms.push(chip(chip_id, chip_set_config, chip_config, cs_config)?);
             chip_id += 1;
         }
 

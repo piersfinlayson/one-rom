@@ -1,7 +1,12 @@
 #!/bin/sh
 set -e
 
-# Builds the One ROM Studio application and dmg packages for Linux.
+# Builds the One ROM Studio deb packages for Linux (x86_64 and arm64), on
+# either architecture.
+#
+# zig links both against the glibc version in ci/linux-min-glibc-version, so
+# the packages install on that version or later whatever the build machine
+# runs.
 #
 # Pre-requisites:
 # - Rust:
@@ -51,7 +56,7 @@ if [ "$DEPS" = true ]; then
     sudo rm -f /etc/apt/sources.list.d/ubuntu-amd64.sources
     sudo rm -f /etc/apt/sources.list.d/ubuntu-archive.list
 
-    sudo apt update && sudo apt install -y libudev-dev libusb-1.0-0-dev gcc-aarch64-linux-gnu
+    sudo apt update && sudo apt install -y curl dpkg-dev python3 xz-utils
 
     # Detect OS and host architecture
     if [ -f /etc/os-release ]; then
@@ -64,24 +69,25 @@ if [ "$DEPS" = true ]; then
     HOST_ARCH=$(dpkg --print-architecture)
     echo "Detected OS: $OS_ID, host architecture: $HOST_ARCH"
 
+    # cargo-deb works out each package's libc6 dependency with dpkg-shlibdeps,
+    # which reads the libc6 installed for that package's architecture.
     if [ "$OS_ID" = "debian" ]; then
         # On Debian, native repos support both architectures
         sudo dpkg --add-architecture arm64
         sudo dpkg --add-architecture amd64
-        sudo apt update && sudo apt install -y libudev-dev:arm64 libusb-1.0-0-dev:arm64
-        sudo apt install -y libudev-dev:amd64 libusb-1.0-0-dev:amd64
+        sudo apt update && sudo apt install -y libc6:arm64 libc6:amd64
 
     elif [ "$OS_ID" = "ubuntu" ]; then
         # On Ubuntu, architectures need different repos
         CODENAME=$(lsb_release -sc)
-        
+
         # Restrict existing repos to native architecture before adding foreign arch
         if [ -f /etc/apt/sources.list.d/ubuntu.sources ]; then
             sudo cp /etc/apt/sources.list.d/ubuntu.sources /tmp/ubuntu.sources.backup
             sudo sed -i '/^Architectures:/d' /etc/apt/sources.list.d/ubuntu.sources
             sudo sed -i "/^Types:/a Architectures: ${HOST_ARCH}" /etc/apt/sources.list.d/ubuntu.sources
         fi
-        
+
         if [ "$HOST_ARCH" = "amd64" ]; then
             # On x86_64 host: add arm64 packages from ports.ubuntu.com
             sudo dpkg --add-architecture arm64
@@ -89,41 +95,22 @@ if [ "$DEPS" = true ]; then
             echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports ${CODENAME} main universe" | sudo tee /etc/apt/sources.list.d/ubuntu-ports.list
             echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports ${CODENAME}-updates main universe" | sudo tee -a /etc/apt/sources.list.d/ubuntu-ports.list
             echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports ${CODENAME}-security main universe" | sudo tee -a /etc/apt/sources.list.d/ubuntu-ports.list
-            sudo apt update && sudo apt install -y libudev-dev:arm64 libusb-1.0-0-dev:arm64
-            
-            # amd64 packages already available from native repos
-            sudo apt install -y libudev-dev:amd64 libusb-1.0-0-dev:amd64
-            
+            sudo apt update && sudo apt install -y libc6:arm64
+
         elif [ "$HOST_ARCH" = "arm64" ]; then
-            # On arm64 host: arm64 packages already available from native repos
-            sudo apt install -y libudev-dev:arm64 libusb-1.0-0-dev:arm64
-            
-            # Add amd64 packages from archive.ubuntu.com
+            # On arm64 host: add amd64 packages from archive.ubuntu.com
             sudo dpkg --add-architecture amd64
             echo "Configuring archive.ubuntu.com for amd64 packages"
             echo "deb [arch=amd64] http://archive.ubuntu.com/ubuntu ${CODENAME} main universe" | sudo tee /etc/apt/sources.list.d/ubuntu-archive.list
             echo "deb [arch=amd64] http://archive.ubuntu.com/ubuntu ${CODENAME}-updates main universe" | sudo tee -a /etc/apt/sources.list.d/ubuntu-archive.list
             echo "deb [arch=amd64] http://security.ubuntu.com/ubuntu ${CODENAME}-security main universe" | sudo tee -a /etc/apt/sources.list.d/ubuntu-archive.list
-            sudo apt update && sudo apt install -y libudev-dev:amd64 libusb-1.0-0-dev:amd64
+            sudo apt update && sudo apt install -y libc6:amd64
         fi
 
     else
         echo "ERROR: Unsupported OS: $OS_ID" >&2
         exit 1
     fi
-
-    # Verify packages installed
-    if ! dpkg -l | grep -q "libudev-dev.*arm64"; then
-        echo "ERROR: libudev-dev:arm64 not installed" >&2
-        exit 1
-    fi
-    echo "libudev-dev:arm64 is installed."
-
-    if ! dpkg -l | grep -q "libudev-dev.*amd64"; then
-        echo "ERROR: libudev-dev:amd64 not installed" >&2
-        exit 1
-    fi
-    echo "libudev-dev:amd64 is installed."
 
     # Install the Rust targets
     rustup target add x86_64-unknown-linux-gnu
@@ -135,6 +122,15 @@ if [ "$DEPS" = true ]; then
 else
     echo "Skipping dependencies installation step."
 fi
+
+# Runs with nodeps too, since the build requires zig on PATH.  It installs
+# nothing when the pinned versions are already present.
+ZIG_BIN="$(../../ci/install-zig.sh)"
+export PATH="${ZIG_BIN}:${PATH}"
+# cargo-zigbuild uses a Python ziglang package ahead of zig on PATH
+export CARGO_ZIGBUILD_ZIG_PATH="${ZIG_BIN}/zig"
+
+MIN_GLIBC="$(tr -d '[:space:]' < ../../ci/linux-min-glibc-version)"
 
 #
 # Clean previous builds
@@ -149,45 +145,18 @@ else
     echo "Skipping cleaning of previous build artifacts."
 fi
 
-#
-# Intel (x86_64)
-#
-
-# Build One ROM Studio
-PACKAGER_TARGET="x86_64-unknown-linux-gnu"
-export PKG_CONFIG_SYSROOT_DIR=/
-export PKG_CONFIG_PATH=/usr/lib/x86_64-linux-gnu/pkgconfig
-export CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=x86_64-linux-gnu-gcc
-echo "Building for target: $PACKAGER_TARGET"
-cargo build --bin onerom-studio --release --target $PACKAGER_TARGET
-
-# Package as a deb
-echo "Packaging dmg for target: $PACKAGER_TARGET"
-cargo deb -v --target $PACKAGER_TARGET
-
-echo "Linux x86_64 build complete."
-
-#
-# ARM (aarch64)
-#
-
-# Build One ROM Studio
-# Note: Requires setting PKG_CONFIG_SYSROOT_DIR and PKG_CONFIG_PATH to find
-# the arm64 libudev-dev files
-PACKAGER_TARGET="aarch64-unknown-linux-gnu"
-export PKG_CONFIG_SYSROOT_DIR=/
-export PKG_CONFIG_PATH=/usr/lib/aarch64-linux-gnu/pkgconfig
-export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc
-echo "Building for target: $PACKAGER_TARGET"
-cargo build --bin onerom-studio --release --target $PACKAGER_TARGET
-
-# Package as a deb
-echo "Packaging deb for target: $PACKAGER_TARGET"
-cargo deb -v --target $PACKAGER_TARGET
-echo "Linux ARM64 build complete."
-
-# Copy .deb files to dist/
 mkdir -p dist
-cp ../target/debian/*.deb dist/
+
+#
+# Build and package
+#
+
+for TARGET in x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu; do
+    echo "Building for target: $TARGET, glibc $MIN_GLIBC"
+    cargo zigbuild --bin onerom-studio --release --target "$TARGET.$MIN_GLIBC"
+
+    echo "Packaging deb for target: $TARGET"
+    cargo deb -v --no-build --target "$TARGET" --output dist/
+done
 
 echo "Build complete."

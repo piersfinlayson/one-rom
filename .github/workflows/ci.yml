@@ -80,6 +80,11 @@ on:
 # build container (ci/docker/Dockerfile).  The coverage floors come from CI's
 # figures and the container reproduces them, so both must install the same
 # build of the pinned compiler.  Move the two together.
+#
+# The Linux packages jobs are the exception to all of this.  The build job
+# installs only what rust/cli/scripts/build-linux.sh and
+# rust/studio/scripts/build-linux.sh install, as the release build machine
+# does, and the test job runs the packages in a container.
 
 jobs:
   lint:
@@ -501,38 +506,68 @@ jobs:
     - name: Build tools
       run: ci/rust-tools.sh
 
-  binaries:
-    # The CLI and Studio binaries, built for the host.  Studio's file dialogs
-    # use the XDG portal, so no GTK.
-    name: Binaries (CLI and Studio)
-    runs-on: ubuntu-24.04
+  linux-packages:
+    # The CLI and Studio Linux packages, built by the scripts the release build
+    # runs, on the release build machine's Ubuntu release and architecture.
+    # Studio's file dialogs use the XDG portal, so no GTK.
+    name: Linux packages (CLI and Studio)
+    runs-on: ubuntu-26.04-arm
     steps:
     - uses: actions/checkout@v7
-
-    - name: Install build dependencies
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y libclang-dev libcurl4-openssl-dev libjson-c-dev \
-                                libzip-dev make xz-utils
 
     - name: Install Rust
       uses: dtolnay/rust-toolchain@stable
 
-    - name: Cache Arm GNU toolchain
+    - name: Cache zig and cargo-zigbuild
       uses: actions/cache@v6
       with:
-        path: ~/arm-gnu-toolchain
-        key: arm-toolchain-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('ci/arm-toolchain-version') }}
-
-    - name: Install Arm GNU toolchain
-      run: echo "TOOLCHAIN=$(ci/install-arm-toolchain.sh)" >> "$GITHUB_ENV"
+        path: ~/zig-toolchain
+        key: zig-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('ci/zig-version', 'ci/cargo-zigbuild-version') }}
 
     - uses: Swatinem/rust-cache@v2
       with:
         workspaces: rust
+        # zig compiles the C dependencies, and cargo doesn't rebuild them when
+        # zig changes
+        key: zig-${{ hashFiles('ci/zig-version') }}
 
-    - name: Build CLI and Studio
-      run: ci/rust-binaries.sh
+    - name: Build CLI packages
+      working-directory: rust/cli
+      run: scripts/build-linux.sh noclean
+
+    - name: Build Studio packages
+      working-directory: rust/studio
+      run: scripts/build-linux.sh noclean
+
+    - name: Upload packages
+      uses: actions/upload-artifact@v7
+      with:
+        name: linux-packages
+        path: |
+          rust/cli/dist/*.deb
+          rust/studio/dist/*.deb
+
+  linux-packages-test:
+    name: Linux packages (${{ matrix.arch }} on Ubuntu 22.04)
+    needs: linux-packages
+    strategy:
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-26.04
+          - arch: arm64
+            runner: ubuntu-26.04-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+    - uses: actions/checkout@v7
+
+    - uses: actions/download-artifact@v8
+      with:
+        name: linux-packages
+        path: linux-packages
+
+    - name: Test packages
+      run: ci/test-linux-debs.sh ${{ matrix.arch }} linux-packages/cli/dist linux-packages/studio/dist
 
   lens:
     name: One ROM Lens (wasm)

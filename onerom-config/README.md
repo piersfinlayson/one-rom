@@ -87,6 +87,7 @@ The format is defined by [schema.json](schema.json), also published at https://i
 | Key | Meaning |
 | --- | --- |
 | `file` | Path or URL. |
+| `plugin` | Name of a published plugin, e.g. `usb`, in place of `file` on a `system_plugin` or `user_plugin` chip.  The latest release compatible with the firmware is used. |
 | `type` | Chip type, e.g. `2364`, `27256`, `6116`. |
 | `cs1`..`cs4`, `ce`, `oe` | `active_low`, `active_high` or `ignore`, for the lines the chip type has.  `allow_cs_ignore: true` permits `ignore` where the chip type does not explicitly allow it. |
 | `description`, `label` | `label` replaces the filename in the device metadata. |

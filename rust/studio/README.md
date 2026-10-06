@@ -73,21 +73,15 @@ See https://piers.rocks/2025/10/30/certum-open-source-code-sign.html
 
 ## CI
 
-`.github/workflows/build-studio.yml` contains the CI instructions for building Studio.  However, it does not sign, so do not use the produced installers for release.
+`.github/workflows/build-apps.yml` builds the Studio and CLI Windows and macOS packages, and `.github/workflows/ci.yml` builds and tests the Linux packages.  These packages are unsigned, so do not use them for release.
 
-This CI runs on all pushes to the `rust/studio/`.
+Both run on every push that changes `rust/`.
 
 ## 
 
 ## Dependencies
 
 Assuming building Windows target on a Debian-based Linux distribution.
-
-For building linux targets:
-
-```bash
-sudo apt install libudev-dev
-```
 
 Install the Rust Windows targets:
 
@@ -100,8 +94,6 @@ Install ming-w64 for Windows builds:
 ```bash
 sudo apt install mingw-w64
 ```
-
-To run th ARM64 Linux build you really need to be building on the platform (or using CI), as libudev is a pain to build as part of the cross compilation.
 
 ## Packaging Implementation
 
@@ -126,10 +118,4 @@ Uses `cargo-bundle` to create the macOS app bundle - see the following in `Cargo
 
 ### Linux
 
-Uses `cargo-packager` to create a `.deb` package - see the following in `Cargo.toml`:
-
-- `[package.metadata.packager]`
-- `[package.metadata.packager.linux]`
-- `[package.metadata.packager.deb]`
-
-`scripts/build-linux.sh` builds the package, including adding maintainer scripts to handle libudev rules installation.
+`scripts/build-linux.sh` builds x86_64 and arm64 `.deb` packages, on either architecture, using `cargo-zigbuild` and `cargo-deb` - see `[package.metadata.deb]` in `Cargo.toml`.  The packages require the glibc version in `ci/linux-min-glibc-version` or later, whatever the build machine runs, and include maintainer scripts to handle udev rules installation.

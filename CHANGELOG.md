@@ -5,13 +5,15 @@ All notables changes between versions are documented in this file.
 ## v0.8.0 - unreleased
 
 Headline changes in this release:
-- One ROMs can now be hardware commissioned making them easier for users to manage.
+- One ROMs now support hardware commissioning, making them easier for users to manage.
 - One ROM now supports a second 2MB flash chip on 32 and 40 pin boards allowing more ROM images to be stored.  These 4MB One ROMs are called size L, with 2MB boards size M.
 - Header pins can be reserved for another use, for example a host reset line, so they aren't used by the core firmware.
+- One ROMs can be started (or set later) into standby mode, preventing them from serving bytes but continuing to listen on the bus.
 
 In detail:
 - A commissioned One ROM's bootloader appears as `One ROM Bootloader` from manufacturer piers.rocks with USB VID and PID `1209:F540`.  This is a permanent dedicated assignment from pid.codes.
 - Add standby mode, where One ROM doesn't serve the ROM but the plugins run as normal.  Configure a slot using the `standby` option.  `onerom control standby` turns standby both on and off while One ROM is running.
+- A config can refer to a plugin name using `"plugin": "usb"` instead of a URL.  CLI and Studio use the latest release of the plugin compatible with the firmware.
 - Firmware:
   - A commissioned One ROM enters the bootloader if commissioning data is present and the commissioned board type differs from the metadata's board type.
   - OTP is made read-only before starting plugins, so nothing can write OTP from this point on.  OTP can only be modified in the bootloader.
@@ -24,6 +26,7 @@ In detail:
   - `onerom inspect info` reports what it cannot decode and why.
 - Web Programmer:
   - Supports programming L sized boards and shows commissioning information.
+  - One ROM Builder allows pins to be reserved.
 - Studio:
   - Supports programming L sized boards and shows commissioning information.
 - Plugins:
@@ -46,9 +49,6 @@ In detail:
   - `onerom program --reset-host` fails before programming where a ROM slot uses the pin, for example X1 for bank select.
 - Other:
   - Retire the `onerom-fw` binary. Use the CLI's `firmware build` option instead.
-
-To test:
-- One ROM and Lab on Windows no longer have an exclamation mark against them in Device Manager.
 
 To publish:
 - Rust crates (in dependency order):

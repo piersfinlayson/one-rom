@@ -371,7 +371,7 @@ pub enum GpioState {
 /// `ora_gpio_use_t` value for value.
 ///
 /// This describes only what the firmware has claimed the pin for. It says
-/// nothing about what is wired to the pad.
+/// nothing about what is wired to the pin.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GpioUse {
@@ -503,7 +503,7 @@ pub struct GpioEntry {
     /// decode; interpret it with [`GpioEntry::gpio_use`].
     pub gpio_use_raw: u8,
 
-    /// Level currently on the pad, 0 or 1.
+    /// Level currently on the pin, 0 or 1.
     pub level: u8,
 
     /// 1 if the pin's output driver is enabled, 0 if not.

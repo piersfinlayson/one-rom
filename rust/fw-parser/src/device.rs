@@ -66,9 +66,11 @@ use std::borrow::Cow;
 
 use onerom_config::fw::FirmwareVersion;
 use onerom_config::hw::Board;
+use onerom_config::pin::ReservedPins;
+use onerom_gen::MIN_RESERVED_PINS_VERSION;
 use onerom_metadata::{
     FLASH_CS1_BASE_ADDR, MaybeKnown, OneromBoardSize, OneromRomInfo, OneromRomSlot, Pointer,
-    RomSlotType,
+    RomSlotType, metadata_generation_for,
 };
 
 use crate::info::{Sdrr, SdrrRomInfo, SdrrRomSet};
@@ -317,6 +319,15 @@ impl ParsedDevice {
                 .map(|_| MaybeKnown::Known(OneromBoardSize::BoardSizeUnknown)),
             Self::Lab => None,
         }
+    }
+
+    /// The pins reserved in the metadata. `None` where the metadata predates
+    /// reserved pins or wasn't read.
+    pub fn reserved_pins(&self) -> Option<ReservedPins> {
+        let header = self.as_schema()?.metadata()?;
+        let first = metadata_generation_for(MIN_RESERVED_PINS_VERSION)?;
+        (header.version >= first)
+            .then(|| ReservedPins::from_bits(header.reserved_sel_pins, header.reserved_x_pins))
     }
 
     /// Iterates the device's ROM slots in flash order, classified and numbered.

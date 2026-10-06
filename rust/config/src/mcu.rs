@@ -119,25 +119,25 @@ impl core::fmt::Display for RpVariant {
     }
 }
 
-/// The over-voltage tolerance of an MCU GPIO pad.
+/// The over-voltage tolerance of an MCU GPIO pin.
 ///
 /// One ROM drives 5V retro buses directly, without level shifters, relying on
-/// the MCU's 5V-tolerant GPIOs. A handful of RP2350 pads are the exception: the
+/// the MCU's 5V-tolerant GPIOs. A handful of RP2350 pins are the exception: the
 /// ADC-capable GPIOs are **not** 5V tolerant and must be kept at or below the
 /// 3.3V IO supply. This distinction matters on the image-select header, where
 /// some select lines can sit behind those ADC pins.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 pub enum PinTolerance {
-    /// 5V-tolerant pad — safe to drive from, or expose to, a 5V retro bus.
+    /// 5V-tolerant pin — safe to drive from, or expose to, a 5V retro bus.
     FiveVolt,
-    /// 3.3V-only pad (an RP2350 ADC input); must not exceed the 3.3V IO supply.
+    /// 3.3V-only pin (an RP2350 ADC input); must not exceed the 3.3V IO supply.
     ThreeVolt3,
 }
 
 impl RpVariant {
     /// The ADC-capable GPIOs for this RP2350 package.
     ///
-    /// These are the only RP2350 pads that are **not** 5V tolerant (see
+    /// These are the only RP2350 pins that are **not** 5V tolerant (see
     /// [`PinTolerance`]); every other GPIO is 5V-tolerant:
     ///
     /// - [`RpVariant::Rp235xA`] (QFN-60): GPIO 26–29.

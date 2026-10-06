@@ -649,7 +649,7 @@ pub(crate) fn slot_heading(user_index: usize, selected: bool, standby: bool) -> 
 }
 
 pub(crate) fn reserved_pins_line(parsed: &ParsedDevice) -> Option<String> {
-    let reserved = onerom_cli::pin::reserved_pads(parsed)?;
+    let reserved = parsed.reserved_pins()?;
     (!reserved.is_empty()).then(|| format!("Reserved pins: {reserved}"))
 }
 
@@ -786,13 +786,13 @@ const GPIO_NONE: &str = "-";
 /// The `Function` column: everything this GPIO is, in ROM or board terms.
 ///
 /// One column rather than two, because splitting the ROM socket signal from the
-/// header pad splits on *provenance* rather than on anything a reader needs: on
-/// a 32-pin board the `A17` header pad and the socket's `A17` line are the same
-/// net, and everywhere else exactly one of the two is populated. An X pad or an
-/// image-select pad is as much a function of the pin as `A11` is.
+/// header pin splits on *provenance* rather than on anything a reader needs: on
+/// a 32-pin board the `A17` header pin and the socket's `A17` line are the same
+/// net, and everywhere else exactly one of the two is populated. An X pin or an
+/// image-select pin is as much a function of the pin as `A11` is.
 ///
 /// Every name that applies is listed, in a fixed order - the ROM socket signal
-/// for the chip being served, then the board peripheral, then the header pad -
+/// for the chip being served, then the board peripheral, then the header pin -
 /// rather than first-match-wins, deduplicated so the shared `A17` net is not
 /// named twice. A GPIO can genuinely be two things: `fire-24-f` drives its
 /// status LED and its NeoPixel from GPIO 29, and both belong here.
@@ -805,7 +805,7 @@ fn gpio_function_label(board: Option<&Board>, chip: Option<ChipType>, gpio: u8) 
     };
 
     // Deduplication is by name, not by source: a 32-pin board's high address
-    // lines are broken out on header pads, so the socket signal and the pad are
+    // lines are broken out on header pins, so the socket signal and the pin are
     // one net and must not be listed twice.
     let mut names: Vec<String> = Vec::new();
     let mut add = |name: String| {
@@ -830,7 +830,7 @@ fn gpio_function_label(board: Option<&Board>, chip: Option<ChipType>, gpio: u8) 
         add(system.to_string());
     }
 
-    // 3. The header pad. Named last because it is where the signal surfaces
+    // 3. The header pin. Named last because it is where the signal surfaces
     //    rather than what it carries - but named, because "which GPIO is X1" is
     //    the main thing this table is read to answer before wiring a reset line.
     if let Some(role) = gpio::header_role(board, gpio) {
@@ -904,7 +904,7 @@ pub(crate) fn render_gpio_table(
         .collect();
 
     // "Connected to something" is a question about the board, not about what
-    // the device reports: X1, X2 and the image-select pads are `free`, and they
+    // the device reports: X1, X2 and the image-select pins are `free`, and they
     // are precisely the pins someone reads this table to find. Without a board
     // nothing can be ruled out, so nothing is.
     let connected = |row: &[String; GPIO_HEADINGS.len()]| {
@@ -1004,10 +1004,10 @@ pub(crate) fn render_gpio_table(
         }
         if board.is_some_and(|b| b.jumper_header().is_none()) {
             out.push_str(
-                "  This board's header layout is not characterised, so pad names come from its\n",
+                "  This board's header layout is not characterised, so its header pins come from\n",
             );
             out.push_str(
-                "  pin assignments alone - use 'onerom inspect header' for what is known.\n",
+                "  its pin assignments alone - use 'onerom inspect header' for what is known.\n",
             );
         }
     }
@@ -1034,7 +1034,7 @@ pub async fn cmd_gpio(options: &Options, args: &InspectGpioArgs) -> Result<(), E
     let device = options.device.as_ref().unwrap();
 
     // Naming is entirely local: the board pin map plus the chip type of the ROM
-    // being served. The board is also what turns a --pin pad name into a GPIO,
+    // being served. The board also resolves a --pin header pin to its GPIO,
     // so it has to be settled before the device is queried.
     let board = resolve_board_optional(options, &args.board)?;
     // The GPIOs being named belong to the connected Fire, so an Ice --board
@@ -1415,7 +1415,7 @@ mod tests {
             false,
         );
 
-        // One column, holding socket signals, board peripherals and header pads
+        // One column, holding socket signals, board peripherals and header pins
         // alike - all of them things the GPIO is.
         assert!(!table.contains("Pad"), "{table}");
         assert_eq!(function_cell(&table, 16), "A7");
@@ -1435,7 +1435,7 @@ mod tests {
 
     #[test]
     fn table_function_column_names_only_gpios() {
-        // GPIO24/25 are the SEL_D/SEL_C pads, which share their nets with the
+        // GPIO24/25 are the SEL_D/SEL_C pins, which share their nets with the
         // SWDIO/SWCLK debug pins. Those are dedicated RP2350 pins, not GPIOs, so
         // a GPIO-indexed table must not claim GPIO24 is SWDIO. (Not verbose:
         // the legend mentions both names, to explain their absence.)
@@ -1494,8 +1494,8 @@ mod tests {
 
     #[test]
     fn table_does_not_name_one_net_twice() {
-        // A 32-pin board breaks its high address lines out onto header pads, so
-        // the socket signal and the pad are the same net under the same name.
+        // A 32-pin board breaks its high address lines out onto header pins, so
+        // the socket signal and the pin are the same net under the same name.
         let board = Board::try_from_str("fire-32-b").unwrap();
         let table = render_gpio_table(
             Some(&board),
@@ -1515,18 +1515,18 @@ mod tests {
                 .to_string();
             assert!(!line.contains(&format!("{cell}, {cell}")), "{line}");
         }
-        // The shared pad/socket case is present in this board at all, so the
+        // The shared pin/socket case is present in this board at all, so the
         // assertion above is not vacuous.
-        let a_pad_gpio = board
+        let a_header_pin_gpio = board
             .addr_pins()
             .iter()
             .copied()
             .find(|&g| gpio::header_role(&board, g).is_some_and(|r| r.starts_with('A')))
             .expect("fire-32-b breaks out address lines");
         assert!(
-            !function_cell(&table, a_pad_gpio).contains(','),
+            !function_cell(&table, a_header_pin_gpio).contains(','),
             "{}",
-            function_cell(&table, a_pad_gpio)
+            function_cell(&table, a_header_pin_gpio)
         );
     }
 
@@ -1565,11 +1565,11 @@ mod tests {
         );
         assert!(!all.contains("hidden"), "{all}");
 
-        // The drivable pads report `free`, so a filter on the device's `use`
+        // The drivable pins report `free`, so a filter on the device's `use`
         // would drop exactly the rows this table exists to show. They must
         // survive the default view.
-        for pad in ["X1", "X2", "SEL_A", "SEL_B", "SEL_C", "SEL_D"] {
-            assert!(default.contains(pad), "{pad} missing\n{default}");
+        for pin in ["X1", "X2", "SEL_A", "SEL_B", "SEL_C", "SEL_D"] {
+            assert!(default.contains(pin), "{pin} missing\n{default}");
         }
     }
 
@@ -1707,7 +1707,7 @@ mod tests {
             table.contains("header layout is not characterised"),
             "{table}"
         );
-        // The pads it can still name are named.
+        // The pins it can still name are named.
         assert!(table.contains("SEL_A"), "{table}");
     }
 
@@ -1830,7 +1830,7 @@ mod tests {
                 48,
             ),
             (
-                "RP2350B, address lines broken out onto header pads",
+                "RP2350B, address lines broken out onto header pins",
                 Some("fire-32-b"),
                 Some(ChipType::Chip27C040),
                 48,

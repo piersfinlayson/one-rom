@@ -9,7 +9,7 @@
 
 use crate::Error;
 use crate::pin::Pin;
-use crate::plugin::{ResolvedPlugin, plugin_to_chip_set_config};
+use crate::plugin::{PluginSpec, ResolvedPlugin, plugin_to_chip_set_config};
 use onerom_config::chip::{CHIP_TYPE_NAMES_PLUGINS, ChipFunction, ChipType, ControlLineType};
 use onerom_config::fw::FirmwareVersion;
 use onerom_config::hw::{Board, Model};
@@ -800,6 +800,45 @@ pub fn inject_plugins_into_config(
     serde_json::to_string_pretty(&config).map_err(|e| Error::Other(e.to_string()))
 }
 
+/// `json` as `--save-config` writes it. A `--plugin` plugin referred to by
+/// name without a version is saved by name, so a build from the saved config
+/// uses the latest compatible release.
+///
+/// `plugins` are `specs` resolved, in the same order.
+pub fn saved_config_json(
+    json: &str,
+    specs: &[PluginSpec],
+    plugins: &[ResolvedPlugin],
+) -> Result<String, Error> {
+    let by_name: Vec<&ResolvedPlugin> = specs
+        .iter()
+        .zip(plugins)
+        .filter(|(spec, _)| matches!(spec, PluginSpec::Named { version: None, .. }))
+        .map(|(_, plugin)| plugin)
+        .collect();
+    if by_name.is_empty() {
+        return Ok(json.to_string());
+    }
+
+    let mut config: Config = serde_json::from_str(json)
+        .map_err(|e| Error::Other(format!("Failed to parse config JSON: {e}")))?;
+
+    for chip in config
+        .chip_sets
+        .iter_mut()
+        .flat_map(|set| set.chips.iter_mut())
+        .filter(|chip| chip.chip_type.resolved().is_plugin())
+    {
+        if let Some(plugin) = by_name.iter().find(|plugin| plugin.file() == chip.file) {
+            chip.file = String::new();
+            chip.plugin = Some(plugin.name.clone());
+            chip.size_handling = SizeHandling::None;
+        }
+    }
+
+    serde_json::to_string_pretty(&config).map_err(|e| Error::Other(e.to_string()))
+}
+
 /// Save a config JSON string to a file.
 pub fn save_config(path: &str, json: &str) -> Result<(), Error> {
     std::fs::write(path, json).map_err(|e| Error::io(path, e))
@@ -818,7 +857,7 @@ pub fn has_system_plugin(config: &Config) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::plugin::{PluginType, PluginVersion, ResolvedSource};
+    use crate::plugin::{PluginType, PluginVersion, Release, ResolvedSource, parse_plugins};
 
     /// A single-ROM config using the canonical `chip_sets`/`chips` keys.
     const ROM_ONLY: &str = r#"{
@@ -1299,5 +1338,51 @@ mod tests {
             inject_plugins_into_config(with_plugin.to_string(), &[plugin(PluginType::System)])
                 .unwrap_err();
         assert!(err.to_string().contains("already defines a plugin"));
+    }
+
+    /// The system plugin `usb`, resolved from the manifest to `version`.
+    fn usb_release(version: &str) -> ResolvedPlugin {
+        let version = PluginVersion::try_from_str(version).unwrap();
+        ResolvedPlugin {
+            plugin_type: PluginType::System,
+            name: "usb".to_string(),
+            version,
+            size: 1024,
+            source: ResolvedSource::Named {
+                release: Release {
+                    version,
+                    path: format!("v{version}"),
+                    filename: "plugin.bin".to_string(),
+                    sha256: String::new(),
+                    api_version: 1,
+                    min_fw_version: FirmwareVersion::new(0, 7, 0, 0),
+                    incompatible_from: None,
+                },
+            },
+        }
+    }
+
+    #[test]
+    fn saved_config_has_a_plugin_without_a_version_by_name() {
+        let plugins = [usb_release("0.3.1")];
+        let specs = parse_plugins(&["usb".to_string()]).unwrap();
+        let json = inject_plugins_into_config(ROM_ONLY.to_string(), &plugins).unwrap();
+
+        let saved = saved_config_json(&json, &specs, &plugins).unwrap();
+        let config: Config = serde_json::from_str(&saved).expect("valid config");
+        let chip = &config.chip_sets[0].chips[0];
+        assert_eq!(chip.plugin.as_deref(), Some("usb"));
+        assert!(chip.file.is_empty());
+        assert!(chip.size_handling.is_none());
+        assert_eq!(config.chip_sets[1].chips[0].file, "http://x/rom.bin");
+    }
+
+    #[test]
+    fn saved_config_has_a_plugin_with_a_version_by_url() {
+        let plugins = [usb_release("0.3.1")];
+        let specs = parse_plugins(&["usb,version=0.3.1".to_string()]).unwrap();
+        let json = inject_plugins_into_config(ROM_ONLY.to_string(), &plugins).unwrap();
+
+        assert_eq!(saved_config_json(&json, &specs, &plugins).unwrap(), json);
     }
 }

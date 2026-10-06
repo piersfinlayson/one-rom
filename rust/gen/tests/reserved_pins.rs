@@ -7,7 +7,7 @@
 use onerom_config::fw::{FirmwareProperties, FirmwareVersion, ServeAlg};
 use onerom_config::hw::Board;
 use onerom_config::mcu::{Family, Variant};
-use onerom_config::pin::{Pad, Pin, ReservedPads};
+use onerom_config::pin::{HeaderPin, Pin, ReservedPins};
 use onerom_gen::{Builder, Error, FileData, MIN_RESERVED_PINS_VERSION};
 use onerom_metadata::{
     DeviceMemoryView, METADATA_BASE, ONEROM_METADATA_HEADER_RESERVED_SEL_PINS_OFFSET,
@@ -44,6 +44,18 @@ fn fly_lead_2764() -> String {
     r#"{ "type": "single", "chips": [{ "file": "a.bin", "type": "2764" }] }"#.to_string()
 }
 
+fn system_plugin() -> String {
+    r#"{ "type": "single", "chips": [{ "file": "usb.bin", "type": "system_plugin" }] }"#.to_string()
+}
+
+/// A minimal valid plugin image.
+fn plugin_image() -> Vec<u8> {
+    let mut image = vec![0u8; 256];
+    image[0..4].copy_from_slice(b"ORA ");
+    image[4..8].copy_from_slice(&1u32.to_le_bytes());
+    image
+}
+
 fn build(version: FirmwareVersion, board: Board, json: &str) -> Result<Vec<u8>, Error> {
     let mut builder = Builder::from_json(version, Family::Rp2350, json)?;
     builder.add_file(FileData::new(0, vec![0xEA; 8192]))?;
@@ -67,7 +79,11 @@ fn reserved_pins_take_every_pin_spelling() {
     let builder = Builder::from_json(V0_8_0, Family::Rp2350, &json).unwrap();
     assert_eq!(
         builder.config().reserved_pins,
-        [Pin::Pad(Pad::Select(2)), Pin::Pad(Pad::X1), Pin::Gpio(24)]
+        [
+            Pin::Header(HeaderPin::Select(2)),
+            Pin::Header(HeaderPin::X1),
+            Pin::Gpio(24)
+        ]
     );
     let saved = serde_json::to_value(builder.config()).unwrap();
     assert_eq!(
@@ -99,7 +115,7 @@ fn an_entry_that_isnt_a_pin_name_fails_to_parse() {
 
 /// The metadata has one bit per reserved pin, however the pin is written.
 #[test]
-fn the_metadata_holds_the_reserved_pads() {
+fn the_metadata_holds_the_reserved_pins() {
     // gpio8 is wired to X2 on a fire-24-f.
     let json = config(&["sel_c", "gpio8", "x2"], &[single("2364")]);
     let metadata = build(V0_8_0, Board::Fire24F, &json).unwrap();
@@ -139,7 +155,7 @@ fn older_firmware_fails_with_reserved_pins() {
 }
 
 #[test]
-fn the_minimum_version_is_where_the_metadata_holds_the_pads() {
+fn the_minimum_version_is_where_the_metadata_holds_the_pins() {
     let before = FirmwareVersion::new(0, 7, 3, 0);
     assert!(before < MIN_RESERVED_PINS_VERSION);
     assert!(metadata_generation_for(before) < metadata_generation_for(MIN_RESERVED_PINS_VERSION));
@@ -162,7 +178,7 @@ fn only_a_pin_the_board_has_can_be_reserved() {
         (Board::Fire40A, "x1", c27c400.to_string(), false),
     ] {
         match build(V0_8_0, board, &config(&[entry], &[set])) {
-            Err(Error::ReservedPinNotAPad { pin, board: b }) if on_board => {
+            Err(Error::ReservedPinNotReservable { pin, board: b }) if on_board => {
                 assert_eq!((pin.to_string(), b), (entry.to_string(), board));
             }
             Err(Error::ReservedPinNotOnBoard { pin, board: b }) if !on_board => {
@@ -175,13 +191,13 @@ fn only_a_pin_the_board_has_can_be_reserved() {
 
 /// A banked set uses X1 for two banks and also X2 for three or four.
 #[test]
-fn a_banked_set_fails_where_it_uses_a_reserved_x_pad() {
+fn a_banked_set_fails_where_it_uses_a_reserved_x_pin() {
     let in_use = |reserved: &str, set: String| match build(
         V0_8_0,
         Board::Fire24F,
         &config(&[reserved], &[single("2364"), set]),
     ) {
-        Err(Error::ReservedPinInUse { slot, pad }) => Some((slot, pad)),
+        Err(Error::ReservedPinInUse { slot, pin }) => Some((slot, pin)),
         Ok(_) => None,
         Err(e) => panic!("{e:?}"),
     };
@@ -203,10 +219,10 @@ fn a_reserved_x1_is_not_replaced_by_x2() {
 
 /// A chip larger than the socket has its extra address lines on X1 and X2.
 #[test]
-fn a_fly_lead_set_fails_where_it_uses_a_reserved_x_pad() {
+fn a_fly_lead_set_fails_where_it_uses_a_reserved_x_pin() {
     let json = config(&["x1"], &[fly_lead_2764()]);
     match build(V0_8_0, Board::Fire24F, &json) {
-        Err(Error::ReservedPinInUse { slot: 0, pad }) => assert_eq!(pad, "X1"),
+        Err(Error::ReservedPinInUse { slot: 0, pin }) => assert_eq!(pin, "X1"),
         other => panic!("{other:?}"),
     }
     // A 2764 has one extra address line, on X1.
@@ -215,7 +231,7 @@ fn a_fly_lead_set_fails_where_it_uses_a_reserved_x_pad() {
 
 /// A slot never uses an image select pin.
 #[test]
-fn reserving_select_pads_builds_every_set() {
+fn reserving_select_pins_builds_every_set() {
     let json = config(
         &["sel_a", "sel_b", "sel_c", "sel_d"],
         &[single("2364"), banked(4), fly_lead_2764()],
@@ -244,8 +260,8 @@ fn a_slot_using_a_reserved_x_pin_fails_on_every_board() {
             ("x1", fly_lead_2764()),
         ] {
             match build(V0_8_0, board, &config(&[reserved], &[set])) {
-                Err(Error::ReservedPinInUse { slot: 0, pad }) => {
-                    assert_eq!(pad, reserved.to_uppercase(), "{board}")
+                Err(Error::ReservedPinInUse { slot: 0, pin }) => {
+                    assert_eq!(pin, reserved.to_uppercase(), "{board}")
                 }
                 other => panic!("{board} {reserved}: {other:?}"),
             }
@@ -263,7 +279,7 @@ fn a_multi_chip_set_fails_where_it_uses_a_reserved_x_pin() {
         Board::Fire24F,
         &config(&["x1"], std::slice::from_ref(&multi)),
     ) {
-        Err(Error::ReservedPinInUse { slot: 0, pad }) => assert_eq!(pad, "X1"),
+        Err(Error::ReservedPinInUse { slot: 0, pin }) => assert_eq!(pin, "X1"),
         other => panic!("{other:?}"),
     }
     assert!(build(V0_8_0, Board::Fire24F, &config(&["x2"], &[multi])).is_ok());
@@ -271,15 +287,9 @@ fn a_multi_chip_set_fails_where_it_uses_a_reserved_x_pin() {
 
 #[test]
 fn a_slot_after_a_plugin_is_numbered_without_it() {
-    let plugin =
-        r#"{ "type": "single", "chips": [{ "file": "usb.bin", "type": "system_plugin" }] }"#;
-    let json = config(&["x1"], &[plugin.to_string(), single("2364"), banked(2)]);
+    let json = config(&["x1"], &[system_plugin(), single("2364"), banked(2)]);
     let mut builder = Builder::from_json(V0_8_0, Family::Rp2350, &json).unwrap();
-    // A minimal valid plugin image.
-    let mut plugin_image = vec![0u8; 256];
-    plugin_image[0..4].copy_from_slice(b"ORA ");
-    plugin_image[4..8].copy_from_slice(&1u32.to_le_bytes());
-    builder.add_file(FileData::new(0, plugin_image)).unwrap();
+    builder.add_file(FileData::new(0, plugin_image())).unwrap();
     builder
         .add_file(FileData::new(1, vec![0xEA; 8192]))
         .unwrap();
@@ -292,17 +302,68 @@ fn a_slot_after_a_plugin_is_numbered_without_it() {
     )
     .unwrap();
     match builder.build(props) {
-        Err(Error::ReservedPinInUse { slot, pad }) => assert_eq!((slot, pad.as_str()), (1, "X1")),
+        Err(Error::ReservedPinInUse { slot, pin }) => assert_eq!((slot, pin.as_str()), (1, "X1")),
         other => panic!("{other:?}"),
     }
 }
 
+/// `slots_using_reserved_pins` on a fire-24-f before any file is added.
+///
+/// Once every file is added, Build fails on the first slot listed or
+/// succeeds where none is.
+fn slots_using_reserved_pins(json: &str) -> Vec<(usize, HeaderPin)> {
+    let mut builder = Builder::from_json(V0_8_0, Family::Rp2350, json).unwrap();
+    let props = FirmwareProperties::new(
+        V0_8_0,
+        Board::Fire24F,
+        Variant::RP2350,
+        ServeAlg::Default,
+        false,
+    )
+    .unwrap();
+    let slots = builder.slots_using_reserved_pins(&props).unwrap();
+
+    for spec in builder.file_specs() {
+        let data = match spec.source.as_str() {
+            "usb.bin" => plugin_image(),
+            _ => vec![0xEA; 8192],
+        };
+        builder.add_file(FileData::new(spec.id, data)).unwrap();
+    }
+    match (builder.build(props).map(drop), slots.first()) {
+        (Ok(()), None) => {}
+        (Err(Error::ReservedPinInUse { slot, pin }), Some(&(first, first_pin))) => {
+            assert_eq!((slot, pin), (first, first_pin.silkscreen().to_string()))
+        }
+        (built, _) => panic!("{slots:?} {built:?}"),
+    }
+    slots
+}
+
 #[test]
-fn two_names_for_one_pad_reserve_it_once() {
+fn a_slot_using_a_reserved_pin_is_listed() {
+    let json = config(&["x1"], &[fly_lead_2764()]);
+    assert_eq!(slots_using_reserved_pins(&json), [(0, HeaderPin::X1)]);
+}
+
+#[test]
+fn a_slot_not_using_a_reserved_pin_isnt_listed() {
+    let json = config(&["x1"], &[single("2364")]);
+    assert_eq!(slots_using_reserved_pins(&json), []);
+}
+
+#[test]
+fn a_listed_slot_after_a_plugin_is_numbered_without_it() {
+    let json = config(&["x1"], &[system_plugin(), single("2364"), fly_lead_2764()]);
+    assert_eq!(slots_using_reserved_pins(&json), [(1, HeaderPin::X1)]);
+}
+
+#[test]
+fn two_names_for_one_pin_reserve_it_once() {
     let json = config(&["sel_c", "gpio25", "x1", "gpio9"], &[single("2364")]);
     let builder = Builder::from_json(V0_8_0, Family::Rp2350, &json).unwrap();
-    let reserved = builder.config().reserved_pads(Board::Fire24F).unwrap();
-    assert_eq!(reserved, ReservedPads::from_bits(0b100, 0b01));
+    let reserved = builder.config().reserved_pins_on(Board::Fire24F).unwrap();
+    assert_eq!(reserved, ReservedPins::from_bits(0b100, 0b01));
 }
 
 fn description(board: Board, json: &str) -> String {
@@ -351,9 +412,7 @@ fn each_image_line_marks_the_jumpers_that_select_it() {
 /// The first image after a plugin set is selected with every jumper open.
 #[test]
 fn plugin_lines_have_no_marks() {
-    let plugin =
-        r#"{ "type": "single", "chips": [{ "file": "usb.bin", "type": "system_plugin" }] }"#;
-    let json = config(&[], &[plugin.to_string(), single("2364"), single("2364")]);
+    let json = config(&[], &[system_plugin(), single("2364"), single("2364")]);
     let lines = image_lines(&description(Board::Fire24F, &json));
     assert_eq!(lines[1], "0: usb.bin");
     assert!(lines[2].starts_with("1: [· · · · ·]"), "{lines:?}");
@@ -367,16 +426,20 @@ fn an_image_beyond_the_jumpers_cannot_be_selected() {
     let json = config(&["sel_c", "sel_d"], &sets);
     let lines = image_lines(&description(Board::Fire24F, &json));
     assert!(lines[4].starts_with("3: [· · · ▪ ▪]"), "{lines:?}");
-    assert_eq!(lines[5], "4: 2364  cannot be selected");
+    assert!(
+        lines[5].ends_with(" 2364  cannot be selected by jumpers"),
+        "{lines:?}"
+    );
+    // The chip type lines up with the rows above.
+    let chip_column = |line: &str| line[..line.find("2364").unwrap()].chars().count();
+    assert_eq!(chip_column(&lines[5]), chip_column(&lines[4]), "{lines:?}");
 }
 
 /// A line after the images replaces the marks in both cases.
 #[test]
 fn turbo_boot_and_one_image_have_no_marks() {
-    let plugin =
-        r#"{ "type": "single", "chips": [{ "file": "usb.bin", "type": "system_plugin" }] }"#;
     let mut json: serde_json::Value =
-        serde_json::from_str(&config(&[], &[plugin.to_string(), single("2364")])).unwrap();
+        serde_json::from_str(&config(&[], &[system_plugin(), single("2364")])).unwrap();
     json["turbo_boot"] = true.into();
     let lines = image_lines(&description(Board::Fire24F, &json.to_string()));
     assert_eq!(

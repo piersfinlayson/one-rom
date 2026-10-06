@@ -567,7 +567,7 @@ pub struct Chip {
 }
 
 impl Chip {
-    fn new(
+    pub(crate) fn new(
         index: usize,
         filename: String,
         label: Option<String>,

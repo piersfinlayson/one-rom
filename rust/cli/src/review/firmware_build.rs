@@ -60,10 +60,13 @@ impl Files {
     pub(super) fn words(&self, line: &str) -> Vec<String> {
         line.split_whitespace()
             .map(|word| match word {
-                "base.bin" | "sets.json" | "out.bin" => {
+                "base.bin" | "sets.json" | "out.bin" | "saved.json" => {
                     self.dir.path().join(word).display().to_string()
                 }
-                word => word.to_string(),
+                word => match word.strip_prefix("file=") {
+                    Some(slot) => format!("file={}", self.dir.path().join(slot).display()),
+                    None => word.to_string(),
+                },
             })
             .collect()
     }
@@ -132,6 +135,44 @@ async fn a_size_other_than_m_with_firmware_before_0_8_0() {
 }
 
 #[tokio::test]
+async fn an_image_larger_than_its_chip_type() {
+    let files = Files::with_2364(8, &["single"], &[]);
+    std::fs::write(files.dir.path().join("0.bin"), vec![0; 2 * IMAGE_2364]).unwrap();
+    let line = "onerom firmware build --board fire-24-f --config sets.json --base-firmware base.bin --output out.bin";
+    build(line, &files).await;
+}
+
+/// An Intel HEX image that doesn't decode, in the first ROM slot behind a
+/// system plugin.
+#[tokio::test]
+async fn an_intel_hex_image_that_does_not_decode() {
+    let files = Files::with_2364(8, &["single"], &[]);
+    let dir = files.dir.path();
+    std::fs::write(dir.join("basic.hex"), ":10000000ZZ\n").unwrap();
+    let plugin = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../images/test/stub-system-plugin.bin"
+    );
+    let config = serde_json::json!({
+        "version": 1,
+        "description": "Plugin and a damaged Intel HEX image",
+        "rom_sets": [
+            { "type": "single", "roms": [{ "file": plugin, "type": "system_plugin" }] },
+            { "type": "single", "roms": [{
+                "file": dir.join("basic.hex"),
+                "label": "basic.hex",
+                "type": "2364",
+                "cs1": "active_low",
+                "format": "ihex"
+            }] }
+        ]
+    });
+    std::fs::write(dir.join("sets.json"), config.to_string()).unwrap();
+    let line = "onerom firmware build --board fire-24-f --config sets.json --base-firmware base.bin --output out.bin";
+    build(line, &files).await;
+}
+
+#[tokio::test]
 async fn verbose_images_and_their_jumpers() {
     let files = Files::with_2364(8, &["single"; 5], &[]);
     let line = "onerom --verbose firmware build --board fire-24-f --config sets.json --base-firmware base.bin --output out.bin";
@@ -143,6 +184,14 @@ async fn verbose_images_and_their_jumpers() {
 async fn verbose_images_with_a_reserved_pin() {
     let files = Files::with_2364(8, &["single"; 5], &[]);
     let line = "onerom --verbose firmware build --board fire-24-f --config sets.json --base-firmware base.bin --output out.bin --reserve-pin sel_c";
+    build(line, &files).await;
+}
+
+/// Four image select pins less two reserved provide 4 combinations for 5 images.
+#[tokio::test]
+async fn verbose_an_image_the_jumpers_cannot_select() {
+    let files = Files::with_2364(8, &["single"; 5], &[]);
+    let line = "onerom --verbose firmware build --board fire-24-f --config sets.json --base-firmware base.bin --output out.bin --reserve-pin sel_c --reserve-pin sel_d";
     build(line, &files).await;
 }
 
@@ -237,4 +286,112 @@ async fn a_standby_slot_without_a_file() {
     build(line, &Files::with_2364(7, &[], &[])).await;
     println!();
     build(line, &Files::with_2364(8, &[], &[])).await;
+}
+
+/// Adds a set holding `chip` as the first set in sets.json.
+fn add_plugin(files: &Files, chip: serde_json::Value) {
+    let path = files.dir.path().join("sets.json");
+    let mut config: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    config["chip_sets"]
+        .as_array_mut()
+        .unwrap()
+        .insert(0, serde_json::json!({ "type": "single", "chips": [chip] }));
+    std::fs::write(&path, config.to_string()).unwrap();
+}
+
+/// The usb plugin referred to by name, for v0.8.0 firmware.
+#[tokio::test]
+#[ignore = "hits the live images server; run explicitly with --ignored"]
+async fn verbose_a_plugin_by_name() {
+    let files = Files::with_2364(8, &["single"], &[]);
+    add_plugin(
+        &files,
+        serde_json::json!({ "type": "system_plugin", "plugin": "usb" }),
+    );
+    println!(r#"~ sets.json has {{ "type": "system_plugin", "plugin": "usb" }}"#);
+    let line = "onerom --verbose firmware build --board fire-24-f --config sets.json --base-firmware base.bin --output out.bin";
+    build(line, &files).await;
+}
+
+/// The user plugin host-control in the system plugin's slot, by name and by
+/// URL.
+#[tokio::test]
+#[ignore = "hits the live images server; run explicitly with --ignored"]
+async fn a_user_plugin_as_the_system_plugin() {
+    let line = "onerom firmware build --board fire-24-f --config sets.json --base-firmware base.bin --output out.bin";
+    let url = "https://images.onerom.org/plugins/user/host-control/v0.1.5/plugin.bin";
+    for (key, value) in [("plugin", "host-control"), ("file", url)] {
+        let files = Files::with_2364(8, &["single"], &[]);
+        add_plugin(
+            &files,
+            serde_json::json!({ "type": "system_plugin", key: value }),
+        );
+        println!(r#"~ sets.json has {{ "type": "system_plugin", "{key}": "{value}" }}"#);
+        build(line, &files).await;
+        println!();
+    }
+}
+
+/// `--plugin usb` is saved by name.
+#[tokio::test]
+#[ignore = "hits the live images server; run explicitly with --ignored"]
+async fn save_config_with_a_plugin_by_name() {
+    let files = Files::with_2364(8, &["single"], &[]);
+    let line = "onerom firmware build --board fire-24-f --slot file=0.bin,type=2364,cs1=active-low --base-firmware base.bin --output out.bin --plugin usb --save-config saved.json";
+    build(line, &files).await;
+    println!("$ cat saved.json");
+    match std::fs::read_to_string(files.dir.path().join("saved.json")) {
+        Ok(saved) => println!("{saved}"),
+        Err(e) => println!("{e}"),
+    }
+}
+
+/// A 2364 chip with a file and a plugin.
+#[tokio::test]
+async fn a_plugin_by_name_on_a_rom_chip() {
+    let files = Files::with_2364(8, &["single"], &[]);
+    let path = files.dir.path().join("sets.json");
+    let mut config: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    config["chip_sets"][0]["chips"][0]["plugin"] = serde_json::json!("usb");
+    std::fs::write(&path, config.to_string()).unwrap();
+    println!(
+        r#"~ sets.json has {{ "file": "0.bin", "type": "2364", "cs1": "active_low", "plugin": "usb" }}"#
+    );
+    let line = "onerom firmware build --board fire-24-f --config sets.json --base-firmware base.bin --output out.bin";
+    build(line, &files).await;
+}
+
+/// A plugin chip with a plugin and a file.
+#[tokio::test]
+async fn a_plugin_by_name_and_by_file() {
+    let files = Files::with_2364(8, &["single"], &[]);
+    let plugin = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../images/test/stub-system-plugin.bin"
+    );
+    add_plugin(
+        &files,
+        serde_json::json!({ "type": "system_plugin", "plugin": "usb", "file": plugin }),
+    );
+    println!(
+        r#"~ sets.json has {{ "type": "system_plugin", "plugin": "usb", "file": "stub-system-plugin.bin" }}"#
+    );
+    let line = "onerom firmware build --board fire-24-f --config sets.json --base-firmware base.bin --output out.bin";
+    build(line, &files).await;
+}
+
+/// A plugin name that isn't published.
+#[tokio::test]
+#[ignore = "hits the live images server; run explicitly with --ignored"]
+async fn a_plugin_by_name_that_isnt_published() {
+    let files = Files::with_2364(8, &["single"], &[]);
+    add_plugin(
+        &files,
+        serde_json::json!({ "type": "system_plugin", "plugin": "usbb" }),
+    );
+    println!(r#"~ sets.json has {{ "type": "system_plugin", "plugin": "usbb" }}"#);
+    let line = "onerom firmware build --board fire-24-f --config sets.json --base-firmware base.bin --output out.bin";
+    build(line, &files).await;
 }

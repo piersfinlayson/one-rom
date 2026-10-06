@@ -2084,8 +2084,8 @@ typedef ora_result_t (*ora_wait_for_knock_fn_t)(
  * This function guarantees to write bytes in an ascending logical address
  * order.
  * 
- * This is not atomic.  For an atomic update, you must switch in a new region
- * of SRAM using the appropriate function (not yet supported). 
+ * This is not atomic.  For an atomic update, write to an inactive slot and
+ * switch to it with @ref ora_set_active_ram_slot_fn_t.
  *
  * @param slot    RAM ROM slot to update
  * @param offset  Logical start address within the ROM image to update

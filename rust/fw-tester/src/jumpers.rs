@@ -5,7 +5,7 @@
 //! Image select jumper states for each image.
 
 use onerom_config::hw::Board;
-use onerom_config::pin::Pad;
+use onerom_config::pin::HeaderPin;
 use onerom_fw_emulator::Emulator;
 use onerom_gen::{Config, MIN_RESERVED_PINS_VERSION};
 use onerom_metadata::metadata_generation_for;
@@ -26,13 +26,13 @@ impl Jumpers {
     /// a config fails to build.
     pub fn new(board: Board, config: &Config) -> Self {
         let reserved = config
-            .reserved_pads(board)
-            .expect("the config's reserved_pins are pads this board has");
+            .reserved_pins_on(board)
+            .expect("the config's reserved_pins are pins this board has");
         // Every pin read is an image select pin.
         let read = reserved
-            .select_pads_read(&board)
-            .filter_map(|pad| {
-                if let Pad::Select(index) = pad {
+            .select_pins_read(&board)
+            .filter_map(|pin| {
+                if let HeaderPin::Select(index) = pin {
                     Some(index)
                 } else {
                     None
@@ -60,7 +60,7 @@ impl Jumpers {
             .iter()
             .enumerate()
             .filter(|(bit, _)| image & (1 << bit) != 0)
-            .fold(0, |jumpers, (_, pad)| jumpers | (1 << pad));
+            .fold(0, |jumpers, (_, pin)| jumpers | (1 << pin));
         let first = metadata_generation_for(MIN_RESERVED_PINS_VERSION)
             .expect("the reservation fields arrived in a metadata generation");
         if Emulator::metadata_generation() >= first {

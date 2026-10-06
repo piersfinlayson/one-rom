@@ -11,7 +11,7 @@ use super::{command_of, failed};
 use crate::args::Commands;
 use crate::args::firmware::FirmwareCommands;
 use crate::firmware::cmd_inspect;
-use crate::test_board::{base_firmware, image_file, original_image};
+use crate::test_board::{base_firmware, image_2364, image_file, original_image};
 
 /// Prints the transcript of `line`, which starts `onerom firmware inspect` and
 /// refers to `image.bin`, with `image` in `image.bin`. There isn't a One ROM
@@ -63,6 +63,12 @@ fn help() {
 #[tokio::test]
 async fn a_built_image() {
     inspect_both(&image_file(BoardSize::M, 2)).await;
+}
+
+/// A fire-24-f image with SEL_C and X1 reserved.
+#[tokio::test]
+async fn an_image_with_reserved_pins() {
+    inspect_both(&image_2364(1, &["sel_c", "x1"])).await;
 }
 
 /// v0.8.0 base firmware, which doesn't contain metadata.

@@ -8,8 +8,8 @@
 //! [`onerom_config`] (no device required):
 //!
 //! - [`render_pin_header`] draws the jumper / programming header (the 2xN header
-//!   along the board's top edge), pad by pad, annotating each image-select and X
-//!   pad with the MCU GPIO behind it and — on RP2350 boards — whether that GPIO
+//!   along the board's top edge), pin by pin, annotating each image-select and X
+//!   pin with the MCU GPIO wired to it and — on RP2350 boards — whether that GPIO
 //!   is 5V-tolerant or 3.3V-only (an ADC pin).
 //! - [`render_rom_socket`] draws the ROM socket as a DIP pinout. Without a chip
 //!   type it labels each socket pin with the GPIO(s) behind it; given a chip
@@ -33,8 +33,8 @@ use onerom_config::mcu::PinTolerance;
 use onerom_gen::ChipSetType;
 use onerom_gen::compat::{check_chip_set_on_board, default_cs_config, format_size};
 
-/// Inner text width of a header pad, between its side walls' margin spaces.
-const PAD_W: usize = 9;
+/// Inner text width of a header pin, between its side walls' margin spaces.
+const PIN_W: usize = 9;
 
 /// Blank interior of the DIP body drawn by the socket view.
 const BODY_W: usize = 17;
@@ -58,7 +58,7 @@ fn left(s: &str, w: usize) -> String {
 // Pin header
 // ===========================================================================
 
-/// The one-word tolerance tag shown under a pad's GPIO.
+/// The one-word tolerance tag shown under a pin's GPIO.
 fn tolerance_tag(t: PinTolerance) -> &'static str {
     match t {
         PinTolerance::FiveVolt => "5V",
@@ -66,10 +66,10 @@ fn tolerance_tag(t: PinTolerance) -> &'static str {
     }
 }
 
-/// The content tokens for one header pad (role label(s), then the GPIO, then its
+/// The content tokens for one header pin (role label(s), then the GPIO, then its
 /// tolerance), top to bottom. The physical header is not silkscreened with pin
 /// numbers, so none are shown.
-fn header_pad_tokens(board: &Board, slot: &HeaderSlot) -> Vec<String> {
+fn header_pin_tokens(board: &Board, slot: &HeaderSlot) -> Vec<String> {
     match slot {
         // Unpopulated positions are never drawn (the caller skips them), so they
         // contribute no content.
@@ -88,11 +88,11 @@ fn header_pad_tokens(board: &Board, slot: &HeaderSlot) -> Vec<String> {
     }
 }
 
-/// Render one pad's content lines to exactly `height` rows of `PAD_W` columns:
+/// Render one pin's content lines to exactly `height` rows of `PIN_W` columns:
 /// each token left-aligned, top to bottom, padded with blank rows to `height`.
-fn header_pad_lines(tokens: &[String], height: usize) -> Vec<String> {
+fn header_pin_lines(tokens: &[String], height: usize) -> Vec<String> {
     (0..height)
-        .map(|i| left(tokens.get(i).map(String::as_str).unwrap_or(""), PAD_W))
+        .map(|i| left(tokens.get(i).map(String::as_str).unwrap_or(""), PIN_W))
         .collect()
 }
 
@@ -103,7 +103,7 @@ fn hcell(content: &str) -> String {
 
 /// Cell-width blank used for absent columns / rows.
 fn hgap() -> String {
-    " ".repeat(PAD_W + 4)
+    " ".repeat(PIN_W + 4)
 }
 
 const HTOP: &str = "┌───────────┐";
@@ -138,20 +138,20 @@ pub fn render_pin_header(board: &Board) -> Option<String> {
     let row3_present = |n: u8| by_col(n).and_then(|c| c.row3.as_ref()).is_some_and(present);
     let any_row3 = (1..=max_col).any(row3_present);
 
-    // One uniform pad height across the whole header, so every box is the same
+    // One uniform pin height across the whole header, so every box is the same
     // size regardless of how many lines its label needs.
-    let mut pad_h = 1usize;
+    let mut pin_h = 1usize;
     for c in cols {
         if present(&c.row1) {
-            pad_h = pad_h.max(header_pad_tokens(board, &c.row1).len());
+            pin_h = pin_h.max(header_pin_tokens(board, &c.row1).len());
         }
         if present(&c.row2) {
-            pad_h = pad_h.max(header_pad_tokens(board, &c.row2).len());
+            pin_h = pin_h.max(header_pin_tokens(board, &c.row2).len());
         }
         if let Some(x) = &c.row3
             && present(x)
         {
-            pad_h = pad_h.max(header_pad_tokens(board, x).len());
+            pin_h = pin_h.max(header_pin_tokens(board, x).len());
         }
     }
 
@@ -175,7 +175,7 @@ pub fn render_pin_header(board: &Board) -> Option<String> {
     );
 
     // Orientation marker at the header's pin-1 corner (top-left). The header
-    // pads are not numbered; this is purely an orientation aid, and on a board
+    // pins are not numbered; this is purely an orientation aid, and on a board
     // whose pin-1 position is unpopulated it marks where that corner is.
     out.push_str("  ◄ pin 1\n");
 
@@ -190,13 +190,13 @@ pub fn render_pin_header(board: &Board) -> Option<String> {
     }));
     out.push('\n');
 
-    // Top pad content.
-    for k in 0..pad_h {
+    // Top pin content.
+    for k in 0..pin_h {
         out.push_str("  ");
         out.push_str(&row(&|n| {
             if row1_present(n) {
-                let toks = header_pad_tokens(board, &by_col(n).unwrap().row1);
-                hcell(&header_pad_lines(&toks, pad_h)[k])
+                let toks = header_pin_tokens(board, &by_col(n).unwrap().row1);
+                hcell(&header_pin_lines(&toks, pin_h)[k])
             } else {
                 hgap()
             }
@@ -205,7 +205,7 @@ pub fn render_pin_header(board: &Board) -> Option<String> {
     }
 
     // Divider band: closes and/or opens each column's boxes depending on which
-    // of its two pads are fitted.
+    // of its two pins are fitted.
     out.push_str("  ");
     out.push_str(&row(&|n| match (row1_present(n), row2_present(n)) {
         (true, true) => HDIV.to_string(),
@@ -215,13 +215,13 @@ pub fn render_pin_header(board: &Board) -> Option<String> {
     }));
     out.push('\n');
 
-    // Bottom pad content.
-    for k in 0..pad_h {
+    // Bottom pin content.
+    for k in 0..pin_h {
         out.push_str("  ");
         out.push_str(&row(&|n| {
             if row2_present(n) {
-                let toks = header_pad_tokens(board, &by_col(n).unwrap().row2);
-                hcell(&header_pad_lines(&toks, pad_h)[k])
+                let toks = header_pin_tokens(board, &by_col(n).unwrap().row2);
+                hcell(&header_pin_lines(&toks, pin_h)[k])
             } else {
                 hgap()
             }
@@ -240,7 +240,7 @@ pub fn render_pin_header(board: &Board) -> Option<String> {
     }));
     out.push('\n');
 
-    // Optional third-row pads (X pins, or high address lines broken out on
+    // Optional third-row pins (X pins, or high address lines broken out on
     // 32-pin boards), drawn under the columns that carry them.
     if any_row3 {
         out.push_str("  ");
@@ -252,12 +252,12 @@ pub fn render_pin_header(board: &Board) -> Option<String> {
             }
         }));
         out.push('\n');
-        for k in 0..pad_h {
+        for k in 0..pin_h {
             out.push_str("  ");
             out.push_str(&row(&|n| {
                 if row3_present(n) {
                     let x = by_col(n).unwrap().row3.as_ref().unwrap();
-                    hcell(&header_pad_lines(&header_pad_tokens(board, x), pad_h)[k])
+                    hcell(&header_pin_lines(&header_pin_tokens(board, x), pin_h)[k])
                 } else {
                     hgap()
                 }
@@ -305,7 +305,7 @@ pub fn render_pin_header(board: &Board) -> Option<String> {
         out.push_str("  A<n> = high address line broken out on the header\n");
     }
     if has_nc {
-        out.push_str("  n/c = pad fitted but not connected\n");
+        out.push_str("  n/c = pin fitted but not connected\n");
     }
 
     Some(out)
@@ -556,7 +556,7 @@ mod tests {
     fn pin_header_keeps_unpopulated_column_in_place_without_numbers() {
         // fire-24-usb-b's left column is unpopulated (n/p): it is drawn as empty
         // space in its physical position (the header is NOT shifted left), the
-        // marker still marks the pin-1 corner, and pads carry no pin numbers.
+        // marker still marks the pin-1 corner, and pins carry no pin numbers.
         let b = Board::try_from_str("fire-24-usb-b").unwrap();
         let s = render_pin_header(&b).expect("fire-24-usb-b has a header");
         assert!(!s.contains("n/p"));
@@ -581,19 +581,19 @@ mod tests {
     }
 
     #[test]
-    fn pin_header_keeps_not_connected_pads_with_legend() {
-        // fire-24-a fits pads that are wired to nothing (n/c) - these stay, and
+    fn pin_header_keeps_not_connected_pins_with_legend() {
+        // fire-24-a fits pins that are wired to nothing (n/c) - these stay, and
         // get a legend line explaining them.
         let b = Board::try_from_str("fire-24-a").unwrap();
         let s = render_pin_header(&b).expect("fire-24-a has a header");
         assert!(s.contains("n/c"));
-        assert!(s.contains("n/c = pad fitted but not connected"));
+        assert!(s.contains("n/c = pin fitted but not connected"));
     }
 
     #[test]
-    fn pin_header_row3_pads_carry_no_pin_marker() {
-        // Third-row pads are labelled by role only (X1/X2 or A<n>), with no
-        // stray "X" pin marker in the pad's number position.
+    fn pin_header_row3_pins_have_no_pin_marker() {
+        // Third-row pins are labelled by role only (X1/X2 or A<n>), with no
+        // stray "X" pin marker in the pin's number position.
         let s = render_pin_header(&board()).expect("fire-24-f has a header");
         assert!(!s.contains("│ X "));
         assert!(s.contains("X1"));

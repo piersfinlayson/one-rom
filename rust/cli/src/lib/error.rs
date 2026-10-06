@@ -320,6 +320,13 @@ pub enum Error {
     #[error("Plugin type mismatch for '{0}': manifest says {1}, binary header says {2}")]
     PluginTypeMismatch(String, String, String),
 
+    #[error("'{name}' is a {plugin_type} plugin but is configured as the {configured} plugin")]
+    PluginWrongChipType {
+        name: String,
+        plugin_type: PluginType,
+        configured: PluginType,
+    },
+
     #[error("Plugin version mismatch for '{0}': manifest says {1}, binary header says {2}")]
     PluginVersionMismatch(String, PluginVersion, PluginVersion),
 
@@ -976,6 +983,15 @@ impl From<onerom_app::PluginError> for Error {
             P::TypeMismatch(src, expected, got) => {
                 Error::PluginTypeMismatch(src, expected.to_string(), got.to_string())
             }
+            P::WrongChipType {
+                name,
+                plugin_type,
+                configured,
+            } => Error::PluginWrongChipType {
+                name,
+                plugin_type,
+                configured,
+            },
             P::VersionMismatch(name, manifest, header) => {
                 Error::PluginVersionMismatch(name, manifest, header)
             }

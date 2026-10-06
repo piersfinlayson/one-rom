@@ -21,7 +21,9 @@ use onerom_cli::error::plan_error;
 use onerom_cli::otp::{PicobootOtp, check_board};
 use onerom_cli::pin::ResolvedPin;
 use onerom_cli::plugin::{parse_plugins, resolve_plugins};
-use onerom_cli::slot::{self, GlobalConfig, check_slot_confirmations, save_config};
+use onerom_cli::slot::{
+    self, GlobalConfig, check_slot_confirmations, save_config, saved_config_json,
+};
 use onerom_cli::usb::{FLASH_BASE, RebootArgs, flash_program, flash_read, reboot};
 use onerom_cli::{Device, DeviceState, Error, Options};
 use onerom_fw_parser::ParsedDevice;
@@ -104,12 +106,8 @@ async fn build_and_assemble(
     let (firmware_data, version, _version_str) =
         acquire_firmware(options, &args.base_firmware, &args.version, board, mcu).await?;
 
-    let plugins = resolve_plugins(
-        &parse_plugins(&args.plugin)?,
-        &version,
-        &onerom_cli::CliFetch,
-    )
-    .await?;
+    let specs = parse_plugins(&args.plugin)?;
+    let plugins = resolve_plugins(&specs, &version, &onerom_cli::CliFetch).await?;
 
     let global_config = GlobalConfig {
         config_name: args.config_name.clone(),
@@ -133,7 +131,7 @@ async fn build_and_assemble(
     )?;
 
     if let Some(path) = &args.save_config {
-        save_config(path, &config_json)?;
+        save_config(path, &saved_config_json(&config_json, &specs, &plugins)?)?;
         if options.verbose {
             println!("Saved ROM configuration to {path}");
         }
@@ -149,8 +147,7 @@ async fn build_and_assemble(
         *mcu,
         size,
         args.force,
-        // Runs with the config resolved and not one ROM image fetched, so a
-        // request this build cannot honour costs the user nothing to discover.
+        // Runs before any ROM image is downloaded.
         |config| refuse_unservable_request(args, slot::has_system_plugin(config)),
     )
     .await?;
@@ -431,13 +428,13 @@ fn refuse_unservable_request(
 }
 
 pub(crate) fn unreserved_reset_pin(image: &ParsedDevice, pin: ResolvedPin) -> Option<String> {
-    let reserved = onerom_cli::pin::reserved_pads(image)?;
-    let pad = onerom_cli::pin::metadata_pad(image, pin.gpio())?;
-    (!reserved.contains(pad)).then(|| {
+    let reserved = image.reserved_pins()?;
+    let header_pin = onerom_cli::pin::metadata_header_pin(image, pin.gpio())?;
+    (!reserved.contains(header_pin)).then(|| {
         format!(
             "--reset-host pin {} is not reserved so One ROM may use it.\n  \
-             Reserve it with --reserve-pin {pad}",
-            pad.silkscreen()
+             Reserve it with --reserve-pin {header_pin}",
+            header_pin.silkscreen()
         )
     })
 }
@@ -465,7 +462,7 @@ pub async fn cmd_program(
     }
 
     // Everything about the reset pin that board metadata alone can settle - the
-    // pad exists, One ROM does not use it for the board's own peripherals, it can
+    // pin exists, One ROM does not use it for the board's own peripherals, it can
     // take 5V - is settled here, before a byte is read or fetched. What the image
     // decides is asked of the image, below.
     let reset_host = match &args.reset_host {
@@ -634,7 +631,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn an_unreserved_reset_pad_is_reported() {
+    async fn an_unreserved_reset_pin_is_reported() {
         use crate::test_board::{holds, image_2364};
         use onerom_cli::image::parse_firmware;
         use onerom_cli::pin::parse_pin;
