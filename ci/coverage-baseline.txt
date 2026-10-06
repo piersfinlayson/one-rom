@@ -23,5 +23,5 @@ plugins/system/usb/src/usb_gpio.c                    81.9
 plugins/system/usb/src/usb_led.c                     94.4
 plugins/system/usb/src/usb_log.c                     85.4
 plugins/system/usb/src/usb_main.c                    74.2
-plugins/system/usb/src/usb_picobootx.c               85.5
+plugins/system/usb/src/usb_picobootx.c               85.6
 plugins/system/usb/src/usb_rom.c                     75.0
