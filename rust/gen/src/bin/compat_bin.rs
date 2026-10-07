@@ -403,10 +403,7 @@ fn generate_document(w: &mut impl Write) -> io::Result<()> {
     writeln!(w)?;
     writeln!(w, "| Cell | Meaning |")?;
     writeln!(w, "|:---|:---|")?;
-    writeln!(
-        w,
-        "| `64KB` | Chip is supported on this board; shows the image size |"
-    )?;
+    writeln!(w, "| `64KB` | Image size of a chip this board supports |")?;
     writeln!(
         w,
         "| `64KB*` | Supported with One ROM overhanging the socket (top pins exposed — power reroute required) |"
@@ -463,8 +460,8 @@ fn generate_document(w: &mut impl Write) -> io::Result<()> {
         "Every fit other than `native` is a cross-size fit, and in all of them One \
                  ROM's power pins may not line up with the socket's — power must be \
                  rerouted to One ROM's own VCC or 5V header pin. \
-                 `larger socket (no fly-leads)` means no *signal* wiring is needed; it \
-                 does not mean the chip simply drops in."
+                 `larger socket (no fly-leads)` means no *signal* wiring is needed. It \
+                 doesn't mean the chip simply drops in."
     )?;
     writeln!(w)?;
 

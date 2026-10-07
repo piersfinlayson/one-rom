@@ -1,5 +1,9 @@
 # CLI Changelog
 
+## v0.5.1 - unreleased
+
+- Reword several error messages and `board` output.
+
 ## v0.5.0 - 2026-10-06
 
 - **Breaking** With a One ROM and a Lab both connected, a command that uses a device requires `--serial`. `scan`, `inspect info` and `firmware inspect` display Lab.

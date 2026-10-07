@@ -9,6 +9,12 @@ Headline changes in this release:
 In detail:
 
 To publish:
+- Rust crates (in dependency order):
+  - onerom-gen 0.9.1
+  - onerom-fw-parser 0.10.1
+  - onerom-app 0.4.1
+  - onerom-cli 0.5.1
+- CLI bin 0.5.1
 
 ## v0.8.0 - 2026-10-06
 

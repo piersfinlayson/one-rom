@@ -425,7 +425,7 @@ pub async fn read_chip_info(pb: &mut Picoboot) -> Result<ChipInfo, Error> {
     let count = if resp.len() >= 4 { word(0) as usize } else { 0 };
     if count < 3 || resp.len() < (count + 1) * 4 {
         return Err(Error::Usb(format!(
-            "GET_INFO CHIP_INFO returned {} bytes with count {count}; too short",
+            "GET_INFO CHIP_INFO response is too short at {} bytes with count {count}",
             resp.len()
         )));
     }

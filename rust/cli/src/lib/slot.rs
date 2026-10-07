@@ -778,8 +778,8 @@ pub fn inject_plugins_into_config(
         .any(|c| c.chip_type.resolved().is_plugin())
     {
         return Err(Error::Other(
-            "The provided config file already defines a plugin; remove it from \
-             the config, or drop --plugin."
+            "The config file already defines a plugin. Remove it from the config \
+             or drop --plugin."
                 .to_string(),
         ));
     }

@@ -789,7 +789,7 @@ impl<'a, R: Reader> Parser<'a, R> {
 
         if version < MIN_SCHEMA_VERSION {
             return Err(format!(
-                "Firmware v{major}.{minor} is not schema format; use parse_format_original()"
+                "Firmware v{major}.{minor} doesn't use the schema format. Use parse_format_original()"
             ));
         }
 

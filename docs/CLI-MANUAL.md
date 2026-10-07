@@ -56,7 +56,7 @@ This One ROM CLI manual covers:
 - **Problems** — symptoms and their fixes, including [recovering a bricked One
   ROM](#recovering-a-bricked-one-rom).
 
-> This manual documents the `onerom` CLI as of release v<!--[version:cli]-->0.5.0<!--[/]-->. Board,
+> This manual documents the `onerom` CLI as of release v<!--[version:cli]-->0.5.1<!--[/]-->. Board,
 > chip and plugin lists shown in examples are illustrative — the set your build
 > supports may differ. Run `onerom --version` to check your version, and
 > `onerom board list` / `onerom chips` for the definitive lists your build knows
@@ -2546,7 +2546,7 @@ names the fit exactly:
 Every fit other than `native` is a cross-size fit, and in all of them One ROM's
 power pins may not line up with the socket's — **power must be rerouted to One
 ROM's own VCC/5V pin**. `larger socket (no fly-leads)` means no *signal* wiring
-is needed; it does not mean the chip simply drops in. Use
+is needed. It doesn't mean the chip simply drops in. Use
 [`board socket`](#board-socket) with `--chip-type` and `--gpio` to see exactly
 where One ROM's VCC lands.
 

@@ -16,7 +16,7 @@ Some greater pin count ROMs can be emulated by a smaller One ROM, provided the R
 
 | Cell | Meaning |
 |:---|:---|
-| `64KB` | Chip is supported on this board; shows the image size |
+| `64KB` | Image size of a chip this board supports |
 | `64KB*` | Supported with One ROM overhanging the socket (top pins exposed — power reroute required) |
 | `64KB†` | Supported with fly-lead wire(s) from the chip socket's address pin(s) to One ROM's X1 (and X2) header pin |
 | `-` | Not supported on this board |
@@ -232,7 +232,7 @@ The **Fit** column says how the chip sits in the board's socket:
 | `larger socket (no fly-leads)` | Chip has *more* pins than the board, but no address line among the extra ones: One ROM sits in the bottom of the socket with nothing to wire |
 | `fly-lead to X1` (and `X2`) | Chip has more pins than the board, and the overhanging address line(s) must be wired to One ROM's X1 (and X2) header pin |
 
-Every fit other than `native` is a cross-size fit, and in all of them One ROM's power pins may not line up with the socket's — power must be rerouted to One ROM's own VCC or 5V header pin. `larger socket (no fly-leads)` means no *signal* wiring is needed; it does not mean the chip simply drops in.
+Every fit other than `native` is a cross-size fit, and in all of them One ROM's power pins may not line up with the socket's — power must be rerouted to One ROM's own VCC or 5V header pin. `larger socket (no fly-leads)` means no *signal* wiring is needed. It doesn't mean the chip simply drops in.
 
 ## One ROM Fire 24 (rev A/A2) — fire-24-a
 

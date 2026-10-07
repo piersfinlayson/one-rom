@@ -20,6 +20,7 @@
 //!
 //!   cargo test -p onerom-cli --bin onerom review::set_size -- --nocapture --test-threads=1
 
+mod board_socket;
 mod commission;
 mod control_erase;
 mod control_pin;

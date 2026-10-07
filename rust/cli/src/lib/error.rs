@@ -26,7 +26,7 @@ fn plugin_way_out(newest_compatible: &Option<CompatibleRelease>) -> String {
             "\n  Plugin version {} supports it: {}",
             r.version, r.binary_url
         ),
-        None => "\n  No version of this plugin supports it.".to_string(),
+        None => "\n  No version of this plugin supports the selected firmware version.".to_string(),
     }
 }
 

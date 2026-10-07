@@ -265,8 +265,8 @@ impl From<LayoutError> for Error {
             },
             LayoutError::RomTooLargeNoCsConfig { board, chip_type } => Error::InvalidConfig {
                 error: alloc::format!(
-                    "{chip_type:?} on {board:?}: ROM exceeds MAX_IMAGE_SIZE; cs1 \
-                     (active_low/active_high) is required to select a half but was not configured"
+                    "{chip_type:?} on {board:?}: ROM exceeds MAX_IMAGE_SIZE, so cs1 must be \
+                     configured as active_low or active_high to select a half"
                 ),
             },
             LayoutError::RomTableTooLarge {
@@ -318,10 +318,9 @@ impl From<LayoutError> for Error {
             } => Error::UnsupportedBoardConfig {
                 board,
                 reason: alloc::format!(
-                    "{} has an ignored control line at GPIO {gpio} sitting between \
-                     this set's select lines; a truly-ignored line interior to the \
-                     CS-detect span is not currently supported on this board (only \
-                     edge-positioned ignored lines can be excluded and forced low)",
+                    "{} has an ignored control line at GPIO {gpio} between this set's \
+                     select lines. This board supports an ignored line only at either \
+                     end of the select lines, where it is excluded and forced low",
                     chip_type.name()
                 ),
             },

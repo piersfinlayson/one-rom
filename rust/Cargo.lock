@@ -4838,7 +4838,7 @@ checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
 
 [[package]]
 name = "onerom-app"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "ed25519-dalek",
  "hex",
@@ -4856,7 +4856,7 @@ dependencies = [
 
 [[package]]
 name = "onerom-cli"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "base64 0.22.1",
  "built",
@@ -4958,7 +4958,7 @@ dependencies = [
 
 [[package]]
 name = "onerom-fw-parser"
-version = "0.10.0"
+version = "0.10.1"
 dependencies = [
  "airfrog-rpc",
  "deku 0.19.1",
@@ -4989,7 +4989,7 @@ dependencies = [
 
 [[package]]
 name = "onerom-gen"
-version = "0.9.0"
+version = "0.9.1"
 dependencies = [
  "onerom-config",
  "onerom-metadata",

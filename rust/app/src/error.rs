@@ -40,11 +40,11 @@ use crate::signers::SignerError;
 fn way_out(newest_compatible: &Option<CompatibleRelease>) -> String {
     match newest_compatible {
         Some(r) => alloc::format!(
-            "; plugin version {} supports it: {}",
+            " - plugin version {} supports it: {}",
             r.version,
             r.binary_url
         ),
-        None => "; no version of this plugin supports it".to_string(),
+        None => " - no version of this plugin supports the selected firmware version".to_string(),
     }
 }
 

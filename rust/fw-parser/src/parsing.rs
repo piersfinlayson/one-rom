@@ -504,7 +504,9 @@ pub(crate) fn parse_and_validate_header(data: &[u8]) -> Result<SdrrInfoHeader, S
         header.build_number,
     );
     if version >= MIN_SCHEMA_VERSION {
-        return Err("Firmware >= v0.7.0 uses schema format; use parse_format_schema()".into());
+        return Err(
+            "Firmware v0.7.0 and later uses the schema format. Use parse_format_schema()".into(),
+        );
     }
 
     if header.major_version == 0 && header.minor_version < 4 {

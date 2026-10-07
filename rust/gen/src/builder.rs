@@ -1441,9 +1441,8 @@ pub(crate) fn check_cs_v2(config: &Config) -> Result<()> {
                     {
                         return Err(Error::InvalidConfig {
                             error: format!(
-                                "{} polarity is fixed by chip type {} and cannot be \
-                                 configured; only 'ignore' may be specified \
-                                 (set {}, chip {})",
+                                "{} polarity is fixed by chip type {} and only 'ignore' \
+                                 can be configured (set {}, chip {})",
                                 name.to_uppercase(),
                                 chip.chip_type.resolved().name(),
                                 set_id,
@@ -1658,7 +1657,7 @@ pub(crate) fn check_cs_v2(config: &Config) -> Result<()> {
                     return Err(Error::InvalidConfig {
                         error: alloc::format!(
                             "Multi set secondary chip {} (set {}, chip {}) lacks control line \
-                             '{}', which the primary chip {} has; a secondary must have every \
+                             '{}', which primary chip {} has. A secondary must have every \
                              control line of the primary",
                             chip_name,
                             set_id,
