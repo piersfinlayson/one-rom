@@ -225,6 +225,8 @@ committed copy differs from a fresh regeneration:
 
 - `cargo run -p onerom-gen --bin compat` → `docs/COMPATIBILITY.md`
 - `cargo run -p schema-gen --bin schema-gen` → `onerom-config/schema.json`
+- `cargo run -p onerom-studio --bin gen-schema` and `--bin gen-manifest` →
+  `rust/studio/manifest/`
 - `cargo run -p onerom-gen --bin layout -- --write-baseline` →
   `ci/layout-baseline.txt`, the flash each chip type costs on each board. A
   diff says the numbers moved, and `… --check` says whether that is an

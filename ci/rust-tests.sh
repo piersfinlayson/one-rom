@@ -33,6 +33,8 @@ SNAPSHOT_CANDIDATES=(
     "firmware/ora/onerom_constants_generated.h"
     "firmware/ora/onerom_metadata_keys_generated.h"
     "firmware/ora/onerom_linker_constants_generated.ld"
+    "rust/studio/manifest/app-schema.json"
+    "rust/studio/manifest/sample-studio.json"
     "INSTALL.md"
     "README.md"
 )
@@ -130,6 +132,8 @@ echo "Checking generated files are up to date..."
 cargo run -p onerom-gen --bin compat
 cargo run -p schema-gen --bin schema-gen
 cargo run -q -p onerom-gen --bin layout -- --write-baseline
+cargo run -q -p onerom-studio --bin gen-schema
+cargo run -q -p onerom-studio --bin gen-manifest
 
 # docs/CHIP-TYPES.md needs no command of its own - the onerom-config build
 # script rewrites it, and the runs above build that crate.  It is checked here
@@ -148,6 +152,8 @@ GENERATED_FILES=(
     "firmware/ora/onerom_constants_generated.h"
     "firmware/ora/onerom_metadata_keys_generated.h"
     "firmware/ora/onerom_linker_constants_generated.ld"
+    "rust/studio/manifest/app-schema.json"
+    "rust/studio/manifest/sample-studio.json"
 )
 
 # A markdown file in docs/ may carry a fragment region, whose text belongs to

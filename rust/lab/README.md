@@ -187,7 +187,7 @@ Lab releases on its own cycle, tagged `lab-vX.Y.Z`.
 4. Add the release to the images repo:
 
     ```bash
-    scripts/release.py --version X.Y.Z --output-dir ../../one-rom-images
+    scripts/release.py --version X.Y.Z --output-dir ../../../one-rom-images
     ```
 
     The script downloads the release's files to `dist` and checks each one.  It

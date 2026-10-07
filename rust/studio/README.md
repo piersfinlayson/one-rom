@@ -4,18 +4,10 @@ A GUI front-end for interacting with One ROM and managing firmware images.
 
 ## Releasing
 
-All instructions assume you are in the `rust/studio` directory.  Steps 1-3 can be run in parallel.
+All instructions assume you are in the `rust/studio` directory.
 
 Steps:
-1. Copy the schema to the images repo if it differs.  The schema is regenerated when [the version is updated](/RELEASE.md#update-version-number).
-
-    ```bash
-    git diff manifest/app-schema.json ../../../one-rom-images/studio/app-schema.json
-    # If differences
-    cp manifest/app-schema.json ../../../one-rom-images/studio/app-schema.json
-    ```
-
-2. Use the `build-release.sh` script to build Studio for all platforms and architectures.  This requires ssh access to build machines for each platform and clones the current main branch to build from.  To set up the Windows machine, see [Setting up a Windows build machine](/docs/SETUP-WINDOWS-BUILD-MACHINE.md):
+1. Use the `build-release.sh` script to build Studio for all platforms and architectures.  This requires ssh access to build machines for each platform and clones the current main branch to build from.  To set up the Windows machine, see [Setting up a Windows build machine](/docs/SETUP-WINDOWS-BUILD-MACHINE.md):
 
     ```bash
     scripts/build-release.sh pin=WIN_SIGNING_PIN
@@ -23,13 +15,13 @@ Steps:
 
     Artifacts are placed in the `dist/` directory.
 
-3. Run the release script to upload the files and update the manifest - assumes you have the images.onerom.org github repo at ../../../one-rom-images:
+2. Run the release script to upload the files and update the manifest - assumes you have the images.onerom.org github repo at ../../../one-rom-images:
 
     ```bash
     scripts/release.py --input-dir dist --output-dir ../../../one-rom-images
     ```
 
-4. Commit one-rom-images changes and push:
+3. Commit one-rom-images changes and push:
 
     ```bash
     cd ../../../one-rom-images
@@ -38,7 +30,7 @@ Steps:
     git push
     ```
 
-5. Tag the current commit in `one-rom` and push.  Tags are signed, so they
+4. Tag the current commit in `one-rom` and push.  Tags are signed, so they
     take a message:
 
     ```bash
@@ -47,9 +39,9 @@ Steps:
     git push origin studio-vX.Y.Z
     ```
 
-6. Check new releases appear at https://onerom.org/studio/
+5. Check new releases appear at https://onerom.org/studio/
 
-7. Update the Studio manifest `one-rom-images/studio.json` with the latest version.
+6. Update the Studio manifest `one-rom-images/studio.json` with the latest version.
 
 ## Updating Mac Icons
 

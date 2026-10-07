@@ -54,9 +54,7 @@ ci/build.sh release v<x.y.z>
 Publish the crates whose version moved this cycle.  The CHANGELOG's "To
 publish" list says which.
 
-Run these from `rust/`.  Cargo reads `rust/.cargo/config.toml` only when run
-inside `rust/`.  Without it `onerom-metadata`'s build script writes its generated
-headers into the crate and verification fails.
+Run these from `rust/`.
 
 `onerom-config` publishes first, on its own, with `--no-verify`.  Its build
 script writes into `src/` and `docs/CHIP-TYPES.md`, which the verification build

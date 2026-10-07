@@ -5071,7 +5071,7 @@ dependencies = [
 
 [[package]]
 name = "onerom-metadata"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "hashbrown 0.17.1",
  "onerom-config",

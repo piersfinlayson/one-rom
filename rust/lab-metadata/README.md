@@ -20,5 +20,5 @@ names, for Lab's firmware to place in memory. `onerom_lab_info_t` is
 its two type parameters.
 
 [metadata_schema_released.toml](metadata_schema_released.toml) is the schema as
-the last release shipped it. It is refreshed after each release, in step 7 of
-[Lab's release steps](/rust/lab/README.md#releasing).
+the last release shipped it. It is refreshed after each release - see
+[Releasing](/rust/lab/README.md#releasing).
