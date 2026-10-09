@@ -1,22 +1,24 @@
 #!/usr/bin/env bash
 # Answer a One ROM signing request raised on GitHub.
 #
-# Usage: scripts/sign-request.sh ISSUE
+# Usage: scripts/sign-request.sh [--pin PIN] ISSUE
 #
 # A One ROM's owner raises a signing request with onerom hardware
 # request-signature, which prints a link to the signing-request issue form
 # filled in with the One ROM's Chip ID, board type, board size and
 # manufacturer. This script
 # reads the issue and signs it with piers.rocks's Community key through
-# onerom hardware sign, which asks for the key's PIN and for confirmation.
+# onerom hardware sign, which prompts for the key's PIN unless --pin is used,
+# and for confirmation.
 # Once signed it posts the hardware commission command the owner runs and
-# closes the issue as completed.
+# the hardware validate command that checks the result, then closes the issue
+# as completed.
 #
-# It rejects an issue with a missing field, a Chip ID that isn't 16 hex
-# digits or a manufacturer other than onerom.org. It also rejects one whose
-# board type or board size onerom hardware sign refuses, which it shows by
-# exiting with code 2, so board types and sizes are checked only by the CLI.
-# The comment says why and asks for a new request, and the issue is closed as
+# An issue is rejected where a field is missing, the Chip ID isn't 16 hex
+# digits or the manufacturer isn't onerom.org. It is also rejected where
+# onerom hardware sign exits with code 2 for an invalid board type or board
+# size, so board types and sizes are checked only by the CLI. The comment
+# lists the reasons and how to raise a new request, and the issue is closed as
 # not planned. A closed issue is left alone. When onerom hardware sign fails
 # in any other way or isn't confirmed nothing is posted and the issue stays
 # open.
@@ -24,9 +26,9 @@
 # Requires curl, jq and onerom, and runs where the signing server is
 # reachable. It reaches GitHub through its REST API.
 #
-# Environment:
-#   ONEROM_SIGNING_SERVER  The signing server's address, for example
-#                          https://onerom-sign.internal.packom.net:8443
+# Set in the environment or in ~/.config/onerom/sign-request.env
+# ($XDG_CONFIG_HOME/onerom/ where set). The environment overrides the file.
+#   ONEROM_SIGNING_SERVER  The signing server's https address.
 #   ONEROM_GITHUB_TOKEN    A fine-grained GitHub personal access token that can
 #                          read and write the repository's issues.
 #   ONEROM                 The onerom binary. Defaults to onerom on PATH.
@@ -46,28 +48,53 @@ BOARD_LABEL="Board type"
 SIZE_LABEL="Board size"
 MANUFACTURER_LABEL="Manufacturer"
 
-ONEROM="${ONEROM:-onerom}"
-
 usage() {
-    echo "usage: $0 ISSUE" >&2
+    echo "usage: $0 [--pin PIN] ISSUE" >&2
     exit 2
 }
 
-[ $# -eq 1 ] || usage
-ISSUE=$1
+PIN=
+ISSUE=
+while [ $# -gt 0 ]; do
+    case $1 in
+        --pin)
+            # An empty PIN makes onerom hardware sign exit with code 2, which
+            # closes the issue as an invalid board type or size.
+            [ -n "${2:-}" ] || usage
+            PIN=$2
+            shift 2
+            ;;
+        *)
+            [ -z "$ISSUE" ] || usage
+            ISSUE=$1
+            shift
+            ;;
+    esac
+done
 [[ "$ISSUE" =~ ^[0-9]+$ ]] || usage
+
+CONFIG="${XDG_CONFIG_HOME:-$HOME/.config}/onerom/sign-request.env"
+if [ -f "$CONFIG" ]; then
+    environment=$(declare -p ONEROM_SIGNING_SERVER ONEROM_GITHUB_TOKEN ONEROM 2>/dev/null || true)
+    # shellcheck source=/dev/null
+    . "$CONFIG"
+    # The environment's values replace the file's.
+    eval "$environment"
+fi
+
+ONEROM="${ONEROM:-onerom}"
 
 for tool in curl jq "$ONEROM"; do
     command -v "$tool" >/dev/null || { echo "$tool not found." >&2; exit 1; }
 done
-# An address onerom hardware sign refuses would look like a refused request,
-# so a mistake here must not reach it.
+# onerom hardware sign exits with code 2 for an address that isn't https,
+# which would look like an invalid board type or size.
 [[ "${ONEROM_SIGNING_SERVER:-}" =~ ^https:// ]] || {
     echo "ONEROM_SIGNING_SERVER isn't an https address." >&2
     exit 1
 }
 # A CLI without hardware sign exits with code 2 as well, which would look like
-# a refused request.
+# an invalid board type or size.
 "$ONEROM" hardware sign --help >/dev/null 2>&1 || {
     echo "$(command -v "$ONEROM") doesn't support \`hardware sign\`." >&2
     exit 1
@@ -77,10 +104,11 @@ done
     exit 1
 }
 
-# Calls GitHub's REST API for the issue and prints the response. $1 says
-# what the call does, such as "read issue 323", for the error where it fails.
-# $2 is the method, $3 the path after the issue's address and $4, where
-# given, the JSON body. It exits where GitHub can't be reached or refuses.
+# Calls GitHub's REST API for the issue and prints the response. $1 is what
+# the call does, for example "read issue 323", for the error message where it
+# fails. $2 is the method, $3 the path after the issue's address and $4, where
+# provided, the JSON body. It exits where GitHub can't be reached or returns
+# an error.
 github() {
     local args=(-sS -w '\n%{http_code}' -X "$2"
         -H "Accept: application/vnd.github+json"
@@ -88,7 +116,7 @@ github() {
         -H "X-GitHub-Api-Version: 2022-11-28")
     [ $# -lt 4 ] || args+=(--data "$4")
     local response error
-    # curl's own error, such as a host it couldn't resolve, goes into the
+    # curl's own error, for example a host it couldn't resolve, goes into the
     # message rather than above it.
     error=$(mktemp)
     response=$(curl "${args[@]}" "https://api.github.com/repos/$REPO/issues/$ISSUE$3" 2>"$error") || {
@@ -111,7 +139,7 @@ AUTOMATED="This is an automated message."
 
 # Posts $1 as a comment on the issue, then closes it as $2, completed or
 # not_planned. Once it's posted it prints the comment beneath a heading,
-# indented, so the terminal shows which text went to GitHub.
+# indented, so it's clear in the terminal which text went to GitHub.
 answer() {
     local comment="$1"$'\n\n'"$AUTOMATED"
     github "comment on issue $ISSUE" POST /comments \
@@ -189,15 +217,16 @@ reject() {
 
 [ ${#reasons[@]} -eq 0 ] || reject "${reasons[@]}"
 
-# hardware sign shows the values and asks for the PIN and for confirmation on
-# the terminal. Its stdout carries only the JSON. It exits with code 2 where
-# it refuses a value on its command line, and the only values the issue
-# supplies that the checks above don't cover are the board type and size.
-# The member doesn't see the CLI's message, which is written for someone who
-# ran it.
+# hardware sign prints the values and prompts for confirmation on the
+# terminal, and for the PIN unless --pin is used. Only the JSON goes to stdout.
+# An invalid value on its command line makes it exit with code 2, and the only
+# values from the issue not checked above are the board type and size. The
+# member doesn't see the CLI's error message, which is written for whoever ran
+# it. With --pin=PIN a PIN starting with - parses as a value, not an option.
 status=0
 signed=$("$ONEROM" hardware sign --chip-id "$chip_id" --board "$board" --size "$size" \
-    --manufacturer "$MANUFACTURER" --signer "$ONEROM_SIGNING_SERVER" --key-id "$KEY_ID" --json) ||
+    --manufacturer "$MANUFACTURER" --signer "$ONEROM_SIGNING_SERVER" --key-id "$KEY_ID" \
+    ${PIN:+"--pin=$PIN"} --json) ||
     status=$?
 case $status in
     0) ;;
@@ -217,5 +246,6 @@ if ! command=$(jq -er .command <<<"$signed" 2>/dev/null); then
 fi
 
 comment="Signed."$'\n\n'"To commission this One ROM run:"$'\n\n```\n'"$command"$'\n```'
+comment+=$'\n\n'"To check the One ROM is properly commissioned run:"$'\n\n```\nonerom hardware validate\n```'
 answer "$comment" completed
 echo "Signed and closed issue $ISSUE."
