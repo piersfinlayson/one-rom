@@ -23,6 +23,9 @@ To publish:
   - onerom-fw 0.5.0
   - onerom-cli 0.6.0
 - CLI bin 0.6.0
+- Studio 0.2.5
+- one-rom-wasm 0.6.2: rebuild against the published Rust crates
+- one-rom-site: pick up wasm 0.6.2
 
 ## v0.8.0 - 2026-10-06
 
