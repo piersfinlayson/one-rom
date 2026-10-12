@@ -14,6 +14,7 @@ use crate::device::flash_chips;
 use crate::hint;
 use crate::otp::{board_size_text, escape_controls};
 use crate::plugin::{CompatibleRelease, PluginType, PluginVersion};
+use crate::usb::AccessFailure;
 
 pub use onerom_app::image_file_text;
 
@@ -33,6 +34,7 @@ fn plugin_way_out(newest_compatible: &Option<CompatibleRelease>) -> String {
 }
 
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum Error {
     #[error("Hit an error accessing USB:\n  {0}")]
     Usb(String),
@@ -45,6 +47,13 @@ pub enum Error {
 
     #[error("One ROM not found: {0}")]
     DeviceNotFound(String),
+
+    /// `--serial` matched a One ROM that could not be opened or read.
+    #[error("One ROM {failure}: {serial}")]
+    DeviceInaccessible {
+        serial: String,
+        failure: AccessFailure,
+    },
 
     #[error("Hit an input/output error: {0}")]
     Io(String),

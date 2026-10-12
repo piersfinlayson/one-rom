@@ -26,7 +26,7 @@ use picoboot::{
 use std::time::Duration;
 
 use crate::Error;
-use crate::device::board_size;
+use crate::device::{board_size, matches_serial};
 use crate::otp::{Commissioning, PicobootOtp, read_otp_board_size};
 use crate::picobootx::LedQueryArgs;
 pub use crate::picobootx::{
@@ -149,7 +149,7 @@ impl AccessError {
 /// The USB identity is copied out of the [`Device`] rather than the device
 /// being kept: the report is written after the enumeration loop, once the scan
 /// knows whether it found anything else.
-struct SkippedDevice {
+pub(crate) struct SkippedDevice {
     error: AccessError,
     serial: Option<String>,
     vid: u16,
@@ -247,6 +247,15 @@ fn include_device(answered: bool, recognised: bool, unrecognised: bool) -> bool 
 /// on a scan target that could not be read is left out and reported after the
 /// loop, at a level that depends on whether anything else was found.
 pub async fn enumerate_devices(options: &Options) -> Result<Vec<Device>, Error> {
+    enumerate_devices_and_skipped(options)
+        .await
+        .map(|(devices, _)| devices)
+}
+
+/// [`enumerate_devices`], plus the devices that could not be read.
+pub(crate) async fn enumerate_devices_and_skipped(
+    options: &Options,
+) -> Result<(Vec<Device>, Vec<SkippedDevice>), Error> {
     // Create the list of targets to use Picoboot to scan for.  We only use
     // the default RP2350 if no custom VID/PID pairs were provided.
     let targets: Vec<Target> = options
@@ -316,7 +325,21 @@ pub async fn enumerate_devices(options: &Options) -> Result<Vec<Device>, Error> 
         log!(level, "{}", skipped.report(options.verbose));
     }
 
-    Ok(devices)
+    Ok((devices, skipped))
+}
+
+/// The error for `--serial` `pattern` where it matches no device that was read.
+pub(crate) fn serial_not_found(pattern: &str, skipped: &[SkippedDevice]) -> Error {
+    skipped
+        .iter()
+        .find_map(|device| {
+            let serial = device.serial.as_deref()?;
+            matches_serial(Some(serial), pattern).then(|| Error::DeviceInaccessible {
+                serial: serial.to_string(),
+                failure: device.error.failure,
+            })
+        })
+        .unwrap_or_else(|| Error::DeviceNotFound(pattern.to_string()))
 }
 
 pub(crate) async fn get_picoboot(device: &Device, long: bool) -> Result<Picoboot, Error> {
@@ -1613,6 +1636,35 @@ mod tests {
         assert_eq!(skip_level(false), Level::Warn);
         // A One ROM was listed, so it is a note.
         assert_eq!(skip_level(true), Level::Info);
+    }
+
+    #[test]
+    fn a_serial_matching_a_skipped_device_is_inaccessible() {
+        let skipped = [
+            skipped(AccessFailure::Unreadable, None),
+            skipped(AccessFailure::NotOpened, Some("E7E47917A0C2B0CE")),
+        ];
+        // With a wildcard, the error contains the device's serial.
+        for pattern in ["E7E47917A0C2B0CE", "e7e4*"] {
+            assert!(matches!(
+                serial_not_found(pattern, &skipped),
+                Error::DeviceInaccessible { serial, failure: AccessFailure::NotOpened }
+                    if serial == "E7E47917A0C2B0CE"
+            ));
+        }
+    }
+
+    #[test]
+    fn a_serial_matching_no_skipped_device_is_not_found() {
+        let skipped = [skipped(AccessFailure::NotOpened, Some("E7E47917A0C2B0CE"))];
+        assert!(matches!(
+            serial_not_found("62CD9AE3C0771A7E", &skipped),
+            Error::DeviceNotFound(pattern) if pattern == "62CD9AE3C0771A7E"
+        ));
+        assert!(matches!(
+            serial_not_found("62CD9AE3C0771A7E", &[]),
+            Error::DeviceNotFound(_)
+        ));
     }
 
     #[test]

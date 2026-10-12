@@ -9,6 +9,7 @@ Headline changes in this release:
 In detail:
 - CLI:
   - `--config` on `onerom program` and `onerom firmware build` can be an http(s) URL.
+  - When the One ROM selected with `--serial` can't be opened the error message is now "could not be opened".
 - Web Programmer:
   - Moves to logic shared with the CLI to combine and verify built firmware.
 - Studio:

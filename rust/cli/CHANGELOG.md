@@ -4,6 +4,7 @@
 
 - Reword several error messages and `board` output.
 - `--config` on `program` and `firmware build` can be an http(s) URL.
+- When the One ROM selected with `--serial` can't be opened the error is now "could not be opened", not "not found".
 
 ## v0.5.0 - 2026-10-06
 
