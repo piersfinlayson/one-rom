@@ -36,9 +36,9 @@ const LONG_HELP_RESET_HOST: &str = concat!(
 // this command and examples.
 #[derive(Debug, Args)]
 pub struct ProgramArgs {
-    /// ROM configuration JSON file. Mutually exclusive with --slot,
-    /// --config-name, --config-description, --save-config, --no-config,
-    /// and --firmware.
+    /// ROM configuration JSON file or http(s) URL. Mutually exclusive with
+    /// --slot, --config-name, --config-description, --save-config,
+    /// --no-config, and --firmware.
     #[arg(
         long = "config",
         short='j',

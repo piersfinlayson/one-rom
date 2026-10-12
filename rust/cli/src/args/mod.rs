@@ -481,6 +481,10 @@ pub enum Commands {
     ///
     ///   onerom program --config c64.json
     ///
+    /// With a config file URL:
+    ///
+    ///   onerom program --config https://images.onerom.org/configs/c64.json
+    ///
     /// With multiple One ROMs connected, using a wildcard to select the target
     /// One ROM:
     ///

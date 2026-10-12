@@ -811,6 +811,7 @@ binary) and flash it to a connected One ROM. This is the primary workflow.
 
 ```
 onerom program --config c64.json
+onerom program --config https://images.onerom.org/configs/c64.json
 onerom program --serial '5*' --config c64.json
 onerom program --board fire-24-e \
     --slot file=kernal.bin,type=2364,cs1=active-low \
@@ -823,7 +824,7 @@ onerom program --config c64.json --out firmware.bin
 
 | Option | Description |
 |---|---|
-| `--config, -j <FILE>` (aliases `--config-file`, `--config-json`, `--json`) | ROM configuration JSON file. Conflicts with `--slot`, `--config-name`, `--config-description`, `--save-config`, `--no-config`, `--firmware`. |
+| `--config, -j <FILE>` (aliases `--config-file`, `--config-json`, `--json`) | ROM configuration JSON file or http(s) URL. Conflicts with `--slot`, `--config-name`, `--config-description`, `--save-config`, `--no-config`, `--firmware`. |
 | `--slot <SPEC>` (alias `--rom`) | ROM slot specification; repeatable. See [ROM slot specification](#rom-slot-specification). Conflicts with `--config`, `--no-config`, `--firmware`. |
 | `--firmware <FILE>` (alias `--fw`) | Flash a pre-built complete firmware binary directly. Conflicts with `--config`, `--slot`, `--base-firmware` and `--plugin` because a pre-built firmware already contains all ROMs/plugins. Also conflicts with `--version`. |
 | `--base-firmware <FILE>` | Use a local minimal firmware instead of downloading. With `--slot`, ROMs are built into it; alone, requires `--no-config`. Must be built with `EXCLUDE_METADATA=1` and `ROM_CONFIGS=`. Conflicts with `--firmware`, `--version`. |
@@ -2388,7 +2389,7 @@ The configuration options mirror [`program`](#program): `--config` (`-j`),
 | `--size <SIZE>` | The board's [size](#board-sizes), for example `L`. Defaults to `M`. A size other than M requires firmware v0.8.0 or later. |
 | `--version <VERSION>` | Firmware version to build against. Defaults to latest. |
 | `--base-firmware <FILE>` | Use a local minimal firmware instead of downloading. Must be built with `EXCLUDE_METADATA=1` and `ROM_CONFIGS=`. Conflicts with `--version`. |
-| `--output, -o <FILE>` (alias `--out`) | Output file path. Defaults to `onerom-<board>-<version>.bin`. Conflicts with `--path`. |
+| `--output, -o <FILE>` (alias `--out`) | Output file path. Defaults to `onerom_<board>_v<version>_<config>.bin`, where `<config>` is the `--config` filename without its extension. Conflicts with `--path`. |
 | `--path <DIR>` | Output directory, using the default filename. Conflicts with `--output`. |
 | `--force, -f` | Continue despite non-fatal problems, reporting each as a warning. |
 
@@ -2459,7 +2460,7 @@ onerom firmware download --version 0.6.5 --board fire-24-e --out firmware.bin
 |---|---|
 | `--version <VERSION>` | Version to download. Defaults to latest. |
 | `--board, -b <BOARD>` | Target board type. Inferred from device if omitted. |
-| `--output, -o <FILE>` (alias `--out`) | Output file path. Defaults to `onerom_<board>_<version>.bin`. Conflicts with `--path`. |
+| `--output, -o <FILE>` (alias `--out`) | Output file path. Defaults to `onerom_<board>_v<version>.bin`. Conflicts with `--path`. |
 | `--path <DIR>` | Output directory, using the default filename. Conflicts with `--output`. |
 
 This firmware binary can then be used as a base for [`firmware build`](#firmware-build) or flashed with

@@ -12,7 +12,7 @@ use onerom_config::mcu::RP235X_BASE_FLASH;
 use onerom_config::mcu::Variant;
 use onerom_config::pin::ReservedPins;
 use onerom_fw::net::{Release, Releases, fetch_license_async};
-use onerom_fw::{assemble_firmware, get_rom_files_async, read_rom_config, validate_sizes};
+use onerom_fw::{assemble_firmware, get_rom_files_async, validate_sizes};
 use onerom_fw_parser::readers::MemoryReader;
 use onerom_fw_parser::{ParseError, ParsedDevice, SlotKind};
 use onerom_gen::ChipSetType;
@@ -29,6 +29,7 @@ use onerom_metadata::{ONEROM_INFO_METADATA_OFFSET, ONEROM_INFO_OFFSET};
 use crate::args;
 use crate::args::hardware::supported_size;
 use crate::utils::{check_fire_board, resolve_board, resolve_firmware_output};
+use onerom_app::LocalFetch;
 use onerom_cli::error::image_file_warning;
 use onerom_cli::image::parse_firmware;
 use onerom_cli::plugin::{
@@ -44,14 +45,15 @@ use onerom_cli::{Error, Options};
 // ------------------------------- Config resolution -------------------------------
 
 /// Resolve a ROM configuration to a JSON string from any of the three sources:
-/// a config file path, a list of slot specs, or an empty config (--no-config).
+/// a config file path or http(s) URL, a list of slot specs, or an empty config
+/// (--no-config).
 ///
 /// `board` and `version` are required when `slots` is non-empty, for chip type
 /// validation: which chip types a board can serve depends on which builder the
 /// target firmware uses. A config file is validated by the builder itself, so
 /// neither is consulted on that path. Shared between `firmware build` and
 /// `program`.
-pub fn resolve_config_json(
+pub async fn resolve_config_json(
     config_file: Option<&str>,
     slots: &[String],
     no_config: bool,
@@ -60,10 +62,16 @@ pub fn resolve_config_json(
     global_config: Option<&GlobalConfig>,
     plugins: &[ResolvedPlugin],
 ) -> Result<String, Error> {
-    if let Some(path) = config_file {
+    if let Some(source) = config_file {
         // A config file supplies the ROM slots; any --plugin entries are
         // injected ahead of them (erroring if the config defines its own).
-        let json = read_rom_config(path)?;
+        let data = onerom_cli::CliFetch.fetch(source).await?;
+        let json = String::from_utf8(data).map_err(|e| {
+            onerom_fw::Error::read(
+                source.to_string(),
+                std::io::Error::new(std::io::ErrorKind::InvalidData, e),
+            )
+        })?;
         let json = inject_plugins_into_config(json, plugins)?;
         if let Some(overrides) = global_config {
             apply_global_overrides(json, overrides)
@@ -587,7 +595,8 @@ pub async fn cmd_build(
         &version,
         global_config.as_ref(),
         &plugins,
-    )?;
+    )
+    .await?;
 
     if let Some(path) = &args.save_config {
         save_config(path, &saved_config_json(&config_json, &specs, &plugins)?)?;
@@ -1708,5 +1717,83 @@ mod tests {
             image.reserved_pins(),
             Some(ReservedPins::from_bits(0b1000, 0b10))
         );
+    }
+
+    // -- config URL --------------------------------------------------------
+
+    /// Serves `body` with `status` to one request and returns the URL.
+    fn serve_once(status: &'static str, body: String) -> String {
+        use std::io::{BufRead, BufReader};
+
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/config.json", listener.local_addr().unwrap());
+        std::thread::spawn(move || {
+            let (stream, _) = listener.accept().unwrap();
+            let mut request = BufReader::new(&stream);
+            let mut line = String::new();
+            while request.read_line(&mut line).unwrap() > 2 {
+                line.clear();
+            }
+            write!(
+                &stream,
+                "HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            )
+            .unwrap();
+        });
+        url
+    }
+
+    #[tokio::test]
+    async fn config_url_builds_the_same_image_as_a_file() {
+        use crate::test_board::{IMAGE_2364, config_2364};
+
+        let dir = tempfile::tempdir().unwrap();
+        let base = dir.path().join("base.bin");
+        let config = dir.path().join("sets.json");
+        let json = config_2364(&["single"], dir.path(), &[]);
+        std::fs::write(&base, base_firmware(8)).unwrap();
+        std::fs::write(&config, &json).unwrap();
+        std::fs::write(dir.path().join("0.bin"), vec![0x5a; IMAGE_2364]).unwrap();
+
+        let mut images = Vec::new();
+        for source in [
+            config.to_str().unwrap().to_string(),
+            serve_once("200 OK", json),
+        ] {
+            let out = dir.path().join(format!("out-{}.bin", images.len()));
+            let args = build_args(&[
+                "onerom",
+                "firmware",
+                "build",
+                "--board",
+                "fire-24-f",
+                "--config",
+                &source,
+                "--base-firmware",
+                base.to_str().unwrap(),
+                "--output",
+                out.to_str().unwrap(),
+            ]);
+            cmd_build(&options(), &args).await.unwrap();
+            images.push(std::fs::read(&out).unwrap());
+        }
+        assert_eq!(images[0], images[1]);
+    }
+
+    #[tokio::test]
+    async fn config_url_http_error_fails() {
+        let url = serve_once("404 Not Found", "Not Found".to_string());
+        let result = resolve_config_json(
+            Some(&url),
+            &[],
+            false,
+            &Board::Fire24F,
+            &FirmwareVersion::new(0, 8, 0, 0),
+            None,
+            &[],
+        )
+        .await;
+        assert!(result.is_err(), "{result:?}");
     }
 }

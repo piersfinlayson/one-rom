@@ -128,7 +128,8 @@ async fn build_and_assemble(
         &version,
         Some(&global_config),
         &plugins,
-    )?;
+    )
+    .await?;
 
     if let Some(path) = &args.save_config {
         save_config(path, &saved_config_json(&config_json, &specs, &plugins)?)?;

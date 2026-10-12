@@ -498,12 +498,7 @@ pub fn resolve_firmware_output(
     let version_part = version.map(|v| format!("_v{v}")).unwrap_or_default();
 
     let config_suffix = config
-        .map(|c| {
-            std::path::Path::new(c)
-                .file_stem()
-                .and_then(|s| s.to_str())
-                .unwrap_or(c)
-        })
+        .and_then(config_stem)
         .map(|s| format!("_{s}"))
         .unwrap_or_default();
 
@@ -518,6 +513,33 @@ pub fn resolve_firmware_output(
     } else {
         default_filename
     }
+}
+
+const WINDOWS_FILENAME_RESERVED: &str = r#"<>:"/\|?*"#;
+
+/// The file stem of a `--config` path or of an http(s) URL's last path segment.
+fn config_stem(config: &str) -> Option<String> {
+    let name = if config.starts_with("http://") || config.starts_with("https://") {
+        let url = reqwest::Url::parse(config).ok()?;
+        let segment = url.path_segments()?.rev().find(|s| !s.is_empty())?;
+        percent_encoding::percent_decode_str(segment)
+            .decode_utf8_lossy()
+            .chars()
+            .map(|c| {
+                if c.is_control() || WINDOWS_FILENAME_RESERVED.contains(c) {
+                    '_'
+                } else {
+                    c
+                }
+            })
+            .collect()
+    } else {
+        config.to_string()
+    };
+    std::path::Path::new(&name)
+        .file_stem()?
+        .to_str()
+        .map(str::to_string)
 }
 
 pub fn read_char() -> Result<KeyEvent, Error> {
@@ -672,6 +694,36 @@ mod tests {
             assert!(
                 out_of_bounds(live_range_of("27C080", offset, Some(length)), 0x80000),
                 "0x{offset:x} 0x{length:x}"
+            );
+        }
+    }
+
+    #[test]
+    fn default_firmware_filename_from_config() {
+        for (config, filename) in [
+            ("configs/c64.json", "onerom_fire-24-e_v0.8.0_c64.bin"),
+            (
+                "https://images.onerom.org/configs/c64-bootloader-longboard.json",
+                "onerom_fire-24-e_v0.8.0_c64-bootloader-longboard.bin",
+            ),
+            (
+                "https://host/c64.json?ref=a/b#c/d",
+                "onerom_fire-24-e_v0.8.0_c64.bin",
+            ),
+            (
+                "https://host/c64%20pal%2Fntsc:1.json",
+                "onerom_fire-24-e_v0.8.0_c64 pal_ntsc_1.bin",
+            ),
+            (
+                "https://host/configs/",
+                "onerom_fire-24-e_v0.8.0_configs.bin",
+            ),
+            ("https://host/", "onerom_fire-24-e_v0.8.0.bin"),
+        ] {
+            assert_eq!(
+                resolve_firmware_output(&None, &None, &Board::Fire24E, Some("0.8.0"), Some(config)),
+                filename,
+                "{config}"
             );
         }
     }

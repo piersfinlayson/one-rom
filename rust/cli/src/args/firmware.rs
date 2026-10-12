@@ -133,8 +133,9 @@ pub enum FirmwareCommands {
 
 #[derive(Debug, Args)]
 pub struct FirmwareBuildArgs {
-    /// ROM configuration JSON file. Mutually exclusive with --slot,
-    /// --config-name, --config-description, --save-config, and --no-config.
+    /// ROM configuration JSON file or http(s) URL. Mutually exclusive with
+    /// --slot, --config-name, --config-description, --save-config, and
+    /// --no-config.
     #[arg(
         long = "config",
         short='j',

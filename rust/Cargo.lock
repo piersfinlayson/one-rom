@@ -4879,6 +4879,7 @@ dependencies = [
  "onerom-lab-metadata",
  "onerom-lab-parser",
  "onerom-metadata",
+ "percent-encoding",
  "picoboot",
  "pkcs8",
  "reqwest",

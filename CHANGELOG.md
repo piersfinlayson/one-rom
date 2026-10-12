@@ -7,6 +7,8 @@ All notable changes between versions are documented in this file.
 Headline changes in this release:
 
 In detail:
+- CLI:
+  - `--config` on `onerom program` and `onerom firmware build` can be an http(s) URL.
 
 To publish:
 - Rust crates (in dependency order):

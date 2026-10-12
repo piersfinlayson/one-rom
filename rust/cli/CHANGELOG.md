@@ -3,6 +3,7 @@
 ## v0.5.1 - unreleased
 
 - Reword several error messages and `board` output.
+- `--config` on `program` and `firmware build` can be an http(s) URL.
 
 ## v0.5.0 - 2026-10-06
 

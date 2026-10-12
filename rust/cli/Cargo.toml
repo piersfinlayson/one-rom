@@ -40,6 +40,7 @@ env_logger = "0.11"
 hex = { version = "0.4" }
 log = "0.4"
 nusb = { version = "0.2.5", features = ["tokio"] }
+percent-encoding = "2.3"
 # encryption decrypts an encrypted --key file, as the signing server decrypts
 # its own keys.
 pkcs8 = { version = "0.11", features = ["encryption", "pem"] }
