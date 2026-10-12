@@ -1,6 +1,6 @@
 # CLI Changelog
 
-## v0.5.1 - unreleased
+## v0.6.0 - unreleased
 
 - Reword several error messages and `board` output.
 - `--config` on `program` and `firmware build` can be an http(s) URL.

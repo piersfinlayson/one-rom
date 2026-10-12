@@ -3580,6 +3580,7 @@ dependencies = [
  "ed25519-dalek",
  "hex",
  "onerom-config",
+ "onerom-fw-parser",
  "onerom-gen",
  "onerom-metadata",
  "serde",
@@ -3591,7 +3592,7 @@ dependencies = [
 
 [[package]]
 name = "onerom-cli"
-version = "0.5.1"
+version = "0.6.0"
 dependencies = [
  "base64",
  "built",
@@ -3640,7 +3641,7 @@ dependencies = [
 
 [[package]]
 name = "onerom-fw"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "base64",
  "bytes",

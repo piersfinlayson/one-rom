@@ -48,7 +48,7 @@ fn helps() {
 #[tokio::test]
 async fn a_data_pin_serving_and_in_standby() {
     let board = Board::Fire24F;
-    let image = parse_firmware(&image_2364(1, &[])).await;
+    let image = parse_firmware(&image_2364(1, &[]).await).await;
     let gpio_use = served_entries(&image, &board)[0].gpio_use().unwrap();
     let name = describe_gpio(Some(&board), Some(ChipType::Chip2364), 0);
     for (state, standby) in [("serving", false), ("in standby", true)] {

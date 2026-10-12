@@ -9,6 +9,8 @@ Headline changes in this release:
 In detail:
 - CLI:
   - `--config` on `onerom program` and `onerom firmware build` can be an http(s) URL.
+- Studio:
+  - Moves to logic shared with the CLI to combine and verify built firmware.
 
 To publish:
 - Rust crates (in dependency order):
@@ -16,8 +18,9 @@ To publish:
   - onerom-gen 0.9.1
   - onerom-fw-parser 0.10.1
   - onerom-app 0.4.1
-  - onerom-cli 0.5.1
-- CLI bin 0.5.1
+  - onerom-fw 0.5.0
+  - onerom-cli 0.6.0
+- CLI bin 0.6.0
 
 ## v0.8.0 - 2026-10-06
 

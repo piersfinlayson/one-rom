@@ -84,7 +84,7 @@ pub fn detected_hardware_info(create: &mut Create, runtime_info: &RuntimeInfo) -
 pub fn flash_firmware(create: &mut Create, runtime_info: &RuntimeInfo) -> Task<AppMessage> {
     debug!("Flash firmware requested");
     if !create.is_busy() {
-        match runtime_info.image().map(|imgs| imgs.full_image()) {
+        match runtime_info.image().map(|imgs| imgs.full_image().to_vec()) {
             Some(fw) => {
                 create.state = State::Flashing;
                 create.set_display_content("Flashing firmware...");

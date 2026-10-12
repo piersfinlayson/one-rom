@@ -45,6 +45,7 @@ mod error;
 mod fetch;
 mod flash;
 pub mod identity;
+mod image;
 mod otp;
 mod plugin;
 mod signers;
@@ -61,6 +62,12 @@ pub use error::{Error, PluginError};
 pub use fetch::{Fetch, LocalFetch};
 // The flash operations that program an image file.
 pub use flash::{FlashPlan, FlashPlanError, FlashStep};
+// Assembling an image file from a build, and checking an image file before it
+// is programmed.
+pub use image::{
+    CheckedImage, ImagePart, ImageProblem, ImageTooLarge, assemble_image, check_image,
+    image_file_text,
+};
 // A board's size. onerom-config declares it because firmware properties
 // contain one.
 pub use onerom_config::hw::{BoardSize, BoardSizeError};

@@ -11,8 +11,8 @@ use onerom_config::hw::{Board, BoardSize};
 use onerom_config::mcu::RP235X_BASE_FLASH;
 use onerom_config::mcu::Variant;
 use onerom_config::pin::ReservedPins;
+use onerom_fw::get_rom_files_async;
 use onerom_fw::net::{Release, Releases, fetch_license_async};
-use onerom_fw::{assemble_firmware, get_rom_files_async, validate_sizes};
 use onerom_fw_parser::readers::MemoryReader;
 use onerom_fw_parser::{ParseError, ParsedDevice, SlotKind};
 use onerom_gen::ChipSetType;
@@ -29,8 +29,8 @@ use onerom_metadata::{ONEROM_INFO_METADATA_OFFSET, ONEROM_INFO_OFFSET};
 use crate::args;
 use crate::args::hardware::supported_size;
 use crate::utils::{check_fire_board, resolve_board, resolve_firmware_output};
-use onerom_app::LocalFetch;
-use onerom_cli::error::image_file_warning;
+use onerom_app::{CheckedImage, ImageProblem, LocalFetch, assemble_image};
+use onerom_cli::error::image_problem_warning;
 use onerom_cli::image::parse_firmware;
 use onerom_cli::plugin::{
     PluginNote, PluginSpec, ResolvedPlugin, check_config_plugins, resolve_config_plugins,
@@ -128,81 +128,50 @@ fn apply_global_overrides(json: String, global_config: &GlobalConfig) -> Result<
 
 // ------------------------------- Firmware parsing and sizing -------------------------------
 
-/// Check an assembled image before it is flashed, and hand back the parse.
-///
-/// The parse is what the checks are made of, so returning it saves a caller with
-/// further questions about the image reading the same bytes a second time.
-#[allow(clippy::collapsible_if)]
-pub async fn verify_assembled_firmware(
+/// Returns the image and its parse, or fails on the first problem `checked`
+/// found. With `force` each problem prints as a warning instead. `board` is the
+/// board the image was checked for.
+pub fn accept_image(
     options: &Options,
-    data: &[u8],
+    checked: CheckedImage,
     force: bool,
-    expected_board: Option<Board>,
-) -> Result<ParsedDevice, Error> {
-    let info = parse_firmware(data).await;
-
-    if let (Some(expected), Some(actual)) = (expected_board, info.get_board()) {
-        if actual != expected {
-            refuse_board_mismatch(expected, actual, force)?;
-        } else if options.verbose {
-            println!("Board match confirmed: {}", expected.name());
-        }
+    board: Option<Board>,
+) -> Result<(Vec<u8>, ParsedDevice), Error> {
+    let CheckedImage {
+        image,
+        device,
+        problems,
+        ..
+    } = checked;
+    if options.verbose
+        && let (Some(expected), Some(actual)) = (board, device.get_board())
+        && actual == expected
+    {
+        println!("Board match confirmed: {}", expected.name());
     }
 
-    if !info.parse_errors().is_empty() {
-        let detail = info
-            .parse_errors()
-            .iter()
-            .map(|e| format!("  {e}"))
-            .collect::<Vec<_>>()
-            .join("\n");
-        if force {
-            eprintln!("Warning: assembled firmware has parse errors (continuing due to --force):");
-            eprintln!("{detail}");
-        } else {
-            return Err(Error::FirmwareValidation(detail));
+    // A clean parse is reported between the board check and the image file
+    // check, the order check_image runs them in.
+    let mut parsed = options.verbose && device.parse_errors().is_empty();
+    for problem in problems {
+        if parsed && !matches!(problem, ImageProblem::BoardMismatch { .. }) {
+            print_parsed(&device);
+            parsed = false;
         }
-    } else if options.verbose {
-        if let Some(version) = info.version() {
-            println!(
-                "Assembled firmware version {} parsed successfully with no errors",
-                version
-            );
+        if !force {
+            return Err(problem.into());
         }
+        eprintln!("{}", image_problem_warning(&problem));
     }
-
-    refuse_image_file(&info, data.len(), force)?;
-    Ok(info)
+    if parsed {
+        print_parsed(&device);
+    }
+    Ok((image, device))
 }
 
-/// Refuses an image for board `actual` where `expected` was asked for. With
-/// `force` it warns instead.
-fn refuse_board_mismatch(expected: Board, actual: Board, force: bool) -> Result<(), Error> {
-    if force {
-        eprintln!(
-            "Warning: firmware board type '{}' does not match expected '{}' (continuing due to --force)",
-            actual.name(),
-            expected.name()
-        );
-        Ok(())
-    } else {
-        Err(Error::BoardMismatch {
-            firmware: actual.name().to_string(),
-            expected: expected.name().to_string(),
-        })
-    }
-}
-
-/// Refuses an image file whose slots don't match its length or the flash
-/// chips. With `force` it warns instead.
-fn refuse_image_file(info: &ParsedDevice, len: usize, force: bool) -> Result<(), Error> {
-    match info.check_image_file(len, FlashChips::first_for(Variant::RP2350)) {
-        Ok(()) => Ok(()),
-        Err(e) if force => {
-            eprintln!("{}", image_file_warning(&e));
-            Ok(())
-        }
-        Err(e) => Err(Error::ImageFile(e)),
+fn print_parsed(device: &ParsedDevice) {
+    if let Some(version) = device.version() {
+        println!("Assembled firmware version {version} parsed successfully with no errors");
     }
 }
 
@@ -316,7 +285,7 @@ pub async fn build_rom_image(
     size: BoardSize,
     force: bool,
     before_fetch: impl FnOnce(&Config) -> Result<(), Error>,
-) -> Result<(FirmwareProperties, Option<Vec<u8>>, Option<Vec<u8>>, String), Error> {
+) -> Result<(FirmwareProperties, Vec<u8>, Vec<u8>, String), Error> {
     let overrides = ConfigOverrides::default().allow_turbo_boot_multi_slot(force);
 
     let (mut builder, warnings) =
@@ -375,7 +344,7 @@ pub async fn build_rom_image(
 
     let fw_props = FirmwareProperties::new(version, board, mcu, ServeAlg::default(), true)?
         .with_board_size(size);
-    let (metadata, image_data) = builder.build(fw_props).map_err(|e| {
+    let (metadata, roms) = builder.build(fw_props).map_err(|e| {
         // `firmware build` adds advice to this one.
         if matches!(e, GenError::SlotDoesNotFit { .. }) {
             Error::SlotDoesNotFit {
@@ -387,21 +356,11 @@ pub async fn build_rom_image(
         }
     })?;
 
-    let metadata = if metadata.is_empty() {
-        None
-    } else {
-        Some(metadata)
-    };
-    let image_data = if image_data.is_empty() {
-        None
-    } else {
-        Some(image_data)
-    };
     let desc = builder
         .description_for_board(board)
         .map_err(onerom_fw::Error::build)?;
 
-    Ok((fw_props, metadata, image_data, desc))
+    Ok((fw_props, metadata, roms, desc))
 }
 
 /// The warning for ROM slots that can't be selected with the image select
@@ -605,7 +564,7 @@ pub async fn cmd_build(
         }
     }
 
-    let (fw_props, metadata, image_data, desc) = build_rom_image(
+    let (fw_props, metadata, roms, desc) = build_rom_image(
         options,
         &config_json,
         version,
@@ -618,11 +577,9 @@ pub async fn cmd_build(
     .await
     .map_err(|e| advise_second_chip(e, board, mcu, size, version))?;
 
-    validate_sizes(&fw_props, &firmware_data, &metadata, &image_data)?;
-
-    let assembled = assemble_firmware(firmware_data, metadata, image_data)?;
+    let checked = assemble_image(&fw_props, firmware_data, metadata, roms).await?;
+    let (assembled, _) = accept_image(options, checked, args.force, Some(board))?;
     let size = assembled.len();
-    verify_assembled_firmware(options, &assembled, args.force, Some(board)).await?;
 
     let out = resolve_firmware_output(
         &args.output,
@@ -1304,6 +1261,7 @@ mod tests {
     use crate::test_board::{
         IMAGE_27C400, base_firmware, image_file, in_turn, move_slot, original_image, shows,
     };
+    use onerom_app::check_image;
     use onerom_metadata::FLASH_CS1_BASE_ADDR;
 
     /// `chips --board` lists every chip type the board can emulate, which is
@@ -1364,7 +1322,7 @@ mod tests {
 
     #[tokio::test]
     async fn an_image_on_the_first_chip_is_read_from_the_first_chip() {
-        let file = image_file(BoardSize::M, 3);
+        let file = image_file(BoardSize::M, 3).await;
         assert!(file.len() <= FIRST_CHIP);
         let image = parse_firmware(&file).await;
         assert!(
@@ -1385,11 +1343,10 @@ mod tests {
     /// length.
     #[tokio::test]
     async fn an_image_using_the_second_chip_is_read_from_both_chips() {
-        let file = image_file(BoardSize::L, 4);
+        let file = image_file(BoardSize::L, 4).await;
         assert_eq!(file.len(), FIRST_CHIP + IMAGE_27C400);
-        let image = verify_assembled_firmware(&options(), &file, false, Some(Board::Fire40A))
-            .await
-            .unwrap();
+        let checked = check_image(file, Some(Board::Fire40A)).await;
+        let (_, image) = accept_image(&options(), checked, false, Some(Board::Fire40A)).unwrap();
         assert!(
             image.parse_errors().is_empty(),
             "{:?}",
@@ -1404,10 +1361,10 @@ mod tests {
     #[tokio::test]
     async fn an_image_file_that_doesnt_match_its_slots_needs_force() {
         use onerom_fw_parser::ImageFileError;
-        let mut short = image_file(BoardSize::M, 3);
+        let mut short = image_file(BoardSize::M, 3).await;
         short.truncate(short.len() - 4096);
-        let damaged = move_slot(image_file(BoardSize::M, 3), 2, 0x1030_0000).await;
-        let mut long = image_file(BoardSize::M, 3);
+        let damaged = move_slot(image_file(BoardSize::M, 3).await, 2, 0x1030_0000).await;
+        let mut long = image_file(BoardSize::M, 3).await;
         long.resize(FIRST_CHIP + 4096, 0xFF);
         for (file, expected) in [
             (short, ImageFileError::TooShort { short_by: 4096 }),
@@ -1420,18 +1377,14 @@ mod tests {
             ),
             (long, ImageFileError::TooLong { too_long_by: 4096 }),
         ] {
-            let error = verify_assembled_firmware(&options(), &file, false, None)
-                .await
-                .unwrap_err();
+            let checked = check_image(file.clone(), None).await;
+            let error = accept_image(&options(), checked, false, None).unwrap_err();
             assert!(
                 matches!(&error, Error::ImageFile(e) if *e == expected),
                 "{error:?}"
             );
-            assert!(
-                verify_assembled_firmware(&options(), &file, true, None)
-                    .await
-                    .is_ok()
-            );
+            let checked = check_image(file, None).await;
+            assert!(accept_image(&options(), checked, true, None).is_ok());
         }
     }
 
@@ -1482,9 +1435,11 @@ mod tests {
     fn board_mismatch_says_which_board_is_which() {
         let expected = Board::try_from_str("fire-24-f").unwrap();
         let actual = Board::try_from_str("fire-28-a").unwrap();
-        let msg = refuse_board_mismatch(expected, actual, false)
-            .unwrap_err()
-            .to_string();
+        let msg = Error::from(ImageProblem::BoardMismatch {
+            image: actual,
+            expected,
+        })
+        .to_string();
         let text =
             "Firmware board type 'fire-28-a' does not match the expected board type 'fire-24-f'";
         assert!(msg.contains(text), "{msg}");
@@ -1494,7 +1449,7 @@ mod tests {
     /// size followed by its chip type and image source.
     #[tokio::test]
     async fn a_built_images_summary_lists_its_mcu_and_roms() {
-        let file = image_file(BoardSize::M, 2);
+        let file = image_file(BoardSize::M, 2).await;
         let image = parse_firmware(&file).await;
         let lines = firmware_summary(false, &image, &file).await.unwrap();
         assert!(shows(&lines, &["fire-40-a"]), "{lines:#?}");
@@ -1514,7 +1469,7 @@ mod tests {
     /// parse errors are printed.
     #[tokio::test]
     async fn base_firmware_is_told_apart_from_a_damaged_image() {
-        let built = image_file(BoardSize::M, 1);
+        let built = image_file(BoardSize::M, 1).await;
         let mut cut_off = built.clone();
         cut_off.truncate(FIRMWARE_SIZE + 0x100);
         for (name, file, base, warned) in [

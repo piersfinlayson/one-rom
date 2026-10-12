@@ -1202,7 +1202,7 @@ mod tests {
 
     /// The ROM slots an image of 2364 `sets` for `board` has using `pin`.
     async fn slots_using(board: Board, sets: &[&str], pin: &str) -> Vec<usize> {
-        let image = image_2364_sets(board, sets, &[]);
+        let image = image_2364_sets(board, sets, &[]).await;
         let image = onerom_cli::image::parse_firmware(&image).await;
         let pin = parse_pin(pin).unwrap().resolve(Some(&board)).unwrap();
         onerom_cli::image::slots_using(&image, pin.gpio())
@@ -1243,7 +1243,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_reset_pin_a_slot_uses_is_refused() {
-        let image = image_2364_sets(board(), &["single", "banked", "banked"], &[]);
+        let image = image_2364_sets(board(), &["single", "banked", "banked"], &[]).await;
         let image = onerom_cli::image::parse_firmware(&image).await;
         let pin = |name: &str| parse_pin(name).unwrap().resolve(Some(&board())).unwrap();
 

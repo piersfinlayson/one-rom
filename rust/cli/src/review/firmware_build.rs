@@ -6,7 +6,7 @@
 
 use tempfile::TempDir;
 
-use super::{command_of, failed};
+use super::{command_of, failed, written_failure};
 use crate::args::Commands;
 use crate::args::firmware::FirmwareCommands;
 use crate::firmware::cmd_build;
@@ -123,6 +123,32 @@ async fn a_set_that_doesnt_fit_with_firmware_before_0_8_0() {
     let line =
         "onerom firmware build --board fire-40-a --config sets.json --base-firmware base.bin";
     build(line, &files).await;
+}
+
+/// An image larger than an M fire-40-a's flash. The builder stops a set that
+/// doesn't fit before the image is assembled, so this is written from the code.
+#[tokio::test]
+async fn an_image_larger_than_the_flash() {
+    use onerom_config::fw::{FirmwareProperties, FirmwareVersion, ServeAlg};
+    use onerom_config::hw::{Board, BoardSize};
+    use onerom_config::mcu::Variant;
+    use onerom_gen::{FIRMWARE_SIZE, MAX_METADATA_LEN};
+
+    println!("### an image 4KB larger than an M fire-40-a's flash");
+    let props = FirmwareProperties::new(
+        FirmwareVersion::new(0, 8, 0, 0),
+        Board::Fire40A,
+        Variant::RP2350,
+        ServeAlg::Default,
+        false,
+    )
+    .unwrap()
+    .with_board_size(BoardSize::M);
+    let roms = vec![0; 2 * 1024 * 1024 - FIRMWARE_SIZE - MAX_METADATA_LEN + 4096];
+    let error = onerom_app::assemble_image(&props, base_firmware(8), vec![0; 1024], roms)
+        .await
+        .unwrap_err();
+    written_failure(&error.into());
 }
 
 /// Three sets for L with v0.7.0 firmware, which supports only M. They'd fit

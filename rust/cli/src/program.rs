@@ -7,15 +7,15 @@
 use onerom_config::fw::FirmwareVersion;
 use onerom_config::hw::{Board, BoardSize};
 use onerom_config::mcu::Variant;
-use onerom_fw::{assemble_firmware, validate_sizes};
 
 use crate::args;
 use crate::firmware::{
-    acquire_firmware, build_rom_image, confirm_slot_overrides, resolve_config_json,
-    verify_assembled_firmware,
+    accept_image, acquire_firmware, build_rom_image, confirm_slot_overrides, resolve_config_json,
 };
 use crate::utils::{check_device, check_fire_board_optional, resolve_board};
-use onerom_app::{FlashPlan, FlashStep, read_commissioning};
+use onerom_app::{
+    CheckedImage, FlashPlan, FlashStep, assemble_image, check_image, read_commissioning,
+};
 use onerom_cli::device::select_device_by_chip_id;
 use onerom_cli::error::plan_error;
 use onerom_cli::otp::{PicobootOtp, check_board};
@@ -56,19 +56,21 @@ fn validate_program_args(args: &args::program::ProgramArgs) -> Result<(), Error>
 
 // ------------------------------- Image acquisition -------------------------------
 
-/// Acquire the complete firmware image to flash, from any of the supported sources.
+/// Acquire the complete firmware image to flash, from any of the supported
+/// sources, and check it for `board`.
 async fn acquire_program_image(
     options: &Options,
     args: &args::program::ProgramArgs,
     board: &Option<Board>,
     mcu: &Variant,
-) -> Result<Vec<u8>, Error> {
+) -> Result<CheckedImage, Error> {
     if let Some(firmware) = &args.firmware {
-        return load_prebuilt_firmware(options, firmware);
+        return Ok(check_image(load_prebuilt_firmware(options, firmware)?, *board).await);
     }
 
     if is_bare_base_firmware(args) {
-        return load_bare_base_firmware(options, args.base_firmware.as_deref().unwrap());
+        let data = load_bare_base_firmware(options, args.base_firmware.as_deref().unwrap())?;
+        return Ok(check_image(data, *board).await);
     }
 
     build_and_assemble(options, args, board, mcu).await
@@ -99,7 +101,7 @@ async fn build_and_assemble(
     args: &args::program::ProgramArgs,
     board: &Option<Board>,
     mcu: &Variant,
-) -> Result<Vec<u8>, Error> {
+) -> Result<CheckedImage, Error> {
     let board = board.as_ref().ok_or(Error::NoBoardOrDevice)?;
 
     // Acquire firmware first — version is needed for plugin compat checking.
@@ -140,7 +142,7 @@ async fn build_and_assemble(
 
     let device = options.device.as_ref().ok_or(Error::NoDevice)?;
     let size = image_size(version, device.flash_chips().size());
-    let (fw_props, metadata, image_data, desc) = build_rom_image(
+    let (fw_props, metadata, roms, desc) = build_rom_image(
         options,
         &config_json,
         version,
@@ -153,13 +155,13 @@ async fn build_and_assemble(
     )
     .await?;
 
-    validate_sizes(&fw_props, &firmware_data, &metadata, &image_data)?;
+    let checked = assemble_image(&fw_props, firmware_data, metadata, roms).await?;
 
     if options.verbose && !desc.is_empty() {
         println!("ROM configuration:\n---\n{desc}\n---");
     }
 
-    assemble_firmware(firmware_data, metadata, image_data).map_err(Into::into)
+    Ok(checked)
 }
 
 /// The size to build an image for a `size` One ROM with firmware `version`.
@@ -475,8 +477,8 @@ pub async fn cmd_program(
         None => None,
     };
 
-    let data = acquire_program_image(options, args, &board, &mcu).await?;
-    let image = verify_assembled_firmware(options, &data, args.force, board).await?;
+    let checked = acquire_program_image(options, args, &board, &mcu).await?;
+    let (data, image) = accept_image(options, checked, args.force, board)?;
 
     // onerom program sets a board up as One ROM.
     if let Some(file) = &args.firmware
@@ -489,9 +491,8 @@ pub async fn cmd_program(
     // built one has already answered, before its ROMs were fetched.
     if args.firmware.is_some() || is_bare_base_firmware(args) {
         // An image whose metadata did not parse cannot answer - and
-        // verify_assembled_firmware has already said so, or been forced past -
-        // so it is left alone rather than refused on a reading nothing stands
-        // behind.
+        // accept_image has already said so, or been forced past - so it is
+        // left alone rather than refused on a reading nothing stands behind.
         let usb_capable = !image.parse_errors().is_empty() || image.is_usb_run_capable();
         refuse_unservable_request(args, usb_capable)?;
     }
@@ -669,8 +670,8 @@ mod tests {
                 .resolve(Some(&Board::Fire24F))
                 .unwrap()
         };
-        let unreserved = parse_firmware(&image_2364(1, &[])).await;
-        let reserved = parse_firmware(&image_2364(1, &["x1", "sel_c"])).await;
+        let unreserved = parse_firmware(&image_2364(1, &[]).await).await;
+        let reserved = parse_firmware(&image_2364(1, &["x1", "sel_c"]).await).await;
 
         let warning = unreserved_reset_pin(&unreserved, pin("x1")).unwrap();
         assert!(holds(&warning, &["X1", "x1"]), "{warning}");

@@ -50,7 +50,7 @@ async fn reserved_pins() {
     use crate::test_board::image_2364;
     use onerom_cli::image::parse_firmware;
 
-    let image = parse_firmware(&image_2364(3, &["sel_c", "x1"])).await;
+    let image = parse_firmware(&image_2364(3, &["sel_c", "x1"]).await).await;
     println!("$ onerom inspect slots");
     println!("~ One ROM Fire 24 F - Firmware: v0.8.0 State: Running Serial: DE3F9C232F655B6B");
     println!("  {}", slot_count_line(3, Some(0), false));

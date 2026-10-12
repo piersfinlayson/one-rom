@@ -8,6 +8,7 @@ use iced::{Element, Subscription, Task, time};
 use log::{debug, error, info, trace, warn};
 use std::time::Duration;
 
+use onerom_app::assemble_image;
 use onerom_cli::CliFetch;
 use onerom_cli::plugin::{PluginNote, check_config_plugins, resolve_config_plugins};
 use onerom_cli::slot::has_system_plugin;
@@ -16,9 +17,7 @@ use onerom_config::hw::Board;
 use onerom_config::mcu::Variant as McuVariant;
 use onerom_fw::get_rom_files_async;
 use onerom_fw::net::{Release, Releases};
-use onerom_gen::{
-    Builder, Error as GenError, FIRMWARE_SIZE, FlashChips, MAX_METADATA_LEN, second_chip_supported,
-};
+use onerom_gen::{Builder, Error as GenError, FlashChips, second_chip_supported};
 
 use crate::analyse::Analyse;
 use crate::app::AppMessage;
@@ -178,11 +177,13 @@ impl StudioTab {
 /// Image built by Studio
 #[derive(Debug, Clone)]
 pub struct Image {
-    firmware: Vec<u8>,
+    data: Vec<u8>,
 
-    metadata: Vec<u8>,
+    firmware_len: usize,
 
-    roms: Vec<u8>,
+    metadata_len: usize,
+
+    roms_len: usize,
 
     usb_run_capable: bool,
 }
@@ -192,23 +193,15 @@ impl std::fmt::Display for Image {
         write!(
             f,
             "Image({}/{}/{}",
-            self.firmware.len(),
-            self.metadata.len(),
-            self.roms.len()
+            self.firmware_len, self.metadata_len, self.roms_len
         )
     }
 }
 
-#[allow(dead_code)]
 impl Image {
-    /// Returns just the required portion of the firmware image
-    pub fn firmware_skinny(&self) -> &[u8] {
-        &self.firmware
-    }
-
     /// Returns the length of the firmware portion
     pub fn firmware_len(&self) -> usize {
-        self.firmware.len()
+        self.firmware_len
     }
 
     /// Whether the image includes a system plugin, which keeps a running
@@ -217,79 +210,24 @@ impl Image {
         self.usb_run_capable
     }
 
-    /// Returns the maximum firmware length (48KB)
-    pub const fn max_firmware_len() -> usize {
-        FIRMWARE_SIZE
-    }
-
-    /// Returns offset from start of flash the firmware is located
-    pub const fn firmware_offset() -> usize {
-        0
-    }
-
-    /// Returns the full firmware portion padded to 48KB
-    pub fn firmware_full(&self) -> Vec<u8> {
-        let mut fw = vec![0xFF_u8; Self::max_firmware_len()];
-        let skinny = self.firmware_skinny();
-        fw[..skinny.len()].copy_from_slice(skinny);
-        fw
-    }
-
-    /// Returns the metadata portion
-    pub fn metadata_skinny(&self) -> &[u8] {
-        &self.metadata
-    }
-
     /// Returns the length of the metadata portion
     pub fn metadata_len(&self) -> usize {
-        self.metadata.len()
-    }
-
-    /// Returns maximum metadata length (16KB)
-    pub const fn max_metadata_len() -> usize {
-        MAX_METADATA_LEN
-    }
-
-    /// Returns offset from start of flash the metadata is located
-    pub const fn metadata_offset() -> usize {
-        FIRMWARE_SIZE
-    }
-
-    /// Returns the full metadata portion padded to 16KB
-    pub fn metadata_full(&self) -> Vec<u8> {
-        let mut md = vec![0xFF_u8; Self::max_metadata_len()];
-        let skinny = self.metadata_skinny();
-        md[..skinny.len()].copy_from_slice(skinny);
-        md
-    }
-
-    /// Returns the ROMs portion
-    pub fn roms(&self) -> &[u8] {
-        &self.roms
+        self.metadata_len
     }
 
     /// Returns the length of the ROMs portion
     pub fn roms_len(&self) -> usize {
-        self.roms.len()
-    }
-
-    /// Returns offset from start of flash the ROMs are located
-    pub const fn roms_offset() -> usize {
-        FIRMWARE_SIZE + MAX_METADATA_LEN
+        self.roms_len
     }
 
     /// Returns full image as would be flashed to device
-    pub fn full_image(&self) -> Vec<u8> {
-        let mut image = Vec::new();
-        image.extend_from_slice(&self.firmware_full());
-        image.extend_from_slice(&self.metadata_full());
-        image.extend_from_slice(&self.roms);
-        image
+    pub fn full_image(&self) -> &[u8] {
+        &self.data
     }
 
     /// Returns size of full image as would be flashed to device
     pub fn full_image_len(&self) -> usize {
-        Self::max_firmware_len() + Self::max_metadata_len() + self.roms_len()
+        self.data.len()
     }
 }
 
@@ -798,17 +736,28 @@ impl Studio {
             }
         };
 
+        let (fw_len, md_len, roms_len) = (firmware.len(), metadata.len(), roms.len());
+        let checked = match assemble_image(&props, firmware, metadata, roms).await {
+            Ok(checked) => checked,
+            Err(e) => {
+                warn!("Failed to assemble image: {e}");
+                return CreateMessage::BuildImageResult(Err(e.to_string())).into();
+            }
+        };
+        if let Some(problem) = checked.problems.first() {
+            warn!("Built image failed its check: {problem}");
+            return CreateMessage::BuildImageResult(Err(problem.to_string())).into();
+        }
+
         // Store image
         let image = Image {
-            firmware,
-            metadata,
-            roms,
+            data: checked.image,
+            firmware_len: fw_len,
+            metadata_len: md_len,
+            roms_len,
             usb_run_capable: has_system_plugin(builder.config()),
         };
         let total_len = image.full_image_len();
-        let fw_len = image.firmware_len();
-        let md_len = image.metadata_len();
-        let roms_len = image.roms_len();
 
         // Get description
         let desc = builder.description();

@@ -4,9 +4,9 @@
 
 //! Shared error type for the One ROM CLI library.
 
-use onerom_app::FlashPlanError;
+use onerom_app::{FlashPlanError, ImageProblem};
 use onerom_config::fw::FirmwareVersion;
-use onerom_fw_parser::ImageFileError;
+use onerom_fw_parser::{ImageFileError, ParseError};
 use onerom_gen::FileFormat;
 use onerom_metadata::{MaybeKnown, OneromBoardSize};
 
@@ -14,6 +14,8 @@ use crate::device::flash_chips;
 use crate::hint;
 use crate::otp::{board_size_text, escape_controls};
 use crate::plugin::{CompatibleRelease, PluginType, PluginVersion};
+
+pub use onerom_app::image_file_text;
 
 /// Render the way out of a plugin incompatibility as a further indented line.
 ///
@@ -853,24 +855,6 @@ fn image_file_error_text(error: &ImageFileError) -> String {
     )
 }
 
-/// The text for an image file whose slots don't match its length or the flash
-/// chips. The advice isn't included.
-pub fn image_file_text(error: &ImageFileError) -> String {
-    let (fault, detail) = match *error {
-        ImageFileError::TooShort { short_by } => {
-            ("too short", format!("It ends {short_by} bytes short"))
-        }
-        ImageFileError::BadAddress { slot, addr } => (
-            "damaged",
-            format!("Slot {slot} is at {addr:#010x}, which isn't a valid address"),
-        ),
-        ImageFileError::TooLong { too_long_by } => {
-            ("too long", format!("It is {too_long_by} bytes too long"))
-        }
-    };
-    format!("Cannot use this image file because it is {fault}.\n  {detail}.")
-}
-
 /// The error for an image of `image_len` bytes that [`FlashPlan::new`] fails
 /// to plan on a board whose size is `size`.
 ///
@@ -899,11 +883,37 @@ pub fn plan_error(
 /// The warning `--force` shows in place of `Error::ImageFile(error)`.
 pub fn image_file_warning(error: &ImageFileError) -> String {
     let reason = match *error {
-        ImageFileError::TooShort { short_by } => format!("ends {short_by} bytes short"),
+        ImageFileError::TooShort { short_by } => format!("is {short_by} bytes short"),
         ImageFileError::BadAddress { .. } => "is damaged".to_string(),
         ImageFileError::TooLong { too_long_by } => format!("is {too_long_by} bytes too long"),
     };
     format!("Warning: This image file {reason} (continuing due to --force)")
+}
+
+/// The warning printed under `--force` in place of the error for `problem`.
+pub fn image_problem_warning(problem: &ImageProblem) -> String {
+    match problem {
+        ImageProblem::BoardMismatch { image, expected } => format!(
+            "Warning: firmware board type '{}' does not match expected '{}' (continuing due to --force)",
+            image.name(),
+            expected.name()
+        ),
+        ImageProblem::ParseErrors(errors) => format!(
+            "Warning: assembled firmware has parse errors (continuing due to --force):\n{}",
+            parse_error_detail(errors)
+        ),
+        ImageProblem::ImageFile(error) => image_file_warning(error),
+        _ => format!("Warning: {problem} (continuing due to --force)"),
+    }
+}
+
+/// Each of `errors` on its own indented line.
+fn parse_error_detail(errors: &[ParseError]) -> String {
+    errors
+        .iter()
+        .map(|e| format!("  {e}"))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// `error`'s text as a sentence, with a capital letter and a full stop.
@@ -934,6 +944,28 @@ impl From<crate::picobootx::DecodeError> for Error {
 impl From<onerom_fw::Error> for Error {
     fn from(e: onerom_fw::Error) -> Self {
         Self::Other(e.to_string())
+    }
+}
+
+impl From<onerom_app::ImageTooLarge> for Error {
+    fn from(e: onerom_app::ImageTooLarge) -> Self {
+        Self::Other(e.to_string())
+    }
+}
+
+impl From<ImageProblem> for Error {
+    fn from(problem: ImageProblem) -> Self {
+        match problem {
+            ImageProblem::BoardMismatch { image, expected } => Self::BoardMismatch {
+                firmware: image.name().to_string(),
+                expected: expected.name().to_string(),
+            },
+            ImageProblem::ParseErrors(errors) => {
+                Self::FirmwareValidation(parse_error_detail(&errors))
+            }
+            ImageProblem::ImageFile(error) => Self::ImageFile(error),
+            _ => Self::Other(problem.to_string()),
+        }
     }
 }
 

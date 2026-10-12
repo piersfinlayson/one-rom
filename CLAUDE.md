@@ -63,8 +63,8 @@ go-ahead before editing this file.
 - **One entry per user-visible change, not per commit.** A feature built over
   several commits — device side, plugin, CLI — is one entry. A correction made
   before release folds into the entry for the thing it corrects.
-- An entry exists where a user or a downstream crate can see the change.
-  Refactors, test-harness fixes, CI and this file are invisible to both.
+- An entry exists where a user can see the change.
+  Refactors, test-harness fixes, CI and this file are invisible to a user.
 - A user-facing change goes under the current in-development heading in the
   repo-root [CHANGELOG.md](/CHANGELOG.md) **and** in the affected component's
   own: `rust/cli/CHANGELOG.md`, `rust/studio/CHANGELOG.md`,
@@ -78,7 +78,8 @@ go-ahead before editing this file.
   Its "To publish" list under the current in-development heading owns in-flight
   bumps. A crate already listed there is bumped-but-unpublished: add the
   CHANGELOG entry and leave the version as it stands. Crates without their own
-  `CHANGELOG.md` (`onerom-metadata`, `onerom-gen`, …) are tracked there alone.
+  `CHANGELOG.md` (`onerom-metadata`, `onerom-gen`, …) appear there only in the
+  "To publish" list.
 - These crates are on crates.io with external consumers, so **SemVer governs**.
   A non-backwards-compatible public-API change takes a **minor** bump (pre-1.0:
   `0.6.x → 0.7.0`). Breaking means altering or removing a public item's

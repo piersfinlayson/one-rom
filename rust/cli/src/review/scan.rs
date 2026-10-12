@@ -191,7 +191,7 @@ async fn reserved_pins() {
     use crate::test_board::image_2364;
     use onerom_cli::image::parse_firmware;
 
-    let image = parse_firmware(&image_2364(3, &["sel_c", "x1"])).await;
+    let image = parse_firmware(&image_2364(3, &["sel_c", "x1"]).await).await;
     for verbose in [false, true] {
         println!(
             "$ onerom scan --slots{}",

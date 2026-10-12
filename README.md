@@ -321,7 +321,7 @@ published are on crates.io, for host-side Rust development.
 |-------|:---------:|----------------|
 | [`onerom-gen`](rust/gen) | ✓ | Generates ROM images and firmware metadata.  The heart of the toolchain — turns a config plus some ROM files into something flashable. |
 | [`onerom-config`](rust/config) | ✓ | The config model: chip types, board definitions, pin maps, JSON schema. |
-| [`onerom-fw`](rust/fw) | ✓ | Composes a complete firmware image, resolving and fetching base firmware from the release manifest. |
+| [`onerom-fw`](rust/fw) | ✓ | Fetches One ROM base firmware and ROM images. |
 | [`onerom-fw-parser`](rust/fw-parser) | ✓ | Reads metadata back out of a firmware binary — what chips, what board, what version. |
 | [`onerom-metadata`](rust/metadata) | ✓ | The embedded metadata schema itself. |
 | [`onerom-lab-metadata`](rust/lab-metadata) | ✓ | One ROM Lab's metadata structures. |

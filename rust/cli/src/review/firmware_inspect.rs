@@ -62,13 +62,13 @@ fn help() {
 /// 27C400 chip sets.
 #[tokio::test]
 async fn a_built_image() {
-    inspect_both(&image_file(BoardSize::M, 2)).await;
+    inspect_both(&image_file(BoardSize::M, 2).await).await;
 }
 
 /// A fire-24-f image with SEL_C and X1 reserved.
 #[tokio::test]
 async fn an_image_with_reserved_pins() {
-    inspect_both(&image_2364(1, &["sel_c", "x1"])).await;
+    inspect_both(&image_2364(1, &["sel_c", "x1"]).await).await;
 }
 
 /// v0.8.0 base firmware, which doesn't contain metadata.
@@ -80,7 +80,7 @@ async fn base_firmware_alone() {
 /// A built image cut off part way through its metadata.
 #[tokio::test]
 async fn an_image_cut_off_in_its_metadata() {
-    let mut image = image_file(BoardSize::M, 1);
+    let mut image = image_file(BoardSize::M, 1).await;
     image.truncate(FIRMWARE_SIZE + 0x100);
     inspect("onerom firmware inspect --firmware image.bin", &image).await;
 }

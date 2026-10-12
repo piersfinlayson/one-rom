@@ -9,6 +9,7 @@ repository = "https://github.com/piersfinlayson/one-rom"
 
 [dependencies]
 onerom-config = { workspace = true }
+onerom-fw-parser = { workspace = true }
 onerom-gen = { workspace = true }
 onerom-metadata = { workspace = true }
 
@@ -34,7 +35,7 @@ thiserror = "2"
 # requires it today. Host applications that are themselves `std` (the CLI,
 # Studio) may enable it, but the core logic must remain buildable without it.
 default = []
-std = ["serde/std", "serde_json/std"]
+std = ["serde/std", "serde_json/std", "onerom-fw-parser/std"]
 
 [dev-dependencies]
 onerom-config = { workspace = true }

@@ -207,7 +207,7 @@ pub fn config_27c400(sets: usize, dir: &Path) -> String {
 
 /// An image file built for a `size` fire-40-a with v0.8.0 firmware from
 /// [`base_firmware`]. It holds `sets` single 27C400 chip sets.
-pub fn image_file(size: BoardSize, sets: usize) -> Vec<u8> {
+pub async fn image_file(size: BoardSize, sets: usize) -> Vec<u8> {
     use onerom_config::fw::{FirmwareProperties, FirmwareVersion, ServeAlg};
     use onerom_config::mcu::{Family, Variant};
     use onerom_gen::{Builder, FileData};
@@ -230,8 +230,7 @@ pub fn image_file(size: BoardSize, sets: usize) -> Vec<u8> {
     )
     .unwrap()
     .with_board_size(size);
-    let (metadata, rom_data) = builder.build(props).unwrap();
-    onerom_fw::assemble_firmware(base_firmware(8), Some(metadata), Some(rom_data)).unwrap()
+    assemble(&builder, props).await
 }
 
 pub const IMAGE_2364: usize = 8 * 1024;
@@ -265,17 +264,17 @@ pub fn config_2364(sets: &[&str], dir: &Path, reserved: &[&str]) -> String {
     )
 }
 
-pub fn image_2364(sets: usize, reserved: &[&str]) -> Vec<u8> {
-    image_2364_for(Board::Fire24F, sets, reserved)
+pub async fn image_2364(sets: usize, reserved: &[&str]) -> Vec<u8> {
+    image_2364_for(Board::Fire24F, sets, reserved).await
 }
 
-pub fn image_2364_for(board: Board, sets: usize, reserved: &[&str]) -> Vec<u8> {
-    image_2364_sets(board, &vec!["single"; sets], reserved)
+pub async fn image_2364_for(board: Board, sets: usize, reserved: &[&str]) -> Vec<u8> {
+    image_2364_sets(board, &vec!["single"; sets], reserved).await
 }
 
 /// An image for `board` with a set of 2364s for each of `sets`, as
 /// [`config_2364`] takes them.
-pub fn image_2364_sets(board: Board, sets: &[&str], reserved: &[&str]) -> Vec<u8> {
+pub async fn image_2364_sets(board: Board, sets: &[&str], reserved: &[&str]) -> Vec<u8> {
     use onerom_config::fw::{FirmwareProperties, FirmwareVersion, ServeAlg};
     use onerom_config::mcu::{Family, Variant};
     use onerom_gen::{Builder, FileData};
@@ -294,8 +293,20 @@ pub fn image_2364_sets(board: Board, sets: &[&str], reserved: &[&str]) -> Vec<u8
     }
     let props =
         FirmwareProperties::new(version, board, Variant::RP2350, ServeAlg::Default, false).unwrap();
-    let (metadata, rom_data) = builder.build(props).unwrap();
-    onerom_fw::assemble_firmware(base_firmware(8), Some(metadata), Some(rom_data)).unwrap()
+    assemble(&builder, props).await
+}
+
+/// The image file `builder` builds for `props` with [`base_firmware`].
+async fn assemble(
+    builder: &onerom_gen::Builder,
+    props: onerom_config::fw::FirmwareProperties,
+) -> Vec<u8> {
+    let (metadata, roms) = builder.build(props).unwrap();
+    let checked = onerom_app::assemble_image(&props, base_firmware(8), metadata, roms)
+        .await
+        .unwrap();
+    assert!(checked.problems.is_empty(), "{:?}", checked.problems);
+    checked.image
 }
 
 /// `image`, an [`image_file`], with slot `slot`'s data pointer changed to

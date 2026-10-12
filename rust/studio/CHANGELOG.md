@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.2.5 - unreleased
+
+- Moves to logic shared with the CLI to combine and verify built firmware.
+
 ## v0.2.4 - 2026-10-06
 
 - Rebuilt against the Rust crates released with firmware v0.8.0.
