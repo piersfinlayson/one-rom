@@ -9,6 +9,8 @@ Headline changes in this release:
 In detail:
 - CLI:
   - `--config` on `onerom program` and `onerom firmware build` can be an http(s) URL.
+- Web Programmer:
+  - Moves to logic shared with the CLI to combine and verify built firmware.
 - Studio:
   - Moves to logic shared with the CLI to combine and verify built firmware.
 
