@@ -160,20 +160,7 @@ fn rom_config_row<'a>(
     if let Some(config) = selected
         && !config.is_special()
     {
-        // Show if config has been loaded/downloaded
-        if let Some(config_len) = runtime_info.selected_config_len() {
-            let reload = style.reload_icon(Message::ReloadConfig.into());
-            row = row.push(reload);
-
-            // split into three rows, with number of bytes gold
-            let downloaded_row = row![
-                Style::text_small("(loaded: "),
-                Style::text_small(format!("{}", config_len)).color(Style::COLOUR_DARK_GOLD),
-                Style::text_small(" bytes)"),
-            ]
-            .spacing(0);
-            row = row.push(downloaded_row);
-        }
+        row = row.push(style.reload_icon(Message::ReloadConfig.into()));
     }
 
     let help = style.help_link(AppLink::RomConfigs, "ROM Config Help");

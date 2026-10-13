@@ -22,7 +22,7 @@ use wildmatch::WildMatch;
 use crate::Options;
 use crate::error::Error;
 use crate::otp::{Commissioning, board_size_text};
-use crate::usb::enumerate_devices;
+use crate::usb::{enumerate_devices, enumerate_devices_and_skipped, serial_not_found};
 
 pub use onerom_app::known_board_size;
 
@@ -515,7 +515,7 @@ pub fn matches_serial(serial: Option<&str>, pattern: &str) -> bool {
 /// - No selector, multiple devices found: returns an error listing serials.
 /// - Selector provided: matches against serial number, errors if not found.
 pub async fn select_device(selector: Option<&str>, options: &Options) -> Result<Device, Error> {
-    let devices = enumerate_devices(options).await?;
+    let (devices, skipped) = enumerate_devices_and_skipped(options).await?;
 
     if devices.is_empty() {
         debug!("No devices found");
@@ -543,7 +543,7 @@ pub async fn select_device(selector: Option<&str>, options: &Options) -> Result<
                 .filter(|d| matches_serial(d.serial.as_deref(), pattern))
                 .collect();
             match matched.len() {
-                0 => Err(Error::DeviceNotFound(pattern.to_string())),
+                0 => Err(serial_not_found(pattern, &skipped)),
                 1 => Ok(matched.remove(0)),
                 _ => {
                     let serials: Vec<String> = matched

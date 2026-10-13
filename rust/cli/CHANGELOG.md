@@ -4,12 +4,13 @@
 
 - Reword several error messages and `board` output.
 - `--config` on `program` and `firmware build` can be an http(s) URL.
-- Add `update` which updates a One ROM's firmware version, one ROM image or aplugin.
+- Add `update` which updates a One ROM's firmware version, one ROM image or a plugin.
 - Add `clone`, which copies a One ROM or firmware file to another One ROM.
 - Add `save`, which saves a One ROM's or firmware file's configuration and ROM images to a PC.
 - `firmware inspect` prints `Chip N` instead of `ROM N`.
 - Remove `inspect image`, which wasn't implemented. Use `save`.
 - Fix: `onerom` no longer crashes when its output is piped to a program that exits early, for example `head`.
+- When the One ROM selected with `--serial` can't be opened the error is now "could not be opened", not "not found".
 
 ## v0.5.0 - 2026-10-06
 

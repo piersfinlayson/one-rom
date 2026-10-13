@@ -12,6 +12,7 @@ In detail:
   - `--config` on `onerom program` and `onerom firmware build` can be an http(s) URL.
   - Add `onerom update`, `onerom clone` and `onerom save`.
   - Fix: `onerom` no longer crashes when its output is piped to a program that exits early, for example `head`.
+  - When the One ROM selected with `--serial` can't be opened the error message is now "could not be opened".
 - Web Programmer:
   - Moves to logic shared with the CLI to combine and verify built firmware.
   - The One ROM Builder tab's Load from Device and Load from File buttons copy the configuration and ROM images of a One ROM or firmware file into the One ROM Builder tab.

@@ -13,7 +13,7 @@ use onerom_gen::FlashChips;
 use onerom_metadata::{MaybeKnown, OneromBoardSize};
 
 use super::firmware_build::Files;
-use super::{command_of, failed};
+use super::{command_of, failed, written_failure};
 use crate::firmware::{accept_image, build_rom_image};
 use crate::program::{plan_lines, verify_line};
 use crate::test_board::{image_file, move_slot};
@@ -248,6 +248,23 @@ fn a_reset_host_pin_the_board_uses() {
         Ok(_) => println!("~ (continues)"),
         Err(e) => failed(e),
     }
+}
+
+/// `--serial` selecting a One ROM another program has open, then one that
+/// isn't connected. Finding the One ROM needs USB.
+#[test]
+fn a_serial_one_rom_that_cant_be_used() {
+    use onerom_cli::Error;
+    use onerom_cli::usb::AccessFailure;
+
+    println!("$ onerom program --serial E7E47917A0C2B0CE --firmware image.bin");
+    written_failure(&Error::DeviceInaccessible {
+        serial: "E7E47917A0C2B0CE".to_string(),
+        failure: AccessFailure::NotOpened,
+    });
+    println!();
+    println!("$ onerom program --serial 62CD9AE3C0771A7E --firmware image.bin");
+    written_failure(&Error::DeviceNotFound("62CD9AE3C0771A7E".to_string()));
 }
 
 #[test]
