@@ -3265,4 +3265,82 @@ mod tests {
         }
         build_fire32b(old, BoardSize::M, &["27C040"; 3]).expect("M builds");
     }
+    /// A slot the board doesn't support fails identifying the slot and its chip
+    /// type. A fire-32-b supports a 27C256 but not a 2364, and the layout error
+    /// doesn't have a reason.
+    #[test]
+    fn a_slot_the_board_doesnt_support_is_named() {
+        let json = r#"{ "version": 1, "description": "test", "chip_sets": [
+            { "type": "single", "chips": [{ "file": "a.bin", "type": "27C256" }] },
+            { "type": "single", "chips": [{ "file": "b.bin", "type": "2364", "cs1": "active_low" }] }
+        ] }"#;
+        let version = FirmwareVersion::new(0, 8, 0, 0);
+        let mut builder = Builder::from_json(version, McuFamily::Rp2350, json).unwrap();
+        builder
+            .add_file(FileData::new(0, vec![0; 32 * 1024]))
+            .unwrap();
+        builder
+            .add_file(FileData::new(1, vec![0; 8 * 1024]))
+            .unwrap();
+        let props = FirmwareProperties::new(
+            version,
+            Board::Fire32B,
+            McuVariant::RP2350,
+            ServeAlg::Default,
+            false,
+        )
+        .unwrap();
+        let e = builder.build(props).unwrap_err();
+        assert!(
+            matches!(
+                e,
+                GenError::SlotUnsupported {
+                    slot: 1,
+                    chip_type: onerom_config::chip::ChipType::Chip2364,
+                    board: Board::Fire32B,
+                    reason: None,
+                }
+            ),
+            "{e:?}"
+        );
+    }
+
+    /// A slot the board doesn't support fails with the layout error's reason
+    /// where it has one. A fire-28-c's ROM table is too small for a banked set
+    /// of three 23QL512s.
+    #[test]
+    fn a_slot_the_board_doesnt_support_has_the_reason() {
+        let chip = r#"{ "file": "a.bin", "type": "23QL512", "cs1": "active_low" }"#;
+        let json = format!(
+            r#"{{ "version": 1, "description": "test", "chip_sets": [
+                {{ "type": "banked", "chips": [{chip}, {chip}, {chip}] }}
+            ] }}"#
+        );
+        let version = FirmwareVersion::new(0, 8, 0, 0);
+        let mut builder = Builder::from_json(version, McuFamily::Rp2350, &json).unwrap();
+        builder
+            .add_file(FileData::new(0, vec![0; 64 * 1024]))
+            .unwrap();
+        let props = FirmwareProperties::new(
+            version,
+            Board::Fire28C,
+            McuVariant::RP2350,
+            ServeAlg::Default,
+            false,
+        )
+        .unwrap();
+        let e = builder.build(props).unwrap_err();
+        assert!(
+            matches!(
+                e,
+                GenError::SlotUnsupported {
+                    slot: 0,
+                    board: Board::Fire28C,
+                    reason: Some(_),
+                    ..
+                }
+            ),
+            "{e:?}"
+        );
+    }
 }

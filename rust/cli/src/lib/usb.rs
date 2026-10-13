@@ -825,9 +825,10 @@ fn check_memory_range(
 
 /// Bytes per PICOBOOT transfer in a memory read.
 ///
-/// The endpoint timeout covers a whole transfer, and a running One ROM answers
-/// at around 70KB/s, so a large read has to be split to finish one.
-const READ_CHUNK_BYTES: u32 = 32 * 1024;
+/// The endpoint timeout set in [`open_picoboot`] covers a whole transfer, so a
+/// large read is split. A running One ROM is read at about 750KB/s. 512KB
+/// transfers were no faster.
+pub(crate) const READ_CHUNK_BYTES: u32 = 32 * 1024;
 
 /// Read bytes from device memory
 pub async fn read_memory(device: &Device, address: u32, length: u32) -> Result<Vec<u8>, Error> {

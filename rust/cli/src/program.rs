@@ -10,7 +10,8 @@ use onerom_config::mcu::Variant;
 
 use crate::args;
 use crate::firmware::{
-    accept_image, acquire_firmware, build_rom_image, confirm_slot_overrides, resolve_config_json,
+    accept_image, acquire_firmware, build_rom_image, confirm_slot_overrides, plugin_error,
+    resolve_config_json,
 };
 use crate::utils::{check_device, check_fire_board_optional, resolve_board};
 use onerom_app::{
@@ -109,7 +110,9 @@ async fn build_and_assemble(
         acquire_firmware(options, &args.base_firmware, &args.version, board, mcu).await?;
 
     let specs = parse_plugins(&args.plugin)?;
-    let plugins = resolve_plugins(&specs, &version, &onerom_cli::CliFetch).await?;
+    let plugins = resolve_plugins(&specs, &version, &onerom_cli::CliFetch)
+        .await
+        .map_err(|e| plugin_error(&specs, e))?;
 
     let global_config = GlobalConfig {
         config_name: args.config_name.clone(),
@@ -150,6 +153,7 @@ async fn build_and_assemble(
         *mcu,
         size,
         args.force,
+        &onerom_cli::CliFetch,
         // Runs before any ROM image is downloaded.
         |config| refuse_unservable_request(args, slot::has_system_plugin(config)),
     )
@@ -166,7 +170,7 @@ async fn build_and_assemble(
 
 /// The size to build an image for a `size` One ROM with firmware `version`.
 /// It's M where the firmware doesn't support `size`.
-fn image_size(version: FirmwareVersion, size: BoardSize) -> BoardSize {
+pub(crate) fn image_size(version: FirmwareVersion, size: BoardSize) -> BoardSize {
     if supports_board_size(version, size) {
         size
     } else {
@@ -206,7 +210,7 @@ pub(crate) fn verify_line(addr: u32, data: &[u8]) -> String {
 /// Flashes `data` and reads it back where `verify`. `image_board` is the
 /// board the image is for. `force` programs a board commissioned as another
 /// board. A refused image leaves the One ROM as it was.
-async fn flash_device(
+pub(crate) async fn flash_device(
     options: &mut Options,
     data: &[u8],
     image_board: Option<Board>,
@@ -372,7 +376,10 @@ fn write_firmware_file(path: &str, data: &[u8]) -> Result<(), Error> {
     Ok(())
 }
 
-async fn reboot_and_rescan(options: &mut Options, reboot_args: &RebootArgs) -> Result<(), Error> {
+pub(crate) async fn reboot_and_rescan(
+    options: &mut Options,
+    reboot_args: &RebootArgs,
+) -> Result<(), Error> {
     let device = options.device.as_ref().unwrap();
     if options.verbose {
         println!("Rebooting device...");

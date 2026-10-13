@@ -6,8 +6,8 @@ use std::fmt::Display;
 use std::io::Write;
 
 use crate::args::inspect::{
-    InspectGpioArgs, InspectHeaderArgs, InspectImageArgs, InspectInfoArgs, InspectLedArgs,
-    InspectOtpArgs, InspectPeekLiveArgs, InspectPeekMemoryArgs, InspectRgbArgs, InspectSlotsArgs,
+    InspectGpioArgs, InspectHeaderArgs, InspectInfoArgs, InspectLedArgs, InspectOtpArgs,
+    InspectPeekLiveArgs, InspectPeekMemoryArgs, InspectRgbArgs, InspectSlotsArgs,
     InspectSocketArgs, InspectTelemetryArgs,
 };
 use crate::commissioning::{device_lines, report_lines};
@@ -700,12 +700,6 @@ pub async fn cmd_slots(options: &Options, args: &InspectSlotsArgs) -> Result<(),
     let device = options.device.as_ref().unwrap();
 
     output_slot_info(device, options, "", &[]).await
-}
-
-pub async fn cmd_image(options: &Options, args: &InspectImageArgs) -> Result<(), Error> {
-    check_device(options, args, false)?;
-    let _device = options.device.as_ref().unwrap();
-    Err(Error::Unimplemented("inspect image".into()))
 }
 
 // Outputs some bytes of data read from the device, either to the console as a

@@ -48,7 +48,9 @@ use core::fmt;
 
 use onerom_config::chip::ChipType as OraChipType;
 use onerom_config::fw::FirmwareVersion;
-use onerom_gen::{Builder, ChipConfig, ChipSetConfig, ChipSetType, ChipTypeSpec, SizeHandling};
+use onerom_gen::{
+    Builder, ChipConfig, ChipSetConfig, ChipSetType, ChipTypeSpec, INLINE_BASE64, SizeHandling,
+};
 use onerom_metadata::{SYSTEM_PLUGIN_SIZE, USER_PLUGIN_SIZE};
 use serde::{Deserialize, Serialize};
 
@@ -286,7 +288,10 @@ pub enum PluginSpec {
 /// Validates syntax only; performs no network or filesystem access. Returns
 /// [`PluginError::SpecSyntax`] with a description of the problem on malformed
 /// input.
-fn parse_plugin(s: &str) -> Result<PluginSpec, PluginError> {
+///
+/// Unlike [`parse_plugins`], it doesn't check the spec against other plugins,
+/// so a user plugin parses without a system plugin.
+pub fn parse_plugin(s: &str) -> Result<PluginSpec, PluginError> {
     // `file=` form: the remainder is the path or URL verbatim.
     if let Some(path) = s.strip_prefix("file=") {
         if path.is_empty() {
@@ -662,7 +667,9 @@ pub(crate) fn binary_url(plugin_type: PluginType, name: &str, release: &Release)
 /// four segments, the type is recognised, and the version path parses. Anything
 /// else - a local build path, a non-official URL - yields `None` and is treated
 /// as a user/sideloaded plugin by the caller.
-fn official_plugin_from_source(source: &str) -> Option<(PluginType, String, PluginVersion)> {
+pub(crate) fn official_plugin_from_source(
+    source: &str,
+) -> Option<(PluginType, String, PluginVersion)> {
     let rest = source.strip_prefix(PLUGIN_SITE_BASE)?.strip_prefix('/')?;
 
     // Exactly {type}/{name}/{version_path}/{filename}.
@@ -1393,6 +1400,23 @@ pub async fn resolve_plugins<F: LocalFetch>(
     Ok(resolved)
 }
 
+/// Resolve one plugin specification as [`resolve_plugins`] does. Whether a
+/// user plugin has a system plugin isn't checked, as that depends on the config
+/// the result joins.
+pub async fn resolve_plugin<F: LocalFetch>(
+    spec: &PluginSpec,
+    fw: &FirmwareVersion,
+    fetch: &F,
+) -> Result<ResolvedPlugin, Error<F::Error>> {
+    let catalogue = match spec {
+        PluginSpec::Named {
+            plugin_type: None, ..
+        } => Some(fetch_catalogue(fetch).await?),
+        PluginSpec::Named { .. } | PluginSpec::File { .. } => None,
+    };
+    resolve_one(spec, catalogue.as_ref(), fw, fetch).await
+}
+
 /// Resolve a single specification.
 async fn resolve_one<F: LocalFetch>(
     spec: &PluginSpec,
@@ -1627,7 +1651,7 @@ pub enum PluginNote<E> {
     /// to check it against. A locally built or third-party plugin is its
     /// author's business; its header is still validated by `onerom-gen`.
     Unofficial {
-        /// The image source recorded in the config.
+        /// The chip's [`file_for_display`](onerom_gen::ChipConfig::file_for_display).
         source: String,
     },
 
@@ -1667,6 +1691,10 @@ pub enum PluginNote<E> {
 /// header-versus-manifest version. A plugin in the chip for the other type of
 /// plugin fails with [`PluginError::WrongChipType`].
 ///
+/// A file inlined as base64 is identified from its label instead. A plugin slot
+/// reused by [`ReadBack::reuse_plugin_slots`](crate::ReadBack::reuse_plugin_slots)
+/// yields no note, and nothing is fetched for it.
+///
 /// Errors are fatal and mean the image must not be built. A failure to *reach*
 /// the manifest is not one: it becomes [`PluginNote::Unchecked`] and the build
 /// continues.
@@ -1688,7 +1716,7 @@ pub async fn check_config_plugins<F: LocalFetch>(
         .enumerate()
         .filter(|(_, chip)| chip.chip_type.resolved().is_plugin())
     {
-        let source = &chip.file;
+        let source = &chip.file_for_display().to_string();
 
         // Only an official URL identifies which plugin this is: the binary
         // header carries a type and a version but no name, and "user plugin
@@ -1705,6 +1733,13 @@ pub async fn check_config_plugins<F: LocalFetch>(
             None => return Err(PluginError::PioNotSupported(source.clone())),
         };
         check_chip_type(&name, url_type, chip_type)?;
+
+        // A plugin slot reused from a One ROM. Its bytes are the release's
+        // followed by the plugin's stored data, so they can't be verified
+        // against the release.
+        if chip.file.starts_with(INLINE_BASE64) {
+            continue;
+        }
 
         // The URL's own type locates the manifest, since it is where the binary
         // demonstrably came from.

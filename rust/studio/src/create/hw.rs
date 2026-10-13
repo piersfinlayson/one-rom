@@ -48,24 +48,7 @@ pub fn detected_hardware_info(create: &mut Create, runtime_info: &RuntimeInfo) -
         None
     };
 
-    // A size read from a device replaces the selected size where the board
-    // supports it.  Otherwise the image's minimum size does.
-    create.size_detected = false;
-    if create.selected_hw_info.board_size.is_some()
-        && let Some(board) = create.selected_hw_info.board
-    {
-        let sizes = Create::board_sizes(board);
-        if let Some(size) = hw_info.board_size
-            && sizes.contains(&size)
-        {
-            create.board_size_selected(size);
-            create.size_detected = true;
-        } else if let Some(min) = hw_info.min_board_size
-            && sizes.contains(&min)
-        {
-            create.board_size_selected(min);
-        }
-    }
+    create.select_size_from(hw_info);
 
     let msg2 = if create.has_board()
         && let Some(mcu) = hw_info.mcu_variant

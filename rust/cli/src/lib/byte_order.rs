@@ -172,7 +172,7 @@ pub fn report_slots(builder: &Builder, verbose: bool) {
         let Some(data) = builder.chip_data(index) else {
             continue;
         };
-        report(data, &chip.file, &intent, verbose);
+        report(data, chip.file_for_display(), &intent, verbose);
     }
 }
 

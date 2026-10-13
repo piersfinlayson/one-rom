@@ -24,7 +24,7 @@ include!("../sources.rs");
 /// entry written by hand is a `FILE` or a `PIN` option.  `FILE` and `PIN` are
 /// the two placeholders that each mean two things.  The odd one is
 /// `self download --version`.  Its placeholder derives the wrong source.
-const DERIVED_OPTIONS: usize = 36;
+const DERIVED_OPTIONS: usize = 39;
 
 /// The command the CLI puts at that path.
 fn command(path: &[&str]) -> &'static Command {

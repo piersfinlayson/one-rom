@@ -675,13 +675,20 @@ fn a_requirement_reaches_the_run_button() {
 
     let after = harness.screen.missing();
     println!("--{}: {before:?} -> {after:?}", spec.long);
+
+    // An option in a required group also settles that group, so the list can
+    // stay the same length.
+    let asked: Vec<&String> = after
+        .iter()
+        .filter(|wanted| !before.contains(wanted))
+        .collect();
     assert!(
-        after.len() > before.len(),
+        !asked.is_empty(),
         "giving --{} must ask for what it needs: {after:?}",
         spec.long
     );
     assert!(
-        after.iter().any(|wanted| wanted.contains(spec.long)),
+        asked.iter().any(|wanted| wanted.contains(spec.long)),
         "and must say which option asked: {after:?}"
     );
 }

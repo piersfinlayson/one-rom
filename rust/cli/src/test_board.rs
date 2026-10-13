@@ -296,6 +296,114 @@ pub async fn image_2364_sets(board: Board, sets: &[&str], reserved: &[&str]) -> 
     assemble(&builder, props).await
 }
 
+/// A fire-24-f image of the stub system plugin, recorded as the published USB
+/// plugin at `version`, and a single 2364.
+pub async fn image_with_usb(version: &str) -> Vec<u8> {
+    use onerom_config::fw::{FirmwareProperties, FirmwareVersion, ServeAlg};
+    use onerom_config::mcu::{Family, Variant};
+    use onerom_gen::{Builder, FileData};
+
+    let firmware = FirmwareVersion::new(0, 8, 0, 0);
+    let json = format!(
+        r#"{{ "version": 1, "description": "Test", "chip_sets": [
+            {{ "type": "single", "chips": [{{ "file": "https://images.onerom.org/plugins/system/usb/v{version}/plugin.bin", "type": "system_plugin" }}] }},
+            {{ "type": "single", "chips": [{{ "file": "kernal.bin", "type": "2364", "cs1": "active_low" }}] }}
+        ] }}"#
+    );
+    let mut builder = Builder::from_json(firmware, Family::Rp2350, &json).unwrap();
+    let plugin = std::fs::read(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../images/test/stub-system-plugin.bin"),
+    )
+    .unwrap();
+    builder.add_file(FileData::new(0, plugin)).unwrap();
+    builder
+        .add_file(FileData::new(1, vec![0; IMAGE_2364]))
+        .unwrap();
+    let props = FirmwareProperties::new(
+        firmware,
+        Board::Fire24F,
+        Variant::RP2350,
+        ServeAlg::Default,
+        false,
+    )
+    .unwrap();
+    assemble(&builder, props).await
+}
+
+/// The published USB plugin's release URL.
+pub const USB_URL: &str = "https://images.onerom.org/plugins/system/usb/v0.3.1/plugin.bin";
+
+/// The published host-control plugin's release URL.
+pub const HOST_CONTROL_URL: &str =
+    "https://images.onerom.org/plugins/user/host-control/v0.1.0/plugin.bin";
+
+/// A fire-24-f image of a stub plugin for each of `sources`, system then user,
+/// and a single 2364. Each plugin is recorded as from its source, and the end
+/// of its slot is filled as stored data.
+pub async fn image_with_plugins(sources: &[&str]) -> Vec<u8> {
+    use onerom_config::fw::{FirmwareProperties, FirmwareVersion, ServeAlg};
+    use onerom_config::mcu::{Family, Variant};
+    use onerom_gen::{Builder, FileData};
+
+    let firmware = FirmwareVersion::new(0, 8, 0, 0);
+    let types = ["system", "user"];
+    let mut sets: Vec<String> = sources
+        .iter()
+        .zip(types)
+        .map(|(source, plugin_type)| {
+            format!(
+                r#"{{ "type": "single", "chips": [{{ "file": {}, "type": "{plugin_type}_plugin" }}] }}"#,
+                json!(source)
+            )
+        })
+        .collect();
+    sets.push(
+        r#"{ "type": "single", "chips": [{ "file": "kernal.bin", "type": "2364", "cs1": "active_low" }] }"#
+            .to_string(),
+    );
+    let json = format!(
+        r#"{{ "version": 1, "description": "Test", "chip_sets": [{}] }}"#,
+        sets.join(", ")
+    );
+    let mut builder = Builder::from_json(firmware, Family::Rp2350, &json).unwrap();
+    for (id, plugin_type) in types.iter().take(sources.len()).enumerate() {
+        let stub = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join(format!("../../images/test/stub-{plugin_type}-plugin.bin"));
+        builder
+            .add_file(FileData::new(id, std::fs::read(stub).unwrap()))
+            .unwrap();
+    }
+    builder
+        .add_file(FileData::new(sources.len(), vec![0; IMAGE_2364]))
+        .unwrap();
+    let props = FirmwareProperties::new(
+        firmware,
+        Board::Fire24F,
+        Variant::RP2350,
+        ServeAlg::Default,
+        false,
+    )
+    .unwrap();
+    let mut image = assemble(&builder, props).await;
+    for n in 0..sources.len() {
+        let range = slot_range(&image, n).await;
+        image[range.end - 0x1000..range.end].fill(0xd0 + n as u8);
+    }
+    image
+}
+
+/// Where slot `slot`'s data is in `image`, counting plugins.
+pub async fn slot_range(image: &[u8], slot: usize) -> std::ops::Range<usize> {
+    let parsed = onerom_cli::image::parse_firmware(image).await;
+    let slot = &parsed
+        .as_schema()
+        .and_then(|onerom| onerom.metadata())
+        .expect("the image's metadata")
+        .rom_slots[slot];
+    let start = (slot.data.addr().expect("the slot's data address") - FLASH_BASE) as usize;
+    start..start + slot.size as usize
+}
+
 /// The image file `builder` builds for `props` with [`base_firmware`].
 async fn assemble(
     builder: &onerom_gen::Builder,
@@ -439,6 +547,17 @@ impl LocalFetch for Files {
                 url: source.to_string(),
                 status: 404,
             })
+    }
+}
+
+/// A fetch that fails the test where anything is fetched.
+pub struct NoFetch;
+
+impl LocalFetch for NoFetch {
+    type Error = onerom_fw::Error;
+
+    async fn fetch(&self, source: &str) -> Result<Vec<u8>, Self::Error> {
+        panic!("{source} was fetched");
     }
 }
 

@@ -304,6 +304,14 @@ async fn a_banked_set_with_x1_reserved() {
     build(line, &files).await;
 }
 
+/// A fire-32-b doesn't support a 2364.
+#[tokio::test]
+async fn a_slot_the_board_doesnt_support() {
+    let files = Files::with_2364(8, &["single"], &[]);
+    let line = "onerom firmware build --board fire-32-b --config sets.json --base-firmware base.bin --output out.bin";
+    build(line, &files).await;
+}
+
 /// A standby slot without a file fails with v0.7.0 firmware and builds with
 /// v0.8.0 firmware.
 #[tokio::test]
@@ -406,6 +414,20 @@ async fn a_plugin_by_name_and_by_file() {
     );
     let line = "onerom firmware build --board fire-24-f --config sets.json --base-firmware base.bin --output out.bin";
     build(line, &files).await;
+}
+
+/// --plugin with a name that isn't published, without a type and with one.
+#[tokio::test]
+#[ignore = "hits the live images server; run explicitly with --ignored"]
+async fn a_plugin_option_that_isnt_published() {
+    let files = Files::with_2364(8, &["single"], &[]);
+    for plugins in ["--plugin nosuch", "--plugin usb --plugin user/usb"] {
+        let line = format!(
+            "onerom firmware build --board fire-24-f --config sets.json --base-firmware base.bin --output out.bin {plugins}"
+        );
+        build(&line, &files).await;
+        println!();
+    }
 }
 
 /// A plugin name that isn't published.

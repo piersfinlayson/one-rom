@@ -5,17 +5,29 @@ All notable changes between versions are documented in this file.
 ## v0.8.1 - unreleased
 
 Headline changes in this release:
+- A One ROM can be updated, cloned to another One ROM and have its config and ROM images saved to a PC.
 
 In detail:
 - CLI:
   - `--config` on `onerom program` and `onerom firmware build` can be an http(s) URL.
+  - Add `onerom update`, `onerom clone` and `onerom save`.
+  - Fix: `onerom` no longer crashes when its output is piped to a program that exits early, for example `head`.
 - Web Programmer:
   - Moves to logic shared with the CLI to combine and verify built firmware.
+  - The One ROM Builder tab's Load from Device and Load from File buttons copy the configuration and ROM images of a One ROM or firmware file into the One ROM Builder tab.
+  - The One ROM Builder tab's Save Image button saves a slot's ROM image to a file.
+  - One ROM Builder no longer requires an image for a RAM slot.
 - Studio:
   - Moves to logic shared with the CLI to combine and verify built firmware.
+  - The Analyse tab's Open in Create button copies the configuration and ROM images of a One ROM or firmware file into the Create tab.
+
+To test:
+- One ROM Web: the One ROM Builder tab's Load from Device button with a One ROM connected.
+- Studio: the Analyse tab's Open in Create button with a One ROM connected.
 
 To publish:
 - Rust crates (in dependency order):
+  - onerom-metadata-gen 0.1.1
   - onerom-metadata 0.3.1
   - onerom-gen 0.9.1
   - onerom-fw-parser 0.10.1

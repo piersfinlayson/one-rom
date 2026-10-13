@@ -27,6 +27,7 @@ pub fn generate(schema: &Schema) -> String {
     let mut out = String::with_capacity(128 * 1024);
     push_file_header(&mut out, schema);
     push_generations(&mut out, schema);
+    push_firmware_release(&mut out, schema);
     push_constants(&mut out, schema);
     push_metadata_generation_table(&mut out, schema);
     push_type_aliases(&mut out, schema);
@@ -174,6 +175,17 @@ fn release_struct(schema: &Schema) -> Option<&str> {
         return None;
     }
     schema.struct_in_slot(SLOT_INFO).map(|s| s.name.as_str())
+}
+
+/// Emit `[schema] firmware_release` as `FIRMWARE_RELEASE`.
+fn push_firmware_release(out: &mut String, schema: &Schema) {
+    let (major, minor, patch) = release_parts(&schema.schema.firmware_release)
+        .expect("validate_release_strings has already refused a malformed release");
+    out.push_str(&format!(
+        "/// The schema's firmware release.\n\
+         pub const FIRMWARE_RELEASE: FirmwareVersion = \
+         FirmwareVersion::new({major}, {minor}, {patch}, 0);\n\n"
+    ));
 }
 
 // ---------------------------------------------------------------------------

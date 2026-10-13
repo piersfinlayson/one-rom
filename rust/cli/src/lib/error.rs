@@ -32,6 +32,28 @@ fn plugin_way_out(newest_compatible: &Option<CompatibleRelease>) -> String {
     }
 }
 
+fn reason_line(reason: &Option<String>) -> String {
+    reason
+        .as_ref()
+        .map_or_else(String::new, |reason| format!("\n  {reason}"))
+}
+
+fn slot_range(slots: usize) -> String {
+    match slots {
+        0 => "There aren't any ROM slots.".to_string(),
+        1 => "There is one ROM slot, slot 0.".to_string(),
+        _ => format!("The ROM slots are 0 to {}.", slots - 1),
+    }
+}
+
+fn chip_range(chips: usize) -> String {
+    if chips == 1 {
+        "It contains one chip, chip 0.".to_string()
+    } else {
+        format!("Its chips are 0 to {}.", chips - 1)
+    }
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("Hit an error accessing USB:\n  {0}")]
@@ -84,6 +106,84 @@ pub enum Error {
 
     #[error("The '{0}' command has not been implemented")]
     Unimplemented(String),
+
+    #[error("Couldn't read {what}.\n  {reason}")]
+    ReadBack { what: String, reason: String },
+
+    #[error("There isn't a ROM slot {slot}.\n  {}", slot_range(*slots))]
+    NoSlot { slot: usize, slots: usize },
+
+    #[error("Slot {slot} doesn't have a ROM image.")]
+    NoImage { slot: usize },
+
+    /// A read-back config's unrecognised setting, as a sentence without its
+    /// full stop.
+    #[error("{0}.\n  This is likely a bug.  Please report it.")]
+    NotRecognised(String),
+
+    /// `what` is the One ROM or firmware file read, as the subject of a
+    /// sentence.
+    #[error(
+        "{what}'s firmware v{version} is newer than this version of onerom supports.\n  Update onerom."
+    )]
+    FirmwareTooNew {
+        what: String,
+        version: FirmwareVersion,
+    },
+
+    #[error("--from and --to are the same One ROM.")]
+    CloneOntoItself,
+
+    #[error("Slot {slot} contains {chips} chips.\n  Use --chip to choose one, from 0 to {}.", chips - 1)]
+    ChipNeeded { slot: u8, chips: usize },
+
+    #[error("Slot {slot} doesn't have a chip {chip}.\n  {}", chip_range(*chips))]
+    NoChip { slot: u8, chip: u8, chips: usize },
+
+    /// `feature` is used by the config read back.
+    #[error("Firmware v{version} doesn't support {feature}.\n  Use firmware v{minimum} or later.")]
+    FirmwareTooOldFor {
+        feature: String,
+        version: FirmwareVersion,
+        minimum: FirmwareVersion,
+    },
+
+    #[error(
+        "{file} is too small for a {chip_type}.\n  It's {actual} bytes and a {chip_type} image is {expected} bytes."
+    )]
+    ImageTooSmall {
+        file: String,
+        chip_type: String,
+        expected: usize,
+        actual: usize,
+    },
+
+    /// `reason` is why the board doesn't support the slot. `None` where the
+    /// build error doesn't contain one.
+    #[error(
+        "The destination is a {board}, which doesn't support slot {slot}'s {chip_type}.{}",
+        reason_line(.reason)
+    )]
+    DestinationUnsupported {
+        board: String,
+        slot: usize,
+        chip_type: String,
+        reason: Option<String>,
+    },
+
+    #[error(
+        "There isn't a published {} plugin called {name}.\n  Use '{list}' to list the published plugins.",
+        plugin_type.short(),
+        list = hint::PLUGIN_LIST
+    )]
+    PluginNotPublished {
+        plugin_type: PluginType,
+        name: String,
+    },
+
+    /// onerom-gen's error building an image from a config.
+    #[error("{0}")]
+    Build(onerom_fw::Error),
 
     #[error("Hit an error accessing the serial port:\n  {0}")]
     SerialPort(String),
@@ -157,6 +257,12 @@ pub enum Error {
 
     #[error("Specified version '{0}' not found.\n  Available releases: {1}")]
     VersionNotFound(String, String),
+
+    #[error(
+        "Firmware v{version} isn't released for {board}.\n  Use '{}' to list the releases.",
+        hint::firmware_releases(.board)
+    )]
+    ReleaseNotForBoard { version: String, board: String },
 
     #[error("No latest release found in manifest.\n  This is likely a bug.  Please report it.")]
     NoLatestRelease,
@@ -285,7 +391,7 @@ pub enum Error {
     PluginTooLarge(usize, usize),
 
     #[error(
-        "Plugin '{name}' not found in the release manifest.\n  Use '{list}' to list available plugins.",
+        "There isn't a published plugin called {name}.\n  Use '{list}' to list the published plugins.",
         name = .0,
         list = hint::PLUGIN_LIST
     )]
@@ -501,6 +607,9 @@ pub enum Error {
 
     #[error("Output directory does not exist: {0}")]
     OutputDirMissing(String),
+
+    #[error("{0} is a file, not a directory.")]
+    NotADirectory(String),
 
     /// One of these was refused:
     /// - a signer table

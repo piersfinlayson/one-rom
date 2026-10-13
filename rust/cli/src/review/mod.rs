@@ -37,9 +37,11 @@ mod inspect_peek;
 mod inspect_slots;
 mod program;
 mod request_signature;
+mod save;
 mod scan;
 mod set_size;
 mod sign;
+mod update;
 mod validate;
 
 use std::cell::RefCell;

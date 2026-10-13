@@ -14,6 +14,7 @@ use core::future::Future;
 use core::pin::pin;
 use core::task::{Context, Poll, Waker};
 
+use onerom_config::fw::FirmwareVersion;
 use onerom_fw_parser::readers::MemoryReader;
 use onerom_fw_parser::{FirmwareFormat, Parser, SDRR_INFO_FW_OFFSET};
 use onerom_metadata::{
@@ -199,6 +200,22 @@ fn a_v0_9_0_device_is_not_recognised() {
     let mut parser = schema_parser(&mut reader);
     let device = block_on(parser.parse_device());
     assert!(!device.is_recognised());
+}
+
+/// The version of firmware above the ceiling is kept. A version that parses
+/// isn't newer.
+#[test]
+fn a_v0_9_0_device_has_its_newer_version() {
+    for (minor, patch, newer) in [
+        (9, 0, Some(FirmwareVersion::new(0, 9, 0, 0))),
+        (8, 999, None),
+    ] {
+        let mut reader = MemoryReader::new(schema_image(0, minor, patch), RP235X_FLASH_BASE);
+        let mut parser = schema_parser(&mut reader);
+        let device = block_on(parser.parse_device());
+        let onerom = device.as_schema().unwrap();
+        assert_eq!(onerom.newer_version(), newer, "v0.{minor}.{patch}");
+    }
 }
 
 // ---------------------------------------------------------------------------

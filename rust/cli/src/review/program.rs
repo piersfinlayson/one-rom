@@ -160,6 +160,7 @@ async fn a_set_that_doesnt_fit_an_m_one_rom() {
         Variant::RP2350,
         BoardSize::M,
         false,
+        &onerom_cli::CliFetch,
         |_| Ok(()),
     )
     .await;

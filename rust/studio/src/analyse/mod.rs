@@ -10,6 +10,7 @@
 mod device;
 mod file;
 mod msg;
+mod read_back;
 mod view;
 
 use iced::{Element, Subscription, Task};
@@ -58,6 +59,7 @@ pub enum AnalyseState {
     Detecting(DetectState),
     Flashing,
     Rebooting,
+    ReadingBack,
 }
 
 impl std::fmt::Display for AnalyseState {
@@ -68,6 +70,7 @@ impl std::fmt::Display for AnalyseState {
             AnalyseState::Detecting(state) => write!(f, "Detecting ({})", state),
             AnalyseState::Flashing => write!(f, "Flashing"),
             AnalyseState::Rebooting => write!(f, "Rebooting"),
+            AnalyseState::ReadingBack => write!(f, "Loading"),
         }
     }
 }
@@ -91,6 +94,7 @@ impl AnalyseState {
             AnalyseState::Detecting(state) => format!("Trying to detect One ROM {state} ..."),
             AnalyseState::Flashing => "Flashing firmware...".to_string(),
             AnalyseState::Rebooting => "Rebooting device...".to_string(),
+            AnalyseState::ReadingBack => "Loading...".to_string(),
         }
     }
 }
@@ -116,6 +120,9 @@ pub struct Analyse {
 
     // Loaded firmware file.  Starting another analysis discards it.
     file: Option<LoadedFile>,
+
+    // The read back's source, for the config passed to Create.
+    read_back_source: String,
 }
 
 /// A firmware file loaded for analysis, which Flash writes
@@ -134,6 +141,7 @@ impl Default for Analyse {
             selected_source_tab: Default::default(),
             fw_info: Default::default(),
             file: Default::default(),
+            read_back_source: Default::default(),
         }
     }
 }
@@ -150,8 +158,8 @@ impl Analyse {
     }
 
     /// Analyse Message handler
-    pub fn update(&mut self, _runtime_info: &RuntimeInfo, message: Message) -> Task<AppMessage> {
-        msg::message(self, _runtime_info, message)
+    pub fn update(&mut self, runtime_info: &RuntimeInfo, message: Message) -> Task<AppMessage> {
+        msg::message(self, runtime_info, message)
     }
 
     /// Check if the analyse tab is busy performing an operation

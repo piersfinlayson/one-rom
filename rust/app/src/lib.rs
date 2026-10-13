@@ -48,6 +48,7 @@ pub mod identity;
 mod image;
 mod otp;
 mod plugin;
+mod read_back;
 mod signers;
 mod size;
 
@@ -120,16 +121,25 @@ pub use plugin::{
     fetch_releases,
     newest_compatible,
     // Pure decision logic.
+    parse_plugin,
     parse_plugins,
     plugin_to_chip_set_config,
     // Resolve the plugins a config refers to by name (delegates fetching).
     resolve_config_plugins,
+    resolve_plugin,
     // Resolve a device plugin slot to a PluginDisplay (delegates fetching).
     resolve_plugin_display,
     resolve_plugins,
     validate_resolved_plugin_types,
     verify_binary,
 };
+// Reading a One ROM or an image file back into the config that builds it.
+pub use read_back::{
+    ReadBack, ReadBackError, ReadBackFile, RecordedPlugin, published_plugins, read_back,
+    read_back_file, read_slot_roms, read_slot_roms_file,
+};
+// A setting a read back's config couldn't recover.
+pub use onerom_gen::RecoveryProblem;
 // The signing keys and the check of a commissioning instance's signature
 // against them.
 pub use signers::{Signer, SignerError, SignerTable, Verdict, verify_instance};

@@ -6177,6 +6177,30 @@ mod tests {
     // ========================================================================
     // Test descriptions
     // ========================================================================
+
+    /// A file inlined as base64 without a label never appears in the
+    /// description or an error.
+    #[test]
+    fn an_inlined_file_is_never_shown() {
+        let data = "QUJD".repeat(2000);
+        let json = format!(
+            r#"{{ "version": 1, "description": "Test", "chip_sets": [{{ "type": "single",
+                "chips": [{{ "file": "base64:{data}", "type": "2364", "cs1": "active_low" }}] }}] }}"#
+        );
+        let mut builder = Builder::from_json(FW_VER, MCU_FAM, &json).expect("Failed to parse JSON");
+        // Half a 2364.
+        builder
+            .add_file(FileData::new(0, create_test_rom_data(4096, 0x5A)))
+            .expect("Failed to add file");
+        let err = builder
+            .build(default_fw_props())
+            .expect_err("Build should fail on an undersized image");
+
+        for shown in [builder.description(), err.to_string()] {
+            assert!(!shown.contains(&data[..16]), "{shown}");
+        }
+    }
+
     #[test]
     fn test_phase19_basic() {
         let json = r#"{

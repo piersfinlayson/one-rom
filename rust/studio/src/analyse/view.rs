@@ -12,6 +12,7 @@ use log::{debug, error, info, trace, warn};
 #[allow(unused_imports)]
 use onerom_config::fw::FirmwareVersion;
 
+use crate::analyse::read_back::can_read_back;
 use crate::analyse::{Analyse, AnalyseState, Message, Source};
 use crate::app::AppMessage;
 use crate::device::Device;
@@ -28,6 +29,7 @@ const FILE_BUTTON_NAME: &str = "File";
 const SOURCE_DEVICE_BUTTON_NAME: &str = "Detect Device";
 const SOURCE_FILE_BUTTON_NAME: &str = "Select File";
 const FLASH_BUTTON_NAME: &str = "Flash";
+const USE_IN_CREATE_BUTTON_NAME: &str = "Open in Create";
 
 /// Main analyse tab view
 pub fn view<'a>(
@@ -126,6 +128,7 @@ fn fw_source_control<'a>(analyse: &'a Analyse, device: &'a Device) -> Element<'a
     } else {
         row
     }
+    .push_maybe(use_in_create_button(analyse, device))
     .push_maybe(if device.is_usb_run_capable() {
         Some(reboot_button(analyse, device))
     } else {
@@ -222,6 +225,27 @@ fn flash_file_button<'a>(analyse: &'a Analyse, device: &'a Device) -> Button<'a,
 
     // Create the button
     Style::text_button_small(content, message, highlighted)
+}
+
+// Open in Create button
+fn use_in_create_button<'a>(
+    analyse: &'a Analyse,
+    device: &'a Device,
+) -> Option<Button<'a, AppMessage>> {
+    let readable = match analyse.selected_source_tab {
+        Source::File => analyse.file.is_some(),
+        Source::Device => device.is_ready(),
+    };
+    if !can_read_back(analyse) || !readable {
+        return None;
+    }
+    let idle = analyse.state.is_idle();
+    let message = idle.then(|| Message::UseInCreate.into());
+    Some(Style::text_button_small(
+        USE_IN_CREATE_BUTTON_NAME,
+        message,
+        idle,
+    ))
 }
 
 // Device source control button

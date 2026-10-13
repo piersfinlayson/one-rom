@@ -4870,6 +4870,7 @@ dependencies = [
  "env_logger",
  "git2 0.20.4",
  "hex",
+ "libc",
  "log",
  "nusb",
  "onerom-app",
@@ -5088,7 +5089,7 @@ dependencies = [
 
 [[package]]
 name = "onerom-metadata-gen"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "onerom-config",
  "serde",

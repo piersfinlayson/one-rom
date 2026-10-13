@@ -33,7 +33,7 @@ use onerom_app::{CheckedImage, ImageProblem, LocalFetch, assemble_image};
 use onerom_cli::error::image_problem_warning;
 use onerom_cli::image::parse_firmware;
 use onerom_cli::plugin::{
-    PluginNote, PluginSpec, ResolvedPlugin, check_config_plugins, resolve_config_plugins,
+    Plugin, PluginNote, PluginSpec, ResolvedPlugin, check_config_plugins, resolve_config_plugins,
     resolve_plugins,
 };
 use onerom_cli::slot::{
@@ -187,14 +187,33 @@ fn check_firmware_size(options: &Options, data: &[u8]) -> Result<(), Error> {
 
 // ------------------------------- Release resolution -------------------------------
 
-fn resolve_release<'a>(
+/// Release `version` of the firmware for `board`, or the latest release where
+/// `version` is `None`.
+pub(crate) fn resolve_release<'a>(
     releases: &'a Releases,
     version: &Option<String>,
+    board: &Board,
+    mcu: &Variant,
 ) -> Result<&'a Release, Error> {
     if let Some(version) = version {
-        releases
-            .release_from_string(version)
-            .ok_or_else(|| Error::VersionNotFound(version.clone(), releases.releases_str()))
+        let Some(release) = releases.release_from_string(version) else {
+            let available: Vec<String> = releases
+                .hw_releases(board, mcu)
+                .into_iter()
+                .map(|release| release.version)
+                .collect();
+            return Err(Error::VersionNotFound(
+                version.clone(),
+                available.join(", "),
+            ));
+        };
+        if !release.supports_hw(board, mcu) {
+            return Err(Error::ReleaseNotForBoard {
+                version: release.version.clone(),
+                board: board.name().to_string(),
+            });
+        }
+        Ok(release)
     } else {
         releases
             .release_from_string(releases.latest())
@@ -248,7 +267,7 @@ async fn acquire_release_firmware(
         println!("Checking available firmware versions...");
     }
     let releases = Releases::from_network_async().await?;
-    let release = resolve_release(&releases, version_arg)?;
+    let release = resolve_release(&releases, version_arg, board, mcu)?;
     let version = release.firmware_version()?;
     let version_str = release.version.clone();
     if options.verbose {
@@ -275,8 +294,10 @@ async fn acquire_release_firmware(
 ///
 /// `force` accepts the config checks that are refused by default, reporting
 /// each one that fires as a warning instead.
+///
+/// The config's plugins are fetched through `fetch`.
 #[allow(clippy::too_many_arguments)]
-pub async fn build_rom_image(
+pub async fn build_rom_image<F: LocalFetch<Error = onerom_fw::Error>>(
     options: &Options,
     config_json: &str,
     version: FirmwareVersion,
@@ -284,6 +305,7 @@ pub async fn build_rom_image(
     mcu: Variant,
     size: BoardSize,
     force: bool,
+    fetch: &F,
     before_fetch: impl FnOnce(&Config) -> Result<(), Error>,
 ) -> Result<(FirmwareProperties, Vec<u8>, Vec<u8>, String), Error> {
     let overrides = ConfigOverrides::default().allow_turbo_boot_multi_slot(force);
@@ -296,7 +318,7 @@ pub async fn build_rom_image(
                 if matches!(e, GenError::TurboBootMultiSlot { .. }) {
                     Error::TurboBootMultiSlot(e)
                 } else {
-                    onerom_fw::Error::parse(e).into()
+                    Error::Build(onerom_fw::Error::parse(e))
                 }
             },
         )?;
@@ -309,7 +331,7 @@ pub async fn build_rom_image(
     let reserved = builder
         .config()
         .reserved_pins_on(board)
-        .map_err(onerom_fw::Error::parse)?;
+        .map_err(|e| Error::Build(onerom_fw::Error::parse(e)))?;
     if let Some(warning) = unselectable_slots(builder.config(), board, reserved) {
         eprintln!("Warning: {warning}");
     }
@@ -324,7 +346,7 @@ pub async fn build_rom_image(
     // Before any ROM image or plugin referred to by name is downloaded.
     before_fetch(builder.config())?;
 
-    let plugins = resolve_config_plugins(&mut builder, &version, &onerom_cli::CliFetch).await?;
+    let plugins = resolve_config_plugins(&mut builder, &version, fetch).await?;
     if options.verbose {
         print_resolved_plugins(&plugins);
     }
@@ -339,7 +361,7 @@ pub async fn build_rom_image(
     // The others have, and checking them again is harmless.
     report_plugin_checks(
         options,
-        check_config_plugins(&builder, &version, &onerom_cli::CliFetch).await?,
+        check_config_plugins(&builder, &version, fetch).await?,
     );
 
     let fw_props = FirmwareProperties::new(version, board, mcu, ServeAlg::default(), true)?
@@ -352,7 +374,7 @@ pub async fn build_rom_image(
                 advise_second_chip: false,
             }
         } else {
-            onerom_fw::Error::build(e).into()
+            Error::Build(onerom_fw::Error::build(e))
         }
     })?;
 
@@ -527,7 +549,9 @@ pub async fn cmd_build(
     }
 
     let specs = parse_plugin_specs(&args.plugin)?;
-    let plugins = resolve_plugins(&specs, &version, &onerom_cli::CliFetch).await?;
+    let plugins = resolve_plugins(&specs, &version, &onerom_cli::CliFetch)
+        .await
+        .map_err(|e| plugin_error(&specs, e))?;
     if options.verbose {
         print_resolved_plugins(&plugins);
     }
@@ -572,6 +596,7 @@ pub async fn cmd_build(
         mcu,
         size,
         args.force,
+        &onerom_cli::CliFetch,
         |_| Ok(()),
     )
     .await
@@ -718,7 +743,7 @@ async fn inspect_release_firmware(
     check_fire_board(&board)?;
     let mcu = Variant::RP2350;
     let releases = Releases::from_network_async().await?;
-    let release = resolve_release(&releases, &args.version)?;
+    let release = resolve_release(&releases, &args.version, &board, &mcu)?;
     let version = release.firmware_version()?;
     if options.verbose {
         println!(
@@ -854,7 +879,7 @@ fn original_summary(verbose: bool, sdrr: &onerom_fw_parser::Sdrr) -> Result<Vec<
         ));
         for (j, rom) in set.roms.iter().enumerate() {
             let name = rom.filename.as_deref().unwrap_or("<unnamed>");
-            lines.push(format!("    ROM {j}: {} {name}", rom.rom_type));
+            lines.push(format!("    Chip {j}: {} {name}", rom.rom_type));
         }
     }
     Ok(lines)
@@ -934,7 +959,7 @@ fn schema_summary(
         ));
         for (j, rom) in slot.roms().enumerate() {
             let name = rom.filename.unwrap_or("<unnamed>");
-            lines.push(format!("    ROM {j}: {} {name}", rom.rom_type));
+            lines.push(format!("    Chip {j}: {} {name}", rom.rom_type));
         }
     }
     lines
@@ -1218,7 +1243,7 @@ pub async fn cmd_download(
     let mcu = Variant::RP2350;
 
     let releases = Releases::from_network_async().await?;
-    let release = resolve_release(&releases, &args.version)?;
+    let release = resolve_release(&releases, &args.version, &board, &mcu)?;
     let version = release.firmware_version()?;
 
     if options.verbose {
@@ -1255,6 +1280,49 @@ fn parse_plugin_specs(raw: &[String]) -> Result<Vec<PluginSpec>, Error> {
     Ok(onerom_cli::plugin::parse_plugins(raw)?)
 }
 
+/// The CLI error for `error`, from resolving the plugins in `specs`.
+///
+/// A plugin with a type isn't looked up in the plugins manifest, so an
+/// unpublished one fails with a 404 for its releases.json.
+pub(crate) fn plugin_error(
+    specs: &[PluginSpec],
+    error: onerom_app::Error<onerom_fw::Error>,
+) -> Error {
+    if let onerom_app::Error::Fetch {
+        source,
+        error: onerom_fw::Error::Http { status: 404, .. },
+    } = &error
+    {
+        let missing = specs.iter().find_map(|spec| match spec {
+            PluginSpec::Named {
+                name,
+                plugin_type: Some(plugin_type),
+                ..
+            } => {
+                let plugin = Plugin {
+                    name: name.clone(),
+                    plugin_type: *plugin_type,
+                    display_name: None,
+                    description: None,
+                    releases: Vec::new(),
+                };
+                (plugin.releases_manifest_url() == *source).then(|| Error::PluginNotPublished {
+                    plugin_type: *plugin_type,
+                    name: name.clone(),
+                })
+            }
+            PluginSpec::Named {
+                plugin_type: None, ..
+            }
+            | PluginSpec::File { .. } => None,
+        });
+        if let Some(missing) = missing {
+            return missing;
+        }
+    }
+    error.into()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1263,6 +1331,82 @@ mod tests {
     };
     use onerom_app::check_image;
     use onerom_metadata::FLASH_CS1_BASE_ADDR;
+
+    /// A plugin with a type whose releases.json isn't found isn't published.
+    /// A plugin without a type that isn't in the plugins manifest isn't
+    /// published either.
+    #[test]
+    fn a_plugin_that_isnt_published_is_reported() {
+        let specs = parse_plugin_specs(&["usb".to_string(), "user/usb".to_string()]).unwrap();
+        let url = "https://images.onerom.org/plugins/user/usb/releases.json";
+        let not_found = onerom_app::Error::Fetch {
+            source: url.to_string(),
+            error: onerom_fw::Error::Http {
+                url: url.to_string(),
+                status: 404,
+            },
+        };
+        let e = plugin_error(&specs, not_found);
+        assert!(
+            matches!(
+                &e,
+                Error::PluginNotPublished { plugin_type: onerom_cli::plugin::PluginType::User, name }
+                    if name == "usb"
+            ),
+            "{e:?}"
+        );
+
+        let not_found = onerom_cli::plugin::PluginError::NotFound("nosuch".to_string());
+        let e = plugin_error(&specs, onerom_app::Error::Plugin(not_found));
+        assert!(
+            matches!(&e, Error::PluginNotFound(name) if name == "nosuch"),
+            "{e:?}"
+        );
+    }
+
+    fn manifest() -> Releases {
+        let board =
+            |name: &str| format!(r#"{{ "name": "{name}", "mcus": [{{ "name": "rp2350" }}] }}"#);
+        let json = format!(
+            r#"{{ "version": 1, "latest": "0.8.0", "releases": [
+                {{ "version": "0.8.0", "boards": [{}, {}] }},
+                {{ "version": "0.5.10", "boards": [{}] }}
+            ] }}"#,
+            board("fire-24-a"),
+            board("fire-32-b"),
+            board("fire-24-a"),
+        );
+        Releases::from_json(&json).unwrap()
+    }
+
+    /// A version the manifest doesn't have fails with the board's releases.
+    /// One it has only for other boards fails identifying the version and
+    /// board.
+    #[test]
+    fn a_release_is_resolved_for_its_board() {
+        let releases = manifest();
+        let board = Board::Fire32B;
+        let resolve = |version: &str| {
+            resolve_release(
+                &releases,
+                &Some(version.to_string()),
+                &board,
+                &Variant::RP2350,
+            )
+        };
+
+        assert_eq!(resolve("0.8.0").unwrap().version, "0.8.0");
+        let e = resolve("9.9.9").unwrap_err();
+        assert!(
+            matches!(&e, Error::VersionNotFound(version, list) if version == "9.9.9" && list == "0.8.0"),
+            "{e:?}"
+        );
+        let e = resolve("0.5.10").unwrap_err();
+        assert!(
+            matches!(&e, Error::ReleaseNotForBoard { version, board } if version == "0.5.10" && board == "fire-32-b"),
+            "{e:?}"
+        );
+    }
 
     /// `chips --board` lists every chip type the board can emulate, which is
     /// wider than `Board::supported_chip_type_names()` - that covers only the

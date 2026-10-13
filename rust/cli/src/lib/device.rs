@@ -263,7 +263,7 @@ impl Device {
     }
 
     /// The One ROM's parse, `None` for other firmware.
-    pub(crate) fn onerom(&self) -> Option<&ParsedDevice> {
+    pub fn onerom(&self) -> Option<&ParsedDevice> {
         match self.firmware.as_ref()? {
             Firmware::OneRom(onerom) => Some(onerom),
             Firmware::Lab(_) => None,

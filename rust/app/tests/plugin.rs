@@ -14,8 +14,9 @@ mod common;
 
 use common::{HttpFetch, MockFetch};
 use onerom_app::{
-    Catalogue, Error, PluginError, PluginNote, PluginType, PluginVersion, ResolvedSource,
-    check_config_plugins, parse_plugins, resolve_config_plugins, resolve_plugins,
+    Catalogue, Error, PluginError, PluginNote, PluginSpec, PluginType, PluginVersion,
+    ResolvedSource, check_config_plugins, parse_plugins, resolve_config_plugins, resolve_plugin,
+    resolve_plugins,
 };
 
 const BASE: &str = "https://images.onerom.org/plugins";
@@ -246,6 +247,94 @@ async fn empty_specs_resolve_to_empty() {
     assert!(resolved.is_empty());
     // Nothing should have been fetched.
     assert!(fetch.requested().is_empty());
+}
+
+// ------------------------------------------------------------
+// resolve_plugin
+// ------------------------------------------------------------
+
+#[tokio::test]
+async fn resolve_one_user_plugin_without_a_system_plugin() {
+    let usr = header(1, (0, 2, 0, 0));
+    let fetch = MockFetch::new().with("/tmp/usr.bin", usr);
+
+    let spec = PluginSpec::File {
+        path: "/tmp/usr.bin".to_string(),
+    };
+    let resolved = resolve_plugin(&spec, &fw("0.7.0"), &fetch).await.unwrap();
+
+    assert_eq!(resolved.plugin_type, PluginType::User);
+    assert_eq!(resolved.version, PluginVersion::new(0, 2, 0, 0));
+    assert!(matches!(resolved.source, ResolvedSource::File { .. }));
+    assert!(!fetch.was_requested(&format!("{BASE}/plugins.json")));
+}
+
+#[tokio::test]
+async fn resolve_one_typed_named_plugin_skips_plugins_manifest() {
+    let bin = header(1, (0, 2, 0, 0));
+    let sha = sha_hex(&bin);
+    let fetch = MockFetch::new()
+        .with(
+            &format!("{BASE}/user/rgb/releases.json"),
+            releases_json("RGB", "0.2.0", "0.7.0", &sha),
+        )
+        .with(&format!("{BASE}/user/rgb/v0.2.0/plugin.bin"), bin);
+
+    let spec = PluginSpec::Named {
+        name: "rgb".to_string(),
+        plugin_type: Some(PluginType::User),
+        version: None,
+    };
+    let resolved = resolve_plugin(&spec, &fw("0.7.0"), &fetch).await.unwrap();
+
+    assert_eq!(resolved.plugin_type, PluginType::User);
+    assert_eq!(resolved.name, "rgb");
+    assert_eq!(resolved.version, PluginVersion::new(0, 2, 0, 0));
+    assert!(matches!(resolved.source, ResolvedSource::Named { .. }));
+    assert!(!fetch.was_requested(&format!("{BASE}/plugins.json")));
+}
+
+#[tokio::test]
+async fn resolve_one_bare_name_fetches_plugins_manifest() {
+    let bin = header(1, (0, 2, 0, 0));
+    let sha = sha_hex(&bin);
+    let fetch = MockFetch::new()
+        .with(&format!("{BASE}/plugins.json"), plugins_json())
+        .with(
+            &format!("{BASE}/user/rgb/releases.json"),
+            releases_json("RGB", "0.2.0", "0.7.0", &sha),
+        )
+        .with(&format!("{BASE}/user/rgb/v0.2.0/plugin.bin"), bin);
+
+    let specs = parse_plugins(&["rgb".to_string()]).unwrap();
+    let resolved = resolve_plugin(&specs[0], &fw("0.7.0"), &fetch)
+        .await
+        .unwrap();
+
+    assert_eq!(resolved.plugin_type, PluginType::User);
+    assert!(fetch.was_requested(&format!("{BASE}/plugins.json")));
+}
+
+#[tokio::test]
+async fn resolve_one_pinned_incompatible_is_hard_error() {
+    let bin = header(1, (0, 2, 0, 0));
+    let sha = sha_hex(&bin);
+    let fetch = MockFetch::new().with(
+        &format!("{BASE}/user/rgb/releases.json"),
+        releases_json("RGB", "0.2.0", "0.8.0", &sha),
+    );
+
+    let spec = PluginSpec::Named {
+        name: "rgb".to_string(),
+        plugin_type: Some(PluginType::User),
+        version: Some(PluginVersion::new(0, 2, 0, 0)),
+    };
+    let err = resolve_plugin(&spec, &fw("0.7.0"), &fetch).await;
+
+    assert!(matches!(
+        err,
+        Err(Error::Plugin(PluginError::Incompatible { .. }))
+    ));
 }
 
 // ------------------------------------------------------------
