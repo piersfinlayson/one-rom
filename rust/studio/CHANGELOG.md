@@ -3,6 +3,7 @@
 ## v0.2.5 - unreleased
 
 - Moves to logic shared with the CLI to combine and verify built firmware.
+- Fix: Due to longer ROM config names the "Loaded (xxx bytes)" was wrapping. It has been removed.
 
 ## v0.2.4 - 2026-10-06
 

@@ -322,10 +322,6 @@ impl RuntimeInfo {
         self.firmware.as_ref().map(|f| f.len())
     }
 
-    pub fn selected_config_len(&self) -> Option<usize> {
-        self.selected_config.as_ref().map(|c| c.data.len())
-    }
-
     fn set_firmware(&mut self, firmware: Vec<u8>) {
         self.firmware = Some(firmware);
     }
