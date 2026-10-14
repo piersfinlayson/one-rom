@@ -116,6 +116,7 @@ your last answer.
   B   Set One ROM Lab board type            B:<board>
   r   Read ROM                              r[:<chip>[:<start>[:<len>[:<fmt>[:<cs1>[:<cs2>[:<cs3>]]]]]]]
   b   Batch ROM read                        b[:<chip>[:<start>[:<len>[:<fmt>[:<secs>[:<cs1>[:<cs2>[:<cs3>]]]]]]]]
+  a   Batch ROM read and RBCP query         a[:<chip>[:<start>[:<len>[:<fmt>[:<secs>[:<cs1>[:<cs2>[:<cs3>]]]]]]]]
   i   Chip type information                 i[:<chip>]
   c   Set or change chip type               c:<chip>[:<cs1>[:<cs2>[:<cs3>]]]
   f   Set or change output format
@@ -126,6 +127,7 @@ your last answer.
   s   Display settings
   p   Show board pin map (socket pin -> GPIO)   p[:<chip>]
   T   List supported board types
+  R   Query a One ROM in the socket over RBCP
   z   Reset to bootloader
   ?/h This help
 ```
@@ -158,6 +160,28 @@ pulls and the capacitance of the test setup.  Failures should be zero.
 
 For a 16-bit capable chip, Lab reads in both 8-bit and 16-bit modes and both the
 SHA1 and the 32-bit summing checksum should match.
+
+## Querying a One ROM
+
+`R` queries a One ROM in the socket that is running the
+[host-control](/plugins/user/host-control) plugin, over
+[RBCP](https://github.com/piersfinlayson/rom-bus-control-protocol).  Set the
+chip type it serves, and any chip select polarities, with `c` first.
+
+```text
+Device:   One ROM
+Firmware: v0.8.0
+RBCP:     0.1.3
+Boot:     flash slot 0, RAM slot 0
+```
+
+A chip with 8-bit and 16-bit modes is queried in each.
+
+RBCP writes into the image the One ROM serves.  Lab then puts back the bytes it
+changed and checks them, so a read afterwards returns the same SHA1 as before.
+
+`a` is a batch read that queries the One ROM over RBCP after each ROM read pass.
+It takes the same arguments as `b`.
 
 ## Pin map
 

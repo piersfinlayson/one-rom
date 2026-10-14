@@ -40,6 +40,7 @@ cargo clippy \
     -p onerom-lab-parser \
     -p onerom-metadata-gen \
     -p onerom-protocol \
+    -p onerom-rbcp-host \
     -p onerom-signing-server \
     -p onerom-studio \
     -p schema-gen \
@@ -55,9 +56,9 @@ CONFIG="$EMU_CONFIG" BOARD="$EMU_BOARD" \
 # These crates are no_std.  The host has std, so a host build can't catch a
 # dependency that pulls it in.  Lab's bare-metal target doesn't have std, so
 # they are checked for it.
-echo "Running clippy (no_std: onerom-app, onerom-fw-parser, onerom-lab-parser)..."
+echo "Running clippy (no_std: onerom-app, onerom-fw-parser, onerom-lab-parser, onerom-rbcp-host)..."
 rustup target add thumbv8m.main-none-eabihf
-cargo clippy -p onerom-app -p onerom-fw-parser -p onerom-lab-parser \
+cargo clippy -p onerom-app -p onerom-fw-parser -p onerom-lab-parser -p onerom-rbcp-host \
     --no-default-features --target thumbv8m.main-none-eabihf -- -D warnings
 
 # onerom-lab pins its own nightly toolchain (rust-toolchain.toml) and is a

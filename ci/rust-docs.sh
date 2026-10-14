@@ -58,6 +58,9 @@ RUSTDOCFLAGS="-D warnings" cargo doc -p onerom-lab-parser --no-deps
 echo "Generating documentation for onerom-protocol..."
 RUSTDOCFLAGS="-D warnings" cargo doc -p onerom-protocol --no-deps
 
+echo "Generating documentation for onerom-rbcp-host..."
+RUSTDOCFLAGS="-D warnings" cargo doc -p onerom-rbcp-host --no-deps
+
 echo "Generating documentation for schema-gen..."
 RUSTDOCFLAGS="-D warnings" cargo doc -p schema-gen --no-deps
 

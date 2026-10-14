@@ -7,6 +7,7 @@
 use crate::Suite;
 
 pub mod conformance;
+pub mod host;
 pub mod integration;
 
 /// Every suite, in the order they run.
@@ -15,6 +16,11 @@ pub static SUITES: &[Suite] = &[
         name: "conformance",
         blurb: "does the device obey the RBCP specification?",
         scenarios: conformance::SCENARIOS,
+    },
+    Suite {
+        name: "host",
+        blurb: "does onerom-rbcp-host work against the device?",
+        scenarios: host::SCENARIOS,
     },
     Suite {
         name: "integration",

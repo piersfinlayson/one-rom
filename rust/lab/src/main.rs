@@ -30,6 +30,7 @@ mod logs;
 mod metadata;
 mod output;
 mod picoboot;
+mod rbcp;
 mod rom;
 mod usb;
 

@@ -39,6 +39,10 @@ pub enum Error {
     Cancelled,
     /// An invalid control line polarity was entered
     InvalidCsPolarity,
+    /// A control line's polarity is unset or set to auto-detect
+    CsPolarityNotSet,
+    /// An RBCP step failed
+    Rbcp(crate::rbcp::Failure),
 }
 
 impl From<crate::usb::Error> for Error {
@@ -67,6 +71,10 @@ impl fmt::Display for Error {
             Self::Syntax => write!(f, "syntax error"),
             Self::Cancelled => write!(f, "cancelled"),
             Self::InvalidCsPolarity => write!(f, "invalid control line polarity"),
+            Self::CsPolarityNotSet => {
+                write!(f, "control line polarity not set - use 'c' to set it")
+            }
+            Self::Rbcp((step, e)) => write!(f, "RBCP {step}: {e}"),
         }
     }
 }
