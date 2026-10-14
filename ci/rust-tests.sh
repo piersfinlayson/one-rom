@@ -104,6 +104,9 @@ cargo test -p onerom-lab-parser
 echo "Testing onerom-protocol..."
 cargo test -p onerom-protocol
 
+echo "Testing onerom-rbcp-host..."
+cargo test -p onerom-rbcp-host
+
 echo "Testing schema-gen..."
 cargo test -p schema-gen
 

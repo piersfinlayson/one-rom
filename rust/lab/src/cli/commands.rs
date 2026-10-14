@@ -59,7 +59,8 @@ pub async fn dispatch(line: &str, state: &mut SessionState) -> Result<(), Error>
 
     match cmd {
         'r' => cmd_read(&mut args, state).await,
-        'b' => cmd_batch(&mut args, state).await,
+        'b' => cmd_batch(&mut args, state, false).await,
+        'a' => cmd_batch(&mut args, state, true).await,
         'i' => cmd_chip_info(&mut args, state).await,
         'c' => cmd_set_chip_type(&mut args, state).await,
         'f' => cmd_set_format(&mut args, state).await,
@@ -71,6 +72,7 @@ pub async fn dispatch(line: &str, state: &mut SessionState) -> Result<(), Error>
         'p' => cmd_pin_map(&mut args, state).await,
         'B' => cmd_set_board(&mut args, state).await,
         'T' => cmd_list_board_types(state).await,
+        'R' => cmd_rbcp(state).await,
         'z' => cmd_reset_to_bootloader().await,
         '?' | 'h' => super::show_help(state).await,
         _ => {
@@ -139,10 +141,20 @@ async fn cmd_read(args: &mut Args<'_>, state: &mut SessionState) -> Result<(), E
         state.range
     ))
     .await?;
-    do_read(board, chip, state.range, fmt, state.cs, state.tri_state).await
+    do_read(
+        board,
+        chip,
+        state.range,
+        fmt,
+        state.cs,
+        state.tri_state,
+        false,
+    )
+    .await
 }
 
-async fn cmd_batch(args: &mut Args<'_>, state: &mut SessionState) -> Result<(), Error> {
+/// A batch read, followed on each pass by an RBCP query where `rbcp` is set.
+async fn cmd_batch(args: &mut Args<'_>, state: &mut SessionState, rbcp: bool) -> Result<(), Error> {
     let board = state.board.ok_or(Error::BoardNotSet)?;
 
     let chip = parser::require_chip(args.next_token(), state.chip, &mut state.editor).await?;
@@ -194,6 +206,10 @@ async fn cmd_batch(args: &mut Args<'_>, state: &mut SessionState) -> Result<(), 
     state.interval_secs = interval;
     state.cs = CsSettings { cs1, cs2, cs3 };
 
+    if rbcp {
+        check_rbcp_cs(chip, state.cs)?;
+    }
+
     send_line("Batch read started. Press any key to stop.").await?;
 
     // Drain any bytes buffered during command entry (e.g. trailing LF from CR+LF).
@@ -204,7 +220,16 @@ async fn cmd_batch(args: &mut Args<'_>, state: &mut SessionState) -> Result<(), 
         pass += 1;
         send_line(&format!("--- Pass {} ---", pass)).await?;
 
-        do_read(board, chip, state.range, fmt, state.cs, state.tri_state).await?;
+        do_read(
+            board,
+            chip,
+            state.range,
+            fmt,
+            state.cs,
+            state.tri_state,
+            rbcp,
+        )
+        .await?;
 
         // Wait for the interval to expire OR a keypress, whichever comes first.
         // A key pressed during a read is buffered and will be returned here
@@ -334,6 +359,7 @@ async fn cmd_quick_read(state: &mut SessionState) -> Result<(), Error> {
         state.format,
         state.cs,
         state.tri_state,
+        false,
     )
     .await
 }
@@ -609,6 +635,95 @@ async fn cmd_list_board_types(_state: &SessionState) -> Result<(), Error> {
     Ok(())
 }
 
+/// Query the One ROM in the socket over RBCP, using the session's chip type
+/// and control line polarities.
+async fn cmd_rbcp(state: &SessionState) -> Result<(), Error> {
+    let board = state.board.ok_or(Error::BoardNotSet)?;
+    let chip = state.chip.ok_or(Error::ChipNotSet)?;
+    check_rbcp_cs(chip, state.cs)?;
+    send_line(&format!("Querying a One ROM serving {chip} over RBCP")).await?;
+    send_line("").await?;
+    do_rbcp(board, chip, state.cs, true).await
+}
+
+/// RBCP requires every configurable control line's polarity, as a read does,
+/// and can't auto-detect one.
+fn check_rbcp_cs(chip: ChipType, cs: CsSettings) -> Result<(), Error> {
+    let cs = cs.to_polarities();
+    let unset = chip.control_lines().iter().any(|c| {
+        c.line_type == ControlLineType::Configurable
+            && match c.name {
+                "cs1" => cs.cs1.is_none(),
+                "cs2" => cs.cs2.is_none(),
+                "cs3" => cs.cs3.is_none(),
+                _ => false,
+            }
+    });
+    if unset {
+        Err(Error::CsPolarityNotSet)
+    } else {
+        Ok(())
+    }
+}
+
+/// Query the One ROM over RBCP in each bit mode the chip has, and print what
+/// it reports.
+///
+/// `full` prints the whole query, as `R` does. Otherwise each mode is one line,
+/// as a batch pass prints it. A failed query is printed and the next mode is
+/// still queried.
+async fn do_rbcp(board: Board, chip: ChipType, cs: CsSettings, full: bool) -> Result<(), Error> {
+    let modes = chip.bit_modes();
+    let text =
+        |f: &onerom_rbcp_host::AsciiField| String::from_utf8_lossy(f.as_bytes()).into_owned();
+    let slot = |s: Option<u8>| s.map_or("unknown".to_string(), |s| s.to_string());
+
+    for &mode in modes {
+        yield_to_usb().await;
+        let mut reader = RomReader::new(board, chip, cs.to_polarities(), false);
+        reader.init();
+        reader.begin_read(mode);
+        let result = crate::rbcp::query(&mut reader, board, mode);
+        reader.end_read();
+
+        if !full {
+            let label = mode_label(mode, modes.len());
+            match result {
+                Ok(id) => {
+                    send_line(&format!(
+                        "  {label}Device: {} {}",
+                        text(&id.device_type),
+                        text(&id.device_version)
+                    ))
+                    .await?
+                }
+                Err(f) => send_line(&format!("  {label}Error: {}", Error::Rbcp(f))).await?,
+            }
+            continue;
+        }
+
+        if modes.len() > 1 {
+            send_line(&format!("{mode}-bit")).await?;
+        }
+        match result {
+            Ok(id) => {
+                send_line(&format!("Device:   {}", text(&id.device_type))).await?;
+                send_line(&format!("Firmware: {}", text(&id.device_version))).await?;
+                send_line(&format!("RBCP:     {}", id.protocol_version)).await?;
+                send_line(&format!(
+                    "Boot:     flash slot {}, RAM slot {}",
+                    slot(id.boot.flash_slot),
+                    slot(id.boot.ram_slot)
+                ))
+                .await?;
+            }
+            Err(f) => send_line(&format!("Error: {}", Error::Rbcp(f))).await?,
+        }
+        send_line("").await?;
+    }
+    Ok(())
+}
+
 async fn cmd_reset_to_bootloader() -> Result<(), Error> {
     send_line("Resetting to bootloader...").await?;
     Timer::after_millis(100).await;
@@ -643,7 +758,8 @@ async fn yield_to_usb() {
     Timer::after_millis(1).await;
 }
 
-/// Route a read to the correct format handler.
+/// Route a read to the correct format handler, then query the One ROM over
+/// RBCP where `rbcp` is set.
 async fn do_read(
     board: Board,
     chip: ChipType,
@@ -651,6 +767,7 @@ async fn do_read(
     fmt: OutputFormat,
     cs: CsSettings,
     tristate: bool,
+    rbcp: bool,
 ) -> Result<(), Error> {
     let needs_scan = chip.control_lines().iter().any(|c| {
         c.line_type == ControlLineType::Configurable
@@ -671,11 +788,18 @@ async fn do_read(
     reader.init();
 
     match fmt {
-        OutputFormat::Checksum => output_checksum(&mut reader, chip, start, count).await,
-        OutputFormat::HexDump => crate::output::hexdump::dump(&mut reader, start, count).await,
-        OutputFormat::IntelHex => crate::output::ihex::dump(&mut reader, start, count).await,
-        OutputFormat::Srec => crate::output::srec::dump(&mut reader, start, count).await,
+        OutputFormat::Checksum => output_checksum(&mut reader, chip, start, count).await?,
+        OutputFormat::HexDump => crate::output::hexdump::dump(&mut reader, start, count).await?,
+        OutputFormat::IntelHex => crate::output::ihex::dump(&mut reader, start, count).await?,
+        OutputFormat::Srec => crate::output::srec::dump(&mut reader, start, count).await?,
     }
+    if rbcp {
+        do_rbcp(board, chip, cs, false).await?;
+    }
+    if fmt == OutputFormat::Checksum || rbcp {
+        send_line("").await?;
+    }
+    Ok(())
 }
 
 /// Run a full-ROM (or warned-full) checksum + SHA-1 read.
@@ -705,12 +829,7 @@ async fn output_checksum(
 
     send_line("").await?;
     for r in &results {
-        let mode = if results.len() == 1 {
-            // If there's only one mode, omit the redundant "8-bit"/"16-bit" label.
-            "".to_string()
-        } else {
-            format!("{}-bit  ", r.mode)
-        };
+        let mode = mode_label(r.mode, results.len());
         send_line(&format!(
             "  {}SHA1: {}  checksum: {:#010X}",
             mode,
@@ -724,23 +843,30 @@ async fn output_checksum(
         let matched = results
             .windows(2)
             .all(|w| w[0].sha1 == w[1].sha1 && w[0].checksum == w[1].checksum);
-        send_line(&format!("  Match: {}", matched)).await?;
+        send_line(&format!("  {:MODE_LABEL_WIDTH$}{matched}", "Match:")).await?;
     }
 
     if reader.tristate() {
         for r in &results {
-            let mode = if results.len() == 1 {
-                "".to_string()
-            } else {
-                format!("{}-bit ", r.mode)
-            };
+            let mode = mode_label(r.mode, results.len());
             send_line(&format!("  {}tristate failures: {}", mode, r.failures)).await?;
         }
     }
 
-    send_line("").await?;
     Ok(())
 }
+
+/// The bit mode a line reports, padded so 8-bit and 16-bit lines align, or
+/// nothing where the chip has one mode.
+fn mode_label(mode: u8, modes: usize) -> String {
+    if modes == 1 {
+        String::new()
+    } else {
+        format!("{:MODE_LABEL_WIDTH$}", format!("{mode}-bit"))
+    }
+}
+
+const MODE_LABEL_WIDTH: usize = 8;
 
 fn chip_has_configurable_cs(chip: ChipType, name: &str) -> bool {
     chip.control_lines()
@@ -836,12 +962,7 @@ async fn scan_cs(
             sha1.copy_from_slice(&sha.finalize());
 
             let trivial = sha1 == all_zeros || sha1 == all_ffs;
-            let mode = if chip.bit_modes().len() == 1 {
-                // If there's only one mode, omit the redundant "8-bit"/"16-bit" label.
-                "".to_string()
-            } else {
-                format!("{}-bit  ", mode)
-            };
+            let mode = mode_label(mode, chip.bit_modes().len());
             send_line(&format!(
                 "  {}  {}SHA1: {}  checksum: {:#010X}  {}",
                 label,

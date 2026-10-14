@@ -16,6 +16,8 @@
 //! - `conformance` — does the device obey the RBCP specification?  One group
 //!   of scenarios per specification section, each asserting what the spec
 //!   requires rather than what this implementation happens to do.
+//! - `host` — does `onerom-rbcp-host`, the host One ROM Lab uses, work
+//!   against the device?
 //! - `integration` — does a realistic application work end to end?  Whole
 //!   flows, modelled on the specification's worked example and the 6502
 //!   reference host.

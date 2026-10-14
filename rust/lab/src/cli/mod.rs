@@ -399,6 +399,9 @@ pub async fn show_help(_state: &SessionState) -> Result<(), Error> {
     send_line("  b   Batch ROM read").await?;
     send_line("        b[:<chip>[:<start>[:<len>[:<fmt>[:<secs>[:<cs1>[:<cs2>[:<cs3>]]]]]]]]]")
         .await?;
+    send_line("  a   Batch ROM read and RBCP query").await?;
+    send_line("        a[:<chip>[:<start>[:<len>[:<fmt>[:<secs>[:<cs1>[:<cs2>[:<cs3>]]]]]]]]]")
+        .await?;
     send_line("  i   Chip type information").await?;
     send_line("        i[:<chip>]").await?;
     send_line("  c   Set or change chip type").await?;
@@ -412,6 +415,7 @@ pub async fn show_help(_state: &SessionState) -> Result<(), Error> {
     send_line("  p   Show board pin map (socket pin -> GPIO)").await?;
     send_line("        p[:<chip>]").await?;
     send_line("  T   List supported board types").await?;
+    send_line("  R   Query a One ROM in the socket over RBCP").await?;
     send_line("  z   Reset to bootloader").await?;
     send_line("  ?/h This help").await?;
     send_line("").await?;

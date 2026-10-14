@@ -545,7 +545,32 @@ impl RomReader {
     /// `begin_read(mode)` must have been called before the first call to
     /// this method in a read session.
     pub fn read_byte_at(&mut self, byte_addr: usize, mode: u8) -> u8 {
-        let (phys_addr, byte_index, delay) = if mode == 16 {
+        let (phys_addr, byte_index, delay) = self.locate(byte_addr, mode);
+        self.set_addr(phys_addr);
+        cortex_m::asm::delay(delay);
+        self.read_data_byte(byte_index)
+    }
+
+    /// As [`RomReader::read_byte_at`], with the control lines asserted for
+    /// this read alone and deasserted afterwards.
+    ///
+    /// A One ROM's address monitor records one address per chip select cycle,
+    /// so RBCP needs a cycle per read.
+    pub fn read_byte_cycled(&mut self, byte_addr: usize, mode: u8) -> u8 {
+        let (phys_addr, byte_index, delay) = self.locate(byte_addr, mode);
+        self.deassert_control();
+        self.set_addr(phys_addr);
+        self.assert_control();
+        cortex_m::asm::delay(delay);
+        let byte = self.read_data_byte(byte_index);
+        self.deassert_control();
+        byte
+    }
+
+    /// The address to drive, the data byte to sample and the read delay for
+    /// `byte_addr` in `mode`.
+    fn locate(&self, byte_addr: usize, mode: u8) -> (usize, usize, u32) {
+        if mode == 16 {
             // Word address with A-1 (bit 0) held low, matching addr_shift=1
             // used in read_mode.
             (
@@ -555,11 +580,7 @@ impl RomReader {
             )
         } else {
             (byte_addr, 0, self.read_delay_cycles)
-        };
-
-        self.set_addr(phys_addr);
-        cortex_m::asm::delay(delay);
-        self.read_data_byte(byte_index)
+        }
     }
 
     /// Deassert all control lines and return the BYTE# pin to its idle state.

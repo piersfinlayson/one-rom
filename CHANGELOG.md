@@ -22,6 +22,9 @@ In detail:
 - Studio:
   - Moves to logic shared with the CLI to combine and verify built firmware.
   - The Analyse tab's Open in Create button copies the configuration and ROM images of a One ROM or firmware file into the Create tab.
+- Lab:
+  - `R` queries One ROM information using RBCP.
+  - `a` is a batch read that reads the ROM and queries One ROM information.
 
 To test:
 - One ROM Web: the One ROM Builder tab's Load from Device button with a One ROM connected.
@@ -38,6 +41,7 @@ To publish:
   - onerom-cli 0.6.0
 - CLI bin 0.6.0
 - Studio 0.2.5
+- One ROM Lab 0.4.1
 - one-rom-wasm 0.6.2: rebuild against the published Rust crates
 - one-rom-site: pick up wasm 0.6.2
 
