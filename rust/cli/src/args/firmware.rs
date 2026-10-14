@@ -222,6 +222,9 @@ pub struct FirmwareBuildArgs {
     /// the config's ROM slots (shifting them up). It is an error if the config
     /// already defines a plugin of its own.
     ///
+    /// The USB plugin is automatically added when a system plugin isn't
+    /// specified (and any config doesn't define a plugin).
+    ///
     /// Forms:
     ///   --plugin usb                       latest compatible version by name
     ///   --plugin system/usb                with explicit type
@@ -231,6 +234,13 @@ pub struct FirmwareBuildArgs {
     ///
     #[arg(long, value_name = "SPEC")]
     pub plugin: Vec<String>,
+
+    /// Build without plugins. Without this, the USB plugin is automatically
+    /// added if a system plugin isn't specified.
+    ///
+    /// Mutually exclusive with --plugin.
+    #[arg(long, conflicts_with = "plugin")]
+    pub no_plugin: bool,
 
     /// Name for the generated ROM configuration.
     ///

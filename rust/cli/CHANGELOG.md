@@ -2,6 +2,7 @@
 
 ## v0.6.0 - unreleased
 
+- **Breaking** `program` and `firmware build` automatically add the USB plugin when a system plugin isn't specified. Use `--no-plugin` to build without plugins.
 - Reword several error messages and `board` output.
 - `--config` on `program` and `firmware build` can be an http(s) URL.
 - Add `update` which updates a One ROM's firmware version, one ROM image or a plugin.

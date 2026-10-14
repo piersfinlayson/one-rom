@@ -28,8 +28,8 @@ const LONG_HELP_RESET_HOST: &str = concat!(
      control reset' for a different hold, or to reset a host without programming \
      it.\n\n\
      Requires the One ROM to reboot into running mode with a USB system plugin, \
-     which is why it cannot be combined with --stopped or --no-reboot, and needs \
-     the re-enumeration pause --fast skips."
+     which is why it cannot be combined with --stopped, --no-reboot or \
+     --no-plugin, and needs the re-enumeration pause --fast skips."
 );
 
 // See Commands::Program in args/mod.rs for the top-level documentation of
@@ -128,6 +128,9 @@ pub struct ProgramArgs {
     /// already defines a plugin of its own. Still mutually exclusive with
     /// --firmware, since a pre-built firmware already contains its plugins.
     ///
+    /// The USB plugin is automatically added when a system plugin isn't specified
+    /// (and any config doesn't define a plugin).
+    ///
     /// Forms:
     ///
     ///   --plugin usb                       latest compatible version by name
@@ -142,6 +145,13 @@ pub struct ProgramArgs {
     ///
     #[arg(long, value_name = "SPEC", conflicts_with = "firmware")]
     pub plugin: Vec<String>,
+
+    /// Build without plugins. Without this, the USB plugin is automatically
+    /// added if a system plugin isn't specified.
+    ///
+    /// Mutually exclusive with --plugin and --firmware.
+    #[arg(long, conflicts_with_all = ["plugin", "firmware"])]
+    pub no_plugin: bool,
 
     /// Name for the generated ROM configuration.
     ///
@@ -267,10 +277,8 @@ pub struct ProgramArgs {
     /// bus, so it shows the boot log of the firmware just flashed.
     ///
     /// Requires the One ROM to reboot into running mode with a USB system
-    /// plugin, which is why it cannot be combined with --stopped or
-    /// --no-reboot, and needs the re-enumeration pause --fast skips.  With
-    /// --batch there would be no one One ROM to follow.
-    #[arg(long, conflicts_with_all = ["fast", "stopped", "no_reboot", "batch"])]
+    /// plugin.
+    #[arg(long, conflicts_with_all = ["fast", "stopped", "no_reboot", "no_plugin", "batch"])]
     pub follow: bool,
 
     // `help` and `long_help` rather than a doc comment, because the pulse length
@@ -282,7 +290,7 @@ pub struct ProgramArgs {
         alias = "host-reset",
         value_name = "PIN",
         value_parser = parse_pin,
-        conflicts_with_all = ["fast", "stopped", "no_reboot"],
+        conflicts_with_all = ["fast", "stopped", "no_reboot", "no_plugin"],
         help = HELP_RESET_HOST,
         long_help = LONG_HELP_RESET_HOST
     )]

@@ -29,23 +29,35 @@ use onerom_metadata::{ONEROM_INFO_METADATA_OFFSET, ONEROM_INFO_OFFSET};
 use crate::args;
 use crate::args::hardware::supported_size;
 use crate::utils::{check_fire_board, resolve_board, resolve_firmware_output};
-use onerom_app::{CheckedImage, ImageProblem, LocalFetch, assemble_image};
+use onerom_app::{CheckedImage, ImageProblem, LocalFetch, PluginError, assemble_image};
 use onerom_cli::error::image_problem_warning;
 use onerom_cli::image::parse_firmware;
 use onerom_cli::plugin::{
-    Plugin, PluginNote, PluginSpec, ResolvedPlugin, check_config_plugins, resolve_config_plugins,
-    resolve_plugins,
+    Plugin, PluginNote, PluginSpec, PluginType, ResolvedPlugin, check_config_plugins, parse_plugin,
+    resolve_config_plugins, resolve_plugin, validate_resolved_plugin_types,
 };
 use onerom_cli::slot::{
     ConfirmationsRequired, GlobalConfig, check_slot_chip_types, check_slot_confirmations,
-    inject_plugins_into_config, parse_slots, save_config, saved_config_json, slots_to_config_json,
+    defines_plugin, inject_plugins_into_config, parse_slots, save_config, saved_config_json,
+    slots_to_config_json,
 };
 use onerom_cli::{Error, Options};
 
 // ------------------------------- Config resolution -------------------------------
 
+/// The config file at `source`, a path or http(s) URL.
+pub async fn fetch_config_json(source: &str) -> Result<String, Error> {
+    let data = onerom_cli::CliFetch.fetch(source).await?;
+    Ok(String::from_utf8(data).map_err(|e| {
+        onerom_fw::Error::read(
+            source.to_string(),
+            std::io::Error::new(std::io::ErrorKind::InvalidData, e),
+        )
+    })?)
+}
+
 /// Resolve a ROM configuration to a JSON string from any of the three sources:
-/// a config file path or http(s) URL, a list of slot specs, or an empty config
+/// a config file's JSON, a list of slot specs, or an empty config
 /// (--no-config).
 ///
 /// `board` and `version` are required when `slots` is non-empty, for chip type
@@ -53,8 +65,8 @@ use onerom_cli::{Error, Options};
 /// target firmware uses. A config file is validated by the builder itself, so
 /// neither is consulted on that path. Shared between `firmware build` and
 /// `program`.
-pub async fn resolve_config_json(
-    config_file: Option<&str>,
+pub fn resolve_config_json(
+    config: Option<String>,
     slots: &[String],
     no_config: bool,
     board: &Board,
@@ -62,16 +74,9 @@ pub async fn resolve_config_json(
     global_config: Option<&GlobalConfig>,
     plugins: &[ResolvedPlugin],
 ) -> Result<String, Error> {
-    if let Some(source) = config_file {
+    if let Some(json) = config {
         // A config file supplies the ROM slots; any --plugin entries are
         // injected ahead of them (erroring if the config defines its own).
-        let data = onerom_cli::CliFetch.fetch(source).await?;
-        let json = String::from_utf8(data).map_err(|e| {
-            onerom_fw::Error::read(
-                source.to_string(),
-                std::io::Error::new(std::io::ErrorKind::InvalidData, e),
-            )
-        })?;
         let json = inject_plugins_into_config(json, plugins)?;
         if let Some(overrides) = global_config {
             apply_global_overrides(json, overrides)
@@ -548,10 +553,18 @@ pub async fn cmd_build(
         ));
     }
 
-    let specs = parse_plugin_specs(&args.plugin)?;
-    let plugins = resolve_plugins(&specs, &version, &onerom_cli::CliFetch)
-        .await
-        .map_err(|e| plugin_error(&specs, e))?;
+    let config = match &args.config_file {
+        Some(source) => Some(fetch_config_json(source).await?),
+        None => None,
+    };
+    let (specs, plugins) = resolve_build_plugins(
+        &args.plugin,
+        args.no_plugin,
+        config.as_deref(),
+        &version,
+        &onerom_cli::CliFetch,
+    )
+    .await?;
     if options.verbose {
         print_resolved_plugins(&plugins);
     }
@@ -571,15 +584,14 @@ pub async fn cmd_build(
         })
     };
     let config_json = resolve_config_json(
-        args.config_file.as_deref(),
+        config,
         &args.slot,
         args.no_config,
         &board,
         &version,
         global_config.as_ref(),
         &plugins,
-    )
-    .await?;
+    )?;
 
     if let Some(path) = &args.save_config {
         save_config(path, &saved_config_json(&config_json, &specs, &plugins)?)?;
@@ -1276,8 +1288,87 @@ pub async fn cmd_download(
     Ok(())
 }
 
-fn parse_plugin_specs(raw: &[String]) -> Result<Vec<PluginSpec>, Error> {
-    Ok(onerom_cli::plugin::parse_plugins(raw)?)
+/// The system plugin an image is built with where a system plugin isn't
+/// specified.
+const DEFAULT_PLUGIN: &str = "usb";
+
+/// Resolves the `--plugin` values `raw` for firmware `version`, and adds the
+/// USB plugin when a system plugin isn't specified. Returns the specs and the
+/// plugins in the same order.
+///
+/// The USB plugin isn't added with `no_plugin`, when `config` defines a plugin
+/// or doesn't parse, or when it doesn't have a version that supports `version`.
+pub(crate) async fn resolve_build_plugins<F: LocalFetch<Error = onerom_fw::Error>>(
+    raw: &[String],
+    no_plugin: bool,
+    config: Option<&str>,
+    version: &FirmwareVersion,
+    fetch: &F,
+) -> Result<(Vec<PluginSpec>, Vec<ResolvedPlugin>), Error> {
+    // A config that doesn't parse doesn't get the default plugin, and the
+    // build reports it.
+    let config = config.map(serde_json::from_str::<Config>);
+    let config_has_plugin = matches!(&config, Some(Ok(config)) if defines_plugin(config));
+    let config_parses = !matches!(config, Some(Err(_)));
+    if no_plugin && config_has_plugin {
+        return Err(Error::InvalidArgument(
+            "--no-plugin".to_string(),
+            "The config file defines a plugin. Remove it from the config or drop --no-plugin."
+                .to_string(),
+        ));
+    }
+
+    // Each spec is resolved alone, as a user plugin without a system plugin is
+    // only an error where the default isn't added.
+    let mut specs = raw
+        .iter()
+        .map(|spec| parse_plugin(spec))
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut plugins = Vec::with_capacity(specs.len() + 1);
+    for spec in &specs {
+        let plugin = resolve_plugin(spec, version, fetch)
+            .await
+            .map_err(|e| plugin_error(std::slice::from_ref(spec), e))?;
+        plugins.push(plugin);
+    }
+
+    let has_system = plugins.iter().any(|p| p.plugin_type == PluginType::System);
+    if !no_plugin && !config_has_plugin && config_parses && !has_system {
+        let spec = PluginSpec::Named {
+            name: DEFAULT_PLUGIN.to_string(),
+            plugin_type: Some(PluginType::System),
+            version: None,
+        };
+        match resolve_plugin(&spec, version, fetch).await {
+            Ok(plugin) => {
+                specs.insert(0, spec);
+                plugins.insert(0, plugin);
+            }
+            Err(onerom_app::Error::Plugin(
+                PluginError::Incompatible {
+                    newest_compatible: None,
+                    ..
+                }
+                | PluginError::IncompatibleNewer {
+                    newest_compatible: None,
+                    ..
+                },
+            )) => println!(
+                "No version of plugin '{DEFAULT_PLUGIN}' supports the selected firmware version {version}.\n  \
+                 Building without a plugin."
+            ),
+            Err(e) => {
+                let error = plugin_error(std::slice::from_ref(&spec), e);
+                return Err(Error::Other(format!(
+                    "{error}\n  Use --no-plugin to build without plugins."
+                )));
+            }
+        }
+    }
+
+    let types: Vec<PluginType> = plugins.iter().map(|p| p.plugin_type).collect();
+    validate_resolved_plugin_types(&types)?;
+    Ok((specs, plugins))
 }
 
 /// The CLI error for `error`, from resolving the plugins in `specs`.
@@ -1327,7 +1418,8 @@ pub(crate) fn plugin_error(
 mod tests {
     use super::*;
     use crate::test_board::{
-        IMAGE_27C400, base_firmware, image_file, in_turn, move_slot, original_image, shows,
+        Files, IMAGE_27C400, NoFetch, base_firmware, holds, image_file, in_turn, move_slot,
+        original_image, published_plugin, shows,
     };
     use onerom_app::check_image;
     use onerom_metadata::FLASH_CS1_BASE_ADDR;
@@ -1337,7 +1429,8 @@ mod tests {
     /// published either.
     #[test]
     fn a_plugin_that_isnt_published_is_reported() {
-        let specs = parse_plugin_specs(&["usb".to_string(), "user/usb".to_string()]).unwrap();
+        let specs = onerom_cli::plugin::parse_plugins(&["usb".to_string(), "user/usb".to_string()])
+            .unwrap();
         let url = "https://images.onerom.org/plugins/user/usb/releases.json";
         let not_found = onerom_app::Error::Fetch {
             source: url.to_string(),
@@ -1808,6 +1901,7 @@ mod tests {
             "sel_d",
             "--reserve-pin",
             "gpio8",
+            "--no-plugin",
         ]);
         cmd_build(&options(), &args).await.unwrap();
 
@@ -1816,6 +1910,126 @@ mod tests {
             image.reserved_pins(),
             Some(ReservedPins::from_bits(0b1000, 0b10))
         );
+    }
+
+    // -- default plugin ----------------------------------------------------
+
+    const V0_8_0: FirmwareVersion = FirmwareVersion::new(0, 8, 0, 0);
+
+    /// A config whose only chip set is a system plugin.
+    const PLUGIN_CONFIG: &str = r#"{
+        "version": 1,
+        "name": "t",
+        "description": "d",
+        "chip_sets": [
+            { "type": "single", "chips": [{ "file": "plugin.bin", "type": "system_plugin" }] }
+        ]
+    }"#;
+
+    fn raw(specs: &[&str]) -> Vec<String> {
+        specs.iter().map(|spec| spec.to_string()).collect()
+    }
+
+    fn names(plugins: &[ResolvedPlugin]) -> Vec<(PluginType, &str)> {
+        plugins
+            .iter()
+            .map(|p| (p.plugin_type, p.name.as_str()))
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn the_usb_plugin_is_added_where_no_plugin_is_specified() {
+        let (_, served) = published_plugin(PluginType::System, "usb");
+        let (specs, plugins) = resolve_build_plugins(&[], false, None, &V0_8_0, &served)
+            .await
+            .unwrap();
+        assert_eq!(names(&plugins), [(PluginType::System, "usb")]);
+        // A saved config refers to it by name.
+        assert!(matches!(
+            &specs[..],
+            [PluginSpec::Named { version: None, .. }]
+        ));
+    }
+
+    #[tokio::test]
+    async fn the_usb_plugin_is_added_ahead_of_a_user_plugin() {
+        let (_, Files(mut served)) = published_plugin(PluginType::System, "usb");
+        served.extend(published_plugin(PluginType::User, "host-control").1.0);
+        let (specs, plugins) = resolve_build_plugins(
+            &raw(&["user/host-control"]),
+            false,
+            None,
+            &V0_8_0,
+            &Files(served),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            names(&plugins),
+            [
+                (PluginType::System, "usb"),
+                (PluginType::User, "host-control")
+            ]
+        );
+        assert_eq!(specs.len(), plugins.len());
+    }
+
+    /// Only `other` is published, so fetching the usb plugin would fail.
+    #[tokio::test]
+    async fn no_plugin_is_added_where_a_system_plugin_is_specified() {
+        let (_, served) = published_plugin(PluginType::System, "other");
+        let (_, plugins) =
+            resolve_build_plugins(&raw(&["system/other"]), false, None, &V0_8_0, &served)
+                .await
+                .unwrap();
+        assert_eq!(names(&plugins), [(PluginType::System, "other")]);
+    }
+
+    #[tokio::test]
+    async fn no_plugin_is_added_where_the_config_defines_one() {
+        let (_, plugins) =
+            resolve_build_plugins(&[], false, Some(PLUGIN_CONFIG), &V0_8_0, &NoFetch)
+                .await
+                .unwrap();
+        assert!(plugins.is_empty());
+    }
+
+    #[tokio::test]
+    async fn no_plugin_leaves_out_the_usb_plugin() {
+        let (_, plugins) = resolve_build_plugins(&[], true, None, &V0_8_0, &NoFetch)
+            .await
+            .unwrap();
+        assert!(plugins.is_empty());
+    }
+
+    #[tokio::test]
+    async fn no_plugin_with_a_config_that_defines_one_fails() {
+        let result = resolve_build_plugins(&[], true, Some(PLUGIN_CONFIG), &V0_8_0, &NoFetch).await;
+        assert!(
+            matches!(&result, Err(Error::InvalidArgument(option, _)) if option == "--no-plugin"),
+            "{result:?}"
+        );
+    }
+
+    /// The published release requires firmware v0.7.0.
+    #[tokio::test]
+    async fn the_usb_plugin_is_left_out_where_no_version_supports_the_firmware() {
+        let (_, served) = published_plugin(PluginType::System, "usb");
+        let (specs, plugins) =
+            resolve_build_plugins(&[], false, None, &FirmwareVersion::new(0, 6, 0, 0), &served)
+                .await
+                .unwrap();
+        assert!(specs.is_empty() && plugins.is_empty());
+    }
+
+    /// The error includes the option that builds without the plugin.
+    #[tokio::test]
+    async fn a_usb_plugin_that_cant_be_fetched_fails() {
+        let result = resolve_build_plugins(&[], false, None, &V0_8_0, &Files(Vec::new())).await;
+        let Err(e) = result else {
+            panic!("{result:?}");
+        };
+        assert!(holds(&e.to_string(), &["--no-plugin"]), "{e}");
     }
 
     // -- config URL --------------------------------------------------------
@@ -1873,6 +2087,7 @@ mod tests {
                 base.to_str().unwrap(),
                 "--output",
                 out.to_str().unwrap(),
+                "--no-plugin",
             ]);
             cmd_build(&options(), &args).await.unwrap();
             images.push(std::fs::read(&out).unwrap());
@@ -1883,16 +2098,7 @@ mod tests {
     #[tokio::test]
     async fn config_url_http_error_fails() {
         let url = serve_once("404 Not Found", "Not Found".to_string());
-        let result = resolve_config_json(
-            Some(&url),
-            &[],
-            false,
-            &Board::Fire24F,
-            &FirmwareVersion::new(0, 8, 0, 0),
-            None,
-            &[],
-        )
-        .await;
+        let result = fetch_config_json(&url).await;
         assert!(result.is_err(), "{result:?}");
     }
 }

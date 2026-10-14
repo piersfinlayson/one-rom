@@ -565,15 +565,11 @@ mod tests {
     use onerom_app::{BoardSize, read_back_file};
     use onerom_cli::LogLevel;
     use onerom_cli::image::parse_firmware;
-    use onerom_cli::plugin::{
-        PluginNote, PluginVersion, ResolvedSource, VerifyTarget, check_config_plugins,
-        verify_binary,
-    };
+    use onerom_cli::plugin::{PluginNote, PluginVersion, ResolvedSource, check_config_plugins};
     use onerom_config::fw::{FirmwareProperties, ServeAlg};
     use onerom_config::mcu::Family;
     use onerom_gen::{Builder, FIRMWARE_SIZE, FileData, INLINE_BASE64};
     use serde_json::json;
-    use sha2::{Digest, Sha256};
 
     use super::*;
     use crate::args::save::SaveArgs;
@@ -581,7 +577,7 @@ mod tests {
     use crate::test_board::{
         Files, HOST_CONTROL_URL, IMAGE_2364, NoFetch, USB_URL, base_firmware, config_2364,
         holds_in_order, image_2364, image_2364_sets, image_with_plugins, image_with_usb,
-        slot_range,
+        published_plugin, slot_range,
     };
 
     const VERSION: FirmwareVersion = FirmwareVersion::new(0, 8, 0, 0);
@@ -1033,53 +1029,9 @@ mod tests {
         assert!(matches!(e, Error::UserPluginWithoutSystem), "{e:?}");
     }
 
-    /// The files the images server serves for the published plugin `name`.
-    /// Its only release is the stub plugin of `plugin_type`. Returns the
-    /// binary's URL and the files.
-    fn published(plugin_type: PluginType, name: &str) -> (String, Files) {
-        let stub = format!("stub-{}-plugin.bin", plugin_type.short());
-        let bin = std::fs::read(
-            Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("../../images/test")
-                .join(&stub),
-        )
-        .unwrap();
-        let version = verify_binary(&bin, VerifyTarget::Header, &stub)
-            .unwrap()
-            .version;
-        let base = format!(
-            "https://images.onerom.org/plugins/{}/{name}",
-            plugin_type.short()
-        );
-        let releases = json!({
-            "version": 1,
-            "display_name": name,
-            "description": "A test plugin",
-            "latest": version.to_string(),
-            "releases": [{
-                "version": version.to_string(),
-                "path": format!("v{version}"),
-                "filename": "plugin.bin",
-                "sha256": hex::encode(Sha256::digest(&bin)),
-                "api_version": 1,
-                "plugin_type": plugin_type.canonical(),
-                "min_fw_version": "0.7.0"
-            }]
-        });
-        let url = format!("{base}/v{version}/plugin.bin");
-        let files = vec![
-            (
-                format!("{base}/releases.json"),
-                releases.to_string().into_bytes(),
-            ),
-            (url.clone(), bin),
-        ];
-        (url, Files(files))
-    }
-
     #[tokio::test]
     async fn a_typed_user_plugin_is_added_after_the_system_plugin() {
-        let (url, served) = published(PluginType::User, "host-control");
+        let (url, served) = published_plugin(PluginType::User, "host-control");
         let mut config = config_of(&["system", "rom"]);
         add_plugin(&mut config, "user/host-control", &VERSION, &served)
             .await
@@ -1091,7 +1043,7 @@ mod tests {
     /// `plugins.json`.
     #[tokio::test]
     async fn an_untyped_user_plugin_is_added_after_the_system_plugin() {
-        let (url, Files(mut served)) = published(PluginType::User, "host-control");
+        let (url, Files(mut served)) = published_plugin(PluginType::User, "host-control");
         let catalogue = json!({
             "version": 1,
             "plugins": [
@@ -1113,7 +1065,7 @@ mod tests {
     /// The `--plugin` help's example of a type.
     #[tokio::test]
     async fn a_typed_system_plugin_replaces_the_system_plugin() {
-        let (url, served) = published(PluginType::System, "usb");
+        let (url, served) = published_plugin(PluginType::System, "usb");
         let mut config = config_of(&["system", "user", "rom"]);
         add_plugin(&mut config, "system/usb", &VERSION, &served)
             .await
@@ -1365,7 +1317,7 @@ mod tests {
 
         let image = image_with_plugins(&[USB_URL, "blink.bin"]).await;
         let read_back = read_back_file(&image).await.unwrap();
-        let (url, Files(mut served)) = published(PluginType::System, "usb");
+        let (url, Files(mut served)) = published_plugin(PluginType::System, "usb");
         let catalogue = json!({
             "version": 1,
             "plugins": [{ "name": "usb", "type": "system_plugin", "path": "system/usb" }]

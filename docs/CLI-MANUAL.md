@@ -75,7 +75,9 @@ breaks an existing command line lands in a minor release — v0.3.0 to v0.4.0 �
 and never in a patch. From v1.0.0 onwards such a change lands in a major
 release, and never in a minor or a patch.
 
-None in this release.
+- `program` and `firmware build` automatically add the USB plugin when a system
+  plugin isn't specified (or a config file doesn't define a plugin). Use
+  `--no-plugin` to build without plugins.
 
 Every release's breaking changes are collected in
 [Appendix: Breaking Change History](#appendix-breaking-change-history), at the
@@ -423,13 +425,17 @@ per-slot CPU frequency/voltage, the status LED and 16-bit forcing.
 ### Program with a plugin
 
 Plugins masquerade as ROMs. At most one system plugin and one user plugin are
-supported. A user plugin requires a system plugin. The system plugin lands in
-slot 0, the user plugin in slot 1:
+supported. A user plugin requires a system plugin. A system plugin uses slot 0
+and a user plugin in slot 1.
+
+The USB plugin is automatically added when a system plugin isn't specified (or
+the config file doesn't define a plugin). Therefore this adds both the USB plugin
+and the host-control plugin:
 
 ```
 onerom program --board fire-24-e \
     --slot file=kernal.bin,type=2364,cs1=active-low \
-    --plugin usb
+    --plugin host-control
 ```
 
 `--plugin` may also be combined with `--config`. The plugins are inserted
@@ -437,11 +443,21 @@ ahead of the config's ROM slots (which shift up accordingly), so you can add a
 plugin to a stock config without editing it:
 
 ```
-onerom program --config c64.json --plugin usb
+onerom program --config c64.json --plugin host-control
 ```
 
 It is an error if the config already defines a plugin of its own — remove it
 from the config, or drop `--plugin`.
+
+Use `--no-plugin` to build without plugins. Where the USB plugin doesn't have a
+version that supports the firmware, the image is built without it:
+
+```
+$ onerom firmware build --board fire-24-c --version 0.5.10 --slot file=kernal.bin,type=2364,cs1=active-low --out firmware.bin
+No version of plugin 'usb' supports the selected firmware version 0.5.10.
+  Building without a plugin.
+Firmware written to firmware.bin
+```
 
 Plugin spec forms are listed under [Plugin
 specification](#plugin-specification).
@@ -478,7 +494,9 @@ Plugin /home/me/my-plugin.bin is not an official One ROM plugin - no published c
 
 If the images server cannot be reached the build is not blocked — an offline
 build of an otherwise valid config still works — but a `Warning:` line naming
-the plugin says the check was skipped.
+the plugin says the check was skipped. The USB plugin that is added
+automatically is downloaded from the images server, so an offline build needs
+`--no-plugin`.
 
 ### Build firmware without flashing
 
@@ -840,7 +858,8 @@ onerom program --config c64.json --out firmware.bin
 
 | Option | Description |
 |---|---|
-| `--plugin <SPEC>` | Plugin specification; repeatable. See [Plugin specification](#plugin-specification). May be combined with `--config`: the plugins are inserted ahead of the config's ROM slots (which shift up), and it is an error if the config already defines a plugin of its own. Conflicts with `--firmware`. |
+| `--plugin <SPEC>` | Plugin specification. Repeatable. See [Plugin specification](#plugin-specification). May be combined with `--config`: the plugins are inserted ahead of the config's ROM slots (which shift up), and it is an error if the config already defines a plugin of its own. Without it, the USB plugin is added where the config doesn't define a plugin. Conflicts with `--firmware`. |
+| `--no-plugin` | Build without plugins. It is an error if the config defines a plugin. Conflicts with `--plugin` and `--firmware`. |
 | `--config-name <NAME>` | Name for the generated ROM configuration. Conflicts with `--config`. |
 | `--config-description <DESC>` (aliases `--desc`, `--description`) | Description for the generated configuration. Defaults to *"Created by the One ROM CLI"*. Conflicts with `--config`. |
 | `--save-config <FILE>` | Save the generated configuration to JSON. Only valid with `--slot` or `--no-config`. Conflicts with `--config`. `--plugin usb` is saved as `"plugin": "usb"`. |
@@ -879,8 +898,8 @@ These are rejected with `--no-config`.
 | `--force, -f` | Continue despite non-fatal problems, reporting each as a warning. |
 | `--batch` (aliases `--multiple`, `--multi`) | Program multiple devices, pausing for confirmation between each. Every board is programmed with the same configuration as the first. |
 | `--scan-slots` | After programming, run `onerom scan --slots` to show the result. Conflicts with `--fast`. |
-| `--follow` | After programming, monitor the One ROM's log, as [`monitor log`](#monitor-log) does. Runs after `--scan-slots`, and only once the One ROM is back on the USB bus, so it shows the boot log of the firmware just flashed. Refused before anything is flashed if the image has no USB system plugin, since such a One ROM leaves the bus as soon as it serves. Conflicts with `--fast`, `--stopped`, `--no-reboot` and `--batch`. |
-| `--reset-host <PIN>` (alias `--host-reset`) | After programming, pulse this pin low to reset the host system, as [`control reset`](#control-reset) does. Written as `gpio<N>` or as a header pin (see [Pin values](#pin-values)). Runs after `--scan-slots` and before `--follow`, once the One ROM is back on the USB bus, and for each device in a `--batch`. The pulse is <!--[const:GPIO_RESET_DEFAULT_HOLD_MS:ms]-->100ms<!--[/]-->. Use `control reset` for a different hold time. A warning is displayed if the pin isn't reserved. Conflicts with `--fast`, `--stopped` and `--no-reboot`. |
+| `--follow` | After programming, monitor the One ROM's log, as [`monitor log`](#monitor-log) does. Runs after `--scan-slots`, and only once the One ROM is back on the USB bus, so it shows the boot log of the firmware just flashed. Refused before anything is flashed if the image has no USB system plugin, since such a One ROM leaves the bus as soon as it serves. Conflicts with `--fast`, `--stopped`, `--no-reboot`, `--no-plugin` and `--batch`. |
+| `--reset-host <PIN>` (alias `--host-reset`) | After programming, pulse this pin low to reset the host system, as [`control reset`](#control-reset) does. Written as `gpio<N>` or as a header pin (see [Pin values](#pin-values)). Runs after `--scan-slots` and before `--follow`, once the One ROM is back on the USB bus, and for each device in a `--batch`. The pulse is <!--[const:GPIO_RESET_DEFAULT_HOLD_MS:ms]-->100ms<!--[/]-->. Use `control reset` for a different hold time. A warning is displayed if the pin isn't reserved. Conflicts with `--fast`, `--stopped`, `--no-reboot` and `--no-plugin`. |
 
 An image is built for the One ROM's [size](#board-sizes). For a
 [commissioned](#hardware) One ROM it must also be built for the board type it
@@ -2533,7 +2552,7 @@ onerom firmware build --config amiga.json --board fire-40-b --size L --out firmw
 ```
 
 The configuration options mirror [`program`](#program): `--config` (`-j`),
-`--slot`, `--plugin`, `--config-name`, `--config-description`, `--save-config`,
+`--slot`, `--plugin`, `--no-plugin`, `--config-name`, `--config-description`, `--save-config`,
 `--no-config`, and the per-device overrides `--instance-name`,
 `--serial-override`, `--logging`, `--disable-swd`, `--turbo-boot`,
 `--reserve-pin` (all rejected with `--no-config`). Build-specific options:
@@ -3379,6 +3398,12 @@ to 3.3V, rather than to ground. It is the jumper labelled `B0` or `B`. The
 
 Changes that can alter or break a command line that worked on an earlier
 release. Newest release first.
+
+### v0.6.0
+
+- `program` and `firmware build` automatically add the USB plugin when a system
+  plugin isn't specified (or a config file doesn't define a plugin). Use
+  `--no-plugin` to build without plugins.
 
 ### v0.5.0
 

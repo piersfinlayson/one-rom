@@ -10,8 +10,8 @@ use onerom_config::mcu::Variant;
 
 use crate::args;
 use crate::firmware::{
-    accept_image, acquire_firmware, build_rom_image, confirm_slot_overrides, plugin_error,
-    resolve_config_json,
+    accept_image, acquire_firmware, build_rom_image, confirm_slot_overrides, fetch_config_json,
+    resolve_build_plugins, resolve_config_json,
 };
 use crate::utils::{check_device, check_fire_board_optional, resolve_board};
 use onerom_app::{
@@ -21,7 +21,6 @@ use onerom_cli::device::select_device_by_chip_id;
 use onerom_cli::error::plan_error;
 use onerom_cli::otp::{PicobootOtp, check_board};
 use onerom_cli::pin::ResolvedPin;
-use onerom_cli::plugin::{parse_plugins, resolve_plugins};
 use onerom_cli::slot::{
     self, GlobalConfig, check_slot_confirmations, save_config, saved_config_json,
 };
@@ -109,10 +108,18 @@ async fn build_and_assemble(
     let (firmware_data, version, _version_str) =
         acquire_firmware(options, &args.base_firmware, &args.version, board, mcu).await?;
 
-    let specs = parse_plugins(&args.plugin)?;
-    let plugins = resolve_plugins(&specs, &version, &onerom_cli::CliFetch)
-        .await
-        .map_err(|e| plugin_error(&specs, e))?;
+    let config = match &args.config_file {
+        Some(source) => Some(fetch_config_json(source).await?),
+        None => None,
+    };
+    let (specs, plugins) = resolve_build_plugins(
+        &args.plugin,
+        args.no_plugin,
+        config.as_deref(),
+        &version,
+        &onerom_cli::CliFetch,
+    )
+    .await?;
 
     let global_config = GlobalConfig {
         config_name: args.config_name.clone(),
@@ -126,15 +133,14 @@ async fn build_and_assemble(
     };
 
     let config_json = resolve_config_json(
-        args.config_file.as_deref(),
+        config,
         &args.slot,
         args.no_config,
         board,
         &version,
         Some(&global_config),
         &plugins,
-    )
-    .await?;
+    )?;
 
     if let Some(path) = &args.save_config {
         save_config(path, &saved_config_json(&config_json, &specs, &plugins)?)?;
@@ -410,7 +416,7 @@ fn without_usb(option: &str, consequence: &str) -> Error {
         format!(
             "The image being programmed has no USB system plugin, so the One ROM\n  \
              will not be on the USB bus once it is running{consequence}\n  \
-             Add '--plugin usb', or drop {option}."
+             Drop {option}."
         ),
     )
 }

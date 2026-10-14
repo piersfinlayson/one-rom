@@ -101,7 +101,7 @@ fn help() {
 #[tokio::test]
 async fn size_l_for_a_board_without_external_flash() {
     let files = Files::new(8, 1);
-    let line = "onerom firmware build --board fire-24-f --size L --config sets.json --base-firmware base.bin";
+    let line = "onerom firmware build --board fire-24-f --size L --config sets.json --base-firmware base.bin --no-plugin";
     build(line, &files).await;
 }
 
@@ -110,8 +110,7 @@ async fn size_l_for_a_board_without_external_flash() {
 #[tokio::test]
 async fn a_set_that_doesnt_fit_an_m_board() {
     let files = Files::new(8, 4);
-    let line =
-        "onerom firmware build --board fire-40-a --config sets.json --base-firmware base.bin";
+    let line = "onerom firmware build --board fire-40-a --config sets.json --base-firmware base.bin --no-plugin";
     build(line, &files).await;
 }
 
@@ -120,8 +119,7 @@ async fn a_set_that_doesnt_fit_an_m_board() {
 #[tokio::test]
 async fn a_set_that_doesnt_fit_with_firmware_before_0_8_0() {
     let files = Files::new(7, 4);
-    let line =
-        "onerom firmware build --board fire-40-a --config sets.json --base-firmware base.bin";
+    let line = "onerom firmware build --board fire-40-a --config sets.json --base-firmware base.bin --no-plugin";
     build(line, &files).await;
 }
 
@@ -156,7 +154,7 @@ async fn an_image_larger_than_the_flash() {
 #[tokio::test]
 async fn a_size_other_than_m_with_firmware_before_0_8_0() {
     let files = Files::new(7, 3);
-    let line = "onerom firmware build --board fire-40-a --size L --config sets.json --base-firmware base.bin";
+    let line = "onerom firmware build --board fire-40-a --size L --config sets.json --base-firmware base.bin --no-plugin";
     build(line, &files).await;
 }
 
@@ -164,7 +162,7 @@ async fn a_size_other_than_m_with_firmware_before_0_8_0() {
 async fn an_image_larger_than_its_chip_type() {
     let files = Files::with_2364(8, &["single"], &[]);
     std::fs::write(files.dir.path().join("0.bin"), vec![0; 2 * IMAGE_2364]).unwrap();
-    let line = "onerom firmware build --board fire-24-f --config sets.json --base-firmware base.bin --output out.bin";
+    let line = "onerom firmware build --board fire-24-f --config sets.json --base-firmware base.bin --output out.bin --no-plugin";
     build(line, &files).await;
 }
 
@@ -201,7 +199,7 @@ async fn an_intel_hex_image_that_does_not_decode() {
 #[tokio::test]
 async fn verbose_images_and_their_jumpers() {
     let files = Files::with_2364(8, &["single"; 5], &[]);
-    let line = "onerom --verbose firmware build --board fire-24-f --config sets.json --base-firmware base.bin --output out.bin";
+    let line = "onerom --verbose firmware build --board fire-24-f --config sets.json --base-firmware base.bin --output out.bin --no-plugin";
     build(line, &files).await;
 }
 
@@ -209,7 +207,7 @@ async fn verbose_images_and_their_jumpers() {
 #[tokio::test]
 async fn verbose_images_with_a_reserved_pin() {
     let files = Files::with_2364(8, &["single"; 5], &[]);
-    let line = "onerom --verbose firmware build --board fire-24-f --config sets.json --base-firmware base.bin --output out.bin --reserve-pin sel_c";
+    let line = "onerom --verbose firmware build --board fire-24-f --config sets.json --base-firmware base.bin --output out.bin --reserve-pin sel_c --no-plugin";
     build(line, &files).await;
 }
 
@@ -217,7 +215,7 @@ async fn verbose_images_with_a_reserved_pin() {
 #[tokio::test]
 async fn verbose_an_image_the_jumpers_cannot_select() {
     let files = Files::with_2364(8, &["single"; 5], &[]);
-    let line = "onerom --verbose firmware build --board fire-24-f --config sets.json --base-firmware base.bin --output out.bin --reserve-pin sel_c --reserve-pin sel_d";
+    let line = "onerom --verbose firmware build --board fire-24-f --config sets.json --base-firmware base.bin --output out.bin --reserve-pin sel_c --reserve-pin sel_d --no-plugin";
     build(line, &files).await;
 }
 
@@ -225,32 +223,32 @@ async fn verbose_an_image_the_jumpers_cannot_select() {
 #[tokio::test]
 async fn verbose_one_image() {
     let files = Files::with_2364(8, &["single"], &[]);
-    let line = "onerom --verbose firmware build --board fire-24-f --config sets.json --base-firmware base.bin --output out.bin";
+    let line = "onerom --verbose firmware build --board fire-24-f --config sets.json --base-firmware base.bin --output out.bin --no-plugin";
     build(line, &files).await;
 }
 
 #[tokio::test]
 async fn verbose_turbo_boot() {
     let files = Files::with_2364(8, &["single"], &[]);
-    let line = "onerom --verbose firmware build --board fire-24-f --config sets.json --base-firmware base.bin --output out.bin --turbo-boot";
+    let line = "onerom --verbose firmware build --board fire-24-f --config sets.json --base-firmware base.bin --output out.bin --turbo-boot --no-plugin";
     build(line, &files).await;
 }
 
 #[tokio::test]
 async fn slots_the_jumpers_cannot_select() {
     let files = Files::with_2364(8, &["single"; 5], &[]);
-    let line = "onerom firmware build --board fire-24-f --config sets.json --base-firmware base.bin --output out.bin --reserve-pin sel_c --reserve-pin sel_d";
+    let line = "onerom firmware build --board fire-24-f --config sets.json --base-firmware base.bin --output out.bin --reserve-pin sel_c --reserve-pin sel_d --no-plugin";
     build(line, &files).await;
     println!();
-    let line = "onerom firmware build --board fire-24-c --config sets.json --base-firmware base.bin --output out.bin";
+    let line = "onerom firmware build --board fire-24-c --config sets.json --base-firmware base.bin --output out.bin --no-plugin";
     build(line, &files).await;
     println!();
     let files = Files::with_2364(8, &["single"; 3], &[]);
-    let line = "onerom firmware build --board fire-24-f --config sets.json --base-firmware base.bin --output out.bin --reserve-pin sel_b --reserve-pin sel_c --reserve-pin sel_d";
+    let line = "onerom firmware build --board fire-24-f --config sets.json --base-firmware base.bin --output out.bin --reserve-pin sel_b --reserve-pin sel_c --reserve-pin sel_d --no-plugin";
     build(line, &files).await;
     println!();
     let files = Files::with_2364(8, &["single"; 2], &[]);
-    let line = "onerom firmware build --board fire-24-f --config sets.json --base-firmware base.bin --output out.bin --reserve-pin sel_a --reserve-pin sel_b --reserve-pin sel_c --reserve-pin sel_d";
+    let line = "onerom firmware build --board fire-24-f --config sets.json --base-firmware base.bin --output out.bin --reserve-pin sel_a --reserve-pin sel_b --reserve-pin sel_c --reserve-pin sel_d --no-plugin";
     build(line, &files).await;
 }
 
@@ -259,12 +257,12 @@ async fn slots_the_jumpers_cannot_select() {
 #[tokio::test]
 async fn a_pin_that_cannot_be_reserved() {
     let files = Files::with_2364(8, &["single"], &[]);
-    let line = "onerom firmware build --board fire-24-f --config sets.json --base-firmware base.bin --output out.bin --reserve-pin gpio23";
+    let line = "onerom firmware build --board fire-24-f --config sets.json --base-firmware base.bin --output out.bin --reserve-pin gpio23 --no-plugin";
     build(line, &files).await;
     for entry in ["sel_e", "banana"] {
         println!();
         let files = Files::with_2364(8, &["single"], &[entry]);
-        let line = "onerom firmware build --board fire-24-f --config sets.json --base-firmware base.bin --output out.bin";
+        let line = "onerom firmware build --board fire-24-f --config sets.json --base-firmware base.bin --output out.bin --no-plugin";
         println!("~ sets.json has \"reserved_pins\": [\"{entry}\"]");
         build(line, &files).await;
     }
@@ -286,7 +284,7 @@ fn a_reserve_pin_that_isnt_a_pin_name() {
 #[tokio::test]
 async fn reserved_pins_with_firmware_before_0_8_0() {
     let files = Files::with_2364(7, &["single"], &[]);
-    let line = "onerom firmware build --board fire-24-f --config sets.json --base-firmware base.bin --output out.bin --reserve-pin sel_c";
+    let line = "onerom firmware build --board fire-24-f --config sets.json --base-firmware base.bin --output out.bin --reserve-pin sel_c --no-plugin";
     build(line, &files).await;
 }
 
@@ -296,11 +294,11 @@ async fn reserved_pins_with_firmware_before_0_8_0() {
 #[tokio::test]
 async fn a_banked_set_with_x1_reserved() {
     let files = Files::with_2364(8, &["single", "banked"], &[]);
-    let line = "onerom firmware build --board fire-24-f --config sets.json --base-firmware base.bin --output out.bin --reserve-pin x1";
+    let line = "onerom firmware build --board fire-24-f --config sets.json --base-firmware base.bin --output out.bin --reserve-pin x1 --no-plugin";
     build(line, &files).await;
     println!();
     let files = Files::with_2364(8, &["single"], &[]);
-    let line = "onerom firmware build --board fire-24-a --config sets.json --base-firmware base.bin --output out.bin --reserve-pin x1 --reserve-pin x2";
+    let line = "onerom firmware build --board fire-24-a --config sets.json --base-firmware base.bin --output out.bin --reserve-pin x1 --reserve-pin x2 --no-plugin";
     build(line, &files).await;
 }
 
@@ -308,7 +306,7 @@ async fn a_banked_set_with_x1_reserved() {
 #[tokio::test]
 async fn a_slot_the_board_doesnt_support() {
     let files = Files::with_2364(8, &["single"], &[]);
-    let line = "onerom firmware build --board fire-32-b --config sets.json --base-firmware base.bin --output out.bin";
+    let line = "onerom firmware build --board fire-32-b --config sets.json --base-firmware base.bin --output out.bin --no-plugin";
     build(line, &files).await;
 }
 
@@ -316,7 +314,7 @@ async fn a_slot_the_board_doesnt_support() {
 /// v0.8.0 firmware.
 #[tokio::test]
 async fn a_standby_slot_without_a_file() {
-    let line = "onerom firmware build --board fire-24-f --base-firmware base.bin --output out.bin --slot type=2364,cs1=active-low,standby=on";
+    let line = "onerom firmware build --board fire-24-f --base-firmware base.bin --output out.bin --slot type=2364,cs1=active-low,standby=on --no-plugin";
     build(line, &Files::with_2364(7, &[], &[])).await;
     println!();
     build(line, &Files::with_2364(8, &[], &[])).await;
@@ -393,7 +391,7 @@ async fn a_plugin_by_name_on_a_rom_chip() {
     println!(
         r#"~ sets.json has {{ "file": "0.bin", "type": "2364", "cs1": "active_low", "plugin": "usb" }}"#
     );
-    let line = "onerom firmware build --board fire-24-f --config sets.json --base-firmware base.bin --output out.bin";
+    let line = "onerom firmware build --board fire-24-f --config sets.json --base-firmware base.bin --output out.bin --no-plugin";
     build(line, &files).await;
 }
 
@@ -441,5 +439,35 @@ async fn a_plugin_by_name_that_isnt_published() {
     );
     println!(r#"~ sets.json has {{ "type": "system_plugin", "plugin": "usbb" }}"#);
     let line = "onerom firmware build --board fire-24-f --config sets.json --base-firmware base.bin --output out.bin";
+    build(line, &files).await;
+}
+
+/// The usb plugin is added when a plugin isn't specified.
+#[tokio::test]
+#[ignore = "hits the live images server; run explicitly with --ignored"]
+async fn verbose_the_default_plugin() {
+    let files = Files::with_2364(8, &["single"], &[]);
+    let line = "onerom --verbose firmware build --board fire-24-f --config sets.json --base-firmware base.bin --output out.bin";
+    build(line, &files).await;
+}
+
+/// The usb plugin doesn't have a release that supports firmware v0.5.10.
+#[tokio::test]
+#[ignore = "hits the live images server; run explicitly with --ignored"]
+async fn the_default_plugin_for_firmware_it_doesnt_support() {
+    let files = Files::with_2364(8, &["single"], &[]);
+    let line = "onerom firmware build --board fire-24-c --version 0.5.10 --slot file=0.bin,type=2364,cs1=active-low --output out.bin";
+    build(line, &files).await;
+}
+
+#[tokio::test]
+async fn no_plugin_with_a_config_that_defines_a_plugin() {
+    let files = Files::with_2364(8, &["single"], &[]);
+    add_plugin(
+        &files,
+        serde_json::json!({ "type": "system_plugin", "plugin": "usb" }),
+    );
+    println!(r#"~ sets.json has {{ "type": "system_plugin", "plugin": "usb" }}"#);
+    let line = "onerom firmware build --board fire-24-f --config sets.json --base-firmware base.bin --output out.bin --no-plugin";
     build(line, &files).await;
 }

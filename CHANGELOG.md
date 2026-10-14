@@ -13,6 +13,7 @@ In detail:
   - Add `onerom update`, `onerom clone` and `onerom save`.
   - Fix: `onerom` no longer crashes when its output is piped to a program that exits early, for example `head`.
   - When the One ROM selected with `--serial` can't be opened the error message is now "could not be opened".
+  - `program` and `firmware build` automatically add the USB plugin when a system plugin isn't specified. Use `--no-plugin` to build without plugins.
 - Web Programmer:
   - Moves to logic shared with the CLI to combine and verify built firmware.
   - The One ROM Builder tab's Load from Device and Load from File buttons copy the configuration and ROM images of a One ROM or firmware file into the One ROM Builder tab.

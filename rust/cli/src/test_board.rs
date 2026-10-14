@@ -8,6 +8,7 @@
 //! - a signer table
 //! - a commissioning plan
 //! - firmware images
+//! - a published plugin
 //!
 //! The board is onerom-app's in-memory OTP.
 //!
@@ -21,12 +22,14 @@ use ed25519_dalek::{Signer as _, SigningKey};
 use onerom_app::{
     BoardSize, LocalFetch, MemoryOtp, Plan, Request, RequestDate, SignerTable, prepare,
 };
+use onerom_cli::plugin::{PluginType, VerifyTarget, verify_binary};
 use onerom_cli::usb::{FLASH_BASE, FLASH_READ_SIZE_BYTES};
 use onerom_config::hw::Board;
 use onerom_gen::FIRMWARE_SIZE;
 use onerom_metadata::METADATA_BASE;
 use onerom_metadata::otp::pico_otp::ecc_encode;
 use serde_json::json;
+use sha2::{Digest, Sha256};
 
 use crate::args::hardware::{HardwareCommissionArgs, today};
 
@@ -529,6 +532,50 @@ pub fn args(board: &str, size: BoardSize, key: PathBuf) -> HardwareCommissionArg
         validate: false,
         inspect_otp: false,
     }
+}
+
+/// The files the images server serves for the published plugin `name`.
+/// Its only release is the stub plugin of `plugin_type`. Returns the
+/// binary's URL and the files.
+pub fn published_plugin(plugin_type: PluginType, name: &str) -> (String, Files) {
+    let stub = format!("stub-{}-plugin.bin", plugin_type.short());
+    let bin = std::fs::read(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../images/test")
+            .join(&stub),
+    )
+    .unwrap();
+    let version = verify_binary(&bin, VerifyTarget::Header, &stub)
+        .unwrap()
+        .version;
+    let base = format!(
+        "https://images.onerom.org/plugins/{}/{name}",
+        plugin_type.short()
+    );
+    let releases = json!({
+        "version": 1,
+        "display_name": name,
+        "description": "A test plugin",
+        "latest": version.to_string(),
+        "releases": [{
+            "version": version.to_string(),
+            "path": format!("v{version}"),
+            "filename": "plugin.bin",
+            "sha256": hex::encode(Sha256::digest(&bin)),
+            "api_version": 1,
+            "plugin_type": plugin_type.canonical(),
+            "min_fw_version": "0.7.0"
+        }]
+    });
+    let url = format!("{base}/v{version}/plugin.bin");
+    let files = vec![
+        (
+            format!("{base}/releases.json"),
+            releases.to_string().into_bytes(),
+        ),
+        (url.clone(), bin),
+    ];
+    (url, Files(files))
 }
 
 /// Files a test fetches by URL. A URL without a file fails as the CLI's fetch

@@ -261,10 +261,11 @@ onerom-cli`. Ask me before flashing, since it changes device state.
   the CLI downloads the *released* base firmware and your changes sit outside
   the test.
 - A stopped One ROM sits in the RP2350 bootloader, so `scan` finds it and
-  `scan --slots` reads its slot metadata with no plugins flashed. Add
-  `--plugin usb` where the test needs the device to **serve while staying on
-  the USB bus**. One system plus one user plugin is the maximum: `usb` is
-  system, `host-control` and `blink` are user.
+  `scan --slots` reads its slot metadata with no plugins flashed. `program`
+  adds `--plugin usb` unless another system plugin is specified, so the device
+  **serves while staying on the USB bus**. Use `--no-plugin` to test without
+  plugins. One system plus one user plugin is the maximum: `usb` is system,
+  `host-control` and `blink` are user.
 - `--plugin` combines with `--config` as well as `--slot` — the plugins go
   ahead of the config's ROM slots, and a config defining its own plugin is an
   error. To pass plugins alongside command-line ROMs, use `--slot`:
@@ -272,7 +273,7 @@ onerom-cli`. Ask me before flashing, since it changes device state.
       onerom program \
         --slot file=<path|url>,type=23128,cs1=active-low,cs2=active-low,cs3=active-high \
         --base-firmware firmware/build/onerom-rp235x.bin \
-        --plugin usb \
+        --plugin host-control \
         --out /tmp/fw.bin
 
   Per-slot firmware overrides go in the spec — `,led=off`, `,cpu-freq=200MHz`,
