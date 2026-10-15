@@ -7,6 +7,7 @@
 use crate::Suite;
 
 pub mod conformance;
+pub mod extensions;
 pub mod host;
 pub mod integration;
 
@@ -16,6 +17,11 @@ pub static SUITES: &[Suite] = &[
         name: "conformance",
         blurb: "does the device obey the RBCP specification?",
         scenarios: conformance::SCENARIOS,
+    },
+    Suite {
+        name: "extensions",
+        blurb: "does the device obey host-control's EXTENSIONS.md?",
+        scenarios: extensions::SCENARIOS,
     },
     Suite {
         name: "host",
@@ -44,5 +50,17 @@ pub fn withheld_api(scenario: &str) -> &'static [u32] {
         .chain(conformance::read_group::WITHHELD_API)
         .find(|(name, _)| *name == scenario)
         .map(|(_, ids)| *ids)
+        .unwrap_or(&[])
+}
+
+/// The array elements the shim's metadata stand-in returns for `scenario`, or
+/// none where the scenario runs against the firmware's metadata alone.
+///
+/// Decided before the plugin starts, as withholding is.
+pub fn metadata_stand_in(scenario: &str) -> &'static [u32] {
+    extensions::device_info::STAND_IN
+        .iter()
+        .find(|(name, _)| *name == scenario)
+        .map(|(_, elems)| *elems)
         .unwrap_or(&[])
 }

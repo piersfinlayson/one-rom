@@ -461,8 +461,10 @@ fn emit_metadata_str_cases(schema: &Schema, out: &mut String) {
 ///
 /// One arm per schema field tagged `plugin_key`: unsigned scalar / enum fields
 /// resolve their value zero-extended to uint32_t; any other type returns
-/// ORA_RESULT_TYPE_MISMATCH.  The expanding function owns the switch, the
-/// argument guard, and the default arm.
+/// ORA_RESULT_TYPE_MISMATCH.  A `[[plugin_keys]]` array returns
+/// ORA_RESULT_TYPE_MISMATCH too, and a `[[plugin_keys]]` number is resolved by
+/// hand.  The expanding function owns the switch, the argument guard, and the
+/// default arm.
 fn emit_metadata_uint_cases(schema: &Schema, out: &mut String) {
     let keys = schema.plugin_keys();
     if keys.is_empty() {
@@ -474,7 +476,8 @@ fn emit_metadata_uint_cases(schema: &Schema, out: &mut String) {
          ora_get_metadata_uint() (firmware/src/plugin.c).\n\n\
          The arms are generated from the schema fields tagged `plugin_key`: each \
          unsigned scalar, enum or bit field resolves its value here, zero-extended \
-         to uint32_t. Any non-numeric key returns ORA_RESULT_TYPE_MISMATCH. The \
+         to uint32_t. Any non-numeric key returns ORA_RESULT_TYPE_MISMATCH. A \
+         number with no stored field is resolved by hand and has no arm here. The \
          expanding function supplies the surrounding switch, the `out == NULL` \
          guard, and the `default:` arm that returns ORA_RESULT_NOT_SUPPORTED for \
          keys unknown to this firmware.",
@@ -484,12 +487,14 @@ fn emit_metadata_uint_cases(schema: &Schema, out: &mut String) {
 
     let mut lines: Vec<String> = vec!["#define ONEROM_METADATA_UINT_CASES(out)".to_string()];
     for entry in &keys {
-        let Some(field) = &entry.field else {
+        if entry.field.is_none() && !entry.unstored_array {
             continue;
-        };
+        }
         let key_name = format!("ORA_METADATA_KEY_{}", entry.key.name);
         lines.push(format!("    case {}:", key_name));
-        if matches!(field.kind, "scalar" | "enum" | "bitfield") {
+        if let Some(field) = &entry.field
+            && matches!(field.kind, "scalar" | "enum" | "bitfield")
+        {
             let access = schema
                 .plugin_key_access(field.struct_name, field.field_name)
                 .expect("plugin_key access paths are validated at schema load");
@@ -515,8 +520,9 @@ fn emit_metadata_uint_cases(schema: &Schema, out: &mut String) {
 /// indexed metadata getter (ora_get_metadata_uint_at in firmware/src/plugin.c).
 ///
 /// One arm per plugin key.  Array-of-unsigned fields bounds-check the index
-/// and resolve the element.  Any other key returns ORA_RESULT_TYPE_MISMATCH.  The expanding function owns the switch, the
-/// argument guard, and the default arm.
+/// and resolve the element.  A `[[plugin_keys]]` array is resolved by hand and
+/// has no arm.  Any other key returns ORA_RESULT_TYPE_MISMATCH.  The expanding
+/// function owns the switch, the argument guard, and the default arm.
 fn emit_metadata_uint_at_cases(schema: &Schema, out: &mut String) {
     let keys = schema.plugin_keys();
     if keys.is_empty() {
@@ -532,7 +538,8 @@ fn emit_metadata_uint_at_cases(schema: &Schema, out: &mut String) {
          returns ORA_RESULT_TYPE_MISMATCH. An `index` past the last element is \
          rejected with ORA_RESULT_INVALID_ARG - the arrays these keys name are \
          terminated by GPIO_NONE, so a caller scans rather than asking for a \
-         length, and reading past the end is a caller error. The expanding \
+         length, and reading past the end is a caller error. An array with no \
+         stored field is resolved by hand and has no arm here. The expanding \
          function supplies the surrounding switch, the `out == NULL` guard, and \
          the `default:` arm that returns ORA_RESULT_NOT_SUPPORTED for keys \
          unknown to this firmware.",
@@ -543,6 +550,9 @@ fn emit_metadata_uint_at_cases(schema: &Schema, out: &mut String) {
     let mut lines: Vec<String> =
         vec!["#define ONEROM_METADATA_UINT_AT_CASES(index, out)".to_string()];
     for entry in &keys {
+        if entry.unstored_array {
+            continue;
+        }
         let key_name = format!("ORA_METADATA_KEY_{}", entry.key.name);
         lines.push(format!("    case {}:", key_name));
         if let Some(field) = &entry.field

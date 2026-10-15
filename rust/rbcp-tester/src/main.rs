@@ -16,6 +16,7 @@
 //! - `conformance` — does the device obey the RBCP specification?  One group
 //!   of scenarios per specification section, each asserting what the spec
 //!   requires rather than what this implementation happens to do.
+//! - `extensions` — does the device obey host-control's EXTENSIONS.md?
 //! - `host` — does `onerom-rbcp-host`, the host One ROM Lab uses, work
 //!   against the device?
 //! - `integration` — does a realistic application work end to end?  Whole
@@ -60,6 +61,11 @@ unsafe extern "C" {
     /// Clear the plugin's claims and the firmware's claim table, as a reboot
     /// does.  Declared here because only this tester's shim defines it.
     fn rbcp_host_test_reset_plugin();
+
+    /// Put the shim's metadata stand-in in front of the firmware's metadata
+    /// calls, with an array key and its elements, or remove it with a count of
+    /// 0.  Declared here because only this tester's shim defines it.
+    fn rbcp_host_test_metadata_stand_in(key: u32, elems: *const u32, count: u32);
 }
 
 mod driver;
@@ -401,6 +407,11 @@ fn run_scenario(
         return Ok(Outcome::Skip(format!("{} — {reason}", chip_type.name())));
     }
 
+    // OTP is process-global in the emulator and survives a reboot, so what one
+    // scenario wrote would still be there for the next.  Cleared before boot
+    // as the firmware reads OTP while booting.
+    Emulator::clear_otp();
+
     Emulator::set_logging(log_enabled);
     Emulator::set_rp_variant(board.rp_variant());
     Emulator::set_sel_image(SEL_IMAGE);
@@ -429,6 +440,17 @@ fn run_scenario(
     let withheld = suites::withheld_api(sc.name);
     // SAFETY: the slice outlives the call, which copies what it needs.
     unsafe { ffi::ora_host_test_withhold_api(withheld.as_ptr(), withheld.len() as u32) };
+
+    // Set for every scenario for the same reason.
+    let elems = suites::metadata_stand_in(sc.name);
+    // SAFETY: the slice outlives the call, which copies it.
+    unsafe {
+        rbcp_host_test_metadata_stand_in(
+            suites::extensions::device_info::STAND_IN_KEY,
+            elems.as_ptr(),
+            elems.len() as u32,
+        )
+    };
 
     // SAFETY: `emu` outlives `plugin`, which is dropped at the end of this fn.
     // Before the plugin starts, so every scenario claims from a clean table.

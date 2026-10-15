@@ -286,6 +286,14 @@ fn run_slot(
         tests::info::test_metadata_flash_sizes(&emulator, board),
     );
     report.add(
+        "metadata_chip_id",
+        tests::info::test_metadata_chip_id(&emulator),
+    );
+    report.add(
+        "commissioning_value",
+        tests::commissioning::test_commissioning_value(&emulator),
+    );
+    report.add(
         "metadata_uint_at",
         tests::info::test_metadata_uint_at(&emulator, config, board, fw_version, base_dir),
     );

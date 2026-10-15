@@ -902,9 +902,33 @@ ora_result_t ora_get_metadata_uint_at(
     // the default below.
     switch (key) {
         ONEROM_METADATA_UINT_AT_CASES(index, out)
+        case ORA_METADATA_KEY_CHIP_ID: {
+            uint8_t byte;
+            if (!otp_chip_id_byte(index, &byte)) {
+                return ORA_RESULT_INVALID_ARG;
+            }
+            *out = byte;
+            return ORA_RESULT_OK;
+        }
         default:
             return ORA_RESULT_NOT_SUPPORTED;
     }
+}
+
+ora_result_t ora_get_commissioning_value(
+    uint16_t key,
+    const uint8_t **value_out,
+    uint16_t *len_out
+) {
+    if ((key == OTP_KEY_NONE) || (value_out == NULL) || (len_out == NULL)) {
+        return ORA_RESULT_INVALID_ARG;
+    }
+    uint16_t row;
+    if (!otp_commissioning_value(key, &row, len_out)) {
+        return ORA_RESULT_NOT_SUPPORTED;
+    }
+    *value_out = (const uint8_t *)otp_ecc_bytes(row);
+    return ORA_RESULT_OK;
 }
 
 ora_result_t ora_demangle_data(uint8_t physical_data, uint8_t *logical_data_out) {
@@ -1924,6 +1948,8 @@ void *ora_fn_lookup(api_id_t id) {
             return ora_firmware_state_query;
         case ORA_ID_SET_STANDBY:
             return ora_set_standby;
+        case ORA_ID_GET_COMMISSIONING_VALUE:
+            return ora_get_commissioning_value;
 
         case ORA_ID_REBOOT:
             return ora_reboot;

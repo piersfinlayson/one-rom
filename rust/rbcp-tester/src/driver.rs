@@ -573,6 +573,22 @@ impl<'a> Bus<'a> {
         }
     }
 
+    /// A metadata string, read through the plugin API.  `None` where it is
+    /// unset.
+    pub fn metadata_str(&self, key: fw_ffi::ora_metadata_key_t) -> (OraResult, Option<String>) {
+        self.emu.get_metadata_str(key)
+    }
+
+    /// A commissioning value, read through the plugin API.
+    pub fn commissioning_value(&self, key: u16) -> (OraResult, Option<Vec<u8>>) {
+        self.emu.get_commissioning_value(key)
+    }
+
+    /// A metadata number, read through the plugin API.
+    pub fn metadata_uint(&self, key: fw_ffi::ora_metadata_key_t) -> (OraResult, Option<u32>) {
+        self.emu.get_metadata_uint(key)
+    }
+
     /// Put the millisecond counter the device times with at `us`
     /// microseconds.
     ///

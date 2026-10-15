@@ -134,6 +134,7 @@ const uint8_t protocol_version[4] = {
 #define GRP_PIPES       0x04u
 #define GRP_AUX         0x05u
 #define GRP_LED         0x06u
+#define GRP_DEVICE_INFO 0x80u
 #define GRP_RESET       0xAAu
 
 // Control commands
@@ -310,6 +311,13 @@ _Static_assert((uint32_t)LED_MAX_HOLD * 100u <= ORA_LED_MAX_HOLD_MS,
 
 // Reset commands
 #define CMD_RBCP_RESET                  0xAAu
+
+// Device Info commands, specified in EXTENSIONS.md
+#define CMD_GET_COMMISSIONING_VERSION   0x00u
+#define CMD_GET_COMMISSIONING_VALUE     0x01u
+#define CMD_GET_METADATA_STR            0x02u
+#define CMD_GET_METADATA_UINT           0x03u
+#define CMD_GET_METADATA_ARRAY          0x04u
 
 // NV Storage size supported by this RBCP implementation
 #define NV_STORAGE_SIZE 4096u
@@ -2767,6 +2775,227 @@ static bool exec_set_led(void) {
 }
 
 // ---------------------------------------------------------------------------
+// Command handlers — Device Info group (0x80), specified in EXTENSIONS.md
+// ---------------------------------------------------------------------------
+
+// ora_get_commissioning_value and ora_get_metadata_str are looked up each time
+// they're used, as the plugin's static RAM is full.
+
+// Every response starts with a 4-byte field.
+#define DEVINFO_HDR_SIZE                4u
+
+static uint32_t ring_read_le(uint8_t n) {
+    uint32_t v = 0u;
+    for (uint8_t i = 0u; i < n; i++) {
+        v |= (uint32_t)ring_read_byte() << (8u * i);
+    }
+    return v;
+}
+
+static void devinfo_hdr_write(uint32_t v) {
+    uint8_t hdr[DEVINFO_HDR_SIZE];
+    for (uint8_t i = 0u; i < DEVINFO_HDR_SIZE; i++) {
+        hdr[i] = (uint8_t)(v >> (8u * i));
+    }
+    data_write(s_state.active_slot, 0u, hdr, DEVINFO_HDR_SIZE);
+}
+
+// Write a Value Response of up to count bytes from offset of a len-byte value.
+static bool devinfo_value_write(
+    const uint8_t *value,
+    uint32_t len,
+    uint32_t offset,
+    uint32_t count
+) {
+    if (offset > len) {
+        s_log("Device Info failed: offset %u beyond length %u",
+              (unsigned)offset, (unsigned)len);
+        return false;
+    }
+    uint32_t n = len - offset;
+    if (n > count) {
+        n = count;
+    }
+    devinfo_hdr_write(len);
+    if (n != 0u) {
+        data_write(s_state.active_slot, DEVINFO_HDR_SIZE, value + offset, n);
+    }
+    return true;
+}
+
+static bool __attribute__((noinline)) exec_get_commissioning_version(void) {
+    if (s_state.cfg.data_size < DEVINFO_HDR_SIZE) {
+        s_log("GET_COMMISSIONING_VERSION failed: data section too small");
+        return false;
+    }
+
+    ora_get_commissioning_value_fn_t get = s_lookup(ORA_ID_GET_COMMISSIONING_VALUE);
+    const uint8_t *value;
+    uint16_t len;
+    uint32_t version = 0u;
+    ora_result_t rc = get(ORA_COMMISSIONING_VERSION_KEY, &value, &len);
+    if (rc == ORA_RESULT_OK) {
+        for (uint16_t i = 0u; (i < len) && (i < 2u); i++) {
+            version |= (uint32_t)value[i] << (8u * i);
+        }
+    } else if (rc != ORA_RESULT_NOT_SUPPORTED) {
+        s_log("GET_COMMISSIONING_VERSION failed: %d", rc);
+        return false;
+    }
+
+    s_log("GET_COMMISSIONING_VERSION: %u", (unsigned)version);
+    devinfo_hdr_write(version);
+    return true;
+}
+
+static bool __attribute__((noinline)) exec_get_commissioning_value(void) {
+    uint8_t count   = ring_read_byte();
+    uint32_t offset = ring_read_le(2u);
+    uint32_t key    = ring_read_le(2u);
+
+    s_log("GET_COMMISSIONING_VALUE: key=0x%04X offset=%u ct=%u",
+          (unsigned)key, (unsigned)offset, (unsigned)count);
+
+    uint32_t byte_count = (count == 0u) ? 256u : (uint32_t)count;
+    if (s_state.cfg.data_size < DEVINFO_HDR_SIZE + byte_count) {
+        s_log("GET_COMMISSIONING_VALUE failed: data section too small");
+        return false;
+    }
+    if ((key >> 8u) == 0xAAu) {
+        s_log("GET_COMMISSIONING_VALUE failed: key MSB 0xAA is reserved");
+        return false;
+    }
+
+    ora_get_commissioning_value_fn_t get = s_lookup(ORA_ID_GET_COMMISSIONING_VALUE);
+    const uint8_t *value;
+    uint16_t len;
+    ora_result_t rc = get((uint16_t)key, &value, &len);
+    if (rc != ORA_RESULT_OK) {
+        s_log("GET_COMMISSIONING_VALUE failed: %d", rc);
+        return false;
+    }
+    return devinfo_value_write(value, len, offset, byte_count);
+}
+
+static bool __attribute__((noinline)) exec_get_metadata_str(void) {
+    uint8_t count   = ring_read_byte();
+    uint32_t offset = ring_read_le(2u);
+    uint32_t key    = ring_read_le(4u);
+
+    s_log("GET_METADATA_STR: key=0x%08X offset=%u ct=%u",
+          (unsigned)key, (unsigned)offset, (unsigned)count);
+
+    uint32_t byte_count = (count == 0u) ? 256u : (uint32_t)count;
+    if (s_state.cfg.data_size < DEVINFO_HDR_SIZE + byte_count) {
+        s_log("GET_METADATA_STR failed: data section too small");
+        return false;
+    }
+    if ((key >> 24u) == 0xAAu) {
+        s_log("GET_METADATA_STR failed: key MSB 0xAA is reserved");
+        return false;
+    }
+
+    ora_get_metadata_str_fn_t get = s_lookup(ORA_ID_GET_METADATA_STR);
+    const char *str;
+    ora_result_t rc = get((ora_metadata_key_t)key, &str);
+    if (rc != ORA_RESULT_OK) {
+        s_log("GET_METADATA_STR failed: %d", rc);
+        return false;
+    }
+
+    // An unset string is NULL and has length 0.
+    uint32_t len = 0u;
+    if (str != NULL) {
+        while ((len < 0xFFFFu) && (str[len] != '\0')) {
+            len++;
+        }
+    }
+    return devinfo_value_write((const uint8_t *)str, len, offset, byte_count);
+}
+
+static bool __attribute__((noinline)) exec_get_metadata_uint(void) {
+    uint32_t key = ring_read_le(4u);
+
+    s_log("GET_METADATA_UINT: key=0x%08X", (unsigned)key);
+
+    if (s_state.cfg.data_size < DEVINFO_HDR_SIZE) {
+        s_log("GET_METADATA_UINT failed: data section too small");
+        return false;
+    }
+    if ((key >> 24u) == 0xAAu) {
+        s_log("GET_METADATA_UINT failed: key MSB 0xAA is reserved");
+        return false;
+    }
+
+    uint32_t value;
+    ora_result_t rc = s_get_metadata_uint((ora_metadata_key_t)key, &value);
+    if (rc != ORA_RESULT_OK) {
+        s_log("GET_METADATA_UINT failed: %d", rc);
+        return false;
+    }
+    devinfo_hdr_write(value);
+    return true;
+}
+
+static bool __attribute__((noinline)) exec_get_metadata_array(void) {
+    uint8_t count = ring_read_byte();
+    uint8_t index = ring_read_byte();
+    uint8_t width = ring_read_byte();
+    uint32_t key  = ring_read_le(4u);
+
+    s_log("GET_METADATA_ARRAY: key=0x%08X index=%u width=%u ct=%u",
+          (unsigned)key, (unsigned)index, (unsigned)width, (unsigned)count);
+
+    if ((width != 1u) && (width != 2u) && (width != 4u)) {
+        s_log("GET_METADATA_ARRAY failed: width %u", (unsigned)width);
+        return false;
+    }
+    uint32_t elem_count = (count == 0u) ? 256u : (uint32_t)count;
+    if (s_state.cfg.data_size < DEVINFO_HDR_SIZE + (elem_count * width)) {
+        s_log("GET_METADATA_ARRAY failed: data section too small");
+        return false;
+    }
+    if ((key >> 24u) == 0xAAu) {
+        s_log("GET_METADATA_ARRAY failed: key MSB 0xAA is reserved");
+        return false;
+    }
+
+    // Every element is checked before any is written, so a failure writes no
+    // data.
+    uint32_t max = (width == 4u) ? 0xFFFFFFFFu : ((1u << (8u * width)) - 1u);
+    uint32_t value;
+    uint32_t n = 0u;
+    ora_result_t rc = ORA_RESULT_OK;
+    while (n < elem_count) {
+        rc = s_get_metadata_uint_at((ora_metadata_key_t)key, index + n, &value);
+        if (rc != ORA_RESULT_OK) {
+            break;
+        }
+        if (value > max) {
+            s_log("GET_METADATA_ARRAY failed: element %u too large for width",
+                  (unsigned)(index + n));
+            return false;
+        }
+        n++;
+    }
+    if (n == 0u) {
+        s_log("GET_METADATA_ARRAY failed: %d", rc);
+        return false;
+    }
+
+    for (uint32_t i = 0u; i < n; i++) {
+        (void)s_get_metadata_uint_at((ora_metadata_key_t)key, index + i, &value);
+        uint8_t elem[4];
+        for (uint8_t b = 0u; b < width; b++) {
+            elem[b] = (uint8_t)(value >> (8u * b));
+        }
+        data_write(s_state.active_slot, DEVINFO_HDR_SIZE + (i * width), elem, width);
+    }
+    devinfo_hdr_write((uint8_t)n);
+    return true;
+}
+
+// ---------------------------------------------------------------------------
 // Command dispatch
 // ---------------------------------------------------------------------------
 
@@ -2824,6 +3053,15 @@ static uint8_t cmd_arg_count(uint8_t group, uint8_t cmd) {
             case CMD_GET_LED_MODE_INFO:   return 2u;
             case CMD_SET_LED:             return 8u;
             default:                      return 0u;
+        }
+    }
+    if (group == GRP_DEVICE_INFO) {
+        switch (cmd) {
+            case CMD_GET_COMMISSIONING_VALUE: return 5u;
+            case CMD_GET_METADATA_STR:        return 7u;
+            case CMD_GET_METADATA_UINT:       return 4u;
+            case CMD_GET_METADATA_ARRAY:      return 7u;
+            default:                          return 0u;
         }
     }
     return 0u;
@@ -3115,6 +3353,36 @@ static bool dispatch(
                     break;
                 case CMD_SET_LED:
                     ok = exec_set_led();
+                    break;
+                default:
+                    ok = false;
+                    break;
+            }
+            break;
+
+        case GRP_DEVICE_INFO:
+            // Command-response mode only, per EXTENSIONS.md.  Consume the
+            // frame, then discard it.
+            if (!s_state.active) {
+                discard_args(cmd_arg_count(group, cmd));
+                ok = false;
+                break;
+            }
+            switch (cmd) {
+                case CMD_GET_COMMISSIONING_VERSION:
+                    ok = exec_get_commissioning_version();
+                    break;
+                case CMD_GET_COMMISSIONING_VALUE:
+                    ok = exec_get_commissioning_value();
+                    break;
+                case CMD_GET_METADATA_STR:
+                    ok = exec_get_metadata_str();
+                    break;
+                case CMD_GET_METADATA_UINT:
+                    ok = exec_get_metadata_uint();
+                    break;
+                case CMD_GET_METADATA_ARRAY:
+                    ok = exec_get_metadata_array();
                     break;
                 default:
                     ok = false;

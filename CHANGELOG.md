@@ -26,10 +26,15 @@ In detail:
   - `R` queries One ROM information using RBCP.
   - `a` is a batch read that reads the ROM and queries One ROM information.
 - Plugins:
-  - host-control 0.1.7 supports RBCP's `REBOOT` command.  Requires firmware 0.8.1.
+  - host-control 0.1.7
+    - Requires firmware 0.8.1.
+    - Supports RBCP's `REBOOT` command.
+    - Adds Device Info extensions which expose One ROM's commissioning values and metadata.
 - Plugin APIs:
   - New: `ora_reboot()` can be used to reboot One ROM.
   - Deprecated: `ORA_ID_REBOOT_BOOTSEL`.  Use `ORA_ID_REBOOT`.
+  - New: `ora_get_commissioning_value()` reads a commissioning value from OTP.
+  - New: `ORA_METADATA_KEY_CHIP_ID` reads the RP2350's chip ID with `ora_get_metadata_uint_at()`.
 
 To test:
 - One ROM Web: the One ROM Builder tab's Load from Device button with a One ROM connected.
@@ -37,7 +42,7 @@ To test:
 
 To publish:
 - Rust crates (in dependency order):
-  - onerom-metadata-gen 0.1.1
+  - onerom-metadata-gen 0.2.0
   - onerom-metadata 0.3.1
   - onerom-gen 0.9.1
   - onerom-fw-parser 0.10.1

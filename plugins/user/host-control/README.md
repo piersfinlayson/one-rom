@@ -22,6 +22,10 @@ The plugin is designed to be driven by the host system's CPU directly.  A [C64 k
 
 To use, build the C64 kernal bootloader, and then install as the first non-plugin image on One ROM.  You will then need to follow it with one or more other C64 kernal images that you want to be able to switch between using the bootloader.
 
+## One ROM Extensions
+
+The plugin adds commands and values in the ranges RBCP reserves for implementation-specific use.  See [EXTENSIONS.md](EXTENSIONS.md).
+
 ## Sending bytes out through One ROM
 
 RBCP's Pipes group lets the host write bytes to a pipe on the device, and this plugin's pipe is One ROM's log channel — so a retro system can get its output to a PC over One ROM's USB, with no serial port or display of its own.  Read it with `onerom monitor log`, or any terminal on the CDC serial port.  See [Logging](/docs/LOGGING.md) for what else arrives there.

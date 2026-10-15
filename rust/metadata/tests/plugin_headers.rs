@@ -260,26 +260,34 @@ fn every_plugin_key_names_the_release_it_arrived_in() {
     }
 }
 
-/// The firmware resolves a key with no stored field by hand in the unsigned
-/// getter, so that getter's generated arms leave it out.  Every key has an arm
-/// in each of the other two, and a key with a stored field has one in all
-/// three.
+/// The firmware resolves a key with no stored field by hand, a number in the
+/// unsigned getter and an array in the indexed one, so that getter's generated
+/// arms leave it out.  Every key has an arm in each of the other two, and a key
+/// with a stored field has one in all three.
 #[test]
-fn only_a_key_with_a_stored_field_has_a_generated_unsigned_arm() {
+fn a_key_with_no_stored_field_has_no_generated_arm_in_its_own_getter() {
     let schema = shipped();
     let header = c_gen::generate(&schema);
-    let start = header
-        .find("#define ONEROM_METADATA_UINT_CASES(out)")
-        .expect("the header defines ONEROM_METADATA_UINT_CASES");
-    let end = header[start..]
-        .find("\n\n")
-        .map_or(header.len(), |at| start + at);
-    let uint_arms = &header[start..end];
+    let arms = |define: &str| {
+        let start = header
+            .find(define)
+            .unwrap_or_else(|| panic!("the header defines {define}"));
+        let end = header[start..]
+            .find("\n\n")
+            .map_or(header.len(), |at| start + at);
+        header[start..end].to_string()
+    };
+    let uint_arms = arms("#define ONEROM_METADATA_UINT_CASES(out)");
+    let uint_at_arms = arms("#define ONEROM_METADATA_UINT_AT_CASES(index, out)");
 
     let keys = schema.plugin_keys();
     assert!(
-        keys.iter().any(|k| k.field.is_none()),
-        "the schema has no key without a stored field"
+        keys.iter().any(|k| k.field.is_none() && !k.unstored_array),
+        "the schema has no number without a stored field"
+    );
+    assert!(
+        keys.iter().any(|k| k.unstored_array),
+        "the schema has no array without a stored field"
     );
     for entry in keys {
         let arm = format!("case ORA_METADATA_KEY_{}:", entry.key.name);
@@ -291,8 +299,13 @@ fn only_a_key_with_a_stored_field_has_a_generated_unsigned_arm() {
         );
         assert_eq!(
             uint_arms.contains(&arm),
-            stored,
+            stored || entry.unstored_array,
             "'{arm}' is wrongly in or out of the unsigned getter:\n{header}"
+        );
+        assert_eq!(
+            uint_at_arms.contains(&arm),
+            !entry.unstored_array,
+            "'{arm}' is wrongly in or out of the indexed getter:\n{header}"
         );
     }
 }

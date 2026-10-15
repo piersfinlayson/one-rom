@@ -2,8 +2,12 @@
 
 ## [0.1.7] - unreleased
 
-Implements RBCP draft 0.1.4.  Supports the `REBOOT` command.
-- Requires firmware 0.8.1.
+Implements RBCP 0.1.4.
+- Supports the `REBOOT` command.
+
+Adds the Device Info commands specified in [EXTENSIONS.md](EXTENSIONS.md).
+
+Requires firmware 0.8.1.
 
 ## [0.1.6] - 2026-10-06
 

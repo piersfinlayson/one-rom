@@ -75,7 +75,7 @@ onerom-gen = { path="gen", version="0.9.1" }
 onerom-metadata = { path="metadata", version="0.3.1" }
 onerom-lab-metadata = { path="lab-metadata", version="0.1.0" }
 onerom-lab-parser = { path="lab-parser", version="0.1.0" }
-onerom-metadata-gen = { path="metadata-gen", version="0.1.1" }
+onerom-metadata-gen = { path="metadata-gen", version="0.2.0" }
 onerom-plugin-tester = { path="plugin-tester", version="0.1.0" }
 onerom-protocol = { path="protocol", version="0.1.1" }
 onerom-rbcp-host = { path="rbcp-host", version="0.1.0" }

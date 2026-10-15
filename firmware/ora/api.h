@@ -766,7 +766,7 @@ typedef enum {
     ORA_ID_GET_PLUGIN_UPTIME_MS      = 0x0000003B,
 
     /**
-     * @brief Get one element of an array-valued unsigned metadata datum
+     * @brief Get one value of an array metadata key
      * @sa ora_get_metadata_uint_at_fn_t
      * @since firmware 0.7.2
      */
@@ -806,6 +806,13 @@ typedef enum {
      * @since firmware 0.8.1
      */
     ORA_ID_REBOOT                    = 0x00000041,
+
+    /**
+     * @brief Get a commissioning value
+     * @sa ora_get_commissioning_value_fn_t
+     * @since firmware 0.8.1
+     */
+    ORA_ID_GET_COMMISSIONING_VALUE   = 0x00000042,
 
     /** Invalid API identifier */
     ORA_ID_INVALID = 0xFFFFFFFF,
@@ -2460,30 +2467,24 @@ typedef ora_result_t (*ora_get_metadata_str_fn_t)(ora_metadata_key_t key, const 
 typedef ora_result_t (*ora_get_metadata_uint_fn_t)(ora_metadata_key_t key, uint32_t *out);
 
 /**
- * @brief Get one element of an array-valued unsigned metadata datum
+ * @brief Get one value of an array metadata key
  * @sa ORA_ID_GET_METADATA_UINT_AT
- *
- * Indexed sibling of @ref ora_get_metadata_uint_fn_t over the same unified key
- * space - a key means the same datum whichever accessor is asked for it. This
- * accessor resolves keys whose datum is an array of unsigned values, such as
- * the image select and X expansion pin maps (ORA_METADATA_KEY_GPIO_SEL,
- * ORA_METADATA_KEY_GPIO_X1, ORA_METADATA_KEY_GPIO_X2).
- *
- * There is no companion call reporting an array's length. A caller reads
- * upwards from index 0 until the call stops returning @c ORA_RESULT_OK, which
- * needs no sentinel value in the data and so works whatever the elements mean.
- * Learning a length that way costs one call per element, plus one.
- *
- * @param key   The metadata datum to retrieve. @sa ora_metadata_key_t
- * @param index Element to read, counting from 0.
- * @param out   Output pointer to receive the value. Must not be NULL.
- * @return ORA_RESULT_OK on success;
- *         ORA_RESULT_NOT_SUPPORTED if @p key is unknown to this firmware;
- *         ORA_RESULT_TYPE_MISMATCH if @p key is valid but not an array of
- *         unsigned values;
- *         ORA_RESULT_INVALID_ARG if @p out is NULL, or @p index is beyond the
- *         last element of the array.
  * @since firmware 0.7.2
+ *
+ * Returns the value at @p index of an array key, for example
+ * ORA_METADATA_KEY_GPIO_SEL or ORA_METADATA_KEY_CHIP_ID.
+ *
+ * To find an array's length, read from index 0 until the call returns
+ * ORA_RESULT_INVALID_ARG.
+ *
+ * @param key    An array metadata key. @sa ora_metadata_key_t
+ * @param index  Index of the value, from 0
+ * @param out    Set to the value. Must not be NULL.
+ * @return ORA_RESULT_OK on success.
+ *         ORA_RESULT_NOT_SUPPORTED if @p key is unknown to this firmware.
+ *         ORA_RESULT_TYPE_MISMATCH if @p key isn't an array.
+ *         ORA_RESULT_INVALID_ARG if @p index is past the end of the array or
+ *         @p out is NULL.
  */
 typedef ora_result_t (*ora_get_metadata_uint_at_fn_t)(
     ora_metadata_key_t key,
@@ -3460,6 +3461,41 @@ _Static_assert(sizeof(ora_reboot_request_t) == 8, "ora_reboot_request_t must be 
  *         ORA_RESULT_ERROR if the reboot can't be scheduled
  */
 typedef ora_result_t (*ora_reboot_fn_t)(const ora_reboot_request_t *req);
+
+/**
+ * @brief Get a commissioning value
+ * @sa ORA_ID_GET_COMMISSIONING_VALUE
+ * @since firmware 0.8.1
+ *
+ * Commissioning values are written to OTP when a One ROM is commissioned. The
+ * value comes from the last complete commissioning instance.
+ *
+ * When called with key ORA_COMMISSIONING_VERSION_KEY the call returns the
+ * instance's format version. A One ROM is commissioned if this returns
+ * ORA_RESULT_OK. If the commissioning area contains an instance with a version
+ * this firmware can't read, the call returns that version for
+ * ORA_COMMISSIONING_VERSION_KEY and ORA_RESULT_NOT_SUPPORTED for every other
+ * key.
+ *
+ * - The value is read in place from OTP.
+ * - A string isn't null-terminated.
+ * - A number is little-endian.
+ * - The firmware doesn't check the signature.
+ *
+ * @param key        An ORA_OTP_KEY_* value or ORA_COMMISSIONING_VERSION_KEY
+ * @param value_out  Set to the value, which stays valid until the One ROM
+ *                   reboots. Must not be NULL.
+ * @param len_out    Set to the value's length in bytes. Must not be NULL.
+ * @return ORA_RESULT_OK on success.
+ *         ORA_RESULT_NOT_SUPPORTED if the One ROM doesn't have the value.
+ *         ORA_RESULT_INVALID_ARG if @p key is ORA_OTP_KEY_NONE or an output
+ *         pointer is NULL.
+ */
+typedef ora_result_t (*ora_get_commissioning_value_fn_t)(
+    uint16_t key,
+    const uint8_t **value_out,
+    uint16_t *len_out
+);
 
 /** @} */ // plugin_api_functions
 

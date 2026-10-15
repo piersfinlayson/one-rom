@@ -29,6 +29,11 @@
 // @since firmware 0.7.2
 #define ORA_GPIO_NONE ((uint8_t)0xFF)
 
+// Key for the commissioning instance's format version in
+// ora_get_commissioning_value.
+// @since firmware 0.8.1
+#define ORA_COMMISSIONING_VERSION_KEY ((uint16_t)0xFFFF)
+
 // Position of FLASH_DEVINFO's CS0_SIZE field.
 // @since firmware 0.8.0
 #define ORA_OTP_FLASH_DEVINFO_CS0_SIZE_SHIFT ((uint16_t)8)
@@ -133,6 +138,36 @@
 // RP235xA
 // @since firmware 0.8.0
 #define ORA_RP235XA ((uint8_t)1)
+
+// An entry with key 0 and length 0 ends a list of OTP store entries. An entry
+// with key 0 and any other length has been deleted.
+// @since firmware 0.8.1
+#define ORA_OTP_KEY_NONE ((uint16_t)0)
+
+// Board name
+// @since firmware 0.8.1
+#define ORA_OTP_KEY_COMMISSIONING_BOARD ((uint16_t)1)
+
+// Commissioning signature
+// @since firmware 0.8.1
+#define ORA_OTP_KEY_COMMISSIONING_SIG ((uint16_t)2)
+
+// Manufacturer's name
+// @since firmware 0.8.1
+#define ORA_OTP_KEY_COMMISSIONING_MANUFACTURER ((uint16_t)3)
+
+// Commissioning date
+// @since firmware 0.8.1
+#define ORA_OTP_KEY_COMMISSIONING_DATE ((uint16_t)4)
+
+// ID of the signing key
+// @since firmware 0.8.1
+#define ORA_OTP_KEY_COMMISSIONING_SIGNER ((uint16_t)5)
+
+// 0xFFFF is never written to OTP as a key. It makes the C enum
+// onerom_otp_key_t 2 bytes wide.
+// @since firmware 0.8.1
+#define ORA_OTP_KEY_RESERVED ((uint16_t)0xFFFF)
 
 // No flash chip.
 // @since firmware 0.8.0

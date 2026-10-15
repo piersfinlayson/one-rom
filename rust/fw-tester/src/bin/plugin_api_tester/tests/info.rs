@@ -12,6 +12,7 @@ use onerom_config::hw::Board;
 use onerom_fw_emulator::{Emulator, OraResult, build_options, ffi};
 use onerom_fw_tester::geometry;
 use onerom_gen::Config;
+use onerom_metadata::otp::format_chip_id;
 use onerom_metadata::{
     OTP_BOOT_FLAGS0_FLASH_DEVINFO_ENABLE, OTP_BOOT_FLAGS0_ROW, OTP_FLASH_DEVINFO_CS0_SIZE_SHIFT,
     OTP_FLASH_DEVINFO_CS1_SIZE_SHIFT, OTP_FLASH_DEVINFO_ROW, OTP_FLASH_DEVINFO_SIZE_BITS,
@@ -445,6 +446,66 @@ fn check_flash_sizes(emu: &Emulator, board: Board) -> Result<(), String> {
             ));
         }
     }
+    Ok(())
+}
+
+/// Verify `CHIP_ID` against the chip ID string the host tools write for the
+/// same OTP rows.
+pub fn test_metadata_chip_id(emu: &Emulator) -> Result<(), String> {
+    let result = check_chip_id(emu);
+    Emulator::clear_otp();
+    result
+}
+
+/// [`test_metadata_chip_id`], less clearing OTP.
+fn check_chip_id(emu: &Emulator) -> Result<(), String> {
+    const KEY: ffi::ora_metadata_key_t = ffi::ora_metadata_key_t_ORA_METADATA_KEY_CHIP_ID;
+    let rows = [0xadac, 0x7c10, 0xc9f9, 0xe126];
+    Emulator::clear_otp();
+    Emulator::set_otp_ecc(0, &rows);
+
+    let mut hex = String::new();
+    for index in 0..8 {
+        match emu.get_metadata_uint_at(KEY, index) {
+            (OraResult::Ok, Some(byte)) if byte <= 0xff => hex.push_str(&format!("{byte:02X}")),
+            (result, value) => {
+                return Err(format!("CHIP_ID[{index}]: got {result:?}/{value:?}"));
+            }
+        }
+    }
+    let want = format_chip_id(rows);
+    if hex != want {
+        return Err(format!("CHIP_ID is {hex}, the host tools write {want}"));
+    }
+
+    let checks = [
+        (
+            "index 8",
+            emu.get_metadata_uint_at(KEY, 8).0,
+            OraResult::InvalidArg,
+        ),
+        (
+            "NULL out",
+            emu.get_metadata_uint_at_null_out(KEY, 0),
+            OraResult::InvalidArg,
+        ),
+        (
+            "via uint",
+            emu.get_metadata_uint(KEY).0,
+            OraResult::TypeMismatch,
+        ),
+        (
+            "via str",
+            emu.get_metadata_str(KEY).0,
+            OraResult::TypeMismatch,
+        ),
+    ];
+    for (label, got, want) in checks {
+        if got != want {
+            return Err(format!("CHIP_ID {label}: got {got:?}, expected {want:?}"));
+        }
+    }
+    println!("  CHIP_ID: {hex}");
     Ok(())
 }
 

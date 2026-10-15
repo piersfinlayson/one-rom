@@ -114,9 +114,12 @@
 # Plugin key attributes
 # ---------------------------------------------------------------------------
 #   A [[plugin_keys]] entry is a plugin key with no stored field. The firmware
-#   resolves it by hand in ora_get_metadata_uint (firmware/src/plugin.c). Its
-#   name, id and first_release follow the rules of a field's plugin_key.
+#   resolves it by hand in ora_get_metadata_uint or ora_get_metadata_uint_at
+#   (firmware/src/plugin.c). Its name, id and first_release follow the rules
+#   of a field's plugin_key.
 #   type              - the value's type: u8, u16, u32 or an [[enums]] entry
+#   element           - in place of type, for an array: its element type, u8,
+#                       u16 or u32
 #   comment           - reaches the generated key header whole
 #
 # ---------------------------------------------------------------------------
@@ -477,6 +480,15 @@ name = "OTP_STORE_VERSION"
 type = "u16"
 value = 1
 comment = "Format version, in the row after OTP_STORE_MAGIC."
+
+[[constants]]
+name = "COMMISSIONING_VERSION_KEY"
+type = "u16"
+value = 0xFFFF
+ora_api = true
+first_release = "0.8.1"
+comment = """Key for the commissioning instance's format version in
+ora_get_commissioning_value."""
 
 [[constants]]
 name = "OTP_USB_WHITE_LABEL_ROW"
@@ -1208,12 +1220,15 @@ packed = true
 comment = """Key of an entry in the One ROM OTP store. The commissioning area and the
 general store share this list, and a key keeps its number for good."""
 strip_prefix = "OTP_KEY_"
+ora_api = true
+first_release = "0.8.1"
 
 [[enums.variants]]
 name = "OTP_KEY_NONE"
 value = 0
 sentinel = true
-comment = "Not a key. With length 0 it ends a list, and otherwise it marks a deleted entry."
+comment = """An entry with key 0 and length 0 ends a list of OTP store entries. An entry
+with key 0 and any other length has been deleted."""
 
 [[enums.variants]]
 name = "OTP_KEY_COMMISSIONING_BOARD"
@@ -1244,7 +1259,8 @@ comment = "ID of the signing key"
 name = "OTP_KEY_RESERVED"
 value = 0xFFFF
 sentinel = true
-comment = "Never a key. Holds the packed C enum at 2 bytes."
+comment = """0xFFFF is never written to OTP as a key. It makes the C enum
+onerom_otp_key_t 2 bytes wide."""
 
 # ---
 
@@ -2343,6 +2359,14 @@ first_release = "0.8.0"
 type = "onerom_flash_size_t"
 comment = """Size of the flash chip on QSPI chip select 1, as an ORA_FLASH_SIZE_* value.
 See ora_get_metadata_uint_fn_t in api.h."""
+
+[[plugin_keys]]
+name = "CHIP_ID"
+id = 26
+first_release = "0.8.1"
+element = "u8"
+comment = """The RP2350's 64-bit chip ID as 8 bytes. The most significant byte is first
+as the chip ID is usually written in hex most significant byte first."""
 
 [[structs.fields]]
 name = "firmware_states"

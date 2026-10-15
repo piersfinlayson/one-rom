@@ -1895,6 +1895,54 @@ impl Emulator {
         ))
     }
 
+    // ── Commissioning ────────────────────────────────────────────────────────
+
+    /// `ORA_ID_GET_COMMISSIONING_VALUE`, returning the result and a copy of the
+    /// value where it succeeded.
+    pub fn get_commissioning_value(&self, key: u16) -> (OraResult, Option<Vec<u8>>) {
+        let mut ptr: *const u8 = std::ptr::null();
+        let mut len: u16 = 0;
+        let r = OraResult::from(plugin_call!(
+            ffi::api_id_t_ORA_ID_GET_COMMISSIONING_VALUE,
+            ffi::ora_get_commissioning_value_fn_t,
+            key,
+            &mut ptr as *mut *const u8,
+            &mut len as *mut u16
+        ));
+        let value = (r.is_ok() && !ptr.is_null())
+            .then(|| unsafe { std::slice::from_raw_parts(ptr, usize::from(len)) }.to_vec());
+        (r, value)
+    }
+
+    /// `ORA_ID_GET_COMMISSIONING_VALUE` with a NULL value pointer, a NULL
+    /// length pointer, or both.
+    pub fn get_commissioning_value_null_out(
+        &self,
+        key: u16,
+        null_value: bool,
+        null_len: bool,
+    ) -> OraResult {
+        let mut ptr: *const u8 = std::ptr::null();
+        let mut len: u16 = 0;
+        let value_out = if null_value {
+            std::ptr::null_mut()
+        } else {
+            &mut ptr as *mut *const u8
+        };
+        let len_out = if null_len {
+            std::ptr::null_mut()
+        } else {
+            &mut len as *mut u16
+        };
+        OraResult::from(plugin_call!(
+            ffi::api_id_t_ORA_ID_GET_COMMISSIONING_VALUE,
+            ffi::ora_get_commissioning_value_fn_t,
+            key,
+            value_out,
+            len_out
+        ))
+    }
+
     // ── Yield ────────────────────────────────────────────────────────────────
 
     /// `ORA_ID_YIELD`, returning the result and whether the core was paused.

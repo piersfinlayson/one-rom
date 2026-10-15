@@ -819,18 +819,21 @@ pub struct PluginKey {
 }
 
 /// A plugin key with no stored field, from the `[[plugin_keys]]` table.  The
-/// firmware resolves it by hand in ora_get_metadata_uint
-/// (firmware/src/plugin.c), so the generated arms for that getter leave it out.
-/// The other getters' generated arms return ORA_RESULT_TYPE_MISMATCH for it.
+/// firmware resolves it by hand, in ora_get_metadata_uint for a number and in
+/// ora_get_metadata_uint_at for an array (firmware/src/plugin.c), so the
+/// generated arms for that getter leave it out.  The other getters' generated
+/// arms return ORA_RESULT_TYPE_MISMATCH for it.
 #[derive(Deserialize, Debug, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct UnstoredPluginKey {
     pub name: String,
     pub id: u32,
     pub first_release: String,
-    /// The type of the value: u8, u16, u32 or an enum.
+    /// The type of a number: u8, u16, u32 or an enum.
     #[serde(rename = "type")]
-    pub type_: String,
+    pub type_: Option<String>,
+    /// The element type of an array: u8, u16 or u32.
+    pub element: Option<String>,
     pub comment: String,
 }
 
@@ -840,6 +843,8 @@ pub struct PluginKeyEntry<'a> {
     pub comment: Option<&'a str>,
     /// None for a `[[plugin_keys]]` key.
     pub field: Option<KeyField<'a>>,
+    /// Whether a `[[plugin_keys]]` key is an array.  False for a stored key.
+    pub unstored_array: bool,
 }
 
 /// The struct field holding a plugin key's value.
@@ -2873,6 +2878,7 @@ impl Schema {
                             count: f.count,
                             count_ref: f.count_ref.as_deref(),
                         }),
+                        unstored_array: false,
                     });
                 }
             }
@@ -2886,6 +2892,7 @@ impl Schema {
                 },
                 comment: Some(&k.comment),
                 field: None,
+                unstored_array: k.element.is_some(),
             });
         }
         keys.sort_by_key(|e| e.key.id);
@@ -2936,16 +2943,37 @@ impl Schema {
             }
         }
         // The firmware resolves a `[[plugin_keys]]` key through
-        // ora_get_metadata_uint, which returns an unsigned value.
+        // ora_get_metadata_uint or ora_get_metadata_uint_at, which return an
+        // unsigned value.
         for k in &self.unstored_keys {
-            let unsigned = matches!(k.type_.as_str(), "u8" | "u16" | "u32")
-                || self.enums.iter().any(|e| e.name == k.type_);
-            if !unsigned {
-                return Err(format!(
-                    "plugin key '{}' has type '{}', which is not u8, u16, u32 or an enum",
-                    k.name, k.type_
-                )
-                .into());
+            match (&k.type_, &k.element) {
+                (Some(t), None) => {
+                    let unsigned = matches!(t.as_str(), "u8" | "u16" | "u32")
+                        || self.enums.iter().any(|e| &e.name == t);
+                    if !unsigned {
+                        return Err(format!(
+                            "plugin key '{}' has type '{}', which is not u8, u16, u32 or an enum",
+                            k.name, t
+                        )
+                        .into());
+                    }
+                }
+                (None, Some(e)) => {
+                    if !matches!(e.as_str(), "u8" | "u16" | "u32") {
+                        return Err(format!(
+                            "plugin key '{}' has element '{}', which is not u8, u16 or u32",
+                            k.name, e
+                        )
+                        .into());
+                    }
+                }
+                _ => {
+                    return Err(format!(
+                        "plugin key '{}' must have exactly one of type and element",
+                        k.name
+                    )
+                    .into());
+                }
             }
         }
         Ok(())
