@@ -590,6 +590,20 @@ impl<'a> Bus<'a> {
         self.emu.advance_timer_us(delta_us);
     }
 
+    /// The bootrom reboot the firmware scheduled since the last call, as
+    /// `(bootloader, delay_ms)`, or `None` if it scheduled none.
+    ///
+    /// In this process the reboot is recorded and never happens.  Reading
+    /// clears the record.
+    pub fn rom_reboot(&self) -> Option<(bool, u32)> {
+        self.emu.rom_reboot()
+    }
+
+    /// Make the firmware's bootrom reboot fail.  Cleared on boot.
+    pub fn set_rom_reboot_fails(&self, fails: bool) {
+        self.emu.set_rom_reboot_fails(fails);
+    }
+
     /// Run one frame of the firmware's LED engine.
     ///
     /// A SET_LED hold is the engine's own timer rather than the device

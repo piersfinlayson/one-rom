@@ -301,6 +301,20 @@ fn run_slot(
         "plugin_uptime_raw_read",
         tests::time::test_plugin_uptime_raw_read(&emulator),
     );
+    report.add("reboot_modes", tests::reboot::test_reboot_modes(&emulator));
+    report.add("reboot_delay", tests::reboot::test_reboot_delay(&emulator));
+    report.add(
+        "reboot_rejects",
+        tests::reboot::test_reboot_rejects(&emulator),
+    );
+    report.add(
+        "reboot_bootrom_fails",
+        tests::reboot::test_reboot_bootrom_fails(&emulator),
+    );
+    report.add(
+        "reboot_bootsel",
+        tests::reboot::test_reboot_bootsel(&emulator),
+    );
 
     // Platform: memory, clocks, peripherals and the cooperative yield.
     report.add(

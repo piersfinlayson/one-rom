@@ -49,7 +49,7 @@ const ora_plugin_header_t ora_plugin_header = {
     .overrides1 = 0,
     .properties1 = 0,
     .min_fw_major_version = 0,
-    .min_fw_minor_version = 7,
+    .min_fw_minor_version = 8,
     .min_fw_patch_version = 1,
     .reserved = {0},
 };
@@ -104,7 +104,7 @@ static const uint32_t s_knock_seq[KNOCK_LEN] = {
 
 #define RBCP_PROTOCOL_VERSION_MAJOR 0u
 #define RBCP_PROTOCOL_VERSION_MINOR 1u
-#define RBCP_PROTOCOL_VERSION_PATCH 3u
+#define RBCP_PROTOCOL_VERSION_PATCH 4u
 const uint8_t protocol_version[4] = {
     RBCP_PROTOCOL_VERSION_MAJOR,
     RBCP_PROTOCOL_VERSION_MINOR,
@@ -144,11 +144,18 @@ const uint8_t protocol_version[4] = {
 #define CMD_SWITCH_AND_EXIT             0x04u
 #define CMD_LOAD_AND_EXIT               0x05u
 #define CMD_EXIT_CMD_RESP_RESTORE       0x06u
+#define CMD_REBOOT                      0x07u
 
 // Most bytes EXIT_CMD_RESP_RESTORE can put back, and so the largest valid
 // count.  Fixed by the protocol at eight, the size of the response header,
 // which is the part of the region the device always writes.
 #define RESTORE_MAX_BYTES               8u
+
+// REBOOT arguments
+#define REBOOT_MODE_NORMAL              0x00u
+#define REBOOT_MODE_BOOTLOADER          0x01u
+#define REBOOT_PARAM_BYTES              7u
+#define REBOOT_DELAY_UNIT_MS            10u
 
 // Read commands
 #define CMD_GET_FLASH_FLASH_SLOT_COUNT  0x00u
@@ -428,22 +435,14 @@ static ora_map_addr_to_phys_fn_t            s_map_addr_to_phys;
 static ora_map_data_to_phys_fn_t            s_map_data_to_phys;
 static ora_demangle_data_fn_t               s_demangle_data;
 
-// The log channel family, added in firmware 0.7.2 and used to serve the Pipes
-// group.  The plugin's min_fw_version stays at 0.7.1, so these may be NULL on
-// older firmware: ora_lookup returns NULL for an identifier the running
-// firmware does not implement.  A NULL here means the device exposes no pipes,
-// which the protocol already provides for, rather than meaning the plugin
-// cannot run.  See pipe_count().
+// The log channel family, used to serve the Pipes group.
 static ora_log_open_write_fn_t              s_log_open_write;
 static ora_log_write_fn_t                   s_log_write;
 static ora_log_query_fn_t                   s_log_query;
 static ora_log_open_read_fn_t               s_log_open_read;
 static ora_log_read_fn_t                    s_log_read;
 
-// The calls the Auxiliary I/O group is built from.  The GPIO pair arrived in
-// firmware 0.7.1 and the other two in 0.7.2, so any of them may be NULL here.
-// Each absence takes something away from the host rather than stopping the
-// plugin - see aux_available(), aux_kind_pins() and aux_max_hold().
+// Used by the Auxiliary I/O group.
 static ora_gpio_set_fn_t                    s_gpio_set;
 static ora_gpio_query_fn_t                  s_gpio_query;
 static ora_get_metadata_uint_fn_t           s_get_metadata_uint;
@@ -1174,6 +1173,57 @@ static bool exec_exit_cmd_resp_restore(void) {
     return true;
 }
 
+static bool exec_reboot(void) {
+    uint8_t mode = ring_read_byte();
+    uint8_t params = 0u;
+    for (uint8_t i = 0u; i < REBOOT_PARAM_BYTES; i++) {
+        params |= ring_read_byte();
+    }
+    uint8_t delay = ring_read_byte();
+
+    if (delay == 0xAAu) {
+        s_log("REBOOT failed: delay value 0xAA is reserved");
+        return false;
+    }
+    if (params != 0u) {
+        s_log("REBOOT failed: non-zero parameters");
+        return false;
+    }
+
+    uint8_t ora_mode;
+    switch (mode) {
+        case REBOOT_MODE_NORMAL:
+            ora_mode = ORA_REBOOT_MODE_NORMAL;
+            break;
+        case REBOOT_MODE_BOOTLOADER:
+            ora_mode = ORA_REBOOT_MODE_BOOTLOADER;
+            break;
+        default:
+            s_log("REBOOT failed: mode 0x%02X not supported", (unsigned)mode);
+            return false;
+    }
+
+    s_log("REBOOT: mode=%u delay=%u", (unsigned)mode, (unsigned)delay);
+
+    ora_reboot_request_t req;
+    zero_bytes((uint8_t *)&req, (uint8_t)sizeof(req));
+    req.size     = (uint8_t)sizeof(req);
+    req.mode     = ora_mode;
+    req.delay_ms = (uint32_t)delay * REBOOT_DELAY_UNIT_MS;
+
+    // Looked up here rather than cached, as the plugin's static RAM is full.
+    ora_reboot_fn_t reboot = s_lookup(ORA_ID_REBOOT);
+    ora_result_t rc = reboot(&req);
+    if (rc != ORA_RESULT_OK) {
+        s_log("REBOOT failed: %d", rc);
+        return false;
+    }
+
+    // Terminal on success only.
+    s_state.active = false;
+    return true;
+}
+
 // ---------------------------------------------------------------------------
 // Command handlers — Modify group (0x02)
 // ---------------------------------------------------------------------------
@@ -1778,17 +1828,10 @@ static bool __attribute__((noinline)) nv_deferred_run(void) {
 static const char pipe_name[] = "RBCP pipe 0";
 
 // Number of pipes.  Pipe N is channel N, and a channel exists where
-// ora_log_query answers.  Zero on firmware without the log API.
+// ora_log_query answers.
 static uint8_t pipe_count(void) {
-    if ((s_log_open_write == NULL) || (s_log_write == NULL) ||
-        (s_log_query == NULL)) {
-        return 0u;
-    }
     if (s_log_query(ORA_LOG_CHANNEL_0, NULL, NULL, NULL) != ORA_RESULT_OK) {
         return 0u;
-    }
-    if ((s_log_open_read == NULL) || (s_log_read == NULL)) {
-        return 1u;
     }
     if (s_log_query(ORA_LOG_CHANNEL_1, NULL, NULL, NULL) != ORA_RESULT_OK) {
         return 1u;
@@ -2036,13 +2079,6 @@ static bool aux_available(void) {
     return (s_gpio_set != NULL) && (s_gpio_query != NULL) && (aux_gpio_count() != 0u);
 }
 
-// The largest hold this device can time.  Zero where the firmware has no
-// millisecond counter, which the protocol defines as offering no timed holds
-// and requires the device to enforce.
-static uint8_t aux_max_hold(void) {
-    return (s_uptime_ms != NULL) ? AUX_MAX_HOLD : 0u;
-}
-
 // Entries a GPIO array metadata key holds, stopping at the first unused one.
 static uint8_t aux_meta_len(ora_metadata_key_t key) {
     uint8_t n = 0u;
@@ -2126,11 +2162,6 @@ static uint8_t aux_kind_pins(uint8_t kind) {
     }
     if (kind == AUX_KIND_GPIO) {
         return aux_gpio_count();
-    }
-    // Neither of the other two can be built without the indexed metadata
-    // getter, which arrived later than this plugin's minimum firmware.
-    if (s_get_metadata_uint_at == NULL) {
-        return 0u;
     }
     return (kind == AUX_KIND_IMG_SEL) ? aux_meta_len(ORA_METADATA_KEY_GPIO_SEL)
                                       : aux_x_count();
@@ -2241,12 +2272,9 @@ static bool aux_set_valid(
         s_log("SET_AUX failed: state 0x%02X undefined", (unsigned)state);
         return false;
     }
+    // Hold needs no range check: AUX_MAX_HOLD is the byte's whole range, so no
+    // value a host can send exceeds it.
     if (hold != 0u) {
-        if (hold > aux_max_hold()) {
-            s_log("SET_AUX failed: hold %u exceeds maximum %u",
-                  (unsigned)hold, (unsigned)aux_max_hold());
-            return false;
-        }
         if (!aux_state_valid(after)) {
             s_log("SET_AUX failed: after 0x%02X undefined", (unsigned)after);
             return false;
@@ -2305,7 +2333,7 @@ static bool exec_get_aux_capability(void) {
     uint8_t resp[8];
     zero_bytes(resp, sizeof(resp));
     resp[0] = aux_group_count();
-    resp[1] = aux_max_hold();
+    resp[1] = AUX_MAX_HOLD;
 
     data_write(s_state.active_slot, 0u, resp, sizeof(resp));
     s_log("GET_AUX_CAPABILITY: groups=%u max_hold=%u",
@@ -2468,23 +2496,13 @@ static bool exec_set_aux_switch_exit(void) {
 // LEDs
 // ---------------------------------------------------------------------------
 
-// The LED calls arrived in firmware 0.7.2, later than this plugin's
-// min_fw_version, so either may be NULL.  Looked up where they are used rather
-// than cached, as this group costs the plugin no state of its own.
-//
-// Only ORA_ID_LED_SET is tested here.  A missing ORA_ID_LED_GET takes every
-// channel away in led_ora_state(), which leaves the count at zero by itself.
-static bool led_available(void) {
-    return s_lookup(ORA_ID_LED_SET) != NULL;
-}
+// The LED calls are looked up where they are used rather than cached, as this
+// group costs the plugin no state of its own.
 
-// Read one ORA channel's state.  False where there is no LED engine to ask, or
-// the channel is not one this firmware knows.
+// Read one ORA channel's state.  False where the channel is not one this
+// firmware knows.
 static bool led_ora_state(uint8_t ora_led, ora_led_state_t *out) {
     ora_led_get_fn_t get = s_lookup(ORA_ID_LED_GET);
-    if (get == NULL) {
-        return false;
-    }
     zero_bytes((uint8_t *)out, (uint8_t)sizeof(*out));
     out->size = (uint8_t)sizeof(*out);
     return get(ora_led, out) == ORA_RESULT_OK;
@@ -2494,9 +2512,6 @@ static bool led_ora_state(uint8_t ora_led, ora_led_state_t *out) {
 // ORA numbers channels whether the board carries them or not - so the count is
 // of the channels reporting present.
 static uint8_t led_count(void) {
-    if (!led_available()) {
-        return 0u;
-    }
     ora_led_state_t st;
     uint8_t n = 0u;
     for (uint8_t ch = 0u; ch <= LED_ORA_LAST; ch++) {
@@ -2509,9 +2524,6 @@ static uint8_t led_count(void) {
 
 // Resolve an RBCP LED number to the ORA channel it names, and its state.
 static bool led_resolve(uint8_t led, uint8_t *ora_out, ora_led_state_t *state) {
-    if (!led_available()) {
-        return false;
-    }
     uint8_t n = 0u;
     for (uint8_t ch = 0u; ch <= LED_ORA_LAST; ch++) {
         if (!led_ora_state(ch, state) || (state->present == 0u)) {
@@ -2902,6 +2914,9 @@ static bool dispatch(
                 case CMD_EXIT_CMD_RESP_RESTORE:
                     ok = exec_exit_cmd_resp_restore();
                     break;
+                case CMD_REBOOT:
+                    ok = exec_reboot();
+                    break;
                 default:
                     // Unknown command: no args consumed.  This will desync the
                     // session; the best the host can do is re-knock.
@@ -3194,6 +3209,13 @@ static bool run_command(uint8_t group, uint8_t cmd) {
         nv_discard_impl();
     }
 
+    // A reboot is scheduled.  RBCP takes no further commands before it.
+    if (ok && (group == GRP_CONTROL) && (cmd == CMD_REBOOT)) {
+        for (;;) {
+            ORA_TEST_YIELD();
+        }
+    }
+
     // Command mode (!was_active && !now_active): no back-channel, nothing to write.
     // A silent command (see cmd_is_silent): no header update at all.
 
@@ -3227,17 +3249,12 @@ __attribute__((noinline)) static void rbcp_setup(
     s_demangle_data        = ora_lookup_fn(ORA_ID_DEMANGLE_DATA);
     s_debug_log            = ora_lookup_fn(ORA_ID_DEBUG_LOG);
 
-    // The log channel family arrived in firmware 0.7.2, later than this
-    // plugin's min_fw_version, so these three may be NULL.  Nothing here checks
-    // for that - pipe_count() does, once, and reports no pipes.
     s_log_open_write       = ora_lookup_fn(ORA_ID_LOG_OPEN_WRITE);
     s_log_write            = ora_lookup_fn(ORA_ID_LOG_WRITE);
     s_log_query            = ora_lookup_fn(ORA_ID_LOG_QUERY);
     s_log_open_read        = ora_lookup_fn(ORA_ID_LOG_OPEN_READ);
     s_log_read             = ora_lookup_fn(ORA_ID_LOG_READ);
 
-    // As with the log channels, these may be NULL - the Auxiliary I/O group
-    // reports less rather than the plugin refusing to run.
     s_gpio_set             = ora_lookup_fn(ORA_ID_GPIO_SET);
     s_gpio_query           = ora_lookup_fn(ORA_ID_GPIO_QUERY);
     s_get_metadata_uint    = ora_lookup_fn(ORA_ID_GET_METADATA_UINT);

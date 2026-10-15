@@ -380,6 +380,7 @@ typedef enum {
     /**
      * @brief Reboot into BOOTSEL mode
      * @sa ora_reboot_bootsel_fn_t
+     * @deprecated Use ORA_ID_REBOOT
      */
     ORA_ID_REBOOT_BOOTSEL = 0x00000000,
 
@@ -392,6 +393,7 @@ typedef enum {
     /**
      * @brief Get One ROM information
      * @sa ora_get_firmware_info_fn_t
+     * @deprecated Returns NULL from v0.7.0
      */
     ORA_ID_GET_FIRMWARE_INFO = 0x00000002,
 
@@ -476,6 +478,7 @@ typedef enum {
     /**
      * @brief Get a pointer to the runtime info structure
       * @sa ora_ntime_info_fn_t
+     * @deprecated Returns NULL from v0.7.0
      */
     ORA_ID_GET_RUNTIME_INFO = 0x00000010,
 
@@ -796,6 +799,13 @@ typedef enum {
      * @since firmware 0.8.0
      */
     ORA_ID_SET_STANDBY               = 0x00000040,
+
+    /**
+     * @brief Reboot One ROM
+     * @sa ora_reboot_fn_t
+     * @since firmware 0.8.1
+     */
+    ORA_ID_REBOOT                    = 0x00000041,
 
     /** Invalid API identifier */
     ORA_ID_INVALID = 0xFFFFFFFF,
@@ -1427,7 +1437,11 @@ typedef void (*ora_plugin_entry_t)(
 /**
  * @brief Reboot into BOOTSEL mode
  * @sa ORA_ID_REBOOT_BOOTSEL
+ * @deprecated Use ORA_ID_REBOOT
  * 
+ * DEPRECATED AS OF v0.8.1 - use ORA_ID_REBOOT with ORA_REBOOT_MODE_BOOTLOADER.
+ * This function is still functional.
+ *
  * Reboots One ROM into the RP2350's BOOTSEL mode, for repogramming or
  * recovery.  This (obviously) stops One ROM serving the ROM image and does
  * not return.  There may be a slight (e.g. 10ms) delay before the reboot.
@@ -1456,6 +1470,7 @@ typedef void *(*ora_alloc_fn_t)(size_t size);
 /**
  * @brief Get One ROM information
  * @sa ORA_ID_GET_FIRMWARE_INFO
+ * @deprecated Returns NULL from v0.7.0
  *
  * DEPRECATED AS OF v0.7.0 - attempt to retrieve this function pointer returns
  * NULL.
@@ -1680,6 +1695,7 @@ typedef uint32_t (*ora_get_plugin_uptime_ms_fn_t)(void);
 /**
  * @brief Get a pointer to the runtime info structure
  * @sa ORA_ID_GET_RUNTIME_INFO
+ * @deprecated Returns NULL from v0.7.0
  * 
  * DEPRECATED AS OF v0.7.0 - attempt to retrieve this function pointer returns
  * NULL.
@@ -3393,6 +3409,57 @@ typedef ora_result_t (*ora_firmware_state_query_fn_t)(
  *         ORA_RESULT_INVALID_ARG if @p standby is neither 0 nor 1.
  */
 typedef ora_result_t (*ora_set_standby_fn_t)(uint8_t standby, uint32_t flags);
+
+/**
+ * @brief Reboot modes
+ * @since firmware 0.8.1
+ */
+typedef enum {
+    /** @brief Normal boot */
+    ORA_REBOOT_MODE_NORMAL     = 0,
+
+    /** @brief RP2350 BOOTSEL mode with USB mass storage disabled */
+    ORA_REBOOT_MODE_BOOTLOADER = 1,
+} ora_reboot_mode_t;
+
+/**
+ * @brief Reboot request
+ * @since firmware 0.8.1
+ */
+typedef struct {
+    /** @brief sizeof this structure, set by the caller.  Minimum 8. */
+    uint8_t  size;
+
+    /** @brief Reboot mode. @sa ora_reboot_mode_t */
+    uint8_t  mode;
+
+    /** @brief Reserved.  Set to zero. */
+    uint8_t  reserved[2];
+
+    /**
+     * @brief Delay before the reboot in ms, up to ORA_REBOOT_MAX_DELAY_MS
+     *
+     * One ROM serves the ROM during the delay.  A delay of 0 is interpreted
+     * as 1ms, which is the minimum delay ora_reboot supports.
+     */
+    uint32_t delay_ms;
+} ora_reboot_request_t;
+_Static_assert(sizeof(ora_reboot_request_t) == 8, "ora_reboot_request_t must be 8 bytes");
+
+/**
+ * @brief Reboot One ROM
+ * @sa ORA_ID_REBOOT
+ * @since firmware 0.8.1
+ *
+ * Returns once the reboot is scheduled.
+ *
+ * @param req  Reboot request
+ * @return ORA_RESULT_INVALID_ARG if @p req is NULL or the delay is too long;
+ *         ORA_RESULT_INVALID_SIZE if @p req->size is too small;
+ *         ORA_RESULT_NOT_SUPPORTED if the mode isn't supported;
+ *         ORA_RESULT_ERROR if the reboot can't be scheduled
+ */
+typedef ora_result_t (*ora_reboot_fn_t)(const ora_reboot_request_t *req);
 
 /** @} */ // plugin_api_functions
 

@@ -2962,3 +2962,29 @@ value = 0xF540
 ora_api = true
 first_release = "0.8.0"
 comment = "The USB product ID a commissioned One ROM's bootloader presents."
+
+# ---------------------------------------------------------------------------
+# Reboot
+# ---------------------------------------------------------------------------
+
+[[constants]]
+name = "REBOOT_MAX_DELAY_MS"
+type = "u32"
+value = 10000
+ora_api = true
+first_release = "0.8.1"
+comment = "Maximum reboot delay in milliseconds."
+
+[[constants]]
+name = "REBOOT_MIN_DELAY_MS"
+type = "u32"
+value = 1
+comment = """Reboot delay in milliseconds used instead of zero to avoid
+loading the watchdog with zero."""
+
+[[constants]]
+name = "REBOOT_REQUEST_MIN_SIZE"
+type = "u8"
+value = 8
+comment = """Size of ora_reboot_request_t when introduced, and the smallest
+size field accepted. Frozen, for the reason LED_REQUEST_MIN_SIZE is."""

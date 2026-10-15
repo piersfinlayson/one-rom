@@ -35,8 +35,6 @@ Three things follow from the pipe being the log channel rather than a channel of
 - **A debug probe reading the log will take the host's bytes too**, and both readers advance the same position, so attach one or the other.
 - **`GET_PIPE_INFO` reports the far end as unspecified.**  RBCP asks what kind of thing a pipe reaches, and the plugin cannot see what drains the log channel — usually the USB plugin, but a debug probe or nothing at all are equally possible — so it says nothing rather than naming a guess.  Whether the far end is attached goes unanswered for the same reason.
 
-Pipes need **firmware v0.7.2 or later**, where the plugin logging API arrived.  On older firmware the plugin runs exactly as before and `GET_PIPE_CAPABILITY` reports no pipes, which the specification provides for — a host should query it before writing, as it should on any device.
-
 ## Reading bytes in
 
 Pipe 1 carries bytes the other way, from One ROM to the host.  Anything typed into a terminal on One ROM's USB serial port ends up on pipe 1, and the host collects it with `PIPE_READ`.
@@ -45,8 +43,6 @@ Pipe 1 carries bytes the other way, from One ROM to the host.  Anything typed in
 - Reading an empty pipe succeeds and returns nothing.
 - `GET_PIPE_INFO` says how many bytes are waiting.
 - Nothing is ever dropped, so the discarded flag in the response is always clear.  When the pipe is full the terminal is held off until the host reads.
-
-Pipe 1 needs firmware v0.7.3.  On older firmware there is one pipe, as before.
 
 ## Driving One ROM's pins
 
@@ -72,7 +68,7 @@ An X pin is muxes to GPIOs on some boards.  Both are the same electrical net, so
 
 A pin keeps whatever state it was left in when the session ends, and across `RBCP_RESET`.  Only a One ROM reset restores it.
 
-Auxiliary I/O is built on the GPIO API added in **firmware v0.7.1**, which is this plugin's minimum.  Timed holds and the image select and X groups need **v0.7.2**: on v0.7.1 the device reports a `max_hold` of zero — the specification's way of saying it offers no timed holds, and a host wanting a pulse must time it itself with two commands — and exposes the GPIO group alone.  A device that can offer nothing at all reports no groups, and every other command in the group then fails.
+When there are no pins available `GET_AUX_CAPABILITY` reports zero groups and the group's other commands fail.
 
 ## Driving One ROM's LEDs
 
@@ -105,7 +101,9 @@ The firmware imposes its own minimum period per mode — a second for breathe an
 
 An LED keeps whatever state it was left in when the session ends, and across `RBCP_RESET`.  Only a One ROM reset restores it.
 
-The LEDs group is built on the LED API added in **firmware v0.7.2**, later than this plugin's minimum of v0.7.1.  On v0.7.1 the device reports no LEDs, and every other command in the group fails.
+## Rebooting One ROM
+
+`REBOOT` supports normal and bootloader modes.  Bootloader mode disables USB mass storage.
 
 ## Address signalling
 
@@ -142,3 +140,7 @@ The specification has the named slot overwritten, and `NV_POKE_BEGIN` fail if it
 The named slot is rejected if it is out of range or is the slot being served.
 
 The differences are more permissive.
+
+### REBOOT delay
+
+The delay is started by the plugin/firmware a few microseconds before the response header is completed, whereas the specification states that it starts after.  The command still completes before the reboot as the minimum delay scheduled by the host-control plugin is 1ms.

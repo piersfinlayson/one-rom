@@ -122,6 +122,10 @@
 // @since firmware 0.8.0
 #define ORA_USB_BOOTLOADER_PID ((uint16_t)0xF540)
 
+// Maximum reboot delay in milliseconds.
+// @since firmware 0.8.1
+#define ORA_REBOOT_MAX_DELAY_MS ((uint32_t)0x00002710)
+
 // RP235xB
 // @since firmware 0.8.0
 #define ORA_RP235XB ((uint8_t)0)

@@ -101,6 +101,12 @@ void setup_gpio(void) {
 // Set by enter_bootloader() below, read by stub_bootloader_entered().
 static uint8_t stub_entered_bootloader;
 
+// Set by rom_reboot() below, read by stub_rom_reboot().
+static uint8_t stub_rebooted;
+static uint8_t stub_reboot_bootloader;
+static uint32_t stub_reboot_delay_ms;
+static uint8_t stub_reboot_fails;
+
 // Put back what a reset puts back.
 //
 // A test build runs many boots in one process, and the firmware's own statics
@@ -120,6 +126,10 @@ void onerom_test_reset(void) {
     stub_timer_reset();
     pio_led_reset();
     stub_entered_bootloader = 0;
+    stub_rebooted = 0;
+    stub_reboot_bootloader = 0;
+    stub_reboot_delay_ms = 0;
+    stub_reboot_fails = 0;
     stub_dma_out_of_reset = 0;
     limp_mode_value = LIMP_MODE_NONE;
 }
@@ -289,6 +299,32 @@ void enter_bootloader(void) {
 
 uint8_t stub_bootloader_entered(void) {
     return stub_entered_bootloader;
+}
+
+// Reboots through the bootrom.  See stub.h for why the call is recorded.
+uint8_t rom_reboot(uint8_t bootloader, uint32_t delay_ms) {
+    STUB_LOG("rom_reboot");
+    if (stub_reboot_fails) {
+        return 0;
+    }
+    stub_rebooted = 1;
+    stub_reboot_bootloader = bootloader;
+    stub_reboot_delay_ms = delay_ms;
+    return 1;
+}
+
+void stub_set_rom_reboot_fails(uint8_t fails) {
+    stub_reboot_fails = fails;
+}
+
+uint8_t stub_rom_reboot(uint8_t *bootloader_out, uint32_t *delay_ms_out) {
+    uint8_t rebooted = stub_rebooted;
+    *bootloader_out = stub_reboot_bootloader;
+    *delay_ms_out = stub_reboot_delay_ms;
+    stub_rebooted = 0;
+    stub_reboot_bootloader = 0;
+    stub_reboot_delay_ms = 0;
+    return rebooted;
 }
 
 void platform_logging(void) {

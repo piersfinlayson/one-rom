@@ -269,6 +269,8 @@ fn main() {
         .allowlist_function("stub_set_sel_image")
         .allowlist_function("stub_set_rp_variant")
         .allowlist_function("stub_bootloader_entered")
+        .allowlist_function("stub_rom_reboot")
+        .allowlist_function("stub_set_rom_reboot_fails")
         // The microsecond counter behind ora_get_plugin_uptime_ms().  There is no
         // TIMER0 in this process, so the harness owns the count - which also
         // lets a test place the clock exactly where it wants it.
@@ -351,6 +353,9 @@ fn main() {
         // nothing drags them in transitively either.  The plugin API tester
         // names the LEDs and the modes rather than hardcoding their values.
         .allowlist_type("ora_led.*")
+        // ora_reboot_mode_t reaches the API as a uint8_t field, as the LED
+        // enums do.
+        .allowlist_type("ora_reboot_mode_t")
         // ora_address_monitor_priority_t reaches the API as a uint8_t field of
         // ora_address_monitor_options_t, so it is not pulled in by the setup
         // function's type and is named here so the monitor tester can use it.

@@ -42,6 +42,17 @@ void stub_set_rp_variant(uint8_t is_b);
 // reads per boot.
 uint8_t stub_bootloader_entered(void);
 
+// Whether rom_reboot() was called since the last read, and its arguments.
+//
+// On a device the reboot follows.  The stub records the call and never
+// reboots, so a test can read its arguments.  Reading clears the record,
+// as does onerom_test_reset().
+uint8_t stub_rom_reboot(uint8_t *bootloader_out, uint32_t *delay_ms_out);
+
+// Make rom_reboot() fail, as it does on a device whose bootrom has no reboot
+// function.  Cleared by onerom_test_reset().
+void stub_set_rom_reboot_fails(uint8_t fails);
+
 // Stands in for TIMER0's free-running microsecond counter, which
 // ora_get_plugin_uptime_ms() reads on a device.  There is no TIMER0 in this process
 // and its address is not mapped, so the harness owns the count instead - which

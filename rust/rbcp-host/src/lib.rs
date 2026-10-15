@@ -459,6 +459,7 @@ pub mod control {
     pub const SWITCH_AND_EXIT: u8 = 0x04;
     pub const LOAD_AND_EXIT: u8 = 0x05;
     pub const EXIT_CMD_RESP_RESTORE: u8 = 0x06;
+    pub const REBOOT: u8 = 0x07;
 }
 
 pub mod read {

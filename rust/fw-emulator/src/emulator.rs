@@ -559,6 +559,24 @@ impl Emulator {
         unsafe { ffi::stub_bootloader_entered() != 0 }
     }
 
+    /// The bootrom reboot the firmware scheduled since the last call, as
+    /// `(bootloader, delay_ms)`, or `None` if it scheduled none.
+    ///
+    /// The stub records the reboot and never reboots.  Reading clears the
+    /// record.
+    pub fn rom_reboot(&self) -> Option<(bool, u32)> {
+        let mut bootloader: u8 = 0;
+        let mut delay_ms: u32 = 0;
+        let rebooted = unsafe { ffi::stub_rom_reboot(&mut bootloader, &mut delay_ms) };
+        (rebooted != 0).then_some((bootloader != 0, delay_ms))
+    }
+
+    /// Make the firmware's bootrom reboot fail, as it does on a device whose
+    /// bootrom has no reboot function.  Cleared on boot.
+    pub fn set_rom_reboot_fails(&self, fails: bool) {
+        unsafe { ffi::stub_set_rom_reboot_fails(u8::from(fails)) };
+    }
+
     /// The serving algorithms and address window the current ROM slot runs.
     ///
     /// `None` before a slot is being served.  Read from the live slot config,
@@ -1841,6 +1859,40 @@ impl Emulator {
             unsafe { ffi::ffi_epio_update_from_apio(self.epio_or_panic()) };
         }
         result
+    }
+
+    // ── Reboot ───────────────────────────────────────────────────────────────
+
+    /// `ORA_ID_REBOOT`.
+    ///
+    /// The request is passed exactly as given, size field included, so a caller
+    /// exercising the size contract states its own.
+    pub fn reboot(&self, req: &ffi::ora_reboot_request_t) -> OraResult {
+        OraResult::from(plugin_call!(
+            ffi::api_id_t_ORA_ID_REBOOT,
+            ffi::ora_reboot_fn_t,
+            req as *const ffi::ora_reboot_request_t
+        ))
+    }
+
+    /// `ORA_ID_REBOOT_BOOTSEL`.
+    ///
+    /// On a device this never returns.  In a test build it returns after
+    /// scheduling the reboot.
+    pub fn reboot_bootsel(&self) {
+        plugin_call!(
+            ffi::api_id_t_ORA_ID_REBOOT_BOOTSEL,
+            ffi::ora_reboot_bootsel_fn_t
+        );
+    }
+
+    /// `ORA_ID_REBOOT` with a NULL request.
+    pub fn reboot_null(&self) -> OraResult {
+        OraResult::from(plugin_call!(
+            ffi::api_id_t_ORA_ID_REBOOT,
+            ffi::ora_reboot_fn_t,
+            std::ptr::null()
+        ))
     }
 
     // ── Yield ────────────────────────────────────────────────────────────────

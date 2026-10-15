@@ -118,13 +118,49 @@ uint8_t initial_plugin_parse(uint8_t *disable_vbus_det, uint8_t *num_plugins) {
     return plugins;
 }
 
-void ora_reboot_bootsel(void) {
-#if !defined(TEST_BUILD)
-    enter_bootloader();
-#endif // !TEST_BUILD
+// ---------------------------------------------------------------------------
+// Reboot
+// ---------------------------------------------------------------------------
 
+ora_result_t ora_reboot(const ora_reboot_request_t *req) {
+    if (req == NULL) {
+        return ORA_RESULT_INVALID_ARG;
+    }
+
+    if (req->size < REBOOT_REQUEST_MIN_SIZE) {
+        return ORA_RESULT_INVALID_SIZE;
+    }
+
+    if (req->mode > ORA_REBOOT_MODE_BOOTLOADER) {
+        return ORA_RESULT_NOT_SUPPORTED;
+    }
+
+    if (req->delay_ms > REBOOT_MAX_DELAY_MS) {
+        return ORA_RESULT_INVALID_ARG;
+    }
+
+    uint32_t delay_ms = req->delay_ms;
+    if (delay_ms == 0) {
+        delay_ms = REBOOT_MIN_DELAY_MS;
+    }
+    if (!rom_reboot(req->mode == ORA_REBOOT_MODE_BOOTLOADER, delay_ms)) {
+        return ORA_RESULT_ERROR;
+    }
+    return ORA_RESULT_OK;
+}
+
+void ora_reboot_bootsel(void) {
+    const ora_reboot_request_t req = {
+        .size = sizeof(req),
+        .mode = ORA_REBOOT_MODE_BOOTLOADER,
+        .delay_ms = 10,
+    };
+    (void)ora_reboot(&req);
+
+#if !defined(TEST_BUILD)
     // Do not return
     while (1);
+#endif // !TEST_BUILD
 }
 
 void *ora_alloc(size_t size) {
@@ -1888,6 +1924,9 @@ void *ora_fn_lookup(api_id_t id) {
             return ora_firmware_state_query;
         case ORA_ID_SET_STANDBY:
             return ora_set_standby;
+
+        case ORA_ID_REBOOT:
+            return ora_reboot;
 
         // Deprecated functions
         case ORA_ID_GET_FIRMWARE_INFO:

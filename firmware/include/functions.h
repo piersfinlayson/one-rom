@@ -66,6 +66,7 @@ void disable_swd(void);
 void setup_status_led(void);
 void blink_pattern(uint32_t on_time, uint32_t off_time, uint8_t repeats);
 void enter_bootloader(void);
+uint8_t rom_reboot(uint8_t bootloader, uint32_t delay_ms);
 void platform_logging(void);
 void setup_usb_controller(void);
 void setup_usb_pll(void);

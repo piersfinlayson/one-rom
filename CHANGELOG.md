@@ -25,6 +25,11 @@ In detail:
 - Lab:
   - `R` queries One ROM information using RBCP.
   - `a` is a batch read that reads the ROM and queries One ROM information.
+- Plugins:
+  - host-control 0.1.7 supports RBCP's `REBOOT` command.  Requires firmware 0.8.1.
+- Plugin APIs:
+  - New: `ora_reboot()` can be used to reboot One ROM.
+  - Deprecated: `ORA_ID_REBOOT_BOOTSEL`.  Use `ORA_ID_REBOOT`.
 
 To test:
 - One ROM Web: the One ROM Builder tab's Load from Device button with a One ROM connected.
@@ -42,6 +47,7 @@ To publish:
 - CLI bin 0.6.0
 - Studio 0.2.5
 - One ROM Lab 0.4.1
+- host-control plugin 0.1.7
 - one-rom-wasm 0.6.2: rebuild against the published Rust crates
 - one-rom-site: pick up wasm 0.6.2
 
