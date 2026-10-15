@@ -65,6 +65,12 @@ const ASCII_FIELD_LEN: usize = 24;
 /// the longest response the crate reads.
 const WRITTEN_LEN: usize = HDR_SIZE as usize + ASCII_FIELD_LEN;
 
+/// The longest response data section the crate reads.
+const DATA_LEN: usize = WRITTEN_LEN - HDR_SIZE as usize;
+
+/// Length of a device info response's header.
+const VALUE_HDR_LEN: usize = 4;
+
 /// Value of a GET_BOOT_SLOT_INFO field where the device loaded no slot or
 /// doesn't know which, and of GET_RAM_SLOT_INFO_ALL's active slot where no
 /// slot is active.
@@ -241,7 +247,7 @@ impl<'b, B: Bus> Session<'b, B> {
 
         session.issue(false, group::READ, read::GET_PROTOCOL_VERSION, &[])?;
         let mut v = [0u8; 3];
-        session.read_data(&mut v);
+        session.read_data(0, &mut v);
         session.protocol_version = ProtocolVersion {
             major: v[0],
             minor: v[1],
@@ -273,12 +279,77 @@ impl<'b, B: Bus> Session<'b, B> {
     pub fn get_boot_slot_info(&mut self) -> Result<BootSlot, Error> {
         self.issue(false, group::READ, read::GET_BOOT_SLOT_INFO, &[])?;
         let mut r = [0u8; 2];
-        self.read_data(&mut r);
+        self.read_data(0, &mut r);
         let slot = |s| (s != NO_SLOT).then_some(s);
         Ok(BootSlot {
             flash_slot: slot(r[0]),
             ram_slot: slot(r[1]),
         })
+    }
+
+    /// 0 where the One ROM isn't commissioned.
+    pub fn get_commissioning_version(&mut self) -> Result<u16, Error> {
+        self.issue(
+            false,
+            group::DEVICE_INFO,
+            device_info::GET_COMMISSIONING_VERSION,
+            &[],
+        )?;
+        let mut r = [0u8; 2];
+        self.read_data(0, &mut r);
+        Ok(u16::from_le_bytes(r))
+    }
+
+    /// Returns the value's length, which may exceed `out.len()`.
+    pub fn get_commissioning_value(&mut self, key: u16, out: &mut [u8]) -> Result<usize, Error> {
+        self.value(
+            device_info::GET_COMMISSIONING_VALUE,
+            &key.to_le_bytes(),
+            out,
+        )
+    }
+
+    /// Returns the string's length, which may exceed `out.len()`.
+    pub fn get_metadata_str(&mut self, key: u32, out: &mut [u8]) -> Result<usize, Error> {
+        self.value(device_info::GET_METADATA_STR, &key.to_le_bytes(), out)
+    }
+
+    pub fn get_metadata_uint(&mut self, key: u32) -> Result<u32, Error> {
+        self.issue(
+            false,
+            group::DEVICE_INFO,
+            device_info::GET_METADATA_UINT,
+            &key.to_le_bytes(),
+        )?;
+        let mut r = [0u8; 4];
+        self.read_data(0, &mut r);
+        Ok(u32::from_le_bytes(r))
+    }
+
+    /// Returns the number of elements read.
+    pub fn get_metadata_array(&mut self, key: u32, out: &mut [u8]) -> Result<usize, Error> {
+        let key = key.to_le_bytes();
+        let mut read = 0;
+        while read < out.len() {
+            let index = u8::try_from(read).map_err(|_| Error::Failed)?;
+            let count = (out.len() - read).min(DATA_LEN - VALUE_HDR_LEN) as u8;
+            let args = [count, index, 1, key[0], key[1], key[2], key[3]];
+            self.issue(
+                false,
+                group::DEVICE_INFO,
+                device_info::GET_METADATA_ARRAY,
+                &args,
+            )?;
+            let mut returned = [0u8; 1];
+            self.read_data(0, &mut returned);
+            let returned = usize::from(returned[0]).min(usize::from(count));
+            self.read_data(VALUE_HDR_LEN as u32, &mut out[read..read + returned]);
+            read += returned;
+            if returned < usize::from(count) {
+                break;
+            }
+        }
+        Ok(read)
     }
 
     /// Puts back the back-channel bytes the session changed, ends the
@@ -293,7 +364,7 @@ impl<'b, B: Bus> Session<'b, B> {
     fn restore(&mut self) -> Result<(), Error> {
         self.issue(false, group::READ, read::GET_RAM_SLOT_INFO_ALL, &[])?;
         let mut info = [0u8; 2];
-        self.read_data(&mut info);
+        self.read_data(0, &mut info);
         let slot = info[1];
         if slot == NO_SLOT {
             return Err(Error::NotRestored);
@@ -334,8 +405,36 @@ impl<'b, B: Bus> Session<'b, B> {
     fn ascii_field(&mut self, cmd: u8) -> Result<AsciiField, Error> {
         self.issue(false, group::READ, cmd, &[])?;
         let mut field = [0u8; ASCII_FIELD_LEN];
-        self.read_data(&mut field);
+        self.read_data(0, &mut field);
         Ok(AsciiField(field))
+    }
+
+    fn value(&mut self, cmd: u8, key: &[u8], out: &mut [u8]) -> Result<usize, Error> {
+        let piece = self.value_piece_len();
+        let mut offset = 0;
+        loop {
+            let mut args = [0u8; 7];
+            args[0] = piece as u8;
+            args[1..3].copy_from_slice(&(offset as u16).to_le_bytes());
+            args[3..3 + key.len()].copy_from_slice(key);
+            self.issue(false, group::DEVICE_INFO, cmd, &args[..3 + key.len()])?;
+            let mut len = [0u8; 2];
+            self.read_data(0, &mut len);
+            let len = usize::from(u16::from_le_bytes(len));
+            let end = len.min(out.len()).min(offset + piece);
+            if end > offset {
+                self.read_data(VALUE_HDR_LEN as u32, &mut out[offset..end]);
+            }
+            offset = end;
+            if offset >= len.min(out.len()) {
+                return Ok(len);
+            }
+        }
+    }
+
+    fn value_piece_len(&self) -> usize {
+        let data = usize::from(self.config.bch_size).saturating_sub(HDR_SIZE as usize);
+        data.min(DATA_LEN).saturating_sub(VALUE_HDR_LEN).max(1)
     }
 
     /// The specification's "Host Polling Sequence", with the knock in front
@@ -412,8 +511,8 @@ impl<'b, B: Bus> Session<'b, B> {
         self.bus.read(self.config.bch_start + offset)
     }
 
-    fn read_data(&mut self, out: &mut [u8]) {
-        let base = self.config.bch_start + HDR_SIZE;
+    fn read_data(&mut self, offset: u32, out: &mut [u8]) {
+        let base = self.config.bch_start + HDR_SIZE + offset;
         for (addr, b) in (base..).zip(out.iter_mut()) {
             *b = self.bus.read(addr);
         }
@@ -448,6 +547,8 @@ pub mod group {
     pub const PIPES: u8 = 0x04;
     pub const AUX: u8 = 0x05;
     pub const LED: u8 = 0x06;
+    /// From host-control's EXTENSIONS.md.
+    pub const DEVICE_INFO: u8 = 0x80;
     pub const RESET: u8 = 0xAA;
 }
 
@@ -512,6 +613,14 @@ pub mod led {
     pub const GET_LED_INFO: u8 = 0x01;
     pub const GET_LED_MODE_INFO: u8 = 0x02;
     pub const SET_LED: u8 = 0x03;
+}
+
+pub mod device_info {
+    pub const GET_COMMISSIONING_VERSION: u8 = 0x00;
+    pub const GET_COMMISSIONING_VALUE: u8 = 0x01;
+    pub const GET_METADATA_STR: u8 = 0x02;
+    pub const GET_METADATA_UINT: u8 = 0x03;
+    pub const GET_METADATA_ARRAY: u8 = 0x04;
 }
 
 pub mod reset {

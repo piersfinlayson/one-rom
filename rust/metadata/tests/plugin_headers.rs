@@ -15,7 +15,7 @@
 
 use onerom_metadata::{OneromBoardSize, Rp235xVariant};
 use onerom_metadata_gen::schema::Schema;
-use onerom_metadata_gen::{c_gen, constants_gen, keys_gen};
+use onerom_metadata_gen::{c_gen, constants_gen, keys_gen, rust_gen};
 
 const SINCE: &str = "// @since firmware ";
 
@@ -255,6 +255,21 @@ fn every_plugin_key_names_the_release_it_arrived_in() {
             line_above(&header, &format!("ORA_METADATA_KEY_{} ", entry.key.name)),
             format!("{SINCE}{}", entry.key.first_release),
             "ORA_METADATA_KEY_{} does not name the release it arrived in:\n{header}",
+            entry.key.name
+        );
+    }
+}
+
+#[test]
+fn every_plugin_key_has_a_rust_constant() {
+    let schema = shipped();
+    let rust = rust_gen::generate(&schema);
+
+    for entry in schema.plugin_keys() {
+        let line = format!("pub const {}: u32 = {:#X};", entry.key.name, entry.key.id);
+        assert!(
+            rust.contains(&line),
+            "metadata_key has no '{line}' for ORA_METADATA_KEY_{}",
             entry.key.name
         );
     }

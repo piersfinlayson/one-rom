@@ -667,6 +667,14 @@ impl Emulator {
         unsafe { ffi::ffi_set_plugins_started() };
     }
 
+    /// The firmware's reading of `key`'s commissioning value: its first row and
+    /// its length in bytes.
+    pub fn otp_commissioning_value(key: u16) -> Option<(u16, u16)> {
+        let (mut row, mut len) = (0, 0);
+        (unsafe { ffi::otp_commissioning_value(key, &mut row, &mut len) } != 0)
+            .then_some((row, len))
+    }
+
     /// The firmware's reading of the board OTP commissions the chip as: the
     /// first row of `COMMISSIONING_BOARD`'s value and its length in bytes.
     pub fn otp_commissioned_board() -> Option<(u16, u16)> {

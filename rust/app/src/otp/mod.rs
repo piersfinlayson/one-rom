@@ -25,7 +25,7 @@ use onerom_metadata::otp::{
     CommissioningArea, FlashLayout, GeneralStore, board_size, format_chip_id,
 };
 use onerom_metadata::{
-    OTP_BOOT_FLAGS0_R1_ROW, OTP_BOOT_FLAGS0_R2_ROW, OTP_BOOT_FLAGS0_ROW,
+    MaybeKnown, OTP_BOOT_FLAGS0_R1_ROW, OTP_BOOT_FLAGS0_R2_ROW, OTP_BOOT_FLAGS0_ROW,
     OTP_COMMISSIONING_AREA_FIRST_ROW, OTP_COMMISSIONING_AREA_LAST_ROW,
     OTP_FLASH_DEVINFO_CS0_SIZE_SHIFT, OTP_FLASH_DEVINFO_CS1_GPIO, OTP_FLASH_DEVINFO_CS1_SIZE_SHIFT,
     OTP_FLASH_DEVINFO_D8H_ERASE_SUPPORTED, OTP_FLASH_DEVINFO_ROW,
@@ -547,6 +547,42 @@ impl DecodedWhiteLabel {
 /// neither M nor L. `flash_devinfo` is FLASH_DEVINFO read with ECC.
 fn configured_size(boot_flags0: [u32; 3], flash_devinfo: u16) -> Option<BoardSize> {
     known_size(board_size(boot_flags0, flash_devinfo))
+}
+
+/// The value a `Board size:` line shows for `size`.
+pub fn board_size_text(size: MaybeKnown<OneromBoardSize>) -> String {
+    match size {
+        MaybeKnown::Known(OneromBoardSize::BoardSizeM) => "M".to_string(),
+        MaybeKnown::Known(OneromBoardSize::BoardSizeL) => "L".to_string(),
+        MaybeKnown::Known(OneromBoardSize::BoardSizeOther) => "other".to_string(),
+        // Firmware before 0.8.0 doesn't record a size.
+        MaybeKnown::Known(OneromBoardSize::BoardSizeUnknown) => "unknown".to_string(),
+        // A size newer firmware recorded, with its number.
+        MaybeKnown::Unknown(_) => size.to_string(),
+    }
+}
+
+/// `text` with each control character escaped. OTP strings are printed this
+/// way because a board's OTP can hold any bytes.
+pub fn escape_controls(text: &str) -> String {
+    text.chars()
+        .map(|c| {
+            if c.is_control() {
+                c.escape_default().to_string()
+            } else {
+                c.to_string()
+            }
+        })
+        .collect()
+}
+
+/// A `YYYYMMDD` commissioning date as `YYYY-MM-DD`. Other text is returned
+/// with its control characters escaped.
+pub fn format_date(date: &str) -> String {
+    match (date.len(), date.bytes().all(|b| b.is_ascii_digit())) {
+        (8, true) => format!("{}-{}-{}", &date[..4], &date[4..6], &date[6..]),
+        _ => escape_controls(date),
+    }
 }
 
 #[cfg(test)]

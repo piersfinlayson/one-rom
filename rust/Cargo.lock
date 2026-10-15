@@ -5023,6 +5023,7 @@ dependencies = [
  "hex-literal",
  "log",
  "once_cell",
+ "onerom-app",
  "onerom-config",
  "onerom-lab-metadata",
  "onerom-metadata",

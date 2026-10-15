@@ -292,6 +292,7 @@ fn main() {
         .allowlist_function("ffi_set_plugins_started")
         .allowlist_function("ffi_firmware_flags")
         .allowlist_var("ORA_FIRMWARE_STATE_QUERY_FLAG_WAIT")
+        .allowlist_function("otp_commissioning_value")
         .allowlist_function("otp_commissioned_board")
         .allowlist_function("otp_board_mismatch")
         .allowlist_function("otp_board_size")

@@ -8,7 +8,7 @@ use log::debug;
 use onerom_app::{OtpAccess, OtpError, read_commissioning};
 use onerom_config::hw::Board;
 use onerom_metadata::otp::{CommissioningArea, CommissioningInstance};
-use onerom_metadata::{MaybeKnown, OTP_PAGE_ROWS, OneromBoardSize};
+use onerom_metadata::{OTP_PAGE_ROWS, OneromBoardSize};
 use picoboot::cmd::PicobootStatus;
 use picoboot::{Connection, Picoboot};
 
@@ -229,41 +229,8 @@ pub(crate) async fn read_otp_board_size(device: &Device) -> Option<OneromBoardSi
     }
 }
 
-/// The value a `Board size:` line shows for `size`.
-pub fn board_size_text(size: MaybeKnown<OneromBoardSize>) -> String {
-    match size {
-        MaybeKnown::Known(OneromBoardSize::BoardSizeM) => "M".to_string(),
-        MaybeKnown::Known(OneromBoardSize::BoardSizeL) => "L".to_string(),
-        MaybeKnown::Known(OneromBoardSize::BoardSizeOther) => "other".to_string(),
-        // Firmware before 0.8.0 doesn't record a size.
-        MaybeKnown::Known(OneromBoardSize::BoardSizeUnknown) => "unknown".to_string(),
-        // A size newer firmware recorded, with its number.
-        MaybeKnown::Unknown(_) => size.to_string(),
-    }
-}
-
-/// `text` with each control character escaped. OTP strings are printed this
-/// way because a board's OTP can hold any bytes.
-pub fn escape_controls(text: &str) -> String {
-    text.chars()
-        .map(|c| {
-            if c.is_control() {
-                c.escape_default().to_string()
-            } else {
-                c.to_string()
-            }
-        })
-        .collect()
-}
-
-/// A `YYYYMMDD` commissioning date as `YYYY-MM-DD`. Other text is returned
-/// with its control characters escaped.
-pub fn format_date(date: &str) -> String {
-    match (date.len(), date.bytes().all(|b| b.is_ascii_digit())) {
-        (8, true) => format!("{}-{}-{}", &date[..4], &date[4..6], &date[6..]),
-        _ => escape_controls(date),
-    }
-}
+/// Shared with Lab.
+pub use onerom_app::{board_size_text, escape_controls, format_date};
 
 /// Refuses an image for `image` on a board commissioned as `commissioned`.
 /// With `force` it warns instead.
@@ -292,6 +259,7 @@ pub fn check_board(commissioned: Option<&str>, image: Board, force: bool) -> Res
 #[cfg(test)]
 mod tests {
     use super::*;
+    use onerom_metadata::MaybeKnown;
 
     fn board(name: &str) -> Board {
         Board::try_from_str(name).unwrap()

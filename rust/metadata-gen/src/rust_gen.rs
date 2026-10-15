@@ -29,6 +29,7 @@ pub fn generate(schema: &Schema) -> String {
     push_generations(&mut out, schema);
     push_firmware_release(&mut out, schema);
     push_constants(&mut out, schema);
+    push_metadata_keys(&mut out, schema);
     push_metadata_generation_table(&mut out, schema);
     push_type_aliases(&mut out, schema);
     push_enums(&mut out, schema);
@@ -782,6 +783,32 @@ fn push_constants(out: &mut String, schema: &Schema) {
     }
 
     push_constant_table(out, schema);
+}
+
+/// Emit `metadata_key`, a constant per plugin key.
+fn push_metadata_keys(out: &mut String, schema: &Schema) {
+    let keys = schema.plugin_keys();
+    if keys.is_empty() {
+        return;
+    }
+    out.push_str(
+        "// ---------------------------------------------------------------------------\n\
+         // Plugin metadata keys\n\
+         // ---------------------------------------------------------------------------\n\n\
+         /// The `ora_metadata_key_t` values.\n\
+         pub mod metadata_key {\n",
+    );
+    for entry in &keys {
+        if let Some(comment) = entry.comment {
+            push_doc_comment(out, "    ", comment);
+            out.push_str("    ///\n");
+        }
+        out.push_str(&format!(
+            "    /// Since firmware {}.\n    pub const {}: u32 = {:#X};\n\n",
+            entry.key.first_release, entry.key.name, entry.key.id
+        ));
+    }
+    out.push_str("}\n\n");
 }
 
 /// Emit the `[[versions]]` entries for the metadata header, as the release

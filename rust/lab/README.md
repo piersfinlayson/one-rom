@@ -169,11 +169,23 @@ SHA1 and the 32-bit summing checksum should match.
 chip type it serves, and any chip select polarities, with `c` first.
 
 ```text
-Device:   One ROM
-Firmware: v0.8.0
-RBCP:     0.1.3
-Boot:     flash slot 0, RAM slot 0
+Device:       One ROM
+Board type:   fire-24-usb-b
+Board size:   L
+Firmware:     v0.8.1
+RBCP:         0.1.4
+Boot:         flash slot 0, RAM slot 0
+Chip ID:      E126C9F97C10ADAC
+Commissioned: yes
+  Board type:   fire-24-usb-b
+  Manufacturer: piers.rocks
+  Date:         2026-09-29
+  Signing key:  piers.rocks Production (1)
+  Signature:    verified
 ```
+
+The first board type is from the firmware metadata and the second from the
+commissioning data.
 
 A chip with 8-bit and 16-bit modes is queried in each.
 
@@ -182,6 +194,10 @@ changed and checks them, so a read afterwards returns the same SHA1 as before.
 
 `a` is a batch read that queries the One ROM over RBCP after each ROM read pass.
 It takes the same arguments as `b`.
+
+```text
+  Device: One ROM v0.8.1, fire-24-usb-b (L) - Commissioned: piers.rocks, signature verified
+```
 
 ## Pin map
 

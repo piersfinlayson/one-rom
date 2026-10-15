@@ -21,7 +21,7 @@ use crossterm::terminal;
 use onerom_app::{
     BoardSize, CommissionError, LocalFetch, LocalOtpAccess, OtpError, Plan, Request, RequestDate,
     RowValue, Signer, SignerTable, Step, StepKind, Verdict, plan_size, prepare, read_board_size,
-    read_chip_id, read_commissioning, verify_instance,
+    read_chip_id, read_commissioning, verdict_text, verify_instance,
 };
 use onerom_cli::error::NEWER_DATA;
 use onerom_cli::otp::{PicobootOtp, board_size_text, escape_controls, format_date};
@@ -1432,22 +1432,6 @@ fn check_values(
             signature("not checked"),
             ("Error:".to_string(), error_line(e)),
         ],
-    }
-}
-
-/// `verdict` as a phrase about an instance's signature.
-fn verdict_text(verdict: Verdict) -> &'static str {
-    match verdict {
-        Verdict::Verified => "verified",
-        Verdict::Recorded => "verified and recorded before the key was retired",
-        Verdict::NotRecorded | Verdict::RecordChanged => "invalid due to retired key",
-        Verdict::ManufacturerNotAllowed => {
-            "invalid because the signing key cannot sign this manufacturer"
-        }
-        Verdict::BadSignature => "invalid",
-        Verdict::UnknownSigner => "invalid due to unknown signing key",
-        Verdict::Incomplete => "incomplete",
-        Verdict::Invalid => "missing values",
     }
 }
 

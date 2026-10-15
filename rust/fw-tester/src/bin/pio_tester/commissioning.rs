@@ -8,6 +8,8 @@
 //!   commissioning instance. It must agree with [`firmware_board`], a Rust copy
 //!   of its rule, on any OTP. Where the host's reader, `onerom_metadata::otp`,
 //!   finds nothing unexpected, the two must find the same board.
+//! - The firmware's reader doesn't find a deleted entry, whose key is
+//!   `OTP_KEY_NONE`.
 //! - The firmware's board size must agree with
 //!   `onerom_metadata::otp::board_size` on a board with a secondary flash chip
 //!   select. The firmware counts chip select 1 only on such a board, so on
@@ -65,6 +67,7 @@ const MANUFACTURERS: [&str; 3] = [
 /// `serves` is set.
 pub fn run(board: Board, serves: bool, report: &mut TestReport) {
     report.add_check("commissioning: firmware reader", check_reader());
+    report.add_check("commissioning: deleted entry", check_deleted_entry());
     report.add_check("commissioning: board size", check_board_size(board));
     if serves {
         report.add_check(
@@ -107,6 +110,32 @@ fn check_reader() -> Result<(), String> {
         check_mismatch(&area, firmware).map_err(|e| format!("case {case}: {e}"))?;
     }
     Ok(())
+}
+
+/// A complete instance holding a deleted entry and the signature.
+fn check_deleted_entry() -> Result<(), String> {
+    let sig_key = OneromOtpKey::OtpKeyCommissioningSig as u16;
+    let mut area = vec![
+        OTP_STORE_MAGIC,
+        OTP_STORE_VERSION,
+        OTP_KEY_NONE,
+        2,
+        0x1234,
+        sig_key,
+        64,
+    ];
+    area.extend([0xa5a5; 32]);
+    Emulator::clear_otp();
+    Emulator::set_otp_ecc(FIRST, &area);
+    if Emulator::otp_commissioning_value(sig_key).is_none() {
+        return Err("the firmware doesn't find the instance's signature".into());
+    }
+    match Emulator::otp_commissioning_value(OTP_KEY_NONE) {
+        None => Ok(()),
+        Some(found) => Err(format!(
+            "the firmware found the deleted entry for OTP_KEY_NONE at {found:x?}"
+        )),
+    }
 }
 
 /// The firmware's rule in Rust: `COMMISSIONING_BOARD` in the last complete

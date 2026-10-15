@@ -80,7 +80,8 @@ pub use size::{device_board_size, known_board_size};
 // word commissioning writes.
 pub use otp::{
     EccRow, Interruption, LOCK1_READ_ONLY, LocalOtpAccess, MemoryOtp, OtpAccess, OtpError,
-    OtpReport, PageLock, read_board_size, read_chip_id, read_commissioning, read_report,
+    OtpReport, PageLock, board_size_text, escape_controls, format_date, read_board_size,
+    read_chip_id, read_commissioning, read_report,
 };
 // FLASH_DEVINFO's fields. The schema declares them, and these are the names the
 // CLI uses.
@@ -142,7 +143,7 @@ pub use read_back::{
 pub use onerom_gen::RecoveryProblem;
 // The signing keys and the check of a commissioning instance's signature
 // against them.
-pub use signers::{Signer, SignerError, SignerTable, Verdict, verify_instance};
+pub use signers::{Signer, SignerError, SignerTable, Verdict, verdict_text, verify_instance};
 
 /// Returns the version of this crate, as set in `Cargo.toml`.
 pub fn crate_version() -> &'static str {

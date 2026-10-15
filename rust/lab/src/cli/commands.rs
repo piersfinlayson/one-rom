@@ -20,9 +20,16 @@ use onerom_config::chip::{ChipType, ControlLineType, chip_type_names_for_pins};
 use onerom_config::hw::{BOARDS, Board};
 use onerom_config::mcu::Family;
 
+use onerom_app::{
+    SignerTable, Verdict, board_size_text, escape_controls, format_date, verdict_text,
+};
+use onerom_metadata::otp::parse_chip_id;
+use onerom_metadata::{MaybeKnown, OneromBoardSize};
 use sha1::{Digest, Sha1};
 
+use crate::commissioning::Check;
 use crate::error::Error;
+use crate::rbcp::Commissioning;
 use crate::rom::RomReader;
 use crate::usb;
 
@@ -670,13 +677,11 @@ fn check_rbcp_cs(chip: ChipType, cs: CsSettings) -> Result<(), Error> {
 /// it reports.
 ///
 /// `full` prints the whole query, as `R` does. Otherwise each mode is one line,
-/// as a batch pass prints it. A failed query is printed and the next mode is
-/// still queried.
+/// as a batch pass prints it, plus any warning. A
+/// failed query is printed and the next mode is still queried.
 async fn do_rbcp(board: Board, chip: ChipType, cs: CsSettings, full: bool) -> Result<(), Error> {
     let modes = chip.bit_modes();
-    let text =
-        |f: &onerom_rbcp_host::AsciiField| String::from_utf8_lossy(f.as_bytes()).into_owned();
-    let slot = |s: Option<u8>| s.map_or("unknown".to_string(), |s| s.to_string());
+    let table = SignerTable::built_in();
 
     for &mode in modes {
         yield_to_usb().await;
@@ -686,42 +691,241 @@ async fn do_rbcp(board: Board, chip: ChipType, cs: CsSettings, full: bool) -> Re
         let result = crate::rbcp::query(&mut reader, board, mode);
         reader.end_read();
 
-        if !full {
-            let label = mode_label(mode, modes.len());
-            match result {
-                Ok(id) => {
-                    send_line(&format!(
-                        "  {label}Device: {} {}",
-                        text(&id.device_type),
-                        text(&id.device_version)
-                    ))
-                    .await?
-                }
-                Err(f) => send_line(&format!("  {label}Error: {}", Error::Rbcp(f))).await?,
-            }
-            continue;
-        }
-
-        if modes.len() > 1 {
+        let label = mode_label(mode, modes.len());
+        if full && modes.len() > 1 {
             send_line(&format!("{mode}-bit")).await?;
         }
-        match result {
-            Ok(id) => {
-                send_line(&format!("Device:   {}", text(&id.device_type))).await?;
-                send_line(&format!("Firmware: {}", text(&id.device_version))).await?;
-                send_line(&format!("RBCP:     {}", id.protocol_version)).await?;
-                send_line(&format!(
-                    "Boot:     flash slot {}, RAM slot {}",
-                    slot(id.boot.flash_slot),
-                    slot(id.boot.ram_slot)
-                ))
-                .await?;
+        let report = match result {
+            Ok(id) => Report::new(&id, &table).await,
+            Err(f) => {
+                let indent = if full { "" } else { "  " };
+                send_line(&format!("{indent}{label}Error: {}", Error::Rbcp(f))).await?;
+                if full {
+                    send_line("").await?;
+                }
+                continue;
             }
-            Err(f) => send_line(&format!("Error: {}", Error::Rbcp(f))).await?,
+        };
+
+        if full {
+            for line in report.full_lines() {
+                send_line(&line).await?;
+            }
+            send_line("").await?;
+        } else {
+            send_line(&format!("  {label}Device: {}", report.line())).await?;
+            if let Some(warning) = &report.warning {
+                send_line(&format!("  {label}{warning}")).await?;
+            }
         }
-        send_line("").await?;
     }
     Ok(())
+}
+
+/// A One ROM's RBCP query as text.
+struct Report {
+    device: String,
+    firmware: String,
+    protocol: String,
+    boot: String,
+    /// `None` without host-control's Device Info commands.
+    info: Option<InfoText>,
+    /// Set where the board types differ.
+    warning: Option<String>,
+}
+
+struct InfoText {
+    board_type: String,
+    board_size: String,
+    chip_id: String,
+    commissioned: CommissionedText,
+}
+
+enum CommissionedText {
+    /// A `Commissioned:` value without lines beneath it.
+    Bare(String),
+    Yes {
+        manufacturer: Option<String>,
+        values: Vec<(&'static str, String)>,
+        signature: &'static str,
+    },
+}
+
+impl Report {
+    async fn new(id: &crate::rbcp::Identity, table: &SignerTable) -> Self {
+        let text =
+            |f: &onerom_rbcp_host::AsciiField| String::from_utf8_lossy(f.as_bytes()).into_owned();
+        let slot = |s: Option<u8>| s.map_or("unknown".to_string(), |s| s.to_string());
+        let mut warning = None;
+        let info = match &id.info {
+            Some(info) => {
+                let (text, board) = commissioned_text(info, table).await;
+                if let Some(board) = board
+                    && board != info.board_type
+                {
+                    warning = Some(format!(
+                        "WARNING: Firmware board type '{}' does not match commissioned board type '{}'.",
+                        escape_controls(&info.board_type),
+                        escape_controls(&board)
+                    ));
+                }
+                Some(InfoText {
+                    board_type: escape_controls(&info.board_type),
+                    board_size: board_size(info.board_size),
+                    chip_id: hex::encode_upper(info.chip_id),
+                    commissioned: text,
+                })
+            }
+            None => None,
+        };
+        Report {
+            device: text(&id.device_type),
+            firmware: text(&id.device_version),
+            protocol: id.protocol_version.to_string(),
+            boot: format!(
+                "flash slot {}, RAM slot {}",
+                slot(id.boot.flash_slot),
+                slot(id.boot.ram_slot)
+            ),
+            info,
+            warning,
+        }
+    }
+
+    /// The lines `R` prints.
+    fn full_lines(&self) -> Vec<String> {
+        let unknown = || "unknown".to_string();
+        let info = self.info.as_ref();
+        let commissioned = match info.map(|i| &i.commissioned) {
+            Some(CommissionedText::Bare(value)) => value.clone(),
+            Some(CommissionedText::Yes { .. }) => "yes".to_string(),
+            None => unknown(),
+        };
+        let top = [
+            ("Device:", self.device.clone()),
+            (
+                "Board type:",
+                info.map_or_else(unknown, |i| i.board_type.clone()),
+            ),
+            (
+                "Board size:",
+                info.map_or_else(unknown, |i| i.board_size.clone()),
+            ),
+            ("Firmware:", self.firmware.clone()),
+            ("RBCP:", self.protocol.clone()),
+            ("Boot:", self.boot.clone()),
+            ("Chip ID:", info.map_or_else(unknown, |i| i.chip_id.clone())),
+            ("Commissioned:", commissioned),
+        ];
+        let mut lines: Vec<String> = self.warning.iter().cloned().collect();
+        lines.extend(labelled(&top, ""));
+        if let Some(CommissionedText::Yes {
+            values, signature, ..
+        }) = info.map(|i| &i.commissioned)
+        {
+            let mut values = values.clone();
+            values.push(("Signature:", signature.to_string()));
+            lines.extend(labelled(&values, "  "));
+        }
+        lines
+    }
+
+    /// The `a` line after `Device: `.
+    fn line(&self) -> String {
+        let mut line = format!("{} {}", self.device, self.firmware);
+        let commissioned = match &self.info {
+            Some(info) => {
+                line.push_str(&format!(", {} ({})", info.board_type, info.board_size));
+                match &info.commissioned {
+                    CommissionedText::Bare(value) => value.clone(),
+                    CommissionedText::Yes {
+                        manufacturer,
+                        signature,
+                        ..
+                    } => format!(
+                        "{}, signature {signature}",
+                        manufacturer.as_deref().unwrap_or("unknown")
+                    ),
+                }
+            }
+            None => "unknown".to_string(),
+        };
+        line.push_str(&format!(" - Commissioned: {commissioned}"));
+        line
+    }
+}
+
+/// Also returns the commissioned board type.
+async fn commissioned_text(
+    info: &crate::rbcp::DeviceInfo,
+    table: &SignerTable,
+) -> (CommissionedText, Option<String>) {
+    let values = match &info.commissioning {
+        Commissioning::No => return (CommissionedText::Bare("no".to_string()), None),
+        Commissioning::UnknownVersion(version) => {
+            return (
+                CommissionedText::Bare(format!("unknown (version {version})")),
+                None,
+            );
+        }
+        Commissioning::Yes(values) => values,
+    };
+    let chip_id = parse_chip_id(&hex::encode_upper(info.chip_id));
+    let signature = match chip_id {
+        Some(chip_id) => match crate::commissioning::check(values, chip_id, table).await {
+            Check::Verdict(verdict) => verdict_text(verdict),
+            Check::Retired => "verified, key retired",
+        },
+        None => verdict_text(Verdict::BadSignature),
+    };
+    let manufacturer = values.manufacturer.as_deref().map(escape_controls);
+    let mut lines = Vec::new();
+    if let Some(board) = &values.board {
+        lines.push(("Board type:", escape_controls(board)));
+    }
+    if let Some(manufacturer) = &manufacturer {
+        lines.push(("Manufacturer:", manufacturer.clone()));
+    }
+    if let Some(date) = &values.date {
+        lines.push(("Date:", format_date(date)));
+    }
+    if let Some(id) = values.signer {
+        let name = match table.get(id) {
+            Some(signer) => format!("{} ({id})", escape_controls(signer.name())),
+            None => format!("signer {id}"),
+        };
+        lines.push(("Signing key:", name));
+    }
+    (
+        CommissionedText::Yes {
+            manufacturer,
+            values: lines,
+            signature,
+        },
+        values.board.clone(),
+    )
+}
+
+/// `raw` is an `onerom_board_size_t`.
+fn board_size(raw: u32) -> String {
+    let size = u8::try_from(raw)
+        .ok()
+        .and_then(|raw| OneromBoardSize::try_from(raw).ok())
+        .map_or(MaybeKnown::Unknown(raw), MaybeKnown::Known);
+    board_size_text(size)
+}
+
+/// Lines up the values past the longest label.
+fn labelled(values: &[(&str, String)], indent: &str) -> Vec<String> {
+    let width = values
+        .iter()
+        .map(|(label, _)| label.len() + 1)
+        .max()
+        .unwrap_or_default();
+    values
+        .iter()
+        .map(|(label, value)| format!("{indent}{label:width$}{value}"))
+        .collect()
 }
 
 async fn cmd_reset_to_bootloader() -> Result<(), Error> {

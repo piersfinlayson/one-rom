@@ -229,6 +229,22 @@ impl Verdict {
     }
 }
 
+/// `verdict` as a phrase about an instance's signature.
+pub fn verdict_text(verdict: Verdict) -> &'static str {
+    match verdict {
+        Verdict::Verified => "verified",
+        Verdict::Recorded => "verified and recorded before the key was retired",
+        Verdict::NotRecorded | Verdict::RecordChanged => "invalid due to retired key",
+        Verdict::ManufacturerNotAllowed => {
+            "invalid because the signing key cannot sign this manufacturer"
+        }
+        Verdict::BadSignature => "invalid",
+        Verdict::UnknownSigner => "invalid due to unknown signing key",
+        Verdict::Incomplete => "incomplete",
+        Verdict::Invalid => "missing values",
+    }
+}
+
 /// Checks `instance`'s signature for the chip whose CHIPID is `chip_id`.
 /// `chip_id` holds rows `0x000`–`0x003` read with ECC. Row `0x000` comes
 /// first.
