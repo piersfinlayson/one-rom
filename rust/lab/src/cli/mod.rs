@@ -153,6 +153,8 @@ pub struct SessionState {
     pub format: OutputFormat,
     /// Batch read interval in seconds. Defaults to 1.
     pub interval_secs: u32,
+    /// Fast read delay in cycles.
+    pub fast_read_delay: u32,
     /// Control line polarities for the current chip.
     pub cs: CsSettings,
     /// Tri-state testing flag for checksum mode.
@@ -169,6 +171,7 @@ impl SessionState {
             range: ReadRange::default(),
             format: OutputFormat::default(),
             interval_secs: 1,
+            fast_read_delay: crate::fast_read::DEFAULT_DELAY_CYCLES,
             cs: CsSettings::unset(),
             tri_state: true,
         }
@@ -402,6 +405,8 @@ pub async fn show_help(_state: &SessionState) -> Result<(), Error> {
     send_line("  a   Batch ROM read and RBCP query").await?;
     send_line("        a[:<chip>[:<start>[:<len>[:<fmt>[:<secs>[:<cs1>[:<cs2>[:<cs3>]]]]]]]]]")
         .await?;
+    send_line("  x   Continuous fast read").await?;
+    send_line("        x[:<chip>[:<cycles>[:<cs1>[:<cs2>[:<cs3>]]]]]").await?;
     send_line("  i   Chip type information").await?;
     send_line("        i[:<chip>]").await?;
     send_line("  c   Set or change chip type").await?;

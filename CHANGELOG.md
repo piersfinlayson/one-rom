@@ -25,6 +25,7 @@ In detail:
 - Lab:
   - `R` queries One ROM information using RBCP.
   - `a` is a batch read that reads the ROM and queries One ROM information.
+  - `x` reads a chip continuously at MHz rates.
 - Plugins:
   - host-control 0.1.7
     - Requires firmware 0.8.1.

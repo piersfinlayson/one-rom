@@ -43,6 +43,10 @@ pub enum Error {
     CsPolarityNotSet,
     /// An RBCP step failed
     Rbcp(crate::rbcp::Failure),
+    /// The chip is larger than a fast read supports
+    FastReadChipSize,
+    /// The board's pins for this chip can't be driven by a fast read
+    FastReadPins,
 }
 
 impl From<crate::usb::Error> for Error {
@@ -75,6 +79,14 @@ impl fmt::Display for Error {
                 write!(f, "control line polarity not set - use 'c' to set it")
             }
             Self::Rbcp((step, e)) => write!(f, "RBCP {step}: {e}"),
+            Self::FastReadChipSize => write!(
+                f,
+                "a fast read supports chips up to {}KB",
+                crate::fast_read::MAX_BYTES / 1024
+            ),
+            Self::FastReadPins => {
+                write!(f, "a fast read doesn't support this chip on this board")
+            }
         }
     }
 }

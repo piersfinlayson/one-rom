@@ -26,6 +26,7 @@ mod cdc;
 mod cli;
 mod commissioning;
 mod error;
+mod fast_read;
 mod hw;
 mod logs;
 mod metadata;

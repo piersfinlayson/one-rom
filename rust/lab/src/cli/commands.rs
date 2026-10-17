@@ -14,7 +14,7 @@ use alloc::{
 };
 
 use embassy_futures::select::{Either, select};
-use embassy_time::Timer;
+use embassy_time::{Duration, Instant, Timer};
 
 use onerom_config::chip::{ChipType, ControlLineType, chip_type_names_for_pins};
 use onerom_config::hw::{BOARDS, Board};
@@ -29,6 +29,7 @@ use sha1::{Digest, Sha1};
 
 use crate::commissioning::Check;
 use crate::error::Error;
+use crate::fast_read::{self, FastReader};
 use crate::rbcp::Commissioning;
 use crate::rom::RomReader;
 use crate::usb;
@@ -68,6 +69,7 @@ pub async fn dispatch(line: &str, state: &mut SessionState) -> Result<(), Error>
         'r' => cmd_read(&mut args, state).await,
         'b' => cmd_batch(&mut args, state, false).await,
         'a' => cmd_batch(&mut args, state, true).await,
+        'x' => cmd_fast_read(&mut args, state).await,
         'i' => cmd_chip_info(&mut args, state).await,
         'c' => cmd_set_chip_type(&mut args, state).await,
         'f' => cmd_set_format(&mut args, state).await,
@@ -160,6 +162,142 @@ async fn cmd_read(args: &mut Args<'_>, state: &mut SessionState) -> Result<(), E
     .await
 }
 
+/// How long a fast read reads before checking for a key.
+const FAST_READ_CHUNK: Duration = Duration::from_millis(250);
+
+/// How often a fast read prints its progress.
+const FAST_READ_STATUS: Duration = Duration::from_secs(1);
+
+/// Read the chip continuously, as fast as Lab can, until a key is pressed.
+async fn cmd_fast_read(args: &mut Args<'_>, state: &mut SessionState) -> Result<(), Error> {
+    let board = state.board.ok_or(Error::BoardNotSet)?;
+
+    let chip = parser::require_chip(args.next_token(), state.chip, &mut state.editor).await?;
+    let delay =
+        parser::get_delay(args.next_token(), state.fast_read_delay, &mut state.editor).await?;
+    let cs1 = parser::get_cs_polarity(
+        args.next_token(),
+        state.cs.cs1,
+        &format!("CS1 polarity {}", CS_KEY),
+        chip_has_configurable_cs(chip, "cs1"),
+        &mut state.editor,
+    )
+    .await?;
+    let cs2 = parser::get_cs_polarity(
+        args.next_token(),
+        state.cs.cs2,
+        &format!("CS2 polarity {}", CS_KEY),
+        chip_has_configurable_cs(chip, "cs2"),
+        &mut state.editor,
+    )
+    .await?;
+    let cs3 = parser::get_cs_polarity(
+        args.next_token(),
+        state.cs.cs3,
+        &format!("CS3 polarity {}", CS_KEY),
+        chip_has_configurable_cs(chip, "cs3"),
+        &mut state.editor,
+    )
+    .await?;
+
+    state.chip = Some(chip);
+    state.fast_read_delay = delay;
+    state.cs = CsSettings { cs1, cs2, cs3 };
+    require_cs(chip, state.cs)?;
+    if chip.size_bytes() > fast_read::MAX_BYTES {
+        return Err(Error::FastReadChipSize);
+    }
+
+    let mut reader = RomReader::new(board, chip, state.cs.to_polarities(), false);
+    reader.init();
+    let pins = reader.begin_fast_read();
+    let result = match FastReader::new(&pins, chip.size_bytes(), delay) {
+        Ok(mut fast) => fast_read_loop(chip, delay, &mut fast)
+            .await
+            .map(|elapsed| (fast, elapsed)),
+        Err(e) => Err(e),
+    };
+    reader.end_read();
+    let (fast, elapsed) = result?;
+
+    send_line("Stopped.").await?;
+    send_line(&fast_read_status(&fast, elapsed)).await?;
+    for m in &fast.listed {
+        send_line(&format!(
+            "  Pass {} address {:#06x}: expected {:#04x}, read {:#04x}",
+            m.pass, m.addr, m.expected, m.read
+        ))
+        .await?;
+    }
+    if fast.mismatches > fast.listed.len() as u64 {
+        send_line(&format!(
+            "  First {} mismatches listed.",
+            fast_read::MAX_LISTED
+        ))
+        .await?;
+    }
+    send_line("").await
+}
+
+/// The passes of a fast read, until a key is pressed.  Returns how long the
+/// passes ran.
+async fn fast_read_loop(
+    chip: ChipType,
+    delay: u32,
+    fast: &mut FastReader,
+) -> Result<Duration, Error> {
+    send_line(&format!(
+        "Fast reading {chip}, read delay {delay} cycles. Press any key to stop."
+    ))
+    .await?;
+    while let Ok(Some(_)) = usb::cdc_try_recv().await {}
+
+    yield_to_usb().await;
+    let sha1 = fast.read_reference();
+    send_line(&format!("  Reference SHA1: {}", hex::encode(sha1))).await?;
+
+    let start = Instant::now();
+    let mut status_at = start + FAST_READ_STATUS;
+    loop {
+        let chunk_end = Instant::now() + FAST_READ_CHUNK;
+        while Instant::now() < chunk_end {
+            fast.compare_pass();
+        }
+        if usb::cdc_try_recv().await?.is_some() {
+            return Ok(start.elapsed());
+        }
+        if Instant::now() >= status_at {
+            send_line(&fast_read_status(fast, start.elapsed())).await?;
+            status_at += FAST_READ_STATUS;
+        }
+    }
+}
+
+/// A fast read's progress as one line, with the mismatches on each data line
+/// that has any.
+fn fast_read_status(fast: &FastReader, elapsed: Duration) -> String {
+    let ms = elapsed.as_millis().max(1);
+    let reads = fast.reads();
+    let centi_mhz = reads / 10 / ms;
+    let mut line = format!(
+        "  {}.{}s  passes {}  reads {}.{}M  {}.{:02}MHz  mismatches {}",
+        ms / 1000,
+        ms % 1000 / 100,
+        fast.passes,
+        reads / 1_000_000,
+        reads % 1_000_000 / 100_000,
+        centi_mhz / 100,
+        centi_mhz % 100,
+        fast.mismatches,
+    );
+    for (n, &count) in fast.line_mismatches.iter().enumerate() {
+        if count != 0 {
+            line.push_str(&format!("  D{n} {count}"));
+        }
+    }
+    line
+}
+
 /// A batch read, followed on each pass by an RBCP query where `rbcp` is set.
 async fn cmd_batch(args: &mut Args<'_>, state: &mut SessionState, rbcp: bool) -> Result<(), Error> {
     let board = state.board.ok_or(Error::BoardNotSet)?;
@@ -214,7 +352,7 @@ async fn cmd_batch(args: &mut Args<'_>, state: &mut SessionState, rbcp: bool) ->
     state.cs = CsSettings { cs1, cs2, cs3 };
 
     if rbcp {
-        check_rbcp_cs(chip, state.cs)?;
+        require_cs(chip, state.cs)?;
     }
 
     send_line("Batch read started. Press any key to stop.").await?;
@@ -470,6 +608,7 @@ async fn cmd_default_info(state: &SessionState) -> Result<(), Error> {
     .await?;
     send_line(&format!("Format:    {}", state.format)).await?;
     send_line(&format!("Interval:  {}s", state.interval_secs)).await?;
+    send_line(&format!("Delay:     {} cycles", state.fast_read_delay)).await?;
     send_line(&format!(
         "Tri-state: {}",
         if state.tri_state { "on" } else { "off" }
@@ -647,15 +786,15 @@ async fn cmd_list_board_types(_state: &SessionState) -> Result<(), Error> {
 async fn cmd_rbcp(state: &SessionState) -> Result<(), Error> {
     let board = state.board.ok_or(Error::BoardNotSet)?;
     let chip = state.chip.ok_or(Error::ChipNotSet)?;
-    check_rbcp_cs(chip, state.cs)?;
+    require_cs(chip, state.cs)?;
     send_line(&format!("Querying a One ROM serving {chip} over RBCP")).await?;
     send_line("").await?;
     do_rbcp(board, chip, state.cs, true).await
 }
 
-/// RBCP requires every configurable control line's polarity, as a read does,
-/// and can't auto-detect one.
-fn check_rbcp_cs(chip: ChipType, cs: CsSettings) -> Result<(), Error> {
+/// RBCP and a fast read require every configurable control line's polarity,
+/// as a read does, and can't auto-detect one.
+fn require_cs(chip: ChipType, cs: CsSettings) -> Result<(), Error> {
     let cs = cs.to_polarities();
     let unset = chip.control_lines().iter().any(|c| {
         c.line_type == ControlLineType::Configurable

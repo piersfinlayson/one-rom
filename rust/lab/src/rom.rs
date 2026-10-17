@@ -29,6 +29,14 @@ pub struct ModeResult {
 
 pub type ReadResult = Vec<ModeResult>;
 
+/// The GPIOs a fast read drives and samples.  See [`crate::fast_read`].
+pub struct FastReadPins {
+    pub addr_gpios: Vec<u8>,
+    pub data_gpios: Vec<u8>,
+    /// The control line asserted for each read, or None if the chip has none
+    pub strobe_gpio: Option<u8>,
+}
+
 /// Active level for a configurable CS line on a mask ROM.
 ///
 /// `true`  = active-high (drive the pin high to assert)
@@ -95,19 +103,25 @@ impl ChecksumState {
 /// A GPIO-backed control line with its assert polarity.
 struct ControlLine {
     flex: Flex<'static>,
+    gpio: u8,
     assert_high: bool,
 }
 
 impl ControlLine {
-    fn active_low(flex: Flex<'static>) -> Self {
+    fn active_low(flex: Flex<'static>, gpio: u8) -> Self {
         Self {
             flex,
+            gpio,
             assert_high: false,
         }
     }
 
-    fn configurable(flex: Flex<'static>, assert_high: bool) -> Self {
-        Self { flex, assert_high }
+    fn configurable(flex: Flex<'static>, gpio: u8, assert_high: bool) -> Self {
+        Self {
+            flex,
+            gpio,
+            assert_high,
+        }
     }
 
     fn init(&mut self) {
@@ -141,6 +155,10 @@ impl ControlLine {
 pub struct RomReader {
     addr: Vec<Flex<'static>>,
     data: Vec<Flex<'static>>,
+    /// The GPIO of each entry in `addr`
+    addr_gpios: Vec<u8>,
+    /// The GPIO of each entry in `data`
+    data_gpios: Vec<u8>,
     ce: Option<ControlLine>,
     oe: Option<ControlLine>,
     cs1: Option<ControlLine>,
@@ -195,38 +213,38 @@ impl RomReader {
         }
 
         // Build address-line GPIO list (A0 … An, or A-1 … An for 27C400).
-        let addr: Vec<Flex<'static>> = chip
+        let addr_gpios: Vec<u8> = chip
             .address_pins()
             .iter()
             .map(|&phys| {
                 let phys = Self::remap_phys_pin(chip, board, phys);
-                let gpio = gpio_for_socket_pin(board, phys).unwrap_or_else(|| {
+                gpio_for_socket_pin(board, phys).unwrap_or_else(|| {
                     panic!(
                         "address pin {} not mapped for chip {} on this board",
                         phys,
                         chip.name()
                     )
-                });
-                steal_gpio(gpio)
+                })
             })
             .collect();
+        let addr = addr_gpios.iter().map(|&gpio| steal_gpio(gpio)).collect();
 
         // Build data-line GPIO list (D0 … Dn).
-        let data: Vec<Flex<'static>> = chip
+        let data_gpios: Vec<u8> = chip
             .data_pins()
             .iter()
             .map(|&phys| {
                 let phys = Self::remap_phys_pin(chip, board, phys);
-                let gpio = gpio_for_socket_pin(board, phys).unwrap_or_else(|| {
+                gpio_for_socket_pin(board, phys).unwrap_or_else(|| {
                     panic!(
                         "data pin {} not mapped for chip {} on this board",
                         phys,
                         chip.name()
                     )
-                });
-                steal_gpio(gpio)
+                })
             })
             .collect();
+        let data = data_gpios.iter().map(|&gpio| steal_gpio(gpio)).collect();
 
         // Build control-line GPIOs.
         let mut ce = None;
@@ -249,23 +267,26 @@ impl RomReader {
             let flex = steal_gpio(gpio);
 
             match ctrl.name {
-                "ce" => ce = Some(ControlLine::active_low(flex)),
-                "oe" => oe = Some(ControlLine::active_low(flex)),
+                "ce" => ce = Some(ControlLine::active_low(flex, gpio)),
+                "oe" => oe = Some(ControlLine::active_low(flex, gpio)),
                 "cs1" => {
                     cs1 = Some(ControlLine::configurable(
                         flex,
+                        gpio,
                         cs.cs1.expect("cs1 polarity required"),
                     ))
                 }
                 "cs2" => {
                     cs2 = Some(ControlLine::configurable(
                         flex,
+                        gpio,
                         cs.cs2.expect("cs2 polarity required"),
                     ))
                 }
                 "cs3" => {
                     cs3 = Some(ControlLine::configurable(
                         flex,
+                        gpio,
                         cs.cs3.expect("cs3 polarity required"),
                     ))
                 }
@@ -296,6 +317,8 @@ impl RomReader {
         Self {
             addr,
             data,
+            addr_gpios,
+            data_gpios,
             ce,
             oe,
             cs1,
@@ -580,6 +603,25 @@ impl RomReader {
             )
         } else {
             (byte_addr, 0, self.read_delay_cycles)
+        }
+    }
+
+    /// Assert every control line but the strobe and return the pins a fast
+    /// read uses.  The strobe is OE, or CE where the chip has no OE, or CS1
+    /// where it has neither.
+    ///
+    /// Pair every call with exactly one call to `end_read`.
+    pub fn begin_fast_read(&mut self) -> FastReadPins {
+        self.assert_control();
+        let strobe = self.oe.as_mut().or(self.ce.as_mut()).or(self.cs1.as_mut());
+        let strobe_gpio = strobe.map(|line| {
+            line.deassert();
+            line.gpio
+        });
+        FastReadPins {
+            addr_gpios: self.addr_gpios.clone(),
+            data_gpios: self.data_gpios.clone(),
+            strobe_gpio,
         }
     }
 

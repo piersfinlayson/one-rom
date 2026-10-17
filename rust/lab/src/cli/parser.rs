@@ -25,6 +25,7 @@ use super::CsPolaritySetting;
 use super::OutputFormat;
 use super::editor::LineEditor;
 use crate::error::Error;
+use crate::fast_read::MAX_DELAY_CYCLES;
 
 // ---------------------------------------------------------------------------
 // Colon-syntax splitting
@@ -326,6 +327,46 @@ pub async fn get_interval(
             Ok(n) if n > 0 => return Ok(n),
             Ok(_) => {
                 super::send_line("Interval must be at least 1 second.").await?;
+            }
+            Err(_) => {
+                super::send_line(&format!("Invalid number '{}'.", s)).await?;
+            }
+        }
+    }
+}
+
+/// Resolve a fast read delay in cycles, 0 to [`MAX_DELAY_CYCLES`],
+/// from an inline token or an interactive prompt.  Ctrl-C or blank input
+/// returns `default`.
+pub async fn get_delay(
+    token: Option<&str>,
+    default: u32,
+    editor: &mut LineEditor,
+) -> Result<u32, Error> {
+    if let Some(t) = token {
+        let n = t.trim().parse::<u32>().map_err(|_| Error::Syntax)?;
+        if n > MAX_DELAY_CYCLES {
+            return Err(Error::Syntax);
+        }
+        return Ok(n);
+    }
+
+    loop {
+        let input = prompt(editor, &format!("Read delay (cycles) [{}]: ", default)).await?;
+
+        let s = match input {
+            None => return Err(Error::Cancelled),
+            Some(s) if s.is_empty() => return Ok(default),
+            Some(s) => s,
+        };
+
+        match s.parse::<u32>() {
+            Ok(n) if n <= MAX_DELAY_CYCLES => return Ok(n),
+            Ok(_) => {
+                super::send_line(&format!(
+                    "Read delay must be at most {MAX_DELAY_CYCLES} cycles."
+                ))
+                .await?;
             }
             Err(_) => {
                 super::send_line(&format!("Invalid number '{}'.", s)).await?;
