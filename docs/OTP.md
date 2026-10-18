@@ -180,6 +180,7 @@ describes. The request provides:
 - the public key
 - a proof
 - the manufacturer strings the key may sign
+- a contact for each manufacturer string
 - a description of what the key is used for
 
 The maintainers assign the key's ID.
@@ -194,13 +195,26 @@ address in `https://images.onerom.org/signers.json`.
 `onerom hardware commission` refuses to use a signing key that isn't in the
 table, is retired or doesn't allow the manufacturer.
 
-ID 0 is invalid. IDs 1–255 are reserved for piers.rocks. Other signers' keys
-are assigned IDs from 256 onwards.
+ID 0 is invalid. IDs 1–4095 are reserved for piers.rocks. Other signers' keys
+are assigned IDs from 4096 onwards.
 
 Each key lists the manufacturers it may sign, which must be a byte exact match.
-A piers.rocks key (1-255) may allow any manufacturer in place of a list by
-specifying `*`. A manufacturer stays in a key's list permanently so that boards
-already signed continue to validate.
+A piers.rocks key with an ID from 1 to 255 may allow any manufacturer in place
+of a list by specifying `*`. A manufacturer stays in a key's list permanently so
+that boards already signed continue to validate.
+
+A contact is an email address or URL at which a manufacturer can be contacted.
+It is printable ASCII and isn't empty.
+
+A key that lists its manufacturers has exactly one contact for each of them.
+
+A key that allows any manufacturer has a contact for each manufacturer whose
+boards are signed with it. The maintainers add a manufacturer's contact before
+the first of its boards is signed with the key.
+
+A manufacturer's contact stays in the table permanently but may be updated. A
+board's contact is its signing key's contact for the board's
+`COMMISSIONING_MANUFACTURER`.
 
 CI rejects the row if:
 - the proof fails to verify

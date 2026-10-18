@@ -10,14 +10,21 @@ body:
     id: name
     attributes:
       label: Key name
-      description: The name the proof signs, usually your organisation name. Example Acme Retro
+      description: The name the proof signs, usually your organisation name. Must not contain One ROM. Example Acme Retro
     validations:
       required: true
   - type: textarea
     id: manufacturers
     attributes:
       label: Manufacturer strings
-      description: Each --manufacturer string the key may sign, one per line. Normally a single manufacturer string will be approved. Example Acme Retro
+      description: Each --manufacturer string the key may sign, one per line. Normally a single manufacturer string will be approved. Must not contain One ROM. Example Acme Retro
+    validations:
+      required: true
+  - type: textarea
+    id: contacts
+    attributes:
+      label: Contacts
+      description: 'Each manufacturer string and contact, an email address or URL. Published in the One ROM repository''s signing key table. Example Acme Retro: https://github.com/acme-retro'
     validations:
       required: true
   - type: input

@@ -86,6 +86,15 @@ signing key is typically only authorised for a single manufacturer string, but
 the maintainers will consider requests for multiple strings on a case by case
 basis.
 
+The key's name and its manufacturer strings must not contain One ROM in any
+form, for example `One ROM`, `OneROM` or `onerom`.
+
+A request must include a contact for each manufacturer string. A contact is an
+email address or URL at which the manufacturer can be contacted, for example
+`https://github.com/acme-retro`. Contacts are published with in the ONE ROM
+repository's signing key table,
+[`rust/app/signing-keys.json`](/rust/app/signing-keys.json).
+
 Any information you submit as part of your request may be published in the One
 ROM repository.
 
@@ -121,8 +130,9 @@ commands require OpenSSL 3.
 
 4. Raise a
    [signing key request](https://github.com/piersfinlayson/one-rom/issues/new?template=signing-key-request.yml),
-   listing each `--manufacturer` you want the key to be able to sign. This key will
-   not be usable until the maintainers grant your request and issue a key ID.
+   listing each `--manufacturer` you want the key to be able to sign, and contact
+   details. This key will not be usable until the maintainers grant your request
+   and issue a key ID.
 
 5. Upon granting your request you will receive a unique signing key ID, which
    is required if using a [signing server](#signing-server).
@@ -221,7 +231,7 @@ To sign One ROMs using a signing server requires:
 
 To sign through a [signing server](/rust/signing-server/README.md) replace
 `--key acme.pem` with the server's address and the key ID. For example
-`--signer https://sign.internal.example.com --key-id 256`.
+`--signer https://sign.internal.example.com --key-id 4096`.
 
 ## External Flash Plugin
 
