@@ -8,7 +8,9 @@ use onerom_app::{BoardSize, LocalFetch, MemoryOtp, SignerTable, read_commissioni
 
 use super::{device, failed, json_boards, neither_m_nor_l_board, newer_boards, size_of};
 use crate::hardware::{SigningKeys, built_in_warning, validate_otp};
-use crate::test_board::{Files, acme_board, commissioned_board, table, table_allowing};
+use crate::test_board::{
+    Files, acme_board, commissioned_board, table, table_allowing, table_with_empty_contacts,
+};
 
 /// The lines `hardware validate` prints for `otp`, with the downloaded
 /// signer table.
@@ -215,6 +217,10 @@ async fn results() {
         "8: the key doesn't allow the manufacturer, piers.rocks (key 1 may sign only onerom.org)";
     let keys = (&table_allowing(&["onerom.org"]), Downloaded);
     validate_case(&mut otp, case, keys, &none).await;
+
+    let case = "9: the key allows any manufacturer and doesn't have piers.rocks's contact";
+    let keys = (&table_with_empty_contacts(), Downloaded);
+    validate_case(&mut otp, case, keys, &none).await;
 }
 
 /// The downloaded signer table is refused because key 300, outside
@@ -233,6 +239,7 @@ async fn a_downloaded_table_refused_for_its_manufacturers() {
         "public_key": hex::encode(key.verifying_key().to_bytes()),
         "proof": hex::encode(proof.to_bytes()),
         "manufacturers": ["*"],
+        "contacts": {},
     }]});
     let pointer = serde_json::json!({ "version": 1, "signing_keys_url": table_url });
     let files = Files(vec![
@@ -265,7 +272,7 @@ async fn validate_json<F: LocalFetch<Error = onerom_fw::Error>>(
     }
 }
 
-/// `--json` for each board, then for three signer tables.
+/// `--json` for each board, then for several signer tables.
 #[tokio::test]
 async fn json() {
     let none = Files(Vec::new());
@@ -290,4 +297,8 @@ async fn json() {
     );
     let refusing = table_allowing(&["onerom.org"]);
     validate_json(&mut otp, (&refusing, SigningKeys::Downloaded), &none).await;
+    println!();
+    println!("### the key allows any manufacturer and doesn't have piers.rocks's contact");
+    let empty_contacts = table_with_empty_contacts();
+    validate_json(&mut otp, (&empty_contacts, SigningKeys::Downloaded), &none).await;
 }

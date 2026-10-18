@@ -36,6 +36,8 @@ In detail:
   - Deprecated: `ORA_ID_REBOOT_BOOTSEL`.  Use `ORA_ID_REBOOT`.
   - New: `ora_get_commissioning_value()` reads a commissioning value from OTP.
   - New: `ORA_METADATA_KEY_CHIP_ID` reads the RP2350's chip ID with `ora_get_metadata_uint_at()`.
+- Other:
+  - Added manufacturer contact details to commissioning signing key tables.
 
 To test:
 - One ROM Web: the One ROM Builder tab's Load from Device button with a One ROM connected.

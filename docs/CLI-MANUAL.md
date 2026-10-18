@@ -2401,6 +2401,7 @@ Board size: M
 Commissioned: yes
   Board type:   fire-40-b
   Manufacturer: Acme Retro
+  Contact:      https://github.com/acme-retro
   Date:         2026-09-29
   Signing key:  Acme Retro (256)
   Signature:    verified

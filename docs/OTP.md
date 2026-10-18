@@ -222,7 +222,12 @@ CI rejects the row if:
 - the key is weak
 - the key doesn't list a manufacturer
 - a listed manufacturer isn't a valid `COMMISSIONING_MANUFACTURER` value
-- a key with ID 256 or above allows any manufacturer.
+- a key with ID 256 or above allows any manufacturer
+- a key doesn't have exactly one contact for each manufacturer
+- a key has two contacts for one manufacturer
+- a contact isn't printable ASCII or is empty
+- a key that allows any manufacturer has a contact for a name that isn't a
+  valid `COMMISSIONING_MANUFACTURER` value.
 
 A weak key is one of Ed25519's small-order points.
 

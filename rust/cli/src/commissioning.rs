@@ -33,14 +33,16 @@ use onerom_metadata::{
 pub type Labelled = (String, String);
 
 /// `instance`'s board type, manufacturer and date with their labels. A value
-/// the instance doesn't have is left out.
-pub fn instance_values(instance: &CommissioningInstance) -> Vec<Labelled> {
+/// the instance doesn't have is left out. `contact` follows the manufacturer
+/// where it's `Some`.
+pub fn instance_values(instance: &CommissioningInstance, contact: Option<&str>) -> Vec<Labelled> {
     [
         ("Board type:", instance.board().map(escape_controls)),
         (
             "Manufacturer:",
             instance.manufacturer().map(escape_controls),
         ),
+        ("Contact:", contact.map(str::to_string)),
         ("Date:", instance.date().map(format_date)),
     ]
     .into_iter()
@@ -192,7 +194,7 @@ pub fn device_lines(
         (Some(unknown), _) => lines.push(format!("Commissioned: {unknown}")),
         (None, Some(current)) => {
             if details {
-                let mut values = instance_values(current);
+                let mut values = instance_values(current, None);
                 if verbose && let Some(signer) = current.signer() {
                     values.push(("Signing key:".to_string(), signer_name(signer, table)));
                 }
@@ -357,7 +359,7 @@ fn commissioning_lines(report: &OtpReport, table: &SignerTable, verbose: bool) -
     let Some(current) = area.current() else {
         return vec![labelled("Commissioned:", "no")];
     };
-    let mut values = instance_values(current);
+    let mut values = instance_values(current, None);
     if let Some(signer) = current.signer() {
         values.push(("Signing key:".to_string(), signer_name(signer, table)));
     }

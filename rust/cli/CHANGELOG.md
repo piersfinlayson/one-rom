@@ -12,6 +12,7 @@
 - Remove `inspect image`, which wasn't implemented. Use `save`.
 - Fix: `onerom` no longer crashes when its output is piped to a program that exits early, for example `head`.
 - When the One ROM selected with `--serial` can't be opened the error is now "could not be opened", not "not found".
+- `hardware validate` displays the manufacturer's contact.
 
 ## v0.5.0 - 2026-10-06
 
