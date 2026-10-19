@@ -32,6 +32,17 @@
       "contacts": {
       },
       "description": "Used to commission One ROMs manufactured by piers.rocks but commissioned with another manufacturer's name"
+    },
+    {
+      "id": 4096,
+      "name": "Emoe",
+      "public_key": "5e9583f23a0986ddf6c51bdb189a3b803ca4ba66e198a71771b285ab070b5e55",
+      "proof": "feeba8da3c8bcd5697a59c7952f83637740f215617d274cd4d71e5e8056443587277a2e427c1f36034d56579d069280f0a79b5575fa85da0d8ab81d056624003",
+      "manufacturers": ["Emoe"],
+      "contacts": {
+        "Emoe": "https://github.com/zymurgy"
+      },
+      "description": "Used to commission One ROMs manufactured for Emoe"
     }
   ]
 }
