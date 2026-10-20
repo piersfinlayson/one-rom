@@ -14,9 +14,10 @@
 
 #define REAL_HARDWARE 1
 
-// The host cannot execute a Cortex-M dmb.  A compiler barrier preserves the
-// ordering the test cares about (data stores before the write_offset store).
-#define ONEROM_RTT_DMB() __atomic_signal_fence(__ATOMIC_SEQ_CST)
+// The host can't execute a Cortex-M dmb.  onerom_rtt_test_barrier() in
+// test_rtt.c is a compiler barrier.
+void onerom_rtt_test_barrier(void);
+#define ONEROM_RTT_DMB() onerom_rtt_test_barrier()
 
 // Nor can it mask interrupts.  The test is single threaded, so the critical
 // section is uncontended and these can be empty; what they must not do is

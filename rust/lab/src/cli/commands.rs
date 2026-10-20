@@ -28,6 +28,7 @@ use onerom_metadata::{MaybeKnown, OneromBoardSize};
 use sha1::{Digest, Sha1};
 
 use crate::commissioning::Check;
+use crate::drive::Driver;
 use crate::error::Error;
 use crate::fast_read::{self, FastReader};
 use crate::rbcp::Commissioning;
@@ -70,6 +71,7 @@ pub async fn dispatch(line: &str, state: &mut SessionState) -> Result<(), Error>
         'b' => cmd_batch(&mut args, state, false).await,
         'a' => cmd_batch(&mut args, state, true).await,
         'x' => cmd_fast_read(&mut args, state).await,
+        'd' => cmd_drive(&mut args, state).await,
         'i' => cmd_chip_info(&mut args, state).await,
         'c' => cmd_set_chip_type(&mut args, state).await,
         'f' => cmd_set_format(&mut args, state).await,
@@ -173,8 +175,13 @@ async fn cmd_fast_read(args: &mut Args<'_>, state: &mut SessionState) -> Result<
     let board = state.board.ok_or(Error::BoardNotSet)?;
 
     let chip = parser::require_chip(args.next_token(), state.chip, &mut state.editor).await?;
-    let delay =
-        parser::get_delay(args.next_token(), state.fast_read_delay, &mut state.editor).await?;
+    let delay = parser::get_delay(
+        args.next_token(),
+        state.fast_read_delay,
+        "Read delay",
+        &mut state.editor,
+    )
+    .await?;
     let cs1 = parser::get_cs_polarity(
         args.next_token(),
         state.cs.cs1,
@@ -271,6 +278,90 @@ async fn fast_read_loop(
             status_at += FAST_READ_STATUS;
         }
     }
+}
+
+/// Toggles between checks of the clock.
+const DRIVE_BURST: u32 = 4096;
+
+/// Drive data lines as a square wave until a key is pressed.
+async fn cmd_drive(args: &mut Args<'_>, state: &mut SessionState) -> Result<(), Error> {
+    let board = state.board.ok_or(Error::BoardNotSet)?;
+
+    let chip = parser::require_chip(args.next_token(), state.chip, &mut state.editor).await?;
+    let lines = parser::get_lines(args.next_token(), state.drive_lines, &mut state.editor).await?;
+    let delay = parser::get_delay(
+        args.next_token(),
+        state.drive_delay,
+        "Toggle delay",
+        &mut state.editor,
+    )
+    .await?;
+
+    state.chip = Some(chip);
+    state.drive_lines = lines;
+    state.drive_delay = delay;
+    require_cs(chip, state.cs)?;
+
+    let mut reader = RomReader::new(board, chip, state.cs.to_polarities(), false);
+    reader.init();
+    let gpios = reader.begin_drive();
+    let result = match Driver::new(&gpios, lines, delay) {
+        Ok(mut driver) => drive_loop(delay, &mut driver)
+            .await
+            .map(|elapsed| (driver, elapsed)),
+        Err(e) => Err(e),
+    };
+    reader.end_drive();
+    reader.end_read();
+    let (driver, elapsed) = result?;
+
+    send_line("Stopped.").await?;
+    send_line(&drive_status(&driver, elapsed)).await?;
+    send_line("").await
+}
+
+async fn drive_loop(delay: u32, driver: &mut Driver) -> Result<Duration, Error> {
+    let names: Vec<String> = (0..16)
+        .filter(|n| driver.lines & (1 << n) != 0)
+        .map(|n| format!("D{n}"))
+        .collect();
+    send_line(&format!(
+        "Driving {}, delay {delay} cycles. Press any key to stop.",
+        names.join(" ")
+    ))
+    .await?;
+    while let Ok(Some(_)) = usb::cdc_try_recv().await {}
+
+    let start = Instant::now();
+    let mut status_at = start + FAST_READ_STATUS;
+    loop {
+        let chunk_end = Instant::now() + FAST_READ_CHUNK;
+        while Instant::now() < chunk_end {
+            driver.toggle(DRIVE_BURST);
+        }
+        if usb::cdc_try_recv().await?.is_some() {
+            return Ok(start.elapsed());
+        }
+        if Instant::now() >= status_at {
+            send_line(&drive_status(driver, start.elapsed())).await?;
+            status_at += FAST_READ_STATUS;
+        }
+    }
+}
+
+fn drive_status(driver: &Driver, elapsed: Duration) -> String {
+    let ms = elapsed.as_millis().max(1);
+    // Two toggles make one cycle of the square wave.
+    let centi_mhz = driver.toggles / 2 / 10 / ms;
+    format!(
+        "  {}.{}s  toggles {}.{}M  {}.{:02}MHz",
+        ms / 1000,
+        ms % 1000 / 100,
+        driver.toggles / 1_000_000,
+        driver.toggles % 1_000_000 / 100_000,
+        centi_mhz / 100,
+        centi_mhz % 100,
+    )
 }
 
 /// A fast read's progress as one line, with the mismatches on each data line

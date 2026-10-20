@@ -17,8 +17,11 @@ mod tests {
     use onerom_config::mcu::{Family as McuFamily, Variant as McuVariant};
     use onerom_gen::{Builder, ConfigOverrides, ConfigWarning, Error as GenError, FileData};
     use onerom_metadata::{
-        CURRENT_METADATA_VERSION, DeviceMemoryView, FLASH_CS1_BASE_ADDR, METADATA_BASE,
-        METADATA_SIZE, ONEROM_METADATA_MAGIC, metadata_generation_for,
+        CURRENT_METADATA_VERSION, DeviceMemoryView, FLASH_CS0_BASE_ADDR, FLASH_CS1_BASE_ADDR,
+        METADATA_BASE, METADATA_SIZE, ONEROM_METADATA_MAGIC, OVERRIDE1_BOOT_SLOT,
+        OVERRIDE1_IGNORE_IMAGE_SELECT, PLUGIN_HEADER_BOOT_SLOT_ADDR_OFFSET,
+        PLUGIN_HEADER_OVERRIDES1_OFFSET, SYSTEM_PLUGIN_OFFSET, SYSTEM_PLUGIN_SIZE,
+        USER_PLUGIN_OFFSET, USER_PLUGIN_SIZE, metadata_generation_for,
     };
 
     // ROM images are placed immediately after the 16KB metadata region.
@@ -3144,6 +3147,65 @@ mod tests {
         );
         assert!(rom[..256] == plugin_image()[..]);
         assert!(rom[64 * 1024..64 * 1024 + 256] == plugin_image()[..]);
+    }
+
+    /// A plugin image's overrides1 and boot_slot_addr.
+    type PluginHeader = (u8, u32);
+
+    fn build_plugins(system: PluginHeader, user: PluginHeader) -> Result<(), GenError> {
+        let image = |(overrides1, boot_slot_addr): PluginHeader| {
+            let mut data = plugin_image();
+            data[PLUGIN_HEADER_OVERRIDES1_OFFSET] = overrides1;
+            data[PLUGIN_HEADER_BOOT_SLOT_ADDR_OFFSET..][..4]
+                .copy_from_slice(&boot_slot_addr.to_le_bytes());
+            data
+        };
+        let types = ["system_plugin", "user_plugin", "27C040"];
+        let mut b = Builder::from_json(V0_8_0, McuFamily::Rp2350, &sets_json(&types))
+            .expect("from_json should succeed");
+        b.add_file(FileData::new(0, image(system))).unwrap();
+        b.add_file(FileData::new(1, image(user))).unwrap();
+        b.add_file(FileData::new(2, vec![0x5A; 512 * 1024]))
+            .unwrap();
+        b.build(fire32b_props(V0_8_0, BoardSize::M)).map(|_| ())
+    }
+
+    /// Without `OVERRIDE1_BOOT_SLOT` the address isn't checked.
+    #[test]
+    fn v2_a_boot_slot_address_lies_in_its_plugin_region() {
+        let ignore = OVERRIDE1_IGNORE_IMAGE_SELECT;
+        type Build = dyn Fn(PluginHeader) -> Result<(), GenError>;
+        let plugins: [(&str, u32, usize, &Build); 2] = [
+            ("system", SYSTEM_PLUGIN_OFFSET, SYSTEM_PLUGIN_SIZE, &|h| {
+                build_plugins(h, (0, 0))
+            }),
+            ("user", USER_PLUGIN_OFFSET, USER_PLUGIN_SIZE, &|h| {
+                build_plugins((0, 0), h)
+            }),
+        ];
+        for (plugin, offset, size, build) in plugins {
+            let region = FLASH_CS0_BASE_ADDR + offset;
+            let end = region + size as u32;
+            for (overrides1, addr, builds) in [
+                (OVERRIDE1_BOOT_SLOT, region, true),
+                (OVERRIDE1_BOOT_SLOT, end - 0x1000, true),
+                (OVERRIDE1_BOOT_SLOT, end - 1, true),
+                (OVERRIDE1_BOOT_SLOT, end, false),
+                (OVERRIDE1_BOOT_SLOT, region - 1, false),
+                (OVERRIDE1_BOOT_SLOT | ignore, FLASH_CS1_BASE_ADDR, false),
+                (OVERRIDE1_BOOT_SLOT, 0, false),
+                (ignore, 0, true),
+                (0, end, true),
+            ] {
+                let result = build((overrides1, addr));
+                assert_eq!(
+                    result.is_ok(),
+                    builds,
+                    "{plugin} plugin overrides1 {overrides1:#04x}, address {addr:#010x}: \
+                     {result:?}"
+                );
+            }
+        }
     }
 
     /// A config with a system plugin chip for `usb` with `plugin_keys` added,

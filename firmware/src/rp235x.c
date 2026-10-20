@@ -479,13 +479,23 @@ void setup_timer0(void) {
     TICKS_TIMER0_CTRL |= TICKS_CTRL_ENABLE;
 }
 
+void usb_controller_out_of_reset(void) {
+    RESET_RESET &= ~RESET_USBCTRL;
+    while (!(RESET_DONE & RESET_USBCTRL)) {}
+}
+
+// RESET_DONE isn't set until clk_usb runs.  USB DPRAM is accessible once the
+// reset bit is clear.
+void usb_controller_reset_and_release(void) {
+    RESET_RESET |= RESET_USBCTRL;
+    RESET_RESET &= ~RESET_USBCTRL;
+}
+
 void setup_usb_controller(void) {
     // Route USB clock to PLL_USB
     CLOCK_CLK_USB_CTRL = CLOCK_USB_CTRL_ENABLE | CLOCK_USB_CTRL_AUXSRC_PLL_USB;
 
-    // Release USB controller from reset
-    RESET_RESET &= ~RESET_USBCTRL;
-    while (!(RESET_DONE & RESET_USBCTRL)) {}
+    usb_controller_out_of_reset();
 }
 
 void setup_usb_pll(void) {

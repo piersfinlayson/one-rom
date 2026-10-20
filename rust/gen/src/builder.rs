@@ -11,9 +11,12 @@ use onerom_config::hw::{Board, HeaderColumn, HeaderRole, HeaderSlot};
 use onerom_config::mcu::Family;
 use onerom_config::pin::{HeaderPin, ReservedPins};
 use onerom_metadata::{
-    MAX_SERIAL_NUMBER_LEN, MAX_UNIT_NAME_LEN, METADATA_BASE, METADATA_SIZE, MIN_SCHEMA_VERSION,
-    MaybeKnown, ONEROM_METADATA_MAGIC, OneromAlgConfig, OneromMetadataHeader, OneromRomInfo,
-    OneromRomSlot, Pointer, ROM_SLOT_NO_IMAGE, RomSlotType, metadata_generation_for, serialize,
+    FLASH_CS0_BASE_ADDR, MAX_SERIAL_NUMBER_LEN, MAX_UNIT_NAME_LEN, METADATA_BASE, METADATA_SIZE,
+    MIN_SCHEMA_VERSION, MaybeKnown, ONEROM_METADATA_MAGIC, OVERRIDE1_BOOT_SLOT, OneromAlgConfig,
+    OneromMetadataHeader, OneromRomInfo, OneromRomSlot, PLUGIN_HEADER_BOOT_SLOT_ADDR_OFFSET,
+    PLUGIN_HEADER_OVERRIDES1_OFFSET, PLUGIN_MAGIC, Pointer, ROM_SLOT_NO_IMAGE, RomSlotType,
+    SYSTEM_PLUGIN_OFFSET, SYSTEM_PLUGIN_SIZE, USER_PLUGIN_OFFSET, USER_PLUGIN_SIZE,
+    metadata_generation_for, serialize,
 };
 
 use crate::flash::{FlashChips, slot_addresses};
@@ -2243,6 +2246,8 @@ pub(crate) fn validate_plugins(
     props: &FirmwareProperties,
 ) -> Result<()> {
     let mut rom_id = 0;
+    let mut system_plugin = None;
+    let mut user_plugin = None;
     for set in config.chip_sets.iter() {
         for rom in set.chips.iter() {
             if matches!(
@@ -2262,7 +2267,7 @@ pub(crate) fn validate_plugins(
                     });
                 }
 
-                if &data[0..4] != b"ORA " {
+                if u32::from_le_bytes(data[0..4].try_into().unwrap()) != PLUGIN_MAGIC {
                     return Err(Error::InvalidPluginImage {
                         plugin_type: rom.chip_type.resolved(),
                         image_file: rom.file_for_display().to_string(),
@@ -2298,11 +2303,63 @@ pub(crate) fn validate_plugins(
                         ),
                     });
                 }
+
+                if matches!(rom.chip_type.resolved(), ChipType::SystemPlugin) {
+                    system_plugin = Some((rom, data));
+                } else if matches!(rom.chip_type.resolved(), ChipType::UserPlugin) {
+                    user_plugin = Some((rom, data));
+                }
             }
             rom_id += 1;
         }
     }
+
+    let plugins = [
+        (
+            ChipType::SystemPlugin,
+            system_plugin,
+            SYSTEM_PLUGIN_OFFSET,
+            SYSTEM_PLUGIN_SIZE,
+        ),
+        (
+            ChipType::UserPlugin,
+            user_plugin,
+            USER_PLUGIN_OFFSET,
+            USER_PLUGIN_SIZE,
+        ),
+    ];
+    for (plugin_type, plugin, offset, size) in plugins {
+        if let Some((rom, data)) = plugin {
+            let region = FLASH_CS0_BASE_ADDR + offset..FLASH_CS0_BASE_ADDR + offset + size as u32;
+            check_boot_slot_addr(plugin_type, rom, data, region)?;
+        }
+    }
     Ok(())
+}
+
+fn check_boot_slot_addr(
+    plugin_type: ChipType,
+    rom: &ChipConfig,
+    data: &[u8],
+    region: core::ops::Range<u32>,
+) -> Result<()> {
+    if data[PLUGIN_HEADER_OVERRIDES1_OFFSET] & OVERRIDE1_BOOT_SLOT == 0 {
+        return Ok(());
+    }
+
+    let offset = PLUGIN_HEADER_BOOT_SLOT_ADDR_OFFSET;
+    let addr = u32::from_le_bytes(data[offset..offset + 4].try_into().unwrap());
+    if region.contains(&addr) {
+        return Ok(());
+    }
+    Err(Error::InvalidPluginImage {
+        plugin_type,
+        image_file: rom.file_for_display().to_string(),
+        error: format!(
+            "The plugin's boot slot address {addr:#010x} is outside the plugin's region. One \
+             ROM would ignore it."
+        ),
+    })
 }
 
 /// Build `ChipSet`s (with `Chip`s, including loaded ROM image data) from

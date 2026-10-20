@@ -47,6 +47,10 @@ pub enum Error {
     FastReadChipSize,
     /// The board's pins for this chip can't be driven by a fast read
     FastReadPins,
+    /// The board's data pins for this chip can't be driven as a square wave
+    DrivePins,
+    /// A drive's data lines include one the chip doesn't have
+    DriveLines(usize),
 }
 
 impl From<crate::usb::Error> for Error {
@@ -87,6 +91,10 @@ impl fmt::Display for Error {
             Self::FastReadPins => {
                 write!(f, "a fast read doesn't support this chip on this board")
             }
+            Self::DrivePins => {
+                write!(f, "data lines can't be driven for this chip on this board")
+            }
+            Self::DriveLines(n) => write!(f, "this chip has {n} data lines"),
         }
     }
 }

@@ -158,7 +158,15 @@ size_t usb_get_serial(char *out, size_t out_size) {
     return len;
 }
 
-void usb_init(ora_lookup_fn_t ora_lookup_fn) {
+// In exclusive serial IN mode:
+// - Only channel 0 goes to the serial port.  See usb_log.c.
+// - One ROM's log is in USB DPRAM above the endpoint buffers.
+// - The plugin doesn't reset the USB controller.  See rp2usb_app_reset_cb().
+// - The plugin doesn't clear the log.  See rp2usb_init() in tinyusb.
+void usb_init(ora_lookup_fn_t ora_lookup_fn, uint8_t entry_flags) {
+    context.exclusive_serial_in =
+        (entry_flags & ORA_ENTRY_FLAG_EXCLUSIVE_SERIAL_IN) ? 1 : 0;
+
     // Look up the required functions from the API.
     context.ora_lookup_fn = ora_lookup_fn;
     context.log = ora_lookup_fn(ORA_ID_LOG);
@@ -211,16 +219,14 @@ void usb_main(
     ora_plugin_type_t plugin_type,
     const ora_entry_args_t *entry_args
 ) {
-    // Unused variables
     (void)plugin_type;
-    (void)entry_args;
 
     // Initialize .ram_func, .data and .bss.  Do up-front to avoid
     // accidentally using it first
     init_data_bss();
 
     // Initialize USB and related functionality
-    usb_init(ora_lookup_fn);
+    usb_init(ora_lookup_fn, entry_args->flags);
     ora_yield_fn_t yield = ora_lookup_fn(ORA_ID_YIELD);
 
     while (1) {
@@ -239,6 +245,12 @@ void usb_main(
 
     ERR("USB plugin exiting");
     return;
+}
+
+// In exclusive serial IN mode the firmware has already reset the USB
+// controller, and a reset would lose writes to One ROM's log in USB DPRAM.
+bool rp2usb_app_reset_cb(void) {
+    return !context.exclusive_serial_in;
 }
 
 // Invoked when device is mounted

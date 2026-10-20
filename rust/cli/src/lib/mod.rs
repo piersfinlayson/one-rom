@@ -23,6 +23,7 @@ pub mod otp;
 pub mod picobootx;
 pub mod pin;
 pub mod plugin;
+pub mod ram_log;
 pub mod read_back;
 pub mod release;
 pub mod reset;

@@ -224,6 +224,10 @@ pub fn test_lookup_coverage(emu: &Emulator, base_dir: &Path) -> Result<(), Strin
             ffi::api_id_t_ORA_ID_GET_COMMISSIONING_VALUE,
             "ORA_ID_GET_COMMISSIONING_VALUE",
         ),
+        (
+            ffi::api_id_t_ORA_ID_GET_FLASH_SLOT_ADDR,
+            "ORA_ID_GET_FLASH_SLOT_ADDR",
+        ),
     ];
 
     // Deprecated/invalid IDs — must resolve to null.

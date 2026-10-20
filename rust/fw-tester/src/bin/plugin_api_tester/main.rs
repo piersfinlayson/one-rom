@@ -468,6 +468,18 @@ fn run_slot(
         tests::slots::test_flash_slot_ext_info(&emulator, config),
     );
     report.add(
+        "flash_slot_addr",
+        tests::slots::test_flash_slot_addr(&emulator, config, board, fw_version, base_dir),
+    );
+    report.add(
+        "flash_slot_addr_on_cs1",
+        tests::slots::test_flash_slot_addr_on_cs1(&emulator, board),
+    );
+    report.add(
+        "flash_slot_addr_no_image",
+        tests::slots::test_flash_slot_addr_no_image(&emulator),
+    );
+    report.add(
         "ram_slot_count",
         tests::slots::test_ram_slot_count(&emulator, config, board, fw_version, base_dir, set_idx),
     );

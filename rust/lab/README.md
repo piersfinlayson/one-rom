@@ -100,6 +100,7 @@ Commands are case sensitive.
 | `q` | | Read the chip with the current settings |
 | `b` | `b:<chip>:<start>:<len>:<fmt>:<secs>:<cs1>:<cs2>:<cs3>` | Read the chip every `<secs>` seconds |
 | `x` | `x:<chip>:<cycles>:<cs1>:<cs2>:<cs3>` | Read the chip repeatedly and compare the passes |
+| `d` | `d:<chip>:<lines>:<cycles>` | Drive the data lines as a square wave, with the chip deselected |
 | `R` | | Query a One ROM over RBCP |
 | `a` | `a:<chip>:<start>:<len>:<fmt>:<secs>:<cs1>:<cs2>:<cs3>` | Read the chip and query the One ROM every `<secs>` seconds |
 | `p` | `p:<chip>` | Display the GPIO wired to each socket pin and X header pin |
@@ -108,7 +109,7 @@ Commands are case sensitive.
 | `z` | | Reboot into the bootloader |
 | `?` or `h` | | Display help |
 
-A key or a break stops `b`, `x` and `a`.
+A key or a break stops `b`, `x`, `d` and `a`.
 
 ## Reading a chip
 
@@ -171,6 +172,20 @@ and reading the data. If the reference SHA1 differs from an `r` read of the same
 chip, the delay is too short.
 
 `x` reads chips up to 64KB.
+
+### Data line drive
+
+`d` drives data lines as a square wave with every control line deasserted, so
+the chip keeps them as inputs. `<lines>` is a mask with D0 in bit 0, or `all`
+for all data lines supported by the chip. A hex mask takes a `0x` or `$` prefix.
+
+```text
+Driving D0 D1 D2 D3 D4 D5 D6 D7, delay 0 cycles. Press any key to stop.
+  1.0s  toggles 11.5M  5.65MHz
+```
+
+The delay is the number of 150MHz CPU cycles between toggles. Lab drives the
+lines at 8mA with fast slew.
 
 ### Querying
 

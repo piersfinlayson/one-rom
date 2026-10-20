@@ -166,13 +166,14 @@ static void onerom_rtt_init(void) {
 }
 
 // The descriptor for a channel, or NULL if there is none or it has no buffer.
-//
-// Channel 0 is up[0], the log.  Channel 1 is down[0], input from a probe or a
-// plugin.  Probes use the arrays directly, so channel numbers exist only here.
 static onerom_rtt_ring_t *onerom_rtt_ring(unsigned channel) {
     onerom_rtt_ring_t *ring;
 
     switch (channel) {
+        case ONEROM_RTT_CH_BOOT:
+            ring = onerom_rtt_log_moved() ? &_SEGGER_RTT.up[1]
+                                          : &_SEGGER_RTT.up[0];
+            break;
         case 0u:
             ring = &_SEGGER_RTT.up[0];
             break;
@@ -200,6 +201,58 @@ void onerom_rtt_plugins_init(void) {
     onerom_rtt_init();
 }
 
+unsigned onerom_rtt_log_moved(void) {
+    return (_SEGGER_RTT.up[1].buffer != 0) ? 1u : 0u;
+}
+
+unsigned onerom_rtt_move_log(char *buffer, unsigned size) {
+    onerom_rtt_ring_t *ch0 = &_SEGGER_RTT.up[0];
+    onerom_rtt_ring_t *log = &_SEGGER_RTT.up[1];
+    unsigned copied;
+
+    ONEROM_RTT_CRITICAL_SECTION();
+
+    onerom_rtt_init();
+
+    if (onerom_rtt_log_moved() || (buffer == 0) || (size < 2u)) {
+        return 0u;
+    }
+
+    copied = onerom_rtt_read(0u, buffer, size - 1u);
+
+    // Drop the bytes that didn't fit.
+    ch0->read_offset = ch0->write_offset;
+
+    log->name = onerom_rtt_channel_name;
+    log->size = size;
+    log->flags = ch0->flags;
+    log->read_offset = 0u;
+    log->write_offset = copied;
+
+    // onerom_rtt_log_moved() reads up[1]'s buffer, so it is written last.
+    ONEROM_RTT_DMB();
+    log->buffer = buffer;
+
+    return 1u;
+}
+
+#if defined(TEST_BUILD)
+void onerom_rtt_test_unmove_log(void) {
+    onerom_rtt_ring_t *ch0 = &_SEGGER_RTT.up[0];
+    onerom_rtt_ring_t *log = &_SEGGER_RTT.up[1];
+
+    ONEROM_RTT_CRITICAL_SECTION();
+
+    if (!onerom_rtt_log_moved()) {
+        return;
+    }
+
+    memset(log, 0, sizeof(*log));
+    ch0->write_offset = 0u;
+    ch0->read_offset = 0u;
+}
+#endif // TEST_BUILD
+
 // Bytes that can be written without overtaking the host's read position.
 //
 // One byte is always left free, which is how a full buffer is told apart from
@@ -226,6 +279,15 @@ static unsigned onerom_rtt_avail(const onerom_rtt_ring_t *ring,
     }
 
     return read_offset - write_offset - 1u;
+}
+
+// The log's ring can be in USB DPRAM, where an unaligned access faults.
+// memcpy() can make unaligned accesses.
+static void onerom_rtt_copy(volatile char *dest, const volatile char *src,
+                            unsigned len) {
+    while (len--) {
+        *dest++ = *src++;
+    }
 }
 
 unsigned onerom_rtt_write(unsigned channel, const void *buf, unsigned len) {
@@ -261,13 +323,13 @@ unsigned onerom_rtt_write(unsigned channel, const void *buf, unsigned len) {
 
     to_end = size - write_offset;
     if (to_end > len) {
-        memcpy(ring->buffer + write_offset, data, len);
+        onerom_rtt_copy(ring->buffer + write_offset, data, len);
         // The data must be complete before write_offset publishes it.
         ONEROM_RTT_DMB();
         ring->write_offset = write_offset + len;
     } else {
-        memcpy(ring->buffer + write_offset, data, to_end);
-        memcpy(ring->buffer, data + to_end, len - to_end);
+        onerom_rtt_copy(ring->buffer + write_offset, data, to_end);
+        onerom_rtt_copy(ring->buffer, data + to_end, len - to_end);
         ONEROM_RTT_DMB();
         ring->write_offset = len - to_end;
     }
@@ -335,11 +397,11 @@ unsigned onerom_rtt_read(unsigned channel, void *buf, unsigned max_len) {
 
     to_end = size - read_offset;
     if (to_end > pending) {
-        memcpy(dest, ring->buffer + read_offset, pending);
+        onerom_rtt_copy(dest, ring->buffer + read_offset, pending);
         read_offset += pending;
     } else {
-        memcpy(dest, ring->buffer + read_offset, to_end);
-        memcpy(dest + to_end, ring->buffer, pending - to_end);
+        onerom_rtt_copy(dest, ring->buffer + read_offset, to_end);
+        onerom_rtt_copy(dest + to_end, ring->buffer, pending - to_end);
         read_offset = pending - to_end;
     }
 

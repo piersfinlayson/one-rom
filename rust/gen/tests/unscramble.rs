@@ -2,8 +2,13 @@
 //
 // MIT License
 
-//! Random data survives a build then an unscramble, for every chip type, board
+//! Random data survives a build then an unscramble for every chip type, board
 //! and set type that builds.
+//!
+//! For a single chip with a forced GPIO in its address window:
+//!
+//! - a write to the served table entries unscrambles to the written data
+//! - a write to the other entries unscrambles to the original data
 
 use onerom_config::chip::{ChipType, ControlLineType};
 use onerom_config::fw::{FirmwareProperties, FirmwareVersion, ServeAlg};
@@ -13,7 +18,10 @@ use onerom_gen::{
     Builder, ChipSetType, FileData, FlashChips, SUPPORTED_CHIP_TYPES_V2, requires_half_select_cs1,
     unscramble_slot,
 };
-use onerom_metadata::{DeviceMemoryView, Generations, METADATA_BASE, OneromMetadataHeader};
+use onerom_metadata::{
+    DeviceMemoryView, Generations, GpioOverride, METADATA_BASE, OneromAlgAddrConfig,
+    OneromMetadataHeader, OneromRomSlot,
+};
 
 const VERSION: FirmwareVersion = FirmwareVersion::new(0, 8, 0, 0);
 
@@ -79,14 +87,13 @@ fn cs_fields(chip_type: ChipType, secondary: bool) -> String {
     fields.join(", ")
 }
 
-/// Builds a set of `count` `chip_type` chips on `board` from random data, then
-/// checks each chip unscrambles to its data. `false` where the set doesn't
-/// build.
-fn round_trip(
+/// `data` has an entry for each chip.
+fn build(
     board: Board,
     chip_type: ChipType,
     (set_type, set, count): (ChipSetType, &str, usize),
-) -> bool {
+    data: &[Vec<u8>],
+) -> Option<(OneromMetadataHeader, Vec<u8>)> {
     let chips: Vec<String> = (0..count)
         .map(|n| {
             let secondary = set_type == ChipSetType::Multi && n > 0;
@@ -102,35 +109,44 @@ fn round_trip(
         r#"{{ "version": 1, "description": "unscramble", "chip_sets": [{{ "type": "{set}", "chips": [{}] }}] }}"#,
         chips.join(", ")
     );
-    let Ok(mut builder) = Builder::from_json(VERSION, Family::Rp2350, &json) else {
-        return false;
-    };
-    let data: Vec<Vec<u8>> = (0..count)
-        .map(|n| random((n as u64) << 32 | count as u64, served_size(chip_type)))
-        .collect();
+    let mut builder = Builder::from_json(VERSION, Family::Rp2350, &json).ok()?;
     for (n, data) in data.iter().enumerate() {
         builder.add_file(FileData::new(n, data.clone())).unwrap();
     }
     let props =
         FirmwareProperties::new(VERSION, board, Variant::RP2350, ServeAlg::Default, false).unwrap();
-    let Ok((metadata, roms)) = builder.build(props) else {
-        return false;
-    };
+    let (metadata, roms) = builder.build(props).ok()?;
 
     let view = DeviceMemoryView::new(&metadata, METADATA_BASE);
     let header = OneromMetadataHeader::parse(&view, METADATA_BASE, Generations::UNKNOWN).unwrap();
     let slot = &header.rom_slots[0];
     let rom_data_start = FlashChips::new(Variant::RP2350, BoardSize::M).rom_data_start();
     let offset = (slot.data.addr().unwrap() - rom_data_start) as usize;
-    let stored = &roms[offset..offset + slot.size as usize];
+    let stored = roms[offset..offset + slot.size as usize].to_vec();
+    Some((header, stored))
+}
 
-    let unscrambled = unscramble_slot(&header.hw, slot, stored).unwrap_or_else(|e| {
-        panic!(
-            "{} {set} x{count} on {}: {e}",
-            chip_type.name(),
-            board.name()
-        )
-    });
+/// `false` if the set doesn't build.
+fn round_trip(
+    board: Board,
+    chip_type: ChipType,
+    (set_type, set, count): (ChipSetType, &str, usize),
+) -> bool {
+    let data: Vec<Vec<u8>> = (0..count)
+        .map(|n| random((n as u64) << 32 | count as u64, served_size(chip_type)))
+        .collect();
+    let Some((header, stored)) = build(board, chip_type, (set_type, set, count), &data) else {
+        return false;
+    };
+
+    let unscrambled =
+        unscramble_slot(&header.hw, &header.rom_slots[0], &stored).unwrap_or_else(|e| {
+            panic!(
+                "{} {set} x{count} on {}: {e}",
+                chip_type.name(),
+                board.name()
+            )
+        });
     assert_eq!(unscrambled.len(), count);
     for (n, (got, want)) in unscrambled.iter().zip(&data).enumerate() {
         assert!(
@@ -172,4 +188,183 @@ fn random_data_survives_build_then_unscramble() {
     // Every board serves single chips of most types and banked and multi
     // sets of some, so far fewer than this means the configs are wrong.
     assert!(built > 500, "only {built} sets built");
+}
+
+/// A single chip built from random data with a forced GPIO in its address
+/// window.
+struct Forced {
+    board: Board,
+    chip_type: ChipType,
+    data: Vec<u8>,
+    header: OneromMetadataHeader,
+    stored: Vec<u8>,
+    /// The table index bits of the forced GPIOs.
+    mask: usize,
+    /// The forced level of each bit in `mask`.
+    level: usize,
+}
+
+fn forced_bits(slot: &OneromRomSlot) -> (usize, usize) {
+    let alg = slot.alg.as_ref().unwrap();
+    let OneromAlgAddrConfig::AlgAddr0 {
+        gpio_base,
+        base_addr_pin,
+        num_addr_pins,
+        ..
+    } = alg.alg_addr
+    else {
+        panic!("unknown address algorithm");
+    };
+    let window = gpio_base + base_addr_pin..gpio_base + base_addr_pin + num_addr_pins;
+    let mut mask = 0;
+    let mut level = 0;
+    for &entry in alg
+        .gpio_override_config
+        .iter()
+        .flat_map(|config| &config.params)
+    {
+        let gpio = entry & 0x3F;
+        if !window.contains(&gpio) {
+            continue;
+        }
+        let bit = 1 << (gpio - window.start);
+        match GpioOverride::try_from(entry >> 6) {
+            Ok(GpioOverride::GpioOverLow) => mask |= bit,
+            Ok(GpioOverride::GpioOverHigh) => {
+                mask |= bit;
+                level |= bit;
+            }
+            _ => {}
+        }
+    }
+    (mask, level)
+}
+
+impl Forced {
+    /// `None` if the chip doesn't build on `board` or its address window
+    /// doesn't contain a forced GPIO.
+    fn new(board: Board, chip_type: ChipType) -> Option<Self> {
+        let data = random(0x4B39, served_size(chip_type));
+        let (header, stored) = build(board, chip_type, SHAPES[0], core::slice::from_ref(&data))?;
+        let (mask, level) = forced_bits(&header.rom_slots[0]);
+        (mask != 0).then_some(Self {
+            board,
+            chip_type,
+            data,
+            header,
+            stored,
+            mask,
+            level,
+        })
+    }
+
+    /// The stored bytes with ROM byte `addr` inverted in the table entries
+    /// `pick` selects, and the ROM data with that byte inverted.
+    fn write(&self, addr: usize, pick: impl Fn(usize) -> bool) -> (Vec<u8>, Vec<u8>) {
+        let mut changed = self.data.clone();
+        changed[addr] ^= 0xFF;
+        let (_, rebuilt) = build(
+            self.board,
+            self.chip_type,
+            SHAPES[0],
+            core::slice::from_ref(&changed),
+        )
+        .unwrap();
+
+        let word_bytes = self.stored.len() / table_entries(&self.header.rom_slots[0]);
+        let mut stored = self.stored.clone();
+        let mut placed = 0;
+        for (index, (word, new)) in stored
+            .chunks_exact_mut(word_bytes)
+            .zip(rebuilt.chunks_exact(word_bytes))
+            .enumerate()
+        {
+            if word != new && pick(index) {
+                word.copy_from_slice(new);
+                placed += 1;
+            }
+        }
+        assert!(placed > 0, "{}: no entries written", self.name());
+        (stored, changed)
+    }
+
+    fn served(&self, index: usize) -> bool {
+        index & self.mask == self.level
+    }
+
+    fn name(&self) -> String {
+        format!("{} on {}", self.chip_type.name(), self.board.name())
+    }
+
+    fn check(&self, stored: &[u8], want: &[u8]) {
+        let roms = unscramble_slot(&self.header.hw, &self.header.rom_slots[0], stored)
+            .unwrap_or_else(|e| panic!("{}: {e}", self.name()));
+        assert!(roms == [want], "{}: unscrambled data differs", self.name());
+    }
+}
+
+fn table_entries(slot: &OneromRomSlot) -> usize {
+    let OneromAlgAddrConfig::AlgAddr0 { num_addr_pins, .. } = slot.alg.as_ref().unwrap().alg_addr
+    else {
+        panic!("unknown address algorithm");
+    };
+    1 << num_addr_pins
+}
+
+/// A ROM byte address with a mix of address bits set.
+fn mixed_addr(forced: &Forced) -> usize {
+    0x5A5A5 % forced.data.len()
+}
+
+/// Every one-chip set with a forced GPIO in its address window.
+fn every_forced(each: impl Fn(&Forced) + Sync) -> Vec<(Board, ChipType)> {
+    std::thread::scope(|scope| {
+        let boards: Vec<_> = Model::Fire
+            .boards()
+            .iter()
+            .map(|&board| {
+                let each = &each;
+                scope.spawn(move || {
+                    SUPPORTED_CHIP_TYPES_V2
+                        .iter()
+                        .filter(|chip_type| !chip_type.is_plugin())
+                        .filter_map(|&chip_type| Forced::new(board, chip_type))
+                        .map(|forced| {
+                            each(&forced);
+                            (board, forced.chip_type)
+                        })
+                        .collect::<Vec<_>>()
+                })
+            })
+            .collect();
+        boards
+            .into_iter()
+            .flat_map(|board| board.join().unwrap())
+            .collect()
+    })
+}
+
+#[test]
+fn served_write_to_27256_on_fire_28_c_unscrambles() {
+    let forced = Forced::new(Board::Fire28C, ChipType::Chip27256).unwrap();
+    let (stored, want) = forced.write(0, |index| forced.served(index));
+    forced.check(&stored, &want);
+}
+
+#[test]
+fn served_write_unscrambles() {
+    let checked = every_forced(|forced| {
+        let (stored, want) = forced.write(mixed_addr(forced), |index| forced.served(index));
+        forced.check(&stored, &want);
+    });
+    assert!(checked.contains(&(Board::Fire28C, ChipType::Chip27256)));
+}
+
+#[test]
+fn never_served_write_unscrambles_to_the_original() {
+    let checked = every_forced(|forced| {
+        let (stored, _) = forced.write(mixed_addr(forced), |index| !forced.served(index));
+        forced.check(&stored, &forced.data);
+    });
+    assert!(checked.contains(&(Board::Fire28C, ChipType::Chip27256)));
 }

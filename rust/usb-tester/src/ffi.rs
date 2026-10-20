@@ -18,7 +18,8 @@ unsafe extern "C" {
     /// back as the harness takes bytes.
     pub fn usb_host_test_set_tx_capacity(capacity: u32);
 
-    /// Whether the bus can carry data, as `tud_cdc_n_connected` reports it.
+    /// Whether the bus is ready, as `tud_ready` reports it.
+    /// `tud_cdc_n_connected` also requires DTR.
     pub fn usb_host_test_set_connected(connected: u8);
 
     /// Raise or drop DTR, through the plugin's own line-state callback.
@@ -70,6 +71,17 @@ unsafe extern "C" {
     /// Clear the plugin's own state and the log channels it held, as a device
     /// does by entering a plugin with its .bss zeroed.
     pub fn usb_host_test_reset_plugin();
+
+    /// The `ORA_ENTRY_FLAG_` values the plugin starts with.
+    pub fn usb_host_test_set_entry_flags(flags: u8);
+
+    pub fn stub_usb_dpram() -> *mut u8;
+
+    pub fn usb_host_test_tinyusb_inits() -> u32;
+
+    /// How many of the plugin's tinyusb initialisations reset the USB
+    /// controller.
+    pub fn usb_host_test_controller_resets() -> u32;
 
     /// Whether the shim's picoboot handler claims a control request before the
     /// plugin's own sees it.

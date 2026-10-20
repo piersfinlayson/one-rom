@@ -131,6 +131,48 @@
 // @since firmware 0.8.1
 #define ORA_REBOOT_MAX_DELAY_MS ((uint32_t)0x00002710)
 
+// Offset of the plugin_type byte in the plugin header.
+// @since firmware 0.8.1
+#define ORA_PLUGIN_HEADER_PLUGIN_TYPE_OFFSET 0x14
+
+// Offset of the overrides1 byte in the plugin header.
+// @since firmware 0.8.1
+#define ORA_PLUGIN_HEADER_OVERRIDES1_OFFSET 0x16
+
+// Offset of the properties1 byte in the plugin header.
+// @since firmware 0.8.1
+#define ORA_PLUGIN_HEADER_PROPERTIES1_OFFSET 0x17
+
+// Offset of the little-endian 32-bit boot_slot_addr in the plugin header.
+// @since firmware 0.8.1
+#define ORA_PLUGIN_HEADER_BOOT_SLOT_ADDR_OFFSET 0x20
+
+// Plugin header overrides1 bit. With it set, One ROM boots the ROM slot
+// numbered in the byte at boot_slot_addr, which must be in the plugin's own flash
+// region. ROM slot 0 is the first slot that isn't a plugin. A number past the
+// last ROM slot is ignored. The system plugin's boot slot is used ahead of the
+// user plugin's.
+// @since firmware 0.8.1
+#define ORA_OVERRIDE1_BOOT_SLOT ((uint8_t)2)
+
+// Plugin header overrides1 bit. With it set, ROM slot 0 boots unless a
+// plugin's OVERRIDE1_BOOT_SLOT selects a slot.
+// @since firmware 0.8.1
+#define ORA_OVERRIDE1_IGNORE_IMAGE_SELECT ((uint8_t)4)
+
+// Plugin header properties1 bit requesting exclusive serial IN mode. With this
+// bit set, plugin are started with ORA_ENTRY_FLAG_EXCLUSIVE_SERIAL_IN set.
+// @since firmware 0.8.1
+#define ORA_PROPERTY1_EXCLUSIVE_SERIAL_IN ((uint8_t)4)
+
+// Address of the RP2350's USB DPRAM.
+// @since firmware 0.8.1
+#define ORA_USB_DPRAM_BASE_ADDR ((uint32_t)0x50100000)
+
+// Size in bytes of the RP2350's USB DPRAM.
+// @since firmware 0.8.1
+#define ORA_USB_DPRAM_SIZE 0x1000
+
 // RP235xB
 // @since firmware 0.8.0
 #define ORA_RP235XB ((uint8_t)0)
@@ -241,5 +283,9 @@
 // One ROM is in standby and doesn't serve the ROM.
 // @since firmware 0.8.0
 #define ORA_FIRMWARE_FLAG_STANDBY ((uint8_t)1)
+
+// One ROM's log is in RTT up buffer 1. Never cleared once set.
+// @since firmware 0.8.1
+#define ORA_FIRMWARE_FLAG_LOG_IN_UP1 ((uint8_t)2)
 
 #endif // ONEROM_CONSTANTS_H

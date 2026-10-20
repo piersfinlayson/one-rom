@@ -23,7 +23,10 @@
 
 use crate::device::Device;
 use crate::{Ctx, Scenario};
-use onerom_metadata::{FLASH_CS0_BASE_ADDR, LIVE_ROM_BASE_ADDR, USER_PLUGIN_OFFSET};
+use onerom_metadata::{
+    FLASH_CS0_BASE_ADDR, LIVE_ROM_BASE_ADDR, USB_DPRAM_BASE_ADDR, USB_DPRAM_SIZE,
+    USER_PLUGIN_OFFSET,
+};
 use onerom_plugin_tester::run::Outcome;
 
 // Status codes, from picobootx.h.
@@ -945,6 +948,37 @@ fn a_write_past_protected_flash_reaches_the_default_range(
     Ok(Outcome::Pass)
 }
 
+fn usb_dpram_is_readable(dev: &mut Device, _ctx: &Ctx) -> Result<Outcome, String> {
+    let base = USB_DPRAM_BASE_ADDR;
+    let size = USB_DPRAM_SIZE as u32;
+    let saved = dev.usb_dpram().to_vec();
+    let pattern: Vec<u8> = (0..size).map(|i| (i % 251) as u8).collect();
+    dev.usb_dpram().copy_from_slice(&pattern);
+    let (st, read) = dev.pb_read(base, size);
+    dev.usb_dpram().copy_from_slice(&saved);
+    if st != OK {
+        return Err(format!("reading USB DPRAM returned {st}"));
+    }
+    if read != pattern {
+        return Err("the read doesn't match USB DPRAM".to_string());
+    }
+
+    for (addr, len, what) in [
+        (base - 1, 1, "the byte before USB DPRAM"),
+        (base + size - 1, 2, "a read past the end of USB DPRAM"),
+        (base + size, 1, "the byte after USB DPRAM"),
+    ] {
+        let (st, _) = dev.pb_read(addr, len);
+        if st == OK {
+            return Err(format!("{what} at {addr:#010x} was readable"));
+        }
+    }
+    if dev.pb_write(base, &[0]) == OK {
+        return Err("a write to USB DPRAM was allowed".to_string());
+    }
+    Ok(Outcome::Pass)
+}
+
 pub static SCENARIOS: &[Scenario] = &[
     Scenario {
         name: "picobootx.the_registration_claims_both_handlers",
@@ -1088,6 +1122,12 @@ pub static SCENARIOS: &[Scenario] = &[
         name: "picobootx.a_write_past_protected_flash_reaches_the_default_range",
         about: "flash past the protected region is left to the default range handler",
         run: a_write_past_protected_flash_reaches_the_default_range,
+        before_start: None,
+    },
+    Scenario {
+        name: "picobootx.usb_dpram_is_readable",
+        about: "a host reads all of USB DPRAM and nothing either side, and can't write it",
+        run: usb_dpram_is_readable,
         before_start: None,
     },
 ];

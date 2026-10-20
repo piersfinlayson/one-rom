@@ -5,10 +5,8 @@
 //! Unscrambling a slot's stored data into the ROMs it serves, the reverse of
 //! [`build_rom_image`](super::rom_image::build_rom_image).
 //!
-//! The layout comes from the image's own metadata - each ROM's pin map, the
-//! slot's address window and the board's X pins - rather than being derived
-//! again. The result is what the firmware serves, whichever version of
-//! onerom-gen built the image.
+//! The layout comes from the image's own metadata so the result is what the
+//! firmware serves whichever version of onerom-gen built the image.
 //!
 //! A ROM comes back at the size it is served:
 //!
@@ -16,17 +14,19 @@
 //! - the size its address lines reach where that's smaller, for example half a
 //!   27C080
 //!
-//! A table entry selecting no ROM, or an address past a ROM's end, holds
-//! padding and is skipped.
+//! A table entry that doesn't select a word of a ROM holds padding and is
+//! skipped. So is an entry a host can't select because a GPIO in the address
+//! window has its input forced. A plugin writing the served image doesn't
+//! update those entries.
 
 use alloc::vec;
 use alloc::vec::Vec;
 use core::fmt;
 
 use onerom_metadata::{
-    BitModes, GPIO_NONE, MaybeKnown, OneromAlgAddrConfig, OneromAlgConfig, OneromAlgCsConfig,
-    OneromAlgDataConfig, OneromAlgDmaConfig, OneromHardwareInfo, OneromRomInfo, OneromRomSlot,
-    RomSlotType,
+    BitModes, GPIO_NONE, GpioOverride, MaybeKnown, OneromAlgAddrConfig, OneromAlgConfig,
+    OneromAlgCsConfig, OneromAlgDataConfig, OneromAlgDmaConfig, OneromHardwareInfo, OneromRomInfo,
+    OneromRomSlot, RomSlotType,
 };
 
 /// Why a slot's stored data can't be unscrambled into its ROMs.
@@ -155,6 +155,9 @@ pub fn unscramble_slot(
     let mut written: Vec<Vec<bool>> = roms.iter().map(|rom| vec![false; rom.words]).collect();
 
     for (index, entry) in data.chunks_exact(table.word_bytes).enumerate() {
+        if !table.selectable(index) {
+            continue;
+        }
         let Some(chip) = select.chip(index) else {
             continue;
         };
@@ -208,6 +211,9 @@ struct Table {
     data_base: u8,
     entries: usize,
     word_bytes: usize,
+    /// The table index bits whose GPIO's input is forced.
+    forced: usize,
+    forced_high: usize,
 }
 
 impl Table {
@@ -259,13 +265,37 @@ impl Table {
         if addr_bits >= 32 {
             return Err(UnscrambleError::BadLayout);
         }
-        Ok(Self {
+        let mut table = Self {
             addr_base,
             addr_bits,
             data_base,
             entries: 1 << addr_bits,
             word_bytes,
-        })
+            forced: 0,
+            forced_high: 0,
+        };
+        for &entry in alg
+            .gpio_override_config
+            .iter()
+            .flat_map(|config| &config.params)
+        {
+            let Some(bit) = table.bit(entry & 0x3F) else {
+                continue;
+            };
+            match GpioOverride::try_from(entry >> 6) {
+                Ok(GpioOverride::GpioOverLow) => table.forced |= 1 << bit,
+                Ok(GpioOverride::GpioOverHigh) => {
+                    table.forced |= 1 << bit;
+                    table.forced_high |= 1 << bit;
+                }
+                Ok(GpioOverride::GpioOverNormal | GpioOverride::GpioOverInvert) | Err(()) => {}
+            }
+        }
+        Ok(table)
+    }
+
+    fn selectable(&self, index: usize) -> bool {
+        index & self.forced == self.forced_high
     }
 
     /// The table index bit `gpio` drives, where it's in the address window.

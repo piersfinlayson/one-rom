@@ -35,6 +35,7 @@ mod inspect_header;
 mod inspect_otp;
 mod inspect_peek;
 mod inspect_slots;
+mod monitor_log;
 mod program;
 mod request_signature;
 mod save;

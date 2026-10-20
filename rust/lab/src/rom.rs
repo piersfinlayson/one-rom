@@ -7,7 +7,7 @@ use log::{debug, error, info, trace, warn};
 
 use alloc::vec::Vec;
 use core::num::Wrapping;
-use embassy_rp::gpio::{Flex, Pull};
+use embassy_rp::gpio::{Drive, Flex, Pull, SlewRate};
 use onerom_config::chip::{ChipType, ControlLineType};
 use onerom_config::hw::Board;
 use sha1::{Digest, Sha1};
@@ -638,6 +638,25 @@ impl RomReader {
                 a1.set_pull(Pull::Down);
                 a1.set_as_input();
             }
+        }
+    }
+
+    /// Drives the data pins as One ROM does.  Returns their GPIOs, D0 first.
+    pub fn begin_drive(&mut self) -> Vec<u8> {
+        self.deassert_control();
+        for pin in self.data.iter_mut() {
+            pin.set_drive_strength(Drive::_8mA);
+            pin.set_slew_rate(SlewRate::Fast);
+            pin.set_low();
+            pin.set_as_output();
+        }
+        self.data_gpios.clone()
+    }
+
+    pub fn end_drive(&mut self) {
+        for pin in self.data.iter_mut() {
+            pin.set_pull(Pull::Down);
+            pin.set_as_input();
         }
     }
 

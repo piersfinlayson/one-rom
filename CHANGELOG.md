@@ -14,6 +14,8 @@ In detail:
   - Fix: `onerom` no longer crashes when its output is piped to a program that exits early, for example `head`.
   - When the One ROM selected with `--serial` can't be opened the error message is now "could not be opened".
   - `program` and `firmware build` automatically add the USB plugin when a system plugin isn't specified. Use `--no-plugin` to build without plugins.
+  - `onerom monitor log` reads One ROM's log from RAM when a plugin has exclusive use of the serial port.
+  - `onerom inspect peek memory` can also read USB DPRAM.
 - Web Programmer:
   - Moves to logic shared with the CLI to combine and verify built firmware.
   - The One ROM Builder tab's Load from Device and Load from File buttons copy the configuration and ROM images of a One ROM or firmware file into the One ROM Builder tab.
@@ -26,16 +28,23 @@ In detail:
   - `R` queries One ROM information using RBCP.
   - `a` is a batch read that reads the ROM and queries One ROM information.
   - `x` reads a chip continuously at MHz rates.
+  - `d` drives a chip's data lines as a square wave, with the chip deselected.
 - Plugins:
   - host-control 0.1.7
     - Requires firmware 0.8.1.
     - Supports RBCP's `REBOOT` command.
     - Adds Device Info extensions which expose One ROM's commissioning values and metadata.
+  - USB 0.3.3
+    - With firmware 0.8.1, supports a plugin with exclusive use of the serial port.
+    - USB DPRAM can be read over picobootx.
 - Plugin APIs:
   - New: `ora_reboot()` can be used to reboot One ROM.
   - Deprecated: `ORA_ID_REBOOT_BOOTSEL`.  Use `ORA_ID_REBOOT`.
   - New: `ora_get_commissioning_value()` reads a commissioning value from OTP.
   - New: `ORA_METADATA_KEY_CHIP_ID` reads the RP2350's chip ID with `ora_get_metadata_uint_at()`.
+  - New: `ora_get_flash_slot_addr()` returns a flash slot's flash address and size.
+  - New: a plugin that sets `ORA_PROPERTY1_EXCLUSIVE_SERIAL_IN` gets exclusive use of the USB serial port.  One ROM's log moves to USB DPRAM in this case.
+  - New: a plugin can choose the ROM slot One ROM boots with `ORA_OVERRIDE1_BOOT_SLOT` and ignore the image select jumpers with `ORA_OVERRIDE1_IGNORE_IMAGE_SELECT`.
 
 To test:
 - One ROM Web: the One ROM Builder tab's Load from Device button with a One ROM connected.
@@ -54,6 +63,7 @@ To publish:
 - Studio 0.2.5
 - One ROM Lab 0.4.1
 - host-control plugin 0.1.7
+- USB plugin 0.3.3
 - one-rom-wasm 0.6.2: rebuild against the published Rust crates
 - one-rom-site: pick up wasm 0.6.2
 

@@ -4,7 +4,7 @@
 
 //! `onerom monitor` - watching a running One ROM as it works.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -12,6 +12,7 @@ use crate::args;
 use crate::utils::check_device_running;
 use onerom_cli::cdc::{SILENCE_TIMEOUT, find_port, stream};
 use onerom_cli::device::Device;
+use onerom_cli::ram_log;
 use onerom_cli::{Error, Options};
 
 pub async fn cmd_log(options: &Options, args: &args::monitor::MonitorLogArgs) -> Result<(), Error> {
@@ -21,35 +22,31 @@ pub async fn cmd_log(options: &Options, args: &args::monitor::MonitorLogArgs) ->
     follow(device, capture, options.verbose).await
 }
 
-/// Attach to a One ROM's serial port and print what it sends until it goes
-/// away.
+pub(crate) enum Source {
+    Serial(String),
+    Ram,
+}
+
+/// Print what a One ROM logs until it disconnects.
 ///
-/// Shared with `onerom program --follow`, which reaches the same place once the
-/// One ROM it has just programmed is back on the bus.
+/// Status goes to stderr so stdout contains only the One ROM's output.
 ///
-/// Status goes to stderr, so redirecting stdout captures the One ROM's output
-/// on its own.
-///
-/// The user chose a One ROM, not a serial port, so the port is named only under
-/// `--verbose` - where it is there to be handed to another tool - and in the
-/// error for failing to open it, where it is what they would act on.
+/// The user chose a One ROM so the serial port is identified only under
+/// `--verbose` and in the error for failing to open it.
 pub async fn follow(device: &Device, capture: Option<PathBuf>, verbose: bool) -> Result<(), Error> {
-    let port_name = find_port(device)?;
+    let source = if ram_log::read_log_from_ram(device) {
+        Source::Ram
+    } else {
+        Source::Serial(find_port(device)?)
+    };
     if verbose {
-        eprintln!("Reading from serial port {port_name}");
+        eprintln!("{}", source_line(&source));
     }
 
-    match capture.as_deref() {
-        Some(path) => eprintln!(
-            "Monitoring log, writing to {} - press Ctrl-C to stop",
-            path.display()
-        ),
-        None => eprintln!("Monitoring log - press Ctrl-C to stop"),
-    }
+    eprintln!("{}", monitoring_line(capture.as_deref()));
 
-    // Ctrl-C ends the session through stream() rather than through the process,
-    // so that what was copied can still be reported. The cost is that an
-    // interrupted run exits 0 instead of dying by signal.
+    // Ctrl-C ends the stream so what was copied can still be reported. An
+    // interrupted run then exits 0.
     let stop = Arc::new(AtomicBool::new(false));
     let signalled = stop.clone();
     tokio::spawn(async move {
@@ -58,26 +55,54 @@ pub async fn follow(device: &Device, capture: Option<PathBuf>, verbose: bool) ->
         }
     });
 
-    // stream() blocks for as long as the session lasts, which is the rest of
-    // this command.
-    let reported = capture.clone();
-    let reader = stop.clone();
-    let result = tokio::task::spawn_blocking(move || {
-        stream(&port_name, capture.as_deref(), SILENCE_TIMEOUT, &reader)
-    })
-    .await
-    .map_err(|e| Error::Other(format!("Failed to read the log: {e}")))?;
+    let copied = match source {
+        Source::Serial(port_name) => {
+            let capture = capture.clone();
+            let reader = stop.clone();
+            tokio::task::spawn_blocking(move || {
+                stream(&port_name, capture.as_deref(), SILENCE_TIMEOUT, &reader)
+            })
+            .await
+            .map_err(|e| Error::Other(format!("Failed to read the log: {e}")))??
+        }
+        Source::Ram => ram_log::stream(device, capture.as_deref(), &stop).await?,
+    };
 
-    let copied = result?;
-
-    if stop.load(Ordering::Relaxed) {
-        eprintln!("Stopped monitoring the log");
-    } else {
-        eprintln!("One ROM disconnected");
-    }
-    if let Some(path) = reported {
-        eprintln!("Wrote {copied} bytes to {}", path.display());
+    eprintln!("{}", ended_line(stop.load(Ordering::Relaxed)));
+    if let Some(path) = capture {
+        eprintln!("{}", wrote_line(copied, &path));
     }
 
     Ok(())
+}
+
+pub(crate) fn source_line(source: &Source) -> String {
+    match source {
+        Source::Serial(port_name) => format!("Reading from serial port {port_name}"),
+        Source::Ram => {
+            "Reading logs from RAM as a plugin has exclusive use of the serial port".to_string()
+        }
+    }
+}
+
+pub(crate) fn monitoring_line(capture: Option<&Path>) -> String {
+    match capture {
+        Some(path) => format!(
+            "Monitoring log, writing to {} - press Ctrl-C to stop",
+            path.display()
+        ),
+        None => "Monitoring log - press Ctrl-C to stop".to_string(),
+    }
+}
+
+pub(crate) fn ended_line(stopped: bool) -> &'static str {
+    if stopped {
+        "Stopped monitoring the log"
+    } else {
+        "One ROM disconnected"
+    }
+}
+
+pub(crate) fn wrote_line(copied: u64, path: &Path) -> String {
+    format!("Wrote {copied} bytes to {}", path.display())
 }

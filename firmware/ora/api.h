@@ -814,6 +814,13 @@ typedef enum {
      */
     ORA_ID_GET_COMMISSIONING_VALUE   = 0x00000042,
 
+    /**
+     * @brief Get a flash slot's address and size
+     * @sa ora_get_flash_slot_addr_fn_t
+     * @since firmware 0.8.1
+     */
+    ORA_ID_GET_FLASH_SLOT_ADDR       = 0x00000043,
+
     /** Invalid API identifier */
     ORA_ID_INVALID = 0xFFFFFFFF,
 } api_id_t;
@@ -1247,13 +1254,18 @@ typedef struct {
     ora_core_t core;
 
     /**
-     * @brief Reserved. Set to zero.
+     * @brief ORA_ENTRY_FLAG_ values
      *
-     * Declared rather than left to the compiler: @ref static_ram_base is
-     * four-byte aligned, so these three bytes exist either way, and a reader
-     * following the fields down should not have to work that out.
+     * Zero on firmware before 0.8.1.
+     *
+     * @since firmware 0.8.1
      */
-    uint8_t reserved[3];
+    uint8_t flags;
+
+    /**
+     * @brief Reserved, written as zero
+     */
+    uint8_t reserved[2];
 
     /**
      * @brief The plugin's static RAM base address
@@ -1289,6 +1301,17 @@ typedef struct {
      */
     uint32_t stack_size;
 } ora_entry_args_t;
+
+/**
+ * @brief Exclusive serial IN mode is on
+ * @sa ora_entry_args_t
+ * @sa ORA_PROPERTY1_EXCLUSIVE_SERIAL_IN
+ * @since firmware 0.8.1
+ *
+ * In this mode only @c ORA_LOG_CHANNEL_0 is written to the serial port.
+ * Firmware and plugin logging aren't written to channel 0.
+ */
+#define ORA_ENTRY_FLAG_EXCLUSIVE_SERIAL_IN   (1u << 0)
 
 /**
  * @brief Monitor mode
@@ -2356,6 +2379,35 @@ typedef ora_result_t (*ora_get_flash_slot_ext_info_fn_t)(
     const char **filename_out,
     uint32_t *chip_size_out,
     uint32_t *rbcp_rom_type_out
+);
+
+/**
+ * @brief Get a flash slot's address and size
+ * @sa ORA_ID_GET_FLASH_SLOT_ADDR
+ * @since firmware 0.8.1
+ *
+ * The slot's data is stored as it is served by One ROM.  Its address and data
+ * bits are rearranged to match the board's pins.  @sa ora_map_addr_to_phys_fn_t
+ *
+ * @param flash_slot  Index of the flash slot, filtered as per
+ *                    @ref ora_get_flash_slot_count_fn_t
+ * @param flags       Filtering flags, must match those passed to
+ *                    @ref ora_get_flash_slot_count_fn_t
+ *                    @sa ORA_FLASH_SLOT_FLAG_EXCLUDE_PLUGINS
+ *                    @sa ORA_FLASH_SLOT_FLAG_EXCLUDE_NON_PLUGINS
+ * @param addr_out    Set to the slot's address in the XIP flash window. May
+ *                    be NULL.
+ * @param size_out    Set to the slot's size in bytes. May be NULL.
+ * @return ORA_RESULT_OK on success.
+ *         ORA_RESULT_INVALID_SLOT if @p flash_slot is out of range for
+ *         @p flags, the slot doesn't have an image or the slot is
+ *         outside the board's flash.
+ */
+typedef ora_result_t (*ora_get_flash_slot_addr_fn_t)(
+    uint8_t flash_slot,
+    uint32_t flags,
+    uint32_t *addr_out,
+    uint32_t *size_out
 );
 
 /** @brief Perform the copy asynchronously via DMA */
@@ -3611,34 +3663,30 @@ typedef struct {
     uint8_t sam_usage;
 
     /**
-     * @brief Firmware overrides this plugin wants to apply
-     * 
-     * Only supported by system plugins, used to indicate to the firmware that
-     * defaults built into the firmware, or overriden by config, should
-     * be overridden.
+     * @brief Firmware overrides set by this plugin
+     *
+     * Overrides apply only if this plugin starts.
      *
      * For future compatibility, any unused bits must be set to 0.
      *
      * This is a bit field, with 1 indicating override.  Bit 0 = LSB
      * Bit 0 - Disable VBUS detect @sa ORA_OVERRIDE1_DISABLE_VBUS_DETECT
+     * Bit 1 - Set the ROM slot to boot @sa ORA_OVERRIDE1_BOOT_SLOT
+     * Bit 2 - Ignore the image select jumpers @sa ORA_OVERRIDE1_IGNORE_IMAGE_SELECT
      */
     // offset 22
     uint8_t overrides1;
 
     /**
      * @brief Plugin properties
-     * 
-     * 
-     * This is used to indicate properties of the plugin to the firmware, to
-     * allow the core firmware and firmware parses to make informed decisions
-     * about how to use the plugin.
-     * 
+     *
      * For future compatibility, any unused bits must be set to 0.
      * 
      * This is a bit field, with 1 indicating the presence of the property.
      * Bit 0 = LSB
      * Bit 0 = supports running while USB is connected @sa ORA_PROPERTY1_SUPPORTS_USB_RUNNING
      * Bit 1 = supports yielding to allow exclusive mode @sa ORA_PROPERTY1_SUPPORTS_YIELD
+     * Bit 2 = requests exclusive serial IN mode @sa ORA_PROPERTY1_EXCLUSIVE_SERIAL_IN
      */
     // offset 23
     uint8_t properties1;
@@ -3666,15 +3714,39 @@ typedef struct {
     uint16_t min_fw_patch_version;
 
     /**
+     * @brief Reserved. Set to zero.
+     */
+    // offset 30
+    uint8_t reserved0[2];
+
+    /**
+     * @brief Flash address of the byte containing the number of the ROM slot to boot
+     *
+     * Set to zero unless ORA_OVERRIDE1_BOOT_SLOT is set.
+     *
+     * @since firmware 0.8.1
+     */
+    // offset 32
+    uint32_t boot_slot_addr;
+
+    /**
      * @brief Reserved for future use
      *
      * This field is reserved for future use and must be set to 0.
      */
-    uint8_t reserved[226];
+    uint8_t reserved[220];
 } ora_plugin_header_t;
 #define ORA_PLUGIN_HEADER_SIZE 256  // Must not change without version bump
 #if UINTPTR_MAX == 0xFFFFFFFFu
 _Static_assert(sizeof(ora_plugin_header_t) == ORA_PLUGIN_HEADER_SIZE, "ora_plugin_header_t must be 256 bytes");
+_Static_assert(__builtin_offsetof(ora_plugin_header_t, plugin_type) == ORA_PLUGIN_HEADER_PLUGIN_TYPE_OFFSET,
+               "plugin_type offset");
+_Static_assert(__builtin_offsetof(ora_plugin_header_t, overrides1) == ORA_PLUGIN_HEADER_OVERRIDES1_OFFSET,
+               "overrides1 offset");
+_Static_assert(__builtin_offsetof(ora_plugin_header_t, properties1) == ORA_PLUGIN_HEADER_PROPERTIES1_OFFSET,
+               "properties1 offset");
+_Static_assert(__builtin_offsetof(ora_plugin_header_t, boot_slot_addr) == ORA_PLUGIN_HEADER_BOOT_SLOT_ADDR_OFFSET,
+               "boot_slot_addr offset");
 #endif
 
 /**

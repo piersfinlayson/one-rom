@@ -29,7 +29,7 @@ const CHANNEL: u32 = 0;
 const SETTLE_MS: u64 = 250;
 
 /// The banner's opening line, and the rule that closes it.
-const BANNER_TITLE: &str = "----- One ROM USB log -----";
+pub(crate) const BANNER_TITLE: &str = "----- One ROM USB log -----";
 const BANNER_RULE: &str = "---------------------------";
 
 /// Passes to run when the plugin has a whole banner to write and a full packet

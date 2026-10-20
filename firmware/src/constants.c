@@ -32,6 +32,7 @@ const char oscillator[] = "Oscillator";
 #if defined(BOOT_LOGGING)
 const char * const port_names[] = {"NONE", "A", "B", "C", "D", "0"};
 const char * const cs_values[] = {"Active Low", "Active High", "-"};
+const char * const plugin_names[] = {"System", "User"};
 #endif // BOOT_LOGGING
 
 #define STRINGIFY(x) #x

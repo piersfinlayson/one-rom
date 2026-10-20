@@ -69,6 +69,8 @@ void enter_bootloader(void);
 uint8_t rom_reboot(uint8_t bootloader, uint32_t delay_ms);
 void platform_logging(void);
 void setup_usb_controller(void);
+void usb_controller_out_of_reset(void);
+void usb_controller_reset_and_release(void);
 void setup_usb_pll(void);
 void setup_timer0(void);
 void setup_adc(void);
@@ -225,6 +227,19 @@ uint8_t check_plugin_valid(
     uint8_t index
 );
 uint8_t initial_plugin_parse(uint8_t *disable_vbus_det, uint8_t *num_plugins);
+
+const ora_plugin_header_t *system_plugin_to_start(void);
+const ora_plugin_header_t *user_plugin_to_start(void);
+uint8_t plugin_entry_flags(void);
+
+uint8_t plugin_boot_slot(uint8_t num_plugins, uint8_t *slot_out);
+uint8_t launch_log_move(uint8_t entry_flags);
+const ora_entry_args_t *plugin_entry_args(
+    ora_plugin_type_t plugin_type,
+    uint8_t entry_flags
+);
+const ora_plugin_header_t *system_plugin_to_launch(void);
+const ora_plugin_header_t *user_plugin_to_launch(uint8_t system_launched);
 #if defined(TEST_BUILD)
 int other_core_yield_capability_from(uint32_t this_core);
 #endif // TEST_BUILD

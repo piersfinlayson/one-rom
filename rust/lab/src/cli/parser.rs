@@ -335,12 +335,13 @@ pub async fn get_interval(
     }
 }
 
-/// Resolve a fast read delay in cycles, 0 to [`MAX_DELAY_CYCLES`],
-/// from an inline token or an interactive prompt.  Ctrl-C or blank input
-/// returns `default`.
+/// Resolve a delay of 0 to [`MAX_DELAY_CYCLES`] cycles from an inline token or
+/// an interactive prompt.  Blank input returns `default` and Ctrl-C returns
+/// [`Error::Cancelled`].
 pub async fn get_delay(
     token: Option<&str>,
     default: u32,
+    label: &str,
     editor: &mut LineEditor,
 ) -> Result<u32, Error> {
     if let Some(t) = token {
@@ -352,7 +353,7 @@ pub async fn get_delay(
     }
 
     loop {
-        let input = prompt(editor, &format!("Read delay (cycles) [{}]: ", default)).await?;
+        let input = prompt(editor, &format!("{label} (cycles) [{}]: ", default)).await?;
 
         let s = match input {
             None => return Err(Error::Cancelled),
@@ -364,12 +365,58 @@ pub async fn get_delay(
             Ok(n) if n <= MAX_DELAY_CYCLES => return Ok(n),
             Ok(_) => {
                 super::send_line(&format!(
-                    "Read delay must be at most {MAX_DELAY_CYCLES} cycles."
+                    "{label} must be at most {MAX_DELAY_CYCLES} cycles."
                 ))
                 .await?;
             }
             Err(_) => {
                 super::send_line(&format!("Invalid number '{}'.", s)).await?;
+            }
+        }
+    }
+}
+
+/// Resolve the data lines to drive from an inline token or an interactive
+/// prompt.  `all` returns `None`.
+pub async fn get_lines(
+    token: Option<&str>,
+    default: Option<u16>,
+    editor: &mut LineEditor,
+) -> Result<Option<u16>, Error> {
+    let parse = |s: &str| {
+        if s.trim().eq_ignore_ascii_case("all") {
+            return Some(None);
+        }
+        match parse_addr(s) {
+            Ok(n) if (1..=0xFFFF).contains(&n) => Some(Some(n as u16)),
+            _ => None,
+        }
+    };
+    if let Some(t) = token {
+        return parse(t).ok_or(Error::Syntax);
+    }
+
+    let shown = match default {
+        Some(lines) => format!("{lines:#06x}"),
+        None => String::from("all"),
+    };
+    loop {
+        let input = prompt(editor, &format!("Data lines, D0 in bit 0 [{shown}]: ")).await?;
+
+        let s = match input {
+            None => return Err(Error::Cancelled),
+            Some(s) if s.is_empty() => return Ok(default),
+            Some(s) => s,
+        };
+
+        match parse(&s) {
+            Some(lines) => return Ok(lines),
+            None => {
+                super::send_line(&format!(
+                    "Invalid data lines '{}'. Use all, or 0x0001 to 0xffff.",
+                    s
+                ))
+                .await?
             }
         }
     }

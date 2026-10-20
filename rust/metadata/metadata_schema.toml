@@ -1427,6 +1427,12 @@ name = "FIRMWARE_FLAG_STANDBY"
 bit = 0
 comment = "One ROM is in standby and doesn't serve the ROM."
 
+[[bitfields.members]]
+name = "FIRMWARE_FLAG_LOG_IN_UP1"
+bit = 1
+first_release = "0.8.1"
+comment = """One ROM's log is in RTT up buffer 1. Never cleared once set."""
+
 [[bitfields]]
 name = "onerom_override_states_t"
 size = 1
@@ -3012,3 +3018,95 @@ type = "u8"
 value = 8
 comment = """Size of ora_reboot_request_t when introduced, and the smallest
 size field accepted. Frozen, for the reason LED_REQUEST_MIN_SIZE is."""
+
+# ---------------------------------------------------------------------------
+# Plugin header
+# ---------------------------------------------------------------------------
+
+[[constants]]
+name = "PLUGIN_MAGIC"
+type = "u32"
+value = 0x2041524F
+comment = """A plugin header's magic value "ORA " read as a little-endian 32-bit value."""
+
+[[constants]]
+name = "PLUGIN_HEADER_PLUGIN_TYPE_OFFSET"
+type = "usize"
+value = 20
+ora_api = true
+first_release = "0.8.1"
+comment = "Offset of the plugin_type byte in the plugin header."
+
+[[constants]]
+name = "PLUGIN_HEADER_OVERRIDES1_OFFSET"
+type = "usize"
+value = 22
+ora_api = true
+first_release = "0.8.1"
+comment = "Offset of the overrides1 byte in the plugin header."
+
+[[constants]]
+name = "PLUGIN_HEADER_PROPERTIES1_OFFSET"
+type = "usize"
+value = 23
+ora_api = true
+first_release = "0.8.1"
+comment = "Offset of the properties1 byte in the plugin header."
+
+[[constants]]
+name = "PLUGIN_HEADER_BOOT_SLOT_ADDR_OFFSET"
+type = "usize"
+value = 32
+ora_api = true
+first_release = "0.8.1"
+comment = "Offset of the little-endian 32-bit boot_slot_addr in the plugin header."
+
+[[constants]]
+name = "OVERRIDE1_BOOT_SLOT"
+type = "u8"
+value = 0x02
+ora_api = true
+first_release = "0.8.1"
+comment = """Plugin header overrides1 bit. With it set, One ROM boots the ROM slot
+numbered in the byte at boot_slot_addr, which must be in the plugin's own flash
+region. ROM slot 0 is the first slot that isn't a plugin. A number past the
+last ROM slot is ignored. The system plugin's boot slot is used ahead of the
+user plugin's."""
+
+[[constants]]
+name = "OVERRIDE1_IGNORE_IMAGE_SELECT"
+type = "u8"
+value = 0x04
+ora_api = true
+first_release = "0.8.1"
+comment = """Plugin header overrides1 bit. With it set, ROM slot 0 boots unless a
+plugin's OVERRIDE1_BOOT_SLOT selects a slot."""
+
+[[constants]]
+name = "PROPERTY1_EXCLUSIVE_SERIAL_IN"
+type = "u8"
+value = 0x04
+ora_api = true
+first_release = "0.8.1"
+comment = """Plugin header properties1 bit requesting exclusive serial IN mode. With this
+bit set, plugin are started with ORA_ENTRY_FLAG_EXCLUSIVE_SERIAL_IN set."""
+
+# ---------------------------------------------------------------------------
+# USB DPRAM
+# ---------------------------------------------------------------------------
+
+[[constants]]
+name = "USB_DPRAM_BASE_ADDR"
+type = "u32"
+value = 0x50100000
+ora_api = true
+first_release = "0.8.1"
+comment = "Address of the RP2350's USB DPRAM."
+
+[[constants]]
+name = "USB_DPRAM_SIZE"
+type = "usize"
+value = 0x1000
+ora_api = true
+first_release = "0.8.1"
+comment = "Size in bytes of the RP2350's USB DPRAM."

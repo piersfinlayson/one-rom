@@ -6,24 +6,18 @@
 // environment that do not exist when the plugin is compiled natively and run
 // against the firmware emulator.
 //
-// Three kinds of thing live here:
+// It contains:
 //
-// 1. tinyusb.  The plugin calls ten of its functions and tinyusb calls back
-//    into the plugin; nothing below that boundary — the device controller, the
-//    USB bus itself — is modelled, because none of it is One ROM's code.  What
-//    is modelled is the CDC endpoint in both directions, in enough detail for
-//    the log drain's and the input's behaviour to be a response to something.
+// 1. tinyusb.  The plugin calls tinyusb and tinyusb calls back into the
+//    plugin.  Nothing below that boundary is modelled because none of it is
+//    One ROM's code.  The CDC endpoint is modelled in both directions.
 //
 // 2. picoboot.  picobootx has its own conformance suite in its own repository,
 //    so it is not compiled here.  The shim keeps what the plugin registered and
 //    stands in for the default command implementations, which the plugin's ops
-//    table names and so must exist at link time.
+//    table points to and so must exist at link time.
 //
 // 3. The entry point the harness calls to start the plugin.
-//
-// This file is specific to one plugin: it names usb_main, and two plugins
-// cannot share a binary in any case — each defines its own ora_plugin_header
-// and its own file-scope state.
 
 #include <stdint.h>
 #include <stddef.h>
@@ -50,6 +44,10 @@ void *ora_fn_lookup(api_id_t id);
 // included from test/stub.h, which needs firmware internals this file does not
 // have.  See the comment where it is called.
 void ora_log_reset_claims(void);
+
+// firmware/test — the memory standing in for USB DPRAM.  Declared here for the
+// same reason.
+char *stub_usb_dpram(void);
 
 // ---------------------------------------------------------------------------
 // The plugin under test
@@ -107,6 +105,7 @@ static uint32_t s_tx_inflight;
 static uint8_t  s_tx_fifo[USB_SHIM_TX_CAPACITY];
 static uint32_t s_tx_fifo_len;
 static uint8_t  s_connected = 1;
+static uint8_t  s_dtr;
 
 // Flushed bytes accumulate here.  Sized for a whole banner and several log
 // lines, so a scenario can run many passes before reading.
@@ -182,7 +181,15 @@ bool tud_cdc_n_write_clear(uint8_t itf) {
 
 bool tud_cdc_n_connected(uint8_t itf) {
     (void)itf;
+    return (s_connected != 0) && (s_dtr != 0);
+}
+
+bool tud_mounted(void) {
     return s_connected != 0;
+}
+
+bool tud_suspended(void) {
+    return false;
 }
 
 // The receive side.
@@ -245,6 +252,8 @@ uint32_t tud_cdc_n_read(uint8_t itf, void *buffer, uint32_t bufsize) {
 }
 
 void usb_host_test_set_dtr(uint8_t dtr) {
+    s_dtr = dtr ? 1 : 0;
+
     // Through the plugin's own callback, so the transition is delivered exactly
     // as tinyusb delivers it — which is what the plugin keys a new session off.
     tud_cdc_line_state_cb(0, dtr != 0, false);
@@ -254,9 +263,31 @@ void usb_host_test_set_dtr(uint8_t dtr) {
 // The rest of tinyusb
 // ---------------------------------------------------------------------------
 
+// The plugin's hook into tinyusb's rp2usb_init().  tinyusb's rp2040_usb.h
+// declares it but doesn't compile on a host.
+bool rp2usb_app_reset_cb(void);
+
+static uint32_t s_tinyusb_inits;
+static uint32_t s_controller_resets;
+
 bool tusb_rhport_init(uint8_t rhport, const tusb_rhport_init_t *rh_init) {
     (void)rhport; (void)rh_init;
+
+    // As rp2usb_init() does on a device.  Its DPRAM clear isn't modelled
+    // because it stops below the USB DPRAM log.
+    s_tinyusb_inits++;
+    if (rp2usb_app_reset_cb()) {
+        s_controller_resets++;
+    }
     return true;
+}
+
+uint32_t usb_host_test_tinyusb_inits(void) {
+    return s_tinyusb_inits;
+}
+
+uint32_t usb_host_test_controller_resets(void) {
+    return s_controller_resets;
 }
 
 void tud_task_ext(uint32_t timeout_ms, bool in_isr) {
@@ -517,6 +548,10 @@ uint8_t usb_host_test_custom_handlers(void) {
                    | (s_custom_ops->fill != NULL ? 2u : 0u));
 }
 
+const volatile uint8_t *usb_host_test_dpram(void) {
+    return (const volatile uint8_t *)stub_usb_dpram();
+}
+
 // Route a read through the ops table the plugin registered, as picoboot would:
 // prepare first, and read only if it was allowed.
 int32_t usb_host_test_read(uint32_t addr, uint8_t *buf, uint32_t len) {
@@ -576,15 +611,21 @@ static void *shim_fn_lookup(api_id_t id) {
     return ora_fn_lookup(id);
 }
 
-// Start the plugin.  Does not return: the plugin's main loop is infinite by
-// design, so the harness runs this on a thread it is willing to abandon.
+static uint8_t s_entry_flags;
+
+void usb_host_test_set_entry_flags(uint8_t flags) {
+    s_entry_flags = flags;
+}
+
+// Start the plugin.  Doesn't return, so the harness runs this on a thread it
+// abandons.
 //
-// The entry arguments describe the plugin's static RAM and stack on a device.
-// This plugin voids both that and its plugin-type argument, and on a host its
-// data and stack are the host's, so a zeroed struct is passed rather than an
-// invented layout that nothing would honour.
+// The plugin reads only the entry arguments' flags, so the other fields are
+// zero.
 void ora_host_test_run_plugin(void) {
-    static const ora_entry_args_t args = {0};
+    static ora_entry_args_t args;
+    memset(&args, 0, sizeof(args));
+    args.flags = s_entry_flags;
     usb_main(shim_fn_lookup, ORA_PLUGIN_TYPE_SYSTEM, &args);
 }
 
@@ -612,6 +653,10 @@ void usb_host_test_reset_plugin(void) {
     s_control_xfer_len = 0;
     s_control_xfer_count = 0;
     s_picoboot_claims_control = 0;
+
+    s_entry_flags = 0;
+    s_tinyusb_inits = 0;
+    s_controller_resets = 0;
 }
 
 // Version fields from the plugin's own header, so the harness can report which

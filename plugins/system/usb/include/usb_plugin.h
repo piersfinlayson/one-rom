@@ -60,6 +60,8 @@ typedef struct {
     ora_log_write_fn_t log_write;
     ora_log_query_fn_t log_query;
 
+    uint8_t exclusive_serial_in;
+
     // Whether a terminal has the CDC port open, and whether a session it has
     // just started is still to be set up.  Both are set from tud_cdc_line_state_cb(),
     // which reports the transition - see usb_log.c.

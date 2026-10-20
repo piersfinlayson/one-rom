@@ -1456,8 +1456,11 @@ Freq: 150MHz
 
 `Name:` appears only when the One ROM has an instance name set, and `Logging:`
 lists the kinds of output switched on — see
-[Logging](/docs/LOGGING.md#over-usb). A One ROM that cannot forward its log says
+[Logging](/docs/LOGGING.md#usb). A One ROM that cannot forward its log says
 so there, rather than leaving you watching a silent port.
+
+A One ROM plugin can claim exclusive use of the USB serial port.  In this case,
+the CLI automatically retrieves logs using another mechanism.
 
 ```
 onerom monitor log
@@ -1469,25 +1472,7 @@ onerom monitor log --output boot.txt
 |---|---|
 | `--output, -o <FILE>` (alias `--out`) | Also write the One ROM's output to this file, replacing its contents. The file receives what the One ROM sends and nothing else, so it is a transcript of the device rather than of this command. The output still appears on screen as well. |
 
-The One ROM's output goes to stdout and everything this command says about
-itself goes to stderr, so `onerom monitor log > boot.txt` captures the log on
-its own. `--verbose` adds a line naming the serial port, for when you want to
-point another tool at it.
-
-What this command needs, and what it cannot do:
-
-- The One ROM must be **running**, and must have been programmed with the USB
-  system plugin. That plugin provides the serial port and forwards the log into
-  it.
-- Nothing is forwarded until this command — or another terminal — opens the
-  port. A One ROM nothing is listening to accumulates its log rather than
-  discarding it, which is why the boot log is still there when you attach.
-- A debug probe reading the log over SWD consumes the same bytes. With both
-  running the stream is split arbitrarily between them and neither sees all of
-  it, so use one at a time.
-- If nothing arrives within two seconds the command fails. Since every attach
-  begins with the banner above, a One ROM with a current USB plugin always sends
-  something — so a timeout points at a plugin too old to forward the log at all.
+One ROM must be running for logging to be displayed.
 
 Device required: yes.
 

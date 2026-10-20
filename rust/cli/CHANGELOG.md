@@ -12,6 +12,9 @@
 - Remove `inspect image`, which wasn't implemented. Use `save`.
 - Fix: `onerom` no longer crashes when its output is piped to a program that exits early, for example `head`.
 - When the One ROM selected with `--serial` can't be opened the error is now "could not be opened", not "not found".
+- `program` and `firmware build` fail when a plugin's boot slot address is outside its region.
+- `monitor log` reads One ROM's log from RAM when a plugin has exclusive use of the serial port.
+- `inspect peek memory` can also read USB DPRAM.
 
 ## v0.5.0 - 2026-10-06
 

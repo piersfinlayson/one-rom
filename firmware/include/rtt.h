@@ -29,21 +29,24 @@
 
 // Number of channel descriptors declared in the control block.
 //
-// Held at SEGGER's default of 3.  Only the first of each is populated.  A probe
-// reads the counts from the control block, so unpopulated descriptors cost 96
-// bytes of RAM and nothing else.
+// Held at SEGGER's default.
 #define ONEROM_RTT_MAX_UP_BUFFERS       3
 #define ONEROM_RTT_MAX_DOWN_BUFFERS     3
 
-// Number of channels.  onerom_rtt_ring() in rtt.c maps each to its descriptor.
+// Number of plugin API channels.
 #define ONEROM_RTT_CHANNELS             2
 
 // Channel operating mode.  Only skip is implemented: a record that does not
 // fit is dropped whole, and the calling core is never blocked.
 #define ONEROM_RTT_MODE_NO_BLOCK_SKIP   0u
 
-// Log channel indices.  Fixed by contract - never identified by name.
-#define ONEROM_RTT_CH_BOOT              0u
+// One ROM's log.
+#define ONEROM_RTT_CH_BOOT              0x100u
+
+// One ROM's log in exclusive serial IN mode.
+#define USB_DPRAM_LOG_SIZE              0x400u
+#define USB_DPRAM_LOG_ADDR \
+    (USB_DPRAM_BASE_ADDR + USB_DPRAM_SIZE - USB_DPRAM_LOG_SIZE)
 
 // A channel descriptor, the same layout in both directions.
 //
@@ -75,6 +78,16 @@ extern onerom_rtt_cb_t _SEGGER_RTT;
 // Prepare the log for plugins.  Call once at plugin launch, on core 0, before
 // either plugin runs.
 void onerom_rtt_plugins_init(void);
+
+// Move One ROM's log from up[0] to up[1], copying as much as fits into
+// `buffer`.  Returns 1 if the log moved.
+unsigned onerom_rtt_move_log(char *buffer, unsigned size);
+
+unsigned onerom_rtt_log_moved(void);
+
+#if defined(TEST_BUILD)
+void onerom_rtt_test_unmove_log(void);
+#endif // TEST_BUILD
 
 // Append a record to a channel.  Returns len if the record was stored, 0 if it
 // was dropped.  Records are all or nothing.

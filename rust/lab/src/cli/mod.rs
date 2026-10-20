@@ -155,6 +155,10 @@ pub struct SessionState {
     pub interval_secs: u32,
     /// Fast read delay in cycles.
     pub fast_read_delay: u32,
+    /// Data lines a drive toggles, or `None` for all of them.
+    pub drive_lines: Option<u16>,
+    /// Drive delay in cycles between toggles.
+    pub drive_delay: u32,
     /// Control line polarities for the current chip.
     pub cs: CsSettings,
     /// Tri-state testing flag for checksum mode.
@@ -172,6 +176,8 @@ impl SessionState {
             format: OutputFormat::default(),
             interval_secs: 1,
             fast_read_delay: crate::fast_read::DEFAULT_DELAY_CYCLES,
+            drive_lines: None,
+            drive_delay: crate::drive::DEFAULT_DELAY_CYCLES,
             cs: CsSettings::unset(),
             tri_state: true,
         }
@@ -407,6 +413,8 @@ pub async fn show_help(_state: &SessionState) -> Result<(), Error> {
         .await?;
     send_line("  x   Continuous fast read").await?;
     send_line("        x[:<chip>[:<cycles>[:<cs1>[:<cs2>[:<cs3>]]]]]").await?;
+    send_line("  d   Drive data lines as a square wave, chip deselected").await?;
+    send_line("        d[:<chip>[:<lines|all>[:<cycles>]]]").await?;
     send_line("  i   Chip type information").await?;
     send_line("        i[:<chip>]").await?;
     send_line("  c   Set or change chip type").await?;

@@ -16,7 +16,7 @@ use onerom_lab_parser::LabParser;
 use onerom_metadata::otp::CommissioningArea;
 use onerom_metadata::{
     MaybeKnown, OTP_NUM_GPIOS_ROW, OneromBoardSize, USB_BOOTLOADER_PID, USB_BOOTLOADER_VID,
-    USB_PLUGIN_PID, USB_PLUGIN_VID,
+    USB_DPRAM_BASE_ADDR, USB_DPRAM_SIZE, USB_PLUGIN_PID, USB_PLUGIN_VID,
 };
 use picoboot::cmd::PicobootStatus;
 use picoboot::{
@@ -115,7 +115,7 @@ impl AccessError {
     /// Every unlisted variant is "could not be read", which is the honest
     /// answer for a failure this layer has nothing more specific to say about.
     #[allow(clippy::wildcard_enum_match_arm)]
-    fn classify(e: &picoboot::Error) -> AccessFailure {
+    pub(crate) fn classify(e: &picoboot::Error) -> AccessFailure {
         match e {
             // Neither of these got as far as speaking PICOBOOT, and neither
             // can tell a rival program from a permissions problem.
@@ -348,14 +348,12 @@ pub(crate) async fn get_picoboot(device: &Device, long: bool) -> Result<Picoboot
         .map_err(|e| Error::Usb(e.to_string()))
 }
 
-/// Open a picoboot handle, keeping the picoboot error rather than its text.
-///
-/// [`get_picoboot`] is the same thing for every caller that only reports the
-/// failure. The scan path needs the variant, because that is what separates
-/// "another program has this device" from "it never answered".
-async fn open_picoboot(device: &Device, long: bool) -> Result<Picoboot, picoboot::Error> {
-    let mut picoboot = Picoboot::new(device.device_info.clone()).await?;
+/// Longer than an `onerom monitor log` poll holds the device.
+const OPEN_RETRY_LIMIT: Duration = Duration::from_millis(100);
 
+const OPEN_RETRY_INTERVAL: Duration = Duration::from_millis(25);
+
+async fn open_picoboot(device: &Device, long: bool) -> Result<Picoboot, picoboot::Error> {
     let timeout = if long {
         // Flash erase can take a long time, so use a longer timeout for all
         // operations when erase is requested.
@@ -365,12 +363,40 @@ async fn open_picoboot(device: &Device, long: bool) -> Result<Picoboot, picoboot
     };
     debug!("Setting PICOBOOT timeouts to {timeout:?} (long={long})");
 
-    picoboot.set_timeouts(Timeouts {
-        endpoint: timeout,
-        ..Timeouts::default()
-    });
+    retry_not_opened(
+        || async {
+            let mut picoboot = Picoboot::new(device.device_info.clone()).await?;
+            picoboot.set_timeouts(Timeouts {
+                endpoint: timeout,
+                ..Timeouts::default()
+            });
+            picoboot.connect().await?;
+            Ok(picoboot)
+        },
+        AccessError::classify,
+    )
+    .await
+}
 
-    Ok(picoboot)
+async fn retry_not_opened<T, E, F>(
+    mut attempt: impl FnMut() -> F,
+    classify: impl Fn(&E) -> AccessFailure,
+) -> Result<T, E>
+where
+    F: Future<Output = Result<T, E>>,
+{
+    let deadline = tokio::time::Instant::now() + OPEN_RETRY_LIMIT;
+    loop {
+        match attempt().await {
+            Err(e)
+                if classify(&e) == AccessFailure::NotOpened
+                    && tokio::time::Instant::now() + OPEN_RETRY_INTERVAL <= deadline =>
+            {
+                tokio::time::sleep(OPEN_RETRY_INTERVAL).await;
+            }
+            result => return result,
+        }
+    }
 }
 
 /// RP2350 chip identity and package variant, read from a device via GET_INFO
@@ -500,26 +526,9 @@ pub async fn read_device_info(device: &mut Device) -> Result<(), AccessError> {
     debug!("Reading {FLASH_READ_SIZE_KB}KB from {FLASH_BASE:#010x} on {device}");
 
     // Parse the device's flash first, to establish its state and recognition.
-    let mut picoboot = open_picoboot(device, false)
+    let picoboot = open_picoboot(device, false)
         .await
         .map_err(AccessError::from_picoboot)?;
-
-    // Connect and reset here rather than leaving both to PicobootReader::new,
-    // which reports a string. The picoboot error variant is the only thing
-    // that separates a device another program is holding from one that opened
-    // and then said nothing, and a string cannot be matched on. The reader
-    // does its own connect and reset afterwards - the connect is a no-op on an
-    // already-connected handle, and the second reset costs one control
-    // transfer on a path that already opens the device twice.
-    {
-        let conn = picoboot
-            .connect()
-            .await
-            .map_err(AccessError::from_picoboot)?;
-        conn.reset_interface()
-            .await
-            .map_err(AccessError::from_picoboot)?;
-    }
 
     let firmware = {
         let mut reader = PicobootReader::new(picoboot)
@@ -754,6 +763,8 @@ enum MemoryType {
     /// Virtual One ROM addresses that are read write at all times when One
     /// ROM is running
     VirtualRw,
+    /// Readable when One ROM is running, never writeable
+    RunningRo,
 }
 
 // A valid One ROM MCU memory region
@@ -792,6 +803,12 @@ const OTHER_REGIONS: &[MemoryRegion] = &[
         LIVE_ROM_BASE,
         LIVE_ROM_MAX_OFFSET,
         MemoryType::VirtualRw,
+    ),
+    MemoryRegion::new(
+        "USB DPRAM",
+        USB_DPRAM_BASE_ADDR,
+        USB_DPRAM_SIZE as u32,
+        MemoryType::RunningRo,
     ),
 ];
 
@@ -840,6 +857,15 @@ fn check_memory_range(
                         Err(Error::MemoryDeviceNotRunning)
                     }
                 }
+                MemoryType::RunningRo => {
+                    if write {
+                        Err(Error::MemoryNotWriteable)
+                    } else if device.is_running() {
+                        Ok(())
+                    } else {
+                        Err(Error::MemoryDeviceNotRunning)
+                    }
+                }
             };
         }
     }
@@ -881,6 +907,35 @@ pub async fn read_memory(device: &Device, address: u32, length: u32) -> Result<V
     }
 
     Ok(data)
+}
+
+/// Reads `length` bytes in one PICOBOOT transfer.
+pub(crate) async fn read_memory_on(
+    picoboot: &mut Picoboot,
+    device: &Device,
+    address: u32,
+    length: u32,
+) -> Result<Vec<u8>, Error> {
+    check_memory_range(device, address, length, false, false)?;
+
+    let data = picoboot.read(address, length).await.map_err(usb_error)?;
+    if data.len() != length as usize {
+        return Err(Error::Usb(format!(
+            "read {} of {length} bytes at {address:#010x}",
+            data.len()
+        )));
+    }
+    Ok(data)
+}
+
+pub(crate) async fn write_memory_on(
+    picoboot: &mut Picoboot,
+    device: &Device,
+    address: u32,
+    data: &[u8],
+) -> Result<(), Error> {
+    check_memory_range(device, address, data.len() as u32, true, false)?;
+    picoboot.write(address, data).await.map_err(usb_error)
 }
 
 /// Write bytes to device memory.
@@ -1566,6 +1621,53 @@ mod tests {
             AccessError::unreadable("no words of its own".to_string()).failure,
             AccessFailure::Unreadable
         );
+    }
+
+    async fn retry(
+        failure: AccessFailure,
+        opens_on: Option<u32>,
+    ) -> (Result<(), u32>, u32, Duration) {
+        let start = tokio::time::Instant::now();
+        let mut attempts = 0;
+        let result = retry_not_opened(
+            || {
+                attempts += 1;
+                std::future::ready(if Some(attempts) == opens_on {
+                    Ok(())
+                } else {
+                    Err(attempts)
+                })
+            },
+            |_| failure,
+        )
+        .await;
+        (result, attempts, start.elapsed())
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_device_that_would_not_open_is_retried_until_it_opens() {
+        let (result, attempts, elapsed) = retry(AccessFailure::NotOpened, Some(3)).await;
+        assert_eq!(result, Ok(()));
+        assert_eq!(attempts, 3);
+        assert_eq!(elapsed, 2 * OPEN_RETRY_INTERVAL);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_device_that_stays_unopened_reports_the_last_failure() {
+        let (result, attempts, elapsed) = retry(AccessFailure::NotOpened, None).await;
+        let retries =
+            u32::try_from(OPEN_RETRY_LIMIT.as_millis() / OPEN_RETRY_INTERVAL.as_millis()).unwrap();
+        assert_eq!(attempts, retries + 1);
+        assert_eq!(result, Err(attempts));
+        assert_eq!(elapsed, OPEN_RETRY_LIMIT);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn other_failures_are_not_retried() {
+        let (result, attempts, elapsed) = retry(AccessFailure::Unreadable, Some(2)).await;
+        assert_eq!(result, Err(1));
+        assert_eq!(attempts, 1);
+        assert_eq!(elapsed, Duration::ZERO);
     }
 
     #[test]

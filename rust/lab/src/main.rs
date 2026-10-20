@@ -25,6 +25,7 @@ use static_cell::StaticCell;
 mod cdc;
 mod cli;
 mod commissioning;
+mod drive;
 mod error;
 mod fast_read;
 mod hw;

@@ -225,6 +225,9 @@ pub enum Error {
     )]
     LogSilent(f32),
 
+    #[error("One ROM's log wasn't found in its RAM.\n  {0}")]
+    LogNotFound(String),
+
     #[error(
         "The operation attempted to access an unsupported memory region\n  Address {0:#010x}, length {1:#010x}"
     )]

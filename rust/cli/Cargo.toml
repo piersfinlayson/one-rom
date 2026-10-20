@@ -82,6 +82,7 @@ static_vcruntime = "3.0"
 [dev-dependencies]
 onerom-lab-metadata = { workspace = true }
 tempfile = "3"
+tokio = { version = "1", features = ["test-util"] }
 
 # Cargo deb metadata for building Linux deb packages
 [package.metadata.deb]

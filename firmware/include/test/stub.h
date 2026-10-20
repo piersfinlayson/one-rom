@@ -132,6 +132,29 @@ void stub_otp_set_ecc(uint16_t row, const uint16_t *values, uint32_t count);
 void stub_otp_set_raw(uint16_t row, const uint32_t *values, uint32_t count);
 void stub_otp_clear(void);
 
+// Flash bytes where the firmware reads a plugin's boot slot.  A byte a test
+// hasn't set reads 0xFF.  The bytes a test sets outlive onerom_test_reset() so
+// the test clears them with stub_flash_clear().
+uint8_t stub_flash_read8(uint32_t addr);
+void stub_flash_set8(uint32_t addr, uint8_t value);
+void stub_flash_clear(void);
+
+char *stub_usb_dpram(void);
+char *stub_usb_dpram_log(void);
+
+// The firmware's USB controller reset steps since the last
+// onerom_test_reset(), in order.  Each is a STUB_USB_RESET_ value.
+// STUB_USB_RESET_LOG_MOVED is set in a step taken after the log moved.
+//
+// Copies up to max of them to steps and returns how many were recorded, up to
+// STUB_USB_RESETS_MAX.
+#define STUB_USB_RESET_ASSERT       1u
+#define STUB_USB_RESET_RELEASE      2u
+#define STUB_USB_RESET_RELEASE_WAIT 3u
+#define STUB_USB_RESET_LOG_MOVED    0x80u
+#define STUB_USB_RESETS_MAX         8u
+uint8_t stub_usb_resets(uint8_t *steps, uint8_t max);
+
 // Put the process-global state a device's reset would clear back to cold boot.
 //
 // The firmware's statics are ordinary host objects in a test build, so nothing
@@ -141,12 +164,10 @@ void stub_otp_clear(void);
 void onerom_test_reset(void);
 void stub_gpio_reset(void);
 
-// Give every log channel back.
+// Release every log channel.
 //
-// Called by a harness that also clears its plugin's own state, and only by such
-// a harness: a plugin records which channels it holds itself, so releasing the
-// firmware's claim without clearing the plugin's leaves the plugin believing it
-// holds a channel the firmware says is free.
+// Call only from a harness that also clears its plugin's record of the channels
+// it holds.
 void ora_log_reset_claims(void);
 
 #endif // TEST_STUB_H
