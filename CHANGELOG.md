@@ -45,6 +45,8 @@ In detail:
   - New: `ora_get_flash_slot_addr()` returns a flash slot's flash address and size.
   - New: a plugin that sets `ORA_PROPERTY1_EXCLUSIVE_SERIAL_IN` gets exclusive use of the USB serial port.  One ROM's log moves to USB DPRAM in this case.
   - New: a plugin can choose the ROM slot One ROM boots with `ORA_OVERRIDE1_BOOT_SLOT` and ignore the image select jumpers with `ORA_OVERRIDE1_IGNORE_IMAGE_SELECT`.
+- Other:
+  - Added manufacturer contact details to commissioning signing key tables.
 
 To test:
 - One ROM Web: the One ROM Builder tab's Load from Device button with a One ROM connected.

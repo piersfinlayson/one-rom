@@ -436,7 +436,7 @@ pub(crate) async fn commission_otp<O: LocalOtpAccess, S: SignatureSource>(
         Err(e) => return Err(e.into()),
     };
     if let Some(replaced) = prepared.replaced_instance() {
-        let mut values = instance_values(replaced);
+        let mut values = instance_values(replaced, None);
         if let Some(signer) = replaced.signer() {
             values.push(("Signing key:".to_string(), signer_name(signer, table)));
         }
@@ -1205,6 +1205,9 @@ struct InstanceCheck<'a> {
     current: bool,
     board: Option<&'a str>,
     manufacturer: Option<&'a str>,
+    /// `None` unless the signature is accepted and its key has the
+    /// manufacturer's contact.
+    contact: Option<&'a str>,
     date: Option<&'a str>,
     signer: Option<u16>,
     signer_name: Option<&'a str>,
@@ -1376,6 +1379,9 @@ fn instance_check<'a>(
         current: Some(instance.first_row()) == current,
         board: instance.board(),
         manufacturer: instance.manufacturer(),
+        contact: accepted(verdict)
+            .then(|| manufacturer_contact(instance, table))
+            .flatten(),
         date: instance.date(),
         signer,
         signer_name: signer.and_then(|id| table.get(id)).map(Signer::name),
@@ -1398,7 +1404,9 @@ fn checked_values(
     verdict: &Result<Verdict, AppError>,
     table: &SignerTable,
 ) -> Vec<Labelled> {
-    let mut values = instance_values(instance);
+    let contact =
+        accepted(verdict).then(|| manufacturer_contact(instance, table).unwrap_or("unknown"));
+    let mut values = instance_values(instance, contact);
     values.extend(check_values(instance, verdict, table));
     values.extend(unknown_keys(instance.entries()).map(|unknown| {
         (
@@ -1407,6 +1415,22 @@ fn checked_values(
         )
     }));
     values
+}
+
+/// Whether the signature is accepted. Only an accepted signature proves the
+/// manufacturer, so its contact is shown only then.
+fn accepted(verdict: &Result<Verdict, AppError>) -> bool {
+    verdict.as_ref().is_ok_and(Verdict::is_accepted)
+}
+
+/// The contact `table` has for `instance`'s manufacturer.
+fn manufacturer_contact<'a>(
+    instance: &CommissioningInstance,
+    table: &'a SignerTable,
+) -> Option<&'a str> {
+    table
+        .get(instance.signer()?)?
+        .contact(instance.manufacturer()?)
 }
 
 /// The check of `instance`'s signature, a line each. An incomplete instance
@@ -2036,9 +2060,10 @@ mod tests {
         // line each. Its row is --verbose information.
         let lines: Vec<&str> = out.lines().collect();
         assert!(holds(lines[0], &["M"]), "{out}");
-        let instance: [&[&str]; 4] = [
+        let instance: [&[&str]; 5] = [
             &["fire-24-f"],
             &["piers.rocks"],
+            &["https://piers.rocks"],
             &["2026-01-01"],
             &[SIGNER_NAME, "1"],
         ];
@@ -2501,6 +2526,7 @@ mod tests {
                     "current": true,
                     "board": "fire-24-f",
                     "manufacturer": "piers.rocks",
+                    "contact": "https://piers.rocks",
                     "date": "20260101",
                     "signer": 1,
                     "signer_name": "test signer",
@@ -2512,6 +2538,40 @@ mod tests {
                 "valid": true,
             })
         );
+    }
+
+    /// A signature that isn't accepted leaves the manufacturer unproven, so
+    /// its contact isn't shown although the table has it.
+    #[tokio::test]
+    async fn validate_shows_the_contact_only_for_an_accepted_signature() {
+        let mut otp = commissioned_board().await;
+        let retired = table(Some(json!({})));
+        assert_eq!(
+            retired.get(1).unwrap().contact("piers.rocks"),
+            Some("https://piers.rocks")
+        );
+        let (result, out) = validate(&mut otp, &retired, &Files(Vec::new()), false).await;
+        assert!(result.is_err());
+        assert!(!out.contains("https://piers.rocks"), "{out}");
+        let (_, out) = validate(&mut otp, &retired, &Files(Vec::new()), true).await;
+        let json: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(json["instances"][0]["contact"], json!(null), "{out}");
+    }
+
+    /// An accepted signature whose key doesn't have the manufacturer's contact
+    /// has "unknown" as the contact's value.
+    #[tokio::test]
+    async fn validate_shows_a_missing_contact_as_unknown() {
+        let mut otp = commissioned_board().await;
+        let table = test_board::table_with_empty_contacts();
+        let (result, out) = validate(&mut otp, &table, &Files(Vec::new()), false).await;
+        result.unwrap();
+        let lines: Vec<&str> = out.lines().collect();
+        let instance: [&[&str]; 3] = [&["piers.rocks"], &["unknown"], &["2026-01-01"]];
+        assert!(in_turn(&lines, &instance), "{out}");
+        let (_, out) = validate(&mut otp, &table, &Files(Vec::new()), true).await;
+        let json: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(json["instances"][0]["contact"], json!(null), "{out}");
     }
 
     #[test]

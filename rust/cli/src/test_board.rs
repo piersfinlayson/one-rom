@@ -491,13 +491,26 @@ fn signer_table(retired: Option<serde_json::Value>, manufacturers: &[&str]) -> S
     if let Some(retired) = retired {
         signer["retired"] = retired;
     }
+    with_acme(signer)
+}
+
+/// [`table`] with key 1's contacts empty.
+pub fn table_with_empty_contacts() -> SignerTable {
+    let mut signer = signer_entry(&key(), 1, SIGNER_NAME, &["*"]);
+    signer["contacts"] = json!({});
+    with_acme(signer)
+}
+
+/// A signer table holding the entry `signer` and [`acme_key`] as signer 256.
+fn with_acme(signer: serde_json::Value) -> SignerTable {
     let acme = signer_entry(&acme_key(), ACME_ID, ACME, &[ACME]);
     let table = json!({ "version": 1, "signers": [signer, acme] });
     SignerTable::parse(table.to_string().as_bytes()).unwrap()
 }
 
 /// A signer table's entry for `key` as signer `id` named `name`.
-/// `manufacturers` is its `manufacturers` field.
+/// `manufacturers` is its `manufacturers` field, and each has its
+/// [`contact`]. A key allowing any manufacturer has piers.rocks's.
 fn signer_entry(
     key: &SigningKey,
     id: u16,
@@ -505,13 +518,30 @@ fn signer_entry(
     manufacturers: &[&str],
 ) -> serde_json::Value {
     let proof = key.sign(&[b"onerom-signer-v1".as_slice(), name.as_bytes()].concat());
+    let contacted = match manufacturers {
+        ["*"] => &["piers.rocks"][..],
+        listed => listed,
+    };
+    let contacts: serde_json::Map<_, _> = contacted
+        .iter()
+        .map(|manufacturer| (manufacturer.to_string(), json!(contact(manufacturer))))
+        .collect();
     json!({
         "id": id,
         "name": name,
         "public_key": hex::encode(key.verifying_key().to_bytes()),
         "proof": hex::encode(proof.to_bytes()),
         "manufacturers": manufacturers,
+        "contacts": contacts,
     })
+}
+
+/// The contact the test tables have for `manufacturer`.
+fn contact(manufacturer: &str) -> String {
+    match manufacturer {
+        ACME => "https://github.com/acme-retro".to_string(),
+        domain => format!("https://{domain}"),
+    }
 }
 
 /// A request to commission `board` as `size` by piers.rocks on [`DATE`]. It

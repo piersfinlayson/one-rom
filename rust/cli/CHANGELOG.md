@@ -15,6 +15,7 @@
 - `program` and `firmware build` fail when a plugin's boot slot address is outside its region.
 - `monitor log` reads One ROM's log from RAM when a plugin has exclusive use of the serial port.
 - `inspect peek memory` can also read USB DPRAM.
+- `hardware validate` displays the manufacturer's contact.
 
 ## v0.5.0 - 2026-10-06
 
