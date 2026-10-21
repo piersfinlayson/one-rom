@@ -18,7 +18,7 @@ use studiov2_commands::{COMMANDS, Command, GLOBALS, Group, Kind, Opt};
 ///
 /// A reader that quietly stops understanding an attribute drops options rather
 /// than failing, and this is what turns that into a test failure.
-const TOTAL_OPTIONS: usize = 228;
+const TOTAL_OPTIONS: usize = 232;
 
 /// The command the CLI puts at that path.
 fn command(path: &[&str]) -> &'static Command {
