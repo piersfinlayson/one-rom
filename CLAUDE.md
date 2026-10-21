@@ -330,6 +330,9 @@ mechanically.
   `supported_values()` (see `args/image.rs`'s `ImageFormatParser`) so a new
   variant flows through with no CLI change. `onerom-gen` stays clap-free.
 - clap already requires a non-`Option` field, so leave `required = true` off.
+- **Adding or removing an option changes `TOTAL_OPTIONS`** in
+  `prototypes/studiov2/commands/tests/description.rs`. Run that crate's
+  `description` test.
 - **Examples in doc comments are runnable.** `firmware inspect firmware.bin`
   sat in the help for months describing an argument form the command never had.
 
