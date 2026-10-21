@@ -1425,7 +1425,7 @@ fn checked_values(
     values.extend(unknown_keys(instance.entries()).map(|unknown| {
         (
             "Skipped:".to_string(),
-            format!("unknown {}", unknown.text()),
+            format!("unknown commissioning key {}", unknown.text()),
         )
     }));
     values

@@ -133,12 +133,9 @@ pub fn unknown_keys(entries: &[StoreEntry]) -> impl Iterator<Item = UnknownKey> 
 }
 
 impl UnknownKey {
-    /// The entry as `key KEY (N bytes) at row ROW`.
+    /// The entry as `KEY (N bytes) at row ROW`.
     pub fn text(&self) -> String {
-        format!(
-            "key {} ({} bytes) at row {:#05x}",
-            self.key, self.len, self.row
-        )
+        format!("{} ({} bytes) at row {:#05x}", self.key, self.len, self.row)
     }
 }
 
@@ -181,7 +178,8 @@ pub fn unknown_version(area: &CommissioningArea) -> Option<String> {
 ///
 /// Always, where they apply:
 /// - `Commissioned: unknown` for an area holding an unknown version
-/// - each skipped key
+/// - the skipped keys, a line each with `verbose` and counted in one line
+///   otherwise
 /// - a board that differs from the firmware's
 ///
 /// `scan` asks for `details` only with `--verbose`. The lines don't say
@@ -232,16 +230,30 @@ pub fn device_lines(
         (None, None) if details && verbose => lines.push("Commissioned: no".to_string()),
         (None, None) => {}
     }
-    lines.extend(skipped_keys(area));
+    lines.extend(skipped_keys(area, verbose));
     lines
 }
 
 /// A line for each entry in `area` whose key this build doesn't know.
-fn skipped_keys(area: &CommissioningArea) -> impl Iterator<Item = String> + '_ {
-    area.instances()
+fn skipped_keys(area: &CommissioningArea, verbose: bool) -> Vec<String> {
+    let unknown: Vec<UnknownKey> = area
+        .instances()
         .iter()
         .flat_map(|instance| unknown_keys(instance.entries()))
-        .map(|unknown| format!("Skipped: unknown {}", unknown.text()))
+        .collect();
+    match unknown.len() {
+        0 => Vec::new(),
+        _ if verbose => unknown
+            .iter()
+            .map(|unknown| format!("Skipped: unknown commissioning key {}", unknown.text()))
+            .collect(),
+        1 => {
+            vec!["Skipped: 1 unknown commissioning key. Update the CLI to display it.".to_string()]
+        }
+        count => vec![format!(
+            "Skipped: {count} unknown commissioning keys. Update the CLI to display them."
+        )],
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -272,8 +284,19 @@ pub fn report_lines(report: &OtpReport, verbose: bool, table: &SignerTable) -> V
         lines.extend(
             instances
                 .flat_map(|instance| unknown_keys(instance.entries()))
-                .chain(general_store.flat_map(|store| unknown_keys(store.entries())))
-                .map(|unknown| labelled("Skipped:", format!("unknown {}", unknown.text()))),
+                .map(|unknown| {
+                    labelled(
+                        "Skipped:",
+                        format!("unknown commissioning key {}", unknown.text()),
+                    )
+                })
+                .chain(
+                    general_store
+                        .flat_map(|store| unknown_keys(store.entries()))
+                        .map(|unknown| {
+                            labelled("Skipped:", format!("unknown key {}", unknown.text()))
+                        }),
+                ),
         );
     }
     lines.extend(white_label_lines(report));
@@ -855,12 +878,19 @@ mod tests {
         assert_eq!(verbose, newer);
         let blank = device_lines(None, &area_of(&[0]), (true, true), &table);
         assert_ne!(verbose, blank);
-        // An instance holding key 9. It ends before its signature. The line
-        // holds the key, its length in bytes and its row.
+        // An instance holding key 9. It ends before its signature. Without
+        // --verbose one line contains the count. With it the line contains the
+        // key, its length in bytes and its row.
         let skipped = area_of(&[OTP_STORE_MAGIC, 1, 9, 4, 0x0201, 0x0403, 0, 0]);
-        let skipped = device_lines(None, &skipped, (true, false), &table);
-        assert_eq!(skipped.len(), 1, "{skipped:?}");
-        assert!(holds(&skipped[0], &["9", "4", "0x0c2"]), "{skipped:?}");
+        let quiet = device_lines(None, &skipped, (true, false), &table);
+        assert_eq!(quiet.len(), 1, "{quiet:?}");
+        assert!(
+            holds(&quiet[0], &["1", "unknown commissioning key"]),
+            "{quiet:?}"
+        );
+        let verbose = device_lines(None, &skipped, (true, true), &table);
+        let verbose = verbose.last().unwrap();
+        assert!(holds(verbose, &["9", "4", "0x0c2"]), "{verbose:?}");
     }
 
     #[test]

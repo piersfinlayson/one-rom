@@ -54,7 +54,7 @@ its C and Rust definitions. A key keeps its number permanently.
 A key can be deprecated in the schema. Its number stays reserved. Parsers keep
 reading it because commissioned boards still contain it.
 
-A parser skips an unknown key using its length. A host tool reports each key it
+A parser skips an unknown key using its length. A host tool reports the keys it
 skips.
 
 ### Commissioning Store Keys

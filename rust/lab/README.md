@@ -22,9 +22,12 @@ Hold BOOTSEL while connecting any other board.
 ```bash
 scripts/flash.sh                # board set at runtime with B:<board>
 scripts/flash.sh fire-40-a      # board built in
+scripts/flash.sh --serial 62CD9AE3C0771A7E fire-40-a
 ```
 
-The argument is the Lab board's type.
+The board argument is the Lab board's type. `--serial` selects the Lab by its
+serial number from `onerom scan`. It's required where a One ROM with the USB
+plugin is also connected, as both have the same USB ID.
 
 ## picotool
 
